@@ -54,6 +54,9 @@ pub struct AutorunState {
     crc_mismatches: usize,
     /// Total number of checkpoints verified so far.
     total_checkpoints_verified: usize,
+    /// Set to `true` when `next_playback_frame` returned a pre-recorded frame this frame.
+    /// Cleared by `begin_frame` at the start of each frame cycle.
+    current_frame_prerecorded: bool,
 }
 
 impl AutorunState {
@@ -110,6 +113,7 @@ impl AutorunState {
                         playback_checkpoint_idx: 0,
                         crc_mismatches: 0,
                         total_checkpoints_verified: 0,
+                        current_frame_prerecorded: false,
                     };
                     Ok((state, None))
                 }
@@ -144,14 +148,20 @@ impl AutorunState {
                     playback_checkpoint_idx,
                     crc_mismatches: 0,
                     total_checkpoints_verified: 0,
+                    current_frame_prerecorded: false,
                 };
                 Ok((state, pending))
             }
         }
     }
 
-    /// Construct extend-mode state: load existing recording and start playback from the
-    /// second-to-last checkpoint (so the transition into recording is verifiable).
+    /// Construct extend-mode state: load an existing recording and prepare to continue it.
+    ///
+    /// * **n ≥ 2 checkpoints**: restores from the second-to-last checkpoint and replays frames
+    ///   up to the last checkpoint, so the transition into recording is verifiable.
+    /// * **n = 1 checkpoint**: restores directly from the single checkpoint and starts recording
+    ///   immediately — no extend playback is needed.
+    /// * **n = 0 checkpoints**: starts from scratch (no state to restore).
     fn new_extend(autorun_path: PathBuf) -> Result<(Self, Option<PendingRestore>), String> {
         let existing = load_autorun_file(&autorun_path)?;
 
@@ -168,8 +178,16 @@ impl AutorunState {
                 n - 1,
                 Some(pending),
             )
+        } else if n == 1 {
+            // Single checkpoint: restore from it and start recording immediately after.
+            // No extend playback is needed — state restoration alone is sufficient.
+            let cp = &existing.checkpoints[0];
+            let pending = PendingRestore {
+                state_bytes: cp.state_bytes.clone(),
+            };
+            (cp.frame_index as usize + 1, 1, Some(pending))
         } else {
-            // Not enough checkpoints — fall back to replaying from the beginning.
+            // No checkpoints: start from scratch.
             (0, 0, None)
         };
 
@@ -182,6 +200,7 @@ impl AutorunState {
             playback_checkpoint_idx,
             crc_mismatches: 0,
             total_checkpoints_verified: 0,
+            current_frame_prerecorded: false,
         };
         Ok((state, pending))
     }
@@ -201,11 +220,27 @@ impl AutorunState {
         self.extending_playback && self.frame_index < self.autorun.frames.len()
     }
 
+    /// Signal the start of a new frame cycle.
+    ///
+    /// Must be called at the very beginning of each frame before any call to
+    /// [`next_playback_frame`]. Clears the pre-recorded flag so that
+    /// [`current_frame_was_prerecorded`] correctly reflects only the current frame.
+    pub fn begin_frame(&mut self) {
+        self.current_frame_prerecorded = false;
+    }
+
+    /// Returns `true` if the current frame's inputs came from a pre-recorded source
+    /// (i.e., [`next_playback_frame`] returned `Some` this frame cycle).
+    pub fn current_frame_was_prerecorded(&self) -> bool {
+        self.current_frame_prerecorded
+    }
+
     /// Get the next frame to play back. Returns None if playback is complete.
     pub fn next_playback_frame(&mut self) -> Option<AutorunFrame> {
         if self.frame_index < self.autorun.frames.len() {
             let frame = self.autorun.frames[self.frame_index].clone();
             self.frame_index += 1;
+            self.current_frame_prerecorded = true;
             Some(frame)
         } else {
             None
@@ -683,5 +718,177 @@ mod tests {
         let rom_path_str = rom_file.path().to_str().expect("rom path");
         let result = AutorunState::new(AutorunMode::Playback, rom_path_str, false, false, Some(-4));
         assert!(result.is_err(), "negative index beyond range should fail");
+    }
+
+    fn make_recording_with_single_checkpoint() -> (tempfile::NamedTempFile, AutorunFile) {
+        let autorun_file = AutorunFile {
+            version: AUTORUN_VERSION,
+            frames: vec![
+                AutorunFrame {
+                    player1: 0,
+                    player2: 0
+                };
+                300
+            ],
+            checkpoints: vec![AutorunCheckpoint {
+                frame_index: 299,
+                screen_crc: 0xABCD,
+                state_bytes: b"single_checkpoint_state".to_vec(),
+            }],
+        };
+        let rom_file = NamedTempFile::new().expect("create temp file");
+        let autorun_path = autorun_path_for_rom(rom_file.path());
+        save_autorun_file(&autorun_path, &autorun_file).expect("save");
+        (rom_file, autorun_file)
+    }
+
+    fn make_recording_with_no_checkpoints() -> tempfile::NamedTempFile {
+        let autorun_file = AutorunFile {
+            version: AUTORUN_VERSION,
+            frames: vec![],
+            checkpoints: vec![],
+        };
+        let rom_file = NamedTempFile::new().expect("create temp file");
+        let autorun_path = autorun_path_for_rom(rom_file.path());
+        save_autorun_file(&autorun_path, &autorun_file).expect("save");
+        rom_file
+    }
+
+    // --- Bug 2: n=1 extend restores from the single checkpoint ---
+
+    #[test]
+    fn test_extend_with_single_checkpoint_restores_from_it() {
+        let (rom_file, _) = make_recording_with_single_checkpoint();
+        let rom_path_str = rom_file.path().to_str().expect("rom path");
+
+        let (_, pending) = AutorunState::new(AutorunMode::Record, rom_path_str, false, true, None)
+            .expect("create extend state");
+
+        assert!(
+            pending.is_some(),
+            "extending with 1 checkpoint must restore from that checkpoint"
+        );
+        assert_eq!(
+            pending.unwrap().state_bytes,
+            b"single_checkpoint_state".to_vec()
+        );
+    }
+
+    #[test]
+    fn test_extend_with_single_checkpoint_starts_at_frame_after_checkpoint() {
+        let (rom_file, _) = make_recording_with_single_checkpoint();
+        let rom_path_str = rom_file.path().to_str().expect("rom path");
+
+        let (state, _) = AutorunState::new(AutorunMode::Record, rom_path_str, false, true, None)
+            .expect("create extend state");
+
+        // CP[0].frame_index = 299, so recording starts at 300
+        assert_eq!(
+            state.current_frame_index(),
+            300,
+            "extend with 1 checkpoint should start at CP[0].frame_index + 1"
+        );
+    }
+
+    #[test]
+    fn test_extend_with_single_checkpoint_has_no_extend_playback() {
+        let (rom_file, _) = make_recording_with_single_checkpoint();
+        let rom_path_str = rom_file.path().to_str().expect("rom path");
+
+        let (state, _) = AutorunState::new(AutorunMode::Record, rom_path_str, false, true, None)
+            .expect("create extend state");
+
+        assert!(
+            !state.is_extending_playback(),
+            "extend with 1 checkpoint should not replay frames — restoration alone is sufficient"
+        );
+    }
+
+    #[test]
+    fn test_extend_with_no_checkpoints_starts_from_scratch() {
+        let rom_file = make_recording_with_no_checkpoints();
+        let rom_path_str = rom_file.path().to_str().expect("rom path");
+
+        let (state, pending) =
+            AutorunState::new(AutorunMode::Record, rom_path_str, false, true, None)
+                .expect("create extend state");
+
+        assert!(
+            pending.is_none(),
+            "no checkpoints means no state to restore"
+        );
+        assert_eq!(state.current_frame_index(), 0, "should start from frame 0");
+    }
+
+    // --- Bug 1: pre-recorded frame flag prevents duplicate at extend transition ---
+
+    #[test]
+    fn test_begin_frame_clears_prerecorded_flag() {
+        let rom_file = NamedTempFile::new().expect("create temp file");
+        let rom_path_str = rom_file.path().to_str().expect("rom path");
+        let (mut state, _) =
+            AutorunState::new(AutorunMode::Record, rom_path_str, false, false, None)
+                .expect("create state");
+
+        state.begin_frame();
+        assert!(!state.current_frame_was_prerecorded());
+    }
+
+    #[test]
+    fn test_prerecorded_flag_true_after_next_playback_frame_returns_some() {
+        let rom_file = NamedTempFile::new().expect("create temp file");
+        let autorun_file = AutorunFile {
+            version: AUTORUN_VERSION,
+            frames: vec![AutorunFrame {
+                player1: 7,
+                player2: 0,
+            }],
+            checkpoints: vec![AutorunCheckpoint {
+                frame_index: 0,
+                screen_crc: 0,
+                state_bytes: vec![],
+            }],
+        };
+        let autorun_path = autorun_path_for_rom(rom_file.path());
+        save_autorun_file(&autorun_path, &autorun_file).expect("save");
+
+        let rom_path_str = rom_file.path().to_str().expect("rom path");
+        let (mut state, _) =
+            AutorunState::new(AutorunMode::Playback, rom_path_str, false, false, None)
+                .expect("create state");
+
+        state.begin_frame();
+        let frame = state.next_playback_frame();
+        assert!(frame.is_some(), "should return the pre-recorded frame");
+        assert!(
+            state.current_frame_was_prerecorded(),
+            "flag must be true after next_playback_frame returned Some"
+        );
+    }
+
+    #[test]
+    fn test_prerecorded_flag_false_after_next_playback_frame_returns_none() {
+        let rom_file = NamedTempFile::new().expect("create temp file");
+        // Empty recording — next_playback_frame always returns None
+        let autorun_file = AutorunFile {
+            version: AUTORUN_VERSION,
+            frames: vec![],
+            checkpoints: vec![],
+        };
+        let autorun_path = autorun_path_for_rom(rom_file.path());
+        save_autorun_file(&autorun_path, &autorun_file).expect("save");
+
+        let rom_path_str = rom_file.path().to_str().expect("rom path");
+        let (mut state, _) =
+            AutorunState::new(AutorunMode::Playback, rom_path_str, false, false, None)
+                .expect("create state");
+
+        state.begin_frame();
+        let frame = state.next_playback_frame();
+        assert!(frame.is_none());
+        assert!(
+            !state.current_frame_was_prerecorded(),
+            "flag must remain false when next_playback_frame returns None"
+        );
     }
 }

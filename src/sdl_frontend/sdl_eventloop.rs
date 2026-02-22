@@ -544,6 +544,8 @@ impl SdlEventLoop {
 
         use crate::console::AutorunMode;
 
+        autorun_state.begin_frame();
+
         // In playback mode or extend mode with remaining frames, apply recorded input
         if autorun_state.mode() == AutorunMode::Playback || autorun_state.is_extending_playback() {
             if let Some(frame) = autorun_state.next_playback_frame() {
@@ -573,7 +575,10 @@ impl SdlEventLoop {
         use crate::console::AutorunMode;
 
         // In record mode (or extend mode after playback), capture button states
-        if autorun_state.mode() == AutorunMode::Record && !autorun_state.is_extending_playback() {
+        if autorun_state.mode() == AutorunMode::Record
+            && !autorun_state.is_extending_playback()
+            && !autorun_state.current_frame_was_prerecorded()
+        {
             let player1 = nes.get_joypad_button_states(1);
             let player2 = nes.get_joypad_button_states(2);
             return autorun_state.record_frame(player1, player2);
