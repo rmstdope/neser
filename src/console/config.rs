@@ -1062,11 +1062,21 @@ impl Config {
     /// Parse a u32 argument from command-line args.
     fn parse_u32_arg(args: &[String], flag: &str) -> Result<Option<u32>, String> {
         for i in 0..args.len() {
+            // Handle `--flag value`
             if args[i] == flag && i + 1 < args.len() {
                 let value = &args[i + 1];
                 let parsed: u32 = value
                     .parse()
                     .map_err(|_| format!("Invalid {} value: {}", flag, value))?;
+                return Ok(Some(parsed));
+            }
+            // Handle `--flag=value`
+            if let Some((flag_part, value_part)) = args[i].split_once('=')
+                && flag_part == flag
+            {
+                let parsed: u32 = value_part
+                    .parse()
+                    .map_err(|_| format!("Invalid {} value: {}", flag, value_part))?;
                 return Ok(Some(parsed));
             }
         }
@@ -1076,11 +1086,21 @@ impl Config {
     /// Parse an f32 argument from command-line args.
     fn parse_f32_arg(args: &[String], flag: &str) -> Result<Option<f32>, String> {
         for i in 0..args.len() {
+            // Handle `--flag value`
             if args[i] == flag && i + 1 < args.len() {
                 let value = &args[i + 1];
                 let parsed: f32 = value
                     .parse()
                     .map_err(|_| format!("Invalid {} value: {}", flag, value))?;
+                return Ok(Some(parsed));
+            }
+            // Handle `--flag=value`
+            if let Some((flag_part, value_part)) = args[i].split_once('=')
+                && flag_part == flag
+            {
+                let parsed: f32 = value_part
+                    .parse()
+                    .map_err(|_| format!("Invalid {} value: {}", flag, value_part))?;
                 return Ok(Some(parsed));
             }
         }
@@ -3564,5 +3584,32 @@ filter=invalid-shader
         ];
         let config = parse_config(args);
         assert_eq!(config.autorun_trim_checkpoints, Some(2));
+    }
+
+    #[test]
+    fn test_cli_playback_from_checkpoint_equals_syntax() {
+        let args = vec![
+            "neser".to_string(),
+            "--playback".to_string(),
+            "game".to_string(),
+            "--playback-from-checkpoint=4".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(
+            config.autorun_from_checkpoint,
+            Some(4),
+            "--playback-from-checkpoint=N (equals syntax) should be parsed"
+        );
+    }
+
+    #[test]
+    fn test_cli_trim_checkpoints_equals_syntax() {
+        let args = vec!["neser".to_string(), "--trim-checkpoints=3".to_string()];
+        let config = parse_config(args);
+        assert_eq!(
+            config.autorun_trim_checkpoints,
+            Some(3),
+            "--trim-checkpoints=N (equals syntax) should be parsed"
+        );
     }
 }
