@@ -97,8 +97,8 @@ impl Mapper52 {
 
 impl Mapper for Mapper52 {
     fn read_prg(&self, addr: u16) -> u8 {
-        if !(0x8000..=0xFFFF).contains(&addr) {
-            return 0; // No PRG-RAM (gated by outer register)
+        if (0x6000..=0x7FFF).contains(&addr) {
+            return self.mmc3.read_prg(addr); // Forward to MMC3 PRG-RAM
         }
         let raw_bank = self.mmc3.mapped_prg_bank(addr);
         let final_bank = self.apply_prg_block(raw_bank);
@@ -108,7 +108,12 @@ impl Mapper for Mapper52 {
 
     fn write_prg(&mut self, addr: u16, value: u8) {
         if (0x6000..=0x7FFF).contains(&addr) {
-            if !self.locked && self.mmc3.is_prg_ram_writable() {
+            if self.locked {
+                // Outer register is locked; write goes to MMC3 PRG-RAM (WRAM)
+                self.mmc3.write_prg(addr, value);
+            } else {
+                // First (unlocked) write sets the outer register and lock bit.
+                // The outer register is a write-only latch; it does NOT write to WRAM.
                 self.locked = (value & 0x80) != 0;
                 self.outer = value;
             }
@@ -140,7 +145,13 @@ impl Mapper for Mapper52 {
     }
 
     fn wram_size(&self) -> usize {
-        0 // $6000-$7FFF is the outer register, not PRG-RAM
+        0x2000 // 8KB PRG-RAM; outer register overlaps but is write-only
+    }
+
+    fn load_wram_snapshot(&mut self, data: &[u8]) {
+        // Delegate directly to MMC3 to avoid routing through mapper52's write_prg,
+        // which would corrupt the outer register during state restoration.
+        Mapper::load_wram_snapshot(&mut self.mmc3, data);
     }
 
     fn ppu_address_changed(&mut self, addr: u16) {
@@ -284,10 +295,34 @@ mod tests {
     }
 
     #[test]
-    fn outer_register_blocked_when_prg_ram_write_protected() {
+    fn outer_register_not_blocked_by_prg_ram_write_protection() {
+        // FCEUX does not gate outer register writes on A001 write-protection.
+        // The outer register is always writable when unlocked, regardless of $A001.
         let mut mapper = make_mapper();
         mapper.write_prg(0xA001, 0xC0); // enable + write-protect PRG-RAM
         mapper.write_prg(0x6000, 0x02);
-        assert_eq!(mapper.outer, 0x00, "Outer register must not change when PRG-RAM is write-protected");
+        assert_eq!(mapper.outer, 0x02, "Outer register must update even when PRG-RAM is write-protected");
+    }
+
+    #[test]
+    fn wram_reads_return_data_written_when_locked() {
+        let mut mapper = make_mapper();
+        // Lock the outer register (first write sets outer=0x80 and locks)
+        mapper.write_prg(0x6000, 0x80);
+        assert!(mapper.locked);
+        // With outer register locked, writes go to WRAM
+        mapper.write_prg(0x6000, 0xAB);
+        mapper.write_prg(0x6001, 0xCD);
+        assert_eq!(mapper.read_prg(0x6000), 0xAB, "WRAM read must return written value");
+        assert_eq!(mapper.read_prg(0x6001), 0xCD, "WRAM read at +1 must return written value");
+    }
+
+    #[test]
+    fn wram_is_not_written_when_setting_outer_register() {
+        let mut mapper = make_mapper();
+        // The outer register write is a latch and does NOT write to WRAM
+        mapper.write_prg(0x6000, 0x80); // sets outer=0x80, locks; should NOT write to WRAM
+        // WRAM should still be 0 (uninitialized)
+        assert_eq!(mapper.read_prg(0x6000), 0x00, "Outer register write must not corrupt WRAM");
     }
 }
