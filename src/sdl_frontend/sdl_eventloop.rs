@@ -378,7 +378,8 @@ impl SdlEventLoop {
     /// * `rom_path` - Path to the loaded ROM; the `.autorun` file lives alongside it.
     /// * `overwrite` - In `Record` mode: back up any existing file and start fresh.
     /// * `extend` - In `Record` mode: replay from second-to-last checkpoint then continue recording.
-    /// * `from_checkpoint` - In `Playback` mode: start playback from this checkpoint index.
+    /// * `from_checkpoint` - In `Playback` mode: start playback from this checkpoint index
+    ///   (negative = from end, -1 = second-to-last, etc.).
     /// * `nes` - The NES instance; used to restore saved state when starting from a checkpoint.
     pub fn init_autorun(
         &mut self,
@@ -386,7 +387,7 @@ impl SdlEventLoop {
         rom_path: &str,
         overwrite: bool,
         extend: bool,
-        from_checkpoint: Option<usize>,
+        from_checkpoint: Option<i64>,
         nes: &mut Nes,
     ) -> Result<(), String> {
         if mode != AutorunMode::None {

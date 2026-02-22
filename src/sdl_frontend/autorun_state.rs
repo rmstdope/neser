@@ -5,6 +5,30 @@ use crate::autorun::{
 use crate::console::AutorunMode;
 use std::path::PathBuf;
 
+/// Resolves a checkpoint index (possibly negative) to a concrete `usize` index.
+///
+/// Negative indices count from the second-to-last checkpoint:
+/// - `-1` → index `total - 2` (second-to-last)
+/// - `-2` → index `total - 3` (third-to-last)
+///
+/// Non-negative indices are returned as-is.
+fn resolve_checkpoint_index(raw: i64, total: usize) -> Result<usize, String> {
+    if raw >= 0 {
+        Ok(raw as usize)
+    } else {
+        // -1 → total-2, -2 → total-3, …
+        let resolved = (total as i64 - 1) + raw;
+        if resolved < 0 {
+            Err(format!(
+                "Checkpoint index {} out of range (recording has {} checkpoints)",
+                raw, total
+            ))
+        } else {
+            Ok(resolved as usize)
+        }
+    }
+}
+
 /// Information needed to restore NES state when starting from a checkpoint.
 ///
 /// Returned by [`AutorunState::new`] when the caller must restore emulator state before
@@ -51,7 +75,7 @@ impl AutorunState {
         rom_path: &str,
         overwrite: bool,
         extend: bool,
-        from_checkpoint: Option<usize>,
+        from_checkpoint: Option<i64>,
     ) -> Result<(Self, Option<PendingRestore>), String> {
         let autorun_path = autorun_path_for_rom(&PathBuf::from(rom_path));
 
@@ -93,21 +117,23 @@ impl AutorunState {
 
             AutorunMode::Playback => {
                 let autorun = load_autorun_file(&autorun_path)?;
-                let (frame_index, playback_checkpoint_idx, pending) =
-                    if let Some(cp_idx) = from_checkpoint {
-                        let cp = autorun.checkpoints.get(cp_idx).ok_or_else(|| {
-                            format!(
-                                "Checkpoint index {cp_idx} out of range (recording has {})",
-                                autorun.checkpoints.len()
-                            )
-                        })?;
-                        let pending = PendingRestore {
-                            state_bytes: cp.state_bytes.clone(),
-                        };
-                        (cp.frame_index as usize + 1, cp_idx + 1, Some(pending))
-                    } else {
-                        (0, 0, None)
+                let (frame_index, playback_checkpoint_idx, pending) = if let Some(cp_idx_raw) =
+                    from_checkpoint
+                {
+                    let cp_idx = resolve_checkpoint_index(cp_idx_raw, autorun.checkpoints.len())?;
+                    let cp = autorun.checkpoints.get(cp_idx).ok_or_else(|| {
+                        format!(
+                            "Checkpoint index {cp_idx} out of range (recording has {})",
+                            autorun.checkpoints.len()
+                        )
+                    })?;
+                    let pending = PendingRestore {
+                        state_bytes: cp.state_bytes.clone(),
                     };
+                    (cp.frame_index as usize + 1, cp_idx + 1, Some(pending))
+                } else {
+                    (0, 0, None)
+                };
 
                 let state = Self {
                     autorun,
@@ -581,5 +607,81 @@ mod tests {
             .expect("create autorun state");
 
         assert!(!state.is_extending_playback());
+    }
+
+    fn make_file_with_4_checkpoints() -> (tempfile::NamedTempFile, AutorunFile) {
+        // 4 checkpoints at frame indices 0, 1, 2, 3
+        let autorun_file = AutorunFile {
+            version: AUTORUN_VERSION,
+            frames: vec![
+                AutorunFrame {
+                    player1: 0,
+                    player2: 0
+                };
+                4
+            ],
+            checkpoints: vec![
+                AutorunCheckpoint {
+                    frame_index: 0,
+                    screen_crc: 0,
+                    state_bytes: b"s0".to_vec(),
+                },
+                AutorunCheckpoint {
+                    frame_index: 1,
+                    screen_crc: 0,
+                    state_bytes: b"s1".to_vec(),
+                },
+                AutorunCheckpoint {
+                    frame_index: 2,
+                    screen_crc: 0,
+                    state_bytes: b"s2".to_vec(),
+                },
+                AutorunCheckpoint {
+                    frame_index: 3,
+                    screen_crc: 0,
+                    state_bytes: b"s3".to_vec(),
+                },
+            ],
+        };
+        let rom_file = NamedTempFile::new().expect("create temp file");
+        let autorun_path = autorun_path_for_rom(rom_file.path());
+        save_autorun_file(&autorun_path, &autorun_file).expect("save");
+        (rom_file, autorun_file)
+    }
+
+    #[test]
+    fn test_playback_from_negative_checkpoint_minus_1_is_second_to_last() {
+        // -1 = second-to-last checkpoint (index 2 of 4)
+        let (rom_file, _) = make_file_with_4_checkpoints();
+        let rom_path_str = rom_file.path().to_str().expect("rom path");
+        let (state, pending) =
+            AutorunState::new(AutorunMode::Playback, rom_path_str, false, false, Some(-1))
+                .expect("create state");
+
+        // Second-to-last is index 2, frame_index=2, so playback starts at frame 3
+        assert_eq!(state.current_frame_index(), 3);
+        assert_eq!(pending.unwrap().state_bytes, b"s2".to_vec());
+    }
+
+    #[test]
+    fn test_playback_from_negative_checkpoint_minus_2_is_third_from_end() {
+        // -2 = third from end (index 1 of 4)
+        let (rom_file, _) = make_file_with_4_checkpoints();
+        let rom_path_str = rom_file.path().to_str().expect("rom path");
+        let (state, pending) =
+            AutorunState::new(AutorunMode::Playback, rom_path_str, false, false, Some(-2))
+                .expect("create state");
+
+        assert_eq!(state.current_frame_index(), 2);
+        assert_eq!(pending.unwrap().state_bytes, b"s1".to_vec());
+    }
+
+    #[test]
+    fn test_playback_from_negative_checkpoint_out_of_range_is_error() {
+        // -4 with 4 checkpoints would resolve to index -1 which is out of range
+        let (rom_file, _) = make_file_with_4_checkpoints();
+        let rom_path_str = rom_file.path().to_str().expect("rom path");
+        let result = AutorunState::new(AutorunMode::Playback, rom_path_str, false, false, Some(-4));
+        assert!(result.is_err(), "negative index beyond range should fail");
     }
 }

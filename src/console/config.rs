@@ -446,8 +446,9 @@ pub struct Config {
     pub autorun_extend: bool,
     /// Whether to overwrite an existing recording (requires record mode).
     pub autorun_overwrite: bool,
-    /// Start playback from this checkpoint index (0-based). `None` starts from frame 0.
-    pub autorun_from_checkpoint: Option<usize>,
+    /// Start playback from this checkpoint index (0-based, or negative for from-end).
+    /// Negative: -1 = second-to-last, -2 = third-to-last, etc.
+    pub autorun_from_checkpoint: Option<i64>,
     /// Trim this many checkpoints from the end of the recording file and exit (no emulation).
     pub autorun_trim_checkpoints: Option<usize>,
     /// RAM initialization mode (config key: `ram_init_mode`).
@@ -862,8 +863,8 @@ impl Config {
             self.autorun_headless = has_playback_headless;
         }
 
-        if let Some(v) = Self::parse_u32_arg(args, "--playback-from-checkpoint")? {
-            self.autorun_from_checkpoint = Some(v as usize);
+        if let Some(v) = Self::parse_i64_arg(args, "--playback-from-checkpoint")? {
+            self.autorun_from_checkpoint = Some(v);
             // Implies playback mode if no explicit mode was set
             if self.autorun_mode == AutorunMode::None {
                 self.autorun_mode = AutorunMode::Playback;
@@ -1079,6 +1080,32 @@ impl Config {
                 && flag_part == flag
             {
                 let parsed: u32 = value_part
+                    .parse()
+                    .map_err(|_| format!("Invalid {} value: {}", flag, value_part))?;
+                return Ok(Some(parsed));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Parse an i64 argument from command-line args (supports negative values).
+    ///
+    /// Supports both `--flag value` and `--flag=value` forms.
+    fn parse_i64_arg(args: &[String], flag: &str) -> Result<Option<i64>, String> {
+        for i in 0..args.len() {
+            // Handle `--flag value` (value may start with '-' for negatives)
+            if args[i] == flag && i + 1 < args.len() {
+                let value = &args[i + 1];
+                let parsed: i64 = value
+                    .parse()
+                    .map_err(|_| format!("Invalid {} value: {}", flag, value))?;
+                return Ok(Some(parsed));
+            }
+            // Handle `--flag=value`
+            if let Some((flag_part, value_part)) = args[i].split_once('=')
+                && flag_part == flag
+            {
+                let parsed: i64 = value_part
                     .parse()
                     .map_err(|_| format!("Invalid {} value: {}", flag, value_part))?;
                 return Ok(Some(parsed));
@@ -3632,5 +3659,32 @@ filter=invalid-shader
             "--playback-from-checkpoint should imply Playback mode"
         );
         assert_eq!(config.autorun_from_checkpoint, Some(4));
+    }
+
+    #[test]
+    fn test_cli_playback_from_checkpoint_negative_value() {
+        // Negative value -1 means second-to-last checkpoint
+        let args = vec![
+            "neser".to_string(),
+            "--playback-from-checkpoint".to_string(),
+            "-1".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(
+            config.autorun_from_checkpoint,
+            Some(-1),
+            "--playback-from-checkpoint=-1 should parse as -1"
+        );
+        assert_eq!(config.autorun_mode, AutorunMode::Playback);
+    }
+
+    #[test]
+    fn test_cli_playback_from_checkpoint_negative_equals_syntax() {
+        let args = vec![
+            "neser".to_string(),
+            "--playback-from-checkpoint=-2".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.autorun_from_checkpoint, Some(-2));
     }
 }
