@@ -44,6 +44,7 @@ if (!(screenWrap instanceof HTMLElement)) {
 }
 const shortcutReference = document.getElementById("shortcut-reference");
 const shortcutHelpOverlay = document.getElementById("shortcut-help-overlay");
+const debuggerPanel = document.getElementById("debugger-panel");
 
 // Use WebGL for rendering with filter support
 const gl = canvas.getContext("webgl");
@@ -1225,17 +1226,89 @@ async function start() {
     requestAnimationFrame(step);
 }
 
+function resumeFrameLoop() {
+    lastFrameTime = 0;
+    frameLimiter.reset();
+    setStatus("Running...");
+    requestAnimationFrame(step);
+}
+
 function pauseResume() {
     if (!nes || !running) return;
     paused = !paused;
     if (!paused) {
-        lastFrameTime = 0;
-        frameLimiter.reset();
-        setStatus("Running...");
-        requestAnimationFrame(step);
+        resumeFrameLoop();
     } else {
         setStatus("Paused");
     }
+}
+
+function updateDebuggerPanel() {
+    if (!nes || !debuggerPanel) return;
+    const json = nes.debugger_snapshot_json();
+    let snap;
+    try {
+        snap = JSON.parse(json);
+    } catch (_) {
+        return;
+    }
+    const toHex2 = n => n.toString(16).toUpperCase().padStart(2, "0");
+    const toHex4 = n => n.toString(16).toUpperCase().padStart(4, "0");
+    debuggerPanel.textContent =
+        `[DEBUGGER]\n` +
+        `PC:${toHex4(snap.pc)}  A:${toHex2(snap.a)} X:${toHex2(snap.x)} Y:${toHex2(snap.y)}\n` +
+        `SP:${toHex2(snap.sp)}  P:${toHex2(snap.p)}  CYC:${snap.cycles}\n` +
+        `SL:${snap.scanline}  PX:${snap.pixel}\n` +
+        `[F5]=Continue  [F10]=StepOver  [F11]=StepInto`;
+}
+
+function showDebuggerPanel() {
+    if (!debuggerPanel) return;
+    updateDebuggerPanel();
+    debuggerPanel.classList.remove("d-none");
+    setStatus("Debugger paused");
+}
+
+function hideDebuggerPanel() {
+    if (debuggerPanel) {
+        debuggerPanel.classList.add("d-none");
+    }
+}
+
+function debuggerOpen() {
+    if (!nes) return;
+    nes.debugger_open();
+    showDebuggerPanel();
+}
+
+function debuggerClose() {
+    if (!nes) return;
+    nes.debugger_continue();
+    hideDebuggerPanel();
+    if (!paused) {
+        resumeFrameLoop();
+    }
+}
+
+function debuggerToggle() {
+    if (!nes || !running) return;
+    if (nes.is_debugger_open()) {
+        debuggerClose();
+    } else {
+        debuggerOpen();
+    }
+}
+
+function debuggerStepOver() {
+    if (!nes || !running) return;
+    nes.debugger_step_over();
+    showDebuggerPanel();
+}
+
+function debuggerStepInto() {
+    if (!nes || !running) return;
+    nes.debugger_step_into();
+    showDebuggerPanel();
 }
 
 function stop() {
@@ -1653,7 +1726,10 @@ const webShortcutActions = {
     saveState: saveStateAction,
     loadState: loadStateAction,
     toggleFullscreen: toggleScreenFullscreen,
-    toggleHelp: toggleShortcutHelp
+    toggleHelp: toggleShortcutHelp,
+    debuggerToggle,
+    debuggerStepOver,
+    debuggerStepInto,
 };
 
 function updateShortcutHelpOverlayText() {

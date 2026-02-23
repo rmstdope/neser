@@ -2,6 +2,7 @@ use crate::app_context::{AppContext, SharedAppContext};
 use crate::autorun::crc32;
 use crate::cartridge::Cartridge;
 use crate::console::{Config, Nes, SaveState, log_rom_timing_mode_selection};
+use crate::debugging::snapshot as debugger_snapshot;
 use crate::frontend_toasts::{
     cartridge_load_toast_message, emulator_timing_toast_message,
     gamepad_init_toast_message as shared_gamepad_init_toast_message,
@@ -20,6 +21,8 @@ pub struct WasmNes {
     rom_loaded: bool,
     pending_toasts: Vec<String>,
     app_context: SharedAppContext,
+    /// True while the debugger is open and the emulator is paused.
+    debugger_paused: bool,
     /// Current autorun recording or playback state.
     autorun_state: Option<WasmAutorunState>,
     /// Bitmask of currently pressed buttons on controller 1 (for autorun recording).
@@ -41,6 +44,9 @@ impl WasmNes {
     }
 
     fn run_until_frame_ready(&mut self) {
+        if self.debugger_paused {
+            return;
+        }
         while !self.nes.is_ready_to_render() {
             self.nes.run_cpu_tick();
         }
@@ -88,6 +94,7 @@ impl WasmNes {
             rom_loaded: false,
             pending_toasts: Vec::new(),
             app_context,
+            debugger_paused: false,
             autorun_state: None,
             controller1_buttons: 0,
             controller2_buttons: 0,
@@ -146,6 +153,9 @@ impl WasmNes {
     ///
     /// Returns a Uint8Array with the cropped frame after overscan removal.
     /// Width = 256 - 2*horizontal_overscan, Height = 240 - 2*vertical_overscan.
+    ///
+    /// When the debugger is open (`is_debugger_open()` returns true), the emulator
+    /// is paused and the last rendered frame is returned without advancing.
     #[wasm_bindgen]
     pub fn render_frame(&mut self) -> Vec<u8> {
         if !self.rom_loaded {
@@ -161,6 +171,9 @@ impl WasmNes {
     ///
     /// Returns a Uint8Array with the cropped frame after overscan removal.
     /// Width = 256 - 2*horizontal_overscan, Height = 240 - 2*vertical_overscan.
+    ///
+    /// When the debugger is open (`is_debugger_open()` returns true), the emulator
+    /// is paused and the last rendered frame is returned without advancing.
     #[wasm_bindgen]
     pub fn render_frame_rgba(&mut self) -> Vec<u8> {
         let pixel_count = self.screen_width() as usize * self.screen_height() as usize;
@@ -529,6 +542,69 @@ impl WasmNes {
         self.audio_muted
     }
 
+    // --- Debugger API ---
+
+    /// Returns true if the debugger is currently open (emulator paused).
+    #[wasm_bindgen]
+    pub fn is_debugger_open(&self) -> bool {
+        self.debugger_paused
+    }
+
+    /// Open the debugger: pause the emulator.
+    #[wasm_bindgen]
+    pub fn debugger_open(&mut self) {
+        self.debugger_paused = true;
+    }
+
+    /// Continue execution: close the debugger and resume the emulator.
+    #[wasm_bindgen]
+    pub fn debugger_continue(&mut self) {
+        self.debugger_paused = false;
+    }
+
+    /// Step into: execute one CPU instruction and keep the debugger open.
+    #[wasm_bindgen]
+    pub fn debugger_step_into(&mut self) {
+        self.debugger_paused = true;
+        self.nes.run_cpu_tick();
+    }
+
+    /// Step over: like step into, but treats JSR as a single unit (runs until the return address).
+    #[wasm_bindgen]
+    pub fn debugger_step_over(&mut self) {
+        self.debugger_paused = true;
+        step_over_instruction(&mut self.nes);
+    }
+
+    /// Returns the current CPU program counter value (useful for testing step behaviour).
+    #[wasm_bindgen]
+    pub fn debugger_cpu_pc(&self) -> u16 {
+        self.nes.cpu.pc()
+    }
+
+    /// Take a snapshot of the current CPU/PPU/APU state and return it as a JSON string.
+    ///
+    /// The returned JSON contains `pc`, `a`, `x`, `y`, `sp`, `p`, `cycles`, and other fields.
+    #[wasm_bindgen]
+    pub fn debugger_snapshot_json(&self) -> String {
+        let snap = debugger_snapshot(&self.nes);
+        // Serialize enough state to be useful; keep it simple without pulling in serde.
+        format!(
+            r#"{{"pc":{pc},"a":{a},"x":{x},"y":{y},"sp":{sp},"p":{p},"cycles":{cycles},"scanline":{scanline},"pixel":{pixel}}}"#,
+            pc = snap.cpu_regs.pc,
+            a = snap.cpu_regs.a,
+            x = snap.cpu_regs.x,
+            y = snap.cpu_regs.y,
+            sp = snap.cpu_regs.sp,
+            p = snap.cpu_regs.p,
+            cycles = snap.cpu_regs.cycles,
+            scanline = snap.cpu_regs.scanline,
+            pixel = snap.cpu_regs.pixel,
+        )
+    }
+
+    // --- End Debugger API ---
+
     #[cfg(test)]
     #[wasm_bindgen]
     pub fn push_audio_sample_for_test(&mut self, sample: f32) {
@@ -539,4 +615,29 @@ impl WasmNes {
 #[wasm_bindgen]
 pub fn gamepad_init_toast_message(gamepads_enabled: bool, detected_controllers: usize) -> String {
     shared_gamepad_init_toast_message(gamepads_enabled, detected_controllers)
+}
+
+/// Execute a single step-over operation on the NES CPU.
+///
+/// If the current instruction is a JSR ($20), runs until the instruction at
+/// the return address (PC + 3) is reached; otherwise executes one CPU tick.
+fn step_over_instruction(nes: &mut Nes) {
+    const JSR_OPCODE: u8 = 0x20;
+    const MAX_STEPS: usize = 1_000_000;
+
+    let pc = nes.cpu.pc();
+    let opcode = nes.bus.borrow().read_cpu_for_debugger(pc);
+
+    if opcode == JSR_OPCODE {
+        let next_pc = pc.wrapping_add(3);
+        nes.run_cpu_tick(); // enter the subroutine
+        for _ in 0..MAX_STEPS {
+            if nes.cpu.pc() == next_pc || nes.cpu.is_halted() {
+                break;
+            }
+            nes.run_cpu_tick();
+        }
+    } else {
+        nes.run_cpu_tick();
+    }
 }

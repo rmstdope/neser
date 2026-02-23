@@ -10,7 +10,10 @@
  *   saveState: Function,
  *   loadState: Function,
  *   toggleFullscreen: Function,
- *   toggleHelp: Function
+ *   toggleHelp: Function,
+ *   debuggerToggle: Function,
+ *   debuggerStepOver: Function,
+ *   debuggerStepInto: Function
  * }} actions
  * @returns {Promise<boolean>}
  */
@@ -32,8 +35,11 @@ export async function dispatchWebShortcutAction(event, actions) {
 const shortcutActionByCode = {
     Space: "togglePause",
     F1: "reset",
+    F5: "debuggerToggle",
     F6: "saveState",
     F7: "loadState",
+    F10: "debuggerStepOver",
+    F11: "debuggerStepInto",
     F12: "toggleFullscreen",
     KeyH: "toggleHelp"
 };

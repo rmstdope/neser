@@ -27,7 +27,10 @@ function makeActions() {
             saveState: async () => calls.push("saveState"),
             loadState: async () => calls.push("loadState"),
             toggleFullscreen: async () => calls.push("toggleFullscreen"),
-            toggleHelp: () => calls.push("toggleHelp")
+            toggleHelp: () => calls.push("toggleHelp"),
+            debuggerToggle: () => calls.push("debuggerToggle"),
+            debuggerStepOver: () => calls.push("debuggerStepOver"),
+            debuggerStepInto: () => calls.push("debuggerStepInto"),
         }
     };
 }
@@ -119,4 +122,37 @@ test("dispatchWebShortcutAction ignores repeated key events", async () => {
     assert.equal(handled, false);
     assert.deepEqual(calls, []);
     assert.equal(event.defaultPrevented, false);
+});
+
+test("dispatchWebShortcutAction routes F5 to debuggerToggle", async () => {
+    const event = makeKeyboardEvent("F5");
+    const { calls, actions } = makeActions();
+
+    const handled = await dispatchWebShortcutAction(event, actions);
+
+    assert.equal(handled, true);
+    assert.deepEqual(calls, ["debuggerToggle"]);
+    assert.equal(event.defaultPrevented, true);
+});
+
+test("dispatchWebShortcutAction routes F10 to debuggerStepOver", async () => {
+    const event = makeKeyboardEvent("F10");
+    const { calls, actions } = makeActions();
+
+    const handled = await dispatchWebShortcutAction(event, actions);
+
+    assert.equal(handled, true);
+    assert.deepEqual(calls, ["debuggerStepOver"]);
+    assert.equal(event.defaultPrevented, true);
+});
+
+test("dispatchWebShortcutAction routes F11 to debuggerStepInto", async () => {
+    const event = makeKeyboardEvent("F11");
+    const { calls, actions } = makeActions();
+
+    const handled = await dispatchWebShortcutAction(event, actions);
+
+    assert.equal(handled, true);
+    assert.deepEqual(calls, ["debuggerStepInto"]);
+    assert.equal(event.defaultPrevented, true);
 });

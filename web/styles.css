@@ -97,6 +97,22 @@ canvas {
     box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
 }
 
+.debugger-panel {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    max-width: min(48%, 320px);
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: rgba(10, 11, 15, 0.92);
+    border: 1px solid rgba(100, 200, 100, 0.35);
+    color: #90ee90;
+    font-family: "Courier New", Courier, monospace;
+    font-size: 0.75rem;
+    line-height: 1.5;
+    white-space: pre;
+    z-index: 12;
+    pointer-events: none;
 /* ── Dark theme overrides for Bootstrap modal ───────────────────────────── */
 .modal-content {
     background: rgba(18, 19, 23, 0.98);
