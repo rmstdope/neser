@@ -27,6 +27,9 @@ import {
 } from "./shortcut_help.js";
 import { createCrosshair } from "./crosshair.js";
 import { computeFullscreenCanvasSize, computeWindowedCanvasSize } from "./canvas_size.js";
+import {
+    findNextVisibleZoomHeight,
+} from "./zoom_controls.js";
 import { createToastContainer, createToastOverlay, drainNesToasts } from "./toast_overlay.js";
 import { createGamepadInitToastNotifier } from "./gamepad_init_toast.js";
 
@@ -1969,6 +1972,64 @@ function updateShortcutHelpScale() {
     shortcutHelpOverlay.style.fontSize = `${fontSizePx}px`;
 }
 
+function measureDisplayHeightAt(height) {
+    updateCanvasSize(height);
+    return canvas.clientHeight;
+}
+
+function probeNextVisibleZoomHeight(direction) {
+    const startHeight = currentHeight;
+    const nextHeight = findNextVisibleZoomHeight({
+        direction,
+        currentHeight: startHeight,
+        step: SCALE_STEP,
+        measureDisplayHeight: measureDisplayHeightAt,
+    });
+
+    if (nextHeight === null) {
+        updateCanvasSize(startHeight);
+    }
+
+    return nextHeight;
+}
+
+function updateZoomButtonState() {
+    const inScreenFullscreen = document.fullscreenElement === screenWrap;
+    if (inScreenFullscreen) {
+        screenMinusBtn.disabled = true;
+        screenPlusBtn.disabled = true;
+        return;
+    }
+
+    const startHeight = currentHeight;
+    const canZoomOut = probeNextVisibleZoomHeight("out") !== null;
+    updateCanvasSize(startHeight);
+    const canZoomIn = probeNextVisibleZoomHeight("in") !== null;
+    updateCanvasSize(startHeight);
+
+    screenMinusBtn.disabled = !canZoomOut;
+    screenPlusBtn.disabled = !canZoomIn;
+}
+
+function applyZoom(direction) {
+    if (document.fullscreenElement === screenWrap) {
+        updateZoomButtonState();
+        return;
+    }
+
+    const startHeight = currentHeight;
+    const nextHeight = probeNextVisibleZoomHeight(direction);
+    if (nextHeight === null) {
+        updateCanvasSize(startHeight);
+        updateZoomButtonState();
+        return;
+    }
+
+    updateCanvasSize(nextHeight);
+
+    updateZoomButtonState();
+}
+
 // Update fullscreen button text based on state
 function updateFullscreenButton() {
     const inScreenFullscreen = document.fullscreenElement === screenWrap;
@@ -2022,6 +2083,7 @@ function updateSaveStateButtons() {
 // Set initial canvas size and button text
 updateCanvasSize(INITIAL_HEIGHT);
 updateFullscreenButton();
+updateZoomButtonState();
 filterToggleBtn.textContent = `Filter: ${filters[currentFilter].name}`;
 updateSaveStateButtons();
 const shortcutReferenceText = buildShortcutReferenceText();
@@ -2035,11 +2097,11 @@ updateShortcutHelpScale();
 startIdleScroller();
 
 screenMinusBtn.addEventListener("click", () => {
-    updateCanvasSize(currentHeight - SCALE_STEP);
+    applyZoom("out");
 });
 
 screenPlusBtn.addEventListener("click", () => {
-    updateCanvasSize(currentHeight + SCALE_STEP);
+    applyZoom("in");
 });
 
 fullscreenBtn.addEventListener("click", async () => {
@@ -2152,11 +2214,16 @@ document.addEventListener("fullscreenchange", () => {
         // Exited fullscreen - restore previous size
         updateCanvasSize(currentHeight);
     }
+    updateZoomButtonState();
 });
 
 // Re-fit canvas when viewport resizes while in fullscreen (e.g. orientation change)
 window.addEventListener("resize", () => {
     if (document.fullscreenElement === screenWrap) {
         updateCanvasSizeForFullscreenViewport();
+        updateZoomButtonState();
+        return;
     }
+
+    updateZoomButtonState();
 });
