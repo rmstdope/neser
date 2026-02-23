@@ -384,7 +384,6 @@ fn debugger_step_into_keeps_debugger_open_and_advances_one_instruction() {
     // Advance to a known stable state
     let _ = nes.render_frame_rgba();
 
-    let pc_before = nes.debugger_cpu_pc();
     nes.debugger_open();
     nes.debugger_step_into();
 
