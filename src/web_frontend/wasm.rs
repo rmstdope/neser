@@ -584,23 +584,35 @@ impl WasmNes {
 
     /// Take a snapshot of the current CPU/PPU/APU state and return it as a JSON string.
     ///
-    /// The returned JSON contains `pc`, `a`, `x`, `y`, `sp`, `p`, `cycles`, and other fields.
+    /// Fields: `pc`, `a`, `x`, `y`, `sp`, `p`, `cycles`, `scanline`, `pixel`,
+    /// `frame_count`, `interrupt` (null | "nmi" | "irq"),
+    /// `nmi_vector`, `reset_vector`, `irq_vector`.
     #[wasm_bindgen]
     pub fn debugger_snapshot_json(&self) -> String {
         let snap = debugger_snapshot(&self.nes);
-        // Serialize enough state to be useful; keep it simple without pulling in serde.
-        format!(
-            r#"{{"pc":{pc},"a":{a},"x":{x},"y":{y},"sp":{sp},"p":{p},"cycles":{cycles},"scanline":{scanline},"pixel":{pixel}}}"#,
-            pc = snap.cpu_regs.pc,
-            a = snap.cpu_regs.a,
-            x = snap.cpu_regs.x,
-            y = snap.cpu_regs.y,
-            sp = snap.cpu_regs.sp,
-            p = snap.cpu_regs.p,
-            cycles = snap.cpu_regs.cycles,
-            scanline = snap.cpu_regs.scanline,
-            pixel = snap.cpu_regs.pixel,
-        )
+        serialize_cpu_regs_snapshot(&snap)
+    }
+
+    /// Returns a JSON array of disassembly lines around the current PC.
+    ///
+    /// Each element is `{"addr":<u16>,"bytes":[<u8>...],"text":"<str>","is_current":<bool>}`.
+    #[wasm_bindgen]
+    pub fn debugger_disasm_json(&self) -> String {
+        let snap = debugger_snapshot(&self.nes);
+        let mut json = String::from('[');
+        for (i, line) in snap.cpu_disasm.iter().enumerate() {
+            if i > 0 {
+                json.push(',');
+            }
+            json.push_str(&disasm_line_to_json_object(
+                line.addr,
+                &line.bytes,
+                &line.text,
+                line.is_current,
+            ));
+        }
+        json.push(']');
+        json
     }
 
     // --- End Debugger API ---
@@ -610,6 +622,68 @@ impl WasmNes {
     pub fn push_audio_sample_for_test(&mut self, sample: f32) {
         self.nes.apu.borrow_mut().push_sample_for_test(sample);
     }
+}
+
+/// Returns the JSON representation of an `Option<InterruptKind>` value.
+///
+/// Produces `null`, `"nmi"`, or `"irq"` — ready to embed verbatim in a JSON string.
+fn interrupt_to_json_str(interrupt: Option<crate::cpu::InterruptKind>) -> &'static str {
+    use crate::cpu::InterruptKind;
+    match interrupt {
+        None => "null",
+        Some(InterruptKind::Nmi) => "\"nmi\"",
+        Some(InterruptKind::Irq) => "\"irq\"",
+    }
+}
+
+/// Serialises the CPU register state from a [`DebuggerSnapshot`] to a JSON object string
+/// without pulling in serde.
+///
+/// The snapshot is accepted (rather than the inner `cpu_regs` directly) because
+/// `CpuRegsSnapshot` is a private type.
+fn serialize_cpu_regs_snapshot(snap: &crate::debugging::DebuggerSnapshot) -> String {
+    let r = snap.cpu_regs;
+    let interrupt = interrupt_to_json_str(r.interrupt);
+    format!(
+        r#"{{"pc":{pc},"a":{a},"x":{x},"y":{y},"sp":{sp},"p":{p},"cycles":{cycles},"scanline":{scanline},"pixel":{pixel},"frame_count":{frame_count},"interrupt":{interrupt},"nmi_vector":{nmi_vector},"reset_vector":{reset_vector},"irq_vector":{irq_vector}}}"#,
+        pc = r.pc,
+        a = r.a,
+        x = r.x,
+        y = r.y,
+        sp = r.sp,
+        p = r.p,
+        cycles = r.cycles,
+        scanline = r.scanline,
+        pixel = r.pixel,
+        frame_count = r.frame_count,
+        interrupt = interrupt,
+        nmi_vector = r.nmi_vector,
+        reset_vector = r.reset_vector,
+        irq_vector = r.irq_vector,
+    )
+}
+
+/// Formats a byte slice as a JSON array string, e.g. `[1,2,3]`.
+fn bytes_to_json_array(bytes: &[u8]) -> String {
+    let mut b = String::from('[');
+    for (j, byte) in bytes.iter().enumerate() {
+        if j > 0 {
+            b.push(',');
+        }
+        b.push_str(&byte.to_string());
+    }
+    b.push(']');
+    b
+}
+
+/// Formats one disassembly line as a JSON object string.
+fn disasm_line_to_json_object(addr: u16, bytes: &[u8], text: &str, is_current: bool) -> String {
+    let bytes_json = bytes_to_json_array(bytes);
+    let escaped_text = text.replace('\\', "\\\\").replace('"', "\\\"");
+    format!(
+        r#"{{"addr":{},"bytes":{},"text":"{}","is_current":{}}}"#,
+        addr, bytes_json, escaped_text, is_current
+    )
 }
 
 #[wasm_bindgen]

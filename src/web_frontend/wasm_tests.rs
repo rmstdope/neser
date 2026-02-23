@@ -15,6 +15,37 @@ fn minimal_nrom() -> Vec<u8> {
     data
 }
 
+/// NROM-128 with all-NOP PRG and all interrupt vectors pointing to $8000.
+///
+/// Use this helper when the disassembly window is exercised, because the
+/// all-zero `minimal_nrom` has reset vector = $0000 and `disassemble_from_start`
+/// stops early when the address wraps around through zero, which prevents
+/// `is_current` from being set to `true` for any entry.
+fn minimal_nrom_nop_at_8000() -> Vec<u8> {
+    let prg_size = 16384usize;
+    let chr_size = 8192usize;
+    let header_size = 16usize;
+    // Zero-initialise the header so no stray mapper or flag bits creep in
+    // from the NOP fill below.
+    let mut data = vec![0u8; header_size + prg_size + chr_size];
+    data[0..4].copy_from_slice(b"NES\x1A");
+    data[4] = 1; // 1 × 16 KB PRG
+    data[5] = 1; // 1 × 8 KB CHR
+    // Fill PRG ROM with NOP ($EA) so instructions are 1 byte each and
+    // there are no wrap-around issues when the disassembly window walks
+    // backwards from $8000.
+    let prg_start = header_size;
+    data[prg_start..prg_start + prg_size].fill(0xEA);
+    // Set NMI / Reset / IRQ-BRK vectors to $8000.
+    data[prg_start + 0x3FFA] = 0x00; // NMI lo
+    data[prg_start + 0x3FFB] = 0x80; // NMI hi  → $8000
+    data[prg_start + 0x3FFC] = 0x00; // Reset lo
+    data[prg_start + 0x3FFD] = 0x80; // Reset hi → $8000
+    data[prg_start + 0x3FFE] = 0x00; // IRQ/BRK lo
+    data[prg_start + 0x3FFF] = 0x80; // IRQ/BRK hi → $8000
+    data
+}
+
 fn read_save_state(nes: &WasmNes) -> SaveState {
     SaveState::from_bytes(&nes.save_state_bytes()).expect("save state should decode")
 }
@@ -391,6 +422,78 @@ fn debugger_snapshot_returns_json_when_open() {
     assert!(json.contains("pc"));
 }
 
+// --- Debugger disasm API tests ---
+
+#[wasm_bindgen_test]
+fn debugger_disasm_json_returns_json_array_when_open() {
+    let mut nes = WasmNes::new();
+    let rom = minimal_nrom();
+    nes.load_rom(&rom, "test.nes").expect("valid rom");
+
+    nes.debugger_open();
+    let json = nes.debugger_disasm_json();
+    assert!(!json.is_empty());
+    // Must be a JSON array
+    assert!(
+        json.trim_start().starts_with('['),
+        "expected JSON array, got: {json}"
+    );
+}
+
+#[wasm_bindgen_test]
+fn debugger_disasm_json_contains_current_instruction_marker() {
+    let mut nes = WasmNes::new();
+    let rom = minimal_nrom_nop_at_8000();
+    nes.load_rom(&rom, "test.nes").expect("valid rom");
+
+    nes.debugger_open();
+    let json = nes.debugger_disasm_json();
+    // At least one entry must have is_current:true
+    assert!(
+        json.contains("\"is_current\":true"),
+        "expected is_current:true in: {json}"
+    );
+}
+
+#[wasm_bindgen_test]
+fn debugger_disasm_json_entries_have_required_fields() {
+    let mut nes = WasmNes::new();
+    let rom = minimal_nrom();
+    nes.load_rom(&rom, "test.nes").expect("valid rom");
+
+    nes.debugger_open();
+    let json = nes.debugger_disasm_json();
+    assert!(json.contains("\"addr\""), "expected addr field in: {json}");
+    assert!(json.contains("\"text\""), "expected text field in: {json}");
+    assert!(
+        json.contains("\"bytes\""),
+        "expected bytes field in: {json}"
+    );
+    assert!(
+        json.contains("\"is_current\""),
+        "expected is_current field in: {json}"
+    );
+}
+
+#[wasm_bindgen_test]
+fn debugger_disasm_current_addr_matches_cpu_pc() {
+    let mut nes = WasmNes::new();
+    let rom = minimal_nrom_nop_at_8000();
+    nes.load_rom(&rom, "test.nes").expect("valid rom");
+
+    let _ = nes.render_frame_rgba();
+    let pc = nes.debugger_cpu_pc();
+    nes.debugger_open();
+    let json = nes.debugger_disasm_json();
+
+    // The is_current entry must have addr == pc (u16 serialised as a number)
+    let expected_fragment = format!("\"addr\":{pc},");
+    assert!(
+        json.contains(&expected_fragment),
+        "expected PC {pc} as addr in disasm JSON.\njson: {json}"
+    );
+}
+
 #[wasm_bindgen_test]
 fn render_frame_rgba_does_not_advance_when_debugger_is_open() {
     let mut nes = WasmNes::new();
@@ -410,5 +513,72 @@ fn render_frame_rgba_does_not_advance_when_debugger_is_open() {
     assert_eq!(
         state_before, state_after,
         "emulator state must not change when debugger is open"
+    );
+}
+// --- debugger_snapshot_json extended fields (issue #695) ---
+
+#[wasm_bindgen_test]
+fn debugger_snapshot_json_includes_frame_count() {
+    let mut nes = WasmNes::new();
+    let rom = minimal_nrom_nop_at_8000();
+    nes.load_rom(&rom, "test.nes").expect("valid rom");
+
+    nes.debugger_open();
+    let json = nes.debugger_snapshot_json();
+    assert!(
+        json.contains("\"frame_count\""),
+        "expected frame_count field in snapshot JSON: {json}"
+    );
+}
+
+#[wasm_bindgen_test]
+fn debugger_snapshot_json_includes_interrupt_field() {
+    let mut nes = WasmNes::new();
+    let rom = minimal_nrom_nop_at_8000();
+    nes.load_rom(&rom, "test.nes").expect("valid rom");
+
+    nes.debugger_open();
+    let json = nes.debugger_snapshot_json();
+    assert!(
+        json.contains("\"interrupt\""),
+        "expected interrupt field in snapshot JSON: {json}"
+    );
+}
+
+#[wasm_bindgen_test]
+fn debugger_snapshot_json_includes_interrupt_vectors() {
+    let mut nes = WasmNes::new();
+    let rom = minimal_nrom_nop_at_8000();
+    nes.load_rom(&rom, "test.nes").expect("valid rom");
+
+    nes.debugger_open();
+    let json = nes.debugger_snapshot_json();
+    assert!(
+        json.contains("\"nmi_vector\""),
+        "expected nmi_vector field: {json}"
+    );
+    assert!(
+        json.contains("\"reset_vector\""),
+        "expected reset_vector field: {json}"
+    );
+    assert!(
+        json.contains("\"irq_vector\""),
+        "expected irq_vector field: {json}"
+    );
+}
+
+#[wasm_bindgen_test]
+fn debugger_snapshot_json_reset_vector_matches_rom_header() {
+    let mut nes = WasmNes::new();
+    let rom = minimal_nrom_nop_at_8000();
+    nes.load_rom(&rom, "test.nes").expect("valid rom");
+
+    nes.debugger_open();
+    let json = nes.debugger_snapshot_json();
+
+    // The minimal_nrom_nop_at_8000 helper sets reset vector to $8000 (32768).
+    assert!(
+        json.contains("\"reset_vector\":32768"),
+        "expected reset_vector:32768 ($8000) in snapshot JSON: {json}"
     );
 }

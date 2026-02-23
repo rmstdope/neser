@@ -99,80 +99,108 @@ canvas {
 
 .debugger-panel {
     position: absolute;
-    top: 12px;
-    right: 12px;
-    max-width: min(48%, 320px);
-    padding: 10px 12px;
+    top: 8px;
+    left: 8px;
+    right: 8px;
+    max-height: calc(100% - 16px);
+    display: flex;
+    flex-direction: column;
+    padding: 8px 10px;
     border-radius: 8px;
-    background: rgba(10, 11, 15, 0.92);
+    background: rgba(10, 11, 15, 0.94);
     border: 1px solid rgba(100, 200, 100, 0.35);
     color: #90ee90;
     font-family: "Courier New", Courier, monospace;
-    font-size: 0.75rem;
-    line-height: 1.5;
-    white-space: pre;
+    font-size: 0.72rem;
+    line-height: 1.45;
     z-index: 12;
-    pointer-events: none;
-/* ── Dark theme overrides for Bootstrap modal ───────────────────────────── */
-.modal-content {
-    background: rgba(18, 19, 23, 0.98);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    color: #e6e6e6;
+    pointer-events: auto;
+    overflow: hidden;
 }
 
-.modal-header {
-    border-bottom-color: rgba(255, 255, 255, 0.08);
+.debugger-body {
+    display: flex;
+    flex-direction: row;
+    gap: 10px;
+    flex: 1;
+    min-height: 0;
+    white-space: pre;
+    overflow: hidden;
 }
 
-.modal-footer {
-    border-top-color: rgba(255, 255, 255, 0.08);
+.debugger-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-bottom: 6px;
+    white-space: normal;
+    pointer-events: auto;
 }
 
-.modal-header .btn-close {
-    filter: invert(1) grayscale(100%) brightness(200%);
+.dbg-btn {
+    background: rgba(40, 70, 40, 0.9);
+    border: 1px solid rgba(100, 200, 100, 0.5);
+    color: #90ee90;
+    font-family: "Courier New", Courier, monospace;
+    font-size: 0.72rem;
+    padding: 2px 7px;
+    border-radius: 4px;
+    cursor: pointer;
+    pointer-events: auto;
 }
 
-.modal .form-label {
-    color: #c4c4c4;
+.dbg-btn:hover {
+    background: rgba(60, 110, 60, 0.95);
+    border-color: #90ee90;
 }
 
-.modal .form-control,
-.modal .form-select {
-    background-color: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    color: #e6e6e6;
+.debugger-disasm {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
 }
 
-.modal .form-control:focus,
-.modal .form-select:focus {
-    background-color: rgba(255, 255, 255, 0.08);
-    border-color: rgba(86, 156, 214, 0.6);
-    color: #e6e6e6;
-    box-shadow: 0 0 0 0.2rem rgba(86, 156, 214, 0.15);
+.debugger-disasm-title {
+    color: #c8ffc8;
+    border-bottom: 1px solid rgba(100, 200, 100, 0.25);
+    margin-bottom: 2px;
 }
 
-.modal .form-control::file-selector-button {
-    background-color: rgba(255, 255, 255, 0.08);
-    color: #e6e6e6;
-    border-color: rgba(255, 255, 255, 0.15);
+.debugger-regs {
+    width: 220px;
+    flex-shrink: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
 }
 
-.modal .form-check-input {
-    background-color: rgba(255, 255, 255, 0.05);
-    border-color: rgba(255, 255, 255, 0.25);
+.debugger-regs-title {
+    color: #c8ffc8;
+    border-bottom: 1px solid rgba(100, 200, 100, 0.25);
+    margin-bottom: 2px;
 }
 
-.modal .form-check-label {
-    color: #c4c4c4;
+.disasm-divider {
+    border: none;
+    border-top: 1px solid rgba(100, 200, 100, 0.25);
+    margin: 3px 0;
 }
 
-.modal .alert-info {
-    background-color: rgba(13, 110, 253, 0.12);
-    border-color: rgba(13, 110, 253, 0.3);
-    color: #9bc2ff;
+.disasm-block {
+    display: block;
+    overflow: hidden;
 }
 
-.modal .form-select option {
-    background-color: #1e1f24;
-    color: #e6e6e6;
+.disasm-line {
+    display: block;
+    color: #6ab06a;
+}
+
+.disasm-current {
+    display: block;
+    color: #f0f080;
+    font-weight: bold;
+    background: rgba(80, 80, 0, 0.35);
 }

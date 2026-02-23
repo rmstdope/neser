@@ -1243,23 +1243,102 @@ function pauseResume() {
     }
 }
 
+function formatDisasmBytes(bytes) {
+    if (!bytes || bytes.length === 0) return "  ";
+    return bytes.map(b => b.toString(16).toUpperCase().padStart(2, "0")).join(" ");
+}
+
+function buildDisasmLineHtml(line) {
+    const addr = line.addr.toString(16).toUpperCase().padStart(4, "0");
+    const bytesStr = formatDisasmBytes(line.bytes).padEnd(8);
+    const esc = line.text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const lineText = `${addr}: ${bytesStr}  ${esc}`;
+    if (line.is_current) {
+        return `<span class="disasm-current">&gt; ${lineText}</span>`;
+    }
+    return `<span class="disasm-line">  ${lineText}</span>`;
+}
+
+function buildDisasmHtml(nes) {
+    try {
+        const disasmJson = nes.debugger_disasm_json();
+        const lines = JSON.parse(disasmJson);
+        if (Array.isArray(lines)) {
+            return lines.map(buildDisasmLineHtml).join("\n");
+        }
+    } catch (_) { /* disasm not available yet */ }
+    return "";
+}
+
+function formatStatusFlags(p) {
+    const flag = (bit, ch) => (p & (1 << bit)) ? ch : "-";
+    return flag(7,"N") + flag(6,"V") + flag(5,"U") + flag(4,"B") +
+           flag(3,"D") + flag(2,"I") + flag(1,"Z") + flag(0,"C");
+}
+
+function buildRegsHtml(snap) {
+    const h2 = n => n.toString(16).toUpperCase().padStart(2, "0");
+    const h4 = n => n.toString(16).toUpperCase().padStart(4, "0");
+    const intStr = snap.interrupt === null ? "-" :
+                   snap.interrupt === "nmi" ? "NMI" : "IRQ";
+    const lines = [
+        `PC: ${h4(snap.pc)}  SP: ${h2(snap.sp)}`,
+        `A:  ${h2(snap.a)}  X:  ${h2(snap.x)}  Y:  ${h2(snap.y)}`,
+        `P:  ${h2(snap.p)}  ${formatStatusFlags(snap.p)}`,
+        `INT: ${intStr}`,
+        `VEC NMI:${h4(snap.nmi_vector)} RST:${h4(snap.reset_vector)}`,
+        `    IRQ:${h4(snap.irq_vector)}`,
+        `CYC: ${snap.cycles}`,
+        `Frame:    ${snap.frame_count}`,
+        `Scanline: ${snap.scanline}`,
+        `Pixel:    ${snap.pixel}`,
+    ];
+    return lines.map(l => {
+        const esc = l.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        return `<span>${esc}</span>`;
+    }).join("\n");
+}
+
 function updateDebuggerPanel() {
     if (!nes || !debuggerPanel) return;
-    const json = nes.debugger_snapshot_json();
     let snap;
     try {
-        snap = JSON.parse(json);
+        snap = JSON.parse(nes.debugger_snapshot_json());
     } catch (_) {
         return;
     }
-    const toHex2 = n => n.toString(16).toUpperCase().padStart(2, "0");
-    const toHex4 = n => n.toString(16).toUpperCase().padStart(4, "0");
-    debuggerPanel.textContent =
-        `[DEBUGGER]\n` +
-        `PC:${toHex4(snap.pc)}  A:${toHex2(snap.a)} X:${toHex2(snap.x)} Y:${toHex2(snap.y)}\n` +
-        `SP:${toHex2(snap.sp)}  P:${toHex2(snap.p)}  CYC:${snap.cycles}\n` +
-        `SL:${snap.scanline}  PX:${snap.pixel}\n` +
-        `[F5]=Continue  [F10]=StepOver  [F11]=StepInto`;
+
+    const disasmHtml = buildDisasmHtml(nes);
+    const regsHtml = buildRegsHtml(snap);
+
+    debuggerPanel.innerHTML =
+        `<div class="debugger-controls">` +
+        `<button class="dbg-btn" id="dbg-step-over">Step over (F10)</button>` +
+        `<button class="dbg-btn" id="dbg-step-into">Step into (F11)</button>` +
+        `<button class="dbg-btn" id="dbg-continue">Continue (F5)</button>` +
+        `</div>` +
+        `<div class="debugger-body">` +
+        `<div class="debugger-disasm">` +
+        `<span class="debugger-disasm-title">Code</span>` +
+        `<span class="disasm-block">${disasmHtml}</span>` +
+        `</div>` +
+        `<div class="debugger-regs">` +
+        `<span class="debugger-regs-title">Registers</span>` +
+        `${regsHtml}` +
+        `</div>` +
+        `</div>`;
+
+    // Wire up buttons (re-attached after each innerHTML update)
+    wireDebuggerButtons();
+}
+
+function wireDebuggerButtons() {
+    function wire(id, handler) {
+        document.getElementById(id)?.addEventListener("click", (e) => { e.stopPropagation(); handler(); });
+    }
+    wire("dbg-step-over", debuggerStepOver);
+    wire("dbg-step-into", debuggerStepInto);
+    wire("dbg-continue", debuggerClose);
 }
 
 function showDebuggerPanel() {
