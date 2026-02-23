@@ -1811,6 +1811,7 @@ ensureWasmInitialized()
 const webShortcutActions = {
     togglePause: pauseResume,
     reset: resetAction,
+    toggleFilter: toggleFilterAction,
     saveState: saveStateAction,
     loadState: loadStateAction,
     toggleFullscreen: toggleScreenFullscreen,
@@ -1829,6 +1830,15 @@ function updateShortcutHelpOverlayText() {
 function toggleShortcutHelp() {
     updateShortcutHelpOverlayText();
     toggleShortcutHelpVisibility(shortcutHelpOverlay);
+}
+
+function updateFilterToggleButtonLabel() {
+    filterToggleBtn.textContent = `Filter: ${filters[currentFilter].name}`;
+}
+
+function toggleFilterAction() {
+    cycleFilter();
+    updateFilterToggleButtonLabel();
 }
 
 function applyKeyboardMapping(event, mapping, controller, targets, pressed) {
@@ -2084,7 +2094,7 @@ function updateSaveStateButtons() {
 updateCanvasSize(INITIAL_HEIGHT);
 updateFullscreenButton();
 updateZoomButtonState();
-filterToggleBtn.textContent = `Filter: ${filters[currentFilter].name}`;
+updateFilterToggleButtonLabel();
 updateSaveStateButtons();
 const shortcutReferenceText = buildShortcutReferenceText();
 if (shortcutReference) {
@@ -2108,10 +2118,7 @@ fullscreenBtn.addEventListener("click", async () => {
     await toggleScreenFullscreen();
 });
 
-filterToggleBtn.addEventListener("click", () => {
-    cycleFilter();
-    filterToggleBtn.textContent = `Filter: ${filters[currentFilter].name}`;
-});
+filterToggleBtn.addEventListener("click", toggleFilterAction);
 
 saveStateBtn?.addEventListener("click", async () => {
     await saveStateAction();
