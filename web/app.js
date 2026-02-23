@@ -1611,13 +1611,19 @@ function renderNtscPass(frame) {
 function step(timestamp) {
     if (!running || paused) return;
     lastFrameTime = timestamp;
-    const framePlan = planFrame({
+    const { shouldStep, shouldRender } = planFrame({
         shouldRender: frameLimiter.shouldRender(timestamp)
     });
     try {
         if (gamepadEnabled && nes) {
             pollGamepad();
         }
+
+        if (!shouldStep) {
+            requestAnimationFrame(step);
+            return;
+        }
+
         const frame = nes.render_frame_rgba(); // RGBA8888
 
         // Stop when pure autorun playback has consumed all recorded frames
@@ -1629,7 +1635,7 @@ function step(timestamp) {
 
         const filter = filters[currentFilter];
         let rendered = true;
-        if (framePlan.shouldRender) {
+        if (shouldRender) {
             if (filter?.type === "ntsc") {
                 rendered = renderNtscPass(frame);
             } else {
