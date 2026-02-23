@@ -39,6 +39,10 @@ canvas {
     color: #8fe28f;
 }
 
+#autorun-status {
+    color: #9bc2ff;
+}
+
 #controls {
     font-size: 0.9rem;
     color: #c4c4c4;
