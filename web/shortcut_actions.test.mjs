@@ -24,6 +24,7 @@ function makeActions() {
         actions: {
             togglePause: () => calls.push("togglePause"),
             reset: () => calls.push("reset"),
+            toggleFilter: () => calls.push("toggleFilter"),
             saveState: async () => calls.push("saveState"),
             loadState: async () => calls.push("loadState"),
             toggleFullscreen: async () => calls.push("toggleFullscreen"),
@@ -54,6 +55,17 @@ test("dispatchWebShortcutAction routes F1 to reset", async () => {
 
     assert.equal(handled, true);
     assert.deepEqual(calls, ["reset"]);
+    assert.equal(event.defaultPrevented, true);
+});
+
+test("dispatchWebShortcutAction routes F4 to toggleFilter", async () => {
+    const event = makeKeyboardEvent("F4");
+    const { calls, actions } = makeActions();
+
+    const handled = await dispatchWebShortcutAction(event, actions);
+
+    assert.equal(handled, true);
+    assert.deepEqual(calls, ["toggleFilter"]);
     assert.equal(event.defaultPrevented, true);
 });
 

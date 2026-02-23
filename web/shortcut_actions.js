@@ -7,6 +7,7 @@
  * @param {{
  *   togglePause: Function,
  *   reset: Function,
+ *   toggleFilter: Function,
  *   saveState: Function,
  *   loadState: Function,
  *   toggleFullscreen: Function,
@@ -35,6 +36,7 @@ export async function dispatchWebShortcutAction(event, actions) {
 const shortcutActionByCode = {
     Space: "togglePause",
     F1: "reset",
+    F4: "toggleFilter",
     F5: "debuggerToggle",
     F6: "saveState",
     F7: "loadState",

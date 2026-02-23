@@ -39,6 +39,7 @@ test("buildShortcutReferenceText includes H help toggle shortcut", () => {
     const text = buildShortcutReferenceText();
     assert.match(text, /H = Toggle Help/);
     assert.match(text, /F12 = Fullscreen/);
+    assert.match(text, /F4 = Cycle Filter/);
 });
 
 test("buildShortcutOverlayText renders multiline list for overlay", () => {
@@ -47,6 +48,7 @@ test("buildShortcutOverlayText renders multiline list for overlay", () => {
     assert.match(text, /^Shortcuts/m);
     assert.match(text, /H: Toggle Help/);
     assert.match(text, /F12: Fullscreen/);
+    assert.match(text, /F4: Cycle Filter/);
     assert.match(text, /\n/);
 });
 

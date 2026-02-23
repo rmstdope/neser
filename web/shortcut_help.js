@@ -1,6 +1,7 @@
 export const WEB_SHORTCUT_REFERENCE = [
     { key: "Space", action: "Pause/Resume" },
     { key: "F1", action: "Reset" },
+    { key: "F4", action: "Cycle Filter" },
     { key: "F5", action: "Debugger Toggle" },
     { key: "F6", action: "Save State" },
     { key: "F7", action: "Load State" },
