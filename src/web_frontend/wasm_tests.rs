@@ -515,3 +515,70 @@ fn render_frame_rgba_does_not_advance_when_debugger_is_open() {
         "emulator state must not change when debugger is open"
     );
 }
+// --- debugger_snapshot_json extended fields (issue #695) ---
+
+#[wasm_bindgen_test]
+fn debugger_snapshot_json_includes_frame_count() {
+    let mut nes = WasmNes::new();
+    let rom = minimal_nrom_nop_at_8000();
+    nes.load_rom(&rom, "test.nes").expect("valid rom");
+
+    nes.debugger_open();
+    let json = nes.debugger_snapshot_json();
+    assert!(
+        json.contains("\"frame_count\""),
+        "expected frame_count field in snapshot JSON: {json}"
+    );
+}
+
+#[wasm_bindgen_test]
+fn debugger_snapshot_json_includes_interrupt_field() {
+    let mut nes = WasmNes::new();
+    let rom = minimal_nrom_nop_at_8000();
+    nes.load_rom(&rom, "test.nes").expect("valid rom");
+
+    nes.debugger_open();
+    let json = nes.debugger_snapshot_json();
+    assert!(
+        json.contains("\"interrupt\""),
+        "expected interrupt field in snapshot JSON: {json}"
+    );
+}
+
+#[wasm_bindgen_test]
+fn debugger_snapshot_json_includes_interrupt_vectors() {
+    let mut nes = WasmNes::new();
+    let rom = minimal_nrom_nop_at_8000();
+    nes.load_rom(&rom, "test.nes").expect("valid rom");
+
+    nes.debugger_open();
+    let json = nes.debugger_snapshot_json();
+    assert!(
+        json.contains("\"nmi_vector\""),
+        "expected nmi_vector field: {json}"
+    );
+    assert!(
+        json.contains("\"reset_vector\""),
+        "expected reset_vector field: {json}"
+    );
+    assert!(
+        json.contains("\"irq_vector\""),
+        "expected irq_vector field: {json}"
+    );
+}
+
+#[wasm_bindgen_test]
+fn debugger_snapshot_json_reset_vector_matches_rom_header() {
+    let mut nes = WasmNes::new();
+    let rom = minimal_nrom_nop_at_8000();
+    nes.load_rom(&rom, "test.nes").expect("valid rom");
+
+    nes.debugger_open();
+    let json = nes.debugger_snapshot_json();
+
+    // The minimal_nrom_nop_at_8000 helper sets reset vector to $8000 (32768).
+    assert!(
+        json.contains("\"reset_vector\":32768"),
+        "expected reset_vector:32768 ($8000) in snapshot JSON: {json}"
+    );
+}

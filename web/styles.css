@@ -95,31 +95,97 @@ canvas {
 
 .debugger-panel {
     position: absolute;
-    top: 12px;
-    right: 12px;
-    max-width: min(48%, 340px);
-    padding: 10px 12px;
+    top: 8px;
+    left: 8px;
+    right: 8px;
+    max-height: calc(100% - 16px);
+    display: flex;
+    flex-direction: column;
+    padding: 8px 10px;
     border-radius: 8px;
-    background: rgba(10, 11, 15, 0.92);
+    background: rgba(10, 11, 15, 0.94);
     border: 1px solid rgba(100, 200, 100, 0.35);
     color: #90ee90;
     font-family: "Courier New", Courier, monospace;
-    font-size: 0.75rem;
-    line-height: 1.5;
-    white-space: pre;
+    font-size: 0.72rem;
+    line-height: 1.45;
     z-index: 12;
-    pointer-events: none;
+    pointer-events: auto;
+    overflow: hidden;
+}
+
+.debugger-body {
+    display: flex;
+    flex-direction: row;
+    gap: 10px;
+    flex: 1;
+    min-height: 0;
+    white-space: pre;
+    overflow: hidden;
+}
+
+.debugger-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-bottom: 6px;
+    white-space: normal;
+    pointer-events: auto;
+}
+
+.dbg-btn {
+    background: rgba(40, 70, 40, 0.9);
+    border: 1px solid rgba(100, 200, 100, 0.5);
+    color: #90ee90;
+    font-family: "Courier New", Courier, monospace;
+    font-size: 0.72rem;
+    padding: 2px 7px;
+    border-radius: 4px;
+    cursor: pointer;
+    pointer-events: auto;
+}
+
+.dbg-btn:hover {
+    background: rgba(60, 110, 60, 0.95);
+    border-color: #90ee90;
+}
+
+.debugger-disasm {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.debugger-disasm-title {
+    color: #c8ffc8;
+    border-bottom: 1px solid rgba(100, 200, 100, 0.25);
+    margin-bottom: 2px;
+}
+
+.debugger-regs {
+    width: 220px;
+    flex-shrink: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.debugger-regs-title {
+    color: #c8ffc8;
+    border-bottom: 1px solid rgba(100, 200, 100, 0.25);
+    margin-bottom: 2px;
 }
 
 .disasm-divider {
     border: none;
     border-top: 1px solid rgba(100, 200, 100, 0.25);
-    margin: 4px 0;
+    margin: 3px 0;
 }
 
 .disasm-block {
     display: block;
-    max-height: 200px;
     overflow: hidden;
 }
 
@@ -132,3 +198,5 @@ canvas {
     display: block;
     color: #f0f080;
     font-weight: bold;
+    background: rgba(80, 80, 0, 0.35);
+}
