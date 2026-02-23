@@ -97,7 +97,7 @@ canvas {
     position: absolute;
     top: 12px;
     right: 12px;
-    max-width: min(48%, 320px);
+    max-width: min(48%, 340px);
     padding: 10px 12px;
     border-radius: 8px;
     background: rgba(10, 11, 15, 0.92);
@@ -110,3 +110,25 @@ canvas {
     z-index: 12;
     pointer-events: none;
 }
+
+.disasm-divider {
+    border: none;
+    border-top: 1px solid rgba(100, 200, 100, 0.25);
+    margin: 4px 0;
+}
+
+.disasm-block {
+    display: block;
+    max-height: 200px;
+    overflow: hidden;
+}
+
+.disasm-line {
+    display: block;
+    color: #6ab06a;
+}
+
+.disasm-current {
+    display: block;
+    color: #f0f080;
+    font-weight: bold;

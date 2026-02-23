@@ -398,6 +398,28 @@ impl WasmNes {
         )
     }
 
+    /// Returns a JSON array of disassembly lines around the current PC.
+    ///
+    /// Each element is `{"addr":<u16>,"bytes":[<u8>...],"text":"<str>","is_current":<bool>}`.
+    #[wasm_bindgen]
+    pub fn debugger_disasm_json(&self) -> String {
+        let snap = debugger_snapshot(&self.nes);
+        let mut json = String::from('[');
+        for (i, line) in snap.cpu_disasm.iter().enumerate() {
+            if i > 0 {
+                json.push(',');
+            }
+            json.push_str(&disasm_line_to_json_object(
+                line.addr,
+                &line.bytes,
+                &line.text,
+                line.is_current,
+            ));
+        }
+        json.push(']');
+        json
+    }
+
     // --- End Debugger API ---
 
     #[cfg(test)]
@@ -405,6 +427,29 @@ impl WasmNes {
     pub fn push_audio_sample_for_test(&mut self, sample: f32) {
         self.nes.apu.borrow_mut().push_sample_for_test(sample);
     }
+}
+
+/// Formats a byte slice as a JSON array string, e.g. `[1,2,3]`.
+fn bytes_to_json_array(bytes: &[u8]) -> String {
+    let mut b = String::from('[');
+    for (j, byte) in bytes.iter().enumerate() {
+        if j > 0 {
+            b.push(',');
+        }
+        b.push_str(&byte.to_string());
+    }
+    b.push(']');
+    b
+}
+
+/// Formats one disassembly line as a JSON object string.
+fn disasm_line_to_json_object(addr: u16, bytes: &[u8], text: &str, is_current: bool) -> String {
+    let bytes_json = bytes_to_json_array(bytes);
+    let escaped_text = text.replace('\\', "\\\\").replace('"', "\\\"");
+    format!(
+        r#"{{"addr":{},"bytes":{},"text":"{}","is_current":{}}}"#,
+        addr, bytes_json, escaped_text, is_current
+    )
 }
 
 #[wasm_bindgen]

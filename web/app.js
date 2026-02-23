@@ -1075,6 +1075,28 @@ function pauseResume() {
     }
 }
 
+function buildDisasmLineHtml(line) {
+    const addr = line.addr.toString(16).toUpperCase().padStart(4, "0");
+    const bytes = (line.bytes || []).map(b => b.toString(16).toUpperCase().padStart(2, "0")).join(" ");
+    const esc = line.text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const lineText = `$${addr}  ${bytes.padEnd(8)}  ${esc}`;
+    if (line.is_current) {
+        return `<span class="disasm-current">&gt; ${lineText}</span>`;
+    }
+    return `<span class="disasm-line">  ${lineText}</span>`;
+}
+
+function buildDisasmHtml(nes) {
+    try {
+        const disasmJson = nes.debugger_disasm_json();
+        const lines = JSON.parse(disasmJson);
+        if (Array.isArray(lines)) {
+            return lines.map(buildDisasmLineHtml).join("\n");
+        }
+    } catch (_) { /* disasm not available yet */ }
+    return "";
+}
+
 function updateDebuggerPanel() {
     if (!nes || !debuggerPanel) return;
     const json = nes.debugger_snapshot_json();
@@ -1086,12 +1108,25 @@ function updateDebuggerPanel() {
     }
     const toHex2 = n => n.toString(16).toUpperCase().padStart(2, "0");
     const toHex4 = n => n.toString(16).toUpperCase().padStart(4, "0");
-    debuggerPanel.textContent =
+
+    // Build register row as plain text
+    const regsText =
         `[DEBUGGER]\n` +
         `PC:${toHex4(snap.pc)}  A:${toHex2(snap.a)} X:${toHex2(snap.x)} Y:${toHex2(snap.y)}\n` +
         `SP:${toHex2(snap.sp)}  P:${toHex2(snap.p)}  CYC:${snap.cycles}\n` +
-        `SL:${snap.scanline}  PX:${snap.pixel}\n` +
-        `[F5]=Continue  [F10]=StepOver  [F11]=StepInto`;
+        `SL:${snap.scanline}  PX:${snap.pixel}`;
+
+    // Build disassembly HTML
+    const disasmHtml = buildDisasmHtml(nes);
+
+    const helpText = `[F5]=Continue  [F10]=StepOver  [F11]=StepInto`;
+
+    // Escape the plain-text parts for safe innerHTML insertion
+    const escPlain = s => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    debuggerPanel.innerHTML =
+        `<span>${escPlain(regsText)}</span>` +
+        (disasmHtml ? `\n<hr class="disasm-divider">\n<span class="disasm-block">${disasmHtml}</span>` : "") +
+        `\n<hr class="disasm-divider">\n<span>${escPlain(helpText)}</span>`;
 }
 
 function showDebuggerPanel() {
