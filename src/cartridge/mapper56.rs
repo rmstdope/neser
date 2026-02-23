@@ -369,7 +369,7 @@ mod tests {
 
     fn make_mapper() -> Mapper56 {
         let prg = banked_data(8 * 1024, PRG_BANKS);
-        let chr = banked_data(1 * 1024, CHR_BANKS);
+        let chr = banked_data(1024, CHR_BANKS);
         Mapper56::new(prg, chr, NametableLayout::Horizontal)
     }
 
@@ -378,7 +378,7 @@ mod tests {
         let result = create_mapper(MapperContext::new(
             56,
             banked_data(8 * 1024, PRG_BANKS),
-            banked_data(1 * 1024, CHR_BANKS),
+            banked_data(1024, CHR_BANKS),
             NametableLayout::Vertical,
         ));
         assert!(result.is_ok(), "Mapper 56 must be registered");
