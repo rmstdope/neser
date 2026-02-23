@@ -1,6 +1,7 @@
 export function planFrame({ shouldRender }) {
+    const render = Boolean(shouldRender);
     return {
-        shouldStep: true,
-        shouldRender: Boolean(shouldRender)
+        shouldStep: render,
+        shouldRender: render
     };
 }
