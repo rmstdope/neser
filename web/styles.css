@@ -39,6 +39,10 @@ canvas {
     color: #8fe28f;
 }
 
+#autorun-status {
+    color: #9bc2ff;
+}
+
 #controls {
     font-size: 0.9rem;
     color: #c4c4c4;
@@ -109,4 +113,66 @@ canvas {
     white-space: pre;
     z-index: 12;
     pointer-events: none;
+/* ── Dark theme overrides for Bootstrap modal ───────────────────────────── */
+.modal-content {
+    background: rgba(18, 19, 23, 0.98);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #e6e6e6;
+}
+
+.modal-header {
+    border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+.modal-footer {
+    border-top-color: rgba(255, 255, 255, 0.08);
+}
+
+.modal-header .btn-close {
+    filter: invert(1) grayscale(100%) brightness(200%);
+}
+
+.modal .form-label {
+    color: #c4c4c4;
+}
+
+.modal .form-control,
+.modal .form-select {
+    background-color: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #e6e6e6;
+}
+
+.modal .form-control:focus,
+.modal .form-select:focus {
+    background-color: rgba(255, 255, 255, 0.08);
+    border-color: rgba(86, 156, 214, 0.6);
+    color: #e6e6e6;
+    box-shadow: 0 0 0 0.2rem rgba(86, 156, 214, 0.15);
+}
+
+.modal .form-control::file-selector-button {
+    background-color: rgba(255, 255, 255, 0.08);
+    color: #e6e6e6;
+    border-color: rgba(255, 255, 255, 0.15);
+}
+
+.modal .form-check-input {
+    background-color: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.25);
+}
+
+.modal .form-check-label {
+    color: #c4c4c4;
+}
+
+.modal .alert-info {
+    background-color: rgba(13, 110, 253, 0.12);
+    border-color: rgba(13, 110, 253, 0.3);
+    color: #9bc2ff;
+}
+
+.modal .form-select option {
+    background-color: #1e1f24;
+    color: #e6e6e6;
 }

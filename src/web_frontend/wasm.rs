@@ -1,4 +1,5 @@
 use crate::app_context::{AppContext, SharedAppContext};
+use crate::autorun::crc32;
 use crate::cartridge::Cartridge;
 use crate::console::{Config, Nes, SaveState, log_rom_timing_mode_selection};
 use crate::debugging::snapshot as debugger_snapshot;
@@ -7,6 +8,7 @@ use crate::frontend_toasts::{
     gamepad_init_toast_message as shared_gamepad_init_toast_message,
 };
 use crate::input::{Button, ControllerType};
+use crate::wasm_autorun::WasmAutorunState;
 use std::cell::RefCell;
 use std::rc::Rc;
 use wasm_bindgen::prelude::*;
@@ -21,6 +23,12 @@ pub struct WasmNes {
     app_context: SharedAppContext,
     /// True while the debugger is open and the emulator is paused.
     debugger_paused: bool,
+    /// Current autorun recording or playback state.
+    autorun_state: Option<WasmAutorunState>,
+    /// Bitmask of currently pressed buttons on controller 1 (for autorun recording).
+    controller1_buttons: u8,
+    /// Bitmask of currently pressed buttons on controller 2 (for autorun recording).
+    controller2_buttons: u8,
 }
 
 impl Default for WasmNes {
@@ -87,6 +95,9 @@ impl WasmNes {
             pending_toasts: Vec::new(),
             app_context,
             debugger_paused: false,
+            autorun_state: None,
+            controller1_buttons: 0,
+            controller2_buttons: 0,
         }
     }
 
@@ -170,9 +181,191 @@ impl WasmNes {
             return Self::opaque_black_rgba_frame(pixel_count);
         }
         let (h, v) = self.overscan();
+
+        // ── Autorun pre-frame: extract pre-recorded input (borrow dropped before injection) ──
+        if let Some(ref mut state) = self.autorun_state {
+            state.begin_frame();
+        }
+        let prerecorded = if let Some(ref mut state) = self.autorun_state {
+            if state.is_extending_playback() || state.is_playback() {
+                state.next_playback_frame()
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if let Some(frame) = prerecorded {
+            // Borrow is released now; we can call self methods freely.
+            self.inject_autorun_buttons(frame.player1, frame.player2);
+        }
+
         self.run_until_frame_ready();
         let rgb = self.nes.get_screen_buffer().cropped_snapshot(h, v);
+
+        // ── Autorun post-frame: record or verify ─────────────────────────────────────────────
+        let screen_crc = if self.autorun_state.is_some() {
+            crc32(&rgb)
+        } else {
+            0
+        };
+
+        // Phase 1: record the frame or check the CRC; capture whether a checkpoint is needed.
+        let needs_checkpoint = if let Some(ref mut state) = self.autorun_state {
+            if state.is_recording() && !state.is_extending_playback() {
+                let p1 = self.controller1_buttons;
+                let p2 = self.controller2_buttons;
+                // record_frame only borrows state here (not self.nes)
+                // We shadow p1/p2 to avoid re-borrowing self after borrow of autorun_state.
+                state.record_frame(p1, p2)
+            } else {
+                state.check_playback_checkpoint(screen_crc);
+                false
+            }
+        } else {
+            false
+        };
+
+        // Phase 2: if a checkpoint is needed, gather NES state and store it.
+        // The borrow of autorun_state from Phase 1 is fully released here.
+        if needs_checkpoint {
+            let state_bytes = self.nes.save_state().to_bytes().unwrap_or_default();
+            if let Some(ref mut state) = self.autorun_state {
+                state.record_checkpoint(screen_crc, state_bytes);
+            }
+        }
+
         Self::rgb_to_rgba(&rgb)
+    }
+
+    /// Inject controller buttons directly into the NES without affecting tracking bitmasks.
+    fn inject_autorun_buttons(&mut self, controller1: u8, controller2: u8) {
+        for bit in 0..8u8 {
+            let btn = match bit {
+                0 => Button::A,
+                1 => Button::B,
+                2 => Button::Select,
+                3 => Button::Start,
+                4 => Button::Up,
+                5 => Button::Down,
+                6 => Button::Left,
+                _ => Button::Right,
+            };
+            self.nes.set_button(1, btn, controller1 & (1 << bit) != 0);
+            self.nes.set_button(2, btn, controller2 & (1 << bit) != 0);
+        }
+    }
+
+    /// Start autorun recording mode.
+    ///
+    /// Call before `load_rom`.  Every subsequent frame rendered by `render_frame_rgba`
+    /// will be recorded.  Retrieve the recording with `stop_autorun`.
+    #[wasm_bindgen]
+    pub fn start_autorun_recording(&mut self) {
+        self.autorun_state = Some(WasmAutorunState::new_recording());
+    }
+
+    /// Load an autorun file for playback (or extend-recording).
+    ///
+    /// # Arguments
+    /// * `bytes`          – JSON-serialized AutorunFile bytes.
+    /// * `checkpoint_idx` – 0-based checkpoint to seek to, or -1 for "from beginning".
+    /// * `extend`         – `true` to play back and then continue recording.
+    ///
+    /// Returns the save-state bytes that the caller must restore before running the
+    /// first frame.  Returns an empty slice when no restore is needed.
+    #[wasm_bindgen]
+    pub fn load_autorun_playback(
+        &mut self,
+        bytes: &[u8],
+        checkpoint_idx: i32,
+        extend: bool,
+    ) -> Result<Vec<u8>, JsValue> {
+        let cp_idx = if checkpoint_idx < 0 {
+            None
+        } else {
+            Some(checkpoint_idx as u32)
+        };
+        let (state, pending) = WasmAutorunState::new_playback(bytes, cp_idx, extend)
+            .map_err(|e| JsValue::from_str(&e))?;
+        self.autorun_state = Some(state);
+        Ok(pending.unwrap_or_default())
+    }
+
+    /// Finalize autorun recording and return the serialized file bytes.
+    ///
+    /// Appends a final checkpoint with the current screen CRC and emulator state,
+    /// then clears the autorun state.  The returned bytes can be offered to the user
+    /// as a browser download.
+    ///
+    /// Returns an empty `Vec` if no recording is active.
+    #[wasm_bindgen]
+    pub fn stop_autorun(&mut self) -> Vec<u8> {
+        if self
+            .autorun_state
+            .as_ref()
+            .map(|s| !s.is_recording())
+            .unwrap_or(true)
+        {
+            self.autorun_state = None;
+            return Vec::new();
+        }
+        // Compute screen CRC and save state before borrowing autorun_state mutably.
+        let screen_crc = {
+            let (h, v) = self.overscan();
+            let rgb = self.nes.get_screen_buffer().cropped_snapshot(h, v);
+            crc32(&rgb)
+        };
+        let save_state_bytes = self.nes.save_state().to_bytes().unwrap_or_default();
+        let bytes = if let Some(ref mut state) = self.autorun_state {
+            state.finalize_recording(screen_crc, save_state_bytes)
+        } else {
+            Vec::new()
+        };
+        self.autorun_state = None;
+        bytes
+    }
+
+    /// Clear any active autorun state without finalizing a recording.
+    #[wasm_bindgen]
+    pub fn clear_autorun(&mut self) {
+        self.autorun_state = None;
+    }
+
+    /// Returns `true` if an autorun (recording or playback) is currently active.
+    #[wasm_bindgen]
+    pub fn is_autorun_active(&self) -> bool {
+        self.autorun_state.is_some()
+    }
+
+    /// Returns `true` if the emulator is currently recording an autorun.
+    #[wasm_bindgen]
+    pub fn autorun_is_recording(&self) -> bool {
+        self.autorun_state
+            .as_ref()
+            .map(|s| s.is_recording())
+            .unwrap_or(false)
+    }
+
+    /// Returns `true` if the emulator is currently playing back an autorun.
+    #[wasm_bindgen]
+    pub fn autorun_is_playback(&self) -> bool {
+        self.autorun_state
+            .as_ref()
+            .map(|s| s.is_playback())
+            .unwrap_or(false)
+    }
+
+    /// Returns `true` when pure playback has exhausted all recorded frames.
+    ///
+    /// The JavaScript layer should call this after each `render_frame_rgba` and
+    /// stop emulation when it returns `true`.
+    #[wasm_bindgen]
+    pub fn autorun_playback_finished(&self) -> bool {
+        self.autorun_state
+            .as_ref()
+            .map(|s| s.is_playback_finished())
+            .unwrap_or(false)
     }
 
     /// Returns the display width in pixels after overscan removal.
@@ -209,6 +402,18 @@ impl WasmNes {
             _ => return, // Invalid button, ignore
         };
         self.nes.set_button(controller, nes_button, pressed);
+
+        // Track button state bitmask for autorun recording
+        let bitmask = match controller {
+            1 => &mut self.controller1_buttons,
+            2 => &mut self.controller2_buttons,
+            _ => return,
+        };
+        if pressed {
+            *bitmask |= 1 << button;
+        } else {
+            *bitmask &= !(1 << button);
+        }
     }
 
     /// Set the controller type for a port.

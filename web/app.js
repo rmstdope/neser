@@ -12,6 +12,7 @@ import { applyJoypadButtonIfAllowed, applyMouseMotion, applyMouseButton, isZappe
 import { createSaveStateContext } from "./save_state_context.js";
 import { fetchRomList } from "./rom_list.js";
 import { handleRomSelection } from "./rom_selection.js";
+import { createAutorunContext, parseAutorunFile } from "./autorun_context.js";
 import { createFrameLimiter } from "./frame_limiter.js";
 import { computePlaybackRate } from "./audio_resampler.js";
 import { planFrame } from "./frame_plan.js";
@@ -799,6 +800,141 @@ let saveStateAvailable = false;
 let running = false;
 let paused = false;
 
+// ── Autorun context + DOM elements ───────────────────────────────────────────
+const autorunCtx = createAutorunContext();
+const autorunCreateCheckbox = document.getElementById("autorun-create");
+const autorunLoadBtn = document.getElementById("autorun-load");
+const autorunStatusEl = document.getElementById("autorun-status");
+const autorunFileInput = document.getElementById("autorun-file-input");
+const autorunFileInfo = document.getElementById("autorun-file-info");
+const autorunFileSummary = document.getElementById("autorun-file-summary");
+const autorunCheckpointSelect = document.getElementById("autorun-checkpoint-select");
+const autorunExtendCheck = document.getElementById("autorun-extend-check");
+const autorunUseBtn = document.getElementById("autorun-use-btn");
+const autorunCancelBtn = document.getElementById("autorun-cancel");
+
+/** Update the small autorun status text and cancel button in the header. */
+function updateAutorunStatus() {
+    if (!autorunStatusEl) return;
+    const config = autorunCtx.getActiveConfig();
+    if (!config) {
+        autorunStatusEl.textContent = "";
+        autorunCancelBtn?.classList.add("d-none");
+    } else if (config.mode === "record") {
+        autorunStatusEl.textContent = "Will record autorun";
+        autorunCancelBtn?.classList.remove("d-none");
+    } else {
+        const info = autorunCtx.getLoadedFile();
+        const cpText = config.checkpointIdx != null
+            ? `from checkpoint ${config.checkpointIdx + 1}`
+            : "from beginning";
+        const extText = config.extend ? ", extending" : "";
+        const expectedRom = autorunCtx.getExpectedRomName();
+        const romHint = expectedRom ? ` · Load ${expectedRom}` : "";
+        autorunStatusEl.textContent =
+            `Autorun loaded (${info?.frameCount ?? "?"} frames, ${cpText}${extText})${romHint}`;
+        autorunCancelBtn?.classList.remove("d-none");
+    }
+}
+
+if (autorunCreateCheckbox) {
+    autorunCreateCheckbox.addEventListener("change", () => {
+        autorunCtx.setCreateRecording(autorunCreateCheckbox.checked);
+        if (autorunCreateCheckbox.checked) {
+            // Clear loaded file when switching to create-recording mode
+            autorunCtx.clearLoadedFile();
+        }
+        updateAutorunStatus();
+    });
+}
+
+if (autorunCancelBtn) {
+    autorunCancelBtn.addEventListener("click", () => {
+        autorunCtx.clearLoadedFile();
+        autorunCtx.setCreateRecording(false);
+        if (autorunCreateCheckbox) autorunCreateCheckbox.checked = false;
+        updateAutorunStatus();
+    });
+}
+
+// Open modal on "Load autorun" button click
+if (autorunLoadBtn) {
+    autorunLoadBtn.addEventListener("click", () => {
+        // Reset modal state
+        if (autorunFileInput) autorunFileInput.value = "";
+        if (autorunFileInfo) autorunFileInfo.classList.add("d-none");
+        if (autorunUseBtn) autorunUseBtn.disabled = true;
+        if (autorunExtendCheck) autorunExtendCheck.checked = false;
+        if (autorunCheckpointSelect) {
+            while (autorunCheckpointSelect.options.length > 1) {
+                autorunCheckpointSelect.remove(1);
+            }
+        }
+        const modal = new window.bootstrap.Modal(document.getElementById("autorun-modal"));
+        modal.show();
+    });
+}
+
+// Handle autorun file selection inside modal
+if (autorunFileInput) {
+    autorunFileInput.addEventListener("change", async (e) => {
+        const file = e.target.files?.[0];
+        if (!file || !autorunFileInfo || !autorunFileSummary || !autorunCheckpointSelect || !autorunUseBtn) return;
+        try {
+            const bytes = new Uint8Array(await file.arrayBuffer());
+            const info = parseAutorunFile(bytes);
+            const expectedRom = file.name.replace(/\.autorun$/i, ".nes");
+            autorunFileSummary.textContent =
+                `${file.name} (${info.frameCount} frames, ${info.checkpointCount} checkpoints) · ROM: ${expectedRom}`;
+            // Populate checkpoint selector
+            while (autorunCheckpointSelect.options.length > 1) {
+                autorunCheckpointSelect.remove(1);
+            }
+            for (let i = 0; i < info.checkpointCount; i++) {
+                const opt = document.createElement("option");
+                opt.value = String(i);
+                opt.textContent = `Checkpoint ${i + 1} (frame ${Math.round((i + 1) * info.frameCount / info.checkpointCount)})`;
+                autorunCheckpointSelect.appendChild(opt);
+            }
+            autorunFileInfo.classList.remove("d-none");
+            autorunUseBtn.disabled = false;
+            // Store raw bytes and filename on the input element for the Use button
+            autorunFileInput._bytes = bytes;
+            autorunFileInput._fileName = file.name;
+        } catch (err) {
+            autorunFileSummary.textContent = `Error: ${err.message}`;
+            autorunFileInfo.classList.remove("d-none");
+            autorunUseBtn.disabled = true;
+            autorunFileInput._bytes = null;
+            autorunFileInput._fileName = null;
+        }
+    });
+}
+
+// Handle "Use Autorun" button click
+if (autorunUseBtn) {
+    autorunUseBtn.addEventListener("click", () => {
+        const bytes = autorunFileInput?._bytes;
+        if (!bytes) return;
+        try {
+            autorunCtx.setLoadedFile(bytes, autorunFileInput?._fileName ?? null);
+            // Uncheck "Create autorun" since playback takes over
+            if (autorunCreateCheckbox) autorunCreateCheckbox.checked = false;
+            autorunCtx.setCreateRecording(false);
+            const cpVal = autorunCheckpointSelect?.value;
+            autorunCtx.setSelectedCheckpoint(cpVal != null && cpVal !== "-1" ? parseInt(cpVal, 10) : null);
+            autorunCtx.setExtend(autorunExtendCheck?.checked ?? false);
+            updateAutorunStatus();
+            // Close modal
+            const modalEl = document.getElementById("autorun-modal");
+            const modal = window.bootstrap.Modal.getInstance(modalEl);
+            modal?.hide();
+        } catch (err) {
+            console.error("Failed to configure autorun:", err);
+        }
+    });
+}
+
 /**
  * Update NES display dimensions from the WASM instance and reallocate the GL texture.
  * Must be called after `nes` is created so overscan is reflected.
@@ -908,6 +1044,10 @@ async function refreshSaveStateController() {
 romInput.addEventListener("change", async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    const expectedRom = autorunCtx.getExpectedRomName();
+    if (expectedRom && file.name.toLowerCase() !== expectedRom.toLowerCase()) {
+        toastOverlay.show(`⚠ Autorun expects "${expectedRom}" but "${file.name}" was loaded — playback may not work correctly`);
+    }
     await handleRomSelection({
         bytes: new Uint8Array(await file.arrayBuffer()),
         name: file.name,
@@ -1029,8 +1169,36 @@ async function start() {
             updateNesDisplayDimensions();
         }
         const romName = romMetadata?.name || "selected-rom.nes";
+
+        // ── Autorun setup: configure before loading ROM ─────────────────────
+        const autorunConfig = autorunCtx.getActiveConfig();
+        if (autorunConfig?.mode === "record") {
+            nes.start_autorun_recording();
+        } else {
+            nes.clear_autorun();
+        }
+
         nes.load_rom(romBytes, romName);
         drainNesToasts(nes, toastOverlay);
+
+        // ── Autorun setup: playback / extend – after ROM is loaded ───────────
+        if (autorunConfig?.mode === "playback") {
+            try {
+                const pendingRestore = nes.load_autorun_playback(
+                    autorunConfig.bytes,
+                    autorunConfig.checkpointIdx ?? -1,
+                    autorunConfig.extend
+                );
+                if (pendingRestore && pendingRestore.length > 0) {
+                    nes.load_state_bytes(pendingRestore);
+                }
+            } catch (autorunErr) {
+                console.error("Failed to load autorun for playback:", autorunErr);
+                toastOverlay.show(`Autorun load failed: ${autorunErr}`);
+                nes.clear_autorun();
+            }
+        }
+
         frameLimiter.setTargetFps(nes.frame_rate_hz());
         // Initialize audio context on user interaction (browser requirement)
         initAudioContext();
@@ -1144,6 +1312,16 @@ function debuggerStepInto() {
 }
 
 function stop() {
+    // ── Autorun teardown: download recording if active ────────────────────
+    if (nes && nes.autorun_is_recording()) {
+        const recordingBytes = nes.stop_autorun();
+        if (recordingBytes && recordingBytes.length > 0) {
+            triggerAutorunDownload(recordingBytes, romMetadata?.name);
+        }
+    } else if (nes) {
+        nes.clear_autorun();
+    }
+
     running = false;
     paused = false;
     startBtn.disabled = false;
@@ -1151,6 +1329,26 @@ function stop() {
     lastFrameTime = 0;
     frameLimiter.reset();
     setStatus("Stopped. You can restart or load a new ROM");
+}
+
+/**
+ * Trigger a browser download of an autorun recording.
+ * @param {Uint8Array} bytes - The serialized AutorunFile JSON bytes.
+ * @param {string|undefined} romName - ROM file name (used to derive the download file name).
+ */
+function triggerAutorunDownload(bytes, romName) {
+    const baseName = romName ? romName.replace(/\.nes$/i, "") : "recording";
+    const fileName = `${baseName}.autorun`;
+    const blob = new Blob([bytes], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = fileName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+    toastOverlay.show(`Autorun saved: ${fileName}`);
 }
 
 function startIdleScroller() {
@@ -1342,6 +1540,14 @@ function step(timestamp) {
             pollGamepad();
         }
         const frame = nes.render_frame_rgba(); // RGBA8888
+
+        // Stop when pure autorun playback has consumed all recorded frames
+        if (nes.autorun_playback_finished()) {
+            stop();
+            setStatus("Autorun playback complete.");
+            return;
+        }
+
         const filter = filters[currentFilter];
         let rendered = true;
         if (framePlan.shouldRender) {
