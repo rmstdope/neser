@@ -141,12 +141,12 @@ impl Mapper for Mapper52 {
                 self.outer = value;
                 let snap = self.mmc3.registers_snapshot();
                 // snap[0]=bank_select, snap[1..=8]=regs[0-7]
-                let (bs, r) = (snap[0], &snap[1..=8]);
+                let (_bs, _r) = (snap[0], &snap[1..=8]);
                 trace_mapper!(1; "[52] OUTER REG <- 0x{:02X} locked={} (B={} P={} p={} S={} C={} c={} T={}) | mmc3: bs=0x{:02X} chr=[{},{},{},{},{},{}] prg=[{},{}]",
                     value, self.locked,
                     (value >> 2) & 1, (value >> 1) & 1, value & 1,
                     (value >> 3) & 1, (value >> 5) & 1, (value >> 4) & 1, (value >> 6) & 1,
-                    bs, r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]);
+                    _bs, _r[0], _r[1], _r[2], _r[3], _r[4], _r[5], _r[6], _r[7]);
             }
         } else {
             self.mmc3.write_prg(addr, value);

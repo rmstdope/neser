@@ -362,12 +362,12 @@ impl Cpu {
         let mut nmi_hijack = self.nmi_pending;
 
         let pc = self.pc;
-        let sp = self.sp;
-        let p = self.p;
-        let cycle = self.total_cycles;
-        let frame = self.ppu.borrow().timing().frame_count();
-        let scanline = self.ppu.borrow().timing().scanline();
-        let pixel = self.ppu.borrow().timing().pixel();
+        let _sp = self.sp;
+        let _p = self.p;
+        let _cycle = self.total_cycles;
+        let _frame = self.ppu.borrow().timing().frame_count();
+        let _scanline = self.ppu.borrow().timing().scanline();
+        let _pixel = self.ppu.borrow().timing().pixel();
         self.dummy_read(pc);
         nmi_hijack |= self.nmi_pending;
         self.dummy_read(pc);
@@ -405,12 +405,12 @@ impl Cpu {
             self.a,
             self.x,
             self.y,
-            p,
-            sp,
-            cycle,
-            frame,
-            scanline,
-            pixel
+            _p,
+            _sp,
+            _cycle,
+            _frame,
+            _scanline,
+            _pixel
         );
     }
 
