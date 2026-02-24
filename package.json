@@ -3,9 +3,11 @@
     "private": true,
     "type": "module",
     "scripts": {
-        "test": "node --test"
+        "test": "node --test",
+        "test:integration:web": "playwright test web/integration/specs/*.integration.spec.mjs"
     },
     "devDependencies": {
+        "@playwright/test": "^1.58.2",
         "fake-indexeddb": "^5.0.2"
     }
 }
