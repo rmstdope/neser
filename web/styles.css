@@ -169,7 +169,7 @@ canvas {
 }
 
 .debugger-regs {
-    width: 220px;
+    width: 300px;
     flex-shrink: 0;
     overflow: hidden;
     display: flex;

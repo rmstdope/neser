@@ -2,6 +2,7 @@ use crate::app_context::{AppContext, SharedAppContext};
 use crate::autorun::crc32;
 use crate::cartridge::Cartridge;
 use crate::console::{Config, Nes, SaveState, log_rom_timing_mode_selection};
+use crate::debugging::DebuggerViewState;
 use crate::debugging::snapshot as debugger_snapshot;
 use crate::frontend_toasts::{
     cartridge_load_toast_message, emulator_timing_toast_message,
@@ -23,6 +24,8 @@ pub struct WasmNes {
     app_context: SharedAppContext,
     /// True while the debugger is open and the emulator is paused.
     debugger_paused: bool,
+    /// Stateful debugger view state for disassembly window persistence.
+    debugger_view_state: DebuggerViewState,
     /// Current autorun recording or playback state.
     autorun_state: Option<WasmAutorunState>,
     /// Bitmask of currently pressed buttons on controller 1 (for autorun recording).
@@ -95,6 +98,7 @@ impl WasmNes {
             pending_toasts: Vec::new(),
             app_context,
             debugger_paused: false,
+            debugger_view_state: DebuggerViewState::default(),
             autorun_state: None,
             controller1_buttons: 0,
             controller2_buttons: 0,
@@ -128,6 +132,7 @@ impl WasmNes {
         self.nes = Nes::new(app_context);
         self.nes.insert_cartridge(cart);
         self.nes.reset(false);
+        self.debugger_view_state = DebuggerViewState::default();
         self.rom_loaded = true;
         self.pending_toasts
             .push(cartridge_load_toast_message(rom_name, true));
@@ -147,6 +152,7 @@ impl WasmNes {
     #[wasm_bindgen]
     pub fn reset(&mut self) {
         self.nes.reset(true);
+        self.debugger_view_state = DebuggerViewState::default();
     }
 
     /// Step the emulator until a full frame is ready and return the pixel buffer (RGB888).
@@ -554,6 +560,7 @@ impl WasmNes {
     #[wasm_bindgen]
     pub fn debugger_open(&mut self) {
         self.debugger_paused = true;
+        self.debugger_view_state = DebuggerViewState::default();
     }
 
     /// Continue execution: close the debugger and resume the emulator.
@@ -597,8 +604,8 @@ impl WasmNes {
     ///
     /// Each element is `{"addr":<u16>,"bytes":[<u8>...],"text":"<str>","is_current":<bool>}`.
     #[wasm_bindgen]
-    pub fn debugger_disasm_json(&self) -> String {
-        let snap = debugger_snapshot(&self.nes);
+    pub fn debugger_disasm_json(&mut self) -> String {
+        let snap = self.debugger_view_state.snapshot(&self.nes);
         let mut json = String::from('[');
         for (i, line) in snap.cpu_disasm.iter().enumerate() {
             if i > 0 {

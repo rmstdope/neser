@@ -63,6 +63,43 @@ fn enable_arkanoid_on_port1(nes: &mut WasmNes) {
         .expect("should set controller type");
 }
 
+fn parse_disasm_addrs_and_current_index(json: &str) -> (Vec<u16>, usize) {
+    let trimmed = json.trim();
+    let body = trimmed
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .expect("disasm JSON should be an array");
+
+    let mut addrs = Vec::new();
+    let mut current_index = None;
+
+    if body.is_empty() {
+        return (addrs, 0);
+    }
+
+    for (index, raw_entry) in body.split("},{").enumerate() {
+        let entry = raw_entry.trim_start_matches('{').trim_end_matches('}');
+        let addr_start = entry
+            .find("\"addr\":")
+            .map(|p| p + "\"addr\":".len())
+            .expect("entry should contain addr");
+        let addr_end_rel = entry[addr_start..]
+            .find(',')
+            .expect("addr field should be followed by comma");
+        let addr_end = addr_start + addr_end_rel;
+        let addr = entry[addr_start..addr_end]
+            .parse::<u16>()
+            .expect("addr should be u16");
+        addrs.push(addr);
+
+        if entry.contains("\"is_current\":true") {
+            current_index = Some(index);
+        }
+    }
+
+    (addrs, current_index.expect("one disasm entry should be current"))
+}
+
 #[wasm_bindgen_test]
 fn wasm_nes_constructs() {
     let _nes = WasmNes::new();
@@ -490,6 +527,42 @@ fn debugger_disasm_current_addr_matches_cpu_pc() {
     assert!(
         json.contains(&expected_fragment),
         "expected PC {pc} as addr in disasm JSON.\njson: {json}"
+    );
+}
+
+#[wasm_bindgen_test]
+fn debugger_disasm_keeps_window_until_last_two_then_recenters() {
+    let mut nes = WasmNes::new();
+    let rom = minimal_nrom_nop_at_8000();
+    nes.load_rom(&rom, "test.nes").expect("valid rom");
+
+    nes.debugger_open();
+    let (addrs0, mut idx) = parse_disasm_addrs_and_current_index(&nes.debugger_disasm_json());
+    let start0 = addrs0.first().copied().expect("non-empty disasm window");
+    let target_lines = addrs0.len();
+
+    // Keep stepping while current instruction is not in the last two rows.
+    while idx < target_lines - 2 {
+        nes.debugger_step_over();
+        let (addrs, new_idx) = parse_disasm_addrs_and_current_index(&nes.debugger_disasm_json());
+        assert_eq!(addrs.first().copied().expect("non-empty window"), start0);
+        idx = new_idx;
+    }
+
+    // Next step moves into one of the last two rows and should recenter.
+    nes.debugger_step_over();
+    let (addrs_after_recenter, idx_after_recenter) =
+        parse_disasm_addrs_and_current_index(&nes.debugger_disasm_json());
+
+    assert_ne!(
+        addrs_after_recenter.first().copied().expect("non-empty window"),
+        start0,
+        "window should recenter when current enters last two rows"
+    );
+    assert_eq!(
+        idx_after_recenter,
+        target_lines / 2,
+        "recenter should place current near window center"
     );
 }
 

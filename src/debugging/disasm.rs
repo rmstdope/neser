@@ -47,7 +47,6 @@ pub fn disassemble_window_with_state<F: Fn(u16) -> u8>(
     config: DisasmWindowConfig,
 ) -> Vec<CpuDisasmLineSnapshot> {
     let target_lines = config.before + 1 + config.after;
-    let bottom_trigger_index = target_lines.saturating_sub(1 + config.bottom_margin);
 
     let mut lines = if let Some(start) = state.start {
         disassemble_from_start(&read, start, pc, target_lines)
@@ -58,13 +57,11 @@ pub fn disassemble_window_with_state<F: Fn(u16) -> u8>(
     let current_index = lines.iter().position(|l| l.is_current);
 
     if let Some(idx) = current_index {
-        if idx >= bottom_trigger_index {
-            let desired_start_idx = idx.saturating_sub(config.top_margin);
-            if let Some(new_start) = lines.get(desired_start_idx).map(|l| l.addr) {
-                lines = disassemble_from_start(&read, new_start, pc, target_lines);
-                state.start = Some(new_start);
-                return lines;
-            }
+        let last_two_start = lines.len().saturating_sub(2);
+        if idx >= last_two_start {
+            lines = disassemble_window(&read, pc, config);
+            state.start = lines.first().map(|l| l.addr);
+            return lines;
         }
 
         // Keep the existing start when the current line is safely within the window.
@@ -186,13 +183,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_disasm_window_scrolls_when_current_reaches_bottom_margin() {
+    fn test_disasm_window_recenters_when_current_reaches_second_last_row() {
         // Use a memory model of all NOPs (0xEA = 1 byte) so instruction boundaries are trivial.
         let read = |_addr: u16| 0xEA;
 
         let config = DisasmWindowConfig {
-            before: 8,
-            after: 8,
+            before: 4,
+            after: 4,
             top_margin: 3,
             bottom_margin: 3,
         };
@@ -205,13 +202,63 @@ mod tests {
         let idx0 = lines0.iter().position(|l| l.is_current).unwrap();
         assert_eq!(idx0, config.before);
 
-        // Step forward until current is at the bottom trigger index.
+        // Move current to the second-last visible row.
         let target_lines = config.before + 1 + config.after;
-        let bottom_trigger_index = target_lines - 1 - config.bottom_margin;
-        let pc_at_trigger = base_pc.wrapping_add((bottom_trigger_index - idx0) as u16);
+        let second_last_index = target_lines - 2;
+        let pc_at_second_last = base_pc.wrapping_add((second_last_index - idx0) as u16);
 
-        let lines1 = disassemble_window_with_state(read, pc_at_trigger, &mut state, config);
+        let lines1 = disassemble_window_with_state(read, pc_at_second_last, &mut state, config);
         let idx1 = lines1.iter().position(|l| l.is_current).unwrap();
-        assert_eq!(idx1, config.top_margin);
+        assert_eq!(idx1, config.before);
+    }
+
+    #[test]
+    fn test_disasm_window_keeps_start_when_current_is_inside_window_and_not_in_last_two_rows() {
+        let read = |_addr: u16| 0xEA;
+
+        let config = DisasmWindowConfig {
+            before: 8,
+            after: 8,
+            top_margin: 3,
+            bottom_margin: 3,
+        };
+
+        let mut state = CpuDisasmWindowState::default();
+
+        let base_pc = 0xC000;
+        let lines0 = disassemble_window_with_state(read, base_pc, &mut state, config);
+        let start0 = lines0.first().unwrap().addr;
+
+        // Advance by one instruction; current remains comfortably inside window.
+        let lines1 =
+            disassemble_window_with_state(read, base_pc.wrapping_add(1), &mut state, config);
+        let idx1 = lines1.iter().position(|l| l.is_current).unwrap();
+
+        assert_eq!(idx1, config.before + 1);
+        assert_eq!(lines1.first().unwrap().addr, start0);
+    }
+
+    #[test]
+    fn test_disasm_window_recenters_when_current_is_outside_existing_window() {
+        let read = |_addr: u16| 0xEA;
+
+        let config = DisasmWindowConfig {
+            before: 8,
+            after: 8,
+            top_margin: 3,
+            bottom_margin: 3,
+        };
+
+        let mut state = CpuDisasmWindowState::default();
+
+        let base_pc = 0xC000;
+        let _ = disassemble_window_with_state(read, base_pc, &mut state, config);
+
+        // Jump far enough so the current PC is outside the existing window.
+        let jumped_pc = base_pc.wrapping_add(0x40);
+        let lines1 = disassemble_window_with_state(read, jumped_pc, &mut state, config);
+        let idx1 = lines1.iter().position(|l| l.is_current).unwrap();
+
+        assert_eq!(idx1, config.before);
     }
 }

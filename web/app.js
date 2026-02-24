@@ -32,6 +32,7 @@ import {
 } from "./zoom_controls.js";
 import { createToastContainer, createToastOverlay, drainNesToasts } from "./toast_overlay.js";
 import { createGamepadInitToastNotifier } from "./gamepad_init_toast.js";
+import { renderDisasmLines } from "./debugger_disasm.js";
 
 const statusEl = document.getElementById("status");
 const startBtn = document.getElementById("start");
@@ -1246,29 +1247,11 @@ function pauseResume() {
     }
 }
 
-function formatDisasmBytes(bytes) {
-    if (!bytes || bytes.length === 0) return "  ";
-    return bytes.map(b => b.toString(16).toUpperCase().padStart(2, "0")).join(" ");
-}
-
-function buildDisasmLineHtml(line) {
-    const addr = line.addr.toString(16).toUpperCase().padStart(4, "0");
-    const bytesStr = formatDisasmBytes(line.bytes).padEnd(8);
-    const esc = line.text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    const lineText = `${addr}: ${bytesStr}  ${esc}`;
-    if (line.is_current) {
-        return `<span class="disasm-current">&gt; ${lineText}</span>`;
-    }
-    return `<span class="disasm-line">  ${lineText}</span>`;
-}
-
 function buildDisasmHtml(nes) {
     try {
         const disasmJson = nes.debugger_disasm_json();
         const lines = JSON.parse(disasmJson);
-        if (Array.isArray(lines)) {
-            return lines.map(buildDisasmLineHtml).join("\n");
-        }
+        return renderDisasmLines(lines);
     } catch (_) { /* disasm not available yet */ }
     return "";
 }
@@ -1289,12 +1272,9 @@ function buildRegsHtml(snap) {
         `A:  ${h2(snap.a)}  X:  ${h2(snap.x)}  Y:  ${h2(snap.y)}`,
         `P:  ${h2(snap.p)}  ${formatStatusFlags(snap.p)}`,
         `INT: ${intStr}`,
-        `VEC NMI:${h4(snap.nmi_vector)} RST:${h4(snap.reset_vector)}`,
-        `    IRQ:${h4(snap.irq_vector)}`,
+        `VEC NMI:${h4(snap.nmi_vector)} RST:${h4(snap.reset_vector)} IRQ:${h4(snap.irq_vector)}`,
         `CYC: ${snap.cycles}`,
-        `Frame:    ${snap.frame_count}`,
-        `Scanline: ${snap.scanline}`,
-        `Pixel:    ${snap.pixel}`,
+        `Frame:${snap.frame_count}  Scanline:${snap.scanline}  Pixel:${snap.pixel}`,
     ];
     return lines.map(l => {
         const esc = l.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
