@@ -829,7 +829,8 @@ impl Config {
         }
 
         // RAM initialization mode
-        if let Some(value) = Self::parse_string_arg(args, "--ram-init-mode") {
+        let cli_ram_init_mode = Self::parse_string_arg(args, "--ram-init-mode");
+        if let Some(value) = cli_ram_init_mode.as_ref() {
             self.apply_config_value("ram_init_mode", &value)?;
         }
 
@@ -884,6 +885,18 @@ impl Config {
 
         if let Some(v) = Self::parse_u32_arg(args, "--trim-checkpoints")? {
             self.autorun_trim_checkpoints = Some(v as usize);
+        }
+
+        // Autorun recording/playback must be deterministic.
+        // Force zero-initialized RAM when autorun is active, and reject an explicit
+        // non-zero CLI --ram-init-mode for these modes.
+        if self.autorun_mode != AutorunMode::None {
+            if let Some(value) = cli_ram_init_mode.as_ref()
+                && !value.eq_ignore_ascii_case("zero")
+            {
+                return Err("Autorun recording/playback requires --ram-init-mode zero".to_string());
+            }
+            self.ram_init_mode = RamInitMode::Zero;
         }
 
         // Breakpoints from --breakpoint flag (comma-separated list)
@@ -3746,5 +3759,67 @@ filter=invalid-shader
         assert_eq!(config.autorun_mode, AutorunMode::Playback);
         assert!(config.autorun_headless);
         assert_eq!(config.autorun_from_checkpoint, Some(-1));
+    }
+
+    #[test]
+    fn test_cli_create_recording_forces_zero_ram_init_mode() {
+        let args = vec!["neser".to_string(), "--create-recording".to_string()];
+        let config = parse_config(args);
+        assert_eq!(config.autorun_mode, AutorunMode::Record);
+        assert_eq!(config.ram_init_mode, RamInitMode::Zero);
+    }
+
+    #[test]
+    fn test_cli_playback_forces_zero_ram_init_mode() {
+        let args = vec!["neser".to_string(), "--playback".to_string()];
+        let config = parse_config(args);
+        assert_eq!(config.autorun_mode, AutorunMode::Playback);
+        assert_eq!(config.ram_init_mode, RamInitMode::Zero);
+    }
+
+    #[test]
+    fn test_cli_playback_from_checkpoint_forces_zero_ram_init_mode() {
+        let args = vec![
+            "neser".to_string(),
+            "--playback-from-checkpoint=1".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.autorun_mode, AutorunMode::Playback);
+        assert_eq!(config.ram_init_mode, RamInitMode::Zero);
+    }
+
+    #[test]
+    fn test_cli_create_recording_rejects_non_zero_ram_init_mode() {
+        let args = vec![
+            "neser".to_string(),
+            "--create-recording".to_string(),
+            "--ram-init-mode".to_string(),
+            "random".to_string(),
+        ];
+        let result = config_new(args);
+        assert!(result.is_err());
+        assert!(
+            result
+                .err()
+                .unwrap()
+                .contains("Autorun recording/playback requires --ram-init-mode zero")
+        );
+    }
+
+    #[test]
+    fn test_cli_playback_rejects_non_zero_ram_init_mode() {
+        let args = vec![
+            "neser".to_string(),
+            "--playback".to_string(),
+            "--ram-init-mode=seeded-random:42".to_string(),
+        ];
+        let result = config_new(args);
+        assert!(result.is_err());
+        assert!(
+            result
+                .err()
+                .unwrap()
+                .contains("Autorun recording/playback requires --ram-init-mode zero")
+        );
     }
 }
