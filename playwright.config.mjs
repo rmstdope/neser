@@ -10,7 +10,10 @@ export default defineConfig({
     use: {
         baseURL: WEB_APP_URL,
         headless: true,
-        trace: "retain-on-failure"
+        trace: "retain-on-failure",
+        launchOptions: {
+            args: ["--use-angle=swiftshader", "--use-gl=angle"]
+        }
     },
     webServer: {
         command: WEB_APP_SERVER_COMMAND,
