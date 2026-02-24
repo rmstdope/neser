@@ -3,6 +3,9 @@ use crate::autorun::crc32;
 use crate::cartridge::Cartridge;
 use crate::console::{Config, Nes, SaveState, log_rom_timing_mode_selection};
 use crate::debugging::DebuggerViewState;
+use crate::debugging::ppu_viewer::{
+    PpuViewerSnapshot, render_nametables_rgba, render_pattern_tables_rgba,
+};
 use crate::frontend_toasts::{
     cartridge_load_toast_message, emulator_timing_toast_message,
     gamepad_init_toast_message as shared_gamepad_init_toast_message,
@@ -559,7 +562,6 @@ impl WasmNes {
     #[wasm_bindgen]
     pub fn debugger_open(&mut self) {
         self.debugger_paused = true;
-        self.debugger_view_state = DebuggerViewState::default();
     }
 
     /// Continue execution: close the debugger and resume the emulator.
@@ -675,6 +677,51 @@ impl WasmNes {
         }
         json.push(']');
         json
+    }
+
+    /// Returns true if the PPU viewer is currently visible inside the debugger.
+    #[wasm_bindgen]
+    pub fn debugger_is_ppu_viewer_open(&self) -> bool {
+        self.debugger_view_state.is_ppu_viewer_visible()
+    }
+
+    /// Toggle PPU viewer visibility in the debugger.
+    #[wasm_bindgen]
+    pub fn debugger_toggle_ppu_viewer(&mut self) {
+        self.debugger_view_state.toggle_ppu_viewer();
+    }
+
+    fn ppu_viewer_snapshot(&self) -> PpuViewerSnapshot {
+        PpuViewerSnapshot::from_nes(&self.nes)
+    }
+
+    /// Returns the PPU pattern table viewer image as RGBA bytes.
+    #[wasm_bindgen]
+    pub fn debugger_ppu_pattern_tables_rgba(&mut self) -> Vec<u8> {
+        let snapshot = self.ppu_viewer_snapshot();
+        render_pattern_tables_rgba(&snapshot.chr, &snapshot.palette)
+    }
+
+    /// Returns the PPU nametable viewer image as RGBA bytes.
+    #[wasm_bindgen]
+    pub fn debugger_ppu_nametables_rgba(&mut self) -> Vec<u8> {
+        let snapshot = self.ppu_viewer_snapshot();
+        render_nametables_rgba(
+            &snapshot.chr,
+            &snapshot.nametables,
+            &snapshot.palette,
+            snapshot.bg_pattern_table,
+        )
+    }
+
+    /// Returns PPU scroll in nametable space as JSON: {"scroll_x":<u16>,"scroll_y":<u16>}.
+    #[wasm_bindgen]
+    pub fn debugger_ppu_scroll_json(&mut self) -> String {
+        let snapshot = self.ppu_viewer_snapshot();
+        format!(
+            r#"{{"scroll_x":{},"scroll_y":{}}}"#,
+            snapshot.scroll.0, snapshot.scroll.1
+        )
     }
 
     // --- End Debugger API ---

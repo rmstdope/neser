@@ -33,6 +33,11 @@ import {
 import { createToastContainer, createToastOverlay, drainNesToasts } from "./toast_overlay.js";
 import { createGamepadInitToastNotifier } from "./gamepad_init_toast.js";
 import { renderDisasmLines } from "./debugger_disasm.js";
+import {
+    computeNtscDisplayWidth,
+    computeScrollViewportRects,
+} from "./ppu_viewer_layout.js";
+import { clampScrollTop, sanitizeScrollTop } from "./ppu_viewer_scroll.js";
 
 const statusEl = document.getElementById("status");
 const startBtn = document.getElementById("start");
@@ -79,7 +84,7 @@ let wasmInitPromise = null;
 
 function createWasmUrl() {
     const wasmUrl = new URL("./pkg/neser_bg.wasm", import.meta.url);
-    wasmUrl.searchParams.set("v", "20260127");
+    wasmUrl.searchParams.set("v", "20260224-701");
     return wasmUrl;
 }
 
@@ -1325,6 +1330,152 @@ function buildHexdumpHtml(snap) {
     );
 }
 
+const PPU_PATTERN_CANVAS_ID = "dbg-ppu-pattern";
+const PPU_NAMETABLES_CANVAS_ID = "dbg-ppu-nametables";
+const PPU_SECTION_ID = "dbg-ppu-section";
+const PPU_PATTERN_WIDTH = 256;
+const PPU_PATTERN_HEIGHT = 128;
+const PPU_NAMETABLES_WIDTH = 512;
+const PPU_NAMETABLES_HEIGHT = 480;
+const PPU_NAMETABLES_DISPLAY_WIDTH = computeNtscDisplayWidth(PPU_NAMETABLES_WIDTH);
+const PPU_VIEWPORT_STROKE_STYLE = "rgba(255, 255, 0, 1)";
+const PPU_VIEWPORT_LINE_WIDTH = 2;
+let debuggerPpuViewerScrollTop = 0;
+
+function drawRgbaToCanvas(canvasId, rgbaBytes, width, height, displayWidth = width) {
+    const canvasEl = document.getElementById(canvasId);
+    if (!(canvasEl instanceof HTMLCanvasElement)) {
+        return;
+    }
+    const context = canvasEl.getContext("2d");
+    if (!context) {
+        return;
+    }
+
+    canvasEl.width = displayWidth;
+    canvasEl.height = height;
+    const expectedLength = width * height * 4;
+    if (!rgbaBytes || rgbaBytes.length !== expectedLength) {
+        context.clearRect(0, 0, displayWidth, height);
+        return;
+    }
+
+    if (displayWidth === width) {
+        const imageData = context.createImageData(width, height);
+        imageData.data.set(rgbaBytes);
+        context.putImageData(imageData, 0, 0);
+        return;
+    }
+
+    const sourceCanvas = document.createElement("canvas");
+    sourceCanvas.width = width;
+    sourceCanvas.height = height;
+    const sourceContext = sourceCanvas.getContext("2d");
+    if (!sourceContext) {
+        return;
+    }
+
+    const imageData = sourceContext.createImageData(width, height);
+    imageData.data.set(rgbaBytes);
+    sourceContext.putImageData(imageData, 0, 0);
+
+    context.imageSmoothingEnabled = false;
+    context.clearRect(0, 0, displayWidth, height);
+    context.drawImage(sourceCanvas, 0, 0, displayWidth, height);
+}
+
+function renderPpuViewerCanvases() {
+    if (!nes || !nes.debugger_is_ppu_viewer_open()) {
+        return;
+    }
+
+    try {
+        drawRgbaToCanvas(
+            PPU_PATTERN_CANVAS_ID,
+            nes.debugger_ppu_pattern_tables_rgba(),
+            PPU_PATTERN_WIDTH,
+            PPU_PATTERN_HEIGHT
+        );
+        drawRgbaToCanvas(
+            PPU_NAMETABLES_CANVAS_ID,
+            nes.debugger_ppu_nametables_rgba(),
+            PPU_NAMETABLES_WIDTH,
+            PPU_NAMETABLES_HEIGHT,
+            PPU_NAMETABLES_DISPLAY_WIDTH
+        );
+        drawPpuViewportRectangles();
+    } catch (_) {
+        // PPU viewer data is best-effort while emulator/debugger initializes.
+    }
+}
+
+function drawPpuViewportRectangles() {
+    const canvasEl = document.getElementById(PPU_NAMETABLES_CANVAS_ID);
+    if (!(canvasEl instanceof HTMLCanvasElement)) {
+        return;
+    }
+    const context = canvasEl.getContext("2d");
+    if (!context) {
+        return;
+    }
+
+    const scrollJson = nes.debugger_ppu_scroll_json();
+    const scroll = JSON.parse(scrollJson);
+    const scrollX = Number.isInteger(scroll.scroll_x) ? scroll.scroll_x : 0;
+    const scrollY = Number.isInteger(scroll.scroll_y) ? scroll.scroll_y : 0;
+
+    const scaleX = canvasEl.width / PPU_NAMETABLES_WIDTH;
+    const scaleY = canvasEl.height / PPU_NAMETABLES_HEIGHT;
+    const rects = computeScrollViewportRects(scrollX, scrollY);
+
+    context.save();
+    context.strokeStyle = PPU_VIEWPORT_STROKE_STYLE;
+    context.lineWidth = PPU_VIEWPORT_LINE_WIDTH;
+    for (const rect of rects) {
+        context.strokeRect(
+            rect.x * scaleX,
+            rect.y * scaleY,
+            rect.width * scaleX,
+            rect.height * scaleY
+        );
+    }
+    context.restore();
+}
+
+function buildPpuViewerHtml(isVisible) {
+    if (!isVisible) {
+        return "";
+    }
+    return (
+        `<div class="debugger-ppu-overlay">` +
+        `<span class="debugger-ppu-title">PPU Viewer</span>` +
+        `<div class="debugger-ppu-section" id="${PPU_SECTION_ID}">` +
+        `<span class="debugger-ppu-label">Pattern tables</span>` +
+        `<canvas id="${PPU_PATTERN_CANVAS_ID}" class="debugger-ppu-canvas"></canvas>` +
+        `<span class="debugger-ppu-label">Nametables</span>` +
+        `<canvas id="${PPU_NAMETABLES_CANVAS_ID}" class="debugger-ppu-canvas debugger-ppu-canvas-large"></canvas>` +
+        `</div>` +
+        `</div>`
+    );
+}
+
+function syncPpuViewerScrollState() {
+    const section = document.getElementById(PPU_SECTION_ID);
+    if (!(section instanceof HTMLElement)) {
+        return;
+    }
+
+    debuggerPpuViewerScrollTop = sanitizeScrollTop(debuggerPpuViewerScrollTop);
+    section.scrollTop = clampScrollTop(debuggerPpuViewerScrollTop, {
+        scrollHeight: section.scrollHeight,
+        clientHeight: section.clientHeight,
+    });
+
+    section.addEventListener("scroll", () => {
+        debuggerPpuViewerScrollTop = sanitizeScrollTop(section.scrollTop);
+    });
+}
+
 function updateDebuggerPanel() {
     if (!nes || !debuggerPanel) return;
     let snap;
@@ -1337,9 +1488,13 @@ function updateDebuggerPanel() {
     const disasmHtml = buildDisasmHtml(nes);
     const regsHtml = buildRegsHtml(snap);
     const hexdumpHtml = buildHexdumpHtml(snap);
+    const ppuViewerVisible = nes.debugger_is_ppu_viewer_open();
+    const ppuViewerHtml = buildPpuViewerHtml(ppuViewerVisible);
+    const ppuViewerButtonText = ppuViewerVisible ? "Hide PPU Viewer" : "Show PPU Viewer";
 
     debuggerPanel.innerHTML =
         `<div class="debugger-controls">` +
+        `<button class="dbg-btn" id="dbg-toggle-ppu-viewer">${ppuViewerButtonText}</button>` +
         `<button class="dbg-btn" id="dbg-step-over">Step over (F10)</button>` +
         `<button class="dbg-btn" id="dbg-step-into">Step into (F11)</button>` +
         `<button class="dbg-btn" id="dbg-continue">Continue (F5)</button>` +
@@ -1359,10 +1514,13 @@ function updateDebuggerPanel() {
         `<span class="debugger-hexdump-divider"></span>` +
         `${hexdumpHtml}` +
         `</div>` +
+        `${ppuViewerHtml}` +
         `</div>`;
 
     // Wire up buttons (re-attached after each innerHTML update)
     wireDebuggerButtons();
+    renderPpuViewerCanvases();
+    syncPpuViewerScrollState();
 }
 
 function wireDebuggerButtons() {
@@ -1376,6 +1534,7 @@ function wireDebuggerButtons() {
     wire("dbg-run-next-scanline", debuggerRunToNextScanline);
     wire("dbg-run-to-nmi", debuggerRunToNmi);
     wire("dbg-run-to-irq", debuggerRunToIrq);
+    wire("dbg-toggle-ppu-viewer", debuggerTogglePpuViewer);
     wire("dbg-hexdump-prev", debuggerHexdumpPrev16);
     wire("dbg-hexdump-next", debuggerHexdumpNext16);
     wire("dbg-hexdump-go", debuggerHexdumpGoToAddress);
@@ -1389,8 +1548,8 @@ function wireDebuggerButtons() {
 
 function showDebuggerPanel() {
     if (!debuggerPanel) return;
-    updateDebuggerPanel();
     debuggerPanel.classList.remove("d-none");
+    updateDebuggerPanel();
     setStatus("Debugger paused");
 }
 
@@ -1457,6 +1616,12 @@ function debuggerRunToNmi() {
 function debuggerRunToIrq() {
     if (!nes || !running) return;
     nes.debugger_run_to_irq();
+    showDebuggerPanel();
+}
+
+function debuggerTogglePpuViewer() {
+    if (!nes || !running) return;
+    nes.debugger_toggle_ppu_viewer();
     showDebuggerPanel();
 }
 
