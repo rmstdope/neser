@@ -551,7 +551,10 @@ fn debugger_disasm_keeps_window_until_last_two_then_recenters() {
         saw_centered |= idx == target_lines / 2;
     }
 
-    assert!(saw_centered, "expected disassembly window to recenter at least once");
+    assert!(
+        saw_centered,
+        "expected disassembly window to recenter at least once"
+    );
 }
 
 #[wasm_bindgen_test]
@@ -685,6 +688,95 @@ fn debugger_hexdump_set_base_jumps_to_specific_address() {
     let clamped_json = nes.debugger_snapshot_json();
     let clamped_base = parse_u16_field(&clamped_json, "prg_hexdump_base");
     assert_eq!(clamped_base, 0x8000);
+}
+
+#[wasm_bindgen_test]
+fn debugger_ppu_viewer_is_closed_by_default() {
+    let nes = WasmNes::new();
+    assert!(
+        !nes.debugger_is_ppu_viewer_open(),
+        "PPU viewer should be closed by default"
+    );
+}
+
+#[wasm_bindgen_test]
+fn debugger_ppu_viewer_toggle_opens_then_closes() {
+    let mut nes = WasmNes::new();
+    let rom = minimal_nrom_nop_at_8000();
+    nes.load_rom(&rom, "test.nes").expect("valid rom");
+    nes.debugger_open();
+
+    assert!(!nes.debugger_is_ppu_viewer_open());
+
+    nes.debugger_toggle_ppu_viewer();
+    assert!(
+        nes.debugger_is_ppu_viewer_open(),
+        "toggle should open the PPU viewer"
+    );
+
+    nes.debugger_toggle_ppu_viewer();
+    assert!(
+        !nes.debugger_is_ppu_viewer_open(),
+        "second toggle should close the PPU viewer"
+    );
+}
+
+#[wasm_bindgen_test]
+fn debugger_ppu_viewer_rgba_buffers_match_expected_dimensions() {
+    let mut nes = WasmNes::new();
+    let rom = minimal_nrom_nop_at_8000();
+    nes.load_rom(&rom, "test.nes").expect("valid rom");
+    nes.debugger_open();
+    nes.debugger_toggle_ppu_viewer();
+
+    let pattern_tables = nes.debugger_ppu_pattern_tables_rgba();
+    let nametables = nes.debugger_ppu_nametables_rgba();
+
+    assert_eq!(
+        pattern_tables.len(),
+        256 * 128 * 4,
+        "pattern table viewer buffer should be 256x128 RGBA"
+    );
+    assert_eq!(
+        nametables.len(),
+        512 * 480 * 4,
+        "nametable viewer buffer should be 512x480 RGBA"
+    );
+}
+
+#[wasm_bindgen_test]
+fn debugger_ppu_viewer_visibility_persists_across_close_and_reopen() {
+    let mut nes = WasmNes::new();
+    let rom = minimal_nrom_nop_at_8000();
+    nes.load_rom(&rom, "test.nes").expect("valid rom");
+
+    nes.debugger_open();
+    nes.debugger_toggle_ppu_viewer();
+    assert!(nes.debugger_is_ppu_viewer_open());
+
+    nes.debugger_continue();
+    assert!(!nes.is_debugger_open());
+
+    nes.debugger_open();
+    assert!(
+        nes.debugger_is_ppu_viewer_open(),
+        "PPU viewer visibility should persist when reopening debugger"
+    );
+}
+
+#[wasm_bindgen_test]
+fn debugger_ppu_scroll_json_exposes_scroll_coordinates() {
+    let mut nes = WasmNes::new();
+    let rom = minimal_nrom_nop_at_8000();
+    nes.load_rom(&rom, "test.nes").expect("valid rom");
+    nes.debugger_open();
+
+    let json = nes.debugger_ppu_scroll_json();
+    let scroll_x = parse_u16_field(&json, "scroll_x");
+    let scroll_y = parse_u16_field(&json, "scroll_y");
+
+    assert!(scroll_x < 512, "scroll_x should be within nametable width");
+    assert!(scroll_y < 480, "scroll_y should be within nametable height");
 }
 
 fn parse_u16_field(json: &str, field: &str) -> u16 {
