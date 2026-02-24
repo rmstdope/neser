@@ -1247,6 +1247,8 @@ function pauseResume() {
     }
 }
 
+let debuggerHexdumpError = "";
+
 function buildDisasmHtml(nes) {
     try {
         const disasmJson = nes.debugger_disasm_json();
@@ -1282,6 +1284,47 @@ function buildRegsHtml(snap) {
     }).join("\n");
 }
 
+function formatHexdumpLines(baseAddr, bytes) {
+    const lines = [];
+    const safeBytes = Array.isArray(bytes) ? bytes : [];
+    for (let row = 0; row < Math.ceil(safeBytes.length / 16); row++) {
+        const addr = (baseAddr + row * 16) & 0xFFFF;
+        const chunk = safeBytes.slice(row * 16, row * 16 + 16);
+        const hexParts = [];
+        for (let column = 0; column < 16; column++) {
+            const value = chunk[column];
+            hexParts.push(value === undefined ? "  " : value.toString(16).toUpperCase().padStart(2, "0"));
+        }
+        const ascii = chunk
+            .map((value) => (value >= 0x20 && value <= 0x7E ? String.fromCharCode(value) : "."))
+            .join("");
+        lines.push(`${addr.toString(16).toUpperCase().padStart(4, "0")}: ${hexParts.join(" ")} |${ascii}|`);
+    }
+    return lines;
+}
+
+function buildHexdumpHtml(snap) {
+    const base = Number.isInteger(snap.prg_hexdump_base) ? snap.prg_hexdump_base : 0;
+    const lines = formatHexdumpLines(base, snap.prg_hexdump_bytes);
+    const escLine = (line) => line.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const linesHtml = lines.map((line) => `<span>${escLine(line)}</span>`).join("\n");
+    const baseHex = base.toString(16).toUpperCase().padStart(4, "0");
+    const errorHtml = debuggerHexdumpError
+        ? `<span class="debugger-hexdump-error">${escLine(debuggerHexdumpError)}</span>`
+        : "";
+    return (
+        `<div class="debugger-hexdump-controls">` +
+        `<button class="dbg-btn" id="dbg-hexdump-prev">-16</button>` +
+        `<button class="dbg-btn" id="dbg-hexdump-next">+16</button>` +
+        `<input class="dbg-hexdump-input" id="dbg-hexdump-base" value="${baseHex}" />` +
+        `<button class="dbg-btn" id="dbg-hexdump-go">Go</button>` +
+        `</div>` +
+        `${errorHtml}` +
+        `<span class="debugger-hexdump-title">PRG-ROM hexdump @ ${baseHex}</span>` +
+        `<span class="debugger-hexdump-block">${linesHtml}</span>`
+    );
+}
+
 function updateDebuggerPanel() {
     if (!nes || !debuggerPanel) return;
     let snap;
@@ -1293,12 +1336,17 @@ function updateDebuggerPanel() {
 
     const disasmHtml = buildDisasmHtml(nes);
     const regsHtml = buildRegsHtml(snap);
+    const hexdumpHtml = buildHexdumpHtml(snap);
 
     debuggerPanel.innerHTML =
         `<div class="debugger-controls">` +
         `<button class="dbg-btn" id="dbg-step-over">Step over (F10)</button>` +
         `<button class="dbg-btn" id="dbg-step-into">Step into (F11)</button>` +
         `<button class="dbg-btn" id="dbg-continue">Continue (F5)</button>` +
+        `<button class="dbg-btn" id="dbg-run-next-frame">Run to next frame</button>` +
+        `<button class="dbg-btn" id="dbg-run-next-scanline">Run to next scanline</button>` +
+        `<button class="dbg-btn" id="dbg-run-to-nmi">Run to NMI</button>` +
+        `<button class="dbg-btn" id="dbg-run-to-irq">Run to IRQ</button>` +
         `</div>` +
         `<div class="debugger-body">` +
         `<div class="debugger-disasm">` +
@@ -1307,7 +1355,9 @@ function updateDebuggerPanel() {
         `</div>` +
         `<div class="debugger-regs">` +
         `<span class="debugger-regs-title">Registers</span>` +
-        `${regsHtml}` +
+        `<span class="debugger-regs-block">${regsHtml}</span>` +
+        `<span class="debugger-hexdump-divider"></span>` +
+        `${hexdumpHtml}` +
         `</div>` +
         `</div>`;
 
@@ -1322,6 +1372,19 @@ function wireDebuggerButtons() {
     wire("dbg-step-over", debuggerStepOver);
     wire("dbg-step-into", debuggerStepInto);
     wire("dbg-continue", debuggerClose);
+    wire("dbg-run-next-frame", debuggerRunToNextFrame);
+    wire("dbg-run-next-scanline", debuggerRunToNextScanline);
+    wire("dbg-run-to-nmi", debuggerRunToNmi);
+    wire("dbg-run-to-irq", debuggerRunToIrq);
+    wire("dbg-hexdump-prev", debuggerHexdumpPrev16);
+    wire("dbg-hexdump-next", debuggerHexdumpNext16);
+    wire("dbg-hexdump-go", debuggerHexdumpGoToAddress);
+    document.getElementById("dbg-hexdump-base")?.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+            e.preventDefault();
+            debuggerHexdumpGoToAddress();
+        }
+    });
 }
 
 function showDebuggerPanel() {
@@ -1370,6 +1433,73 @@ function debuggerStepOver() {
 function debuggerStepInto() {
     if (!nes || !running) return;
     nes.debugger_step_into();
+    showDebuggerPanel();
+}
+
+function debuggerRunToNextFrame() {
+    if (!nes || !running) return;
+    nes.debugger_run_to_next_frame();
+    showDebuggerPanel();
+}
+
+function debuggerRunToNextScanline() {
+    if (!nes || !running) return;
+    nes.debugger_run_to_next_scanline();
+    showDebuggerPanel();
+}
+
+function debuggerRunToNmi() {
+    if (!nes || !running) return;
+    nes.debugger_run_to_nmi();
+    showDebuggerPanel();
+}
+
+function debuggerRunToIrq() {
+    if (!nes || !running) return;
+    nes.debugger_run_to_irq();
+    showDebuggerPanel();
+}
+
+function debuggerHexdumpPrev16() {
+    if (!nes || !running) return;
+    debuggerHexdumpError = "";
+    nes.debugger_hexdump_prev_16();
+    showDebuggerPanel();
+}
+
+function debuggerHexdumpNext16() {
+    if (!nes || !running) return;
+    debuggerHexdumpError = "";
+    nes.debugger_hexdump_next_16();
+    showDebuggerPanel();
+}
+
+function parseHexdumpAddressInput(rawInput) {
+    const normalized = rawInput.trim().replace(/^0x/i, "");
+    if (!/^[0-9a-fA-F]+$/.test(normalized)) {
+        return { ok: false, error: "Invalid address" };
+    }
+    const parsed = Number.parseInt(normalized, 16);
+    if (!Number.isInteger(parsed) || parsed < 0x8000 || parsed > 0xFFFF) {
+        return { ok: false, error: "Address must be in 8000-FFFF" };
+    }
+    return { ok: true, value: parsed };
+}
+
+function debuggerHexdumpGoToAddress() {
+    if (!nes || !running) return;
+    const input = document.getElementById("dbg-hexdump-base");
+    if (!(input instanceof HTMLInputElement)) return;
+
+    const parsed = parseHexdumpAddressInput(input.value);
+    if (!parsed.ok) {
+        debuggerHexdumpError = parsed.error;
+        showDebuggerPanel();
+        return;
+    }
+
+    debuggerHexdumpError = "";
+    nes.debugger_hexdump_set_base(parsed.value);
     showDebuggerPanel();
 }
 
@@ -1829,7 +1959,19 @@ function applyKeyboardMapping(event, mapping, controller, targets, pressed) {
     applyJoypadButtonIfAllowed(nes, controller, mapping.button, pressed);
 }
 
+function isEditableKeyboardTarget(target) {
+    if (!(target instanceof HTMLElement)) {
+        return false;
+    }
+    const tag = target.tagName.toUpperCase();
+    return target.isContentEditable || tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+}
+
 async function handleKeyDown(event) {
+    if (isEditableKeyboardTarget(event.target)) {
+        return;
+    }
+
     if (!nes && event.code !== "KeyH") {
         return;
     }
@@ -1843,6 +1985,10 @@ async function handleKeyDown(event) {
         return;
     }
 
+    if (nes.is_debugger_open()) {
+        return;
+    }
+
     const key = event.key.toLowerCase();
     const targets = getKeyboardControllerTarget(connectedGamepads.length);
 
@@ -1851,7 +1997,15 @@ async function handleKeyDown(event) {
 }
 
 function handleKeyUp(event) {
+    if (isEditableKeyboardTarget(event.target)) {
+        return;
+    }
+
     if (!nes) {
+        return;
+    }
+
+    if (nes.is_debugger_open()) {
         return;
     }
 

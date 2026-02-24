@@ -174,12 +174,58 @@ canvas {
     overflow: hidden;
     display: flex;
     flex-direction: column;
+    gap: 4px;
 }
 
 .debugger-regs-title {
     color: #c8ffc8;
     border-bottom: 1px solid rgba(100, 200, 100, 0.25);
     margin-bottom: 2px;
+}
+
+.debugger-regs-block {
+    display: block;
+    overflow: hidden;
+}
+
+.debugger-hexdump-divider {
+    display: block;
+    border-top: 1px solid rgba(100, 200, 100, 0.25);
+    margin: 2px 0;
+}
+
+.debugger-hexdump-controls {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 2px;
+    align-items: center;
+}
+
+.dbg-hexdump-input {
+    width: 76px;
+    background: rgba(10, 11, 15, 0.96);
+    border: 1px solid rgba(100, 200, 100, 0.5);
+    color: #90ee90;
+    font-family: "Courier New", Courier, monospace;
+    font-size: 0.72rem;
+    padding: 2px 4px;
+    border-radius: 4px;
+}
+
+.debugger-hexdump-error {
+    color: #ff7d7d;
+    margin-bottom: 2px;
+}
+
+.debugger-hexdump-title {
+    color: #c8ffc8;
+    margin-bottom: 2px;
+}
+
+.debugger-hexdump-block {
+    display: block;
+    overflow: hidden;
+    color: #6ab06a;
 }
 
 .disasm-divider {

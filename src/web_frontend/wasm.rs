@@ -3,7 +3,6 @@ use crate::autorun::crc32;
 use crate::cartridge::Cartridge;
 use crate::console::{Config, Nes, SaveState, log_rom_timing_mode_selection};
 use crate::debugging::DebuggerViewState;
-use crate::debugging::snapshot as debugger_snapshot;
 use crate::frontend_toasts::{
     cartridge_load_toast_message, emulator_timing_toast_message,
     gamepad_init_toast_message as shared_gamepad_init_toast_message,
@@ -583,6 +582,34 @@ impl WasmNes {
         step_over_instruction(&mut self.nes);
     }
 
+    /// Run until the next frame boundary is crossed and keep the debugger open.
+    #[wasm_bindgen]
+    pub fn debugger_run_to_next_frame(&mut self) {
+        self.debugger_paused = true;
+        run_to_next_frame(&mut self.nes);
+    }
+
+    /// Run until the scanline changes and keep the debugger open.
+    #[wasm_bindgen]
+    pub fn debugger_run_to_next_scanline(&mut self) {
+        self.debugger_paused = true;
+        run_to_next_scanline(&mut self.nes);
+    }
+
+    /// Run until the next NMI handler entry and keep the debugger open.
+    #[wasm_bindgen]
+    pub fn debugger_run_to_nmi(&mut self) {
+        self.debugger_paused = true;
+        run_to_interrupt_entry(&mut self.nes, 0xFFFA, crate::cpu::InterruptKind::Nmi);
+    }
+
+    /// Run until the next IRQ handler entry and keep the debugger open.
+    #[wasm_bindgen]
+    pub fn debugger_run_to_irq(&mut self) {
+        self.debugger_paused = true;
+        run_to_interrupt_entry(&mut self.nes, 0xFFFE, crate::cpu::InterruptKind::Irq);
+    }
+
     /// Returns the current CPU program counter value (useful for testing step behaviour).
     #[wasm_bindgen]
     pub fn debugger_cpu_pc(&self) -> u16 {
@@ -595,9 +622,37 @@ impl WasmNes {
     /// `frame_count`, `interrupt` (null | "nmi" | "irq"),
     /// `nmi_vector`, `reset_vector`, `irq_vector`.
     #[wasm_bindgen]
-    pub fn debugger_snapshot_json(&self) -> String {
-        let snap = debugger_snapshot(&self.nes);
-        serialize_cpu_regs_snapshot(&snap)
+    pub fn debugger_snapshot_json(&mut self) -> String {
+        let snap = self.debugger_view_state.snapshot(&self.nes);
+        serialize_debugger_snapshot_json(&snap)
+    }
+
+    /// Move the PRG-ROM hexdump base 16 bytes backward.
+    #[wasm_bindgen]
+    pub fn debugger_hexdump_prev_16(&mut self) {
+        let visible_base = self
+            .debugger_view_state
+            .snapshot(&self.nes)
+            .prg_hexdump_base;
+        self.debugger_view_state
+            .nudge_prg_hexdump_base_by_bytes_from(visible_base, -16);
+    }
+
+    /// Move the PRG-ROM hexdump base 16 bytes forward.
+    #[wasm_bindgen]
+    pub fn debugger_hexdump_next_16(&mut self) {
+        let visible_base = self
+            .debugger_view_state
+            .snapshot(&self.nes)
+            .prg_hexdump_base;
+        self.debugger_view_state
+            .nudge_prg_hexdump_base_by_bytes_from(visible_base, 16);
+    }
+
+    /// Jump the PRG-ROM hexdump to a specific base address.
+    #[wasm_bindgen]
+    pub fn debugger_hexdump_set_base(&mut self, base: u16) {
+        self.debugger_view_state.set_prg_hexdump_base(base);
     }
 
     /// Returns a JSON array of disassembly lines around the current PC.
@@ -648,11 +703,12 @@ fn interrupt_to_json_str(interrupt: Option<crate::cpu::InterruptKind>) -> &'stat
 ///
 /// The snapshot is accepted (rather than the inner `cpu_regs` directly) because
 /// `CpuRegsSnapshot` is a private type.
-fn serialize_cpu_regs_snapshot(snap: &crate::debugging::DebuggerSnapshot) -> String {
+fn serialize_debugger_snapshot_json(snap: &crate::debugging::DebuggerSnapshot) -> String {
     let r = snap.cpu_regs;
     let interrupt = interrupt_to_json_str(r.interrupt);
+    let prg_hexdump_bytes = bytes_to_json_array(&snap.prg_hexdump_bytes);
     format!(
-        r#"{{"pc":{pc},"a":{a},"x":{x},"y":{y},"sp":{sp},"p":{p},"cycles":{cycles},"scanline":{scanline},"pixel":{pixel},"frame_count":{frame_count},"interrupt":{interrupt},"nmi_vector":{nmi_vector},"reset_vector":{reset_vector},"irq_vector":{irq_vector}}}"#,
+        r#"{{"pc":{pc},"a":{a},"x":{x},"y":{y},"sp":{sp},"p":{p},"cycles":{cycles},"scanline":{scanline},"pixel":{pixel},"frame_count":{frame_count},"interrupt":{interrupt},"nmi_vector":{nmi_vector},"reset_vector":{reset_vector},"irq_vector":{irq_vector},"prg_hexdump_base":{prg_hexdump_base},"prg_hexdump_bytes":{prg_hexdump_bytes}}}"#,
         pc = r.pc,
         a = r.a,
         x = r.x,
@@ -667,6 +723,8 @@ fn serialize_cpu_regs_snapshot(snap: &crate::debugging::DebuggerSnapshot) -> Str
         nmi_vector = r.nmi_vector,
         reset_vector = r.reset_vector,
         irq_vector = r.irq_vector,
+        prg_hexdump_base = snap.prg_hexdump_base,
+        prg_hexdump_bytes = prg_hexdump_bytes,
     )
 }
 
@@ -720,5 +778,91 @@ fn step_over_instruction(nes: &mut Nes) {
         }
     } else {
         nes.run_cpu_tick();
+    }
+}
+
+fn run_to_next_frame(nes: &mut Nes) {
+    const MAX_STEPS: usize = 2_000_000;
+
+    let mut previous_scanline = {
+        let ppu = nes.ppu.borrow();
+        ppu.scanline()
+    };
+
+    for _step in 0..MAX_STEPS {
+        if nes.cpu.is_halted() {
+            break;
+        }
+
+        nes.run_cpu_tick();
+
+        let scanline = {
+            let ppu = nes.ppu.borrow();
+            ppu.scanline()
+        };
+
+        if scanline < previous_scanline {
+            break;
+        }
+
+        previous_scanline = scanline;
+    }
+}
+
+fn run_to_next_scanline(nes: &mut Nes) {
+    const MAX_STEPS: usize = 100_000;
+
+    let start_scanline = {
+        let ppu = nes.ppu.borrow();
+        ppu.scanline()
+    };
+
+    for _step in 0..MAX_STEPS {
+        if nes.cpu.is_halted() {
+            break;
+        }
+
+        nes.run_cpu_tick();
+
+        let scanline = {
+            let ppu = nes.ppu.borrow();
+            ppu.scanline()
+        };
+
+        if scanline != start_scanline {
+            break;
+        }
+    }
+}
+
+fn read_vector_target(nes: &Nes, vector_addr: u16) -> u16 {
+    let memory = nes.bus.borrow();
+    let lo = memory.read_cpu_for_debugger(vector_addr);
+    let hi = memory.read_cpu_for_debugger(vector_addr.wrapping_add(1));
+    u16::from_le_bytes([lo, hi])
+}
+
+fn run_to_interrupt_entry(nes: &mut Nes, vector_addr: u16, kind: crate::cpu::InterruptKind) {
+    const MAX_STEPS: usize = 2_000_000;
+
+    let target_pc = read_vector_target(nes, vector_addr);
+    let mut has_exited_required_interrupt = nes.cpu.current_interrupt() != Some(kind);
+
+    for _step in 0..MAX_STEPS {
+        if nes.cpu.is_halted() {
+            break;
+        }
+
+        nes.run_cpu_tick();
+
+        let current_interrupt = nes.cpu.current_interrupt();
+        if current_interrupt != Some(kind) {
+            has_exited_required_interrupt = true;
+            continue;
+        }
+
+        if has_exited_required_interrupt && nes.cpu.pc() == target_pc {
+            break;
+        }
     }
 }
