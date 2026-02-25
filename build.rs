@@ -113,7 +113,9 @@ fn remove_trailing_metadata_groups(input: &str) -> String {
         if trimmed.ends_with(')') {
             if let Some(start) = trimmed.rfind('(')
                 && trimmed[start..].find(')').is_some()
-                && trimmed[start + 1..trimmed.len() - 1].chars().all(|c| c != '(')
+                && trimmed[start + 1..trimmed.len() - 1]
+                    .chars()
+                    .all(|c| c != '(')
             {
                 result = trimmed[..start].trim_end().to_string();
                 continue;
@@ -122,7 +124,9 @@ fn remove_trailing_metadata_groups(input: &str) -> String {
         if trimmed.ends_with(']') {
             if let Some(start) = trimmed.rfind('[')
                 && trimmed[start..].find(']').is_some()
-                && trimmed[start + 1..trimmed.len() - 1].chars().all(|c| c != '[')
+                && trimmed[start + 1..trimmed.len() - 1]
+                    .chars()
+                    .all(|c| c != '[')
             {
                 result = trimmed[..start].trim_end().to_string();
                 continue;
