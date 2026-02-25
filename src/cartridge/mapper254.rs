@@ -6,6 +6,7 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
+use crate::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
 use crate::cartridge::mmc3::MMC3Mapper;
 use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
@@ -19,26 +20,28 @@ use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 /// - Copy protection via PRG-RAM read XOR scheme
 ///
 /// Protection mechanism:
-/// - Write to $6000-$7FFF: Activates protection flag
-/// - Write to $8000-$9FFF (even): Clears protection flag (standard bank select)
-/// - Read from $6000-$7FFF when protected: Returns 0 XOR LUT[addr & 3]
-///   instead of actual PRG-RAM contents
-/// - LUT: [0x00, 0xFF, 0x55, 0xAA]
+/// - On power-on, protection is active
+/// - Write to any address where (addr & $E001) == $8000: Clears protection
+/// - Write to any address where (addr & $E001) == $A001: Updates XOR mask byte
+/// - Read from $6000-$7FFF while protected: Returns PRG-RAM[addr] XOR mask
 ///
-/// Once protection is cleared (by writing to $8000), PRG-RAM reads normally.
+/// Once protection is cleared, PRG-RAM reads normally.
 pub struct Mapper254 {
     mmc3: MMC3Mapper,
-    protection_active: bool,
+    prg_ram: PrgRam,
+    protection_disabled: bool,
+    xor_mask: u8,
 }
 
 impl Mapper254 {
     const MAPPER_NUMBER: u8 = 254;
-    const PROTECTION_LUT: [u8; 4] = [0x00, 0xFF, 0x55, 0xAA];
 
     pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
         Self {
             mmc3: MMC3Mapper::new(prg_rom, chr_rom, mirroring),
-            protection_active: false,
+            prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
+            protection_disabled: false,
+            xor_mask: 0,
         }
     }
 }
@@ -47,11 +50,11 @@ impl Mapper for Mapper254 {
     fn read_prg(&self, addr: u16) -> u8 {
         match addr {
             0x6000..=0x7FFF => {
-                if self.protection_active {
-                    // Return XOR'd value from LUT
-                    Self::PROTECTION_LUT[(addr & 3) as usize]
+                let value = self.prg_ram.try_read(addr).unwrap_or(0);
+                if self.protection_disabled {
+                    value
                 } else {
-                    self.mmc3.read_prg(addr)
+                    value ^ self.xor_mask
                 }
             }
             _ => self.mmc3.read_prg(addr),
@@ -60,33 +63,30 @@ impl Mapper for Mapper254 {
 
     fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
         match addr {
-            0x6000..=0x7FFF => {
-                if self.protection_active {
-                    Self::PROTECTION_LUT[(addr & 3) as usize]
-                } else {
-                    self.mmc3.read_prg_open_bus(addr, open_bus)
-                }
-            }
+            0x6000..=0x7FFF => self.read_prg(addr),
             _ => self.mmc3.read_prg_open_bus(addr, open_bus),
         }
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
-        match addr {
-            0x6000..=0x7FFF => {
-                // Any write to PRG-RAM area activates protection
-                self.protection_active = true;
-                // Still forward the write to MMC3 for PRG-RAM storage
-                self.mmc3.write_prg(addr, value);
+        if self.prg_ram.try_write(addr, value) {
+            return;
+        }
+
+        if addr >= 0x8000 {
+            match addr & 0xE001 {
+                0x8000 => {
+                    self.protection_disabled = true;
+                }
+                0xA001 => {
+                    self.xor_mask = value;
+                }
+                _ => {}
             }
-            0x8000..=0x9FFF if (addr & 1) == 0 => {
-                // Even address in $8000-$9FFF (bank select) clears protection
-                self.protection_active = false;
-                self.mmc3.write_prg(addr, value);
-            }
-            _ => {
-                self.mmc3.write_prg(addr, value);
-            }
+        }
+
+        if addr >= 0x8000 {
+            self.mmc3.write_prg(addr, value);
         }
     }
 
@@ -107,15 +107,15 @@ impl Mapper for Mapper254 {
     }
 
     fn wram_size(&self) -> usize {
-        self.mmc3.wram_size()
+        self.prg_ram.size()
     }
 
     fn wram_snapshot(&self) -> Vec<u8> {
-        self.mmc3.wram_snapshot()
+        self.prg_ram.snapshot()
     }
 
     fn load_wram_snapshot(&mut self, data: &[u8]) {
-        self.mmc3.load_wram_snapshot(data);
+        self.prg_ram.load_snapshot(data);
     }
 
     fn ppu_address_changed(&mut self, addr: u16) {
@@ -140,22 +140,31 @@ impl Mapper for Mapper254 {
 
     fn registers_snapshot(&self) -> Vec<u8> {
         let mut snap = self.mmc3.registers_snapshot();
-        snap.push(self.protection_active as u8);
+        snap.push(self.protection_disabled as u8);
+        snap.push(self.xor_mask);
         snap
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        // MMC3 snapshot is 16 bytes, our extra byte is at index 16
-        if data.len() > 16 {
+        // MMC3 snapshot is 16 bytes.
+        // New mapper254 data appends 2 bytes: [protection_disabled, xor_mask]
+        // Legacy mapper254 data appended 1 byte: [protection_active]
+        if data.len() >= 18 {
             self.mmc3.restore_registers(&data[..16]);
-            self.protection_active = data[16] != 0;
+            self.protection_disabled = data[16] != 0;
+            self.xor_mask = data[17];
+        } else if data.len() >= 17 {
+            self.mmc3.restore_registers(&data[..16]);
+            let legacy_protection_active = data[16] != 0;
+            self.protection_disabled = !legacy_protection_active;
+            self.xor_mask = 0;
         } else {
             self.mmc3.restore_registers(data);
         }
     }
 
     fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        self.mmc3.initialize_ram(mode);
+        self.prg_ram.initialize(mode);
     }
 
     fn capabilities(&self) -> MapperCapabilities {
@@ -197,10 +206,10 @@ mod tests {
         let chr_rom = banked_data(1024, 8);
         let mut mapper = create_mapper254(prg_rom, chr_rom, NametableLayout::Vertical).unwrap();
 
-        // Write to PRG-RAM, which activates protection
+        // Protection is active by default but xor_mask starts at 0
         mapper.write_prg(0x6000, 0xAB);
 
-        // Clear protection by writing to $8000 (even)
+        // Clear protection by writing to a mirrored $8000 address
         mapper.write_prg(0x8000, 0);
 
         // Now PRG-RAM should be readable normally
@@ -208,19 +217,18 @@ mod tests {
     }
 
     #[test]
-    fn test_protection_activates_on_prg_ram_write() {
+    fn test_protection_uses_xor_mask_from_a001() {
         let prg_rom = banked_data(8 * 1024, 4);
         let chr_rom = banked_data(1024, 8);
         let mut mapper = create_mapper254(prg_rom, chr_rom, NametableLayout::Vertical).unwrap();
 
-        // Write to PRG-RAM → activates protection
+        // Write data and set XOR mask via mirrored $A001 address
         mapper.write_prg(0x6000, 0xAB);
+        mapper.write_prg(0xA003, 0xFF);
 
-        // Read should return LUT value, not actual data
-        assert_eq!(mapper.read_prg(0x6000), 0x00); // LUT[0] = 0x00
-        assert_eq!(mapper.read_prg(0x6001), 0xFF); // LUT[1] = 0xFF
-        assert_eq!(mapper.read_prg(0x6002), 0x55); // LUT[2] = 0x55
-        assert_eq!(mapper.read_prg(0x6003), 0xAA); // LUT[3] = 0xAA
+        // Protected reads return PRG-RAM XOR mask
+        assert_eq!(mapper.read_prg(0x6000), 0xAB ^ 0xFF);
+        assert_eq!(mapper.read_prg(0x6001), 0x00 ^ 0xFF);
     }
 
     #[test]
@@ -229,13 +237,14 @@ mod tests {
         let chr_rom = banked_data(1024, 8);
         let mut mapper = create_mapper254(prg_rom, chr_rom, NametableLayout::Vertical).unwrap();
 
-        // Activate protection
+        // Security active by default
         mapper.write_prg(0x6000, 0x42);
+        mapper.write_prg(0xBFFF, 0x55);
 
-        // Verify protection is active
-        assert_eq!(mapper.read_prg(0x6000), 0x00); // LUT value
+        // Verify protection is active (PRG-RAM XOR mask)
+        assert_eq!(mapper.read_prg(0x6000), 0x42 ^ 0x55);
 
-        // Clear by writing to $8000 (even = bank select)
+        // Clear by writing to exact $8000
         mapper.write_prg(0x8000, 0);
 
         // Now should read actual PRG-RAM
@@ -243,31 +252,47 @@ mod tests {
     }
 
     #[test]
-    fn test_protection_lut_wraps_at_4() {
+    fn test_a001_mirrors_update_xor_mask() {
         let prg_rom = banked_data(8 * 1024, 4);
         let chr_rom = banked_data(1024, 8);
         let mut mapper = create_mapper254(prg_rom, chr_rom, NametableLayout::Vertical).unwrap();
 
-        mapper.write_prg(0x6000, 0); // Activate protection
+        mapper.write_prg(0x6000, 0x22);
+        mapper.write_prg(0xA001, 0x55);
+        assert_eq!(mapper.read_prg(0x6000), 0x22 ^ 0x55);
 
-        // LUT wraps: $6004 & 3 = 0, $6005 & 3 = 1, etc.
-        assert_eq!(mapper.read_prg(0x6004), 0x00);
-        assert_eq!(mapper.read_prg(0x6005), 0xFF);
+        mapper.write_prg(0xB001, 0xAA);
+        assert_eq!(mapper.read_prg(0x6000), 0x22 ^ 0xAA);
     }
 
     #[test]
-    fn test_odd_address_does_not_clear_protection() {
+    fn test_wram_ignores_mmc3_prg_ram_disable() {
         let prg_rom = banked_data(8 * 1024, 4);
         let chr_rom = banked_data(1024, 8);
         let mut mapper = create_mapper254(prg_rom, chr_rom, NametableLayout::Vertical).unwrap();
 
-        mapper.write_prg(0x6000, 0x42); // Activate protection
+        mapper.write_prg(0x6000, 0x42);
 
-        // Write to $8001 (odd) should NOT clear protection
-        mapper.write_prg(0x8001, 0);
+        // MMC3 PRG-RAM disable bit pattern at $A001 should not disable mapper254 WRAM reads.
+        mapper.write_prg(0xA001, 0x00);
 
-        // Protection should still be active
-        assert_eq!(mapper.read_prg(0x6000), 0x00); // LUT value
+        // Security still active with xor_mask=0, so WRAM is readable.
+        assert_eq!(mapper.read_prg(0x6000), 0x42);
+    }
+
+    #[test]
+    fn test_8002_clears_protection() {
+        let prg_rom = banked_data(8 * 1024, 4);
+        let chr_rom = banked_data(1024, 8);
+        let mut mapper = create_mapper254(prg_rom, chr_rom, NametableLayout::Vertical).unwrap();
+
+        mapper.write_prg(0x6000, 0x42);
+        mapper.write_prg(0xA001, 0x55);
+
+        // $8002 mirrors $8000 in MMC3 decode and must clear protection.
+        mapper.write_prg(0x8002, 0x00);
+
+        assert_eq!(mapper.read_prg(0x6000), 0x42);
     }
 
     #[test]
@@ -290,15 +315,16 @@ mod tests {
         let mut mapper =
             create_mapper254(prg_rom.clone(), chr_rom.clone(), NametableLayout::Vertical).unwrap();
 
-        // Activate protection
+        // Set security state + xor mask
         mapper.write_prg(0x6000, 0x42);
+        mapper.write_prg(0xA001, 0x55);
 
         let regs = mapper.registers_snapshot();
 
         let mut restored = create_mapper254(prg_rom, chr_rom, NametableLayout::Vertical).unwrap();
         restored.restore_registers(&regs);
 
-        // Protection should be restored
-        assert_eq!(restored.read_prg(0x6000), 0x00); // LUT value (protection active)
+        // Security state + xor mask should be restored.
+        assert_eq!(restored.read_prg(0x6001), 0x00 ^ 0x55);
     }
 }
