@@ -7,38 +7,11 @@ mod tests {
     use crate::cartridge::{Cartridge, TimingMode as CartridgeTimingMode};
     use crate::console::{Config, Nes, RamInitMode, TimingMode};
 
-    const MAPPER_AUTORUN_ROOT: &str = "roms/games/mappers";
-
     fn deterministic_config() -> Config {
         Config {
             ram_init_mode: RamInitMode::Zero,
             ..Default::default()
         }
-    }
-
-    fn collect_autorun_files_recursive(dir: &Path) -> Result<Vec<PathBuf>, String> {
-        let mut autorun_files = Vec::new();
-
-        for entry in std::fs::read_dir(dir)
-            .map_err(|e| format!("Failed to read directory {}: {e}", dir.display()))?
-        {
-            let entry = entry
-                .map_err(|e| format!("Failed to read directory entry in {}: {e}", dir.display()))?;
-            let path = entry.path();
-
-            if path.is_dir() {
-                autorun_files.extend(collect_autorun_files_recursive(&path)?);
-            } else if path
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("autorun"))
-            {
-                autorun_files.push(path);
-            }
-        }
-
-        autorun_files.sort();
-        Ok(autorun_files)
     }
 
     fn timing_mode_for_cartridge(timing_mode: CartridgeTimingMode) -> TimingMode {
@@ -133,56 +106,5 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_mapper_autoruns_verify_all_checkpoints_and_final_crc() {
-        let root = Path::new(MAPPER_AUTORUN_ROOT);
-
-        if !root.exists() {
-            println!(
-                "[autorun verification] Skipping - mapper autorun root does not exist: {}",
-                root.display()
-            );
-            return;
-        }
-
-        let autorun_files =
-            collect_autorun_files_recursive(root).expect("collect mapper autorun files");
-
-        if autorun_files.is_empty() {
-            println!(
-                "[autorun verification] Skipping - no .autorun files found under {}",
-                root.display()
-            );
-            return;
-        }
-
-        let total = autorun_files.len();
-        let mut failures = Vec::new();
-
-        for (index, autorun_path) in autorun_files.into_iter().enumerate() {
-            match verify_single_autorun(&autorun_path) {
-                Ok(()) => println!(
-                    "[autorun verification] ({}/{}) PASS - {}",
-                    index + 1,
-                    total,
-                    autorun_path.display()
-                ),
-                Err(error) => {
-                    println!(
-                        "[autorun verification] ({}/{}) FAIL - {}",
-                        index + 1,
-                        total,
-                        autorun_path.display()
-                    );
-                    failures.push(error);
-                }
-            }
-        }
-
-        assert!(
-            failures.is_empty(),
-            "autorun verification failures:\n{}",
-            failures.join("\n")
-        );
-    }
+    include!(concat!(env!("OUT_DIR"), "/autorun_generated_tests.rs"));
 }

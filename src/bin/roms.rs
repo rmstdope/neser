@@ -2,7 +2,7 @@
 // in `src/cartridge/ines.rs`. The local copies were removed to avoid
 // dead-code warnings.
 
-use neser::cartridge::{ConsoleType, NametableLayout, TimingMode};
+use neser::cartridge::{ConsoleType, NametableLayout, RomDb, RomDbEntry, TimingMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Rom {
@@ -25,10 +25,15 @@ struct Rom {
     misc_roms: u8,
     default_expansion_device: u8,
     rom_crc32: Option<u32>,
+    actual_file_size_bytes: usize,
+    expected_file_size_bytes: usize,
+    file_length_matches_header: bool,
+    header_prg_rom_size_bytes: usize,
+    header_chr_rom_size_bytes: usize,
+    used_db_size_override: bool,
 }
 
 fn parse_rom_header(header: &[u8; 16]) -> Option<Rom> {
-    // Delegate parsing to centralized parser and convert to local `Rom` struct.
     let parsed = neser::cartridge::parse_header(header)?;
 
     Some(Rom {
@@ -51,7 +56,35 @@ fn parse_rom_header(header: &[u8; 16]) -> Option<Rom> {
         misc_roms: parsed.misc_roms,
         default_expansion_device: parsed.default_expansion_device,
         rom_crc32: None,
+        actual_file_size_bytes: 0,
+        expected_file_size_bytes: 0,
+        file_length_matches_header: true,
+        header_prg_rom_size_bytes: parsed.prg_rom_size_bytes,
+        header_chr_rom_size_bytes: parsed.chr_rom_size_bytes,
+        used_db_size_override: false,
     })
+}
+
+fn apply_db_size_overrides(info: &mut Rom, db_entry: &RomDbEntry) {
+    let mut overridden = info.used_db_size_override;
+
+    if let Some(prg_size) = db_entry.prg_rom_size {
+        let prg_size = prg_size as usize;
+        if prg_size != info.prg_rom_size_bytes {
+            overridden = true;
+        }
+        info.prg_rom_size_bytes = prg_size;
+    }
+
+    if let Some(chr_size) = db_entry.chr_rom_size {
+        let chr_size = chr_size as usize;
+        if chr_size != info.chr_rom_size_bytes {
+            overridden = true;
+        }
+        info.chr_rom_size_bytes = chr_size;
+    }
+
+    info.used_db_size_override = overridden;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,7 +112,7 @@ fn parse_command(args: &[String]) -> Result<Command, String> {
     }
 }
 
-fn read_rom_from_file(path: &std::path::Path) -> Result<Rom, String> {
+fn read_rom_from_file(path: &std::path::Path, rom_db: Option<&RomDb>) -> Result<Rom, String> {
     let data = std::fs::read(path).map_err(|err| err.to_string())?;
     if data.len() < 16 {
         return Err("File too small for iNES header".to_string());
@@ -91,13 +124,55 @@ fn read_rom_from_file(path: &std::path::Path) -> Result<Rom, String> {
     let mut info = parse_rom_header(&header).ok_or_else(|| "Invalid iNES header".to_string())?;
 
     let trainer_offset = if info.has_trainer { 512 } else { 0 };
+    let header_prg_rom_start = 16 + trainer_offset;
+    let header_prg_rom_end = header_prg_rom_start + info.prg_rom_size_bytes;
+    let header_chr_rom_start = header_prg_rom_end;
+    let header_chr_rom_end = header_chr_rom_start + info.chr_rom_size_bytes;
+
+    let payload_start = header_prg_rom_start;
+    let payload = if payload_start <= data.len() {
+        &data[payload_start..]
+    } else {
+        &[]
+    };
+    let fallback_crc32 = neser::cartridge::calculate_rom_crc32(payload, &[]);
+
+    if let Some(rom_db) = rom_db
+        && let Some(db_entry) = rom_db.get_by_crc(fallback_crc32)
+    {
+        apply_db_size_overrides(&mut info, db_entry);
+    }
+
+    if data.len() >= header_chr_rom_end {
+        let header_prg_rom = &data[header_prg_rom_start..header_prg_rom_end];
+        let header_chr_rom = &data[header_chr_rom_start..header_chr_rom_end];
+        let crc32 = neser::cartridge::calculate_rom_crc32(header_prg_rom, header_chr_rom);
+        info.rom_crc32 = Some(crc32);
+
+        if let Some(rom_db) = rom_db
+            && let Some(db_entry) = rom_db.get_by_crc(crc32)
+        {
+            apply_db_size_overrides(&mut info, db_entry);
+        }
+    } else {
+        info.rom_crc32 = Some(fallback_crc32);
+    }
+
     let prg_rom_start = 16 + trainer_offset;
     let prg_rom_end = prg_rom_start + info.prg_rom_size_bytes;
     let chr_rom_start = prg_rom_end;
     let chr_rom_end = chr_rom_start + info.chr_rom_size_bytes;
 
+    info.actual_file_size_bytes = data.len();
+    info.expected_file_size_bytes = chr_rom_end;
+    info.file_length_matches_header = data.len() == chr_rom_end;
+
     if data.len() < chr_rom_end {
-        return Err("File too small for PRG/CHR ROM data".to_string());
+        return Err(format!(
+            "!!! WARNING: FILE LENGTH DOES NOT MATCH DB/HEADER DECLARATION !!! actual={} expected={} (file too small for PRG/CHR ROM data)",
+            data.len(),
+            chr_rom_end
+        ));
     }
 
     let prg_rom = &data[prg_rom_start..prg_rom_end];
@@ -182,6 +257,30 @@ fn print_rom_info(path: &std::path::Path, info: Rom) {
             "no"
         }
     );
+
+    if info.used_db_size_override {
+        println!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+        println!("!!! WARNING: HEADER PRG/CHR SIZE DOES NOT MATCH ROM DB ENTRY !!!");
+        println!(
+            "!!! Header PRG/CHR: {}/{} bytes | DB PRG/CHR: {}/{} bytes !!!",
+            info.header_prg_rom_size_bytes,
+            info.header_chr_rom_size_bytes,
+            info.prg_rom_size_bytes,
+            info.chr_rom_size_bytes
+        );
+        println!("!!! Using ROM DB sizes for validation and display.             !!!");
+        println!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+    }
+
+    if !info.file_length_matches_header {
+        println!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+        println!("!!! WARNING: FILE LENGTH DOES NOT MATCH HEADER DECLARATION !!!");
+        println!(
+            "!!! Actual size: {} bytes | Expected from DB/header: {} bytes !!!",
+            info.actual_file_size_bytes, info.expected_file_size_bytes
+        );
+        println!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+    }
 }
 
 fn collect_roms(root: &std::path::Path) -> Result<Vec<std::path::PathBuf>, std::io::Error> {
@@ -222,7 +321,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             roms.sort();
 
             for rom in roms {
-                match read_rom_from_file(&rom) {
+                match read_rom_from_file(&rom, None) {
                     Ok(info) => {
                         let display_path = rom.strip_prefix(root).unwrap_or(&rom);
                         println!(
@@ -240,11 +339,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Command::Info(path) => {
-            let info =
-                read_rom_from_file(&path).map_err(|err| format!("{}: {err}", path.display()))?;
+            let rom_db = RomDb::new()?;
+            let info = read_rom_from_file(&path, Some(&rom_db))
+                .map_err(|err| format!("{}: {err}", path.display()))?;
             print_rom_info(&path, info);
         }
         Command::InfoAll => {
+            let rom_db = RomDb::new()?;
             let root = std::path::Path::new("roms/games");
             let mut roms = collect_roms(root)?;
             roms.sort();
@@ -256,7 +357,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 first = false;
 
-                match read_rom_from_file(&rom) {
+                match read_rom_from_file(&rom, Some(&rom_db)) {
                     Ok(info) => print_rom_info(&rom, info),
                     Err(err) => eprintln!("{}: {err}", rom.display()),
                 }
@@ -295,7 +396,6 @@ mod tests {
     fn test_parse_command_list() {
         let args = vec!["list".to_string()];
         let command = parse_command(&args).expect("parse command");
-
         assert!(matches!(command, Command::List));
     }
 
@@ -303,7 +403,6 @@ mod tests {
     fn test_parse_command_info_without_path_lists_all() {
         let args = vec!["info".to_string()];
         let command = parse_command(&args).expect("parse command");
-
         assert!(matches!(command, Command::InfoAll));
     }
 
@@ -312,7 +411,6 @@ mod tests {
         let missing_path = PathBuf::from("roms/does-not-exist/missing.nes");
         let args = vec!["info".to_string(), missing_path.display().to_string()];
         let err = parse_command(&args).expect_err("should fail with missing file");
-
         assert!(err.to_lowercase().contains("file"));
     }
 
@@ -320,11 +418,11 @@ mod tests {
     fn test_parse_ines_header_extracts_fields() {
         let mut header = [0u8; 16];
         header[0..4].copy_from_slice(b"NES\x1A");
-        header[4] = 2; // 2 * 16KB PRG ROM
-        header[5] = 1; // 1 * 8KB CHR ROM
-        header[6] = 0b0000_0011; // vertical mirroring + battery
-        header[7] = 0b0101_0000; // mapper upper nibble = 0x5
-        header[8] = 2; // 16KB PRG RAM (2 * 8KB)
+        header[4] = 2;
+        header[5] = 1;
+        header[6] = 0b0000_0011;
+        header[7] = 0b0101_0000;
+        header[8] = 2;
 
         let info = parse_rom_header(&header).expect("parse header");
 
@@ -341,14 +439,13 @@ mod tests {
     fn test_parse_ines_header_defaults_prg_ram_to_8kb() {
         let mut header = [0u8; 16];
         header[0..4].copy_from_slice(b"NES\x1A");
-        header[4] = 1; // 1 * 16KB PRG ROM
-        header[5] = 1; // 1 * 8KB CHR ROM
-        header[6] = 0b0000_0000; // horizontal mirroring
-        header[7] = 0b0000_0000; // mapper 0
-        header[8] = 0; // iNES 1.0 default PRG-RAM size
+        header[4] = 1;
+        header[5] = 1;
+        header[6] = 0b0000_0000;
+        header[7] = 0b0000_0000;
+        header[8] = 0;
 
         let info = parse_rom_header(&header).expect("parse header");
-
         assert_eq!(info.prg_ram_size_bytes, Some(8 * 1024));
     }
 
@@ -358,16 +455,16 @@ mod tests {
         header[0..4].copy_from_slice(b"NES\x1A");
         header[4] = 0x02;
         header[5] = 0x03;
-        header[6] = 0b0010_0011; // mapper low nibble=2, vertical mirroring + battery
-        header[7] = 0b1010_1001; // mapper high nibble=0xA, NES2.0 id, VS System
-        header[8] = 0b0011_0100; // submapper=3, mapper MSB=4
-        header[9] = 0b0010_0001; // chr msb=2, prg msb=1
-        header[10] = 0b1000_0111; // PRG-NVRAM=8, PRG-RAM=7
-        header[11] = 0b0110_0101; // CHR-NVRAM=6, CHR-RAM=5
-        header[12] = 0x03; // Dendy
-        header[13] = 0b1011_0111; // VS hardware=0xB, VS PPU=0x7
-        header[14] = 0x02; // misc ROMs
-        header[15] = 0x1A; // default expansion device
+        header[6] = 0b0010_0011;
+        header[7] = 0b1010_1001;
+        header[8] = 0b0011_0100;
+        header[9] = 0b0010_0001;
+        header[10] = 0b1000_0111;
+        header[11] = 0b0110_0101;
+        header[12] = 0x03;
+        header[13] = 0b1011_0111;
+        header[14] = 0x02;
+        header[15] = 0x1A;
 
         let info = parse_rom_header(&header).expect("parse header");
 
@@ -394,11 +491,10 @@ mod tests {
     fn test_parse_rom_header_extended_console_type() {
         let mut header = [0u8; 16];
         header[0..4].copy_from_slice(b"NES\x1A");
-        header[7] = 0b0000_1011; // NES2.0 id, extended console type
-        header[13] = 0x09; // extended console type id
+        header[7] = 0b0000_1011;
+        header[13] = 0x09;
 
         let info = parse_rom_header(&header).expect("parse header");
-
         assert_eq!(info.console_type, ConsoleType::Extended(0x09));
     }
 
@@ -406,8 +502,8 @@ mod tests {
     fn test_read_rom_from_file_sets_crc32() {
         let mut header = [0u8; 16];
         header[0..4].copy_from_slice(b"NES\x1A");
-        header[4] = 1; // 1 * 16KB PRG ROM
-        header[5] = 1; // 1 * 8KB CHR ROM
+        header[4] = 1;
+        header[5] = 1;
 
         let prg_rom = vec![0xAA; 16 * 1024];
         let chr_rom = vec![0xBB; 8 * 1024];
@@ -425,9 +521,116 @@ mod tests {
         path.push(format!("neser-rom-crc-{nonce}.nes"));
 
         std::fs::write(&path, &rom_bytes).expect("write temp rom");
-        let info = read_rom_from_file(&path).expect("read temp rom");
+        let info = read_rom_from_file(&path, None).expect("read temp rom");
         let _ = std::fs::remove_file(&path);
 
         assert_eq!(info.rom_crc32, Some(expected_crc));
+        assert_eq!(info.actual_file_size_bytes, rom_bytes.len());
+        assert_eq!(
+            info.expected_file_size_bytes,
+            16 + info.prg_rom_size_bytes + info.chr_rom_size_bytes
+        );
+        assert!(info.file_length_matches_header);
+        assert!(!info.used_db_size_override);
+    }
+
+    #[test]
+    fn test_read_rom_from_file_detects_trailing_bytes_length_mismatch() {
+        let mut header = [0u8; 16];
+        header[0..4].copy_from_slice(b"NES\x1A");
+        header[4] = 1;
+        header[5] = 1;
+
+        let prg_rom = vec![0xAA; 16 * 1024];
+        let chr_rom = vec![0xBB; 8 * 1024];
+        let trailer = vec![0xCC; 128];
+
+        let mut rom_bytes = header.to_vec();
+        rom_bytes.extend_from_slice(&prg_rom);
+        rom_bytes.extend_from_slice(&chr_rom);
+        rom_bytes.extend_from_slice(&trailer);
+
+        let mut path = std::env::temp_dir();
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        path.push(format!("neser-rom-len-{nonce}.nes"));
+
+        std::fs::write(&path, &rom_bytes).expect("write temp rom");
+        let info = read_rom_from_file(&path, None).expect("read temp rom");
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(info.actual_file_size_bytes, rom_bytes.len());
+        assert_eq!(
+            info.expected_file_size_bytes,
+            16 + info.prg_rom_size_bytes + info.chr_rom_size_bytes
+        );
+        assert!(!info.file_length_matches_header);
+    }
+
+    #[test]
+    fn test_read_rom_from_file_uses_db_sizes_when_mismatching_header() {
+        let mut header = [0u8; 16];
+        header[0..4].copy_from_slice(b"NES\x1A");
+        header[4] = 1;
+        header[5] = 1;
+
+        let prg_rom = vec![0xAA; 16 * 1024];
+        let chr_rom = vec![0xBB; 8 * 1024];
+        let expected_crc = neser::cartridge::calculate_rom_crc32(&prg_rom, &chr_rom);
+
+        let mut rom_bytes = header.to_vec();
+        rom_bytes.extend_from_slice(&prg_rom);
+        rom_bytes.extend_from_slice(&chr_rom);
+
+        let mut rom_path = std::env::temp_dir();
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        rom_path.push(format!("neser-rom-db-override-{nonce}.nes"));
+        std::fs::write(&rom_path, &rom_bytes).expect("write temp rom");
+
+        let mut csv_path = std::env::temp_dir();
+        csv_path.push(format!("neser-rom-db-override-{nonce}.csv"));
+        let columns = vec![
+            "1".to_string(),
+            "Test".to_string(),
+            "".to_string(),
+            format!("{expected_crc:08X}"),
+            "".to_string(),
+            "".to_string(),
+            "Licensed Test".to_string(),
+            "4".to_string(),
+            "".to_string(),
+            "H".to_string(),
+            "16384".to_string(),
+            "00000000".to_string(),
+            "".to_string(),
+            "".to_string(),
+            "0".to_string(),
+            "00000000".to_string(),
+            "".to_string(),
+            "".to_string(),
+            "".to_string(),
+            "".to_string(),
+            "".to_string(),
+            "1".to_string(),
+        ];
+        let csv = format!("{}\n", columns.join(","));
+        std::fs::write(&csv_path, csv).expect("write temp db");
+
+        let rom_db = RomDb::from_path(&csv_path).expect("load temp db");
+        let info = read_rom_from_file(&rom_path, Some(&rom_db)).expect("read temp rom");
+
+        let _ = std::fs::remove_file(&rom_path);
+        let _ = std::fs::remove_file(&csv_path);
+
+        assert_eq!(info.header_prg_rom_size_bytes, 16 * 1024);
+        assert_eq!(info.header_chr_rom_size_bytes, 8 * 1024);
+        assert_eq!(info.prg_rom_size_bytes, 16 * 1024);
+        assert_eq!(info.chr_rom_size_bytes, 0);
+        assert!(info.used_db_size_override);
     }
 }

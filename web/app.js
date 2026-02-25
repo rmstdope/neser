@@ -64,7 +64,7 @@ if (!gl) {
 // NES display dimensions after overscan removal (updated after NES instance is created).
 let width = 256 - 2 * 8; // default: horizontal_overscan=8 → 240
 let height = 240 - 2 * 8; // default: vertical_overscan=8  → 224
-const SCROLLER_TEXT = "Updates: Feb 24: Added recording/autorunner support and debugger support for web. Feb 19: Added scraping of ROM database for better comapibility. Feb 14: Full PAL support! Keyboard shortcuts with 'H'. ** Feb 7: Added support for NES Zapper controller. ** Feb 5: Added support for Arkanoid controller!  **";
+const SCROLLER_TEXT = "Updates: Feb 24: Added recording/autorunner support and debugger support for web. Feb 19: Added scraping of ROM database for better comapatibility. Feb 14: Full PAL support! Keyboard shortcuts with 'H'. ** Feb 7: Added support for NES Zapper controller. ** Feb 5: Added support for Arkanoid controller!  **";
 const SCROLLER_SPEED = 2.0;
 const SCROLLER_AMPLITUDE = 20;
 const SCROLLER_FREQUENCY = 0.05;

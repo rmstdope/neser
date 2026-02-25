@@ -4,7 +4,8 @@
     "sdl"
   ],
   "python.testing.pytestArgs": [
-    "scripts/scraper"
+    "scripts/scraper",
+    "scripts"
   ],
   "python.testing.pytestEnabled": true
 }
