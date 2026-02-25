@@ -17,6 +17,7 @@ mod mapper242;
 mod mapper243;
 mod mapper244;
 mod mapper246;
+mod mapper255;
 mod mapper42;
 mod mapper44;
 mod mapper45;
