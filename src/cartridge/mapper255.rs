@@ -93,6 +93,14 @@ impl Mapper255 {
 }
 
 impl Mapper for Mapper255 {
+    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        match addr {
+            0x5800..=0x5FFF => self.read_prg(addr),
+            _ if addr < 0x6000 => open_bus,
+            _ => self.read_prg(addr),
+        }
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
         match addr {
             0x5800..=0x5FFF => {
@@ -292,21 +300,37 @@ mod tests {
     }
 
     #[test]
-    fn test_protection_ram() {
+    fn test_protection_ram_via_open_bus() {
         let prg_rom = banked_data(16 * 1024, 4);
         let chr_rom = banked_data(8 * 1024, 4);
         let mut mapper = create_mapper255(prg_rom, chr_rom, NametableLayout::Vertical).unwrap();
 
-        // Write full byte but only low 4 bits retained
+        // Protection RAM at $5800-$5FFF: write full byte, only low 4 bits retained.
+        // Reads must go through read_prg_open_bus (as the real bus does),
+        // NOT through read_prg directly, to ensure the override works.
+        let open_bus = 0xAB_u8;
+
         mapper.write_prg(0x5800, 0xFF);
-        assert_eq!(mapper.read_prg(0x5800), 0x0F);
+        assert_eq!(mapper.read_prg_open_bus(0x5800, open_bus), 0x0F);
 
         mapper.write_prg(0x5801, 0xA5);
-        assert_eq!(mapper.read_prg(0x5801), 0x05);
+        assert_eq!(mapper.read_prg_open_bus(0x5801, open_bus), 0x05);
 
         // Addresses wrap to 4 bytes
         mapper.write_prg(0x5804, 0x03);
-        assert_eq!(mapper.read_prg(0x5800), 0x03); // wraps to index 0
+        assert_eq!(mapper.read_prg_open_bus(0x5800, open_bus), 0x03);
+    }
+
+    #[test]
+    fn test_reads_below_5800_return_open_bus() {
+        let prg_rom = banked_data(16 * 1024, 4);
+        let chr_rom = banked_data(8 * 1024, 4);
+        let mapper = create_mapper255(prg_rom, chr_rom, NametableLayout::Vertical).unwrap();
+
+        // Reads from $5000-$57FF should return open bus (not protection RAM)
+        let open_bus = 0x77_u8;
+        assert_eq!(mapper.read_prg_open_bus(0x5000, open_bus), open_bus);
+        assert_eq!(mapper.read_prg_open_bus(0x57FF, open_bus), open_bus);
     }
 
     #[test]

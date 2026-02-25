@@ -846,12 +846,12 @@ mod tests {
 
     #[test]
     fn test_unsupported_mapper() {
-        let rom_data = create_test_rom_with_mapper(1, 1, 0xFF, false, 1);
+        let rom_data = create_test_rom_with_mapper(1, 1, 0xFD, false, 1);
 
         let result = load_cartridge_from_bytes(&rom_data);
         assert!(matches!(
             result,
-            Err(CartridgeError::UnsupportedMapper(0xFF))
+            Err(CartridgeError::UnsupportedMapper(0xFD))
         ));
     }
 
