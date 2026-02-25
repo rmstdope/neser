@@ -4,7 +4,10 @@
 //! - Main: <https://www.nesdev.org/wiki/INES_Mapper_255>
 //!
 //! Known Limitations:
-//! - No known gameplay-blocking functional limitations are currently documented.
+//! - Sub-games that write to $8000-$FFFF (e.g., UxROM/CNROM games) will
+//!   inadvertently change the multicart's address latch, switching to wrong
+//!   banks. This is a hardware limitation of the multicart, not an emulator
+//!   bug (confirmed identical behavior in FCEUX and Nestopia).
 
 use crate::cartridge::NametableLayout;
 use crate::cartridge::common::{BankedRom, ChrMemory};
