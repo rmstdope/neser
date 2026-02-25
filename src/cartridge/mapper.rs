@@ -29,6 +29,7 @@ use super::mapper62::Mapper62;
 use super::mapper64::Mapper64;
 use super::mapper65::Mapper65;
 use super::mapper241::Mapper241;
+use super::mapper242::Mapper242;
 use super::mmc1::MMC1Mapper;
 use super::mmc2::MMC2Mapper;
 use super::mmc3::MMC3Mapper;
@@ -744,6 +745,7 @@ mapper_registry! {
     78 => NinaTengenMapper::new,
     206 => Namco118Mapper::new,
     241 => Mapper241::new,
+    242 => Mapper242::new,
 }
 
 #[cfg(test)]
@@ -751,7 +753,7 @@ const SUPPORTED_MAPPERS: &[u8] = &[
     4, // MMC3 is constructed with CRC-specific behavior.
     0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 13, 15, 16, 17, 19, 21, 22, 23, 24, 25, 26, 32, 33, 34, 40,
     42, 44, 45, 46, 47, 49, 50, 51, 52, 53, 56, 57, 58, 60, 61, 62, 64, 65, 66, 68, 69, 71, 78,
-    206, 241,
+    206, 241, 242,
 ];
 
 /// List of supported iNES mapper IDs handled by the factory.
