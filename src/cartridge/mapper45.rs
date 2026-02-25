@@ -19,11 +19,10 @@ use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 ///
 /// Outer bank registers are written by consecutive writes to $6000–$7FFF.
 /// The register pointer auto-increments (mod 4) on each write.
-/// Writing to $6001 resets the pointer to 0.
 ///
 /// Register layout:
 /// - Reg0: CHR_OR[7:0]  (low 8 bits of CHR bank OR value)
-/// - Reg1: PRG_OR[6:0]  (low 7 bits of PRG bank OR value; bit 7 unused)
+/// - Reg1: PRG_OR[7:0]  (PRG bank OR low 8 bits)
 /// - Reg2: [CCCC MMMM]
 ///   - CCCC (bits[7:4]): additional CHR_OR bits [11:8] and CHR_AND formula
 ///   - MMMM (bits[3:0]): determines CHR_AND via shift
@@ -33,12 +32,13 @@ use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 ///   - PRG_AND = !(reg3 & 0x3F) & 0x3F  (inverted lower 6 bits)
 ///
 /// Note: Reg2 bit[6] = CHR_OR bit 10, bit[5] = CHR_OR bit 9 (per NesDev)
-/// When reg3 bit6 (lock) is set, writes to $6000 no longer update registers.
+/// When reg3 bit6 (lock) is set, writes in $6000-$7FFF are forwarded to WRAM/MMC3.
 pub struct Mapper45 {
     mmc3: MMC3Mapper,
     regs: [u8; 4],
     write_ptr: usize,
     locked: bool,
+    menu_dip_position: u8,
 }
 
 impl Mapper45 {
@@ -47,13 +47,34 @@ impl Mapper45 {
     const PRG_BANK_MASK: usize = Self::PRG_BANK_SIZE - 1;
     const CHR_1K_BANK_SIZE: usize = 0x0400; // 1 KiB
     const CHR_BANK_MASK: usize = Self::CHR_1K_BANK_SIZE - 1;
+    const OUTER_REG_MASK: u16 = 0xF001;
+    const OUTER_REG_DATA_ADDR: u16 = 0x6000;
+    const OUTER_REG_RESET_ADDR: u16 = 0x6001;
 
     pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
-        Self {
+        let mut mapper = Self {
             mmc3: MMC3Mapper::new(prg_rom, chr_rom, mirroring),
             regs: [0x00, 0x00, 0x00, 0x00],
             write_ptr: 0,
             locked: false,
+            menu_dip_position: 0,
+        };
+        mapper.reset_outer_bank_registers();
+        mapper
+    }
+
+    fn reset_outer_bank_registers(&mut self) {
+        self.regs = [0x00, 0x00, 0x0F, 0x00];
+        self.write_ptr = 0;
+        self.locked = false;
+    }
+
+    fn menu_selection_d0(&self, addr: u16) -> u8 {
+        let selected_addr_bit = 1u16 << (4 + (self.menu_dip_position & 0x07) as u16);
+        if (addr & selected_addr_bit) != 0 {
+            1
+        } else {
+            0
         }
     }
 
@@ -62,9 +83,15 @@ impl Mapper45 {
         (!(self.regs[3] & 0x3F) & 0x3F) as usize
     }
 
-    /// Computes PRG_OR from reg1 lower 7 bits.
+    /// Computes PRG_OR from reg1 and reg2 high PRG select bits.
+    ///
+    /// Mapping (bank index bits):
+    /// - reg1[7:0] -> PRG A20:A13 (bits 7:0)
+    /// - reg2[7:6] -> PRG A22:A21 (bits 9:8)
     fn prg_or(&self) -> usize {
-        (self.regs[1] & 0x7F) as usize
+        let low = self.regs[1] as usize;
+        let high = ((self.regs[2] as usize >> 6) & 0x03) << 8;
+        low | high
     }
 
     /// Computes CHR_AND from reg2 lower 4 bits.
@@ -86,7 +113,22 @@ impl Mapper45 {
 }
 
 impl Mapper for Mapper45 {
+    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        if (0x5000..=0x5FFF).contains(&addr) {
+            return (open_bus & 0xFE) | self.menu_selection_d0(addr);
+        }
+
+        if addr < 0x6000 {
+            open_bus
+        } else {
+            self.read_prg(addr)
+        }
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
+        if (0x6000..=0x7FFF).contains(&addr) {
+            return self.mmc3.read_prg(addr);
+        }
         if !(0x8000..=0xFFFF).contains(&addr) {
             return 0;
         }
@@ -98,16 +140,25 @@ impl Mapper for Mapper45 {
 
     fn write_prg(&mut self, addr: u16, value: u8) {
         if (0x6000..=0x7FFF).contains(&addr) {
-            if addr == 0x6001 || (addr & 0x1FFF) == 0x0001 {
-                // Any $6001 write resets the register pointer and clears the lock bit.
-                self.write_ptr = 0;
-                self.locked = false;
-            } else if !self.locked {
-                self.regs[self.write_ptr] = value;
-                if self.write_ptr == 3 && (value & 0x40) != 0 {
-                    self.locked = true;
+            match addr & Self::OUTER_REG_MASK {
+                Self::OUTER_REG_DATA_ADDR => {
+                    if self.locked {
+                        self.mmc3.write_prg(addr, value);
+                    } else {
+                        let reg_index = self.write_ptr;
+                        self.regs[reg_index] = value;
+                        if reg_index == 3 && (value & 0x40) != 0 {
+                            self.locked = true;
+                        }
+                        self.write_ptr = (self.write_ptr + 1) % 4;
+                    }
                 }
-                self.write_ptr = (self.write_ptr + 1) % 4;
+                Self::OUTER_REG_RESET_ADDR => {
+                    self.reset_outer_bank_registers();
+                }
+                _ => {
+                    self.mmc3.write_prg(addr, value);
+                }
             }
         } else {
             self.mmc3.write_prg(addr, value);
@@ -116,14 +167,18 @@ impl Mapper for Mapper45 {
 
     fn read_chr(&self, addr: u16) -> u8 {
         let raw = self.mmc3.mapped_chr_1k_bank(addr);
-        let bank = (raw & self.chr_and()) | self.chr_or();
+        let chr_and = self.chr_and();
+        let chr_or = self.chr_or();
+        let bank = (raw & chr_and) | chr_or;
         let offset = (addr as usize) & Self::CHR_BANK_MASK;
         self.mmc3.read_chr_1k_at(bank, offset)
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
         let raw = self.mmc3.mapped_chr_1k_bank(addr);
-        let bank = (raw & self.chr_and()) | self.chr_or();
+        let chr_and = self.chr_and();
+        let chr_or = self.chr_or();
+        let bank = (raw & chr_and) | chr_or;
         let offset = (addr as usize) & Self::CHR_BANK_MASK;
         self.mmc3.write_chr_1k_at(bank, offset, value);
     }
@@ -148,6 +203,11 @@ impl Mapper for Mapper45 {
         self.mmc3.cpu_cycle();
     }
 
+    fn reset(&mut self) {
+        self.mmc3.reset();
+        self.reset_outer_bank_registers();
+    }
+
     fn irq_pending(&self) -> bool {
         self.mmc3.irq_pending()
     }
@@ -168,15 +228,17 @@ impl Mapper for Mapper45 {
         let mut snap = self.mmc3.registers_snapshot();
         snap.extend_from_slice(&self.regs);
         snap.push(self.write_ptr as u8 | if self.locked { 0x80 } else { 0 });
+        snap.push(self.menu_dip_position & 0x07);
         snap
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        if data.len() >= 5 {
-            let (rest, tail) = data.split_at(data.len() - 5);
+        if data.len() >= 6 {
+            let (rest, tail) = data.split_at(data.len() - 6);
             self.regs.copy_from_slice(&tail[0..4]);
             self.write_ptr = (tail[4] & 0x03) as usize;
             self.locked = (tail[4] & 0x80) != 0;
+            self.menu_dip_position = tail[5] & 0x07;
             self.mmc3.restore_registers(rest);
         }
     }
@@ -267,16 +329,59 @@ mod tests {
     }
 
     #[test]
-    fn write_to_6001_resets_pointer() {
+    fn write_to_6001_is_data_write_not_pointer_reset() {
         let mut m = make_direct();
         m.write_prg(0x6000, 0xAA); // reg0 = 0xAA
-        m.write_prg(0x6001, 0x00); // reset pointer
-        m.write_prg(0x6000, 0xBB); // reg0 = 0xBB (starts over)
-        assert_eq!(m.regs[0], 0xBB, "Reg0 must be 0xBB after pointer reset");
-        assert_eq!(
-            m.regs[1], 0x00,
-            "Reg1 must remain at default after pointer reset"
-        );
+        m.write_prg(0x6000, 0xBB); // reg1 = 0xBB
+        m.write_prg(0x6000, 0xCC); // reg2 = 0xCC
+        m.write_prg(0x6000, 0x40); // reg3 = lock
+        assert!(m.locked);
+
+        m.write_prg(0x6001, 0x00); // reset+unlock via mask F001
+
+        assert_eq!(m.regs[0], 0x00);
+        assert_eq!(m.regs[1], 0x00);
+        assert_eq!(m.regs[2], 0x0F);
+        assert_eq!(m.regs[3], 0x00);
+        assert_eq!(m.write_ptr, 0);
+        assert!(!m.locked);
+    }
+
+    #[test]
+    fn write_to_6003_is_masked_reset() {
+        let mut m = make_direct();
+
+        m.write_prg(0x6000, 0x11); // reg0
+        m.write_prg(0x6000, 0x22); // reg1
+        m.write_prg(0x6003, 0x00); // masked as $6001 reset
+
+        assert_eq!(m.regs[0], 0x00);
+        assert_eq!(m.regs[1], 0x00);
+        assert_eq!(m.regs[2], 0x0F);
+        assert_eq!(m.regs[3], 0x00);
+        assert_eq!(m.write_ptr, 0);
+    }
+
+    #[test]
+    fn locked_outer_register_window_forwards_wram_writes() {
+        let mut m = make_direct();
+
+        // Program reg3 with lock bit set (4th sequential write).
+        m.write_prg(0x6000, 0x11); // reg0
+        m.write_prg(0x6000, 0x22); // reg1
+        m.write_prg(0x6000, 0x33); // reg2
+        m.write_prg(0x6000, 0x40); // reg3 (lock)
+        assert!(m.locked);
+
+        // Once locked, writes in the window should go to WRAM, not be dropped.
+        m.write_prg(0x6002, 0xA5);
+        assert_eq!(m.read_prg(0x6002), 0xA5);
+
+        // Outer registers must remain unchanged while locked.
+        assert_eq!(m.regs[0], 0x11);
+        assert_eq!(m.regs[1], 0x22);
+        assert_eq!(m.regs[2], 0x33);
+        assert_eq!(m.regs[3], 0x40);
     }
 
     // --- PRG bank mapping ---
@@ -314,6 +419,23 @@ mod tests {
             m.read_prg(0x8000),
             16,
             "PRG R6=0, AND=0x3F, OR=0x10: (0 & 0x3F) | 0x10 = 16"
+        );
+    }
+
+    #[test]
+    fn prg_or_includes_reg1_bit7_and_reg2_high_bits() {
+        let mut m = make_direct();
+
+        // reg1 carries PRG A13..A20 (8 bits), reg2[7:6] carries PRG A21..A22.
+        m.write_prg(0x6000, 0x00); // reg0
+        m.write_prg(0x6000, 0x80); // reg1: sets PRG A20 contribution
+        m.write_prg(0x6000, 0xC0); // reg2[7:6]=11b -> contributes bits 8..9 in bank index
+        m.write_prg(0x6000, 0x00); // reg3: PRG_AND = 0x3F
+
+        assert_eq!(
+            m.prg_or(),
+            0x380,
+            "PRG OR must include reg1 bit7 and reg2[7:6] high PRG bits"
         );
     }
 
@@ -432,30 +554,20 @@ mod tests {
         // reg0 = 0x00 means CHR_OR[7:0] = 0.
         let m = make_direct();
         assert_eq!(m.regs[0], 0x00, "reg0 must be 0x00 at power-on (not 0xFF)");
+        assert_eq!(
+            m.regs[2], 0x0F,
+            "reg2 must be 0x0F after mapper soft reset state"
+        );
     }
 
-    // --- $6001 lock clearing ---
-
     #[test]
-    fn write_to_6001_clears_lock() {
-        // NesDev spec: writing any value to $6001 clears the Lock bit,
-        // making the next write to $6000 go to register #0.
-        let mut m = make_direct();
-        // Lock the mapper
-        m.write_prg(0x6000, 0x01); // reg0
-        m.write_prg(0x6000, 0x00); // reg1
-        m.write_prg(0x6000, 0x00); // reg2
-        m.write_prg(0x6000, 0x40); // reg3: bit 6 = lock
-        assert!(m.locked, "must be locked before test");
-        // Write to $6001 must clear the lock
-        m.write_prg(0x6001, 0x00);
-        assert!(!m.locked, "$6001 write must clear the lock bit");
-        // After clearing lock, $6000 write must go to reg0
-        m.write_prg(0x6000, 0x42);
-        assert_eq!(
-            m.regs[0], 0x42,
-            "reg0 must be writable after $6001 clears lock"
-        );
+    fn menu_selection_reads_drive_only_d0_over_open_bus() {
+        let m = make_direct();
+        let open_bus = 0xA6;
+
+        assert_eq!(m.read_prg_open_bus(0x5010, open_bus), 0xA7);
+        assert_eq!(m.read_prg_open_bus(0x5020, open_bus), 0xA6);
+        assert_eq!(m.read_prg_open_bus(0x5800, open_bus), 0xA6);
     }
 
     // --- CHR bank out-of-bounds wrapping ---

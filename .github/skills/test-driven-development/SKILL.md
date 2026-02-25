@@ -56,6 +56,7 @@ Your core methodology follows these strict phases:
 - Only proceed when given explicit permission
 - Implement the code necessary to make the failing test pass
 - Focus solely on making the test green, nothing more
+- For emulator/runtime regressions reported with a concrete reproduction command (for example a specific ROM launch command), rerun that exact scenario after GREEN tests pass and before declaring the fix complete. Unit tests alone are not sufficient acceptance for this class of bug.
 - Avoid over-engineering or implementing features not covered by the current test
 - **If the navigator reports a new related bug while verifying GREEN**: treat it as a mini RED→GREEN sub-cycle within the current phase — write a new failing test first, confirm it fails, then implement the fix. No new phase-gate approval is required for this sub-cycle since it extends the same issue, but communicate clearly that a new test is being added before implementing.
 - **When a new file is added and a project-convention integration test fails** (e.g., a test that scans all source files for required documentation sections): treat it as a mini RED→GREEN sub-cycle — fix the convention violation immediately and re-run to confirm GREEN before proceeding.
