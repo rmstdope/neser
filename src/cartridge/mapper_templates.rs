@@ -111,7 +111,7 @@ use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 /// ```
 pub struct SimpleFixedPrgMapper<const CHR_BANK_KB: usize, const MAPPER_NUM: u8> {
     prg_rom: Vec<u8>,
-    prg_ram: PrgRam,
+    prg_ram: Option<PrgRam>,
     chr_rom: BankedRom,
     mirroring: NametableLayout,
     chr_bank: BankSwitch,
@@ -131,10 +131,17 @@ impl<const CHR_BANK_KB: usize, const MAPPER_NUM: u8> SimpleFixedPrgMapper<CHR_BA
         let mirroring = ctx.mirroring;
         let chr_bank_size = CHR_BANK_KB * 1024;
         let chr_bank = BankSwitch::from_rom(&chr_rom, chr_bank_size);
+        let prg_ram = if ctx.prg_ram_banks_8k > 0 && ctx.prg_ram_size_specified {
+            Some(PrgRam::new(
+                ctx.prg_ram_banks_8k as usize * DEFAULT_PRG_RAM_SIZE,
+            ))
+        } else {
+            None
+        };
 
         Self {
             prg_rom,
-            prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
+            prg_ram,
             chr_rom: BankedRom::new(chr_rom, chr_bank_size),
             mirroring,
             chr_bank,
@@ -146,8 +153,10 @@ impl<const CHR_BANK_KB: usize, const MAPPER_NUM: u8> Mapper
     for SimpleFixedPrgMapper<CHR_BANK_KB, MAPPER_NUM>
 {
     fn read_prg(&self, addr: u16) -> u8 {
-        // PRG-RAM at $6000-$7FFF
-        if let Some(value) = self.prg_ram.try_read(addr) {
+        // PRG-RAM at $6000-$7FFF (only if present)
+        if let Some(prg_ram) = &self.prg_ram
+            && let Some(value) = prg_ram.try_read(addr)
+        {
             return value;
         }
 
@@ -162,9 +171,19 @@ impl<const CHR_BANK_KB: usize, const MAPPER_NUM: u8> Mapper
         }
     }
 
+    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        match addr {
+            0x0000..=0x5FFF => open_bus,
+            0x6000..=0x7FFF if self.prg_ram.is_none() => open_bus,
+            _ => self.read_prg(addr),
+        }
+    }
+
     fn write_prg(&mut self, addr: u16, value: u8) {
-        // PRG-RAM at $6000-$7FFF
-        if self.prg_ram.try_write(addr, value) {
+        // PRG-RAM at $6000-$7FFF (only if present)
+        if let Some(prg_ram) = &mut self.prg_ram
+            && prg_ram.try_write(addr, value)
+        {
             return;
         }
 
@@ -192,15 +211,19 @@ impl<const CHR_BANK_KB: usize, const MAPPER_NUM: u8> Mapper
     }
 
     fn wram_size(&self) -> usize {
-        self.prg_ram.size()
+        self.prg_ram.as_ref().map_or(0, PrgRam::size)
     }
 
     fn wram_snapshot(&self) -> Vec<u8> {
-        self.prg_ram.snapshot()
+        self.prg_ram
+            .as_ref()
+            .map_or_else(Vec::new, PrgRam::snapshot)
     }
 
     fn load_wram_snapshot(&mut self, data: &[u8]) {
-        self.prg_ram.load_snapshot(data);
+        if let Some(prg_ram) = &mut self.prg_ram {
+            prg_ram.load_snapshot(data);
+        }
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -219,7 +242,7 @@ impl<const CHR_BANK_KB: usize, const MAPPER_NUM: u8> Mapper
             has_chr_banking: true,
             has_dynamic_mirroring: false,
             has_expansion_audio: false,
-            max_prg_ram_kb: 8,
+            max_prg_ram_kb: if self.prg_ram.is_some() { 8 } else { 0 },
             prg_bank_size_kb: 32,
             chr_bank_size_kb: CHR_BANK_KB,
             trainer_jsr: false,
