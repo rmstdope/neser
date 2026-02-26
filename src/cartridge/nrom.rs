@@ -10,9 +10,6 @@ use crate::cartridge::MapperCapabilities;
 use crate::cartridge::NametableLayout;
 use crate::cartridge::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
 
-// Memory size constants
-const PRG_BANK_SIZE: usize = 0x4000; // 16KB
-
 /// Mapper 0 - NROM
 ///
 /// Hardware: Nintendo's simplest cartridge board with no bank switching
@@ -32,7 +29,7 @@ const PRG_BANK_SIZE: usize = 0x4000; // 16KB
 /// - Some NROM boards have no PRG-RAM (depends on board variant)
 pub struct NROMMapper {
     prg_rom: Vec<u8>,
-    prg_ram: PrgRam,
+    prg_ram: Option<PrgRam>,
     chr_memory: ChrMemory,
     mirroring: NametableLayout,
 }
@@ -44,9 +41,16 @@ impl NROMMapper {
         let prg_rom = ctx.prg_rom;
         let chr_rom = ctx.chr_rom;
         let mirroring = ctx.mirroring;
+        let prg_ram = if ctx.prg_ram_size_specified && ctx.prg_ram_banks_8k > 0 {
+            Some(PrgRam::new(
+                ctx.prg_ram_banks_8k as usize * DEFAULT_PRG_RAM_SIZE,
+            ))
+        } else {
+            None
+        };
         Self {
             prg_rom,
-            prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
+            prg_ram,
             chr_memory: ChrMemory::new(chr_rom),
             mirroring,
         }
@@ -55,34 +59,28 @@ impl NROMMapper {
 
 impl Mapper for NROMMapper {
     fn read_prg(&self, addr: u16) -> u8 {
-        // PRG-RAM at $6000-$7FFF
-        if let Some(value) = self.prg_ram.try_read(addr) {
-            value
-        } else {
-            // PRG ROM at $8000-$FFFF
-            match addr {
-                0x8000..=0xFFFF => {
-                    let offset = (addr - 0x8000) as usize;
+        // PRG-RAM at $6000-$7FFF (only if present)
+        if let Some(prg_ram) = &self.prg_ram
+            && let Some(value) = prg_ram.try_read(addr)
+        {
+            return value;
+        }
 
-                    // Handle 16KB vs 32KB PRG ROM
-                    if self.prg_rom.len() == PRG_BANK_SIZE {
-                        // 16KB ROM: mirror at $C000
-                        let index = offset % PRG_BANK_SIZE;
-                        self.prg_rom.get(index).copied().unwrap_or(0)
-                    } else {
-                        // 32KB or larger ROM: direct mapping
-                        let index = offset % self.prg_rom.len();
-                        self.prg_rom.get(index).copied().unwrap_or(0)
-                    }
-                }
-                _ => 0,
+        // PRG ROM at $8000-$FFFF; % len naturally mirrors 16KB ROM to $C000-$FFFF
+        match addr {
+            0x8000..=0xFFFF => {
+                let index = (addr - 0x8000) as usize % self.prg_rom.len();
+                self.prg_rom.get(index).copied().unwrap_or(0)
             }
+            _ => 0,
         }
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
-        // PRG-RAM at $6000-$7FFF
-        let _ = self.prg_ram.try_write(addr, value);
+        // PRG-RAM at $6000-$7FFF (only if present)
+        if let Some(prg_ram) = &mut self.prg_ram {
+            let _ = prg_ram.try_write(addr, value);
+        }
     }
 
     fn read_chr(&mut self, addr: u16) -> u8 {
@@ -102,15 +100,19 @@ impl Mapper for NROMMapper {
     }
 
     fn wram_size(&self) -> usize {
-        self.prg_ram.size()
+        self.prg_ram.as_ref().map_or(0, |r| r.size())
     }
 
     fn wram_snapshot(&self) -> Vec<u8> {
-        self.prg_ram.snapshot()
+        self.prg_ram
+            .as_ref()
+            .map_or_else(Vec::new, |r| r.snapshot())
     }
 
     fn load_wram_snapshot(&mut self, data: &[u8]) {
-        self.prg_ram.load_snapshot(data);
+        if let Some(prg_ram) = &mut self.prg_ram {
+            prg_ram.load_snapshot(data);
+        }
     }
 
     fn chr_ram_snapshot(&self) -> Vec<u8> {
@@ -122,8 +124,18 @@ impl Mapper for NROMMapper {
     }
 
     fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        self.prg_ram.initialize(mode);
+        if let Some(prg_ram) = &mut self.prg_ram {
+            prg_ram.initialize(mode);
+        }
         self.chr_memory.initialize(mode);
+    }
+
+    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        match addr {
+            0x0000..=0x5FFF => open_bus,
+            0x6000..=0x7FFF if self.prg_ram.is_none() => open_bus,
+            _ => self.read_prg(addr),
+        }
     }
 
     fn capabilities(&self) -> MapperCapabilities {
@@ -132,7 +144,7 @@ impl Mapper for NROMMapper {
             has_chr_banking: false,
             has_dynamic_mirroring: false,
             has_expansion_audio: false,
-            max_prg_ram_kb: 8,
+            max_prg_ram_kb: self.prg_ram.as_ref().map_or(0, |r| r.size() / 1024),
             prg_bank_size_kb: 32,
             chr_bank_size_kb: 8,
             trainer_jsr: false,
@@ -408,5 +420,127 @@ mod tests {
         // $6000 might return different value (PRG-RAM or 0)
         // We just verify it doesn't panic
         let _ = mapper.read_prg_open_bus(0x6000, open_bus);
+    }
+
+    // --- Issue #344: PRG-RAM absence via metadata ---
+
+    #[test]
+    fn test_nrom_no_prg_ram_read_returns_zero() {
+        // Given: NROM with no PRG-RAM (prg_ram_banks_8k = 0)
+        let mapper = NROMMapper::new(
+            MapperContext::new_for_test(
+                0,
+                vec![0; 0x8000],
+                vec![0; 8192],
+                NametableLayout::Horizontal,
+            )
+            .with_prg_ram_banks(0),
+        );
+
+        // When: reading from $6000-$7FFF
+        // Then: return 0 (no RAM present)
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            0,
+            "no PRG-RAM: read at $6000 should return 0"
+        );
+        assert_eq!(
+            mapper.read_prg(0x7FFF),
+            0,
+            "no PRG-RAM: read at $7FFF should return 0"
+        );
+        assert_eq!(
+            mapper.read_prg(0x6800),
+            0,
+            "no PRG-RAM: read at $6800 should return 0"
+        );
+    }
+
+    #[test]
+    fn test_nrom_no_prg_ram_write_ignored() {
+        // Given: NROM with no PRG-RAM
+        let mut mapper = NROMMapper::new(
+            MapperContext::new_for_test(
+                0,
+                vec![0; 0x8000],
+                vec![0; 8192],
+                NametableLayout::Horizontal,
+            )
+            .with_prg_ram_banks(0),
+        );
+
+        // When: writing to $6000-$7FFF
+        mapper.write_prg(0x6000, 0xAB);
+        mapper.write_prg(0x7FFF, 0xCD);
+
+        // Then: reads still return 0 (writes ignored)
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            0,
+            "no PRG-RAM: write should be ignored"
+        );
+        assert_eq!(
+            mapper.read_prg(0x7FFF),
+            0,
+            "no PRG-RAM: write should be ignored"
+        );
+    }
+
+    #[test]
+    fn test_nrom_no_prg_ram_open_bus_returns_open_bus() {
+        // Given: NROM with no PRG-RAM
+        let mapper = NROMMapper::new(
+            MapperContext::new_for_test(
+                0,
+                vec![0; 0x8000],
+                vec![0; 8192],
+                NametableLayout::Horizontal,
+            )
+            .with_prg_ram_banks(0),
+        );
+        let open_bus = 0x42;
+
+        // When: reading $6000-$7FFF with open_bus value
+        // Then: return open_bus (no RAM present)
+        assert_eq!(
+            mapper.read_prg_open_bus(0x6000, open_bus),
+            open_bus,
+            "no PRG-RAM: $6000 should return open-bus"
+        );
+        assert_eq!(
+            mapper.read_prg_open_bus(0x7FFF, open_bus),
+            open_bus,
+            "no PRG-RAM: $7FFF should return open-bus"
+        );
+    }
+
+    #[test]
+    fn test_nrom_with_prg_ram_read_write_works() {
+        // Given: NROM with PRG-RAM present (prg_ram_banks_8k = 1)
+        let mut mapper = NROMMapper::new(
+            MapperContext::new_for_test(
+                0,
+                vec![0; 0x8000],
+                vec![0; 8192],
+                NametableLayout::Horizontal,
+            )
+            .with_prg_ram_banks(1),
+        );
+
+        // When: writing and reading back
+        mapper.write_prg(0x6000, 0x77);
+        mapper.write_prg(0x7FFF, 0x88);
+
+        // Then: values are preserved
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            0x77,
+            "PRG-RAM present: write/read should work"
+        );
+        assert_eq!(
+            mapper.read_prg(0x7FFF),
+            0x88,
+            "PRG-RAM present: write/read should work"
+        );
     }
 }
