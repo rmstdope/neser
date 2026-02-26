@@ -132,6 +132,22 @@ impl MMC4Mapper {
             _ => {}
         }
     }
+
+    fn encode_mirroring(mirroring: NametableLayout) -> u8 {
+        match mirroring {
+            NametableLayout::Vertical => 0,
+            NametableLayout::Horizontal => 1,
+            _ => 1,
+        }
+    }
+
+    fn decode_mirroring(value: u8) -> NametableLayout {
+        match value {
+            0 => NametableLayout::Vertical,
+            1 => NametableLayout::Horizontal,
+            _ => NametableLayout::Horizontal,
+        }
+    }
 }
 
 impl Mapper for MMC4Mapper {
@@ -181,24 +197,18 @@ impl Mapper for MMC4Mapper {
     }
 
     fn read_chr(&mut self, addr: u16) -> u8 {
-        self.update_latches(addr);
-
         let bank = self.chr_bank_for_addr(addr);
         let offset = (addr as usize) & (Self::CHR_BANK_SIZE - 1);
-        self.read_chr_bank_4k(bank, offset)
+        let value = self.read_chr_bank_4k(bank, offset);
+        self.update_latches(addr);
+        value
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
-        self.update_latches(addr);
-
         let bank = self.chr_bank_for_addr(addr);
         let offset = (addr as usize) & (Self::CHR_BANK_SIZE - 1);
         let index = bank * Self::CHR_BANK_SIZE + offset;
         self.chr_memory.write_at_index(index, value);
-    }
-
-    fn ppu_address_changed(&mut self, addr: u16) {
-        self.update_latches(addr);
     }
 
     fn get_mirroring(&self) -> NametableLayout {
@@ -245,11 +255,7 @@ impl Mapper for MMC4Mapper {
             self.chr_bank_1_fd,
             self.chr_bank_1_fe,
             (self.latch0_is_fd.get() as u8) | ((self.latch1_is_fd.get() as u8) << 1),
-            match self.mirroring {
-                NametableLayout::Vertical => 0,
-                NametableLayout::Horizontal => 1,
-                _ => 1,
-            },
+            Self::encode_mirroring(self.mirroring),
         ]
     }
 
@@ -262,11 +268,7 @@ impl Mapper for MMC4Mapper {
             self.chr_bank_1_fe = data[4];
             self.latch0_is_fd.set((data[5] & 1) != 0);
             self.latch1_is_fd.set((data[5] & 2) != 0);
-            self.mirroring = match data[6] {
-                0 => NametableLayout::Vertical,
-                1 => NametableLayout::Horizontal,
-                _ => NametableLayout::Horizontal,
-            };
+            self.mirroring = Self::decode_mirroring(data[6]);
         }
     }
 
@@ -342,20 +344,20 @@ mod tests {
         mapper.write_prg(0xD000, 3); // high FD
         mapper.write_prg(0xE000, 4); // high FE
 
-        // Low region latch: FD
-        mapper.ppu_address_changed(0x0FD8);
+        // Low region latch: FD (triggered by CHR read, takes effect after that fetch)
+        let _ = mapper.read_chr(0x0FD8);
         assert_eq!(mapper.read_chr(0x0000), 1);
 
         // Low region latch: FE
-        mapper.ppu_address_changed(0x0FE8);
+        let _ = mapper.read_chr(0x0FE8);
         assert_eq!(mapper.read_chr(0x0000), 2);
 
         // High region latch: FD
-        mapper.ppu_address_changed(0x1FD8);
+        let _ = mapper.read_chr(0x1FD8);
         assert_eq!(mapper.read_chr(0x1000), 3);
 
         // High region latch: FE
-        mapper.ppu_address_changed(0x1FE8);
+        let _ = mapper.read_chr(0x1FE8);
         assert_eq!(mapper.read_chr(0x1000), 4);
     }
 
@@ -378,8 +380,8 @@ mod tests {
         mapper.write_prg(0xE000, 0x04); // CHR 1 FE
         mapper.write_prg(0xF000, 0x01); // Mirroring horizontal
 
-        mapper.ppu_address_changed(0x0FD8); // latch0 FD
-        mapper.ppu_address_changed(0x1FE8); // latch1 FE
+        let _ = mapper.read_chr(0x0FD8); // latch0 FD after fetch
+        let _ = mapper.read_chr(0x1FE8); // latch1 FE after fetch
 
         let saved = mapper.registers_snapshot();
 
@@ -408,5 +410,54 @@ mod tests {
 
         assert_eq!(mapper.read_prg_open_bus(0x5000, 0x33), 0x33);
         assert_eq!(mapper.read_prg_open_bus(0x5FFF, 0x44), 0x44);
+    }
+
+    #[test]
+    fn test_mmc4_trigger_read_uses_previous_bank_then_latch_updates() {
+        let chr_rom = filled_banks(MMC4Mapper::CHR_BANK_SIZE, 8);
+        let prg_rom = filled_banks(MMC4Mapper::PRG_BANK_SIZE, 4);
+
+        let mut mapper = MMC4Mapper::new(MapperContext::new_for_test(
+            10,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Vertical,
+        ));
+
+        mapper.write_prg(0xB000, 1); // low FD
+        mapper.write_prg(0xC000, 2); // low FE
+
+        // Ensure low latch is FE before triggering FD tile read.
+        let _ = mapper.read_chr(0x0FE8);
+
+        // Per MMC4 spec, the triggering $0FD8 fetch itself must still use old FE bank.
+        assert_eq!(mapper.read_chr(0x0FD8), 2);
+
+        // Latch effect applies after that fetch: subsequent low-region reads use FD bank.
+        assert_eq!(mapper.read_chr(0x0000), 1);
+    }
+
+    #[test]
+    fn test_mmc4_write_chr_does_not_update_latch_state() {
+        let chr_rom = filled_banks(MMC4Mapper::CHR_BANK_SIZE, 8);
+        let prg_rom = filled_banks(MMC4Mapper::PRG_BANK_SIZE, 4);
+
+        let mut mapper = MMC4Mapper::new(MapperContext::new_for_test(
+            10,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Vertical,
+        ));
+
+        mapper.write_prg(0xB000, 1); // low FD
+        mapper.write_prg(0xC000, 2); // low FE
+
+        // Set low latch to FE via triggering read.
+        let _ = mapper.read_chr(0x0FE8);
+        assert_eq!(mapper.read_chr(0x0000), 2);
+
+        // CHR writes must not change latch state.
+        mapper.write_chr(0x0FD8, 0xAA);
+        assert_eq!(mapper.read_chr(0x0000), 2);
     }
 }
