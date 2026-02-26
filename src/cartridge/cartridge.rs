@@ -250,7 +250,9 @@ impl Cartridge {
     pub fn from_parts(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
         use crate::cartridge::nrom::NROMMapper;
         let crc32 = crate::cartridge::calculate_rom_crc32(&prg_rom, &chr_rom);
-        let mapper = Box::new(NROMMapper::new(prg_rom, chr_rom, mirroring));
+        let mapper = Box::new(NROMMapper::new(MapperContext::new_for_test(
+            0, prg_rom, chr_rom, mirroring,
+        )));
         Self {
             mapper,
             crc32,
@@ -495,11 +497,11 @@ mod tests {
     fn test_load_simple_rom() {
         let rom_data = create_test_rom(1, 1, 0, false);
 
-        let cartridge = load_cartridge_from_bytes(&rom_data).unwrap();
+        let mut cartridge = load_cartridge_from_bytes(&rom_data).unwrap();
         // Verify mapper can read PRG ROM (16KB at $8000-$BFFF)
         assert_eq!(cartridge.mapper().read_prg(0x8000), 0xAA);
         // Verify mapper can read CHR ROM (8KB at $0000-$1FFF)
-        assert_eq!(cartridge.mapper().read_chr(0x0000), 0xBB);
+        assert_eq!(cartridge.mapper_mut().read_chr(0x0000), 0xBB);
         // Verify no trainer data
         assert!(cartridge.trainer().is_none());
     }
@@ -529,7 +531,7 @@ mod tests {
         // Add CHR ROM data
         rom.extend(vec![0xBB; 8 * 1024]);
 
-        let cartridge = load_cartridge_from_bytes(&rom).unwrap();
+        let mut cartridge = load_cartridge_from_bytes(&rom).unwrap();
 
         // Verify trainer data is accessible
         let trainer = cartridge.trainer().expect("Trainer should be present");
@@ -542,7 +544,7 @@ mod tests {
 
         // Verify mapper can still read PRG and CHR correctly
         assert_eq!(cartridge.mapper().read_prg(0x8000), 0xAA);
-        assert_eq!(cartridge.mapper().read_chr(0x0000), 0xBB);
+        assert_eq!(cartridge.mapper_mut().read_chr(0x0000), 0xBB);
     }
 
     #[test]
@@ -556,24 +558,24 @@ mod tests {
     fn test_load_rom_with_trainer() {
         let rom_data = create_test_rom(1, 1, 0x04, true);
 
-        let cartridge = load_cartridge_from_bytes(&rom_data).unwrap();
+        let mut cartridge = load_cartridge_from_bytes(&rom_data).unwrap();
         // Verify mapper can read PRG ROM after skipping trainer
         assert_eq!(cartridge.mapper().read_prg(0x8000), 0xAA);
         // Verify mapper can read CHR ROM
-        assert_eq!(cartridge.mapper().read_chr(0x0000), 0xBB);
+        assert_eq!(cartridge.mapper_mut().read_chr(0x0000), 0xBB);
     }
 
     #[test]
     fn test_load_rom_multiple_banks() {
         let rom_data = create_test_rom(2, 4, 0, false);
 
-        let cartridge = load_cartridge_from_bytes(&rom_data).unwrap();
+        let mut cartridge = load_cartridge_from_bytes(&rom_data).unwrap();
         // Verify 32KB PRG ROM can be read
         assert_eq!(cartridge.mapper().read_prg(0x8000), 0xAA);
         assert_eq!(cartridge.mapper().read_prg(0xFFFF), 0xAA);
         // Verify CHR ROM can be read (only first 8KB used by NROM)
-        assert_eq!(cartridge.mapper().read_chr(0x0000), 0xBB);
-        assert_eq!(cartridge.mapper().read_chr(0x1FFF), 0xBB);
+        assert_eq!(cartridge.mapper_mut().read_chr(0x0000), 0xBB);
+        assert_eq!(cartridge.mapper_mut().read_chr(0x1FFF), 0xBB);
     }
 
     #[test]

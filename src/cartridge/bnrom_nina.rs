@@ -52,7 +52,10 @@ pub struct BnromNinaMapper {
 }
 
 impl BnromNinaMapper {
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
+        let mirroring = ctx.mirroring;
         // Detect variant: NINA-001 has CHR ROM, BNROM uses CHR-RAM
         let is_nina = !chr_rom.is_empty();
 
@@ -121,7 +124,7 @@ impl Mapper for BnromNinaMapper {
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         if self.is_nina {
             // NINA-001: banked CHR
             let bank_offset = self.chr_bank.offset(CHR_BANK_SIZE);
@@ -206,6 +209,7 @@ impl Mapper for BnromNinaMapper {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cartridge::mapper::MapperContext;
 
     // BNROM tests (CHR-RAM)
     #[test]
@@ -223,7 +227,12 @@ mod tests {
         }
 
         // Empty CHR ROM = BNROM variant
-        let mut mapper = BnromNinaMapper::new(prg_rom, vec![], NametableLayout::Horizontal);
+        let mut mapper = BnromNinaMapper::new(MapperContext::new_for_test(
+            34,
+            prg_rom,
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         // Initially bank 0
         assert_eq!(mapper.read_prg(0x8000), 0);
@@ -248,8 +257,12 @@ mod tests {
     #[test]
     fn test_bnrom_chr_ram() {
         // BNROM uses CHR-RAM
-        let mut mapper =
-            BnromNinaMapper::new(vec![0; 128 * 1024], vec![], NametableLayout::Horizontal);
+        let mut mapper = BnromNinaMapper::new(MapperContext::new_for_test(
+            34,
+            vec![0; 128 * 1024],
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         // CHR-RAM should be writable
         mapper.write_chr(0x0000, 0xAA);
@@ -273,7 +286,12 @@ mod tests {
             }
         }
 
-        let mut mapper = BnromNinaMapper::new(prg_rom.clone(), vec![], NametableLayout::Horizontal);
+        let mut mapper = BnromNinaMapper::new(MapperContext::new_for_test(
+            34,
+            prg_rom.clone(),
+            vec![],
+            NametableLayout::Horizontal,
+        ));
         mapper.write_prg(0x8000, 2);
         mapper.write_chr(0x0000, 0x11);
         mapper.write_chr(0x1FFF, 0x22);
@@ -281,7 +299,12 @@ mod tests {
         let registers = mapper.registers_snapshot();
         let chr_ram = mapper.chr_ram_snapshot();
 
-        let mut restored = BnromNinaMapper::new(prg_rom, vec![], NametableLayout::Horizontal);
+        let mut restored = BnromNinaMapper::new(MapperContext::new_for_test(
+            34,
+            prg_rom,
+            vec![],
+            NametableLayout::Horizontal,
+        ));
         restored.restore_registers(&registers);
         restored.restore_chr_ram(&chr_ram);
 
@@ -302,7 +325,12 @@ mod tests {
             }
         }
 
-        let mut mapper = BnromNinaMapper::new(prg_rom, vec![], NametableLayout::Horizontal);
+        let mut mapper = BnromNinaMapper::new(MapperContext::new_for_test(
+            34,
+            prg_rom,
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         mapper.write_prg(0x8000, 1);
         assert_eq!(mapper.read_prg(0x8000), 101);
@@ -328,8 +356,12 @@ mod tests {
         }
 
         // Non-empty CHR ROM = NINA-001 variant
-        let mut mapper =
-            BnromNinaMapper::new(prg_rom, vec![0; 64 * 1024], NametableLayout::Horizontal);
+        let mut mapper = BnromNinaMapper::new(MapperContext::new_for_test(
+            34,
+            prg_rom,
+            vec![0; 64 * 1024],
+            NametableLayout::Horizontal,
+        ));
 
         // Initially bank 0
         assert_eq!(mapper.read_prg(0x8000), 0);
@@ -357,8 +389,12 @@ mod tests {
             }
         }
 
-        let mut mapper =
-            BnromNinaMapper::new(vec![0; 128 * 1024], chr_rom, NametableLayout::Horizontal);
+        let mut mapper = BnromNinaMapper::new(MapperContext::new_for_test(
+            34,
+            vec![0; 128 * 1024],
+            chr_rom,
+            NametableLayout::Horizontal,
+        ));
 
         // Initially bank 0
         assert_eq!(mapper.read_chr(0x0000), 0);
@@ -388,8 +424,12 @@ mod tests {
             }
         }
 
-        let mut mapper =
-            BnromNinaMapper::new(prg_rom, vec![0; 8 * 1024], NametableLayout::Horizontal);
+        let mut mapper = BnromNinaMapper::new(MapperContext::new_for_test(
+            34,
+            prg_rom,
+            vec![0; 8 * 1024],
+            NametableLayout::Horizontal,
+        ));
 
         // Set bank via proper register
         mapper.write_prg(0x7FFD, 1);
@@ -406,43 +446,59 @@ mod tests {
     #[test]
     fn test_bnrom_detection() {
         // Empty CHR ROM = BNROM
-        let mapper_bnrom =
-            BnromNinaMapper::new(vec![0; 32 * 1024], vec![], NametableLayout::Horizontal);
+        let mapper_bnrom = BnromNinaMapper::new(MapperContext::new_for_test(
+            34,
+            vec![0; 32 * 1024],
+            vec![],
+            NametableLayout::Horizontal,
+        ));
         assert!(!mapper_bnrom.is_nina);
 
         // Non-empty CHR ROM = NINA-001
-        let mapper_nina = BnromNinaMapper::new(
+        let mapper_nina = BnromNinaMapper::new(MapperContext::new_for_test(
+            34,
             vec![0; 32 * 1024],
             vec![0; 8 * 1024],
             NametableLayout::Horizontal,
-        );
+        ));
         assert!(mapper_nina.is_nina);
     }
 
     #[test]
     fn test_bnrom_mirroring() {
-        let mapper_h =
-            BnromNinaMapper::new(vec![0; 128 * 1024], vec![], NametableLayout::Horizontal);
+        let mapper_h = BnromNinaMapper::new(MapperContext::new_for_test(
+            34,
+            vec![0; 128 * 1024],
+            vec![],
+            NametableLayout::Horizontal,
+        ));
         assert_eq!(mapper_h.get_mirroring(), NametableLayout::Horizontal);
 
-        let mapper_v = BnromNinaMapper::new(vec![0; 128 * 1024], vec![], NametableLayout::Vertical);
+        let mapper_v = BnromNinaMapper::new(MapperContext::new_for_test(
+            34,
+            vec![0; 128 * 1024],
+            vec![],
+            NametableLayout::Vertical,
+        ));
         assert_eq!(mapper_v.get_mirroring(), NametableLayout::Vertical);
     }
 
     #[test]
     fn test_nina001_mirroring() {
-        let mapper_h = BnromNinaMapper::new(
+        let mapper_h = BnromNinaMapper::new(MapperContext::new_for_test(
+            34,
             vec![0; 128 * 1024],
             vec![0; 8 * 1024],
             NametableLayout::Horizontal,
-        );
+        ));
         assert_eq!(mapper_h.get_mirroring(), NametableLayout::Horizontal);
 
-        let mapper_v = BnromNinaMapper::new(
+        let mapper_v = BnromNinaMapper::new(MapperContext::new_for_test(
+            34,
             vec![0; 128 * 1024],
             vec![0; 8 * 1024],
             NametableLayout::Vertical,
-        );
+        ));
         assert_eq!(mapper_v.get_mirroring(), NametableLayout::Vertical);
     }
 

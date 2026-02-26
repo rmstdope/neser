@@ -6,6 +6,7 @@
 //! - See CARTRIDGE_REVIEW.md sections 5 and 6 for remaining mapper test/documentation follow-up.
 
 use crate::cartridge::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::cartridge::ines::ConsoleType;
 use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
 /// Mapper 9 - MMC2 (PNROM boards)
@@ -30,7 +31,7 @@ use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 /// - Used exclusively in (Mike Tyson's) Punch-Out!!
 pub struct MMC2Mapper {
     prg_rom: Vec<u8>,
-    prg_ram: PrgRam,
+    prg_ram: Option<PrgRam>,
 
     chr_memory: ChrMemory,
 
@@ -53,10 +54,15 @@ impl MMC2Mapper {
     const PRG_BANK_SIZE: usize = 0x2000; // 8KB
     const CHR_BANK_SIZE: usize = 0x1000; // 4KB
 
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let prg_ram = matches!(ctx.console_type, ConsoleType::Playchoice10)
+            .then(|| PrgRam::new(DEFAULT_PRG_RAM_SIZE));
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
+        let mirroring = ctx.mirroring;
         Self {
             prg_rom,
-            prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
+            prg_ram,
             chr_memory: ChrMemory::new(chr_rom),
             mirroring,
             prg_bank_8k: 0,
@@ -99,6 +105,11 @@ impl MMC2Mapper {
         self.prg_rom.get(addr).copied().unwrap_or(0)
     }
 
+    fn read_prg_window_8k(&self, addr: u16, window_start: u16, bank_index: usize) -> u8 {
+        let offset = (addr - window_start) as usize;
+        self.read_prg_rom_bank(bank_index, offset)
+    }
+
     fn read_chr_bank_4k(&self, bank_index: usize, bank_offset: usize) -> u8 {
         let addr = bank_index * Self::CHR_BANK_SIZE + bank_offset;
         self.chr_memory.read_at_index(addr)
@@ -122,8 +133,8 @@ impl MMC2Mapper {
 
     fn update_latches_for_chr_read(&mut self, addr: u16) {
         match addr {
-            0x0FD8..=0x0FDF => self.latch0_is_fd = true,
-            0x0FE8..=0x0FEF => self.latch0_is_fd = false,
+            0x0FD8 => self.latch0_is_fd = true,
+            0x0FE8 => self.latch0_is_fd = false,
             0x1FD8..=0x1FDF => self.latch1_is_fd = true,
             0x1FE8..=0x1FEF => self.latch1_is_fd = false,
             _ => {}
@@ -134,41 +145,49 @@ impl MMC2Mapper {
 impl Mapper for MMC2Mapper {
     fn read_prg(&self, addr: u16) -> u8 {
         // PRG-RAM at $6000-$7FFF
-        if let Some(value) = self.prg_ram.try_read(addr) {
+        if let Some(prg_ram) = &self.prg_ram
+            && let Some(value) = prg_ram.try_read(addr)
+        {
             return value;
         }
 
         match addr {
             0x8000..=0x9FFF => {
                 let bank = self.clamp_prg_bank_8k(self.prg_bank_8k);
-                let offset = (addr - 0x8000) as usize;
-                self.read_prg_rom_bank(bank, offset)
+                self.read_prg_window_8k(addr, 0x8000, bank)
             }
             0xA000..=0xBFFF => {
                 let count = self.prg_bank_count_8k();
                 let bank = count.saturating_sub(3);
-                let offset = (addr - 0xA000) as usize;
-                self.read_prg_rom_bank(bank, offset)
+                self.read_prg_window_8k(addr, 0xA000, bank)
             }
             0xC000..=0xDFFF => {
                 let count = self.prg_bank_count_8k();
                 let bank = count.saturating_sub(2);
-                let offset = (addr - 0xC000) as usize;
-                self.read_prg_rom_bank(bank, offset)
+                self.read_prg_window_8k(addr, 0xC000, bank)
             }
             0xE000..=0xFFFF => {
                 let count = self.prg_bank_count_8k();
                 let bank = count.saturating_sub(1);
-                let offset = (addr - 0xE000) as usize;
-                self.read_prg_rom_bank(bank, offset)
+                self.read_prg_window_8k(addr, 0xE000, bank)
             }
             _ => 0,
         }
     }
 
+    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        match addr {
+            0x0000..=0x5FFF => open_bus,
+            0x6000..=0x7FFF if self.prg_ram.is_none() => open_bus,
+            _ => self.read_prg(addr),
+        }
+    }
+
     fn write_prg(&mut self, addr: u16, value: u8) {
         // PRG-RAM at $6000-$7FFF
-        if self.prg_ram.try_write(addr, value) {
+        if let Some(prg_ram) = &mut self.prg_ram
+            && prg_ram.try_write(addr, value)
+        {
             return;
         }
 
@@ -197,17 +216,12 @@ impl Mapper for MMC2Mapper {
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
-        // Latches are updated on PPU reads. This requires internal mutation, so we
-        // implement latch updates via ppu_address_changed for now as a no-op and
-        // do latch updates by taking &mut self in write_chr/read_chr below.
-        //
-        // Since the trait signature is `&self`, we rely on the fact that the rest of
-        // the emulator calls `ppu_address_changed` on address changes for latch-like
-        // mechanisms (MMC3). For MMC2, we update latches in `ppu_address_changed`.
+    fn read_chr(&mut self, addr: u16) -> u8 {
         let bank = self.chr_bank_for_addr(addr);
         let offset = (addr as usize) & (Self::CHR_BANK_SIZE - 1);
-        self.read_chr_bank_4k(bank, offset)
+        let value = self.read_chr_bank_4k(bank, offset);
+        self.update_latches_for_chr_read(addr);
+        value
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
@@ -218,9 +232,7 @@ impl Mapper for MMC2Mapper {
     }
 
     fn ppu_address_changed(&mut self, addr: u16) {
-        // MMC2 latches are clocked by reads in the pattern tables. We approximate
-        // this by updating latches on address bus activity.
-        self.update_latches_for_chr_read(addr);
+        let _ = addr;
     }
 
     fn get_mirroring(&self) -> NametableLayout {
@@ -232,15 +244,19 @@ impl Mapper for MMC2Mapper {
     }
 
     fn wram_size(&self) -> usize {
-        self.prg_ram.size()
+        self.prg_ram.as_ref().map_or(0, PrgRam::size)
     }
 
     fn wram_snapshot(&self) -> Vec<u8> {
-        self.prg_ram.snapshot()
+        self.prg_ram
+            .as_ref()
+            .map_or_else(Vec::new, PrgRam::snapshot)
     }
 
     fn load_wram_snapshot(&mut self, data: &[u8]) {
-        self.prg_ram.load_snapshot(data);
+        if let Some(prg_ram) = &mut self.prg_ram {
+            prg_ram.load_snapshot(data);
+        }
     }
 
     fn chr_ram_snapshot(&self) -> Vec<u8> {
@@ -298,7 +314,7 @@ impl Mapper for MMC2Mapper {
             has_chr_banking: true,
             has_dynamic_mirroring: true,
             has_expansion_audio: false,
-            max_prg_ram_kb: 8,
+            max_prg_ram_kb: if self.prg_ram.is_some() { 8 } else { 0 },
             prg_bank_size_kb: 8,
             chr_bank_size_kb: 4,
             trainer_jsr: false,
@@ -310,6 +326,7 @@ impl Mapper for MMC2Mapper {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cartridge::mapper::MapperContext;
 
     fn filled_banks(bank_size: usize, banks: usize) -> Vec<u8> {
         (0..banks)
@@ -323,7 +340,12 @@ mod tests {
         let prg_rom = filled_banks(MMC2Mapper::PRG_BANK_SIZE, prg_banks);
         let chr_rom = filled_banks(MMC2Mapper::CHR_BANK_SIZE, 8);
 
-        let mapper = MMC2Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
+        let mapper = MMC2Mapper::new(MapperContext::new_for_test(
+            9,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Vertical,
+        ));
 
         // Power-on: bank 0 at $8000.
         assert_eq!(mapper.read_prg(0x8000), 0);
@@ -339,8 +361,12 @@ mod tests {
         let prg_rom = filled_banks(MMC2Mapper::PRG_BANK_SIZE, 4);
         let chr_rom = filled_banks(MMC2Mapper::CHR_BANK_SIZE, 8);
 
-        let mut mapper =
-            MMC2Mapper::new(prg_rom.clone(), chr_rom.clone(), NametableLayout::Vertical);
+        let mut mapper = MMC2Mapper::new(MapperContext::new_for_test(
+            9,
+            prg_rom.clone(),
+            chr_rom.clone(),
+            NametableLayout::Vertical,
+        ));
 
         mapper.write_prg(0xA000, 0x03); // PRG bank
         mapper.write_prg(0xB000, 0x01); // CHR 0 FD
@@ -349,12 +375,17 @@ mod tests {
         mapper.write_prg(0xE000, 0x04); // CHR 1 FE
         mapper.write_prg(0xF000, 0x01); // Mirroring horizontal
 
-        mapper.ppu_address_changed(0x0FD8); // latch0 FD
-        mapper.ppu_address_changed(0x1FE8); // latch1 FE
+        mapper.read_chr(0x0FD8); // latch0 FD after read
+        mapper.read_chr(0x1FE8); // latch1 FE after read
 
         let saved = mapper.registers_snapshot();
 
-        let mut restored = MMC2Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
+        let mut restored = MMC2Mapper::new(MapperContext::new_for_test(
+            9,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Vertical,
+        ));
         restored.restore_registers(&saved);
 
         assert_eq!(restored.get_mirroring(), NametableLayout::Horizontal);
@@ -369,7 +400,12 @@ mod tests {
         let chr_rom = filled_banks(MMC2Mapper::CHR_BANK_SIZE, 8);
         let prg_rom = filled_banks(MMC2Mapper::PRG_BANK_SIZE, 8);
 
-        let mut mapper = MMC2Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
+        let mut mapper = MMC2Mapper::new(MapperContext::new_for_test(
+            9,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Vertical,
+        ));
 
         // Configure banks.
         mapper.write_prg(0xB000, 1); // low FD
@@ -377,32 +413,105 @@ mod tests {
         mapper.write_prg(0xD000, 3); // high FD
         mapper.write_prg(0xE000, 4); // high FE
 
-        // Low region latch: FD
-        mapper.ppu_address_changed(0x0FD8);
+        // Triggering read uses old bank for that fetch, then switches latch.
+        assert_eq!(mapper.read_chr(0x0FD8), 2);
         assert_eq!(mapper.read_chr(0x0000), 1);
 
-        // Low region latch: FE
-        mapper.ppu_address_changed(0x0FE8);
+        assert_eq!(mapper.read_chr(0x0FE8), 1);
         assert_eq!(mapper.read_chr(0x0000), 2);
 
-        // High region latch: FD
-        mapper.ppu_address_changed(0x1FD8);
+        assert_eq!(mapper.read_chr(0x1FD8), 4);
         assert_eq!(mapper.read_chr(0x1000), 3);
 
-        // High region latch: FE
-        mapper.ppu_address_changed(0x1FE8);
+        assert_eq!(mapper.read_chr(0x1FE8), 3);
         assert_eq!(mapper.read_chr(0x1000), 4);
     }
 
     #[test]
+    fn test_mmc2_latch0_only_switches_on_exact_addresses() {
+        let chr_rom = filled_banks(MMC2Mapper::CHR_BANK_SIZE, 8);
+        let prg_rom = filled_banks(MMC2Mapper::PRG_BANK_SIZE, 8);
+
+        let mut mapper = MMC2Mapper::new(MapperContext::new_for_test(
+            9,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Vertical,
+        ));
+
+        mapper.write_prg(0xB000, 1); // low FD
+        mapper.write_prg(0xC000, 2); // low FE
+
+        // Power-on FE bank selected.
+        assert_eq!(mapper.read_chr(0x0000), 2);
+
+        // Neighbor of FD trigger must not switch latch0.
+        assert_eq!(mapper.read_chr(0x0FDF), 2);
+        assert_eq!(mapper.read_chr(0x0000), 2);
+
+        // Exact FD trigger should switch to FD for subsequent reads.
+        assert_eq!(mapper.read_chr(0x0FD8), 2);
+        assert_eq!(mapper.read_chr(0x0000), 1);
+
+        // Neighbor of FE trigger must not switch latch0.
+        assert_eq!(mapper.read_chr(0x0FEF), 1);
+        assert_eq!(mapper.read_chr(0x0000), 1);
+
+        // Exact FE trigger should switch to FE for subsequent reads.
+        assert_eq!(mapper.read_chr(0x0FE8), 1);
+        assert_eq!(mapper.read_chr(0x0000), 2);
+    }
+
+    #[test]
+    fn test_mmc2_ppu_address_changed_does_not_switch_latches() {
+        let chr_rom = filled_banks(MMC2Mapper::CHR_BANK_SIZE, 8);
+        let prg_rom = filled_banks(MMC2Mapper::PRG_BANK_SIZE, 8);
+
+        let mut mapper = MMC2Mapper::new(MapperContext::new_for_test(
+            9,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Vertical,
+        ));
+
+        mapper.write_prg(0xB000, 1);
+        mapper.write_prg(0xC000, 2);
+
+        // Power-on FE bank selected.
+        assert_eq!(mapper.read_chr(0x0000), 2);
+
+        mapper.ppu_address_changed(0x0FD8);
+
+        // Still FE because address bus activity alone must not switch latch.
+        assert_eq!(mapper.read_chr(0x0000), 2);
+    }
+
+    #[test]
     fn test_mmc2_open_bus() {
-        let mapper = MMC2Mapper::new(
+        let mapper = MMC2Mapper::new(MapperContext::new_for_test(
+            9,
             vec![0; 128 * 1024],
             vec![0; 128 * 1024],
             NametableLayout::Horizontal,
-        );
+        ));
 
         assert_eq!(mapper.read_prg_open_bus(0x5000, 0x11), 0x11);
         assert_eq!(mapper.read_prg_open_bus(0x5FFF, 0x22), 0x22);
+    }
+
+    #[test]
+    fn test_mmc2_standard_board_has_no_prg_ram_window() {
+        let mut mapper = MMC2Mapper::new(MapperContext::new_for_test(
+            9,
+            vec![0; 128 * 1024],
+            vec![0; 128 * 1024],
+            NametableLayout::Horizontal,
+        ));
+
+        mapper.write_prg(0x6000, 0xA5);
+
+        assert_eq!(mapper.wram_size(), 0);
+        assert_eq!(mapper.read_prg_open_bus(0x6000, 0x3C), 0x3C);
+        assert_eq!(mapper.read_prg_open_bus(0x7FFF, 0x7E), 0x7E);
     }
 }

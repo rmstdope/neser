@@ -43,8 +43,15 @@ pub struct AxROMMapper {
 }
 
 impl AxROMMapper {
-    pub fn new(prg_rom: Vec<u8>, _chr_rom: Vec<u8>, _mirroring: NametableLayout) -> Self {
-        Self::new_with_submapper_and_prg_ram_banks(prg_rom, 0, 1)
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let submapper = if ctx.submapper == 0 && ctx.crc32 == 0x41D3_2FD7 {
+            2
+        } else {
+            ctx.submapper
+        };
+        let prg_ram_banks_8k = ctx.prg_ram_banks_8k;
+        let prg_rom = ctx.prg_rom;
+        Self::new_with_submapper_and_prg_ram_banks(prg_rom, submapper, prg_ram_banks_8k)
     }
 
     pub fn new_with_submapper_and_prg_ram_banks(
@@ -141,7 +148,7 @@ impl Mapper for AxROMMapper {
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         self.chr_memory.read(addr)
     }
 
@@ -478,7 +485,8 @@ mod tests {
         }
 
         let mut mapper = create_mapper(
-            MapperContext::new_for_test(7, prg_rom, vec![], NametableLayout::Horizontal).with_submapper(2),
+            MapperContext::new_for_test(7, prg_rom, vec![], NametableLayout::Horizontal)
+                .with_submapper(2),
         )
         .expect("Failed to create AxROM mapper with submapper 2");
 
@@ -503,7 +511,8 @@ mod tests {
         }
 
         let mut mapper = create_mapper(
-            MapperContext::new_for_test(7, prg_rom, vec![], NametableLayout::Horizontal).with_submapper(1),
+            MapperContext::new_for_test(7, prg_rom, vec![], NametableLayout::Horizontal)
+                .with_submapper(1),
         )
         .expect("Failed to create AxROM mapper with submapper 1");
 

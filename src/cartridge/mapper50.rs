@@ -65,7 +65,10 @@ impl Mapper50 {
     // IRQ fires on the $0FFF→$1000 transition (after 4096 cycles)
     const IRQ_FIRE_COUNT: u16 = 0x1000;
 
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
+        let mirroring = ctx.mirroring;
         Self {
             prg_rom,
             chr_memory: ChrMemory::new(chr_rom),
@@ -138,7 +141,7 @@ impl Mapper for Mapper50 {
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         self.chr_memory.read(addr)
     }
 
@@ -231,14 +234,24 @@ mod tests {
     fn make_mapper() -> Box<dyn Mapper> {
         let prg = banked_data(8 * 1024, PRG_BANKS);
         let chr = banked_data(8 * 1024, 1);
-        create_mapper(MapperContext::new_for_test(50, prg, chr, NametableLayout::Vertical))
-            .expect("Mapper 50 should be implemented")
+        create_mapper(MapperContext::new_for_test(
+            50,
+            prg,
+            chr,
+            NametableLayout::Vertical,
+        ))
+        .expect("Mapper 50 should be implemented")
     }
 
     fn make_mapper_direct() -> Mapper50 {
         let prg = banked_data(8 * 1024, PRG_BANKS);
         let chr = banked_data(8 * 1024, 1);
-        Mapper50::new(prg, chr, NametableLayout::Vertical)
+        Mapper50::new(MapperContext::new_for_test(
+            50,
+            prg,
+            chr,
+            NametableLayout::Vertical,
+        ))
     }
 
     // --- Factory ---

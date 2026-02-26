@@ -57,8 +57,16 @@ impl Mapper61 {
     const CHR_BANK_SIZE: usize = 0x2000; // 8 KiB
     const CHR_BANK_MASK: usize = Self::CHR_BANK_SIZE - 1;
 
-    #[allow(dead_code)]
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let submapper = ctx.submapper;
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
+        let mirroring = ctx.mirroring;
+        Self::new_with_submapper(prg_rom, chr_rom, mirroring, submapper)
+    }
+
+    #[cfg(test)]
+    pub fn new_internal(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
         Self::new_with_submapper(prg_rom, chr_rom, mirroring, 0)
     }
 
@@ -151,7 +159,7 @@ impl Mapper for Mapper61 {
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         let count = self.num_chr_banks();
         if count == 0 {
             return self.chr_memory.read(addr);
@@ -241,7 +249,7 @@ mod tests {
     fn make_mapper() -> Mapper61 {
         let prg = banked_data(16 * 1024, 32);
         let chr = banked_data(8 * 1024, 16);
-        Mapper61::new(prg, chr, NametableLayout::Vertical)
+        Mapper61::new_internal(prg, chr, NametableLayout::Vertical)
     }
 
     fn make_mapper_sub1() -> Mapper61 {

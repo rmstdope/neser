@@ -254,14 +254,12 @@ impl MMC5Mapper {
     const PRG_RAM_BANK_COUNT_MAX: usize = 8;
     const PRG_ROM_BANK_SIZE: usize = 8 * 1024;
 
-    #[allow(dead_code)]
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
-        Self::new_with_prg_ram_size(
-            prg_rom,
-            chr_rom,
-            mirroring,
-            Self::PRG_RAM_BANK_COUNT_MAX as u8,
-        )
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let prg_ram_banks_8k = ctx.prg_ram_banks_8k;
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
+        let mirroring = ctx.mirroring;
+        Self::new_with_prg_ram_size(prg_rom, chr_rom, mirroring, prg_ram_banks_8k)
     }
 
     pub fn new_with_prg_ram_size(
@@ -1317,7 +1315,7 @@ impl Mapper for MMC5Mapper {
         self.reset_scanline_tracking(true);
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         let bank = self.get_chr_bank(addr);
 
         // Trace CHR reads in extended attribute mode to debug fine_y issues (issue #385)
@@ -2133,7 +2131,12 @@ mod tests {
     fn new_mmc5_for_irq_test() -> MMC5Mapper {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 8);
-        MMC5Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal)
+        MMC5Mapper::new_with_prg_ram_size(
+            prg_rom,
+            chr_rom,
+            NametableLayout::Horizontal,
+            MMC5Mapper::PRG_RAM_BANK_COUNT_MAX as u8,
+        )
     }
 
     fn create_mmc5_mapper(
@@ -2236,10 +2239,11 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 16);
 
-        let mut mapper = MMC5Mapper::new(
+        let mut mapper = MMC5Mapper::new_with_prg_ram_size(
             prg_rom.clone(),
             chr_rom.clone(),
             NametableLayout::Horizontal,
+            MMC5Mapper::PRG_RAM_BANK_COUNT_MAX as u8,
         );
 
         mapper.write_prg(0x5100, 3);
@@ -2270,7 +2274,12 @@ mod tests {
 
         let saved = mapper.registers_snapshot();
 
-        let mut restored = MMC5Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
+        let mut restored = MMC5Mapper::new_with_prg_ram_size(
+            prg_rom,
+            chr_rom,
+            NametableLayout::Vertical,
+            MMC5Mapper::PRG_RAM_BANK_COUNT_MAX as u8,
+        );
         restored.restore_registers(&saved);
 
         assert_eq!(restored.read_prg(0x8000), 1);
@@ -2399,7 +2408,12 @@ mod tests {
     fn test_mmc5_read_prg_open_bus_allows_expansion_registers() {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1024, 1);
-        let mut mmc5 = MMC5Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+        let mut mmc5 = MMC5Mapper::new_with_prg_ram_size(
+            prg_rom,
+            chr_rom,
+            NametableLayout::Horizontal,
+            MMC5Mapper::PRG_RAM_BANK_COUNT_MAX as u8,
+        );
 
         mmc5.write_prg(0x5205, 3);
         mmc5.write_prg(0x5206, 4);

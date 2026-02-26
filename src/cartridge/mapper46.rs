@@ -44,7 +44,10 @@ impl Mapper46 {
     const CHR_BANK_SIZE: usize = 0x2000; // 8 KiB
     const CHR_BANK_MASK: usize = Self::CHR_BANK_SIZE - 1;
 
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
+        let mirroring = ctx.mirroring;
         Self {
             prg_rom,
             chr_memory: ChrMemory::new(chr_rom),
@@ -93,7 +96,7 @@ impl Mapper for Mapper46 {
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         let offset = (addr as usize) & Self::CHR_BANK_MASK;
         let mapped = self.chr_bank() * Self::CHR_BANK_SIZE + offset;
         self.chr_memory.read_at_index(mapped)
@@ -168,14 +171,24 @@ mod tests {
     fn make_mapper() -> Box<dyn Mapper> {
         let prg = banked_data(32 * 1024, PRG_PAGES);
         let chr = banked_data(8 * 1024, CHR_BANKS);
-        create_mapper(MapperContext::new_for_test(46, prg, chr, NametableLayout::Vertical))
-            .expect("Mapper 46 should be implemented")
+        create_mapper(MapperContext::new_for_test(
+            46,
+            prg,
+            chr,
+            NametableLayout::Vertical,
+        ))
+        .expect("Mapper 46 should be implemented")
     }
 
     fn make_mapper_direct() -> Mapper46 {
         let prg = banked_data(32 * 1024, PRG_PAGES);
         let chr = banked_data(8 * 1024, CHR_BANKS);
-        Mapper46::new(prg, chr, NametableLayout::Vertical)
+        Mapper46::new(MapperContext::new_for_test(
+            46,
+            prg,
+            chr,
+            NametableLayout::Vertical,
+        ))
     }
 
     // --- Factory ---
@@ -263,7 +276,7 @@ mod tests {
 
     #[test]
     fn chr_defaults_to_bank_0() {
-        let mapper = make_mapper();
+        let mut mapper = make_mapper();
         assert_eq!(mapper.read_chr(0x0000), 0, "CHR must default to bank 0");
     }
 
@@ -303,7 +316,12 @@ mod tests {
     #[test]
     fn chr_ram_writable_when_no_chr_rom() {
         let prg = banked_data(32 * 1024, PRG_PAGES);
-        let mut mapper = Mapper46::new(prg, vec![], NametableLayout::Vertical);
+        let mut mapper = Mapper46::new(MapperContext::new_for_test(
+            46,
+            prg,
+            vec![],
+            NametableLayout::Vertical,
+        ));
         mapper.write_chr(0x0100, 0xAB);
         assert_eq!(mapper.read_chr(0x0100), 0xAB);
     }
@@ -314,7 +332,12 @@ mod tests {
     fn mirroring_from_header() {
         let prg = banked_data(32 * 1024, PRG_PAGES);
         let chr = banked_data(8 * 1024, CHR_BANKS);
-        let mapper = Mapper46::new(prg, chr, NametableLayout::Horizontal);
+        let mapper = Mapper46::new(MapperContext::new_for_test(
+            46,
+            prg,
+            chr,
+            NametableLayout::Horizontal,
+        ));
         assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
     }
 

@@ -65,7 +65,10 @@ impl BandaiFcgMapper {
     const PRG_BANK_SIZE: usize = 16 * 1024; // 16KB
     const CHR_BANK_SIZE: usize = 1024; // 1KB
 
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
+        let mirroring = ctx.mirroring;
         // Default to Both variant for submapper 0 (unspecified) compatibility
         Self::new_with_variant(prg_rom, chr_rom, mirroring, BandaiFcgVariant::Both)
     }
@@ -226,7 +229,7 @@ impl Mapper for BandaiFcgMapper {
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         let slot = (addr >> 10) as usize; // Which 1KB slot (0-7)
         let offset = (addr & 0x03FF) as usize; // Offset within 1KB
         let bank = self.chr_banks[slot];
@@ -374,7 +377,12 @@ mod tests {
         let prg_rom = banked_data(16 * 1024, 4); // 4 x 16KB banks
         let chr_rom = banked_data(1024, 8);
 
-        let mut mapper = BandaiFcgMapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+        let mut mapper = BandaiFcgMapper::new(MapperContext::new_for_test(
+            16,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Horizontal,
+        ));
 
         // Initially bank 0 at $8000, last bank (3) at $C000
         assert_eq!(mapper.read_prg(0x8000), 0, "Bank 0 at $8000");
@@ -391,7 +399,12 @@ mod tests {
         let prg_rom = banked_data(16 * 1024, 2);
         let chr_rom = banked_data(1024, 16); // 16 x 1KB banks
 
-        let mut mapper = BandaiFcgMapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+        let mut mapper = BandaiFcgMapper::new(MapperContext::new_for_test(
+            16,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Horizontal,
+        ));
 
         // Set different banks for each 1KB slot
         for i in 0..8 {
@@ -416,7 +429,12 @@ mod tests {
         let prg_rom = banked_data(16 * 1024, 2);
         let chr_rom = banked_data(1024, 8);
 
-        let mut mapper = BandaiFcgMapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+        let mut mapper = BandaiFcgMapper::new(MapperContext::new_for_test(
+            16,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Horizontal,
+        ));
 
         // Test all mirroring modes
         mapper.write_prg(0x8009, 0);
@@ -437,7 +455,12 @@ mod tests {
         let prg_rom = banked_data(16 * 1024, 2);
         let chr_rom = banked_data(1024, 8);
 
-        let mut mapper = BandaiFcgMapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+        let mut mapper = BandaiFcgMapper::new(MapperContext::new_for_test(
+            16,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Horizontal,
+        ));
 
         // Set latch to 3
         mapper.write_prg(0x800B, 3); // Low byte
@@ -464,7 +487,12 @@ mod tests {
         let prg_rom = banked_data(16 * 1024, 2);
         let chr_rom = banked_data(1024, 8);
 
-        let mut mapper = BandaiFcgMapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+        let mut mapper = BandaiFcgMapper::new(MapperContext::new_for_test(
+            16,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Horizontal,
+        ));
 
         // Trigger an IRQ
         mapper.write_prg(0x800B, 1);
@@ -484,7 +512,12 @@ mod tests {
         let prg_rom = banked_data(16 * 1024, 2);
         let chr_rom = banked_data(1024, 8);
 
-        let mut mapper = BandaiFcgMapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+        let mut mapper = BandaiFcgMapper::new(MapperContext::new_for_test(
+            16,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Horizontal,
+        ));
 
         // Set latch to 0
         mapper.write_prg(0x800B, 0);
@@ -628,7 +661,12 @@ mod tests {
         let chr_rom = banked_data(1024, 16);
 
         // Default constructor uses Both variant
-        let mut mapper = BandaiFcgMapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+        let mut mapper = BandaiFcgMapper::new(MapperContext::new_for_test(
+            16,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Horizontal,
+        ));
 
         // $6000 range should work
         mapper.write_prg(0x6008, 1);
@@ -652,7 +690,12 @@ mod tests {
         let prg_rom = banked_data(16 * 1024, 2);
         let chr_rom = banked_data(1024, 8);
 
-        let mut mapper = BandaiFcgMapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+        let mut mapper = BandaiFcgMapper::new(MapperContext::new_for_test(
+            16,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Horizontal,
+        ));
 
         // $6000 range uses FCG-1/2 behavior (direct counter writes)
         mapper.write_prg(0x600B, 5); // Direct counter low = 5
@@ -694,8 +737,12 @@ mod tests {
         let prg_rom = banked_data(16 * 1024, 4);
         let chr_rom = vec![]; // CHR-RAM path
 
-        let mut mapper =
-            BandaiFcgMapper::new(prg_rom.clone(), chr_rom, NametableLayout::Horizontal);
+        let mut mapper = BandaiFcgMapper::new(MapperContext::new_for_test(
+            16,
+            prg_rom.clone(),
+            chr_rom,
+            NametableLayout::Horizontal,
+        ));
 
         mapper.write_prg(0x8008, 2); // PRG bank
         mapper.write_prg(0x8000, 3); // CHR bank 0
@@ -710,7 +757,12 @@ mod tests {
         let regs = mapper.registers_snapshot();
         let chr = mapper.chr_ram_snapshot();
 
-        let mut restored = BandaiFcgMapper::new(prg_rom, vec![], NametableLayout::Vertical);
+        let mut restored = BandaiFcgMapper::new(MapperContext::new_for_test(
+            16,
+            prg_rom,
+            vec![],
+            NametableLayout::Vertical,
+        ));
         restored.restore_registers(&regs);
         restored.restore_chr_ram(&chr);
 

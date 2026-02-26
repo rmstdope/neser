@@ -53,7 +53,9 @@ impl Mapper51 {
     const PRG_BANK_SIZE: usize = 0x2000; // 8 KiB
     const PRG_BANK_MASK: usize = Self::PRG_BANK_SIZE - 1;
 
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, _mirroring: NametableLayout) -> Self {
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
         Self {
             prg_rom,
             chr_memory: ChrMemory::new(chr_rom),
@@ -62,14 +64,14 @@ impl Mapper51 {
         }
     }
 
-    /// Alias kept for compatibility with the mapper factory (submapper value is ignored).
-    pub fn new_with_submapper(
-        prg_rom: Vec<u8>,
-        chr_rom: Vec<u8>,
-        mirroring: NametableLayout,
-        _submapper: u8,
-    ) -> Self {
-        Self::new(prg_rom, chr_rom, mirroring)
+    #[cfg(test)]
+    pub fn new_internal(prg_rom: Vec<u8>, chr_rom: Vec<u8>, _mirroring: NametableLayout) -> Self {
+        Self {
+            prg_rom,
+            chr_memory: ChrMemory::new(chr_rom),
+            bank: 0,
+            mode: 1,
+        }
     }
 
     fn prg_bank_count(&self) -> usize {
@@ -143,7 +145,7 @@ impl Mapper for Mapper51 {
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         self.chr_memory.read(addr)
     }
 
@@ -218,15 +220,20 @@ mod tests {
     fn make_mapper() -> Box<dyn Mapper> {
         let prg = banked_data(8 * 1024, PRG_BANKS);
         let chr = banked_data(8 * 1024, 1);
-        create_mapper(MapperContext::new_for_test(51, prg, chr, NametableLayout::Vertical))
-            .expect("Mapper 51 should be implemented")
+        create_mapper(MapperContext::new_for_test(
+            51,
+            prg,
+            chr,
+            NametableLayout::Vertical,
+        ))
+        .expect("Mapper 51 should be implemented")
     }
 
     fn make_mapper_direct() -> Mapper51 {
         // Use Horizontal header so mirroring tests verify mode-derived value, not header passthrough
         let prg = banked_data(8 * 1024, PRG_BANKS);
         let chr = banked_data(8 * 1024, 1);
-        Mapper51::new(prg, chr, NametableLayout::Horizontal)
+        Mapper51::new_internal(prg, chr, NametableLayout::Horizontal)
     }
 
     // --- Factory ---
@@ -410,7 +417,7 @@ mod tests {
         // CHR is always fixed at bank 0; use 2-bank CHR so bank 1 would differ
         let prg = banked_data(8 * 1024, PRG_BANKS);
         let chr = banked_data(8 * 1024, 2); // bank 0 → 0, bank 1 → 1
-        let mapper = Mapper51::new(prg, chr, NametableLayout::Vertical);
+        let mut mapper = Mapper51::new_internal(prg, chr, NametableLayout::Vertical);
         assert_eq!(mapper.read_chr(0x0000), 0, "CHR must read from bank 0");
         assert_eq!(mapper.read_chr(0x1FFF), 0, "CHR end must still be bank 0");
     }

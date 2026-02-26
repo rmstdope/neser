@@ -34,7 +34,9 @@ pub struct CpromMapper {
 }
 
 impl CpromMapper {
-    pub fn new(prg_rom: Vec<u8>, _chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let prg_rom = ctx.prg_rom;
+        let mirroring = ctx.mirroring;
         // CPROM uses CHR-RAM, ignore chr_rom parameter
         Self {
             prg_rom,
@@ -85,7 +87,7 @@ impl Mapper for CpromMapper {
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         let bank_offset = self.get_chr_bank_offset(addr);
         let offset = (addr & 0x0FFF) as usize;
         let index = bank_offset + offset;
@@ -155,6 +157,7 @@ impl Mapper for CpromMapper {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cartridge::mapper::MapperContext;
 
     #[test]
     fn test_cprom_32kb_prg_fixed() {
@@ -166,7 +169,12 @@ mod tests {
             *byte = (i / 1024) as u8;
         }
 
-        let mapper = CpromMapper::new(prg_rom, vec![], NametableLayout::Horizontal);
+        let mapper = CpromMapper::new(MapperContext::new_for_test(
+            13,
+            prg_rom,
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         // PRG ROM should be accessible at $8000-$FFFF
         assert_eq!(mapper.read_prg(0x8000), 0); // First byte of first 1KB block
@@ -179,7 +187,12 @@ mod tests {
     fn test_cprom_chr_ram_lower_bank_fixed() {
         // Per NesDev spec: PPU $0000-$0FFF is FIXED to bank 0 (first page).
         // The bank select register does NOT affect $0000-$0FFF.
-        let mut mapper = CpromMapper::new(vec![0; 32 * 1024], vec![], NametableLayout::Horizontal);
+        let mut mapper = CpromMapper::new(MapperContext::new_for_test(
+            13,
+            vec![0; 32 * 1024],
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         // Write a distinct pattern to bank 0 via the lower window
         for i in 0..4096u16 {
@@ -205,7 +218,12 @@ mod tests {
     #[test]
     fn test_cprom_chr_ram_upper_bank_switching() {
         // Per NesDev spec: PPU $1000-$1FFF is swappable via the bank select register.
-        let mut mapper = CpromMapper::new(vec![0; 32 * 1024], vec![], NametableLayout::Horizontal);
+        let mut mapper = CpromMapper::new(MapperContext::new_for_test(
+            13,
+            vec![0; 32 * 1024],
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         // Write distinct patterns to each 4KB bank via the upper window ($1000-$1FFF)
         for bank in 0u8..4 {
@@ -242,7 +260,12 @@ mod tests {
     fn test_cprom_chr_ram_writable() {
         // CHR-RAM should be writable in both windows.
         // Per spec: $0000-$0FFF is fixed to bank 0; $1000-$1FFF is swappable.
-        let mut mapper = CpromMapper::new(vec![0; 32 * 1024], vec![], NametableLayout::Horizontal);
+        let mut mapper = CpromMapper::new(MapperContext::new_for_test(
+            13,
+            vec![0; 32 * 1024],
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         // Write to fixed lower window (always bank 0)
         mapper.write_chr(0x0000, 0xAA);
@@ -272,7 +295,12 @@ mod tests {
     fn test_cprom_bank_select_mask() {
         // Only lower 2 bits should be used for bank select (4 banks total).
         // The selected bank maps to PPU $1000-$1FFF.
-        let mut mapper = CpromMapper::new(vec![0; 32 * 1024], vec![], NametableLayout::Horizontal);
+        let mut mapper = CpromMapper::new(MapperContext::new_for_test(
+            13,
+            vec![0; 32 * 1024],
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         // Fill each bank with distinct pattern via the upper window
         for bank in 0u8..4 {
@@ -298,10 +326,20 @@ mod tests {
 
     #[test]
     fn test_cprom_mirroring() {
-        let mapper_h = CpromMapper::new(vec![0; 32 * 1024], vec![], NametableLayout::Horizontal);
+        let mapper_h = CpromMapper::new(MapperContext::new_for_test(
+            13,
+            vec![0; 32 * 1024],
+            vec![],
+            NametableLayout::Horizontal,
+        ));
         assert_eq!(mapper_h.get_mirroring(), NametableLayout::Horizontal);
 
-        let mapper_v = CpromMapper::new(vec![0; 32 * 1024], vec![], NametableLayout::Vertical);
+        let mapper_v = CpromMapper::new(MapperContext::new_for_test(
+            13,
+            vec![0; 32 * 1024],
+            vec![],
+            NametableLayout::Vertical,
+        ));
         assert_eq!(mapper_v.get_mirroring(), NametableLayout::Vertical);
     }
 
@@ -309,7 +347,12 @@ mod tests {
     fn test_cprom_bank_select_any_address() {
         // CPROM responds to writes anywhere in $8000-$FFFF.
         // The selected bank maps to PPU $1000-$1FFF.
-        let mut mapper = CpromMapper::new(vec![0; 32 * 1024], vec![], NametableLayout::Horizontal);
+        let mut mapper = CpromMapper::new(MapperContext::new_for_test(
+            13,
+            vec![0; 32 * 1024],
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         // Fill banks with distinct patterns via the upper window
         for bank in 0u8..4 {
@@ -332,14 +375,23 @@ mod tests {
 
     #[test]
     fn test_cprom_registers_snapshot_restores_chr_bank() {
-        let mut mapper = CpromMapper::new(vec![0; 32 * 1024], vec![], NametableLayout::Horizontal);
+        let mut mapper = CpromMapper::new(MapperContext::new_for_test(
+            13,
+            vec![0; 32 * 1024],
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         mapper.write_prg(0x8000, 0b0000_0010); // select bank 2
         mapper.write_chr(0x1000, 0xAA); // write to bank 2 via upper window
         let regs = mapper.registers_snapshot();
 
-        let mut restored =
-            CpromMapper::new(vec![0; 32 * 1024], vec![], NametableLayout::Horizontal);
+        let mut restored = CpromMapper::new(MapperContext::new_for_test(
+            13,
+            vec![0; 32 * 1024],
+            vec![],
+            NametableLayout::Horizontal,
+        ));
         restored.restore_registers(&regs);
 
         // After restoring registers, upper window should still map to bank 2
@@ -353,7 +405,12 @@ mod tests {
 
     #[test]
     fn test_cprom_open_bus() {
-        let mapper = CpromMapper::new(vec![0; 32 * 1024], vec![], NametableLayout::Horizontal);
+        let mapper = CpromMapper::new(MapperContext::new_for_test(
+            13,
+            vec![0; 32 * 1024],
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         assert_eq!(mapper.read_prg_open_bus(0x5000, 0x77), 0x77);
         assert_eq!(mapper.read_prg_open_bus(0x5FFF, 0x88), 0x88);

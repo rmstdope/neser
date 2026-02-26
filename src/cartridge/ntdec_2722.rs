@@ -59,7 +59,10 @@ impl Ntdec2722Mapper {
     const IRQ_FIRE_COUNT: u16 = 4096;
     const IRQ_SELF_ACK_COUNT: u16 = 8192;
 
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
+        let mirroring = ctx.mirroring;
         Self {
             prg_rom,
             chr_memory: ChrMemory::new(chr_rom),
@@ -121,7 +124,7 @@ impl Mapper for Ntdec2722Mapper {
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         self.chr_memory.read_at_index((addr & 0x1FFF) as usize)
     }
 
@@ -233,7 +236,12 @@ mod tests {
     fn make_mapper_direct() -> Ntdec2722Mapper {
         let prg_rom = banked_data(8 * 1024, PRG_BANKS);
         let chr_rom = banked_data(8 * 1024, CHR_BANKS);
-        Ntdec2722Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical)
+        Ntdec2722Mapper::new(MapperContext::new_for_test(
+            40,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Vertical,
+        ))
     }
 
     // --- Factory ---
@@ -339,7 +347,12 @@ mod tests {
     fn mirroring_is_preserved_from_header() {
         let prg_rom = banked_data(8 * 1024, PRG_BANKS);
         let chr_rom = banked_data(8 * 1024, CHR_BANKS);
-        let mapper = Ntdec2722Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+        let mapper = Ntdec2722Mapper::new(MapperContext::new_for_test(
+            40,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Horizontal,
+        ));
         assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
     }
 
@@ -429,8 +442,12 @@ mod tests {
     fn registers_snapshot_and_restore() {
         let prg_rom = banked_data(8 * 1024, PRG_BANKS);
         let chr_rom = banked_data(8 * 1024, CHR_BANKS);
-        let mut mapper =
-            Ntdec2722Mapper::new(prg_rom.clone(), chr_rom.clone(), NametableLayout::Vertical);
+        let mut mapper = Ntdec2722Mapper::new(MapperContext::new_for_test(
+            40,
+            prg_rom.clone(),
+            chr_rom.clone(),
+            NametableLayout::Vertical,
+        ));
 
         // Set up state
         mapper.write_prg(0xE000, 2); // $C000 bank = 2
@@ -441,7 +458,12 @@ mod tests {
 
         let snap = mapper.registers_snapshot();
 
-        let mut restored = Ntdec2722Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
+        let mut restored = Ntdec2722Mapper::new(MapperContext::new_for_test(
+            40,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Vertical,
+        ));
         restored.restore_registers(&snap);
 
         assert_eq!(

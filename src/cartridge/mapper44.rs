@@ -44,9 +44,12 @@ impl Mapper44 {
     const CHR_1K_BANK_SIZE: usize = 0x0400; // 1 KiB
     const CHR_BANK_MASK: usize = Self::CHR_1K_BANK_SIZE - 1;
 
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
+        let mirroring = ctx.mirroring;
         Self {
-            mmc3: MMC3Mapper::new(prg_rom, chr_rom, mirroring),
+            mmc3: MMC3Mapper::new_with_irq_mode(prg_rom, chr_rom, mirroring, false),
             block: 0,
         }
     }
@@ -98,7 +101,7 @@ impl Mapper for Mapper44 {
         self.mmc3.write_prg(addr, value);
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         let raw = self.mmc3.mapped_chr_1k_bank(addr);
         let (and, or) = self.chr_and_or();
         let bank = (raw & and) | or;
@@ -191,8 +194,13 @@ mod tests {
     fn make_mapper() -> Box<dyn Mapper> {
         let prg = banked_data(8 * 1024, PRG_BANKS);
         let chr = banked_data(1024, CHR_1K_BANKS);
-        create_mapper(MapperContext::new_for_test(44, prg, chr, NametableLayout::Vertical))
-            .expect("Mapper 44 should be implemented")
+        create_mapper(MapperContext::new_for_test(
+            44,
+            prg,
+            chr,
+            NametableLayout::Vertical,
+        ))
+        .expect("Mapper 44 should be implemented")
     }
 
     // --- Factory ---

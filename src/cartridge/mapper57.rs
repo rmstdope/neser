@@ -55,7 +55,9 @@ impl Mapper57 {
     const CHR_BANK_SIZE: usize = 0x2000; // 8 KiB
     const CHR_BANK_MASK: usize = Self::CHR_BANK_SIZE - 1;
 
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, _mirroring: NametableLayout) -> Self {
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
         Self {
             prg_rom,
             chr_memory: ChrMemory::new(chr_rom),
@@ -139,7 +141,7 @@ impl Mapper for Mapper57 {
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         let count = self.chr_bank_count();
         if count == 0 {
             return self.chr_memory.read(addr);
@@ -217,7 +219,12 @@ mod tests {
     fn make_mapper() -> Mapper57 {
         let prg = banked_data(16 * 1024, 8);
         let chr = banked_data(8 * 1024, 16);
-        Mapper57::new(prg, chr, NametableLayout::Vertical)
+        Mapper57::new(MapperContext::new_for_test(
+            57,
+            prg,
+            chr,
+            NametableLayout::Vertical,
+        ))
     }
 
     #[test]

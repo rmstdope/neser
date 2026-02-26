@@ -41,7 +41,10 @@ pub struct ColorDreamsMapper {
 }
 
 impl ColorDreamsMapper {
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
+        let mirroring = ctx.mirroring;
         const PRG_BANK_SIZE: usize = 32 * 1024;
         const CHR_BANK_SIZE: usize = 8 * 1024;
 
@@ -83,7 +86,7 @@ impl Mapper for ColorDreamsMapper {
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         let offset = (addr & 0x1FFF) as usize;
         self.chr_rom.read(self.chr_bank.current(), offset)
     }
@@ -293,11 +296,12 @@ mod tests {
 
     #[test]
     fn test_colordreams_open_bus() {
-        let mapper = ColorDreamsMapper::new(
+        let mapper = ColorDreamsMapper::new(MapperContext::new_for_test(
+            11,
             vec![0; 128 * 1024],
             vec![0; 128 * 1024],
             NametableLayout::Horizontal,
-        );
+        ));
 
         assert_eq!(mapper.read_prg_open_bus(0x5000, 0x55), 0x55);
         assert_eq!(mapper.read_prg_open_bus(0x5FFF, 0x66), 0x66);

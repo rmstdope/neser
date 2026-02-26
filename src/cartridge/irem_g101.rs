@@ -56,7 +56,16 @@ impl IremG101Mapper {
     // CHR register select: low 3 bits of address in $B000 range
     const CHR_REG_SELECT_MASK: u16 = 0x0007;
 
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let submapper = ctx.submapper;
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
+        let mirroring = ctx.mirroring;
+        Self::new_with_submapper(prg_rom, chr_rom, mirroring, submapper)
+    }
+
+    #[cfg(test)]
+    pub fn new_internal(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
         Self::new_with_submapper(prg_rom, chr_rom, mirroring, 0)
     }
 
@@ -185,7 +194,7 @@ impl Mapper for IremG101Mapper {
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         self.chr_memory.read_at_index(self.resolve_chr_addr(addr))
     }
 
@@ -439,8 +448,11 @@ mod tests {
     fn registers_snapshot_and_restore() {
         let prg_rom = banked_data(8 * 1024, 6);
         let chr_rom = banked_data(1024, 11);
-        let mut mapper =
-            IremG101Mapper::new(prg_rom.clone(), chr_rom.clone(), NametableLayout::Vertical);
+        let mut mapper = IremG101Mapper::new_internal(
+            prg_rom.clone(),
+            chr_rom.clone(),
+            NametableLayout::Vertical,
+        );
 
         mapper.write_prg(0x8000, 2);
         mapper.write_prg(0xA000, 3);
@@ -449,7 +461,8 @@ mod tests {
 
         let snap = mapper.registers_snapshot();
 
-        let mut restored = IremG101Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
+        let mut restored =
+            IremG101Mapper::new_internal(prg_rom, chr_rom, NametableLayout::Vertical);
         restored.restore_registers(&snap);
 
         assert_eq!(restored.read_prg(0xC000), 2); // mode 1: reg0 at $C000

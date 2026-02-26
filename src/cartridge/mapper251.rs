@@ -18,9 +18,12 @@ pub struct Mapper251 {
 impl Mapper251 {
     const MAPPER_NUMBER: u8 = 251;
 
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
+        let mirroring = ctx.mirroring;
         Self {
-            inner: Mapper45::new(prg_rom, chr_rom, mirroring),
+            inner: Mapper45::new_internal(prg_rom, chr_rom, mirroring),
         }
     }
 }
@@ -38,7 +41,7 @@ impl Mapper for Mapper251 {
         self.inner.write_prg(addr, value);
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         self.inner.read_chr(addr)
     }
 
@@ -106,7 +109,9 @@ mod tests {
         chr_rom: Vec<u8>,
         mirroring: NametableLayout,
     ) -> std::io::Result<Box<dyn Mapper>> {
-        create_mapper(MapperContext::new_for_test(251, prg_rom, chr_rom, mirroring))
+        create_mapper(MapperContext::new_for_test(
+            251, prg_rom, chr_rom, mirroring,
+        ))
     }
 
     #[test]

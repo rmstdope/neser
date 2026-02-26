@@ -1,5 +1,5 @@
 use crate::cartridge::NametableLayout;
-use crate::cartridge::ines::ParsedRom;
+use crate::cartridge::ines::{ConsoleType, ParsedRom};
 use std::io;
 
 use super::axrom::AxROMMapper;
@@ -49,6 +49,7 @@ use super::namco163::Namco163Mapper;
 use super::nina_tengen::NinaTengenMapper;
 use super::nrom::NROMMapper;
 use super::ntdec_2722::Ntdec2722Mapper;
+#[cfg(test)]
 use super::rom_db;
 use super::sunsoft_4::Sunsoft4Mapper;
 use super::sunsoft_fme7::SunsoftFme7Mapper;
@@ -69,12 +70,16 @@ pub struct MapperContext {
     pub submapper: u8,
     /// PPU nametable mirroring mode from the header.
     pub mirroring: NametableLayout,
+    /// Console type from iNES/NES 2.0 header.
+    pub console_type: ConsoleType,
     /// PRG ROM bytes.
     pub prg_rom: Vec<u8>,
     /// CHR ROM bytes (empty when CHR-RAM).
     pub chr_rom: Vec<u8>,
     /// PRG-RAM size in 8KB units (minimum 1).
     pub prg_ram_banks_8k: u8,
+    /// Whether PRG-RAM size was explicitly specified by header metadata.
+    pub prg_ram_size_specified: bool,
     /// Whether PRG-RAM is battery backed.
     pub battery_backed_prg_ram: bool,
     /// CRC32 of concatenated PRG/CHR; may be overridden for tests.
@@ -94,9 +99,11 @@ impl MapperContext {
             mapper: info.mapper,
             submapper: info.submapper,
             mirroring: info.mirroring,
+            console_type: info.console_type,
             prg_rom: parsed.prg_rom.clone(),
             chr_rom: parsed.chr_rom.clone(),
             prg_ram_banks_8k: Self::prg_ram_banks_8k(info.prg_ram_size_bytes),
+            prg_ram_size_specified: info.prg_ram_size_bytes.is_some(),
             battery_backed_prg_ram: info.battery_backed_prg_ram,
             crc32: parsed.crc32,
         }
@@ -128,9 +135,11 @@ impl MapperContext {
             mapper,
             submapper: 0,
             mirroring,
+            console_type: ConsoleType::NesFamicom,
             prg_rom,
             chr_rom,
             prg_ram_banks_8k: 1,
+            prg_ram_size_specified: true,
             battery_backed_prg_ram: false,
             crc32,
         }
@@ -150,25 +159,11 @@ impl MapperContext {
         self
     }
 
-    // /// Mark PRG-RAM as battery backed.
-    // pub fn with_battery_backed_prg_ram(mut self, battery_backed_prg_ram: bool) -> Self {
-    //     self.battery_backed_prg_ram = battery_backed_prg_ram;
-    //     self
-    // }
-
-    // /// Override CRC32 value (useful for tests with synthetic ROM data).
-    // #[allow(dead_code)]
-    // pub fn with_crc32(mut self, crc32: u32) -> Self {
-    //     self.crc32 = crc32;
-    //     self
-    // }
-
-    fn mapper_u16(&self) -> u16 {
-        self.mapper
-    }
-
-    fn into_parts(self) -> (Vec<u8>, Vec<u8>, NametableLayout) {
-        (self.prg_rom, self.chr_rom, self.mirroring)
+    /// Mark PRG-RAM size as unspecified in metadata.
+    #[cfg(test)]
+    pub fn with_unspecified_prg_ram_size(mut self) -> Self {
+        self.prg_ram_size_specified = false;
+        self
     }
 }
 
@@ -219,135 +214,6 @@ impl Default for MapperCapabilities {
     }
 }
 
-/// Minimal mapper contract required by all cartridge boards.
-pub trait MapperCore {
-    fn read_prg(&self, addr: u16) -> u8;
-    fn write_prg(&mut self, addr: u16, value: u8);
-    fn read_chr(&self, addr: u16) -> u8;
-    fn write_chr(&mut self, addr: u16, value: u8);
-    fn get_mirroring(&self) -> NametableLayout;
-}
-
-/// Optional IRQ behavior for mappers that can assert CPU interrupts.
-///
-/// This trait models **CPU-visible** IRQ behavior. Implementations that use a
-/// CPU-driven counter (e.g. incremented every CPU cycle or CPU tick) should
-/// implement [`clock_irq`] and [`irq_pending`]. Mappers whose IRQs are driven
-/// purely by PPU events (A12 edges, scanlines, etc.) should prefer the
-/// callbacks in [`MapperPpuExtension`] instead of overloading [`clock_irq`].
-pub trait MapperIrq: MapperCore {
-    /// Returns whether the mapper currently has an IRQ pending for the CPU.
-    ///
-    /// When this returns `true`, the CPU core should treat the mapper as
-    /// asserting the IRQ line until the mapper-specific acknowledge/clear
-    /// mechanism has been invoked via PRG writes.
-    fn irq_pending(&self) -> bool {
-        false
-    }
-
-    /// Advance the mapper's CPU-IRQ timing by one unit.
-    ///
-    /// # Calling contract
-    ///
-    /// The emulator core is expected to call this once per **CPU cycle**
-    /// (i.e., per CPU clock tick), not per PPU cycle or scanline. This is
-    /// intended for mappers whose IRQ counters are clocked directly from the
-    /// CPU clock.
-    ///
-    /// For mappers whose IRQs are instead clocked from PPU activity (such as
-    /// rising edges on A12, or per-scanline counters), use the PPU event
-    /// hooks in [`MapperPpuExtension`] (`ppu_address_changed`, `ppu_scanline`)
-    /// to implement that behavior rather than relying on `clock_irq`.
-    ///
-    /// The default implementation is a no-op, so mappers that do not require
-    /// CPU-clocked IRQ behavior can ignore this method.
-    fn clock_irq(&mut self) {}
-}
-
-/// Optional PPU event hooks used by advanced mappers (e.g. MMC3/MMC5).
-pub trait MapperPpuExtension: MapperCore {
-    fn ppu_address_changed(&mut self, _addr: u16) {}
-
-    fn ppu_scanline(&mut self, _scanline: u16, _rendering_enabled: bool) {}
-}
-
-/// Optional expansion-audio support.
-pub trait MapperAudio: MapperCore {
-    fn expansion_audio_sample(&self) -> f32 {
-        0.0
-    }
-}
-
-/// Optional save-state and WRAM persistence support.
-pub trait MapperStateSnapshot: MapperCore {
-    /// Get the total WRAM size in bytes that should be persisted.
-    ///
-    /// Default is 8KB (the CPU-visible $6000-$7FFF window).
-    /// Mappers with banked or larger WRAM should override this to report full raw size.
-    fn wram_size(&self) -> usize {
-        0x2000
-    }
-
-    /// Create a WRAM snapshot for persistence.
-    ///
-    /// Default implementation only snapshots the CPU-visible $6000-$7FFF window (8KB max).
-    /// Mappers with >8KB WRAM, banked WRAM, or WRAM that can be disabled/protected must
-    /// override this to snapshot raw WRAM directly (independent of current mapping/protection).
-    fn wram_snapshot(&self) -> Vec<u8> {
-        debug_assert!(
-            self.wram_size() <= 0x2000,
-            "MapperStateSnapshot::wram_snapshot default only handles 8KB ($6000-$7FFF); override for larger/banked WRAM"
-        );
-        let size = self.wram_size().min(0x2000);
-        let mut snapshot = Vec::with_capacity(size);
-        for i in 0..size {
-            snapshot.push(self.read_prg(0x6000 + i as u16));
-        }
-        snapshot
-    }
-
-    /// Restore a WRAM snapshot from persistence.
-    ///
-    /// Default implementation only restores through the CPU-visible $6000-$7FFF window (8KB max).
-    /// Mappers with >8KB WRAM, banked WRAM, or WRAM that can be disabled/protected must
-    /// override this to restore raw WRAM directly (independent of current mapping/protection).
-    fn load_wram_snapshot(&mut self, data: &[u8]) {
-        debug_assert!(
-            self.wram_size() <= 0x2000,
-            "MapperStateSnapshot::load_wram_snapshot default only handles 8KB ($6000-$7FFF); override for larger/banked WRAM"
-        );
-        let to_copy = data.len().min(0x2000).min(self.wram_size());
-        for (i, &byte) in data.iter().take(to_copy).enumerate() {
-            self.write_prg(0x6000 + i as u16, byte);
-        }
-    }
-
-    fn prg_ram_snapshot(&self) -> Vec<u8> {
-        self.wram_snapshot()
-    }
-
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        Vec::new()
-    }
-
-    fn registers_snapshot(&self) -> Vec<u8> {
-        Vec::new()
-    }
-
-    fn restore_prg_ram(&mut self, data: &[u8]) {
-        self.load_wram_snapshot(data);
-    }
-
-    fn restore_chr_ram(&mut self, _data: &[u8]) {}
-
-    fn restore_registers(&mut self, _data: &[u8]) {}
-}
-
-/// Convenience trait bound for core + state mappers.
-pub trait MapperComposable: MapperCore + MapperStateSnapshot {}
-
-impl<T: MapperCore + MapperStateSnapshot + ?Sized> MapperComposable for T {}
-
 pub trait Mapper {
     /// Read a byte from PRG address space (CPU $6000-$FFFF)
     /// - $6000-$7FFF: PRG-RAM (8KB, battery-backed on some cartridges)
@@ -374,7 +240,7 @@ pub trait Mapper {
 
     /// Read a byte from CHR address space (PPU $0000-$1FFF)
     /// Returns the byte at the given address after bank translation
-    fn read_chr(&self, addr: u16) -> u8;
+    fn read_chr(&mut self, addr: u16) -> u8;
 
     /// Write a byte to CHR address space (PPU $0000-$1FFF)
     /// Only works for CHR-RAM, CHR-ROM is read-only
@@ -594,140 +460,6 @@ pub trait Mapper {
     }
 }
 
-impl<T: Mapper + ?Sized> MapperCore for T {
-    fn read_prg(&self, addr: u16) -> u8 {
-        Mapper::read_prg(self, addr)
-    }
-
-    fn write_prg(&mut self, addr: u16, value: u8) {
-        Mapper::write_prg(self, addr, value);
-    }
-
-    fn read_chr(&self, addr: u16) -> u8 {
-        Mapper::read_chr(self, addr)
-    }
-
-    fn write_chr(&mut self, addr: u16, value: u8) {
-        Mapper::write_chr(self, addr, value);
-    }
-
-    fn get_mirroring(&self) -> NametableLayout {
-        Mapper::get_mirroring(self)
-    }
-}
-
-impl<T: Mapper + ?Sized> MapperPpuExtension for T {
-    fn ppu_address_changed(&mut self, addr: u16) {
-        Mapper::ppu_address_changed(self, addr);
-    }
-
-    fn ppu_scanline(&mut self, scanline: u16, rendering_enabled: bool) {
-        Mapper::ppu_scanline(self, scanline, rendering_enabled);
-    }
-}
-
-impl<T: Mapper + ?Sized> MapperAudio for T {
-    fn expansion_audio_sample(&self) -> f32 {
-        Mapper::expansion_audio_sample(self)
-    }
-}
-
-impl<T: Mapper + ?Sized> MapperStateSnapshot for T {
-    fn wram_size(&self) -> usize {
-        Mapper::wram_size(self)
-    }
-
-    fn wram_snapshot(&self) -> Vec<u8> {
-        Mapper::wram_snapshot(self)
-    }
-
-    fn load_wram_snapshot(&mut self, data: &[u8]) {
-        Mapper::load_wram_snapshot(self, data);
-    }
-
-    fn prg_ram_snapshot(&self) -> Vec<u8> {
-        Mapper::prg_ram_snapshot(self)
-    }
-
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        Mapper::chr_ram_snapshot(self)
-    }
-
-    fn registers_snapshot(&self) -> Vec<u8> {
-        Mapper::registers_snapshot(self)
-    }
-
-    fn restore_prg_ram(&mut self, data: &[u8]) {
-        Mapper::restore_prg_ram(self, data);
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        Mapper::restore_chr_ram(self, data);
-    }
-
-    fn restore_registers(&mut self, data: &[u8]) {
-        Mapper::restore_registers(self, data);
-    }
-}
-
-#[inline]
-fn probe_mapper_core<T: MapperCore + ?Sized>(_mapper: &T) {
-    let _ = <T as MapperCore>::read_prg as fn(&T, u16) -> u8;
-    let _ = <T as MapperCore>::write_prg as fn(&mut T, u16, u8);
-    let _ = <T as MapperCore>::read_chr as fn(&T, u16) -> u8;
-    let _ = <T as MapperCore>::write_chr as fn(&mut T, u16, u8);
-    let _ = <T as MapperCore>::get_mirroring as fn(&T) -> NametableLayout;
-}
-
-#[inline]
-fn probe_mapper_irq<T: MapperIrq + ?Sized>(_mapper: &T) {
-    let _ = <T as MapperIrq>::irq_pending as fn(&T) -> bool;
-    let _ = <T as MapperIrq>::clock_irq as fn(&mut T);
-}
-
-#[inline]
-fn probe_mapper_ppu_extension<T: MapperPpuExtension + ?Sized>(_mapper: &mut T) {
-    let _ = <T as MapperPpuExtension>::ppu_address_changed as fn(&mut T, u16);
-    let _ = <T as MapperPpuExtension>::ppu_scanline as fn(&mut T, u16, bool);
-}
-
-#[inline]
-fn probe_mapper_audio<T: MapperAudio + ?Sized>(_mapper: &T) {
-    let _ = <T as MapperAudio>::expansion_audio_sample as fn(&T) -> f32;
-}
-
-#[inline]
-fn probe_mapper_state_snapshot<T: MapperStateSnapshot + ?Sized>(_mapper: &T) {
-    let _ = <T as MapperStateSnapshot>::wram_size as fn(&T) -> usize;
-    let _ = <T as MapperStateSnapshot>::wram_snapshot as fn(&T) -> Vec<u8>;
-    let _ = <T as MapperStateSnapshot>::load_wram_snapshot as fn(&mut T, &[u8]);
-    let _ = <T as MapperStateSnapshot>::prg_ram_snapshot as fn(&T) -> Vec<u8>;
-    let _ = <T as MapperStateSnapshot>::chr_ram_snapshot as fn(&T) -> Vec<u8>;
-    let _ = <T as MapperStateSnapshot>::registers_snapshot as fn(&T) -> Vec<u8>;
-    let _ = <T as MapperStateSnapshot>::restore_prg_ram as fn(&mut T, &[u8]);
-    let _ = <T as MapperStateSnapshot>::restore_chr_ram as fn(&mut T, &[u8]);
-    let _ = <T as MapperStateSnapshot>::restore_registers as fn(&mut T, &[u8]);
-}
-
-#[inline]
-fn probe_mapper_composable<T: MapperComposable + ?Sized>(_mapper: &T) {}
-
-fn vrc2_vrc4_22(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Vrc2Vrc4Mapper {
-    Vrc2Vrc4Mapper::new(22, prg_rom, chr_rom, mirroring)
-}
-
-fn vrc6_24(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> VRC6Mapper {
-    let mapper = VRC6Mapper::new(24, prg_rom, chr_rom, mirroring);
-    probe_mapper_irq(&mapper);
-    mapper
-}
-
-fn vrc6_26(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> VRC6Mapper {
-    let mapper = VRC6Mapper::new(26, prg_rom, chr_rom, mirroring);
-    probe_mapper_irq(&mapper);
-    mapper
-}
-
 macro_rules! mapper_registry {
     ($($id:expr => $ctor:path),+ $(,)?) => {
         fn create_registry_mapper(
@@ -736,8 +468,7 @@ macro_rules! mapper_registry {
             match metadata.mapper {
                 $(
                     $id => {
-                        let (prg_rom, chr_rom, mirroring) = metadata.into_parts();
-                        Some(Box::new($ctor(prg_rom, chr_rom, mirroring)))
+                        Some(Box::new($ctor(metadata)))
                     }
                 )+
                 _ => None,
@@ -751,17 +482,25 @@ mapper_registry! {
     1 => MMC1Mapper::new,
     2 => UxROMMapper::new,
     3 => CNROMMapper::new,
+    4 => MMC3Mapper::new,
+    5 => MMC5Mapper::new,
+    6 => SuperMagicCardMapper::new,
     7 => AxROMMapper::new,
+    8 => SuperMagicCardMapper::new,
     9 => MMC2Mapper::new,
     10 => MMC4Mapper::new,
     11 => ColorDreamsMapper::new,
     13 => CpromMapper::new,
     15 => Multicart15Mapper::new,
     16 => BandaiFcgMapper::new,
+    17 => SuperMagicCardMapper::new,
     19 => Namco163Mapper::new,
-    22 => vrc2_vrc4_22,
-    24 => vrc6_24,
-    26 => vrc6_26,
+    21 => Vrc2Vrc4Mapper::new,
+    22 => Vrc2Vrc4Mapper::new,
+    23 => Vrc2Vrc4Mapper::new,
+    24 => VRC6Mapper::new,
+    25 => Vrc2Vrc4Mapper::new,
+    26 => VRC6Mapper::new,
     32 => IremG101Mapper::new,
     33 => TaitoTc0190Mapper::new,
     34 => BnromNinaMapper::new,
@@ -773,16 +512,19 @@ mapper_registry! {
     47 => Mapper47::new,
     49 => Mapper49::new,
     50 => Mapper50::new,
+    51 => Mapper51::new,
     52 => Mapper52::new,
     53 => Mapper53::new,
     56 => Mapper56::new,
     57 => Mapper57::new,
     58 => Mapper58::new,
     60 => Mapper60::new,
+    61 => Mapper61::new,
     62 => Mapper62::new,
     64 => Mapper64::new,
     65 => Mapper65::new,
     66 => GxROMMapper::new,
+    68 => Sunsoft4Mapper::new,
     69 => SunsoftFme7Mapper::new,
     71 => CamericaMapper::new,
     78 => NinaTengenMapper::new,
@@ -800,9 +542,8 @@ mapper_registry! {
 
 #[cfg(test)]
 const SUPPORTED_MAPPERS: &[u8] = &[
-    4, // MMC3 is constructed with CRC-specific behavior.
-    0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 13, 15, 16, 17, 19, 21, 22, 23, 24, 25, 26, 32, 33, 34, 40,
-    42, 44, 45, 46, 47, 49, 50, 51, 52, 53, 56, 57, 58, 60, 61, 62, 64, 65, 66, 68, 69, 71, 78,
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 16, 17, 19, 21, 22, 23, 24, 25, 26, 32, 33, 34,
+    40, 42, 44, 45, 46, 47, 49, 50, 51, 52, 53, 56, 57, 58, 60, 61, 62, 64, 65, 66, 68, 69, 71, 78,
     206, 241, 242, 243, 244, 245, 246, 251, 254, 255,
 ];
 
@@ -812,125 +553,12 @@ pub fn supported_mappers() -> &'static [u8] {
     SUPPORTED_MAPPERS
 }
 
-fn resolve_smc_submapper(mapper_number: u16, submapper: u8) -> u8 {
-    match mapper_number {
-        8 => 4,
-        6 if submapper == 0 => 1,
-        _ => submapper,
-    }
-}
-
 /// Create a mapper instance based on mapper metadata.
 pub fn create_mapper(metadata: MapperContext) -> io::Result<Box<dyn Mapper>> {
-    let mapper_number = metadata.mapper_u16();
-
-    if mapper_number == 4 {
-        let crc32 = metadata.crc32;
-        let use_alternate_irq = rom_db::requires_mmc3_alternate_irq(crc32);
-        let (prg_rom, chr_rom, mirroring) = metadata.into_parts();
-        let mapper = MMC3Mapper::new_with_irq_mode(prg_rom, chr_rom, mirroring, use_alternate_irq);
-        probe_mapper_irq(&mapper);
-        return Ok(Box::new(mapper));
-    }
-
-    if mapper_number == 5 {
-        let prg_ram_banks_8k = metadata.prg_ram_banks_8k;
-        let (prg_rom, chr_rom, mirroring) = metadata.into_parts();
-        return Ok(Box::new(MMC5Mapper::new_with_prg_ram_size(
-            prg_rom,
-            chr_rom,
-            mirroring,
-            prg_ram_banks_8k,
-        )));
-    }
-
-    if mapper_number == 68 {
-        let prg_ram_banks_8k = metadata.prg_ram_banks_8k;
-        let (prg_rom, chr_rom, mirroring) = metadata.into_parts();
-        return Ok(Box::new(Sunsoft4Mapper::new_with_prg_ram_banks(
-            prg_rom,
-            chr_rom,
-            mirroring,
-            prg_ram_banks_8k,
-        )));
-    }
-
-    if mapper_number == 6 || mapper_number == 8 {
-        let submapper = resolve_smc_submapper(mapper_number, metadata.submapper);
-        let (prg_rom, chr_rom, mirroring) = metadata.into_parts();
-        return Ok(Box::new(SuperMagicCardMapper::new(
-            prg_rom, chr_rom, mirroring, submapper,
-        )));
-    }
-
-    if mapper_number == 17 {
-        let submapper = metadata.submapper;
-        let (prg_rom, chr_rom, mirroring) = metadata.into_parts();
-        return Ok(Box::new(SuperMagicCardMapper::new_mapper17(
-            prg_rom, chr_rom, mirroring, submapper,
-        )));
-    }
-
-    if mapper_number == 7 {
-        let submapper = if metadata.submapper == 0 && metadata.crc32 == 0x41D3_2FD7 {
-            2
-        } else {
-            metadata.submapper
-        };
-        let prg_ram_banks_8k = metadata.prg_ram_banks_8k;
-        let prg_rom = metadata.prg_rom;
-        return Ok(Box::new(AxROMMapper::new_with_submapper_and_prg_ram_banks(
-            prg_rom,
-            submapper,
-            prg_ram_banks_8k,
-        )));
-    }
-
-    if mapper_number == 21 || mapper_number == 23 || mapper_number == 25 {
-        let submapper = metadata.submapper;
-        let (prg_rom, chr_rom, mirroring) = metadata.into_parts();
-        let mapper = Vrc2Vrc4Mapper::new_with_submapper(
-            mapper_number as u8,
-            submapper,
-            prg_rom,
-            chr_rom,
-            mirroring,
-        );
-        return Ok(Box::new(mapper));
-    }
-
-    if mapper_number == 32 && metadata.submapper == 1 {
-        let (prg_rom, chr_rom, mirroring) = metadata.into_parts();
-        return Ok(Box::new(IremG101Mapper::new_with_submapper(
-            prg_rom, chr_rom, mirroring, 1,
-        )));
-    }
-
-    if mapper_number == 51 {
-        let submapper = metadata.submapper;
-        let (prg_rom, chr_rom, mirroring) = metadata.into_parts();
-        return Ok(Box::new(Mapper51::new_with_submapper(
-            prg_rom, chr_rom, mirroring, submapper,
-        )));
-    }
-
-    if mapper_number == 61 {
-        let submapper = metadata.submapper;
-        let (prg_rom, chr_rom, mirroring) = metadata.into_parts();
-        return Ok(Box::new(Mapper61::new_with_submapper(
-            prg_rom, chr_rom, mirroring, submapper,
-        )));
-    }
-
-    if let Some(mut mapper) = create_registry_mapper(metadata) {
-        probe_mapper_core(&*mapper);
-        probe_mapper_ppu_extension(&mut *mapper);
-        probe_mapper_audio(&*mapper);
-        probe_mapper_state_snapshot(&*mapper);
-        probe_mapper_composable(&*mapper);
+    let mapper_number = metadata.mapper;
+    if let Some(mapper) = create_registry_mapper(metadata) {
         return Ok(mapper);
     }
-
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         format!("Mapper {} not implemented", mapper_number),
@@ -976,7 +604,8 @@ mod tests {
             .flat_map(|bank| std::iter::repeat_n(bank, 16 * 1024))
             .collect();
         let chr_rom = vec![0u8; 8 * 1024];
-        let metadata = MapperContext::new_for_test(8, prg_rom, chr_rom, NametableLayout::Horizontal);
+        let metadata =
+            MapperContext::new_for_test(8, prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // When creating a mapper instance
         let mut mapper =
@@ -1004,7 +633,8 @@ mod tests {
         let chr_rom = (0u8..4)
             .flat_map(|bank| std::iter::repeat_n(0x10 + bank, 8 * 1024))
             .collect();
-        let metadata = MapperContext::new_for_test(8, prg_rom, chr_rom, NametableLayout::Horizontal);
+        let metadata =
+            MapperContext::new_for_test(8, prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // When selecting CHR bank 1 through mode 4 latch bits 1-0
         let mut mapper =
@@ -1020,7 +650,8 @@ mod tests {
         // Test that simple mappers can use the default no-op implementation
         let prg_rom = vec![0u8; 32 * 1024];
         let chr_rom = vec![0u8; 8 * 1024];
-        let metadata = MapperContext::new_for_test(0, prg_rom, chr_rom, NametableLayout::Horizontal);
+        let metadata =
+            MapperContext::new_for_test(0, prg_rom, chr_rom, NametableLayout::Horizontal);
 
         let mut mapper = create_mapper(metadata).expect("NROM mapper should be created");
 
@@ -1036,7 +667,8 @@ mod tests {
         let prg_size = 32 * 1024; // Use 32KB PRG-ROM for these tests (MMC5 and others)
         let prg_rom = vec![0u8; prg_size];
         let chr_rom = vec![0u8; 8 * 1024];
-        let metadata = MapperContext::new_for_test(id, prg_rom, chr_rom, NametableLayout::Horizontal);
+        let metadata =
+            MapperContext::new_for_test(id, prg_rom, chr_rom, NametableLayout::Horizontal);
         create_mapper(metadata).unwrap_or_else(|_| panic!("Mapper {} should be created", id))
     }
 
@@ -1230,7 +862,7 @@ mod tests {
 
     // --- Acceptance tests for composable mapper traits ---
 
-    fn assert_core_contract<T: MapperCore>(mapper: &mut T) {
+    fn assert_core_contract<T: Mapper>(mapper: &mut T) {
         let _ = mapper.read_prg(0x8000);
         mapper.write_prg(0x8000, 0x12);
         let _ = mapper.read_chr(0x0000);
@@ -1238,21 +870,21 @@ mod tests {
         let _ = mapper.get_mirroring();
     }
 
-    fn assert_irq_contract<T: MapperCore + MapperIrq>(mapper: &mut T) {
-        mapper.clock_irq();
+    fn assert_irq_contract<T: Mapper>(mapper: &mut T) {
+        mapper.cpu_cycle();
         let _ = mapper.irq_pending();
     }
 
-    fn assert_ppu_extension_contract<T: MapperCore + MapperPpuExtension>(mapper: &mut T) {
+    fn assert_ppu_extension_contract<T: Mapper>(mapper: &mut T) {
         mapper.ppu_address_changed(0x1000);
         mapper.ppu_scanline(42, true);
     }
 
-    fn assert_audio_contract<T: MapperCore + MapperAudio>(mapper: &mut T) {
+    fn assert_audio_contract<T: Mapper>(mapper: &mut T) {
         let _ = mapper.expansion_audio_sample();
     }
 
-    fn assert_state_contract<T: MapperCore + MapperStateSnapshot>(mapper: &mut T) {
+    fn assert_state_contract<T: Mapper>(mapper: &mut T) {
         let wram = mapper.wram_snapshot();
         mapper.load_wram_snapshot(&wram);
         let prg = mapper.prg_ram_snapshot();
@@ -1263,18 +895,19 @@ mod tests {
         mapper.restore_registers(&registers);
     }
 
-    fn assert_composable_contract<T: MapperComposable>(mapper: &mut T) {
+    fn assert_composable_contract<T: Mapper>(mapper: &mut T) {
         let _ = mapper.wram_size();
         let _ = mapper.prg_ram_snapshot();
     }
 
     #[test]
     fn nrom_satisfies_core_and_state_traits() {
-        let mut mapper = NROMMapper::new(
+        let mut mapper = NROMMapper::new(MapperContext::new_for_test(
+            0,
             vec![0u8; 32 * 1024],
             vec![0u8; 8 * 1024],
             NametableLayout::Horizontal,
-        );
+        ));
         assert_core_contract(&mut mapper);
         assert_state_contract(&mut mapper);
         assert_composable_contract(&mut mapper);
@@ -1282,11 +915,12 @@ mod tests {
 
     #[test]
     fn mmc3_satisfies_core_irq_ppu_and_state_traits() {
-        let mut mapper = MMC3Mapper::new(
+        let mut mapper = MMC3Mapper::new(MapperContext::new_for_test(
+            4,
             vec![0u8; 32 * 1024],
             vec![0u8; 8 * 1024],
             NametableLayout::Horizontal,
-        );
+        ));
         assert_core_contract(&mut mapper);
         assert_irq_contract(&mut mapper);
         assert_ppu_extension_contract(&mut mapper);
@@ -1295,7 +929,7 @@ mod tests {
 
     #[test]
     fn vrc6_satisfies_core_irq_audio_and_state_traits() {
-        let mut mapper = VRC6Mapper::new(
+        let mut mapper = VRC6Mapper::new_for_variant(
             24,
             vec![0u8; 32 * 1024],
             vec![0u8; 8 * 1024],

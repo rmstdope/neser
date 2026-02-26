@@ -70,7 +70,10 @@ impl Namco163Mapper {
     const IRQ_LOW_REG: usize = 12;
     const IRQ_HIGH_ENABLE_REG: usize = 13;
 
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
+        let mirroring = ctx.mirroring;
         Self {
             prg_rom,
             chr_memory: ChrMemory::new(chr_rom),
@@ -518,7 +521,7 @@ impl Mapper for Namco163Mapper {
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         let chr_addr = (addr & 0x1FFF) as usize;
         let slot = (chr_addr / Self::CHR_BANK_SIZE_1K).min(7);
         let bank_offset = chr_addr & (Self::CHR_BANK_SIZE_1K - 1);
@@ -711,8 +714,12 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 16);
 
-        let mut mapper: Namco163Mapper =
-            Namco163Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
+        let mut mapper: Namco163Mapper = Namco163Mapper::new(MapperContext::new_for_test(
+            19,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Vertical,
+        ));
 
         // Select PRG banks for $8000/$A000/$C000.
         mapper.write_prg(0xE000, 1);
@@ -775,7 +782,12 @@ mod tests {
     fn namco163_register_windows_use_0x800_ranges() {
         let prg_rom = banked_data(8 * 1024, 4);
         let chr_rom = banked_data(1024, 16);
-        let mut mapper = Namco163Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
+        let mut mapper = Namco163Mapper::new(MapperContext::new_for_test(
+            19,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Vertical,
+        ));
 
         // Given CHR bank writes to distinct 0x800-sized register windows
         mapper.write_prg(0x8000, 3);
@@ -794,7 +806,12 @@ mod tests {
     fn namco163_irq_registers_are_directly_readable_at_5000_and_5800() {
         let prg_rom = banked_data(8 * 1024, 4);
         let chr_rom = banked_data(1024, 8);
-        let mut mapper = Namco163Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+        let mut mapper = Namco163Mapper::new(MapperContext::new_for_test(
+            19,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Horizontal,
+        ));
 
         // Given direct writes to IRQ low/high registers
         mapper.write_prg(0x5000, 0x34);
@@ -821,7 +838,12 @@ mod tests {
     fn namco163_chr_e0_bank_uses_ciram_when_enabled_by_e800() {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1024, 256);
-        let mut mapper = Namco163Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
+        let mut mapper = Namco163Mapper::new(MapperContext::new_for_test(
+            19,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Vertical,
+        ));
 
         // Given bank $E0 in $0000-$03FF and E800.6 = 0 (CIRAM enabled for $0000-$0FFF)
         mapper.write_prg(0x8000, 0xE0);
@@ -840,7 +862,12 @@ mod tests {
     fn namco163_c000_dfff_registers_bank_nametable_pages() {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1024, 16);
-        let mut mapper = Namco163Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+        let mut mapper = Namco163Mapper::new(MapperContext::new_for_test(
+            19,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Horizontal,
+        ));
 
         // Given $C000/$C800 select nametable pages (E0 -> CIRAM A, E1 -> CIRAM B)
         mapper.write_prg(0xC000, 0xE0);
@@ -859,7 +886,12 @@ mod tests {
     fn namco163_f800_controls_wram_write_protect_windows() {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1024, 2);
-        let mut mapper = Namco163Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+        let mut mapper = Namco163Mapper::new(MapperContext::new_for_test(
+            19,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Horizontal,
+        ));
 
         // Given invalid high nibble, all WRAM writes should be blocked
         mapper.write_prg(0xF800, 0x00);
@@ -887,7 +919,12 @@ mod tests {
     fn namco163_irq_counter_saturates_at_7fff() {
         let prg_rom = banked_data(8 * 1024, 4);
         let chr_rom = banked_data(1024, 8);
-        let mut mapper = Namco163Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
+        let mut mapper = Namco163Mapper::new(MapperContext::new_for_test(
+            19,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Vertical,
+        ));
 
         // Given IRQ counter at $7FFF and enabled
         mapper.write_prg(0x5000, 0xFF);
@@ -909,7 +946,12 @@ mod tests {
     fn namco163_e800_prg_bank_uses_low_6_bits_only() {
         let prg_rom = banked_data(8 * 1024, 128);
         let chr_rom = banked_data(1024, 8);
-        let mut mapper = Namco163Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+        let mut mapper = Namco163Mapper::new(MapperContext::new_for_test(
+            19,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Horizontal,
+        ));
 
         // Given E800 with upper control bits set and low bank bits = 3
         mapper.write_prg(0xE800, 0xC3);
@@ -922,7 +964,12 @@ mod tests {
     fn namco163_c000_nt_bank_below_e0_reads_from_chr_memory() {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1024, 16);
-        let mut mapper = Namco163Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+        let mut mapper = Namco163Mapper::new(MapperContext::new_for_test(
+            19,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Horizontal,
+        ));
 
         // Given nametable page register points to CHR bank 2
         mapper.write_prg(0xC000, 0x02);
@@ -935,7 +982,12 @@ mod tests {
     fn namco163_c000_nt_bank_below_e0_writes_chr_ram_when_present() {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_ram = Vec::new(); // CHR-RAM configuration
-        let mut mapper = Namco163Mapper::new(prg_rom, chr_ram, NametableLayout::Vertical);
+        let mut mapper = Namco163Mapper::new(MapperContext::new_for_test(
+            19,
+            prg_rom,
+            chr_ram,
+            NametableLayout::Vertical,
+        ));
 
         // Given nametable page register points to CHR bank 1
         mapper.write_prg(0xC000, 0x01);
@@ -950,7 +1002,12 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = Vec::new(); // CHR-RAM path is fine for this test.
 
-        let mut mapper = Namco163Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
+        let mut mapper = Namco163Mapper::new(MapperContext::new_for_test(
+            19,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Vertical,
+        ));
 
         // Internal 128-byte RAM via data port + address port.
         mapper.write_prg(0xF800, 0x80); // ptr=0, auto-inc
@@ -981,7 +1038,12 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1024, 2);
 
-        let mut mapper = Namco163Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
+        let mut mapper = Namco163Mapper::new(MapperContext::new_for_test(
+            19,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Vertical,
+        ));
 
         // Set RAM pointer to 0 with auto-increment.
         mapper.write_prg(0xF800, 0x80);
@@ -1004,8 +1066,12 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1024, 2);
 
-        let mut mapper: Namco163Mapper =
-            Namco163Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
+        let mut mapper: Namco163Mapper = Namco163Mapper::new(MapperContext::new_for_test(
+            19,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Vertical,
+        ));
 
         // Write a simple waveform: nibble 0xF at position 0.
         mapper.write_prg(0xF800, 0x80); // pointer=0, auto-inc
@@ -1057,8 +1123,12 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1024, 2);
 
-        let mut mapper =
-            Namco163Mapper::new(prg_rom.clone(), chr_rom.clone(), NametableLayout::Vertical);
+        let mut mapper = Namco163Mapper::new(MapperContext::new_for_test(
+            19,
+            prg_rom.clone(),
+            chr_rom.clone(),
+            NametableLayout::Vertical,
+        ));
 
         // Configure audio so we have a non-zero last output.
         mapper.write_prg(0xF800, 0x80); // pointer=0, auto-inc
@@ -1096,7 +1166,12 @@ mod tests {
 
         let snapshot = mapper.registers_snapshot();
 
-        let mut restored = Namco163Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+        let mut restored = Namco163Mapper::new(MapperContext::new_for_test(
+            19,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Horizontal,
+        ));
         restored.restore_registers(&snapshot);
 
         assert_eq!(restored.get_mirroring(), NametableLayout::SingleScreenLower);

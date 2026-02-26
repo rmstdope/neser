@@ -272,7 +272,15 @@ impl VRC6Mapper {
     const PRG_BANK_SIZE_8K: usize = 0x2000;
     const CHR_BANK_SIZE_1K: usize = 0x0400;
 
-    pub fn new(
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let mapper_number = ctx.mapper as u8;
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
+        let mirroring = ctx.mirroring;
+        Self::new_for_variant(mapper_number, prg_rom, chr_rom, mirroring)
+    }
+
+    pub fn new_for_variant(
         mapper_number: u8,
         prg_rom: Vec<u8>,
         chr_rom: Vec<u8>,
@@ -519,7 +527,7 @@ impl Mapper for VRC6Mapper {
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         let addr = addr & 0x1FFF;
         let bank_slot = (addr as usize) / Self::CHR_BANK_SIZE_1K;
         let bank_offset = (addr as usize) % Self::CHR_BANK_SIZE_1K;
@@ -713,16 +721,6 @@ impl Mapper for VRC6Mapper {
             trainer_jsr: false,
             ..Default::default()
         }
-    }
-}
-
-impl crate::cartridge::MapperIrq for VRC6Mapper {
-    fn irq_pending(&self) -> bool {
-        <Self as Mapper>::irq_pending(self)
-    }
-
-    fn clock_irq(&mut self) {
-        self.tick_vrc_irq();
     }
 }
 

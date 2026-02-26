@@ -34,6 +34,7 @@ pub type UxROMMapper = SimpleBankedPrgMapper<16, 2>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cartridge::mapper::MapperContext;
     use crate::cartridge::{Mapper, NametableLayout};
 
     #[test]
@@ -50,7 +51,12 @@ mod tests {
             }
         }
 
-        let mut mapper = UxROMMapper::new(prg_rom, vec![], NametableLayout::Horizontal);
+        let mut mapper = UxROMMapper::new(MapperContext::new_for_test(
+            2,
+            prg_rom,
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         // Initially bank 0 should be at $8000-$BFFF
         assert_eq!(mapper.read_prg(0x8000), 0);
@@ -88,7 +94,12 @@ mod tests {
             }
         }
 
-        let mut mapper = UxROMMapper::new(prg_rom, vec![], NametableLayout::Vertical);
+        let mut mapper = UxROMMapper::new(MapperContext::new_for_test(
+            2,
+            prg_rom,
+            vec![],
+            NametableLayout::Vertical,
+        ));
 
         // Last bank (15) should be at $C000-$FFFF
         assert_eq!(mapper.read_prg(0xC000), 15);
@@ -106,7 +117,12 @@ mod tests {
     #[test]
     fn test_uxrom_chr_ram() {
         // UxROM uses 8KB CHR-RAM
-        let mut mapper = UxROMMapper::new(vec![0; 128 * 1024], vec![], NametableLayout::Horizontal);
+        let mut mapper = UxROMMapper::new(MapperContext::new_for_test(
+            2,
+            vec![0; 128 * 1024],
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         // CHR-RAM should be writable
         mapper.write_chr(0x0000, 0xAA);
@@ -120,10 +136,20 @@ mod tests {
 
     #[test]
     fn test_uxrom_mirroring() {
-        let mapper_h = UxROMMapper::new(vec![0; 128 * 1024], vec![], NametableLayout::Horizontal);
+        let mapper_h = UxROMMapper::new(MapperContext::new_for_test(
+            2,
+            vec![0; 128 * 1024],
+            vec![],
+            NametableLayout::Horizontal,
+        ));
         assert_eq!(mapper_h.get_mirroring(), NametableLayout::Horizontal);
 
-        let mapper_v = UxROMMapper::new(vec![0; 128 * 1024], vec![], NametableLayout::Vertical);
+        let mapper_v = UxROMMapper::new(MapperContext::new_for_test(
+            2,
+            vec![0; 128 * 1024],
+            vec![],
+            NametableLayout::Vertical,
+        ));
         assert_eq!(mapper_v.get_mirroring(), NametableLayout::Vertical);
     }
 
@@ -140,7 +166,12 @@ mod tests {
             }
         }
 
-        let mut mapper = UxROMMapper::new(prg_rom, vec![], NametableLayout::Horizontal);
+        let mut mapper = UxROMMapper::new(MapperContext::new_for_test(
+            2,
+            prg_rom,
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         // Test writing different bit patterns
         mapper.write_prg(0x8000, 0b0000_0000); // Bank 0
@@ -166,7 +197,12 @@ mod tests {
             }
         }
 
-        let mut mapper = UxROMMapper::new(prg_rom, vec![], NametableLayout::Horizontal);
+        let mut mapper = UxROMMapper::new(MapperContext::new_for_test(
+            2,
+            prg_rom,
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         // Last bank should always read 115 (bank 15 + 100)
         assert_eq!(mapper.read_prg(0xC000), 115);
@@ -194,7 +230,12 @@ mod tests {
             }
         }
 
-        let mut mapper = UxROMMapper::new(prg_rom.clone(), vec![], NametableLayout::Horizontal);
+        let mut mapper = UxROMMapper::new(MapperContext::new_for_test(
+            2,
+            prg_rom.clone(),
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         mapper.write_prg(0x8000, 3);
         mapper.write_chr(0x0000, 0x5A);
@@ -202,7 +243,12 @@ mod tests {
         let regs = mapper.registers_snapshot();
         let chr = mapper.chr_ram_snapshot();
 
-        let mut restored = UxROMMapper::new(prg_rom, vec![], NametableLayout::Horizontal);
+        let mut restored = UxROMMapper::new(MapperContext::new_for_test(
+            2,
+            prg_rom,
+            vec![],
+            NametableLayout::Horizontal,
+        ));
         restored.restore_registers(&regs);
         restored.restore_chr_ram(&chr);
 
@@ -212,7 +258,12 @@ mod tests {
 
     #[test]
     fn test_uxrom_open_bus() {
-        let mapper = UxROMMapper::new(vec![0; 128 * 1024], vec![], NametableLayout::Horizontal);
+        let mapper = UxROMMapper::new(MapperContext::new_for_test(
+            2,
+            vec![0; 128 * 1024],
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         assert_eq!(mapper.read_prg_open_bus(0x5000, 0xAA), 0xAA);
         assert_eq!(mapper.read_prg_open_bus(0x5FFF, 0xBB), 0xBB);

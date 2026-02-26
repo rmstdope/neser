@@ -55,9 +55,12 @@ impl Mapper52 {
     const CHR_1K_SIZE: usize = 0x0400; // 1 KiB
     const CHR_BANK_MASK: usize = Self::CHR_1K_SIZE - 1;
 
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
+        let mirroring = ctx.mirroring;
         Self {
-            mmc3: MMC3Mapper::new(prg_rom, chr_rom, mirroring),
+            mmc3: MMC3Mapper::new_with_irq_mode(prg_rom, chr_rom, mirroring, false),
             outer: 0,
             locked: false,
         }
@@ -71,7 +74,11 @@ impl Mapper52 {
         mirroring: NametableLayout,
         _submapper: u8,
     ) -> Self {
-        Self::new(prg_rom, chr_rom, mirroring)
+        Self {
+            mmc3: MMC3Mapper::new_with_irq_mode(prg_rom, chr_rom, mirroring, false),
+            outer: 0,
+            locked: false,
+        }
     }
 
     fn apply_prg_block(&self, mmc3_raw_bank: usize) -> usize {
@@ -153,7 +160,7 @@ impl Mapper for Mapper52 {
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         let raw_bank = self.mmc3.mapped_chr_1k_bank(addr);
         let final_bank = self.apply_chr_block(raw_bank);
         let offset = (addr as usize) & Self::CHR_BANK_MASK;
@@ -257,7 +264,12 @@ mod tests {
     fn make_mapper() -> Mapper52 {
         let prg = banked_data(8 * 1024, PRG_BANKS);
         let chr = banked_data(1024, CHR_1K_BANKS);
-        Mapper52::new(prg, chr, NametableLayout::Vertical)
+        Mapper52::new(MapperContext::new_for_test(
+            52,
+            prg,
+            chr,
+            NametableLayout::Vertical,
+        ))
     }
 
     #[test]

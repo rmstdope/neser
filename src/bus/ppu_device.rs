@@ -103,7 +103,7 @@ mod tests {
 
         fn write_prg(&mut self, _addr: u16, _value: u8) {}
 
-        fn read_chr(&self, _addr: u16) -> u8 {
+        fn read_chr(&mut self, _addr: u16) -> u8 {
             0
         }
 

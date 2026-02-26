@@ -62,7 +62,10 @@ impl TaitoTc0190Mapper {
     const PRG_RAM_SIZE: usize = 0x2000; // 8KB
     const REGISTER_MASK: u16 = 0xA003; // bits 13, 1, 0 select the active register
 
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
+        let mirroring = ctx.mirroring;
         Self {
             prg_rom,
             chr_memory: ChrMemory::new(chr_rom),
@@ -200,7 +203,7 @@ impl Mapper for TaitoTc0190Mapper {
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         let byte_index = self.map_chr_to_byte_index(addr);
         self.chr_memory.read_at_index(byte_index)
     }
@@ -515,7 +518,12 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = vec![0; 8 * 1024];
 
-        let mut mapper = TaitoTc0190Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
+        let mut mapper = TaitoTc0190Mapper::new(MapperContext::new_for_test(
+            33,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Vertical,
+        ));
 
         mapper.write_prg(0x6000, 0xAB);
         assert_eq!(mapper.read_prg(0x6000), 0xAB);
@@ -528,7 +536,12 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = vec![0; 8 * 1024];
 
-        let mut mapper = TaitoTc0190Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
+        let mut mapper = TaitoTc0190Mapper::new(MapperContext::new_for_test(
+            33,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Vertical,
+        ));
         mapper.write_prg(0x6000, 0xBB);
 
         let snap = mapper.wram_snapshot();

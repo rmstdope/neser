@@ -51,9 +51,20 @@ impl Mapper45 {
     const OUTER_REG_DATA_ADDR: u16 = 0x6000;
     const OUTER_REG_RESET_ADDR: u16 = 0x6001;
 
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
+        let mirroring = ctx.mirroring;
+        Self::new_internal(prg_rom, chr_rom, mirroring)
+    }
+
+    pub(crate) fn new_internal(
+        prg_rom: Vec<u8>,
+        chr_rom: Vec<u8>,
+        mirroring: NametableLayout,
+    ) -> Self {
         let mut mapper = Self {
-            mmc3: MMC3Mapper::new(prg_rom, chr_rom, mirroring),
+            mmc3: MMC3Mapper::new_with_irq_mode(prg_rom, chr_rom, mirroring, false),
             regs: [0x00, 0x00, 0x00, 0x00],
             write_ptr: 0,
             locked: false,
@@ -165,7 +176,7 @@ impl Mapper for Mapper45 {
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         let raw = self.mmc3.mapped_chr_1k_bank(addr);
         let chr_and = self.chr_and();
         let chr_or = self.chr_or();
@@ -271,14 +282,24 @@ mod tests {
     fn make_mapper() -> Box<dyn Mapper> {
         let prg = banked_data(8 * 1024, PRG_BANKS);
         let chr = banked_data(1024, CHR_1K_BANKS);
-        create_mapper(MapperContext::new_for_test(45, prg, chr, NametableLayout::Vertical))
-            .expect("Mapper 45 should be implemented")
+        create_mapper(MapperContext::new_for_test(
+            45,
+            prg,
+            chr,
+            NametableLayout::Vertical,
+        ))
+        .expect("Mapper 45 should be implemented")
     }
 
     fn make_direct() -> Mapper45 {
         let prg = banked_data(8 * 1024, PRG_BANKS);
         let chr = banked_data(1024, CHR_1K_BANKS);
-        Mapper45::new(prg, chr, NametableLayout::Vertical)
+        Mapper45::new(MapperContext::new_for_test(
+            45,
+            prg,
+            chr,
+            NametableLayout::Vertical,
+        ))
     }
 
     // --- Factory ---
@@ -579,7 +600,12 @@ mod tests {
         // the wrapped result (9 % 7 = 2) differs from the out-of-bounds result (0).
         let prg = banked_data(8 * 1024, 8);
         let chr = banked_data(1024, 7); // banks 0-6; bank N filled with byte N
-        let mut m = Mapper45::new(prg, chr, NametableLayout::Vertical);
+        let mut m = Mapper45::new(MapperContext::new_for_test(
+            45,
+            prg,
+            chr,
+            NametableLayout::Vertical,
+        ));
         // CHR_OR = 9, CHR_AND = 0 → all CHR maps to bank 9
         // 9 % 7 = 2 → bank 2 → first byte = 0x02
         m.write_prg(0x6000, 9); // reg0: CHR_OR = 9
@@ -602,7 +628,12 @@ mod tests {
         // → reads bank 2 (marker 0x02).
         let prg = banked_data(8 * 1024, 8);
         let chr = banked_data(1024, 3); // banks 0-2; bank N filled with byte N
-        let mut m = Mapper45::new(prg, chr, NametableLayout::Vertical);
+        let mut m = Mapper45::new(MapperContext::new_for_test(
+            45,
+            prg,
+            chr,
+            NametableLayout::Vertical,
+        ));
         // reg0=0x00, reg2=0x80 (only bit 7 set → CHR_OR[11]=1 → CHR_OR=0x800=2048)
         // CHR_AND = 0 (lower nibble of reg2 = 0) → bank = chr_or = 2048
         // 2048 % 3 = 2 → reads bank 2 (value 0x02)

@@ -123,8 +123,6 @@ impl Memory {
     }
 
     /// Read CHR for debugger purposes — no `ppu_address_changed` side effect.
-    ///
-    /// Uses a shared borrow so it won't interfere with other active borrows.
     /// Returns 0 if no cartridge is loaded.
     pub fn read_chr_for_debugger(
         &self,
@@ -133,8 +131,8 @@ impl Memory {
     ) -> u8 {
         let masked_addr = addr & 0x1FFF;
         if let Some(cart) = cartridge {
-            let cart = cart.borrow();
-            cart.mapper().read_chr(masked_addr)
+            let mut cart = cart.borrow_mut();
+            cart.mapper_mut().read_chr(masked_addr)
         } else {
             0
         }
@@ -385,7 +383,7 @@ mod tests {
 
         fn write_prg(&mut self, _addr: u16, _value: u8) {}
 
-        fn read_chr(&self, _addr: u16) -> u8 {
+        fn read_chr(&mut self, _addr: u16) -> u8 {
             0
         }
 

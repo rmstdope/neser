@@ -85,6 +85,7 @@
 //! let mapper = MyGxROMStyle::new(prg_rom, chr_rom, MirroringMode::Horizontal);
 //! ```
 
+use super::mapper::MapperContext;
 use crate::cartridge::common::{BankSwitch, BankedRom, ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
 use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
@@ -124,7 +125,10 @@ impl<const CHR_BANK_KB: usize, const MAPPER_NUM: u8> SimpleFixedPrgMapper<CHR_BA
     /// * `prg_rom` - PRG-ROM data (will be fixed at $8000-$FFFF)
     /// * `chr_rom` - CHR-ROM data (will be bank-switched)
     /// * `mirroring` - Nametable mirroring mode
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
+    pub fn new(ctx: MapperContext) -> Self {
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
+        let mirroring = ctx.mirroring;
         let chr_bank_size = CHR_BANK_KB * 1024;
         let chr_bank = BankSwitch::from_rom(&chr_rom, chr_bank_size);
 
@@ -170,7 +174,7 @@ impl<const CHR_BANK_KB: usize, const MAPPER_NUM: u8> Mapper
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         let offset = (addr & 0x1FFF) as usize;
         self.chr_rom.read(self.chr_bank.current(), offset)
     }
@@ -263,7 +267,9 @@ impl<const PRG_BANK_KB: usize, const MAPPER_NUM: u8>
     /// * `prg_rom` - PRG-ROM data (will be bank-switched)
     /// * `_chr_rom` - Ignored (CHR-RAM is used instead)
     /// * `mirroring` - Nametable mirroring mode
-    pub fn new(prg_rom: Vec<u8>, _chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
+    pub fn new(ctx: MapperContext) -> Self {
+        let prg_rom = ctx.prg_rom;
+        let mirroring = ctx.mirroring;
         let prg_bank_size = PRG_BANK_KB * 1024;
 
         Self {
@@ -313,7 +319,7 @@ impl<const PRG_BANK_KB: usize, const MAPPER_NUM: u8> Mapper
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         self.chr_memory.read(addr)
     }
 
@@ -430,7 +436,10 @@ impl<
     /// * `prg_rom` - PRG-ROM data (32KB banks)
     /// * `chr_rom` - CHR-ROM data (8KB banks)
     /// * `mirroring` - Nametable mirroring mode
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
+    pub fn new(ctx: MapperContext) -> Self {
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
+        let mirroring = ctx.mirroring;
         const PRG_BANK_SIZE: usize = 32 * 1024; // 32KB
         const CHR_BANK_SIZE: usize = 8 * 1024; // 8KB
 
@@ -483,7 +492,7 @@ impl<
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         let offset = (addr & 0x1FFF) as usize;
         self.chr_rom.read(self.chr_bank.current(), offset)
     }
@@ -542,6 +551,7 @@ impl<
 
 #[cfg(test)]
 mod tests {
+    use super::super::mapper::MapperContext;
     use super::*;
 
     // Test helper to create banked data
@@ -570,7 +580,12 @@ mod tests {
                 *byte = (i / 1024) as u8;
             }
 
-            let mapper = TestMapper::new(prg_rom, vec![0; 32 * 1024], NametableLayout::Horizontal);
+            let mapper = TestMapper::new(MapperContext::new_for_test(
+                3,
+                prg_rom,
+                vec![0; 32 * 1024],
+                NametableLayout::Horizontal,
+            ));
 
             assert_eq!(mapper.read_prg(0x8000), 0);
             assert_eq!(mapper.read_prg(0x9000), 4);
@@ -589,8 +604,12 @@ mod tests {
                 }
             }
 
-            let mut mapper =
-                TestMapper::new(vec![0; 32 * 1024], chr_rom, NametableLayout::Horizontal);
+            let mut mapper = TestMapper::new(MapperContext::new_for_test(
+                3,
+                vec![0; 32 * 1024],
+                chr_rom,
+                NametableLayout::Horizontal,
+            ));
 
             assert_eq!(mapper.read_chr(0x0000), 0);
 
@@ -615,8 +634,12 @@ mod tests {
                 }
             }
 
-            let mut mapper =
-                TestMapper::new(vec![0; 32 * 1024], chr_rom, NametableLayout::Vertical);
+            let mut mapper = TestMapper::new(MapperContext::new_for_test(
+                3,
+                vec![0; 32 * 1024],
+                chr_rom,
+                NametableLayout::Vertical,
+            ));
 
             mapper.write_prg(0x8000, 0b0000_0001);
             assert_eq!(mapper.read_chr(0x0000), 50);
@@ -637,17 +660,22 @@ mod tests {
                 }
             }
 
-            let mut mapper = TestMapper::new(
+            let mut mapper = TestMapper::new(MapperContext::new_for_test(
+                3,
                 vec![0; 32 * 1024],
                 chr_rom.clone(),
                 NametableLayout::Horizontal,
-            );
+            ));
             mapper.write_prg(0x8000, 0b0000_0011);
 
             let registers = mapper.registers_snapshot();
 
-            let mut restored =
-                TestMapper::new(vec![0; 32 * 1024], chr_rom, NametableLayout::Horizontal);
+            let mut restored = TestMapper::new(MapperContext::new_for_test(
+                3,
+                vec![0; 32 * 1024],
+                chr_rom,
+                NametableLayout::Horizontal,
+            ));
             restored.restore_registers(&registers);
 
             assert_eq!(restored.read_chr(0x0000), 21);
@@ -656,11 +684,12 @@ mod tests {
 
         #[test]
         fn test_mapper_number() {
-            let mapper = TestMapper::new(
+            let mapper = TestMapper::new(MapperContext::new_for_test(
+                3,
                 vec![0; 32 * 1024],
                 vec![0; 32 * 1024],
                 NametableLayout::Horizontal,
-            );
+            ));
             assert_eq!(mapper.mapper_number(), 3);
         }
     }
@@ -682,7 +711,12 @@ mod tests {
                 }
             }
 
-            let mut mapper = TestMapper::new(prg_rom, vec![], NametableLayout::Horizontal);
+            let mut mapper = TestMapper::new(MapperContext::new_for_test(
+                2,
+                prg_rom,
+                vec![],
+                NametableLayout::Horizontal,
+            ));
 
             // Initially bank 0 at $8000-$BFFF
             assert_eq!(mapper.read_prg(0x8000), 0);
@@ -702,8 +736,12 @@ mod tests {
 
         #[test]
         fn test_chr_ram() {
-            let mut mapper =
-                TestMapper::new(vec![0; 128 * 1024], vec![], NametableLayout::Horizontal);
+            let mut mapper = TestMapper::new(MapperContext::new_for_test(
+                2,
+                vec![0; 128 * 1024],
+                vec![],
+                NametableLayout::Horizontal,
+            ));
 
             mapper.write_chr(0x0000, 0xAA);
             mapper.write_chr(0x1000, 0xBB);
@@ -725,7 +763,12 @@ mod tests {
                 }
             }
 
-            let mut mapper = TestMapper::new(prg_rom, vec![], NametableLayout::Horizontal);
+            let mut mapper = TestMapper::new(MapperContext::new_for_test(
+                2,
+                prg_rom,
+                vec![],
+                NametableLayout::Horizontal,
+            ));
 
             // Last bank should always be 115 (bank 15 + 100)
             assert_eq!(mapper.read_prg(0xC000), 115);
@@ -748,14 +791,24 @@ mod tests {
                 }
             }
 
-            let mut mapper = TestMapper::new(prg_rom.clone(), vec![], NametableLayout::Horizontal);
+            let mut mapper = TestMapper::new(MapperContext::new_for_test(
+                2,
+                prg_rom.clone(),
+                vec![],
+                NametableLayout::Horizontal,
+            ));
             mapper.write_prg(0x8000, 3);
             mapper.write_chr(0x0000, 0x5A);
 
             let regs = mapper.registers_snapshot();
             let chr = mapper.chr_ram_snapshot();
 
-            let mut restored = TestMapper::new(prg_rom, vec![], NametableLayout::Horizontal);
+            let mut restored = TestMapper::new(MapperContext::new_for_test(
+                2,
+                prg_rom,
+                vec![],
+                NametableLayout::Horizontal,
+            ));
             restored.restore_registers(&regs);
             restored.restore_chr_ram(&chr);
 
@@ -765,7 +818,12 @@ mod tests {
 
         #[test]
         fn test_mapper_number() {
-            let mapper = TestMapper::new(vec![0; 128 * 1024], vec![], NametableLayout::Horizontal);
+            let mapper = TestMapper::new(MapperContext::new_for_test(
+                2,
+                vec![0; 128 * 1024],
+                vec![],
+                NametableLayout::Horizontal,
+            ));
             assert_eq!(mapper.mapper_number(), 2);
         }
     }
@@ -784,7 +842,12 @@ mod tests {
             let prg_rom = banked_data(32 * 1024, 4);
             let chr_rom = banked_data(8 * 1024, 4);
 
-            let mut mapper = GxROMTestMapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+            let mut mapper = GxROMTestMapper::new(MapperContext::new_for_test(
+                66,
+                prg_rom,
+                chr_rom,
+                NametableLayout::Horizontal,
+            ));
 
             // Initial banks
             assert_eq!(mapper.read_prg(0x8000), 0);
@@ -801,8 +864,12 @@ mod tests {
             let prg_rom = banked_data(32 * 1024, 16);
             let chr_rom = banked_data(8 * 1024, 16);
 
-            let mut mapper =
-                ColorDreamsTestMapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+            let mut mapper = ColorDreamsTestMapper::new(MapperContext::new_for_test(
+                11,
+                prg_rom,
+                chr_rom,
+                NametableLayout::Horizontal,
+            ));
 
             // Select PRG bank 8, CHR bank 5: 0b1000_0101 = 0x85
             mapper.write_prg(0x8000, 0x85);
@@ -820,8 +887,12 @@ mod tests {
             let prg_rom = banked_data(32 * 1024, 4); // Only 4 banks
             let chr_rom = banked_data(8 * 1024, 2); // Only 2 banks
 
-            let mut mapper =
-                ColorDreamsTestMapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+            let mut mapper = ColorDreamsTestMapper::new(MapperContext::new_for_test(
+                11,
+                prg_rom,
+                chr_rom,
+                NametableLayout::Horizontal,
+            ));
 
             // Select bank 5, should wrap to bank 1 (5 % 4 = 1)
             mapper.write_prg(0x8000, 0x50); // 0b0101_0000
@@ -837,16 +908,22 @@ mod tests {
             let prg_rom = banked_data(32 * 1024, 4);
             let chr_rom = banked_data(8 * 1024, 4);
 
-            let mut mapper = GxROMTestMapper::new(
+            let mut mapper = GxROMTestMapper::new(MapperContext::new_for_test(
+                66,
                 prg_rom.clone(),
                 chr_rom.clone(),
                 NametableLayout::Horizontal,
-            );
+            ));
             mapper.write_prg(0x8000, 0x21); // PRG bank 2, CHR bank 1
 
             let snapshot = mapper.registers_snapshot();
 
-            let mut restored = GxROMTestMapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+            let mut restored = GxROMTestMapper::new(MapperContext::new_for_test(
+                66,
+                prg_rom,
+                chr_rom,
+                NametableLayout::Horizontal,
+            ));
             restored.restore_registers(&snapshot);
 
             assert_eq!(restored.read_prg(0x8000), 2);
@@ -858,15 +935,20 @@ mod tests {
             let prg_rom = vec![0; 128 * 1024];
             let chr_rom = vec![0; 32 * 1024];
 
-            let gxrom = GxROMTestMapper::new(
+            let gxrom = GxROMTestMapper::new(MapperContext::new_for_test(
+                66,
                 prg_rom.clone(),
                 chr_rom.clone(),
                 NametableLayout::Horizontal,
-            );
+            ));
             assert_eq!(gxrom.mapper_number(), 66);
 
-            let colordreams =
-                ColorDreamsTestMapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+            let colordreams = ColorDreamsTestMapper::new(MapperContext::new_for_test(
+                11,
+                prg_rom,
+                chr_rom,
+                NametableLayout::Horizontal,
+            ));
             assert_eq!(colordreams.mapper_number(), 11);
         }
     }

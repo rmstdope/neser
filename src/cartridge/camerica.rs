@@ -46,7 +46,8 @@ pub struct CamericaMapper {
 }
 
 impl CamericaMapper {
-    pub fn new(prg_rom: Vec<u8>, _chr_rom: Vec<u8>, _mirroring: NametableLayout) -> Self {
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let prg_rom = ctx.prg_rom;
         // Mapper 71 uses CHR-RAM, ignores chr_rom and initial mirroring (controlled by register)
         Self {
             prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE),
@@ -100,7 +101,7 @@ impl Mapper for CamericaMapper {
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         self.chr_memory.read(addr)
     }
 
@@ -201,7 +202,12 @@ mod tests {
             }
         }
 
-        let mut mapper = CamericaMapper::new(prg_rom, vec![], NametableLayout::Horizontal);
+        let mut mapper = CamericaMapper::new(MapperContext::new_for_test(
+            71,
+            prg_rom,
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         // Initially bank 0 should be at $8000-$BFFF
         assert_eq!(mapper.read_prg(0x8000), 0);
@@ -239,7 +245,12 @@ mod tests {
             }
         }
 
-        let mut mapper = CamericaMapper::new(prg_rom, vec![], NametableLayout::Horizontal);
+        let mut mapper = CamericaMapper::new(MapperContext::new_for_test(
+            71,
+            prg_rom,
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         // Test that upper bits are masked off
         mapper.write_prg(0x8000, 0b1111_0101); // Should select bank 5
@@ -252,7 +263,12 @@ mod tests {
     #[test]
     fn test_mapper71_one_screen_mirroring() {
         let prg_rom = vec![0; 128 * 1024];
-        let mut mapper = CamericaMapper::new(prg_rom, vec![], NametableLayout::Horizontal);
+        let mut mapper = CamericaMapper::new(MapperContext::new_for_test(
+            71,
+            prg_rom,
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         // Default should be lower nametable
         assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenLower);
@@ -280,8 +296,12 @@ mod tests {
     #[test]
     fn test_mapper71_chr_ram() {
         // Mapper 71 uses 8KB CHR-RAM
-        let mut mapper =
-            CamericaMapper::new(vec![0; 128 * 1024], vec![], NametableLayout::Horizontal);
+        let mut mapper = CamericaMapper::new(MapperContext::new_for_test(
+            71,
+            vec![0; 128 * 1024],
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         // CHR-RAM should be writable
         mapper.write_chr(0x0000, 0xAA);
@@ -306,7 +326,12 @@ mod tests {
             }
         }
 
-        let mut mapper = CamericaMapper::new(prg_rom, vec![], NametableLayout::Horizontal);
+        let mut mapper = CamericaMapper::new(MapperContext::new_for_test(
+            71,
+            prg_rom,
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         // Last bank should always read 115 (bank 15 + 100)
         assert_eq!(mapper.read_prg(0xC000), 115);
@@ -336,7 +361,12 @@ mod tests {
             }
         }
 
-        let mut mapper = CamericaMapper::new(prg_rom, vec![], NametableLayout::Horizontal);
+        let mut mapper = CamericaMapper::new(MapperContext::new_for_test(
+            71,
+            prg_rom,
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         // Set bank to 5
         mapper.write_prg(0x8000, 5);
@@ -360,7 +390,12 @@ mod tests {
     fn test_mapper71_prg_ram_support() {
         // Mapper 71 should support PRG-RAM at $6000-$7FFF
         let prg_rom = vec![0; 128 * 1024];
-        let mut mapper = CamericaMapper::new(prg_rom, vec![], NametableLayout::Horizontal);
+        let mut mapper = CamericaMapper::new(MapperContext::new_for_test(
+            71,
+            prg_rom,
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         // Write to PRG-RAM
         mapper.write_prg(0x6000, 0xAA);
@@ -382,7 +417,12 @@ mod tests {
             }
         }
 
-        let mut mapper = CamericaMapper::new(prg_rom.clone(), vec![], NametableLayout::Horizontal);
+        let mut mapper = CamericaMapper::new(MapperContext::new_for_test(
+            71,
+            prg_rom.clone(),
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         mapper.write_prg(0x8000, 2);
         mapper.write_prg(0xC000, 0x10); // one-screen upper
@@ -391,7 +431,12 @@ mod tests {
         let regs = mapper.registers_snapshot();
         let chr = mapper.chr_ram_snapshot();
 
-        let mut restored = CamericaMapper::new(prg_rom, vec![], NametableLayout::Horizontal);
+        let mut restored = CamericaMapper::new(MapperContext::new_for_test(
+            71,
+            prg_rom,
+            vec![],
+            NametableLayout::Horizontal,
+        ));
         restored.restore_registers(&regs);
         restored.restore_chr_ram(&chr);
 

@@ -46,9 +46,12 @@ pub struct Sunsoft4Mapper {
 }
 
 impl Sunsoft4Mapper {
-    #[allow(dead_code)]
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
-        Self::new_with_prg_ram_banks(prg_rom, chr_rom, mirroring, 1)
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let prg_ram_banks_8k = ctx.prg_ram_banks_8k;
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
+        let mirroring = ctx.mirroring;
+        Self::new_with_prg_ram_banks(prg_rom, chr_rom, mirroring, prg_ram_banks_8k)
     }
 
     pub fn new_with_prg_ram_banks(
@@ -188,7 +191,7 @@ impl Mapper for Sunsoft4Mapper {
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         let (bank, offset) = self.chr_bank_for_addr(addr);
         self.read_chr_indexed(bank, offset, CHR_BANK_SIZE_2K)
     }
@@ -327,8 +330,12 @@ mod tests {
             }
         }
 
-        let mut mapper =
-            Sunsoft4Mapper::new(prg_rom, vec![0u8; 8 * 1024], NametableLayout::Horizontal);
+        let mut mapper = Sunsoft4Mapper::new_with_prg_ram_banks(
+            prg_rom,
+            vec![0u8; 8 * 1024],
+            NametableLayout::Horizontal,
+            1,
+        );
 
         // Default power-on PRG bank is 0 in the switchable $8000-$BFFF window.
         assert_eq!(mapper.read_prg(0x8000), 0);
@@ -355,10 +362,11 @@ mod tests {
             }
         }
 
-        let mut mapper = Sunsoft4Mapper::new(
+        let mut mapper = Sunsoft4Mapper::new_with_prg_ram_banks(
             vec![0u8; 2 * PRG_BANK_SIZE],
             chr_rom,
             NametableLayout::Horizontal,
+            1,
         );
         mapper.write_prg(0x8000, 0x00);
         mapper.write_prg(0x9000, 0x01);
@@ -387,10 +395,11 @@ mod tests {
             }
         }
 
-        let mut mapper = Sunsoft4Mapper::new(
+        let mut mapper = Sunsoft4Mapper::new_with_prg_ram_banks(
             vec![0u8; 2 * PRG_BANK_SIZE],
             chr_rom,
             NametableLayout::Horizontal,
+            1,
         );
 
         mapper.write_prg(0xC000, 0x01);
@@ -434,8 +443,12 @@ mod tests {
             }
         }
 
-        let mut mapper =
-            Sunsoft4Mapper::new(prg_rom.clone(), chr_rom.clone(), NametableLayout::Vertical);
+        let mut mapper = Sunsoft4Mapper::new_with_prg_ram_banks(
+            prg_rom.clone(),
+            chr_rom.clone(),
+            NametableLayout::Vertical,
+            1,
+        );
 
         // Configure complex state
         mapper.write_prg(0x8000, 10); // CHR bank 0 (addresses $8000-$8FFF)
@@ -460,7 +473,8 @@ mod tests {
         let prg_ram = mapper.wram_snapshot();
 
         // Create fresh mapper and restore
-        let mut restored = Sunsoft4Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
+        let mut restored =
+            Sunsoft4Mapper::new_with_prg_ram_banks(prg_rom, chr_rom, NametableLayout::Vertical, 1);
         restored.restore_registers(&registers);
         restored.load_wram_snapshot(&prg_ram);
 

@@ -125,11 +125,7 @@ mod tests {
         nes.reset(false);
 
         let rgb = run_nes_for_frames(&mut nes, frames);
-        Ok((
-            rgb,
-            SCREEN_WIDTH,
-            SCREEN_HEIGHT,
-        ))
+        Ok((rgb, SCREEN_WIDTH, SCREEN_HEIGHT))
     }
 
     #[test]
@@ -150,8 +146,7 @@ mod tests {
 
         let frame = run_nes_for_frames(&mut nes, 2);
 
-        let expected_len =
-            (SCREEN_WIDTH * SCREEN_HEIGHT * 3) as usize;
+        let expected_len = (SCREEN_WIDTH * SCREEN_HEIGHT * 3) as usize;
         assert_eq!(frame.len(), expected_len);
     }
 

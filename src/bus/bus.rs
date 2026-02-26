@@ -262,7 +262,11 @@ impl Bus {
                 .cartridge
                 .borrow()
                 .as_ref()
-                .map(|cart| cart.borrow().mapper().read_prg(addr))
+                .map(|cart| {
+                    cart.borrow()
+                        .mapper()
+                        .read_prg_open_bus(addr, self.open_bus)
+                })
                 .unwrap_or(0),
             _ => 0,
         }
@@ -735,7 +739,7 @@ mod tests {
 
         fn write_prg(&mut self, _addr: u16, _value: u8) {}
 
-        fn read_chr(&self, _addr: u16) -> u8 {
+        fn read_chr(&mut self, _addr: u16) -> u8 {
             0
         }
 
@@ -1240,6 +1244,32 @@ mod tests {
         // Prime open bus to a known value, then read from disabled WRAM.
         mem.write(0x0000, 0xAB, false);
         assert_eq!(mem.read(0x6000, false), 0xAB);
+    }
+
+    #[test]
+    fn test_debug_read_uses_open_bus_for_disabled_mmc1_wram() {
+        let mut mem = create_test_memory();
+
+        let cart = Cartridge::load_from_file(
+            &create_mmc1_ines_rom_with_vertical_mirroring(),
+            "bus-mmc1-debug-wram-disable.nes",
+            Rc::new(RefCell::new(crate::app_context::AppContext::new())),
+        )
+        .expect("MMC1 test ROM should load");
+        mem.map_cartridge(cart);
+
+        // Disable WRAM by setting bit 4 of the PRG bank register via 5 writes to $E000.
+        mem.write(0xE000, 0b0000_0000, false);
+        mem.write(0xE000, 0b0000_0000, false);
+        mem.write(0xE000, 0b0000_0000, false);
+        mem.write(0xE000, 0b0000_0000, false);
+        mem.write(0xE000, 0b0000_0001, false);
+
+        // Prime bus open-bus value and ensure debugger read uses it.
+        mem.write(0x0000, 0x5E, false);
+        let open_bus = mem.read(0x0000, false);
+        assert_eq!(open_bus, 0x5E);
+        assert_eq!(mem.read_cpu_for_debugger(0x6000), open_bus);
     }
 
     #[test]

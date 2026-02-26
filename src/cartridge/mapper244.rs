@@ -46,7 +46,10 @@ impl Mapper244 {
     /// CHR bank lookup table (pairs 1/2 and 5/6 swapped)
     const CHR_LUT: [u8; 8] = [0, 2, 1, 3, 4, 6, 5, 7];
 
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
+        let mirroring = ctx.mirroring;
         let prg_bank = BankSwitch::from_rom(&prg_rom, Self::PRG_BANK_SIZE);
         let chr_bank = BankSwitch::from_rom(&chr_rom, Self::CHR_BANK_SIZE);
         Self {
@@ -90,7 +93,7 @@ impl Mapper for Mapper244 {
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         let offset = (addr & 0x1FFF) as usize;
         self.chr_rom.read(self.chr_bank.current(), offset)
     }
@@ -158,7 +161,9 @@ mod tests {
         chr_rom: Vec<u8>,
         mirroring: NametableLayout,
     ) -> std::io::Result<Box<dyn Mapper>> {
-        create_mapper(MapperContext::new_for_test(244, prg_rom, chr_rom, mirroring))
+        create_mapper(MapperContext::new_for_test(
+            244, prg_rom, chr_rom, mirroring,
+        ))
     }
 
     #[test]

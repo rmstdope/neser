@@ -113,7 +113,28 @@ impl SuperMagicCardMapper {
     /// * `chr_rom`   — CHR-ROM data when present; otherwise mapper uses CHR-RAM
     /// * `mirroring` — initial nametable mirroring from the iNES header
     /// * `submapper` — iNES 2.0 submapper (0 is remapped to 1 per spec)
-    pub fn new(
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let mapper = ctx.mapper;
+        let submapper = ctx.submapper;
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
+        let mirroring = ctx.mirroring;
+        if mapper == 17 {
+            Self::new_mapper17(prg_rom, chr_rom, mirroring, submapper)
+        } else {
+            // mappers 6 and 8; resolve submapper for SMC power-on state
+            let effective_submapper = if mapper == 8 {
+                4
+            } else if submapper == 0 {
+                1
+            } else {
+                submapper
+            };
+            Self::new_with_submapper(prg_rom, chr_rom, mirroring, effective_submapper)
+        }
+    }
+
+    pub fn new_with_submapper(
         prg_rom: Vec<u8>,
         chr_rom: Vec<u8>,
         mirroring: NametableLayout,
@@ -530,7 +551,7 @@ impl Mapper for SuperMagicCardMapper {
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         let index = self.chr_index_for_addr(addr);
         let value = self.chr_memory.read_at_index(index);
         self.update_mmc4_latches(addr);
@@ -736,13 +757,17 @@ mod tests {
     const PRG_BANK_SIZE_16K: usize = 0x4000;
 
     fn create_m6(prg: Vec<u8>, submapper: u8, mirroring: NametableLayout) -> Box<dyn Mapper> {
-        create_mapper(MapperContext::new_for_test(6, prg, vec![], mirroring).with_submapper(submapper))
-            .expect("Failed to create Mapper 6")
+        create_mapper(
+            MapperContext::new_for_test(6, prg, vec![], mirroring).with_submapper(submapper),
+        )
+        .expect("Failed to create Mapper 6")
     }
 
     fn create_m17(prg: Vec<u8>, submapper: u8, mirroring: NametableLayout) -> Box<dyn Mapper> {
-        create_mapper(MapperContext::new_for_test(17, prg, vec![], mirroring).with_submapper(submapper))
-            .expect("Failed to create Mapper 17")
+        create_mapper(
+            MapperContext::new_for_test(17, prg, vec![], mirroring).with_submapper(submapper),
+        )
+        .expect("Failed to create Mapper 17")
     }
 
     // ── Initial state ──────────────────────────────────────────────────────────

@@ -66,7 +66,10 @@ impl Mapper64 {
     const CHR_BANK_MASK: usize = Self::CHR_1K_SIZE - 1;
     const A12_LOW_FILTER: u8 = 3;
 
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
+        let mirroring = ctx.mirroring;
         let _ = mirroring;
         Self {
             prg_rom,
@@ -267,7 +270,7 @@ impl Mapper for Mapper64 {
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         let slot = (addr as usize) / Self::CHR_1K_SIZE;
         let offset = (addr as usize) & Self::CHR_BANK_MASK;
         let bank = self.chr_1k_bank_for_slot(slot);
@@ -430,7 +433,12 @@ mod tests {
     fn make_mapper() -> Mapper64 {
         let prg = banked_data(8 * 1024, PRG_BANKS);
         let chr = banked_data(1024, CHR_1K_BANKS);
-        Mapper64::new(prg, chr, NametableLayout::Vertical)
+        Mapper64::new(MapperContext::new_for_test(
+            64,
+            prg,
+            chr,
+            NametableLayout::Vertical,
+        ))
     }
 
     fn set_prg_bank(mapper: &mut Mapper64, reg: u8, bank: u8) {

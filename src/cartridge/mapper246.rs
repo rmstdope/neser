@@ -45,7 +45,10 @@ impl Mapper246 {
     const PRG_BANK_SIZE: usize = 8 * 1024; // 8KB
     const CHR_BANK_SIZE: usize = 2 * 1024; // 2KB
 
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
+        let mirroring = ctx.mirroring;
         let num_prg_banks = prg_rom.len() / Self::PRG_BANK_SIZE;
         // Default: last 4 banks of PRG for initial mapping
         let last_bank = if num_prg_banks > 0 {
@@ -135,7 +138,7 @@ impl Mapper for Mapper246 {
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         let slot = ((addr >> 11) & 0x03) as usize; // 2KB slots: 0-3
         let bank = self.resolve_chr_bank(self.chr_banks[slot]);
         let offset = (addr & 0x07FF) as usize;
@@ -218,7 +221,9 @@ mod tests {
         chr_rom: Vec<u8>,
         mirroring: NametableLayout,
     ) -> std::io::Result<Box<dyn Mapper>> {
-        create_mapper(MapperContext::new_for_test(246, prg_rom, chr_rom, mirroring))
+        create_mapper(MapperContext::new_for_test(
+            246, prg_rom, chr_rom, mirroring,
+        ))
     }
 
     #[test]

@@ -34,9 +34,12 @@ impl Mapper245 {
     const PRG_BANK_SIZE: usize = 0x2000; // 8KB
     const PRG_BANK_MASK: usize = Self::PRG_BANK_SIZE - 1;
 
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
+        let mirroring = ctx.mirroring;
         Self {
-            mmc3: MMC3Mapper::new(prg_rom, chr_rom, mirroring),
+            mmc3: MMC3Mapper::new_with_irq_mode(prg_rom, chr_rom, mirroring, false),
         }
     }
 
@@ -110,7 +113,7 @@ impl Mapper for Mapper245 {
         self.mmc3.write_prg(addr, value);
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         // CHR-RAM only, use standard MMC3 CHR mapping
         self.mmc3.read_chr(addr)
     }
@@ -193,7 +196,9 @@ mod tests {
         chr_rom: Vec<u8>,
         mirroring: NametableLayout,
     ) -> std::io::Result<Box<dyn Mapper>> {
-        create_mapper(MapperContext::new_for_test(245, prg_rom, chr_rom, mirroring))
+        create_mapper(MapperContext::new_for_test(
+            245, prg_rom, chr_rom, mirroring,
+        ))
     }
 
     #[test]

@@ -199,13 +199,13 @@ impl Vrc2Vrc4Mapper {
 
     const FLAG_PRG_RAM_ENABLED: u8 = 1 << 5;
 
-    pub fn new(
-        mapper_number: u8,
-        prg_rom: Vec<u8>,
-        chr_rom: Vec<u8>,
-        mirroring: NametableLayout,
-    ) -> Self {
-        Self::new_with_submapper(mapper_number, 0, prg_rom, chr_rom, mirroring)
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let mapper_number = ctx.mapper as u8;
+        let submapper = ctx.submapper;
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
+        let mirroring = ctx.mirroring;
+        Self::new_with_submapper(mapper_number, submapper, prg_rom, chr_rom, mirroring)
     }
 
     pub fn new_with_submapper(
@@ -581,7 +581,7 @@ impl Mapper for Vrc2Vrc4Mapper {
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         let addr = addr & 0x1FFF;
         let bank_slot = (addr as usize) / Self::CHR_BANK_SIZE_1K;
         let bank_offset = (addr as usize) % Self::CHR_BANK_SIZE_1K;

@@ -47,7 +47,10 @@ pub struct Multicart15Mapper {
 }
 
 impl Multicart15Mapper {
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
+        let mirroring = ctx.mirroring;
         // Pirate multicarts typically use CHR-RAM
         Self {
             prg_rom,
@@ -135,7 +138,7 @@ impl Mapper for Multicart15Mapper {
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         self.chr_memory.read(addr)
     }
 
@@ -222,6 +225,7 @@ impl Mapper for Multicart15Mapper {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cartridge::mapper::MapperContext;
 
     fn create_test_prg_rom(num_16k_banks: usize) -> Vec<u8> {
         let mut prg_rom = vec![0; num_16k_banks * 16 * 1024];
@@ -252,7 +256,12 @@ mod tests {
     fn test_multicart15_mode0_16kb_mirror() {
         // Mode 0: 8KB pages are sequential, with optional XOR by sub-bank bit
         let prg_rom = create_test_prg_rom_8k(32);
-        let mut mapper = Multicart15Mapper::new(prg_rom, vec![], NametableLayout::Horizontal);
+        let mut mapper = Multicart15Mapper::new(MapperContext::new_for_test(
+            15,
+            prg_rom,
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         // mode 0 at SS=0, bank_select=2, sub-bank=0
         mapper.write_prg(0x8000, 2);
@@ -273,7 +282,12 @@ mod tests {
         prg_rom[upper_half_of_pair + 0x3FFC] = 0x78;
         prg_rom[upper_half_of_pair + 0x3FFD] = 0x56;
 
-        let mut mapper = Multicart15Mapper::new(prg_rom, vec![], NametableLayout::Horizontal);
+        let mut mapper = Multicart15Mapper::new(MapperContext::new_for_test(
+            15,
+            prg_rom,
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         mapper.write_prg(0x8000, 2);
 
@@ -287,7 +301,12 @@ mod tests {
     fn test_multicart15_mode1_32kb() {
         // Mode 1 (UNROM style): top 16KB in current 128KB window is fixed to pages 0x0E/0x0F
         let prg_rom = create_test_prg_rom_8k(64);
-        let mut mapper = Multicart15Mapper::new(prg_rom, vec![], NametableLayout::Horizontal);
+        let mut mapper = Multicart15Mapper::new(MapperContext::new_for_test(
+            15,
+            prg_rom,
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         mapper.write_prg(0x8001, 0);
 
@@ -301,7 +320,12 @@ mod tests {
     fn test_multicart15_mode2_8kb_banks() {
         // Mode 2 (NROM-64 style): all four 8KB slots map to one 8KB page
         let prg_rom = create_test_prg_rom_8k(64);
-        let mut mapper = Multicart15Mapper::new(prg_rom, vec![], NametableLayout::Horizontal);
+        let mut mapper = Multicart15Mapper::new(MapperContext::new_for_test(
+            15,
+            prg_rom,
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         mapper.write_prg(0x8002, 3);
 
@@ -314,7 +338,12 @@ mod tests {
     #[test]
     fn test_multicart15_mode3_16kb_mirror() {
         let prg_rom = create_test_prg_rom_8k(32);
-        let mut mapper = Multicart15Mapper::new(prg_rom, vec![], NametableLayout::Horizontal);
+        let mut mapper = Multicart15Mapper::new(MapperContext::new_for_test(
+            15,
+            prg_rom,
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         mapper.write_prg(0x8003, 3);
 
@@ -335,7 +364,12 @@ mod tests {
         prg_rom[page1 + 0x1FFC] = 0x78;
         prg_rom[page1 + 0x1FFD] = 0x56;
 
-        let mut mapper = Multicart15Mapper::new(prg_rom, vec![], NametableLayout::Horizontal);
+        let mut mapper = Multicart15Mapper::new(MapperContext::new_for_test(
+            15,
+            prg_rom,
+            vec![],
+            NametableLayout::Horizontal,
+        ));
         mapper.write_prg(0x8003, 0);
 
         assert_eq!(mapper.read_prg(0xFFFA), 0x34);
@@ -347,7 +381,12 @@ mod tests {
     #[test]
     fn test_multicart15_mirroring_control() {
         let prg_rom = create_test_prg_rom(4);
-        let mut mapper = Multicart15Mapper::new(prg_rom, vec![], NametableLayout::Horizontal);
+        let mut mapper = Multicart15Mapper::new(MapperContext::new_for_test(
+            15,
+            prg_rom,
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         // Initially horizontal
         assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
@@ -371,7 +410,12 @@ mod tests {
     #[test]
     fn test_multicart15_mirroring_uses_d6_bit() {
         let prg_rom = create_test_prg_rom(4);
-        let mut mapper = Multicart15Mapper::new(prg_rom, vec![], NametableLayout::Horizontal);
+        let mut mapper = Multicart15Mapper::new(MapperContext::new_for_test(
+            15,
+            prg_rom,
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         mapper.write_prg(0x8000, 0x00);
         assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
@@ -386,7 +430,12 @@ mod tests {
     #[test]
     fn test_multicart15_mode_decode_uses_low_two_address_bits() {
         let prg_rom = create_test_prg_rom(8);
-        let mut mapper = Multicart15Mapper::new(prg_rom, vec![], NametableLayout::Horizontal);
+        let mut mapper = Multicart15Mapper::new(MapperContext::new_for_test(
+            15,
+            prg_rom,
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         mapper.write_prg(0x8000, 0);
         assert_eq!(mapper.mode, 0);
@@ -417,7 +466,12 @@ mod tests {
     fn test_multicart15_bank_select_masking() {
         // Test that bank selection wraps safely for high values
         let prg_rom = create_test_prg_rom(8);
-        let mut mapper = Multicart15Mapper::new(prg_rom, vec![], NametableLayout::Horizontal);
+        let mut mapper = Multicart15Mapper::new(MapperContext::new_for_test(
+            15,
+            prg_rom,
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         mapper.write_prg(0x8000, 0xFF);
 
@@ -429,8 +483,12 @@ mod tests {
     #[test]
     fn test_multicart15_chr_ram() {
         // Multicart mappers typically use CHR-RAM
-        let mut mapper =
-            Multicart15Mapper::new(vec![0; 128 * 1024], vec![], NametableLayout::Horizontal);
+        let mut mapper = Multicart15Mapper::new(MapperContext::new_for_test(
+            15,
+            vec![0; 128 * 1024],
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         // Mode 1 enables CHR-RAM writes
         mapper.write_prg(0x8001, 0);
@@ -449,7 +507,12 @@ mod tests {
     fn test_multicart15_mode_switching() {
         // Test switching between modes
         let prg_rom = create_test_prg_rom(16);
-        let mut mapper = Multicart15Mapper::new(prg_rom, vec![], NametableLayout::Horizontal);
+        let mut mapper = Multicart15Mapper::new(MapperContext::new_for_test(
+            15,
+            prg_rom,
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         // Start in mode 0
         mapper.write_prg(0x8000, 1);
@@ -473,7 +536,12 @@ mod tests {
     fn test_multicart15_address_discrimination() {
         // Test that different addresses trigger different modes
         let prg_rom = create_test_prg_rom(8);
-        let mut mapper = Multicart15Mapper::new(prg_rom, vec![], NametableLayout::Horizontal);
+        let mut mapper = Multicart15Mapper::new(MapperContext::new_for_test(
+            15,
+            prg_rom,
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         // SS = 0 -> mode 0
         mapper.write_prg(0x8000, 0);
@@ -508,7 +576,12 @@ mod tests {
     fn test_multicart15_large_rom() {
         // Test with a large ROM to ensure bank wrapping works
         let prg_rom = create_test_prg_rom(32); // 512KB
-        let mut mapper = Multicart15Mapper::new(prg_rom, vec![], NametableLayout::Horizontal);
+        let mut mapper = Multicart15Mapper::new(MapperContext::new_for_test(
+            15,
+            prg_rom,
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         // Write to mode 0 with various bank numbers
         mapper.write_prg(0x8000, 0);
@@ -524,7 +597,12 @@ mod tests {
     #[test]
     fn test_multicart15_registers_snapshot_restores_state() {
         let prg_rom = create_test_prg_rom(8);
-        let mut mapper = Multicart15Mapper::new(prg_rom.clone(), vec![], NametableLayout::Vertical);
+        let mut mapper = Multicart15Mapper::new(MapperContext::new_for_test(
+            15,
+            prg_rom.clone(),
+            vec![],
+            NametableLayout::Vertical,
+        ));
 
         mapper.write_prg(0x8002, 0x40 | 0x12); // mode 2, bank select 0x12, horizontal mirroring
         mapper.write_chr(0x0000, 0xAB);
@@ -532,7 +610,12 @@ mod tests {
         let regs = mapper.registers_snapshot();
         let chr = mapper.chr_ram_snapshot();
 
-        let mut restored = Multicart15Mapper::new(prg_rom, vec![], NametableLayout::Vertical);
+        let mut restored = Multicart15Mapper::new(MapperContext::new_for_test(
+            15,
+            prg_rom,
+            vec![],
+            NametableLayout::Vertical,
+        ));
         restored.restore_registers(&regs);
         restored.restore_chr_ram(&chr);
 
@@ -544,8 +627,12 @@ mod tests {
 
     #[test]
     fn test_multicart15_chr_ram_write_protected_in_modes_0_and_3() {
-        let mut mapper =
-            Multicart15Mapper::new(vec![0; 128 * 1024], vec![], NametableLayout::Horizontal);
+        let mut mapper = Multicart15Mapper::new(MapperContext::new_for_test(
+            15,
+            vec![0; 128 * 1024],
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         mapper.write_prg(0x8000, 0);
         mapper.write_chr(0x0000, 0xAA);
@@ -558,8 +645,12 @@ mod tests {
 
     #[test]
     fn test_multicart15_chr_ram_write_enabled_in_modes_1_and_2() {
-        let mut mapper =
-            Multicart15Mapper::new(vec![0; 128 * 1024], vec![], NametableLayout::Horizontal);
+        let mut mapper = Multicart15Mapper::new(MapperContext::new_for_test(
+            15,
+            vec![0; 128 * 1024],
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         mapper.write_prg(0x8001, 0);
         mapper.write_chr(0x0000, 0xAA);

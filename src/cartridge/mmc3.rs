@@ -9,6 +9,7 @@
 //
 // ============================================================================
 
+use super::rom_db;
 use crate::cartridge::common::ChrMemory;
 use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 use crate::trace_mapper;
@@ -83,6 +84,7 @@ impl MMC3Mapper {
     const PRG_BANK_SIZE: usize = 0x2000; // 8KB
     const CHR_BANK_SIZE: usize = 0x0400; // 1KB
     const PRG_RAM_SIZE: usize = 0x2000; // 8KB
+    const DEFAULT_PRG_RAM_BANKS_8K: u8 = 1;
 
     const A12_LOW_CYCLES_REQUIRED: u8 = 3;
 
@@ -94,11 +96,26 @@ impl MMC3Mapper {
     /// For alternate (NEC) IRQ behavior, use the builder pattern:
     /// ```ignore
     /// // true enables alternate (NEC) IRQ behavior
-    /// let mapper = MMC3Mapper::new(prg_rom, chr_rom, mirroring).with_irq_mode(true);
+    /// let mapper = MMC3Mapper::new_with_irq_mode(prg_rom, chr_rom, mirroring, false).with_irq_mode(true);
     /// ```
-    #[allow(dead_code)]
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
-        Self::new_with_irq_mode(prg_rom, chr_rom, mirroring, false)
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let crc32 = ctx.crc32;
+        let use_alternate_irq = rom_db::requires_mmc3_alternate_irq(crc32);
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
+        let mirroring = ctx.mirroring;
+        let prg_ram_banks_8k = if ctx.prg_ram_size_specified {
+            ctx.prg_ram_banks_8k
+        } else {
+            0
+        };
+        Self::new_with_prg_ram_banks_and_irq_mode(
+            prg_rom,
+            chr_rom,
+            mirroring,
+            prg_ram_banks_8k,
+            use_alternate_irq,
+        )
     }
 
     /// Create an MMC3 mapper with explicit IRQ behavior mode.
@@ -113,12 +130,30 @@ impl MMC3Mapper {
         mirroring: NametableLayout,
         use_alternate_irq: bool,
     ) -> Self {
+        Self::new_with_prg_ram_banks_and_irq_mode(
+            prg_rom,
+            chr_rom,
+            mirroring,
+            Self::DEFAULT_PRG_RAM_BANKS_8K,
+            use_alternate_irq,
+        )
+    }
+
+    fn new_with_prg_ram_banks_and_irq_mode(
+        prg_rom: Vec<u8>,
+        chr_rom: Vec<u8>,
+        mirroring: NametableLayout,
+        prg_ram_banks_8k: u8,
+        use_alternate_irq: bool,
+    ) -> Self {
+        let prg_ram_size = prg_ram_banks_8k as usize * Self::PRG_RAM_SIZE;
+        let has_prg_ram = prg_ram_size > 0;
         Self {
             prg_rom,
             chr_memory: ChrMemory::new(chr_rom),
-            prg_ram: vec![0; Self::PRG_RAM_SIZE],
+            prg_ram: vec![0; prg_ram_size],
             mirroring,
-            prg_ram_enabled: true, // PRG-RAM enabled by default on power-on
+            prg_ram_enabled: has_prg_ram, // PRG-RAM enabled by default on power-on when present
             prg_ram_write_protected: false,
             bank_select: 0,
             regs: [0; 8],
@@ -140,7 +175,7 @@ impl MMC3Mapper {
     ///
     /// This allows for fluent construction:
     /// ```ignore
-    /// let mapper = MMC3Mapper::new(prg_rom, chr_rom, mirroring)
+    /// let mapper = MMC3Mapper::new_with_irq_mode(prg_rom, chr_rom, mirroring, false)
     ///     .with_irq_mode(true);  // true = NEC behavior, false = Sharp behavior
     /// ```
     ///
@@ -210,6 +245,11 @@ impl MMC3Mapper {
     }
 
     fn update_prg_ram_control(&mut self, value: u8) {
+        if self.prg_ram.is_empty() {
+            self.prg_ram_enabled = false;
+            self.prg_ram_write_protected = false;
+            return;
+        }
         self.prg_ram_enabled = (value & Self::PRG_RAM_ENABLE_MASK) != 0;
         self.prg_ram_write_protected = (value & Self::PRG_RAM_WRITE_PROTECT_MASK) != 0;
     }
@@ -282,7 +322,7 @@ impl MMC3Mapper {
     /// Returns true if the PRG-RAM window is enabled and writable (used by
     /// multicart mappers that gate the block register behind PRG-RAM control).
     pub fn is_prg_ram_writable(&self) -> bool {
-        self.prg_ram_enabled && !self.prg_ram_write_protected
+        !self.prg_ram.is_empty() && self.prg_ram_enabled && !self.prg_ram_write_protected
     }
 
     // ============================================================================
@@ -478,9 +518,40 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1024, 8);
 
-        let mut mapper = MMC3Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+        let mut mapper =
+            MMC3Mapper::new_with_irq_mode(prg_rom, chr_rom, NametableLayout::Horizontal, false);
         mapper.write_prg(0x6000, 0xAA);
         assert_eq!(mapper.read_prg(0x6000), 0xAA);
+    }
+
+    #[test]
+    fn test_mmc3_unspecified_prg_ram_size_behaves_as_no_prg_ram() {
+        let prg_rom = banked_data(8 * 1024, 8);
+        let chr_rom = banked_data(1024, 16);
+        let metadata =
+            MapperContext::new_for_test(4, prg_rom, chr_rom, NametableLayout::Horizontal)
+                .with_unspecified_prg_ram_size();
+        let mut mapper = create_mapper(metadata).expect("MMC3 (mapper 4) should be implemented");
+
+        assert_eq!(
+            mapper.wram_size(),
+            0,
+            "unspecified PRG-RAM should default to no PRG-RAM for MMC3"
+        );
+
+        mapper.write_prg(0x6000, 0xAA);
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            0x00,
+            "reads should return 0 when PRG-RAM is absent"
+        );
+
+        let open_bus = 0x5C;
+        assert_eq!(
+            mapper.read_prg_open_bus(0x6000, open_bus),
+            open_bus,
+            "open-bus read should be returned when PRG-RAM is absent"
+        );
     }
 
     #[test]
@@ -639,7 +710,8 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 16);
 
-        let mut mapper = MMC3Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+        let mut mapper =
+            MMC3Mapper::new_with_irq_mode(prg_rom, chr_rom, NametableLayout::Horizontal, false);
 
         // Set latch to a non-zero value
         mapper.write_prg(0xC000, 5);
@@ -992,8 +1064,12 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 32); // 256KB = 32 8KB banks
         let chr_rom = banked_data(1024, 128); // 128KB = 128 1KB banks
 
-        let mut mapper =
-            MMC3Mapper::new(prg_rom.clone(), chr_rom.clone(), NametableLayout::Vertical);
+        let mut mapper = MMC3Mapper::new_with_irq_mode(
+            prg_rom.clone(),
+            chr_rom.clone(),
+            NametableLayout::Vertical,
+            false,
+        );
 
         // Configure all 8 bank registers
         mapper.write_prg(0x8000, 0x00); // Select R0 (2KB CHR)
@@ -1040,7 +1116,8 @@ mod tests {
         let prg_ram = mapper.wram_snapshot();
 
         // Create fresh mapper and restore
-        let mut restored = MMC3Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+        let mut restored =
+            MMC3Mapper::new_with_irq_mode(prg_rom, chr_rom, NametableLayout::Horizontal, false);
         restored.restore_registers(&registers);
         restored.load_wram_snapshot(&prg_ram);
 
@@ -1060,10 +1137,11 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 16);
 
-        let mut mapper = MMC3Mapper::new(
+        let mut mapper = MMC3Mapper::new_with_irq_mode(
             prg_rom.clone(),
             chr_rom.clone(),
             NametableLayout::Horizontal,
+            false,
         );
 
         // Configure IRQ
@@ -1088,7 +1166,8 @@ mod tests {
         let registers = mapper.registers_snapshot();
 
         // Create fresh mapper and restore
-        let mut restored = MMC3Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+        let mut restored =
+            MMC3Mapper::new_with_irq_mode(prg_rom, chr_rom, NametableLayout::Horizontal, false);
         restored.restore_registers(&registers);
 
         // Verify IRQ state is preserved
@@ -1112,10 +1191,11 @@ mod tests {
         let chr_rom = banked_data(1024, 16);
 
         // Test FourScreen mirroring
-        let mut mapper_fourscreen = MMC3Mapper::new(
+        let mut mapper_fourscreen = MMC3Mapper::new_with_irq_mode(
             prg_rom.clone(),
             chr_rom.clone(),
             NametableLayout::FourScreen,
+            false,
         );
 
         // Configure some state to make the test more realistic
@@ -1132,10 +1212,11 @@ mod tests {
         let registers_fourscreen = mapper_fourscreen.registers_snapshot();
 
         // Restore to fresh mapper (initially Horizontal) and verify FourScreen is restored
-        let mut restored_fourscreen = MMC3Mapper::new(
+        let mut restored_fourscreen = MMC3Mapper::new_with_irq_mode(
             prg_rom.clone(),
             chr_rom.clone(),
             NametableLayout::Horizontal,
+            false,
         );
         restored_fourscreen.restore_registers(&registers_fourscreen);
 
@@ -1146,10 +1227,11 @@ mod tests {
         );
 
         // Test SingleScreen mirroring
-        let mut mapper_singlescreen = MMC3Mapper::new(
+        let mut mapper_singlescreen = MMC3Mapper::new_with_irq_mode(
             prg_rom.clone(),
             chr_rom.clone(),
             NametableLayout::SingleScreen,
+            false,
         );
 
         // Configure some state
@@ -1166,7 +1248,7 @@ mod tests {
 
         // Restore to fresh mapper and verify SingleScreen is restored
         let mut restored_singlescreen =
-            MMC3Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
+            MMC3Mapper::new_with_irq_mode(prg_rom, chr_rom, NametableLayout::Vertical, false);
         restored_singlescreen.restore_registers(&registers_singlescreen);
 
         assert_eq!(
@@ -1183,18 +1265,20 @@ mod tests {
         let chr_rom = banked_data(1024, 8);
 
         // Create mapper with default (Sharp) IRQ behavior
-        let mapper_default = MMC3Mapper::new(
+        let mapper_default = MMC3Mapper::new_with_irq_mode(
             prg_rom.clone(),
             chr_rom.clone(),
             NametableLayout::Horizontal,
+            false,
         );
         assert!(!mapper_default.use_alternate_irq);
 
         // Create mapper with alternate (NEC) IRQ behavior using builder pattern
-        let mapper_alternate = MMC3Mapper::new(
+        let mapper_alternate = MMC3Mapper::new_with_irq_mode(
             prg_rom.clone(),
             chr_rom.clone(),
             NametableLayout::Horizontal,
+            false,
         )
         .with_irq_mode(true);
         assert!(mapper_alternate.use_alternate_irq);
@@ -1208,10 +1292,11 @@ mod tests {
     /// Test MMC3 enabled PRG-RAM doesn't return open-bus
     #[test]
     fn test_mmc3_enabled_prg_ram_returns_data_not_open_bus() {
-        let mut mapper = MMC3Mapper::new(
+        let mut mapper = MMC3Mapper::new_with_irq_mode(
             vec![0; 128 * 1024],
             vec![0; 128 * 1024],
             NametableLayout::Horizontal,
+            false,
         );
 
         // Enable PRG-RAM (bit 7 = 1)
@@ -1239,7 +1324,7 @@ impl Mapper for MMC3Mapper {
     fn read_prg(&self, addr: u16) -> u8 {
         match addr {
             0x6000..=0x7FFF => {
-                if !self.prg_ram_enabled {
+                if self.prg_ram.is_empty() || !self.prg_ram_enabled {
                     return 0;
                 }
                 let offset = (addr - 0x6000) as usize;
@@ -1289,7 +1374,7 @@ impl Mapper for MMC3Mapper {
     fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
         match addr {
             0x6000..=0x7FFF => {
-                if !self.prg_ram_enabled {
+                if self.prg_ram.is_empty() || !self.prg_ram_enabled {
                     return open_bus;
                 }
                 self.read_prg(addr)
@@ -1307,7 +1392,8 @@ impl Mapper for MMC3Mapper {
     fn write_prg(&mut self, addr: u16, value: u8) {
         match addr {
             0x6000..=0x7FFF => {
-                if !self.prg_ram_enabled || self.prg_ram_write_protected {
+                if self.prg_ram.is_empty() || !self.prg_ram_enabled || self.prg_ram_write_protected
+                {
                     return;
                 }
                 let offset = (addr - 0x6000) as usize;
@@ -1373,7 +1459,7 @@ impl Mapper for MMC3Mapper {
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         // MMC3 uses CHR banking in 1KB units (with two 2KB banks depending on CHR mode).
         let chr_addr = (addr & 0x1FFF) as usize;
         let (bank_index, bank_offset) = self.map_chr_addr_to_bank_1k(chr_addr);
@@ -1511,27 +1597,11 @@ impl Mapper for MMC3Mapper {
             has_chr_banking: true,
             has_dynamic_mirroring: true,
             has_expansion_audio: false,
-            max_prg_ram_kb: 8,
+            max_prg_ram_kb: self.prg_ram.len() / 1024,
             prg_bank_size_kb: 8,
             chr_bank_size_kb: 1,
             trainer_jsr: false,
             ..Default::default()
         }
-    }
-}
-
-impl crate::cartridge::MapperIrq for MMC3Mapper {
-    fn irq_pending(&self) -> bool {
-        <Self as Mapper>::irq_pending(self)
-    }
-
-    fn clock_irq(&mut self) {
-        // NOTE: MMC3's IRQ counter is clocked exclusively on PPU A12 rising edges,
-        // via the PPU address change hook (`clock_irq_counter_on_a12_rising_edge`).
-        //
-        // Leaving this as a no-op avoids the common misinterpretation that
-        // `clock_irq` should be called every CPU cycle by a generic IRQ driver,
-        // which would break MMC3 IRQ timing. Do not drive MMC3 IRQs via this
-        // method; use the PPU A12 edge logic instead.
     }
 }

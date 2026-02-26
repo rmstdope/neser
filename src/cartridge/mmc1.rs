@@ -89,9 +89,12 @@ pub struct MMC1Mapper {
 }
 
 impl MMC1Mapper {
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, _mirroring: NametableLayout) -> Self {
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
+        let mirroring = ctx.mirroring;
         // Default to MMC1B for backward compatibility and broader game support
-        Self::new_with_revision(prg_rom, chr_rom, _mirroring, Mmc1Revision::Mmc1B)
+        Self::new_with_revision(prg_rom, chr_rom, mirroring, Mmc1Revision::Mmc1B)
     }
 
     pub fn new_with_revision(
@@ -191,6 +194,18 @@ impl MMC1Mapper {
         (self.control >> 4) & 0x01
     }
 
+    fn is_mmc1a_a17_bypass_active(&self) -> bool {
+        match self.revision {
+            #[cfg(test)]
+            Mmc1Revision::Mmc1A => (self.prg_bank & 0x10) != 0,
+            Mmc1Revision::Mmc1B => false,
+        }
+    }
+
+    fn mmc1a_a17_bit(&self) -> usize {
+        ((self.prg_bank >> 3) & 0x01) as usize
+    }
+
     fn is_wram_enabled(&self) -> bool {
         match self.revision {
             #[cfg(test)]
@@ -220,6 +235,7 @@ impl MMC1Mapper {
         let prg_mode = self.get_prg_mode();
         let num_banks = self.prg_rom.len() / PRG_BANK_SIZE;
         let last_bank = num_banks.saturating_sub(1);
+        let mmc1a_a17_bypass = self.is_mmc1a_a17_bypass_active();
 
         match prg_mode {
             0 | 1 => {
@@ -231,7 +247,12 @@ impl MMC1Mapper {
             2 => {
                 // Fix first bank at $8000, switch 16KB bank at $C000
                 if addr < 0xC000 {
-                    0 // First bank fixed
+                    let bank = if mmc1a_a17_bypass {
+                        self.mmc1a_a17_bit() << 3
+                    } else {
+                        0
+                    };
+                    (bank % num_banks.max(1)) * PRG_BANK_SIZE
                 } else {
                     let bank = (self.prg_bank & 0x0F) as usize;
                     let bank = bank % num_banks.max(1);
@@ -245,7 +266,12 @@ impl MMC1Mapper {
                     let bank = bank % num_banks.max(1);
                     bank * PRG_BANK_SIZE
                 } else {
-                    last_bank * PRG_BANK_SIZE
+                    let bank = if mmc1a_a17_bypass {
+                        (self.mmc1a_a17_bit() << 3) | 0x07
+                    } else {
+                        last_bank
+                    };
+                    (bank % num_banks.max(1)) * PRG_BANK_SIZE
                 }
             }
             _ => unreachable!(),
@@ -340,7 +366,7 @@ impl Mapper for MMC1Mapper {
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         let bank_offset = self.get_chr_bank_offset(addr);
         let offset = if self.get_chr_mode() == 0 {
             // 8KB mode
@@ -527,18 +553,24 @@ mod tests {
         let prg_rom = vec![0; PRG_BANK_SIZE * 2];
         let chr_rom = vec![];
 
-        let mut mapper = MMC1Mapper::new(
+        let mut mapper = MMC1Mapper::new(MapperContext::new_for_test(
+            1,
             prg_rom.clone(),
             chr_rom.clone(),
             NametableLayout::Horizontal,
-        );
+        ));
 
         mapper.cpu_cycle();
         mapper.write_prg(0x8000, 0x01);
 
         let saved = mapper.registers_snapshot();
 
-        let mut restored = MMC1Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+        let mut restored = MMC1Mapper::new(MapperContext::new_for_test(
+            1,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Horizontal,
+        ));
         restored.restore_registers(&saved);
 
         let before = restored.registers_snapshot();
@@ -1065,7 +1097,12 @@ mod tests {
         // Default constructor should use MMC1B for backward compatibility
         let prg_rom = vec![0; 128 * 1024];
         let chr_rom = vec![0; 8 * 1024];
-        let mut mapper = MMC1Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+        let mut mapper = MMC1Mapper::new(MapperContext::new_for_test(
+            1,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Horizontal,
+        ));
 
         // Write to WRAM
         mapper.write_prg(0x6000, 0xAA);
@@ -1079,12 +1116,74 @@ mod tests {
     }
 
     #[test]
+    fn test_mmc1a_prg_bit4_enables_a17_bypass_for_fixed_last_bank() {
+        let mut prg_rom = vec![0; 16 * PRG_BANK_SIZE];
+        let chr_rom = vec![0; 8 * 1024];
+
+        for bank in 0..16 {
+            let start = bank * PRG_BANK_SIZE;
+            let end = start + PRG_BANK_SIZE;
+            for byte in &mut prg_rom[start..end] {
+                *byte = bank as u8;
+            }
+        }
+
+        let mut mapper = MMC1Mapper::new_with_revision(
+            prg_rom,
+            chr_rom,
+            NametableLayout::Horizontal,
+            Mmc1Revision::Mmc1A,
+        );
+
+        // PRG mode 3 (switch $8000, fixed $C000)
+        write_register(&mut mapper, 0x8000, 0b01100);
+        // bit4=1 enables MMC1A bypass, bit3=0 drives A17 low
+        write_register(&mut mapper, 0xE000, 0b10000);
+
+        // MMC1A bypass applies A17 from bit3 to fixed-bank path, selecting bank 7
+        assert_eq!(mapper.read_prg(0xC000), 7);
+    }
+
+    #[test]
+    fn test_mmc1b_prg_bit4_does_not_change_fixed_last_bank() {
+        let mut prg_rom = vec![0; 16 * PRG_BANK_SIZE];
+        let chr_rom = vec![0; 8 * 1024];
+
+        for bank in 0..16 {
+            let start = bank * PRG_BANK_SIZE;
+            let end = start + PRG_BANK_SIZE;
+            for byte in &mut prg_rom[start..end] {
+                *byte = bank as u8;
+            }
+        }
+
+        let mut mapper = MMC1Mapper::new_with_revision(
+            prg_rom,
+            chr_rom,
+            NametableLayout::Horizontal,
+            Mmc1Revision::Mmc1B,
+        );
+
+        // PRG mode 3 (switch $8000, fixed $C000)
+        write_register(&mut mapper, 0x8000, 0b01100);
+        // On MMC1B, bit4 is WRAM control only; fixed bank remains last bank
+        write_register(&mut mapper, 0xE000, 0b10000);
+
+        assert_eq!(mapper.read_prg(0xC000), 15);
+    }
+
+    #[test]
     fn test_mmc1_consecutive_write_ignore() {
         // MMC1 should ignore consecutive-cycle writes to prevent RMW instructions
         // from shifting two bits. Reset writes (bit 7 set) are never ignored.
         let prg_rom = vec![0; 128 * 1024];
         let chr_rom = vec![0; 8 * 1024];
-        let mut mapper = MMC1Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+        let mut mapper = MMC1Mapper::new(MapperContext::new_for_test(
+            1,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Horizontal,
+        ));
 
         // Start with a clean shift register (reset it first)
         mapper.write_prg(0x8000, 0x80); // Reset, cycle 0
@@ -1136,7 +1235,12 @@ mod tests {
         // Reset writes (bit 7 set) should never be ignored, even if consecutive
         let prg_rom = vec![0; 128 * 1024];
         let chr_rom = vec![0; 8 * 1024];
-        let mut mapper = MMC1Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+        let mut mapper = MMC1Mapper::new(MapperContext::new_for_test(
+            1,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Horizontal,
+        ));
 
         // Start loading a value
         mapper.write_prg(0x8000, 0x01);
@@ -1183,11 +1287,12 @@ mod tests {
             }
         }
 
-        let mut mapper = MMC1Mapper::new(
+        let mut mapper = MMC1Mapper::new(MapperContext::new_for_test(
+            1,
             prg_rom.clone(),
             chr_rom.clone(),
             NametableLayout::Horizontal,
-        );
+        ));
 
         // Configure complex state with all registers
         // Control register: CHR mode 1 (two 4KB banks), PRG mode 3 (switch at $8000, fixed last at $C000), horizontal mirroring
@@ -1235,7 +1340,12 @@ mod tests {
         let chr_ram = mapper.chr_ram_snapshot();
 
         // Create fresh mapper and restore
-        let mut restored = MMC1Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
+        let mut restored = MMC1Mapper::new(MapperContext::new_for_test(
+            1,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Vertical,
+        ));
         restored.restore_registers(&registers);
         restored.load_wram_snapshot(&prg_ram);
         restored.restore_chr_ram(&chr_ram);
@@ -1256,11 +1366,12 @@ mod tests {
         let prg_rom = vec![0; 256 * 1024];
         let chr_rom = vec![0; 128 * 1024];
 
-        let mut mapper = MMC1Mapper::new(
+        let mut mapper = MMC1Mapper::new(MapperContext::new_for_test(
+            1,
             prg_rom.clone(),
             chr_rom.clone(),
             NametableLayout::Horizontal,
-        );
+        ));
 
         // Start writing to control register but don't finish
         mapper.cpu_cycle();
@@ -1274,7 +1385,12 @@ mod tests {
         let registers = mapper.registers_snapshot();
 
         // Restore to new mapper
-        let mut restored = MMC1Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+        let mut restored = MMC1Mapper::new(MapperContext::new_for_test(
+            1,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Horizontal,
+        ));
         restored.restore_registers(&registers);
 
         // Complete the write sequence
@@ -1297,7 +1413,12 @@ mod tests {
     /// When disabled, reads from $6000-$7FFF should return open-bus.
     #[test]
     fn test_mmc1_disabled_wram_returns_open_bus() {
-        let mut mapper = MMC1Mapper::new(vec![0; 256 * 1024], vec![], NametableLayout::Horizontal);
+        let mut mapper = MMC1Mapper::new(MapperContext::new_for_test(
+            1,
+            vec![0; 256 * 1024],
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         // First, enable WRAM and write some data
         // Write to $E000-$FFFF controls PRG banking and WRAM enable
@@ -1359,7 +1480,12 @@ mod tests {
     /// Test MMC1 enabled WRAM doesn't return open-bus
     #[test]
     fn test_mmc1_enabled_wram_returns_data() {
-        let mut mapper = MMC1Mapper::new(vec![0; 256 * 1024], vec![], NametableLayout::Horizontal);
+        let mut mapper = MMC1Mapper::new(MapperContext::new_for_test(
+            1,
+            vec![0; 256 * 1024],
+            vec![],
+            NametableLayout::Horizontal,
+        ));
 
         // Reset and ensure WRAM is enabled (bit 4 = 0)
         mapper.write_prg(0x8000, 0x80);

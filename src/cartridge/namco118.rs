@@ -54,7 +54,10 @@ impl Namco118Mapper {
     const EVEN_ALIGN_MASK: u8 = 0xFE;
     const CHR_ADDR_MASK: u16 = 0x1FFF;
 
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
+        let mirroring = ctx.mirroring;
         Self {
             prg_rom,
             chr_memory: ChrMemory::new(chr_rom),
@@ -226,7 +229,7 @@ impl Mapper for Namco118Mapper {
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         let chr_addr = (addr & Self::CHR_ADDR_MASK) as usize;
         let (bank_index, bank_offset) = self.map_chr_addr_to_bank_1k(chr_addr);
         self.read_chr_bank_1k(bank_index, bank_offset)
@@ -317,7 +320,9 @@ mod tests {
         chr_rom: Vec<u8>,
         mirroring: NametableLayout,
     ) -> std::io::Result<Box<dyn Mapper>> {
-        create_mapper(MapperContext::new_for_test(206, prg_rom, chr_rom, mirroring))
+        create_mapper(MapperContext::new_for_test(
+            206, prg_rom, chr_rom, mirroring,
+        ))
     }
 
     #[test]
@@ -405,7 +410,12 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = Vec::new(); // CHR-RAM path
 
-        let mut mapper = Namco118Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
+        let mut mapper = Namco118Mapper::new(MapperContext::new_for_test(
+            206,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Vertical,
+        ));
 
         mapper.write_prg(0x6000, 0xAA);
         assert_eq!(mapper.read_prg(0x6000), 0xAA);

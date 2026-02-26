@@ -54,7 +54,10 @@ impl MMC4Mapper {
     const PRG_BANK_SIZE: usize = 0x4000; // 16KB
     const CHR_BANK_SIZE: usize = 0x1000; // 4KB
 
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
+        let mirroring = ctx.mirroring;
         Self {
             prg_rom,
             prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
@@ -177,7 +180,7 @@ impl Mapper for MMC4Mapper {
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         self.update_latches(addr);
 
         let bank = self.chr_bank_for_addr(addr);
@@ -285,6 +288,7 @@ impl Mapper for MMC4Mapper {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cartridge::mapper::MapperContext;
 
     fn filled_banks(bank_size: usize, banks: usize) -> Vec<u8> {
         (0..banks)
@@ -298,7 +302,12 @@ mod tests {
         let prg_rom = filled_banks(MMC4Mapper::PRG_BANK_SIZE, prg_banks);
         let chr_rom = filled_banks(MMC4Mapper::CHR_BANK_SIZE, 8);
 
-        let mut mapper = MMC4Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
+        let mut mapper = MMC4Mapper::new(MapperContext::new_for_test(
+            10,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Vertical,
+        ));
 
         // Power-on: bank 0 at $8000.
         assert_eq!(mapper.read_prg(0x8000), 0);
@@ -320,7 +329,12 @@ mod tests {
         let chr_rom = filled_banks(MMC4Mapper::CHR_BANK_SIZE, 8);
         let prg_rom = filled_banks(MMC4Mapper::PRG_BANK_SIZE, 4);
 
-        let mut mapper = MMC4Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
+        let mut mapper = MMC4Mapper::new(MapperContext::new_for_test(
+            10,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Vertical,
+        ));
 
         // Configure banks.
         mapper.write_prg(0xB000, 1); // low FD
@@ -350,8 +364,12 @@ mod tests {
         let prg_rom = filled_banks(MMC4Mapper::PRG_BANK_SIZE, 4);
         let chr_rom = filled_banks(MMC4Mapper::CHR_BANK_SIZE, 8);
 
-        let mut mapper =
-            MMC4Mapper::new(prg_rom.clone(), chr_rom.clone(), NametableLayout::Vertical);
+        let mut mapper = MMC4Mapper::new(MapperContext::new_for_test(
+            10,
+            prg_rom.clone(),
+            chr_rom.clone(),
+            NametableLayout::Vertical,
+        ));
 
         mapper.write_prg(0xA000, 0x03); // PRG bank
         mapper.write_prg(0xB000, 0x01); // CHR 0 FD
@@ -365,7 +383,12 @@ mod tests {
 
         let saved = mapper.registers_snapshot();
 
-        let mut restored = MMC4Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
+        let mut restored = MMC4Mapper::new(MapperContext::new_for_test(
+            10,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Vertical,
+        ));
         restored.restore_registers(&saved);
 
         assert_eq!(restored.get_mirroring(), NametableLayout::Horizontal);
@@ -376,11 +399,12 @@ mod tests {
 
     #[test]
     fn test_mmc4_open_bus() {
-        let mapper = MMC4Mapper::new(
+        let mapper = MMC4Mapper::new(MapperContext::new_for_test(
+            10,
             vec![0; 128 * 1024],
             vec![0; 128 * 1024],
             NametableLayout::Horizontal,
-        );
+        ));
 
         assert_eq!(mapper.read_prg_open_bus(0x5000, 0x33), 0x33);
         assert_eq!(mapper.read_prg_open_bus(0x5FFF, 0x44), 0x44);

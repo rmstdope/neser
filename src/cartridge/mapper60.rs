@@ -40,7 +40,10 @@ impl Mapper60 {
     const CHR_BANK_SIZE: usize = 0x2000; // 8 KiB
     const CHR_BANK_MASK: usize = Self::CHR_BANK_SIZE - 1;
 
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
+        let mirroring = ctx.mirroring;
         Self {
             prg_rom,
             chr_memory: ChrMemory::new(chr_rom),
@@ -81,7 +84,7 @@ impl Mapper for Mapper60 {
         // No writable registers
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         let count = self.chr_bank_count();
         if count == 0 {
             return self.chr_memory.read(addr);
@@ -153,7 +156,12 @@ mod tests {
     fn make_mapper() -> Mapper60 {
         let prg = banked_data(16 * 1024, 4);
         let chr = banked_data(8 * 1024, 4);
-        Mapper60::new(prg, chr, NametableLayout::Horizontal)
+        Mapper60::new(MapperContext::new_for_test(
+            60,
+            prg,
+            chr,
+            NametableLayout::Horizontal,
+        ))
     }
 
     #[test]
@@ -169,7 +177,7 @@ mod tests {
 
     #[test]
     fn default_is_game_0() {
-        let mapper = make_mapper();
+        let mut mapper = make_mapper();
         assert_eq!(mapper.read_prg(0x8000), 0);
         assert_eq!(mapper.read_chr(0x0000), 0);
     }

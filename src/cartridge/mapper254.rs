@@ -36,9 +36,12 @@ pub struct Mapper254 {
 impl Mapper254 {
     const MAPPER_NUMBER: u8 = 254;
 
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
+        let mirroring = ctx.mirroring;
         Self {
-            mmc3: MMC3Mapper::new(prg_rom, chr_rom, mirroring),
+            mmc3: MMC3Mapper::new_with_irq_mode(prg_rom, chr_rom, mirroring, false),
             prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
             protection_disabled: false,
             xor_mask: 0,
@@ -90,7 +93,7 @@ impl Mapper for Mapper254 {
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         self.mmc3.read_chr(addr)
     }
 

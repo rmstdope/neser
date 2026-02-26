@@ -1003,7 +1003,7 @@ mod tests {
 
         fn write_prg(&mut self, _addr: u16, _value: u8) {}
 
-        fn read_chr(&self, _addr: u16) -> u8 {
+        fn read_chr(&mut self, _addr: u16) -> u8 {
             0
         }
 
@@ -1299,7 +1299,7 @@ mod tests {
 
         fn write_prg(&mut self, _addr: u16, _value: u8) {}
 
-        fn read_chr(&self, _addr: u16) -> u8 {
+        fn read_chr(&mut self, _addr: u16) -> u8 {
             0
         }
 
@@ -1353,7 +1353,7 @@ mod tests {
 
         fn write_prg(&mut self, _addr: u16, _value: u8) {}
 
-        fn read_chr(&self, addr: u16) -> u8 {
+        fn read_chr(&mut self, addr: u16) -> u8 {
             self.events.borrow_mut().push(ChrFetchEvent::ReadChr(addr));
 
             0
@@ -1385,7 +1385,7 @@ mod tests {
 
         fn write_prg(&mut self, _addr: u16, _value: u8) {}
 
-        fn read_chr(&self, _addr: u16) -> u8 {
+        fn read_chr(&mut self, _addr: u16) -> u8 {
             0
         }
 

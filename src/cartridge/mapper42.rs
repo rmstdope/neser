@@ -45,7 +45,10 @@ impl Mapper42 {
     const IRQ_ASSERT_THRESHOLD: u16 = 0x6000;
     const IRQ_COUNTER_MASK: u16 = 0x7FFF; // 15-bit
 
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
+        let mirroring = ctx.mirroring;
         Self {
             prg_rom,
             chr_memory: ChrMemory::new(chr_rom),
@@ -119,7 +122,7 @@ impl Mapper for Mapper42 {
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         let offset = (addr as usize) & Self::CHR_BANK_MASK;
         let mapped = self.chr_bank as usize * Self::CHR_BANK_SIZE + offset;
         self.chr_memory.read_at_index(mapped)
@@ -240,7 +243,12 @@ mod tests {
     fn make_mapper_direct() -> Mapper42 {
         let prg_rom = banked_data(8 * 1024, PRG_BANKS);
         let chr_rom = banked_data(8 * 1024, CHR_BANKS);
-        Mapper42::new(prg_rom, chr_rom, NametableLayout::Vertical)
+        Mapper42::new(MapperContext::new_for_test(
+            42,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Vertical,
+        ))
     }
 
     // --- Factory ---
@@ -356,7 +364,7 @@ mod tests {
 
     #[test]
     fn chr_defaults_to_bank_0() {
-        let mapper = make_mapper();
+        let mut mapper = make_mapper();
         assert_eq!(mapper.read_chr(0x0000), 0, "CHR must default to bank 0");
     }
 
@@ -385,7 +393,12 @@ mod tests {
     #[test]
     fn chr_ram_is_writable_when_no_chr_rom() {
         let prg_rom = banked_data(8 * 1024, PRG_BANKS);
-        let mut mapper = Mapper42::new(prg_rom, vec![], NametableLayout::Vertical);
+        let mut mapper = Mapper42::new(MapperContext::new_for_test(
+            42,
+            prg_rom,
+            vec![],
+            NametableLayout::Vertical,
+        ));
         mapper.write_chr(0x0100, 0xAB);
         assert_eq!(
             mapper.read_chr(0x0100),
@@ -400,7 +413,12 @@ mod tests {
     fn mirroring_defaults_from_header() {
         let prg_rom = banked_data(8 * 1024, PRG_BANKS);
         let chr_rom = banked_data(8 * 1024, CHR_BANKS);
-        let mapper = Mapper42::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+        let mapper = Mapper42::new(MapperContext::new_for_test(
+            42,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Horizontal,
+        ));
         assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
     }
 
@@ -525,7 +543,12 @@ mod tests {
     fn registers_snapshot_and_restore() {
         let prg_rom = banked_data(8 * 1024, PRG_BANKS);
         let chr_rom = banked_data(8 * 1024, CHR_BANKS);
-        let mut mapper = Mapper42::new(prg_rom.clone(), chr_rom.clone(), NametableLayout::Vertical);
+        let mut mapper = Mapper42::new(MapperContext::new_for_test(
+            42,
+            prg_rom.clone(),
+            chr_rom.clone(),
+            NametableLayout::Vertical,
+        ));
 
         mapper.write_prg(0xE000, 2); // prg bank = 2
         mapper.write_prg(0x8000, 5); // chr bank = 5
@@ -536,7 +559,12 @@ mod tests {
         }
 
         let snap = mapper.registers_snapshot();
-        let mut restored = Mapper42::new(prg_rom, chr_rom, NametableLayout::Vertical);
+        let mut restored = Mapper42::new(MapperContext::new_for_test(
+            42,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Vertical,
+        ));
         restored.restore_registers(&snap);
 
         assert_eq!(restored.read_prg(0x6000), 2, "Restored PRG bank must match");

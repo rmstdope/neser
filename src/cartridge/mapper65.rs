@@ -57,7 +57,10 @@ impl Mapper65 {
     const CHR_BANK_SIZE: usize = 0x0400; // 1 KiB
     const CHR_BANK_MASK: usize = Self::CHR_BANK_SIZE - 1;
 
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
+        let mirroring = ctx.mirroring;
         let _ = mirroring; // mirroring is programmable; header value ignored
         Self {
             prg_rom,
@@ -176,7 +179,7 @@ impl Mapper for Mapper65 {
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         let slot = (addr as usize) / Self::CHR_BANK_SIZE;
         let offset = (addr as usize) & Self::CHR_BANK_MASK;
         let bank = self.chr_regs[slot & 7] as usize;
@@ -307,7 +310,12 @@ mod tests {
     fn make_mapper() -> Mapper65 {
         let prg = banked_data(8 * 1024, PRG_BANKS);
         let chr = banked_data(1024, CHR_BANKS);
-        Mapper65::new(prg, chr, NametableLayout::Horizontal)
+        Mapper65::new(MapperContext::new_for_test(
+            65,
+            prg,
+            chr,
+            NametableLayout::Horizontal,
+        ))
     }
 
     #[test]

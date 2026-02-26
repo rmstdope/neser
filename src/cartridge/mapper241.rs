@@ -33,7 +33,10 @@ impl Mapper241 {
     const MAPPER_NUMBER: u8 = 241;
     const PRG_BANK_SIZE: usize = 32 * 1024; // 32KB
 
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
+        let mirroring = ctx.mirroring;
         let prg_bank = BankSwitch::from_rom(&prg_rom, Self::PRG_BANK_SIZE);
         Self {
             prg_rom: BankedRom::new(prg_rom, Self::PRG_BANK_SIZE),
@@ -67,7 +70,7 @@ impl Mapper for Mapper241 {
         }
     }
 
-    fn read_chr(&self, addr: u16) -> u8 {
+    fn read_chr(&mut self, addr: u16) -> u8 {
         self.chr_memory.read(addr)
     }
 
@@ -140,7 +143,9 @@ mod tests {
         chr_rom: Vec<u8>,
         mirroring: NametableLayout,
     ) -> std::io::Result<Box<dyn Mapper>> {
-        create_mapper(MapperContext::new_for_test(241, prg_rom, chr_rom, mirroring))
+        create_mapper(MapperContext::new_for_test(
+            241, prg_rom, chr_rom, mirroring,
+        ))
     }
 
     #[test]

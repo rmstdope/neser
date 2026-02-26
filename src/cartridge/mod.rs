@@ -71,10 +71,7 @@ pub use common::{
 #[allow(unused_imports)]
 pub use ines::{ConsoleType, InesHeader, NametableLayout, ParsedRom, TimingMode};
 #[allow(unused_imports)]
-pub use mapper::{
-    Mapper, MapperAudio, MapperCapabilities, MapperComposable, MapperContext, MapperCore,
-    MapperIrq, MapperPpuExtension, MapperStateSnapshot,
-};
+pub use mapper::{Mapper, MapperCapabilities, MapperContext};
 #[allow(unused_imports)]
 pub use mapper_templates::{DualBank32Mapper, SimpleBankedPrgMapper, SimpleFixedPrgMapper};
 #[allow(unused_imports)]
