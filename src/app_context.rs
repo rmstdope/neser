@@ -97,6 +97,7 @@ impl AppContext {
             .collect()
     }
 
+    #[allow(dead_code)]
     pub fn get_db_entry_by_crc(&self, crc: u32) -> Option<RomDbEntry> {
         self.rom_db.get_by_crc(crc).cloned()
     }

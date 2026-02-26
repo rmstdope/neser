@@ -69,9 +69,7 @@ pub use common::{
     StateSnapshot,
 };
 #[allow(unused_imports)]
-pub use ines::{
-    ConsoleType, InesHeader, NametableLayout, ParsedRom, TimingMode,
-};
+pub use ines::{ConsoleType, InesHeader, NametableLayout, ParsedRom, TimingMode};
 #[allow(unused_imports)]
 pub use mapper::{
     Mapper, MapperAudio, MapperCapabilities, MapperComposable, MapperContext, MapperCore,
@@ -82,4 +80,5 @@ pub use mapper_templates::{DualBank32Mapper, SimpleBankedPrgMapper, SimpleFixedP
 #[allow(unused_imports)]
 pub use rom_db::calculate_rom_crc32;
 pub(crate) use rom_db::default_arkanoid_on_port;
+#[allow(unused_imports)]
 pub use rom_db::{RomDb, RomDbEntry};

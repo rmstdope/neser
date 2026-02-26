@@ -189,7 +189,9 @@ mod tests {
         chr_rom: Vec<u8>,
         mirroring: NametableLayout,
     ) -> std::io::Result<Box<dyn Mapper>> {
-        create_mapper(MapperContext::new_for_test(254, prg_rom, chr_rom, mirroring))
+        create_mapper(MapperContext::new_for_test(
+            254, prg_rom, chr_rom, mirroring,
+        ))
     }
 
     #[test]
@@ -228,7 +230,7 @@ mod tests {
 
         // Protected reads return PRG-RAM XOR mask
         assert_eq!(mapper.read_prg(0x6000), 0xAB ^ 0xFF);
-        assert_eq!(mapper.read_prg(0x6001), 0x00 ^ 0xFF);
+        assert_eq!(mapper.read_prg(0x6001), 0xFF);
     }
 
     #[test]
@@ -325,6 +327,6 @@ mod tests {
         restored.restore_registers(&regs);
 
         // Security state + xor mask should be restored.
-        assert_eq!(restored.read_prg(0x6001), 0x00 ^ 0x55);
+        assert_eq!(restored.read_prg(0x6001), 0x55);
     }
 }

@@ -831,7 +831,7 @@ impl Config {
         // RAM initialization mode
         let cli_ram_init_mode = Self::parse_string_arg(args, "--ram-init-mode");
         if let Some(value) = cli_ram_init_mode.as_ref() {
-            self.apply_config_value("ram_init_mode", &value)?;
+            self.apply_config_value("ram_init_mode", value)?;
         }
 
         // Overscan
