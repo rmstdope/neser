@@ -49,7 +49,12 @@ impl AxROMMapper {
         } else {
             ctx.submapper
         };
-        let prg_ram_banks_8k = ctx.prg_ram_banks_8k;
+        // AxROM boards have no PRG-RAM; only allocate when explicitly specified.
+        let prg_ram_banks_8k = if ctx.prg_ram_size_specified {
+            ctx.prg_ram_banks_8k
+        } else {
+            0
+        };
         let prg_rom = ctx.prg_rom;
         Self::new_with_submapper_and_prg_ram_banks(prg_rom, submapper, prg_ram_banks_8k)
     }
@@ -522,6 +527,31 @@ mod tests {
             mapper.read_prg(0x8000),
             0x01,
             "submapper 1 should not apply bus conflicts and should select bank 1"
+        );
+    }
+
+    #[test]
+    fn test_axrom_no_prg_ram_when_size_unspecified() {
+        // AxROM boards have no PRG-RAM. When the ROM header doesn't specify
+        // PRG-RAM size (prg_ram_size_specified=false), none should be allocated.
+        let prg_rom = vec![0; 128 * 1024];
+        let mut mapper = create_mapper(
+            MapperContext::new_for_test(7, prg_rom, vec![], NametableLayout::Horizontal)
+                .with_unspecified_prg_ram_size(),
+        )
+        .expect("AxROM mapper must be created");
+
+        mapper.write_prg(0x6000, 0xAA);
+
+        assert_eq!(
+            mapper.read_prg_open_bus(0x6000, 0x55),
+            0x55,
+            "AxROM with unspecified PRG-RAM must return open bus at $6000-$7FFF"
+        );
+        assert_eq!(
+            mapper.wram_size(),
+            0,
+            "AxROM should report no WRAM when unspecified"
         );
     }
 }
