@@ -337,4 +337,82 @@ mod tests {
         assert_eq!(mapper.read_prg_open_bus(0x5000, 0xCC), 0xCC);
         assert_eq!(mapper.read_prg_open_bus(0x5FFF, 0xDD), 0xDD);
     }
+
+    #[test]
+    fn test_cnrom_no_prg_ram_when_banks_zero() {
+        // CNROM with explicitly zero PRG-RAM banks should return open bus
+        // and ignore writes at $6000-$7FFF (spec: no PRG-RAM on standard boards)
+        let mut mapper = CNROMMapper::new(
+            MapperContext::new_for_test(
+                3,
+                vec![0; 32 * 1024],
+                vec![0; 32 * 1024],
+                NametableLayout::Horizontal,
+            )
+            .with_prg_ram_banks(0),
+        );
+
+        // Writes should be silently ignored
+        mapper.write_prg(0x6000, 0xAA);
+        mapper.write_prg(0x7FFF, 0xBB);
+
+        // Reads via open-bus path should return open-bus value, not RAM
+        assert_eq!(
+            mapper.read_prg_open_bus(0x6000, 0x5A),
+            0x5A,
+            "Should return open bus when no PRG-RAM"
+        );
+        assert_eq!(
+            mapper.read_prg_open_bus(0x7FFF, 0xC3),
+            0xC3,
+            "Should return open bus when no PRG-RAM"
+        );
+        assert_eq!(mapper.wram_size(), 0, "WRAM size must be 0 when no PRG-RAM");
+    }
+
+    #[test]
+    fn test_cnrom_no_prg_ram_when_size_unspecified() {
+        // CNROM with unspecified PRG-RAM size must default to no PRG-RAM
+        // (standard CNROM boards have none; bootleg boards declare it explicitly)
+        let mut mapper = CNROMMapper::new(
+            MapperContext::new_for_test(
+                3,
+                vec![0; 32 * 1024],
+                vec![0; 32 * 1024],
+                NametableLayout::Horizontal,
+            )
+            .with_unspecified_prg_ram_size(),
+        );
+
+        mapper.write_prg(0x6000, 0xAA);
+
+        assert_eq!(
+            mapper.read_prg_open_bus(0x6000, 0x5A),
+            0x5A,
+            "Unspecified PRG-RAM size must result in open bus at $6000-$7FFF"
+        );
+        assert_eq!(mapper.wram_size(), 0);
+    }
+
+    #[test]
+    fn test_cnrom_prg_ram_present_when_explicitly_specified() {
+        // A bootleg CNROM board with explicitly-declared PRG-RAM should work
+        let mut mapper = CNROMMapper::new(
+            MapperContext::new_for_test(
+                3,
+                vec![0; 32 * 1024],
+                vec![0; 32 * 1024],
+                NametableLayout::Horizontal,
+            )
+            .with_prg_ram_banks(1),
+        );
+
+        mapper.write_prg(0x6000, 0xDE);
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            0xDE,
+            "Explicitly declared PRG-RAM must be readable"
+        );
+        assert_eq!(mapper.wram_size(), 8 * 1024);
+    }
 }
