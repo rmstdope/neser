@@ -68,7 +68,7 @@ impl AxROMMapper {
 
         // AxROM uses CHR-RAM, ignores chr_rom and initial mirroring (controlled by register)
         let prg_bank = BankSwitch::from_rom(&normalized_prg_rom, PRG_BANK_SIZE_32K);
-        let bus_conflicts = submapper == 2;
+        let bus_conflicts = submapper != 1;
         let prg_ram = if prg_ram_banks_8k == 0 {
             None
         } else {
@@ -234,7 +234,7 @@ mod tests {
     use crate::cartridge::mapper::{MapperContext, create_mapper};
 
     fn create_axrom_mapper(prg_rom: Vec<u8>, mirroring: NametableLayout) -> Box<dyn Mapper> {
-        create_mapper(MapperContext::new_for_test(7, prg_rom, vec![], mirroring))
+        create_mapper(MapperContext::new_for_test(7, prg_rom, vec![], mirroring).with_submapper(1))
             .expect("Failed to create AxROM mapper")
     }
 
@@ -476,6 +476,33 @@ mod tests {
 
         assert_eq!(mapper.read_prg_open_bus(0x5000, 0xEE), 0xEE);
         assert_eq!(mapper.read_prg_open_bus(0x5FFF, 0xFF), 0xFF);
+    }
+
+    #[test]
+    fn test_axrom_submapper_0_applies_bus_conflicts_for_amrom_aorom() {
+        // AMROM/AOROM (submapper 0, the default) have AND-type bus conflicts.
+        // Writing 0x01 while bank 0 data is 0x00 → 0x01 & 0x00 = 0x00 → bank stays 0.
+        let mut prg_rom = vec![0; 64 * 1024];
+        for byte in &mut prg_rom[0..32 * 1024] {
+            *byte = 0x00;
+        }
+        for byte in &mut prg_rom[32 * 1024..64 * 1024] {
+            *byte = 0x01;
+        }
+
+        let mut mapper = create_mapper(
+            MapperContext::new_for_test(7, prg_rom, vec![], NametableLayout::Horizontal)
+                .with_submapper(0),
+        )
+        .expect("AxROM submapper 0 must be created");
+
+        mapper.write_prg(0x8000, 0x01);
+
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            0x00,
+            "submapper 0 (AMROM/AOROM) must apply bus conflicts and keep bank 0 selected"
+        );
     }
 
     #[test]
