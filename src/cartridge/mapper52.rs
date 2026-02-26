@@ -50,6 +50,8 @@ pub struct Mapper52 {
 
 impl Mapper52 {
     const MAPPER_NUMBER: u8 = 52;
+    const WRAM_START: u16 = 0x6000;
+    const WRAM_END: u16 = 0x7FFF;
     const PRG_BANK_SIZE: usize = 0x2000; // 8 KiB
     const PRG_BANK_MASK: usize = Self::PRG_BANK_SIZE - 1;
     const CHR_1K_SIZE: usize = 0x0400; // 1 KiB
@@ -113,11 +115,27 @@ impl Mapper52 {
             self.outer, t, b, c_bit, c_lo, mmc3_raw_bank, final_bank);
         final_bank
     }
+
+    fn is_wram_window(addr: u16) -> bool {
+        (Self::WRAM_START..=Self::WRAM_END).contains(&addr)
+    }
 }
 
 impl Mapper for Mapper52 {
+    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        if Self::is_wram_window(addr) {
+            return self.mmc3.read_prg_open_bus(addr, open_bus);
+        }
+
+        if addr < Self::WRAM_START {
+            return open_bus;
+        }
+
+        self.read_prg(addr)
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
-        if (0x6000..=0x7FFF).contains(&addr) {
+        if Self::is_wram_window(addr) {
             return self.mmc3.read_prg(addr); // Forward to MMC3 PRG-RAM
         }
         let raw_bank = self.mmc3.mapped_prg_bank(addr);
@@ -406,5 +424,14 @@ mod tests {
             0x00,
             "Outer register write must not corrupt WRAM"
         );
+    }
+
+    #[test]
+    fn wram_disabled_reads_return_open_bus_value() {
+        let mut mapper = make_mapper();
+        mapper.write_prg(0xA001, 0x00);
+
+        let open_bus = 0x5A;
+        assert_eq!(mapper.read_prg_open_bus(0x6000, open_bus), open_bus);
     }
 }
