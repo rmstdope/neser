@@ -70,7 +70,7 @@ pub use common::{
 };
 #[allow(unused_imports)]
 pub use ines::{
-    ConsoleType, InesHeader, Mirroring, NametableLayout, TimingMode, parse_header, parse_rom,
+    ConsoleType, InesHeader, NametableLayout, ParsedRom, TimingMode,
 };
 #[allow(unused_imports)]
 pub use mapper::{

@@ -3,7 +3,7 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use crate::cartridge::Cartridge;
-    use crate::console::{Config, Nes, RamInitMode, TimingMode};
+    use crate::console::{Config, Nes, RamInitMode};
     use crate::integration_tests::golden_screenshots::{
         GoldenScreenshotPolicy, assert_matches_golden_screenshot_byte_exact,
         ensure_golden_screenshot, golden_screenshot_path_for_rom,
@@ -11,6 +11,8 @@ mod tests {
     use crate::integration_tests::manual_test_cartridges;
 
     const FRAMES_TO_RUN: u32 = 60 * 5;
+    const SCREEN_WIDTH: u32 = 256;
+    const SCREEN_HEIGHT: u32 = 240;
 
     fn deterministic_config() -> Config {
         Config {
@@ -125,8 +127,8 @@ mod tests {
         let rgb = run_nes_for_frames(&mut nes, frames);
         Ok((
             rgb,
-            TimingMode::Ntsc.screen_width(),
-            TimingMode::Ntsc.screen_height(),
+            SCREEN_WIDTH,
+            SCREEN_HEIGHT,
         ))
     }
 
@@ -149,7 +151,7 @@ mod tests {
         let frame = run_nes_for_frames(&mut nes, 2);
 
         let expected_len =
-            (TimingMode::Ntsc.screen_width() * TimingMode::Ntsc.screen_height() * 3) as usize;
+            (SCREEN_WIDTH * SCREEN_HEIGHT * 3) as usize;
         assert_eq!(frame.len(), expected_len);
     }
 

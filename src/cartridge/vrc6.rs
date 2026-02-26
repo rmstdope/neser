@@ -738,7 +738,7 @@ mod tests {
         chr_rom: Vec<u8>,
         mirroring: NametableLayout,
     ) -> std::io::Result<Box<dyn Mapper>> {
-        create_mapper(MapperContext::new(
+        create_mapper(MapperContext::new_for_test(
             mapper_number,
             prg_rom,
             chr_rom,

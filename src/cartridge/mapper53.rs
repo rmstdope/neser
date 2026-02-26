@@ -249,7 +249,7 @@ mod tests {
 
     #[test]
     fn mapper_53_is_registered() {
-        let result = create_mapper(MapperContext::new(
+        let result = create_mapper(MapperContext::new_for_test(
             53,
             banked_data(8 * 1024, 128),
             vec![],

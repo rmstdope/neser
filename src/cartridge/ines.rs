@@ -1,6 +1,7 @@
 // iNES / NES 2.0 header parsing helpers
 // Purpose: centralize header parsing so multiple callers can reuse the logic.
 
+use crate::cartridge::rom_db::RomDb;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,9 +74,6 @@ impl NametableLayout {
         }
     }
 }
-
-#[allow(dead_code)]
-pub type Mirroring = NametableLayout;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimingMode {
@@ -168,16 +166,6 @@ impl TimingMode {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn screen_width(self) -> u32 {
-        256
-    }
-
-    #[allow(dead_code)]
-    pub fn screen_height(self) -> u32 {
-        240
-    }
-
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Ntsc => "ntsc",
@@ -212,123 +200,128 @@ pub struct InesHeader {
     pub default_expansion_device: u8,
 }
 
-// Helper: parse NES2 RAM size nibble into bytes
-pub fn parse_nes2_ram_size(nibble: u8) -> Option<usize> {
-    if nibble == 0 {
-        None
-    } else {
-        Some(64usize << nibble)
-    }
-}
+impl InesHeader {
+    /// Parse a 16-byte iNES header. Returns `None` if the header magic is invalid.
+    pub fn parse(header: &[u8; 16]) -> Option<Self> {
+        if &header[0..4] != b"NES\x1A" {
+            return None;
+        }
 
-// Helper: parse NES2 ROM size (LSB + MSB nibble) into bytes
-pub fn parse_nes2_rom_size_bytes(lsb: u8, msb_nibble: u8, unit_bytes: usize) -> usize {
-    if msb_nibble == 0x0F {
-        // Extended format
-        let exponent = (lsb >> 4) as usize;
-        let multiplier = (lsb & 0x0F) as usize;
-        let base = 1usize << (exponent + 10);
-        base * (multiplier * 2 + 1)
-    } else {
-        let size_units = ((msb_nibble as usize) << 8) | lsb as usize;
-        size_units * unit_bytes
-    }
-}
+        let flags6 = header[6];
+        let flags7 = header[7];
+        let nes2 = (flags7 & 0x0C) == 0x08;
 
-/// Parse a 16-byte iNES header. Returns `None` if the header magic is invalid.
-pub fn parse_header(header: &[u8; 16]) -> Option<InesHeader> {
-    if &header[0..4] != b"NES\x1A" {
-        return None;
-    }
+        let header_version = if nes2 { "2.0" } else { "1.0" };
+        let has_trainer = (flags6 & 0x04) != 0;
+        let battery_backed_prg_ram = (flags6 & 0x02) != 0;
+        let mirroring = NametableLayout::from_flags6(flags6);
 
-    let flags6 = header[6];
-    let flags7 = header[7];
-    let nes2 = (flags7 & 0x0C) == 0x08;
-
-    let header_version = if nes2 { "2.0" } else { "1.0" };
-    let has_trainer = (flags6 & 0x04) != 0;
-    let battery_backed_prg_ram = (flags6 & 0x02) != 0;
-    let mirroring = NametableLayout::from_flags6(flags6);
-
-    let (mapper, submapper) = if nes2 {
-        let mapper =
-            (flags6 as u16 >> 4) | ((flags7 as u16) & 0xF0) | (((header[8] & 0x0F) as u16) << 8);
-        let submapper = header[8] >> 4;
-        (mapper, submapper)
-    } else {
-        let mapper = (flags6 >> 4) | (flags7 & 0xF0);
-        (mapper as u16, 0)
-    };
-
-    let console_type = ConsoleType::from_header(flags7, nes2, header[13]);
-
-    let (prg_rom_size_bytes, chr_rom_size_bytes) = if nes2 {
-        let prg_msb = header[9] & 0x0F;
-        let chr_msb = header[9] >> 4;
-        (
-            parse_nes2_rom_size_bytes(header[4], prg_msb, 16 * 1024),
-            parse_nes2_rom_size_bytes(header[5], chr_msb, 8 * 1024),
-        )
-    } else {
-        (
-            header[4] as usize * 16 * 1024,
-            header[5] as usize * 8 * 1024,
-        )
-    };
-
-    let (prg_ram_size_bytes, prg_nvram_size_bytes, chr_ram_size_bytes, chr_nvram_size_bytes) =
-        if nes2 {
-            let prg_ram = parse_nes2_ram_size(header[10] & 0x0F);
-            let prg_nvram = parse_nes2_ram_size(header[10] >> 4);
-            let chr_ram = parse_nes2_ram_size(header[11] & 0x0F);
-            let chr_nvram = parse_nes2_ram_size(header[11] >> 4);
-            (prg_ram, prg_nvram, chr_ram, chr_nvram)
+        let (mapper, submapper) = if nes2 {
+            let mapper = (flags6 as u16 >> 4)
+                | ((flags7 as u16) & 0xF0)
+                | (((header[8] & 0x0F) as u16) << 8);
+            let submapper = header[8] >> 4;
+            (mapper, submapper)
         } else {
-            let prg_ram = if header[8] == 0 {
-                Some(8 * 1024)
-            } else {
-                Some(header[8] as usize * 8 * 1024)
-            };
-            let chr_ram = if chr_rom_size_bytes == 0 {
-                Some(8 * 1024)
-            } else {
-                None
-            };
-            (prg_ram, None, chr_ram, None)
+            let mapper = (flags6 >> 4) | (flags7 & 0xF0);
+            (mapper as u16, 0)
         };
 
-    let timing_mode = TimingMode::from_header(header, nes2);
+        let console_type = ConsoleType::from_header(flags7, nes2, header[13]);
 
-    let (vs_ppu_type, vs_hardware_type) = if matches!(console_type, ConsoleType::VsSystem) && nes2 {
-        (Some(header[13] & 0x0F), Some(header[13] >> 4))
-    } else {
-        (None, None)
-    };
+        let (prg_rom_size_bytes, chr_rom_size_bytes) = if nes2 {
+            let prg_msb = header[9] & 0x0F;
+            let chr_msb = header[9] >> 4;
+            (
+                Self::parse_nes2_rom_size_bytes(header[4], prg_msb, 16 * 1024),
+                Self::parse_nes2_rom_size_bytes(header[5], chr_msb, 8 * 1024),
+            )
+        } else {
+            (
+                header[4] as usize * 16 * 1024,
+                header[5] as usize * 8 * 1024,
+            )
+        };
 
-    let misc_roms = if nes2 { header[14] } else { 0 };
-    let default_expansion_device = if nes2 { header[15] } else { 0 };
+        let (prg_ram_size_bytes, prg_nvram_size_bytes, chr_ram_size_bytes, chr_nvram_size_bytes) =
+            if nes2 {
+                let prg_ram = Self::parse_nes2_ram_size(header[10] & 0x0F);
+                let prg_nvram = Self::parse_nes2_ram_size(header[10] >> 4);
+                let chr_ram = Self::parse_nes2_ram_size(header[11] & 0x0F);
+                let chr_nvram = Self::parse_nes2_ram_size(header[11] >> 4);
+                (prg_ram, prg_nvram, chr_ram, chr_nvram)
+            } else {
+                let prg_ram = if header[8] == 0 {
+                    Some(8 * 1024)
+                } else {
+                    Some(header[8] as usize * 8 * 1024)
+                };
+                let chr_ram = if chr_rom_size_bytes == 0 {
+                    Some(8 * 1024)
+                } else {
+                    None
+                };
+                (prg_ram, None, chr_ram, None)
+            };
 
-    Some(InesHeader {
-        mapper,
-        submapper,
-        console_type,
-        mirroring,
-        has_trainer,
-        header_version,
-        battery_backed_prg_ram,
-        prg_rom_size_bytes,
-        chr_rom_size_bytes,
-        prg_ram_size_bytes,
-        prg_nvram_size_bytes,
-        chr_ram_size_bytes,
-        chr_nvram_size_bytes,
-        timing_mode,
-        vs_ppu_type,
-        vs_hardware_type,
-        misc_roms,
-        default_expansion_device,
-    })
+        let timing_mode = TimingMode::from_header(header, nes2);
+
+        let (vs_ppu_type, vs_hardware_type) =
+            if matches!(console_type, ConsoleType::VsSystem) && nes2 {
+                (Some(header[13] & 0x0F), Some(header[13] >> 4))
+            } else {
+                (None, None)
+            };
+
+        let misc_roms = if nes2 { header[14] } else { 0 };
+        let default_expansion_device = if nes2 { header[15] } else { 0 };
+
+        Some(Self {
+            mapper,
+            submapper,
+            console_type,
+            mirroring,
+            has_trainer,
+            header_version,
+            battery_backed_prg_ram,
+            prg_rom_size_bytes,
+            chr_rom_size_bytes,
+            prg_ram_size_bytes,
+            prg_nvram_size_bytes,
+            chr_ram_size_bytes,
+            chr_nvram_size_bytes,
+            timing_mode,
+            vs_ppu_type,
+            vs_hardware_type,
+            misc_roms,
+            default_expansion_device,
+        })
+    }
+
+    // Helper: parse NES2 RAM size nibble into bytes
+    fn parse_nes2_ram_size(nibble: u8) -> Option<usize> {
+        if nibble == 0 {
+            None
+        } else {
+            Some(64usize << nibble)
+        }
+    }
+
+    // Helper: parse NES2 ROM size (LSB + MSB nibble) into bytes
+    fn parse_nes2_rom_size_bytes(lsb: u8, msb_nibble: u8, unit_bytes: usize) -> usize {
+        if msb_nibble == 0x0F {
+            // Extended format
+            let exponent = (lsb >> 4) as usize;
+            let multiplier = (lsb & 0x0F) as usize;
+            let base = 1usize << (exponent + 10);
+            base * (multiplier * 2 + 1)
+        } else {
+            let size_units = ((msb_nibble as usize) << 8) | lsb as usize;
+            size_units * unit_bytes
+        }
+    }
 }
+
 /// Errors that can occur while parsing a full ROM blob.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RomParseError {
@@ -340,91 +333,218 @@ pub enum RomParseError {
 const HEADER_SIZE: usize = 16;
 const TRAINER_SIZE: usize = 512;
 
-type ParsedRom = (InesHeader, Vec<u8>, Vec<u8>, Option<Vec<u8>>, u32);
+/// Result of parsing a full iNES/NES2 ROM blob.
+#[derive(Debug)]
+pub struct ParsedRom {
+    pub header: InesHeader,
+    pub prg_rom: Vec<u8>,
+    pub chr_rom: Vec<u8>,
+    pub trainer: Option<Vec<u8>>,
+    /// CRC32 of the concatenated PRG + CHR ROM data.
+    pub crc32: u32,
+    /// CRC32 of the raw payload (everything after header + trainer).
+    /// Useful as a fallback for ROM database lookup.
+    pub payload_crc32: u32,
+}
 
-/// Parse a full iNES/NES2 ROM blob. Returns the parsed header, owned PRG ROM
-/// bytes, owned CHR ROM bytes, optional trainer data (512 bytes if present),
-/// and the combined CRC32 of PRG+CHR.
-///
-/// # Errors
-///
-/// Returns `RomParseError::InvalidHeader` if the magic bytes are invalid.
-/// Returns `RomParseError::FileTooSmall` if the file is smaller than expected.
-pub fn parse_rom(data: &[u8]) -> Result<ParsedRom, RomParseError> {
-    if data.len() < HEADER_SIZE {
-        return Err(RomParseError::FileTooSmall {
-            expected: HEADER_SIZE,
-            actual: data.len(),
-        });
-    }
-
-    let header: [u8; HEADER_SIZE] = data[0..HEADER_SIZE]
-        .try_into()
-        .map_err(|_| RomParseError::InvalidHeader)?;
-    let info = parse_header(&header).ok_or(RomParseError::InvalidHeader)?;
-
-    let trainer_offset = if info.has_trainer { TRAINER_SIZE } else { 0 };
-    let prg_rom_start = HEADER_SIZE + trainer_offset;
-
-    // Extract trainer data if present
-    let trainer = if info.has_trainer {
-        if data.len() < HEADER_SIZE + TRAINER_SIZE {
+impl ParsedRom {
+    /// Parse a full iNES/NES2 ROM blob, optionally applying ROM database overrides.
+    ///
+    /// When a `RomDb` is provided, the parsed CRC32 (and a fallback payload CRC32)
+    /// are used to look up the ROM in the database. Any database overrides for
+    /// mapper, submapper, mirroring, PRG/CHR sizes, and timing mode are applied
+    /// to the returned `ParsedRom`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RomParseError::InvalidHeader` if the magic bytes are invalid.
+    /// Returns `RomParseError::FileTooSmall` if the file is smaller than expected.
+    pub fn parse(data: &[u8], rom_db: Option<&RomDb>) -> Result<Self, RomParseError> {
+        if data.len() < HEADER_SIZE {
             return Err(RomParseError::FileTooSmall {
-                expected: HEADER_SIZE + TRAINER_SIZE,
+                expected: HEADER_SIZE,
                 actual: data.len(),
             });
         }
-        Some(data[HEADER_SIZE..HEADER_SIZE + TRAINER_SIZE].to_vec())
-    } else {
-        None
-    };
 
-    // Primary sizes come from parsed header (NES2-aware). If these sizes
-    // don't fit in the provided data and the header is marked as NES2,
-    // attempt a graceful fallback to iNES v1 sizing to be permissive with
-    // headers that set NES2 bits but leave v1-compatible size fields.
-    let mut prg_bytes = info.prg_rom_size_bytes;
-    let mut chr_bytes = info.chr_rom_size_bytes;
+        let header: [u8; HEADER_SIZE] = data[0..HEADER_SIZE]
+            .try_into()
+            .map_err(|_| RomParseError::InvalidHeader)?;
+        let info = InesHeader::parse(&header).ok_or(RomParseError::InvalidHeader)?;
 
-    let prg_rom_end = prg_rom_start + prg_bytes;
-    let chr_rom_start = prg_rom_end;
-    let chr_rom_end = chr_rom_start + chr_bytes;
+        let trainer_offset = if info.has_trainer { TRAINER_SIZE } else { 0 };
+        let prg_rom_start = HEADER_SIZE + trainer_offset;
 
-    let mut header_for_return = info.clone();
-
-    if data.len() < chr_rom_end {
-        // Try fallback to iNES v1 sizing when header indicated NES2 but data is small.
-        if header_for_return.header_version == "2.0" {
-            let prg_v1 = (header[4] as usize) * 16 * 1024;
-            let chr_v1 = (header[5] as usize) * 8 * 1024;
-            let prg_end_v1 = prg_rom_start + prg_v1;
-            let chr_end_v1 = prg_end_v1 + chr_v1;
-            if data.len() >= chr_end_v1 {
-                prg_bytes = prg_v1;
-                chr_bytes = chr_v1;
-                header_for_return.prg_rom_size_bytes = prg_bytes;
-                header_for_return.chr_rom_size_bytes = chr_bytes;
-            } else {
+        // Extract trainer data if present
+        let trainer = if info.has_trainer {
+            if data.len() < HEADER_SIZE + TRAINER_SIZE {
                 return Err(RomParseError::FileTooSmall {
-                    expected: chr_end_v1,
+                    expected: HEADER_SIZE + TRAINER_SIZE,
                     actual: data.len(),
                 });
             }
+            Some(data[HEADER_SIZE..HEADER_SIZE + TRAINER_SIZE].to_vec())
         } else {
+            None
+        };
+
+        // Primary sizes come from parsed header (NES2-aware). If these sizes
+        // don't fit in the provided data and the header is marked as NES2,
+        // attempt a graceful fallback to iNES v1 sizing to be permissive with
+        // headers that set NES2 bits but leave v1-compatible size fields.
+        let mut prg_bytes = info.prg_rom_size_bytes;
+        let mut chr_bytes = info.chr_rom_size_bytes;
+
+        let prg_rom_end = prg_rom_start + prg_bytes;
+        let chr_rom_start = prg_rom_end;
+        let chr_rom_end = chr_rom_start + chr_bytes;
+
+        let mut header_for_return = info.clone();
+
+        if data.len() < chr_rom_end {
+            // Try fallback to iNES v1 sizing when header indicated NES2 but data is small.
+            if header_for_return.header_version == "2.0" {
+                let prg_v1 = (header[4] as usize) * 16 * 1024;
+                let chr_v1 = (header[5] as usize) * 8 * 1024;
+                let prg_end_v1 = prg_rom_start + prg_v1;
+                let chr_end_v1 = prg_end_v1 + chr_v1;
+                if data.len() >= chr_end_v1 {
+                    prg_bytes = prg_v1;
+                    chr_bytes = chr_v1;
+                    header_for_return.prg_rom_size_bytes = prg_bytes;
+                    header_for_return.chr_rom_size_bytes = chr_bytes;
+                } else {
+                    return Err(RomParseError::FileTooSmall {
+                        expected: chr_end_v1,
+                        actual: data.len(),
+                    });
+                }
+            } else {
+                return Err(RomParseError::FileTooSmall {
+                    expected: chr_rom_end,
+                    actual: data.len(),
+                });
+            }
+        }
+
+        let prg_rom = data[prg_rom_start..(prg_rom_start + prg_bytes)].to_vec();
+        let chr_rom =
+            data[(prg_rom_start + prg_bytes)..(prg_rom_start + prg_bytes + chr_bytes)].to_vec();
+
+        let crc = crate::cartridge::calculate_rom_crc32(&prg_rom, &chr_rom);
+
+        let payload = if prg_rom_start <= data.len() {
+            &data[prg_rom_start..]
+        } else {
+            &[]
+        };
+        let payload_crc32 = crate::cartridge::calculate_rom_crc32(payload, &[]);
+
+        let mut parsed = Self {
+            header: header_for_return,
+            prg_rom,
+            chr_rom,
+            trainer,
+            crc32: crc,
+            payload_crc32,
+        };
+
+        if let Some(db) = rom_db {
+            parsed.apply_db_overrides(data, db)?;
+        }
+
+        Ok(parsed)
+    }
+
+    /// Look up the ROM in the database and apply any overrides.
+    fn apply_db_overrides(&mut self, data: &[u8], db: &RomDb) -> Result<(), RomParseError> {
+        let db_entry = db
+            .get_by_crc(self.crc32)
+            .or_else(|| db.get_by_crc(self.payload_crc32));
+
+        let Some(entry) = db_entry else {
+            return Ok(());
+        };
+
+        // Apply PRG/CHR size overrides — may require re-slicing the raw data.
+        let resolved_prg =
+            Self::resolve_with_db(self.header.prg_rom_size_bytes, entry.prg_rom_size);
+        let resolved_chr =
+            Self::resolve_with_db(self.header.chr_rom_size_bytes, entry.chr_rom_size);
+
+        if resolved_prg != self.header.prg_rom_size_bytes
+            || resolved_chr != self.header.chr_rom_size_bytes
+        {
+            let (new_prg, new_chr, new_crc) = Self::reparse_rom_with_sizes(
+                data,
+                self.header.has_trainer,
+                resolved_prg,
+                resolved_chr,
+            )?;
+            self.prg_rom = new_prg;
+            self.chr_rom = new_chr;
+            self.header.prg_rom_size_bytes = resolved_prg;
+            self.header.chr_rom_size_bytes = resolved_chr;
+            self.crc32 = new_crc;
+        }
+
+        // Apply scalar overrides.
+        if let Some(mapper) = entry.mapper {
+            self.header.mapper = mapper;
+        }
+        if let Some(submapper) = entry.submapper {
+            self.header.submapper = submapper;
+        }
+        if let Some(mirroring) = entry.nametable_layout {
+            self.header.mirroring = mirroring;
+        }
+        if let Some(timing) = entry.console_region {
+            self.header.timing_mode = timing;
+        }
+
+        Ok(())
+    }
+
+    /// Resolve a header value with an optional database override.
+    fn resolve_with_db(header_value: usize, db_value: Option<u32>) -> usize {
+        db_value.map(|v| v as usize).unwrap_or(header_value)
+    }
+
+    /// Re-parse the raw ROM data with overridden PRG and CHR sizes.
+    ///
+    /// This is used when a ROM database provides corrected sizes that differ
+    /// from what the header declares. All knowledge of the iNES layout
+    /// (header size, trainer offset) is encapsulated here.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RomParseError::FileTooSmall` if the data is too small for the
+    /// requested sizes.
+    fn reparse_rom_with_sizes(
+        data: &[u8],
+        has_trainer: bool,
+        prg_size: usize,
+        chr_size: usize,
+    ) -> Result<(Vec<u8>, Vec<u8>, u32), RomParseError> {
+        let trainer_offset = if has_trainer { TRAINER_SIZE } else { 0 };
+        let prg_start = HEADER_SIZE + trainer_offset;
+        let prg_end = prg_start + prg_size;
+        let chr_start = prg_end;
+        let chr_end = chr_start + chr_size;
+
+        if data.len() < chr_end {
             return Err(RomParseError::FileTooSmall {
-                expected: chr_rom_end,
+                expected: chr_end,
                 actual: data.len(),
             });
         }
+
+        let prg_rom = data[prg_start..prg_end].to_vec();
+        let chr_rom = data[chr_start..chr_end].to_vec();
+        let crc32 = crate::cartridge::calculate_rom_crc32(&prg_rom, &chr_rom);
+
+        Ok((prg_rom, chr_rom, crc32))
     }
-
-    let prg_rom = data[prg_rom_start..(prg_rom_start + prg_bytes)].to_vec();
-    let chr_rom =
-        data[(prg_rom_start + prg_bytes)..(prg_rom_start + prg_bytes + chr_bytes)].to_vec();
-
-    let crc = crate::cartridge::calculate_rom_crc32(&prg_rom, &chr_rom);
-
-    Ok((header_for_return, prg_rom, chr_rom, trainer, crc))
 }
 
 #[cfg(test)]
@@ -441,7 +561,7 @@ mod tests {
         header[7] = 0; // flags7
         header[8] = 0; // prg ram size
 
-        let info = parse_header(&header).expect("header parse");
+        let info = InesHeader::parse(&header).expect("header parse");
         assert_eq!(info.prg_rom_size_bytes, 16 * 1024);
         assert_eq!(info.chr_rom_size_bytes, 8 * 1024);
         assert_eq!(info.header_version, "1.0");
@@ -457,7 +577,7 @@ mod tests {
         header[4] = 0x10; // lsb
         header[9] = 0x01; // prg msb nibble = 1
 
-        let info = parse_header(&header).expect("nes2");
+        let info = InesHeader::parse(&header).expect("nes2");
         // with prg lsb 0x10 (16) and msb 1, compute size > 0
         assert!(info.prg_rom_size_bytes > 0);
         assert_eq!(info.header_version, "2.0");
@@ -472,7 +592,7 @@ mod tests {
         header[4] = 2; // 2 * 16KB PRG
         header[5] = 1; // 1 * 8KB CHR
 
-        let info = parse_header(&header).expect("header parse");
+        let info = InesHeader::parse(&header).expect("header parse");
         assert!(info.has_trainer);
         assert!(info.battery_backed_prg_ram);
         assert_eq!(info.prg_rom_size_bytes, 2 * 16 * 1024);
@@ -489,7 +609,7 @@ mod tests {
         header[6] = 0; // flags
         header[8] = 0; // prg ram size byte
 
-        let info = parse_header(&header).expect("v1 defaults");
+        let info = InesHeader::parse(&header).expect("v1 defaults");
         assert_eq!(info.prg_ram_size_bytes, Some(8 * 1024));
         assert_eq!(info.chr_ram_size_bytes, Some(8 * 1024));
     }
@@ -502,7 +622,7 @@ mod tests {
         header[7] = 0x01; // vs system flag in v1
         header[9] = 0x01; // pal for v1
 
-        let info = parse_header(&header).expect("console timing");
+        let info = InesHeader::parse(&header).expect("console timing");
         match info.console_type {
             ConsoleType::VsSystem => {}
             _ => panic!("expected VsSystem"),
@@ -526,12 +646,15 @@ mod tests {
         rom.extend(vec![0xAAu8; 2 * 16 * 1024]);
         rom.extend(vec![0xBBu8; 8 * 1024]);
 
-        let (hdr, prg, chr, trainer, crc) = parse_rom(&rom).expect("parse_rom v1");
-        assert_eq!(hdr.header_version, "1.0");
-        assert_eq!(prg.len(), 2 * 16 * 1024);
-        assert_eq!(chr.len(), 8 * 1024);
-        assert!(trainer.is_none());
-        assert_eq!(crc, crate::cartridge::calculate_rom_crc32(&prg, &chr));
+        let parsed = ParsedRom::parse(&rom, None).expect("parse_rom v1");
+        assert_eq!(parsed.header.header_version, "1.0");
+        assert_eq!(parsed.prg_rom.len(), 2 * 16 * 1024);
+        assert_eq!(parsed.chr_rom.len(), 8 * 1024);
+        assert!(parsed.trainer.is_none());
+        assert_eq!(
+            parsed.crc32,
+            crate::cartridge::calculate_rom_crc32(&parsed.prg_rom, &parsed.chr_rom)
+        );
     }
 
     #[test]
@@ -550,14 +673,14 @@ mod tests {
         rom.extend(vec![0xAAu8; 16 * 1024]);
         rom.extend(vec![0xBBu8; 8 * 1024]);
 
-        let (hdr, prg, chr, trainer, _crc) = parse_rom(&rom).expect("parse_rom fallback");
+        let parsed = ParsedRom::parse(&rom, None).expect("parse_rom fallback");
         // Fallback should update reported sizes to v1 values
-        assert_eq!(hdr.header_version, "2.0");
-        assert_eq!(hdr.prg_rom_size_bytes, 16 * 1024);
-        assert_eq!(hdr.chr_rom_size_bytes, 8 * 1024);
-        assert_eq!(prg.len(), 16 * 1024);
-        assert_eq!(chr.len(), 8 * 1024);
-        assert!(trainer.is_none());
+        assert_eq!(parsed.header.header_version, "2.0");
+        assert_eq!(parsed.header.prg_rom_size_bytes, 16 * 1024);
+        assert_eq!(parsed.header.chr_rom_size_bytes, 8 * 1024);
+        assert_eq!(parsed.prg_rom.len(), 16 * 1024);
+        assert_eq!(parsed.chr_rom.len(), 8 * 1024);
+        assert!(parsed.trainer.is_none());
     }
 
     #[test]
@@ -572,7 +695,7 @@ mod tests {
         // Only provide 100 bytes after header
         rom.extend(vec![0x00u8; 100]);
 
-        let err = parse_rom(&rom).expect_err("should be too small");
+        let err = ParsedRom::parse(&rom, None).expect_err("should be too small");
         match err {
             RomParseError::FileTooSmall {
                 expected: _,
@@ -587,7 +710,7 @@ mod tests {
         // Provide a 16-byte buffer with an invalid magic to trigger InvalidHeader
         let mut data = vec![0u8; 16];
         data[0..4].copy_from_slice(b"BAD!");
-        let err = parse_rom(&data).expect_err("invalid header");
+        let err = ParsedRom::parse(&data, None).expect_err("invalid header");
         match err {
             RomParseError::InvalidHeader => {}
             _ => panic!("expected InvalidHeader"),
@@ -612,14 +735,14 @@ mod tests {
         rom.extend(vec![0xAAu8; 16 * 1024]);
         rom.extend(vec![0xBBu8; 8 * 1024]);
 
-        let (hdr, prg, chr, trainer, _crc) = parse_rom(&rom).expect("parse_rom with trainer");
+        let parsed = ParsedRom::parse(&rom, None).expect("parse_rom with trainer");
 
         // Verify header recognizes trainer
-        assert!(hdr.has_trainer);
+        assert!(parsed.header.has_trainer);
 
         // Verify trainer data is extracted
-        assert!(trainer.is_some());
-        let extracted_trainer = trainer.unwrap();
+        assert!(parsed.trainer.is_some());
+        let extracted_trainer = parsed.trainer.unwrap();
         assert_eq!(extracted_trainer.len(), 512);
 
         // Verify trainer data matches what we put in
@@ -628,10 +751,10 @@ mod tests {
         }
 
         // Verify PRG and CHR are still correct
-        assert_eq!(prg.len(), 16 * 1024);
-        assert_eq!(chr.len(), 8 * 1024);
-        assert_eq!(prg[0], 0xAA);
-        assert_eq!(chr[0], 0xBB);
+        assert_eq!(parsed.prg_rom.len(), 16 * 1024);
+        assert_eq!(parsed.chr_rom.len(), 8 * 1024);
+        assert_eq!(parsed.prg_rom[0], 0xAA);
+        assert_eq!(parsed.chr_rom[0], 0xBB);
     }
 
     #[test]
@@ -648,17 +771,17 @@ mod tests {
         rom.extend(vec![0xAAu8; 16 * 1024]);
         rom.extend(vec![0xBBu8; 8 * 1024]);
 
-        let (hdr, prg, chr, trainer, _crc) = parse_rom(&rom).expect("parse_rom without trainer");
+        let parsed = ParsedRom::parse(&rom, None).expect("parse_rom without trainer");
 
         // Verify header doesn't have trainer
-        assert!(!hdr.has_trainer);
+        assert!(!parsed.header.has_trainer);
 
         // Verify no trainer data is returned
-        assert!(trainer.is_none());
+        assert!(parsed.trainer.is_none());
 
         // Verify PRG and CHR are correct
-        assert_eq!(prg.len(), 16 * 1024);
-        assert_eq!(chr.len(), 8 * 1024);
+        assert_eq!(parsed.prg_rom.len(), 16 * 1024);
+        assert_eq!(parsed.chr_rom.len(), 8 * 1024);
     }
 
     #[test]
@@ -674,7 +797,7 @@ mod tests {
         // Only add 100 bytes (not enough for trainer)
         rom.extend(vec![0x00u8; 100]);
 
-        let err = parse_rom(&rom).expect_err("should be too small");
+        let err = ParsedRom::parse(&rom, None).expect_err("should be too small");
         match err {
             RomParseError::FileTooSmall { expected, actual } => {
                 // Expected: 16 (header) + 512 (trainer) = 528
@@ -708,5 +831,76 @@ mod tests {
         assert_eq!(ConsoleType::VsSystem.header_value(), 0x01);
         assert_eq!(ConsoleType::Playchoice10.header_value(), 0x02);
         assert_eq!(ConsoleType::Extended(0x09).header_value(), 0x09);
+    }
+
+    /// Build a minimal valid iNES v1 ROM with the given PRG/CHR bank counts.
+    fn build_test_rom(prg_banks: u8, chr_banks: u8) -> Vec<u8> {
+        let mut rom = vec![0u8; 16];
+        rom[0..4].copy_from_slice(b"NES\x1A");
+        rom[4] = prg_banks;
+        rom[5] = chr_banks;
+        rom.extend(vec![0xAAu8; prg_banks as usize * 16 * 1024]);
+        rom.extend(vec![0xBBu8; chr_banks as usize * 8 * 1024]);
+        rom
+    }
+
+    /// Create a `RomDb` with a single entry whose CRC matches the given ROM
+    /// and whose CSV columns encode the specified overrides.
+    fn db_with_override_for_rom(rom: &[u8], csv_fields: &str) -> RomDb {
+        let parsed = ParsedRom::parse(rom, None).expect("test ROM should parse");
+        let crc_hex = format!("{:08X}", parsed.crc32);
+        // CSV: rom_id,name,country,crc,console_type,console_region,rom_class,
+        //      mapper,submapper,nametable_layout,prg_rom_size,prg_rom_crc,
+        //      prg_nvram_size,prg_ram_size,chr_rom_size,chr_rom_crc,
+        //      chr_nvram_size,chr_ram_size,battery,vs_hardware,vs_ppu,expansion
+        let csv = format!("1,Test,US,{crc_hex},{csv_fields}\n");
+        RomDb::from_csv_content(&csv)
+    }
+
+    #[test]
+    fn db_overrides_mapper() {
+        let rom = build_test_rom(1, 1);
+        // Override mapper to 4 (col 7 = csv_fields position 3)
+        let db = db_with_override_for_rom(&rom, ",,,4,,,,,,,,,,,,,,");
+        let parsed = ParsedRom::parse(&rom, Some(&db)).expect("parse with db");
+        assert_eq!(parsed.header.mapper, 4);
+    }
+
+    #[test]
+    fn db_overrides_submapper() {
+        let rom = build_test_rom(1, 1);
+        // Override submapper to 2 (col 8 = csv_fields position 4)
+        let db = db_with_override_for_rom(&rom, ",,,,2,,,,,,,,,,,,,");
+        let parsed = ParsedRom::parse(&rom, Some(&db)).expect("parse with db");
+        assert_eq!(parsed.header.submapper, 2);
+    }
+
+    #[test]
+    fn db_overrides_mirroring() {
+        let rom = build_test_rom(1, 1);
+        // Override nametable_layout to V (col 9 = csv_fields position 5)
+        let db = db_with_override_for_rom(&rom, ",,,,,V,,,,,,,,,,,,");
+        let parsed = ParsedRom::parse(&rom, Some(&db)).expect("parse with db");
+        assert_eq!(parsed.header.mirroring, NametableLayout::Vertical);
+    }
+
+    #[test]
+    fn db_overrides_timing_mode() {
+        let rom = build_test_rom(1, 1);
+        // Override console_region to 1 (col 5) = PAL
+        let db = db_with_override_for_rom(&rom, ",1,,,,,,,,,,,,,,,,");
+        let parsed = ParsedRom::parse(&rom, Some(&db)).expect("parse with db");
+        assert_eq!(parsed.header.timing_mode, TimingMode::Pal);
+    }
+
+    #[test]
+    fn db_no_match_leaves_header_unchanged() {
+        let rom = build_test_rom(1, 1);
+        // DB with a CRC that doesn't match
+        let db = RomDb::from_csv_content("1,Other,,DEADBEEF,,,,4,,,,,,,,,,,,,\n");
+        let without_db = ParsedRom::parse(&rom, None).expect("parse without db");
+        let with_db = ParsedRom::parse(&rom, Some(&db)).expect("parse with db");
+        assert_eq!(without_db.header.mapper, with_db.header.mapper);
+        assert_eq!(without_db.header.mirroring, with_db.header.mirroring);
     }
 }

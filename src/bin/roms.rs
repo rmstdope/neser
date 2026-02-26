@@ -34,7 +34,7 @@ struct Rom {
 }
 
 fn parse_rom_header(header: &[u8; 16]) -> Option<Rom> {
-    let parsed = neser::cartridge::parse_header(header)?;
+    let parsed = neser::cartridge::InesHeader::parse(header)?;
 
     Some(Rom {
         mapper: parsed.mapper,

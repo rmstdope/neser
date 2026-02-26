@@ -2143,7 +2143,7 @@ mod tests {
     ) -> std::io::Result<Box<dyn Mapper>> {
         let context = MapperContext {
             prg_ram_banks_8k: (MMC5Mapper::PRG_RAM_BANK_COUNT_MAX as u8).max(1),
-            ..MapperContext::new(5, prg_rom, chr_rom, mirroring)
+            ..MapperContext::new_for_test(5, prg_rom, chr_rom, mirroring)
         };
         create_mapper(context)
     }

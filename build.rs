@@ -110,27 +110,25 @@ fn remove_trailing_metadata_groups(input: &str) -> String {
     let mut result = input.trim().to_string();
     loop {
         let trimmed = result.trim_end();
-        if trimmed.ends_with(')') {
-            if let Some(start) = trimmed.rfind('(')
-                && trimmed[start..].find(')').is_some()
-                && trimmed[start + 1..trimmed.len() - 1]
-                    .chars()
-                    .all(|c| c != '(')
-            {
-                result = trimmed[..start].trim_end().to_string();
-                continue;
-            }
+        if trimmed.ends_with(')')
+            && let Some(start) = trimmed.rfind('(')
+            && trimmed[start..].find(')').is_some()
+            && trimmed[start + 1..trimmed.len() - 1]
+                .chars()
+                .all(|c| c != '(')
+        {
+            result = trimmed[..start].trim_end().to_string();
+            continue;
         }
-        if trimmed.ends_with(']') {
-            if let Some(start) = trimmed.rfind('[')
-                && trimmed[start..].find(']').is_some()
-                && trimmed[start + 1..trimmed.len() - 1]
-                    .chars()
-                    .all(|c| c != '[')
-            {
-                result = trimmed[..start].trim_end().to_string();
-                continue;
-            }
+        if trimmed.ends_with(']')
+            && let Some(start) = trimmed.rfind('[')
+            && trimmed[start..].find(']').is_some()
+            && trimmed[start + 1..trimmed.len() - 1]
+                .chars()
+                .all(|c| c != '[')
+        {
+            result = trimmed[..start].trim_end().to_string();
+            continue;
         }
         break;
     }

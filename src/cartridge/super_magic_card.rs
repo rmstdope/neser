@@ -736,12 +736,12 @@ mod tests {
     const PRG_BANK_SIZE_16K: usize = 0x4000;
 
     fn create_m6(prg: Vec<u8>, submapper: u8, mirroring: NametableLayout) -> Box<dyn Mapper> {
-        create_mapper(MapperContext::new(6, prg, vec![], mirroring).with_submapper(submapper))
+        create_mapper(MapperContext::new_for_test(6, prg, vec![], mirroring).with_submapper(submapper))
             .expect("Failed to create Mapper 6")
     }
 
     fn create_m17(prg: Vec<u8>, submapper: u8, mirroring: NametableLayout) -> Box<dyn Mapper> {
-        create_mapper(MapperContext::new(17, prg, vec![], mirroring).with_submapper(submapper))
+        create_mapper(MapperContext::new_for_test(17, prg, vec![], mirroring).with_submapper(submapper))
             .expect("Failed to create Mapper 17")
     }
 
@@ -1898,7 +1898,7 @@ mod tests {
         // $4500 bit 0 = 1 → 1 KiB CHR banking active; writes to $4510 switch CHR bank 0
         let prg = vec![0u8; 64 * 1024];
         let chr = banked_data(CHR_BANK_SIZE_1K, 8);
-        let mapper_ctx = MapperContext::new(17, prg, chr, NametableLayout::Vertical);
+        let mapper_ctx = MapperContext::new_for_test(17, prg, chr, NametableLayout::Vertical);
         let mut mapper = create_mapper(mapper_ctx).expect("Mapper 17 with CHR-ROM");
 
         // Select bank 3 for PPU $0000–$03FF

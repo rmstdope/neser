@@ -262,7 +262,7 @@ mod tests {
 
     #[test]
     fn mapper_52_is_registered() {
-        let result = create_mapper(MapperContext::new(
+        let result = create_mapper(MapperContext::new_for_test(
             52,
             banked_data(8 * 1024, PRG_BANKS),
             banked_data(1024, CHR_1K_BANKS),

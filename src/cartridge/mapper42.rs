@@ -228,7 +228,7 @@ mod tests {
     fn make_mapper() -> Box<dyn Mapper> {
         let prg_rom = banked_data(8 * 1024, PRG_BANKS);
         let chr_rom = banked_data(8 * 1024, CHR_BANKS);
-        create_mapper(MapperContext::new(
+        create_mapper(MapperContext::new_for_test(
             42,
             prg_rom,
             chr_rom,
@@ -249,7 +249,7 @@ mod tests {
     fn mapper_42_is_registered_in_factory() {
         let prg_rom = banked_data(8 * 1024, PRG_BANKS);
         let chr_rom = banked_data(8 * 1024, CHR_BANKS);
-        let result = create_mapper(MapperContext::new(
+        let result = create_mapper(MapperContext::new_for_test(
             42,
             prg_rom,
             chr_rom,

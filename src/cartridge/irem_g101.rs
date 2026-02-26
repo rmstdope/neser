@@ -260,7 +260,7 @@ mod tests {
     fn make_mapper(prg_banks: usize, chr_banks_1k: usize) -> Box<dyn Mapper> {
         let prg_rom = banked_data(8 * 1024, prg_banks);
         let chr_rom = banked_data(1024, chr_banks_1k);
-        create_mapper(MapperContext::new(
+        create_mapper(MapperContext::new_for_test(
             32,
             prg_rom,
             chr_rom,
@@ -277,7 +277,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, prg_banks);
         let chr_rom = banked_data(1024, chr_banks_1k);
         create_mapper(
-            MapperContext::new(32, prg_rom, chr_rom, NametableLayout::Vertical)
+            MapperContext::new_for_test(32, prg_rom, chr_rom, NametableLayout::Vertical)
                 .with_submapper(submapper),
         )
         .expect("Mapper 32 should be implemented")

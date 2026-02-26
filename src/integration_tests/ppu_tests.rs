@@ -13,12 +13,15 @@ mod tests {
         setup_rom_test,
     };
 
+    const SCREEN_WIDTH: u32 = 256;
+    // const SCREEN_HEIGHT: u32 = 240;
+
     type RgbLine = Vec<(u8, u8, u8)>;
     type NmiSyncLines = (RgbLine, RgbLine, RgbLine, RgbLine);
 
     fn capture_scanline_rgb(nes: &Nes, y: u32) -> Vec<(u8, u8, u8)> {
         let screen_buffer = nes.get_screen_buffer();
-        (0..TimingMode::Ntsc.screen_width())
+        (0..SCREEN_WIDTH)
             .map(|x| screen_buffer.get_pixel(x, y))
             .collect()
     }
@@ -868,7 +871,7 @@ AA AA 01 01 10 10 01 01 00 00\n\
             let screen = nes.get_screen_buffer();
             for y_range in &y_ranges {
                 for y in y_range.clone() {
-                    for x in 189u32..TimingMode::Ntsc.screen_width() {
+                    for x in 189u32..SCREEN_WIDTH {
                         let pixel = screen.get_pixel(x, y);
                         if pixel != black {
                             all_failures.push(format!(

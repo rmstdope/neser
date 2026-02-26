@@ -222,7 +222,7 @@ mod tests {
     use crate::cartridge::mapper::{MapperContext, create_mapper};
 
     fn create_axrom_mapper(prg_rom: Vec<u8>, mirroring: NametableLayout) -> Box<dyn Mapper> {
-        create_mapper(MapperContext::new(7, prg_rom, vec![], mirroring))
+        create_mapper(MapperContext::new_for_test(7, prg_rom, vec![], mirroring))
             .expect("Failed to create AxROM mapper")
     }
 
@@ -419,7 +419,7 @@ mod tests {
     fn test_axrom_has_no_prg_ram_when_disabled() {
         let prg_rom = vec![0; 128 * 1024];
         let mut mapper = create_mapper(
-            MapperContext::new(7, prg_rom, vec![], NametableLayout::Horizontal)
+            MapperContext::new_for_test(7, prg_rom, vec![], NametableLayout::Horizontal)
                 .with_prg_ram_banks(0),
         )
         .expect("Failed to create AxROM mapper without PRG-RAM");
@@ -444,7 +444,7 @@ mod tests {
     fn test_axrom_uses_prg_ram_when_present() {
         let prg_rom = vec![0; 128 * 1024];
         let mut mapper = create_mapper(
-            MapperContext::new(7, prg_rom, vec![], NametableLayout::Horizontal)
+            MapperContext::new_for_test(7, prg_rom, vec![], NametableLayout::Horizontal)
                 .with_prg_ram_banks(1),
         )
         .expect("Failed to create AxROM mapper with PRG-RAM");
@@ -478,7 +478,7 @@ mod tests {
         }
 
         let mut mapper = create_mapper(
-            MapperContext::new(7, prg_rom, vec![], NametableLayout::Horizontal).with_submapper(2),
+            MapperContext::new_for_test(7, prg_rom, vec![], NametableLayout::Horizontal).with_submapper(2),
         )
         .expect("Failed to create AxROM mapper with submapper 2");
 
@@ -503,7 +503,7 @@ mod tests {
         }
 
         let mut mapper = create_mapper(
-            MapperContext::new(7, prg_rom, vec![], NametableLayout::Horizontal).with_submapper(1),
+            MapperContext::new_for_test(7, prg_rom, vec![], NametableLayout::Horizontal).with_submapper(1),
         )
         .expect("Failed to create AxROM mapper with submapper 1");
 

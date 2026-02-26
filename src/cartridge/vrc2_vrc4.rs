@@ -756,7 +756,7 @@ mod tests {
         chr_rom: Vec<u8>,
         mirroring: NametableLayout,
     ) -> Box<dyn Mapper> {
-        create_mapper(MapperContext::new(
+        create_mapper(MapperContext::new_for_test(
             mapper_number,
             prg_rom,
             chr_rom,
@@ -773,7 +773,7 @@ mod tests {
         mirroring: NametableLayout,
     ) -> Box<dyn Mapper> {
         create_mapper(
-            MapperContext::new(mapper_number, prg_rom, chr_rom, mirroring)
+            MapperContext::new_for_test(mapper_number, prg_rom, chr_rom, mirroring)
                 .with_submapper(submapper),
         )
         .expect("VRC mapper with submapper should be implemented")

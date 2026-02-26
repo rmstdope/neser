@@ -8,8 +8,10 @@ use std::rc::Rc;
 use std::{error, fmt};
 
 use crate::app_context::IntoSharedAppContext;
+#[cfg(test)]
+use crate::cartridge::NametableLayout;
 use crate::cartridge::mapper::MapperContext;
-use crate::cartridge::{Mapper, NametableLayout, TimingMode};
+use crate::cartridge::{Mapper, TimingMode};
 
 #[derive(Debug)]
 pub enum CartridgeError {
@@ -19,8 +21,6 @@ pub enum CartridgeError {
     Io(io::Error),
 }
 
-const PRG_RAM_BANK_SIZE: usize = 8 * 1024;
-const DEFAULT_PRG_RAM_BANKS_8K: u8 = 1;
 const SAVE_FILE_EXTENSION: &str = "sav";
 const STATE_FILE_EXTENSION: &str = "state";
 
@@ -84,103 +84,18 @@ impl Cartridge {
         }
     }
 
-    fn prg_ram_banks_8k(prg_ram_size_bytes: Option<usize>) -> u8 {
-        prg_ram_size_bytes
-            .map(|size| {
-                if size == 0 {
-                    return 0;
-                }
-
-                size.div_ceil(PRG_RAM_BANK_SIZE).clamp(1, u8::MAX as usize) as u8
-            })
-            .unwrap_or(DEFAULT_PRG_RAM_BANKS_8K)
-    }
-
     fn create_mapper(
-        info: &crate::cartridge::ines::InesHeader,
-        prg_rom: Vec<u8>,
-        chr_rom: Vec<u8>,
+        parsed: &crate::cartridge::ines::ParsedRom,
     ) -> Result<Box<dyn Mapper>, CartridgeError> {
-        let mut context = MapperContext::new(info.mapper, prg_rom, chr_rom, info.mirroring)
-            .with_prg_ram_banks(Self::prg_ram_banks_8k(info.prg_ram_size_bytes))
-            .with_battery_backed_prg_ram(info.battery_backed_prg_ram);
-
-        if info.submapper != 0 {
-            context = context.with_submapper(info.submapper);
-        }
-
+        let context = MapperContext::from_parsed_rom(parsed);
+        let mapper_number = context.mapper;
         crate::cartridge::mapper::create_mapper(context).map_err(|err| {
             if err.kind() == io::ErrorKind::Unsupported {
-                CartridgeError::UnsupportedMapper(info.mapper)
+                CartridgeError::UnsupportedMapper(mapper_number)
             } else {
                 CartridgeError::Io(err)
             }
         })
-    }
-
-    fn resolve_mirroring_mode_with_db_override(
-        header_mirroring: NametableLayout,
-        db_entry: Option<&crate::cartridge::RomDbEntry>,
-    ) -> NametableLayout {
-        db_entry
-            .and_then(|entry| entry.nametable_layout)
-            .unwrap_or(header_mirroring)
-    }
-
-    fn resolve_mapper_with_db_override(
-        header_mapper: u16,
-        db_entry: Option<&crate::cartridge::RomDbEntry>,
-    ) -> u16 {
-        db_entry
-            .and_then(|entry| entry.mapper)
-            .unwrap_or(header_mapper)
-    }
-
-    fn resolve_submapper_with_db_override(
-        header_submapper: u8,
-        db_entry: Option<&crate::cartridge::RomDbEntry>,
-    ) -> u8 {
-        db_entry
-            .and_then(|entry| entry.submapper)
-            .unwrap_or(header_submapper)
-    }
-
-    fn resolve_prg_rom_size_with_db_override(
-        header_prg_rom_size_bytes: usize,
-        db_entry: Option<&crate::cartridge::RomDbEntry>,
-    ) -> usize {
-        db_entry
-            .and_then(|entry| entry.prg_rom_size)
-            .map(|size| size as usize)
-            .unwrap_or(header_prg_rom_size_bytes)
-    }
-
-    fn resolve_chr_rom_size_with_db_override(
-        header_chr_rom_size_bytes: usize,
-        db_entry: Option<&crate::cartridge::RomDbEntry>,
-    ) -> usize {
-        db_entry
-            .and_then(|entry| entry.chr_rom_size)
-            .map(|size| size as usize)
-            .unwrap_or(header_chr_rom_size_bytes)
-    }
-
-    fn configure_paths_from_rom(&mut self, rom_path: PathBuf) {
-        self.rom_path = Some(rom_path.clone());
-        self.save_path = Some(rom_path.with_extension(SAVE_FILE_EXTENSION));
-    }
-
-    fn apply_db_timing_mode_override_from_entry(
-        &mut self,
-        db_entry: Option<&crate::cartridge::RomDbEntry>,
-    ) {
-        if let Some(db_timing_mode) = db_entry.and_then(|entry| entry.console_region) {
-            self.override_rom_timing_mode(db_timing_mode);
-        }
-    }
-
-    pub fn override_rom_timing_mode(&mut self, timing_mode: TimingMode) {
-        self.rom_timing_mode = timing_mode.normalize_rom_timing_mode();
     }
 
     fn can_persist_save_ram(&self) -> bool {
@@ -226,72 +141,21 @@ impl Cartridge {
     ) -> Result<Self, CartridgeError> {
         let app_context = app_context.into_shared();
         let rom_path = path.as_ref().to_path_buf();
-        let (mut info, mut prg_rom, mut chr_rom, trainer, mut crc32) =
-            crate::cartridge::parse_rom(data).map_err(Self::map_parse_error)?;
-
-        let trainer_offset = if info.has_trainer { 512 } else { 0 };
-        let payload_start = 16 + trainer_offset;
-        let payload = if payload_start <= data.len() {
-            &data[payload_start..]
-        } else {
-            &[]
-        };
-        let fallback_crc32 = crate::cartridge::calculate_rom_crc32(payload, &[]);
-
-        let mut db_entry = app_context.borrow().get_db_entry_by_crc(crc32);
-        if db_entry.is_none() {
-            db_entry = app_context.borrow().get_db_entry_by_crc(fallback_crc32);
-        }
-
-        let resolved_prg_size =
-            Self::resolve_prg_rom_size_with_db_override(info.prg_rom_size_bytes, db_entry.as_ref());
-        let resolved_chr_size =
-            Self::resolve_chr_rom_size_with_db_override(info.chr_rom_size_bytes, db_entry.as_ref());
-
-        if resolved_prg_size != info.prg_rom_size_bytes
-            || resolved_chr_size != info.chr_rom_size_bytes
-        {
-            let prg_start = payload_start;
-            let prg_end = prg_start + resolved_prg_size;
-            let chr_start = prg_end;
-            let chr_end = chr_start + resolved_chr_size;
-
-            if data.len() < chr_end {
-                return Err(CartridgeError::FileTooSmall {
-                    expected: chr_end,
-                    actual: data.len(),
-                });
-            }
-
-            prg_rom = data[prg_start..prg_end].to_vec();
-            chr_rom = data[chr_start..chr_end].to_vec();
-            info.prg_rom_size_bytes = resolved_prg_size;
-            info.chr_rom_size_bytes = resolved_chr_size;
-            crc32 = crate::cartridge::calculate_rom_crc32(&prg_rom, &chr_rom);
-        }
-
-        info.mirroring =
-            Self::resolve_mirroring_mode_with_db_override(info.mirroring, db_entry.as_ref());
-        info.mapper = Self::resolve_mapper_with_db_override(info.mapper, db_entry.as_ref());
-        info.submapper =
-            Self::resolve_submapper_with_db_override(info.submapper, db_entry.as_ref());
-        crate::debugging::log_info(format!(
-            "Loading ROM with CRC32 {:08X}, mapper {}, submapper {}",
-            crc32, info.mapper, info.submapper
-        ));
+        let ctx = app_context.borrow();
+        let rom_db = ctx.rom_db();
+        let parsed = crate::cartridge::ParsedRom::parse(data, Some(rom_db))
+            .map_err(Self::map_parse_error)?;
 
         let mut cart = Self {
-            mapper: Self::create_mapper(&info, prg_rom, chr_rom)?,
-            crc32,
-            rom_timing_mode: info.timing_mode.normalize_rom_timing_mode(),
-            rom_path: None,
-            save_path: None,
-            battery_backed_prg_ram: info.battery_backed_prg_ram,
-            trainer,
+            mapper: Self::create_mapper(&parsed)?,
+            crc32: parsed.crc32,
+            rom_timing_mode: parsed.header.timing_mode.normalize_rom_timing_mode(),
+            save_path: Some(rom_path.with_extension(SAVE_FILE_EXTENSION)),
+            rom_path: Some(rom_path),
+            battery_backed_prg_ram: parsed.header.battery_backed_prg_ram,
+            trainer: parsed.trainer,
         };
 
-        cart.apply_db_timing_mode_override_from_entry(db_entry.as_ref());
-        cart.configure_paths_from_rom(rom_path);
         cart.load_save_ram_from_disk()?;
 
         Ok(cart)
@@ -739,193 +603,6 @@ mod tests {
         rom_data[12] = 0x01; // NES2 timing mode PAL
         let cartridge = load_cartridge_from_bytes(&rom_data).unwrap();
         assert_eq!(cartridge.rom_timing_mode(), TimingMode::Pal);
-    }
-
-    #[test]
-    fn test_db_timing_mode_override_applies_known_crc_entry() {
-        let rom_data = create_test_rom_with_flags9(1, 1, 0, 0, 0, false);
-        let mut cartridge = load_cartridge_from_bytes(&rom_data).unwrap();
-        assert_eq!(cartridge.rom_timing_mode(), TimingMode::Ntsc);
-
-        let rom_db = crate::cartridge::RomDb::new().expect("rom db should load");
-        let (crc, expected_timing_mode) = rom_db
-            .entries()
-            .iter()
-            .find_map(|(crc, entry)| {
-                entry
-                    .console_region
-                    .map(|timing_mode| (*crc, timing_mode.normalize_rom_timing_mode()))
-            })
-            .expect("rom db should contain at least one entry with console region");
-
-        cartridge.set_crc32_for_test(crc);
-        let db_entry = rom_db.get_by_crc(crc);
-        cartridge.apply_db_timing_mode_override_from_entry(db_entry);
-
-        assert_eq!(cartridge.rom_timing_mode(), expected_timing_mode);
-    }
-
-    #[test]
-    fn test_db_nametable_layout_overrides_header_mirroring_mode() {
-        let db_entry = crate::cartridge::RomDbEntry {
-            rom_id: None,
-            name: None,
-            country: None,
-            crc: None,
-            console_type: None,
-            console_region: None,
-            rom_class: None,
-            mapper: None,
-            submapper: None,
-            nametable_layout: Some(NametableLayout::Vertical),
-            prg_rom_size: None,
-            prg_rom_crc: None,
-            prg_nvram_size: None,
-            prg_ram_size: None,
-            chr_rom_size: None,
-            chr_rom_crc: None,
-            chr_nvram_size: None,
-            chr_ram_size: None,
-            battery: None,
-            vs_hardware_type: None,
-            vs_ppu_type: None,
-            expansion_type: None,
-        };
-
-        let resolved = Cartridge::resolve_mirroring_mode_with_db_override(
-            NametableLayout::Horizontal,
-            Some(&db_entry),
-        );
-
-        assert_eq!(resolved, NametableLayout::Vertical);
-    }
-
-    #[test]
-    fn test_db_mapper_overrides_header_mapper() {
-        let db_entry = crate::cartridge::RomDbEntry {
-            rom_id: None,
-            name: None,
-            country: None,
-            crc: None,
-            console_type: None,
-            console_region: None,
-            rom_class: None,
-            mapper: Some(4),
-            submapper: None,
-            nametable_layout: None,
-            prg_rom_size: None,
-            prg_rom_crc: None,
-            prg_nvram_size: None,
-            prg_ram_size: None,
-            chr_rom_size: None,
-            chr_rom_crc: None,
-            chr_nvram_size: None,
-            chr_ram_size: None,
-            battery: None,
-            vs_hardware_type: None,
-            vs_ppu_type: None,
-            expansion_type: None,
-        };
-
-        let resolved = Cartridge::resolve_mapper_with_db_override(23, Some(&db_entry));
-
-        assert_eq!(resolved, 4);
-    }
-
-    #[test]
-    fn test_db_submapper_overrides_header_submapper() {
-        let db_entry = crate::cartridge::RomDbEntry {
-            rom_id: None,
-            name: None,
-            country: None,
-            crc: None,
-            console_type: None,
-            console_region: None,
-            rom_class: None,
-            mapper: None,
-            submapper: Some(2),
-            nametable_layout: None,
-            prg_rom_size: None,
-            prg_rom_crc: None,
-            prg_nvram_size: None,
-            prg_ram_size: None,
-            chr_rom_size: None,
-            chr_rom_crc: None,
-            chr_nvram_size: None,
-            chr_ram_size: None,
-            battery: None,
-            vs_hardware_type: None,
-            vs_ppu_type: None,
-            expansion_type: None,
-        };
-
-        let resolved = Cartridge::resolve_submapper_with_db_override(7, Some(&db_entry));
-
-        assert_eq!(resolved, 2);
-    }
-
-    #[test]
-    fn test_db_prg_rom_size_overrides_header_size() {
-        let db_entry = crate::cartridge::RomDbEntry {
-            rom_id: None,
-            name: None,
-            country: None,
-            crc: None,
-            console_type: None,
-            console_region: None,
-            rom_class: None,
-            mapper: None,
-            submapper: None,
-            nametable_layout: None,
-            prg_rom_size: Some(2 * 1024 * 1024),
-            prg_rom_crc: None,
-            prg_nvram_size: None,
-            prg_ram_size: None,
-            chr_rom_size: None,
-            chr_rom_crc: None,
-            chr_nvram_size: None,
-            chr_ram_size: None,
-            battery: None,
-            vs_hardware_type: None,
-            vs_ppu_type: None,
-            expansion_type: None,
-        };
-
-        let resolved = Cartridge::resolve_prg_rom_size_with_db_override(16 * 1024, Some(&db_entry));
-
-        assert_eq!(resolved, 2 * 1024 * 1024);
-    }
-
-    #[test]
-    fn test_db_chr_rom_size_overrides_header_size() {
-        let db_entry = crate::cartridge::RomDbEntry {
-            rom_id: None,
-            name: None,
-            country: None,
-            crc: None,
-            console_type: None,
-            console_region: None,
-            rom_class: None,
-            mapper: None,
-            submapper: None,
-            nametable_layout: None,
-            prg_rom_size: None,
-            prg_rom_crc: None,
-            prg_nvram_size: None,
-            prg_ram_size: None,
-            chr_rom_size: Some(2 * 1024 * 1024),
-            chr_rom_crc: None,
-            chr_nvram_size: None,
-            chr_ram_size: None,
-            battery: None,
-            vs_hardware_type: None,
-            vs_ppu_type: None,
-            expansion_type: None,
-        };
-
-        let resolved = Cartridge::resolve_chr_rom_size_with_db_override(0, Some(&db_entry));
-
-        assert_eq!(resolved, 2 * 1024 * 1024);
     }
 
     #[test]

@@ -493,7 +493,7 @@ mod tests {
         chr_rom: Vec<u8>,
         mirroring: NametableLayout,
     ) -> Box<dyn Mapper> {
-        create_mapper(MapperContext::new(1, prg_rom, chr_rom, mirroring))
+        create_mapper(MapperContext::new_for_test(1, prg_rom, chr_rom, mirroring))
             .expect("MMC1 (mapper 1) should be implemented")
     }
 

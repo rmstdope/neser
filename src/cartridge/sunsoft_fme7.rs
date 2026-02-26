@@ -402,7 +402,7 @@ mod tests {
     fn test_mapper_69_is_wired_in_factory() {
         let prg_rom = banked_data(8 * 1024, 16);
         let chr_rom = banked_data(1024, 8);
-        let mapper = create_mapper(MapperContext::new(
+        let mapper = create_mapper(MapperContext::new_for_test(
             69,
             prg_rom,
             chr_rom,

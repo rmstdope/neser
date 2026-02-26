@@ -1,4 +1,5 @@
 use crate::cartridge::NametableLayout;
+use crate::cartridge::ines::ParsedRom;
 use std::io;
 
 use super::axrom::AxROMMapper;
@@ -80,10 +81,43 @@ pub struct MapperContext {
     pub crc32: u32,
 }
 
+const PRG_RAM_BANK_SIZE: usize = 8 * 1024;
+const DEFAULT_PRG_RAM_BANKS_8K: u8 = 1;
+
 impl MapperContext {
+    /// Create mapper context from a fully parsed ROM, extracting all relevant
+    /// header fields (mapper, submapper, mirroring, PRG-RAM size, battery flag)
+    /// and ROM data.
+    pub fn from_parsed_rom(parsed: &ParsedRom) -> Self {
+        let info = &parsed.header;
+        Self {
+            mapper: info.mapper,
+            submapper: info.submapper,
+            mirroring: info.mirroring,
+            prg_rom: parsed.prg_rom.clone(),
+            chr_rom: parsed.chr_rom.clone(),
+            prg_ram_banks_8k: Self::prg_ram_banks_8k(info.prg_ram_size_bytes),
+            battery_backed_prg_ram: info.battery_backed_prg_ram,
+            crc32: parsed.crc32,
+        }
+    }
+
+    fn prg_ram_banks_8k(prg_ram_size_bytes: Option<usize>) -> u8 {
+        prg_ram_size_bytes
+            .map(|size| {
+                if size == 0 {
+                    return 0;
+                }
+
+                size.div_ceil(PRG_RAM_BANK_SIZE).clamp(1, u8::MAX as usize) as u8
+            })
+            .unwrap_or(DEFAULT_PRG_RAM_BANKS_8K)
+    }
+
     /// Create mapper metadata with default submapper 0, 1×8KB PRG-RAM (not battery-backed),
-    /// and CRC32 computed from PRG+CHR data.
-    pub fn new(
+    /// and CRC32 computed from PRG+CHR data. Intended for unit tests.
+    #[cfg(test)]
+    pub fn new_for_test(
         mapper: u16,
         prg_rom: Vec<u8>,
         chr_rom: Vec<u8>,
@@ -103,29 +137,31 @@ impl MapperContext {
     }
 
     /// Set NES 2.0 submapper id.
+    #[cfg(test)]
     pub fn with_submapper(mut self, submapper: u8) -> Self {
         self.submapper = submapper;
         self
     }
 
     /// Override PRG-RAM size in 8KB units (clamped to at least one bank).
+    #[cfg(test)]
     pub fn with_prg_ram_banks(mut self, prg_ram_banks_8k: u8) -> Self {
         self.prg_ram_banks_8k = prg_ram_banks_8k;
         self
     }
 
-    /// Mark PRG-RAM as battery backed.
-    pub fn with_battery_backed_prg_ram(mut self, battery_backed_prg_ram: bool) -> Self {
-        self.battery_backed_prg_ram = battery_backed_prg_ram;
-        self
-    }
+    // /// Mark PRG-RAM as battery backed.
+    // pub fn with_battery_backed_prg_ram(mut self, battery_backed_prg_ram: bool) -> Self {
+    //     self.battery_backed_prg_ram = battery_backed_prg_ram;
+    //     self
+    // }
 
-    /// Override CRC32 value (useful for tests with synthetic ROM data).
-    #[allow(dead_code)]
-    pub fn with_crc32(mut self, crc32: u32) -> Self {
-        self.crc32 = crc32;
-        self
-    }
+    // /// Override CRC32 value (useful for tests with synthetic ROM data).
+    // #[allow(dead_code)]
+    // pub fn with_crc32(mut self, crc32: u32) -> Self {
+    //     self.crc32 = crc32;
+    //     self
+    // }
 
     fn mapper_u16(&self) -> u16 {
         self.mapper
@@ -697,7 +733,7 @@ macro_rules! mapper_registry {
         fn create_registry_mapper(
             metadata: MapperContext,
         ) -> Option<Box<dyn Mapper>> {
-            match metadata.mapper_u16() {
+            match metadata.mapper {
                 $(
                     $id => {
                         let (prg_rom, chr_rom, mirroring) = metadata.into_parts();
@@ -925,7 +961,7 @@ mod tests {
         let chr_rom = vec![0u8; 8 * 1024];
         let metadata = MapperContext {
             prg_ram_banks_8k: 2,
-            ..MapperContext::new(5, prg_rom, chr_rom, NametableLayout::Horizontal)
+            ..MapperContext::new_for_test(5, prg_rom, chr_rom, NametableLayout::Horizontal)
         };
 
         let mapper = create_mapper(metadata).expect("MMC5 mapper should be created");
@@ -940,7 +976,7 @@ mod tests {
             .flat_map(|bank| std::iter::repeat_n(bank, 16 * 1024))
             .collect();
         let chr_rom = vec![0u8; 8 * 1024];
-        let metadata = MapperContext::new(8, prg_rom, chr_rom, NametableLayout::Horizontal);
+        let metadata = MapperContext::new_for_test(8, prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // When creating a mapper instance
         let mut mapper =
@@ -968,7 +1004,7 @@ mod tests {
         let chr_rom = (0u8..4)
             .flat_map(|bank| std::iter::repeat_n(0x10 + bank, 8 * 1024))
             .collect();
-        let metadata = MapperContext::new(8, prg_rom, chr_rom, NametableLayout::Horizontal);
+        let metadata = MapperContext::new_for_test(8, prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // When selecting CHR bank 1 through mode 4 latch bits 1-0
         let mut mapper =
@@ -984,7 +1020,7 @@ mod tests {
         // Test that simple mappers can use the default no-op implementation
         let prg_rom = vec![0u8; 32 * 1024];
         let chr_rom = vec![0u8; 8 * 1024];
-        let metadata = MapperContext::new(0, prg_rom, chr_rom, NametableLayout::Horizontal);
+        let metadata = MapperContext::new_for_test(0, prg_rom, chr_rom, NametableLayout::Horizontal);
 
         let mut mapper = create_mapper(metadata).expect("NROM mapper should be created");
 
@@ -1000,7 +1036,7 @@ mod tests {
         let prg_size = 32 * 1024; // Use 32KB PRG-ROM for these tests (MMC5 and others)
         let prg_rom = vec![0u8; prg_size];
         let chr_rom = vec![0u8; 8 * 1024];
-        let metadata = MapperContext::new(id, prg_rom, chr_rom, NametableLayout::Horizontal);
+        let metadata = MapperContext::new_for_test(id, prg_rom, chr_rom, NametableLayout::Horizontal);
         create_mapper(metadata).unwrap_or_else(|_| panic!("Mapper {} should be created", id))
     }
 

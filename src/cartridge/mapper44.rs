@@ -191,7 +191,7 @@ mod tests {
     fn make_mapper() -> Box<dyn Mapper> {
         let prg = banked_data(8 * 1024, PRG_BANKS);
         let chr = banked_data(1024, CHR_1K_BANKS);
-        create_mapper(MapperContext::new(44, prg, chr, NametableLayout::Vertical))
+        create_mapper(MapperContext::new_for_test(44, prg, chr, NametableLayout::Vertical))
             .expect("Mapper 44 should be implemented")
     }
 
@@ -199,7 +199,7 @@ mod tests {
 
     #[test]
     fn mapper_44_is_registered_in_factory() {
-        let result = create_mapper(MapperContext::new(
+        let result = create_mapper(MapperContext::new_for_test(
             44,
             banked_data(8 * 1024, PRG_BANKS),
             banked_data(1024, CHR_1K_BANKS),

@@ -186,7 +186,7 @@ mod tests {
         let prg = banked_data(8 * 1024, PRG_BANKS);
         // CHR 512 banks overflows u8 — use 384 (non-power-of-two), which still covers blocks 0–2
         let chr = banked_data(1024, 256);
-        create_mapper(MapperContext::new(49, prg, chr, NametableLayout::Vertical))
+        create_mapper(MapperContext::new_for_test(49, prg, chr, NametableLayout::Vertical))
             .expect("Mapper 49 should be implemented")
     }
 
@@ -194,7 +194,7 @@ mod tests {
 
     #[test]
     fn mapper_49_is_registered_in_factory() {
-        let result = create_mapper(MapperContext::new(
+        let result = create_mapper(MapperContext::new_for_test(
             49,
             banked_data(8 * 1024, PRG_BANKS),
             banked_data(1024, 256),

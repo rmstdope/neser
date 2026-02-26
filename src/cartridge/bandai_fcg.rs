@@ -360,7 +360,7 @@ mod tests {
     fn test_mapper_16_is_wired_in_factory() {
         let prg_rom = banked_data(16 * 1024, 2);
         let chr_rom = banked_data(1024, 8);
-        let mapper = create_mapper(MapperContext::new(
+        let mapper = create_mapper(MapperContext::new_for_test(
             16,
             prg_rom,
             chr_rom,

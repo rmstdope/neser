@@ -178,7 +178,7 @@ mod tests {
     fn test_mapper_71_is_wired_in_factory() {
         let prg_rom = vec![0; 128 * 1024];
         let chr_rom = vec![];
-        let mapper = create_mapper(MapperContext::new(
+        let mapper = create_mapper(MapperContext::new_for_test(
             71,
             prg_rom,
             chr_rom,
