@@ -76,7 +76,7 @@ mod tests {
 
         let mut mapper = CNROMMapper::new(MapperContext::new_for_test(
             3,
-            vec![0; 32 * 1024],
+            vec![0xFF; 32 * 1024], // 0xFF ensures bus conflicts don't mask the bank select
             chr_rom,
             NametableLayout::Horizontal,
         ));
@@ -120,7 +120,7 @@ mod tests {
 
         let mut mapper = CNROMMapper::new(MapperContext::new_for_test(
             3,
-            vec![0; 32 * 1024],
+            vec![0xFF; 32 * 1024], // 0xFF ensures bus conflicts don't mask the bank select
             chr_rom,
             NametableLayout::Vertical,
         ));
@@ -151,7 +151,7 @@ mod tests {
 
         let mut mapper = CNROMMapper::new(MapperContext::new_for_test(
             3,
-            vec![0; 32 * 1024],
+            vec![0xFF; 32 * 1024], // 0xFF ensures bus conflicts don't mask the bank select
             chr_rom.clone(),
             NametableLayout::Horizontal,
         ));
@@ -161,7 +161,7 @@ mod tests {
 
         let mut restored = CNROMMapper::new(MapperContext::new_for_test(
             3,
-            vec![0; 32 * 1024],
+            vec![0xFF; 32 * 1024], // 0xFF ensures bus conflicts don't mask the bank select
             chr_rom,
             NametableLayout::Horizontal,
         ));
@@ -223,7 +223,7 @@ mod tests {
 
         let mut mapper = CNROMMapper::new(MapperContext::new_for_test(
             3,
-            vec![0; 32 * 1024],
+            vec![0xFF; 32 * 1024], // 0xFF ensures bus conflicts don't mask the bank select
             chr_rom,
             NametableLayout::Horizontal,
         ));
@@ -242,7 +242,7 @@ mod tests {
     #[test]
     fn test_cnrom_registers_snapshot_bank_wrapping() {
         // Test edge case: bank selection wrapping when bank number exceeds available banks
-        let prg_rom = vec![0; 32 * 1024];
+        let prg_rom = vec![0xFF; 32 * 1024]; // 0xFF ensures bus conflicts don't mask the bank select
         let mut chr_rom = vec![0; 16 * 1024]; // Only 2 banks (16KB)
 
         // Fill CHR ROM with bank-specific data
@@ -414,5 +414,67 @@ mod tests {
             "Explicitly declared PRG-RAM must be readable"
         );
         assert_eq!(mapper.wram_size(), 8 * 1024);
+    }
+
+    #[test]
+    fn test_cnrom_submapper_0_applies_and_type_bus_conflicts() {
+        // Submapper 0 = original CNROM hardware, which has AND-type bus conflicts.
+        // Effective bank = written_value & ROM_value_at_written_address.
+        let mut chr_rom = vec![0; 32 * 1024]; // 4 banks of 8KB
+        for bank in 0..4usize {
+            let start = bank * 8 * 1024;
+            for byte in &mut chr_rom[start..start + 8 * 1024] {
+                *byte = (bank * 10) as u8;
+            }
+        }
+
+        // PRG-ROM: offset 0 (= CPU $8000) contains 0x02
+        let mut prg_rom = vec![0xFF; 32 * 1024];
+        prg_rom[0] = 0x02;
+
+        let mut mapper = CNROMMapper::new(
+            MapperContext::new_for_test(3, prg_rom, chr_rom, NametableLayout::Horizontal)
+                .with_submapper(0)
+                .with_prg_ram_banks(0),
+        );
+
+        // Write 0x01 to $8000. ROM[0] = 0x02. Bus conflict: 0x01 & 0x02 = 0x00 → bank 0
+        mapper.write_prg(0x8000, 0x01);
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            0,
+            "submapper 0: AND-type bus conflict must reduce effective bank to write & ROM"
+        );
+    }
+
+    #[test]
+    fn test_cnrom_submapper_1_disables_bus_conflicts() {
+        // Submapper 1 = no bus conflicts; written value selects bank directly.
+        let mut chr_rom = vec![0; 32 * 1024];
+        for bank in 0..4usize {
+            let start = bank * 8 * 1024;
+            for byte in &mut chr_rom[start..start + 8 * 1024] {
+                *byte = (bank * 10) as u8;
+            }
+        }
+
+        // PRG-ROM offset 0 = 0x02 (would cause conflict if conflicts were active)
+        let mut prg_rom = vec![0xFF; 32 * 1024];
+        prg_rom[0] = 0x02;
+
+        let mut mapper = CNROMMapper::new(
+            MapperContext::new_for_test(3, prg_rom, chr_rom, NametableLayout::Horizontal)
+                .with_submapper(1)
+                .with_prg_ram_banks(0),
+        );
+
+        // Write 0x01 to $8000. ROM[0] = 0x02.
+        // No conflict: written value 0x01 directly → bank 1 (value 10)
+        mapper.write_prg(0x8000, 0x01);
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            10,
+            "submapper 1: no bus conflict, write value selects bank directly"
+        );
     }
 }

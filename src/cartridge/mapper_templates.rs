@@ -115,6 +115,7 @@ pub struct SimpleFixedPrgMapper<const CHR_BANK_KB: usize, const MAPPER_NUM: u8> 
     chr_rom: BankedRom,
     mirroring: NametableLayout,
     chr_bank: BankSwitch,
+    bus_conflicts: bool,
 }
 
 impl<const CHR_BANK_KB: usize, const MAPPER_NUM: u8> SimpleFixedPrgMapper<CHR_BANK_KB, MAPPER_NUM> {
@@ -138,6 +139,9 @@ impl<const CHR_BANK_KB: usize, const MAPPER_NUM: u8> SimpleFixedPrgMapper<CHR_BA
         } else {
             None
         };
+        // Submapper 1 = explicitly no bus conflicts; all others (including 0 = original
+        // CNROM hardware) emulate AND-type bus conflicts.
+        let bus_conflicts = ctx.submapper != 1;
 
         Self {
             prg_rom,
@@ -145,6 +149,7 @@ impl<const CHR_BANK_KB: usize, const MAPPER_NUM: u8> SimpleFixedPrgMapper<CHR_BA
             chr_rom: BankedRom::new(chr_rom, chr_bank_size),
             mirroring,
             chr_bank,
+            bus_conflicts,
         }
     }
 }
@@ -187,9 +192,16 @@ impl<const CHR_BANK_KB: usize, const MAPPER_NUM: u8> Mapper
             return;
         }
 
-        // Any write to $8000-$FFFF sets the CHR bank select
+        // Any write to $8000-$FFFF sets the CHR bank select.
+        // Original CNROM has AND-type bus conflicts: the ROM at the write address
+        // also drives the bus, so the effective value is (write & ROM).
         if (0x8000..=0xFFFF).contains(&addr) {
-            self.chr_bank.set(value);
+            let effective = if self.bus_conflicts {
+                value & self.read_prg(addr)
+            } else {
+                value
+            };
+            self.chr_bank.set(effective);
         }
     }
 
@@ -629,7 +641,7 @@ mod tests {
 
             let mut mapper = TestMapper::new(MapperContext::new_for_test(
                 3,
-                vec![0; 32 * 1024],
+                vec![0xFF; 32 * 1024], // 0xFF ensures bus conflicts don't mask the bank select
                 chr_rom,
                 NametableLayout::Horizontal,
             ));
@@ -659,7 +671,7 @@ mod tests {
 
             let mut mapper = TestMapper::new(MapperContext::new_for_test(
                 3,
-                vec![0; 32 * 1024],
+                vec![0xFF; 32 * 1024], // 0xFF ensures bus conflicts don't mask the bank select
                 chr_rom,
                 NametableLayout::Vertical,
             ));
@@ -685,7 +697,7 @@ mod tests {
 
             let mut mapper = TestMapper::new(MapperContext::new_for_test(
                 3,
-                vec![0; 32 * 1024],
+                vec![0xFF; 32 * 1024], // 0xFF ensures bus conflicts don't mask the bank select
                 chr_rom.clone(),
                 NametableLayout::Horizontal,
             ));
@@ -695,7 +707,7 @@ mod tests {
 
             let mut restored = TestMapper::new(MapperContext::new_for_test(
                 3,
-                vec![0; 32 * 1024],
+                vec![0xFF; 32 * 1024], // 0xFF ensures bus conflicts don't mask the bank select
                 chr_rom,
                 NametableLayout::Horizontal,
             ));
