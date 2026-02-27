@@ -100,9 +100,9 @@ canvas {
 .debugger-panel {
     position: absolute;
     top: 8px;
+    bottom: 8px;
     left: 8px;
     right: 8px;
-    max-height: calc(100% - 16px);
     display: flex;
     flex-direction: column;
     padding: 8px 10px;
