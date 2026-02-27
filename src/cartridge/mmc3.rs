@@ -304,8 +304,16 @@ impl MMC3Mapper {
     }
 
     /// Reads a byte from PRG ROM at the given 8KB bank and byte offset.
+    ///
+    /// `bank` is wrapped modulo total PRG bank count so outer-bank mappers that
+    /// produce high address bits on smaller ROMs mirror correctly instead of
+    /// reading out-of-range zeros.
     pub fn read_prg_at_bank(&self, bank: usize, offset: usize) -> u8 {
-        self.read_prg_rom_bank(bank, offset)
+        let count = self.prg_bank_count();
+        if count == 0 {
+            return 0;
+        }
+        self.read_prg_rom_bank(bank % count, offset)
     }
 
     /// Reads a byte from CHR memory at the given 1KB bank and byte offset.

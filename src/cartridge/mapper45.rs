@@ -47,9 +47,6 @@ impl Mapper45 {
     const PRG_BANK_MASK: usize = Self::PRG_BANK_SIZE - 1;
     const CHR_1K_BANK_SIZE: usize = 0x0400; // 1 KiB
     const CHR_BANK_MASK: usize = Self::CHR_1K_BANK_SIZE - 1;
-    const OUTER_REG_MASK: u16 = 0xF001;
-    const OUTER_REG_DATA_ADDR: u16 = 0x6000;
-    const OUTER_REG_RESET_ADDR: u16 = 0x6001;
 
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
         let prg_rom = ctx.prg_rom;
@@ -151,25 +148,15 @@ impl Mapper for Mapper45 {
 
     fn write_prg(&mut self, addr: u16, value: u8) {
         if (0x6000..=0x7FFF).contains(&addr) {
-            match addr & Self::OUTER_REG_MASK {
-                Self::OUTER_REG_DATA_ADDR => {
-                    if self.locked {
-                        self.mmc3.write_prg(addr, value);
-                    } else {
-                        let reg_index = self.write_ptr;
-                        self.regs[reg_index] = value;
-                        if reg_index == 3 && (value & 0x40) != 0 {
-                            self.locked = true;
-                        }
-                        self.write_ptr = (self.write_ptr + 1) % 4;
-                    }
+            if self.locked {
+                self.mmc3.write_prg(addr, value);
+            } else {
+                let reg_index = self.write_ptr;
+                self.regs[reg_index] = value;
+                if reg_index == 3 && (value & 0x40) != 0 {
+                    self.locked = true;
                 }
-                Self::OUTER_REG_RESET_ADDR => {
-                    self.reset_outer_bank_registers();
-                }
-                _ => {
-                    self.mmc3.write_prg(addr, value);
-                }
+                self.write_ptr = (self.write_ptr + 1) % 4;
             }
         } else {
             self.mmc3.write_prg(addr, value);
@@ -354,33 +341,29 @@ mod tests {
         let mut m = make_direct();
         m.write_prg(0x6000, 0xAA); // reg0 = 0xAA
         m.write_prg(0x6000, 0xBB); // reg1 = 0xBB
-        m.write_prg(0x6000, 0xCC); // reg2 = 0xCC
-        m.write_prg(0x6000, 0x40); // reg3 = lock
-        assert!(m.locked);
+        m.write_prg(0x6001, 0xCC); // reg2 = 0xCC (sequential data write)
 
-        m.write_prg(0x6001, 0x00); // reset+unlock via mask F001
-
-        assert_eq!(m.regs[0], 0x00);
-        assert_eq!(m.regs[1], 0x00);
-        assert_eq!(m.regs[2], 0x0F);
+        assert_eq!(m.regs[0], 0xAA);
+        assert_eq!(m.regs[1], 0xBB);
+        assert_eq!(m.regs[2], 0xCC);
         assert_eq!(m.regs[3], 0x00);
-        assert_eq!(m.write_ptr, 0);
+        assert_eq!(m.write_ptr, 3);
         assert!(!m.locked);
     }
 
     #[test]
-    fn write_to_6003_is_masked_reset() {
+    fn write_to_6003_is_data_write() {
         let mut m = make_direct();
 
         m.write_prg(0x6000, 0x11); // reg0
         m.write_prg(0x6000, 0x22); // reg1
-        m.write_prg(0x6003, 0x00); // masked as $6001 reset
+        m.write_prg(0x6003, 0x33); // reg2 (sequential data write)
 
-        assert_eq!(m.regs[0], 0x00);
-        assert_eq!(m.regs[1], 0x00);
-        assert_eq!(m.regs[2], 0x0F);
+        assert_eq!(m.regs[0], 0x11);
+        assert_eq!(m.regs[1], 0x22);
+        assert_eq!(m.regs[2], 0x33);
         assert_eq!(m.regs[3], 0x00);
-        assert_eq!(m.write_ptr, 0);
+        assert_eq!(m.write_ptr, 3);
     }
 
     #[test]
@@ -645,6 +628,43 @@ mod tests {
             m.read_chr(0x0000),
             2,
             "reg2 bit 7 must set CHR_OR[11]; 0x800 % 3 = 2 → bank 2 marker 0x02"
+        );
+    }
+
+    #[test]
+    fn prg_reads_wrap_when_outer_or_exceeds_prg_size() {
+        // Use 7 PRG banks (non-power-of-two) so modulo wrap is observable.
+        // Without wrapping, high bank selections would read 0 from out-of-range.
+        let prg = banked_data(8 * 1024, 7); // banks 0..6, bank N filled with byte N
+        let chr = banked_data(1024, 8);
+        let mut m = Mapper45::new(MapperContext::new_for_test(
+            45,
+            prg,
+            chr,
+            NametableLayout::Vertical,
+        ));
+
+        // PRG_OR = 9, PRG_AND = 0x3F, R6 = 0
+        // $8000 raw bank = 0 -> final bank = 9 -> wraps to 9 % 7 = 2.
+        m.write_prg(0x6000, 0x00); // reg0
+        m.write_prg(0x6000, 0x09); // reg1: PRG_OR low bits = 9
+        m.write_prg(0x6000, 0x00); // reg2
+        m.write_prg(0x6000, 0x00); // reg3: PRG_AND = 0x3F
+        m.write_prg(0x8000, 0b0000_0110); // select R6
+        m.write_prg(0x8001, 0x00); // R6=0
+
+        assert_eq!(
+            m.read_prg(0x8000),
+            2,
+            "Out-of-range PRG bank must mirror modulo ROM size (9 % 7 = 2)"
+        );
+
+        // Vector area uses MMC3 fixed-last raw bank (6). Outer OR still applies:
+        // final bank = 6 | 9 = 15 -> wraps to 15 % 7 = 1.
+        assert_eq!(
+            m.read_prg(0xFFFC),
+            1,
+            "Vector window reads must not collapse to zero when outer OR sets high bits"
         );
     }
 }
