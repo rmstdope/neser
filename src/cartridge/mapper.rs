@@ -26,6 +26,7 @@ use super::mapper53::Mapper53;
 use super::mapper56::Mapper56;
 use super::mapper57::Mapper57;
 use super::mapper58::Mapper58;
+use super::mapper59::Mapper59;
 use super::mapper60::Mapper60;
 use super::mapper61::Mapper61;
 use super::mapper62::Mapper62;
@@ -526,6 +527,7 @@ mapper_registry! {
     56 => Mapper56::new,
     57 => Mapper57::new,
     58 => Mapper58::new,
+    59 => Mapper59::new,
     60 => Mapper60::new,
     61 => Mapper61::new,
     62 => Mapper62::new,
@@ -555,8 +557,8 @@ mapper_registry! {
 #[cfg(test)]
 const SUPPORTED_MAPPERS: &[u8] = &[
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 16, 17, 19, 21, 22, 23, 24, 25, 26, 32, 33, 34,
-    40, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 56, 57, 58, 60, 61, 62, 64, 65, 66, 67, 68,
-    69, 71, 72, 73, 78, 185, 206, 241, 242, 243, 244, 245, 246, 251, 254, 255,
+    40, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 56, 57, 58, 59, 60, 61, 62, 64, 65, 66, 67,
+    68, 69, 71, 72, 73, 78, 185, 206, 241, 242, 243, 244, 245, 246, 251, 254, 255,
 ];
 
 /// List of supported iNES mapper IDs handled by the factory.
