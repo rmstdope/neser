@@ -11,6 +11,7 @@ use super::colordreams::ColorDreamsMapper;
 use super::cprom::CpromMapper;
 use super::gxrom::GxROMMapper;
 use super::irem_g101::IremG101Mapper;
+use super::mapper37::Mapper37;
 use super::mapper42::Mapper42;
 use super::mapper44::Mapper44;
 use super::mapper45::Mapper45;
@@ -29,6 +30,7 @@ use super::mapper61::Mapper61;
 use super::mapper62::Mapper62;
 use super::mapper64::Mapper64;
 use super::mapper65::Mapper65;
+use super::mapper67::Mapper67;
 use super::mapper185::Mapper185;
 use super::mapper241::Mapper241;
 use super::mapper242::Mapper242;
@@ -505,6 +507,7 @@ mapper_registry! {
     32 => IremG101Mapper::new,
     33 => TaitoTc0190Mapper::new,
     34 => BnromNinaMapper::new,
+    37 => Mapper37::new,
     40 => Ntdec2722Mapper::new,
     42 => Mapper42::new,
     44 => Mapper44::new,
@@ -525,6 +528,7 @@ mapper_registry! {
     64 => Mapper64::new,
     65 => Mapper65::new,
     66 => GxROMMapper::new,
+    67 => Mapper67::new,
     68 => Sunsoft4Mapper::new,
     69 => SunsoftFme7Mapper::new,
     71 => CamericaMapper::new,
@@ -545,8 +549,8 @@ mapper_registry! {
 #[cfg(test)]
 const SUPPORTED_MAPPERS: &[u8] = &[
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 16, 17, 19, 21, 22, 23, 24, 25, 26, 32, 33, 34,
-    40, 42, 44, 45, 46, 47, 49, 50, 51, 52, 53, 56, 57, 58, 60, 61, 62, 64, 65, 66, 68, 69, 71, 78,
-    185, 206, 241, 242, 243, 244, 245, 246, 251, 254, 255,
+    37, 40, 42, 44, 45, 46, 47, 49, 50, 51, 52, 53, 56, 57, 58, 60, 61, 62, 64, 65, 66, 67, 68, 69,
+    71, 78, 185, 206, 241, 242, 243, 244, 245, 246, 251, 254, 255,
 ];
 
 /// List of supported iNES mapper IDs handled by the factory.
