@@ -1323,6 +1323,14 @@ impl SdlEventLoop {
 
     pub(crate) fn save_breakpoints_to_debug_file(&self, nes: &Nes) {
         let Some(path) = nes.debug_path() else { return };
+        if self.breakpoints.is_empty() {
+            if path.exists() {
+                if let Err(err) = std::fs::remove_file(&path) {
+                    log_info(format!("Failed to remove .debug file: {err}"));
+                }
+            }
+            return;
+        }
         let content = self.breakpoints.save_to_string();
         if let Err(err) = std::fs::write(&path, content) {
             log_info(format!("Failed to save breakpoints: {err}"));
@@ -4790,6 +4798,70 @@ mod tests {
         assert!(
             content.contains("pc 0xC000 enabled"),
             "unexpected content: {content}"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_save_breakpoints_to_debug_file_deletes_file_when_no_breakpoints() {
+        use crate::app_context::AppContext;
+
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let rom_path = copy_test_rom(&temp_dir);
+
+        let debug_path = rom_path.with_extension("debug");
+        fs::write(&debug_path, "pc 0xC000 enabled\n").expect("Failed to write .debug file");
+        assert!(debug_path.exists(), "precondition: debug file should exist");
+
+        let rom_bytes = std::fs::read(&rom_path).expect("Failed to read ROM");
+        let cart = Cartridge::load_from_file(&rom_bytes, &rom_path, AppContext::new())
+            .expect("Failed to load ROM");
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        nes.insert_cartridge(cart);
+        nes.reset(false);
+
+        let config = default_config();
+        let event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+        // No breakpoints added
+        event_loop.save_breakpoints_to_debug_file(&nes);
+
+        assert!(
+            !debug_path.exists(),
+            "debug file should be deleted when no breakpoints"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_save_breakpoints_to_debug_file_does_not_create_file_when_no_breakpoints() {
+        use crate::app_context::AppContext;
+
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let rom_path = copy_test_rom(&temp_dir);
+
+        let debug_path = rom_path.with_extension("debug");
+        assert!(!debug_path.exists(), "precondition: debug file should not exist");
+
+        let rom_bytes = std::fs::read(&rom_path).expect("Failed to read ROM");
+        let cart = Cartridge::load_from_file(&rom_bytes, &rom_path, AppContext::new())
+            .expect("Failed to load ROM");
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        nes.insert_cartridge(cart);
+        nes.reset(false);
+
+        let config = default_config();
+        let event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+        event_loop.save_breakpoints_to_debug_file(&nes);
+
+        assert!(
+            !debug_path.exists(),
+            "debug file should not be created when there are no breakpoints"
         );
     }
 
