@@ -35,16 +35,18 @@ Always run the full regression suite before merging any code changes to ensure t
 
 When starting to work on any feature that exists as a github issue, assign that feature to the user that is working on it. Each feature should have a corresponding issue in the issue tracker that describes the work to be done.
 If a feature is large, it should be broken down into smaller sub-issues. This makes it easier to manage and track progress on complex tasks. Each sub-issue should represent a discrete piece of work that can be completed independently. Prefix the sub-issues with ""Sub-issue (<<issue-number>>):"" to clearly indicate their relationship to the main feature issue. <<issue-number>> should be replaced with the main issue number.
+All sub-issues should be linked back to the main issue in their description to maintain clear traceability. Vice versa, all main issues should reference their sub-issues.
 
 When working on an issue, this is important:
 
 - ALWAYS assign the issue to the developer working on it.
 - ALWAYS create a new branch from main named after the issue number and a short description of the work to be done, e.g., `42-add-user-authentication`. Once the work is completed and reviewed, merge the branch back into main using a pull request.
 - ALWAYS create a pull request (PR) for merging the sub-issue branch back into main.
-- Before merging the PR, ALWAYS make sure all pre-commit checkpoints pass (see "Committing and Merging to main" below) and ALWAYS ask the navigator to review and approve the PR.
+- Before merging the PR, ALWAYS make sure all pre-commit checkpoints pass (see "Committing and Merging to main" below) and ALWAYS ask the navigator to review and approve the PR. Even if any issue existed previously, it shall be fixed before merging. Do not merge any code that has known issues, even if they existed before. 
 - ALWAYS merge an issue branch back into main before starting to work on another issue. This ensures that the latest changes are always incorporated and reduces the risk of merge conflicts.
 
 When a PR is merged, the issue should be closed and the branch deleted to keep the repository clean and organized. If the issue is a sub-issue of a larger feature, ensure that the main issue is updated with relevant information about the progress made and that it is closed when all sub-issues are completed.
+When a sub-issue is closed, the main issue's description should be updated to reflect the completion of that sub-issue and any remaining work that needs to be done on the main issue.
 
 Issue workflow checklist:
 
@@ -53,7 +55,7 @@ Issue workflow checklist:
 
 ### Github CLI
 
-Use the comand line command 'gh' for interacting the github issues. Be careful with quoting when using gh. NEVER use backticks in the text with gh and use real newlines instead of \n.
+Use the comand line command 'gh' for interacting with github issues. Be careful with quoting when using gh. NEVER use backticks in the text with gh and use real newlines instead of \n.
 When creating issues, always add the appropriate labels to the issue using gh:
 
 - bug - for all bugs
