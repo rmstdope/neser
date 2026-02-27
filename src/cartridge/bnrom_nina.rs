@@ -8,9 +8,7 @@
 use crate::cartridge::Mapper;
 use crate::cartridge::MapperCapabilities;
 use crate::cartridge::NametableLayout;
-use crate::cartridge::common::{
-    BankSwitch, BankedRom, ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam,
-};
+use crate::cartridge::common::{BankSwitch, BankedRom, ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
 
 // Memory size constants
 const PRG_BANK_SIZE: usize = 0x8000; // 32KB
@@ -547,8 +545,13 @@ mod tests {
 
         // NES 2.0 submapper 1 explicitly selects NINA-001/NINA-002
         let mapper_submapper_1 = BnromNinaMapper::new(
-            MapperContext::new_for_test(34, vec![0; 32 * 1024], vec![0; 8 * 1024], NametableLayout::Horizontal)
-                .with_submapper(1),
+            MapperContext::new_for_test(
+                34,
+                vec![0; 32 * 1024],
+                vec![0; 8 * 1024],
+                NametableLayout::Horizontal,
+            )
+            .with_submapper(1),
         );
         assert!(mapper_submapper_1.is_nina);
 
