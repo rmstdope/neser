@@ -268,4 +268,94 @@ mod tests {
         assert_eq!(mapper.read_prg_open_bus(0x5000, 0xAA), 0xAA);
         assert_eq!(mapper.read_prg_open_bus(0x5FFF, 0xBB), 0xBB);
     }
+
+    // --- Issue #345: PRG-RAM absence via metadata ---
+
+    #[test]
+    fn test_uxrom_no_prg_ram_write_ignored() {
+        // Given: UxROM with no PRG-RAM (prg_ram_banks_8k = 0)
+        let mut mapper = UxROMMapper::new(
+            MapperContext::new_for_test(
+                2,
+                vec![0; 128 * 1024],
+                vec![],
+                NametableLayout::Horizontal,
+            )
+            .with_prg_ram_banks(0),
+        );
+
+        // When: writing to $6000-$7FFF
+        mapper.write_prg(0x6000, 0xAB);
+        mapper.write_prg(0x7FFF, 0xCD);
+
+        // Then: reads still return 0 (writes ignored, no RAM)
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            0,
+            "no PRG-RAM: write should be ignored"
+        );
+        assert_eq!(
+            mapper.read_prg(0x7FFF),
+            0,
+            "no PRG-RAM: write should be ignored"
+        );
+    }
+
+    #[test]
+    fn test_uxrom_no_prg_ram_open_bus_returns_open_bus() {
+        // Given: UxROM with no PRG-RAM
+        let mapper = UxROMMapper::new(
+            MapperContext::new_for_test(
+                2,
+                vec![0; 128 * 1024],
+                vec![],
+                NametableLayout::Horizontal,
+            )
+            .with_prg_ram_banks(0),
+        );
+        let open_bus = 0x42;
+
+        // When: reading $6000-$7FFF via read_prg_open_bus
+        // Then: return open_bus (no RAM present)
+        assert_eq!(
+            mapper.read_prg_open_bus(0x6000, open_bus),
+            open_bus,
+            "no PRG-RAM: $6000 should return open-bus"
+        );
+        assert_eq!(
+            mapper.read_prg_open_bus(0x7FFF, open_bus),
+            open_bus,
+            "no PRG-RAM: $7FFF should return open-bus"
+        );
+    }
+
+    #[test]
+    fn test_uxrom_with_prg_ram_read_write_works() {
+        // Given: UxROM with 8KB PRG-RAM (prg_ram_banks_8k = 1)
+        let mut mapper = UxROMMapper::new(
+            MapperContext::new_for_test(
+                2,
+                vec![0; 128 * 1024],
+                vec![],
+                NametableLayout::Horizontal,
+            )
+            .with_prg_ram_banks(1),
+        );
+
+        // When: writing and reading back
+        mapper.write_prg(0x6000, 0x77);
+        mapper.write_prg(0x7FFF, 0x88);
+
+        // Then: values are preserved
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            0x77,
+            "PRG-RAM present: write/read should work"
+        );
+        assert_eq!(
+            mapper.read_prg(0x7FFF),
+            0x88,
+            "PRG-RAM present: write/read should work"
+        );
+    }
 }
