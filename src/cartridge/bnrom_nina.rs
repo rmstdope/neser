@@ -9,10 +9,10 @@ use crate::cartridge::Mapper;
 use crate::cartridge::MapperCapabilities;
 use crate::cartridge::NametableLayout;
 use crate::cartridge::common::{BankSwitch, BankedRom, ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
+use std::env;
 
 // Memory size constants
 const PRG_BANK_SIZE: usize = 0x8000; // 32KB
-const CHR_FALLBACK_THRESHOLD_SIZE: usize = 0x2000; // 8KB
 const NINA_CHR_BANK_SIZE: usize = 0x1000; // 4KB
 
 /// Mapper 34 - BNROM / NINA-001
@@ -31,7 +31,13 @@ const NINA_CHR_BANK_SIZE: usize = 0x1000; // 4KB
 /// Detection:
 /// - Submapper 1 denotes NINA-001/NINA-002
 /// - Submapper 2 denotes BNROM
-/// - Without submapper: CHR-ROM size 0-8 KiB => BNROM, above 8 KiB => NINA-001/NINA-002
+/// - Submapper 0 / no submapper fallback: CHR-ROM absent => BNROM, CHR-ROM present => NINA-001/NINA-002
+/// - Submapper 0 NINA path intentionally enables FCEUX-compatible mapper-34 hack behavior
+///   used by some patched ROMs (e.g. hM34 set):
+///   - PRG bank writes accepted at $8000-$FFFF
+///   - $7FFD PRG register uses full value (not bit0-only)
+///     This preserves gameplay/audio/graphics parity for those ROMs while keeping
+///     strict NINA semantics for explicit NES 2.0 submapper 1.
 ///
 /// BNROM variant:
 /// - Bank select at $8000-$FFFF (any write selects 32KB PRG bank)
@@ -42,6 +48,11 @@ const NINA_CHR_BANK_SIZE: usize = 0x1000; // 4KB
 /// - CHR bank select at $7FFE (PPU $0000-$0FFF, 4KB)
 /// - CHR bank select at $7FFF (PPU $1000-$1FFF, 4KB)
 /// - Used in Impossible Mission II, Puzzle, Rad Racket
+///
+/// Compatibility note:
+/// - For iNES/submapper-0 mapper 34 ROM hacks, this implementation follows FCEUX's
+///   long-standing hybrid mapper-34 behavior where NINA CHR banking and PRG writes
+///   at $8000-$FFFF coexist. This mode is intentionally isolated to submapper 0.
 pub struct BnromNinaMapper {
     prg_rom: BankedRom,
     prg_ram: PrgRam,
@@ -51,34 +62,66 @@ pub struct BnromNinaMapper {
     chr_bank_low: BankSwitch,
     chr_bank_high: BankSwitch,
     is_nina: bool, // true for NINA-001, false for BNROM
+    // Enabled only for mapper 34 submapper 0 + CHR-ROM fallback to match common
+    // FCEUX-compatible hacked ROM expectations (hybrid NINA/BNROM PRG writes).
+    mapper34_compat_mode: bool,
+    trace_enabled: bool,
+    trace_budget: u32,
 }
 
 impl BnromNinaMapper {
+    fn trace_state(&mut self, event: &str, addr: u16, value: u8) {
+        if !self.trace_enabled || self.trace_budget == 0 {
+            return;
+        }
+
+        self.trace_budget -= 1;
+        eprintln!(
+            "[mapper34] {event} addr={addr:04X} val={value:02X} is_nina={} compat={} prg={} chr_lo={} chr_hi={}",
+            self.is_nina,
+            self.mapper34_compat_mode,
+            self.prg_bank.current(),
+            self.chr_bank_low.current(),
+            self.chr_bank_high.current()
+        );
+    }
+
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
         let prg_rom = ctx.prg_rom;
         let chr_rom = ctx.chr_rom;
         let mirroring = ctx.mirroring;
-        // Detect variant per NESdev iNES mapper 34 guidance.
+        // Detect variant using explicit NES 2.0 submappers where available.
         // Submapper 1 = NINA-001/NINA-002, submapper 2 = BNROM.
-        // Without submapper info, CHR-ROM 0-8 KiB => BNROM, >8 KiB => NINA.
+        // For submapper 0 / iNES fallback, match Mesen/FCEUX behavior:
+        // CHR-ROM present => NINA, CHR-ROM absent => BNROM.
         let is_nina = match ctx.submapper {
             1 => true,
             2 => false,
-            _ => chr_rom.len() > CHR_FALLBACK_THRESHOLD_SIZE,
+            _ => !chr_rom.is_empty(),
         };
+        // Compatibility mode for mapper 34 iNES/submapper 0 hacks.
+        // Keeps strict hardware-style behavior for explicit submapper 1.
+        let mapper34_compat_mode = is_nina && ctx.submapper == 0;
 
         // NINA uses two independent 4KB CHR windows ($0000 and $1000).
         // BNROM has unbanked CHR memory (typically 8KB CHR-RAM).
         let (chr_bank_low, chr_bank_high) = if is_nina {
-            let bank = BankSwitch::from_rom(&chr_rom, NINA_CHR_BANK_SIZE);
-            (bank, bank)
+            let bank_low = BankSwitch::from_rom(&chr_rom, NINA_CHR_BANK_SIZE);
+            let mut bank_high = BankSwitch::from_rom(&chr_rom, NINA_CHR_BANK_SIZE);
+            bank_high.set(1);
+            (bank_low, bank_high)
         } else {
             (BankSwitch::new(1), BankSwitch::new(1))
         };
         let prg_bank = BankSwitch::from_rom(&prg_rom, PRG_BANK_SIZE);
         let prg_ram_size = if is_nina { DEFAULT_PRG_RAM_SIZE } else { 0 };
+        let trace_enabled = env::var_os("NESER_TRACE_MAPPER34").is_some();
+        let trace_budget = env::var("NESER_TRACE_MAPPER34_LIMIT")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(200);
 
-        Self {
+        let mut mapper = Self {
             prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE),
             prg_ram: PrgRam::new(prg_ram_size),
             chr_memory: ChrMemory::new(chr_rom),
@@ -87,7 +130,13 @@ impl BnromNinaMapper {
             chr_bank_low,
             chr_bank_high,
             is_nina,
-        }
+            mapper34_compat_mode,
+            trace_enabled,
+            trace_budget,
+        };
+
+        mapper.trace_state("init", 0, 0);
+        mapper
     }
 
     fn nina_chr_index(&self, addr: u16) -> usize {
@@ -102,6 +151,13 @@ impl BnromNinaMapper {
 }
 
 impl Mapper for BnromNinaMapper {
+    fn reset(&mut self) {
+        self.prg_bank.set(0);
+        self.chr_bank_low.set(0);
+        self.chr_bank_high.set(if self.is_nina { 1 } else { 0 });
+        self.trace_state("reset", 0, 0);
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
         // PRG-RAM at $6000-$7FFF
         if let Some(value) = self.prg_ram.try_read(addr) {
@@ -125,7 +181,14 @@ impl Mapper for BnromNinaMapper {
 
             match addr {
                 0x7FFD => {
-                    self.prg_bank.set(value);
+                    // Strict NINA (submapper 1): bit0 PRG bank select.
+                    // Submapper 0 compatibility mode: accept full register value
+                    // to match FCEUX mapper-34 hack behavior.
+                    if self.mapper34_compat_mode {
+                        self.prg_bank.set(value);
+                    } else {
+                        self.prg_bank.set(value & 0x01);
+                    }
                 }
                 0x7FFE => {
                     self.chr_bank_low.set(value);
@@ -135,6 +198,15 @@ impl Mapper for BnromNinaMapper {
                 }
                 _ => {}
             }
+            self.trace_state("write_nina_reg", addr, value);
+            return;
+        }
+
+        // Submapper 0 compatibility mode accepts PRG bank writes at $8000-$FFFF
+        // (FCEUX mapper-34 hybrid behavior used by several hM34 ROMs).
+        if self.is_nina && self.mapper34_compat_mode && (0x8000..=0xFFFF).contains(&addr) {
+            self.prg_bank.set(value);
+            self.trace_state("write_nina_compat_prg", addr, value);
             return;
         }
 
@@ -148,6 +220,7 @@ impl Mapper for BnromNinaMapper {
             // BNROM has AND-type bus conflicts: effective value = write_value & rom_value_at_addr.
             let rom_value = self.read_prg(addr);
             self.prg_bank.set(value & rom_value);
+            self.trace_state("write_bnrom_bank", addr, value);
         }
     }
 
@@ -387,8 +460,40 @@ mod tests {
         mapper.write_prg(0x7FFD, 1);
         assert_eq!(mapper.read_prg(0x8000), 10);
 
+        // Submapper 0 compatibility mode uses full-value PRG bank register.
         mapper.write_prg(0x7FFD, 3);
         assert_eq!(mapper.read_prg(0x8000), 30);
+
+        mapper.write_prg(0x7FFD, 2);
+        assert_eq!(mapper.read_prg(0x8000), 20);
+    }
+
+    #[test]
+    fn test_nina001_submapper1_prg_bank_is_bit0_only() {
+        let mut prg_rom = vec![0; 128 * 1024];
+        for bank in 0..4 {
+            let start = bank * 32 * 1024;
+            let end = start + 32 * 1024;
+            for byte in &mut prg_rom[start..end] {
+                *byte = (bank * 10) as u8;
+            }
+        }
+
+        let mut mapper = BnromNinaMapper::new(
+            MapperContext::new_for_test(
+                34,
+                prg_rom,
+                vec![0; 64 * 1024],
+                NametableLayout::Horizontal,
+            )
+            .with_submapper(1),
+        );
+
+        mapper.write_prg(0x7FFD, 3);
+        assert_eq!(mapper.read_prg(0x8000), 10);
+
+        mapper.write_prg(0x7FFD, 2);
+        assert_eq!(mapper.read_prg(0x8000), 0);
     }
 
     #[test]
@@ -410,9 +515,9 @@ mod tests {
             NametableLayout::Horizontal,
         ));
 
-        // Initially both 4KB windows are bank 0
+        // NINA powers on with CHR banks mapped as 0/1 for the two 4KB windows.
         assert_eq!(mapper.read_chr(0x0000), 0);
-        assert_eq!(mapper.read_chr(0x1000), 0);
+        assert_eq!(mapper.read_chr(0x1000), 20);
 
         // Select independent 4KB CHR banks
         mapper.write_prg(0x7FFE, 1); // $0000-$0FFF
@@ -466,6 +571,44 @@ mod tests {
     }
 
     #[test]
+    fn test_nina001_reset_restores_default_prg_and_chr_mapping() {
+        let mut prg_rom = vec![0; 128 * 1024];
+        for bank in 0..4 {
+            let start = bank * 32 * 1024;
+            let end = start + 32 * 1024;
+            for byte in &mut prg_rom[start..end] {
+                *byte = (bank * 10) as u8;
+            }
+        }
+
+        let mut chr_rom = vec![0; 64 * 1024];
+        for bank in 0..16 {
+            let start = bank * 4 * 1024;
+            let end = start + 4 * 1024;
+            for byte in &mut chr_rom[start..end] {
+                *byte = (bank + 1) as u8;
+            }
+        }
+
+        let mut mapper = BnromNinaMapper::new(MapperContext::new_for_test(
+            34,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Vertical,
+        ));
+
+        mapper.write_prg(0x7FFD, 1);
+        mapper.write_prg(0x7FFE, 5);
+        mapper.write_prg(0x7FFF, 7);
+
+        mapper.reset();
+
+        assert_eq!(mapper.read_prg(0x8000), 0);
+        assert_eq!(mapper.read_chr(0x0000), 1);
+        assert_eq!(mapper.read_chr(0x1000), 2);
+    }
+
+    #[test]
     fn test_nina001_register_write_updates_prg_ram_overlay() {
         let mut mapper = BnromNinaMapper::new(MapperContext::new_for_test(
             34,
@@ -495,12 +638,15 @@ mod tests {
             }
         }
 
-        let mut mapper = BnromNinaMapper::new(MapperContext::new_for_test(
-            34,
-            prg_rom,
-            vec![0; 32 * 1024],
-            NametableLayout::Horizontal,
-        ));
+        let mut mapper = BnromNinaMapper::new(
+            MapperContext::new_for_test(
+                34,
+                prg_rom,
+                vec![0; 32 * 1024],
+                NametableLayout::Horizontal,
+            )
+            .with_submapper(1),
+        );
 
         // Set bank via proper register
         mapper.write_prg(0x7FFD, 1);
@@ -515,6 +661,31 @@ mod tests {
     }
 
     #[test]
+    fn test_nina001_submapper0_accepts_8000_prg_writes_for_compat() {
+        let mut prg_rom = vec![0; 128 * 1024];
+        for bank in 0..4 {
+            let start = bank * 32 * 1024;
+            let end = start + 32 * 1024;
+            for byte in &mut prg_rom[start..end] {
+                *byte = (bank * 10) as u8;
+            }
+        }
+
+        let mut mapper = BnromNinaMapper::new(MapperContext::new_for_test(
+            34,
+            prg_rom,
+            vec![0; 32 * 1024],
+            NametableLayout::Horizontal,
+        ));
+
+        mapper.write_prg(0x8000, 2);
+        assert_eq!(mapper.read_prg(0x8000), 20);
+
+        mapper.write_prg(0xFFFF, 3);
+        assert_eq!(mapper.read_prg(0x8000), 30);
+    }
+
+    #[test]
     fn test_bnrom_detection() {
         // Empty CHR ROM = BNROM
         let mapper_bnrom = BnromNinaMapper::new(MapperContext::new_for_test(
@@ -525,14 +696,15 @@ mod tests {
         ));
         assert!(!mapper_bnrom.is_nina);
 
-        // 8KB CHR ROM with no submapper info remains BNROM per iNES mapper 34 heuristic
-        let mapper_bnrom_8k_chr = BnromNinaMapper::new(MapperContext::new_for_test(
+        // Submapper 0 fallback follows Mesen/FCEUX compatibility:
+        // any CHR-ROM payload indicates NINA wiring.
+        let mapper_nina_8k_chr = BnromNinaMapper::new(MapperContext::new_for_test(
             34,
             vec![0; 32 * 1024],
             vec![0; 8 * 1024],
             NametableLayout::Horizontal,
         ));
-        assert!(!mapper_bnrom_8k_chr.is_nina);
+        assert!(mapper_nina_8k_chr.is_nina);
 
         // >8KB CHR ROM defaults to NINA-001/NINA-002 when submapper is absent
         let mapper_nina_32k_chr = BnromNinaMapper::new(MapperContext::new_for_test(
@@ -542,6 +714,29 @@ mod tests {
             NametableLayout::Horizontal,
         ));
         assert!(mapper_nina_32k_chr.is_nina);
+
+        // Explicit submapper 0 (NES 2.0) uses the same CHR-ROM presence fallback.
+        let mapper_submapper_0_no_chr = BnromNinaMapper::new(
+            MapperContext::new_for_test(
+                34,
+                vec![0; 32 * 1024],
+                vec![],
+                NametableLayout::Horizontal,
+            )
+            .with_submapper(0),
+        );
+        assert!(!mapper_submapper_0_no_chr.is_nina);
+
+        let mapper_submapper_0_with_chr = BnromNinaMapper::new(
+            MapperContext::new_for_test(
+                34,
+                vec![0; 32 * 1024],
+                vec![0; 8 * 1024],
+                NametableLayout::Horizontal,
+            )
+            .with_submapper(0),
+        );
+        assert!(mapper_submapper_0_with_chr.is_nina);
 
         // NES 2.0 submapper 1 explicitly selects NINA-001/NINA-002
         let mapper_submapper_1 = BnromNinaMapper::new(
