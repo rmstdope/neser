@@ -1511,12 +1511,14 @@ function updateDebuggerPanel() {
         `<span class="disasm-block">${disasmHtml}</span>` +
         `</div>` +
         `<div class="debugger-regs">` +
+        `<div class="debugger-regs-scroll">` +
         `<span class="debugger-regs-title">Registers</span>` +
         `<span class="debugger-regs-block">${regsHtml}</span>` +
         `<span class="debugger-hexdump-divider"></span>` +
         `${hexdumpHtml}` +
         `<span class="debugger-hexdump-divider"></span>` +
         `${oamHtml}` +
+        `</div>` +
         `</div>` +
         `${ppuViewerHtml}` +
         `</div>`;
