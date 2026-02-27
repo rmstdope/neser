@@ -12,6 +12,7 @@ use super::cprom::CpromMapper;
 use super::gxrom::GxROMMapper;
 use super::irem_g101::IremG101Mapper;
 use super::mapper42::Mapper42;
+use super::mapper43::Mapper43;
 use super::mapper44::Mapper44;
 use super::mapper45::Mapper45;
 use super::mapper46::Mapper46;
@@ -511,6 +512,7 @@ mapper_registry! {
     34 => BnromNinaMapper::new,
     40 => Ntdec2722Mapper::new,
     42 => Mapper42::new,
+    43 => Mapper43::new,
     44 => Mapper44::new,
     45 => Mapper45::new,
     46 => Mapper46::new,
@@ -553,8 +555,8 @@ mapper_registry! {
 #[cfg(test)]
 const SUPPORTED_MAPPERS: &[u8] = &[
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 16, 17, 19, 21, 22, 23, 24, 25, 26, 32, 33, 34,
-    40, 42, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 56, 57, 58, 60, 61, 62, 64, 65, 66, 67, 68, 69,
-    71, 72, 73, 78, 185, 206, 241, 242, 243, 244, 245, 246, 251, 254, 255,
+    40, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 56, 57, 58, 60, 61, 62, 64, 65, 66, 67, 68,
+    69, 71, 72, 73, 78, 185, 206, 241, 242, 243, 244, 245, 246, 251, 254, 255,
 ];
 
 /// List of supported iNES mapper IDs handled by the factory.

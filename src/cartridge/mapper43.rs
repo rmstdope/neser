@@ -1,0 +1,438 @@
+//! Mapper 043 - TONY-I / YS-612 (Super Mario Bros. 2 FDS conversion)
+//!
+//! Specifications:
+//! - Main: <https://www.nesdev.org/wiki/INES_Mapper_043>
+//!
+//! Known Limitations:
+//! - No known gameplay-blocking functional limitations are currently documented.
+
+use crate::cartridge::NametableLayout;
+use crate::cartridge::common::ChrMemory;
+use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+
+/// Mapper 043 - TONY-I / YS-612 (SMB2 Japanese FDS conversion)
+///
+/// Hardware: TONY-I / YS-612 PCB
+///
+/// Specifications:
+/// - Main: <https://www.nesdev.org/wiki/INES_Mapper_043>
+/// - PRG-ROM: 80 KiB (10 × 8 KiB banks)
+/// - PRG-RAM: None
+/// - CHR: 8 KiB fixed (ROM)
+/// - Mirroring: Fixed from header
+///
+/// PRG window map (8 KiB each):
+/// - $5000-$5FFF: 2KB chip at offset 0x10000, masked to 2KB
+/// - $6000-$7FFF: Fixed bank 2 (offset 0x4000)
+/// - $8000-$9FFF: Fixed bank 1 (offset 0x2000)
+/// - $A000-$BFFF: Fixed bank 0 (offset 0x0000)
+/// - $C000-$DFFF: Switchable via register at ($addr & 0x71FF) == $4022
+/// - $E000-$FFFF: Fixed bank 9 (offset 0x12000)
+///
+/// Register: ($addr & 0x71FF) == $4022 → bits[2:0] index into BANK_LOOKUP
+/// BANK_LOOKUP: [4, 3, 4, 4, 4, 7, 5, 6]
+///
+/// IRQ: 12-bit CPU-cycle counter; fires on overflow ($FFF→$1000 = 4096 cycles).
+/// Writing to ($addr & 0x71FF) == $4122 resets counter to 0 and clears pending IRQ.
+pub struct Mapper43 {
+    prg_rom: Vec<u8>,
+    chr_memory: ChrMemory,
+    mirroring: NametableLayout,
+    switchable_bank: u8,
+    irq_counter: u16,
+    irq_pending: bool,
+}
+
+impl Mapper43 {
+    const MAPPER_NUMBER: u8 = 43;
+    const PRG_BANK_SIZE: usize = 0x2000;
+    const PRG_BANK_MASK: usize = Self::PRG_BANK_SIZE - 1;
+    const IRQ_OVERFLOW: u16 = 0x1000;
+    const BANK_LOOKUP: [u8; 8] = [4, 3, 4, 4, 4, 7, 5, 6];
+
+    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let prg_rom = ctx.prg_rom;
+        let chr_rom = ctx.chr_rom;
+        let mirroring = ctx.mirroring;
+        Self {
+            prg_rom,
+            chr_memory: ChrMemory::new(chr_rom),
+            mirroring,
+            switchable_bank: 0,
+            irq_counter: 0,
+            irq_pending: false,
+        }
+    }
+
+    fn prg_read_bank(&self, bank: usize, offset: usize) -> u8 {
+        let addr = bank * Self::PRG_BANK_SIZE + offset;
+        self.prg_rom.get(addr).copied().unwrap_or(0)
+    }
+}
+
+impl Mapper for Mapper43 {
+    fn read_prg(&self, addr: u16) -> u8 {
+        let offset = addr as usize & Self::PRG_BANK_MASK;
+        match addr {
+            0x5000..=0x5FFF => {
+                // 2KB chip at 0x10000, masked to 2KB
+                let chip_offset = addr as usize & 0x7FF;
+                self.prg_rom
+                    .get(0x10000 + chip_offset)
+                    .copied()
+                    .unwrap_or(0)
+            }
+            0x6000..=0x7FFF => self.prg_read_bank(2, offset),
+            0x8000..=0x9FFF => self.prg_read_bank(1, offset),
+            0xA000..=0xBFFF => self.prg_read_bank(0, offset),
+            0xC000..=0xDFFF => {
+                let bank = Self::BANK_LOOKUP[self.switchable_bank as usize & 7] as usize;
+                self.prg_read_bank(bank, offset)
+            }
+            0xE000..=0xFFFF => self.prg_read_bank(9, offset),
+            _ => 0,
+        }
+    }
+
+    fn write_prg(&mut self, addr: u16, value: u8) {
+        if addr & 0x71FF == 0x4022 {
+            self.switchable_bank = value & 0x07;
+        } else if addr & 0x71FF == 0x4122 {
+            self.irq_counter = 0;
+            self.irq_pending = false;
+        }
+    }
+
+    fn read_chr(&mut self, addr: u16) -> u8 {
+        self.chr_memory.read(addr)
+    }
+
+    fn write_chr(&mut self, addr: u16, value: u8) {
+        self.chr_memory.write(addr, value);
+    }
+
+    fn get_mirroring(&self) -> NametableLayout {
+        self.mirroring
+    }
+
+    fn mapper_number(&self) -> u8 {
+        Self::MAPPER_NUMBER
+    }
+
+    fn wram_size(&self) -> usize {
+        0
+    }
+
+    fn cpu_cycle(&mut self) {
+        self.irq_counter = self.irq_counter.wrapping_add(1);
+        if self.irq_counter >= Self::IRQ_OVERFLOW {
+            self.irq_counter = 0;
+            self.irq_pending = true;
+        }
+    }
+
+    fn irq_pending(&self) -> bool {
+        self.irq_pending
+    }
+
+    fn chr_ram_snapshot(&self) -> Vec<u8> {
+        self.chr_memory.snapshot()
+    }
+
+    fn restore_chr_ram(&mut self, data: &[u8]) {
+        self.chr_memory.load_snapshot(data);
+    }
+
+    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+        self.chr_memory.initialize(mode);
+    }
+
+    fn registers_snapshot(&self) -> Vec<u8> {
+        vec![
+            self.switchable_bank,
+            (self.irq_counter & 0xFF) as u8,
+            (self.irq_counter >> 8) as u8,
+            self.irq_pending as u8,
+        ]
+    }
+
+    fn restore_registers(&mut self, data: &[u8]) {
+        if data.len() >= 4 {
+            self.switchable_bank = data[0];
+            self.irq_counter = (data[1] as u16) | ((data[2] as u16) << 8);
+            self.irq_pending = data[3] != 0;
+        }
+    }
+
+    fn capabilities(&self) -> MapperCapabilities {
+        MapperCapabilities {
+            has_irq: true,
+            prg_bank_size_kb: 8,
+            chr_bank_size_kb: 8,
+            ..MapperCapabilities::default()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Mapper43;
+    use crate::cartridge::NametableLayout;
+    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+
+    const PRG_SIZE: usize = 80 * 1024; // 80 KiB
+    const CHR_SIZE: usize = 8 * 1024; // 8 KiB
+
+    /// Build a PRG ROM where every byte at offset `i` equals `(i / 0x2000) as u8`
+    /// (i.e. bank-number fill), except the 2KB chip region at 0x10000 which is
+    /// filled with the sentinel value 0xAB.
+    fn make_prg() -> Vec<u8> {
+        let mut prg = vec![0u8; PRG_SIZE];
+        for i in 0..PRG_SIZE {
+            prg[i] = (i / 0x2000) as u8;
+        }
+        // 2KB chip at 0x10000..=0x107FF: fill with sentinel so reads are distinct
+        for b in prg[0x10000..0x10800].iter_mut() {
+            *b = 0xAB;
+        }
+        prg
+    }
+
+    fn make_mapper() -> Box<dyn Mapper> {
+        create_mapper(MapperContext::new_for_test(
+            43,
+            make_prg(),
+            vec![0u8; CHR_SIZE],
+            NametableLayout::Vertical,
+        ))
+        .expect("Mapper 43 should be registered")
+    }
+
+    fn make_mapper_direct() -> Mapper43 {
+        Mapper43::new(MapperContext::new_for_test(
+            43,
+            make_prg(),
+            vec![0u8; CHR_SIZE],
+            NametableLayout::Vertical,
+        ))
+    }
+
+    // ── Factory ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn mapper_43_is_registered() {
+        let result = create_mapper(MapperContext::new_for_test(
+            43,
+            make_prg(),
+            vec![0u8; CHR_SIZE],
+            NametableLayout::Vertical,
+        ));
+        assert!(
+            result.is_ok(),
+            "Mapper 43 must be registered in the factory"
+        );
+    }
+
+    // ── Fixed PRG windows ────────────────────────────────────────────────────
+
+    #[test]
+    fn prg_5000_reads_2kb_chip_with_masking() {
+        let mapper = make_mapper();
+        // $5000 → offset 0x10000 + (0x5000 & 0x7FF) = 0x10000 → sentinel 0xAB
+        assert_eq!(
+            mapper.read_prg(0x5000),
+            0xAB,
+            "$5000 must read from the 2KB chip sentinel region"
+        );
+        // $5800 → (0x5800 & 0x7FF) = 0 → also sentinel
+        assert_eq!(mapper.read_prg(0x5800), 0xAB);
+        // Masking: $57FF → (0x57FF & 0x7FF) = 0x7FF → still within 2KB chip → 0xAB
+        assert_eq!(mapper.read_prg(0x57FF), 0xAB);
+    }
+
+    #[test]
+    fn prg_6000_is_fixed_bank_2() {
+        let mapper = make_mapper();
+        // Bank 2 at offset 0x4000; fill byte = 2
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            2,
+            "$6000 must read from fixed bank 2"
+        );
+        assert_eq!(mapper.read_prg(0x7FFF), 2);
+    }
+
+    #[test]
+    fn prg_8000_is_fixed_bank_1() {
+        let mapper = make_mapper();
+        // Bank 1 at offset 0x2000; fill byte = 1
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            1,
+            "$8000 must read from fixed bank 1"
+        );
+        assert_eq!(mapper.read_prg(0x9FFF), 1);
+    }
+
+    #[test]
+    fn prg_a000_is_fixed_bank_0() {
+        let mapper = make_mapper();
+        // Bank 0 at offset 0x0000; fill byte = 0
+        assert_eq!(
+            mapper.read_prg(0xA000),
+            0,
+            "$A000 must read from fixed bank 0"
+        );
+        assert_eq!(mapper.read_prg(0xBFFF), 0);
+    }
+
+    #[test]
+    fn prg_e000_is_fixed_bank_9() {
+        let mapper = make_mapper();
+        // Bank 9 at offset 0x12000; fill byte = 9
+        assert_eq!(
+            mapper.read_prg(0xE000),
+            9,
+            "$E000 must read from fixed bank 9"
+        );
+        assert_eq!(mapper.read_prg(0xFFFF), 9);
+    }
+
+    // ── Switchable $C000-$DFFF ───────────────────────────────────────────────
+
+    #[test]
+    fn prg_c000_defaults_to_bank_4() {
+        let mapper = make_mapper();
+        // Default switchable_bank = 0; BANK_LOOKUP[0] = 4; fill byte = 4
+        assert_eq!(
+            mapper.read_prg(0xC000),
+            4,
+            "$C000 must default to BANK_LOOKUP[0] = bank 4"
+        );
+    }
+
+    #[test]
+    fn prg_c000_switches_via_register_at_4022() {
+        let mut mapper = make_mapper();
+        // Write index 1 → BANK_LOOKUP[1] = 3 → fill byte = 3
+        mapper.write_prg(0x4022, 1);
+        assert_eq!(
+            mapper.read_prg(0xC000),
+            3,
+            "After writing 1 to $4022, $C000 should read bank 3"
+        );
+        // Mirrored address: $4222 also hits the register (addr & 0x71FF == 0x4022)
+        mapper.write_prg(0x4222, 0); // back to BANK_LOOKUP[0] = 4
+        assert_eq!(mapper.read_prg(0xC000), 4);
+    }
+
+    #[test]
+    fn c000_bank_lookup_table_all_7_entries() {
+        let mut mapper = make_mapper();
+        let expected: [u8; 8] = [4, 3, 4, 4, 4, 7, 5, 6];
+        for (idx, &bank) in expected.iter().enumerate() {
+            mapper.write_prg(0x4022, idx as u8);
+            assert_eq!(
+                mapper.read_prg(0xC000),
+                bank,
+                "BANK_LOOKUP[{idx}] should select bank {bank}, got {}",
+                mapper.read_prg(0xC000)
+            );
+        }
+    }
+
+    // ── IRQ ──────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn irq_fires_after_4096_cycles() {
+        let mut mapper = make_mapper_direct();
+        assert!(!mapper.irq_pending(), "IRQ must not be pending initially");
+        for _ in 0..4095 {
+            mapper.cpu_cycle();
+        }
+        assert!(
+            !mapper.irq_pending(),
+            "IRQ must not fire before 4096 cycles"
+        );
+        mapper.cpu_cycle(); // 4096th cycle → overflow
+        assert!(
+            mapper.irq_pending(),
+            "IRQ must fire after exactly 4096 cycles"
+        );
+    }
+
+    #[test]
+    fn irq_acknowledge_resets_counter() {
+        let mut mapper = make_mapper_direct();
+        // Run 4096 cycles to fire IRQ
+        for _ in 0..4096 {
+            mapper.cpu_cycle();
+        }
+        assert!(mapper.irq_pending(), "IRQ should be pending");
+        // Writing to $4122 resets counter and clears IRQ
+        mapper.write_prg(0x4122, 0x00);
+        assert!(
+            !mapper.irq_pending(),
+            "IRQ must be cleared after writing $4122"
+        );
+        // Counter is reset; running 4095 more cycles must not fire again
+        for _ in 0..4095 {
+            mapper.cpu_cycle();
+        }
+        assert!(
+            !mapper.irq_pending(),
+            "IRQ must not fire before counter overflows again"
+        );
+        mapper.cpu_cycle();
+        assert!(
+            mapper.irq_pending(),
+            "IRQ must fire again after another 4096 cycles"
+        );
+    }
+
+    // ── CHR ──────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn chr_rom_readable() {
+        let mut mapper = {
+            let mut chr = vec![0u8; CHR_SIZE];
+            chr[0x0000] = 0x42;
+            chr[0x1FFF] = 0x99;
+            Box::new(Mapper43::new(MapperContext::new_for_test(
+                43,
+                make_prg(),
+                chr,
+                NametableLayout::Vertical,
+            )))
+        };
+        assert_eq!(mapper.read_chr(0x0000), 0x42);
+        assert_eq!(mapper.read_chr(0x1FFF), 0x99);
+    }
+
+    // ── Snapshot round-trip ──────────────────────────────────────────────────
+
+    #[test]
+    fn registers_snapshot_round_trips() {
+        let mut mapper = make_mapper_direct();
+        // Change some state
+        mapper.write_prg(0x4022, 5); // switchable_bank = 5
+        for _ in 0..100 {
+            mapper.cpu_cycle();
+        }
+        let snap = mapper.registers_snapshot();
+        // Build a fresh mapper and restore
+        let mut mapper2 = make_mapper_direct();
+        mapper2.restore_registers(&snap);
+        assert_eq!(
+            mapper2.read_prg(0xC000),
+            mapper.read_prg(0xC000),
+            "Switchable bank must be preserved across snapshot"
+        );
+        // IRQ pending state
+        assert_eq!(
+            mapper2.irq_pending(),
+            mapper.irq_pending(),
+            "IRQ pending must be preserved"
+        );
+    }
+}
