@@ -258,6 +258,52 @@ canvas {
     display: block;
 }
 
+.debugger-watch-title {
+    color: #c8ffc8;
+    margin-bottom: 2px;
+}
+
+.debugger-watch-controls {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 2px;
+    align-items: center;
+}
+
+.dbg-watch-input {
+    width: 76px;
+    background: rgba(10, 11, 15, 0.96);
+    border: 1px solid rgba(100, 200, 100, 0.5);
+    color: #90ee90;
+    font-family: "Courier New", Courier, monospace;
+    font-size: 0.72rem;
+    padding: 2px 4px;
+    border-radius: 4px;
+}
+
+.debugger-watch-block {
+    display: block;
+    overflow: visible;
+    color: #6ab06a;
+}
+
+.debugger-watch-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 2px;
+}
+
+.debugger-watch-value {
+    flex: 1;
+}
+
+.debugger-watch-error {
+    color: #ff7d7d;
+    margin-bottom: 2px;
+    display: block;
+}
+
 .debugger-ppu-title {
     color: #c8ffc8;
 }

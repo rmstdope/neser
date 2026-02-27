@@ -44,6 +44,18 @@ pub struct DebuggerUiAction {
     pub set_prg_hexdump_base: Option<u16>,
     /// Move PRG hexdump base by byte delta (e.g. -16 or +16).
     pub nudge_prg_hexdump_base_by_bytes: Option<i16>,
+    /// Add a memory watch address.
+    pub add_watch_address: Option<u16>,
+    /// Remove memory watch entry by index.
+    pub remove_watch_address: Option<usize>,
+    /// Update memory watch entry address by index.
+    pub update_watch_address: Option<WatchAddressUpdate>,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct WatchAddressUpdate {
+    pub index: usize,
+    pub address: u16,
 }
 
 /// Persistent state for the "add breakpoint" row in the breakpoint panel.
@@ -62,6 +74,15 @@ pub struct HexdumpUiState {
     pub address_input: String,
     pub error: Option<String>,
 }
+
+#[derive(Debug, Default)]
+pub struct WatchlistUiState {
+    pub add_input: String,
+    pub add_error: Option<String>,
+    pub row_inputs: Vec<String>,
+    pub row_errors: Vec<Option<String>>,
+}
+
 pub fn layout_model(display_size: [f32; 2]) -> (&'static str, [f32; 2], [f32; 2]) {
     let [display_w, display_h] = display_size;
     let margin = DEBUGGER_OUTER_MARGIN;
@@ -78,6 +99,7 @@ pub fn render(
     breakpoints: &BreakpointList,
     add_state: &mut BreakpointAddUiState,
     hexdump_state: &mut HexdumpUiState,
+    watch_state: &mut WatchlistUiState,
 ) -> DebuggerUiAction {
     let mut action = DebuggerUiAction::default();
     let (title, pos, size) = layout_model(ui.io().display_size);
@@ -95,6 +117,7 @@ pub fn render(
                 breakpoints,
                 add_state,
                 hexdump_state,
+                watch_state,
                 &mut action,
             );
         });
@@ -147,6 +170,7 @@ fn render_cpu_window(
     breakpoints: &BreakpointList,
     add_state: &mut BreakpointAddUiState,
     hexdump_state: &mut HexdumpUiState,
+    watch_state: &mut WatchlistUiState,
     action: &mut DebuggerUiAction,
 ) {
     render_cpu_controls(ui, action);
@@ -166,6 +190,7 @@ fn render_cpu_window(
         [layout.right_w, avail[1]],
         layout.gap,
         hexdump_state,
+        watch_state,
         action,
     );
 }
@@ -370,6 +395,7 @@ fn render_cpu_right_panel(
     size: [f32; 2],
     gap: f32,
     hexdump_state: &mut HexdumpUiState,
+    watch_state: &mut WatchlistUiState,
     action: &mut DebuggerUiAction,
 ) {
     ui.child_window("cpu_right")
@@ -378,7 +404,7 @@ fn render_cpu_right_panel(
         .build(|| {
             apply_debugger_ui_font_scale(ui);
             let right_avail = ui.content_region_avail();
-            let (regs_h, hex_h, oam_h) = cpu_right_panel_split(right_avail, gap);
+            let (regs_h, hex_h, oam_h, watch_h) = cpu_right_panel_split(right_avail, gap);
 
             ui.child_window("cpu_regs")
                 .size([right_avail[0], regs_h])
@@ -417,6 +443,16 @@ fn render_cpu_right_panel(
                 .build(|| {
                     apply_debugger_ui_font_scale(ui);
                     render_oam_panel(ui, snapshot);
+                });
+
+            ui.dummy([0.0, gap]);
+
+            ui.child_window("watch_panel")
+                .size([right_avail[0], watch_h])
+                .border(true)
+                .build(|| {
+                    apply_debugger_ui_font_scale(ui);
+                    render_memory_watch_panel(ui, snapshot, watch_state, action);
                 });
         });
 }
@@ -480,11 +516,109 @@ fn render_hexdump_controls(
     }
 }
 
-fn cpu_right_panel_split(avail: [f32; 2], gap: f32) -> (f32, f32, f32) {
+fn cpu_right_panel_split(avail: [f32; 2], gap: f32) -> (f32, f32, f32, f32) {
     let regs_h = avail[1] * 0.20;
-    let oam_h = avail[1] * 0.45;
-    let hex_h = (avail[1] - regs_h - oam_h - 2.0 * gap).max(0.0);
-    (regs_h, hex_h, oam_h)
+    let oam_h = avail[1] * 0.30;
+    let watch_h = avail[1] * 0.20;
+    let hex_h = (avail[1] - regs_h - oam_h - watch_h - 3.0 * gap).max(0.0);
+    (regs_h, hex_h, oam_h, watch_h)
+}
+
+fn render_memory_watch_panel(
+    ui: &imgui::Ui,
+    snapshot: &DebuggerSnapshot,
+    watch_state: &mut WatchlistUiState,
+    action: &mut DebuggerUiAction,
+) {
+    if !ui.collapsing_header("Memory Watch##watch_header", imgui::TreeNodeFlags::empty()) {
+        return;
+    }
+
+    let _width = ui.push_item_width(100.0);
+    let add_enter_pressed = ui
+        .input_text("##watch_add_addr", &mut watch_state.add_input)
+        .flags(imgui::InputTextFlags::ENTER_RETURNS_TRUE)
+        .build();
+    drop(_width);
+    ui.same_line();
+    let add_clicked = ui.small_button("Add##watch_add");
+    if add_clicked || add_enter_pressed {
+        match validate_watch_address_input(&watch_state.add_input) {
+            Ok(address) => {
+                action.add_watch_address = Some(address);
+                watch_state.add_input.clear();
+                watch_state.add_error = None;
+            }
+            Err(message) => {
+                watch_state.add_error = Some(message.to_string());
+            }
+        }
+    }
+
+    if let Some(message) = watch_state.add_error.as_deref() {
+        ui.text_colored([1.0, 0.4, 0.4, 1.0], message);
+    }
+
+    ensure_watch_row_state_capacity(watch_state, snapshot.watch_values.len());
+    for (index, entry) in snapshot.watch_values.iter().enumerate() {
+        if watch_state.row_inputs[index].is_empty() {
+            watch_state.row_inputs[index] = format!("{:04X}", entry.address);
+        }
+
+        let _width = ui.push_item_width(70.0);
+        let edit_enter_pressed = ui
+            .input_text(
+                format!("##watch_addr_{}", index),
+                &mut watch_state.row_inputs[index],
+            )
+            .flags(imgui::InputTextFlags::ENTER_RETURNS_TRUE)
+            .build();
+        drop(_width);
+        if edit_enter_pressed {
+            match validate_watch_address_input(&watch_state.row_inputs[index]) {
+                Ok(address) => {
+                    action.update_watch_address = Some(WatchAddressUpdate { index, address });
+                    watch_state.row_errors[index] = None;
+                }
+                Err(message) => {
+                    watch_state.row_errors[index] = Some(message.to_string());
+                }
+            }
+        }
+
+        ui.same_line();
+        ui.text(format_watch_entry(entry.address, entry.value));
+        ui.same_line();
+        if ui.small_button(format!("X##watch_rm_{}", index)) {
+            action.remove_watch_address = Some(index);
+        }
+
+        if let Some(message) = watch_state.row_errors[index].as_deref() {
+            ui.text_colored([1.0, 0.4, 0.4, 1.0], message);
+        }
+    }
+}
+
+fn ensure_watch_row_state_capacity(watch_state: &mut WatchlistUiState, len: usize) {
+    if watch_state.row_inputs.len() < len {
+        watch_state.row_inputs.resize_with(len, String::new);
+    } else if watch_state.row_inputs.len() > len {
+        watch_state.row_inputs.truncate(len);
+    }
+
+    if watch_state.row_errors.len() < len {
+        watch_state.row_errors.resize(len, None);
+    } else if watch_state.row_errors.len() > len {
+        watch_state.row_errors.truncate(len);
+    }
+}
+
+fn format_watch_entry(address: u16, value: u8) -> String {
+    format!("${:04X}: ${:02X} ({})", address, value, value)
+}
+
+fn validate_watch_address_input(value: &str) -> Result<u16, &'static str> {
+    parse_hex_u16(value).ok_or("Invalid watch address")
 }
 
 fn format_disasm_bytes(bytes: &[u8]) -> String {
@@ -887,5 +1021,23 @@ mod tests {
         assert!(entry.contains("CC"), "tile=CC");
         assert!(entry.contains("01"), "attr=01");
         assert!(entry.contains("DD"), "X=DD");
+    }
+
+    #[test]
+    fn test_format_watch_entry_renders_hex_and_decimal_value() {
+        let row = format_watch_entry(0x0010, 0x7F);
+        assert!(row.contains("$0010"), "address should be hex");
+        assert!(row.contains("$7F"), "value should be hex");
+        assert!(row.contains("127"), "value should include decimal");
+    }
+
+    #[test]
+    fn test_validate_watch_address_input_accepts_hex_and_rejects_invalid() {
+        assert_eq!(validate_watch_address_input("0010"), Ok(0x0010));
+        assert_eq!(validate_watch_address_input("0x00FF"), Ok(0x00FF));
+        assert_eq!(
+            validate_watch_address_input("GG"),
+            Err("Invalid watch address")
+        );
     }
 }

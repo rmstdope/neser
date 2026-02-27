@@ -34,6 +34,7 @@ import { createToastContainer, createToastOverlay, drainNesToasts } from "./toas
 import { createGamepadInitToastNotifier } from "./gamepad_init_toast.js";
 import { renderDisasmLines } from "./debugger_disasm.js";
 import { buildOamHtml } from "./debugger_oam.js";
+import { formatWatchEntry, parseWatchAddressInput } from "./debugger_watch.js";
 import {
     computeNtscDisplayWidth,
     computeScrollViewportRects,
@@ -1254,6 +1255,8 @@ function pauseResume() {
 }
 
 let debuggerHexdumpError = "";
+let debuggerWatchAddError = "";
+let debuggerWatchRowErrors = new Map();
 
 function buildDisasmHtml(nes) {
     try {
@@ -1328,6 +1331,47 @@ function buildHexdumpHtml(snap) {
         `${errorHtml}` +
         `<span class="debugger-hexdump-title">PRG-ROM hexdump @ ${baseHex}</span>` +
         `<span class="debugger-hexdump-block">${linesHtml}</span>`
+    );
+}
+
+function buildWatchHtml(snap) {
+    const watchValues = Array.isArray(snap.watch_values) ? snap.watch_values : [];
+    const esc = (value) => String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+
+    const rows = watchValues.map((entry, index) => {
+        const address = Number(entry?.address) & 0xFFFF;
+        const value = Number(entry?.value) & 0xFF;
+        const text = esc(formatWatchEntry(address, value));
+        const addrHex = address.toString(16).toUpperCase().padStart(4, "0");
+        const rowError = debuggerWatchRowErrors.get(index);
+        const rowErrorHtml = rowError
+            ? `<span class="debugger-watch-error">${esc(rowError)}</span>`
+            : "";
+        return (
+            `<div class="debugger-watch-row">` +
+            `<input class="dbg-watch-input" id="dbg-watch-addr-${index}" value="${addrHex}" />` +
+            `<span class="debugger-watch-value">${text}</span>` +
+            `<button class="dbg-btn" id="dbg-watch-rm-${index}">X</button>` +
+            `</div>` +
+            rowErrorHtml
+        );
+    }).join("");
+
+    const addErrorHtml = debuggerWatchAddError
+        ? `<span class="debugger-watch-error">${esc(debuggerWatchAddError)}</span>`
+        : "";
+
+    return (
+        `<span class="debugger-watch-title">Memory Watch</span>` +
+        `<div class="debugger-watch-controls">` +
+        `<input class="dbg-watch-input" id="dbg-watch-add-input" placeholder="addr (hex)" />` +
+        `<button class="dbg-btn" id="dbg-watch-add">Add</button>` +
+        `</div>` +
+        addErrorHtml +
+        `<div class="debugger-watch-block">${rows}</div>`
     );
 }
 
@@ -1490,6 +1534,7 @@ function updateDebuggerPanel() {
     const regsHtml = buildRegsHtml(snap);
     const hexdumpHtml = buildHexdumpHtml(snap);
     const oamHtml = buildOamHtml(snap.oam);
+    const watchHtml = buildWatchHtml(snap);
     const ppuViewerVisible = nes.debugger_is_ppu_viewer_open();
     const ppuViewerHtml = buildPpuViewerHtml(ppuViewerVisible);
     const ppuViewerButtonText = ppuViewerVisible ? "Hide PPU Viewer" : "Show PPU Viewer";
@@ -1518,6 +1563,8 @@ function updateDebuggerPanel() {
         `${hexdumpHtml}` +
         `<span class="debugger-hexdump-divider"></span>` +
         `${oamHtml}` +
+        `<span class="debugger-hexdump-divider"></span>` +
+        `${watchHtml}` +
         `</div>` +
         `</div>` +
         `${ppuViewerHtml}` +
@@ -1550,6 +1597,76 @@ function wireDebuggerButtons() {
             debuggerHexdumpGoToAddress();
         }
     });
+
+    wire("dbg-watch-add", debuggerWatchAddAddress);
+    document.getElementById("dbg-watch-add-input")?.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+            e.preventDefault();
+            debuggerWatchAddAddress();
+        }
+    });
+
+    document.querySelectorAll("[id^='dbg-watch-rm-']").forEach((el) => {
+        el.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const index = Number(el.id.replace("dbg-watch-rm-", ""));
+            if (Number.isInteger(index)) {
+                debuggerWatchRemoveAddress(index);
+            }
+        });
+    });
+
+    document.querySelectorAll("[id^='dbg-watch-addr-']").forEach((el) => {
+        el.addEventListener("keydown", (e) => {
+            if (e.key !== "Enter") {
+                return;
+            }
+            e.preventDefault();
+            const index = Number(el.id.replace("dbg-watch-addr-", ""));
+            if (!Number.isInteger(index)) {
+                return;
+            }
+            debuggerWatchUpdateAddress(index, el.value);
+        });
+    });
+}
+
+function debuggerWatchAddAddress() {
+    if (!nes) return;
+    const input = document.getElementById("dbg-watch-add-input");
+    if (!(input instanceof HTMLInputElement)) return;
+
+    const parsed = parseWatchAddressInput(input.value);
+    if (parsed === null) {
+        debuggerWatchAddError = "Invalid watch address";
+        updateDebuggerPanel();
+        return;
+    }
+
+    debuggerWatchAddError = "";
+    nes.debugger_watch_add(parsed);
+    updateDebuggerPanel();
+}
+
+function debuggerWatchRemoveAddress(index) {
+    if (!nes) return;
+    debuggerWatchRowErrors.delete(index);
+    nes.debugger_watch_remove(index);
+    updateDebuggerPanel();
+}
+
+function debuggerWatchUpdateAddress(index, value) {
+    if (!nes) return;
+    const parsed = parseWatchAddressInput(value);
+    if (parsed === null) {
+        debuggerWatchRowErrors.set(index, "Invalid watch address");
+        updateDebuggerPanel();
+        return;
+    }
+
+    debuggerWatchRowErrors.delete(index);
+    nes.debugger_watch_update(index, parsed);
+    updateDebuggerPanel();
 }
 
 function showDebuggerPanel() {
