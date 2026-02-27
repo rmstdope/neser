@@ -13,8 +13,18 @@ use crate::debugging::{Tracing, log_info};
 use crate::input::{ControllerInput, ControllerType, controller_input_type};
 use crate::ppu::Ppu;
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::rc::Rc;
+
+const MAX_CPU_TRACE_LINES: usize = 512;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CpuTraceLine {
+    pub addr: u16,
+    pub bytes: Vec<u8>,
+    pub text: String,
+}
 
 pub struct Nes {
     // TODO pub fields smell
@@ -25,6 +35,7 @@ pub struct Nes {
     pub cpu: Cpu,
     fractional_ppu_cycles: f64,
     ready_to_render: bool,
+    recent_cpu_trace: VecDeque<CpuTraceLine>,
 }
 
 impl Nes {
@@ -58,6 +69,7 @@ impl Nes {
             cpu,
             fractional_ppu_cycles: 0.0,
             ready_to_render: false,
+            recent_cpu_trace: VecDeque::with_capacity(MAX_CPU_TRACE_LINES),
         }
     }
 
@@ -186,6 +198,7 @@ impl Nes {
 
         self.fractional_ppu_cycles = 0.0;
         self.ready_to_render = false;
+        self.recent_cpu_trace.clear();
 
         // Re-establish 1-cycle PPU offset after reset
         self.ppu.borrow_mut().run_ppu_cycles(1);
@@ -228,6 +241,9 @@ impl Nes {
 
         let cycles_before = self.cpu.get_total_cycles();
 
+        let trace_line = self.capture_current_cpu_trace_line();
+        self.push_cpu_trace_line(trace_line);
+
         // Execute exactly one CPU instruction.
         self.cpu.execute();
 
@@ -249,6 +265,45 @@ impl Nes {
         // }
 
         self.run_cpu_tick()
+    }
+
+    pub fn recent_cpu_trace(&self, limit: usize) -> Vec<CpuTraceLine> {
+        if limit == 0 || self.recent_cpu_trace.is_empty() {
+            return Vec::new();
+        }
+
+        let start = self.recent_cpu_trace.len().saturating_sub(limit);
+        self.recent_cpu_trace
+            .iter()
+            .skip(start)
+            .cloned()
+            .collect()
+    }
+
+    fn push_cpu_trace_line(&mut self, line: CpuTraceLine) {
+        if self.recent_cpu_trace.len() == MAX_CPU_TRACE_LINES {
+            self.recent_cpu_trace.pop_front();
+        }
+        self.recent_cpu_trace.push_back(line);
+    }
+
+    fn capture_current_cpu_trace_line(&self) -> CpuTraceLine {
+        let pc = self.cpu.pc();
+        let memory = self.bus.borrow();
+        let opcode = memory.read_cpu_for_debugger(pc);
+        let instruction = lookup(opcode);
+        let byte_len = instruction.bytes().max(1) as usize;
+
+        let mut bytes = Vec::with_capacity(byte_len);
+        for offset in 0..byte_len {
+            bytes.push(memory.read_cpu_for_debugger(pc.wrapping_add(offset as u16)));
+        }
+
+        CpuTraceLine {
+            addr: pc,
+            text: format_compact_trace_instruction(instruction, pc, &bytes),
+            bytes,
+        }
     }
 
     /// NES system palette - 64 RGB color values (0x00-0x3F)
@@ -773,8 +828,55 @@ impl Nes {
         // Clear derived state
         self.fractional_ppu_cycles = 0.0;
         self.ready_to_render = false;
+        self.recent_cpu_trace.clear();
 
         Ok(())
+    }
+}
+
+fn format_compact_trace_instruction(meta: &crate::cpu::OpCode, addr: u16, bytes: &[u8]) -> String {
+    let operand = match meta.mode {
+        "IMP" => String::new(),
+        "ACC" => "A".to_string(),
+        "IMM" => format!("#${:02X}", bytes.get(1).copied().unwrap_or(0)),
+        "ZP" => format!("${:02X}", bytes.get(1).copied().unwrap_or(0)),
+        "ZPX" => format!("${:02X},X", bytes.get(1).copied().unwrap_or(0)),
+        "ZPY" => format!("${:02X},Y", bytes.get(1).copied().unwrap_or(0)),
+        "INDX" => format!("(${:02X},X)", bytes.get(1).copied().unwrap_or(0)),
+        "INDY" | "INDYW" => format!("(${:02X}),Y", bytes.get(1).copied().unwrap_or(0)),
+        "REL" => {
+            let off = bytes.get(1).copied().unwrap_or(0) as i8;
+            let next = addr.wrapping_add(2);
+            let target = next.wrapping_add(off as i16 as u16);
+            format!("${:04X}", target)
+        }
+        "ABS" => {
+            let lo = bytes.get(1).copied().unwrap_or(0);
+            let hi = bytes.get(2).copied().unwrap_or(0);
+            format!("${:04X}", u16::from_le_bytes([lo, hi]))
+        }
+        "ABSX" | "ABSXW" => {
+            let lo = bytes.get(1).copied().unwrap_or(0);
+            let hi = bytes.get(2).copied().unwrap_or(0);
+            format!("${:04X},X", u16::from_le_bytes([lo, hi]))
+        }
+        "ABSY" | "ABSYW" => {
+            let lo = bytes.get(1).copied().unwrap_or(0);
+            let hi = bytes.get(2).copied().unwrap_or(0);
+            format!("${:04X},Y", u16::from_le_bytes([lo, hi]))
+        }
+        "IND" => {
+            let lo = bytes.get(1).copied().unwrap_or(0);
+            let hi = bytes.get(2).copied().unwrap_or(0);
+            format!("(${:04X})", u16::from_le_bytes([lo, hi]))
+        }
+        _ => String::new(),
+    };
+
+    if operand.is_empty() {
+        meta.mnemonic.to_string()
+    } else {
+        format!("{} {}", meta.mnemonic, operand)
     }
 }
 
@@ -1979,5 +2081,37 @@ mod tests {
             game_vector,
             "Hard reset without trainer must go directly to game reset vector"
         );
+    }
+
+    #[test]
+    fn test_recent_cpu_trace_is_bounded_and_returns_recent_tail() {
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+
+        let mut prg_rom = vec![0xEAu8; 32 * 1024];
+        // Reset vector -> $8000
+        prg_rom[0x7FFC] = 0x00;
+        prg_rom[0x7FFD] = 0x80;
+        let cartridge = crate::cartridge::Cartridge::from_parts(
+            prg_rom,
+            vec![],
+            crate::cartridge::NametableLayout::Horizontal,
+        );
+        nes.insert_cartridge(cartridge);
+        nes.cpu.set_pc(0x8000);
+
+        let executed = MAX_CPU_TRACE_LINES + 20;
+        for _ in 0..executed {
+            nes.run_cpu_tick();
+        }
+
+        let full = nes.recent_cpu_trace(usize::MAX);
+        assert_eq!(full.len(), MAX_CPU_TRACE_LINES);
+
+        let recent = nes.recent_cpu_trace(32);
+        assert_eq!(recent.len(), 32);
+        let expected_first = 0x8000u16.wrapping_add((executed - 32) as u16);
+        assert_eq!(recent[0].addr, expected_first);
     }
 }

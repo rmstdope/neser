@@ -2,7 +2,8 @@ use crate::console::Nes;
 
 use super::disasm::{DisasmWindowConfig, disassemble_window, disassemble_window_with_state};
 use super::types::{
-    CpuDisasmLineSnapshot, CpuDisasmWindowState, CpuRegsSnapshot, DebuggerSnapshot,
+    CpuDisasmLineSnapshot, CpuDisasmWindowState, CpuRegsSnapshot, CpuTraceLineSnapshot,
+    DebuggerSnapshot,
     MemoryWatchEntrySnapshot,
 };
 
@@ -160,6 +161,16 @@ fn build_snapshot(
             .collect::<Vec<_>>()
     };
 
+    let recent_trace = nes
+        .recent_cpu_trace(32)
+        .into_iter()
+        .map(|line| CpuTraceLineSnapshot {
+            addr: line.addr,
+            bytes: line.bytes,
+            text: line.text,
+        })
+        .collect::<Vec<_>>();
+
     let (nmi_vector, reset_vector, irq_vector) = read_vectors_for_snapshot(nes);
 
     let (frame_count, scanline, pixel, oam) = {
@@ -231,6 +242,7 @@ apu_cycle: {apu_cycle}  frame_counter_cycle: {frame_counter_cycle}",
         apu,
         oam,
         watch_values,
+        recent_trace,
     }
 }
 
@@ -469,5 +481,29 @@ mod tests {
         assert_eq!(snap.watch_values[0].value, 0x7F);
         assert_eq!(snap.watch_values[1].address, 0x00FF);
         assert_eq!(snap.watch_values[1].value, 0x12);
+    }
+
+    #[test]
+    fn test_snapshot_includes_recent_cpu_trace_lines() {
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+
+        let mut prg_rom = vec![0xEAu8; 32 * 1024];
+        // Reset vector -> $8000
+        prg_rom[0x7FFC] = 0x00;
+        prg_rom[0x7FFD] = 0x80;
+        let cartridge = Cartridge::from_parts(prg_rom, vec![], NametableLayout::Horizontal);
+        nes.insert_cartridge(cartridge);
+        nes.cpu.set_pc(0x8000);
+
+        nes.run_cpu_tick();
+        nes.run_cpu_tick();
+
+        let snap = snapshot(&nes);
+        assert_eq!(snap.recent_trace.len(), 2);
+        assert_eq!(snap.recent_trace[0].addr, 0x8000);
+        assert_eq!(snap.recent_trace[1].addr, 0x8001);
+        assert!(snap.recent_trace[0].text.contains("NOP"));
     }
 }

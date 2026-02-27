@@ -372,3 +372,20 @@ canvas {
     font-weight: bold;
     background: rgba(80, 80, 0, 0.35);
 }
+
+.debugger-trace-title {
+    color: #c8ffc8;
+    margin-bottom: 2px;
+}
+
+.debugger-trace-block {
+    display: block;
+    overflow-y: auto;
+    min-height: 0;
+    max-height: 32%;
+    color: #6ab06a;
+}
+
+.debugger-trace-row {
+    display: block;
+}

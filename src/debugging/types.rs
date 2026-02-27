@@ -31,6 +31,13 @@ pub struct MemoryWatchEntrySnapshot {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CpuTraceLineSnapshot {
+    pub addr: u16,
+    pub bytes: Vec<u8>,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DebuggerSnapshot {
     pub cpu_regs: CpuRegsSnapshot,
     pub prg_hexdump_base: u16,
@@ -43,6 +50,8 @@ pub struct DebuggerSnapshot {
     pub oam: Vec<u8>,
     /// Memory watch entries with live values from CPU address space.
     pub watch_values: Vec<MemoryWatchEntrySnapshot>,
+    /// Most recent executed CPU instructions (bounded ring buffer tail).
+    pub recent_trace: Vec<CpuTraceLineSnapshot>,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]

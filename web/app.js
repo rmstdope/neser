@@ -1375,6 +1375,28 @@ function buildWatchHtml(snap) {
     );
 }
 
+function buildTraceHtml(snap) {
+    const traceLines = Array.isArray(snap.recent_trace) ? snap.recent_trace : [];
+    const esc = (value) => String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+
+    const rows = traceLines.map((entry) => {
+        const addr = (Number(entry?.addr) & 0xFFFF).toString(16).toUpperCase().padStart(4, "0");
+        const bytes = Array.isArray(entry?.bytes)
+            ? entry.bytes.map((value) => (Number(value) & 0xFF).toString(16).toUpperCase().padStart(2, "0")).join(" ")
+            : "";
+        const text = typeof entry?.text === "string" ? entry.text : "";
+        return `<span class="debugger-trace-row">${esc(`${addr}: ${bytes.padEnd(8, " ")} ${text}`)}</span>`;
+    }).join("");
+
+    return (
+        `<span class="debugger-trace-title">Trace (recent 32)</span>` +
+        `<div class="debugger-trace-block">${rows}</div>`
+    );
+}
+
 const PPU_PATTERN_CANVAS_ID = "dbg-ppu-pattern";
 const PPU_NAMETABLES_CANVAS_ID = "dbg-ppu-nametables";
 const PPU_SECTION_ID = "dbg-ppu-section";
@@ -1531,6 +1553,7 @@ function updateDebuggerPanel() {
     }
 
     const disasmHtml = buildDisasmHtml(nes);
+    const traceHtml = buildTraceHtml(snap);
     const regsHtml = buildRegsHtml(snap);
     const hexdumpHtml = buildHexdumpHtml(snap);
     const oamHtml = buildOamHtml(snap.oam);
@@ -1554,6 +1577,8 @@ function updateDebuggerPanel() {
         `<div class="debugger-disasm">` +
         `<span class="debugger-disasm-title">Code</span>` +
         `<span class="disasm-block">${disasmHtml}</span>` +
+        `<span class="debugger-hexdump-divider"></span>` +
+        `${traceHtml}` +
         `</div>` +
         `<div class="debugger-regs">` +
         `<div class="debugger-regs-scroll">` +

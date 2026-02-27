@@ -775,8 +775,9 @@ fn serialize_debugger_snapshot_json(snap: &crate::debugging::DebuggerSnapshot) -
     let prg_hexdump_bytes = bytes_to_json_array(&snap.prg_hexdump_bytes);
     let oam = bytes_to_json_array(&snap.oam);
     let watch_values = watch_values_to_json_array(snap);
+    let recent_trace = recent_trace_to_json_array(snap);
     format!(
-        r#"{{"pc":{pc},"a":{a},"x":{x},"y":{y},"sp":{sp},"p":{p},"cycles":{cycles},"scanline":{scanline},"pixel":{pixel},"frame_count":{frame_count},"interrupt":{interrupt},"nmi_vector":{nmi_vector},"reset_vector":{reset_vector},"irq_vector":{irq_vector},"prg_hexdump_base":{prg_hexdump_base},"prg_hexdump_bytes":{prg_hexdump_bytes},"oam":{oam},"watch_values":{watch_values}}}"#,
+        r#"{{"pc":{pc},"a":{a},"x":{x},"y":{y},"sp":{sp},"p":{p},"cycles":{cycles},"scanline":{scanline},"pixel":{pixel},"frame_count":{frame_count},"interrupt":{interrupt},"nmi_vector":{nmi_vector},"reset_vector":{reset_vector},"irq_vector":{irq_vector},"prg_hexdump_base":{prg_hexdump_base},"prg_hexdump_bytes":{prg_hexdump_bytes},"oam":{oam},"watch_values":{watch_values},"recent_trace":{recent_trace}}}"#,
         pc = r.pc,
         a = r.a,
         x = r.x,
@@ -795,6 +796,7 @@ fn serialize_debugger_snapshot_json(snap: &crate::debugging::DebuggerSnapshot) -
         prg_hexdump_bytes = prg_hexdump_bytes,
         oam = oam,
         watch_values = watch_values,
+        recent_trace = recent_trace,
     )
 }
 
@@ -807,6 +809,23 @@ fn watch_values_to_json_array(snap: &crate::debugging::DebuggerSnapshot) -> Stri
         json.push_str(&format!(
             r#"{{"address":{},"value":{}}}"#,
             entry.address, entry.value
+        ));
+    }
+    json.push(']');
+    json
+}
+
+fn recent_trace_to_json_array(snap: &crate::debugging::DebuggerSnapshot) -> String {
+    let mut json = String::from("[");
+    for (index, entry) in snap.recent_trace.iter().enumerate() {
+        if index > 0 {
+            json.push(',');
+        }
+        json.push_str(&format!(
+            r#"{{"addr":{},"bytes":{},"text":"{}"}}"#,
+            entry.addr,
+            bytes_to_json_array(&entry.bytes),
+            entry.text.replace('\\', "\\\\").replace('"', "\\\"")
         ));
     }
     json.push(']');
@@ -974,6 +993,16 @@ mod tests {
         assert!(
             json.contains("\"watch_values\""),
             "JSON should include watch_values field"
+        );
+    }
+
+    #[test]
+    fn test_serialize_debugger_snapshot_json_includes_recent_trace_field() {
+        let mut wasm = WasmNes::new();
+        let json = wasm.debugger_snapshot_json();
+        assert!(
+            json.contains("\"recent_trace\""),
+            "JSON should include recent_trace field"
         );
     }
 }

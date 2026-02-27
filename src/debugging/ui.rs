@@ -386,6 +386,13 @@ fn render_cpu_code_panel(ui: &imgui::Ui, snapshot: &DebuggerSnapshot, size: [f32
                     ui.text(text);
                 }
             }
+
+            ui.separator();
+            ui.text("Trace (recent 32)");
+            ui.separator();
+            for line in &snapshot.recent_trace {
+                ui.text(format_trace_entry(line.addr, &line.bytes, &line.text));
+            }
         });
 }
 
@@ -615,6 +622,11 @@ fn ensure_watch_row_state_capacity(watch_state: &mut WatchlistUiState, len: usiz
 
 fn format_watch_entry(address: u16, value: u8) -> String {
     format!("${:04X}: ${:02X} ({})", address, value, value)
+}
+
+fn format_trace_entry(address: u16, bytes: &[u8], text: &str) -> String {
+    let bytes_str = format_disasm_bytes(bytes);
+    format!("{:04X}: {:<8} {}", address, bytes_str, text)
 }
 
 fn validate_watch_address_input(value: &str) -> Result<u16, &'static str> {
@@ -1039,5 +1051,13 @@ mod tests {
             validate_watch_address_input("GG"),
             Err("Invalid watch address")
         );
+    }
+
+    #[test]
+    fn test_format_trace_entry_renders_compact_trace_row() {
+        let row = format_trace_entry(0xC000, &[0xA9, 0x01], "LDA #$01");
+        assert!(row.contains("C000"));
+        assert!(row.contains("A9 01"));
+        assert!(row.contains("LDA #$01"));
     }
 }
