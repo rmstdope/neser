@@ -194,7 +194,7 @@ canvas {
 
 .debugger-regs-block {
     display: block;
-    overflow: hidden;
+    overflow: visible;
 }
 
 .debugger-hexdump-divider {
@@ -233,7 +233,7 @@ canvas {
 
 .debugger-hexdump-block {
     display: block;
-    overflow: hidden;
+    overflow: visible;
     color: #6ab06a;
 }
 
@@ -250,7 +250,7 @@ canvas {
 
 .debugger-oam-block {
     display: block;
-    overflow: hidden;
+    overflow: visible;
     color: #6ab06a;
 }
 
