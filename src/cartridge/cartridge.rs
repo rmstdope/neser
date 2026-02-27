@@ -146,6 +146,10 @@ impl Cartridge {
         let parsed = crate::cartridge::ParsedRom::parse(data, Some(rom_db))
             .map_err(Self::map_parse_error)?;
 
+        crate::debugging::log_info(format!(
+            "Loaded rom with CRC32: {:08X}, mapper={}, submapper={}",
+            parsed.crc32, parsed.header.mapper, parsed.header.submapper
+        ));
         let mut cart = Self {
             mapper: Self::create_mapper(&parsed)?,
             crc32: parsed.crc32,
