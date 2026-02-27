@@ -12,10 +12,12 @@ use super::cprom::CpromMapper;
 use super::gxrom::GxROMMapper;
 use super::irem_g101::IremG101Mapper;
 use super::mapper42::Mapper42;
+use super::mapper43::Mapper43;
 use super::mapper44::Mapper44;
 use super::mapper45::Mapper45;
 use super::mapper46::Mapper46;
 use super::mapper47::Mapper47;
+use super::mapper48::Mapper48;
 use super::mapper49::Mapper49;
 use super::mapper50::Mapper50;
 use super::mapper51::Mapper51;
@@ -29,6 +31,7 @@ use super::mapper61::Mapper61;
 use super::mapper62::Mapper62;
 use super::mapper64::Mapper64;
 use super::mapper65::Mapper65;
+use super::mapper67::Mapper67;
 use super::mapper185::Mapper185;
 use super::mapper241::Mapper241;
 use super::mapper242::Mapper242;
@@ -507,10 +510,12 @@ mapper_registry! {
     34 => BnromNinaMapper::new,
     40 => Ntdec2722Mapper::new,
     42 => Mapper42::new,
+    43 => Mapper43::new,
     44 => Mapper44::new,
     45 => Mapper45::new,
     46 => Mapper46::new,
     47 => Mapper47::new,
+    48 => Mapper48::new,
     49 => Mapper49::new,
     50 => Mapper50::new,
     51 => Mapper51::new,
@@ -525,6 +530,7 @@ mapper_registry! {
     64 => Mapper64::new,
     65 => Mapper65::new,
     66 => GxROMMapper::new,
+    67 => Mapper67::new,
     68 => Sunsoft4Mapper::new,
     69 => SunsoftFme7Mapper::new,
     71 => CamericaMapper::new,
@@ -545,8 +551,8 @@ mapper_registry! {
 #[cfg(test)]
 const SUPPORTED_MAPPERS: &[u8] = &[
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 16, 17, 19, 21, 22, 23, 24, 25, 26, 32, 33, 34,
-    40, 42, 44, 45, 46, 47, 49, 50, 51, 52, 53, 56, 57, 58, 60, 61, 62, 64, 65, 66, 68, 69, 71, 78,
-    185, 206, 241, 242, 243, 244, 245, 246, 251, 254, 255,
+    40, 42, 43, 44, 45, 46, 47, 49, 50, 51, 52, 53, 56, 57, 58, 60, 61, 62, 64, 65, 66, 67, 68, 69,
+    71, 78, 185, 206, 241, 242, 243, 244, 245, 246, 251, 254, 255,
 ];
 
 /// List of supported iNES mapper IDs handled by the factory.
