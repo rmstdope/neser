@@ -12,7 +12,6 @@ use crate::cartridge::common::ChrMemory;
 use crate::trace_mapper;
 
 // Memory size constants
-const PRG_RAM_SIZE: usize = 8192; // 8KB
 const PRG_BANK_SIZE: usize = 0x4000; // 16KB
 const CHR_BANK_SIZE_4K: usize = 0x1000; // 4KB (for MMC1, MMC3)
 const CHR_BANK_SIZE_8K: usize = 0x2000; // 8KB
@@ -62,7 +61,12 @@ pub enum Mmc1Revision {
 /// - MMC1A: PRG-RAM is always enabled, bit 4 of PRG bank register is ignored
 /// - MMC1B/C: Bit 4 controls PRG-RAM (0 = enabled, 1 = disabled)
 ///
+/// SxROM Board Variant Support:
+/// - SUROM (512KB PRG-ROM): CHR bank 0 bit 4 selects 256KB outer PRG-ROM bank
+/// - SOROM/SXROM (>8KB PRG-RAM): CHR bank 0 bit 3 selects active 8KB PRG-RAM bank
+///
 /// See: https://www.nesdev.org/wiki/MMC1#ASIC_Revisions
+///      https://www.nesdev.org/wiki/SxROM
 ///
 /// Used in games like The Legend of Zelda, Metroid, Mega Man 2, Final Fantasy.
 pub struct MMC1Mapper {
@@ -83,6 +87,10 @@ pub struct MMC1Mapper {
     // Hardware revision
     revision: Mmc1Revision, // MMC1A vs MMC1B behavior
 
+    // SxROM board variant flags (detected from ROM metadata at construction)
+    surom: bool, // SUROM: 512KB PRG-ROM; chr_bank_0[4] selects 256KB outer bank
+    sorom: bool, // SOROM/SXROM: >8KB PRG-RAM; chr_bank_0[3] selects 8KB PRG-RAM bank
+
     // Cycle tracking for consecutive-write ignore behavior
     cpu_cycle_count: u64,  // Current CPU cycle count
     last_write_cycle: u64, // CPU cycle of last write to shift register
@@ -90,22 +98,38 @@ pub struct MMC1Mapper {
 
 impl MMC1Mapper {
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
-        let prg_rom = ctx.prg_rom;
-        let chr_rom = ctx.chr_rom;
-        let mirroring = ctx.mirroring;
-        // Default to MMC1B for backward compatibility and broader game support
-        Self::new_with_revision(prg_rom, chr_rom, mirroring, Mmc1Revision::Mmc1B)
+        let prg_ram_size = (ctx.prg_ram_banks_8k as usize) * 8192;
+        let surom = ctx.prg_rom.len() > 256 * 1024;
+        let sorom = ctx.prg_ram_banks_8k >= 2;
+        Self {
+            prg_rom: ctx.prg_rom,
+            prg_ram: vec![0; prg_ram_size],
+            chr_memory: ChrMemory::new(ctx.chr_rom),
+            shift_register: 0x10,
+            write_count: 0,
+            control: MMC1_DEFAULT_CONTROL,
+            chr_bank_0: 0,
+            chr_bank_1: 0,
+            prg_bank: 0,
+            revision: Mmc1Revision::Mmc1B,
+            surom,
+            sorom,
+            cpu_cycle_count: 0,
+            last_write_cycle: 0,
+        }
     }
 
+    #[cfg(test)]
     pub fn new_with_revision(
         prg_rom: Vec<u8>,
         chr_rom: Vec<u8>,
         _mirroring: NametableLayout,
         revision: Mmc1Revision,
     ) -> Self {
+        let surom = prg_rom.len() > 256 * 1024;
         Self {
             prg_rom,
-            prg_ram: vec![0; PRG_RAM_SIZE],
+            prg_ram: vec![0; 8192],
             chr_memory: ChrMemory::new(chr_rom),
             shift_register: 0x10, // Power-on state: bit 4 set
             write_count: 0,
@@ -114,6 +138,8 @@ impl MMC1Mapper {
             chr_bank_1: 0,
             prg_bank: 0,
             revision,
+            surom,
+            sorom: false,
             cpu_cycle_count: 0,
             last_write_cycle: 0,
         }
@@ -234,13 +260,20 @@ impl MMC1Mapper {
     fn get_prg_bank_offset(&self, addr: u16) -> usize {
         let prg_mode = self.get_prg_mode();
         let num_banks = self.prg_rom.len() / PRG_BANK_SIZE;
-        let last_bank = num_banks.saturating_sub(1);
         let mmc1a_a17_bypass = self.is_mmc1a_a17_bypass_active();
+
+        // SUROM: chr_bank_0 bit 4 selects which 256KB outer half of 512KB PRG-ROM
+        let outer_bank = if self.surom {
+            ((self.chr_bank_0 >> 4) & 1) as usize
+        } else {
+            0
+        };
 
         match prg_mode {
             0 | 1 => {
                 // 32KB mode: switch entire $8000-$FFFF, ignore low bit of bank number
-                let bank = ((self.prg_bank & 0x0E) >> 1) as usize;
+                let inner = ((self.prg_bank & 0x0E) >> 1) as usize;
+                let bank = (outer_bank << 3) | inner;
                 let bank = bank % (num_banks / 2).max(1);
                 bank * PRG_BANK_SIZE * 2
             }
@@ -250,11 +283,11 @@ impl MMC1Mapper {
                     let bank = if mmc1a_a17_bypass {
                         self.mmc1a_a17_bit() << 3
                     } else {
-                        0
+                        outer_bank << 4 // first bank of current outer half
                     };
                     (bank % num_banks.max(1)) * PRG_BANK_SIZE
                 } else {
-                    let bank = (self.prg_bank & 0x0F) as usize;
+                    let bank = (outer_bank << 4) | (self.prg_bank & 0x0F) as usize;
                     let bank = bank % num_banks.max(1);
                     bank * PRG_BANK_SIZE
                 }
@@ -262,19 +295,29 @@ impl MMC1Mapper {
             3 => {
                 // Switch 16KB bank at $8000, fix last bank at $C000
                 if addr < 0xC000 {
-                    let bank = (self.prg_bank & 0x0F) as usize;
+                    let bank = (outer_bank << 4) | (self.prg_bank & 0x0F) as usize;
                     let bank = bank % num_banks.max(1);
                     bank * PRG_BANK_SIZE
                 } else {
                     let bank = if mmc1a_a17_bypass {
                         (self.mmc1a_a17_bit() << 3) | 0x07
                     } else {
-                        last_bank
+                        (outer_bank << 4) | 0x0F // last bank of current outer half
                     };
                     (bank % num_banks.max(1)) * PRG_BANK_SIZE
                 }
             }
             _ => unreachable!(),
+        }
+    }
+
+    fn prg_ram_bank_offset(&self, addr: u16) -> usize {
+        let base = (addr - 0x6000) as usize;
+        if self.sorom {
+            let bank = ((self.chr_bank_0 >> 3) & 1) as usize;
+            bank * 8192 + base
+        } else {
+            base
         }
     }
 
@@ -306,11 +349,10 @@ impl Mapper for MMC1Mapper {
     fn read_prg(&self, addr: u16) -> u8 {
         match addr {
             0x6000..=0x7FFF => {
-                // Check if WRAM is enabled
                 if !self.is_wram_enabled() {
                     return 0; // Return 0 when WRAM is disabled (open bus behavior)
                 }
-                let offset = (addr - 0x6000) as usize;
+                let offset = self.prg_ram_bank_offset(addr);
                 self.prg_ram.get(offset).copied().unwrap_or(0)
             }
             0x8000..=0xFFFF => {
@@ -350,11 +392,10 @@ impl Mapper for MMC1Mapper {
     fn write_prg(&mut self, addr: u16, value: u8) {
         match addr {
             0x6000..=0x7FFF => {
-                // Only allow writes if WRAM is enabled
                 if !self.is_wram_enabled() {
                     return; // Ignore writes when WRAM is disabled
                 }
-                let offset = (addr - 0x6000) as usize;
+                let offset = self.prg_ram_bank_offset(addr);
                 if offset < self.prg_ram.len() {
                     self.prg_ram[offset] = value;
                 }
@@ -493,7 +534,7 @@ impl Mapper for MMC1Mapper {
             has_chr_banking: true,
             has_dynamic_mirroring: true,
             has_expansion_audio: false,
-            max_prg_ram_kb: 8,
+            max_prg_ram_kb: (self.prg_ram.len() / 1024).max(8),
             prg_bank_size_kb: 16,
             chr_bank_size_kb: 4,
             trainer_jsr: false,
@@ -1266,11 +1307,11 @@ mod tests {
     #[test]
     fn test_mmc1_comprehensive_state_roundtrip() {
         // Test round-trip of complete MMC1 state including all registers and banking modes
-        let mut prg_rom = vec![0; 512 * 1024]; // 512KB = 32 banks
+        let mut prg_rom = vec![0; 256 * 1024]; // 256KB = 16 banks
         let mut chr_rom = vec![0; 128 * 1024]; // 128KB = 32 4KB banks
 
         // Fill PRG ROM with bank-specific data
-        for bank in 0..32 {
+        for bank in 0..16 {
             let start = bank * 16 * 1024;
             let end = start + 16 * 1024;
             for byte in &mut prg_rom[start..end] {
@@ -1331,7 +1372,7 @@ mod tests {
         assert_eq!(mapper.read_chr(0x0000), 105); // CHR bank 5
         assert_eq!(mapper.read_chr(0x1000), 110); // CHR bank 10
         assert_eq!(mapper.read_prg(0x8000), 7); // Switchable bank 7 (PRG mode 3)
-        assert_eq!(mapper.read_prg(0xC000), 31); // Fixed last bank
+        assert_eq!(mapper.read_prg(0xC000), 15); // Fixed last bank (bank 15 = last of 16)
         assert_eq!(mapper.read_prg(0x6000), 0); // PRG-RAM
 
         // Take snapshot
@@ -1355,7 +1396,7 @@ mod tests {
         assert_eq!(restored.read_chr(0x0000), 105); // CHR bank 5
         assert_eq!(restored.read_chr(0x1000), 110); // CHR bank 10
         assert_eq!(restored.read_prg(0x8000), 7); // Switchable bank 7
-        assert_eq!(restored.read_prg(0xC000), 31); // Fixed last bank
+        assert_eq!(restored.read_prg(0xC000), 15); // Fixed last bank
         assert_eq!(restored.read_prg(0x6000), 0); // PRG-RAM restored
         assert_eq!(restored.read_prg(0x60FF), 0xFF); // PRG-RAM restored
     }
@@ -1474,6 +1515,133 @@ mod tests {
             mapper.read_prg_open_bus(0x7FFF, open_bus),
             open_bus,
             "Disabled WRAM should return open-bus at $7FFF"
+        );
+    }
+
+    // ===== SxROM Variant Tests (Issue #327) =====
+
+    /// SUROM: 512KB PRG-ROM — CHR bank 0 bit 4 selects 256KB outer PRG-ROM bank.
+    ///
+    /// The 5-bit CHR bank register has bit 4 repurposed as PRG-ROM A18 on SUROM boards.
+    /// This allows addressing 512KB of PRG-ROM even though the PRG bank register only holds
+    /// the low 4 bits (0-15 within the active 256KB half).
+    #[test]
+    fn test_mmc1_surom_outer_prg_bank_selection() {
+        // 512KB PRG-ROM = 32 × 16KB banks; fill each bank with its bank number
+        let mut prg_rom = vec![0u8; 512 * 1024];
+        for bank in 0..32usize {
+            let offset = bank * PRG_BANK_SIZE;
+            prg_rom[offset..offset + PRG_BANK_SIZE].fill(bank as u8);
+        }
+
+        let mut mapper = MMC1Mapper::new(
+            MapperContext::new_for_test(1, prg_rom, vec![], NametableLayout::Horizontal)
+                .with_prg_ram_banks(1),
+        );
+
+        // PRG mode 3 (default): $8000 switches 16KB, last bank fixed at $C000
+        // Select PRG bank 0 in lower half (outer bank bit = 0)
+        write_register(&mut mapper, 0xA000, 0x00); // chr_bank_0 = 0 (outer=0, bank 0)
+        write_register(&mut mapper, 0xE000, 0x00); // prg_bank = 0
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            0,
+            "With outer bank 0, bank 0 fills $8000"
+        );
+
+        // Now set chr_bank_0 bit 4 = 1 → switch to upper 256KB outer bank
+        write_register(&mut mapper, 0xA000, 0x10); // chr_bank_0 = 0x10 (outer=1, bank 16)
+        write_register(&mut mapper, 0xE000, 0x00); // prg_bank = 0 (within outer half)
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            16,
+            "With outer bank 1, prg_bank 0 maps to ROM bank 16"
+        );
+
+        // Verify outer bank bit also works for non-zero inner bank
+        write_register(&mut mapper, 0xA000, 0x10); // outer=1
+        write_register(&mut mapper, 0xE000, 0x02); // inner prg_bank = 2 → bank 18
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            18,
+            "Outer bank 1 + inner bank 2 maps to ROM bank 18"
+        );
+    }
+
+    /// SOROM: 16KB PRG-RAM (2×8KB) — CHR bank 0 bit 3 selects the active PRG-RAM bank.
+    ///
+    /// SOROM boards connect CHR A13 to the /CE of a second 8KB PRG-RAM chip, effectively
+    /// doubling the accessible PRG-RAM to 16KB via software bank selection.
+    #[test]
+    fn test_mmc1_sorom_prg_ram_banking() {
+        let prg_rom = vec![0u8; 256 * 1024];
+
+        let mut mapper = MMC1Mapper::new(
+            MapperContext::new_for_test(1, prg_rom, vec![], NametableLayout::Horizontal)
+                .with_prg_ram_banks(2), // 2 × 8KB = 16KB PRG-RAM → SOROM
+        );
+
+        // Ensure WRAM is enabled: set prg_bank bit 4 = 0
+        write_register(&mut mapper, 0xE000, 0x00);
+
+        // Write to PRG-RAM bank 0 (chr_bank_0 bit 3 = 0)
+        write_register(&mut mapper, 0xA000, 0x00); // chr_bank_0 bit 3 = 0 → bank 0
+        mapper.write_prg(0x6000, 0xAA);
+
+        // Switch to PRG-RAM bank 1 (chr_bank_0 bit 3 = 1)
+        write_register(&mut mapper, 0xA000, 0x08); // chr_bank_0 bit 3 = 1 → bank 1
+        mapper.write_prg(0x6000, 0xBB);
+
+        // Read back bank 0 — should still have 0xAA
+        write_register(&mut mapper, 0xA000, 0x00); // back to bank 0
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            0xAA,
+            "PRG-RAM bank 0 should hold 0xAA independently of bank 1"
+        );
+
+        // Read back bank 1 — should still have 0xBB
+        write_register(&mut mapper, 0xA000, 0x08); // bank 1
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            0xBB,
+            "PRG-RAM bank 1 should hold 0xBB independently of bank 0"
+        );
+    }
+
+    /// PRG-RAM size respected from metadata: mapper should allocate the correct amount.
+    #[test]
+    fn test_mmc1_prg_ram_size_from_metadata() {
+        let prg_rom = vec![0u8; 256 * 1024];
+
+        let mapper_1kb = MMC1Mapper::new(
+            MapperContext::new_for_test(1, prg_rom.clone(), vec![], NametableLayout::Horizontal)
+                .with_prg_ram_banks(1),
+        );
+        assert_eq!(
+            mapper_1kb.wram_size(),
+            8 * 1024,
+            "1 bank should allocate 8KB"
+        );
+
+        let mapper_2kb = MMC1Mapper::new(
+            MapperContext::new_for_test(1, prg_rom.clone(), vec![], NametableLayout::Horizontal)
+                .with_prg_ram_banks(2),
+        );
+        assert_eq!(
+            mapper_2kb.wram_size(),
+            16 * 1024,
+            "2 banks should allocate 16KB"
+        );
+
+        let mapper_4kb = MMC1Mapper::new(
+            MapperContext::new_for_test(1, prg_rom, vec![], NametableLayout::Horizontal)
+                .with_prg_ram_banks(4),
+        );
+        assert_eq!(
+            mapper_4kb.wram_size(),
+            32 * 1024,
+            "4 banks should allocate 32KB (SXROM)"
         );
     }
 
