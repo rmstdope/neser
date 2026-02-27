@@ -1324,10 +1324,10 @@ impl SdlEventLoop {
     pub(crate) fn save_breakpoints_to_debug_file(&self, nes: &Nes) {
         let Some(path) = nes.debug_path() else { return };
         if self.breakpoints.is_empty() {
-            if path.exists() {
-                if let Err(err) = std::fs::remove_file(&path) {
-                    log_info(format!("Failed to remove .debug file: {err}"));
-                }
+            if path.exists()
+                && let Err(err) = std::fs::remove_file(&path)
+            {
+                log_info(format!("Failed to remove .debug file: {err}"));
             }
             return;
         }

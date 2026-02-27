@@ -188,8 +188,8 @@ mod tests {
     /// filled with the sentinel value 0xAB.
     fn make_prg() -> Vec<u8> {
         let mut prg = vec![0u8; PRG_SIZE];
-        for i in 0..PRG_SIZE {
-            prg[i] = (i / 0x2000) as u8;
+        for (i, byte) in prg.iter_mut().enumerate().take(PRG_SIZE) {
+            *byte = (i / 0x2000) as u8;
         }
         // 2KB chip at 0x10000..=0x107FF: fill with sentinel so reads are distinct
         for b in prg[0x10000..0x10800].iter_mut() {
