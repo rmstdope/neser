@@ -33,6 +33,8 @@ pub struct DebuggerSnapshot {
     pub cpu: String,
     pub ppu: String,
     pub apu: String,
+    /// Raw OAM data: 256 bytes (64 sprites × 4 bytes: Y, tile, attrs, X).
+    pub oam: Vec<u8>,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]

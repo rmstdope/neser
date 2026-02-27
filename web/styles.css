@@ -100,9 +100,9 @@ canvas {
 .debugger-panel {
     position: absolute;
     top: 8px;
+    bottom: 8px;
     left: 8px;
     right: 8px;
-    max-height: calc(100% - 16px);
     display: flex;
     flex-direction: column;
     padding: 8px 10px;
@@ -172,7 +172,15 @@ canvas {
 .debugger-regs {
     width: 300px;
     flex-shrink: 0;
-    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.debugger-regs-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: 4px;
@@ -186,7 +194,7 @@ canvas {
 
 .debugger-regs-block {
     display: block;
-    overflow: hidden;
+    overflow: visible;
 }
 
 .debugger-hexdump-divider {
@@ -225,8 +233,29 @@ canvas {
 
 .debugger-hexdump-block {
     display: block;
-    overflow: hidden;
+    overflow: visible;
     color: #6ab06a;
+}
+
+.debugger-oam-title {
+    color: #c8ffc8;
+    margin-bottom: 2px;
+}
+
+.debugger-oam-header {
+    display: block;
+    color: #90ee90;
+    margin-bottom: 1px;
+}
+
+.debugger-oam-block {
+    display: block;
+    overflow: visible;
+    color: #6ab06a;
+}
+
+.debugger-oam-row {
+    display: block;
 }
 
 .debugger-ppu-title {
@@ -281,7 +310,9 @@ canvas {
 
 .disasm-block {
     display: block;
-    overflow: hidden;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
 }
 
 .disasm-line {

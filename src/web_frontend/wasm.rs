@@ -622,7 +622,8 @@ impl WasmNes {
     ///
     /// Fields: `pc`, `a`, `x`, `y`, `sp`, `p`, `cycles`, `scanline`, `pixel`,
     /// `frame_count`, `interrupt` (null | "nmi" | "irq"),
-    /// `nmi_vector`, `reset_vector`, `irq_vector`.
+    /// `nmi_vector`, `reset_vector`, `irq_vector`,
+    /// `prg_hexdump_base`, `prg_hexdump_bytes`, `oam` (256-element array).
     #[wasm_bindgen]
     pub fn debugger_snapshot_json(&mut self) -> String {
         let snap = self.debugger_view_state.snapshot(&self.nes);
@@ -754,8 +755,9 @@ fn serialize_debugger_snapshot_json(snap: &crate::debugging::DebuggerSnapshot) -
     let r = snap.cpu_regs;
     let interrupt = interrupt_to_json_str(r.interrupt);
     let prg_hexdump_bytes = bytes_to_json_array(&snap.prg_hexdump_bytes);
+    let oam = bytes_to_json_array(&snap.oam);
     format!(
-        r#"{{"pc":{pc},"a":{a},"x":{x},"y":{y},"sp":{sp},"p":{p},"cycles":{cycles},"scanline":{scanline},"pixel":{pixel},"frame_count":{frame_count},"interrupt":{interrupt},"nmi_vector":{nmi_vector},"reset_vector":{reset_vector},"irq_vector":{irq_vector},"prg_hexdump_base":{prg_hexdump_base},"prg_hexdump_bytes":{prg_hexdump_bytes}}}"#,
+        r#"{{"pc":{pc},"a":{a},"x":{x},"y":{y},"sp":{sp},"p":{p},"cycles":{cycles},"scanline":{scanline},"pixel":{pixel},"frame_count":{frame_count},"interrupt":{interrupt},"nmi_vector":{nmi_vector},"reset_vector":{reset_vector},"irq_vector":{irq_vector},"prg_hexdump_base":{prg_hexdump_base},"prg_hexdump_bytes":{prg_hexdump_bytes},"oam":{oam}}}"#,
         pc = r.pc,
         a = r.a,
         x = r.x,
@@ -772,6 +774,7 @@ fn serialize_debugger_snapshot_json(snap: &crate::debugging::DebuggerSnapshot) -
         irq_vector = r.irq_vector,
         prg_hexdump_base = snap.prg_hexdump_base,
         prg_hexdump_bytes = prg_hexdump_bytes,
+        oam = oam,
     )
 }
 
@@ -911,5 +914,20 @@ fn run_to_interrupt_entry(nes: &mut Nes, vector_addr: u16, kind: crate::cpu::Int
         if has_exited_required_interrupt && nes.cpu.pc() == target_pc {
             break;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app_context::AppContext;
+    use crate::debugging::snapshot;
+
+    #[test]
+    fn test_serialize_debugger_snapshot_json_includes_oam_field() {
+        let nes = Nes::new(AppContext::new_with_config(Config::default()));
+        let snap = snapshot(&nes);
+        let json = serialize_debugger_snapshot_json(&snap);
+        assert!(json.contains("\"oam\""), "JSON should include oam field");
     }
 }
