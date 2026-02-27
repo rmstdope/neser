@@ -290,6 +290,7 @@ pub struct SimpleBankedPrgMapper<const PRG_BANK_KB: usize, const MAPPER_NUM: u8>
     chr_memory: ChrMemory,
     mirroring: NametableLayout,
     bank_select: u8,
+    bank_select_mask: u8,
 }
 
 impl<const PRG_BANK_KB: usize, const MAPPER_NUM: u8>
@@ -313,6 +314,8 @@ impl<const PRG_BANK_KB: usize, const MAPPER_NUM: u8>
         } else {
             None
         };
+        let num_banks = (prg_rom.len() / prg_bank_size).max(1);
+        let bank_select_mask = (num_banks.next_power_of_two() - 1) as u8;
 
         Self {
             prg_rom: BankedRom::new(prg_rom, prg_bank_size),
@@ -320,6 +323,7 @@ impl<const PRG_BANK_KB: usize, const MAPPER_NUM: u8>
             chr_memory: ChrMemory::new_ram(8192),
             mirroring,
             bank_select: 0,
+            bank_select_mask,
         }
     }
 }
@@ -367,9 +371,9 @@ impl<const PRG_BANK_KB: usize, const MAPPER_NUM: u8> Mapper
             return;
         }
 
-        // Any write to $8000-$FFFF sets the bank register
+        // Any write to $8000-$FFFF sets the bank register (masked to hardware width)
         if (0x8000..=0xFFFF).contains(&addr) {
-            self.bank_select = value;
+            self.bank_select = value & self.bank_select_mask;
         }
     }
 
