@@ -24,6 +24,19 @@ pub struct CpuDisasmLineSnapshot {
     pub is_current: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MemoryWatchEntrySnapshot {
+    pub address: u16,
+    pub value: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CpuTraceLineSnapshot {
+    pub addr: u16,
+    pub bytes: Vec<u8>,
+    pub text: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DebuggerSnapshot {
     pub cpu_regs: CpuRegsSnapshot,
@@ -35,6 +48,10 @@ pub struct DebuggerSnapshot {
     pub apu: String,
     /// Raw OAM data: 256 bytes (64 sprites × 4 bytes: Y, tile, attrs, X).
     pub oam: Vec<u8>,
+    /// Memory watch entries with live values from CPU address space.
+    pub watch_values: Vec<MemoryWatchEntrySnapshot>,
+    /// Most recent executed CPU instructions (bounded ring buffer tail).
+    pub recent_trace: Vec<CpuTraceLineSnapshot>,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]

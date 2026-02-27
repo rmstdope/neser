@@ -6,7 +6,9 @@ use crate::debugging::log_info;
 use crate::debugging::ppu_viewer::{
     PpuViewerSnapshot, render_nametables_rgba, render_pattern_tables_rgba,
 };
-use crate::debugging::ui::{self as debugger_ui, BreakpointAddUiState, HexdumpUiState};
+use crate::debugging::ui::{
+    self as debugger_ui, BreakpointAddUiState, HexdumpUiState, WatchlistUiState,
+};
 use crate::rendering::input::{InputEvent, apply_input};
 use crate::rendering::shader_manager::ShaderManager;
 use std::ffi::c_void;
@@ -63,6 +65,7 @@ pub struct GlBackend {
     breakpoints: BreakpointList,
     bp_add_state: BreakpointAddUiState,
     hexdump_ui_state: HexdumpUiState,
+    watchlist_ui_state: WatchlistUiState,
     shader_manager: ShaderManager,
     /// Horizontal overscan in pixels (removed from left and right).
     h_overscan: u32,
@@ -391,6 +394,7 @@ impl GlBackend {
             breakpoints: BreakpointList::default(),
             bp_add_state: BreakpointAddUiState::default(),
             hexdump_ui_state: HexdumpUiState::default(),
+            watchlist_ui_state: WatchlistUiState::default(),
             shader_manager,
             h_overscan,
             v_overscan,
@@ -581,6 +585,7 @@ impl GlBackend {
                     &self.breakpoints,
                     &mut self.bp_add_state,
                     &mut self.hexdump_ui_state,
+                    &mut self.watchlist_ui_state,
                 );
                 if action.toggle_ppu_viewer {
                     self.debugger_view_state.toggle_ppu_viewer();
@@ -591,6 +596,16 @@ impl GlBackend {
                 if let Some(delta) = action.nudge_prg_hexdump_base_by_bytes {
                     self.debugger_view_state
                         .nudge_prg_hexdump_base_by_bytes_from(snapshot.prg_hexdump_base, delta);
+                }
+                if let Some(address) = action.add_watch_address {
+                    self.debugger_view_state.add_watch_address(address);
+                }
+                if let Some(index) = action.remove_watch_address {
+                    self.debugger_view_state.remove_watch_address(index);
+                }
+                if let Some(update) = action.update_watch_address {
+                    self.debugger_view_state
+                        .update_watch_address(update.index, update.address);
                 }
                 if action.increase_opacity {
                     self.debugger_alpha = (self.debugger_alpha + 0.1).min(1.0);

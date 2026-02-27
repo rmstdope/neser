@@ -658,6 +658,25 @@ impl WasmNes {
         self.debugger_view_state.set_prg_hexdump_base(base);
     }
 
+    /// Add a CPU memory address to the debugger watch list.
+    #[wasm_bindgen]
+    pub fn debugger_watch_add(&mut self, address: u16) {
+        self.debugger_view_state.add_watch_address(address);
+    }
+
+    /// Remove a watch entry by index.
+    #[wasm_bindgen]
+    pub fn debugger_watch_remove(&mut self, index: usize) {
+        self.debugger_view_state.remove_watch_address(index);
+    }
+
+    /// Update a watch entry address by index.
+    #[wasm_bindgen]
+    pub fn debugger_watch_update(&mut self, index: usize, address: u16) {
+        self.debugger_view_state
+            .update_watch_address(index, address);
+    }
+
     /// Returns a JSON array of disassembly lines around the current PC.
     ///
     /// Each element is `{"addr":<u16>,"bytes":[<u8>...],"text":"<str>","is_current":<bool>}`.
@@ -756,8 +775,10 @@ fn serialize_debugger_snapshot_json(snap: &crate::debugging::DebuggerSnapshot) -
     let interrupt = interrupt_to_json_str(r.interrupt);
     let prg_hexdump_bytes = bytes_to_json_array(&snap.prg_hexdump_bytes);
     let oam = bytes_to_json_array(&snap.oam);
+    let watch_values = watch_values_to_json_array(snap);
+    let recent_trace = recent_trace_to_json_array(snap);
     format!(
-        r#"{{"pc":{pc},"a":{a},"x":{x},"y":{y},"sp":{sp},"p":{p},"cycles":{cycles},"scanline":{scanline},"pixel":{pixel},"frame_count":{frame_count},"interrupt":{interrupt},"nmi_vector":{nmi_vector},"reset_vector":{reset_vector},"irq_vector":{irq_vector},"prg_hexdump_base":{prg_hexdump_base},"prg_hexdump_bytes":{prg_hexdump_bytes},"oam":{oam}}}"#,
+        r#"{{"pc":{pc},"a":{a},"x":{x},"y":{y},"sp":{sp},"p":{p},"cycles":{cycles},"scanline":{scanline},"pixel":{pixel},"frame_count":{frame_count},"interrupt":{interrupt},"nmi_vector":{nmi_vector},"reset_vector":{reset_vector},"irq_vector":{irq_vector},"prg_hexdump_base":{prg_hexdump_base},"prg_hexdump_bytes":{prg_hexdump_bytes},"oam":{oam},"watch_values":{watch_values},"recent_trace":{recent_trace}}}"#,
         pc = r.pc,
         a = r.a,
         x = r.x,
@@ -775,7 +796,41 @@ fn serialize_debugger_snapshot_json(snap: &crate::debugging::DebuggerSnapshot) -
         prg_hexdump_base = snap.prg_hexdump_base,
         prg_hexdump_bytes = prg_hexdump_bytes,
         oam = oam,
+        watch_values = watch_values,
+        recent_trace = recent_trace,
     )
+}
+
+fn watch_values_to_json_array(snap: &crate::debugging::DebuggerSnapshot) -> String {
+    let mut json = String::from("[");
+    for (index, entry) in snap.watch_values.iter().enumerate() {
+        if index > 0 {
+            json.push(',');
+        }
+        json.push_str(&format!(
+            r#"{{"address":{},"value":{}}}"#,
+            entry.address, entry.value
+        ));
+    }
+    json.push(']');
+    json
+}
+
+fn recent_trace_to_json_array(snap: &crate::debugging::DebuggerSnapshot) -> String {
+    let mut json = String::from("[");
+    for (index, entry) in snap.recent_trace.iter().enumerate() {
+        if index > 0 {
+            json.push(',');
+        }
+        json.push_str(&format!(
+            r#"{{"addr":{},"bytes":{},"text":"{}"}}"#,
+            entry.addr,
+            bytes_to_json_array(&entry.bytes),
+            entry.text.replace('\\', "\\\\").replace('"', "\\\"")
+        ));
+    }
+    json.push(']');
+    json
 }
 
 /// Formats a byte slice as a JSON array string, e.g. `[1,2,3]`.
@@ -929,5 +984,26 @@ mod tests {
         let snap = snapshot(&nes);
         let json = serialize_debugger_snapshot_json(&snap);
         assert!(json.contains("\"oam\""), "JSON should include oam field");
+    }
+
+    #[test]
+    fn test_serialize_debugger_snapshot_json_includes_watch_values_field() {
+        let mut wasm = WasmNes::new();
+        wasm.debugger_watch_add(0x0010);
+        let json = wasm.debugger_snapshot_json();
+        assert!(
+            json.contains("\"watch_values\""),
+            "JSON should include watch_values field"
+        );
+    }
+
+    #[test]
+    fn test_serialize_debugger_snapshot_json_includes_recent_trace_field() {
+        let mut wasm = WasmNes::new();
+        let json = wasm.debugger_snapshot_json();
+        assert!(
+            json.contains("\"recent_trace\""),
+            "JSON should include recent_trace field"
+        );
     }
 }

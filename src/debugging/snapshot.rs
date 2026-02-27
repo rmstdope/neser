@@ -2,14 +2,16 @@ use crate::console::Nes;
 
 use super::disasm::{DisasmWindowConfig, disassemble_window, disassemble_window_with_state};
 use super::types::{
-    CpuDisasmLineSnapshot, CpuDisasmWindowState, CpuRegsSnapshot, DebuggerSnapshot,
+    CpuDisasmLineSnapshot, CpuDisasmWindowState, CpuRegsSnapshot, CpuTraceLineSnapshot,
+    DebuggerSnapshot, MemoryWatchEntrySnapshot,
 };
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct DebuggerViewState {
     cpu_disasm: CpuDisasmWindowState,
     show_ppu_viewer: bool,
     prg_hexdump_base: Option<u16>,
+    watch_addresses: Vec<u16>,
 }
 
 impl DebuggerViewState {
@@ -20,9 +22,10 @@ impl DebuggerViewState {
                 Some(&mut self.cpu_disasm),
                 DisasmWindowConfig::default(),
                 Some(base),
+                &self.watch_addresses,
             )
         } else {
-            snapshot_with_disasm_state(nes, &mut self.cpu_disasm)
+            snapshot_with_disasm_state(nes, &mut self.cpu_disasm, &self.watch_addresses)
         }
     }
 
@@ -48,9 +51,33 @@ impl DebuggerViewState {
         self.prg_hexdump_base = Some(normalize_prg_hexdump_base(nudged));
     }
 
+    pub fn add_watch_address(&mut self, address: u16) {
+        if !self.watch_addresses.contains(&address) {
+            self.watch_addresses.push(address);
+        }
+    }
+
+    pub fn remove_watch_address(&mut self, index: usize) {
+        if index < self.watch_addresses.len() {
+            self.watch_addresses.remove(index);
+        }
+    }
+
+    pub fn update_watch_address(&mut self, index: usize, address: u16) {
+        if index < self.watch_addresses.len() {
+            self.watch_addresses[index] = address;
+            self.watch_addresses.dedup();
+        }
+    }
+
     #[cfg(test)]
     pub fn prg_hexdump_base(&self) -> Option<u16> {
         self.prg_hexdump_base
+    }
+
+    #[cfg(test)]
+    pub fn watch_addresses(&self) -> Vec<u16> {
+        self.watch_addresses.clone()
     }
 }
 
@@ -61,15 +88,16 @@ pub struct Debugger {
 
 impl Debugger {
     pub fn snapshot(&self, nes: &Nes) -> DebuggerSnapshot {
-        snapshot_impl(nes, None, self.disasm, None)
+        snapshot_impl(nes, None, self.disasm, None, &[])
     }
 
     pub fn snapshot_with_disasm_state(
         &self,
         nes: &Nes,
         state: &mut CpuDisasmWindowState,
+        watch_addresses: &[u16],
     ) -> DebuggerSnapshot {
-        snapshot_impl(nes, Some(state), self.disasm, None)
+        snapshot_impl(nes, Some(state), self.disasm, None, watch_addresses)
     }
 }
 
@@ -105,6 +133,7 @@ fn build_snapshot(
     nes: &Nes,
     cpu_disasm: Vec<CpuDisasmLineSnapshot>,
     prg_hexdump_base_override: Option<u16>,
+    watch_addresses: &[u16],
 ) -> DebuggerSnapshot {
     let cpu_cycles = nes.cpu.get_total_cycles();
     let pc = nes.cpu.pc();
@@ -119,6 +148,27 @@ fn build_snapshot(
             .map(|offset| memory.read_prg_rom_for_debugger(prg_hexdump_base + offset))
             .collect::<Vec<u8>>()
     };
+
+    let watch_values = {
+        let memory = nes.bus.borrow();
+        watch_addresses
+            .iter()
+            .map(|address| MemoryWatchEntrySnapshot {
+                address: *address,
+                value: memory.read_cpu_for_debugger(*address),
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let recent_trace = nes
+        .recent_cpu_trace(32)
+        .into_iter()
+        .map(|line| CpuTraceLineSnapshot {
+            addr: line.addr,
+            bytes: line.bytes,
+            text: line.text,
+        })
+        .collect::<Vec<_>>();
 
     let (nmi_vector, reset_vector, irq_vector) = read_vectors_for_snapshot(nes);
 
@@ -190,6 +240,8 @@ apu_cycle: {apu_cycle}  frame_counter_cycle: {frame_counter_cycle}",
         ppu,
         apu,
         oam,
+        watch_values,
+        recent_trace,
     }
 }
 
@@ -198,6 +250,7 @@ fn snapshot_impl(
     state: Option<&mut CpuDisasmWindowState>,
     disasm_config: DisasmWindowConfig,
     prg_hexdump_base_override: Option<u16>,
+    watch_addresses: &[u16],
 ) -> DebuggerSnapshot {
     let cpu_disasm = {
         let memory = nes.bus.borrow();
@@ -216,15 +269,19 @@ fn snapshot_impl(
         }
     };
 
-    build_snapshot(nes, cpu_disasm, prg_hexdump_base_override)
+    build_snapshot(nes, cpu_disasm, prg_hexdump_base_override, watch_addresses)
 }
 
 pub fn snapshot(nes: &Nes) -> DebuggerSnapshot {
     Debugger::default().snapshot(nes)
 }
 
-pub fn snapshot_with_disasm_state(nes: &Nes, state: &mut CpuDisasmWindowState) -> DebuggerSnapshot {
-    Debugger::default().snapshot_with_disasm_state(nes, state)
+pub fn snapshot_with_disasm_state(
+    nes: &Nes,
+    state: &mut CpuDisasmWindowState,
+    watch_addresses: &[u16],
+) -> DebuggerSnapshot {
+    Debugger::default().snapshot_with_disasm_state(nes, state, watch_addresses)
 }
 
 #[cfg(test)]
@@ -383,5 +440,69 @@ mod tests {
         assert_eq!(snap.oam[1], 0xAB, "sprite 0 tile");
         assert_eq!(snap.oam[2], 0x03, "sprite 0 attrs");
         assert_eq!(snap.oam[3], 0x40, "sprite 0 X");
+    }
+
+    #[test]
+    fn test_debugger_view_state_memory_watch_add_update_remove() {
+        let mut state = DebuggerViewState::default();
+
+        state.add_watch_address(0x0010);
+        state.add_watch_address(0x0010);
+        state.add_watch_address(0x00FF);
+
+        assert_eq!(state.watch_addresses(), vec![0x0010, 0x00FF]);
+
+        state.update_watch_address(1, 0x0200);
+        assert_eq!(state.watch_addresses(), vec![0x0010, 0x0200]);
+
+        state.remove_watch_address(0);
+        assert_eq!(state.watch_addresses(), vec![0x0200]);
+    }
+
+    #[test]
+    fn test_snapshot_includes_memory_watch_values_for_selected_addresses() {
+        let nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        {
+            let mut bus = nes.bus.borrow_mut();
+            bus.write(0x0010, 0x7F, false);
+            bus.write(0x00FF, 0x12, false);
+        }
+
+        let mut state = DebuggerViewState::default();
+        state.add_watch_address(0x0010);
+        state.add_watch_address(0x00FF);
+
+        let snap = state.snapshot(&nes);
+        assert_eq!(snap.watch_values.len(), 2);
+        assert_eq!(snap.watch_values[0].address, 0x0010);
+        assert_eq!(snap.watch_values[0].value, 0x7F);
+        assert_eq!(snap.watch_values[1].address, 0x00FF);
+        assert_eq!(snap.watch_values[1].value, 0x12);
+    }
+
+    #[test]
+    fn test_snapshot_includes_recent_cpu_trace_lines() {
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+
+        let mut prg_rom = vec![0xEAu8; 32 * 1024];
+        // Reset vector -> $8000
+        prg_rom[0x7FFC] = 0x00;
+        prg_rom[0x7FFD] = 0x80;
+        let cartridge = Cartridge::from_parts(prg_rom, vec![], NametableLayout::Horizontal);
+        nes.insert_cartridge(cartridge);
+        nes.cpu.set_pc(0x8000);
+
+        nes.run_cpu_tick();
+        nes.run_cpu_tick();
+
+        let snap = snapshot(&nes);
+        assert_eq!(snap.recent_trace.len(), 2);
+        assert_eq!(snap.recent_trace[0].addr, 0x8000);
+        assert_eq!(snap.recent_trace[1].addr, 0x8001);
+        assert!(snap.recent_trace[0].text.contains("NOP"));
     }
 }
