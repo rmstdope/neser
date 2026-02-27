@@ -122,9 +122,14 @@ fn build_snapshot(
 
     let (nmi_vector, reset_vector, irq_vector) = read_vectors_for_snapshot(nes);
 
-    let (frame_count, scanline, pixel) = {
+    let (frame_count, scanline, pixel, oam) = {
         let ppu = nes.ppu.borrow();
-        (ppu.frame_count(), ppu.scanline(), ppu.pixel())
+        (
+            ppu.frame_count(),
+            ppu.scanline(),
+            ppu.pixel(),
+            ppu.oam_snapshot(),
+        )
     };
 
     let cpu_regs = CpuRegsSnapshot {
@@ -184,6 +189,7 @@ apu_cycle: {apu_cycle}  frame_counter_cycle: {frame_counter_cycle}",
         cpu,
         ppu,
         apu,
+        oam,
     }
 }
 
@@ -348,5 +354,34 @@ mod tests {
 
         state.nudge_prg_hexdump_base_by_bytes_from(0xC000, 16);
         assert_eq!(state.prg_hexdump_base(), Some(0xC010));
+    }
+
+    #[test]
+    fn test_snapshot_oam_contains_256_bytes() {
+        let nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        let snap = snapshot(&nes);
+        assert_eq!(snap.oam.len(), 256);
+    }
+
+    #[test]
+    fn test_snapshot_oam_reflects_ppu_oam_state() {
+        let nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+
+        // Write sprite 0 fields via OAM address/data registers.
+        nes.ppu.borrow_mut().write_oam_address(0x00);
+        nes.ppu.borrow_mut().write_oam_data(0x20); // Y
+        nes.ppu.borrow_mut().write_oam_data(0xAB); // tile index
+        nes.ppu.borrow_mut().write_oam_data(0x03); // attributes
+        nes.ppu.borrow_mut().write_oam_data(0x40); // X
+
+        let snap = snapshot(&nes);
+        assert_eq!(snap.oam[0], 0x20, "sprite 0 Y");
+        assert_eq!(snap.oam[1], 0xAB, "sprite 0 tile");
+        assert_eq!(snap.oam[2], 0x03, "sprite 0 attrs");
+        assert_eq!(snap.oam[3], 0x40, "sprite 0 X");
     }
 }

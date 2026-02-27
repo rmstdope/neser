@@ -172,10 +172,11 @@ canvas {
 .debugger-regs {
     width: 300px;
     flex-shrink: 0;
-    overflow: hidden;
+    overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: 4px;
+    min-height: 0;
 }
 
 .debugger-regs-title {
@@ -227,6 +228,29 @@ canvas {
     display: block;
     overflow: hidden;
     color: #6ab06a;
+}
+
+.debugger-oam-title {
+    color: #c8ffc8;
+    margin-bottom: 2px;
+}
+
+.debugger-oam-header {
+    display: block;
+    color: #90ee90;
+    margin-bottom: 1px;
+}
+
+.debugger-oam-block {
+    display: block;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+    color: #6ab06a;
+}
+
+.debugger-oam-row {
+    display: block;
 }
 
 .debugger-ppu-title {

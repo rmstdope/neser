@@ -729,6 +729,11 @@ impl Ppu {
         self.registers.oam_address
     }
 
+    /// Returns a copy of the 256-byte OAM data for debugging.
+    pub fn oam_snapshot(&self) -> Vec<u8> {
+        self.sprites.oam_snapshot()
+    }
+
     /// Check if A12 changed from 0 to 1 (rising edge)
     /// This is used for mapper IRQ counters (e.g., MMC3)
     /// Returns true if A12 went from 0 to 1

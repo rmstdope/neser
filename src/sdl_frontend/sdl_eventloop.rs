@@ -4843,7 +4843,10 @@ mod tests {
         let rom_path = copy_test_rom(&temp_dir);
 
         let debug_path = rom_path.with_extension("debug");
-        assert!(!debug_path.exists(), "precondition: debug file should not exist");
+        assert!(
+            !debug_path.exists(),
+            "precondition: debug file should not exist"
+        );
 
         let rom_bytes = std::fs::read(&rom_path).expect("Failed to read ROM");
         let cart = Cartridge::load_from_file(&rom_bytes, &rom_path, AppContext::new())

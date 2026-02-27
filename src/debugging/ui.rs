@@ -378,7 +378,7 @@ fn render_cpu_right_panel(
         .build(|| {
             apply_debugger_ui_font_scale(ui);
             let right_avail = ui.content_region_avail();
-            let (regs_h, hex_h) = cpu_right_panel_split(right_avail, gap);
+            let (regs_h, hex_h, oam_h) = cpu_right_panel_split(right_avail, gap);
 
             ui.child_window("cpu_regs")
                 .size([right_avail[0], regs_h])
@@ -408,7 +408,25 @@ fn render_cpu_right_panel(
                         ui.text(line);
                     }
                 });
+
+            ui.dummy([0.0, gap]);
+
+            ui.child_window("oam_panel")
+                .size([right_avail[0], oam_h])
+                .border(true)
+                .build(|| {
+                    apply_debugger_ui_font_scale(ui);
+                    render_oam_panel(ui, snapshot);
+                });
         });
+}
+
+fn render_oam_panel(ui: &imgui::Ui, snapshot: &DebuggerSnapshot) {
+    ui.text("OAM (#  Y  tile attr  X)");
+    ui.separator();
+    for entry in format_oam_entries(&snapshot.oam) {
+        ui.text(entry);
+    }
 }
 
 fn render_hexdump_controls(
@@ -462,10 +480,11 @@ fn render_hexdump_controls(
     }
 }
 
-fn cpu_right_panel_split(avail: [f32; 2], gap: f32) -> (f32, f32) {
-    let regs_h = avail[1] * 0.35;
-    let hex_h = (avail[1] - regs_h - gap).max(0.0);
-    (regs_h, hex_h)
+fn cpu_right_panel_split(avail: [f32; 2], gap: f32) -> (f32, f32, f32) {
+    let regs_h = avail[1] * 0.20;
+    let oam_h = avail[1] * 0.45;
+    let hex_h = (avail[1] - regs_h - oam_h - 2.0 * gap).max(0.0);
+    (regs_h, hex_h, oam_h)
 }
 
 fn format_disasm_bytes(bytes: &[u8]) -> String {
@@ -573,6 +592,28 @@ pub(crate) fn format_breakpoint_label(bp: &Breakpoint) -> String {
         BreakpointKind::Frame(n) => format!("FRM {}", n),
         BreakpointKind::WriteAddress(addr) => format!("WR  ${:04X}", addr),
     }
+}
+
+/// Format a single OAM sprite entry as a human-readable string.
+///
+/// Format: `"NN: Y=YY tile=TT attr=AA X=XX"` where all values are hex and `NN` is the
+/// zero-padded two-digit sprite index.
+pub(crate) fn format_oam_entry(index: u8, y: u8, tile: u8, attrs: u8, x: u8) -> String {
+    format!(
+        "{:02}: Y={:02X} tile={:02X} attr={:02X} X={:02X}",
+        index, y, tile, attrs, x
+    )
+}
+
+/// Format all 64 OAM entries from raw 256-byte OAM data into strings.
+pub(crate) fn format_oam_entries(oam: &[u8]) -> Vec<String> {
+    (0..64)
+        .map(|i| {
+            let base = i * 4;
+            let (y, tile, attrs, x) = (oam[base], oam[base + 1], oam[base + 2], oam[base + 3]);
+            format_oam_entry(i as u8, y, tile, attrs, x)
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -813,5 +854,38 @@ mod tests {
             validate_hexdump_input("7FFF"),
             Err("Invalid hexdump address")
         );
+    }
+
+    #[test]
+    fn test_format_oam_entry_contains_index_and_all_fields_in_hex() {
+        let entry = format_oam_entry(5, 0x20, 0xAB, 0x03, 0x40);
+        assert!(entry.contains("05"), "should contain sprite index 05");
+        assert!(entry.contains("20"), "should contain Y=20");
+        assert!(entry.contains("AB"), "should contain tile=AB");
+        assert!(entry.contains("03"), "should contain attr=03");
+        assert!(entry.contains("40"), "should contain X=40");
+    }
+
+    #[test]
+    fn test_format_oam_entries_returns_64_lines_for_full_oam() {
+        let oam = [0u8; 256];
+        let entries = format_oam_entries(&oam);
+        assert_eq!(entries.len(), 64);
+    }
+
+    #[test]
+    fn test_format_oam_entries_reflects_sprite_data() {
+        let mut oam = [0u8; 256];
+        // Sprite 3: offset 12..16
+        oam[12] = 0xBB; // Y
+        oam[13] = 0xCC; // tile
+        oam[14] = 0x01; // attrs
+        oam[15] = 0xDD; // X
+        let entries = format_oam_entries(&oam);
+        let entry = &entries[3];
+        assert!(entry.contains("BB"), "Y=BB");
+        assert!(entry.contains("CC"), "tile=CC");
+        assert!(entry.contains("01"), "attr=01");
+        assert!(entry.contains("DD"), "X=DD");
     }
 }

@@ -33,6 +33,7 @@ import {
 import { createToastContainer, createToastOverlay, drainNesToasts } from "./toast_overlay.js";
 import { createGamepadInitToastNotifier } from "./gamepad_init_toast.js";
 import { renderDisasmLines } from "./debugger_disasm.js";
+import { buildOamHtml } from "./debugger_oam.js";
 import {
     computeNtscDisplayWidth,
     computeScrollViewportRects,
@@ -1488,6 +1489,7 @@ function updateDebuggerPanel() {
     const disasmHtml = buildDisasmHtml(nes);
     const regsHtml = buildRegsHtml(snap);
     const hexdumpHtml = buildHexdumpHtml(snap);
+    const oamHtml = buildOamHtml(snap.oam);
     const ppuViewerVisible = nes.debugger_is_ppu_viewer_open();
     const ppuViewerHtml = buildPpuViewerHtml(ppuViewerVisible);
     const ppuViewerButtonText = ppuViewerVisible ? "Hide PPU Viewer" : "Show PPU Viewer";
@@ -1513,6 +1515,8 @@ function updateDebuggerPanel() {
         `<span class="debugger-regs-block">${regsHtml}</span>` +
         `<span class="debugger-hexdump-divider"></span>` +
         `${hexdumpHtml}` +
+        `<span class="debugger-hexdump-divider"></span>` +
+        `${oamHtml}` +
         `</div>` +
         `${ppuViewerHtml}` +
         `</div>`;

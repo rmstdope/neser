@@ -686,6 +686,7 @@ impl Sprites {
     }
 
     /// Create a snapshot of OAM for save-state.
+    /// Returns a copy of the full 256-byte primary OAM for debugging.
     pub fn oam_snapshot(&self) -> Vec<u8> {
         self.oam_data.to_vec()
     }
