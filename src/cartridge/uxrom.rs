@@ -358,4 +358,79 @@ mod tests {
             "PRG-RAM present: write/read should work"
         );
     }
+
+    // --- Issue #346: Bank select masking ---
+
+    #[test]
+    fn test_uxrom_unrom_bank_select_masked_to_3_bits() {
+        // Given: UNROM-style 128KB ROM (8 banks) — hardware supports only 3 bits
+        let mut mapper = UxROMMapper::new(
+            MapperContext::new_for_test(
+                2,
+                vec![0; 128 * 1024],
+                vec![],
+                NametableLayout::Horizontal,
+            )
+            .with_prg_ram_banks(0),
+        );
+
+        // When: writing a value with upper bits set (0xFF = 8 bits set)
+        mapper.write_prg(0x8000, 0xFF);
+
+        // Then: bank_select stored in snapshot should have upper bits cleared (3-bit mask)
+        let snapshot = mapper.registers_snapshot();
+        assert_eq!(
+            snapshot[0], 0x07,
+            "UNROM bank_select should be masked to 3 bits (0x07)"
+        );
+    }
+
+    #[test]
+    fn test_uxrom_uorom_bank_select_masked_to_4_bits() {
+        // Given: UOROM-style 256KB ROM (16 banks) — hardware supports 4 bits
+        let mut mapper = UxROMMapper::new(
+            MapperContext::new_for_test(
+                2,
+                vec![0; 256 * 1024],
+                vec![],
+                NametableLayout::Horizontal,
+            )
+            .with_prg_ram_banks(0),
+        );
+
+        // When: writing a value with upper bits set (0xFF)
+        mapper.write_prg(0x8000, 0xFF);
+
+        // Then: bank_select stored in snapshot should have upper bits cleared (4-bit mask)
+        let snapshot = mapper.registers_snapshot();
+        assert_eq!(
+            snapshot[0], 0x0F,
+            "UOROM bank_select should be masked to 4 bits (0x0F)"
+        );
+    }
+
+    #[test]
+    fn test_uxrom_bank_select_reads_correct_bank_after_masking() {
+        // Given: UOROM 256KB ROM (16 banks), each filled with bank number
+        let mut prg_rom = vec![0; 256 * 1024];
+        for bank in 0..16usize {
+            let start = bank * 16 * 1024;
+            let end = start + 16 * 1024;
+            prg_rom[start..end].fill(bank as u8);
+        }
+        let mut mapper = UxROMMapper::new(
+            MapperContext::new_for_test(2, prg_rom, vec![], NametableLayout::Horizontal)
+                .with_prg_ram_banks(0),
+        );
+
+        // When: writing 0x1F (upper bit beyond 4-bit mask), expect mask to 0x0F = 15
+        mapper.write_prg(0x8000, 0x1F);
+
+        // Then: reads bank 15 (0x1F & 0x0F = 0x0F = 15)
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            15,
+            "bank_select 0x1F should be masked to bank 15 for UOROM"
+        );
+    }
 }
