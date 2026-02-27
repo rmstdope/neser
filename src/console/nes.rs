@@ -273,11 +273,7 @@ impl Nes {
         }
 
         let start = self.recent_cpu_trace.len().saturating_sub(limit);
-        self.recent_cpu_trace
-            .iter()
-            .skip(start)
-            .cloned()
-            .collect()
+        self.recent_cpu_trace.iter().skip(start).cloned().collect()
     }
 
     fn push_cpu_trace_line(&mut self, line: CpuTraceLine) {

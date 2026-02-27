@@ -3,8 +3,7 @@ use crate::console::Nes;
 use super::disasm::{DisasmWindowConfig, disassemble_window, disassemble_window_with_state};
 use super::types::{
     CpuDisasmLineSnapshot, CpuDisasmWindowState, CpuRegsSnapshot, CpuTraceLineSnapshot,
-    DebuggerSnapshot,
-    MemoryWatchEntrySnapshot,
+    DebuggerSnapshot, MemoryWatchEntrySnapshot,
 };
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]

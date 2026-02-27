@@ -673,7 +673,8 @@ impl WasmNes {
     /// Update a watch entry address by index.
     #[wasm_bindgen]
     pub fn debugger_watch_update(&mut self, index: usize, address: u16) {
-        self.debugger_view_state.update_watch_address(index, address);
+        self.debugger_view_state
+            .update_watch_address(index, address);
     }
 
     /// Returns a JSON array of disassembly lines around the current PC.
