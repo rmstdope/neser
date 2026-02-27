@@ -291,6 +291,7 @@ pub struct SimpleBankedPrgMapper<const PRG_BANK_KB: usize, const MAPPER_NUM: u8>
     mirroring: NametableLayout,
     bank_select: u8,
     bank_select_mask: u8,
+    bus_conflicts: bool,
 }
 
 impl<const PRG_BANK_KB: usize, const MAPPER_NUM: u8>
@@ -316,6 +317,9 @@ impl<const PRG_BANK_KB: usize, const MAPPER_NUM: u8>
         };
         let num_banks = (prg_rom.len() / prg_bank_size).max(1);
         let bank_select_mask = (num_banks.next_power_of_two() - 1) as u8;
+        // Submapper 2 = explicitly no bus conflicts; all others (including 0 = original
+        // UxROM hardware) emulate AND-type bus conflicts.
+        let bus_conflicts = ctx.submapper != 2;
 
         Self {
             prg_rom: BankedRom::new(prg_rom, prg_bank_size),
@@ -324,6 +328,7 @@ impl<const PRG_BANK_KB: usize, const MAPPER_NUM: u8>
             mirroring,
             bank_select: 0,
             bank_select_mask,
+            bus_conflicts,
         }
     }
 }
@@ -371,9 +376,16 @@ impl<const PRG_BANK_KB: usize, const MAPPER_NUM: u8> Mapper
             return;
         }
 
-        // Any write to $8000-$FFFF sets the bank register (masked to hardware width)
+        // Any write to $8000-$FFFF sets the bank register (masked to hardware width).
+        // Original UxROM boards have AND-type bus conflicts: the ROM at the write address
+        // also drives the bus, so the effective value is (write & ROM).
         if (0x8000..=0xFFFF).contains(&addr) {
-            self.bank_select = value & self.bank_select_mask;
+            let effective = if self.bus_conflicts {
+                value & self.read_prg(addr)
+            } else {
+                value
+            };
+            self.bank_select = effective & self.bank_select_mask;
         }
     }
 
@@ -773,12 +785,10 @@ mod tests {
                 }
             }
 
-            let mut mapper = TestMapper::new(MapperContext::new_for_test(
-                2,
-                prg_rom,
-                vec![],
-                NametableLayout::Horizontal,
-            ));
+            let mut mapper = TestMapper::new(
+                MapperContext::new_for_test(2, prg_rom, vec![], NametableLayout::Horizontal)
+                    .with_submapper(2),
+            );
 
             // Initially bank 0 at $8000-$BFFF
             assert_eq!(mapper.read_prg(0x8000), 0);
@@ -853,24 +863,25 @@ mod tests {
                 }
             }
 
-            let mut mapper = TestMapper::new(MapperContext::new_for_test(
-                2,
-                prg_rom.clone(),
-                vec![],
-                NametableLayout::Horizontal,
-            ));
+            let mut mapper = TestMapper::new(
+                MapperContext::new_for_test(
+                    2,
+                    prg_rom.clone(),
+                    vec![],
+                    NametableLayout::Horizontal,
+                )
+                .with_submapper(2),
+            );
             mapper.write_prg(0x8000, 3);
             mapper.write_chr(0x0000, 0x5A);
 
             let regs = mapper.registers_snapshot();
             let chr = mapper.chr_ram_snapshot();
 
-            let mut restored = TestMapper::new(MapperContext::new_for_test(
-                2,
-                prg_rom,
-                vec![],
-                NametableLayout::Horizontal,
-            ));
+            let mut restored = TestMapper::new(
+                MapperContext::new_for_test(2, prg_rom, vec![], NametableLayout::Horizontal)
+                    .with_submapper(2),
+            );
             restored.restore_registers(&regs);
             restored.restore_chr_ram(&chr);
 
