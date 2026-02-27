@@ -243,9 +243,7 @@ canvas {
 
 .debugger-oam-block {
     display: block;
-    overflow-y: auto;
-    flex: 1;
-    min-height: 0;
+    overflow: hidden;
     color: #6ab06a;
 }
 
@@ -305,7 +303,9 @@ canvas {
 
 .disasm-block {
     display: block;
-    overflow: hidden;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
 }
 
 .disasm-line {
