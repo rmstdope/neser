@@ -51,12 +51,10 @@ mod tests {
             }
         }
 
-        let mut mapper = UxROMMapper::new(MapperContext::new_for_test(
-            2,
-            prg_rom,
-            vec![],
-            NametableLayout::Horizontal,
-        ));
+        let mut mapper = UxROMMapper::new(
+            MapperContext::new_for_test(2, prg_rom, vec![], NametableLayout::Horizontal)
+                .with_submapper(2),
+        );
 
         // Initially bank 0 should be at $8000-$BFFF
         assert_eq!(mapper.read_prg(0x8000), 0);
@@ -94,12 +92,10 @@ mod tests {
             }
         }
 
-        let mut mapper = UxROMMapper::new(MapperContext::new_for_test(
-            2,
-            prg_rom,
-            vec![],
-            NametableLayout::Vertical,
-        ));
+        let mut mapper = UxROMMapper::new(
+            MapperContext::new_for_test(2, prg_rom, vec![], NametableLayout::Vertical)
+                .with_submapper(2),
+        );
 
         // Last bank (15) should be at $C000-$FFFF
         assert_eq!(mapper.read_prg(0xC000), 15);
@@ -166,12 +162,10 @@ mod tests {
             }
         }
 
-        let mut mapper = UxROMMapper::new(MapperContext::new_for_test(
-            2,
-            prg_rom,
-            vec![],
-            NametableLayout::Horizontal,
-        ));
+        let mut mapper = UxROMMapper::new(
+            MapperContext::new_for_test(2, prg_rom, vec![], NametableLayout::Horizontal)
+                .with_submapper(2),
+        );
 
         // Test writing different bit patterns
         mapper.write_prg(0x8000, 0b0000_0000); // Bank 0
@@ -197,12 +191,10 @@ mod tests {
             }
         }
 
-        let mut mapper = UxROMMapper::new(MapperContext::new_for_test(
-            2,
-            prg_rom,
-            vec![],
-            NametableLayout::Horizontal,
-        ));
+        let mut mapper = UxROMMapper::new(
+            MapperContext::new_for_test(2, prg_rom, vec![], NametableLayout::Horizontal)
+                .with_submapper(2),
+        );
 
         // Last bank should always read 115 (bank 15 + 100)
         assert_eq!(mapper.read_prg(0xC000), 115);
@@ -230,12 +222,10 @@ mod tests {
             }
         }
 
-        let mut mapper = UxROMMapper::new(MapperContext::new_for_test(
-            2,
-            prg_rom.clone(),
-            vec![],
-            NametableLayout::Horizontal,
-        ));
+        let mut mapper = UxROMMapper::new(
+            MapperContext::new_for_test(2, prg_rom.clone(), vec![], NametableLayout::Horizontal)
+                .with_submapper(2),
+        );
 
         mapper.write_prg(0x8000, 3);
         mapper.write_chr(0x0000, 0x5A);
@@ -243,12 +233,10 @@ mod tests {
         let regs = mapper.registers_snapshot();
         let chr = mapper.chr_ram_snapshot();
 
-        let mut restored = UxROMMapper::new(MapperContext::new_for_test(
-            2,
-            prg_rom,
-            vec![],
-            NametableLayout::Horizontal,
-        ));
+        let mut restored = UxROMMapper::new(
+            MapperContext::new_for_test(2, prg_rom, vec![], NametableLayout::Horizontal)
+                .with_submapper(2),
+        );
         restored.restore_registers(&regs);
         restored.restore_chr_ram(&chr);
 
@@ -364,6 +352,7 @@ mod tests {
     #[test]
     fn test_uxrom_unrom_bank_select_masked_to_3_bits() {
         // Given: UNROM-style 128KB ROM (8 banks) — hardware supports only 3 bits
+        // Use submapper 2 (no bus conflicts) to test masking in isolation
         let mut mapper = UxROMMapper::new(
             MapperContext::new_for_test(
                 2,
@@ -371,6 +360,7 @@ mod tests {
                 vec![],
                 NametableLayout::Horizontal,
             )
+            .with_submapper(2)
             .with_prg_ram_banks(0),
         );
 
@@ -388,6 +378,7 @@ mod tests {
     #[test]
     fn test_uxrom_uorom_bank_select_masked_to_4_bits() {
         // Given: UOROM-style 256KB ROM (16 banks) — hardware supports 4 bits
+        // Use submapper 2 (no bus conflicts) to test masking in isolation
         let mut mapper = UxROMMapper::new(
             MapperContext::new_for_test(
                 2,
@@ -395,6 +386,7 @@ mod tests {
                 vec![],
                 NametableLayout::Horizontal,
             )
+            .with_submapper(2)
             .with_prg_ram_banks(0),
         );
 
@@ -412,6 +404,7 @@ mod tests {
     #[test]
     fn test_uxrom_bank_select_reads_correct_bank_after_masking() {
         // Given: UOROM 256KB ROM (16 banks), each filled with bank number
+        // Use submapper 2 (no bus conflicts) to test masking in isolation
         let mut prg_rom = vec![0; 256 * 1024];
         for bank in 0..16usize {
             let start = bank * 16 * 1024;
@@ -420,6 +413,7 @@ mod tests {
         }
         let mut mapper = UxROMMapper::new(
             MapperContext::new_for_test(2, prg_rom, vec![], NametableLayout::Horizontal)
+                .with_submapper(2)
                 .with_prg_ram_banks(0),
         );
 
@@ -432,5 +426,72 @@ mod tests {
             15,
             "bank_select 0x1F should be masked to bank 15 for UOROM"
         );
+    }
+
+    // --- Issue #347: Bus conflicts ---
+
+    #[test]
+    fn test_uxrom_submapper0_has_bus_conflicts() {
+        // Given: UxROM submapper 0 (original, bus conflicts present)
+        // PRG ROM filled with 0x00 at bank-select write addresses.
+        // With bus conflicts: effective = write_value & 0x00 = 0x00 → always bank 0.
+        let prg_rom = vec![0x00; 128 * 1024]; // all zeros
+        let mut mapper = UxROMMapper::new(
+            MapperContext::new_for_test(2, prg_rom, vec![], NametableLayout::Horizontal)
+                .with_submapper(0)
+                .with_prg_ram_banks(0),
+        );
+
+        // When: trying to write bank 3 (but ROM bytes at write addr are 0x00)
+        mapper.write_prg(0x8000, 3);
+
+        // Then: effective value = 3 & 0x00 = 0 → bank 0 selected (bus conflict)
+        let snapshot = mapper.registers_snapshot();
+        assert_eq!(
+            snapshot[0], 0,
+            "submapper 0: bus conflict should force bank_select to 0 (write & ROM[addr])"
+        );
+    }
+
+    #[test]
+    fn test_uxrom_submapper2_no_bus_conflicts() {
+        // Given: UxROM submapper 2 (explicitly no bus conflicts)
+        // PRG ROM filled with 0x00 at bank-select write addresses.
+        // Without bus conflicts: write_value used directly.
+        let prg_rom = vec![0x00; 128 * 1024]; // all zeros
+        let mut mapper = UxROMMapper::new(
+            MapperContext::new_for_test(2, prg_rom, vec![], NametableLayout::Horizontal)
+                .with_submapper(2)
+                .with_prg_ram_banks(0),
+        );
+
+        // When: writing bank 3
+        mapper.write_prg(0x8000, 3);
+
+        // Then: bank 3 selected (no bus conflict applied)
+        let snapshot = mapper.registers_snapshot();
+        assert_eq!(
+            snapshot[0], 3,
+            "submapper 2: no bus conflict, bank_select should be 3"
+        );
+    }
+
+    #[test]
+    fn test_uxrom_bus_conflict_and_value_selects_correct_bank() {
+        // Given: UxROM submapper 0 (bus conflicts) with ROM filled 0xFF
+        // (0xFF & write_value = write_value, so bank select passes through)
+        let prg_rom = vec![0xFF; 128 * 1024];
+        let mut mapper = UxROMMapper::new(
+            MapperContext::new_for_test(2, prg_rom, vec![], NametableLayout::Horizontal)
+                .with_submapper(0)
+                .with_prg_ram_banks(0),
+        );
+
+        // When: writing bank 5 (0x05 & 0xFF = 0x05 → bank 5)
+        mapper.write_prg(0x8000, 5);
+
+        // Then: bank 5 selected
+        let snapshot = mapper.registers_snapshot();
+        assert_eq!(snapshot[0], 5, "0x05 & 0xFF = 0x05, should select bank 5");
     }
 }
