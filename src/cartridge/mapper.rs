@@ -11,6 +11,7 @@ use super::colordreams::ColorDreamsMapper;
 use super::cprom::CpromMapper;
 use super::gxrom::GxROMMapper;
 use super::irem_g101::IremG101Mapper;
+use super::mapper12::Mapper12;
 use super::mapper37::Mapper37;
 use super::mapper42::Mapper42;
 use super::mapper43::Mapper43;
@@ -498,6 +499,7 @@ mapper_registry! {
     9 => MMC2Mapper::new,
     10 => MMC4Mapper::new,
     11 => ColorDreamsMapper::new,
+    12 => Mapper12::new,
     13 => CpromMapper::new,
     15 => Multicart15Mapper::new,
     16 => BandaiFcgMapper::new,
@@ -558,9 +560,9 @@ mapper_registry! {
 
 #[cfg(test)]
 const SUPPORTED_MAPPERS: &[u8] = &[
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 16, 17, 19, 21, 22, 23, 24, 25, 26, 32, 33, 34,
-    37, 40, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 56, 57, 58, 59, 60, 61, 62, 64, 65, 66,
-    67, 68, 69, 71, 72, 73, 78, 185, 206, 241, 242, 243, 244, 245, 246, 251, 254, 255,
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, 17, 19, 21, 22, 23, 24, 25, 26, 32, 33,
+    34, 37, 40, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 56, 57, 58, 59, 60, 61, 62, 64, 65,
+    66, 67, 68, 69, 71, 72, 73, 78, 185, 206, 241, 242, 243, 244, 245, 246, 251, 254, 255,
 ];
 
 /// List of supported iNES mapper IDs handled by the factory.
