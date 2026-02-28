@@ -15,6 +15,16 @@ from romxml import RomXml
 from nescartdb import NesCartDb, BASE_URL
 from rom_database import RomDatabase
 
+
+def _filter_present_fields(row: dict) -> dict:
+    """Return only fields with non-NULL values, preserving explicit zero values."""
+    return {k: v for k, v in row.items() if v is not None}
+
+
+def _csv_cell(value: object) -> str:
+    """Format a CSV cell value, preserving numeric zero and blanking only NULL."""
+    return "" if value is None else str(value)
+
 def print_csv_header(field_order: list[str]) -> None:
     """Print a CSV header describing the exported fields."""
     print("# NES ROM information (CSV format)")
@@ -115,21 +125,10 @@ def main() -> int:
             if args.format == "csv":
                 print_csv_header(field_order)
                 for row in rows:
-                    cleaned = {
-                        k: v
-                        for k, v in row.items()
-                        if v is not None and not (k.endswith("size") and v == 0)
-                    }
-                    print(",".join(str(cleaned.get(k, "") or "") for k in field_order))
+                    cleaned = _filter_present_fields(row)
+                    print(",".join(_csv_cell(cleaned.get(k)) for k in field_order))
             else:
-                cleaned_rows = [
-                    {
-                        k: v
-                        for k, v in row.items()
-                        if v is not None
-                    }
-                    for row in rows
-                ]
+                cleaned_rows = [_filter_present_fields(row) for row in rows]
                 print(json.dumps(cleaned_rows, indent=2))
             return 0
 

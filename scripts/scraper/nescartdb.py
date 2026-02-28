@@ -330,13 +330,6 @@ class NesCartDb:
             game_name = h1_tag.text.strip()
 
         result: Dict[str, str] = {}
-        # Insert defaults for ROM and RAM
-        result[RomDbKey.PRG_ROM_SIZE.value] = 0
-        result[RomDbKey.CHR_ROM_SIZE.value] = 0
-        result[RomDbKey.PRG_RAM_SIZE.value] = 0
-        result[RomDbKey.CHR_RAM_SIZE.value] = 0
-        result[RomDbKey.PRG_NVRAM_SIZE.value] = 0
-        result[RomDbKey.CHR_NVRAM_SIZE.value] = 0
         if game_name:
             result[RomDbKey.NAME.value] = game_name
         if rom_details.get("crc"):
@@ -346,10 +339,10 @@ class NesCartDb:
         submapper = self._first_value(kv, ["Submapper", "SubMapper"])
         chr_ram = self._first_value(kv, ["CHR RAM", "CHR-RAM", "VRAM"])
         work_ram = self._first_value(kv, ["WRAM", "Work RAM"])
-        eeprom_size = self._parse_eeprom_size_from_chip_info(chip_info) or 0
+        eeprom_size = self._parse_eeprom_size_from_chip_info(chip_info)
         batt = self._first_value(kv, ["Battery present", "Battery"])
         # In iNES 2.0, battery means "battery or other non-volatile memory"
-        if eeprom_size > 0:
+        if eeprom_size is not None and eeprom_size > 0:
             batt = '1'
         peri = self._first_value(kv, ["Peripherals", "Controllers"])
         if mapper:
@@ -367,7 +360,8 @@ class NesCartDb:
                 result[RomDbKey.PRG_NVRAM_SIZE.value] = self._parse_size(work_ram)
             else:
                 result[RomDbKey.PRG_RAM_SIZE.value] = self._parse_size(work_ram)
-                result[RomDbKey.PRG_NVRAM_SIZE.value] = eeprom_size
+                if eeprom_size is not None:
+                    result[RomDbKey.PRG_NVRAM_SIZE.value] = eeprom_size
         if batt:
             result[RomDbKey.BATTERY.value] = self._parse_yes_no(batt)
         if peri:

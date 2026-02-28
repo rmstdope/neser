@@ -84,6 +84,29 @@ class TestRomDatabase(unittest.TestCase):
         self.assertIsNotNone(got)
         self.assertEqual(got.get(RomDbKey.NAMETABLE_LAYOUT.value), "vertical")
 
+    def test_missing_columns_remain_null_on_insert(self):
+        """Inserts should keep unspecified integer columns as NULL, not zero."""
+        crc = "NULLONINSERT"
+        self.db.insert_rom_by_crc({RomDbKey.CRC.value: crc})
+        got = self.db.get_rom_by_crc(crc)
+        self.assertIsNotNone(got)
+        self.assertIsNone(got.get(RomDbKey.PRG_RAM_SIZE.value))
+        self.assertIsNone(got.get(RomDbKey.CHR_RAM_SIZE.value))
+
+    def test_update_can_set_explicit_null_and_zero_stays_distinct(self):
+        """Updates should allow NULL and preserve distinction from explicit zero."""
+        crc = "NULLVSZERO"
+        self.db.insert_rom_by_crc({RomDbKey.CRC.value: crc, RomDbKey.PRG_RAM_SIZE.value: 0})
+
+        got = self.db.get_rom_by_crc(crc)
+        self.assertIsNotNone(got)
+        self.assertEqual(got.get(RomDbKey.PRG_RAM_SIZE.value), 0)
+
+        self.db.update_rom_by_crc(crc, {RomDbKey.PRG_RAM_SIZE.value: None})
+        got = self.db.get_rom_by_crc(crc)
+        self.assertIsNotNone(got)
+        self.assertIsNone(got.get(RomDbKey.PRG_RAM_SIZE.value))
+
     def test_process_record_by_crc_outcomes(self):
         """Exercise process_record_by_crc return codes for add/update/skip/conflict."""
         crc = "FEEDFACE"

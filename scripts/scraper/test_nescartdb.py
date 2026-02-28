@@ -724,7 +724,7 @@ class TestNesCartDb(unittest.TestCase):
         self.assertEqual(result[RomDbKey.CHR_ROM_SIZE.value], 8192)
         self.assertEqual(result[RomDbKey.PRG_RAM_SIZE.value], 0)
         self.assertEqual(result[RomDbKey.CHR_RAM_SIZE.value], 0)
-        self.assertEqual(result[RomDbKey.PRG_NVRAM_SIZE.value], 0)
+        self.assertIsNone(result.get(RomDbKey.PRG_NVRAM_SIZE.value))
         self.assertEqual(result[RomDbKey.BATTERY.value], 0)
         self.assertEqual(result[RomDbKey.EXPANSION_TYPE.value], 1)
         self.assertNotIn(RomDbKey.SUBMAPPER.value, result)

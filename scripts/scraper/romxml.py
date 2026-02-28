@@ -233,5 +233,6 @@ class RomXml:
                 elem.clear()
                 if self._remaining > 0:
                     self._remaining -= 1
+                print(f'{record}')
                 return record
         return None
