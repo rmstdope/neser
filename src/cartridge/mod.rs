@@ -79,7 +79,7 @@ pub use common::{
     StateSnapshot,
 };
 #[allow(unused_imports)]
-pub use ines::{ConsoleType, InesHeader, NametableLayout, ParsedRom, TimingMode};
+pub use ines::{ConsoleType, InesHeader, NametableLayout, ParsedRom, RomParseError, TimingMode};
 #[allow(unused_imports)]
 pub use mapper::{Mapper, MapperCapabilities, MapperContext};
 #[allow(unused_imports)]

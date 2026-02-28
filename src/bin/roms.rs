@@ -2,101 +2,23 @@
 // in `src/cartridge/ines.rs`. The local copies were removed to avoid
 // dead-code warnings.
 
-use neser::cartridge::{ConsoleType, NametableLayout, RomDb, RomDbEntry, TimingMode};
+use neser::cartridge::{ConsoleType, ParsedRom, RomDb, RomParseError, TimingMode};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Rom {
-    mapper: u16,
-    submapper: u8,
-    console_type: ConsoleType,
-    mirroring: NametableLayout,
-    has_trainer: bool,
-    header_version: &'static str,
-    battery_backed_prg_ram: bool,
-    prg_rom_size_bytes: usize,
-    chr_rom_size_bytes: usize,
-    prg_ram_size_bytes: Option<usize>,
-    prg_nvram_size_bytes: Option<usize>,
-    chr_ram_size_bytes: Option<usize>,
-    chr_nvram_size_bytes: Option<usize>,
-    timing_mode: TimingMode,
-    vs_ppu_type: Option<u8>,
-    vs_hardware_type: Option<u8>,
-    misc_roms: u8,
-    default_expansion_device: u8,
-    rom_crc32: Option<u32>,
-    actual_file_size_bytes: usize,
-    expected_file_size_bytes: usize,
-    file_length_matches_header: bool,
-    header_prg_rom_size_bytes: usize,
-    header_chr_rom_size_bytes: usize,
-    used_db_size_override: bool,
-}
-
-fn parse_rom_header(header: &[u8; 16]) -> Option<Rom> {
-    let parsed = neser::cartridge::InesHeader::parse(header)?;
-
-    Some(Rom {
-        mapper: parsed.mapper,
-        submapper: parsed.submapper,
-        console_type: parsed.console_type,
-        mirroring: parsed.mirroring,
-        has_trainer: parsed.has_trainer,
-        header_version: parsed.header_version,
-        battery_backed_prg_ram: parsed.battery_backed_prg_ram,
-        prg_rom_size_bytes: parsed.prg_rom_size_bytes,
-        chr_rom_size_bytes: parsed.chr_rom_size_bytes,
-        prg_ram_size_bytes: parsed.prg_ram_size_bytes,
-        prg_nvram_size_bytes: parsed.prg_nvram_size_bytes,
-        chr_ram_size_bytes: parsed.chr_ram_size_bytes,
-        chr_nvram_size_bytes: parsed.chr_nvram_size_bytes,
-        timing_mode: parsed.timing_mode,
-        vs_ppu_type: parsed.vs_ppu_type,
-        vs_hardware_type: parsed.vs_hardware_type,
-        misc_roms: parsed.misc_roms,
-        default_expansion_device: parsed.default_expansion_device,
-        rom_crc32: None,
-        actual_file_size_bytes: 0,
-        expected_file_size_bytes: 0,
-        file_length_matches_header: true,
-        header_prg_rom_size_bytes: parsed.prg_rom_size_bytes,
-        header_chr_rom_size_bytes: parsed.chr_rom_size_bytes,
-        used_db_size_override: false,
-    })
-}
-
-fn apply_db_size_overrides(info: &mut Rom, db_entry: &RomDbEntry) {
-    let mut overridden = info.used_db_size_override;
-
-    if let Some(prg_size) = db_entry.prg_rom_size {
-        let prg_size = prg_size as usize;
-        if prg_size != info.prg_rom_size_bytes {
-            overridden = true;
-        }
-        info.prg_rom_size_bytes = prg_size;
-    }
-
-    if let Some(chr_size) = db_entry.chr_rom_size {
-        let chr_size = chr_size as usize;
-        if chr_size != info.chr_rom_size_bytes {
-            overridden = true;
-        }
-        info.chr_rom_size_bytes = chr_size;
-    }
-
-    info.used_db_size_override = overridden;
-}
+const DEFAULT_LIST_ROOT: &str = "roms/games";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Command {
-    List,
+    List(std::path::PathBuf),
     Info(std::path::PathBuf),
     InfoAll,
 }
 
 fn parse_command(args: &[String]) -> Result<Command, String> {
     match args {
-        [command] if command == "list" => Ok(Command::List),
+        [command] if command == "list" => {
+            Ok(Command::List(std::path::PathBuf::from(DEFAULT_LIST_ROOT)))
+        }
+        [command, path] if command == "list" => Ok(Command::List(std::path::PathBuf::from(path))),
         [command, path] if command == "info" => {
             let path = std::path::PathBuf::from(path);
             if !path.is_file() {
@@ -108,78 +30,25 @@ fn parse_command(args: &[String]) -> Result<Command, String> {
             Ok(Command::Info(path))
         }
         [command] if command == "info" => Ok(Command::InfoAll),
-        _ => Err("Usage: roms list | roms info <path>".to_string()),
+        _ => Err("Usage: roms list [path] | roms info <path>".to_string()),
     }
 }
 
-fn read_rom_from_file(path: &std::path::Path, rom_db: Option<&RomDb>) -> Result<Rom, String> {
+fn read_rom_from_file(
+    path: &std::path::Path,
+    rom_db: &RomDb,
+) -> Result<(ParsedRom, usize), String> {
     let data = std::fs::read(path).map_err(|err| err.to_string())?;
-    if data.len() < 16 {
-        return Err("File too small for iNES header".to_string());
-    }
 
-    let header: [u8; 16] = data[0..16]
-        .try_into()
-        .map_err(|_| "Failed to read iNES header".to_string())?;
-    let mut info = parse_rom_header(&header).ok_or_else(|| "Invalid iNES header".to_string())?;
-
-    let trainer_offset = if info.has_trainer { 512 } else { 0 };
-    let header_prg_rom_start = 16 + trainer_offset;
-    let header_prg_rom_end = header_prg_rom_start + info.prg_rom_size_bytes;
-    let header_chr_rom_start = header_prg_rom_end;
-    let header_chr_rom_end = header_chr_rom_start + info.chr_rom_size_bytes;
-
-    let payload_start = header_prg_rom_start;
-    let payload = if payload_start <= data.len() {
-        &data[payload_start..]
-    } else {
-        &[]
-    };
-    let fallback_crc32 = neser::cartridge::calculate_rom_crc32(payload, &[]);
-
-    if let Some(rom_db) = rom_db
-        && let Some(db_entry) = rom_db.get_by_crc(fallback_crc32)
-    {
-        apply_db_size_overrides(&mut info, db_entry);
-    }
-
-    if data.len() >= header_chr_rom_end {
-        let header_prg_rom = &data[header_prg_rom_start..header_prg_rom_end];
-        let header_chr_rom = &data[header_chr_rom_start..header_chr_rom_end];
-        let crc32 = neser::cartridge::calculate_rom_crc32(header_prg_rom, header_chr_rom);
-        info.rom_crc32 = Some(crc32);
-
-        if let Some(rom_db) = rom_db
-            && let Some(db_entry) = rom_db.get_by_crc(crc32)
-        {
-            apply_db_size_overrides(&mut info, db_entry);
-        }
-    } else {
-        info.rom_crc32 = Some(fallback_crc32);
-    }
-
-    let prg_rom_start = 16 + trainer_offset;
-    let prg_rom_end = prg_rom_start + info.prg_rom_size_bytes;
-    let chr_rom_start = prg_rom_end;
-    let chr_rom_end = chr_rom_start + info.chr_rom_size_bytes;
-
-    info.actual_file_size_bytes = data.len();
-    info.expected_file_size_bytes = chr_rom_end;
-    info.file_length_matches_header = data.len() == chr_rom_end;
-
-    if data.len() < chr_rom_end {
-        return Err(format!(
+    let parsed = ParsedRom::parse(&data, Some(rom_db)).map_err(|err| match err {
+        RomParseError::InvalidHeader => "Invalid iNES header".to_string(),
+        RomParseError::FileTooSmall { expected, actual } => format!(
             "!!! WARNING: FILE LENGTH DOES NOT MATCH DB/HEADER DECLARATION !!! actual={} expected={} (file too small for PRG/CHR ROM data)",
-            data.len(),
-            chr_rom_end
-        ));
-    }
+            actual, expected
+        ),
+    })?;
 
-    let prg_rom = &data[prg_rom_start..prg_rom_end];
-    let chr_rom = &data[chr_rom_start..chr_rom_end];
-    info.rom_crc32 = Some(neser::cartridge::calculate_rom_crc32(prg_rom, chr_rom));
-
-    Ok(info)
+    Ok((parsed, data.len()))
 }
 
 fn console_type_label(console_type: ConsoleType) -> String {
@@ -209,75 +78,81 @@ fn timing_mode_short_label(timing: TimingMode) -> char {
     }
 }
 
-fn print_rom_info(path: &std::path::Path, info: Rom) {
+fn expected_file_size_bytes(parsed: &ParsedRom) -> usize {
+    let trainer_offset = if parsed.header.has_trainer { 512 } else { 0 };
+    16 + trainer_offset + parsed.header.prg_rom_size_bytes + parsed.header.chr_rom_size_bytes
+}
+
+fn print_rom_info(path: &std::path::Path, parsed: &ParsedRom, actual_file_size_bytes: usize) {
     println!("ROM: {}", path.display());
-    println!("Header version: {}", info.header_version);
-    println!("Mapper: {} ({})", info.mapper, info.submapper);
-    println!("Console type: {}", console_type_label(info.console_type));
-    println!("PRG ROM size: {} bytes", info.prg_rom_size_bytes);
-    println!("CHR ROM size: {} bytes", info.chr_rom_size_bytes);
-    if let Some(prg_ram_size_bytes) = info.prg_ram_size_bytes {
+    println!("Header version: {}", parsed.header.header_version);
+    println!(
+        "Mapper: {} ({})",
+        parsed.header.mapper, parsed.header.submapper
+    );
+    println!(
+        "Console type: {}",
+        console_type_label(parsed.header.console_type)
+    );
+    println!("PRG ROM size: {} bytes", parsed.header.prg_rom_size_bytes);
+    println!("CHR ROM size: {} bytes", parsed.header.chr_rom_size_bytes);
+    if let Some(prg_ram_size_bytes) = parsed.header.prg_ram_size_bytes {
         println!("PRG-RAM size: {} bytes", prg_ram_size_bytes);
     }
-    if let Some(prg_nvram_size_bytes) = info.prg_nvram_size_bytes {
+    if let Some(prg_nvram_size_bytes) = parsed.header.prg_nvram_size_bytes {
         println!("PRG-NVRAM size: {} bytes", prg_nvram_size_bytes);
     }
-    if let Some(chr_ram_size_bytes) = info.chr_ram_size_bytes {
+    if let Some(chr_ram_size_bytes) = parsed.header.chr_ram_size_bytes {
         println!("CHR-RAM size: {} bytes", chr_ram_size_bytes);
     }
-    if let Some(chr_nvram_size_bytes) = info.chr_nvram_size_bytes {
+    if let Some(chr_nvram_size_bytes) = parsed.header.chr_nvram_size_bytes {
         println!("CHR-NVRAM size: {} bytes", chr_nvram_size_bytes);
     }
-    println!("Timing mode: {}", timing_mode_label(info.timing_mode));
-    if let Some(rom_crc32) = info.rom_crc32 {
-        println!("PRG+CHR CRC32: {:08X}", rom_crc32);
-    }
-    if let Some(vs_ppu_type) = info.vs_ppu_type {
+    println!(
+        "Timing mode: {}",
+        timing_mode_label(parsed.header.timing_mode)
+    );
+    println!("PRG+CHR CRC32: {:08X}", parsed.crc32);
+    if let Some(vs_ppu_type) = parsed.header.vs_ppu_type {
         println!("Vs. PPU type: {vs_ppu_type}");
     }
-    if let Some(vs_hardware_type) = info.vs_hardware_type {
+    if let Some(vs_hardware_type) = parsed.header.vs_hardware_type {
         println!("Vs. hardware type: {vs_hardware_type}");
     }
-    if info.misc_roms > 0 {
-        println!("Misc ROMs: {}", info.misc_roms);
+    if parsed.header.misc_roms > 0 {
+        println!("Misc ROMs: {}", parsed.header.misc_roms);
     }
-    if info.default_expansion_device > 0 {
+    if parsed.header.default_expansion_device > 0 {
         println!(
             "Default expansion device: {}",
-            info.default_expansion_device
+            parsed.header.default_expansion_device
         );
     }
-    println!("Mirroring: {:?}", info.mirroring);
-    println!("Trainer: {}", if info.has_trainer { "yes" } else { "no" });
+    println!("Mirroring: {:?}", parsed.header.mirroring);
+    println!(
+        "Trainer: {}",
+        if parsed.header.has_trainer {
+            "yes"
+        } else {
+            "no"
+        }
+    );
     println!(
         "Battery-backed PRG RAM: {}",
-        if info.battery_backed_prg_ram {
+        if parsed.header.battery_backed_prg_ram {
             "yes"
         } else {
             "no"
         }
     );
 
-    if info.used_db_size_override {
-        println!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-        println!("!!! WARNING: HEADER PRG/CHR SIZE DOES NOT MATCH ROM DB ENTRY !!!");
-        println!(
-            "!!! Header PRG/CHR: {}/{} bytes | DB PRG/CHR: {}/{} bytes !!!",
-            info.header_prg_rom_size_bytes,
-            info.header_chr_rom_size_bytes,
-            info.prg_rom_size_bytes,
-            info.chr_rom_size_bytes
-        );
-        println!("!!! Using ROM DB sizes for validation and display.             !!!");
-        println!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-    }
-
-    if !info.file_length_matches_header {
+    let expected_file_size_bytes = expected_file_size_bytes(parsed);
+    if actual_file_size_bytes != expected_file_size_bytes {
         println!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
         println!("!!! WARNING: FILE LENGTH DOES NOT MATCH HEADER DECLARATION !!!");
         println!(
             "!!! Actual size: {} bytes | Expected from DB/header: {} bytes !!!",
-            info.actual_file_size_bytes, info.expected_file_size_bytes
+            actual_file_size_bytes, expected_file_size_bytes
         );
         println!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
     }
@@ -315,24 +190,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
 
     match command {
-        Command::List => {
-            let root = std::path::Path::new("roms/games");
-            let mut roms = collect_roms(root)?;
+        Command::List(root) => {
+            let rom_db = RomDb::new()?;
+            let mut roms = collect_roms(&root)?;
             roms.sort();
 
             for rom in roms {
-                match read_rom_from_file(&rom, None) {
-                    Ok(info) => {
-                        let display_path = rom.strip_prefix(root).unwrap_or(&rom);
+                match read_rom_from_file(&rom, &rom_db) {
+                    Ok((parsed, _)) => {
+                        let display_path = rom.strip_prefix(&root).unwrap_or(&rom);
                         println!(
                             "{:03} {} {}",
-                            info.mapper,
-                            timing_mode_short_label(info.timing_mode),
+                            parsed.header.mapper,
+                            timing_mode_short_label(parsed.header.timing_mode),
                             display_path.display()
                         );
                     }
                     Err(err) => {
-                        let display_path = rom.strip_prefix(root).unwrap_or(&rom);
+                        let display_path = rom.strip_prefix(&root).unwrap_or(&rom);
                         eprintln!("{}: {err}", display_path.display());
                     }
                 }
@@ -340,13 +215,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Command::Info(path) => {
             let rom_db = RomDb::new()?;
-            let info = read_rom_from_file(&path, Some(&rom_db))
+            let (parsed, actual_file_size_bytes) = read_rom_from_file(&path, &rom_db)
                 .map_err(|err| format!("{}: {err}", path.display()))?;
-            print_rom_info(&path, info);
+            print_rom_info(&path, &parsed, actual_file_size_bytes);
         }
         Command::InfoAll => {
             let rom_db = RomDb::new()?;
-            let root = std::path::Path::new("roms/games");
+            let root = std::path::Path::new(DEFAULT_LIST_ROOT);
             let mut roms = collect_roms(root)?;
             roms.sort();
 
@@ -357,8 +232,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 first = false;
 
-                match read_rom_from_file(&rom, Some(&rom_db)) {
-                    Ok(info) => print_rom_info(&rom, info),
+                match read_rom_from_file(&rom, &rom_db) {
+                    Ok((parsed, actual_file_size_bytes)) => {
+                        print_rom_info(&rom, &parsed, actual_file_size_bytes)
+                    }
                     Err(err) => eprintln!("{}: {err}", rom.display()),
                 }
             }
@@ -396,7 +273,14 @@ mod tests {
     fn test_parse_command_list() {
         let args = vec!["list".to_string()];
         let command = parse_command(&args).expect("parse command");
-        assert!(matches!(command, Command::List));
+        assert_eq!(command, Command::List(PathBuf::from(DEFAULT_LIST_ROOT)));
+    }
+
+    #[test]
+    fn test_parse_command_list_with_path() {
+        let args = vec!["list".to_string(), "roms".to_string()];
+        let command = parse_command(&args).expect("parse command");
+        assert_eq!(command, Command::List(PathBuf::from("roms")));
     }
 
     #[test]
@@ -412,90 +296,6 @@ mod tests {
         let args = vec!["info".to_string(), missing_path.display().to_string()];
         let err = parse_command(&args).expect_err("should fail with missing file");
         assert!(err.to_lowercase().contains("file"));
-    }
-
-    #[test]
-    fn test_parse_ines_header_extracts_fields() {
-        let mut header = [0u8; 16];
-        header[0..4].copy_from_slice(b"NES\x1A");
-        header[4] = 2;
-        header[5] = 1;
-        header[6] = 0b0000_0011;
-        header[7] = 0b0101_0000;
-        header[8] = 2;
-
-        let info = parse_rom_header(&header).expect("parse header");
-
-        assert_eq!(info.prg_rom_size_bytes, 2 * 16 * 1024);
-        assert_eq!(info.chr_rom_size_bytes, 8 * 1024);
-        assert_eq!(info.prg_ram_size_bytes, Some(2 * 8 * 1024));
-        assert_eq!(info.mapper, 0x50);
-        assert_eq!(info.mirroring, NametableLayout::Vertical);
-        assert!(info.battery_backed_prg_ram);
-        assert!(!info.has_trainer);
-    }
-
-    #[test]
-    fn test_parse_ines_header_defaults_prg_ram_to_8kb() {
-        let mut header = [0u8; 16];
-        header[0..4].copy_from_slice(b"NES\x1A");
-        header[4] = 1;
-        header[5] = 1;
-        header[6] = 0b0000_0000;
-        header[7] = 0b0000_0000;
-        header[8] = 0;
-
-        let info = parse_rom_header(&header).expect("parse header");
-        assert_eq!(info.prg_ram_size_bytes, Some(8 * 1024));
-    }
-
-    #[test]
-    fn test_parse_rom_header_nes2_extracts_fields() {
-        let mut header = [0u8; 16];
-        header[0..4].copy_from_slice(b"NES\x1A");
-        header[4] = 0x02;
-        header[5] = 0x03;
-        header[6] = 0b0010_0011;
-        header[7] = 0b1010_1001;
-        header[8] = 0b0011_0100;
-        header[9] = 0b0010_0001;
-        header[10] = 0b1000_0111;
-        header[11] = 0b0110_0101;
-        header[12] = 0x03;
-        header[13] = 0b1011_0111;
-        header[14] = 0x02;
-        header[15] = 0x1A;
-
-        let info = parse_rom_header(&header).expect("parse header");
-
-        assert_eq!(info.mapper, 0x4A2);
-        assert_eq!(info.submapper, 0x3);
-        assert_eq!(info.console_type, ConsoleType::VsSystem);
-        assert_eq!(info.mirroring, NametableLayout::Vertical);
-        assert!(info.battery_backed_prg_ram);
-        assert!(!info.has_trainer);
-        assert_eq!(info.prg_rom_size_bytes, 4_227_072);
-        assert_eq!(info.chr_rom_size_bytes, 4_218_880);
-        assert_eq!(info.prg_ram_size_bytes, Some(8_192));
-        assert_eq!(info.prg_nvram_size_bytes, Some(16_384));
-        assert_eq!(info.chr_ram_size_bytes, Some(2_048));
-        assert_eq!(info.chr_nvram_size_bytes, Some(4_096));
-        assert_eq!(info.timing_mode, TimingMode::Dendy);
-        assert_eq!(info.vs_ppu_type, Some(0x7));
-        assert_eq!(info.vs_hardware_type, Some(0xB));
-        assert_eq!(info.misc_roms, 0x02);
-        assert_eq!(info.default_expansion_device, 0x1A);
-    }
-
-    #[test]
-    fn test_parse_rom_header_extended_console_type() {
-        let mut header = [0u8; 16];
-        header[0..4].copy_from_slice(b"NES\x1A");
-        header[7] = 0b0000_1011;
-        header[13] = 0x09;
-
-        let info = parse_rom_header(&header).expect("parse header");
-        assert_eq!(info.console_type, ConsoleType::Extended(0x09));
     }
 
     #[test]
@@ -521,17 +321,18 @@ mod tests {
         path.push(format!("neser-rom-crc-{nonce}.nes"));
 
         std::fs::write(&path, &rom_bytes).expect("write temp rom");
-        let info = read_rom_from_file(&path, None).expect("read temp rom");
+        let rom_db = RomDb::new().expect("load rom db");
+        let (parsed, actual_file_size_bytes) =
+            read_rom_from_file(&path, &rom_db).expect("read temp rom");
         let _ = std::fs::remove_file(&path);
 
-        assert_eq!(info.rom_crc32, Some(expected_crc));
-        assert_eq!(info.actual_file_size_bytes, rom_bytes.len());
+        assert_eq!(parsed.crc32, expected_crc);
+        assert_eq!(actual_file_size_bytes, rom_bytes.len());
         assert_eq!(
-            info.expected_file_size_bytes,
-            16 + info.prg_rom_size_bytes + info.chr_rom_size_bytes
+            expected_file_size_bytes(&parsed),
+            16 + parsed.header.prg_rom_size_bytes + parsed.header.chr_rom_size_bytes
         );
-        assert!(info.file_length_matches_header);
-        assert!(!info.used_db_size_override);
+        assert_eq!(actual_file_size_bytes, expected_file_size_bytes(&parsed));
     }
 
     #[test]
@@ -558,15 +359,13 @@ mod tests {
         path.push(format!("neser-rom-len-{nonce}.nes"));
 
         std::fs::write(&path, &rom_bytes).expect("write temp rom");
-        let info = read_rom_from_file(&path, None).expect("read temp rom");
+        let rom_db = RomDb::new().expect("load rom db");
+        let (parsed, actual_file_size_bytes) =
+            read_rom_from_file(&path, &rom_db).expect("read temp rom");
         let _ = std::fs::remove_file(&path);
 
-        assert_eq!(info.actual_file_size_bytes, rom_bytes.len());
-        assert_eq!(
-            info.expected_file_size_bytes,
-            16 + info.prg_rom_size_bytes + info.chr_rom_size_bytes
-        );
-        assert!(!info.file_length_matches_header);
+        assert_eq!(actual_file_size_bytes, rom_bytes.len());
+        assert_ne!(actual_file_size_bytes, expected_file_size_bytes(&parsed));
     }
 
     #[test]
@@ -622,15 +421,15 @@ mod tests {
         std::fs::write(&csv_path, csv).expect("write temp db");
 
         let rom_db = RomDb::from_path(&csv_path).expect("load temp db");
-        let info = read_rom_from_file(&rom_path, Some(&rom_db)).expect("read temp rom");
+        let (parsed, actual_file_size_bytes) =
+            read_rom_from_file(&rom_path, &rom_db).expect("read temp rom");
 
         let _ = std::fs::remove_file(&rom_path);
         let _ = std::fs::remove_file(&csv_path);
 
-        assert_eq!(info.header_prg_rom_size_bytes, 16 * 1024);
-        assert_eq!(info.header_chr_rom_size_bytes, 8 * 1024);
-        assert_eq!(info.prg_rom_size_bytes, 16 * 1024);
-        assert_eq!(info.chr_rom_size_bytes, 0);
-        assert!(info.used_db_size_override);
+        assert_eq!(parsed.header.prg_rom_size_bytes, 16 * 1024);
+        assert_eq!(parsed.header.chr_rom_size_bytes, 0);
+        assert_eq!(parsed.header.mapper, 4);
+        assert_ne!(actual_file_size_bytes, expected_file_size_bytes(&parsed));
     }
 }
