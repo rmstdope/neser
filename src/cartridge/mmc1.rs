@@ -18,8 +18,11 @@ const CHR_BANK_SIZE_8K: usize = 0x2000; // 8KB
 const MMC1_SUBMAPPER_FIXED_32KB_PRG: u8 = 5;
 const MMC1_SUBMAPPER_HARDWIRED_MIRRORING: u8 = 7;
 const MMC1_SHIFT_REGISTER_RESET: u8 = 0x80; // Bit 7 set triggers reset
+const MMC1_SHIFT_REGISTER_POWER_ON: u8 = 0x10;
 const MMC1_WRITE_COUNT_MAX: u8 = 5; // Number of writes to load a register
 const MMC1_DEFAULT_CONTROL: u8 = 0x0C; // PRG mode 3, CHR mode 0
+#[cfg(test)]
+const MMC1B_WRAM_DISABLED_POWER_ON_PRG_BANK: u8 = 0x10;
 const MMC1_MIN_CYCLES_BETWEEN_SERIAL_WRITES: u64 = 2;
 const MMC1_CHR_BANK_0_REGISTER_ADDR: u16 = 0xA000;
 const MMC1_CHR_BANK_1_REGISTER_ADDR: u16 = 0xC000;
@@ -106,6 +109,15 @@ pub struct MMC1Mapper {
 }
 
 impl MMC1Mapper {
+    #[cfg(test)]
+    fn power_on_prg_bank_for_revision(revision: Mmc1Revision) -> u8 {
+        match revision {
+            #[cfg(test)]
+            Mmc1Revision::Mmc1A => 0,
+            Mmc1Revision::Mmc1B => MMC1B_WRAM_DISABLED_POWER_ON_PRG_BANK,
+        }
+    }
+
     fn hardwired_mirroring_from_header(
         submapper: u8,
         header_mirroring: NametableLayout,
@@ -121,7 +133,7 @@ impl MMC1Mapper {
             prg_rom: ctx.prg_rom,
             prg_ram: vec![0; prg_ram_size],
             chr_memory: ChrMemory::new(ctx.chr_rom),
-            shift_register: 0x10,
+            shift_register: MMC1_SHIFT_REGISTER_POWER_ON,
             write_count: 0,
             control: MMC1_DEFAULT_CONTROL,
             chr_bank_0: 0,
@@ -150,16 +162,17 @@ impl MMC1Mapper {
         revision: Mmc1Revision,
     ) -> Self {
         let surom = prg_rom.len() > 256 * 1024;
+        let prg_bank = Self::power_on_prg_bank_for_revision(revision);
         Self {
             prg_rom,
             prg_ram: vec![0; 8192],
             chr_memory: ChrMemory::new(chr_rom),
-            shift_register: 0x10, // Power-on state: bit 4 set
+            shift_register: MMC1_SHIFT_REGISTER_POWER_ON, // Power-on state: bit 4 set
             write_count: 0,
             control: MMC1_DEFAULT_CONTROL, // Default: PRG mode 3 (fix last bank), CHR mode 0
             chr_bank_0: 0,
             chr_bank_1: 0,
-            prg_bank: 0,
+            prg_bank,
             revision,
             surom,
             sorom: false,
@@ -173,7 +186,7 @@ impl MMC1Mapper {
     }
 
     fn reset_shift_register(&mut self) {
-        self.shift_register = 0x10; // Reset to power-on state: bit 4 set
+        self.shift_register = MMC1_SHIFT_REGISTER_POWER_ON; // Reset to power-on state: bit 4 set
         self.write_count = 0;
         self.control |= MMC1_DEFAULT_CONTROL; // Set PRG mode to 3 (fix last bank)
     }
@@ -265,7 +278,7 @@ impl MMC1Mapper {
             }
 
             // Reset shift register for next write sequence
-            self.shift_register = 0x10; // Reset to power-on state
+            self.shift_register = MMC1_SHIFT_REGISTER_POWER_ON; // Reset to power-on state
             self.write_count = 0;
         }
     }
@@ -644,6 +657,9 @@ mod tests {
     use super::*;
     use crate::cartridge::mapper::{MapperContext, create_mapper};
 
+    const TEST_PRG_ROM_SIZE: usize = 128 * 1024;
+    const TEST_CHR_ROM_SIZE: usize = 8 * 1024;
+
     /// Helper function to write a 5-bit value to a register using the MMC1 shift mechanism
     fn write_register<M: Mapper + ?Sized>(mapper: &mut M, addr: u16, value: u8) {
         for i in 0..5 {
@@ -669,6 +685,15 @@ mod tests {
             vec![],
             NametableLayout::Horizontal,
         ))
+    }
+
+    fn create_revision_test_mapper(revision: Mmc1Revision) -> MMC1Mapper {
+        MMC1Mapper::new_with_revision(
+            vec![0; TEST_PRG_ROM_SIZE],
+            vec![0; TEST_CHR_ROM_SIZE],
+            NametableLayout::Horizontal,
+            revision,
+        )
     }
 
     #[test]
@@ -1110,14 +1135,7 @@ mod tests {
     #[test]
     fn test_mmc1a_wram_always_enabled() {
         // MMC1A revision: PRG-RAM is always enabled, bit 4 is ignored
-        let prg_rom = vec![0; 128 * 1024];
-        let chr_rom = vec![0; 8 * 1024];
-        let mut mapper = MMC1Mapper::new_with_revision(
-            prg_rom,
-            chr_rom,
-            NametableLayout::Horizontal,
-            Mmc1Revision::Mmc1A,
-        );
+        let mut mapper = create_revision_test_mapper(Mmc1Revision::Mmc1A);
 
         // Write to WRAM while enabled
         mapper.write_prg(0x6000, 0xAA);
@@ -1152,16 +1170,15 @@ mod tests {
     #[test]
     fn test_mmc1b_wram_enable_disable() {
         // MMC1B revision: PRG-RAM can be disabled via bit 4
-        let prg_rom = vec![0; 128 * 1024];
-        let chr_rom = vec![0; 8 * 1024];
-        let mut mapper = MMC1Mapper::new_with_revision(
-            prg_rom,
-            chr_rom,
-            NametableLayout::Horizontal,
-            Mmc1Revision::Mmc1B,
-        );
+        let mut mapper = create_revision_test_mapper(Mmc1Revision::Mmc1B);
 
-        // Initially WRAM should be enabled (prg_bank defaults to 0)
+        // Initially WRAM should be disabled on MMC1B power-on
+        assert_eq!(mapper.read_prg(0x6000), 0x00);
+
+        // Enable WRAM by clearing bit 4 of PRG bank register
+        write_register(&mut mapper, 0xE000, 0b00000);
+
+        // With WRAM enabled, writes should work
         mapper.write_prg(0x6000, 0xAA);
         assert_eq!(mapper.read_prg(0x6000), 0xAA);
 
@@ -1185,6 +1202,16 @@ mod tests {
         // Previous write while disabled should not have affected memory
         mapper.write_prg(0x6001, 0xDD);
         assert_eq!(mapper.read_prg(0x6001), 0xDD);
+    }
+
+    #[test]
+    fn test_mmc1b_power_on_defaults_wram_to_disabled() {
+        let mapper = create_revision_test_mapper(Mmc1Revision::Mmc1B);
+
+        assert!(
+            !mapper.is_wram_enabled(),
+            "MMC1B should power on with WRAM disabled by default"
+        );
     }
 
     #[test]
