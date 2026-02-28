@@ -37,7 +37,6 @@ const MMC1_CHR_BANK_1_REGISTER_ADDR: u16 = 0xC000;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mmc1Revision {
     /// MMC1A: PRG-RAM always enabled, bit 4 ignored
-    #[cfg(test)]
     Mmc1A,
     /// MMC1B/C: PRG-RAM enable controlled by bit 4 of PRG bank register
     Mmc1B,
@@ -109,10 +108,16 @@ pub struct MMC1Mapper {
 }
 
 impl MMC1Mapper {
+    fn revision_from_mapper(mapper_id: u16) -> Mmc1Revision {
+        match mapper_id {
+            155 => Mmc1Revision::Mmc1A,
+            _ => Mmc1Revision::Mmc1B,
+        }
+    }
+
     #[cfg(test)]
     fn power_on_prg_bank_for_revision(revision: Mmc1Revision) -> u8 {
         match revision {
-            #[cfg(test)]
             Mmc1Revision::Mmc1A => 0,
             Mmc1Revision::Mmc1B => MMC1B_WRAM_DISABLED_POWER_ON_PRG_BANK,
         }
@@ -129,6 +134,7 @@ impl MMC1Mapper {
         let prg_ram_size = (ctx.prg_ram_banks_8k as usize) * 8192;
         let surom = ctx.prg_rom.len() > 256 * 1024;
         let sorom = ctx.prg_ram_banks_8k >= 2;
+        let revision = Self::revision_from_mapper(ctx.mapper);
         Self {
             prg_rom: ctx.prg_rom,
             prg_ram: vec![0; prg_ram_size],
@@ -139,7 +145,7 @@ impl MMC1Mapper {
             chr_bank_0: 0,
             chr_bank_1: 0,
             prg_bank: 0,
-            revision: Mmc1Revision::Mmc1B,
+            revision,
             surom,
             sorom,
             submapper: ctx.submapper,
@@ -293,7 +299,6 @@ impl MMC1Mapper {
 
     fn is_mmc1a_a17_bypass_active(&self) -> bool {
         match self.revision {
-            #[cfg(test)]
             Mmc1Revision::Mmc1A => (self.prg_bank & 0x10) != 0,
             Mmc1Revision::Mmc1B => false,
         }
@@ -305,7 +310,6 @@ impl MMC1Mapper {
 
     fn is_wram_enabled(&self) -> bool {
         match self.revision {
-            #[cfg(test)]
             Mmc1Revision::Mmc1A => {
                 // MMC1A always has PRG-RAM enabled, bit 4 is ignored
                 true
