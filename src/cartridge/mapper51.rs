@@ -52,13 +52,30 @@ impl Mapper51 {
     const MAPPER_NUMBER: u8 = 51;
     const PRG_BANK_SIZE: usize = 0x2000; // 8 KiB
     const PRG_BANK_MASK: usize = Self::PRG_BANK_SIZE - 1;
+    const CHR_WINDOW_SIZE: usize = 0x2000; // 8 KiB
+    const BAD_DUMP_CHR_ROM_ON_CHR_RAM_CRC32: u32 = 0xA912_B064;
+
+    fn create_chr_memory(submapper: u8, crc32: u32, chr_rom: Vec<u8>) -> ChrMemory {
+        if submapper == 0 && crc32 == Self::BAD_DUMP_CHR_ROM_ON_CHR_RAM_CRC32 {
+            // Mapper 51 JY-010 boards use fixed 8KB CHR-RAM. Some bad dumps carry
+            // an 8KB CHR-ROM payload in the header; keep those bytes as RAM init
+            // while preserving writable CHR behavior for runtime graphics updates.
+            let mut chr_memory = ChrMemory::new_ram(Self::CHR_WINDOW_SIZE);
+            if !chr_rom.is_empty() {
+                chr_memory.load_snapshot(&chr_rom);
+            }
+            chr_memory
+        } else {
+            ChrMemory::new(chr_rom)
+        }
+    }
 
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
         let prg_rom = ctx.prg_rom;
-        let chr_rom = ctx.chr_rom;
+        let chr_memory = Self::create_chr_memory(ctx.submapper, ctx.crc32, ctx.chr_rom);
         Self {
             prg_rom,
-            chr_memory: ChrMemory::new(chr_rom),
+            chr_memory,
             bank: 0,
             mode: 1,
         }
@@ -234,6 +251,14 @@ mod tests {
         let prg = banked_data(8 * 1024, PRG_BANKS);
         let chr = banked_data(8 * 1024, 1);
         Mapper51::new_internal(prg, chr, NametableLayout::Horizontal)
+    }
+
+    fn make_mapper_with_submapper(submapper: u8, chr: Vec<u8>, crc32: u32) -> Box<dyn Mapper> {
+        let prg = banked_data(8 * 1024, PRG_BANKS);
+        let mut ctx = MapperContext::new_for_test(51, prg, chr, NametableLayout::Vertical)
+            .with_submapper(submapper);
+        ctx.crc32 = crc32;
+        create_mapper(ctx).expect("Mapper 51 should be implemented")
     }
 
     // --- Factory ---
@@ -420,6 +445,33 @@ mod tests {
         let mut mapper = Mapper51::new_internal(prg, chr, NametableLayout::Vertical);
         assert_eq!(mapper.read_chr(0x0000), 0, "CHR must read from bank 0");
         assert_eq!(mapper.read_chr(0x1FFF), 0, "CHR end must still be bank 0");
+    }
+
+    #[test]
+    fn submapper0_with_chr_rom_header_data_still_uses_chr_ram() {
+        // Compatibility case from issue #777 ROM: submapper 0 can appear with
+        // bogus 8KB CHR-ROM data in bad dumps even though hardware uses CHR-RAM.
+        let mut mapper = make_mapper_with_submapper(0, vec![0xAA; 8 * 1024], 0xA912_B064);
+        assert_eq!(mapper.read_chr(0x0010), 0xAA);
+        mapper.write_chr(0x0010, 0x5C);
+        assert_eq!(
+            mapper.read_chr(0x0010),
+            0x5C,
+            "submapper 0 compatibility should keep CHR writable"
+        );
+    }
+
+    #[test]
+    fn submapper0_non_compat_crc_with_chr_rom_stays_read_only() {
+        // Mesen2 parity path: regular Mapper 51 behavior treats CHR-ROM as read-only.
+        let mut mapper = make_mapper_with_submapper(0, vec![0xAA; 8 * 1024], 0x1234_5678);
+        assert_eq!(mapper.read_chr(0x0010), 0xAA);
+        mapper.write_chr(0x0010, 0x5C);
+        assert_eq!(
+            mapper.read_chr(0x0010),
+            0xAA,
+            "non-compat CRC should follow normal read-only CHR-ROM behavior"
+        );
     }
 
     // --- Reset ---
