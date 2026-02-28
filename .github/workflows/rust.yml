@@ -135,7 +135,7 @@ jobs:
       - name: Add wasm target
         run: rustup target add wasm32-unknown-unknown
       - name: Install wasm-bindgen CLI
-        run: cargo install wasm-bindgen-cli --locked
+        run: cargo install wasm-bindgen-cli --version 0.2.108 --locked
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
       - name: Run web integration tests
