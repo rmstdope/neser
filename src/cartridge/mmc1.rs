@@ -18,6 +18,7 @@ const CHR_BANK_SIZE_8K: usize = 0x2000; // 8KB
 const MMC1_SHIFT_REGISTER_RESET: u8 = 0x80; // Bit 7 set triggers reset
 const MMC1_WRITE_COUNT_MAX: u8 = 5; // Number of writes to load a register
 const MMC1_DEFAULT_CONTROL: u8 = 0x0C; // PRG mode 3, CHR mode 0
+const MMC1_MIN_CYCLES_BETWEEN_SERIAL_WRITES: u64 = 2;
 
 /// MMC1 ASIC revision variants
 ///
@@ -94,6 +95,7 @@ pub struct MMC1Mapper {
     // Cycle tracking for consecutive-write ignore behavior
     cpu_cycle_count: u64,  // Current CPU cycle count
     last_write_cycle: u64, // CPU cycle of last write to shift register
+    has_last_write: bool,  // Whether any serial-port write has occurred
 }
 
 impl MMC1Mapper {
@@ -116,6 +118,7 @@ impl MMC1Mapper {
             sorom,
             cpu_cycle_count: 0,
             last_write_cycle: 0,
+            has_last_write: false,
         }
     }
 
@@ -142,6 +145,7 @@ impl MMC1Mapper {
             sorom: false,
             cpu_cycle_count: 0,
             last_write_cycle: 0,
+            has_last_write: false,
         }
     }
 
@@ -151,25 +155,36 @@ impl MMC1Mapper {
         self.control |= MMC1_DEFAULT_CONTROL; // Set PRG mode to 3 (fix last bank)
     }
 
+    fn mark_serial_write_attempt(&mut self) {
+        self.last_write_cycle = self.cpu_cycle_count;
+        self.has_last_write = true;
+    }
+
+    fn should_ignore_serial_write(&self) -> bool {
+        self.has_last_write
+            && self.cpu_cycle_count > 0
+            && self.cpu_cycle_count.saturating_sub(self.last_write_cycle)
+                < MMC1_MIN_CYCLES_BETWEEN_SERIAL_WRITES
+    }
+
     fn write_register(&mut self, addr: u16, value: u8) {
         // Check for reset (bit 7 set) - reset writes are NEVER ignored
         if value & MMC1_SHIFT_REGISTER_RESET != 0 {
             self.reset_shift_register();
-            self.last_write_cycle = self.cpu_cycle_count;
+            self.mark_serial_write_attempt();
             return;
         }
 
         // MMC1 ignores consecutive-cycle writes (except reset writes above)
         // This prevents RMW instructions from shifting two bits
-        // Only apply this filtering if cpu_cycle() has been called (cpu_cycle_count > 0)
-        // This allows tests without cpu_cycle() calls to work as before
-        if self.cpu_cycle_count > 0 && self.cpu_cycle_count == self.last_write_cycle {
+        if self.should_ignore_serial_write() {
             // Consecutive write detected - ignore it
+            self.mark_serial_write_attempt();
             return;
         }
 
         // Update last write cycle
-        self.last_write_cycle = self.cpu_cycle_count;
+        self.mark_serial_write_attempt();
 
         // Shift in bit 0
         self.shift_register >>= 1;
@@ -477,6 +492,7 @@ impl Mapper for MMC1Mapper {
         // [5]: prg_bank
         // [6..=13]: cpu_cycle_count (u64 LE)
         // [14..=21]: last_write_cycle (u64 LE)
+        // [22]: has_last_write (0 or 1)
         vec![
             self.shift_register,
             self.write_count,
@@ -500,6 +516,7 @@ impl Mapper for MMC1Mapper {
             ((self.last_write_cycle >> 40) & 0xFF) as u8,
             ((self.last_write_cycle >> 48) & 0xFF) as u8,
             ((self.last_write_cycle >> 56) & 0xFF) as u8,
+            self.has_last_write as u8,
         ]
     }
 
@@ -520,6 +537,11 @@ impl Mapper for MMC1Mapper {
             self.last_write_cycle = u64::from_le_bytes([
                 data[14], data[15], data[16], data[17], data[18], data[19], data[20], data[21],
             ]);
+            self.has_last_write = true;
+        }
+
+        if data.len() >= 23 {
+            self.has_last_write = data[22] != 0;
         }
     }
 
@@ -621,6 +643,37 @@ mod tests {
         assert_eq!(
             after, before,
             "consecutive write should be ignored when cpu_cycle_count matches last_write_cycle"
+        );
+    }
+
+    #[test]
+    fn test_mmc1_ignores_write_on_immediately_following_cycle() {
+        let prg_rom = vec![0; PRG_BANK_SIZE * 2];
+        let chr_rom = vec![];
+
+        let mut mapper = MMC1Mapper::new(MapperContext::new_for_test(
+            1,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Horizontal,
+        ));
+
+        mapper.cpu_cycle();
+        mapper.write_prg(0x8000, 0x01);
+
+        let shift_register_after_first = mapper.shift_register;
+        let write_count_after_first = mapper.write_count;
+
+        mapper.cpu_cycle();
+        mapper.write_prg(0x8000, 0x00);
+
+        assert_eq!(
+            mapper.shift_register, shift_register_after_first,
+            "write on immediately following cycle should be ignored"
+        );
+        assert_eq!(
+            mapper.write_count, write_count_after_first,
+            "write counter should not advance for ignored consecutive-cycle writes"
         );
     }
 
@@ -1226,49 +1279,29 @@ mod tests {
             NametableLayout::Horizontal,
         ));
 
-        // Start with a clean shift register (reset it first)
-        mapper.write_prg(0x8000, 0x80); // Reset, cycle 0
-
-        // Advance to cycle 1 for first real write
+        // Advance to cycle 1 for first write
         mapper.cpu_cycle(); // cycle = 1
 
         // First write on cycle 1: shift in bit 1 (write_count = 1)
-        mapper.write_prg(0x8000, 0x01); // last_write = 1, write_count = 1
+        mapper.write_prg(0x8000, 0x01);
+        assert_eq!(mapper.write_count, 1);
 
         // Immediately write again on same cycle (simulates RMW) - should be IGNORED
-        mapper.write_prg(0x8000, 0x01); // still cycle 1, ignored
+        mapper.write_prg(0x8000, 0x01);
+        assert_eq!(mapper.write_count, 1);
 
-        // Advance to cycle 2
-        mapper.cpu_cycle(); // cycle = 2
+        // Advance to cycle 2 - should still be ignored (immediately following cycle)
+        mapper.cpu_cycle();
+        mapper.write_prg(0x8000, 0x00);
+        assert_eq!(mapper.write_count, 1);
 
-        // Second accepted write on cycle 2 - bit 0 (write_count = 2)
-        mapper.write_prg(0x8000, 0x00); // last_write = 2, write_count = 2
+        // Advance to cycle 3 without writing
+        mapper.cpu_cycle();
 
-        // Consecutive write again - should be IGNORED
-        mapper.write_prg(0x8000, 0x01); // still cycle 2, ignored
-
-        // Advance to cycle 3
-        mapper.cpu_cycle(); // cycle = 3
-
-        // Third accepted write - bit 1 (write_count = 3)
-        mapper.write_prg(0x8000, 0x01); // last_write = 3, write_count = 3
-
-        // Advance to cycle 4
-        mapper.cpu_cycle(); // cycle = 4
-
-        // Fourth accepted write - bit 1 (write_count = 4)
-        mapper.write_prg(0x8000, 0x01); // last_write = 4, write_count = 4
-
-        // Advance to cycle 5
-        mapper.cpu_cycle(); // cycle = 5
-
-        // Fifth accepted write - bit 0 (write_count = 5, triggers load)
-        mapper.write_prg(0x8000, 0x00); // last_write = 5, write_count = 0 (reset after load)
-
-        // We should have shifted in: 1, 0, 1, 1, 0 (in LSB-first order)
-        // This gives us 0b01101 in the register
-        // Bits 0-1 = 01 = SingleScreenUpper
-        assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenUpper);
+        // Advance to cycle 4 - now accepted (2 cycles since last write attempt)
+        mapper.cpu_cycle();
+        mapper.write_prg(0x8000, 0x00);
+        assert_eq!(mapper.write_count, 2);
     }
 
     #[test]
@@ -1341,11 +1374,13 @@ mod tests {
         // = 0b11111 = 31
         for i in 0..5 {
             mapper.cpu_cycle();
+            mapper.cpu_cycle();
             mapper.write_prg(0x8000, (31 >> i) & 0x01); // Control = 31
         }
 
         // CHR bank 0: Select bank 5
         for i in 0..5 {
+            mapper.cpu_cycle();
             mapper.cpu_cycle();
             mapper.write_prg(0xA000, (5 >> i) & 0x01);
         }
@@ -1353,11 +1388,13 @@ mod tests {
         // CHR bank 1: Select bank 10
         for i in 0..5 {
             mapper.cpu_cycle();
+            mapper.cpu_cycle();
             mapper.write_prg(0xC000, (10 >> i) & 0x01);
         }
 
         // PRG bank: Select bank 7
         for i in 0..5 {
+            mapper.cpu_cycle();
             mapper.cpu_cycle();
             mapper.write_prg(0xE000, (7 >> i) & 0x01);
         }
@@ -1418,7 +1455,9 @@ mod tests {
         mapper.cpu_cycle();
         mapper.write_prg(0x8000, 0x01); // 1st bit
         mapper.cpu_cycle();
+        mapper.cpu_cycle();
         mapper.write_prg(0x8000, 0x01); // 2nd bit
+        mapper.cpu_cycle();
         mapper.cpu_cycle();
         mapper.write_prg(0x8000, 0x00); // 3rd bit (now shift_register has 0b00000101, write_count=3)
 
@@ -1436,7 +1475,9 @@ mod tests {
 
         // Complete the write sequence
         restored.cpu_cycle();
+        restored.cpu_cycle();
         restored.write_prg(0x8000, 0x01); // 4th bit
+        restored.cpu_cycle();
         restored.cpu_cycle();
         restored.write_prg(0x8000, 0x01); // 5th bit (completes write sequence)
 
