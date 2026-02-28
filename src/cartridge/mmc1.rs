@@ -20,6 +20,8 @@ const MMC1_SHIFT_REGISTER_RESET: u8 = 0x80; // Bit 7 set triggers reset
 const MMC1_WRITE_COUNT_MAX: u8 = 5; // Number of writes to load a register
 const MMC1_DEFAULT_CONTROL: u8 = 0x0C; // PRG mode 3, CHR mode 0
 const MMC1_MIN_CYCLES_BETWEEN_SERIAL_WRITES: u64 = 2;
+const MMC1_CHR_BANK_0_REGISTER_ADDR: u16 = 0xA000;
+const MMC1_CHR_BANK_1_REGISTER_ADDR: u16 = 0xC000;
 
 /// MMC1 ASIC revision variants
 ///
@@ -93,6 +95,7 @@ pub struct MMC1Mapper {
     surom: bool, // SUROM: 512KB PRG-ROM; chr_bank_0[4] selects 256KB outer bank
     sorom: bool, // SOROM/SXROM: >8KB PRG-RAM; chr_bank_0[3] selects 8KB PRG-RAM bank
     submapper: u8,
+    last_chr_reg_addr: u16,
 
     // Cycle tracking for consecutive-write ignore behavior
     cpu_cycle_count: u64,  // Current CPU cycle count
@@ -119,6 +122,7 @@ impl MMC1Mapper {
             surom,
             sorom,
             submapper: ctx.submapper,
+            last_chr_reg_addr: 0xA000,
             cpu_cycle_count: 0,
             last_write_cycle: 0,
             has_last_write: false,
@@ -147,6 +151,7 @@ impl MMC1Mapper {
             surom,
             sorom: false,
             submapper: 0,
+            last_chr_reg_addr: 0xA000,
             cpu_cycle_count: 0,
             last_write_cycle: 0,
             has_last_write: false,
@@ -168,6 +173,27 @@ impl MMC1Mapper {
         self.has_last_write
             && self.cpu_cycle_count.saturating_sub(self.last_write_cycle)
                 < MMC1_MIN_CYCLES_BETWEEN_SERIAL_WRITES
+    }
+
+    fn update_chr_bank_0_register(&mut self, register_value: u8) {
+        self.last_chr_reg_addr = MMC1_CHR_BANK_0_REGISTER_ADDR;
+        self.chr_bank_0 = register_value & 0x1F;
+    }
+
+    fn update_chr_bank_1_register(&mut self, register_value: u8) {
+        self.last_chr_reg_addr = MMC1_CHR_BANK_1_REGISTER_ADDR;
+        self.chr_bank_1 = register_value & 0x1F;
+    }
+
+    fn select_extra_chr_reg_source(&self) -> u8 {
+        let is_4kb_chr_mode = self.get_chr_mode() == 1;
+        let used_chr_bank_1_register = self.last_chr_reg_addr == MMC1_CHR_BANK_1_REGISTER_ADDR;
+
+        if is_4kb_chr_mode && used_chr_bank_1_register {
+            self.chr_bank_1
+        } else {
+            self.chr_bank_0
+        }
     }
 
     fn write_register(&mut self, addr: u16, value: u8) {
@@ -211,11 +237,11 @@ impl MMC1Mapper {
                 }
                 0xA000..=0xBFFF => {
                     trace_mapper!(1; "MMC1 CHR_bank_0=${:02X}", register_value & 0x1F);
-                    self.chr_bank_0 = register_value & 0x1F;
+                    self.update_chr_bank_0_register(register_value);
                 }
                 0xC000..=0xDFFF => {
                     trace_mapper!(1; "MMC1 CHR_bank_1=${:02X}", register_value & 0x1F);
-                    self.chr_bank_1 = register_value & 0x1F;
+                    self.update_chr_bank_1_register(register_value);
                 }
                 0xE000..=0xFFFF => {
                     trace_mapper!(1; "MMC1 PRG_bank=${:02X}", register_value & 0x1F);
@@ -279,10 +305,11 @@ impl MMC1Mapper {
         let prg_mode = self.get_prg_mode();
         let num_banks = self.prg_rom.len() / PRG_BANK_SIZE;
         let mmc1a_a17_bypass = self.is_mmc1a_a17_bypass_active();
+        let extra_chr_reg = self.get_extra_chr_reg();
 
         // SUROM: chr_bank_0 bit 4 selects which 256KB outer half of 512KB PRG-ROM
         let outer_bank = if self.surom {
-            ((self.chr_bank_0 >> 4) & 1) as usize
+            ((extra_chr_reg >> 4) & 1) as usize
         } else {
             0
         };
@@ -332,11 +359,15 @@ impl MMC1Mapper {
     fn prg_ram_bank_offset(&self, addr: u16) -> usize {
         let base = (addr - 0x6000) as usize;
         if self.sorom {
-            let bank = ((self.chr_bank_0 >> 3) & 1) as usize;
+            let bank = ((self.get_extra_chr_reg() >> 3) & 1) as usize;
             bank * 8192 + base
         } else {
             base
         }
+    }
+
+    fn get_extra_chr_reg(&self) -> u8 {
+        self.select_extra_chr_reg_source()
     }
 
     fn get_chr_bank_offset(&self, addr: u16) -> usize {
@@ -510,6 +541,7 @@ impl Mapper for MMC1Mapper {
         // [6..=13]: cpu_cycle_count (u64 LE)
         // [14..=21]: last_write_cycle (u64 LE)
         // [22]: has_last_write (0 or 1)
+        // [23..=24]: last_chr_reg_addr (u16 LE)
         vec![
             self.shift_register,
             self.write_count,
@@ -534,6 +566,8 @@ impl Mapper for MMC1Mapper {
             ((self.last_write_cycle >> 48) & 0xFF) as u8,
             ((self.last_write_cycle >> 56) & 0xFF) as u8,
             self.has_last_write as u8,
+            (self.last_chr_reg_addr & 0xFF) as u8,
+            ((self.last_chr_reg_addr >> 8) & 0xFF) as u8,
         ]
     }
 
@@ -559,6 +593,10 @@ impl Mapper for MMC1Mapper {
 
         if data.len() >= 23 {
             self.has_last_write = data[22] != 0;
+        }
+
+        if data.len() >= 25 {
+            self.last_chr_reg_addr = u16::from_le_bytes([data[23], data[24]]);
         }
     }
 
@@ -1541,6 +1579,35 @@ mod tests {
             mapper.read_prg(0x8000),
             18,
             "Outer bank 1 + inner bank 2 maps to ROM bank 18"
+        );
+    }
+
+    #[test]
+    fn test_mmc1_surom_uses_last_chr_register_for_outer_bank_in_4kb_mode() {
+        let mut prg_rom = vec![0u8; 512 * 1024];
+        for bank in 0..32usize {
+            let offset = bank * PRG_BANK_SIZE;
+            prg_rom[offset..offset + PRG_BANK_SIZE].fill(bank as u8);
+        }
+
+        let mut mapper = MMC1Mapper::new(
+            MapperContext::new_for_test(1, prg_rom, vec![], NametableLayout::Horizontal)
+                .with_prg_ram_banks(1),
+        );
+
+        // Enable 4KB CHR mode and PRG mode 3
+        write_register(&mut mapper, 0x8000, 0b11100);
+
+        // Set CHR bank 0 outer bit low, then CHR bank 1 outer bit high.
+        // In 4KB CHR mode, last CHR register written should drive SUROM outer PRG bit.
+        write_register(&mut mapper, 0xA000, 0x00);
+        write_register(&mut mapper, 0xC000, 0x10);
+        write_register(&mut mapper, 0xE000, 0x00);
+
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            16,
+            "with 4KB CHR mode and last write to $C000, outer PRG bank should come from CHR bank 1"
         );
     }
 
