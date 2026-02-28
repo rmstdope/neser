@@ -16,6 +16,7 @@ const PRG_BANK_SIZE: usize = 0x4000; // 16KB
 const CHR_BANK_SIZE_4K: usize = 0x1000; // 4KB (for MMC1, MMC3)
 const CHR_BANK_SIZE_8K: usize = 0x2000; // 8KB
 const MMC1_SUBMAPPER_FIXED_32KB_PRG: u8 = 5;
+const MMC1_SUBMAPPER_HARDWIRED_MIRRORING: u8 = 7;
 const MMC1_SHIFT_REGISTER_RESET: u8 = 0x80; // Bit 7 set triggers reset
 const MMC1_WRITE_COUNT_MAX: u8 = 5; // Number of writes to load a register
 const MMC1_DEFAULT_CONTROL: u8 = 0x0C; // PRG mode 3, CHR mode 0
@@ -95,6 +96,7 @@ pub struct MMC1Mapper {
     surom: bool, // SUROM: 512KB PRG-ROM; chr_bank_0[4] selects 256KB outer bank
     sorom: bool, // SOROM/SXROM: >8KB PRG-RAM; chr_bank_0[3] selects 8KB PRG-RAM bank
     submapper: u8,
+    hardwired_mirroring: Option<NametableLayout>,
     last_chr_reg_addr: u16,
 
     // Cycle tracking for consecutive-write ignore behavior
@@ -104,6 +106,13 @@ pub struct MMC1Mapper {
 }
 
 impl MMC1Mapper {
+    fn hardwired_mirroring_from_header(
+        submapper: u8,
+        header_mirroring: NametableLayout,
+    ) -> Option<NametableLayout> {
+        (submapper == MMC1_SUBMAPPER_HARDWIRED_MIRRORING).then_some(header_mirroring)
+    }
+
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
         let prg_ram_size = (ctx.prg_ram_banks_8k as usize) * 8192;
         let surom = ctx.prg_rom.len() > 256 * 1024;
@@ -122,6 +131,10 @@ impl MMC1Mapper {
             surom,
             sorom,
             submapper: ctx.submapper,
+            hardwired_mirroring: Self::hardwired_mirroring_from_header(
+                ctx.submapper,
+                ctx.mirroring,
+            ),
             last_chr_reg_addr: 0xA000,
             cpu_cycle_count: 0,
             last_write_cycle: 0,
@@ -151,6 +164,7 @@ impl MMC1Mapper {
             surom,
             sorom: false,
             submapper: 0,
+            hardwired_mirroring: None,
             last_chr_reg_addr: 0xA000,
             cpu_cycle_count: 0,
             last_write_cycle: 0,
@@ -291,7 +305,7 @@ impl MMC1Mapper {
         }
     }
 
-    fn get_mirroring_mode(&self) -> NametableLayout {
+    fn mirroring_from_control_register(&self) -> NametableLayout {
         match self.control & 0x03 {
             0 => NametableLayout::SingleScreenLower, // One-screen, lower bank
             1 => NametableLayout::SingleScreenUpper, // One-screen, upper bank
@@ -299,6 +313,11 @@ impl MMC1Mapper {
             3 => NametableLayout::Horizontal,
             _ => unreachable!(),
         }
+    }
+
+    fn get_mirroring_mode(&self) -> NametableLayout {
+        self.hardwired_mirroring
+            .unwrap_or_else(|| self.mirroring_from_control_register())
     }
 
     fn get_prg_bank_offset(&self, addr: u16) -> usize {
@@ -1677,6 +1696,30 @@ mod tests {
             mapper.read_prg(0xC000),
             0x22,
             "submapper 5 should keep fixed upper 16KB bank at $C000"
+        );
+    }
+
+    #[test]
+    fn test_mmc1_submapper_7_uses_hardwired_mirroring() {
+        let mut mapper = MMC1Mapper::new(
+            MapperContext::new_for_test(
+                1,
+                vec![0u8; 2 * PRG_BANK_SIZE],
+                vec![],
+                NametableLayout::Vertical,
+            )
+            .with_submapper(7),
+        );
+
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
+
+        // Attempt to switch mirroring to horizontal via control register.
+        write_register(&mut mapper, 0x8000, 0b00011);
+
+        assert_eq!(
+            mapper.get_mirroring(),
+            NametableLayout::Vertical,
+            "submapper 7 should ignore dynamic mirroring writes and keep header-configured layout"
         );
     }
 
