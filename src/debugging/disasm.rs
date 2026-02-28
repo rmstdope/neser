@@ -13,10 +13,10 @@ pub struct DisasmWindowConfig {
 impl Default for DisasmWindowConfig {
     fn default() -> Self {
         // Total window height is before + 1 + after.
-        // Previously 8 + 1 + 8 = 17; doubled to 34.
+        // 10 + 1 + 9 = 20 lines.
         Self {
-            before: 16,
-            after: 17,
+            before: 10,
+            after: 9,
             top_margin: 3,
             bottom_margin: 3,
         }

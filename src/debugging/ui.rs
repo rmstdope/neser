@@ -11,6 +11,7 @@ const CODE_VIEW_CHILD_WINDOW_HORIZONTAL_PADDING: f32 = 16.0;
 const CODE_VIEW_SCROLLBAR_GUTTER: f32 = 16.0;
 const CODE_VIEW_HIGHLIGHT_OVERDRAW_MARGIN: f32 = 4.0;
 const CPU_RIGHT_PANEL_MIN_WIDTH: f32 = 320.0;
+const CODE_PANEL_VISIBLE_LINES: usize = 20;
 
 fn debugger_ui_font_scale() -> f32 {
     DEBUGGER_UI_FONT_SCALE
@@ -161,6 +162,10 @@ fn code_view_target_width_for_font_scale(font_scale: f32) -> f32 {
         + CODE_VIEW_CHILD_WINDOW_HORIZONTAL_PADDING
         + CODE_VIEW_SCROLLBAR_GUTTER
         + CODE_VIEW_HIGHLIGHT_OVERDRAW_MARGIN
+}
+
+fn code_panel_disasm_height_for_line_height(line_height_with_spacing: f32) -> f32 {
+    line_height_with_spacing * CODE_PANEL_VISIBLE_LINES as f32
 }
 
 #[cfg(feature = "sdl")]
@@ -362,37 +367,55 @@ fn render_cpu_code_panel(ui: &imgui::Ui, snapshot: &DebuggerSnapshot, size: [f32
             ui.text("Code");
             ui.separator();
 
-            for line in &snapshot.cpu_disasm {
-                let bytes = format_disasm_bytes(&line.bytes);
-                let text = format!("{:04X}: {:<8} {}", line.addr, bytes, line.text);
-                if line.is_current {
-                    let cursor = ui.cursor_screen_pos();
-                    let draw_w = ui.content_region_avail()[0];
-                    let draw_h = ui.text_line_height();
+            let disasm_height =
+                code_panel_disasm_height_for_line_height(ui.text_line_height_with_spacing())
+                    .min(ui.content_region_avail()[1].max(0.0));
 
-                    ui.get_window_draw_list()
-                        .add_rect(
-                            cursor,
-                            [cursor[0] + draw_w, cursor[1] + draw_h],
-                            [1.0, 1.0, 1.0, 1.0],
-                        )
-                        .filled(true)
-                        .build();
+            ui.child_window("cpu_code_disasm")
+                .size([0.0, disasm_height])
+                .border(false)
+                .build(|| {
+                    apply_debugger_ui_font_scale(ui);
+                    for line in &snapshot.cpu_disasm {
+                        let bytes = format_disasm_bytes(&line.bytes);
+                        let text = format!("{:04X}: {:<8} {}", line.addr, bytes, line.text);
+                        if line.is_current {
+                            let cursor = ui.cursor_screen_pos();
+                            let draw_w = ui.content_region_avail()[0];
+                            let draw_h = ui.text_line_height();
 
-                    let _text = ui.push_style_color(imgui::StyleColor::Text, [0.0, 0.0, 0.0, 1.0]);
-                    ui.text(text);
-                    ui.set_scroll_here_y_with_ratio(0.5);
-                } else {
-                    ui.text(text);
-                }
-            }
+                            ui.get_window_draw_list()
+                                .add_rect(
+                                    cursor,
+                                    [cursor[0] + draw_w, cursor[1] + draw_h],
+                                    [1.0, 1.0, 1.0, 1.0],
+                                )
+                                .filled(true)
+                                .build();
+
+                            let _text =
+                                ui.push_style_color(imgui::StyleColor::Text, [0.0, 0.0, 0.0, 1.0]);
+                            ui.text(text);
+                        } else {
+                            ui.text(text);
+                        }
+                    }
+                });
 
             ui.separator();
             ui.text("Trace (recent 32)");
             ui.separator();
-            for line in &snapshot.recent_trace {
-                ui.text(format_trace_entry(line.addr, &line.bytes, &line.text));
-            }
+
+            let trace_height = ui.content_region_avail()[1].max(0.0);
+            ui.child_window("cpu_trace")
+                .size([0.0, trace_height])
+                .border(false)
+                .build(|| {
+                    apply_debugger_ui_font_scale(ui);
+                    for line in &snapshot.recent_trace {
+                        ui.text(format_trace_entry(line.addr, &line.bytes, &line.text));
+                    }
+                });
         });
 }
 
@@ -1059,5 +1082,15 @@ mod tests {
         assert!(row.contains("C000"));
         assert!(row.contains("A9 01"));
         assert!(row.contains("LDA #$01"));
+    }
+
+    #[test]
+    fn test_code_panel_visible_lines_is_fixed_to_twenty() {
+        assert_eq!(CODE_PANEL_VISIBLE_LINES, 20);
+    }
+
+    #[test]
+    fn test_code_panel_disasm_height_matches_line_count() {
+        assert_close(code_panel_disasm_height_for_line_height(2.5), 50.0);
     }
 }
