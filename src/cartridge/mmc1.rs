@@ -15,6 +15,7 @@ use crate::trace_mapper;
 const PRG_BANK_SIZE: usize = 0x4000; // 16KB
 const CHR_BANK_SIZE_4K: usize = 0x1000; // 4KB (for MMC1, MMC3)
 const CHR_BANK_SIZE_8K: usize = 0x2000; // 8KB
+const MMC1_SUBMAPPER_FIXED_32KB_PRG: u8 = 5;
 const MMC1_SHIFT_REGISTER_RESET: u8 = 0x80; // Bit 7 set triggers reset
 const MMC1_WRITE_COUNT_MAX: u8 = 5; // Number of writes to load a register
 const MMC1_DEFAULT_CONTROL: u8 = 0x0C; // PRG mode 3, CHR mode 0
@@ -91,6 +92,7 @@ pub struct MMC1Mapper {
     // SxROM board variant flags (detected from ROM metadata at construction)
     surom: bool, // SUROM: 512KB PRG-ROM; chr_bank_0[4] selects 256KB outer bank
     sorom: bool, // SOROM/SXROM: >8KB PRG-RAM; chr_bank_0[3] selects 8KB PRG-RAM bank
+    submapper: u8,
 
     // Cycle tracking for consecutive-write ignore behavior
     cpu_cycle_count: u64,  // Current CPU cycle count
@@ -116,6 +118,7 @@ impl MMC1Mapper {
             revision: Mmc1Revision::Mmc1B,
             surom,
             sorom,
+            submapper: ctx.submapper,
             cpu_cycle_count: 0,
             last_write_cycle: 0,
             has_last_write: false,
@@ -143,6 +146,7 @@ impl MMC1Mapper {
             revision,
             surom,
             sorom: false,
+            submapper: 0,
             cpu_cycle_count: 0,
             last_write_cycle: 0,
             has_last_write: false,
@@ -357,6 +361,26 @@ impl MMC1Mapper {
             }
         }
     }
+
+    fn uses_fixed_32kb_prg_mapping(&self) -> bool {
+        self.submapper == MMC1_SUBMAPPER_FIXED_32KB_PRG
+    }
+
+    fn read_prg_fixed_32kb(&self, addr: u16) -> u8 {
+        let index = (addr - 0x8000) as usize;
+        self.prg_rom.get(index).copied().unwrap_or(0)
+    }
+
+    fn read_prg_banked(&self, addr: u16) -> u8 {
+        let bank_offset = self.get_prg_bank_offset(addr);
+        let offset = if self.get_prg_mode() <= 1 {
+            (addr - 0x8000) as usize
+        } else {
+            (addr & 0x3FFF) as usize
+        };
+        let index = bank_offset + offset;
+        self.prg_rom.get(index).copied().unwrap_or(0)
+    }
 }
 
 impl Mapper for MMC1Mapper {
@@ -370,16 +394,10 @@ impl Mapper for MMC1Mapper {
                 self.prg_ram.get(offset).copied().unwrap_or(0)
             }
             0x8000..=0xFFFF => {
-                let bank_offset = self.get_prg_bank_offset(addr);
-                let offset = if self.get_prg_mode() <= 1 {
-                    // 32KB mode
-                    (addr - 0x8000) as usize
-                } else {
-                    // 16KB mode
-                    (addr & 0x3FFF) as usize
-                };
-                let index = bank_offset + offset;
-                self.prg_rom.get(index).copied().unwrap_or(0)
+                if self.uses_fixed_32kb_prg_mapping() {
+                    return self.read_prg_fixed_32kb(addr);
+                }
+                self.read_prg_banked(addr)
             }
             _ => 0,
         }
@@ -1564,6 +1582,34 @@ mod tests {
             mapper.read_prg(0x6000),
             0xBB,
             "PRG-RAM bank 1 should hold 0xBB independently of bank 0"
+        );
+    }
+
+    #[test]
+    fn test_mmc1_submapper_5_uses_fixed_32kb_prg_mapping() {
+        let mut prg_rom = vec![0u8; 2 * PRG_BANK_SIZE];
+        prg_rom[..PRG_BANK_SIZE].fill(0x11);
+        prg_rom[PRG_BANK_SIZE..].fill(0x22);
+
+        let mut mapper = MMC1Mapper::new(
+            MapperContext::new_for_test(1, prg_rom, vec![], NametableLayout::Horizontal)
+                .with_submapper(5),
+        );
+
+        assert_eq!(mapper.read_prg(0x8000), 0x11);
+        assert_eq!(mapper.read_prg(0xC000), 0x22);
+
+        write_register(&mut mapper, 0xE000, 0b00001);
+
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            0x11,
+            "submapper 5 should ignore PRG bank switching at $8000"
+        );
+        assert_eq!(
+            mapper.read_prg(0xC000),
+            0x22,
+            "submapper 5 should keep fixed upper 16KB bank at $C000"
         );
     }
 
