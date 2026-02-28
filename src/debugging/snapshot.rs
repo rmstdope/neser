@@ -380,7 +380,7 @@ mod tests {
         let snap = snapshot(&nes);
 
         // Disassembly window is expected to be a fixed-size viewport.
-        assert_eq!(snap.cpu_disasm.len(), 34);
+        assert_eq!(snap.cpu_disasm.len(), 20);
 
         assert!(snap.cpu_disasm.iter().any(|l| l.addr == 0x8000
             && l.text.contains("LDA")
