@@ -647,4 +647,14 @@ mod tests {
 
         assert_eq!(entry.nametable_layout, None);
     }
+
+    #[test]
+    fn test_rom_db_contains_mapper_override_for_sweet_home_translation_crc() {
+        let db = RomDb::from_csv_content(include_str!("rom_db.csv"));
+        let entry = db
+            .get_by_crc(0x3AAF_F278)
+            .expect("patched Sweet Home CRC should be present in ROM DB");
+
+        assert_eq!(entry.mapper, Some(1));
+    }
 }
