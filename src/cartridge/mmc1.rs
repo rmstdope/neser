@@ -162,7 +162,6 @@ impl MMC1Mapper {
 
     fn should_ignore_serial_write(&self) -> bool {
         self.has_last_write
-            && self.cpu_cycle_count > 0
             && self.cpu_cycle_count.saturating_sub(self.last_write_cycle)
                 < MMC1_MIN_CYCLES_BETWEEN_SERIAL_WRITES
     }
@@ -175,16 +174,16 @@ impl MMC1Mapper {
             return;
         }
 
+        let should_ignore = self.should_ignore_serial_write();
+
+        // Update last write cycle for any non-reset serial port write attempt
+        self.mark_serial_write_attempt();
+
         // MMC1 ignores consecutive-cycle writes (except reset writes above)
         // This prevents RMW instructions from shifting two bits
-        if self.should_ignore_serial_write() {
-            // Consecutive write detected - ignore it
-            self.mark_serial_write_attempt();
+        if should_ignore {
             return;
         }
-
-        // Update last write cycle
-        self.mark_serial_write_attempt();
 
         // Shift in bit 0
         self.shift_register >>= 1;
@@ -571,8 +570,10 @@ mod tests {
     use crate::cartridge::mapper::{MapperContext, create_mapper};
 
     /// Helper function to write a 5-bit value to a register using the MMC1 shift mechanism
-    fn write_register(mapper: &mut MMC1Mapper, addr: u16, value: u8) {
+    fn write_register<M: Mapper + ?Sized>(mapper: &mut M, addr: u16, value: u8) {
         for i in 0..5 {
+            mapper.cpu_cycle();
+            mapper.cpu_cycle();
             mapper.write_prg(addr, (value >> i) & 0x01);
         }
     }
@@ -584,6 +585,15 @@ mod tests {
     ) -> Box<dyn Mapper> {
         create_mapper(MapperContext::new_for_test(1, prg_rom, chr_rom, mirroring))
             .expect("MMC1 (mapper 1) should be implemented")
+    }
+
+    fn create_mmc1_timing_test_mapper() -> MMC1Mapper {
+        MMC1Mapper::new(MapperContext::new_for_test(
+            1,
+            vec![0; PRG_BANK_SIZE * 2],
+            vec![],
+            NametableLayout::Horizontal,
+        ))
     }
 
     #[test]
@@ -598,11 +608,7 @@ mod tests {
 
         // Load value 0b00011 (3) into control register at $8000-$9FFF
         // This requires 5 writes, each with bit 0 containing the next bit of the value
-        mapper.write_prg(0x8000, 0b00000001); // bit 0
-        mapper.write_prg(0x8000, 0b00000001); // bit 1
-        mapper.write_prg(0x8000, 0b00000000); // bit 2
-        mapper.write_prg(0x8000, 0b00000000); // bit 3
-        mapper.write_prg(0x8000, 0b00000000); // bit 4 (5th write triggers load)
+        write_register(&mut *mapper, 0x8000, 0b00011);
 
         // After loading 0b00011 into control register:
         // Bits 0-1: Mirroring = 0b11 = Horizontal
@@ -613,27 +619,14 @@ mod tests {
 
     #[test]
     fn test_mmc1_registers_snapshot_preserves_write_ignore_timing() {
-        let prg_rom = vec![0; PRG_BANK_SIZE * 2];
-        let chr_rom = vec![];
-
-        let mut mapper = MMC1Mapper::new(MapperContext::new_for_test(
-            1,
-            prg_rom.clone(),
-            chr_rom.clone(),
-            NametableLayout::Horizontal,
-        ));
+        let mut mapper = create_mmc1_timing_test_mapper();
 
         mapper.cpu_cycle();
         mapper.write_prg(0x8000, 0x01);
 
         let saved = mapper.registers_snapshot();
 
-        let mut restored = MMC1Mapper::new(MapperContext::new_for_test(
-            1,
-            prg_rom,
-            chr_rom,
-            NametableLayout::Horizontal,
-        ));
+        let mut restored = create_mmc1_timing_test_mapper();
         restored.restore_registers(&saved);
 
         let before = restored.registers_snapshot();
@@ -648,15 +641,7 @@ mod tests {
 
     #[test]
     fn test_mmc1_ignores_write_on_immediately_following_cycle() {
-        let prg_rom = vec![0; PRG_BANK_SIZE * 2];
-        let chr_rom = vec![];
-
-        let mut mapper = MMC1Mapper::new(MapperContext::new_for_test(
-            1,
-            prg_rom,
-            chr_rom,
-            NametableLayout::Horizontal,
-        ));
+        let mut mapper = create_mmc1_timing_test_mapper();
 
         mapper.cpu_cycle();
         mapper.write_prg(0x8000, 0x01);
@@ -674,6 +659,20 @@ mod tests {
         assert_eq!(
             mapper.write_count, write_count_after_first,
             "write counter should not advance for ignored consecutive-cycle writes"
+        );
+    }
+
+    #[test]
+    fn test_mmc1_ignores_consecutive_write_without_cpu_cycle_ticks() {
+        let mut mapper = create_mmc1_timing_test_mapper();
+
+        mapper.write_prg(0x8000, 0x01);
+        assert_eq!(mapper.write_count, 1);
+
+        mapper.write_prg(0x8000, 0x00);
+        assert_eq!(
+            mapper.write_count, 1,
+            "consecutive write should be ignored even when cpu_cycle() was not called"
         );
     }
 
@@ -712,32 +711,19 @@ mod tests {
         let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Load 0b00000 (mirroring = 0 = SingleScreenLower)
-        for _ in 0..5 {
-            mapper.write_prg(0x8000, 0b00000000);
-        }
+        write_register(&mut *mapper, 0x8000, 0b00000);
         assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenLower);
 
         // Load 0b00001 (mirroring = 1 = SingleScreenUpper)
-        mapper.write_prg(0x8000, 0b00000001);
-        for _ in 0..4 {
-            mapper.write_prg(0x8000, 0b00000000);
-        }
+        write_register(&mut *mapper, 0x8000, 0b00001);
         assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenUpper);
 
         // Load 0b00010 (mirroring = 2 = Vertical)
-        mapper.write_prg(0x8000, 0b00000000);
-        mapper.write_prg(0x8000, 0b00000001);
-        for _ in 0..3 {
-            mapper.write_prg(0x8000, 0b00000000);
-        }
+        write_register(&mut *mapper, 0x8000, 0b00010);
         assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
 
         // Load 0b00011 (mirroring = 3 = Horizontal)
-        mapper.write_prg(0x8000, 0b00000001);
-        mapper.write_prg(0x8000, 0b00000001);
-        for _ in 0..3 {
-            mapper.write_prg(0x8000, 0b00000000);
-        }
+        write_register(&mut *mapper, 0x8000, 0b00011);
         assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
     }
 
@@ -760,24 +746,16 @@ mod tests {
 
         // Set control register to PRG mode 0 (bits 2-3 = 0b00) and mirroring
         // Value: 0b00000 (mirroring=0, prg_mode=0, chr_mode=0)
-        for _ in 0..5 {
-            mapper.write_prg(0x8000, 0b00000000);
-        }
+        write_register(&mut *mapper, 0x8000, 0b00000);
 
         // Select 32KB bank 0 via PRG bank register (address $E000-$FFFF)
         // Load value 0b00000 (bank 0)
-        for _ in 0..5 {
-            mapper.write_prg(0xE000, 0b00000000);
-        }
+        write_register(&mut *mapper, 0xE000, 0b00000);
         assert_eq!(mapper.read_prg(0x8000), 10);
         assert_eq!(mapper.read_prg(0xC000), 10);
 
         // Select 32KB bank 1 (write 0b00010 = 2, but low bit ignored, so bank 1)
-        mapper.write_prg(0xE000, 0b00000000);
-        mapper.write_prg(0xE000, 0b00000001);
-        for _ in 0..3 {
-            mapper.write_prg(0xE000, 0b00000000);
-        }
+        write_register(&mut *mapper, 0xE000, 0b00010);
         assert_eq!(mapper.read_prg(0x8000), 11);
         assert_eq!(mapper.read_prg(0xC000), 11);
     }
@@ -801,21 +779,13 @@ mod tests {
 
         // Set control register to PRG mode 2 (bits 2-3 = 0b10)
         // Value: 0b01000 (mirroring=0, prg_mode=2, chr_mode=0)
-        mapper.write_prg(0x8000, 0b00000000);
-        mapper.write_prg(0x8000, 0b00000000);
-        mapper.write_prg(0x8000, 0b00000000);
-        mapper.write_prg(0x8000, 0b00000001);
-        mapper.write_prg(0x8000, 0b00000000);
+        write_register(&mut *mapper, 0x8000, 0b01000);
 
         // First bank at $8000 should be fixed to bank 0
         assert_eq!(mapper.read_prg(0x8000), 20);
 
         // Select bank 3 at $C000
-        mapper.write_prg(0xE000, 0b00000001);
-        mapper.write_prg(0xE000, 0b00000001);
-        for _ in 0..3 {
-            mapper.write_prg(0xE000, 0b00000000);
-        }
+        write_register(&mut *mapper, 0xE000, 0b00011);
         assert_eq!(mapper.read_prg(0x8000), 20); // First bank still fixed
         assert_eq!(mapper.read_prg(0xC000), 23); // Bank 3 at $C000
     }
@@ -839,21 +809,13 @@ mod tests {
 
         // Set control register to PRG mode 3 (bits 2-3 = 0b11) - this is the default
         // Value: 0b01100 (mirroring=0, prg_mode=3, chr_mode=0)
-        mapper.write_prg(0x8000, 0b00000000);
-        mapper.write_prg(0x8000, 0b00000000);
-        mapper.write_prg(0x8000, 0b00000001);
-        mapper.write_prg(0x8000, 0b00000001);
-        mapper.write_prg(0x8000, 0b00000000);
+        write_register(&mut *mapper, 0x8000, 0b01100);
 
         // Last bank at $C000 should be fixed to bank 15 (last bank)
         assert_eq!(mapper.read_prg(0xC000), 45); // Bank 15 = 30 + 15
 
         // Select bank 2 at $8000
-        mapper.write_prg(0xE000, 0b00000000);
-        mapper.write_prg(0xE000, 0b00000001);
-        for _ in 0..3 {
-            mapper.write_prg(0xE000, 0b00000000);
-        }
+        write_register(&mut *mapper, 0xE000, 0b00010);
         assert_eq!(mapper.read_prg(0x8000), 32); // Bank 2 at $8000
         assert_eq!(mapper.read_prg(0xC000), 45); // Last bank still fixed
     }
@@ -877,19 +839,12 @@ mod tests {
 
         // Set control register to CHR mode 0 (bit 4 = 0)
         // Value: 0b00000 (mirroring=0, prg_mode=0, chr_mode=0)
-        for _ in 0..5 {
-            mapper.write_prg(0x8000, 0b00000000);
-        }
+        write_register(&mut *mapper, 0x8000, 0b00000);
 
         // Select 8KB bank 2 via CHR bank 0 register (address $A000-$BFFF)
         // In 8KB mode, only CHR bank 0 matters, and low bit is ignored
         // Load value 0b00100 (4, but low bit ignored = bank 2)
-        mapper.write_prg(0xA000, 0b00000000);
-        mapper.write_prg(0xA000, 0b00000000);
-        mapper.write_prg(0xA000, 0b00000001);
-        for _ in 0..2 {
-            mapper.write_prg(0xA000, 0b00000000);
-        }
+        write_register(&mut *mapper, 0xA000, 0b00100);
         assert_eq!(mapper.read_chr(0x0000), 42); // Bank 2
         assert_eq!(mapper.read_chr(0x1000), 42); // Still bank 2
     }
@@ -913,27 +868,14 @@ mod tests {
 
         // Set control register to CHR mode 1 (bit 4 = 1)
         // Value: 0b10000 (mirroring=0, prg_mode=0, chr_mode=1)
-        mapper.write_prg(0x8000, 0b00000000);
-        for _ in 0..3 {
-            mapper.write_prg(0x8000, 0b00000000);
-        }
-        mapper.write_prg(0x8000, 0b00000001);
+        write_register(&mut *mapper, 0x8000, 0b10000);
 
         // Select 4KB bank 3 at $0000 via CHR bank 0 register
-        mapper.write_prg(0xA000, 0b00000001);
-        mapper.write_prg(0xA000, 0b00000001);
-        for _ in 0..3 {
-            mapper.write_prg(0xA000, 0b00000000);
-        }
+        write_register(&mut *mapper, 0xA000, 0b00011);
         assert_eq!(mapper.read_chr(0x0000), 53); // Bank 3 at $0000
 
         // Select 4KB bank 5 at $1000 via CHR bank 1 register
-        mapper.write_prg(0xC000, 0b00000001);
-        mapper.write_prg(0xC000, 0b00000000);
-        mapper.write_prg(0xC000, 0b00000001);
-        for _ in 0..2 {
-            mapper.write_prg(0xC000, 0b00000000);
-        }
+        write_register(&mut *mapper, 0xC000, 0b00101);
         assert_eq!(mapper.read_chr(0x0000), 53); // Bank 3 still at $0000
         assert_eq!(mapper.read_chr(0x1000), 55); // Bank 5 at $1000
     }
@@ -987,11 +929,7 @@ mod tests {
 
         // Write sequence: 1, 0, 1, 0, 1 should result in value 0b10101
         // With proper power-on state (0x10), after 5 writes we should see the bit pattern
-        mapper.write_prg(0x8000, 0b00000001); // Write bit 0 = 1
-        mapper.write_prg(0x8000, 0b00000000); // Write bit 0 = 0
-        mapper.write_prg(0x8000, 0b00000001); // Write bit 0 = 1
-        mapper.write_prg(0x8000, 0b00000000); // Write bit 0 = 0
-        mapper.write_prg(0x8000, 0b00000001); // Write bit 0 = 1 (5th write, should load)
+        write_register(&mut *mapper, 0x8000, 0b10101);
 
         // The control register should now contain 0b10101 (mirroring = 0b01 = SingleScreenUpper)
         assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenUpper);
@@ -1013,9 +951,7 @@ mod tests {
 
         // Now write a sequence and verify it works correctly
         // Write 5 ones: should result in 0b11111 after loading
-        for _ in 0..5 {
-            mapper.write_prg(0x8000, 0b00000001);
-        }
+        write_register(&mut *mapper, 0x8000, 0b11111);
 
         // Control register should be 0b11111 (mirroring = 0b11 = Horizontal)
         assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
@@ -1038,11 +974,7 @@ mod tests {
         // To load 0b10000 into the shift register, write the bit sequence: 0,0,0,0,1
         // The shift register starts at 0x10, shifts right, and ORs each bit at position 4
         // After 5 writes, this produces: 0b10000 (bit 4 set = WRAM disabled)
-        mapper.write_prg(0xE000, 0b00000000);
-        mapper.write_prg(0xE000, 0b00000000);
-        mapper.write_prg(0xE000, 0b00000000);
-        mapper.write_prg(0xE000, 0b00000000);
-        mapper.write_prg(0xE000, 0b00000001);
+        write_register(&mut *mapper, 0xE000, 0b10000);
 
         // With WRAM disabled, reads should return 0 (open bus behavior)
         assert_eq!(mapper.read_prg(0x6000), 0x00);
@@ -1053,9 +985,7 @@ mod tests {
 
         // Re-enable WRAM by clearing bit 4
         // Write 0b00000 to prg_bank register
-        for _ in 0..5 {
-            mapper.write_prg(0xE000, 0b00000000);
-        }
+        write_register(&mut *mapper, 0xE000, 0b00000);
 
         // With WRAM enabled again, writes should work
         mapper.write_prg(0x6000, 0xCC);
@@ -1086,11 +1016,7 @@ mod tests {
 
         // Disable WRAM (set bit 4 of prg_bank)
         // Write sequence: 0,0,0,0,1 to load 0b10000
-        mapper.write_prg(0xE000, 0b00000000);
-        mapper.write_prg(0xE000, 0b00000000);
-        mapper.write_prg(0xE000, 0b00000000);
-        mapper.write_prg(0xE000, 0b00000000);
-        mapper.write_prg(0xE000, 0b00000001); // Loads 0b10000 (bit 4 set)
+        write_register(&mut *mapper, 0xE000, 0b10000); // Loads 0b10000 (bit 4 set)
 
         // All WRAM reads should return 0
         assert_eq!(mapper.read_prg(0x6000), 0x00);
@@ -1510,10 +1436,7 @@ mod tests {
         mapper.write_prg(0x8000, 0x80);
 
         // Write pattern to enable WRAM: bit 4 = 0
-        // We'll write 5 times with bit 0 = 0 each time to load 0x00 into register
-        for _ in 0..5 {
-            mapper.write_prg(0xE000, 0x00);
-        }
+        write_register(&mut mapper, 0xE000, 0x00);
 
         // Write to WRAM
         mapper.write_prg(0x6000, 0xAA);
@@ -1528,13 +1451,7 @@ mod tests {
         mapper.write_prg(0x8000, 0x80);
 
         // Write pattern to disable WRAM: bit 4 = 1
-        // We need to shift in 10000 binary = 0x10
-        // Shift register is filled LSB first, so: bit0, bit1, bit2, bit3, bit4
-        mapper.write_prg(0xE000, 0x00); // bit 0 = 0
-        mapper.write_prg(0xE000, 0x00); // bit 1 = 0
-        mapper.write_prg(0xE000, 0x00); // bit 2 = 0
-        mapper.write_prg(0xE000, 0x00); // bit 3 = 0
-        mapper.write_prg(0xE000, 0x01); // bit 4 = 1
+        write_register(&mut mapper, 0xE000, 0x10);
 
         // read_prg should return 0 for backward compatibility
         assert_eq!(mapper.read_prg(0x6000), 0x00);

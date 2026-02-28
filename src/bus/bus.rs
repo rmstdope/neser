@@ -786,11 +786,17 @@ mod tests {
         rom
     }
 
-    fn write_mmc1_control(bus: &mut Bus, value: u8) {
+    fn write_mmc1_register(bus: &mut Bus, addr: u16, value: u8) {
         for i in 0..5 {
+            bus.mapper_cpu_cycle();
+            bus.mapper_cpu_cycle();
             let bit = (value >> i) & 0x01;
-            bus.write_for_testing(0x8000, bit);
+            bus.write(addr, bit, false);
         }
+    }
+
+    fn write_mmc1_control(bus: &mut Bus, value: u8) {
+        write_mmc1_register(bus, 0x8000, value);
     }
 
     fn assert_vertical_mirroring(ppu: &mut ppu::Ppu) {
@@ -1199,11 +1205,7 @@ mod tests {
 
         // Program MMC1 control register to mirroring=horizontal (control bits 0-1 = 0b11).
         // Load value 0b00011 into $8000-$9FFF via 5 writes (see MMC1 unit tests).
-        mem.write(0x8000, 0b0000_0001, false);
-        mem.write(0x8000, 0b0000_0001, false);
-        mem.write(0x8000, 0b0000_0000, false);
-        mem.write(0x8000, 0b0000_0000, false);
-        mem.write(0x8000, 0b0000_0000, false);
+        write_mmc1_control(&mut mem, 0b00011);
 
         // After switching to horizontal mirroring, tables 0 and 1 are mirrored.
         // Writing to $2800 should NOT affect $2000 anymore.
@@ -1235,11 +1237,7 @@ mod tests {
         mem.map_cartridge(cart);
 
         // Disable WRAM by setting bit 4 of the PRG bank register via 5 writes to $E000.
-        mem.write(0xE000, 0b0000_0000, false);
-        mem.write(0xE000, 0b0000_0000, false);
-        mem.write(0xE000, 0b0000_0000, false);
-        mem.write(0xE000, 0b0000_0000, false);
-        mem.write(0xE000, 0b0000_0001, false);
+        write_mmc1_register(&mut mem, 0xE000, 0b10000);
 
         // Prime open bus to a known value, then read from disabled WRAM.
         mem.write(0x0000, 0xAB, false);
@@ -1259,11 +1257,7 @@ mod tests {
         mem.map_cartridge(cart);
 
         // Disable WRAM by setting bit 4 of the PRG bank register via 5 writes to $E000.
-        mem.write(0xE000, 0b0000_0000, false);
-        mem.write(0xE000, 0b0000_0000, false);
-        mem.write(0xE000, 0b0000_0000, false);
-        mem.write(0xE000, 0b0000_0000, false);
-        mem.write(0xE000, 0b0000_0001, false);
+        write_mmc1_register(&mut mem, 0xE000, 0b10000);
 
         // Prime bus open-bus value and ensure debugger read uses it.
         mem.write(0x0000, 0x5E, false);
