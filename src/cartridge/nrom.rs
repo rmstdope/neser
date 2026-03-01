@@ -7,8 +7,7 @@
 
 use crate::cartridge::Mapper;
 use crate::cartridge::MapperCapabilities;
-use crate::cartridge::NametableLayout;
-use crate::cartridge::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::cartridge::common::BaseMapper;
 
 /// Mapper 0 - NROM
 ///
@@ -28,134 +27,62 @@ use crate::cartridge::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
 /// - Used in early NES games like Super Mario Bros., Ice Climber, Excitebike
 /// - Some NROM boards have no PRG-RAM (depends on board variant)
 pub struct NROMMapper {
-    prg_rom: Vec<u8>,
-    prg_ram: Option<PrgRam>,
-    chr_memory: ChrMemory,
-    mirroring: NametableLayout,
+    base: BaseMapper,
 }
 
 impl NROMMapper {
     /// Create a new NROM mapper
     /// If chr_rom is empty, 8KB of CHR-RAM is allocated
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
-        let prg_rom = ctx.prg_rom;
-        let chr_rom = ctx.chr_rom;
-        let mirroring = ctx.mirroring;
-        let prg_ram = if ctx.prg_ram_size_specified && ctx.prg_ram_banks_8k > 0 {
-            Some(PrgRam::new(
-                ctx.prg_ram_banks_8k as usize * DEFAULT_PRG_RAM_SIZE,
-            ))
-        } else {
-            None
+        let capabilities = MapperCapabilities {
+            has_irq: false,
+            has_chr_banking: false,
+            has_dynamic_mirroring: false,
+            has_expansion_audio: false,
+            max_prg_ram_kb: if ctx.prg_ram_size_specified && ctx.prg_ram_banks_8k > 0 {
+                ctx.prg_ram_banks_8k as usize * 8
+            } else {
+                0
+            },
+            prg_bank_size_kb: 32,
+            chr_bank_size_kb: 8,
+            trainer_jsr: false,
+            ..Default::default()
         };
         Self {
-            prg_rom,
-            prg_ram,
-            chr_memory: ChrMemory::new(chr_rom),
-            mirroring,
+            base: BaseMapper::new(&ctx, capabilities),
         }
     }
 }
 
 impl Mapper for NROMMapper {
+    fn base(&self) -> Option<&BaseMapper> {
+        Some(&self.base)
+    }
+
+    fn base_mut(&mut self) -> Option<&mut BaseMapper> {
+        Some(&mut self.base)
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
         // PRG-RAM at $6000-$7FFF (only if present)
-        if let Some(prg_ram) = &self.prg_ram
-            && let Some(value) = prg_ram.try_read(addr)
-        {
+        if let Some(value) = self.base.try_read_prg_ram(addr) {
             return value;
         }
-
         // PRG ROM at $8000-$FFFF; % len naturally mirrors 16KB ROM to $C000-$FFFF
-        match addr {
-            0x8000..=0xFFFF => {
-                let index = (addr - 0x8000) as usize % self.prg_rom.len();
-                self.prg_rom.get(index).copied().unwrap_or(0)
-            }
-            _ => 0,
-        }
+        self.base.read_prg_rom_fixed(addr)
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
         // PRG-RAM at $6000-$7FFF (only if present)
-        if let Some(prg_ram) = &mut self.prg_ram {
-            let _ = prg_ram.try_write(addr, value);
-        }
-    }
-
-    fn read_chr(&mut self, addr: u16) -> u8 {
-        self.chr_memory.read(addr)
-    }
-
-    fn write_chr(&mut self, addr: u16, value: u8) {
-        self.chr_memory.write(addr, value);
-    }
-
-    fn get_mirroring(&self) -> NametableLayout {
-        self.mirroring
-    }
-
-    fn mapper_number(&self) -> u8 {
-        0
-    }
-
-    fn wram_size(&self) -> usize {
-        self.prg_ram.as_ref().map_or(0, |r| r.size())
-    }
-
-    fn wram_snapshot(&self) -> Vec<u8> {
-        self.prg_ram
-            .as_ref()
-            .map_or_else(Vec::new, |r| r.snapshot())
-    }
-
-    fn load_wram_snapshot(&mut self, data: &[u8]) {
-        if let Some(prg_ram) = &mut self.prg_ram {
-            prg_ram.load_snapshot(data);
-        }
-    }
-
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_memory.snapshot()
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.chr_memory.load_snapshot(data);
-    }
-
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        if let Some(prg_ram) = &mut self.prg_ram {
-            prg_ram.initialize(mode);
-        }
-        self.chr_memory.initialize(mode);
-    }
-
-    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
-        match addr {
-            0x0000..=0x5FFF => open_bus,
-            0x6000..=0x7FFF if self.prg_ram.is_none() => open_bus,
-            _ => self.read_prg(addr),
-        }
-    }
-
-    fn capabilities(&self) -> MapperCapabilities {
-        MapperCapabilities {
-            has_irq: false,
-            has_chr_banking: false,
-            has_dynamic_mirroring: false,
-            has_expansion_audio: false,
-            max_prg_ram_kb: self.prg_ram.as_ref().map_or(0, |r| r.size() / 1024),
-            prg_bank_size_kb: 32,
-            chr_bank_size_kb: 8,
-            trainer_jsr: false,
-            ..Default::default()
-        }
+        self.base.try_write_prg_ram(addr, value);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cartridge::NametableLayout;
     use crate::cartridge::mapper::MapperContext;
 
     #[test]

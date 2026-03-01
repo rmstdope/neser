@@ -225,6 +225,29 @@ impl Default for MapperCapabilities {
 }
 
 pub trait Mapper {
+    /// Return a reference to the embedded [`BaseMapper`], if present.
+    ///
+    /// Mappers that embed a `BaseMapper` should override this (and [`base_mut`])
+    /// to return `Some(&self.base)`. The default trait methods for mirroring,
+    /// WRAM, CHR-RAM, capabilities, etc. then delegate to the `BaseMapper`,
+    /// eliminating boilerplate.
+    ///
+    /// Mappers that do **not** use `BaseMapper` can leave the default (`None`)
+    /// and override individual methods as before.
+    ///
+    /// [`BaseMapper`]: crate::cartridge::common::BaseMapper
+    /// [`base_mut`]: Mapper::base_mut
+    fn base(&self) -> Option<&super::common::BaseMapper> {
+        None
+    }
+
+    /// Return a mutable reference to the embedded [`BaseMapper`], if present.
+    ///
+    /// See [`base`](Mapper::base) for details.
+    fn base_mut(&mut self) -> Option<&mut super::common::BaseMapper> {
+        None
+    }
+
     /// Read a byte from PRG address space (CPU $6000-$FFFF)
     /// - $6000-$7FFF: PRG-RAM (8KB, battery-backed on some cartridges)
     /// - $8000-$FFFF: PRG-ROM (with bank switching on advanced mappers)
@@ -234,10 +257,15 @@ pub trait Mapper {
     /// Read a byte from PRG address space (CPU $6000-$FFFF), with open-bus context.
     ///
     /// Mappers that return open bus for disabled regions can override this method
-    /// to return `open_bus` when appropriate. Default falls back to `read_prg`.
-    fn read_prg_open_bus(&self, addr: u16, _open_bus: u8) -> u8 {
-        if addr < 0x6000 {
-            _open_bus
+    /// to return `open_bus` when appropriate.
+    ///
+    /// Default delegates to `BaseMapper` if available, otherwise falls back to
+    /// `read_prg` with open-bus below $6000.
+    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        if let Some(base) = self.base() {
+            base.read_prg_open_bus(addr, open_bus, |a| self.read_prg(a))
+        } else if addr < 0x6000 {
+            open_bus
         } else {
             self.read_prg(addr)
         }
@@ -249,12 +277,24 @@ pub trait Mapper {
     fn write_prg(&mut self, addr: u16, value: u8);
 
     /// Read a byte from CHR address space (PPU $0000-$1FFF)
-    /// Returns the byte at the given address after bank translation
-    fn read_chr(&mut self, addr: u16) -> u8;
+    /// Returns the byte at the given address after bank translation.
+    ///
+    /// Default delegates to `BaseMapper` if available.
+    fn read_chr(&mut self, addr: u16) -> u8 {
+        self.base()
+            .map(|b| b.read_chr(addr))
+            .expect("read_chr or base() must be implemented")
+    }
 
     /// Write a byte to CHR address space (PPU $0000-$1FFF)
-    /// Only works for CHR-RAM, CHR-ROM is read-only
-    fn write_chr(&mut self, addr: u16, value: u8);
+    /// Only works for CHR-RAM, CHR-ROM is read-only.
+    ///
+    /// Default delegates to `BaseMapper` if available.
+    fn write_chr(&mut self, addr: u16, value: u8) {
+        if let Some(base) = self.base_mut() {
+            base.write_chr(addr, value);
+        }
+    }
 
     /// Notify mapper of PPU address bus changes
     /// Used for detecting A12 rising edges (for MMC3 IRQ)
@@ -342,9 +382,13 @@ pub trait Mapper {
     ///
     /// This is called when a cartridge is inserted or on hard reset to initialize
     /// RAM contents. Soft resets should NOT call this method (RAM should be preserved).
-    /// Default implementation is a no-op for mappers without RAM or mappers that
-    /// don't use the helper types.
-    fn initialize_ram(&mut self, _mode: crate::console::RamInitMode) {}
+    ///
+    /// Default delegates to `BaseMapper` if available, otherwise is a no-op.
+    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+        if let Some(base) = self.base_mut() {
+            base.initialize_ram(mode);
+        }
+    }
 
     /// Whether the mapper is currently asserting IRQ.
     ///
@@ -365,16 +409,24 @@ pub trait Mapper {
         0.0
     }
 
-    /// Get the current nametable mirroring mode
-    /// Some mappers can change mirroring dynamically
-    fn get_mirroring(&self) -> NametableLayout;
+    /// Get the current nametable mirroring mode.
+    /// Some mappers can change mirroring dynamically.
+    ///
+    /// Default delegates to `BaseMapper` if available.
+    fn get_mirroring(&self) -> NametableLayout {
+        self.base()
+            .map(|b| b.mirroring())
+            .expect("get_mirroring or base() must be implemented")
+    }
 
     /// Get the size of cartridge WRAM (PRG-RAM) in bytes.
     ///
     /// Returns the total size of battery-backed PRG-RAM that should be persisted to disk.
-    /// Default implementation returns 8KB (0x2000 bytes), the standard PRG-RAM size.
+    ///
+    /// Default delegates to `BaseMapper` if available, otherwise returns
+    /// 8KB (0x2000 bytes).
     fn wram_size(&self) -> usize {
-        0x2000
+        self.base().map_or(0x2000, |b| b.wram_size())
     }
 
     /// Create a snapshot of all cartridge WRAM (PRG-RAM) for persistence.
@@ -385,9 +437,13 @@ pub trait Mapper {
     /// - Current bank mapping (for mappers with banked WRAM like MMC5)
     ///
     /// Returns a Vec containing the complete WRAM contents.
-    /// Default implementation reads via read_prg at $6000-$7FFF (8KB window).
+    /// Default delegates to `BaseMapper` if available, otherwise reads via
+    /// `read_prg` at $6000-$7FFF (8KB window).
     /// **Mappers with >8KB WRAM MUST override this method to capture all banks.**
     fn wram_snapshot(&self) -> Vec<u8> {
+        if let Some(base) = self.base() {
+            return base.wram_snapshot();
+        }
         let size = self.wram_size().min(0x2000);
         let mut snapshot = Vec::with_capacity(size);
         for i in 0..size {
@@ -404,9 +460,14 @@ pub trait Mapper {
     /// - Current bank mapping (for mappers with banked WRAM like MMC5)
     ///
     /// The data slice should contain the complete WRAM contents to restore.
-    /// Default implementation writes via write_prg at $6000-$7FFF (8KB window).
+    /// Default delegates to `BaseMapper` if available, otherwise writes via
+    /// `write_prg` at $6000-$7FFF (8KB window).
     /// **Mappers with >8KB WRAM MUST override this method to restore all banks.**
     fn load_wram_snapshot(&mut self, data: &[u8]) {
+        if let Some(base) = self.base_mut() {
+            base.load_wram_snapshot(data);
+            return;
+        }
         let to_copy = data.len().min(0x2000).min(self.wram_size());
         for (i, &byte) in data.iter().take(to_copy).enumerate() {
             self.write_prg(0x6000 + i as u16, byte);
@@ -416,9 +477,10 @@ pub trait Mapper {
     /// Get the mapper number (iNES mapper ID).
     ///
     /// Returns the iNES mapper number for this mapper (e.g., 0 for NROM, 1 for MMC1).
-    /// Default implementation returns 0.
+    ///
+    /// Default delegates to `BaseMapper` if available, otherwise returns 0.
     fn mapper_number(&self) -> u8 {
-        0
+        self.base().map_or(0, |b| b.mapper_number())
     }
 
     /// Create a snapshot of PRG-RAM for save-state.
@@ -430,9 +492,10 @@ pub trait Mapper {
 
     /// Create a snapshot of CHR-RAM for save-state.
     ///
-    /// Default implementation returns empty (CHR-ROM has no state to save).
+    /// Default delegates to `BaseMapper` if available, otherwise returns
+    /// empty (CHR-ROM has no state to save).
     fn chr_ram_snapshot(&self) -> Vec<u8> {
-        Vec::new()
+        self.base().map_or_else(Vec::new, |b| b.chr_ram_snapshot())
     }
 
     /// Create a snapshot of mapper-specific registers for save-state.
@@ -451,8 +514,12 @@ pub trait Mapper {
 
     /// Restore CHR-RAM from a save-state.
     ///
-    /// Default implementation is a no-op.
-    fn restore_chr_ram(&mut self, _data: &[u8]) {}
+    /// Default delegates to `BaseMapper` if available, otherwise is a no-op.
+    fn restore_chr_ram(&mut self, data: &[u8]) {
+        if let Some(base) = self.base_mut() {
+            base.restore_chr_ram(data);
+        }
+    }
 
     /// Restore mapper-specific registers from a save-state.
     ///
@@ -463,10 +530,13 @@ pub trait Mapper {
     ///
     /// Each mapper should override this to accurately describe its features
     /// (IRQ, CHR banking, dynamic mirroring, expansion audio, etc.).
-    /// The default returns conservative defaults suitable for the simplest mappers.
+    ///
+    /// Default delegates to `BaseMapper` if available, otherwise returns
+    /// conservative defaults suitable for the simplest mappers.
     #[allow(dead_code)]
     fn capabilities(&self) -> MapperCapabilities {
-        MapperCapabilities::default()
+        self.base()
+            .map_or_else(MapperCapabilities::default, |b| b.capabilities())
     }
 }
 
