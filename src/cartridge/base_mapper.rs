@@ -1,0 +1,757 @@
+//! `BaseMapper` — shared state and default behavior for all NES mapper implementations.
+//!
+//! Mappers embed `BaseMapper` via composition and delegate boilerplate to it,
+//! only implementing the truly mapper-specific logic themselves.
+
+use super::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
+use super::mapper::{MapperCapabilities, MapperContext};
+use crate::cartridge::NametableLayout;
+
+/// Shared mapper infrastructure holding common state
+/// (PRG-ROM, PRG-RAM, CHR memory, mirroring, mapper number) and providing
+/// default implementations for the repetitive `Mapper` trait methods.
+///
+/// Mappers embed `BaseMapper` via composition and delegate boilerplate to it,
+/// only implementing the truly mapper-specific logic themselves.
+///
+/// # Usage
+///
+/// ```rust,ignore
+/// use neser::cartridge::{BaseMapper, Mapper, NametableLayout, MapperCapabilities};
+///
+/// pub struct MyMapper {
+///     base: BaseMapper,
+///     // ... mapper-specific fields
+/// }
+///
+/// impl Mapper for MyMapper {
+///     fn base(&self) -> Option<&BaseMapper> { Some(&self.base) }
+///     fn base_mut(&mut self) -> Option<&mut BaseMapper> { Some(&mut self.base) }
+///     fn read_prg(&self, addr: u16) -> u8 {
+///         if let Some(v) = self.base.try_read_prg_ram(addr) { return v; }
+///         self.base.read_prg_banked(addr)
+///     }
+///     fn write_prg(&mut self, addr: u16, value: u8) {
+///         if self.base.try_write_prg_ram(addr, value) { return; }
+///         // mapper-specific register write logic
+///     }
+/// }
+/// ```
+pub struct BaseMapper {
+    prg_rom: Vec<u8>,
+    prg_ram: Option<PrgRam>,
+    chr_memory: ChrMemory,
+    mirroring: NametableLayout,
+    mapper_number: u16,
+    capabilities: MapperCapabilities,
+    prg_page_size: usize,
+    chr_page_size: usize,
+    /// Page table mapping PRG slots to bank numbers.
+    /// Length = 32KB / prg_page_size. Each entry is a bank number (after wrapping).
+    prg_pages: Vec<usize>,
+    /// Page table mapping CHR slots to bank numbers.
+    /// Length = 8KB / chr_page_size. Each entry is a bank number (after wrapping).
+    chr_pages: Vec<usize>,
+    /// Whether bus conflicts are enabled (write value ANDed with ROM at same address).
+    bus_conflicts: bool,
+}
+
+/// Resolve a signed bank number to an unsigned index, wrapping to available banks.
+///
+/// Negative values count from the end: -1 = last bank, -2 = second-to-last, etc.
+fn resolve_bank(bank: i16, bank_count: usize) -> usize {
+    if bank < 0 {
+        (bank_count as i32 + bank as i32) as usize % bank_count
+    } else {
+        bank as usize % bank_count
+    }
+}
+
+/// Compute the flat byte index for a banked memory access.
+///
+/// `offset` is the byte offset within the banked window (e.g. `addr - 0x8000` for PRG).
+/// `page_size` is the size of each bank in bytes.
+/// `pages` maps slot numbers to bank numbers.
+fn resolve_banked_index(offset: usize, page_size: usize, pages: &[usize]) -> usize {
+    let slot = offset / page_size;
+    let bank = pages[slot];
+    bank * page_size + (offset % page_size)
+}
+
+#[allow(dead_code)]
+impl BaseMapper {
+    /// Create a new `BaseMapper` from a `MapperContext`.
+    ///
+    /// PRG-RAM is created only when the header explicitly specifies a non-zero size.
+    /// CHR memory is ROM when `chr_rom` is non-empty, otherwise CHR-RAM is allocated.
+    pub fn new(ctx: &MapperContext, capabilities: MapperCapabilities) -> Self {
+        let prg_ram = if ctx.prg_ram_size_specified && ctx.prg_ram_banks_8k > 0 {
+            Some(PrgRam::new(
+                ctx.prg_ram_banks_8k as usize * DEFAULT_PRG_RAM_SIZE,
+            ))
+        } else {
+            None
+        };
+        Self {
+            prg_rom: ctx.prg_rom.clone(),
+            prg_ram,
+            chr_memory: ChrMemory::new(ctx.chr_rom.clone()),
+            mirroring: ctx.mirroring,
+            mapper_number: ctx.mapper,
+            capabilities,
+            prg_page_size: 0,
+            chr_page_size: 0,
+            prg_pages: Vec::new(),
+            chr_pages: Vec::new(),
+            bus_conflicts: false,
+        }
+    }
+
+    // --- PRG-ROM access ---
+
+    /// Get a reference to the PRG-ROM data.
+    #[inline]
+    pub fn prg_rom(&self) -> &[u8] {
+        &self.prg_rom
+    }
+
+    /// Read a byte from fixed PRG-ROM at $8000-$FFFF with automatic mirroring.
+    ///
+    /// For mappers with no PRG banking (e.g., NROM), this maps the full
+    /// 32KB window using `offset % prg_rom.len()` which naturally handles
+    /// 16KB mirroring.
+    #[inline]
+    pub fn read_prg_rom_fixed(&self, addr: u16) -> u8 {
+        if (0x8000..=0xFFFF).contains(&addr) {
+            let index = (addr - 0x8000) as usize % self.prg_rom.len();
+            self.prg_rom.get(index).copied().unwrap_or(0)
+        } else {
+            0
+        }
+    }
+
+    // --- PRG-RAM access ---
+
+    /// Try to read from PRG-RAM if the address is in $6000-$7FFF.
+    /// Returns `Some(value)` if PRG-RAM exists and address is in range, else `None`.
+    #[inline]
+    pub fn try_read_prg_ram(&self, addr: u16) -> Option<u8> {
+        self.prg_ram.as_ref().and_then(|ram| ram.try_read(addr))
+    }
+
+    /// Try to write to PRG-RAM if the address is in $6000-$7FFF.
+    /// Returns `true` if the write was handled.
+    #[inline]
+    pub fn try_write_prg_ram(&mut self, addr: u16, value: u8) -> bool {
+        if let Some(prg_ram) = &mut self.prg_ram {
+            prg_ram.try_write(addr, value)
+        } else {
+            false
+        }
+    }
+
+    /// Whether PRG-RAM is present.
+    #[inline]
+    pub fn has_prg_ram(&self) -> bool {
+        self.prg_ram.is_some()
+    }
+
+    // --- CHR memory access ---
+
+    /// Read a byte from CHR memory (ROM or RAM) at $0000-$1FFF.
+    #[inline]
+    pub fn read_chr(&self, addr: u16) -> u8 {
+        self.chr_memory.read(addr)
+    }
+
+    /// Write a byte to CHR memory. Only succeeds for CHR-RAM.
+    #[inline]
+    pub fn write_chr(&mut self, addr: u16, value: u8) {
+        self.chr_memory.write(addr, value);
+    }
+
+    // --- Mirroring ---
+
+    /// Get the nametable mirroring layout.
+    #[inline]
+    pub fn mirroring(&self) -> NametableLayout {
+        self.mirroring
+    }
+
+    /// Set the nametable mirroring layout (for mappers with dynamic mirroring).
+    #[inline]
+    pub fn set_mirroring(&mut self, mirroring: NametableLayout) {
+        self.mirroring = mirroring;
+    }
+
+    // --- Mapper identification ---
+
+    /// Get the mapper number.
+    #[inline]
+    pub fn mapper_number(&self) -> u8 {
+        self.mapper_number as u8
+    }
+
+    // --- Save-state / WRAM support ---
+
+    /// Get the WRAM (PRG-RAM) size in bytes.
+    pub fn wram_size(&self) -> usize {
+        self.prg_ram.as_ref().map_or(0, PrgRam::size)
+    }
+
+    /// Create a snapshot of PRG-RAM for save persistence.
+    pub fn wram_snapshot(&self) -> Vec<u8> {
+        self.prg_ram
+            .as_ref()
+            .map_or_else(Vec::new, PrgRam::snapshot)
+    }
+
+    /// Load a PRG-RAM snapshot from save persistence.
+    pub fn load_wram_snapshot(&mut self, data: &[u8]) {
+        if let Some(prg_ram) = &mut self.prg_ram {
+            prg_ram.load_snapshot(data);
+        }
+    }
+
+    /// Create a snapshot of CHR-RAM for save-state.
+    pub fn chr_ram_snapshot(&self) -> Vec<u8> {
+        self.chr_memory.snapshot()
+    }
+
+    /// Restore CHR-RAM from a save-state.
+    pub fn restore_chr_ram(&mut self, data: &[u8]) {
+        self.chr_memory.load_snapshot(data);
+    }
+
+    /// Re-initialize all RAM (PRG-RAM + CHR-RAM) for cartridge insertion / hard reset.
+    pub fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+        if let Some(prg_ram) = &mut self.prg_ram {
+            prg_ram.initialize(mode);
+        }
+        self.chr_memory.initialize(mode);
+    }
+
+    /// Read PRG with open-bus handling.
+    ///
+    /// Returns `open_bus` for addresses below $6000 and for $6000-$7FFF when
+    /// no PRG-RAM is present. Otherwise delegates to the provided `read_prg` function.
+    pub fn read_prg_open_bus(&self, addr: u16, open_bus: u8, read_prg: impl Fn(u16) -> u8) -> u8 {
+        match addr {
+            0x0000..=0x5FFF => open_bus,
+            0x6000..=0x7FFF if self.prg_ram.is_none() => open_bus,
+            _ => read_prg(addr),
+        }
+    }
+
+    /// Get the mapper capabilities.
+    pub fn capabilities(&self) -> MapperCapabilities {
+        self.capabilities.clone()
+    }
+
+    // --- Banking configuration ---
+
+    /// Configure PRG-ROM banking with the given page size in bytes.
+    ///
+    /// Sets up the page table with `32KB / page_size` slots.
+    /// Initially all slots are mapped to bank 0.
+    /// Common page sizes: 0x2000 (8KB), 0x4000 (16KB), 0x8000 (32KB).
+    pub fn configure_prg_banking(&mut self, page_size: usize) {
+        self.prg_page_size = page_size;
+        let slot_count = 0x8000 / page_size;
+        self.prg_pages = vec![0; slot_count];
+    }
+
+    /// Configure CHR memory banking with the given page size in bytes.
+    ///
+    /// Sets up the page table with `8KB / page_size` slots.
+    /// Initially all slots are mapped to bank 0.
+    /// Common page sizes: 0x0400 (1KB), 0x0800 (2KB), 0x1000 (4KB), 0x2000 (8KB).
+    pub fn configure_chr_banking(&mut self, page_size: usize) {
+        self.chr_page_size = page_size;
+        let slot_count = 0x2000 / page_size;
+        self.chr_pages = vec![0; slot_count];
+    }
+
+    /// Select a PRG bank for the given slot.
+    ///
+    /// Negative values count from the end: -1 = last bank, -2 = second-to-last, etc.
+    /// Bank numbers are automatically wrapped to the available number of banks.
+    pub fn select_prg_page(&mut self, slot: usize, bank: i16) {
+        self.prg_pages[slot] = resolve_bank(bank, self.prg_bank_count());
+    }
+
+    /// Select a CHR bank for the given slot.
+    ///
+    /// Negative values count from the end: -1 = last bank, -2 = second-to-last, etc.
+    /// Bank numbers are automatically wrapped to the available number of banks.
+    pub fn select_chr_page(&mut self, slot: usize, bank: i16) {
+        self.chr_pages[slot] = resolve_bank(bank, self.chr_bank_count());
+    }
+
+    /// Read a byte from banked PRG-ROM at $8000-$FFFF.
+    ///
+    /// Uses the page table to resolve the address to the correct bank and offset.
+    /// Requires `configure_prg_banking` to have been called first.
+    pub fn read_prg_banked(&self, addr: u16) -> u8 {
+        let offset = (addr - 0x8000) as usize;
+        let index = resolve_banked_index(offset, self.prg_page_size, &self.prg_pages);
+        self.prg_rom.get(index).copied().unwrap_or(0)
+    }
+
+    /// Read a byte from banked CHR memory at $0000-$1FFF.
+    ///
+    /// Uses the page table to resolve the address to the correct bank and offset.
+    /// Requires `configure_chr_banking` to have been called first.
+    pub fn read_chr_banked(&self, addr: u16) -> u8 {
+        let offset = (addr & 0x1FFF) as usize;
+        let index = resolve_banked_index(offset, self.chr_page_size, &self.chr_pages);
+        self.chr_memory.read_at_index(index)
+    }
+
+    /// Write a byte to banked CHR memory at $0000-$1FFF.
+    ///
+    /// Only succeeds for CHR-RAM. Uses the page table to resolve the address.
+    /// Requires `configure_chr_banking` to have been called first.
+    pub fn write_chr_banked(&mut self, addr: u16, value: u8) {
+        let offset = (addr & 0x1FFF) as usize;
+        let index = resolve_banked_index(offset, self.chr_page_size, &self.chr_pages);
+        self.chr_memory.write_at_index(index, value);
+    }
+
+    /// Enable or disable bus conflicts.
+    ///
+    /// When enabled, write values are ANDed with the ROM byte at the write address.
+    pub fn set_bus_conflicts(&mut self, enabled: bool) {
+        self.bus_conflicts = enabled;
+    }
+
+    /// Whether bus conflicts are enabled.
+    pub fn has_bus_conflicts(&self) -> bool {
+        self.bus_conflicts
+    }
+
+    /// Apply bus conflict: AND the write value with the PRG-ROM byte at the same address.
+    ///
+    /// Returns the original value if bus conflicts are disabled.
+    pub fn apply_bus_conflict(&self, addr: u16, value: u8) -> u8 {
+        if self.bus_conflicts {
+            value & self.read_prg_banked(addr)
+        } else {
+            value
+        }
+    }
+
+    /// Get the number of PRG banks for the configured page size.
+    pub fn prg_bank_count(&self) -> usize {
+        self.prg_rom.len() / self.prg_page_size
+    }
+
+    /// Get the number of CHR banks for the configured page size.
+    pub fn chr_bank_count(&self) -> usize {
+        self.chr_memory.size() / self.chr_page_size
+    }
+
+    /// Get the current PRG bank selected for a given slot.
+    pub fn prg_page(&self, slot: usize) -> usize {
+        self.prg_pages[slot]
+    }
+
+    /// Get the current CHR bank selected for a given slot.
+    pub fn chr_page(&self, slot: usize) -> usize {
+        self.chr_pages[slot]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_base_mapper_with_prg_ram(prg_ram_banks: u8) -> BaseMapper {
+        let ctx = MapperContext::new_for_test(
+            0,
+            vec![0; 0x8000],
+            vec![0; 8192],
+            NametableLayout::Horizontal,
+        )
+        .with_prg_ram_banks(prg_ram_banks);
+        BaseMapper::new(&ctx, MapperCapabilities::default())
+    }
+
+    #[test]
+    fn test_base_mapper_read_prg_rom_fixed_32kb() {
+        let mut prg_rom = vec![0; 0x8000];
+        prg_rom[0x0000] = 0xAA;
+        prg_rom[0x4000] = 0xBB;
+        prg_rom[0x7FFF] = 0xCC;
+        let ctx =
+            MapperContext::new_for_test(0, prg_rom, vec![0; 8192], NametableLayout::Horizontal);
+        let base = BaseMapper::new(&ctx, MapperCapabilities::default());
+
+        assert_eq!(base.read_prg_rom_fixed(0x8000), 0xAA);
+        assert_eq!(base.read_prg_rom_fixed(0xC000), 0xBB);
+        assert_eq!(base.read_prg_rom_fixed(0xFFFF), 0xCC);
+    }
+
+    #[test]
+    fn test_base_mapper_read_prg_rom_fixed_16kb_mirrors() {
+        let mut prg_rom = vec![0; 0x4000];
+        prg_rom[0x0000] = 0xAA;
+        prg_rom[0x3FFF] = 0xBB;
+        let ctx =
+            MapperContext::new_for_test(0, prg_rom, vec![0; 8192], NametableLayout::Horizontal);
+        let base = BaseMapper::new(&ctx, MapperCapabilities::default());
+
+        assert_eq!(base.read_prg_rom_fixed(0x8000), 0xAA);
+        assert_eq!(base.read_prg_rom_fixed(0xBFFF), 0xBB);
+        assert_eq!(base.read_prg_rom_fixed(0xC000), 0xAA); // mirrored
+        assert_eq!(base.read_prg_rom_fixed(0xFFFF), 0xBB); // mirrored
+    }
+
+    #[test]
+    fn test_base_mapper_prg_ram_read_write() {
+        let mut base = make_base_mapper_with_prg_ram(1);
+
+        assert_eq!(base.try_read_prg_ram(0x6000), Some(0));
+        base.try_write_prg_ram(0x6000, 0x42);
+        assert_eq!(base.try_read_prg_ram(0x6000), Some(0x42));
+
+        // Out of range
+        assert_eq!(base.try_read_prg_ram(0x5FFF), None);
+        assert_eq!(base.try_read_prg_ram(0x8000), None);
+    }
+
+    #[test]
+    fn test_base_mapper_no_prg_ram() {
+        let base = make_base_mapper_with_prg_ram(0);
+
+        assert!(!base.has_prg_ram());
+        assert_eq!(base.try_read_prg_ram(0x6000), None);
+        assert_eq!(base.wram_size(), 0);
+        assert!(base.wram_snapshot().is_empty());
+    }
+
+    #[test]
+    fn test_base_mapper_chr_read_write_ram() {
+        let ctx = MapperContext::new_for_test(
+            0,
+            vec![0; 0x8000],
+            vec![], // empty = CHR-RAM
+            NametableLayout::Horizontal,
+        );
+        let mut base = BaseMapper::new(&ctx, MapperCapabilities::default());
+
+        base.write_chr(0x0000, 0xAA);
+        assert_eq!(base.read_chr(0x0000), 0xAA);
+    }
+
+    #[test]
+    fn test_base_mapper_chr_read_rom() {
+        let ctx = MapperContext::new_for_test(
+            0,
+            vec![0; 0x8000],
+            vec![0x55; 8192],
+            NametableLayout::Horizontal,
+        );
+        let mut base = BaseMapper::new(&ctx, MapperCapabilities::default());
+
+        assert_eq!(base.read_chr(0x0000), 0x55);
+        base.write_chr(0x0000, 0xAA); // should be ignored (ROM)
+        assert_eq!(base.read_chr(0x0000), 0x55);
+    }
+
+    #[test]
+    fn test_base_mapper_mirroring() {
+        let ctx = MapperContext::new_for_test(
+            0,
+            vec![0; 0x8000],
+            vec![0; 8192],
+            NametableLayout::Vertical,
+        );
+        let mut base = BaseMapper::new(&ctx, MapperCapabilities::default());
+
+        assert_eq!(base.mirroring(), NametableLayout::Vertical);
+        base.set_mirroring(NametableLayout::Horizontal);
+        assert_eq!(base.mirroring(), NametableLayout::Horizontal);
+    }
+
+    #[test]
+    fn test_base_mapper_wram_snapshot_restore() {
+        let mut base = make_base_mapper_with_prg_ram(1);
+        base.try_write_prg_ram(0x6000, 0x42);
+        base.try_write_prg_ram(0x7FFF, 0xAB);
+
+        let snapshot = base.wram_snapshot();
+        assert_eq!(snapshot.len(), 8192);
+
+        let mut base2 = make_base_mapper_with_prg_ram(1);
+        base2.load_wram_snapshot(&snapshot);
+        assert_eq!(base2.try_read_prg_ram(0x6000), Some(0x42));
+        assert_eq!(base2.try_read_prg_ram(0x7FFF), Some(0xAB));
+    }
+
+    #[test]
+    fn test_base_mapper_chr_ram_snapshot_restore() {
+        let ctx =
+            MapperContext::new_for_test(0, vec![0; 0x8000], vec![], NametableLayout::Horizontal);
+        let mut base = BaseMapper::new(&ctx, MapperCapabilities::default());
+        base.write_chr(0x0000, 0xAA);
+        base.write_chr(0x1FFF, 0xBB);
+
+        let snapshot = base.chr_ram_snapshot();
+
+        let ctx2 =
+            MapperContext::new_for_test(0, vec![0; 0x8000], vec![], NametableLayout::Horizontal);
+        let mut base2 = BaseMapper::new(&ctx2, MapperCapabilities::default());
+        base2.restore_chr_ram(&snapshot);
+        assert_eq!(base2.read_chr(0x0000), 0xAA);
+        assert_eq!(base2.read_chr(0x1FFF), 0xBB);
+    }
+
+    #[test]
+    fn test_base_mapper_open_bus_no_prg_ram() {
+        let base = make_base_mapper_with_prg_ram(0);
+
+        // Below $6000: open bus
+        assert_eq!(base.read_prg_open_bus(0x5000, 0x42, |_| 0xFF), 0x42);
+        // $6000-$7FFF with no PRG-RAM: open bus
+        assert_eq!(base.read_prg_open_bus(0x6000, 0x42, |_| 0xFF), 0x42);
+        // $8000+: delegates to read_prg
+        assert_eq!(base.read_prg_open_bus(0x8000, 0x42, |_| 0xAA), 0xAA);
+    }
+
+    #[test]
+    fn test_base_mapper_open_bus_with_prg_ram() {
+        let base = make_base_mapper_with_prg_ram(1);
+
+        // $6000-$7FFF with PRG-RAM: delegates to read_prg
+        assert_eq!(base.read_prg_open_bus(0x6000, 0x42, |_| 0xBB), 0xBB);
+    }
+
+    #[test]
+    fn test_base_mapper_mapper_number() {
+        let ctx = MapperContext::new_for_test(
+            7,
+            vec![0; 0x8000],
+            vec![0; 8192],
+            NametableLayout::Horizontal,
+        );
+        let base = BaseMapper::new(&ctx, MapperCapabilities::default());
+        assert_eq!(base.mapper_number(), 7);
+    }
+
+    #[test]
+    fn test_base_mapper_capabilities() {
+        let caps = MapperCapabilities {
+            has_irq: true,
+            has_chr_banking: true,
+            ..Default::default()
+        };
+        let ctx = MapperContext::new_for_test(
+            0,
+            vec![0; 0x8000],
+            vec![0; 8192],
+            NametableLayout::Horizontal,
+        );
+        let base = BaseMapper::new(&ctx, caps.clone());
+        assert_eq!(base.capabilities(), caps);
+    }
+
+    // ========================================================================
+    // PRG Banking Tests
+    // ========================================================================
+
+    /// Build ROM data where each bank is filled with its index as a marker byte.
+    fn make_bank_marked_rom(num_banks: usize, bank_size: usize) -> Vec<u8> {
+        (0..num_banks)
+            .flat_map(|bank| std::iter::repeat_n(bank as u8, bank_size))
+            .collect()
+    }
+
+    /// Helper: create a BaseMapper with identifiable PRG-ROM banks.
+    fn make_prg_banked_mapper(num_banks: usize, page_size: usize) -> BaseMapper {
+        let prg_rom = make_bank_marked_rom(num_banks, page_size);
+        let ctx =
+            MapperContext::new_for_test(0, prg_rom, vec![0; 8192], NametableLayout::Horizontal);
+        let mut base = BaseMapper::new(&ctx, MapperCapabilities::default());
+        base.configure_prg_banking(page_size);
+        base
+    }
+
+    #[test]
+    fn test_configure_prg_banking_sets_page_count() {
+        let base = make_prg_banked_mapper(4, 0x2000);
+        assert_eq!(base.prg_bank_count(), 4);
+    }
+
+    #[test]
+    fn test_configure_prg_banking_16kb_pages() {
+        let base = make_prg_banked_mapper(4, 0x4000);
+        assert_eq!(base.prg_bank_count(), 4);
+    }
+
+    #[test]
+    fn test_select_prg_page_and_read() {
+        let mut base = make_prg_banked_mapper(4, 0x2000);
+        base.select_prg_page(0, 2);
+        assert_eq!(base.read_prg_banked(0x8000), 2);
+        assert_eq!(base.read_prg_banked(0x9FFF), 2);
+    }
+
+    #[test]
+    fn test_select_prg_page_multiple_slots() {
+        let mut base = make_prg_banked_mapper(4, 0x2000);
+        base.select_prg_page(0, 3);
+        base.select_prg_page(1, 1);
+        base.select_prg_page(2, 0);
+        base.select_prg_page(3, 2);
+
+        assert_eq!(base.read_prg_banked(0x8000), 3);
+        assert_eq!(base.read_prg_banked(0xA000), 1);
+        assert_eq!(base.read_prg_banked(0xC000), 0);
+        assert_eq!(base.read_prg_banked(0xE000), 2);
+    }
+
+    #[test]
+    fn test_select_prg_page_negative_bank() {
+        let mut base = make_prg_banked_mapper(4, 0x2000);
+        base.select_prg_page(3, -1);
+        assert_eq!(base.read_prg_banked(0xE000), 3);
+        base.select_prg_page(2, -2);
+        assert_eq!(base.read_prg_banked(0xC000), 2);
+    }
+
+    #[test]
+    fn test_select_prg_page_bank_wraps() {
+        let mut base = make_prg_banked_mapper(4, 0x2000);
+        base.select_prg_page(0, 5);
+        assert_eq!(base.read_prg_banked(0x8000), 1); // 5 % 4 = 1
+    }
+
+    #[test]
+    fn test_prg_page_query() {
+        let mut base = make_prg_banked_mapper(4, 0x2000);
+        base.select_prg_page(1, 3);
+        assert_eq!(base.prg_page(1), 3);
+    }
+
+    #[test]
+    fn test_read_prg_banked_16kb_pages() {
+        let mut base = make_prg_banked_mapper(2, 0x4000);
+        base.select_prg_page(0, 0);
+        base.select_prg_page(1, 1);
+        assert_eq!(base.read_prg_banked(0x8000), 0);
+        assert_eq!(base.read_prg_banked(0xBFFF), 0);
+        assert_eq!(base.read_prg_banked(0xC000), 1);
+        assert_eq!(base.read_prg_banked(0xFFFF), 1);
+    }
+
+    #[test]
+    fn test_read_prg_banked_32kb_page() {
+        let mut base = make_prg_banked_mapper(2, 0x8000);
+        base.select_prg_page(0, 1);
+        assert_eq!(base.read_prg_banked(0x8000), 1);
+        assert_eq!(base.read_prg_banked(0xFFFF), 1);
+    }
+
+    // ========================================================================
+    // CHR Banking Tests
+    // ========================================================================
+
+    fn make_chr_banked_mapper(num_chr_banks: usize, chr_page_size: usize) -> BaseMapper {
+        let chr_rom = make_bank_marked_rom(num_chr_banks, chr_page_size);
+        let ctx =
+            MapperContext::new_for_test(0, vec![0; 0x8000], chr_rom, NametableLayout::Horizontal);
+        let mut base = BaseMapper::new(&ctx, MapperCapabilities::default());
+        base.configure_chr_banking(chr_page_size);
+        base
+    }
+
+    #[test]
+    fn test_configure_chr_banking_sets_bank_count() {
+        let base = make_chr_banked_mapper(8, 0x0400);
+        assert_eq!(base.chr_bank_count(), 8);
+    }
+
+    #[test]
+    fn test_select_chr_page_and_read() {
+        let mut base = make_chr_banked_mapper(8, 0x0400);
+        base.select_chr_page(0, 5);
+        assert_eq!(base.read_chr_banked(0x0000), 5);
+        assert_eq!(base.read_chr_banked(0x03FF), 5);
+    }
+
+    #[test]
+    fn test_chr_banking_multiple_slots() {
+        let mut base = make_chr_banked_mapper(16, 0x0400);
+        for slot in 0..8 {
+            base.select_chr_page(slot, slot as i16 + 4);
+        }
+        for slot in 0..8 {
+            let addr = (slot * 0x0400) as u16;
+            assert_eq!(base.read_chr_banked(addr), (slot + 4) as u8);
+        }
+    }
+
+    #[test]
+    fn test_chr_banking_negative_bank() {
+        let mut base = make_chr_banked_mapper(8, 0x0400);
+        base.select_chr_page(7, -1);
+        assert_eq!(base.read_chr_banked(0x1C00), 7);
+    }
+
+    #[test]
+    fn test_chr_banking_4kb_pages() {
+        let mut base = make_chr_banked_mapper(4, 0x1000);
+        base.select_chr_page(0, 2);
+        base.select_chr_page(1, 3);
+        assert_eq!(base.read_chr_banked(0x0000), 2);
+        assert_eq!(base.read_chr_banked(0x0FFF), 2);
+        assert_eq!(base.read_chr_banked(0x1000), 3);
+        assert_eq!(base.read_chr_banked(0x1FFF), 3);
+    }
+
+    #[test]
+    fn test_write_chr_banked_ram() {
+        let ctx =
+            MapperContext::new_for_test(0, vec![0; 0x8000], vec![], NametableLayout::Horizontal);
+        let mut base = BaseMapper::new(&ctx, MapperCapabilities::default());
+        base.configure_chr_banking(0x2000);
+        base.select_chr_page(0, 0);
+        base.write_chr_banked(0x0000, 0xAB);
+        assert_eq!(base.read_chr_banked(0x0000), 0xAB);
+    }
+
+    #[test]
+    fn test_chr_page_query() {
+        let mut base = make_chr_banked_mapper(8, 0x0400);
+        base.select_chr_page(3, 7);
+        assert_eq!(base.chr_page(3), 7);
+    }
+
+    // ========================================================================
+    // Bus Conflict Tests
+    // ========================================================================
+
+    #[test]
+    fn test_bus_conflicts_disabled_returns_original() {
+        let base = make_prg_banked_mapper(2, 0x4000);
+        assert!(!base.has_bus_conflicts());
+        assert_eq!(base.apply_bus_conflict(0x8000, 0xFF), 0xFF);
+    }
+
+    #[test]
+    fn test_bus_conflicts_enabled_ands_with_rom() {
+        let mut base = make_prg_banked_mapper(2, 0x4000);
+        base.set_bus_conflicts(true);
+        base.select_prg_page(0, 0);
+        assert_eq!(base.apply_bus_conflict(0x8000, 0xFF), 0x00);
+    }
+
+    #[test]
+    fn test_bus_conflicts_with_nonzero_rom() {
+        let mut base = make_prg_banked_mapper(4, 0x2000);
+        base.set_bus_conflicts(true);
+        base.select_prg_page(0, 1);
+        assert_eq!(base.apply_bus_conflict(0x8000, 0xFF), 0x01);
+    }
+}

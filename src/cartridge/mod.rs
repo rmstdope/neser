@@ -1,5 +1,6 @@
 mod axrom;
 mod bandai_fcg;
+mod base_mapper;
 mod bnrom_nina;
 mod camerica;
 #[allow(clippy::module_inception)]
@@ -72,11 +73,13 @@ mod uxrom;
 mod vrc2_vrc4;
 mod vrc6;
 
+#[allow(unused_imports)]
+pub use base_mapper::BaseMapper;
 pub use cartridge::Cartridge;
 #[allow(unused_imports)]
 pub use common::{
-    BankSwitch, BankedRom, BaseMapper, ChrMemory, DEFAULT_CHR_RAM_SIZE, DEFAULT_PRG_RAM_SIZE,
-    PrgRam, StateSnapshot,
+    BankSwitch, BankedRom, ChrMemory, DEFAULT_CHR_RAM_SIZE, DEFAULT_PRG_RAM_SIZE, PrgRam,
+    StateSnapshot,
 };
 #[allow(unused_imports)]
 pub use ines::{ConsoleType, InesHeader, NametableLayout, ParsedRom, RomParseError, TimingMode};

@@ -7,7 +7,7 @@
 
 use crate::cartridge::Mapper;
 use crate::cartridge::MapperCapabilities;
-use crate::cartridge::common::BaseMapper;
+use crate::cartridge::base_mapper::BaseMapper;
 
 /// Mapper 0 - NROM
 ///
