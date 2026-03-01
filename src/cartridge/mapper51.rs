@@ -7,6 +7,7 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
+use crate::cartridge::BaseMapper;
 use crate::cartridge::NametableLayout;
 use crate::cartridge::common::ChrMemory;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
@@ -42,107 +43,111 @@ use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 ///
 /// CHR: Fixed 8KB bank 0
 pub struct Mapper51 {
-    prg_rom: Vec<u8>,
-    chr_memory: ChrMemory,
+    base: BaseMapper,
     bank: u8,
     mode: u8,
 }
 
+const BAD_DUMP_CHR_ROM_ON_CHR_RAM_CRC32: u32 = 0xA912_B064;
+
 impl Mapper51 {
-    const MAPPER_NUMBER: u8 = 51;
-    const PRG_BANK_SIZE: usize = 0x2000; // 8 KiB
-    const PRG_BANK_MASK: usize = Self::PRG_BANK_SIZE - 1;
-    const CHR_WINDOW_SIZE: usize = 0x2000; // 8 KiB
-    const BAD_DUMP_CHR_ROM_ON_CHR_RAM_CRC32: u32 = 0xA912_B064;
-
-    fn create_chr_memory(submapper: u8, crc32: u32, chr_rom: Vec<u8>) -> ChrMemory {
-        if submapper == 0 && crc32 == Self::BAD_DUMP_CHR_ROM_ON_CHR_RAM_CRC32 {
-            // Mapper 51 JY-010 boards use fixed 8KB CHR-RAM. Some bad dumps carry
-            // an 8KB CHR-ROM payload in the header; keep those bytes as RAM init
-            // while preserving writable CHR behavior for runtime graphics updates.
-            let mut chr_memory = ChrMemory::new_ram(Self::CHR_WINDOW_SIZE);
-            if !chr_rom.is_empty() {
-                chr_memory.load_snapshot(&chr_rom);
-            }
-            chr_memory
-        } else {
-            ChrMemory::new(chr_rom)
-        }
-    }
-
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
-        let prg_rom = ctx.prg_rom;
-        let chr_memory = Self::create_chr_memory(ctx.submapper, ctx.crc32, ctx.chr_rom);
-        Self {
-            prg_rom,
-            chr_memory,
+        let submapper = ctx.submapper;
+        let crc32 = ctx.crc32;
+        let chr_rom_data = ctx.chr_rom.clone();
+
+        let capabilities = MapperCapabilities {
+            has_dynamic_mirroring: true,
+            prg_bank_size_kb: 8,
+            chr_bank_size_kb: 8,
+            ..Default::default()
+        };
+
+        let mut base = BaseMapper::new(&ctx, capabilities);
+        base.configure_prg_banking(0x2000); // 8KB
+
+        // Handle bad-dump CRC32 case: replace CHR-ROM with CHR-RAM initialized
+        // with the ROM data. Some bad dumps carry an 8KB CHR-ROM payload in the
+        // header; keep those bytes as RAM init while preserving writable CHR
+        // behavior for runtime graphics updates.
+        if submapper == 0 && crc32 == BAD_DUMP_CHR_ROM_ON_CHR_RAM_CRC32 {
+            let mut chr_memory = ChrMemory::new_ram(0x2000);
+            if !chr_rom_data.is_empty() {
+                chr_memory.load_snapshot(&chr_rom_data);
+            }
+            base.set_chr_memory(chr_memory);
+        }
+
+        let mut mapper = Self {
+            base,
             bank: 0,
             mode: 1,
-        }
-    }
-
-    #[cfg(test)]
-    pub fn new_internal(prg_rom: Vec<u8>, chr_rom: Vec<u8>, _mirroring: NametableLayout) -> Self {
-        Self {
-            prg_rom,
-            chr_memory: ChrMemory::new(chr_rom),
-            bank: 0,
-            mode: 1,
-        }
-    }
-
-    fn prg_bank_count(&self) -> usize {
-        self.prg_rom.len() / Self::PRG_BANK_SIZE
-    }
-
-    fn wrapped_bank(bank: usize, count: usize) -> usize {
-        if count == 0 { 0 } else { bank % count }
+        };
+        mapper.update_banks();
+        mapper
     }
 
     fn decode_mode(value: u8) -> u8 {
         ((value >> 3) & 0x02) | ((value >> 1) & 0x01)
     }
 
-    fn resolve_prg_bank(&self, addr: u16) -> usize {
+    fn resolve_6000_bank(&self) -> usize {
         let bank = self.bank as usize;
+        let prg_rom = self.base.prg_rom();
+        let bank_count = prg_rom.len() / 0x2000;
         let raw = if self.mode & 0x01 != 0 {
-            // 32KB mode: $8000-$FFFF mapped to 4 consecutive 8KB pages
-            match addr {
-                0x6000..=0x7FFF => 0x23 | (bank << 2),
-                0x8000..=0x9FFF => bank << 2,
-                0xA000..=0xBFFF => (bank << 2) | 1,
-                0xC000..=0xDFFF => (bank << 2) | 2,
-                0xE000..=0xFFFF => (bank << 2) | 3,
-                _ => 0,
-            }
+            0x23 | (bank << 2)
         } else {
-            let mode = self.mode as usize;
-            // 16KB mode: $8000 and $C000 are independent 16KB windows
-            match addr {
-                0x6000..=0x7FFF => 0x2F | (bank << 2),
-                0x8000..=0x9FFF => (bank << 2) | mode,
-                0xA000..=0xBFFF => ((bank << 2) | mode) + 1,
-                0xC000..=0xDFFF => (bank << 2) | 0x0E,
-                0xE000..=0xFFFF => (bank << 2) | 0x0F,
-                _ => 0,
-            }
+            0x2F | (bank << 2)
         };
-        Self::wrapped_bank(raw, self.prg_bank_count())
+        if bank_count == 0 { 0 } else { raw % bank_count }
+    }
+
+    fn update_banks(&mut self) {
+        let bank = self.bank as usize;
+        if self.mode & 0x01 != 0 {
+            // 32KB mode: $8000-$FFFF mapped to 4 consecutive 8KB pages
+            self.base.select_prg_page(0, (bank << 2) as i16);
+            self.base.select_prg_page(1, ((bank << 2) | 1) as i16);
+            self.base.select_prg_page(2, ((bank << 2) | 2) as i16);
+            self.base.select_prg_page(3, ((bank << 2) | 3) as i16);
+        } else {
+            // 16KB mode: $8000 and $C000 are independent 16KB windows
+            let mode = self.mode as usize;
+            self.base.select_prg_page(0, ((bank << 2) | mode) as i16);
+            self.base
+                .select_prg_page(1, (((bank << 2) | mode) + 1) as i16);
+            self.base.select_prg_page(2, ((bank << 2) | 0x0E) as i16);
+            self.base.select_prg_page(3, ((bank << 2) | 0x0F) as i16);
+        }
+
+        let mirroring = if self.mode == 0x03 {
+            NametableLayout::Horizontal
+        } else {
+            NametableLayout::Vertical
+        };
+        self.base.set_mirroring(mirroring);
     }
 }
 
 impl Mapper for Mapper51 {
+    fn base(&self) -> Option<&BaseMapper> {
+        Some(&self.base)
+    }
+
+    fn base_mut(&mut self) -> Option<&mut BaseMapper> {
+        Some(&mut self.base)
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
         match addr {
-            0x6000..=0xFFFF => {
-                let bank = self.resolve_prg_bank(addr);
-                let offset = (addr as usize) & Self::PRG_BANK_MASK;
-                self.prg_rom
-                    .get(bank * Self::PRG_BANK_SIZE + offset)
-                    .copied()
-                    .unwrap_or(0)
+            0x6000..=0x7FFF => {
+                let bank = self.resolve_6000_bank();
+                let offset = (addr as usize) & 0x1FFF;
+                let prg_rom = self.base.prg_rom();
+                prg_rom.get(bank * 0x2000 + offset).copied().unwrap_or(0)
             }
-            _ => 0,
+            _ => self.base.read_prg_banked(addr),
         }
     }
 
@@ -150,52 +155,26 @@ impl Mapper for Mapper51 {
         match addr {
             0x6000..=0x7FFF => {
                 self.mode = Self::decode_mode(value);
+                self.update_banks();
             }
             0xC000..=0xDFFF => {
                 self.bank = value & 0x0F;
                 self.mode = (Self::decode_mode(value) & 0x02) | (self.mode & 0x01);
+                self.update_banks();
             }
             0x8000..=0xBFFF | 0xE000..=0xFFFF => {
                 self.bank = value & 0x0F;
+                self.update_banks();
             }
             _ => {}
         }
     }
 
-    fn read_chr(&mut self, addr: u16) -> u8 {
-        self.chr_memory.read(addr)
-    }
-
-    fn write_chr(&mut self, addr: u16, value: u8) {
-        self.chr_memory.write(addr, value);
-    }
-
-    fn get_mirroring(&self) -> NametableLayout {
-        if self.mode == 0x03 {
-            NametableLayout::Horizontal
-        } else {
-            NametableLayout::Vertical
+    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        match addr {
+            0x0000..=0x5FFF => open_bus,
+            _ => self.read_prg(addr),
         }
-    }
-
-    fn mapper_number(&self) -> u8 {
-        Self::MAPPER_NUMBER
-    }
-
-    fn wram_size(&self) -> usize {
-        0
-    }
-
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_memory.snapshot()
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.chr_memory.load_snapshot(data);
-    }
-
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        self.chr_memory.initialize(mode);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -206,21 +185,14 @@ impl Mapper for Mapper51 {
         if data.len() >= 2 {
             self.bank = data[0];
             self.mode = data[1];
+            self.update_banks();
         }
     }
 
     fn reset(&mut self) {
         self.bank = 0;
         self.mode = 1;
-    }
-
-    fn capabilities(&self) -> MapperCapabilities {
-        MapperCapabilities {
-            has_dynamic_mirroring: true,
-            prg_bank_size_kb: 8,
-            chr_bank_size_kb: 8,
-            ..Default::default()
-        }
+        self.update_banks();
     }
 }
 
@@ -250,7 +222,12 @@ mod tests {
         // Use Horizontal header so mirroring tests verify mode-derived value, not header passthrough
         let prg = banked_data(8 * 1024, PRG_BANKS);
         let chr = banked_data(8 * 1024, 1);
-        Mapper51::new_internal(prg, chr, NametableLayout::Horizontal)
+        Mapper51::new(MapperContext::new_for_test(
+            51,
+            prg,
+            chr,
+            NametableLayout::Horizontal,
+        ))
     }
 
     fn make_mapper_with_submapper(submapper: u8, chr: Vec<u8>, crc32: u32) -> Box<dyn Mapper> {
@@ -442,7 +419,12 @@ mod tests {
         // CHR is always fixed at bank 0; use 2-bank CHR so bank 1 would differ
         let prg = banked_data(8 * 1024, PRG_BANKS);
         let chr = banked_data(8 * 1024, 2); // bank 0 → 0, bank 1 → 1
-        let mut mapper = Mapper51::new_internal(prg, chr, NametableLayout::Vertical);
+        let mut mapper = Mapper51::new(MapperContext::new_for_test(
+            51,
+            prg,
+            chr,
+            NametableLayout::Vertical,
+        ));
         assert_eq!(mapper.read_chr(0x0000), 0, "CHR must read from bank 0");
         assert_eq!(mapper.read_chr(0x1FFF), 0, "CHR end must still be bank 0");
     }

@@ -5,7 +5,7 @@
 //! - Edge-case behavior may still differ from hardware in untested timing and board-variant scenarios.
 //! - See CARTRIDGE_REVIEW.md sections 5 and 6 for remaining mapper test/documentation follow-up.
 
-use crate::cartridge::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::ines::ConsoleType;
 use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
@@ -30,12 +30,7 @@ use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 /// - Latch state determines which of two 4KB CHR banks is active per region
 /// - Used exclusively in (Mike Tyson's) Punch-Out!!
 pub struct MMC2Mapper {
-    prg_rom: Vec<u8>,
-    prg_ram: Option<PrgRam>,
-
-    chr_memory: ChrMemory,
-
-    mirroring: NametableLayout,
+    base: BaseMapper,
 
     // --- PRG banking ---
     prg_bank_8k: u8,
@@ -51,84 +46,57 @@ pub struct MMC2Mapper {
 }
 
 impl MMC2Mapper {
-    const PRG_BANK_SIZE: usize = 0x2000; // 8KB
-    const CHR_BANK_SIZE: usize = 0x1000; // 4KB
-
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
-        let prg_ram = matches!(ctx.console_type, ConsoleType::Playchoice10)
-            .then(|| PrgRam::new(DEFAULT_PRG_RAM_SIZE));
-        let prg_rom = ctx.prg_rom;
-        let chr_rom = ctx.chr_rom;
-        let mirroring = ctx.mirroring;
+        let has_prg_ram = matches!(ctx.console_type, ConsoleType::Playchoice10);
+        let capabilities = MapperCapabilities {
+            has_chr_banking: true,
+            has_dynamic_mirroring: true,
+            max_prg_ram_kb: if has_prg_ram { 8 } else { 0 },
+            prg_bank_size_kb: 8,
+            chr_bank_size_kb: 4,
+            ..Default::default()
+        };
+        let mut base = BaseMapper::new(&ctx, capabilities);
+        base.configure_prg_banking(8 * 1024);
+        base.configure_chr_banking(4 * 1024);
+        // $8000: bank 0, $A000/$C000/$E000: fixed last 3 banks
+        base.select_prg_page(0, 0);
+        base.select_prg_page(1, -3);
+        base.select_prg_page(2, -2);
+        base.select_prg_page(3, -1);
+        // CHR: both latches FE (false), all bank regs = 0
+        base.select_chr_page(0, 0);
+        base.select_chr_page(1, 0);
         Self {
-            prg_rom,
-            prg_ram,
-            chr_memory: ChrMemory::new(chr_rom),
-            mirroring,
+            base,
             prg_bank_8k: 0,
             chr_bank_0_fd: 0,
             chr_bank_0_fe: 0,
             chr_bank_1_fd: 0,
             chr_bank_1_fe: 0,
-            // Power-on latch state is hardware-defined; FE is a common default in emulators.
             latch0_is_fd: false,
             latch1_is_fd: false,
         }
     }
 
-    fn prg_bank_count_8k(&self) -> usize {
-        self.prg_rom.len() / Self::PRG_BANK_SIZE
+    fn update_prg_banks(&mut self) {
+        self.base.select_prg_page(0, self.prg_bank_8k as i16);
+        // Slots 1-3 always fixed to last 3 banks
     }
 
-    fn chr_bank_count_4k(&self) -> usize {
-        self.chr_memory.size() / Self::CHR_BANK_SIZE
-    }
-
-    fn clamp_prg_bank_8k(&self, bank: u8) -> usize {
-        let count = self.prg_bank_count_8k();
-        if count == 0 {
-            return 0;
-        }
-        (bank as usize) % count
-    }
-
-    fn clamp_chr_bank_4k(&self, bank: u8) -> usize {
-        let count = self.chr_bank_count_4k();
-        if count == 0 {
-            return 0;
-        }
-        (bank as usize) % count
-    }
-
-    fn read_prg_rom_bank(&self, bank_index: usize, bank_offset: usize) -> u8 {
-        let addr = bank_index * Self::PRG_BANK_SIZE + bank_offset;
-        self.prg_rom.get(addr).copied().unwrap_or(0)
-    }
-
-    fn read_prg_window_8k(&self, addr: u16, window_start: u16, bank_index: usize) -> u8 {
-        let offset = (addr - window_start) as usize;
-        self.read_prg_rom_bank(bank_index, offset)
-    }
-
-    fn read_chr_bank_4k(&self, bank_index: usize, bank_offset: usize) -> u8 {
-        let addr = bank_index * Self::CHR_BANK_SIZE + bank_offset;
-        self.chr_memory.read_at_index(addr)
-    }
-
-    fn chr_bank_for_addr(&self, addr: u16) -> usize {
-        let bank = if addr < 0x1000 {
-            if self.latch0_is_fd {
-                self.chr_bank_0_fd
-            } else {
-                self.chr_bank_0_fe
-            }
-        } else if self.latch1_is_fd {
+    fn update_chr_pages(&mut self) {
+        let bank0 = if self.latch0_is_fd {
+            self.chr_bank_0_fd
+        } else {
+            self.chr_bank_0_fe
+        };
+        let bank1 = if self.latch1_is_fd {
             self.chr_bank_1_fd
         } else {
             self.chr_bank_1_fe
         };
-
-        self.clamp_chr_bank_4k(bank)
+        self.base.select_chr_page(0, bank0 as i16);
+        self.base.select_chr_page(1, bank1 as i16);
     }
 
     fn update_latches_for_chr_read(&mut self, addr: u16) {
@@ -143,51 +111,26 @@ impl MMC2Mapper {
 }
 
 impl Mapper for MMC2Mapper {
+    fn base(&self) -> Option<&BaseMapper> {
+        Some(&self.base)
+    }
+
+    fn base_mut(&mut self) -> Option<&mut BaseMapper> {
+        Some(&mut self.base)
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
-        // PRG-RAM at $6000-$7FFF
-        if let Some(prg_ram) = &self.prg_ram
-            && let Some(value) = prg_ram.try_read(addr)
-        {
+        if let Some(value) = self.base.try_read_prg_ram(addr) {
             return value;
         }
-
         match addr {
-            0x8000..=0x9FFF => {
-                let bank = self.clamp_prg_bank_8k(self.prg_bank_8k);
-                self.read_prg_window_8k(addr, 0x8000, bank)
-            }
-            0xA000..=0xBFFF => {
-                let count = self.prg_bank_count_8k();
-                let bank = count.saturating_sub(3);
-                self.read_prg_window_8k(addr, 0xA000, bank)
-            }
-            0xC000..=0xDFFF => {
-                let count = self.prg_bank_count_8k();
-                let bank = count.saturating_sub(2);
-                self.read_prg_window_8k(addr, 0xC000, bank)
-            }
-            0xE000..=0xFFFF => {
-                let count = self.prg_bank_count_8k();
-                let bank = count.saturating_sub(1);
-                self.read_prg_window_8k(addr, 0xE000, bank)
-            }
+            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
             _ => 0,
         }
     }
 
-    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
-        match addr {
-            0x0000..=0x5FFF => open_bus,
-            0x6000..=0x7FFF if self.prg_ram.is_none() => open_bus,
-            _ => self.read_prg(addr),
-        }
-    }
-
     fn write_prg(&mut self, addr: u16, value: u8) {
-        // PRG-RAM at $6000-$7FFF
-        if let Some(prg_ram) = &mut self.prg_ram
-            && prg_ram.try_write(addr, value)
-        {
+        if self.base.try_write_prg_ram(addr, value) {
             return;
         }
 
@@ -195,21 +138,35 @@ impl Mapper for MMC2Mapper {
             // PRG bank select ($A000-$AFFF)
             0xA000..=0xAFFF => {
                 self.prg_bank_8k = value & 0x0F;
+                self.update_prg_banks();
             }
 
             // CHR bank registers
-            0xB000..=0xBFFF => self.chr_bank_0_fd = value & 0x1F,
-            0xC000..=0xCFFF => self.chr_bank_0_fe = value & 0x1F,
-            0xD000..=0xDFFF => self.chr_bank_1_fd = value & 0x1F,
-            0xE000..=0xEFFF => self.chr_bank_1_fe = value & 0x1F,
+            0xB000..=0xBFFF => {
+                self.chr_bank_0_fd = value & 0x1F;
+                self.update_chr_pages();
+            }
+            0xC000..=0xCFFF => {
+                self.chr_bank_0_fe = value & 0x1F;
+                self.update_chr_pages();
+            }
+            0xD000..=0xDFFF => {
+                self.chr_bank_1_fd = value & 0x1F;
+                self.update_chr_pages();
+            }
+            0xE000..=0xEFFF => {
+                self.chr_bank_1_fe = value & 0x1F;
+                self.update_chr_pages();
+            }
 
             // Mirroring control ($F000-$FFFF)
             0xF000..=0xFFFF => {
-                self.mirroring = if (value & 0x01) != 0 {
+                let mirroring = if (value & 0x01) != 0 {
                     NametableLayout::Horizontal
                 } else {
                     NametableLayout::Vertical
                 };
+                self.base.set_mirroring(mirroring);
             }
 
             _ => {}
@@ -217,65 +174,21 @@ impl Mapper for MMC2Mapper {
     }
 
     fn read_chr(&mut self, addr: u16) -> u8 {
-        let bank = self.chr_bank_for_addr(addr);
-        let offset = (addr as usize) & (Self::CHR_BANK_SIZE - 1);
-        let value = self.read_chr_bank_4k(bank, offset);
+        let value = self.base.read_chr_banked(addr);
         self.update_latches_for_chr_read(addr);
+        self.update_chr_pages();
         value
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
-        let bank = self.chr_bank_for_addr(addr);
-        let offset = (addr as usize) & (Self::CHR_BANK_SIZE - 1);
-        let index = bank * Self::CHR_BANK_SIZE + offset;
-        self.chr_memory.write_at_index(index, value);
+        self.base.write_chr_banked(addr, value);
     }
 
     fn ppu_address_changed(&mut self, addr: u16) {
         let _ = addr;
     }
 
-    fn get_mirroring(&self) -> NametableLayout {
-        self.mirroring
-    }
-
-    fn mapper_number(&self) -> u8 {
-        9
-    }
-
-    fn wram_size(&self) -> usize {
-        self.prg_ram.as_ref().map_or(0, PrgRam::size)
-    }
-
-    fn wram_snapshot(&self) -> Vec<u8> {
-        self.prg_ram
-            .as_ref()
-            .map_or_else(Vec::new, PrgRam::snapshot)
-    }
-
-    fn load_wram_snapshot(&mut self, data: &[u8]) {
-        if let Some(prg_ram) = &mut self.prg_ram {
-            prg_ram.load_snapshot(data);
-        }
-    }
-
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_memory.snapshot()
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.chr_memory.load_snapshot(data);
-    }
-
     fn registers_snapshot(&self) -> Vec<u8> {
-        // Serialize MMC2 internal registers:
-        // [0]: prg_bank_8k
-        // [1]: chr_bank_0_fd
-        // [2]: chr_bank_0_fe
-        // [3]: chr_bank_1_fd
-        // [4]: chr_bank_1_fe
-        // [5]: latches (bit 0 = latch0_is_fd, bit 1 = latch1_is_fd)
-        // [6]: mirroring
         vec![
             self.prg_bank_8k,
             self.chr_bank_0_fd,
@@ -283,7 +196,7 @@ impl Mapper for MMC2Mapper {
             self.chr_bank_1_fd,
             self.chr_bank_1_fe,
             (self.latch0_is_fd as u8) | ((self.latch1_is_fd as u8) << 1),
-            match self.mirroring {
+            match self.base.mirroring() {
                 NametableLayout::Vertical => 0,
                 NametableLayout::Horizontal => 1,
                 _ => 1,
@@ -300,25 +213,14 @@ impl Mapper for MMC2Mapper {
             self.chr_bank_1_fe = data[4];
             self.latch0_is_fd = (data[5] & 1) != 0;
             self.latch1_is_fd = (data[5] & 2) != 0;
-            self.mirroring = match data[6] {
+            let mirroring = match data[6] {
                 0 => NametableLayout::Vertical,
                 1 => NametableLayout::Horizontal,
                 _ => NametableLayout::Horizontal,
             };
-        }
-    }
-
-    fn capabilities(&self) -> MapperCapabilities {
-        MapperCapabilities {
-            has_irq: false,
-            has_chr_banking: true,
-            has_dynamic_mirroring: true,
-            has_expansion_audio: false,
-            max_prg_ram_kb: if self.prg_ram.is_some() { 8 } else { 0 },
-            prg_bank_size_kb: 8,
-            chr_bank_size_kb: 4,
-            trainer_jsr: false,
-            ..Default::default()
+            self.base.set_mirroring(mirroring);
+            self.update_prg_banks();
+            self.update_chr_pages();
         }
     }
 }
@@ -337,8 +239,8 @@ mod tests {
     #[test]
     fn test_mmc2_prg_bank_8000_is_switchable_and_upper_banks_are_fixed() {
         let prg_banks = 8;
-        let prg_rom = filled_banks(MMC2Mapper::PRG_BANK_SIZE, prg_banks);
-        let chr_rom = filled_banks(MMC2Mapper::CHR_BANK_SIZE, 8);
+        let prg_rom = filled_banks(0x2000, prg_banks);
+        let chr_rom = filled_banks(0x1000, 8);
 
         let mapper = MMC2Mapper::new(MapperContext::new_for_test(
             9,
@@ -358,8 +260,8 @@ mod tests {
 
     #[test]
     fn test_mmc2_registers_snapshot_preserves_latches_and_mirroring() {
-        let prg_rom = filled_banks(MMC2Mapper::PRG_BANK_SIZE, 4);
-        let chr_rom = filled_banks(MMC2Mapper::CHR_BANK_SIZE, 8);
+        let prg_rom = filled_banks(0x2000, 4);
+        let chr_rom = filled_banks(0x1000, 8);
 
         let mut mapper = MMC2Mapper::new(MapperContext::new_for_test(
             9,
@@ -397,8 +299,8 @@ mod tests {
     #[test]
     fn test_mmc2_chr_latches_select_between_fd_and_fe_banks() {
         // Provide at least 6 4KB banks.
-        let chr_rom = filled_banks(MMC2Mapper::CHR_BANK_SIZE, 8);
-        let prg_rom = filled_banks(MMC2Mapper::PRG_BANK_SIZE, 8);
+        let chr_rom = filled_banks(0x1000, 8);
+        let prg_rom = filled_banks(0x2000, 8);
 
         let mut mapper = MMC2Mapper::new(MapperContext::new_for_test(
             9,
@@ -429,8 +331,8 @@ mod tests {
 
     #[test]
     fn test_mmc2_latch0_only_switches_on_exact_addresses() {
-        let chr_rom = filled_banks(MMC2Mapper::CHR_BANK_SIZE, 8);
-        let prg_rom = filled_banks(MMC2Mapper::PRG_BANK_SIZE, 8);
+        let chr_rom = filled_banks(0x1000, 8);
+        let prg_rom = filled_banks(0x2000, 8);
 
         let mut mapper = MMC2Mapper::new(MapperContext::new_for_test(
             9,
@@ -464,8 +366,8 @@ mod tests {
 
     #[test]
     fn test_mmc2_ppu_address_changed_does_not_switch_latches() {
-        let chr_rom = filled_banks(MMC2Mapper::CHR_BANK_SIZE, 8);
-        let prg_rom = filled_banks(MMC2Mapper::PRG_BANK_SIZE, 8);
+        let chr_rom = filled_banks(0x1000, 8);
+        let prg_rom = filled_banks(0x2000, 8);
 
         let mut mapper = MMC2Mapper::new(MapperContext::new_for_test(
             9,

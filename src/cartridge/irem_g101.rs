@@ -5,7 +5,7 @@
 //!
 //! Specification: <https://www.nesdev.org/wiki/INES_Mapper_032>
 
-use crate::cartridge::common::ChrMemory;
+use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
 /// Mapper 032 - Irem G-101
@@ -34,22 +34,14 @@ use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 /// - Mode 0: [$8000]=reg0, [$A000]=reg1, [$C000]={-2}, [$E000]={-1}
 /// - Mode 1: [$8000]={-2}, [$A000]=reg1, [$C000]=reg0, [$E000]={-1}
 pub struct IremG101Mapper {
-    prg_rom: Vec<u8>,
-    chr_memory: ChrMemory,
+    base: BaseMapper,
     prg_regs: [u8; 2],
     chr_regs: [u8; 8],
     prg_mode: bool,
-    mirroring: NametableLayout,
     submapper: u8,
 }
 
 impl IremG101Mapper {
-    const MAPPER_NUMBER: u8 = 32;
-    const PRG_BANK_SIZE: usize = 0x2000; // 8KB
-    const PRG_BANK_MASK: usize = Self::PRG_BANK_SIZE - 1;
-    const CHR_BANK_SIZE: usize = 0x0400; // 1KB
-    const CHR_SLOT_COUNT: usize = 8;
-
     // Control register ($9000) bit masks
     const CONTROL_PRG_MODE_BIT: u8 = 0b0000_0010;
     const CONTROL_MIRROR_BIT: u8 = 0b0000_0001;
@@ -58,70 +50,57 @@ impl IremG101Mapper {
 
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
         let submapper = ctx.submapper;
-        let prg_rom = ctx.prg_rom;
-        let chr_rom = ctx.chr_rom;
-        let mirroring = ctx.mirroring;
-        Self::new_with_submapper(prg_rom, chr_rom, mirroring, submapper)
+        let capabilities = MapperCapabilities {
+            has_chr_banking: true,
+            has_dynamic_mirroring: submapper != 1,
+            max_prg_ram_kb: 0,
+            prg_bank_size_kb: 8,
+            chr_bank_size_kb: 1,
+            ..Default::default()
+        };
+        let mut base = BaseMapper::new(&ctx, capabilities);
+        if submapper == 1 {
+            base.set_mirroring(NametableLayout::SingleScreenUpper);
+        }
+        base.configure_prg_banking(8 * 1024);
+        base.configure_chr_banking(1024);
+        let mut mapper = Self {
+            base,
+            prg_regs: [0; 2],
+            chr_regs: [0; 8],
+            prg_mode: false,
+            submapper,
+        };
+        mapper.update_banks();
+        mapper
     }
 
     #[cfg(test)]
     pub fn new_internal(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
-        Self::new_with_submapper(prg_rom, chr_rom, mirroring, 0)
+        let ctx = super::mapper::MapperContext::new_for_test(32, prg_rom, chr_rom, mirroring);
+        Self::new(ctx)
     }
 
-    pub fn new_with_submapper(
-        prg_rom: Vec<u8>,
-        chr_rom: Vec<u8>,
-        mirroring: NametableLayout,
-        submapper: u8,
-    ) -> Self {
-        let initial_mirroring = if submapper == 1 {
-            NametableLayout::SingleScreenUpper
+    fn update_banks(&mut self) {
+        // PRG banking
+        let r0 = self.prg_regs[0] as i16;
+        let r1 = self.prg_regs[1] as i16;
+        if !self.prg_mode {
+            self.base.select_prg_page(0, r0);
+            self.base.select_prg_page(1, r1);
+            self.base.select_prg_page(2, -2);
+            self.base.select_prg_page(3, -1);
         } else {
-            mirroring
-        };
-        Self {
-            prg_rom,
-            chr_memory: ChrMemory::new(chr_rom),
-            prg_regs: [0; 2],
-            chr_regs: [0; 8],
-            prg_mode: false,
-            mirroring: initial_mirroring,
-            submapper,
+            self.base.select_prg_page(0, -2);
+            self.base.select_prg_page(1, r1);
+            self.base.select_prg_page(2, r0);
+            self.base.select_prg_page(3, -1);
         }
-    }
 
-    fn prg_bank_count(&self) -> usize {
-        self.prg_rom.len() / Self::PRG_BANK_SIZE
-    }
-
-    fn chr_bank_count_1k(&self) -> usize {
-        self.chr_memory.size() / Self::CHR_BANK_SIZE
-    }
-
-    fn prg_bank_index(&self, bank: u8) -> usize {
-        Self::wrapped_bank(bank, self.prg_bank_count())
-    }
-
-    fn chr_bank_index_1k(&self, bank: u8) -> usize {
-        Self::wrapped_bank(bank, self.chr_bank_count_1k())
-    }
-
-    /// Wraps a register value into a valid bank index using modulo.
-    fn wrapped_bank(register: u8, bank_count: usize) -> usize {
-        if bank_count == 0 {
-            return 0;
+        // CHR banking
+        for (slot, &bank) in self.chr_regs.iter().enumerate() {
+            self.base.select_chr_page(slot, bank as i16);
         }
-        (register as usize) % bank_count
-    }
-
-    /// Resolves a CHR bus address to a mapped index into CHR memory.
-    fn resolve_chr_addr(&self, addr: u16) -> usize {
-        let chr_addr = (addr & 0x1FFF) as usize;
-        let slot = (chr_addr / Self::CHR_BANK_SIZE).min(Self::CHR_SLOT_COUNT - 1);
-        let bank_offset = chr_addr % Self::CHR_BANK_SIZE;
-        let bank_index = self.chr_bank_index_1k(self.chr_regs[slot]);
-        bank_index * Self::CHR_BANK_SIZE + bank_offset
     }
 
     /// Decodes the mirroring control bit (bit 0 of $9000) to a `NametableLayout`.
@@ -144,92 +123,62 @@ impl IremG101Mapper {
 }
 
 impl Mapper for IremG101Mapper {
-    fn read_prg(&self, addr: u16) -> u8 {
-        let count = self.prg_bank_count();
-        if count == 0 {
-            return 0;
-        }
-        let bank_offset = (addr as usize) & Self::PRG_BANK_MASK;
-        let fixed_last = count - 1;
-        let fixed_second_last = count.saturating_sub(2);
+    fn base(&self) -> Option<&BaseMapper> {
+        Some(&self.base)
+    }
 
-        let bank_index = match addr {
-            0x8000..=0x9FFF => {
-                if self.prg_mode {
-                    fixed_second_last
-                } else {
-                    self.prg_bank_index(self.prg_regs[0])
-                }
-            }
-            0xA000..=0xBFFF => self.prg_bank_index(self.prg_regs[1]),
-            0xC000..=0xDFFF => {
-                if self.prg_mode {
-                    self.prg_bank_index(self.prg_regs[0])
-                } else {
-                    fixed_second_last
-                }
-            }
-            0xE000..=0xFFFF => fixed_last,
-            _ => return 0,
-        };
-        let mapped = bank_index * Self::PRG_BANK_SIZE + bank_offset;
-        self.prg_rom.get(mapped).copied().unwrap_or(0)
+    fn base_mut(&mut self) -> Option<&mut BaseMapper> {
+        Some(&mut self.base)
+    }
+
+    fn read_prg(&self, addr: u16) -> u8 {
+        match addr {
+            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
+            _ => 0,
+        }
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
         match addr & 0xF000 {
-            0x8000 => self.prg_regs[0] = value & 0x1F,
+            0x8000 => {
+                self.prg_regs[0] = value & 0x1F;
+                self.update_banks();
+            }
             0x9000 => {
                 if self.submapper != 1 {
                     self.prg_mode = (value & Self::CONTROL_PRG_MODE_BIT) != 0;
-                    self.mirroring = Self::mirroring_from_bit(value & Self::CONTROL_MIRROR_BIT);
+                    self.base
+                        .set_mirroring(Self::mirroring_from_bit(value & Self::CONTROL_MIRROR_BIT));
+                    self.update_banks();
                 }
             }
-            0xA000 => self.prg_regs[1] = value & 0x1F,
+            0xA000 => {
+                self.prg_regs[1] = value & 0x1F;
+                self.update_banks();
+            }
             0xB000 => {
                 let slot = (addr & Self::CHR_REG_SELECT_MASK) as usize;
                 self.chr_regs[slot] = value;
+                self.update_banks();
             }
             _ => {}
         }
     }
 
     fn read_chr(&mut self, addr: u16) -> u8 {
-        self.chr_memory.read_at_index(self.resolve_chr_addr(addr))
+        self.base.read_chr_banked(addr)
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
-        let mapped_addr = self.resolve_chr_addr(addr);
-        self.chr_memory.write_at_index(mapped_addr, value);
-    }
-
-    fn get_mirroring(&self) -> NametableLayout {
-        self.mirroring
-    }
-
-    fn mapper_number(&self) -> u8 {
-        Self::MAPPER_NUMBER
-    }
-
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_memory.snapshot()
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.chr_memory.load_snapshot(data);
-    }
-
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        self.chr_memory.initialize(mode);
+        self.base.write_chr_banked(addr, value);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        // Layout: [0-1] prg_regs, [2-9] chr_regs, [10] prg_mode, [11] mirroring bit
         let mut snap = Vec::with_capacity(12);
         snap.extend_from_slice(&self.prg_regs);
         snap.extend_from_slice(&self.chr_regs);
         snap.push(self.prg_mode as u8);
-        snap.push(Self::mirroring_to_bit(self.mirroring));
+        snap.push(Self::mirroring_to_bit(self.base.mirroring()));
         snap
     }
 
@@ -239,22 +188,9 @@ impl Mapper for IremG101Mapper {
             self.chr_regs.copy_from_slice(&data[2..10]);
             self.prg_mode = data[10] != 0;
             if self.submapper != 1 {
-                self.mirroring = Self::mirroring_from_bit(data[11]);
+                self.base.set_mirroring(Self::mirroring_from_bit(data[11]));
             }
-        }
-    }
-
-    fn capabilities(&self) -> MapperCapabilities {
-        MapperCapabilities {
-            has_irq: false,
-            has_chr_banking: true,
-            has_dynamic_mirroring: self.submapper != 1,
-            has_expansion_audio: false,
-            max_prg_ram_kb: 0,
-            prg_bank_size_kb: 8,
-            chr_bank_size_kb: 1,
-            trainer_jsr: false,
-            ..Default::default()
+            self.update_banks();
         }
     }
 }

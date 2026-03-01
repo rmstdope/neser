@@ -5,12 +5,12 @@
 //! - Edge-case behavior may still differ from hardware in untested timing and board-variant scenarios.
 //! - See CARTRIDGE_REVIEW.md sections 5 and 6 for remaining mapper test/documentation follow-up.
 
+use crate::cartridge::BaseMapper;
 use crate::cartridge::Mapper;
 use crate::cartridge::MapperCapabilities;
 use crate::cartridge::NametableLayout;
-use crate::cartridge::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
 
-// Memory size constants
+#[cfg(test)]
 const PRG_BANK_SIZE_8K: usize = 0x2000; // 8KB
 #[cfg(test)]
 const PRG_BANK_SIZE_16K: usize = 0x4000; // 16KB
@@ -37,9 +37,7 @@ const PRG_BANK_SIZE_16K: usize = 0x4000; // 16KB
 /// - Bit 6 of data: mirroring control
 /// - Used in various pirate multicarts (100-in-1, 168-in-1, etc.)
 pub struct Multicart15Mapper {
-    prg_rom: Vec<u8>,
-    prg_ram: PrgRam,
-    chr_memory: ChrMemory,
+    base: BaseMapper,
     bank_select: u8,
     sub_bank: u8,
     mode: u8,
@@ -48,32 +46,36 @@ pub struct Multicart15Mapper {
 
 impl Multicart15Mapper {
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
-        let prg_rom = ctx.prg_rom;
-        let chr_rom = ctx.chr_rom;
         let mirroring = ctx.mirroring;
-        // Pirate multicarts typically use CHR-RAM
-        Self {
-            prg_rom,
-            prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
-            chr_memory: ChrMemory::new(chr_rom),
+        let capabilities = MapperCapabilities {
+            has_irq: false,
+            has_chr_banking: false,
+            has_dynamic_mirroring: true,
+            has_expansion_audio: false,
+            max_prg_ram_kb: 8,
+            prg_bank_size_kb: 8,
+            chr_bank_size_kb: 8,
+            trainer_jsr: false,
+            ..Default::default()
+        };
+        let mut base = BaseMapper::new(&ctx, capabilities);
+        base.configure_prg_banking(0x2000); // 8KB
+        let mut mapper = Self {
+            base,
             bank_select: 0,
             sub_bank: 0,
             mode: 0,
             mirroring,
-        }
+        };
+        mapper.update_banks();
+        mapper
     }
 
-    fn get_prg_bank_8k(&self, bank_num: u8) -> usize {
-        let total_banks = (self.prg_rom.len() / PRG_BANK_SIZE_8K).max(1);
-        let bank = (bank_num as usize) % total_banks;
-        bank * PRG_BANK_SIZE_8K
-    }
-
-    fn get_prg_page_for_slot(&self, slot: u8) -> u8 {
+    fn get_prg_page_for_slot(&self, slot: u8) -> i16 {
         let sub_bank = self.sub_bank & 0x01;
         let base = self.bank_select.wrapping_shl(1);
 
-        match self.mode {
+        let page = match self.mode {
             0 => base.wrapping_add(slot) ^ sub_bank,
             1 | 3 => {
                 let lower = base | sub_bank;
@@ -86,45 +88,46 @@ impl Multicart15Mapper {
             }
             2 => base | sub_bank,
             _ => unreachable!("Invalid banking mode"),
-        }
+        };
+        page as i16
     }
 
     fn is_chr_ram_writable(&self) -> bool {
         matches!(self.mode, 1 | 2)
     }
+
+    fn update_banks(&mut self) {
+        for slot in 0..4 {
+            let page = self.get_prg_page_for_slot(slot);
+            self.base.select_prg_page(slot as usize, page);
+        }
+        self.base.set_mirroring(self.mirroring);
+    }
 }
 
 impl Mapper for Multicart15Mapper {
+    fn base(&self) -> Option<&BaseMapper> {
+        Some(&self.base)
+    }
+
+    fn base_mut(&mut self) -> Option<&mut BaseMapper> {
+        Some(&mut self.base)
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
-        // PRG-RAM at $6000-$7FFF
-        if let Some(value) = self.prg_ram.try_read(addr) {
+        if let Some(value) = self.base.try_read_prg_ram(addr) {
             return value;
         }
-
-        // PRG ROM at $8000-$FFFF
-        if addr < 0x8000 {
-            return 0;
-        }
-
-        let offset = (addr - 0x8000) as usize;
-        let slot = (offset / PRG_BANK_SIZE_8K) as u8;
-        let slot_offset = offset % PRG_BANK_SIZE_8K;
-        let page = self.get_prg_page_for_slot(slot);
-        let page_offset = self.get_prg_bank_8k(page);
-        let index = page_offset + slot_offset;
-
-        self.prg_rom.get(index).copied().unwrap_or(0)
+        self.base.read_prg_banked(addr)
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
-        // PRG-RAM at $6000-$7FFF
-        if self.prg_ram.try_write(addr, value) {
+        if self.base.try_write_prg_ram(addr, value) {
             return;
         }
 
         // Mapper control registers at $8000-$FFFF
         if addr >= 0x8000 {
-            // Extract bank and mirroring from value
             self.bank_select = value & 0x7F;
             self.sub_bank = value >> 7;
             self.mirroring = if (value & 0x40) != 0 {
@@ -135,52 +138,17 @@ impl Mapper for Multicart15Mapper {
 
             // Set mode from low two address bits (SS)
             self.mode = (addr & 0x0003) as u8;
+            self.update_banks();
         }
-    }
-
-    fn read_chr(&mut self, addr: u16) -> u8 {
-        self.chr_memory.read(addr)
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
         if self.is_chr_ram_writable() {
-            self.chr_memory.write(addr, value);
+            self.base.write_chr(addr, value);
         }
     }
 
-    fn get_mirroring(&self) -> NametableLayout {
-        self.mirroring
-    }
-
-    fn mapper_number(&self) -> u8 {
-        15
-    }
-
-    fn wram_size(&self) -> usize {
-        self.prg_ram.size()
-    }
-
-    fn wram_snapshot(&self) -> Vec<u8> {
-        self.prg_ram.snapshot()
-    }
-
-    fn load_wram_snapshot(&mut self, data: &[u8]) {
-        self.prg_ram.load_snapshot(data);
-    }
-
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_memory.snapshot()
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.chr_memory.load_snapshot(data);
-    }
-
     fn registers_snapshot(&self) -> Vec<u8> {
-        // [0]: bank_select
-        // [1]: sub_bank
-        // [2]: mode
-        // [3]: mirroring
         let mirroring = match self.mirroring {
             NametableLayout::Horizontal => 0,
             NametableLayout::Vertical => 1,
@@ -204,20 +172,7 @@ impl Mapper for Multicart15Mapper {
                 4 => NametableLayout::FourScreen,
                 _ => NametableLayout::Horizontal,
             };
-        }
-    }
-
-    fn capabilities(&self) -> MapperCapabilities {
-        MapperCapabilities {
-            has_irq: false,
-            has_chr_banking: false,
-            has_dynamic_mirroring: true,
-            has_expansion_audio: false,
-            max_prg_ram_kb: 8,
-            prg_bank_size_kb: 8,
-            chr_bank_size_kb: 8,
-            trainer_jsr: false,
-            ..Default::default()
+            self.update_banks();
         }
     }
 }

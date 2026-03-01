@@ -5,16 +5,15 @@
 //! - Edge-case behavior may still differ from hardware in untested timing and board-variant scenarios.
 //! - See CARTRIDGE_REVIEW.md sections 5 and 6 for remaining mapper test/documentation follow-up.
 
+use crate::cartridge::BaseMapper;
 use crate::cartridge::Mapper;
 use crate::cartridge::MapperCapabilities;
 use crate::cartridge::NametableLayout;
-use crate::cartridge::common::ChrMemory;
 use crate::trace_mapper;
 
 // Memory size constants
 const PRG_BANK_SIZE: usize = 0x4000; // 16KB
-const CHR_BANK_SIZE_4K: usize = 0x1000; // 4KB (for MMC1, MMC3)
-const CHR_BANK_SIZE_8K: usize = 0x2000; // 8KB
+const CHR_BANK_SIZE: usize = 0x1000; // 4KB
 const MMC1_SUBMAPPER_FIXED_32KB_PRG: u8 = 5;
 const MMC1_SUBMAPPER_HARDWIRED_MIRRORING: u8 = 7;
 const MMC1_SHIFT_REGISTER_RESET: u8 = 0x80; // Bit 7 set triggers reset
@@ -77,9 +76,8 @@ pub enum Mmc1Revision {
 ///
 /// Used in games like The Legend of Zelda, Metroid, Mega Man 2, Final Fantasy.
 pub struct MMC1Mapper {
-    prg_rom: Vec<u8>,
-    prg_ram: Vec<u8>,
-    chr_memory: ChrMemory,
+    base: BaseMapper,
+    prg_ram: Vec<u8>, // Separate: WRAM gating + SOROM banking not supported by PrgRam
 
     // Shift register state
     shift_register: u8, // 5-bit shift register
@@ -135,10 +133,23 @@ impl MMC1Mapper {
         let surom = ctx.prg_rom.len() > 256 * 1024;
         let sorom = ctx.prg_ram_banks_8k >= 2;
         let revision = Self::revision_from_mapper(ctx.mapper);
-        Self {
-            prg_rom: ctx.prg_rom,
+
+        let capabilities = MapperCapabilities {
+            has_chr_banking: true,
+            has_dynamic_mirroring: true,
+            max_prg_ram_kb: 0, // PRG-RAM managed separately (gating + banking)
+            prg_bank_size_kb: 16,
+            chr_bank_size_kb: 4,
+            ..Default::default()
+        };
+
+        let mut base = BaseMapper::new(&ctx, capabilities);
+        base.configure_prg_banking(PRG_BANK_SIZE);
+        base.configure_chr_banking(CHR_BANK_SIZE);
+
+        let mut mapper = Self {
+            base,
             prg_ram: vec![0; prg_ram_size],
-            chr_memory: ChrMemory::new(ctx.chr_rom),
             shift_register: MMC1_SHIFT_REGISTER_POWER_ON,
             write_count: 0,
             control: MMC1_DEFAULT_CONTROL,
@@ -157,25 +168,44 @@ impl MMC1Mapper {
             cpu_cycle_count: 0,
             last_write_cycle: 0,
             has_last_write: false,
-        }
+        };
+
+        mapper.update_banks();
+        mapper
     }
 
     #[cfg(test)]
     pub fn new_with_revision(
         prg_rom: Vec<u8>,
         chr_rom: Vec<u8>,
-        _mirroring: NametableLayout,
+        mirroring: NametableLayout,
         revision: Mmc1Revision,
     ) -> Self {
+        use crate::cartridge::mapper::MapperContext;
+
         let surom = prg_rom.len() > 256 * 1024;
         let prg_bank = Self::power_on_prg_bank_for_revision(revision);
-        Self {
-            prg_rom,
+        let ctx = MapperContext::new_for_test(1, prg_rom, chr_rom, mirroring);
+
+        let capabilities = MapperCapabilities {
+            has_chr_banking: true,
+            has_dynamic_mirroring: true,
+            max_prg_ram_kb: 0,
+            prg_bank_size_kb: 16,
+            chr_bank_size_kb: 4,
+            ..Default::default()
+        };
+
+        let mut base = BaseMapper::new(&ctx, capabilities);
+        base.configure_prg_banking(PRG_BANK_SIZE);
+        base.configure_chr_banking(CHR_BANK_SIZE);
+
+        let mut mapper = Self {
+            base,
             prg_ram: vec![0; 8192],
-            chr_memory: ChrMemory::new(chr_rom),
-            shift_register: MMC1_SHIFT_REGISTER_POWER_ON, // Power-on state: bit 4 set
+            shift_register: MMC1_SHIFT_REGISTER_POWER_ON,
             write_count: 0,
-            control: MMC1_DEFAULT_CONTROL, // Default: PRG mode 3 (fix last bank), CHR mode 0
+            control: MMC1_DEFAULT_CONTROL,
             chr_bank_0: 0,
             chr_bank_1: 0,
             prg_bank,
@@ -188,7 +218,10 @@ impl MMC1Mapper {
             cpu_cycle_count: 0,
             last_write_cycle: 0,
             has_last_write: false,
-        }
+        };
+
+        mapper.update_banks();
+        mapper
     }
 
     fn reset_shift_register(&mut self) {
@@ -234,6 +267,7 @@ impl MMC1Mapper {
         if value & MMC1_SHIFT_REGISTER_RESET != 0 {
             self.reset_shift_register();
             self.mark_serial_write_attempt();
+            self.update_banks();
             return;
         }
 
@@ -286,6 +320,8 @@ impl MMC1Mapper {
             // Reset shift register for next write sequence
             self.shift_register = MMC1_SHIFT_REGISTER_POWER_ON; // Reset to power-on state
             self.write_count = 0;
+
+            self.update_banks();
         }
     }
 
@@ -337,61 +373,6 @@ impl MMC1Mapper {
             .unwrap_or_else(|| self.mirroring_from_control_register())
     }
 
-    fn get_prg_bank_offset(&self, addr: u16) -> usize {
-        let prg_mode = self.get_prg_mode();
-        let num_banks = self.prg_rom.len() / PRG_BANK_SIZE;
-        let mmc1a_a17_bypass = self.is_mmc1a_a17_bypass_active();
-        let extra_chr_reg = self.get_extra_chr_reg();
-
-        // SUROM: chr_bank_0 bit 4 selects which 256KB outer half of 512KB PRG-ROM
-        let outer_bank = if self.surom {
-            ((extra_chr_reg >> 4) & 1) as usize
-        } else {
-            0
-        };
-
-        match prg_mode {
-            0 | 1 => {
-                // 32KB mode: switch entire $8000-$FFFF, ignore low bit of bank number
-                let inner = ((self.prg_bank & 0x0E) >> 1) as usize;
-                let bank = (outer_bank << 3) | inner;
-                let bank = bank % (num_banks / 2).max(1);
-                bank * PRG_BANK_SIZE * 2
-            }
-            2 => {
-                // Fix first bank at $8000, switch 16KB bank at $C000
-                if addr < 0xC000 {
-                    let bank = if mmc1a_a17_bypass {
-                        self.mmc1a_a17_bit() << 3
-                    } else {
-                        outer_bank << 4 // first bank of current outer half
-                    };
-                    (bank % num_banks.max(1)) * PRG_BANK_SIZE
-                } else {
-                    let bank = (outer_bank << 4) | (self.prg_bank & 0x0F) as usize;
-                    let bank = bank % num_banks.max(1);
-                    bank * PRG_BANK_SIZE
-                }
-            }
-            3 => {
-                // Switch 16KB bank at $8000, fix last bank at $C000
-                if addr < 0xC000 {
-                    let bank = (outer_bank << 4) | (self.prg_bank & 0x0F) as usize;
-                    let bank = bank % num_banks.max(1);
-                    bank * PRG_BANK_SIZE
-                } else {
-                    let bank = if mmc1a_a17_bypass {
-                        (self.mmc1a_a17_bit() << 3) | 0x07
-                    } else {
-                        (outer_bank << 4) | 0x0F // last bank of current outer half
-                    };
-                    (bank % num_banks.max(1)) * PRG_BANK_SIZE
-                }
-            }
-            _ => unreachable!(),
-        }
-    }
-
     fn prg_ram_bank_offset(&self, addr: u16) -> usize {
         let base = (addr - 0x6000) as usize;
         if self.sorom {
@@ -406,47 +387,81 @@ impl MMC1Mapper {
         self.select_extra_chr_reg_source()
     }
 
-    fn get_chr_bank_offset(&self, addr: u16) -> usize {
-        let chr_mode = self.get_chr_mode();
-        let num_4kb_banks = self.chr_memory.size() / CHR_BANK_SIZE_4K;
+    fn update_banks(&mut self) {
+        self.update_prg_banks();
+        self.update_chr_banks();
+        self.base.set_mirroring(self.get_mirroring_mode());
+    }
 
-        if chr_mode == 0 {
+    fn update_prg_banks(&mut self) {
+        if self.uses_fixed_32kb_prg_mapping() {
+            self.base.select_prg_page(0, 0);
+            self.base.select_prg_page(1, 1);
+            return;
+        }
+
+        let prg_mode = self.get_prg_mode();
+        let extra_chr_reg = self.get_extra_chr_reg();
+        let mmc1a_a17_bypass = self.is_mmc1a_a17_bypass_active();
+
+        // SUROM: chr register bit 4 selects which 256KB outer half of 512KB PRG-ROM
+        let outer_bank = if self.surom {
+            ((extra_chr_reg >> 4) & 1) as i16
+        } else {
+            0i16
+        };
+
+        match prg_mode {
+            0 | 1 => {
+                // 32KB mode: switch entire $8000-$FFFF, ignore low bit of bank number
+                let inner = ((self.prg_bank & 0x0E) >> 1) as i16;
+                let bank_32k = (outer_bank << 3) | inner;
+                self.base.select_prg_page(0, bank_32k * 2);
+                self.base.select_prg_page(1, bank_32k * 2 + 1);
+            }
+            2 => {
+                // Fix first bank at $8000, switch 16KB bank at $C000
+                let fixed_bank = if mmc1a_a17_bypass {
+                    (self.mmc1a_a17_bit() << 3) as i16
+                } else {
+                    outer_bank << 4 // first bank of current outer half
+                };
+                let switch_bank = (outer_bank << 4) | (self.prg_bank & 0x0F) as i16;
+                self.base.select_prg_page(0, fixed_bank);
+                self.base.select_prg_page(1, switch_bank);
+            }
+            3 => {
+                // Switch 16KB bank at $8000, fix last bank at $C000
+                let switch_bank = (outer_bank << 4) | (self.prg_bank & 0x0F) as i16;
+                let fixed_bank = if mmc1a_a17_bypass {
+                    ((self.mmc1a_a17_bit() << 3) | 0x07) as i16
+                } else {
+                    (outer_bank << 4) | 0x0F // last bank of current outer half
+                };
+                self.base.select_prg_page(0, switch_bank);
+                self.base.select_prg_page(1, fixed_bank);
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    fn update_chr_banks(&mut self) {
+        if self.get_chr_mode() == 0 {
             // 8KB mode: switch entire $0000-$1FFF, ignore low bit
-            let bank = ((self.chr_bank_0 & 0x1E) >> 1) as usize;
-            let bank = bank % (num_4kb_banks / 2).max(1);
-            bank * CHR_BANK_SIZE_8K
+            let bank_8k = ((self.chr_bank_0 & 0x1E) >> 1) as i16;
+            self.base.select_chr_page(0, bank_8k * 2);
+            self.base.select_chr_page(1, bank_8k * 2 + 1);
         } else {
             // 4KB mode: two separate 4KB banks
-            if addr < 0x1000 {
-                let bank = (self.chr_bank_0 & 0x1F) as usize;
-                let bank = bank % num_4kb_banks.max(1);
-                bank * CHR_BANK_SIZE_4K
-            } else {
-                let bank = (self.chr_bank_1 & 0x1F) as usize;
-                let bank = bank % num_4kb_banks.max(1);
-                bank * CHR_BANK_SIZE_4K
-            }
+            self.base
+                .select_chr_page(0, (self.chr_bank_0 & 0x1F) as i16);
+            self.base
+                .select_chr_page(1, (self.chr_bank_1 & 0x1F) as i16);
         }
     }
 
     fn uses_fixed_32kb_prg_mapping(&self) -> bool {
         self.submapper == MMC1_SUBMAPPER_FIXED_32KB_PRG
-    }
-
-    fn read_prg_fixed_32kb(&self, addr: u16) -> u8 {
-        let index = (addr - 0x8000) as usize;
-        self.prg_rom.get(index).copied().unwrap_or(0)
-    }
-
-    fn read_prg_banked(&self, addr: u16) -> u8 {
-        let bank_offset = self.get_prg_bank_offset(addr);
-        let offset = if self.get_prg_mode() <= 1 {
-            (addr - 0x8000) as usize
-        } else {
-            (addr & 0x3FFF) as usize
-        };
-        let index = bank_offset + offset;
-        self.prg_rom.get(index).copied().unwrap_or(0)
     }
 }
 
@@ -460,12 +475,7 @@ impl Mapper for MMC1Mapper {
                 let offset = self.prg_ram_bank_offset(addr);
                 self.prg_ram.get(offset).copied().unwrap_or(0)
             }
-            0x8000..=0xFFFF => {
-                if self.uses_fixed_32kb_prg_mapping() {
-                    return self.read_prg_fixed_32kb(addr);
-                }
-                self.read_prg_banked(addr)
-            }
+            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
             _ => 0,
         }
     }
@@ -507,37 +517,19 @@ impl Mapper for MMC1Mapper {
     }
 
     fn read_chr(&mut self, addr: u16) -> u8 {
-        let bank_offset = self.get_chr_bank_offset(addr);
-        let offset = if self.get_chr_mode() == 0 {
-            // 8KB mode
-            (addr & 0x1FFF) as usize
-        } else {
-            // 4KB mode
-            (addr & 0x0FFF) as usize
-        };
-        let index = bank_offset + offset;
-        self.chr_memory.read_at_index(index)
+        self.base.read_chr_banked(addr)
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
-        let bank_offset = self.get_chr_bank_offset(addr);
-        let offset = if self.get_chr_mode() == 0 {
-            // 8KB mode
-            (addr & 0x1FFF) as usize
-        } else {
-            // 4KB mode
-            (addr & 0x0FFF) as usize
-        };
-        let index = bank_offset + offset;
-        self.chr_memory.write_at_index(index, value);
+        self.base.write_chr_banked(addr, value);
     }
 
     fn get_mirroring(&self) -> NametableLayout {
-        self.get_mirroring_mode()
+        self.base.mirroring()
     }
 
     fn mapper_number(&self) -> u8 {
-        1
+        self.base.mapper_number()
     }
 
     fn wram_size(&self) -> usize {
@@ -554,16 +546,16 @@ impl Mapper for MMC1Mapper {
     }
 
     fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_memory.snapshot()
+        self.base.chr_ram_snapshot()
     }
 
     fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.chr_memory.load_snapshot(data);
+        self.base.restore_chr_ram(data);
     }
 
     fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
         crate::console::initialize_ram(&mut self.prg_ram, mode);
-        self.chr_memory.initialize(mode);
+        self.base.initialize_ram(mode); // Only initializes CHR-RAM (no PRG-RAM in base)
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -634,6 +626,8 @@ impl Mapper for MMC1Mapper {
         if data.len() >= 25 {
             self.last_chr_reg_addr = u16::from_le_bytes([data[23], data[24]]);
         }
+
+        self.update_banks();
     }
 
     fn cpu_cycle(&mut self) {

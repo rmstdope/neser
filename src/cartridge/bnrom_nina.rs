@@ -5,15 +5,11 @@
 //! - Edge-case behavior may still differ from hardware in untested timing and board-variant scenarios.
 //! - See CARTRIDGE_REVIEW.md sections 5 and 6 for remaining mapper test/documentation follow-up.
 
+use crate::cartridge::BaseMapper;
 use crate::cartridge::Mapper;
 use crate::cartridge::MapperCapabilities;
 use crate::cartridge::NametableLayout;
-use crate::cartridge::common::{BankSwitch, BankedRom, ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
 use std::env;
-
-// Memory size constants
-const PRG_BANK_SIZE: usize = 0x8000; // 32KB
-const NINA_CHR_BANK_SIZE: usize = 0x1000; // 4KB
 
 /// Mapper 34 - BNROM / NINA-001
 ///
@@ -54,13 +50,11 @@ const NINA_CHR_BANK_SIZE: usize = 0x1000; // 4KB
 ///   long-standing hybrid mapper-34 behavior where NINA CHR banking and PRG writes
 ///   at $8000-$FFFF coexist. This mode is intentionally isolated to submapper 0.
 pub struct BnromNinaMapper {
-    prg_rom: BankedRom,
-    prg_ram: PrgRam,
-    chr_memory: ChrMemory,
+    base: BaseMapper,
     mirroring: NametableLayout,
-    prg_bank: BankSwitch,
-    chr_bank_low: BankSwitch,
-    chr_bank_high: BankSwitch,
+    prg_bank: u8,
+    chr_bank_low: u8,
+    chr_bank_high: u8,
     is_nina: bool, // true for NINA-001, false for BNROM
     // Enabled only for mapper 34 submapper 0 + CHR-ROM fallback to match common
     // FCEUX-compatible hacked ROM expectations (hybrid NINA/BNROM PRG writes).
@@ -80,15 +74,13 @@ impl BnromNinaMapper {
             "[mapper34] {event} addr={addr:04X} val={value:02X} is_nina={} compat={} prg={} chr_lo={} chr_hi={}",
             self.is_nina,
             self.mapper34_compat_mode,
-            self.prg_bank.current(),
-            self.chr_bank_low.current(),
-            self.chr_bank_high.current()
+            self.prg_bank,
+            self.chr_bank_low,
+            self.chr_bank_high
         );
     }
 
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
-        let prg_rom = ctx.prg_rom;
-        let chr_rom = ctx.chr_rom;
         let mirroring = ctx.mirroring;
         // Detect variant using explicit NES 2.0 submappers where available.
         // Submapper 1 = NINA-001/NINA-002, submapper 2 = BNROM.
@@ -97,24 +89,32 @@ impl BnromNinaMapper {
         let is_nina = match ctx.submapper {
             1 => true,
             2 => false,
-            _ => !chr_rom.is_empty(),
+            _ => !ctx.chr_rom.is_empty(),
         };
         // Compatibility mode for mapper 34 iNES/submapper 0 hacks.
         // Keeps strict hardware-style behavior for explicit submapper 1.
         let mapper34_compat_mode = is_nina && ctx.submapper == 0;
 
-        // NINA uses two independent 4KB CHR windows ($0000 and $1000).
-        // BNROM has unbanked CHR memory (typically 8KB CHR-RAM).
-        let (chr_bank_low, chr_bank_high) = if is_nina {
-            let bank_low = BankSwitch::from_rom(&chr_rom, NINA_CHR_BANK_SIZE);
-            let mut bank_high = BankSwitch::from_rom(&chr_rom, NINA_CHR_BANK_SIZE);
-            bank_high.set(1);
-            (bank_low, bank_high)
-        } else {
-            (BankSwitch::new(1), BankSwitch::new(1))
+        let capabilities = MapperCapabilities {
+            has_irq: false,
+            has_chr_banking: is_nina,
+            has_dynamic_mirroring: false,
+            has_expansion_audio: false,
+            max_prg_ram_kb: if is_nina { 8 } else { 0 },
+            prg_bank_size_kb: 32,
+            chr_bank_size_kb: if is_nina { 4 } else { 8 },
+            trainer_jsr: false,
+            ..Default::default()
         };
-        let prg_bank = BankSwitch::from_rom(&prg_rom, PRG_BANK_SIZE);
-        let prg_ram_size = if is_nina { DEFAULT_PRG_RAM_SIZE } else { 0 };
+
+        let mut base = BaseMapper::new(&ctx, capabilities);
+        base.configure_prg_banking(0x8000); // 32KB
+        if is_nina {
+            base.configure_chr_banking(0x1000); // 4KB
+        }
+
+        let chr_bank_high = if is_nina { 1 } else { 0 };
+
         let trace_enabled = env::var_os("NESER_TRACE_MAPPER34").is_some();
         let trace_budget = env::var("NESER_TRACE_MAPPER34_LIMIT")
             .ok()
@@ -122,54 +122,59 @@ impl BnromNinaMapper {
             .unwrap_or(200);
 
         let mut mapper = Self {
-            prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE),
-            prg_ram: PrgRam::new(prg_ram_size),
-            chr_memory: ChrMemory::new(chr_rom),
+            base,
             mirroring,
-            prg_bank,
-            chr_bank_low,
+            prg_bank: 0,
+            chr_bank_low: 0,
             chr_bank_high,
             is_nina,
             mapper34_compat_mode,
             trace_enabled,
             trace_budget,
         };
-
+        mapper.update_banks();
         mapper.trace_state("init", 0, 0);
         mapper
     }
 
-    fn nina_chr_index(&self, addr: u16) -> usize {
-        let window_offset = (addr & 0x0FFF) as usize;
-        let bank_offset = if addr < 0x1000 {
-            self.chr_bank_low.offset(NINA_CHR_BANK_SIZE)
-        } else {
-            self.chr_bank_high.offset(NINA_CHR_BANK_SIZE)
-        };
-        bank_offset + window_offset
+    fn update_banks(&mut self) {
+        self.base.select_prg_page(0, self.prg_bank as i16);
+        if self.is_nina {
+            self.base.select_chr_page(0, self.chr_bank_low as i16);
+            self.base.select_chr_page(1, self.chr_bank_high as i16);
+        }
+        self.base.set_mirroring(self.mirroring);
     }
 }
 
 impl Mapper for BnromNinaMapper {
+    fn base(&self) -> Option<&BaseMapper> {
+        Some(&self.base)
+    }
+
+    fn base_mut(&mut self) -> Option<&mut BaseMapper> {
+        Some(&mut self.base)
+    }
+
     fn reset(&mut self) {
-        self.prg_bank.set(0);
-        self.chr_bank_low.set(0);
-        self.chr_bank_high.set(if self.is_nina { 1 } else { 0 });
+        self.prg_bank = 0;
+        self.chr_bank_low = 0;
+        self.chr_bank_high = if self.is_nina { 1 } else { 0 };
+        self.update_banks();
         self.trace_state("reset", 0, 0);
     }
 
     fn read_prg(&self, addr: u16) -> u8 {
-        // PRG-RAM at $6000-$7FFF
-        if let Some(value) = self.prg_ram.try_read(addr) {
+        // PRG-RAM at $6000-$7FFF (NINA only)
+        if let Some(value) = self.base.try_read_prg_ram(addr) {
             return value;
         }
 
         // PRG ROM at $8000-$FFFF (32KB switchable bank)
-        match addr {
-            0x8000..=0xFFFF => self
-                .prg_rom
-                .read_with_base(self.prg_bank.current(), 0x8000, addr),
-            _ => 0,
+        if addr >= 0x8000 {
+            self.base.read_prg_banked(addr)
+        } else {
+            0
         }
     }
 
@@ -177,7 +182,7 @@ impl Mapper for BnromNinaMapper {
         // NINA-001 registers overlap PRG-RAM at $7FFD-$7FFF.
         // A write updates both the register and underlying RAM byte.
         if self.is_nina && (0x7FFD..=0x7FFF).contains(&addr) {
-            let _ = self.prg_ram.try_write(addr, value);
+            let _ = self.base.try_write_prg_ram(addr, value);
 
             match addr {
                 0x7FFD => {
@@ -185,122 +190,79 @@ impl Mapper for BnromNinaMapper {
                     // Submapper 0 compatibility mode: accept full register value
                     // to match FCEUX mapper-34 hack behavior.
                     if self.mapper34_compat_mode {
-                        self.prg_bank.set(value);
+                        self.prg_bank = value;
                     } else {
-                        self.prg_bank.set(value & 0x01);
+                        self.prg_bank = value & 0x01;
                     }
                 }
                 0x7FFE => {
-                    self.chr_bank_low.set(value);
+                    self.chr_bank_low = value;
                 }
                 0x7FFF => {
-                    self.chr_bank_high.set(value);
+                    self.chr_bank_high = value;
                 }
                 _ => {}
             }
+            self.update_banks();
             self.trace_state("write_nina_reg", addr, value);
             return;
         }
 
         // Submapper 0 compatibility mode accepts PRG bank writes at $8000-$FFFF
         // (FCEUX mapper-34 hybrid behavior used by several hM34 ROMs).
-        if self.is_nina && self.mapper34_compat_mode && (0x8000..=0xFFFF).contains(&addr) {
-            self.prg_bank.set(value);
+        if self.is_nina && self.mapper34_compat_mode && addr >= 0x8000 {
+            self.prg_bank = value;
+            self.update_banks();
             self.trace_state("write_nina_compat_prg", addr, value);
             return;
         }
 
-        if self.prg_ram.try_write(addr, value) {
+        if self.base.try_write_prg_ram(addr, value) {
             return;
         }
 
         // BNROM: Any write to $8000-$FFFF sets PRG bank
         // NINA-001: Writes to $8000-$FFFF are ignored (uses $7FFD-$7FFF instead)
-        if !self.is_nina && (0x8000..=0xFFFF).contains(&addr) {
+        if !self.is_nina && addr >= 0x8000 {
             // BNROM has AND-type bus conflicts: effective value = write_value & rom_value_at_addr.
-            let rom_value = self.read_prg(addr);
-            self.prg_bank.set(value & rom_value);
+            let rom_value = self.base.read_prg_banked(addr);
+            self.prg_bank = value & rom_value;
+            self.update_banks();
             self.trace_state("write_bnrom_bank", addr, value);
         }
     }
 
     fn read_chr(&mut self, addr: u16) -> u8 {
         if self.is_nina {
-            self.chr_memory.read_at_index(self.nina_chr_index(addr))
+            self.base.read_chr_banked(addr)
         } else {
-            self.chr_memory.read(addr)
+            self.base.read_chr(addr)
         }
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
         if self.is_nina {
-            let index = self.nina_chr_index(addr);
-            self.chr_memory.write_at_index(index, value);
+            self.base.write_chr_banked(addr, value);
         } else {
-            self.chr_memory.write(addr, value);
+            self.base.write_chr(addr, value);
         }
     }
 
-    fn get_mirroring(&self) -> NametableLayout {
-        self.mirroring
-    }
-
-    fn mapper_number(&self) -> u8 {
-        34
-    }
-
-    fn wram_size(&self) -> usize {
-        self.prg_ram.size()
-    }
-
-    fn wram_snapshot(&self) -> Vec<u8> {
-        self.prg_ram.snapshot()
-    }
-
-    fn load_wram_snapshot(&mut self, data: &[u8]) {
-        self.prg_ram.load_snapshot(data);
-    }
-
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_memory.snapshot()
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.chr_memory.load_snapshot(data);
-    }
-
     fn registers_snapshot(&self) -> Vec<u8> {
-        vec![
-            self.prg_bank.raw(),
-            self.chr_bank_low.raw(),
-            self.chr_bank_high.raw(),
-        ]
+        vec![self.prg_bank, self.chr_bank_low, self.chr_bank_high]
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
         if let Some(&value) = data.first() {
-            self.prg_bank.set(value);
+            self.prg_bank = value;
         }
         if let Some(&value) = data.get(1) {
-            self.chr_bank_low.set(value);
+            self.chr_bank_low = value;
         }
         if let Some(&value) = data.get(2) {
-            self.chr_bank_high.set(value);
+            self.chr_bank_high = value;
         }
-    }
-
-    fn capabilities(&self) -> MapperCapabilities {
-        MapperCapabilities {
-            has_irq: false,
-            has_chr_banking: self.is_nina,
-            has_dynamic_mirroring: false,
-            has_expansion_audio: false,
-            max_prg_ram_kb: if self.is_nina { 8 } else { 0 },
-            prg_bank_size_kb: 32,
-            chr_bank_size_kb: if self.is_nina { 4 } else { 8 },
-            trainer_jsr: false,
-            ..Default::default()
-        }
+        self.update_banks();
     }
 }
 
