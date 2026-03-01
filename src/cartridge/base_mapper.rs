@@ -173,6 +173,23 @@ impl BaseMapper {
         self.chr_memory.write(addr, value);
     }
 
+    /// Read a byte from CHR memory at a raw byte index (not limited to $0000-$1FFF).
+    ///
+    /// Used by MMC3-based multicart mappers that compute their own effective
+    /// bank and offset, bypassing the page table.
+    #[inline]
+    pub fn read_chr_at_index(&self, index: usize) -> u8 {
+        self.chr_memory.read_at_index(index)
+    }
+
+    /// Write a byte to CHR memory at a raw byte index (not limited to $0000-$1FFF).
+    ///
+    /// Only succeeds for CHR-RAM. Used by MMC3-based multicart mappers.
+    #[inline]
+    pub fn write_chr_at_index(&mut self, index: usize, value: u8) {
+        self.chr_memory.write_at_index(index, value);
+    }
+
     // --- Mirroring ---
 
     /// Get the nametable mirroring layout.

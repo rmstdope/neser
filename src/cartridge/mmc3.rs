@@ -10,7 +10,7 @@
 // ============================================================================
 
 use super::rom_db;
-use crate::cartridge::common::ChrMemory;
+use crate::cartridge::BaseMapper;
 use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 use crate::trace_mapper;
 
@@ -49,14 +49,11 @@ use crate::trace_mapper;
 /// - IRQ behavior selection is currently derived from ROM metadata/CRC heuristics.
 /// - Some board-specific clone quirks are intentionally not modeled yet.
 pub struct MMC3Mapper {
-    prg_rom: Vec<u8>,
-    chr_memory: ChrMemory,
+    base: BaseMapper,
     prg_ram: Vec<u8>,
 
     prg_ram_enabled: bool,
     prg_ram_write_protected: bool,
-
-    mirroring: NametableLayout,
 
     bank_select: u8,
     regs: [u8; 8],
@@ -91,69 +88,69 @@ impl MMC3Mapper {
     const PRG_RAM_ENABLE_MASK: u8 = 0b1000_0000;
     const PRG_RAM_WRITE_PROTECT_MASK: u8 = 0b0100_0000;
 
-    /// Create an MMC3 mapper with default (Sharp) IRQ behavior.
-    ///
-    /// For alternate (NEC) IRQ behavior, use the builder pattern:
-    /// ```ignore
-    /// // true enables alternate (NEC) IRQ behavior
-    /// let mapper = MMC3Mapper::new_with_irq_mode(prg_rom, chr_rom, mirroring, false).with_irq_mode(true);
-    /// ```
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
         let crc32 = ctx.crc32;
         let use_alternate_irq = rom_db::requires_mmc3_alternate_irq(crc32);
-        let prg_rom = ctx.prg_rom;
-        let chr_rom = ctx.chr_rom;
-        let mirroring = ctx.mirroring;
         let prg_ram_banks_8k = if ctx.prg_ram_size_specified {
             ctx.prg_ram_banks_8k
         } else {
             0
         };
-        Self::new_with_prg_ram_banks_and_irq_mode(
-            prg_rom,
-            chr_rom,
-            mirroring,
-            prg_ram_banks_8k,
-            use_alternate_irq,
-        )
+        Self::new_internal(ctx, prg_ram_banks_8k, use_alternate_irq)
     }
 
     /// Create an MMC3 mapper with explicit IRQ behavior mode.
-    ///
-    /// - `use_alternate_irq = false`: Normal (Sharp) behavior - IRQ when counter is 0
-    /// - `use_alternate_irq = true`: Alternate (NEC) behavior - IRQ only on 1→0 transition
-    ///
-    /// **Prefer using the builder pattern with `with_irq_mode()` instead.**
+    /// Used by MMC3-based multicart wrappers (mappers 12, 37, 44, etc.).
     pub fn new_with_irq_mode(
         prg_rom: Vec<u8>,
         chr_rom: Vec<u8>,
         mirroring: NametableLayout,
         use_alternate_irq: bool,
     ) -> Self {
-        Self::new_with_prg_ram_banks_and_irq_mode(
+        let ctx = super::mapper::MapperContext {
+            mapper: 4,
+            submapper: 0,
             prg_rom,
             chr_rom,
             mirroring,
-            Self::DEFAULT_PRG_RAM_BANKS_8K,
-            use_alternate_irq,
-        )
+            prg_ram_banks_8k: Self::DEFAULT_PRG_RAM_BANKS_8K,
+            prg_ram_size_specified: true,
+            battery_backed_prg_ram: false,
+            console_type: crate::cartridge::ConsoleType::NesFamicom,
+            crc32: 0,
+        };
+        Self::new_internal(ctx, Self::DEFAULT_PRG_RAM_BANKS_8K, use_alternate_irq)
     }
 
-    fn new_with_prg_ram_banks_and_irq_mode(
-        prg_rom: Vec<u8>,
-        chr_rom: Vec<u8>,
-        mirroring: NametableLayout,
+    fn new_internal(
+        ctx: super::mapper::MapperContext,
         prg_ram_banks_8k: u8,
         use_alternate_irq: bool,
     ) -> Self {
         let prg_ram_size = prg_ram_banks_8k as usize * Self::PRG_RAM_SIZE;
         let has_prg_ram = prg_ram_size > 0;
-        Self {
-            prg_rom,
-            chr_memory: ChrMemory::new(chr_rom),
+        let mirroring = ctx.mirroring;
+
+        let capabilities = MapperCapabilities {
+            has_irq: true,
+            has_chr_banking: true,
+            has_dynamic_mirroring: true,
+            has_expansion_audio: false,
+            max_prg_ram_kb: 0, // MMC3 manages PRG-RAM separately
+            prg_bank_size_kb: 8,
+            chr_bank_size_kb: 1,
+            trainer_jsr: false,
+            ..Default::default()
+        };
+
+        let mut base = BaseMapper::new(&ctx, capabilities);
+        base.configure_prg_banking(0x2000);
+        base.configure_chr_banking(0x0400);
+
+        let mut mapper = Self {
+            base,
             prg_ram: vec![0; prg_ram_size],
-            mirroring,
-            prg_ram_enabled: has_prg_ram, // PRG-RAM enabled by default on power-on when present
+            prg_ram_enabled: has_prg_ram,
             prg_ram_write_protected: false,
             bank_select: 0,
             regs: [0; 8],
@@ -168,20 +165,13 @@ impl MMC3Mapper {
             current_a12: false,
             a12_low_cycles: 0,
             use_alternate_irq,
-        }
+        };
+        mapper.base.set_mirroring(mirroring);
+        mapper.update_banks();
+        mapper
     }
 
     /// Builder method to set alternate (NEC) IRQ behavior.
-    ///
-    /// This allows for fluent construction:
-    /// ```ignore
-    /// let mapper = MMC3Mapper::new_with_irq_mode(prg_rom, chr_rom, mirroring, false)
-    ///     .with_irq_mode(true);  // true = NEC behavior, false = Sharp behavior
-    /// ```
-    ///
-    /// # Arguments
-    /// * `use_alternate_irq` - Pass `true` for alternate (NEC) IRQ behavior (only fire on 1→0 transition),
-    ///   or `false` for normal (Sharp) IRQ behavior (fire when counter is 0)
     #[allow(dead_code)]
     pub fn with_irq_mode(mut self, use_alternate_irq: bool) -> Self {
         self.use_alternate_irq = use_alternate_irq;
@@ -193,11 +183,11 @@ impl MMC3Mapper {
     // ============================================================================
 
     fn prg_bank_count(&self) -> usize {
-        self.prg_rom.len() / Self::PRG_BANK_SIZE
+        self.base.prg_bank_count()
     }
 
     fn chr_bank_count_1k(&self) -> usize {
-        self.chr_memory.size() / Self::CHR_BANK_SIZE
+        self.base.chr_bank_count()
     }
 
     fn prg_bank_index(&self, bank: u8) -> usize {
@@ -230,7 +220,7 @@ impl MMC3Mapper {
 
     fn read_prg_rom_bank(&self, bank_index: usize, bank_offset: usize) -> u8 {
         let addr = bank_index * Self::PRG_BANK_SIZE + bank_offset;
-        self.prg_rom.get(addr).copied().unwrap_or(0)
+        self.base.prg_rom().get(addr).copied().unwrap_or(0)
     }
 
     /// Reads one byte from a 1 KiB CHR bank. `bank_index` is wrapped modulo
@@ -241,7 +231,7 @@ impl MMC3Mapper {
             return 0;
         }
         let addr = (bank_index % count) * Self::CHR_BANK_SIZE + bank_offset;
-        self.chr_memory.read_at_index(addr)
+        self.base.read_chr_at_index(addr)
     }
 
     fn update_prg_ram_control(&mut self, value: u8) {
@@ -324,7 +314,7 @@ impl MMC3Mapper {
     /// Writes a byte to CHR-RAM at the given 1KB bank and byte offset.
     pub fn write_chr_1k_at(&mut self, bank: usize, offset: usize, value: u8) {
         let mapped_addr = bank * Self::CHR_BANK_SIZE + offset;
-        self.chr_memory.write_at_index(mapped_addr, value);
+        self.base.write_chr_at_index(mapped_addr, value);
     }
 
     /// Returns true if the PRG-RAM window is enabled and writable (used by
@@ -497,6 +487,49 @@ impl MMC3Mapper {
         };
 
         (self.chr_bank_index_1k(bank_1k), bank_offset)
+    }
+
+    fn update_banks(&mut self) {
+        // PRG: 4 × 8KB slots
+        if self.prg_mode() {
+            self.base.select_prg_page(0, -2);
+            self.base.select_prg_page(1, self.regs[7] as i16);
+            self.base.select_prg_page(2, self.regs[6] as i16);
+            self.base.select_prg_page(3, -1);
+        } else {
+            self.base.select_prg_page(0, self.regs[6] as i16);
+            self.base.select_prg_page(1, self.regs[7] as i16);
+            self.base.select_prg_page(2, -2);
+            self.base.select_prg_page(3, -1);
+        }
+
+        // CHR: 8 × 1KB slots
+        let r0 = (self.regs[0] & 0xFE) as i16;
+        let r1 = (self.regs[1] & 0xFE) as i16;
+        let r2 = self.regs[2] as i16;
+        let r3 = self.regs[3] as i16;
+        let r4 = self.regs[4] as i16;
+        let r5 = self.regs[5] as i16;
+
+        if !self.chr_mode() {
+            self.base.select_chr_page(0, r0);
+            self.base.select_chr_page(1, r0 + 1);
+            self.base.select_chr_page(2, r1);
+            self.base.select_chr_page(3, r1 + 1);
+            self.base.select_chr_page(4, r2);
+            self.base.select_chr_page(5, r3);
+            self.base.select_chr_page(6, r4);
+            self.base.select_chr_page(7, r5);
+        } else {
+            self.base.select_chr_page(0, r2);
+            self.base.select_chr_page(1, r3);
+            self.base.select_chr_page(2, r4);
+            self.base.select_chr_page(3, r5);
+            self.base.select_chr_page(4, r0);
+            self.base.select_chr_page(5, r0 + 1);
+            self.base.select_chr_page(6, r1);
+            self.base.select_chr_page(7, r1 + 1);
+        }
     }
 }
 
@@ -1338,43 +1371,7 @@ impl Mapper for MMC3Mapper {
                 let offset = (addr - 0x6000) as usize;
                 self.prg_ram.get(offset).copied().unwrap_or(0)
             }
-            0x8000..=0xFFFF => {
-                let prg_count = self.prg_bank_count();
-                if prg_count == 0 {
-                    return 0;
-                }
-
-                let bank_offset = (addr as usize) & (Self::PRG_BANK_SIZE - 1);
-
-                let fixed_last = prg_count.saturating_sub(1);
-                let fixed_second_last = prg_count.saturating_sub(2);
-
-                // Registers R6 and R7 are PRG 8KB bank selectors.
-                let r6 = self.prg_bank_index(self.regs[6]);
-                let r7 = self.prg_bank_index(self.regs[7]);
-
-                let bank_index = match addr {
-                    0x8000..=0x9FFF => {
-                        if self.prg_mode() {
-                            fixed_second_last
-                        } else {
-                            r6
-                        }
-                    }
-                    0xA000..=0xBFFF => r7,
-                    0xC000..=0xDFFF => {
-                        if self.prg_mode() {
-                            r6
-                        } else {
-                            fixed_second_last
-                        }
-                    }
-                    0xE000..=0xFFFF => fixed_last,
-                    _ => 0,
-                };
-
-                self.read_prg_rom_bank(bank_index, bank_offset)
-            }
+            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
             _ => 0,
         }
     }
@@ -1420,6 +1417,7 @@ impl Mapper for MMC3Mapper {
                     trace_mapper!(1; "MMC3 reg[{}]=${:02X}", reg, value);
                     self.regs[reg] = value;
                 }
+                self.update_banks();
             }
             0xA000..=0xBFFF => {
                 if (addr & 1) == 0 {
@@ -1431,7 +1429,7 @@ impl Mapper for MMC3Mapper {
                         NametableLayout::Horizontal
                     };
                     trace_mapper!(1; "MMC3 mirroring={:?}", new_mirroring);
-                    self.mirroring = new_mirroring;
+                    self.base.set_mirroring(new_mirroring);
                 } else {
                     // PRG RAM protect
                     // - bit 7: PRG-RAM enable
@@ -1468,18 +1466,11 @@ impl Mapper for MMC3Mapper {
     }
 
     fn read_chr(&mut self, addr: u16) -> u8 {
-        // MMC3 uses CHR banking in 1KB units (with two 2KB banks depending on CHR mode).
-        let chr_addr = (addr & 0x1FFF) as usize;
-        let (bank_index, bank_offset) = self.map_chr_addr_to_bank_1k(chr_addr);
-        self.read_chr_bank_1k(bank_index, bank_offset)
+        self.base.read_chr_banked(addr)
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
-        // CHR-RAM writes must respect the same bank mapping as reads.
-        let chr_addr = (addr & 0x1FFF) as usize;
-        let (bank_index, bank_offset) = self.map_chr_addr_to_bank_1k(chr_addr);
-        let mapped_addr = bank_index * Self::CHR_BANK_SIZE + bank_offset;
-        self.chr_memory.write_at_index(mapped_addr, value);
+        self.base.write_chr_banked(addr, value);
     }
 
     fn ppu_address_changed(&mut self, addr: u16) {
@@ -1497,7 +1488,7 @@ impl Mapper for MMC3Mapper {
     }
 
     fn get_mirroring(&self) -> NametableLayout {
-        self.mirroring
+        self.base.mirroring()
     }
 
     fn mapper_number(&self) -> u8 {
@@ -1520,16 +1511,16 @@ impl Mapper for MMC3Mapper {
     }
 
     fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_memory.snapshot()
+        self.base.chr_ram_snapshot()
     }
 
     fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.chr_memory.load_snapshot(data);
+        self.base.restore_chr_ram(data);
     }
 
     fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
         crate::console::initialize_ram(&mut self.prg_ram, mode);
-        self.chr_memory.initialize(mode);
+        self.base.initialize_ram(mode);
     }
 
     // ============================================================================
@@ -1558,7 +1549,7 @@ impl Mapper for MMC3Mapper {
             | ((self.prg_ram_enabled as u8) << 3)
             | ((self.prg_ram_write_protected as u8) << 4);
         snapshot.push(flags);
-        snapshot.push(match self.mirroring {
+        snapshot.push(match self.base.mirroring() {
             NametableLayout::Vertical => 0,
             NametableLayout::Horizontal => 1,
             NametableLayout::FourScreen => 2,
@@ -1583,13 +1574,13 @@ impl Mapper for MMC3Mapper {
             self.irq_asserted = (flags & 4) != 0;
             self.prg_ram_enabled = (flags & 8) != 0;
             self.prg_ram_write_protected = (flags & 16) != 0;
-            self.mirroring = match data[12] {
+            self.base.set_mirroring(match data[12] {
                 0 => NametableLayout::Vertical,
                 1 => NametableLayout::Horizontal,
                 2 => NametableLayout::FourScreen,
                 3 => NametableLayout::SingleScreen,
                 _ => NametableLayout::Horizontal,
-            };
+            });
         }
 
         if data.len() >= 16 {
@@ -1597,6 +1588,8 @@ impl Mapper for MMC3Mapper {
             self.current_a12 = data[14] != 0;
             self.a12_low_cycles = data[15];
         }
+
+        self.update_banks();
     }
 
     fn capabilities(&self) -> MapperCapabilities {
