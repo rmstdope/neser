@@ -5,11 +5,8 @@
 //! - Edge-case behavior may still differ from hardware in untested timing and board-variant scenarios.
 //! - See CARTRIDGE_REVIEW.md sections 5 and 6 for remaining mapper test/documentation follow-up.
 
-use crate::cartridge::common::{BankSwitch, BankedRom, ChrMemory};
-use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
-
-const PRG_BANK_SIZE: usize = 0x8000; // 32KB
-const CHR_BANK_SIZE: usize = 0x2000; // 8KB
+use crate::cartridge::base_mapper::BaseMapper;
+use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// Mapper 140 - Jaleco JF-11/JF-14
 ///
@@ -22,42 +19,44 @@ const CHR_BANK_SIZE: usize = 0x2000; // 8KB
 /// - No PRG-RAM (registers occupy `$6000-$7FFF`)
 /// - Mirroring: fixed from iNES header
 pub struct Mapper140 {
-    prg_rom: BankedRom,
-    chr_memory: ChrMemory,
-    mirroring: NametableLayout,
-    prg_bank: BankSwitch,
-    chr_bank: BankSwitch,
+    base: BaseMapper,
     register: u8,
 }
 
 impl Mapper140 {
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
-        let prg_rom = ctx.prg_rom;
-        let chr_rom = ctx.chr_rom;
-
-        Self {
-            prg_bank: BankSwitch::from_rom(&prg_rom, PRG_BANK_SIZE),
-            chr_bank: BankSwitch::from_rom(&chr_rom, CHR_BANK_SIZE),
-            prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE),
-            chr_memory: ChrMemory::new(chr_rom),
-            mirroring: ctx.mirroring,
-            register: 0,
-        }
+        let capabilities = MapperCapabilities {
+            has_chr_banking: true,
+            max_prg_ram_kb: 0,
+            prg_bank_size_kb: 32,
+            chr_bank_size_kb: 8,
+            ..Default::default()
+        };
+        let mut base = BaseMapper::new(&ctx, capabilities);
+        base.configure_prg_banking(32 * 1024);
+        base.configure_chr_banking(8 * 1024);
+        Self { base, register: 0 }
     }
 
     fn apply_register(&mut self, value: u8) {
         self.register = value;
-        self.prg_bank.set((value >> 4) & 0b11);
-        self.chr_bank.set(value & 0b1111);
+        self.base.select_prg_page(0, ((value >> 4) & 0b11) as i16);
+        self.base.select_chr_page(0, (value & 0b1111) as i16);
     }
 }
 
 impl Mapper for Mapper140 {
+    fn base(&self) -> Option<&BaseMapper> {
+        Some(&self.base)
+    }
+
+    fn base_mut(&mut self) -> Option<&mut BaseMapper> {
+        Some(&mut self.base)
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
         match addr {
-            0x8000..=0xFFFF => self
-                .prg_rom
-                .read_with_base(self.prg_bank.current(), 0x8000, addr),
+            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
             _ => 0,
         }
     }
@@ -69,39 +68,11 @@ impl Mapper for Mapper140 {
     }
 
     fn read_chr(&mut self, addr: u16) -> u8 {
-        let index = self.chr_bank.offset(CHR_BANK_SIZE) + (addr as usize & 0x1FFF);
-        self.chr_memory.read_at_index(index)
+        self.base.read_chr_banked(addr)
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
-        let index = self.chr_bank.offset(CHR_BANK_SIZE) + (addr as usize & 0x1FFF);
-        self.chr_memory.write_at_index(index, value);
-    }
-
-    fn get_mirroring(&self) -> NametableLayout {
-        self.mirroring
-    }
-
-    fn mapper_number(&self) -> u8 {
-        140
-    }
-
-    fn wram_size(&self) -> usize {
-        0
-    }
-
-    fn wram_snapshot(&self) -> Vec<u8> {
-        Vec::new()
-    }
-
-    fn load_wram_snapshot(&mut self, _data: &[u8]) {}
-
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_memory.snapshot()
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.chr_memory.load_snapshot(data);
+        self.base.write_chr_banked(addr, value);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -111,20 +82,6 @@ impl Mapper for Mapper140 {
     fn restore_registers(&mut self, data: &[u8]) {
         if let Some(&value) = data.first() {
             self.apply_register(value);
-        }
-    }
-
-    fn capabilities(&self) -> MapperCapabilities {
-        MapperCapabilities {
-            has_irq: false,
-            has_chr_banking: true,
-            has_dynamic_mirroring: false,
-            has_expansion_audio: false,
-            max_prg_ram_kb: 0,
-            prg_bank_size_kb: 32,
-            chr_bank_size_kb: 8,
-            trainer_jsr: false,
-            ..Default::default()
         }
     }
 }

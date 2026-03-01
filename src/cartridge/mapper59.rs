@@ -7,7 +7,7 @@
 //! - No known gameplay-blocking functional limitations are currently documented.
 
 use crate::cartridge::NametableLayout;
-use crate::cartridge::common::ChrMemory;
+use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// Mapper 059 – BMC-T3H53 / BMC-D1038
@@ -41,9 +41,7 @@ use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 /// - NROM-128 (S=1): 16 KB bank = PPp; same bank at $8000–$BFFF and $C000–$FFFF
 /// - NROM-256 (S=0): 32 KB window; $8000→PP<<1 (16KB), $C000→(PP<<1)+1 (16KB)
 pub struct Mapper59 {
-    prg_rom: Vec<u8>,
-    chr_memory: ChrMemory,
-    mirroring: NametableLayout,
+    base: BaseMapper,
     chr_bank: u8,       // 3 bits: CCC
     prg_pp: u8,         // 2 bits: high PRG bits
     prg_p: u8,          // 1 bit: low PRG bank bit (NROM-128 only)
@@ -54,19 +52,23 @@ pub struct Mapper59 {
 
 impl Mapper59 {
     const MAPPER_NUMBER: u8 = 59;
-    const PRG_BANK_SIZE: usize = 0x4000; // 16 KiB
-    const PRG_BANK_MASK: usize = Self::PRG_BANK_SIZE - 1;
-    const CHR_BANK_SIZE: usize = 0x2000; // 8 KiB
-    const CHR_BANK_MASK: usize = Self::CHR_BANK_SIZE - 1;
 
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
-        let prg_rom = ctx.prg_rom;
-        let chr_rom = ctx.chr_rom;
-        let mirroring = ctx.mirroring;
+        let capabilities = MapperCapabilities {
+            has_chr_banking: true,
+            has_dynamic_mirroring: true,
+            max_prg_ram_kb: 0,
+            prg_bank_size_kb: 16,
+            chr_bank_size_kb: 8,
+            ..Default::default()
+        };
+        let mut base = BaseMapper::new(&ctx, capabilities);
+        base.configure_prg_banking(16 * 1024);
+        base.configure_chr_banking(8 * 1024);
+        // Default NROM-256: slot 0 = 0, slot 1 = 1
+        base.select_prg_page(1, 1);
         Self {
-            prg_rom,
-            chr_memory: ChrMemory::new(chr_rom),
-            mirroring,
+            base,
             chr_bank: 0,
             prg_pp: 0,
             prg_p: 0,
@@ -76,38 +78,36 @@ impl Mapper59 {
         }
     }
 
-    fn prg_bank_count(&self) -> usize {
-        self.prg_rom.len() / Self::PRG_BANK_SIZE
-    }
-
-    fn read_prg_bank(&self, bank: usize, offset: usize) -> u8 {
-        let count = self.prg_bank_count();
-        if count == 0 {
-            return 0;
+    fn update_banks(&mut self) {
+        if self.prg_mode_128 {
+            let bank = ((self.prg_pp as i16) << 1) | (self.prg_p as i16);
+            self.base.select_prg_page(0, bank);
+            self.base.select_prg_page(1, bank);
+        } else {
+            let base_bank = (self.prg_pp as i16) << 1;
+            self.base.select_prg_page(0, base_bank);
+            self.base.select_prg_page(1, base_bank + 1);
         }
-        let b = bank % count;
-        self.prg_rom
-            .get(b * Self::PRG_BANK_SIZE + offset)
-            .copied()
-            .unwrap_or(0)
+        self.base.select_chr_page(0, self.chr_bank as i16);
     }
 }
 
 impl Mapper for Mapper59 {
+    fn base(&self) -> Option<&BaseMapper> {
+        Some(&self.base)
+    }
+
+    fn base_mut(&mut self) -> Option<&mut BaseMapper> {
+        Some(&mut self.base)
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
         if self.jumper_mode {
             return 0x00;
         }
-        let offset = addr as usize & Self::PRG_BANK_MASK;
-        if self.prg_mode_128 {
-            // NROM-128: 16KB bank = PP:p; same bank at $8000 and $C000
-            let bank = ((self.prg_pp as usize) << 1) | (self.prg_p as usize);
-            self.read_prg_bank(bank, offset)
-        } else {
-            // NROM-256: 32KB window; $8000→PP<<1, $C000→(PP<<1)+1
-            let base = (self.prg_pp as usize) << 1;
-            let bank = if addr >= 0xC000 { base + 1 } else { base };
-            self.read_prg_bank(bank, offset)
+        match addr {
+            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
+            _ => 0,
         }
     }
 
@@ -116,75 +116,45 @@ impl Mapper for Mapper59 {
         if self.locked {
             return;
         }
-        let a = addr as usize;
-        // Decode address bits
-        let chr_bank = (a & 0x07) as u8; // A2:A0
-        let mirroring_h = (a >> 3) & 1 != 0; // A3
-        let prg_p = ((a >> 4) & 1) as u8; // A4
-        let prg_pp = ((a >> 5) & 3) as u8; // A6:A5
-        let prg_mode_128 = (a >> 7) & 1 != 0; // A7
-        let jumper_mode = (a >> 8) & 1 != 0; // A8
-        let lock = (a >> 9) & 1 != 0; // A9
+        if let 0x8000..=0xFFFF = addr {
+            let a = addr as usize;
+            self.chr_bank = (a & 0x07) as u8;
+            let mirroring_h = (a >> 3) & 1 != 0;
+            self.prg_p = ((a >> 4) & 1) as u8;
+            self.prg_pp = ((a >> 5) & 3) as u8;
+            self.prg_mode_128 = (a >> 7) & 1 != 0;
+            self.jumper_mode = (a >> 8) & 1 != 0;
+            if (a >> 9) & 1 != 0 {
+                self.locked = true;
+            }
 
-        self.chr_bank = chr_bank;
-        self.mirroring = if mirroring_h {
-            NametableLayout::Horizontal
-        } else {
-            NametableLayout::Vertical
-        };
-        self.prg_p = prg_p;
-        self.prg_pp = prg_pp;
-        self.prg_mode_128 = prg_mode_128;
-        self.jumper_mode = jumper_mode;
-        if lock {
-            self.locked = true;
+            let mirroring = if mirroring_h {
+                NametableLayout::Horizontal
+            } else {
+                NametableLayout::Vertical
+            };
+            self.base.set_mirroring(mirroring);
+            self.update_banks();
         }
     }
 
     fn read_chr(&mut self, addr: u16) -> u8 {
-        let chr_count = self.chr_memory.size() / Self::CHR_BANK_SIZE;
-        if chr_count == 0 {
-            return self.chr_memory.read(addr);
-        }
-        let bank = self.chr_bank as usize % chr_count;
-        let offset = addr as usize & Self::CHR_BANK_MASK;
-        self.chr_memory
-            .read_at_index(bank * Self::CHR_BANK_SIZE + offset)
+        self.base.read_chr_banked(addr)
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
-        self.chr_memory.write(addr, value);
-    }
-
-    fn get_mirroring(&self) -> NametableLayout {
-        self.mirroring
+        self.base.write_chr_banked(addr, value);
     }
 
     fn mapper_number(&self) -> u8 {
         Self::MAPPER_NUMBER
     }
 
-    fn wram_size(&self) -> usize {
-        0
-    }
-
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_memory.snapshot()
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.chr_memory.load_snapshot(data);
-    }
-
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        self.chr_memory.initialize(mode);
-    }
-
     fn registers_snapshot(&self) -> Vec<u8> {
         let flags = (self.prg_mode_128 as u8)
             | ((self.jumper_mode as u8) << 1)
             | ((self.locked as u8) << 2)
-            | ((if self.mirroring == NametableLayout::Horizontal {
+            | ((if self.base.mirroring() == NametableLayout::Horizontal {
                 1u8
             } else {
                 0u8
@@ -201,21 +171,13 @@ impl Mapper for Mapper59 {
             self.prg_mode_128 = flags & 1 != 0;
             self.jumper_mode = flags & 2 != 0;
             self.locked = flags & 4 != 0;
-            self.mirroring = if flags & 8 != 0 {
+            let mirroring = if flags & 8 != 0 {
                 NametableLayout::Horizontal
             } else {
                 NametableLayout::Vertical
             };
-        }
-    }
-
-    fn capabilities(&self) -> MapperCapabilities {
-        MapperCapabilities {
-            has_chr_banking: true,
-            prg_bank_size_kb: 16,
-            chr_bank_size_kb: 8,
-            has_dynamic_mirroring: true,
-            ..MapperCapabilities::default()
+            self.base.set_mirroring(mirroring);
+            self.update_banks();
         }
     }
 

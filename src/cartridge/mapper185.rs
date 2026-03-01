@@ -7,9 +7,9 @@
 //!
 //! See: <https://www.nesdev.org/wiki/CNROM#Mapper_185>
 
-use crate::cartridge::common::{BankSwitch, BankedRom, DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mapper::MapperContext;
-use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
+use crate::cartridge::{Mapper, MapperCapabilities};
 
 /// Mapper 185 - CNROM variant with CHR-ROM chip select gating.
 ///
@@ -20,25 +20,19 @@ use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 /// - Mirroring: Fixed (from header)
 /// - NES 2.0 submapper: encodes which low-2-bit value enables CHR reads
 pub struct Mapper185 {
-    prg_rom: Vec<u8>,
-    prg_ram: Option<PrgRam>,
-    chr_rom: BankedRom,
-    chr_bank: BankSwitch,
-    mirroring: NametableLayout,
+    base: BaseMapper,
+    register: u8,
     chr_enabled: bool,
     chr_enable_mask: u8, // low 2 bits that must match to enable CHR
 }
 
 impl Mapper185 {
     pub fn new(ctx: MapperContext) -> Self {
-        let chr_bank_size = 8 * 1024;
-        let chr_bank = BankSwitch::from_rom(&ctx.chr_rom, chr_bank_size);
-        let prg_ram = if ctx.prg_ram_banks_8k > 0 && ctx.prg_ram_size_specified {
-            Some(PrgRam::new(
-                ctx.prg_ram_banks_8k as usize * DEFAULT_PRG_RAM_SIZE,
-            ))
-        } else {
-            None
+        let capabilities = MapperCapabilities {
+            max_prg_ram_kb: 8,
+            prg_bank_size_kb: 32,
+            chr_bank_size_kb: 8,
+            ..Default::default()
         };
         // Submapper encodes which low-2-bit value enables CHR-ROM.
         // Submapper 0 (unspecified) defaults to disabled (mask = 0xFF → never matches low 2 bits).
@@ -47,13 +41,11 @@ impl Mapper185 {
         } else {
             0xFF // never matches normal writes
         };
+        let base = BaseMapper::new(&ctx, capabilities);
 
         Self {
-            prg_rom: ctx.prg_rom,
-            prg_ram,
-            chr_rom: BankedRom::new(ctx.chr_rom, chr_bank_size),
-            chr_bank,
-            mirroring: ctx.mirroring,
+            base,
+            register: 0,
             chr_enabled: false,
             chr_enable_mask,
         }
@@ -61,37 +53,28 @@ impl Mapper185 {
 }
 
 impl Mapper for Mapper185 {
+    fn base(&self) -> Option<&BaseMapper> {
+        Some(&self.base)
+    }
+
+    fn base_mut(&mut self) -> Option<&mut BaseMapper> {
+        Some(&mut self.base)
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
-        if let Some(prg_ram) = &self.prg_ram
-            && let Some(value) = prg_ram.try_read(addr)
-        {
-            return value;
-        }
         match addr {
-            0x8000..=0xFFFF => {
-                let offset = (addr - 0x8000) as usize % self.prg_rom.len().max(1);
-                self.prg_rom.get(offset).copied().unwrap_or(0)
-            }
+            0x6000..=0x7FFF => self.base.try_read_prg_ram(addr).unwrap_or(0),
+            0x8000..=0xFFFF => self.base.read_prg_rom_fixed(addr),
             _ => 0,
         }
     }
 
-    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
-        match addr {
-            0x0000..=0x5FFF => open_bus,
-            0x6000..=0x7FFF if self.prg_ram.is_none() => open_bus,
-            _ => self.read_prg(addr),
-        }
-    }
-
     fn write_prg(&mut self, addr: u16, value: u8) {
-        if let Some(prg_ram) = &mut self.prg_ram
-            && prg_ram.try_write(addr, value)
-        {
+        if self.base.try_write_prg_ram(addr, value) {
             return;
         }
         if (0x8000..=0xFFFF).contains(&addr) {
-            self.chr_bank.set(value);
+            self.register = value;
             self.chr_enabled = (value & 0x03) == self.chr_enable_mask;
         }
     }
@@ -100,69 +83,30 @@ impl Mapper for Mapper185 {
         if !self.chr_enabled {
             return 0; // PPU open bus when CHR disabled
         }
-        let offset = (addr & 0x1FFF) as usize;
-        self.chr_rom.read(self.chr_bank.current(), offset)
+        self.base.read_chr(addr)
     }
 
     fn write_chr(&mut self, _addr: u16, _value: u8) {
         // CHR-ROM is read-only
     }
 
-    fn get_mirroring(&self) -> NametableLayout {
-        self.mirroring
-    }
-
-    fn mapper_number(&self) -> u8 {
-        185
-    }
-
-    fn wram_size(&self) -> usize {
-        self.prg_ram.as_ref().map_or(0, PrgRam::size)
-    }
-
-    fn wram_snapshot(&self) -> Vec<u8> {
-        self.prg_ram
-            .as_ref()
-            .map_or_else(Vec::new, PrgRam::snapshot)
-    }
-
-    fn load_wram_snapshot(&mut self, data: &[u8]) {
-        if let Some(prg_ram) = &mut self.prg_ram {
-            prg_ram.load_snapshot(data);
-        }
-    }
-
     fn registers_snapshot(&self) -> Vec<u8> {
-        vec![self.chr_bank.raw(), u8::from(self.chr_enabled)]
+        vec![self.register, u8::from(self.chr_enabled)]
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
         if let Some(&bank) = data.first() {
-            self.chr_bank.set(bank);
+            self.register = bank;
         }
         if let Some(&enabled) = data.get(1) {
             self.chr_enabled = enabled != 0;
-        }
-    }
-
-    fn capabilities(&self) -> MapperCapabilities {
-        MapperCapabilities {
-            has_irq: false,
-            has_chr_banking: false,
-            has_dynamic_mirroring: false,
-            has_expansion_audio: false,
-            max_prg_ram_kb: if self.prg_ram.is_some() { 8 } else { 0 },
-            prg_bank_size_kb: 32,
-            chr_bank_size_kb: 8,
-            trainer_jsr: false,
-            ..Default::default()
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::cartridge::NametableLayout;
     use crate::cartridge::mapper::{MapperContext, create_mapper};
 
     fn chr_rom_with_banks(num_banks: usize) -> Vec<u8> {

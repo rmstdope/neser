@@ -6,8 +6,7 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
-use crate::cartridge::NametableLayout;
-use crate::cartridge::common::ChrMemory;
+use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// Mapper 060 - Reset-based NROM-128 4-in-1
@@ -27,55 +26,48 @@ use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 /// The game is selected by a 2-bit internal counter that increments on every
 /// soft reset and wraps from 3 back to 0.
 pub struct Mapper60 {
-    prg_rom: Vec<u8>,
-    chr_memory: ChrMemory,
-    mirroring: NametableLayout,
+    base: BaseMapper,
     game_select: u8, // 2-bit counter, incremented on reset
 }
 
 impl Mapper60 {
-    const MAPPER_NUMBER: u8 = 60;
-    const PRG_BANK_SIZE: usize = 0x4000; // 16 KiB
-    const PRG_BANK_MASK: usize = Self::PRG_BANK_SIZE - 1;
-    const CHR_BANK_SIZE: usize = 0x2000; // 8 KiB
-    const CHR_BANK_MASK: usize = Self::CHR_BANK_SIZE - 1;
-
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
-        let prg_rom = ctx.prg_rom;
-        let chr_rom = ctx.chr_rom;
-        let mirroring = ctx.mirroring;
+        let capabilities = MapperCapabilities {
+            prg_bank_size_kb: 16,
+            chr_bank_size_kb: 8,
+            ..Default::default()
+        };
+        let mut base = BaseMapper::new(&ctx, capabilities);
+        // 16KB PRG banking: 2 slots, both start at bank 0
+        // NROM-128: same bank at $8000 and $C000
+        base.configure_prg_banking(16 * 1024);
+        base.configure_chr_banking(8 * 1024);
         Self {
-            prg_rom,
-            chr_memory: ChrMemory::new(chr_rom),
-            mirroring,
+            base,
             game_select: 0,
         }
     }
 
-    fn prg_bank_count(&self) -> usize {
-        self.prg_rom.len() / Self::PRG_BANK_SIZE
-    }
-
-    fn chr_bank_count(&self) -> usize {
-        self.chr_memory.size() / Self::CHR_BANK_SIZE
+    fn apply_game_select(&mut self) {
+        let bank = self.game_select as i16;
+        self.base.select_prg_page(0, bank);
+        self.base.select_prg_page(1, bank);
+        self.base.select_chr_page(0, bank);
     }
 }
 
 impl Mapper for Mapper60 {
+    fn base(&self) -> Option<&BaseMapper> {
+        Some(&self.base)
+    }
+
+    fn base_mut(&mut self) -> Option<&mut BaseMapper> {
+        Some(&mut self.base)
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
         match addr {
-            0x8000..=0xFFFF => {
-                let count = self.prg_bank_count();
-                if count == 0 {
-                    return 0;
-                }
-                let bank = (self.game_select as usize) % count;
-                let offset = (addr as usize) & Self::PRG_BANK_MASK;
-                self.prg_rom
-                    .get(bank * Self::PRG_BANK_SIZE + offset)
-                    .copied()
-                    .unwrap_or(0)
-            }
+            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
             _ => 0,
         }
     }
@@ -85,42 +77,7 @@ impl Mapper for Mapper60 {
     }
 
     fn read_chr(&mut self, addr: u16) -> u8 {
-        let count = self.chr_bank_count();
-        if count == 0 {
-            return self.chr_memory.read(addr);
-        }
-        let bank = (self.game_select as usize) % count;
-        let offset = (addr as usize) & Self::CHR_BANK_MASK;
-        self.chr_memory
-            .read_at_index(bank * Self::CHR_BANK_SIZE + offset)
-    }
-
-    fn write_chr(&mut self, addr: u16, value: u8) {
-        self.chr_memory.write(addr, value);
-    }
-
-    fn get_mirroring(&self) -> NametableLayout {
-        self.mirroring
-    }
-
-    fn mapper_number(&self) -> u8 {
-        Self::MAPPER_NUMBER
-    }
-
-    fn wram_size(&self) -> usize {
-        0
-    }
-
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_memory.snapshot()
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.chr_memory.load_snapshot(data);
-    }
-
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        self.chr_memory.initialize(mode);
+        self.base.read_chr_banked(addr)
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -130,26 +87,21 @@ impl Mapper for Mapper60 {
     fn restore_registers(&mut self, data: &[u8]) {
         if let Some(&v) = data.first() {
             self.game_select = v & 0x03;
+            self.apply_game_select();
         }
     }
 
     /// On reset, advance to the next game (2-bit counter).
     fn reset(&mut self) {
         self.game_select = (self.game_select + 1) & 0x03;
-    }
-
-    fn capabilities(&self) -> MapperCapabilities {
-        MapperCapabilities {
-            prg_bank_size_kb: 16,
-            chr_bank_size_kb: 8,
-            ..Default::default()
-        }
+        self.apply_game_select();
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cartridge::NametableLayout;
     use crate::cartridge::mapper::{MapperContext, create_mapper};
     use crate::cartridge::test_helpers::banked_data;
 

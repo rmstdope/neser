@@ -8,11 +8,9 @@
 use crate::cartridge::Mapper;
 use crate::cartridge::MapperCapabilities;
 use crate::cartridge::NametableLayout;
-use crate::cartridge::common::{BankSwitch, BankedRom, ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::cartridge::base_mapper::BaseMapper;
+use crate::cartridge::common::ChrMemory;
 use crate::trace_mapper;
-
-// Memory size constants
-const PRG_BANK_SIZE_32K: usize = 0x8000; // 32KB (for AxROM)
 
 /// Mapper 7 - AxROM (AMROM, ANROM, AN1ROM, AOROM boards)
 ///
@@ -34,12 +32,8 @@ const PRG_BANK_SIZE_32K: usize = 0x8000; // 32KB (for AxROM)
 /// - Bit 4: One-screen mirroring (0 = lower/A, 1 = upper/B)
 /// - Used in Battletoads, Marble Madness, Wizards & Warriors
 pub struct AxROMMapper {
-    prg_rom: BankedRom,
-    chr_memory: ChrMemory,
-    prg_ram: Option<PrgRam>,
-    prg_bank: BankSwitch,
-    mirroring_bit: bool, // Bit 4 from bank select register
-    bus_conflicts: bool,
+    base: BaseMapper,
+    register: u8,
 }
 
 impl AxROMMapper {
@@ -55,76 +49,59 @@ impl AxROMMapper {
         } else {
             0
         };
-        let prg_rom = ctx.prg_rom;
-        Self::new_with_submapper_and_prg_ram_banks(prg_rom, submapper, prg_ram_banks_8k)
+        Self::new_internal(ctx, submapper, prg_ram_banks_8k)
     }
 
-    pub fn new_with_submapper_and_prg_ram_banks(
-        prg_rom: Vec<u8>,
+    fn new_internal(
+        mut ctx: super::mapper::MapperContext,
         submapper: u8,
         prg_ram_banks_8k: u8,
     ) -> Self {
-        let normalized_prg_rom = Self::normalize_prg_rom(prg_rom);
+        // Normalize 16KB ROMs to 32KB for consistent 32KB banking
+        if ctx.prg_rom.len() == 0x4000 {
+            let mirrored = ctx.prg_rom.clone();
+            ctx.prg_rom.extend_from_slice(&mirrored);
+        }
+        ctx.prg_ram_banks_8k = prg_ram_banks_8k;
 
-        // AxROM uses CHR-RAM, ignores chr_rom and initial mirroring (controlled by register)
-        let prg_bank = BankSwitch::from_rom(&normalized_prg_rom, PRG_BANK_SIZE_32K);
-        let bus_conflicts = submapper != 1;
-        let prg_ram = if prg_ram_banks_8k == 0 {
-            None
-        } else {
-            Some(PrgRam::new(
-                prg_ram_banks_8k as usize * DEFAULT_PRG_RAM_SIZE,
-            ))
+        let capabilities = MapperCapabilities {
+            has_dynamic_mirroring: true,
+            max_prg_ram_kb: 8,
+            prg_bank_size_kb: 32,
+            chr_bank_size_kb: 8,
+            ..Default::default()
         };
 
-        Self {
-            prg_rom: BankedRom::new(normalized_prg_rom, PRG_BANK_SIZE_32K),
-            chr_memory: ChrMemory::new_ram(8192),
-            prg_ram,
-            prg_bank,
-            mirroring_bit: false, // Default to lower nametable
-            bus_conflicts,
-        }
-    }
+        let bus_conflicts = submapper != 1;
+        let mut base = BaseMapper::new(&ctx, capabilities);
+        // AxROM uses CHR-RAM regardless of header
+        base.set_chr_memory(ChrMemory::new_ram(8192));
+        base.configure_prg_banking(32 * 1024);
+        base.set_bus_conflicts(bus_conflicts);
 
-    fn normalize_prg_rom(mut prg_rom: Vec<u8>) -> Vec<u8> {
-        if prg_rom.len() == 0x4000 {
-            let mirrored_half = prg_rom.clone();
-            prg_rom.extend_from_slice(&mirrored_half);
-        }
-        prg_rom
+        Self { base, register: 0 }
     }
 }
 
 impl Mapper for AxROMMapper {
-    fn read_prg(&self, addr: u16) -> u8 {
-        // PRG ROM at $8000-$FFFF (32KB switchable bank)
-        if let Some(prg_ram) = &self.prg_ram
-            && let Some(value) = prg_ram.try_read(addr)
-        {
-            return value;
-        }
+    fn base(&self) -> Option<&BaseMapper> {
+        Some(&self.base)
+    }
 
+    fn base_mut(&mut self) -> Option<&mut BaseMapper> {
+        Some(&mut self.base)
+    }
+
+    fn read_prg(&self, addr: u16) -> u8 {
         match addr {
-            0x8000..=0xFFFF => self
-                .prg_rom
-                .read_with_base(self.prg_bank.current(), 0x8000, addr),
+            0x6000..=0x7FFF => self.base.try_read_prg_ram(addr).unwrap_or(0),
+            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
             _ => 0,
         }
     }
 
-    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
-        match addr {
-            0x0000..=0x5FFF => open_bus,
-            0x6000..=0x7FFF if self.prg_ram.is_none() => open_bus,
-            _ => self.read_prg(addr),
-        }
-    }
-
     fn write_prg(&mut self, addr: u16, value: u8) {
-        if let Some(prg_ram) = &mut self.prg_ram
-            && prg_ram.try_write(addr, value)
-        {
+        if self.base.try_write_prg_ram(addr, value) {
             return;
         }
 
@@ -132,14 +109,15 @@ impl Mapper for AxROMMapper {
         // Bits 0-2: PRG bank select
         // Bit 4: One-screen mirroring (0 = lower, 1 = upper)
         if (0x8000..=0xFFFF).contains(&addr) {
-            let register_value = if self.bus_conflicts {
-                value & self.read_prg(addr)
+            let register_value = self.base.apply_bus_conflict(addr, value);
+            self.register = register_value;
+            self.base.select_prg_page(0, (register_value & 0x07) as i16);
+            let mirroring = if (register_value & 0x10) != 0 {
+                NametableLayout::SingleScreenUpper
             } else {
-                value
+                NametableLayout::SingleScreenLower
             };
-
-            self.prg_bank.set(register_value & 0x07);
-            self.mirroring_bit = (register_value & 0x10) != 0;
+            self.base.set_mirroring(mirroring);
 
             trace_mapper!(1;
                 "AxROM write ${:04X}: raw=${:02X} effective=${:02X} bank={} mirroring={} conflicts={}",
@@ -147,83 +125,26 @@ impl Mapper for AxROMMapper {
                 value,
                 register_value,
                 register_value & 0x07,
-                if self.mirroring_bit { "upper" } else { "lower" },
-                self.bus_conflicts
+                if (register_value & 0x10) != 0 { "upper" } else { "lower" },
+                self.base.has_bus_conflicts()
             );
         }
     }
 
-    fn read_chr(&mut self, addr: u16) -> u8 {
-        self.chr_memory.read(addr)
-    }
-
-    fn write_chr(&mut self, addr: u16, value: u8) {
-        self.chr_memory.write(addr, value);
-    }
-
-    fn get_mirroring(&self) -> NametableLayout {
-        // Bit 4 determines one-screen mirroring mode
-        // 0 = lower nametable (single-screen A)
-        // 1 = upper nametable (single-screen B)
-        if self.mirroring_bit {
-            NametableLayout::SingleScreenUpper
-        } else {
-            NametableLayout::SingleScreenLower
-        }
-    }
-
-    fn mapper_number(&self) -> u8 {
-        7
-    }
-
-    fn wram_size(&self) -> usize {
-        self.prg_ram.as_ref().map_or(0, PrgRam::size)
-    }
-
-    fn wram_snapshot(&self) -> Vec<u8> {
-        self.prg_ram
-            .as_ref()
-            .map_or_else(Vec::new, PrgRam::snapshot)
-    }
-
-    fn load_wram_snapshot(&mut self, data: &[u8]) {
-        if let Some(prg_ram) = &mut self.prg_ram {
-            prg_ram.load_snapshot(data);
-        }
-    }
-
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_memory.snapshot()
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.chr_memory.load_snapshot(data);
-    }
-
     fn registers_snapshot(&self) -> Vec<u8> {
-        // Store both bank and mirroring bit in a single byte
-        let value = self.prg_bank.raw() | (if self.mirroring_bit { 0x10 } else { 0 });
-        vec![value]
+        vec![self.register]
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
         if let Some(&value) = data.first() {
-            self.prg_bank.set(value & 0x07);
-            self.mirroring_bit = (value & 0x10) != 0;
-        }
-    }
-
-    fn capabilities(&self) -> MapperCapabilities {
-        MapperCapabilities {
-            has_irq: false,
-            has_chr_banking: false,
-            has_dynamic_mirroring: true,
-            has_expansion_audio: false,
-            max_prg_ram_kb: if self.prg_ram.is_some() { 8 } else { 0 },
-            prg_bank_size_kb: 32,
-            chr_bank_size_kb: 8,
-            trainer_jsr: false,
-            ..Default::default()
+            self.register = value;
+            self.base.select_prg_page(0, (value & 0x07) as i16);
+            let mirroring = if (value & 0x10) != 0 {
+                NametableLayout::SingleScreenUpper
+            } else {
+                NametableLayout::SingleScreenLower
+            };
+            self.base.set_mirroring(mirroring);
         }
     }
 }
