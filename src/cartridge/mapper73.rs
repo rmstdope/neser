@@ -6,8 +6,8 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
+use crate::cartridge::BaseMapper;
 use crate::cartridge::NametableLayout;
-use crate::cartridge::common::ChrMemory;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// Mapper 073 - Konami VRC3
@@ -32,34 +32,38 @@ use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 /// - $D000-$DFFF: IRQ Acknowledge
 /// - $F000-$FFFF: PRG bank select [.... .PPP]
 pub struct Mapper73 {
-    prg_rom: Vec<u8>,
+    base: BaseMapper,
     prg_ram: Vec<u8>,
-    chr_ram: ChrMemory,
-    mirroring: NametableLayout,
     prg_bank: u8,
     irq_latch: u16,
     irq_counter: u16,
     irq_mode_8bit: bool,
-    irq_enable: bool,
+    pub(crate) irq_enable: bool,
     irq_enable_on_ack: bool,
     irq_pending: bool,
 }
 
 impl Mapper73 {
-    const MAPPER_NUMBER: u8 = 73;
     const PRG_BANK_SIZE: usize = 0x4000; // 16 KiB
-    const PRG_BANK_MASK: usize = Self::PRG_BANK_SIZE - 1;
     const PRG_RAM_SIZE: usize = 0x2000; // 8 KiB
 
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
-        let prg_rom = ctx.prg_rom;
         let mirroring = ctx.mirroring;
         let prg_ram_size = (ctx.prg_ram_banks_8k as usize).max(1) * Self::PRG_RAM_SIZE;
-        Self {
-            prg_rom,
+        let capabilities = MapperCapabilities {
+            has_irq: true,
+            max_prg_ram_kb: 8,
+            prg_bank_size_kb: 16,
+            ..Default::default()
+        };
+
+        let mut base = BaseMapper::new(&ctx, capabilities);
+        base.configure_prg_banking(Self::PRG_BANK_SIZE);
+        base.set_mirroring(mirroring);
+
+        let mut mapper = Self {
+            base,
             prg_ram: vec![0u8; prg_ram_size],
-            chr_ram: ChrMemory::new(vec![]),
-            mirroring,
             prg_bank: 0,
             irq_latch: 0,
             irq_counter: 0,
@@ -67,23 +71,15 @@ impl Mapper73 {
             irq_enable: false,
             irq_enable_on_ack: false,
             irq_pending: false,
-        }
+        };
+
+        mapper.update_banks();
+        mapper
     }
 
-    fn num_prg_banks(&self) -> usize {
-        self.prg_rom.len() / Self::PRG_BANK_SIZE
-    }
-
-    fn prg_bank_read(&self, bank: usize, offset: usize) -> u8 {
-        let count = self.num_prg_banks();
-        if count == 0 {
-            return 0;
-        }
-        let b = bank % count;
-        self.prg_rom
-            .get(b * Self::PRG_BANK_SIZE + offset)
-            .copied()
-            .unwrap_or(0)
+    fn update_banks(&mut self) {
+        self.base.select_prg_page(0, self.prg_bank as i16);
+        self.base.select_prg_page(1, -1); // $C000 fixed last
     }
 
     fn acknowledge_irq(&mut self) {
@@ -118,15 +114,7 @@ impl Mapper for Mapper73 {
                 let idx = (addr as usize) - 0x6000;
                 self.prg_ram.get(idx).copied().unwrap_or(0)
             }
-            0x8000..=0xBFFF => {
-                let offset = (addr as usize) & Self::PRG_BANK_MASK;
-                self.prg_bank_read(self.prg_bank as usize, offset)
-            }
-            0xC000..=0xFFFF => {
-                let offset = (addr as usize) & Self::PRG_BANK_MASK;
-                let last = self.num_prg_banks().saturating_sub(1);
-                self.prg_bank_read(last, offset)
-            }
+            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
             _ => 0,
         }
     }
@@ -168,25 +156,26 @@ impl Mapper for Mapper73 {
             }
             0xF000..=0xFFFF => {
                 self.prg_bank = value & 0x07;
+                self.update_banks();
             }
             _ => {}
         }
     }
 
     fn read_chr(&mut self, addr: u16) -> u8 {
-        self.chr_ram.read_at_index(addr as usize)
+        self.base.read_chr(addr)
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
-        self.chr_ram.write_at_index(addr as usize, value);
+        self.base.write_chr(addr, value);
     }
 
     fn get_mirroring(&self) -> NametableLayout {
-        self.mirroring
+        self.base.mirroring()
     }
 
     fn mapper_number(&self) -> u8 {
-        Self::MAPPER_NUMBER
+        self.base.mapper_number()
     }
 
     fn wram_size(&self) -> usize {
@@ -214,24 +203,20 @@ impl Mapper for Mapper73 {
     }
 
     fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_ram.snapshot()
+        self.base.chr_ram_snapshot()
     }
 
     fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.chr_ram.load_snapshot(data);
+        self.base.restore_chr_ram(data);
     }
 
     fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        self.chr_ram.initialize(mode);
+        self.base.initialize_ram(mode);
+        crate::console::initialize_ram(&mut self.prg_ram, mode);
     }
 
     fn capabilities(&self) -> MapperCapabilities {
-        MapperCapabilities {
-            has_irq: true,
-            max_prg_ram_kb: 8,
-            prg_bank_size_kb: 16,
-            ..Default::default()
-        }
+        self.base.capabilities()
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -263,6 +248,7 @@ impl Mapper for Mapper73 {
             self.irq_enable = (data[5] & 0x02) != 0;
             self.irq_enable_on_ack = (data[5] & 0x04) != 0;
             self.irq_pending = (data[5] & 0x08) != 0;
+            self.update_banks();
         }
     }
 }

@@ -62,8 +62,8 @@
 // Imports & Dependencies
 // ============================================================================
 
+use crate::cartridge::BaseMapper;
 use crate::cartridge::NametableLayout;
-use crate::cartridge::common::ChrMemory;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 use crate::trace_mapper;
 use std::cell::Cell;
@@ -73,10 +73,8 @@ use std::cell::Cell;
 // ============================================================================
 
 pub struct MMC5Mapper {
-    prg_rom: Vec<u8>,
-    chr_memory: ChrMemory,
+    base: BaseMapper,
     prg_ram: Vec<u8>,
-    mirroring: NametableLayout,
     ciram: Vec<u8>,
 
     // PRG banking
@@ -268,7 +266,35 @@ impl MMC5Mapper {
         mirroring: NametableLayout,
         prg_ram_banks_8k: u8,
     ) -> Self {
-        let prg_rom_bank_count_8k = prg_rom.len() / Self::PRG_ROM_BANK_SIZE;
+        use super::mapper::MapperContext;
+
+        let ctx = MapperContext {
+            mapper: 5,
+            submapper: 0,
+            mirroring,
+            console_type: crate::cartridge::ConsoleType::NesFamicom,
+            prg_rom,
+            chr_rom,
+            prg_ram_banks_8k,
+            prg_ram_size_specified: true,
+            battery_backed_prg_ram: false,
+            crc32: 0,
+        };
+
+        let capabilities = MapperCapabilities {
+            has_irq: true,
+            has_chr_banking: true,
+            has_dynamic_mirroring: true,
+            has_expansion_audio: true,
+            max_prg_ram_kb: 0, // MMC5 manages PRG-RAM separately
+            prg_bank_size_kb: 8,
+            chr_bank_size_kb: 1,
+            trainer_jsr: false,
+            ..Default::default()
+        };
+
+        let base = BaseMapper::new(&ctx, capabilities);
+        let prg_rom_bank_count_8k = base.prg_rom().len() / Self::PRG_ROM_BANK_SIZE;
 
         // MMC5 PRG-RAM can be up to 64KB (8 x 8KB banks), but many cartridges have less.
         // Allocate based on cartridge metadata, clamped to the hardware maximum.
@@ -281,10 +307,8 @@ impl MMC5Mapper {
         // $5117 defaults to $FF on real hardware; for our bank-indexed model, we map it to the
         // last available 8KB PRG ROM bank when present.
         Self {
-            prg_rom,
-            chr_memory: ChrMemory::new(chr_rom),
+            base,
             prg_ram,
-            mirroring,
             ciram,
 
             // PRG banking
@@ -460,7 +484,7 @@ impl MMC5Mapper {
     // See: https://www.nesdev.org/wiki/MMC5#PRG_Bankswitching
 
     fn prg_rom_bank_count_8k(&self) -> usize {
-        self.prg_rom.len() / Self::PRG_ROM_BANK_SIZE
+        self.base.prg_rom().len() / Self::PRG_ROM_BANK_SIZE
     }
 
     fn prg_ram_bank_count_8k(&self) -> usize {
@@ -476,7 +500,7 @@ impl MMC5Mapper {
 
         let bank_index = (bank as usize) % num_banks;
         let offset = (addr - base) as usize;
-        self.prg_rom[bank_index * Self::PRG_ROM_BANK_SIZE + offset]
+        self.base.prg_rom()[bank_index * Self::PRG_ROM_BANK_SIZE + offset]
     }
 
     fn prg_ram_bank_index_8k(&self, bank: u8) -> usize {
@@ -796,11 +820,11 @@ impl MMC5Mapper {
         let offset = (addr as usize) % bank_size;
         let chr_addr = (bank as usize) * bank_size + offset;
 
-        let data_len = self.chr_memory.size();
+        let data_len = self.base.chr_size();
         if data_len == 0 {
             0
         } else {
-            self.chr_memory.read_at_index(chr_addr % data_len)
+            self.base.read_chr_at_index(chr_addr % data_len)
         }
     }
 
@@ -817,9 +841,9 @@ impl MMC5Mapper {
         let offset = (addr as usize) % bank_size;
         let chr_addr = (bank as usize) * bank_size + offset;
 
-        let data_len = self.chr_memory.size();
+        let data_len = self.base.chr_size();
         if data_len > 0 {
-            self.chr_memory.write_at_index(chr_addr % data_len, value);
+            self.base.write_chr_at_index(chr_addr % data_len, value);
         }
     }
 
@@ -1653,7 +1677,7 @@ impl Mapper for MMC5Mapper {
         }
 
         // Default to the original iNES mirroring for other cases
-        self.mirroring
+        self.base.mirroring()
     }
 
     fn mapper_number(&self) -> u8 {
@@ -1677,16 +1701,16 @@ impl Mapper for MMC5Mapper {
     }
 
     fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_memory.snapshot()
+        self.base.chr_ram_snapshot()
     }
 
     fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.chr_memory.load_snapshot(data);
+        self.base.restore_chr_ram(data);
     }
 
     fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
         crate::console::initialize_ram(&mut self.prg_ram, mode);
-        self.chr_memory.initialize(mode);
+        self.base.initialize_ram(mode);
     }
 
     // ============================================================================
@@ -1768,7 +1792,7 @@ impl Mapper for MMC5Mapper {
         snapshot.push(self.pcm_enabled as u8);
         snapshot.push(self.pcm_value);
 
-        snapshot.push(match self.mirroring {
+        snapshot.push(match self.base.mirroring() {
             NametableLayout::Horizontal => 0,
             NametableLayout::Vertical => 1,
             NametableLayout::SingleScreen => 2,
@@ -2095,7 +2119,7 @@ impl Mapper for MMC5Mapper {
 
         self.pcm_enabled = pcm_enabled;
         self.pcm_value = pcm_value;
-        self.mirroring = mirroring;
+        self.base.set_mirroring(mirroring);
     }
 
     fn capabilities(&self) -> MapperCapabilities {

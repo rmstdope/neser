@@ -6,8 +6,8 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
+use crate::cartridge::BaseMapper;
 use crate::cartridge::NametableLayout;
-use crate::cartridge::common::ChrMemory;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// Mapper 043 - TONY-I / YS-612 (SMB2 Japanese FDS conversion)
@@ -35,61 +35,75 @@ use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 /// IRQ: 12-bit CPU-cycle counter; fires on overflow ($FFF→$1000 = 4096 cycles).
 /// Writing to ($addr & 0x71FF) == $4122 resets counter to 0 and clears pending IRQ.
 pub struct Mapper43 {
-    prg_rom: Vec<u8>,
-    chr_memory: ChrMemory,
-    mirroring: NametableLayout,
+    base: BaseMapper,
     switchable_bank: u8,
     irq_counter: u16,
     irq_pending: bool,
 }
 
 impl Mapper43 {
-    const MAPPER_NUMBER: u8 = 43;
     const PRG_BANK_SIZE: usize = 0x2000;
-    const PRG_BANK_MASK: usize = Self::PRG_BANK_SIZE - 1;
     const IRQ_OVERFLOW: u16 = 0x1000;
     const BANK_LOOKUP: [u8; 8] = [4, 3, 4, 4, 4, 7, 5, 6];
 
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
-        let prg_rom = ctx.prg_rom;
-        let chr_rom = ctx.chr_rom;
         let mirroring = ctx.mirroring;
-        Self {
-            prg_rom,
-            chr_memory: ChrMemory::new(chr_rom),
-            mirroring,
+        let capabilities = MapperCapabilities {
+            has_irq: true,
+            prg_bank_size_kb: 8,
+            chr_bank_size_kb: 8,
+            ..Default::default()
+        };
+
+        let mut base = BaseMapper::new(&ctx, capabilities);
+        base.configure_prg_banking(Self::PRG_BANK_SIZE);
+        base.set_mirroring(mirroring);
+
+        let mut mapper = Self {
+            base,
             switchable_bank: 0,
             irq_counter: 0,
             irq_pending: false,
-        }
+        };
+
+        mapper.update_banks();
+        mapper
     }
 
-    fn prg_read_bank(&self, bank: usize, offset: usize) -> u8 {
-        let addr = bank * Self::PRG_BANK_SIZE + offset;
-        self.prg_rom.get(addr).copied().unwrap_or(0)
+    fn update_banks(&mut self) {
+        // $8000=bank1, $A000=bank0, $C000=switchable, $E000=bank9
+        self.base.select_prg_page(0, 1);
+        self.base.select_prg_page(1, 0);
+        let c000_bank = Self::BANK_LOOKUP[self.switchable_bank as usize & 7] as i16;
+        self.base.select_prg_page(2, c000_bank);
+        self.base.select_prg_page(3, 9);
+    }
+
+    fn read_prg_custom(&self, addr: u16) -> u8 {
+        let prg = self.base.prg_rom();
+        match addr {
+            0x5000..=0x5FFF => {
+                // 2KB chip at 0x10000, masked to 2KB
+                let chip_offset = addr as usize & 0x7FF;
+                prg.get(0x10000 + chip_offset).copied().unwrap_or(0)
+            }
+            0x6000..=0x7FFF => {
+                // Fixed bank 2
+                let offset = (addr as usize) & (Self::PRG_BANK_SIZE - 1);
+                prg.get(2 * Self::PRG_BANK_SIZE + offset)
+                    .copied()
+                    .unwrap_or(0)
+            }
+            _ => 0,
+        }
     }
 }
 
 impl Mapper for Mapper43 {
     fn read_prg(&self, addr: u16) -> u8 {
-        let offset = addr as usize & Self::PRG_BANK_MASK;
         match addr {
-            0x5000..=0x5FFF => {
-                // 2KB chip at 0x10000, masked to 2KB
-                let chip_offset = addr as usize & 0x7FF;
-                self.prg_rom
-                    .get(0x10000 + chip_offset)
-                    .copied()
-                    .unwrap_or(0)
-            }
-            0x6000..=0x7FFF => self.prg_read_bank(2, offset),
-            0x8000..=0x9FFF => self.prg_read_bank(1, offset),
-            0xA000..=0xBFFF => self.prg_read_bank(0, offset),
-            0xC000..=0xDFFF => {
-                let bank = Self::BANK_LOOKUP[self.switchable_bank as usize & 7] as usize;
-                self.prg_read_bank(bank, offset)
-            }
-            0xE000..=0xFFFF => self.prg_read_bank(9, offset),
+            0x5000..=0x7FFF => self.read_prg_custom(addr),
+            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
             _ => 0,
         }
     }
@@ -97,6 +111,7 @@ impl Mapper for Mapper43 {
     fn write_prg(&mut self, addr: u16, value: u8) {
         if addr & 0x71FF == 0x4022 {
             self.switchable_bank = value & 0x07;
+            self.update_banks();
         } else if addr & 0x71FF == 0x4122 {
             self.irq_counter = 0;
             self.irq_pending = false;
@@ -104,23 +119,23 @@ impl Mapper for Mapper43 {
     }
 
     fn read_chr(&mut self, addr: u16) -> u8 {
-        self.chr_memory.read(addr)
+        self.base.read_chr(addr)
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
-        self.chr_memory.write(addr, value);
+        self.base.write_chr(addr, value);
     }
 
     fn get_mirroring(&self) -> NametableLayout {
-        self.mirroring
+        self.base.mirroring()
     }
 
     fn mapper_number(&self) -> u8 {
-        Self::MAPPER_NUMBER
+        self.base.mapper_number()
     }
 
     fn wram_size(&self) -> usize {
-        0
+        self.base.wram_size()
     }
 
     fn cpu_cycle(&mut self) {
@@ -136,15 +151,15 @@ impl Mapper for Mapper43 {
     }
 
     fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_memory.snapshot()
+        self.base.chr_ram_snapshot()
     }
 
     fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.chr_memory.load_snapshot(data);
+        self.base.restore_chr_ram(data);
     }
 
     fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        self.chr_memory.initialize(mode);
+        self.base.initialize_ram(mode);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -161,16 +176,12 @@ impl Mapper for Mapper43 {
             self.switchable_bank = data[0];
             self.irq_counter = (data[1] as u16) | ((data[2] as u16) << 8);
             self.irq_pending = data[3] != 0;
+            self.update_banks();
         }
     }
 
     fn capabilities(&self) -> MapperCapabilities {
-        MapperCapabilities {
-            has_irq: true,
-            prg_bank_size_kb: 8,
-            chr_bank_size_kb: 8,
-            ..MapperCapabilities::default()
-        }
+        self.base.capabilities()
     }
 }
 

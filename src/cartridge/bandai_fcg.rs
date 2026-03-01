@@ -26,8 +26,8 @@
 //! - Games requiring EEPROM cannot save progress
 use crate::trace_mapper;
 
+use crate::cartridge::BaseMapper;
 use crate::cartridge::NametableLayout;
-use crate::cartridge::common::{BankedRom, ChrMemory};
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// Submapper variants for Bandai FCG
@@ -43,9 +43,7 @@ pub enum BandaiFcgVariant {
 }
 
 pub struct BandaiFcgMapper {
-    prg_rom: BankedRom,
-    chr_memory: ChrMemory,
-    mirroring: NametableLayout,
+    base: BaseMapper,
     variant: BandaiFcgVariant,
 
     // PRG banking
@@ -62,27 +60,24 @@ pub struct BandaiFcgMapper {
 }
 
 impl BandaiFcgMapper {
-    const PRG_BANK_SIZE: usize = 16 * 1024; // 16KB
-    const CHR_BANK_SIZE: usize = 1024; // 1KB
-
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
-        let prg_rom = ctx.prg_rom;
-        let chr_rom = ctx.chr_rom;
-        let mirroring = ctx.mirroring;
-        // Default to Both variant for submapper 0 (unspecified) compatibility
-        Self::new_with_variant(prg_rom, chr_rom, mirroring, BandaiFcgVariant::Both)
+        Self::new_with_variant(ctx, BandaiFcgVariant::Both)
     }
 
-    pub fn new_with_variant(
-        prg_rom: Vec<u8>,
-        chr_rom: Vec<u8>,
-        mirroring: NametableLayout,
-        variant: BandaiFcgVariant,
-    ) -> Self {
-        Self {
-            prg_rom: BankedRom::new(prg_rom, Self::PRG_BANK_SIZE),
-            chr_memory: ChrMemory::new(chr_rom),
-            mirroring,
+    pub fn new_with_variant(ctx: super::mapper::MapperContext, variant: BandaiFcgVariant) -> Self {
+        let capabilities = MapperCapabilities {
+            has_irq: true,
+            has_chr_banking: true,
+            has_dynamic_mirroring: true,
+            prg_bank_size_kb: 16,
+            chr_bank_size_kb: 1,
+            ..Default::default()
+        };
+        let mut base = BaseMapper::new(&ctx, capabilities);
+        base.configure_prg_banking(0x4000);
+        base.configure_chr_banking(0x0400);
+        let mut mapper = Self {
+            base,
             variant,
             prg_bank: 0,
             chr_banks: [0; 8],
@@ -90,56 +85,24 @@ impl BandaiFcgMapper {
             irq_counter: 0,
             irq_latch: 0,
             irq_pending: false,
+        };
+        mapper.update_banks();
+        mapper
+    }
+
+    fn update_banks(&mut self) {
+        self.base.select_prg_page(0, self.prg_bank as i16);
+        self.base.select_prg_page(1, -1); // fixed last
+        for i in 0..8 {
+            self.base.select_chr_page(i, self.chr_banks[i] as i16);
         }
-    }
-
-    fn prg_bank_count(&self) -> usize {
-        self.prg_rom.num_banks()
-    }
-
-    fn last_prg_bank(&self) -> usize {
-        let count = self.prg_bank_count();
-        if count == 0 { 0 } else { count - 1 }
-    }
-
-    fn chr_bank_count(&self) -> usize {
-        self.chr_memory.size() / Self::CHR_BANK_SIZE
-    }
-
-    fn read_chr_byte(&self, bank: u8, offset: usize) -> u8 {
-        let bank_count = self.chr_bank_count();
-        if bank_count == 0 {
-            return 0;
-        }
-        let bank_index = (bank as usize) % bank_count;
-        let addr = bank_index * Self::CHR_BANK_SIZE + offset;
-        self.chr_memory.read_at_index(addr)
-    }
-
-    fn write_chr_byte(&mut self, bank: u8, offset: usize, value: u8) {
-        let bank_count = self.chr_bank_count();
-        if bank_count == 0 {
-            return;
-        }
-        let bank_index = (bank as usize) % bank_count;
-        let addr = bank_index * Self::CHR_BANK_SIZE + offset;
-        self.chr_memory.write_at_index(addr, value);
     }
 }
 
 impl Mapper for BandaiFcgMapper {
     fn read_prg(&self, addr: u16) -> u8 {
         match addr {
-            0x8000..=0xBFFF => {
-                // Switchable 16KB bank
-                self.prg_rom
-                    .read_with_base(self.prg_bank as usize, 0x8000, addr)
-            }
-            0xC000..=0xFFFF => {
-                // Fixed last 16KB bank
-                let bank_index = self.last_prg_bank();
-                self.prg_rom.read_with_base(bank_index, 0xC000, addr)
-            }
+            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
             _ => 0,
         }
     }
@@ -178,13 +141,13 @@ impl Mapper for BandaiFcgMapper {
             }
             0x09 => {
                 // Mirroring
-                self.mirroring = match value & 0x03 {
+                self.base.set_mirroring(match value & 0x03 {
                     0 => NametableLayout::Vertical,
                     1 => NametableLayout::Horizontal,
                     2 => NametableLayout::SingleScreenLower,
                     3 => NametableLayout::SingleScreenUpper,
                     _ => unreachable!(),
-                };
+                });
             }
             0x0A => {
                 // IRQ control
@@ -227,20 +190,15 @@ impl Mapper for BandaiFcgMapper {
             }
             _ => {}
         }
+        self.update_banks();
     }
 
     fn read_chr(&mut self, addr: u16) -> u8 {
-        let slot = (addr >> 10) as usize; // Which 1KB slot (0-7)
-        let offset = (addr & 0x03FF) as usize; // Offset within 1KB
-        let bank = self.chr_banks[slot];
-        self.read_chr_byte(bank, offset)
+        self.base.read_chr_banked(addr)
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
-        let slot = (addr >> 10) as usize;
-        let offset = (addr & 0x03FF) as usize;
-        let bank = self.chr_banks[slot];
-        self.write_chr_byte(bank, offset, value);
+        self.base.write_chr_banked(addr, value);
     }
 
     fn cpu_cycle(&mut self) {
@@ -259,11 +217,11 @@ impl Mapper for BandaiFcgMapper {
     }
 
     fn get_mirroring(&self) -> NametableLayout {
-        self.mirroring
+        self.base.mirroring()
     }
 
     fn mapper_number(&self) -> u8 {
-        16
+        self.base.mapper_number()
     }
 
     fn wram_size(&self) -> usize {
@@ -282,11 +240,15 @@ impl Mapper for BandaiFcgMapper {
     }
 
     fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_memory.snapshot()
+        self.base.chr_ram_snapshot()
     }
 
     fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.chr_memory.load_snapshot(data);
+        self.base.restore_chr_ram(data);
+    }
+
+    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+        self.base.initialize_ram(mode);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -306,7 +268,7 @@ impl Mapper for BandaiFcgMapper {
         snapshot.push((self.irq_counter >> 8) as u8);
         snapshot.push((self.irq_latch & 0xFF) as u8);
         snapshot.push((self.irq_latch >> 8) as u8);
-        let mirroring = match self.mirroring {
+        let mirroring = match self.base.mirroring() {
             NametableLayout::Horizontal => 0,
             NametableLayout::Vertical => 1,
             NametableLayout::SingleScreenLower => 2,
@@ -327,29 +289,20 @@ impl Mapper for BandaiFcgMapper {
             self.irq_pending = (flags & 2) != 0;
             self.irq_counter = (data[10] as u16) | ((data[11] as u16) << 8);
             self.irq_latch = (data[12] as u16) | ((data[13] as u16) << 8);
-            self.mirroring = match data[14] {
+            self.base.set_mirroring(match data[14] {
                 0 => NametableLayout::Horizontal,
                 1 => NametableLayout::Vertical,
                 2 => NametableLayout::SingleScreenLower,
                 3 => NametableLayout::SingleScreenUpper,
                 4 => NametableLayout::FourScreen,
                 _ => NametableLayout::Horizontal,
-            };
+            });
+            self.update_banks();
         }
     }
 
     fn capabilities(&self) -> MapperCapabilities {
-        MapperCapabilities {
-            has_irq: true,
-            has_chr_banking: true,
-            has_dynamic_mirroring: true,
-            has_expansion_audio: false,
-            max_prg_ram_kb: 0,
-            prg_bank_size_kb: 16,
-            chr_bank_size_kb: 1,
-            trainer_jsr: false,
-            ..Default::default()
-        }
+        self.base.capabilities()
     }
 }
 
@@ -541,9 +494,7 @@ mod tests {
         let chr_rom = banked_data(1024, 16);
 
         let mut mapper = BandaiFcgMapper::new_with_variant(
-            prg_rom,
-            chr_rom,
-            NametableLayout::Horizontal,
+            MapperContext::new_for_test(16, prg_rom, chr_rom, NametableLayout::Horizontal),
             BandaiFcgVariant::Fcg1_2,
         );
 
@@ -574,9 +525,7 @@ mod tests {
         let chr_rom = banked_data(1024, 16);
 
         let mut mapper = BandaiFcgMapper::new_with_variant(
-            prg_rom,
-            chr_rom,
-            NametableLayout::Horizontal,
+            MapperContext::new_for_test(16, prg_rom, chr_rom, NametableLayout::Horizontal),
             BandaiFcgVariant::Fcg1_2,
         );
 
@@ -595,9 +544,7 @@ mod tests {
         let chr_rom = banked_data(1024, 8);
 
         let mut mapper = BandaiFcgMapper::new_with_variant(
-            prg_rom,
-            chr_rom,
-            NametableLayout::Horizontal,
+            MapperContext::new_for_test(16, prg_rom, chr_rom, NametableLayout::Horizontal),
             BandaiFcgVariant::Fcg1_2,
         );
 
@@ -628,9 +575,7 @@ mod tests {
         let chr_rom = banked_data(1024, 16);
 
         let mut mapper = BandaiFcgMapper::new_with_variant(
-            prg_rom,
-            chr_rom,
-            NametableLayout::Horizontal,
+            MapperContext::new_for_test(16, prg_rom, chr_rom, NametableLayout::Horizontal),
             BandaiFcgVariant::Lz93d50,
         );
 
