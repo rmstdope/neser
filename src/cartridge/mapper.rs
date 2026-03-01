@@ -237,14 +237,14 @@ pub trait Mapper {
     ///
     /// [`BaseMapper`]: crate::cartridge::common::BaseMapper
     /// [`base_mut`]: Mapper::base_mut
-    fn base(&self) -> Option<&super::common::BaseMapper> {
+    fn base(&self) -> Option<&super::base_mapper::BaseMapper> {
         None
     }
 
     /// Return a mutable reference to the embedded [`BaseMapper`], if present.
     ///
     /// See [`base`](Mapper::base) for details.
-    fn base_mut(&mut self) -> Option<&mut super::common::BaseMapper> {
+    fn base_mut(&mut self) -> Option<&mut super::base_mapper::BaseMapper> {
         None
     }
 
