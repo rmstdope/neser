@@ -8,7 +8,7 @@
 //! - No known gameplay-blocking functional limitations are currently documented.
 
 use crate::cartridge::NametableLayout;
-use crate::cartridge::common::ChrMemory;
+use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// Mapper 053 - Supervision 16-in-1
@@ -42,46 +42,39 @@ use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 ///
 /// CHR: Fixed 8KB bank 0 (CHR-RAM).
 pub struct Mapper53 {
-    prg_rom: Vec<u8>,
-    chr_memory: ChrMemory,
+    base: BaseMapper,
     cmd0: u8,
     cmd1: u8,
 }
 
 impl Mapper53 {
-    const MAPPER_NUMBER: u8 = 53;
     const PRG_8K_SIZE: usize = 0x2000;
     const PRG_8K_MASK: usize = Self::PRG_8K_SIZE - 1;
-    const PRG_16K_SIZE: usize = 0x4000;
-    const PRG_16K_MASK: usize = Self::PRG_16K_SIZE - 1;
-    const PRG_32K_SIZE: usize = 0x8000;
-    const PRG_32K_MASK: usize = Self::PRG_32K_SIZE - 1;
 
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
-        let prg_rom = ctx.prg_rom;
-        let chr_rom = ctx.chr_rom;
-        Self {
-            prg_rom,
-            chr_memory: ChrMemory::new_ram(if chr_rom.is_empty() {
-                8192
-            } else {
-                chr_rom.len()
-            }),
+        let capabilities = MapperCapabilities {
+            has_dynamic_mirroring: true,
+            prg_bank_size_kb: 16,
+            chr_bank_size_kb: 8,
+            max_prg_ram_kb: 0,
+            ..Default::default()
+        };
+        let mut base = BaseMapper::new(&ctx, capabilities);
+        base.configure_prg_banking(16 * 1024);
+        // Default: menu mode → 32KB bank 0 = 16KB banks 0 and 1
+        base.select_prg_page(0, 0);
+        base.select_prg_page(1, 1);
+        let mut mapper = Self {
+            base,
             cmd0: 0,
             cmd1: 0,
-        }
+        };
+        mapper.update_banks();
+        mapper
     }
 
     fn num_prg_8k_banks(&self) -> usize {
-        self.prg_rom.len() / Self::PRG_8K_SIZE
-    }
-
-    fn num_prg_16k_banks(&self) -> usize {
-        self.prg_rom.len() / Self::PRG_16K_SIZE
-    }
-
-    fn num_prg_32k_banks(&self) -> usize {
-        self.prg_rom.len() / Self::PRG_32K_SIZE
+        self.base.prg_rom().len() / Self::PRG_8K_SIZE
     }
 
     fn read_prg_8k_bank(&self, bank: usize, offset: usize) -> u8 {
@@ -90,32 +83,9 @@ impl Mapper53 {
             return 0;
         }
         let safe_bank = bank % count;
-        self.prg_rom
+        self.base
+            .prg_rom()
             .get(safe_bank * Self::PRG_8K_SIZE + offset)
-            .copied()
-            .unwrap_or(0)
-    }
-
-    fn read_prg_16k_bank(&self, bank: usize, offset: usize) -> u8 {
-        let count = self.num_prg_16k_banks();
-        if count == 0 {
-            return 0;
-        }
-        let safe_bank = bank % count;
-        self.prg_rom
-            .get(safe_bank * Self::PRG_16K_SIZE + offset)
-            .copied()
-            .unwrap_or(0)
-    }
-
-    fn read_prg_32k_bank(&self, bank: usize, offset: usize) -> u8 {
-        let count = self.num_prg_32k_banks();
-        if count == 0 {
-            return 0;
-        }
-        let safe_bank = bank % count;
-        self.prg_rom
-            .get(safe_bank * Self::PRG_32K_SIZE + offset)
             .copied()
             .unwrap_or(0)
     }
@@ -128,34 +98,44 @@ impl Mapper53 {
     fn game_selected(&self) -> bool {
         (self.cmd0 & 0x10) != 0
     }
+
+    fn update_banks(&mut self) {
+        if self.game_selected() {
+            let outer = (self.cmd0 & 0x0F) as usize;
+            let switchable = ((outer << 3) | (self.cmd1 & 7) as usize).wrapping_add(2) as i16;
+            let fixed = ((outer << 3) | 7).wrapping_add(2) as i16;
+            self.base.select_prg_page(0, switchable);
+            self.base.select_prg_page(1, fixed);
+        } else {
+            // Menu: 32KB bank 0 = 16KB banks 0 and 1
+            self.base.select_prg_page(0, 0);
+            self.base.select_prg_page(1, 1);
+        }
+        let mirroring = if (self.cmd0 & 0x20) != 0 {
+            NametableLayout::Horizontal
+        } else {
+            NametableLayout::Vertical
+        };
+        self.base.set_mirroring(mirroring);
+    }
 }
 
 impl Mapper for Mapper53 {
+    fn base(&self) -> Option<&BaseMapper> {
+        Some(&self.base)
+    }
+
+    fn base_mut(&mut self) -> Option<&mut BaseMapper> {
+        Some(&mut self.base)
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
         match addr {
             0x6000..=0x7FFF => {
                 let offset = (addr as usize) & Self::PRG_8K_MASK;
                 self.read_prg_8k_bank(self.prg_6000_bank(), offset)
             }
-            0x8000..=0xFFFF => {
-                if self.game_selected() {
-                    // Game running: $8000-$BFFF = selectable, $C000-$FFFF = fixed last in block
-                    let outer = (self.cmd0 & 0x0F) as usize;
-                    if addr < 0xC000 {
-                        let bank = (outer << 3 | (self.cmd1 & 7) as usize).wrapping_add(2);
-                        let offset = (addr as usize) & Self::PRG_16K_MASK;
-                        self.read_prg_16k_bank(bank, offset)
-                    } else {
-                        let bank = (outer << 3 | 7).wrapping_add(2);
-                        let offset = (addr as usize) & Self::PRG_16K_MASK;
-                        self.read_prg_16k_bank(bank, offset)
-                    }
-                } else {
-                    // Menu: 32KB bank 0
-                    let offset = (addr as usize) & Self::PRG_32K_MASK;
-                    self.read_prg_32k_bank(0, offset)
-                }
-            }
+            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
             _ => 0,
         }
     }
@@ -166,49 +146,15 @@ impl Mapper for Mapper53 {
                 // Only writable when bit 4 is NOT set (menu mode, not game running)
                 if !self.game_selected() {
                     self.cmd0 = value;
+                    self.update_banks();
                 }
             }
             0x8000..=0xFFFF => {
                 self.cmd1 = value;
+                self.update_banks();
             }
             _ => {}
         }
-    }
-
-    fn read_chr(&mut self, addr: u16) -> u8 {
-        self.chr_memory.read(addr)
-    }
-
-    fn write_chr(&mut self, addr: u16, value: u8) {
-        self.chr_memory.write(addr, value);
-    }
-
-    fn get_mirroring(&self) -> NametableLayout {
-        if (self.cmd0 & 0x20) != 0 {
-            NametableLayout::Horizontal
-        } else {
-            NametableLayout::Vertical
-        }
-    }
-
-    fn mapper_number(&self) -> u8 {
-        Self::MAPPER_NUMBER
-    }
-
-    fn wram_size(&self) -> usize {
-        0
-    }
-
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_memory.snapshot()
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.chr_memory.load_snapshot(data);
-    }
-
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        self.chr_memory.initialize(mode);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -219,21 +165,14 @@ impl Mapper for Mapper53 {
         if data.len() >= 2 {
             self.cmd0 = data[0];
             self.cmd1 = data[1];
+            self.update_banks();
         }
     }
 
     fn reset(&mut self) {
         self.cmd0 = 0;
         self.cmd1 = 0;
-    }
-
-    fn capabilities(&self) -> MapperCapabilities {
-        MapperCapabilities {
-            has_dynamic_mirroring: true,
-            prg_bank_size_kb: 16,
-            chr_bank_size_kb: 8,
-            ..Default::default()
-        }
+        self.update_banks();
     }
 }
 

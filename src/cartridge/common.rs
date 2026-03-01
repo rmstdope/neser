@@ -548,6 +548,7 @@ impl BankSwitch {
     ///
     /// # Returns
     /// The offset into ROM data for the current bank
+    #[cfg(test)]
     pub fn offset(&self, bank_size: usize) -> usize {
         self.current() * bank_size
     }

@@ -5,14 +5,10 @@
 //! - Edge-case behavior may still differ from hardware in untested timing and board-variant scenarios.
 //! - See CARTRIDGE_REVIEW.md sections 5 and 6 for remaining mapper test/documentation follow-up.
 
+use crate::cartridge::BaseMapper;
 use crate::cartridge::Mapper;
 use crate::cartridge::MapperCapabilities;
 use crate::cartridge::NametableLayout;
-use crate::cartridge::common::{BankedRom, DEFAULT_PRG_RAM_SIZE, PrgRam};
-
-// Memory size constants
-const PRG_BANK_SIZE: usize = 0x4000; // 16KB
-const CHR_BANK_SIZE: usize = 0x2000; // 8KB
 
 /// Mapper 78 - Irem Holy Diver / Jaleco JF-16
 ///
@@ -40,9 +36,7 @@ const CHR_BANK_SIZE: usize = 0x2000; // 8KB
 /// - Games: Holy Diver (Irem), Uchuusen: Cosmo Carrier (Irem)
 /// - Also used by Tengen: Pac-Man, RBI Baseball, Tetris (unlicensed)
 pub struct NinaTengenMapper {
-    prg_rom: BankedRom,
-    prg_ram: PrgRam,
-    chr_rom: BankedRom,
+    base: BaseMapper,
     prg_bank_select: u8,
     chr_bank_select: u8,
     mirroring: NametableLayout,
@@ -50,52 +44,57 @@ pub struct NinaTengenMapper {
 
 impl NinaTengenMapper {
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
-        let prg_rom = ctx.prg_rom;
-        let chr_rom = ctx.chr_rom;
         let mirroring = ctx.mirroring;
-        Self {
-            prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE),
-            prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
-            chr_rom: BankedRom::new(chr_rom, CHR_BANK_SIZE),
+        let capabilities = MapperCapabilities {
+            has_irq: false,
+            has_chr_banking: true,
+            has_dynamic_mirroring: true,
+            has_expansion_audio: false,
+            max_prg_ram_kb: 8,
+            prg_bank_size_kb: 16,
+            chr_bank_size_kb: 8,
+            trainer_jsr: false,
+            ..Default::default()
+        };
+        let mut base = BaseMapper::new(&ctx, capabilities);
+        base.configure_prg_banking(0x4000); // 16KB
+        base.configure_chr_banking(0x2000); // 8KB
+        let mut mapper = Self {
+            base,
             prg_bank_select: 0,
             chr_bank_select: 0,
             mirroring,
-        }
+        };
+        mapper.update_banks();
+        mapper
     }
 
-    fn get_last_prg_bank(&self) -> usize {
-        // Get the last bank number (num_banks - 1)
-        let num_banks = self.prg_rom.num_banks();
-        if num_banks == 0 { 0 } else { num_banks - 1 }
+    fn update_banks(&mut self) {
+        self.base.select_prg_page(0, self.prg_bank_select as i16);
+        self.base.select_prg_page(1, -1); // Fixed last bank
+        self.base.select_chr_page(0, self.chr_bank_select as i16);
+        self.base.set_mirroring(self.mirroring);
     }
 }
 
 impl Mapper for NinaTengenMapper {
+    fn base(&self) -> Option<&BaseMapper> {
+        Some(&self.base)
+    }
+
+    fn base_mut(&mut self) -> Option<&mut BaseMapper> {
+        Some(&mut self.base)
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
-        // PRG-RAM at $6000-$7FFF
-        if let Some(value) = self.prg_ram.try_read(addr) {
+        if let Some(value) = self.base.try_read_prg_ram(addr) {
             return value;
         }
-
-        // PRG ROM at $8000-$FFFF
-        match addr {
-            0x8000..=0xBFFF => {
-                // Switchable 16KB bank
-                self.prg_rom
-                    .read_with_base(self.prg_bank_select as usize, 0x8000, addr)
-            }
-            0xC000..=0xFFFF => {
-                // Fixed to last 16KB bank
-                let last_bank = self.get_last_prg_bank();
-                self.prg_rom.read_with_base(last_bank, 0xC000, addr)
-            }
-            _ => 0,
-        }
+        self.base.read_prg_banked(addr)
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
-        // PRG-RAM at $6000-$7FFF
-        if self.prg_ram.try_write(addr, value) {
+        if self.base.try_write_prg_ram(addr, value) {
             return;
         }
 
@@ -113,36 +112,17 @@ impl Mapper for NinaTengenMapper {
 
             // Bits 4-7: CHR bank select
             self.chr_bank_select = (value >> 4) & 0x0F;
+
+            self.update_banks();
         }
     }
 
     fn read_chr(&mut self, addr: u16) -> u8 {
-        self.chr_rom
-            .read_with_base(self.chr_bank_select as usize, 0x0000, addr)
+        self.base.read_chr_banked(addr)
     }
 
     fn write_chr(&mut self, _addr: u16, _value: u8) {
         // Mapper 78 uses CHR-ROM, writes are ignored
-    }
-
-    fn get_mirroring(&self) -> NametableLayout {
-        self.mirroring
-    }
-
-    fn mapper_number(&self) -> u8 {
-        78
-    }
-
-    fn wram_size(&self) -> usize {
-        self.prg_ram.size()
-    }
-
-    fn wram_snapshot(&self) -> Vec<u8> {
-        self.prg_ram.snapshot()
-    }
-
-    fn load_wram_snapshot(&mut self, data: &[u8]) {
-        self.prg_ram.load_snapshot(data);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -168,20 +148,7 @@ impl Mapper for NinaTengenMapper {
                 4 => NametableLayout::FourScreen,
                 _ => NametableLayout::Horizontal,
             };
-        }
-    }
-
-    fn capabilities(&self) -> MapperCapabilities {
-        MapperCapabilities {
-            has_irq: false,
-            has_chr_banking: true,
-            has_dynamic_mirroring: true,
-            has_expansion_audio: false,
-            max_prg_ram_kb: 8,
-            prg_bank_size_kb: 16,
-            chr_bank_size_kb: 8,
-            trainer_jsr: false,
-            ..Default::default()
+            self.update_banks();
         }
     }
 }

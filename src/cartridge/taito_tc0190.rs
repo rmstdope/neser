@@ -5,7 +5,7 @@
 //! - Edge-case behavior may still differ from hardware in untested timing and board-variant scenarios.
 //! - See CARTRIDGE_REVIEW.md sections 5 and 6 for remaining mapper test/documentation follow-up.
 
-use crate::cartridge::common::ChrMemory;
+use crate::cartridge::BaseMapper;
 use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
 /// Mapper 033 – Taito TC0190
@@ -44,144 +44,88 @@ use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 /// - `$A002` [CCCC CCCC]: CHR bank 4 (1KB @ $1800)
 /// - `$A003` [CCCC CCCC]: CHR bank 5 (1KB @ $1C00)
 pub struct TaitoTc0190Mapper {
-    prg_rom: Vec<u8>,
-    chr_memory: ChrMemory,
-    prg_ram: Vec<u8>,
-
+    base: BaseMapper,
     mirroring: NametableLayout,
-
     prg_bank: [u8; 2],
     chr_bank_2k: [u8; 2],
     chr_bank_1k: [u8; 4],
 }
 
 impl TaitoTc0190Mapper {
-    const PRG_BANK_SIZE: usize = 0x2000; // 8KB
-    const CHR_BANK_2K_SIZE: usize = 0x0800; // 2KB
-    const CHR_BANK_1K_SIZE: usize = 0x0400; // 1KB
-    const PRG_RAM_SIZE: usize = 0x2000; // 8KB
     const REGISTER_MASK: u16 = 0xA003; // bits 13, 1, 0 select the active register
 
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
-        let prg_rom = ctx.prg_rom;
-        let chr_rom = ctx.chr_rom;
         let mirroring = ctx.mirroring;
-        Self {
-            prg_rom,
-            chr_memory: ChrMemory::new(chr_rom),
-            prg_ram: vec![0; Self::PRG_RAM_SIZE],
+        let capabilities = MapperCapabilities {
+            has_irq: false,
+            has_chr_banking: true,
+            has_dynamic_mirroring: true,
+            has_expansion_audio: false,
+            max_prg_ram_kb: 8,
+            prg_bank_size_kb: 8,
+            chr_bank_size_kb: 1,
+            trainer_jsr: false,
+            ..Default::default()
+        };
+        let mut base = BaseMapper::new(&ctx, capabilities);
+        base.configure_prg_banking(0x2000); // 8KB
+        base.configure_chr_banking(0x0400); // 1KB
+        let mut mapper = Self {
+            base,
             mirroring,
             prg_bank: [0; 2],
             chr_bank_2k: [0; 2],
             chr_bank_1k: [0; 4],
-        }
-    }
-
-    fn prg_bank_count(&self) -> usize {
-        self.prg_rom.len() / Self::PRG_BANK_SIZE
-    }
-
-    fn prg_bank_index(&self, bank: u8) -> usize {
-        Self::bank_index(bank, self.prg_bank_count())
-    }
-
-    fn read_prg_rom_bank(&self, bank_index: usize, offset: usize) -> u8 {
-        let addr = bank_index * Self::PRG_BANK_SIZE + offset;
-        self.prg_rom.get(addr).copied().unwrap_or(0)
-    }
-
-    fn chr_bank_count_2k(&self) -> usize {
-        self.chr_memory.size() / Self::CHR_BANK_2K_SIZE
-    }
-
-    fn chr_bank_count_1k(&self) -> usize {
-        self.chr_memory.size() / Self::CHR_BANK_1K_SIZE
-    }
-
-    fn chr_bank_index_2k(&self, bank: u8) -> usize {
-        Self::bank_index(bank, self.chr_bank_count_2k())
-    }
-
-    fn chr_bank_index_1k(&self, bank: u8) -> usize {
-        Self::bank_index(bank, self.chr_bank_count_1k())
-    }
-
-    /// Returns `bank % count`, or 0 when no banks are present.
-    fn bank_index(bank: u8, count: usize) -> usize {
-        if count == 0 {
-            return 0;
-        }
-        (bank as usize) % count
-    }
-
-    fn map_chr_to_byte_index(&self, addr: u16) -> usize {
-        let addr = (addr & 0x1FFF) as usize;
-        let (bank_index, bank_size) = match addr {
-            0x0000..=0x07FF => (
-                self.chr_bank_index_2k(self.chr_bank_2k[0]),
-                Self::CHR_BANK_2K_SIZE,
-            ),
-            0x0800..=0x0FFF => (
-                self.chr_bank_index_2k(self.chr_bank_2k[1]),
-                Self::CHR_BANK_2K_SIZE,
-            ),
-            0x1000..=0x13FF => (
-                self.chr_bank_index_1k(self.chr_bank_1k[0]),
-                Self::CHR_BANK_1K_SIZE,
-            ),
-            0x1400..=0x17FF => (
-                self.chr_bank_index_1k(self.chr_bank_1k[1]),
-                Self::CHR_BANK_1K_SIZE,
-            ),
-            0x1800..=0x1BFF => (
-                self.chr_bank_index_1k(self.chr_bank_1k[2]),
-                Self::CHR_BANK_1K_SIZE,
-            ),
-            0x1C00..=0x1FFF => (
-                self.chr_bank_index_1k(self.chr_bank_1k[3]),
-                Self::CHR_BANK_1K_SIZE,
-            ),
-            _ => return 0,
         };
-        bank_index * bank_size + (addr & (bank_size - 1))
+        mapper.update_banks();
+        mapper
+    }
+
+    fn update_banks(&mut self) {
+        // PRG: slots 0-1 switchable, slots 2-3 fixed second-last and last
+        self.base.select_prg_page(0, self.prg_bank[0] as i16);
+        self.base.select_prg_page(1, self.prg_bank[1] as i16);
+        self.base.select_prg_page(2, -2); // second-last
+        self.base.select_prg_page(3, -1); // last
+
+        // CHR (1KB slots): 2KB banks expand to 2 consecutive 1KB slots
+        let b2k0 = self.chr_bank_2k[0] as i16 * 2;
+        let b2k1 = self.chr_bank_2k[1] as i16 * 2;
+        self.base.select_chr_page(0, b2k0);
+        self.base.select_chr_page(1, b2k0 + 1);
+        self.base.select_chr_page(2, b2k1);
+        self.base.select_chr_page(3, b2k1 + 1);
+        self.base.select_chr_page(4, self.chr_bank_1k[0] as i16);
+        self.base.select_chr_page(5, self.chr_bank_1k[1] as i16);
+        self.base.select_chr_page(6, self.chr_bank_1k[2] as i16);
+        self.base.select_chr_page(7, self.chr_bank_1k[3] as i16);
+
+        self.base.set_mirroring(self.mirroring);
     }
 }
 
 impl Mapper for TaitoTc0190Mapper {
+    fn base(&self) -> Option<&BaseMapper> {
+        Some(&self.base)
+    }
+
+    fn base_mut(&mut self) -> Option<&mut BaseMapper> {
+        Some(&mut self.base)
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
-        match addr {
-            0x6000..=0x7FFF => {
-                let offset = (addr - 0x6000) as usize;
-                self.prg_ram.get(offset).copied().unwrap_or(0)
-            }
-            0x8000..=0xFFFF => {
-                let count = self.prg_bank_count();
-                if count == 0 {
-                    return 0;
-                }
-                let bank_offset = (addr as usize) & (Self::PRG_BANK_SIZE - 1);
-                let bank_index = match addr {
-                    0x8000..=0x9FFF => self.prg_bank_index(self.prg_bank[0]),
-                    0xA000..=0xBFFF => self.prg_bank_index(self.prg_bank[1]),
-                    0xC000..=0xDFFF => count.saturating_sub(2),
-                    0xE000..=0xFFFF => count.saturating_sub(1),
-                    _ => 0,
-                };
-                self.read_prg_rom_bank(bank_index, bank_offset)
-            }
-            _ => 0,
+        if let Some(value) = self.base.try_read_prg_ram(addr) {
+            return value;
         }
+        self.base.read_prg_banked(addr)
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
-        match addr {
-            0x6000..=0x7FFF => {
-                let offset = (addr - 0x6000) as usize;
-                if let Some(byte) = self.prg_ram.get_mut(offset) {
-                    *byte = value;
-                }
-            }
-            0x8000..=0xBFFF => match addr & Self::REGISTER_MASK {
+        if self.base.try_write_prg_ram(addr, value) {
+            return;
+        }
+        if (0x8000..=0xBFFF).contains(&addr) {
+            match addr & Self::REGISTER_MASK {
                 0x8000 => {
                     self.prg_bank[0] = value & 0x3F;
                     self.mirroring = if (value & 0x40) != 0 {
@@ -189,62 +133,47 @@ impl Mapper for TaitoTc0190Mapper {
                     } else {
                         NametableLayout::Vertical
                     };
+                    self.update_banks();
                 }
-                0x8001 => self.prg_bank[1] = value & 0x3F,
-                0x8002 => self.chr_bank_2k[0] = value,
-                0x8003 => self.chr_bank_2k[1] = value,
-                0xA000 => self.chr_bank_1k[0] = value,
-                0xA001 => self.chr_bank_1k[1] = value,
-                0xA002 => self.chr_bank_1k[2] = value,
-                0xA003 => self.chr_bank_1k[3] = value,
+                0x8001 => {
+                    self.prg_bank[1] = value & 0x3F;
+                    self.update_banks();
+                }
+                0x8002 => {
+                    self.chr_bank_2k[0] = value;
+                    self.update_banks();
+                }
+                0x8003 => {
+                    self.chr_bank_2k[1] = value;
+                    self.update_banks();
+                }
+                0xA000 => {
+                    self.chr_bank_1k[0] = value;
+                    self.update_banks();
+                }
+                0xA001 => {
+                    self.chr_bank_1k[1] = value;
+                    self.update_banks();
+                }
+                0xA002 => {
+                    self.chr_bank_1k[2] = value;
+                    self.update_banks();
+                }
+                0xA003 => {
+                    self.chr_bank_1k[3] = value;
+                    self.update_banks();
+                }
                 _ => {}
-            },
-            _ => {}
+            }
         }
     }
 
     fn read_chr(&mut self, addr: u16) -> u8 {
-        let byte_index = self.map_chr_to_byte_index(addr);
-        self.chr_memory.read_at_index(byte_index)
+        self.base.read_chr_banked(addr)
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
-        let byte_index = self.map_chr_to_byte_index(addr);
-        self.chr_memory.write_at_index(byte_index, value);
-    }
-
-    fn get_mirroring(&self) -> NametableLayout {
-        self.mirroring
-    }
-
-    fn mapper_number(&self) -> u8 {
-        33
-    }
-
-    fn wram_size(&self) -> usize {
-        self.prg_ram.len()
-    }
-
-    fn wram_snapshot(&self) -> Vec<u8> {
-        self.prg_ram.clone()
-    }
-
-    fn load_wram_snapshot(&mut self, data: &[u8]) {
-        let to_copy = data.len().min(self.prg_ram.len());
-        self.prg_ram[..to_copy].copy_from_slice(&data[..to_copy]);
-    }
-
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_memory.snapshot()
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.chr_memory.load_snapshot(data);
-    }
-
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        crate::console::initialize_ram(&mut self.prg_ram, mode);
-        self.chr_memory.initialize(mode);
+        self.base.write_chr_banked(addr, value);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -274,20 +203,7 @@ impl Mapper for TaitoTc0190Mapper {
             self.prg_bank.copy_from_slice(&data[1..3]);
             self.chr_bank_2k.copy_from_slice(&data[3..5]);
             self.chr_bank_1k.copy_from_slice(&data[5..9]);
-        }
-    }
-
-    fn capabilities(&self) -> MapperCapabilities {
-        MapperCapabilities {
-            has_irq: false,
-            has_chr_banking: true,
-            has_dynamic_mirroring: true,
-            has_expansion_audio: false,
-            max_prg_ram_kb: 8,
-            prg_bank_size_kb: 8,
-            chr_bank_size_kb: 1,
-            trainer_jsr: false,
-            ..Default::default()
+            self.update_banks();
         }
     }
 }
