@@ -8,10 +8,7 @@
 use crate::cartridge::Mapper;
 use crate::cartridge::MapperCapabilities;
 use crate::cartridge::NametableLayout;
-use crate::cartridge::common::{BankedRom, ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
-
-// Memory size constants
-const PRG_BANK_SIZE: usize = 0x4000; // 16KB
+use crate::cartridge::base_mapper::BaseMapper;
 
 /// Mapper 71 - Camerica / Codemasters
 ///
@@ -38,134 +35,88 @@ const PRG_BANK_SIZE: usize = 0x4000; // 16KB
 /// - Similar to UxROM but with programmable mirroring
 /// - Used in Micro Machines, Fire Hawk, Dizzy series (Codemasters games)
 pub struct CamericaMapper {
-    prg_rom: BankedRom,
-    prg_ram: PrgRam,
-    chr_memory: ChrMemory,
+    base: BaseMapper,
     bank_select: u8,
-    one_screen_upper: bool, // true = upper nametable, false = lower nametable
 }
 
 impl CamericaMapper {
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
-        let prg_rom = ctx.prg_rom;
-        // Mapper 71 uses CHR-RAM, ignores chr_rom and initial mirroring (controlled by register)
+        let capabilities = MapperCapabilities {
+            has_dynamic_mirroring: true,
+            max_prg_ram_kb: 8,
+            prg_bank_size_kb: 16,
+            chr_bank_size_kb: 8,
+            ..Default::default()
+        };
+        let mut base = BaseMapper::new(&ctx, capabilities);
+        base.configure_prg_banking(16 * 1024);
+        // Fixed last bank at slot 1 ($C000-$FFFF)
+        base.select_prg_page(1, -1);
+        // Override mirroring to one-screen lower (Camerica default)
+        base.set_mirroring(NametableLayout::SingleScreenLower);
         Self {
-            prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE),
-            prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
-            chr_memory: ChrMemory::new_ram(8192),
+            base,
             bank_select: 0,
-            one_screen_upper: false, // Default to lower nametable
         }
     }
 }
 
 impl Mapper for CamericaMapper {
+    fn base(&self) -> Option<&BaseMapper> {
+        Some(&self.base)
+    }
+
+    fn base_mut(&mut self) -> Option<&mut BaseMapper> {
+        Some(&mut self.base)
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
-        // PRG-RAM at $6000-$7FFF
-        if let Some(value) = self.prg_ram.try_read(addr) {
+        if let Some(value) = self.base.try_read_prg_ram(addr) {
             return value;
         }
-
-        // PRG ROM at $8000-$FFFF
         match addr {
-            0x8000..=0xBFFF => {
-                // Switchable 16KB bank
-                let bank = self.bank_select as usize;
-                self.prg_rom.read_with_base(bank, 0x8000, addr)
-            }
-            0xC000..=0xFFFF => {
-                // Fixed to last 16KB bank
-                let last_bank = self.prg_rom.num_banks().saturating_sub(1);
-                self.prg_rom.read_with_base(last_bank, 0xC000, addr)
-            }
+            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
             _ => 0,
         }
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
-        // PRG-RAM at $6000-$7FFF
-        if self.prg_ram.try_write(addr, value) {
+        if self.base.try_write_prg_ram(addr, value) {
             return;
         }
-
         match addr {
             0x8000..=0xBFFF => {
                 // PRG bank select (bits 0-3)
                 self.bank_select = value & 0x0F;
+                self.base.select_prg_page(0, self.bank_select as i16);
             }
             0xC000..=0xFFFF => {
                 // Mirroring control (bit 4)
-                self.one_screen_upper = (value & 0x10) != 0;
+                let upper = (value & 0x10) != 0;
+                self.base.set_mirroring(if upper {
+                    NametableLayout::SingleScreenUpper
+                } else {
+                    NametableLayout::SingleScreenLower
+                });
             }
             _ => {}
         }
     }
 
-    fn read_chr(&mut self, addr: u16) -> u8 {
-        self.chr_memory.read(addr)
-    }
-
-    fn write_chr(&mut self, addr: u16, value: u8) {
-        self.chr_memory.write(addr, value);
-    }
-
-    fn get_mirroring(&self) -> NametableLayout {
-        // Bit 4 of mirroring register determines one-screen mode
-        if self.one_screen_upper {
-            NametableLayout::SingleScreenUpper
-        } else {
-            NametableLayout::SingleScreenLower
-        }
-    }
-
-    fn mapper_number(&self) -> u8 {
-        71
-    }
-
-    fn wram_size(&self) -> usize {
-        self.prg_ram.size()
-    }
-
-    fn wram_snapshot(&self) -> Vec<u8> {
-        self.prg_ram.snapshot()
-    }
-
-    fn load_wram_snapshot(&mut self, data: &[u8]) {
-        self.prg_ram.load_snapshot(data);
-    }
-
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_memory.snapshot()
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.chr_memory.load_snapshot(data);
-    }
-
     fn registers_snapshot(&self) -> Vec<u8> {
-        // [0]: bank_select
-        // [1]: one_screen_upper
-        vec![self.bank_select, self.one_screen_upper as u8]
+        let one_screen_upper = matches!(self.base.mirroring(), NametableLayout::SingleScreenUpper);
+        vec![self.bank_select, one_screen_upper as u8]
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
         if data.len() >= 2 {
             self.bank_select = data[0];
-            self.one_screen_upper = data[1] != 0;
-        }
-    }
-
-    fn capabilities(&self) -> MapperCapabilities {
-        MapperCapabilities {
-            has_irq: false,
-            has_chr_banking: false,
-            has_dynamic_mirroring: true,
-            has_expansion_audio: false,
-            max_prg_ram_kb: 8,
-            prg_bank_size_kb: 16,
-            chr_bank_size_kb: 8,
-            trainer_jsr: false,
-            ..Default::default()
+            self.base.select_prg_page(0, self.bank_select as i16);
+            self.base.set_mirroring(if data[1] != 0 {
+                NametableLayout::SingleScreenUpper
+            } else {
+                NametableLayout::SingleScreenLower
+            });
         }
     }
 }

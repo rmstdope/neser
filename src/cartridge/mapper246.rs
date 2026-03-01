@@ -6,8 +6,7 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
-use crate::cartridge::NametableLayout;
-use crate::cartridge::common::{BankedRom, ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// Mapper 246 - Fong Shen Bang
@@ -32,150 +31,85 @@ use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 ///
 /// PRG-RAM at $6800-$7FFF (6KB usable, excluding register space)
 pub struct Mapper246 {
-    prg_rom: BankedRom,
-    prg_ram: PrgRam,
-    chr_memory: ChrMemory,
-    mirroring: NametableLayout,
+    base: BaseMapper,
     prg_banks: [u8; 4],
     chr_banks: [u8; 4],
 }
 
 impl Mapper246 {
-    const MAPPER_NUMBER: u8 = 246;
-    const PRG_BANK_SIZE: usize = 8 * 1024; // 8KB
-    const CHR_BANK_SIZE: usize = 2 * 1024; // 2KB
-
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
-        let prg_rom = ctx.prg_rom;
-        let chr_rom = ctx.chr_rom;
-        let mirroring = ctx.mirroring;
-        let num_prg_banks = prg_rom.len() / Self::PRG_BANK_SIZE;
-        // Default: last 4 banks of PRG for initial mapping
+        let capabilities = MapperCapabilities {
+            has_chr_banking: true,
+            max_prg_ram_kb: 8,
+            prg_bank_size_kb: 8,
+            chr_bank_size_kb: 2,
+            ..Default::default()
+        };
+        let num_prg_banks = ctx.prg_rom.len() / (8 * 1024);
         let last_bank = if num_prg_banks > 0 {
             (num_prg_banks - 1) as u8
         } else {
             0
         };
+        let mut base = BaseMapper::new(&ctx, capabilities);
+        base.configure_prg_banking(8 * 1024);
+        base.configure_chr_banking(2 * 1024);
+        // Initial PRG mapping: banks 0, 1, last-1, last
+        let prg_banks = [0, 1, last_bank.saturating_sub(1), last_bank];
+        for (slot, &bank) in prg_banks.iter().enumerate() {
+            base.select_prg_page(slot, bank as i16);
+        }
         Self {
-            prg_rom: BankedRom::new(prg_rom, Self::PRG_BANK_SIZE),
-            prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
-            chr_memory: ChrMemory::new(chr_rom),
-            mirroring,
-            prg_banks: [0, 1, last_bank.saturating_sub(1), last_bank],
+            base,
+            prg_banks,
             chr_banks: [0, 0, 0, 0],
-        }
-    }
-
-    fn resolve_prg_bank(&self, bank: u8) -> usize {
-        let num_banks = self.prg_rom.num_banks();
-        if num_banks == 0 {
-            0
-        } else {
-            (bank as usize) % num_banks
-        }
-    }
-
-    fn resolve_chr_bank(&self, bank: u8) -> usize {
-        let total_size = self.chr_memory.size();
-        let num_banks = total_size / Self::CHR_BANK_SIZE;
-        if num_banks == 0 {
-            0
-        } else {
-            (bank as usize) % num_banks
         }
     }
 }
 
 impl Mapper for Mapper246 {
+    fn base(&self) -> Option<&BaseMapper> {
+        Some(&self.base)
+    }
+
+    fn base_mut(&mut self) -> Option<&mut BaseMapper> {
+        Some(&mut self.base)
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
         match addr {
-            0x6000..=0x67FF => {
-                // Register space - reads return open bus (0)
-                0
-            }
-            0x6800..=0x7FFF => {
-                // PRG-RAM (offset by $800 to skip register space)
-                self.prg_ram.try_read(addr).unwrap_or(0)
-            }
-            0x8000..=0x9FFF => {
-                let bank = self.resolve_prg_bank(self.prg_banks[0]);
-                let offset = (addr - 0x8000) as usize;
-                self.prg_rom.read(bank, offset)
-            }
-            0xA000..=0xBFFF => {
-                let bank = self.resolve_prg_bank(self.prg_banks[1]);
-                let offset = (addr - 0xA000) as usize;
-                self.prg_rom.read(bank, offset)
-            }
-            0xC000..=0xDFFF => {
-                let bank = self.resolve_prg_bank(self.prg_banks[2]);
-                let offset = (addr - 0xC000) as usize;
-                self.prg_rom.read(bank, offset)
-            }
-            0xE000..=0xFFFF => {
-                let bank = self.resolve_prg_bank(self.prg_banks[3]);
-                let offset = (addr - 0xE000) as usize;
-                self.prg_rom.read(bank, offset)
-            }
+            0x6000..=0x67FF => 0, // Register space - reads return open bus
+            0x6800..=0x7FFF => self.base.try_read_prg_ram(addr).unwrap_or(0),
+            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
             _ => 0,
         }
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
         match addr {
-            0x6000 => self.prg_banks[0] = value,
-            0x6001 => self.prg_banks[1] = value,
-            0x6002 => self.prg_banks[2] = value,
-            0x6003 => self.prg_banks[3] = value,
-            0x6004 => self.chr_banks[0] = value,
-            0x6005 => self.chr_banks[1] = value,
-            0x6006 => self.chr_banks[2] = value,
-            0x6007 => self.chr_banks[3] = value,
+            0x6000..=0x6007 => {
+                let reg = (addr - 0x6000) as usize;
+                if reg < 4 {
+                    self.prg_banks[reg] = value;
+                    self.base.select_prg_page(reg, value as i16);
+                } else {
+                    self.chr_banks[reg - 4] = value;
+                    self.base.select_chr_page(reg - 4, value as i16);
+                }
+            }
             0x6800..=0x7FFF => {
-                self.prg_ram.try_write(addr, value);
+                self.base.try_write_prg_ram(addr, value);
             }
             _ => {}
         }
     }
 
     fn read_chr(&mut self, addr: u16) -> u8 {
-        let slot = ((addr >> 11) & 0x03) as usize; // 2KB slots: 0-3
-        let bank = self.resolve_chr_bank(self.chr_banks[slot]);
-        let offset = (addr & 0x07FF) as usize;
-        let index = bank * Self::CHR_BANK_SIZE + offset;
-        self.chr_memory.read_at_index(index)
+        self.base.read_chr_banked(addr)
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
-        self.chr_memory.write(addr, value);
-    }
-
-    fn get_mirroring(&self) -> NametableLayout {
-        self.mirroring
-    }
-
-    fn mapper_number(&self) -> u8 {
-        Self::MAPPER_NUMBER
-    }
-
-    fn wram_size(&self) -> usize {
-        self.prg_ram.size()
-    }
-
-    fn wram_snapshot(&self) -> Vec<u8> {
-        self.prg_ram.snapshot()
-    }
-
-    fn load_wram_snapshot(&mut self, data: &[u8]) {
-        self.prg_ram.load_snapshot(data);
-    }
-
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_memory.snapshot()
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.chr_memory.load_snapshot(data);
+        self.base.write_chr_banked(addr, value);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -188,32 +122,23 @@ impl Mapper for Mapper246 {
     fn restore_registers(&mut self, data: &[u8]) {
         if data.len() >= 4 {
             self.prg_banks.copy_from_slice(&data[0..4]);
+            for (slot, &bank) in self.prg_banks.iter().enumerate() {
+                self.base.select_prg_page(slot, bank as i16);
+            }
         }
         if data.len() >= 8 {
             self.chr_banks.copy_from_slice(&data[4..8]);
-        }
-    }
-
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        self.prg_ram.initialize(mode);
-        self.chr_memory.initialize(mode);
-    }
-
-    fn capabilities(&self) -> MapperCapabilities {
-        MapperCapabilities {
-            has_chr_banking: true,
-            max_prg_ram_kb: 8,
-            prg_bank_size_kb: 8,
-            chr_bank_size_kb: 2,
-            ..Default::default()
+            for (slot, &bank) in self.chr_banks.iter().enumerate() {
+                self.base.select_chr_page(slot, bank as i16);
+            }
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::cartridge::NametableLayout;
+    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
     use crate::cartridge::test_helpers::banked_data;
 
     fn create_mapper246(

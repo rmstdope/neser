@@ -6,8 +6,7 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
-use crate::cartridge::NametableLayout;
-use crate::cartridge::common::ChrMemory;
+use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// Mapper 046 - Rumble Station (Color Dreams multicart)
@@ -31,105 +30,74 @@ use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 ///
 /// Known games: Rumble Station 15-in-1
 pub struct Mapper46 {
-    prg_rom: Vec<u8>,
-    chr_memory: ChrMemory,
-    mirroring: NametableLayout,
+    base: BaseMapper,
     outer: u8,
     inner: u8,
 }
 
 impl Mapper46 {
-    const MAPPER_NUMBER: u8 = 46;
-    const PRG_PAGE_SIZE: usize = 0x8000; // 32 KiB
-    const CHR_BANK_SIZE: usize = 0x2000; // 8 KiB
-    const CHR_BANK_MASK: usize = Self::CHR_BANK_SIZE - 1;
-
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
-        let prg_rom = ctx.prg_rom;
-        let chr_rom = ctx.chr_rom;
-        let mirroring = ctx.mirroring;
+        let capabilities = MapperCapabilities {
+            has_chr_banking: true,
+            max_prg_ram_kb: 0,
+            prg_bank_size_kb: 32,
+            chr_bank_size_kb: 8,
+            ..Default::default()
+        };
+        let mut base = BaseMapper::new(&ctx, capabilities);
+        base.configure_prg_banking(32 * 1024);
+        base.configure_chr_banking(8 * 1024);
         Self {
-            prg_rom,
-            chr_memory: ChrMemory::new(chr_rom),
-            mirroring,
+            base,
             outer: 0,
             inner: 0,
         }
     }
 
-    fn prg_page_count(&self) -> usize {
-        let pages = self.prg_rom.len() / Self::PRG_PAGE_SIZE;
-        if pages == 0 { 1 } else { pages }
-    }
-
-    fn chr_bank_count(&self) -> usize {
-        let banks = self.chr_memory.size() / Self::CHR_BANK_SIZE;
-        if banks == 0 { 1 } else { banks }
-    }
-
-    fn prg_page(&self) -> usize {
-        let page = ((self.outer & 0x0F) as usize) << 1 | ((self.inner & 0x01) as usize);
-        page % self.prg_page_count()
-    }
-
-    fn chr_bank(&self) -> usize {
-        let bank = ((self.outer >> 4) as usize) << 3 | (((self.inner >> 4) & 0x07) as usize);
-        bank % self.chr_bank_count()
+    fn update_banks(&mut self) {
+        let prg_page = ((self.outer & 0x0F) as i16) << 1 | ((self.inner & 0x01) as i16);
+        let chr_bank = ((self.outer >> 4) as i16) << 3 | (((self.inner >> 4) & 0x07) as i16);
+        self.base.select_prg_page(0, prg_page);
+        self.base.select_chr_page(0, chr_bank);
     }
 }
 
 impl Mapper for Mapper46 {
+    fn base(&self) -> Option<&BaseMapper> {
+        Some(&self.base)
+    }
+
+    fn base_mut(&mut self) -> Option<&mut BaseMapper> {
+        Some(&mut self.base)
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
-        if !(0x8000..=0xFFFF).contains(&addr) {
-            return 0;
+        match addr {
+            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
+            _ => 0,
         }
-        let offset = (addr as usize) & (Self::PRG_PAGE_SIZE - 1);
-        let mapped = self.prg_page() * Self::PRG_PAGE_SIZE + offset;
-        self.prg_rom.get(mapped).copied().unwrap_or(0)
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
         match addr {
-            0x6000..=0x7FFF => self.outer = value,
-            0x8000..=0xFFFF => self.inner = value,
+            0x6000..=0x7FFF => {
+                self.outer = value;
+                self.update_banks();
+            }
+            0x8000..=0xFFFF => {
+                self.inner = value;
+                self.update_banks();
+            }
             _ => {}
         }
     }
 
     fn read_chr(&mut self, addr: u16) -> u8 {
-        let offset = (addr as usize) & Self::CHR_BANK_MASK;
-        let mapped = self.chr_bank() * Self::CHR_BANK_SIZE + offset;
-        self.chr_memory.read_at_index(mapped)
+        self.base.read_chr_banked(addr)
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
-        let offset = (addr as usize) & Self::CHR_BANK_MASK;
-        let mapped = self.chr_bank() * Self::CHR_BANK_SIZE + offset;
-        self.chr_memory.write_at_index(mapped, value);
-    }
-
-    fn get_mirroring(&self) -> NametableLayout {
-        self.mirroring
-    }
-
-    fn mapper_number(&self) -> u8 {
-        Self::MAPPER_NUMBER
-    }
-
-    fn wram_size(&self) -> usize {
-        0 // $6000-$7FFF is the outer bank register, not RAM
-    }
-
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_memory.snapshot()
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.chr_memory.load_snapshot(data);
-    }
-
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        self.chr_memory.initialize(mode);
+        self.base.write_chr_banked(addr, value);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -140,19 +108,7 @@ impl Mapper for Mapper46 {
         if data.len() >= 2 {
             self.outer = data[0];
             self.inner = data[1];
-        }
-    }
-
-    fn capabilities(&self) -> MapperCapabilities {
-        MapperCapabilities {
-            has_irq: false,
-            has_chr_banking: true,
-            has_dynamic_mirroring: false,
-            has_expansion_audio: false,
-            max_prg_ram_kb: 0,
-            prg_bank_size_kb: 32,
-            chr_bank_size_kb: 8,
-            ..Default::default()
+            self.update_banks();
         }
     }
 }

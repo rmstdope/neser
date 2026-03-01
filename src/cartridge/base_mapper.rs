@@ -85,7 +85,10 @@ impl BaseMapper {
     /// PRG-RAM is created only when the header explicitly specifies a non-zero size.
     /// CHR memory is ROM when `chr_rom` is non-empty, otherwise CHR-RAM is allocated.
     pub fn new(ctx: &MapperContext, capabilities: MapperCapabilities) -> Self {
-        let prg_ram = if ctx.prg_ram_size_specified && ctx.prg_ram_banks_8k > 0 {
+        let prg_ram = if capabilities.max_prg_ram_kb > 0
+            && ctx.prg_ram_size_specified
+            && ctx.prg_ram_banks_8k > 0
+        {
             Some(PrgRam::new(
                 ctx.prg_ram_banks_8k as usize * DEFAULT_PRG_RAM_SIZE,
             ))
@@ -221,6 +224,13 @@ impl BaseMapper {
     /// Restore CHR-RAM from a save-state.
     pub fn restore_chr_ram(&mut self, data: &[u8]) {
         self.chr_memory.load_snapshot(data);
+    }
+
+    /// Replace the CHR memory with a custom `ChrMemory` instance.
+    ///
+    /// Useful for mappers that need non-standard CHR-RAM sizes (e.g. CPROM with 16KB CHR-RAM).
+    pub fn set_chr_memory(&mut self, chr: ChrMemory) {
+        self.chr_memory = chr;
     }
 
     /// Re-initialize all RAM (PRG-RAM + CHR-RAM) for cartridge insertion / hard reset.
@@ -374,7 +384,11 @@ mod tests {
             NametableLayout::Horizontal,
         )
         .with_prg_ram_banks(prg_ram_banks);
-        BaseMapper::new(&ctx, MapperCapabilities::default())
+        let capabilities = MapperCapabilities {
+            max_prg_ram_kb: if prg_ram_banks > 0 { 8 } else { 0 },
+            ..MapperCapabilities::default()
+        };
+        BaseMapper::new(&ctx, capabilities)
     }
 
     #[test]

@@ -7,7 +7,7 @@
 //! - No known gameplay-blocking functional limitations are currently documented.
 
 use crate::cartridge::NametableLayout;
-use crate::cartridge::common::{BankSwitch, BankedRom, ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// Mapper 242 - 43272 (address-latch PRG switch)
@@ -24,133 +24,79 @@ use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 /// - Address bits A[3:1] select 32KB PRG bank
 /// - Address bit A[0] selects mirroring: 0=Vertical, 1=Horizontal
 pub struct Mapper242 {
-    prg_rom: BankedRom,
-    prg_ram: PrgRam,
-    chr_memory: ChrMemory,
-    mirroring: NametableLayout,
-    prg_bank: BankSwitch,
+    base: BaseMapper,
 }
 
 impl Mapper242 {
-    const MAPPER_NUMBER: u8 = 242;
-    const PRG_BANK_SIZE: usize = 32 * 1024;
-
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
-        let prg_rom = ctx.prg_rom;
-        let chr_rom = ctx.chr_rom;
-        let mirroring = ctx.mirroring;
-        let prg_bank = BankSwitch::from_rom(&prg_rom, Self::PRG_BANK_SIZE);
-        Self {
-            prg_rom: BankedRom::new(prg_rom, Self::PRG_BANK_SIZE),
-            prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
-            chr_memory: ChrMemory::new(chr_rom),
-            mirroring,
-            prg_bank,
-        }
-    }
-}
-
-impl Mapper for Mapper242 {
-    fn read_prg(&self, addr: u16) -> u8 {
-        if let Some(value) = self.prg_ram.try_read(addr) {
-            return value;
-        }
-        match addr {
-            0x8000..=0xFFFF => self
-                .prg_rom
-                .read_with_base(self.prg_bank.current(), 0x8000, addr),
-            _ => 0,
-        }
-    }
-
-    fn write_prg(&mut self, addr: u16, value: u8) {
-        if self.prg_ram.try_write(addr, value) {
-            return;
-        }
-        if (0x8000..=0xFFFF).contains(&addr) {
-            // Address bits A[3:1] select PRG bank
-            let bank = ((addr >> 1) & 0x07) as u8;
-            self.prg_bank.set(bank);
-            // Address bit A[0] selects mirroring
-            self.mirroring = if addr & 0x01 != 0 {
-                NametableLayout::Horizontal
-            } else {
-                NametableLayout::Vertical
-            };
-        }
-        let _ = value; // Data value is ignored
-    }
-
-    fn read_chr(&mut self, addr: u16) -> u8 {
-        self.chr_memory.read(addr)
-    }
-
-    fn write_chr(&mut self, addr: u16, value: u8) {
-        self.chr_memory.write(addr, value);
-    }
-
-    fn get_mirroring(&self) -> NametableLayout {
-        self.mirroring
-    }
-
-    fn mapper_number(&self) -> u8 {
-        Self::MAPPER_NUMBER
-    }
-
-    fn wram_size(&self) -> usize {
-        self.prg_ram.size()
-    }
-
-    fn wram_snapshot(&self) -> Vec<u8> {
-        self.prg_ram.snapshot()
-    }
-
-    fn load_wram_snapshot(&mut self, data: &[u8]) {
-        self.prg_ram.load_snapshot(data);
-    }
-
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_memory.snapshot()
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.chr_memory.load_snapshot(data);
-    }
-
-    fn registers_snapshot(&self) -> Vec<u8> {
-        let mirroring_byte = match self.mirroring {
-            NametableLayout::Horizontal => 1,
-            _ => 0,
-        };
-        vec![self.prg_bank.raw(), mirroring_byte]
-    }
-
-    fn restore_registers(&mut self, data: &[u8]) {
-        if let Some(&bank) = data.first() {
-            self.prg_bank.set(bank);
-        }
-        if let Some(&mir) = data.get(1) {
-            self.mirroring = if mir != 0 {
-                NametableLayout::Horizontal
-            } else {
-                NametableLayout::Vertical
-            };
-        }
-    }
-
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        self.prg_ram.initialize(mode);
-        self.chr_memory.initialize(mode);
-    }
-
-    fn capabilities(&self) -> MapperCapabilities {
-        MapperCapabilities {
-            has_chr_banking: false,
+        let capabilities = MapperCapabilities {
             has_dynamic_mirroring: true,
             max_prg_ram_kb: 8,
             prg_bank_size_kb: 32,
             chr_bank_size_kb: 8,
             ..Default::default()
+        };
+        let mut base = BaseMapper::new(&ctx, capabilities);
+        base.configure_prg_banking(32 * 1024);
+        Self { base }
+    }
+}
+
+impl Mapper for Mapper242 {
+    fn base(&self) -> Option<&BaseMapper> {
+        Some(&self.base)
+    }
+
+    fn base_mut(&mut self) -> Option<&mut BaseMapper> {
+        Some(&mut self.base)
+    }
+
+    fn read_prg(&self, addr: u16) -> u8 {
+        if let Some(value) = self.base.try_read_prg_ram(addr) {
+            return value;
+        }
+        match addr {
+            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
+            _ => 0,
+        }
+    }
+
+    fn write_prg(&mut self, addr: u16, value: u8) {
+        if self.base.try_write_prg_ram(addr, value) {
+            return;
+        }
+        if (0x8000..=0xFFFF).contains(&addr) {
+            // Address bits A[3:1] select PRG bank
+            let bank = ((addr >> 1) & 0x07) as i16;
+            self.base.select_prg_page(0, bank);
+            // Address bit A[0] selects mirroring
+            self.base.set_mirroring(if addr & 0x01 != 0 {
+                NametableLayout::Horizontal
+            } else {
+                NametableLayout::Vertical
+            });
+        }
+        let _ = value; // Data value is ignored
+    }
+
+    fn registers_snapshot(&self) -> Vec<u8> {
+        let mirroring_byte = match self.base.mirroring() {
+            NametableLayout::Horizontal => 1,
+            _ => 0,
+        };
+        vec![self.base.prg_page(0) as u8, mirroring_byte]
+    }
+
+    fn restore_registers(&mut self, data: &[u8]) {
+        if let Some(&bank) = data.first() {
+            self.base.select_prg_page(0, bank as i16);
+        }
+        if let Some(&mir) = data.get(1) {
+            self.base.set_mirroring(if mir != 0 {
+                NametableLayout::Horizontal
+            } else {
+                NametableLayout::Vertical
+            });
         }
     }
 }

@@ -10,10 +10,9 @@
 
 use crate::cartridge::Mapper;
 use crate::cartridge::MapperCapabilities;
-use crate::cartridge::NametableLayout;
-use crate::cartridge::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::cartridge::base_mapper::BaseMapper;
+use crate::cartridge::common::ChrMemory;
 
-const CHR_BANK_SIZE: usize = 0x1000; // 4 KiB
 const CHR_RAM_SIZE: usize = 0x4000; // 16 KiB total (4 banks)
 
 /// Mapper 13 - CPROM
@@ -26,57 +25,51 @@ const CHR_RAM_SIZE: usize = 0x4000; // 16 KiB total (4 banks)
 /// - Bank select register: any write to `$8000-$FFFF`, bits 0-1 choose which bank maps to `$1000-$1FFF`
 /// - Mirroring: fixed (set by iNES header)
 pub struct CpromMapper {
-    prg_rom: Vec<u8>,
-    prg_ram: PrgRam,
-    chr_memory: ChrMemory,
-    mirroring: NametableLayout,
+    base: BaseMapper,
     chr_bank_select: u8,
 }
 
 impl CpromMapper {
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
-        let prg_rom = ctx.prg_rom;
-        let mirroring = ctx.mirroring;
-        // CPROM uses CHR-RAM, ignore chr_rom parameter
+        let capabilities = MapperCapabilities {
+            has_chr_banking: true,
+            max_prg_ram_kb: 8,
+            prg_bank_size_kb: 32,
+            chr_bank_size_kb: 4,
+            ..Default::default()
+        };
+        let mut base = BaseMapper::new(&ctx, capabilities);
+        // CPROM uses 16KB CHR-RAM regardless of header CHR-ROM
+        base.set_chr_memory(ChrMemory::new_ram(CHR_RAM_SIZE));
+        base.configure_chr_banking(4 * 1024);
+        // Slot 0 ($0000-$0FFF) is fixed to bank 0 (default)
+        // Slot 1 ($1000-$1FFF) is switchable via register
         Self {
-            prg_rom,
-            prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
-            chr_memory: ChrMemory::new_ram(CHR_RAM_SIZE),
-            mirroring,
+            base,
             chr_bank_select: 0,
-        }
-    }
-
-    fn get_chr_bank_offset(&self, addr: u16) -> usize {
-        if addr < 0x1000 {
-            // $0000-$0FFF is always bank 0 — fixed by hardware design
-            0
-        } else {
-            // $1000-$1FFF maps to whichever bank is selected by register bits 0-1
-            let bank = (self.chr_bank_select & 0x03) as usize;
-            bank * CHR_BANK_SIZE
         }
     }
 }
 
 impl Mapper for CpromMapper {
-    fn read_prg(&self, addr: u16) -> u8 {
-        if let Some(value) = self.prg_ram.try_read(addr) {
-            return value;
-        }
+    fn base(&self) -> Option<&BaseMapper> {
+        Some(&self.base)
+    }
 
+    fn base_mut(&mut self) -> Option<&mut BaseMapper> {
+        Some(&mut self.base)
+    }
+
+    fn read_prg(&self, addr: u16) -> u8 {
         match addr {
-            0x8000..=0xFFFF => {
-                let offset = (addr - 0x8000) as usize;
-                let index = offset % self.prg_rom.len();
-                self.prg_rom.get(index).copied().unwrap_or(0)
-            }
+            0x6000..=0x7FFF => self.base.try_read_prg_ram(addr).unwrap_or(0),
+            0x8000..=0xFFFF => self.base.read_prg_rom_fixed(addr),
             _ => 0,
         }
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
-        if self.prg_ram.try_write(addr, value) {
+        if self.base.try_write_prg_ram(addr, value) {
             return;
         }
 
@@ -84,49 +77,16 @@ impl Mapper for CpromMapper {
         // Note: subject to bus conflicts with PRG-ROM data on real hardware.
         if (0x8000..=0xFFFF).contains(&addr) {
             self.chr_bank_select = value & 0x03;
+            self.base.select_chr_page(1, self.chr_bank_select as i16);
         }
     }
 
     fn read_chr(&mut self, addr: u16) -> u8 {
-        let bank_offset = self.get_chr_bank_offset(addr);
-        let offset = (addr & 0x0FFF) as usize;
-        let index = bank_offset + offset;
-        self.chr_memory.read_at_index(index)
+        self.base.read_chr_banked(addr)
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
-        let bank_offset = self.get_chr_bank_offset(addr);
-        let offset = (addr & 0x0FFF) as usize;
-        let index = bank_offset + offset;
-        self.chr_memory.write_at_index(index, value);
-    }
-
-    fn get_mirroring(&self) -> NametableLayout {
-        self.mirroring
-    }
-
-    fn mapper_number(&self) -> u8 {
-        13
-    }
-
-    fn wram_size(&self) -> usize {
-        self.prg_ram.size()
-    }
-
-    fn wram_snapshot(&self) -> Vec<u8> {
-        self.prg_ram.snapshot()
-    }
-
-    fn load_wram_snapshot(&mut self, data: &[u8]) {
-        self.prg_ram.load_snapshot(data);
-    }
-
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_memory.snapshot()
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.chr_memory.load_snapshot(data);
+        self.base.write_chr_banked(addr, value);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -136,20 +96,7 @@ impl Mapper for CpromMapper {
     fn restore_registers(&mut self, data: &[u8]) {
         if !data.is_empty() {
             self.chr_bank_select = data[0];
-        }
-    }
-
-    fn capabilities(&self) -> MapperCapabilities {
-        MapperCapabilities {
-            has_irq: false,
-            has_chr_banking: true,
-            has_dynamic_mirroring: false,
-            has_expansion_audio: false,
-            max_prg_ram_kb: 8,
-            prg_bank_size_kb: 32,
-            chr_bank_size_kb: 4,
-            trainer_jsr: false,
-            ..Default::default()
+            self.base.select_chr_page(1, self.chr_bank_select as i16);
         }
     }
 }
@@ -157,6 +104,7 @@ impl Mapper for CpromMapper {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cartridge::NametableLayout;
     use crate::cartridge::mapper::MapperContext;
 
     #[test]
