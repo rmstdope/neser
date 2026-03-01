@@ -1048,12 +1048,12 @@ mod tests {
 
     #[test]
     fn vrc6_satisfies_core_irq_audio_and_state_traits() {
-        let mut mapper = VRC6Mapper::new_for_variant(
+        let mut mapper = VRC6Mapper::new(MapperContext::new_for_test(
             24,
             vec![0u8; 32 * 1024],
             vec![0u8; 8 * 1024],
             NametableLayout::Horizontal,
-        );
+        ));
         assert_core_contract(&mut mapper);
         assert_irq_contract(&mut mapper);
         assert_audio_contract(&mut mapper);

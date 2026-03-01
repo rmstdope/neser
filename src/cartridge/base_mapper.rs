@@ -238,6 +238,11 @@ impl BaseMapper {
         self.chr_memory.snapshot()
     }
 
+    /// Return the total size of the CHR memory in bytes.
+    pub fn chr_size(&self) -> usize {
+        self.chr_memory.size()
+    }
+
     /// Restore CHR-RAM from a save-state.
     pub fn restore_chr_ram(&mut self, data: &[u8]) {
         self.chr_memory.load_snapshot(data);

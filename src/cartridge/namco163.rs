@@ -7,7 +7,8 @@
 
 use std::cell::Cell;
 
-use crate::cartridge::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::cartridge::BaseMapper;
+use crate::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
 use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
 /// Mapper 19 - Namco 163 (Namco 129/163 with expansion audio)
@@ -36,11 +37,9 @@ use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 /// - Basic banking and IRQ fully implemented
 /// - Expansion audio implemented with wavetable synthesis
 pub struct Namco163Mapper {
-    prg_rom: Vec<u8>,
-    chr_memory: ChrMemory,
+    base: BaseMapper,
     prg_ram: PrgRam,
     ciram: [u8; 0x800],
-    mirroring: NametableLayout,
     chr_nt_regs: [u8; 12],
     prg_select: [u8; 3],
     regs: [u8; 16],
@@ -60,7 +59,6 @@ pub struct Namco163Mapper {
 }
 
 impl Namco163Mapper {
-    const PRG_BANK_SIZE_8K: usize = 0x2000;
     const CHR_BANK_SIZE_1K: usize = 0x0400;
     const CIRAM_BANK_THRESHOLD: u8 = 0xE0;
     const CIRAM_INDEX_MASK: usize = 0x07FF;
@@ -71,15 +69,27 @@ impl Namco163Mapper {
     const IRQ_HIGH_ENABLE_REG: usize = 13;
 
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
-        let prg_rom = ctx.prg_rom;
-        let chr_rom = ctx.chr_rom;
         let mirroring = ctx.mirroring;
-        Self {
-            prg_rom,
-            chr_memory: ChrMemory::new(chr_rom),
+        let capabilities = MapperCapabilities {
+            has_irq: true,
+            has_chr_banking: true,
+            has_dynamic_mirroring: true,
+            has_expansion_audio: true,
+            max_prg_ram_kb: 0, // Namco163 manages PRG-RAM separately
+            prg_bank_size_kb: 8,
+            chr_bank_size_kb: 1,
+            trainer_jsr: false,
+            ..Default::default()
+        };
+
+        let mut base = BaseMapper::new(&ctx, capabilities);
+        base.configure_prg_banking(0x2000);
+        base.configure_chr_banking(0x0400);
+
+        let mut mapper = Self {
+            base,
             prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
             ciram: [0; 0x800],
-            mirroring,
             chr_nt_regs: [0; 12],
             prg_select: [0; 3],
             regs: [0; 16],
@@ -96,15 +106,14 @@ impl Namco163Mapper {
             irq_counter: 0,
             irq_enabled: false,
             irq_pending: false,
-        }
-    }
-
-    fn prg_bank_count_8k(&self) -> usize {
-        self.prg_rom.len() / Self::PRG_BANK_SIZE_8K
+        };
+        mapper.base.set_mirroring(mirroring);
+        mapper.update_banks();
+        mapper
     }
 
     fn chr_bank_count_1k(&self) -> usize {
-        self.chr_memory.size() / Self::CHR_BANK_SIZE_1K
+        self.base.chr_bank_count()
     }
 
     fn ciram_page_index(bank: u8, bank_offset: usize) -> usize {
@@ -115,16 +124,16 @@ impl Namco163Mapper {
         Self::ciram_page_index(bank, bank_offset) & Self::CIRAM_INDEX_MASK
     }
 
-    fn prg_bank_index_8k(&self, bank: u8) -> usize {
-        let count = self.prg_bank_count_8k();
-        if count == 0 {
-            return 0;
-        }
-        (bank as usize) % count
-    }
-
     fn set_prg_select_bank(&mut self, slot: usize, value: u8) {
         self.prg_select[slot] = value & Self::PRG_SELECT_MASK;
+        self.update_banks();
+    }
+
+    fn update_banks(&mut self) {
+        self.base.select_prg_page(0, self.prg_select[0] as i16);
+        self.base.select_prg_page(1, self.prg_select[1] as i16);
+        self.base.select_prg_page(2, self.prg_select[2] as i16);
+        self.base.select_prg_page(3, -1); // fixed last bank
     }
 
     fn chr_bank_index_1k(&self, bank: u8) -> usize {
@@ -136,13 +145,13 @@ impl Namco163Mapper {
     }
 
     fn map_mirroring(&mut self, value: u8) {
-        self.mirroring = match value & 0x3 {
+        self.base.set_mirroring(match value & 0x3 {
             0 => NametableLayout::Vertical,
             1 => NametableLayout::Horizontal,
             2 => NametableLayout::SingleScreenLower,
             3 => NametableLayout::SingleScreenUpper,
             _ => unreachable!("value is masked to 0..3"),
-        };
+        });
     }
 
     fn load_irq_counter_from_regs(&mut self) {
@@ -201,7 +210,7 @@ impl Namco163Mapper {
 
         let bank = self.chr_bank_index_1k(bank);
         let index = bank * Self::CHR_BANK_SIZE_1K + bank_offset;
-        self.chr_memory.read_at_index(index)
+        self.base.read_chr_at_index(index)
     }
 
     fn write_chr_slot(&mut self, slot: usize, bank_offset: usize, value: u8) {
@@ -213,7 +222,7 @@ impl Namco163Mapper {
 
         let bank = self.chr_bank_index_1k(bank);
         let index = bank * Self::CHR_BANK_SIZE_1K + bank_offset;
-        self.chr_memory.write_at_index(index, value);
+        self.base.write_chr_at_index(index, value);
     }
 
     fn nametable_bank_for_addr(&self, addr: u16) -> u8 {
@@ -437,37 +446,7 @@ impl Mapper for Namco163Mapper {
                     return value;
                 }
 
-                if self.prg_rom.is_empty() {
-                    return 0;
-                }
-
-                match addr {
-                    0x8000..=0x9FFF => {
-                        let bank = self.prg_bank_index_8k(self.prg_select[0]);
-                        let offset = (addr as usize) & (Self::PRG_BANK_SIZE_8K - 1);
-                        let index = bank * Self::PRG_BANK_SIZE_8K + offset;
-                        self.prg_rom.get(index).copied().unwrap_or(0)
-                    }
-                    0xA000..=0xBFFF => {
-                        let bank = self.prg_bank_index_8k(self.prg_select[1]);
-                        let offset = (addr as usize) & (Self::PRG_BANK_SIZE_8K - 1);
-                        let index = bank * Self::PRG_BANK_SIZE_8K + offset;
-                        self.prg_rom.get(index).copied().unwrap_or(0)
-                    }
-                    0xC000..=0xDFFF => {
-                        let bank = self.prg_bank_index_8k(self.prg_select[2]);
-                        let offset = (addr as usize) & (Self::PRG_BANK_SIZE_8K - 1);
-                        let index = bank * Self::PRG_BANK_SIZE_8K + offset;
-                        self.prg_rom.get(index).copied().unwrap_or(0)
-                    }
-                    0xE000..=0xFFFF => {
-                        let bank = self.prg_bank_count_8k().saturating_sub(1);
-                        let offset = (addr as usize) & (Self::PRG_BANK_SIZE_8K - 1);
-                        let index = bank * Self::PRG_BANK_SIZE_8K + offset;
-                        self.prg_rom.get(index).copied().unwrap_or(0)
-                    }
-                    _ => 0,
-                }
+                self.base.read_prg_banked(addr)
             }
         }
     }
@@ -540,7 +519,7 @@ impl Mapper for Namco163Mapper {
             return Some(self.ciram[index]);
         }
         self.nametable_chr_index(addr)
-            .map(|index| self.chr_memory.read_at_index(index))
+            .map(|index| self.base.read_chr_at_index(index))
     }
 
     fn write_nametable(&mut self, addr: u16, value: u8) -> bool {
@@ -549,7 +528,7 @@ impl Mapper for Namco163Mapper {
             return true;
         }
         if let Some(index) = self.nametable_chr_index(addr) {
-            self.chr_memory.write_at_index(index, value);
+            self.base.write_chr_at_index(index, value);
             return true;
         }
         false
@@ -574,7 +553,7 @@ impl Mapper for Namco163Mapper {
     }
 
     fn get_mirroring(&self) -> NametableLayout {
-        self.mirroring
+        self.base.mirroring()
     }
 
     fn mapper_number(&self) -> u8 {
@@ -597,6 +576,7 @@ impl Mapper for Namco163Mapper {
         self.audio_last_output = 0;
         self.e800_control = 0;
         self.wram_protect = 0;
+        self.update_banks();
     }
 
     fn wram_size(&self) -> usize {
@@ -612,11 +592,11 @@ impl Mapper for Namco163Mapper {
     }
 
     fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_memory.snapshot()
+        self.base.chr_ram_snapshot()
     }
 
     fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.chr_memory.load_snapshot(data);
+        self.base.restore_chr_ram(data);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -677,6 +657,8 @@ impl Mapper for Namco163Mapper {
             self.audio_current_channel = data[166] as i8;
             self.audio_last_output = i16::from_le_bytes([data[167], data[168]]);
         }
+
+        self.update_banks();
     }
 
     fn capabilities(&self) -> MapperCapabilities {

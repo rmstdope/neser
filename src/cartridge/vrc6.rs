@@ -9,7 +9,8 @@
 //! - Cycle-accuracy edge cases and less-common board wiring variants are not yet
 //!   comprehensively validated by dedicated ROM test suites.
 
-use crate::cartridge::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::cartridge::BaseMapper;
+use crate::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
 use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 use crate::trace_mapper;
 
@@ -243,8 +244,7 @@ impl Vrc6Audio {
 pub struct VRC6Mapper {
     variant: Vrc6Variant,
 
-    prg_rom: Vec<u8>,
-    chr_memory: ChrMemory,
+    base: BaseMapper,
     prg_ram: PrgRam,
 
     prg_bank_16k: u8,
@@ -253,7 +253,6 @@ pub struct VRC6Mapper {
 
     b003: u8,
     prg_ram_enabled: bool,
-    mirroring: NametableLayout,
 
     // --- VRC IRQ (used by VRC6) ---
     irq_latch: u8,
@@ -269,40 +268,40 @@ pub struct VRC6Mapper {
 }
 
 impl VRC6Mapper {
-    const PRG_BANK_SIZE_8K: usize = 0x2000;
-    const CHR_BANK_SIZE_1K: usize = 0x0400;
-
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
         let mapper_number = ctx.mapper as u8;
-        let prg_rom = ctx.prg_rom;
-        let chr_rom = ctx.chr_rom;
-        let mirroring = ctx.mirroring;
-        Self::new_for_variant(mapper_number, prg_rom, chr_rom, mirroring)
-    }
-
-    pub fn new_for_variant(
-        mapper_number: u8,
-        prg_rom: Vec<u8>,
-        chr_rom: Vec<u8>,
-        mirroring: NametableLayout,
-    ) -> Self {
         let variant = match mapper_number {
             24 => Vrc6Variant::Mapper24,
             26 => Vrc6Variant::Mapper26,
             _ => Vrc6Variant::Mapper24,
         };
 
-        Self {
+        let mirroring = ctx.mirroring;
+        let capabilities = MapperCapabilities {
+            has_irq: true,
+            has_chr_banking: true,
+            has_dynamic_mirroring: true,
+            has_expansion_audio: true,
+            max_prg_ram_kb: 0, // VRC6 manages PRG-RAM separately with gating
+            prg_bank_size_kb: 8,
+            chr_bank_size_kb: 1,
+            trainer_jsr: false,
+            ..Default::default()
+        };
+
+        let mut base = BaseMapper::new(&ctx, capabilities);
+        base.configure_prg_banking(0x2000);
+        base.configure_chr_banking(0x0400);
+
+        let mut mapper = Self {
             variant,
-            prg_rom,
-            chr_memory: ChrMemory::new(chr_rom),
+            base,
             prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
             prg_bank_16k: 0,
             prg_bank_8k: 0,
             chr_banks_1k: [0; 8],
             b003: 0,
             prg_ram_enabled: false,
-            mirroring,
 
             irq_latch: 0,
             irq_counter: 0,
@@ -313,36 +312,10 @@ impl VRC6Mapper {
             irq_prescaler: 0,
 
             audio: Vrc6Audio::default(),
-        }
-    }
-
-    fn prg_bank_count_8k(&self) -> usize {
-        self.prg_rom.len() / Self::PRG_BANK_SIZE_8K
-    }
-
-    fn chr_bank_count_1k(&self) -> usize {
-        self.chr_memory.size() / Self::CHR_BANK_SIZE_1K
-    }
-
-    fn prg_bank_index_8k(&self, bank: usize) -> usize {
-        let count = self.prg_bank_count_8k();
-        if count == 0 {
-            return 0;
-        }
-        bank % count
-    }
-
-    fn chr_bank_index_1k(&self, bank: u8) -> usize {
-        let count = self.chr_bank_count_1k();
-        if count == 0 {
-            return 0;
-        }
-        (bank as usize) % count
-    }
-
-    fn fixed_last_prg_bank_8k(&self) -> usize {
-        let count = self.prg_bank_count_8k();
-        count.saturating_sub(1)
+        };
+        mapper.base.set_mirroring(mirroring);
+        mapper.update_banks();
+        mapper
     }
 
     fn normalize_reg_addr(&self, addr: u16) -> u16 {
@@ -366,23 +339,14 @@ impl VRC6Mapper {
 
         // Commercial VRC6 games use banking mode 0 and write values where (b003 & 0x0F)
         // is one of: 0, 4, 8, C (vertical, horizontal, 1-screen A, 1-screen B).
-        self.mirroring = match self.b003 & 0x0F {
+        let new_mirroring = match self.b003 & 0x0F {
             0x0 => NametableLayout::Vertical,
             0x4 => NametableLayout::Horizontal,
             0x8 => NametableLayout::SingleScreen, // 1-screen A (CIRAM lower bank)
             0xC => NametableLayout::SingleScreenUpper, // 1-screen B (CIRAM upper bank)
-            _ => self.mirroring,
+            _ => self.base.mirroring(),
         };
-    }
-
-    fn read_prg_rom_8k(&self, bank_index: usize, bank_offset: usize) -> u8 {
-        let addr = bank_index * Self::PRG_BANK_SIZE_8K + bank_offset;
-        self.prg_rom.get(addr).copied().unwrap_or(0)
-    }
-
-    fn read_chr_1k(&self, bank_index: usize, bank_offset: usize) -> u8 {
-        let addr = bank_index * Self::CHR_BANK_SIZE_1K + bank_offset;
-        self.chr_memory.read_at_index(addr)
+        self.base.set_mirroring(new_mirroring);
     }
 
     fn reset_irq_prescaler(&mut self) {
@@ -423,6 +387,21 @@ impl VRC6Mapper {
             self.clock_vrc_irq_counter();
         }
     }
+
+    fn update_banks(&mut self) {
+        // PRG: 16KB at $8000 (= 2×8KB), 8KB at $C000, fixed 8KB at $E000
+        let bank16k_lo = (self.prg_bank_16k as i16 & 0x0F) * 2;
+        self.base.select_prg_page(0, bank16k_lo);
+        self.base.select_prg_page(1, bank16k_lo + 1);
+        self.base
+            .select_prg_page(2, (self.prg_bank_8k & 0x1F) as i16);
+        self.base.select_prg_page(3, -1);
+
+        // CHR: 8 × 1KB slots
+        for i in 0..8 {
+            self.base.select_chr_page(i, self.chr_banks_1k[i] as i16);
+        }
+    }
 }
 
 impl Mapper for VRC6Mapper {
@@ -435,26 +414,7 @@ impl Mapper for VRC6Mapper {
         }
 
         match addr {
-            0x8000..=0xBFFF => {
-                let offset = (addr - 0x8000) as usize;
-
-                // 16KB bank at $8000-$BFFF, selected by 4-bit value.
-                // Express in 8KB banks: bank16k * 2, then +0/+1 based on address.
-                let bank16k = (self.prg_bank_16k & 0x0F) as usize;
-                let bank8k = bank16k * 2 + (offset / Self::PRG_BANK_SIZE_8K);
-                let bank_offset = offset % Self::PRG_BANK_SIZE_8K;
-
-                self.read_prg_rom_8k(self.prg_bank_index_8k(bank8k), bank_offset)
-            }
-            0xC000..=0xDFFF => {
-                let offset = (addr - 0xC000) as usize;
-                let bank8k = (self.prg_bank_8k & 0x1F) as usize;
-                self.read_prg_rom_8k(self.prg_bank_index_8k(bank8k), offset)
-            }
-            0xE000..=0xFFFF => {
-                let offset = (addr - 0xE000) as usize;
-                self.read_prg_rom_8k(self.fixed_last_prg_bank_8k(), offset)
-            }
+            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
             _ => 0,
         }
     }
@@ -468,7 +428,10 @@ impl Mapper for VRC6Mapper {
         if (0x8000..=0xFFFF).contains(&addr) {
             let reg = self.normalize_reg_addr(addr);
             match reg {
-                0x8000..=0x8003 => self.prg_bank_16k = value & 0x0F,
+                0x8000..=0x8003 => {
+                    self.prg_bank_16k = value & 0x0F;
+                    self.update_banks();
+                }
                 0x9000 => self.audio.pulse1.write_control(value),
                 0x9001 => self.audio.pulse1.write_period_low(value),
                 0x9002 => self.audio.pulse1.write_period_high_and_enable(value),
@@ -479,7 +442,10 @@ impl Mapper for VRC6Mapper {
                 0xB000 => self.audio.saw.write_rate(value),
                 0xB001 => self.audio.saw.write_period_low(value),
                 0xB002 => self.audio.saw.write_period_high_and_enable(value),
-                0xC000..=0xC003 => self.prg_bank_8k = value & 0x1F,
+                0xC000..=0xC003 => {
+                    self.prg_bank_8k = value & 0x1F;
+                    self.update_banks();
+                }
                 0xB003 => {
                     self.b003 = value;
                     self.update_mirroring_from_b003();
@@ -516,10 +482,12 @@ impl Mapper for VRC6Mapper {
                 0xD000..=0xD003 => {
                     let idx = (reg & 0x0003) as usize;
                     self.chr_banks_1k[idx] = value;
+                    self.update_banks();
                 }
                 0xE000..=0xE003 => {
                     let idx = 4 + (reg & 0x0003) as usize;
                     self.chr_banks_1k[idx] = value;
+                    self.update_banks();
                 }
                 // Other VRC6 registers not currently modeled.
                 _ => {}
@@ -528,17 +496,11 @@ impl Mapper for VRC6Mapper {
     }
 
     fn read_chr(&mut self, addr: u16) -> u8 {
-        let addr = addr & 0x1FFF;
-        let bank_slot = (addr as usize) / Self::CHR_BANK_SIZE_1K;
-        let bank_offset = (addr as usize) % Self::CHR_BANK_SIZE_1K;
-
-        let bank = self.chr_banks_1k.get(bank_slot).copied().unwrap_or(0);
-        self.read_chr_1k(self.chr_bank_index_1k(bank), bank_offset)
+        self.base.read_chr_banked(addr)
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
-        let addr = (addr & 0x1FFF) as usize;
-        self.chr_memory.write_at_index(addr, value);
+        self.base.write_chr(addr, value);
     }
 
     fn cpu_cycle(&mut self) {
@@ -556,7 +518,7 @@ impl Mapper for VRC6Mapper {
     }
 
     fn get_mirroring(&self) -> NametableLayout {
-        self.mirroring
+        self.base.mirroring()
     }
 
     fn mapper_number(&self) -> u8 {
@@ -579,11 +541,11 @@ impl Mapper for VRC6Mapper {
     }
 
     fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_memory.snapshot()
+        self.base.chr_ram_snapshot()
     }
 
     fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.chr_memory.load_snapshot(data);
+        self.base.restore_chr_ram(data);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -616,7 +578,7 @@ impl Mapper for VRC6Mapper {
         snapshot.push(flags);
         let prescaler_bytes = self.irq_prescaler.to_le_bytes();
         snapshot.extend_from_slice(&prescaler_bytes);
-        snapshot.push(match self.mirroring {
+        snapshot.push(match self.base.mirroring() {
             NametableLayout::Horizontal => 0,
             NametableLayout::Vertical => 1,
             NametableLayout::SingleScreen | NametableLayout::SingleScreenLower => 2,
@@ -666,14 +628,14 @@ impl Mapper for VRC6Mapper {
             self.irq_enable_after_ack = (flags & 4) != 0;
             self.irq_asserted = (flags & 8) != 0;
             self.irq_prescaler = i32::from_le_bytes([data[14], data[15], data[16], data[17]]);
-            self.mirroring = match data[18] {
+            self.base.set_mirroring(match data[18] {
                 0 => NametableLayout::Horizontal,
                 1 => NametableLayout::Vertical,
                 2 => NametableLayout::SingleScreen,
                 3 => NametableLayout::SingleScreenUpper,
                 4 => NametableLayout::FourScreen,
                 _ => NametableLayout::Horizontal,
-            };
+            });
         }
 
         if data.len() >= 41 {
@@ -707,6 +669,8 @@ impl Mapper for VRC6Mapper {
                 }
             }
         }
+
+        self.update_banks();
     }
 
     fn capabilities(&self) -> MapperCapabilities {
