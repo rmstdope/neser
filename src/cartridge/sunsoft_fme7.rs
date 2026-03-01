@@ -39,15 +39,13 @@
 //! Known Limitations:
 //! - **Expansion audio not implemented** (5B audio chip)
 
-use crate::cartridge::common::ChrMemory;
+use crate::cartridge::BaseMapper;
 use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 use crate::trace_mapper;
 
 pub struct SunsoftFme7Mapper {
-    prg_rom: Vec<u8>,
+    base: BaseMapper,
     prg_ram: Vec<u8>,
-    chr_memory: ChrMemory,
-    mirroring: NametableLayout,
 
     // Register selection
     command: u8,
@@ -68,19 +66,24 @@ pub struct SunsoftFme7Mapper {
 }
 
 impl SunsoftFme7Mapper {
-    const PRG_BANK_SIZE: usize = 8 * 1024; // 8KB
-    const CHR_BANK_SIZE: usize = 1024; // 1KB
-    const PRG_RAM_SIZE: usize = 8 * 1024; // 8KB (can be larger, but 8KB is standard)
+    const PRG_RAM_SIZE: usize = 8 * 1024; // 8KB
 
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
-        let prg_rom = ctx.prg_rom;
-        let chr_rom = ctx.chr_rom;
-        let mirroring = ctx.mirroring;
-        Self {
-            prg_rom,
+        let capabilities = MapperCapabilities {
+            has_irq: true,
+            has_chr_banking: true,
+            has_dynamic_mirroring: true,
+            max_prg_ram_kb: 8,
+            prg_bank_size_kb: 8,
+            chr_bank_size_kb: 1,
+            ..Default::default()
+        };
+        let mut base = BaseMapper::new(&ctx, capabilities);
+        base.configure_prg_banking(0x2000);
+        base.configure_chr_banking(0x0400);
+        let mut mapper = Self {
+            base,
             prg_ram: vec![0u8; Self::PRG_RAM_SIZE],
-            chr_memory: ChrMemory::new(chr_rom),
-            mirroring,
             command: 0,
             prg_banks: [0, 0, 0, 0],
             prg_ram_enabled: false,
@@ -90,45 +93,33 @@ impl SunsoftFme7Mapper {
             irq_enabled: false,
             irq_counter_enabled: false,
             irq_pending: false,
+        };
+        mapper.update_banks();
+        mapper
+    }
+
+    fn update_banks(&mut self) {
+        // PRG: $8000-$FFFF = 4 x 8KB slots
+        self.base.select_prg_page(0, self.prg_banks[1] as i16);
+        self.base.select_prg_page(1, self.prg_banks[2] as i16);
+        self.base.select_prg_page(2, self.prg_banks[3] as i16);
+        self.base.select_prg_page(3, -1); // fixed last
+        // CHR: 8 x 1KB slots
+        for i in 0..8 {
+            self.base.select_chr_page(i, self.chr_banks[i] as i16);
         }
     }
 
-    fn prg_bank_count(&self) -> usize {
-        self.prg_rom.len() / Self::PRG_BANK_SIZE
-    }
-
-    fn chr_bank_count(&self) -> usize {
-        self.chr_memory.size() / Self::CHR_BANK_SIZE
-    }
-
-    fn read_prg_bank(&self, bank: u8, offset: usize) -> u8 {
-        let bank_count = self.prg_bank_count();
+    fn read_prg_6000(&self, addr: u16) -> u8 {
+        let prg_rom = self.base.prg_rom();
+        let bank_size = 0x2000;
+        let bank_count = prg_rom.len() / bank_size;
         if bank_count == 0 {
             return 0;
         }
-        let bank_index = (bank as usize) % bank_count;
-        let addr = bank_index * Self::PRG_BANK_SIZE + offset;
-        self.prg_rom.get(addr).copied().unwrap_or(0)
-    }
-
-    fn read_chr_byte(&self, bank: u8, offset: usize) -> u8 {
-        let bank_count = self.chr_bank_count();
-        if bank_count == 0 {
-            return 0;
-        }
-        let bank_index = (bank as usize) % bank_count;
-        let addr = bank_index * Self::CHR_BANK_SIZE + offset;
-        self.chr_memory.read_at_index(addr)
-    }
-
-    fn write_chr_byte(&mut self, bank: u8, offset: usize, value: u8) {
-        let bank_count = self.chr_bank_count();
-        if bank_count == 0 {
-            return;
-        }
-        let bank_index = (bank as usize) % bank_count;
-        let addr = bank_index * Self::CHR_BANK_SIZE + offset;
-        self.chr_memory.write_at_index(addr, value);
+        let bank = (self.prg_banks[0] as usize) % bank_count;
+        let offset = (addr as usize) - 0x6000;
+        prg_rom.get(bank * bank_size + offset).copied().unwrap_or(0)
     }
 
     fn write_command(&mut self, value: u8) {
@@ -160,13 +151,13 @@ impl SunsoftFme7Mapper {
             }
             0x0C => {
                 // Mirroring
-                self.mirroring = match value & 0x03 {
+                self.base.set_mirroring(match value & 0x03 {
                     0 => NametableLayout::Vertical,
                     1 => NametableLayout::Horizontal,
                     2 => NametableLayout::SingleScreenLower,
                     3 => NametableLayout::SingleScreenUpper,
                     _ => unreachable!(),
-                };
+                });
             }
             0x0D => {
                 // IRQ control
@@ -194,6 +185,7 @@ impl SunsoftFme7Mapper {
             }
             _ => {}
         }
+        self.update_banks();
     }
 }
 
@@ -201,39 +193,14 @@ impl Mapper for SunsoftFme7Mapper {
     fn read_prg(&self, addr: u16) -> u8 {
         match addr {
             0x6000..=0x7FFF => {
-                // Bank 0 (can be RAM or ROM)
                 if self.prg_ram_enabled {
-                    // RAM access
                     let offset = (addr - 0x6000) as usize;
                     self.prg_ram.get(offset).copied().unwrap_or(0)
                 } else {
-                    // ROM access
-                    let offset = (addr - 0x6000) as usize;
-                    self.read_prg_bank(self.prg_banks[0], offset)
+                    self.read_prg_6000(addr)
                 }
             }
-            0x8000..=0x9FFF => {
-                // Bank 1
-                let offset = (addr - 0x8000) as usize;
-                self.read_prg_bank(self.prg_banks[1], offset)
-            }
-            0xA000..=0xBFFF => {
-                // Bank 2
-                let offset = (addr - 0xA000) as usize;
-                self.read_prg_bank(self.prg_banks[2], offset)
-            }
-            0xC000..=0xDFFF => {
-                // Bank 3
-                let offset = (addr - 0xC000) as usize;
-                self.read_prg_bank(self.prg_banks[3], offset)
-            }
-            0xE000..=0xFFFF => {
-                // Bank 4: fixed to the last PRG ROM bank ($E000-$FFFF is not switchable on FME-7)
-                // Use last bank by default
-                let last_bank = self.prg_bank_count().saturating_sub(1) as u8;
-                let offset = (addr - 0xE000) as usize;
-                self.read_prg_bank(last_bank, offset)
-            }
+            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
             _ => 0,
         }
     }
@@ -262,17 +229,11 @@ impl Mapper for SunsoftFme7Mapper {
     }
 
     fn read_chr(&mut self, addr: u16) -> u8 {
-        let slot = (addr >> 10) as usize; // Which 1KB slot (0-7)
-        let offset = (addr & 0x03FF) as usize; // Offset within 1KB
-        let bank = self.chr_banks[slot];
-        self.read_chr_byte(bank, offset)
+        self.base.read_chr_banked(addr)
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
-        let slot = (addr >> 10) as usize;
-        let offset = (addr & 0x03FF) as usize;
-        let bank = self.chr_banks[slot];
-        self.write_chr_byte(bank, offset, value);
+        self.base.write_chr_banked(addr, value);
     }
 
     fn cpu_cycle(&mut self) {
@@ -292,11 +253,11 @@ impl Mapper for SunsoftFme7Mapper {
     }
 
     fn get_mirroring(&self) -> NametableLayout {
-        self.mirroring
+        self.base.mirroring()
     }
 
     fn mapper_number(&self) -> u8 {
-        69
+        self.base.mapper_number()
     }
 
     fn wram_size(&self) -> usize {
@@ -313,16 +274,16 @@ impl Mapper for SunsoftFme7Mapper {
     }
 
     fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_memory.snapshot()
+        self.base.chr_ram_snapshot()
     }
 
     fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.chr_memory.load_snapshot(data);
+        self.base.restore_chr_ram(data);
     }
 
     fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
         crate::console::initialize_ram(&mut self.prg_ram, mode);
-        self.chr_memory.initialize(mode);
+        self.base.initialize_ram(mode);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -345,7 +306,7 @@ impl Mapper for SunsoftFme7Mapper {
         snapshot.push(flags);
         snapshot.push((self.irq_counter & 0xFF) as u8);
         snapshot.push((self.irq_counter >> 8) as u8);
-        let mirroring = match self.mirroring {
+        let mirroring = match self.base.mirroring() {
             NametableLayout::Horizontal => 0,
             NametableLayout::Vertical => 1,
             NametableLayout::SingleScreenLower => 2,
@@ -369,29 +330,20 @@ impl Mapper for SunsoftFme7Mapper {
             self.irq_counter_enabled = (flags & 8) != 0;
             self.irq_pending = (flags & 16) != 0;
             self.irq_counter = (data[14] as u16) | ((data[15] as u16) << 8);
-            self.mirroring = match data[16] {
+            self.base.set_mirroring(match data[16] {
                 0 => NametableLayout::Horizontal,
                 1 => NametableLayout::Vertical,
                 2 => NametableLayout::SingleScreenLower,
                 3 => NametableLayout::SingleScreenUpper,
                 4 => NametableLayout::FourScreen,
                 _ => NametableLayout::Horizontal,
-            };
+            });
+            self.update_banks();
         }
     }
 
     fn capabilities(&self) -> MapperCapabilities {
-        MapperCapabilities {
-            has_irq: true,
-            has_chr_banking: true,
-            has_dynamic_mirroring: true,
-            has_expansion_audio: false,
-            max_prg_ram_kb: 8,
-            prg_bank_size_kb: 8,
-            chr_bank_size_kb: 1,
-            trainer_jsr: false,
-            ..Default::default()
-        }
+        self.base.capabilities()
     }
 }
 

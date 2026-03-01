@@ -5,7 +5,7 @@
 //!
 //! Specification: <https://www.nesdev.org/wiki/INES_Mapper_040>
 
-use crate::cartridge::common::ChrMemory;
+use crate::cartridge::BaseMapper;
 use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
 /// Mapper 040 - NTDEC 2722
@@ -34,9 +34,7 @@ use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 ///
 /// Known games: Super Mario Bros. 2 (Japanese, aka The Lost Levels)
 pub struct Ntdec2722Mapper {
-    prg_rom: Vec<u8>,
-    chr_memory: ChrMemory,
-    mirroring: NametableLayout,
+    base: BaseMapper,
     /// Switchable bank index for the $C000-$DFFF window.
     prg_bank: u8,
     irq_enabled: bool,
@@ -45,62 +43,69 @@ pub struct Ntdec2722Mapper {
 }
 
 impl Ntdec2722Mapper {
-    const MAPPER_NUMBER: u8 = 40;
     const PRG_BANK_SIZE: usize = 0x2000; // 8KB
-    const PRG_BANK_MASK: usize = Self::PRG_BANK_SIZE - 1;
 
     // Fixed PRG window bank assignments (hardwired per spec)
     const BANK_AT_6000: usize = 6;
-    const BANK_AT_8000: usize = 4;
-    const BANK_AT_A000: usize = 5;
-    const BANK_AT_E000: usize = 7;
 
     // IRQ counter thresholds (CD4020 bits Q12 and Q13)
     const IRQ_FIRE_COUNT: u16 = 4096;
     const IRQ_SELF_ACK_COUNT: u16 = 8192;
 
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
-        let prg_rom = ctx.prg_rom;
-        let chr_rom = ctx.chr_rom;
         let mirroring = ctx.mirroring;
-        Self {
-            prg_rom,
-            chr_memory: ChrMemory::new(chr_rom),
-            mirroring,
+        let capabilities = MapperCapabilities {
+            has_irq: true,
+            prg_bank_size_kb: 8,
+            chr_bank_size_kb: 8,
+            ..Default::default()
+        };
+
+        let mut base = BaseMapper::new(&ctx, capabilities);
+        base.configure_prg_banking(Self::PRG_BANK_SIZE);
+        base.set_mirroring(mirroring);
+
+        let mut mapper = Self {
+            base,
             prg_bank: 0,
             irq_enabled: false,
             irq_counter: 0,
             irq_pending: false,
-        }
+        };
+
+        mapper.update_banks();
+        mapper
     }
 
-    fn prg_bank_count(&self) -> usize {
-        self.prg_rom.len() / Self::PRG_BANK_SIZE
+    fn update_banks(&mut self) {
+        // $8000=bank4, $A000=bank5, $C000=switchable, $E000=bank7
+        self.base.select_prg_page(0, 4);
+        self.base.select_prg_page(1, 5);
+        self.base.select_prg_page(2, self.prg_bank as i16);
+        self.base.select_prg_page(3, 7);
     }
 
-    fn wrapped_bank(index: usize, bank_count: usize) -> usize {
+    fn read_prg_6000(&self, addr: u16) -> u8 {
+        let prg = self.base.prg_rom();
+        let bank_count = prg.len() / Self::PRG_BANK_SIZE;
         if bank_count == 0 {
-            0
-        } else {
-            index % bank_count
+            return 0;
         }
+        let bank = Self::BANK_AT_6000 % bank_count;
+        let offset = (addr as usize) & (Self::PRG_BANK_SIZE - 1);
+        prg.get(bank * Self::PRG_BANK_SIZE + offset)
+            .copied()
+            .unwrap_or(0)
     }
 }
 
 impl Mapper for Ntdec2722Mapper {
     fn read_prg(&self, addr: u16) -> u8 {
-        let bank_count = self.prg_bank_count();
-        let bank_offset = (addr as usize) & Self::PRG_BANK_MASK;
-        let bank_index = match addr {
-            0x6000..=0x7FFF => Self::wrapped_bank(Self::BANK_AT_6000, bank_count),
-            0x8000..=0x9FFF => Self::wrapped_bank(Self::BANK_AT_8000, bank_count),
-            0xA000..=0xBFFF => Self::wrapped_bank(Self::BANK_AT_A000, bank_count),
-            0xC000..=0xDFFF => Self::wrapped_bank(self.prg_bank as usize, bank_count),
-            0xE000..=0xFFFF => Self::wrapped_bank(Self::BANK_AT_E000, bank_count),
-            _ => return 0,
-        };
-        let mapped = bank_index * Self::PRG_BANK_SIZE + bank_offset;
-        self.prg_rom.get(mapped).copied().unwrap_or(0)
+        match addr {
+            0x6000..=0x7FFF => self.read_prg_6000(addr),
+            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
+            _ => 0,
+        }
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
@@ -119,26 +124,26 @@ impl Mapper for Ntdec2722Mapper {
             0xE000 => {
                 // Select 8KB PRG bank for $C000 window
                 self.prg_bank = value;
+                self.update_banks();
             }
             _ => {}
         }
     }
 
     fn read_chr(&mut self, addr: u16) -> u8 {
-        self.chr_memory.read_at_index((addr & 0x1FFF) as usize)
+        self.base.read_chr(addr)
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
-        self.chr_memory
-            .write_at_index((addr & 0x1FFF) as usize, value);
+        self.base.write_chr(addr, value);
     }
 
     fn get_mirroring(&self) -> NametableLayout {
-        self.mirroring
+        self.base.mirroring()
     }
 
     fn mapper_number(&self) -> u8 {
-        Self::MAPPER_NUMBER
+        self.base.mapper_number()
     }
 
     fn wram_size(&self) -> usize {
@@ -163,15 +168,15 @@ impl Mapper for Ntdec2722Mapper {
     }
 
     fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_memory.snapshot()
+        self.base.chr_ram_snapshot()
     }
 
     fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.chr_memory.load_snapshot(data);
+        self.base.restore_chr_ram(data);
     }
 
     fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        self.chr_memory.initialize(mode);
+        self.base.initialize_ram(mode);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -192,21 +197,12 @@ impl Mapper for Ntdec2722Mapper {
             self.irq_enabled = (data[1] & 1) != 0;
             self.irq_pending = (data[1] & 2) != 0;
             self.irq_counter = (data[2] as u16) | ((data[3] as u16) << 8);
+            self.update_banks();
         }
     }
 
     fn capabilities(&self) -> MapperCapabilities {
-        MapperCapabilities {
-            has_irq: true,
-            has_chr_banking: false,
-            has_dynamic_mirroring: false,
-            has_expansion_audio: false,
-            max_prg_ram_kb: 0,
-            prg_bank_size_kb: 8,
-            chr_bank_size_kb: 8,
-            trainer_jsr: false,
-            ..Default::default()
-        }
+        self.base.capabilities()
     }
 }
 

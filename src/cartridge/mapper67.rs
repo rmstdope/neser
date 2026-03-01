@@ -6,8 +6,8 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
+use crate::cartridge::BaseMapper;
 use crate::cartridge::NametableLayout;
-use crate::cartridge::common::ChrMemory;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// Mapper 067 – Sunsoft 3
@@ -49,9 +49,7 @@ use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 /// - `$E800`: Mirroring [.... ..MM] 0=Vert 1=Horz 2=1-screenA 3=1-screenB
 /// - `$F800`: PRG bank [.... PPPP] (16KB bank at $8000)
 pub struct Mapper67 {
-    prg_rom: Vec<u8>,
-    chr_memory: ChrMemory,
-    mirroring: NametableLayout,
+    base: BaseMapper,
     prg_bank: u8,
     chr_banks: [u8; 4],
     irq_enabled: bool,
@@ -61,61 +59,52 @@ pub struct Mapper67 {
 }
 
 impl Mapper67 {
-    const MAPPER_NUMBER: u8 = 67;
     const PRG_BANK_SIZE: usize = 0x4000; // 16 KiB
-    const PRG_BANK_MASK: usize = Self::PRG_BANK_SIZE - 1;
     const CHR_BANK_SIZE: usize = 0x0800; // 2 KiB
-    const CHR_BANK_MASK: usize = Self::CHR_BANK_SIZE - 1;
 
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
-        let prg_rom = ctx.prg_rom;
-        let chr_rom = ctx.chr_rom;
-        Self {
-            prg_rom,
-            chr_memory: ChrMemory::new(chr_rom),
-            mirroring: NametableLayout::Vertical,
+        let capabilities = MapperCapabilities {
+            has_irq: true,
+            has_chr_banking: true,
+            has_dynamic_mirroring: true,
+            prg_bank_size_kb: 16,
+            chr_bank_size_kb: 2,
+            ..Default::default()
+        };
+
+        let mut base = BaseMapper::new(&ctx, capabilities);
+        base.configure_prg_banking(Self::PRG_BANK_SIZE);
+        base.configure_chr_banking(Self::CHR_BANK_SIZE);
+        base.set_mirroring(NametableLayout::Vertical);
+
+        let mut mapper = Self {
+            base,
             prg_bank: 0,
             chr_banks: [0; 4],
             irq_enabled: false,
             irq_pending: false,
             irq_counter: 0,
             irq_write_hi_next: true,
+        };
+
+        mapper.update_banks();
+        mapper
+    }
+
+    fn update_banks(&mut self) {
+        self.base.select_prg_page(0, self.prg_bank as i16);
+        self.base.select_prg_page(1, -1); // $C000 fixed last
+
+        for i in 0..4 {
+            self.base.select_chr_page(i, self.chr_banks[i] as i16);
         }
-    }
-
-    fn num_prg_banks(&self) -> usize {
-        self.prg_rom.len() / Self::PRG_BANK_SIZE
-    }
-
-    fn read_prg_bank(&self, bank: usize, offset: usize) -> u8 {
-        let count = self.num_prg_banks();
-        if count == 0 {
-            return 0;
-        }
-        let b = bank % count;
-        self.prg_rom
-            .get(b * Self::PRG_BANK_SIZE + offset)
-            .copied()
-            .unwrap_or(0)
-    }
-
-    fn num_chr_banks(&self) -> usize {
-        self.chr_memory.size() / Self::CHR_BANK_SIZE
     }
 }
 
 impl Mapper for Mapper67 {
     fn read_prg(&self, addr: u16) -> u8 {
         match addr {
-            0x8000..=0xBFFF => {
-                let offset = (addr as usize) & Self::PRG_BANK_MASK;
-                self.read_prg_bank(self.prg_bank as usize, offset)
-            }
-            0xC000..=0xFFFF => {
-                let offset = (addr as usize) & Self::PRG_BANK_MASK;
-                let last = self.num_prg_banks().saturating_sub(1);
-                self.read_prg_bank(last, offset)
-            }
+            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
             _ => 0,
         }
     }
@@ -126,10 +115,22 @@ impl Mapper for Mapper67 {
                 // IRQ acknowledge
                 self.irq_pending = false;
             }
-            0x8800 => self.chr_banks[0] = value,
-            0x9800 => self.chr_banks[1] = value,
-            0xA800 => self.chr_banks[2] = value,
-            0xB800 => self.chr_banks[3] = value,
+            0x8800 => {
+                self.chr_banks[0] = value;
+                self.update_banks();
+            }
+            0x9800 => {
+                self.chr_banks[1] = value;
+                self.update_banks();
+            }
+            0xA800 => {
+                self.chr_banks[2] = value;
+                self.update_banks();
+            }
+            0xB800 => {
+                self.chr_banks[3] = value;
+                self.update_banks();
+            }
             0xC800 => {
                 if self.irq_write_hi_next {
                     self.irq_counter = (self.irq_counter & 0x00FF) | ((value as u16) << 8);
@@ -144,46 +145,39 @@ impl Mapper for Mapper67 {
                 self.irq_write_hi_next = true;
             }
             0xE800 => {
-                self.mirroring = match value & 0x03 {
+                self.base.set_mirroring(match value & 0x03 {
                     0 => NametableLayout::Vertical,
                     1 => NametableLayout::Horizontal,
                     2 => NametableLayout::SingleScreenLower,
                     _ => NametableLayout::SingleScreenUpper,
-                };
+                });
             }
             0xF800 => {
                 self.prg_bank = value & 0x0F;
+                self.update_banks();
             }
             _ => {}
         }
     }
 
     fn read_chr(&mut self, addr: u16) -> u8 {
-        let slot = (addr as usize) / Self::CHR_BANK_SIZE;
-        let offset = (addr as usize) & Self::CHR_BANK_MASK;
-        let count = self.num_chr_banks();
-        if count == 0 {
-            return self.chr_memory.read(addr);
-        }
-        let bank = (self.chr_banks[slot & 3] as usize) % count;
-        self.chr_memory
-            .read_at_index(bank * Self::CHR_BANK_SIZE + offset)
+        self.base.read_chr_banked(addr)
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
-        self.chr_memory.write(addr, value);
+        self.base.write_chr_banked(addr, value);
     }
 
     fn get_mirroring(&self) -> NametableLayout {
-        self.mirroring
+        self.base.mirroring()
     }
 
     fn mapper_number(&self) -> u8 {
-        Self::MAPPER_NUMBER
+        self.base.mapper_number()
     }
 
     fn wram_size(&self) -> usize {
-        0
+        self.base.wram_size()
     }
 
     fn irq_pending(&self) -> bool {
@@ -203,19 +197,19 @@ impl Mapper for Mapper67 {
     }
 
     fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_memory.snapshot()
+        self.base.chr_ram_snapshot()
     }
 
     fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.chr_memory.load_snapshot(data);
+        self.base.restore_chr_ram(data);
     }
 
     fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        self.chr_memory.initialize(mode);
+        self.base.initialize_ram(mode);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        let mirror_byte = match self.mirroring {
+        let mirror_byte = match self.base.mirroring() {
             NametableLayout::Vertical => 0u8,
             NametableLayout::Horizontal => 1,
             NametableLayout::SingleScreenLower => 2,
@@ -241,38 +235,33 @@ impl Mapper for Mapper67 {
             return;
         }
         self.prg_bank = data[0];
-        self.mirroring = match data[1] {
+        self.base.set_mirroring(match data[1] {
             1 => NametableLayout::Horizontal,
             2 => NametableLayout::SingleScreenLower,
             3 => NametableLayout::SingleScreenUpper,
             _ => NametableLayout::Vertical,
-        };
+        });
         self.irq_enabled = (data[2] & 1) != 0;
         self.irq_pending = (data[2] & 2) != 0;
         self.irq_write_hi_next = (data[2] & 4) != 0;
         self.irq_counter = (data[3] as u16) | ((data[4] as u16) << 8);
         self.chr_banks.copy_from_slice(&data[5..9]);
+        self.update_banks();
     }
 
     fn reset(&mut self) {
         self.prg_bank = 0;
         self.chr_banks = [0; 4];
-        self.mirroring = NametableLayout::Vertical;
+        self.base.set_mirroring(NametableLayout::Vertical);
         self.irq_enabled = false;
         self.irq_pending = false;
         self.irq_counter = 0;
         self.irq_write_hi_next = true;
+        self.update_banks();
     }
 
     fn capabilities(&self) -> MapperCapabilities {
-        MapperCapabilities {
-            has_irq: true,
-            has_chr_banking: true,
-            has_dynamic_mirroring: true,
-            prg_bank_size_kb: 16,
-            chr_bank_size_kb: 2,
-            ..Default::default()
-        }
+        self.base.capabilities()
     }
 }
 
