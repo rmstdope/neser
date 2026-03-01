@@ -685,13 +685,27 @@ mod tests {
         last_write: Rc<RefCell<Option<(u16, u8)>>>,
     }
 
+    fn create_test_base_mapper() -> crate::cartridge::BaseMapper {
+        let ctx = crate::cartridge::MapperContext::new_for_test(
+            0,
+            vec![0; 0x8000],
+            vec![0; 8192],
+            crate::cartridge::NametableLayout::Horizontal,
+        );
+        crate::cartridge::BaseMapper::new(&ctx, crate::cartridge::MapperCapabilities::default())
+    }
+
     struct OamDmaCountingMapper {
+        base: crate::cartridge::BaseMapper,
         oam_dma_calls: Rc<RefCell<u32>>,
     }
 
     impl OamDmaCountingMapper {
         fn new(oam_dma_calls: Rc<RefCell<u32>>) -> Self {
-            Self { oam_dma_calls }
+            Self {
+                base: create_test_base_mapper(),
+                oam_dma_calls,
+            }
         }
     }
 
@@ -733,6 +747,14 @@ mod tests {
     }
 
     impl crate::cartridge::Mapper for OamDmaCountingMapper {
+        fn base(&self) -> &crate::cartridge::BaseMapper {
+            &self.base
+        }
+
+        fn base_mut(&mut self) -> &mut crate::cartridge::BaseMapper {
+            &mut self.base
+        }
+
         fn read_prg(&self, _addr: u16) -> u8 {
             0
         }

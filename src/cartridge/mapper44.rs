@@ -6,6 +6,7 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
+use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mmc3::MMC3Mapper;
 use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
@@ -33,7 +34,7 @@ use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 ///
 /// Known games: Super HIK 7-in-1 (A001), Super Marvelous 7-in-1
 pub struct Mapper44 {
-    mmc3: MMC3Mapper,
+    pub(crate) mmc3: MMC3Mapper,
     block: u8, // 0-6 (7 maps to 6)
 }
 
@@ -78,6 +79,13 @@ impl Mapper44 {
 }
 
 impl Mapper for Mapper44 {
+    fn base(&self) -> &BaseMapper {
+        &self.mmc3.base
+    }
+    fn base_mut(&mut self) -> &mut BaseMapper {
+        &mut self.mmc3.base
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
         if !(0x8000..=0xFFFF).contains(&addr) {
             return 0;

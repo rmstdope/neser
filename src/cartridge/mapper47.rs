@@ -6,6 +6,7 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
+use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mmc3::MMC3Mapper;
 use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
@@ -29,7 +30,7 @@ use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 ///
 /// Known games: Super Spike V'Ball + Nintendo World Cup
 pub struct Mapper47 {
-    mmc3: MMC3Mapper,
+    pub(crate) mmc3: MMC3Mapper,
     block: u8,
 }
 
@@ -60,6 +61,13 @@ impl Mapper47 {
 }
 
 impl Mapper for Mapper47 {
+    fn base(&self) -> &BaseMapper {
+        &self.mmc3.base
+    }
+    fn base_mut(&mut self) -> &mut BaseMapper {
+        &mut self.mmc3.base
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
         if !(0x8000..=0xFFFF).contains(&addr) {
             return 0; // No PRG-RAM

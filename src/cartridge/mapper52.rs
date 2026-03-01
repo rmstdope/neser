@@ -6,6 +6,7 @@
 //! Known Limitations:
 //! - Submapper 13/14 (CHR RAM variants) are not implemented.
 
+use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mmc3::MMC3Mapper;
 use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 use crate::trace_mapper;
@@ -43,7 +44,7 @@ use crate::trace_mapper;
 ///   A19 = B
 ///   bank = (B<<9) | (C<<8) | (A17<<7) | (mmc3_1k_bank & 0x7F)
 pub struct Mapper52 {
-    mmc3: MMC3Mapper,
+    pub(crate) mmc3: MMC3Mapper,
     outer: u8,
     locked: bool,
 }
@@ -122,6 +123,13 @@ impl Mapper52 {
 }
 
 impl Mapper for Mapper52 {
+    fn base(&self) -> &BaseMapper {
+        &self.mmc3.base
+    }
+    fn base_mut(&mut self) -> &mut BaseMapper {
+        &mut self.mmc3.base
+    }
+
     fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
         if Self::is_wram_window(addr) {
             return self.mmc3.read_prg_open_bus(addr, open_bus);

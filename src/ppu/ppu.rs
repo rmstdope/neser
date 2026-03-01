@@ -997,11 +997,30 @@ mod tests {
         background, memory, registers, rendering, screen_buffer, sprites, status, timing,
     };
 
+    fn create_test_base_mapper() -> crate::cartridge::BaseMapper {
+        let ctx = crate::cartridge::MapperContext::new_for_test(
+            0,
+            vec![0; 0x8000],
+            vec![0; 8192],
+            NametableLayout::Horizontal,
+        );
+        crate::cartridge::BaseMapper::new(&ctx, crate::cartridge::MapperCapabilities::default())
+    }
+
     struct ScanlineSpyMapper {
+        base: crate::cartridge::BaseMapper,
         calls: Rc<RefCell<Vec<(u16, bool)>>>,
     }
 
     impl crate::cartridge::Mapper for ScanlineSpyMapper {
+        fn base(&self) -> &crate::cartridge::BaseMapper {
+            &self.base
+        }
+
+        fn base_mut(&mut self) -> &mut crate::cartridge::BaseMapper {
+            &mut self.base
+        }
+
         fn read_prg(&self, _addr: u16) -> u8 {
             0
         }
@@ -1109,6 +1128,7 @@ mod tests {
 
         let cart = Rc::new(RefCell::new(Cartridge::from_mapper_for_test(Box::new(
             ScanlineSpyMapper {
+                base: create_test_base_mapper(),
                 calls: calls.clone(),
             },
         ))));
@@ -1133,6 +1153,7 @@ mod tests {
 
         let cart = Rc::new(RefCell::new(Cartridge::from_mapper_for_test(Box::new(
             ScanlineSpyMapper {
+                base: create_test_base_mapper(),
                 calls: calls.clone(),
             },
         ))));
@@ -1294,10 +1315,19 @@ mod tests {
     }
 
     struct EndFrameSpyMapper {
+        base: crate::cartridge::BaseMapper,
         calls: Rc<RefCell<u32>>,
     }
 
     impl crate::cartridge::Mapper for EndFrameSpyMapper {
+        fn base(&self) -> &crate::cartridge::BaseMapper {
+            &self.base
+        }
+
+        fn base_mut(&mut self) -> &mut crate::cartridge::BaseMapper {
+            &mut self.base
+        }
+
         fn read_prg(&self, _addr: u16) -> u8 {
             0
         }
@@ -1327,6 +1357,7 @@ mod tests {
 
         let cart = Rc::new(RefCell::new(Cartridge::from_mapper_for_test(Box::new(
             EndFrameSpyMapper {
+                base: create_test_base_mapper(),
                 calls: calls.clone(),
             },
         ))));
@@ -1348,10 +1379,19 @@ mod tests {
     }
 
     struct ChrFetchKindSpyMapper {
+        base: crate::cartridge::BaseMapper,
         events: Rc<RefCell<Vec<ChrFetchEvent>>>,
     }
 
     impl crate::cartridge::Mapper for ChrFetchKindSpyMapper {
+        fn base(&self) -> &crate::cartridge::BaseMapper {
+            &self.base
+        }
+
+        fn base_mut(&mut self) -> &mut crate::cartridge::BaseMapper {
+            &mut self.base
+        }
+
         fn read_prg(&self, _addr: u16) -> u8 {
             0
         }
@@ -1380,10 +1420,19 @@ mod tests {
     }
 
     struct A12PrimingSpyMapper {
+        base: crate::cartridge::BaseMapper,
         calls: Rc<RefCell<Vec<u16>>>,
     }
 
     impl crate::cartridge::Mapper for A12PrimingSpyMapper {
+        fn base(&self) -> &crate::cartridge::BaseMapper {
+            &self.base
+        }
+
+        fn base_mut(&mut self) -> &mut crate::cartridge::BaseMapper {
+            &mut self.base
+        }
+
         fn read_prg(&self, _addr: u16) -> u8 {
             0
         }
@@ -1411,6 +1460,7 @@ mod tests {
 
         let cart = Rc::new(RefCell::new(Cartridge::from_mapper_for_test(Box::new(
             ChrFetchKindSpyMapper {
+                base: create_test_base_mapper(),
                 events: events.clone(),
             },
         ))));
@@ -1498,6 +1548,7 @@ mod tests {
 
         let cart = Rc::new(RefCell::new(Cartridge::from_mapper_for_test(Box::new(
             A12PrimingSpyMapper {
+                base: create_test_base_mapper(),
                 calls: calls.clone(),
             },
         ))));

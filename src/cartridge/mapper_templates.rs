@@ -158,12 +158,12 @@ impl<const CHR_BANK_KB: usize, const MAPPER_NUM: u8> SimpleFixedPrgMapper<CHR_BA
 impl<const CHR_BANK_KB: usize, const MAPPER_NUM: u8> Mapper
     for SimpleFixedPrgMapper<CHR_BANK_KB, MAPPER_NUM>
 {
-    fn base(&self) -> Option<&BaseMapper> {
-        Some(&self.base)
+    fn base(&self) -> &BaseMapper {
+        &self.base
     }
 
-    fn base_mut(&mut self) -> Option<&mut BaseMapper> {
-        Some(&mut self.base)
+    fn base_mut(&mut self) -> &mut BaseMapper {
+        &mut self.base
     }
 
     fn read_prg(&self, addr: u16) -> u8 {
@@ -275,12 +275,12 @@ impl<const PRG_BANK_KB: usize, const MAPPER_NUM: u8>
 impl<const PRG_BANK_KB: usize, const MAPPER_NUM: u8> Mapper
     for SimpleBankedPrgMapper<PRG_BANK_KB, MAPPER_NUM>
 {
-    fn base(&self) -> Option<&BaseMapper> {
-        Some(&self.base)
+    fn base(&self) -> &BaseMapper {
+        &self.base
     }
 
-    fn base_mut(&mut self) -> Option<&mut BaseMapper> {
-        Some(&mut self.base)
+    fn base_mut(&mut self) -> &mut BaseMapper {
+        &mut self.base
     }
 
     fn read_prg(&self, addr: u16) -> u8 {
@@ -398,12 +398,12 @@ impl<
     const MAPPER_NUM: u8,
 > Mapper for DualBank32Mapper<PRG_MASK, PRG_SHIFT, CHR_MASK, CHR_SHIFT, MAPPER_NUM>
 {
-    fn base(&self) -> Option<&BaseMapper> {
-        Some(&self.base)
+    fn base(&self) -> &BaseMapper {
+        &self.base
     }
 
-    fn base_mut(&mut self) -> Option<&mut BaseMapper> {
-        Some(&mut self.base)
+    fn base_mut(&mut self) -> &mut BaseMapper {
+        &mut self.base
     }
 
     fn read_prg(&self, addr: u16) -> u8 {

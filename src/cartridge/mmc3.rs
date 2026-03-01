@@ -49,7 +49,7 @@ use crate::trace_mapper;
 /// - IRQ behavior selection is currently derived from ROM metadata/CRC heuristics.
 /// - Some board-specific clone quirks are intentionally not modeled yet.
 pub struct MMC3Mapper {
-    base: BaseMapper,
+    pub(crate) base: BaseMapper,
     prg_ram: Vec<u8>,
 
     prg_ram_enabled: bool,
@@ -1362,6 +1362,13 @@ mod tests {
 // ============================================================================
 
 impl Mapper for MMC3Mapper {
+    fn base(&self) -> &BaseMapper {
+        &self.base
+    }
+    fn base_mut(&mut self) -> &mut BaseMapper {
+        &mut self.base
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
         match addr {
             0x6000..=0x7FFF => {

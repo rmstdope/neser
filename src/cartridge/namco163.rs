@@ -436,6 +436,13 @@ impl Namco163Mapper {
 }
 
 impl Mapper for Namco163Mapper {
+    fn base(&self) -> &BaseMapper {
+        &self.base
+    }
+    fn base_mut(&mut self) -> &mut BaseMapper {
+        &mut self.base
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
         match addr & 0xF800 {
             0x4800 => self.audio_read_data(),

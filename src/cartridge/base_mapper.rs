@@ -25,8 +25,8 @@ use crate::cartridge::NametableLayout;
 /// }
 ///
 /// impl Mapper for MyMapper {
-///     fn base(&self) -> Option<&BaseMapper> { Some(&self.base) }
-///     fn base_mut(&mut self) -> Option<&mut BaseMapper> { Some(&mut self.base) }
+///     fn base(&self) -> &BaseMapper { &self.base }
+///     fn base_mut(&mut self) -> &mut BaseMapper { &mut self.base }
 ///     fn read_prg(&self, addr: u16) -> u8 {
 ///         if let Some(v) = self.base.try_read_prg_ram(addr) { return v; }
 ///         self.base.read_prg_banked(addr)

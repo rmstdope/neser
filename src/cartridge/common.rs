@@ -294,6 +294,7 @@ impl ChrMemory {
     }
 
     /// Check if this is CHR-RAM (writable) vs CHR-ROM (read-only).
+    #[cfg(test)]
     #[inline]
     pub fn is_ram(&self) -> bool {
         self.is_ram
@@ -371,7 +372,7 @@ impl StateSnapshot for ChrMemory {
 /// - Bounds checking
 ///
 /// # Example
-/// ```rust
+/// ```ignore
 /// use neser::cartridge::BankedRom;
 ///
 /// let prg_rom = vec![0u8; 0x8000];
@@ -387,12 +388,14 @@ impl StateSnapshot for ChrMemory {
 /// let value = banked_prg.read_with_base(bank, 0x8000, 0x9000);
 /// let _ = value;
 /// ```
+#[cfg(test)]
 #[derive(Clone)]
 pub struct BankedRom {
     data: Vec<u8>,
     bank_size: usize,
 }
 
+#[cfg(test)]
 impl BankedRom {
     /// Create a new banked ROM with the specified bank size.
     ///
@@ -474,7 +477,7 @@ impl BankedRom {
 /// Eliminates manual `.max(1)` calls and reduces duplicated bank calculation code.
 ///
 /// # Example
-/// ```rust
+/// ```ignore
 /// use neser::cartridge::BankSwitch;
 ///
 /// // PRG-ROM with 128KB (4 banks of 32KB)
@@ -490,12 +493,14 @@ impl BankedRom {
 /// bank.set(5);
 /// assert_eq!(bank.current(), 1); // 5 % 4 = 1
 /// ```
+#[cfg(test)]
 #[derive(Clone, Copy, Debug)]
 pub struct BankSwitch {
     num_banks: usize,
     bank: u8,
 }
 
+#[cfg(test)]
 impl BankSwitch {
     /// Create a new bank switch helper.
     ///
@@ -559,6 +564,7 @@ impl BankSwitch {
     }
 }
 
+#[cfg(test)]
 impl StateSnapshot for BankSwitch {
     fn snapshot(&self) -> Vec<u8> {
         vec![self.bank]

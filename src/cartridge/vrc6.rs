@@ -405,6 +405,13 @@ impl VRC6Mapper {
 }
 
 impl Mapper for VRC6Mapper {
+    fn base(&self) -> &BaseMapper {
+        &self.base
+    }
+    fn base_mut(&mut self) -> &mut BaseMapper {
+        &mut self.base
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
         // PRG-RAM at $6000-$7FFF, enabled by $B003 bit 7 (W)
         if self.prg_ram_enabled

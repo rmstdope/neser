@@ -900,6 +900,13 @@ impl MMC5Mapper {
 // ============================================================================
 
 impl Mapper for MMC5Mapper {
+    fn base(&self) -> &BaseMapper {
+        &self.base
+    }
+    fn base_mut(&mut self) -> &mut BaseMapper {
+        &mut self.base
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
         match addr {
             // Hardware multiplier output (read-only)

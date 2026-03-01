@@ -374,9 +374,29 @@ mod tests {
     use super::*;
     use crate::cartridge::Cartridge;
 
-    struct TestNametableOverrideMapper;
+    fn create_test_base_mapper() -> crate::cartridge::BaseMapper {
+        let ctx = crate::cartridge::MapperContext::new_for_test(
+            0,
+            vec![0; 0x8000],
+            vec![0; 8192],
+            crate::cartridge::NametableLayout::Horizontal,
+        );
+        crate::cartridge::BaseMapper::new(&ctx, crate::cartridge::MapperCapabilities::default())
+    }
+
+    struct TestNametableOverrideMapper {
+        base: crate::cartridge::BaseMapper,
+    }
 
     impl crate::cartridge::Mapper for TestNametableOverrideMapper {
+        fn base(&self) -> &crate::cartridge::BaseMapper {
+            &self.base
+        }
+
+        fn base_mut(&mut self) -> &mut crate::cartridge::BaseMapper {
+            &mut self.base
+        }
+
         fn read_prg(&self, _addr: u16) -> u8 {
             0
         }
@@ -415,7 +435,9 @@ mod tests {
     fn test_mapper_can_override_nametable_reads() {
         let mem = Memory::default();
         let cart = Rc::new(RefCell::new(Cartridge::from_mapper_for_test(Box::new(
-            TestNametableOverrideMapper,
+            TestNametableOverrideMapper {
+                base: create_test_base_mapper(),
+            },
         ))));
         let cartridge = Some(cart);
 
