@@ -570,6 +570,379 @@ impl StateSnapshot for BankSwitch {
     }
 }
 
+// ============================================================================
+// A12 (Scanline) IRQ Counter
+// ============================================================================
+//
+// Used by MMC3-family mappers to generate scanline-based IRQs.
+//
+// The counter is clocked by PPU address bus A12 rising edges:
+// 1. PPU renders a scanline → A12 transitions low→high as it accesses pattern tables
+// 2. A12 must be low for at least 3 CPU cycles (debounce/low-pass filter)
+// 3. On each valid rising edge, the counter is clocked
+// 4. Clock behavior: if counter==0 or reload requested → load from latch, else decrement
+// 5. IRQ fires when counter reaches 0 (exact behavior depends on variant)
+//
+// Two chip variants:
+// - Normal (Sharp): IRQ when counter IS 0 after update
+// - Alternate (NEC): IRQ only on 1→0 TRANSITION (not reload-to-0 from natural wrap)
+//
+// Register interface (caller is responsible for mapping addresses):
+// - set_latch(value): sets the reload value
+// - request_reload(): clears counter to 0, sets reload flag
+// - set_enabled(true/false): enables/disables IRQ generation; disable also acknowledges
+// - cpu_cycle(): tracks A12 low cycles for debounce
+// - ppu_address_changed(addr): detects A12 rising edges and clocks counter
+// - is_pending(): returns true if IRQ is asserted
+//
+// See: https://www.nesdev.org/wiki/MMC3#IRQ_Specifics
+
+/// Reusable A12 (scanline) IRQ counter for MMC3-family mappers.
+#[allow(dead_code)]
+pub struct A12IrqCounter {
+    latch: u8,
+    counter: u8,
+    reload: bool,
+    enabled: bool,
+    asserted: bool,
+    prev_a12: bool,
+    current_a12: bool,
+    a12_low_cycles: u8,
+    alternate_behavior: bool,
+}
+
+#[allow(dead_code)]
+impl A12IrqCounter {
+    /// Minimum number of CPU cycles A12 must be low before a rising edge is valid.
+    const A12_LOW_CYCLES_REQUIRED: u8 = 3;
+
+    /// Create a new A12 IRQ counter.
+    ///
+    /// `alternate_behavior`:
+    /// - `false`: Normal (Sharp) — IRQ when counter IS 0 after update
+    /// - `true`: Alternate (NEC) — IRQ only on 1→0 transition
+    pub fn new(alternate_behavior: bool) -> Self {
+        Self {
+            latch: 0,
+            counter: 0,
+            reload: false,
+            enabled: false,
+            asserted: false,
+            prev_a12: false,
+            current_a12: false,
+            a12_low_cycles: 0,
+            alternate_behavior,
+        }
+    }
+
+    /// Set the IRQ latch (reload value).
+    pub fn set_latch(&mut self, value: u8) {
+        self.latch = value;
+    }
+
+    /// Request counter reload: clears counter to 0 and sets reload flag.
+    pub fn request_reload(&mut self) {
+        self.counter = 0;
+        self.reload = true;
+    }
+
+    /// Enable or disable IRQ generation. Disabling also acknowledges any pending IRQ.
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+        if !enabled {
+            self.asserted = false;
+        }
+    }
+
+    /// Returns true if an IRQ is currently asserted (pending).
+    pub fn is_pending(&self) -> bool {
+        self.asserted
+    }
+
+    /// Track A12 low cycles for debounce. Call once per CPU cycle.
+    pub fn cpu_cycle(&mut self) {
+        if self.current_a12 {
+            self.a12_low_cycles = 0;
+        } else {
+            self.a12_low_cycles = self.a12_low_cycles.saturating_add(1);
+        }
+    }
+
+    /// Notify the counter that the PPU address bus changed.
+    /// Detects A12 rising edges and clocks the counter when appropriate.
+    pub fn ppu_address_changed(&mut self, addr: u16) {
+        let current_a12 = (addr & 0x1000) != 0;
+        self.current_a12 = current_a12;
+
+        // Detect rising edge
+        let rising_edge = !self.prev_a12 && current_a12;
+        self.prev_a12 = current_a12;
+
+        if !rising_edge {
+            return;
+        }
+
+        // Debounce: A12 must have been low for at least 3 CPU cycles
+        if self.a12_low_cycles < Self::A12_LOW_CYCLES_REQUIRED {
+            return;
+        }
+
+        // Clock the counter
+        self.clock_counter();
+    }
+
+    fn clock_counter(&mut self) {
+        let old_counter = self.counter;
+        let was_reload = self.reload;
+
+        if self.counter == 0 || self.reload {
+            self.counter = self.latch;
+            self.reload = false;
+        } else {
+            self.counter = self.counter.wrapping_sub(1);
+        }
+
+        let should_fire = if self.alternate_behavior {
+            // Alternate (NEC): IRQ only on 1→0 transition
+            let decremented_to_zero = old_counter == 1 && self.counter == 0;
+            let reload_triggered_to_zero = was_reload && self.counter == 0;
+            decremented_to_zero || reload_triggered_to_zero
+        } else {
+            // Normal (Sharp): IRQ when counter is 0
+            self.counter == 0
+        };
+
+        if should_fire && self.enabled {
+            self.asserted = true;
+        }
+    }
+
+    /// Read the current counter value (for testing/debugging).
+    #[cfg(test)]
+    pub fn counter(&self) -> u8 {
+        self.counter
+    }
+}
+
+// ============================================================================
+// CPU Cycle IRQ Counter
+// ============================================================================
+//
+// Simple countdown IRQ counter clocked by CPU cycles. Used by mappers like
+// 65 (Irem H3001) which have a 16-bit counter that counts down each CPU cycle.
+//
+// Behavior:
+// - Counter counts down each CPU cycle when enabled
+// - On reaching 0: fires IRQ, counter stays at 0 (no wrap)
+// - Separate 16-bit reload value loaded via set_reload()
+// - load_counter() copies reload value into counter
+// - acknowledge() clears pending flag
+//
+// See: https://www.nesdev.org/wiki/INES_Mapper_065
+
+/// Reusable CPU-cycle countdown IRQ counter.
+#[derive(Default)]
+#[allow(dead_code)]
+pub struct CpuCycleIrqCounter {
+    counter: u16,
+    reload: u16,
+    enabled: bool,
+    pending: bool,
+}
+
+#[allow(dead_code)]
+impl CpuCycleIrqCounter {
+    /// Create a new CPU cycle IRQ counter.
+    pub fn new() -> Self {
+        Self {
+            counter: 0,
+            reload: 0,
+            enabled: false,
+            pending: false,
+        }
+    }
+
+    /// Set the reload value.
+    pub fn set_reload(&mut self, value: u16) {
+        self.reload = value;
+    }
+
+    /// Copy the reload value into the counter.
+    pub fn load_counter(&mut self) {
+        self.counter = self.reload;
+    }
+
+    /// Enable or disable the counter.
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+
+    /// Returns true if an IRQ is pending.
+    pub fn is_pending(&self) -> bool {
+        self.pending
+    }
+
+    /// Acknowledge (clear) the pending IRQ.
+    pub fn acknowledge(&mut self) {
+        self.pending = false;
+    }
+
+    /// Clock the counter once (call once per CPU cycle).
+    pub fn clock(&mut self) {
+        if !self.enabled || self.counter == 0 {
+            return;
+        }
+        self.counter -= 1;
+        if self.counter == 0 {
+            self.pending = true;
+        }
+    }
+
+    /// Read the current counter value (for testing/debugging).
+    #[cfg(test)]
+    pub fn counter(&self) -> u16 {
+        self.counter
+    }
+}
+
+// ============================================================================
+// VRC IRQ Counter
+// ============================================================================
+//
+// Used by VRC2/VRC4 and VRC6 mappers. 8-bit count-UP counter with prescaler
+// for scanline-mode emulation.
+//
+// Modes:
+// - CPU cycle mode: clocks counter every CPU cycle
+// - Scanline mode: prescaler starts at 341, decrements by 3 each CPU cycle;
+//   when ≤ 0, adds 341 and clocks counter (~114 CPU cycles per scanline)
+//
+// Counter counts UP: if counter == 0xFF, reload from latch and assert IRQ;
+// otherwise increment.
+//
+// Register interface (caller maps addresses):
+// - set_latch_low(value): sets latch bits [3:0]
+// - set_latch_high(value): sets latch bits [7:4]
+// - write_control(value): [.... .MEA] — mode, enable, enable-after-ack
+// - acknowledge(): clears IRQ, copies enable-after-ack → enabled
+// - clock(): call once per CPU cycle
+//
+// See: https://www.nesdev.org/wiki/VRC6#IRQ_Control
+// See: https://www.nesdev.org/wiki/VRC4#IRQ_Control
+
+/// Reusable VRC-style IRQ counter with prescaler for scanline-mode.
+#[derive(Default)]
+#[allow(dead_code)]
+pub struct VrcIrqCounter {
+    latch: u8,
+    counter: u8,
+    enabled: bool,
+    mode_cycle: bool,
+    enable_after_ack: bool,
+    asserted: bool,
+    prescaler: i32,
+}
+
+#[allow(dead_code)]
+impl VrcIrqCounter {
+    /// Prescaler initial value: 341 master clock ticks.
+    const PRESCALER_INIT: i32 = 341;
+    /// Prescaler step: 3 master ticks per CPU cycle.
+    const PRESCALER_STEP: i32 = 3;
+
+    /// Create a new VRC IRQ counter.
+    pub fn new() -> Self {
+        Self {
+            latch: 0,
+            counter: 0,
+            enabled: false,
+            mode_cycle: false,
+            enable_after_ack: false,
+            asserted: false,
+            prescaler: 0,
+        }
+    }
+
+    /// Set the low nibble of the latch (bits [3:0]).
+    pub fn set_latch_low(&mut self, value: u8) {
+        self.latch = (self.latch & 0xF0) | (value & 0x0F);
+    }
+
+    /// Set the high nibble of the latch (bits [7:4]).
+    pub fn set_latch_high(&mut self, value: u8) {
+        self.latch = (self.latch & 0x0F) | ((value & 0x0F) << 4);
+    }
+
+    /// Write IRQ control register: `[.... .MEA]`
+    /// - bit 2 (M): mode (1 = CPU cycle, 0 = scanline)
+    /// - bit 1 (E): enable (1 = enable and load counter from latch)
+    /// - bit 0 (A): enable-after-ack
+    pub fn write_control(&mut self, value: u8) {
+        self.asserted = false;
+        self.prescaler = Self::PRESCALER_INIT;
+        self.mode_cycle = (value & 0b0000_0100) != 0;
+        let enable = (value & 0b0000_0010) != 0;
+        self.enable_after_ack = (value & 0b0000_0001) != 0;
+        if enable {
+            self.enabled = true;
+            self.counter = self.latch;
+        } else {
+            self.enabled = false;
+        }
+    }
+
+    /// Acknowledge IRQ: clears asserted flag, copies enable-after-ack → enabled.
+    pub fn acknowledge(&mut self) {
+        self.asserted = false;
+        self.enabled = self.enable_after_ack;
+    }
+
+    /// Returns true if an IRQ is asserted (pending).
+    pub fn is_pending(&self) -> bool {
+        self.asserted
+    }
+
+    /// Clock the counter. Call once per CPU cycle.
+    pub fn clock(&mut self) {
+        if !self.enabled {
+            return;
+        }
+
+        if self.mode_cycle {
+            self.clock_counter();
+            return;
+        }
+
+        // Scanline mode: prescaler counts down
+        self.prescaler -= Self::PRESCALER_STEP;
+        if self.prescaler <= 0 {
+            self.prescaler += Self::PRESCALER_INIT;
+            self.clock_counter();
+        }
+    }
+
+    fn clock_counter(&mut self) {
+        if self.counter == 0xFF {
+            self.counter = self.latch;
+            self.asserted = true;
+        } else {
+            self.counter = self.counter.wrapping_add(1);
+        }
+    }
+
+    /// Read the current counter value (for testing/debugging).
+    #[cfg(test)]
+    pub fn counter(&self) -> u8 {
+        self.counter
+    }
+
+    /// Read the current latch value (for testing/debugging).
+    #[cfg(test)]
+    pub fn latch(&self) -> u8 {
+        self.latch
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -973,5 +1346,497 @@ mod tests {
         // Zero bank size
         let zero_bank = BankSwitch::from_rom(&rom_data, 0);
         assert_eq!(zero_bank.current(), 0);
+    }
+
+    // ========================================================================
+    // A12IrqCounter Tests
+    // ========================================================================
+
+    /// Helper: simulate N CPU cycles to satisfy A12 debounce requirement.
+    fn run_cpu_cycles(irq: &mut A12IrqCounter, n: u32) {
+        for _ in 0..n {
+            irq.cpu_cycle();
+        }
+    }
+
+    /// Helper: simulate a valid A12 rising edge (low for 3+ cycles, then high).
+    fn trigger_a12_rising_edge(irq: &mut A12IrqCounter) {
+        irq.ppu_address_changed(0x0000); // A12 low
+        run_cpu_cycles(irq, 3);
+        irq.ppu_address_changed(0x1000); // A12 high → rising edge
+    }
+
+    #[test]
+    fn test_a12_irq_new_defaults() {
+        let irq = A12IrqCounter::new(false);
+        assert!(!irq.is_pending());
+        assert_eq!(irq.counter(), 0);
+    }
+
+    #[test]
+    fn test_a12_irq_set_latch() {
+        let mut irq = A12IrqCounter::new(false);
+        irq.set_latch(10);
+        // Latch doesn't affect counter until reload
+        assert_eq!(irq.counter(), 0);
+    }
+
+    #[test]
+    fn test_a12_irq_reload_loads_latch_into_counter() {
+        let mut irq = A12IrqCounter::new(false);
+        irq.set_latch(5);
+        irq.request_reload();
+        irq.set_enabled(true);
+
+        // Counter is 0 + reload flag → next clock loads latch
+        trigger_a12_rising_edge(&mut irq);
+        assert_eq!(irq.counter(), 5);
+    }
+
+    #[test]
+    fn test_a12_irq_counter_decrements_on_each_clock() {
+        let mut irq = A12IrqCounter::new(false);
+        irq.set_latch(3);
+        irq.request_reload();
+        irq.set_enabled(true);
+
+        // First clock: counter==0 + reload → loads 3
+        trigger_a12_rising_edge(&mut irq);
+        assert_eq!(irq.counter(), 3);
+
+        // Second clock: 3 → 2
+        trigger_a12_rising_edge(&mut irq);
+        assert_eq!(irq.counter(), 2);
+
+        // Third clock: 2 → 1
+        trigger_a12_rising_edge(&mut irq);
+        assert_eq!(irq.counter(), 1);
+    }
+
+    #[test]
+    fn test_a12_irq_fires_when_counter_reaches_zero_normal() {
+        let mut irq = A12IrqCounter::new(false); // Normal (Sharp)
+        irq.set_latch(2);
+        irq.request_reload();
+        irq.set_enabled(true);
+
+        // Clock 1: loads 2 (counter was 0 + reload)
+        trigger_a12_rising_edge(&mut irq);
+        assert!(!irq.is_pending());
+
+        // Clock 2: 2 → 1
+        trigger_a12_rising_edge(&mut irq);
+        assert!(!irq.is_pending());
+
+        // Clock 3: 1 → 0 → IRQ fires
+        trigger_a12_rising_edge(&mut irq);
+        assert!(irq.is_pending());
+    }
+
+    #[test]
+    fn test_a12_irq_does_not_fire_when_disabled() {
+        let mut irq = A12IrqCounter::new(false);
+        irq.set_latch(1);
+        irq.request_reload();
+        // Enabled is false by default
+
+        // Clock 1: loads 1
+        trigger_a12_rising_edge(&mut irq);
+        // Clock 2: 1 → 0
+        trigger_a12_rising_edge(&mut irq);
+        assert!(!irq.is_pending());
+    }
+
+    #[test]
+    fn test_a12_irq_disable_acknowledges_pending() {
+        let mut irq = A12IrqCounter::new(false);
+        irq.set_latch(1);
+        irq.request_reload();
+        irq.set_enabled(true);
+
+        // Fire IRQ
+        trigger_a12_rising_edge(&mut irq); // loads 1
+        trigger_a12_rising_edge(&mut irq); // 1 → 0, fires
+
+        assert!(irq.is_pending());
+
+        // Disable acknowledges
+        irq.set_enabled(false);
+        assert!(!irq.is_pending());
+    }
+
+    #[test]
+    fn test_a12_irq_counter_reloads_on_zero_naturally() {
+        let mut irq = A12IrqCounter::new(false);
+        irq.set_latch(1);
+        irq.request_reload();
+        irq.set_enabled(true);
+
+        // Clock 1: loads 1 (counter==0 + reload)
+        trigger_a12_rising_edge(&mut irq);
+        assert_eq!(irq.counter(), 1);
+
+        // Clock 2: 1 → 0, fires IRQ
+        trigger_a12_rising_edge(&mut irq);
+        assert_eq!(irq.counter(), 0);
+        assert!(irq.is_pending());
+
+        // Clock 3: counter==0 (no reload flag) → loads latch (1)
+        trigger_a12_rising_edge(&mut irq);
+        assert_eq!(irq.counter(), 1);
+    }
+
+    #[test]
+    fn test_a12_irq_debounce_rejects_short_low() {
+        let mut irq = A12IrqCounter::new(false);
+        irq.set_latch(5);
+        irq.request_reload();
+        irq.set_enabled(true);
+
+        // A12 goes low for only 2 cycles, then high — should NOT clock
+        irq.ppu_address_changed(0x0000); // A12 low
+        run_cpu_cycles(&mut irq, 2); // Only 2 cycles low
+        irq.ppu_address_changed(0x1000); // A12 high
+
+        // Counter should still be 0 (not clocked)
+        assert_eq!(irq.counter(), 0);
+    }
+
+    #[test]
+    fn test_a12_irq_debounce_accepts_sufficient_low() {
+        let mut irq = A12IrqCounter::new(false);
+        irq.set_latch(5);
+        irq.request_reload();
+        irq.set_enabled(true);
+
+        // A12 low for exactly 3 cycles then high → valid edge
+        irq.ppu_address_changed(0x0000); // A12 low
+        run_cpu_cycles(&mut irq, 3);
+        irq.ppu_address_changed(0x1000); // A12 high → clocked
+
+        assert_eq!(irq.counter(), 5);
+    }
+
+    #[test]
+    fn test_a12_irq_no_edge_when_already_high() {
+        let mut irq = A12IrqCounter::new(false);
+        irq.set_latch(5);
+        irq.request_reload();
+        irq.set_enabled(true);
+
+        // First: valid rising edge to load counter
+        trigger_a12_rising_edge(&mut irq);
+        assert_eq!(irq.counter(), 5);
+
+        // Second: A12 stays high → no rising edge → no clock
+        run_cpu_cycles(&mut irq, 3);
+        irq.ppu_address_changed(0x1000);
+        assert_eq!(irq.counter(), 5);
+    }
+
+    #[test]
+    fn test_a12_irq_alternate_fires_on_decrement_to_zero() {
+        let mut irq = A12IrqCounter::new(true); // Alternate (NEC)
+        irq.set_latch(2);
+        irq.request_reload();
+        irq.set_enabled(true);
+
+        // Clock 1: loads 2
+        trigger_a12_rising_edge(&mut irq);
+        assert!(!irq.is_pending());
+
+        // Clock 2: 2 → 1
+        trigger_a12_rising_edge(&mut irq);
+        assert!(!irq.is_pending());
+
+        // Clock 3: 1 → 0 → IRQ (decrement-to-zero transition)
+        trigger_a12_rising_edge(&mut irq);
+        assert!(irq.is_pending());
+    }
+
+    #[test]
+    fn test_a12_irq_alternate_fires_on_reload_triggered_to_zero() {
+        let mut irq = A12IrqCounter::new(true); // Alternate (NEC)
+        irq.set_latch(0); // Latch = 0
+        irq.request_reload();
+        irq.set_enabled(true);
+
+        // Clock: counter==0 + reload → loads 0 from latch
+        // This is reload-triggered, so alternate fires
+        trigger_a12_rising_edge(&mut irq);
+        assert!(irq.is_pending());
+    }
+
+    #[test]
+    fn test_a12_irq_alternate_no_fire_on_natural_zero_reload() {
+        let mut irq = A12IrqCounter::new(true); // Alternate (NEC)
+        irq.set_latch(0); // Latch = 0
+        irq.set_enabled(true);
+
+        // First: fire via reload (reload flag set)
+        irq.request_reload();
+        trigger_a12_rising_edge(&mut irq);
+        assert!(irq.is_pending());
+
+        // Acknowledge
+        irq.set_enabled(false);
+        irq.set_enabled(true);
+
+        // Now counter is 0, reload flag is NOT set → natural zero-to-zero
+        // Alternate behavior: should NOT fire (no transition)
+        trigger_a12_rising_edge(&mut irq);
+        assert!(!irq.is_pending());
+    }
+
+    #[test]
+    fn test_a12_irq_normal_fires_on_natural_zero_reload() {
+        let mut irq = A12IrqCounter::new(false); // Normal (Sharp)
+        irq.set_latch(0); // Latch = 0
+        irq.set_enabled(true);
+
+        // Counter is 0, no reload flag → loads latch (0) → counter is 0
+        // Normal behavior: fires because counter IS 0
+        trigger_a12_rising_edge(&mut irq);
+        assert!(irq.is_pending());
+    }
+
+    // ========================================================================
+    // CpuCycleIrqCounter Tests
+    // ========================================================================
+
+    #[test]
+    fn test_cpu_cycle_irq_new_defaults() {
+        let irq = CpuCycleIrqCounter::new();
+        assert!(!irq.is_pending());
+        assert_eq!(irq.counter(), 0);
+    }
+
+    #[test]
+    fn test_cpu_cycle_irq_countdown_to_zero() {
+        let mut irq = CpuCycleIrqCounter::new();
+        irq.set_reload(3);
+        irq.load_counter();
+        irq.set_enabled(true);
+
+        irq.clock(); // 3 → 2
+        assert_eq!(irq.counter(), 2);
+        assert!(!irq.is_pending());
+
+        irq.clock(); // 2 → 1
+        assert_eq!(irq.counter(), 1);
+        assert!(!irq.is_pending());
+
+        irq.clock(); // 1 → 0 → fires
+        assert_eq!(irq.counter(), 0);
+        assert!(irq.is_pending());
+    }
+
+    #[test]
+    fn test_cpu_cycle_irq_stays_at_zero() {
+        let mut irq = CpuCycleIrqCounter::new();
+        irq.set_reload(1);
+        irq.load_counter();
+        irq.set_enabled(true);
+
+        irq.clock(); // 1 → 0 → fires
+        assert_eq!(irq.counter(), 0);
+
+        irq.clock(); // stays at 0, no re-fire
+        assert_eq!(irq.counter(), 0);
+    }
+
+    #[test]
+    fn test_cpu_cycle_irq_does_not_count_when_disabled() {
+        let mut irq = CpuCycleIrqCounter::new();
+        irq.set_reload(3);
+        irq.load_counter();
+        // enabled is false by default
+
+        irq.clock();
+        assert_eq!(irq.counter(), 3); // no change
+    }
+
+    #[test]
+    fn test_cpu_cycle_irq_acknowledge_clears_pending() {
+        let mut irq = CpuCycleIrqCounter::new();
+        irq.set_reload(1);
+        irq.load_counter();
+        irq.set_enabled(true);
+
+        irq.clock(); // fires
+        assert!(irq.is_pending());
+
+        irq.acknowledge();
+        assert!(!irq.is_pending());
+    }
+
+    #[test]
+    fn test_cpu_cycle_irq_load_counter_copies_reload() {
+        let mut irq = CpuCycleIrqCounter::new();
+        irq.set_reload(100);
+        irq.load_counter();
+        assert_eq!(irq.counter(), 100);
+
+        // Counter can be reloaded at any time
+        irq.set_reload(200);
+        irq.load_counter();
+        assert_eq!(irq.counter(), 200);
+    }
+
+    #[test]
+    fn test_cpu_cycle_irq_reload_high_low_bytes() {
+        let mut irq = CpuCycleIrqCounter::new();
+        // Simulate mapper 65 style: set high and low bytes separately
+        irq.set_reload(0x1234);
+        irq.load_counter();
+        assert_eq!(irq.counter(), 0x1234);
+    }
+
+    // ========================================================================
+    // VrcIrqCounter Tests
+    // ========================================================================
+
+    #[test]
+    fn test_vrc_irq_new_defaults() {
+        let irq = VrcIrqCounter::new();
+        assert!(!irq.is_pending());
+        assert_eq!(irq.counter(), 0);
+        assert_eq!(irq.latch(), 0);
+    }
+
+    #[test]
+    fn test_vrc_irq_set_latch_nibbles() {
+        let mut irq = VrcIrqCounter::new();
+        irq.set_latch_low(0x0A); // low nibble = A
+        assert_eq!(irq.latch(), 0x0A);
+
+        irq.set_latch_high(0x05); // high nibble = 5 → latch = 0x5A
+        assert_eq!(irq.latch(), 0x5A);
+    }
+
+    #[test]
+    fn test_vrc_irq_set_latch_preserves_other_nibble() {
+        let mut irq = VrcIrqCounter::new();
+        irq.set_latch_high(0x0F); // high nibble = F → latch = 0xF0
+        irq.set_latch_low(0x03); // low nibble = 3 → latch = 0xF3
+        assert_eq!(irq.latch(), 0xF3);
+
+        // Changing high doesn't affect low
+        irq.set_latch_high(0x02); // → latch = 0x23
+        assert_eq!(irq.latch(), 0x23);
+    }
+
+    #[test]
+    fn test_vrc_irq_cpu_cycle_mode_counts_up() {
+        let mut irq = VrcIrqCounter::new();
+        irq.set_latch_low(0x00);
+        irq.set_latch_high(0x00);
+        // Enable in cycle mode: value = 0b0000_0110 (M=1, E=1, A=0)
+        irq.write_control(0b0000_0110);
+
+        // Counter should have been loaded from latch (0)
+        assert_eq!(irq.counter(), 0);
+
+        irq.clock();
+        assert_eq!(irq.counter(), 1);
+
+        irq.clock();
+        assert_eq!(irq.counter(), 2);
+    }
+
+    #[test]
+    fn test_vrc_irq_cpu_cycle_mode_fires_on_overflow() {
+        let mut irq = VrcIrqCounter::new();
+        // Set latch to 0xFE so counter overflows quickly
+        irq.set_latch_low(0x0E);
+        irq.set_latch_high(0x0F); // latch = 0xFE
+        irq.write_control(0b0000_0110); // Enable in cycle mode
+
+        assert_eq!(irq.counter(), 0xFE);
+
+        irq.clock(); // 0xFE → 0xFF
+        assert!(!irq.is_pending());
+
+        irq.clock(); // 0xFF → reload from latch, assert IRQ
+        assert!(irq.is_pending());
+        assert_eq!(irq.counter(), 0xFE); // reloaded from latch
+    }
+
+    #[test]
+    fn test_vrc_irq_scanline_mode_prescaler() {
+        let mut irq = VrcIrqCounter::new();
+        irq.set_latch_low(0x0E);
+        irq.set_latch_high(0x0F); // latch = 0xFE
+        // Enable in scanline mode: value = 0b0000_0010 (M=0, E=1, A=0)
+        irq.write_control(0b0000_0010);
+
+        assert_eq!(irq.counter(), 0xFE);
+
+        // In scanline mode: prescaler=341, decrements by 3 each CPU cycle.
+        // 341/3 = 113.67 → needs 114 CPU cycles for one counter tick
+        for _ in 0..113 {
+            irq.clock();
+        }
+        // After 113 clocks: prescaler = 341 - 113*3 = 341 - 339 = 2 (> 0, no tick)
+        assert_eq!(irq.counter(), 0xFE);
+
+        irq.clock(); // 114th: prescaler = 2 - 3 = -1 ≤ 0 → tick counter
+        assert_eq!(irq.counter(), 0xFF);
+    }
+
+    #[test]
+    fn test_vrc_irq_acknowledge_clears_and_restores_enable() {
+        let mut irq = VrcIrqCounter::new();
+        // Enable with enable-after-ack=1: value = 0b0000_0111
+        irq.write_control(0b0000_0111);
+
+        // Force IRQ
+        irq.set_latch_low(0x0F);
+        irq.set_latch_high(0x0F); // latch = 0xFF
+        irq.write_control(0b0000_0110); // re-enable, no ack yet
+        irq.clock(); // counter 0xFF → reload, assert!
+
+        assert!(irq.is_pending());
+
+        irq.acknowledge();
+        assert!(!irq.is_pending());
+        // After ack, enabled should be restored from enable_after_ack
+    }
+
+    #[test]
+    fn test_vrc_irq_write_control_acknowledges() {
+        let mut irq = VrcIrqCounter::new();
+        irq.set_latch_low(0x0F);
+        irq.set_latch_high(0x0F); // latch = 0xFF
+        irq.write_control(0b0000_0110); // Enable in cycle mode
+        irq.clock(); // counter 0xFF → reload, assert
+
+        assert!(irq.is_pending());
+
+        // Writing control register acknowledges IRQ
+        irq.write_control(0b0000_0000); // disable + ack
+        assert!(!irq.is_pending());
+    }
+
+    #[test]
+    fn test_vrc_irq_disabled_does_not_count() {
+        let mut irq = VrcIrqCounter::new();
+        irq.set_latch_low(0x05);
+        // Don't enable: write_control with E=0
+        irq.write_control(0b0000_0000);
+
+        irq.clock();
+        irq.clock();
+        assert_eq!(irq.counter(), 0); // no counting
+    }
+
+    #[test]
+    fn test_vrc_irq_enable_loads_counter_from_latch() {
+        let mut irq = VrcIrqCounter::new();
+        irq.set_latch_low(0x0A);
+        irq.set_latch_high(0x0B); // latch = 0xBA
+        irq.write_control(0b0000_0010); // Enable bit set → loads counter
+
+        assert_eq!(irq.counter(), 0xBA);
     }
 }
