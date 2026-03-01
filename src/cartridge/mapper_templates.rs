@@ -85,9 +85,21 @@
 //! let mapper = MyGxROMStyle::new(prg_rom, chr_rom, MirroringMode::Horizontal);
 //! ```
 
+use super::base_mapper::BaseMapper;
 use super::mapper::MapperContext;
-use crate::cartridge::common::{BankSwitch, BankedRom, ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
-use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
+use crate::cartridge::{Mapper, MapperCapabilities};
+
+/// Compute the PRG-RAM size in KB from a mapper context.
+///
+/// Returns `0` when the header did not explicitly specify PRG-RAM or
+/// indicated zero banks.
+fn prg_ram_size_kb(ctx: &MapperContext) -> usize {
+    if ctx.prg_ram_size_specified && ctx.prg_ram_banks_8k > 0 {
+        ctx.prg_ram_banks_8k as usize * 8
+    } else {
+        0
+    }
+}
 
 /// Simple mapper with fixed PRG-ROM and bank-selectable CHR-ROM.
 ///
@@ -110,12 +122,9 @@ use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 /// let mapper = CNROMMapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
 /// ```
 pub struct SimpleFixedPrgMapper<const CHR_BANK_KB: usize, const MAPPER_NUM: u8> {
-    prg_rom: Vec<u8>,
-    prg_ram: Option<PrgRam>,
-    chr_rom: BankedRom,
-    mirroring: NametableLayout,
-    chr_bank: BankSwitch,
-    bus_conflicts: bool,
+    base: BaseMapper,
+    /// Raw CHR bank register value (for snapshot/restore).
+    chr_bank_raw: u8,
 }
 
 impl<const CHR_BANK_KB: usize, const MAPPER_NUM: u8> SimpleFixedPrgMapper<CHR_BANK_KB, MAPPER_NUM> {
@@ -123,33 +132,25 @@ impl<const CHR_BANK_KB: usize, const MAPPER_NUM: u8> SimpleFixedPrgMapper<CHR_BA
     ///
     /// # Arguments
     ///
-    /// * `prg_rom` - PRG-ROM data (will be fixed at $8000-$FFFF)
-    /// * `chr_rom` - CHR-ROM data (will be bank-switched)
-    /// * `mirroring` - Nametable mirroring mode
+    /// * `ctx` - Mapper construction context with ROM data and header details
     pub fn new(ctx: MapperContext) -> Self {
-        let prg_rom = ctx.prg_rom;
-        let chr_rom = ctx.chr_rom;
-        let mirroring = ctx.mirroring;
-        let chr_bank_size = CHR_BANK_KB * 1024;
-        let chr_bank = BankSwitch::from_rom(&chr_rom, chr_bank_size);
-        let prg_ram = if ctx.prg_ram_banks_8k > 0 && ctx.prg_ram_size_specified {
-            Some(PrgRam::new(
-                ctx.prg_ram_banks_8k as usize * DEFAULT_PRG_RAM_SIZE,
-            ))
-        } else {
-            None
-        };
         // Submapper 1 = explicitly no bus conflicts; all others (including 0 = original
         // CNROM hardware) emulate AND-type bus conflicts.
         let bus_conflicts = ctx.submapper != 1;
+        let capabilities = MapperCapabilities {
+            has_chr_banking: true,
+            max_prg_ram_kb: prg_ram_size_kb(&ctx),
+            chr_bank_size_kb: CHR_BANK_KB,
+            ..Default::default()
+        };
+
+        let mut base = BaseMapper::new(&ctx, capabilities);
+        base.configure_chr_banking(CHR_BANK_KB * 1024);
+        base.set_bus_conflicts(bus_conflicts);
 
         Self {
-            prg_rom,
-            prg_ram,
-            chr_rom: BankedRom::new(chr_rom, chr_bank_size),
-            mirroring,
-            chr_bank,
-            bus_conflicts,
+            base,
+            chr_bank_raw: 0,
         }
     }
 }
@@ -157,108 +158,51 @@ impl<const CHR_BANK_KB: usize, const MAPPER_NUM: u8> SimpleFixedPrgMapper<CHR_BA
 impl<const CHR_BANK_KB: usize, const MAPPER_NUM: u8> Mapper
     for SimpleFixedPrgMapper<CHR_BANK_KB, MAPPER_NUM>
 {
-    fn read_prg(&self, addr: u16) -> u8 {
-        // PRG-RAM at $6000-$7FFF (only if present)
-        if let Some(prg_ram) = &self.prg_ram
-            && let Some(value) = prg_ram.try_read(addr)
-        {
-            return value;
-        }
-
-        // PRG ROM is fixed at $8000-$FFFF (32KB or 16KB)
-        match addr {
-            0x8000..=0xFFFF => {
-                let offset = (addr - 0x8000) as usize;
-                let index = offset % self.prg_rom.len();
-                self.prg_rom.get(index).copied().unwrap_or(0)
-            }
-            _ => 0,
-        }
+    fn base(&self) -> Option<&BaseMapper> {
+        Some(&self.base)
     }
 
-    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
-        match addr {
-            0x0000..=0x5FFF => open_bus,
-            0x6000..=0x7FFF if self.prg_ram.is_none() => open_bus,
-            _ => self.read_prg(addr),
+    fn base_mut(&mut self) -> Option<&mut BaseMapper> {
+        Some(&mut self.base)
+    }
+
+    fn read_prg(&self, addr: u16) -> u8 {
+        if let Some(value) = self.base.try_read_prg_ram(addr) {
+            return value;
         }
+        self.base.read_prg_rom_fixed(addr)
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
-        // PRG-RAM at $6000-$7FFF (only if present)
-        if let Some(prg_ram) = &mut self.prg_ram
-            && prg_ram.try_write(addr, value)
-        {
+        if self.base.try_write_prg_ram(addr, value) {
             return;
         }
 
         // Any write to $8000-$FFFF sets the CHR bank select.
-        // Original CNROM has AND-type bus conflicts: the ROM at the write address
-        // also drives the bus, so the effective value is (write & ROM).
+        // Bus conflicts use fixed PRG-ROM (not banked) since this mapper has no PRG banking.
         if (0x8000..=0xFFFF).contains(&addr) {
-            let effective = if self.bus_conflicts {
-                value & self.read_prg(addr)
+            let effective = if self.base.has_bus_conflicts() {
+                value & self.base.read_prg_rom_fixed(addr)
             } else {
                 value
             };
-            self.chr_bank.set(effective);
+            self.chr_bank_raw = effective;
+            self.base.select_chr_page(0, effective as i16);
         }
     }
 
     fn read_chr(&mut self, addr: u16) -> u8 {
-        let offset = (addr & 0x1FFF) as usize;
-        self.chr_rom.read(self.chr_bank.current(), offset)
-    }
-
-    fn write_chr(&mut self, _addr: u16, _value: u8) {
-        // CHR-ROM is read-only, writes are ignored
-    }
-
-    fn get_mirroring(&self) -> NametableLayout {
-        self.mirroring
-    }
-
-    fn mapper_number(&self) -> u8 {
-        MAPPER_NUM
-    }
-
-    fn wram_size(&self) -> usize {
-        self.prg_ram.as_ref().map_or(0, PrgRam::size)
-    }
-
-    fn wram_snapshot(&self) -> Vec<u8> {
-        self.prg_ram
-            .as_ref()
-            .map_or_else(Vec::new, PrgRam::snapshot)
-    }
-
-    fn load_wram_snapshot(&mut self, data: &[u8]) {
-        if let Some(prg_ram) = &mut self.prg_ram {
-            prg_ram.load_snapshot(data);
-        }
+        self.base.read_chr_banked(addr)
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        vec![self.chr_bank.raw()]
+        vec![self.chr_bank_raw]
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
         if let Some(&value) = data.first() {
-            self.chr_bank.set(value);
-        }
-    }
-
-    fn capabilities(&self) -> MapperCapabilities {
-        MapperCapabilities {
-            has_irq: false,
-            has_chr_banking: true,
-            has_dynamic_mirroring: false,
-            has_expansion_audio: false,
-            max_prg_ram_kb: if self.prg_ram.is_some() { 8 } else { 0 },
-            prg_bank_size_kb: 32,
-            chr_bank_size_kb: CHR_BANK_KB,
-            trainer_jsr: false,
-            ..Default::default()
+            self.chr_bank_raw = value;
+            self.base.select_chr_page(0, value as i16);
         }
     }
 }
@@ -285,13 +229,11 @@ impl<const CHR_BANK_KB: usize, const MAPPER_NUM: u8> Mapper
 /// let mapper = UxROMMapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
 /// ```
 pub struct SimpleBankedPrgMapper<const PRG_BANK_KB: usize, const MAPPER_NUM: u8> {
-    prg_rom: BankedRom,
-    prg_ram: Option<PrgRam>,
-    chr_memory: ChrMemory,
-    mirroring: NametableLayout,
+    base: BaseMapper,
+    /// Current PRG bank selection register value.
     bank_select: u8,
+    /// Mask applied to bank register based on ROM size.
     bank_select_mask: u8,
-    bus_conflicts: bool,
 }
 
 impl<const PRG_BANK_KB: usize, const MAPPER_NUM: u8>
@@ -301,34 +243,31 @@ impl<const PRG_BANK_KB: usize, const MAPPER_NUM: u8>
     ///
     /// # Arguments
     ///
-    /// * `prg_rom` - PRG-ROM data (will be bank-switched)
-    /// * `_chr_rom` - Ignored (CHR-RAM is used instead)
-    /// * `mirroring` - Nametable mirroring mode
+    /// * `ctx` - Mapper construction context with ROM data and header details
     pub fn new(ctx: MapperContext) -> Self {
-        let prg_rom = ctx.prg_rom;
-        let mirroring = ctx.mirroring;
         let prg_bank_size = PRG_BANK_KB * 1024;
-        let prg_ram = if ctx.prg_ram_size_specified && ctx.prg_ram_banks_8k > 0 {
-            Some(PrgRam::new(
-                ctx.prg_ram_banks_8k as usize * DEFAULT_PRG_RAM_SIZE,
-            ))
-        } else {
-            None
-        };
-        let num_banks = (prg_rom.len() / prg_bank_size).max(1);
+        let num_banks = (ctx.prg_rom.len() / prg_bank_size).max(1);
         let bank_select_mask = (num_banks.next_power_of_two() - 1) as u8;
         // Submapper 2 = explicitly no bus conflicts; all others (including 0 = original
         // UxROM hardware) emulate AND-type bus conflicts.
         let bus_conflicts = ctx.submapper != 2;
 
+        let capabilities = MapperCapabilities {
+            max_prg_ram_kb: prg_ram_size_kb(&ctx),
+            prg_bank_size_kb: PRG_BANK_KB,
+            ..Default::default()
+        };
+
+        let mut base = BaseMapper::new(&ctx, capabilities);
+        base.configure_prg_banking(prg_bank_size);
+        // Fixed last bank at upper window
+        base.select_prg_page(1, -1);
+        base.set_bus_conflicts(bus_conflicts);
+
         Self {
-            prg_rom: BankedRom::new(prg_rom, prg_bank_size),
-            prg_ram,
-            chr_memory: ChrMemory::new_ram(8192),
-            mirroring,
+            base,
             bank_select: 0,
             bank_select_mask,
-            bus_conflicts,
         }
     }
 }
@@ -336,97 +275,35 @@ impl<const PRG_BANK_KB: usize, const MAPPER_NUM: u8>
 impl<const PRG_BANK_KB: usize, const MAPPER_NUM: u8> Mapper
     for SimpleBankedPrgMapper<PRG_BANK_KB, MAPPER_NUM>
 {
+    fn base(&self) -> Option<&BaseMapper> {
+        Some(&self.base)
+    }
+
+    fn base_mut(&mut self) -> Option<&mut BaseMapper> {
+        Some(&mut self.base)
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
-        // PRG-RAM at $6000-$7FFF (only if present)
-        if let Some(prg_ram) = &self.prg_ram
-            && let Some(value) = prg_ram.try_read(addr)
-        {
+        if let Some(value) = self.base.try_read_prg_ram(addr) {
             return value;
         }
-
-        // PRG ROM at $8000-$FFFF
         match addr {
-            0x8000..=0xBFFF => {
-                // Switchable PRG bank
-                let bank = self.bank_select as usize;
-                self.prg_rom.read_with_base(bank, 0x8000, addr)
-            }
-            0xC000..=0xFFFF => {
-                // Fixed to last PRG bank
-                let last_bank = self.prg_rom.num_banks().saturating_sub(1);
-                self.prg_rom.read_with_base(last_bank, 0xC000, addr)
-            }
+            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
             _ => 0,
         }
     }
 
-    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
-        match addr {
-            0x0000..=0x5FFF => open_bus,
-            0x6000..=0x7FFF if self.prg_ram.is_none() => open_bus,
-            _ => self.read_prg(addr),
-        }
-    }
-
     fn write_prg(&mut self, addr: u16, value: u8) {
-        // PRG-RAM at $6000-$7FFF (only if present)
-        if let Some(prg_ram) = &mut self.prg_ram
-            && prg_ram.try_write(addr, value)
-        {
+        if self.base.try_write_prg_ram(addr, value) {
             return;
         }
 
         // Any write to $8000-$FFFF sets the bank register (masked to hardware width).
-        // Original UxROM boards have AND-type bus conflicts: the ROM at the write address
-        // also drives the bus, so the effective value is (write & ROM).
         if (0x8000..=0xFFFF).contains(&addr) {
-            let effective = if self.bus_conflicts {
-                value & self.read_prg(addr)
-            } else {
-                value
-            };
+            let effective = self.base.apply_bus_conflict(addr, value);
             self.bank_select = effective & self.bank_select_mask;
+            self.base.select_prg_page(0, self.bank_select as i16);
         }
-    }
-
-    fn read_chr(&mut self, addr: u16) -> u8 {
-        self.chr_memory.read(addr)
-    }
-
-    fn write_chr(&mut self, addr: u16, value: u8) {
-        self.chr_memory.write(addr, value);
-    }
-
-    fn get_mirroring(&self) -> NametableLayout {
-        self.mirroring
-    }
-
-    fn mapper_number(&self) -> u8 {
-        MAPPER_NUM
-    }
-
-    fn wram_size(&self) -> usize {
-        self.prg_ram.as_ref().map_or(0, PrgRam::size)
-    }
-
-    fn wram_snapshot(&self) -> Vec<u8> {
-        self.prg_ram
-            .as_ref()
-            .map_or_else(Vec::new, PrgRam::snapshot)
-    }
-
-    fn load_wram_snapshot(&mut self, data: &[u8]) {
-        if let Some(prg_ram) = &mut self.prg_ram {
-            prg_ram.load_snapshot(data);
-        }
-    }
-
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_memory.snapshot()
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.chr_memory.load_snapshot(data);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -436,20 +313,7 @@ impl<const PRG_BANK_KB: usize, const MAPPER_NUM: u8> Mapper
     fn restore_registers(&mut self, data: &[u8]) {
         if !data.is_empty() {
             self.bank_select = data[0];
-        }
-    }
-
-    fn capabilities(&self) -> MapperCapabilities {
-        MapperCapabilities {
-            has_irq: false,
-            has_chr_banking: false,
-            has_dynamic_mirroring: false,
-            has_expansion_audio: false,
-            max_prg_ram_kb: self.prg_ram.as_ref().map_or(0, |r| r.size() / 1024),
-            prg_bank_size_kb: PRG_BANK_KB,
-            chr_bank_size_kb: 8,
-            trainer_jsr: false,
-            ..Default::default()
+            self.base.select_prg_page(0, self.bank_select as i16);
         }
     }
 }
@@ -487,12 +351,11 @@ pub struct DualBank32Mapper<
     const CHR_SHIFT: u8,
     const MAPPER_NUM: u8,
 > {
-    prg_rom: BankedRom,
-    prg_ram: PrgRam,
-    chr_rom: BankedRom,
-    mirroring: NametableLayout,
-    prg_bank: BankSwitch,
-    chr_bank: BankSwitch,
+    base: BaseMapper,
+    /// Raw PRG bank register value (for snapshot/restore).
+    prg_bank_raw: u8,
+    /// Raw CHR bank register value (for snapshot/restore).
+    chr_bank_raw: u8,
 }
 
 impl<
@@ -507,26 +370,22 @@ impl<
     ///
     /// # Arguments
     ///
-    /// * `prg_rom` - PRG-ROM data (32KB banks)
-    /// * `chr_rom` - CHR-ROM data (8KB banks)
-    /// * `mirroring` - Nametable mirroring mode
+    /// * `ctx` - Mapper construction context with ROM data and header details
     pub fn new(ctx: MapperContext) -> Self {
-        let prg_rom = ctx.prg_rom;
-        let chr_rom = ctx.chr_rom;
-        let mirroring = ctx.mirroring;
-        const PRG_BANK_SIZE: usize = 32 * 1024; // 32KB
-        const CHR_BANK_SIZE: usize = 8 * 1024; // 8KB
+        let capabilities = MapperCapabilities {
+            has_chr_banking: true,
+            max_prg_ram_kb: prg_ram_size_kb(&ctx),
+            ..Default::default()
+        };
 
-        let prg_bank = BankSwitch::from_rom(&prg_rom, PRG_BANK_SIZE);
-        let chr_bank = BankSwitch::from_rom(&chr_rom, CHR_BANK_SIZE);
+        let mut base = BaseMapper::new(&ctx, capabilities);
+        base.configure_prg_banking(32 * 1024); // 32KB pages → 1 slot
+        base.configure_chr_banking(8 * 1024); // 8KB pages → 1 slot
 
         Self {
-            prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE),
-            prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
-            chr_rom: BankedRom::new(chr_rom, CHR_BANK_SIZE),
-            mirroring,
-            prg_bank,
-            chr_bank,
+            base,
+            prg_bank_raw: 0,
+            chr_bank_raw: 0,
         }
     }
 }
@@ -539,86 +398,54 @@ impl<
     const MAPPER_NUM: u8,
 > Mapper for DualBank32Mapper<PRG_MASK, PRG_SHIFT, CHR_MASK, CHR_SHIFT, MAPPER_NUM>
 {
+    fn base(&self) -> Option<&BaseMapper> {
+        Some(&self.base)
+    }
+
+    fn base_mut(&mut self) -> Option<&mut BaseMapper> {
+        Some(&mut self.base)
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
-        // PRG-RAM at $6000-$7FFF
-        if let Some(value) = self.prg_ram.try_read(addr) {
+        if let Some(value) = self.base.try_read_prg_ram(addr) {
             return value;
         }
-
         match addr {
-            0x8000..=0xFFFF => self
-                .prg_rom
-                .read_with_base(self.prg_bank.current(), 0x8000, addr),
+            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
             _ => 0,
         }
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
-        // PRG-RAM at $6000-$7FFF
-        if self.prg_ram.try_write(addr, value) {
+        if self.base.try_write_prg_ram(addr, value) {
             return;
         }
 
         if (0x8000..=0xFFFF).contains(&addr) {
             // Extract PRG and CHR banks using configured masks and shifts
-            self.chr_bank.set((value >> CHR_SHIFT) & CHR_MASK);
-            self.prg_bank.set((value >> PRG_SHIFT) & PRG_MASK);
+            self.chr_bank_raw = (value >> CHR_SHIFT) & CHR_MASK;
+            self.prg_bank_raw = (value >> PRG_SHIFT) & PRG_MASK;
+            self.base.select_chr_page(0, self.chr_bank_raw as i16);
+            self.base.select_prg_page(0, self.prg_bank_raw as i16);
         }
     }
 
     fn read_chr(&mut self, addr: u16) -> u8 {
-        let offset = (addr & 0x1FFF) as usize;
-        self.chr_rom.read(self.chr_bank.current(), offset)
-    }
-
-    fn write_chr(&mut self, _addr: u16, _value: u8) {
-        // CHR-ROM is read-only, writes are ignored
-    }
-
-    fn get_mirroring(&self) -> NametableLayout {
-        self.mirroring
-    }
-
-    fn mapper_number(&self) -> u8 {
-        MAPPER_NUM
-    }
-
-    fn wram_size(&self) -> usize {
-        self.prg_ram.size()
-    }
-
-    fn wram_snapshot(&self) -> Vec<u8> {
-        self.prg_ram.snapshot()
-    }
-
-    fn load_wram_snapshot(&mut self, data: &[u8]) {
-        self.prg_ram.load_snapshot(data);
+        self.base.read_chr_banked(addr)
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        vec![self.prg_bank.raw(), self.chr_bank.raw()]
+        vec![self.prg_bank_raw, self.chr_bank_raw]
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
         if let Some(&value) = data.first() {
-            self.prg_bank.set(value);
+            self.prg_bank_raw = value;
+            self.base.select_prg_page(0, value as i16);
         }
         if let Some(&value) = data.get(1) {
-            self.chr_bank.set(value);
-        }
-    }
-
-    fn capabilities(&self) -> MapperCapabilities {
-        MapperCapabilities {
-            has_irq: false,
-            has_chr_banking: true,
-            has_dynamic_mirroring: false,
-            has_expansion_audio: false,
-            max_prg_ram_kb: 8,
-            prg_bank_size_kb: 32,
-            chr_bank_size_kb: 8,
-            trainer_jsr: false,
-            ..Default::default()
+            self.chr_bank_raw = value;
+            self.base.select_chr_page(0, value as i16);
         }
     }
 }
@@ -627,6 +454,7 @@ impl<
 mod tests {
     use super::super::mapper::MapperContext;
     use super::*;
+    use crate::cartridge::NametableLayout;
 
     // Test helper to create banked data
     fn banked_data(bank_size: usize, num_banks: usize) -> Vec<u8> {
