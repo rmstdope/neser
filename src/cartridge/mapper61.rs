@@ -111,17 +111,8 @@ impl Mapper61 {
         let chr = self.effective_chr_bank();
         self.base.select_chr_page(0, chr as i16);
 
-        let base = (self.prg_base as i16) << 1;
-        if self.prg_mode {
-            // NROM-128: same bank at both slots
-            let bank = base | (self.prg_a14 as i16);
-            self.base.select_prg_page(0, bank);
-            self.base.select_prg_page(1, bank);
-        } else {
-            // NROM-256: consecutive banks
-            self.base.select_prg_page(0, base);
-            self.base.select_prg_page(1, base + 1);
-        }
+        let bank = (self.prg_base << 1) | self.prg_a14;
+        self.base.apply_nrom_prg_banking(bank, self.prg_mode);
     }
 
     fn effective_chr_bank(&self) -> usize {
