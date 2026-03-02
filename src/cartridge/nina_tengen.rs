@@ -115,28 +115,18 @@ impl Mapper for NinaTengenMapper {
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        let mirroring = match self.mirroring {
-            NametableLayout::Horizontal => 0,
-            NametableLayout::Vertical => 1,
-            NametableLayout::SingleScreen | NametableLayout::SingleScreenLower => 2,
-            NametableLayout::SingleScreenUpper => 3,
-            NametableLayout::FourScreen => 4,
-        };
-        vec![self.prg_bank_select, self.chr_bank_select, mirroring]
+        vec![
+            self.prg_bank_select,
+            self.chr_bank_select,
+            self.mirroring.to_snapshot_byte(),
+        ]
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
         if data.len() >= 3 {
             self.prg_bank_select = data[0];
             self.chr_bank_select = data[1];
-            self.mirroring = match data[2] {
-                0 => NametableLayout::Horizontal,
-                1 => NametableLayout::Vertical,
-                2 => NametableLayout::SingleScreen,
-                3 => NametableLayout::SingleScreenUpper,
-                4 => NametableLayout::FourScreen,
-                _ => NametableLayout::Horizontal,
-            };
+            self.mirroring = NametableLayout::from_snapshot_byte(data[2]);
             self.update_banks();
         }
     }

@@ -73,6 +73,37 @@ impl NametableLayout {
             Self::SingleScreen | Self::SingleScreenLower | Self::SingleScreenUpper => None,
         }
     }
+
+    /// Encode this layout as a single byte for snapshot/save-state purposes.
+    ///
+    /// Standard encoding: Horizontal=0, Vertical=1, SingleScreenLower=2,
+    /// SingleScreenUpper=3, FourScreen=4.
+    /// `SingleScreen` is treated as equivalent to `SingleScreenLower` (both → 2).
+    pub fn to_snapshot_byte(self) -> u8 {
+        match self {
+            Self::Horizontal => 0,
+            Self::Vertical => 1,
+            Self::SingleScreen | Self::SingleScreenLower => 2,
+            Self::SingleScreenUpper => 3,
+            Self::FourScreen => 4,
+        }
+    }
+
+    /// Decode a snapshot byte back into a `NametableLayout`.
+    ///
+    /// Standard encoding: 0=Horizontal, 1=Vertical, 2=SingleScreenLower,
+    /// 3=SingleScreenUpper, 4=FourScreen.
+    /// Unknown values default to `Horizontal`.
+    pub fn from_snapshot_byte(byte: u8) -> Self {
+        match byte {
+            0 => Self::Horizontal,
+            1 => Self::Vertical,
+            2 => Self::SingleScreenLower,
+            3 => Self::SingleScreenUpper,
+            4 => Self::FourScreen,
+            _ => Self::Horizontal,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -902,5 +933,99 @@ mod tests {
         let with_db = ParsedRom::parse(&rom, Some(&db)).expect("parse with db");
         assert_eq!(without_db.header.mapper, with_db.header.mapper);
         assert_eq!(without_db.header.mirroring, with_db.header.mirroring);
+    }
+
+    #[test]
+    fn to_snapshot_byte_horizontal() {
+        assert_eq!(NametableLayout::Horizontal.to_snapshot_byte(), 0);
+    }
+
+    #[test]
+    fn to_snapshot_byte_vertical() {
+        assert_eq!(NametableLayout::Vertical.to_snapshot_byte(), 1);
+    }
+
+    #[test]
+    fn to_snapshot_byte_single_screen_lower() {
+        assert_eq!(NametableLayout::SingleScreenLower.to_snapshot_byte(), 2);
+    }
+
+    #[test]
+    fn to_snapshot_byte_single_screen_aliases_lower() {
+        assert_eq!(NametableLayout::SingleScreen.to_snapshot_byte(), 2);
+    }
+
+    #[test]
+    fn to_snapshot_byte_single_screen_upper() {
+        assert_eq!(NametableLayout::SingleScreenUpper.to_snapshot_byte(), 3);
+    }
+
+    #[test]
+    fn to_snapshot_byte_four_screen() {
+        assert_eq!(NametableLayout::FourScreen.to_snapshot_byte(), 4);
+    }
+
+    #[test]
+    fn from_snapshot_byte_horizontal() {
+        assert_eq!(
+            NametableLayout::from_snapshot_byte(0),
+            NametableLayout::Horizontal
+        );
+    }
+
+    #[test]
+    fn from_snapshot_byte_vertical() {
+        assert_eq!(
+            NametableLayout::from_snapshot_byte(1),
+            NametableLayout::Vertical
+        );
+    }
+
+    #[test]
+    fn from_snapshot_byte_single_screen_lower() {
+        assert_eq!(
+            NametableLayout::from_snapshot_byte(2),
+            NametableLayout::SingleScreenLower
+        );
+    }
+
+    #[test]
+    fn from_snapshot_byte_single_screen_upper() {
+        assert_eq!(
+            NametableLayout::from_snapshot_byte(3),
+            NametableLayout::SingleScreenUpper
+        );
+    }
+
+    #[test]
+    fn from_snapshot_byte_four_screen() {
+        assert_eq!(
+            NametableLayout::from_snapshot_byte(4),
+            NametableLayout::FourScreen
+        );
+    }
+
+    #[test]
+    fn from_snapshot_byte_unknown_defaults_to_horizontal() {
+        assert_eq!(
+            NametableLayout::from_snapshot_byte(255),
+            NametableLayout::Horizontal
+        );
+    }
+
+    #[test]
+    fn snapshot_byte_roundtrip_all_variants() {
+        let variants = [
+            NametableLayout::Horizontal,
+            NametableLayout::Vertical,
+            NametableLayout::SingleScreenLower,
+            NametableLayout::SingleScreenUpper,
+            NametableLayout::FourScreen,
+        ];
+        for &layout in &variants {
+            let byte = layout.to_snapshot_byte();
+            let restored = NametableLayout::from_snapshot_byte(byte);
+            assert_eq!(restored, layout, "roundtrip failed for {layout:?}");
+        }
     }
 }

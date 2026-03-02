@@ -142,14 +142,12 @@ impl Mapper for Multicart15Mapper {
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        let mirroring = match self.mirroring {
-            NametableLayout::Horizontal => 0,
-            NametableLayout::Vertical => 1,
-            NametableLayout::SingleScreen | NametableLayout::SingleScreenLower => 2,
-            NametableLayout::SingleScreenUpper => 3,
-            NametableLayout::FourScreen => 4,
-        };
-        vec![self.bank_select, self.sub_bank, self.mode, mirroring]
+        vec![
+            self.bank_select,
+            self.sub_bank,
+            self.mode,
+            self.mirroring.to_snapshot_byte(),
+        ]
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
@@ -157,14 +155,7 @@ impl Mapper for Multicart15Mapper {
             self.bank_select = data[0];
             self.sub_bank = data[1];
             self.mode = data[2];
-            self.mirroring = match data[3] {
-                0 => NametableLayout::Horizontal,
-                1 => NametableLayout::Vertical,
-                2 => NametableLayout::SingleScreen,
-                3 => NametableLayout::SingleScreenUpper,
-                4 => NametableLayout::FourScreen,
-                _ => NametableLayout::Horizontal,
-            };
+            self.mirroring = NametableLayout::from_snapshot_byte(data[3]);
             self.update_banks();
         }
     }

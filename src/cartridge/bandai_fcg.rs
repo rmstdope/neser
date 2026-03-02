@@ -234,15 +234,7 @@ impl Mapper for BandaiFcgMapper {
         snapshot.push((self.irq.counter() >> 8) as u8);
         snapshot.push((self.irq_latch & 0xFF) as u8);
         snapshot.push((self.irq_latch >> 8) as u8);
-        let mirroring = match self.base.mirroring() {
-            NametableLayout::Horizontal => 0,
-            NametableLayout::Vertical => 1,
-            NametableLayout::SingleScreenLower => 2,
-            NametableLayout::SingleScreenUpper => 3,
-            NametableLayout::SingleScreen => 2,
-            NametableLayout::FourScreen => 4,
-        };
-        snapshot.push(mirroring);
+        snapshot.push(self.base.mirroring().to_snapshot_byte());
         snapshot
     }
 
@@ -256,14 +248,8 @@ impl Mapper for BandaiFcgMapper {
             self.irq
                 .set_counter((data[10] as u16) | ((data[11] as u16) << 8));
             self.irq_latch = (data[12] as u16) | ((data[13] as u16) << 8);
-            self.base.set_mirroring(match data[14] {
-                0 => NametableLayout::Horizontal,
-                1 => NametableLayout::Vertical,
-                2 => NametableLayout::SingleScreenLower,
-                3 => NametableLayout::SingleScreenUpper,
-                4 => NametableLayout::FourScreen,
-                _ => NametableLayout::Horizontal,
-            });
+            self.base
+                .set_mirroring(NametableLayout::from_snapshot_byte(data[14]));
             self.update_banks();
         }
     }
