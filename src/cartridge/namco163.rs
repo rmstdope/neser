@@ -559,10 +559,6 @@ impl Mapper for Namco163Mapper {
         self.audio_last_output as f32 / 128.0
     }
 
-    fn mapper_number(&self) -> u8 {
-        19
-    }
-
     fn reset(&mut self) {
         self.regs = [0; 16];
         self.chr_nt_regs = [0; 12];

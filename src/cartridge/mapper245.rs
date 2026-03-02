@@ -8,7 +8,7 @@
 
 use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mmc3::MMC3Mapper;
-use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
+use crate::cartridge::{Mapper, MapperCapabilities};
 
 /// Mapper 245 - Waixing MMC3 variant
 ///
@@ -130,10 +130,6 @@ impl Mapper for Mapper245 {
         self.mmc3.write_chr(addr, value);
     }
 
-    fn get_mirroring(&self) -> NametableLayout {
-        self.mmc3.get_mirroring()
-    }
-
     fn mapper_number(&self) -> u8 {
         Self::MAPPER_NUMBER
     }
@@ -196,6 +192,7 @@ impl Mapper for Mapper245 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cartridge::NametableLayout;
     use crate::cartridge::mapper::{MapperContext, create_mapper};
     use crate::cartridge::test_helpers::banked_data;
 

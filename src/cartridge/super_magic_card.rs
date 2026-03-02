@@ -628,10 +628,6 @@ impl Mapper for SuperMagicCardMapper {
         }
     }
 
-    fn mapper_number(&self) -> u8 {
-        6
-    }
-
     fn capabilities(&self) -> MapperCapabilities {
         MapperCapabilities {
             has_irq: true,

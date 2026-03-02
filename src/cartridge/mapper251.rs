@@ -9,7 +9,7 @@
 
 use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mapper45::Mapper45;
-use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
+use crate::cartridge::{Mapper, MapperCapabilities};
 
 /// Mapper 251 implemented as a thin wrapper around Mapper 45 behavior.
 pub struct Mapper251 {
@@ -55,10 +55,6 @@ impl Mapper for Mapper251 {
 
     fn write_chr(&mut self, addr: u16, value: u8) {
         self.inner.write_chr(addr, value);
-    }
-
-    fn get_mirroring(&self) -> NametableLayout {
-        self.inner.get_mirroring()
     }
 
     fn mapper_number(&self) -> u8 {
@@ -109,6 +105,7 @@ impl Mapper for Mapper251 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cartridge::NametableLayout;
     use crate::cartridge::mapper::{MapperContext, create_mapper};
     use crate::cartridge::test_helpers::banked_data;
 

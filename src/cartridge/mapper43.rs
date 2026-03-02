@@ -136,10 +136,6 @@ impl Mapper for Mapper43 {
         self.irq_pending
     }
 
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        self.base.initialize_ram(mode);
-    }
-
     fn registers_snapshot(&self) -> Vec<u8> {
         vec![
             self.switchable_bank,

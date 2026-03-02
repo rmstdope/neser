@@ -188,10 +188,6 @@ impl Mapper for Mapper65 {
         }
     }
 
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        self.base.initialize_ram(mode);
-    }
-
     fn registers_snapshot(&self) -> Vec<u8> {
         let mirror_byte = match self.base.mirroring() {
             NametableLayout::Vertical => 0u8,

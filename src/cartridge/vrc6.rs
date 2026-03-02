@@ -520,13 +520,6 @@ impl Mapper for VRC6Mapper {
         self.audio.sample()
     }
 
-    fn mapper_number(&self) -> u8 {
-        match self.variant {
-            Vrc6Variant::Mapper24 => 24,
-            Vrc6Variant::Mapper26 => 26,
-        }
-    }
-
     fn wram_size(&self) -> usize {
         self.prg_ram.size()
     }

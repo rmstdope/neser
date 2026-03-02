@@ -238,10 +238,6 @@ impl Mapper for BandaiFcgMapper {
         // No WRAM to restore - EEPROM save data is separate
     }
 
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        self.base.initialize_ram(mode);
-    }
-
     fn registers_snapshot(&self) -> Vec<u8> {
         // Serialize Bandai FCG internal registers:
         // [0]: prg_bank

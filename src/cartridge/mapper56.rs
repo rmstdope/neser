@@ -222,10 +222,6 @@ impl Mapper for Mapper56 {
         }
     }
 
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        self.base.initialize_ram(mode);
-    }
-
     fn wram_snapshot(&self) -> Vec<u8> {
         self.prg_ram.to_vec()
     }

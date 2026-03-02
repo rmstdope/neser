@@ -166,10 +166,6 @@ impl Mapper for Mapper42 {
         self.irq_pending
     }
 
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        self.base.initialize_ram(mode);
-    }
-
     fn registers_snapshot(&self) -> Vec<u8> {
         // Layout: [0] prg_bank, [1] chr_bank,
         //         [2] flags (irq_enabled | irq_pending<<1),

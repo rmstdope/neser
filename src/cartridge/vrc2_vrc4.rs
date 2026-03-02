@@ -568,10 +568,6 @@ impl Mapper for Vrc2Vrc4Mapper {
         self.prg_ram.load_snapshot(data);
     }
 
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        self.base.initialize_ram(mode);
-    }
-
     fn registers_snapshot(&self) -> Vec<u8> {
         // Layout:
         // [0]:    prg_bank_0

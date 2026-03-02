@@ -245,10 +245,6 @@ impl Mapper for Mapper48 {
         self.irq_pending
     }
 
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        self.base.initialize_ram(mode);
-    }
-
     fn registers_snapshot(&self) -> Vec<u8> {
         // [0]: mirroring (0=Vert, 1=Horz)
         // [1..=2]: prg_bank[0..1]

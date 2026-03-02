@@ -1494,10 +1494,6 @@ impl Mapper for MMC3Mapper {
         self.irq_asserted
     }
 
-    fn mapper_number(&self) -> u8 {
-        4
-    }
-
     fn wram_size(&self) -> usize {
         self.prg_ram.len()
     }
