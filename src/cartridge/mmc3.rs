@@ -1472,14 +1472,6 @@ impl Mapper for MMC3Mapper {
         }
     }
 
-    fn read_chr(&mut self, addr: u16) -> u8 {
-        self.base.read_chr_banked(addr)
-    }
-
-    fn write_chr(&mut self, addr: u16, value: u8) {
-        self.base.write_chr_banked(addr, value);
-    }
-
     fn ppu_address_changed(&mut self, addr: u16) {
         if self.should_clock_irq_on_a12_change(addr) {
             self.clock_irq_counter_on_a12_rising_edge();

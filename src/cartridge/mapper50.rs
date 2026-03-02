@@ -156,6 +156,14 @@ impl Mapper for Mapper50 {
         }
     }
 
+    fn read_chr(&mut self, addr: u16) -> u8 {
+        self.base().read_chr(addr)
+    }
+
+    fn write_chr(&mut self, addr: u16, value: u8) {
+        self.base_mut().write_chr(addr, value);
+    }
+
     fn cpu_cycle(&mut self) {
         if !self.irq_enabled {
             return;

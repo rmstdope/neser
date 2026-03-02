@@ -267,17 +267,19 @@ pub trait Mapper {
     /// Read a byte from CHR address space (PPU $0000-$1FFF)
     /// Returns the byte at the given address after bank translation.
     ///
-    /// Default delegates to `BaseMapper` if available.
+    /// Default uses banked CHR access via `BaseMapper::read_chr_banked`.
+    /// Mappers without CHR banking must override this to use `self.base().read_chr(addr)`.
     fn read_chr(&mut self, addr: u16) -> u8 {
-        self.base().read_chr(addr)
+        self.base().read_chr_banked(addr)
     }
 
     /// Write a byte to CHR address space (PPU $0000-$1FFF)
     /// Only works for CHR-RAM, CHR-ROM is read-only.
     ///
-    /// Default delegates to `BaseMapper` if available.
+    /// Default uses banked CHR access via `BaseMapper::write_chr_banked`.
+    /// Mappers without CHR banking must override this to use `self.base_mut().write_chr(addr, value)`.
     fn write_chr(&mut self, addr: u16, value: u8) {
-        self.base_mut().write_chr(addr, value);
+        self.base_mut().write_chr_banked(addr, value);
     }
 
     /// Notify mapper of PPU address bus changes

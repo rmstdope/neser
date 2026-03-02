@@ -141,14 +141,6 @@ impl Mapper for Mapper42 {
         }
     }
 
-    fn read_chr(&mut self, addr: u16) -> u8 {
-        self.base.read_chr_banked(addr)
-    }
-
-    fn write_chr(&mut self, addr: u16, value: u8) {
-        self.base.write_chr_banked(addr, value);
-    }
-
     fn wram_size(&self) -> usize {
         // No WRAM: $6000-$7FFF is mapped to PRG ROM, not RAM.
         0

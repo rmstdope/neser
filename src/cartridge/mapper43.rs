@@ -124,6 +124,14 @@ impl Mapper for Mapper43 {
         }
     }
 
+    fn read_chr(&mut self, addr: u16) -> u8 {
+        self.base().read_chr(addr)
+    }
+
+    fn write_chr(&mut self, addr: u16, value: u8) {
+        self.base_mut().write_chr(addr, value);
+    }
+
     fn cpu_cycle(&mut self) {
         self.irq_counter = self.irq_counter.wrapping_add(1);
         if self.irq_counter >= Self::IRQ_OVERFLOW {

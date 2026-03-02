@@ -137,6 +137,14 @@ impl Mapper for Ntdec2722Mapper {
         }
     }
 
+    fn read_chr(&mut self, addr: u16) -> u8 {
+        self.base().read_chr(addr)
+    }
+
+    fn write_chr(&mut self, addr: u16, value: u8) {
+        self.base_mut().write_chr(addr, value);
+    }
+
     fn wram_size(&self) -> usize {
         // No WRAM: $6000-$7FFF is mapped to PRG ROM bank 6, not RAM.
         0

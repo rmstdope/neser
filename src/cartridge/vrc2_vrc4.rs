@@ -537,10 +537,6 @@ impl Mapper for Vrc2Vrc4Mapper {
         }
     }
 
-    fn read_chr(&mut self, addr: u16) -> u8 {
-        self.base.read_chr_banked(addr)
-    }
-
     fn cpu_cycle(&mut self) {
         trace_mapper!(5; "[vrc2_vrc4] cpu_cycle (irq)");
         if self.variant.has_irq() {

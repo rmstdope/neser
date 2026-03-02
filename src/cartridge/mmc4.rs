@@ -187,11 +187,6 @@ impl Mapper for MMC4Mapper {
         value
     }
 
-    fn write_chr(&mut self, addr: u16, value: u8) {
-        // Write to current bank — do NOT update latches
-        self.base.write_chr_banked(addr, value);
-    }
-
     fn registers_snapshot(&self) -> Vec<u8> {
         vec![
             self.prg_bank_16k,

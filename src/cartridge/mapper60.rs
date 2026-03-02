@@ -76,10 +76,6 @@ impl Mapper for Mapper60 {
         // No writable registers
     }
 
-    fn read_chr(&mut self, addr: u16) -> u8 {
-        self.base.read_chr_banked(addr)
-    }
-
     fn registers_snapshot(&self) -> Vec<u8> {
         vec![self.game_select]
     }

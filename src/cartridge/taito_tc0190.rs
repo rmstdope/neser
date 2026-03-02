@@ -168,14 +168,6 @@ impl Mapper for TaitoTc0190Mapper {
         }
     }
 
-    fn read_chr(&mut self, addr: u16) -> u8 {
-        self.base.read_chr_banked(addr)
-    }
-
-    fn write_chr(&mut self, addr: u16, value: u8) {
-        self.base.write_chr_banked(addr, value);
-    }
-
     fn registers_snapshot(&self) -> Vec<u8> {
         // [0]: mirroring (0=Vert, 1=Horz)
         // [1..=2]: prg_bank[0..1]
