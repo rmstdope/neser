@@ -53,6 +53,7 @@ mod mapper73;
 mod mapper_templates;
 mod mmc1;
 mod mmc2;
+mod mmc2_mmc4_latch;
 mod mmc3;
 mod mmc4;
 mod mmc5;

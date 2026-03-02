@@ -7,6 +7,7 @@
 
 use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::ines::ConsoleType;
+use crate::cartridge::mmc2_mmc4_latch::{LatchTriggerMode, Mmc2Mmc4Latch};
 use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
 /// Mapper 9 - MMC2 (PNROM boards)
@@ -36,13 +37,7 @@ pub struct MMC2Mapper {
     prg_bank_8k: u8,
 
     // --- CHR banking + latches ---
-    chr_bank_0_fd: u8,
-    chr_bank_0_fe: u8,
-    chr_bank_1_fd: u8,
-    chr_bank_1_fe: u8,
-
-    latch0_is_fd: bool,
-    latch1_is_fd: bool,
+    chr_latch: Mmc2Mmc4Latch,
 }
 
 impl MMC2Mapper {
@@ -70,12 +65,7 @@ impl MMC2Mapper {
         Self {
             base,
             prg_bank_8k: 0,
-            chr_bank_0_fd: 0,
-            chr_bank_0_fe: 0,
-            chr_bank_1_fd: 0,
-            chr_bank_1_fe: 0,
-            latch0_is_fd: false,
-            latch1_is_fd: false,
+            chr_latch: Mmc2Mmc4Latch::new(LatchTriggerMode::Mmc2),
         }
     }
 
@@ -85,28 +75,14 @@ impl MMC2Mapper {
     }
 
     fn update_chr_pages(&mut self) {
-        let bank0 = if self.latch0_is_fd {
-            self.chr_bank_0_fd
-        } else {
-            self.chr_bank_0_fe
-        };
-        let bank1 = if self.latch1_is_fd {
-            self.chr_bank_1_fd
-        } else {
-            self.chr_bank_1_fe
-        };
+        let bank0 = self.chr_latch.selected_bank_0();
+        let bank1 = self.chr_latch.selected_bank_1();
         self.base.select_chr_page(0, bank0 as i16);
         self.base.select_chr_page(1, bank1 as i16);
     }
 
     fn update_latches_for_chr_read(&mut self, addr: u16) {
-        match addr {
-            0x0FD8 => self.latch0_is_fd = true,
-            0x0FE8 => self.latch0_is_fd = false,
-            0x1FD8..=0x1FDF => self.latch1_is_fd = true,
-            0x1FE8..=0x1FEF => self.latch1_is_fd = false,
-            _ => {}
-        }
+        self.chr_latch.update_for_chr_read(addr);
     }
 }
 
@@ -133,19 +109,19 @@ impl Mapper for MMC2Mapper {
 
             // CHR bank registers
             0xB000..=0xBFFF => {
-                self.chr_bank_0_fd = value & 0x1F;
+                self.chr_latch.bank_0_fd = value & 0x1F;
                 self.update_chr_pages();
             }
             0xC000..=0xCFFF => {
-                self.chr_bank_0_fe = value & 0x1F;
+                self.chr_latch.bank_0_fe = value & 0x1F;
                 self.update_chr_pages();
             }
             0xD000..=0xDFFF => {
-                self.chr_bank_1_fd = value & 0x1F;
+                self.chr_latch.bank_1_fd = value & 0x1F;
                 self.update_chr_pages();
             }
             0xE000..=0xEFFF => {
-                self.chr_bank_1_fe = value & 0x1F;
+                self.chr_latch.bank_1_fe = value & 0x1F;
                 self.update_chr_pages();
             }
 
@@ -177,11 +153,11 @@ impl Mapper for MMC2Mapper {
     fn registers_snapshot(&self) -> Vec<u8> {
         vec![
             self.prg_bank_8k,
-            self.chr_bank_0_fd,
-            self.chr_bank_0_fe,
-            self.chr_bank_1_fd,
-            self.chr_bank_1_fe,
-            (self.latch0_is_fd as u8) | ((self.latch1_is_fd as u8) << 1),
+            self.chr_latch.bank_0_fd,
+            self.chr_latch.bank_0_fe,
+            self.chr_latch.bank_1_fd,
+            self.chr_latch.bank_1_fe,
+            (self.chr_latch.latch0_is_fd as u8) | ((self.chr_latch.latch1_is_fd as u8) << 1),
             match self.base.mirroring() {
                 NametableLayout::Vertical => 0,
                 NametableLayout::Horizontal => 1,
@@ -193,12 +169,12 @@ impl Mapper for MMC2Mapper {
     fn restore_registers(&mut self, data: &[u8]) {
         if data.len() >= 7 {
             self.prg_bank_8k = data[0];
-            self.chr_bank_0_fd = data[1];
-            self.chr_bank_0_fe = data[2];
-            self.chr_bank_1_fd = data[3];
-            self.chr_bank_1_fe = data[4];
-            self.latch0_is_fd = (data[5] & 1) != 0;
-            self.latch1_is_fd = (data[5] & 2) != 0;
+            self.chr_latch.bank_0_fd = data[1];
+            self.chr_latch.bank_0_fe = data[2];
+            self.chr_latch.bank_1_fd = data[3];
+            self.chr_latch.bank_1_fe = data[4];
+            self.chr_latch.latch0_is_fd = (data[5] & 1) != 0;
+            self.chr_latch.latch1_is_fd = (data[5] & 2) != 0;
             let mirroring = match data[6] {
                 0 => NametableLayout::Vertical,
                 1 => NametableLayout::Horizontal,
