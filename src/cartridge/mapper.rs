@@ -418,7 +418,11 @@ pub trait Mapper {
     /// This is used to model mapper-generated IRQs (e.g., MMC3 scanline IRQ).
     /// Default delegates to MMC3 when available, otherwise returns false.
     fn irq_pending(&self) -> bool {
-        self.mmc3_delegate().is_some_and(MMC3Mapper::irq_pending)
+        if let Some(mmc3) = self.mmc3_delegate() {
+            mmc3.irq_pending()
+        } else {
+            false
+        }
     }
 
     /// Current expansion-audio output sample contributed by the mapper.
