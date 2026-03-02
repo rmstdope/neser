@@ -166,13 +166,6 @@ impl<const CHR_BANK_KB: usize, const MAPPER_NUM: u8> Mapper
         &mut self.base
     }
 
-    fn read_prg(&self, addr: u16) -> u8 {
-        if let Some(value) = self.base.try_read_prg_ram(addr) {
-            return value;
-        }
-        self.base.read_prg_rom_fixed(addr)
-    }
-
     fn write_prg(&mut self, addr: u16, value: u8) {
         if self.base.try_write_prg_ram(addr, value) {
             return;
@@ -290,14 +283,6 @@ impl<const PRG_BANK_KB: usize, const MAPPER_NUM: u8> Mapper
             self.bank_select = effective & self.bank_select_mask;
             self.base.select_prg_page(0, self.bank_select as i16);
         }
-    }
-
-    fn read_chr(&mut self, addr: u16) -> u8 {
-        self.base().read_chr(addr)
-    }
-
-    fn write_chr(&mut self, addr: u16, value: u8) {
-        self.base_mut().write_chr(addr, value);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
