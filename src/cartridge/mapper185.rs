@@ -61,14 +61,6 @@ impl Mapper for Mapper185 {
         &mut self.base
     }
 
-    fn read_prg(&self, addr: u16) -> u8 {
-        match addr {
-            0x6000..=0x7FFF => self.base.try_read_prg_ram(addr).unwrap_or(0),
-            0x8000..=0xFFFF => self.base.read_prg_rom_fixed(addr),
-            _ => 0,
-        }
-    }
-
     fn write_prg(&mut self, addr: u16, value: u8) {
         if self.base.try_write_prg_ram(addr, value) {
             return;

@@ -64,26 +64,9 @@ impl Mapper for NROMMapper {
         &mut self.base
     }
 
-    fn read_prg(&self, addr: u16) -> u8 {
-        // PRG-RAM at $6000-$7FFF (only if present)
-        if let Some(value) = self.base.try_read_prg_ram(addr) {
-            return value;
-        }
-        // PRG ROM at $8000-$FFFF; % len naturally mirrors 16KB ROM to $C000-$FFFF
-        self.base.read_prg_rom_fixed(addr)
-    }
-
     fn write_prg(&mut self, addr: u16, value: u8) {
         // PRG-RAM at $6000-$7FFF (only if present)
         self.base.try_write_prg_ram(addr, value);
-    }
-
-    fn read_chr(&mut self, addr: u16) -> u8 {
-        self.base().read_chr(addr)
-    }
-
-    fn write_chr(&mut self, addr: u16, value: u8) {
-        self.base_mut().write_chr(addr, value);
     }
 }
 

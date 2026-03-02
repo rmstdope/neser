@@ -247,14 +247,15 @@ pub trait Mapper {
     ///   Returns the byte at the given address after bank translation.
     ///
     /// Default tries PRG-RAM first via `BaseMapper::try_read_prg_ram`, then
-    /// falls back to banked PRG-ROM via `BaseMapper::read_prg_banked`.
+    /// falls back to PRG-ROM via `BaseMapper::read_prg_rom` (which auto-detects
+    /// banked vs fixed access).
     /// Mappers with custom PRG address decoding must override this.
     fn read_prg(&self, addr: u16) -> u8 {
         if let Some(value) = self.base().try_read_prg_ram(addr) {
             return value;
         }
         match addr {
-            0x8000..=0xFFFF => self.base().read_prg_banked(addr),
+            0x8000..=0xFFFF => self.base().read_prg_rom(addr),
             _ => 0,
         }
     }
@@ -279,19 +280,19 @@ pub trait Mapper {
     /// Read a byte from CHR address space (PPU $0000-$1FFF)
     /// Returns the byte at the given address after bank translation.
     ///
-    /// Default uses banked CHR access via `BaseMapper::read_chr_banked`.
-    /// Mappers without CHR banking must override this to use `self.base().read_chr(addr)`.
+    /// Default delegates to `BaseMapper::read_chr`, which auto-detects
+    /// banked vs unbanked access based on whether CHR banking is configured.
     fn read_chr(&mut self, addr: u16) -> u8 {
-        self.base().read_chr_banked(addr)
+        self.base().read_chr(addr)
     }
 
     /// Write a byte to CHR address space (PPU $0000-$1FFF)
     /// Only works for CHR-RAM, CHR-ROM is read-only.
     ///
-    /// Default uses banked CHR access via `BaseMapper::write_chr_banked`.
-    /// Mappers without CHR banking must override this to use `self.base_mut().write_chr(addr, value)`.
+    /// Default delegates to `BaseMapper::write_chr`, which auto-detects
+    /// banked vs unbanked access based on whether CHR banking is configured.
     fn write_chr(&mut self, addr: u16, value: u8) {
-        self.base_mut().write_chr_banked(addr, value);
+        self.base_mut().write_chr(addr, value);
     }
 
     /// Notify mapper of PPU address bus changes

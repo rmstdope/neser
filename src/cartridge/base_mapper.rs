@@ -118,6 +118,19 @@ impl BaseMapper {
         &self.prg_rom
     }
 
+    /// Read a byte from PRG-ROM at $8000-$FFFF.
+    ///
+    /// Auto-detects banking: if `configure_prg_banking` has been called,
+    /// delegates to `read_prg_banked`; otherwise uses `read_prg_rom_fixed`.
+    #[inline]
+    pub fn read_prg_rom(&self, addr: u16) -> u8 {
+        if self.prg_page_size > 0 {
+            self.read_prg_banked(addr)
+        } else {
+            self.read_prg_rom_fixed(addr)
+        }
+    }
+
     /// Read a byte from fixed PRG-ROM at $8000-$FFFF with automatic mirroring.
     ///
     /// For mappers with no PRG banking (e.g., NROM), this maps the full
@@ -162,15 +175,29 @@ impl BaseMapper {
     // --- CHR memory access ---
 
     /// Read a byte from CHR memory (ROM or RAM) at $0000-$1FFF.
+    ///
+    /// Auto-detects banking: if `configure_chr_banking` has been called,
+    /// delegates to `read_chr_banked`; otherwise uses direct unbanked access.
     #[inline]
     pub fn read_chr(&self, addr: u16) -> u8 {
-        self.chr_memory.read(addr)
+        if self.chr_page_size > 0 {
+            self.read_chr_banked(addr)
+        } else {
+            self.chr_memory.read(addr)
+        }
     }
 
     /// Write a byte to CHR memory. Only succeeds for CHR-RAM.
+    ///
+    /// Auto-detects banking: if `configure_chr_banking` has been called,
+    /// delegates to `write_chr_banked`; otherwise uses direct unbanked access.
     #[inline]
     pub fn write_chr(&mut self, addr: u16, value: u8) {
-        self.chr_memory.write(addr, value);
+        if self.chr_page_size > 0 {
+            self.write_chr_banked(addr, value);
+        } else {
+            self.chr_memory.write(addr, value);
+        }
     }
 
     /// Read a byte from CHR memory at a raw byte index (not limited to $0000-$1FFF).

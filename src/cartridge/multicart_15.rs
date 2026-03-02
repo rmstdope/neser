@@ -135,10 +135,6 @@ impl Mapper for Multicart15Mapper {
         }
     }
 
-    fn read_chr(&mut self, addr: u16) -> u8 {
-        self.base().read_chr(addr)
-    }
-
     fn write_chr(&mut self, addr: u16, value: u8) {
         if self.is_chr_ram_writable() {
             self.base.write_chr(addr, value);

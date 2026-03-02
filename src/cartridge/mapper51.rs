@@ -170,14 +170,6 @@ impl Mapper for Mapper51 {
         }
     }
 
-    fn read_chr(&mut self, addr: u16) -> u8 {
-        self.base().read_chr(addr)
-    }
-
-    fn write_chr(&mut self, addr: u16, value: u8) {
-        self.base_mut().write_chr(addr, value);
-    }
-
     fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
         match addr {
             0x0000..=0x5FFF => open_bus,
