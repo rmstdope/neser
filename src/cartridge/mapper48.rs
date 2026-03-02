@@ -6,6 +6,7 @@
 //! - See CARTRIDGE_REVIEW.md sections 5 and 6 for remaining mapper test/documentation follow-up.
 
 use crate::cartridge::BaseMapper;
+use crate::cartridge::common::A12RisingEdgeDetector;
 use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
 /// Mapper 048 – Taito TC0690
@@ -62,15 +63,13 @@ pub struct Mapper48 {
     irq_enabled: bool,
     irq_pending: bool,
 
-    prev_a12: bool,
-    a12_low_cycles: u8,
+    a12_detector: A12RisingEdgeDetector,
 }
 
 impl Mapper48 {
     const PRG_BANK_SIZE: usize = 0x2000; // 8KB
     const CHR_BANK_1K_SIZE: usize = 0x0400; // 1KB
     const REGISTER_MASK: u16 = 0xE003;
-    const A12_LOW_CYCLES_REQUIRED: u8 = 3;
 
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
         let mirroring = ctx.mirroring;
@@ -98,8 +97,7 @@ impl Mapper48 {
             irq_reload: false,
             irq_enabled: false,
             irq_pending: false,
-            prev_a12: false,
-            a12_low_cycles: 0,
+            a12_detector: A12RisingEdgeDetector::new(3),
         };
 
         mapper.update_banks();
@@ -204,26 +202,13 @@ impl Mapper for Mapper48 {
     }
 
     fn ppu_address_changed(&mut self, addr: u16) {
-        let a12 = (addr & 0x1000) != 0;
-        let was_low = !self.prev_a12;
-        let rising_edge = a12 && was_low && self.a12_low_cycles >= Self::A12_LOW_CYCLES_REQUIRED;
-        if rising_edge {
+        if self.a12_detector.update(addr) {
             self.clock_irq_counter();
         }
-        if !a12 {
-            if self.a12_low_cycles < Self::A12_LOW_CYCLES_REQUIRED {
-                self.a12_low_cycles += 1;
-            }
-        } else {
-            self.a12_low_cycles = 0;
-        }
-        self.prev_a12 = a12;
     }
 
     fn cpu_cycle(&mut self) {
-        if !self.prev_a12 && self.a12_low_cycles < Self::A12_LOW_CYCLES_REQUIRED {
-            self.a12_low_cycles += 1;
-        }
+        self.a12_detector.cpu_tick();
     }
 
     fn irq_pending(&self) -> bool {
