@@ -279,16 +279,6 @@ impl<const PRG_BANK_KB: usize, const MAPPER_NUM: u8> Mapper
         &mut self.base
     }
 
-    fn read_prg(&self, addr: u16) -> u8 {
-        if let Some(value) = self.base.try_read_prg_ram(addr) {
-            return value;
-        }
-        match addr {
-            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
-            _ => 0,
-        }
-    }
-
     fn write_prg(&mut self, addr: u16, value: u8) {
         if self.base.try_write_prg_ram(addr, value) {
             return;
@@ -408,16 +398,6 @@ impl<
 
     fn base_mut(&mut self) -> &mut BaseMapper {
         &mut self.base
-    }
-
-    fn read_prg(&self, addr: u16) -> u8 {
-        if let Some(value) = self.base.try_read_prg_ram(addr) {
-            return value;
-        }
-        match addr {
-            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
-            _ => 0,
-        }
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {

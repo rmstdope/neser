@@ -182,13 +182,6 @@ impl Mapper for Mapper64 {
         &mut self.base
     }
 
-    fn read_prg(&self, addr: u16) -> u8 {
-        match addr {
-            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
-            _ => 0,
-        }
-    }
-
     fn write_prg(&mut self, addr: u16, value: u8) {
         let even = (addr & 1) == 0;
         match addr & 0xE000 {

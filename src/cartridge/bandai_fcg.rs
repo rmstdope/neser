@@ -107,13 +107,6 @@ impl Mapper for BandaiFcgMapper {
         &mut self.base
     }
 
-    fn read_prg(&self, addr: u16) -> u8 {
-        match addr {
-            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
-            _ => 0,
-        }
-    }
-
     fn write_prg(&mut self, addr: u16, value: u8) {
         // Determine which address range this write falls into and if it's valid
         let is_6000_range = (0x6000..=0x7FFF).contains(&addr);

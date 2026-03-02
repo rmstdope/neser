@@ -54,13 +54,6 @@ impl Mapper for Mapper140 {
         &mut self.base
     }
 
-    fn read_prg(&self, addr: u16) -> u8 {
-        match addr {
-            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
-            _ => 0,
-        }
-    }
-
     fn write_prg(&mut self, addr: u16, value: u8) {
         if (0x6000..=0x7FFF).contains(&addr) {
             self.apply_register(value);

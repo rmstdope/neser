@@ -244,8 +244,20 @@ pub trait Mapper {
     /// Read a byte from PRG address space (CPU $6000-$FFFF)
     /// - $6000-$7FFF: PRG-RAM (8KB, battery-backed on some cartridges)
     /// - $8000-$FFFF: PRG-ROM (with bank switching on advanced mappers)
-    ///   Returns the byte at the given address after bank translation
-    fn read_prg(&self, addr: u16) -> u8;
+    ///   Returns the byte at the given address after bank translation.
+    ///
+    /// Default tries PRG-RAM first via `BaseMapper::try_read_prg_ram`, then
+    /// falls back to banked PRG-ROM via `BaseMapper::read_prg_banked`.
+    /// Mappers with custom PRG address decoding must override this.
+    fn read_prg(&self, addr: u16) -> u8 {
+        if let Some(value) = self.base().try_read_prg_ram(addr) {
+            return value;
+        }
+        match addr {
+            0x8000..=0xFFFF => self.base().read_prg_banked(addr),
+            _ => 0,
+        }
+    }
 
     /// Read a byte from PRG address space (CPU $6000-$FFFF), with open-bus context.
     ///
