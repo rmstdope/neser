@@ -10,6 +10,8 @@ use crate::cartridge::BaseMapper;
 use crate::cartridge::NametableLayout;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
+use super::cpu_cycle_irq::{CpuCycleIrq, CpuCycleIrqMode};
+
 /// Mapper 065 - Irem H3001
 ///
 /// Hardware: Irem H3001 ASIC
@@ -42,10 +44,7 @@ pub struct Mapper65 {
     prg_regs: [u8; 2], // reg0 ($8000), reg1 ($A000)
     chr_regs: [u8; 8], // $B000-$B007
     prg_mode: bool,    // $9000 bit7: false=mode0, true=mode1
-    irq_enabled: bool,
-    irq_pending: bool,
-    irq_counter: u16,
-    irq_reload: u16,
+    irq: CpuCycleIrq,
 }
 
 impl Mapper65 {
@@ -72,10 +71,7 @@ impl Mapper65 {
             prg_regs: [0x00, 0x01], // power-on state
             chr_regs: [0; 8],
             prg_mode: false,
-            irq_enabled: false,
-            irq_pending: false,
-            irq_counter: 0,
-            irq_reload: 0,
+            irq: CpuCycleIrq::new(CpuCycleIrqMode::DownToZero),
         };
 
         mapper.update_banks();
@@ -103,7 +99,7 @@ impl Mapper65 {
     }
 
     fn acknowledge_irq(&mut self) {
-        self.irq_pending = false;
+        self.irq.acknowledge();
     }
 }
 
@@ -143,34 +139,30 @@ impl Mapper for Mapper65 {
             }
             0x9003 => {
                 self.acknowledge_irq();
-                self.irq_enabled = (value & 0x80) != 0;
+                self.irq.set_enabled((value & 0x80) != 0);
             }
             0x9004 => {
                 self.acknowledge_irq();
-                self.irq_counter = self.irq_reload;
+                self.irq.reload_counter();
             }
             0x9005 => {
-                self.irq_reload = (self.irq_reload & 0x00FF) | ((value as u16) << 8);
+                self.irq
+                    .set_reload((self.irq.reload() & 0x00FF) | ((value as u16) << 8));
             }
             0x9006 => {
-                self.irq_reload = (self.irq_reload & 0xFF00) | (value as u16);
+                self.irq
+                    .set_reload((self.irq.reload() & 0xFF00) | (value as u16));
             }
             _ => {}
         }
     }
 
     fn irq_pending(&self) -> bool {
-        self.irq_pending
+        self.irq.is_pending()
     }
 
     fn cpu_cycle(&mut self) {
-        if !self.irq_enabled || self.irq_counter == 0 {
-            return;
-        }
-        self.irq_counter -= 1;
-        if self.irq_counter == 0 {
-            self.irq_pending = true;
-        }
+        self.irq.tick();
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -179,17 +171,17 @@ impl Mapper for Mapper65 {
             NametableLayout::Horizontal => 1,
             _ => 2,
         };
-        let irq_flags = (self.irq_enabled as u8) | ((self.irq_pending as u8) << 1);
+        let irq_flags = (self.irq.enabled() as u8) | ((self.irq.is_pending() as u8) << 1);
         let mut v = vec![
             self.prg_regs[0],
             self.prg_regs[1],
             self.prg_mode as u8,
             mirror_byte,
             irq_flags,
-            (self.irq_counter & 0xFF) as u8,
-            (self.irq_counter >> 8) as u8,
-            (self.irq_reload & 0xFF) as u8,
-            (self.irq_reload >> 8) as u8,
+            (self.irq.counter() & 0xFF) as u8,
+            (self.irq.counter() >> 8) as u8,
+            (self.irq.reload() & 0xFF) as u8,
+            (self.irq.reload() >> 8) as u8,
         ];
         v.extend_from_slice(&self.chr_regs);
         v
@@ -207,10 +199,12 @@ impl Mapper for Mapper65 {
             2 => NametableLayout::SingleScreenLower,
             _ => NametableLayout::Vertical,
         });
-        self.irq_enabled = (data[4] & 1) != 0;
-        self.irq_pending = (data[4] & 2) != 0;
-        self.irq_counter = (data[5] as u16) | ((data[6] as u16) << 8);
-        self.irq_reload = (data[7] as u16) | ((data[8] as u16) << 8);
+        self.irq.set_enabled((data[4] & 1) != 0);
+        self.irq.set_pending((data[4] & 2) != 0);
+        self.irq
+            .set_counter((data[5] as u16) | ((data[6] as u16) << 8));
+        self.irq
+            .set_reload((data[7] as u16) | ((data[8] as u16) << 8));
         self.chr_regs.copy_from_slice(&data[9..17]);
         self.update_banks();
     }
@@ -220,10 +214,10 @@ impl Mapper for Mapper65 {
         self.chr_regs = [0; 8];
         self.prg_mode = false;
         self.base.set_mirroring(NametableLayout::Vertical);
-        self.irq_enabled = false;
-        self.irq_pending = false;
-        self.irq_counter = 0;
-        self.irq_reload = 0;
+        self.irq.set_enabled(false);
+        self.irq.set_pending(false);
+        self.irq.set_counter(0);
+        self.irq.set_reload(0);
         self.update_banks();
     }
 }
@@ -397,7 +391,7 @@ mod tests {
         }
         // IRQ fires once; counter stays at 0 (no wrap)
         assert!(mapper.irq_pending(), "IRQ must remain pending");
-        assert_eq!(mapper.irq_counter, 0, "Counter must stop at 0");
+        assert_eq!(mapper.irq.counter(), 0, "Counter must stop at 0");
     }
 
     // --- Snapshot ---
@@ -416,6 +410,6 @@ mod tests {
         assert_eq!(r.read_prg(0x8000), mapper.read_prg(0x8000));
         assert_eq!(r.read_prg(0xA000), mapper.read_prg(0xA000));
         assert_eq!(r.get_mirroring(), mapper.get_mirroring());
-        assert_eq!(r.irq_reload, mapper.irq_reload);
+        assert_eq!(r.irq.reload(), mapper.irq.reload());
     }
 }

@@ -9,6 +9,8 @@
 use crate::cartridge::BaseMapper;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
+use super::cpu_cycle_irq::{CpuCycleIrq, CpuCycleIrqMode};
+
 /// Mapper 043 - TONY-I / YS-612 (SMB2 Japanese FDS conversion)
 ///
 /// Hardware: TONY-I / YS-612 PCB
@@ -36,13 +38,11 @@ use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 pub struct Mapper43 {
     base: BaseMapper,
     switchable_bank: u8,
-    irq_counter: u16,
-    irq_pending: bool,
+    irq: CpuCycleIrq,
 }
 
 impl Mapper43 {
     const PRG_BANK_SIZE: usize = 0x2000;
-    const IRQ_OVERFLOW: u16 = 0x1000;
     const BANK_LOOKUP: [u8; 8] = [4, 3, 4, 4, 4, 7, 5, 6];
 
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
@@ -61,9 +61,9 @@ impl Mapper43 {
         let mut mapper = Self {
             base,
             switchable_bank: 0,
-            irq_counter: 0,
-            irq_pending: false,
+            irq: CpuCycleIrq::new(CpuCycleIrqMode::UpReset { threshold: 0x1000 }),
         };
+        mapper.irq.set_enabled(true); // Mapper 43 always counts
 
         mapper.update_banks();
         mapper
@@ -119,37 +119,34 @@ impl Mapper for Mapper43 {
             self.switchable_bank = value & 0x07;
             self.update_banks();
         } else if addr & 0x71FF == 0x4122 {
-            self.irq_counter = 0;
-            self.irq_pending = false;
+            self.irq.set_counter(0);
+            self.irq.acknowledge();
         }
     }
 
     fn cpu_cycle(&mut self) {
-        self.irq_counter = self.irq_counter.wrapping_add(1);
-        if self.irq_counter >= Self::IRQ_OVERFLOW {
-            self.irq_counter = 0;
-            self.irq_pending = true;
-        }
+        self.irq.tick();
     }
 
     fn irq_pending(&self) -> bool {
-        self.irq_pending
+        self.irq.is_pending()
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
         vec![
             self.switchable_bank,
-            (self.irq_counter & 0xFF) as u8,
-            (self.irq_counter >> 8) as u8,
-            self.irq_pending as u8,
+            (self.irq.counter() & 0xFF) as u8,
+            (self.irq.counter() >> 8) as u8,
+            self.irq.is_pending() as u8,
         ]
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
         if data.len() >= 4 {
             self.switchable_bank = data[0];
-            self.irq_counter = (data[1] as u16) | ((data[2] as u16) << 8);
-            self.irq_pending = data[3] != 0;
+            self.irq
+                .set_counter((data[1] as u16) | ((data[2] as u16) << 8));
+            self.irq.set_pending(data[3] != 0);
             self.update_banks();
         }
     }

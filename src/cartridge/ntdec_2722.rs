@@ -8,6 +8,8 @@
 use crate::cartridge::BaseMapper;
 use crate::cartridge::{Mapper, MapperCapabilities};
 
+use super::cpu_cycle_irq::{CpuCycleIrq, CpuCycleIrqMode};
+
 /// Mapper 040 - NTDEC 2722
 ///
 /// Hardware: NTDEC 2722 PCB, used in Super Mario Bros. 2 (Japanese) conversions.
@@ -37,9 +39,7 @@ pub struct Ntdec2722Mapper {
     base: BaseMapper,
     /// Switchable bank index for the $C000-$DFFF window.
     prg_bank: u8,
-    irq_enabled: bool,
-    irq_counter: u16,
-    irq_pending: bool,
+    irq: CpuCycleIrq,
 }
 
 impl Ntdec2722Mapper {
@@ -47,10 +47,6 @@ impl Ntdec2722Mapper {
 
     // Fixed PRG window bank assignments (hardwired per spec)
     const BANK_AT_6000: usize = 6;
-
-    // IRQ counter thresholds (CD4020 bits Q12 and Q13)
-    const IRQ_FIRE_COUNT: u16 = 4096;
-    const IRQ_SELF_ACK_COUNT: u16 = 8192;
 
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
         let mirroring = ctx.mirroring;
@@ -68,9 +64,10 @@ impl Ntdec2722Mapper {
         let mut mapper = Self {
             base,
             prg_bank: 0,
-            irq_enabled: false,
-            irq_counter: 0,
-            irq_pending: false,
+            irq: CpuCycleIrq::new(CpuCycleIrqMode::UpSelfAck {
+                fire_count: 4096,
+                ack_count: 8192,
+            }),
         };
 
         mapper.update_banks();
@@ -119,14 +116,14 @@ impl Mapper for Ntdec2722Mapper {
         match addr & 0xE000 {
             0x8000 => {
                 // Disable and acknowledge IRQ
-                self.irq_enabled = false;
-                self.irq_pending = false;
-                self.irq_counter = 0;
+                self.irq.set_enabled(false);
+                self.irq.acknowledge();
+                self.irq.set_counter(0);
             }
             0xA000 => {
                 // Enable IRQ, reset counter
-                self.irq_enabled = true;
-                self.irq_counter = 0;
+                self.irq.set_enabled(true);
+                self.irq.set_counter(0);
             }
             0xE000 => {
                 // Select 8KB PRG bank for $C000 window
@@ -143,39 +140,30 @@ impl Mapper for Ntdec2722Mapper {
     }
 
     fn cpu_cycle(&mut self) {
-        if !self.irq_enabled {
-            return;
-        }
-        self.irq_counter += 1;
-        if self.irq_counter == Self::IRQ_FIRE_COUNT {
-            self.irq_pending = true;
-        } else if self.irq_counter == Self::IRQ_SELF_ACK_COUNT {
-            self.irq_pending = false;
-        }
+        self.irq.tick();
     }
 
     fn irq_pending(&self) -> bool {
-        self.irq_pending
+        self.irq.is_pending()
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        // Layout: [0] prg_bank, [1] flags (irq_enabled | irq_pending<<1),
-        //         [2-3] irq_counter (little-endian)
-        let flags = (self.irq_enabled as u8) | ((self.irq_pending as u8) << 1);
+        let flags = (self.irq.enabled() as u8) | ((self.irq.is_pending() as u8) << 1);
         vec![
             self.prg_bank,
             flags,
-            (self.irq_counter & 0xFF) as u8,
-            (self.irq_counter >> 8) as u8,
+            (self.irq.counter() & 0xFF) as u8,
+            (self.irq.counter() >> 8) as u8,
         ]
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
         if data.len() >= 4 {
             self.prg_bank = data[0];
-            self.irq_enabled = (data[1] & 1) != 0;
-            self.irq_pending = (data[1] & 2) != 0;
-            self.irq_counter = (data[2] as u16) | ((data[3] as u16) << 8);
+            self.irq.set_enabled((data[1] & 1) != 0);
+            self.irq.set_pending((data[1] & 2) != 0);
+            self.irq
+                .set_counter((data[2] as u16) | ((data[3] as u16) << 8));
             self.update_banks();
         }
     }

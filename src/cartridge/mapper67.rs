@@ -10,6 +10,8 @@ use crate::cartridge::BaseMapper;
 use crate::cartridge::NametableLayout;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
+use super::cpu_cycle_irq::{CpuCycleIrq, CpuCycleIrqMode};
+
 /// Mapper 067 – Sunsoft 3
 ///
 /// Hardware: Sunsoft 3 ASIC
@@ -52,9 +54,7 @@ pub struct Mapper67 {
     base: BaseMapper,
     prg_bank: u8,
     chr_banks: [u8; 4],
-    irq_enabled: bool,
-    irq_pending: bool,
-    irq_counter: u16,
+    irq: CpuCycleIrq,
     irq_write_hi_next: bool,
 }
 
@@ -81,9 +81,7 @@ impl Mapper67 {
             base,
             prg_bank: 0,
             chr_banks: [0; 4],
-            irq_enabled: false,
-            irq_pending: false,
-            irq_counter: 0,
+            irq: CpuCycleIrq::new(CpuCycleIrqMode::DownAutoDisable),
             irq_write_hi_next: true,
         };
 
@@ -113,7 +111,7 @@ impl Mapper for Mapper67 {
         match addr & 0xF800 {
             0x8000 => {
                 // IRQ acknowledge
-                self.irq_pending = false;
+                self.irq.acknowledge();
             }
             0x8800 => {
                 self.chr_banks[0] = value;
@@ -133,15 +131,17 @@ impl Mapper for Mapper67 {
             }
             0xC800 => {
                 if self.irq_write_hi_next {
-                    self.irq_counter = (self.irq_counter & 0x00FF) | ((value as u16) << 8);
+                    self.irq
+                        .set_counter((self.irq.counter() & 0x00FF) | ((value as u16) << 8));
                     self.irq_write_hi_next = false;
                 } else {
-                    self.irq_counter = (self.irq_counter & 0xFF00) | (value as u16);
+                    self.irq
+                        .set_counter((self.irq.counter() & 0xFF00) | (value as u16));
                     self.irq_write_hi_next = true;
                 }
             }
             0xD800 => {
-                self.irq_enabled = (value & 0x10) != 0;
+                self.irq.set_enabled((value & 0x10) != 0);
                 self.irq_write_hi_next = true;
             }
             0xE800 => {
@@ -161,19 +161,11 @@ impl Mapper for Mapper67 {
     }
 
     fn irq_pending(&self) -> bool {
-        self.irq_pending
+        self.irq.is_pending()
     }
 
     fn cpu_cycle(&mut self) {
-        if !self.irq_enabled {
-            return;
-        }
-        if self.irq_counter == 0 {
-            self.irq_pending = true;
-            self.irq_enabled = false;
-            return;
-        }
-        self.irq_counter -= 1;
+        self.irq.tick();
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -184,15 +176,15 @@ impl Mapper for Mapper67 {
             NametableLayout::SingleScreenUpper => 3,
             _ => 0,
         };
-        let irq_flags = (self.irq_enabled as u8)
-            | ((self.irq_pending as u8) << 1)
+        let irq_flags = (self.irq.enabled() as u8)
+            | ((self.irq.is_pending() as u8) << 1)
             | ((self.irq_write_hi_next as u8) << 2);
         let mut v = vec![
             self.prg_bank,
             mirror_byte,
             irq_flags,
-            (self.irq_counter & 0xFF) as u8,
-            (self.irq_counter >> 8) as u8,
+            (self.irq.counter() & 0xFF) as u8,
+            (self.irq.counter() >> 8) as u8,
         ];
         v.extend_from_slice(&self.chr_banks);
         v
@@ -209,10 +201,11 @@ impl Mapper for Mapper67 {
             3 => NametableLayout::SingleScreenUpper,
             _ => NametableLayout::Vertical,
         });
-        self.irq_enabled = (data[2] & 1) != 0;
-        self.irq_pending = (data[2] & 2) != 0;
+        self.irq.set_enabled((data[2] & 1) != 0);
+        self.irq.set_pending((data[2] & 2) != 0);
         self.irq_write_hi_next = (data[2] & 4) != 0;
-        self.irq_counter = (data[3] as u16) | ((data[4] as u16) << 8);
+        self.irq
+            .set_counter((data[3] as u16) | ((data[4] as u16) << 8));
         self.chr_banks.copy_from_slice(&data[5..9]);
         self.update_banks();
     }
@@ -221,9 +214,9 @@ impl Mapper for Mapper67 {
         self.prg_bank = 0;
         self.chr_banks = [0; 4];
         self.base.set_mirroring(NametableLayout::Vertical);
-        self.irq_enabled = false;
-        self.irq_pending = false;
-        self.irq_counter = 0;
+        self.irq.set_enabled(false);
+        self.irq.set_pending(false);
+        self.irq.set_counter(0);
         self.irq_write_hi_next = true;
         self.update_banks();
     }
@@ -397,7 +390,10 @@ mod tests {
             mapper.cpu_cycle();
         }
         // irq_enabled should be false; counter should stay at 0xFFFF
-        assert!(!mapper.irq_enabled, "IRQ must disable itself after firing");
+        assert!(
+            !mapper.irq.enabled(),
+            "IRQ must disable itself after firing"
+        );
     }
 
     #[test]
@@ -421,7 +417,8 @@ mod tests {
         mapper.write_prg(0xC800, 0x12); // high byte = 0x12
         mapper.write_prg(0xC800, 0x34); // low byte  = 0x34
         assert_eq!(
-            mapper.irq_counter, 0x1234,
+            mapper.irq.counter(),
+            0x1234,
             "Counter must be 0x1234 after two writes"
         );
     }
@@ -436,7 +433,8 @@ mod tests {
         mapper.write_prg(0xC800, 0x56); // high byte (again)
         mapper.write_prg(0xC800, 0x78); // low byte
         assert_eq!(
-            mapper.irq_counter, 0x5678,
+            mapper.irq.counter(),
+            0x5678,
             "Toggle must reset after $D800 write"
         );
     }
@@ -462,8 +460,8 @@ mod tests {
 
         assert_eq!(restored.read_prg(0x8000), mapper.read_prg(0x8000));
         assert_eq!(restored.get_mirroring(), mapper.get_mirroring());
-        assert_eq!(restored.irq_counter, mapper.irq_counter);
-        assert_eq!(restored.irq_enabled, mapper.irq_enabled);
+        assert_eq!(restored.irq.counter(), mapper.irq.counter());
+        assert_eq!(restored.irq.enabled(), mapper.irq.enabled());
         assert_eq!(restored.chr_banks, mapper.chr_banks);
     }
 }

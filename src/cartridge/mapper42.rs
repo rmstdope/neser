@@ -10,6 +10,8 @@ use crate::cartridge::BaseMapper;
 use crate::cartridge::NametableLayout;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
+use super::cpu_cycle_irq::{CpuCycleIrq, CpuCycleIrqMode};
+
 /// Mapper 042 - FDS game conversions
 ///
 /// Hardware: Used for hacked FDS games converted to cartridge form.
@@ -27,18 +29,12 @@ pub struct Mapper42 {
     base: BaseMapper,
     prg_bank: u8,
     chr_bank: u8,
-    irq_enabled: bool,
-    irq_counter: u16,
-    irq_pending: bool,
+    irq: CpuCycleIrq,
 }
 
 impl Mapper42 {
     const PRG_BANK_SIZE: usize = 0x2000; // 8 KiB
     const CHR_BANK_SIZE: usize = 0x2000; // 8 KiB
-
-    // IRQ: 15-bit counter; asserted when bits 14 and 13 are set (counter >= 0x6000)
-    const IRQ_ASSERT_THRESHOLD: u16 = 0x6000;
-    const IRQ_COUNTER_MASK: u16 = 0x7FFF; // 15-bit
 
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
         let mirroring = ctx.mirroring;
@@ -60,9 +56,10 @@ impl Mapper42 {
             base,
             prg_bank: 0,
             chr_bank: 0,
-            irq_enabled: false,
-            irq_counter: 0,
-            irq_pending: false,
+            irq: CpuCycleIrq::new(CpuCycleIrqMode::UpLevel {
+                threshold: 0x6000,
+                mask: 0x7FFF,
+            }),
         };
 
         mapper.update_banks();
@@ -131,10 +128,10 @@ impl Mapper for Mapper42 {
             }
             0xE002 => {
                 // IRQ Control: bit 1 (0=Disable+Ack+Reset, 1=Enable)
-                self.irq_enabled = (value & 0x02) != 0;
-                if !self.irq_enabled {
-                    self.irq_pending = false;
-                    self.irq_counter = 0;
+                self.irq.set_enabled((value & 0x02) != 0);
+                if !self.irq.enabled() {
+                    self.irq.acknowledge();
+                    self.irq.set_counter(0);
                 }
             }
             _ => {}
@@ -147,15 +144,11 @@ impl Mapper for Mapper42 {
     }
 
     fn cpu_cycle(&mut self) {
-        if !self.irq_enabled {
-            return;
-        }
-        self.irq_counter = (self.irq_counter + 1) & Self::IRQ_COUNTER_MASK;
-        self.irq_pending = self.irq_counter >= Self::IRQ_ASSERT_THRESHOLD;
+        self.irq.tick();
     }
 
     fn irq_pending(&self) -> bool {
-        self.irq_pending
+        self.irq.is_pending()
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -163,14 +156,15 @@ impl Mapper for Mapper42 {
         //         [2] flags (irq_enabled | irq_pending<<1),
         //         [3-4] irq_counter (little-endian),
         //         [5] mirroring (0=Vertical, 1=Horizontal)
-        let flags = (self.irq_enabled as u8) | ((self.irq_pending as u8) << 1);
+        let flags = (self.irq.enabled() as u8) | ((self.irq.is_pending() as u8) << 1);
         let mirror_byte = matches!(self.base.mirroring(), NametableLayout::Horizontal) as u8;
+        let counter = self.irq.counter();
         vec![
             self.prg_bank,
             self.chr_bank,
             flags,
-            (self.irq_counter & 0xFF) as u8,
-            (self.irq_counter >> 8) as u8,
+            (counter & 0xFF) as u8,
+            (counter >> 8) as u8,
             mirror_byte,
         ]
     }
@@ -179,9 +173,10 @@ impl Mapper for Mapper42 {
         if data.len() >= 6 {
             self.prg_bank = data[0];
             self.chr_bank = data[1];
-            self.irq_enabled = (data[2] & 1) != 0;
-            self.irq_pending = (data[2] & 2) != 0;
-            self.irq_counter = (data[3] as u16) | ((data[4] as u16) << 8);
+            self.irq.set_enabled((data[2] & 1) != 0);
+            self.irq.set_pending((data[2] & 2) != 0);
+            self.irq
+                .set_counter((data[3] as u16) | ((data[4] as u16) << 8));
             self.base.set_mirroring(if data[5] != 0 {
                 NametableLayout::Horizontal
             } else {
