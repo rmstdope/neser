@@ -612,17 +612,12 @@ pub struct A12IrqCounter {
     reload: bool,
     enabled: bool,
     asserted: bool,
-    prev_a12: bool,
-    current_a12: bool,
-    a12_low_cycles: u8,
+    a12_detector: A12RisingEdgeDetector,
     alternate_behavior: bool,
 }
 
 #[allow(dead_code)]
 impl A12IrqCounter {
-    /// Minimum number of CPU cycles A12 must be low before a rising edge is valid.
-    const A12_LOW_CYCLES_REQUIRED: u8 = 3;
-
     /// Create a new A12 IRQ counter.
     ///
     /// `alternate_behavior`:
@@ -635,9 +630,7 @@ impl A12IrqCounter {
             reload: false,
             enabled: false,
             asserted: false,
-            prev_a12: false,
-            current_a12: false,
-            a12_low_cycles: 0,
+            a12_detector: A12RisingEdgeDetector::new(3),
             alternate_behavior,
         }
     }
@@ -668,34 +661,15 @@ impl A12IrqCounter {
 
     /// Track A12 low cycles for debounce. Call once per CPU cycle.
     pub fn cpu_cycle(&mut self) {
-        if self.current_a12 {
-            self.a12_low_cycles = 0;
-        } else {
-            self.a12_low_cycles = self.a12_low_cycles.saturating_add(1);
-        }
+        self.a12_detector.cpu_tick();
     }
 
     /// Notify the counter that the PPU address bus changed.
     /// Detects A12 rising edges and clocks the counter when appropriate.
     pub fn ppu_address_changed(&mut self, addr: u16) {
-        let current_a12 = (addr & 0x1000) != 0;
-        self.current_a12 = current_a12;
-
-        // Detect rising edge
-        let rising_edge = !self.prev_a12 && current_a12;
-        self.prev_a12 = current_a12;
-
-        if !rising_edge {
-            return;
+        if self.a12_detector.update(addr) {
+            self.clock_counter();
         }
-
-        // Debounce: A12 must have been low for at least 3 CPU cycles
-        if self.a12_low_cycles < Self::A12_LOW_CYCLES_REQUIRED {
-            return;
-        }
-
-        // Clock the counter
-        self.clock_counter();
     }
 
     fn clock_counter(&mut self) {
