@@ -124,6 +124,9 @@ impl BaseMapper {
     /// delegates to `read_prg_banked`; otherwise uses `read_prg_rom_fixed`.
     #[inline]
     pub fn read_prg_rom(&self, addr: u16) -> u8 {
+        if !(0x8000..=0xFFFF).contains(&addr) {
+            return 0;
+        }
         if self.prg_page_size > 0 {
             self.read_prg_banked(addr)
         } else {
@@ -471,6 +474,41 @@ mod tests {
     }
 
     #[test]
+    fn test_base_mapper_read_prg_rom_unconfigured_uses_fixed() {
+        let mut prg_rom = vec![0; 0x4000];
+        prg_rom[0x0000] = 0xAB;
+        prg_rom[0x3FFF] = 0xCD;
+        let ctx =
+            MapperContext::new_for_test(0, prg_rom, vec![0; 8192], NametableLayout::Horizontal);
+        let base = BaseMapper::new(&ctx, MapperCapabilities::default());
+
+        assert_eq!(base.read_prg_rom(0x8000), 0xAB);
+        assert_eq!(base.read_prg_rom(0xC000), 0xAB); // mirrored in fixed mode
+        assert_eq!(base.read_prg_rom(0xFFFF), 0xCD);
+    }
+
+    #[test]
+    fn test_base_mapper_read_prg_rom_configured_uses_banked() {
+        let mut base = make_prg_banked_mapper(4, 0x2000);
+        base.select_prg_page(0, 3);
+        base.select_prg_page(1, 1);
+        base.select_prg_page(2, 0);
+        base.select_prg_page(3, 2);
+
+        assert_eq!(base.read_prg_rom(0x8000), 3);
+        assert_eq!(base.read_prg_rom(0xA000), 1);
+        assert_eq!(base.read_prg_rom(0xC000), 0);
+        assert_eq!(base.read_prg_rom(0xE000), 2);
+    }
+
+    #[test]
+    fn test_base_mapper_read_prg_rom_out_of_range_returns_zero() {
+        let mut base = make_prg_banked_mapper(2, 0x4000);
+        base.select_prg_page(0, 1);
+        assert_eq!(base.read_prg_rom(0x7FFF), 0);
+    }
+
+    #[test]
     fn test_base_mapper_prg_ram_read_write() {
         let mut base = make_base_mapper_with_prg_ram(1);
 
@@ -520,6 +558,21 @@ mod tests {
         assert_eq!(base.read_chr(0x0000), 0x55);
         base.write_chr(0x0000, 0xAA); // should be ignored (ROM)
         assert_eq!(base.read_chr(0x0000), 0x55);
+    }
+
+    #[test]
+    fn test_base_mapper_chr_read_write_auto_dispatch_with_banking() {
+        let ctx =
+            MapperContext::new_for_test(0, vec![0; 0x8000], vec![], NametableLayout::Horizontal);
+        let mut base = BaseMapper::new(&ctx, MapperCapabilities::default());
+        base.configure_chr_banking(0x1000); // 2x 4KB slots over 8KB CHR-RAM
+        base.select_chr_page(0, 1);
+        base.select_chr_page(1, 0);
+
+        base.write_chr(0x0000, 0x3C); // Should write through banked dispatch to bank 1
+        assert_eq!(base.read_chr(0x0000), 0x3C);
+        assert_eq!(base.read_chr_at_index(0x1000), 0x3C);
+        assert_eq!(base.read_chr_at_index(0x0000), 0x00);
     }
 
     #[test]
