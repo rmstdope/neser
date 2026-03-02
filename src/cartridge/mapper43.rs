@@ -147,6 +147,7 @@ impl Mapper for Mapper43 {
             self.irq
                 .set_counter((data[1] as u16) | ((data[2] as u16) << 8));
             self.irq.set_pending(data[3] != 0);
+            self.irq.set_enabled(true);
             self.update_banks();
         }
     }

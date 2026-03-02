@@ -64,7 +64,7 @@ impl CpuCycleIrq {
                 if !self.enabled {
                     return;
                 }
-                self.counter = (self.counter + 1) & mask;
+                self.counter = self.counter.wrapping_add(1) & mask;
                 self.pending = self.counter >= threshold;
             }
             CpuCycleIrqMode::UpReset { threshold } => {
@@ -94,7 +94,7 @@ impl CpuCycleIrq {
                 if !self.enabled {
                     return;
                 }
-                self.counter += 1;
+                self.counter = self.counter.wrapping_add(1);
                 if self.counter == fire_count {
                     self.pending = true;
                 } else if self.counter == ack_count {
