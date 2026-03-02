@@ -495,13 +495,7 @@ impl Mapper for VRC6Mapper {
         snapshot.push(flags);
         let prescaler_bytes = self.irq.prescaler().to_le_bytes();
         snapshot.extend_from_slice(&prescaler_bytes);
-        snapshot.push(match self.base.mirroring() {
-            NametableLayout::Horizontal => 0,
-            NametableLayout::Vertical => 1,
-            NametableLayout::SingleScreen | NametableLayout::SingleScreenLower => 2,
-            NametableLayout::SingleScreenUpper => 3,
-            NametableLayout::FourScreen => 4,
-        });
+        snapshot.push(self.base.mirroring().to_snapshot_byte());
         snapshot.push(self.audio.global_halt as u8);
         snapshot.push(self.audio.global_shift);
 
@@ -546,14 +540,8 @@ impl Mapper for VRC6Mapper {
             self.irq.set_asserted((flags & 8) != 0);
             self.irq
                 .set_prescaler(i32::from_le_bytes([data[14], data[15], data[16], data[17]]));
-            self.base.set_mirroring(match data[18] {
-                0 => NametableLayout::Horizontal,
-                1 => NametableLayout::Vertical,
-                2 => NametableLayout::SingleScreen,
-                3 => NametableLayout::SingleScreenUpper,
-                4 => NametableLayout::FourScreen,
-                _ => NametableLayout::Horizontal,
-            });
+            self.base
+                .set_mirroring(NametableLayout::from_snapshot_byte(data[18]));
         }
 
         if data.len() >= 41 {

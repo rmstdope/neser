@@ -285,15 +285,7 @@ impl Mapper for SunsoftFme7Mapper {
         snapshot.push(flags);
         snapshot.push((self.irq.counter() & 0xFF) as u8);
         snapshot.push((self.irq.counter() >> 8) as u8);
-        let mirroring = match self.base.mirroring() {
-            NametableLayout::Horizontal => 0,
-            NametableLayout::Vertical => 1,
-            NametableLayout::SingleScreenLower => 2,
-            NametableLayout::SingleScreenUpper => 3,
-            NametableLayout::SingleScreen => 2,
-            NametableLayout::FourScreen => 4,
-        };
-        snapshot.push(mirroring);
+        snapshot.push(self.base.mirroring().to_snapshot_byte());
         snapshot
     }
 
@@ -310,14 +302,8 @@ impl Mapper for SunsoftFme7Mapper {
             self.irq.set_pending((flags & 16) != 0);
             self.irq
                 .set_counter((data[14] as u16) | ((data[15] as u16) << 8));
-            self.base.set_mirroring(match data[16] {
-                0 => NametableLayout::Horizontal,
-                1 => NametableLayout::Vertical,
-                2 => NametableLayout::SingleScreenLower,
-                3 => NametableLayout::SingleScreenUpper,
-                4 => NametableLayout::FourScreen,
-                _ => NametableLayout::Horizontal,
-            });
+            self.base
+                .set_mirroring(NametableLayout::from_snapshot_byte(data[16]));
             self.update_banks();
         }
     }

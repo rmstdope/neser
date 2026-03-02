@@ -533,14 +533,7 @@ impl Mapper for Vrc2Vrc4Mapper {
         }
         snapshot.push(flags);
         snapshot.extend_from_slice(&self.irq.prescaler().to_le_bytes());
-        let mirroring = match self.base.mirroring() {
-            NametableLayout::Horizontal => 0u8,
-            NametableLayout::Vertical => 1,
-            NametableLayout::SingleScreenLower | NametableLayout::SingleScreen => 2,
-            NametableLayout::SingleScreenUpper => 3,
-            NametableLayout::FourScreen => 4,
-        };
-        snapshot.push(mirroring);
+        snapshot.push(self.base.mirroring().to_snapshot_byte());
         snapshot
     }
 
@@ -566,14 +559,8 @@ impl Mapper for Vrc2Vrc4Mapper {
             self.prg_ram_enabled = (flags & Self::FLAG_PRG_RAM_ENABLED) != 0;
             self.irq
                 .set_prescaler(i32::from_le_bytes([data[22], data[23], data[24], data[25]]));
-            self.base.set_mirroring(match data[26] {
-                0 => NametableLayout::Horizontal,
-                1 => NametableLayout::Vertical,
-                2 => NametableLayout::SingleScreenLower,
-                3 => NametableLayout::SingleScreenUpper,
-                4 => NametableLayout::FourScreen,
-                _ => NametableLayout::Horizontal,
-            });
+            self.base
+                .set_mirroring(NametableLayout::from_snapshot_byte(data[26]));
             self.update_banks();
         }
     }
