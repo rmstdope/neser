@@ -72,6 +72,7 @@ pub mod test_helpers;
 mod uxrom;
 mod vrc2_vrc4;
 mod vrc6;
+mod vrc_irq;
 
 #[allow(unused_imports)]
 pub use base_mapper::BaseMapper;

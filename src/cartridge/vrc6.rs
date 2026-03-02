@@ -11,6 +11,7 @@
 
 use crate::cartridge::BaseMapper;
 use crate::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::cartridge::vrc_irq::VrcIrq;
 use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 use crate::trace_mapper;
 
@@ -255,13 +256,7 @@ pub struct VRC6Mapper {
     prg_ram_enabled: bool,
 
     // --- VRC IRQ (used by VRC6) ---
-    irq_latch: u8,
-    irq_counter: u8,
-    irq_enabled: bool,
-    irq_mode_cycle: bool,
-    irq_enable_after_ack: bool,
-    irq_asserted: bool,
-    irq_prescaler: i32,
+    irq: VrcIrq,
 
     // --- VRC6 expansion audio ---
     audio: Vrc6Audio,
@@ -303,13 +298,7 @@ impl VRC6Mapper {
             b003: 0,
             prg_ram_enabled: false,
 
-            irq_latch: 0,
-            irq_counter: 0,
-            irq_enabled: false,
-            irq_mode_cycle: false,
-            irq_enable_after_ack: false,
-            irq_asserted: false,
-            irq_prescaler: 0,
+            irq: VrcIrq::new(341, 3),
 
             audio: Vrc6Audio::default(),
         };
@@ -347,45 +336,6 @@ impl VRC6Mapper {
             _ => self.base.mirroring(),
         };
         self.base.set_mirroring(new_mirroring);
-    }
-
-    fn reset_irq_prescaler(&mut self) {
-        // VRC IRQ scanline-mode prescaler (nesdev): 341 master ticks / 3 per CPU cycle.
-        // Using the simple model: start at 341 and subtract 3 each CPU cycle; when <= 0,
-        // add 341 and clock the IRQ counter. This makes the first clock after 114 cycles.
-        self.irq_prescaler = 341;
-    }
-
-    fn acknowledge_irq(&mut self) {
-        self.irq_asserted = false;
-    }
-
-    fn clock_vrc_irq_counter(&mut self) {
-        // VRC IRQ (nesdev):
-        // If counter is $FF, reload from latch and trip IRQ; otherwise increment.
-        if self.irq_counter == 0xFF {
-            self.irq_counter = self.irq_latch;
-            self.irq_asserted = true;
-        } else {
-            self.irq_counter = self.irq_counter.wrapping_add(1);
-        }
-    }
-
-    fn tick_vrc_irq(&mut self) {
-        if !self.irq_enabled {
-            return;
-        }
-
-        if self.irq_mode_cycle {
-            self.clock_vrc_irq_counter();
-            return;
-        }
-
-        self.irq_prescaler -= 3;
-        if self.irq_prescaler <= 0 {
-            self.irq_prescaler += 341;
-            self.clock_vrc_irq_counter();
-        }
     }
 
     fn update_banks(&mut self) {
@@ -459,32 +409,19 @@ impl Mapper for VRC6Mapper {
                 }
                 0xF000 => {
                     // IRQ Latch
-                    self.irq_latch = value;
+                    self.irq.write_latch(value);
                 }
                 0xF001 => {
                     // IRQ Control (.... .MEA)
                     // M: mode (1=cycle, 0=scanline)
                     // E: enable (1=enabled)
                     // A: enable after acknowledgement (copied to E on $F002 writes)
-                    self.acknowledge_irq();
-                    self.reset_irq_prescaler();
-
-                    self.irq_mode_cycle = (value & 0b0000_0100) != 0;
-                    let enable = (value & 0b0000_0010) != 0;
-                    self.irq_enable_after_ack = (value & 0b0000_0001) != 0;
-
-                    if enable {
-                        self.irq_enabled = true;
-                        self.irq_counter = self.irq_latch;
-                    } else {
-                        self.irq_enabled = false;
-                    }
+                    self.irq.write_control(value);
                 }
                 0xF002 => {
                     // IRQ Acknowledge
                     // Any write acknowledges pending IRQ and copies A->E.
-                    self.acknowledge_irq();
-                    self.irq_enabled = self.irq_enable_after_ack;
+                    self.irq.write_acknowledge();
                 }
                 0xD000..=0xD003 => {
                     let idx = (reg & 0x0003) as usize;
@@ -505,11 +442,11 @@ impl Mapper for VRC6Mapper {
     fn cpu_cycle(&mut self) {
         trace_mapper!(5; "[vrc6] cpu_cycle (irq)");
         self.audio.cpu_cycle();
-        self.tick_vrc_irq();
+        self.irq.tick();
     }
 
     fn irq_pending(&self) -> bool {
-        self.irq_asserted
+        self.irq.pending()
     }
 
     fn expansion_audio_sample(&self) -> f32 {
@@ -549,14 +486,14 @@ impl Mapper for VRC6Mapper {
         snapshot.push(self.prg_bank_8k);
         snapshot.extend_from_slice(&self.chr_banks_1k);
         snapshot.push(self.b003);
-        snapshot.push(self.irq_latch);
-        snapshot.push(self.irq_counter);
-        let flags = (self.irq_enabled as u8)
-            | ((self.irq_mode_cycle as u8) << 1)
-            | ((self.irq_enable_after_ack as u8) << 2)
-            | ((self.irq_asserted as u8) << 3);
+        snapshot.push(self.irq.latch());
+        snapshot.push(self.irq.counter());
+        let flags = (self.irq.enabled() as u8)
+            | ((self.irq.mode_cycle() as u8) << 1)
+            | ((self.irq.enable_after_ack() as u8) << 2)
+            | ((self.irq.pending() as u8) << 3);
         snapshot.push(flags);
-        let prescaler_bytes = self.irq_prescaler.to_le_bytes();
+        let prescaler_bytes = self.irq.prescaler().to_le_bytes();
         snapshot.extend_from_slice(&prescaler_bytes);
         snapshot.push(match self.base.mirroring() {
             NametableLayout::Horizontal => 0,
@@ -600,14 +537,15 @@ impl Mapper for VRC6Mapper {
             self.chr_banks_1k.copy_from_slice(&data[2..10]);
             self.b003 = data[10];
             self.prg_ram_enabled = (self.b003 & 0x80) != 0;
-            self.irq_latch = data[11];
-            self.irq_counter = data[12];
+            self.irq.write_latch(data[11]);
+            self.irq.set_counter(data[12]);
             let flags = data[13];
-            self.irq_enabled = (flags & 1) != 0;
-            self.irq_mode_cycle = (flags & 2) != 0;
-            self.irq_enable_after_ack = (flags & 4) != 0;
-            self.irq_asserted = (flags & 8) != 0;
-            self.irq_prescaler = i32::from_le_bytes([data[14], data[15], data[16], data[17]]);
+            self.irq.set_enabled((flags & 1) != 0);
+            self.irq.set_mode_cycle((flags & 2) != 0);
+            self.irq.set_enable_after_ack((flags & 4) != 0);
+            self.irq.set_asserted((flags & 8) != 0);
+            self.irq
+                .set_prescaler(i32::from_le_bytes([data[14], data[15], data[16], data[17]]));
             self.base.set_mirroring(match data[18] {
                 0 => NametableLayout::Horizontal,
                 1 => NametableLayout::Vertical,
