@@ -174,18 +174,6 @@ impl Mapper for Mapper65 {
         self.base.write_chr_banked(addr, value);
     }
 
-    fn get_mirroring(&self) -> NametableLayout {
-        self.base.mirroring()
-    }
-
-    fn mapper_number(&self) -> u8 {
-        self.base.mapper_number()
-    }
-
-    fn wram_size(&self) -> usize {
-        self.base.wram_size()
-    }
-
     fn irq_pending(&self) -> bool {
         self.irq_pending
     }
@@ -198,14 +186,6 @@ impl Mapper for Mapper65 {
         if self.irq_counter == 0 {
             self.irq_pending = true;
         }
-    }
-
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.base.chr_ram_snapshot()
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.base.restore_chr_ram(data);
     }
 
     fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
@@ -264,10 +244,6 @@ impl Mapper for Mapper65 {
         self.irq_counter = 0;
         self.irq_reload = 0;
         self.update_banks();
-    }
-
-    fn capabilities(&self) -> MapperCapabilities {
-        self.base.capabilities()
     }
 }
 

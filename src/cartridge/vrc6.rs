@@ -506,10 +506,6 @@ impl Mapper for VRC6Mapper {
         self.base.read_chr_banked(addr)
     }
 
-    fn write_chr(&mut self, addr: u16, value: u8) {
-        self.base.write_chr(addr, value);
-    }
-
     fn cpu_cycle(&mut self) {
         trace_mapper!(5; "[vrc6] cpu_cycle (irq)");
         self.audio.cpu_cycle();
@@ -522,10 +518,6 @@ impl Mapper for VRC6Mapper {
 
     fn expansion_audio_sample(&self) -> f32 {
         self.audio.sample()
-    }
-
-    fn get_mirroring(&self) -> NametableLayout {
-        self.base.mirroring()
     }
 
     fn mapper_number(&self) -> u8 {
@@ -545,14 +537,6 @@ impl Mapper for VRC6Mapper {
 
     fn load_wram_snapshot(&mut self, data: &[u8]) {
         self.prg_ram.load_snapshot(data);
-    }
-
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.base.chr_ram_snapshot()
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.base.restore_chr_ram(data);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {

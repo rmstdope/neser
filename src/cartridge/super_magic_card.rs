@@ -731,14 +731,6 @@ impl Mapper for SuperMagicCardMapper {
         }
     }
 
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.base.chr_ram_snapshot()
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.base.restore_chr_ram(data);
-    }
-
     fn wram_size(&self) -> usize {
         WRAM_SIZE_32K
     }

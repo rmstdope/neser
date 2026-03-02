@@ -7,7 +7,6 @@
 //! - No known gameplay-blocking functional limitations are currently documented.
 
 use crate::cartridge::BaseMapper;
-use crate::cartridge::NametableLayout;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// Mapper 073 - Konami VRC3
@@ -169,22 +168,6 @@ impl Mapper for Mapper73 {
         }
     }
 
-    fn read_chr(&mut self, addr: u16) -> u8 {
-        self.base.read_chr(addr)
-    }
-
-    fn write_chr(&mut self, addr: u16, value: u8) {
-        self.base.write_chr(addr, value);
-    }
-
-    fn get_mirroring(&self) -> NametableLayout {
-        self.base.mirroring()
-    }
-
-    fn mapper_number(&self) -> u8 {
-        self.base.mapper_number()
-    }
-
     fn wram_size(&self) -> usize {
         Self::PRG_RAM_SIZE
     }
@@ -209,21 +192,9 @@ impl Mapper for Mapper73 {
         self.irq_pending
     }
 
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.base.chr_ram_snapshot()
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.base.restore_chr_ram(data);
-    }
-
     fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
         self.base.initialize_ram(mode);
         crate::console::initialize_ram(&mut self.prg_ram, mode);
-    }
-
-    fn capabilities(&self) -> MapperCapabilities {
-        self.base.capabilities()
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -263,6 +234,7 @@ impl Mapper for Mapper73 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cartridge::NametableLayout;
     use crate::cartridge::mapper::{MapperContext, create_mapper};
     use crate::cartridge::test_helpers::banked_data;
 

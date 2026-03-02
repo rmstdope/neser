@@ -559,10 +559,6 @@ impl Mapper for Namco163Mapper {
         self.audio_last_output as f32 / 128.0
     }
 
-    fn get_mirroring(&self) -> NametableLayout {
-        self.base.mirroring()
-    }
-
     fn mapper_number(&self) -> u8 {
         19
     }
@@ -596,14 +592,6 @@ impl Mapper for Namco163Mapper {
 
     fn load_wram_snapshot(&mut self, data: &[u8]) {
         self.prg_ram.load_snapshot(data);
-    }
-
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.base.chr_ram_snapshot()
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.base.restore_chr_ram(data);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {

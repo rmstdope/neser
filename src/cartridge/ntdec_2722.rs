@@ -6,7 +6,7 @@
 //! Specification: <https://www.nesdev.org/wiki/INES_Mapper_040>
 
 use crate::cartridge::BaseMapper;
-use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
+use crate::cartridge::{Mapper, MapperCapabilities};
 
 /// Mapper 040 - NTDEC 2722
 ///
@@ -137,22 +137,6 @@ impl Mapper for Ntdec2722Mapper {
         }
     }
 
-    fn read_chr(&mut self, addr: u16) -> u8 {
-        self.base.read_chr(addr)
-    }
-
-    fn write_chr(&mut self, addr: u16, value: u8) {
-        self.base.write_chr(addr, value);
-    }
-
-    fn get_mirroring(&self) -> NametableLayout {
-        self.base.mirroring()
-    }
-
-    fn mapper_number(&self) -> u8 {
-        self.base.mapper_number()
-    }
-
     fn wram_size(&self) -> usize {
         // No WRAM: $6000-$7FFF is mapped to PRG ROM bank 6, not RAM.
         0
@@ -172,14 +156,6 @@ impl Mapper for Ntdec2722Mapper {
 
     fn irq_pending(&self) -> bool {
         self.irq_pending
-    }
-
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.base.chr_ram_snapshot()
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.base.restore_chr_ram(data);
     }
 
     fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
@@ -206,10 +182,6 @@ impl Mapper for Ntdec2722Mapper {
             self.irq_counter = (data[2] as u16) | ((data[3] as u16) << 8);
             self.update_banks();
         }
-    }
-
-    fn capabilities(&self) -> MapperCapabilities {
-        self.base.capabilities()
     }
 }
 

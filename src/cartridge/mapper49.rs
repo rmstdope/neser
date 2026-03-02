@@ -127,10 +127,6 @@ impl Mapper for Mapper49 {
         Self::MAPPER_NUMBER
     }
 
-    fn wram_size(&self) -> usize {
-        0
-    }
-
     fn ppu_address_changed(&mut self, addr: u16) {
         self.mmc3.ppu_address_changed(addr);
     }

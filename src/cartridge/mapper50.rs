@@ -7,7 +7,6 @@
 //! - No known gameplay-blocking functional limitations are currently documented.
 
 use crate::cartridge::BaseMapper;
-use crate::cartridge::NametableLayout;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// Mapper 050 - N-32 (Romeo / SMB2 Japanese FDS conversion)
@@ -157,26 +156,6 @@ impl Mapper for Mapper50 {
         }
     }
 
-    fn read_chr(&mut self, addr: u16) -> u8 {
-        self.base.read_chr(addr)
-    }
-
-    fn write_chr(&mut self, addr: u16, value: u8) {
-        self.base.write_chr(addr, value);
-    }
-
-    fn get_mirroring(&self) -> NametableLayout {
-        self.base.mirroring()
-    }
-
-    fn mapper_number(&self) -> u8 {
-        self.base.mapper_number()
-    }
-
-    fn wram_size(&self) -> usize {
-        self.base.wram_size()
-    }
-
     fn cpu_cycle(&mut self) {
         if !self.irq_enabled {
             return;
@@ -190,14 +169,6 @@ impl Mapper for Mapper50 {
 
     fn irq_pending(&self) -> bool {
         self.irq_pending
-    }
-
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.base.chr_ram_snapshot()
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.base.restore_chr_ram(data);
     }
 
     fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
@@ -222,10 +193,6 @@ impl Mapper for Mapper50 {
             self.irq_counter = (data[2] as u16) | ((data[3] as u16) << 8);
             self.update_banks();
         }
-    }
-
-    fn capabilities(&self) -> MapperCapabilities {
-        self.base.capabilities()
     }
 }
 

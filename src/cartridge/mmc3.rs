@@ -1494,10 +1494,6 @@ impl Mapper for MMC3Mapper {
         self.irq_asserted
     }
 
-    fn get_mirroring(&self) -> NametableLayout {
-        self.base.mirroring()
-    }
-
     fn mapper_number(&self) -> u8 {
         4
     }
@@ -1515,14 +1511,6 @@ impl Mapper for MMC3Mapper {
         // Write directly to PRG-RAM, bypassing enable/protect state
         let to_copy = data.len().min(self.prg_ram.len());
         self.prg_ram[..to_copy].copy_from_slice(&data[..to_copy]);
-    }
-
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.base.chr_ram_snapshot()
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.base.restore_chr_ram(data);
     }
 
     fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {

@@ -149,14 +149,6 @@ impl Mapper for Mapper42 {
         self.base.write_chr_banked(addr, value);
     }
 
-    fn get_mirroring(&self) -> NametableLayout {
-        self.base.mirroring()
-    }
-
-    fn mapper_number(&self) -> u8 {
-        self.base.mapper_number()
-    }
-
     fn wram_size(&self) -> usize {
         // No WRAM: $6000-$7FFF is mapped to PRG ROM, not RAM.
         0
@@ -172,14 +164,6 @@ impl Mapper for Mapper42 {
 
     fn irq_pending(&self) -> bool {
         self.irq_pending
-    }
-
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.base.chr_ram_snapshot()
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.base.restore_chr_ram(data);
     }
 
     fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
@@ -217,10 +201,6 @@ impl Mapper for Mapper42 {
             });
             self.update_banks();
         }
-    }
-
-    fn capabilities(&self) -> MapperCapabilities {
-        self.base.capabilities()
     }
 }
 

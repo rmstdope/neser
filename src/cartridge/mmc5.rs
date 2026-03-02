@@ -1707,14 +1707,6 @@ impl Mapper for MMC5Mapper {
         self.prg_ram[..to_copy].copy_from_slice(&data[..to_copy]);
     }
 
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.base.chr_ram_snapshot()
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.base.restore_chr_ram(data);
-    }
-
     fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
         crate::console::initialize_ram(&mut self.prg_ram, mode);
         self.base.initialize_ram(mode);
