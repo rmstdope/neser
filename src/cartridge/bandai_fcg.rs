@@ -28,6 +28,7 @@ use crate::trace_mapper;
 
 use crate::cartridge::BaseMapper;
 use crate::cartridge::NametableLayout;
+use crate::cartridge::cpu_cycle_irq::{CpuCycleIrq, CpuCycleIrqMode};
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// Submapper variants for Bandai FCG
@@ -53,10 +54,8 @@ pub struct BandaiFcgMapper {
     chr_banks: [u8; 8],
 
     // IRQ
-    irq_enabled: bool,
-    irq_counter: u16,
+    irq: CpuCycleIrq,
     irq_latch: u16, // Only used by LZ93D50
-    irq_pending: bool,
 }
 
 impl BandaiFcgMapper {
@@ -81,10 +80,8 @@ impl BandaiFcgMapper {
             variant,
             prg_bank: 0,
             chr_banks: [0; 8],
-            irq_enabled: false,
-            irq_counter: 0,
+            irq: CpuCycleIrq::new(CpuCycleIrqMode::DownToZero),
             irq_latch: 0,
-            irq_pending: false,
         };
         mapper.update_banks();
         mapper
@@ -152,19 +149,19 @@ impl Mapper for BandaiFcgMapper {
             0x0A => {
                 // IRQ control
                 // Writing acknowledges pending IRQ
-                self.irq_pending = false;
+                self.irq.acknowledge();
 
                 if use_latch_behavior {
                     // LZ93D50 behavior: copy latch to counter
-                    self.irq_counter = self.irq_latch;
+                    self.irq.set_counter(self.irq_latch);
                 }
                 // FCG-1/2: counter was written directly, no latch copy
 
                 // Enable/disable
-                self.irq_enabled = (value & 0x01) != 0;
+                self.irq.set_enabled((value & 0x01) != 0);
                 // If enabled while counter is 0, trigger immediately
-                if self.irq_enabled && self.irq_counter == 0 {
-                    self.irq_pending = true;
+                if self.irq.enabled() && self.irq.counter() == 0 {
+                    self.irq.set_pending(true);
                 }
             }
             0x0B => {
@@ -173,7 +170,8 @@ impl Mapper for BandaiFcgMapper {
                     self.irq_latch = (self.irq_latch & 0xFF00) | (value as u16);
                 } else {
                     // Direct counter write
-                    self.irq_counter = (self.irq_counter & 0xFF00) | (value as u16);
+                    self.irq
+                        .set_counter((self.irq.counter() & 0xFF00) | (value as u16));
                 }
             }
             0x0C => {
@@ -182,7 +180,8 @@ impl Mapper for BandaiFcgMapper {
                     self.irq_latch = (self.irq_latch & 0x00FF) | ((value as u16) << 8);
                 } else {
                     // Direct counter write
-                    self.irq_counter = (self.irq_counter & 0x00FF) | ((value as u16) << 8);
+                    self.irq
+                        .set_counter((self.irq.counter() & 0x00FF) | ((value as u16) << 8));
                 }
             }
             0x0D => {
@@ -196,16 +195,11 @@ impl Mapper for BandaiFcgMapper {
     fn cpu_cycle(&mut self) {
         trace_mapper!(5; "[bandai_fcg] cpu_cycle");
         // IRQ counter decrements every CPU cycle when enabled
-        if self.irq_enabled && self.irq_counter > 0 {
-            self.irq_counter -= 1;
-            if self.irq_counter == 0 {
-                self.irq_pending = true;
-            }
-        }
+        self.irq.tick();
     }
 
     fn irq_pending(&self) -> bool {
-        self.irq_pending
+        self.irq.is_pending()
     }
 
     fn wram_size(&self) -> usize {
@@ -234,10 +228,10 @@ impl Mapper for BandaiFcgMapper {
         let mut snapshot = Vec::with_capacity(15);
         snapshot.push(self.prg_bank);
         snapshot.extend_from_slice(&self.chr_banks);
-        let flags = (self.irq_enabled as u8) | ((self.irq_pending as u8) << 1);
+        let flags = (self.irq.enabled() as u8) | ((self.irq.is_pending() as u8) << 1);
         snapshot.push(flags);
-        snapshot.push((self.irq_counter & 0xFF) as u8);
-        snapshot.push((self.irq_counter >> 8) as u8);
+        snapshot.push((self.irq.counter() & 0xFF) as u8);
+        snapshot.push((self.irq.counter() >> 8) as u8);
         snapshot.push((self.irq_latch & 0xFF) as u8);
         snapshot.push((self.irq_latch >> 8) as u8);
         let mirroring = match self.base.mirroring() {
@@ -257,9 +251,10 @@ impl Mapper for BandaiFcgMapper {
             self.prg_bank = data[0];
             self.chr_banks.copy_from_slice(&data[1..9]);
             let flags = data[9];
-            self.irq_enabled = (flags & 1) != 0;
-            self.irq_pending = (flags & 2) != 0;
-            self.irq_counter = (data[10] as u16) | ((data[11] as u16) << 8);
+            self.irq.set_enabled((flags & 1) != 0);
+            self.irq.set_pending((flags & 2) != 0);
+            self.irq
+                .set_counter((data[10] as u16) | ((data[11] as u16) << 8));
             self.irq_latch = (data[12] as u16) | ((data[13] as u16) << 8);
             self.base.set_mirroring(match data[14] {
                 0 => NametableLayout::Horizontal,

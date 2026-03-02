@@ -9,6 +9,8 @@
 use crate::cartridge::BaseMapper;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
+use super::cpu_cycle_irq::{CpuCycleIrq, CpuCycleIrqMode};
+
 /// Mapper 050 - N-32 (Romeo / SMB2 Japanese FDS conversion)
 ///
 /// Hardware: 761214 PCB
@@ -44,18 +46,13 @@ use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 pub struct Mapper50 {
     base: BaseMapper,
     prg_reg: u8,
-    irq_enabled: bool,
-    irq_counter: u16,
-    irq_pending: bool,
+    irq: CpuCycleIrq,
 }
 
 impl Mapper50 {
     const PRG_BANK_SIZE: usize = 0x2000; // 8 KiB
 
     const BANK_AT_6000: usize = 0x0F;
-
-    // IRQ fires on the $0FFF→$1000 transition (after 4096 cycles)
-    const IRQ_FIRE_COUNT: u16 = 0x1000;
 
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
         let mirroring = ctx.mirroring;
@@ -73,9 +70,7 @@ impl Mapper50 {
         let mut mapper = Self {
             base,
             prg_reg: 0,
-            irq_enabled: false,
-            irq_counter: 0,
-            irq_pending: false,
+            irq: CpuCycleIrq::new(CpuCycleIrqMode::UpAutoDisable { threshold: 0x1000 }),
         };
 
         mapper.update_banks();
@@ -145,11 +140,11 @@ impl Mapper for Mapper50 {
             0x4120 => {
                 // IRQ control
                 if (value & 0x01) != 0 {
-                    self.irq_enabled = true;
+                    self.irq.set_enabled(true);
                 } else {
-                    self.irq_enabled = false;
-                    self.irq_pending = false;
-                    self.irq_counter = 0;
+                    self.irq.set_enabled(false);
+                    self.irq.acknowledge();
+                    self.irq.set_counter(0);
                 }
             }
             _ => {}
@@ -157,36 +152,30 @@ impl Mapper for Mapper50 {
     }
 
     fn cpu_cycle(&mut self) {
-        if !self.irq_enabled {
-            return;
-        }
-        self.irq_counter = self.irq_counter.wrapping_add(1);
-        if self.irq_counter == Self::IRQ_FIRE_COUNT {
-            self.irq_pending = true;
-            self.irq_enabled = false; // auto-disable on fire
-        }
+        self.irq.tick();
     }
 
     fn irq_pending(&self) -> bool {
-        self.irq_pending
+        self.irq.is_pending()
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        let flags = (self.irq_enabled as u8) | ((self.irq_pending as u8) << 1);
+        let flags = (self.irq.enabled() as u8) | ((self.irq.is_pending() as u8) << 1);
         vec![
             self.prg_reg,
             flags,
-            (self.irq_counter & 0xFF) as u8,
-            (self.irq_counter >> 8) as u8,
+            (self.irq.counter() & 0xFF) as u8,
+            (self.irq.counter() >> 8) as u8,
         ]
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
         if data.len() >= 4 {
             self.prg_reg = data[0];
-            self.irq_enabled = (data[1] & 1) != 0;
-            self.irq_pending = (data[1] & 2) != 0;
-            self.irq_counter = (data[2] as u16) | ((data[3] as u16) << 8);
+            self.irq.set_enabled((data[1] & 1) != 0);
+            self.irq.set_pending((data[1] & 2) != 0);
+            self.irq
+                .set_counter((data[2] as u16) | ((data[3] as u16) << 8));
             self.update_banks();
         }
     }
@@ -384,10 +373,10 @@ mod tests {
         }
         assert!(mapper.irq_pending());
         // After firing, counter should not advance further
-        let count_before = mapper.irq_counter;
+        let count_before = mapper.irq.counter();
         mapper.cpu_cycle();
         assert_eq!(
-            mapper.irq_counter,
+            mapper.irq.counter(),
             count_before.wrapping_add(0), // counter stopped
             "Counter must stop after IRQ fires"
         );

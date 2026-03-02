@@ -9,6 +9,7 @@ mod cnrom;
 mod colordreams;
 mod common;
 mod cprom;
+mod cpu_cycle_irq;
 mod gxrom;
 mod ines;
 mod irem_g101;

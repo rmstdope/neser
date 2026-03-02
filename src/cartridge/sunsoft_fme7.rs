@@ -43,6 +43,8 @@ use crate::cartridge::BaseMapper;
 use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 use crate::trace_mapper;
 
+use super::cpu_cycle_irq::{CpuCycleIrq, CpuCycleIrqMode};
+
 pub struct SunsoftFme7Mapper {
     base: BaseMapper,
     prg_ram: Vec<u8>,
@@ -59,10 +61,8 @@ pub struct SunsoftFme7Mapper {
     chr_banks: [u8; 8],
 
     // IRQ
-    irq_counter: u16,
-    irq_enabled: bool,
+    irq: CpuCycleIrq,
     irq_counter_enabled: bool,
-    irq_pending: bool,
 }
 
 impl SunsoftFme7Mapper {
@@ -89,10 +89,8 @@ impl SunsoftFme7Mapper {
             prg_ram_enabled: false,
             prg_ram_readonly: false,
             chr_banks: [0, 1, 2, 3, 4, 5, 6, 7],
-            irq_counter: 0,
-            irq_enabled: false,
+            irq: CpuCycleIrq::new(CpuCycleIrqMode::DownUnderflow),
             irq_counter_enabled: false,
-            irq_pending: false,
         };
         mapper.update_banks();
         mapper
@@ -161,27 +159,29 @@ impl SunsoftFme7Mapper {
             }
             0x0D => {
                 // IRQ control
-                self.irq_enabled = (value & 0x01) != 0;
+                self.irq.set_enabled((value & 0x01) != 0);
                 self.irq_counter_enabled = (value & 0x80) != 0;
 
-                if self.irq_enabled {
-                    self.irq_pending = false;
+                if self.irq.enabled() {
+                    self.irq.acknowledge();
                 }
 
                 trace_mapper!(1; "[fme7] IRQ enabled={}, counter_enabled={}", 
-                    self.irq_enabled, self.irq_counter_enabled);
+                    self.irq.enabled(), self.irq_counter_enabled);
             }
             0x0E => {
                 // IRQ counter low byte
-                self.irq_counter = (self.irq_counter & 0xFF00) | (value as u16);
+                self.irq
+                    .set_counter((self.irq.counter() & 0xFF00) | (value as u16));
                 trace_mapper!(1; "[fme7] IRQ counter low <- ${:02X}, counter now ${:04X}", 
-                    value, self.irq_counter);
+                    value, self.irq.counter());
             }
             0x0F => {
                 // IRQ counter high byte
-                self.irq_counter = (self.irq_counter & 0x00FF) | ((value as u16) << 8);
+                self.irq
+                    .set_counter((self.irq.counter() & 0x00FF) | ((value as u16) << 8));
                 trace_mapper!(1; "[fme7] IRQ counter high <- ${:02X}, counter now ${:04X}", 
-                    value, self.irq_counter);
+                    value, self.irq.counter());
             }
             _ => {}
         }
@@ -239,16 +239,12 @@ impl Mapper for SunsoftFme7Mapper {
         // IRQ counter decrements every CPU cycle when counter enable (bit 7) is set
         // IRQ triggers on underflow only if IRQ enable (bit 0) is also set
         if self.irq_counter_enabled {
-            self.irq_counter = self.irq_counter.wrapping_sub(1);
-            if self.irq_counter == 0xFFFF && self.irq_enabled {
-                self.irq_pending = true;
-                trace_mapper!(2; "[fme7] IRQ triggered on underflow");
-            }
+            self.irq.tick();
         }
     }
 
     fn irq_pending(&self) -> bool {
-        self.irq_pending
+        self.irq.is_pending()
     }
 
     fn wram_size(&self) -> usize {
@@ -283,12 +279,12 @@ impl Mapper for SunsoftFme7Mapper {
         snapshot.extend_from_slice(&self.chr_banks);
         let flags = (self.prg_ram_enabled as u8)
             | ((self.prg_ram_readonly as u8) << 1)
-            | ((self.irq_enabled as u8) << 2)
+            | ((self.irq.enabled() as u8) << 2)
             | ((self.irq_counter_enabled as u8) << 3)
-            | ((self.irq_pending as u8) << 4);
+            | ((self.irq.is_pending() as u8) << 4);
         snapshot.push(flags);
-        snapshot.push((self.irq_counter & 0xFF) as u8);
-        snapshot.push((self.irq_counter >> 8) as u8);
+        snapshot.push((self.irq.counter() & 0xFF) as u8);
+        snapshot.push((self.irq.counter() >> 8) as u8);
         let mirroring = match self.base.mirroring() {
             NametableLayout::Horizontal => 0,
             NametableLayout::Vertical => 1,
@@ -309,10 +305,11 @@ impl Mapper for SunsoftFme7Mapper {
             let flags = data[13];
             self.prg_ram_enabled = (flags & 1) != 0;
             self.prg_ram_readonly = (flags & 2) != 0;
-            self.irq_enabled = (flags & 4) != 0;
+            self.irq.set_enabled((flags & 4) != 0);
             self.irq_counter_enabled = (flags & 8) != 0;
-            self.irq_pending = (flags & 16) != 0;
-            self.irq_counter = (data[14] as u16) | ((data[15] as u16) << 8);
+            self.irq.set_pending((flags & 16) != 0);
+            self.irq
+                .set_counter((data[14] as u16) | ((data[15] as u16) << 8));
             self.base.set_mirroring(match data[16] {
                 0 => NametableLayout::Horizontal,
                 1 => NametableLayout::Vertical,
