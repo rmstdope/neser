@@ -6,6 +6,7 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
+use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mmc3::MMC3Mapper;
 use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
@@ -26,7 +27,7 @@ use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 /// - PRG bank = ((R0 & 1) << 5) | (mmc3_bank & 0x3F)
 /// - This extends PRG addressing to 1MB (64 × 8KB × 2 = 128 banks)
 pub struct Mapper245 {
-    mmc3: MMC3Mapper,
+    pub(crate) mmc3: MMC3Mapper,
 }
 
 impl Mapper245 {
@@ -88,6 +89,13 @@ impl Mapper245 {
 }
 
 impl Mapper for Mapper245 {
+    fn base(&self) -> &BaseMapper {
+        &self.mmc3.base
+    }
+    fn base_mut(&mut self) -> &mut BaseMapper {
+        &mut self.mmc3.base
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
         match addr {
             0x6000..=0x7FFF => self.mmc3.read_prg(addr),

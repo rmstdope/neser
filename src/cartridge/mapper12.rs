@@ -6,6 +6,7 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
+use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mmc3::MMC3Mapper;
 use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
@@ -29,7 +30,7 @@ use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 /// - `final_bank = (outer_bit << 8) | mmc3_1k_bank`
 /// - This extends the MMC3's 256 KiB CHR window to 512 KiB.
 pub struct Mapper12 {
-    inner: MMC3Mapper,
+    pub(crate) inner: MMC3Mapper,
     chr_ext_lo: bool, // bit 0: CHR A18 for PPU $0000-$0FFF
     chr_ext_hi: bool, // bit 4: CHR A18 for PPU $1000-$1FFF
 }
@@ -56,6 +57,13 @@ impl Mapper12 {
 }
 
 impl Mapper for Mapper12 {
+    fn base(&self) -> &BaseMapper {
+        &self.inner.base
+    }
+    fn base_mut(&mut self) -> &mut BaseMapper {
+        &mut self.inner.base
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
         if Self::is_outer_reg(addr) {
             return self.chr_ext_lo as u8;

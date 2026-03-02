@@ -26,7 +26,8 @@
 //! - Edge-case behavior may still differ from hardware in untested timing and board-variant scenarios.
 //! - See CARTRIDGE_REVIEW.md sections 5 and 6 for remaining mapper test/documentation follow-up.
 
-use crate::cartridge::common::{BankedRom, ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::cartridge::base_mapper::BaseMapper;
+use crate::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
 use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
 const PRG_BANK_SIZE: usize = 0x4000; // 16KB
@@ -34,10 +35,8 @@ const CHR_BANK_SIZE_2K: usize = 0x0800; // 2KB
 const NAMETABLE_BANK_SIZE_1K: usize = 0x0400; // 1KB
 
 pub struct Sunsoft4Mapper {
-    prg_rom: BankedRom,
+    base: BaseMapper,
     prg_ram: PrgRam,
-    chr_memory: ChrMemory,
-    mirroring: NametableLayout,
     prg_bank: u8,
     chr_banks_2k: [u8; 4],
     nametable_banks_1k: [u8; 2],
@@ -48,24 +47,22 @@ pub struct Sunsoft4Mapper {
 impl Sunsoft4Mapper {
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
         let prg_ram_banks_8k = ctx.prg_ram_banks_8k;
-        let prg_rom = ctx.prg_rom;
-        let chr_rom = ctx.chr_rom;
-        let mirroring = ctx.mirroring;
-        Self::new_with_prg_ram_banks(prg_rom, chr_rom, mirroring, prg_ram_banks_8k)
-    }
-
-    pub fn new_with_prg_ram_banks(
-        prg_rom: Vec<u8>,
-        chr_rom: Vec<u8>,
-        mirroring: NametableLayout,
-        prg_ram_banks_8k: u8,
-    ) -> Self {
+        let caps = MapperCapabilities {
+            has_irq: false,
+            has_chr_banking: true,
+            has_dynamic_mirroring: true,
+            has_expansion_audio: false,
+            max_prg_ram_kb: 0, // PRG-RAM managed separately with enable gating
+            prg_bank_size_kb: 16,
+            chr_bank_size_kb: 2,
+            trainer_jsr: false,
+            ..Default::default()
+        };
+        let base = BaseMapper::new(&ctx, caps);
         let prg_ram_size = (prg_ram_banks_8k.max(1) as usize) * DEFAULT_PRG_RAM_SIZE;
         Self {
-            prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE),
+            base,
             prg_ram: PrgRam::new(prg_ram_size),
-            chr_memory: ChrMemory::new(chr_rom),
-            mirroring,
             prg_bank: 0,
             chr_banks_2k: [0; 4],
             nametable_banks_1k: [0; 2],
@@ -74,27 +71,46 @@ impl Sunsoft4Mapper {
         }
     }
 
+    #[cfg(test)]
+    pub fn new_with_prg_ram_banks(
+        prg_rom: Vec<u8>,
+        chr_rom: Vec<u8>,
+        mirroring: NametableLayout,
+        prg_ram_banks_8k: u8,
+    ) -> Self {
+        let ctx = super::mapper::MapperContext {
+            mapper: 68,
+            submapper: 0,
+            mirroring,
+            console_type: crate::cartridge::ConsoleType::NesFamicom,
+            prg_rom,
+            chr_rom,
+            prg_ram_banks_8k,
+            prg_ram_size_specified: true,
+            battery_backed_prg_ram: false,
+            crc32: 0,
+        };
+        Self::new(ctx)
+    }
+
     fn read_chr_indexed(&self, bank: u8, offset: usize, bank_size: usize) -> u8 {
-        let total_banks = self.chr_memory.size() / bank_size;
+        let total_banks = self.base.chr_size() / bank_size;
         if total_banks == 0 {
             return 0;
         }
         let bank_index = (bank as usize) % total_banks;
         let index = bank_index * bank_size + offset;
-        self.chr_memory.read_at_index(index)
+        self.base.read_chr_at_index(index)
     }
 
     fn write_chr_indexed(&mut self, bank: u8, offset: usize, bank_size: usize, value: u8) {
-        if !self.chr_memory.is_ram() {
-            return;
-        }
-        let total_banks = self.chr_memory.size() / bank_size;
+        let total_banks = self.base.chr_size() / bank_size;
         if total_banks == 0 {
             return;
         }
         let bank_index = (bank as usize) % total_banks;
         let index = bank_index * bank_size + offset;
-        self.chr_memory.write_at_index(index, value);
+        self.base.write_chr_at_index(index, value);
     }
 
     fn map_nametable_to_bank(&self, addr: u16) -> (usize, usize) {
@@ -102,7 +118,7 @@ impl Sunsoft4Mapper {
         let table = ((addr - 0x2000) / 0x0400) as usize;
         let offset = (addr & 0x03FF) as usize;
 
-        let use_upper = match self.mirroring {
+        let use_upper = match self.base.mirroring() {
             NametableLayout::Vertical => table == 1 || table == 3,
             NametableLayout::Horizontal => table == 2 || table == 3,
             NametableLayout::SingleScreenLower => false,
@@ -129,6 +145,13 @@ impl Sunsoft4Mapper {
 }
 
 impl Mapper for Sunsoft4Mapper {
+    fn base(&self) -> &BaseMapper {
+        &self.base
+    }
+    fn base_mut(&mut self) -> &mut BaseMapper {
+        &mut self.base
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
         if self.prg_ram_enabled
             && let Some(value) = self.prg_ram.try_read(addr)
@@ -136,14 +159,20 @@ impl Mapper for Sunsoft4Mapper {
             return value;
         }
 
+        let prg = self.base.prg_rom();
+        let num_banks = prg.len() / PRG_BANK_SIZE;
         match addr {
             0x8000..=0xBFFF => {
-                let bank = self.prg_bank as usize;
-                self.prg_rom.read_with_base(bank, 0x8000, addr)
+                let bank = (self.prg_bank as usize) % num_banks.max(1);
+                let offset = (addr - 0x8000) as usize;
+                prg.get(bank * PRG_BANK_SIZE + offset).copied().unwrap_or(0)
             }
             0xC000..=0xFFFF => {
-                let last_bank = self.prg_rom.num_banks().saturating_sub(1);
-                self.prg_rom.read_with_base(last_bank, 0xC000, addr)
+                let last_bank = num_banks.saturating_sub(1);
+                let offset = (addr - 0xC000) as usize;
+                prg.get(last_bank * PRG_BANK_SIZE + offset)
+                    .copied()
+                    .unwrap_or(0)
             }
             _ => 0,
         }
@@ -174,13 +203,14 @@ impl Mapper for Sunsoft4Mapper {
                 self.nametable_banks_1k[1] = value;
             }
             0xE000..=0xEFFF => {
-                self.mirroring = match value & 0x03 {
+                let new_mirroring = match value & 0x03 {
                     0 => NametableLayout::Vertical,
                     1 => NametableLayout::Horizontal,
                     2 => NametableLayout::SingleScreenLower,
                     3 => NametableLayout::SingleScreenUpper,
                     _ => NametableLayout::Horizontal,
                 };
+                self.base.set_mirroring(new_mirroring);
                 self.nametable_rom_mode = (value & 0x10) != 0;
             }
             0xF000..=0xFFFF => {
@@ -229,11 +259,11 @@ impl Mapper for Sunsoft4Mapper {
     }
 
     fn get_mirroring(&self) -> NametableLayout {
-        self.mirroring
+        self.base.mirroring()
     }
 
     fn mapper_number(&self) -> u8 {
-        68
+        self.base.mapper_number()
     }
 
     fn wram_size(&self) -> usize {
@@ -249,11 +279,11 @@ impl Mapper for Sunsoft4Mapper {
     }
 
     fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_memory.snapshot()
+        self.base.chr_ram_snapshot()
     }
 
     fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.chr_memory.load_snapshot(data);
+        self.base.restore_chr_ram(data);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -263,7 +293,7 @@ impl Mapper for Sunsoft4Mapper {
         snapshot.extend_from_slice(&self.nametable_banks_1k);
         snapshot.push(self.nametable_rom_mode as u8);
         snapshot.push(self.prg_ram_enabled as u8);
-        let mirroring_bits = match self.mirroring {
+        let mirroring_bits = match self.base.mirroring() {
             NametableLayout::Vertical => 0,
             NametableLayout::Horizontal => 1,
             NametableLayout::SingleScreenLower => 2,
@@ -283,13 +313,13 @@ impl Mapper for Sunsoft4Mapper {
         self.nametable_banks_1k.copy_from_slice(&data[5..7]);
         self.nametable_rom_mode = data[7] != 0;
         self.prg_ram_enabled = data[8] != 0;
-        self.mirroring = match data[9] & 0x03 {
+        self.base.set_mirroring(match data[9] & 0x03 {
             0 => NametableLayout::Vertical,
             1 => NametableLayout::Horizontal,
             2 => NametableLayout::SingleScreenLower,
             3 => NametableLayout::SingleScreenUpper,
-            _ => self.mirroring,
-        };
+            _ => self.base.mirroring(),
+        });
     }
 
     fn reset(&mut self) {
@@ -301,17 +331,9 @@ impl Mapper for Sunsoft4Mapper {
     }
 
     fn capabilities(&self) -> MapperCapabilities {
-        MapperCapabilities {
-            has_irq: false,
-            has_chr_banking: true,
-            has_dynamic_mirroring: true,
-            has_expansion_audio: false,
-            max_prg_ram_kb: self.prg_ram.size() / 1024,
-            prg_bank_size_kb: 16,
-            chr_bank_size_kb: 2,
-            trainer_jsr: false,
-            ..Default::default()
-        }
+        let mut caps = self.base.capabilities();
+        caps.max_prg_ram_kb = self.prg_ram.size() / 1024;
+        caps
     }
 }
 

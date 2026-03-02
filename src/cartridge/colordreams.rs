@@ -5,7 +5,7 @@
 //! - Edge-case behavior may still differ from hardware in untested timing and board-variant scenarios.
 //! - See CARTRIDGE_REVIEW.md sections 5 and 6 for remaining mapper test/documentation follow-up.
 
-use crate::cartridge::common::{BankSwitch, BankedRom};
+use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
 /// Mapper 11 - Color Dreams
@@ -33,40 +33,48 @@ use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 /// Implementation:
 /// - Dedicated mapper 11 implementation with `CCCC LLPP` decoding
 pub struct ColorDreamsMapper {
-    prg_rom: BankedRom,
-    chr_rom: BankedRom,
-    mirroring: NametableLayout,
-    prg_bank: BankSwitch,
-    chr_bank: BankSwitch,
+    base: BaseMapper,
+    prg_bank: u8,
+    chr_bank: u8,
 }
 
 impl ColorDreamsMapper {
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
-        let prg_rom = ctx.prg_rom;
-        let chr_rom = ctx.chr_rom;
-        let mirroring = ctx.mirroring;
-        const PRG_BANK_SIZE: usize = 32 * 1024;
-        const CHR_BANK_SIZE: usize = 8 * 1024;
-
-        let prg_bank = BankSwitch::from_rom(&prg_rom, PRG_BANK_SIZE);
-        let chr_bank = BankSwitch::from_rom(&chr_rom, CHR_BANK_SIZE);
+        let caps = MapperCapabilities {
+            has_irq: false,
+            has_chr_banking: true,
+            has_dynamic_mirroring: false,
+            has_expansion_audio: false,
+            max_prg_ram_kb: 0,
+            prg_bank_size_kb: 32,
+            chr_bank_size_kb: 8,
+            trainer_jsr: false,
+            ..Default::default()
+        };
+        let mut base = BaseMapper::new(&ctx, caps);
+        base.configure_prg_banking(32 * 1024);
+        base.configure_chr_banking(8 * 1024);
+        base.set_bus_conflicts(true);
 
         Self {
-            prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE),
-            chr_rom: BankedRom::new(chr_rom, CHR_BANK_SIZE),
-            mirroring,
-            prg_bank,
-            chr_bank,
+            base,
+            prg_bank: 0,
+            chr_bank: 0,
         }
     }
 }
 
 impl Mapper for ColorDreamsMapper {
+    fn base(&self) -> &BaseMapper {
+        &self.base
+    }
+    fn base_mut(&mut self) -> &mut BaseMapper {
+        &mut self.base
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
         match addr {
-            0x8000..=0xFFFF => self
-                .prg_rom
-                .read_with_base(self.prg_bank.current(), 0x8000, addr),
+            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
             _ => 0,
         }
     }
@@ -80,15 +88,16 @@ impl Mapper for ColorDreamsMapper {
 
     fn write_prg(&mut self, addr: u16, value: u8) {
         if (0x8000..=0xFFFF).contains(&addr) {
-            let register_value = value & self.read_prg(addr);
-            self.prg_bank.set(register_value & 0b0000_0011);
-            self.chr_bank.set((register_value >> 4) & 0b0000_1111);
+            let register_value = self.base.apply_bus_conflict(addr, value);
+            self.prg_bank = register_value & 0b0000_0011;
+            self.chr_bank = (register_value >> 4) & 0b0000_1111;
+            self.base.select_prg_page(0, self.prg_bank as i16);
+            self.base.select_chr_page(0, self.chr_bank as i16);
         }
     }
 
     fn read_chr(&mut self, addr: u16) -> u8 {
-        let offset = (addr & 0x1FFF) as usize;
-        self.chr_rom.read(self.chr_bank.current(), offset)
+        self.base.read_chr_banked(addr)
     }
 
     fn write_chr(&mut self, _addr: u16, _value: u8) {
@@ -96,11 +105,11 @@ impl Mapper for ColorDreamsMapper {
     }
 
     fn get_mirroring(&self) -> NametableLayout {
-        self.mirroring
+        self.base.mirroring()
     }
 
     fn mapper_number(&self) -> u8 {
-        11
+        self.base.mapper_number()
     }
 
     fn wram_size(&self) -> usize {
@@ -108,30 +117,22 @@ impl Mapper for ColorDreamsMapper {
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        vec![self.prg_bank.raw(), self.chr_bank.raw()]
+        vec![self.prg_bank, self.chr_bank]
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
         if let Some(&value) = data.first() {
-            self.prg_bank.set(value);
+            self.prg_bank = value;
+            self.base.select_prg_page(0, value as i16);
         }
         if let Some(&value) = data.get(1) {
-            self.chr_bank.set(value);
+            self.chr_bank = value;
+            self.base.select_chr_page(0, value as i16);
         }
     }
 
     fn capabilities(&self) -> MapperCapabilities {
-        MapperCapabilities {
-            has_irq: false,
-            has_chr_banking: true,
-            has_dynamic_mirroring: false,
-            has_expansion_audio: false,
-            max_prg_ram_kb: 0,
-            prg_bank_size_kb: 32,
-            chr_bank_size_kb: 8,
-            trainer_jsr: false,
-            ..Default::default()
-        }
+        self.base.capabilities()
     }
 }
 

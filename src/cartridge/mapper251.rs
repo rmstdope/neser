@@ -7,12 +7,13 @@
 //! Notes:
 //! - iNES mapper 251 is treated as mapper 45 compatibility behavior.
 
+use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mapper45::Mapper45;
 use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
 /// Mapper 251 implemented as a thin wrapper around Mapper 45 behavior.
 pub struct Mapper251 {
-    inner: Mapper45,
+    pub(crate) inner: Mapper45,
 }
 
 impl Mapper251 {
@@ -29,6 +30,13 @@ impl Mapper251 {
 }
 
 impl Mapper for Mapper251 {
+    fn base(&self) -> &BaseMapper {
+        &self.inner.mmc3.base
+    }
+    fn base_mut(&mut self) -> &mut BaseMapper {
+        &mut self.inner.mmc3.base
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
         self.inner.read_prg(addr)
     }

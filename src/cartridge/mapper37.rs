@@ -6,6 +6,7 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
+use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mmc3::MMC3Mapper;
 use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
@@ -34,7 +35,7 @@ use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 ///
 /// Known games: Super Mario Bros, Tetris, Nintendo World Cup
 pub struct Mapper37 {
-    inner: MMC3Mapper,
+    pub(crate) inner: MMC3Mapper,
     outer_reg: u8, // bits [2:0] = Q[2:0]
 }
 
@@ -81,6 +82,13 @@ impl Mapper37 {
 }
 
 impl Mapper for Mapper37 {
+    fn base(&self) -> &BaseMapper {
+        &self.inner.base
+    }
+    fn base_mut(&mut self) -> &mut BaseMapper {
+        &mut self.inner.base
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
         if !(0x8000..=0xFFFF).contains(&addr) {
             return 0; // No PRG-RAM; $6000-$7FFF is the outer register only

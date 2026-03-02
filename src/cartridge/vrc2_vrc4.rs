@@ -493,6 +493,13 @@ impl Vrc2Vrc4Mapper {
 }
 
 impl Mapper for Vrc2Vrc4Mapper {
+    fn base(&self) -> &BaseMapper {
+        &self.base
+    }
+    fn base_mut(&mut self) -> &mut BaseMapper {
+        &mut self.base
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
         // PRG-RAM at $6000-$7FFF (only when WRAM is enabled; VRC2 is always enabled)
         if (!self.variant.has_irq() || self.prg_ram_enabled)

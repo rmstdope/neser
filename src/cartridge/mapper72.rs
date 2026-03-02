@@ -65,12 +65,12 @@ impl Mapper72 {
 }
 
 impl Mapper for Mapper72 {
-    fn base(&self) -> Option<&BaseMapper> {
-        Some(&self.base)
+    fn base(&self) -> &BaseMapper {
+        &self.base
     }
 
-    fn base_mut(&mut self) -> Option<&mut BaseMapper> {
-        Some(&mut self.base)
+    fn base_mut(&mut self) -> &mut BaseMapper {
+        &mut self.base
     }
 
     fn read_prg(&self, addr: u16) -> u8 {

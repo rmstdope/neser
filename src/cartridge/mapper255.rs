@@ -112,12 +112,12 @@ impl Mapper255 {
 }
 
 impl Mapper for Mapper255 {
-    fn base(&self) -> Option<&BaseMapper> {
-        Some(&self.base)
+    fn base(&self) -> &BaseMapper {
+        &self.base
     }
 
-    fn base_mut(&mut self) -> Option<&mut BaseMapper> {
-        Some(&mut self.base)
+    fn base_mut(&mut self) -> &mut BaseMapper {
+        &mut self.base
     }
 
     fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {

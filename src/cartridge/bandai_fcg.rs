@@ -100,6 +100,13 @@ impl BandaiFcgMapper {
 }
 
 impl Mapper for BandaiFcgMapper {
+    fn base(&self) -> &BaseMapper {
+        &self.base
+    }
+    fn base_mut(&mut self) -> &mut BaseMapper {
+        &mut self.base
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
         match addr {
             0x8000..=0xFFFF => self.base.read_prg_banked(addr),

@@ -100,6 +100,13 @@ impl Ntdec2722Mapper {
 }
 
 impl Mapper for Ntdec2722Mapper {
+    fn base(&self) -> &BaseMapper {
+        &self.base
+    }
+    fn base_mut(&mut self) -> &mut BaseMapper {
+        &mut self.base
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
         match addr {
             0x6000..=0x7FFF => self.read_prg_6000(addr),

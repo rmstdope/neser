@@ -14,7 +14,8 @@
 //!   (requires CPU/console-layer changes; tracked separately).
 use std::cell::Cell;
 
-use crate::cartridge::common::{BankedRom, ChrMemory};
+use crate::cartridge::base_mapper::BaseMapper;
+use crate::cartridge::common::ChrMemory;
 use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
 const PRG_BANK_SIZE_8K: usize = 0x2000;
@@ -50,8 +51,7 @@ const PRG_BANK3_LOWER_HALF: usize = 6; // 16 KiB index → 8 KiB banks 12 & 13
 ///   $6000-$7FFF — 8 KiB window into 32 KiB banked WRAM
 ///   $8000-$FFFF — latch write when latch is enabled; always updates 2M shadow slots
 pub struct SuperMagicCardMapper {
-    prg_rom: BankedRom,
-    chr_memory: ChrMemory,
+    base: BaseMapper,
     wram: Vec<u8>,
     scratch_ram: Vec<u8>, // 4 KiB scratch RAM at CPU $5000–$5FFF (Mapper 17 only)
     trainer_load_address: u16, // CPU address where the trainer is loaded (default $7000)
@@ -116,11 +116,25 @@ impl SuperMagicCardMapper {
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
         let mapper = ctx.mapper;
         let submapper = ctx.submapper;
-        let prg_rom = ctx.prg_rom;
-        let chr_rom = ctx.chr_rom;
+        let chr_is_ram = ctx.chr_rom.is_empty();
+        let caps = MapperCapabilities {
+            has_irq: true,
+            has_chr_banking: true,
+            has_dynamic_mirroring: true,
+            has_expansion_audio: false,
+            max_prg_ram_kb: 0, // WRAM managed separately
+            prg_bank_size_kb: 8,
+            chr_bank_size_kb: 8,
+            trainer_jsr: true,
+            trainer_load_address: 0x7000,
+        };
+        let mut base = BaseMapper::new(&ctx, caps);
+        if chr_is_ram {
+            base.set_chr_memory(ChrMemory::new_ram(CHR_RAM_SIZE_256K));
+        }
         let mirroring = ctx.mirroring;
         if mapper == 17 {
-            Self::new_mapper17(prg_rom, chr_rom, mirroring, submapper)
+            Self::new_mapper17(base, mirroring, submapper)
         } else {
             // mappers 6 and 8; resolve submapper for SMC power-on state
             let effective_submapper = if mapper == 8 {
@@ -130,16 +144,11 @@ impl SuperMagicCardMapper {
             } else {
                 submapper
             };
-            Self::new_with_submapper(prg_rom, chr_rom, mirroring, effective_submapper)
+            Self::new_with_submapper(base, mirroring, effective_submapper)
         }
     }
 
-    pub fn new_with_submapper(
-        prg_rom: Vec<u8>,
-        chr_rom: Vec<u8>,
-        mirroring: NametableLayout,
-        submapper: u8,
-    ) -> Self {
+    pub fn new_with_submapper(base: BaseMapper, mirroring: NametableLayout, submapper: u8) -> Self {
         // Per NesDev spec, the emulator simulates writing
         //   [$42FF] = (submapper << 5) | (horizontalMirroring ? 0x10 : 0x00)
         // at power-on:
@@ -152,15 +161,9 @@ impl SuperMagicCardMapper {
         let d4 = u8::from(matches!(mirroring, NametableLayout::Horizontal));
         // A0 = 1 (addr $42FF has bit 0 set)
         let mirroring_type = (1 << 1) | d4;
-        let chr_memory = if chr_rom.is_empty() {
-            ChrMemory::new_ram(CHR_RAM_SIZE_256K)
-        } else {
-            ChrMemory::new(chr_rom)
-        };
 
         Self {
-            prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE_8K),
-            chr_memory,
+            base,
             wram: vec![0; WRAM_SIZE_32K],
             scratch_ram: Vec::new(),
             trainer_load_address: 0x7000,
@@ -199,13 +202,8 @@ impl SuperMagicCardMapper {
     ///   `$4510–$4517 = [0, 1, 2, 3, 4, 5, 6, 7]` — identity mapping: slot N → CHR bank N
     ///
     /// The `submapper` field encodes the trainer load address (submapper 0 → $7000).
-    pub fn new_mapper17(
-        prg_rom: Vec<u8>,
-        chr_rom: Vec<u8>,
-        mirroring: NametableLayout,
-        submapper: u8,
-    ) -> Self {
-        let num_banks_8k = prg_rom.len() / PRG_BANK_SIZE_8K;
+    pub fn new_mapper17(base: BaseMapper, mirroring: NametableLayout, submapper: u8) -> Self {
+        let num_banks_8k = base.prg_rom().len() / PRG_BANK_SIZE_8K;
         let n = num_banks_8k as u8;
 
         // $42FF = $20 | (horizontalMirroring ? 0x10 : 0x00)
@@ -227,11 +225,6 @@ impl SuperMagicCardMapper {
 
         // $4500 = $47: chr_mode_1kb=true (bit 0), chr_nt_active=false (bit 1 set → CIRAM),
         //              mmc4_disabled=true (bit 2), irq_pa12_mode=false (bit 3=0), wram_bank=0
-        let chr_memory = if chr_rom.is_empty() {
-            ChrMemory::new_ram(CHR_RAM_SIZE_256K)
-        } else {
-            ChrMemory::new(chr_rom)
-        };
 
         // Trainer load address from submapper (0→$7000, 1→$5D00, 2→$5E00, 3→$5F00)
         let trainer_load_address = match submapper {
@@ -242,8 +235,7 @@ impl SuperMagicCardMapper {
         };
 
         Self {
-            prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE_8K),
-            chr_memory,
+            base,
             wram: vec![0; WRAM_SIZE_32K],
             scratch_ram: vec![0; 0x1000], // 4 KiB scratch RAM at $5000–$5FFF
             trainer_load_address,
@@ -456,9 +448,30 @@ impl SuperMagicCardMapper {
     fn acknowledge_irq(&mut self) {
         self.irq_pending_flag = false;
     }
+
+    /// Read a byte from PRG-ROM at the given 8KB bank and address.
+    fn read_prg_bank_8k(&self, bank: usize, base_addr: u16, addr: u16) -> u8 {
+        let prg = self.base.prg_rom();
+        let num_banks = prg.len() / PRG_BANK_SIZE_8K;
+        if num_banks == 0 {
+            return 0;
+        }
+        let bank = bank % num_banks;
+        let offset = (addr - base_addr) as usize;
+        prg.get(bank * PRG_BANK_SIZE_8K + offset)
+            .copied()
+            .unwrap_or(0)
+    }
 }
 
 impl Mapper for SuperMagicCardMapper {
+    fn base(&self) -> &BaseMapper {
+        &self.base
+    }
+    fn base_mut(&mut self) -> &mut BaseMapper {
+        &mut self.base
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
         match addr {
             0x5000..=0x5FFF => self
@@ -467,18 +480,10 @@ impl Mapper for SuperMagicCardMapper {
                 .copied()
                 .unwrap_or(0),
             0x6000..=0x7FFF => self.wram.get(self.wram_index(addr)).copied().unwrap_or(0),
-            0x8000..=0x9FFF => self
-                .prg_rom
-                .read_with_base(self.bank_for_slot(0), 0x8000, addr),
-            0xA000..=0xBFFF => self
-                .prg_rom
-                .read_with_base(self.bank_for_slot(1), 0xA000, addr),
-            0xC000..=0xDFFF => self
-                .prg_rom
-                .read_with_base(self.bank_for_slot(2), 0xC000, addr),
-            0xE000..=0xFFFF => self
-                .prg_rom
-                .read_with_base(self.bank_for_slot(3), 0xE000, addr),
+            0x8000..=0x9FFF => self.read_prg_bank_8k(self.bank_for_slot(0), 0x8000, addr),
+            0xA000..=0xBFFF => self.read_prg_bank_8k(self.bank_for_slot(1), 0xA000, addr),
+            0xC000..=0xDFFF => self.read_prg_bank_8k(self.bank_for_slot(2), 0xC000, addr),
+            0xE000..=0xFFFF => self.read_prg_bank_8k(self.bank_for_slot(3), 0xE000, addr),
             _ => 0,
         }
     }
@@ -553,7 +558,7 @@ impl Mapper for SuperMagicCardMapper {
 
     fn read_chr(&mut self, addr: u16) -> u8 {
         let index = self.chr_index_for_addr(addr);
-        let value = self.chr_memory.read_at_index(index);
+        let value = self.base.read_chr_at_index(index);
         self.update_mmc4_latches(addr);
         value
     }
@@ -561,7 +566,7 @@ impl Mapper for SuperMagicCardMapper {
     fn write_chr(&mut self, addr: u16, value: u8) {
         if !self.chr_write_protected() {
             let index = self.chr_index_for_addr(addr);
-            self.chr_memory.write_at_index(index, value);
+            self.base.write_chr_at_index(index, value);
         }
     }
 
@@ -576,8 +581,8 @@ impl Mapper for SuperMagicCardMapper {
         let bank = self.chr_nt_regs[slot] as usize;
         let offset = (addr & 0x03FF) as usize;
         Some(
-            self.chr_memory
-                .read_at_index(bank * CHR_BANK_SIZE_1K + offset),
+            self.base
+                .read_chr_at_index(bank * CHR_BANK_SIZE_1K + offset),
         )
     }
 
@@ -591,8 +596,8 @@ impl Mapper for SuperMagicCardMapper {
         }
         let bank = self.chr_nt_regs[slot] as usize;
         let offset = (addr & 0x03FF) as usize;
-        self.chr_memory
-            .write_at_index(bank * CHR_BANK_SIZE_1K + offset, value);
+        self.base
+            .write_chr_at_index(bank * CHR_BANK_SIZE_1K + offset, value);
         true
     }
 
@@ -727,11 +732,11 @@ impl Mapper for SuperMagicCardMapper {
     }
 
     fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_memory.snapshot()
+        self.base.chr_ram_snapshot()
     }
 
     fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.chr_memory.load_snapshot(data);
+        self.base.restore_chr_ram(data);
     }
 
     fn wram_size(&self) -> usize {

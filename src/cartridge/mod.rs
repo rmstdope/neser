@@ -76,11 +76,11 @@ mod vrc6;
 #[allow(unused_imports)]
 pub use base_mapper::BaseMapper;
 pub use cartridge::Cartridge;
+#[cfg(test)]
 #[allow(unused_imports)]
-pub use common::{
-    BankSwitch, BankedRom, ChrMemory, DEFAULT_CHR_RAM_SIZE, DEFAULT_PRG_RAM_SIZE, PrgRam,
-    StateSnapshot,
-};
+pub use common::{BankSwitch, BankedRom};
+#[allow(unused_imports)]
+pub use common::{ChrMemory, DEFAULT_CHR_RAM_SIZE, DEFAULT_PRG_RAM_SIZE, PrgRam, StateSnapshot};
 #[allow(unused_imports)]
 pub use ines::{ConsoleType, InesHeader, NametableLayout, ParsedRom, RomParseError, TimingMode};
 #[allow(unused_imports)]

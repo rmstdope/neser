@@ -7,6 +7,7 @@
 //! - IRQ behavior is inherited from the inner MMC3 (see `mmc3.rs` Known Limitations).
 //! - Board-specific clone quirks that deviate from the NesDev spec are not modeled.
 
+use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mmc3::MMC3Mapper;
 use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
@@ -34,7 +35,7 @@ use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 /// Note: Reg2 bit[6] = CHR_OR bit 10, bit[5] = CHR_OR bit 9 (per NesDev)
 /// When reg3 bit6 (lock) is set, writes in $6000-$7FFF are forwarded to WRAM/MMC3.
 pub struct Mapper45 {
-    mmc3: MMC3Mapper,
+    pub(crate) mmc3: MMC3Mapper,
     regs: [u8; 4],
     write_ptr: usize,
     locked: bool,
@@ -121,6 +122,13 @@ impl Mapper45 {
 }
 
 impl Mapper for Mapper45 {
+    fn base(&self) -> &BaseMapper {
+        &self.mmc3.base
+    }
+    fn base_mut(&mut self) -> &mut BaseMapper {
+        &mut self.mmc3.base
+    }
+
     fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
         if (0x5000..=0x5FFF).contains(&addr) {
             return (open_bus & 0xFE) | self.menu_selection_d0(addr);

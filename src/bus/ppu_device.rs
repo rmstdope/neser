@@ -93,10 +93,19 @@ mod tests {
     use std::cell::Cell;
 
     struct MaskTrackingMapper {
+        base: crate::cartridge::BaseMapper,
         mask_writes: Rc<Cell<usize>>,
     }
 
     impl Mapper for MaskTrackingMapper {
+        fn base(&self) -> &crate::cartridge::BaseMapper {
+            &self.base
+        }
+
+        fn base_mut(&mut self) -> &mut crate::cartridge::BaseMapper {
+            &mut self.base
+        }
+
         fn read_prg(&self, _addr: u16) -> u8 {
             0
         }
@@ -152,6 +161,18 @@ mod tests {
     fn test_ppu_mask_mirror_write_does_not_notify_mapper() {
         let mask_writes = Rc::new(Cell::new(0));
         let mapper = Box::new(MaskTrackingMapper {
+            base: {
+                let ctx = crate::cartridge::MapperContext::new_for_test(
+                    0,
+                    vec![0; 0x8000],
+                    vec![0; 8192],
+                    NametableLayout::Horizontal,
+                );
+                crate::cartridge::BaseMapper::new(
+                    &ctx,
+                    crate::cartridge::MapperCapabilities::default(),
+                )
+            },
             mask_writes: Rc::clone(&mask_writes),
         });
         let cartridge = Cartridge::from_mapper_for_test(mapper);

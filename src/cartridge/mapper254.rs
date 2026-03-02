@@ -6,6 +6,7 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
+use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
 use crate::cartridge::mmc3::MMC3Mapper;
 use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
@@ -27,7 +28,7 @@ use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 ///
 /// Once protection is cleared, PRG-RAM reads normally.
 pub struct Mapper254 {
-    mmc3: MMC3Mapper,
+    pub(crate) mmc3: MMC3Mapper,
     prg_ram: PrgRam,
     protection_disabled: bool,
     xor_mask: u8,
@@ -50,6 +51,13 @@ impl Mapper254 {
 }
 
 impl Mapper for Mapper254 {
+    fn base(&self) -> &BaseMapper {
+        &self.mmc3.base
+    }
+    fn base_mut(&mut self) -> &mut BaseMapper {
+        &mut self.mmc3.base
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
         match addr {
             0x6000..=0x7FFF => {
