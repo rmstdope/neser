@@ -64,6 +64,14 @@ impl Mapper for Mapper12 {
         &mut self.inner.base
     }
 
+    fn mmc3_delegate(&self) -> Option<&MMC3Mapper> {
+        Some(&self.inner)
+    }
+
+    fn mmc3_delegate_mut(&mut self) -> Option<&mut MMC3Mapper> {
+        Some(&mut self.inner)
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
         if Self::is_outer_reg(addr) {
             return self.chr_ext_lo as u8;
@@ -112,30 +120,6 @@ impl Mapper for Mapper12 {
 
     fn wram_size(&self) -> usize {
         8 * 1024
-    }
-
-    fn ppu_address_changed(&mut self, addr: u16) {
-        self.inner.ppu_address_changed(addr);
-    }
-
-    fn cpu_cycle(&mut self) {
-        self.inner.cpu_cycle();
-    }
-
-    fn irq_pending(&self) -> bool {
-        self.inner.irq_pending()
-    }
-
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.inner.chr_ram_snapshot()
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.inner.restore_chr_ram(data);
-    }
-
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        self.inner.initialize_ram(mode);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {

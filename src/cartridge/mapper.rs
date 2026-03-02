@@ -241,6 +241,20 @@ pub trait Mapper {
     /// See [`base`](Mapper::base) for details.
     fn base_mut(&mut self) -> &mut super::base_mapper::BaseMapper;
 
+    /// Return a reference to an embedded [`MMC3Mapper`] when this mapper wraps MMC3.
+    ///
+    /// Default returns `None` for non-MMC3 mappers.
+    fn mmc3_delegate(&self) -> Option<&MMC3Mapper> {
+        None
+    }
+
+    /// Return a mutable reference to an embedded [`MMC3Mapper`] when this mapper wraps MMC3.
+    ///
+    /// Default returns `None` for non-MMC3 mappers.
+    fn mmc3_delegate_mut(&mut self) -> Option<&mut MMC3Mapper> {
+        None
+    }
+
     /// Read a byte from PRG address space (CPU $6000-$FFFF)
     /// - $6000-$7FFF: PRG-RAM (8KB, battery-backed on some cartridges)
     /// - $8000-$FFFF: PRG-ROM (with bank switching on advanced mappers)
@@ -297,8 +311,12 @@ pub trait Mapper {
 
     /// Notify mapper of PPU address bus changes
     /// Used for detecting A12 rising edges (for MMC3 IRQ)
-    /// Default implementation is a no-op.
-    fn ppu_address_changed(&mut self, _addr: u16) {}
+    /// Default delegates to MMC3 when available, otherwise is a no-op.
+    fn ppu_address_changed(&mut self, addr: u16) {
+        if let Some(mmc3) = self.mmc3_delegate_mut() {
+            mmc3.ppu_address_changed(addr);
+        }
+    }
 
     /// Set the current PPU CHR fetch kind.
     ///
@@ -367,8 +385,12 @@ pub trait Mapper {
     /// Notify mapper that a CPU cycle has elapsed.
     ///
     /// Some mappers implement CPU-cycle-driven IRQ systems (e.g., Konami VRC IRQ).
-    /// Default implementation is a no-op.
-    fn cpu_cycle(&mut self) {}
+    /// Default delegates to MMC3 when available, otherwise is a no-op.
+    fn cpu_cycle(&mut self) {
+        if let Some(mmc3) = self.mmc3_delegate_mut() {
+            mmc3.cpu_cycle();
+        }
+    }
 
     /// Reset the mapper to its power-on state.
     ///
@@ -382,17 +404,21 @@ pub trait Mapper {
     /// This is called when a cartridge is inserted or on hard reset to initialize
     /// RAM contents. Soft resets should NOT call this method (RAM should be preserved).
     ///
-    /// Default delegates to `BaseMapper` if available, otherwise is a no-op.
+    /// Default delegates to MMC3 when available, otherwise delegates to `BaseMapper`.
     fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        self.base_mut().initialize_ram(mode);
+        if let Some(mmc3) = self.mmc3_delegate_mut() {
+            mmc3.initialize_ram(mode);
+        } else {
+            self.base_mut().initialize_ram(mode);
+        }
     }
 
     /// Whether the mapper is currently asserting IRQ.
     ///
     /// This is used to model mapper-generated IRQs (e.g., MMC3 scanline IRQ).
-    /// Default implementation returns false for mappers without IRQ support.
+    /// Default delegates to MMC3 when available, otherwise returns false.
     fn irq_pending(&self) -> bool {
-        false
+        self.mmc3_delegate().is_some_and(MMC3Mapper::irq_pending)
     }
 
     /// Current expansion-audio output sample contributed by the mapper.
@@ -473,10 +499,13 @@ pub trait Mapper {
 
     /// Create a snapshot of CHR-RAM for save-state.
     ///
-    /// Default delegates to `BaseMapper` if available, otherwise returns
-    /// empty (CHR-ROM has no state to save).
+    /// Default delegates to MMC3 when available, otherwise delegates to `BaseMapper`.
     fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.base().chr_ram_snapshot()
+        if let Some(mmc3) = self.mmc3_delegate() {
+            mmc3.chr_ram_snapshot()
+        } else {
+            self.base().chr_ram_snapshot()
+        }
     }
 
     /// Create a snapshot of mapper-specific registers for save-state.
@@ -495,9 +524,13 @@ pub trait Mapper {
 
     /// Restore CHR-RAM from a save-state.
     ///
-    /// Default delegates to `BaseMapper` if available, otherwise is a no-op.
+    /// Default delegates to MMC3 when available, otherwise delegates to `BaseMapper`.
     fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.base_mut().restore_chr_ram(data);
+        if let Some(mmc3) = self.mmc3_delegate_mut() {
+            mmc3.restore_chr_ram(data);
+        } else {
+            self.base_mut().restore_chr_ram(data);
+        }
     }
 
     /// Restore mapper-specific registers from a save-state.

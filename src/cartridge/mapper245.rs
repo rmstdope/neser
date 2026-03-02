@@ -96,6 +96,14 @@ impl Mapper for Mapper245 {
         &mut self.mmc3.base
     }
 
+    fn mmc3_delegate(&self) -> Option<&MMC3Mapper> {
+        Some(&self.mmc3)
+    }
+
+    fn mmc3_delegate_mut(&mut self) -> Option<&mut MMC3Mapper> {
+        Some(&mut self.mmc3)
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
         match addr {
             0x6000..=0x7FFF => self.mmc3.read_prg(addr),
@@ -146,36 +154,12 @@ impl Mapper for Mapper245 {
         self.mmc3.load_wram_snapshot(data);
     }
 
-    fn ppu_address_changed(&mut self, addr: u16) {
-        self.mmc3.ppu_address_changed(addr);
-    }
-
-    fn cpu_cycle(&mut self) {
-        self.mmc3.cpu_cycle();
-    }
-
-    fn irq_pending(&self) -> bool {
-        self.mmc3.irq_pending()
-    }
-
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.mmc3.chr_ram_snapshot()
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.mmc3.restore_chr_ram(data);
-    }
-
     fn registers_snapshot(&self) -> Vec<u8> {
         self.mmc3.registers_snapshot()
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
         self.mmc3.restore_registers(data);
-    }
-
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        self.mmc3.initialize_ram(mode);
     }
 
     fn capabilities(&self) -> MapperCapabilities {

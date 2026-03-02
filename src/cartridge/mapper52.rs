@@ -130,6 +130,14 @@ impl Mapper for Mapper52 {
         &mut self.mmc3.base
     }
 
+    fn mmc3_delegate(&self) -> Option<&MMC3Mapper> {
+        Some(&self.mmc3)
+    }
+
+    fn mmc3_delegate_mut(&mut self) -> Option<&mut MMC3Mapper> {
+        Some(&mut self.mmc3)
+    }
+
     fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
         if Self::is_wram_window(addr) {
             return self.mmc3.read_prg_open_bus(addr, open_bus);
@@ -212,30 +220,6 @@ impl Mapper for Mapper52 {
         // Delegate directly to MMC3 to avoid routing through mapper52's write_prg,
         // which would corrupt the outer register during state restoration.
         Mapper::load_wram_snapshot(&mut self.mmc3, data);
-    }
-
-    fn ppu_address_changed(&mut self, addr: u16) {
-        self.mmc3.ppu_address_changed(addr);
-    }
-
-    fn cpu_cycle(&mut self) {
-        self.mmc3.cpu_cycle();
-    }
-
-    fn irq_pending(&self) -> bool {
-        self.mmc3.irq_pending()
-    }
-
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.mmc3.chr_ram_snapshot()
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.mmc3.restore_chr_ram(data);
-    }
-
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        self.mmc3.initialize_ram(mode);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
