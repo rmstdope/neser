@@ -9,7 +9,7 @@
 use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
 use crate::cartridge::mmc3::MMC3Mapper;
-use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
+use crate::cartridge::{Mapper, MapperCapabilities};
 
 /// Mapper 254 - Pikachu Y2K (MMC3 variant with copy protection)
 ///
@@ -109,10 +109,6 @@ impl Mapper for Mapper254 {
         self.mmc3.write_chr(addr, value);
     }
 
-    fn get_mirroring(&self) -> NametableLayout {
-        self.mmc3.get_mirroring()
-    }
-
     fn mapper_number(&self) -> u8 {
         Self::MAPPER_NUMBER
     }
@@ -192,6 +188,7 @@ impl Mapper for Mapper254 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cartridge::NametableLayout;
     use crate::cartridge::mapper::{MapperContext, create_mapper};
     use crate::cartridge::test_helpers::banked_data;
 

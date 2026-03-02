@@ -8,7 +8,7 @@
 
 use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mmc3::MMC3Mapper;
-use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
+use crate::cartridge::{Mapper, MapperCapabilities};
 
 /// Mapper 012 - SL-5020B (MMC3 with CHR A18 outer bank extension)
 ///
@@ -104,10 +104,6 @@ impl Mapper for Mapper12 {
         let final_bank = ((ext_bit as usize) << 8) | mmc3_bank;
         let offset = (ppu_addr as usize) & Self::CHR_BANK_MASK;
         self.inner.write_chr_1k_at(final_bank, offset, value);
-    }
-
-    fn get_mirroring(&self) -> NametableLayout {
-        self.inner.get_mirroring()
     }
 
     fn mapper_number(&self) -> u8 {

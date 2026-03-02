@@ -8,7 +8,7 @@
 
 use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mmc3::MMC3Mapper;
-use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
+use crate::cartridge::{Mapper, MapperCapabilities};
 
 /// Mapper 044 - MMC3-based 7-in-1 multicart
 ///
@@ -123,10 +123,6 @@ impl Mapper for Mapper44 {
         let bank = (raw & and) | or;
         let offset = (addr as usize) & Self::CHR_BANK_MASK;
         self.mmc3.write_chr_1k_at(bank, offset, value);
-    }
-
-    fn get_mirroring(&self) -> NametableLayout {
-        self.mmc3.get_mirroring()
     }
 
     fn mapper_number(&self) -> u8 {

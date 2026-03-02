@@ -628,10 +628,6 @@ impl Mapper for SuperMagicCardMapper {
         }
     }
 
-    fn mapper_number(&self) -> u8 {
-        6
-    }
-
     fn capabilities(&self) -> MapperCapabilities {
         MapperCapabilities {
             has_irq: true,
@@ -729,14 +725,6 @@ impl Mapper for SuperMagicCardMapper {
             self.irq_pa12_mode = (data[28] & 0x04) != 0;
             self.prev_a12 = (data[28] & 0x08) != 0;
         }
-    }
-
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.base.chr_ram_snapshot()
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.base.restore_chr_ram(data);
     }
 
     fn wram_size(&self) -> usize {

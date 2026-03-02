@@ -218,14 +218,6 @@ impl Mapper for Mapper48 {
         self.base.write_chr_banked(addr, value);
     }
 
-    fn get_mirroring(&self) -> NametableLayout {
-        self.base.mirroring()
-    }
-
-    fn mapper_number(&self) -> u8 {
-        self.base.mapper_number()
-    }
-
     fn ppu_address_changed(&mut self, addr: u16) {
         let a12 = (addr & 0x1000) != 0;
         let was_low = !self.prev_a12;
@@ -251,18 +243,6 @@ impl Mapper for Mapper48 {
 
     fn irq_pending(&self) -> bool {
         self.irq_pending
-    }
-
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.base.chr_ram_snapshot()
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.base.restore_chr_ram(data);
-    }
-
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        self.base.initialize_ram(mode);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -309,10 +289,6 @@ impl Mapper for Mapper48 {
             self.irq_pending = (flags & 4) != 0;
             self.update_banks();
         }
-    }
-
-    fn capabilities(&self) -> MapperCapabilities {
-        self.base.capabilities()
     }
 }
 

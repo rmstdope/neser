@@ -6,7 +6,7 @@
 //! - See CARTRIDGE_REVIEW.md sections 5 and 6 for remaining mapper test/documentation follow-up.
 
 use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
+use crate::cartridge::{Mapper, MapperCapabilities};
 
 /// Mapper 11 - Color Dreams
 ///
@@ -104,18 +104,6 @@ impl Mapper for ColorDreamsMapper {
         // CHR-ROM is read-only
     }
 
-    fn get_mirroring(&self) -> NametableLayout {
-        self.base.mirroring()
-    }
-
-    fn mapper_number(&self) -> u8 {
-        self.base.mapper_number()
-    }
-
-    fn wram_size(&self) -> usize {
-        0
-    }
-
     fn registers_snapshot(&self) -> Vec<u8> {
         vec![self.prg_bank, self.chr_bank]
     }
@@ -129,10 +117,6 @@ impl Mapper for ColorDreamsMapper {
             self.chr_bank = value;
             self.base.select_chr_page(0, value as i16);
         }
-    }
-
-    fn capabilities(&self) -> MapperCapabilities {
-        self.base.capabilities()
     }
 }
 

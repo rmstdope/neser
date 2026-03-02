@@ -203,14 +203,6 @@ impl Mapper for Mapper56 {
         self.base.write_chr_banked(addr, value);
     }
 
-    fn get_mirroring(&self) -> NametableLayout {
-        self.base.mirroring()
-    }
-
-    fn mapper_number(&self) -> u8 {
-        self.base.mapper_number()
-    }
-
     fn wram_size(&self) -> usize {
         8192
     }
@@ -228,18 +220,6 @@ impl Mapper for Mapper56 {
             self.irq_pending = true;
             self.irq_enabled = false; // counter stops, like VRC3
         }
-    }
-
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.base.chr_ram_snapshot()
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.base.restore_chr_ram(data);
-    }
-
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        self.base.initialize_ram(mode);
     }
 
     fn wram_snapshot(&self) -> Vec<u8> {
@@ -317,10 +297,6 @@ impl Mapper for Mapper56 {
         self.irq_after_ack = false;
         self.irq_pending = false;
         self.update_banks();
-    }
-
-    fn capabilities(&self) -> MapperCapabilities {
-        self.base.capabilities()
     }
 }
 

@@ -200,10 +200,6 @@ impl Mapper for Mapper52 {
         self.mmc3.write_chr_1k_at(final_bank, offset, value);
     }
 
-    fn get_mirroring(&self) -> NametableLayout {
-        self.mmc3.get_mirroring()
-    }
-
     fn mapper_number(&self) -> u8 {
         Self::MAPPER_NUMBER
     }

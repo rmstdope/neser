@@ -223,14 +223,6 @@ impl Mapper for BandaiFcgMapper {
         self.irq_pending
     }
 
-    fn get_mirroring(&self) -> NametableLayout {
-        self.base.mirroring()
-    }
-
-    fn mapper_number(&self) -> u8 {
-        self.base.mapper_number()
-    }
-
     fn wram_size(&self) -> usize {
         // Mapper 16 does not have traditional PRG-RAM.
         // Save data is stored in EEPROM (not yet implemented).
@@ -244,18 +236,6 @@ impl Mapper for BandaiFcgMapper {
 
     fn load_wram_snapshot(&mut self, _data: &[u8]) {
         // No WRAM to restore - EEPROM save data is separate
-    }
-
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.base.chr_ram_snapshot()
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.base.restore_chr_ram(data);
-    }
-
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        self.base.initialize_ram(mode);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -306,10 +286,6 @@ impl Mapper for BandaiFcgMapper {
             });
             self.update_banks();
         }
-    }
-
-    fn capabilities(&self) -> MapperCapabilities {
-        self.base.capabilities()
     }
 }
 

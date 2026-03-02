@@ -51,8 +51,6 @@ pub struct Mapper59 {
 }
 
 impl Mapper59 {
-    const MAPPER_NUMBER: u8 = 59;
-
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
@@ -144,10 +142,6 @@ impl Mapper for Mapper59 {
 
     fn write_chr(&mut self, addr: u16, value: u8) {
         self.base.write_chr_banked(addr, value);
-    }
-
-    fn mapper_number(&self) -> u8 {
-        Self::MAPPER_NUMBER
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
