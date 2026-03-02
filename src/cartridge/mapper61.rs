@@ -155,10 +155,6 @@ impl Mapper for Mapper61 {
         }
     }
 
-    fn read_chr(&mut self, addr: u16) -> u8 {
-        self.base.read_chr_banked(addr)
-    }
-
     fn registers_snapshot(&self) -> Vec<u8> {
         let flags = (self.prg_mode as u8)
             | ((self.prg_a14) << 1)

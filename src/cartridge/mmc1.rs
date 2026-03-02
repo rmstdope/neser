@@ -523,14 +523,6 @@ impl Mapper for MMC1Mapper {
         }
     }
 
-    fn read_chr(&mut self, addr: u16) -> u8 {
-        self.base.read_chr_banked(addr)
-    }
-
-    fn write_chr(&mut self, addr: u16, value: u8) {
-        self.base.write_chr_banked(addr, value);
-    }
-
     fn wram_size(&self) -> usize {
         self.prg_ram.len()
     }

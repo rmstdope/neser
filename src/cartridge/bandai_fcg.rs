@@ -200,14 +200,6 @@ impl Mapper for BandaiFcgMapper {
         self.update_banks();
     }
 
-    fn read_chr(&mut self, addr: u16) -> u8 {
-        self.base.read_chr_banked(addr)
-    }
-
-    fn write_chr(&mut self, addr: u16, value: u8) {
-        self.base.write_chr_banked(addr, value);
-    }
-
     fn cpu_cycle(&mut self) {
         trace_mapper!(5; "[bandai_fcg] cpu_cycle");
         // IRQ counter decrements every CPU cycle when enabled

@@ -502,10 +502,6 @@ impl Mapper for VRC6Mapper {
         }
     }
 
-    fn read_chr(&mut self, addr: u16) -> u8 {
-        self.base.read_chr_banked(addr)
-    }
-
     fn cpu_cycle(&mut self) {
         trace_mapper!(5; "[vrc6] cpu_cycle (irq)");
         self.audio.cpu_cycle();

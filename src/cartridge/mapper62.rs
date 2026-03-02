@@ -123,14 +123,6 @@ impl Mapper for Mapper62 {
         }
     }
 
-    fn read_chr(&mut self, addr: u16) -> u8 {
-        self.base.read_chr_banked(addr)
-    }
-
-    fn write_chr(&mut self, addr: u16, value: u8) {
-        self.base.write_chr_banked(addr, value);
-    }
-
     fn registers_snapshot(&self) -> Vec<u8> {
         let flags = (self.prg_mode as u8)
             | ((matches!(self.base.mirroring(), NametableLayout::Horizontal) as u8) << 1);

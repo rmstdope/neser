@@ -166,14 +166,6 @@ impl Mapper for Namco118Mapper {
         }
     }
 
-    fn read_chr(&mut self, addr: u16) -> u8 {
-        self.base.read_chr_banked(addr)
-    }
-
-    fn write_chr(&mut self, addr: u16, value: u8) {
-        self.base.write_chr_banked(addr, value);
-    }
-
     fn registers_snapshot(&self) -> Vec<u8> {
         let mut snapshot = Vec::with_capacity(9);
         snapshot.push(self.bank_select);

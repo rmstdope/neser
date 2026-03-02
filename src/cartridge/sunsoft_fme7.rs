@@ -235,14 +235,6 @@ impl Mapper for SunsoftFme7Mapper {
         }
     }
 
-    fn read_chr(&mut self, addr: u16) -> u8 {
-        self.base.read_chr_banked(addr)
-    }
-
-    fn write_chr(&mut self, addr: u16, value: u8) {
-        self.base.write_chr_banked(addr, value);
-    }
-
     fn cpu_cycle(&mut self) {
         // IRQ counter decrements every CPU cycle when counter enable (bit 7) is set
         // IRQ triggers on underflow only if IRQ enable (bit 0) is also set

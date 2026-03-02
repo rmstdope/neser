@@ -191,10 +191,6 @@ impl<const CHR_BANK_KB: usize, const MAPPER_NUM: u8> Mapper
         }
     }
 
-    fn read_chr(&mut self, addr: u16) -> u8 {
-        self.base.read_chr_banked(addr)
-    }
-
     fn registers_snapshot(&self) -> Vec<u8> {
         vec![self.chr_bank_raw]
     }
@@ -304,6 +300,14 @@ impl<const PRG_BANK_KB: usize, const MAPPER_NUM: u8> Mapper
             self.bank_select = effective & self.bank_select_mask;
             self.base.select_prg_page(0, self.bank_select as i16);
         }
+    }
+
+    fn read_chr(&mut self, addr: u16) -> u8 {
+        self.base().read_chr(addr)
+    }
+
+    fn write_chr(&mut self, addr: u16, value: u8) {
+        self.base_mut().write_chr(addr, value);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -428,10 +432,6 @@ impl<
             self.base.select_chr_page(0, self.chr_bank_raw as i16);
             self.base.select_prg_page(0, self.prg_bank_raw as i16);
         }
-    }
-
-    fn read_chr(&mut self, addr: u16) -> u8 {
-        self.base.read_chr_banked(addr)
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {

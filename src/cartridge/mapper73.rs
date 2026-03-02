@@ -168,6 +168,14 @@ impl Mapper for Mapper73 {
         }
     }
 
+    fn read_chr(&mut self, addr: u16) -> u8 {
+        self.base().read_chr(addr)
+    }
+
+    fn write_chr(&mut self, addr: u16, value: u8) {
+        self.base_mut().write_chr(addr, value);
+    }
+
     fn wram_size(&self) -> usize {
         Self::PRG_RAM_SIZE
     }

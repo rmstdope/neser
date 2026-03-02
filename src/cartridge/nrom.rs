@@ -77,6 +77,14 @@ impl Mapper for NROMMapper {
         // PRG-RAM at $6000-$7FFF (only if present)
         self.base.try_write_prg_ram(addr, value);
     }
+
+    fn read_chr(&mut self, addr: u16) -> u8 {
+        self.base().read_chr(addr)
+    }
+
+    fn write_chr(&mut self, addr: u16, value: u8) {
+        self.base_mut().write_chr(addr, value);
+    }
 }
 
 #[cfg(test)]

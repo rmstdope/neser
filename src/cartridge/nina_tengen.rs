@@ -117,10 +117,6 @@ impl Mapper for NinaTengenMapper {
         }
     }
 
-    fn read_chr(&mut self, addr: u16) -> u8 {
-        self.base.read_chr_banked(addr)
-    }
-
     fn write_chr(&mut self, _addr: u16, _value: u8) {
         // Mapper 78 uses CHR-ROM, writes are ignored
     }

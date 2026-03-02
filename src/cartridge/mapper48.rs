@@ -210,14 +210,6 @@ impl Mapper for Mapper48 {
         }
     }
 
-    fn read_chr(&mut self, addr: u16) -> u8 {
-        self.base.read_chr_banked(addr)
-    }
-
-    fn write_chr(&mut self, addr: u16, value: u8) {
-        self.base.write_chr_banked(addr, value);
-    }
-
     fn ppu_address_changed(&mut self, addr: u16) {
         let a12 = (addr & 0x1000) != 0;
         let was_low = !self.prev_a12;

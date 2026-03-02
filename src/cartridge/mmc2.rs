@@ -180,10 +180,6 @@ impl Mapper for MMC2Mapper {
         value
     }
 
-    fn write_chr(&mut self, addr: u16, value: u8) {
-        self.base.write_chr_banked(addr, value);
-    }
-
     fn ppu_address_changed(&mut self, addr: u16) {
         let _ = addr;
     }

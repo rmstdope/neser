@@ -131,14 +131,6 @@ impl Mapper for Mapper243 {
         }
     }
 
-    fn read_chr(&mut self, addr: u16) -> u8 {
-        self.base.read_chr_banked(addr)
-    }
-
-    fn write_chr(&mut self, addr: u16, value: u8) {
-        self.base.write_chr_banked(addr, value);
-    }
-
     fn registers_snapshot(&self) -> Vec<u8> {
         vec![
             self.command,
