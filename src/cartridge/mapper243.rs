@@ -93,13 +93,6 @@ impl Mapper for Mapper243 {
         &mut self.base
     }
 
-    fn read_prg(&self, addr: u16) -> u8 {
-        match addr {
-            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
-            _ => 0,
-        }
-    }
-
     fn write_prg(&mut self, addr: u16, value: u8) {
         if addr & 0x4101 == 0x4100 {
             self.command = value & 0x07;

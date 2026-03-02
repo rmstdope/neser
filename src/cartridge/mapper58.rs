@@ -87,13 +87,6 @@ impl Mapper for Mapper58 {
         &mut self.base
     }
 
-    fn read_prg(&self, addr: u16) -> u8 {
-        match addr {
-            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
-            _ => 0,
-        }
-    }
-
     fn write_prg(&mut self, addr: u16, value: u8) {
         let _ = value; // data bus is not used; bank selection is from address
         if (0x8000..=0xFFFF).contains(&addr) {

@@ -164,20 +164,6 @@ impl Mapper for BnromNinaMapper {
         self.trace_state("reset", 0, 0);
     }
 
-    fn read_prg(&self, addr: u16) -> u8 {
-        // PRG-RAM at $6000-$7FFF (NINA only)
-        if let Some(value) = self.base.try_read_prg_ram(addr) {
-            return value;
-        }
-
-        // PRG ROM at $8000-$FFFF (32KB switchable bank)
-        if addr >= 0x8000 {
-            self.base.read_prg_banked(addr)
-        } else {
-            0
-        }
-    }
-
     fn write_prg(&mut self, addr: u16, value: u8) {
         // NINA-001 registers overlap PRG-RAM at $7FFD-$7FFF.
         // A write updates both the register and underlying RAM byte.

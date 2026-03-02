@@ -72,13 +72,6 @@ impl Mapper for ColorDreamsMapper {
         &mut self.base
     }
 
-    fn read_prg(&self, addr: u16) -> u8 {
-        match addr {
-            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
-            _ => 0,
-        }
-    }
-
     fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
         match addr {
             0x0000..=0x7FFF => open_bus,

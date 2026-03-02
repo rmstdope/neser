@@ -65,13 +65,6 @@ impl Mapper for Mapper60 {
         &mut self.base
     }
 
-    fn read_prg(&self, addr: u16) -> u8 {
-        match addr {
-            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
-            _ => 0,
-        }
-    }
-
     fn write_prg(&mut self, _addr: u16, _value: u8) {
         // No writable registers
     }
