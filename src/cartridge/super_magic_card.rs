@@ -15,7 +15,7 @@
 use std::cell::Cell;
 
 use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::common::ChrMemory;
+use crate::cartridge::common::{A12RisingEdgeDetector, ChrMemory};
 use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
 const PRG_BANK_SIZE_8K: usize = 0x2000;
@@ -72,7 +72,7 @@ pub struct SuperMagicCardMapper {
     irq_enabled: bool,    // counting active (enabled by $4503, disabled by $4501)
     irq_pending_flag: bool, // IRQ asserted (set on $FFFF→$0000 wrap)
     irq_pa12_mode: bool,  // $4500 bit 3: false=M2 (cpu_cycle), true=PA12 (ppu_address_changed)
-    prev_a12: bool,       // previous A12 state for rising edge detection
+    a12_detector: A12RisingEdgeDetector, // A12 rising edge detection (no debounce)
     prg_2m_slots: [u8; 4], // shadow 8 KiB PRG banks for 2M mode (always updated on $8000-$FFFF writes)
     prg_4m_slots: [u8; 4], // 8 KiB PRG banks for 4M mode (updated via $4504-$4507)
     mode_2m_active: bool,  // true when $43FE was the last $43FC-$43FF write
@@ -184,7 +184,7 @@ impl SuperMagicCardMapper {
             irq_enabled: false,
             irq_pending_flag: false,
             irq_pa12_mode: false,
-            prev_a12: false,
+            a12_detector: A12RisingEdgeDetector::new(0),
             prg_2m_slots: [0; 4],
             prg_4m_slots: [0; 4],
             mode_2m_active: false,
@@ -256,7 +256,7 @@ impl SuperMagicCardMapper {
             irq_enabled: false,
             irq_pending_flag: false,
             irq_pa12_mode: false,
-            prev_a12: false,
+            a12_detector: A12RisingEdgeDetector::new(0),
             prg_2m_slots: [0; 4],
             prg_4m_slots,
             mode_2m_active: false,
@@ -422,14 +422,6 @@ impl SuperMagicCardMapper {
             0x1FE8..=0x1FEF => self.mmc4_latch1_fd.set(false),
             _ => {}
         }
-    }
-
-    /// Returns `true` if address bit 12 has just risen (low→high transition).
-    fn pa12_rising_edge(&mut self, addr: u16) -> bool {
-        let a12 = (addr & 0x1000) != 0;
-        let rising = a12 && !self.prev_a12;
-        self.prev_a12 = a12;
-        rising
     }
 
     /// Increment the IRQ counter by one; set `irq_pending_flag` on $FFFF → $0000 wrap.
@@ -603,7 +595,7 @@ impl Mapper for SuperMagicCardMapper {
 
     fn ppu_address_changed(&mut self, addr: u16) {
         self.update_mmc4_latches(addr);
-        if self.irq_pa12_mode && self.pa12_rising_edge(addr) {
+        if self.irq_pa12_mode && self.a12_detector.update(addr) {
             self.tick_irq_counter();
         }
     }
@@ -681,7 +673,7 @@ impl Mapper for SuperMagicCardMapper {
             (self.irq_enabled as u8)
                 | ((self.irq_pending_flag as u8) << 1)
                 | ((self.irq_pa12_mode as u8) << 2)
-                | ((self.prev_a12 as u8) << 3),
+                | ((self.a12_detector.prev_a12() as u8) << 3),
         );
         v
     }
@@ -723,7 +715,7 @@ impl Mapper for SuperMagicCardMapper {
             self.irq_enabled = (data[28] & 0x01) != 0;
             self.irq_pending_flag = (data[28] & 0x02) != 0;
             self.irq_pa12_mode = (data[28] & 0x04) != 0;
-            self.prev_a12 = (data[28] & 0x08) != 0;
+            self.a12_detector.set_prev_a12((data[28] & 0x08) != 0);
         }
     }
 

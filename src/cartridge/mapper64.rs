@@ -9,6 +9,7 @@
 
 use crate::cartridge::BaseMapper;
 use crate::cartridge::NametableLayout;
+use crate::cartridge::common::A12RisingEdgeDetector;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// Mapper 064 - Tengen RAMBO-1
@@ -52,13 +53,10 @@ pub struct Mapper64 {
     // CPU cycle mode prescaler (clock every 4 CPU cycles)
     cpu_prescaler: u8,
     // PPU A12 scanline filter
-    prev_a12: bool,
-    a12_low_cycles: u8,
+    a12_detector: A12RisingEdgeDetector,
 }
 
 impl Mapper64 {
-    const A12_LOW_FILTER: u8 = 3;
-
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_irq: true,
@@ -86,8 +84,7 @@ impl Mapper64 {
             irq_cpu_mode: false,
             irq_reload_flag: false,
             cpu_prescaler: 0,
-            prev_a12: false,
-            a12_low_cycles: 0,
+            a12_detector: A12RisingEdgeDetector::new(3),
         };
         mapper.update_banks();
         mapper
@@ -241,23 +238,13 @@ impl Mapper for Mapper64 {
     }
 
     fn ppu_address_changed(&mut self, addr: u16) {
-        let a12 = (addr & 0x1000) != 0;
-        if a12 {
-            // Rising edge detection with low-pass filter
-            if !self.prev_a12 && self.a12_low_cycles >= Self::A12_LOW_FILTER {
-                // Clock IRQ counter in scanline mode
-                if !self.irq_cpu_mode {
-                    self.clock_irq_counter();
-                }
-            }
-            self.a12_low_cycles = 0;
-        } else {
-            self.a12_low_cycles = self.a12_low_cycles.saturating_add(1);
+        if self.a12_detector.update(addr) && !self.irq_cpu_mode {
+            self.clock_irq_counter();
         }
-        self.prev_a12 = a12;
     }
 
     fn cpu_cycle(&mut self) {
+        self.a12_detector.cpu_tick();
         if !self.irq_cpu_mode {
             return;
         }
@@ -331,8 +318,7 @@ impl Mapper for Mapper64 {
         self.irq_cpu_mode = false;
         self.irq_reload_flag = false;
         self.cpu_prescaler = 0;
-        self.prev_a12 = false;
-        self.a12_low_cycles = 0;
+        self.a12_detector = A12RisingEdgeDetector::new(3);
         self.update_banks();
     }
 }
@@ -537,9 +523,10 @@ mod tests {
         // Need 3 scanline clocks (A12 low→high transitions with filter)
         let mut fired = false;
         for _ in 0..20 {
-            // Simulate A12 going low (several cycles) then high
-            for _ in 0..10 {
-                mapper.ppu_address_changed(0x0000); // A12=0
+            // Simulate A12 going low for several CPU cycles then high
+            mapper.ppu_address_changed(0x0000); // A12=0
+            for _ in 0..4 {
+                mapper.cpu_cycle(); // track low cycles via cpu_tick
             }
             mapper.ppu_address_changed(0x1000); // A12=1 → clock
             if mapper.irq_pending() {

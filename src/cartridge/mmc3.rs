@@ -11,6 +11,7 @@
 
 use super::rom_db;
 use crate::cartridge::BaseMapper;
+use crate::cartridge::common::A12RisingEdgeDetector;
 use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 use crate::trace_mapper;
 
@@ -65,9 +66,7 @@ pub struct MMC3Mapper {
     irq_enabled: bool,
     irq_asserted: bool,
 
-    prev_a12: bool,
-    current_a12: bool,
-    a12_low_cycles: u8,
+    a12_detector: A12RisingEdgeDetector,
 
     /// Use alternate (NEC) IRQ behavior: only fire on 1→0 transition
     use_alternate_irq: bool,
@@ -82,8 +81,6 @@ impl MMC3Mapper {
     const CHR_BANK_SIZE: usize = 0x0400; // 1KB
     const PRG_RAM_SIZE: usize = 0x2000; // 8KB
     const DEFAULT_PRG_RAM_BANKS_8K: u8 = 1;
-
-    const A12_LOW_CYCLES_REQUIRED: u8 = 3;
 
     const PRG_RAM_ENABLE_MASK: u8 = 0b1000_0000;
     const PRG_RAM_WRITE_PROTECT_MASK: u8 = 0b0100_0000;
@@ -161,9 +158,7 @@ impl MMC3Mapper {
             irq_enabled: false,
             irq_asserted: false,
 
-            prev_a12: false,
-            current_a12: false,
-            a12_low_cycles: 0,
+            a12_detector: A12RisingEdgeDetector::new(3),
             use_alternate_irq,
         };
         mapper.base.set_mirroring(mirroring);
@@ -372,35 +367,6 @@ impl MMC3Mapper {
     // ```
     //
     // See: https://www.nesdev.org/wiki/MMC3#IRQ_Specifics
-
-    fn a12_rising_edge(&mut self, current_a12: bool) -> bool {
-        let rising_edge = !self.prev_a12 && current_a12;
-        self.prev_a12 = current_a12;
-        rising_edge
-    }
-
-    fn track_a12_low_cycles(&mut self) {
-        if self.current_a12 {
-            self.a12_low_cycles = 0;
-        } else {
-            self.a12_low_cycles = self.a12_low_cycles.saturating_add(1);
-        }
-    }
-
-    fn should_clock_irq_on_a12_change(&mut self, addr: u16) -> bool {
-        // MMC3 A12 low-pass filter: A12 must be low for at least 3 M2 (CPU) cycles
-        // before a rising edge is allowed to clock the IRQ counter.
-        let current_a12 = (addr & 0x1000) != 0;
-        self.current_a12 = current_a12;
-        let rising_edge = self.a12_rising_edge(current_a12);
-        let low_cycles_met = self.a12_low_cycles >= Self::A12_LOW_CYCLES_REQUIRED;
-        let should_clock = rising_edge && low_cycles_met;
-
-        trace_mapper!(5; "MMC3 A12 check: addr=${:04X}, a12={}, rising_edge={}, low_cycles={}, should_clock={}", 
-            addr, current_a12, rising_edge, self.a12_low_cycles, should_clock);
-
-        should_clock
-    }
 
     fn clock_irq_counter_on_a12_rising_edge(&mut self) {
         // MMC3 IRQ counter behavior:
@@ -1473,13 +1439,14 @@ impl Mapper for MMC3Mapper {
     }
 
     fn ppu_address_changed(&mut self, addr: u16) {
-        if self.should_clock_irq_on_a12_change(addr) {
+        if self.a12_detector.update(addr) {
+            trace_mapper!(5; "MMC3 A12 rising edge detected: addr=${:04X}", addr);
             self.clock_irq_counter_on_a12_rising_edge();
         }
     }
 
     fn cpu_cycle(&mut self) {
-        self.track_a12_low_cycles();
+        self.a12_detector.cpu_tick();
     }
 
     fn irq_pending(&self) -> bool {
@@ -1518,9 +1485,9 @@ impl Mapper for MMC3Mapper {
         // [10]: irq_counter
         // [11]: flags (irq_reload, irq_enabled, irq_asserted, prg_ram_enabled, prg_ram_write_protected)
         // [12]: mirroring mode
-        // [13]: prev_a12
-        // [14]: current_a12
-        // [15]: a12_low_cycles
+        // [13]: prev_a12 (from A12 detector)
+        // [14]: current_a12 (from A12 detector)
+        // [15]: a12_low_cycles (from A12 detector)
         let mut snapshot = Vec::with_capacity(16);
         snapshot.push(self.bank_select);
         snapshot.extend_from_slice(&self.regs);
@@ -1539,9 +1506,9 @@ impl Mapper for MMC3Mapper {
             NametableLayout::SingleScreen => 3,
             _ => 1,
         });
-        snapshot.push(self.prev_a12 as u8);
-        snapshot.push(self.current_a12 as u8);
-        snapshot.push(self.a12_low_cycles);
+        snapshot.push(self.a12_detector.prev_a12() as u8);
+        snapshot.push(self.a12_detector.current_a12() as u8);
+        snapshot.push(self.a12_detector.a12_low_cycles());
         snapshot
     }
 
@@ -1567,9 +1534,9 @@ impl Mapper for MMC3Mapper {
         }
 
         if data.len() >= 16 {
-            self.prev_a12 = data[13] != 0;
-            self.current_a12 = data[14] != 0;
-            self.a12_low_cycles = data[15];
+            self.a12_detector.set_prev_a12(data[13] != 0);
+            self.a12_detector.set_current_a12(data[14] != 0);
+            self.a12_detector.set_a12_low_cycles(data[15]);
         }
 
         self.update_banks();

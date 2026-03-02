@@ -612,17 +612,12 @@ pub struct A12IrqCounter {
     reload: bool,
     enabled: bool,
     asserted: bool,
-    prev_a12: bool,
-    current_a12: bool,
-    a12_low_cycles: u8,
+    a12_detector: A12RisingEdgeDetector,
     alternate_behavior: bool,
 }
 
 #[allow(dead_code)]
 impl A12IrqCounter {
-    /// Minimum number of CPU cycles A12 must be low before a rising edge is valid.
-    const A12_LOW_CYCLES_REQUIRED: u8 = 3;
-
     /// Create a new A12 IRQ counter.
     ///
     /// `alternate_behavior`:
@@ -635,9 +630,7 @@ impl A12IrqCounter {
             reload: false,
             enabled: false,
             asserted: false,
-            prev_a12: false,
-            current_a12: false,
-            a12_low_cycles: 0,
+            a12_detector: A12RisingEdgeDetector::new(3),
             alternate_behavior,
         }
     }
@@ -668,34 +661,15 @@ impl A12IrqCounter {
 
     /// Track A12 low cycles for debounce. Call once per CPU cycle.
     pub fn cpu_cycle(&mut self) {
-        if self.current_a12 {
-            self.a12_low_cycles = 0;
-        } else {
-            self.a12_low_cycles = self.a12_low_cycles.saturating_add(1);
-        }
+        self.a12_detector.cpu_tick();
     }
 
     /// Notify the counter that the PPU address bus changed.
     /// Detects A12 rising edges and clocks the counter when appropriate.
     pub fn ppu_address_changed(&mut self, addr: u16) {
-        let current_a12 = (addr & 0x1000) != 0;
-        self.current_a12 = current_a12;
-
-        // Detect rising edge
-        let rising_edge = !self.prev_a12 && current_a12;
-        self.prev_a12 = current_a12;
-
-        if !rising_edge {
-            return;
+        if self.a12_detector.update(addr) {
+            self.clock_counter();
         }
-
-        // Debounce: A12 must have been low for at least 3 CPU cycles
-        if self.a12_low_cycles < Self::A12_LOW_CYCLES_REQUIRED {
-            return;
-        }
-
-        // Clock the counter
-        self.clock_counter();
     }
 
     fn clock_counter(&mut self) {
@@ -728,6 +702,96 @@ impl A12IrqCounter {
     #[cfg(test)]
     pub fn counter(&self) -> u8 {
         self.counter
+    }
+}
+
+// ============================================================================
+// A12 Rising Edge Detector
+// ============================================================================
+//
+// Reusable PPU A12 rising edge detector with configurable debounce.
+// Used by MMC3-family mappers (mapper48, mapper64, etc.) and SuperMagicCard.
+//
+// The PPU address bus bit 12 (A12) toggles between 0 and 1 as the PPU
+// fetches pattern table tiles. A rising edge (0→1 transition) that stays
+// low for a minimum number of CPU cycles indicates a new scanline.
+//
+// The debounce threshold filters out rapid A12 toggling during pattern
+// table fetches within a single scanline:
+// - threshold=3: standard MMC3-family debounce (3 CPU cycles low)
+// - threshold=0: no debounce (every rising edge counts)
+//
+// See: https://www.nesdev.org/wiki/MMC3#IRQ_Specifics
+
+pub struct A12RisingEdgeDetector {
+    prev_a12: bool,
+    current_a12: bool,
+    a12_low_cycles: u8,
+    threshold: u8,
+}
+
+impl A12RisingEdgeDetector {
+    /// Create a new A12 rising edge detector with the given debounce threshold.
+    ///
+    /// `threshold`: minimum number of CPU cycles A12 must be low before a
+    /// rising edge is considered valid. Use 3 for standard MMC3-family
+    /// debounce, or 0 for no debounce.
+    pub fn new(threshold: u8) -> Self {
+        Self {
+            prev_a12: false,
+            current_a12: false,
+            a12_low_cycles: 0,
+            threshold,
+        }
+    }
+
+    /// Notify the detector that the PPU address bus changed.
+    /// Returns `true` if a valid A12 rising edge was detected.
+    pub fn update(&mut self, addr: u16) -> bool {
+        let a12 = (addr & 0x1000) != 0;
+        self.current_a12 = a12;
+        let rising = a12 && !self.prev_a12;
+        self.prev_a12 = a12;
+        rising && self.a12_low_cycles >= self.threshold
+    }
+
+    /// Track A12 low cycles. Call once per CPU cycle.
+    pub fn cpu_tick(&mut self) {
+        if self.current_a12 {
+            self.a12_low_cycles = 0;
+        } else {
+            self.a12_low_cycles = self.a12_low_cycles.saturating_add(1);
+        }
+    }
+
+    /// Get the previous A12 state (for snapshot serialization).
+    pub fn prev_a12(&self) -> bool {
+        self.prev_a12
+    }
+
+    /// Get the current A12 state (for snapshot serialization).
+    pub fn current_a12(&self) -> bool {
+        self.current_a12
+    }
+
+    /// Get the A12 low cycle count (for snapshot serialization).
+    pub fn a12_low_cycles(&self) -> u8 {
+        self.a12_low_cycles
+    }
+
+    /// Set the previous A12 state (for snapshot restoration).
+    pub fn set_prev_a12(&mut self, value: bool) {
+        self.prev_a12 = value;
+    }
+
+    /// Set the current A12 state (for snapshot restoration).
+    pub fn set_current_a12(&mut self, value: bool) {
+        self.current_a12 = value;
+    }
+
+    /// Set the A12 low cycle count (for snapshot restoration).
+    pub fn set_a12_low_cycles(&mut self, value: u8) {
+        self.a12_low_cycles = value;
     }
 }
 
@@ -1288,6 +1352,182 @@ mod tests {
         // Zero bank size
         let zero_bank = BankSwitch::from_rom(&rom_data, 0);
         assert_eq!(zero_bank.current(), 0);
+    }
+
+    // ========================================================================
+    // A12RisingEdgeDetector Tests
+    // ========================================================================
+
+    /// Helper: simulate N CPU cycles on the detector.
+    fn run_detector_cpu_ticks(det: &mut A12RisingEdgeDetector, n: u32) {
+        for _ in 0..n {
+            det.cpu_tick();
+        }
+    }
+
+    #[test]
+    fn test_a12_detector_new_defaults() {
+        let det = A12RisingEdgeDetector::new(3);
+        assert!(!det.prev_a12());
+        assert!(!det.current_a12());
+        assert_eq!(det.a12_low_cycles(), 0);
+    }
+
+    #[test]
+    fn test_a12_detector_no_debounce_detects_first_rising_edge() {
+        // With threshold=0, the very first rising edge should be detected
+        let mut det = A12RisingEdgeDetector::new(0);
+        assert!(det.update(0x1000)); // A12 goes high → rising edge
+    }
+
+    #[test]
+    fn test_a12_detector_no_debounce_no_false_positive_when_staying_high() {
+        let mut det = A12RisingEdgeDetector::new(0);
+        assert!(det.update(0x1000)); // rising edge
+        assert!(!det.update(0x1000)); // still high → no edge
+        assert!(!det.update(0x1FFF)); // still high (different addr) → no edge
+    }
+
+    #[test]
+    fn test_a12_detector_no_debounce_no_edge_on_falling() {
+        let mut det = A12RisingEdgeDetector::new(0);
+        det.update(0x1000); // go high
+        assert!(!det.update(0x0000)); // falling edge → no detection
+    }
+
+    #[test]
+    fn test_a12_detector_no_debounce_detects_repeated_rising_edges() {
+        let mut det = A12RisingEdgeDetector::new(0);
+        assert!(det.update(0x1000)); // first rising edge
+        assert!(!det.update(0x0000)); // go low
+        assert!(det.update(0x1000)); // second rising edge
+    }
+
+    #[test]
+    fn test_a12_detector_debounce_rejects_edge_without_enough_low_cycles() {
+        let mut det = A12RisingEdgeDetector::new(3);
+        // Only 2 CPU cycles with A12 low — not enough
+        det.update(0x0000); // A12 low
+        run_detector_cpu_ticks(&mut det, 2);
+        assert!(!det.update(0x1000)); // rising edge but debounce not met
+    }
+
+    #[test]
+    fn test_a12_detector_debounce_accepts_edge_with_enough_low_cycles() {
+        let mut det = A12RisingEdgeDetector::new(3);
+        det.update(0x0000); // A12 low
+        run_detector_cpu_ticks(&mut det, 3); // exactly 3 CPU cycles
+        assert!(det.update(0x1000)); // rising edge with debounce met
+    }
+
+    #[test]
+    fn test_a12_detector_debounce_accepts_edge_with_excess_low_cycles() {
+        let mut det = A12RisingEdgeDetector::new(3);
+        det.update(0x0000); // A12 low
+        run_detector_cpu_ticks(&mut det, 10); // more than enough
+        assert!(det.update(0x1000)); // rising edge with debounce met
+    }
+
+    #[test]
+    fn test_a12_detector_cpu_tick_resets_low_cycles_when_a12_high() {
+        let mut det = A12RisingEdgeDetector::new(3);
+        det.update(0x0000); // A12 low
+        run_detector_cpu_ticks(&mut det, 5); // accumulate some low cycles
+        assert!(det.a12_low_cycles() > 0);
+
+        det.update(0x1000); // A12 goes high
+        det.cpu_tick(); // should reset counter
+        assert_eq!(det.a12_low_cycles(), 0);
+    }
+
+    #[test]
+    fn test_a12_detector_cpu_tick_increments_low_cycles_when_a12_low() {
+        let mut det = A12RisingEdgeDetector::new(3);
+        det.update(0x0000); // A12 low
+        det.cpu_tick();
+        assert_eq!(det.a12_low_cycles(), 1);
+        det.cpu_tick();
+        assert_eq!(det.a12_low_cycles(), 2);
+        det.cpu_tick();
+        assert_eq!(det.a12_low_cycles(), 3);
+    }
+
+    #[test]
+    fn test_a12_detector_low_cycles_saturate() {
+        let mut det = A12RisingEdgeDetector::new(3);
+        det.update(0x0000); // A12 low
+        // Run many CPU cycles — should saturate at 255, not overflow
+        run_detector_cpu_ticks(&mut det, 300);
+        assert_eq!(det.a12_low_cycles(), 255);
+    }
+
+    #[test]
+    fn test_a12_detector_debounce_resets_after_detection() {
+        // After a valid rising edge, a12_low_cycles should be reset
+        // so the next rising edge requires fresh debounce
+        let mut det = A12RisingEdgeDetector::new(3);
+        det.update(0x0000); // A12 low
+        run_detector_cpu_ticks(&mut det, 3);
+        assert!(det.update(0x1000)); // valid rising edge
+
+        // Now A12 is high, cpu_tick should reset counter
+        det.cpu_tick();
+        assert_eq!(det.a12_low_cycles(), 0);
+
+        // Go low briefly and try again — should fail debounce
+        det.update(0x0000);
+        run_detector_cpu_ticks(&mut det, 1);
+        assert!(!det.update(0x1000)); // not enough low cycles
+    }
+
+    #[test]
+    fn test_a12_detector_update_tracks_current_a12() {
+        let mut det = A12RisingEdgeDetector::new(3);
+        assert!(!det.current_a12());
+
+        det.update(0x1000);
+        assert!(det.current_a12());
+
+        det.update(0x0000);
+        assert!(!det.current_a12());
+    }
+
+    #[test]
+    fn test_a12_detector_snapshot_restore() {
+        let mut det = A12RisingEdgeDetector::new(3);
+        det.update(0x0000); // A12 low
+        run_detector_cpu_ticks(&mut det, 2);
+        det.update(0x1000); // A12 high (but debounce not met)
+
+        // Save state
+        let prev = det.prev_a12();
+        let curr = det.current_a12();
+        let low = det.a12_low_cycles();
+
+        // Create new detector and restore
+        let mut det2 = A12RisingEdgeDetector::new(3);
+        det2.set_prev_a12(prev);
+        det2.set_current_a12(curr);
+        det2.set_a12_low_cycles(low);
+
+        assert_eq!(det2.prev_a12(), prev);
+        assert_eq!(det2.current_a12(), curr);
+        assert_eq!(det2.a12_low_cycles(), low);
+    }
+
+    #[test]
+    fn test_a12_detector_addr_bit12_extraction() {
+        // Verify that only bit 12 of the address matters
+        let mut det = A12RisingEdgeDetector::new(0);
+
+        // 0x1000 = bit 12 set
+        assert!(det.update(0x1000));
+
+        // Go low with various addresses that have bit 12 clear
+        assert!(!det.update(0x0FFF));
+
+        // Rise again with different address but bit 12 set
+        assert!(det.update(0x1FFF));
     }
 
     // ========================================================================
