@@ -9,6 +9,7 @@
 
 use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mapper45::Mapper45;
+use crate::cartridge::mmc3::MMC3Mapper;
 use crate::cartridge::{Mapper, MapperCapabilities};
 
 /// Mapper 251 implemented as a thin wrapper around Mapper 45 behavior.
@@ -35,6 +36,14 @@ impl Mapper for Mapper251 {
     }
     fn base_mut(&mut self) -> &mut BaseMapper {
         &mut self.inner.mmc3.base
+    }
+
+    fn mmc3_delegate(&self) -> Option<&MMC3Mapper> {
+        Some(&self.inner.mmc3)
+    }
+
+    fn mmc3_delegate_mut(&mut self) -> Option<&mut MMC3Mapper> {
+        Some(&mut self.inner.mmc3)
     }
 
     fn read_prg(&self, addr: u16) -> u8 {
@@ -65,28 +74,8 @@ impl Mapper for Mapper251 {
         self.inner.wram_size()
     }
 
-    fn ppu_address_changed(&mut self, addr: u16) {
-        self.inner.ppu_address_changed(addr);
-    }
-
-    fn cpu_cycle(&mut self) {
-        self.inner.cpu_cycle();
-    }
-
-    fn irq_pending(&self) -> bool {
-        self.inner.irq_pending()
-    }
-
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.inner.chr_ram_snapshot()
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.inner.restore_chr_ram(data);
-    }
-
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        self.inner.initialize_ram(mode);
+    fn reset(&mut self) {
+        self.inner.reset();
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -157,5 +146,29 @@ mod tests {
         assert_eq!(mapper.read_prg(0xFFFD), 0xFE);
         assert_eq!(mapper.read_prg(0xFFFE), 0x58);
         assert_eq!(mapper.read_prg(0xFFFF), 0xE4);
+    }
+
+    #[test]
+    fn test_reset_restores_default_outer_bank_state_like_mapper45() {
+        let prg_rom = banked_data(8 * 1024, 9);
+        let chr_rom = banked_data(1024, 8);
+        let mut mapper = create_mapper251(prg_rom, chr_rom, NametableLayout::Vertical).unwrap();
+
+        assert_eq!(mapper.read_prg(0xE000), 8);
+
+        mapper.write_prg(0x6000, 0x00);
+        mapper.write_prg(0x6000, 0x20);
+        mapper.write_prg(0x6000, 0x00);
+        mapper.write_prg(0x6000, 0x00);
+
+        assert_eq!(mapper.read_prg(0xE000), 4);
+
+        mapper.reset();
+
+        assert_eq!(
+            mapper.read_prg(0xE000),
+            8,
+            "Reset must restore mapper 45 default outer-bank registers"
+        );
     }
 }
