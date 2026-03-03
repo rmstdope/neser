@@ -56,6 +56,7 @@ impl Mapper43 {
 
         let mut base = BaseMapper::new(&ctx, capabilities);
         base.configure_prg_banking(Self::PRG_BANK_SIZE);
+        base.configure_prg_6000_banking();
         base.set_mirroring(mirroring);
 
         let mut mapper = Self {
@@ -70,6 +71,9 @@ impl Mapper43 {
     }
 
     fn update_banks(&mut self) {
+        // $6000-$7FFF: fixed bank 2
+        self.base.select_prg_6000_page(2);
+
         // $8000=bank1, $A000=bank0, $C000=switchable, $E000=bank9
         self.base.select_prg_page(0, 1);
         self.base.select_prg_page(1, 0);
@@ -78,23 +82,11 @@ impl Mapper43 {
         self.base.select_prg_page(3, 9);
     }
 
-    fn read_prg_custom(&self, addr: u16) -> u8 {
+    fn read_prg_5000(&self, addr: u16) -> u8 {
         let prg = self.base.prg_rom();
-        match addr {
-            0x5000..=0x5FFF => {
-                // 2KB chip at 0x10000, masked to 2KB
-                let chip_offset = addr as usize & 0x7FF;
-                prg.get(0x10000 + chip_offset).copied().unwrap_or(0)
-            }
-            0x6000..=0x7FFF => {
-                // Fixed bank 2
-                let offset = (addr as usize) & (Self::PRG_BANK_SIZE - 1);
-                prg.get(2 * Self::PRG_BANK_SIZE + offset)
-                    .copied()
-                    .unwrap_or(0)
-            }
-            _ => 0,
-        }
+        // 2KB chip at 0x10000, masked to 2KB
+        let chip_offset = addr as usize & 0x7FF;
+        prg.get(0x10000 + chip_offset).copied().unwrap_or(0)
     }
 }
 
@@ -108,9 +100,16 @@ impl Mapper for Mapper43 {
 
     fn read_prg(&self, addr: u16) -> u8 {
         match addr {
-            0x5000..=0x7FFF => self.read_prg_custom(addr),
-            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
-            _ => 0,
+            0x5000..=0x5FFF => self.read_prg_5000(addr),
+            _ => {
+                if let Some(value) = self.base.try_read_prg_6000(addr) {
+                    return value;
+                }
+                match addr {
+                    0x8000..=0xFFFF => self.base.read_prg_rom(addr),
+                    _ => 0,
+                }
+            }
         }
     }
 

@@ -54,6 +54,9 @@ pub struct BaseMapper {
     chr_pages: Vec<usize>,
     /// Whether bus conflicts are enabled (write value ANDed with ROM at same address).
     bus_conflicts: bool,
+    /// Optional PRG-ROM bank resolved for the $6000-$7FFF region.
+    /// `None` means $6000 banking is not configured (default: PRG-RAM or open bus).
+    prg_6000_bank: Option<usize>,
 }
 
 /// Resolve a signed bank number to an unsigned index, wrapping to available banks.
@@ -107,6 +110,7 @@ impl BaseMapper {
             prg_pages: Vec::new(),
             chr_pages: Vec::new(),
             bus_conflicts: false,
+            prg_6000_bank: None,
         }
     }
 
@@ -356,6 +360,52 @@ impl BaseMapper {
             self.select_prg_page(0, even);
             self.select_prg_page(1, even | 1);
         }
+    }
+
+    /// Enable 8KB PRG-ROM banking at $6000-$7FFF.
+    ///
+    /// After calling this, `select_prg_6000_page()` can be used to choose
+    /// which 8KB bank of PRG-ROM appears at $6000-$7FFF, and
+    /// `try_read_prg_6000()` will resolve reads from that region.
+    ///
+    /// Initially maps bank 0.
+    pub fn configure_prg_6000_banking(&mut self) {
+        self.prg_6000_bank = Some(0);
+    }
+
+    /// Select which 8KB PRG-ROM bank maps to $6000-$7FFF.
+    ///
+    /// Requires `configure_prg_6000_banking()` to have been called first.
+    /// Negative values count from the end: -1 = last 8KB bank, etc.
+    pub fn select_prg_6000_page(&mut self, bank: i16) {
+        let bank_count = self.prg_rom.len() / 0x2000;
+        if bank_count > 0 {
+            self.prg_6000_bank = Some(resolve_bank(bank, bank_count));
+        }
+    }
+
+    /// Try to read a byte from the $6000-$7FFF PRG-ROM banking region.
+    ///
+    /// Returns `Some(byte)` if $6000 banking is configured and `addr` is in
+    /// $6000-$7FFF. Returns `None` otherwise (so the caller can fall through
+    /// to PRG-RAM or open bus).
+    pub fn try_read_prg_6000(&self, addr: u16) -> Option<u8> {
+        let bank = self.prg_6000_bank?;
+        if !(0x6000..=0x7FFF).contains(&addr) {
+            return None;
+        }
+        let offset = (addr as usize) - 0x6000;
+        Some(
+            self.prg_rom
+                .get(bank * 0x2000 + offset)
+                .copied()
+                .unwrap_or(0),
+        )
+    }
+
+    /// Returns `true` if $6000-$7FFF PRG-ROM banking is configured.
+    pub fn has_prg_6000_banking(&self) -> bool {
+        self.prg_6000_bank.is_some()
     }
 
     /// Select a CHR bank for the given slot.
@@ -848,6 +898,86 @@ mod tests {
         base.apply_nrom_prg_banking(4, false);
         assert_eq!(base.read_prg_banked(0x8000), 4);
         assert_eq!(base.read_prg_banked(0xC000), 5);
+    }
+
+    // ========================================================================
+    // $6000 PRG-ROM Banking Tests
+    // ========================================================================
+
+    /// Helper: create a BaseMapper with identifiable 8KB PRG-ROM banks and $6000 banking.
+    fn make_prg_6000_mapper(num_8k_banks: usize) -> BaseMapper {
+        let prg_rom = make_bank_marked_rom(num_8k_banks, 0x2000);
+        let ctx =
+            MapperContext::new_for_test(0, prg_rom, vec![0; 8192], NametableLayout::Horizontal);
+        let mut base = BaseMapper::new(&ctx, MapperCapabilities::default());
+        base.configure_prg_6000_banking();
+        base
+    }
+
+    #[test]
+    fn test_prg_6000_default_maps_bank_0() {
+        let base = make_prg_6000_mapper(6);
+        assert_eq!(base.try_read_prg_6000(0x6000), Some(0));
+        assert_eq!(base.try_read_prg_6000(0x7FFF), Some(0));
+    }
+
+    #[test]
+    fn test_prg_6000_select_bank() {
+        let mut base = make_prg_6000_mapper(6);
+        base.select_prg_6000_page(3);
+        assert_eq!(base.try_read_prg_6000(0x6000), Some(3));
+        assert_eq!(base.try_read_prg_6000(0x7FFF), Some(3));
+    }
+
+    #[test]
+    fn test_prg_6000_bank_wraps() {
+        // 6 banks → bank 7 wraps to 1 (7 % 6 = 1)
+        let mut base = make_prg_6000_mapper(6);
+        base.select_prg_6000_page(7);
+        assert_eq!(base.try_read_prg_6000(0x6000), Some(1));
+    }
+
+    #[test]
+    fn test_prg_6000_negative_bank() {
+        // 6 banks → -1 = last bank = 5
+        let mut base = make_prg_6000_mapper(6);
+        base.select_prg_6000_page(-1);
+        assert_eq!(base.try_read_prg_6000(0x6000), Some(5));
+    }
+
+    #[test]
+    fn test_prg_6000_returns_none_when_not_configured() {
+        // No configure_prg_6000_banking() call
+        let prg_rom = make_bank_marked_rom(4, 0x2000);
+        let ctx =
+            MapperContext::new_for_test(0, prg_rom, vec![0; 8192], NametableLayout::Horizontal);
+        let base = BaseMapper::new(&ctx, MapperCapabilities::default());
+        assert_eq!(base.try_read_prg_6000(0x6000), None);
+    }
+
+    #[test]
+    fn test_prg_6000_returns_none_outside_range() {
+        let base = make_prg_6000_mapper(6);
+        assert_eq!(base.try_read_prg_6000(0x5FFF), None);
+        assert_eq!(base.try_read_prg_6000(0x8000), None);
+    }
+
+    #[test]
+    fn test_has_prg_6000_banking_false_by_default() {
+        let ctx = MapperContext::new_for_test(
+            0,
+            vec![0; 0x8000],
+            vec![0; 8192],
+            NametableLayout::Horizontal,
+        );
+        let base = BaseMapper::new(&ctx, MapperCapabilities::default());
+        assert!(!base.has_prg_6000_banking());
+    }
+
+    #[test]
+    fn test_has_prg_6000_banking_true_after_configure() {
+        let base = make_prg_6000_mapper(4);
+        assert!(base.has_prg_6000_banking());
     }
 
     // ========================================================================

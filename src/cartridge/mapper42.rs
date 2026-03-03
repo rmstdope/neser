@@ -49,6 +49,7 @@ impl Mapper42 {
 
         let mut base = BaseMapper::new(&ctx, capabilities);
         base.configure_prg_banking(Self::PRG_BANK_SIZE);
+        base.configure_prg_6000_banking();
         base.configure_chr_banking(Self::CHR_BANK_SIZE);
         base.set_mirroring(mirroring);
 
@@ -67,6 +68,9 @@ impl Mapper42 {
     }
 
     fn update_banks(&mut self) {
+        // $6000-$7FFF: switchable PRG-ROM bank
+        self.base.select_prg_6000_page(self.prg_bank as i16);
+
         // $8000-$FFFF: fixed last 4 × 8KB banks
         self.base.select_prg_page(0, -4);
         self.base.select_prg_page(1, -3);
@@ -76,19 +80,6 @@ impl Mapper42 {
         // CHR: single 8KB bank
         self.base.select_chr_page(0, self.chr_bank as i16);
     }
-
-    fn read_prg_6000(&self, addr: u16) -> u8 {
-        let prg = self.base.prg_rom();
-        let bank_count = prg.len() / Self::PRG_BANK_SIZE;
-        if bank_count == 0 {
-            return 0;
-        }
-        let bank = (self.prg_bank as usize) % bank_count;
-        let offset = (addr as usize) & (Self::PRG_BANK_SIZE - 1);
-        prg.get(bank * Self::PRG_BANK_SIZE + offset)
-            .copied()
-            .unwrap_or(0)
-    }
 }
 
 impl Mapper for Mapper42 {
@@ -97,14 +88,6 @@ impl Mapper for Mapper42 {
     }
     fn base_mut(&mut self) -> &mut BaseMapper {
         &mut self.base
-    }
-
-    fn read_prg(&self, addr: u16) -> u8 {
-        match addr {
-            0x6000..=0x7FFF => self.read_prg_6000(addr),
-            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
-            _ => 0,
-        }
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
@@ -117,6 +100,7 @@ impl Mapper for Mapper42 {
             0xE000 => {
                 // PRG Select: bits 3:0
                 self.prg_bank = value & 0x0F;
+                self.base.select_prg_6000_page(self.prg_bank as i16);
             }
             0xE001 => {
                 // Mirroring: bit 3 (0=Vertical, 1=Horizontal)
@@ -136,11 +120,6 @@ impl Mapper for Mapper42 {
             }
             _ => {}
         }
-    }
-
-    fn wram_size(&self) -> usize {
-        // No WRAM: $6000-$7FFF is mapped to PRG ROM, not RAM.
-        0
     }
 
     fn cpu_cycle(&mut self) {

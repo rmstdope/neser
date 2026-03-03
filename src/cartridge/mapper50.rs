@@ -65,6 +65,7 @@ impl Mapper50 {
 
         let mut base = BaseMapper::new(&ctx, capabilities);
         base.configure_prg_banking(Self::PRG_BANK_SIZE);
+        base.configure_prg_6000_banking();
         base.set_mirroring(mirroring);
 
         let mut mapper = Self {
@@ -78,25 +79,15 @@ impl Mapper50 {
     }
 
     fn update_banks(&mut self) {
+        // $6000-$7FFF: fixed bank 0x0F
+        self.base.select_prg_6000_page(Self::BANK_AT_6000 as i16);
+
         // $8000=0x08, $A000=0x09, $C000=switchable, $E000=0x0B
         self.base.select_prg_page(0, 0x08);
         self.base.select_prg_page(1, 0x09);
         self.base
             .select_prg_page(2, Self::unscramble_prg(self.prg_reg) as i16);
         self.base.select_prg_page(3, 0x0B);
-    }
-
-    fn read_prg_6000(&self, addr: u16) -> u8 {
-        let prg = self.base.prg_rom();
-        let bank_count = prg.len() / Self::PRG_BANK_SIZE;
-        if bank_count == 0 {
-            return 0;
-        }
-        let bank = Self::BANK_AT_6000 % bank_count;
-        let offset = (addr as usize) & (Self::PRG_BANK_SIZE - 1);
-        prg.get(bank * Self::PRG_BANK_SIZE + offset)
-            .copied()
-            .unwrap_or(0)
     }
 
     /// Unscramble the PRG register [HLLM] to get the actual 4-bit bank number.
@@ -114,14 +105,6 @@ impl Mapper for Mapper50 {
     }
     fn base_mut(&mut self) -> &mut BaseMapper {
         &mut self.base
-    }
-
-    fn read_prg(&self, addr: u16) -> u8 {
-        match addr {
-            0x6000..=0x7FFF => self.read_prg_6000(addr),
-            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
-            _ => 0,
-        }
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {

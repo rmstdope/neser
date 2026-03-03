@@ -48,9 +48,6 @@ pub struct Mapper53 {
 }
 
 impl Mapper53 {
-    const PRG_8K_SIZE: usize = 0x2000;
-    const PRG_8K_MASK: usize = Self::PRG_8K_SIZE - 1;
-
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_dynamic_mirroring: true,
@@ -61,6 +58,7 @@ impl Mapper53 {
         };
         let mut base = BaseMapper::new(&ctx, capabilities);
         base.configure_prg_banking(16 * 1024);
+        base.configure_prg_6000_banking();
         // Default: menu mode → 32KB bank 0 = 16KB banks 0 and 1
         base.select_prg_page(0, 0);
         base.select_prg_page(1, 1);
@@ -73,23 +71,6 @@ impl Mapper53 {
         mapper
     }
 
-    fn num_prg_8k_banks(&self) -> usize {
-        self.base.prg_rom().len() / Self::PRG_8K_SIZE
-    }
-
-    fn read_prg_8k_bank(&self, bank: usize, offset: usize) -> u8 {
-        let count = self.num_prg_8k_banks();
-        if count == 0 {
-            return 0;
-        }
-        let safe_bank = bank % count;
-        self.base
-            .prg_rom()
-            .get(safe_bank * Self::PRG_8K_SIZE + offset)
-            .copied()
-            .unwrap_or(0)
-    }
-
     /// $6000 bank (8KB): ((cmd0 & 0x0F) << 4 | 0x0F) + 4
     fn prg_6000_bank(&self) -> usize {
         ((((self.cmd0 & 0x0F) as usize) << 4) | 0x0F).wrapping_add(4)
@@ -100,6 +81,9 @@ impl Mapper53 {
     }
 
     fn update_banks(&mut self) {
+        // $6000-$7FFF: computed 8KB bank
+        self.base.select_prg_6000_page(self.prg_6000_bank() as i16);
+
         if self.game_selected() {
             let outer = (self.cmd0 & 0x0F) as usize;
             let switchable = ((outer << 3) | (self.cmd1 & 7) as usize).wrapping_add(2) as i16;
@@ -127,17 +111,6 @@ impl Mapper for Mapper53 {
 
     fn base_mut(&mut self) -> &mut BaseMapper {
         &mut self.base
-    }
-
-    fn read_prg(&self, addr: u16) -> u8 {
-        match addr {
-            0x6000..=0x7FFF => {
-                let offset = (addr as usize) & Self::PRG_8K_MASK;
-                self.read_prg_8k_bank(self.prg_6000_bank(), offset)
-            }
-            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
-            _ => 0,
-        }
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {

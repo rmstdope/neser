@@ -80,6 +80,7 @@ impl SunsoftFme7Mapper {
         };
         let mut base = BaseMapper::new(&ctx, capabilities);
         base.configure_prg_banking(0x2000);
+        base.configure_prg_6000_banking();
         base.configure_chr_banking(0x0400);
         let mut mapper = Self {
             base,
@@ -97,6 +98,8 @@ impl SunsoftFme7Mapper {
     }
 
     fn update_banks(&mut self) {
+        // PRG: $6000-$7FFF = switchable 8KB ROM bank (when RAM not enabled)
+        self.base.select_prg_6000_page(self.prg_banks[0] as i16);
         // PRG: $8000-$FFFF = 4 x 8KB slots
         self.base.select_prg_page(0, self.prg_banks[1] as i16);
         self.base.select_prg_page(1, self.prg_banks[2] as i16);
@@ -106,18 +109,6 @@ impl SunsoftFme7Mapper {
         for i in 0..8 {
             self.base.select_chr_page(i, self.chr_banks[i] as i16);
         }
-    }
-
-    fn read_prg_6000(&self, addr: u16) -> u8 {
-        let prg_rom = self.base.prg_rom();
-        let bank_size = 0x2000;
-        let bank_count = prg_rom.len() / bank_size;
-        if bank_count == 0 {
-            return 0;
-        }
-        let bank = (self.prg_banks[0] as usize) % bank_count;
-        let offset = (addr as usize) - 0x6000;
-        prg_rom.get(bank * bank_size + offset).copied().unwrap_or(0)
     }
 
     fn write_command(&mut self, value: u8) {
@@ -204,10 +195,10 @@ impl Mapper for SunsoftFme7Mapper {
                     let offset = (addr - 0x6000) as usize;
                     self.prg_ram.get(offset).copied().unwrap_or(0)
                 } else {
-                    self.read_prg_6000(addr)
+                    self.base.try_read_prg_6000(addr).unwrap_or(0)
                 }
             }
-            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
+            0x8000..=0xFFFF => self.base.read_prg_rom(addr),
             _ => 0,
         }
     }
