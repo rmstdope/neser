@@ -57,7 +57,7 @@ test.describe("Phase 1 critical path lifecycle", () => {
 
         await page.locator(RESET_BUTTON_SELECTOR).click();
 
-        await expect(page.locator(STATUS_SELECTOR)).toContainText("Reset");
+        await expect(page.locator(STATUS_SELECTOR)).toContainText("Soft reset");
         await expect(page.locator(START_BUTTON_SELECTOR)).toBeDisabled();
     });
 

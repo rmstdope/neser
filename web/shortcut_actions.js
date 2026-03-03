@@ -3,10 +3,11 @@
  *
  * Returns true when a mapped shortcut was handled.
  *
- * @param {KeyboardEvent|{code:string,preventDefault:Function}} event
+ * @param {KeyboardEvent|{code:string,repeat:boolean,metaKey:boolean,altKey:boolean,shiftKey:boolean,preventDefault:Function}} event
  * @param {{
  *   togglePause: Function,
  *   reset: Function,
+ *   hardReset: Function,
  *   toggleFilter: Function,
  *   saveState: Function,
  *   loadState: Function,
@@ -23,7 +24,7 @@ export async function dispatchWebShortcutAction(event, actions) {
         return false;
     }
 
-    const action = shortcutActionForCode(event.code, actions);
+    const action = shortcutActionForEvent(event, actions);
     if (!action) {
         return false;
     }
@@ -35,18 +36,31 @@ export async function dispatchWebShortcutAction(event, actions) {
 
 const shortcutActionByCode = {
     Space: "togglePause",
-    F1: "reset",
     F4: "toggleFilter",
     F5: "debuggerToggle",
     F6: "saveState",
     F7: "loadState",
     F10: "debuggerStepOver",
     F11: "debuggerStepInto",
-    F12: "toggleFullscreen",
     KeyH: "toggleHelp"
 };
 
-function shortcutActionForCode(code, actions) {
+function hasCommandOrAltModifier(event) {
+    return Boolean(event.metaKey || event.altKey);
+}
+
+function shortcutActionForEvent(event, actions) {
+    if (hasCommandOrAltModifier(event)) {
+        if (event.code === "KeyR") {
+            return event.shiftKey ? actions.hardReset : actions.reset;
+        }
+
+        if (event.code === "KeyF") {
+            return actions.toggleFullscreen;
+        }
+    }
+
+    const code = event.code;
     const actionName = shortcutActionByCode[code];
     if (!actionName) {
         return null;

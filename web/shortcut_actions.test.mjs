@@ -3,11 +3,15 @@ import assert from "node:assert/strict";
 
 import { dispatchWebShortcutAction } from "./shortcut_actions.js";
 
-function makeKeyboardEvent(code) {
+function makeKeyboardEvent(code, modifiers = {}) {
     let prevented = false;
     return {
         code,
         repeat: false,
+        metaKey: false,
+        altKey: false,
+        shiftKey: false,
+        ...modifiers,
         preventDefault() {
             prevented = true;
         },
@@ -23,7 +27,8 @@ function makeActions() {
         calls,
         actions: {
             togglePause: () => calls.push("togglePause"),
-            reset: () => calls.push("reset"),
+            reset: () => calls.push("softReset"),
+            hardReset: () => calls.push("hardReset"),
             toggleFilter: () => calls.push("toggleFilter"),
             saveState: async () => calls.push("saveState"),
             loadState: async () => calls.push("loadState"),
@@ -47,14 +52,58 @@ test("dispatchWebShortcutAction routes Space to togglePause", async () => {
     assert.equal(event.defaultPrevented, true);
 });
 
-test("dispatchWebShortcutAction routes F1 to reset", async () => {
+test("dispatchWebShortcutAction ignores legacy F1 reset key", async () => {
     const event = makeKeyboardEvent("F1");
     const { calls, actions } = makeActions();
 
     const handled = await dispatchWebShortcutAction(event, actions);
 
+    assert.equal(handled, false);
+    assert.deepEqual(calls, []);
+    assert.equal(event.defaultPrevented, false);
+});
+
+test("dispatchWebShortcutAction routes Cmd/Meta+R to soft reset", async () => {
+    const event = makeKeyboardEvent("KeyR", { metaKey: true });
+    const { calls, actions } = makeActions();
+
+    const handled = await dispatchWebShortcutAction(event, actions);
+
     assert.equal(handled, true);
-    assert.deepEqual(calls, ["reset"]);
+    assert.deepEqual(calls, ["softReset"]);
+    assert.equal(event.defaultPrevented, true);
+});
+
+test("dispatchWebShortcutAction routes Alt+R to soft reset", async () => {
+    const event = makeKeyboardEvent("KeyR", { altKey: true });
+    const { calls, actions } = makeActions();
+
+    const handled = await dispatchWebShortcutAction(event, actions);
+
+    assert.equal(handled, true);
+    assert.deepEqual(calls, ["softReset"]);
+    assert.equal(event.defaultPrevented, true);
+});
+
+test("dispatchWebShortcutAction routes Shift+Cmd/Meta+R to hard reset", async () => {
+    const event = makeKeyboardEvent("KeyR", { metaKey: true, shiftKey: true });
+    const { calls, actions } = makeActions();
+
+    const handled = await dispatchWebShortcutAction(event, actions);
+
+    assert.equal(handled, true);
+    assert.deepEqual(calls, ["hardReset"]);
+    assert.equal(event.defaultPrevented, true);
+});
+
+test("dispatchWebShortcutAction routes Shift+Alt+R to hard reset", async () => {
+    const event = makeKeyboardEvent("KeyR", { altKey: true, shiftKey: true });
+    const { calls, actions } = makeActions();
+
+    const handled = await dispatchWebShortcutAction(event, actions);
+
+    assert.equal(handled, true);
+    assert.deepEqual(calls, ["hardReset"]);
     assert.equal(event.defaultPrevented, true);
 });
 
@@ -91,8 +140,30 @@ test("dispatchWebShortcutAction routes F7 to loadState", async () => {
     assert.equal(event.defaultPrevented, true);
 });
 
-test("dispatchWebShortcutAction routes F12 to toggleFullscreen", async () => {
+test("dispatchWebShortcutAction ignores legacy F12 fullscreen key", async () => {
     const event = makeKeyboardEvent("F12");
+    const { calls, actions } = makeActions();
+
+    const handled = await dispatchWebShortcutAction(event, actions);
+
+    assert.equal(handled, false);
+    assert.deepEqual(calls, []);
+    assert.equal(event.defaultPrevented, false);
+});
+
+test("dispatchWebShortcutAction routes Cmd/Meta+F to toggleFullscreen", async () => {
+    const event = makeKeyboardEvent("KeyF", { metaKey: true });
+    const { calls, actions } = makeActions();
+
+    const handled = await dispatchWebShortcutAction(event, actions);
+
+    assert.equal(handled, true);
+    assert.deepEqual(calls, ["toggleFullscreen"]);
+    assert.equal(event.defaultPrevented, true);
+});
+
+test("dispatchWebShortcutAction routes Alt+F to toggleFullscreen", async () => {
+    const event = makeKeyboardEvent("KeyF", { altKey: true });
     const { calls, actions } = makeActions();
 
     const handled = await dispatchWebShortcutAction(event, actions);

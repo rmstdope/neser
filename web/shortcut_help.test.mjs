@@ -38,7 +38,9 @@ function createMockHelpOverlay(initiallyHidden = true) {
 test("buildShortcutReferenceText includes H help toggle shortcut", () => {
     const text = buildShortcutReferenceText();
     assert.match(text, /H = Toggle Help/);
-    assert.match(text, /F12 = Fullscreen/);
+    assert.match(text, /Cmd\/Alt\+F = Toggle Fullscreen/);
+    assert.match(text, /Cmd\/Alt\+R = Soft Reset/);
+    assert.match(text, /Shift\+Cmd\/Alt\+R = Hard Reset/);
     assert.match(text, /F4 = Cycle Filter/);
 });
 
@@ -47,7 +49,9 @@ test("buildShortcutOverlayText renders multiline list for overlay", () => {
 
     assert.match(text, /^Shortcuts/m);
     assert.match(text, /H: Toggle Help/);
-    assert.match(text, /F12: Fullscreen/);
+    assert.match(text, /Cmd\/Alt\+F: Toggle Fullscreen/);
+    assert.match(text, /Cmd\/Alt\+R: Soft Reset/);
+    assert.match(text, /Shift\+Cmd\/Alt\+R: Hard Reset/);
     assert.match(text, /F4: Cycle Filter/);
     assert.match(text, /\n/);
 });
@@ -62,9 +66,19 @@ test("computeShortcutHelpFontSizePx clamps to supported range", () => {
     assert.equal(computeShortcutHelpFontSizePx(2200), 38);
 });
 
-test("WEB_SHORTCUT_REFERENCE includes KeyH mapping", () => {
+test("WEB_SHORTCUT_REFERENCE includes help, soft reset, and hard reset mappings", () => {
     const helpShortcut = WEB_SHORTCUT_REFERENCE.find((shortcut) => shortcut.key === "H");
     assert.deepEqual(helpShortcut, { key: "H", action: "Toggle Help" });
+
+    const softResetShortcut = WEB_SHORTCUT_REFERENCE.find(
+        (shortcut) => shortcut.key === "Cmd/Alt+R"
+    );
+    assert.deepEqual(softResetShortcut, { key: "Cmd/Alt+R", action: "Soft Reset" });
+
+    const hardResetShortcut = WEB_SHORTCUT_REFERENCE.find(
+        (shortcut) => shortcut.key === "Shift+Cmd/Alt+R"
+    );
+    assert.deepEqual(hardResetShortcut, { key: "Shift+Cmd/Alt+R", action: "Hard Reset" });
 });
 
 test("toggleShortcutHelpVisibility shows hidden overlay", () => {
