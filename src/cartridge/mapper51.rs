@@ -65,6 +65,7 @@ impl Mapper51 {
 
         let mut base = BaseMapper::new(&ctx, capabilities);
         base.configure_prg_banking(0x2000); // 8KB
+        base.configure_prg_6000_banking();
 
         // Handle bad-dump CRC32 case: replace CHR-ROM with CHR-RAM initialized
         // with the ROM data. Some bad dumps carry an 8KB CHR-ROM payload in the
@@ -91,20 +92,17 @@ impl Mapper51 {
         ((value >> 3) & 0x02) | ((value >> 1) & 0x01)
     }
 
-    fn resolve_6000_bank(&self) -> usize {
-        let bank = self.bank as usize;
-        let prg_rom = self.base.prg_rom();
-        let bank_count = prg_rom.len() / 0x2000;
-        let raw = if self.mode & 0x01 != 0 {
-            0x23 | (bank << 2)
-        } else {
-            0x2F | (bank << 2)
-        };
-        if bank_count == 0 { 0 } else { raw % bank_count }
-    }
-
     fn update_banks(&mut self) {
         let bank = self.bank as usize;
+
+        // $6000-$7FFF: computed bank
+        let prg_6000 = if self.mode & 0x01 != 0 {
+            (0x23 | (bank << 2)) as i16
+        } else {
+            (0x2F | (bank << 2)) as i16
+        };
+        self.base.select_prg_6000_page(prg_6000);
+
         if self.mode & 0x01 != 0 {
             // 32KB mode: $8000-$FFFF mapped to 4 consecutive 8KB pages
             self.base.select_prg_page(0, (bank << 2) as i16);
@@ -137,18 +135,6 @@ impl Mapper for Mapper51 {
 
     fn base_mut(&mut self) -> &mut BaseMapper {
         &mut self.base
-    }
-
-    fn read_prg(&self, addr: u16) -> u8 {
-        match addr {
-            0x6000..=0x7FFF => {
-                let bank = self.resolve_6000_bank();
-                let offset = (addr as usize) & 0x1FFF;
-                let prg_rom = self.base.prg_rom();
-                prg_rom.get(bank * 0x2000 + offset).copied().unwrap_or(0)
-            }
-            _ => self.base.read_prg_banked(addr),
-        }
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {

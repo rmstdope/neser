@@ -59,6 +59,7 @@ impl Ntdec2722Mapper {
 
         let mut base = BaseMapper::new(&ctx, capabilities);
         base.configure_prg_banking(Self::PRG_BANK_SIZE);
+        base.configure_prg_6000_banking();
         base.set_mirroring(mirroring);
 
         let mut mapper = Self {
@@ -75,24 +76,14 @@ impl Ntdec2722Mapper {
     }
 
     fn update_banks(&mut self) {
+        // $6000-$7FFF: fixed bank 6
+        self.base.select_prg_6000_page(Self::BANK_AT_6000 as i16);
+
         // $8000=bank4, $A000=bank5, $C000=switchable, $E000=bank7
         self.base.select_prg_page(0, 4);
         self.base.select_prg_page(1, 5);
         self.base.select_prg_page(2, self.prg_bank as i16);
         self.base.select_prg_page(3, 7);
-    }
-
-    fn read_prg_6000(&self, addr: u16) -> u8 {
-        let prg = self.base.prg_rom();
-        let bank_count = prg.len() / Self::PRG_BANK_SIZE;
-        if bank_count == 0 {
-            return 0;
-        }
-        let bank = Self::BANK_AT_6000 % bank_count;
-        let offset = (addr as usize) & (Self::PRG_BANK_SIZE - 1);
-        prg.get(bank * Self::PRG_BANK_SIZE + offset)
-            .copied()
-            .unwrap_or(0)
     }
 }
 
@@ -102,14 +93,6 @@ impl Mapper for Ntdec2722Mapper {
     }
     fn base_mut(&mut self) -> &mut BaseMapper {
         &mut self.base
-    }
-
-    fn read_prg(&self, addr: u16) -> u8 {
-        match addr {
-            0x6000..=0x7FFF => self.read_prg_6000(addr),
-            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
-            _ => 0,
-        }
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
@@ -132,11 +115,6 @@ impl Mapper for Ntdec2722Mapper {
             }
             _ => {}
         }
-    }
-
-    fn wram_size(&self) -> usize {
-        // No WRAM: $6000-$7FFF is mapped to PRG ROM bank 6, not RAM.
-        0
     }
 
     fn cpu_cycle(&mut self) {
