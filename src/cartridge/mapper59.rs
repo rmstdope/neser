@@ -119,12 +119,7 @@ impl Mapper for Mapper59 {
                 self.locked = true;
             }
 
-            let mirroring = if mirroring_h {
-                NametableLayout::Horizontal
-            } else {
-                NametableLayout::Vertical
-            };
-            self.base.set_mirroring(mirroring);
+            self.base.set_mirroring_hv(mirroring_h);
             self.update_banks();
         }
     }
@@ -150,12 +145,7 @@ impl Mapper for Mapper59 {
             self.prg_mode_128 = flags & 1 != 0;
             self.jumper_mode = flags & 2 != 0;
             self.locked = flags & 4 != 0;
-            let mirroring = if flags & 8 != 0 {
-                NametableLayout::Horizontal
-            } else {
-                NametableLayout::Vertical
-            };
-            self.base.set_mirroring(mirroring);
+            self.base.set_mirroring_hv(flags & 8 != 0);
             self.update_banks();
         }
     }

@@ -60,11 +60,7 @@ impl Mapper for Mapper242 {
             let bank = ((addr >> 1) & 0x07) as i16;
             self.base.select_prg_page(0, bank);
             // Address bit A[0] selects mirroring
-            self.base.set_mirroring(if addr & 0x01 != 0 {
-                NametableLayout::Horizontal
-            } else {
-                NametableLayout::Vertical
-            });
+            self.base.set_mirroring_hv(addr & 0x01 != 0);
         }
         let _ = value; // Data value is ignored
     }
@@ -82,11 +78,7 @@ impl Mapper for Mapper242 {
             self.base.select_prg_page(0, bank as i16);
         }
         if let Some(&mir) = data.get(1) {
-            self.base.set_mirroring(if mir != 0 {
-                NametableLayout::Horizontal
-            } else {
-                NametableLayout::Vertical
-            });
+            self.base.set_mirroring_hv(mir != 0);
         }
     }
 }

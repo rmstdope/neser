@@ -98,11 +98,7 @@ impl Mapper61 {
         self.prg_mode = (addr & 0x0010) != 0;
         self.prg_a14 = ((addr >> 5) & 0x01) as u8;
         self.chr_a13 = ((addr >> 6) & 0x01) as u8;
-        self.base.set_mirroring(if (addr & 0x0080) != 0 {
-            NametableLayout::Horizontal
-        } else {
-            NametableLayout::Vertical
-        });
+        self.base.set_mirroring_hv((addr & 0x0080) != 0);
         self.chr_bank = ((addr >> 8) & 0x0F) as u8;
         self.update_banks();
     }
@@ -153,11 +149,7 @@ impl Mapper for Mapper61 {
             self.prg_mode = (data[1] & 0x01) != 0;
             self.prg_a14 = (data[1] >> 1) & 0x01;
             self.chr_a13 = (data[1] >> 2) & 0x01;
-            self.base.set_mirroring(if (data[1] & 0x08) != 0 {
-                NametableLayout::Horizontal
-            } else {
-                NametableLayout::Vertical
-            });
+            self.base.set_mirroring_hv((data[1] & 0x08) != 0);
             self.chr_bank = data[2];
             self.update_banks();
         }

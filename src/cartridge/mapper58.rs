@@ -86,12 +86,7 @@ impl Mapper for Mapper58 {
             self.prg_bank = a & 0x07;
             self.chr_bank = (a >> 3) & 0x07;
             self.prg_mode = (a & 0x40) != 0;
-            let mirroring = if (a & 0x80) != 0 {
-                NametableLayout::Horizontal
-            } else {
-                NametableLayout::Vertical
-            };
-            self.base.set_mirroring(mirroring);
+            self.base.set_mirroring_hv((a & 0x80) != 0);
             self.update_banks();
         }
     }
@@ -107,12 +102,7 @@ impl Mapper for Mapper58 {
             self.prg_bank = data[0];
             self.chr_bank = data[1];
             self.prg_mode = (data[2] & 1) != 0;
-            let mirroring = if (data[2] & 2) != 0 {
-                NametableLayout::Horizontal
-            } else {
-                NametableLayout::Vertical
-            };
-            self.base.set_mirroring(mirroring);
+            self.base.set_mirroring_hv((data[2] & 2) != 0);
             self.update_banks();
         }
     }

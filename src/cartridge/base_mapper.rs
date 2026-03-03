@@ -238,6 +238,16 @@ impl BaseMapper {
         self.mirroring = mirroring;
     }
 
+    /// Convenience: set horizontal (true) or vertical (false) mirroring.
+    #[inline]
+    pub fn set_mirroring_hv(&mut self, horizontal: bool) {
+        self.mirroring = if horizontal {
+            NametableLayout::Horizontal
+        } else {
+            NametableLayout::Vertical
+        };
+    }
+
     // --- Mapper identification ---
 
     /// Get the mapper number.
@@ -654,6 +664,34 @@ mod tests {
         assert_eq!(base.mirroring(), NametableLayout::Vertical);
         base.set_mirroring(NametableLayout::Horizontal);
         assert_eq!(base.mirroring(), NametableLayout::Horizontal);
+    }
+
+    #[test]
+    fn test_set_mirroring_hv_true_sets_horizontal() {
+        let ctx = MapperContext::new_for_test(
+            0,
+            vec![0; 0x8000],
+            vec![0; 8192],
+            NametableLayout::Vertical,
+        );
+        let mut base = BaseMapper::new(&ctx, MapperCapabilities::default());
+
+        base.set_mirroring_hv(true);
+        assert_eq!(base.mirroring(), NametableLayout::Horizontal);
+    }
+
+    #[test]
+    fn test_set_mirroring_hv_false_sets_vertical() {
+        let ctx = MapperContext::new_for_test(
+            0,
+            vec![0; 0x8000],
+            vec![0; 8192],
+            NametableLayout::Horizontal,
+        );
+        let mut base = BaseMapper::new(&ctx, MapperCapabilities::default());
+
+        base.set_mirroring_hv(false);
+        assert_eq!(base.mirroring(), NametableLayout::Vertical);
     }
 
     #[test]

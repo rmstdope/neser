@@ -133,12 +133,7 @@ impl Mapper for MMC4Mapper {
                 self.update_chr_pages();
             }
             0xF000..=0xFFFF => {
-                let mirroring = if (value & 0x01) != 0 {
-                    NametableLayout::Horizontal
-                } else {
-                    NametableLayout::Vertical
-                };
-                self.base.set_mirroring(mirroring);
+                self.base.set_mirroring_hv((value & 0x01) != 0);
             }
             _ => {}
         }

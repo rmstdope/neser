@@ -191,11 +191,7 @@ impl Mapper for Mapper48 {
                 self.irq_pending = false;
             }
             0xE000 => {
-                self.base.set_mirroring(if (value & 0x40) != 0 {
-                    NametableLayout::Horizontal
-                } else {
-                    NametableLayout::Vertical
-                });
+                self.base.set_mirroring_hv((value & 0x40) != 0);
             }
             _ => {}
         }
@@ -243,11 +239,7 @@ impl Mapper for Mapper48 {
 
     fn restore_registers(&mut self, data: &[u8]) {
         if data.len() >= 12 {
-            self.base.set_mirroring(if data[0] != 0 {
-                NametableLayout::Horizontal
-            } else {
-                NametableLayout::Vertical
-            });
+            self.base.set_mirroring_hv(data[0] != 0);
             self.prg_bank.copy_from_slice(&data[1..3]);
             self.chr_bank_2k.copy_from_slice(&data[3..5]);
             self.chr_bank_1k.copy_from_slice(&data[5..9]);

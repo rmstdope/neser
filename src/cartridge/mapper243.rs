@@ -6,7 +6,6 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
-use crate::cartridge::NametableLayout;
 use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
@@ -70,12 +69,7 @@ impl Mapper243 {
     }
 
     fn update_mirroring(&mut self) {
-        let mirroring = if self.mirror_flag == 0 {
-            NametableLayout::Vertical
-        } else {
-            NametableLayout::Horizontal
-        };
-        self.base.set_mirroring(mirroring);
+        self.base.set_mirroring_hv(self.mirror_flag != 0);
     }
 
     fn update_banks(&mut self) {
@@ -152,6 +146,7 @@ impl Mapper for Mapper243 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cartridge::NametableLayout;
     use crate::cartridge::mapper::{MapperContext, create_mapper};
     use crate::cartridge::test_helpers::banked_data;
 

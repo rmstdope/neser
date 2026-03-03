@@ -176,11 +176,7 @@ impl Mapper for Mapper56 {
 
                 // Superimposed register: Mirroring ($F800-$FBFF, mask $FC00)
                 if (addr & 0xFC00) == 0xF800 {
-                    self.base.set_mirroring(if (value & 0x01) != 0 {
-                        NametableLayout::Vertical
-                    } else {
-                        NametableLayout::Horizontal
-                    });
+                    self.base.set_mirroring_hv((value & 0x01) == 0);
                 }
 
                 // Superimposed register: CHR banks ($FC00-$FC07, mask $FC07)
@@ -262,11 +258,7 @@ impl Mapper for Mapper56 {
         self.prg_a17[1] = data[4];
         self.prg_a17[2] = data[5];
         self.prg_a17[3] = data[6];
-        self.base.set_mirroring(if data[7] != 0 {
-            NametableLayout::Vertical
-        } else {
-            NametableLayout::Horizontal
-        });
+        self.base.set_mirroring_hv(data[7] == 0);
         self.bank_select = data[8];
         self.irq_enabled = (data[9] & 1) != 0;
         self.irq_pending = (data[9] & 2) != 0;

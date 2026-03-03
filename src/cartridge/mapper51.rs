@@ -8,7 +8,6 @@
 //! - No known gameplay-blocking functional limitations are currently documented.
 
 use crate::cartridge::BaseMapper;
-use crate::cartridge::NametableLayout;
 use crate::cartridge::common::ChrMemory;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
@@ -119,12 +118,7 @@ impl Mapper51 {
             self.base.select_prg_page(3, ((bank << 2) | 0x0F) as i16);
         }
 
-        let mirroring = if self.mode == 0x03 {
-            NametableLayout::Horizontal
-        } else {
-            NametableLayout::Vertical
-        };
-        self.base.set_mirroring(mirroring);
+        self.base.set_mirroring_hv(self.mode == 0x03);
     }
 }
 

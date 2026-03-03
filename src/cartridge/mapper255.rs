@@ -99,12 +99,7 @@ impl Mapper255 {
         self.prg_bank = ((addr >> 6) & 0x3F) as u8;
         self.chr_bank = (addr & 0x3F) as u8;
 
-        let mirroring = if (addr >> 13) & 1 == 0 {
-            NametableLayout::Vertical
-        } else {
-            NametableLayout::Horizontal
-        };
-        self.base.set_mirroring(mirroring);
+        self.base.set_mirroring_hv((addr >> 13) & 1 != 0);
         self.update_banks();
     }
 }
@@ -173,12 +168,7 @@ impl Mapper for Mapper255 {
             self.protection_ram.copy_from_slice(&data[4..8]);
         }
         if data.len() >= 9 {
-            let mirroring = if data[8] == 1 {
-                NametableLayout::Horizontal
-            } else {
-                NametableLayout::Vertical
-            };
-            self.base.set_mirroring(mirroring);
+            self.base.set_mirroring_hv(data[8] == 1);
         }
         self.update_banks();
     }
