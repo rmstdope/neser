@@ -48,7 +48,6 @@ pub struct Mapper56 {
     irq_enabled: bool,
     irq_after_ack: bool, // "A" bit from $C000
     irq_pending: bool,
-    prg_ram: [u8; 8192],
 }
 
 impl Mapper56 {
@@ -77,7 +76,6 @@ impl Mapper56 {
             irq_enabled: false,
             irq_after_ack: false,
             irq_pending: false,
-            prg_ram: [0; 8192],
         };
         mapper.update_banks();
         mapper
@@ -117,7 +115,7 @@ impl Mapper for Mapper56 {
 
     fn read_prg(&self, addr: u16) -> u8 {
         match addr {
-            0x6000..=0x7FFF => self.prg_ram[(addr as usize) & 0x1FFF],
+            0x6000..=0x7FFF => self.base.try_read_prg_ram(addr).unwrap_or(0),
             0x8000..=0xFFFF => self.base.read_prg_banked(addr),
             _ => 0,
         }
@@ -126,7 +124,7 @@ impl Mapper for Mapper56 {
     fn write_prg(&mut self, addr: u16, value: u8) {
         match addr {
             0x6000..=0x7FFF => {
-                self.prg_ram[(addr as usize) & 0x1FFF] = value;
+                self.base.try_write_prg_ram(addr, value);
             }
             0x8000..=0x8FFF => {
                 self.irq_latch = (self.irq_latch & 0xFFF0) | ((value as u16) & 0x0F);
@@ -191,10 +189,6 @@ impl Mapper for Mapper56 {
         }
     }
 
-    fn wram_size(&self) -> usize {
-        8192
-    }
-
     fn irq_pending(&self) -> bool {
         self.irq_pending
     }
@@ -208,15 +202,6 @@ impl Mapper for Mapper56 {
             self.irq_pending = true;
             self.irq_enabled = false; // counter stops, like VRC3
         }
-    }
-
-    fn wram_snapshot(&self) -> Vec<u8> {
-        self.prg_ram.to_vec()
-    }
-
-    fn load_wram_snapshot(&mut self, data: &[u8]) {
-        let len = data.len().min(self.prg_ram.len());
-        self.prg_ram[..len].copy_from_slice(&data[..len]);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -437,5 +422,38 @@ mod tests {
         assert!(mapper.irq_pending());
         mapper.write_prg(0xD000, 0); // acknowledge
         assert!(!mapper.irq_pending());
+    }
+
+    // -----------------------------------------------------------------------
+    // PRG-RAM ($6000-$7FFF)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn prg_ram_readable_and_writable_at_6000() {
+        let mut mapper = make_mapper();
+        mapper.write_prg(0x6000, 0xAB);
+        assert_eq!(mapper.read_prg(0x6000), 0xAB);
+        mapper.write_prg(0x7FFF, 0xCD);
+        assert_eq!(mapper.read_prg(0x7FFF), 0xCD);
+    }
+
+    #[test]
+    fn wram_snapshot_round_trip() {
+        let mut mapper = make_mapper();
+        mapper.write_prg(0x6000, 0x11);
+        mapper.write_prg(0x6100, 0x22);
+        mapper.write_prg(0x7FFF, 0x33);
+        let snapshot = mapper.wram_snapshot();
+        assert_eq!(snapshot.len(), 8192);
+        assert_eq!(snapshot[0x0000], 0x11);
+        assert_eq!(snapshot[0x0100], 0x22);
+        assert_eq!(snapshot[0x1FFF], 0x33);
+
+        // Restore into a fresh mapper
+        let mut mapper2 = make_mapper();
+        mapper2.load_wram_snapshot(&snapshot);
+        assert_eq!(mapper2.read_prg(0x6000), 0x11);
+        assert_eq!(mapper2.read_prg(0x6100), 0x22);
+        assert_eq!(mapper2.read_prg(0x7FFF), 0x33);
     }
 }
