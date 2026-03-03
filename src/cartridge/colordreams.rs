@@ -72,13 +72,6 @@ impl Mapper for ColorDreamsMapper {
         &mut self.base
     }
 
-    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
-        match addr {
-            0x0000..=0x7FFF => open_bus,
-            _ => self.read_prg(addr),
-        }
-    }
-
     fn write_prg(&mut self, addr: u16, value: u8) {
         if (0x8000..=0xFFFF).contains(&addr) {
             let register_value = self.base.apply_bus_conflict(addr, value);
@@ -87,10 +80,6 @@ impl Mapper for ColorDreamsMapper {
             self.base.select_prg_page(0, self.prg_bank as i16);
             self.base.select_chr_page(0, self.chr_bank as i16);
         }
-    }
-
-    fn write_chr(&mut self, _addr: u16, _value: u8) {
-        // CHR-ROM is read-only
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
