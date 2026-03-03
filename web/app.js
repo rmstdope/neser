@@ -2234,6 +2234,7 @@ ensureWasmInitialized()
 const webShortcutActions = {
     togglePause: pauseResume,
     reset: resetAction,
+    hardReset: hardResetAction,
     toggleFilter: toggleFilterAction,
     saveState: saveStateAction,
     loadState: loadStateAction,
@@ -2513,8 +2514,14 @@ async function toggleScreenFullscreen() {
 
 function resetAction() {
     if (!nes) return;
-    nes.reset();
-    setStatus("Reset", false);
+    nes.reset(true);
+    setStatus("Soft reset", false);
+}
+
+function hardResetAction() {
+    if (!nes) return;
+    nes.reset(false);
+    setStatus("Hard reset", false);
 }
 
 async function saveStateAction() {

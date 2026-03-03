@@ -151,9 +151,12 @@ impl WasmNes {
     }
 
     /// Reset the emulator without ejecting the cartridge.
+    ///
+    /// `soft_reset = true` performs a soft reset.
+    /// `soft_reset = false` performs a hard reset.
     #[wasm_bindgen]
-    pub fn reset(&mut self) {
-        self.nes.reset(true);
+    pub fn reset(&mut self, soft_reset: bool) {
+        self.nes.reset(soft_reset);
         self.debugger_view_state = DebuggerViewState::default();
     }
 

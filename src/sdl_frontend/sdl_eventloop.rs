@@ -6,6 +6,7 @@ use crate::console::{AutorunMode, ControllerStateWrapper, Nes, SaveState, Timing
 use crate::frontend_toasts::gamepad_init_toast_message;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
+use sdl2::keyboard::Mod;
 use sdl2::mouse::MouseButton;
 #[cfg(test)]
 #[allow(unused_imports)]
@@ -996,14 +997,16 @@ impl SdlEventLoop {
                         }
                         Event::KeyDown {
                             keycode: Some(keycode),
+                            keymod,
                             ..
                         } => {
                             // Handle F4 for shader cycling
                             if keycode == Keycode::F4 {
                                 gl_backend.cycle_shader();
-                            } else if keycode == Keycode::F12 {
+                            } else if Self::is_fullscreen_shortcut(keycode, keymod) {
                                 self.toggle_fullscreen(Some(&mut gl_backend));
-                            } else if self.handle_key_down_for_run(nes, keycode)
+                            } else if self
+                                .handle_key_down_for_run_with_modifiers(nes, keycode, keymod)
                                 == KeyDownOutcome::Quit
                             {
                                 self.gl_backend = Some(gl_backend);
@@ -1389,9 +1392,12 @@ impl SdlEventLoop {
                 }
                 Event::KeyDown {
                     keycode: Some(keycode),
+                    keymod,
                     ..
                 } => {
-                    if self.handle_key_down_for_run(nes, keycode) == KeyDownOutcome::Quit {
+                    if self.handle_key_down_for_run_with_modifiers(nes, keycode, keymod)
+                        == KeyDownOutcome::Quit
+                    {
                         return true;
                     }
                 }
@@ -1539,7 +1545,45 @@ impl SdlEventLoop {
         }
     }
 
+    #[cfg(test)]
     fn handle_key_down_for_run(&mut self, nes: &mut Nes, keycode: Keycode) -> KeyDownOutcome {
+        self.handle_key_down_for_run_with_modifiers(nes, keycode, Mod::NOMOD)
+    }
+
+    fn has_command_or_alt_modifier(keymod: Mod) -> bool {
+        keymod.intersects(Mod::LALTMOD | Mod::RALTMOD | Mod::LGUIMOD | Mod::RGUIMOD)
+    }
+
+    fn has_shift_modifier(keymod: Mod) -> bool {
+        keymod.intersects(Mod::LSHIFTMOD | Mod::RSHIFTMOD)
+    }
+
+    fn is_fullscreen_shortcut(keycode: Keycode, keymod: Mod) -> bool {
+        keycode == Keycode::F && Self::has_command_or_alt_modifier(keymod)
+    }
+
+    fn handle_key_down_for_run_with_modifiers(
+        &mut self,
+        nes: &mut Nes,
+        keycode: Keycode,
+        keymod: Mod,
+    ) -> KeyDownOutcome {
+        if Self::has_command_or_alt_modifier(keymod) {
+            match keycode {
+                Keycode::Q => return KeyDownOutcome::Quit,
+                Keycode::R => {
+                    let soft_reset = !Self::has_shift_modifier(keymod);
+                    nes.reset(soft_reset);
+                    return KeyDownOutcome::Continue;
+                }
+                Keycode::F => {
+                    self.toggle_fullscreen(None);
+                    return KeyDownOutcome::Continue;
+                }
+                _ => {}
+            }
+        }
+
         // When the debugger is open, make F5 behave exactly like the Continue button.
         // This ensures breakpoint ignore-once semantics apply equally.
         if keycode == Keycode::F5 && self.debugger_open_requested {
@@ -1555,11 +1599,6 @@ impl SdlEventLoop {
 
         if keycode == Keycode::H {
             self.help_overlay_visible = !self.help_overlay_visible;
-            return KeyDownOutcome::Continue;
-        }
-
-        if keycode == Keycode::F12 {
-            self.toggle_fullscreen(None);
             return KeyDownOutcome::Continue;
         }
 
@@ -1692,13 +1731,14 @@ impl SdlEventLoop {
     /// - 0: Start button
     ///
     /// Emulator controls:
-    /// - Escape: Quit
+    /// - Cmd/Alt+Q: Quit
     /// - Space: Toggle pause
-    /// - F1: Reset
+    /// - Cmd/Alt+R: Soft reset
+    /// - Shift+Cmd/Alt+R: Hard reset
+    /// - Cmd/Alt+F: Toggle fullscreen
     /// - F5: Open debugger (when closed) / Continue (when debugger open)
     /// - F10: Debugger step-over (JSR runs until RTS)
     /// - F11: Debugger step-into (single CPU tick)
-    /// - F12: Toggle fullscreen
     /// - F2/F3: Volume up/down (when audio is enabled)
     /// - F6: Save state (when a ROM is loaded)
     /// - F7: Load state (when a ROM is loaded)
@@ -1712,7 +1752,6 @@ impl SdlEventLoop {
         port_2: Option<u8>,
     ) -> KeyDownOutcome {
         match keycode {
-            Keycode::Escape => return KeyDownOutcome::Quit,
             Keycode::Space => {
                 *paused = !*paused;
             }
@@ -1739,9 +1778,6 @@ impl SdlEventLoop {
                 *paused = true;
                 *debugger_open_requested = true;
                 nes.run_cpu_tick();
-            }
-            Keycode::F1 => {
-                nes.reset(true);
             }
             Keycode::F2 => {
                 if let Some(audio) = audio {
@@ -1860,12 +1896,14 @@ P: B\n\
 
         format!(
             "Controls\n\
-Esc: Quit\n\
+    Cmd/Alt+Q: Quit\n\
 Space: Pause\n\
 H: Toggle help\n\
 \n\
 System\n\
-F1: Reset\n\
+    Cmd/Alt+R: Soft reset\n\
+    Shift+Cmd/Alt+R: Hard reset\n\
+    Cmd/Alt+F: Fullscreen\n\
 F2/F3: Volume up/down\n\
 F4: Cycle shader\n\
 F5: Debugger (open/continue)\n\
@@ -1873,7 +1911,6 @@ F6: Save state\n\
 F7: Load state\n\
 F10: Step over\n\
 F11: Step into\n\
-F12: Fullscreen\n\
 \n\
 {player1_section}\n\
 \n\
@@ -2464,7 +2501,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn test_handle_key_down_f12_toggles_fullscreen_state() {
+    fn test_handle_key_down_cmd_or_alt_f_toggles_fullscreen_state() {
         let config = default_config();
         let mut event_loop =
             SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
@@ -2474,10 +2511,12 @@ mod tests {
 
         assert!(!event_loop.is_fullscreen());
 
-        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::F12);
+        let _ =
+            event_loop.handle_key_down_for_run_with_modifiers(&mut nes, Keycode::F, Mod::LGUIMOD);
         assert!(event_loop.is_fullscreen());
 
-        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::F12);
+        let _ =
+            event_loop.handle_key_down_for_run_with_modifiers(&mut nes, Keycode::F, Mod::LALTMOD);
         assert!(!event_loop.is_fullscreen());
     }
 
@@ -3051,22 +3090,20 @@ mod tests {
     }
 
     #[test]
-    fn test_handle_key_down_escape_requests_quit() {
-        // Desired behavior: key handling for Escape is centralized in handle_key_down,
-        // and it indicates that the event loop should exit.
+    fn test_handle_key_down_cmd_or_alt_q_requests_quit() {
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
             Config::default(),
         ));
-        let mut paused = false;
-        let mut debugger_open_requested = false;
+        let config = default_config();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
 
-        let outcome = SdlEventLoop::handle_key_down(
-            &mut nes,
-            Keycode::Escape,
-            None,
-            &mut paused,
-            &mut debugger_open_requested,
-        );
+        let outcome =
+            event_loop.handle_key_down_for_run_with_modifiers(&mut nes, Keycode::Q, Mod::LGUIMOD);
+        assert_eq!(outcome, KeyDownOutcome::Quit);
+
+        let outcome =
+            event_loop.handle_key_down_for_run_with_modifiers(&mut nes, Keycode::Q, Mod::LALTMOD);
         assert_eq!(outcome, KeyDownOutcome::Quit);
     }
 
@@ -3124,9 +3161,10 @@ mod tests {
             Config::default(),
         ));
         let text = event_loop.help_overlay_text(&nes);
-        assert!(text.contains("Esc"));
+        assert!(text.contains("Cmd/Alt+Q"));
         assert!(text.contains("Space"));
-        assert!(text.contains("F1"));
+        assert!(text.contains("Cmd/Alt+R"));
+        assert!(text.contains("Shift+Cmd/Alt+R"));
         assert!(text.contains("F2"));
         assert!(text.contains("F3"));
         assert!(text.contains("F5"));
@@ -3134,7 +3172,7 @@ mod tests {
         assert!(text.contains("F7"));
         assert!(text.contains("F10"));
         assert!(text.contains("F11"));
-        assert!(text.contains("F12"));
+        assert!(text.contains("Cmd/Alt+F"));
         assert!(text.contains("W/A/S/D"));
         assert!(text.contains("R"));
         assert!(text.contains("T"));
@@ -4156,8 +4194,8 @@ mod tests {
     }
 
     #[test]
-    fn test_handle_key_down_f1_resets_nes() {
-        // Desired behavior: F1 triggers a reset through centralized handle_key_down.
+    fn test_handle_key_down_f1_no_longer_resets_nes() {
+        // Desired behavior: reset is reassigned to Cmd/Alt+R, so plain F1 should not reset.
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
             Config::default(),
         ));
@@ -4184,6 +4222,76 @@ mod tests {
             None,
             &mut paused,
             &mut debugger_open_requested,
+        );
+        assert_eq!(nes.cpu.pc(), 0x1234);
+    }
+
+    #[test]
+    #[serial]
+    fn test_handle_key_down_cmd_or_alt_r_resets_nes() {
+        let config = default_config();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+
+        let mut prg_rom = vec![0u8; 0x8000];
+        let reset_vector: u16 = 0x8000;
+        prg_rom[0x7FFC] = (reset_vector & 0x00FF) as u8;
+        prg_rom[0x7FFD] = (reset_vector >> 8) as u8;
+        let cartridge = crate::cartridge::Cartridge::from_parts(
+            prg_rom,
+            vec![],
+            crate::cartridge::NametableLayout::Horizontal,
+        );
+        nes.insert_cartridge(cartridge);
+
+        nes.cpu.set_pc(0x1234);
+        let _ =
+            event_loop.handle_key_down_for_run_with_modifiers(&mut nes, Keycode::R, Mod::LGUIMOD);
+        assert_eq!(nes.cpu.pc(), reset_vector);
+
+        nes.cpu.set_pc(0x5678);
+        let _ =
+            event_loop.handle_key_down_for_run_with_modifiers(&mut nes, Keycode::R, Mod::LALTMOD);
+        assert_eq!(nes.cpu.pc(), reset_vector);
+    }
+
+    #[test]
+    #[serial]
+    fn test_handle_key_down_shift_cmd_or_alt_r_resets_nes() {
+        let config = default_config();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+
+        let mut prg_rom = vec![0u8; 0x8000];
+        let reset_vector: u16 = 0x8000;
+        prg_rom[0x7FFC] = (reset_vector & 0x00FF) as u8;
+        prg_rom[0x7FFD] = (reset_vector >> 8) as u8;
+        let cartridge = crate::cartridge::Cartridge::from_parts(
+            prg_rom,
+            vec![],
+            crate::cartridge::NametableLayout::Horizontal,
+        );
+        nes.insert_cartridge(cartridge);
+
+        nes.cpu.set_pc(0x1234);
+        let _ = event_loop.handle_key_down_for_run_with_modifiers(
+            &mut nes,
+            Keycode::R,
+            Mod::LGUIMOD | Mod::LSHIFTMOD,
+        );
+        assert_eq!(nes.cpu.pc(), reset_vector);
+
+        nes.cpu.set_pc(0x5678);
+        let _ = event_loop.handle_key_down_for_run_with_modifiers(
+            &mut nes,
+            Keycode::R,
+            Mod::LALTMOD | Mod::LSHIFTMOD,
         );
         assert_eq!(nes.cpu.pc(), reset_vector);
     }
