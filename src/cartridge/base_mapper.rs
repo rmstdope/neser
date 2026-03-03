@@ -499,6 +499,53 @@ impl BaseMapper {
     pub fn chr_page(&self, slot: usize) -> usize {
         self.chr_pages[slot]
     }
+
+    /// Snapshot all banking page tables (PRG + CHR) and optionally mirroring state.
+    ///
+    /// Format: [prg_page_0, ..., prg_page_N, chr_page_0, ..., chr_page_M, mirroring?]
+    /// Mirroring byte is included only when `has_dynamic_mirroring` is set in capabilities.
+    /// Mirroring byte uses `NametableLayout::to_snapshot_byte()` encoding.
+    ///
+    /// # Panics
+    /// Panics if any bank index exceeds 255.
+    pub fn banking_snapshot(&self) -> Vec<u8> {
+        let mut data: Vec<u8> = self
+            .prg_pages
+            .iter()
+            .chain(self.chr_pages.iter())
+            .map(|&page| {
+                u8::try_from(page)
+                    .expect("banking_snapshot: bank index does not fit in u8 (max 255)")
+            })
+            .collect();
+        if self.capabilities.has_dynamic_mirroring {
+            data.push(self.mirroring.to_snapshot_byte());
+        }
+        data
+    }
+
+    /// Restore banking page tables (PRG + CHR) and optionally mirroring state
+    /// from a snapshot produced by `banking_snapshot()`.
+    pub fn restore_banking(&mut self, data: &[u8]) {
+        let mut idx = 0;
+        for slot in 0..self.prg_pages.len() {
+            if let Some(&bank) = data.get(idx) {
+                self.select_prg_page(slot, bank as i16);
+                idx += 1;
+            }
+        }
+        for slot in 0..self.chr_pages.len() {
+            if let Some(&bank) = data.get(idx) {
+                self.select_chr_page(slot, bank as i16);
+                idx += 1;
+            }
+        }
+        if self.capabilities.has_dynamic_mirroring
+            && let Some(&mir) = data.get(idx)
+        {
+            self.set_mirroring(NametableLayout::from_snapshot_byte(mir));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1116,6 +1163,126 @@ mod tests {
         let mut base = make_chr_banked_mapper(8, 0x0400);
         base.select_chr_page(3, 7);
         assert_eq!(base.chr_page(3), 7);
+    }
+
+    // ========================================================================
+    // Banking Snapshot/Restore Tests
+    // ========================================================================
+
+    #[test]
+    fn test_banking_snapshot_prg_only() {
+        let mut base = make_prg_banked_mapper(4, 0x4000);
+        base.select_prg_page(0, 2);
+        base.select_prg_page(1, 3);
+        let snapshot = base.banking_snapshot();
+        assert_eq!(snapshot, vec![2, 3]);
+    }
+
+    #[test]
+    fn test_banking_snapshot_prg_and_chr() {
+        let prg_rom = vec![0; 0x10000]; // 64KB = 4 banks of 16KB
+        let chr_rom = make_bank_marked_rom(8, 0x0400);
+        let ctx = MapperContext::new_for_test(0, prg_rom, chr_rom, NametableLayout::Horizontal);
+        let mut base = BaseMapper::new(&ctx, MapperCapabilities::default());
+        base.configure_prg_banking(0x4000);
+        base.configure_chr_banking(0x0400);
+        base.select_prg_page(0, 1);
+        base.select_prg_page(1, 2);
+        base.select_chr_page(0, 5);
+        base.select_chr_page(1, 6);
+        let snapshot = base.banking_snapshot();
+        // PRG pages first, then CHR pages
+        assert_eq!(snapshot, vec![1, 2, 5, 6, 0, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn test_banking_snapshot_with_dynamic_mirroring() {
+        let caps = MapperCapabilities {
+            has_dynamic_mirroring: true,
+            ..Default::default()
+        };
+        let ctx =
+            MapperContext::new_for_test(0, vec![0; 0x8000], vec![], NametableLayout::Horizontal);
+        let mut base = BaseMapper::new(&ctx, caps);
+        base.configure_prg_banking(0x8000);
+        base.select_prg_page(0, 0);
+        base.set_mirroring_hv(true); // Horizontal
+        let snapshot = base.banking_snapshot();
+        // [prg_page0, mirroring(H=0 via to_snapshot_byte)]
+        assert_eq!(snapshot, vec![0, 0]);
+    }
+
+    #[test]
+    fn test_banking_snapshot_without_dynamic_mirroring_excludes_mirroring() {
+        let mut base = make_prg_banked_mapper(2, 0x8000);
+        base.select_prg_page(0, 1);
+        let snapshot = base.banking_snapshot();
+        assert_eq!(snapshot, vec![1]); // No mirroring byte
+    }
+
+    #[test]
+    fn test_restore_banking_prg_only() {
+        let mut base = make_prg_banked_mapper(4, 0x4000);
+        base.select_prg_page(0, 0);
+        base.select_prg_page(1, 0);
+        base.restore_banking(&[2, 3]);
+        assert_eq!(base.prg_page(0), 2);
+        assert_eq!(base.prg_page(1), 3);
+    }
+
+    #[test]
+    fn test_restore_banking_prg_and_chr() {
+        let prg_rom = vec![0; 0x10000]; // 64KB = 4 banks of 16KB
+        let chr_rom = make_bank_marked_rom(8, 0x0400);
+        let ctx = MapperContext::new_for_test(0, prg_rom, chr_rom, NametableLayout::Horizontal);
+        let mut base = BaseMapper::new(&ctx, MapperCapabilities::default());
+        base.configure_prg_banking(0x4000);
+        base.configure_chr_banking(0x0400);
+        base.restore_banking(&[1, 2, 5, 6, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(base.prg_page(0), 1);
+        assert_eq!(base.prg_page(1), 2);
+        assert_eq!(base.chr_page(0), 5);
+        assert_eq!(base.chr_page(1), 6);
+    }
+
+    #[test]
+    fn test_restore_banking_with_mirroring() {
+        let caps = MapperCapabilities {
+            has_dynamic_mirroring: true,
+            ..Default::default()
+        };
+        let ctx =
+            MapperContext::new_for_test(0, vec![0; 0x8000], vec![], NametableLayout::Vertical);
+        let mut base = BaseMapper::new(&ctx, caps);
+        base.configure_prg_banking(0x8000);
+        base.restore_banking(&[0, 0]); // page0=0, mirroring=Horizontal (H=0 via from_snapshot_byte)
+        assert_eq!(base.prg_page(0), 0);
+        assert_eq!(base.mirroring(), NametableLayout::Horizontal);
+    }
+
+    #[test]
+    fn test_banking_snapshot_restore_roundtrip() {
+        let prg_rom = vec![0; 0x10000]; // 64KB = 4 banks of 16KB
+        let chr_rom = make_bank_marked_rom(8, 0x0400);
+        let ctx = MapperContext::new_for_test(0, prg_rom, chr_rom, NametableLayout::Horizontal);
+        let mut base = BaseMapper::new(&ctx, MapperCapabilities::default());
+        base.configure_prg_banking(0x4000);
+        base.configure_chr_banking(0x0400);
+        base.select_prg_page(0, 1);
+        base.select_prg_page(1, 3);
+        base.select_chr_page(0, 7);
+        base.select_chr_page(3, 2);
+        let snapshot = base.banking_snapshot();
+        // Reset all pages
+        base.select_prg_page(0, 0);
+        base.select_prg_page(1, 0);
+        base.select_chr_page(0, 0);
+        base.select_chr_page(3, 0);
+        base.restore_banking(&snapshot);
+        assert_eq!(base.prg_page(0), 1);
+        assert_eq!(base.prg_page(1), 3);
+        assert_eq!(base.chr_page(0), 7);
+        assert_eq!(base.chr_page(3), 2);
     }
 
     // ========================================================================

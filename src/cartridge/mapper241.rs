@@ -57,13 +57,11 @@ impl Mapper for Mapper241 {
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        vec![self.base.prg_page(0) as u8]
+        self.base.banking_snapshot()
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        if let Some(&value) = data.first() {
-            self.base.select_prg_page(0, value as i16);
-        }
+        self.base.restore_banking(data);
     }
 }
 
