@@ -6,7 +6,6 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
-use crate::cartridge::NametableLayout;
 use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
@@ -66,26 +65,18 @@ impl Mapper for Mapper242 {
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        let mirroring_byte = match self.base.mirroring() {
-            NametableLayout::Horizontal => 1,
-            _ => 0,
-        };
-        vec![self.base.prg_page(0) as u8, mirroring_byte]
+        self.base.banking_snapshot()
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        if let Some(&bank) = data.first() {
-            self.base.select_prg_page(0, bank as i16);
-        }
-        if let Some(&mir) = data.get(1) {
-            self.base.set_mirroring_hv(mir != 0);
-        }
+        self.base.restore_banking(data);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cartridge::NametableLayout;
     use crate::cartridge::mapper::{MapperContext, create_mapper};
     use crate::cartridge::test_helpers::banked_data;
 
