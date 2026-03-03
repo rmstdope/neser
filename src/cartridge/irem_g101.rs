@@ -103,15 +103,6 @@ impl IremG101Mapper {
         }
     }
 
-    /// Decodes the mirroring control bit (bit 0 of $9000) to a `NametableLayout`.
-    fn mirroring_from_bit(bit: u8) -> NametableLayout {
-        if bit != 0 {
-            NametableLayout::Horizontal
-        } else {
-            NametableLayout::Vertical
-        }
-    }
-
     /// Encodes the current mirroring mode as a single bit for snapshot storage.
     fn mirroring_to_bit(mirroring: NametableLayout) -> u8 {
         if mirroring == NametableLayout::Horizontal {
@@ -141,7 +132,7 @@ impl Mapper for IremG101Mapper {
                 if self.submapper != 1 {
                     self.prg_mode = (value & Self::CONTROL_PRG_MODE_BIT) != 0;
                     self.base
-                        .set_mirroring(Self::mirroring_from_bit(value & Self::CONTROL_MIRROR_BIT));
+                        .set_mirroring_hv((value & Self::CONTROL_MIRROR_BIT) != 0);
                     self.update_banks();
                 }
             }
@@ -173,7 +164,7 @@ impl Mapper for IremG101Mapper {
             self.chr_regs.copy_from_slice(&data[2..10]);
             self.prg_mode = data[10] != 0;
             if self.submapper != 1 {
-                self.base.set_mirroring(Self::mirroring_from_bit(data[11]));
+                self.base.set_mirroring_hv(data[11] != 0);
             }
             self.update_banks();
         }

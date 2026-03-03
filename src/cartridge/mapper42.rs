@@ -104,11 +104,7 @@ impl Mapper for Mapper42 {
             }
             0xE001 => {
                 // Mirroring: bit 3 (0=Vertical, 1=Horizontal)
-                self.base.set_mirroring(if (value & 0x08) != 0 {
-                    NametableLayout::Horizontal
-                } else {
-                    NametableLayout::Vertical
-                });
+                self.base.set_mirroring_hv((value & 0x08) != 0);
             }
             0xE002 => {
                 // IRQ Control: bit 1 (0=Disable+Ack+Reset, 1=Enable)
@@ -156,11 +152,7 @@ impl Mapper for Mapper42 {
             self.irq.set_pending((data[2] & 2) != 0);
             self.irq
                 .set_counter((data[3] as u16) | ((data[4] as u16) << 8));
-            self.base.set_mirroring(if data[5] != 0 {
-                NametableLayout::Horizontal
-            } else {
-                NametableLayout::Vertical
-            });
+            self.base.set_mirroring_hv(data[5] != 0);
             self.update_banks();
         }
     }

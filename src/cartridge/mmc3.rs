@@ -1396,13 +1396,8 @@ impl Mapper for MMC3Mapper {
                 if (addr & 1) == 0 {
                     // Mirroring
                     // MMC3: bit0 selects mirroring.
-                    let new_mirroring = if (value & 1) == 0 {
-                        NametableLayout::Vertical
-                    } else {
-                        NametableLayout::Horizontal
-                    };
-                    trace_mapper!(1; "MMC3 mirroring={:?}", new_mirroring);
-                    self.base.set_mirroring(new_mirroring);
+                    self.base.set_mirroring_hv((value & 1) != 0);
+                    trace_mapper!(1; "MMC3 mirroring={:?}", self.base.mirroring());
                 } else {
                     // PRG RAM protect
                     // - bit 7: PRG-RAM enable

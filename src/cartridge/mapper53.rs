@@ -7,7 +7,6 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
-use crate::cartridge::NametableLayout;
 use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
@@ -95,12 +94,7 @@ impl Mapper53 {
             self.base.select_prg_page(0, 0);
             self.base.select_prg_page(1, 1);
         }
-        let mirroring = if (self.cmd0 & 0x20) != 0 {
-            NametableLayout::Horizontal
-        } else {
-            NametableLayout::Vertical
-        };
-        self.base.set_mirroring(mirroring);
+        self.base.set_mirroring_hv((self.cmd0 & 0x20) != 0);
     }
 }
 
@@ -152,6 +146,7 @@ impl Mapper for Mapper53 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cartridge::NametableLayout;
     use crate::cartridge::mapper::{MapperContext, create_mapper};
     use crate::cartridge::test_helpers::banked_data;
 

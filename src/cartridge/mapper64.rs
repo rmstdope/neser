@@ -200,11 +200,7 @@ impl Mapper for Mapper64 {
             }
             0xA000 => {
                 if even {
-                    self.base.set_mirroring(if (value & 0x01) != 0 {
-                        NametableLayout::Horizontal
-                    } else {
-                        NametableLayout::Vertical
-                    });
+                    self.base.set_mirroring_hv((value & 0x01) != 0);
                 }
                 // Odd ($A001): unused
             }
@@ -284,11 +280,7 @@ impl Mapper for Mapper64 {
             return;
         }
         self.bank_select = data[0];
-        self.base.set_mirroring(if data[1] != 0 {
-            NametableLayout::Horizontal
-        } else {
-            NametableLayout::Vertical
-        });
+        self.base.set_mirroring_hv(data[1] != 0);
         let flags = data[2];
         self.chr_a12_inv = (flags & 1) != 0;
         self.prg_swap = (flags & 2) != 0;
