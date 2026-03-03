@@ -241,11 +241,12 @@ impl BaseMapper {
     /// Convenience: set horizontal (true) or vertical (false) mirroring.
     #[inline]
     pub fn set_mirroring_hv(&mut self, horizontal: bool) {
-        self.mirroring = if horizontal {
+        let mirroring = if horizontal {
             NametableLayout::Horizontal
         } else {
             NametableLayout::Vertical
         };
+        self.set_mirroring(mirroring);
     }
 
     // --- Mapper identification ---
