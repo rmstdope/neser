@@ -342,6 +342,22 @@ impl BaseMapper {
         self.prg_pages[slot] = resolve_bank(bank, self.prg_bank_count());
     }
 
+    /// Apply NROM-128 or NROM-256 PRG banking to two 16KB slots.
+    ///
+    /// - NROM-128 (`nrom_128 = true`): maps the same 16KB bank to both $8000 and $C000.
+    /// - NROM-256 (`nrom_128 = false`): maps a consecutive 16KB bank pair (even/odd).
+    ///   Bit 0 of `bank` is cleared for slot 0 and set for slot 1.
+    pub fn apply_nrom_prg_banking(&mut self, bank: u8, nrom_128: bool) {
+        if nrom_128 {
+            self.select_prg_page(0, bank as i16);
+            self.select_prg_page(1, bank as i16);
+        } else {
+            let even = (bank & !1) as i16;
+            self.select_prg_page(0, even);
+            self.select_prg_page(1, even | 1);
+        }
+    }
+
     /// Select a CHR bank for the given slot.
     ///
     /// Negative values count from the end: -1 = last bank, -2 = second-to-last, etc.
@@ -767,6 +783,71 @@ mod tests {
         base.select_prg_page(0, 1);
         assert_eq!(base.read_prg_banked(0x8000), 1);
         assert_eq!(base.read_prg_banked(0xFFFF), 1);
+    }
+
+    // ========================================================================
+    // NROM PRG Banking Tests
+    // ========================================================================
+
+    #[test]
+    fn test_nrom128_mirrors_same_bank_to_both_slots() {
+        // 6 banks avoids power-of-two wrapping false-passes
+        let mut base = make_prg_banked_mapper(6, 0x4000);
+        base.apply_nrom_prg_banking(3, true);
+        assert_eq!(base.read_prg_banked(0x8000), 3);
+        assert_eq!(base.read_prg_banked(0xC000), 3);
+    }
+
+    #[test]
+    fn test_nrom256_selects_consecutive_bank_pair() {
+        let mut base = make_prg_banked_mapper(6, 0x4000);
+        base.apply_nrom_prg_banking(2, false);
+        assert_eq!(base.read_prg_banked(0x8000), 2);
+        assert_eq!(base.read_prg_banked(0xC000), 3);
+    }
+
+    #[test]
+    fn test_nrom256_clears_bit0_for_slot0() {
+        let mut base = make_prg_banked_mapper(6, 0x4000);
+        // Passing odd bank 3: slot 0 should get bank 2 (bit 0 cleared),
+        // slot 1 should get bank 3 (bit 0 set).
+        base.apply_nrom_prg_banking(3, false);
+        assert_eq!(base.read_prg_banked(0x8000), 2);
+        assert_eq!(base.read_prg_banked(0xC000), 3);
+    }
+
+    #[test]
+    fn test_nrom128_bank_zero() {
+        let mut base = make_prg_banked_mapper(6, 0x4000);
+        base.apply_nrom_prg_banking(0, true);
+        assert_eq!(base.read_prg_banked(0x8000), 0);
+        assert_eq!(base.read_prg_banked(0xC000), 0);
+    }
+
+    #[test]
+    fn test_nrom256_bank_zero() {
+        let mut base = make_prg_banked_mapper(6, 0x4000);
+        base.apply_nrom_prg_banking(0, false);
+        assert_eq!(base.read_prg_banked(0x8000), 0);
+        assert_eq!(base.read_prg_banked(0xC000), 1);
+    }
+
+    #[test]
+    fn test_nrom128_wraps_bank_to_available() {
+        // 6 banks → bank 7 should wrap to bank 1 (7 % 6 = 1)
+        let mut base = make_prg_banked_mapper(6, 0x4000);
+        base.apply_nrom_prg_banking(7, true);
+        assert_eq!(base.read_prg_banked(0x8000), 1);
+        assert_eq!(base.read_prg_banked(0xC000), 1);
+    }
+
+    #[test]
+    fn test_nrom256_wraps_bank_to_available() {
+        // 6 banks → bank 4: slot 0 = 4 % 6 = 4, slot 1 = 5 % 6 = 5
+        let mut base = make_prg_banked_mapper(6, 0x4000);
+        base.apply_nrom_prg_banking(4, false);
+        assert_eq!(base.read_prg_banked(0x8000), 4);
+        assert_eq!(base.read_prg_banked(0xC000), 5);
     }
 
     // ========================================================================

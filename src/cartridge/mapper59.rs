@@ -77,15 +77,8 @@ impl Mapper59 {
     }
 
     fn update_banks(&mut self) {
-        if self.prg_mode_128 {
-            let bank = ((self.prg_pp as i16) << 1) | (self.prg_p as i16);
-            self.base.select_prg_page(0, bank);
-            self.base.select_prg_page(1, bank);
-        } else {
-            let base_bank = (self.prg_pp as i16) << 1;
-            self.base.select_prg_page(0, base_bank);
-            self.base.select_prg_page(1, base_bank + 1);
-        }
+        let bank = (self.prg_pp << 1) | self.prg_p;
+        self.base.apply_nrom_prg_banking(bank, self.prg_mode_128);
         self.base.select_chr_page(0, self.chr_bank as i16);
     }
 }

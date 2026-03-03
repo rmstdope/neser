@@ -64,16 +64,8 @@ impl Mapper58 {
     }
 
     fn update_banks(&mut self) {
-        if self.prg_mode {
-            // NROM-128: same bank at both $8000 and $C000
-            self.base.select_prg_page(0, self.prg_bank as i16);
-            self.base.select_prg_page(1, self.prg_bank as i16);
-        } else {
-            // NROM-256: consecutive 16KB banks
-            let even = (self.prg_bank & !1) as i16;
-            self.base.select_prg_page(0, even);
-            self.base.select_prg_page(1, even | 1);
-        }
+        self.base
+            .apply_nrom_prg_banking(self.prg_bank, self.prg_mode);
         self.base.select_chr_page(0, self.chr_bank as i16);
     }
 }
