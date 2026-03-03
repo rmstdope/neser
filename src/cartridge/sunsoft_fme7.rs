@@ -47,7 +47,6 @@ use super::cpu_cycle_irq::{CpuCycleIrq, CpuCycleIrqMode};
 
 pub struct SunsoftFme7Mapper {
     base: BaseMapper,
-    prg_ram: Vec<u8>,
 
     // Register selection
     command: u8,
@@ -66,8 +65,6 @@ pub struct SunsoftFme7Mapper {
 }
 
 impl SunsoftFme7Mapper {
-    const PRG_RAM_SIZE: usize = 8 * 1024; // 8KB
-
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_irq: true,
@@ -84,7 +81,6 @@ impl SunsoftFme7Mapper {
         base.configure_chr_banking(0x0400);
         let mut mapper = Self {
             base,
-            prg_ram: vec![0u8; Self::PRG_RAM_SIZE],
             command: 0,
             prg_banks: [0, 0, 0, 0],
             prg_ram_enabled: false,
@@ -192,8 +188,7 @@ impl Mapper for SunsoftFme7Mapper {
         match addr {
             0x6000..=0x7FFF => {
                 if self.prg_ram_enabled {
-                    let offset = (addr - 0x6000) as usize;
-                    self.prg_ram.get(offset).copied().unwrap_or(0)
+                    self.base.try_read_prg_ram(addr).unwrap_or(0)
                 } else {
                     self.base.try_read_prg_6000(addr).unwrap_or(0)
                 }
@@ -208,10 +203,7 @@ impl Mapper for SunsoftFme7Mapper {
             0x6000..=0x7FFF => {
                 // PRG-RAM writes (if enabled and not readonly)
                 if self.prg_ram_enabled && !self.prg_ram_readonly {
-                    let offset = (addr - 0x6000) as usize;
-                    if offset < self.prg_ram.len() {
-                        self.prg_ram[offset] = value;
-                    }
+                    self.base.try_write_prg_ram(addr, value);
                 }
             }
             0x8000..=0x9FFF => {
@@ -236,24 +228,6 @@ impl Mapper for SunsoftFme7Mapper {
 
     fn irq_pending(&self) -> bool {
         self.irq.is_pending()
-    }
-
-    fn wram_size(&self) -> usize {
-        Self::PRG_RAM_SIZE
-    }
-
-    fn wram_snapshot(&self) -> Vec<u8> {
-        self.prg_ram.clone()
-    }
-
-    fn load_wram_snapshot(&mut self, data: &[u8]) {
-        let to_copy = data.len().min(self.prg_ram.len());
-        self.prg_ram[..to_copy].copy_from_slice(&data[..to_copy]);
-    }
-
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        crate::console::initialize_ram(&mut self.prg_ram, mode);
-        self.base.initialize_ram(mode);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -557,5 +531,48 @@ mod tests {
         assert_eq!(restored.get_mirroring(), NametableLayout::SingleScreenUpper);
         assert_eq!(restored.read_prg(0x8000), 3);
         assert_eq!(restored.read_chr(0x0000), 4);
+    }
+
+    // -----------------------------------------------------------------------
+    // WRAM snapshot/restore
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_wram_snapshot_round_trip() {
+        let prg_rom = banked_data(8 * 1024, 8);
+        let chr_rom = banked_data(1024, 8);
+        let mut mapper = SunsoftFme7Mapper::new(MapperContext::new_for_test(
+            69,
+            prg_rom.clone(),
+            chr_rom.clone(),
+            NametableLayout::Horizontal,
+        ));
+
+        // Enable RAM (command 8, bit 7 = 1)
+        mapper.write_prg(0x8000, 0x08);
+        mapper.write_prg(0xA000, 0x80);
+
+        mapper.write_prg(0x6000, 0x11);
+        mapper.write_prg(0x6100, 0x22);
+        mapper.write_prg(0x7FFF, 0x33);
+        let snapshot = mapper.wram_snapshot();
+        assert_eq!(snapshot.len(), 8192);
+        assert_eq!(snapshot[0x0000], 0x11);
+        assert_eq!(snapshot[0x0100], 0x22);
+        assert_eq!(snapshot[0x1FFF], 0x33);
+
+        let mut mapper2 = SunsoftFme7Mapper::new(MapperContext::new_for_test(
+            69,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Horizontal,
+        ));
+        mapper2.load_wram_snapshot(&snapshot);
+        // Enable RAM to read back
+        mapper2.write_prg(0x8000, 0x08);
+        mapper2.write_prg(0xA000, 0x80);
+        assert_eq!(mapper2.read_prg(0x6000), 0x11);
+        assert_eq!(mapper2.read_prg(0x6100), 0x22);
+        assert_eq!(mapper2.read_prg(0x7FFF), 0x33);
     }
 }

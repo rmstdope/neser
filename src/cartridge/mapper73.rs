@@ -32,7 +32,6 @@ use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 /// - $F000-$FFFF: PRG bank select [.... .PPP]
 pub struct Mapper73 {
     base: BaseMapper,
-    prg_ram: Vec<u8>,
     prg_bank: u8,
     irq_latch: u16,
     irq_counter: u16,
@@ -44,11 +43,9 @@ pub struct Mapper73 {
 
 impl Mapper73 {
     const PRG_BANK_SIZE: usize = 0x4000; // 16 KiB
-    const PRG_RAM_SIZE: usize = 0x2000; // 8 KiB
 
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
         let mirroring = ctx.mirroring;
-        let prg_ram_size = (ctx.prg_ram_banks_8k as usize).max(1) * Self::PRG_RAM_SIZE;
         let capabilities = MapperCapabilities {
             has_irq: true,
             max_prg_ram_kb: 8,
@@ -62,7 +59,6 @@ impl Mapper73 {
 
         let mut mapper = Self {
             base,
-            prg_ram: vec![0u8; prg_ram_size],
             prg_bank: 0,
             irq_latch: 0,
             irq_counter: 0,
@@ -116,10 +112,7 @@ impl Mapper for Mapper73 {
 
     fn read_prg(&self, addr: u16) -> u8 {
         match addr {
-            0x6000..=0x7FFF => {
-                let idx = (addr as usize) - 0x6000;
-                self.prg_ram.get(idx).copied().unwrap_or(0)
-            }
+            0x6000..=0x7FFF => self.base.try_read_prg_ram(addr).unwrap_or(0),
             0x8000..=0xFFFF => self.base.read_prg_banked(addr),
             _ => 0,
         }
@@ -128,10 +121,7 @@ impl Mapper for Mapper73 {
     fn write_prg(&mut self, addr: u16, value: u8) {
         match addr {
             0x6000..=0x7FFF => {
-                let idx = (addr as usize) - 0x6000;
-                if let Some(b) = self.prg_ram.get_mut(idx) {
-                    *b = value;
-                }
+                self.base.try_write_prg_ram(addr, value);
             }
             0x8000..=0x8FFF => {
                 self.irq_latch = (self.irq_latch & 0xFFF0) | ((value as u16) & 0x000F);
@@ -168,19 +158,6 @@ impl Mapper for Mapper73 {
         }
     }
 
-    fn wram_size(&self) -> usize {
-        Self::PRG_RAM_SIZE
-    }
-
-    fn wram_snapshot(&self) -> Vec<u8> {
-        self.prg_ram.clone()
-    }
-
-    fn load_wram_snapshot(&mut self, data: &[u8]) {
-        let to_copy = data.len().min(self.prg_ram.len());
-        self.prg_ram[..to_copy].copy_from_slice(&data[..to_copy]);
-    }
-
     fn cpu_cycle(&mut self) {
         if !self.irq_enable {
             return;
@@ -190,11 +167,6 @@ impl Mapper for Mapper73 {
 
     fn irq_pending(&self) -> bool {
         self.irq_pending
-    }
-
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        self.base.initialize_ram(mode);
-        crate::console::initialize_ram(&mut self.prg_ram, mode);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -500,5 +472,28 @@ mod tests {
         assert_eq!(restored.irq_enable, original.irq_enable);
         assert_eq!(restored.irq_enable_on_ack, original.irq_enable_on_ack);
         assert_eq!(restored.irq_pending, original.irq_pending);
+    }
+
+    // -----------------------------------------------------------------------
+    // WRAM snapshot/restore
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn wram_snapshot_round_trip() {
+        let mut mapper = make_mapper();
+        mapper.write_prg(0x6000, 0x11);
+        mapper.write_prg(0x6100, 0x22);
+        mapper.write_prg(0x7FFF, 0x33);
+        let snapshot = mapper.wram_snapshot();
+        assert_eq!(snapshot.len(), 8192);
+        assert_eq!(snapshot[0x0000], 0x11);
+        assert_eq!(snapshot[0x0100], 0x22);
+        assert_eq!(snapshot[0x1FFF], 0x33);
+
+        let mut mapper2 = make_mapper();
+        mapper2.load_wram_snapshot(&snapshot);
+        assert_eq!(mapper2.read_prg(0x6000), 0x11);
+        assert_eq!(mapper2.read_prg(0x6100), 0x22);
+        assert_eq!(mapper2.read_prg(0x7FFF), 0x33);
     }
 }
