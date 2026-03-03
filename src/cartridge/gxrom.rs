@@ -28,7 +28,7 @@ use crate::cartridge::mapper_templates::DualBank32Mapper;
 ///
 /// Implementation:
 /// - Uses `DualBank32Mapper` template with PRG bits 4-5, CHR bits 0-1
-pub type GxROMMapper = DualBank32Mapper<0b0011, 4, 0b0011, 0, 66>;
+pub type GxROMMapper = DualBank32Mapper<0b0011, 4, 0b0011, 0, false, 66>;
 
 #[cfg(test)]
 mod tests {

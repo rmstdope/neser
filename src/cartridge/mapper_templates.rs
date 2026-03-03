@@ -76,13 +76,14 @@
 //! **Examples:** GxROM (mapper 66), ColorDreams (mapper 11)
 //!
 //! ```rust,ignore
-//! // Example: GxROM uses PRG bits 4-5, CHR bits 0-1
-//! pub type MyGxROMStyle = DualBank32Mapper<0b0011, 4, 0b0011, 0, 66>;
+//! // Example: GxROM uses PRG bits 4-5, CHR bits 0-1, no bus conflicts
+//! pub type MyGxROMStyle = DualBank32Mapper<0b0011, 4, 0b0011, 0, false, 66>;
 //!
-//! // Example: ColorDreams uses PRG bits 4-7, CHR bits 0-3
-//! pub type MyColorDreamsStyle = DualBank32Mapper<0b1111, 4, 0b1111, 0, 11>;
+//! // Example: ColorDreams uses PRG bits 0-1, CHR bits 4-7, with bus conflicts
+//! pub type MyColorDreamsStyle = DualBank32Mapper<0b0011, 0, 0b1111, 4, true, 11>;
 //!
-//! let mapper = MyGxROMStyle::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+//! // `ctx` is a `MapperContext` created by the cartridge loader
+//! let mapper = MyGxROMStyle::new(ctx);
 //! ```
 
 use super::base_mapper::BaseMapper;
@@ -310,24 +311,27 @@ impl<const PRG_BANK_KB: usize, const MAPPER_NUM: u8> Mapper
 /// - `PRG_SHIFT`: Bit shift for PRG bank (e.g., 4 for bits 4-5)
 /// - `CHR_MASK`: Bit mask for CHR bank selection (e.g., 0b0011 for 2 bits)
 /// - `CHR_SHIFT`: Bit shift for CHR bank (e.g., 0 for bits 0-1)
+/// - `BUS_CONFLICTS`: Whether bus conflicts are enabled (CPU read AND write value)
 /// - `MAPPER_NUM`: Mapper number for identification
 ///
 /// # Example
 ///
 /// ```rust,ignore
-/// // GxROM (Mapper 66): PRG bits 4-5, CHR bits 0-1
-/// type GxROMMapper = DualBank32Mapper<0b0011, 4, 0b0011, 0, 66>;
+/// // GxROM (Mapper 66): PRG bits 4-5, CHR bits 0-1, no bus conflicts
+/// type GxROMMapper = DualBank32Mapper<0b0011, 4, 0b0011, 0, false, 66>;
 ///
-/// // ColorDreams (Mapper 11): PRG bits 4-7, CHR bits 0-3
-/// type ColorDreamsMapper = DualBank32Mapper<0b1111, 4, 0b1111, 0, 11>;
+/// // ColorDreams (Mapper 11): PRG bits 0-1, CHR bits 4-7, with bus conflicts
+/// type ColorDreamsMapper = DualBank32Mapper<0b0011, 0, 0b1111, 4, true, 11>;
 ///
-/// let mapper = GxROMMapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+/// // `ctx` is a `MapperContext` created by the cartridge loader
+/// let mapper = GxROMMapper::new(ctx);
 /// ```
 pub struct DualBank32Mapper<
     const PRG_MASK: u8,
     const PRG_SHIFT: u8,
     const CHR_MASK: u8,
     const CHR_SHIFT: u8,
+    const BUS_CONFLICTS: bool,
     const MAPPER_NUM: u8,
 > {
     base: BaseMapper,
@@ -342,8 +346,9 @@ impl<
     const PRG_SHIFT: u8,
     const CHR_MASK: u8,
     const CHR_SHIFT: u8,
+    const BUS_CONFLICTS: bool,
     const MAPPER_NUM: u8,
-> DualBank32Mapper<PRG_MASK, PRG_SHIFT, CHR_MASK, CHR_SHIFT, MAPPER_NUM>
+> DualBank32Mapper<PRG_MASK, PRG_SHIFT, CHR_MASK, CHR_SHIFT, BUS_CONFLICTS, MAPPER_NUM>
 {
     /// Create a new DualBank32Mapper.
     ///
@@ -360,6 +365,7 @@ impl<
         let mut base = BaseMapper::new(&ctx, capabilities);
         base.configure_prg_banking(32 * 1024); // 32KB pages → 1 slot
         base.configure_chr_banking(8 * 1024); // 8KB pages → 1 slot
+        base.set_bus_conflicts(BUS_CONFLICTS);
 
         Self {
             base,
@@ -374,8 +380,9 @@ impl<
     const PRG_SHIFT: u8,
     const CHR_MASK: u8,
     const CHR_SHIFT: u8,
+    const BUS_CONFLICTS: bool,
     const MAPPER_NUM: u8,
-> Mapper for DualBank32Mapper<PRG_MASK, PRG_SHIFT, CHR_MASK, CHR_SHIFT, MAPPER_NUM>
+> Mapper for DualBank32Mapper<PRG_MASK, PRG_SHIFT, CHR_MASK, CHR_SHIFT, BUS_CONFLICTS, MAPPER_NUM>
 {
     fn base(&self) -> &BaseMapper {
         &self.base
@@ -391,9 +398,11 @@ impl<
         }
 
         if (0x8000..=0xFFFF).contains(&addr) {
+            // Apply bus conflicts if enabled (AND write value with ROM data)
+            let effective = self.base.apply_bus_conflict(addr, value);
             // Extract PRG and CHR banks using configured masks and shifts
-            self.chr_bank_raw = (value >> CHR_SHIFT) & CHR_MASK;
-            self.prg_bank_raw = (value >> PRG_SHIFT) & PRG_MASK;
+            self.chr_bank_raw = (effective >> CHR_SHIFT) & CHR_MASK;
+            self.prg_bank_raw = (effective >> PRG_SHIFT) & PRG_MASK;
             self.base.select_chr_page(0, self.chr_bank_raw as i16);
             self.base.select_prg_page(0, self.prg_bank_raw as i16);
         }
@@ -698,10 +707,14 @@ mod tests {
     mod dual_bank32 {
         use super::*;
 
-        // GxROM: PRG bits 4-5, CHR bits 0-1
-        type GxROMTestMapper = DualBank32Mapper<0b0011, 4, 0b0011, 0, 66>;
-        // ColorDreams: PRG bits 4-7, CHR bits 0-3
-        type ColorDreamsTestMapper = DualBank32Mapper<0b1111, 4, 0b1111, 0, 11>;
+        // GxROM: PRG bits 4-5, CHR bits 0-1, no bus conflicts
+        type GxROMTestMapper = DualBank32Mapper<0b0011, 4, 0b0011, 0, false, 66>;
+        // Wide 4-bit masks: PRG bits 4-7, CHR bits 0-3, no bus conflicts
+        // (tests wider mask values than GxROM's 2-bit masks)
+        type WideMaskTestMapper = DualBank32Mapper<0b1111, 4, 0b1111, 0, false, 11>;
+        // Bus conflict variant: PRG bits 0-1, CHR bits 4-7, bus conflicts enabled
+        // (matches real ColorDreams register layout)
+        type BusConflictTestMapper = DualBank32Mapper<0b0011, 0, 0b1111, 4, true, 11>;
 
         #[test]
         fn test_gxrom_bank_selection() {
@@ -726,11 +739,11 @@ mod tests {
         }
 
         #[test]
-        fn test_colordreams_bank_selection() {
+        fn test_wide_mask_bank_selection() {
             let prg_rom = banked_data(32 * 1024, 16);
             let chr_rom = banked_data(8 * 1024, 16);
 
-            let mut mapper = ColorDreamsTestMapper::new(MapperContext::new_for_test(
+            let mut mapper = WideMaskTestMapper::new(MapperContext::new_for_test(
                 11,
                 prg_rom,
                 chr_rom,
@@ -753,7 +766,7 @@ mod tests {
             let prg_rom = banked_data(32 * 1024, 4); // Only 4 banks
             let chr_rom = banked_data(8 * 1024, 2); // Only 2 banks
 
-            let mut mapper = ColorDreamsTestMapper::new(MapperContext::new_for_test(
+            let mut mapper = WideMaskTestMapper::new(MapperContext::new_for_test(
                 11,
                 prg_rom,
                 chr_rom,
@@ -809,13 +822,61 @@ mod tests {
             ));
             assert_eq!(gxrom.mapper_number(), 66);
 
-            let colordreams = ColorDreamsTestMapper::new(MapperContext::new_for_test(
+            let wide_mask = WideMaskTestMapper::new(MapperContext::new_for_test(
                 11,
                 prg_rom,
                 chr_rom,
                 NametableLayout::Horizontal,
             ));
-            assert_eq!(colordreams.mapper_number(), 11);
+            assert_eq!(wide_mask.mapper_number(), 11);
+        }
+
+        #[test]
+        fn test_bus_conflicts_mask_write_value() {
+            // PRG-ROM bank 0 filled with 0x00: bus conflict ANDs write value with 0x00
+            let mut prg_rom = vec![0u8; 4 * 32 * 1024];
+            // Bank 1 filled with 0x01
+            for byte in &mut prg_rom[32 * 1024..2 * 32 * 1024] {
+                *byte = 0x01;
+            }
+            let chr_rom = banked_data(8 * 1024, 16);
+
+            let mut mapper = BusConflictTestMapper::new(MapperContext::new_for_test(
+                11,
+                prg_rom,
+                chr_rom,
+                NametableLayout::Horizontal,
+            ));
+
+            // Bank 0 is selected, all bytes are 0x00.
+            // Write 0x01 to $8000: bus conflict → 0x01 & 0x00 = 0x00, so bank stays 0.
+            mapper.write_prg(0x8000, 0x01);
+            assert_eq!(
+                mapper.read_prg(0x8000),
+                0,
+                "bus conflict should mask the write"
+            );
+        }
+
+        #[test]
+        fn test_no_bus_conflicts_when_disabled() {
+            let prg_rom = banked_data(32 * 1024, 4);
+            let chr_rom = banked_data(8 * 1024, 4);
+
+            let mut mapper = GxROMTestMapper::new(MapperContext::new_for_test(
+                66,
+                prg_rom,
+                chr_rom,
+                NametableLayout::Horizontal,
+            ));
+
+            // Write bank 1 to PRG (bit 4 = 0x10): no bus conflicts, so it works
+            mapper.write_prg(0x8000, 0x10);
+            assert_eq!(
+                mapper.read_prg(0x8000),
+                1,
+                "no bus conflict, bank should switch"
+            );
         }
     }
 }

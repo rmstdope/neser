@@ -5,8 +5,7 @@
 //! - Edge-case behavior may still differ from hardware in untested timing and board-variant scenarios.
 //! - See CARTRIDGE_REVIEW.md sections 5 and 6 for remaining mapper test/documentation follow-up.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::{Mapper, MapperCapabilities};
+use crate::cartridge::mapper_templates::DualBank32Mapper;
 
 /// Mapper 11 - Color Dreams
 ///
@@ -31,72 +30,8 @@ use crate::cartridge::{Mapper, MapperCapabilities};
 /// - Some variants support different bank counts
 ///
 /// Implementation:
-/// - Dedicated mapper 11 implementation with `CCCC LLPP` decoding
-pub struct ColorDreamsMapper {
-    base: BaseMapper,
-    prg_bank: u8,
-    chr_bank: u8,
-}
-
-impl ColorDreamsMapper {
-    pub fn new(ctx: super::mapper::MapperContext) -> Self {
-        let caps = MapperCapabilities {
-            has_irq: false,
-            has_chr_banking: true,
-            has_dynamic_mirroring: false,
-            has_expansion_audio: false,
-            max_prg_ram_kb: 0,
-            prg_bank_size_kb: 32,
-            chr_bank_size_kb: 8,
-            trainer_jsr: false,
-            ..Default::default()
-        };
-        let mut base = BaseMapper::new(&ctx, caps);
-        base.configure_prg_banking(32 * 1024);
-        base.configure_chr_banking(8 * 1024);
-        base.set_bus_conflicts(true);
-
-        Self {
-            base,
-            prg_bank: 0,
-            chr_bank: 0,
-        }
-    }
-}
-
-impl Mapper for ColorDreamsMapper {
-    fn base(&self) -> &BaseMapper {
-        &self.base
-    }
-    fn base_mut(&mut self) -> &mut BaseMapper {
-        &mut self.base
-    }
-
-    fn write_prg(&mut self, addr: u16, value: u8) {
-        if (0x8000..=0xFFFF).contains(&addr) {
-            let register_value = self.base.apply_bus_conflict(addr, value);
-            self.prg_bank = register_value & 0b0000_0011;
-            self.chr_bank = (register_value >> 4) & 0b0000_1111;
-            self.base.select_prg_page(0, self.prg_bank as i16);
-            self.base.select_chr_page(0, self.chr_bank as i16);
-        }
-    }
-
-    fn registers_snapshot(&self) -> Vec<u8> {
-        vec![self.prg_bank, self.chr_bank]
-    }
-
-    fn restore_registers(&mut self, data: &[u8]) {
-        if let Some(&value) = data.first() {
-            self.prg_bank = value;
-            self.base.select_prg_page(0, value as i16);
-        }
-        if let Some(&value) = data.get(1) {
-            self.chr_bank = value;
-            self.base.select_chr_page(0, value as i16);
-        }
-    }
-}
+/// - Uses `DualBank32Mapper` template with PRG bits 0-1, CHR bits 4-7, bus conflicts enabled
+pub type ColorDreamsMapper = DualBank32Mapper<0b0011, 0, 0b1111, 4, true, 11>;
 
 #[cfg(test)]
 mod tests {
@@ -119,7 +54,9 @@ mod tests {
         chr_rom: Vec<u8>,
         mirroring: NametableLayout,
     ) -> std::io::Result<Box<dyn Mapper>> {
-        create_mapper(MapperContext::new_for_test(11, prg_rom, chr_rom, mirroring))
+        create_mapper(
+            MapperContext::new_for_test(11, prg_rom, chr_rom, mirroring).with_prg_ram_banks(0),
+        )
     }
 
     #[test]
@@ -259,12 +196,15 @@ mod tests {
 
     #[test]
     fn test_colordreams_open_bus() {
-        let mapper = ColorDreamsMapper::new(MapperContext::new_for_test(
-            11,
-            vec![0; 128 * 1024],
-            vec![0; 128 * 1024],
-            NametableLayout::Horizontal,
-        ));
+        let mapper = ColorDreamsMapper::new(
+            MapperContext::new_for_test(
+                11,
+                vec![0; 128 * 1024],
+                vec![0; 128 * 1024],
+                NametableLayout::Horizontal,
+            )
+            .with_prg_ram_banks(0),
+        );
 
         assert_eq!(mapper.read_prg_open_bus(0x5000, 0x55), 0x55);
         assert_eq!(mapper.read_prg_open_bus(0x5FFF, 0x66), 0x66);
