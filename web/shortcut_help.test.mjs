@@ -38,7 +38,7 @@ function createMockHelpOverlay(initiallyHidden = true) {
 test("buildShortcutReferenceText includes H help toggle shortcut", () => {
     const text = buildShortcutReferenceText();
     assert.match(text, /H = Toggle Help/);
-    assert.match(text, /Cmd\/Alt\+F = Fullscreen/);
+    assert.match(text, /Cmd\/Alt\+F = Toggle Fullscreen/);
     assert.match(text, /Cmd\/Alt\+R = Soft Reset/);
     assert.match(text, /Shift\+Cmd\/Alt\+R = Hard Reset/);
     assert.match(text, /F4 = Cycle Filter/);
@@ -49,7 +49,7 @@ test("buildShortcutOverlayText renders multiline list for overlay", () => {
 
     assert.match(text, /^Shortcuts/m);
     assert.match(text, /H: Toggle Help/);
-    assert.match(text, /Cmd\/Alt\+F: Fullscreen/);
+    assert.match(text, /Cmd\/Alt\+F: Toggle Fullscreen/);
     assert.match(text, /Cmd\/Alt\+R: Soft Reset/);
     assert.match(text, /Shift\+Cmd\/Alt\+R: Hard Reset/);
     assert.match(text, /F4: Cycle Filter/);

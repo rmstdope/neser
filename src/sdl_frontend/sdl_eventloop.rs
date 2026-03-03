@@ -1896,14 +1896,14 @@ P: B\n\
 
         format!(
             "Controls\n\
-    Cmd/Alt+Q: Quit\n\
+Cmd/Alt+Q: Quit\n\
 Space: Pause\n\
 H: Toggle help\n\
 \n\
 System\n\
-    Cmd/Alt+R: Soft reset\n\
-    Shift+Cmd/Alt+R: Hard reset\n\
-    Cmd/Alt+F: Fullscreen\n\
+Cmd/Alt+R: Soft reset\n\
+Shift+Cmd/Alt+R: Hard reset\n\
+Cmd/Alt+F: Toggle fullscreen\n\
 F2/F3: Volume up/down\n\
 F4: Cycle shader\n\
 F5: Debugger (open/continue)\n\

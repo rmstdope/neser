@@ -3,7 +3,7 @@
  *
  * Returns true when a mapped shortcut was handled.
  *
- * @param {KeyboardEvent|{code:string,preventDefault:Function}} event
+ * @param {KeyboardEvent|{code:string,repeat:boolean,metaKey:boolean,altKey:boolean,shiftKey:boolean,preventDefault:Function}} event
  * @param {{
  *   togglePause: Function,
  *   reset: Function,

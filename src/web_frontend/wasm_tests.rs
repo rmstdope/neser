@@ -321,7 +321,7 @@ fn reset_restores_initial_state() {
     let modified = nes.save_state_bytes();
     assert_ne!(initial, modified);
 
-    nes.reset();
+    nes.reset(true);
     let after_reset = nes.save_state_bytes();
     assert!(!after_reset.is_empty());
     assert_ne!(modified, after_reset);

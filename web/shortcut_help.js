@@ -8,7 +8,7 @@ export const WEB_SHORTCUT_REFERENCE = [
     { key: "F7", action: "Load State" },
     { key: "F10", action: "Debugger Step Over" },
     { key: "F11", action: "Debugger Step Into" },
-    { key: "Cmd/Alt+F", action: "Fullscreen" },
+    { key: "Cmd/Alt+F", action: "Toggle Fullscreen" },
     { key: "H", action: "Toggle Help" }
 ];
 
