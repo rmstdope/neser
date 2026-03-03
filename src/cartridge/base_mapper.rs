@@ -1088,6 +1088,30 @@ mod tests {
     }
 
     #[test]
+    fn test_write_chr_rom_is_noop_unbanked() {
+        let chr_rom = vec![0x42; 0x2000];
+        let ctx =
+            MapperContext::new_for_test(0, vec![0; 0x8000], chr_rom, NametableLayout::Horizontal);
+        let mut base = BaseMapper::new(&ctx, MapperCapabilities::default());
+        // Attempt to write to CHR-ROM — should be silently ignored
+        base.write_chr(0x0000, 0xFF);
+        assert_eq!(base.read_chr(0x0000), 0x42);
+    }
+
+    #[test]
+    fn test_write_chr_rom_is_noop_banked() {
+        let chr_rom = vec![0x42; 0x2000];
+        let ctx =
+            MapperContext::new_for_test(0, vec![0; 0x8000], chr_rom, NametableLayout::Horizontal);
+        let mut base = BaseMapper::new(&ctx, MapperCapabilities::default());
+        base.configure_chr_banking(0x2000);
+        base.select_chr_page(0, 0);
+        // Attempt to write to CHR-ROM via banked path — should be silently ignored
+        base.write_chr_banked(0x0000, 0xFF);
+        assert_eq!(base.read_chr_banked(0x0000), 0x42);
+    }
+
+    #[test]
     fn test_chr_page_query() {
         let mut base = make_chr_banked_mapper(8, 0x0400);
         base.select_chr_page(3, 7);

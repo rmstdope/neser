@@ -78,10 +78,6 @@ impl Mapper for Mapper185 {
         self.base.read_chr(addr)
     }
 
-    fn write_chr(&mut self, _addr: u16, _value: u8) {
-        // CHR-ROM is read-only
-    }
-
     fn registers_snapshot(&self) -> Vec<u8> {
         vec![self.register, u8::from(self.chr_enabled)]
     }

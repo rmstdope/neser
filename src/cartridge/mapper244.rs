@@ -77,10 +77,6 @@ impl Mapper for Mapper244 {
         }
     }
 
-    fn write_chr(&mut self, _addr: u16, _value: u8) {
-        // CHR-ROM is read-only
-    }
-
     fn registers_snapshot(&self) -> Vec<u8> {
         vec![self.base.prg_page(0) as u8, self.base.chr_page(0) as u8]
     }
