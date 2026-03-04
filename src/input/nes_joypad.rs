@@ -6,7 +6,7 @@
 use super::ControllerInput;
 use serde::{Deserialize, Serialize};
 
-/// Bus joypad state for save-state support.
+/// Joypad controller state for save-state support.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct JoypadState {
     pub strobe: bool,

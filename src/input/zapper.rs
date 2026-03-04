@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-/// Bus Zapper controller state for save-state support.
+/// Zapper controller state for save-state support.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ZapperState {
     pub x: u8,

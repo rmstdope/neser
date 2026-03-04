@@ -6,7 +6,7 @@
 use super::ControllerInput;
 use serde::{Deserialize, Serialize};
 
-/// Bus Arkanoid controller state for save-state support.
+/// Arkanoid controller state for save-state support.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ArkanoidState {
     pub strobe: bool,
