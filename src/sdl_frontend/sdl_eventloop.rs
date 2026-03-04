@@ -2,8 +2,9 @@ use super::autorun_state::AutorunState;
 use super::sdl_audio::SdlNesAudio;
 use super::sdl_gl_wrapper::SdlGlWrapper;
 use crate::app_context::{AppContext, IntoSharedAppContext, SharedAppContext};
+use crate::bus::ControllerStateWrapper;
 use crate::console::{
-    AutorunMode, ControllerStateWrapper, Nes, SaveState, TimingMode, default_catalog_csv_path,
+    AutorunMode, Nes, SaveState, TimingMode, default_catalog_csv_path,
     log_rom_timing_mode_selection,
 };
 use crate::frontend_toasts::gamepad_init_toast_message;

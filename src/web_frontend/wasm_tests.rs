@@ -1,6 +1,8 @@
 #![cfg(all(test, feature = "wasm", target_arch = "wasm32"))]
 
-use crate::console::{ArkanoidState, ControllerStateWrapper, SaveState};
+use crate::bus::ControllerStateWrapper;
+use crate::console::SaveState;
+use crate::input::ArkanoidState;
 use crate::wasm::{WasmNes, gamepad_init_toast_message};
 use wasm_bindgen_test::*;
 

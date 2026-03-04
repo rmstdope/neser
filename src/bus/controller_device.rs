@@ -77,7 +77,7 @@ mod tests {
         }
 
         fn capture_state(&self) -> crate::input::ControllerState {
-            crate::input::ControllerState::Joypad(crate::console::JoypadState {
+            crate::input::ControllerState::Joypad(crate::input::JoypadState {
                 strobe: false,
                 button_index: 0,
                 button_states: 0,

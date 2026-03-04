@@ -6,13 +6,42 @@ use super::ppu_device::PpuDevice;
 use super::ram_device::RamDevice;
 use crate::apu;
 use crate::cartridge::Cartridge;
-use crate::console::{BusState, MapperState};
 use crate::debugging::log_info;
-use crate::input::{ArkanoidController, Button, Controller, ControllerType, NesJoypad, Zapper};
+use crate::input::{
+    ArkanoidController, ArkanoidState, Button, Controller, ControllerType, JoypadState, NesJoypad,
+    Zapper, ZapperState,
+};
 use crate::ppu;
+use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::io;
 use std::ops::RangeInclusive;
+
+/// Wrapper for controller state to support serialization.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum ControllerStateWrapper {
+    Joypad(JoypadState),
+    Arkanoid(ArkanoidState),
+    Zapper(ZapperState),
+}
+
+/// Bus state for save-state support.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct BusState {
+    pub open_bus: u8,
+    pub oam_dma_page: Option<u8>,
+    pub port1_controller: ControllerStateWrapper,
+    pub port2_controller: ControllerStateWrapper,
+}
+
+/// Mapper state (opaque serialization).
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct MapperState {
+    pub mapper_number: u8,
+    pub prg_ram: Vec<u8>,
+    pub chr_ram: Vec<u8>,
+    pub registers: Vec<u8>,
+}
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -580,8 +609,6 @@ impl Bus {
 
     /// Capture bus state for save-state.
     pub fn capture_state(&self) -> BusState {
-        use crate::console::ControllerStateWrapper;
-
         let port1_state = self.controllers[0].borrow().capture_state();
         let port2_state = self.controllers[1].borrow().capture_state();
 
@@ -603,8 +630,6 @@ impl Bus {
 
     /// Restore bus state from a save-state.
     pub fn restore_state(&mut self, state: &BusState) {
-        use crate::console::ControllerStateWrapper;
-
         self.open_bus = state.open_bus;
         *self.oam_dma_page.borrow_mut() = state.oam_dma_page;
         self.dma_triggered.replace(false);

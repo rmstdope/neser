@@ -9,8 +9,26 @@
 /// - Length counter
 use super::envelope::Envelope;
 use super::length_counter::LengthCounter;
-use crate::console::{NoiseState, TimingMode};
+use crate::apu::envelope::EnvelopeState;
+use crate::console::TimingMode;
 use crate::trace_apu;
+use serde::{Deserialize, Serialize};
+
+/// APU noise channel state for save-state support.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct NoiseState {
+    pub timer: u16,
+    pub timer_period: u16,
+    pub length_counter: u8,
+    pub length_counter_enabled: bool,
+    pub length_counter_halt: bool,
+    pub length_counter_pending_halt: Option<bool>,
+    pub length_counter_reload_value: u8,
+    pub length_counter_previous_value: u8,
+    pub envelope: EnvelopeState,
+    pub mode_flag: bool,
+    pub shift_register: u16,
+}
 
 // Period lookup table for NTSC (in CPU cycles)
 const NOISE_PERIOD_TABLE_NTSC: [u16; 16] = [

@@ -3,10 +3,54 @@ use super::frame_counter::FrameCounter;
 use super::noise::Noise;
 use super::pulse::Pulse;
 use super::triangle::Triangle;
-use crate::console::{ApuState, FrameCounterState, TimingMode};
+use crate::apu::dmc::DmcState;
+use crate::apu::noise::NoiseState;
+use crate::apu::pulse::PulseState;
+use crate::apu::triangle::TriangleState;
+use crate::console::TimingMode;
 use crate::trace_apu;
 use ringbuf::HeapRb;
 use ringbuf::traits::{Consumer, Observer, RingBuffer};
+use serde::{Deserialize, Serialize};
+
+/// APU frame counter state for save-state support.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct FrameCounterState {
+    pub cycle_counter: u32,
+    pub mode: bool,
+    pub irq_inhibit: bool,
+    pub irq_flag: bool,
+    pub irq_assert_cycles_remaining: u8,
+    pub block_frame_counter: bool,
+    pub five_step_extra_cycle: bool,
+    pub pending_write: Option<u8>,
+    pub write_delay: u8,
+    pub pending_write_on_odd_cpu_cycle: bool,
+    pub pending_immediate_quarter: bool,
+    pub pending_immediate_half: bool,
+}
+
+/// APU complete state for save-state support.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ApuState {
+    pub frame_counter: FrameCounterState,
+    pub pulse1: PulseState,
+    pub pulse2: PulseState,
+    pub triangle: TriangleState,
+    pub noise: NoiseState,
+    pub dmc: DmcState,
+    pub sample_accumulator: f32,
+    pub cycles_per_sample: f32,
+    pub pending_samples: Vec<f32>,
+    pub pulse1_enabled: bool,
+    pub pulse2_enabled: bool,
+    pub triangle_enabled: bool,
+    pub noise_enabled: bool,
+    pub dmc_enabled: bool,
+    pub apu_cycle: u32,
+    pub cpu_cycle: u64,
+    pub last_4017_write: u8,
+}
 
 // Upper bound for queued audio samples awaiting retrieval.
 //

@@ -1,10 +1,19 @@
 use super::ControllerInput;
 use crate::app_context::AppContext;
-use crate::console::ZapperState;
 use crate::input::Button;
 use crate::ppu::Ppu;
+use serde::{Deserialize, Serialize};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+
+/// Zapper controller state for save-state support.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ZapperState {
+    pub x: u8,
+    pub y: u8,
+    pub trigger: bool,
+    pub light: bool,
+}
 
 /// Luminance threshold for light detection (0-255)
 /// Bright pixels above this threshold will trigger light detection
