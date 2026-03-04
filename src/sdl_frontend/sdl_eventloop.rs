@@ -2512,12 +2512,20 @@ mod tests {
         assert!(!event_loop.is_fullscreen());
 
         let _ =
+            event_loop.handle_key_down_for_run_with_modifiers(&mut nes, Keycode::F, Mod::LALTMOD);
+        assert!(!event_loop.is_fullscreen());
+
+        let _ =
             event_loop.handle_key_down_for_run_with_modifiers(&mut nes, Keycode::F, Mod::LCTRLMOD);
         assert!(event_loop.is_fullscreen());
 
         let _ =
             event_loop.handle_key_down_for_run_with_modifiers(&mut nes, Keycode::F, Mod::LALTMOD);
         assert!(event_loop.is_fullscreen());
+
+        let _ =
+            event_loop.handle_key_down_for_run_with_modifiers(&mut nes, Keycode::F, Mod::LCTRLMOD);
+        assert!(!event_loop.is_fullscreen());
     }
 
     #[test]
@@ -4262,6 +4270,13 @@ mod tests {
         let _ =
             event_loop.handle_key_down_for_run_with_modifiers(&mut nes, Keycode::R, Mod::LALTMOD);
         assert_eq!(nes.cpu.pc(), 0x5678);
+
+        let _ = event_loop.handle_key_down_for_run_with_modifiers(
+            &mut nes,
+            Keycode::R,
+            Mod::LCTRLMOD,
+        );
+        assert_eq!(nes.cpu.pc(), reset_vector);
     }
 
     #[test]
