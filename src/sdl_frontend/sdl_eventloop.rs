@@ -1670,14 +1670,9 @@ impl SdlEventLoop {
     }
 
     fn cartridge_switch_fuzzy_matches(needle: &str, haystack: &str) -> bool {
-        if needle.is_empty() {
-            return true;
-        }
-
         let mut needle_chars = needle.chars();
-        let mut current = match needle_chars.next() {
-            Some(ch) => ch,
-            None => return true,
+        let Some(mut current) = needle_chars.next() else {
+            return true;
         };
 
         for ch in haystack.chars() {
@@ -1870,8 +1865,7 @@ impl SdlEventLoop {
                 continue;
             };
 
-            let absolute_index = visible_index;
-            let line = if absolute_index == selected {
+            let line = if visible_index == selected {
                 format!(">> {} <<", self.cartridge_switch_entries[entry_index])
             } else {
                 format!("   {}", self.cartridge_switch_entries[entry_index])
