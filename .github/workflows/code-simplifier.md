@@ -25,7 +25,7 @@ safe-outputs:
 network:
   allowed:
     - defaults
-    - "index.crates.io"
+    - "rust"
 
 tools:
   github:
