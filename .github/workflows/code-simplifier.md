@@ -22,6 +22,11 @@ safe-outputs:
     reviewers: [copilot]
     expires: 1d
 
+network:
+  allowed:
+    - defaults
+    - "index.crates.io"
+
 tools:
   github:
     toolsets: [default]
