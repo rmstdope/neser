@@ -1550,8 +1550,8 @@ impl SdlEventLoop {
         self.handle_key_down_for_run_with_modifiers(nes, keycode, Mod::NOMOD)
     }
 
-    fn has_command_or_alt_modifier(keymod: Mod) -> bool {
-        keymod.intersects(Mod::LALTMOD | Mod::RALTMOD | Mod::LGUIMOD | Mod::RGUIMOD)
+    fn has_control_modifier(keymod: Mod) -> bool {
+        keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD)
     }
 
     fn has_shift_modifier(keymod: Mod) -> bool {
@@ -1559,7 +1559,7 @@ impl SdlEventLoop {
     }
 
     fn is_fullscreen_shortcut(keycode: Keycode, keymod: Mod) -> bool {
-        keycode == Keycode::F && Self::has_command_or_alt_modifier(keymod)
+        keycode == Keycode::F && Self::has_control_modifier(keymod)
     }
 
     fn handle_key_down_for_run_with_modifiers(
@@ -1568,7 +1568,7 @@ impl SdlEventLoop {
         keycode: Keycode,
         keymod: Mod,
     ) -> KeyDownOutcome {
-        if Self::has_command_or_alt_modifier(keymod) {
+        if Self::has_control_modifier(keymod) {
             match keycode {
                 Keycode::Q => return KeyDownOutcome::Quit,
                 Keycode::R => {
@@ -1731,11 +1731,11 @@ impl SdlEventLoop {
     /// - 0: Start button
     ///
     /// Emulator controls:
-    /// - Cmd/Alt+Q: Quit
+    /// - Ctrl+Q: Quit
     /// - Space: Toggle pause
-    /// - Cmd/Alt+R: Soft reset
-    /// - Shift+Cmd/Alt+R: Hard reset
-    /// - Cmd/Alt+F: Toggle fullscreen
+    /// - Ctrl+R: Soft reset
+    /// - Shift+Ctrl+R: Hard reset
+    /// - Ctrl+F: Toggle fullscreen
     /// - F5: Open debugger (when closed) / Continue (when debugger open)
     /// - F10: Debugger step-over (JSR runs until RTS)
     /// - F11: Debugger step-into (single CPU tick)
@@ -1896,14 +1896,14 @@ P: B\n\
 
         format!(
             "Controls\n\
-Cmd/Alt+Q: Quit\n\
+Ctrl+Q: Quit\n\
 Space: Pause\n\
 H: Toggle help\n\
 \n\
 System\n\
-Cmd/Alt+R: Soft reset\n\
-Shift+Cmd/Alt+R: Hard reset\n\
-Cmd/Alt+F: Toggle fullscreen\n\
+Ctrl+R: Soft reset\n\
+Shift+Ctrl+R: Hard reset\n\
+Ctrl+F: Toggle fullscreen\n\
 F2/F3: Volume up/down\n\
 F4: Cycle shader\n\
 F5: Debugger (open/continue)\n\
@@ -2501,7 +2501,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn test_handle_key_down_cmd_or_alt_f_toggles_fullscreen_state() {
+    fn test_handle_key_down_ctrl_f_toggles_fullscreen_state() {
         let config = default_config();
         let mut event_loop =
             SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
@@ -2512,12 +2512,12 @@ mod tests {
         assert!(!event_loop.is_fullscreen());
 
         let _ =
-            event_loop.handle_key_down_for_run_with_modifiers(&mut nes, Keycode::F, Mod::LGUIMOD);
+            event_loop.handle_key_down_for_run_with_modifiers(&mut nes, Keycode::F, Mod::LCTRLMOD);
         assert!(event_loop.is_fullscreen());
 
         let _ =
             event_loop.handle_key_down_for_run_with_modifiers(&mut nes, Keycode::F, Mod::LALTMOD);
-        assert!(!event_loop.is_fullscreen());
+        assert!(event_loop.is_fullscreen());
     }
 
     #[test]
@@ -3090,7 +3090,7 @@ mod tests {
     }
 
     #[test]
-    fn test_handle_key_down_cmd_or_alt_q_requests_quit() {
+    fn test_handle_key_down_ctrl_q_requests_quit() {
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
             Config::default(),
         ));
@@ -3098,13 +3098,16 @@ mod tests {
         let mut event_loop =
             SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
 
-        let outcome =
-            event_loop.handle_key_down_for_run_with_modifiers(&mut nes, Keycode::Q, Mod::LGUIMOD);
+        let outcome = event_loop.handle_key_down_for_run_with_modifiers(
+            &mut nes,
+            Keycode::Q,
+            Mod::LCTRLMOD,
+        );
         assert_eq!(outcome, KeyDownOutcome::Quit);
 
         let outcome =
             event_loop.handle_key_down_for_run_with_modifiers(&mut nes, Keycode::Q, Mod::LALTMOD);
-        assert_eq!(outcome, KeyDownOutcome::Quit);
+        assert_eq!(outcome, KeyDownOutcome::Continue);
     }
 
     #[test]
@@ -3161,10 +3164,10 @@ mod tests {
             Config::default(),
         ));
         let text = event_loop.help_overlay_text(&nes);
-        assert!(text.contains("Cmd/Alt+Q"));
+        assert!(text.contains("Ctrl+Q"));
         assert!(text.contains("Space"));
-        assert!(text.contains("Cmd/Alt+R"));
-        assert!(text.contains("Shift+Cmd/Alt+R"));
+        assert!(text.contains("Ctrl+R"));
+        assert!(text.contains("Shift+Ctrl+R"));
         assert!(text.contains("F2"));
         assert!(text.contains("F3"));
         assert!(text.contains("F5"));
@@ -3172,7 +3175,7 @@ mod tests {
         assert!(text.contains("F7"));
         assert!(text.contains("F10"));
         assert!(text.contains("F11"));
-        assert!(text.contains("Cmd/Alt+F"));
+        assert!(text.contains("Ctrl+F"));
         assert!(text.contains("W/A/S/D"));
         assert!(text.contains("R"));
         assert!(text.contains("T"));
@@ -4195,7 +4198,7 @@ mod tests {
 
     #[test]
     fn test_handle_key_down_f1_no_longer_resets_nes() {
-        // Desired behavior: reset is reassigned to Cmd/Alt+R, so plain F1 should not reset.
+        // Desired behavior: reset is reassigned to Ctrl+R, so plain F1 should not reset.
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
             Config::default(),
         ));
@@ -4228,39 +4231,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn test_handle_key_down_cmd_or_alt_r_resets_nes() {
-        let config = default_config();
-        let mut event_loop =
-            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
-        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
-            Config::default(),
-        ));
-
-        let mut prg_rom = vec![0u8; 0x8000];
-        let reset_vector: u16 = 0x8000;
-        prg_rom[0x7FFC] = (reset_vector & 0x00FF) as u8;
-        prg_rom[0x7FFD] = (reset_vector >> 8) as u8;
-        let cartridge = crate::cartridge::Cartridge::from_parts(
-            prg_rom,
-            vec![],
-            crate::cartridge::NametableLayout::Horizontal,
-        );
-        nes.insert_cartridge(cartridge);
-
-        nes.cpu.set_pc(0x1234);
-        let _ =
-            event_loop.handle_key_down_for_run_with_modifiers(&mut nes, Keycode::R, Mod::LGUIMOD);
-        assert_eq!(nes.cpu.pc(), reset_vector);
-
-        nes.cpu.set_pc(0x5678);
-        let _ =
-            event_loop.handle_key_down_for_run_with_modifiers(&mut nes, Keycode::R, Mod::LALTMOD);
-        assert_eq!(nes.cpu.pc(), reset_vector);
-    }
-
-    #[test]
-    #[serial]
-    fn test_handle_key_down_shift_cmd_or_alt_r_resets_nes() {
+    fn test_handle_key_down_ctrl_r_resets_nes() {
         let config = default_config();
         let mut event_loop =
             SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
@@ -4283,7 +4254,42 @@ mod tests {
         let _ = event_loop.handle_key_down_for_run_with_modifiers(
             &mut nes,
             Keycode::R,
-            Mod::LGUIMOD | Mod::LSHIFTMOD,
+            Mod::LCTRLMOD,
+        );
+        assert_eq!(nes.cpu.pc(), reset_vector);
+
+        nes.cpu.set_pc(0x5678);
+        let _ =
+            event_loop.handle_key_down_for_run_with_modifiers(&mut nes, Keycode::R, Mod::LALTMOD);
+        assert_eq!(nes.cpu.pc(), 0x5678);
+    }
+
+    #[test]
+    #[serial]
+    fn test_handle_key_down_shift_ctrl_r_resets_nes() {
+        let config = default_config();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+
+        let mut prg_rom = vec![0u8; 0x8000];
+        let reset_vector: u16 = 0x8000;
+        prg_rom[0x7FFC] = (reset_vector & 0x00FF) as u8;
+        prg_rom[0x7FFD] = (reset_vector >> 8) as u8;
+        let cartridge = crate::cartridge::Cartridge::from_parts(
+            prg_rom,
+            vec![],
+            crate::cartridge::NametableLayout::Horizontal,
+        );
+        nes.insert_cartridge(cartridge);
+
+        nes.cpu.set_pc(0x1234);
+        let _ = event_loop.handle_key_down_for_run_with_modifiers(
+            &mut nes,
+            Keycode::R,
+            Mod::LCTRLMOD | Mod::LSHIFTMOD,
         );
         assert_eq!(nes.cpu.pc(), reset_vector);
 
@@ -4293,7 +4299,7 @@ mod tests {
             Keycode::R,
             Mod::LALTMOD | Mod::LSHIFTMOD,
         );
-        assert_eq!(nes.cpu.pc(), reset_vector);
+        assert_eq!(nes.cpu.pc(), 0x5678);
     }
 
     #[test]
