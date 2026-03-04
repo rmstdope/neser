@@ -44,6 +44,7 @@ Create an upbeat daily status report for the repo as a GitHub issue.
 - Progress tracking, goal reminders and highlights
 - Project status and recommendations
 - Actionable next steps for maintainers
+- Statistics on issues and PRs (open vs closed, time to close, etc.)
 
 ## Style
 
@@ -56,3 +57,4 @@ Create an upbeat daily status report for the repo as a GitHub issue.
 1. Gather recent activity from the repository
 2. Study the repository, its issues and its pull requests
 3. Create a new GitHub issue with your findings and insights
+4. If there are older repo status issues, close them with a comment linking to the new report
