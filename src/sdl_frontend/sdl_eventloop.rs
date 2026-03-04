@@ -2,7 +2,10 @@ use super::autorun_state::AutorunState;
 use super::sdl_audio::SdlNesAudio;
 use super::sdl_gl_wrapper::SdlGlWrapper;
 use crate::app_context::{AppContext, IntoSharedAppContext, SharedAppContext};
-use crate::console::{AutorunMode, ControllerStateWrapper, Nes, SaveState, TimingMode};
+use crate::console::{
+    AutorunMode, ControllerStateWrapper, Nes, SaveState, TimingMode, default_catalog_csv_path,
+    log_rom_timing_mode_selection,
+};
 use crate::frontend_toasts::gamepad_init_toast_message;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
@@ -13,6 +16,7 @@ use sdl2::mouse::MouseButton;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs;
+use std::path::Path;
 #[cfg(test)]
 #[allow(unused_imports)]
 use std::rc::Rc;
@@ -72,6 +76,12 @@ pub struct SdlEventLoop {
     last_mouse_position: Option<(i32, i32)>,
     cursor_hidden: bool,
     autorun_state: Option<AutorunState>,
+    cartridge_switch_dialog_open: bool,
+    cartridge_switch_pause_state_before_open: bool,
+    cartridge_switch_entries: Vec<String>,
+    cartridge_switch_selected_index: usize,
+    cartridge_switch_filter_query: String,
+    cartridge_switch_filtered_indices: Vec<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -359,6 +369,12 @@ impl SdlEventLoop {
             last_mouse_position: None,
             cursor_hidden: false,
             autorun_state: None,
+            cartridge_switch_dialog_open: false,
+            cartridge_switch_pause_state_before_open: false,
+            cartridge_switch_entries: Vec::new(),
+            cartridge_switch_selected_index: 0,
+            cartridge_switch_filter_query: String::new(),
+            cartridge_switch_filtered_indices: Vec::new(),
         };
 
         let gamepad_toast =
@@ -1562,12 +1578,350 @@ impl SdlEventLoop {
         keycode == Keycode::F && Self::has_control_modifier(keymod)
     }
 
+    fn preload_cartridge_switch_entries_from_default_catalog(&mut self) {
+        if let Some(home) = std::env::var_os("HOME") {
+            let catalog_path = default_catalog_csv_path(std::path::PathBuf::from(home).as_path());
+            let _ = self.load_cartridge_switch_entries_from_csv(&catalog_path);
+        }
+    }
+
+    fn parse_cartridge_switch_entries(content: &str) -> Vec<String> {
+        content
+            .lines()
+            .skip(1)
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(ToString::to_string)
+            .collect()
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn read_rom_bytes(rom_path: &str) -> Result<Vec<u8>, String> {
+        fs::read(rom_path).map_err(|err| format!("Failed to read ROM: {err}"))
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn load_cartridge_from_rom_bytes(
+        &self,
+        rom_path: &str,
+        rom_bytes: &[u8],
+        app_context: SharedAppContext,
+    ) -> Result<crate::cartridge::Cartridge, String> {
+        crate::cartridge::Cartridge::load_from_file(rom_bytes, rom_path, app_context)
+            .map_err(|err| format!("Failed to load ROM cartridge: {err}"))
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn apply_cartridge_timing_mode_from_rom(
+        app_context: &SharedAppContext,
+        cartridge: &crate::cartridge::Cartridge,
+    ) {
+        let rom_timing_mode = cartridge.rom_timing_mode();
+        let applied = app_context
+            .borrow_mut()
+            .config_mut()
+            .apply_rom_timing_mode(rom_timing_mode);
+        log_rom_timing_mode_selection(app_context, rom_timing_mode, applied);
+    }
+
+    fn request_cartridge_switch_dialog(&mut self) -> KeyDownOutcome {
+        self.cartridge_switch_pause_state_before_open = self.paused;
+        self.cartridge_switch_dialog_open = true;
+        self.paused = true;
+        self.preload_cartridge_switch_entries_from_default_catalog();
+        self.refresh_cartridge_switch_filtered_entries();
+        KeyDownOutcome::Continue
+    }
+
+    fn close_cartridge_switch_dialog(&mut self) {
+        self.cartridge_switch_dialog_open = false;
+        self.paused = self.debugger_open_requested || self.cartridge_switch_pause_state_before_open;
+        self.cartridge_switch_pause_state_before_open = false;
+    }
+
+    fn refresh_cartridge_switch_filtered_entries(&mut self) {
+        let needle = self.cartridge_switch_filter_query.to_ascii_lowercase();
+        self.cartridge_switch_filtered_indices = self
+            .cartridge_switch_entries
+            .iter()
+            .enumerate()
+            .filter_map(|(index, path)| {
+                let haystack = Path::new(path)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or(path)
+                    .to_ascii_lowercase();
+
+                if needle.is_empty() || Self::cartridge_switch_fuzzy_matches(&needle, &haystack) {
+                    Some(index)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if self.cartridge_switch_filtered_indices.is_empty() {
+            self.cartridge_switch_selected_index = 0;
+        } else {
+            self.cartridge_switch_selected_index = self
+                .cartridge_switch_selected_index
+                .min(self.cartridge_switch_filtered_indices.len() - 1);
+        }
+    }
+
+    fn cartridge_switch_fuzzy_matches(needle: &str, haystack: &str) -> bool {
+        if needle.is_empty() {
+            return true;
+        }
+
+        let mut needle_chars = needle.chars();
+        let mut current = match needle_chars.next() {
+            Some(ch) => ch,
+            None => return true,
+        };
+
+        for ch in haystack.chars() {
+            if ch == current {
+                match needle_chars.next() {
+                    Some(next) => current = next,
+                    None => return true,
+                }
+            }
+        }
+
+        false
+    }
+
+    fn move_cartridge_switch_selection_next(&mut self) {
+        let visible_entry_count = self.cartridge_switch_visible_entry_count();
+        if visible_entry_count == 0 {
+            self.cartridge_switch_selected_index = 0;
+            return;
+        }
+
+        self.cartridge_switch_selected_index =
+            (self.cartridge_switch_selected_index + 1) % visible_entry_count;
+    }
+
+    fn move_cartridge_switch_selection_prev(&mut self) {
+        let visible_entry_count = self.cartridge_switch_visible_entry_count();
+        if visible_entry_count == 0 {
+            self.cartridge_switch_selected_index = 0;
+            return;
+        }
+
+        self.cartridge_switch_selected_index = if self.cartridge_switch_selected_index == 0 {
+            visible_entry_count - 1
+        } else {
+            self.cartridge_switch_selected_index - 1
+        };
+    }
+
+    fn cartridge_switch_uses_unfiltered_fallback(&self) -> bool {
+        self.cartridge_switch_filter_query.is_empty()
+            && self.cartridge_switch_filtered_indices.is_empty()
+            && !self.cartridge_switch_entries.is_empty()
+    }
+
+    fn cartridge_switch_visible_entry_count(&self) -> usize {
+        if self.cartridge_switch_uses_unfiltered_fallback() {
+            self.cartridge_switch_entries.len()
+        } else {
+            self.cartridge_switch_filtered_indices.len()
+        }
+    }
+
+    fn cartridge_switch_entry_index_at_visible(&self, visible_index: usize) -> Option<usize> {
+        if self.cartridge_switch_uses_unfiltered_fallback() {
+            self.cartridge_switch_entries
+                .get(visible_index)
+                .map(|_| visible_index)
+        } else {
+            self.cartridge_switch_filtered_indices
+                .get(visible_index)
+                .copied()
+        }
+    }
+
+    fn selected_cartridge_switch_entry(&self) -> Option<&str> {
+        self.cartridge_switch_entry_index_at_visible(self.cartridge_switch_selected_index)
+            .and_then(|entry_index| self.cartridge_switch_entries.get(entry_index))
+            .map(String::as_str)
+    }
+
+    fn cartridge_switch_input_char(keycode: Keycode) -> Option<char> {
+        match keycode {
+            Keycode::A => Some('a'),
+            Keycode::B => Some('b'),
+            Keycode::C => Some('c'),
+            Keycode::D => Some('d'),
+            Keycode::E => Some('e'),
+            Keycode::F => Some('f'),
+            Keycode::G => Some('g'),
+            Keycode::H => Some('h'),
+            Keycode::I => Some('i'),
+            Keycode::J => Some('j'),
+            Keycode::K => Some('k'),
+            Keycode::L => Some('l'),
+            Keycode::M => Some('m'),
+            Keycode::N => Some('n'),
+            Keycode::O => Some('o'),
+            Keycode::P => Some('p'),
+            Keycode::Q => Some('q'),
+            Keycode::R => Some('r'),
+            Keycode::S => Some('s'),
+            Keycode::T => Some('t'),
+            Keycode::U => Some('u'),
+            Keycode::V => Some('v'),
+            Keycode::W => Some('w'),
+            Keycode::X => Some('x'),
+            Keycode::Y => Some('y'),
+            Keycode::Z => Some('z'),
+            Keycode::Num0 => Some('0'),
+            Keycode::Num1 => Some('1'),
+            Keycode::Num2 => Some('2'),
+            Keycode::Num3 => Some('3'),
+            Keycode::Num4 => Some('4'),
+            Keycode::Num5 => Some('5'),
+            Keycode::Num6 => Some('6'),
+            Keycode::Num7 => Some('7'),
+            Keycode::Num8 => Some('8'),
+            Keycode::Num9 => Some('9'),
+            Keycode::Space => Some(' '),
+            Keycode::Minus => Some('-'),
+            Keycode::Underscore => Some('_'),
+            Keycode::Period => Some('.'),
+            Keycode::Slash => Some('/'),
+            _ => None,
+        }
+    }
+
+    fn handle_cartridge_switch_dialog_key(&mut self, nes: &mut Nes, keycode: Keycode) {
+        match keycode {
+            Keycode::Escape => self.close_cartridge_switch_dialog(),
+            Keycode::Down => self.move_cartridge_switch_selection_next(),
+            Keycode::Up => self.move_cartridge_switch_selection_prev(),
+            Keycode::Backspace => {
+                self.cartridge_switch_filter_query.pop();
+                self.refresh_cartridge_switch_filtered_entries();
+            }
+            Keycode::Return | Keycode::KpEnter => {
+                if let Some(path) = self.selected_cartridge_switch_entry().map(str::to_string)
+                    && let Err(err) = self.switch_to_cartridge_path(nes, &path)
+                {
+                    log_info(format!("Failed to switch cartridge: {err}"));
+                }
+                self.close_cartridge_switch_dialog();
+            }
+            _ => {
+                if let Some(ch) = Self::cartridge_switch_input_char(keycode) {
+                    self.cartridge_switch_filter_query.push(ch);
+                    self.refresh_cartridge_switch_filtered_entries();
+                }
+            }
+        }
+    }
+
+    fn cartridge_switch_overlay_text(&self) -> String {
+        if self.cartridge_switch_entries.is_empty() {
+            return "Switch cartridge\nNo catalog entries found\n\nPress Esc to close".to_string();
+        }
+
+        let filter_label = if self.cartridge_switch_filter_query.is_empty() {
+            "(none)"
+        } else {
+            self.cartridge_switch_filter_query.as_str()
+        };
+        let visible_count = self.cartridge_switch_visible_entry_count();
+        let total_count = self.cartridge_switch_entries.len();
+        let matches_label = format!("Matches: {visible_count}/{total_count}");
+
+        if visible_count == 0 {
+            return format!(
+                "Switch cartridge\nFilter: {filter_label}\n{matches_label}\nNo matching entries\n\nBackspace: Edit filter    Esc: Cancel"
+            );
+        }
+
+        const MAX_VISIBLE: usize = 12;
+        let entry_count = visible_count;
+        let selected = self
+            .cartridge_switch_selected_index
+            .min(entry_count.saturating_sub(1));
+        let mut start = selected.saturating_sub(MAX_VISIBLE / 2);
+        let mut end = (start + MAX_VISIBLE).min(entry_count);
+        if end - start < MAX_VISIBLE {
+            start = end.saturating_sub(MAX_VISIBLE);
+        }
+        end = (start + MAX_VISIBLE).min(entry_count);
+
+        let mut lines = vec![
+            "Switch cartridge".to_string(),
+            format!("Filter: {filter_label}"),
+            matches_label,
+            "Up/Down: Select".to_string(),
+            "Type to filter    Backspace: Delete".to_string(),
+            "Enter: Load    Esc: Cancel".to_string(),
+            String::new(),
+        ];
+
+        for visible_index in start..end {
+            let Some(entry_index) = self.cartridge_switch_entry_index_at_visible(visible_index)
+            else {
+                continue;
+            };
+
+            let absolute_index = visible_index;
+            let line = if absolute_index == selected {
+                format!(">> {} <<", self.cartridge_switch_entries[entry_index])
+            } else {
+                format!("   {}", self.cartridge_switch_entries[entry_index])
+            };
+            lines.push(line);
+        }
+
+        lines.join("\n")
+    }
+
+    pub fn load_cartridge_switch_entries_from_csv(
+        &mut self,
+        catalog_csv_path: &Path,
+    ) -> Result<(), String> {
+        let content = fs::read_to_string(catalog_csv_path)
+            .map_err(|err| format!("Failed to read cartridge catalog CSV: {err}"))?;
+        self.cartridge_switch_entries = Self::parse_cartridge_switch_entries(&content);
+        self.refresh_cartridge_switch_filtered_entries();
+        Ok(())
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn switch_to_cartridge_path(
+        &mut self,
+        nes: &mut Nes,
+        rom_path: &str,
+    ) -> Result<(), String> {
+        let rom_bytes = Self::read_rom_bytes(rom_path)?;
+        let app_context = nes.app_context.clone();
+        let cartridge =
+            self.load_cartridge_from_rom_bytes(rom_path, &rom_bytes, app_context.clone())?;
+
+        Self::apply_cartridge_timing_mode_from_rom(&app_context, &cartridge);
+
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+        Ok(())
+    }
+
     fn handle_key_down_for_run_with_modifiers(
         &mut self,
         nes: &mut Nes,
         keycode: Keycode,
         keymod: Mod,
     ) -> KeyDownOutcome {
+        if self.cartridge_switch_dialog_open {
+            self.handle_cartridge_switch_dialog_key(nes, keycode);
+            return KeyDownOutcome::Continue;
+        }
+
         if Self::has_control_modifier(keymod) {
             match keycode {
                 Keycode::Q => return KeyDownOutcome::Quit,
@@ -1576,6 +1930,7 @@ impl SdlEventLoop {
                     nes.reset(soft_reset);
                     return KeyDownOutcome::Continue;
                 }
+                Keycode::O => return self.request_cartridge_switch_dialog(),
                 Keycode::F => {
                     self.toggle_fullscreen(None);
                     return KeyDownOutcome::Continue;
@@ -1904,6 +2259,7 @@ System\n\
 Ctrl+R: Soft reset\n\
 Shift+Ctrl+R: Hard reset\n\
 Ctrl+F: Toggle fullscreen\n\
+Ctrl+O: Switch cartridge\n\
 F2/F3: Volume up/down\n\
 F4: Cycle shader\n\
 F5: Debugger (open/continue)\n\
@@ -1921,6 +2277,10 @@ F11: Step into\n\
     /// Generate overlay text for rendering.
     /// Returns autorun overlay text if in autorun mode, otherwise help overlay text if visible.
     fn overlay_render_text(&self, nes: &Nes) -> Option<String> {
+        if self.cartridge_switch_dialog_open {
+            return Some(self.cartridge_switch_overlay_text());
+        }
+
         // Check if autorun is active and generate overlay
         if let Some(ref autorun_state) = self.autorun_state {
             let tv_system = nes.app_context.borrow().config().tv_system;
@@ -3119,6 +3479,446 @@ mod tests {
     }
 
     #[test]
+    #[serial]
+    fn test_handle_key_down_ctrl_o_requests_cartridge_switch_dialog() {
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        let config = default_config();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config)).unwrap();
+
+        let _ =
+            event_loop.handle_key_down_for_run_with_modifiers(&mut nes, Keycode::O, Mod::LGUIMOD);
+        assert!(event_loop.cartridge_switch_dialog_open);
+    }
+
+    #[test]
+    #[serial]
+    fn test_load_cartridge_switch_entries_from_csv_populates_entries() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let csv_path = temp_dir.path().join("cartridges.csv");
+        fs::write(&csv_path, "path\nroms/games/a.nes\nroms/games/sub/b.nes\n").expect("write csv");
+
+        let config = default_config();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config)).unwrap();
+
+        event_loop
+            .load_cartridge_switch_entries_from_csv(&csv_path)
+            .expect("csv load should succeed");
+
+        assert_eq!(
+            event_loop.cartridge_switch_entries,
+            vec![
+                "roms/games/a.nes".to_string(),
+                "roms/games/sub/b.nes".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_switch_to_cartridge_path_loads_cartridge_into_nes() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let rom_path = copy_test_rom(&temp_dir);
+        let rom_path_str = rom_path.to_string_lossy().to_string();
+
+        let config = default_config();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config)).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+
+        event_loop
+            .switch_to_cartridge_path(&mut nes, &rom_path_str)
+            .expect("cartridge switch should succeed");
+
+        assert!(
+            nes.state_path().is_some(),
+            "NES should have cartridge state path after switch"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_cartridge_switch_dialog_overlay_shows_selected_entry() {
+        let config = default_config();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config)).unwrap();
+        let nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+
+        event_loop.cartridge_switch_dialog_open = true;
+        event_loop.cartridge_switch_entries = vec!["roms/games/a.nes".to_string()];
+        event_loop.cartridge_switch_selected_index = 0;
+
+        let overlay = event_loop
+            .overlay_render_text(&nes)
+            .expect("overlay text should be present");
+        assert!(overlay.contains("Switch cartridge"));
+        assert!(overlay.contains(">> roms/games/a.nes <<"));
+    }
+
+    #[test]
+    #[serial]
+    fn test_cartridge_switch_dialog_down_and_up_changes_selection() {
+        let config = default_config();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config)).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+
+        event_loop.cartridge_switch_dialog_open = true;
+        event_loop.paused = true;
+        event_loop.cartridge_switch_entries = vec![
+            "roms/games/a.nes".to_string(),
+            "roms/games/b.nes".to_string(),
+        ];
+        event_loop.cartridge_switch_selected_index = 0;
+
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::Down);
+        assert_eq!(event_loop.cartridge_switch_selected_index, 1);
+
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::Up);
+        assert_eq!(event_loop.cartridge_switch_selected_index, 0);
+    }
+
+    #[test]
+    #[serial]
+    fn test_cartridge_switch_dialog_escape_closes_dialog_and_unpauses() {
+        let config = default_config();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config)).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+
+        let _ = event_loop.request_cartridge_switch_dialog();
+
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::Escape);
+
+        assert!(!event_loop.cartridge_switch_dialog_open);
+        assert!(!event_loop.paused);
+    }
+
+    #[test]
+    #[serial]
+    fn test_cartridge_switch_dialog_escape_restores_preexisting_paused_state() {
+        let config = default_config();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config)).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+
+        event_loop.paused = true;
+        let _ = event_loop.request_cartridge_switch_dialog();
+
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::Escape);
+
+        assert!(!event_loop.cartridge_switch_dialog_open);
+        assert!(event_loop.paused);
+    }
+
+    #[test]
+    #[serial]
+    fn test_cartridge_switch_dialog_enter_loads_selected_rom_and_closes() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let rom_path = copy_test_rom(&temp_dir);
+        let rom_path_str = rom_path.to_string_lossy().to_string();
+
+        let config = default_config();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config)).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+
+        event_loop.cartridge_switch_dialog_open = true;
+        event_loop.paused = true;
+        event_loop.cartridge_switch_entries = vec![rom_path_str.clone()];
+        event_loop.cartridge_switch_selected_index = 0;
+
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::Return);
+
+        assert_eq!(
+            nes.state_path(),
+            Some(rom_path.with_extension("state")),
+            "Selected ROM should be loaded into NES"
+        );
+        assert!(!event_loop.cartridge_switch_dialog_open);
+        assert!(!event_loop.paused);
+    }
+
+    #[test]
+    #[serial]
+    fn test_cartridge_switch_dialog_typing_filters_entries() {
+        let config = default_config();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config)).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+
+        event_loop.cartridge_switch_dialog_open = true;
+        event_loop.paused = true;
+        event_loop.cartridge_switch_entries = vec![
+            "roms/games/mario.nes".to_string(),
+            "roms/games/zelda.nes".to_string(),
+            "roms/games/mega_man.nes".to_string(),
+        ];
+        event_loop.refresh_cartridge_switch_filtered_entries();
+
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::M);
+
+        let overlay = event_loop
+            .overlay_render_text(&nes)
+            .expect("overlay should be visible");
+        assert!(overlay.contains("Filter: m"));
+        assert!(overlay.contains("Matches: 2/3"));
+        assert!(overlay.contains("mario.nes"));
+        assert!(overlay.contains("mega_man.nes"));
+        assert!(!overlay.contains("zelda.nes"));
+    }
+
+    #[test]
+    #[serial]
+    fn test_cartridge_switch_dialog_fuzzy_subsequence_match_is_supported() {
+        let config = default_config();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config)).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+
+        event_loop.cartridge_switch_dialog_open = true;
+        event_loop.paused = true;
+        event_loop.cartridge_switch_entries = vec![
+            "roms/games/mega_man.nes".to_string(),
+            "roms/games/mario.nes".to_string(),
+        ];
+        event_loop.refresh_cartridge_switch_filtered_entries();
+
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::M);
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::M);
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::N);
+
+        let overlay = event_loop
+            .overlay_render_text(&nes)
+            .expect("overlay should be visible");
+        assert!(overlay.contains("Filter: mmn"));
+        assert!(overlay.contains("mega_man.nes"));
+        assert!(!overlay.contains("mario.nes"));
+    }
+
+    #[test]
+    #[serial]
+    fn test_cartridge_switch_dialog_fuzzy_matching_is_order_sensitive() {
+        let config = default_config();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config)).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+
+        event_loop.cartridge_switch_dialog_open = true;
+        event_loop.paused = true;
+        event_loop.cartridge_switch_entries = vec!["roms/games/mega_man.nes".to_string()];
+        event_loop.refresh_cartridge_switch_filtered_entries();
+
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::N);
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::M);
+
+        let overlay = event_loop
+            .overlay_render_text(&nes)
+            .expect("overlay should be visible");
+        assert!(overlay.contains("Filter: nm"));
+        assert!(overlay.contains("Matches: 0/1"));
+        assert!(overlay.contains("No matching entries"));
+    }
+
+    #[test]
+    #[serial]
+    fn test_cartridge_switch_dialog_backspace_updates_filter() {
+        let config = default_config();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config)).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+
+        event_loop.cartridge_switch_dialog_open = true;
+        event_loop.paused = true;
+        event_loop.cartridge_switch_entries = vec![
+            "roms/games/mario.nes".to_string(),
+            "roms/games/zelda.nes".to_string(),
+        ];
+        event_loop.refresh_cartridge_switch_filtered_entries();
+
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::M);
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::Backspace);
+
+        let overlay = event_loop
+            .overlay_render_text(&nes)
+            .expect("overlay should be visible");
+        assert!(overlay.contains("Filter: (none)"));
+        assert!(overlay.contains("mario.nes"));
+        assert!(overlay.contains("zelda.nes"));
+    }
+
+    #[test]
+    #[serial]
+    fn test_cartridge_switch_dialog_j_and_k_are_filter_characters() {
+        let config = default_config();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config)).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+
+        event_loop.cartridge_switch_dialog_open = true;
+        event_loop.paused = true;
+        event_loop.cartridge_switch_entries = vec![
+            "roms/games/jk_mario.nes".to_string(),
+            "roms/games/zelda.nes".to_string(),
+        ];
+        event_loop.refresh_cartridge_switch_filtered_entries();
+
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::J);
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::K);
+
+        let overlay = event_loop
+            .overlay_render_text(&nes)
+            .expect("overlay should be visible");
+        assert!(overlay.contains("Filter: jk"));
+        assert!(overlay.contains("jk_mario.nes"));
+        assert!(!overlay.contains("zelda.nes"));
+    }
+
+    #[test]
+    #[serial]
+    fn test_cartridge_switch_dialog_enter_loads_filtered_selected_rom() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let rom_path = copy_test_rom(&temp_dir);
+        let rom_path_str = rom_path.to_string_lossy().to_string();
+
+        let config = default_config();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config)).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+
+        event_loop.cartridge_switch_dialog_open = true;
+        event_loop.paused = true;
+        event_loop.cartridge_switch_entries = vec![
+            "roms/games/missing_rom.nes".to_string(),
+            rom_path_str.clone(),
+        ];
+        event_loop.refresh_cartridge_switch_filtered_entries();
+
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::T);
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::E);
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::S);
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::T);
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::Return);
+
+        assert_eq!(
+            nes.state_path(),
+            Some(rom_path.with_extension("state")),
+            "Filtered selected ROM should be loaded into NES"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_cartridge_switch_dialog_reopen_preserves_filter_and_selection() {
+        struct EnvRestore {
+            key: &'static str,
+            prev: Option<String>,
+        }
+
+        impl Drop for EnvRestore {
+            fn drop(&mut self) {
+                match &self.prev {
+                    Some(value) => unsafe { env::set_var(self.key, value) },
+                    None => unsafe { env::remove_var(self.key) },
+                }
+            }
+        }
+
+        let temp_home = tempfile::tempdir().expect("temp home");
+        let restore = EnvRestore {
+            key: "HOME",
+            prev: env::var("HOME").ok(),
+        };
+        unsafe {
+            env::set_var("HOME", temp_home.path());
+        }
+
+        let config = default_config();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config)).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+
+        event_loop.cartridge_switch_entries = vec![
+            "roms/games/mega_man.nes".to_string(),
+            "roms/games/mario.nes".to_string(),
+            "roms/games/zelda.nes".to_string(),
+        ];
+        let _ = event_loop.request_cartridge_switch_dialog();
+
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::M);
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::Down);
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::Escape);
+
+        let _ = event_loop.request_cartridge_switch_dialog();
+        let overlay = event_loop
+            .overlay_render_text(&nes)
+            .expect("overlay should be visible");
+
+        assert!(overlay.contains("Filter: m"));
+        assert!(overlay.contains(">> roms/games/mario.nes <<"));
+
+        drop(restore);
+    }
+
+    #[test]
+    #[serial]
+    fn test_cartridge_switch_dialog_refresh_uses_first_match_when_selection_removed() {
+        let config = default_config();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config)).unwrap();
+        let nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+
+        event_loop.cartridge_switch_dialog_open = true;
+        event_loop.paused = true;
+        event_loop.cartridge_switch_filter_query = "m".to_string();
+        event_loop.cartridge_switch_entries = vec![
+            "roms/games/mega_man.nes".to_string(),
+            "roms/games/mario.nes".to_string(),
+        ];
+        event_loop.refresh_cartridge_switch_filtered_entries();
+        event_loop.cartridge_switch_selected_index = 1;
+
+        event_loop.cartridge_switch_entries = vec!["roms/games/mega_man.nes".to_string()];
+        event_loop.refresh_cartridge_switch_filtered_entries();
+
+        let overlay = event_loop
+            .overlay_render_text(&nes)
+            .expect("overlay should be visible");
+        assert!(overlay.contains(">> roms/games/mega_man.nes <<"));
+    }
+
+    #[test]
     fn test_handle_key_down_space_toggles_pause() {
         // Desired behavior: Space toggles pause state via centralized handle_key_down.
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
@@ -3184,6 +3984,7 @@ mod tests {
         assert!(text.contains("F10"));
         assert!(text.contains("F11"));
         assert!(text.contains("Ctrl+F"));
+        assert!(text.contains("Ctrl+O"));
         assert!(text.contains("W/A/S/D"));
         assert!(text.contains("R"));
         assert!(text.contains("T"));
