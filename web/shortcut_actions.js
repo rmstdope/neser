@@ -46,7 +46,7 @@ const shortcutActionByCode = {
 };
 
 function hasControlModifier(event) {
-    return Boolean(event.ctrlKey);
+    return Boolean(event.ctrlKey) && !event.altKey;
 }
 
 function shortcutActionForEvent(event, actions) {

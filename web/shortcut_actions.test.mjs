@@ -75,6 +75,17 @@ test("dispatchWebShortcutAction routes Ctrl+R to soft reset", async () => {
     assert.equal(event.defaultPrevented, true);
 });
 
+test("dispatchWebShortcutAction ignores Ctrl+Alt+R (AltGr-like)", async () => {
+    const event = makeKeyboardEvent("KeyR", { ctrlKey: true, altKey: true });
+    const { calls, actions } = makeActions();
+
+    const handled = await dispatchWebShortcutAction(event, actions);
+
+    assert.equal(handled, false);
+    assert.deepEqual(calls, []);
+    assert.equal(event.defaultPrevented, false);
+});
+
 test("dispatchWebShortcutAction ignores Alt+R", async () => {
     const event = makeKeyboardEvent("KeyR", { altKey: true });
     const { calls, actions } = makeActions();
