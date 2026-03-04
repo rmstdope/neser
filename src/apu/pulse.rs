@@ -2,8 +2,31 @@
 /// Generates square waves with variable duty cycle
 use super::envelope::Envelope;
 use super::length_counter::LengthCounter;
-use crate::console::PulseState;
+use crate::apu::envelope::EnvelopeState;
 use crate::trace_apu;
+use serde::{Deserialize, Serialize};
+
+/// APU pulse channel state for save-state support.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PulseState {
+    pub timer: u16,
+    pub timer_period: u16,
+    pub length_counter: u8,
+    pub length_counter_enabled: bool,
+    pub length_counter_halt: bool,
+    pub length_counter_pending_halt: Option<bool>,
+    pub length_counter_reload_value: u8,
+    pub length_counter_previous_value: u8,
+    pub duty: u8,
+    pub duty_position: u8,
+    pub envelope: EnvelopeState,
+    pub sweep_enabled: bool,
+    pub sweep_period: u8,
+    pub sweep_negate: bool,
+    pub sweep_shift: u8,
+    pub sweep_reload: bool,
+    pub sweep_divider: u8,
+}
 
 pub struct Pulse {
     // Channel identifier (true = Pulse 1, false = Pulse 2)
