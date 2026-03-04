@@ -11,14 +11,13 @@ permissions:
   pull-requests: read
 safe-outputs:
   add-labels:
-    allowed: [bug, enhancement, documentation]
+    allowed: [bug, feature, games, mapper, refactoring, testing]
     blocked: ["~*", "*[bot]"]
     target: triggering
     max: 1
   update-issue:
-    body: true
-    target: triggering
-    max: 1
+    title: null
+    body: null
 timeout-minutes: 15
 strict: true
 ---
@@ -40,29 +39,11 @@ Use its guidance for structure, scope clarity, acceptance criteria quality, and 
   ${{ steps.sanitized.outputs.text }}
   ```
 
-## Classification Guidelines
-
-**Bug**: An issue that describes:
-
-- Something that is broken or not working as expected
-- An error, exception, or crash
-- Incorrect behavior compared to documentation
-- Performance degradation or regression
-- Security vulnerabilities
-
-**Enhancement**: An issue that describes:
-
-- A request for new functionality
-- An enhancement to existing features
-- A suggestion for improvement
-- Documentation additions or updates
-- New capabilities or options
-
 ## Your Task
 
 1. Read and analyze the issue content above
-2. Determine whether this is a "bug" or an "enhancement" based on the guidelines
-3. Add the appropriate label to the issue using the safe-outputs configuration
+2. Set a new descriptive title if the current title is not sufficiently descriptive of the issue outcome.
+3. Add the appropriate labels to the issue using the safe-outputs configuration
 4. Evaluate and improve the issue content using `github-issue-designer` principles:
   - Keep one clear, independently deliverable outcome
   - Make scope explicit and minimal
@@ -79,8 +60,6 @@ Use its guidance for structure, scope clarity, acceptance criteria quality, and 
   - Dependencies / Links
 6. If the issue is already high quality, preserve the author intent and only apply minimal edits.
 7. Preserve existing links, code blocks, issue/PR references, and technical identifiers exactly unless they are clearly incorrect.
-
-**Important**: Only add ONE label - either "bug" or "enhancement". Choose the most appropriate classification based on the primary nature of the issue.
 
 When you improve the issue description, emit an `update_issue` safe output for the triggering issue with `operation: replace` and include the full improved issue body content.
 
