@@ -334,6 +334,28 @@ const CLI_FLAGS: &[CliFlag] = &[
         ),
         has_value: true,
     },
+    CliFlag {
+        flag: "--cartridge-search-paths",
+        help: Some("Comma-separated search paths to scan recursively for .nes files on startup"),
+        has_value: true,
+    },
+    CliFlag {
+        flag: "--scan-cartridges",
+        help: Some(
+            "Enable cartridge scanning on startup (optionally: true/false, default when flag present: true)",
+        ),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--no-scan-cartridges",
+        help: Some("Disable cartridge scanning on startup (equivalent to --scan-cartridges false)"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--rebuild-cartridge-catalog",
+        help: Some("Rebuild cartridge catalog from scratch on startup"),
+        has_value: false,
+    },
 ];
 
 /// Boolean flags that accept optional values (shared by validate_args and parse_rom_arg).
@@ -349,6 +371,7 @@ const OPTIONAL_BOOL_FLAGS: &[&str] = &[
     "--debugger",
     "--load-state",
     "--fullscreen",
+    "--scan-cartridges",
 ];
 
 /// Result of parsing command-line arguments.
@@ -484,6 +507,12 @@ pub struct Config {
     ///
     /// Valid range: `0..=16`. Default: `8`.
     pub vertical_overscan: u8,
+    /// Comma-separated configured search paths for cartridge discovery.
+    pub cartridge_search_paths: Vec<String>,
+    /// Whether startup cartridge scanning is enabled.
+    pub scan_cartridges: bool,
+    /// Whether to rebuild the cartridge catalog from scratch on startup.
+    pub rebuild_cartridge_catalog: bool,
 }
 
 /// Autorun operating mode.
@@ -598,6 +627,9 @@ impl Default for Config {
             breakpoints: Vec::new(),
             horizontal_overscan: 0,
             vertical_overscan: 8,
+            cartridge_search_paths: Vec::new(),
+            scan_cartridges: true,
+            rebuild_cartridge_catalog: false,
         }
     }
 }
@@ -841,6 +873,8 @@ impl Config {
         if let Some(v) = Self::parse_u32_arg(args, "--vertical-overscan")? {
             self.vertical_overscan = (v as u8).min(16);
         }
+
+        self.apply_cartridge_catalog_args(args)?;
 
         // Autorun mode flags
         let has_create_recording = args.iter().any(|arg| arg == "--create-recording");
@@ -1505,6 +1539,9 @@ impl Config {
                     self.vertical_overscan = v.min(16);
                 }
             }
+            "cartridge_search_paths" | "scan_cartridges" | "rebuild_cartridge_catalog" => {
+                self.apply_cartridge_catalog_config_value(key, value);
+            }
             _ => {} // Unknown keys are silently ignored
         }
         Ok(())
@@ -1537,6 +1574,53 @@ impl Config {
             "true" | "yes" | "1" => Ok(true),
             "false" | "no" | "0" => Ok(false),
             _ => Err(()),
+        }
+    }
+
+    fn parse_search_paths(value: &str) -> Vec<String> {
+        value
+            .split(',')
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .map(ToString::to_string)
+            .collect()
+    }
+
+    fn apply_cartridge_catalog_args(&mut self, args: &[String]) -> Result<(), String> {
+        if let Some(paths) = Self::parse_string_arg(args, "--cartridge-search-paths") {
+            self.cartridge_search_paths = Self::parse_search_paths(&paths);
+        }
+
+        if let Some(scan) = Self::parse_bool_arg(args, "--scan-cartridges")? {
+            self.scan_cartridges = scan;
+        }
+        if Self::has_negation_flag(args, &["--no-scan-cartridges"]) {
+            self.scan_cartridges = false;
+        }
+
+        if args.iter().any(|arg| arg == "--rebuild-cartridge-catalog") {
+            self.rebuild_cartridge_catalog = true;
+        }
+
+        Ok(())
+    }
+
+    fn apply_cartridge_catalog_config_value(&mut self, key: &str, value: &str) {
+        match key {
+            "cartridge_search_paths" => {
+                self.cartridge_search_paths = Self::parse_search_paths(value);
+            }
+            "scan_cartridges" => {
+                if let Ok(scan) = Self::parse_bool(value) {
+                    self.scan_cartridges = scan;
+                }
+            }
+            "rebuild_cartridge_catalog" => {
+                if let Ok(rebuild) = Self::parse_bool(value) {
+                    self.rebuild_cartridge_catalog = rebuild;
+                }
+            }
+            _ => {}
         }
     }
 
@@ -3821,5 +3905,41 @@ filter=invalid-shader
                 .unwrap()
                 .contains("Autorun recording/playback requires --ram-init-mode zero")
         );
+    }
+
+    #[test]
+    fn given_cartridge_search_paths_cli_when_parsed_then_paths_are_configured() {
+        let args = vec![
+            "neser".to_string(),
+            "--cartridge-search-paths".to_string(),
+            "roms,games/custom".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(
+            config.cartridge_search_paths,
+            vec!["roms".to_string(), "games/custom".to_string()]
+        );
+    }
+
+    #[test]
+    fn given_no_cartridge_paths_when_using_defaults_then_paths_are_empty() {
+        let config = Config::with_defaults();
+        assert!(config.cartridge_search_paths.is_empty());
+    }
+
+    #[test]
+    fn given_no_scan_cartridges_cli_when_parsed_then_startup_scan_is_disabled() {
+        let args = vec!["neser".to_string(), "--no-scan-cartridges".to_string()];
+        let config = parse_config(args);
+        assert!(!config.scan_cartridges);
+    }
+
+    #[test]
+    fn given_rebuild_catalog_config_key_when_loaded_then_rebuild_is_enabled() {
+        let mut config = Config::default();
+        config
+            .apply_config_value("rebuild_cartridge_catalog", "true")
+            .unwrap();
+        assert!(config.rebuild_cartridge_catalog);
     }
 }
