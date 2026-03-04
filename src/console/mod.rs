@@ -16,15 +16,8 @@ pub use config::Config;
 pub use config::ParseResult;
 pub use config::RamInitMode;
 pub use nes::Nes;
-pub use nes::{SAVESTATE_VERSION, SaveState, SaveStateError};
+pub use nes::SaveState;
 pub use ram_init::initialize_ram;
-
-// Re-export state types from their component modules for backward compatibility
-pub use crate::apu::{ApuState, DmcState, EnvelopeState, FrameCounterState, NoiseState, PulseState, TriangleState};
-pub use crate::bus::{BusState, ControllerStateWrapper, MapperState};
-pub use crate::cpu::CpuState;
-pub use crate::input::{ArkanoidState, JoypadState, ZapperState};
-pub use crate::ppu::{PpuRegisterState, PpuState, PpuTimingState, SpritesState};
 
 pub fn log_rom_timing_mode_selection(
     app_context: &SharedAppContext,

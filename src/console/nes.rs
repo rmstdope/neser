@@ -1,14 +1,14 @@
-use crate::apu::ApuState;
 use crate::app_context::{IntoSharedAppContext, SharedAppContext};
 use crate::apu::Apu;
+use crate::apu::ApuState;
 use crate::bus::{Bus, BusState, MapperState};
 use crate::cartridge::Cartridge;
 #[cfg(test)]
 use crate::cartridge::TimingMode;
 #[cfg(test)]
 use crate::console::Config;
-use crate::cpu::{Cpu, CpuState};
 use crate::cpu::lookup;
+use crate::cpu::{Cpu, CpuState};
 use crate::debugging::{Tracing, log_info};
 use crate::input::{ControllerInput, ControllerType, controller_input_type};
 use crate::ppu::{Ppu, PpuState};
@@ -1969,11 +1969,11 @@ mod tests {
         let bus_state = nes.bus.borrow().capture_state();
         assert!(matches!(
             bus_state.port1_controller,
-            crate::console::ControllerStateWrapper::Arkanoid(_)
+            crate::bus::ControllerStateWrapper::Arkanoid(_)
         ));
         assert!(matches!(
             bus_state.port2_controller,
-            crate::console::ControllerStateWrapper::Joypad(_)
+            crate::bus::ControllerStateWrapper::Joypad(_)
         ));
     }
 
@@ -1991,11 +1991,11 @@ mod tests {
         let bus_state = nes.bus.borrow().capture_state();
         assert!(matches!(
             bus_state.port1_controller,
-            crate::console::ControllerStateWrapper::Joypad(_)
+            crate::bus::ControllerStateWrapper::Joypad(_)
         ));
         assert!(matches!(
             bus_state.port2_controller,
-            crate::console::ControllerStateWrapper::Zapper(_)
+            crate::bus::ControllerStateWrapper::Zapper(_)
         ));
     }
 
@@ -2019,7 +2019,7 @@ mod tests {
         let bus_state = nes.bus.borrow().capture_state();
         assert!(matches!(
             bus_state.port2_controller,
-            crate::console::ControllerStateWrapper::Joypad(_)
+            crate::bus::ControllerStateWrapper::Joypad(_)
         ));
     }
 

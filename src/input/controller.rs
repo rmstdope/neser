@@ -1,7 +1,7 @@
+use crate::input::Button;
 use crate::input::arkanoid_controller::ArkanoidState;
 use crate::input::nes_joypad::JoypadState;
 use crate::input::zapper::ZapperState;
-use crate::input::Button;
 
 /// Unified controller state for save-state support.
 #[derive(Debug, Clone)]
