@@ -3,7 +3,7 @@
  *
  * Returns true when a mapped shortcut was handled.
  *
- * @param {KeyboardEvent|{code:string,repeat:boolean,metaKey:boolean,altKey:boolean,shiftKey:boolean,preventDefault:Function}} event
+ * @param {KeyboardEvent|{code:string,repeat:boolean,metaKey:boolean,altKey:boolean,ctrlKey:boolean,shiftKey:boolean,preventDefault:Function}} event
  * @param {{
  *   togglePause: Function,
  *   reset: Function,
@@ -45,12 +45,12 @@ const shortcutActionByCode = {
     KeyH: "toggleHelp"
 };
 
-function hasCommandOrAltModifier(event) {
-    return Boolean(event.metaKey || event.altKey);
+function hasControlModifier(event) {
+    return Boolean(event.ctrlKey) && !event.altKey;
 }
 
 function shortcutActionForEvent(event, actions) {
-    if (hasCommandOrAltModifier(event)) {
+    if (hasControlModifier(event)) {
         if (event.code === "KeyR") {
             return event.shiftKey ? actions.hardReset : actions.reset;
         }
