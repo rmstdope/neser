@@ -1,3 +1,4 @@
+mod cartridge_catalog;
 mod config;
 mod nes;
 mod ram_init;
@@ -7,6 +8,9 @@ use crate::app_context::SharedAppContext;
 use crate::debugging::log_info;
 
 pub use crate::cartridge::TimingMode;
+pub use cartridge_catalog::{
+    CartridgeCatalogOptions, default_catalog_csv_path, refresh_cartridge_catalog,
+};
 pub use config::ApuChannels;
 pub use config::AutorunMode;
 pub use config::Config;

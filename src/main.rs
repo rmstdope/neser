@@ -13,13 +13,54 @@ mod rendering;
 mod sdl_frontend;
 
 use app_context::AppContext;
-use console::{ApuChannels, Config, Nes, ParseResult, SaveState, log_rom_timing_mode_selection};
+use console::{
+    ApuChannels, CartridgeCatalogOptions, Config, Nes, ParseResult, SaveState,
+    default_catalog_csv_path, log_rom_timing_mode_selection, refresh_cartridge_catalog,
+};
 use debugging::log_info;
 use frontend_toasts::{cartridge_load_toast_message, emulator_timing_toast_message};
 use sdl_frontend::{SdlEventLoop, SdlNesAudio};
 use std::cell::RefCell;
 use std::fs;
+use std::path::PathBuf;
 use std::rc::Rc;
+
+fn cartridge_catalog_startup_config(
+    app_context: &Rc<RefCell<AppContext>>,
+) -> (Vec<String>, bool, bool) {
+    let config = app_context.borrow();
+    let config = config.config();
+    (
+        config.cartridge_search_paths.clone(),
+        config.scan_cartridges,
+        config.rebuild_cartridge_catalog,
+    )
+}
+
+fn refresh_startup_cartridge_catalog(app_context: &Rc<RefCell<AppContext>>) {
+    let (cartridge_search_paths, scan_cartridges, rebuild_cartridge_catalog) =
+        cartridge_catalog_startup_config(app_context);
+
+    if let Some(home) = std::env::var_os("HOME") {
+        let home_path = PathBuf::from(home);
+        let catalog_path = default_catalog_csv_path(home_path.as_path());
+        let mut search_paths: Vec<PathBuf> = cartridge_search_paths
+            .into_iter()
+            .map(PathBuf::from)
+            .collect();
+        if search_paths.is_empty() {
+            search_paths.push(home_path.join(".neser").join("roms"));
+        }
+        let mut catalog_options = CartridgeCatalogOptions::new(search_paths, catalog_path);
+        catalog_options.scan_enabled = scan_cartridges;
+        catalog_options.rebuild_catalog = rebuild_cartridge_catalog;
+        if let Err(err) = refresh_cartridge_catalog(&catalog_options) {
+            log_info(format!(
+                "Warning: failed to refresh cartridge catalog: {err}"
+            ));
+        }
+    }
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command-line arguments
@@ -34,6 +75,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let app_context = Rc::new(RefCell::new(AppContext::new_with_config(parsed_config)));
+
+    refresh_startup_cartridge_catalog(&app_context);
 
     // Handle --trim-checkpoints: modify recording file and exit immediately.
     let trim_n = app_context.borrow().config().autorun_trim_checkpoints;
