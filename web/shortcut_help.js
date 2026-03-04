@@ -1,14 +1,14 @@
 export const WEB_SHORTCUT_REFERENCE = [
     { key: "Space", action: "Pause/Resume" },
-    { key: "Cmd/Alt+R", action: "Soft Reset" },
-    { key: "Shift+Cmd/Alt+R", action: "Hard Reset" },
+    { key: "Ctrl+R", action: "Soft Reset" },
+    { key: "Shift+Ctrl+R", action: "Hard Reset" },
     { key: "F4", action: "Cycle Filter" },
     { key: "F5", action: "Debugger Toggle" },
     { key: "F6", action: "Save State" },
     { key: "F7", action: "Load State" },
     { key: "F10", action: "Debugger Step Over" },
     { key: "F11", action: "Debugger Step Into" },
-    { key: "Cmd/Alt+F", action: "Toggle Fullscreen" },
+    { key: "Ctrl+F", action: "Toggle Fullscreen" },
     { key: "H", action: "Toggle Help" }
 ];
 
