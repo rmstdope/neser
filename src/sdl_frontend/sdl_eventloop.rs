@@ -76,7 +76,8 @@ pub struct SdlEventLoop {
     last_mouse_position: Option<(i32, i32)>,
     cursor_hidden: bool,
     autorun_state: Option<AutorunState>,
-    cartridge_switch_dialog_requested: bool,
+    cartridge_switch_dialog_open: bool,
+    cartridge_switch_pause_state_before_open: bool,
     cartridge_switch_entries: Vec<String>,
     cartridge_switch_selected_index: usize,
     cartridge_switch_filter_query: String,
@@ -368,7 +369,8 @@ impl SdlEventLoop {
             last_mouse_position: None,
             cursor_hidden: false,
             autorun_state: None,
-            cartridge_switch_dialog_requested: false,
+            cartridge_switch_dialog_open: false,
+            cartridge_switch_pause_state_before_open: false,
             cartridge_switch_entries: Vec::new(),
             cartridge_switch_selected_index: 0,
             cartridge_switch_filter_query: String::new(),
@@ -1623,7 +1625,8 @@ impl SdlEventLoop {
     }
 
     fn request_cartridge_switch_dialog(&mut self) -> KeyDownOutcome {
-        self.cartridge_switch_dialog_requested = true;
+        self.cartridge_switch_pause_state_before_open = self.paused;
+        self.cartridge_switch_dialog_open = true;
         self.paused = true;
         self.preload_cartridge_switch_entries_from_default_catalog();
         self.refresh_cartridge_switch_filtered_entries();
@@ -1631,10 +1634,9 @@ impl SdlEventLoop {
     }
 
     fn close_cartridge_switch_dialog(&mut self) {
-        self.cartridge_switch_dialog_requested = false;
-        if !self.debugger_open_requested {
-            self.paused = false;
-        }
+        self.cartridge_switch_dialog_open = false;
+        self.paused = self.debugger_open_requested || self.cartridge_switch_pause_state_before_open;
+        self.cartridge_switch_pause_state_before_open = false;
     }
 
     fn refresh_cartridge_switch_filtered_entries(&mut self) {
@@ -1915,7 +1917,7 @@ impl SdlEventLoop {
         keycode: Keycode,
         keymod: Mod,
     ) -> KeyDownOutcome {
-        if self.cartridge_switch_dialog_requested {
+        if self.cartridge_switch_dialog_open {
             self.handle_cartridge_switch_dialog_key(nes, keycode);
             return KeyDownOutcome::Continue;
         }
@@ -2275,7 +2277,7 @@ F11: Step into\n\
     /// Generate overlay text for rendering.
     /// Returns autorun overlay text if in autorun mode, otherwise help overlay text if visible.
     fn overlay_render_text(&self, nes: &Nes) -> Option<String> {
-        if self.cartridge_switch_dialog_requested {
+        if self.cartridge_switch_dialog_open {
             return Some(self.cartridge_switch_overlay_text());
         }
 
@@ -3478,7 +3480,7 @@ mod tests {
 
         let _ =
             event_loop.handle_key_down_for_run_with_modifiers(&mut nes, Keycode::O, Mod::LGUIMOD);
-        assert!(event_loop.cartridge_switch_dialog_requested);
+        assert!(event_loop.cartridge_switch_dialog_open);
     }
 
     #[test]
@@ -3539,7 +3541,7 @@ mod tests {
             Config::default(),
         ));
 
-        event_loop.cartridge_switch_dialog_requested = true;
+        event_loop.cartridge_switch_dialog_open = true;
         event_loop.cartridge_switch_entries = vec!["roms/games/a.nes".to_string()];
         event_loop.cartridge_switch_selected_index = 0;
 
@@ -3560,7 +3562,7 @@ mod tests {
             Config::default(),
         ));
 
-        event_loop.cartridge_switch_dialog_requested = true;
+        event_loop.cartridge_switch_dialog_open = true;
         event_loop.paused = true;
         event_loop.cartridge_switch_entries = vec![
             "roms/games/a.nes".to_string(),
@@ -3585,13 +3587,31 @@ mod tests {
             Config::default(),
         ));
 
-        event_loop.cartridge_switch_dialog_requested = true;
-        event_loop.paused = true;
+        let _ = event_loop.request_cartridge_switch_dialog();
 
         let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::Escape);
 
-        assert!(!event_loop.cartridge_switch_dialog_requested);
+        assert!(!event_loop.cartridge_switch_dialog_open);
         assert!(!event_loop.paused);
+    }
+
+    #[test]
+    #[serial]
+    fn test_cartridge_switch_dialog_escape_restores_preexisting_paused_state() {
+        let config = default_config();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config)).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+
+        event_loop.paused = true;
+        let _ = event_loop.request_cartridge_switch_dialog();
+
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::Escape);
+
+        assert!(!event_loop.cartridge_switch_dialog_open);
+        assert!(event_loop.paused);
     }
 
     #[test]
@@ -3608,7 +3628,7 @@ mod tests {
             Config::default(),
         ));
 
-        event_loop.cartridge_switch_dialog_requested = true;
+        event_loop.cartridge_switch_dialog_open = true;
         event_loop.paused = true;
         event_loop.cartridge_switch_entries = vec![rom_path_str.clone()];
         event_loop.cartridge_switch_selected_index = 0;
@@ -3620,7 +3640,7 @@ mod tests {
             Some(rom_path.with_extension("state")),
             "Selected ROM should be loaded into NES"
         );
-        assert!(!event_loop.cartridge_switch_dialog_requested);
+        assert!(!event_loop.cartridge_switch_dialog_open);
         assert!(!event_loop.paused);
     }
 
@@ -3634,7 +3654,7 @@ mod tests {
             Config::default(),
         ));
 
-        event_loop.cartridge_switch_dialog_requested = true;
+        event_loop.cartridge_switch_dialog_open = true;
         event_loop.paused = true;
         event_loop.cartridge_switch_entries = vec![
             "roms/games/mario.nes".to_string(),
@@ -3665,7 +3685,7 @@ mod tests {
             Config::default(),
         ));
 
-        event_loop.cartridge_switch_dialog_requested = true;
+        event_loop.cartridge_switch_dialog_open = true;
         event_loop.paused = true;
         event_loop.cartridge_switch_entries = vec![
             "roms/games/mega_man.nes".to_string(),
@@ -3695,7 +3715,7 @@ mod tests {
             Config::default(),
         ));
 
-        event_loop.cartridge_switch_dialog_requested = true;
+        event_loop.cartridge_switch_dialog_open = true;
         event_loop.paused = true;
         event_loop.cartridge_switch_entries = vec!["roms/games/mega_man.nes".to_string()];
         event_loop.refresh_cartridge_switch_filtered_entries();
@@ -3721,7 +3741,7 @@ mod tests {
             Config::default(),
         ));
 
-        event_loop.cartridge_switch_dialog_requested = true;
+        event_loop.cartridge_switch_dialog_open = true;
         event_loop.paused = true;
         event_loop.cartridge_switch_entries = vec![
             "roms/games/mario.nes".to_string(),
@@ -3750,7 +3770,7 @@ mod tests {
             Config::default(),
         ));
 
-        event_loop.cartridge_switch_dialog_requested = true;
+        event_loop.cartridge_switch_dialog_open = true;
         event_loop.paused = true;
         event_loop.cartridge_switch_entries = vec![
             "roms/games/jk_mario.nes".to_string(),
@@ -3783,7 +3803,7 @@ mod tests {
             Config::default(),
         ));
 
-        event_loop.cartridge_switch_dialog_requested = true;
+        event_loop.cartridge_switch_dialog_open = true;
         event_loop.paused = true;
         event_loop.cartridge_switch_entries = vec![
             "roms/games/missing_rom.nes".to_string(),
@@ -3869,7 +3889,7 @@ mod tests {
             Config::default(),
         ));
 
-        event_loop.cartridge_switch_dialog_requested = true;
+        event_loop.cartridge_switch_dialog_open = true;
         event_loop.paused = true;
         event_loop.cartridge_switch_filter_query = "m".to_string();
         event_loop.cartridge_switch_entries = vec![

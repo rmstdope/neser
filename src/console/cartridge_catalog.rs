@@ -24,11 +24,10 @@ impl CartridgeCatalogOptions {
 }
 
 pub fn refresh_cartridge_catalog(options: &CartridgeCatalogOptions) -> io::Result<Vec<PathBuf>> {
-    let discovered = collect_nes_files(&options.search_paths)?;
-
     let mut catalog_entries = existing_catalog_entries(options)?;
 
     if options.scan_enabled {
+        let discovered = collect_nes_files(&options.search_paths)?;
         catalog_entries.extend(discovered);
     }
 
@@ -64,9 +63,22 @@ fn collect_nes_files_under(root: &Path, out: &mut BTreeSet<PathBuf>) -> io::Resu
     for entry in entries {
         let entry = entry?;
         let path = entry.path();
-        if path.is_dir() {
+
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
+            Err(err) => return Err(err),
+        };
+
+        let file_type = metadata.file_type();
+
+        if file_type.is_symlink() {
+            continue;
+        }
+
+        if file_type.is_dir() {
             collect_nes_files_under(&path, out)?;
-        } else if is_nes_file(&path) {
+        } else if file_type.is_file() && is_nes_file(&path) {
             out.insert(path);
         }
     }
@@ -222,6 +234,51 @@ mod tests {
         let csv_lines = read_csv_lines(&catalog_path);
         assert!(csv_lines.iter().any(|line| line.ends_with("fresh.nes")));
         assert!(!csv_lines.iter().any(|line| line.ends_with("stale.nes")));
+    }
+
+    #[test]
+    fn given_scan_disabled_when_refreshing_then_catalog_keeps_existing_entries() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path().join("roms");
+        write_file(&root.join("newly_found.nes"));
+
+        let existing = root.join("existing.nes");
+        let catalog_path = temp.path().join("cartridges.csv");
+        fs::write(&catalog_path, format!("path\n{}\n", existing.display())).expect("seed csv");
+
+        let mut options = CartridgeCatalogOptions::new(vec![root], catalog_path.clone());
+        options.scan_enabled = false;
+
+        let entries = refresh_cartridge_catalog(&options).expect("refresh should succeed");
+
+        assert_eq!(entries, vec![existing]);
+        let csv_lines = read_csv_lines(&catalog_path);
+        assert_eq!(csv_lines.len(), 2);
+        assert!(csv_lines.iter().any(|line| line.ends_with("existing.nes")));
+        assert!(
+            !csv_lines
+                .iter()
+                .any(|line| line.ends_with("newly_found.nes"))
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn given_symlinked_directory_loop_when_refreshing_then_scan_skips_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path().join("roms");
+        write_file(&root.join("games/a.nes"));
+        fs::create_dir_all(root.join("games/sub")).expect("create nested directory");
+        symlink(&root, root.join("games/sub/loop")).expect("create symlink loop");
+
+        let catalog_path = temp.path().join("cartridges.csv");
+        let options = CartridgeCatalogOptions::new(vec![root], catalog_path);
+
+        let entries = refresh_cartridge_catalog(&options).expect("refresh should succeed");
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].ends_with("games/a.nes"));
     }
 
     #[test]
