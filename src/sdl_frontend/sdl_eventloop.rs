@@ -3462,11 +3462,8 @@ mod tests {
         let mut event_loop =
             SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
 
-        let outcome = event_loop.handle_key_down_for_run_with_modifiers(
-            &mut nes,
-            Keycode::Q,
-            Mod::LCTRLMOD,
-        );
+        let outcome =
+            event_loop.handle_key_down_for_run_with_modifiers(&mut nes, Keycode::Q, Mod::LCTRLMOD);
         assert_eq!(outcome, KeyDownOutcome::Quit);
 
         let outcome =
@@ -5056,11 +5053,8 @@ mod tests {
         nes.insert_cartridge(cartridge);
 
         nes.cpu.set_pc(0x1234);
-        let _ = event_loop.handle_key_down_for_run_with_modifiers(
-            &mut nes,
-            Keycode::R,
-            Mod::LCTRLMOD,
-        );
+        let _ =
+            event_loop.handle_key_down_for_run_with_modifiers(&mut nes, Keycode::R, Mod::LCTRLMOD);
         assert_eq!(nes.cpu.pc(), reset_vector);
 
         nes.cpu.set_pc(0x5678);
@@ -5068,11 +5062,8 @@ mod tests {
             event_loop.handle_key_down_for_run_with_modifiers(&mut nes, Keycode::R, Mod::LALTMOD);
         assert_eq!(nes.cpu.pc(), 0x5678);
 
-        let _ = event_loop.handle_key_down_for_run_with_modifiers(
-            &mut nes,
-            Keycode::R,
-            Mod::LCTRLMOD,
-        );
+        let _ =
+            event_loop.handle_key_down_for_run_with_modifiers(&mut nes, Keycode::R, Mod::LCTRLMOD);
         assert_eq!(nes.cpu.pc(), reset_vector);
     }
 
