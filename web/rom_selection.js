@@ -4,7 +4,8 @@ export async function handleRomSelection({
     running,
     stop,
     applyRomBytes,
-    start
+    start,
+    focusCanvas
 }) {
     if (running) {
         stop();
@@ -12,5 +13,8 @@ export async function handleRomSelection({
     await applyRomBytes(bytes, name);
     if (start) {
         await start();
+    }
+    if (focusCanvas) {
+        focusCanvas();
     }
 }

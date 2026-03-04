@@ -1065,7 +1065,8 @@ romInput.addEventListener("change", async (e) => {
         running,
         stop,
         applyRomBytes,
-        start
+        start,
+        focusCanvas: () => canvas.focus()
     });
 });
 
@@ -1086,7 +1087,8 @@ if (romSelect) {
                 running,
                 stop,
                 applyRomBytes,
-                start
+                start,
+                focusCanvas: () => canvas.focus()
             });
         } catch (error) {
             console.error("Failed to load bundled ROM", error);
