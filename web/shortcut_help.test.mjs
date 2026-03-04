@@ -38,9 +38,9 @@ function createMockHelpOverlay(initiallyHidden = true) {
 test("buildShortcutReferenceText includes H help toggle shortcut", () => {
     const text = buildShortcutReferenceText();
     assert.match(text, /H = Toggle Help/);
-    assert.match(text, /Cmd\/Alt\+F = Toggle Fullscreen/);
-    assert.match(text, /Cmd\/Alt\+R = Soft Reset/);
-    assert.match(text, /Shift\+Cmd\/Alt\+R = Hard Reset/);
+    assert.match(text, /Ctrl\+F = Toggle Fullscreen/);
+    assert.match(text, /Ctrl\+R = Soft Reset/);
+    assert.match(text, /Shift\+Ctrl\+R = Hard Reset/);
     assert.match(text, /F4 = Cycle Filter/);
 });
 
@@ -49,9 +49,9 @@ test("buildShortcutOverlayText renders multiline list for overlay", () => {
 
     assert.match(text, /^Shortcuts/m);
     assert.match(text, /H: Toggle Help/);
-    assert.match(text, /Cmd\/Alt\+F: Toggle Fullscreen/);
-    assert.match(text, /Cmd\/Alt\+R: Soft Reset/);
-    assert.match(text, /Shift\+Cmd\/Alt\+R: Hard Reset/);
+    assert.match(text, /Ctrl\+F: Toggle Fullscreen/);
+    assert.match(text, /Ctrl\+R: Soft Reset/);
+    assert.match(text, /Shift\+Ctrl\+R: Hard Reset/);
     assert.match(text, /F4: Cycle Filter/);
     assert.match(text, /\n/);
 });
@@ -71,14 +71,14 @@ test("WEB_SHORTCUT_REFERENCE includes help, soft reset, and hard reset mappings"
     assert.deepEqual(helpShortcut, { key: "H", action: "Toggle Help" });
 
     const softResetShortcut = WEB_SHORTCUT_REFERENCE.find(
-        (shortcut) => shortcut.key === "Cmd/Alt+R"
+        (shortcut) => shortcut.key === "Ctrl+R"
     );
-    assert.deepEqual(softResetShortcut, { key: "Cmd/Alt+R", action: "Soft Reset" });
+    assert.deepEqual(softResetShortcut, { key: "Ctrl+R", action: "Soft Reset" });
 
     const hardResetShortcut = WEB_SHORTCUT_REFERENCE.find(
-        (shortcut) => shortcut.key === "Shift+Cmd/Alt+R"
+        (shortcut) => shortcut.key === "Shift+Ctrl+R"
     );
-    assert.deepEqual(hardResetShortcut, { key: "Shift+Cmd/Alt+R", action: "Hard Reset" });
+    assert.deepEqual(hardResetShortcut, { key: "Shift+Ctrl+R", action: "Hard Reset" });
 });
 
 test("toggleShortcutHelpVisibility shows hidden overlay", () => {
