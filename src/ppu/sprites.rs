@@ -1,4 +1,4 @@
-use crate::console::SpritesState;
+use super::ppu::SpritesState;
 
 /// Manages sprite evaluation, OAM, and sprite rendering
 pub struct Sprites {

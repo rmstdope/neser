@@ -1,8 +1,26 @@
 /// Triangle wave channel for the NES APU
 /// Generates triangle waves with a 32-step linear sequence
 use super::length_counter::LengthCounter;
-use crate::console::TriangleState;
 use crate::trace_apu;
+use serde::{Deserialize, Serialize};
+
+/// APU triangle channel state for save-state support.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct TriangleState {
+    pub timer: u16,
+    pub timer_period: u16,
+    pub length_counter: u8,
+    pub length_counter_enabled: bool,
+    pub length_counter_halt: bool,
+    pub length_counter_pending_halt: Option<bool>,
+    pub length_counter_reload_value: u8,
+    pub length_counter_previous_value: u8,
+    pub linear_counter: u8,
+    pub linear_counter_reload: u8,
+    pub linear_counter_reload_flag: bool,
+    pub control_flag: bool,
+    pub sequence_position: u8,
+}
 
 pub struct Triangle {
     // Timer fields (11-bit)

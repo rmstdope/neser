@@ -1,5 +1,16 @@
-use crate::console::EnvelopeState;
 use crate::trace_apu;
+use serde::{Deserialize, Serialize};
+
+/// APU channel envelope state for save-state support.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct EnvelopeState {
+    pub start_flag: bool,
+    pub divider: u8,
+    pub decay_level: u8,
+    pub constant_volume: bool,
+    pub loop_flag: bool,
+    pub period: u8,
+}
 
 /// Envelope Generator
 ///

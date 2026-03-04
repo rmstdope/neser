@@ -16,3 +16,9 @@ mod audio_analysis_pulse_test;
 mod audio_analysis_triangle_test;
 
 pub use apu::Apu;
+pub use apu::{ApuState, FrameCounterState};
+pub use dmc::DmcState;
+pub use envelope::EnvelopeState;
+pub use noise::NoiseState;
+pub use pulse::PulseState;
+pub use triangle::TriangleState;

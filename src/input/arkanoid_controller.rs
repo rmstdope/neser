@@ -4,6 +4,18 @@
 /// uses bit 3 for the trigger/button. Position is latched on strobe and shifted
 /// out MSB-first (inverted) when strobe is low.
 use super::ControllerInput;
+use serde::{Deserialize, Serialize};
+
+/// Bus Arkanoid controller state for save-state support.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ArkanoidState {
+    pub strobe: bool,
+    pub shift_index: u8,
+    pub position: u8,
+    pub latched_position: u8,
+    pub trigger: bool,
+    pub enabled: bool,
+}
 
 pub struct ArkanoidController {
     strobe: bool,
@@ -79,8 +91,8 @@ impl ArkanoidController {
     }
 
     /// Capture current paddle state for save-state.
-    pub fn capture_state(&self) -> crate::console::ArkanoidState {
-        crate::console::ArkanoidState {
+    pub fn capture_state(&self) -> ArkanoidState {
+        ArkanoidState {
             strobe: self.strobe,
             shift_index: self.shift_index,
             position: self.position,
@@ -91,7 +103,7 @@ impl ArkanoidController {
     }
 
     /// Restore paddle state from a save-state.
-    pub fn restore_state(&mut self, state: &crate::console::ArkanoidState) {
+    pub fn restore_state(&mut self, state: &ArkanoidState) {
         self.strobe = state.strobe;
         self.shift_index = state.shift_index;
         self.position = state.position.clamp(Self::MIN_POSITION, Self::MAX_POSITION);

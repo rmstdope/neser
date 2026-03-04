@@ -1,21 +1,89 @@
+use crate::apu::ApuState;
 use crate::app_context::{IntoSharedAppContext, SharedAppContext};
 use crate::apu::Apu;
-use crate::bus::Bus;
+use crate::bus::{Bus, BusState, MapperState};
 use crate::cartridge::Cartridge;
 #[cfg(test)]
 use crate::cartridge::TimingMode;
 #[cfg(test)]
 use crate::console::Config;
-use crate::console::{SAVESTATE_VERSION, SaveState};
-use crate::cpu::Cpu;
+use crate::cpu::{Cpu, CpuState};
 use crate::cpu::lookup;
 use crate::debugging::{Tracing, log_info};
 use crate::input::{ControllerInput, ControllerType, controller_input_type};
-use crate::ppu::Ppu;
+use crate::ppu::{Ppu, PpuState};
+use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::rc::Rc;
+
+/// Current save-state format version.
+/// Increment this when making breaking changes to the state format.
+pub const SAVESTATE_VERSION: u32 = 8;
+
+/// Complete emulator state snapshot.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SaveState {
+    /// Version of the save-state format
+    pub version: u32,
+    /// CPU state
+    pub cpu: CpuState,
+    /// PPU state
+    pub ppu: PpuState,
+    /// APU state
+    pub apu: ApuState,
+    /// Bus state
+    pub bus: BusState,
+    /// CPU RAM (2KB, mirrored to 8KB)
+    pub ram: Vec<u8>,
+    /// Mapper state (serialized as opaque bytes)
+    pub mapper: MapperState,
+}
+
+impl SaveState {
+    /// Create a new save state with the current version.
+    pub fn new(
+        cpu: CpuState,
+        ppu: PpuState,
+        apu: ApuState,
+        bus: BusState,
+        ram: Vec<u8>,
+        mapper: MapperState,
+    ) -> Self {
+        Self {
+            version: SAVESTATE_VERSION,
+            cpu,
+            ppu,
+            apu,
+            bus,
+            ram,
+            mapper,
+        }
+    }
+
+    /// Serialize the save state to JSON.
+    #[cfg(test)]
+    pub fn to_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string(self)
+    }
+
+    /// Deserialize a save state from JSON.
+    #[cfg(test)]
+    pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(json)
+    }
+
+    /// Serialize the save state to JSON-encoded UTF-8 bytes.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, serde_json::Error> {
+        serde_json::to_vec(self)
+    }
+
+    /// Deserialize a save state from JSON-encoded UTF-8 bytes.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, serde_json::Error> {
+        serde_json::from_slice(bytes)
+    }
+}
 
 const MAX_CPU_TRACE_LINES: usize = 512;
 
@@ -2109,5 +2177,55 @@ mod tests {
         assert_eq!(recent.len(), 32);
         let expected_first = 0x8000u16.wrapping_add((executed - 32) as u16);
         assert_eq!(recent[0].addr, expected_first);
+    }
+
+    #[test]
+    fn test_savestate_version() {
+        assert_eq!(SAVESTATE_VERSION, 8);
+    }
+
+    #[test]
+    fn test_savestate_json_roundtrip() {
+        let rom_data = create_minimal_nrom_rom();
+        let cartridge = load_test_cartridge(&rom_data);
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+        for _ in 0..100 {
+            nes.run_cpu_tick();
+        }
+
+        let state = nes.save_state();
+        let json = state.to_json().expect("serialization should succeed");
+        let restored = SaveState::from_json(&json).expect("deserialization should succeed");
+
+        assert_eq!(restored.version, state.version);
+        assert_eq!(restored.cpu.a, state.cpu.a);
+        assert_eq!(restored.cpu.pc, state.cpu.pc);
+        assert_eq!(restored.ppu.timing.scanline, state.ppu.timing.scanline);
+    }
+
+    #[test]
+    fn test_savestate_bytes_roundtrip() {
+        let rom_data = create_minimal_nrom_rom();
+        let cartridge = load_test_cartridge(&rom_data);
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+        for _ in 0..100 {
+            nes.run_cpu_tick();
+        }
+
+        let state = nes.save_state();
+        let bytes = state.to_bytes().expect("serialization should succeed");
+        let restored = SaveState::from_bytes(&bytes).expect("deserialization should succeed");
+
+        assert_eq!(restored.version, state.version);
+        assert_eq!(restored.cpu.x, state.cpu.x);
+        assert_eq!(restored.cpu.y, state.cpu.y);
     }
 }

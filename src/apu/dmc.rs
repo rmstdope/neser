@@ -8,8 +8,30 @@
 //! - Output unit (shift register + 7-bit output level 0-127)
 //! - IRQ flag
 //! - Loop flag for sample restart
-use crate::console::{DmcState, TimingMode};
+use crate::console::TimingMode;
 use crate::trace_apu;
+use serde::{Deserialize, Serialize};
+
+/// APU DMC channel state for save-state support.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct DmcState {
+    pub timer: u16,
+    pub timer_period: u16,
+    pub output_level: u8,
+    pub sample_address: u16,
+    pub sample_length: u16,
+    pub current_address: u16,
+    pub bytes_remaining: u16,
+    pub sample_buffer: Option<u8>,
+    pub shift_register: u8,
+    pub bits_remaining: u8,
+    pub silence_flag: bool,
+    pub irq_enabled: bool,
+    pub irq_flag: bool,
+    pub loop_flag: bool,
+    pub dma_pending: bool,
+    pub transfer_start_delay: u8,
+}
 
 // NTSC rate periods (in CPU cycles)
 const DMC_RATE_TABLE_NTSC: [u16; 16] = [

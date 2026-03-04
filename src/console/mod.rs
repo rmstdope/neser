@@ -2,7 +2,6 @@ mod cartridge_catalog;
 mod config;
 mod nes;
 mod ram_init;
-mod savestate;
 
 use crate::app_context::SharedAppContext;
 use crate::debugging::log_info;
@@ -17,13 +16,15 @@ pub use config::Config;
 pub use config::ParseResult;
 pub use config::RamInitMode;
 pub use nes::Nes;
+pub use nes::{SAVESTATE_VERSION, SaveState, SaveStateError};
 pub use ram_init::initialize_ram;
-pub use savestate::{
-    ApuState, ArkanoidState, BusState, ControllerStateWrapper, CpuState, DmcState, EnvelopeState,
-    FrameCounterState, JoypadState, MapperState, NoiseState, PpuRegisterState, PpuState,
-    PpuTimingState, PulseState, SAVESTATE_VERSION, SaveState, SpritesState, TriangleState,
-    ZapperState,
-};
+
+// Re-export state types from their component modules for backward compatibility
+pub use crate::apu::{ApuState, DmcState, EnvelopeState, FrameCounterState, NoiseState, PulseState, TriangleState};
+pub use crate::bus::{BusState, ControllerStateWrapper, MapperState};
+pub use crate::cpu::CpuState;
+pub use crate::input::{ArkanoidState, JoypadState, ZapperState};
+pub use crate::ppu::{PpuRegisterState, PpuState, PpuTimingState, SpritesState};
 
 pub fn log_rom_timing_mode_selection(
     app_context: &SharedAppContext,
