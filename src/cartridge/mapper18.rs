@@ -160,9 +160,7 @@ impl Mapper for Mapper18 {
         }
 
         let mask = IRQ_MASKS[self.irq_counter_size as usize];
-        let mut counter = self.irq_counter & mask;
-
-        counter = counter.wrapping_sub(1);
+        let counter = (self.irq_counter & mask).wrapping_sub(1);
         if counter == 0 {
             self.irq_pending = true;
         }

@@ -272,8 +272,8 @@ impl Mapper for Mapper20 {
         self.irq_repeat = false;
         self.io_enable = 0;
         self.fds_control = 0;
-        self.wave_ram = [0u8; 64];
-        self.audio_regs = [0u8; 16];
+        self.wave_ram.fill(0);
+        self.audio_regs.fill(0);
         self.base.set_mirroring(NametableLayout::Horizontal);
     }
 }
