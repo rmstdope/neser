@@ -24,6 +24,8 @@ tools:
     lockdown: false
 
 safe-outputs:
+  assign-to-agent:
+    model: gpt-5-mini
   mentions: false
   allowed-github-references: []
   create-issue:
