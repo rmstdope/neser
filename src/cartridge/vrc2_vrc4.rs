@@ -1,4 +1,4 @@
-//! Mappers 21/22/23/25 - Konami VRC2/VRC4
+//! Mappers 21/22/23/25/27 - Konami VRC2/VRC4
 //!
 //! Known Limitations:
 //! - Edge-case behavior may still differ from hardware in untested timing and board-variant scenarios.
@@ -9,7 +9,7 @@ use crate::cartridge::vrc_irq::VrcIrq;
 use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 use crate::trace_mapper;
 
-/// Mappers 21, 22, 23, 25 - Konami VRC2/VRC4
+/// Mappers 21, 22, 23, 25, 27 - Konami VRC2/VRC4
 ///
 /// Hardware: Konami's VRC2 and VRC4 chips with different pin configurations
 ///
@@ -28,6 +28,7 @@ use crate::trace_mapper;
 /// - Mapper 22: VRC2a (no IRQ support)
 /// - Mapper 23: VRC2b / VRC4e (has IRQ, typically VRC4)
 /// - Mapper 25: VRC4b (Gradius II, Teenage Mutant Ninja Turtles II) / VRC4d (Bio Miracle)
+/// - Mapper 27: VRC4_27 / World Hero (Kotobuki System) — A0→chip A0, A1→chip A1, full VRC4
 ///
 /// Notes:
 /// - VRC2 variants (22, some 23) have no IRQ support
@@ -49,6 +50,7 @@ enum Vrc2Vrc4Variant {
     Mapper22,                  // VRC2a (no IRQ)
     Mapper23(Mapper23PinMode), // VRC4f, VRC4e, VRC2b
     Mapper25(Mapper25PinMode), // VRC4b, VRC4d, VRC2c
+    Mapper27,                  // VRC4_27 (World Hero): A0→chip A0, A1→chip A1, full VRC4
 }
 
 impl Vrc2Vrc4Variant {
@@ -60,6 +62,7 @@ impl Vrc2Vrc4Variant {
             Vrc2Vrc4Variant::Mapper23(_) => true,
             Vrc2Vrc4Variant::Mapper25(Mapper25PinMode::Vrc2cOnly) => false,
             Vrc2Vrc4Variant::Mapper25(_) => true,
+            Vrc2Vrc4Variant::Mapper27 => true,
         }
     }
 
@@ -77,6 +80,7 @@ impl Vrc2Vrc4Variant {
             Vrc2Vrc4Variant::Mapper23(_) => false,
             Vrc2Vrc4Variant::Mapper25(Mapper25PinMode::Vrc2cOnly) => false,
             Vrc2Vrc4Variant::Mapper25(_) => true,
+            Vrc2Vrc4Variant::Mapper27 => true,
         }
     }
 
@@ -207,6 +211,7 @@ impl Vrc2Vrc4Mapper {
                 3 => Mapper25PinMode::Vrc2cOnly,
                 _ => Mapper25PinMode::Combined,
             }),
+            27 => Vrc2Vrc4Variant::Mapper27,
             _ => Vrc2Vrc4Variant::Mapper21(Mapper21PinMode::Combined),
         };
         let capabilities = MapperCapabilities {
@@ -272,6 +277,7 @@ impl Vrc2Vrc4Mapper {
     /// - Mapper 23 VRC4e:       CPU A2→chip A0, CPU A3→chip A1
     /// - Mapper 25 VRC4b/VRC2c: CPU A1→chip A0, CPU A0→chip A1
     /// - Mapper 25 VRC4d:       CPU A3→chip A0, CPU A2→chip A1
+    /// - Mapper 27 VRC4_27:     CPU A0→chip A0, CPU A1→chip A1 (direct, no swap)
     ///
     /// iNES 1.0 combined mode ORs all known wirings for a mapper together.
     fn normalize_reg_addr(&self, addr: u16) -> u16 {
@@ -331,6 +337,12 @@ impl Vrc2Vrc4Mapper {
                     Mapper25PinMode::Vrc4dOnly => (addr >> 2) & 0x01,
                     Mapper25PinMode::Combined => (addr & 0x01) | ((addr >> 2) & 0x01),
                 };
+                base | (a1 << 1) | a0
+            }
+            Vrc2Vrc4Variant::Mapper27 => {
+                // VRC4_27: A0→chip A0, A1→chip A1 (direct mapping, no swap)
+                let a0 = addr & 0x01;
+                let a1 = (addr >> 1) & 0x01;
                 base | (a1 << 1) | a0
             }
         }
@@ -1592,6 +1604,199 @@ mod tests {
             mapper.read_prg(0x6000),
             0xCD,
             "VRC2c: $6000 latch must be accessible without WRAM-enable write"
+        );
+    }
+
+    // =========================================================================
+    // Mapper 27 (World Hero / VRC4_27) spec tests
+    //
+    // Mesen2 source (VRC2_4.h, VRCVariant::VRC4_27):
+    //   A0 = addr & 0x01   (CPU bit 0 → chip A0)
+    //   A1 = (addr >> 1) & 0x01   (CPU bit 1 → chip A1)
+    // Full VRC4 capabilities: IRQ, 5-bit CHR, 4-way mirroring, PRG swap mode.
+    // No heuristics — single well-defined addressing variant.
+    // =========================================================================
+
+    #[test]
+    fn test_mapper27_is_registered() {
+        let prg_rom = banked_data(8 * 1024, 8);
+        let chr_rom = banked_data(1024, 8);
+        let mapper = create_mapper(MapperContext::new_for_test(
+            27,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Horizontal,
+        ));
+        assert!(mapper.is_ok(), "mapper 27 must be registered");
+    }
+
+    /// Mapper 27 PRG banking: two 8KB switchable windows at $8000/$A000,
+    /// fixed second-to-last at $C000, fixed last at $E000.
+    /// Address normalization: A0=bit0, A1=bit1 → $8000/$8001/$8002/$8003 all target
+    /// the PRG bank 0 register range.
+    #[test]
+    fn test_mapper27_prg_banking() {
+        let prg_rom = banked_data(8 * 1024, 8);
+        let chr_rom = banked_data(1024, 8);
+        let mut mapper = create_vrc_mapper(27, prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        // PRG Select 0: bank 2 via $8000 (chip pos 0)
+        mapper.write_prg(0x8000, 2);
+        // PRG Select 1: bank 4 via $A000 (chip pos 0)
+        mapper.write_prg(0xA000, 4);
+
+        assert_eq!(mapper.read_prg(0x8000), 2, "$8000 should be bank 2");
+        assert_eq!(mapper.read_prg(0x9FFF), 2, "$9FFF should still be bank 2");
+        assert_eq!(mapper.read_prg(0xA000), 4, "$A000 should be bank 4");
+        assert_eq!(mapper.read_prg(0xBFFF), 4, "$BFFF should still be bank 4");
+        // Second-to-last = bank 6 for 8-bank ROM
+        assert_eq!(
+            mapper.read_prg(0xC000),
+            6,
+            "$C000 should be second-to-last (bank 6)"
+        );
+        // Last = bank 7
+        assert_eq!(
+            mapper.read_prg(0xE000),
+            7,
+            "$E000 should be last bank (bank 7)"
+        );
+    }
+
+    /// Mapper 27 CHR banking: eight 1KB banks, 5-bit addressing via split nibble writes.
+    /// Physical $B000 (A0=0, A1=0) → chip pos 0 = CHR bank 0 low nibble
+    /// Physical $B001 (A0=1, A1=0) → chip pos 1 = CHR bank 0 high nibble
+    #[test]
+    fn test_mapper27_chr_banking_5bit_nibble_split() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1024, 32);
+        let mut mapper = create_vrc_mapper(27, prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        // CHR bank 0 = 0x1F (5-bit): low nibble 0xF via $B000, high nibble 0x01 via $B001
+        mapper.write_prg(0xB000, 0x0F); // chip pos 0 (A0=0, A1=0)
+        mapper.write_prg(0xB001, 0x01); // chip pos 1 (A0=1, A1=0) → bank bit 4 → bank 0x1F
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            31,
+            "CHR bank 0 must be 31 (0x1F) after 5-bit nibble split write"
+        );
+    }
+
+    /// Mapper 27 mirroring: full 4-way support (Vertical, Horizontal, Lower, Upper).
+    /// Written via $9000 (chip pos 0): 0=V, 1=H, 2=lower, 3=upper.
+    #[test]
+    fn test_mapper27_four_mode_mirroring() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1024, 8);
+        let mut mapper = create_vrc_mapper(27, prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        mapper.write_prg(0x9000, 0x00);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
+
+        mapper.write_prg(0x9000, 0x01);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
+
+        mapper.write_prg(0x9000, 0x02);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenLower);
+
+        mapper.write_prg(0x9000, 0x03);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenUpper);
+    }
+
+    /// Mapper 27 IRQ: VRC4 IRQ with latch-based counter.
+    /// Physical $F000 (pos 0) = latch low nibble, $F001 (pos 1) = latch high nibble,
+    /// $F002 (pos 2) = IRQ control, $F003 (pos 3) = acknowledge.
+    #[test]
+    fn test_mapper27_irq_fires_and_acknowledges() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1024, 8);
+        let mut mapper = create_vrc_mapper(27, prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        // Latch = 0xFE: low nibble 0xE via $F000, high nibble 0xF via $F001
+        mapper.write_prg(0xF000, 0x0E); // chip pos 0 (A0=0, A1=0)
+        mapper.write_prg(0xF001, 0x0F); // chip pos 1 (A0=1, A1=0)
+        // IRQ control via $F002 (chip pos 2, A0=0, A1=1): M=1 (cycle mode), E=1
+        mapper.write_prg(0xF002, 0b0000_0110);
+
+        // counter = 0xFE → cycle 1: 0xFF (no IRQ), cycle 2: overflow → IRQ
+        mapper.cpu_cycle();
+        assert!(!mapper.irq_pending(), "IRQ must not fire after first cycle");
+        mapper.cpu_cycle();
+        assert!(mapper.irq_pending(), "IRQ must fire after counter overflow");
+
+        // Acknowledge via $F003 (chip pos 3, A0=1, A1=1)
+        mapper.write_prg(0xF003, 0x00);
+        assert!(!mapper.irq_pending(), "IRQ must clear after acknowledge");
+    }
+
+    /// Mapper 27 PRG swap mode: $9002 bit 1 swaps $8000/$C000 windows.
+    /// Physical $9002 (A0=0, A1=1) → chip pos 2 = PRG swap + WRAM enable.
+    #[test]
+    fn test_mapper27_prg_swap_mode() {
+        let prg_rom = banked_data(8 * 1024, 8);
+        let chr_rom = banked_data(1024, 8);
+        let mut mapper = create_vrc_mapper(27, prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        mapper.write_prg(0x8000, 2); // PRG Select 0 = bank 2
+
+        // Before swap: bank 2 at $8000
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            2,
+            "before swap: $8000 should be bank 2"
+        );
+        assert_eq!(
+            mapper.read_prg(0xC000),
+            6,
+            "before swap: $C000 should be second-to-last"
+        );
+
+        // Enable swap mode: $9002 (A0=0, A1=1) bit 1 = M
+        mapper.write_prg(0x9002, 0b0000_0010);
+
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            6,
+            "after swap: $8000 should be second-to-last"
+        );
+        assert_eq!(
+            mapper.read_prg(0xC000),
+            2,
+            "after swap: $C000 should be bank 2"
+        );
+    }
+
+    /// Mapper 27 save-state: snapshot/restore roundtrip preserves all register state.
+    #[test]
+    fn test_mapper27_snapshot_restore_roundtrip() {
+        let prg_rom = banked_data(8 * 1024, 8);
+        let chr_rom = banked_data(1024, 32);
+
+        let mut mapper = create_vrc_mapper(
+            27,
+            prg_rom.clone(),
+            chr_rom.clone(),
+            NametableLayout::Horizontal,
+        );
+
+        mapper.write_prg(0x8000, 3);
+        mapper.write_prg(0xA000, 5);
+        mapper.write_prg(0xB000, 0x0F);
+        mapper.write_prg(0xB001, 0x01); // CHR bank 0 = 0x1F
+        mapper.write_prg(0x9000, 0x02); // mirroring = SingleScreenLower
+        mapper.write_prg(0xF000, 0x0E);
+        mapper.write_prg(0xF001, 0x0F);
+        mapper.write_prg(0xF002, 0b0000_0110);
+        mapper.cpu_cycle();
+
+        let snapshot = mapper.registers_snapshot();
+        let mut restored = create_vrc_mapper(27, prg_rom, chr_rom, NametableLayout::Horizontal);
+        restored.restore_registers(&snapshot);
+
+        assert_eq!(
+            snapshot,
+            restored.registers_snapshot(),
+            "snapshot/restore roundtrip must be idempotent"
         );
     }
 }

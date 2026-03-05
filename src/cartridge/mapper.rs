@@ -613,6 +613,7 @@ mapper_registry! {
     24 => VRC6Mapper::new,
     25 => Vrc2Vrc4Mapper::new,
     26 => VRC6Mapper::new,
+    27 => Vrc2Vrc4Mapper::new,
     29 => Mapper29::new,
     32 => IremG101Mapper::new,
     33 => TaitoTc0190Mapper::new,
