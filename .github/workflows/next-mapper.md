@@ -4,6 +4,7 @@ description: Runs after a pull request is closed, selects the oldest open mapper
 on:
   pull_request:
     types: [closed]
+  workflow_dispatch:
   skip-if-match: 'is:pr is:open in:title "[next-mapper]"'
 
 permissions:

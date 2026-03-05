@@ -27,7 +27,7 @@
 #   Imports:
 #     - shared/reporting.md
 #
-# gh-aw-metadata: {"schema_version":"v1","frontmatter_hash":"f3535c91c56141c448551c072e9c60749e10ef4156d7b0d580c414f2bd311474","compiler_version":"v0.53.0"}
+# gh-aw-metadata: {"schema_version":"v1","frontmatter_hash":"4e161cc11f880719ac56960b8565786d34e6e2d1b507891e3d1562742a55d05f","compiler_version":"v0.53.0"}
 
 name: "Next Mapper"
 "on":
@@ -35,6 +35,7 @@ name: "Next Mapper"
     types:
     - closed
   # skip-if-match: is:pr is:open in:title "[next-mapper]" # Skip-if-match processed as search check in pre-activation job
+  workflow_dispatch:
 
 permissions: {}
 
