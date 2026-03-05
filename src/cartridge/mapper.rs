@@ -43,6 +43,7 @@ use super::mapper132::Mapper132;
 use super::mapper133::Mapper133;
 use super::mapper140::Mapper140;
 use super::mapper185::Mapper185;
+use super::mapper205::Mapper205;
 use super::mapper241::Mapper241;
 use super::mapper242::Mapper242;
 use super::mapper243::Mapper243;
@@ -646,6 +647,7 @@ mapper_registry! {
     140 => Mapper140::new,
     155 => MMC1Mapper::new,
     185 => Mapper185::new,
+    205 => Mapper205::new,
     206 => Namco118Mapper::new,
     241 => Mapper241::new,
     242 => Mapper242::new,
@@ -662,8 +664,8 @@ mapper_registry! {
 const SUPPORTED_MAPPERS: &[u8] = &[
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 19, 21, 22, 23, 24, 25, 26, 32,
     33, 34, 37, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 56, 57, 58, 59, 60, 61, 62,
-    64, 65, 66, 67, 68, 69, 71, 72, 73, 78, 132, 133, 140, 155, 185, 206, 241, 242, 243, 244, 245,
-    246, 251, 254, 255,
+    64, 65, 66, 67, 68, 69, 71, 72, 73, 78, 132, 133, 140, 155, 185, 205, 206, 241, 242, 243, 244,
+    245, 246, 251, 254, 255,
 ];
 
 /// List of supported iNES mapper IDs handled by the factory.
