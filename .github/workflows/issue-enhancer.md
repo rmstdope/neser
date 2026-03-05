@@ -10,6 +10,10 @@ permissions:
   contents: read
   issues: read
   pull-requests: read
+network:
+  allowed:
+    - defaults
+    - "www.nesdev.org"
 safe-outputs:
   assign-to-agent:
     model: gpt-5-mini

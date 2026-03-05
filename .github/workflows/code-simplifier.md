@@ -28,6 +28,7 @@ network:
   allowed:
     - defaults
     - "rust"
+    - "www.nesdev.org"
 
 tools:
   github:
