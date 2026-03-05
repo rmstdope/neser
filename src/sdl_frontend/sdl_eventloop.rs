@@ -76,6 +76,9 @@ pub struct SdlEventLoop {
     controller_player_map: HashMap<u32, u8>, // Maps controller instance_id to player number (1 or 2)
     last_mouse_position: Option<(i32, i32)>,
     cursor_hidden: bool,
+    mouse_grabbed: bool,
+    mouse_released_by_escape: bool,
+    window_focused: bool,
     autorun_state: Option<AutorunState>,
     cartridge_switch_dialog_open: bool,
     cartridge_switch_pause_state_before_open: bool,
@@ -130,27 +133,14 @@ impl SdlEventLoop {
         scaled.round().clamp(MIN_POSITION, MAX_POSITION) as u8
     }
 
-    /// Maps an SDL mouse X position into a Zapper screen position (0..=255).
-    fn map_mouse_x_to_zapper_position(x: i32, window_width: u32) -> u8 {
-        if window_width <= 1 {
+    fn map_mouse_axis_to_zapper_position(axis: i32, window_extent: u32) -> u8 {
+        if window_extent <= 1 {
             return 0;
         }
 
-        let max_x = window_width.saturating_sub(1) as i32;
-        let clamped_x = x.clamp(0, max_x);
-        let normalized = clamped_x as f32 / max_x as f32;
-        (normalized * 255.0).round().clamp(0.0, 255.0) as u8
-    }
-
-    /// Maps an SDL mouse Y position into a Zapper screen position (0..=255).
-    fn map_mouse_y_to_zapper_position(y: i32, window_height: u32) -> u8 {
-        if window_height <= 1 {
-            return 0;
-        }
-
-        let max_y = window_height.saturating_sub(1) as i32;
-        let clamped_y = y.clamp(0, max_y);
-        let normalized = clamped_y as f32 / max_y as f32;
+        let max_axis = window_extent.saturating_sub(1) as i32;
+        let clamped_axis = axis.clamp(0, max_axis);
+        let normalized = clamped_axis as f32 / max_axis as f32;
         (normalized * 255.0).round().clamp(0.0, 255.0) as u8
     }
 
@@ -162,8 +152,8 @@ impl SdlEventLoop {
             let position = Self::map_mouse_x_to_paddle_position(x, window_width);
             nes.set_mouse_x_position(position);
         } else {
-            let x_position = Self::map_mouse_x_to_zapper_position(x, window_width);
-            let y_position = Self::map_mouse_y_to_zapper_position(y, window_height);
+            let x_position = Self::map_mouse_axis_to_zapper_position(x, window_width);
+            let y_position = Self::map_mouse_axis_to_zapper_position(y, window_height);
             nes.set_mouse_x_position(x_position);
             nes.set_mouse_y_position(y_position);
         }
@@ -209,13 +199,22 @@ impl SdlEventLoop {
         }
     }
 
-    fn update_cursor_visibility(&mut self, zapper_active: bool) {
-        if self.cursor_hidden == zapper_active {
+    fn update_cursor_visibility(&mut self, hide_cursor: bool) {
+        if self.cursor_hidden == hide_cursor {
             return;
         }
 
-        self._sdl_context.mouse().show_cursor(!zapper_active);
-        self.cursor_hidden = zapper_active;
+        self._sdl_context.mouse().capture(hide_cursor);
+        self._sdl_context.mouse().show_cursor(!hide_cursor);
+        self.cursor_hidden = hide_cursor;
+    }
+
+    fn should_grab_mouse_input(
+        mouse_controller_active: bool,
+        window_focused: bool,
+        mouse_released_by_escape: bool,
+    ) -> bool {
+        mouse_controller_active && window_focused && !mouse_released_by_escape
     }
 
     fn zapper_ports(nes: &Nes) -> Vec<u8> {
@@ -369,6 +368,9 @@ impl SdlEventLoop {
             controller_player_map,
             last_mouse_position: None,
             cursor_hidden: false,
+            mouse_grabbed: false,
+            mouse_released_by_escape: false,
+            window_focused: true,
             autorun_state: None,
             cartridge_switch_dialog_open: false,
             cartridge_switch_pause_state_before_open: false,
@@ -1017,6 +1019,14 @@ impl SdlEventLoop {
                             keymod,
                             ..
                         } => {
+                            if keycode == Keycode::Escape && self.mouse_grabbed {
+                                self.mouse_released_by_escape = true;
+                                let _ = gl_backend.set_mouse_grab(false);
+                                self.mouse_grabbed = false;
+                                self.update_cursor_visibility(false);
+                                continue;
+                            }
+
                             // Handle F4 for shader cycling
                             if keycode == Keycode::F4 {
                                 gl_backend.cycle_shader();
@@ -1049,15 +1059,57 @@ impl SdlEventLoop {
                         Event::ControllerButtonUp { button, which, .. } => {
                             controller_buttons.push((which, button, false));
                         }
+                        Event::Window { win_event, .. } => match win_event {
+                            sdl2::event::WindowEvent::FocusGained => {
+                                self.window_focused = true;
+                            }
+                            sdl2::event::WindowEvent::FocusLost => {
+                                self.window_focused = false;
+                                self.mouse_released_by_escape = true;
+                                let _ = gl_backend.set_mouse_grab(false);
+                                self.mouse_grabbed = false;
+                                self.update_cursor_visibility(false);
+                            }
+                            _ => {}
+                        },
                         Event::MouseMotion { x, y, .. } => {
+                            let mouse_controller_active = !Self::mouse_ports(nes).is_empty();
+                            if mouse_controller_active && !self.mouse_grabbed {
+                                continue;
+                            }
+
                             let (window_width, window_height) = gl_backend.window_size();
                             self.last_mouse_position = Some((x, y));
                             Self::update_mouse_motion(nes, x, y, window_width, window_height);
                         }
                         Event::MouseButtonDown { mouse_btn, .. } => {
+                            let mouse_controller_active = !Self::mouse_ports(nes).is_empty();
+                            if mouse_controller_active && !self.mouse_grabbed {
+                                self.mouse_released_by_escape = false;
+                                let should_grab = Self::should_grab_mouse_input(
+                                    mouse_controller_active,
+                                    self.window_focused,
+                                    self.mouse_released_by_escape,
+                                );
+                                if should_grab {
+                                    let _ = gl_backend.set_mouse_grab(true);
+                                    self.mouse_grabbed = true;
+                                    self.update_cursor_visibility(true);
+                                }
+                            }
+
+                            if mouse_controller_active && !self.mouse_grabbed {
+                                continue;
+                            }
+
                             Self::update_mouse_button(nes, mouse_btn, true);
                         }
                         Event::MouseButtonUp { mouse_btn, .. } => {
+                            let mouse_controller_active = !Self::mouse_ports(nes).is_empty();
+                            if mouse_controller_active && !self.mouse_grabbed {
+                                continue;
+                            }
+
                             Self::update_mouse_button(nes, mouse_btn, false);
                         }
                         _ => {}
@@ -1084,8 +1136,17 @@ impl SdlEventLoop {
                     );
 
                     let overlay_text = self.overlay_render_text(nes);
-                    let zapper_active = !Self::zapper_ports(nes).is_empty();
-                    self.update_cursor_visibility(zapper_active);
+                    let mouse_controller_active = !Self::mouse_ports(nes).is_empty();
+                    let should_grab = Self::should_grab_mouse_input(
+                        mouse_controller_active,
+                        self.window_focused,
+                        self.mouse_released_by_escape,
+                    );
+                    if self.mouse_grabbed != should_grab {
+                        let _ = gl_backend.set_mouse_grab(should_grab);
+                        self.mouse_grabbed = should_grab;
+                    }
+                    self.update_cursor_visibility(should_grab);
                     let crosshair = self.zapper_crosshair(nes);
                     let overlay_blink_red = self.should_overlay_blink_red(nes);
                     gl_backend.update_breakpoints(&self.breakpoints);
@@ -1183,8 +1244,17 @@ impl SdlEventLoop {
 
                 // 3. Render the frame (always present the NES frame; show debugger if requested)
                 let overlay_text = self.overlay_render_text(nes);
-                let zapper_active = !Self::zapper_ports(nes).is_empty();
-                self.update_cursor_visibility(zapper_active);
+                let mouse_controller_active = !Self::mouse_ports(nes).is_empty();
+                let should_grab = Self::should_grab_mouse_input(
+                    mouse_controller_active,
+                    self.window_focused,
+                    self.mouse_released_by_escape,
+                );
+                if self.mouse_grabbed != should_grab {
+                    let _ = gl_backend.set_mouse_grab(should_grab);
+                    self.mouse_grabbed = should_grab;
+                }
+                self.update_cursor_visibility(should_grab);
                 let crosshair = self.zapper_crosshair(nes);
                 let overlay_blink_red = self.should_overlay_blink_red(nes);
                 gl_backend.update_breakpoints(&self.breakpoints);
@@ -2792,10 +2862,10 @@ mod tests {
         let window_width = 320;
         let window_height = 240;
 
-        let left = SdlEventLoop::map_mouse_x_to_zapper_position(0, window_width);
-        let right = SdlEventLoop::map_mouse_x_to_zapper_position(319, window_width);
-        let top = SdlEventLoop::map_mouse_y_to_zapper_position(0, window_height);
-        let bottom = SdlEventLoop::map_mouse_y_to_zapper_position(239, window_height);
+        let left = SdlEventLoop::map_mouse_axis_to_zapper_position(0, window_width);
+        let right = SdlEventLoop::map_mouse_axis_to_zapper_position(319, window_width);
+        let top = SdlEventLoop::map_mouse_axis_to_zapper_position(0, window_height);
+        let bottom = SdlEventLoop::map_mouse_axis_to_zapper_position(239, window_height);
 
         assert_eq!(left, 0);
         assert_eq!(right, 255);
@@ -3215,6 +3285,26 @@ mod tests {
         event_loop.handle_controller_button(&mut nes, 42, sdl2::controller::Button::A, true);
 
         assert_eq!(read_joypad1_buttons(&mut nes), [0; 8]);
+    }
+
+    #[test]
+    fn test_should_grab_mouse_input_when_mouse_controller_active_and_window_focused() {
+        assert!(SdlEventLoop::should_grab_mouse_input(true, true, false));
+    }
+
+    #[test]
+    fn test_should_not_grab_mouse_input_when_window_not_focused() {
+        assert!(!SdlEventLoop::should_grab_mouse_input(true, false, false));
+    }
+
+    #[test]
+    fn test_should_not_grab_mouse_input_when_mouse_controller_not_active() {
+        assert!(!SdlEventLoop::should_grab_mouse_input(false, true, false));
+    }
+
+    #[test]
+    fn test_should_not_grab_mouse_input_after_escape_release() {
+        assert!(!SdlEventLoop::should_grab_mouse_input(true, true, true));
     }
 
     #[test]
