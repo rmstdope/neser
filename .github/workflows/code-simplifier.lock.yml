@@ -27,7 +27,7 @@
 #   Imports:
 #     - shared/reporting.md
 #
-# gh-aw-metadata: {"schema_version":"v1","frontmatter_hash":"c7e3970a32c4dce8a4aecd4e748d565b0ad057ff674a3f6d15ccd6067d3f07b6","compiler_version":"v0.53.0"}
+# gh-aw-metadata: {"schema_version":"v1","frontmatter_hash":"f09c3f7fc47dd8782296c599813077e5d2c2725bd96a81c7429be628f0544cdc","compiler_version":"v0.53.0"}
 
 name: "Code Simplifier"
 "on":

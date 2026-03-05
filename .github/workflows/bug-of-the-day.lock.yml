@@ -27,7 +27,7 @@
 #   Imports:
 #     - shared/reporting.md
 #
-# gh-aw-metadata: {"schema_version":"v1","frontmatter_hash":"78159e3b49276991812db9a45f3bc0cfe2eeb6b5ea655c308b6f4a0063b6a222","compiler_version":"v0.53.0"}
+# gh-aw-metadata: {"schema_version":"v1","frontmatter_hash":"08658209bd18e95fb8229b8cd64d79b238fa7db669bf75510c68d9d4ab4d38f6","compiler_version":"v0.53.0"}
 
 name: "Bug of the Day"
 "on":

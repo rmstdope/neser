@@ -1,15 +1,18 @@
 ---
 name: Issue Enhancer
 description: Automatically enhances an issue by ensuring correct labeling and by applying github-issue-designer quality principles for outcome-oriented issue design.
+engine: copilot
 on:
-  issues:
-    types: [opened]
+#   issues:
+#     types: [opened]
   reaction: "eyes"
 permissions:
   contents: read
   issues: read
   pull-requests: read
 safe-outputs:
+  assign-to-agent:
+    model: gpt-5-mini
   add-labels:
     allowed: [bug, feature, games, mapper, refactoring, testing]
     blocked: ["~*", "*[bot]"]

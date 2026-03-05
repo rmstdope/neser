@@ -1,8 +1,9 @@
 ---
 name: Bug of the Day
 description: Selects the highest-priority open bug issue, fixes it using the bug-hunter workflow, and creates a pull request.
+engine: copilot
 on:
-  #schedule: daily
+#   schedule: daily
   workflow_dispatch:
   skip-if-match: 'is:pr is:open in:title "[bug-of-the-day]"'
 
