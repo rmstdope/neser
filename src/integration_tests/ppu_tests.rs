@@ -829,7 +829,7 @@ AA AA 01 01 10 10 01 01 00 00\n\
         "roms/automated_tests/ppu_vbl_nmi/rom_singles/10-even_odd_timing.nes"
     );
 
-    #[ignore] // Failing with current OAM implementation, needs investigation
+    // #[ignore] // Failing with current OAM implementation, needs investigation
     #[test]
     fn test_scanline_a1() {
         let mut nes = create_nes_from_rom(
@@ -842,7 +842,7 @@ AA AA 01 01 10 10 01 01 00 00\n\
 
         let _white = Nes::lookup_system_palette(0x30);
         let black = Nes::lookup_system_palette(0x00);
-        let y_ranges = [
+        let write_bars_y = [
             // First block
             48u32..=54,
             56u32..=62,
@@ -863,14 +863,41 @@ AA AA 01 01 10 10 01 01 00 00\n\
             208u32..=214,
             216u32..=222,
         ];
+        let all_black_y = [
+            // First block
+            55, 63, 71, 79, 87,
+            // Between first and second
+            95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111,
+            112, 113, 114, 115, 116, 117, 118, 119,
+            // Second block
+            127, 135, 143, 151, 159,
+            // Between second and third
+            167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185,
+            186, 187, 188, 189, 190, 191,
+            // Third block
+            199, 207, 215, 223,
+            // After third
+            223, 224, 225, 226, 227, 228,
+        ];
 
         let mut all_failures: Vec<String> = Vec::new();
         for frame_offset in 0..10 {
             run_nes_for_frames(&mut nes, 1);
 
             let screen = nes.get_screen_buffer();
-            for y_range in &y_ranges {
+            // Check that the white bars are solid and contiguous,
+            // and that the pixels to the right of the bars are black.
+            for y_range in &write_bars_y {
                 for y in y_range.clone() {
+                    for x in 187u32..189u32 {
+                        let pixel = screen.get_pixel(x, y);
+                        if pixel == black {
+                            all_failures.push(format!(
+                                "frame_offset={}, x={}, y={}, got {:?}",
+                                frame_offset, x, y, pixel
+                            ));
+                        }
+                    }
                     for x in 189u32..SCREEN_WIDTH {
                         let pixel = screen.get_pixel(x, y);
                         if pixel != black {
@@ -879,6 +906,18 @@ AA AA 01 01 10 10 01 01 00 00\n\
                                 frame_offset, x, y, pixel
                             ));
                         }
+                    }
+                }
+            }
+            // Check that the all-black rows are solid and contiguous.
+            for y in &all_black_y {
+                for x in 187u32..SCREEN_WIDTH {
+                    let pixel = screen.get_pixel(x, *y);
+                    if pixel != black {
+                        all_failures.push(format!(
+                            "frame_offset={}, x={}, y={}, got {:?}",
+                            frame_offset, x, y, pixel
+                        ));
                     }
                 }
             }
