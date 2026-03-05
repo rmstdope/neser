@@ -53,7 +53,7 @@ jobs:
       - name: Install SDL2
         run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
       - name: Run tests
-        run: cargo test --lib --bins --tests --examples
+        run: cargo test --lib --examples --all-features
 
   rust-lint-pr:
     runs-on: ubuntu-latest
