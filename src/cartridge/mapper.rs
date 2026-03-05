@@ -22,6 +22,7 @@ use super::mapper31::Mapper31;
 use super::mapper35::Mapper35;
 use super::mapper36::Mapper36;
 use super::mapper37::Mapper37;
+use super::mapper39::Mapper39;
 use super::mapper41::Mapper41;
 use super::mapper42::Mapper42;
 use super::mapper43::Mapper43;
@@ -628,6 +629,7 @@ mapper_registry! {
     35 => Mapper35::new,
     36 => Mapper36::new,
     37 => Mapper37::new,
+    39 => Mapper39::new,
     40 => Ntdec2722Mapper::new,
     41 => Mapper41::new,
     42 => Mapper42::new,
@@ -681,9 +683,9 @@ mapper_registry! {
 #[cfg(test)]
 const SUPPORTED_MAPPERS: &[u8] = &[
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-    26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
-    52, 53, 56, 57, 58, 59, 60, 61, 62, 64, 65, 66, 67, 68, 69, 71, 72, 73, 78, 129, 132, 133, 140,
-    155, 185, 205, 206, 241, 242, 243, 244, 245, 246, 251, 254, 255,
+    26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50,
+    51, 52, 53, 56, 57, 58, 59, 60, 61, 62, 64, 65, 66, 67, 68, 69, 71, 72, 73, 78, 129, 132, 133,
+    140, 155, 185, 205, 206, 241, 242, 243, 244, 245, 246, 251, 254, 255,
 ];
 
 /// List of supported iNES mapper IDs handled by the factory.
