@@ -27,13 +27,10 @@
 #   Imports:
 #     - shared/reporting.md
 #
-# gh-aw-metadata: {"schema_version":"v1","frontmatter_hash":"196dcb9c4c35a3183b0f36fa82582010d56da16394b36fb6c654c7a71f740b5e","compiler_version":"v0.53.0"}
+# gh-aw-metadata: {"schema_version":"v1","frontmatter_hash":"78159e3b49276991812db9a45f3bc0cfe2eeb6b5ea655c308b6f4a0063b6a222","compiler_version":"v0.53.0"}
 
 name: "Bug of the Day"
 "on":
-  schedule:
-  - cron: "51 11 * * *"
-    # Friendly format: daily (scattered)
   # skip-if-match: is:pr is:open in:title "[bug-of-the-day]" # Skip-if-match processed as search check in pre-activation job
   workflow_dispatch:
 
@@ -246,8 +243,6 @@ jobs:
       contents: read
       issues: read
       pull-requests: read
-    concurrency:
-      group: "gh-aw-copilot-${{ github.workflow }}"
     env:
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       GH_AW_ASSETS_ALLOWED_EXTS: ""

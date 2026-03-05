@@ -3483,7 +3483,7 @@ mod tests {
             SdlEventLoop::new(true, None, AppContext::new_with_config(config)).unwrap();
 
         let _ =
-            event_loop.handle_key_down_for_run_with_modifiers(&mut nes, Keycode::O, Mod::LGUIMOD);
+            event_loop.handle_key_down_for_run_with_modifiers(&mut nes, Keycode::O, Mod::LCTRLMOD);
         assert!(event_loop.cartridge_switch_dialog_open);
     }
 

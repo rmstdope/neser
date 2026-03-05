@@ -28,13 +28,10 @@
 #
 # Source: githubnext/agentics/workflows/daily-repo-status.md@b466f28f0f65b68d6f2b10b15b44f51d787b93be
 #
-# gh-aw-metadata: {"schema_version":"v1","frontmatter_hash":"4c98a1e4ce976aed6f3ee1943aaf073d09de2c825c15b81ee929da68f46a0814","compiler_version":"v0.53.0"}
+# gh-aw-metadata: {"schema_version":"v1","frontmatter_hash":"ca9496191d4bacf15f6a5dccdab28e3c1354e5a9d6b7b1e78514f4f5fd68dc04","compiler_version":"v0.53.0"}
 
 name: "Daily Repo Status"
 "on":
-  schedule:
-  - cron: "41 8 * * *"
-    # Friendly format: daily (scattered)
   workflow_dispatch:
 
 permissions: {}
@@ -236,8 +233,6 @@ jobs:
       contents: read
       issues: read
       pull-requests: read
-    concurrency:
-      group: "gh-aw-copilot-${{ github.workflow }}"
     env:
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       GH_AW_ASSETS_ALLOWED_EXTS: ""

@@ -2,8 +2,8 @@
 name: Next Mapper
 description: Runs after a pull request is closed, selects the oldest open mapper issue, implements it with test-driven development, and creates a pull request.
 on:
-  pull_request:
-    types: [closed]
+  #pull_request:
+  #  types: [closed]
   workflow_dispatch:
   skip-if-match: 'is:pr is:open in:title "[next-mapper]"'
 
@@ -63,7 +63,7 @@ If no eligible issue exists, or a workflow-created PR is already open, exit with
 ## Selection and gating rules
 
 1. Check for existing open PRs created by this workflow using title prefix `[next-mapper]`.
-	 - If any such PR exists, stop with `noop`.
+   - If any such PR exists, stop with `noop`.
 2. Query open issues labeled `mapper`.
 3. Pick the oldest by `createdAt`.
 4. Skip issues that already have an open PR clearly linked to them.
@@ -123,10 +123,10 @@ If implementation completes successfully, emit `create_pull_request` with:
 - A PR title using the workflow prefix.
 - `Fixes #<issue-number>` in PR body.
 - Summary of:
-	- specification findings (NesDev and/or Mesen2 fallback)
-	- tests added/updated
-	- implementation highlights
-	- validation commands run and results
+  - specification findings (NesDev and/or Mesen2 fallback)
+  - tests added/updated
+  - implementation highlights
+  - validation commands run and results
 
 ## Done condition
 

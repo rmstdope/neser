@@ -2,7 +2,7 @@
 name: Code Simplifier
 description: Analyzes recently modified code and creates pull requests with simplifications that improve clarity, consistency, and maintainability while preserving functionality
 on:
-  schedule: daily
+  #schedule: daily
   skip-if-match: 'is:pr is:open in:title "[code-simplifier]"'
 
 permissions:
@@ -34,9 +34,6 @@ tools:
 timeout-minutes: 30
 strict: true
 ---
-
-<!-- This prompt will be imported in the agentic workflow .github/workflows/code-simplifier.md at runtime. -->
-<!-- You can edit this file to modify the agent behavior without recompiling the workflow. -->
 
 # Code Simplifier Agent
 
@@ -85,7 +82,7 @@ For each merged PR or recent commit:
 
 If **no files were changed in the last 24 hours**, exit gracefully without creating a PR:
 
-```
+```none
 ✅ No code changes detected in the last 24 hours.
 Code simplifier has nothing to process today.
 ```
@@ -209,7 +206,7 @@ If tests fail:
 
 ### 3.2 Run Linters
 
-Ensure code style is consistent using clippy for Rust code, and ESLint or similar for JavaScript/TypeScript. 
+Ensure code style is consistent using clippy for Rust code, and ESLint or similar for JavaScript/TypeScript.
 
 Fix any linting issues introduced by the simplifications.
 
@@ -231,7 +228,7 @@ Only create a PR if:
 
 If no improvements were made or changes broke tests, exit gracefully:
 
-```
+```none
 ✅ Code analyzed from last 24 hours.
 No simplifications needed - code already meets quality standards.
 ```
@@ -344,14 +341,14 @@ Your output MUST either:
 
 1. **If no changes in last 24 hours**:
 
-   ```
+   ```none
    ✅ No code changes detected in the last 24 hours.
    Code simplifier has nothing to process today.
    ```
 
 2. **If no simplifications beneficial**:
 
-   ```
+   ```none
    ✅ Code analyzed from last 24 hours.
    No simplifications needed - code already meets quality standards.
    ```
