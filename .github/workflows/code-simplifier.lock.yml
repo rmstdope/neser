@@ -27,15 +27,11 @@
 #   Imports:
 #     - shared/reporting.md
 #
-# gh-aw-metadata: {"schema_version":"v1","frontmatter_hash":"6ef72340b8e1394a2d2b1d39666a5357a418b9b933adc3e1deb9a091de01ea9e","compiler_version":"v0.53.0"}
+# gh-aw-metadata: {"schema_version":"v1","frontmatter_hash":"c7e3970a32c4dce8a4aecd4e748d565b0ad057ff674a3f6d15ccd6067d3f07b6","compiler_version":"v0.53.0"}
 
 name: "Code Simplifier"
 "on":
-  schedule:
-  - cron: "42 4 * * *"
-    # Friendly format: daily (scattered)
   # skip-if-match: is:pr is:open in:title "[code-simplifier]" # Skip-if-match processed as search check in pre-activation job
-  workflow_dispatch:
 
 permissions: {}
 
