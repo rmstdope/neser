@@ -57,6 +57,7 @@ Existing runtime behavior through `Mapper` remains unchanged.
 | 24 | VRC6a | x | x | x | x | 8 | 8 | 1 |
 | 25 | VRC4b/VRC4d | x | x | x | | 8 | 8 | 1 |
 | 26 | VRC6b | x | x | x | x | 8 | 8 | 1 |
+| 29 | Sealie Computing | | x | | | 8 | 16 | 8 |
 | 34 | BNROM/NINA-001 | | * | | | 8 | 32 | 8 |
 | 66 | GxROM | | x | | | 8 | 32 | 8 |
 | 68 | Sunsoft-4 | | x | x | | ** | 16 | 2 |
@@ -77,6 +78,6 @@ Existing runtime behavior through `Mapper` remains unchanged.
 | Feature | Mappers |
 | --------- | --------- |
 | IRQ | 4, 5, 16, 19, 21, 23, 24, 25, 26, 69 |
-| CHR Banking | 1, 3, 4, 5, 9, 10, 11, 13, 16, 19, 21, 22, 23, 24, 25, 26, 34*, 66, 68, 69, 78, 206 |
+| CHR Banking | 1, 3, 4, 5, 9, 10, 11, 13, 16, 19, 21, 22, 23, 24, 25, 26, 29, 34*, 66, 68, 69, 78, 206 |
 | Dynamic Mirroring | 1, 4, 5, 7, 9, 10, 15, 16, 19, 21, 22, 23, 24, 25, 26, 68, 69, 71, 78 |
 | Expansion Audio | 5, 19, 24, 26 |
