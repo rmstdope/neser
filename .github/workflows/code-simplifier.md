@@ -3,7 +3,7 @@ name: Code Simplifier
 description: Analyzes recently modified code and creates pull requests with simplifications that improve clarity, consistency, and maintainability while preserving functionality
 engine: copilot
 on:
-#   schedule: daily
+  schedule: daily
   skip-if-match: 'is:pr is:open in:title "[code-simplifier]"'
 
 permissions:
