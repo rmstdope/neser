@@ -114,7 +114,7 @@ Run and pass all of the following:
 
 - `cargo clippy --all-targets --all-features -- -D warnings`
 - `cargo fmt`
-- `cargo nextest --all-features`
+- `cargo nextest --all-features --libs`
 - `wasm-pack test --headless --chrome --features wasm`
 - `source .venv/bin/activate && python -m unittest discover -s scripts/scraper -p "test_*.py"`
 - `cd web && npm test`
