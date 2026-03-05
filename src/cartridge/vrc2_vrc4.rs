@@ -582,7 +582,7 @@ impl Mapper for Vrc2Vrc4Mapper {
 mod tests {
     use crate::cartridge::NametableLayout;
     use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::cartridge::test_helpers::{banked_data, banked_data_with_upper_marker};
 
     fn create_vrc_mapper(
         mapper_number: u16,
@@ -1663,22 +1663,28 @@ mod tests {
         );
     }
 
-    /// Mapper 27 CHR banking: eight 1KB banks, 5-bit addressing via split nibble writes.
+    /// Mapper 27 CHR banking: 5-bit addressing via split nibble writes, proving bit 4
+    /// (bank >= 256) is honoured — a 4-bit mask would silently discard the high bit.
     /// Physical $B000 (A0=0, A1=0) → chip pos 0 = CHR bank 0 low nibble
     /// Physical $B001 (A0=1, A1=0) → chip pos 1 = CHR bank 0 high nibble
     #[test]
     fn test_mapper27_chr_banking_5bit_nibble_split() {
         let prg_rom = banked_data(8 * 1024, 2);
-        let chr_rom = banked_data(1024, 32);
+        // 512 × 1KB banks: banks 0-255 filled with 0, banks 256-511 filled with 1.
+        // banked_data_with_upper_marker encodes (bank >> 8) per bank, so reading
+        // bank 256+ returns 1 — impossible to achieve by accident under a 4-bit mask.
+        let chr_rom = banked_data_with_upper_marker(1024, 512);
         let mut mapper = create_vrc_mapper(27, prg_rom, chr_rom, NametableLayout::Horizontal);
 
-        // CHR bank 0 = 0x1F (5-bit): low nibble 0xF via $B000, high nibble 0x01 via $B001
-        mapper.write_prg(0xB000, 0x0F); // chip pos 0 (A0=0, A1=0)
-        mapper.write_prg(0xB001, 0x01); // chip pos 1 (A0=1, A1=0) → bank bit 4 → bank 0x1F
+        // Select CHR bank 0 = 256 (0x100): low nibble 0x00 via $B000, high nibble 0x10 via $B001.
+        // 0x10 & 0x1F (VRC4 5-bit mask) = 0x10 → bank = (0x10 << 4) | 0x00 = 0x100 = 256.
+        // Under a 4-bit mask (0x0F) the high nibble would be masked to 0 and bank would be 0.
+        mapper.write_prg(0xB000, 0x00); // chip pos 0 (A0=0, A1=0): low nibble = 0
+        mapper.write_prg(0xB001, 0x10); // chip pos 1 (A0=1, A1=0): high nibble bit 4 set → bank 256
         assert_eq!(
             mapper.read_chr(0x0000),
-            31,
-            "CHR bank 0 must be 31 (0x1F) after 5-bit nibble split write"
+            1,
+            "CHR bank 0 must map to bank 256 (upper-marker byte = 1) after 5-bit nibble write"
         );
     }
 
