@@ -967,12 +967,17 @@ impl Cpu {
                 value
             );
         }
+        // Run ALL PPU/APU cycles for this CPU cycle BEFORE the write takes effect.
+        // On real NES hardware the write strobe occurs at the very end of PHI2,
+        // so the PPU processes all its ticks for this cycle using the old register
+        // values. This is critical for mid-scanline register timing (e.g.,
+        // scanline-a1 test ROM).
         self.before_cpu_cycle(true);
+        self.after_cpu_cycle(true);
         self.bus.borrow_mut().write(addr, value, dummy);
         if !dummy {
             self.last_cpu_write_addr = Some(addr);
         }
-        self.after_cpu_cycle(true);
     }
 
     /// Dummy write a byte to memory at the specified address
