@@ -3388,6 +3388,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_handle_key_down_f6_saves_state_next_to_rom() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let rom_path = copy_test_rom(&temp_dir);
@@ -3417,6 +3418,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_handle_key_down_f7_loads_state_when_present() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let rom_path = copy_test_rom(&temp_dir);
@@ -3455,6 +3457,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_handle_key_down_ctrl_q_requests_quit() {
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
             Config::default(),
