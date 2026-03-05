@@ -15,6 +15,20 @@ const STOP_BUTTON_SELECTOR = "#stop";
 
 test.describe("Phase 2 runtime controls", () => {
     test("Given emulator is running, when keyboard input is sent, then no error state appears and input path remains active", async ({ page }) => {
+        // Collect console errors and page errors
+        const consoleErrors = [];
+        const pageErrors = [];
+
+        page.on("console", (msg) => {
+            if (msg.type() === "error") {
+                consoleErrors.push(msg.text());
+            }
+        });
+
+        page.on("pageerror", (error) => {
+            pageErrors.push(error.message);
+        });
+
         await startFromBundledRom(page);
 
         // Test that keyboard input reaches the emulator by sending key events
@@ -28,17 +42,6 @@ test.describe("Phase 2 runtime controls", () => {
         // Verify emulator is still running without errors
         await waitForRunningState(page);
 
-        // Verify no error messages in console
-        const consoleErrors = [];
-        page.on("console", (msg) => {
-            if (msg.type() === "error") {
-                consoleErrors.push(msg.text());
-            }
-        });
-
-        // Wait a brief moment for any async errors to appear
-        await page.waitForTimeout(100);
-
         // Stop the emulator
         await page.locator(STOP_BUTTON_SELECTOR).click();
 
@@ -47,8 +50,12 @@ test.describe("Phase 2 runtime controls", () => {
             await page.locator(SCREEN_SELECTOR).press(key);
         }
 
-        // Wait and verify no crashes occurred
+        // Wait a brief moment for any async errors to appear
         await page.waitForTimeout(100);
+
+        // Verify no errors occurred during input
+        expect(consoleErrors).toHaveLength(0);
+        expect(pageErrors).toHaveLength(0);
     });
 
     test("Given gamepad toggle exists, when toggled, then state and aria-pressed update correctly", async ({ page }) => {
@@ -102,7 +109,6 @@ test.describe("Phase 2 runtime controls", () => {
 
         // Click multiple times to cycle through filters
         const clickCount = 5;
-        let previousText = initialText;
 
         for (let i = 0; i < clickCount; i++) {
             await filterToggle.click();
@@ -168,13 +174,11 @@ test.describe("Phase 2 runtime controls", () => {
         expect(zoomedOutHeight).toBeLessThanOrEqual(zoomedInHeight);
 
         // Verify controls are still functional (not disabled unexpectedly)
-        // Note: buttons may be disabled if at min/max zoom
+        // Note: buttons may be disabled if at min/max zoom, but not both at once
         const plusDisabled = await screenPlus.isDisabled();
         const minusDisabled = await screenMinus.isDisabled();
 
-        // At least one should be enabled (unless at both extremes simultaneously, which shouldn't happen)
-        // Just verify no crash occurred
-        expect(typeof plusDisabled).toBe("boolean");
-        expect(typeof minusDisabled).toBe("boolean");
+        // Both zoom controls should never be disabled simultaneously
+        expect(plusDisabled && minusDisabled).toBeFalsy();
     });
 });
