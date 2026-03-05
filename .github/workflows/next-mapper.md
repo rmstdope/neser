@@ -3,8 +3,8 @@ name: Next Mapper
 description: Runs after a pull request is closed, selects the oldest open mapper issue, implements it with test-driven development, and creates a pull request.
 engine: copilot
 on:
-#   pull_request:
-#     types: [closed]
+  pull_request:
+    types: [closed]
   workflow_dispatch:
   skip-if-match: 'is:pr is:open in:title "[next-mapper]"'
 

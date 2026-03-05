@@ -3,8 +3,8 @@ name: Issue Enhancer
 description: Automatically enhances an issue by ensuring correct labeling and by applying github-issue-designer quality principles for outcome-oriented issue design.
 engine: copilot
 on:
-#   issues:
-#     types: [opened]
+  issues:
+    types: [opened]
   reaction: "eyes"
 permissions:
   contents: read
