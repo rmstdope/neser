@@ -63,6 +63,9 @@ test.describe("Phase 2 runtime controls", () => {
 
         const gamepadToggle = page.locator(GAMEPAD_TOGGLE_SELECTOR);
 
+        // Wait for element to be visible and ready
+        await expect(gamepadToggle).toBeVisible({ timeout: 20000 });
+
         // Initial state should be "on" (default)
         await expect(gamepadToggle).toHaveAttribute("aria-pressed", "true");
         await expect(gamepadToggle).toContainText(/Gamepad.*On/i);
@@ -83,6 +86,9 @@ test.describe("Phase 2 runtime controls", () => {
 
         const muteButton = page.locator(MUTE_BUTTON_SELECTOR);
 
+        // Wait for element to be visible and ready
+        await expect(muteButton).toBeVisible({ timeout: 20000 });
+
         // Initial state should be unmuted (default)
         await expect(muteButton).toHaveAttribute("aria-pressed", "false");
         await expect(muteButton).toContainText(/Audio.*On/i);
@@ -102,6 +108,9 @@ test.describe("Phase 2 runtime controls", () => {
         await openApp(page);
 
         const filterToggle = page.locator(FILTER_TOGGLE_SELECTOR);
+
+        // Wait for element to be visible and ready
+        await expect(filterToggle).toBeVisible({ timeout: 20000 });
 
         // Get initial filter text
         const initialText = await filterToggle.textContent();
@@ -145,6 +154,11 @@ test.describe("Phase 2 runtime controls", () => {
         const screenPlus = page.locator(SCREEN_PLUS_SELECTOR);
         const screenMinus = page.locator(SCREEN_MINUS_SELECTOR);
         const screen = page.locator(SCREEN_SELECTOR);
+
+        // Wait for elements to be visible and ready
+        await expect(screenPlus).toBeVisible({ timeout: 20000 });
+        await expect(screenMinus).toBeVisible({ timeout: 20000 });
+        await expect(screen).toBeVisible({ timeout: 20000 });
 
         // Get initial canvas height
         const initialBox = await screen.boundingBox();

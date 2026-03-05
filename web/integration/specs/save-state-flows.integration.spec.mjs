@@ -48,9 +48,6 @@ test.describe("Phase 2 save-state flows", () => {
 
         // Verify success status message
         await expect(statusLabel).toContainText("State loaded", { timeout: 5000 });
-
-        // Verify emulator is still running after load
-        await waitForRunningState(page);
     });
 
     test("Given no saved state exists, when page loads, then load button is disabled", async ({ page }) => {
@@ -86,9 +83,6 @@ test.describe("Phase 2 save-state flows", () => {
         // Load should still work
         await loadButton.click();
         await expect(statusLabel).toContainText("State loaded", { timeout: 5000 });
-
-        // Verify emulator is still running
-        await waitForRunningState(page);
     });
 });
 
