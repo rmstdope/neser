@@ -29,12 +29,8 @@ impl Mapper14 {
     const CHR_OUTER_HIGH_HALF: u8 = 0x80;
 
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
-        let prg_rom = ctx.prg_rom;
-        let chr_rom = ctx.chr_rom;
-        let mirroring = ctx.mirroring;
-
         let mut mapper = Self {
-            mmc3: MMC3Mapper::new_with_irq_mode(prg_rom, chr_rom, mirroring, false),
+            mmc3: MMC3Mapper::new_with_irq_mode(ctx.prg_rom, ctx.chr_rom, ctx.mirroring, false),
             mode: 0,
             vrc_prg_regs: [0; 2],
             vrc_chr_regs: [0; 8],

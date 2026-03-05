@@ -20,12 +20,8 @@ impl Mapper205 {
     const CHR_1K_BANK_MASK: usize = Self::CHR_1K_BANK_SIZE - 1;
 
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
-        let prg_rom = ctx.prg_rom;
-        let chr_rom = ctx.chr_rom;
-        let mirroring = ctx.mirroring;
-
         Self {
-            inner: MMC3Mapper::new_with_irq_mode(prg_rom, chr_rom, mirroring, false),
+            inner: MMC3Mapper::new_with_irq_mode(ctx.prg_rom, ctx.chr_rom, ctx.mirroring, false),
             selected_block: 0,
         }
     }
@@ -125,8 +121,6 @@ impl Mapper for Mapper205 {
             has_irq: true,
             has_chr_banking: true,
             has_dynamic_mirroring: true,
-            has_expansion_audio: false,
-            max_prg_ram_kb: 0,
             prg_bank_size_kb: 8,
             chr_bank_size_kb: 1,
             ..Default::default()
