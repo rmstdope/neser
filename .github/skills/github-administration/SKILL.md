@@ -48,6 +48,9 @@ gh label list --json name --limit 100
 5. Store temporary body files under a non-versioned workspace path (for this repo: `.tmp/`) and pass them via `--body-file`.
 6. In persistent terminals, avoid heredoc for long multi-line bodies; write a temporary file first and pass it via `--body-file`.
 7. Do not auto-assign newly created issues unless the navigator explicitly requests assignment at creation time.
+8. For large bulk creation (20+ issues), run in throttled batches (e.g., 10-25 issues), re-fetch issue list between batches, and deduplicate by exact title before each create.
+9. Treat empty `gh issue create` stdout as a failed/unknown result and verify by querying issue list before marking creation complete.
+10. If GitHub returns secondary rate limiting (HTTP 403 / “temporarily blocked from content creation”), stop mutation attempts, report the blocker, and retry later with smaller batches.
 
 ## Command Recipes
 
