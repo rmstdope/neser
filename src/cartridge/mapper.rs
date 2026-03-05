@@ -642,6 +642,7 @@ mapper_registry! {
     72 => Mapper72::new,
     73 => Mapper73::new,
     78 => NinaTengenMapper::new,
+    129 => Mapper58::new,
     132 => Mapper132::new,
     133 => Mapper133::new,
     140 => Mapper140::new,
@@ -664,8 +665,8 @@ mapper_registry! {
 const SUPPORTED_MAPPERS: &[u8] = &[
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 19, 21, 22, 23, 24, 25, 26, 32,
     33, 34, 37, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 56, 57, 58, 59, 60, 61, 62,
-    64, 65, 66, 67, 68, 69, 71, 72, 73, 78, 132, 133, 140, 155, 185, 205, 206, 241, 242, 243, 244,
-    245, 246, 251, 254, 255,
+    64, 65, 66, 67, 68, 69, 71, 72, 73, 78, 129, 132, 133, 140, 155, 185, 205, 206, 241, 242, 243,
+    244, 245, 246, 251, 254, 255,
 ];
 
 /// List of supported iNES mapper IDs handled by the factory.
@@ -764,6 +765,25 @@ mod tests {
 
         // Then reads come from CHR-ROM bank 1.
         assert_eq!(mapper.read_chr(0x0000), 0x11);
+    }
+
+    #[test]
+    fn create_mapper_accepts_mapper_129_as_mapper_58_alias() {
+        let prg_rom = (0u8..8)
+            .flat_map(|bank| std::iter::repeat_n(bank, 16 * 1024))
+            .collect();
+        let chr_rom = (0u8..8)
+            .flat_map(|bank| std::iter::repeat_n(0x10 + bank, 8 * 1024))
+            .collect();
+        let metadata =
+            MapperContext::new_for_test(129, prg_rom, chr_rom, NametableLayout::Vertical);
+
+        let mut mapper = create_mapper(metadata)
+            .expect("Mapper 129 should be created as mapper 58-compatible alias");
+
+        mapper.write_prg(0x8080, 0);
+
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
     }
 
     fn write_mmc1_serial_register(mapper: &mut dyn Mapper, register_addr: u16, register_value: u8) {
