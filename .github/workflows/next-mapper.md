@@ -19,8 +19,6 @@ imports:
   - shared/reporting.md
 
 safe-outputs:
-  assign-to-agent:
-    model: gpt-5-mini
   create-pull-request:
     title-prefix: "[next-mapper] "
     labels: [feature, mapper, automation]
@@ -125,12 +123,16 @@ Run and pass all of the following:
 If implementation completes successfully, emit `create_pull_request` with:
 
 - A PR title using the workflow prefix.
-- `Fixes #<issue-number>` in PR body.
+- A GitHub closing keyword for the selected issue in PR body (`Fixes #<issue-number>`, `Closes #<issue-number>`, or `Resolves #<issue-number>`).
+- Put the closing keyword line at the very top or bottom of the PR body so GitHub links it reliably.
 - Summary of:
   - specification findings (NesDev and/or Mesen2 fallback)
   - tests added/updated
   - implementation highlights
   - validation commands run and results
+
+The issue number in the closing keyword MUST be the exact selected mapper issue number from this run.
+The PR should be linked to the issue so that the issue is automatically closed when the PR is merged.
 
 ## Done condition
 
