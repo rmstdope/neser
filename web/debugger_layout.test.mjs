@@ -17,14 +17,14 @@ test("debugger left panel (.debugger-disasm) uses flex: 35 for 35% proportional 
     const rule = extractRule(css, ".debugger-disasm");
     assert.ok(rule, ".debugger-disasm rule not found in styles.css");
     // Should use flex: 35 (not flex: 1) so the left panel occupies 35% of space
-    assert.ok(rule.includes("flex: 35"), `.debugger-disasm should have flex: 35 but got: ${rule.trim()}`);
+    assert.ok(/\bflex\s*:\s*35\b\s*;?/.test(rule), `.debugger-disasm should have flex: 35 but got: ${rule.trim()}`);
 });
 
 test("debugger right panel (.debugger-regs) uses flex: 65 for 65% proportional width", () => {
     const rule = extractRule(css, ".debugger-regs");
     assert.ok(rule, ".debugger-regs rule not found in styles.css");
     // Should use flex: 65 (not width: 300px) so the right panel occupies 65% of space
-    assert.ok(rule.includes("flex: 65"), `.debugger-regs should have flex: 65 but got: ${rule.trim()}`);
+    assert.ok(/\bflex\s*:\s*65\b\s*;?/.test(rule), `.debugger-regs should have flex: 65 but got: ${rule.trim()}`);
     // Should not have a fixed width that overrides the proportional split
     assert.ok(!rule.includes("width: 300px"), `.debugger-regs should not have fixed width: 300px`);
 });
