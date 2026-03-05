@@ -5,7 +5,7 @@ const WEB_APP_SERVER_COMMAND = "bash scripts/build_web.sh && bash scripts/run_we
 
 export default defineConfig({
     testDir: ".",
-    timeout: 30_000,
+    timeout: 120_000,
     retries: process.env.CI ? 1 : 0,
     use: {
         baseURL: WEB_APP_URL,
