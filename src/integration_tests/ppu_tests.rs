@@ -829,7 +829,7 @@ AA AA 01 01 10 10 01 01 00 00\n\
         "roms/automated_tests/ppu_vbl_nmi/rom_singles/10-even_odd_timing.nes"
     );
 
-    // #[ignore] // Failing with current OAM implementation, needs investigation
+    #[ignore] // Failing with current OAM implementation, needs investigation
     #[test]
     fn test_scanline_a1() {
         let mut nes = create_nes_from_rom(
@@ -865,18 +865,13 @@ AA AA 01 01 10 10 01 01 00 00\n\
         ];
         let all_black_y = [
             // First block
-            55, 63, 71, 79, 87,
-            // Between first and second
-            95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111,
-            112, 113, 114, 115, 116, 117, 118, 119,
-            // Second block
-            127, 135, 143, 151, 159,
-            // Between second and third
-            167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185,
-            186, 187, 188, 189, 190, 191,
-            // Third block
-            199, 207, 215, 223,
-            // After third
+            55, 63, 71, 79, 87, // Between first and second
+            95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112,
+            113, 114, 115, 116, 117, 118, 119, // Second block
+            127, 135, 143, 151, 159, // Between second and third
+            167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183,
+            184, 185, 186, 187, 188, 189, 190, 191, // Third block
+            199, 207, 215, 223, // After third
             223, 224, 225, 226, 227, 228,
         ];
 

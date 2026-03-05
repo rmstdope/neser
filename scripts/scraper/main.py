@@ -11,9 +11,14 @@ Requires BeautifulSoup4 for HTML parsing.
 """
 import argparse
 import json
-from romxml import RomXml
-from nescartdb import NesCartDb, BASE_URL
-from rom_database import RomDatabase
+try:
+    from .romxml import RomXml
+    from .nescartdb import NesCartDb, BASE_URL
+    from .rom_database import RomDatabase
+except ImportError:  # pragma: no cover - allow running as a script
+    from romxml import RomXml
+    from nescartdb import NesCartDb, BASE_URL
+    from rom_database import RomDatabase
 
 
 def _filter_present_fields(row: dict) -> dict:
