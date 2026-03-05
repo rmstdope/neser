@@ -30,6 +30,7 @@ mod mapper246;
 mod mapper251;
 mod mapper254;
 mod mapper255;
+mod mapper36;
 mod mapper37;
 mod mapper41;
 mod mapper42;
