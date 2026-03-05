@@ -50,6 +50,7 @@ Existing runtime behavior through `Mapper` remains unchanged.
 | 13 | CPROM | | x | | | 8 | 32 | 4 |
 | 15 | Multicart 15 | | | x | | 8 | 8 | 8 |
 | 16 | Bandai FCG | x | x | x | | 0 | 16 | 1 |
+| 18 | Jaleco SS 88006 | x | x | x | | 0 | 8 | 1 |
 | 19 | Namco 163 | x | x | x | x | 8 | 8 | 1 |
 | 21 | VRC4a/VRC4c | x | x | x | | 8 | 8 | 1 |
 | 22 | VRC2a | | x | x | | 8 | 8 | 1 |
@@ -77,7 +78,7 @@ Existing runtime behavior through `Mapper` remains unchanged.
 
 | Feature | Mappers |
 | --------- | --------- |
-| IRQ | 4, 5, 16, 19, 21, 23, 24, 25, 26, 69 |
-| CHR Banking | 1, 3, 4, 5, 9, 10, 11, 13, 16, 19, 21, 22, 23, 24, 25, 26, 29, 34*, 66, 68, 69, 78, 206 |
-| Dynamic Mirroring | 1, 4, 5, 7, 9, 10, 15, 16, 19, 21, 22, 23, 24, 25, 26, 68, 69, 71, 78 |
+| IRQ | 4, 5, 16, 18, 19, 21, 23, 24, 25, 26, 69 |
+| CHR Banking | 1, 3, 4, 5, 9, 10, 11, 13, 16, 18, 19, 21, 22, 23, 24, 25, 26, 29, 34*, 66, 68, 69, 78, 206 |
+| Dynamic Mirroring | 1, 4, 5, 7, 9, 10, 15, 16, 18, 19, 21, 22, 23, 24, 25, 26, 68, 69, 71, 78 |
 | Expansion Audio | 5, 19, 24, 26 |
