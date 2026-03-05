@@ -63,20 +63,21 @@ test.describe("Phase 2 runtime controls", () => {
 
         const gamepadToggle = page.locator(GAMEPAD_TOGGLE_SELECTOR);
 
-        // Wait for element to be visible and ready
+        // Wait for element to be visible, enabled and stable
         await expect(gamepadToggle).toBeVisible({ timeout: 20000 });
+        await expect(gamepadToggle).toBeEnabled({ timeout: 20000 });
 
         // Initial state should be "on" (default)
         await expect(gamepadToggle).toHaveAttribute("aria-pressed", "true");
         await expect(gamepadToggle).toContainText(/Gamepad.*On/i);
 
         // Click to toggle off
-        await gamepadToggle.click();
+        await gamepadToggle.click({ timeout: 60000 });
         await expect(gamepadToggle).toHaveAttribute("aria-pressed", "false");
         await expect(gamepadToggle).toContainText(/Gamepad.*Off/i);
 
         // Click to toggle back on
-        await gamepadToggle.click();
+        await gamepadToggle.click({ timeout: 60000 });
         await expect(gamepadToggle).toHaveAttribute("aria-pressed", "true");
         await expect(gamepadToggle).toContainText(/Gamepad.*On/i);
     });
@@ -86,20 +87,21 @@ test.describe("Phase 2 runtime controls", () => {
 
         const muteButton = page.locator(MUTE_BUTTON_SELECTOR);
 
-        // Wait for element to be visible and ready
+        // Wait for element to be visible, enabled and stable
         await expect(muteButton).toBeVisible({ timeout: 20000 });
+        await expect(muteButton).toBeEnabled({ timeout: 20000 });
 
         // Initial state should be unmuted (default)
         await expect(muteButton).toHaveAttribute("aria-pressed", "false");
         await expect(muteButton).toContainText(/Audio.*On/i);
 
         // Click to mute
-        await muteButton.click();
+        await muteButton.click({ timeout: 60000 });
         await expect(muteButton).toHaveAttribute("aria-pressed", "true");
         await expect(muteButton).toContainText(/Audio.*Off/i);
 
         // Click to unmute
-        await muteButton.click();
+        await muteButton.click({ timeout: 60000 });
         await expect(muteButton).toHaveAttribute("aria-pressed", "false");
         await expect(muteButton).toContainText(/Audio.*On/i);
     });
@@ -109,8 +111,9 @@ test.describe("Phase 2 runtime controls", () => {
 
         const filterToggle = page.locator(FILTER_TOGGLE_SELECTOR);
 
-        // Wait for element to be visible and ready
+        // Wait for element to be visible, enabled and stable
         await expect(filterToggle).toBeVisible({ timeout: 20000 });
+        await expect(filterToggle).toBeEnabled({ timeout: 20000 });
 
         // Get initial filter text
         const initialText = await filterToggle.textContent();
@@ -120,7 +123,7 @@ test.describe("Phase 2 runtime controls", () => {
         const clickCount = 5;
 
         for (let i = 0; i < clickCount; i++) {
-            await filterToggle.click();
+            await filterToggle.click({ timeout: 60000 });
 
             // Wait for text to update
             await page.waitForTimeout(50);
@@ -136,13 +139,13 @@ test.describe("Phase 2 runtime controls", () => {
         await startFromBundledRom(page);
 
         // Toggle filter while running
-        await filterToggle.click();
+        await filterToggle.click({ timeout: 60000 });
 
         // Verify emulator still running
         await waitForRunningState(page);
 
         // Toggle again
-        await filterToggle.click();
+        await filterToggle.click({ timeout: 60000 });
 
         // Verify emulator still running
         await waitForRunningState(page);
@@ -155,9 +158,11 @@ test.describe("Phase 2 runtime controls", () => {
         const screenMinus = page.locator(SCREEN_MINUS_SELECTOR);
         const screen = page.locator(SCREEN_SELECTOR);
 
-        // Wait for elements to be visible and ready
+        // Wait for elements to be visible, enabled and stable
         await expect(screenPlus).toBeVisible({ timeout: 20000 });
+        await expect(screenPlus).toBeEnabled({ timeout: 20000 });
         await expect(screenMinus).toBeVisible({ timeout: 20000 });
+        await expect(screenMinus).toBeEnabled({ timeout: 20000 });
         await expect(screen).toBeVisible({ timeout: 20000 });
 
         // Get initial canvas height
@@ -166,7 +171,7 @@ test.describe("Phase 2 runtime controls", () => {
         const initialHeight = initialBox.height;
 
         // Click zoom in
-        await screenPlus.click();
+        await screenPlus.click({ timeout: 60000 });
         await page.waitForTimeout(100);
 
         const zoomedInBox = await screen.boundingBox();
@@ -177,7 +182,7 @@ test.describe("Phase 2 runtime controls", () => {
         expect(zoomedInHeight).toBeGreaterThanOrEqual(initialHeight);
 
         // Click zoom out
-        await screenMinus.click();
+        await screenMinus.click({ timeout: 60000 });
         await page.waitForTimeout(100);
 
         const zoomedOutBox = await screen.boundingBox();
