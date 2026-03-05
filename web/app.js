@@ -40,6 +40,11 @@ import {
     computeScrollViewportRects,
 } from "./ppu_viewer_layout.js";
 import { clampScrollTop, sanitizeScrollTop } from "./ppu_viewer_scroll.js";
+import { computeMouseCursorStyle } from "./cursor_visibility.js";
+import {
+    shouldForwardArkanoidMouseInput,
+    shouldKeepPointerLocked,
+} from "./pointer_lock.js";
 
 const statusEl = document.getElementById("status");
 const startBtn = document.getElementById("start");
@@ -596,6 +601,17 @@ let idleScrollerActive = false;
 let idleScroller = null;
 let idleScrollerStartTime = 0;
 let crosshair = null; // Crosshair overlay for Zapper
+let windowFocused = true;
+let pointerReleasedByEscape = false;
+let lockedPointerX = 0;
+let lockedPointerY = 0;
+
+function requestPointerLockFromUserGesture() {
+    pointerReleasedByEscape = false;
+    if (document.pointerLockElement !== canvas) {
+        canvas.requestPointerLock?.();
+    }
+}
 
 function resetWebGLResources() {
     if (nesTexture) gl.deleteTexture(nesTexture);
@@ -1055,6 +1071,7 @@ async function refreshSaveStateController() {
 romInput.addEventListener("change", async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    requestPointerLockFromUserGesture();
     const expectedRom = autorunCtx.getExpectedRomName();
     if (expectedRom && file.name.toLowerCase() !== expectedRom.toLowerCase()) {
         toastOverlay.show(`⚠ Autorun expects "${expectedRom}" but "${file.name}" was loaded — playback may not work correctly`);
@@ -1074,6 +1091,7 @@ if (romSelect) {
     romSelect.addEventListener("change", async (e) => {
         const value = e.target.value;
         if (!value) return;
+        requestPointerLockFromUserGesture();
         try {
             const response = await fetch(value);
             if (!response.ok) {
@@ -1218,8 +1236,8 @@ async function start() {
         nes.set_audio_muted(audioMuted);
         await refreshSaveStateController();
         
-        // Update Zapper cursor state after ROM is loaded
-        updateZapperCursor();
+        // Update pointer visibility and Zapper overlay after ROM is loaded
+        updateMouseCursorState();
     } catch (err) {
         drainNesToasts(nes, toastOverlay);
         setStatus(`Failed to load ROM: ${err}`, true);
@@ -1835,6 +1853,12 @@ function stop() {
     clearCanvas();
     lastFrameTime = 0;
     frameLimiter.reset();
+    if (document.pointerLockElement === canvas) {
+        document.exitPointerLock?.();
+    }
+    document.body.style.cursor = "default";
+    windowFocused = true;
+    pointerReleasedByEscape = false;
     setStatus("Stopped. You can restart or load a new ROM");
 }
 
@@ -2112,7 +2136,10 @@ function step(timestamp) {
     }
 }
 
-startBtn.addEventListener("click", start);
+startBtn.addEventListener("click", () => {
+    requestPointerLockFromUserGesture();
+    void start();
+});
 const gamepadToggleBtn = document.getElementById("gamepad-toggle");
 function updateGamepadButton() {
     gamepadToggleBtn.textContent = gamepadEnabled ? "Gamepad : On" : "Gamepad : Off";
@@ -2288,6 +2315,15 @@ async function handleKeyDown(event) {
         return;
     }
 
+    if (event.key === "Escape") {
+        pointerReleasedByEscape = true;
+        if (document.pointerLockElement === canvas) {
+            document.exitPointerLock?.();
+        }
+        updateMouseCursorState();
+        return;
+    }
+
     if (!nes && event.code !== "KeyH") {
         return;
     }
@@ -2337,12 +2373,33 @@ document.addEventListener('keyup', handleKeyUp);
 
 function handleMouseMotion(event) {
     if (!nes) return;
+
+    const mouseControllerActive = isMouseControllerActive(nes);
+    const pointerLocked = document.pointerLockElement === canvas;
+    if (mouseControllerActive && !shouldForwardArkanoidMouseInput({ pointerLocked })) {
+        return;
+    }
+
     const rect = canvas.getBoundingClientRect();
     if (rect.width <= 1 || rect.height <= 1) {
         return;
     }
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
+
+    let x = event.clientX - rect.left;
+    let y = event.clientY - rect.top;
+
+    if (pointerLocked) {
+        const maxX = Math.max(0, rect.width - 1);
+        const maxY = Math.max(0, rect.height - 1);
+        lockedPointerX = Math.min(maxX, Math.max(0, lockedPointerX + event.movementX));
+        lockedPointerY = Math.min(maxY, Math.max(0, lockedPointerY + event.movementY));
+        x = lockedPointerX;
+        y = lockedPointerY;
+    } else {
+        lockedPointerX = x;
+        lockedPointerY = y;
+    }
+
     applyMouseMotion(nes, x, y, rect.width, rect.height);
     
     // Update crosshair position if visible
@@ -2351,36 +2408,113 @@ function handleMouseMotion(event) {
     }
 }
 
-function updateZapperCursor() {
-    if (!nes) return;
-    
-    const zapperActive = isZapperActive(nes);
-    
-    if (zapperActive) {
-        // Hide system cursor and show crosshair
-        canvas.style.cursor = "none";
+function isArkanoidControllerActive(nesInstance) {
+    if (!nesInstance) {
+        return false;
+    }
+
+    const mouseOnAnyPort =
+        nesInstance.is_mouse_emulated_controller(1) ||
+        nesInstance.is_mouse_emulated_controller(2);
+    return mouseOnAnyPort && !isZapperActive(nesInstance);
+}
+
+function isMouseControllerActive(nesInstance) {
+    if (!nesInstance) {
+        return false;
+    }
+
+    return (
+        nesInstance.is_mouse_emulated_controller(1) ||
+        nesInstance.is_mouse_emulated_controller(2)
+    );
+}
+
+function setCrosshairVisible(visible) {
+    if (visible) {
         if (!crosshair) {
             crosshair = createCrosshair(canvas);
         }
         crosshair.show();
-    } else {
-        // Show system cursor and hide/destroy crosshair
-        canvas.style.cursor = "default";
-        if (crosshair) {
-            crosshair.destroy();
-            crosshair = null;
-        }
+        return;
     }
+
+    if (crosshair) {
+        crosshair.destroy();
+        crosshair = null;
+    }
+}
+
+function updateMouseCursorState() {
+    if (!nes) return;
+
+    const zapperActive = isZapperActive(nes);
+    const pointerLocked = document.pointerLockElement === canvas;
+    setCrosshairVisible(zapperActive && pointerLocked);
+
+    if (zapperActive && pointerLocked) {
+        document.body.style.cursor = "none";
+        return;
+    }
+
+    const arkanoidActive = isArkanoidControllerActive(nes);
+
+    const keepPointerLocked = shouldKeepPointerLocked({
+        arkanoidActive,
+        windowFocused,
+        releasedByEscape: pointerReleasedByEscape,
+    });
+
+    if (!keepPointerLocked && document.pointerLockElement === canvas) {
+        document.exitPointerLock?.();
+    }
+
+    document.body.style.cursor = computeMouseCursorStyle({
+        arkanoidActive,
+        windowFocused,
+        releasedByEscape: pointerReleasedByEscape,
+    });
 }
 
 function handleMouseButton(event, pressed) {
     if (!nes) return;
+
+    const mouseControllerActive = isMouseControllerActive(nes);
+    const pointerLocked = document.pointerLockElement === canvas;
+    if (mouseControllerActive && !shouldForwardArkanoidMouseInput({ pointerLocked })) {
+        return;
+    }
+
     applyMouseButton(nes, event.button, pressed);
 }
 
-canvas.addEventListener("mousemove", handleMouseMotion);
-canvas.addEventListener("mousedown", (event) => handleMouseButton(event, true));
+window.addEventListener("mousemove", handleMouseMotion);
+canvas.addEventListener("mousedown", (event) => {
+    pointerReleasedByEscape = false;
+    requestPointerLockFromUserGesture();
+    updateMouseCursorState();
+    handleMouseButton(event, true);
+});
 window.addEventListener("mouseup", (event) => handleMouseButton(event, false));
+window.addEventListener("focus", () => {
+    windowFocused = true;
+    updateMouseCursorState();
+});
+window.addEventListener("blur", () => {
+    windowFocused = false;
+    pointerReleasedByEscape = true;
+    updateMouseCursorState();
+});
+document.addEventListener("pointerlockchange", () => {
+    if (document.pointerLockElement === canvas) {
+        const rect = canvas.getBoundingClientRect();
+        lockedPointerX = rect.width * 0.5;
+        lockedPointerY = rect.height * 0.5;
+    } else {
+        pointerReleasedByEscape = true;
+    }
+    updateMouseCursorState();
+});
 
 // Screen size controls
 const screenMinusBtn = document.getElementById("screen-minus");

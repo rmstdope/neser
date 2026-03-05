@@ -141,6 +141,11 @@ impl SdlGlWrapper {
     pub fn set_fullscreen(&mut self, enabled: bool) -> Result<(), String> {
         self.gl_backend.set_fullscreen(enabled)
     }
+
+    /// Enables or disables mouse confinement to the SDL window.
+    pub fn set_mouse_grab(&mut self, enabled: bool) -> Result<(), String> {
+        self.gl_backend.set_mouse_grab(enabled)
+    }
 }
 
 /// Chooses which display to use for fullscreen rendering.

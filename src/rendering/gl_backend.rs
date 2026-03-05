@@ -38,6 +38,8 @@ pub trait RenderTarget {
     fn make_current(&self) -> Result<(), String>;
     /// Toggles fullscreen mode for the render target.
     fn set_fullscreen(&mut self, enabled: bool) -> Result<(), String>;
+    /// Enables or disables mouse confinement to the render target window.
+    fn set_mouse_grab(&mut self, enabled: bool) -> Result<(), String>;
 }
 
 /// Loader for GL procedure addresses used by OpenGL and related backends.
@@ -253,6 +255,11 @@ impl GlBackend {
     /// Enables or disables fullscreen mode for the underlying render target.
     pub fn set_fullscreen(&mut self, enabled: bool) -> Result<(), String> {
         self.render_target.set_fullscreen(enabled)
+    }
+
+    /// Enables or disables mouse grab on the render target window.
+    pub fn set_mouse_grab(&mut self, enabled: bool) -> Result<(), String> {
+        self.render_target.set_mouse_grab(enabled)
     }
 
     /// Computes windowed mode dimensions preserving the target aspect ratio.

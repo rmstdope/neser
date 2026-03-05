@@ -41,4 +41,9 @@ impl RenderTarget for SdlRenderTarget {
         };
         self.window.set_fullscreen(mode).map_err(|e| e.to_string())
     }
+
+    fn set_mouse_grab(&mut self, enabled: bool) -> Result<(), String> {
+        self.window.set_grab(enabled);
+        Ok(())
+    }
 }
