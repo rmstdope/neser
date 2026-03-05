@@ -354,4 +354,34 @@ mod tests {
             "8-bit masked counter should fire at 0x11"
         );
     }
+
+    #[test]
+    fn snapshot_restore_roundtrip() {
+        let mut mapper = make_mapper();
+
+        mapper.write_prg(0x8000, 0x0C);
+        mapper.write_prg(0x8001, 0x01);
+        mapper.write_prg(0xA000, 0x07);
+        mapper.write_prg(0xA001, 0x02);
+        mapper.write_prg(0xF002, 0x03);
+
+        mapper.write_prg(0xE000, 0x04);
+        mapper.write_prg(0xE001, 0x03);
+        mapper.write_prg(0xE002, 0x02);
+        mapper.write_prg(0xE003, 0x01);
+        mapper.write_prg(0xF001, 0x01);
+        mapper.write_prg(0xF000, 0x00);
+        mapper.cpu_cycle();
+
+        let snapshot = mapper.registers_snapshot();
+
+        let mut restored = make_mapper();
+        restored.restore_registers(&snapshot);
+
+        assert_eq!(
+            snapshot,
+            restored.registers_snapshot(),
+            "snapshot/restore roundtrip must preserve mapper 18 register state"
+        );
+    }
 }
