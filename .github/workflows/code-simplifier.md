@@ -4,6 +4,7 @@ description: Analyzes recently modified code and creates pull requests with simp
 engine: copilot
 on:
   schedule: daily
+  workflow_dispatch:
   skip-if-match: 'is:pr is:open in:title "[code-simplifier]"'
 
 permissions:
