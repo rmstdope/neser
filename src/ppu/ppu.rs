@@ -106,6 +106,8 @@ const NAMETABLE_STRIDE: u16 = 0x400;
 
 mod tick;
 
+pub type SharedPpu = Rc<RefCell<Ppu>>;
+
 /// Refactored PPU using modular components
 pub struct Ppu {
     /// Timing and cycle management

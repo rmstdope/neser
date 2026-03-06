@@ -114,7 +114,8 @@ mod tests {
         nes.reset(false);
         run_nes_for_frames(&mut nes, 300);
 
-        let mut ppu = nes.ppu.borrow_mut();
+        let binding = nes.ppu();
+        let mut ppu = binding.borrow_mut();
         ppu.write_address(0x3F, false);
         ppu.write_address(0x00, false);
         let palette_data = ppu.read_data();
@@ -138,7 +139,8 @@ mod tests {
         nes.set_button(1, Button::Right, true);
         run_nes_for_frames(&mut nes, 150);
 
-        let mut ppu = nes.ppu.borrow_mut();
+        let binding = nes.ppu();
+        let mut ppu = binding.borrow_mut();
         ppu.write_address(0x3F, false);
         ppu.write_address(0x00, false);
         let palette_data = ppu.read_data();
@@ -400,8 +402,8 @@ mod tests {
         // - Cpu::reset reads the reset vector via bus reads, which advances the PPU further
         //   due to the CPU master-clock phase model.
         // Ensure the PPU reaches exactly 21 cycles (7 * 3) before the first traced instruction.
-        let ppu_cycles_needed = 21u64.saturating_sub(nes.ppu.borrow().total_cycles());
-        nes.ppu.borrow_mut().run_ppu_cycles(ppu_cycles_needed);
+        let ppu_cycles_needed = 21u64.saturating_sub(nes.ppu().borrow().total_cycles());
+        nes.ppu().borrow_mut().run_ppu_cycles(ppu_cycles_needed);
 
         for line in golden_log.lines() {
             let expected = line.to_string();

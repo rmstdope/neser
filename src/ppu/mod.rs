@@ -18,6 +18,7 @@ pub use background::Background;
 pub use memory::Memory;
 pub use ppu::Ppu;
 pub use ppu::PpuState;
+pub use ppu::SharedPpu;
 pub use registers::Registers;
 pub use rendering::Rendering;
 pub use screen_buffer::ScreenBuffer;

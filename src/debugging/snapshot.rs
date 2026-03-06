@@ -173,7 +173,8 @@ fn build_snapshot(
     let (nmi_vector, reset_vector, irq_vector) = read_vectors_for_snapshot(nes);
 
     let (frame_count, scanline, pixel, oam) = {
-        let ppu = nes.ppu.borrow();
+        let ppu_ref = nes.ppu();
+        let ppu = ppu_ref.borrow();
         (
             ppu.frame_count(),
             ppu.scanline(),
@@ -429,11 +430,11 @@ mod tests {
         ));
 
         // Write sprite 0 fields via OAM address/data registers.
-        nes.ppu.borrow_mut().write_oam_address(0x00);
-        nes.ppu.borrow_mut().write_oam_data(0x20); // Y
-        nes.ppu.borrow_mut().write_oam_data(0xAB); // tile index
-        nes.ppu.borrow_mut().write_oam_data(0x03); // attributes
-        nes.ppu.borrow_mut().write_oam_data(0x40); // X
+        nes.ppu().borrow_mut().write_oam_address(0x00);
+        nes.ppu().borrow_mut().write_oam_data(0x20); // Y
+        nes.ppu().borrow_mut().write_oam_data(0xAB); // tile index
+        nes.ppu().borrow_mut().write_oam_data(0x03); // attributes
+        nes.ppu().borrow_mut().write_oam_data(0x40); // X
 
         let snap = snapshot(&nes);
         assert_eq!(snap.oam[0], 0x20, "sprite 0 Y");

@@ -11,7 +11,7 @@ use crate::cpu::lookup;
 use crate::cpu::{Cpu, CpuState};
 use crate::debugging::{Tracing, log_info};
 use crate::input::{ControllerInput, ControllerType, controller_input_type};
-use crate::ppu::{Ppu, PpuState};
+use crate::ppu::{Ppu, PpuState, SharedPpu};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -96,8 +96,8 @@ pub struct CpuTraceLine {
 
 pub struct Nes {
     // TODO pub fields smell
-    pub app_context: SharedAppContext,
-    pub ppu: Rc<RefCell<Ppu>>,
+    app_context: SharedAppContext,
+    ppu: SharedPpu,
     pub apu: Rc<RefCell<Apu>>,
     pub bus: Rc<RefCell<Bus>>,
     pub cpu: Cpu,
@@ -244,6 +244,14 @@ impl Nes {
 
     pub fn debug_path(&self) -> Option<PathBuf> {
         self.bus.borrow().cartridge_debug_path()
+    }
+
+    pub fn app_context(&self) -> SharedAppContext {
+        self.app_context.clone()
+    }
+
+    pub fn ppu(&self) -> SharedPpu {
+        self.ppu.clone()
     }
 
     /// Reset the NES system.

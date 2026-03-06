@@ -405,7 +405,7 @@ AA AA 01 01 10 10 01 01 00 00\n\
         nes.reset(false);
         // Remove sprites 4-63 to avoid random garbage
         for i in 16..=255 {
-            nes.ppu.borrow_mut().sprites().write_oam(i, 0xFF);
+            nes.ppu().borrow_mut().sprites().write_oam(i, 0xFF);
         }
         nes
     }

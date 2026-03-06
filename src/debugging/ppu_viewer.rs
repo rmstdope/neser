@@ -37,7 +37,8 @@ pub struct PpuViewerSnapshot {
 
 impl PpuViewerSnapshot {
     pub fn from_nes(nes: &Nes) -> Self {
-        let ppu = nes.ppu.borrow();
+        let binding = nes.ppu();
+        let ppu = binding.borrow();
         Self {
             chr: ppu.chr_snapshot_for_debugger(),
             nametables: ppu.nametable_snapshot_for_debugger(),
@@ -343,8 +344,7 @@ mod tests {
         let nes = Nes::new(crate::app_context::AppContext::new_with_config(
             Config::default(),
         ));
-        let ppu = nes.ppu.borrow();
-        let (sx, sy) = ppu.scroll_for_debugger();
+        let (sx, sy) = nes.ppu().borrow().scroll_for_debugger();
         // After reset, t=0 and fine_x=0, so scroll is at (0, 0).
         assert_eq!(sx, 0);
         assert_eq!(sy, 0);
@@ -357,9 +357,9 @@ mod tests {
         ));
         // Write $80 (128) to PPUSCROLL twice: X=128, Y=0.
         // This sets coarse_x=16, fine_x=0 → scroll_x = 128.
-        nes.ppu.borrow_mut().write_scroll(0x80, false);
-        nes.ppu.borrow_mut().write_scroll(0x00, false);
-        let (sx, sy) = nes.ppu.borrow().scroll_for_debugger();
+        nes.ppu().borrow_mut().write_scroll(0x80, false);
+        nes.ppu().borrow_mut().write_scroll(0x00, false);
+        let (sx, sy) = nes.ppu().borrow().scroll_for_debugger();
         assert_eq!(sx, 128, "scroll_x should be 128");
         assert_eq!(sy, 0, "scroll_y should be 0");
     }
@@ -370,9 +370,9 @@ mod tests {
             Config::default(),
         ));
         // X=0, Y=120 → scroll_y = 120.
-        nes.ppu.borrow_mut().write_scroll(0x00, false);
-        nes.ppu.borrow_mut().write_scroll(0x78, false);
-        let (sx, sy) = nes.ppu.borrow().scroll_for_debugger();
+        nes.ppu().borrow_mut().write_scroll(0x00, false);
+        nes.ppu().borrow_mut().write_scroll(0x78, false);
+        let (sx, sy) = nes.ppu().borrow().scroll_for_debugger();
         assert_eq!(sx, 0, "scroll_x should be 0");
         assert_eq!(sy, 120, "scroll_y should be 120");
     }

@@ -182,7 +182,7 @@ pub(crate) mod tests {
             nes.reset(false);
 
             // CPU cycles per frame depends on TV system
-            let cpu_cycles_per_frame = match nes.app_context.borrow().config().tv_system {
+            let cpu_cycles_per_frame = match nes.app_context().borrow().config().tv_system {
                 crate::console::TimingMode::Ntsc => 29_780u32,
                 crate::console::TimingMode::Pal => 33_247u32,
                 crate::console::TimingMode::MultiRegion
@@ -408,7 +408,7 @@ pub(crate) mod tests {
         nes.reset(false);
 
         // CPU cycles per frame depends on TV system
-        let cpu_cycles_per_frame = match nes.app_context.borrow().config().tv_system {
+        let cpu_cycles_per_frame = match nes.app_context().borrow().config().tv_system {
             crate::console::TimingMode::Ntsc => 29_780u32,
             crate::console::TimingMode::Pal => 33_247u32,
             crate::console::TimingMode::MultiRegion

@@ -76,7 +76,7 @@ pub fn run_headless_playback(
             && file.checkpoints[cp_idx].frame_index as usize == frame_idx
         {
             let cp = &file.checkpoints[cp_idx];
-            let actual_crc = nes.ppu.borrow().screen_buffer().crc32();
+            let actual_crc = nes.ppu().borrow().screen_buffer().crc32();
             if actual_crc != cp.screen_crc {
                 crc_mismatches += 1;
             }
@@ -181,7 +181,7 @@ mod tests {
         // Run 1 frame and capture real screen CRC to build a correct recording
         run_nes_frames(&mut nes, 1);
         let state_after_1 = nes.save_state();
-        let crc_after_1 = nes.ppu.borrow().screen_buffer().crc32();
+        let crc_after_1 = nes.ppu().borrow().screen_buffer().crc32();
 
         let state_bytes = state_after_1.to_bytes().expect("serialize state");
 
@@ -244,7 +244,7 @@ mod tests {
 
         // Run one more frame from that state to know the expected CRC
         run_nes_frames(&mut nes, 1);
-        let crc_at_301 = nes.ppu.borrow().screen_buffer().crc32();
+        let crc_at_301 = nes.ppu().borrow().screen_buffer().crc32();
 
         let file = AutorunFile {
             version: AUTORUN_VERSION,

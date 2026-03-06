@@ -108,12 +108,10 @@ fn test_ppu_ram_initialization_zero_mode() {
     config.ram_init_mode = RamInitMode::Zero;
     let nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
 
-    let ppu = nes.ppu.borrow();
-
     // Check nametable RAM (0x2000-0x2FFF range)
     for addr in 0x2000..0x3000 {
         assert_eq!(
-            ppu.read_nametable_for_debug(addr),
+            nes.ppu().borrow().read_nametable_for_debug(addr),
             0x00,
             "PPU nametable[{:#04X}] should be 0x00",
             addr
@@ -131,14 +129,11 @@ fn test_ppu_ram_initialization_seeded_random_deterministic() {
     config2.ram_init_mode = RamInitMode::SeededRandom(42);
     let nes2 = Nes::new(crate::app_context::AppContext::new_with_config(config2));
 
-    let ppu1 = nes1.ppu.borrow();
-    let ppu2 = nes2.ppu.borrow();
-
     // Check that nametable RAM is identical
     for addr in 0x2000..0x3000 {
         assert_eq!(
-            ppu1.read_nametable_for_debug(addr),
-            ppu2.read_nametable_for_debug(addr),
+            nes1.ppu().borrow().read_nametable_for_debug(addr),
+            nes2.ppu().borrow().read_nametable_for_debug(addr),
             "PPU nametable[{:#04X}] should match with same seed",
             addr
         );
@@ -282,9 +277,8 @@ fn test_ppu_hard_reset_reinitializes_ram() {
     // Hard reset should re-initialize PPU RAM to zero
     nes.reset(false);
 
-    let ppu = nes.ppu.borrow();
     assert_eq!(
-        ppu.read_nametable_for_debug(0x2000),
+        nes.ppu().borrow().read_nametable_for_debug(0x2000),
         0x00,
         "Hard reset should zero PPU nametable"
     );
@@ -312,9 +306,8 @@ fn test_ppu_soft_reset_preserves_ram() {
     // Soft reset should preserve PPU RAM
     nes.reset(true);
 
-    let ppu = nes.ppu.borrow();
     assert_eq!(
-        ppu.read_nametable_for_debug(0x2000),
+        nes.ppu().borrow().read_nametable_for_debug(0x2000),
         0xFF,
         "Soft reset should preserve PPU nametable"
     );

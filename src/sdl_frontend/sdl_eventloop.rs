@@ -615,7 +615,7 @@ impl SdlEventLoop {
         use crate::console::AutorunMode;
 
         if checkpoint_due {
-            let crc = nes.ppu.borrow().screen_buffer().crc32();
+            let crc = nes.ppu().borrow().screen_buffer().crc32();
             let state_bytes = nes.save_state().to_bytes().unwrap_or_default();
             if let Some(ref mut autorun_state) = self.autorun_state {
                 autorun_state.record_checkpoint(crc, state_bytes);
@@ -627,7 +627,7 @@ impl SdlEventLoop {
             && (autorun_state.mode() == AutorunMode::Playback
                 || autorun_state.is_extending_playback())
         {
-            let crc = nes.ppu.borrow().screen_buffer().crc32();
+            let crc = nes.ppu().borrow().screen_buffer().crc32();
             if let Some(matched) = autorun_state.check_playback_checkpoint(crc) {
                 if matched {
                     log_info(format!(
@@ -655,7 +655,7 @@ impl SdlEventLoop {
 
         let mismatches = autorun_state.crc_mismatches();
         let verified = autorun_state.total_checkpoints_verified();
-        let crc = nes.ppu.borrow().screen_buffer().crc32();
+        let crc = nes.ppu().borrow().screen_buffer().crc32();
 
         if mismatches == 0 {
             log_info(format!(
@@ -689,7 +689,7 @@ impl SdlEventLoop {
 
         let current_frame = autorun_state.current_frame_index();
         let total_frames = autorun_state.total_frames();
-        let tv_system = nes.app_context.borrow().config().tv_system;
+        let tv_system = nes.app_context().borrow().config().tv_system;
 
         // Calculate FPS and blink parameters
         let fps = tv_system.frame_rate_hz().round().max(1.0) as usize;
@@ -721,7 +721,7 @@ impl SdlEventLoop {
         }
 
         // Capture final screen CRC and emulator state for the final checkpoint
-        let crc = nes.ppu.borrow().screen_buffer().crc32();
+        let crc = nes.ppu().borrow().screen_buffer().crc32();
         let state_bytes = nes.save_state().to_bytes().unwrap_or_default();
 
         autorun_state.save_with_final_checkpoint(crc, state_bytes)?;
@@ -839,7 +839,7 @@ impl SdlEventLoop {
         // leaving trackers stale. Syncing here means threshold breakpoints can only
         // fire when crossed going forward from this point.
         self.last_post_instruction_cycles = nes.cpu.get_total_cycles();
-        self.last_post_instruction_frame = nes.ppu.borrow().frame_count();
+        self.last_post_instruction_frame = nes.ppu().borrow().frame_count();
 
         self.paused = false;
         self.debugger_open_requested = false;
@@ -924,7 +924,7 @@ impl SdlEventLoop {
         let prev_cycles = self.last_post_instruction_cycles;
         let current_cycles = nes.cpu.get_total_cycles();
         let prev_frame = self.last_post_instruction_frame;
-        let current_frame = nes.ppu.borrow().frame_count();
+        let current_frame = nes.ppu().borrow().frame_count();
         let ctx = EvalContext {
             pc: nes.cpu.pc(),
             prev_cpu_cycles: prev_cycles,
@@ -1270,7 +1270,7 @@ impl SdlEventLoop {
                 let current_time = timer.performance_counter();
                 let elapsed_ticks = (current_time - last_frame_time) as f64;
                 let elapsed_seconds = elapsed_ticks / performance_frequency;
-                let tv_system = nes.app_context.borrow().config().tv_system;
+                let tv_system = nes.app_context().borrow().config().tv_system;
                 let target_frame_time = 1.0 / tv_system.frame_rate_hz();
 
                 // Calculate FPS before sleeping
@@ -1967,11 +1967,11 @@ impl SdlEventLoop {
         rom_path: &str,
     ) -> Result<(), String> {
         let rom_bytes = Self::read_rom_bytes(rom_path)?;
-        let app_context = nes.app_context.clone();
+        let app_context = nes.app_context();
         let cartridge =
             self.load_cartridge_from_rom_bytes(rom_path, &rom_bytes, app_context.clone())?;
 
-        Self::apply_cartridge_timing_mode_from_rom(&app_context, &cartridge);
+        Self::apply_cartridge_timing_mode_from_rom(&app_context.clone(), &cartridge);
 
         nes.insert_cartridge(cartridge);
         nes.reset(false);
@@ -2039,10 +2039,7 @@ impl SdlEventLoop {
     fn debugger_run_to_next_frame(nes: &mut Nes) {
         const MAX_STEPS: usize = 2_000_000;
 
-        let mut previous_scanline = {
-            let ppu = nes.ppu.borrow();
-            ppu.scanline()
-        };
+        let mut previous_scanline = { nes.ppu().borrow().scanline() };
 
         for _step in 0..MAX_STEPS {
             if nes.cpu.is_halted() {
@@ -2051,10 +2048,8 @@ impl SdlEventLoop {
 
             nes.run_cpu_tick();
 
-            let (scanline, _pixel) = {
-                let ppu = nes.ppu.borrow();
-                (ppu.scanline(), ppu.pixel())
-            };
+            let (scanline, _pixel) =
+                { (nes.ppu().borrow().scanline(), nes.ppu().borrow().pixel()) };
 
             // Stop once we have crossed into the next frame.
             //
@@ -2084,10 +2079,7 @@ impl SdlEventLoop {
     fn debugger_run_to_next_scanline(nes: &mut Nes) {
         const MAX_STEPS: usize = 100_000;
 
-        let start_scanline = {
-            let ppu = nes.ppu.borrow();
-            ppu.scanline()
-        };
+        let start_scanline = { nes.ppu().borrow().scanline() };
 
         for _step in 0..MAX_STEPS {
             if nes.cpu.is_halted() {
@@ -2096,10 +2088,7 @@ impl SdlEventLoop {
 
             nes.run_cpu_tick();
 
-            let scanline = {
-                let ppu = nes.ppu.borrow();
-                ppu.scanline()
-            };
+            let scanline = { nes.ppu().borrow().scanline() };
 
             if scanline != start_scanline {
                 break;
@@ -2350,7 +2339,7 @@ F11: Step into\n\
 
         // Check if autorun is active and generate overlay
         if let Some(ref autorun_state) = self.autorun_state {
-            let tv_system = nes.app_context.borrow().config().tv_system;
+            let tv_system = nes.app_context().borrow().config().tv_system;
             let overlay = self.autorun_overlay_text(autorun_state, tv_system);
             return Some(overlay);
         }
@@ -2784,25 +2773,16 @@ mod tests {
             SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
         let mut nes = nes_with_nop_loop_program();
 
-        let target_frame = {
-            let ppu = nes.ppu.borrow();
-            ppu.frame_count() + 1
-        };
+        let target_frame = { nes.ppu().borrow().frame_count() + 1 };
         event_loop.add_frame_breakpoint(target_frame);
 
         let mut crossed_target_when_paused = false;
         for _ in 0..2_000_000 {
-            let frame_before = {
-                let ppu = nes.ppu.borrow();
-                ppu.frame_count()
-            };
+            let frame_before = { nes.ppu().borrow().frame_count() };
 
             tick_headless_once(&mut event_loop, &mut nes);
 
-            let frame_after = {
-                let ppu = nes.ppu.borrow();
-                ppu.frame_count()
-            };
+            let frame_after = { nes.ppu().borrow().frame_count() };
 
             if event_loop.is_paused() {
                 crossed_target_when_paused =
@@ -4302,7 +4282,8 @@ mod tests {
         // We pick a position such that executing exactly one CPU instruction will cross into
         // the next frame, but the instruction boundary will *not* land on (0,0).
         for nes in [&mut nes_expected, &mut nes_actual] {
-            let mut ppu = nes.ppu.borrow_mut();
+            let ppu_ref = nes.ppu();
+            let mut ppu = ppu_ref.borrow_mut();
             while ppu.scanline() != 261 || ppu.pixel() != 338 {
                 ppu.run_ppu_cycles(1);
             }
@@ -4312,8 +4293,10 @@ mod tests {
         // after we have crossed the frame start.
         nes_expected.run_cpu_tick();
         let (expected_scanline, expected_pixel) = {
-            let ppu = nes_expected.ppu.borrow();
-            (ppu.scanline(), ppu.pixel())
+            (
+                nes_expected.ppu().borrow().scanline(),
+                nes_expected.ppu().borrow().pixel(),
+            )
         };
         assert_eq!(
             expected_scanline, 0,
@@ -4329,8 +4312,10 @@ mod tests {
         let cpu_cycles_after = nes_actual.cpu.get_total_cycles();
 
         let (actual_scanline, actual_pixel) = {
-            let ppu = nes_actual.ppu.borrow();
-            (ppu.scanline(), ppu.pixel())
+            (
+                nes_actual.ppu().borrow().scanline(),
+                nes_actual.ppu().borrow().pixel(),
+            )
         };
 
         assert_eq!(
@@ -4355,7 +4340,8 @@ mod tests {
         event_loop.debugger_open_requested = true;
 
         {
-            let mut ppu = nes_expected.ppu.borrow_mut();
+            let binding = nes_expected.ppu();
+            let mut ppu = binding.borrow_mut();
             while ppu.scanline() != 100 || ppu.pixel() != 338 {
                 ppu.run_ppu_cycles(1);
             }
@@ -4364,13 +4350,9 @@ mod tests {
         let save_state = nes_expected.save_state();
         let expected_scanline = {
             nes_expected.run_cpu_tick();
-            let ppu = nes_expected.ppu.borrow();
-            ppu.scanline()
+            nes_expected.ppu().borrow().scanline()
         };
-        let expected_pixel = {
-            let ppu = nes_expected.ppu.borrow();
-            ppu.pixel()
-        };
+        let expected_pixel = { nes_expected.ppu().borrow().pixel() };
 
         let mut nes_actual = nes_with_nop_loop_program();
         nes_actual.load_state(&save_state).unwrap();
@@ -4384,8 +4366,10 @@ mod tests {
         );
 
         let (actual_scanline, actual_pixel) = {
-            let ppu = nes_actual.ppu.borrow();
-            (ppu.scanline(), ppu.pixel())
+            (
+                nes_actual.ppu().borrow().scanline(),
+                nes_actual.ppu().borrow().pixel(),
+            )
         };
 
         assert_eq!(actual_scanline, expected_scanline);
