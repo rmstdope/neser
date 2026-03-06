@@ -208,7 +208,10 @@ mod tests {
             banked_data(4 * 1024, CHR_BANKS),
             NametableLayout::Vertical,
         ));
-        assert!(result.is_ok(), "Mapper 75 must be registered in the factory");
+        assert!(
+            result.is_ok(),
+            "Mapper 75 must be registered in the factory"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -465,9 +468,18 @@ mod tests {
         let mut restored = make_mapper();
         restored.restore_registers(&snap);
 
-        assert_eq!(restored.prg_bank, original.prg_bank, "PRG banks must be preserved");
-        assert_eq!(restored.chr_bank_low, original.chr_bank_low, "CHR low bits must be preserved");
-        assert_eq!(restored.chr_bank_high, original.chr_bank_high, "CHR high bits must be preserved");
+        assert_eq!(
+            restored.prg_bank, original.prg_bank,
+            "PRG banks must be preserved"
+        );
+        assert_eq!(
+            restored.chr_bank_low, original.chr_bank_low,
+            "CHR low bits must be preserved"
+        );
+        assert_eq!(
+            restored.chr_bank_high, original.chr_bank_high,
+            "CHR high bits must be preserved"
+        );
         assert_eq!(
             restored.get_mirroring(),
             original.get_mirroring(),
