@@ -194,4 +194,20 @@ mod tests {
         assert_eq!(restored.read_prg(0xC000), mapper.read_prg(0xC000));
         assert_eq!(restored.get_mirroring(), mapper.get_mirroring());
     }
+
+    #[test]
+    fn reset_restores_power_on_prg_and_mirroring_state() {
+        let mut mapper = make_mapper();
+
+        mapper.write_prg(0x88A2, 0);
+        assert_ne!(mapper.read_prg(0x8000), 0);
+        assert_ne!(mapper.read_prg(0xC000), 1);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
+
+        mapper.reset();
+
+        assert_eq!(mapper.read_prg(0x8000), 0);
+        assert_eq!(mapper.read_prg(0xC000), 1);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
+    }
 }

@@ -637,6 +637,7 @@ mapper_registry! {
     33 => TaitoTc0190Mapper::new,
     34 => BnromNinaMapper::new,
     35 => Mapper35::new,
+    349 => Mapper349::new,
     350 => Mapper350::new,
     36 => Mapper36::new,
     37 => Mapper37::new,
@@ -697,7 +698,6 @@ mapper_registry! {
     251 => Mapper251::new,
     254 => Mapper254::new,
     255 => Mapper255::new,
-    349 => Mapper349::new,
 }
 
 #[cfg(test)]
