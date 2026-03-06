@@ -281,6 +281,11 @@ impl Mapper for Mapper82 {
         self.update_banks();
     }
 
+    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+        crate::console::initialize_ram(&mut self.ram, mode);
+        self.base.initialize_ram(mode);
+    }
+
     fn wram_size(&self) -> usize {
         self.ram.len()
     }
