@@ -71,6 +71,7 @@ mod mapper73;
 mod mapper74;
 mod mapper75;
 mod mapper77;
+mod mapper81;
 mod mapper_templates;
 mod mmc1;
 mod mmc2;

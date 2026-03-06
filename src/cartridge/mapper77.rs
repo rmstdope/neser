@@ -172,7 +172,10 @@ mod tests {
             banked_data(4 * 1024, 4),
             NametableLayout::Horizontal,
         ));
-        assert!(result.is_ok(), "Mapper 77 must be registered in the factory");
+        assert!(
+            result.is_ok(),
+            "Mapper 77 must be registered in the factory"
+        );
     }
 
     #[test]
@@ -210,10 +213,18 @@ mod tests {
         let mut mapper = make_mapper();
 
         mapper.write_prg(0xFFFF, 0x02);
-        assert_eq!(mapper.read_chr(0x0000), 2, "write to $FFFF should select bank 2");
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            2,
+            "write to $FFFF should select bank 2"
+        );
 
         mapper.write_prg(0xC000, 0x01);
-        assert_eq!(mapper.read_chr(0x0000), 1, "write to $C000 should select bank 1");
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            1,
+            "write to $C000 should select bank 1"
+        );
     }
 
     #[test]
@@ -222,7 +233,11 @@ mod tests {
 
         // Upper nibble should be ignored; only bits [3:0] count.
         mapper.write_prg(0x8000, 0xF1); // bits [3:0] = 1
-        assert_eq!(mapper.read_chr(0x0000), 1, "only bits [3:0] should select the bank");
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            1,
+            "only bits [3:0] should select the bank"
+        );
     }
 
     #[test]
@@ -243,10 +258,18 @@ mod tests {
         let mut mapper = make_mapper();
 
         mapper.write_chr(0x1000, 0xAB);
-        assert_eq!(mapper.read_chr(0x1000), 0xAB, "$1000 CHR-RAM write should persist");
+        assert_eq!(
+            mapper.read_chr(0x1000),
+            0xAB,
+            "$1000 CHR-RAM write should persist"
+        );
 
         mapper.write_chr(0x17FF, 0xCD);
-        assert_eq!(mapper.read_chr(0x17FF), 0xCD, "$17FF CHR-RAM write should persist");
+        assert_eq!(
+            mapper.read_chr(0x17FF),
+            0xCD,
+            "$17FF CHR-RAM write should persist"
+        );
     }
 
     #[test]
@@ -316,7 +339,15 @@ mod tests {
         let mut restored = make_mapper();
         restored.restore_chr_ram(&snap);
 
-        assert_eq!(restored.read_chr(0x1000), 0xDE, "CHR-RAM byte at $1000 should be restored");
-        assert_eq!(restored.read_chr(0x17FF), 0xAD, "CHR-RAM byte at $17FF should be restored");
+        assert_eq!(
+            restored.read_chr(0x1000),
+            0xDE,
+            "CHR-RAM byte at $1000 should be restored"
+        );
+        assert_eq!(
+            restored.read_chr(0x17FF),
+            0xAD,
+            "CHR-RAM byte at $17FF should be restored"
+        );
     }
 }
