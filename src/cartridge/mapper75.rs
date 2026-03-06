@@ -7,6 +7,7 @@
 //! - No known gameplay-blocking functional limitations are currently documented.
 
 use crate::cartridge::BaseMapper;
+use crate::cartridge::NametableLayout;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// Mapper 075 - Konami VRC1
@@ -43,15 +44,47 @@ impl Mapper75 {
     const CHR_BANK_SIZE: usize = 0x1000; // 4 KiB
 
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
-        todo!("Mapper75::new")
+        let mirroring = ctx.mirroring;
+        let capabilities = MapperCapabilities {
+            has_chr_banking: true,
+            has_dynamic_mirroring: true,
+            max_prg_ram_kb: 0,
+            prg_bank_size_kb: 8,
+            chr_bank_size_kb: 4,
+            ..Default::default()
+        };
+
+        let mut base = BaseMapper::new(&ctx, capabilities);
+        base.configure_prg_banking(Self::PRG_BANK_SIZE);
+        base.configure_chr_banking(Self::CHR_BANK_SIZE);
+        base.set_mirroring(mirroring);
+
+        let mut mapper = Self {
+            base,
+            prg_bank: [0; 3],
+            chr_bank_low: [0; 2],
+            chr_bank_high: [0; 2],
+        };
+
+        mapper.update_prg_banks();
+        mapper.update_chr_banks();
+        mapper
     }
 
     fn update_prg_banks(&mut self) {
-        todo!("update_prg_banks")
+        // 4 slots of 8KB cover $8000-$FFFF; slots 0-2 are switchable, slot 3 fixed to last bank
+        self.base.select_prg_page(0, self.prg_bank[0] as i16);
+        self.base.select_prg_page(1, self.prg_bank[1] as i16);
+        self.base.select_prg_page(2, self.prg_bank[2] as i16);
+        self.base.select_prg_page(3, -1); // $E000-$FFFF fixed to last bank
     }
 
     fn update_chr_banks(&mut self) {
-        todo!("update_chr_banks")
+        // 5-bit bank number: high bit from chr_bank_high, low 4 bits from chr_bank_low
+        let bank0 = ((self.chr_bank_high[0] as i16) << 4) | (self.chr_bank_low[0] as i16);
+        let bank1 = ((self.chr_bank_high[1] as i16) << 4) | (self.chr_bank_low[1] as i16);
+        self.base.select_chr_page(0, bank0);
+        self.base.select_chr_page(1, bank1);
     }
 }
 
@@ -65,19 +98,79 @@ impl Mapper for Mapper75 {
     }
 
     fn read_prg(&self, addr: u16) -> u8 {
-        todo!("read_prg")
+        match addr {
+            0x8000..=0xFFFF => self.base.read_prg_banked(addr),
+            _ => 0,
+        }
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
-        todo!("write_prg")
+        match addr {
+            0x8000..=0x8FFF => {
+                self.prg_bank[0] = value & 0x0F;
+                self.update_prg_banks();
+            }
+            0x9000..=0x9FFF => {
+                // bit 0 = H/V mirroring (1=H, 0=V)
+                // bit 1 = CHR bank 0 high bit (bit 4)
+                // bit 2 = CHR bank 1 high bit (bit 4)
+                self.base.set_mirroring_hv((value & 0x01) != 0);
+                self.chr_bank_high[0] = (value >> 1) & 0x01;
+                self.chr_bank_high[1] = (value >> 2) & 0x01;
+                self.update_chr_banks();
+            }
+            0xA000..=0xAFFF => {
+                self.prg_bank[1] = value & 0x0F;
+                self.update_prg_banks();
+            }
+            0xB000..=0xBFFF => {
+                self.chr_bank_low[1] = value & 0x0F;
+                self.update_chr_banks();
+            }
+            0xC000..=0xCFFF => {
+                self.prg_bank[2] = value & 0x0F;
+                self.update_prg_banks();
+            }
+            0xE000..=0xEFFF => {
+                self.chr_bank_low[0] = value & 0x0F;
+                self.update_chr_banks();
+            }
+            _ => {}
+        }
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        todo!("registers_snapshot")
+        // Layout:
+        // [0-2]  prg_bank[0..2]
+        // [3-4]  chr_bank_low[0..1]
+        // [5-6]  chr_bank_high[0..1]
+        // [7]    flags: bit 0 = mirroring (0=Vertical, 1=Horizontal)
+        let mirroring_bit = u8::from(self.get_mirroring() == NametableLayout::Horizontal);
+        vec![
+            self.prg_bank[0],
+            self.prg_bank[1],
+            self.prg_bank[2],
+            self.chr_bank_low[0],
+            self.chr_bank_low[1],
+            self.chr_bank_high[0],
+            self.chr_bank_high[1],
+            mirroring_bit,
+        ]
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        todo!("restore_registers")
+        if data.len() >= 8 {
+            self.prg_bank[0] = data[0];
+            self.prg_bank[1] = data[1];
+            self.prg_bank[2] = data[2];
+            self.chr_bank_low[0] = data[3];
+            self.chr_bank_low[1] = data[4];
+            self.chr_bank_high[0] = data[5];
+            self.chr_bank_high[1] = data[6];
+            self.base.set_mirroring_hv((data[7] & 0x01) != 0);
+            self.update_prg_banks();
+            self.update_chr_banks();
+        }
     }
 }
 
