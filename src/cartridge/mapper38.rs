@@ -86,8 +86,9 @@ impl Mapper for Mapper38 {
 
     fn restore_registers(&mut self, data: &[u8]) {
         if data.len() >= 2 {
-            self.prg_bank = data[0];
-            self.chr_bank = data[1];
+            // Mask to 2 bits to maintain hardware-consistent state even if the snapshot is corrupt
+            self.prg_bank = data[0] & 0x03;
+            self.chr_bank = data[1] & 0x03;
             self.update_banks();
         }
     }
