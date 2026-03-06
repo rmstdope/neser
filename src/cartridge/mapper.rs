@@ -57,7 +57,6 @@ use super::mapper77::Mapper77;
 use super::mapper81::Mapper81;
 use super::mapper82::Mapper82;
 use super::mapper83::Mapper83;
-use super::mapper84::Mapper84;
 use super::mapper132::Mapper132;
 use super::mapper133::Mapper133;
 use super::mapper140::Mapper140;
@@ -682,7 +681,7 @@ mapper_registry! {
     81 => Mapper81::new,
     82 => Mapper82::new,
     83 => Mapper83::new,
-    84 => Mapper84::new,
+    84 => Ntdec2722Mapper::new,
     129 => Mapper58::new,
     132 => Mapper132::new,
     133 => Mapper133::new,
