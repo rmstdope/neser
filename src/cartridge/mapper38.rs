@@ -31,8 +31,8 @@ const CHR_BANK_SIZE: usize = 8 * 1024;
 /// See the module-level documentation for hardware details.
 pub struct Mapper38 {
     base: BaseMapper,
-    pub(crate) prg_bank: u8,
-    pub(crate) chr_bank: u8,
+    prg_bank: u8,
+    chr_bank: u8,
 }
 
 impl Mapper38 {
