@@ -56,7 +56,7 @@ impl Mapper350 {
         base.configure_prg_6000_banking();
         base.configure_chr_banking(8 * 1024);
 
-        // Mapper 350 uses 8KB CHR-RAM (not CHR-ROM). Keep any dumped CHR payload
+        // Mapper 350 uses 8KB CHR RAM (not CHR ROM). Keep any dumped CHR payload
         // as initial RAM contents for compatibility with bad dumps.
         let mut chr_ram = ChrMemory::new_ram(8 * 1024);
         if !chr_seed.is_empty() {
@@ -81,7 +81,7 @@ impl Mapper350 {
         self.mode() <= 1
     }
 
-    fn outer_block_128k(&self) -> i16 {
+    fn outer_block_index(&self) -> i16 {
         let mut block = (self.outer_reg & 0x07) as i16;
         // Chip select is only used in UNROM modes.
         if self.mode() >= 2 && (self.outer_reg & 0x08) != 0 {
@@ -93,26 +93,26 @@ impl Mapper350 {
     fn update_banks(&mut self) {
         self.base.select_prg_6000_page(1);
 
-        let base_16k = self.outer_block_128k() * 8;
-        let inner_16k = (self.inner_reg & 0x07) as i16;
+        let base_16k_bank = self.outer_block_index() * 8;
+        let inner_16k_bank = (self.inner_reg & 0x07) as i16;
 
         match self.mode() {
             // NROM-128
             0 => {
-                let bank = base_16k + inner_16k;
+                let bank = base_16k_bank + inner_16k_bank;
                 self.base.select_prg_page(0, bank);
                 self.base.select_prg_page(1, bank);
             }
             // NROM-256: inner bit0 replaced by CPU A14
             1 => {
-                let even = base_16k + (inner_16k & !1);
+                let even = base_16k_bank + (inner_16k_bank & !1);
                 self.base.select_prg_page(0, even);
                 self.base.select_prg_page(1, even | 1);
             }
             // UNROM variants (2/3)
             _ => {
-                self.base.select_prg_page(0, base_16k + inner_16k);
-                self.base.select_prg_page(1, base_16k + 7);
+                self.base.select_prg_page(0, base_16k_bank + inner_16k_bank);
+                self.base.select_prg_page(1, base_16k_bank + 7);
             }
         }
 
@@ -177,6 +177,7 @@ mod tests {
     use crate::cartridge::test_helpers::banked_data;
 
     const PRG_16K_BANKS: usize = 48;
+    const PRG_8K_BANKS: usize = PRG_16K_BANKS * 2;
 
     fn make_mapper() -> Mapper350 {
         Mapper350::new(MapperContext::new_for_test(
@@ -187,10 +188,10 @@ mod tests {
         ))
     }
 
-    fn make_mapper_with_8k_markers() -> Mapper350 {
+    fn make_mapper_with_8k_bank_markers() -> Mapper350 {
         Mapper350::new(MapperContext::new_for_test(
             350,
-            banked_data(8 * 1024, PRG_16K_BANKS * 2),
+            banked_data(8 * 1024, PRG_8K_BANKS),
             vec![],
             NametableLayout::Vertical,
         ))
@@ -209,7 +210,7 @@ mod tests {
 
     #[test]
     fn fixed_6000_window_reads_prg_bank_1() {
-        let mapper = make_mapper_with_8k_markers();
+        let mapper = make_mapper_with_8k_bank_markers();
         assert_eq!(mapper.read_prg(0x6000), 1);
         assert_eq!(mapper.read_prg(0x7FFF), 1);
     }
@@ -221,6 +222,10 @@ mod tests {
         mapper.write_prg(0xC000, 0x05); // inner bank 5
         assert_eq!(mapper.read_prg(0x8000), 21);
         assert_eq!(mapper.read_prg(0xC000), 21);
+
+        mapper.write_prg(0xC000, 0x01); // switch inner bank to 1
+        assert_eq!(mapper.read_prg(0x8000), 17);
+        assert_eq!(mapper.read_prg(0xC000), 17);
     }
 
     #[test]
@@ -255,6 +260,10 @@ mod tests {
         let mut mapper = make_mapper();
         mapper.write_prg(0x8000, 0x00); // mode 0
         mapper.write_chr(0x0000, 0xAB);
+        assert_eq!(mapper.read_chr(0x0000), 0x00);
+
+        mapper.write_prg(0x8000, 0x10); // mode 1
+        mapper.write_chr(0x0000, 0xCD);
         assert_eq!(mapper.read_chr(0x0000), 0x00);
     }
 
