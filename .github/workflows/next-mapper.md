@@ -32,6 +32,7 @@ network:
     - "www.nesdev.org"
     - "nesdev.org"
     - "web.archive.org"
+    - "fceux.com"
 
 tools:
   github:
