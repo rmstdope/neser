@@ -92,10 +92,9 @@ impl Mapper for Mapper77 {
         match addr {
             // 4 KB CHR-ROM page (bank-switched).
             0x0000..=0x0FFF => self.read_chr_rom_page(addr as usize),
-            // 2 KB CHR-RAM (fixed).
-            0x1000..=0x17FF => self.chr_ram[(addr - 0x1000) as usize],
-            // $1800–$1FFF mirrors the same 2 KB CHR-RAM (nametable use by hardware).
-            0x1800..=0x1FFF => self.chr_ram[(addr - 0x1800) as usize],
+            // 2 KB CHR-RAM (fixed). Both $1000–$17FF and $1800–$1FFF address the
+            // same physical 2 KB: mask the low 11 bits of the region offset.
+            0x1000..=0x1FFF => self.chr_ram[(addr - 0x1000) as usize & 0x7FF],
             _ => 0,
         }
     }
@@ -104,10 +103,9 @@ impl Mapper for Mapper77 {
         match addr {
             // CHR-ROM is read-only.
             0x0000..=0x0FFF => {}
-            // 2 KB CHR-RAM is writable.
-            0x1000..=0x17FF => self.chr_ram[(addr - 0x1000) as usize] = value,
-            // $1800–$1FFF mirrors the same 2 KB CHR-RAM.
-            0x1800..=0x1FFF => self.chr_ram[(addr - 0x1800) as usize] = value,
+            // 2 KB CHR-RAM is writable. Both $1000–$17FF and $1800–$1FFF address
+            // the same physical 2 KB.
+            0x1000..=0x1FFF => self.chr_ram[(addr - 0x1000) as usize & 0x7FF] = value,
             _ => {}
         }
     }
