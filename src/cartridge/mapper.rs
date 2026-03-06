@@ -20,6 +20,7 @@ use super::mapper29::Mapper29;
 use super::mapper30::Mapper30;
 use super::mapper31::Mapper31;
 use super::mapper35::Mapper35;
+use super::mapper350::Mapper350;
 use super::mapper36::Mapper36;
 use super::mapper37::Mapper37;
 use super::mapper39::Mapper39;
@@ -55,6 +56,8 @@ use super::mapper74::Mapper74;
 use super::mapper75::Mapper75;
 use super::mapper77::Mapper77;
 use super::mapper81::Mapper81;
+use super::mapper82::Mapper82;
+use super::mapper83::Mapper83;
 use super::mapper132::Mapper132;
 use super::mapper133::Mapper133;
 use super::mapper140::Mapper140;
@@ -634,6 +637,7 @@ mapper_registry! {
     33 => TaitoTc0190Mapper::new,
     34 => BnromNinaMapper::new,
     35 => Mapper35::new,
+    350 => Mapper350::new,
     36 => Mapper36::new,
     37 => Mapper37::new,
     39 => Mapper39::new,
@@ -675,6 +679,8 @@ mapper_registry! {
     77 => Mapper77::new,
     78 => NinaTengenMapper::new,
     81 => Mapper81::new,
+    82 => Mapper82::new,
+    83 => Mapper83::new,
     129 => Mapper58::new,
     132 => Mapper132::new,
     133 => Mapper133::new,
@@ -695,17 +701,17 @@ mapper_registry! {
 }
 
 #[cfg(test)]
-const SUPPORTED_MAPPERS: &[u8] = &[
+const SUPPORTED_MAPPERS: &[u16] = &[
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
     26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50,
     51, 52, 53, 54, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75,
-    77, 78, 81, 129, 132, 133, 140, 155, 185, 205, 206, 241, 242, 243, 244, 245, 246, 251, 254,
-    255,
+    77, 78, 81, 82, 83, 129, 132, 133, 140, 155, 185, 205, 206, 241, 242, 243, 244, 245, 246, 251,
+    254, 255, 350
 ];
 
 /// List of supported iNES mapper IDs handled by the factory.
 #[cfg(test)]
-pub fn supported_mappers() -> &'static [u8] {
+pub fn supported_mappers() -> &'static [u16] {
     SUPPORTED_MAPPERS
 }
 
