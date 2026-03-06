@@ -76,10 +76,10 @@ pub struct Mapper83 {
     mode: u8,
     /// PRG bank for 32KB mode (written by $8000 / $B000 / $B0FF / $B1FF).
     bank: u8,
-    /// Set by any $8000 write; enables 2KB CHR banking when `!is_not_2k_bank`.
+    /// Set by any $8000 write; enables 2KB CHR banking when `!force_chr_1k_mode`.
     is_2k_bank: bool,
-    /// Set by writes to $8312–$8315; forces 1KB CHR banking.
-    is_not_2k_bank: bool,
+    /// Set by writes to $8312–$8315; forces 1KB CHR banking regardless of `is_2k_bank`.
+    force_chr_1k_mode: bool,
     /// 16-bit countdown IRQ counter.
     irq_counter: u16,
     /// Whether the IRQ counter is currently decrementing.
@@ -121,7 +121,7 @@ impl Mapper83 {
             mode: 0,
             bank: 0,
             is_2k_bank: false,
-            is_not_2k_bank: false,
+            force_chr_1k_mode: false,
             irq_counter: 0,
             irq_enabled: false,
             irq_pending: false,
@@ -141,7 +141,7 @@ impl Mapper83 {
     }
 
     fn apply_chr_banking(&mut self) {
-        if self.is_2k_bank && !self.is_not_2k_bank {
+        if self.is_2k_bank && !self.force_chr_1k_mode {
             // 2KB CHR mode: regs[0], regs[1], regs[6], regs[7] each select a 2KB page
             let r0 = (self.regs[0] as i16) << 1;
             let r1 = (self.regs[1] as i16) << 1;
@@ -243,7 +243,7 @@ impl Mapper for Mapper83 {
                 let idx = (addr - 0x8310) as usize;
                 self.regs[idx] = value;
                 if (0x8312..=0x8315).contains(&addr) {
-                    self.is_not_2k_bank = true;
+                    self.force_chr_1k_mode = true;
                 }
                 self.update_state();
             }
@@ -267,13 +267,13 @@ impl Mapper for Mapper83 {
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        // Layout: [mode, bank, is_2k_bank, is_not_2k_bank, irq_flags, irq_lo, irq_hi, regs×11, ex_regs×4]
+        // Layout: [mode, bank, is_2k_bank, force_chr_1k_mode, irq_flags, irq_lo, irq_hi, regs×11, ex_regs×4]
         let irq_flags = (self.irq_enabled as u8) | ((self.irq_pending as u8) << 1);
         let mut v = vec![
             self.mode,
             self.bank,
             self.is_2k_bank as u8,
-            self.is_not_2k_bank as u8,
+            self.force_chr_1k_mode as u8,
             irq_flags,
             (self.irq_counter & 0xFF) as u8,
             (self.irq_counter >> 8) as u8,
@@ -290,7 +290,7 @@ impl Mapper for Mapper83 {
         self.mode = data[0];
         self.bank = data[1];
         self.is_2k_bank = data[2] != 0;
-        self.is_not_2k_bank = data[3] != 0;
+        self.force_chr_1k_mode = data[3] != 0;
         self.irq_enabled = (data[4] & 1) != 0;
         self.irq_pending = (data[4] & 2) != 0;
         self.irq_counter = (data[5] as u16) | ((data[6] as u16) << 8);
@@ -305,7 +305,7 @@ impl Mapper for Mapper83 {
         self.mode = 0;
         self.bank = 0;
         self.is_2k_bank = false;
-        self.is_not_2k_bank = false;
+        self.force_chr_1k_mode = false;
         self.irq_counter = 0;
         self.irq_enabled = false;
         self.irq_pending = false;
@@ -515,7 +515,7 @@ mod tests {
     #[test]
     fn chr_1kb_reg0_controls_slot0() {
         let mut mapper = make_mapper();
-        // Force 1KB mode by writing to $8312 first (sets is_not_2k_bank)
+        // Force 1KB mode by writing to $8312 first (sets force_chr_1k_mode)
         mapper.write_prg(0x8312, 0);
         mapper.write_prg(0x8310, 7);
         assert_eq!(
@@ -545,7 +545,7 @@ mod tests {
             mapper.write_prg(0x8310 + i, (i * 4) as u8);
         }
         for i in 0..8u16 {
-            let bank = (i * 4) as u8 % PRG_BANKS as u8;
+            let bank = (i * 4) as u8 % CHR_BANKS as u8;
             assert_eq!(
                 mapper.read_chr(i * 0x400),
                 bank,
@@ -597,7 +597,7 @@ mod tests {
         let mut mapper = make_mapper();
         mapper.write_prg(0x8000, 0); // enable 2KB mode
         mapper.write_prg(0x8310, 3); // reg[0]=3 (would give 6 in 2KB mode)
-        // Now write $8312 → sets is_not_2k_bank, forcing 1KB mode
+        // Now write $8312 → sets force_chr_1k_mode, forcing 1KB mode
         mapper.write_prg(0x8312, 0);
         // In 1KB mode, slot 0 uses reg[0]=3 directly
         assert_eq!(
@@ -762,7 +762,7 @@ mod tests {
         // Set up a distinctive state
         mapper.write_prg(0x8300, 5); // PRG reg[8] = 5
         mapper.write_prg(0x8301, 7); // PRG reg[9] = 7
-        mapper.write_prg(0x8312, 3); // CHR reg[2] = 3 (also sets is_not_2k_bank)
+        mapper.write_prg(0x8312, 3); // CHR reg[2] = 3 (also sets force_chr_1k_mode)
         mapper.write_prg(0x8100, 0x81); // mode: bit[7]=IRQ latch, bit[0]=Horizontal
         mapper.write_prg(0x8200, 0x34);
         mapper.write_prg(0x8201, 0x12);
