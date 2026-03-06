@@ -70,6 +70,7 @@ use super::mapper246::Mapper246;
 use super::mapper251::Mapper251;
 use super::mapper254::Mapper254;
 use super::mapper255::Mapper255;
+use super::mapper349::Mapper349;
 use super::mmc1::MMC1Mapper;
 use super::mmc2::MMC2Mapper;
 use super::mmc3::MMC3Mapper;
@@ -694,20 +695,21 @@ mapper_registry! {
     251 => Mapper251::new,
     254 => Mapper254::new,
     255 => Mapper255::new,
+    349 => Mapper349::new,
 }
 
 #[cfg(test)]
-const SUPPORTED_MAPPERS: &[u8] = &[
+const SUPPORTED_MAPPERS: &[u16] = &[
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
     26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50,
     51, 52, 53, 54, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75,
     77, 78, 81, 82, 129, 132, 133, 140, 155, 185, 205, 206, 241, 242, 243, 244, 245, 246, 251, 254,
-    255,
+    255, 349,
 ];
 
 /// List of supported iNES mapper IDs handled by the factory.
 #[cfg(test)]
-pub fn supported_mappers() -> &'static [u8] {
+pub fn supported_mappers() -> &'static [u16] {
     SUPPORTED_MAPPERS
 }
 
@@ -1010,7 +1012,7 @@ mod tests {
     #[test]
     fn all_supported_mappers_return_capabilities() {
         for &id in supported_mappers() {
-            let mapper = make_mapper(id as u16);
+            let mapper = make_mapper(id);
             let caps = mapper.capabilities();
             // Verify the capabilities struct is populated (no panics)
             let _ = format!("{:?}", caps);
@@ -1022,7 +1024,7 @@ mod tests {
     #[test]
     fn irq_capable_mappers_report_irq_pending_false_initially() {
         for &id in supported_mappers() {
-            let mapper = make_mapper(id as u16);
+            let mapper = make_mapper(id);
             if mapper.capabilities().has_irq {
                 assert!(
                     !mapper.irq_pending(),
@@ -1036,7 +1038,7 @@ mod tests {
     #[test]
     fn expansion_audio_mappers_return_silent_initially() {
         for &id in supported_mappers() {
-            let mapper = make_mapper(id as u16);
+            let mapper = make_mapper(id);
             if mapper.capabilities().has_expansion_audio {
                 assert_eq!(
                     mapper.expansion_audio_sample(),
@@ -1051,7 +1053,7 @@ mod tests {
     #[test]
     fn prg_ram_capable_mappers_report_nonzero_wram_size() {
         for &id in supported_mappers() {
-            let mapper = make_mapper(id as u16);
+            let mapper = make_mapper(id);
             let caps = mapper.capabilities();
             if caps.max_prg_ram_kb > 0 {
                 assert!(
