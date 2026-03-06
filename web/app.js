@@ -1584,14 +1584,19 @@ function updateDebuggerPanel() {
 
     debuggerPanel.innerHTML =
         `<div class="debugger-controls">` +
-        `<button class="dbg-btn" id="dbg-toggle-ppu-viewer">${ppuViewerButtonText}</button>` +
+        `<div class="debugger-controls-upper">` +
+        `<button class="dbg-btn" id="dbg-continue">Continue (F5)</button>` +
         `<button class="dbg-btn" id="dbg-step-over">Step over (F10)</button>` +
         `<button class="dbg-btn" id="dbg-step-into">Step into (F11)</button>` +
-        `<button class="dbg-btn" id="dbg-continue">Continue (F5)</button>` +
+        `<span class="dbg-spacer"></span>` +
+        `<button class="dbg-btn" id="dbg-toggle-ppu-viewer">${ppuViewerButtonText}</button>` +
+        `</div>` +
+        `<div class="debugger-controls-lower">` +
         `<button class="dbg-btn" id="dbg-run-next-frame">Run to next frame</button>` +
         `<button class="dbg-btn" id="dbg-run-next-scanline">Run to next scanline</button>` +
         `<button class="dbg-btn" id="dbg-run-to-nmi">Run to NMI</button>` +
         `<button class="dbg-btn" id="dbg-run-to-irq">Run to IRQ</button>` +
+        `</div>` +
         `</div>` +
         `<div class="debugger-body">` +
         `<div class="debugger-disasm">` +
