@@ -38,7 +38,7 @@ pub struct BusState {
 /// Mapper state (opaque serialization).
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct MapperState {
-    pub mapper_number: u8,
+    pub mapper_number: u16,
     pub prg_ram: Vec<u8>,
     pub chr_ram: Vec<u8>,
     pub registers: Vec<u8>,

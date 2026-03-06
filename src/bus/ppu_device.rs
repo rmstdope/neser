@@ -124,7 +124,7 @@ mod tests {
             NametableLayout::Horizontal
         }
 
-        fn mapper_number(&self) -> u8 {
+        fn mapper_number(&self) -> u16 {
             0
         }
 

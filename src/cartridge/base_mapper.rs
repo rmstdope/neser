@@ -253,8 +253,8 @@ impl BaseMapper {
 
     /// Get the mapper number.
     #[inline]
-    pub fn mapper_number(&self) -> u8 {
-        self.mapper_number as u8
+    pub fn mapper_number(&self) -> u16 {
+        self.mapper_number
     }
 
     // --- Save-state / WRAM support ---

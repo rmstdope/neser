@@ -53,17 +53,17 @@ impl Mapper348 {
         (self.outer_bank_high_bits() << 5) | (raw_1k_bank & 0x7F)
     }
 
-    fn apply_prg_outer_bits(&self, raw_8k_bank: usize) -> usize {
-        (self.outer_bank_high_bits() << 2) | (raw_8k_bank & 0x0F)
+    fn apply_prg_outer_bits(&self, raw_8k_page: u8) -> usize {
+        (self.outer_bank_high_bits() << 2) | (usize::from(raw_8k_page) & 0x0F)
     }
 
     fn forced_special_mode_prg_bank(&self, source_window_addr: u16) -> usize {
-        let low_nibble = self.mmc3.mapped_prg_bank(source_window_addr) & 0x0F;
+        let low_nibble = usize::from(self.mmc3.raw_prg_8k_page_number(source_window_addr)) & 0x0F;
         Self::SPECIAL_MODE_FIXED_PRG_BASE | low_nibble
     }
 
     fn mapped_chr_bank_and_offset(&self, addr: u16) -> (usize, usize) {
-        let raw_bank = self.mmc3.mapped_chr_1k_bank(addr);
+        let raw_bank = self.mmc3.raw_chr_1k_bank(addr);
         let bank = self.apply_chr_outer_bits(raw_bank);
         let offset = (addr as usize) & Self::CHR_BANK_MASK;
         (bank, offset)
@@ -72,14 +72,18 @@ impl Mapper348 {
     fn mapped_prg_bank_for_addr(&self, addr: u16) -> usize {
         if self.special_mode() {
             match addr {
-                0x8000..=0x9FFF => self.apply_prg_outer_bits(self.mmc3.mapped_prg_bank(0x8000)),
-                0xA000..=0xBFFF => self.apply_prg_outer_bits(self.mmc3.mapped_prg_bank(0xA000)),
+                0x8000..=0x9FFF => {
+                    self.apply_prg_outer_bits(self.mmc3.raw_prg_8k_page_number(0x8000))
+                }
+                0xA000..=0xBFFF => {
+                    self.apply_prg_outer_bits(self.mmc3.raw_prg_8k_page_number(0xA000))
+                }
                 0xC000..=0xDFFF => self.forced_special_mode_prg_bank(0x8000),
                 0xE000..=0xFFFF => self.forced_special_mode_prg_bank(0xA000),
                 _ => 0,
             }
         } else {
-            let raw = self.mmc3.mapped_prg_bank(addr);
+            let raw = self.mmc3.raw_prg_8k_page_number(addr);
             self.apply_prg_outer_bits(raw)
         }
     }
@@ -115,9 +119,13 @@ impl Mapper for Mapper348 {
     fn write_prg(&mut self, addr: u16, value: u8) {
         if (0x6800..=0x68FF).contains(&addr) {
             self.outer_reg = value;
-        } else {
+        } else if (0x8000..=0xFFFF).contains(&addr) {
             self.mmc3.write_prg(addr, value);
         }
+    }
+
+    fn mapper_number(&self) -> u16 {
+        348
     }
 
     fn read_chr(&mut self, addr: u16) -> u8 {
@@ -247,5 +255,25 @@ mod tests {
         assert!(caps.has_chr_banking);
         assert!(caps.has_dynamic_mirroring);
         assert!(!caps.has_expansion_audio);
+    }
+
+    #[test]
+    fn writes_to_6000_region_except_6800_68ff_do_not_change_outer_register() {
+        let mut mapper = make_mapper();
+
+        mapper.write_prg(0x6800, 0x00);
+        mapper.write_prg(0x8000, 0x00);
+        mapper.write_prg(0x8001, 0x01);
+        let baseline = mapper.read_chr(0x0000);
+
+        mapper.write_prg(0x6000, 0x04);
+        mapper.write_prg(0x67FF, 0x04);
+        mapper.write_prg(0x6900, 0x04);
+        mapper.write_prg(0x7FFF, 0x04);
+
+        assert_eq!(mapper.read_chr(0x0000), baseline);
+
+        mapper.write_prg(0x6800, 0x04);
+        assert_ne!(mapper.read_chr(0x0000), baseline);
     }
 }

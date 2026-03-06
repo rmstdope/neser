@@ -974,7 +974,7 @@ mod savestate_error {
         /// The save-state format version is incompatible.
         IncompatibleVersion { expected: u32, found: u32 },
         /// The mapper number doesn't match the currently loaded cartridge.
-        MapperMismatch { expected: u8, found: u8 },
+        MapperMismatch { expected: u16, found: u16 },
     }
 
     impl std::fmt::Display for SaveStateError {

@@ -290,6 +290,32 @@ impl MMC3Mapper {
         bank_index
     }
 
+    /// Returns the raw (unwrapped) 8KB PRG page number selected for a CPU address.
+    ///
+    /// This returns the logical MMC3 page number before modulo-wrapping against
+    /// physical PRG size. Fixed pages are represented as 0xFE/0xFF.
+    pub fn raw_prg_8k_page_number(&self, addr: u16) -> u8 {
+        let reg6 = self.regs[6];
+        let reg7 = self.regs[7];
+        if !self.prg_mode() {
+            match addr {
+                0x8000..=0x9FFF => reg6,
+                0xA000..=0xBFFF => reg7,
+                0xC000..=0xDFFF => 0xFE,
+                0xE000..=0xFFFF => 0xFF,
+                _ => 0,
+            }
+        } else {
+            match addr {
+                0x8000..=0x9FFF => 0xFE,
+                0xA000..=0xBFFF => reg7,
+                0xC000..=0xDFFF => reg6,
+                0xE000..=0xFFFF => 0xFF,
+                _ => 0,
+            }
+        }
+    }
+
     /// Returns the raw (unwrapped) 1KB CHR bank register value for the given PPU address.
     ///
     /// Unlike `mapped_chr_1k_bank`, this does NOT apply modulo-wrapping against the

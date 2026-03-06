@@ -223,7 +223,7 @@ impl Mapper for Mapper14 {
         8 * 1024
     }
 
-    fn mapper_number(&self) -> u8 {
+    fn mapper_number(&self) -> u16 {
         14
     }
 }

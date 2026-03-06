@@ -133,8 +133,8 @@ impl Mapper for Mapper44 {
         self.mmc3.write_chr_1k_at(bank, offset, value);
     }
 
-    fn mapper_number(&self) -> u8 {
-        Self::MAPPER_NUMBER
+    fn mapper_number(&self) -> u16 {
+        u16::from(Self::MAPPER_NUMBER)
     }
 
     fn wram_size(&self) -> usize {

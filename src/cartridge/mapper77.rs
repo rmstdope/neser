@@ -115,7 +115,7 @@ impl Mapper for Mapper77 {
         }
     }
 
-    fn mapper_number(&self) -> u8 {
+    fn mapper_number(&self) -> u16 {
         77
     }
 

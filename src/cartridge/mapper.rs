@@ -521,7 +521,7 @@ pub trait Mapper {
     /// Returns the iNES mapper number for this mapper (e.g., 0 for NROM, 1 for MMC1).
     ///
     /// Default delegates to `BaseMapper` if available, otherwise returns 0.
-    fn mapper_number(&self) -> u8 {
+    fn mapper_number(&self) -> u16 {
         self.base().mapper_number()
     }
 
