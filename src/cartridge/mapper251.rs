@@ -66,8 +66,8 @@ impl Mapper for Mapper251 {
         self.inner.write_chr(addr, value);
     }
 
-    fn mapper_number(&self) -> u8 {
-        Self::MAPPER_NUMBER
+    fn mapper_number(&self) -> u16 {
+        u16::from(Self::MAPPER_NUMBER)
     }
 
     fn wram_size(&self) -> usize {
