@@ -195,7 +195,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .add_toast(emulator_timing_toast_message(tv_system));
 
     if let Some(actual_rate) = audio_sample_rate {
-        nes_instance.apu.borrow_mut().set_sample_rate(actual_rate);
+        nes_instance.apu().borrow_mut().set_sample_rate(actual_rate);
     }
 
     // Create event loop with headless mode if autorun playback is headless
@@ -251,7 +251,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Apply channel enable/disable settings
     {
-        let mut apu = nes_instance.apu.borrow_mut();
+        let mut apu = nes_instance.apu().borrow_mut();
         let app_context = app_context.borrow();
         let config = app_context.config();
         apu.set_pulse1_enabled(config.apu_channels.contains(ApuChannels::PULSE1));
@@ -275,7 +275,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Best-effort save on clean shutdown (Escape/Quit).
     if run_result.is_ok()
-        && let Err(e) = nes_instance.bus.borrow().save_ram()
+        && let Err(e) = nes_instance.bus().borrow().save_ram()
     {
         log_info(format!("Warning: failed to save RAM: {}", e));
     }

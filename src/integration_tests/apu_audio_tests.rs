@@ -55,7 +55,7 @@ mod tests {
         nes.reset(false);
 
         {
-            let mut apu = nes.apu.borrow_mut();
+            let mut apu = nes.apu().borrow_mut();
             apu.set_sample_rate(SAMPLE_RATE_HZ);
             apu.set_triangle_enabled(false);
             apu.set_noise_enabled(enable_noise);
@@ -110,7 +110,7 @@ mod tests {
         nes.reset(false);
 
         {
-            let mut apu = nes.apu.borrow_mut();
+            let mut apu = nes.apu().borrow_mut();
             apu.set_sample_rate(SAMPLE_RATE_HZ);
             apu.set_triangle_enabled(triangle_enabled);
             apu.set_dmc_enabled(dmc_enabled);
@@ -126,7 +126,7 @@ mod tests {
             cycles_run = cycles_run.saturating_add(consumed.max(1));
 
             {
-                let mut apu = nes.apu.borrow_mut();
+                let mut apu = nes.apu().borrow_mut();
                 apu.set_pulse1_enabled(pulse1_enabled);
                 apu.set_pulse2_enabled(pulse2_enabled);
                 apu.set_noise_enabled(noise_enabled);
@@ -676,14 +676,14 @@ mod tests {
 
     /// Check that exactly one IRQ has been fired from the DMC.
     fn check_one_irq_fired(nes: &mut Nes) -> bool {
-        let irq_count = nes.apu.borrow().dmc().debug_irq_trigger_count();
+        let irq_count = nes.apu().borrow().dmc().debug_irq_trigger_count();
         assert_eq!(irq_count, 1, "expected 1 IRQ fired, got {}", irq_count);
         true
     }
 
     /// Check that exactly zero IRQs have been fired from the DMC.
     fn check_zero_irq_fired(nes: &mut Nes) -> bool {
-        let irq_count = nes.apu.borrow().dmc().debug_irq_trigger_count();
+        let irq_count = nes.apu().borrow().dmc().debug_irq_trigger_count();
         assert_eq!(irq_count, 0, "expected 0 IRQ fired, got {}", irq_count);
         true
     }

@@ -17,3 +17,4 @@ mod audio_analysis_triangle_test;
 
 pub use apu::Apu;
 pub use apu::ApuState;
+pub use apu::SharedApu;

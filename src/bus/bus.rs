@@ -4,14 +4,15 @@ use super::mapper_device::MapperDevice;
 use super::oam_dma_device::OamDmaDevice;
 use super::ppu_device::PpuDevice;
 use super::ram_device::RamDevice;
-use crate::apu;
+use crate::app_context::SharedAppContext;
+use crate::apu::SharedApu;
 use crate::cartridge::Cartridge;
 use crate::debugging::log_info;
 use crate::input::{
     ArkanoidController, ArkanoidState, Button, Controller, ControllerType, JoypadState, NesJoypad,
     Zapper, ZapperState,
 };
-use crate::ppu;
+use crate::ppu::{self, SharedPpu};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::io;
@@ -51,13 +52,15 @@ pub trait BusDevice {
     fn address_range(&self) -> RangeInclusive<u16>;
 }
 
+pub type SharedBus = Rc<RefCell<Bus>>;
+
 /// NES Memory (64KB address space)
 pub struct Bus {
     cpu_ram: Rc<RefCell<Vec<u8>>>,
     cartridge: Rc<RefCell<Option<Rc<RefCell<Cartridge>>>>>,
-    ppu: Rc<RefCell<ppu::Ppu>>,
-    apu: Rc<RefCell<apu::Apu>>,
-    app_context: Rc<RefCell<crate::app_context::AppContext>>,
+    ppu: SharedPpu,
+    apu: SharedApu,
+    app_context: SharedAppContext,
     oam_dma_page: Rc<RefCell<Option<u8>>>, // Stores the page for pending OAM DMA
     dma_triggered: Rc<RefCell<bool>>,
     controllers: [Rc<RefCell<Box<dyn Controller>>>; 2], // Port 1 and Port 2 controllers
@@ -81,7 +84,7 @@ impl Bus {
     /// Create a new memory instance with 64KB address space
     pub fn new(
         ppu: Rc<RefCell<ppu::Ppu>>,
-        apu: Rc<RefCell<apu::Apu>>,
+        apu: SharedApu,
         app_context: Rc<RefCell<crate::app_context::AppContext>>,
     ) -> Self {
         let controllers = [
@@ -871,7 +874,7 @@ mod tests {
     #[test]
     fn test_restore_mapper_state_updates_ppu_mirroring() {
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
-        let apu = Rc::new(RefCell::new(apu::Apu::new()));
+        let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
         let app_context = Rc::new(RefCell::new(crate::app_context::AppContext::new()));
         let mut bus = Bus::new(ppu.clone(), apu, app_context.clone());
 
@@ -959,7 +962,7 @@ mod tests {
 
     fn create_test_memory() -> Bus {
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
-        let apu = Rc::new(RefCell::new(apu::Apu::new()));
+        let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
         let config = crate::console::Config {
             ram_init_mode: crate::console::RamInitMode::Zero,
             ..Default::default()
@@ -1095,7 +1098,7 @@ mod tests {
     #[test]
     fn test_oam_dma_write_notifies_mapper_only_on_real_write() {
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
-        let apu = Rc::new(RefCell::new(apu::Apu::new()));
+        let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
         let app_context = Rc::new(RefCell::new(crate::app_context::AppContext::new()));
         let mut memory = Bus::new(ppu, apu, app_context.clone());
 
@@ -1228,7 +1231,7 @@ mod tests {
         // a nametable boundary can show duplicated screens.
 
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
-        let apu = Rc::new(RefCell::new(apu::Apu::new()));
+        let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
         let app_context = Rc::new(RefCell::new(crate::app_context::AppContext::new()));
         let mut mem = Bus::new(ppu.clone(), apu, app_context.clone());
 

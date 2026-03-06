@@ -835,12 +835,12 @@ mod tests {
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
             Config::default(),
         ));
-        nes.cpu.set_pc(0xC000);
-        nes.cpu.set_a_register(0x12);
-        nes.cpu.set_x(0x34);
-        nes.cpu.set_y(0x56);
-        nes.cpu.set_sp(0xFD);
-        nes.cpu.set_p(0b1010_0101);
+        nes.cpu_mut().set_pc(0xC000);
+        nes.cpu_mut().set_a_register(0x12);
+        nes.cpu_mut().set_x(0x34);
+        nes.cpu_mut().set_y(0x56);
+        nes.cpu_mut().set_sp(0xFD);
+        nes.cpu_mut().set_p(0b1010_0101);
 
         let snapshot = snapshot(&nes);
         let lines = cpu_register_lines(&snapshot);

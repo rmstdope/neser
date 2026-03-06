@@ -866,7 +866,7 @@ mod sample_tests {
 
         // Configure DMC to play 1 byte starting at $C000, at the fastest rate.
         {
-            let mut apu = nes.apu.borrow_mut();
+            let mut apu = nes.apu().borrow_mut();
             apu.dmc_mut().write_flags_and_rate(0x0F);
             apu.dmc_mut().write_sample_address(0x00);
             apu.dmc_mut().write_sample_length(0x00);
@@ -880,7 +880,7 @@ mod sample_tests {
 
         // Assert: once the DMC reads 0xFF from $C000, output should have increased above 0.
         // This currently FAILS because the DMC memory reader is stubbed (uses 0x00).
-        let output = nes.apu.borrow().dmc().output();
+        let output = nes.apu().borrow().dmc().output();
         assert!(
             output > 0,
             "expected DMC output to be > 0 after reading sample; got {output}"

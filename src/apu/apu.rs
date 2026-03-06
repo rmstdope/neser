@@ -1,3 +1,6 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use super::dmc::Dmc;
 use super::frame_counter::FrameCounter;
 use super::noise::Noise;
@@ -118,6 +121,8 @@ const TND_TABLE: [f32; 203] = [
     0.715575887, 0.717701770, 0.719817864, 0.721924234, 0.724020949, 0.726108075, 0.728185676,
     0.730253819, 0.732312567, 0.734361984, 0.736402134, 0.738433080, 0.740454883, 0.742467605,
 ];
+
+pub type SharedApu = Rc<RefCell<Apu>>;
 
 /// Main APU module integrating frame counter and sound channels
 pub struct Apu {

@@ -393,9 +393,9 @@ mod tests {
             deterministic_config(),
         ));
         nes.insert_cartridge(cartridge);
-        nes.cpu.reset(false);
+        nes.cpu_mut().reset(false);
         // nestest automated test starts execution at $C000 (not reset vector $C004)
-        nes.cpu.set_pc(0xC000);
+        nes.cpu_mut().set_pc(0xC000);
         // CPU reset takes 7 cycles, manually sync PPU and CPU cycle counters
         // PPU is already a bit ahead here:
         // - Nes::new runs the PPU for 1 cycle (sprite-0 hit timing offset)

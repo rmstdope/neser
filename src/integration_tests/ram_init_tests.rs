@@ -31,7 +31,7 @@ fn test_cpu_ram_initialization_zero_mode() {
     let nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
 
     // Check that CPU RAM is initialized to zero (first 2KB mirrored 4 times)
-    let bus = nes.bus.borrow();
+    let bus = nes.bus().borrow();
     let ram = bus.cpu_ram_ref();
     let ram_data = ram.borrow();
 
@@ -52,11 +52,11 @@ fn test_cpu_ram_initialization_seeded_random_mode_deterministic() {
     let nes2 = Nes::new(crate::app_context::AppContext::new_with_config(config2));
 
     // Check that both have identical RAM
-    let bus1 = nes1.bus.borrow();
+    let bus1 = nes1.bus().borrow();
     let ram1 = bus1.cpu_ram_ref();
     let ram1_data = ram1.borrow();
 
-    let bus2 = nes2.bus.borrow();
+    let bus2 = nes2.bus().borrow();
     let ram2 = bus2.cpu_ram_ref();
     let ram2_data = ram2.borrow();
 
@@ -79,11 +79,11 @@ fn test_cpu_ram_initialization_different_seeds_produce_different_values() {
     config2.ram_init_mode = RamInitMode::SeededRandom(43);
     let nes2 = Nes::new(crate::app_context::AppContext::new_with_config(config2));
 
-    let bus1 = nes1.bus.borrow();
+    let bus1 = nes1.bus().borrow();
     let ram1 = bus1.cpu_ram_ref();
     let ram1_data = ram1.borrow();
 
-    let bus2 = nes2.bus.borrow();
+    let bus2 = nes2.bus().borrow();
     let ram2 = bus2.cpu_ram_ref();
     let ram2_data = ram2.borrow();
 
@@ -150,7 +150,7 @@ fn test_cartridge_ram_initialization_zero_mode() {
     let cartridge = load_test_cartridge(&rom_data, "ram-init-zero.nes");
     nes.insert_cartridge(cartridge);
 
-    let mut bus = nes.bus.borrow_mut();
+    let mut bus = nes.bus().borrow_mut();
     // Check PRG-RAM at $6000-$7FFF
     for addr in 0x6000..=0x7FFF {
         assert_eq!(
@@ -180,8 +180,8 @@ fn test_cartridge_ram_initialization_seeded_random_deterministic() {
     let cartridge2 = load_test_cartridge(&rom_data2, "ram-init-seeded-b.nes");
     nes2.insert_cartridge(cartridge2);
 
-    let mut bus1 = nes1.bus.borrow_mut();
-    let mut bus2 = nes2.bus.borrow_mut();
+    let mut bus1 = nes1.bus().borrow_mut();
+    let mut bus2 = nes2.bus().borrow_mut();
 
     // Check PRG-RAM at $6000-$7FFF
     for addr in 0x6000..=0x6100 {
@@ -207,7 +207,7 @@ fn test_hard_reset_reinitializes_ram() {
 
     // Write some non-zero data to RAM
     {
-        let bus = nes.bus.borrow();
+        let bus = nes.bus().borrow();
         let ram_rc = bus.cpu_ram_ref();
         let mut ram = ram_rc.borrow_mut();
         ram[0x100] = 0xFF;
@@ -217,7 +217,7 @@ fn test_hard_reset_reinitializes_ram() {
     // Hard reset (soft_reset = false) should re-initialize RAM to zero
     nes.reset(false);
 
-    let bus = nes.bus.borrow();
+    let bus = nes.bus().borrow();
     let ram_rc = bus.cpu_ram_ref();
     let ram = ram_rc.borrow();
     assert_eq!(ram[0x100], 0x00, "Hard reset should zero RAM[0x100]");
@@ -237,7 +237,7 @@ fn test_soft_reset_preserves_ram() {
 
     // Write some non-zero data to RAM
     {
-        let bus = nes.bus.borrow();
+        let bus = nes.bus().borrow();
         let ram_rc = bus.cpu_ram_ref();
         let mut ram = ram_rc.borrow_mut();
         ram[0x100] = 0xFF;
@@ -247,7 +247,7 @@ fn test_soft_reset_preserves_ram() {
     // Soft reset (soft_reset = true) should preserve RAM
     nes.reset(true);
 
-    let bus = nes.bus.borrow();
+    let bus = nes.bus().borrow();
     let ram_rc = bus.cpu_ram_ref();
     let ram = ram_rc.borrow();
     assert_eq!(ram[0x100], 0xFF, "Soft reset should preserve RAM[0x100]");
@@ -267,7 +267,7 @@ fn test_ppu_hard_reset_reinitializes_ram() {
 
     // Write some non-zero data to PPU nametable
     {
-        let mut bus = nes.bus.borrow_mut();
+        let mut bus = nes.bus().borrow_mut();
         // Write via PPU registers
         bus.write(0x2006, 0x20, false); // PPUADDR high
         bus.write(0x2006, 0x00, false); // PPUADDR low
@@ -297,7 +297,7 @@ fn test_ppu_soft_reset_preserves_ram() {
 
     // Write some non-zero data to PPU nametable
     {
-        let mut bus = nes.bus.borrow_mut();
+        let mut bus = nes.bus().borrow_mut();
         bus.write(0x2006, 0x20, false); // PPUADDR high
         bus.write(0x2006, 0x00, false); // PPUADDR low
         bus.write(0x2007, 0xFF, false); // PPUDATA
@@ -324,7 +324,7 @@ fn test_ppu_palette_ram_init_zero_mode() {
     // Access palette RAM via PPUADDR ($2006) and PPUDATA ($2007).
     // For Zero mode, all palette entries should read back as 0x00.
     {
-        let mut bus = nes.bus.borrow_mut();
+        let mut bus = nes.bus().borrow_mut();
 
         for offset in 0u16..32 {
             let addr = 0x3F00u16 + offset;
@@ -353,7 +353,7 @@ fn test_oam_ram_initialization_zero_mode() {
 
     // Access OAM via OAMDATA ($2004) after setting OAMADDR ($2003)
     {
-        let mut bus = nes.bus.borrow_mut();
+        let mut bus = nes.bus().borrow_mut();
 
         // Check all 256 bytes of OAM
         for addr in 0u8..=255 {
@@ -380,8 +380,8 @@ fn test_oam_ram_initialization_seeded_random_deterministic() {
 
     // OAM should be identical for same seed
     {
-        let mut bus1 = nes1.bus.borrow_mut();
-        let mut bus2 = nes2.bus.borrow_mut();
+        let mut bus1 = nes1.bus().borrow_mut();
+        let mut bus2 = nes2.bus().borrow_mut();
 
         // Sample OAM values at various addresses
         for addr in [0u8, 1, 10, 50, 100, 200, 255] {
@@ -413,7 +413,7 @@ fn test_oam_hard_reset_reinitializes() {
 
     // Write some non-zero data to OAM
     {
-        let mut bus = nes.bus.borrow_mut();
+        let mut bus = nes.bus().borrow_mut();
         bus.write(0x2003, 5, false); // OAMADDR = 5
         bus.write(0x2004, 0xFF, false); // OAMDATA = 0xFF (writes to addr 5, increments to 6)
         bus.write(0x2003, 20, false); // OAMADDR = 20
@@ -424,7 +424,7 @@ fn test_oam_hard_reset_reinitializes() {
     nes.reset(false);
 
     {
-        let mut bus = nes.bus.borrow_mut();
+        let mut bus = nes.bus().borrow_mut();
         bus.write(0x2003, 5, false);
         assert_eq!(
             bus.read(0x2004, false),
@@ -453,7 +453,7 @@ fn test_oam_soft_reset_preserves() {
 
     // Write some non-zero data to OAM
     {
-        let mut bus = nes.bus.borrow_mut();
+        let mut bus = nes.bus().borrow_mut();
         bus.write(0x2003, 5, false); // OAMADDR = 5
         bus.write(0x2004, 0xFF, false); // OAMDATA = 0xFF (writes to addr 5, increments to 6)
         bus.write(0x2003, 20, false); // OAMADDR = 20
@@ -464,7 +464,7 @@ fn test_oam_soft_reset_preserves() {
     nes.reset(true);
 
     {
-        let mut bus = nes.bus.borrow_mut();
+        let mut bus = nes.bus().borrow_mut();
         bus.write(0x2003, 5, false);
         assert_eq!(
             bus.read(0x2004, false),

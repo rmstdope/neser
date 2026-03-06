@@ -199,7 +199,7 @@ pub(crate) mod tests {
             // Run frames and check for results
             for frame in 1..=self.max_frames {
                 // Run one frame (roughly 29780 CPU cycles for NTSC, 33247 for PAL)
-                let mut current_status = nes.bus.borrow_mut().read_for_testing(0x6000);
+                let mut current_status = nes.bus().borrow_mut().read_for_testing(0x6000);
                 if current_status == 0x80 {
                     running = true;
                 }
@@ -211,14 +211,14 @@ pub(crate) mod tests {
                     nes.run_cpu_tick();
 
                     if cpu_cycle != 0 && cpu_cycle % STATUS_POLL_INTERVAL == 0 {
-                        current_status = nes.bus.borrow_mut().read_for_testing(0x6000);
+                        current_status = nes.bus().borrow_mut().read_for_testing(0x6000);
                         if current_status == 0x80 {
                             running = true;
                         }
                     }
                 }
                 // Make sure we observe any status update at end-of-frame.
-                let status = nes.bus.borrow_mut().read_for_testing(0x6000);
+                let status = nes.bus().borrow_mut().read_for_testing(0x6000);
                 if status == 0x80 {
                     running = true;
                 }
@@ -256,7 +256,7 @@ pub(crate) mod tests {
                         } else {
                             // Test requests a reset-button style reset.
                             nes.reset(true);
-                            nes.bus.borrow_mut().write_for_testing(0x6000, 0x80);
+                            nes.bus().borrow_mut().write_for_testing(0x6000, 0x80);
                             self.wait_reset = 1;
                         }
                     } else if status == 0x80 {
@@ -418,7 +418,7 @@ pub(crate) mod tests {
 
         for _frame in 1..=max_frames {
             for _cpu_cycle in 0..cpu_cycles_per_frame {
-                if nes.cpu.pc() == stop_address {
+                if nes.cpu_ref().pc() == stop_address {
                     // while nes.sample_ready() {
                     //     println!("SampleX: {}", nes.get_sample().unwrap());
                     // }

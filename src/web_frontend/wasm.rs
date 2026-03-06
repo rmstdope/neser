@@ -139,7 +139,7 @@ impl WasmNes {
         self.pending_toasts
             .push(cartridge_load_toast_message(rom_name, true));
         self.pending_toasts.push(emulator_timing_toast_message(
-            self.nes.app_context.borrow().config().tv_system,
+            self.nes.app_context().borrow().config().tv_system,
         ));
         web_sys::console::log_1(&JsValue::from_str("ROM loaded successfully"));
         Ok(())
@@ -437,7 +437,7 @@ impl WasmNes {
         let controller_type = ControllerType::parse(controller_type)
             .ok_or_else(|| JsValue::from_str("invalid controller type"))?;
         self.nes
-            .bus
+            .bus()
             .borrow_mut()
             .set_controller_type(port, controller_type);
         Ok(())
@@ -495,7 +495,7 @@ impl WasmNes {
     #[wasm_bindgen]
     pub fn frame_rate_hz(&self) -> f64 {
         self.nes
-            .app_context
+            .app_context()
             .borrow()
             .config()
             .tv_system
@@ -618,7 +618,7 @@ impl WasmNes {
     /// Returns the current CPU program counter value (useful for testing step behaviour).
     #[wasm_bindgen]
     pub fn debugger_cpu_pc(&self) -> u16 {
-        self.nes.cpu.pc()
+        self.nes.cpu_ref().pc()
     }
 
     /// Take a snapshot of the current CPU/PPU/APU state and return it as a JSON string.
@@ -752,7 +752,7 @@ impl WasmNes {
     #[cfg(test)]
     #[wasm_bindgen]
     pub fn push_audio_sample_for_test(&mut self, sample: f32) {
-        self.nes.apu.borrow_mut().push_sample_for_test(sample);
+        self.nes.apu().borrow_mut().push_sample_for_test(sample);
     }
 }
 
@@ -872,14 +872,14 @@ fn step_over_instruction(nes: &mut Nes) {
     const JSR_OPCODE: u8 = 0x20;
     const MAX_STEPS: usize = 1_000_000;
 
-    let pc = nes.cpu.pc();
-    let opcode = nes.bus.borrow().read_cpu_for_debugger(pc);
+    let pc = nes.cpu_ref().pc();
+    let opcode = nes.bus().borrow().read_cpu_for_debugger(pc);
 
     if opcode == JSR_OPCODE {
         let next_pc = pc.wrapping_add(3);
         nes.run_cpu_tick(); // enter the subroutine
         for _ in 0..MAX_STEPS {
-            if nes.cpu.pc() == next_pc || nes.cpu.is_halted() {
+            if nes.cpu_ref().pc() == next_pc || nes.cpu_ref().is_halted() {
                 break;
             }
             nes.run_cpu_tick();
@@ -893,19 +893,19 @@ fn run_to_next_frame(nes: &mut Nes) {
     const MAX_STEPS: usize = 2_000_000;
 
     let mut previous_scanline = {
-        let ppu = nes.ppu.borrow();
+        let ppu = nes.ppu().borrow();
         ppu.scanline()
     };
 
     for _step in 0..MAX_STEPS {
-        if nes.cpu.is_halted() {
+        if nes.cpu_ref().is_halted() {
             break;
         }
 
         nes.run_cpu_tick();
 
         let scanline = {
-            let ppu = nes.ppu.borrow();
+            let ppu = nes.ppu().borrow();
             ppu.scanline()
         };
 
@@ -921,19 +921,19 @@ fn run_to_next_scanline(nes: &mut Nes) {
     const MAX_STEPS: usize = 100_000;
 
     let start_scanline = {
-        let ppu = nes.ppu.borrow();
+        let ppu = nes.ppu().borrow();
         ppu.scanline()
     };
 
     for _step in 0..MAX_STEPS {
-        if nes.cpu.is_halted() {
+        if nes.cpu_ref().is_halted() {
             break;
         }
 
         nes.run_cpu_tick();
 
         let scanline = {
-            let ppu = nes.ppu.borrow();
+            let ppu = nes.ppu().borrow();
             ppu.scanline()
         };
 
@@ -944,7 +944,7 @@ fn run_to_next_scanline(nes: &mut Nes) {
 }
 
 fn read_vector_target(nes: &Nes, vector_addr: u16) -> u16 {
-    let memory = nes.bus.borrow();
+    let memory = nes.bus().borrow();
     let lo = memory.read_cpu_for_debugger(vector_addr);
     let hi = memory.read_cpu_for_debugger(vector_addr.wrapping_add(1));
     u16::from_le_bytes([lo, hi])
@@ -954,22 +954,22 @@ fn run_to_interrupt_entry(nes: &mut Nes, vector_addr: u16, kind: crate::cpu::Int
     const MAX_STEPS: usize = 2_000_000;
 
     let target_pc = read_vector_target(nes, vector_addr);
-    let mut has_exited_required_interrupt = nes.cpu.current_interrupt() != Some(kind);
+    let mut has_exited_required_interrupt = nes.cpu_ref().current_interrupt() != Some(kind);
 
     for _step in 0..MAX_STEPS {
-        if nes.cpu.is_halted() {
+        if nes.cpu_ref().is_halted() {
             break;
         }
 
         nes.run_cpu_tick();
 
-        let current_interrupt = nes.cpu.current_interrupt();
+        let current_interrupt = nes.cpu_ref().current_interrupt();
         if current_interrupt != Some(kind) {
             has_exited_required_interrupt = true;
             continue;
         }
 
-        if has_exited_required_interrupt && nes.cpu.pc() == target_pc {
+        if has_exited_required_interrupt && nes.cpu_ref().pc() == target_pc {
             break;
         }
     }

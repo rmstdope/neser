@@ -10,4 +10,5 @@ pub mod ram_device;
 pub use bus::Bus;
 #[cfg(test)]
 pub(crate) use bus::BusDevice;
+pub use bus::SharedBus;
 pub use bus::{BusState, ControllerStateWrapper, MapperState};

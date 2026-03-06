@@ -1,7 +1,6 @@
 use crate::app_context::{IntoSharedAppContext, SharedAppContext};
-use crate::apu::Apu;
-use crate::apu::ApuState;
-use crate::bus::{Bus, BusState, MapperState};
+use crate::apu::{Apu, ApuState, SharedApu};
+use crate::bus::{Bus, BusState, MapperState, SharedBus};
 use crate::cartridge::Cartridge;
 #[cfg(test)]
 use crate::cartridge::TimingMode;
@@ -98,9 +97,9 @@ pub struct Nes {
     // TODO pub fields smell
     app_context: SharedAppContext,
     ppu: SharedPpu,
-    pub apu: Rc<RefCell<Apu>>,
-    pub bus: Rc<RefCell<Bus>>,
-    pub cpu: Cpu,
+    apu: Rc<RefCell<Apu>>,
+    bus: Rc<RefCell<Bus>>,
+    cpu: Cpu,
     fractional_ppu_cycles: f64,
     ready_to_render: bool,
     recent_cpu_trace: VecDeque<CpuTraceLine>,
@@ -246,12 +245,28 @@ impl Nes {
         self.bus.borrow().cartridge_debug_path()
     }
 
-    pub fn app_context(&self) -> SharedAppContext {
-        self.app_context.clone()
+    pub fn app_context(&self) -> &SharedAppContext {
+        &self.app_context
     }
 
-    pub fn ppu(&self) -> SharedPpu {
-        self.ppu.clone()
+    pub fn ppu(&self) -> &SharedPpu {
+        &self.ppu
+    }
+
+    pub fn apu(&self) -> &SharedApu {
+        &self.apu
+    }
+
+    pub fn bus(&self) -> &SharedBus {
+        &self.bus
+    }
+
+    pub fn cpu_ref(&self) -> &Cpu {
+        &self.cpu
+    }
+
+    pub fn cpu_mut(&mut self) -> &mut Cpu {
+        &mut self.cpu
     }
 
     /// Reset the NES system.
@@ -266,7 +281,7 @@ impl Nes {
         self.ppu.borrow_mut().reset(soft_reset, ram_init_mode);
         self.apu.borrow_mut().reset(cpu_cycle, soft_reset);
         self.bus.borrow_mut().reset(soft_reset, ram_init_mode);
-        self.cpu.reset(soft_reset);
+        self.cpu_mut().reset(soft_reset);
 
         if !soft_reset {
             self.start_trainer_if_present();
