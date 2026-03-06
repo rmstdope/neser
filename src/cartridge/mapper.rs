@@ -50,6 +50,7 @@ use super::mapper65::Mapper65;
 use super::mapper67::Mapper67;
 use super::mapper72::Mapper72;
 use super::mapper73::Mapper73;
+use super::mapper75::Mapper75;
 use super::mapper132::Mapper132;
 use super::mapper133::Mapper133;
 use super::mapper140::Mapper140;
@@ -664,6 +665,7 @@ mapper_registry! {
     71 => CamericaMapper::new,
     72 => Mapper72::new,
     73 => Mapper73::new,
+    75 => Mapper75::new,
     78 => NinaTengenMapper::new,
     129 => Mapper58::new,
     132 => Mapper132::new,
@@ -688,7 +690,7 @@ mapper_registry! {
 const SUPPORTED_MAPPERS: &[u8] = &[
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
     26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50,
-    51, 52, 53, 54, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 71, 72, 73, 78, 129,
+    51, 52, 53, 54, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 71, 72, 73, 75, 78, 129,
     132, 133, 140, 155, 185, 205, 206, 241, 242, 243, 244, 245, 246, 251, 254, 255,
 ];
 
