@@ -30,6 +30,8 @@ network:
     - defaults
     - "rust"
     - "www.nesdev.org"
+    - "nesdev.org"
+    - "web.archive.org"
 
 tools:
   github:
