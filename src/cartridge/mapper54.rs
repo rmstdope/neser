@@ -174,15 +174,15 @@ mod tests {
     }
 
     #[test]
-    fn prg_and_chr_banks_are_independent() {
+    fn prg_and_chr_banks_both_update_from_same_write_address() {
         let mut mapper = make_mapper();
-        // Select PRG bank 2 (addr $8002), CHR bank stays 0.
+        // Both banks update on every write; each uses a different bit mask.
+        // addr $8002 → PRG bank = 2 & 0x03 = 2, CHR bank = 2 & 0x07 = 2.
         mapper.write_prg(0x8002, 0x00);
         assert_eq!(mapper.read_prg(0x8000), 2, "PRG bank 2");
         assert_eq!(mapper.read_chr(0x0000), 2, "CHR bank also 2 (addr & 0x07)");
 
-        // Now select CHR bank 5 (addr $8005), PRG bank also changes (addr & 0x03 = 1).
-        // Both banks update together on every write.
+        // addr $8005 → PRG bank = 5 & 0x03 = 1, CHR bank = 5 & 0x07 = 5.
         mapper.write_prg(0x8005, 0x00);
         assert_eq!(mapper.read_prg(0x8000), 1, "PRG bank = 5 & 0x03 = 1");
         assert_eq!(mapper.read_chr(0x0000), 5, "CHR bank = 5 & 0x07 = 5");
