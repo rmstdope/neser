@@ -131,11 +131,23 @@ canvas {
 
 .debugger-controls {
     display: flex;
-    flex-wrap: wrap;
+    flex-direction: column;
     gap: 4px;
     margin-bottom: 6px;
     white-space: normal;
     pointer-events: auto;
+}
+
+.debugger-controls-upper,
+.debugger-controls-lower {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-items: center;
+}
+
+.dbg-spacer {
+    flex: 1;
 }
 
 .dbg-btn {
