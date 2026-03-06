@@ -22,15 +22,16 @@ const CHR_RAM_SIZE: usize = 2 * 1024;
 /// Specifications: <https://www.nesdev.org/wiki/INES_Mapper_077>
 /// - PRG-ROM: 32 KB fixed at $8000–$FFFF (no banking)
 /// - CHR-ROM: 16 KB total; 4 KB page selected by register bits [3:0] at $0000–$0FFF
-/// - CHR-RAM: 2 KB on-board SRAM at $1000–$17FF (not bankable); also used as
-///   nametable RAM (accessible to the PPU as nametable memory)
+/// - CHR-RAM: 2 KB on-board SRAM at $1000–$17FF (not bankable), accessible via PPU
+///   pattern-table addresses in that range
 /// - Register: any write to $8000–$FFFF; bits [3:0] select the active 4 KB CHR-ROM page
 /// - Mirroring: one-screen lower (fixed; both nametable addresses map to the same bank)
 ///
 /// PPU CHR address space layout:
 /// - `$0000–$0FFF`: 4 KB CHR-ROM page (bank-switched by register bits [3:0])
 /// - `$1000–$17FF`: 2 KB CHR-RAM (fixed, not bankable)
-/// - `$1800–$1FFF`: CHR-RAM mirror (same 2 KB; used by the PPU as nametable)
+/// - `$1800–$1FFF`: mirror of CHR-RAM ($1000–$17FF) on the cartridge; nametable RAM
+///   remains in CIRAM and is accessed via `read_nametable`/`write_nametable`
 pub struct Mapper77 {
     base: BaseMapper,
     /// Currently selected 4 KB CHR-ROM bank (bits [3:0] of the write register).
@@ -65,8 +66,12 @@ impl Mapper77 {
         if chr_size == 0 {
             return 0;
         }
-        let bank_count = chr_size / CHR_ROM_PAGE_SIZE;
-        let effective_bank = (self.chr_bank as usize) % bank_count.max(1);
+        // Use ceiling division so a partial final page is still addressable.
+        let bank_count = (chr_size + CHR_ROM_PAGE_SIZE - 1) / CHR_ROM_PAGE_SIZE;
+        if bank_count == 0 {
+            return 0;
+        }
+        let effective_bank = (self.chr_bank as usize) % bank_count;
         let index = effective_bank * CHR_ROM_PAGE_SIZE + offset;
         self.base.read_chr_at_index(index)
     }
@@ -131,6 +136,13 @@ impl Mapper for Mapper77 {
     fn restore_chr_ram(&mut self, data: &[u8]) {
         let len = data.len().min(CHR_RAM_SIZE);
         self.chr_ram[..len].copy_from_slice(&data[..len]);
+    }
+
+    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+        // Initialize the base mapper's RAM (PRG-RAM, if any).
+        self.base_mut().initialize_ram(mode);
+        // Also initialize the on-board CHR-RAM that is managed directly by this mapper.
+        crate::console::initialize_ram(&mut self.chr_ram, mode);
     }
 }
 
