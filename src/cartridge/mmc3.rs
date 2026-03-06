@@ -280,12 +280,58 @@ impl MMC3Mapper {
         }
     }
 
-    /// Returns the raw 1KB CHR bank index for the given PPU address, based on
-    /// the current bank register state. Callers apply AND/OR masking.
+    /// Returns the wrapped 1KB CHR bank index for the given PPU address, based on
+    /// the current bank register state. The bank register value is wrapped modulo
+    /// the total physical CHR bank count inside `map_chr_addr_to_bank_1k`. Callers
+    /// apply AND/OR masking.
     pub fn mapped_chr_1k_bank(&self, addr: u16) -> usize {
         let chr_addr = (addr & 0x1FFF) as usize;
         let (bank_index, _) = self.map_chr_addr_to_bank_1k(chr_addr);
         bank_index
+    }
+
+    /// Returns the raw (unwrapped) 1KB CHR bank register value for the given PPU address.
+    ///
+    /// Unlike `mapped_chr_1k_bank`, this does NOT apply modulo-wrapping against the
+    /// physical CHR bank count. Use this when the bank *number itself* is semantically
+    /// meaningful (e.g., mapper 74 treats register values 8–9 as CHR-RAM, regardless
+    /// of the ROM size).
+    pub fn raw_chr_1k_bank(&self, addr: u16) -> usize {
+        let chr_addr = (addr & 0x1FFF) as usize;
+        let r0 = self.regs[0] & 0xFE; // 2KB bank, even-aligned
+        let r1 = self.regs[1] & 0xFE; // 2KB bank, even-aligned
+        let r2 = self.regs[2];
+        let r3 = self.regs[3];
+        let r4 = self.regs[4];
+        let r5 = self.regs[5];
+        let bank_1k = if !self.chr_mode() {
+            // CHR mode 0
+            match chr_addr {
+                0x0000..=0x03FF => r0,
+                0x0400..=0x07FF => r0.wrapping_add(1),
+                0x0800..=0x0BFF => r1,
+                0x0C00..=0x0FFF => r1.wrapping_add(1),
+                0x1000..=0x13FF => r2,
+                0x1400..=0x17FF => r3,
+                0x1800..=0x1BFF => r4,
+                0x1C00..=0x1FFF => r5,
+                _ => 0,
+            }
+        } else {
+            // CHR mode 1
+            match chr_addr {
+                0x0000..=0x03FF => r2,
+                0x0400..=0x07FF => r3,
+                0x0800..=0x0BFF => r4,
+                0x0C00..=0x0FFF => r5,
+                0x1000..=0x13FF => r0,
+                0x1400..=0x17FF => r0.wrapping_add(1),
+                0x1800..=0x1BFF => r1,
+                0x1C00..=0x1FFF => r1.wrapping_add(1),
+                _ => 0,
+            }
+        };
+        bank_1k as usize
     }
 
     /// Reads a byte from PRG ROM at the given 8KB bank and byte offset.

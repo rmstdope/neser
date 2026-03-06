@@ -77,27 +77,44 @@ impl Mapper for Mapper74 {
         self.inner.read_prg(addr)
     }
 
+    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        self.inner.read_prg_open_bus(addr, open_bus)
+    }
+
     fn write_prg(&mut self, addr: u16, value: u8) {
         self.inner.write_prg(addr, value);
     }
 
+    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+        self.inner.initialize_ram(mode);
+        crate::console::initialize_ram(&mut self.chr_ram, mode);
+    }
+
     fn read_chr(&mut self, ppu_addr: u16) -> u8 {
-        let bank = self.inner.mapped_chr_1k_bank(ppu_addr);
+        // Use the raw (unwrapped) register value to determine CHR-RAM vs CHR-ROM:
+        // banks 8–9 always map to CHR-RAM regardless of the physical CHR-ROM size.
+        let raw_bank = self.inner.raw_chr_1k_bank(ppu_addr);
         let offset = (ppu_addr as usize) & Self::CHR_BANK_MASK;
-        if Self::is_chr_ram_bank(bank) {
-            self.chr_ram[Self::chr_ram_index(bank, offset)]
+        if Self::is_chr_ram_bank(raw_bank) {
+            self.chr_ram[Self::chr_ram_index(raw_bank, offset)]
         } else {
-            self.inner.read_chr_1k_at(bank, offset)
+            let wrapped_bank = self.inner.mapped_chr_1k_bank(ppu_addr);
+            self.inner.read_chr_1k_at(wrapped_bank, offset)
         }
     }
 
     fn write_chr(&mut self, ppu_addr: u16, value: u8) {
-        let bank = self.inner.mapped_chr_1k_bank(ppu_addr);
+        // Use the raw (unwrapped) register value to determine CHR-RAM vs CHR-ROM.
+        let raw_bank = self.inner.raw_chr_1k_bank(ppu_addr);
         let offset = (ppu_addr as usize) & Self::CHR_BANK_MASK;
-        if Self::is_chr_ram_bank(bank) {
-            self.chr_ram[Self::chr_ram_index(bank, offset)] = value;
+        if Self::is_chr_ram_bank(raw_bank) {
+            self.chr_ram[Self::chr_ram_index(raw_bank, offset)] = value;
+        } else {
+            // Delegate to inner MMC3 so that CHR-RAM-only cartridges (no CHR-ROM)
+            // still allow writes to non-8/9 banks via the BaseMapper CHR-RAM.
+            let wrapped_bank = self.inner.mapped_chr_1k_bank(ppu_addr);
+            self.inner.write_chr_1k_at(wrapped_bank, offset, value);
         }
-        // Writes to CHR-ROM banks are silently ignored
     }
 
     fn mapper_number(&self) -> u8 {
@@ -105,7 +122,15 @@ impl Mapper for Mapper74 {
     }
 
     fn wram_size(&self) -> usize {
-        8 * 1024
+        self.inner.wram_size()
+    }
+
+    fn wram_snapshot(&self) -> Vec<u8> {
+        self.inner.wram_snapshot()
+    }
+
+    fn load_wram_snapshot(&mut self, data: &[u8]) {
+        self.inner.load_wram_snapshot(data);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
