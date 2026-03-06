@@ -49,7 +49,7 @@ impl Mapper349 {
     fn apply_register_addr(&mut self, addr: u16) {
         self.register_addr = addr;
         if (addr & 0x0800) != 0 {
-            let bank0 = ((addr & 0x001F) | (addr & ((addr & 0x0040) >> 6))) as i16;
+            let bank0 = (addr & 0x001F) as i16;
             let bank1 = ((addr & 0x0018) | 0x0007) as i16;
             self.base.select_prg_page(0, bank0);
             self.base.select_prg_page(1, bank1);
