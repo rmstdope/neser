@@ -79,6 +79,7 @@ Before writing tests or implementation, research mapper behavior in this exact o
 
 1. **Primary source: NesDev specification** for the selected mapper.
 2. **Fallback source: Mesen2 implementation** only when NesDev is missing or incomplete for a specific behavior.
+3. **Fallback source: FCEUX implementation** only when both NesDev and Mesen2 are missing or incomplete for a specific behavior.
 
 Research must cover all applicable mapper aspects, including but not limited to:
 
@@ -112,7 +113,7 @@ When starting implementation:
 
 ## Required validation (must pass before PR)
 
-Run and pass all of the following:
+It is VERY IMPORTANT that you run and pass all of the following:
 
 - `cargo clippy --all-targets --all-features -- -D warnings`
 - `cargo fmt`
@@ -120,6 +121,8 @@ Run and pass all of the following:
 - `wasm-pack test --headless --chrome --features wasm`
 - `source .venv/bin/activate && python -m unittest discover -s scripts/scraper -p "test_*.py"`
 - `cd web && npm test`
+
+THIS VALIDATION IS MANDATORY. Do not skip or ignore any of these steps. If you encounter issues, debug and fix them until all pass before proceeding to PR creation.
 
 ## Pull request requirements
 
