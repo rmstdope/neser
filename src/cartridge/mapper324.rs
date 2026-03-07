@@ -331,19 +331,26 @@ mod tests {
 
     #[test]
     fn bus_conflicts_applied_to_register_writes() {
-        // Given: mapper with PRG ROM all-zeros (bus conflict zeros the write value)
+        // Given: mapper with PRG ROM whose banks are identifiable at offset 0x100,
+        // and ROM byte at $8000 is 0x00 so bus conflicts zero the write value.
         let bank_size = 16 * 1024;
-        let prg_rom = vec![0x00_u8; bank_size * 8]; // all zeros
+        let num_banks = 8;
+        let mut prg_rom = vec![0x00_u8; bank_size * num_banks];
+        // Tag each bank with its index at offset 0x100 so we can detect which bank is mapped.
+        for bank in 0..num_banks {
+            let offset = bank * bank_size + 0x100;
+            prg_rom[offset] = bank as u8;
+        }
         let mut mapper = Mapper324::new(MapperContext::new_for_test(
             324,
             prg_rom,
             vec![],
             NametableLayout::Vertical,
         ));
-        // When: write bank 5 (0x05), but ROM byte is 0x00 → effective = 5 & 0 = 0
+        // When: write bank 5 (0x05), but ROM byte at $8000 is 0x00 → effective = 0x05 & 0x00 = 0x00
         mapper.write_prg(0x8000, 0x05);
-        // Then: bank 0 selected (bus conflict forced selection to 0)
-        assert_eq!(mapper.read_prg(0x8000), 0x00);
+        // Then: bank 0 is selected, so reading at $8100 (offset 0x100 into the lower bank) yields marker 0.
+        assert_eq!(mapper.read_prg(0x8100), 0x00);
     }
 
     #[test]
