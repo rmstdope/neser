@@ -66,6 +66,7 @@ Existing runtime behavior through `Mapper` remains unchanged.
 | 71 | Camerica | | | x | | 8 | 16 | 8 |
 | 78 | Holy Diver/Cosmo Carrier | | x | x | | 8 | 16 | 8 |
 | 206 | Namco 118/108 | | x | | | 8 | 8 | 1 |
+| 347 | Kaiser UNL-KS7030 | | | x | | 8 | 4 | 8 |
 
 ### Notes
 
@@ -80,5 +81,5 @@ Existing runtime behavior through `Mapper` remains unchanged.
 | --------- | --------- |
 | IRQ | 4, 5, 16, 18, 19, 21, 23, 24, 25, 26, 69 |
 | CHR Banking | 1, 3, 4, 5, 9, 10, 11, 13, 16, 18, 19, 21, 22, 23, 24, 25, 26, 29, 34*, 66, 68, 69, 78, 206 |
-| Dynamic Mirroring | 1, 4, 5, 7, 9, 10, 15, 16, 18, 19, 21, 22, 23, 24, 25, 26, 68, 69, 71, 78 |
+| Dynamic Mirroring | 1, 4, 5, 7, 9, 10, 15, 16, 18, 19, 21, 22, 23, 24, 25, 26, 68, 69, 71, 78, 347 |
 | Expansion Audio | 5, 19, 24, 26 |
