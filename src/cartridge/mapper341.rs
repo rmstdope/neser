@@ -34,6 +34,7 @@ impl Mapper341 {
         let mut base = BaseMapper::new(&ctx, capabilities);
         base.configure_prg_banking(PRG_BANK_SIZE_BYTES);
         base.configure_chr_banking(CHR_BANK_SIZE_BYTES);
+        base.set_mirroring(crate::cartridge::NametableLayout::Vertical);
 
         let mut mapper = Self { base, bank: 0 };
         mapper.update_banks();
@@ -160,6 +161,22 @@ mod tests {
 
         mapper.write_prg(0x8002, 0x00);
         assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
+    }
+
+    #[test]
+    fn power_on_mirroring_is_vertical_even_if_header_is_horizontal() {
+        let mapper = Mapper341::new(MapperContext::new_for_test(
+            MAPPER_NUMBER,
+            banked_data(PRG_BANK_SIZE_BYTES, 8),
+            banked_data(CHR_BANK_SIZE_BYTES, 8),
+            NametableLayout::Horizontal,
+        ));
+
+        assert_eq!(
+            mapper.get_mirroring(),
+            NametableLayout::Vertical,
+            "Power-on latch state should default to A1=0 (vertical mirroring)"
+        );
     }
 
     #[test]
