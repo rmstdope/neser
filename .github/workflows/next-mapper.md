@@ -71,7 +71,7 @@ If no eligible issue exists, or a workflow-created PR is already open, exit with
 1. Check for existing open PRs created by this workflow using title prefix `[next-mapper]`.
    - If any such PR exists, stop with `noop`.
 2. Query open issues labeled `mapper`.
-3. Pick the oldest by `createdAt`.
+3. Pick one of the open issues at random.
 4. Skip issues that already have an open PR clearly linked to them.
 
 ## Required mapper research order
