@@ -38,6 +38,7 @@ pub struct Mapper55 {
     base: BaseMapper,
     prg_bank: u8,
     irq: CpuCycleIrq,
+    initial_mirroring: NametableLayout,
 }
 
 impl Mapper55 {
@@ -67,6 +68,7 @@ impl Mapper55 {
                 threshold: 0x6000,
                 mask: 0x7FFF,
             }),
+            initial_mirroring: mirroring,
         };
 
         mapper.update_banks();
@@ -167,6 +169,7 @@ impl Mapper for Mapper55 {
         self.irq.set_enabled(false);
         self.irq.acknowledge();
         self.irq.set_counter(0);
+        self.base.set_mirroring(self.initial_mirroring);
         self.update_banks();
     }
 }
@@ -447,6 +450,11 @@ mod tests {
             mapper.read_prg(0x8000),
             (PRG_BANKS - 4) as u8,
             "$8000 must still be fixed to last-4 bank after reset"
+        );
+        assert_eq!(
+            mapper.get_mirroring(),
+            NametableLayout::Vertical,
+            "Mirroring must reset to header value (Vertical) after reset"
         );
     }
 
