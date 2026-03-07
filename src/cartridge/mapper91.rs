@@ -611,7 +611,10 @@ mod tests {
             mapper2.ppu_address_changed(0x1000);
             mapper2.irq_pending()
         };
-        assert!(!edge, "Restoring A12 state must not cause a spurious rising edge");
+        assert!(
+            !edge,
+            "Restoring A12 state must not cause a spurious rising edge"
+        );
     }
 
     // --- Reset ---
@@ -632,16 +635,48 @@ mod tests {
         mapper.reset();
 
         // PRG slots 0/1 must return to bank 0
-        assert_eq!(mapper.read_prg(0x8000), 0, "PRG slot 0 must reset to bank 0");
-        assert_eq!(mapper.read_prg(0xA000), 0, "PRG slot 1 must reset to bank 0");
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            0,
+            "PRG slot 0 must reset to bank 0"
+        );
+        assert_eq!(
+            mapper.read_prg(0xA000),
+            0,
+            "PRG slot 1 must reset to bank 0"
+        );
         // PRG slots 2/3 must remain fixed
-        assert_eq!(mapper.read_prg(0xC000), 4, "PRG slot 2 must stay fixed after reset");
-        assert_eq!(mapper.read_prg(0xE000), 5, "PRG slot 3 must stay fixed after reset");
+        assert_eq!(
+            mapper.read_prg(0xC000),
+            4,
+            "PRG slot 2 must stay fixed after reset"
+        );
+        assert_eq!(
+            mapper.read_prg(0xE000),
+            5,
+            "PRG slot 3 must stay fixed after reset"
+        );
         // CHR slots must return to bank 0
-        assert_eq!(mapper.read_chr(0x0000), 0, "CHR slot 0 must reset to bank 0");
-        assert_eq!(mapper.read_chr(0x0800), 0, "CHR slot 1 must reset to bank 0");
-        assert_eq!(mapper.read_chr(0x1000), 0, "CHR slot 2 must reset to bank 0");
-        assert_eq!(mapper.read_chr(0x1800), 0, "CHR slot 3 must reset to bank 0");
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            0,
+            "CHR slot 0 must reset to bank 0"
+        );
+        assert_eq!(
+            mapper.read_chr(0x0800),
+            0,
+            "CHR slot 1 must reset to bank 0"
+        );
+        assert_eq!(
+            mapper.read_chr(0x1000),
+            0,
+            "CHR slot 2 must reset to bank 0"
+        );
+        assert_eq!(
+            mapper.read_chr(0x1800),
+            0,
+            "CHR slot 3 must reset to bank 0"
+        );
         // IRQ must be disabled and not pending
         assert!(!mapper.irq_pending(), "IRQ must not be pending after reset");
     }
