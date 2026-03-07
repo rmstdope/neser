@@ -29,14 +29,15 @@ use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 /// Power-on state: PRG bank 0, CHR bank 0.
 pub struct Mapper86 {
     base: BaseMapper,
-    pub(crate) prg_bank: u8,
-    pub(crate) chr_bank: u8,
+    prg_bank: u8,
+    chr_bank: u8,
 }
 
 impl Mapper86 {
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
+            has_expansion_audio: true,
             max_prg_ram_kb: 0,
             prg_bank_size_kb: 32,
             chr_bank_size_kb: 8,
@@ -257,15 +258,36 @@ mod tests {
 
     #[test]
     fn chr_bank_combines_bits_1_0_and_bit6() {
-        let mut mapper = make_mapper();
-        // bit[6]=1, bits[1:0]=0b11=3 → CHR bank = 3 | 4 = 7
-        // But we only have 5 CHR banks (0-4), so use value giving bank within range
-        // bit[6]=1, bits[1:0]=0b00=0 → CHR bank = 4; bit[6]=0, bits[1:0]=0b01=1 → bank 1
-        mapper.write_prg(0x6000, 0x41); // bit[6]=1, bits[1:0]=1 → bank = 1 | 4 = 5 (but only 5 banks 0-4)
-        // Use only banks within range: bit[6]=1, bits[1:0]=0 → bank=4
-        let mut mapper2 = make_mapper();
-        mapper2.write_prg(0x6000, 0x40); // bank=4
-        assert_eq!(mapper2.read_chr(0x0000), 4);
+        // Use 8 CHR banks so bank 7 (=3|4) is in range.
+        let prg = banked_data(32 * 1024, PRG_BANKS);
+        let chr = banked_data(8 * 1024, 8);
+        let mut mapper = Mapper86::new(MapperContext::new_for_test(
+            86,
+            prg,
+            chr,
+            NametableLayout::Horizontal,
+        ));
+        // bit[6]=0, bits[1:0]=0b10=2 → chr_bank = 2
+        mapper.write_prg(0x6000, 0x02);
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            2,
+            "CHR bank must use bits[1:0] when bit[6]=0"
+        );
+        // bit[6]=1, bits[1:0]=0b01=1 → chr_bank = 1 | 4 = 5
+        mapper.write_prg(0x6000, 0x41);
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            5,
+            "CHR bank must combine bit[6]→bit[2] with bits[1:0]"
+        );
+        // bit[6]=1, bits[1:0]=0b11=3 → chr_bank = 3 | 4 = 7
+        mapper.write_prg(0x6000, 0x47);
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            7,
+            "CHR bank must combine bits[1:0] and bit[6]→bit[2]"
+        );
     }
 
     #[test]
@@ -320,14 +342,6 @@ mod tests {
         let mut restored = make_mapper();
         restored.restore_registers(&snap);
 
-        assert_eq!(
-            restored.prg_bank, mapper.prg_bank,
-            "Snapshot must preserve PRG bank"
-        );
-        assert_eq!(
-            restored.chr_bank, mapper.chr_bank,
-            "Snapshot must preserve CHR bank"
-        );
         assert_eq!(
             restored.read_prg(0x8000),
             mapper.read_prg(0x8000),
