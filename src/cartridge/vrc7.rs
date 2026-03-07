@@ -251,12 +251,18 @@ impl Mapper for VRC7Mapper {
         self.prg_ram.load_snapshot(data);
     }
 
+    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+        self.prg_ram.initialize(mode);
+        self.base.initialize_ram(mode);
+    }
+
     fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
-        // PRG-RAM read when disabled returns open bus (0)
+        // Reads from $6000-$7FFF return open bus when PRG-RAM is disabled.
+        // All other addresses (PRG-ROM at $8000-$FFFF) return ROM data.
         if (self.control & 0x80) == 0 && (0x6000..=0x7FFF).contains(&addr) {
-            return 0;
+            return open_bus;
         }
-        open_bus
+        self.read_prg(addr)
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -492,6 +498,36 @@ mod tests {
         // Enable RAM and verify value was not written
         mapper.write_prg(0xE000, 0x80);
         assert_ne!(mapper.read_prg(0x6000), 0xCD);
+    }
+
+    // ── read_prg_open_bus ────────────────────────────────────────────────────
+
+    #[test]
+    fn read_prg_open_bus_returns_rom_data_for_prg_rom_addresses() {
+        // PRG-ROM reads ($8000-$FFFF) should return ROM data, not open bus.
+        let mut mapper = create_vrc7(prg_rom(8), chr_rom(8), NametableLayout::Horizontal);
+        mapper.write_prg(0x8000, 3); // select bank 3 for window 0
+        // read_prg and read_prg_open_bus must agree for ROM addresses
+        let rom_value = mapper.read_prg(0x8000);
+        assert_eq!(mapper.read_prg_open_bus(0x8000, 0xFF), rom_value);
+        // open-bus sentinel (0xFF) must NOT bleed through
+        assert_ne!(mapper.read_prg_open_bus(0x8000, 0xFF), 0xFF);
+    }
+
+    #[test]
+    fn read_prg_open_bus_returns_open_bus_for_disabled_ram() {
+        // When PRG-RAM is disabled, $6000 reads must return the open-bus value.
+        let mapper = create_vrc7(prg_rom(8), chr_rom(8), NametableLayout::Horizontal);
+        assert_eq!(mapper.read_prg_open_bus(0x6000, 0xAB), 0xAB);
+    }
+
+    #[test]
+    fn read_prg_open_bus_returns_ram_data_when_enabled() {
+        // When PRG-RAM is enabled, $6000-$7FFF reads must return RAM contents.
+        let mut mapper = create_vrc7(prg_rom(8), chr_rom(8), NametableLayout::Horizontal);
+        mapper.write_prg(0xE000, 0x80); // enable PRG-RAM
+        mapper.write_prg(0x6000, 0x55);
+        assert_eq!(mapper.read_prg_open_bus(0x6000, 0xFF), 0x55);
     }
 
     // ── IRQ ──────────────────────────────────────────────────────────────────
