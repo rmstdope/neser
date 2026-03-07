@@ -24,7 +24,8 @@ use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 /// - CHR: 8 KiB bank = game_select
 ///
 /// The game is selected by a 2-bit internal counter that increments on every
-/// soft reset and wraps from 3 back to 0.
+/// reset and wraps from 3 back to 0. On hard reset (power-on), the counter
+/// is pre-set so that the boot-time reset always selects game 0.
 pub struct Mapper60 {
     base: BaseMapper,
     game_select: u8, // 2-bit counter, incremented on reset
@@ -35,6 +36,7 @@ impl Mapper60 {
         let capabilities = MapperCapabilities {
             prg_bank_size_kb: 16,
             chr_bank_size_kb: 8,
+            has_chr_banking: true,
             ..Default::default()
         };
         let mut base = BaseMapper::new(&ctx, capabilities);
@@ -84,6 +86,14 @@ impl Mapper for Mapper60 {
     fn reset(&mut self) {
         self.game_select = (self.game_select + 1) & 0x03;
         self.apply_game_select();
+    }
+
+    /// On hard reset, pre-set `game_select` to 3 so that the subsequent
+    /// `reset()` call during hard reset advances to 0 (power-on game).
+    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+        self.game_select = 3;
+        self.apply_game_select();
+        self.base_mut().initialize_ram(mode);
     }
 }
 
@@ -188,5 +198,21 @@ mod tests {
         r.restore_registers(&snap);
         assert_eq!(r.read_prg(0x8000), 2);
         assert_eq!(r.read_chr(0x0000), 2);
+    }
+
+    #[test]
+    fn hard_reset_starts_at_game_0() {
+        let mut mapper = make_mapper();
+        mapper.reset(); // reset -> game 1
+        mapper.reset(); // reset -> game 2
+        // Simulate hard reset: initialize_ram then reset
+        mapper.initialize_ram(crate::console::RamInitMode::Zero);
+        mapper.reset();
+        assert_eq!(
+            mapper.game_select, 0,
+            "hard reset must start at game 0"
+        );
+        assert_eq!(mapper.read_prg(0x8000), 0);
+        assert_eq!(mapper.read_chr(0x0000), 0);
     }
 }
