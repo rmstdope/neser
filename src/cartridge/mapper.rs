@@ -79,6 +79,7 @@ use super::mapper254::Mapper254;
 use super::mapper255::Mapper255;
 use super::mapper327::Mapper327;
 use super::mapper328::Mapper328;
+use super::mapper342::Mapper342;
 use super::mapper344::Mapper344;
 use super::mapper345::Mapper345;
 use super::mapper346::Mapper346;
@@ -686,7 +687,8 @@ mapper_registry! {
     58 => Mapper58::new,
     59 => Mapper59::new,
     60 => Mapper60::new,
-    343 => Mapper60::new,
+    342 => Mapper342::new,
+    343 => Mapper343::new,
     61 => Mapper61::new,
     62 => Mapper62::new,
     63 => Mapper63::new,
@@ -738,7 +740,7 @@ const SUPPORTED_MAPPERS: &[u16] = &[
     26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
     50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73,
     74, 75, 77, 78, 81, 82, 83, 84, 85, 86, 87, 88, 90, 129, 132, 133, 140, 155, 185, 205, 206,
-    241, 242, 243, 244, 245, 246, 251, 254, 255, 327, 328, 343, 344, 345, 346, 347, 348, 349, 350,
+    241, 242, 243, 244, 245, 246, 251, 254, 255, 327, 328, 342, 343, 344, 345, 346, 347, 348, 349, 350,
 ];
 
 /// List of supported iNES mapper IDs handled by the factory.
@@ -897,6 +899,20 @@ mod tests {
         let result = create_mapper(metadata);
 
         assert!(result.is_ok(), "Mapper 344 (GN-26) should be created");
+    }
+
+    #[test]
+    fn create_mapper_accepts_mapper_342_coolgirl() {
+        let metadata = MapperContext::new_for_test(
+            342,
+            vec![0u8; 256 * 1024],
+            vec![0u8; 8 * 1024],
+            NametableLayout::Vertical,
+        );
+
+        let result = create_mapper(metadata);
+
+        assert!(result.is_ok(), "Mapper 342 (COOLGIRL) should be created");
     }
 
     #[test]
