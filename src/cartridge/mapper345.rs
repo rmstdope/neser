@@ -92,6 +92,10 @@ impl Mapper345 {
     fn mapped_chr_1k_bank(&self, addr: u16) -> usize {
         self.mmc3.mapped_chr_1k_bank(addr) & 0x07
     }
+
+    fn is_mmc3_mirroring_write(addr: u16) -> bool {
+        (addr & 0xF001) == 0xA000
+    }
 }
 
 impl Mapper for Mapper345 {
@@ -136,7 +140,7 @@ impl Mapper for Mapper345 {
 
         if (0x8000..=0xFFFF).contains(&addr) {
             self.mmc3.write_prg(addr, value);
-            if (addr & 0x6001) == 0x2000 {
+            if Self::is_mmc3_mirroring_write(addr) {
                 self.mmc3_mirroring_horizontal = (value & 0x01) != 0;
                 self.apply_mirroring();
             }
@@ -289,6 +293,37 @@ mod tests {
 
         mapper.write_prg(0x6000, 0x30);
         assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenUpper);
+
+        mapper.write_prg(0x6000, 0x00);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
+    }
+
+    #[test]
+    fn write_6000_is_ignored_when_prg_ram_is_not_writable() {
+        let mut mapper = make_mapper();
+
+        mapper.write_prg(0xA000, 0x01);
+        let expected_bank_8000 = mapper.read_prg(0x8000);
+        let expected_bank_e000 = mapper.read_prg(0xE000);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
+
+        mapper.write_prg(0xA001, 0xC0);
+        mapper.write_prg(0x6000, 0x33);
+
+        assert_eq!(mapper.read_prg(0x8000), expected_bank_8000);
+        assert_eq!(mapper.read_prg(0xE000), expected_bank_e000);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
+    }
+
+    #[test]
+    fn non_a000_writes_do_not_change_cached_mmc3_mirroring_state() {
+        let mut mapper = make_mapper();
+
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
+
+        mapper.write_prg(0xB000, 0x01);
+        mapper.write_prg(0x6000, 0x20);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenLower);
 
         mapper.write_prg(0x6000, 0x00);
         assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
