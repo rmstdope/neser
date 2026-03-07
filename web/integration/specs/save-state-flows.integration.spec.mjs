@@ -8,6 +8,7 @@ import {
 const SAVE_STATE_BUTTON_SELECTOR = "#save-state";
 const LOAD_STATE_BUTTON_SELECTOR = "#load-state";
 const STATUS_SELECTOR = "#status";
+const TOAST_SELECTOR = ".neser-toast";
 
 test.describe("Phase 2 save-state flows", () => {
     test("Given emulator has started, when save state is clicked, then state is stored successfully", async ({ page }) => {
@@ -83,6 +84,35 @@ test.describe("Phase 2 save-state flows", () => {
         // Load should still work
         await loadButton.click();
         await expect(statusLabel).toContainText("State loaded", { timeout: 5000 });
+    });
+
+    test("Given emulator has started, when save state is clicked, then a toast notification is shown", async ({ page }) => {
+        await startFromBundledRom(page);
+
+        const saveButton = page.locator(SAVE_STATE_BUTTON_SELECTOR);
+
+        await saveButton.click();
+
+        await expect(page.locator(TOAST_SELECTOR).filter({ hasText: "State saved" })).toBeVisible({
+            timeout: 5000
+        });
+    });
+
+    test("Given state has been saved, when load state is clicked, then a toast notification is shown", async ({ page }) => {
+        await startFromBundledRom(page);
+
+        const saveButton = page.locator(SAVE_STATE_BUTTON_SELECTOR);
+        const loadButton = page.locator(LOAD_STATE_BUTTON_SELECTOR);
+        const statusLabel = page.locator(STATUS_SELECTOR);
+
+        await saveButton.click();
+        await expect(statusLabel).toContainText("State saved", { timeout: 5000 });
+
+        await loadButton.click();
+
+        await expect(page.locator(TOAST_SELECTOR).filter({ hasText: "State loaded" })).toBeVisible({
+            timeout: 5000
+        });
     });
 });
 
