@@ -390,9 +390,7 @@ impl Mapper for Mapper90 {
 
     fn cpu_cycle(&mut self) {
         self.a12.cpu_tick();
-        if self.irq_source == IrqSource::CpuClock
-            || self.irq_source == IrqSource::CpuWrite
-        {
+        if self.irq_source == IrqSource::CpuClock || self.irq_source == IrqSource::CpuWrite {
             self.tick_irq();
         }
     }
