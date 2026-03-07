@@ -300,7 +300,7 @@ impl Mapper for Mapper90 {
             },
             _ => self
                 .base
-                .read_prg_open_bus(addr, open_bus, |a| self.base.read_prg_rom(a)),
+                .read_prg_open_bus(addr, open_bus, |a| self.read_prg(a)),
         }
     }
 
