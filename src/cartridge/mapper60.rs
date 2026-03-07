@@ -117,6 +117,27 @@ mod tests {
     }
 
     #[test]
+    fn mapper_343_is_mapper_60_compatible_alias() {
+        let mut mapper = create_mapper(MapperContext::new_for_test(
+            343,
+            banked_data(16 * 1024, 4),
+            banked_data(8 * 1024, 4),
+            NametableLayout::Horizontal,
+        ))
+        .expect("Mapper 343 must be registered as a Mapper 60-compatible alias");
+
+        assert_eq!(mapper.read_prg(0x8000), 0);
+        assert_eq!(mapper.read_prg(0xC000), 0);
+        assert_eq!(mapper.read_chr(0x0000), 0);
+
+        mapper.reset();
+
+        assert_eq!(mapper.read_prg(0x8000), 1);
+        assert_eq!(mapper.read_prg(0xC000), 1);
+        assert_eq!(mapper.read_chr(0x0000), 1);
+    }
+
+    #[test]
     fn default_is_game_0() {
         let mut mapper = make_mapper();
         assert_eq!(mapper.read_prg(0x8000), 0);

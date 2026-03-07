@@ -67,6 +67,7 @@ Existing runtime behavior through `Mapper` remains unchanged.
 | 78 | Holy Diver/Cosmo Carrier | | x | x | | 8 | 16 | 8 |
 | 87 | Jaleco/Konami CHR-only | | x | | | 0 | 32 | 8 |
 | 206 | Namco 118/108 | | x | | | 8 | 8 | 1 |
+| 343 | Reset-based 4-in-1 multicart | | | | | 8 | 16 | 8 |
 | 344 | BMC-GN-26 | x | x | x | | 8 | 8 | 1 |
 | 346 | Kaiser KS7012 | | | | | 0 | 32 | 8 |
 | 347 | Kaiser UNL-KS7030 | | | x | | 8 | 4 | 8 |
