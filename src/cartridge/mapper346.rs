@@ -152,4 +152,19 @@ mod tests {
         mapper.write_prg(0xE0A0, 0x00);
         assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
     }
+
+    #[test]
+    fn snapshot_restore_preserves_prg_bank_selection() {
+        let mut mapper = make_mapper();
+        mapper.write_prg(0xE0A0, 0x00);
+        assert_eq!(mapper.read_prg(0x8000), 0);
+
+        let snapshot = mapper.registers_snapshot();
+
+        let mut restored = make_mapper();
+        restored.restore_registers(&snapshot);
+
+        assert_eq!(restored.read_prg(0x8000), 0);
+        assert_eq!(restored.read_prg(0xFFFF), 0);
+    }
 }

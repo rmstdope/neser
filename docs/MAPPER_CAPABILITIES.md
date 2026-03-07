@@ -66,7 +66,7 @@ Existing runtime behavior through `Mapper` remains unchanged.
 | 71 | Camerica | | | x | | 8 | 16 | 8 |
 | 78 | Holy Diver/Cosmo Carrier | | x | x | | 8 | 16 | 8 |
 | 206 | Namco 118/108 | | x | | | 8 | 8 | 1 |
-| 346 | Kaiser KS7012 | | | | | 8 | 32 | 8 |
+| 346 | Kaiser KS7012 | | | | | 0 | 32 | 8 |
 | 347 | Kaiser UNL-KS7030 | | | x | | 8 | 4 | 8 |
 
 ### Notes
