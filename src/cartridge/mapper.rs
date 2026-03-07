@@ -81,6 +81,7 @@ use super::mapper255::Mapper255;
 use super::mapper324::Mapper324;
 use super::mapper327::Mapper327;
 use super::mapper328::Mapper328;
+use super::mapper341::Mapper341;
 use super::mapper342::Mapper342;
 use super::mapper344::Mapper344;
 use super::mapper345::Mapper345;
@@ -658,6 +659,7 @@ mapper_registry! {
     33 => TaitoTc0190Mapper::new,
     34 => BnromNinaMapper::new,
     35 => Mapper35::new,
+    341 => Mapper341::new,
     344 => Mapper344::new,
     345 => Mapper345::new,
     346 => Mapper346::new,
@@ -904,6 +906,36 @@ mod tests {
         let result = create_mapper(metadata);
 
         assert!(result.is_ok(), "Mapper 344 (GN-26) should be created");
+    }
+
+    #[test]
+    fn create_mapper_accepts_mapper_341_tj03() {
+        let metadata = MapperContext::new_for_test(
+            341,
+            vec![0u8; 16 * 1024 * 8],
+            vec![0u8; 8 * 1024 * 8],
+            NametableLayout::Vertical,
+        );
+
+        let result = create_mapper(metadata);
+        assert!(result.is_ok(), "Mapper 341 (BMC-TJ-03) should be created");
+    }
+
+    #[test]
+    fn mapper_341_reports_no_irq_and_no_expansion_audio() {
+        let metadata = MapperContext::new_for_test(
+            341,
+            vec![0u8; 16 * 1024 * 8],
+            vec![0u8; 8 * 1024 * 8],
+            NametableLayout::Vertical,
+        );
+        let mapper = create_mapper(metadata).expect("Mapper 341 should be created");
+        let caps = mapper.capabilities();
+
+        assert!(!caps.has_irq);
+        assert!(!caps.has_expansion_audio);
+        assert_eq!(caps.prg_bank_size_kb, 16);
+        assert_eq!(caps.chr_bank_size_kb, 8);
     }
 
     #[test]
