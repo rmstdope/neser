@@ -96,6 +96,7 @@ use super::taito_tc0190::TaitoTc0190Mapper;
 use super::uxrom::UxROMMapper;
 use super::vrc2_vrc4::Vrc2Vrc4Mapper;
 use super::vrc6::VRC6Mapper;
+use super::vrc7::VRC7Mapper;
 
 /// Metadata for constructing a mapper, containing cartridge header details and
 /// derived values (e.g., CRC32) used by the factory.
@@ -690,6 +691,7 @@ mapper_registry! {
     82 => Mapper82::new,
     83 => Mapper83::new,
     84 => Ntdec2722Mapper::new,
+    85 => VRC7Mapper::new,
     129 => Mapper58::new,
     132 => Mapper132::new,
     133 => Mapper133::new,
@@ -714,8 +716,8 @@ const SUPPORTED_MAPPERS: &[u16] = &[
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
     26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
     50, 51, 52, 53, 54, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74,
-    75, 77, 78, 81, 82, 83, 84, 129, 132, 133, 140, 155, 185, 205, 206, 241, 242, 243, 244, 245,
-    246, 251, 254, 255, 347, 348, 349, 350,
+    75, 77, 78, 81, 82, 83, 84, 85, 129, 132, 133, 140, 155, 185, 205, 206, 241, 242, 243, 244,
+    245, 246, 251, 254, 255, 347, 348, 349, 350,
 ];
 
 /// List of supported iNES mapper IDs handled by the factory.

@@ -68,6 +68,7 @@ mappers that are not yet implemented.
 | 82 | Taito X1-017 (Kyuukyoku Harikiri Stadium II/III) | 3 × 8 KB switchable PRG + last fixed; CHR 2×2 KB + 4×1 KB (mode-selectable); H/V switchable; 5 KB password-protected PRG-RAM | None | None | 5 KB (password-gated) | ✅ | Registers at $7EF0–$7EFF. RAM split into three independently password-protected regions. CHR mode bit swaps 2 KB and 1 KB halves. PRG bank = write-value >> 2. No deltas. |
 | 83 | Caltron 6-in-1 (Dragon Ball Z Party multicart) | 4 × 8 KB switchable PRG (or 32 KB mode); 8 × 1 KB or 4 × 2 KB switchable CHR; H/V/1scA/1scB programmable; 16-bit CPU-cycle IRQ | None | None | None | ✅ | Registers at $5000/$5100–$5103/$8000–$8317. PRG 8-bank mode via $8300–$8302; 32 KB mode via $8000/$8100 bit 6. CHR 1 KB default; 2 KB mode set by $8000 write; $8312–$8315 clears 2 KB mode. IRQ counter written $8200/$8201; enabled by $8100 bit 7 latch. DIP switches at $5000 not emulated (always 0). |
 | 84 | PC-SMB2J (Super Mario Bros. 2 Japan FDS conversion) | 3 fixed 8 KB banks (4/5/7) + 1 switchable (via $E000); fixed bank 6 at $6000 | 8 KB fixed | Fixed from header | CPU-cycle (4096-cycle, self-ack at 8192) | None | None | ✅ | NesDev spec says "details unknown; maybe same FDS port as Mapper 40". Implemented following Mapper 040 (NTDEC 2722) layout. $8000=IRQ disable/ack, $A000=IRQ enable, $E000=bank select. |
+| 85 | Konami VRC7 | 3 × 8 KB switchable ($8000/$A000/$C000) + last 8 KB fixed at $E000 | 8 × 1 KB switchable ($0000–$1FFF) | H / V / 1scA / 1scB via $E000 bits[1:0] | CPU-cycle (VrcIrq, $E008/$F000/$F008) | YM2413/OPLL FM (stubbed) | 8 KB at $6000–$7FFF (enabled by $E000 bit 7) | ⚠️ | FM audio (YM2413/OPLL) is stubbed with silence. Address bit 4 remapped to bit 3 per VRC7 PCB wiring (except $9010). |
 | 129 | Duplicate assignment (Mapper 58 alias) | Same as mapper 58 | Same as mapper 58 | Same as mapper 58 | None | None | None | ✅ | NesDev marks mapper 129 as duplicate assignment of mapper 58; routed to mapper 58 implementation in factory. |
 | 132 | TXC 22111 / UNL-22211 | 32 KB switchable (selected by output bit 2) | 8 KB switchable (selected by output bits 1:0) | Fixed from header | None | None | None | ✅ | Register window decoded via `$E103` mask in `$4100-$4FFF`, status readback at `$4100` (`S xor V` + `RRR`), and bank output applied on `$8000` writes per NesDev. |
 | 205 | BMC-JC-016-2 (MMC3 multicart) | MMC3 8 KB PRG banks constrained by outer block register | MMC3 1 KB CHR banks constrained by outer block register | MMC3 H / V | MMC3 scanline | None | None | ✅ | Outer block register at `$6000-$7FFF` (`MM`) selects PRG/CHR `AND/OR` masks per NesDev table. No PRG-RAM window at `$6000-$7FFF`. |
@@ -99,7 +100,6 @@ commonly-played or interesting gaps. The full NesDev mapper list is at
 | 75 | Konami VRC1 | Exciting Boxing, Tetris (J), King Kong 2 | 8 KB PRG × 2 + fixed, 4 KB CHR × 2, switchable H/V |
 | 76 | Namco 109 | Megami Tensei | MMC3/206 variant with 2 KB CHR inflated to 2 KB |
 | 79 | NINA-03/06 | AVE Nina games, Tiles of Fate | Simple: 3-bit PRG + 4-bit CHR register at $4100 |
-| 85 | Konami VRC7 | Lagrange Point | 8 KB PRG × 3 + fixed, 8 × 1 KB CHR, FM audio (YM2413 OPLL) |
 | 86 | Jaleco JF-13 | Moero!! Pro Yakyuu | Similar to mapper 101; 3-bit CHR + 2-bit PRG |
 | 87 | Konami/Jaleco (simple CHR) | Goonies, City Connection | 2-bit CHR bank, fixed 32 KB PRG |
 | 88 | Namco 118 | Youkai Douchuuki, Devil Man | Mapper 206 variant with 128 KB CHR (A12 wired to CHR A16) |
@@ -136,7 +136,7 @@ commonly-played or interesting gaps. The full NesDev mapper list is at
 | 19 | Namco 163 wavetable | Implemented |
 | 24 / 26 | VRC6 pulse + sawtooth | Implemented |
 | 69 | Sunsoft 5B (YM2149) | **Not implemented** → Gimmick! music broken |
-| 85 | VRC7 FM (YM2413) | Not implemented (mapper itself not supported) |
+| 85 | VRC7 FM (YM2413) | Implemented (mapper supported; FM audio stubbed with silence) |
 
 ### Save Game (EEPROM/SRAM) Status
 

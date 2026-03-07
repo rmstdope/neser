@@ -103,6 +103,7 @@ pub mod test_helpers;
 mod uxrom;
 mod vrc2_vrc4;
 mod vrc6;
+mod vrc7;
 mod vrc_irq;
 
 #[allow(unused_imports)]
