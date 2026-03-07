@@ -375,17 +375,24 @@ impl Mapper for Mapper90 {
     }
 
     fn ppu_address_changed(&mut self, addr: u16) {
-        if self.irq_source == IrqSource::PpuA12Rise && self.a12.update(addr) {
+        // Always update the A12 edge detector for correct filtering,
+        // regardless of which IRQ source is selected.
+        let a12_rose = self.a12.update(addr);
+
+        if self.irq_source == IrqSource::PpuA12Rise && a12_rose {
+            // IRQ source 1: tick on PPU A12 rising edge
             self.tick_irq();
-        } else if self.irq_source != IrqSource::PpuA12Rise {
-            // still update detector for correct filtering
-            self.a12.update(addr);
+        } else if self.irq_source == IrqSource::PpuRead {
+            // IRQ source 2: tick on PPU activity (approximated here by address changes)
+            self.tick_irq();
         }
     }
 
     fn cpu_cycle(&mut self) {
         self.a12.cpu_tick();
-        if self.irq_source == IrqSource::CpuClock {
+        if self.irq_source == IrqSource::CpuClock
+            || self.irq_source == IrqSource::CpuWrite
+        {
             self.tick_irq();
         }
     }
