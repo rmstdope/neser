@@ -110,13 +110,13 @@ impl Mapper for Mapper88 {
             return;
         }
         // All writes $8000–$FFFF are redirected to $8000/$8001 only.
-        // Bank select (even): bit 7 (CHR mode) and bit 6 (PRG mode) are ignored.
         // Bank data (odd): written to selected register.
         if addr >= 0x8000 {
             match addr & 0x8001 {
                 0x8000 => {
-                    self.bank_select = value & Self::REG_SELECT_MASK;
-                    self.update_banks();
+                    // Bits 6–7 (PRG/CHR mode) are always forced to 0; bits 3–5 are preserved
+                    // in the snapshot but unused. Bits 0–2 select the target register (0–7).
+                    self.bank_select = value & 0x3F;
                 }
                 0x8001 => {
                     let reg = self.selected_reg();
@@ -362,7 +362,7 @@ mod tests {
     // ---------- Mirroring and IRQ tests ----------
 
     #[test]
-    fn mirroring_is_fixed_from_header_writes_to_high_addresses_ignored() {
+    fn mirroring_is_fixed_from_header_high_addr_writes_redirect_to_bank_regs() {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1024, 8);
 
