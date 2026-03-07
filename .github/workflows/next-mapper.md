@@ -33,6 +33,7 @@ network:
     - "nesdev.org"
     - "web.archive.org"
     - "fceux.com"
+    - "python"
 
 tools:
   github:
