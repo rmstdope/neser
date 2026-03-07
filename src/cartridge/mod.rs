@@ -60,6 +60,7 @@ mod mapper51;
 mod mapper52;
 mod mapper53;
 mod mapper54;
+mod mapper55;
 mod mapper56;
 mod mapper57;
 mod mapper58;
