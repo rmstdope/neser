@@ -17,9 +17,9 @@ use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 /// Hardware: RT-01 discrete logic (single game known: Thunderbirds)
 ///
 /// Specifications (Mesen2 `Rt01.h`):
-/// - PRG-ROM: Fixed 32 KiB at $8000–$FFFF (two 16 KiB pages, both at bank 0)
+/// - PRG-ROM: Fixed 32 KiB at $8000–$FFFF (bank 0 at $8000–$BFFF, bank 1 at $C000–$FFFF)
 /// - PRG-RAM: None
-/// - CHR: Fixed 8 KiB ROM (four 2 KiB pages, all at bank 0)
+/// - CHR: Fixed 8 KiB ROM (banks 0–3 at 2 KiB each across $0000–$1FFF)
 /// - Mirroring: Fixed from header (not programmable)
 /// - Bus conflicts: None
 /// - IRQ: None
@@ -29,7 +29,7 @@ use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 /// - $FE80–$FEFF: returns copy-protection value (0xFF)
 /// - All other $8000–$FFFF reads: normal ROM data
 ///
-/// Power-on state: bank 0 for all PRG and CHR pages.
+/// Power-on state: PRG slots 0/1 mapped to banks 0/1; CHR slots 0–3 mapped to banks 0–3.
 pub struct Mapper328 {
     base: BaseMapper,
 }
@@ -52,11 +52,11 @@ impl Mapper328 {
 
     fn update_banks(&mut self) {
         self.base.select_prg_page(0, 0);
-        self.base.select_prg_page(1, 0);
+        self.base.select_prg_page(1, 1);
         self.base.select_chr_page(0, 0);
-        self.base.select_chr_page(1, 0);
-        self.base.select_chr_page(2, 0);
-        self.base.select_chr_page(3, 0);
+        self.base.select_chr_page(1, 1);
+        self.base.select_chr_page(2, 2);
+        self.base.select_chr_page(3, 3);
     }
 
     fn is_protection_addr(addr: u16) -> bool {
@@ -152,22 +152,22 @@ mod tests {
     }
 
     #[test]
-    fn power_on_prg_c000_reads_bank_0() {
+    fn power_on_prg_c000_reads_bank_1() {
         let mapper = make_mapper();
-        // Second 16KB window also fixed to bank 0 (mirrored).
+        // Second 16KB window is fixed to bank 1.
         assert_eq!(
             mapper.read_prg(0xC000),
-            0,
-            "$C000 must map to PRG bank 0 at power-on"
+            1,
+            "$C000 must map to PRG bank 1 at power-on"
         );
     }
 
     #[test]
-    fn prg_is_fully_mirrored_both_windows_bank_0() {
+    fn power_on_prg_lower_window_bank_0_upper_window_bank_1() {
         let prg = banked_data(16 * 1024, PRG_BANKS);
         let chr = banked_data(2 * 1024, CHR_BANKS);
         // Bank 0 byte at offset 0 = 0; bank 1 byte at offset 0 = 1.
-        // Both windows must return 0 (bank 0).
+        // Lower window ($8000-$BFFF) must return bank 0 data, upper ($C000-$FFFF) bank 1.
         let mapper = Mapper328::new(MapperContext::new_for_test(
             328,
             prg,
@@ -175,21 +175,19 @@ mod tests {
             NametableLayout::Horizontal,
         ));
         assert_eq!(mapper.read_prg(0x8000), 0, "Lower window must be bank 0");
-        // $C000 in the second 16KB window but that window also maps to bank 0.
-        // The byte at offset 0 of bank 0 is 0.
-        assert_eq!(mapper.read_prg(0xC001), 0, "Upper window must be bank 0");
+        assert_eq!(mapper.read_prg(0xC001), 1, "Upper window must be bank 1");
     }
 
     // --- Power-on state: CHR ---
 
     #[test]
-    fn power_on_chr_all_pages_bank_0() {
+    fn power_on_chr_pages_at_respective_banks() {
         let mut mapper = make_mapper();
-        // Each 2KB page should read bank 0 (byte value 0).
+        // Each 2KB page maps to its own bank: page 0→bank 0, page 1→bank 1, etc.
         assert_eq!(mapper.read_chr(0x0000), 0, "CHR page 0 must be bank 0");
-        assert_eq!(mapper.read_chr(0x0800), 0, "CHR page 1 must be bank 0");
-        assert_eq!(mapper.read_chr(0x1000), 0, "CHR page 2 must be bank 0");
-        assert_eq!(mapper.read_chr(0x1800), 0, "CHR page 3 must be bank 0");
+        assert_eq!(mapper.read_chr(0x0800), 1, "CHR page 1 must be bank 1");
+        assert_eq!(mapper.read_chr(0x1000), 2, "CHR page 2 must be bank 2");
+        assert_eq!(mapper.read_chr(0x1800), 3, "CHR page 3 must be bank 3");
     }
 
     // --- Copy-protection reads ---
@@ -240,24 +238,23 @@ mod tests {
 
     #[test]
     fn reads_just_outside_ce80_range_return_rom_data() {
-        // $CE7F is just below the protection range.
+        // $CE7F is just below the protection range; falls in the upper (bank 1) window.
         let mapper = make_mapper();
-        // ROM bank 0 byte at offset $4E7F (= $CE7F - $8000) = 0 (bank 0 fill).
         let value = mapper.read_prg(0xCE7F);
         assert_eq!(
-            value, 0,
-            "$CE7F must return normal ROM data, not the protection value"
+            value, 1,
+            "$CE7F must return normal ROM data (bank 1), not the protection value"
         );
     }
 
     #[test]
     fn reads_just_outside_cf00_range_return_rom_data() {
-        // $CF00 is just above the protection range.
+        // $CF00 is just above the protection range; falls in the upper (bank 1) window.
         let mapper = make_mapper();
         let value = mapper.read_prg(0xCF00);
         assert_eq!(
-            value, 0,
-            "$CF00 must return normal ROM data, not the protection value"
+            value, 1,
+            "$CF00 must return normal ROM data (bank 1), not the protection value"
         );
     }
 
@@ -266,8 +263,8 @@ mod tests {
         let mapper = make_mapper();
         let value = mapper.read_prg(0xFE7F);
         assert_eq!(
-            value, 0,
-            "$FE7F must return normal ROM data, not the protection value"
+            value, 1,
+            "$FE7F must return normal ROM data (bank 1), not the protection value"
         );
     }
 
@@ -276,8 +273,8 @@ mod tests {
         let mapper = make_mapper();
         let value = mapper.read_prg(0xFF00);
         assert_eq!(
-            value, 0,
-            "$FF00 must return normal ROM data, not the protection value"
+            value, 1,
+            "$FF00 must return normal ROM data (bank 1), not the protection value"
         );
     }
 
@@ -295,8 +292,8 @@ mod tests {
         );
         assert_eq!(
             mapper.read_prg(0xC000),
-            0,
-            "PRG must remain bank 0 after writes"
+            1,
+            "PRG upper window must remain bank 1 after writes"
         );
     }
 
