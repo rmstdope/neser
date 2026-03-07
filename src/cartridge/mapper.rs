@@ -78,6 +78,7 @@ use super::mapper251::Mapper251;
 use super::mapper254::Mapper254;
 use super::mapper255::Mapper255;
 use super::mapper328::Mapper328;
+use super::mapper341::Mapper341;
 use super::mapper344::Mapper344;
 use super::mapper345::Mapper345;
 use super::mapper346::Mapper346;
@@ -652,6 +653,7 @@ mapper_registry! {
     33 => TaitoTc0190Mapper::new,
     34 => BnromNinaMapper::new,
     35 => Mapper35::new,
+    341 => Mapper341::new,
     344 => Mapper344::new,
     345 => Mapper345::new,
     346 => Mapper346::new,
@@ -736,7 +738,7 @@ const SUPPORTED_MAPPERS: &[u16] = &[
     26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
     50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73,
     74, 75, 77, 78, 81, 82, 83, 84, 85, 86, 87, 88, 90, 129, 132, 133, 140, 155, 185, 205, 206,
-    241, 242, 243, 244, 245, 246, 251, 254, 255, 328, 343, 344, 345, 346, 347, 348, 349, 350,
+    241, 242, 243, 244, 245, 246, 251, 254, 255, 328, 341, 343, 344, 345, 346, 347, 348, 349, 350,
 ];
 
 /// List of supported iNES mapper IDs handled by the factory.
@@ -895,6 +897,37 @@ mod tests {
         let result = create_mapper(metadata);
 
         assert!(result.is_ok(), "Mapper 344 (GN-26) should be created");
+    }
+
+    #[test]
+    fn create_mapper_accepts_mapper_341_tj03() {
+        let metadata = MapperContext::new_for_test(
+            341,
+            vec![0u8; 16 * 1024 * 8],
+            vec![0u8; 8 * 1024 * 8],
+            NametableLayout::Vertical,
+        );
+
+        let result = create_mapper(metadata);
+
+        assert!(result.is_ok(), "Mapper 341 (BMC-TJ-03) should be created");
+    }
+
+    #[test]
+    fn mapper_341_reports_no_irq_and_no_expansion_audio() {
+        let metadata = MapperContext::new_for_test(
+            341,
+            vec![0u8; 16 * 1024 * 8],
+            vec![0u8; 8 * 1024 * 8],
+            NametableLayout::Vertical,
+        );
+        let mapper = create_mapper(metadata).expect("Mapper 341 should be created");
+        let caps = mapper.capabilities();
+
+        assert!(!caps.has_irq);
+        assert!(!caps.has_expansion_audio);
+        assert_eq!(caps.prg_bank_size_kb, 16);
+        assert_eq!(caps.chr_bank_size_kb, 8);
     }
 
     #[test]
