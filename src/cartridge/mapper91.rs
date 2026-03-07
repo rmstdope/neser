@@ -135,7 +135,21 @@ impl Mapper for Mapper91 {
         }
     }
 
+    fn reset(&mut self) {
+        self.prg_regs = [0; 2];
+        self.chr_regs = [0; 4];
+        self.irq_counter = 0;
+        self.irq_reload = false;
+        self.irq_enabled = false;
+        self.irq_asserted = false;
+        self.a12 = A12RisingEdgeDetector::new(3);
+        self.update_banks();
+    }
+
     fn write_prg(&mut self, addr: u16, value: u8) {
+        if !(0x6000..=0x7FFF).contains(&addr) {
+            return;
+        }
         match addr & 0x7003 {
             0x6000 => {
                 self.chr_regs[0] = value;
@@ -191,7 +205,14 @@ impl Mapper for Mapper91 {
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        let mut snap = Vec::with_capacity(8);
+        // [0..=1]:  prg_regs (2-element array: prg_regs[0], prg_regs[1])
+        // [2..=5]:  chr_regs (4-element array: chr_regs[0..=3])
+        // [6]:      irq_counter
+        // [7]:      flags (irq_reload | irq_enabled<<1 | irq_asserted<<2)
+        // [8]:      a12 prev_a12
+        // [9]:      a12 current_a12
+        // [10]:     a12 a12_low_cycles
+        let mut snap = Vec::with_capacity(11);
         snap.extend_from_slice(&self.prg_regs);
         snap.extend_from_slice(&self.chr_regs);
         snap.push(self.irq_counter);
@@ -199,6 +220,9 @@ impl Mapper for Mapper91 {
             | ((self.irq_enabled as u8) << 1)
             | ((self.irq_asserted as u8) << 2);
         snap.push(flags);
+        snap.push(self.a12.prev_a12() as u8);
+        snap.push(self.a12.current_a12() as u8);
+        snap.push(self.a12.a12_low_cycles());
         snap
     }
 
@@ -212,6 +236,11 @@ impl Mapper for Mapper91 {
             self.irq_enabled = (flags & 2) != 0;
             self.irq_asserted = (flags & 4) != 0;
             self.update_banks();
+        }
+        if data.len() >= 11 {
+            self.a12.set_prev_a12(data[8] != 0);
+            self.a12.set_current_a12(data[9] != 0);
+            self.a12.set_a12_low_cycles(data[10]);
         }
     }
 }
@@ -558,6 +587,112 @@ mod tests {
             mapper2.read_chr(0x1800),
             6,
             "CHR slot 3 must survive snapshot"
+        );
+    }
+
+    #[test]
+    fn a12_state_is_included_in_snapshot_round_trip() {
+        let mut mapper = make_mapper();
+        // Drive A12 high so current_a12=true and a12_low_cycles=0
+        mapper.ppu_address_changed(0x1000);
+        mapper.cpu_cycle();
+
+        let snap = mapper.registers_snapshot();
+        assert!(snap.len() >= 11, "Snapshot must include A12 detector state");
+
+        let mut mapper2 = make_mapper();
+        mapper2.restore_registers(&snap);
+
+        // After restore, the A12 state must match (current_a12=true means no spurious
+        // edge when the same address is presented again)
+        let edge = {
+            // Presenting A12 high again should NOT produce another rising edge
+            // because current_a12 was already true when saved
+            mapper2.ppu_address_changed(0x1000);
+            mapper2.irq_pending()
+        };
+        assert!(!edge, "Restoring A12 state must not cause a spurious rising edge");
+    }
+
+    // --- Reset ---
+
+    #[test]
+    fn reset_restores_power_on_state() {
+        let mut mapper = make_mapper();
+        // Change PRG/CHR banks
+        mapper.write_prg(0x7000, 2);
+        mapper.write_prg(0x7001, 3);
+        mapper.write_prg(0x6000, 4);
+        mapper.write_prg(0x6001, 5);
+        mapper.write_prg(0x6002, 6);
+        mapper.write_prg(0x6003, 7);
+        // Enable IRQ
+        mapper.write_prg(0x7003, 0);
+
+        mapper.reset();
+
+        // PRG slots 0/1 must return to bank 0
+        assert_eq!(mapper.read_prg(0x8000), 0, "PRG slot 0 must reset to bank 0");
+        assert_eq!(mapper.read_prg(0xA000), 0, "PRG slot 1 must reset to bank 0");
+        // PRG slots 2/3 must remain fixed
+        assert_eq!(mapper.read_prg(0xC000), 4, "PRG slot 2 must stay fixed after reset");
+        assert_eq!(mapper.read_prg(0xE000), 5, "PRG slot 3 must stay fixed after reset");
+        // CHR slots must return to bank 0
+        assert_eq!(mapper.read_chr(0x0000), 0, "CHR slot 0 must reset to bank 0");
+        assert_eq!(mapper.read_chr(0x0800), 0, "CHR slot 1 must reset to bank 0");
+        assert_eq!(mapper.read_chr(0x1000), 0, "CHR slot 2 must reset to bank 0");
+        assert_eq!(mapper.read_chr(0x1800), 0, "CHR slot 3 must reset to bank 0");
+        // IRQ must be disabled and not pending
+        assert!(!mapper.irq_pending(), "IRQ must not be pending after reset");
+    }
+
+    #[test]
+    fn reset_clears_irq_state_and_a12_detector() {
+        let mut mapper = make_mapper();
+        mapper.write_prg(0x7003, 0);
+        // Trigger enough edges to fire IRQ
+        let trigger_a12_rising_edge = |m: &mut Box<dyn Mapper>| {
+            m.ppu_address_changed(0x0000);
+            for _ in 0..3 {
+                m.cpu_cycle();
+            }
+            m.ppu_address_changed(0x1000);
+        };
+        for _ in 0..9 {
+            trigger_a12_rising_edge(&mut mapper);
+        }
+        assert!(mapper.irq_pending(), "IRQ must be pending before reset");
+
+        mapper.reset();
+
+        assert!(!mapper.irq_pending(), "IRQ must be cleared by reset");
+        // After reset, IRQ is disabled: further edges must not fire
+        mapper.write_prg(0x7003, 0); // re-enable to check A12 detector was cleared
+        trigger_a12_rising_edge(&mut mapper);
+        assert!(
+            !mapper.irq_pending(),
+            "After reset, first edge must reload counter (not fire immediately)"
+        );
+    }
+
+    // --- write_prg address range guard ---
+
+    #[test]
+    fn write_prg_ignores_addresses_outside_6000_7fff() {
+        let mut mapper = make_mapper();
+        // $E000 & 0x7003 = $6000 → would alias to CHR reg 0 without range guard
+        mapper.write_prg(0xE000, 5);
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            0,
+            "Write to $E000 must be ignored (outside $6000-$7FFF)"
+        );
+        // $A001 & 0x7003 = $2001 but also ensure $8001 writes are ignored
+        mapper.write_prg(0x8000, 3);
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            0,
+            "Write to $8000 must be ignored (outside $6000-$7FFF)"
         );
     }
 }
