@@ -688,7 +688,7 @@ mapper_registry! {
     59 => Mapper59::new,
     60 => Mapper60::new,
     342 => Mapper342::new,
-    343 => Mapper60::new,
+    343 => Mapper343::new,
     61 => Mapper61::new,
     62 => Mapper62::new,
     63 => Mapper63::new,
