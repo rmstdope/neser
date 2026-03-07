@@ -360,7 +360,6 @@ impl Mapper for Mapper90 {
                 self.last_bank_sw = (value & 0x04) != 0;
                 self.chr_mode = (value >> 3) & 0x03;
                 // bits 5 and 6 (ROM nametables) are inhibited by jumper on mapper 90
-                self.prg_at_6000 = (value & 0x80) != 0;
                 self.update_banks();
             }
             0xD001 => {
