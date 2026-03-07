@@ -208,10 +208,7 @@ mod tests {
         // Simulate hard reset: initialize_ram then reset
         mapper.initialize_ram(crate::console::RamInitMode::Zero);
         mapper.reset();
-        assert_eq!(
-            mapper.game_select, 0,
-            "hard reset must start at game 0"
-        );
+        assert_eq!(mapper.game_select, 0, "hard reset must start at game 0");
         assert_eq!(mapper.read_prg(0x8000), 0);
         assert_eq!(mapper.read_chr(0x0000), 0);
     }
