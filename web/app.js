@@ -1046,7 +1046,10 @@ async function refreshSaveStateController() {
             createSaveStateController,
             saveStateFn: saveState,
             loadStateFn: loadState,
-            setStatus
+            setStatus: (msg, isError = false) => {
+                setStatus(msg, isError);
+                toastOverlay.show(msg);
+            }
         });
         if (saveStateController) {
             const db = await openSaveStateDb();

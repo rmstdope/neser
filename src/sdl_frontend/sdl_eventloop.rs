@@ -2430,6 +2430,9 @@ F11: Step into\n\
             Ok(bytes) => bytes,
             Err(err) => {
                 log_info(format!("Failed to serialize save-state: {err}"));
+                nes.app_context()
+                    .borrow_mut()
+                    .add_toast("Failed to save state");
                 return;
             }
         };
@@ -2438,6 +2441,9 @@ F11: Step into\n\
             && let Err(err) = fs::create_dir_all(parent)
         {
             log_info(format!("Failed to create save-state directory: {err}"));
+            nes.app_context()
+                .borrow_mut()
+                .add_toast("Failed to save state");
             return;
         }
 
@@ -2446,12 +2452,21 @@ F11: Step into\n\
 
         if let Err(err) = fs::write(&tmp_path, bytes) {
             log_info(format!("Failed to write save-state: {err}"));
+            nes.app_context()
+                .borrow_mut()
+                .add_toast("Failed to save state");
             return;
         }
 
         if let Err(err) = fs::rename(&tmp_path, &state_path) {
             log_info(format!("Failed to finalize save-state: {err}"));
+            nes.app_context()
+                .borrow_mut()
+                .add_toast("Failed to save state");
+            return;
         }
+
+        nes.app_context().borrow_mut().add_toast("State saved");
     }
 
     fn load_state_from_disk(nes: &mut Nes) {
@@ -2460,6 +2475,9 @@ F11: Step into\n\
         };
 
         if !state_path.exists() {
+            nes.app_context()
+                .borrow_mut()
+                .add_toast("No save state found");
             return;
         }
 
@@ -2467,6 +2485,9 @@ F11: Step into\n\
             Ok(bytes) => bytes,
             Err(err) => {
                 log_info(format!("Failed to read save-state: {err}"));
+                nes.app_context()
+                    .borrow_mut()
+                    .add_toast("Failed to load state");
                 return;
             }
         };
@@ -2475,13 +2496,22 @@ F11: Step into\n\
             Ok(state) => state,
             Err(err) => {
                 log_info(format!("Failed to deserialize save-state: {err}"));
+                nes.app_context()
+                    .borrow_mut()
+                    .add_toast("Failed to load state");
                 return;
             }
         };
 
         if let Err(err) = nes.load_state(&state) {
             log_info(format!("Failed to restore save-state: {err}"));
+            nes.app_context()
+                .borrow_mut()
+                .add_toast("Failed to load state");
+            return;
         }
+
+        nes.app_context().borrow_mut().add_toast("State loaded");
     }
 
     /// Handle controller device added event
@@ -2611,6 +2641,7 @@ fn apply_volume_hotkey(audio: &SdlNesAudio, keycode: Keycode) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_context::AppContext;
     use crate::cartridge::Cartridge;
     use crate::console::Config;
     use serial_test::serial;
@@ -2619,6 +2650,7 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use std::rc::Rc;
+    use std::time::Instant;
     use tempfile::TempDir;
 
     fn default_config() -> Config {
@@ -5713,8 +5745,6 @@ mod tests {
     #[test]
     #[serial]
     fn test_load_breakpoints_from_debug_file_populates_breakpoints() {
-        use crate::app_context::AppContext;
-
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let rom_path = copy_test_rom(&temp_dir);
 
@@ -5746,8 +5776,6 @@ mod tests {
     #[test]
     #[serial]
     fn test_load_breakpoints_from_debug_file_does_nothing_when_no_file() {
-        use crate::app_context::AppContext;
-
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let rom_path = copy_test_rom(&temp_dir);
 
@@ -5775,8 +5803,6 @@ mod tests {
     #[test]
     #[serial]
     fn test_save_breakpoints_to_debug_file_writes_correct_content() {
-        use crate::app_context::AppContext;
-
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let rom_path = copy_test_rom(&temp_dir);
 
@@ -5806,8 +5832,6 @@ mod tests {
     #[test]
     #[serial]
     fn test_save_breakpoints_to_debug_file_deletes_file_when_no_breakpoints() {
-        use crate::app_context::AppContext;
-
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let rom_path = copy_test_rom(&temp_dir);
 
@@ -5839,8 +5863,6 @@ mod tests {
     #[test]
     #[serial]
     fn test_save_breakpoints_to_debug_file_does_not_create_file_when_no_breakpoints() {
-        use crate::app_context::AppContext;
-
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let rom_path = copy_test_rom(&temp_dir);
 
@@ -5903,6 +5925,137 @@ mod tests {
             event_loop.breakpoint_count(),
             1,
             "expected config breakpoints to be loaded"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_save_state_to_disk_shows_state_saved_toast() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let rom_path = copy_test_rom(&temp_dir);
+        let rom_bytes = std::fs::read(&rom_path).expect("Failed to read ROM");
+        let cart = Cartridge::load_from_file(&rom_bytes, &rom_path, AppContext::new())
+            .expect("Failed to load ROM");
+        let mut nes = Nes::new(AppContext::new_with_config(Config::default()));
+        nes.insert_cartridge(cart);
+        nes.reset(false);
+
+        SdlEventLoop::save_state_to_disk(&mut nes);
+
+        let toasts = nes
+            .app_context()
+            .borrow_mut()
+            .visible_toasts(Instant::now());
+        assert!(
+            toasts.iter().any(|t| t.contains("State saved")),
+            "expected 'State saved' toast after successful save, got: {toasts:?}"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_load_state_from_disk_shows_no_save_state_found_toast_when_file_absent() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let rom_path = copy_test_rom(&temp_dir);
+        let rom_bytes = std::fs::read(&rom_path).expect("Failed to read ROM");
+        let cart = Cartridge::load_from_file(&rom_bytes, &rom_path, AppContext::new())
+            .expect("Failed to load ROM");
+        let mut nes = Nes::new(AppContext::new_with_config(Config::default()));
+        nes.insert_cartridge(cart);
+        nes.reset(false);
+
+        // No save file exists – load should show a "not found" toast.
+        SdlEventLoop::load_state_from_disk(&mut nes);
+
+        let toasts = nes
+            .app_context()
+            .borrow_mut()
+            .visible_toasts(Instant::now());
+        assert!(
+            toasts.iter().any(|t| t.contains("No save state found")),
+            "expected 'No save state found' toast, got: {toasts:?}"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_load_state_from_disk_shows_state_loaded_toast_when_file_exists() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let rom_path = copy_test_rom(&temp_dir);
+        let rom_bytes = std::fs::read(&rom_path).expect("Failed to read ROM");
+        let cart = Cartridge::load_from_file(&rom_bytes, &rom_path, AppContext::new())
+            .expect("Failed to load ROM");
+        let mut nes = Nes::new(AppContext::new_with_config(Config::default()));
+        nes.insert_cartridge(cart);
+        nes.reset(false);
+
+        // Save first, then load.
+        SdlEventLoop::save_state_to_disk(&mut nes);
+        SdlEventLoop::load_state_from_disk(&mut nes);
+
+        let toasts = nes
+            .app_context()
+            .borrow_mut()
+            .visible_toasts(Instant::now());
+        assert!(
+            toasts.iter().any(|t| t.contains("State loaded")),
+            "expected 'State loaded' toast after successful load, got: {toasts:?}"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_save_state_to_disk_shows_failed_to_save_state_toast_on_io_error() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let rom_path = copy_test_rom(&temp_dir);
+        let rom_bytes = std::fs::read(&rom_path).expect("Failed to read ROM");
+        let cart = Cartridge::load_from_file(&rom_bytes, &rom_path, AppContext::new())
+            .expect("Failed to load ROM");
+        let mut nes = Nes::new(AppContext::new_with_config(Config::default()));
+        nes.insert_cartridge(cart);
+        nes.reset(false);
+
+        // Block the rename by occupying the target state path with a directory.
+        let state_path = rom_path.with_extension("state");
+        fs::create_dir_all(&state_path).expect("Failed to create blocking directory");
+
+        SdlEventLoop::save_state_to_disk(&mut nes);
+
+        let toasts = nes
+            .app_context()
+            .borrow_mut()
+            .visible_toasts(Instant::now());
+        assert!(
+            toasts.iter().any(|t| t.contains("Failed to save state")),
+            "expected 'Failed to save state' toast on I/O error, got: {toasts:?}"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_load_state_from_disk_shows_failed_to_load_state_toast_on_read_error() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let rom_path = copy_test_rom(&temp_dir);
+        let rom_bytes = std::fs::read(&rom_path).expect("Failed to read ROM");
+        let cart = Cartridge::load_from_file(&rom_bytes, &rom_path, AppContext::new())
+            .expect("Failed to load ROM");
+        let mut nes = Nes::new(AppContext::new_with_config(Config::default()));
+        nes.insert_cartridge(cart);
+        nes.reset(false);
+
+        // Place a directory at the state path so fs::read returns an EISDIR error.
+        let state_path = rom_path.with_extension("state");
+        fs::create_dir_all(&state_path).expect("Failed to create blocking directory");
+
+        SdlEventLoop::load_state_from_disk(&mut nes);
+
+        let toasts = nes
+            .app_context()
+            .borrow_mut()
+            .visible_toasts(Instant::now());
+        assert!(
+            toasts.iter().any(|t| t.contains("Failed to load state")),
+            "expected 'Failed to load state' toast on read error, got: {toasts:?}"
         );
     }
 }
