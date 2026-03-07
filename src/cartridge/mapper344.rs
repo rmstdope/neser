@@ -82,7 +82,13 @@ impl Mapper344 {
     }
 
     fn nrom_base_inner_bank(&self) -> usize {
-        let register_6 = self.mmc3.raw_prg_8k_page_number(Self::PRG_ROM_START) as usize;
+        let bank_8000 = self.mmc3.raw_prg_8k_page_number(Self::PRG_ROM_START) as usize;
+        let bank_c000 = self.mmc3.raw_prg_8k_page_number(0xC000) as usize;
+        let register_6 = if bank_8000 == 0xFE || bank_8000 == 0xFF {
+            bank_c000
+        } else {
+            bank_8000
+        };
         register_6 & Self::NROM_BASE_BANK_MASK
     }
 
@@ -180,10 +186,23 @@ impl Mapper for Mapper344 {
     fn write_prg(&mut self, addr: u16, value: u8) {
         if Self::is_outer_register_write(addr) {
             self.write_outer_register_if_enabled(addr);
+            self.mmc3.write_prg(addr, value);
             return;
         }
 
         self.mmc3.write_prg(addr, value);
+    }
+
+    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        if !Self::is_prg_rom_addr(addr) {
+            return self.mmc3.read_prg_open_bus(addr, open_bus);
+        }
+
+        if self.is_nrom_prg_mode_enabled() {
+            self.read_prg_nrom_mode(addr)
+        } else {
+            self.read_prg_mmc3_mode(addr)
+        }
     }
 
     fn read_chr(&mut self, addr: u16) -> u8 {
@@ -295,7 +314,7 @@ mod tests {
         let mut mapper = make_mapper();
 
         mapper.write_prg(0xA001, 0x80);
-        mapper.write_prg(0x8000, 0x06);
+        mapper.write_prg(0x8000, 0x46);
         mapper.write_prg(0x8001, 0x06);
 
         mapper.write_prg(0x6008, 0x00);
@@ -304,6 +323,25 @@ mod tests {
         assert_eq!(mapper.read_prg(0xA000), 0x07);
         assert_eq!(mapper.read_prg(0xC000), 0x06);
         assert_eq!(mapper.read_prg(0xE000), 0x07);
+    }
+
+    #[test]
+    fn outer_register_write_address_also_writes_prg_ram() {
+        let mut mapper = make_mapper();
+
+        mapper.write_prg(0xA001, 0x80);
+        mapper.write_prg(0x6002, 0x5A);
+
+        assert_eq!(mapper.read_prg(0x6002), 0x5A);
+    }
+
+    #[test]
+    fn read_prg_open_bus_delegates_wram_window_to_mmc3_behavior() {
+        let mut mapper = make_mapper();
+
+        mapper.write_prg(0xA001, 0x00);
+
+        assert_eq!(mapper.read_prg_open_bus(0x6000, 0xAA), 0xAA);
     }
 
     #[test]
