@@ -53,8 +53,10 @@ impl Mapper for Mapper342 {
         MAPPER_NUMBER
     }
 
-    fn write_prg(&mut self, _addr: u16, _value: u8) {
-        // No-op in baseline implementation.
+    fn write_prg(&mut self, addr: u16, value: u8) {
+        // Delegate potential PRG-RAM writes ($6000-$7FFF) to the base mapper.
+        self.base.try_write_prg_ram(addr, value);
+        // No mapper-specific register handling in baseline implementation.
     }
 }
 
