@@ -1,6 +1,6 @@
 ---
 name: Next Mapper
-description: Runs after a pull request is closed, selects the oldest open mapper issue, implements it with test-driven development, and creates a pull request.
+description: Runs after a pull request is closed, selects a random open mapper issue, implements it with test-driven development, and creates a pull request.
 engine: copilot
 on:
   pull_request:
@@ -60,9 +60,10 @@ Still announce each phase transition clearly in your progress updates.
 Every time this workflow runs (on pull request close):
 
 1. Ensure there is no open PR already created by this workflow.
-2. If none exists, select the **oldest open issue** labeled `mapper`.
+2. If none exists, select  **random open issue** labeled `mapper`.
 3. Implement that mapper thoroughly using TDD and repository conventions.
-4. Create a PR for the implementation.
+4. Make sure all pre-merge checks pass locally before PR creation.
+5. Create a PR for the implementation.
 
 If no eligible issue exists, or a workflow-created PR is already open, exit with `noop` and explain why.
 
@@ -71,7 +72,7 @@ If no eligible issue exists, or a workflow-created PR is already open, exit with
 1. Check for existing open PRs created by this workflow using title prefix `[next-mapper]`.
    - If any such PR exists, stop with `noop`.
 2. Query open issues labeled `mapper`.
-3. Pick one of the open issues at random.
+3. Pick one of these issues at random.
 4. Skip issues that already have an open PR clearly linked to them.
 
 ## Required mapper research order
