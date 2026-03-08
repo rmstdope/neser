@@ -102,11 +102,11 @@ impl Mapper80 {
         }
         self.base.select_prg_page(3, -1);
 
-        let chr0 = self.chr_banks[0] as i16;
+        let chr0 = (self.chr_banks[0] & 0xFE) as i16;
         self.base.select_chr_page(0, chr0);
         self.base.select_chr_page(1, chr0 + 1);
 
-        let chr1 = self.chr_banks[1] as i16;
+        let chr1 = (self.chr_banks[1] & 0xFE) as i16;
         self.base.select_chr_page(2, chr1);
         self.base.select_chr_page(3, chr1 + 1);
 
@@ -208,7 +208,7 @@ impl Mapper for Mapper80 {
         let mut snapshot = Vec::with_capacity(SNAPSHOT_SIZE);
         snapshot.extend_from_slice(&self.prg_banks);
         snapshot.extend_from_slice(&self.chr_banks);
-        snapshot.push(matches!(self.base.mirroring(), NametableLayout::Horizontal) as u8);
+        snapshot.push(matches!(self.base.mirroring(), NametableLayout::Vertical) as u8);
         snapshot.push(self.ram_permission);
         snapshot
     }
@@ -262,6 +262,12 @@ impl Mapper for Mapper80 {
         self.ram_permission = 0;
         self.unhandled_write_trace_budget = 128;
         self.apply_banks();
+    }
+
+    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+        crate::console::initialize_ram(&mut self.prg_ram, mode);
+        crate::console::initialize_ram(&mut self.ram, mode);
+        self.base.initialize_ram(mode);
     }
 
     fn wram_size(&self) -> usize {
@@ -342,17 +348,18 @@ mod tests {
     fn registers_7ef0_to_7ef5_select_chr_windows_with_two_2k_pairs() {
         let mut mapper = make_mapper();
 
-        mapper.write_prg(0x7EF0, 3);
-        mapper.write_prg(0x7EF1, 5);
+        // Odd values for 2KB pair registers: the low bit must be cleared (&0xFE)
+        mapper.write_prg(0x7EF0, 3); // even-aligned to 2
+        mapper.write_prg(0x7EF1, 5); // even-aligned to 4
         mapper.write_prg(0x7EF2, 7);
         mapper.write_prg(0x7EF3, 8);
         mapper.write_prg(0x7EF4, 9);
         mapper.write_prg(0x7EF5, 10);
 
-        assert_eq!(mapper.read_chr(0x0000), (3 % CHR_BANKS) as u8);
-        assert_eq!(mapper.read_chr(0x0400), (4 % CHR_BANKS) as u8);
-        assert_eq!(mapper.read_chr(0x0800), (5 % CHR_BANKS) as u8);
-        assert_eq!(mapper.read_chr(0x0C00), (6 % CHR_BANKS) as u8);
+        assert_eq!(mapper.read_chr(0x0000), (2 % CHR_BANKS) as u8, "2KB pair base must be even-aligned");
+        assert_eq!(mapper.read_chr(0x0400), (3 % CHR_BANKS) as u8, "2KB pair second page");
+        assert_eq!(mapper.read_chr(0x0800), (4 % CHR_BANKS) as u8, "2KB pair base must be even-aligned");
+        assert_eq!(mapper.read_chr(0x0C00), (5 % CHR_BANKS) as u8, "2KB pair second page");
         assert_eq!(mapper.read_chr(0x1000), (7 % CHR_BANKS) as u8);
         assert_eq!(mapper.read_chr(0x1400), (8 % CHR_BANKS) as u8);
         assert_eq!(mapper.read_chr(0x1800), (9 % CHR_BANKS) as u8);
@@ -480,5 +487,70 @@ mod tests {
         assert_eq!(mapper.read_prg(0x8000), (4 % PRG_BANKS) as u8);
         assert_eq!(mapper.read_prg(0xA000), (6 % PRG_BANKS) as u8);
         assert_eq!(mapper.read_prg(0xC000), (8 % PRG_BANKS) as u8);
+    }
+
+    #[test]
+    fn registers_snapshot_restore_round_trip_preserves_all_state() {
+        let mut mapper = make_mapper();
+
+        mapper.write_prg(0x7EFA, 5);
+        mapper.write_prg(0x7EFC, 7);
+        mapper.write_prg(0x7EFE, 9);
+        mapper.write_prg(0x7EF0, 4);
+        mapper.write_prg(0x7EF1, 6);
+        mapper.write_prg(0x7EF2, 2);
+        mapper.write_prg(0x7EF3, 3);
+        mapper.write_prg(0x7EF4, 8);
+        mapper.write_prg(0x7EF5, 10);
+        mapper.write_prg(0x7EF6, 0x01); // vertical mirroring
+        mapper.write_prg(0x7EF8, 0xA3); // enable RAM
+
+        let snap = mapper.registers_snapshot();
+        let mut restored = make_mapper();
+        restored.restore_registers(&snap);
+
+        assert_eq!(
+            restored.read_prg(0x8000),
+            mapper.read_prg(0x8000),
+            "snapshot: PRG $8000"
+        );
+        assert_eq!(
+            restored.read_prg(0xA000),
+            mapper.read_prg(0xA000),
+            "snapshot: PRG $A000"
+        );
+        assert_eq!(
+            restored.read_prg(0xC000),
+            mapper.read_prg(0xC000),
+            "snapshot: PRG $C000"
+        );
+        assert_eq!(
+            restored.read_chr(0x0000),
+            mapper.read_chr(0x0000),
+            "snapshot: CHR $0000"
+        );
+        assert_eq!(
+            restored.read_chr(0x0800),
+            mapper.read_chr(0x0800),
+            "snapshot: CHR $0800"
+        );
+        assert_eq!(
+            restored.read_chr(0x1000),
+            mapper.read_chr(0x1000),
+            "snapshot: CHR $1000"
+        );
+        assert_eq!(
+            restored.get_mirroring(),
+            NametableLayout::Vertical,
+            "snapshot: vertical mirroring must be preserved"
+        );
+        // Write to RAM to verify permission (ram_permission) was restored
+        mapper.write_prg(0x7F10, 0x42);
+        restored.write_prg(0x7F10, 0x42);
+        assert_eq!(
+            restored.read_prg(0x7F10),
+            mapper.read_prg(0x7F10),
+            "snapshot: RAM permission must be preserved"
+        );
     }
 }
