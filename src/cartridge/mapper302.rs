@@ -593,14 +593,13 @@ mod tests {
     }
 
     #[test]
-    fn b103_write_affects_reg0_high_nibble() {
+    fn b103_write_affects_reg1_high_nibble() {
         let mut mapper = make_mapper();
-        mapper.write_prg(0xB103, 0x03); // $B103 & $F002 = $B002 → reg[1] low nibble
-        mapper.write_prg(0xB101, 0x03); // $B101 & $F002 = $B000, odd → reg[0] high nibble = 0x30
+        mapper.write_prg(0xB103, 0x03); // $B103 & $F002 = $B002, odd → reg[1] high nibble = 0x30
         assert_eq!(
-            read_bank(&mapper, 0x8000),
+            read_bank(&mapper, 0x8800),
             0x30,
-            "$B101 → reg[0] high nibble 3 → bank 0x30"
+            "$B103 masked to $B002 → reg[1] high nibble 3 → bank 0x30 at $8800"
         );
     }
 
