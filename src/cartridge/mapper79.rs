@@ -2,6 +2,14 @@
 //!
 //! Specifications:
 //! - Main: <https://www.nesdev.org/wiki/INES_Mapper_079>
+//!
+//! Hardware register behavior used by this implementation (NINA-03/NINA-06):
+//! - Register write decode: `$4100-$5FFF`, but only addresses where
+//!   `(addr & 0xE100) == 0x4100` latch the register.
+//! - PRG bank (32KB at `$8000-$FFFF`): `bit 3` (`(value >> 3) & 0x01`).
+//! - CHR bank (8KB at `$0000-$1FFF`): `bits [2:0]` (`value & 0x07`).
+//! - Other bits are ignored for mapper 79.
+//! - Mirroring is fixed from the ROM header.
 
 use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
