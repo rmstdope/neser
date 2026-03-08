@@ -147,6 +147,11 @@ impl Mapper for Mapper80 {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
+        if (0x7E70..=0x7E7F).contains(&addr) {
+            self.prg_ram[Self::prg_ram_index(addr)] = value;
+            trace_mapper!(2; "[80] PRG-RAM shadow write ${:04X}=${:02X}", addr, value);
+        }
+
         if let Some(reg_addr) = Self::decode_control_register(addr) {
             match reg_addr {
                 CHR_REG_START..=CHR_REG_END => {
@@ -488,6 +493,19 @@ mod tests {
         assert_eq!(mapper.read_prg(0x8000), (4 % PRG_BANKS) as u8);
         assert_eq!(mapper.read_prg(0xA000), (6 % PRG_BANKS) as u8);
         assert_eq!(mapper.read_prg(0xC000), (8 % PRG_BANKS) as u8);
+    }
+
+    #[test]
+    fn aliased_7e7x_register_writes_are_retained_in_prg_ram() {
+        let mut mapper = make_mapper();
+
+        mapper.write_prg(0x7E7A, 0x4D);
+        mapper.write_prg(0x7E7C, 0x6E);
+        mapper.write_prg(0x7E7E, 0x8F);
+
+        assert_eq!(mapper.read_prg(0x7E7A), 0x4D);
+        assert_eq!(mapper.read_prg(0x7E7C), 0x6E);
+        assert_eq!(mapper.read_prg(0x7E7E), 0x8F);
     }
 
     #[test]
