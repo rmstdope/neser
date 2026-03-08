@@ -8,10 +8,7 @@
 //!
 //! | Address | Bits | Function |
 //! |---------|------|----------|
-//! | Even ($6000, $6002, …) | [7:6] outer bank high | PRG + mirroring |
-//! | Even | [5] | Lock: once set, all writes ignored |
-//! | Even | [4] | Mirroring: 0=Vertical, 1=Horizontal |
-//! | Even | [7:0] | PRG bank register `v` |
+//! | Even ($6000, $6002, …) | [7:0] | PRG bank register `v`: [7:6]=outer bank high, [5]=lock (1=ignore further writes), [4]=mirroring (0=Vertical, 1=Horizontal), [3]=PRG banking mode bit, [2:0]=inner bank low |
 //! | Odd  ($6001, $6003, …) | [7:0] | CHR 8 KB page select |
 //!
 //! ## PRG Banking
@@ -51,6 +48,7 @@ impl Mapper332 {
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_dynamic_mirroring: true,
+            has_chr_banking: true,
             prg_bank_size_kb: 16,
             chr_bank_size_kb: 8,
             max_prg_ram_kb: 0,
@@ -354,6 +352,7 @@ mod tests {
         assert!(!caps.has_irq);
         assert!(!caps.has_expansion_audio);
         assert!(caps.has_dynamic_mirroring);
+        assert!(caps.has_chr_banking);
         assert_eq!(caps.prg_bank_size_kb, 16);
         assert_eq!(caps.chr_bank_size_kb, 8);
         assert_eq!(caps.max_prg_ram_kb, 0);
