@@ -224,12 +224,11 @@ mod tests {
         let mut mapper = create_mapper76(prg_rom, chr_rom, NametableLayout::Vertical)
             .expect("Mapper 76 should be implemented");
 
-        // Write to $A000 (odd bit clear → treated as $8000 bank select)
-        // Write to $A001 (odd bit set → treated as $8001 bank data for R7)
-        mapper.write_prg(0xA001, 3); // redirects to $8001: write reg[selected]=3
-        // bank_select defaults to 0b0000_0000 → reg 0 would be selected
-        // but after bank select write to $A000, reg 7 would be written if we set select first
+        // High-address write to $A000 (odd bit clear) must behave as $8000 bank select.
+        // Here we select PRG register R7.
         mapper.write_prg(0xA000, 0b0000_0111); // select R7 (redirected from $A000 to $8000)
+        // High-address write to $A001 (odd bit set) must behave as $8001 bank data for
+        // the currently selected register (R7).
         mapper.write_prg(0xA001, 4); // write 4 to R7 (redirected from $A001 to $8001)
 
         assert_eq!(
