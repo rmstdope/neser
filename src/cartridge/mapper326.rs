@@ -12,7 +12,7 @@
 //!
 //! Used for a bootleg version of _Contra_ (_Gryzor_).
 //! The board provides:
-//! - 128 KiB PRG-ROM in four 16 KiB windows ($8000/$A000/$C000 switchable, $E000 fixed last)
+//! - 128 KiB PRG-ROM in four 8 KiB windows ($8000/$A000/$C000 switchable, $E000 fixed last)
 //! - 128 KiB CHR-ROM in eight 1 KiB windows ($0000–$1C00, each independently switchable)
 //! - Per-nametable mirroring: each of the four NES nametable slots ($2000/$2400/$2800/$2C00)
 //!   independently selects VRAM page 0 or 1 (one bit per nametable).
@@ -32,7 +32,7 @@
 //! | `$C000`        | Set PRG bank for $C000–$DFFF (slot 2) |
 //! | `$E000`        | (fixed last bank; writes ignored)     |
 //!
-//! The data byte selects a 16 KiB PRG-ROM bank (0–7 for 128 KiB ROM).
+//! The data byte selects an 8 KiB PRG-ROM bank (0–15 for 128 KiB ROM).
 //! Bits above the valid bank range are ignored (automatic wrapping).
 //!
 //! ## CHR bank and mirroring registers (A4 = 1, mask $801F)
