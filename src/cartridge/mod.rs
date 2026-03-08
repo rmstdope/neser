@@ -86,6 +86,7 @@ mod mapper72;
 mod mapper73;
 mod mapper74;
 mod mapper75;
+mod mapper76;
 mod mapper77;
 mod mapper79;
 mod mapper81;
