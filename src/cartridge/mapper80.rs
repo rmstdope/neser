@@ -299,7 +299,7 @@ impl Mapper for Mapper80 {
 
 #[cfg(test)]
 mod tests {
-    use super::{CHR_BANK_SIZE, PRG_BANK_SIZE, PRG_RAM_SIZE, PRG_RAM_START, RAM_SIZE, RAM_START};
+    use super::{CHR_BANK_SIZE, PRG_BANK_SIZE, RAM_SIZE, RAM_START};
     use crate::cartridge::NametableLayout;
     use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
     use crate::cartridge::test_helpers::banked_data;

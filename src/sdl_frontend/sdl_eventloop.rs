@@ -1722,13 +1722,7 @@ impl SdlEventLoop {
             .iter()
             .enumerate()
             .filter_map(|(index, path)| {
-                let haystack = Path::new(path)
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or(path)
-                    .to_ascii_lowercase();
-
-                if needle.is_empty() || Self::cartridge_switch_fuzzy_matches(&needle, &haystack) {
+                if Self::cartridge_switch_entry_matches_filter(path, &needle) {
                     Some(index)
                 } else {
                     None
@@ -1763,6 +1757,28 @@ impl SdlEventLoop {
         }
 
         false
+    }
+
+    fn cartridge_switch_entry_matches_filter(path: &str, needle: &str) -> bool {
+        if needle.is_empty() {
+            return true;
+        }
+
+        let filename_haystack = Path::new(path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(path)
+            .to_ascii_lowercase();
+        if Self::cartridge_switch_fuzzy_matches(needle, &filename_haystack) {
+            return true;
+        }
+
+        let directory_haystack = Path::new(path)
+            .parent()
+            .and_then(|parent| parent.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        directory_haystack.contains(needle)
     }
 
     fn move_cartridge_switch_selection_next(&mut self) {
@@ -3778,11 +3794,12 @@ mod tests {
         event_loop.refresh_cartridge_switch_filtered_entries();
 
         let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::M);
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::A);
 
         let overlay = event_loop
             .overlay_render_text(&nes)
             .expect("overlay should be visible");
-        assert!(overlay.contains("Filter: m"));
+        assert!(overlay.contains("Filter: ma"));
         assert!(overlay.contains("Matches: 2/3"));
         assert!(overlay.contains("mario.nes"));
         assert!(overlay.contains("mega_man.nes"));
@@ -3843,6 +3860,38 @@ mod tests {
         assert!(overlay.contains("Filter: nm"));
         assert!(overlay.contains("Matches: 0/1"));
         assert!(overlay.contains("No matching entries"));
+    }
+
+    #[test]
+    #[serial]
+    fn test_cartridge_switch_dialog_filter_matches_directory_names() {
+        let config = default_config();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config)).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+
+        event_loop.cartridge_switch_dialog_open = true;
+        event_loop.paused = true;
+        event_loop.cartridge_switch_entries = vec![
+            "roms/rainwarrior/mario.nes".to_string(),
+            "roms/games/zelda.nes".to_string(),
+        ];
+        event_loop.refresh_cartridge_switch_filtered_entries();
+
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::R);
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::A);
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::I);
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::N);
+
+        let overlay = event_loop
+            .overlay_render_text(&nes)
+            .expect("overlay should be visible");
+        assert!(overlay.contains("Filter: rain"));
+        assert!(overlay.contains("Matches: 1/2"));
+        assert!(overlay.contains("roms/rainwarrior/mario.nes"));
+        assert!(!overlay.contains("roms/games/zelda.nes"));
     }
 
     #[test]
