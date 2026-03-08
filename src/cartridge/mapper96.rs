@@ -6,6 +6,9 @@
 use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
+const CHR_PAGE_MASK: u8 = 0x03;
+const CHR_BANKS_PER_PAGE_64K: i16 = 8;
+
 pub struct Mapper96 {
     base: BaseMapper,
     chr_page: u8,
@@ -17,7 +20,7 @@ impl Mapper96 {
             has_chr_banking: true,
             max_prg_ram_kb: 0,
             prg_bank_size_kb: 32,
-            chr_bank_size_kb: 64,
+            chr_bank_size_kb: 8,
             ..Default::default()
         };
         let mut base = BaseMapper::new(&ctx, capabilities);
@@ -29,7 +32,8 @@ impl Mapper96 {
     }
 
     fn update_chr_bank(&mut self) {
-        self.base.select_chr_page(0, (self.chr_page as i16) * 8);
+        self.base
+            .select_chr_page(0, (self.chr_page as i16) * CHR_BANKS_PER_PAGE_64K);
     }
 }
 
@@ -46,7 +50,7 @@ impl Mapper for Mapper96 {
         if !(0x8000..=0xFFFF).contains(&addr) {
             return;
         }
-        self.chr_page = value & 0x03;
+        self.chr_page = value & CHR_PAGE_MASK;
         self.update_chr_bank();
     }
 
