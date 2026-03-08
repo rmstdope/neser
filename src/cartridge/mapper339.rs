@@ -84,14 +84,14 @@ impl Mapper339 {
     }
 
     fn read_prg_mmc3_mode(&self, addr: u16) -> u8 {
-        let inner = self.mmc3.mapped_prg_bank(addr) & 0x07;
+        let inner = (self.mmc3.raw_prg_8k_page_number(addr) as usize) & 0x07;
         let bank = (self.outer_cc() << 3) | inner;
         let offset = (addr as usize) & PRG_8K_OFFSET_MASK;
         self.mmc3.read_prg_at_bank(bank, offset)
     }
 
     fn mapped_chr_1k_bank(&self, addr: u16) -> usize {
-        let inner = self.mmc3.mapped_chr_1k_bank(addr) & 0x7F;
+        let inner = self.mmc3.raw_chr_1k_bank(addr) & 0x7F;
         (self.outer_cc() << 7) | inner
     }
 
