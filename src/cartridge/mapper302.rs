@@ -132,10 +132,14 @@ impl Mapper for Mapper302 {
     fn read_prg(&self, addr: u16) -> u8 {
         match addr {
             0x6000..=0x7FFF => {
-                let slot = (addr - 0x6000) as usize / PRG_PAGE_SIZE;
-                let bank = self.regs[4 + slot] as usize;
-                let offset = (addr - 0x6000) as usize % PRG_PAGE_SIZE;
                 let prg = self.base.prg_rom();
+                let bank_count = prg.len() / PRG_PAGE_SIZE;
+                if bank_count == 0 {
+                    return 0;
+                }
+                let slot = (addr - 0x6000) as usize / PRG_PAGE_SIZE;
+                let bank = self.regs[4 + slot] as usize % bank_count;
+                let offset = (addr - 0x6000) as usize % PRG_PAGE_SIZE;
                 let index = bank * PRG_PAGE_SIZE + offset;
                 prg.get(index).copied().unwrap_or(0)
             }
