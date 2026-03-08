@@ -102,11 +102,11 @@ impl Mapper80 {
         }
         self.base.select_prg_page(3, -1);
 
-        let chr0 = (self.chr_banks[0] & 0xFE) as i16;
+        let chr0 = self.chr_banks[0] as i16;
         self.base.select_chr_page(0, chr0);
         self.base.select_chr_page(1, chr0 + 1);
 
-        let chr1 = (self.chr_banks[1] & 0xFE) as i16;
+        let chr1 = self.chr_banks[1] as i16;
         self.base.select_chr_page(2, chr1);
         self.base.select_chr_page(3, chr1 + 1);
 
@@ -358,10 +358,10 @@ mod tests {
         mapper.write_prg(0x7EF4, 9);
         mapper.write_prg(0x7EF5, 10);
 
-        assert_eq!(mapper.read_chr(0x0000), (2 % CHR_BANKS) as u8);
-        assert_eq!(mapper.read_chr(0x0400), (3 % CHR_BANKS) as u8);
-        assert_eq!(mapper.read_chr(0x0800), (4 % CHR_BANKS) as u8);
-        assert_eq!(mapper.read_chr(0x0C00), (5 % CHR_BANKS) as u8);
+        assert_eq!(mapper.read_chr(0x0000), (3 % CHR_BANKS) as u8);
+        assert_eq!(mapper.read_chr(0x0400), (4 % CHR_BANKS) as u8);
+        assert_eq!(mapper.read_chr(0x0800), (5 % CHR_BANKS) as u8);
+        assert_eq!(mapper.read_chr(0x0C00), (6 % CHR_BANKS) as u8);
         assert_eq!(mapper.read_chr(0x1000), (7 % CHR_BANKS) as u8);
         assert_eq!(mapper.read_chr(0x1400), (8 % CHR_BANKS) as u8);
         assert_eq!(mapper.read_chr(0x1800), (9 % CHR_BANKS) as u8);
