@@ -18,11 +18,9 @@ const PRG_WRITE_START: u16 = 0x8000;
 const OUTER_PRG_MASK: u8 = 0x1F;
 const INNER_PRG_MASK: u8 = 0x07;
 const MODE_NROM_128_BIT: u16 = 0x20;
-const HORIZONTAL_MIRROR_MATCH_MASK: u16 = 0x25;
-const HORIZONTAL_MIRROR_MATCH_VALUE: u16 = 0x25;
+const HORIZONTAL_MIRROR_BITS: u16 = 0x25;
 const UNROM_FIXED_INNER_BANK: i16 = 0x07;
 const REGISTERS_SNAPSHOT_LEN: usize = 4;
-const BOOLEAN_FLAG_MASK: u8 = 0x01;
 
 pub struct Mapper340 {
     base: BaseMapper,
@@ -108,7 +106,7 @@ impl Mapper340 {
     }
 
     fn decode_mirroring_horizontal(addr: u16) -> bool {
-        (addr & HORIZONTAL_MIRROR_MATCH_MASK) == HORIZONTAL_MIRROR_MATCH_VALUE
+        (addr & HORIZONTAL_MIRROR_BITS) == HORIZONTAL_MIRROR_BITS
     }
 }
 
@@ -155,8 +153,8 @@ impl Mapper for Mapper340 {
         self.apply_state(
             data[0] & OUTER_PRG_MASK,
             data[1] & INNER_PRG_MASK,
-            (data[2] & BOOLEAN_FLAG_MASK) != 0,
-            (data[3] & BOOLEAN_FLAG_MASK) != 0,
+            data[2] != 0,
+            data[3] != 0,
         );
     }
 
