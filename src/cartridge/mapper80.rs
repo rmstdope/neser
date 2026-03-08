@@ -271,7 +271,6 @@ impl Mapper for Mapper80 {
 
     fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
         self.ram.fill(0);
-        self.prg_ram.fill(0);
         self.base.initialize_ram(mode);
     }
 
@@ -532,12 +531,13 @@ mod tests {
     #[test]
     fn initialize_ram_zeroes_mapper_owned_ram_buffers() {
         let mut mapper = make_mapper();
+        mapper.write_prg(0x7004, 0x9D);
+        mapper.write_prg(0x7024, 0xEE);
         mapper.initialize_ram(crate::console::RamInitMode::Random);
         mapper.write_prg(0x7EF8, 0xA3);
 
-        for offset in 0..PRG_RAM_SIZE {
-            assert_eq!(mapper.read_prg(PRG_RAM_START + offset as u16), 0);
-        }
+        assert_eq!(mapper.read_prg(0x7004), 0x9D);
+        assert_eq!(mapper.read_prg(0x7024), 0xEE);
 
         for offset in 0..RAM_SIZE {
             assert_eq!(mapper.read_prg(RAM_START + offset as u16), 0);
