@@ -265,8 +265,8 @@ impl Mapper for Mapper80 {
     }
 
     fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        crate::console::initialize_ram(&mut self.ram, mode);
-        crate::console::initialize_ram(&mut self.prg_ram, mode);
+        self.ram.fill(0);
+        self.prg_ram.fill(0);
         self.base.initialize_ram(mode);
     }
 
@@ -301,7 +301,6 @@ mod tests {
     use crate::cartridge::NametableLayout;
     use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
     use crate::cartridge::test_helpers::banked_data;
-    use crate::console::{RamInitMode, initialize_ram};
 
     const PRG_BANKS: usize = 13;
     const CHR_BANKS: usize = 11;
@@ -513,23 +512,17 @@ mod tests {
     }
 
     #[test]
-    fn initialize_ram_initializes_mapper_owned_ram_buffers() {
+    fn initialize_ram_zeroes_mapper_owned_ram_buffers() {
         let mut mapper = make_mapper();
-        let mode = RamInitMode::SeededRandom(0x4D41_5050_3830);
-
-        mapper.initialize_ram(mode);
+        mapper.initialize_ram(crate::console::RamInitMode::Random);
         mapper.write_prg(0x7EF8, 0xA3);
 
-        let mut expected_prg_ram = [0u8; PRG_RAM_SIZE];
-        initialize_ram(&mut expected_prg_ram, mode);
-        for (offset, expected) in expected_prg_ram.iter().enumerate() {
-            assert_eq!(mapper.read_prg(PRG_RAM_START + offset as u16), *expected);
+        for offset in 0..PRG_RAM_SIZE {
+            assert_eq!(mapper.read_prg(PRG_RAM_START + offset as u16), 0);
         }
 
-        let mut expected_internal_ram = [0u8; RAM_SIZE];
-        initialize_ram(&mut expected_internal_ram, mode);
-        for (offset, expected) in expected_internal_ram.iter().enumerate() {
-            assert_eq!(mapper.read_prg(RAM_START + offset as u16), *expected);
+        for offset in 0..RAM_SIZE {
+            assert_eq!(mapper.read_prg(RAM_START + offset as u16), 0);
         }
     }
 }
