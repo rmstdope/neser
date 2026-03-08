@@ -208,7 +208,7 @@ impl Mapper for Mapper80 {
         let mut snapshot = Vec::with_capacity(SNAPSHOT_SIZE);
         snapshot.extend_from_slice(&self.prg_banks);
         snapshot.extend_from_slice(&self.chr_banks);
-        snapshot.push(matches!(self.base.mirroring(), NametableLayout::Horizontal) as u8);
+        snapshot.push(matches!(self.base.mirroring(), NametableLayout::Vertical) as u8);
         snapshot.push(self.ram_permission);
         snapshot
     }
@@ -264,6 +264,12 @@ impl Mapper for Mapper80 {
         self.apply_banks();
     }
 
+    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+        crate::console::initialize_ram(&mut self.ram, mode);
+        crate::console::initialize_ram(&mut self.prg_ram, mode);
+        self.base.initialize_ram(mode);
+    }
+
     fn wram_size(&self) -> usize {
         self.prg_ram.len() + self.ram.len()
     }
@@ -289,10 +295,13 @@ impl Mapper for Mapper80 {
 
 #[cfg(test)]
 mod tests {
-    use super::{CHR_BANK_SIZE, PRG_BANK_SIZE};
+    use super::{
+        CHR_BANK_SIZE, PRG_BANK_SIZE, PRG_RAM_SIZE, PRG_RAM_START, RAM_SIZE, RAM_START,
+    };
     use crate::cartridge::NametableLayout;
     use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
     use crate::cartridge::test_helpers::banked_data;
+    use crate::console::{RamInitMode, initialize_ram};
 
     const PRG_BANKS: usize = 13;
     const CHR_BANKS: usize = 11;
@@ -480,5 +489,47 @@ mod tests {
         assert_eq!(mapper.read_prg(0x8000), (4 % PRG_BANKS) as u8);
         assert_eq!(mapper.read_prg(0xA000), (6 % PRG_BANKS) as u8);
         assert_eq!(mapper.read_prg(0xC000), (8 % PRG_BANKS) as u8);
+    }
+
+    #[test]
+    fn snapshot_restore_preserves_mirroring_without_inversion() {
+        for (write_value, expected) in [
+            (0x00, NametableLayout::Horizontal),
+            (0x01, NametableLayout::Vertical),
+        ] {
+            let mut mapper = make_mapper();
+            mapper.write_prg(0x7EF6, write_value);
+            let snapshot = mapper.registers_snapshot();
+
+            mapper.write_prg(0x7EF6, write_value ^ 0x01);
+            mapper.restore_registers(&snapshot);
+
+            assert_eq!(
+                mapper.get_mirroring(),
+                expected,
+                "Snapshot/restore must keep mirroring unchanged"
+            );
+        }
+    }
+
+    #[test]
+    fn initialize_ram_initializes_mapper_owned_ram_buffers() {
+        let mut mapper = make_mapper();
+        let mode = RamInitMode::SeededRandom(0x4D41_5050_3830);
+
+        mapper.initialize_ram(mode);
+        mapper.write_prg(0x7EF8, 0xA3);
+
+        let mut expected_prg_ram = [0u8; PRG_RAM_SIZE];
+        initialize_ram(&mut expected_prg_ram, mode);
+        for (offset, expected) in expected_prg_ram.iter().enumerate() {
+            assert_eq!(mapper.read_prg(PRG_RAM_START + offset as u16), *expected);
+        }
+
+        let mut expected_internal_ram = [0u8; RAM_SIZE];
+        initialize_ram(&mut expected_internal_ram, mode);
+        for (offset, expected) in expected_internal_ram.iter().enumerate() {
+            assert_eq!(mapper.read_prg(RAM_START + offset as u16), *expected);
+        }
     }
 }
