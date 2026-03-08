@@ -641,7 +641,7 @@ mod tests {
     }
 
     #[test]
-    fn write_to_8000_bit1_sets_vertical_mirroring() {
+    fn write_to_8000_bit0_sets_vertical_mirroring() {
         let mut mapper = make_mapper();
         mapper.write_prg(0x8000, 0x01); // bit 0 = 1 → Vertical
         assert_eq!(
