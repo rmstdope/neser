@@ -23,6 +23,7 @@ pub struct Mapper117 {
 impl Mapper117 {
     const PRG_BANK_SIZE: usize = 0x2000;
     const CHR_BANK_SIZE: usize = 0x0400;
+    const SNAPSHOT_SIZE: usize = 15;
 
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
@@ -116,7 +117,7 @@ impl Mapper for Mapper117 {
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        let mut data = Vec::with_capacity(15);
+        let mut data = Vec::with_capacity(Self::SNAPSHOT_SIZE);
         data.push(matches!(self.base.mirroring(), NametableLayout::Vertical) as u8);
         data.extend_from_slice(&self.prg_regs);
         data.extend_from_slice(&self.chr_regs);
@@ -127,7 +128,7 @@ impl Mapper for Mapper117 {
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        if data.len() < 15 {
+        if data.len() < Self::SNAPSHOT_SIZE {
             return;
         }
 
@@ -188,6 +189,21 @@ mod tests {
         mapper.write_prg(0x8000, 4);
         mapper.write_prg(0x8001, 5);
         mapper.write_prg(0x8002, 6);
+
+        assert_eq!(mapper.read_prg(0x8000), 4);
+        assert_eq!(mapper.read_prg(0xA000), 5);
+        assert_eq!(mapper.read_prg(0xC000), 6);
+        assert_eq!(mapper.read_prg(0xE000), (PRG_BANKS - 1) as u8);
+    }
+
+    #[test]
+    fn write_to_8003_is_ignored() {
+        let mut mapper = make_mapper();
+        mapper.write_prg(0x8000, 4);
+        mapper.write_prg(0x8001, 5);
+        mapper.write_prg(0x8002, 6);
+
+        mapper.write_prg(0x8003, 0);
 
         assert_eq!(mapper.read_prg(0x8000), 4);
         assert_eq!(mapper.read_prg(0xA000), 5);
