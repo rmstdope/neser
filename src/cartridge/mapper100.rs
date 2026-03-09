@@ -46,6 +46,10 @@ impl Mapper for Mapper100 {
         self.mmc3.read_prg(addr)
     }
 
+    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        self.mmc3.read_prg_open_bus(addr, open_bus)
+    }
+
     fn write_prg(&mut self, addr: u16, value: u8) {
         self.mmc3.write_prg(addr, value);
     }
@@ -147,5 +151,12 @@ mod tests {
         assert!(!caps.has_expansion_audio);
         assert!(caps.has_chr_banking);
         assert!(caps.has_dynamic_mirroring);
+    }
+
+    #[test]
+    fn read_prg_open_bus_reads_wram_via_mmc3_delegate() {
+        let mut mapper = make_mapper();
+        mapper.write_prg(0x6000, 0x3C);
+        assert_eq!(mapper.read_prg_open_bus(0x6000, 0xAA), 0x3C);
     }
 }
