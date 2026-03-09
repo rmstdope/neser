@@ -99,10 +99,11 @@ mod tests {
     use crate::cartridge::mapper::{MapperContext, create_mapper};
     use crate::cartridge::test_helpers::banked_data;
 
+    // Non-power-of-two counts help catch incorrect modulo-wrapping assumptions.
     const PRG_BANKS: usize = 11;
     const CHR_BANKS: usize = 13;
 
-    fn make_mapper(mirroring: NametableLayout) -> Mapper92 {
+    fn make_test_mapper(mirroring: NametableLayout) -> Mapper92 {
         Mapper92::new(MapperContext::new_for_test(
             92,
             banked_data(16 * 1024, PRG_BANKS),
@@ -127,7 +128,7 @@ mod tests {
 
     #[test]
     fn power_on_maps_bank_0_at_8000_and_last_bank_at_c000() {
-        let mut mapper = make_mapper(NametableLayout::Vertical);
+        let mut mapper = make_test_mapper(NametableLayout::Vertical);
         assert_eq!(mapper.read_prg(0x8000), 0);
         assert_eq!(mapper.read_prg(0xC000), (PRG_BANKS - 1) as u8);
         assert_eq!(mapper.read_chr(0x0000), 0);
@@ -135,7 +136,7 @@ mod tests {
 
     #[test]
     fn level_sensitive_prg_and_chr_bank_switching_matches_spec_vectors() {
-        let mut mapper = make_mapper(NametableLayout::Vertical);
+        let mut mapper = make_test_mapper(NametableLayout::Vertical);
 
         mapper.write_prg(0x8000, 0x00);
         assert_eq!(mapper.read_prg(0x8000), 0);
@@ -156,7 +157,7 @@ mod tests {
 
     #[test]
     fn prg_updates_while_bit7_stays_high() {
-        let mut mapper = make_mapper(NametableLayout::Vertical);
+        let mut mapper = make_test_mapper(NametableLayout::Vertical);
         mapper.write_prg(0x8000, 0x82);
         mapper.write_prg(0x8000, 0x83);
         assert_eq!(
@@ -168,18 +169,18 @@ mod tests {
 
     #[test]
     fn mirroring_is_fixed_from_header() {
-        let mut mapper = make_mapper(NametableLayout::Horizontal);
+        let mut mapper = make_test_mapper(NametableLayout::Horizontal);
         mapper.write_prg(0x8000, 0xC5);
         assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
     }
 
     #[test]
     fn snapshot_restore_round_trips_registers() {
-        let mut mapper = make_mapper(NametableLayout::Vertical);
+        let mut mapper = make_test_mapper(NametableLayout::Vertical);
         mapper.write_prg(0x8000, 0xC5);
         let snapshot = mapper.registers_snapshot();
 
-        let mut restored = make_mapper(NametableLayout::Vertical);
+        let mut restored = make_test_mapper(NametableLayout::Vertical);
         restored.restore_registers(&snapshot);
 
         assert_eq!(restored.read_prg(0x8000), 5);
