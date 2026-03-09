@@ -283,9 +283,21 @@ mod tests {
         mapper.write_prg(0x4020, 0xFF);
         mapper.write_prg(0x6000, 0xFF);
         mapper.write_prg(0x7FFF, 0xFF);
-        assert_eq!(mapper.read_prg(0x8000), 6, "PRG $8000 should remain 6 after writes below $8000");
-        assert_eq!(mapper.read_prg(0xC000), 7, "PRG $C000 should remain 7 after writes below $8000");
-        assert_eq!(mapper.read_chr(0x0000), 5, "CHR bank should remain 5 after writes below $8000");
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            6,
+            "PRG $8000 should remain 6 after writes below $8000"
+        );
+        assert_eq!(
+            mapper.read_prg(0xC000),
+            7,
+            "PRG $C000 should remain 7 after writes below $8000"
+        );
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            5,
+            "CHR bank should remain 5 after writes below $8000"
+        );
     }
 
     #[test]
