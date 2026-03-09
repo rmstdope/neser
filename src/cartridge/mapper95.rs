@@ -21,8 +21,8 @@ use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 /// - Mirroring: Derived from bit 5 of R0 and R1 (on bank-data writes)
 ///
 /// Notes:
-/// - Register interface matches mapper 206 (`$8000` bank select, `$8001` bank data)
-/// - PRG/CHR banking mode bits are supported like mapper 206 (no IRQ)
+/// - Register interface mirrors all writes in `$8000-$FFFF` to `$8000/$8001`
+/// - PRG/CHR mode bits are forced off on bank-select writes (`value &= 0x3F`)
 /// - Mirroring is not controlled through `$A000`; writes there are ignored
 /// - On odd write (`$8001` equivalent), mirroring is recomputed from:
 ///   - `r0 = (R0 >> 5) & 1`
@@ -144,20 +144,23 @@ impl Mapper for Mapper95 {
             return;
         }
 
-        match addr {
-            0x8000..=0x9FFF => {
-                if (addr & 1) == 0 {
-                    self.bank_select = value;
-                } else {
-                    let reg = self.selected_reg();
-                    self.regs[reg] = value;
-                    self.update_mirroring_from_r0_r1();
-                }
-                self.update_banks();
+        if addr < 0x8000 {
+            return;
+        }
+
+        match addr & 0x8001 {
+            0x8000 => {
+                self.bank_select = value & 0x3F;
             }
-            0xA000..=0xFFFF => {}
+            0x8001 => {
+                let reg = self.selected_reg();
+                self.regs[reg] = value;
+                self.update_mirroring_from_r0_r1();
+            }
             _ => {}
         }
+
+        self.update_banks();
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -282,5 +285,37 @@ mod tests {
         mapper.write_prg(0x8000, 0b0000_0001);
         mapper.write_prg(0x8001, 0x00);
         assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
+    }
+
+    #[test]
+    fn mapper95_register_writes_are_mirrored_across_8000_ffff() {
+        let prg_rom = banked_data(8 * 1024, 8);
+        let chr_rom = banked_data(1024, 16);
+
+        let mut mapper = create_mapper95(prg_rom, chr_rom, NametableLayout::Vertical)
+            .expect("Mapper 95 should be implemented");
+
+        // Bank-select from A000-range even address (mirrors to $8000)
+        mapper.write_prg(0xA000, 0b0000_0110); // select R6
+        // Bank-data from C000-range odd address (mirrors to $8001)
+        mapper.write_prg(0xC001, 3); // R6 = 3
+
+        assert_eq!(mapper.read_prg(0x8000), 3);
+    }
+
+    #[test]
+    fn mapper95_forces_prg_chr_mode_bits_off() {
+        let prg_rom = banked_data(8 * 1024, 8);
+        let chr_rom = banked_data(1024, 16);
+
+        let mut mapper = create_mapper95(prg_rom, chr_rom, NametableLayout::Vertical)
+            .expect("Mapper 95 should be implemented");
+
+        // Attempt PRG mode 1 with R6 select. Mapper should force mode 0.
+        mapper.write_prg(0x8000, 0b0100_0110);
+        mapper.write_prg(0x8001, 4);
+
+        assert_eq!(mapper.read_prg(0x8000), 4);
+        assert_eq!(mapper.read_prg(0xC000), 6);
     }
 }

@@ -3,7 +3,7 @@ mod tests {
     use std::fs;
 
     use crate::cartridge::Cartridge;
-    use crate::console::{Config, Nes};
+    use crate::console::{Config, Nes, RamInitMode};
     use crate::integration_tests::rom_test_runner::tests::run_nes_for_frames;
     use crate::setup_rom_test;
 
@@ -67,6 +67,69 @@ mod tests {
                 crc,
                 *expected_crc,
                 "unexpected frame CRC at checkpoint {} for mmc5exram",
+                index + 1
+            );
+        }
+    }
+
+    fn build_mapper95_test_rom() -> Vec<u8> {
+        let prg_rom_banks_16k = 8u8;
+        let chr_rom_banks_8k = 1u8;
+
+        let mut rom = Vec::new();
+        rom.extend_from_slice(b"NES\x1A");
+        rom.push(prg_rom_banks_16k);
+        rom.push(chr_rom_banks_8k);
+        rom.push(0xF0);
+        rom.push(0x50);
+        rom.extend_from_slice(&[0u8; 8]);
+
+        let prg_size = prg_rom_banks_16k as usize * 16 * 1024;
+        let mut prg = vec![0xEA; prg_size];
+        let program: [u8; 33] = [
+            0xA9, 0x06, 0x8D, 0x00, 0x80, 0xA9, 0x01, 0x8D, 0x01, 0x80, 0xA9, 0x07, 0x8D, 0x00,
+            0x80, 0xA9, 0x02, 0x8D, 0x01, 0x80, 0xA9, 0x00, 0x8D, 0x00, 0x80, 0xA9, 0x20, 0x8D,
+            0x01, 0x80, 0x4C, 0x20, 0x80,
+        ];
+        prg[0..program.len()].copy_from_slice(&program);
+
+        let reset_vector = 0x8000u16;
+        let vector_base = prg_size - 6;
+        prg[vector_base..vector_base + 2].copy_from_slice(&reset_vector.to_le_bytes());
+        prg[vector_base + 2..vector_base + 4].copy_from_slice(&reset_vector.to_le_bytes());
+        prg[vector_base + 4..vector_base + 6].copy_from_slice(&reset_vector.to_le_bytes());
+
+        rom.extend_from_slice(&prg);
+        rom.extend(std::iter::repeat_n(
+            0u8,
+            chr_rom_banks_8k as usize * 8 * 1024,
+        ));
+
+        rom
+    }
+
+    #[test]
+    fn test_mapper95_in_memory_rom_crc_sequence() {
+        let rom_path = "in-memory/mapper95-test.nes";
+        let rom_data = build_mapper95_test_rom();
+        let cartridge =
+            Cartridge::load_from_file(&rom_data, rom_path, crate::app_context::AppContext::new())
+                .expect("in-memory mapper95 ROM should parse");
+
+        let mut config = Config::default();
+        config.ram_init_mode = RamInitMode::Zero;
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+
+        let expected_crcs = [0xE328388E, 0xE328388E, 0xE328388E];
+        for (index, expected_crc) in expected_crcs.iter().enumerate() {
+            run_nes_for_frames(&mut nes, 60);
+            let crc = nes.get_screen_buffer().crc32();
+            assert_eq!(
+                crc,
+                *expected_crc,
+                "unexpected frame CRC at checkpoint {} for in-memory mapper95 ROM",
                 index + 1
             );
         }
