@@ -69,7 +69,7 @@ Existing runtime behavior through `Mapper` remains unchanged.
 | 29 | Sealie Computing | | x | | | 8 | 16 | 8 |
 | 30 | UNROM-512 (homebrew) |  | x | x |  | 0 | 16 | 8 |
 | 31 | NSF playing cart / 8-in-1 (Homebrew) |  | x |  |  | 0 | 4 | 8 |
-| 32 | Irem G-101 |  | x |  |  | 0 | 8 | 1 |
+| 32 | Irem G-101 |  | x | x (except submapper 1) |  | 0 | 8 | 1 |
 | 33 | TaitoTc0190Mapper  |  | x | x |  | 8 | 8 | 1 |
 | 34 | BNROM/NINA-001 | | * | | | 8 | 32 | 8 |
 | 35 | J.Y. Company (simple variant) | x | x | x |  | 8 | 8 | 1 |
