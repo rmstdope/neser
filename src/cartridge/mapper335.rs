@@ -44,8 +44,6 @@ use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 const MAPPER_NUMBER: u16 = 335;
 const PRG_BANK_SIZE_BYTES: usize = 16 * 1024;
 const CHR_BANK_SIZE_BYTES: usize = 8 * 1024;
-const CHR_WRITE_END: u16 = 0xBFFF;
-const PRG_WRITE_START: u16 = 0xC000;
 const NROM128_BIT: u8 = 0x10;
 const PRG_BANK_MASK: u8 = 0x07;
 const CHR_BANK_MASK: u8 = 0x0F;
@@ -124,10 +122,10 @@ impl Mapper for Mapper335 {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
-        if addr <= CHR_WRITE_END {
-            self.apply_state(self.prg_reg, value);
-        } else if addr >= PRG_WRITE_START {
-            self.apply_state(value, self.chr_reg);
+        match addr {
+            0x8000..=0xBFFF => self.apply_state(self.prg_reg, value),
+            0xC000..=0xFFFF => self.apply_state(value, self.chr_reg),
+            _ => {}
         }
     }
 
@@ -274,6 +272,21 @@ mod tests {
     }
 
     // ── Write handlers ────────────────────────────────────────────────────────
+
+    #[test]
+    fn writes_below_8000_do_not_change_prg_or_chr_banks() {
+        let mut mapper = make_mapper();
+        // Establish a known non-default state first
+        mapper.write_prg(0xC000, 0x03); // PRG pages 6/7
+        mapper.write_prg(0x8000, 0x05); // CHR bank 5
+        // Writes in the $4020-$7FFF range must be silently ignored
+        mapper.write_prg(0x4020, 0xFF);
+        mapper.write_prg(0x6000, 0xFF);
+        mapper.write_prg(0x7FFF, 0xFF);
+        assert_eq!(mapper.read_prg(0x8000), 6, "PRG $8000 should remain 6 after writes below $8000");
+        assert_eq!(mapper.read_prg(0xC000), 7, "PRG $C000 should remain 7 after writes below $8000");
+        assert_eq!(mapper.read_chr(0x0000), 5, "CHR bank should remain 5 after writes below $8000");
+    }
 
     #[test]
     fn writes_to_8000_bfff_change_chr_bank() {
