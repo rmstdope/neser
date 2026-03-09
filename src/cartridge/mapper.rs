@@ -72,7 +72,6 @@ use super::mapper95::Mapper95;
 use super::mapper96::Mapper96;
 use super::mapper100::Mapper100;
 use super::mapper101::Mapper101;
-use super::mapper102::Mapper102;
 use super::mapper104::Mapper104;
 use super::mapper105::Mapper105;
 use super::mapper115::Mapper115;
@@ -764,7 +763,7 @@ mapper_registry! {
     96 => Mapper96::new,
     100 => Mapper100::new,
     101 => Mapper101::new,
-    102 => Mapper102::new,
+    102 => NROMMapper::new,
     104 => Mapper104::new,
     105 => Mapper105::new,
     115 => Mapper115::new,
@@ -1017,6 +1016,28 @@ mod tests {
     #[test]
     fn supported_mappers_includes_mapper_102() {
         assert!(supported_mappers().contains(&102));
+    }
+
+    #[test]
+    fn mapper_102_uses_nrom_fixed_mapping_behavior() {
+        let mut prg_rom = vec![0; 16 * 1024];
+        prg_rom[0x0000] = 0x12;
+        prg_rom[0x3FFF] = 0x34;
+        let mut mapper = create_mapper(MapperContext::new_for_test(
+            102,
+            prg_rom,
+            vec![0x5A; 8 * 1024],
+            NametableLayout::Vertical,
+        ))
+        .expect("Mapper 102 should be created");
+
+        mapper.write_prg(0x8000, 0xFF);
+
+        assert_eq!(mapper.read_prg(0x8000), 0x12);
+        assert_eq!(mapper.read_prg(0xBFFF), 0x34);
+        assert_eq!(mapper.read_prg(0xC000), 0x12);
+        assert_eq!(mapper.read_prg(0xFFFF), 0x34);
+        assert_eq!(mapper.read_chr(0x0000), 0x5A);
     }
 
     #[test]
