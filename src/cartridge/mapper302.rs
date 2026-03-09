@@ -18,7 +18,7 @@ use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 /// Specifications:
 /// - Primary: NesDev wiki; Fallback: Mesen2 `Kaiser7057.h`
 /// - PRG-ROM: 128 KiB (64 × 2 KiB banks); four 2 KiB switchable at $8000–$9FFF,
-///            four 2 KiB switchable at $6000–$7FFF, rest fixed
+///   four 2 KiB switchable at $6000–$7FFF, rest fixed
 /// - CHR: 8 KiB ROM (single bank, unbanked)
 /// - Mirroring: H / V programmable via writes to $8000–$9FFF (bit 0)
 /// - IRQ: None
