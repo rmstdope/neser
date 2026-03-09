@@ -27,7 +27,7 @@ impl Mapper97 {
         };
         let mut base = BaseMapper::new(&ctx, capabilities);
         base.configure_prg_banking(16 * 1024);
-        // Irem TAM-S1: $8000 fixed to last bank, $C000 switchable (power-on bank 0).
+        // Irem TAM-S1: $8000-$BFFF fixed to last bank, $C000-$FFFF switchable (power-on bank 0).
         base.select_prg_page(0, -1);
         base.select_prg_page(1, 0);
         Self {
