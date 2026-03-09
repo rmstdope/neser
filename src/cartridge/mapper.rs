@@ -1019,7 +1019,7 @@ mod tests {
     }
 
     #[test]
-    fn mapper_102_uses_nrom_fixed_mapping_behavior() {
+    fn mapper_102_behaves_as_nrom() {
         let mut prg_rom = vec![0; 16 * 1024];
         prg_rom[0x0000] = 0x12;
         prg_rom[0x3FFF] = 0x34;
