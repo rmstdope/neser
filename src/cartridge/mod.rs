@@ -105,6 +105,7 @@ mod mapper88;
 mod mapper90;
 mod mapper91;
 mod mapper93;
+mod mapper95;
 mod mapper_templates;
 mod mmc1;
 mod mmc2;
