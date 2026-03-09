@@ -99,7 +99,9 @@ impl Mapper for Mapper115 {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
-        if (0x4100..=0x7FFF).contains(&addr) {
+        if (0x6000..=0x7FFF).contains(&addr) {
+            self.mmc3.write_prg(addr, value);
+        } else if (0x4100..=0x5FFF).contains(&addr) {
             if addr == 0x5080 {
                 self.protection_reg = value;
             } else if (addr & 0x01) != 0 {
@@ -314,5 +316,26 @@ mod tests {
         assert_eq!(restored.read_chr(0x1001), 1);
         assert_eq!(restored.get_mirroring(), NametableLayout::Horizontal);
         assert_eq!(restored.read_prg(0x5000), 0x5A);
+    }
+
+    #[test]
+    fn wram_window_writes_do_not_modify_outer_registers() {
+        let mut mapper = make_mapper();
+        mapper.write_prg(0x8000, 0x06);
+        mapper.write_prg(0x8001, 5);
+        assert_eq!(mapper.read_prg(0x8000), 5);
+
+        mapper.write_prg(0x6000, 0xAA);
+
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            0xAA,
+            "$6000-$7FFF writes should be handled as WRAM writes"
+        );
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            5,
+            "WRAM writes must not accidentally update mapper 115 outer bank registers"
+        );
     }
 }
