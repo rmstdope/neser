@@ -241,19 +241,28 @@ mod tests {
 
     // ── Bus conflicts ───────────────────────────────────────────────────────
 
+    /// Make a mapper where the ROM byte at $8000 (bank 0, offset 0) is 0x06,
+    /// so a write of 0x07 produces effective inner = 0x07 & 0x06 = 0x06.
+    fn make_mapper_for_bus_conflict() -> Mapper294 {
+        let mut prg = make_prg_rom();
+        prg[0] = 0b0000_0110; // bank 0, offset 0 → used by bus-conflict AND
+        Mapper294::new(MapperContext::new_for_test(
+            294,
+            prg,
+            vec![],
+            NametableLayout::Vertical,
+        ))
+    }
+
     #[test]
     fn inner_write_applies_bus_conflict() {
-        let mut mapper = make_mapper();
-        // ROM at $8000 + 0x100 is bank_id = 0, but we write via $8000 (offset 0).
-        // The bus-conflict AND is at addr $8000 (offset 0 from window base),
-        // where ROM content = 0xFF, so AND passes the write value unchanged.
-        // Write inner=5 to a mirror address to confirm conflict logic is engaged.
-        // We verify by checking that $8000 maps to bank 5.
-        mapper.write_prg(0x8000, 0x05);
+        let mut mapper = make_mapper_for_bus_conflict();
+        // ROM byte at $8000 = 0b0000_0110; writing 0x07 → 0x07 & 0x06 = 0x06 (inner bank 6)
+        mapper.write_prg(0x8000, 0x07);
         assert_eq!(
             read_bank_id(&mapper, 0x8000),
-            5,
-            "Bus conflict with 0xFF ROM should pass value 5 unchanged"
+            6, // outer=0, inner=0x07 & 0x06 = 0x06 → bank 0*8+6 = 6
+            "Bus conflict must AND write value (0x07) with ROM byte (0x06), selecting inner bank 6"
         );
     }
 
@@ -280,12 +289,8 @@ mod tests {
     #[test]
     fn outer_register_mask_c100_triggers_on_4100_variants() {
         let mut mapper = make_mapper();
-        // Addresses satisfying addr & 0xC100 == 0x4100 (e.g., 0x4100, 0x41FF, 0x42FE... wait)
-        // 0x4100 & 0xC100 = 0x4100 ✓
-        // 0x41FE & 0xC100 = 0x4100 ✓
-        // 0x43FF & 0xC100 = 0x4100... let me check: 0x43FF = 0100 0011 1111 1111
-        //   & 0xC100       = 1100 0001 0000 0000
-        //   = 0100 0001 0000 0000 = 0x4100 ✓
+        // Any address where addr & 0xC100 == 0x4100 triggers the outer register.
+        // Representative matches: 0x4100, 0x41FE (bits 15:14=01, bit 8=1, rest free).
         mapper.write_prg(0x41FE, 0x02); // addr & 0xC100 = 0x4100 → outer=2
         assert_eq!(
             read_bank_id(&mapper, 0x8000),
