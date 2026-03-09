@@ -15,13 +15,19 @@ impl Mapper101 {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
             max_prg_ram_kb: 0,
+            prg_bank_size_kb: 32,
             chr_bank_size_kb: 8,
             ..Default::default()
         };
         let mut base = BaseMapper::new(&ctx, capabilities);
         base.configure_chr_banking(CHR_BANK_SIZE);
+        let mut mapper = Self { base, chr_bank: 0 };
+        mapper.update_banks();
+        mapper
+    }
 
-        Self { base, chr_bank: 0 }
+    fn update_banks(&mut self) {
+        self.base.select_chr_page(0, self.chr_bank as i16);
     }
 }
 
@@ -34,13 +40,29 @@ impl Mapper for Mapper101 {
         &mut self.base
     }
 
-    fn write_prg(&mut self, _addr: u16, _value: u8) {}
-
-    fn registers_snapshot(&self) -> Vec<u8> {
-        vec![]
+    fn write_prg(&mut self, addr: u16, value: u8) {
+        if !(0x6000..=0x7FFF).contains(&addr) {
+            return;
+        }
+        self.chr_bank = value & 0x0F;
+        self.update_banks();
     }
 
-    fn restore_registers(&mut self, _data: &[u8]) {}
+    fn registers_snapshot(&self) -> Vec<u8> {
+        vec![self.chr_bank]
+    }
+
+    fn restore_registers(&mut self, data: &[u8]) {
+        if let Some(chr_bank) = data.first() {
+            self.chr_bank = chr_bank & 0x0F;
+            self.update_banks();
+        }
+    }
+
+    fn reset(&mut self) {
+        self.chr_bank = 0;
+        self.update_banks();
+    }
 }
 
 #[cfg(test)]
