@@ -13,6 +13,7 @@ use super::gxrom::GxROMMapper;
 use super::irem_g101::IremG101Mapper;
 use super::mapper12::Mapper12;
 use super::mapper14::Mapper14;
+use super::mapper117::Mapper117;
 use super::mapper18::Mapper18;
 use super::mapper20::Mapper20;
 use super::mapper28::Mapper28;
@@ -68,7 +69,9 @@ use super::mapper88::Mapper88;
 use super::mapper90::Mapper90;
 use super::mapper91::Mapper91;
 use super::mapper93::Mapper93;
+use super::mapper95::Mapper95;
 use super::mapper96::Mapper96;
+use super::mapper100::Mapper100;
 use super::mapper132::Mapper132;
 use super::mapper133::Mapper133;
 use super::mapper140::Mapper140;
@@ -84,11 +87,14 @@ use super::mapper251::Mapper251;
 use super::mapper254::Mapper254;
 use super::mapper255::Mapper255;
 use super::mapper302::Mapper302;
+use super::mapper320::Mapper320;
 use super::mapper324::Mapper324;
 use super::mapper326::Mapper326;
 use super::mapper327::Mapper327;
 use super::mapper328::Mapper328;
+use super::mapper330::Mapper330;
 use super::mapper332::Mapper332;
+use super::mapper335::Mapper335;
 use super::mapper339::Mapper339;
 use super::mapper340::Mapper340;
 use super::mapper341::Mapper341;
@@ -662,9 +668,12 @@ mapper_registry! {
     29 => Mapper29::new,
     30 => Mapper30::new,
     31 => Mapper31::new,
+    320 => Mapper320::new,
     327 => Mapper327::new,
     328 => Mapper328::new,
+    330 => Mapper330::new,
     332 => Mapper332::new,
+    335 => Mapper335::new,
     324 => Mapper324::new,
     326 => Mapper326::new,
     32 => IremG101Mapper::new,
@@ -739,7 +748,10 @@ mapper_registry! {
     90 => Mapper90::new,
     91 => Mapper91::new,
     93 => Mapper93::new,
+    95 => Mapper95::new,
     96 => Mapper96::new,
+    100 => Mapper100::new,
+    117 => Mapper117::new,
     129 => Mapper58::new,
     132 => Mapper132::new,
     133 => Mapper133::new,
@@ -765,9 +777,9 @@ const SUPPORTED_MAPPERS: &[u16] = &[
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
     26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
     50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73,
-    74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 90, 91, 93, 96, 129, 132, 133, 140,
-    155, 185, 205, 206, 241, 242, 243, 244, 245, 246, 251, 254, 255, 302, 324, 326, 327, 328, 332,
-    339, 340, 342, 343, 344, 345, 346, 347, 348, 349, 350,
+    74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 90, 91, 93, 95, 96, 100, 117, 129,
+    132, 133, 140, 155, 185, 205, 206, 241, 242, 243, 244, 245, 246, 251, 254, 255, 302, 320, 324,
+    326, 327, 328, 330, 332, 335, 339, 340, 342, 343, 344, 345, 346, 347, 348, 349, 350,
 ];
 
 /// List of supported iNES mapper IDs handled by the factory.
@@ -779,13 +791,12 @@ pub fn supported_mappers() -> &'static [u16] {
 /// Create a mapper instance based on mapper metadata.
 pub fn create_mapper(metadata: MapperContext) -> io::Result<Box<dyn Mapper>> {
     let mapper_number = metadata.mapper;
-    if let Some(mapper) = create_registry_mapper(metadata) {
-        return Ok(mapper);
-    }
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        format!("Mapper {} not implemented", mapper_number),
-    ))
+    create_registry_mapper(metadata).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!("Mapper {} not implemented", mapper_number),
+        )
+    })
 }
 
 #[cfg(test)]
@@ -804,6 +815,18 @@ mod tests {
         assert!(supported.contains(&5));
         assert!(supported.contains(&7));
         assert!(supported.contains(&8));
+        assert!(supported.contains(&95));
+    }
+
+    #[test]
+    fn create_mapper_accepts_mapper_95() {
+        let prg_rom = vec![0u8; 8 * 1024 * 8];
+        let chr_rom = vec![0u8; 1024 * 16];
+        let metadata = MapperContext::new_for_test(95, prg_rom, chr_rom, NametableLayout::Vertical);
+
+        let mapper = create_mapper(metadata).expect("Mapper 95 should be implemented");
+        assert!(!mapper.capabilities().has_irq);
+        assert!(mapper.capabilities().has_chr_banking);
     }
 
     #[test]
@@ -912,6 +935,53 @@ mod tests {
 
         mapper.write_prg(0x6000, 0x34);
         assert_eq!(mapper.read_prg(0x6000), 0x34);
+    }
+
+    #[test]
+    fn create_mapper_accepts_mapper_100_as_mmc3_compatible() {
+        let prg_rom = vec![0u8; 8 * 1024 * 48];
+        let chr_rom = vec![0u8; 1024 * 96];
+        let metadata =
+            MapperContext::new_for_test(100, prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        let result = create_mapper(metadata);
+
+        assert!(result.is_ok(), "Mapper 100 should be created");
+    }
+
+    #[test]
+    fn mapper_100_matches_mmc3_bank_mirroring_and_irq_capabilities() {
+        let prg_rom = (0u8..48)
+            .flat_map(|bank| std::iter::repeat_n(bank, 8 * 1024))
+            .collect();
+        let chr_rom = (0u8..96)
+            .flat_map(|bank| std::iter::repeat_n(bank, 1024))
+            .collect();
+        let mut mapper = create_mapper(MapperContext::new_for_test(
+            100,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Horizontal,
+        ))
+        .expect("Mapper 100 should be created");
+
+        mapper.write_prg(0x8000, 0x06);
+        mapper.write_prg(0x8001, 5);
+        assert_eq!(mapper.read_prg(0x8000), 5);
+
+        mapper.write_prg(0xA000, 0);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
+        mapper.write_prg(0xA000, 1);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
+
+        let caps = mapper.capabilities();
+        assert!(caps.has_irq);
+        assert!(!caps.has_expansion_audio);
+    }
+
+    #[test]
+    fn supported_mappers_includes_mapper_100() {
+        assert!(supported_mappers().contains(&100));
     }
 
     #[test]
