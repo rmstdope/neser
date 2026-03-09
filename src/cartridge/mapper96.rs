@@ -25,9 +25,7 @@ impl Mapper96 {
         };
         let mut base = BaseMapper::new(&ctx, capabilities);
         base.configure_prg_banking(32 * 1024);
-        base.select_prg_page(0, 0);
         base.configure_chr_banking(8 * 1024);
-        base.select_chr_page(0, 0);
         Self { base, chr_page: 0 }
     }
 
@@ -60,7 +58,7 @@ impl Mapper for Mapper96 {
 
     fn restore_registers(&mut self, data: &[u8]) {
         if let Some(&chr_page) = data.first() {
-            self.chr_page = chr_page;
+            self.chr_page = chr_page & CHR_PAGE_MASK;
             self.update_chr_bank();
         }
     }
@@ -102,7 +100,10 @@ mod tests {
             chr,
             NametableLayout::Horizontal,
         ));
-        assert!(result.is_ok(), "Mapper 96 must be registered in the factory");
+        assert!(
+            result.is_ok(),
+            "Mapper 96 must be registered in the factory"
+        );
     }
 
     #[test]
@@ -130,5 +131,25 @@ mod tests {
             0,
             "value 0x02 wraps to CHR page 0 with 2 total pages"
         );
+    }
+
+    #[test]
+    fn registers_snapshot_restore_and_reset_roundtrip_chr_page() {
+        let mut mapper = make_mapper_direct();
+        mapper.write_prg(0x8000, 0x01);
+        let snapshot = mapper.registers_snapshot();
+
+        mapper.write_prg(0x8000, 0x00);
+        assert_eq!(mapper.read_chr(0x0000), 0, "state changed before restore");
+
+        mapper.restore_registers(&snapshot);
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            1,
+            "restored snapshot returns CHR page 1 mapping"
+        );
+
+        mapper.reset();
+        assert_eq!(mapper.read_chr(0x0000), 0, "reset returns to CHR page 0");
     }
 }
