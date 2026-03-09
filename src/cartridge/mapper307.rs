@@ -51,12 +51,13 @@ pub struct Mapper307 {
     current_register: u8,
     regs: [u8; 8],
     /// 2 KiB CIRAM for per-nametable routing (2 × 1 KiB pages).
-    ciram: [u8; 0x800],
+    ciram: [u8; CIRAM_SIZE],
     /// 8 KiB WRAM: page 0 at $6000–$6FFF, page 1 at $B000–$BFFF.
     wram: [u8; 0x2000],
 }
 
 const PRG_PAGE_SIZE: usize = 0x1000; // 4 KiB
+const CIRAM_SIZE: usize = 0x800; // 2 KiB (2 × 1 KiB nametable pages)
 
 impl Mapper307 {
     pub fn new(ctx: MapperContext) -> Self {
@@ -71,14 +72,13 @@ impl Mapper307 {
             base,
             current_register: 0,
             regs: [0; 8],
-            ciram: [0; 0x800],
+            ciram: [0; CIRAM_SIZE],
             wram: [0; 0x2000],
         }
     }
 
     fn prg_bank_count(&self) -> usize {
-        let len = self.base.prg_rom().len();
-        if len == 0 { 1 } else { len / PRG_PAGE_SIZE }
+        (self.base.prg_rom().len() / PRG_PAGE_SIZE).max(1)
     }
 
     fn resolve_prg_bank(&self, bank: i32) -> usize {
@@ -184,6 +184,19 @@ impl Mapper for Mapper307 {
         }
     }
 
+    fn wram_size(&self) -> usize {
+        self.wram.len()
+    }
+
+    fn wram_snapshot(&self) -> Vec<u8> {
+        self.wram.to_vec()
+    }
+
+    fn load_wram_snapshot(&mut self, data: &[u8]) {
+        let len = data.len().min(self.wram.len());
+        self.wram[..len].copy_from_slice(&data[..len]);
+    }
+
     fn write_prg(&mut self, addr: u16, value: u8) {
         match addr {
             0x6000..=0x6FFF => {
@@ -233,18 +246,22 @@ impl Mapper for Mapper307 {
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        let mut snap = Vec::with_capacity(10);
+        // 8 bytes of regs + 1 byte of current_register + CIRAM_SIZE bytes of CIRAM
+        let mut snap = Vec::with_capacity(9 + CIRAM_SIZE);
         snap.extend_from_slice(&self.regs);
         snap.push(self.current_register);
+        snap.extend_from_slice(&self.ciram);
         snap
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        if data.len() < 9 {
+        // Expect 8 bytes regs, 1 byte current_register, and CIRAM_SIZE bytes CIRAM.
+        if data.len() < 9 + CIRAM_SIZE {
             return;
         }
         self.regs.copy_from_slice(&data[0..8]);
         self.current_register = data[8];
+        self.ciram.copy_from_slice(&data[9..9 + CIRAM_SIZE]);
     }
 
     fn reset(&mut self) {
@@ -489,12 +506,28 @@ mod tests {
         mapper.write_prg(0x8001, 5); // reg[6] = 5
         mapper.write_prg(0x8000, 7); // select reg 7
         mapper.write_prg(0x8001, 3); // reg[7] = 3
+        // Write a value to a nametable to exercise CIRAM round-trip.
+        mapper.write_nametable(0x2001, 0x42);
         let snap = mapper.registers_snapshot();
         let mut mapper2 = create_mapper(32);
         mapper2.restore_registers(&snap);
         // After restore, banking should match.
         assert_eq!(mapper2.read_prg(0x8000), mapper.read_prg(0x8000));
         assert_eq!(mapper2.read_prg(0xC000), mapper.read_prg(0xC000));
+        // CIRAM should also be restored.
+        assert_eq!(mapper2.read_nametable(0x2001), Some(0x42));
+    }
+
+    #[test]
+    fn test_wram_snapshot_round_trips() {
+        let mut mapper = create_mapper(32);
+        mapper.write_prg(0x6000, 0xAB); // WRAM page 0 at $6000-$6FFF
+        mapper.write_prg(0xB000, 0xCD); // WRAM page 1 at $B000-$BFFF
+        let snap = mapper.wram_snapshot();
+        let mut mapper2 = create_mapper(32);
+        mapper2.load_wram_snapshot(&snap);
+        assert_eq!(mapper2.read_prg(0x6000), 0xAB);
+        assert_eq!(mapper2.read_prg(0xB000), 0xCD);
     }
 
     // ── Reset tests ─────────────────────────────────────────────────────────
