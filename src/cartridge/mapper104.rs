@@ -46,7 +46,7 @@ impl Mapper for Mapper104 {
         if addr >= 0xC000 {
             self.register = (self.register & 0x70) | (value & 0x0F);
             self.update_banks();
-        } else if addr <= 0x9FFF && (value & 0x08) != 0 {
+        } else if addr >= 0x8000 && (value & 0x08) != 0 {
             self.register = (self.register & 0x0F) | ((value << 4) & 0x70);
             self.update_banks();
         }
@@ -140,5 +140,18 @@ mod tests {
         mapper.write_prg(0xC000, 0x0F);
         mapper.write_prg(0x8000, 0x0B);
         assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
+    }
+
+    #[test]
+    fn reset_restores_power_on_prg_state() {
+        let mut mapper = create_mapper104(banked_data(16 * 1024, PRG_BANKS), vec![]);
+        mapper.write_prg(0xC000, 0x0A);
+        mapper.write_prg(0x8000, 0x0B);
+        assert_eq!(mapper.read_prg(0x8000), 58);
+        assert_eq!(mapper.read_prg(0xC000), 63);
+
+        mapper.reset();
+        assert_eq!(mapper.read_prg(0x8000), 0);
+        assert_eq!(mapper.read_prg(0xC000), 15);
     }
 }
