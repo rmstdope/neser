@@ -43,9 +43,9 @@ Existing runtime behavior through `Mapper` remains unchanged.
 | 3 | CNROM | | x | | | 8 | 32 | 8 |
 | 4 | MMC3 | x | x | x | | 8 | 8 | 1 |
 | 5 | MMC5 | x | x | x | x | 64 | 8 | 1 |
-| 6 | SuperMagicCardMapper  | x | x | x |  | 0 | 8 | 8 |
+| 6 | Super Magic Card | x | x | x |  | 0 | 8 | 8 |
 | 7 | AxROM | | | x | | 8 | 32 | 8 |
-| 8 | SuperMagicCardMapper  | x | x | x |  | 0 | 8 | 8 |
+| 8 | Super Magic Card | x | x | x |  | 0 | 8 | 8 |
 | 9 | MMC2 | | x | x | | 8 | 8 | 4 |
 | 10 | MMC4 | | x | x | | 8 | 16 | 4 |
 | 11 | ColorDreams | | x | | | 8 | 32 | 8 |
@@ -54,7 +54,7 @@ Existing runtime behavior through `Mapper` remains unchanged.
 | 14 | SL1632 (MMC3/VRC2 hybrid) | x | x | x |  | 8 | 8 | 1 |
 | 15 | Multicart 15 | | | x | | 8 | 8 | 8 |
 | 16 | Bandai FCG | x | x | x | | 0 | 16 | 1 |
-| 17 | SuperMagicCardMapper  | x | x | x |  | 0 | 8 | 8 |
+| 17 | Super Magic Card | x | x | x |  | 0 | 8 | 8 |
 | 18 | Jaleco SS 88006 | x | x | x | | 0 | 8 | 1 |
 | 19 | Namco 163 | x | x | x | x | 8 | 8 | 1 |
 | 20 | Famicom Disk System (FDS) | x | x |  | x | 8 | 32 | 8 |
