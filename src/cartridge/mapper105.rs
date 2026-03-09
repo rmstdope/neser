@@ -23,14 +23,16 @@ use crate::cartridge::mmc1::MMC1Mapper;
 /// - bits 0-3: countdown value (in CPU cycles, with 0 treated as 1)
 pub struct Mapper105 {
     inner: MMC1Mapper,
-    irq_counter: u32,
-    irq_reload: u32,
+    irq_counter: u8,
+    irq_reload: u8,
     irq_enabled: bool,
     irq_pending: bool,
     last_chr_bank_0: u8,
 }
 
 impl Mapper105 {
+    const SNAPSHOT_SIZE: usize = 5;
+
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
         let mut inner = MMC1Mapper::new(ctx);
         Self::force_chr_i_bit_high(&mut inner);
@@ -61,7 +63,7 @@ impl Mapper105 {
     }
 
     fn apply_timer_control(&mut self, chr_bank_0: u8) {
-        self.irq_reload = (chr_bank_0 & 0x0F) as u32;
+        self.irq_reload = chr_bank_0 & 0x0F;
         if (chr_bank_0 & 0x10) != 0 {
             self.irq_enabled = false;
             self.irq_pending = false;
@@ -69,6 +71,7 @@ impl Mapper105 {
         } else {
             self.irq_enabled = true;
             self.irq_pending = false;
+            // Treat reload 0 as a 1-cycle timer so arming always progresses.
             self.irq_counter = self.irq_reload.max(1);
         }
     }
@@ -155,30 +158,25 @@ impl Mapper for Mapper105 {
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        let mut snap = Vec::with_capacity(16 + self.inner.registers_snapshot().len());
+        let mut snap = Vec::with_capacity(Self::SNAPSHOT_SIZE + self.inner.registers_snapshot().len());
         snap.push(self.irq_enabled as u8);
         snap.push(self.irq_pending as u8);
         snap.push(self.last_chr_bank_0);
-        snap.push(self.irq_counter as u8);
-        snap.push((self.irq_counter >> 8) as u8);
-        snap.push((self.irq_counter >> 16) as u8);
-        snap.push((self.irq_counter >> 24) as u8);
-        snap.push(self.irq_reload as u8);
-        snap.push((self.irq_reload >> 8) as u8);
-        snap.push((self.irq_reload >> 16) as u8);
-        snap.push((self.irq_reload >> 24) as u8);
+        snap.push(self.irq_counter);
+        snap.push(self.irq_reload);
         snap.extend(self.inner.registers_snapshot());
         snap
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        if data.len() >= 11 {
+        if data.len() >= Self::SNAPSHOT_SIZE {
             self.irq_enabled = data[0] != 0;
             self.irq_pending = data[1] != 0;
+            // Snapshot stores only CHR bank 0 lower 5 bits.
             self.last_chr_bank_0 = data[2] & 0x1F;
-            self.irq_counter = u32::from_le_bytes([data[3], data[4], data[5], data[6]]);
-            self.irq_reload = u32::from_le_bytes([data[7], data[8], data[9], data[10]]);
-            self.inner.restore_registers(&data[11..]);
+            self.irq_counter = data[3];
+            self.irq_reload = data[4];
+            self.inner.restore_registers(&data[Self::SNAPSHOT_SIZE..]);
             self.maybe_update_timer_from_chr_register();
         }
     }
@@ -208,6 +206,8 @@ mod tests {
     const CHR_BANKS_4K: usize = 9;
 
     fn write_mmc1_register<M: Mapper + ?Sized>(mapper: &mut M, addr: u16, value: u8) {
+        // MMC1 serial protocol in this codebase requires two cpu_cycle() ticks
+        // between writes so consecutive-write filtering does not drop the bit.
         for bit in 0..5 {
             mapper.cpu_cycle();
             mapper.cpu_cycle();
@@ -268,6 +268,8 @@ mod tests {
     fn mapper_105_irq_fires_after_configured_cycle_count() {
         let mut mapper = make_mapper();
 
+        // Timer is armed on the final serial commit write; pre-commit cpu cycles
+        // in write_mmc1_register() do not consume the new countdown value.
         write_mmc1_register(mapper.as_mut(), 0xA000, 0b00011);
         assert!(!mapper.irq_pending());
 
@@ -282,6 +284,26 @@ mod tests {
         assert!(
             !mapper.irq_pending(),
             "setting timer control bit must clear pending IRQ"
+        );
+    }
+
+    #[test]
+    fn mapper_105_timer_bit4_toggle_and_zero_reload_behavior() {
+        let mut mapper = make_mapper();
+
+        // Reload value 0 must still produce a 1-cycle timer when bit4 is clear.
+        write_mmc1_register(mapper.as_mut(), 0xA000, 0b00000);
+        assert!(!mapper.irq_pending());
+        mapper.cpu_cycle();
+        assert!(mapper.irq_pending(), "reload 0 should be treated as 1 cycle");
+
+        // Bit4 set should disable timer and clear pending IRQ.
+        write_mmc1_register(mapper.as_mut(), 0xA000, 0b10000);
+        assert!(!mapper.irq_pending());
+        mapper.cpu_cycle();
+        assert!(
+            !mapper.irq_pending(),
+            "timer should remain disabled while bit4 is set"
         );
     }
 }
