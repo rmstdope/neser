@@ -149,6 +149,7 @@ Existing runtime behavior through `Mapper` remains unchanged.
 | 255 | 110-in-1 Multicart |  | x | x |  | 0 | 16 | 8 |
 | 302 | Mapper 302 |  |  | x |  | 8 | 2 | 8 |
 | 307 | Kaiser KS7037 |  |  | x |  | 8 | 4 | 8 |
+| 319 | HP898F (4-in-1 multicart) |  | x | x |  | 0 | 16 | 8 |
 | 324 | Farid UNROM-8 |  |  |  |  | 0 | 16 | 8 |
 | 326 | Mapper 326 |  |  |  |  | 0 | 8 | 1 |
 | 327 | Mapper 327 |  |  |  |  | 0 | 32 | 8 |
