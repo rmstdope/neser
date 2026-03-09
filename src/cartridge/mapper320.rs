@@ -32,6 +32,7 @@
 use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::common::ChrMemory;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::cartridge::NametableLayout;
 
 const MAPPER_NUMBER: u16 = 320;
 const PRG_BANK_SIZE_BYTES: usize = 16 * 1024;
@@ -89,6 +90,7 @@ impl Mapper320 {
         self.base.select_prg_page(0, bank_8000);
         self.base.select_prg_page(1, bank_c000);
         self.base.select_chr_page(0, 0);
+        self.base.set_mirroring(NametableLayout::Horizontal);
     }
 
     fn apply_state(&mut self, inner_reg: u8, outer_reg: u8, prg_mode: u8) {
@@ -200,6 +202,21 @@ mod tests {
             mapper.get_mirroring(),
             NametableLayout::Horizontal,
             "mirroring should always be horizontal"
+        );
+    }
+
+    #[test]
+    fn mirroring_is_forced_horizontal_even_when_header_says_vertical() {
+        let mapper = Mapper320::new(MapperContext::new_for_test(
+            MAPPER_NUMBER,
+            banked_data(PRG_BANK_SIZE_BYTES, PRG_BANKS_16K),
+            vec![],
+            NametableLayout::Vertical,
+        ));
+        assert_eq!(
+            mapper.get_mirroring(),
+            NametableLayout::Horizontal,
+            "mapper 320 always enforces horizontal mirroring regardless of ROM header"
         );
     }
 
