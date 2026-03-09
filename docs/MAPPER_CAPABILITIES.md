@@ -64,7 +64,7 @@ Existing runtime behavior through `Mapper` remains unchanged.
 | 24 | VRC6a | x | x | x | x | 8 | 8 | 1 |
 | 25 | VRC4b/VRC4d | x | x | x | | 8 | 8 | 1 |
 | 26 | VRC6b | x | x | x | x | 8 | 8 | 1 |
-| 27 | Vrc2Vrc4Mapper  |  | x | x |  | 8 | 8 | 1 |
+| 27 | Vrc2Vrc4Mapper  | x | x | x |  | 8 | 8 | 1 |
 | 28 | Action 53 (homebrew multicart) |  | x | x |  | 0 | 16 | 8 |
 | 29 | Sealie Computing | | x | | | 8 | 16 | 8 |
 | 30 | UNROM-512 (homebrew) |  | x | x |  | 0 | 16 | 8 |
