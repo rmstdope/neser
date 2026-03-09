@@ -117,7 +117,8 @@ impl Mapper for Mapper118 {
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        if data.len() < Self::CIRAM_SIZE {
+        let min_len = self.mmc3.registers_snapshot().len() + Self::CIRAM_SIZE;
+        if data.len() < min_len {
             return;
         }
         let (mmc3_data, ciram_data) = data.split_at(data.len() - Self::CIRAM_SIZE);
