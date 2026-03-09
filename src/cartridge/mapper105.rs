@@ -32,10 +32,14 @@ pub struct Mapper105 {
 
 impl Mapper105 {
     const SNAPSHOT_SIZE: usize = 5;
+    const MMC1_WRITE_COUNT_IDX: usize = 1;
+    const MMC1_CHR_BANK0_IDX: usize = 3;
+    const MMC1_LAST_CHR_REG_ADDR_LO_IDX: usize = 23;
+    const MMC1_LAST_CHR_REG_ADDR_HI_IDX: usize = 24;
 
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
         let mut inner = MMC1Mapper::new(ctx);
-        Self::force_chr_i_bit_high(&mut inner);
+        Self::force_timer_disable_bit_on_powerup(&mut inner);
         let chr_bank_0 = Self::chr_bank_0_from_mapper(&inner);
 
         let mut mapper = Self {
@@ -50,7 +54,7 @@ impl Mapper105 {
         mapper
     }
 
-    fn force_chr_i_bit_high(inner: &mut MMC1Mapper) {
+    fn force_timer_disable_bit_on_powerup(inner: &mut MMC1Mapper) {
         let mut regs = inner.registers_snapshot();
         if regs.len() >= 4 {
             regs[3] |= 0x10;
@@ -59,7 +63,12 @@ impl Mapper105 {
     }
 
     fn chr_bank_0_from_mapper(inner: &MMC1Mapper) -> u8 {
-        inner.registers_snapshot().get(3).copied().unwrap_or(0) & 0x1F
+        inner
+            .registers_snapshot()
+            .get(Self::MMC1_CHR_BANK0_IDX)
+            .copied()
+            .unwrap_or(0)
+            & 0x1F
     }
 
     fn apply_timer_control(&mut self, chr_bank_0: u8) {
@@ -81,6 +90,26 @@ impl Mapper105 {
         if chr_bank_0 != self.last_chr_bank_0 {
             self.last_chr_bank_0 = chr_bank_0;
             self.apply_timer_control(chr_bank_0);
+        }
+    }
+
+    fn apply_timer_on_chr_bank0_commit(&mut self, before: &[u8], after: &[u8]) {
+        if before.len() <= Self::MMC1_LAST_CHR_REG_ADDR_HI_IDX
+            || after.len() <= Self::MMC1_LAST_CHR_REG_ADDR_HI_IDX
+        {
+            return;
+        }
+
+        let committed = before[Self::MMC1_WRITE_COUNT_IDX] == 4
+            && after[Self::MMC1_WRITE_COUNT_IDX] == 0;
+        let committed_reg = u16::from_le_bytes([
+            after[Self::MMC1_LAST_CHR_REG_ADDR_LO_IDX],
+            after[Self::MMC1_LAST_CHR_REG_ADDR_HI_IDX],
+        ]);
+
+        if committed && committed_reg == 0xA000 {
+            self.last_chr_bank_0 = after[Self::MMC1_CHR_BANK0_IDX] & 0x1F;
+            self.apply_timer_control(self.last_chr_bank_0);
         }
     }
 
@@ -116,8 +145,10 @@ impl Mapper for Mapper105 {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
+        let before = self.inner.registers_snapshot();
         self.inner.write_prg(addr, value);
-        self.maybe_update_timer_from_chr_register();
+        let after = self.inner.registers_snapshot();
+        self.apply_timer_on_chr_bank0_commit(&before, &after);
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
@@ -183,7 +214,7 @@ impl Mapper for Mapper105 {
 
     fn reset(&mut self) {
         self.inner.reset();
-        Self::force_chr_i_bit_high(&mut self.inner);
+        Self::force_timer_disable_bit_on_powerup(&mut self.inner);
         self.last_chr_bank_0 = Self::chr_bank_0_from_mapper(&self.inner);
         self.apply_timer_control(self.last_chr_bank_0);
     }
@@ -304,6 +335,28 @@ mod tests {
         assert!(
             !mapper.irq_pending(),
             "timer should remain disabled while bit4 is set"
+        );
+    }
+
+    #[test]
+    fn mapper_105_rewriting_same_chr_bank0_value_rearms_and_clears_irq() {
+        let mut mapper = make_mapper();
+
+        write_mmc1_register(mapper.as_mut(), 0xA000, 0b00001);
+        mapper.cpu_cycle();
+        assert!(mapper.irq_pending(), "initial timer arm should fire IRQ");
+
+        // Rewriting the same committed value should re-apply timer control,
+        // clearing pending IRQ and re-arming the countdown.
+        write_mmc1_register(mapper.as_mut(), 0xA000, 0b00001);
+        assert!(
+            !mapper.irq_pending(),
+            "same-value rewrite must clear pending IRQ and restart timer"
+        );
+        mapper.cpu_cycle();
+        assert!(
+            mapper.irq_pending(),
+            "re-armed timer should fire again after configured countdown"
         );
     }
 }
