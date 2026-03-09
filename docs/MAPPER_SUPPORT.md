@@ -117,7 +117,6 @@ commonly-played or interesting gaps. The full NesDev mapper list is at
 | 75 | Konami VRC1 | Exciting Boxing, Tetris (J), King Kong 2 | 8 KB PRG × 2 + fixed, 4 KB CHR × 2, switchable H/V |
 | 79 | NINA-03/06 | AVE Nina games, Tiles of Fate | Simple: 3-bit PRG + 4-bit CHR register at $4100 |
 | 94 | Senjou no Ookami / Capcom | Senjou no Ookami | UNROM clone with register at $8000, bus conflicts |
-| 95 | Namco 118 1-screen variant | Dragon Buster | Mapper 206 + CHR A15 selects CIRAM A10 |
 | 97 | Irem TAM-S1 | Kaiketsu Yanchamaru | 32 KB PRG switchable, hardwired mirroring |
 | 105 | NES-EVENT (MMC1 variant) | Nintendo World Championships 1990 | MMC1 variant with additional timer/counter |
 | 112 | NTDEC multicart | Asder 20-in-1 | 4-bit PRG and CHR multi-register set |

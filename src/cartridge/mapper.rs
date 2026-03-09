@@ -68,6 +68,7 @@ use super::mapper88::Mapper88;
 use super::mapper90::Mapper90;
 use super::mapper91::Mapper91;
 use super::mapper93::Mapper93;
+use super::mapper95::Mapper95;
 use super::mapper132::Mapper132;
 use super::mapper133::Mapper133;
 use super::mapper140::Mapper140;
@@ -738,6 +739,7 @@ mapper_registry! {
     90 => Mapper90::new,
     91 => Mapper91::new,
     93 => Mapper93::new,
+    95 => Mapper95::new,
     129 => Mapper58::new,
     132 => Mapper132::new,
     133 => Mapper133::new,
@@ -763,7 +765,7 @@ const SUPPORTED_MAPPERS: &[u16] = &[
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
     26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
     50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73,
-    74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 90, 91, 93, 129, 132, 133, 140,
+    74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 90, 91, 93, 95, 129, 132, 133, 140,
     155, 185, 205, 206, 241, 242, 243, 244, 245, 246, 251, 254, 255, 302, 324, 326, 327, 328, 332,
     339, 340, 342, 343, 344, 345, 346, 347, 348, 349, 350,
 ];
@@ -777,13 +779,12 @@ pub fn supported_mappers() -> &'static [u16] {
 /// Create a mapper instance based on mapper metadata.
 pub fn create_mapper(metadata: MapperContext) -> io::Result<Box<dyn Mapper>> {
     let mapper_number = metadata.mapper;
-    if let Some(mapper) = create_registry_mapper(metadata) {
-        return Ok(mapper);
-    }
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        format!("Mapper {} not implemented", mapper_number),
-    ))
+    create_registry_mapper(metadata).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!("Mapper {} not implemented", mapper_number),
+        )
+    })
 }
 
 #[cfg(test)]
@@ -802,6 +803,18 @@ mod tests {
         assert!(supported.contains(&5));
         assert!(supported.contains(&7));
         assert!(supported.contains(&8));
+        assert!(supported.contains(&95));
+    }
+
+    #[test]
+    fn create_mapper_accepts_mapper_95() {
+        let prg_rom = vec![0u8; 8 * 1024 * 8];
+        let chr_rom = vec![0u8; 1024 * 16];
+        let metadata = MapperContext::new_for_test(95, prg_rom, chr_rom, NametableLayout::Vertical);
+
+        let mapper = create_mapper(metadata).expect("Mapper 95 should be implemented");
+        assert_eq!(mapper.capabilities().has_irq, false);
+        assert_eq!(mapper.capabilities().has_chr_banking, true);
     }
 
     #[test]
