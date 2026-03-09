@@ -91,7 +91,10 @@ mod tests {
             banked_data(8 * 1024, CHR_BANKS),
             NametableLayout::Vertical,
         ));
-        assert!(result.is_ok(), "Mapper 101 must be registered in the factory");
+        assert!(
+            result.is_ok(),
+            "Mapper 101 must be registered in the factory"
+        );
     }
 
     #[test]
