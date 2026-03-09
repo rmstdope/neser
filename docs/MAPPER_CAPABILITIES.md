@@ -130,6 +130,7 @@ Existing runtime behavior through `Mapper` remains unchanged.
 | 91 | Mapper 91 | x | x |  |  | 8 | 8 | 2 |
 | 93 | Mapper 93 |  |  |  |  | 0 | 16 | 8 |
 | 101 | Jaleco JF-10 |  | x |  |  | 0 | 32 | 8 |
+| 104 | Pegasus 5-in-1 (Golden Five) |  |  |  |  | 0 | 16 | 8 |
 | 117 | Fu Guang | x | x | x | | 0 | 8 | 1 |
 | 129 | BMC multicart (address latch) |  | x | x |  | 0 | 16 | 8 |
 | 132 | TXC 22111 / UNL-22211 |  | x |  |  | 0 | 32 | 8 |
