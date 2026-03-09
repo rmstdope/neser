@@ -155,7 +155,7 @@ Existing runtime behavior through `Mapper` remains unchanged.
 | 326 | Mapper 326 |  |  |  |  | 0 | 8 | 1 |
 | 327 | Mapper 327 |  |  |  |  | 0 | 32 | 8 |
 | 328 | Mapper 328 |  |  |  |  | 0 | 16 | 2 |
-| 329 | EDU2000 | x |  |  |  | 32 | 32 | 8 |
+| 329 | EDU2000 |  |  |  |  | 32 | 32 | 8 |
 | 330 | Mapper 330 |  |  |  |  | 8 | 32 | 8 |
 | 332 | Super 40-in-1 (BMC-WS) |  | x | x |  | 0 | 16 | 8 |
 | 335 | BMC-CTC-09 (10-in-1 multicart) |  | x | x |  | 0 | 16 | 8 |
