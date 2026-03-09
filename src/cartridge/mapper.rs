@@ -813,8 +813,8 @@ mod tests {
         let metadata = MapperContext::new_for_test(95, prg_rom, chr_rom, NametableLayout::Vertical);
 
         let mapper = create_mapper(metadata).expect("Mapper 95 should be implemented");
-        assert_eq!(mapper.capabilities().has_irq, false);
-        assert_eq!(mapper.capabilities().has_chr_banking, true);
+        assert!(!mapper.capabilities().has_irq);
+        assert!(mapper.capabilities().has_chr_banking);
     }
 
     #[test]

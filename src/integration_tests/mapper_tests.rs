@@ -89,7 +89,7 @@ mod tests {
         let program: [u8; 33] = [
             0xA9, 0x06, 0x8D, 0x00, 0x80, 0xA9, 0x01, 0x8D, 0x01, 0x80, 0xA9, 0x07, 0x8D, 0x00,
             0x80, 0xA9, 0x02, 0x8D, 0x01, 0x80, 0xA9, 0x00, 0x8D, 0x00, 0x80, 0xA9, 0x20, 0x8D,
-            0x01, 0x80, 0x4C, 0x20, 0x80,
+            0x01, 0x80, 0x4C, 0x1E, 0x80,
         ];
         prg[0..program.len()].copy_from_slice(&program);
 
@@ -116,8 +116,10 @@ mod tests {
             Cartridge::load_from_file(&rom_data, rom_path, crate::app_context::AppContext::new())
                 .expect("in-memory mapper95 ROM should parse");
 
-        let mut config = Config::default();
-        config.ram_init_mode = RamInitMode::Zero;
+        let config = Config {
+            ram_init_mode: RamInitMode::Zero,
+            ..Default::default()
+        };
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
         nes.insert_cartridge(cartridge);
         nes.reset(false);
