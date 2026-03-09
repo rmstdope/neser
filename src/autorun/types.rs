@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const AUTORUN_VERSION: u32 = 2;
+pub const AUTORUN_VERSION: u32 = 3;
 
 /// Number of frames between checkpoints (~5 seconds at NTSC 60fps).
 pub const CHECKPOINT_INTERVAL_FRAMES: u32 = 300;
@@ -42,8 +42,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_autorun_version_is_2() {
-        assert_eq!(AUTORUN_VERSION, 2);
+    fn test_autorun_version_is_3() {
+        assert_eq!(AUTORUN_VERSION, 3);
     }
 
     #[test]
@@ -74,7 +74,7 @@ mod tests {
     }
 
     #[test]
-    fn test_autorun_file_no_checksum_field() {
+    fn test_autorun_file_uses_checkpoints_instead_of_checksum() {
         // AutorunFile must NOT have a `checksum` field (it was replaced by checkpoints)
         let file = AutorunFile {
             version: AUTORUN_VERSION,
