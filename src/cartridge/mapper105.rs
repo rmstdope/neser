@@ -32,10 +32,14 @@ pub struct Mapper105 {
 
 impl Mapper105 {
     const SNAPSHOT_SIZE: usize = 5;
+    const CHR_BANK_MASK: u8 = 0x1F;
+    const MMC1_WRITE_COMPLETE_COUNT: u8 = 4;
+    const MMC1_CHR_BANK0_REGISTER_ADDR: u16 = 0xA000;
     const MMC1_WRITE_COUNT_IDX: usize = 1;
     const MMC1_CHR_BANK0_IDX: usize = 3;
     const MMC1_LAST_CHR_REG_ADDR_LO_IDX: usize = 23;
     const MMC1_LAST_CHR_REG_ADDR_HI_IDX: usize = 24;
+    const MMC1_MIN_REG_SNAPSHOT_SIZE: usize = Self::MMC1_LAST_CHR_REG_ADDR_HI_IDX + 1;
 
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
         let mut inner = MMC1Mapper::new(ctx);
@@ -68,7 +72,7 @@ impl Mapper105 {
             .get(Self::MMC1_CHR_BANK0_IDX)
             .copied()
             .unwrap_or(0)
-            & 0x1F
+            & Self::CHR_BANK_MASK
     }
 
     fn apply_timer_control(&mut self, chr_bank_0: u8) {
@@ -94,21 +98,21 @@ impl Mapper105 {
     }
 
     fn apply_timer_on_chr_bank0_commit(&mut self, before: &[u8], after: &[u8]) {
-        if before.len() <= Self::MMC1_LAST_CHR_REG_ADDR_HI_IDX
-            || after.len() <= Self::MMC1_LAST_CHR_REG_ADDR_HI_IDX
+        if before.len() < Self::MMC1_MIN_REG_SNAPSHOT_SIZE
+            || after.len() < Self::MMC1_MIN_REG_SNAPSHOT_SIZE
         {
             return;
         }
 
-        let committed = before[Self::MMC1_WRITE_COUNT_IDX] == 4
+        let committed = before[Self::MMC1_WRITE_COUNT_IDX] == Self::MMC1_WRITE_COMPLETE_COUNT
             && after[Self::MMC1_WRITE_COUNT_IDX] == 0;
         let committed_reg = u16::from_le_bytes([
             after[Self::MMC1_LAST_CHR_REG_ADDR_LO_IDX],
             after[Self::MMC1_LAST_CHR_REG_ADDR_HI_IDX],
         ]);
 
-        if committed && committed_reg == 0xA000 {
-            self.last_chr_bank_0 = after[Self::MMC1_CHR_BANK0_IDX] & 0x1F;
+        if committed && committed_reg == Self::MMC1_CHR_BANK0_REGISTER_ADDR {
+            self.last_chr_bank_0 = after[Self::MMC1_CHR_BANK0_IDX] & Self::CHR_BANK_MASK;
             self.apply_timer_control(self.last_chr_bank_0);
         }
     }
@@ -204,7 +208,7 @@ impl Mapper for Mapper105 {
             self.irq_enabled = data[0] != 0;
             self.irq_pending = data[1] != 0;
             // Snapshot stores only CHR bank 0 lower 5 bits.
-            self.last_chr_bank_0 = data[2] & 0x1F;
+            self.last_chr_bank_0 = data[2] & Self::CHR_BANK_MASK;
             self.irq_counter = data[3];
             self.irq_reload = data[4];
             self.inner.restore_registers(&data[Self::SNAPSHOT_SIZE..]);
