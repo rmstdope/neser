@@ -89,6 +89,7 @@ use super::mapper254::Mapper254;
 use super::mapper255::Mapper255;
 use super::mapper302::Mapper302;
 use super::mapper307::Mapper307;
+use super::mapper319::Mapper319;
 use super::mapper320::Mapper320;
 use super::mapper324::Mapper324;
 use super::mapper326::Mapper326;
@@ -670,6 +671,7 @@ mapper_registry! {
     29 => Mapper29::new,
     30 => Mapper30::new,
     31 => Mapper31::new,
+    319 => Mapper319::new,
     320 => Mapper320::new,
     327 => Mapper327::new,
     328 => Mapper328::new,
@@ -782,7 +784,8 @@ const SUPPORTED_MAPPERS: &[u16] = &[
     50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73,
     74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 90, 91, 93, 95, 96, 100, 101, 117,
     129, 132, 133, 140, 155, 185, 205, 206, 241, 242, 243, 244, 245, 246, 251, 254, 255, 302, 307,
-    320, 324, 326, 327, 328, 330, 332, 335, 339, 340, 342, 343, 344, 345, 346, 347, 348, 349, 350,
+    319, 320, 324, 326, 327, 328, 330, 332, 335, 339, 340, 342, 343, 344, 345, 346, 347, 348, 349,
+    350,
 ];
 
 /// List of supported iNES mapper IDs handled by the factory.
