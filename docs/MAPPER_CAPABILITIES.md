@@ -57,7 +57,7 @@ Existing runtime behavior through `Mapper` remains unchanged.
 | 17 | SuperMagicCardMapper  | x | x | x |  | 0 | 8 | 8 |
 | 18 | Jaleco SS 88006 | x | x | x | | 0 | 8 | 1 |
 | 19 | Namco 163 | x | x | x | x | 8 | 8 | 1 |
-| 20 | Famicom Disk System (FDS) | x |  |  | x | 8 | 32 | 8 |
+| 20 | Famicom Disk System (FDS) | x | x |  | x | 8 | 32 | 8 |
 | 21 | VRC4a/VRC4c | x | x | x | | 8 | 8 | 1 |
 | 22 | VRC2a | | x | x | | 8 | 8 | 1 |
 | 23 | VRC2b/VRC4e | x | x | x | | 8 | 8 | 1 |
