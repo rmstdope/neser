@@ -35,6 +35,8 @@ pub struct Mapper95 {
     regs: [u8; 8],
 }
 
+const REGISTERS_SNAPSHOT_LEN: usize = 9; // bank_select (1) + regs (8)
+
 impl Mapper95 {
     const PRG_MODE_MASK: u8 = 0b0100_0000;
     const CHR_MODE_MASK: u8 = 0b1000_0000;
@@ -164,16 +166,15 @@ impl Mapper for Mapper95 {
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        let mut snapshot = Vec::with_capacity(9);
-        snapshot.push(self.bank_select);
+        let mut snapshot = vec![self.bank_select];
         snapshot.extend_from_slice(&self.regs);
         snapshot
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        if data.len() >= 9 {
+        if data.len() >= REGISTERS_SNAPSHOT_LEN {
             self.bank_select = data[0];
-            self.regs.copy_from_slice(&data[1..9]);
+            self.regs.copy_from_slice(&data[1..REGISTERS_SNAPSHOT_LEN]);
             self.update_banks();
             self.update_mirroring_from_r0_r1();
         }

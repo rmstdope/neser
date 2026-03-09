@@ -76,15 +76,15 @@ impl Mapper320 {
     }
 
     fn update_banks(&mut self) {
-        let outer = self.outer_reg as i16;
+        let outer_shift = (self.outer_reg as i16) << 3;
         let (bank_8000, bank_c000) = if self.prg_mode != 0 {
             // UNROM mode: inner uses 3 bits, fixed is 0x07
             let inner = (self.inner_reg & 0x07) as i16;
-            (inner | (outer << 3), 0x07 | (outer << 3))
+            (inner | outer_shift, 0x07 | outer_shift)
         } else {
             // UOROM mode: inner uses 4 bits, fixed is 0x0F
             let inner = (self.inner_reg & 0x0F) as i16;
-            (inner | (outer << 3), 0x0F | (outer << 3))
+            (inner | outer_shift, 0x0F | outer_shift)
         };
 
         self.base.select_prg_page(0, bank_8000);
