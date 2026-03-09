@@ -97,6 +97,69 @@ mappers that are not yet implemented.
 
 ---
 
+
+### Additional Implemented Mappers (Coverage List)
+
+These mapper IDs are implemented in `src/cartridge/mapper.rs` and supported by the factory.
+They are included here to keep this document aligned with the implementation registry.
+
+| # | Registry Constructor | Status | Notes |
+| --: | -------------------- | :----: | ----- |
+| 12 | `Mapper12::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 14 | `Mapper14::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 27 | `Vrc2Vrc4Mapper::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 28 | `Mapper28::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 30 | `Mapper30::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 31 | `Mapper31::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 35 | `Mapper35::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 37 | `Mapper37::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 39 | `Mapper39::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 41 | `Mapper41::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 43 | `Mapper43::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 48 | `Mapper48::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 51 | `Mapper51::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 52 | `Mapper52::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 53 | `Mapper53::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 54 | `Mapper54::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 56 | `Mapper56::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 57 | `Mapper57::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 58 | `Mapper58::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 59 | `Mapper59::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 60 | `Mapper60::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 61 | `Mapper61::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 62 | `Mapper62::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 63 | `Mapper63::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 64 | `Mapper64::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 65 | `Mapper65::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 67 | `Mapper67::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 70 | `Mapper70::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 72 | `Mapper72::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 73 | `Mapper73::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 74 | `Mapper74::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 75 | `Mapper75::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 79 | `Mapper79::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 80 | `Mapper80::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 91 | `Mapper91::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 133 | `Mapper133::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 140 | `Mapper140::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 155 | `MMC1Mapper::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 185 | `Mapper185::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 241 | `Mapper241::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 242 | `Mapper242::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 243 | `Mapper243::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 244 | `Mapper244::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 245 | `Mapper245::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 246 | `Mapper246::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 251 | `Mapper251::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 254 | `Mapper254::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 255 | `Mapper255::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 302 | `Mapper302::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 326 | `Mapper326::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 330 | `Mapper330::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 332 | `Mapper332::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 335 | `Mapper335::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+| 342 | `Mapper342::new` | ⚠️ | Implemented in factory registry; dedicated detailed row pending. |
+
 ## Unimplemented Mappers of Note
 
 The following mappers are **not** present in neser's `mapper_registry!` and represent the most
