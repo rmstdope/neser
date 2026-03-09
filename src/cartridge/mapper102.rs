@@ -27,6 +27,7 @@ impl Mapper102 {
             has_chr_banking: false,
             has_dynamic_mirroring: false,
             has_expansion_audio: false,
+            // Like mapper 0, PRG-RAM availability/size is header-defined.
             max_prg_ram_kb: if ctx.prg_ram_size_specified && ctx.prg_ram_banks_8k > 0 {
                 ctx.prg_ram_banks_8k as usize * 8
             } else {

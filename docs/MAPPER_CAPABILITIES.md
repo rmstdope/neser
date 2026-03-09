@@ -130,7 +130,7 @@ Existing runtime behavior through `Mapper` remains unchanged.
 | 91 | Mapper 91 | x | x |  |  | 8 | 8 | 2 |
 | 93 | Mapper 93 |  |  |  |  | 0 | 16 | 8 |
 | 101 | Jaleco JF-10 |  | x |  |  | 0 | 32 | 8 |
-| 102 | Deprecated iNES alias (NROM-class) |  |  |  |  | 8 | 32 | 8 |
+| 102 | Deprecated iNES alias (NROM-class) |  |  |  |  | Header-defined | 32 | 8 |
 | 104 | Pegasus 5-in-1 (Golden Five) |  |  |  |  | 0 | 16 | 8 |
 | 105 | NES-EVENT (Mapper 105) | x | x | x |  | 8 | 16 | 4 |
 | 115 | KS202 / MMC3 variant | x | x | x |  | 8 | 8 | 1 |
