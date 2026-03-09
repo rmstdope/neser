@@ -29,10 +29,10 @@
 //!
 //! No known gameplay-blocking limitations.
 
+use crate::cartridge::NametableLayout;
 use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::common::ChrMemory;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
-use crate::cartridge::NametableLayout;
 
 const MAPPER_NUMBER: u16 = 320;
 const PRG_BANK_SIZE_BYTES: usize = 16 * 1024;
