@@ -73,6 +73,7 @@ use super::mapper96::Mapper96;
 use super::mapper100::Mapper100;
 use super::mapper101::Mapper101;
 use super::mapper104::Mapper104;
+use super::mapper105::Mapper105;
 use super::mapper115::Mapper115;
 use super::mapper117::Mapper117;
 use super::mapper132::Mapper132;
@@ -763,6 +764,7 @@ mapper_registry! {
     100 => Mapper100::new,
     101 => Mapper101::new,
     104 => Mapper104::new,
+    105 => Mapper105::new,
     115 => Mapper115::new,
     117 => Mapper117::new,
     129 => Mapper58::new,
@@ -996,6 +998,18 @@ mod tests {
     #[test]
     fn supported_mappers_includes_mapper_100() {
         assert!(supported_mappers().contains(&100));
+    }
+
+    #[test]
+    fn create_mapper_accepts_mapper_105_nes_event() {
+        let prg_rom = vec![0u8; 16 * 1024 * 16];
+        let chr_rom = vec![0u8; 8 * 1024];
+        let metadata =
+            MapperContext::new_for_test(105, prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        let result = create_mapper(metadata);
+
+        assert!(result.is_ok(), "Mapper 105 should be created");
     }
 
     #[test]
