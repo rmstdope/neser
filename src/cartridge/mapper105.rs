@@ -193,7 +193,8 @@ impl Mapper for Mapper105 {
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        let mut snap = Vec::with_capacity(Self::SNAPSHOT_SIZE + self.inner.registers_snapshot().len());
+        let mut snap =
+            Vec::with_capacity(Self::SNAPSHOT_SIZE + self.inner.registers_snapshot().len());
         snap.push(self.irq_enabled as u8);
         snap.push(self.irq_pending as u8);
         snap.push(self.last_chr_bank_0);
@@ -310,10 +311,16 @@ mod tests {
 
         mapper.cpu_cycle();
         mapper.cpu_cycle();
-        assert!(!mapper.irq_pending(), "IRQ should not fire before countdown");
+        assert!(
+            !mapper.irq_pending(),
+            "IRQ should not fire before countdown"
+        );
 
         mapper.cpu_cycle();
-        assert!(mapper.irq_pending(), "IRQ should fire when countdown reaches zero");
+        assert!(
+            mapper.irq_pending(),
+            "IRQ should fire when countdown reaches zero"
+        );
 
         write_mmc1_register(mapper.as_mut(), 0xA000, 0b10011);
         assert!(
@@ -330,7 +337,10 @@ mod tests {
         write_mmc1_register(mapper.as_mut(), 0xA000, 0b00000);
         assert!(!mapper.irq_pending());
         mapper.cpu_cycle();
-        assert!(mapper.irq_pending(), "reload 0 should be treated as 1 cycle");
+        assert!(
+            mapper.irq_pending(),
+            "reload 0 should be treated as 1 cycle"
+        );
 
         // Bit4 set should disable timer and clear pending IRQ.
         write_mmc1_register(mapper.as_mut(), 0xA000, 0b10000);
