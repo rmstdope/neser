@@ -122,7 +122,10 @@ mod tests {
             banked_data(CHR_BANK_SIZE, CHR_BANKS_8K),
             NametableLayout::Horizontal,
         ));
-        assert!(result.is_ok(), "mapper 113 should be registered in the factory");
+        assert!(
+            result.is_ok(),
+            "mapper 113 should be registered in the factory"
+        );
     }
 
     #[test]

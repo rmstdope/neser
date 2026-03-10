@@ -161,7 +161,10 @@ mod tests {
             banked_data(1024, CHR_ROM_1K_BANKS),
             NametableLayout::Vertical,
         ));
-        assert!(result.is_ok(), "Mapper 119 must be registered in the factory");
+        assert!(
+            result.is_ok(),
+            "Mapper 119 must be registered in the factory"
+        );
     }
 
     #[test]
