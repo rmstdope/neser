@@ -21,10 +21,18 @@ impl Mapper114 {
     const CHR_1K_BANK_SIZE: usize = 0x0400;
     const CHR_BANK_MASK: usize = Self::CHR_1K_BANK_SIZE - 1;
     const SECURITY: [u8; 8] = [0, 3, 1, 5, 6, 7, 2, 4];
+    const BANK_SELECT_MODE_BITS_MASK: u8 = 0xC0;
+    const SECURITY_INDEX_MASK: u8 = 0x07;
+    const USE_ALTERNATE_IRQ: bool = false;
 
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
         Self {
-            mmc3: MMC3Mapper::new_with_irq_mode(ctx.prg_rom, ctx.chr_rom, ctx.mirroring, false),
+            mmc3: MMC3Mapper::new_with_irq_mode(
+                ctx.prg_rom,
+                ctx.chr_rom,
+                ctx.mirroring,
+                Self::USE_ALTERNATE_IRQ,
+            ),
             outer_reg: 0,
             pending_bank_data_write: false,
         }
@@ -87,7 +95,8 @@ impl Mapper for Mapper114 {
         match addr & 0xE001 {
             0x8001 => self.mmc3.write_prg(0xA000, value),
             0xA000 => {
-                let translated = (value & 0xC0) | Self::SECURITY[(value & 0x07) as usize];
+                let translated = (value & Self::BANK_SELECT_MODE_BITS_MASK)
+                    | Self::SECURITY[(value & Self::SECURITY_INDEX_MASK) as usize];
                 self.mmc3.write_prg(0x8000, translated);
                 self.pending_bank_data_write = true;
             }
@@ -209,6 +218,9 @@ mod tests {
         for submapper in [0, 1] {
             let mut mapper = make_mapper(submapper);
 
+            // Mapper 114 uses a split bank-write flow:
+            // $A000 updates MMC3 bank-select (with low-bit security scramble),
+            // then the following $C000 writes the bank data once.
             mapper.write_prg(0xA000, 0x04);
             mapper.write_prg(0xC000, 0x05);
             assert_eq!(mapper.read_prg(0x8000), 5);
