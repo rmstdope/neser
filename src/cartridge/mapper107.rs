@@ -5,7 +5,7 @@
 //!
 //! Register behavior:
 //! - Writes to `$8000-$FFFF` update both PRG and CHR banking.
-//! - PRG bank (32KB at `$8000-$FFFF`): `(value >> 2) & 0x0F`.
+//! - PRG bank (32KB at `$8000-$FFFF`): `((value >> 2) & 0x0F)` (original bits `[5:2]`).
 //! - CHR bank (8KB at `$0000-$1FFF`): `value & 0x03`.
 
 use crate::cartridge::base_mapper::BaseMapper;
@@ -89,14 +89,15 @@ mod tests {
     use crate::cartridge::mapper::{MapperContext, create_mapper};
     use crate::cartridge::test_helpers::banked_data;
 
-    const PRG_BANKS_32K: usize = 19;
-    const CHR_BANKS_8K: usize = 7;
+    // Non-power-of-two bank counts prevent modulo-wrapping false positives.
+    const TEST_PRG_BANK_COUNT: usize = 19;
+    const TEST_CHR_BANK_COUNT: usize = 7;
 
     fn make_mapper() -> Mapper107 {
         Mapper107::new(MapperContext::new_for_test(
             MAPPER_NUMBER,
-            banked_data(PRG_BANK_SIZE, PRG_BANKS_32K),
-            banked_data(CHR_BANK_SIZE, CHR_BANKS_8K),
+            banked_data(PRG_BANK_SIZE, TEST_PRG_BANK_COUNT),
+            banked_data(CHR_BANK_SIZE, TEST_CHR_BANK_COUNT),
             NametableLayout::Horizontal,
         ))
     }
@@ -105,8 +106,8 @@ mod tests {
     fn mapper_107_is_registered_in_factory() {
         let result = create_mapper(MapperContext::new_for_test(
             MAPPER_NUMBER,
-            banked_data(PRG_BANK_SIZE, PRG_BANKS_32K),
-            banked_data(CHR_BANK_SIZE, CHR_BANKS_8K),
+            banked_data(PRG_BANK_SIZE, TEST_PRG_BANK_COUNT),
+            banked_data(CHR_BANK_SIZE, TEST_CHR_BANK_COUNT),
             NametableLayout::Horizontal,
         ));
         assert!(result.is_ok(), "Mapper 107 must be creatable via factory");
