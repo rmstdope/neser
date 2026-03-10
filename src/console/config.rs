@@ -309,6 +309,11 @@ const CLI_FLAGS: &[CliFlag] = &[
         has_value: true,
     },
     CliFlag {
+        flag: "--convert-autorun",
+        help: Some("Convert <ROM>.autorun file from older versions to the current format and exit"),
+        has_value: false,
+    },
+    CliFlag {
         flag: "--ram-init-mode",
         help: Some("RAM initialization mode: zero, random, or seeded-random:SEED (default: zero)"),
         has_value: true,
@@ -479,6 +484,8 @@ pub struct Config {
     pub autorun_from_checkpoint: Option<i64>,
     /// Trim this many checkpoints from the end of the recording file and exit (no emulation).
     pub autorun_trim_checkpoints: Option<usize>,
+    /// Convert an existing autorun file to the latest format and exit (no emulation).
+    pub autorun_convert: bool,
     /// RAM initialization mode (config key: `ram_init_mode`).
     ///
     /// Controls how all emulated RAM is initialized on power-on/hard reset:
@@ -618,6 +625,7 @@ impl Default for Config {
             autorun_overwrite: false,
             autorun_from_checkpoint: None,
             autorun_trim_checkpoints: None,
+            autorun_convert: false,
             // Use Zero for WASM to avoid issues with getrandom in test environments
             #[cfg(target_arch = "wasm32")]
             ram_init_mode: RamInitMode::Zero,
@@ -919,6 +927,11 @@ impl Config {
 
         if let Some(v) = Self::parse_u32_arg(args, "--trim-checkpoints")? {
             self.autorun_trim_checkpoints = Some(v as usize);
+        }
+
+        let convert_autorun_requested = args.iter().any(|arg| arg == "--convert-autorun");
+        if convert_autorun_requested {
+            self.autorun_convert = true;
         }
 
         // Autorun recording/playback must be deterministic.
@@ -3750,6 +3763,13 @@ filter=invalid-shader
             Some(3),
             "--trim-checkpoints=N (equals syntax) should be parsed"
         );
+    }
+
+    #[test]
+    fn test_cli_convert_autorun_sets_autorun_convert_true() {
+        let args = vec!["neser".to_string(), "--convert-autorun".to_string()];
+        let config = parse_config(args);
+        assert!(config.autorun_convert);
     }
 
     #[test]
