@@ -219,6 +219,7 @@ mod tests {
         let mut mapper = make_mapper();
         mapper.write_prg(0x5000, 0xE1);
         assert!(mapper.write_nametable(0x2000, 0x5A));
+        assert_eq!(mapper.read_nametable(0x2000), Some(0x5A));
         let snapshot = mapper.registers_snapshot();
 
         let mut restored = make_mapper();
