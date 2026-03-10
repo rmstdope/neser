@@ -18,7 +18,7 @@ safe-outputs:
   assign-to-agent:
     model: gpt-5-mini
   add-labels:
-    allowed: [bug, feature, games, mapper, refactoring, testing]
+    allowed: [bug, feature, games, mapper, refactoring, testing, enhanced]
     blocked: ["~*", "*[bot]"]
     target: triggering
     max: 1
@@ -40,6 +40,7 @@ Use its guidance for structure, scope clarity, acceptance criteria quality, and 
 
 - **Issue Number**: ${{ github.event.issue.number }}
 - **Repository**: ${{ github.repository }}
+- **Issue Labels**: ${{ toJson(github.event.issue.labels.*.name) }}
 - **Issue Content**:
 
   ```none
@@ -48,16 +49,20 @@ Use its guidance for structure, scope clarity, acceptance criteria quality, and 
 
 ### Your Task
 
-1. Read and analyze the issue content above
-2. Set a new descriptive title if the current title is not sufficiently descriptive of the issue outcome.
-3. Add the appropriate labels to the issue using the safe-outputs configuration
-4. Evaluate and improve the issue content using `github-issue-designer` principles:
+1. Read and analyze the issue content above.
+2. If the issue already has the `enhanced` label:
+   - do not emit `update_issue`
+   - do not emit `add_labels`
+   - emit `noop` with a brief reason and stop
+3. Set a new descriptive title if the current title is not sufficiently descriptive of the issue outcome.
+4. Add the appropriate labels to the issue using the safe-outputs configuration.
+5. Evaluate and improve the issue content using `github-issue-designer` principles:
    - Keep one clear, independently deliverable outcome
    - Make scope explicit and minimal
    - Add out-of-scope/non-goals when needed to prevent scope creep
    - Ensure acceptance criteria are objective and testable
    - Ensure validation steps are concrete and mapped to outcomes
-5. Ensure the issue body follows the recommended structure from `github-issue-designer` when applicable:
+6. Ensure the issue body follows the recommended structure from `github-issue-designer` when applicable:
    - Summary
    - Problem
    - Scope
@@ -65,9 +70,11 @@ Use its guidance for structure, scope clarity, acceptance criteria quality, and 
    - Acceptance criteria
    - Validation
    - Dependencies / Links
-6. If the issue is already high quality, preserve the author intent and only apply minimal edits.
-7. Preserve existing links, code blocks, issue/PR references, and technical identifiers exactly unless they are clearly incorrect.
+7. If the issue is already high quality, preserve the author intent and only apply minimal edits.
+8. Preserve existing links, code blocks, issue/PR references, and technical identifiers exactly unless they are clearly incorrect.
 
 When you improve the issue description, emit an `update_issue` safe output for the triggering issue with `operation: replace` and include the full improved issue body content.
 
-If no body changes are needed, do not emit `update_issue`; emit `noop` with a brief reason instead.
+If no body changes are needed and the issue does not have `enhanced`, skip `update_issue` and continue.
+
+For every issue that does not already have `enhanced`, emit `add_labels` with `labels: ["enhanced"]` after completing enhancement decisions.
