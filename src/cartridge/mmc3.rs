@@ -119,6 +119,31 @@ impl MMC3Mapper {
         Self::new_internal(ctx, Self::DEFAULT_PRG_RAM_BANKS_8K, use_alternate_irq)
     }
 
+    /// Create an MMC3 mapper with explicit IRQ behavior mode and PRG-RAM bank count.
+    /// Used by MMC3-based wrappers that need to control whether PRG-RAM is present
+    /// (e.g., mapper 292 which has no PRG-RAM at $6000–$7FFF).
+    pub fn new_with_irq_mode_and_prg_ram_banks(
+        prg_rom: Vec<u8>,
+        chr_rom: Vec<u8>,
+        mirroring: NametableLayout,
+        use_alternate_irq: bool,
+        prg_ram_banks_8k: u8,
+    ) -> Self {
+        let ctx = super::mapper::MapperContext {
+            mapper: 4,
+            submapper: 0,
+            prg_rom,
+            chr_rom,
+            mirroring,
+            prg_ram_banks_8k,
+            prg_ram_size_specified: true,
+            battery_backed_prg_ram: false,
+            console_type: crate::cartridge::ConsoleType::NesFamicom,
+            crc32: 0,
+        };
+        Self::new_internal(ctx, prg_ram_banks_8k, use_alternate_irq)
+    }
+
     fn new_internal(
         ctx: super::mapper::MapperContext,
         prg_ram_banks_8k: u8,
@@ -181,7 +206,7 @@ impl MMC3Mapper {
         self.base.prg_bank_count()
     }
 
-    fn chr_bank_count_1k(&self) -> usize {
+    pub fn chr_bank_count_1k(&self) -> usize {
         self.base.chr_bank_count()
     }
 
@@ -388,6 +413,13 @@ impl MMC3Mapper {
     /// multicart mappers that gate the block register behind PRG-RAM control).
     pub fn is_prg_ram_writable(&self) -> bool {
         !self.prg_ram.is_empty() && self.prg_ram_enabled && !self.prg_ram_write_protected
+    }
+
+    /// Returns the raw CHR bank register value at the given index (0–7).
+    /// This is the raw register value without CHR-mode-dependent interpretation.
+    /// Used by mappers that override CHR banking but still need MMC3 register values.
+    pub fn chr_bank_reg(&self, index: usize) -> u8 {
+        self.regs.get(index).copied().unwrap_or(0)
     }
 
     // ============================================================================
