@@ -253,4 +253,36 @@ mod tests {
             assert!(mapper.irq_pending());
         }
     }
+
+    #[test]
+    fn mapper_114_outer_reg_override_controls_prg_windows() {
+        for submapper in [0, 1] {
+            let mut mapper = make_mapper(submapper);
+
+            // Baseline MMC3 mapping (bit7 clear): R6 controls $8000 in PRG mode 0.
+            mapper.write_prg(0xA000, 0x04);
+            mapper.write_prg(0xC000, 0x07);
+            assert_eq!(mapper.read_prg(0x8000), 7);
+
+            // Override mode (bit7 set): low nibble selects mirrored 16KB pair.
+            mapper.write_prg(0x5000, 0x83);
+            assert_eq!(mapper.read_prg(0x8000), 6);
+            assert_eq!(mapper.read_prg(0xA000), 7);
+            assert_eq!(mapper.read_prg(0xC000), 6);
+            assert_eq!(mapper.read_prg(0xE000), 7);
+
+            // Clearing bit7 restores MMC3-selected mapping.
+            mapper.write_prg(0x5000, 0x00);
+            assert_eq!(mapper.read_prg(0x8000), 7);
+        }
+    }
+
+    #[test]
+    fn mapper_114_wram_window_writes_are_forwarded_to_mmc3() {
+        for submapper in [0, 1] {
+            let mut mapper = make_mapper(submapper);
+            mapper.write_prg(0x6000, 0x5A);
+            assert_eq!(mapper.read_prg_open_bus(0x6000, 0x00), 0x5A);
+        }
+    }
 }
