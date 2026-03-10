@@ -4,9 +4,11 @@ use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mmc3::MMC3Mapper;
 use crate::cartridge::{Mapper, MapperCapabilities};
 
+const CHR_RAM_SIZE: usize = 8 * 1024;
+
 pub struct Mapper119 {
     pub(crate) inner: MMC3Mapper,
-    chr_ram: [u8; 8 * 1024],
+    chr_ram: [u8; CHR_RAM_SIZE],
 }
 
 impl Mapper119 {
@@ -23,7 +25,7 @@ impl Mapper119 {
         let mirroring = ctx.mirroring;
         Self {
             inner: MMC3Mapper::new_with_irq_mode(prg_rom, chr_rom, mirroring, false),
-            chr_ram: [0; 8 * 1024],
+            chr_ram: [0; CHR_RAM_SIZE],
         }
     }
 }
@@ -106,7 +108,6 @@ impl Mapper for Mapper119 {
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        const CHR_RAM_SIZE: usize = 8 * 1024;
         if data.len() >= CHR_RAM_SIZE {
             let (mmc3_data, chr_ram_data) = data.split_at(data.len() - CHR_RAM_SIZE);
             self.inner.restore_registers(mmc3_data);
@@ -193,10 +194,11 @@ mod tests {
     #[test]
     fn mmc3_irq_works_through_delegation() {
         let mut mapper = make_mapper_direct();
-        mapper.write_prg(0xC000, 1);
-        mapper.write_prg(0xC001, 0);
-        mapper.write_prg(0xE001, 0);
+        mapper.write_prg(0xC000, 1); // IRQ latch = 1
+        mapper.write_prg(0xC001, 0); // reload
+        mapper.write_prg(0xE001, 0); // enable IRQ
 
+        // Trigger two A12 rising edges with sufficient low-time debounce between edges.
         for _ in 0..2 {
             mapper.ppu_address_changed(0x0FFF);
             for _ in 0..3 {
