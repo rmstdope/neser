@@ -164,7 +164,7 @@ impl Mapper for Mapper337 {
         if data.len() < REGISTERS_SNAPSHOT_LEN {
             return;
         }
-        self.apply_state(data[0], data[1], data[2]);
+        self.apply_state(data[0], data[1], data[2] & CTRL_MASK);
     }
 
     fn reset(&mut self) {
@@ -555,6 +555,25 @@ mod tests {
             restored.read_chr(0x1000),
             39,
             "restored CHR $1000 should be bank 39"
+        );
+    }
+
+    #[test]
+    fn restore_registers_masks_ctrl_high_nibble() {
+        // A crafted save-state with high nibble bits set in ctrl (e.g. 0xF4) must
+        // behave identically to restoring the low-nibble-only value (0x04).
+        let mut mapper = make_mapper();
+        mapper.restore_registers(&[0x00, 0x00, 0xF4]);
+        // 0xF4 & 0x0F = 0x04: bit2=1 → horizontal, bit3=0 → normal mode
+        assert_eq!(
+            mapper.get_mirroring(),
+            NametableLayout::Horizontal,
+            "ctrl high nibble must be stripped on restore"
+        );
+        assert_eq!(
+            mapper.read_prg(0xC000),
+            7,
+            "$C000 must be in normal mode (bit3=0) after restore"
         );
     }
 
