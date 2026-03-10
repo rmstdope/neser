@@ -181,6 +181,7 @@ commonly-played or interesting gaps. The full NesDev mapper list is at
 |---|---------------|---------------|-------------------------------|
 | 94 | Senjou no Ookami / Capcom | Senjou no Ookami | UNROM clone with register at $8000, bus conflicts |
 | 105 | NES-EVENT (MMC1 variant) | Nintendo World Championships 1990 | MMC1 variant with additional timer/counter |
+| 112 | NTDEC multicart | Asder 20-in-1 | 4-bit PRG and CHR multi-register set |
 | 113 | Multicart (NINA-03 style) | HES 6-in-1, Sachen Glorys | PRG+CHR register at $4100/$6000 |
 | 119 | TQROM | Pin Bot, High Speed | MMC3 + CHR mixed ROM+RAM banks |
 | 152 | Bandai (FCG-like, 1-screen) | Gegege no Kitarou 2 | Mapper 70 variant with 1-screen mirroring |
