@@ -26,11 +26,11 @@
 //!   - If mode = sprite (bit 5 clear): `sprite_xor = cpu_latch`
 //!
 //! Known Limitations:
-//! - The cpu_latch only tracks writes in $6000–$FFFF (mapper space).
+//! - The cpu_latch only tracks writes in $4020–$FFFF (mapper device range).
 //!   Hardware intercepts all 65536 CPU writes, but neser's mapper interface
-//!   only delivers writes in this range. Games accessing the protection via
-//!   writes to CPU RAM ($0000–$5FFF) before reading $6000–$7FFF may behave
-//!   differently in hardware.
+//!   only delivers writes for addresses $4020 and above. Games that rely on
+//!   writes to CPU RAM ($0000–$401F) before reading $6000–$7FFF may behave
+//!   differently on hardware.
 
 use std::cell::Cell;
 
@@ -61,8 +61,15 @@ impl Mapper292 {
     const MAPPER_NUMBER: u16 = 292;
 
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
-        // Dragon Fighter has no PRG-RAM; $6000–$7FFF is the protection window
-        let inner = MMC3Mapper::new_with_irq_mode(ctx.prg_rom, ctx.chr_rom, ctx.mirroring, false);
+        // Dragon Fighter has no PRG-RAM; $6000–$7FFF is the protection window.
+        // Pass prg_ram_banks_8k = 0 so the inner MMC3 does not allocate PRG-RAM.
+        let inner = MMC3Mapper::new_with_irq_mode_and_prg_ram_banks(
+            ctx.prg_rom,
+            ctx.chr_rom,
+            ctx.mirroring,
+            false,
+            0,
+        );
         Self {
             inner,
             prot_reg: 0,
@@ -146,6 +153,11 @@ impl Mapper for Mapper292 {
 
     fn read_prg(&self, addr: u16) -> u8 {
         match addr {
+            0x6000..=0x7FFF => {
+                // Protection region: no PRG-RAM; return 0 (open-bus side effect
+                // is handled by read_prg_open_bus, not here)
+                0
+            }
             0x8000..=0x9FFF => {
                 // $8000–$9FFF: overridden by bits 4:0 of prot_reg
                 let bank = (self.prot_reg & 0x1F) as usize;
@@ -185,8 +197,8 @@ impl Mapper for Mapper292 {
     }
 
     fn write_chr(&mut self, ppu_addr: u16, value: u8) {
-        // No CHR-RAM; writes are silently ignored
-        let _ = (ppu_addr, value);
+        let (bank_1k, offset) = self.chr_1k_bank_and_offset(ppu_addr);
+        self.inner.write_chr_1k_at(bank_1k, offset, value);
     }
 
     fn wram_size(&self) -> usize {
@@ -219,6 +231,9 @@ impl Mapper for Mapper292 {
             self.sprite_xor.set(extra[2]);
             self.sprite_or.set(extra[3]);
             self.bg_chr.set(extra[4]);
+        } else {
+            // Snapshot predates mapper292 extra bytes; restore inner MMC3 state only
+            self.inner.restore_registers(data);
         }
     }
 
