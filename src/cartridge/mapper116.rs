@@ -73,14 +73,14 @@ impl Mapper116 {
                 self.base_mut().select_prg_page(3, -1);
             }
             1 => {
-                let prg0 = self.mmc3.mapped_prg_bank(0x8000) as i16;
-                let prg1 = self.mmc3.mapped_prg_bank(0xA000) as i16;
-                let prg2 = self.mmc3.mapped_prg_bank(0xC000) as i16;
-                let prg3 = self.mmc3.mapped_prg_bank(0xE000) as i16;
-                self.base_mut().select_prg_page(0, prg0);
-                self.base_mut().select_prg_page(1, prg1);
-                self.base_mut().select_prg_page(2, prg2);
-                self.base_mut().select_prg_page(3, prg3);
+                let prg_bank_8000 = self.mmc3.mapped_prg_bank(0x8000) as i16;
+                let prg_bank_a000 = self.mmc3.mapped_prg_bank(0xA000) as i16;
+                let prg_bank_c000 = self.mmc3.mapped_prg_bank(0xC000) as i16;
+                let prg_bank_e000 = self.mmc3.mapped_prg_bank(0xE000) as i16;
+                self.base_mut().select_prg_page(0, prg_bank_8000);
+                self.base_mut().select_prg_page(1, prg_bank_a000);
+                self.base_mut().select_prg_page(2, prg_bank_c000);
+                self.base_mut().select_prg_page(3, prg_bank_e000);
             }
             _ => {
                 let bank = (self.mmc1_regs[3] & 0x0F) as i16;
@@ -120,8 +120,8 @@ impl Mapper116 {
             }
             1 => {
                 for slot in 0..8 {
-                    let addr = (slot as u16) * 0x0400;
-                    let bank = self.mmc3.mapped_chr_1k_bank(addr) as i16;
+                    let slot_base_addr = (slot as u16) * 0x0400;
+                    let bank = self.mmc3.mapped_chr_1k_bank(slot_base_addr) as i16;
                     self.base_mut().select_chr_page(slot, outer | bank);
                 }
             }
