@@ -609,7 +609,11 @@ let lockedPointerY = 0;
 function requestPointerLockFromUserGesture() {
     pointerReleasedByEscape = false;
     if (document.pointerLockElement !== canvas) {
-        canvas.requestPointerLock?.();
+        try {
+            const pointerLockResult = canvas.requestPointerLock?.();
+            pointerLockResult?.catch?.(() => {});
+        } catch (_) {
+        }
     }
 }
 
@@ -889,10 +893,14 @@ if (autorunLoadBtn) {
     autorunLoadBtn.addEventListener("click", () => {
         // Reset modal state
         if (autorunFileInput) autorunFileInput.value = "";
-        if (autorunFileInfo) autorunFileInfo.classList.add("d-none");
+        if (autorunFileSummary) {
+            autorunFileSummary.textContent = "Select an autorun file to inspect checkpoints and playback options.";
+        }
+        if (autorunFileInfo) autorunFileInfo.classList.remove("d-none");
         if (autorunUseBtn) autorunUseBtn.disabled = true;
         if (autorunExtendCheck) autorunExtendCheck.checked = false;
         if (autorunCheckpointSelect) {
+            autorunCheckpointSelect.value = "-1";
             while (autorunCheckpointSelect.options.length > 1) {
                 autorunCheckpointSelect.remove(1);
             }
