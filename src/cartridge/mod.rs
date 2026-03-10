@@ -124,6 +124,7 @@ mod mapper90;
 mod mapper91;
 mod mapper92;
 mod mapper93;
+mod mapper94;
 mod mapper95;
 mod mapper96;
 mod mapper97;
