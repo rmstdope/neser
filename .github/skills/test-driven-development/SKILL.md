@@ -85,7 +85,9 @@ Your core methodology follows these strict phases:
   - **Rust**: `cargo fmt -- --check`, `cargo clippy --all-features -- -D warnings`, `cargo test --lib --bins --tests --examples`
   - **Web/JS** (if web/ was changed): `npm test` from the `web/` directory
   - **Never filter or grep pre-merge check output** — run each command unfiltered and read the full output to confirm zero errors and zero warnings before declaring checks passed.
-  - If a check fails due to a **pre-existing issue unrelated to your changes**, verify on the base branch (e.g., `git stash && cargo clippy --all-features -- -D warnings`) and document the finding rather than fixing it
+  - **All pre-merge checks must pass on the actual merge-ready branch before merge.** Do not treat an unrelated or pre-existing failure as ignorable just because it was introduced earlier.
+  - If a check fails because the branch is stale relative to the base branch, update the branch with the latest base branch first and rerun the full pre-merge suite on the updated result.
+  - If a check still fails after the branch is up to date, fix the failure; do not merge while any required pre-merge check is failing.
 - When creating a PR with a complex body (e.g., containing markdown backticks or multi-line text), use `gh pr create --body-file <file>` or a shell heredoc to avoid quoting issues
 - If more iterations are needed before the issue is completed, loop back to the RED phase
 - If the issue is fully implemented, create a PR with a clear description of the changes and link to the relevant issue
