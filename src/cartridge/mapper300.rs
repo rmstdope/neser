@@ -31,11 +31,11 @@
 //! # Power-on state
 //!
 //! Register = 0: PRG bank 0 at both $8000 and $C000; CHR bank 0; vertical
-//! mirroring (bit 0 = 0 → Vertical).
+//! mirroring (bit 0 = 0 → vertical).
 //!
 //! Mesen2 calls `WriteRegister(0x8000, 0)` on init, so:
 //! - bank = (0 >> 2) & 7 = 0
-//! - mirroring = bit 0 of 0 = 0 → Vertical
+//! - mirroring = bit 0 of 0 = 0 → vertical
 
 use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
