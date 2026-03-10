@@ -31,6 +31,7 @@ pub struct DmcState {
     pub loop_flag: bool,
     pub dma_pending: bool,
     pub transfer_start_delay: u8,
+    #[serde(default)]
     pub disable_delay: u8,
 }
 

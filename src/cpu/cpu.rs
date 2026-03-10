@@ -2919,7 +2919,6 @@ mod tests {
         cpu.before_cpu_cycle(false);
         let _ = cpu.bus.borrow_mut().read(halted_read_addr, false);
         cpu.after_cpu_cycle(false);
-        cpu.dmc_dma_need_halt = false;
 
         assert_eq!(cpu.get_total_cycles(), cycles_before_halt + 1);
 
