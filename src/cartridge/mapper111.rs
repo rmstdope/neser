@@ -7,6 +7,7 @@
 //! - No known gameplay-blocking functional limitations are currently documented.
 
 use crate::cartridge::base_mapper::BaseMapper;
+use crate::cartridge::common::ChrMemory;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
 
 pub struct GtromMapper {
@@ -20,6 +21,7 @@ impl GtromMapper {
     const NAMETABLE_RAM_SIZE: usize = 4 * Self::NAMETABLE_BANK_SIZE;
 
     pub fn new(ctx: MapperContext) -> Self {
+        let chr_ram_size = ctx.chr_rom.len().max(8 * 1024);
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
             has_dynamic_mirroring: true,
@@ -29,6 +31,7 @@ impl GtromMapper {
         };
 
         let mut base = BaseMapper::new(&ctx, capabilities);
+        base.set_chr_memory(ChrMemory::new_ram(chr_ram_size));
         base.configure_prg_banking(32 * 1024);
         base.configure_chr_banking(8 * 1024);
 
@@ -100,6 +103,11 @@ impl Mapper for GtromMapper {
         snapshot
     }
 
+    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+        self.base.initialize_ram(mode);
+        crate::console::initialize_ram(&mut self.nametable_ram, mode);
+    }
+
     fn restore_registers(&mut self, data: &[u8]) {
         if data.is_empty() {
             return;
@@ -125,6 +133,7 @@ mod tests {
     use crate::cartridge::NametableLayout;
     use crate::cartridge::mapper::create_mapper;
     use crate::cartridge::test_helpers::banked_data;
+    use crate::console::RamInitMode;
 
     const PRG_BANKS_32K: usize = 3;
     const CHR_BANKS_8K: usize = 2;
@@ -163,10 +172,15 @@ mod tests {
     fn chr_bank_switches_with_register_bit_5() {
         let mut mapper = make_mapper();
 
+        mapper.write_prg(0x5000, 0x00);
+        mapper.write_chr(0x0010, 0x12);
         mapper.write_prg(0x5000, 0x20);
+        mapper.write_chr(0x0010, 0x34);
 
-        assert_eq!(mapper.read_chr(0x0000), 1);
-        assert_eq!(mapper.read_chr(0x1FFF), 1);
+        mapper.write_prg(0x5000, 0x00);
+        assert_eq!(mapper.read_chr(0x0010), 0x12);
+        mapper.write_prg(0x5000, 0x20);
+        assert_eq!(mapper.read_chr(0x0010), 0x34);
     }
 
     #[test]
@@ -174,22 +188,37 @@ mod tests {
         let mut mapper = make_mapper();
 
         mapper.write_prg(0x5000, 0x00);
-        assert!(mapper.write_nametable(0x2000, 0x11));
-
+        assert!(mapper.write_nametable(0x2000, 0x10));
+        mapper.write_prg(0x5000, 0x40);
+        assert!(mapper.write_nametable(0x2000, 0x20));
+        mapper.write_prg(0x5000, 0x80);
+        assert!(mapper.write_nametable(0x2000, 0x30));
         mapper.write_prg(0x5000, 0xC0);
-        assert!(mapper.write_nametable(0x2000, 0x33));
+        assert!(mapper.write_nametable(0x2000, 0x40));
 
         mapper.write_prg(0x5000, 0x00);
-        assert_eq!(mapper.read_nametable(0x2000), Some(0x11));
-
+        assert_eq!(mapper.read_nametable(0x2000), Some(0x10));
+        mapper.write_prg(0x5000, 0x40);
+        assert_eq!(mapper.read_nametable(0x2000), Some(0x20));
+        mapper.write_prg(0x5000, 0x80);
+        assert_eq!(mapper.read_nametable(0x2000), Some(0x30));
         mapper.write_prg(0x5000, 0xC0);
-        assert_eq!(mapper.read_nametable(0x2000), Some(0x33));
+        assert_eq!(mapper.read_nametable(0x2000), Some(0x40));
+    }
+
+    #[test]
+    fn chr_ram_is_writable_even_when_chr_rom_is_present_in_input() {
+        let mut mapper = make_mapper();
+
+        mapper.write_chr(0x0010, 0x5A);
+        assert_eq!(mapper.read_chr(0x0010), 0x5A);
     }
 
     #[test]
     fn registers_snapshot_restore_round_trips_selected_banks() {
         let mut mapper = make_mapper();
         mapper.write_prg(0x5000, 0xE1);
+        assert!(mapper.write_nametable(0x2000, 0x5A));
         let snapshot = mapper.registers_snapshot();
 
         let mut restored = make_mapper();
@@ -197,7 +226,35 @@ mod tests {
 
         assert_eq!(restored.read_prg(0x8000), mapper.read_prg(0x8000));
         assert_eq!(restored.read_chr(0x0000), mapper.read_chr(0x0000));
-        assert!(restored.write_nametable(0x2000, 0x5A));
         assert_eq!(restored.read_nametable(0x2000), Some(0x5A));
+    }
+
+    #[test]
+    fn reset_restores_power_on_register_state() {
+        let mut mapper = make_mapper();
+
+        mapper.write_prg(0x5000, 0x22);
+        assert_eq!(mapper.read_prg(0x8000), 2);
+        mapper.write_prg(0x5000, 0x02);
+        mapper.write_chr(0x0020, 0x21);
+        mapper.write_prg(0x5000, 0x22);
+        mapper.write_chr(0x0020, 0x43);
+        assert_eq!(mapper.read_chr(0x0020), 0x43);
+
+        mapper.reset();
+
+        assert_eq!(mapper.read_prg(0x8000), 0);
+        assert_eq!(mapper.read_chr(0x0020), 0x21);
+    }
+
+    #[test]
+    fn initialize_ram_zero_clears_mapper_owned_nametable_ram() {
+        let mut mapper = make_mapper();
+
+        mapper.write_prg(0x5000, 0xC0);
+        assert!(mapper.write_nametable(0x2000, 0xAB));
+        mapper.initialize_ram(RamInitMode::Zero);
+
+        assert_eq!(mapper.read_nametable(0x2000), Some(0x00));
     }
 }
