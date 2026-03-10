@@ -309,6 +309,11 @@ const CLI_FLAGS: &[CliFlag] = &[
         has_value: true,
     },
     CliFlag {
+        flag: "--convert-autorun",
+        help: Some("Convert <ROM>.autorun file from older versions to the current format and exit"),
+        has_value: false,
+    },
+    CliFlag {
         flag: "--ram-init-mode",
         help: Some("RAM initialization mode: zero, random, or seeded-random:SEED (default: zero)"),
         has_value: true,
@@ -372,6 +377,7 @@ const OPTIONAL_BOOL_FLAGS: &[&str] = &[
     "--load-state",
     "--fullscreen",
     "--scan-cartridges",
+    "--convert-autorun",
 ];
 
 /// Result of parsing command-line arguments.
@@ -479,6 +485,8 @@ pub struct Config {
     pub autorun_from_checkpoint: Option<i64>,
     /// Trim this many checkpoints from the end of the recording file and exit (no emulation).
     pub autorun_trim_checkpoints: Option<usize>,
+    /// Convert an existing autorun file to the latest format and exit (no emulation).
+    pub autorun_convert: bool,
     /// RAM initialization mode (config key: `ram_init_mode`).
     ///
     /// Controls how all emulated RAM is initialized on power-on/hard reset:
@@ -618,6 +626,7 @@ impl Default for Config {
             autorun_overwrite: false,
             autorun_from_checkpoint: None,
             autorun_trim_checkpoints: None,
+            autorun_convert: false,
             // Use Zero for WASM to avoid issues with getrandom in test environments
             #[cfg(target_arch = "wasm32")]
             ram_init_mode: RamInitMode::Zero,
@@ -919,6 +928,14 @@ impl Config {
 
         if let Some(v) = Self::parse_u32_arg(args, "--trim-checkpoints")? {
             self.autorun_trim_checkpoints = Some(v as usize);
+        }
+
+        if let Some(convert_autorun_requested) = Self::parse_bool_arg(args, "--convert-autorun")? {
+            self.autorun_convert = convert_autorun_requested;
+        }
+
+        if self.autorun_trim_checkpoints.is_some() && self.autorun_convert {
+            return Err("Cannot specify both --trim-checkpoints and --convert-autorun".to_string());
         }
 
         // Autorun recording/playback must be deterministic.
@@ -3749,6 +3766,42 @@ filter=invalid-shader
             config.autorun_trim_checkpoints,
             Some(3),
             "--trim-checkpoints=N (equals syntax) should be parsed"
+        );
+    }
+
+    #[test]
+    fn test_cli_convert_autorun_sets_autorun_convert_true() {
+        let args = vec!["neser".to_string(), "--convert-autorun".to_string()];
+        let config = parse_config(args);
+        assert!(config.autorun_convert);
+    }
+
+    #[test]
+    fn test_cli_convert_autorun_equals_syntax_true() {
+        let args = vec!["neser".to_string(), "--convert-autorun=true".to_string()];
+        let config = parse_config(args);
+        assert!(config.autorun_convert);
+    }
+
+    #[test]
+    fn test_cli_convert_autorun_equals_syntax_false() {
+        let args = vec!["neser".to_string(), "--convert-autorun=false".to_string()];
+        let config = parse_config(args);
+        assert!(!config.autorun_convert);
+    }
+
+    #[test]
+    fn test_cli_trim_checkpoints_and_convert_autorun_are_mutually_exclusive() {
+        let args = vec![
+            "neser".to_string(),
+            "--trim-checkpoints".to_string(),
+            "1".to_string(),
+            "--convert-autorun".to_string(),
+        ];
+        let result = config_new(args);
+        assert!(
+            result.is_err(),
+            "--trim-checkpoints and --convert-autorun should be mutually exclusive"
         );
     }
 

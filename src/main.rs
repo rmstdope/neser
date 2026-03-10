@@ -62,6 +62,48 @@ fn refresh_startup_cartridge_catalog(app_context: &Rc<RefCell<AppContext>>) {
     }
 }
 
+fn convert_autorun_for_rom(rom_path: &str) -> Result<String, String> {
+    use autorun::{AUTORUN_VERSION, autorun_path_for_rom, convert_autorun_file};
+
+    let path = autorun_path_for_rom(&PathBuf::from(rom_path));
+    if !path.exists() {
+        return Err(format!(
+            "No autorun file found for ROM {}: {}",
+            rom_path,
+            path.display()
+        ));
+    }
+
+    convert_autorun_file(&path)?;
+    Ok(format!(
+        "Converted autorun file to version {}: {}",
+        AUTORUN_VERSION,
+        path.display()
+    ))
+}
+
+fn trim_autorun_checkpoints_for_rom(
+    rom_path: &str,
+    checkpoints_to_trim: usize,
+) -> Result<String, String> {
+    use autorun::{autorun_path_for_rom, load_autorun_file, save_autorun_file, trim_recording};
+    use std::path::PathBuf;
+
+    let path = autorun_path_for_rom(&PathBuf::from(rom_path));
+    let mut file = load_autorun_file(&path)?;
+    let checkpoints_before = file.checkpoints.len();
+    trim_recording(&mut file, checkpoints_to_trim);
+    save_autorun_file(&path, &file)?;
+
+    Ok(format!(
+        "Trimmed {} checkpoint(s): {} → {} checkpoints, {} frames remaining",
+        checkpoints_before.saturating_sub(file.checkpoints.len()),
+        checkpoints_before,
+        file.checkpoints.len(),
+        file.frames.len(),
+    ))
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command-line arguments
     let args: Vec<String> = std::env::args().collect();
@@ -79,23 +121,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     refresh_startup_cartridge_catalog(&app_context);
 
     // Handle --trim-checkpoints: modify recording file and exit immediately.
-    let trim_n = app_context.borrow().config().autorun_trim_checkpoints;
-    let trim_rom = app_context.borrow().config().rom_path.clone();
-    if let (Some(n), Some(rom_path)) = (trim_n, trim_rom.as_deref()) {
-        use autorun::{autorun_path_for_rom, load_autorun_file, save_autorun_file, trim_recording};
-        use std::path::PathBuf;
-        let path = autorun_path_for_rom(&PathBuf::from(rom_path));
-        let mut file = load_autorun_file(&path)?;
-        let before = file.checkpoints.len();
-        trim_recording(&mut file, n);
-        save_autorun_file(&path, &file)?;
-        println!(
-            "Trimmed {} checkpoint(s): {} → {} checkpoints, {} frames remaining",
-            before.saturating_sub(file.checkpoints.len()),
-            before,
-            file.checkpoints.len(),
-            file.frames.len(),
-        );
+    let trim_checkpoints = app_context.borrow().config().autorun_trim_checkpoints;
+    let trim_rom_path = app_context.borrow().config().rom_path.clone();
+    if let (Some(checkpoints_to_trim), Some(rom_path)) =
+        (trim_checkpoints, trim_rom_path.as_deref())
+    {
+        let message = trim_autorun_checkpoints_for_rom(rom_path, checkpoints_to_trim)?;
+        println!("{message}");
+        return Ok(());
+    }
+
+    // Handle --convert-autorun: convert recording file format and exit immediately.
+    let convert_autorun_requested = app_context.borrow().config().autorun_convert;
+    let convert_rom_path = app_context.borrow().config().rom_path.clone();
+    if convert_autorun_requested {
+        let rom_path =
+            convert_rom_path.ok_or_else(|| "--convert-autorun requires a ROM path".to_string())?;
+        let message = convert_autorun_for_rom(&rom_path)?;
+        println!("{message}");
         return Ok(());
     }
 
@@ -286,7 +329,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::autorun::AUTORUN_VERSION;
     use serial_test::serial;
+    use tempfile::TempDir;
 
     #[test]
     #[serial]
@@ -319,5 +364,54 @@ mod tests {
 
         assert!(event_loop.is_paused());
         assert!(event_loop.debugger_open_requested());
+    }
+
+    #[test]
+    fn test_convert_autorun_for_rom_fails_when_autorun_file_missing() {
+        let temp_dir = TempDir::new().expect("create temp dir");
+        let rom_path = temp_dir.path().join("missing.nes");
+
+        let result = convert_autorun_for_rom(rom_path.to_str().expect("rom path to str"));
+
+        assert!(
+            result.is_err(),
+            "conversion should fail when corresponding .autorun file is missing"
+        );
+    }
+
+    #[test]
+    fn test_convert_autorun_for_rom_converts_v2_file_to_v3() {
+        let temp_dir = TempDir::new().expect("create temp dir");
+        let rom_path = temp_dir.path().join("game.nes");
+        let autorun_path = rom_path.with_extension("autorun");
+
+        std::fs::write(
+            &autorun_path,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "version": 2,
+                "frames": [
+                    {"player1": 0, "player2": 0},
+                    {"player1": 0, "player2": 0},
+                    {"player1": 1, "player2": 0}
+                ],
+                "checkpoints": []
+            }))
+            .expect("serialize v2 file"),
+        )
+        .expect("write v2 autorun file");
+
+        convert_autorun_for_rom(rom_path.to_str().expect("rom path to str"))
+            .expect("convert v2 to v3");
+
+        let converted: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&autorun_path).expect("read converted file"))
+                .expect("parse converted file");
+
+        assert_eq!(converted["version"], AUTORUN_VERSION);
+        assert_eq!(converted["frames"].as_array().map(Vec::len), Some(2));
+        assert_eq!(
+            converted["frames"][0],
+            serde_json::json!({"player1": 0, "player2": 0, "repeat": 2})
+        );
     }
 }
