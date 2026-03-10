@@ -144,6 +144,7 @@ impl Mapper for Mapper112 {
 
 #[cfg(test)]
 mod tests {
+    use super::Mapper112;
     use crate::cartridge::NametableLayout;
     use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
     use crate::cartridge::test_helpers::banked_data;
@@ -159,6 +160,15 @@ mod tests {
             NametableLayout::Vertical,
         ))
         .expect("Mapper 112 should be implemented")
+    }
+
+    fn make_mapper_impl() -> Mapper112 {
+        Mapper112::new(MapperContext::new_for_test(
+            112,
+            banked_data(8 * 1024, TEST_PRG_BANKS_8K),
+            banked_data(1024, TEST_CHR_BANKS_1K),
+            NametableLayout::Vertical,
+        ))
     }
 
     #[test]
@@ -225,13 +235,22 @@ mod tests {
     }
 
     #[test]
-    fn writes_in_4020_5fff_are_ignored() {
-        let mut mapper = make_mapper();
-        let before = mapper.read_prg(0x8000);
+    fn writes_below_0x8000_are_ignored() {
+        let mut mapper = make_mapper_impl();
+        mapper.write_prg(0x8000, 0);
+        mapper.write_prg(0xA000, 3);
+
+        let before_prg = mapper.read_prg(0x8000);
+        let before_current = mapper.current_register;
+        let before_outer = mapper.outer_chr_bank;
+        let before_registers = mapper.registers;
 
         mapper.write_prg(0x4020, 1);
-        mapper.write_prg(0x5fff, 7);
+        mapper.write_prg(0x5FFF, 7);
 
-        assert_eq!(mapper.read_prg(0x8000), before);
+        assert_eq!(mapper.read_prg(0x8000), before_prg);
+        assert_eq!(mapper.current_register, before_current);
+        assert_eq!(mapper.outer_chr_bank, before_outer);
+        assert_eq!(mapper.registers, before_registers);
     }
 }
