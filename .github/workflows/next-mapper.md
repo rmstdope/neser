@@ -34,7 +34,6 @@ network:
     - "web.archive.org"
     - "fceux.com"
     - "python"
-    - "wiki.nesdev.com"
 
 tools:
   github:
