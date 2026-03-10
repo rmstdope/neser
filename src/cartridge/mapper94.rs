@@ -1,7 +1,12 @@
 //! Mapper 094 - HVC-UN1ROM
+//!
+//! Specifications:
+//! - NesDev wiki: <https://www.nesdev.org/wiki/UN1ROM>
+//! - Mesen2 mapper implementation: <https://github.com/SourMesen/Mesen2/blob/master/Core/Database/Mappers/Mapper094.cpp>
 
 use crate::cartridge::NametableLayout;
 use crate::cartridge::base_mapper::BaseMapper;
+use crate::cartridge::common::ChrMemory;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
 pub struct Mapper94 {
@@ -11,6 +16,7 @@ pub struct Mapper94 {
 
 impl Mapper94 {
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let chr_seed = ctx.chr_rom.clone();
         let capabilities = MapperCapabilities {
             max_prg_ram_kb: 0,
             prg_bank_size_kb: 16,
@@ -22,6 +28,15 @@ impl Mapper94 {
         base.select_prg_page(1, -1);
         base.set_bus_conflicts(true);
         base.set_mirroring(NametableLayout::Vertical);
+
+        // Mapper 94 is CHR-RAM-only. If a dump provides CHR bytes, treat them
+        // as initial CHR-RAM contents for compatibility with bad dumps.
+        let mut chr_ram = ChrMemory::new_ram(8 * 1024);
+        if !chr_seed.is_empty() {
+            chr_ram.load_snapshot(&chr_seed);
+        }
+        base.set_chr_memory(chr_ram);
+
         Self { base, prg_bank: 0 }
     }
 }
@@ -138,6 +153,22 @@ mod tests {
         assert_eq!(mapper.read_chr(0x0000), 0xAA);
         assert_eq!(mapper.read_chr(0x1000), 0xBB);
         assert_eq!(mapper.read_chr(0x1FFF), 0xCC);
+    }
+
+    #[test]
+    fn chr_rom_payload_is_treated_as_seeded_chr_ram() {
+        let mut chr_seed = vec![0; 8 * 1024];
+        chr_seed[0x0100] = 0x3A;
+        let mut mapper = Mapper94::new(MapperContext::new_for_test(
+            94,
+            make_prg_rom(),
+            chr_seed,
+            NametableLayout::Horizontal,
+        ));
+
+        assert_eq!(mapper.read_chr(0x0100), 0x3A);
+        mapper.write_chr(0x0100, 0xC7);
+        assert_eq!(mapper.read_chr(0x0100), 0xC7);
     }
 
     #[test]
