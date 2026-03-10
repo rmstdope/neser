@@ -110,6 +110,11 @@ impl Mapper for Mapper118 {
         self.mmc3.load_wram_snapshot(data);
     }
 
+    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+        self.mmc3.initialize_ram(mode);
+        crate::console::initialize_ram(&mut self.ciram, mode);
+    }
+
     fn registers_snapshot(&self) -> Vec<u8> {
         let mut snapshot = self.mmc3.registers_snapshot();
         snapshot.extend_from_slice(&self.ciram);
@@ -140,6 +145,7 @@ mod tests {
     use crate::cartridge::mapper::{create_mapper, Mapper, MapperContext};
     use crate::cartridge::test_helpers::banked_data;
     use crate::cartridge::NametableLayout;
+    use crate::console::RamInitMode;
 
     const PRG_BANKS_8K: usize = 64;
     const CHR_BANKS_1K: usize = 256;
@@ -219,6 +225,56 @@ mod tests {
         mapper.write_prg(0x8000, 0x00);
         mapper.write_prg(0x8001, 0x00);
         assert_eq!(mapper.read_nametable(0x2000), Some(0x11));
+    }
+
+    #[test]
+    fn mapper_118_mirroring_routes_all_quadrants_and_chr_mode_variants() {
+        let mut mapper = make_mapper(118);
+
+        // CHR mode 0: $2000/$2400 use R0/R0+1, $2800/$2C00 use R1/R1+1
+        mapper.write_prg(0x8000, 0x00); // R0, CHR mode 0
+        mapper.write_prg(0x8001, 0x00); // bit7=0 -> NT0
+        mapper.write_prg(0x8000, 0x01); // R1
+        mapper.write_prg(0x8001, 0x80); // bit7=1 -> NT1
+
+        assert!(mapper.write_nametable(0x2000, 0x12)); // NT0
+        assert!(mapper.write_nametable(0x2800, 0x34)); // NT1
+        assert_eq!(mapper.read_nametable(0x2000), Some(0x12));
+        assert_eq!(mapper.read_nametable(0x2400), Some(0x12));
+        assert_eq!(mapper.read_nametable(0x2800), Some(0x34));
+        assert_eq!(mapper.read_nametable(0x2C00), Some(0x34));
+
+        // CHR mode 1: $2000/$2400/$2800/$2C00 use R2/R3/R4/R5 respectively.
+        mapper.write_prg(0x8000, 0x82); // R2, CHR mode 1
+        mapper.write_prg(0x8001, 0x80); // NT1
+        mapper.write_prg(0x8000, 0x83); // R3
+        mapper.write_prg(0x8001, 0x00); // NT0
+        mapper.write_prg(0x8000, 0x84); // R4
+        mapper.write_prg(0x8001, 0x80); // NT1
+        mapper.write_prg(0x8000, 0x85); // R5
+        mapper.write_prg(0x8001, 0x00); // NT0
+
+        assert!(mapper.write_nametable(0x2000, 0x56)); // NT1
+        assert!(mapper.write_nametable(0x2400, 0x78)); // NT0
+        assert_eq!(mapper.read_nametable(0x2000), Some(0x56));
+        assert_eq!(mapper.read_nametable(0x2800), Some(0x56));
+        assert_eq!(mapper.read_nametable(0x2400), Some(0x78));
+        assert_eq!(mapper.read_nametable(0x2C00), Some(0x78));
+    }
+
+    #[test]
+    fn mapper_118_initialize_ram_initializes_mapper_owned_ciram() {
+        let mut mapper = make_mapper(118);
+
+        mapper.initialize_ram(RamInitMode::SeededRandom(0x118));
+
+        let snapshot = mapper.registers_snapshot();
+        let ciram_start = snapshot.len() - 0x800;
+        let ciram = &snapshot[ciram_start..];
+        assert!(
+            ciram.iter().any(|&b| b != 0),
+            "initialize_ram should initialize mapper-owned CIRAM as well"
+        );
     }
 
     #[test]
