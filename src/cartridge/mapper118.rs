@@ -142,9 +142,9 @@ impl Mapper for Mapper118 {
 
 #[cfg(test)]
 mod tests {
-    use crate::cartridge::mapper::{create_mapper, Mapper, MapperContext};
-    use crate::cartridge::test_helpers::banked_data;
     use crate::cartridge::NametableLayout;
+    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::cartridge::test_helpers::banked_data;
     use crate::console::RamInitMode;
 
     const PRG_BANKS_8K: usize = 64;
