@@ -18,7 +18,7 @@ safe-outputs:
   assign-to-agent:
     model: gpt-5-mini
   add-labels:
-    allowed: [enhanced]
+    allowed: [bug, feature, games, mapper, refactoring, testing, enhanced]
     blocked: ["~*", "*[bot]"]
     target: triggering
     max: 1
@@ -55,7 +55,7 @@ Use its guidance for structure, scope clarity, acceptance criteria quality, and 
    - do not emit `add_labels`
    - emit `noop` with a brief reason and skip all remaining steps
 3. Set a new descriptive title if the current title is not sufficiently descriptive of the issue outcome.
-4. Plan to add the `enhanced` label at workflow completion using the safe-outputs configuration. Do not add any additional labels in this workflow.
+4. Determine appropriate labels for the issue content (for example `bug`, `feature`, `mapper`, `games`, `refactoring`, `testing`) and include `enhanced`.
 5. Evaluate and improve the issue content using `github-issue-designer` principles:
    - Keep one clear, independently deliverable outcome
    - Make scope explicit and minimal
@@ -75,4 +75,4 @@ Use its guidance for structure, scope clarity, acceptance criteria quality, and 
 
 When you improve the issue description, emit an `update_issue` safe output for the triggering issue with `operation: replace` and include the full improved issue body content.
 
-After completing enhancement decisions for any issue without the `enhanced` label (including when no body update is needed), emit exactly one `add_labels` with `labels: ["enhanced"]`.
+After completing enhancement decisions for any issue without the `enhanced` label (including when no body update is needed), emit exactly one `add_labels` containing `enhanced` and any other appropriate labels.
