@@ -108,7 +108,7 @@ mod tests {
     }
 
     #[test]
-    fn writes_outside_41ff_do_not_change_fixed_prg_window() {
+    fn writes_to_prg_addresses_other_than_41ff_are_ignored() {
         let mut mapper = make_mapper();
         assert_eq!(mapper.read_prg(0x8000), 0x11);
         mapper.write_prg(0x8000, 0x00);
