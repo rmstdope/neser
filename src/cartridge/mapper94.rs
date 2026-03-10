@@ -112,7 +112,10 @@ mod tests {
             vec![],
             NametableLayout::Horizontal,
         ));
-        assert!(result.is_ok(), "Mapper 94 must be registered in the factory");
+        assert!(
+            result.is_ok(),
+            "Mapper 94 must be registered in the factory"
+        );
     }
 
     #[test]

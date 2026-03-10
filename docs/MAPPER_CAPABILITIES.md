@@ -159,6 +159,7 @@ Existing runtime behavior through `Mapper` remains unchanged.
 | 300 | BMC-190in1 (190-in-1 multicart) |  | x | x |  | 0 | 16 | 8 |
 | 302 | Mapper 302 |  |  | x |  | 8 | 2 | 8 |
 | 307 | Kaiser KS7037 |  |  | x |  | 8 | 4 | 8 |
+| 316 | Mapper 316 (unknown board) |  |  |  |  | 0 | 32 | 8 |
 | 319 | HP898F (4-in-1 multicart) |  | x | x |  | 0 | 16 | 8 |
 | 324 | Farid UNROM-8 |  |  |  |  | 0 | 16 | 8 |
 | 326 | Mapper 326 |  |  |  |  | 0 | 8 | 1 |
