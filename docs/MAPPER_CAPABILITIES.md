@@ -128,8 +128,10 @@ Existing runtime behavior through `Mapper` remains unchanged.
 | 88 | Namco 118 (Namco 108 chip, CHR A12 wired to CHR A16) |  | x |  |  | 8 | 8 | 1 |
 | 90 | Mapper 90 | x | x | x |  | 8 | 8 | 1 |
 | 91 | Mapper 91 | x | x |  |  | 8 | 8 | 2 |
+| 92 | Jaleco JF-19/JF-21 |  | x |  |  | 0 | 16 | 8 |
 | 93 | Mapper 93 |  |  |  |  | 0 | 16 | 8 |
 | 101 | Jaleco JF-10 |  | x |  |  | 0 | 32 | 8 |
+| 102 | Deprecated iNES alias (NROM-class) |  |  |  |  | Header-defined | 32 | 8 |
 | 104 | Pegasus 5-in-1 (Golden Five) |  |  |  |  | 0 | 16 | 8 |
 | 105 | NES-EVENT (Mapper 105) | x | x | x |  | 8 | 16 | 4 |
 | 115 | KS202 / MMC3 variant | x | x | x |  | 8 | 8 | 1 |
