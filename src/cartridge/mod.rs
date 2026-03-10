@@ -18,6 +18,7 @@ mod mapper100;
 mod mapper101;
 mod mapper104;
 mod mapper105;
+mod mapper107;
 mod mapper115;
 mod mapper117;
 mod mapper118;
