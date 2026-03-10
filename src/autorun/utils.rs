@@ -207,6 +207,15 @@ pub fn load_autorun_file(path: &Path) -> Result<AutorunFile, String> {
     }
 }
 
+pub fn convert_autorun_file(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Err(format!("Autorun file not found: {}", path.display()));
+    }
+
+    let autorun_file = load_autorun_file(path)?;
+    save_autorun_file(path, &autorun_file)
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::types::{AutorunCheckpoint, AutorunFrame};
@@ -474,5 +483,44 @@ mod tests {
         let result = load_autorun_file(temp.path());
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("repeat=0"));
+    }
+
+    #[test]
+    fn test_convert_autorun_file_fails_when_source_file_missing() {
+        let temp_dir = tempfile::TempDir::new().expect("create temp dir");
+        let missing_path = temp_dir.path().join("missing.autorun");
+        let result = convert_autorun_file(&missing_path);
+        assert!(
+            result.is_err(),
+            "conversion should fail when file is missing"
+        );
+    }
+
+    #[test]
+    fn test_convert_autorun_file_rewrites_v2_to_v3_rle() {
+        let temp = NamedTempFile::new().expect("create temp file");
+        let legacy_v2 = json!({
+            "version": 2,
+            "frames": [
+                {"player1": 0, "player2": 0},
+                {"player1": 0, "player2": 0},
+                {"player1": 1, "player2": 0}
+            ],
+            "checkpoints": []
+        });
+        std::fs::write(
+            temp.path(),
+            serde_json::to_vec_pretty(&legacy_v2).expect("serialize v2 json"),
+        )
+        .expect("write v2 autorun");
+
+        convert_autorun_file(temp.path()).expect("convert file");
+
+        let parsed: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(temp.path()).expect("read converted file"))
+                .expect("parse converted json");
+        assert_eq!(parsed["version"], json!(AUTORUN_VERSION));
+        assert_eq!(parsed["frames"].as_array().map(Vec::len), Some(2));
+        assert_eq!(parsed["frames"][0]["repeat"], json!(2));
     }
 }

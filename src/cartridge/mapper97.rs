@@ -7,9 +7,9 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
+use crate::cartridge::NametableLayout;
 use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
-use crate::cartridge::NametableLayout;
 
 pub struct Mapper97 {
     base: BaseMapper,
