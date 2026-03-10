@@ -355,6 +355,7 @@ mod tests {
     use crate::cartridge::test_helpers::banked_data;
 
     const MAPPER_ID: u16 = 116;
+    // Non-power-of-two sizes avoid modulo-wrapping false positives in bank assertions.
     const PRG_BANKS_8K: usize = 37;
     const CHR_BANKS_1K: usize = 385;
 
