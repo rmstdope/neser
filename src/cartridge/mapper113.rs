@@ -102,8 +102,8 @@ mod tests {
     use crate::cartridge::mapper::{MapperContext, create_mapper};
     use crate::cartridge::test_helpers::banked_data;
 
-    const PRG_BANKS_32K: usize = 7;
-    const CHR_BANKS_8K: usize = 13;
+    const PRG_BANKS_32K: usize = 8;
+    const CHR_BANKS_8K: usize = 16;
 
     fn make_mapper() -> Mapper113 {
         Mapper113::new(MapperContext::new_for_test(
@@ -135,8 +135,8 @@ mod tests {
         assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
 
         mapper.write_prg(0x4100, 0xFF);
-        assert_eq!(mapper.read_prg(0x8000), 7 % PRG_BANKS_32K as u8);
-        assert_eq!(mapper.read_chr(0x0000), 15 % CHR_BANKS_8K as u8);
+        assert_eq!(mapper.read_prg(0x8000), 7);
+        assert_eq!(mapper.read_chr(0x0000), 15);
         assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
     }
 
@@ -145,13 +145,13 @@ mod tests {
         let mut mapper = make_mapper();
 
         mapper.write_prg(0x4100, 0x40);
-        assert_eq!(mapper.read_prg(0x8000), 7 % PRG_BANKS_32K as u8);
-        assert_eq!(mapper.read_chr(0x0000), 8 % CHR_BANKS_8K as u8);
+        assert_eq!(mapper.read_prg(0x8000), 0);
+        assert_eq!(mapper.read_chr(0x0000), 8);
 
         mapper.write_prg(0x4200, 0x00);
         assert_eq!(
             mapper.read_prg(0x8000),
-            7 % PRG_BANKS_32K as u8,
+            0,
             "writes outside (addr & 0xE100)==0x4100 should be ignored"
         );
     }
@@ -169,7 +169,7 @@ mod tests {
 
         mapper.restore_registers(&snapshot);
         assert_eq!(mapper.read_prg(0x8000), 1);
-        assert_eq!(mapper.read_chr(0x0000), 15 % CHR_BANKS_8K as u8);
+        assert_eq!(mapper.read_chr(0x0000), 15);
         assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
     }
 }
