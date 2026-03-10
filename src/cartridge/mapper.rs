@@ -67,9 +67,11 @@ use super::mapper87::Mapper87;
 use super::mapper88::Mapper88;
 use super::mapper90::Mapper90;
 use super::mapper91::Mapper91;
+use super::mapper92::Mapper92;
 use super::mapper93::Mapper93;
 use super::mapper95::Mapper95;
 use super::mapper96::Mapper96;
+use super::mapper97::Mapper97;
 use super::mapper100::Mapper100;
 use super::mapper101::Mapper101;
 use super::mapper104::Mapper104;
@@ -92,6 +94,7 @@ use super::mapper251::Mapper251;
 use super::mapper254::Mapper254;
 use super::mapper255::Mapper255;
 use super::mapper294::Mapper294;
+use super::mapper300::Mapper300;
 use super::mapper302::Mapper302;
 use super::mapper307::Mapper307;
 use super::mapper319::Mapper319;
@@ -678,6 +681,7 @@ mapper_registry! {
     29 => Mapper29::new,
     30 => Mapper30::new,
     31 => Mapper31::new,
+    300 => Mapper300::new,
     319 => Mapper319::new,
     320 => Mapper320::new,
     327 => Mapper327::new,
@@ -760,9 +764,11 @@ mapper_registry! {
     88 => Mapper88::new,
     90 => Mapper90::new,
     91 => Mapper91::new,
+    92 => Mapper92::new,
     93 => Mapper93::new,
     95 => Mapper95::new,
     96 => Mapper96::new,
+    97 => Mapper97::new,
     100 => Mapper100::new,
     101 => Mapper101::new,
     102 => NROMMapper::new,
@@ -797,10 +803,10 @@ const SUPPORTED_MAPPERS: &[u16] = &[
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
     26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
     50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73,
-    74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 90, 91, 93, 95, 96, 100, 101, 102,
-    104, 115, 117, 118, 129, 132, 133, 140, 155, 185, 205, 206, 241, 242, 243, 244, 245, 246, 251,
-    254, 255, 294, 302, 307, 319, 320, 324, 326, 327, 328, 329, 330, 332, 335, 338, 339, 340, 342,
-    343, 344, 345, 346, 347, 348, 349, 350,
+    74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 90, 91, 92, 93, 95, 96, 100, 101,
+    102, 104, 115, 117, 118, 129, 132, 133, 140, 155, 185, 205, 206, 241, 242, 243, 244, 245, 246,
+    251, 254, 255, 294, 300, 302, 307, 319, 320, 324, 326, 327, 328, 329, 330, 332, 335, 338, 339,
+    340, 342, 343, 344, 345, 346, 347, 348, 349, 350,
 ];
 
 /// List of supported iNES mapper IDs handled by the factory.
