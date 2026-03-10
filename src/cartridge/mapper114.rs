@@ -206,31 +206,33 @@ mod tests {
 
     #[test]
     fn mapper_114_prg_chr_mirroring_and_irq_follow_expected_behavior() {
-        let mut mapper = make_mapper(0);
+        for submapper in [0, 1] {
+            let mut mapper = make_mapper(submapper);
 
-        mapper.write_prg(0xA000, 0x04);
-        mapper.write_prg(0xC000, 0x05);
-        assert_eq!(mapper.read_prg(0x8000), 5);
+            mapper.write_prg(0xA000, 0x04);
+            mapper.write_prg(0xC000, 0x05);
+            assert_eq!(mapper.read_prg(0x8000), 5);
 
-        mapper.write_prg(0xA000, 0x06);
-        mapper.write_prg(0xC000, 0x09);
-        assert_eq!(mapper.read_chr(0x1000), 9);
+            mapper.write_prg(0xA000, 0x06);
+            mapper.write_prg(0xC000, 0x09);
+            assert_eq!(mapper.read_chr(0x1000), 9);
 
-        mapper.write_prg(0x8001, 0x01);
-        assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
-        mapper.write_prg(0x8001, 0x00);
-        assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
+            mapper.write_prg(0x8001, 0x01);
+            assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
+            mapper.write_prg(0x8001, 0x00);
+            assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
 
-        mapper.write_prg(0xA001, 1);
-        mapper.write_prg(0xC001, 0);
-        mapper.write_prg(0xE001, 0);
-        for _ in 0..2 {
-            mapper.ppu_address_changed(0x0FFF);
-            for _ in 0..3 {
-                mapper.cpu_cycle();
+            mapper.write_prg(0xA001, 1);
+            mapper.write_prg(0xC001, 0);
+            mapper.write_prg(0xE001, 0);
+            for _ in 0..2 {
+                mapper.ppu_address_changed(0x0FFF);
+                for _ in 0..3 {
+                    mapper.cpu_cycle();
+                }
+                mapper.ppu_address_changed(0x1000);
             }
-            mapper.ppu_address_changed(0x1000);
+            assert!(mapper.irq_pending());
         }
-        assert!(mapper.irq_pending());
     }
 }
