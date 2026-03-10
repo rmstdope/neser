@@ -9,9 +9,9 @@
 //!   mapper 116 clone hardware behavior differs from Nintendo MMC1 timing.
 //! - Submapper variants currently share the same behavior path.
 
+use crate::cartridge::NametableLayout;
 use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mmc3::MMC3Mapper;
-use crate::cartridge::NametableLayout;
 use crate::cartridge::{Mapper, MapperCapabilities};
 
 pub struct Mapper116 {
@@ -99,7 +99,7 @@ impl Mapper116 {
                         self.base_mut().select_prg_page(3, hi + 1);
                     }
                 } else {
-                    let start = ((bank & 0x0E) << 1) as i16;
+                    let start = (bank & 0x0E) << 1;
                     self.base_mut().select_prg_page(0, start);
                     self.base_mut().select_prg_page(1, start + 1);
                     self.base_mut().select_prg_page(2, start + 2);
@@ -115,7 +115,8 @@ impl Mapper116 {
             0 => {
                 let chr = self.vrc2_chr;
                 for (slot, bank) in chr.iter().enumerate() {
-                    self.base_mut().select_chr_page(slot, outer | (*bank as i16));
+                    self.base_mut()
+                        .select_chr_page(slot, outer | (*bank as i16));
                 }
             }
             1 => {
@@ -130,7 +131,8 @@ impl Mapper116 {
                     let lo = (self.mmc1_regs[1] as i16) << 2;
                     let hi = (self.mmc1_regs[2] as i16) << 2;
                     for offset in 0..4 {
-                        self.base_mut().select_chr_page(offset, outer | (lo + offset as i16));
+                        self.base_mut()
+                            .select_chr_page(offset, outer | (lo + offset as i16));
                         self.base_mut()
                             .select_chr_page(offset + 4, outer | (hi + offset as i16));
                     }
@@ -156,8 +158,12 @@ impl Mapper116 {
                 self.base_mut().set_mirroring_hv(mirror_h)
             }
             _ => match self.mmc1_regs[0] & 0x03 {
-                0 => self.base_mut().set_mirroring(NametableLayout::SingleScreenLower),
-                1 => self.base_mut().set_mirroring(NametableLayout::SingleScreenUpper),
+                0 => self
+                    .base_mut()
+                    .set_mirroring(NametableLayout::SingleScreenLower),
+                1 => self
+                    .base_mut()
+                    .set_mirroring(NametableLayout::SingleScreenUpper),
                 2 => self.base_mut().set_mirroring(NametableLayout::Vertical),
                 _ => self.base_mut().set_mirroring(NametableLayout::Horizontal),
             },
@@ -310,7 +316,8 @@ impl Mapper for Mapper116 {
         let mmc3_bank = self.mmc3.mapped_chr_1k_bank(addr) as u16;
         let final_bank = self.outer_chr_bank() | mmc3_bank;
         let offset = (addr as usize) & 0x03FF;
-        self.mmc3.write_chr_1k_at(final_bank as usize, offset, value);
+        self.mmc3
+            .write_chr_1k_at(final_bank as usize, offset, value);
     }
 
     fn irq_pending(&self) -> bool {
@@ -432,7 +439,10 @@ mod tests {
             banked_data(1024, CHR_BANKS_1K),
             NametableLayout::Vertical,
         ));
-        assert!(result.is_ok(), "Mapper 116 must be registered in the factory");
+        assert!(
+            result.is_ok(),
+            "Mapper 116 must be registered in the factory"
+        );
     }
 
     #[test]
