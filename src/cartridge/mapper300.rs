@@ -30,11 +30,10 @@
 //!
 //! # Power-on state
 //!
-//! Register = 0: PRG bank 0 at both $8000 and $C000; CHR bank 0; horizontal
-//! mirroring (bit 0 = 0 → vertical, but init writes 0 to both slots and CHR/PRG
-//! are bank 0; mirroring from header).
+//! Register = 0: PRG bank 0 at both $8000 and $C000; CHR bank 0; vertical
+//! mirroring (bit 0 = 0 → Vertical).
 //!
-//! Actually: Mesen2 calls `WriteRegister(0x8000, 0)` on init, so:
+//! Mesen2 calls `WriteRegister(0x8000, 0)` on init, so:
 //! - bank = (0 >> 2) & 7 = 0
 //! - mirroring = bit 0 of 0 = 0 → Vertical
 
@@ -254,7 +253,7 @@ mod tests {
     #[test]
     fn chr_and_prg_always_use_same_bank_index() {
         let mut mapper = make_mapper();
-        for b in 0u8..7 {
+        for b in 0u8..=7 {
             let value = b << 2; // bank = b, mirroring = 0
             mapper.write_prg(0x8000, value);
             assert_eq!(mapper.read_prg(0x8000), b, "PRG bank should be {b}");
