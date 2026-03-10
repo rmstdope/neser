@@ -85,6 +85,7 @@ use super::mapper112::Mapper112;
 use super::mapper113::Mapper113;
 use super::mapper114::Mapper114;
 use super::mapper115::Mapper115;
+use super::mapper116::Mapper116;
 use super::mapper117::Mapper117;
 use super::mapper118::Mapper118;
 use super::mapper132::Mapper132;
@@ -795,6 +796,7 @@ mapper_registry! {
     113 => Mapper113::new,
     114 => Mapper114::new,
     115 => Mapper115::new,
+    116 => Mapper116::new,
     117 => Mapper117::new,
     118 => Mapper118::new,
     129 => Mapper58::new,
