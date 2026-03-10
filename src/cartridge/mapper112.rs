@@ -98,7 +98,7 @@ impl Mapper for Mapper112 {
 
     fn write_prg(&mut self, addr: u16, value: u8) {
         match addr {
-            0x4020..=0x5FFF | 0x8000..=0xFFFF => match addr & 0xE001 {
+            0x8000..=0xFFFF => match addr & 0xE001 {
                 0x8000 => self.current_register = value & 0x07,
                 0xA000 => self.registers[self.current_register as usize] = value,
                 0xC000 => self.outer_chr_bank = value,
@@ -222,5 +222,16 @@ mod tests {
         assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
         mapper.write_prg(0xE000, 1);
         assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
+    }
+
+    #[test]
+    fn writes_in_4020_5fff_are_ignored() {
+        let mut mapper = make_mapper();
+        let before = mapper.read_prg(0x8000);
+
+        mapper.write_prg(0x4020, 1);
+        mapper.write_prg(0x5fff, 7);
+
+        assert_eq!(mapper.read_prg(0x8000), before);
     }
 }
