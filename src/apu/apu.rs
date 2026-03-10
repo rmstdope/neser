@@ -1736,17 +1736,27 @@ mod tests {
     }
 
     #[test]
-    fn test_disable_dmc_clears_bytes_remaining() {
+    fn test_disable_dmc_clears_bytes_remaining_after_disable_delay() {
         let mut apu = Apu::new_for_testing();
         // Set up and enable DMC
         apu.dmc_mut().write_sample_address(0x00);
         apu.dmc_mut().write_sample_length(0x01);
         apu.write_enable(STATUS_DMC);
         assert!(apu.dmc().has_bytes_remaining());
+        assert_eq!(apu.read_status(0) & STATUS_DMC, STATUS_DMC);
 
         // Disable DMC
         apu.write_enable(0b0000_0000);
+        assert!(apu.dmc().has_bytes_remaining());
+        assert_eq!(apu.read_status(0) & STATUS_DMC, STATUS_DMC);
+
+        apu.clock();
+        assert!(apu.dmc().has_bytes_remaining());
+        assert_eq!(apu.read_status(0) & STATUS_DMC, STATUS_DMC);
+
+        apu.clock();
         assert!(!apu.dmc().has_bytes_remaining());
+        assert_eq!(apu.read_status(0) & STATUS_DMC, 0);
     }
 
     #[test]

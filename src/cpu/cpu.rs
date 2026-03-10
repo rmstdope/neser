@@ -2890,6 +2890,54 @@ mod tests {
     }
 
     #[test]
+    fn test_cancelled_dmc_dma_after_halt_does_not_complete_sample_read() {
+        let (ppu, apu, memory) = create_test_memory();
+        let mut cpu = Cpu::new(
+            TimingMode::Ntsc,
+            Rc::clone(&memory),
+            Rc::clone(&ppu),
+            Rc::clone(&apu),
+        );
+
+        fake_cartridge(&mut cpu, &[0xA5]);
+
+        {
+            let mut apu = apu.borrow_mut();
+            apu.dmc_mut().write_sample_address(0x00);
+            apu.dmc_mut().write_sample_length(0x00);
+            apu.write_enable(0b0001_0000);
+            apu.dmc_mut().debug_set_transfer_start_delay(0);
+            apu.dmc_mut().debug_set_dma_pending(true);
+        }
+
+        cpu.set_total_cycles(1);
+        cpu.start_dmc_dma();
+
+        let halted_read_addr = 0x1234;
+        let cycles_before_halt = cpu.get_total_cycles();
+
+        cpu.before_cpu_cycle(false);
+        let _ = cpu.bus.borrow_mut().read(halted_read_addr, false);
+        cpu.after_cpu_cycle(false);
+        cpu.dmc_dma_need_halt = false;
+
+        assert_eq!(cpu.get_total_cycles(), cycles_before_halt + 1);
+
+        apu.borrow_mut().write_enable(0);
+        cpu.process_pending_dmc_dma(halted_read_addr);
+
+        let dmc_state = apu.borrow().dmc().capture_state();
+        assert!(
+            dmc_state.sample_buffer.is_none(),
+            "cancelled DMC DMA should discard the queued sample fetch"
+        );
+        assert!(
+            !dmc_state.dma_pending,
+            "cancelled DMC DMA should not remain pending after the discard"
+        );
+    }
+
+    #[test]
     fn test_execute_does_not_service_irq_when_not_asserted() {
         let (ppu, apu, memory) = create_test_memory();
         let mut cpu = Cpu::new(

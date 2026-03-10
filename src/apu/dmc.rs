@@ -31,6 +31,7 @@ pub struct DmcState {
     pub loop_flag: bool,
     pub dma_pending: bool,
     pub transfer_start_delay: u8,
+    pub disable_delay: u8,
 }
 
 // NTSC rate periods (in CPU cycles)
@@ -78,8 +79,11 @@ pub struct Dmc {
     #[cfg(test)]
     irq_trigger_count: u32,
 
-    // Transfer start delay (2-3 cycles after enabling DMC via $4015)
+    // Transfer start delay (1-2 cycles after enabling DMC via $4015)
     transfer_start_delay: u8,
+
+    // Disable delay (2-3 cycles after disabling DMC via $4015)
+    disable_delay: u8,
 }
 
 impl Default for Dmc {
@@ -122,6 +126,7 @@ impl Dmc {
             #[cfg(test)]
             irq_trigger_count: 0,
             transfer_start_delay: 0,
+            disable_delay: 0,
         }
     }
 
@@ -154,7 +159,7 @@ impl Dmc {
 
     /// If a DMA request is pending, returns the address the DMA should read.
     pub fn dma_address(&self) -> Option<u16> {
-        self.dma_pending.then_some(self.current_address)
+        (self.dma_pending && self.bytes_remaining > 0).then_some(self.current_address)
     }
 
     /// Complete a pending DMA read by supplying the fetched byte.
@@ -352,25 +357,60 @@ impl Dmc {
         trace_apu!(3; "dmc restart_sample address=0x{:04X} length={}", self.current_address, self.bytes_remaining);
     }
 
+    fn delay_for_cpu_cycle(cpu_cycle: u64, even_cycle_delay: u8, odd_cycle_delay: u8) -> u8 {
+        if cpu_cycle.is_multiple_of(2) {
+            even_cycle_delay
+        } else {
+            odd_cycle_delay
+        }
+    }
+
+    fn process_disable_delay(&mut self) {
+        if self.disable_delay == 0 {
+            return;
+        }
+
+        self.disable_delay -= 1;
+        if self.disable_delay == 0 {
+            self.bytes_remaining = 0;
+            self.dma_pending = false;
+            trace_apu!(4; "dmc disable_delay expired");
+        }
+    }
+
+    fn process_transfer_start_delay(&mut self) {
+        if self.transfer_start_delay == 0 {
+            return;
+        }
+
+        self.transfer_start_delay -= 1;
+        if self.transfer_start_delay == 0 {
+            // Delay expired, now trigger DMA if buffer is still empty
+            self.fill_sample_buffer_if_needed();
+            trace_apu!(4; "dmc transfer_start_delay expired");
+        }
+    }
+
     /// Enable or disable the channel (called from $4015 status register)
     /// cpu_cycle is the current CPU cycle count for accurate delay timing
     pub fn set_enabled(&mut self, enabled: bool, cpu_cycle: u64) {
         trace_apu!(2; "dmc set_enabled {} cpu_cycle={}", enabled, cpu_cycle);
         if enabled {
+            self.disable_delay = 0;
+
             // If bytes_remaining is 0, restart the sample
             if self.bytes_remaining == 0 {
                 self.restart_sample();
                 // Delay DMA request by 1-2 cycles based on odd/even CPU cycle
-                if cpu_cycle.is_multiple_of(2) {
-                    self.transfer_start_delay = 1;
-                } else {
-                    self.transfer_start_delay = 2;
-                }
+                self.transfer_start_delay = Self::delay_for_cpu_cycle(cpu_cycle, 1, 2);
                 trace_apu!(4; "dmc transfer_start_delay {}", self.transfer_start_delay);
             }
         } else {
-            // Disable: clear bytes remaining (retain any buffered sample)
-            self.bytes_remaining = 0;
+            // Disabling the DMC takes effect after a short CPU-cycle delay.
+            if self.disable_delay == 0 {
+                self.disable_delay = Self::delay_for_cpu_cycle(cpu_cycle, 2, 3);
+            }
+
             if self.sample_buffer.is_some() {
                 trace_apu!(4; "dmc sample_buffer retained (disable)");
             }
@@ -380,14 +420,8 @@ impl Dmc {
     /// Process one CPU clock cycle - handles transfer start delays
     /// Must be called once per CPU cycle to properly time DMC DMA requests
     pub fn process_clock(&mut self) {
-        if self.transfer_start_delay > 0 {
-            self.transfer_start_delay -= 1;
-            if self.transfer_start_delay == 0 {
-                // Delay expired, now trigger DMA if buffer is still empty
-                self.fill_sample_buffer_if_needed();
-                trace_apu!(4; "dmc transfer_start_delay expired");
-            }
-        }
+        self.process_disable_delay();
+        self.process_transfer_start_delay();
     }
 
     /// Simulate finishing a byte read (decrements bytes_remaining and handles loop/IRQ)
@@ -462,6 +496,7 @@ impl Dmc {
             loop_flag: self.loop_flag,
             dma_pending: self.dma_pending,
             transfer_start_delay: self.transfer_start_delay,
+            disable_delay: self.disable_delay,
         }
     }
 
@@ -483,6 +518,7 @@ impl Dmc {
         self.loop_flag = state.loop_flag;
         self.dma_pending = state.dma_pending;
         self.transfer_start_delay = state.transfer_start_delay;
+        self.disable_delay = state.disable_delay;
     }
 }
 
@@ -752,12 +788,37 @@ mod sample_tests {
     }
 
     #[test]
-    fn test_disable_channel_clears_bytes_remaining() {
+    fn test_disable_channel_waits_two_cycles_before_clearing_on_even_cpu_cycle() {
         let mut dmc = Dmc::new();
         dmc.bytes_remaining = 100;
 
         dmc.set_enabled(false, 0);
 
+        assert_eq!(dmc.bytes_remaining, 100);
+
+        dmc.process_clock();
+        assert_eq!(dmc.bytes_remaining, 100);
+
+        dmc.process_clock();
+        assert_eq!(dmc.bytes_remaining, 0);
+    }
+
+    #[test]
+    fn test_disable_channel_waits_three_cycles_before_clearing_on_odd_cpu_cycle() {
+        let mut dmc = Dmc::new();
+        dmc.bytes_remaining = 100;
+
+        dmc.set_enabled(false, 1);
+
+        assert_eq!(dmc.bytes_remaining, 100);
+
+        dmc.process_clock();
+        assert_eq!(dmc.bytes_remaining, 100);
+
+        dmc.process_clock();
+        assert_eq!(dmc.bytes_remaining, 100);
+
+        dmc.process_clock();
         assert_eq!(dmc.bytes_remaining, 0);
     }
 
