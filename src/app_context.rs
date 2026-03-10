@@ -49,14 +49,15 @@ impl IntoSharedAppContext for SharedAppContext {
     }
 }
 
-// TODO ???
 #[cfg(not(target_arch = "wasm32"))]
 fn load_rom_db() -> RomDb {
+    // RomDb loads the cvs database
     RomDb::new().unwrap()
 }
 
 #[cfg(target_arch = "wasm32")]
 fn load_rom_db() -> RomDb {
+    // cvs database is not accessible in wasm, so we include it as a string and parse it at runtime
     RomDb::from_csv_content(include_str!("cartridge/rom_db.csv"))
 }
 
