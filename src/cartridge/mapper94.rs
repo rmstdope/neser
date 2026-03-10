@@ -109,6 +109,9 @@ mod tests {
         mapper.write_prg(0x8000, 0x08);
         assert_eq!(read_prg_bank(&mapper, 0x8000), 2);
 
+        mapper.write_prg(0x8000, 0x88);
+        assert_eq!(read_prg_bank(&mapper, 0x8000), 2);
+
         mapper.write_prg(0x8000, 0xCB);
         assert_eq!(read_prg_bank(&mapper, 0x8000), 2);
     }
@@ -138,7 +141,7 @@ mod tests {
     }
 
     #[test]
-    fn bus_conflicts_and_write_value_before_bank_extract() {
+    fn bus_conflicts_apply_before_bank_selection() {
         let mut prg = make_prg_rom();
         prg[0] = 0x14;
         let mut mapper = Mapper94::new(MapperContext::new_for_test(
@@ -150,6 +153,21 @@ mod tests {
 
         mapper.write_prg(0x8000, 0x3C);
         assert_eq!(read_prg_bank(&mapper, 0x8000), 5);
+    }
+
+    #[test]
+    fn bus_conflicts_can_mask_bank_bits_to_zero() {
+        let mut prg = make_prg_rom();
+        prg[0] = 0x03;
+        let mut mapper = Mapper94::new(MapperContext::new_for_test(
+            94,
+            prg,
+            vec![],
+            NametableLayout::Vertical,
+        ));
+
+        mapper.write_prg(0x8000, 0x3C);
+        assert_eq!(read_prg_bank(&mapper, 0x8000), 0);
     }
 
     #[test]
