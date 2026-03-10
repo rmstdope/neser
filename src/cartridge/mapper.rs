@@ -67,12 +67,18 @@ use super::mapper87::Mapper87;
 use super::mapper88::Mapper88;
 use super::mapper90::Mapper90;
 use super::mapper91::Mapper91;
+use super::mapper92::Mapper92;
 use super::mapper93::Mapper93;
 use super::mapper95::Mapper95;
 use super::mapper96::Mapper96;
+use super::mapper97::Mapper97;
 use super::mapper100::Mapper100;
 use super::mapper101::Mapper101;
+use super::mapper104::Mapper104;
+use super::mapper105::Mapper105;
+use super::mapper115::Mapper115;
 use super::mapper117::Mapper117;
+use super::mapper118::Mapper118;
 use super::mapper132::Mapper132;
 use super::mapper133::Mapper133;
 use super::mapper140::Mapper140;
@@ -87,6 +93,8 @@ use super::mapper246::Mapper246;
 use super::mapper251::Mapper251;
 use super::mapper254::Mapper254;
 use super::mapper255::Mapper255;
+use super::mapper294::Mapper294;
+use super::mapper300::Mapper300;
 use super::mapper302::Mapper302;
 use super::mapper307::Mapper307;
 use super::mapper319::Mapper319;
@@ -95,9 +103,11 @@ use super::mapper324::Mapper324;
 use super::mapper326::Mapper326;
 use super::mapper327::Mapper327;
 use super::mapper328::Mapper328;
+use super::mapper329::Mapper329;
 use super::mapper330::Mapper330;
 use super::mapper332::Mapper332;
 use super::mapper335::Mapper335;
+use super::mapper338::Mapper338;
 use super::mapper339::Mapper339;
 use super::mapper340::Mapper340;
 use super::mapper341::Mapper341;
@@ -671,10 +681,12 @@ mapper_registry! {
     29 => Mapper29::new,
     30 => Mapper30::new,
     31 => Mapper31::new,
+    300 => Mapper300::new,
     319 => Mapper319::new,
     320 => Mapper320::new,
     327 => Mapper327::new,
     328 => Mapper328::new,
+    329 => Mapper329::new,
     330 => Mapper330::new,
     332 => Mapper332::new,
     335 => Mapper335::new,
@@ -685,6 +697,7 @@ mapper_registry! {
     34 => BnromNinaMapper::new,
     35 => Mapper35::new,
     339 => Mapper339::new,
+    338 => Mapper338::new,
     340 => Mapper340::new,
     341 => Mapper341::new,
     344 => Mapper344::new,
@@ -751,12 +764,19 @@ mapper_registry! {
     88 => Mapper88::new,
     90 => Mapper90::new,
     91 => Mapper91::new,
+    92 => Mapper92::new,
     93 => Mapper93::new,
     95 => Mapper95::new,
     96 => Mapper96::new,
+    97 => Mapper97::new,
     100 => Mapper100::new,
     101 => Mapper101::new,
+    102 => NROMMapper::new,
+    104 => Mapper104::new,
+    105 => Mapper105::new,
+    115 => Mapper115::new,
     117 => Mapper117::new,
+    118 => Mapper118::new,
     129 => Mapper58::new,
     132 => Mapper132::new,
     133 => Mapper133::new,
@@ -774,6 +794,7 @@ mapper_registry! {
     251 => Mapper251::new,
     254 => Mapper254::new,
     255 => Mapper255::new,
+    294 => Mapper294::new,
     302 => Mapper302::new,
     307 => Mapper307::new,
 }
@@ -782,10 +803,10 @@ const SUPPORTED_MAPPERS: &[u16] = &[
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
     26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
     50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73,
-    74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 90, 91, 93, 95, 96, 100, 101, 117,
-    129, 132, 133, 140, 155, 185, 205, 206, 241, 242, 243, 244, 245, 246, 251, 254, 255, 302, 307,
-    319, 320, 324, 326, 327, 328, 330, 332, 335, 339, 340, 342, 343, 344, 345, 346, 347, 348, 349,
-    350,
+    74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 90, 91, 92, 93, 95, 96, 100, 101,
+    102, 104, 115, 117, 118, 129, 132, 133, 140, 155, 185, 205, 206, 241, 242, 243, 244, 245, 246,
+    251, 254, 255, 294, 300, 302, 307, 319, 320, 324, 326, 327, 328, 329, 330, 332, 335, 338, 339,
+    340, 342, 343, 344, 345, 346, 347, 348, 349, 350,
 ];
 
 /// List of supported iNES mapper IDs handled by the factory.
@@ -988,6 +1009,57 @@ mod tests {
     #[test]
     fn supported_mappers_includes_mapper_100() {
         assert!(supported_mappers().contains(&100));
+    }
+
+    #[test]
+    fn create_mapper_accepts_mapper_102() {
+        let prg_rom = vec![0u8; 32 * 1024];
+        let chr_rom = vec![0u8; 8 * 1024];
+        let metadata =
+            MapperContext::new_for_test(102, prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        let result = create_mapper(metadata);
+
+        assert!(result.is_ok(), "Mapper 102 should be created");
+    }
+
+    #[test]
+    fn supported_mappers_includes_mapper_102() {
+        assert!(supported_mappers().contains(&102));
+    }
+
+    #[test]
+    fn mapper_102_behaves_as_nrom() {
+        let mut prg_rom = vec![0; 16 * 1024];
+        prg_rom[0x0000] = 0x12;
+        prg_rom[0x3FFF] = 0x34;
+        let mut mapper = create_mapper(MapperContext::new_for_test(
+            102,
+            prg_rom,
+            vec![0x5A; 8 * 1024],
+            NametableLayout::Vertical,
+        ))
+        .expect("Mapper 102 should be created");
+
+        mapper.write_prg(0x8000, 0xFF);
+
+        assert_eq!(mapper.read_prg(0x8000), 0x12);
+        assert_eq!(mapper.read_prg(0xBFFF), 0x34);
+        assert_eq!(mapper.read_prg(0xC000), 0x12);
+        assert_eq!(mapper.read_prg(0xFFFF), 0x34);
+        assert_eq!(mapper.read_chr(0x0000), 0x5A);
+    }
+
+    #[test]
+    fn create_mapper_accepts_mapper_105_nes_event() {
+        let prg_rom = vec![0u8; 16 * 1024 * 16];
+        let chr_rom = vec![0u8; 8 * 1024];
+        let metadata =
+            MapperContext::new_for_test(105, prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        let result = create_mapper(metadata);
+
+        assert!(result.is_ok(), "Mapper 105 should be created");
     }
 
     #[test]
