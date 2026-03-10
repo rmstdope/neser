@@ -149,10 +149,12 @@ mod tests {
     }
 
     #[test]
-    fn prg_bank_select_uses_bits_5_to_0() {
+    fn prg_bank_select_uses_lower_6_bits() {
         let mut mapper = make_mapper();
-        mapper.write_prg(0x8000, 0x12);
-        assert_eq!(mapper.read_prg(0xC000), 3);
+        // 0x22 uses bit 5. With 5 PRG banks: 0x22 & 0x3F = 34, and 34 % 5 = 4.
+        // The previous 0x0F mask would produce 0x02, and 2 % 5 = 2.
+        mapper.write_prg(0x8000, 0x22);
+        assert_eq!(mapper.read_prg(0xC000), 4);
     }
 
     #[test]
