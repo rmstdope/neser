@@ -56,7 +56,7 @@ impl Mapper for Mapper97 {
             return;
         }
 
-        self.c000_bank = value & 0x0F;
+        self.c000_bank = value & 0x3F;
         self.update_c000_bank();
         let mirroring = if (value & 0x80) != 0 {
             NametableLayout::Vertical
@@ -67,11 +67,7 @@ impl Mapper for Mapper97 {
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        let mirroring = match self.base.mirroring() {
-            NametableLayout::Vertical => 1,
-            _ => 0,
-        };
-        vec![self.c000_bank, mirroring]
+        vec![self.c000_bank, self.base.mirroring().to_snapshot_byte()]
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
@@ -80,11 +76,8 @@ impl Mapper for Mapper97 {
             self.update_c000_bank();
         }
         if let Some(&mirroring) = data.get(1) {
-            self.base.set_mirroring(if mirroring == 0 {
-                NametableLayout::Horizontal
-            } else {
-                NametableLayout::Vertical
-            });
+            self.base
+                .set_mirroring(NametableLayout::from_snapshot_byte(mirroring));
         }
     }
 
@@ -153,5 +146,31 @@ mod tests {
         mapper.write_prg(0xC000, 0x00);
         assert_eq!(mapper.read_prg(0xC000), 3);
         assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
+    }
+
+    #[test]
+    fn prg_bank_select_uses_bits_5_to_0() {
+        let mut mapper = make_mapper();
+        mapper.write_prg(0x8000, 0x12);
+        assert_eq!(mapper.read_prg(0xC000), 3);
+    }
+
+    #[test]
+    fn registers_snapshot_restore_and_reset_roundtrip_state() {
+        let mut mapper = make_mapper();
+        mapper.write_prg(0x8000, 0x82);
+        let snapshot = mapper.registers_snapshot();
+
+        mapper.write_prg(0x8000, 0x01);
+        assert_eq!(mapper.read_prg(0xC000), 1);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
+
+        mapper.restore_registers(&snapshot);
+        assert_eq!(mapper.read_prg(0xC000), 2);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
+
+        mapper.reset();
+        assert_eq!(mapper.read_prg(0xC000), 0);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
     }
 }
