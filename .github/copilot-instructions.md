@@ -64,6 +64,7 @@ When creating issues, always add the appropriate labels to the issue using gh:
 - mapper - for anything that has to do with a specific mapper or mappers
 - refactoring - for anything that has to do with refactoring the codebase
 - testing - for anything that has to do with testing
+- enhanced - for issues created or updated with AI assistance workflows
 
 ### Definition of Done
 

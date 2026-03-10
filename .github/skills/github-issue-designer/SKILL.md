@@ -113,6 +113,7 @@ Choose labels by issue intent:
 - `refactoring` = internal code quality work
 - `testing` = test-focused scope
 - `games` / `mapper` = domain-focused scope
+- `enhanced` = issue content was created or updated with AI assistance
 
 (`github-administration` applies labels technically.)
 
