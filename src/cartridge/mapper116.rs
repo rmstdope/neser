@@ -7,7 +7,7 @@
 //! Known Limitations:
 //! - MMC1 consecutive-cycle serial-write ignore behavior is not modeled here because
 //!   mapper 116 clone hardware behavior differs from Nintendo MMC1 timing.
-//! - Submappers 0 and 2 are accepted and currently share the same behavior path.
+//! - Submapper variants currently share the same behavior path.
 
 use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mmc3::MMC3Mapper;
@@ -21,6 +21,7 @@ pub struct Mapper116 {
     vrc2_chr: [u8; 8],
     vrc2_prg: [u8; 2],
     vrc2_mirroring: u8,
+    mmc3_mirroring: u8,
 
     mmc1_regs: [u8; 4],
     mmc1_buffer: u8,
@@ -31,12 +32,14 @@ impl Mapper116 {
     const MODE_SELECT_MASK: u16 = 0x4100;
 
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let mmc3_mirroring = u8::from(matches!(ctx.mirroring, NametableLayout::Horizontal));
         let mut mapper = Self {
             mmc3: MMC3Mapper::new_with_irq_mode(ctx.prg_rom, ctx.chr_rom, ctx.mirroring, false),
             mode: 0,
             vrc2_chr: [0xFF, 0xFF, 0xFF, 0xFF, 4, 5, 6, 7],
             vrc2_prg: [0, 1],
             vrc2_mirroring: 0,
+            mmc3_mirroring,
             mmc1_regs: [0x0C, 0, 0, 0],
             mmc1_buffer: 0,
             mmc1_shift: 0,
@@ -69,7 +72,16 @@ impl Mapper116 {
                 self.base_mut().select_prg_page(2, -2);
                 self.base_mut().select_prg_page(3, -1);
             }
-            1 => {}
+            1 => {
+                let prg0 = self.mmc3.mapped_prg_bank(0x8000) as i16;
+                let prg1 = self.mmc3.mapped_prg_bank(0xA000) as i16;
+                let prg2 = self.mmc3.mapped_prg_bank(0xC000) as i16;
+                let prg3 = self.mmc3.mapped_prg_bank(0xE000) as i16;
+                self.base_mut().select_prg_page(0, prg0);
+                self.base_mut().select_prg_page(1, prg1);
+                self.base_mut().select_prg_page(2, prg2);
+                self.base_mut().select_prg_page(3, prg3);
+            }
             _ => {
                 let bank = (self.mmc1_regs[3] & 0x0F) as i16;
                 if (self.mmc1_regs[0] & 0x08) != 0 {
@@ -106,7 +118,13 @@ impl Mapper116 {
                     self.base_mut().select_chr_page(slot, outer | (*bank as i16));
                 }
             }
-            1 => {}
+            1 => {
+                for slot in 0..8 {
+                    let addr = (slot as u16) * 0x0400;
+                    let bank = self.mmc3.mapped_chr_1k_bank(addr) as i16;
+                    self.base_mut().select_chr_page(slot, outer | bank);
+                }
+            }
             _ => {
                 if (self.mmc1_regs[0] & 0x10) != 0 {
                     let lo = (self.mmc1_regs[1] as i16) << 2;
@@ -133,7 +151,10 @@ impl Mapper116 {
                 let mirror_h = (self.vrc2_mirroring & 0x01) != 0;
                 self.base_mut().set_mirroring_hv(mirror_h)
             }
-            1 => {}
+            1 => {
+                let mirror_h = (self.mmc3_mirroring & 0x01) != 0;
+                self.base_mut().set_mirroring_hv(mirror_h)
+            }
             _ => match self.mmc1_regs[0] & 0x03 {
                 0 => self.base_mut().set_mirroring(NametableLayout::SingleScreenLower),
                 1 => self.base_mut().set_mirroring(NametableLayout::SingleScreenUpper),
@@ -222,17 +243,32 @@ impl Mapper for Mapper116 {
         116
     }
 
+    fn mmc3_delegate(&self) -> Option<&MMC3Mapper> {
+        Some(&self.mmc3)
+    }
+
+    fn mmc3_delegate_mut(&mut self) -> Option<&mut MMC3Mapper> {
+        Some(&mut self.mmc3)
+    }
+
     fn write_prg(&mut self, addr: u16, value: u8) {
         if addr < 0x8000 {
             if (addr & Self::MODE_SELECT_MASK) == Self::MODE_SELECT_MASK {
                 self.write_mode_select(addr, value);
+            } else if (0x6000..=0x7FFF).contains(&addr) {
+                self.mmc3.write_prg(addr, value);
             }
             return;
         }
 
         match self.active_mode() {
             0 => self.write_vrc2_register(addr, value),
-            1 => self.mmc3.write_prg(addr, value),
+            1 => {
+                if (addr & 0xE001) == 0xA000 {
+                    self.mmc3_mirroring = value;
+                }
+                self.mmc3.write_prg(addr, value)
+            }
             _ => self.write_mmc1_register(addr, value),
         }
     }
@@ -299,6 +335,7 @@ impl Mapper for Mapper116 {
         self.vrc2_chr = [0xFF, 0xFF, 0xFF, 0xFF, 4, 5, 6, 7];
         self.vrc2_prg = [0, 1];
         self.vrc2_mirroring = 0;
+        self.mmc3_mirroring = 0;
         self.mmc1_regs = [0x0C, 0, 0, 0];
         self.mmc1_buffer = 0;
         self.mmc1_shift = 0;
@@ -318,11 +355,19 @@ impl Mapper for Mapper116 {
     }
 
     fn wram_size(&self) -> usize {
-        8 * 1024
+        self.mmc3.wram_size()
+    }
+
+    fn wram_snapshot(&self) -> Vec<u8> {
+        self.mmc3.wram_snapshot()
+    }
+
+    fn load_wram_snapshot(&mut self, data: &[u8]) {
+        self.mmc3.load_wram_snapshot(data);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        let mut out = vec![self.mode, self.vrc2_mirroring];
+        let mut out = vec![self.mode, self.vrc2_mirroring, self.mmc3_mirroring];
         out.extend_from_slice(&self.vrc2_prg);
         out.extend_from_slice(&self.vrc2_chr);
         out.extend_from_slice(&self.mmc1_regs);
@@ -333,17 +378,18 @@ impl Mapper for Mapper116 {
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        if data.len() < 18 {
+        if data.len() < 19 {
             return;
         }
         self.mode = data[0];
         self.vrc2_mirroring = data[1];
-        self.vrc2_prg.copy_from_slice(&data[2..4]);
-        self.vrc2_chr.copy_from_slice(&data[4..12]);
-        self.mmc1_regs.copy_from_slice(&data[12..16]);
-        self.mmc1_buffer = data[16];
-        self.mmc1_shift = data[17];
-        self.mmc3.restore_registers(&data[18..]);
+        self.mmc3_mirroring = data[2];
+        self.vrc2_prg.copy_from_slice(&data[3..5]);
+        self.vrc2_chr.copy_from_slice(&data[5..13]);
+        self.mmc1_regs.copy_from_slice(&data[13..17]);
+        self.mmc1_buffer = data[17];
+        self.mmc1_shift = data[18];
+        self.mmc3.restore_registers(&data[19..]);
         self.update_state();
     }
 }
@@ -432,6 +478,47 @@ mod tests {
         mapper.cpu_cycle();
         mapper.ppu_address_changed(0x1000);
         assert!(mapper.irq_pending());
+    }
+
+    #[test]
+    fn mmc3_mode_reapplies_prg_and_mirroring_on_mode_entry_without_new_mmc3_writes() {
+        let mut mapper = make_mapper();
+
+        mapper.write_prg(0x4100, 0x01);
+        mapper.write_prg(0x8000, 0x06);
+        mapper.write_prg(0x8001, 9);
+        mapper.write_prg(0xA000, 1);
+
+        mapper.write_prg(0x4100, 0x00);
+        mapper.write_prg(0x8000, 3);
+        mapper.write_prg(0x9000, 0);
+        assert_eq!(mapper.read_prg(0x8000), 3);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
+
+        mapper.write_prg(0x4100, 0x01);
+
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            9,
+            "MMC3 PRG mapping should be restored immediately on mode entry"
+        );
+        assert_eq!(
+            mapper.get_mirroring(),
+            NametableLayout::Horizontal,
+            "MMC3 mirroring should be restored immediately on mode entry"
+        );
+    }
+
+    #[test]
+    fn wram_read_write_is_routed_to_mapper_prg_ram() {
+        let mut mapper = make_mapper();
+        mapper.write_prg(0x4100, 0x01);
+
+        mapper.write_prg(0x6000, 0x5A);
+        mapper.write_prg(0x6E00, 0xA5);
+
+        assert_eq!(mapper.read_prg(0x6000), 0x5A);
+        assert_eq!(mapper.read_prg(0x6E00), 0xA5);
     }
 
     #[test]
