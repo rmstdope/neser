@@ -16,6 +16,7 @@ mod irem_g101;
 mod mapper;
 mod mapper100;
 mod mapper101;
+mod mapper103;
 mod mapper104;
 mod mapper105;
 mod mapper107;
