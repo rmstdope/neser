@@ -97,8 +97,8 @@ impl Mapper for Mapper112 {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
-        match addr {
-            0x8000..=0xFFFF => match addr & 0xE001 {
+        if let 0x8000..=0xFFFF = addr {
+            match addr & 0xE001 {
                 0x8000 => self.current_register = value & 0x07,
                 0xA000 => self.registers[self.current_register as usize] = value,
                 0xC000 => self.outer_chr_bank = value,
@@ -110,8 +110,7 @@ impl Mapper for Mapper112 {
                     });
                 }
                 _ => {}
-            },
-            _ => {}
+            }
         }
         self.update_state();
     }
