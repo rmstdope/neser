@@ -26,6 +26,7 @@ mod mapper113;
 mod mapper115;
 mod mapper117;
 mod mapper118;
+mod mapper119;
 mod mapper12;
 mod mapper132;
 mod mapper133;
