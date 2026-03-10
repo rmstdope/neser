@@ -4,9 +4,9 @@
 //! - Main: <https://www.nesdev.org/wiki/INES_Mapper_089>
 //! - Mesen2 reference: `Sunsoft89.h`
 
+use crate::cartridge::NametableLayout;
 use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
-use crate::cartridge::NametableLayout;
 
 const PRG_BANK_SIZE: usize = 16 * 1024;
 const CHR_BANK_SIZE: usize = 8 * 1024;
@@ -111,7 +111,10 @@ mod tests {
             banked_data(CHR_BANK_SIZE, CHR_BANKS_8K),
             NametableLayout::Horizontal,
         ));
-        assert!(result.is_ok(), "Mapper 89 must be registered in the factory");
+        assert!(
+            result.is_ok(),
+            "Mapper 89 must be registered in the factory"
+        );
     }
 
     #[test]
@@ -136,8 +139,16 @@ mod tests {
         let mut mapper = make_mapper();
         mapper.write_prg(0x8000, 0x83); // CHR bank = (0x83 & 0x07) | ((0x83 & 0x80) >> 4) = 11
 
-        assert_eq!(mapper.read_chr(0x0000), 11, "CHR bank should switch at $0000");
-        assert_eq!(mapper.read_chr(0x1FFF), 11, "CHR bank should switch at $1FFF");
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            11,
+            "CHR bank should switch at $0000"
+        );
+        assert_eq!(
+            mapper.read_chr(0x1FFF),
+            11,
+            "CHR bank should switch at $1FFF"
+        );
     }
 
     #[test]

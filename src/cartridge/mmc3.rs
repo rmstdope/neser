@@ -390,6 +390,18 @@ impl MMC3Mapper {
         !self.prg_ram.is_empty() && self.prg_ram_enabled && !self.prg_ram_write_protected
     }
 
+    /// Returns the raw CHR bank register value at the given index (0–7).
+    /// This is the raw register value without CHR-mode-dependent interpretation.
+    /// Used by mappers that override CHR banking but still need MMC3 register values.
+    pub fn chr_bank_reg(&self, index: usize) -> u8 {
+        self.regs.get(index).copied().unwrap_or(0)
+    }
+
+    /// Returns the total number of 1KB CHR banks.
+    pub fn chr_bank_count_1k_pub(&self) -> usize {
+        self.chr_bank_count_1k()
+    }
+
     // ============================================================================
     // PPU A12 Edge Detection for IRQ Timing
     // ============================================================================
