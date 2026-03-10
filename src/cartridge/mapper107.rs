@@ -161,20 +161,44 @@ mod tests {
         let mut restored = make_mapper();
         restored.restore_registers(&snapshot);
 
-        assert_eq!(restored.read_prg(0x8000), 3, "restored PRG bank should be 3");
-        assert_eq!(restored.read_chr(0x0000), 3, "restored CHR bank should be 3");
+        assert_eq!(
+            restored.read_prg(0x8000),
+            3,
+            "restored PRG bank should be 3"
+        );
+        assert_eq!(
+            restored.read_chr(0x0000),
+            3,
+            "restored CHR bank should be 3"
+        );
     }
 
     #[test]
     fn reset_returns_prg_and_chr_banks_to_power_on_state() {
         let mut mapper = make_mapper();
         mapper.write_prg(0x8000, 0x0F);
-        assert_eq!(mapper.read_prg(0x8000), 3, "precondition: PRG bank switched");
-        assert_eq!(mapper.read_chr(0x0000), 3, "precondition: CHR bank switched");
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            3,
+            "precondition: PRG bank switched"
+        );
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            3,
+            "precondition: CHR bank switched"
+        );
 
         mapper.reset();
 
-        assert_eq!(mapper.read_prg(0x8000), 0, "reset should restore PRG bank 0");
-        assert_eq!(mapper.read_chr(0x0000), 0, "reset should restore CHR bank 0");
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            0,
+            "reset should restore PRG bank 0"
+        );
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            0,
+            "reset should restore CHR bank 0"
+        );
     }
 }
