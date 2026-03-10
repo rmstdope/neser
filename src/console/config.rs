@@ -377,6 +377,7 @@ const OPTIONAL_BOOL_FLAGS: &[&str] = &[
     "--load-state",
     "--fullscreen",
     "--scan-cartridges",
+    "--convert-autorun",
 ];
 
 /// Result of parsing command-line arguments.
@@ -929,9 +930,12 @@ impl Config {
             self.autorun_trim_checkpoints = Some(v as usize);
         }
 
-        let convert_autorun_requested = args.iter().any(|arg| arg == "--convert-autorun");
-        if convert_autorun_requested {
-            self.autorun_convert = true;
+        if let Some(convert_autorun_requested) = Self::parse_bool_arg(args, "--convert-autorun")? {
+            self.autorun_convert = convert_autorun_requested;
+        }
+
+        if self.autorun_trim_checkpoints.is_some() && self.autorun_convert {
+            return Err("Cannot specify both --trim-checkpoints and --convert-autorun".to_string());
         }
 
         // Autorun recording/playback must be deterministic.
@@ -3770,6 +3774,35 @@ filter=invalid-shader
         let args = vec!["neser".to_string(), "--convert-autorun".to_string()];
         let config = parse_config(args);
         assert!(config.autorun_convert);
+    }
+
+    #[test]
+    fn test_cli_convert_autorun_equals_syntax_true() {
+        let args = vec!["neser".to_string(), "--convert-autorun=true".to_string()];
+        let config = parse_config(args);
+        assert!(config.autorun_convert);
+    }
+
+    #[test]
+    fn test_cli_convert_autorun_equals_syntax_false() {
+        let args = vec!["neser".to_string(), "--convert-autorun=false".to_string()];
+        let config = parse_config(args);
+        assert!(!config.autorun_convert);
+    }
+
+    #[test]
+    fn test_cli_trim_checkpoints_and_convert_autorun_are_mutually_exclusive() {
+        let args = vec![
+            "neser".to_string(),
+            "--trim-checkpoints".to_string(),
+            "1".to_string(),
+            "--convert-autorun".to_string(),
+        ];
+        let result = config_new(args);
+        assert!(
+            result.is_err(),
+            "--trim-checkpoints and --convert-autorun should be mutually exclusive"
+        );
     }
 
     #[test]

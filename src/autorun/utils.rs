@@ -487,8 +487,9 @@ mod tests {
 
     #[test]
     fn test_convert_autorun_file_fails_when_source_file_missing() {
-        let path = Path::new("/tmp/neser_missing_convert_input.autorun");
-        let result = convert_autorun_file(path);
+        let temp_dir = tempfile::TempDir::new().expect("create temp dir");
+        let missing_path = temp_dir.path().join("missing.autorun");
+        let result = convert_autorun_file(&missing_path);
         assert!(
             result.is_err(),
             "conversion should fail when file is missing"
