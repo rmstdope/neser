@@ -87,11 +87,17 @@ impl Mapper for Mapper114 {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
-        if (0x5000..=0x7FFF).contains(&addr) {
+        // Outer bank register lives in the $5000–$5FFF range.
+        if (0x5000..=0x5FFF).contains(&addr) {
             self.outer_reg = value;
             return;
         }
 
+        // Delegate WRAM/PRG-RAM writes to the underlying MMC3 in the $6000–$7FFF window.
+        if (0x6000..=0x7FFF).contains(&addr) {
+            self.mmc3.write_prg(addr, value);
+            return;
+        }
         match addr & 0xE001 {
             0x8001 => self.mmc3.write_prg(0xA000, value),
             0xA000 => {
