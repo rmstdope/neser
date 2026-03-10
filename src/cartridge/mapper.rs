@@ -71,6 +71,7 @@ use super::mapper92::Mapper92;
 use super::mapper93::Mapper93;
 use super::mapper95::Mapper95;
 use super::mapper96::Mapper96;
+use super::mapper97::Mapper97;
 use super::mapper100::Mapper100;
 use super::mapper101::Mapper101;
 use super::mapper104::Mapper104;
@@ -766,6 +767,7 @@ mapper_registry! {
     93 => Mapper93::new,
     95 => Mapper95::new,
     96 => Mapper96::new,
+    97 => Mapper97::new,
     100 => Mapper100::new,
     101 => Mapper101::new,
     102 => NROMMapper::new,
