@@ -259,12 +259,19 @@ mod tests {
         for submapper in [0, 1] {
             let mut mapper = make_mapper(submapper);
 
-            // Baseline MMC3 mapping (bit7 clear): R6 controls $8000 in PRG mode 0.
+            // Baseline MMC3 mapping (bit7 clear): select MMC3 R6 via mapper-114's $A000 path.
             mapper.write_prg(0xA000, 0x04);
             mapper.write_prg(0xC000, 0x07);
-            assert_eq!(mapper.read_prg(0x8000), 7);
+            assert_eq!(
+                mapper.read_prg(0x8000),
+                7,
+                "R6=7 should map $8000 before outer override is enabled"
+            );
+            assert_eq!(mapper.read_prg(0xA000), 0);
+            assert_eq!(mapper.read_prg(0xC000), 46);
+            assert_eq!(mapper.read_prg(0xE000), 47);
 
-            // Override mode (bit7 set): low nibble selects mirrored 16KB pair.
+            // Override mode (0x83): bit7 enables override, low nibble 0x03 selects pair 6/7.
             mapper.write_prg(0x5000, 0x83);
             assert_eq!(mapper.read_prg(0x8000), 6);
             assert_eq!(mapper.read_prg(0xA000), 7);
@@ -274,6 +281,9 @@ mod tests {
             // Clearing bit7 restores MMC3-selected mapping.
             mapper.write_prg(0x5000, 0x00);
             assert_eq!(mapper.read_prg(0x8000), 7);
+            assert_eq!(mapper.read_prg(0xA000), 0);
+            assert_eq!(mapper.read_prg(0xC000), 46);
+            assert_eq!(mapper.read_prg(0xE000), 47);
         }
     }
 
