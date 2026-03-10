@@ -148,14 +148,14 @@ mod tests {
     use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
     use crate::cartridge::test_helpers::banked_data;
 
-    const PRG_BANKS_8K: usize = 11;
-    const CHR_BANKS_1K: usize = 48;
+    const TEST_PRG_BANKS_8K: usize = 11;
+    const TEST_CHR_BANKS_1K: usize = 48;
 
     fn make_mapper() -> Box<dyn Mapper> {
         create_mapper(MapperContext::new_for_test(
             112,
-            banked_data(8 * 1024, PRG_BANKS_8K),
-            banked_data(1024, CHR_BANKS_1K),
+            banked_data(8 * 1024, TEST_PRG_BANKS_8K),
+            banked_data(1024, TEST_CHR_BANKS_1K),
             NametableLayout::Vertical,
         ))
         .expect("Mapper 112 should be implemented")
@@ -165,8 +165,8 @@ mod tests {
     fn mapper_112_is_registered() {
         let mapper = create_mapper(MapperContext::new_for_test(
             112,
-            banked_data(8 * 1024, PRG_BANKS_8K),
-            banked_data(1024, CHR_BANKS_1K),
+            banked_data(8 * 1024, TEST_PRG_BANKS_8K),
+            banked_data(1024, TEST_CHR_BANKS_1K),
             NametableLayout::Vertical,
         ));
         assert!(mapper.is_ok(), "Mapper 112 should be registered in factory");
@@ -183,8 +183,8 @@ mod tests {
 
         assert_eq!(mapper.read_prg(0x8000), 3);
         assert_eq!(mapper.read_prg(0xA000), 5);
-        assert_eq!(mapper.read_prg(0xC000), (PRG_BANKS_8K - 2) as u8);
-        assert_eq!(mapper.read_prg(0xE000), (PRG_BANKS_8K - 1) as u8);
+        assert_eq!(mapper.read_prg(0xC000), (TEST_PRG_BANKS_8K - 2) as u8);
+        assert_eq!(mapper.read_prg(0xE000), (TEST_PRG_BANKS_8K - 1) as u8);
     }
 
     #[test]
