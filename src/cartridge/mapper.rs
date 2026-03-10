@@ -766,6 +766,7 @@ mapper_registry! {
     96 => Mapper96::new,
     100 => Mapper100::new,
     101 => Mapper101::new,
+    102 => NROMMapper::new,
     104 => Mapper104::new,
     105 => Mapper105::new,
     115 => Mapper115::new,
@@ -796,10 +797,10 @@ const SUPPORTED_MAPPERS: &[u16] = &[
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
     26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
     50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73,
-    74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 90, 91, 92, 93, 95, 96, 100, 101, 104,
-    115, 117, 129, 132, 133, 140, 155, 185, 205, 206, 241, 242, 243, 244, 245, 246, 251, 254, 255,
-    294, 302, 307, 319, 320, 324, 326, 327, 328, 329, 330, 332, 335, 338, 339, 340, 342, 343, 344,
-    345, 346, 347, 348, 349, 350,
+    74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 90, 91, 92, 93, 95, 96, 100, 101,
+    102, 104, 115, 117, 129, 132, 133, 140, 155, 185, 205, 206, 241, 242, 243, 244, 245, 246, 251,
+    254, 255, 294, 302, 307, 319, 320, 324, 326, 327, 328, 329, 330, 332, 335, 338, 339, 340, 342,
+    343, 344, 345, 346, 347, 348, 349, 350,
 ];
 
 /// List of supported iNES mapper IDs handled by the factory.
@@ -1002,6 +1003,45 @@ mod tests {
     #[test]
     fn supported_mappers_includes_mapper_100() {
         assert!(supported_mappers().contains(&100));
+    }
+
+    #[test]
+    fn create_mapper_accepts_mapper_102() {
+        let prg_rom = vec![0u8; 32 * 1024];
+        let chr_rom = vec![0u8; 8 * 1024];
+        let metadata =
+            MapperContext::new_for_test(102, prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        let result = create_mapper(metadata);
+
+        assert!(result.is_ok(), "Mapper 102 should be created");
+    }
+
+    #[test]
+    fn supported_mappers_includes_mapper_102() {
+        assert!(supported_mappers().contains(&102));
+    }
+
+    #[test]
+    fn mapper_102_behaves_as_nrom() {
+        let mut prg_rom = vec![0; 16 * 1024];
+        prg_rom[0x0000] = 0x12;
+        prg_rom[0x3FFF] = 0x34;
+        let mut mapper = create_mapper(MapperContext::new_for_test(
+            102,
+            prg_rom,
+            vec![0x5A; 8 * 1024],
+            NametableLayout::Vertical,
+        ))
+        .expect("Mapper 102 should be created");
+
+        mapper.write_prg(0x8000, 0xFF);
+
+        assert_eq!(mapper.read_prg(0x8000), 0x12);
+        assert_eq!(mapper.read_prg(0xBFFF), 0x34);
+        assert_eq!(mapper.read_prg(0xC000), 0x12);
+        assert_eq!(mapper.read_prg(0xFFFF), 0x34);
+        assert_eq!(mapper.read_chr(0x0000), 0x5A);
     }
 
     #[test]
