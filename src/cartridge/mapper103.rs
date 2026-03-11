@@ -63,10 +63,14 @@ impl Mapper103 {
     }
 
     fn read_prg_6000_banked(&self, addr: u16) -> u8 {
-        let bank_count = (self.base.prg_rom().len() / PRG_BANK_SIZE_8K).max(1);
+        let prg = self.base.prg_rom();
+        let bank_count = prg.len() / PRG_BANK_SIZE_8K;
+        if bank_count == 0 {
+            return 0;
+        }
         let bank = (self.prg_reg as usize) % bank_count;
         let offset = (addr - 0x6000) as usize;
-        self.base.prg_rom()[bank * PRG_BANK_SIZE_8K + offset]
+        prg.get(bank * PRG_BANK_SIZE_8K + offset).copied().unwrap_or(0)
     }
 }
 
