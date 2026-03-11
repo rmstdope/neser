@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -e
+
+parent_num="$1"
+child_num="$2"
+
+if [[ -z "$parent_num" || -z "$child_num" ]]; then
+  echo "Usage: gh issue-child-add <parent> <child>"
+  exit 1
+fi
+
+repo=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+owner=${repo%/*}
+name=${repo#*/}
+
+ids=$(gh api graphql \
+  -F owner="$owner" \
+  -F name="$name" \
+  -F parent="$parent_num" \
+  -F child="$child_num" \
+  -f query='
+    query($owner:String!, $name:String!, $parent:Int!, $child:Int!) {
+      repository(owner:$owner, name:$name) {
+        parentIssue: issue(number:$parent) { id }
+        childIssue: issue(number:$child) { id }
+      }
+    }
+  ' \
+  -q '.data.repository | "\(.parentIssue.id) \(.childIssue.id)"')
+
+parent_id=$(echo "$ids" | cut -d" " -f1)
+child_id=$(echo "$ids" | cut -d" " -f2)
+
+gh api graphql \
+  -F parent="$parent_id" \
+  -F child="$child_id" \
+  -f query='
+    mutation($parent:ID!, $child:ID!) {
+      addSubIssue(input:{issueId:$parent, subIssueId:$child}) {
+        clientMutationId
+      }
+    }
+  ' > /dev/null
+
+echo "Linked issue #$child_num as child of #$parent_num"
