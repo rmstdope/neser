@@ -115,7 +115,9 @@ impl Mapper for Mapper103 {
                     self.work_ram[(addr - 0x6000) as usize]
                 }
             }
-            _ => self.base.read_prg_open_bus(addr, open_bus, |a| self.read_prg(a)),
+            _ => self
+                .base
+                .read_prg_open_bus(addr, open_bus, |a| self.read_prg(a)),
         }
     }
 
