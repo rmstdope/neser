@@ -113,12 +113,10 @@ impl Mapper for Mapper103 {
                     self.work_ram[(addr - 0x6000) as usize]
                 }
             }
-            0xB800..=0xD7FF if !self.prg_ram_disabled => {
-                self.work_ram[0x2000 + (addr - 0xB800) as usize]
-            }
-            _ => self.base.read_prg_open_bus(addr, open_bus),
+            _ => self.base.read_prg_open_bus(addr, open_bus, |a| self.read_prg(a)),
         }
     }
+
     fn write_prg(&mut self, addr: u16, value: u8) {
         match addr & 0xF000 {
             0x6000 | 0x7000 => {
@@ -171,9 +169,7 @@ impl Mapper for Mapper103 {
             self.prg_reg = data[1] & 0x0F;
             if let Some(&mirroring) = data.get(2) {
                 self.base
-                    .set_mirroring(crate::cartridge::NametableLayout::from_snapshot_byte(
-                        mirroring,
-                    ));
+                    .set_mirroring(NametableLayout::from_snapshot_byte(mirroring));
             }
             self.update_state();
         }
@@ -222,7 +218,8 @@ mod tests {
         let mut mapper = make_mapper();
         assert_eq!(mapper.read_prg(0x8000), 7);
         assert_eq!(mapper.read_prg(0xA000), 8);
-        assert_eq!(mapper.read_prg(0xC000), 9);
+        // $C000-$D7FF is shadowed by WRAM when PRG-RAM is enabled; use $D800 (outside WRAM window) to verify ROM bank
+        assert_eq!(mapper.read_prg(0xD800), 9);
         assert_eq!(mapper.read_prg(0xE000), 10);
         assert_eq!(mapper.read_chr(0x0000), 0);
     }
