@@ -222,7 +222,7 @@ mod tests {
         let mut mapper = make_mapper();
         assert_eq!(mapper.read_prg(0x8000), 7);
         assert_eq!(mapper.read_prg(0xA000), 8);
-        assert_eq!(mapper.read_prg(0xC000), 0);
+        assert_eq!(mapper.read_prg(0xC000), 9);
         assert_eq!(mapper.read_prg(0xE000), 10);
         assert_eq!(mapper.read_chr(0x0000), 0);
     }
