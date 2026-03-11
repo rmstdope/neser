@@ -14,9 +14,9 @@
 //! - No mapper-specific IRQ behavior (hardware does not expose mapper IRQs).
 //! - No expansion audio behavior.
 
+use crate::cartridge::NametableLayout;
 use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
-use crate::cartridge::NametableLayout;
 
 const MAPPER_NUMBER: u16 = 103;
 const PRG_BANK_SIZE_8K: usize = 8 * 1024;
@@ -70,7 +70,9 @@ impl Mapper103 {
         }
         let bank = (self.prg_reg as usize) % bank_count;
         let offset = (addr - 0x6000) as usize;
-        prg.get(bank * PRG_BANK_SIZE_8K + offset).copied().unwrap_or(0)
+        prg.get(bank * PRG_BANK_SIZE_8K + offset)
+            .copied()
+            .unwrap_or(0)
     }
 }
 
@@ -113,7 +115,9 @@ impl Mapper for Mapper103 {
                     self.work_ram[(addr - 0x6000) as usize]
                 }
             }
-            _ => self.base.read_prg_open_bus(addr, open_bus, |a| self.read_prg(a)),
+            _ => self
+                .base
+                .read_prg_open_bus(addr, open_bus, |a| self.read_prg(a)),
         }
     }
 
