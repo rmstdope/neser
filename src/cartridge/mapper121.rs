@@ -6,23 +6,25 @@ use crate::cartridge::{Mapper, MapperCapabilities};
 
 pub struct Mapper121 {
     mmc3: MMC3Mapper,
-    ex_regs: [u8; 8],
+    ex_regs: [u8; Self::EX_REGS_SIZE],
 }
 
 impl Mapper121 {
     const LOOKUP: [u8; 4] = [0x83, 0x83, 0x42, 0x00];
+    const EX_REGS_SIZE: usize = 8;
+    const MMC3_MIN_SNAPSHOT_SIZE: usize = 13;
 
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
         let mut mapper = Self {
             mmc3: MMC3Mapper::new_with_irq_mode(ctx.prg_rom, ctx.chr_rom, ctx.mirroring, false),
-            ex_regs: [0; 8],
+            ex_regs: [0; Self::EX_REGS_SIZE],
         };
         mapper.reset_ex_regs();
         mapper
     }
 
     fn reset_ex_regs(&mut self) {
-        self.ex_regs = [0; 8];
+        self.ex_regs = [0; Self::EX_REGS_SIZE];
         self.ex_regs[3] = 0x80;
     }
 
@@ -186,11 +188,8 @@ impl Mapper for Mapper121 {
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        let mmc3_min_size = self.mmc3.registers_snapshot().len();
-        let ex_size = self.ex_regs.len();
-
-        if data.len() >= mmc3_min_size + ex_size {
-            let split = data.len() - ex_size;
+        if data.len() >= Self::MMC3_MIN_SNAPSHOT_SIZE + Self::EX_REGS_SIZE {
+            let split = data.len() - Self::EX_REGS_SIZE;
             self.mmc3.restore_registers(&data[..split]);
             self.ex_regs.copy_from_slice(&data[split..]);
         } else {
@@ -211,6 +210,7 @@ impl Mapper for Mapper121 {
 
 #[cfg(test)]
 mod tests {
+    use super::Mapper121;
     use crate::cartridge::NametableLayout;
     use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
     use crate::cartridge::test_helpers::banked_data;
@@ -326,7 +326,7 @@ mod tests {
         let mapper = make_mapper();
 
         let snapshot = mapper.registers_snapshot();
-        let mmc3_only_snapshot = snapshot[..snapshot.len() - 8].to_vec();
+        let mmc3_only_snapshot = snapshot[..snapshot.len() - Mapper121::EX_REGS_SIZE].to_vec();
 
         let mut restored = make_mapper();
         restored.restore_registers(&mmc3_only_snapshot);
