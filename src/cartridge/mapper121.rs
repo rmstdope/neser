@@ -14,7 +14,8 @@ impl Mapper121 {
     const EX_REGS_SIZE: usize = 8;
     // Minimum accepted MMC3 restore payload length in mmc3.rs:
     // bank_select (1) + regs[0..7] (8) + irq_latch (1) + irq_counter (1) +
-    // flags (1) + mirroring (1) = 13 bytes.
+    // flags (1) + mirroring (1) = 13 bytes. Used to distinguish legacy
+    // MMC3-only snapshots from extended Mapper121 snapshots.
     const MMC3_MIN_SNAPSHOT_SIZE: usize = 13;
 
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
@@ -191,14 +192,16 @@ impl Mapper for Mapper121 {
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        if data.len() >= Self::MMC3_MIN_SNAPSHOT_SIZE + Self::EX_REGS_SIZE {
+        if data.len() >= Self::EX_REGS_SIZE {
             let split = data.len() - Self::EX_REGS_SIZE;
-            self.mmc3.restore_registers(&data[..split]);
-            self.ex_regs.copy_from_slice(&data[split..]);
-        } else {
-            self.mmc3.restore_registers(data);
-            self.reset_ex_regs();
+            if split >= Self::MMC3_MIN_SNAPSHOT_SIZE {
+                self.mmc3.restore_registers(&data[..split]);
+                self.ex_regs.copy_from_slice(&data[split..]);
+                return;
+            }
         }
+        self.mmc3.restore_registers(data);
+        self.reset_ex_regs();
     }
 
     fn reset(&mut self) {
@@ -331,10 +334,16 @@ mod tests {
         let snapshot = mapper.registers_snapshot();
         let legacy_mmc3_snapshot = snapshot[..snapshot.len() - Mapper121::EX_REGS_SIZE].to_vec();
 
-        let mut restored = make_mapper();
+        let mut restored = Mapper121::new(MapperContext::new_for_test(
+            MAPPER_ID,
+            banked_data(8 * 1024, PRG_BANKS_8K),
+            banked_data(1024, CHR_BANKS_1K),
+            NametableLayout::Vertical,
+        ));
         restored.restore_registers(&legacy_mmc3_snapshot);
 
         assert_eq!(restored.read_prg(0x5000), 0);
         assert_eq!(restored.read_prg(0xE000), (PRG_BANKS_8K - 1) as u8);
+        assert_eq!(restored.ex_regs[3], 0x80);
     }
 }
