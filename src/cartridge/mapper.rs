@@ -92,6 +92,7 @@ use super::mapper118::Mapper118;
 use super::mapper119::Mapper119;
 use super::mapper120::Mapper120;
 use super::mapper121::Mapper121;
+use super::mapper122::Mapper122;
 use super::mapper132::Mapper132;
 use super::mapper133::Mapper133;
 use super::mapper140::Mapper140;
@@ -808,6 +809,7 @@ mapper_registry! {
     119 => Mapper119::new,
     120 => Mapper120::new,
     121 => Mapper121::new,
+    122 => Mapper122::new,
     129 => Mapper58::new,
     132 => Mapper132::new,
     133 => Mapper133::new,
@@ -838,7 +840,7 @@ const SUPPORTED_MAPPERS: &[u16] = &[
     26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
     50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73,
     74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96,
-    100, 101, 102, 103, 104, 110, 114, 115, 117, 118, 120, 121, 129, 132, 133, 140, 155, 185, 205,
+    100, 101, 102, 103, 104, 110, 114, 115, 117, 118, 120, 121, 122, 129, 132, 133, 140, 155, 185, 205,
     206, 241, 242,
     243, 244, 245, 246, 251, 254, 255, 288, 292, 294, 300, 302, 307, 308, 319, 320, 324, 326, 327,
     328, 329, 330, 332, 335, 337, 338, 339, 340, 342, 343, 344, 345, 346, 347, 348, 349, 350,
@@ -1061,6 +1063,23 @@ mod tests {
     #[test]
     fn supported_mappers_includes_mapper_102() {
         assert!(supported_mappers().contains(&102));
+    }
+
+    #[test]
+    fn create_mapper_accepts_mapper_122() {
+        let metadata = MapperContext::new_for_test(
+            122,
+            vec![0u8; 32 * 1024],
+            vec![0u8; 8 * 1024 * 4],
+            NametableLayout::Horizontal,
+        );
+        let result = create_mapper(metadata);
+        assert!(result.is_ok(), "Mapper 122 should be created");
+    }
+
+    #[test]
+    fn supported_mappers_includes_mapper_122() {
+        assert!(supported_mappers().contains(&122));
     }
 
     #[test]
