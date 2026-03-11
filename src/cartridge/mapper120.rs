@@ -1,7 +1,19 @@
+//! Mapper 120 - Tobidase Daisakusen
+//!
+//! Specifications:
+//! - Main: <https://www.nesdev.org/wiki/INES_Mapper_120>
+//!
+//! Hardware behavior:
+//! - PRG-ROM: fixed 32KB window at $8000-$FFFF
+//! - CHR-ROM: 8KB switchable bank selected by writing to $41FF
+//! - Mirroring: fixed from header
+//!
+//! Known limitations:
+//! - No known gameplay-blocking limitations are currently documented.
+
 use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
-const PRG_BANK_SIZE: usize = 32 * 1024;
 const CHR_BANK_SIZE: usize = 8 * 1024;
 
 pub struct Mapper120 {
@@ -13,12 +25,10 @@ impl Mapper120 {
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
-            prg_bank_size_kb: 32,
             chr_bank_size_kb: 8,
             ..Default::default()
         };
         let mut base = BaseMapper::new(&ctx, capabilities);
-        base.configure_prg_banking(PRG_BANK_SIZE);
         base.configure_chr_banking(CHR_BANK_SIZE);
         let mut mapper = Self { base, chr_bank: 0 };
         mapper.apply_banks();
@@ -26,7 +36,6 @@ impl Mapper120 {
     }
 
     fn apply_banks(&mut self) {
-        self.base.select_prg_page(0, 0);
         self.base.select_chr_page(0, self.chr_bank as i16);
     }
 }
@@ -74,6 +83,8 @@ mod tests {
     use crate::cartridge::NametableLayout;
     use crate::cartridge::mapper::{MapperContext, create_mapper};
 
+    const PRG_BANK_SIZE: usize = 32 * 1024;
+
     fn make_mapper() -> Mapper120 {
         let prg_rom = [vec![0x11; PRG_BANK_SIZE], vec![0x22; PRG_BANK_SIZE]].concat();
         let chr_rom = [vec![0xAA; CHR_BANK_SIZE], vec![0x55; CHR_BANK_SIZE]].concat();
@@ -113,5 +124,54 @@ mod tests {
         assert_eq!(mapper.read_prg(0x8000), 0x11);
         mapper.write_prg(0x8000, 0x00);
         assert_eq!(mapper.read_prg(0x8000), 0x11);
+    }
+
+    #[test]
+    fn snapshot_restore_preserves_chr_bank_selection() {
+        let mut mapper = make_mapper();
+        mapper.write_prg(0x41FF, 0x01);
+        assert_eq!(mapper.read_chr(0x0000), 0x55);
+
+        let snapshot = mapper.registers_snapshot();
+
+        let mut restored = make_mapper();
+        restored.write_prg(0x41FF, 0x00);
+        assert_eq!(restored.read_chr(0x0000), 0xAA);
+        restored.restore_registers(&snapshot);
+        assert_eq!(restored.read_chr(0x0000), 0x55);
+    }
+
+    #[test]
+    fn reset_restores_chr_bank_zero() {
+        let mut mapper = make_mapper();
+        mapper.write_prg(0x41FF, 0x01);
+        assert_eq!(mapper.read_chr(0x0000), 0x55);
+        mapper.reset();
+        assert_eq!(mapper.read_chr(0x0000), 0xAA);
+    }
+
+    #[test]
+    fn mapper_120_handles_16k_prg_rom_without_panicking() {
+        let creation = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            create_mapper(MapperContext::new_for_test(
+                120,
+                vec![0x3C; 16 * 1024],
+                vec![0xAA; CHR_BANK_SIZE],
+                NametableLayout::Horizontal,
+            ))
+        }));
+
+        assert!(
+            creation.is_ok(),
+            "mapper 120 creation should not panic with 16KB PRG-ROM"
+        );
+        let mapper = creation
+            .expect("mapper 120 creation should not panic")
+            .expect("mapper 120 should still be creatable with malformed 16KB PRG");
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            0x3C,
+            "fixed PRG read should work when PRG-ROM is undersized"
+        );
     }
 }
