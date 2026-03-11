@@ -12,6 +12,9 @@ pub struct Mapper121 {
 impl Mapper121 {
     const LOOKUP: [u8; 4] = [0x83, 0x83, 0x42, 0x00];
     const EX_REGS_SIZE: usize = 8;
+    // Minimum accepted MMC3 restore payload length in mmc3.rs:
+    // bank_select (1) + regs[0..7] (8) + irq_latch (1) + irq_counter (1) +
+    // flags (1) + mirroring (1) = 13 bytes.
     const MMC3_MIN_SNAPSHOT_SIZE: usize = 13;
 
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
@@ -326,10 +329,10 @@ mod tests {
         let mapper = make_mapper();
 
         let snapshot = mapper.registers_snapshot();
-        let mmc3_only_snapshot = snapshot[..snapshot.len() - Mapper121::EX_REGS_SIZE].to_vec();
+        let legacy_mmc3_snapshot = snapshot[..snapshot.len() - Mapper121::EX_REGS_SIZE].to_vec();
 
         let mut restored = make_mapper();
-        restored.restore_registers(&mmc3_only_snapshot);
+        restored.restore_registers(&legacy_mmc3_snapshot);
 
         assert_eq!(restored.read_prg(0x5000), 0);
         assert_eq!(restored.read_prg(0xE000), (PRG_BANKS_8K - 1) as u8);
