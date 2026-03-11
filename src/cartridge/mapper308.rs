@@ -10,7 +10,7 @@
 //! - No known gameplay-blocking functional limitations are currently documented.
 
 use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperContext};
+use crate::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
 use crate::cartridge::vrc2_vrc4::Vrc2Vrc4Mapper;
 use crate::console::RamInitMode;
 
@@ -57,7 +57,7 @@ use crate::console::RamInitMode;
 /// - When the high counter == 0 AND the low counter bit 11 == 0, an IRQ is asserted.
 /// - Writing $F000 clears the assertion, disables counting, and resets the low counter.
 ///
-/// Power-on state: all registers zero; no IRQ; vertical mirroring from header.
+/// Power-on state: all registers zero; no IRQ; mirroring from cartridge header.
 pub struct Mapper308 {
     /// Inner VRC2b mapper handling all PRG/CHR/mirroring registers.
     inner: Vrc2Vrc4Mapper,
@@ -71,12 +71,10 @@ pub struct Mapper308 {
     irq_asserted: bool,
 }
 
-/// Size of the serialized inner Vrc2Vrc4Mapper registers snapshot.
-const INNER_SNAPSHOT_SIZE: usize = 27;
-/// Number of extra bytes appended by Mapper308 to the inner snapshot.
+/// Number of bytes used by Mapper308's own IRQ state in the snapshot.
 const IRQ_SNAPSHOT_BYTES: usize = 4;
-/// Total snapshot size.
-const SNAPSHOT_SIZE: usize = INNER_SNAPSHOT_SIZE + IRQ_SNAPSHOT_BYTES;
+/// Mask to keep the high IRQ counter within 4-bit range (0x00–0x0F).
+const IRQ_COUNT_HIGH_MASK: u8 = 0x0F;
 
 impl Mapper308 {
     pub fn new(ctx: MapperContext) -> Self {
@@ -114,7 +112,7 @@ impl Mapper308 {
             }
             0xF003 => {
                 // Load high counter from bits [7:4] of the written value.
-                self.irq_count_high = (value >> 4) & 0x0F;
+                self.irq_count_high = (value >> 4) & IRQ_COUNT_HIGH_MASK;
             }
             _ => {}
         }
@@ -131,7 +129,7 @@ impl Mapper308 {
 
         // Decrement high counter when bit 11 transitions 0 → 1.
         if (prev & 0x0800) == 0 && (curr & 0x0800) != 0 {
-            self.irq_count_high = self.irq_count_high.wrapping_sub(1);
+            self.irq_count_high = self.irq_count_high.wrapping_sub(1) & IRQ_COUNT_HIGH_MASK;
         }
         // Assert IRQ when high counter is zero and bit 11 is clear.
         if self.irq_count_high == 0 && (curr & 0x0800) == 0 {
@@ -147,6 +145,16 @@ impl Mapper for Mapper308 {
 
     fn base_mut(&mut self) -> &mut BaseMapper {
         self.inner.base_mut()
+    }
+
+    fn mapper_number(&self) -> u16 {
+        308
+    }
+
+    fn capabilities(&self) -> MapperCapabilities {
+        let mut caps = self.inner.capabilities();
+        caps.has_irq = true;
+        caps
     }
 
     fn read_prg(&self, addr: u16) -> u8 {
@@ -188,25 +196,23 @@ impl Mapper for Mapper308 {
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        let mut snapshot = self.inner.registers_snapshot();
+        let mut snapshot = Vec::new();
         snapshot.push(self.irq_count_high);
         snapshot.extend_from_slice(&self.irq_count_low.to_le_bytes());
         let flags = (self.irq_enabled as u8) | ((self.irq_asserted as u8) << 1);
         snapshot.push(flags);
+        snapshot.extend(self.inner.registers_snapshot());
         snapshot
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        if data.len() >= INNER_SNAPSHOT_SIZE {
-            self.inner.restore_registers(&data[..INNER_SNAPSHOT_SIZE]);
-        }
-        if data.len() >= SNAPSHOT_SIZE {
-            self.irq_count_high = data[INNER_SNAPSHOT_SIZE];
-            self.irq_count_low =
-                u16::from_le_bytes([data[INNER_SNAPSHOT_SIZE + 1], data[INNER_SNAPSHOT_SIZE + 2]]);
-            let flags = data[INNER_SNAPSHOT_SIZE + 3];
+        if data.len() >= IRQ_SNAPSHOT_BYTES {
+            self.irq_count_high = data[0];
+            self.irq_count_low = u16::from_le_bytes([data[1], data[2]]);
+            let flags = data[3];
             self.irq_enabled = (flags & 0x01) != 0;
             self.irq_asserted = (flags & 0x02) != 0;
+            self.inner.restore_registers(&data[IRQ_SNAPSHOT_BYTES..]);
         }
     }
 
@@ -600,10 +606,12 @@ mod tests {
     #[test]
     fn snapshot_length_is_correct() {
         let mapper = make_mapper();
+        // Layout: IRQ_SNAPSHOT_BYTES (4) first, then the full VRC2b inner snapshot (27 bytes).
         assert_eq!(
             mapper.registers_snapshot().len(),
-            SNAPSHOT_SIZE,
-            "Snapshot must be exactly {SNAPSHOT_SIZE} bytes"
+            IRQ_SNAPSHOT_BYTES + 27,
+            "Snapshot must be exactly {} bytes",
+            IRQ_SNAPSHOT_BYTES + 27
         );
     }
 
