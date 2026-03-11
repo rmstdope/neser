@@ -207,6 +207,7 @@ impl Dmc {
                 DMC_RATE_TABLE_NTSC[rate_index]
             }
         };
+
         trace_apu!(2; "dmc write_flags_and_rate value=0x{:02X} irq_enabled={} loop={} rate_index={} period={}", value, self.irq_enabled, self.loop_flag, rate_index, self.timer_period);
 
         // If IRQ is disabled, clear the interrupt flag

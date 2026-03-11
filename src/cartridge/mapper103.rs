@@ -14,9 +14,9 @@
 //! - No mapper-specific IRQ behavior (hardware does not expose mapper IRQs).
 //! - No expansion audio behavior.
 
+use crate::cartridge::NametableLayout;
 use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
-use crate::cartridge::NametableLayout;
 
 const MAPPER_NUMBER: u16 = 103;
 const PRG_BANK_SIZE_8K: usize = 8 * 1024;
@@ -70,7 +70,9 @@ impl Mapper103 {
         }
         let bank = (self.prg_reg as usize) % bank_count;
         let offset = (addr - 0x6000) as usize;
-        prg.get(bank * PRG_BANK_SIZE_8K + offset).copied().unwrap_or(0)
+        prg.get(bank * PRG_BANK_SIZE_8K + offset)
+            .copied()
+            .unwrap_or(0)
     }
 }
 
@@ -214,7 +216,7 @@ mod tests {
     }
 
     #[test]
-    fn reset_maps_last_32k_prg_and_chr_bank_0() {
+    fn reset_maps_fixed_prg_windows_and_chr_bank_0_outside_wram_overlay() {
         let mut mapper = make_mapper();
         assert_eq!(mapper.read_prg(0x8000), 7);
         assert_eq!(mapper.read_prg(0xA000), 8);
