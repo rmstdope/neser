@@ -683,6 +683,13 @@ impl Cpu {
         self.dmc_dma_need_dummy_read = true;
     }
 
+    fn cpu_visible_dmc_dma_pending(&self) -> bool {
+        !self.dmc_dma_running && {
+            let mut apu = self.apu.borrow_mut();
+            apu.dmc_mut().cpu_dma_pending()
+        }
+    }
+
     /// Process any pending DMC DMA during a CPU read cycle.
     /// This is called from `read()` and handles the DMA state machine.
     ///
@@ -730,12 +737,7 @@ impl Cpu {
     fn process_pending_dma(&mut self, read_address: u16) -> bool {
         // Check if OAM DMA is pending
         let oam_dma_pending = self.bus.borrow().oam_dma_pending();
-
-        // Check if DMC DMA is pending (and not already running)
-        let dmc_dma_pending = !self.dmc_dma_running && {
-            let mut apu = self.apu.borrow_mut();
-            apu.dmc_mut().dma_pending()
-        };
+        let dmc_dma_pending = self.cpu_visible_dmc_dma_pending();
 
         if !oam_dma_pending && !dmc_dma_pending {
             return false;
@@ -784,10 +786,7 @@ impl Cpu {
         let source_base = (page as u16) << 8;
 
         // Check if DMC DMA is also pending at the start
-        let dmc_pending_at_start = {
-            let mut apu = self.apu.borrow_mut();
-            apu.dmc_mut().dma_pending()
-        };
+        let dmc_pending_at_start = self.cpu_visible_dmc_dma_pending();
 
         // DMC DMA progress states (like Pinky)
         const DMC_IDLE: u8 = 0;
@@ -810,10 +809,7 @@ impl Cpu {
 
         loop {
             // Check DMC progress
-            let dmc_pending = {
-                let mut apu = self.apu.borrow_mut();
-                apu.dmc_mut().dma_pending()
-            };
+            let dmc_pending = self.cpu_visible_dmc_dma_pending();
 
             // If DMC becomes pending during OAM DMA, start tracking it
             if dmc_pending && dmc_progress == DMC_IDLE {
@@ -924,6 +920,7 @@ impl Cpu {
             } else {
                 trace_cpu!(2; "tick cyc={} [read] addr=0x{:04X}", self.total_cycles, addr);
             }
+
             self.before_cpu_cycle(false);
 
             // Process any pending DMA (OAM and/or DMC)
