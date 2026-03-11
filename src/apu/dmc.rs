@@ -30,6 +30,8 @@ pub struct DmcState {
     pub irq_flag: bool,
     pub loop_flag: bool,
     pub dma_pending: bool,
+    #[serde(default)]
+    pub dma_pending_deferred: bool,
     pub transfer_start_delay: u8,
     #[serde(default)]
     pub disable_delay: u8,
@@ -73,6 +75,7 @@ pub struct Dmc {
     bytes_remaining: u16,
 
     dma_pending: bool,
+    dma_pending_deferred: bool,
 
     // IRQ
     interrupt_flag: bool,
@@ -123,6 +126,7 @@ impl Dmc {
             current_address: 0,
             bytes_remaining: 0,
             dma_pending: false,
+            dma_pending_deferred: false,
             interrupt_flag: false,
             #[cfg(test)]
             irq_trigger_count: 0,
@@ -139,13 +143,20 @@ impl Dmc {
     }
 
     /// Returns true if the DMC has a pending DMA request for the next sample byte.
+    #[cfg(test)]
     pub fn dma_pending(&self) -> bool {
         self.dma_pending
+    }
+
+    /// Returns true if the CPU should service the pending DMA request this read cycle.
+    pub fn cpu_dma_pending(&self) -> bool {
+        self.dma_pending && !self.dma_pending_deferred
     }
 
     #[cfg(test)]
     pub fn debug_set_dma_pending(&mut self, value: bool) {
         self.dma_pending = value;
+        self.dma_pending_deferred = false;
     }
 
     #[cfg(test)]
@@ -170,6 +181,7 @@ impl Dmc {
         }
 
         self.dma_pending = false;
+        self.dma_pending_deferred = false;
         self.sample_buffer = Some(value);
         trace_apu!(4; "dmc sample_buffer set value=0x{:02X}", value);
         trace_apu!(3; "dmc complete_dma_read value=0x{:02X}", value);
@@ -233,7 +245,7 @@ impl Dmc {
         // Blargg's `apu_test/7-dmc_basics` depends on this happening immediately when empty.
         // However, we skip this if transfer_start_delay is active (just enabled via $4015)
         if self.transfer_start_delay == 0 {
-            self.fill_sample_buffer_if_needed();
+            self.fill_sample_buffer_if_needed(false);
         }
 
         // The DMC rate table values are expressed in CPU cycles per output-unit clock.
@@ -243,13 +255,16 @@ impl Dmc {
         if self.timer == 0 {
             self.timer = self.timer_period.saturating_sub(1);
             self.clock_output_unit();
+            if self.transfer_start_delay == 0 {
+                self.fill_sample_buffer_if_needed(true);
+            }
             trace_apu!(4; "dmc clock_timer reload period={} output_level={}", self.timer_period, self.output_level);
         } else {
             self.timer -= 1;
         }
     }
 
-    fn fill_sample_buffer_if_needed(&mut self) {
+    fn fill_sample_buffer_if_needed(&mut self, defer_dma_visibility: bool) {
         if self.sample_buffer.is_some() {
             return;
         }
@@ -260,6 +275,7 @@ impl Dmc {
         // Request a CPU-side DMA read. The CPU will stall and provide the byte.
         if !self.dma_pending {
             self.dma_pending = true;
+            self.dma_pending_deferred = defer_dma_visibility;
             trace_apu!(4; "dmc dma_pending address=0x{:04X} bytes_remaining={}", self.current_address, self.bytes_remaining);
         }
     }
@@ -375,6 +391,7 @@ impl Dmc {
         if self.disable_delay == 0 {
             self.bytes_remaining = 0;
             self.dma_pending = false;
+            self.dma_pending_deferred = false;
             trace_apu!(4; "dmc disable_delay expired");
         }
     }
@@ -387,7 +404,7 @@ impl Dmc {
         self.transfer_start_delay -= 1;
         if self.transfer_start_delay == 0 {
             // Delay expired, now trigger DMA if buffer is still empty
-            self.fill_sample_buffer_if_needed();
+            self.fill_sample_buffer_if_needed(false);
             trace_apu!(4; "dmc transfer_start_delay expired");
         }
     }
@@ -421,6 +438,7 @@ impl Dmc {
     /// Process one CPU clock cycle - handles transfer start delays
     /// Must be called once per CPU cycle to properly time DMC DMA requests
     pub fn process_clock(&mut self) {
+        self.dma_pending_deferred = false;
         self.process_disable_delay();
         self.process_transfer_start_delay();
     }
@@ -496,6 +514,7 @@ impl Dmc {
             irq_flag: self.interrupt_flag,
             loop_flag: self.loop_flag,
             dma_pending: self.dma_pending,
+            dma_pending_deferred: self.dma_pending_deferred,
             transfer_start_delay: self.transfer_start_delay,
             disable_delay: self.disable_delay,
         }
@@ -518,6 +537,7 @@ impl Dmc {
         self.interrupt_flag = state.irq_flag;
         self.loop_flag = state.loop_flag;
         self.dma_pending = state.dma_pending;
+        self.dma_pending_deferred = state.dma_pending_deferred;
         self.transfer_start_delay = state.transfer_start_delay;
         self.disable_delay = state.disable_delay;
     }
@@ -710,6 +730,55 @@ mod tests {
         dmc.start_output_cycle();
         assert!(dmc.silence_flag);
         assert_eq!(dmc.bits_remaining, 8);
+    }
+
+    #[test]
+    fn test_clock_timer_raises_dma_pending_on_same_cycle_sample_buffer_is_consumed() {
+        let mut dmc = Dmc::new();
+        dmc.write_sample_address(0x00);
+        dmc.current_address = 0xC000;
+        dmc.bytes_remaining = 2;
+        dmc.dma_pending = true;
+        dmc.complete_dma_read(0xAA);
+        dmc.bits_remaining = 1;
+        dmc.timer = 0;
+        dmc.transfer_start_delay = 0;
+        dmc.dma_pending = false;
+
+        assert_eq!(dmc.sample_buffer, Some(0xAA));
+        assert!(!dmc.dma_pending());
+
+        dmc.clock_timer();
+
+        assert!(dmc.sample_buffer.is_none());
+        assert!(
+            dmc.dma_pending(),
+            "expected dma_pending to be raised on the same clock_timer call that consumed the sample buffer"
+        );
+        assert!(!dmc.cpu_dma_pending());
+    }
+
+    #[test]
+    fn test_deferred_rollover_dma_becomes_cpu_visible_next_cycle() {
+        let mut dmc = Dmc::new();
+        dmc.write_sample_address(0x00);
+        dmc.current_address = 0xC000;
+        dmc.bytes_remaining = 2;
+        dmc.dma_pending = true;
+        dmc.complete_dma_read(0xAA);
+        dmc.bits_remaining = 1;
+        dmc.timer = 0;
+        dmc.transfer_start_delay = 0;
+        dmc.dma_pending = false;
+
+        dmc.clock_timer();
+
+        assert!(dmc.dma_pending());
+        assert!(!dmc.cpu_dma_pending());
+
+        dmc.process_clock();
+
+        assert!(dmc.cpu_dma_pending());
     }
 
     #[test]
