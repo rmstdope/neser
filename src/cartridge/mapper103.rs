@@ -100,6 +100,21 @@ impl Mapper for Mapper103 {
         }
     }
 
+    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        match addr {
+            0x6000..=0x7FFF => {
+                if self.prg_ram_disabled {
+                    self.read_prg_6000_banked(addr)
+                } else {
+                    self.work_ram[(addr - 0x6000) as usize]
+                }
+            }
+            0xB800..=0xD7FF if !self.prg_ram_disabled => {
+                self.work_ram[0x2000 + (addr - 0xB800) as usize]
+            }
+            _ => self.base.read_prg_open_bus(addr, open_bus),
+        }
+    }
     fn write_prg(&mut self, addr: u16, value: u8) {
         match addr & 0xF000 {
             0x6000 | 0x7000 => {
