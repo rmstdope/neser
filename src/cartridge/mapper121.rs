@@ -118,12 +118,16 @@ impl Mapper for Mapper121 {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
-        if addr < 0x8000 {
+        if (0x5000..=0x5FFF).contains(&addr) {
             self.ex_regs[4] = Self::LOOKUP[(value & 0x03) as usize];
 
             if (addr & 0x5180) == 0x5180 {
                 self.ex_regs[3] = value;
             }
+            return;
+        }
+        if addr < 0x8000 {
+            self.mmc3.write_prg(addr, value);
             return;
         }
 
@@ -182,13 +186,17 @@ impl Mapper for Mapper121 {
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        if data.len() < 8 {
+        let mmc3_min_size = self.mmc3.registers_snapshot().len();
+        let ex_size = self.ex_regs.len();
+
+        if data.len() >= mmc3_min_size + ex_size {
+            let split = data.len() - ex_size;
+            self.mmc3.restore_registers(&data[..split]);
+            self.ex_regs.copy_from_slice(&data[split..]);
+        } else {
             self.mmc3.restore_registers(data);
-            return;
+            self.reset_ex_regs();
         }
-        let split = data.len() - 8;
-        self.mmc3.restore_registers(&data[..split]);
-        self.ex_regs.copy_from_slice(&data[split..]);
     }
 
     fn reset(&mut self) {
@@ -289,5 +297,41 @@ mod tests {
 
         mapper.write_prg(0xE000, 0);
         assert!(!mapper.irq_pending());
+    }
+
+    #[test]
+    fn mapper_121_preserves_mmc3_prg_ram_semantics_at_6000_7fff() {
+        let mut mapper = make_mapper();
+
+        assert_eq!(mapper.read_prg(0x5000), 0);
+
+        mapper.write_prg(0x6000, 0x82);
+        assert_eq!(mapper.read_prg(0x6000), 0x82);
+        assert_eq!(mapper.read_prg(0x5000), 0);
+
+        mapper.write_prg(0xA001, 0x00);
+        mapper.write_prg(0x6000, 0x33);
+        assert_eq!(mapper.read_prg(0x6000), 0);
+
+        mapper.write_prg(0xA001, 0x80);
+        assert_eq!(mapper.read_prg(0x6000), 0x82);
+
+        mapper.write_prg(0xA001, 0xC0);
+        mapper.write_prg(0x6000, 0x44);
+        assert_eq!(mapper.read_prg(0x6000), 0x82);
+    }
+
+    #[test]
+    fn mapper_121_restores_old_mmc3_only_snapshots_without_truncation() {
+        let mapper = make_mapper();
+
+        let snapshot = mapper.registers_snapshot();
+        let mmc3_only_snapshot = snapshot[..snapshot.len() - 8].to_vec();
+
+        let mut restored = make_mapper();
+        restored.restore_registers(&mmc3_only_snapshot);
+
+        assert_eq!(restored.read_prg(0x5000), 0);
+        assert_eq!(restored.read_prg(0xE000), (PRG_BANKS_8K - 1) as u8);
     }
 }
