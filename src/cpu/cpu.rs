@@ -153,8 +153,19 @@ pub struct CpuRegisters {
 }
 
 impl Cpu {
-    fn is_controller_port_read(addr: u16) -> bool {
-        matches!(addr, 0x4016 | 0x4017)
+    fn is_controller_port2_read(addr: u16) -> bool {
+        addr == 0x4017
+    }
+
+    fn should_skip_first_input_clock(read_address: u16, dmc_address: u16) -> bool {
+        let is_controller_read = matches!(read_address, 0x4016 | 0x4017);
+        is_controller_read && (dmc_address & 0x1F) == (read_address & 0x1F)
+    }
+
+    fn dmc_pending_single_byte_fetch(&self) -> bool {
+        let mut apu = self.apu.borrow_mut();
+        let dmc = apu.dmc_mut().capture_state();
+        dmc.sample_length == 1 && dmc.bytes_remaining == 1
     }
 
     pub fn current_interrupt(&self) -> Option<InterruptKind> {
@@ -730,7 +741,7 @@ impl Cpu {
                     self.after_cpu_cycle(false);
                     self.apu.borrow_mut().dmc_mut().complete_dma_read(value);
 
-                    if Self::is_controller_port_read(read_address) {
+                    if Self::is_controller_port2_read(read_address) {
                         observed_bus_value = Some(value);
                     }
                 }
@@ -769,13 +780,41 @@ impl Cpu {
         if !oam_dma_pending && dmc_dma_pending {
             self.start_dmc_dma();
 
+            let dmc_dma_address = {
+                let mut apu = self.apu.borrow_mut();
+                apu.dmc_mut().dma_address()
+            };
+
+            let is_controller_read = matches!(read_address, 0x4016 | 0x4017);
+            let single_byte_dmc_fetch = self.dmc_pending_single_byte_fetch();
+            let skip_first_input_clock = dmc_dma_address
+                .map(|address| Self::should_skip_first_input_clock(read_address, address))
+                .unwrap_or(false);
+            let use_dummy_halt_read = is_controller_read
+                && !(single_byte_dmc_fetch && !skip_first_input_clock);
+
             // Halt cycle: complete the CPU cycle started by read() - the read value is discarded
-            let _ = self.bus.borrow_mut().read(read_address, false);
+            let halted_read_value = self
+                .bus
+                .borrow_mut()
+                .read(read_address, use_dummy_halt_read);
             self.after_cpu_cycle(false);
             self.dmc_dma_need_halt = false;
 
             // Process remaining DMC DMA cycles
             let observed_bus_value = self.process_pending_dmc_dma(read_address);
+
+            if read_address == 0x4016 {
+                let Some(_) = observed_bus_value else {
+                    return DmaReadOutcome::RetryRead;
+                };
+
+                if single_byte_dmc_fetch && !skip_first_input_clock {
+                    return DmaReadOutcome::ReturnValue(halted_read_value);
+                }
+
+                return DmaReadOutcome::ReturnValue(halted_read_value);
+            }
 
             if let Some(value) = observed_bus_value {
                 return DmaReadOutcome::ReturnValue(value);
@@ -2971,8 +3010,8 @@ mod tests {
         let after = cpu.get_total_cycles();
         assert_eq!(
             after - before,
-            3,
-            "DMC overlap on $4016 should consume halt + dummy + get cycles"
+            4,
+            "DMC overlap on $4016 should consume halt + dummy + get + retried CPU read"
         );
     }
 
@@ -2995,6 +3034,16 @@ mod tests {
             value, 0xA5,
             "On the DMC get cycle, $4017 should observe the DMC sample byte on the bus"
         );
+    }
+
+    #[test]
+    fn test_should_skip_first_input_clock_for_aliasing_4016_read() {
+        assert!(Cpu::should_skip_first_input_clock(0x4016, 0xC016));
+    }
+
+    #[test]
+    fn test_should_not_skip_first_input_clock_for_non_aliasing_4016_read() {
+        assert!(!Cpu::should_skip_first_input_clock(0x4016, 0xC000));
     }
 
     #[test]
