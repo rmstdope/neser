@@ -10,9 +10,11 @@ from typing import Any, Callable
 
 from rich.text import Text
 from textual.app import App, ComposeResult, ScreenStackError
+from textual.coordinate import Coordinate
 from textual.css.query import NoMatches
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
+from textual.timer import Timer
 from textual.widgets import Button, Checkbox, DataTable, Input, Label, TextArea
 
 from .constants import REPO_ROOT
@@ -35,10 +37,15 @@ class MapperToolApp(App[None]):
     DEFAULT_ROM_FILES_DB_PATH = Path("scripts/mappertool/rom_files.csv")
     DEFAULT_SETTINGS_PATH = Path("scripts/mappertool/mappertool_settings.json")
     ROM_NAME_MAX_DISPLAY_CHARS = 30
+    ROM_NAME_SCROLL_START_DELAY_SECONDS = 2.0
+    ROM_NAME_SCROLL_TICK_SECONDS = 0.25
     ROM_PANE_TITLE = "ROMs"
     CONFIG_PANE_TITLE = "Actions"
     LOGS_PANE_TITLE = "Logs"
-    _CHECKPOINT_PROGRESS_RE = re.compile(r"checkpoint\s+(\d+)\s*/\s*(\d+)", re.IGNORECASE)
+    _CHECKPOINT_PROGRESS_RE = re.compile(
+        r"(?:checkpoint|recalculating\s+checkpoint\s+crc\(s\):)\s*(\d+)\s*/\s*(\d+)",
+        re.IGNORECASE,
+    )
     CSS = """
     Screen {
         layout: vertical;
@@ -87,6 +94,11 @@ class MapperToolApp(App[None]):
         margin-bottom: 1;
     }
 
+    #rom-database {
+        height: 1fr;
+        min-height: 0;
+    }
+
     #config-editor {
         layout: vertical;
         width: 2fr;
@@ -112,7 +124,8 @@ class MapperToolApp(App[None]):
 
     #drop-rescan-button,
     #playback-all-button,
-    #playback-not-run-button {
+    #playback-not-run-button,
+    #recalculate-failing-crcs-button {
         height: auto;
     }
 
@@ -232,6 +245,18 @@ class MapperToolApp(App[None]):
                         classes="rom-command-button",
                     )
                     yield Button(
+                        "Run ROM",
+                        id="rom-command-run-rom",
+                        variant="warning",
+                        classes="rom-command-button",
+                    )
+                    yield Button(
+                        "Recalculate CRCs",
+                        id="rom-command-recalculate-crcs",
+                        variant="warning",
+                        classes="rom-command-button",
+                    )
+                    yield Button(
                         "Delete recording",
                         id="rom-command-delete",
                         variant="error",
@@ -241,6 +266,12 @@ class MapperToolApp(App[None]):
                     yield Button(
                         "Create autorun recording",
                         id="rom-command-create",
+                        variant="warning",
+                        classes="rom-command-button",
+                    )
+                    yield Button(
+                        "Run ROM",
+                        id="rom-command-run-rom",
                         variant="warning",
                         classes="rom-command-button",
                     )
@@ -355,6 +386,11 @@ class MapperToolApp(App[None]):
         self._autorun_cancel_requested = False
         self._autorun_run_modal: MapperToolApp.AutorunRunModal | None = None
         self._autorun_subprocess: asyncio.subprocess.Process | None = None
+        self._highlighted_rom_row_index: int | None = None
+        self._rom_name_scroll_offset = 0
+        self._rom_name_scroll_active = False
+        self._rom_name_scroll_start_timer: Timer | None = None
+        self._rom_name_scroll_tick_timer: Timer | None = None
 
     def compose(self) -> ComposeResult:
         """Build top ROM/config panes and a bottom logs pane."""
@@ -401,13 +437,17 @@ class MapperToolApp(App[None]):
                         id="playback-not-run-button",
                         variant="warning",
                     )
+                    yield Button(
+                        "Recalculate failing CRCs",
+                        id="recalculate-failing-crcs-button",
+                        variant="warning",
+                    )
 
         with Horizontal(id="bottom-panes"):
             logs_pane = Vertical(id="logs-pane", classes="pane")
             logs_pane.border_title = self.LOGS_PANE_TITLE
             with logs_pane:
                 logs = TextArea(id="logs", read_only=True)
-                logs.load_text("Mappertool logs will appear here.\n")
                 yield logs
 
     def on_mount(self) -> None:
@@ -434,6 +474,10 @@ class MapperToolApp(App[None]):
     def _populate_rom_table(self, rom_table: DataTable) -> None:
         """Render tracked ROM records in the left-hand ROM list widget."""
 
+        self._cancel_rom_name_scroll_timers()
+        self._highlighted_rom_row_index = None
+        self._rom_name_scroll_offset = 0
+        self._rom_name_scroll_active = False
         rom_table.clear(columns=False)
         self._rom_table_full_paths = []
         for record in self._sorted_rom_records():
@@ -492,6 +536,85 @@ class MapperToolApp(App[None]):
         if len(filename) <= cls.ROM_NAME_MAX_DISPLAY_CHARS:
             return filename
         return filename[: cls.ROM_NAME_MAX_DISPLAY_CHARS - 3] + "..."
+
+    def _is_highlighted_rom_name_scrollable(self, row_index: int) -> bool:
+        """Return True if highlighted row has a ROM name longer than visible column budget."""
+
+        if row_index < 0 or row_index >= len(self._rom_table_full_paths):
+            return False
+        rom_name = self._rom_filename(self._rom_table_full_paths[row_index])
+        return len(rom_name) > self.ROM_NAME_MAX_DISPLAY_CHARS
+
+    def _rom_display_name_for_row(self, row_index: int) -> str:
+        """Return rendered ROM display name for table row, including optional scroll state."""
+
+        rom_path = self._rom_table_full_paths[row_index]
+        if (
+            row_index != self._highlighted_rom_row_index
+            or not self._rom_name_scroll_active
+            or not self._is_highlighted_rom_name_scrollable(row_index)
+        ):
+            return self._rom_display_name(rom_path)
+
+        filename = self._rom_filename(rom_path)
+        source = f"{filename}   {filename}"
+        cycle_length = len(filename) + 3
+        start_index = self._rom_name_scroll_offset % cycle_length
+        return source[start_index : start_index + self.ROM_NAME_MAX_DISPLAY_CHARS]
+
+    def _cancel_rom_name_scroll_timers(self) -> None:
+        """Cancel active highlighted-ROM scroll timers if they exist."""
+
+        for timer in (self._rom_name_scroll_start_timer, self._rom_name_scroll_tick_timer):
+            if timer is not None:
+                with contextlib.suppress(Exception):
+                    timer.stop()
+        self._rom_name_scroll_start_timer = None
+        self._rom_name_scroll_tick_timer = None
+
+    def _update_rom_name_cell(self, row_index: int) -> None:
+        """Update ROM name cell content for one row if table and row are currently valid."""
+
+        if row_index < 0 or row_index >= len(self._rom_table_full_paths):
+            return
+        try:
+            table = self.query_one("#rom-database", DataTable)
+        except NoMatches:
+            return
+        if row_index >= table.row_count:
+            return
+        table.update_cell_at(
+            Coordinate(row_index, 2),
+            self._table_cell(self._rom_display_name_for_row(row_index)),
+        )
+
+    def _start_highlighted_rom_name_scroll(self) -> None:
+        """Start ticker that scrolls highlighted ROM name if it is still eligible."""
+
+        row_index = self._highlighted_rom_row_index
+        if row_index is None or not self._is_highlighted_rom_name_scrollable(row_index):
+            return
+        self._rom_name_scroll_active = True
+        self._rom_name_scroll_offset = 0
+        self._update_rom_name_cell(row_index)
+        self._rom_name_scroll_tick_timer = self.set_interval(
+            self.ROM_NAME_SCROLL_TICK_SECONDS,
+            self._advance_highlighted_rom_name_scroll,
+        )
+
+    def _advance_highlighted_rom_name_scroll(self) -> None:
+        """Advance highlighted ROM name marquee by one character and refresh visible cell."""
+
+        row_index = self._highlighted_rom_row_index
+        if row_index is None or not self._rom_name_scroll_active:
+            return
+        if not self._is_highlighted_rom_name_scrollable(row_index):
+            self._cancel_rom_name_scroll_timers()
+            self._rom_name_scroll_active = False
+            return
+
+        self._rom_name_scroll_offset += 1
+        self._update_rom_name_cell(row_index)
 
     def _update_rom_table_summary(self, rom_table: DataTable) -> None:
         """Show active sort/filter state in ROM table title."""
@@ -689,6 +812,14 @@ class MapperToolApp(App[None]):
             )
             return
 
+        if event.button.id == "recalculate-failing-crcs-button":
+            self.run_worker(
+                self._recalculate_failing_crc_autorun_files(),
+                group="recalculate-failing-crcs",
+                exclusive=True,
+            )
+            return
+
     def on_data_table_header_selected(self, event: DataTable.HeaderSelected) -> None:
         """Toggle sorting for the selected ROM table column header."""
 
@@ -836,6 +967,29 @@ class MapperToolApp(App[None]):
                 "--",
                 "--playback-headless",
             ]
+        elif command_id == "rom-command-run-rom":
+            command = [
+                "cargo",
+                "run",
+                "--release",
+                "--features",
+                "sdl",
+                "--bin",
+                "neser",
+                "--",
+            ]
+        elif command_id == "rom-command-recalculate-crcs":
+            command = [
+                "cargo",
+                "run",
+                "--release",
+                "--features",
+                "sdl",
+                "--bin",
+                "neser",
+                "--",
+                "--recalculate-autorun",
+            ]
 
         if command is None:
             self._append_log(f"Unknown ROM command: {command_id}")
@@ -844,7 +998,11 @@ class MapperToolApp(App[None]):
         command.append(str(rom_absolute_path))
         self._append_log(f"Running command: {' '.join(command)}")
         playback_result = await self._run_autorun_command_with_status_modal(command, command_id)
-        if command_id in {"rom-command-playback-headed", "rom-command-playback-headless"}:
+        if command_id in {
+            "rom-command-playback-headed",
+            "rom-command-playback-headless",
+            "rom-command-recalculate-crcs",
+        }:
             if playback_result in {"passed", "failed"}:
                 self._set_record_autorun_status(rom_relative_path, playback_result)
         self._refresh_record_autorun_state(rom_relative_path)
@@ -856,9 +1014,11 @@ class MapperToolApp(App[None]):
             lambda record: record.has_autorun,
         )
 
-        await self._playback_record_set(
+        await self._run_batch_autorun_for_records(
             autorun_records,
             title="Playback All",
+            command_id="rom-command-playback-headless",
+            command_argument="--playback-headless",
         )
 
     async def _playback_not_run_autorun_files(self) -> None:
@@ -868,9 +1028,25 @@ class MapperToolApp(App[None]):
             lambda record: record.has_autorun and record.autorun_status == "not_run",
         )
 
-        await self._playback_record_set(
+        await self._run_batch_autorun_for_records(
             autorun_records,
             title="Playback Not run",
+            command_id="rom-command-playback-headless",
+            command_argument="--playback-headless",
+        )
+
+    async def _recalculate_failing_crc_autorun_files(self) -> None:
+        """Recalculate checkpoint CRCs for autorun files currently marked as failed."""
+
+        autorun_records = self._sorted_autorun_records(
+            lambda record: record.has_autorun and record.autorun_status == "failed",
+        )
+
+        await self._run_batch_autorun_for_records(
+            autorun_records,
+            title="Recalculate failing CRCs",
+            command_id="rom-command-recalculate-crcs",
+            command_argument="--recalculate-autorun",
         )
 
     def _sorted_autorun_records(
@@ -884,13 +1060,15 @@ class MapperToolApp(App[None]):
             key=lambda record: record.rom_path.casefold(),
         )
 
-    async def _playback_record_set(
+    async def _run_batch_autorun_for_records(
         self,
         records: list[RomFileRecord],
         *,
         title: str,
+        command_id: str,
+        command_argument: str,
     ) -> None:
-        """Playback selected ROM record set with per-file progress status."""
+        """Run selected autorun command for ROM record set with per-file progress status."""
 
         self._autorun_cancel_requested = False
 
@@ -915,7 +1093,7 @@ class MapperToolApp(App[None]):
                 "--bin",
                 "neser",
                 "--",
-                "--playback-headless",
+                command_argument,
                 str(rom_absolute_path),
             ]
             file_progress = f"{index}/{total_records}"
@@ -923,7 +1101,7 @@ class MapperToolApp(App[None]):
             self._append_log(f"{title} running ({file_progress}): {record.rom_path}")
             playback_result = await self._run_autorun_command_with_status_modal(
                 command,
-                "rom-command-playback-headless",
+                command_id,
                 full_set_progress_status=status_context,
                 current_file_progress_status="Checkpoint: -",
             )
@@ -970,34 +1148,60 @@ class MapperToolApp(App[None]):
             )
             self._autorun_subprocess = process
 
-            async def consume_stream(reader: asyncio.StreamReader | None) -> None:
+            def process_output_line(line: str) -> None:
                 nonlocal checkpoints_done, checkpoints_total, error_count
+                if not line:
+                    return
+
+                self._append_log(line)
+
+                parsed_progress = self._extract_checkpoint_progress_from_output(line)
+                if parsed_progress is not None:
+                    checkpoints_done, checkpoints_total = parsed_progress
+                    if "MISMATCH" in line:
+                        error_count += 1
+                    self._set_autorun_modal_status(
+                        "Running",
+                        full_set_progress_status=full_set_progress_status,
+                        current_file_progress_status=(
+                            f"Checkpoint {checkpoints_done}/{checkpoints_total}. "
+                            f"Errors: {error_count}"
+                        ),
+                    )
+
+            async def consume_stream(reader: asyncio.StreamReader | None) -> None:
                 if reader is None:
                     return
 
+                buffer = ""
+
                 while True:
-                    line_bytes = await reader.readline()
-                    if not line_bytes:
+                    chunk = await reader.read(1024)
+                    if not chunk:
                         break
 
-                    line = line_bytes.decode(errors="replace").strip()
-                    if not line:
-                        continue
-                    self._append_log(line)
+                    buffer += chunk.decode(errors="replace")
 
-                    parsed_progress = self._extract_checkpoint_progress_from_output(line)
-                    if parsed_progress is not None:
-                        checkpoints_done, checkpoints_total = parsed_progress
-                        if "MISMATCH" in line:
-                            error_count += 1
-                        self._set_autorun_modal_status(
-                            "Running",
-                            full_set_progress_status=full_set_progress_status,
-                            current_file_progress_status=(
-                                f"Checkpoint {checkpoints_done}/{checkpoints_total}. "
-                                f"Errors: {error_count}"
-                            ),
-                        )
+                    while True:
+                        newline_index = buffer.find("\n")
+                        carriage_index = buffer.find("\r")
+
+                        separator_index = -1
+                        if newline_index >= 0 and carriage_index >= 0:
+                            separator_index = min(newline_index, carriage_index)
+                        elif newline_index >= 0:
+                            separator_index = newline_index
+                        elif carriage_index >= 0:
+                            separator_index = carriage_index
+
+                        if separator_index < 0:
+                            break
+
+                        line = buffer[:separator_index].strip()
+                        buffer = buffer[separator_index + 1 :]
+                        process_output_line(line)
+
+                process_output_line(buffer.strip())
 
             stdout_task = asyncio.create_task(consume_stream(process.stdout))
             stderr_task = asyncio.create_task(consume_stream(process.stderr))
@@ -1266,10 +1470,31 @@ class MapperToolApp(App[None]):
         if event.data_table.id != "rom-database":
             return
 
+        previous_row = self._highlighted_rom_row_index
+        was_scrolling = self._rom_name_scroll_active
+        self._cancel_rom_name_scroll_timers()
+        self._rom_name_scroll_active = False
+        self._rom_name_scroll_offset = 0
+
         if 0 <= event.cursor_row < len(self._rom_table_full_paths):
+            self._highlighted_rom_row_index = event.cursor_row
             event.data_table.tooltip = self._rom_table_full_paths[event.cursor_row]
+
+            if was_scrolling and previous_row is not None and previous_row != event.cursor_row:
+                self._update_rom_name_cell(previous_row)
+
+            if self._is_highlighted_rom_name_scrollable(event.cursor_row):
+                self._rom_name_scroll_start_timer = self.set_timer(
+                    self.ROM_NAME_SCROLL_START_DELAY_SECONDS,
+                    self._start_highlighted_rom_name_scroll,
+                )
+
+            self.call_after_refresh(event.data_table._scroll_cursor_into_view, animate=False)
             return
 
+        self._highlighted_rom_row_index = None
+        if was_scrolling and previous_row is not None:
+            self._update_rom_name_cell(previous_row)
         event.data_table.tooltip = None
 
     def _append_log(self, message: str) -> None:

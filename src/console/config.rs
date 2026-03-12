@@ -314,6 +314,13 @@ const CLI_FLAGS: &[CliFlag] = &[
         has_value: false,
     },
     CliFlag {
+        flag: "--recalculate-autorun",
+        help: Some(
+            "Run headless playback, recalculate checkpoint CRCs in <ROM>.autorun file, save, and exit",
+        ),
+        has_value: false,
+    },
+    CliFlag {
         flag: "--ram-init-mode",
         help: Some("RAM initialization mode: zero, random, or seeded-random:SEED (default: zero)"),
         has_value: true,
@@ -378,6 +385,7 @@ const OPTIONAL_BOOL_FLAGS: &[&str] = &[
     "--fullscreen",
     "--scan-cartridges",
     "--convert-autorun",
+    "--recalculate-autorun",
 ];
 
 /// Result of parsing command-line arguments.
@@ -487,6 +495,8 @@ pub struct Config {
     pub autorun_trim_checkpoints: Option<usize>,
     /// Convert an existing autorun file to the latest format and exit (no emulation).
     pub autorun_convert: bool,
+    /// Recalculate checkpoint CRCs in an existing autorun file and exit (no emulation).
+    pub autorun_recalculate: bool,
     /// RAM initialization mode (config key: `ram_init_mode`).
     ///
     /// Controls how all emulated RAM is initialized on power-on/hard reset:
@@ -627,6 +637,7 @@ impl Default for Config {
             autorun_from_checkpoint: None,
             autorun_trim_checkpoints: None,
             autorun_convert: false,
+            autorun_recalculate: false,
             // Use Zero for WASM to avoid issues with getrandom in test environments
             #[cfg(target_arch = "wasm32")]
             ram_init_mode: RamInitMode::Zero,
@@ -934,14 +945,44 @@ impl Config {
             self.autorun_convert = convert_autorun_requested;
         }
 
+        if let Some(recalculate_autorun_requested) =
+            Self::parse_bool_arg(args, "--recalculate-autorun")?
+        {
+            self.autorun_recalculate = recalculate_autorun_requested;
+        }
+
         if self.autorun_trim_checkpoints.is_some() && self.autorun_convert {
             return Err("Cannot specify both --trim-checkpoints and --convert-autorun".to_string());
+        }
+
+        if self.autorun_trim_checkpoints.is_some() && self.autorun_recalculate {
+            return Err(
+                "Cannot specify both --trim-checkpoints and --recalculate-autorun".to_string(),
+            );
+        }
+
+        if self.autorun_convert && self.autorun_recalculate {
+            return Err(
+                "Cannot specify both --convert-autorun and --recalculate-autorun".to_string(),
+            );
+        }
+
+        if self.autorun_recalculate && self.autorun_mode != AutorunMode::None {
+            return Err(
+                "Cannot combine --recalculate-autorun with recording/playback flags".to_string(),
+            );
+        }
+
+        if self.autorun_recalculate && self.autorun_from_checkpoint.is_some() {
+            return Err(
+                "Cannot combine --recalculate-autorun with checkpoint playback flags".to_string(),
+            );
         }
 
         // Autorun recording/playback must be deterministic.
         // Force zero-initialized RAM when autorun is active, and reject an explicit
         // non-zero CLI --ram-init-mode for these modes.
-        if self.autorun_mode != AutorunMode::None {
+        if self.autorun_mode != AutorunMode::None || self.autorun_recalculate {
             if let Some(value) = cli_ram_init_mode.as_ref()
                 && !value.eq_ignore_ascii_case("zero")
             {
@@ -3791,6 +3832,20 @@ filter=invalid-shader
     }
 
     #[test]
+    fn test_cli_recalculate_autorun_sets_autorun_recalculate_true() {
+        let args = vec!["neser".to_string(), "--recalculate-autorun".to_string()];
+        let config = parse_config(args);
+        assert!(config.autorun_recalculate);
+    }
+
+    #[test]
+    fn test_cli_recalculate_autorun_equals_syntax_false() {
+        let args = vec!["neser".to_string(), "--recalculate-autorun=false".to_string()];
+        let config = parse_config(args);
+        assert!(!config.autorun_recalculate);
+    }
+
+    #[test]
     fn test_cli_trim_checkpoints_and_convert_autorun_are_mutually_exclusive() {
         let args = vec![
             "neser".to_string(),
@@ -3802,6 +3857,34 @@ filter=invalid-shader
         assert!(
             result.is_err(),
             "--trim-checkpoints and --convert-autorun should be mutually exclusive"
+        );
+    }
+
+    #[test]
+    fn test_cli_recalculate_autorun_and_convert_autorun_are_mutually_exclusive() {
+        let args = vec![
+            "neser".to_string(),
+            "--recalculate-autorun".to_string(),
+            "--convert-autorun".to_string(),
+        ];
+        let result = config_new(args);
+        assert!(
+            result.is_err(),
+            "--recalculate-autorun and --convert-autorun should be mutually exclusive"
+        );
+    }
+
+    #[test]
+    fn test_cli_recalculate_autorun_and_playback_are_mutually_exclusive() {
+        let args = vec![
+            "neser".to_string(),
+            "--recalculate-autorun".to_string(),
+            "--playback".to_string(),
+        ];
+        let result = config_new(args);
+        assert!(
+            result.is_err(),
+            "--recalculate-autorun and --playback should be mutually exclusive"
         );
     }
 

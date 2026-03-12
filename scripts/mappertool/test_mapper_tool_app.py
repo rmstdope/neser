@@ -1,6 +1,7 @@
 """UI and interaction tests for MapperToolApp."""
 
 import asyncio
+import inspect
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -19,6 +20,21 @@ from .mapper_tool_app import MapperToolApp
 from .test_helpers import make_ines_rom
 
 
+def _install_run_worker_mock(app: MapperToolApp) -> Mock:
+    """Replace run_worker with mock that closes coroutine args to avoid warnings."""
+
+    worker_mock = Mock()
+
+    def close_coro_and_return(*args, **kwargs):
+        if args and inspect.iscoroutine(args[0]):
+            args[0].close()
+        return None
+
+    worker_mock.side_effect = close_coro_and_return
+    app.run_worker = worker_mock  # type: ignore[method-assign]
+    return worker_mock
+
+
 class MapperToolAppLayoutTests(unittest.TestCase):
     """Validate widget composition and user interactions."""
 
@@ -31,6 +47,8 @@ class MapperToolAppLayoutTests(unittest.TestCase):
         self.assertIn("layout: horizontal;", css)
         self.assertIn("#rom-pane {", css)
         self.assertIn("width: 3fr;", css)
+        self.assertIn("#rom-database {", css)
+        self.assertIn("height: 1fr;", css)
         self.assertIn("#config-editor {", css)
         self.assertIn("width: 2fr;", css)
         self.assertIn("border: solid $accent;", css)
@@ -118,10 +136,11 @@ class MapperToolAppLayoutTests(unittest.TestCase):
         asyncio.run(run_assertions())
 
     def test_rom_table_has_initial_focus_on_mount(self) -> None:
-        """Application starts with ROM table focused instead of mapper filter input."""
+        """Without startup scan worker, ROM table receives initial focus on mount."""
 
         async def run_assertions() -> None:
             app = MapperToolApp()
+            _install_run_worker_mock(app)
             async with app.run_test() as pilot:
                 await pilot.pause()
                 rom_table = app.query_one("#rom-database", DataTable)
@@ -141,10 +160,15 @@ class MapperToolAppLayoutTests(unittest.TestCase):
                 self.assertEqual(app.query_one("#drop-rescan-button").parent, section)
                 self.assertEqual(app.query_one("#playback-all-button").parent, section)
                 self.assertEqual(app.query_one("#playback-not-run-button").parent, section)
+                self.assertEqual(app.query_one("#recalculate-failing-crcs-button").parent, section)
                 self.assertEqual(app.query_one("#drop-rescan-button", Button).variant, "warning")
                 self.assertEqual(app.query_one("#playback-all-button", Button).variant, "warning")
                 self.assertEqual(app.query_one("#playback-all-button", Button).label.plain, "Playback All Recordings")
                 self.assertEqual(app.query_one("#playback-not-run-button", Button).variant, "warning")
+                self.assertEqual(
+                    app.query_one("#recalculate-failing-crcs-button", Button).variant,
+                    "warning",
+                )
 
         asyncio.run(run_assertions())
 
@@ -191,10 +215,11 @@ class MapperToolAppLayoutTests(unittest.TestCase):
             async with app.run_test() as pilot:
                 await pilot.pause()
                 logs = app.query_one("#logs", TextArea)
+                logs.load_text("sample log line\n")
                 logs.select_all()
                 app.action_copy_log_selection()
                 self.assertTrue(copied)
-                self.assertIn("Mappertool logs will appear here.", copied[0])
+                self.assertIn("sample log line", copied[0])
 
         asyncio.run(run_assertions())
 
@@ -502,6 +527,81 @@ class MapperToolAppLayoutTests(unittest.TestCase):
 
             asyncio.run(run_assertions())
 
+    def test_row_highlight_requests_cursor_scroll_into_view(self) -> None:
+        """Highlight handler asks DataTable to keep highlighted row visible."""
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            temp_root = Path(temp_dir_str)
+            rom_root = temp_root / "roms"
+            rom_root.mkdir(parents=True)
+
+            (rom_root / "sample.nes").write_bytes(make_ines_rom(mapper=2, submapper=0))
+
+            rom_db_path = temp_root / "rom_db.csv"
+            rom_db_path.write_text("# empty\n", encoding="utf-8")
+            rom_files_db_path = temp_root / "rom_files.csv"
+
+            async def run_assertions() -> None:
+                app = MapperToolApp(
+                    rom_db_csv_path=rom_db_path,
+                    rom_root=rom_root,
+                    rom_files_csv_path=rom_files_db_path,
+                )
+                async with app.run_test() as pilot:
+                    await pilot.pause()
+                    table = app.query_one("#rom-database", DataTable)
+                    app.call_after_refresh = Mock()  # type: ignore[method-assign]
+
+                    app.on_data_table_row_highlighted(
+                        SimpleNamespace(data_table=table, cursor_row=0)
+                    )
+
+                    app.call_after_refresh.assert_called_once_with(
+                        table._scroll_cursor_into_view,
+                        animate=False,
+                    )
+
+            asyncio.run(run_assertions())
+
+    def test_highlighted_long_rom_name_scrolls_when_marquee_advances(self) -> None:
+        """Highlighted long ROM names scroll horizontally once marquee tick advances."""
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            temp_root = Path(temp_dir_str)
+            rom_root = temp_root / "roms"
+            rom_root.mkdir(parents=True)
+
+            long_name = "abcdefghijklmnopqrstuvwxyz12345.nes"
+            (rom_root / long_name).write_bytes(make_ines_rom(mapper=2, submapper=0))
+
+            rom_db_path = temp_root / "rom_db.csv"
+            rom_db_path.write_text("# empty\n", encoding="utf-8")
+            rom_files_db_path = temp_root / "rom_files.csv"
+
+            async def run_assertions() -> None:
+                app = MapperToolApp(
+                    rom_db_csv_path=rom_db_path,
+                    rom_root=rom_root,
+                    rom_files_csv_path=rom_files_db_path,
+                )
+                async with app.run_test() as pilot:
+                    await pilot.pause()
+                    table = app.query_one("#rom-database", DataTable)
+                    initial_display = str(table.get_row_at(0)[2])
+                    self.assertEqual(initial_display, "abcdefghijklmnopqrstuvwxyz1...")
+
+                    app.on_data_table_row_highlighted(
+                        SimpleNamespace(data_table=table, cursor_row=0)
+                    )
+                    app._rom_name_scroll_active = True
+                    app._advance_highlighted_rom_name_scroll()
+
+                    advanced_display = str(table.get_row_at(0)[2])
+                    self.assertNotEqual(advanced_display, initial_display)
+                    self.assertEqual(len(advanced_display), app.ROM_NAME_MAX_DISPLAY_CHARS)
+
+            asyncio.run(run_assertions())
+
     def test_row_selection_opens_rom_command_dialog_with_create_when_no_autorun(self) -> None:
         """Selecting ROM row opens command dialog with create action when no autorun exists."""
 
@@ -632,10 +732,240 @@ class MapperToolAppLayoutTests(unittest.TestCase):
         self.assertIn("error", joined)
         self.assertIn("rom-command-playback-headless", joined)
         self.assertIn("rom-command-playback-headed", joined)
+        self.assertIn("rom-command-run-rom", joined)
+        self.assertIn("rom-command-recalculate-crcs", joined)
         self.assertIn("rom-command-extend", joined)
         self.assertIn("rom-command-create", joined)
         self.assertIn("rom-command-cancel", joined)
         self.assertIn("warning", joined)
+
+    def test_run_rom_command_runs_neser_without_autorun_flags(self) -> None:
+        """Run ROM dialog action runs neser normally for selected ROM path."""
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            temp_root = Path(temp_dir_str)
+            rom_root = temp_root / "roms"
+            rom_root.mkdir(parents=True)
+            (rom_root / "sample.nes").write_bytes(make_ines_rom(mapper=2, submapper=0))
+
+            rom_db_path = temp_root / "rom_db.csv"
+            rom_db_path.write_text("# empty\n", encoding="utf-8")
+            rom_files_db_path = temp_root / "rom_files.csv"
+
+            async def run_assertions() -> None:
+                app = MapperToolApp(
+                    rom_db_csv_path=rom_db_path,
+                    rom_root=rom_root,
+                    rom_files_csv_path=rom_files_db_path,
+                )
+                captured_calls: list[tuple[list[str], str, str, str]] = []
+
+                async def fake_run(
+                    command: list[str],
+                    command_id: str,
+                    full_set_progress_status: str = "",
+                    current_file_progress_status: str = "",
+                ) -> str | None:
+                    captured_calls.append(
+                        (
+                            command,
+                            command_id,
+                            full_set_progress_status,
+                            current_file_progress_status,
+                        )
+                    )
+                    return "passed"
+
+                app._run_autorun_command_with_status_modal = fake_run  # type: ignore[method-assign]
+
+                async with app.run_test() as pilot:
+                    await pilot.pause()
+                    await app._run_rom_command("sample.nes", "rom-command-run-rom")
+
+                self.assertEqual(len(captured_calls), 1)
+                command, command_id, _, _ = captured_calls[0]
+                self.assertEqual(command_id, "rom-command-run-rom")
+                self.assertNotIn("--playback", command)
+                self.assertNotIn("--playback-headless", command)
+                self.assertNotIn("--recalculate-autorun", command)
+                self.assertTrue(command[-1].endswith("sample.nes"))
+
+            asyncio.run(run_assertions())
+
+    def test_recalculate_crcs_rom_command_runs_recalculate_autorun_flag(self) -> None:
+        """Recalculate CRCs dialog action runs neser with --recalculate-autorun for selected ROM."""
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            temp_root = Path(temp_dir_str)
+            rom_root = temp_root / "roms"
+            rom_root.mkdir(parents=True)
+            (rom_root / "sample.nes").write_bytes(make_ines_rom(mapper=2, submapper=0))
+            (rom_root / "sample.autorun").write_text("{}", encoding="utf-8")
+
+            rom_db_path = temp_root / "rom_db.csv"
+            rom_db_path.write_text("# empty\n", encoding="utf-8")
+            rom_files_db_path = temp_root / "rom_files.csv"
+
+            async def run_assertions() -> None:
+                app = MapperToolApp(
+                    rom_db_csv_path=rom_db_path,
+                    rom_root=rom_root,
+                    rom_files_csv_path=rom_files_db_path,
+                )
+                captured_calls: list[tuple[list[str], str, str, str]] = []
+
+                async def fake_run(
+                    command: list[str],
+                    command_id: str,
+                    full_set_progress_status: str = "",
+                    current_file_progress_status: str = "",
+                ) -> str | None:
+                    captured_calls.append(
+                        (
+                            command,
+                            command_id,
+                            full_set_progress_status,
+                            current_file_progress_status,
+                        )
+                    )
+                    return "passed"
+
+                app._run_autorun_command_with_status_modal = fake_run  # type: ignore[method-assign]
+
+                async with app.run_test() as pilot:
+                    await pilot.pause()
+                    await app._run_rom_command("sample.nes", "rom-command-recalculate-crcs")
+
+                self.assertEqual(len(captured_calls), 1)
+                command, command_id, _, _ = captured_calls[0]
+                self.assertEqual(command_id, "rom-command-recalculate-crcs")
+                self.assertIn("--recalculate-autorun", command)
+                self.assertTrue(command[-1].endswith("sample.nes"))
+                self.assertEqual(app.rom_file_records["sample.nes"].autorun_status, "passed")
+
+            asyncio.run(run_assertions())
+
+    def test_rom_command_modal_places_recalculate_directly_above_delete(self) -> None:
+        """Autorun command modal orders Recalculate CRCs immediately before Delete recording."""
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            temp_root = Path(temp_dir_str)
+            rom_root = temp_root / "roms"
+            rom_root.mkdir(parents=True)
+            (rom_root / "sample.nes").write_bytes(make_ines_rom(mapper=2, submapper=0))
+            (rom_root / "sample.autorun").write_text(
+                '{"version":3,"frames":[{"player1":0,"player2":0,"repeat":1}],"checkpoints":[]}',
+                encoding="utf-8",
+            )
+
+            rom_db_path = temp_root / "rom_db.csv"
+            rom_db_path.write_text("# empty\n", encoding="utf-8")
+            rom_files_db_path = temp_root / "rom_files.csv"
+
+            async def run_assertions() -> None:
+                app = MapperToolApp(
+                    rom_db_csv_path=rom_db_path,
+                    rom_root=rom_root,
+                    rom_files_csv_path=rom_files_db_path,
+                )
+
+                async with app.run_test() as pilot:
+                    await pilot.pause()
+                    table = app.query_one("#rom-database", DataTable)
+                    app.on_data_table_row_selected(SimpleNamespace(data_table=table, cursor_row=0))
+                    await pilot.pause()
+
+                    dialog = app.screen.query_one("#rom-command-dialog")
+                    button_ids = [
+                        child.id
+                        for child in dialog.children
+                        if isinstance(child, Button)
+                    ]
+                    recalculate_index = button_ids.index("rom-command-recalculate-crcs")
+                    delete_index = button_ids.index("rom-command-delete")
+                    self.assertEqual(recalculate_index + 1, delete_index)
+
+            asyncio.run(run_assertions())
+
+    def test_rom_command_modal_variant_a_places_run_rom_before_cancel(self) -> None:
+        """No-autorun command modal places Run ROM directly before Cancel."""
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            temp_root = Path(temp_dir_str)
+            rom_root = temp_root / "roms"
+            rom_root.mkdir(parents=True)
+            (rom_root / "sample.nes").write_bytes(make_ines_rom(mapper=2, submapper=0))
+
+            rom_db_path = temp_root / "rom_db.csv"
+            rom_db_path.write_text("# empty\n", encoding="utf-8")
+            rom_files_db_path = temp_root / "rom_files.csv"
+
+            async def run_assertions() -> None:
+                app = MapperToolApp(
+                    rom_db_csv_path=rom_db_path,
+                    rom_root=rom_root,
+                    rom_files_csv_path=rom_files_db_path,
+                )
+
+                async with app.run_test() as pilot:
+                    await pilot.pause()
+                    table = app.query_one("#rom-database", DataTable)
+                    app.on_data_table_row_selected(SimpleNamespace(data_table=table, cursor_row=0))
+                    await pilot.pause()
+
+                    dialog = app.screen.query_one("#rom-command-dialog")
+                    button_ids = [
+                        child.id
+                        for child in dialog.children
+                        if isinstance(child, Button)
+                    ]
+                    run_index = button_ids.index("rom-command-run-rom")
+                    cancel_index = button_ids.index("rom-command-cancel")
+                    self.assertEqual(run_index + 1, cancel_index)
+
+            asyncio.run(run_assertions())
+
+    def test_rom_command_modal_variant_b_places_run_rom_before_recalculate(self) -> None:
+        """Autorun command modal places Run ROM directly before Recalculate CRCs."""
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            temp_root = Path(temp_dir_str)
+            rom_root = temp_root / "roms"
+            rom_root.mkdir(parents=True)
+            (rom_root / "sample.nes").write_bytes(make_ines_rom(mapper=2, submapper=0))
+            (rom_root / "sample.autorun").write_text(
+                '{"version":3,"frames":[{"player1":0,"player2":0,"repeat":1}],"checkpoints":[]}',
+                encoding="utf-8",
+            )
+
+            rom_db_path = temp_root / "rom_db.csv"
+            rom_db_path.write_text("# empty\n", encoding="utf-8")
+            rom_files_db_path = temp_root / "rom_files.csv"
+
+            async def run_assertions() -> None:
+                app = MapperToolApp(
+                    rom_db_csv_path=rom_db_path,
+                    rom_root=rom_root,
+                    rom_files_csv_path=rom_files_db_path,
+                )
+
+                async with app.run_test() as pilot:
+                    await pilot.pause()
+                    table = app.query_one("#rom-database", DataTable)
+                    app.on_data_table_row_selected(SimpleNamespace(data_table=table, cursor_row=0))
+                    await pilot.pause()
+
+                    dialog = app.screen.query_one("#rom-command-dialog")
+                    button_ids = [
+                        child.id
+                        for child in dialog.children
+                        if isinstance(child, Button)
+                    ]
+                    run_index = button_ids.index("rom-command-run-rom")
+                    recalc_index = button_ids.index("rom-command-recalculate-crcs")
+                    self.assertEqual(run_index + 1, recalc_index)
+
+            asyncio.run(run_assertions())
 
     def test_autorun_column_shows_not_run_in_grey_when_autorun_exists(self) -> None:
         """Autorun column shows grey Not run when sibling .autorun exists but no playback result."""
@@ -1038,12 +1368,12 @@ class MapperToolAppLayoutTests(unittest.TestCase):
         """Playback All button dispatches a dedicated batch playback worker."""
 
         app = MapperToolApp()
-        app.run_worker = Mock()  # type: ignore[method-assign]
+        run_worker_mock = _install_run_worker_mock(app)
 
         app.on_button_pressed(SimpleNamespace(button=SimpleNamespace(id="playback-all-button")))
 
-        app.run_worker.assert_called_once()
-        call_kwargs = app.run_worker.call_args.kwargs
+        run_worker_mock.assert_called_once()
+        call_kwargs = run_worker_mock.call_args.kwargs
         self.assertEqual(call_kwargs["group"], "playback-all")
         self.assertTrue(call_kwargs["exclusive"])
 
@@ -1051,13 +1381,28 @@ class MapperToolAppLayoutTests(unittest.TestCase):
         """Playback Not run button dispatches a dedicated filtered playback worker."""
 
         app = MapperToolApp()
-        app.run_worker = Mock()  # type: ignore[method-assign]
+        run_worker_mock = _install_run_worker_mock(app)
 
         app.on_button_pressed(SimpleNamespace(button=SimpleNamespace(id="playback-not-run-button")))
 
-        app.run_worker.assert_called_once()
-        call_kwargs = app.run_worker.call_args.kwargs
+        run_worker_mock.assert_called_once()
+        call_kwargs = run_worker_mock.call_args.kwargs
         self.assertEqual(call_kwargs["group"], "playback-not-run")
+        self.assertTrue(call_kwargs["exclusive"])
+
+    def test_recalculate_failing_crcs_button_starts_batch_worker(self) -> None:
+        """Recalculate failing CRCs button dispatches dedicated batch worker."""
+
+        app = MapperToolApp()
+        run_worker_mock = _install_run_worker_mock(app)
+
+        app.on_button_pressed(
+            SimpleNamespace(button=SimpleNamespace(id="recalculate-failing-crcs-button"))
+        )
+
+        run_worker_mock.assert_called_once()
+        call_kwargs = run_worker_mock.call_args.kwargs
+        self.assertEqual(call_kwargs["group"], "recalculate-failing-crcs")
         self.assertTrue(call_kwargs["exclusive"])
 
     def test_playback_all_runs_each_autorun_with_file_progress_context(self) -> None:
@@ -1220,6 +1565,69 @@ class MapperToolAppLayoutTests(unittest.TestCase):
 
             asyncio.run(run_assertions())
 
+    def test_recalculate_failing_crcs_runs_only_failed_autorun_files(self) -> None:
+        """Recalculate failing CRCs runs only autorun records currently marked as failed."""
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            temp_root = Path(temp_dir_str)
+            rom_root = temp_root / "roms"
+            rom_root.mkdir(parents=True)
+
+            (rom_root / "first.nes").write_bytes(make_ines_rom(mapper=1, submapper=0))
+            (rom_root / "first.autorun").write_text("{}", encoding="utf-8")
+            (rom_root / "second.nes").write_bytes(make_ines_rom(mapper=2, submapper=0))
+            (rom_root / "second.autorun").write_text("{}", encoding="utf-8")
+            (rom_root / "third.nes").write_bytes(make_ines_rom(mapper=3, submapper=0))
+            (rom_root / "third.autorun").write_text("{}", encoding="utf-8")
+
+            rom_db_path = temp_root / "rom_db.csv"
+            rom_db_path.write_text("# empty\n", encoding="utf-8")
+            rom_files_db_path = temp_root / "rom_files.csv"
+
+            async def run_assertions() -> None:
+                app = MapperToolApp(
+                    rom_db_csv_path=rom_db_path,
+                    rom_root=rom_root,
+                    rom_files_csv_path=rom_files_db_path,
+                )
+                captured_calls: list[tuple[list[str], str, str, str]] = []
+
+                async def fake_run(
+                    command: list[str],
+                    command_id: str,
+                    full_set_progress_status: str = "",
+                    current_file_progress_status: str = "",
+                ) -> str | None:
+                    captured_calls.append(
+                        (
+                            command,
+                            command_id,
+                            full_set_progress_status,
+                            current_file_progress_status,
+                        )
+                    )
+                    return "passed"
+
+                app._run_autorun_command_with_status_modal = fake_run  # type: ignore[method-assign]
+
+                async with app.run_test() as pilot:
+                    await pilot.pause()
+                    app._set_record_autorun_status("first.nes", "failed")
+                    app._set_record_autorun_status("second.nes", "passed")
+                    app._set_record_autorun_status("third.nes", "failed")
+
+                    await app._recalculate_failing_crc_autorun_files()
+
+                    self.assertEqual(len(captured_calls), 2)
+                    self.assertEqual(captured_calls[0][1], "rom-command-recalculate-crcs")
+                    self.assertEqual(captured_calls[0][2], "File 1/2: first.nes")
+                    self.assertEqual(captured_calls[1][2], "File 2/2: third.nes")
+                    self.assertIn("--recalculate-autorun", captured_calls[0][0])
+                    self.assertEqual(app.rom_file_records["first.nes"].autorun_status, "passed")
+                    self.assertEqual(app.rom_file_records["third.nes"].autorun_status, "passed")
+
+            asyncio.run(run_assertions())
+
     def test_playback_all_can_restart_after_previous_cancel(self) -> None:
         """Playback All also starts normally even when previous run left cancel flag set."""
 
@@ -1289,6 +1697,14 @@ class MapperToolAppLayoutTests(unittest.TestCase):
             "Autorun checkpoint CRC match (0x12345678) at frame 45/300, checkpoint 3/10"
         )
         self.assertEqual(progress, (3, 10))
+
+    def test_extract_checkpoint_progress_from_output_parses_recalculate_line(self) -> None:
+        """Checkpoint parser extracts X/Y from recalculation progress output."""
+
+        progress = MapperToolApp._extract_checkpoint_progress_from_output(
+            "Recalculating checkpoint CRC(s): 7/17"
+        )
+        self.assertEqual(progress, (7, 17))
 
     def test_request_autorun_cancel_terminates_running_process(self) -> None:
         """Canceling autorun requests subprocess termination and marks cancel state."""

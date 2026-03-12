@@ -104,6 +104,57 @@ fn trim_autorun_checkpoints_for_rom(
     ))
 }
 
+fn recalculate_autorun_for_rom(rom_path: &str) -> Result<String, String> {
+    use autorun::{
+        autorun_path_for_rom,
+        headless_playback::recalculate_checkpoint_crcs_with_progress,
+        load_autorun_file, save_autorun_file,
+    };
+    use cartridge::Cartridge;
+    use console::RamInitMode;
+    use std::io::{self, Write};
+
+    let path = autorun_path_for_rom(&PathBuf::from(rom_path));
+    if !path.exists() {
+        return Err(format!(
+            "No autorun file found for ROM {}: {}",
+            rom_path,
+            path.display()
+        ));
+    }
+
+    let mut file = load_autorun_file(&path)?;
+    let rom_bytes = fs::read(rom_path).map_err(|e| format!("Failed to read ROM {}: {e}", rom_path))?;
+
+    let mut config = Config::default();
+    config.ram_init_mode = RamInitMode::Zero;
+    let app_context = AppContext::new_with_config(config);
+
+    let cart = Cartridge::load_from_file(&rom_bytes, rom_path, app_context.clone())
+        .map_err(|e| format!("Failed to load cartridge {}: {e}", rom_path))?;
+    let mut nes = Nes::new(app_context);
+    nes.insert_cartridge(cart);
+    nes.reset(false);
+
+    let mut progress_printed = false;
+    let updated = recalculate_checkpoint_crcs_with_progress(&mut nes, &mut file, None, |done, total| {
+        progress_printed = true;
+        print!("\rRecalculating checkpoint CRC(s): {done}/{total}");
+        let _ = io::stdout().flush();
+    })?;
+
+    if progress_printed {
+        println!("\n");
+    }
+    save_autorun_file(&path, &file)?;
+
+    Ok(format!(
+        "Recalculated {} checkpoint CRC(s) in {}",
+        updated,
+        path.display()
+    ))
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command-line arguments
     let args: Vec<String> = std::env::args().collect();
@@ -138,6 +189,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let rom_path =
             convert_rom_path.ok_or_else(|| "--convert-autorun requires a ROM path".to_string())?;
         let message = convert_autorun_for_rom(&rom_path)?;
+        println!("{message}");
+        return Ok(());
+    }
+
+    // Handle --recalculate-autorun: replay and rewrite checkpoint CRCs, then exit.
+    let recalculate_autorun_requested = app_context.borrow().config().autorun_recalculate;
+    let recalculate_rom_path = app_context.borrow().config().rom_path.clone();
+    if recalculate_autorun_requested {
+        let rom_path = recalculate_rom_path
+            .ok_or_else(|| "--recalculate-autorun requires a ROM path".to_string())?;
+        let message = recalculate_autorun_for_rom(&rom_path)?;
         println!("{message}");
         return Ok(());
     }
@@ -412,6 +474,19 @@ mod tests {
         assert_eq!(
             converted["frames"][0],
             serde_json::json!({"player1": 0, "player2": 0, "repeat": 2})
+        );
+    }
+
+    #[test]
+    fn test_recalculate_autorun_for_rom_fails_when_autorun_file_missing() {
+        let temp_dir = TempDir::new().expect("create temp dir");
+        let rom_path = temp_dir.path().join("missing.nes");
+
+        let result = recalculate_autorun_for_rom(rom_path.to_str().expect("rom path to str"));
+
+        assert!(
+            result.is_err(),
+            "recalculation should fail when corresponding .autorun file is missing"
         );
     }
 }

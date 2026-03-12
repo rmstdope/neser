@@ -5,6 +5,7 @@
   ],
   "python.testing.pytestArgs": [
     "scripts/scraper",
+    "scripts/mappertool",
     "scripts"
   ],
   "python.testing.pytestEnabled": true

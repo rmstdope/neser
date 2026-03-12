@@ -93,6 +93,69 @@ pub fn run_headless_playback(
     })
 }
 
+/// Run a full headless playback of `file` and rewrite checkpoint screen CRCs.
+///
+/// Returns the number of checkpoints updated.
+#[allow(dead_code)]
+pub fn recalculate_checkpoint_crcs(
+    nes: &mut Nes,
+    file: &mut AutorunFile,
+    start_checkpoint: Option<usize>,
+) -> Result<usize, String> {
+    recalculate_checkpoint_crcs_with_progress(nes, file, start_checkpoint, |_, _| {})
+}
+
+/// Run a full headless playback of `file`, rewrite checkpoint screen CRCs,
+/// and report progress via callback as `(done, total)`.
+pub fn recalculate_checkpoint_crcs_with_progress<F>(
+    nes: &mut Nes,
+    file: &mut AutorunFile,
+    start_checkpoint: Option<usize>,
+    mut on_progress: F,
+) -> Result<usize, String>
+where
+    F: FnMut(usize, usize),
+{
+    let (start_frame, first_checkpoint_idx) = if let Some(cp_idx) = start_checkpoint {
+        let cp = file
+            .checkpoints
+            .get(cp_idx)
+            .ok_or_else(|| format!("Checkpoint index {cp_idx} out of range"))?;
+        let state = SaveState::from_bytes(&cp.state_bytes)
+            .map_err(|e| format!("Failed to deserialize checkpoint {cp_idx} state: {e}"))?;
+        nes.load_state(&state)
+            .map_err(|e| format!("Failed to load checkpoint {cp_idx} state: {e}"))?;
+        (cp.frame_index as usize + 1, cp_idx + 1)
+    } else {
+        (0, 0)
+    };
+
+    let mut frame_idx = start_frame;
+    let mut cp_idx = first_checkpoint_idx;
+    let mut updated = 0usize;
+    let total_to_update = file.checkpoints.len().saturating_sub(first_checkpoint_idx);
+
+    for frame in file.frames.iter().skip(start_frame) {
+        nes.set_joypad_button_states(1, frame.player1);
+        nes.set_joypad_button_states(2, frame.player2);
+
+        run_one_frame(nes);
+
+        while cp_idx < file.checkpoints.len() && file.checkpoints[cp_idx].frame_index as usize == frame_idx
+        {
+            let actual_crc = nes.ppu().borrow().screen_buffer().crc32();
+            file.checkpoints[cp_idx].screen_crc = actual_crc;
+            updated += 1;
+            on_progress(updated, total_to_update);
+            cp_idx += 1;
+        }
+
+        frame_idx += 1;
+    }
+
+    Ok(updated)
+}
+
 /// Emulate the NES until the PPU signals a completed frame, then clear the flag.
 #[allow(dead_code)]
 fn run_one_frame(nes: &mut Nes) {
@@ -277,5 +340,84 @@ mod tests {
         // checkpoint at frame 300 (index 1) should be verified once.
         assert_eq!(result.total_checkpoints_verified, 1);
         assert_eq!(result.crc_mismatches, 0);
+    }
+
+    #[test]
+    fn test_recalculate_checkpoint_crcs_updates_mismatching_checkpoint_crc() {
+        let rom = minimal_nrom_rom();
+        let mut nes = make_nes_with_cart(&rom);
+
+        run_nes_frames(&mut nes, 1);
+        let state_after_1 = nes.save_state();
+        let state_bytes = state_after_1.to_bytes().expect("serialize state");
+
+        let mut file = AutorunFile {
+            version: AUTORUN_VERSION,
+            frames: vec![AutorunFrame {
+                player1: 0,
+                player2: 0,
+            }],
+            checkpoints: vec![AutorunCheckpoint {
+                frame_index: 0,
+                screen_crc: 0xDEADBEEF,
+                state_bytes,
+            }],
+        };
+
+        nes.reset(false);
+        let updated = recalculate_checkpoint_crcs(&mut nes, &mut file, None)
+            .expect("recalculation succeeds");
+
+        assert_eq!(updated, 1);
+        assert_ne!(file.checkpoints[0].screen_crc, 0xDEADBEEF);
+    }
+
+    #[test]
+    fn test_recalculate_checkpoint_crcs_reports_progress_for_each_checkpoint() {
+        let rom = minimal_nrom_rom();
+        let mut nes = make_nes_with_cart(&rom);
+
+        run_nes_frames(&mut nes, 1);
+        let state_after_1 = nes.save_state();
+        let state_bytes = state_after_1.to_bytes().expect("serialize state");
+
+        let mut file = AutorunFile {
+            version: AUTORUN_VERSION,
+            frames: vec![
+                AutorunFrame {
+                    player1: 0,
+                    player2: 0,
+                },
+                AutorunFrame {
+                    player1: 0,
+                    player2: 0,
+                },
+            ],
+            checkpoints: vec![
+                AutorunCheckpoint {
+                    frame_index: 0,
+                    screen_crc: 0,
+                    state_bytes: state_bytes.clone(),
+                },
+                AutorunCheckpoint {
+                    frame_index: 1,
+                    screen_crc: 0,
+                    state_bytes,
+                },
+            ],
+        };
+
+        nes.reset(false);
+        let mut progress = Vec::new();
+        let updated = recalculate_checkpoint_crcs_with_progress(
+            &mut nes,
+            &mut file,
+            None,
+            |done, total| progress.push((done, total)),
+        )
+        .expect("recalculation succeeds");
+
+        assert_eq!(updated, 2);
+        assert_eq!(progress, vec![(1, 2), (2, 2)]);
     }
 }
