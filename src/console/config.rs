@@ -3840,7 +3840,10 @@ filter=invalid-shader
 
     #[test]
     fn test_cli_recalculate_autorun_equals_syntax_false() {
-        let args = vec!["neser".to_string(), "--recalculate-autorun=false".to_string()];
+        let args = vec![
+            "neser".to_string(),
+            "--recalculate-autorun=false".to_string(),
+        ];
         let config = parse_config(args);
         assert!(!config.autorun_recalculate);
     }

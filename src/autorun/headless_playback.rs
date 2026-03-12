@@ -141,7 +141,8 @@ where
 
         run_one_frame(nes);
 
-        while cp_idx < file.checkpoints.len() && file.checkpoints[cp_idx].frame_index as usize == frame_idx
+        while cp_idx < file.checkpoints.len()
+            && file.checkpoints[cp_idx].frame_index as usize == frame_idx
         {
             let actual_crc = nes.ppu().borrow().screen_buffer().crc32();
             file.checkpoints[cp_idx].screen_crc = actual_crc;
@@ -365,8 +366,8 @@ mod tests {
         };
 
         nes.reset(false);
-        let updated = recalculate_checkpoint_crcs(&mut nes, &mut file, None)
-            .expect("recalculation succeeds");
+        let updated =
+            recalculate_checkpoint_crcs(&mut nes, &mut file, None).expect("recalculation succeeds");
 
         assert_eq!(updated, 1);
         assert_ne!(file.checkpoints[0].screen_crc, 0xDEADBEEF);
@@ -409,13 +410,11 @@ mod tests {
 
         nes.reset(false);
         let mut progress = Vec::new();
-        let updated = recalculate_checkpoint_crcs_with_progress(
-            &mut nes,
-            &mut file,
-            None,
-            |done, total| progress.push((done, total)),
-        )
-        .expect("recalculation succeeds");
+        let updated =
+            recalculate_checkpoint_crcs_with_progress(&mut nes, &mut file, None, |done, total| {
+                progress.push((done, total))
+            })
+            .expect("recalculation succeeds");
 
         assert_eq!(updated, 2);
         assert_eq!(progress, vec![(1, 2), (2, 2)]);

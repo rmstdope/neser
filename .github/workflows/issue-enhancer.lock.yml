@@ -23,7 +23,7 @@
 #
 # Automatically enhances an issue by ensuring correct labeling and by applying github-issue-designer quality principles for outcome-oriented issue design.
 #
-# gh-aw-metadata: {"schema_version":"v1","frontmatter_hash":"c3e73976e4716b99f2644e5814682da563824de3cacb9937a7edc960fb5be6b7","compiler_version":"v0.53.6"}
+# gh-aw-metadata: {"schema_version":"v1","frontmatter_hash":"8ba3b072bba84b1a9a4567ae2bcf9de639ac94d9a835d18ed6944ab77ea7e868","compiler_version":"v0.53.6"}
 
 name: "Issue Enhancer"
 "on":
@@ -1342,3 +1342,4 @@ jobs:
           name: safe-output-items
           path: /tmp/safe-output-items.jsonl
           if-no-files-found: warn
+

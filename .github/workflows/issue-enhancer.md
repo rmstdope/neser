@@ -40,7 +40,6 @@ Use its guidance for structure, scope clarity, acceptance criteria quality, and 
 
 - **Issue Number**: ${{ github.event.issue.number }}
 - **Repository**: ${{ github.repository }}
-- **Issue Labels**: ${{ toJson(github.event.issue.labels.*.name) }}
 - **Issue Content**:
 
   ```none

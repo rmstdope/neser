@@ -106,8 +106,7 @@ fn trim_autorun_checkpoints_for_rom(
 
 fn recalculate_autorun_for_rom(rom_path: &str) -> Result<String, String> {
     use autorun::{
-        autorun_path_for_rom,
-        headless_playback::recalculate_checkpoint_crcs_with_progress,
+        autorun_path_for_rom, headless_playback::recalculate_checkpoint_crcs_with_progress,
         load_autorun_file, save_autorun_file,
     };
     use cartridge::Cartridge;
@@ -124,7 +123,8 @@ fn recalculate_autorun_for_rom(rom_path: &str) -> Result<String, String> {
     }
 
     let mut file = load_autorun_file(&path)?;
-    let rom_bytes = fs::read(rom_path).map_err(|e| format!("Failed to read ROM {}: {e}", rom_path))?;
+    let rom_bytes =
+        fs::read(rom_path).map_err(|e| format!("Failed to read ROM {}: {e}", rom_path))?;
 
     let mut config = Config::default();
     config.ram_init_mode = RamInitMode::Zero;
@@ -137,11 +137,12 @@ fn recalculate_autorun_for_rom(rom_path: &str) -> Result<String, String> {
     nes.reset(false);
 
     let mut progress_printed = false;
-    let updated = recalculate_checkpoint_crcs_with_progress(&mut nes, &mut file, None, |done, total| {
-        progress_printed = true;
-        print!("\rRecalculating checkpoint CRC(s): {done}/{total}");
-        let _ = io::stdout().flush();
-    })?;
+    let updated =
+        recalculate_checkpoint_crcs_with_progress(&mut nes, &mut file, None, |done, total| {
+            progress_printed = true;
+            print!("\rRecalculating checkpoint CRC(s): {done}/{total}");
+            let _ = io::stdout().flush();
+        })?;
 
     if progress_printed {
         println!("\n");
