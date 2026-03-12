@@ -138,11 +138,9 @@ impl Mapper for Mapper314 {
                 self.regs[idx] = value;
                 changed = true;
             }
-        } else if addr >= 0x8000 {
-            if self.regs[3] != value {
-                self.regs[3] = value;
-                changed = true;
-            }
+        } else if addr >= 0x8000 && self.regs[3] != value {
+            self.regs[3] = value;
+            changed = true;
         }
 
         if changed {
