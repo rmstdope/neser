@@ -80,7 +80,7 @@ Before merging or committing to main, the following checkpoint shall pass:
 
 - Run `cargo clippy --all-targets --all-features -- -D warnings` and fix all warnings
 - Run `cargo fmt`
-- Run `cargo nextest --all-features --lib` and fix all warnings and ensure all tests pass
+- Run `cargo nextest run --all-features --lib` and fix all warnings and ensure all tests pass
 - Run `wasm-pack test --headless --chrome --features wasm` and fix all warnings and ensure all tests pass
 - Run `source .venv/bin/activate && python -m unittest discover -s scripts/mappertool -s scripts/scraper -s scripts -t . -p "test_*.py"` and ensure all tests pass
 - Run `npm test` and ensure all tests pass (if any tests exist)
