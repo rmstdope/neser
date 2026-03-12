@@ -316,6 +316,11 @@ impl AutorunState {
         self.total_checkpoints_verified
     }
 
+    /// Total number of checkpoints in the loaded autorun file.
+    pub fn total_checkpoints(&self) -> usize {
+        self.autorun.checkpoints.len()
+    }
+
     /// Get the autorun mode.
     pub fn mode(&self) -> AutorunMode {
         self.mode

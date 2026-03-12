@@ -27,6 +27,8 @@ class RomFileDatabase:
         "mapper",
         "submapper",
         "mapper_source",
+        "has_autorun",
+        "autorun_status",
         "is_valid",
         "parse_error",
     ]
@@ -55,8 +57,13 @@ class RomFileDatabase:
                     mapper=row.get("mapper", "").strip(),
                     submapper=row.get("submapper", "").strip(),
                     mapper_source=row.get("mapper_source", "").strip() or "header",
+                    has_autorun=(row.get("has_autorun", "0").strip() == "1"),
                     is_valid=(row.get("is_valid", "1").strip() != "0"),
                     parse_error=row.get("parse_error", "").strip(),
+                    autorun_status=self._normalize_autorun_status(
+                        row.get("autorun_status", ""),
+                        has_autorun=(row.get("has_autorun", "0").strip() == "1"),
+                    ),
                 )
 
         return records
@@ -79,16 +86,33 @@ class RomFileDatabase:
                         "mapper": record.mapper,
                         "submapper": record.submapper,
                         "mapper_source": record.mapper_source,
+                        "has_autorun": "1" if record.has_autorun else "0",
+                        "autorun_status": self._normalize_autorun_status(
+                            record.autorun_status,
+                            has_autorun=record.has_autorun,
+                        ),
                         "is_valid": "1" if record.is_valid else "0",
                         "parse_error": record.parse_error,
                     }
                 )
 
+    @staticmethod
+    def _normalize_autorun_status(raw_status: str, *, has_autorun: bool) -> str:
+        """Normalize persisted autorun status and apply fallback defaults."""
+
+        normalized = raw_status.strip().lower()
+        if not has_autorun:
+            return "na"
+        if normalized in {"not_run", "passed", "failed"}:
+            return normalized
+        return "not_run"
+
     def scan_and_update(
         self,
         rom_root: Path,
         rom_db_index: RomDbIndex,
-    ) -> tuple[dict[str, RomFileRecord], list[RomFileRecord], int, int, list[str]]:
+        should_cancel: callable | None = None,
+    ) -> tuple[dict[str, RomFileRecord], list[RomFileRecord], int, int, list[str], bool]:
         """Scan ROMs, append new ones, reconcile existing rows, return diagnostics."""
 
         records = self.load()
@@ -96,15 +120,28 @@ class RomFileDatabase:
         updated_records = 0
         invalid_marked = 0
         warnings: list[str] = []
+        was_cancelled = False
 
         if not rom_root.exists():
-            return records, new_records, updated_records, invalid_marked, [f"ROM root not found: {rom_root}"]
+            return (
+                records,
+                new_records,
+                updated_records,
+                invalid_marked,
+                [f"ROM root not found: {rom_root}"],
+                was_cancelled,
+            )
 
         for rom_path in sorted(path for path in rom_root.rglob("*") if path.suffix.lower() == ".nes"):
+            if should_cancel is not None and should_cancel():
+                was_cancelled = True
+                break
+
             if not rom_path.is_file():
                 continue
 
             relative_path = rom_path.relative_to(rom_root).as_posix()
+            has_autorun = rom_path.with_suffix(".autorun").is_file()
             existing = records.get(relative_path)
             if existing is not None and not existing.is_valid:
                 continue
@@ -124,8 +161,10 @@ class RomFileDatabase:
                     mapper="",
                     submapper="",
                     mapper_source="invalid",
+                    has_autorun=False,
                     is_valid=False,
                     parse_error=str(error),
+                    autorun_status="na",
                 )
                 if existing is None:
                     records[relative_path] = invalid_record
@@ -159,8 +198,13 @@ class RomFileDatabase:
                 mapper=str(mapper),
                 submapper="" if submapper is None else str(submapper),
                 mapper_source=mapper_source,
+                has_autorun=has_autorun,
                 is_valid=True,
                 parse_error="",
+                autorun_status=self._normalize_autorun_status(
+                    existing.autorun_status if existing is not None else "",
+                    has_autorun=has_autorun,
+                ),
             )
             if existing is None:
                 records[relative_path] = record
@@ -172,4 +216,4 @@ class RomFileDatabase:
         if new_records or updated_records or invalid_marked:
             self.save(records)
 
-        return records, new_records, updated_records, invalid_marked, warnings
+        return records, new_records, updated_records, invalid_marked, warnings, was_cancelled

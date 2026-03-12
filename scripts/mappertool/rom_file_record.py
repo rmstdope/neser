@@ -14,5 +14,7 @@ class RomFileRecord:
     mapper: str
     submapper: str
     mapper_source: str
+    has_autorun: bool
     is_valid: bool
     parse_error: str
+    autorun_status: str
