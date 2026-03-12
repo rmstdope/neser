@@ -83,6 +83,7 @@ class RomFileDatabaseTests(unittest.TestCase):
             self.assertIsNotNone(record)
             assert record is not None
             self.assertTrue(record.has_autorun)
+            self.assertEqual(record.autorun_status, "not_run")
 
     def test_scan_reconciles_existing_row_to_override(self) -> None:
         """Existing rows are updated when rom_db overrides become available."""
@@ -121,11 +122,30 @@ class RomFileDatabaseTests(unittest.TestCase):
             self.assertEqual(record.mapper, "9")
             self.assertEqual(record.submapper, "4")
             self.assertEqual(record.mapper_source, "rom_db_override")
+            self.assertEqual(record.autorun_status, "na")
             self.assertEqual(len(new_records), 0)
             self.assertEqual(updated_records, 1)
             self.assertEqual(invalid_marked, 0)
             self.assertEqual(warnings, [])
             self.assertFalse(was_cancelled)
+
+    def test_load_legacy_rows_default_autorun_status_from_has_autorun(self) -> None:
+        """Legacy CSV rows without autorun_status get sane defaults when loaded."""
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            temp_root = Path(temp_dir_str)
+            db_path = temp_root / "rom_files.csv"
+            db_path.write_text(
+                "rom_path,crc,header_mapper,header_submapper,mapper,submapper,mapper_source,has_autorun,is_valid,parse_error\n"
+                "with_autorun.nes,AAAA0001,1,,1,,header,1,1,\n"
+                "without_autorun.nes,BBBB0002,1,,1,,header,0,1,\n",
+                encoding="utf-8",
+            )
+
+            records = RomFileDatabase(db_path).load()
+
+            self.assertEqual(records["with_autorun.nes"].autorun_status, "not_run")
+            self.assertEqual(records["without_autorun.nes"].autorun_status, "na")
 
     def test_invalid_rom_is_persisted_and_skipped_on_next_scan(self) -> None:
         """Invalid ROMs are stored as invalid entries and not reparsed later."""

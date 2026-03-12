@@ -28,6 +28,7 @@ class RomFileDatabase:
         "submapper",
         "mapper_source",
         "has_autorun",
+        "autorun_status",
         "is_valid",
         "parse_error",
     ]
@@ -59,6 +60,10 @@ class RomFileDatabase:
                     has_autorun=(row.get("has_autorun", "0").strip() == "1"),
                     is_valid=(row.get("is_valid", "1").strip() != "0"),
                     parse_error=row.get("parse_error", "").strip(),
+                    autorun_status=self._normalize_autorun_status(
+                        row.get("autorun_status", ""),
+                        has_autorun=(row.get("has_autorun", "0").strip() == "1"),
+                    ),
                 )
 
         return records
@@ -82,10 +87,25 @@ class RomFileDatabase:
                         "submapper": record.submapper,
                         "mapper_source": record.mapper_source,
                         "has_autorun": "1" if record.has_autorun else "0",
+                        "autorun_status": self._normalize_autorun_status(
+                            record.autorun_status,
+                            has_autorun=record.has_autorun,
+                        ),
                         "is_valid": "1" if record.is_valid else "0",
                         "parse_error": record.parse_error,
                     }
                 )
+
+    @staticmethod
+    def _normalize_autorun_status(raw_status: str, *, has_autorun: bool) -> str:
+        """Normalize persisted autorun status and apply fallback defaults."""
+
+        normalized = raw_status.strip().lower()
+        if not has_autorun:
+            return "na"
+        if normalized in {"not_run", "passed", "failed"}:
+            return normalized
+        return "not_run"
 
     def scan_and_update(
         self,
@@ -144,6 +164,7 @@ class RomFileDatabase:
                     has_autorun=False,
                     is_valid=False,
                     parse_error=str(error),
+                    autorun_status="na",
                 )
                 if existing is None:
                     records[relative_path] = invalid_record
@@ -180,6 +201,10 @@ class RomFileDatabase:
                 has_autorun=has_autorun,
                 is_valid=True,
                 parse_error="",
+                autorun_status=self._normalize_autorun_status(
+                    existing.autorun_status if existing is not None else "",
+                    has_autorun=has_autorun,
+                ),
             )
             if existing is None:
                 records[relative_path] = record

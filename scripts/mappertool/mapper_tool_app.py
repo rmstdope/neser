@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 import re
 import threading
-from typing import Any
+from typing import Any, Callable
 
 from rich.text import Text
 from textual.app import App, ComposeResult, ScreenStackError
@@ -111,7 +111,8 @@ class MapperToolApp(App[None]):
     }
 
     #drop-rescan-button,
-    #playback-all-button {
+    #playback-all-button,
+    #playback-not-run-button {
         height: auto;
     }
 
@@ -199,29 +200,35 @@ class MapperToolApp(App[None]):
             ("escape", "dismiss", "Close"),
         ]
 
-        def __init__(self, rom_path: str, has_autorun: bool) -> None:
+        def __init__(self, rom_path: str, has_autorun: bool, autorun_summary: str | None = None) -> None:
             super().__init__()
             self.rom_path = rom_path
             self.has_autorun = has_autorun
+            self.autorun_summary = autorun_summary
 
         def compose(self) -> ComposeResult:
             rom_name = Path(self.rom_path).name
             with Vertical(id="rom-command-dialog"):
                 yield Label(f"ROM Commands: {rom_name}")
+                if self.autorun_summary:
+                    yield Label(self.autorun_summary)
                 if self.has_autorun:
                     yield Button(
                         "Playback recording (headless)",
                         id="rom-command-playback-headless",
+                        variant="warning",
                         classes="rom-command-button",
                     )
                     yield Button(
                         "Playback recording (headed)",
                         id="rom-command-playback-headed",
+                        variant="warning",
                         classes="rom-command-button",
                     )
                     yield Button(
                         "Etended recording",
                         id="rom-command-extend",
+                        variant="warning",
                         classes="rom-command-button",
                     )
                     yield Button(
@@ -234,9 +241,15 @@ class MapperToolApp(App[None]):
                     yield Button(
                         "Create autorun recording",
                         id="rom-command-create",
+                        variant="warning",
                         classes="rom-command-button",
                     )
-                yield Button("Cancel", id="rom-command-cancel", classes="rom-command-button")
+                yield Button(
+                    "Cancel",
+                    id="rom-command-cancel",
+                    variant="warning",
+                    classes="rom-command-button",
+                )
 
         def on_button_pressed(self, event: Button.Pressed) -> None:
             if event.button.id == "rom-command-cancel":
@@ -342,7 +355,6 @@ class MapperToolApp(App[None]):
         self._autorun_cancel_requested = False
         self._autorun_run_modal: MapperToolApp.AutorunRunModal | None = None
         self._autorun_subprocess: asyncio.subprocess.Process | None = None
-        self._autorun_playback_results: dict[str, str] = {}
 
     def compose(self) -> ComposeResult:
         """Build top ROM/config panes and a bottom logs pane."""
@@ -353,14 +365,14 @@ class MapperToolApp(App[None]):
             with rom_pane:
                 with Horizontal(id="rom-filters"):
                     yield Input(
-                        placeholder="Mapper filter (comma separated)",
-                        id="mapper-filter-input",
-                        value=self._rom_mapper_filter_text,
-                    )
-                    yield Input(
                         placeholder="ROM name filter",
                         id="name-filter-input",
                         value=self._rom_name_filter,
+                    )
+                    yield Input(
+                        placeholder="Mapper filter (comma separated)",
+                        id="mapper-filter-input",
+                        value=self._rom_mapper_filter_text,
                     )
                 yield Checkbox(
                     "Show only ROMs with autorun files",
@@ -369,7 +381,7 @@ class MapperToolApp(App[None]):
                 )
                 rom_database = DataTable(id="rom-database")
                 rom_database.cursor_type = "row"
-                rom_database.add_columns("Map", "SMap", "ROM", "CRC", "Source")
+                rom_database.add_columns("Map", "SMap", "ROM", "Autorun", "CRC", "Source")
                 yield rom_database
 
             config_editor = Vertical(id="config-editor", classes="pane")
@@ -379,7 +391,16 @@ class MapperToolApp(App[None]):
                     yield Label("ROM Inventory")
                     yield Input(value=str(self.rom_root), id="rom-root-input")
                     yield Button("Drop and rescan", id="drop-rescan-button", variant="warning")
-                    yield Button("Playback All", id="playback-all-button", variant="warning")
+                    yield Button(
+                        "Playback All Recordings",
+                        id="playback-all-button",
+                        variant="warning",
+                    )
+                    yield Button(
+                        "Playback Not run",
+                        id="playback-not-run-button",
+                        variant="warning",
+                    )
 
         with Horizontal(id="bottom-panes"):
             logs_pane = Vertical(id="logs-pane", classes="pane")
@@ -391,6 +412,9 @@ class MapperToolApp(App[None]):
 
     def on_mount(self) -> None:
         """Load databases and scan for new ROM files at startup."""
+
+        with contextlib.suppress(NoMatches):
+            self.set_focus(self.query_one("#rom-database", DataTable))
 
         try:
             self.rom_db_index = RomDbIndex.from_csv(self.rom_db_csv_path)
@@ -414,27 +438,45 @@ class MapperToolApp(App[None]):
         self._rom_table_full_paths = []
         for record in self._sorted_rom_records():
             rom_table.add_row(
-                self._table_cell(record.mapper, record),
-                self._table_cell(record.submapper, record),
-                self._table_cell(self._rom_display_name(record.rom_path), record),
-                self._table_cell(record.crc, record),
-                self._table_cell(record.mapper_source, record),
+                self._table_cell(record.mapper),
+                self._table_cell(record.submapper),
+                self._table_cell(self._rom_display_name(record.rom_path)),
+                self._autorun_status_cell(record),
+                self._table_cell(record.crc),
+                self._table_cell(record.mapper_source),
             )
             self._rom_table_full_paths.append(record.rom_path)
         self._update_rom_table_summary(rom_table)
 
-    def _table_cell(self, value: str, record: RomFileRecord) -> str | Text:
-        """Return table cell renderable, highlighted for ROMs with autorun files."""
+    def _table_cell(self, value: str) -> str:
+        """Return plain table cell renderable."""
+
+        return value
+
+    @staticmethod
+    def _autorun_status_label(record: RomFileRecord) -> str:
+        """Return user-facing autorun status label for ROM table."""
 
         if not record.has_autorun:
-            return value
+            return "N/A"
+        if record.autorun_status == "passed":
+            return "PASS"
+        if record.autorun_status == "failed":
+            return "FAIL"
+        return "Not run"
 
-        playback_result = self._autorun_playback_results.get(record.rom_path)
-        if playback_result == "passed":
-            return Text(value, style="black on green")
-        if playback_result == "failed":
-            return Text(value, style="white on red")
-        return Text(value, style="black on yellow")
+    @classmethod
+    def _autorun_status_cell(cls, record: RomFileRecord) -> str | Text:
+        """Return autorun status cell with dedicated status highlighting."""
+
+        label = cls._autorun_status_label(record)
+        if label == "PASS":
+            return Text(label, style="black on green")
+        if label == "FAIL":
+            return Text(label, style="white on red")
+        if label == "Not run":
+            return Text(label, style="black on grey70")
+        return label
 
     @staticmethod
     def _rom_filename(rom_path: str) -> str:
@@ -476,7 +518,7 @@ class MapperToolApp(App[None]):
     def _column_label(column_index: int) -> str:
         """Return short display label for ROM table columns."""
 
-        labels = ["Map", "SMap", "ROM", "CRC", "Source"]
+        labels = ["Map", "SMap", "ROM", "Autorun", "CRC", "Source"]
         if 0 <= column_index < len(labels):
             return labels[column_index]
         return f"Col{column_index}"
@@ -552,6 +594,9 @@ class MapperToolApp(App[None]):
         if column_index == 2:
             return (0, self._rom_filename(record.rom_path).casefold())
         if column_index == 3:
+            order = {"na": 0, "not_run": 1, "failed": 2, "passed": 3}
+            return (0, order.get(record.autorun_status, 1))
+        if column_index == 4:
             return (0, record.crc.casefold())
         return (0, record.mapper_source.casefold())
 
@@ -636,6 +681,14 @@ class MapperToolApp(App[None]):
             )
             return
 
+        if event.button.id == "playback-not-run-button":
+            self.run_worker(
+                self._playback_not_run_autorun_files(),
+                group="playback-not-run",
+                exclusive=True,
+            )
+            return
+
     def on_data_table_header_selected(self, event: DataTable.HeaderSelected) -> None:
         """Toggle sorting for the selected ROM table column header."""
 
@@ -667,7 +720,77 @@ class MapperToolApp(App[None]):
         if record is None:
             return
 
-        self.push_screen(self.RomCommandModal(rom_path, record.has_autorun))
+        self.push_screen(
+            self.RomCommandModal(
+                rom_path,
+                record.has_autorun,
+                self._autorun_summary_for_record(record),
+            )
+        )
+
+    @classmethod
+    def _autorun_last_run_label(cls, status: str) -> str:
+        """Return display label for persisted autorun status values."""
+
+        normalized = status.strip().lower()
+        if normalized == "passed":
+            return "PASS"
+        if normalized == "failed":
+            return "FAIL"
+        if normalized == "not_run":
+            return "Not run"
+        return "N/A"
+
+    def _autorun_summary_for_record(self, record: RomFileRecord) -> str | None:
+        """Build one-line autorun metadata summary for ROM command dialog."""
+
+        if not record.has_autorun:
+            return None
+
+        autorun_path = (self.rom_root / Path(record.rom_path)).with_suffix(".autorun")
+        frame_count, checkpoint_count = self._read_autorun_metadata(autorun_path)
+        length_text = str(frame_count) if frame_count is not None else "unknown"
+        checkpoint_text = str(checkpoint_count) if checkpoint_count is not None else "unknown"
+        last_run = self._autorun_last_run_label(record.autorun_status)
+
+        return (
+            f"Autorun: {length_text} frames, "
+            f"{checkpoint_text} CRCs, "
+            f"{last_run}"
+        )
+
+    @staticmethod
+    def _read_autorun_metadata(autorun_path: Path) -> tuple[int | None, int | None]:
+        """Read frame/checkpoint counts from autorun JSON (v2/v3), tolerating invalid files."""
+
+        try:
+            raw = json.loads(autorun_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None, None
+
+        if not isinstance(raw, dict):
+            return None, None
+
+        checkpoints_raw = raw.get("checkpoints")
+        checkpoint_count = len(checkpoints_raw) if isinstance(checkpoints_raw, list) else None
+
+        frames_raw = raw.get("frames")
+        if not isinstance(frames_raw, list):
+            return None, checkpoint_count
+
+        version_raw = raw.get("version")
+        if version_raw == 3:
+            frame_count = 0
+            for frame in frames_raw:
+                if not isinstance(frame, dict):
+                    return None, checkpoint_count
+                repeat_raw = frame.get("repeat")
+                if not isinstance(repeat_raw, int) or repeat_raw < 0:
+                    return None, checkpoint_count
+                frame_count += repeat_raw
+            return frame_count, checkpoint_count
+
+        return len(frames_raw), checkpoint_count
 
     def handle_rom_command(self, rom_relative_path: str, command_id: str) -> None:
         """Dispatch selected ROM command from command dialog."""
@@ -723,25 +846,62 @@ class MapperToolApp(App[None]):
         playback_result = await self._run_autorun_command_with_status_modal(command, command_id)
         if command_id in {"rom-command-playback-headed", "rom-command-playback-headless"}:
             if playback_result in {"passed", "failed"}:
-                self._autorun_playback_results[rom_relative_path] = playback_result
+                self._set_record_autorun_status(rom_relative_path, playback_result)
         self._refresh_record_autorun_state(rom_relative_path)
 
     async def _playback_all_autorun_files(self) -> None:
         """Playback all discovered autorun files sequentially with progress status."""
 
-        autorun_records = sorted(
-            [record for record in self.rom_file_records.values() if record.has_autorun],
+        autorun_records = self._sorted_autorun_records(
+            lambda record: record.has_autorun,
+        )
+
+        await self._playback_record_set(
+            autorun_records,
+            title="Playback All",
+        )
+
+    async def _playback_not_run_autorun_files(self) -> None:
+        """Playback all discovered autorun files currently marked as not_run."""
+
+        autorun_records = self._sorted_autorun_records(
+            lambda record: record.has_autorun and record.autorun_status == "not_run",
+        )
+
+        await self._playback_record_set(
+            autorun_records,
+            title="Playback Not run",
+        )
+
+    def _sorted_autorun_records(
+        self,
+        predicate: Callable[[RomFileRecord], bool],
+    ) -> list[RomFileRecord]:
+        """Return sorted ROM records matching predicate for autorun batch operations."""
+
+        return sorted(
+            [record for record in self.rom_file_records.values() if predicate(record)],
             key=lambda record: record.rom_path.casefold(),
         )
 
-        if not autorun_records:
-            self._append_log("No autorun files found for Playback All")
+    async def _playback_record_set(
+        self,
+        records: list[RomFileRecord],
+        *,
+        title: str,
+    ) -> None:
+        """Playback selected ROM record set with per-file progress status."""
+
+        self._autorun_cancel_requested = False
+
+        if not records:
+            self._append_log(f"No autorun files found for {title}")
             return
 
-        total_records = len(autorun_records)
-        self._append_log(f"Playback All started for {total_records} autorun file(s)")
+        total_records = len(records)
+        self._append_log(f"{title} started for {total_records} autorun file(s)")
 
-        for index, record in enumerate(autorun_records, start=1):
+        for index, record in enumerate(records, start=1):
             if self._autorun_cancel_requested:
                 break
 
@@ -760,7 +920,7 @@ class MapperToolApp(App[None]):
             ]
             file_progress = f"{index}/{total_records}"
             status_context = f"File {file_progress}: {Path(record.rom_path).name}"
-            self._append_log(f"Playback All running ({file_progress}): {record.rom_path}")
+            self._append_log(f"{title} running ({file_progress}): {record.rom_path}")
             playback_result = await self._run_autorun_command_with_status_modal(
                 command,
                 "rom-command-playback-headless",
@@ -769,16 +929,16 @@ class MapperToolApp(App[None]):
             )
 
             if playback_result in {"passed", "failed"}:
-                self._autorun_playback_results[record.rom_path] = playback_result
+                self._set_record_autorun_status(record.rom_path, playback_result)
             self._refresh_record_autorun_state(record.rom_path)
 
             if self._autorun_cancel_requested:
                 break
 
         if self._autorun_cancel_requested:
-            self._append_log("Playback All cancelled")
+            self._append_log(f"{title} cancelled")
         else:
-            self._append_log("Playback All completed")
+            self._append_log(f"{title} completed")
 
     async def _run_autorun_command_with_status_modal(
         self,
@@ -907,9 +1067,15 @@ class MapperToolApp(App[None]):
             return
 
         has_autorun = (self.rom_root / Path(rom_relative_path)).with_suffix(".autorun").is_file()
+        next_autorun_status = existing.autorun_status
         if not has_autorun:
-            self._autorun_playback_results.pop(rom_relative_path, None)
-        if has_autorun != existing.has_autorun:
+            next_autorun_status = "na"
+        elif existing.has_autorun is False:
+            next_autorun_status = "not_run"
+        elif next_autorun_status not in {"not_run", "passed", "failed"}:
+            next_autorun_status = "not_run"
+
+        if has_autorun != existing.has_autorun or next_autorun_status != existing.autorun_status:
             self.rom_file_records[rom_relative_path] = RomFileRecord(
                 rom_path=existing.rom_path,
                 crc=existing.crc,
@@ -921,8 +1087,45 @@ class MapperToolApp(App[None]):
                 has_autorun=has_autorun,
                 is_valid=existing.is_valid,
                 parse_error=existing.parse_error,
+                autorun_status=next_autorun_status,
             )
             RomFileDatabase(self.rom_files_csv_path).save(self.rom_file_records)
+
+        try:
+            rom_table = self.query_one("#rom-database", DataTable)
+        except NoMatches:
+            return
+        self._populate_rom_table(rom_table)
+
+    def _set_record_autorun_status(self, rom_relative_path: str, status: str) -> None:
+        """Persist autorun playback status for one ROM and redraw table."""
+
+        existing = self.rom_file_records.get(rom_relative_path)
+        if existing is None:
+            return
+
+        normalized = status.strip().lower()
+        if normalized not in {"na", "not_run", "passed", "failed"}:
+            return
+        if normalized != "na" and not existing.has_autorun:
+            return
+        if normalized == existing.autorun_status:
+            return
+
+        self.rom_file_records[rom_relative_path] = RomFileRecord(
+            rom_path=existing.rom_path,
+            crc=existing.crc,
+            header_mapper=existing.header_mapper,
+            header_submapper=existing.header_submapper,
+            mapper=existing.mapper,
+            submapper=existing.submapper,
+            mapper_source=existing.mapper_source,
+            has_autorun=existing.has_autorun,
+            is_valid=existing.is_valid,
+            parse_error=existing.parse_error,
+            autorun_status=normalized,
+        )
+        RomFileDatabase(self.rom_files_csv_path).save(self.rom_file_records)
 
         try:
             rom_table = self.query_one("#rom-database", DataTable)

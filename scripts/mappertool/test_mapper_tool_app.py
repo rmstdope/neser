@@ -75,7 +75,7 @@ class MapperToolAppLayoutTests(unittest.TestCase):
                 await pilot.pause()
                 rom_table = app.query_one("#rom-database")
                 labels = [column.label.plain for column in rom_table.ordered_columns]
-                self.assertEqual(labels, ["Map", "SMap", "ROM", "CRC", "Source"])
+                self.assertEqual(labels, ["Map", "SMap", "ROM", "Autorun", "CRC", "Source"])
 
         asyncio.run(run_assertions())
 
@@ -104,6 +104,31 @@ class MapperToolAppLayoutTests(unittest.TestCase):
 
         asyncio.run(run_assertions())
 
+    def test_rom_filters_place_name_before_mapper(self) -> None:
+        """ROM filter row places ROM name input before mapper input."""
+
+        async def run_assertions() -> None:
+            app = MapperToolApp()
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                filters_row = app.query_one("#rom-filters")
+                child_ids = [child.id for child in filters_row.children]
+                self.assertEqual(child_ids, ["name-filter-input", "mapper-filter-input"])
+
+        asyncio.run(run_assertions())
+
+    def test_rom_table_has_initial_focus_on_mount(self) -> None:
+        """Application starts with ROM table focused instead of mapper filter input."""
+
+        async def run_assertions() -> None:
+            app = MapperToolApp()
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                rom_table = app.query_one("#rom-database", DataTable)
+                self.assertEqual(app.focused, rom_table)
+
+        asyncio.run(run_assertions())
+
     def test_config_pane_groups_rom_controls_under_rom_inventory_section(self) -> None:
         """Config pane groups ROM root input and rescan button under ROM Inventory section."""
 
@@ -115,8 +140,11 @@ class MapperToolAppLayoutTests(unittest.TestCase):
                 self.assertEqual(app.query_one("#rom-root-input").parent, section)
                 self.assertEqual(app.query_one("#drop-rescan-button").parent, section)
                 self.assertEqual(app.query_one("#playback-all-button").parent, section)
+                self.assertEqual(app.query_one("#playback-not-run-button").parent, section)
                 self.assertEqual(app.query_one("#drop-rescan-button", Button).variant, "warning")
                 self.assertEqual(app.query_one("#playback-all-button", Button).variant, "warning")
+                self.assertEqual(app.query_one("#playback-all-button", Button).label.plain, "Playback All Recordings")
+                self.assertEqual(app.query_one("#playback-not-run-button", Button).variant, "warning")
 
         asyncio.run(run_assertions())
 
@@ -506,6 +534,7 @@ class MapperToolAppLayoutTests(unittest.TestCase):
                     dialog = pushed[-1]
                     self.assertEqual(type(dialog).__name__, "RomCommandModal")
                     self.assertFalse(dialog.has_autorun)
+                    self.assertIsNone(dialog.autorun_summary)
 
             asyncio.run(run_assertions())
 
@@ -517,7 +546,10 @@ class MapperToolAppLayoutTests(unittest.TestCase):
             rom_root = temp_root / "roms"
             rom_root.mkdir(parents=True)
             (rom_root / "sample.nes").write_bytes(make_ines_rom(mapper=2, submapper=0))
-            (rom_root / "sample.autorun").write_text("{}", encoding="utf-8")
+            (rom_root / "sample.autorun").write_text(
+                '{"version":3,"frames":[{"player1":0,"player2":0,"repeat":12}],"checkpoints":[{"frame_index":11,"screen_crc":1,"state_bytes":[]}]}',
+                encoding="utf-8",
+            )
 
             rom_db_path = temp_root / "rom_db.csv"
             rom_db_path.write_text("# empty\n", encoding="utf-8")
@@ -542,11 +574,71 @@ class MapperToolAppLayoutTests(unittest.TestCase):
                     dialog = pushed[-1]
                     self.assertEqual(type(dialog).__name__, "RomCommandModal")
                     self.assertTrue(dialog.has_autorun)
+                    self.assertIsNotNone(dialog.autorun_summary)
+                    self.assertEqual(
+                        dialog.autorun_summary,
+                        "Autorun: 12 frames, 1 CRCs, Not run",
+                    )
 
             asyncio.run(run_assertions())
 
-    def test_rows_with_autorun_files_are_rendered_in_yellow(self) -> None:
-        """ROM rows with sibling .autorun files are highlighted in yellow."""
+    def test_row_selection_dialog_shows_last_run_pass_in_autorun_summary(self) -> None:
+        """ROM command dialog summary includes persisted last-run PASS status."""
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            temp_root = Path(temp_dir_str)
+            rom_root = temp_root / "roms"
+            rom_root.mkdir(parents=True)
+            (rom_root / "sample.nes").write_bytes(make_ines_rom(mapper=2, submapper=0))
+            (rom_root / "sample.autorun").write_text(
+                '{"version":2,"frames":[{"player1":0,"player2":0}],"checkpoints":[]}',
+                encoding="utf-8",
+            )
+
+            rom_db_path = temp_root / "rom_db.csv"
+            rom_db_path.write_text("# empty\n", encoding="utf-8")
+            rom_files_db_path = temp_root / "rom_files.csv"
+
+            async def run_assertions() -> None:
+                app = MapperToolApp(
+                    rom_db_csv_path=rom_db_path,
+                    rom_root=rom_root,
+                    rom_files_csv_path=rom_files_db_path,
+                )
+                pushed: list[object] = []
+                app.push_screen = lambda screen, callback=None: pushed.append(screen)  # type: ignore[method-assign]
+
+                async with app.run_test() as pilot:
+                    await pilot.pause()
+                    app._set_record_autorun_status("sample.nes", "passed")
+                    table = app.query_one("#rom-database", DataTable)
+                    app.on_data_table_row_selected(
+                        SimpleNamespace(data_table=table, cursor_row=0)
+                    )
+                    dialog = pushed[-1]
+                    self.assertEqual(
+                        dialog.autorun_summary,
+                        "Autorun: 1 frames, 0 CRCs, PASS",
+                    )
+
+            asyncio.run(run_assertions())
+
+    def test_rom_command_modal_button_variants_defined_in_source(self) -> None:
+        """ROM dialog source config keeps delete as error and other actions as warning."""
+
+        source = MapperToolApp.RomCommandModal.compose.__code__.co_consts
+        joined = " ".join(str(part) for part in source)
+        self.assertIn("rom-command-delete", joined)
+        self.assertIn("error", joined)
+        self.assertIn("rom-command-playback-headless", joined)
+        self.assertIn("rom-command-playback-headed", joined)
+        self.assertIn("rom-command-extend", joined)
+        self.assertIn("rom-command-create", joined)
+        self.assertIn("rom-command-cancel", joined)
+        self.assertIn("warning", joined)
+
+    def test_autorun_column_shows_not_run_in_grey_when_autorun_exists(self) -> None:
+        """Autorun column shows grey Not run when sibling .autorun exists but no playback result."""
 
         with tempfile.TemporaryDirectory() as temp_dir_str:
             temp_root = Path(temp_dir_str)
@@ -569,14 +661,15 @@ class MapperToolAppLayoutTests(unittest.TestCase):
                 async with app.run_test() as pilot:
                     await pilot.pause()
                     table = app.query_one("#rom-database", DataTable)
-                    row = table.get_row_at(0)
-                    self.assertTrue(all(isinstance(cell, Text) for cell in row))
-                    self.assertTrue(all("yellow" in str(cell.style) for cell in row))
+                    status_cell = table.get_row_at(0)[3]
+                    self.assertIsInstance(status_cell, Text)
+                    self.assertEqual(status_cell.plain, "Not run")
+                    self.assertIn("grey", str(status_cell.style))
 
             asyncio.run(run_assertions())
 
-    def test_rows_with_passed_autorun_playback_are_rendered_in_green(self) -> None:
-        """ROM rows become green when last autorun playback passed in this app session."""
+    def test_autorun_column_shows_pass_in_green_when_last_playback_passed(self) -> None:
+        """Autorun column shows PASS in green when persisted status is passed."""
 
         with tempfile.TemporaryDirectory() as temp_dir_str:
             temp_root = Path(temp_dir_str)
@@ -598,16 +691,17 @@ class MapperToolAppLayoutTests(unittest.TestCase):
                 )
                 async with app.run_test() as pilot:
                     await pilot.pause()
-                    app._autorun_playback_results["sample.nes"] = "passed"
+                    app._set_record_autorun_status("sample.nes", "passed")
                     table = app.query_one("#rom-database", DataTable)
-                    app._populate_rom_table(table)
-                    row = table.get_row_at(0)
-                    self.assertTrue(all("green" in str(cell.style) for cell in row))
+                    status_cell = table.get_row_at(0)[3]
+                    self.assertIsInstance(status_cell, Text)
+                    self.assertEqual(status_cell.plain, "PASS")
+                    self.assertIn("green", str(status_cell.style))
 
             asyncio.run(run_assertions())
 
-    def test_rows_with_failed_autorun_playback_are_rendered_in_red(self) -> None:
-        """ROM rows become red when last autorun playback failed in this app session."""
+    def test_autorun_column_shows_fail_in_red_when_last_playback_failed(self) -> None:
+        """Autorun column shows FAIL in red when persisted status is failed."""
 
         with tempfile.TemporaryDirectory() as temp_dir_str:
             temp_root = Path(temp_dir_str)
@@ -629,11 +723,40 @@ class MapperToolAppLayoutTests(unittest.TestCase):
                 )
                 async with app.run_test() as pilot:
                     await pilot.pause()
-                    app._autorun_playback_results["sample.nes"] = "failed"
+                    app._set_record_autorun_status("sample.nes", "failed")
                     table = app.query_one("#rom-database", DataTable)
-                    app._populate_rom_table(table)
-                    row = table.get_row_at(0)
-                    self.assertTrue(all("red" in str(cell.style) for cell in row))
+                    status_cell = table.get_row_at(0)[3]
+                    self.assertIsInstance(status_cell, Text)
+                    self.assertEqual(status_cell.plain, "FAIL")
+                    self.assertIn("red", str(status_cell.style))
+
+            asyncio.run(run_assertions())
+
+    def test_autorun_column_shows_na_without_autorun_file(self) -> None:
+        """Autorun column shows N/A with no highlight when no autorun file exists."""
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            temp_root = Path(temp_dir_str)
+            rom_root = temp_root / "roms"
+            rom_root.mkdir(parents=True)
+
+            (rom_root / "sample.nes").write_bytes(make_ines_rom(mapper=2, submapper=0))
+
+            rom_db_path = temp_root / "rom_db.csv"
+            rom_db_path.write_text("# empty\n", encoding="utf-8")
+            rom_files_db_path = temp_root / "rom_files.csv"
+
+            async def run_assertions() -> None:
+                app = MapperToolApp(
+                    rom_db_csv_path=rom_db_path,
+                    rom_root=rom_root,
+                    rom_files_csv_path=rom_files_db_path,
+                )
+                async with app.run_test() as pilot:
+                    await pilot.pause()
+                    table = app.query_one("#rom-database", DataTable)
+                    status_cell = table.get_row_at(0)[3]
+                    self.assertEqual(status_cell, "N/A")
 
             asyncio.run(run_assertions())
 
@@ -723,6 +846,44 @@ class MapperToolAppLayoutTests(unittest.TestCase):
                     self.assertTrue(
                         app_restarted.query_one("#autorun-only-filter", Checkbox).value
                     )
+
+            asyncio.run(run_assertions())
+
+    def test_autorun_status_persists_between_application_runs(self) -> None:
+        """Autorun PASS/FAIL status persists in ROM inventory between app restarts."""
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            temp_root = Path(temp_dir_str)
+            rom_root = temp_root / "roms"
+            rom_root.mkdir(parents=True)
+            (rom_root / "sample.nes").write_bytes(make_ines_rom(mapper=2, submapper=0))
+            (rom_root / "sample.autorun").write_text("{}", encoding="utf-8")
+
+            rom_db_path = temp_root / "rom_db.csv"
+            rom_db_path.write_text("# empty\n", encoding="utf-8")
+            rom_files_db_path = temp_root / "rom_files.csv"
+
+            async def run_assertions() -> None:
+                app = MapperToolApp(
+                    rom_db_csv_path=rom_db_path,
+                    rom_root=rom_root,
+                    rom_files_csv_path=rom_files_db_path,
+                )
+                async with app.run_test() as pilot:
+                    await pilot.pause()
+                    app._set_record_autorun_status("sample.nes", "passed")
+
+                restarted = MapperToolApp(
+                    rom_db_csv_path=rom_db_path,
+                    rom_root=rom_root,
+                    rom_files_csv_path=rom_files_db_path,
+                )
+                async with restarted.run_test() as pilot:
+                    await pilot.pause()
+                    table = restarted.query_one("#rom-database", DataTable)
+                    status_cell = table.get_row_at(0)[3]
+                    self.assertIsInstance(status_cell, Text)
+                    self.assertEqual(status_cell.plain, "PASS")
 
             asyncio.run(run_assertions())
 
@@ -886,6 +1047,19 @@ class MapperToolAppLayoutTests(unittest.TestCase):
         self.assertEqual(call_kwargs["group"], "playback-all")
         self.assertTrue(call_kwargs["exclusive"])
 
+    def test_playback_not_run_button_starts_batch_playback_worker(self) -> None:
+        """Playback Not run button dispatches a dedicated filtered playback worker."""
+
+        app = MapperToolApp()
+        app.run_worker = Mock()  # type: ignore[method-assign]
+
+        app.on_button_pressed(SimpleNamespace(button=SimpleNamespace(id="playback-not-run-button")))
+
+        app.run_worker.assert_called_once()
+        call_kwargs = app.run_worker.call_args.kwargs
+        self.assertEqual(call_kwargs["group"], "playback-not-run")
+        self.assertTrue(call_kwargs["exclusive"])
+
     def test_playback_all_runs_each_autorun_with_file_progress_context(self) -> None:
         """Playback All runs all autorun files and passes file progress context X/Y."""
 
@@ -940,8 +1114,152 @@ class MapperToolAppLayoutTests(unittest.TestCase):
                     self.assertEqual(captured_calls[1][2], "File 2/2: second.nes")
                     self.assertEqual(captured_calls[0][3], "Checkpoint: -")
                     self.assertIn("--playback-headless", captured_calls[0][0])
-                    self.assertEqual(app._autorun_playback_results.get("first.nes"), "passed")
-                    self.assertEqual(app._autorun_playback_results.get("second.nes"), "passed")
+                    self.assertEqual(app.rom_file_records["first.nes"].autorun_status, "passed")
+                    self.assertEqual(app.rom_file_records["second.nes"].autorun_status, "passed")
+
+            asyncio.run(run_assertions())
+
+    def test_playback_not_run_runs_only_not_run_autorun_files(self) -> None:
+        """Playback Not run runs only autorun records currently marked as not_run."""
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            temp_root = Path(temp_dir_str)
+            rom_root = temp_root / "roms"
+            rom_root.mkdir(parents=True)
+
+            (rom_root / "first.nes").write_bytes(make_ines_rom(mapper=1, submapper=0))
+            (rom_root / "first.autorun").write_text("{}", encoding="utf-8")
+            (rom_root / "second.nes").write_bytes(make_ines_rom(mapper=2, submapper=0))
+            (rom_root / "second.autorun").write_text("{}", encoding="utf-8")
+            (rom_root / "third.nes").write_bytes(make_ines_rom(mapper=3, submapper=0))
+            (rom_root / "third.autorun").write_text("{}", encoding="utf-8")
+
+            rom_db_path = temp_root / "rom_db.csv"
+            rom_db_path.write_text("# empty\n", encoding="utf-8")
+            rom_files_db_path = temp_root / "rom_files.csv"
+
+            async def run_assertions() -> None:
+                app = MapperToolApp(
+                    rom_db_csv_path=rom_db_path,
+                    rom_root=rom_root,
+                    rom_files_csv_path=rom_files_db_path,
+                )
+                captured_calls: list[tuple[list[str], str, str, str]] = []
+
+                async def fake_run(
+                    command: list[str],
+                    command_id: str,
+                    full_set_progress_status: str = "",
+                    current_file_progress_status: str = "",
+                ) -> str | None:
+                    captured_calls.append(
+                        (
+                            command,
+                            command_id,
+                            full_set_progress_status,
+                            current_file_progress_status,
+                        )
+                    )
+                    return "passed"
+
+                app._run_autorun_command_with_status_modal = fake_run  # type: ignore[method-assign]
+
+                async with app.run_test() as pilot:
+                    await pilot.pause()
+                    app._set_record_autorun_status("second.nes", "passed")
+                    app._set_record_autorun_status("third.nes", "failed")
+
+                    await app._playback_not_run_autorun_files()
+
+                    self.assertEqual(len(captured_calls), 1)
+                    self.assertEqual(captured_calls[0][2], "File 1/1: first.nes")
+                    self.assertIn("first.nes", captured_calls[0][0][-1])
+
+            asyncio.run(run_assertions())
+
+    def test_playback_not_run_can_restart_after_previous_cancel(self) -> None:
+        """A stale cancel flag from previous run does not block starting a new batch playback."""
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            temp_root = Path(temp_dir_str)
+            rom_root = temp_root / "roms"
+            rom_root.mkdir(parents=True)
+
+            (rom_root / "first.nes").write_bytes(make_ines_rom(mapper=1, submapper=0))
+            (rom_root / "first.autorun").write_text("{}", encoding="utf-8")
+
+            rom_db_path = temp_root / "rom_db.csv"
+            rom_db_path.write_text("# empty\n", encoding="utf-8")
+            rom_files_db_path = temp_root / "rom_files.csv"
+
+            async def run_assertions() -> None:
+                app = MapperToolApp(
+                    rom_db_csv_path=rom_db_path,
+                    rom_root=rom_root,
+                    rom_files_csv_path=rom_files_db_path,
+                )
+                call_count = 0
+
+                async def fake_run(
+                    command: list[str],
+                    command_id: str,
+                    full_set_progress_status: str = "",
+                    current_file_progress_status: str = "",
+                ) -> str | None:
+                    nonlocal call_count
+                    call_count += 1
+                    return "passed"
+
+                app._run_autorun_command_with_status_modal = fake_run  # type: ignore[method-assign]
+
+                async with app.run_test() as pilot:
+                    await pilot.pause()
+                    app._autorun_cancel_requested = True
+                    await app._playback_not_run_autorun_files()
+                    self.assertEqual(call_count, 1)
+
+            asyncio.run(run_assertions())
+
+    def test_playback_all_can_restart_after_previous_cancel(self) -> None:
+        """Playback All also starts normally even when previous run left cancel flag set."""
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            temp_root = Path(temp_dir_str)
+            rom_root = temp_root / "roms"
+            rom_root.mkdir(parents=True)
+
+            (rom_root / "first.nes").write_bytes(make_ines_rom(mapper=1, submapper=0))
+            (rom_root / "first.autorun").write_text("{}", encoding="utf-8")
+
+            rom_db_path = temp_root / "rom_db.csv"
+            rom_db_path.write_text("# empty\n", encoding="utf-8")
+            rom_files_db_path = temp_root / "rom_files.csv"
+
+            async def run_assertions() -> None:
+                app = MapperToolApp(
+                    rom_db_csv_path=rom_db_path,
+                    rom_root=rom_root,
+                    rom_files_csv_path=rom_files_db_path,
+                )
+                call_count = 0
+
+                async def fake_run(
+                    command: list[str],
+                    command_id: str,
+                    full_set_progress_status: str = "",
+                    current_file_progress_status: str = "",
+                ) -> str | None:
+                    nonlocal call_count
+                    call_count += 1
+                    return "passed"
+
+                app._run_autorun_command_with_status_modal = fake_run  # type: ignore[method-assign]
+
+                async with app.run_test() as pilot:
+                    await pilot.pause()
+                    app._autorun_cancel_requested = True
+                    await app._playback_all_autorun_files()
+                    self.assertEqual(call_count, 1)
 
             asyncio.run(run_assertions())
 

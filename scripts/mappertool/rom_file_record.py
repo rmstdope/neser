@@ -17,3 +17,4 @@ class RomFileRecord:
     has_autorun: bool
     is_valid: bool
     parse_error: str
+    autorun_status: str
