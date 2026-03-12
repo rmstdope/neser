@@ -41,6 +41,7 @@ prompts.txt
 # NESER user stuff
 neser.conf
 roms.sqlite
+mappertool_settings.json
 
 # wasm-bindgen output
 web/pkg/

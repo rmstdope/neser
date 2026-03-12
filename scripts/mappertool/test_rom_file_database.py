@@ -24,7 +24,7 @@ class RomFileDatabaseTests(unittest.TestCase):
             rom_files_db_path = temp_root / "rom_files.csv"
             db = RomFileDatabase(rom_files_db_path)
 
-            records, new_records, updated_records, invalid_marked, warnings = db.scan_and_update(
+            records, new_records, updated_records, invalid_marked, warnings, was_cancelled = db.scan_and_update(
                 rom_root,
                 RomDbIndex({}),
             )
@@ -35,6 +35,7 @@ class RomFileDatabaseTests(unittest.TestCase):
             self.assertEqual(updated_records, 0)
             self.assertEqual(invalid_marked, 0)
             self.assertEqual(warnings, [])
+            self.assertFalse(was_cancelled)
 
     def test_scan_applies_rom_db_override_to_new_record(self) -> None:
         """Scan uses rom_db.csv CRC override for mapper/submapper values."""
@@ -64,6 +65,26 @@ class RomFileDatabaseTests(unittest.TestCase):
             self.assertEqual(record.submapper, "3")
             self.assertEqual(record.mapper_source, "rom_db_override")
 
+    def test_scan_marks_record_when_corresponding_autorun_file_exists(self) -> None:
+        """Scan marks records with existing sibling .autorun files."""
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            temp_root = Path(temp_dir_str)
+            rom_root = temp_root / "roms"
+            rom_root.mkdir(parents=True)
+
+            (rom_root / "sample.nes").write_bytes(make_ines_rom(mapper=2, submapper=1))
+            (rom_root / "sample.autorun").write_text("{}", encoding="utf-8")
+
+            db = RomFileDatabase(temp_root / "rom_files.csv")
+            records, *_ = db.scan_and_update(rom_root, RomDbIndex({}))
+
+            record = records.get("sample.nes")
+            self.assertIsNotNone(record)
+            assert record is not None
+            self.assertTrue(record.has_autorun)
+            self.assertEqual(record.autorun_status, "not_run")
+
     def test_scan_reconciles_existing_row_to_override(self) -> None:
         """Existing rows are updated when rom_db overrides become available."""
 
@@ -90,7 +111,7 @@ class RomFileDatabaseTests(unittest.TestCase):
 
             db = RomFileDatabase(rom_files_db_path)
             index = RomDbIndex.from_csv(rom_db_path)
-            records, new_records, updated_records, invalid_marked, warnings = db.scan_and_update(
+            records, new_records, updated_records, invalid_marked, warnings, was_cancelled = db.scan_and_update(
                 rom_root,
                 index,
             )
@@ -101,10 +122,30 @@ class RomFileDatabaseTests(unittest.TestCase):
             self.assertEqual(record.mapper, "9")
             self.assertEqual(record.submapper, "4")
             self.assertEqual(record.mapper_source, "rom_db_override")
+            self.assertEqual(record.autorun_status, "na")
             self.assertEqual(len(new_records), 0)
             self.assertEqual(updated_records, 1)
             self.assertEqual(invalid_marked, 0)
             self.assertEqual(warnings, [])
+            self.assertFalse(was_cancelled)
+
+    def test_load_legacy_rows_default_autorun_status_from_has_autorun(self) -> None:
+        """Legacy CSV rows without autorun_status get sane defaults when loaded."""
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            temp_root = Path(temp_dir_str)
+            db_path = temp_root / "rom_files.csv"
+            db_path.write_text(
+                "rom_path,crc,header_mapper,header_submapper,mapper,submapper,mapper_source,has_autorun,is_valid,parse_error\n"
+                "with_autorun.nes,AAAA0001,1,,1,,header,1,1,\n"
+                "without_autorun.nes,BBBB0002,1,,1,,header,0,1,\n",
+                encoding="utf-8",
+            )
+
+            records = RomFileDatabase(db_path).load()
+
+            self.assertEqual(records["with_autorun.nes"].autorun_status, "not_run")
+            self.assertEqual(records["without_autorun.nes"].autorun_status, "na")
 
     def test_invalid_rom_is_persisted_and_skipped_on_next_scan(self) -> None:
         """Invalid ROMs are stored as invalid entries and not reparsed later."""
@@ -116,7 +157,7 @@ class RomFileDatabaseTests(unittest.TestCase):
             (rom_root / "broken.nes").write_bytes(b"not-a-valid-ines")
 
             db = RomFileDatabase(temp_root / "rom_files.csv")
-            records_first, _, _, invalid_marked_first, warnings_first = db.scan_and_update(
+            records_first, _, _, invalid_marked_first, warnings_first, cancelled_first = db.scan_and_update(
                 rom_root,
                 RomDbIndex({}),
             )
@@ -128,8 +169,9 @@ class RomFileDatabaseTests(unittest.TestCase):
             self.assertEqual(first_record.mapper_source, "invalid")
             self.assertEqual(invalid_marked_first, 1)
             self.assertTrue(any("Marked invalid ROM" in warning for warning in warnings_first))
+            self.assertFalse(cancelled_first)
 
-            records_second, _, updated_second, invalid_marked_second, warnings_second = db.scan_and_update(
+            records_second, _, updated_second, invalid_marked_second, warnings_second, cancelled_second = db.scan_and_update(
                 rom_root,
                 RomDbIndex({}),
             )
@@ -140,3 +182,32 @@ class RomFileDatabaseTests(unittest.TestCase):
             self.assertEqual(updated_second, 0)
             self.assertEqual(invalid_marked_second, 0)
             self.assertEqual(warnings_second, [])
+            self.assertFalse(cancelled_second)
+
+    def test_scan_honors_cancellation_callback(self) -> None:
+        """Scan stops early and reports cancellation when callback requests it."""
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            temp_root = Path(temp_dir_str)
+            rom_root = temp_root / "roms"
+            rom_root.mkdir(parents=True)
+            (rom_root / "a.nes").write_bytes(make_ines_rom(mapper=1, submapper=0))
+            (rom_root / "b.nes").write_bytes(make_ines_rom(mapper=2, submapper=0))
+
+            db = RomFileDatabase(temp_root / "rom_files.csv")
+
+            call_count = 0
+
+            def should_cancel() -> bool:
+                nonlocal call_count
+                call_count += 1
+                return call_count >= 2
+
+            records, _, _, _, _, was_cancelled = db.scan_and_update(
+                rom_root,
+                RomDbIndex({}),
+                should_cancel=should_cancel,
+            )
+
+            self.assertTrue(was_cancelled)
+            self.assertLessEqual(len(records), 1)
