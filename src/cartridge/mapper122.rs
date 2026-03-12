@@ -7,7 +7,6 @@
 use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
-const PRG_BANK_SIZE: usize = 32 * 1024;
 const CHR_BANK_SIZE: usize = 4 * 1024;
 
 pub struct Mapper122 {
@@ -25,7 +24,6 @@ impl Mapper122 {
             ..Default::default()
         };
         let mut base = BaseMapper::new(&ctx, capabilities);
-        base.configure_prg_banking(PRG_BANK_SIZE);
         base.configure_chr_banking(CHR_BANK_SIZE);
         let mut mapper = Self {
             base,
@@ -37,7 +35,6 @@ impl Mapper122 {
     }
 
     fn sync(&mut self) {
-        self.base.select_prg_page(0, 0);
         self.base.select_chr_page(0, self.chr_low_bank as i16);
         self.base.select_chr_page(1, self.chr_high_bank as i16);
     }
@@ -92,11 +89,13 @@ mod tests {
 
     const PRG_BANKS_32K: usize = 3;
     const CHR_BANKS_4K: usize = 11;
+    const PRG_BANK_SIZE_32K: usize = 32 * 1024;
+    const TEST_PRG_PATTERN_BYTE: u8 = 0x5A;
 
     fn make_mapper(mirroring: NametableLayout) -> Mapper122 {
         Mapper122::new(MapperContext::new_for_test(
             122,
-            banked_data(PRG_BANK_SIZE, PRG_BANKS_32K),
+            banked_data(PRG_BANK_SIZE_32K, PRG_BANKS_32K),
             banked_data(CHR_BANK_SIZE, CHR_BANKS_4K),
             mirroring,
         ))
@@ -106,7 +105,7 @@ mod tests {
     fn mapper_122_is_registered() {
         let result = create_mapper(MapperContext::new_for_test(
             122,
-            banked_data(PRG_BANK_SIZE, PRG_BANKS_32K),
+            banked_data(PRG_BANK_SIZE_32K, PRG_BANKS_32K),
             banked_data(CHR_BANK_SIZE, CHR_BANKS_4K),
             NametableLayout::Horizontal,
         ));
@@ -138,5 +137,21 @@ mod tests {
         mapper.write_prg(0x8000, 1);
         mapper.write_prg(0x8001, 2);
         assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
+    }
+
+    #[test]
+    fn prg_16kb_rom_is_mirrored_without_panic() {
+        let mut mapper = Mapper122::new(MapperContext::new_for_test(
+            122,
+            vec![TEST_PRG_PATTERN_BYTE; 16 * 1024],
+            banked_data(CHR_BANK_SIZE, CHR_BANKS_4K),
+            NametableLayout::Horizontal,
+        ));
+
+        mapper.write_prg(0x8000, 3);
+        mapper.write_prg(0x8001, 4);
+
+        assert_eq!(mapper.read_prg(0x8000), TEST_PRG_PATTERN_BYTE);
+        assert_eq!(mapper.read_prg(0xC000), TEST_PRG_PATTERN_BYTE);
     }
 }
