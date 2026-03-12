@@ -21,7 +21,7 @@ jobs:
       python: ${{ steps.filter.outputs.python }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Detect changed paths
         id: filter
         uses: dorny/paths-filter@v3
@@ -52,11 +52,11 @@ jobs:
     if: needs.changes.outputs.python == 'true'
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
-          python-version: '3.x'
+          python-version: "3.x"
       - name: Run Python tests
         run: python -m unittest discover -s scripts/mappertool -s scripts/scraper -s scripts -t . -p "test_*.py"
 
@@ -64,7 +64,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Cache Rust dependencies and build outputs
         uses: Swatinem/rust-cache@v2
       - name: Install SDL2
@@ -77,7 +77,7 @@ jobs:
     if: github.event_name == 'pull_request'
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Cache Rust dependencies and build outputs
         uses: Swatinem/rust-cache@v2
       - name: Install SDL2
@@ -92,7 +92,7 @@ jobs:
     if: github.event_name == 'push'
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Cache Rust dependencies and build outputs
         uses: Swatinem/rust-cache@v2
       - name: Install SDL2
@@ -106,7 +106,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Cache Rust dependencies and build outputs
         uses: Swatinem/rust-cache@v2
       - name: Setup wasm-pack
@@ -122,7 +122,7 @@ jobs:
     if: needs.changes.outputs.web == 'true'
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -138,7 +138,7 @@ jobs:
     if: needs.changes.outputs.web_integration == 'true'
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Cache Rust dependencies and build outputs
         uses: Swatinem/rust-cache@v2
       - name: Setup Node.js
