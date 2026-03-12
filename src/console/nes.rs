@@ -283,6 +283,12 @@ impl Nes {
         self.bus.borrow_mut().reset(soft_reset, ram_init_mode);
         self.cpu_mut().reset(soft_reset);
 
+        // Reinitialize DMC timer phase after CPU reset. The CPU reset runs 7
+        // internal cycles that clock the APU (including the DMC timer). On real
+        // hardware the timer effectively starts from its full period value once
+        // user code begins executing, so we restore it to the correct phase.
+        self.apu.borrow_mut().dmc_mut().reinit_timer_after_reset();
+
         if !soft_reset {
             self.start_trainer_if_present();
         }
@@ -1601,7 +1607,9 @@ mod tests {
     #[test]
     fn test_dmc_dma_stalls_cpu_on_sample_fetch() {
         // DMC DMA reads should stall the CPU (RDY low) for 1-4 cycles.
-        // With a 2-cycle NOP instruction, this means the first tick should cost 3-6 cycles.
+        // After set_enabled, there is a transfer_start_delay of 2-3 cycles
+        // before the DMA request becomes visible. Run enough ticks for the
+        // delay to expire and the stall to occur.
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
             Config::default(),
         ));
@@ -1613,7 +1621,7 @@ mod tests {
 
         // Configure DMC to play 1 byte starting at $C000, at the fastest rate.
         // The sample buffer starts empty, so the DMC should attempt a memory fetch
-        // immediately when the APU is clocked.
+        // once the transfer_start_delay expires.
         {
             let mut apu = nes.apu.borrow_mut();
             apu.dmc_mut().write_flags_and_rate(0x0F);
@@ -1622,11 +1630,23 @@ mod tests {
             apu.write_enable(0x10);
         }
 
-        let cpu_cycles = nes.run_cpu_tick();
+        // Run up to 4 CPU ticks; at least one should show the DMA stall
+        let mut found_stall = false;
+        for _ in 0..4 {
+            let cpu_cycles = nes.run_cpu_tick();
+            if cpu_cycles > 2 {
+                found_stall = true;
+                assert!(
+                    (3..=6).contains(&cpu_cycles),
+                    "expected DMC DMA stalling to add 1-4 cycles to a 2-cycle NOP; got {cpu_cycles}"
+                );
+                break;
+            }
+        }
 
         assert!(
-            (3..=6).contains(&cpu_cycles),
-            "expected DMC DMA stalling to add 1-4 cycles to a 2-cycle NOP; got {cpu_cycles}"
+            found_stall,
+            "expected DMC DMA stall within 4 CPU ticks after enabling DMC"
         );
     }
 

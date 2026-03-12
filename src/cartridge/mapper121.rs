@@ -124,37 +124,30 @@ impl Mapper for Mapper121 {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
-        if (0x5000..=0x5FFF).contains(&addr) {
-            self.ex_regs[4] = Self::LOOKUP[(value & 0x03) as usize];
-
-            if (addr & 0x5180) == 0x5180 {
-                self.ex_regs[3] = value;
-            }
-            return;
-        }
-        if addr < 0x8000 {
-            self.mmc3.write_prg(addr, value);
-            return;
-        }
-
-        if addr < 0xA000 {
-            if (addr & 0x03) == 0x03 {
-                self.ex_regs[5] = value;
-                self.update_ex_regs();
-                self.mmc3.write_prg(0x8000, value);
-            } else if (addr & 0x01) != 0 {
-                self.ex_regs[6] = Self::reverse_low_6_bits(value);
-                if self.ex_regs[7] == 0 {
-                    self.update_ex_regs();
+        match addr {
+            0x5000..=0x5FFF => {
+                self.ex_regs[4] = Self::LOOKUP[(value & 0x03) as usize];
+                if (addr & 0x5180) == 0x5180 {
+                    self.ex_regs[3] = value;
                 }
-                self.mmc3.write_prg(0x8001, value);
-            } else {
-                self.mmc3.write_prg(0x8000, value);
             }
-            return;
+            0x8000..=0x9FFF => {
+                if (addr & 0x03) == 0x03 {
+                    self.ex_regs[5] = value;
+                    self.update_ex_regs();
+                    self.mmc3.write_prg(0x8000, value);
+                } else if (addr & 0x01) != 0 {
+                    self.ex_regs[6] = Self::reverse_low_6_bits(value);
+                    if self.ex_regs[7] == 0 {
+                        self.update_ex_regs();
+                    }
+                    self.mmc3.write_prg(0x8001, value);
+                } else {
+                    self.mmc3.write_prg(0x8000, value);
+                }
+            }
+            _ => self.mmc3.write_prg(addr, value),
         }
-
-        self.mmc3.write_prg(addr, value);
     }
 
     fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {

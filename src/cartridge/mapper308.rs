@@ -162,12 +162,9 @@ impl Mapper for Mapper308 {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
-        if (0xF000..=0xFFFF).contains(&addr) {
-            // Custom IRQ registers override the $F000–$FFFF range.
-            self.handle_irq_write(addr, value);
-        } else {
-            // Delegate all other writes to the inner VRC2b mapper.
-            self.inner.write_prg(addr, value);
+        match addr {
+            0xF000..=0xFFFF => self.handle_irq_write(addr, value),
+            _ => self.inner.write_prg(addr, value),
         }
     }
 
@@ -196,11 +193,9 @@ impl Mapper for Mapper308 {
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        let mut snapshot = Vec::new();
-        snapshot.push(self.irq_count_high);
-        snapshot.extend_from_slice(&self.irq_count_low.to_le_bytes());
+        let [lo, hi] = self.irq_count_low.to_le_bytes();
         let flags = (self.irq_enabled as u8) | ((self.irq_asserted as u8) << 1);
-        snapshot.push(flags);
+        let mut snapshot = vec![self.irq_count_high, lo, hi, flags];
         snapshot.extend(self.inner.registers_snapshot());
         snapshot
     }

@@ -218,7 +218,7 @@ mod tests {
     }
 
     #[test]
-    fn reset_maps_last_32k_prg_and_chr_bank_0() {
+    fn reset_maps_fixed_prg_windows_and_chr_bank_0_outside_wram_overlay() {
         let mut mapper = make_mapper();
         assert_eq!(mapper.read_prg(0x8000), 7);
         assert_eq!(mapper.read_prg(0xA000), 8);
