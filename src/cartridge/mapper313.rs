@@ -108,7 +108,14 @@ impl Mapper for Mapper313 {
         if !(0x8000..=0xFFFF).contains(&addr) {
             return self.mmc3.read_prg(addr);
         }
-        let inner_bank = self.mmc3.mapped_prg_bank(addr);
+        let page = self.mmc3.raw_prg_8k_page_number(addr) as usize;
+        // 0xFE/0xFF are MMC3 fixed-page sentinels: second-to-last (14) and last (15)
+        // within the 16-bank (0x0F + 1) slot assigned to each reset-counter value.
+        let inner_bank = match page {
+            0xFE => 14,
+            0xFF => 15,
+            n => n & PRG_INNER_BANK_MASK,
+        };
         let bank = self.outer_prg_bank(inner_bank);
         let offset = (addr as usize) & PRG_BANK_OFFSET_MASK;
         self.mmc3.read_prg_at_bank(bank, offset)
@@ -134,7 +141,13 @@ impl Mapper for Mapper313 {
 
     fn write_chr(&mut self, addr: u16, value: u8) {
         let inner_bank = self.mmc3.raw_chr_1k_bank(addr);
-        let bank = self.outer_chr_bank(inner_bank);
+        let mut bank = self.outer_chr_bank(inner_bank);
+        let chr_bank_count = self.mmc3.chr_bank_count_1k();
+        // When chr_bank_count is 0 the cartridge uses CHR-RAM; write_chr_1k_at
+        // handles RAM addressing internally, so no modulo-wrap is needed.
+        if chr_bank_count != 0 {
+            bank %= chr_bank_count;
+        }
         let offset = (addr as usize) & CHR_BANK_OFFSET_MASK;
         self.mmc3.write_chr_1k_at(bank, offset, value);
     }
