@@ -24,13 +24,6 @@ pub(crate) mod tests {
             }
         }
 
-        pub fn joypad_port2() -> Self {
-            Self {
-                port1: ControllerType::Joypad,
-                port2: ControllerType::Joypad,
-            }
-        }
-
         pub fn zapper() -> Self {
             Self {
                 port1: ControllerType::Joypad,
