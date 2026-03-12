@@ -25,5 +25,4 @@ mod tests {
         test_read_joy3_thorough_test,
         "roms/automated_tests/read_joy3/thorough_test.nes"
     );
-
 }
