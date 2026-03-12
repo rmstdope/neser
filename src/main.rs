@@ -126,8 +126,10 @@ fn recalculate_autorun_for_rom(rom_path: &str) -> Result<String, String> {
     let rom_bytes =
         fs::read(rom_path).map_err(|e| format!("Failed to read ROM {}: {e}", rom_path))?;
 
-    let mut config = Config::default();
-    config.ram_init_mode = RamInitMode::Zero;
+    let config = Config {
+        ram_init_mode: RamInitMode::Zero,
+        ..Default::default()
+    };
     let app_context = AppContext::new_with_config(config);
 
     let cart = Cartridge::load_from_file(&rom_bytes, rom_path, app_context.clone())

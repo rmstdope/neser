@@ -135,6 +135,13 @@ pub enum InterruptKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DmaReadOutcome {
+    NoDma,
+    RetryRead,
+    ReturnValue(u8),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
 pub struct CpuRegisters {
     pub a: u8,
@@ -146,6 +153,10 @@ pub struct CpuRegisters {
 }
 
 impl Cpu {
+    fn is_controller_port_read(addr: u16) -> bool {
+        matches!(addr, 0x4016 | 0x4017)
+    }
+
     pub fn current_interrupt(&self) -> Option<InterruptKind> {
         self.interrupt_stack.last().copied()
     }
@@ -698,7 +709,9 @@ impl Cpu {
     /// 2. Dummy read cycle: CPU read is repeated (discarded), consumes _needDummyRead
     /// 3. Optional alignment cycle: if not on a "get" cycle, repeat read
     /// 4. Get cycle: actual DMC sample byte read
-    fn process_pending_dmc_dma(&mut self, read_address: u16) {
+    fn process_pending_dmc_dma(&mut self, read_address: u16) -> Option<u8> {
+        let mut observed_bus_value = None;
+
         // Loop until DMC DMA completes
         while self.dmc_dma_running {
             // Check if we're on a get cycle (even cycle count)
@@ -716,6 +729,10 @@ impl Cpu {
                     let value = self.bus.borrow_mut().read(addr, false);
                     self.after_cpu_cycle(false);
                     self.apu.borrow_mut().dmc_mut().complete_dma_read(value);
+
+                    if Self::is_controller_port_read(read_address) {
+                        observed_bus_value = Some(value);
+                    }
                 }
 
                 self.dmc_dma_running = false;
@@ -730,17 +747,19 @@ impl Cpu {
                 }
             }
         }
+
+        observed_bus_value
     }
 
     /// Process any pending DMA (OAM and/or DMC) during a CPU read cycle.
-    /// Returns true if DMA was processed and the read should be retried.
-    fn process_pending_dma(&mut self, read_address: u16) -> bool {
+    /// Returns a DMA read outcome indicating whether to retry the read or return a bus value.
+    fn process_pending_dma(&mut self, read_address: u16) -> DmaReadOutcome {
         // Check if OAM DMA is pending
         let oam_dma_pending = self.bus.borrow().oam_dma_pending();
         let dmc_dma_pending = self.cpu_visible_dmc_dma_pending();
 
         if !oam_dma_pending && !dmc_dma_pending {
-            return false;
+            return DmaReadOutcome::NoDma;
         }
 
         // Note: The caller (read()) has already called before_cpu_cycle().
@@ -756,9 +775,13 @@ impl Cpu {
             self.dmc_dma_need_halt = false;
 
             // Process remaining DMC DMA cycles
-            self.process_pending_dmc_dma(read_address);
+            let observed_bus_value = self.process_pending_dmc_dma(read_address);
 
-            return true;
+            if let Some(value) = observed_bus_value {
+                return DmaReadOutcome::ReturnValue(value);
+            }
+
+            return DmaReadOutcome::RetryRead;
         }
 
         // OAM DMA is pending (possibly with DMC collision)
@@ -772,7 +795,7 @@ impl Cpu {
             self.run_oam_dma_internal(page);
         }
 
-        true
+        DmaReadOutcome::RetryRead
     }
 
     /// Run OAM DMA internally (called from process_pending_dma or handle_oam_dma_if_pending).
@@ -924,9 +947,13 @@ impl Cpu {
             self.before_cpu_cycle(false);
 
             // Process any pending DMA (OAM and/or DMC)
-            if self.process_pending_dma(addr) {
-                // DMA was processed; retry the read from the beginning
-                continue;
+            match self.process_pending_dma(addr) {
+                DmaReadOutcome::NoDma => {}
+                DmaReadOutcome::RetryRead => {
+                    // DMA was processed; retry the read from the beginning
+                    continue;
+                }
+                DmaReadOutcome::ReturnValue(value) => return value,
             }
 
             let value = self.bus.borrow_mut().read(addr, is_dummy_read);
@@ -2896,16 +2923,7 @@ mod tests {
             Rc::clone(&apu),
         );
 
-        fake_cartridge(&mut cpu, &[0xA5]);
-
-        {
-            let mut apu = apu.borrow_mut();
-            apu.dmc_mut().write_sample_address(0x00);
-            apu.dmc_mut().write_sample_length(0x00);
-            apu.write_enable(0b0001_0000);
-            apu.dmc_mut().debug_set_transfer_start_delay(0);
-            apu.dmc_mut().debug_set_dma_pending(true);
-        }
+        setup_pending_dmc_dma_with_sample(&mut cpu, &apu, 0xA5);
 
         cpu.set_total_cycles(1);
         cpu.start_dmc_dma();
@@ -2930,6 +2948,52 @@ mod tests {
         assert!(
             !dmc_state.dma_pending,
             "cancelled DMC DMA should not remain pending after the discard"
+        );
+    }
+
+    #[test]
+    fn test_dmc_dma_overlap_4016_exercises_halt_and_dummy_cycles() {
+        let (ppu, apu, memory) = create_test_memory();
+        let mut cpu = Cpu::new(
+            TimingMode::Ntsc,
+            Rc::clone(&memory),
+            Rc::clone(&ppu),
+            Rc::clone(&apu),
+        );
+
+        setup_pending_dmc_dma_with_sample(&mut cpu, &apu, 0xA5);
+
+        cpu.set_total_cycles(0);
+        let before = cpu.get_total_cycles();
+
+        let _ = cpu.read(0x4016);
+
+        let after = cpu.get_total_cycles();
+        assert_eq!(
+            after - before,
+            3,
+            "DMC overlap on $4016 should consume halt + dummy + get cycles"
+        );
+    }
+
+    #[test]
+    fn test_dmc_dma_overlap_4017_get_cycle_returns_dmc_sample_value() {
+        let (ppu, apu, memory) = create_test_memory();
+        let mut cpu = Cpu::new(
+            TimingMode::Ntsc,
+            Rc::clone(&memory),
+            Rc::clone(&ppu),
+            Rc::clone(&apu),
+        );
+
+        setup_pending_dmc_dma_with_sample(&mut cpu, &apu, 0xA5);
+
+        cpu.set_total_cycles(0);
+        let value = cpu.read(0x4017);
+
+        assert_eq!(
+            value, 0xA5,
+            "On the DMC get cycle, $4017 should observe the DMC sample byte on the bus"
         );
     }
 
@@ -3380,6 +3444,21 @@ mod tests {
         let cartridge = Cartridge::from_parts(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         cpu.bus.borrow_mut().map_cartridge(cartridge);
+    }
+
+    fn setup_pending_dmc_dma_with_sample(
+        cpu: &mut Cpu,
+        apu: &Rc<RefCell<crate::apu::Apu>>,
+        sample_byte: u8,
+    ) {
+        fake_cartridge(cpu, &[sample_byte]);
+
+        let mut apu = apu.borrow_mut();
+        apu.dmc_mut().write_sample_address(0x00);
+        apu.dmc_mut().write_sample_length(0x00);
+        apu.write_enable(0b0001_0000);
+        apu.dmc_mut().debug_set_transfer_start_delay(0);
+        apu.dmc_mut().debug_set_dma_pending(true);
     }
 
     #[test]
