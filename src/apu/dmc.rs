@@ -112,7 +112,7 @@ impl Dmc {
 
         Dmc {
             tv_system,
-            timer: 0,
+            timer: timer_period.saturating_sub(1),
             timer_period,
             irq_enabled: false,
             loop_flag: false,
@@ -142,6 +142,17 @@ impl Dmc {
         *self = Self::new_with_tv_system(tv_system);
     }
 
+    /// Reinitialize the timer counter to the full period value.
+    ///
+    /// This is called after the CPU reset sequence completes. The CPU reset
+    /// runs 7 internal cycles that clock the APU, which would decrement the
+    /// timer away from its initial value. On real hardware (and in catch-up
+    /// emulators like Mesen), the timer effectively starts counting from the
+    /// full period when user code begins, so we restore it here.
+    pub fn reinit_timer_after_reset(&mut self) {
+        self.timer = self.timer_period.saturating_sub(1);
+    }
+
     /// Returns true if the DMC has a pending DMA request for the next sample byte.
     #[cfg(test)]
     pub fn dma_pending(&self) -> bool {
@@ -151,6 +162,11 @@ impl Dmc {
     /// Returns true if the CPU should service the pending DMA request this read cycle.
     pub fn cpu_dma_pending(&self) -> bool {
         self.dma_pending && !self.dma_pending_deferred
+    }
+
+    #[cfg(test)]
+    pub fn debug_timer(&self) -> u16 {
+        self.timer
     }
 
     #[cfg(test)]
@@ -207,6 +223,7 @@ impl Dmc {
                 DMC_RATE_TABLE_NTSC[rate_index]
             }
         };
+
         trace_apu!(2; "dmc write_flags_and_rate value=0x{:02X} irq_enabled={} loop={} rate_index={} period={}", value, self.irq_enabled, self.loop_flag, rate_index, self.timer_period);
 
         // If IRQ is disabled, clear the interrupt flag
@@ -632,16 +649,18 @@ mod tests {
         let mut dmc = Dmc::new();
         dmc.write_flags_and_rate(0b0000_1111); // Rate $F = period 54
 
-        assert_eq!(dmc.timer, 0);
+        // Timer starts at full period (rate 0 = 428-1 = 427), not at 0.
+        // write_flags_and_rate only changes the period, not the running counter.
+        assert_eq!(dmc.timer, 427);
         assert_eq!(dmc.timer_period, 54);
 
-        // First clock loads the timer
+        // First clock counts down from the initial timer value
         dmc.clock_timer();
-        assert_eq!(dmc.timer, 53);
+        assert_eq!(dmc.timer, 426);
 
-        // Subsequent clocks count down
+        // Subsequent clocks continue counting down
         dmc.clock_timer();
-        assert_eq!(dmc.timer, 52);
+        assert_eq!(dmc.timer, 425);
     }
 
     #[test]
@@ -803,6 +822,72 @@ mod tests {
         assert!(!dmc.silence_flag);
         assert_eq!(dmc.shift_register, 0xAA);
         assert_eq!(dmc.bits_remaining, 4);
+    }
+
+    #[test]
+    fn test_cold_start_timer_starts_at_full_period() {
+        // On real hardware the timer counter starts at the full period value
+        // so the first output-unit tick occurs after exactly `period` CPU cycles,
+        // not immediately on the first clock_timer() call.
+        let dmc = Dmc::new();
+        let expected_timer = DMC_RATE_TABLE_NTSC[0] - 1; // 428 - 1 = 427
+        assert_eq!(
+            dmc.debug_timer(),
+            expected_timer,
+            "timer should start at full period ({expected_timer}), not 0"
+        );
+    }
+
+    #[test]
+    fn test_reset_timer_starts_at_full_period() {
+        // After reset the timer phase should restart from full period,
+        // same as cold start.
+        let mut dmc = Dmc::new();
+        // Drain the timer partially
+        for _ in 0..10 {
+            dmc.clock_timer();
+        }
+        assert_ne!(dmc.debug_timer(), DMC_RATE_TABLE_NTSC[0] - 1);
+
+        dmc.reset();
+
+        let expected_timer = DMC_RATE_TABLE_NTSC[0] - 1;
+        assert_eq!(
+            dmc.debug_timer(),
+            expected_timer,
+            "after reset, timer should restart at full period ({expected_timer})"
+        );
+    }
+
+    #[test]
+    fn test_first_dmc_tick_occurs_after_full_period_cycles() {
+        // After cold start, the first output-unit tick must occur after
+        // exactly `period` clock_timer() calls, not on the first call.
+        let mut dmc = Dmc::new();
+        // Use the default rate 0 period (428 CPU cycles)
+        let period = DMC_RATE_TABLE_NTSC[0]; // 428
+
+        // Set up a non-silent shift register so we can observe output changes.
+        dmc.silence_flag = false;
+        dmc.shift_register = 0xFF; // all 1-bits -> will increment output_level
+        dmc.bits_remaining = 8;
+        dmc.output_level = 0;
+
+        // Clock (period - 1) times — timer should count down but NOT fire
+        for i in 0..(period - 1) {
+            dmc.clock_timer();
+            assert_eq!(
+                dmc.output_level, 0,
+                "output level should not change before full period (cycle {i})"
+            );
+        }
+
+        // On the period-th clock, timer reaches 0 and the output unit fires
+        dmc.clock_timer();
+        assert_eq!(
+            dmc.output_level, 2,
+            "output level should change on the {period}th cycle (full period)"
+        );
     }
 }
 
