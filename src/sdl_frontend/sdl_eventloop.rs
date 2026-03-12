@@ -629,17 +629,19 @@ impl SdlEventLoop {
         {
             let crc = nes.ppu().borrow().screen_buffer().crc32();
             if let Some(matched) = autorun_state.check_playback_checkpoint(crc) {
+                let current_frame = autorun_state.current_frame_index();
+                let total_frames = autorun_state.total_frames();
+                let current_checkpoint = autorun_state.total_checkpoints_verified();
+                let total_checkpoints = autorun_state.total_checkpoints();
                 if matched {
                     log_info(format!(
-                        "Autorun checkpoint CRC match (0x{:08X}) at frame {}",
-                        crc,
-                        autorun_state.current_frame_index().saturating_sub(1),
+                        "Autorun checkpoint CRC match (0x{:08X}) at frame {}/{}, checkpoint {}/{}",
+                        crc, current_frame, total_frames, current_checkpoint, total_checkpoints,
                     ));
                 } else {
                     log_info(format!(
-                        "Autorun checkpoint CRC MISMATCH at frame {}: got 0x{:08X}",
-                        autorun_state.current_frame_index().saturating_sub(1),
-                        crc,
+                        "Autorun checkpoint CRC MISMATCH at frame {}/{}, checkpoint {}/{}: got 0x{:08X}",
+                        current_frame, total_frames, current_checkpoint, total_checkpoints, crc,
                     ));
                 }
             }
