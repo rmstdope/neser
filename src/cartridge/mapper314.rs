@@ -1,4 +1,4 @@
-//! Mapper 314 – BMC-64IN1NOREPEATE (64-in-1 no-repeat multicart)
+//! Mapper 314 – BMC-64IN1NOREPEAT (64-in-1 no-repeat multicart)
 //!
 //! Specifications:
 //! - Primary source: NesDev wiki (unavailable due to Cloudflare 403 in this environment).
@@ -52,7 +52,7 @@ const MAPPER_NUMBER: u16 = 314;
 const PRG_BANK_SIZE_BYTES: usize = 16 * 1024;
 const CHR_BANK_SIZE_BYTES: usize = 8 * 1024;
 
-/// Mapper 314 – BMC-64IN1NOREPEATE
+/// Mapper 314 – BMC-64IN1NOREPEAT
 pub struct Mapper314 {
     base: BaseMapper,
     regs: [u8; 4],
@@ -130,12 +130,24 @@ impl Mapper for Mapper314 {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
+        let mut changed = false;
+
         if (0x5000..=0x5003).contains(&addr) {
-            self.regs[(addr & 0x03) as usize] = value;
+            let idx = (addr & 0x03) as usize;
+            if self.regs[idx] != value {
+                self.regs[idx] = value;
+                changed = true;
+            }
         } else if addr >= 0x8000 {
-            self.regs[3] = value;
+            if self.regs[3] != value {
+                self.regs[3] = value;
+                changed = true;
+            }
         }
-        self.apply_state();
+
+        if changed {
+            self.apply_state();
+        }
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -337,7 +349,7 @@ mod tests {
     }
 
     #[test]
-    fn reg0_bits_1_0_contribute_to_chr_bank() {
+    fn reg0_bits_2_1_contribute_to_chr_bank() {
         let mut mapper = make_mapper();
         // reg[0]=0x82 → bits[2:1] = 0x01 → (reg[0]>>1)&0x03 = (0x82>>1)&0x03 = 0x41&0x03 = 0x01
         // reg[2]=0 → CHR = (0<<2) | 0x01 = 1
