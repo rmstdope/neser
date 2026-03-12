@@ -92,6 +92,7 @@ When splitting larger work:
 - prefix titles with `Sub-issue (<parent-issue-number>):`
 - include parent linkage in body
 - ensure each sub-issue has independent acceptance criteria
+- try to link sub-issues to its parent using the gh extension `issue-child-add`, usage `gh issue-child-add <parent> <child>`
 
 ## Update Guidelines
 
