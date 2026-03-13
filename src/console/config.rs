@@ -897,7 +897,7 @@ impl Config {
                 self.controller_port1_explicit = true;
             } else {
                 eprintln!(
-                    "Warning: invalid value '{}' for '--controller-port1'; using default controller type.",
+                    "Warning: invalid value '{}' for '--controller-port1'; falling back to joypad.",
                     controller_port1
                 );
                 self.controller_port1 = ControllerType::Joypad;
@@ -910,7 +910,7 @@ impl Config {
                 self.controller_port2_explicit = true;
             } else {
                 eprintln!(
-                    "Warning: invalid value '{}' for '--controller-port2'; using default controller type.",
+                    "Warning: invalid value '{}' for '--controller-port2'; falling back to joypad.",
                     controller_port2
                 );
                 self.controller_port2 = ControllerType::Joypad;
@@ -2751,7 +2751,7 @@ mod tests {
     }
 
     #[test]
-    fn test_config_controller_port_flag_invalid_value_falls_back_to_default() {
+    fn test_config_controller_port_flag_invalid_value_falls_back_to_joypad() {
         let args = vec![
             "neser".to_string(),
             "--controller-port1=unknown".to_string(),
@@ -2762,7 +2762,7 @@ mod tests {
     }
 
     #[test]
-    fn test_config_controller_port_invalid_cli_value_overrides_config_file_to_default() {
+    fn test_config_controller_port_invalid_cli_value_overrides_config_file_to_joypad() {
         use std::io::Write;
         use tempfile::NamedTempFile;
 
