@@ -738,15 +738,12 @@ impl Cpu {
                     self.dmc_dma_phase = DmcDmaPhase::Aligning;
                 }
                 DmcDmaPhase::Aligning => {
-                    let on_get_cycle = self.total_cycles.is_multiple_of(2);
-                    if on_get_cycle {
-                        self.dmc_dma_phase = DmcDmaPhase::Reading;
-                    } else {
+                    if !self.total_cycles.is_multiple_of(2) {
                         self.before_cpu_cycle(false);
                         let _ = self.bus.borrow_mut().read(read_address, true);
                         self.after_cpu_cycle(false);
-                        self.dmc_dma_phase = DmcDmaPhase::Reading;
                     }
+                    self.dmc_dma_phase = DmcDmaPhase::Reading;
                 }
                 DmcDmaPhase::Reading => {
                     let dma_addr = {
@@ -816,14 +813,9 @@ impl Cpu {
             let observed_bus_value = self.process_pending_dmc_dma(read_address);
 
             if read_address == 0x4016 {
-                let Some(_) = observed_bus_value else {
+                if observed_bus_value.is_none() {
                     return DmaReadOutcome::RetryRead;
-                };
-
-                if single_byte_dmc_fetch && !skip_first_input_clock {
-                    return DmaReadOutcome::ReturnValue(halted_read_value);
                 }
-
                 return DmaReadOutcome::ReturnValue(halted_read_value);
             }
 
