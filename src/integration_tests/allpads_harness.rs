@@ -153,13 +153,14 @@ pub(crate) mod tests {
         total_frames: u32,
         capture_interval: u32,
     ) -> AllpadsResult {
-        let rom_data = std::fs::read(ALLPADS_ROM_PATH).expect("allpads.nes ROM should be readable");
+        let rom_data =
+            std::fs::read(ALLPADS_ROM_PATH).expect("allpads218.nes ROM should be readable");
         let cartridge = Cartridge::load_from_file(
             &rom_data,
             ALLPADS_ROM_PATH,
             crate::app_context::AppContext::new(),
         )
-        .expect("allpads.nes ROM should parse successfully");
+        .expect("allpads218.nes ROM should parse successfully");
 
         let config = Config {
             ram_init_mode: RamInitMode::Zero,
