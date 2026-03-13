@@ -5,7 +5,7 @@ pub(crate) mod tests {
     use crate::input::{Button, ControllerType};
     use crate::integration_tests::rom_test_runner::tests::run_nes_for_frames;
 
-    const ALLPADS_ROM_PATH: &str = "roms/automated_tests/allpads-r9/allpads.nes";
+    const ALLPADS_ROM_PATH: &str = "roms/automated_tests/allpads-r9/allpads218.nes";
 
     /// Controller configuration for a test scenario.
     #[derive(Debug, Clone)]
@@ -70,6 +70,64 @@ pub(crate) mod tests {
     pub(crate) struct FrameCapture {
         pub frame: u32,
         pub nametable_text: String,
+        pub nametable_raw: Vec<u8>,
+        pub oam_data: Vec<u8>,
+    }
+
+    /// Build a script that enters the controller test (A press+release at frames
+    /// 300/305) then presses the given button at frame 400.
+    #[allow(dead_code)]
+    pub(crate) fn script_enter_test_and_press(button: Button) -> Vec<ScriptEntry> {
+        vec![
+            ScriptEntry {
+                frame: 300,
+                actions: vec![InputAction::Button {
+                    port: 1,
+                    button: Button::A,
+                    pressed: true,
+                }],
+            },
+            ScriptEntry {
+                frame: 305,
+                actions: vec![InputAction::Button {
+                    port: 1,
+                    button: Button::A,
+                    pressed: false,
+                }],
+            },
+            ScriptEntry {
+                frame: 400,
+                actions: vec![InputAction::Button {
+                    port: 1,
+                    button,
+                    pressed: true,
+                }],
+            },
+        ]
+    }
+
+    /// Build a script that enters the controller test (A press+release at frames
+    /// 300/305) without pressing any additional button.
+    #[allow(dead_code)]
+    pub(crate) fn script_enter_test() -> Vec<ScriptEntry> {
+        vec![
+            ScriptEntry {
+                frame: 300,
+                actions: vec![InputAction::Button {
+                    port: 1,
+                    button: Button::A,
+                    pressed: true,
+                }],
+            },
+            ScriptEntry {
+                frame: 305,
+                actions: vec![InputAction::Button {
+                    port: 1,
+                    button: Button::A,
+                    pressed: false,
+                }],
+            },
+        ]
     }
 
     /// Result of running the allpads harness.
@@ -95,13 +153,14 @@ pub(crate) mod tests {
         total_frames: u32,
         capture_interval: u32,
     ) -> AllpadsResult {
-        let rom_data = std::fs::read(ALLPADS_ROM_PATH).expect("allpads.nes ROM should be readable");
+        let rom_data =
+            std::fs::read(ALLPADS_ROM_PATH).expect("allpads218.nes ROM should be readable");
         let cartridge = Cartridge::load_from_file(
             &rom_data,
             ALLPADS_ROM_PATH,
             crate::app_context::AppContext::new(),
         )
-        .expect("allpads.nes ROM should parse successfully");
+        .expect("allpads218.nes ROM should parse successfully");
 
         let config = Config {
             ram_init_mode: RamInitMode::Zero,
@@ -157,18 +216,36 @@ pub(crate) mod tests {
 
             if should_capture {
                 let base_addr = nes.base_nametable_addr();
-                let raw_text = nes.read_nametable_text(base_addr, 32 * 30);
-                let nametable_text = raw_text
-                    .as_bytes()
+                let nametable_raw = nes.read_nametable_raw(base_addr, 32 * 30);
+                // allpads218.nes tiles are ASCII - 0x20 (tile 0x21 = 'A', tile 0x10 = '0')
+                let nametable_text = nametable_raw
                     .chunks(32)
-                    .map(|chunk| String::from_utf8_lossy(chunk).trim_end().to_string())
+                    .map(|chunk| {
+                        chunk
+                            .iter()
+                            .map(|&b| {
+                                let ascii = b.wrapping_add(0x20);
+                                if (0x20..=0x7E).contains(&ascii) {
+                                    ascii as char
+                                } else {
+                                    ' '
+                                }
+                            })
+                            .collect::<String>()
+                            .trim_end()
+                            .to_string()
+                    })
                     .filter(|s| !s.is_empty())
                     .collect::<Vec<_>>()
                     .join("\n");
 
+                let oam_data = nes.ppu().borrow().oam_snapshot();
+
                 captures.push(FrameCapture {
                     frame,
                     nametable_text,
+                    nametable_raw,
+                    oam_data,
                 });
             }
         }

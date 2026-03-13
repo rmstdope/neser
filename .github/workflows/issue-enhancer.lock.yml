@@ -23,7 +23,7 @@
 #
 # Automatically enhances an issue by ensuring correct labeling and by applying github-issue-designer quality principles for outcome-oriented issue design.
 #
-# gh-aw-metadata: {"schema_version":"v1","frontmatter_hash":"8ba3b072bba84b1a9a4567ae2bcf9de639ac94d9a835d18ed6944ab77ea7e868","compiler_version":"v0.53.6"}
+# gh-aw-metadata: {"schema_version":"v1","frontmatter_hash":"eaecdcd293f47312109d6b5909e16f78ef2d80d755163b7b41433782fd5189e3","compiler_version":"v0.53.6"}
 
 name: "Issue Enhancer"
 "on":
@@ -41,7 +41,7 @@ run-name: "Issue Enhancer"
 jobs:
   activation:
     needs: pre_activation
-    if: needs.pre_activation.outputs.activated == 'true'
+    if: (needs.pre_activation.outputs.activated == 'true') && (contains(github.event.issue.labels.*.name, 'enhanced') == false)
     runs-on: ubuntu-slim
     permissions:
       contents: read
@@ -1240,6 +1240,7 @@ jobs:
             await main();
 
   pre_activation:
+    if: contains(github.event.issue.labels.*.name, 'enhanced') == false
     runs-on: ubuntu-slim
     outputs:
       activated: ${{ steps.check_membership.outputs.is_team_member == 'true' }}
