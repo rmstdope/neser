@@ -167,7 +167,8 @@ impl Nes {
         let port2_explicit = config.controller_port2_explicit;
         drop(app_context); // Release borrow early
 
-        // Explicit user configuration always takes precedence over ROM DB auto-detection.
+        // If any controller port is explicitly configured, disable ROM DB auto-detection
+        // for all ports and apply configured values directly.
         if port1_explicit || port2_explicit {
             bus.set_controller_type(1, port1_type);
             bus.set_controller_type(2, port2_type);
