@@ -6,7 +6,7 @@
 //!
 //! Known Limitations:
 //! - PEC586Hack (PC display mode vs NES display mode) is not emulated.
-//! - 512KB custom PRG unscrambling for the NES-mode-disabled case is not implemented.
+//! - 512KB custom PRG unscrambling for the NES-mode-disabled case is only partially implemented (via `unscrambled_prg_index`/`read_prg_512k`) and may not match all hardware.
 
 use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
