@@ -95,6 +95,16 @@ const CLI_FLAGS: &[CliFlag] = &[
         help: Some("Debugger window opacity: 0.1 (transparent) to 1.0 (opaque, default: 0.7)"),
         has_value: true,
     },
+    CliFlag {
+        flag: "--controller-port1",
+        help: Some("Controller type for port 1: joypad, zapper, arkanoid"),
+        has_value: true,
+    },
+    CliFlag {
+        flag: "--controller-port2",
+        help: Some("Controller type for port 2: joypad, zapper, arkanoid"),
+        has_value: true,
+    },
     // Aligned flags matching config file keys with same value ranges
     // Support both value-based (--audio true) and prefix negation (--no-audio, --disable-audio)
     CliFlag {
@@ -878,6 +888,34 @@ impl Config {
         // Debugger alpha
         if let Some(alpha) = Self::parse_f32_arg(args, "--debugger-alpha")? {
             self.debugger_alpha = alpha.clamp(0.1, 1.0);
+        }
+
+        // Controller ports
+        if let Some(controller_port1) = Self::parse_string_arg(args, "--controller-port1") {
+            if let Some(controller) = ControllerType::parse(&controller_port1) {
+                self.controller_port1 = controller;
+                self.controller_port1_explicit = true;
+            } else {
+                eprintln!(
+                    "Warning: invalid value '{}' for '--controller-port1'; using default controller type.",
+                    controller_port1
+                );
+                self.controller_port1 = ControllerType::Joypad;
+                self.controller_port1_explicit = false;
+            }
+        }
+        if let Some(controller_port2) = Self::parse_string_arg(args, "--controller-port2") {
+            if let Some(controller) = ControllerType::parse(&controller_port2) {
+                self.controller_port2 = controller;
+                self.controller_port2_explicit = true;
+            } else {
+                eprintln!(
+                    "Warning: invalid value '{}' for '--controller-port2'; using default controller type.",
+                    controller_port2
+                );
+                self.controller_port2 = ControllerType::Joypad;
+                self.controller_port2_explicit = false;
+            }
         }
 
         // RAM initialization mode
@@ -2667,6 +2705,91 @@ mod tests {
 
         assert_eq!(config.controller_port1, ControllerType::Joypad);
         assert!(!config.controller_port1_explicit);
+    }
+
+    #[test]
+    fn test_config_controller_port1_flag_zapper() {
+        let args = vec!["neser".to_string(), "--controller-port1=zapper".to_string()];
+        let config = parse_config(args);
+        assert_eq!(config.controller_port1, ControllerType::Zapper);
+    }
+
+    #[test]
+    fn test_config_controller_port1_flag_arkanoid() {
+        let args = vec![
+            "neser".to_string(),
+            "--controller-port1=arkanoid".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.controller_port1, ControllerType::Arkanoid);
+    }
+
+    #[test]
+    fn test_config_controller_port2_flag_zapper() {
+        let args = vec!["neser".to_string(), "--controller-port2=zapper".to_string()];
+        let config = parse_config(args);
+        assert_eq!(config.controller_port2, ControllerType::Zapper);
+    }
+
+    #[test]
+    fn test_config_controller_port_cli_overrides_config_file() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let content = "controller_port1=zapper\n";
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(content.as_bytes()).unwrap();
+
+        let args = vec![
+            "neser".to_string(),
+            "--config".to_string(),
+            file.path().to_string_lossy().to_string(),
+            "--controller-port1=joypad".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.controller_port1, ControllerType::Joypad);
+    }
+
+    #[test]
+    fn test_config_controller_port_flag_invalid_value_falls_back_to_default() {
+        let args = vec![
+            "neser".to_string(),
+            "--controller-port1=unknown".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.controller_port1, ControllerType::Joypad);
+        assert!(!config.controller_port1_explicit);
+    }
+
+    #[test]
+    fn test_config_controller_port_invalid_cli_value_overrides_config_file_to_default() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let content = "controller_port1=zapper\n";
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(content.as_bytes()).unwrap();
+
+        let args = vec![
+            "neser".to_string(),
+            "--config".to_string(),
+            file.path().to_string_lossy().to_string(),
+            "--controller-port1=unknown".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.controller_port1, ControllerType::Joypad);
+        assert!(!config.controller_port1_explicit);
+    }
+
+    #[test]
+    fn test_config_controller_port_flags_two_mouse_controllers_error() {
+        let args = vec![
+            "neser".to_string(),
+            "--controller-port1=zapper".to_string(),
+            "--controller-port2=arkanoid".to_string(),
+        ];
+        let result = config_new(args);
+        assert!(result.is_err());
     }
 
     #[test]
