@@ -515,12 +515,8 @@ mod tests {
         // 32KB PRG, 8KB CHR, initial vertical mirroring (value shouldn't matter)
         let prg_rom = vec![0u8; 0x8000];
         let chr_rom = vec![0u8; 0x2000];
-        let mut mapper = Mapper257::new(MapperContext::new_for_test(
-            257,
-            prg_rom,
-            chr_rom,
-            NametableLayout::Vertical,
-        ));
+        let mut mapper = create_mapper257(prg_rom, chr_rom, NametableLayout::Vertical)
+            .expect("failed to create mapper");
 
         // Take an initial snapshot and confirm it only contains the 8 register bytes.
         let snapshot = mapper.registers_snapshot();
