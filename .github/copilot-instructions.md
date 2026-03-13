@@ -105,6 +105,10 @@ Unit test should be of both black and white box variety. Black box tests should 
 
 Integration tests should cover end-to-end scenarios that validate the overall functionality of the emulator. These tests should simulate real-world usage and interactions, ensuring that all components work together as expected. Integration tests can include running actual NES ROMs and verifying their output against known good results, as well as testing the emulator's performance and stability under various conditions. Integration tests should always be defined against either a well known ROMs behaviour or specifications found on https://www.nesdev.org/wiki/.
 
+## Communication with user
+
+When asking questions to the user, always try to use the questions UI/tool with pre-defined answers. This makes communication more efficient and reduces the risk of misunderstandings. If the question cannot be answered with predefined options there also need to be a free text option to use.
+
 ## Repository-specific guidance
 
 - Project type: Rust NES emulator with two different frontends
