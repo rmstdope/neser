@@ -115,22 +115,16 @@ Each port can be independently configured in the configuration file or via the a
 
 ### Auto-Detection
 
-NESER automatically detects known paddle-based games by ROM CRC32 and configures the appropriate port **only if that specific port hasn't been explicitly configured**:
+NESER automatically detects known paddle-based games by ROM CRC32 and configures the appropriate port **only when neither controller port is explicitly configured**:
 
 - **Arkanoid** (CRC: 0x32FB0583) → Paddle on **port 2**
 - **PaddleTest3** (CRC: 0x47F9F410) → Paddle on **port 1**
 
-**Important**: Auto-detection respects explicit user configuration on a per-port basis. If you have explicitly configured the port that would be auto-detected (e.g., port 2 for Arkanoid), auto-detection for that port will be skipped and your configuration will be used instead. Other ports can still use auto-detection or their configured values.
+**Important**: Any explicit controller configuration (`controller_port1` and/or `controller_port2`, including CLI overrides) disables CRC-based auto-detection so your configured controllers are always used.
 
-When a known ROM is loaded and the target port hasn't been explicitly configured, you'll see a message like:
+When a known ROM is loaded and no controller ports are explicitly configured, you'll see a message like:
 ```
 Enabling Arkanoid paddle on port 2 for inserted cartridge
-```
-
-When a known ROM is loaded but the target port has explicit configuration, you'll see:
-```
-ROM detected as Arkanoid (port 2), but user has explicitly configured that port; keeping user configuration
-```
 ```
 
 ### Paddle Controller Input (SDL Frontend)
