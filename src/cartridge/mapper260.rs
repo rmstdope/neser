@@ -103,11 +103,11 @@ impl Mapper260 {
             if (self.ex_regs[0] & 0x0F) == 0x04 {
                 // 16 KiB mirror: slots 0,2 → page; slots 1,3 → page+1
                 let page = ((self.ex_regs[1] & 0x1F) as usize) << 1;
-                page | (slot & 0x01)
+                page + (slot & 0x01)
             } else {
                 // 32 KiB fixed: slot k → page+k
                 let page = ((self.ex_regs[1] & 0x1E) as usize) << 1;
-                page | slot
+                page + slot
             }
         } else {
             // Normal MMC3 mode with outer bank masking
