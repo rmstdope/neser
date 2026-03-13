@@ -57,14 +57,40 @@ mod tests {
         let config = ControllerConfig::joypad_port1();
         let result = run_allpads(&config, &[], 300, 0);
         let cap = &result.captures[0];
+        // NES-001 open-bus emulation: bits 4-1 of $4016/$4017 are grounded, so allpads
+        // identifies the console as NES-001 (not NES-101/dogbone). Controllers show as
+        // "NES CONTROLLER" (no dogbone replacement).
         assert!(
-            cap.nametable_text.contains("NES DOGBONE"),
-            "Controller display should show 'NES DOGBONE', got:\n{}",
+            cap.nametable_text.contains("NES"),
+            "Controller display should show 'NES', got:\n{}",
             cap.nametable_text
         );
         assert!(
             cap.nametable_text.contains("CONTROLLER"),
             "Controller display should show 'CONTROLLER', got:\n{}",
+            cap.nametable_text
+        );
+    }
+
+    /// Test that the allpads title screen shows a known console model (NES-001, NES-101,
+    /// or Family Computer), not "Unknown console". This verifies correct PPU latch open-bus
+    /// behavior: bits 7-5 of $4016/$4017 are open bus, bits 4-1 are grounded/driven on NES-001.
+    #[test]
+    fn allpads_console_probe_identifies_known_console_model() {
+        let config = ControllerConfig::joypad_port1();
+        // Capture title screen during first 200 frames (COLDBOOTTIME = 240)
+        let result = run_allpads(&config, &[], 100, 0);
+        let cap = &result.captures[0];
+        let known_models = ["NES-001", "NES-101", "Family Computer"];
+        let has_known_model = known_models.iter().any(|m| cap.nametable_text.contains(m));
+        assert!(
+            has_known_model,
+            "Console probe should identify a known model (NES-001, NES-101, or Family Computer), got:\n{}",
+            cap.nametable_text
+        );
+        assert!(
+            !cap.nametable_text.contains("Unknown console"),
+            "Console probe should NOT show 'Unknown console', got:\n{}",
             cap.nametable_text
         );
     }

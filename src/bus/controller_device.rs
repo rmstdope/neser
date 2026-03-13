@@ -24,10 +24,22 @@ impl BusDevice for ControllerDevice {
         let index = (addr - 0x4016) as usize;
 
         let controller_state = self.controllers[index].borrow_mut().read(is_dummy_read);
-        // Determine mask based on controller type.
-        // Joypad uses bit 0 (mask 0xFE), Arkanoid and Zapper controller uses bits 4-3 (mask 0xE7).
-        let is_mouse = self.controllers[index].borrow().input_type() == ControllerInput::Mouse;
-        let mask = if is_mouse { 0xE7 } else { 0xFE };
+        // Determine open-bus mask based on controller type.
+        // On NES-001 hardware, $4016/$4017 bits 7-5 float (open bus), bits 4-1 are
+        // grounded or driven by the 7-pin connector (treated as 0), and bit 0 is serial data.
+        // Arkanoid/Zapper controllers additionally drive bits 4 and 3 so keep bits 7-5,2,1
+        // from open bus (mask 0xE7). Mouse also uses bits 3-1.
+        let input_type = self.controllers[index].borrow().input_type();
+        let mask = if input_type == ControllerInput::Mouse {
+            0xE7
+        } else if input_type == ControllerInput::Gamepad {
+            // Bits 7-5 from open bus; bits 4-1 grounded (NES-001 behaviour).
+            0xE0
+        } else {
+            // Arkanoid, Zapper: bits 4 and 3 are driven by the peripheral,
+            // so keep bits 7-5 and bits 2-1 from open bus.
+            0xE7
+        };
         Some((open_bus & mask) | controller_state)
     }
 

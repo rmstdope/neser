@@ -516,9 +516,7 @@ mod tests {
         let prg_rom = vec![0u8; 0x8000];
         let chr_rom = vec![0u8; 0x2000];
         let mut mapper = create_mapper257(prg_rom, chr_rom, NametableLayout::Vertical)
-            .expect("failed to create mapper")
-            .downcast::<Mapper257>()
-            .expect("not a Mapper257");
+            .expect("failed to create mapper");
 
         // Take an initial snapshot and confirm it only contains the 8 register bytes.
         let snapshot = mapper.registers_snapshot();
