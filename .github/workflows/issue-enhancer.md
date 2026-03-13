@@ -6,6 +6,7 @@ on:
   issues:
     types: [opened]
   reaction: "eyes"
+if: "contains(github.event.issue.labels.*.name, 'enhanced') == false"
 permissions:
   contents: read
   issues: read
