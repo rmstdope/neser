@@ -109,6 +109,7 @@ use super::mapper251::Mapper251;
 use super::mapper254::Mapper254;
 use super::mapper255::Mapper255;
 use super::mapper257::Mapper257;
+use super::mapper260::Mapper260;
 use super::mapper287::Mapper287;
 use super::mapper288::Mapper288;
 use super::mapper291::Mapper291;
@@ -835,6 +836,7 @@ mapper_registry! {
     254 => Mapper254::new,
     255 => Mapper255::new,
     257 => Mapper257::new,
+    260 => Mapper260::new,
     292 => Mapper292::new,
     291 => Mapper291::new,
     294 => Mapper294::new,
