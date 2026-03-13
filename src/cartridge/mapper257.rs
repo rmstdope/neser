@@ -79,7 +79,7 @@ impl Mapper257 {
         let capabilities = MapperCapabilities {
             has_dynamic_mirroring: true,
             max_prg_ram_kb: 8,
-            prg_bank_size_kb: 16,
+            prg_bank_size_kb: 8,
             chr_bank_size_kb: 8,
             ..Default::default()
         };
