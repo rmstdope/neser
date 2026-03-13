@@ -62,3 +62,6 @@ test-results/
 
 # Agentic workflows
 .github/aw/logs
+
+# doit agent
+.doit
