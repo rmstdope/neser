@@ -227,10 +227,11 @@ impl Mapper for Mapper260 {
             }
             0x8000..=0xFFFF => {
                 if self.ex_regs[0] & 0x04 != 0 {
+                    // In outer-locked mode, latch the value into ex_regs[4]
+                    // while still forwarding the write to the underlying MMC3.
                     self.ex_regs[4] = value;
-                } else {
-                    self.mmc3.write_prg(addr, value);
                 }
+                self.mmc3.write_prg(addr, value);
             }
             _ => {}
         }
