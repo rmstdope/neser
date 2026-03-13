@@ -842,6 +842,8 @@ mapper_registry! {
     313 => Mapper313::new,
     314 => Mapper314::new,
 }
+
+#[allow(clippy::style)]
 #[cfg(test)]
 const SUPPORTED_MAPPERS: &[u16] = &[
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
