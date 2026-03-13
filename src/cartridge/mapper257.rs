@@ -200,12 +200,9 @@ impl Mapper for Mapper257 {
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        let mut v = self.reg.to_vec();
-        v.push(match self.base.mirroring() {
-            crate::cartridge::NametableLayout::Horizontal => 1,
-            _ => 0,
-        });
-        v
+        // Snapshot only the mapper's register state. Mirroring is derived from registers
+        // via `update_mirroring()` on restore, so we do not serialize it separately here.
+        self.reg.to_vec()
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
@@ -510,5 +507,33 @@ mod tests {
 
         assert_eq!(restored.read_prg(0x8000), 2, "Restored: $8000 = bank 2");
         assert_eq!(restored.read_prg(0xC000), 3, "Restored: $C000 = bank 3");
+    }
+    // existing tests above
+
+    #[test]
+    fn snapshot_and_restore_only_use_register_bytes() {
+        // 32KB PRG, 8KB CHR, initial vertical mirroring (value shouldn't matter)
+        let prg_rom = vec![0u8; 0x8000];
+        let chr_rom = vec![0u8; 0x2000];
+        let mut mapper = create_mapper257(prg_rom, chr_rom, NametableLayout::Vertical)
+            .expect("failed to create mapper")
+            .downcast::<Mapper257>()
+            .expect("not a Mapper257");
+
+        // Take an initial snapshot and confirm it only contains the 8 register bytes.
+        let snapshot = mapper.registers_snapshot();
+        assert_eq!(snapshot.len(), 8);
+
+        // Mutate registers via PRG writes that the mapper interprets as register writes.
+        mapper.write_prg(0x5000, 0x12);
+        mapper.write_prg(0x5100, 0x34);
+
+        // Restore from the original snapshot; this should restore reg[] and mirroring
+        // based solely on those 8 bytes.
+        mapper.restore_registers(&snapshot);
+
+        // After restore, the live snapshot should match the original snapshot bytes.
+        let snapshot_after = mapper.registers_snapshot();
+        assert_eq!(snapshot_after, snapshot);
     }
 }
