@@ -259,31 +259,21 @@ impl Mapper for Mapper260 {
         self.mmc3.load_wram_snapshot(data);
     }
 
+    fn registers_snapshot(&self) -> Vec<u8> {
         // Layout (version 0):
         // [ mmc3_snapshot..., ex_regs(5), locked(1), version(1), mmc3_len_le(2) ]
-        let mmc3_data = self.mmc3.registers_snapshot();
-        let mmc3_len = mmc3_data.len();
-
-        // ex_regs(5) + locked(1) + version(1) + length(2)
-        let overhead = self.ex_regs.len() + 1 + 1 + 2;
-        let mut snap = Vec::with_capacity(mmc3_len + overhead);
-
-        // MMC3 portion
-        snap.extend_from_slice(&mmc3_data);
-        // Mapper260-specific portion
         let mut snap = self.mmc3.registers_snapshot();
+        let mmc3_len = snap.len();
         snap.extend_from_slice(&self.ex_regs);
-        // Mapper260 snapshot version
-        snap.push(0); // version 0
-        // Store MMC3 snapshot length as u16 LE
-        let mmc3_len_u16 = mmc3_len as u16;
-        snap.push((mmc3_len_u16 & 0x00FF) as u8);
-        snap.push((mmc3_len_u16 >> 8) as u8);
-
         snap.push(u8::from(self.locked));
+        snap.push(0); // version 0
+        let mmc3_len_u16 = mmc3_len as u16;
+        snap.push((mmc3_len_u16 & 0xFF) as u8);
+        snap.push((mmc3_len_u16 >> 8) as u8);
         snap
     }
 
+    fn restore_registers(&mut self, data: &[u8]) {
         // Expected layout (version 0):
         // [ mmc3_snapshot..., ex_regs(5), locked(1), version(1), mmc3_len_le(2) ]
         const EX_REGS_LEN: usize = 5;
@@ -294,9 +284,8 @@ impl Mapper for Mapper260 {
         const MIN_TOTAL_LEN: usize = EX_REGS_LEN + LOCKED_LEN + FOOTER_LEN;
 
         if data.len() < MIN_TOTAL_LEN {
-            // Not enough data to contain mapper260-specific footer.
-        if data.len() < 6 {
             return;
+        }
 
         let total = data.len();
 
@@ -318,7 +307,6 @@ impl Mapper for Mapper260 {
             .saturating_add(LOCKED_LEN)
             .saturating_add(FOOTER_LEN);
         if total < expected_min || mmc3_len > total {
-            // Corrupt or inconsistent snapshot; bail out.
             return;
         }
 
@@ -326,18 +314,13 @@ impl Mapper for Mapper260 {
         let ex_end = ex_start + EX_REGS_LEN;
         let locked_idx = ex_end;
 
-        // Ensure the mapper260 fields all lie before the footer.
         if locked_idx + 1 > total - FOOTER_LEN {
             return;
         }
 
-        self.ex_regs
-            .copy_from_slice(&data[ex_start..ex_end]);
+        self.ex_regs.copy_from_slice(&data[ex_start..ex_end]);
         self.locked = data[locked_idx] != 0;
-
-        let mmc3_data = &data[..mmc3_len];
-        self.locked = tail[5] != 0;
-        self.mmc3.restore_registers(mmc3_data);
+        self.mmc3.restore_registers(&data[..mmc3_len]);
     }
 
     fn reset(&mut self) {
