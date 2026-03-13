@@ -1,5 +1,5 @@
 use crate::bus::bus::BusDevice;
-use crate::input::{Controller, ControllerInput};
+use crate::input::Controller;
 use std::cell::RefCell;
 use std::ops::RangeInclusive;
 use std::rc::Rc;
@@ -24,11 +24,10 @@ impl BusDevice for ControllerDevice {
         let index = (addr - 0x4016) as usize;
 
         let controller_state = self.controllers[index].borrow_mut().read(is_dummy_read);
-        // Determine mask based on controller type.
-        // Joypad uses bit 0 (mask 0xFE), Arkanoid and Zapper controller uses bits 4-3 (mask 0xE7).
-        let is_mouse = self.controllers[index].borrow().input_type() == ControllerInput::Mouse;
-        let mask = if is_mouse { 0xE7 } else { 0xFE };
-        Some((open_bus & mask) | controller_state)
+        // NES-001 open bus: only bits 5-7 are unconnected (open bus).
+        // Bits 0-4 are driven by the controller I/O register:
+        //   bit 0 = serial data, bits 1-2 = grounded, bits 3-4 = controller port.
+        Some((open_bus & 0xE0) | controller_state)
     }
 
     fn write(&mut self, addr: u16, value: u8, _is_dummy_write: bool) -> bool {
@@ -51,7 +50,7 @@ impl BusDevice for ControllerDevice {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::input::Button;
+    use crate::input::{Button, ControllerInput};
 
     struct TestController {
         reads: Rc<RefCell<u32>>,
@@ -107,20 +106,67 @@ mod tests {
         }
     }
 
+    fn create_test_controller_device() -> ControllerDevice {
+        let reads = Rc::new(RefCell::new(0));
+        let dummy_reads = Rc::new(RefCell::new(0));
+        let controller1: Rc<RefCell<Box<dyn Controller>>> = Rc::new(RefCell::new(Box::new(
+            TestController::new(reads.clone(), dummy_reads.clone()),
+        )));
+        let controller2: Rc<RefCell<Box<dyn Controller>>> = Rc::new(RefCell::new(Box::new(
+            TestController::new(reads, dummy_reads),
+        )));
+        ControllerDevice::new(controller1, controller2)
+    }
+
     #[test]
     fn test_dummy_read_uses_no_clock() {
         let reads = Rc::new(RefCell::new(0));
         let dummy_reads = Rc::new(RefCell::new(0));
-        let controller = Rc::new(RefCell::new(Box::new(TestController::new(
+        let reads_check = reads.clone();
+        let dummy_reads_check = dummy_reads.clone();
+        let controller1 = Rc::new(RefCell::new(Box::new(TestController::new(
             reads.clone(),
             dummy_reads.clone(),
         )) as Box<dyn Controller>));
+        let controller2 = Rc::new(RefCell::new(
+            Box::new(TestController::new(reads, dummy_reads)) as Box<dyn Controller>,
+        ));
 
-        let mut device = ControllerDevice::new(controller.clone(), controller);
+        let mut device = ControllerDevice::new(controller1, controller2);
 
         device.read(0x4016, 0xFF, true);
 
-        assert_eq!(*reads.borrow(), 0);
-        assert_eq!(*dummy_reads.borrow(), 1);
+        assert_eq!(*reads_check.borrow(), 0);
+        assert_eq!(*dummy_reads_check.borrow(), 1);
+    }
+
+    /// On NES-001, only bits 5-7 of $4016/$4017 are open bus.
+    /// Bits 0-4 are driven by the controller I/O register.
+    /// With open_bus = $BF and controller returning 0,
+    /// the result should be $A0 (bits 5,7 from open bus).
+    #[test]
+    fn test_gamepad_open_bus_only_on_bits_5_to_7() {
+        let mut device = create_test_controller_device();
+
+        let result = device.read(0x4016, 0xBF, false).unwrap();
+        assert_eq!(
+            result, 0xA0,
+            "Expected $A0 (only bits 5-7 from open bus), got ${:02X}",
+            result
+        );
+    }
+
+    /// With open_bus = $40, only bits 5-7 should reflect open bus.
+    /// Controller returns 0, so result should be $40.
+    #[test]
+    fn test_gamepad_open_bus_with_40() {
+        let mut device = create_test_controller_device();
+
+        let result = device.read(0x4016, 0x40, false).unwrap();
+        assert_eq!(
+            result, 0x40,
+            "Expected $40 (bits 5-7 from open bus $40), got ${:02X}",
+            result
+        );
     }
 }

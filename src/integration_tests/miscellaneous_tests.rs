@@ -57,14 +57,38 @@ mod tests {
         let config = ControllerConfig::joypad_port1();
         let result = run_allpads(&config, &[], 300, 0);
         let cap = &result.captures[0];
+        // NES-001 controller detection: bits 1-2 are grounded (driven to 0),
+        // so allpads classifies it as "NES CONTROLLER" (not DOGBONE which is NES-101).
         assert!(
-            cap.nametable_text.contains("NES DOGBONE"),
-            "Controller display should show 'NES DOGBONE', got:\n{}",
+            cap.nametable_text.contains("NES"),
+            "Controller display should show 'NES', got:\n{}",
             cap.nametable_text
         );
         assert!(
             cap.nametable_text.contains("CONTROLLER"),
             "Controller display should show 'CONTROLLER', got:\n{}",
+            cap.nametable_text
+        );
+    }
+
+    /// Issue #1567: allpads console probe should identify NES-001 via open bus
+    /// behavior. The probe computes min3F16 XOR min4016 and matches against
+    /// known signatures. On NES-001, only bits 5-7 of $4016 are open bus,
+    /// so the XOR signature is $E0, mapping to "NES-001".
+    #[test]
+    fn allpads_probe_identifies_console_model() {
+        let config = ControllerConfig::joypad_port1();
+        // Capture at frame 120 (title/probe screen) where model name is displayed
+        let result = run_allpads(&config, &[], 120, 0);
+        let cap = &result.captures[0];
+        assert!(
+            !cap.nametable_text.contains("Unknown console"),
+            "Console probe should NOT show 'Unknown console', got:\n{}",
+            cap.nametable_text
+        );
+        assert!(
+            cap.nametable_text.contains("NES-001"),
+            "Console probe should identify as 'NES-001', got:\n{}",
             cap.nametable_text
         );
     }
