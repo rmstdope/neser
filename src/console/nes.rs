@@ -9,7 +9,7 @@ use crate::console::Config;
 use crate::cpu::lookup;
 use crate::cpu::{Cpu, CpuState};
 use crate::debugging::{Tracing, log_info};
-use crate::input::{ControllerInput, ControllerType, controller_input_type};
+use crate::input::ControllerType;
 use crate::ppu::{Ppu, PpuState, SharedPpu};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
@@ -141,7 +141,8 @@ impl Nes {
     }
 
     /// Insert a cartridge and map it into memory.
-    /// Auto-configures Arkanoid or Zapper controllers for known ROMs if that specific port hasn't been explicitly configured.
+    /// Auto-configures Arkanoid or Zapper controllers for known ROMs only when no controller
+    /// ports were explicitly configured by the user.
     pub fn insert_cartridge(&mut self, mut cartridge: Cartridge) {
         let zapper_port = self
             .app_context
@@ -166,6 +167,14 @@ impl Nes {
         let port2_explicit = config.controller_port2_explicit;
         drop(app_context); // Release borrow early
 
+        // If any controller port is explicitly configured, disable ROM DB auto-detection
+        // for all ports and apply configured values directly.
+        if port1_explicit || port2_explicit {
+            bus.set_controller_type(1, port1_type);
+            bus.set_controller_type(2, port2_type);
+            return;
+        }
+
         let auto_controller = if zapper_port != 0 {
             Some((zapper_port, ControllerType::Zapper))
         } else if arkanoid_port != 0 {
@@ -174,62 +183,28 @@ impl Nes {
             None
         };
 
-        // Auto-configure mouse-emulated controller when detected, but only if the specific port
-        // hasn't been explicitly configured by the user, and we wouldn't create a second
-        // mouse-emulated controller alongside another mouse-emulated controller.
+        // Auto-configure mouse-emulated controller when detected.
+        // This branch only runs when neither controller port was explicitly configured.
         if let Some((auto_port, auto_type)) = auto_controller {
-            let port_explicitly_configured = match auto_port {
-                1 => port1_explicit,
-                2 => port2_explicit,
-                _ => false,
-            };
-
             let other_port_type = if auto_port == 1 {
                 port2_type
             } else {
                 port1_type
             };
-            let other_port_explicit = if auto_port == 1 {
-                port2_explicit
-            } else {
-                port1_explicit
+            let auto_label = match auto_type {
+                ControllerType::Arkanoid => "Arkanoid",
+                ControllerType::Zapper => "Zapper",
+                ControllerType::Joypad => "Joypad",
             };
+            log_info(format!(
+                "Enabling {} controller on port {} for inserted cartridge. If you don't want this behavior, explicitly configure controller_port1/controller_port2 in config (or via CLI). Note that some games expect the controller on a specific port, so be sure to configure the correct one if you have issues with input not working in certain games.",
+                auto_label, auto_port
+            ));
+            bus.set_controller_type(auto_port, auto_type);
 
-            let other_port_is_explicit_mouse = other_port_explicit
-                && controller_input_type(other_port_type) == ControllerInput::Mouse;
-
-            if !port_explicitly_configured && !other_port_is_explicit_mouse {
-                let auto_label = match auto_type {
-                    ControllerType::Arkanoid => "Arkanoid",
-                    ControllerType::Zapper => "Zapper",
-                    ControllerType::Joypad => "Joypad",
-                };
-                log_info(format!(
-                    "Enabling {} controller on port {} for inserted cartridge. If you don't want this behavior, explicitly configure that port or configure another mouse-emulated controller on the other port to prevent auto-detection. Note that some games expect the controller on a specific port, so be sure to configure the correct one if you have issues with input not working in certain games.",
-                    auto_label, auto_port
-                ));
-                bus.set_controller_type(auto_port, auto_type);
-
-                // Apply the other port's configuration
-                let other_port = if auto_port == 1 { 2 } else { 1 };
-                bus.set_controller_type(other_port, other_port_type);
-            } else {
-                let auto_label = match auto_type {
-                    ControllerType::Arkanoid => "Arkanoid",
-                    ControllerType::Zapper => "Zapper",
-                    ControllerType::Joypad => "Joypad",
-                };
-                log_info(format!(
-                    "ROM detected as supporting a {} controller on port {}, but user has explicitly configured that port \
-                    or configured another mouse-emulated controller on another port. \
-                    Keeping user configuration. Note that this may cause issues if the game expects a {} controller on \
-                    port {}.",
-                    auto_label, auto_port, auto_label, auto_port
-                ));
-                // Apply user's explicit configuration
-                bus.set_controller_type(1, port1_type);
-                bus.set_controller_type(2, port2_type);
-            }
+            // Apply the other port's configuration
+            let other_port = if auto_port == 1 { 2 } else { 1 };
+            bus.set_controller_type(other_port, other_port_type);
         } else {
             // No mouse-emulated controller detected, just apply user config
             bus.set_controller_type(1, port1_type);
@@ -2073,6 +2048,34 @@ mod tests {
         nes.insert_cartridge(cartridge);
 
         let bus_state = nes.bus.borrow().capture_state();
+        assert!(matches!(
+            bus_state.port2_controller,
+            crate::bus::ControllerStateWrapper::Joypad(_)
+        ));
+    }
+
+    #[test]
+    fn test_insert_cartridge_does_not_apply_rom_db_controller_when_any_port_is_explicit() {
+        let rom_data = create_minimal_nrom_rom();
+        let mut cartridge = load_test_cartridge(&rom_data);
+        cartridge.set_crc32_for_test(0x24598791); // ROM DB maps this to Zapper on port 2
+
+        let config = Config {
+            controller_port1: crate::input::ControllerType::Joypad,
+            controller_port1_explicit: true,
+            controller_port2: crate::input::ControllerType::Joypad,
+            controller_port2_explicit: false,
+            ..Default::default()
+        };
+
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
+        nes.insert_cartridge(cartridge);
+
+        let bus_state = nes.bus.borrow().capture_state();
+        assert!(matches!(
+            bus_state.port1_controller,
+            crate::bus::ControllerStateWrapper::Joypad(_)
+        ));
         assert!(matches!(
             bus_state.port2_controller,
             crate::bus::ControllerStateWrapper::Joypad(_)
