@@ -868,6 +868,19 @@ impl Nes {
         text
     }
 
+    /// Read raw nametable tile indices as a byte vector.
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub fn read_nametable_raw(&self, nametable_addr: u16, length: usize) -> Vec<u8> {
+        let ppu = self.ppu.borrow();
+        (0..length)
+            .map(|i| {
+                let addr = nametable_addr.wrapping_add(i as u16);
+                ppu.read_nametable_for_debug(addr)
+            })
+            .collect()
+    }
+
     /// Create a complete save-state snapshot of the emulator.
     ///
     /// This captures the full state of CPU, PPU, APU, RAM, and mapper,
