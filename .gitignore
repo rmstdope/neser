@@ -42,6 +42,7 @@ prompts.txt
 neser.conf
 roms.sqlite
 mappertool_settings.json
+rom_files.csv
 
 # wasm-bindgen output
 web/pkg/
