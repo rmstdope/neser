@@ -52,6 +52,27 @@ mod tests {
         }
     }
 
+    fn parse_metric_value(nametable_text: &str, label: &str) -> Option<u32> {
+        let lines: Vec<&str> = nametable_text.lines().collect();
+        for (idx, line) in lines.iter().enumerate() {
+            if !line.contains(label) {
+                continue;
+            }
+
+            // allpads may render metric values on the same line as the label or
+            // on one of the immediately following lines (e.g. "PULLTIME" then
+            // "Y 19").
+            for candidate in lines.iter().skip(idx).take(3) {
+                for token in candidate.split_whitespace().rev() {
+                    if let Ok(value) = token.parse::<u32>() {
+                        return Some(value);
+                    }
+                }
+            }
+        }
+        None
+    }
+
     #[test]
     fn allpads_joypad_probe_identifies_nes_controller() {
         let config = ControllerConfig::joypad_port1();
@@ -138,6 +159,104 @@ mod tests {
         assert_eq!(
             result1.captures[0].oam_data, result2.captures[0].oam_data,
             "OAM data should be identical across runs"
+        );
+    }
+
+    /////////////////////////////////////
+    // Allpads Zapper scenario (#1556)
+    /////////////////////////////////////
+
+    #[test]
+    fn allpads_zapper_probe_identifies_zapper() {
+        let config = ControllerConfig::zapper();
+        let result = run_allpads(&config, &[], 300, 0);
+        let cap = &result.captures[0];
+
+        assert!(
+            cap.nametable_text.contains("ZAPPER"),
+            "Controller display should identify Zapper, got:\n{}",
+            cap.nametable_text
+        );
+    }
+
+    #[test]
+    fn allpads_zapper_trigger_hold_updates_metrics_and_pulltime() {
+        let config = ControllerConfig::zapper();
+        let script = vec![
+            crate::integration_tests::allpads_harness::tests::ScriptEntry {
+                frame: 360,
+                actions: vec![
+                    crate::integration_tests::allpads_harness::tests::InputAction::MouseX(80),
+                    crate::integration_tests::allpads_harness::tests::InputAction::MouseY(96),
+                ],
+            },
+            crate::integration_tests::allpads_harness::tests::ScriptEntry {
+                frame: 400,
+                actions: vec![
+                    crate::integration_tests::allpads_harness::tests::InputAction::MouseButton(
+                        true,
+                    ),
+                ],
+            },
+            crate::integration_tests::allpads_harness::tests::ScriptEntry {
+                frame: 450,
+                actions: vec![
+                    crate::integration_tests::allpads_harness::tests::InputAction::MouseButton(
+                        false,
+                    ),
+                ],
+            },
+        ];
+
+        let result = run_allpads(&config, &script, 460, 20);
+
+        let during_hold_early = result
+            .captures
+            .iter()
+            .find(|capture| capture.frame == 420)
+            .expect("Expected capture at frame 420");
+        let during_hold_late = result
+            .captures
+            .iter()
+            .find(|capture| capture.frame == 440)
+            .expect("Expected capture at frame 440");
+
+        assert!(
+            during_hold_early.nametable_text.contains("LIGHT Y"),
+            "Zapper metrics should include 'LIGHT Y', got:\n{}",
+            during_hold_early.nametable_text
+        );
+        assert!(
+            during_hold_early.nametable_text.contains("HEIGHT"),
+            "Zapper metrics should include 'HEIGHT', got:\n{}",
+            during_hold_early.nametable_text
+        );
+        assert!(
+            during_hold_early.nametable_text.contains("PULLTIME"),
+            "Zapper metrics should include 'PULLTIME', got:\n{}",
+            during_hold_early.nametable_text
+        );
+
+        let pull_time_early = parse_metric_value(&during_hold_early.nametable_text, "PULLTIME")
+            .unwrap_or_else(|| {
+                panic!(
+                    "Expected PullTime metric at frame 420, got:\n{}",
+                    during_hold_early.nametable_text
+                )
+            });
+        let pull_time_late = parse_metric_value(&during_hold_late.nametable_text, "PULLTIME")
+            .unwrap_or_else(|| {
+                panic!(
+                    "Expected PullTime metric at frame 440, got:\n{}",
+                    during_hold_late.nametable_text
+                )
+            });
+
+        assert!(
+            pull_time_late > pull_time_early,
+            "PullTime should increase while trigger is held (early={}, late={})",
+            pull_time_early,
+            pull_time_late
         );
     }
 
