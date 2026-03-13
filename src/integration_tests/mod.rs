@@ -1,5 +1,6 @@
 pub mod manual_test_cartridges;
 
+mod allpads_harness;
 mod apu_audio_tests;
 mod apu_visual_tests;
 mod autorun_tests;

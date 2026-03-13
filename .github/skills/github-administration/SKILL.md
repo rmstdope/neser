@@ -51,6 +51,9 @@ gh label list --json name --limit 100
 8. For large bulk creation (20+ issues), run in throttled batches (e.g., 10-25 issues), re-fetch issue list between batches, and deduplicate by exact title before each create.
 9. Treat empty `gh issue create` stdout as a failed/unknown result and verify by querying issue list before marking creation complete.
 10. If GitHub returns secondary rate limiting (HTTP 403 / “temporarily blocked from content creation”), stop mutation attempts, report the blocker, and retry later with smaller batches.
+11. When creating multiple related issues (even small sets), create exactly one issue per command, immediately verify the created issue number and title, then proceed to the next issue.
+12. Do not chain multiple `gh issue create` commands in one terminal call. Persist and verify each returned URL before creating another issue.
+13. After each create, run a duplicate-title check (exact title match) before moving forward. If a duplicate is found, stop creation and clean up duplicates first.
 
 ## Command Recipes
 
@@ -133,6 +136,22 @@ Fix:
 - abort and recover shell state
 - avoid reusing heredoc for long content
 - create the body in a temporary/workspace file and retry with `--body-file`
+
+### Duplicate issues were accidentally created
+
+Cause: multiple `gh issue create` attempts were run without per-issue verification.
+
+Fix:
+
+- keep the canonical issue open
+- close duplicate issues with explicit comments pointing to the canonical issue
+- re-run link/child association against the canonical issue only
+
+Prevention:
+
+- create one issue at a time
+- verify the created number/title immediately
+- run an exact-title duplicate check before creating the next issue
 
 ## Post-action Checklist
 
