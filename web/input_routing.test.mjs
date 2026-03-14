@@ -78,6 +78,16 @@ test("getKeyboardControllerTarget returns [] when two or more gamepads", () => {
     assert.deepEqual(getKeyboardControllerTarget(3), []);
 });
 
+test("getKeyboardControllerTarget routes keyboard to players 3 and 4 when Four Score is enabled and two gamepads are connected", () => {
+    const targets = getKeyboardControllerTarget(2, true);
+    assert.deepEqual(targets, [3, 4]);
+});
+
+test("getKeyboardControllerTarget routes keyboard to players 2 and 3 when Four Score is enabled and one gamepad is connected", () => {
+    const targets = getKeyboardControllerTarget(1, true);
+    assert.deepEqual(targets, [2, 3]);
+});
+
 // Tests for shouldSuppressJoypadInput
 test("shouldSuppressJoypadInput suppresses controller 1 when mouse-emulated controller on port 1", () => {
     const nes = makeNesStub({ arkanoidPort: 1 });

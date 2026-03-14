@@ -262,19 +262,42 @@ impl SdlEventLoop {
         nes: &Nes,
         controller_player_map: &HashMap<u32, u8>,
     ) -> (Option<u8>, Option<u8>) {
+        let four_score_enabled = nes.app_context().borrow().config().four_score_enabled;
         let gamepad_ports = Self::gamepad_ports(nes);
         let assigned_count = controller_player_map.len().min(gamepad_ports.len());
-        let port_1 = if assigned_count == 0 {
-            gamepad_ports.first().copied()
-        } else {
-            None
-        };
-        let port_2 = if assigned_count <= 1 {
-            gamepad_ports.get(1).copied()
-        } else {
-            None
-        };
-        (port_1, port_2)
+
+        if !four_score_enabled {
+            let port_1 = if assigned_count == 0 {
+                gamepad_ports.first().copied()
+            } else {
+                None
+            };
+            let port_2 = if assigned_count <= 1 {
+                gamepad_ports.get(1).copied()
+            } else {
+                None
+            };
+            return (port_1, port_2);
+        }
+
+        match assigned_count {
+            0 => (Some(1), Some(2)),
+            1 => (Some(2), Some(3)),
+            _ => (Some(3), Some(4)),
+        }
+    }
+
+    #[cfg(test)]
+    fn keyboard_target_ports(nes: &Nes, controller_player_map: &HashMap<u32, u8>) -> Vec<u8> {
+        let (port_1, port_2) = Self::keyboard_ports(nes, controller_player_map);
+        let mut targets = Vec::new();
+        if let Some(port) = port_1 {
+            targets.push(port);
+        }
+        if let Some(port) = port_2 {
+            targets.push(port);
+        }
+        targets
     }
 
     fn apply_keyboard_button(nes: &mut Nes, ports: &[u8], button: Button, pressed: bool) {
@@ -2914,6 +2937,33 @@ mod tests {
         assert_eq!(right, 255);
         assert_eq!(top, 0);
         assert_eq!(bottom, 255);
+    }
+
+    #[test]
+    fn test_keyboard_targets_four_score_two_gamepads() {
+        let mut config = Config::with_defaults();
+        config.four_score_enabled = true;
+        let nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
+
+        let mut controller_player_map = HashMap::new();
+        controller_player_map.insert(10, 1);
+        controller_player_map.insert(11, 2);
+
+        let targets = SdlEventLoop::keyboard_target_ports(&nes, &controller_player_map);
+        assert_eq!(targets, vec![3, 4]);
+    }
+
+    #[test]
+    fn test_keyboard_targets_four_score_one_gamepad() {
+        let mut config = Config::with_defaults();
+        config.four_score_enabled = true;
+        let nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
+
+        let mut controller_player_map = HashMap::new();
+        controller_player_map.insert(10, 1);
+
+        let targets = SdlEventLoop::keyboard_target_ports(&nes, &controller_player_map);
+        assert_eq!(targets, vec![2, 3]);
     }
 
     #[test]

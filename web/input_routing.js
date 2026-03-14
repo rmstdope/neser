@@ -15,9 +15,19 @@
  * - Two or more gamepads: keyboard is disabled (empty array)
  * 
  * @param {number} gamepadCount - Number of connected gamepads
+ * @param {boolean} fourScoreEnabled - Whether Four Score mode is enabled
  * @returns {number[]} Array of controller numbers that keyboard should control
  */
-export function getKeyboardControllerTarget(gamepadCount) {
+export function getKeyboardControllerTarget(gamepadCount, fourScoreEnabled = false) {
+    if (fourScoreEnabled) {
+        if (gamepadCount === 0) {
+            return [1, 2];
+        } else if (gamepadCount === 1) {
+            return [2, 3];
+        }
+        return [3, 4];
+    }
+
     if (gamepadCount === 0) {
         return [1, 2]; // Keyboard controls both controllers
     } else if (gamepadCount === 1) {

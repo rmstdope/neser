@@ -6,26 +6,35 @@ use std::rc::Rc;
 
 pub(crate) struct ControllerDevice {
     controllers: [Rc<RefCell<Box<dyn Controller>>>; 2],
+    four_score_extra_button_states: Rc<RefCell<[u8; 2]>>,
     four_score_enabled: bool,
     four_score_strobe: bool,
     four_score_index: [u8; 2],
 }
 
 impl ControllerDevice {
+    #[cfg(test)]
     pub(crate) fn new(
         port1_controller: Rc<RefCell<Box<dyn Controller>>>,
         port2_controller: Rc<RefCell<Box<dyn Controller>>>,
     ) -> Self {
-        Self::new_with_four_score(port1_controller, port2_controller, false)
+        Self::new_with_four_score_state(
+            port1_controller,
+            port2_controller,
+            false,
+            Rc::new(RefCell::new([0, 0])),
+        )
     }
 
-    pub(crate) fn new_with_four_score(
+    pub(crate) fn new_with_four_score_state(
         port1_controller: Rc<RefCell<Box<dyn Controller>>>,
         port2_controller: Rc<RefCell<Box<dyn Controller>>>,
         four_score_enabled: bool,
+        four_score_extra_button_states: Rc<RefCell<[u8; 2]>>,
     ) -> Self {
         Self {
             controllers: [port1_controller, port2_controller],
+            four_score_extra_button_states,
             four_score_enabled,
             four_score_strobe: false,
             four_score_index: [0, 0],
@@ -47,7 +56,9 @@ impl ControllerDevice {
                 .read(is_dummy_read)
                 & 0x01
         } else if idx < 16 {
-            0
+            let extra_state = self.four_score_extra_button_states.borrow();
+            let player_state = extra_state[port_index];
+            (player_state >> (idx - 8)) & 0x01
         } else if idx < 24 {
             let signature = if port_index == 0 { 0x10 } else { 0x20 };
             (signature >> (idx - 16)) & 0x01
@@ -234,7 +245,7 @@ mod tests {
     }
 
     #[test]
-    fn test_four_score_port1_sequence_red() {
+    fn test_four_score_port1_sequence() {
         let reads = Rc::new(RefCell::new(0));
         let dummy_reads = Rc::new(RefCell::new(0));
         let controller1: Rc<RefCell<Box<dyn Controller>>> = Rc::new(RefCell::new(Box::new(
@@ -257,7 +268,7 @@ mod tests {
     }
 
     #[test]
-    fn test_four_score_port2_sequence_red() {
+    fn test_four_score_port2_sequence() {
         let reads = Rc::new(RefCell::new(0));
         let dummy_reads = Rc::new(RefCell::new(0));
         let controller1: Rc<RefCell<Box<dyn Controller>>> = Rc::new(RefCell::new(Box::new(

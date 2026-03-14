@@ -64,6 +64,7 @@ pub struct Bus {
     oam_dma_page: Rc<RefCell<Option<u8>>>, // Stores the page for pending OAM DMA
     dma_triggered: Rc<RefCell<bool>>,
     controllers: [Rc<RefCell<Box<dyn Controller>>>; 2], // Port 1 and Port 2 controllers
+    four_score_extra_button_states: Rc<RefCell<[u8; 2]>>, // Emulated players 3 and 4 button states
     open_bus: u8, // Last value on the data bus for open bus behavior
     devices: Vec<Box<dyn BusDevice>>,
 }
@@ -114,6 +115,7 @@ impl Bus {
             oam_dma_page: Rc::new(RefCell::new(None)),
             dma_triggered: Rc::new(RefCell::new(false)),
             controllers,
+            four_score_extra_button_states: Rc::new(RefCell::new([0, 0])),
             open_bus: 0xFF, // Initialize to 0xFF (common power-on state)
             devices: Vec::new(),
         };
@@ -124,9 +126,11 @@ impl Bus {
             controller.cartridge.clone(),
         )));
         let four_score_enabled = controller.app_context.borrow().config().four_score_enabled;
-        let mut controller_device = ControllerDevice::new(
+        let mut controller_device = ControllerDevice::new_with_four_score_state(
             controller.controllers[0].clone(),
             controller.controllers[1].clone(),
+            four_score_enabled,
+            controller.four_score_extra_button_states.clone(),
         );
         controller_device.set_four_score_enabled(four_score_enabled);
         controller.register_device(Box::new(controller_device));
@@ -480,17 +484,38 @@ impl Bus {
 
     /// Set button state for a controller
     pub fn set_button(&mut self, port: u8, button: Button, pressed: bool) {
-        if !(1..=2).contains(&port) {
+        if (1..=2).contains(&port) {
+            self.controllers[(port - 1) as usize]
+                .borrow_mut()
+                .set_button(button, pressed);
             return;
         }
-        self.controllers[(port - 1) as usize]
-            .borrow_mut()
-            .set_button(button, pressed);
+
+        if !self.app_context.borrow().config().four_score_enabled {
+            return;
+        }
+
+        if !(3..=4).contains(&port) {
+            return;
+        }
+
+        let mut states = self.four_score_extra_button_states.borrow_mut();
+        let player_index = (port - 3) as usize;
+        let bit = button as u8;
+        if pressed {
+            states[player_index] |= 1 << bit;
+        } else {
+            states[player_index] &= !(1 << bit);
+        }
     }
 
     /// Get joypad button states as a u8 bitmask (for autorun recording).
     /// Returns 0 if the controller is not a joypad.
     pub fn get_joypad_button_states(&self, port: u8) -> u8 {
+        if self.app_context.borrow().config().four_score_enabled && (3..=4).contains(&port) {
+            return self.four_score_extra_button_states.borrow()[(port - 3) as usize];
+        }
+
         if !(1..=2).contains(&port) {
             return 0;
         }
@@ -539,6 +564,10 @@ impl Bus {
 
     /// Return the input type for a controller port.
     pub fn controller_input_type(&self, port: u8) -> Option<crate::input::ControllerInput> {
+        if self.app_context.borrow().config().four_score_enabled && (3..=4).contains(&port) {
+            return Some(crate::input::ControllerInput::Gamepad);
+        }
+
         if !(1..=2).contains(&port) {
             return None;
         }
@@ -976,6 +1005,29 @@ mod tests {
         Bus::new(ppu, apu, app_context.clone())
     }
 
+    fn create_test_memory_with_four_score_enabled() -> Bus {
+        let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
+        let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
+        let config = crate::console::Config {
+            ram_init_mode: crate::console::RamInitMode::Zero,
+            four_score_enabled: true,
+            ..Default::default()
+        };
+        let app_context = Rc::new(RefCell::new(
+            crate::app_context::AppContext::new_with_config(config),
+        ));
+        Bus::new(ppu, apu, app_context.clone())
+    }
+
+    fn read_24_bits(memory: &mut Bus, addr: u16) -> u32 {
+        let mut value = 0u32;
+        for bit in 0..24 {
+            let sample = memory.read(addr, false) & 0x01;
+            value |= (sample as u32) << bit;
+        }
+        value
+    }
+
     #[test]
     fn test_bus_device_dispatches_reads_and_writes() {
         let mut memory = create_test_memory();
@@ -1016,6 +1068,33 @@ mod tests {
         let dma = memory.write(0x4016, 0x55, false);
         assert!(!dma);
         assert_eq!(*last_write.borrow(), Some((0x4016, 0x55)));
+    }
+
+    #[test]
+    fn test_four_score_port1_includes_player3_button_state() {
+        let mut memory = create_test_memory_with_four_score_enabled();
+
+        // Player 3 A should appear as bit 8 in the 24-bit $4016 stream.
+        memory.set_button(3, crate::input::Button::A, true);
+        memory.write(0x4016, 0x01, false);
+        memory.write(0x4016, 0x00, false);
+
+        let bits = read_24_bits(&mut memory, 0x4016);
+        assert_eq!(bits & (1 << 8), 1 << 8);
+    }
+
+    #[test]
+    fn test_four_score_port2_includes_player4_button_state() {
+        let mut memory = create_test_memory_with_four_score_enabled();
+
+        // Player 4 B should appear as bit 9 in the 24-bit $4017 stream
+        // (B is bit 1 within the P4 byte at offset 8).
+        memory.set_button(4, crate::input::Button::B, true);
+        memory.write(0x4016, 0x01, false);
+        memory.write(0x4016, 0x00, false);
+
+        let bits = read_24_bits(&mut memory, 0x4017);
+        assert_eq!(bits & (1 << 9), 1 << 9);
     }
 
     #[test]

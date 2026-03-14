@@ -2358,7 +2358,10 @@ async function handleKeyDown(event) {
     }
 
     const key = event.key.toLowerCase();
-    const targets = getKeyboardControllerTarget(connectedGamepads.length);
+    const targets = getKeyboardControllerTarget(
+        connectedGamepads.length,
+        nes?.is_four_score_enabled?.() ?? false
+    );
 
     applyKeyboardMapping(event, keyToButtonController1[key], 1, targets, true);
     applyKeyboardMapping(event, keyToButtonController2[key], 2, targets, true);
@@ -2378,7 +2381,10 @@ function handleKeyUp(event) {
     }
 
     const key = event.key.toLowerCase();
-    const targets = getKeyboardControllerTarget(connectedGamepads.length);
+    const targets = getKeyboardControllerTarget(
+        connectedGamepads.length,
+        nes?.is_four_score_enabled?.() ?? false
+    );
 
     applyKeyboardMapping(event, keyToButtonController1[key], 1, targets, false);
     applyKeyboardMapping(event, keyToButtonController2[key], 2, targets, false);
