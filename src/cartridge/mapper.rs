@@ -125,6 +125,7 @@ use super::mapper314::Mapper314;
 use super::mapper319::Mapper319;
 use super::mapper320::Mapper320;
 use super::mapper324::Mapper324;
+use super::mapper325::Mapper325;
 use super::mapper326::Mapper326;
 use super::mapper327::Mapper327;
 use super::mapper328::Mapper328;
@@ -718,6 +719,7 @@ mapper_registry! {
     335 => Mapper335::new,
     337 => Mapper337::new,
     324 => Mapper324::new,
+    325 => Mapper325::new,
     326 => Mapper326::new,
     32 => IremG101Mapper::new,
     33 => TaitoTc0190Mapper::new,
