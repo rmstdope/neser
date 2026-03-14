@@ -10,14 +10,29 @@
  * Determine which controller port(s) the keyboard should control.
  * 
  * Rules:
- * - No gamepads: keyboard controls both controllers (1 and 2)
- * - One gamepad: keyboard controls controller 2
- * - Two or more gamepads: keyboard is disabled (empty array)
+ * - When Four Score is disabled (`fourScoreEnabled === false`):
+ *   - No gamepads: keyboard controls both controllers (1 and 2)
+ *   - One gamepad: keyboard controls controller 2
+ *   - Two or more gamepads: keyboard is disabled (empty array)
+ * - When Four Score is enabled (`fourScoreEnabled === true`):
+ *   - No gamepads: keyboard controls controllers 1 and 2
+ *   - One gamepad: keyboard controls controllers 2 and 3
+ *   - Two or more gamepads: keyboard controls controllers 3 and 4
  * 
  * @param {number} gamepadCount - Number of connected gamepads
+ * @param {boolean} fourScoreEnabled - Whether Four Score mode is enabled
  * @returns {number[]} Array of controller numbers that keyboard should control
  */
-export function getKeyboardControllerTarget(gamepadCount) {
+export function getKeyboardControllerTarget(gamepadCount, fourScoreEnabled = false) {
+    if (fourScoreEnabled) {
+        if (gamepadCount === 0) {
+            return [1, 2];
+        } else if (gamepadCount === 1) {
+            return [2, 3];
+        }
+        return [3, 4];
+    }
+
     if (gamepadCount === 0) {
         return [1, 2]; // Keyboard controls both controllers
     } else if (gamepadCount === 1) {

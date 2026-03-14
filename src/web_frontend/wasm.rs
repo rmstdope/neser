@@ -396,7 +396,7 @@ impl WasmNes {
     /// Set button state for a controller.
     ///
     /// # Arguments
-    /// * `controller` - Controller number (1 or 2)
+    /// * `controller` - Controller number (1-4 when Four Score is enabled, otherwise 1-2)
     /// * `button` - Button number (0=A, 1=B, 2=Select, 3=Start, 4=Up, 5=Down, 6=Left, 7=Right)
     /// * `pressed` - true if pressed, false if released
     #[wasm_bindgen]
@@ -425,6 +425,11 @@ impl WasmNes {
         } else {
             *bitmask &= !(1 << button);
         }
+    }
+
+    #[wasm_bindgen]
+    pub fn is_four_score_enabled(&self) -> bool {
+        self.nes.app_context().borrow().config().four_score_enabled
     }
 
     /// Set the controller type for a port.

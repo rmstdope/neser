@@ -6,16 +6,84 @@ use std::rc::Rc;
 
 pub(crate) struct ControllerDevice {
     controllers: [Rc<RefCell<Box<dyn Controller>>>; 2],
+    four_score_extra_button_states: Rc<RefCell<[u8; 2]>>,
+    four_score_enabled: bool,
+    four_score_strobe: bool,
+    four_score_index: [u8; 2],
 }
 
 impl ControllerDevice {
+    #[cfg(test)]
     pub(crate) fn new(
         port1_controller: Rc<RefCell<Box<dyn Controller>>>,
         port2_controller: Rc<RefCell<Box<dyn Controller>>>,
     ) -> Self {
+        Self::new_with_four_score_state(
+            port1_controller,
+            port2_controller,
+            false,
+            Rc::new(RefCell::new([0, 0])),
+        )
+    }
+
+    pub(crate) fn new_with_four_score_state(
+        port1_controller: Rc<RefCell<Box<dyn Controller>>>,
+        port2_controller: Rc<RefCell<Box<dyn Controller>>>,
+        four_score_enabled: bool,
+        four_score_extra_button_states: Rc<RefCell<[u8; 2]>>,
+    ) -> Self {
         Self {
             controllers: [port1_controller, port2_controller],
+            four_score_extra_button_states,
+            four_score_enabled,
+            four_score_strobe: false,
+            four_score_index: [0, 0],
         }
+    }
+
+    pub(crate) fn set_four_score_enabled(&mut self, enabled: bool) {
+        self.four_score_enabled = enabled;
+        self.four_score_index = [0, 0];
+        self.four_score_strobe = false;
+    }
+
+    fn read_four_score_bit(&mut self, port_index: usize, is_dummy_read: bool) -> u8 {
+        let idx = self.four_score_index[port_index];
+
+        // Always read the full controller state once so we can preserve any
+        // non-joypad bits (e.g., Zapper, Arkanoid) while still applying
+        // Four Score's serial protocol on bit 0.
+        let mut controller_state = self.controllers[port_index]
+            .borrow_mut()
+            .read(is_dummy_read);
+
+        let serial_bit = if idx < 8 {
+            // First 8 bits are the underlying controller's serial data (bit 0).
+            controller_state & 0x01
+        } else if idx < 16 {
+            // Next 8 bits are extra buttons (players 3/4).
+            let extra_state = self.four_score_extra_button_states.borrow();
+            let player_state = extra_state[port_index];
+            (player_state >> (idx - 8)) & 0x01
+        } else if idx < 24 {
+            // Next 8 bits are the Four Score signature.
+            let signature = if port_index == 0 { 0x10 } else { 0x20 };
+            (signature >> (idx - 16)) & 0x01
+        } else {
+            // Remaining reads return 1.
+            1
+        };
+
+        // Preserve all higher bits from the underlying controller and only
+        // override bit 0 with the Four Score serial bit.
+        controller_state = (controller_state & !0x01) | serial_bit;
+
+        if !is_dummy_read && !self.four_score_strobe {
+            self.four_score_index[port_index] =
+                self.four_score_index[port_index].saturating_add(1);
+        }
+
+        controller_state
     }
 }
 
@@ -23,7 +91,11 @@ impl BusDevice for ControllerDevice {
     fn read(&mut self, addr: u16, open_bus: u8, is_dummy_read: bool) -> Option<u8> {
         let index = (addr - 0x4016) as usize;
 
-        let controller_state = self.controllers[index].borrow_mut().read(is_dummy_read);
+        let controller_state = if self.four_score_enabled {
+            self.read_four_score_bit(index, is_dummy_read)
+        } else {
+            self.controllers[index].borrow_mut().read(is_dummy_read)
+        };
         // NES-001 open bus: only bits 5-7 are unconnected (open bus).
         // Bits 0-4 are driven by the controller I/O register:
         //   bit 0 = serial data, bits 1-2 = grounded, bits 3-4 = controller port.
@@ -33,6 +105,12 @@ impl BusDevice for ControllerDevice {
     fn write(&mut self, addr: u16, value: u8, _is_dummy_write: bool) -> bool {
         match addr {
             0x4016 => {
+                let new_strobe = value & 0x01 != 0;
+                if self.four_score_strobe && !new_strobe {
+                    self.four_score_index = [0, 0];
+                }
+                self.four_score_strobe = new_strobe;
+
                 self.controllers[0].borrow_mut().write_strobe(value);
                 self.controllers[1].borrow_mut().write_strobe(value);
                 true
@@ -51,6 +129,15 @@ impl BusDevice for ControllerDevice {
 mod tests {
     use super::*;
     use crate::input::{Button, ControllerInput};
+
+    fn read_24_bits(device: &mut ControllerDevice, addr: u16) -> u32 {
+        let mut value = 0u32;
+        for bit in 0..24 {
+            let sample = device.read(addr, 0x00, false).unwrap() & 0x01;
+            value |= (sample as u32) << bit;
+        }
+        value
+    }
 
     struct TestController {
         reads: Rc<RefCell<u32>>,
@@ -168,5 +255,51 @@ mod tests {
             "Expected $40 (bits 5-7 from open bus $40), got ${:02X}",
             result
         );
+    }
+
+    #[test]
+    fn test_four_score_port1_sequence() {
+        let reads = Rc::new(RefCell::new(0));
+        let dummy_reads = Rc::new(RefCell::new(0));
+        let controller1: Rc<RefCell<Box<dyn Controller>>> = Rc::new(RefCell::new(Box::new(
+            TestController::new(reads.clone(), dummy_reads.clone()),
+        )));
+        let controller2: Rc<RefCell<Box<dyn Controller>>> = Rc::new(RefCell::new(Box::new(
+            TestController::new(reads, dummy_reads),
+        )));
+        let mut device = ControllerDevice::new(controller1, controller2);
+        device.set_four_score_enabled(true);
+
+        // Strobe high->low latches and resets shift state.
+        assert!(device.write(0x4016, 1, false));
+        assert!(device.write(0x4016, 0, false));
+
+        // Expected Four Score sequence on $4016:
+        // P1 byte (all 0 in this fixture), P3 byte (all 0 in this fixture), signature $10.
+        let bits = read_24_bits(&mut device, 0x4016);
+        assert_eq!(bits, 0x0010_0000);
+    }
+
+    #[test]
+    fn test_four_score_port2_sequence() {
+        let reads = Rc::new(RefCell::new(0));
+        let dummy_reads = Rc::new(RefCell::new(0));
+        let controller1: Rc<RefCell<Box<dyn Controller>>> = Rc::new(RefCell::new(Box::new(
+            TestController::new(reads.clone(), dummy_reads.clone()),
+        )));
+        let controller2: Rc<RefCell<Box<dyn Controller>>> = Rc::new(RefCell::new(Box::new(
+            TestController::new(reads, dummy_reads),
+        )));
+        let mut device = ControllerDevice::new(controller1, controller2);
+        device.set_four_score_enabled(true);
+
+        // Strobe high->low latches and resets shift state.
+        assert!(device.write(0x4016, 1, false));
+        assert!(device.write(0x4016, 0, false));
+
+        // Expected Four Score sequence on $4017:
+        // P2 byte (all 0 in this fixture), P4 byte (all 0 in this fixture), signature $20.
+        let bits = read_24_bits(&mut device, 0x4017);
+        assert_eq!(bits, 0x0020_0000);
     }
 }

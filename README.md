@@ -113,6 +113,16 @@ Each port can be independently configured in the configuration file or via the a
 - Default: Joypad  
 - Can be configured as Paddle for games that use paddle on port 2
 
+### Four Score (4-player) mode
+
+Enable Four Score with CLI `--enable-4-score` or config key `enable_4_score=true`.
+
+When enabled, input is assigned as follows:
+
+- 2 physical gamepads connected: gamepads control emulated players 1-2, keyboard controls players 3-4
+- 1 physical gamepad connected: gamepad controls player 1, keyboard controls players 2-3
+- 0 physical gamepads connected: keyboard controls players 1-2
+
 ### Auto-Detection
 
 NESER automatically detects known games that require special controllers (for example, paddle or Zapper) by ROM CRC32 and configures the appropriate port **only when neither controller port is explicitly configured**:

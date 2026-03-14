@@ -184,6 +184,23 @@ const CLI_FLAGS: &[CliFlag] = &[
         has_value: false,
     },
     CliFlag {
+        flag: "--enable-4-score",
+        help: Some(
+            "Enable Four Score mode (optionally: true/false, default when flag present: true)",
+        ),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--no-4-score",
+        help: Some("Disable Four Score mode (equivalent to --enable-4-score false)"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--disable-4-score",
+        help: Some("Disable Four Score mode (equivalent to --enable-4-score false)"),
+        has_value: false,
+    },
+    CliFlag {
         flag: "--pulse1",
         help: Some(
             "Enable pulse 1 channel (optionally: true/false, default when flag present: true)",
@@ -392,6 +409,7 @@ const OPTIONAL_BOOL_FLAGS: &[&str] = &[
     "--audio",
     "--vsync",
     "--gamepads",
+    "--enable-4-score",
     "--pulse1",
     "--pulse2",
     "--triangle",
@@ -454,6 +472,8 @@ pub struct Config {
     pub vsync_enabled: bool,
     /// Whether gamepad support is enabled.
     pub gamepads_enabled: bool,
+    /// Whether Four Score mode is enabled.
+    pub four_score_enabled: bool,
     /// Whether to run in fullscreen mode.
     pub fullscreen: bool,
     /// Which display to use for fullscreen (None = auto-select).
@@ -632,6 +652,7 @@ impl Default for Config {
             audio_enabled: true,
             vsync_enabled: true,
             gamepads_enabled: true,
+            four_score_enabled: false,
             fullscreen: false,
             fullscreen_display: None,
             shader_path: None,
@@ -787,6 +808,14 @@ impl Config {
         }
         if Self::has_negation_flag(args, &["--no-gamepads", "--disable-gamepads"]) {
             self.gamepads_enabled = false;
+        }
+
+        // Four Score: --enable-4-score true/false, --no-4-score, --disable-4-score
+        if let Some(four_score) = Self::parse_bool_arg(args, "--enable-4-score")? {
+            self.four_score_enabled = four_score;
+        }
+        if Self::has_negation_flag(args, &["--no-4-score", "--disable-4-score"]) {
+            self.four_score_enabled = false;
         }
 
         // Debugger: --debugger true/false
@@ -1444,6 +1473,11 @@ impl Config {
             "gamepads" => {
                 if let Ok(b) = Self::parse_bool(value) {
                     self.gamepads_enabled = b;
+                }
+            }
+            "enable_4_score" => {
+                if let Ok(b) = Self::parse_bool(value) {
+                    self.four_score_enabled = b;
                 }
             }
             "fullscreen" => {
@@ -3348,6 +3382,51 @@ filter=invalid-shader
         let args = vec!["neser".to_string(), "--no-gamepads".to_string()];
         let config = parse_config(args);
         assert!(!config.gamepads_enabled);
+    }
+
+    #[test]
+    fn test_config_enable_4_score_enables_four_score() {
+        let args = vec!["neser".to_string(), "--enable-4-score".to_string()];
+        let config = parse_config(args);
+        assert!(config.four_score_enabled);
+    }
+
+    #[test]
+    fn test_config_enable_4_score_with_value_false_disables_four_score() {
+        let args = vec![
+            "neser".to_string(),
+            "--enable-4-score".to_string(),
+            "false".to_string(),
+            "game.nes".to_string(),
+        ];
+        let config = parse_config(args);
+        assert!(!config.four_score_enabled);
+        assert_eq!(config.rom_path.as_deref(), Some("game.nes"));
+    }
+
+    #[test]
+    fn test_config_no_4_score_disables_four_score() {
+        let args = vec!["neser".to_string(), "--no-4-score".to_string()];
+        let config = parse_config(args);
+        assert!(!config.four_score_enabled);
+    }
+
+    #[test]
+    fn test_config_disable_4_score_disables_four_score() {
+        let args = vec!["neser".to_string(), "--disable-4-score".to_string()];
+        let config = parse_config(args);
+        assert!(!config.four_score_enabled);
+    }
+
+    #[test]
+    fn test_config_no_4_score_overrides_enable_4_score() {
+        let args = vec![
+            "neser".to_string(),
+            "--enable-4-score".to_string(),
+            "--no-4-score".to_string(),
+        ];
+        let config = parse_config(args);
+        assert!(!config.four_score_enabled);
     }
 
     #[test]
