@@ -93,6 +93,14 @@ display=0
 # Set to false to use keyboard only.
 gamepads=true
 
+# Enable Four Score emulation mode.
+# When true, NESER emulates 4-player Four Score reads on $4016/$4017.
+# Input fallback policy:
+#   - 2 physical gamepads connected: gamepads -> players 1-2, keyboard -> players 3-4
+#   - 1 physical gamepad connected: gamepad -> player 1, keyboard -> players 2-3
+#   - 0 physical gamepads connected: keyboard -> players 1-2
+enable_4_score=false
+
 # Controller Type Configuration (Per-Port)
 # Each of the two controller ports can be configured independently.
 # Valid values: joypad, arkanoid, none
