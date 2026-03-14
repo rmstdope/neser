@@ -79,8 +79,7 @@ impl ControllerDevice {
         controller_state = (controller_state & !0x01) | serial_bit;
 
         if !is_dummy_read && !self.four_score_strobe {
-            self.four_score_index[port_index] =
-                self.four_score_index[port_index].saturating_add(1);
+            self.four_score_index[port_index] = self.four_score_index[port_index].saturating_add(1);
         }
 
         controller_state

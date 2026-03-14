@@ -97,12 +97,12 @@ const CLI_FLAGS: &[CliFlag] = &[
     },
     CliFlag {
         flag: "--controller-port1",
-        help: Some("Controller type for port 1: joypad, zapper, arkanoid"),
+        help: Some("Controller type for port 1: joypad, snes-adapter, zapper, arkanoid"),
         has_value: true,
     },
     CliFlag {
         flag: "--controller-port2",
-        help: Some("Controller type for port 2: joypad, zapper, arkanoid"),
+        help: Some("Controller type for port 2: joypad, snes-adapter, zapper, arkanoid"),
         has_value: true,
     },
     CliFlag {

@@ -195,6 +195,7 @@ impl Nes {
                 ControllerType::Arkanoid => "Arkanoid",
                 ControllerType::Zapper => "Zapper",
                 ControllerType::Joypad => "Joypad",
+                ControllerType::SnesAdapter => "SNES adapter",
             };
             log_info(format!(
                 "Enabling {} controller on port {} for inserted cartridge. If you don't want this behavior, explicitly configure controller_port1/controller_port2 in config (or via CLI). Note that some games expect the controller on a specific port, so be sure to configure the correct one if you have issues with input not working in certain games.",

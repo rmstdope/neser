@@ -10,7 +10,7 @@ use crate::cartridge::Cartridge;
 use crate::debugging::log_info;
 use crate::input::{
     ArkanoidController, ArkanoidState, Button, Controller, ControllerType, JoypadState, NesJoypad,
-    Zapper, ZapperState,
+    SnesAdapter, SnesAdapterState, Zapper, ZapperState,
 };
 use crate::ppu::{self, SharedPpu};
 use serde::{Deserialize, Serialize};
@@ -22,6 +22,7 @@ use std::ops::RangeInclusive;
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ControllerStateWrapper {
     Joypad(JoypadState),
+    SnesAdapter(SnesAdapterState),
     Arkanoid(ArkanoidState),
     Zapper(ZapperState),
 }
@@ -77,6 +78,7 @@ impl Bus {
     ) -> Box<dyn Controller> {
         match controller_type {
             ControllerType::Joypad => Box::new(NesJoypad::new()),
+            ControllerType::SnesAdapter => Box::new(SnesAdapter::new()),
             ControllerType::Arkanoid => Box::new(ArkanoidController::new()),
             ControllerType::Zapper => Box::new(Zapper::new(ppu, app_context)),
         }
@@ -652,11 +654,17 @@ impl Bus {
             oam_dma_page: *self.oam_dma_page.borrow(),
             port1_controller: match port1_state {
                 crate::input::ControllerState::Joypad(s) => ControllerStateWrapper::Joypad(s),
+                crate::input::ControllerState::SnesAdapter(s) => {
+                    ControllerStateWrapper::SnesAdapter(s)
+                }
                 crate::input::ControllerState::Paddle(s) => ControllerStateWrapper::Arkanoid(s),
                 crate::input::ControllerState::Zapper(s) => ControllerStateWrapper::Zapper(s),
             },
             port2_controller: match port2_state {
                 crate::input::ControllerState::Joypad(s) => ControllerStateWrapper::Joypad(s),
+                crate::input::ControllerState::SnesAdapter(s) => {
+                    ControllerStateWrapper::SnesAdapter(s)
+                }
                 crate::input::ControllerState::Paddle(s) => ControllerStateWrapper::Arkanoid(s),
                 crate::input::ControllerState::Zapper(s) => ControllerStateWrapper::Zapper(s),
             },
@@ -678,6 +686,15 @@ impl Bus {
                     ControllerType::Joypad,
                 );
                 controller.restore_state(&crate::input::ControllerState::Joypad(s.clone()));
+                *self.controllers[0].borrow_mut() = controller;
+            }
+            ControllerStateWrapper::SnesAdapter(s) => {
+                let mut controller = Self::build_controller(
+                    self.ppu.clone(),
+                    self.app_context.clone(),
+                    ControllerType::SnesAdapter,
+                );
+                controller.restore_state(&crate::input::ControllerState::SnesAdapter(s.clone()));
                 *self.controllers[0].borrow_mut() = controller;
             }
             ControllerStateWrapper::Arkanoid(s) => {
@@ -709,6 +726,15 @@ impl Bus {
                     ControllerType::Joypad,
                 );
                 controller.restore_state(&crate::input::ControllerState::Joypad(s.clone()));
+                *self.controllers[1].borrow_mut() = controller;
+            }
+            ControllerStateWrapper::SnesAdapter(s) => {
+                let mut controller = Self::build_controller(
+                    self.ppu.clone(),
+                    self.app_context.clone(),
+                    ControllerType::SnesAdapter,
+                );
+                controller.restore_state(&crate::input::ControllerState::SnesAdapter(s.clone()));
                 *self.controllers[1].borrow_mut() = controller;
             }
             ControllerStateWrapper::Arkanoid(s) => {
