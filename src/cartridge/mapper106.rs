@@ -72,6 +72,12 @@ impl Mapper for Mapper106 {
         MAPPER_NUMBER
     }
 
+        // Delegate to PRG-RAM handling first (e.g., $6000-$7FFF) if enabled.
+        if self.base.try_write_prg_ram(addr, value) {
+            return;
+        }
+
+        // Only decode mapper registers for $8000-$FFFF.
     fn write_prg(&mut self, addr: u16, value: u8) {
         if addr < 0x8000 {
             return;
