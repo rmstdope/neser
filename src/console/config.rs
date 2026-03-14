@@ -97,12 +97,16 @@ const CLI_FLAGS: &[CliFlag] = &[
     },
     CliFlag {
         flag: "--controller-port1",
-        help: Some("Controller type for port 1: joypad, snes-adapter, zapper, arkanoid"),
+        help: Some(
+            "Controller type for port 1: joypad, snes-controller, snes-mouse, zapper, arkanoid",
+        ),
         has_value: true,
     },
     CliFlag {
         flag: "--controller-port2",
-        help: Some("Controller type for port 2: joypad, snes-adapter, zapper, arkanoid"),
+        help: Some(
+            "Controller type for port 2: joypad, snes-controller, snes-mouse, zapper, arkanoid",
+        ),
         has_value: true,
     },
     CliFlag {
@@ -693,6 +697,21 @@ impl Default for Config {
 }
 
 impl Config {
+    fn valid_controller_values() -> &'static str {
+        "joypad, snes-controller, snes-mouse, zapper, arkanoid"
+    }
+
+    fn parse_controller_arg(flag: &str, value: &str) -> Result<ControllerType, String> {
+        ControllerType::parse(value).ok_or_else(|| {
+            format!(
+                "Invalid value '{}' for '{}'. Valid options are: {}",
+                value,
+                flag,
+                Self::valid_controller_values()
+            )
+        })
+    }
+
     /// Create a new Config with only default values (no config files or args).
     #[cfg(test)]
     pub fn with_defaults() -> Self {
@@ -928,30 +947,14 @@ impl Config {
 
         // Controller ports
         if let Some(controller_port1) = Self::parse_string_arg(args, "--controller-port1") {
-            if let Some(controller) = ControllerType::parse(&controller_port1) {
-                self.controller_port1 = controller;
-                self.controller_port1_explicit = true;
-            } else {
-                eprintln!(
-                    "Warning: invalid value '{}' for '--controller-port1'; falling back to joypad.",
-                    controller_port1
-                );
-                self.controller_port1 = ControllerType::Joypad;
-                self.controller_port1_explicit = false;
-            }
+            self.controller_port1 =
+                Self::parse_controller_arg("--controller-port1", &controller_port1)?;
+            self.controller_port1_explicit = true;
         }
         if let Some(controller_port2) = Self::parse_string_arg(args, "--controller-port2") {
-            if let Some(controller) = ControllerType::parse(&controller_port2) {
-                self.controller_port2 = controller;
-                self.controller_port2_explicit = true;
-            } else {
-                eprintln!(
-                    "Warning: invalid value '{}' for '--controller-port2'; falling back to joypad.",
-                    controller_port2
-                );
-                self.controller_port2 = ControllerType::Joypad;
-                self.controller_port2_explicit = false;
-            }
+            self.controller_port2 =
+                Self::parse_controller_arg("--controller-port2", &controller_port2)?;
+            self.controller_port2_explicit = true;
         }
 
         // Zapper detection size
@@ -1563,28 +1566,12 @@ impl Config {
                 }
             }
             "controller_port1" => {
-                if let Some(controller) = ControllerType::parse(value) {
-                    self.controller_port1 = controller;
-                    self.controller_port1_explicit = true;
-                } else {
-                    eprintln!(
-                        "Warning: invalid value '{}' for 'controller_port1' in configuration; \
-                         keeping default controller type.",
-                        value
-                    );
-                }
+                self.controller_port1 = Self::parse_controller_arg("controller_port1", value)?;
+                self.controller_port1_explicit = true;
             }
             "controller_port2" => {
-                if let Some(controller) = ControllerType::parse(value) {
-                    self.controller_port2 = controller;
-                    self.controller_port2_explicit = true;
-                } else {
-                    eprintln!(
-                        "Warning: invalid value '{}' for 'controller_port2' in configuration; \
-                         keeping default controller type.",
-                        value
-                    );
-                }
+                self.controller_port2 = Self::parse_controller_arg("controller_port2", value)?;
+                self.controller_port2_explicit = true;
             }
             "zapper_detection_size" => {
                 if let Ok(size) = value.parse::<u8>() {
@@ -1839,7 +1826,7 @@ impl Config {
             .filter(|controller| {
                 matches!(
                     **controller,
-                    ControllerType::Arkanoid | ControllerType::Zapper
+                    ControllerType::Arkanoid | ControllerType::Zapper | ControllerType::SnesMouse
                 )
             })
             .count();
@@ -2790,12 +2777,14 @@ mod tests {
     }
 
     #[test]
-    fn test_config_file_controller_port_invalid_value_ignored() {
+    fn test_config_file_controller_port_invalid_value_errors() {
         let mut config = Config::default();
-        let _ = config.apply_config_value("controller_port1", "unknown");
-
-        assert_eq!(config.controller_port1, ControllerType::Joypad);
-        assert!(!config.controller_port1_explicit);
+        let result = config.apply_config_value("controller_port1", "unknown");
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "Invalid value 'unknown' for 'controller_port1'. Valid options are: joypad, snes-controller, snes-mouse, zapper, arkanoid"
+        );
     }
 
     #[test]
@@ -2813,6 +2802,28 @@ mod tests {
         ];
         let config = parse_config(args);
         assert_eq!(config.controller_port1, ControllerType::Arkanoid);
+    }
+
+    #[test]
+    fn test_config_controller_port1_flag_snes_controller() {
+        let args = vec![
+            "neser".to_string(),
+            "--controller-port1=snes-controller".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.controller_port1, ControllerType::SnesController);
+        assert!(config.controller_port1_explicit);
+    }
+
+    #[test]
+    fn test_config_controller_port1_flag_snes_mouse() {
+        let args = vec![
+            "neser".to_string(),
+            "--controller-port1=snes-mouse".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.controller_port1, ControllerType::SnesMouse);
+        assert!(config.controller_port1_explicit);
     }
 
     #[test]
@@ -2842,18 +2853,21 @@ mod tests {
     }
 
     #[test]
-    fn test_config_controller_port_flag_invalid_value_falls_back_to_joypad() {
+    fn test_config_controller_port_flag_invalid_value_errors() {
         let args = vec![
             "neser".to_string(),
             "--controller-port1=unknown".to_string(),
         ];
-        let config = parse_config(args);
-        assert_eq!(config.controller_port1, ControllerType::Joypad);
-        assert!(!config.controller_port1_explicit);
+        let result = config_new(args);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "Invalid value 'unknown' for '--controller-port1'. Valid options are: joypad, snes-controller, snes-mouse, zapper, arkanoid"
+        );
     }
 
     #[test]
-    fn test_config_controller_port_invalid_cli_value_overrides_config_file_to_joypad() {
+    fn test_config_controller_port_invalid_cli_value_does_not_override_config_file_and_errors() {
         use std::io::Write;
         use tempfile::NamedTempFile;
 
@@ -2867,9 +2881,26 @@ mod tests {
             file.path().to_string_lossy().to_string(),
             "--controller-port1=unknown".to_string(),
         ];
-        let config = parse_config(args);
-        assert_eq!(config.controller_port1, ControllerType::Joypad);
-        assert!(!config.controller_port1_explicit);
+        let result = Config::new(&args);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "Invalid value 'unknown' for '--controller-port1'. Valid options are: joypad, snes-controller, snes-mouse, zapper, arkanoid"
+        );
+    }
+
+    #[test]
+    fn test_config_controller_port_flag_snes_adapter_is_rejected() {
+        let args = vec![
+            "neser".to_string(),
+            "--controller-port1=snes-adapter".to_string(),
+        ];
+        let result = config_new(args);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "Invalid value 'snes-adapter' for '--controller-port1'. Valid options are: joypad, snes-controller, snes-mouse, zapper, arkanoid"
+        );
     }
 
     #[test]

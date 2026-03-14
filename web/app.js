@@ -2225,16 +2225,20 @@ async function populateRomSelect() {
 populateRomSelect();
 
 // Keyboard input mappings for both controllers
-// Controller 1: W=Up, S=Down, A=Left, D=Right, T=B, R=A, 4=Select, 5=Start
+// Controller 1: W=Up, S=Down, A=Left, D=Right, R=Y, T=X, F=B, G=A, Q=L, E=R, 4=Select, 5=Start
 const keyToButtonController1 = {
-    'w': { button: 4, name: 'Up' },      // Button 4 = Up
-    's': { button: 5, name: 'Down' },    // Button 5 = Down
-    'a': { button: 6, name: 'Left' },    // Button 6 = Left
-    'd': { button: 7, name: 'Right' },   // Button 7 = Right
-    't': { button: 1, name: 'B' },       // Button 1 = B
-    'r': { button: 0, name: 'A' },       // Button 0 = A
-    '4': { button: 2, name: 'Select' },  // Button 2 = Select
-    '5': { button: 3, name: 'Start' }    // Button 3 = Start
+    'w': { button: 4, snesButton: 4, name: 'Up' },        // NES Up / SNES Up
+    's': { button: 5, snesButton: 5, name: 'Down' },      // NES Down / SNES Down
+    'a': { button: 6, snesButton: 6, name: 'Left' },      // NES Left / SNES Left
+    'd': { button: 7, snesButton: 7, name: 'Right' },     // NES Right / SNES Right
+    'r': { button: 0, snesButton: 1, name: 'Y' },         // NES A fallback / SNES Y
+    't': { button: 1, snesButton: 9, name: 'X' },         // NES B fallback / SNES X
+    'f': { snesButton: 0, name: 'B' },                    // SNES B only
+    'g': { snesButton: 8, name: 'A' },                    // SNES A only
+    'q': { snesButton: 10, name: 'L' },                   // SNES L only
+    'e': { snesButton: 11, name: 'R' },                   // SNES R only
+    '4': { button: 2, snesButton: 2, name: 'Select' },    // NES Select / SNES Select
+    '5': { button: 3, snesButton: 3, name: 'Start' }      // NES Start / SNES Start
 };
 
 // Controller 2: I=Up, K=Down, J=Left, L=Right, P=B, O=A, 9=Select, 0=Start
@@ -2315,7 +2319,17 @@ function applyKeyboardMapping(event, mapping, controller, targets, pressed) {
         return;
     }
     event.preventDefault();
-    applyJoypadButtonIfAllowed(nes, controller, mapping.button, pressed);
+
+    if (mapping.snesButton !== undefined) {
+        const handledAsSnes = nes.set_snes_button(controller, mapping.snesButton, pressed);
+        if (handledAsSnes) {
+            return;
+        }
+    }
+
+    if (mapping.button !== undefined) {
+        applyJoypadButtonIfAllowed(nes, controller, mapping.button, pressed);
+    }
 }
 
 function isEditableKeyboardTarget(target) {

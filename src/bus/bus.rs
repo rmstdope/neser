@@ -10,7 +10,7 @@ use crate::cartridge::Cartridge;
 use crate::debugging::log_info;
 use crate::input::{
     ArkanoidController, ArkanoidState, Button, Controller, ControllerType, JoypadState, NesJoypad,
-    SnesAdapter, SnesAdapterState, Zapper, ZapperState,
+    SnesAdapter, SnesAdapterState, SnesButton, Zapper, ZapperState,
 };
 use crate::ppu::{self, SharedPpu};
 use serde::{Deserialize, Serialize};
@@ -79,6 +79,8 @@ impl Bus {
         match controller_type {
             ControllerType::Joypad => Box::new(NesJoypad::new()),
             ControllerType::SnesAdapter => Box::new(SnesAdapter::new()),
+            ControllerType::SnesController => Box::new(SnesAdapter::new_controller()),
+            ControllerType::SnesMouse => Box::new(SnesAdapter::new_mouse()),
             ControllerType::Arkanoid => Box::new(ArkanoidController::new()),
             ControllerType::Zapper => Box::new(Zapper::new(ppu, app_context)),
         }
@@ -511,6 +513,17 @@ impl Bus {
         }
     }
 
+    /// Set SNES-specific button state for a controller.
+    pub fn set_snes_button(&mut self, port: u8, button: SnesButton, pressed: bool) -> bool {
+        if !(1..=2).contains(&port) {
+            return false;
+        }
+
+        self.controllers[(port - 1) as usize]
+            .borrow_mut()
+            .set_snes_button(button, pressed)
+    }
+
     /// Get joypad button states as a u8 bitmask (for autorun recording).
     /// Returns 0 if the controller is not a joypad.
     pub fn get_joypad_button_states(&self, port: u8) -> u8 {
@@ -557,11 +570,32 @@ impl Bus {
         }
     }
 
+    /// Apply relative mouse delta for mouse-emulated controllers.
+    pub fn add_mouse_delta(&mut self, dx: i16, dy: i16) {
+        for controller in &self.controllers {
+            controller.borrow_mut().add_mouse_delta(dx, dy);
+        }
+    }
+
     /// Update mouse left button state for any mouse-emulated controller.
     pub fn set_mouse_left_button(&mut self, pressed: bool) {
         for controller in &self.controllers {
             controller.borrow_mut().set_mouse_left_button(pressed);
         }
+    }
+
+    /// Update mouse right button state for any mouse-emulated controller.
+    pub fn set_mouse_right_button(&mut self, pressed: bool) {
+        for controller in &self.controllers {
+            controller.borrow_mut().set_mouse_right_button(pressed);
+        }
+    }
+
+    /// Returns true when a Super NES mouse is active on any port.
+    pub fn has_snes_mouse(&self) -> bool {
+        self.controllers
+            .iter()
+            .any(|controller| controller.borrow().is_snes_mouse())
     }
 
     /// Return the input type for a controller port.

@@ -106,8 +106,12 @@ test("buildControllerOverlayText shows keyboard keys for both players when no ga
     const text = buildControllerOverlayText(0);
     assert.match(text, /Controller \(Player 1\)/);
     assert.match(text, /W\/A\/S\/D: D-Pad/);
-    assert.match(text, /R: A/);
-    assert.match(text, /T: B/);
+    assert.match(text, /R: Y/);
+    assert.match(text, /T: X/);
+    assert.match(text, /F: B/);
+    assert.match(text, /G: A/);
+    assert.match(text, /Q: L/);
+    assert.match(text, /E: R/);
     assert.match(text, /4: Select/);
     assert.match(text, /5: Start/);
     assert.match(text, /Controller \(Player 2\)/);

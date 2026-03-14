@@ -6,22 +6,25 @@ import {
     applyMouseButton,
     applyMouseMotion,
     mapMouseXToPaddlePosition,
+    mapMouseAxisToSnesMousePosition,
     mapMouseXToZapperPosition,
     mapMouseYToZapperPosition,
     isZapperActive
 } from "./mouse_input.js";
 
-function makeNesStub({ arkanoidPort = 0, zapperPort = 0 } = {}) {
+function makeNesStub({ arkanoidPort = 0, zapperPort = 0, snesMousePorts = [] } = {}) {
     const calls = {
         setButton: [],
         setMouseXPosition: [],
         setMouseYPosition: [],
-        setMouseLeftButton: []
+        setMouseLeftButton: [],
+        setMouseRightButton: []
     };
 
     const nes = {
         is_mouse_emulated_controller: (controller) => (arkanoidPort === controller),
         is_zapper_active: (port) => (zapperPort === port),
+        is_snes_mouse_active: (port) => snesMousePorts.includes(port),
         set_button: (controller, button, pressed) => {
             calls.setButton.push({ controller, button, pressed });
         },
@@ -33,6 +36,9 @@ function makeNesStub({ arkanoidPort = 0, zapperPort = 0 } = {}) {
         },
         set_mouse_left_button: (pressed) => {
             calls.setMouseLeftButton.push({ pressed });
+        },
+        set_mouse_right_button: (pressed) => {
+            calls.setMouseRightButton.push({ pressed });
         }
     };
 
@@ -147,6 +153,30 @@ test("applyMouseButton maps left button to trigger", () => {
     applyMouseButton(nes, 0, false);
 
     assert.deepEqual(calls.setMouseLeftButton, [{ pressed: true }, { pressed: false }]);
+});
+
+test("applyMouseButton maps right button to SNES mouse secondary button", () => {
+    const { nes, calls } = makeNesStub({ snesMousePorts: [1] });
+
+    applyMouseButton(nes, 2, true);
+    applyMouseButton(nes, 2, false);
+
+    assert.deepEqual(calls.setMouseRightButton, [{ pressed: true }, { pressed: false }]);
+});
+
+test("applyMouseMotion updates SNES mouse position on both axes", () => {
+    const { nes, calls } = makeNesStub({ snesMousePorts: [1] });
+    const width = 320;
+    const height = 480;
+    const x = 240;
+    const y = 360;
+
+    const expectedX = mapMouseAxisToSnesMousePosition(x, width);
+    const expectedY = mapMouseAxisToSnesMousePosition(y, height);
+    applyMouseMotion(nes, x, y, width, height);
+
+    assert.deepEqual(calls.setMouseXPosition, [{ position: expectedX }]);
+    assert.deepEqual(calls.setMouseYPosition, [{ position: expectedY }]);
 });
 
 test("applyJoypadButtonIfAllowed suppresses controller 1 in mouse mode", () => {

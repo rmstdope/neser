@@ -28,7 +28,7 @@ use crate::debugging::{
     breakpoints::{BreakpointKind, BreakpointList},
     log_info, snapshot, ui,
 };
-use crate::input::Button;
+use crate::input::{Button, SnesButton};
 use crate::rendering::Crosshair;
 
 // Type alias to simplify the complex return type used when initializing gamepads.
@@ -154,30 +154,54 @@ impl SdlEventLoop {
         window_width: u32,
         window_height: u32,
     ) -> Option<(u8, u8)> {
-        if Self::zapper_ports(nes).is_empty() {
-            let position = Self::map_mouse_x_to_paddle_position(x, window_width);
-            nes.set_mouse_x_position(position);
-            None
-        } else {
+        if !Self::zapper_ports(nes).is_empty() || nes.has_snes_mouse() {
             let x_position = Self::map_mouse_axis_to_zapper_position(x, window_width);
             let y_position = Self::map_mouse_axis_to_zapper_position(y, window_height);
             nes.set_mouse_x_position(x_position);
             nes.set_mouse_y_position(y_position);
             Some((x_position, y_position))
+        } else {
+            let position = Self::map_mouse_x_to_paddle_position(x, window_width);
+            nes.set_mouse_x_position(position);
+            None
         }
+    }
+
+    fn map_relative_mouse_delta_to_axis_delta(delta: i32, window_extent: u32) -> i16 {
+        if window_extent <= 1 {
+            return 0;
+        }
+        let scaled = (delta as f32) * (255.0 / (window_extent.saturating_sub(1) as f32));
+        scaled.round().clamp(-255.0, 255.0) as i16
+    }
+
+    fn apply_snes_mouse_relative_motion(
+        nes: &mut Nes,
+        xrel: i32,
+        yrel: i32,
+        window_width: u32,
+        window_height: u32,
+    ) {
+        let dx = Self::map_relative_mouse_delta_to_axis_delta(xrel, window_width);
+        let dy = Self::map_relative_mouse_delta_to_axis_delta(yrel, window_height);
+        nes.add_mouse_delta(dx, dy);
     }
 
     /// Maps left mouse button presses to mouse-emulated controller.
     ///
     /// This is a no-op if no mouse-emulated controller is connected.
     fn update_mouse_button(nes: &mut Nes, button: MouseButton, pressed: bool) {
-        if button != MouseButton::Left {
-            return;
-        }
-
         if !Self::mouse_ports(nes).is_empty() {
-            nes.set_mouse_left_button(pressed);
+            match button {
+                MouseButton::Left => nes.set_mouse_left_button(pressed),
+                MouseButton::Right => nes.set_mouse_right_button(pressed),
+                _ => {}
+            }
         }
+    }
+
+    fn should_use_relative_mouse_mode(should_grab: bool, snes_mouse_active: bool) -> bool {
+        should_grab && snes_mouse_active
     }
 
     fn gamepad_ports(nes: &Nes) -> Vec<u8> {
@@ -303,6 +327,26 @@ impl SdlEventLoop {
     fn apply_keyboard_button(nes: &mut Nes, ports: &[u8], button: Button, pressed: bool) {
         for port in ports {
             nes.set_button(*port, button, pressed);
+        }
+    }
+
+    fn apply_keyboard_snes_button(nes: &mut Nes, ports: &[u8], button: SnesButton, pressed: bool) {
+        for port in ports {
+            nes.set_snes_button(*port, button, pressed);
+        }
+    }
+
+    fn apply_keyboard_button_or_snes_button(
+        nes: &mut Nes,
+        ports: &[u8],
+        joypad_button: Button,
+        snes_button: SnesButton,
+        pressed: bool,
+    ) {
+        for port in ports {
+            if !nes.set_snes_button(*port, snes_button, pressed) {
+                nes.set_button(*port, joypad_button, pressed);
+            }
         }
     }
 
@@ -1103,20 +1147,38 @@ impl SdlEventLoop {
                                 self.window_focused = false;
                                 self.mouse_released_by_escape = true;
                                 let _ = gl_backend.set_mouse_grab(false);
+                                self._sdl_context.mouse().set_relative_mouse_mode(false);
                                 self.mouse_grabbed = false;
                                 self.update_cursor_visibility(false);
                             }
                             _ => {}
                         },
-                        Event::MouseMotion { x, y, .. } => {
+                        Event::MouseMotion {
+                            x, y, xrel, yrel, ..
+                        } => {
                             let mouse_controller_active = !Self::mouse_ports(nes).is_empty();
                             if mouse_controller_active && !self.mouse_grabbed {
                                 continue;
                             }
 
                             let (window_width, window_height) = gl_backend.window_size();
-                            self.last_zapper_position =
-                                Self::update_mouse_motion(nes, x, y, window_width, window_height);
+                            if nes.has_snes_mouse() && Self::zapper_ports(nes).is_empty() {
+                                Self::apply_snes_mouse_relative_motion(
+                                    nes,
+                                    xrel,
+                                    yrel,
+                                    window_width,
+                                    window_height,
+                                );
+                            } else {
+                                self.last_zapper_position = Self::update_mouse_motion(
+                                    nes,
+                                    x,
+                                    y,
+                                    window_width,
+                                    window_height,
+                                );
+                            }
                         }
                         Event::MouseButtonDown { mouse_btn, .. } => {
                             let mouse_controller_active = !Self::mouse_ports(nes).is_empty();
@@ -1129,6 +1191,12 @@ impl SdlEventLoop {
                                 );
                                 if should_grab {
                                     let _ = gl_backend.set_mouse_grab(true);
+                                    self._sdl_context.mouse().set_relative_mouse_mode(
+                                        Self::should_use_relative_mouse_mode(
+                                            true,
+                                            nes.has_snes_mouse(),
+                                        ),
+                                    );
                                     self.mouse_grabbed = true;
                                     self.update_cursor_visibility(true);
                                 }
@@ -1180,6 +1248,9 @@ impl SdlEventLoop {
                     );
                     if self.mouse_grabbed != should_grab {
                         let _ = gl_backend.set_mouse_grab(should_grab);
+                        self._sdl_context.mouse().set_relative_mouse_mode(
+                            Self::should_use_relative_mouse_mode(should_grab, nes.has_snes_mouse()),
+                        );
                         self.mouse_grabbed = should_grab;
                     }
                     self.update_cursor_visibility(should_grab);
@@ -1290,6 +1361,9 @@ impl SdlEventLoop {
                 );
                 if self.mouse_grabbed != should_grab {
                     let _ = gl_backend.set_mouse_grab(should_grab);
+                    self._sdl_context.mouse().set_relative_mouse_mode(
+                        Self::should_use_relative_mouse_mode(should_grab, nes.has_snes_mouse()),
+                    );
                     self.mouse_grabbed = should_grab;
                 }
                 self.update_cursor_visibility(should_grab);
@@ -2276,15 +2350,67 @@ impl SdlEventLoop {
         let p1 = port_1.as_slice();
         let p2 = port_2.as_slice();
         match keycode {
-            // Player 1: W/A/S/D + R/T (A/B) + 4/5 (Select/Start)
-            Keycode::W => Self::apply_keyboard_button(nes, p1, Button::Up, pressed),
-            Keycode::S => Self::apply_keyboard_button(nes, p1, Button::Down, pressed),
-            Keycode::A => Self::apply_keyboard_button(nes, p1, Button::Left, pressed),
-            Keycode::D => Self::apply_keyboard_button(nes, p1, Button::Right, pressed),
-            Keycode::R => Self::apply_keyboard_button(nes, p1, Button::A, pressed),
-            Keycode::T => Self::apply_keyboard_button(nes, p1, Button::B, pressed),
-            Keycode::Num4 => Self::apply_keyboard_button(nes, p1, Button::Select, pressed),
-            Keycode::Num5 => Self::apply_keyboard_button(nes, p1, Button::Start, pressed),
+            // Player 1: W/A/S/D + R/T/F/G/Q/E (SNES Y/X/B/A/L/R) + 4/5 (Select/Start)
+            Keycode::W => Self::apply_keyboard_button_or_snes_button(
+                nes,
+                p1,
+                Button::Up,
+                SnesButton::Up,
+                pressed,
+            ),
+            Keycode::S => Self::apply_keyboard_button_or_snes_button(
+                nes,
+                p1,
+                Button::Down,
+                SnesButton::Down,
+                pressed,
+            ),
+            Keycode::A => Self::apply_keyboard_button_or_snes_button(
+                nes,
+                p1,
+                Button::Left,
+                SnesButton::Left,
+                pressed,
+            ),
+            Keycode::D => Self::apply_keyboard_button_or_snes_button(
+                nes,
+                p1,
+                Button::Right,
+                SnesButton::Right,
+                pressed,
+            ),
+            Keycode::R => Self::apply_keyboard_button_or_snes_button(
+                nes,
+                p1,
+                Button::A,
+                SnesButton::Y,
+                pressed,
+            ),
+            Keycode::T => Self::apply_keyboard_button_or_snes_button(
+                nes,
+                p1,
+                Button::B,
+                SnesButton::X,
+                pressed,
+            ),
+            Keycode::F => Self::apply_keyboard_snes_button(nes, p1, SnesButton::B, pressed),
+            Keycode::G => Self::apply_keyboard_snes_button(nes, p1, SnesButton::A, pressed),
+            Keycode::Q => Self::apply_keyboard_snes_button(nes, p1, SnesButton::L, pressed),
+            Keycode::E => Self::apply_keyboard_snes_button(nes, p1, SnesButton::R, pressed),
+            Keycode::Num4 => Self::apply_keyboard_button_or_snes_button(
+                nes,
+                p1,
+                Button::Select,
+                SnesButton::Select,
+                pressed,
+            ),
+            Keycode::Num5 => Self::apply_keyboard_button_or_snes_button(
+                nes,
+                p1,
+                Button::Start,
+                SnesButton::Start,
+                pressed,
+            ),
             // Player 2: I/J/K/L + O/P (A/B) + 9/0 (Select/Start)
             Keycode::I => Self::apply_keyboard_button(nes, p2, Button::Up, pressed),
             Keycode::K => Self::apply_keyboard_button(nes, p2, Button::Down, pressed),
@@ -2768,6 +2894,34 @@ mod tests {
         read_joypad_buttons(nes, 1)
     }
 
+    fn read_snes_adapter_buttons(nes: &mut Nes, port: u8) -> u16 {
+        let state = nes.bus().borrow().capture_state();
+        let wrapper = if port == 1 {
+            state.port1_controller
+        } else {
+            state.port2_controller
+        };
+
+        match wrapper {
+            ControllerStateWrapper::SnesAdapter(snes) => snes.button_states,
+            _ => 0,
+        }
+    }
+
+    fn read_snes_adapter_state(nes: &mut Nes, port: u8) -> Option<crate::input::SnesAdapterState> {
+        let state = nes.bus().borrow().capture_state();
+        let wrapper = if port == 1 {
+            state.port1_controller
+        } else {
+            state.port2_controller
+        };
+
+        match wrapper {
+            ControllerStateWrapper::SnesAdapter(snes) => Some(snes),
+            _ => None,
+        }
+    }
+
     fn read_paddle_trigger_bit_for_port(nes: &mut Nes, port: u8) -> u8 {
         let addr = if port == 1 { 0x4016 } else { 0x4017 };
         let value = nes.bus().borrow_mut().read(addr, false);
@@ -3237,6 +3391,44 @@ mod tests {
 
     #[test]
     #[serial]
+    fn test_player1_keyboard_snes_controller_mapping() {
+        let config = default_config();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        nes.bus()
+            .borrow_mut()
+            .set_controller_type(1, crate::input::ControllerType::SnesController);
+
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::R);
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::T);
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::F);
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::G);
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::Q);
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::E);
+
+        let bits = read_snes_adapter_buttons(&mut nes, 1);
+        assert_eq!(bits & (1 << 0), 1 << 0, "F should map to SNES B");
+        assert_eq!(bits & (1 << 1), 1 << 1, "R should map to SNES Y");
+        assert_eq!(bits & (1 << 8), 1 << 8, "G should map to SNES A");
+        assert_eq!(bits & (1 << 9), 1 << 9, "T should map to SNES X");
+        assert_eq!(bits & (1 << 10), 1 << 10, "Q should map to SNES L");
+        assert_eq!(bits & (1 << 11), 1 << 11, "E should map to SNES R");
+
+        event_loop.handle_key_up_for_run(&mut nes, Keycode::R);
+        event_loop.handle_key_up_for_run(&mut nes, Keycode::T);
+        event_loop.handle_key_up_for_run(&mut nes, Keycode::F);
+        event_loop.handle_key_up_for_run(&mut nes, Keycode::G);
+        event_loop.handle_key_up_for_run(&mut nes, Keycode::Q);
+        event_loop.handle_key_up_for_run(&mut nes, Keycode::E);
+
+        assert_eq!(read_snes_adapter_buttons(&mut nes, 1) & 0x0FFF, 0);
+    }
+
+    #[test]
+    #[serial]
     fn test_gamepad_routes_to_first_gamepad_port() {
         let config = default_config();
         let mut event_loop =
@@ -3332,6 +3524,75 @@ mod tests {
             .borrow_mut()
             .set_controller_type(1, crate::input::ControllerType::Arkanoid);
         assert_eq!(read_paddle_trigger_bit(&mut nes), 0);
+    }
+
+    #[test]
+    fn test_snes_mouse_motion_uses_full_axis_mapping() {
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        nes.bus()
+            .borrow_mut()
+            .set_controller_type(1, crate::input::ControllerType::SnesMouse);
+
+        let window_width = 320;
+        let window_height = 240;
+        let x = 319;
+        let y = 239;
+
+        let _ = SdlEventLoop::update_mouse_motion(&mut nes, x, y, window_width, window_height);
+
+        let state = read_snes_adapter_state(&mut nes, 1).expect("Expected SNES adapter state");
+        assert_eq!(state.mouse_x_position, 255);
+        assert_eq!(state.mouse_y_position, 255);
+    }
+
+    #[test]
+    fn test_snes_mouse_right_button_sets_secondary_button_state() {
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        nes.bus()
+            .borrow_mut()
+            .set_controller_type(1, crate::input::ControllerType::SnesMouse);
+
+        SdlEventLoop::update_mouse_button(&mut nes, MouseButton::Right, true);
+        let pressed = read_snes_adapter_state(&mut nes, 1).expect("Expected SNES adapter state");
+        assert!(pressed.mouse_right_button);
+
+        SdlEventLoop::update_mouse_button(&mut nes, MouseButton::Right, false);
+        let released = read_snes_adapter_state(&mut nes, 1).expect("Expected SNES adapter state");
+        assert!(!released.mouse_right_button);
+    }
+
+    #[test]
+    fn test_snes_mouse_relative_motion_accumulates_from_event_deltas() {
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        nes.bus()
+            .borrow_mut()
+            .set_controller_type(1, crate::input::ControllerType::SnesMouse);
+
+        SdlEventLoop::apply_snes_mouse_relative_motion(&mut nes, 10, 10, 320, 240);
+
+        let state_after_first =
+            read_snes_adapter_state(&mut nes, 1).expect("Expected SNES adapter state");
+        assert_eq!(state_after_first.mouse_x_position, 8);
+        assert_eq!(state_after_first.mouse_y_position, 11);
+
+        SdlEventLoop::apply_snes_mouse_relative_motion(&mut nes, 10, 10, 320, 240);
+        let state_after_second =
+            read_snes_adapter_state(&mut nes, 1).expect("Expected SNES adapter state");
+        assert_eq!(state_after_second.mouse_x_position, 16);
+        assert_eq!(state_after_second.mouse_y_position, 22);
+    }
+
+    #[test]
+    fn test_should_use_relative_mouse_mode_for_grabbed_snes_mouse() {
+        assert!(SdlEventLoop::should_use_relative_mouse_mode(true, true));
+        assert!(!SdlEventLoop::should_use_relative_mouse_mode(false, true));
+        assert!(!SdlEventLoop::should_use_relative_mouse_mode(true, false));
     }
 
     #[test]

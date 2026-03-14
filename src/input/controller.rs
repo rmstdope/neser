@@ -18,8 +18,27 @@ pub enum ControllerState {
 pub enum ControllerType {
     Joypad,
     SnesAdapter,
+    SnesController,
+    SnesMouse,
     Arkanoid,
     Zapper,
+}
+
+/// SNES-specific button identifiers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnesButton {
+    B,
+    Y,
+    Select,
+    Start,
+    Up,
+    Down,
+    Left,
+    Right,
+    A,
+    X,
+    L,
+    R,
 }
 
 impl ControllerType {
@@ -27,7 +46,8 @@ impl ControllerType {
     pub fn parse(value: &str) -> Option<Self> {
         match value.to_lowercase().as_str() {
             "joypad" => Some(Self::Joypad),
-            "snes-adapter" | "snes_adapter" | "snesadapter" | "snes" => Some(Self::SnesAdapter),
+            "snes-controller" | "snes_controller" | "snescontroller" => Some(Self::SnesController),
+            "snes-mouse" | "snes_mouse" | "snesmouse" => Some(Self::SnesMouse),
             "arkanoid" | "paddle" => Some(Self::Arkanoid),
             "zapper" => Some(Self::Zapper),
             _ => None,
@@ -50,8 +70,41 @@ pub fn controller_input_type(controller_type: ControllerType) -> ControllerInput
     match controller_type {
         ControllerType::Joypad => ControllerInput::Gamepad,
         ControllerType::SnesAdapter => ControllerInput::Gamepad,
+        ControllerType::SnesController => ControllerInput::Gamepad,
+        ControllerType::SnesMouse => ControllerInput::Mouse,
         ControllerType::Arkanoid => ControllerInput::Mouse,
         ControllerType::Zapper => ControllerInput::Mouse,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn controller_type_parse_supports_explicit_snes_controller_and_snes_mouse() {
+        assert_eq!(
+            ControllerType::parse("snes-controller"),
+            Some(ControllerType::SnesController)
+        );
+        assert_eq!(
+            ControllerType::parse("snes-mouse"),
+            Some(ControllerType::SnesMouse)
+        );
+        assert_eq!(ControllerType::parse("snes-adapter"), None);
+        assert_eq!(ControllerType::parse("snes"), None);
+    }
+
+    #[test]
+    fn controller_input_type_reports_expected_inputs_for_explicit_snes_types() {
+        assert_eq!(
+            controller_input_type(ControllerType::SnesController),
+            ControllerInput::Gamepad
+        );
+        assert_eq!(
+            controller_input_type(ControllerType::SnesMouse),
+            ControllerInput::Mouse
+        );
     }
 }
 
@@ -73,6 +126,12 @@ pub trait Controller {
     /// Returns true if the operation was successful, false if not supported.
     fn set_button(&mut self, button: Button, pressed: bool) -> bool;
 
+    /// Set SNES button state (for SNES controller emulation).
+    /// Returns true if the operation was successful, false if not supported.
+    fn set_snes_button(&mut self, _button: SnesButton, _pressed: bool) -> bool {
+        false
+    }
+
     /// Set mouse X position for mouse-emulated controllers.
     /// Returns true if the operation was successful, false if not supported.
     fn set_mouse_x_position(&mut self, position: u8) -> bool;
@@ -84,6 +143,24 @@ pub trait Controller {
     /// Set mouse left button state for mouse-emulated controllers.
     /// Returns true if the operation was successful, false if not supported.
     fn set_mouse_left_button(&mut self, pressed: bool) -> bool;
+
+    /// Apply relative mouse delta for mouse-emulated controllers.
+    ///
+    /// Returns true if the controller consumed the delta.
+    fn add_mouse_delta(&mut self, _dx: i16, _dy: i16) -> bool {
+        false
+    }
+
+    /// Set mouse right button state for mouse-emulated controllers.
+    /// Returns true if the operation was successful, false if not supported.
+    fn set_mouse_right_button(&mut self, _pressed: bool) -> bool {
+        false
+    }
+
+    /// Returns true when this controller is a Super NES mouse.
+    fn is_snes_mouse(&self) -> bool {
+        false
+    }
 
     // Get the type of input this controller needs.
     fn input_type(&self) -> ControllerInput;

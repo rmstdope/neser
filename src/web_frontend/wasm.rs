@@ -10,7 +10,7 @@ use crate::frontend_toasts::{
     cartridge_load_toast_message, emulator_timing_toast_message,
     gamepad_init_toast_message as shared_gamepad_init_toast_message,
 };
-use crate::input::{Button, ControllerType};
+use crate::input::{Button, ControllerType, SnesButton};
 use crate::wasm_autorun::WasmAutorunState;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -427,6 +427,38 @@ impl WasmNes {
         }
     }
 
+    /// Set SNES button state for a controller.
+    ///
+    /// # Arguments
+    /// * `controller` - Controller number (1-2)
+    /// * `button` - SNES button number
+    ///   (0=B, 1=Y, 2=Select, 3=Start, 4=Up, 5=Down, 6=Left, 7=Right, 8=A, 9=X, 10=L, 11=R)
+    /// * `pressed` - true if pressed, false if released
+    ///
+    /// # Returns
+    /// `true` if the active controller on the port supports SNES button input,
+    /// `false` otherwise.
+    #[wasm_bindgen]
+    pub fn set_snes_button(&mut self, controller: u8, button: u8, pressed: bool) -> bool {
+        let snes_button = match button {
+            0 => SnesButton::B,
+            1 => SnesButton::Y,
+            2 => SnesButton::Select,
+            3 => SnesButton::Start,
+            4 => SnesButton::Up,
+            5 => SnesButton::Down,
+            6 => SnesButton::Left,
+            7 => SnesButton::Right,
+            8 => SnesButton::A,
+            9 => SnesButton::X,
+            10 => SnesButton::L,
+            11 => SnesButton::R,
+            _ => return false,
+        };
+
+        self.nes.set_snes_button(controller, snes_button, pressed)
+    }
+
     #[wasm_bindgen]
     pub fn is_four_score_enabled(&self) -> bool {
         self.nes.app_context().borrow().config().four_score_enabled
@@ -454,6 +486,12 @@ impl WasmNes {
     #[wasm_bindgen]
     pub fn is_mouse_emulated_controller(&self, port: u8) -> bool {
         self.nes.controller_input_type(port) == Some(crate::input::ControllerInput::Mouse)
+    }
+
+    /// Check if a Super NES mouse is active on a specific port.
+    #[wasm_bindgen]
+    pub fn is_snes_mouse_active(&self, port: u8) -> bool {
+        (1..=2).contains(&port) && self.nes.has_snes_mouse()
     }
 
     /// Check if a Zapper light gun is active on the specified port.
@@ -494,6 +532,12 @@ impl WasmNes {
     #[wasm_bindgen]
     pub fn set_mouse_left_button(&mut self, pressed: bool) {
         self.nes.set_mouse_left_button(pressed);
+    }
+
+    /// Set the mouse right button state for any mouse-emulated controller.
+    #[wasm_bindgen]
+    pub fn set_mouse_right_button(&mut self, pressed: bool) {
+        self.nes.set_mouse_right_button(pressed);
     }
 
     /// Get the nominal TV-system refresh rate in Hz for the loaded ROM or system default (if not ROM loaded).

@@ -44,12 +44,33 @@ export function mapMouseYToZapperPosition(y, windowHeight) {
     return Math.min(239, Math.max(0, Math.round(scaled)));
 }
 
+export function mapMouseAxisToSnesMousePosition(axis, windowExtent) {
+    if (windowExtent <= 1) {
+        return 0;
+    }
+
+    const maxAxis = windowExtent - 1;
+    const clamped = Math.min(Math.max(axis, 0), maxAxis);
+    const normalized = clamped / maxAxis;
+    const scaled = normalized * 255;
+
+    return Math.min(255, Math.max(0, Math.round(scaled)));
+}
+
 export function applyMouseMotion(nes, x, y, windowWidth, windowHeight) {
     const isZapper = isZapperActive(nes);
+    const isSnesMouse =
+        nes.is_snes_mouse_active?.(1) ||
+        nes.is_snes_mouse_active?.(2);
     
     if (isZapper) {
         const positionX = mapMouseXToZapperPosition(x, windowWidth);
         const positionY = mapMouseYToZapperPosition(y, windowHeight);
+        nes.set_mouse_x_position(positionX);
+        nes.set_mouse_y_position(positionY);
+    } else if (isSnesMouse) {
+        const positionX = mapMouseAxisToSnesMousePosition(x, windowWidth);
+        const positionY = mapMouseAxisToSnesMousePosition(y, windowHeight);
         nes.set_mouse_x_position(positionX);
         nes.set_mouse_y_position(positionY);
     } else {
@@ -62,6 +83,8 @@ export function applyMouseMotion(nes, x, y, windowWidth, windowHeight) {
 export function applyMouseButton(nes, button, pressed) {
     if (button === 0) {
         nes.set_mouse_left_button(pressed);
+    } else if (button === 2) {
+        nes.set_mouse_right_button(pressed);
     }
 }
 

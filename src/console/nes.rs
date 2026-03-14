@@ -196,6 +196,8 @@ impl Nes {
                 ControllerType::Zapper => "Zapper",
                 ControllerType::Joypad => "Joypad",
                 ControllerType::SnesAdapter => "SNES adapter",
+                ControllerType::SnesController => "SNES controller",
+                ControllerType::SnesMouse => "SNES mouse",
             };
             log_info(format!(
                 "Enabling {} controller on port {} for inserted cartridge. If you don't want this behavior, explicitly configure controller_port1/controller_port2 in config (or via CLI). Note that some games expect the controller on a specific port, so be sure to configure the correct one if you have issues with input not working in certain games.",
@@ -443,6 +445,18 @@ impl Nes {
             .set_button(controller, button, pressed);
     }
 
+    /// Set SNES-specific button state for a controller.
+    pub fn set_snes_button(
+        &mut self,
+        controller: u8,
+        button: crate::input::SnesButton,
+        pressed: bool,
+    ) -> bool {
+        self.bus
+            .borrow_mut()
+            .set_snes_button(controller, button, pressed)
+    }
+
     /// Set all joypad button states from a u8 bitmask (for autorun playback).
     ///
     /// Each bit corresponds to a [`crate::input::Button`] variant by its discriminant index.
@@ -498,12 +512,27 @@ impl Nes {
         self.bus.borrow_mut().set_mouse_y_position(position);
     }
 
+    /// Apply relative mouse delta for mouse-emulated controllers.
+    pub fn add_mouse_delta(&mut self, dx: i16, dy: i16) {
+        self.bus.borrow_mut().add_mouse_delta(dx, dy);
+    }
+
     /// Update the left mouse button status for any mouse-emulated controller.
     ///
     /// # Arguments
     /// * `pressed` - `true` if the Arkanoid controller trigger is pressed, `false` if released.
     pub fn set_mouse_left_button(&mut self, pressed: bool) {
         self.bus.borrow_mut().set_mouse_left_button(pressed);
+    }
+
+    /// Update the right mouse button status for any mouse-emulated controller.
+    pub fn set_mouse_right_button(&mut self, pressed: bool) {
+        self.bus.borrow_mut().set_mouse_right_button(pressed);
+    }
+
+    /// Returns true when a Super NES mouse is active on any controller port.
+    pub fn has_snes_mouse(&self) -> bool {
+        self.bus.borrow().has_snes_mouse()
     }
 
     /// Generate a trace line for the current CPU state
