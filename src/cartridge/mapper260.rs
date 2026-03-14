@@ -262,10 +262,19 @@ impl Mapper for Mapper260 {
     fn registers_snapshot(&self) -> Vec<u8> {
         // Layout (version 0):
         // [ mmc3_snapshot..., ex_regs(5), locked(1), version(1), mmc3_len_le(2) ]
-        let mut snap = self.mmc3.registers_snapshot();
-        let mmc3_len = snap.len();
+        let mmc3_data = self.mmc3.registers_snapshot();
+        let mmc3_len = mmc3_data.len();
+
+        // ex_regs(5) + locked(1) + version(1) + length(2)
+        let overhead = self.ex_regs.len() + 1 + 1 + 2;
+        let mut snap = Vec::with_capacity(mmc3_len + overhead);
+
+        // MMC3 portion
+        snap.extend_from_slice(&mmc3_data);
+        // Mapper260-specific portion
         snap.extend_from_slice(&self.ex_regs);
         snap.push(u8::from(self.locked));
+        // Mapper260 snapshot version
         snap.push(0); // version 0
         let mmc3_len_u16 = mmc3_len as u16;
         snap.push((mmc3_len_u16 & 0xFF) as u8);
@@ -306,7 +315,8 @@ impl Mapper for Mapper260 {
             .saturating_add(EX_REGS_LEN)
             .saturating_add(LOCKED_LEN)
             .saturating_add(FOOTER_LEN);
-        if total < expected_min || mmc3_len > total {
+        if total < expected_min || mmc3_len > total.saturating_sub(FOOTER_LEN) {
+            // Corrupt or inconsistent snapshot; bail out.
             return;
         }
 
@@ -320,7 +330,9 @@ impl Mapper for Mapper260 {
 
         self.ex_regs.copy_from_slice(&data[ex_start..ex_end]);
         self.locked = data[locked_idx] != 0;
-        self.mmc3.restore_registers(&data[..mmc3_len]);
+
+        let mmc3_data = &data[..mmc3_len];
+        self.mmc3.restore_registers(mmc3_data);
     }
 
     fn reset(&mut self) {

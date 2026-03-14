@@ -127,31 +127,65 @@ fn draw_overlay_text(
     draw_list.add_text(text_pos, overlay_text_rgba(text_color, blink_red), text);
 }
 
-fn draw_crosshair(ui: &imgui::Ui, crosshair: Crosshair) {
-    const CROSSHAIR_SIZE: f32 = 12.0;
+fn draw_crosshair(ui: &imgui::Ui, crosshair: Crosshair, draw_ctx: &CrosshairDrawContext) {
     let color = [1.0, 0.2, 0.2, 1.0];
     let draw_list = ui.get_background_draw_list();
 
-    draw_list
-        .add_line(
-            [crosshair.x - CROSSHAIR_SIZE, crosshair.y],
-            [crosshair.x + CROSSHAIR_SIZE, crosshair.y],
-            color,
-        )
-        .thickness(2.0)
-        .build();
-    draw_list
-        .add_line(
-            [crosshair.x, crosshair.y - CROSSHAIR_SIZE],
-            [crosshair.x, crosshair.y + CROSSHAIR_SIZE],
-            color,
-        )
-        .thickness(2.0)
-        .build();
-    draw_list
-        .add_circle([crosshair.x, crosshair.y], 7.0, color)
-        .thickness(2.0)
-        .build();
+    let pixel_w = draw_ctx.draw_w / draw_ctx.cropped_w.max(1) as f32;
+    let pixel_h = draw_ctx.draw_h / draw_ctx.cropped_h.max(1) as f32;
+
+    let (ix, iy) = project_crosshair_to_cropped_indices(crosshair, draw_ctx);
+
+    let center_x = draw_ctx.x0 + (ix + 0.5) * pixel_w;
+    let center_y = draw_ctx.y0 + (iy + 0.5) * pixel_h;
+
+    let pattern: [(i32, i32); 8] = [
+        (0, -2),
+        (0, -1),
+        (-2, 0),
+        (-1, 0),
+        (1, 0),
+        (2, 0),
+        (0, 1),
+        (0, 2),
+    ];
+
+    for (dx, dy) in pattern {
+        let cx = center_x + dx as f32 * pixel_w;
+        let cy = center_y + dy as f32 * pixel_h;
+        draw_list
+            .add_rect(
+                [cx - pixel_w * 0.5, cy - pixel_h * 0.5],
+                [cx + pixel_w * 0.5, cy + pixel_h * 0.5],
+                color,
+            )
+            .filled(true)
+            .build();
+    }
+}
+
+struct CrosshairDrawContext {
+    x0: f32,
+    y0: f32,
+    draw_w: f32,
+    draw_h: f32,
+    cropped_w: u32,
+    cropped_h: u32,
+    h_overscan: u32,
+    v_overscan: u32,
+}
+
+fn project_crosshair_to_cropped_indices(
+    crosshair: Crosshair,
+    draw_ctx: &CrosshairDrawContext,
+) -> (f32, f32) {
+    let nes_x = crosshair.x.floor();
+    let nes_y = crosshair.y.floor();
+    let ix = (nes_x - draw_ctx.h_overscan as f32)
+        .clamp(0.0, (draw_ctx.cropped_w.saturating_sub(1)) as f32);
+    let iy = (nes_y - draw_ctx.v_overscan as f32)
+        .clamp(0.0, (draw_ctx.cropped_h.saturating_sub(1)) as f32);
+    (ix, iy)
 }
 
 fn draw_toasts(
@@ -533,6 +567,8 @@ impl GlBackend {
         }
 
         let visible_toasts = self.app_context.borrow_mut().visible_toasts(now);
+        let cropped_w = self.cropped_width();
+        let cropped_h = self.cropped_height();
         // Start ImGui frame
         {
             let ui = self.imgui.frame();
@@ -568,7 +604,17 @@ impl GlBackend {
             }
 
             if let Some(crosshair) = crosshair {
-                draw_crosshair(ui, crosshair);
+                let draw_ctx = CrosshairDrawContext {
+                    x0,
+                    y0,
+                    draw_w,
+                    draw_h,
+                    cropped_w,
+                    cropped_h,
+                    h_overscan: self.h_overscan,
+                    v_overscan: self.v_overscan,
+                };
+                draw_crosshair(ui, crosshair, &draw_ctx);
             }
 
             if !visible_toasts.is_empty() {
@@ -695,6 +741,65 @@ mod tests_windowed_dimensions {
         let (w, h) = GlBackend::windowed_dimensions(960);
         assert_eq!(h, 960);
         assert_eq!(w, 1170);
+    }
+}
+
+#[cfg(test)]
+mod tests_crosshair_projection {
+    use super::{Crosshair, CrosshairDrawContext, project_crosshair_to_cropped_indices};
+
+    #[test]
+    fn test_crosshair_projection_without_overscan() {
+        let draw_ctx = CrosshairDrawContext {
+            x0: 0.0,
+            y0: 0.0,
+            draw_w: 256.0,
+            draw_h: 240.0,
+            cropped_w: 256,
+            cropped_h: 240,
+            h_overscan: 0,
+            v_overscan: 0,
+        };
+        let (ix, iy) =
+            project_crosshair_to_cropped_indices(Crosshair { x: 10.0, y: 20.0 }, &draw_ctx);
+        assert_eq!(ix, 10.0);
+        assert_eq!(iy, 20.0);
+    }
+
+    #[test]
+    fn test_crosshair_projection_applies_vertical_overscan_offset() {
+        let draw_ctx = CrosshairDrawContext {
+            x0: 0.0,
+            y0: 0.0,
+            draw_w: 256.0,
+            draw_h: 224.0,
+            cropped_w: 256,
+            cropped_h: 224,
+            h_overscan: 0,
+            v_overscan: 8,
+        };
+        let (ix, iy) =
+            project_crosshair_to_cropped_indices(Crosshair { x: 100.0, y: 40.0 }, &draw_ctx);
+        assert_eq!(ix, 100.0);
+        assert_eq!(iy, 32.0);
+    }
+
+    #[test]
+    fn test_crosshair_projection_clamps_to_visible_region() {
+        let draw_ctx = CrosshairDrawContext {
+            x0: 0.0,
+            y0: 0.0,
+            draw_w: 240.0,
+            draw_h: 208.0,
+            cropped_w: 240,
+            cropped_h: 208,
+            h_overscan: 8,
+            v_overscan: 16,
+        };
+        let (ix, iy) =
+            project_crosshair_to_cropped_indices(Crosshair { x: 255.0, y: 239.0 }, &draw_ctx);
+        assert_eq!(ix, 239.0);
+        assert_eq!(iy, 207.0);
     }
 }
 

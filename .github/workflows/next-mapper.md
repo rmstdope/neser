@@ -33,6 +33,7 @@ network:
     - "nesdev.org"
     - "web.archive.org"
     - "fceux.com"
+    - "nesdev-wiki.nes.science"
     - "python"
 
 tools:
@@ -80,8 +81,9 @@ If no eligible issue exists, or a workflow-created PR is already open, exit with
 Before writing tests or implementation, research mapper behavior in this exact order:
 
 1. **Primary source: NesDev specification** for the selected mapper.
-2. **Fallback source: Mesen2 implementation** only when NesDev is missing or incomplete for a specific behavior.
-3. **Fallback source: FCEUX implementation** only when both NesDev and Mesen2 are missing or incomplete for a specific behavior.
+2. **Backup of primary source: https://nesdev-wiki.nes.science/wikipages/Mapper.xhtml** if the main NesDev page is unreachable.
+3. **Fallback source: Mesen2 implementation** only when NesDev is missing or incomplete for a specific behavior.
+4. **Fallback source: FCEUX implementation** only when both NesDev and Mesen2 are missing or incomplete for a specific behavior.
 
 Research must cover all applicable mapper aspects, including but not limited to:
 

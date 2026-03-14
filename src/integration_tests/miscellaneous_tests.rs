@@ -2,7 +2,8 @@
 mod tests {
     use crate::input::Button;
     use crate::integration_tests::allpads_harness::tests::{
-        ControllerConfig, run_allpads, script_enter_test, script_enter_test_and_press,
+        ControllerConfig, InputAction, ScriptEntry, run_allpads, script_enter_test,
+        script_enter_test_and_press,
     };
     use crate::setup_rom_console_test;
 
@@ -53,6 +54,22 @@ mod tests {
     }
 
     fn parse_metric_value(nametable_text: &str, label: &str) -> Option<u32> {
+        fn parse_token_number(token: &str) -> Option<u32> {
+            if let Ok(value) = token.parse::<u32>() {
+                return Some(value);
+            }
+            let digits: String = token
+                .chars()
+                .skip_while(|c| !c.is_ascii_digit())
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
+            if digits.is_empty() {
+                None
+            } else {
+                digits.parse::<u32>().ok()
+            }
+        }
+
         let lines: Vec<&str> = nametable_text.lines().collect();
         for (idx, line) in lines.iter().enumerate() {
             if !line.contains(label) {
@@ -64,9 +81,67 @@ mod tests {
             // "Y 19").
             for candidate in lines.iter().skip(idx).take(3) {
                 for token in candidate.split_whitespace().rev() {
-                    if let Ok(value) = token.parse::<u32>() {
+                    if let Some(value) = parse_token_number(token) {
                         return Some(value);
                     }
+                }
+            }
+        }
+        None
+    }
+
+    fn parse_signed_numbers(line: &str) -> Vec<i32> {
+        let mut result = Vec::new();
+        let mut current = String::new();
+
+        for ch in line.chars() {
+            if ch.is_ascii_digit() || ((ch == '-' || ch == '+') && current.is_empty()) {
+                current.push(ch);
+            } else if !current.is_empty() {
+                if let Ok(value) = current.parse::<i32>() {
+                    result.push(value);
+                }
+                current.clear();
+            }
+        }
+
+        if !current.is_empty()
+            && let Ok(value) = current.parse::<i32>()
+        {
+            result.push(value);
+        }
+
+        result
+    }
+
+    fn parse_metric_signed_value(nametable_text: &str, label: &str) -> Option<i32> {
+        let lines: Vec<&str> = nametable_text.lines().collect();
+        for (idx, line) in lines.iter().enumerate() {
+            if !line.contains(label) {
+                continue;
+            }
+
+            for candidate in lines.iter().skip(idx).take(3) {
+                let numbers = parse_signed_numbers(candidate);
+                if let Some(value) = numbers.first() {
+                    return Some(*value);
+                }
+            }
+        }
+        None
+    }
+
+    fn parse_metric_signed_pair(nametable_text: &str, label: &str) -> Option<(i32, i32)> {
+        let lines: Vec<&str> = nametable_text.lines().collect();
+        for (idx, line) in lines.iter().enumerate() {
+            if !line.contains(label) {
+                continue;
+            }
+
+            for candidate in lines.iter().skip(idx).take(3) {
+                let numbers = parse_signed_numbers(candidate);
+                if numbers.len() >= 2 {
+                    return Some((numbers[0], numbers[1]));
                 }
             }
         }
@@ -183,28 +258,20 @@ mod tests {
     fn allpads_zapper_trigger_hold_updates_metrics_and_pulltime() {
         let config = ControllerConfig::zapper();
         let script = vec![
-            crate::integration_tests::allpads_harness::tests::ScriptEntry {
+            ScriptEntry {
                 frame: 360,
                 actions: vec![
-                    crate::integration_tests::allpads_harness::tests::InputAction::MouseX(80),
-                    crate::integration_tests::allpads_harness::tests::InputAction::MouseY(96),
+                    InputAction::MouseX(80),
+                    InputAction::MouseY(96),
                 ],
             },
-            crate::integration_tests::allpads_harness::tests::ScriptEntry {
+            ScriptEntry {
                 frame: 400,
-                actions: vec![
-                    crate::integration_tests::allpads_harness::tests::InputAction::MouseButton(
-                        true,
-                    ),
-                ],
+                actions: vec![InputAction::MouseButton(true)],
             },
-            crate::integration_tests::allpads_harness::tests::ScriptEntry {
+            ScriptEntry {
                 frame: 450,
-                actions: vec![
-                    crate::integration_tests::allpads_harness::tests::InputAction::MouseButton(
-                        false,
-                    ),
-                ],
+                actions: vec![InputAction::MouseButton(false)],
             },
         ];
 
@@ -257,6 +324,249 @@ mod tests {
             "PullTime should increase while trigger is held (early={}, late={})",
             pull_time_early,
             pull_time_late
+        );
+    }
+
+    #[test]
+    fn allpads_zapper_y_sweep_reports_light_metrics() {
+        let config = ControllerConfig::zapper();
+        let sample_ys: [u8; 9] = [0, 1, 2, 118, 119, 120, 237, 238, 239];
+        let mut script = vec![
+            ScriptEntry {
+                frame: 360,
+                actions: vec![InputAction::MouseX(80), InputAction::MouseY(0)],
+            },
+            ScriptEntry {
+                frame: 400,
+                actions: vec![InputAction::MouseButton(true)],
+            },
+        ];
+
+        let mut frame = 420;
+        for y in sample_ys {
+            script.push(ScriptEntry {
+                frame,
+                actions: vec![InputAction::MouseY(y)],
+            });
+            frame += 20;
+        }
+
+        let total_frames = frame + 20;
+        let result = run_allpads(&config, &script, total_frames, 20);
+
+        let mut sample_frame = 440;
+        let mut observed: Vec<(u8, u32, u32)> = Vec::new();
+        for y in sample_ys {
+            let cap = result
+                .captures
+                .iter()
+                .find(|capture| capture.frame == sample_frame)
+                .unwrap_or_else(|| panic!("Expected capture at frame {}", sample_frame));
+            let light_y = parse_metric_value(&cap.nametable_text, "LIGHT Y").unwrap_or_else(|| {
+                panic!(
+                    "Expected LIGHT Y metric at frame {}, got:\n{}",
+                    sample_frame, cap.nametable_text
+                )
+            });
+            let height = parse_metric_value(&cap.nametable_text, "HEIGHT").unwrap_or_else(|| {
+                panic!(
+                    "Expected HEIGHT metric at frame {}, got:\n{}",
+                    sample_frame, cap.nametable_text
+                )
+            });
+            println!("allpads y={} => LIGHT Y={}, HEIGHT={}", y, light_y, height);
+            observed.push((y, light_y, height));
+            sample_frame += 20;
+        }
+
+        for (y, light_y, height) in observed.iter().copied() {
+            match y {
+                0 | 1 | 2 | 237 | 238 | 239 => {
+                    assert_eq!(
+                        (light_y, height),
+                        (192, 0),
+                        "Top/bottom edge should be off-window sentinel at y={y}"
+                    );
+                }
+                118..=120 => {
+                    assert!(
+                        light_y < 192,
+                        "Mid-screen sample should detect light (LIGHT Y < 192) at y={y}, got {light_y}"
+                    );
+                    assert!(
+                        (1..=6).contains(&height),
+                        "Mid-screen detected light height should be short (1..=6) at y={y}, got {height}"
+                    );
+                }
+                _ => unreachable!("Unexpected y sample"),
+            }
+        }
+    }
+
+    /////////////////////////////////////
+    // Allpads Arkanoid scenario (#1557)
+    /////////////////////////////////////
+
+    #[test]
+    fn allpads_arkanoid_probe_identifies_controller() {
+        let config = ControllerConfig::arkanoid();
+        let result = run_allpads(&config, &[], 300, 0);
+        let cap = &result.captures[0];
+
+        assert!(
+            cap.nametable_text.contains("NES ARKANOID"),
+            "Controller display should identify NES Arkanoid, got:\n{}",
+            cap.nametable_text
+        );
+        assert!(
+            cap.nametable_text.contains("PRESS FIRE"),
+            "Probe screen should prompt fire button, got:\n{}",
+            cap.nametable_text
+        );
+    }
+
+    #[test]
+    fn allpads_arkanoid_movement_updates_displacement_range_velocity_and_acceleration() {
+        let config = ControllerConfig::arkanoid();
+        let script = vec![
+            ScriptEntry {
+                frame: 300,
+                actions: vec![InputAction::MouseButton(true)],
+            },
+            ScriptEntry {
+                frame: 305,
+                actions: vec![InputAction::MouseButton(false)],
+            },
+            ScriptEntry {
+                frame: 360,
+                actions: vec![InputAction::MouseX(40)],
+            },
+            ScriptEntry {
+                frame: 400,
+                actions: vec![InputAction::MouseX(120)],
+            },
+            ScriptEntry {
+                frame: 440,
+                actions: vec![InputAction::MouseX(200)],
+            },
+            ScriptEntry {
+                frame: 480,
+                actions: vec![InputAction::MouseX(60)],
+            },
+        ];
+
+        let result = run_allpads(&config, &script, 520, 20);
+
+        let cap_a = result
+            .captures
+            .iter()
+            .find(|capture| capture.frame == 420)
+            .expect("Expected capture at frame 420");
+        let cap_b = result
+            .captures
+            .iter()
+            .find(|capture| capture.frame == 500)
+            .expect("Expected capture at frame 500");
+
+        for cap in [cap_a, cap_b] {
+            assert!(
+                cap.nametable_text.contains("DISPLACEMENT"),
+                "Arkanoid screen should include Displacement, got:\n{}",
+                cap.nametable_text
+            );
+            assert!(
+                cap.nametable_text.contains("RANGE"),
+                "Arkanoid screen should include Range, got:\n{}",
+                cap.nametable_text
+            );
+            assert!(
+                cap.nametable_text.contains("VELOCITY"),
+                "Arkanoid screen should include Velocity, got:\n{}",
+                cap.nametable_text
+            );
+            assert!(
+                cap.nametable_text.contains("ACCELERATION"),
+                "Arkanoid screen should include Acceleration, got:\n{}",
+                cap.nametable_text
+            );
+        }
+
+        let displacement_a = parse_metric_signed_value(&cap_a.nametable_text, "DISPLACEMENT")
+            .expect("Expected Displacement value at frame 420");
+        let displacement_b = parse_metric_signed_value(&cap_b.nametable_text, "DISPLACEMENT")
+            .expect("Expected Displacement value at frame 500");
+
+        let (range_min_a, range_max_a) = parse_metric_signed_pair(&cap_a.nametable_text, "RANGE")
+            .expect("Expected Range min/max at frame 420");
+        let (range_min_b, range_max_b) = parse_metric_signed_pair(&cap_b.nametable_text, "RANGE")
+            .expect("Expected Range min/max at frame 500");
+
+        let velocity_b = parse_metric_signed_value(&cap_b.nametable_text, "VELOCITY")
+            .expect("Expected Velocity value at frame 500");
+        let acceleration_b = parse_metric_signed_value(&cap_b.nametable_text, "ACCELERATION")
+            .expect("Expected Acceleration value at frame 500");
+
+        assert_ne!(
+            displacement_a, displacement_b,
+            "Displacement should react to scripted movement"
+        );
+        assert!(
+            range_max_a >= range_min_a && range_max_b >= range_min_b,
+            "Range min/max ordering should remain valid (a: {}-{}, b: {}-{})",
+            range_min_a,
+            range_max_a,
+            range_min_b,
+            range_max_b
+        );
+        assert!(
+            range_max_b - range_min_b >= range_max_a - range_min_a,
+            "Range span should not shrink after wider sweep (a span {}, b span {})",
+            range_max_a - range_min_a,
+            range_max_b - range_min_b
+        );
+        assert_ne!(
+            velocity_b, 0,
+            "Velocity should react to movement (frame 500)"
+        );
+        assert_ne!(
+            acceleration_b, 0,
+            "Acceleration should react to movement changes (frame 500)"
+        );
+    }
+
+    #[test]
+    fn allpads_arkanoid_fire_button_produces_observable_response() {
+        let config = ControllerConfig::arkanoid();
+        let no_fire_result = run_allpads(&config, &[], 340, 0);
+        let no_fire_cap = &no_fire_result.captures[0];
+        assert!(
+            no_fire_cap.nametable_text.contains("PRESS FIRE"),
+            "Without fire input, probe screen should remain visible, got:\n{}",
+            no_fire_cap.nametable_text
+        );
+
+        let script = vec![
+            ScriptEntry {
+                frame: 300,
+                actions: vec![InputAction::MouseButton(true)],
+            },
+            ScriptEntry {
+                frame: 305,
+                actions: vec![InputAction::MouseButton(false)],
+            },
+            ScriptEntry {
+                frame: 420,
+                actions: vec![InputAction::MouseButton(false)],
+            },
+        ];
+
+        let fire_result = run_allpads(&config, &script, 420, 0);
+        let fire_cap = &fire_result.captures[0];
+
+        assert!(
+            fire_cap.nametable_text.contains("DISPLACEMENT"),
+            "Fire input should enter Arkanoid paddle test screen, got:\n{}",
+            fire_cap.nametable_text
         );
     }
 
