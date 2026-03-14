@@ -4,10 +4,11 @@
 //! - Primary: NesDev wiki (mapper page unavailable during this session; researched via Mesen2)
 //! - Fallback: Mesen2 `Core/NES/Mappers/Homebrew/Cheapocabra.h`
 //!
-//! Register (`$5000–$5FFF` and `$7000–$7FFF` writes): `[NT CC PPPP]`
+//! Register (`$5000–$5FFF` and `$7000–$7FFF` writes): `[-- N C PPPP]`
 //! - `PPPP` (bits 3–0): 32 KB PRG bank at `$8000–$FFFF`
-//! - `C`   (bit 4):    8 KB CHR-RAM bank (0 or 1) at `$0000–$1FFF`
-//! - `NT`  (bit 5):    nametable set (0 = banks 0–7, 1 = banks 8–15)
+//! - `C`    (bit 4):    8 KB CHR-RAM bank (0 or 1) at `$0000–$1FFF`
+//! - `N` / `NT` (bit 5): nametable set (0 = banks 0–7, 1 = banks 8–15)
+//! - bits 7–6: unused
 //!
 //! PRG-ROM: up to 16 × 32 KB banks (512 KB).
 //! CHR-RAM: 16 KB (two 8 KB banks).
