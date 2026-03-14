@@ -13,7 +13,7 @@ export const WEB_SHORTCUT_REFERENCE = [
 ];
 
 const PLAYER_KEYBOARD_BINDINGS = [
-    "W/A/S/D: D-Pad\nR: A\nT: B\n4: Select\n5: Start",
+    "W/A/S/D: D-Pad\nR: Y\nT: X\nF: B\nG: A\nQ: L\nE: R\n4: Select\n5: Start",
     "I/J/K/L: D-Pad\nO: A\nP: B\n9: Select\n0: Start"
 ];
 

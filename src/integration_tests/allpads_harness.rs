@@ -2,7 +2,7 @@
 pub(crate) mod tests {
     use crate::cartridge::Cartridge;
     use crate::console::{Config, Nes, RamInitMode};
-    use crate::input::{Button, ControllerType};
+    use crate::input::{Button, ControllerType, SnesButton};
     use crate::integration_tests::rom_test_runner::tests::run_nes_for_frames;
 
     const ALLPADS_ROM_PATH: &str = "roms/automated_tests/allpads-r9/allpads218.nes";
@@ -24,10 +24,17 @@ pub(crate) mod tests {
             }
         }
 
-        pub fn snes_adapter_port1() -> Self {
+        pub fn snes_controller_port1() -> Self {
             Self {
-                port1: ControllerType::SnesAdapter,
-                port2: ControllerType::SnesAdapter,
+                port1: ControllerType::SnesController,
+                port2: ControllerType::SnesController,
+            }
+        }
+
+        pub fn snes_mouse_port1() -> Self {
+            Self {
+                port1: ControllerType::SnesMouse,
+                port2: ControllerType::SnesMouse,
             }
         }
 
@@ -56,12 +63,20 @@ pub(crate) mod tests {
             button: Button,
             pressed: bool,
         },
+        /// Press or release an SNES button on a port.
+        SnesButton {
+            port: u8,
+            button: SnesButton,
+            pressed: bool,
+        },
         /// Set the mouse X position (for Arkanoid/Zapper).
         MouseX(u8),
         /// Set the mouse Y position (for Zapper).
         MouseY(u8),
         /// Set mouse left button (for Arkanoid trigger / Zapper trigger).
         MouseButton(bool),
+        /// Set mouse right button (for Super NES mouse secondary button).
+        MouseRightButton(bool),
     }
 
     /// A scripted input entry: apply actions at a specific frame.
@@ -197,6 +212,13 @@ pub(crate) mod tests {
                         } => {
                             nes.set_button(*port, *button, *pressed);
                         }
+                        InputAction::SnesButton {
+                            port,
+                            button,
+                            pressed,
+                        } => {
+                            nes.set_snes_button(*port, *button, *pressed);
+                        }
                         InputAction::MouseX(pos) => {
                             nes.set_mouse_x_position(*pos);
                         }
@@ -205,6 +227,9 @@ pub(crate) mod tests {
                         }
                         InputAction::MouseButton(pressed) => {
                             nes.set_mouse_left_button(*pressed);
+                        }
+                        InputAction::MouseRightButton(pressed) => {
+                            nes.set_mouse_right_button(*pressed);
                         }
                     }
                 }

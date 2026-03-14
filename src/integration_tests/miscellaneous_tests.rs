@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::input::Button;
+    use crate::input::{Button, SnesButton};
     use crate::integration_tests::allpads_harness::tests::{
         ControllerConfig, InputAction, ScriptEntry, run_allpads, script_enter_test,
         script_enter_test_and_press,
@@ -270,13 +270,50 @@ mod tests {
         ]
     }
 
+    fn script_enter_snes_test_and_press_snes(button: SnesButton) -> Vec<ScriptEntry> {
+        vec![
+            ScriptEntry {
+                frame: 300,
+                actions: vec![InputAction::Button {
+                    port: 1,
+                    button: Button::B,
+                    pressed: true,
+                }],
+            },
+            ScriptEntry {
+                frame: 305,
+                actions: vec![InputAction::Button {
+                    port: 1,
+                    button: Button::B,
+                    pressed: false,
+                }],
+            },
+            ScriptEntry {
+                frame: 400,
+                actions: vec![InputAction::SnesButton {
+                    port: 1,
+                    button,
+                    pressed: true,
+                }],
+            },
+        ]
+    }
+
     fn snes_button_attrs(oam: &[u8]) -> Vec<u8> {
         (0..12).map(|sprite| oam_sprite_attr(oam, sprite)).collect()
     }
 
+    fn highlighted_snes_button_indices(attrs: &[u8]) -> Vec<usize> {
+        attrs
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, attr)| if *attr == 0x01 { Some(idx) } else { None })
+            .collect()
+    }
+
     #[test]
     fn allpads_snes_adapter_probe_identifies_super_nes_controller() {
-        let config = ControllerConfig::snes_adapter_port1();
+        let config = ControllerConfig::snes_controller_port1();
         let result = run_allpads(&config, &[], 300, 0);
         let cap = &result.captures[0];
         let text = cap.nametable_text.to_ascii_uppercase();
@@ -295,7 +332,7 @@ mod tests {
 
     #[test]
     fn allpads_snes_adapter_b_press_enters_test_screen() {
-        let config = ControllerConfig::snes_adapter_port1();
+        let config = ControllerConfig::snes_controller_port1();
         let script = script_enter_snes_test_and_press(Button::B);
         let result = run_allpads(&config, &script, 430, 0);
         let cap = &result.captures[0];
@@ -315,7 +352,7 @@ mod tests {
 
     #[test]
     fn allpads_snes_adapter_scripted_input_changes_button_highlight() {
-        let config = ControllerConfig::snes_adapter_port1();
+        let config = ControllerConfig::snes_controller_port1();
 
         let baseline_script = vec![
             ScriptEntry {
@@ -355,8 +392,60 @@ mod tests {
     }
 
     #[test]
+    fn allpads_snes_adapter_each_button_is_one_hot_highlighted() {
+        let config = ControllerConfig::snes_controller_port1();
+
+        let baseline = run_allpads(
+            &config,
+            &script_enter_snes_test_and_press(Button::B),
+            395,
+            0,
+        );
+        let baseline_attrs = snes_button_attrs(&baseline.captures[0].oam_data);
+        let baseline_highlighted = highlighted_snes_button_indices(&baseline_attrs);
+        assert!(
+            baseline_highlighted.is_empty(),
+            "No SNES buttons should be highlighted without held input, got {:?} (attrs={:?})",
+            baseline_highlighted,
+            baseline_attrs
+        );
+
+        let cases: &[(SnesButton, usize, &str)] = &[
+            (SnesButton::B, 0, "B"),
+            (SnesButton::Y, 1, "Y"),
+            (SnesButton::Select, 2, "Select"),
+            (SnesButton::Start, 3, "Start"),
+            (SnesButton::Up, 4, "Up"),
+            (SnesButton::Down, 5, "Down"),
+            (SnesButton::Left, 6, "Left"),
+            (SnesButton::Right, 7, "Right"),
+            (SnesButton::A, 8, "A"),
+            (SnesButton::X, 9, "X"),
+            (SnesButton::L, 10, "L"),
+            (SnesButton::R, 11, "R"),
+        ];
+
+        for (button, expected_index, label) in cases {
+            let script = script_enter_snes_test_and_press_snes(*button);
+            let result = run_allpads(&config, &script, 430, 0);
+            let attrs = snes_button_attrs(&result.captures[0].oam_data);
+            let highlighted = highlighted_snes_button_indices(&attrs);
+
+            assert_eq!(
+                highlighted,
+                vec![*expected_index],
+                "Pressing {} should highlight only index {}. highlighted={:?}, attrs={:?}",
+                label,
+                expected_index,
+                highlighted,
+                attrs
+            );
+        }
+    }
+
+    #[test]
     fn allpads_snes_adapter_scenario_is_deterministic() {
-        let config = ControllerConfig::snes_adapter_port1();
+        let config = ControllerConfig::snes_controller_port1();
         let script = script_enter_snes_test_and_press(Button::Right);
         let result1 = run_allpads(&config, &script, 430, 0);
         let result2 = run_allpads(&config, &script, 430, 0);
@@ -377,7 +466,7 @@ mod tests {
 
     #[test]
     fn allpads_snes_mouse_adapter_probe_identifies_super_nes_mouse() {
-        let config = ControllerConfig::snes_adapter_port1();
+        let config = ControllerConfig::snes_mouse_port1();
         let script = vec![
             ScriptEntry {
                 frame: 1,
@@ -423,7 +512,7 @@ mod tests {
 
     #[test]
     fn allpads_snes_mouse_adapter_left_click_enters_mouse_test_screen() {
-        let config = ControllerConfig::snes_adapter_port1();
+        let config = ControllerConfig::snes_mouse_port1();
         let script = script_enter_snes_mouse_test();
         let result = run_allpads(&config, &script, 420, 0);
         let cap = &result.captures[0];
@@ -437,8 +526,28 @@ mod tests {
     }
 
     #[test]
+    fn allpads_snes_mouse_adapter_right_click_changes_button_state() {
+        let config = ControllerConfig::snes_mouse_port1();
+
+        let baseline_script = script_enter_snes_mouse_test();
+        let baseline = run_allpads(&config, &baseline_script, 430, 0);
+
+        let mut right_click_script = script_enter_snes_mouse_test();
+        right_click_script.push(ScriptEntry {
+            frame: 400,
+            actions: vec![InputAction::MouseRightButton(true)],
+        });
+        let active = run_allpads(&config, &right_click_script, 430, 0);
+
+        assert_ne!(
+            baseline.captures[0].oam_data, active.captures[0].oam_data,
+            "Right mouse button should affect SNES mouse test-screen state"
+        );
+    }
+
+    #[test]
     fn allpads_snes_mouse_adapter_scripted_movement_updates_position_metrics() {
-        let config = ControllerConfig::snes_adapter_port1();
+        let config = ControllerConfig::snes_mouse_port1();
         let mut script = script_enter_snes_mouse_test();
         script.push(ScriptEntry {
             frame: 360,
@@ -484,8 +593,122 @@ mod tests {
     }
 
     #[test]
+    fn allpads_snes_mouse_adapter_y_sweep_reaches_wide_range() {
+        let config = ControllerConfig::snes_mouse_port1();
+        let mut script = script_enter_snes_mouse_test();
+        script.push(ScriptEntry {
+            frame: 360,
+            actions: vec![InputAction::MouseX(96), InputAction::MouseY(0)],
+        });
+        script.push(ScriptEntry {
+            frame: 420,
+            actions: vec![InputAction::MouseX(96), InputAction::MouseY(255)],
+        });
+
+        let result = run_allpads(&config, &script, 460, 20);
+        let cap_before_move = result
+            .captures
+            .iter()
+            .find(|capture| capture.frame == 380)
+            .expect("Expected capture at frame 380");
+        let cap_after_move = result
+            .captures
+            .iter()
+            .find(|capture| capture.frame == 440)
+            .expect("Expected capture at frame 440");
+
+        let (x_before, y_before) =
+            parse_metric_signed_pair(&cap_before_move.nametable_text, "POSITION").unwrap_or_else(
+                || {
+                    panic!(
+                        "Expected POSITION metric before Y movement, got:\n{}",
+                        cap_before_move.nametable_text
+                    )
+                },
+            );
+        let (x_after, y_after) =
+            parse_metric_signed_pair(&cap_after_move.nametable_text, "POSITION").unwrap_or_else(
+                || {
+                    panic!(
+                        "Expected POSITION metric after Y movement, got:\n{}",
+                        cap_after_move.nametable_text
+                    )
+                },
+            );
+
+        assert_eq!(
+            x_before, x_after,
+            "X should remain stable during Y-only movement (before={}, after={})",
+            x_before, x_after
+        );
+        let y_span = (y_after - y_before).abs();
+        assert!(
+            y_span >= 150,
+            "Y sweep should span most of the screen (>=150), got {} (before={}, after={})",
+            y_span,
+            y_before,
+            y_after
+        );
+    }
+
+    #[test]
+    fn allpads_snes_mouse_adapter_x_sweep_reaches_wide_range() {
+        let config = ControllerConfig::snes_mouse_port1();
+        let mut script = script_enter_snes_mouse_test();
+        script.push(ScriptEntry {
+            frame: 360,
+            actions: vec![InputAction::MouseX(0), InputAction::MouseY(96)],
+        });
+        script.push(ScriptEntry {
+            frame: 420,
+            actions: vec![InputAction::MouseX(255), InputAction::MouseY(96)],
+        });
+
+        let result = run_allpads(&config, &script, 460, 20);
+        let cap_left = result
+            .captures
+            .iter()
+            .find(|capture| capture.frame == 380)
+            .expect("Expected capture at frame 380");
+        let cap_right = result
+            .captures
+            .iter()
+            .find(|capture| capture.frame == 440)
+            .expect("Expected capture at frame 440");
+
+        let (x_left, y_left) = parse_metric_signed_pair(&cap_left.nametable_text, "POSITION")
+            .unwrap_or_else(|| {
+                panic!(
+                    "Expected POSITION metric at left edge, got:\n{}",
+                    cap_left.nametable_text
+                )
+            });
+        let (x_right, y_right) = parse_metric_signed_pair(&cap_right.nametable_text, "POSITION")
+            .unwrap_or_else(|| {
+                panic!(
+                    "Expected POSITION metric at right edge, got:\n{}",
+                    cap_right.nametable_text
+                )
+            });
+
+        assert_eq!(
+            y_left, y_right,
+            "Y should remain stable during X-only sweep (left={}, right={})",
+            y_left, y_right
+        );
+        let x_span = (x_right - x_left).abs();
+        assert!(
+            x_span >= 220,
+            "X sweep should span most of the screen (>=220), got {} (left={}, right={})",
+            x_span,
+            x_left,
+            x_right
+        );
+    }
+
+    #[test]
     fn allpads_snes_mouse_adapter_scenario_is_deterministic() {
-        let config = ControllerConfig::snes_adapter_port1();
+        let config = ControllerConfig::snes_mouse_port1();
         let mut script = script_enter_snes_mouse_test();
         script.push(ScriptEntry {
             frame: 360,
