@@ -193,7 +193,12 @@ impl Mapper for Mapper262 {
     }
 
     fn reset(&mut self) {
+        // Mapper 262 uses a soft-reset switch that inverts all bits each reset.
         self.reset_switch ^= 0xFF;
+        // Restore CHR mode / outer bits to power-on default.
+        self.ex_reg = 0;
+        // Delegate reset to the inner MMC3 to restore its power-on state.
+        self.mmc3.reset();
     }
 }
 
