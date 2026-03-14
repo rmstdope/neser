@@ -251,10 +251,11 @@ AA AA 01 01 10 10 01 01 00 00\n\
     }
 
     fn run_oam_decay_crc_test(tv_system: TimingMode, expected_crc: u32, capture_name: &str) {
+        let hardware_model = crate::console::HardwareModel::from_timing_mode(tv_system);
         let mut nes = create_nes_from_rom(
             "roms/automated_tests/misc_oam_tests/oam-decay-test.nes",
             crate::app_context::AppContext::new_with_config(Config {
-                tv_system,
+                hardware_model,
                 oam_dram_decay_enabled: true,
                 ram_init_mode: RamInitMode::Zero,
                 ..Default::default()
@@ -350,7 +351,7 @@ AA AA 01 01 10 10 01 01 00 00\n\
         let mut nes = create_nes_from_rom(
             "roms/automated_tests/nmi_sync/demo_pal.nes",
             crate::app_context::AppContext::new_with_config(Config {
-                tv_system: TimingMode::Pal,
+                hardware_model: crate::console::HardwareModel::NesPal,
                 ..Default::default()
             }),
             "demo_pal",

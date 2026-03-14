@@ -297,7 +297,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut nes_instance = Nes::new(app_context.clone());
     nes_instance.insert_cartridge(cart);
-    let tv_system = app_context.borrow().config().tv_system;
+    let tv_system = app_context.borrow().config().hardware_model.timing_mode();
     app_context
         .borrow_mut()
         .add_toast(emulator_timing_toast_message(tv_system));

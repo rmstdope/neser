@@ -109,7 +109,7 @@ impl Nes {
     pub fn new<C: IntoSharedAppContext>(app_context: C) -> Self {
         let app_context = app_context.into_shared();
         let config = app_context.borrow().config().clone();
-        let tv_system = config.tv_system;
+        let tv_system = config.hardware_model.timing_mode();
         let ram_init_mode = config.ram_init_mode;
         let oam_dram_decay_enabled = config.oam_dram_decay_enabled;
         let ppu = Rc::new(RefCell::new(Ppu::new(tv_system, ram_init_mode)));
@@ -1103,7 +1103,7 @@ mod tests {
     #[test]
     fn test_pal_ppu_runs_3_2x_cpu_cycles() {
         let config = Config {
-            tv_system: TimingMode::Pal,
+            hardware_model: crate::console::HardwareModel::NesPal,
             ..Default::default()
         };
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
@@ -1121,7 +1121,7 @@ mod tests {
     #[test]
     fn test_pal_ppu_accumulates_fractional_cycles() {
         let config = Config {
-            tv_system: TimingMode::Pal,
+            hardware_model: crate::console::HardwareModel::NesPal,
             ..Default::default()
         };
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));

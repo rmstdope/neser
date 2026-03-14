@@ -119,8 +119,8 @@ const CLI_FLAGS: &[CliFlag] = &[
     // Aligned flags matching config file keys with same value ranges
     // Support both value-based (--audio true) and prefix negation (--no-audio, --disable-audio)
     CliFlag {
-        flag: "--tv-system",
-        help: Some("TV system: ntsc or pal (default: ntsc)"),
+        flag: "--hardware-model",
+        help: Some("Hardware model: nes-ntsc or nes-pal (default: nes-ntsc)"),
         has_value: true,
     },
     CliFlag {
@@ -463,13 +463,55 @@ pub enum RamInitMode {
     SeededRandom(u64),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HardwareModel {
+    NesNtsc,
+    NesPal,
+}
+
+impl HardwareModel {
+    pub const fn from_timing_mode(timing_mode: TimingMode) -> Self {
+        match timing_mode {
+            TimingMode::Pal => Self::NesPal,
+            TimingMode::Ntsc
+            | TimingMode::MultiRegion
+            | TimingMode::Dendy
+            | TimingMode::Unknown(_) => Self::NesNtsc,
+        }
+    }
+
+    pub const fn timing_mode(self) -> TimingMode {
+        match self {
+            Self::NesNtsc => TimingMode::Ntsc,
+            Self::NesPal => TimingMode::Pal,
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NesNtsc => "nes-ntsc",
+            Self::NesPal => "nes-pal",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        if value.eq_ignore_ascii_case("nes-ntsc") {
+            Some(Self::NesNtsc)
+        } else if value.eq_ignore_ascii_case("nes-pal") {
+            Some(Self::NesPal)
+        } else {
+            None
+        }
+    }
+}
+
 /// Emulator configuration.
 #[derive(Debug, Clone)]
 pub struct Config {
-    /// TV system (NTSC or PAL).
-    pub tv_system: TimingMode,
-    /// Whether the TV system was explicitly configured.
-    pub tv_system_explicit: bool,
+    /// Emulated hardware model.
+    pub hardware_model: HardwareModel,
+    /// Whether the hardware model was explicitly configured.
+    pub hardware_model_explicit: bool,
     /// Whether audio is enabled.
     pub audio_enabled: bool,
     /// Whether VSync is enabled.
@@ -651,8 +693,8 @@ bitflags! {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            tv_system: TimingMode::Ntsc,
-            tv_system_explicit: false,
+            hardware_model: HardwareModel::NesNtsc,
+            hardware_model_explicit: false,
             audio_enabled: true,
             vsync_enabled: true,
             gamepads_enabled: true,
@@ -780,20 +822,14 @@ impl Config {
     /// Apply command-line arguments to the config.
     /// Arguments override any values set by defaults or config file.
     fn apply_args(&mut self, args: &[String]) -> Result<(), String> {
-        // TV system (value-based, aligned with config file)
-        if let Some(tv_system) = Self::parse_string_arg(args, "--tv-system") {
-            if tv_system.eq_ignore_ascii_case("pal") {
-                self.tv_system = TimingMode::Pal;
-                self.tv_system_explicit = true;
-            } else if tv_system.eq_ignore_ascii_case("ntsc") {
-                self.tv_system = TimingMode::Ntsc;
-                self.tv_system_explicit = true;
-            } else {
-                return Err(format!(
-                    "Invalid --tv-system value: '{}'. Valid options are: ntsc, pal",
-                    tv_system
-                ));
-            }
+        if let Some(hardware_model) = Self::parse_string_arg(args, "--hardware-model") {
+            self.hardware_model = HardwareModel::parse(&hardware_model).ok_or_else(|| {
+                format!(
+                    "Invalid --hardware-model value: '{}'. Valid options are: nes-ntsc, nes-pal",
+                    hardware_model
+                )
+            })?;
+            self.hardware_model_explicit = true;
         }
 
         // OAM DRAM decay: --oam-dram-decay true/false, --no-oam-dram-decay, --disable-oam-dram-decay
@@ -1110,7 +1146,7 @@ impl Config {
 
         println!("\nExamples:");
         println!("  neser game.nes                               # Load and run a ROM");
-        println!("  neser --tv-system pal game.nes               # Use PAL timing");
+        println!("  neser --hardware-model nes-pal game.nes      # Use NES PAL timing");
         println!(
             "  neser --debugger game.nes                    # Enable debugger (no value = true)"
         );
@@ -1383,8 +1419,8 @@ impl Config {
     ///
     /// # Example config file:
     /// ```text
-    /// # TV system: ntsc or pal
-    /// tv_system=ntsc
+    /// # Hardware model: nes-ntsc or nes-pal
+    /// hardware_model=nes-ntsc
     ///
     /// # Audio settings
     /// audio=true
@@ -1454,13 +1490,10 @@ impl Config {
     /// Apply a single config file key-value pair.
     fn apply_config_value(&mut self, key: &str, value: &str) -> Result<(), String> {
         match key {
-            "tv_system" => {
-                if value.eq_ignore_ascii_case("pal") {
-                    self.tv_system = TimingMode::Pal;
-                    self.tv_system_explicit = true;
-                } else if value.eq_ignore_ascii_case("ntsc") {
-                    self.tv_system = TimingMode::Ntsc;
-                    self.tv_system_explicit = true;
+            "hardware_model" => {
+                if let Some(hardware_model) = HardwareModel::parse(value) {
+                    self.hardware_model = hardware_model;
+                    self.hardware_model_explicit = true;
                 }
             }
             "audio" => {
@@ -1693,22 +1726,15 @@ impl Config {
     }
 
     pub fn apply_rom_timing_mode(&mut self, rom_timing_mode: crate::cartridge::TimingMode) -> bool {
-        if self.tv_system_explicit {
+        if self.hardware_model_explicit {
             return false;
         }
 
-        match rom_timing_mode {
-            crate::cartridge::TimingMode::Ntsc => {
-                self.tv_system = TimingMode::Ntsc;
-                true
-            }
-            crate::cartridge::TimingMode::Pal => {
-                self.tv_system = TimingMode::Pal;
-                true
-            }
-            crate::cartridge::TimingMode::MultiRegion
-            | crate::cartridge::TimingMode::Dendy
-            | crate::cartridge::TimingMode::Unknown(_) => false,
+        if rom_timing_mode.is_ntsc_or_pal() {
+            self.hardware_model = HardwareModel::from_timing_mode(rom_timing_mode);
+            true
+        } else {
+            false
         }
     }
 
@@ -1919,7 +1945,7 @@ mod tests {
     #[test]
     fn test_config_default_values() {
         let config = Config::with_defaults();
-        assert_eq!(config.tv_system, TimingMode::Ntsc);
+        assert_eq!(config.hardware_model, HardwareModel::NesNtsc);
         assert!(config.audio_enabled);
         assert!(config.vsync_enabled);
         assert!(config.gamepads_enabled);
@@ -1953,7 +1979,7 @@ mod tests {
             file.path().to_string_lossy().to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.tv_system, TimingMode::Ntsc);
+        assert_eq!(config.hardware_model, HardwareModel::NesNtsc);
         assert!(config.audio_enabled);
         assert!(config.vsync_enabled);
         assert!(config.gamepads_enabled);
@@ -1982,15 +2008,26 @@ mod tests {
     }
 
     #[test]
-    fn test_config_tv_system_pal() {
+    fn test_config_hardware_model_nes_pal() {
         let args = vec![
             "neser".to_string(),
-            "--tv-system".to_string(),
-            "pal".to_string(),
+            "--hardware-model".to_string(),
+            "nes-pal".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.tv_system, TimingMode::Pal);
-        assert!(config.tv_system_explicit);
+        assert_eq!(config.hardware_model, HardwareModel::NesPal);
+        assert!(config.hardware_model_explicit);
+    }
+
+    #[test]
+    fn test_hardware_model_timing_mode_values_match_expected_cpu_clock_and_scanlines() {
+        let ntsc_timing = HardwareModel::NesNtsc.timing_mode();
+        assert_eq!(ntsc_timing.cpu_clock_hz(), 1_789_773.0);
+        assert_eq!(ntsc_timing.scanlines_per_frame(), 262);
+
+        let pal_timing = HardwareModel::NesPal.timing_mode();
+        assert_eq!(pal_timing.cpu_clock_hz(), 1_662_607.0);
+        assert_eq!(pal_timing.scanlines_per_frame(), 312);
     }
 
     #[test]
@@ -1998,19 +2035,19 @@ mod tests {
         let mut config = Config::default();
         let applied = config.apply_rom_timing_mode(crate::cartridge::TimingMode::Pal);
         assert!(applied);
-        assert_eq!(config.tv_system, TimingMode::Pal);
+        assert_eq!(config.hardware_model, HardwareModel::NesPal);
     }
 
     #[test]
     fn test_config_apply_rom_timing_mode_does_not_override_explicit() {
         let mut config = Config {
-            tv_system: TimingMode::Pal,
-            tv_system_explicit: true,
+            hardware_model: HardwareModel::NesPal,
+            hardware_model_explicit: true,
             ..Default::default()
         };
         let applied = config.apply_rom_timing_mode(crate::cartridge::TimingMode::Ntsc);
         assert!(!applied);
-        assert_eq!(config.tv_system, TimingMode::Pal);
+        assert_eq!(config.hardware_model, HardwareModel::NesPal);
     }
 
     #[test]
@@ -2018,7 +2055,7 @@ mod tests {
         let mut config = Config::default();
         let applied = config.apply_rom_timing_mode(crate::cartridge::TimingMode::Unknown(0));
         assert!(!applied);
-        assert_eq!(config.tv_system, TimingMode::Ntsc);
+        assert_eq!(config.hardware_model, HardwareModel::NesNtsc);
     }
 
     #[test]
@@ -2354,8 +2391,8 @@ mod tests {
     fn test_config_multiple_flags() {
         let args = vec![
             "neser".to_string(),
-            "--tv-system".to_string(),
-            "pal".to_string(),
+            "--hardware-model".to_string(),
+            "nes-pal".to_string(),
             "--audio".to_string(),
             "false".to_string(),
             "--fullscreen".to_string(),
@@ -2368,7 +2405,7 @@ mod tests {
             "false".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.tv_system, TimingMode::Pal);
+        assert_eq!(config.hardware_model, HardwareModel::NesPal);
         assert!(!config.audio_enabled);
         assert!(config.fullscreen);
         assert_eq!(config.fullscreen_display, Some(2));
@@ -2541,32 +2578,40 @@ mod tests {
     // Config file tests
 
     #[test]
-    fn test_config_file_tv_system_pal() {
+    fn test_config_file_hardware_model_nes_pal() {
         let mut config = Config::default();
-        config.apply_config_value("tv_system", "pal").unwrap();
-        assert_eq!(config.tv_system, TimingMode::Pal);
-        assert!(config.tv_system_explicit);
+        config
+            .apply_config_value("hardware_model", "nes-pal")
+            .unwrap();
+        assert_eq!(config.hardware_model, HardwareModel::NesPal);
+        assert!(config.hardware_model_explicit);
     }
 
     #[test]
-    fn test_config_file_tv_system_ntsc() {
+    fn test_config_file_hardware_model_nes_ntsc() {
         let mut config = Config {
-            tv_system: TimingMode::Pal,
+            hardware_model: HardwareModel::NesPal,
             ..Default::default()
         };
-        config.apply_config_value("tv_system", "ntsc").unwrap();
-        assert_eq!(config.tv_system, TimingMode::Ntsc);
-        assert!(config.tv_system_explicit);
+        config
+            .apply_config_value("hardware_model", "nes-ntsc")
+            .unwrap();
+        assert_eq!(config.hardware_model, HardwareModel::NesNtsc);
+        assert!(config.hardware_model_explicit);
     }
 
     #[test]
-    fn test_config_file_tv_system_case_insensitive() {
+    fn test_config_file_hardware_model_case_insensitive() {
         let mut config = Config::default();
-        config.apply_config_value("tv_system", "PAL").unwrap();
-        assert_eq!(config.tv_system, TimingMode::Pal);
+        config
+            .apply_config_value("hardware_model", "NES-PAL")
+            .unwrap();
+        assert_eq!(config.hardware_model, HardwareModel::NesPal);
 
-        config.apply_config_value("tv_system", "NTSC").unwrap();
-        assert_eq!(config.tv_system, TimingMode::Ntsc);
+        config
+            .apply_config_value("hardware_model", "NES-NTSC")
+            .unwrap();
+        assert_eq!(config.hardware_model, HardwareModel::NesNtsc);
     }
 
     #[test]
@@ -3014,7 +3059,7 @@ mod tests {
             .apply_config_value("unknown_key", "some_value")
             .unwrap();
         // Config should remain unchanged
-        assert_eq!(config.tv_system, TimingMode::Ntsc);
+        assert_eq!(config.hardware_model, HardwareModel::NesNtsc);
     }
 
     #[test]
@@ -3024,7 +3069,7 @@ mod tests {
 
         let content = r#"
 # Test config file
-tv_system=pal
+hardware_model=nes-pal
 audio=false
 fullscreen=true
 display=2
@@ -3039,7 +3084,7 @@ pulse1=false
         let mut config = Config::default();
         config.load_from_file(file.path()).unwrap();
 
-        assert_eq!(config.tv_system, TimingMode::Pal);
+        assert_eq!(config.hardware_model, HardwareModel::NesPal);
         assert!(!config.audio_enabled);
         assert!(config.fullscreen);
         assert_eq!(config.fullscreen_display, Some(2));
@@ -3060,7 +3105,7 @@ pulse1=false
 
         // Create config file that sets PAL and disables audio
         let content = r#"
-tv_system=pal
+hardware_model=nes-pal
 audio=false
 "#;
         let mut file = NamedTempFile::new().unwrap();
@@ -3071,7 +3116,7 @@ audio=false
 
         // Load from config file
         config.load_from_file(file.path()).unwrap();
-        assert_eq!(config.tv_system, TimingMode::Pal);
+        assert_eq!(config.hardware_model, HardwareModel::NesPal);
         assert!(!config.audio_enabled);
 
         // Apply args - no args means config file values should remain
@@ -3079,8 +3124,30 @@ audio=false
         config.apply_args(&args).unwrap();
 
         // Config file values should persist since args don't override them
-        assert_eq!(config.tv_system, TimingMode::Pal);
+        assert_eq!(config.hardware_model, HardwareModel::NesPal);
         assert!(!config.audio_enabled);
+    }
+
+    #[test]
+    fn test_config_hardware_model_flag_overrides_config_file() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let content = "hardware_model=nes-pal\n";
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(content.as_bytes()).unwrap();
+
+        let args = vec![
+            "neser".to_string(),
+            "--config".to_string(),
+            file.path().to_string_lossy().to_string(),
+            "--hardware-model".to_string(),
+            "nes-ntsc".to_string(),
+        ];
+
+        let config = parse_config(args);
+        assert_eq!(config.hardware_model, HardwareModel::NesNtsc);
+        assert!(config.hardware_model_explicit);
     }
 
     #[test]
@@ -3112,7 +3179,7 @@ controller_port2=arkanoid
             .load_from_file(Path::new("/nonexistent/path/neser.conf"))
             .unwrap();
         // Should not panic, config should remain default
-        assert_eq!(config.tv_system, TimingMode::Ntsc);
+        assert_eq!(config.hardware_model, HardwareModel::NesNtsc);
         assert!(config.audio_enabled);
     }
 
@@ -3121,7 +3188,7 @@ controller_port2=arkanoid
         use std::io::Write;
         use tempfile::NamedTempFile;
 
-        let content = "tv_system=pal\naudio=false\n";
+        let content = "hardware_model=nes-pal\naudio=false\n";
         let mut file = NamedTempFile::new().unwrap();
         file.write_all(content.as_bytes()).unwrap();
 
@@ -3131,7 +3198,7 @@ controller_port2=arkanoid
             file.path().to_str().unwrap().to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.tv_system, TimingMode::Pal);
+        assert_eq!(config.hardware_model, HardwareModel::NesPal);
         assert!(!config.audio_enabled);
     }
 
@@ -3141,7 +3208,7 @@ controller_port2=arkanoid
         use tempfile::NamedTempFile;
 
         let content = r#"
-tv_system=pal
+hardware_model=nes-pal
 filter=invalid-shader
 "#;
         let mut file = NamedTempFile::new().unwrap();
@@ -3186,7 +3253,7 @@ filter=invalid-shader
         use tempfile::NamedTempFile;
 
         // Create a config file with --config that sets PAL
-        let content = "tv_system=pal\n";
+        let content = "hardware_model=nes-pal\n";
         let mut explicit_file = NamedTempFile::new().unwrap();
         explicit_file.write_all(content.as_bytes()).unwrap();
 
@@ -3197,7 +3264,7 @@ filter=invalid-shader
             explicit_file.path().to_str().unwrap().to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.tv_system, TimingMode::Pal);
+        assert_eq!(config.hardware_model, HardwareModel::NesPal);
     }
 
     #[test]
@@ -3327,25 +3394,56 @@ filter=invalid-shader
     }
 
     #[test]
-    fn test_config_tv_system_flag_pal() {
+    fn test_config_hardware_model_flag_nes_pal() {
+        let args = vec![
+            "neser".to_string(),
+            "--hardware-model".to_string(),
+            "nes-pal".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.hardware_model, HardwareModel::NesPal);
+    }
+
+    #[test]
+    fn test_config_hardware_model_flag_nes_ntsc() {
+        let args = vec![
+            "neser".to_string(),
+            "--hardware-model".to_string(),
+            "nes-ntsc".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.hardware_model, HardwareModel::NesNtsc);
+    }
+
+    #[test]
+    fn test_config_hardware_model_flag_invalid_value_errors() {
+        let args = vec![
+            "neser".to_string(),
+            "--hardware-model".to_string(),
+            "pal".to_string(),
+        ];
+        let result = config_new(args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_config_file_tv_system_key_is_ignored() {
+        let mut config = Config::default();
+        config
+            .apply_config_value("tv_system", "pal")
+            .expect("legacy key should be ignored gracefully");
+        assert_eq!(config.hardware_model, HardwareModel::NesNtsc);
+    }
+
+    #[test]
+    fn test_config_tv_system_flag_is_unknown() {
         let args = vec![
             "neser".to_string(),
             "--tv-system".to_string(),
             "pal".to_string(),
         ];
-        let config = parse_config(args);
-        assert_eq!(config.tv_system, TimingMode::Pal);
-    }
-
-    #[test]
-    fn test_config_tv_system_flag_ntsc() {
-        let args = vec![
-            "neser".to_string(),
-            "--tv-system".to_string(),
-            "ntsc".to_string(),
-        ];
-        let config = parse_config(args);
-        assert_eq!(config.tv_system, TimingMode::Ntsc);
+        let result = config_new(args);
+        assert!(result.is_err());
     }
 
     #[test]

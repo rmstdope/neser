@@ -139,7 +139,12 @@ impl WasmNes {
         self.pending_toasts
             .push(cartridge_load_toast_message(rom_name, true));
         self.pending_toasts.push(emulator_timing_toast_message(
-            self.nes.app_context().borrow().config().tv_system,
+            self.nes
+                .app_context()
+                .borrow()
+                .config()
+                .hardware_model
+                .timing_mode(),
         ));
         web_sys::console::log_1(&JsValue::from_str("ROM loaded successfully"));
         Ok(())
