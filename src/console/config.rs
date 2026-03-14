@@ -105,6 +105,13 @@ const CLI_FLAGS: &[CliFlag] = &[
         help: Some("Controller type for port 2: joypad, zapper, arkanoid"),
         has_value: true,
     },
+    CliFlag {
+        flag: "--zapper-detection-size",
+        help: Some(
+            "Zapper light detection square radius in pixels (0..=255, default: 0; higher values are more tolerant but slower)",
+        ),
+        has_value: true,
+    },
     // Aligned flags matching config file keys with same value ranges
     // Support both value-based (--audio true) and prefix negation (--no-audio, --disable-audio)
     CliFlag {
@@ -915,6 +922,27 @@ impl Config {
                 );
                 self.controller_port2 = ControllerType::Joypad;
                 self.controller_port2_explicit = false;
+            }
+        }
+
+        // Zapper detection size
+        if let Some(size) = Self::parse_u32_arg(args, "--zapper-detection-size")? {
+            let size_u8 = u8::try_from(size).map_err(|_| {
+                format!(
+                    "Invalid --zapper-detection-size value: {} (must be between 0 and 255)",
+                    size
+                )
+            })?;
+            self.zapper_detection_size = size_u8;
+
+            if size_u8 > 10 {
+                eprintln!(
+                    "Warning: --zapper-detection-size={} may cause performance issues. \
+                     Large values sample (2*size + 1)^2 = {} pixels per controller read. \
+                     Consider values <= 10 for better performance.",
+                    size_u8,
+                    (2 * size_u8 as u32 + 1).pow(2)
+                );
             }
         }
 
@@ -2345,6 +2373,35 @@ mod tests {
             "neser".to_string(),
             "--window-height".to_string(),
             "not_a_number".to_string(),
+        ];
+        let result = config_new(args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_config_zapper_detection_size_cli_space_syntax() {
+        let args = vec![
+            "neser".to_string(),
+            "--zapper-detection-size".to_string(),
+            "3".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.zapper_detection_size, 3);
+    }
+
+    #[test]
+    fn test_config_zapper_detection_size_cli_equals_syntax() {
+        let args = vec!["neser".to_string(), "--zapper-detection-size=7".to_string()];
+        let config = parse_config(args);
+        assert_eq!(config.zapper_detection_size, 7);
+    }
+
+    #[test]
+    fn test_config_zapper_detection_size_cli_out_of_range_errors() {
+        let args = vec![
+            "neser".to_string(),
+            "--zapper-detection-size".to_string(),
+            "300".to_string(),
         ];
         let result = config_new(args);
         assert!(result.is_err());

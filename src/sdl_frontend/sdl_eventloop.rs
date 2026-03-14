@@ -74,7 +74,7 @@ pub struct SdlEventLoop {
     controllers: Vec<sdl2::controller::GameController>,
     game_controller_subsystem: Option<sdl2::GameControllerSubsystem>,
     controller_player_map: HashMap<u32, u8>, // Maps controller instance_id to player number (1 or 2)
-    last_mouse_position: Option<(i32, i32)>,
+    last_zapper_position: Option<(u8, u8)>,
     cursor_hidden: bool,
     mouse_grabbed: bool,
     mouse_released_by_escape: bool,
@@ -147,15 +147,23 @@ impl SdlEventLoop {
     /// Applies mouse motion to mouse-emulated controller.
     ///
     /// This is a no-op if no mouse-emulated controller is connected.
-    fn update_mouse_motion(nes: &mut Nes, x: i32, y: i32, window_width: u32, window_height: u32) {
+    fn update_mouse_motion(
+        nes: &mut Nes,
+        x: i32,
+        y: i32,
+        window_width: u32,
+        window_height: u32,
+    ) -> Option<(u8, u8)> {
         if Self::zapper_ports(nes).is_empty() {
             let position = Self::map_mouse_x_to_paddle_position(x, window_width);
             nes.set_mouse_x_position(position);
+            None
         } else {
             let x_position = Self::map_mouse_axis_to_zapper_position(x, window_width);
             let y_position = Self::map_mouse_axis_to_zapper_position(y, window_height);
             nes.set_mouse_x_position(x_position);
             nes.set_mouse_y_position(y_position);
+            Some((x_position, y_position))
         }
     }
 
@@ -192,7 +200,7 @@ impl SdlEventLoop {
         if Self::zapper_ports(nes).is_empty() {
             None
         } else {
-            self.last_mouse_position.map(|(x, y)| Crosshair {
+            self.last_zapper_position.map(|(x, y)| Crosshair {
                 x: x as f32,
                 y: y as f32,
             })
@@ -366,7 +374,7 @@ impl SdlEventLoop {
             controllers,
             game_controller_subsystem,
             controller_player_map,
-            last_mouse_position: None,
+            last_zapper_position: None,
             cursor_hidden: false,
             mouse_grabbed: false,
             mouse_released_by_escape: false,
@@ -1084,8 +1092,8 @@ impl SdlEventLoop {
                             }
 
                             let (window_width, window_height) = gl_backend.window_size();
-                            self.last_mouse_position = Some((x, y));
-                            Self::update_mouse_motion(nes, x, y, window_width, window_height);
+                            self.last_zapper_position =
+                                Self::update_mouse_motion(nes, x, y, window_width, window_height);
                         }
                         Event::MouseButtonDown { mouse_btn, .. } => {
                             let mouse_controller_active = !Self::mouse_ports(nes).is_empty();
@@ -3210,7 +3218,7 @@ mod tests {
         let y = 120;
         let expected = SdlEventLoop::map_mouse_x_to_paddle_position(x, window_width);
 
-        SdlEventLoop::update_mouse_motion(&mut nes, x, y, window_width, window_height);
+        let _ = SdlEventLoop::update_mouse_motion(&mut nes, x, y, window_width, window_height);
 
         assert_eq!(read_paddle_position_for_port(&mut nes, 1), expected);
         assert_eq!(read_paddle_position_for_port(&mut nes, 2), expected);
@@ -3264,7 +3272,7 @@ mod tests {
         let y = 120;
         let expected = SdlEventLoop::map_mouse_x_to_paddle_position(x, window_width);
 
-        SdlEventLoop::update_mouse_motion(&mut nes, x, y, window_width, window_height);
+        let _ = SdlEventLoop::update_mouse_motion(&mut nes, x, y, window_width, window_height);
 
         assert_eq!(read_paddle_position(&mut nes), expected);
     }
@@ -3283,7 +3291,7 @@ mod tests {
         nes.bus()
             .borrow_mut()
             .set_controller_type(1, crate::input::ControllerType::Joypad);
-        SdlEventLoop::update_mouse_motion(&mut nes, x, y, window_width, window_height);
+        let _ = SdlEventLoop::update_mouse_motion(&mut nes, x, y, window_width, window_height);
 
         nes.bus()
             .borrow_mut()
