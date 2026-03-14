@@ -443,7 +443,10 @@ mod tests {
             .screen_buffer_mut()
             .set_pixel(100, 100, 255, 255, 255);
         zapper.read(false);
-        assert!(zapper.capture_state().light, "Light should be detected on target line");
+        assert!(
+            zapper.capture_state().light,
+            "Light should be detected on target line"
+        );
 
         advance_ppu_to(&ppu, 102, 100);
         ppu.borrow_mut()

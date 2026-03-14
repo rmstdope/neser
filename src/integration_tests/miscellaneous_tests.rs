@@ -300,12 +300,14 @@ mod tests {
 
         let mut frame = 420;
         for y in sample_ys {
-            script.push(crate::integration_tests::allpads_harness::tests::ScriptEntry {
-                frame,
-                actions: vec![
-                    crate::integration_tests::allpads_harness::tests::InputAction::MouseY(y),
-                ],
-            });
+            script.push(
+                crate::integration_tests::allpads_harness::tests::ScriptEntry {
+                    frame,
+                    actions: vec![
+                        crate::integration_tests::allpads_harness::tests::InputAction::MouseY(y),
+                    ],
+                },
+            );
             frame += 20;
         }
 
