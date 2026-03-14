@@ -2,7 +2,8 @@
 mod tests {
     use crate::input::Button;
     use crate::integration_tests::allpads_harness::tests::{
-        ControllerConfig, run_allpads, script_enter_test, script_enter_test_and_press,
+        ControllerConfig, InputAction, ScriptEntry, run_allpads, script_enter_test,
+        script_enter_test_and_press,
     };
     use crate::setup_rom_console_test;
 
@@ -199,28 +200,20 @@ mod tests {
     fn allpads_zapper_trigger_hold_updates_metrics_and_pulltime() {
         let config = ControllerConfig::zapper();
         let script = vec![
-            crate::integration_tests::allpads_harness::tests::ScriptEntry {
+            ScriptEntry {
                 frame: 360,
                 actions: vec![
-                    crate::integration_tests::allpads_harness::tests::InputAction::MouseX(80),
-                    crate::integration_tests::allpads_harness::tests::InputAction::MouseY(96),
+                    InputAction::MouseX(80),
+                    InputAction::MouseY(96),
                 ],
             },
-            crate::integration_tests::allpads_harness::tests::ScriptEntry {
+            ScriptEntry {
                 frame: 400,
-                actions: vec![
-                    crate::integration_tests::allpads_harness::tests::InputAction::MouseButton(
-                        true,
-                    ),
-                ],
+                actions: vec![InputAction::MouseButton(true)],
             },
-            crate::integration_tests::allpads_harness::tests::ScriptEntry {
+            ScriptEntry {
                 frame: 450,
-                actions: vec![
-                    crate::integration_tests::allpads_harness::tests::InputAction::MouseButton(
-                        false,
-                    ),
-                ],
+                actions: vec![InputAction::MouseButton(false)],
             },
         ];
 
@@ -281,33 +274,22 @@ mod tests {
         let config = ControllerConfig::zapper();
         let sample_ys: [u8; 9] = [0, 1, 2, 118, 119, 120, 237, 238, 239];
         let mut script = vec![
-            crate::integration_tests::allpads_harness::tests::ScriptEntry {
+            ScriptEntry {
                 frame: 360,
-                actions: vec![
-                    crate::integration_tests::allpads_harness::tests::InputAction::MouseX(80),
-                    crate::integration_tests::allpads_harness::tests::InputAction::MouseY(0),
-                ],
+                actions: vec![InputAction::MouseX(80), InputAction::MouseY(0)],
             },
-            crate::integration_tests::allpads_harness::tests::ScriptEntry {
+            ScriptEntry {
                 frame: 400,
-                actions: vec![
-                    crate::integration_tests::allpads_harness::tests::InputAction::MouseButton(
-                        true,
-                    ),
-                ],
+                actions: vec![InputAction::MouseButton(true)],
             },
         ];
 
         let mut frame = 420;
         for y in sample_ys {
-            script.push(
-                crate::integration_tests::allpads_harness::tests::ScriptEntry {
-                    frame,
-                    actions: vec![
-                        crate::integration_tests::allpads_harness::tests::InputAction::MouseY(y),
-                    ],
-                },
-            );
+            script.push(ScriptEntry {
+                frame,
+                actions: vec![InputAction::MouseY(y)],
+            });
             frame += 20;
         }
 
