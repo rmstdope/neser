@@ -175,15 +175,18 @@ impl Mapper for Mapper262 {
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        const MMC3_SNAP_LEN: usize = 16;
-        if data.len() >= MMC3_SNAP_LEN {
-            self.mmc3.restore_registers(&data[..MMC3_SNAP_LEN]);
+        // Derive MMC3 snapshot length from the mapper itself to avoid
+        // hard-coding internal MMC3 state size here.
+        let mmc3_snap_len = self.mmc3.registers_snapshot().len();
+
+        if data.len() >= mmc3_snap_len {
+            self.mmc3.restore_registers(&data[..mmc3_snap_len]);
         }
-        if data.len() > MMC3_SNAP_LEN {
-            self.ex_reg = data[MMC3_SNAP_LEN];
+        if data.len() > mmc3_snap_len {
+            self.ex_reg = data[mmc3_snap_len];
         }
-        if data.len() > MMC3_SNAP_LEN + 1 {
-            self.reset_switch = data[MMC3_SNAP_LEN + 1];
+        if data.len() > mmc3_snap_len + 1 {
+            self.reset_switch = data[mmc3_snap_len + 1];
         }
     }
 
