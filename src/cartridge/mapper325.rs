@@ -153,6 +153,14 @@ impl Mapper for Mapper325 {
         8 * 1024
     }
 
+    fn wram_snapshot(&self) -> Vec<u8> {
+        self.mmc3.wram_snapshot()
+    }
+
+    fn load_wram_snapshot(&mut self, data: &[u8]) {
+        self.mmc3.load_wram_snapshot(data);
+    }
+
     fn registers_snapshot(&self) -> Vec<u8> {
         self.mmc3.registers_snapshot()
     }
