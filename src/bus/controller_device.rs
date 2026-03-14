@@ -50,27 +50,40 @@ impl ControllerDevice {
     fn read_four_score_bit(&mut self, port_index: usize, is_dummy_read: bool) -> u8 {
         let idx = self.four_score_index[port_index];
 
-        let bit = if idx < 8 {
-            self.controllers[port_index]
-                .borrow_mut()
-                .read(is_dummy_read)
-                & 0x01
+        // Always read the full controller state once so we can preserve any
+        // non-joypad bits (e.g., Zapper, Arkanoid) while still applying
+        // Four Score's serial protocol on bit 0.
+        let mut controller_state = self.controllers[port_index]
+            .borrow_mut()
+            .read(is_dummy_read);
+
+        let serial_bit = if idx < 8 {
+            // First 8 bits are the underlying controller's serial data (bit 0).
+            controller_state & 0x01
         } else if idx < 16 {
+            // Next 8 bits are extra buttons (players 3/4).
             let extra_state = self.four_score_extra_button_states.borrow();
             let player_state = extra_state[port_index];
             (player_state >> (idx - 8)) & 0x01
         } else if idx < 24 {
+            // Next 8 bits are the Four Score signature.
             let signature = if port_index == 0 { 0x10 } else { 0x20 };
             (signature >> (idx - 16)) & 0x01
         } else {
+            // Remaining reads return 1.
             1
         };
 
+        // Preserve all higher bits from the underlying controller and only
+        // override bit 0 with the Four Score serial bit.
+        controller_state = (controller_state & !0x01) | serial_bit;
+
         if !is_dummy_read && !self.four_score_strobe {
-            self.four_score_index[port_index] = self.four_score_index[port_index].saturating_add(1);
+            self.four_score_index[port_index] =
+                self.four_score_index[port_index].saturating_add(1);
         }
 
-        bit
+        controller_state
     }
 }
 
