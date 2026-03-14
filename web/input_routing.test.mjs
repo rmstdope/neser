@@ -88,6 +88,12 @@ test("getKeyboardControllerTarget routes keyboard to players 2 and 3 when Four S
     assert.deepEqual(targets, [2, 3]);
 });
 
+test("getKeyboardControllerTarget follows Four Score unplug transition sequence", () => {
+    assert.deepEqual(getKeyboardControllerTarget(2, true), [3, 4]);
+    assert.deepEqual(getKeyboardControllerTarget(1, true), [2, 3]);
+    assert.deepEqual(getKeyboardControllerTarget(0, true), [1, 2]);
+});
+
 // Tests for shouldSuppressJoypadInput
 test("shouldSuppressJoypadInput suppresses controller 1 when mouse-emulated controller on port 1", () => {
     const nes = makeNesStub({ arkanoidPort: 1 });

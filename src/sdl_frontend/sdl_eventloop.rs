@@ -2967,6 +2967,33 @@ mod tests {
     }
 
     #[test]
+    fn test_keyboard_targets_four_score_unplug_transition_sequence() {
+        let mut config = Config::with_defaults();
+        config.four_score_enabled = true;
+        let nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
+
+        let mut controller_player_map = HashMap::new();
+        controller_player_map.insert(10, 1);
+        controller_player_map.insert(11, 2);
+        assert_eq!(
+            SdlEventLoop::keyboard_target_ports(&nes, &controller_player_map),
+            vec![3, 4]
+        );
+
+        controller_player_map.remove(&11);
+        assert_eq!(
+            SdlEventLoop::keyboard_target_ports(&nes, &controller_player_map),
+            vec![2, 3]
+        );
+
+        controller_player_map.clear();
+        assert_eq!(
+            SdlEventLoop::keyboard_target_ports(&nes, &controller_player_map),
+            vec![1, 2]
+        );
+    }
+
+    #[test]
     fn test_paddle_mode_suppresses_keyboard_joypad_input() {
         let mut paused = false;
         let mut debugger_open_requested = false;
