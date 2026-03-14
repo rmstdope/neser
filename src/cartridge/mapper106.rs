@@ -31,6 +31,7 @@ impl Mapper106 {
             has_chr_banking: true,
             prg_bank_size_kb: 8,
             chr_bank_size_kb: 1,
+            max_prg_ram_kb: 8,
             ..Default::default()
         };
 
