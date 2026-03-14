@@ -260,10 +260,7 @@ mod tests {
         let script = vec![
             ScriptEntry {
                 frame: 360,
-                actions: vec![
-                    InputAction::MouseX(80),
-                    InputAction::MouseY(96),
-                ],
+                actions: vec![InputAction::MouseX(80), InputAction::MouseY(96)],
             },
             ScriptEntry {
                 frame: 400,
