@@ -5,5 +5,7 @@ argument-hint: "issueNumber (for example: 1585)"
 agent: "agent"
 ---
 
-lets start working on #${input:issueNumber}. start by making a plan for what we should do and how it should be implemented. be sure to ask me questions using the question ui/tool if there are any uncertainties on how to implement or there are design decisions that need to be done. to start with:
-A new config option --enable-4-score should be added. If that is set, the player will _have_ to have at least two controllers connected to the computer so that emulated controller 1-2 can use the physical controllers and emulated controller 3-4 can use the keyboard. Should one controller by unplugged during emulation, only the first three emulated controllers will work. should both be unplugged, only the keyboard will emulate controller 1-2.
+Lets start working on #${input:issueNumber}.
+Start by making a plan for what we should do and how it should be implemented. Be sure to ask me questions using the question UI/tool if there are any uncertainties on how to implement or there are design decisions that need to be made.
+If need be, research NES specifications with NesDev docs as the primary authoritative source. If that is not reachable, use its archive mirror, https://nesdev-wiki.nes.science/wikipages/Special_AllPages.xhtml
+Be sure to follow TDD according to instructions in the `test-driven-development` skill, and to apply the `bug-hunter` skill if you encounter any bugs during implementation.
