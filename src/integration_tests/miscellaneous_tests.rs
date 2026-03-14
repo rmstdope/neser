@@ -258,28 +258,20 @@ mod tests {
     fn allpads_zapper_trigger_hold_updates_metrics_and_pulltime() {
         let config = ControllerConfig::zapper();
         let script = vec![
-            crate::integration_tests::allpads_harness::tests::ScriptEntry {
+            ScriptEntry {
                 frame: 360,
                 actions: vec![
-                    crate::integration_tests::allpads_harness::tests::InputAction::MouseX(80),
-                    crate::integration_tests::allpads_harness::tests::InputAction::MouseY(96),
+                    InputAction::MouseX(80),
+                    InputAction::MouseY(96),
                 ],
             },
-            crate::integration_tests::allpads_harness::tests::ScriptEntry {
+            ScriptEntry {
                 frame: 400,
-                actions: vec![
-                    crate::integration_tests::allpads_harness::tests::InputAction::MouseButton(
-                        true,
-                    ),
-                ],
+                actions: vec![InputAction::MouseButton(true)],
             },
-            crate::integration_tests::allpads_harness::tests::ScriptEntry {
+            ScriptEntry {
                 frame: 450,
-                actions: vec![
-                    crate::integration_tests::allpads_harness::tests::InputAction::MouseButton(
-                        false,
-                    ),
-                ],
+                actions: vec![InputAction::MouseButton(false)],
             },
         ];
 
