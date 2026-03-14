@@ -238,6 +238,140 @@ mod tests {
     }
 
     /////////////////////////////////////
+    // Allpads SNES adapter scenario (#1577)
+    /////////////////////////////////////
+
+    fn script_enter_snes_test_and_press(button: Button) -> Vec<ScriptEntry> {
+        vec![
+            ScriptEntry {
+                frame: 300,
+                actions: vec![InputAction::Button {
+                    port: 1,
+                    button: Button::B,
+                    pressed: true,
+                }],
+            },
+            ScriptEntry {
+                frame: 305,
+                actions: vec![InputAction::Button {
+                    port: 1,
+                    button: Button::B,
+                    pressed: false,
+                }],
+            },
+            ScriptEntry {
+                frame: 400,
+                actions: vec![InputAction::Button {
+                    port: 1,
+                    button,
+                    pressed: true,
+                }],
+            },
+        ]
+    }
+
+    fn snes_button_attrs(oam: &[u8]) -> Vec<u8> {
+        (0..12).map(|sprite| oam_sprite_attr(oam, sprite)).collect()
+    }
+
+    #[test]
+    fn allpads_snes_adapter_probe_identifies_super_nes_controller() {
+        let config = ControllerConfig::snes_adapter_port1();
+        let result = run_allpads(&config, &[], 300, 0);
+        let cap = &result.captures[0];
+        let text = cap.nametable_text.to_ascii_uppercase();
+
+        assert!(
+            text.contains("SUPER NES"),
+            "Probe screen should show 'Super NES', got:\n{}",
+            cap.nametable_text
+        );
+        assert!(
+            text.contains("CONTROLLER"),
+            "Probe screen should show 'Controller', got:\n{}",
+            cap.nametable_text
+        );
+    }
+
+    #[test]
+    fn allpads_snes_adapter_b_press_enters_test_screen() {
+        let config = ControllerConfig::snes_adapter_port1();
+        let script = script_enter_snes_test_and_press(Button::B);
+        let result = run_allpads(&config, &script, 430, 0);
+        let cap = &result.captures[0];
+        let text = cap.nametable_text.to_ascii_uppercase();
+
+        assert!(
+            text.contains("SUPER NES CONTROLLER"),
+            "SNES test screen should show title, got:\n{}",
+            cap.nametable_text
+        );
+        assert!(
+            text.contains("RESET: EXIT"),
+            "SNES test screen should be active after pressing B, got:\n{}",
+            cap.nametable_text
+        );
+    }
+
+    #[test]
+    fn allpads_snes_adapter_scripted_input_changes_button_highlight() {
+        let config = ControllerConfig::snes_adapter_port1();
+
+        let baseline_script = vec![
+            ScriptEntry {
+                frame: 300,
+                actions: vec![InputAction::Button {
+                    port: 1,
+                    button: Button::B,
+                    pressed: true,
+                }],
+            },
+            ScriptEntry {
+                frame: 305,
+                actions: vec![InputAction::Button {
+                    port: 1,
+                    button: Button::B,
+                    pressed: false,
+                }],
+            },
+        ];
+        let baseline = run_allpads(&config, &baseline_script, 430, 0);
+
+        let active_script = script_enter_snes_test_and_press(Button::Right);
+        let active = run_allpads(&config, &active_script, 430, 0);
+
+        let baseline_attrs = snes_button_attrs(&baseline.captures[0].oam_data);
+        let active_attrs = snes_button_attrs(&active.captures[0].oam_data);
+
+        assert_ne!(
+            baseline_attrs, active_attrs,
+            "Scripted SNES input should change highlighted button sprite attrs"
+        );
+        assert!(
+            active_attrs.contains(&0x01),
+            "At least one SNES button sprite should be highlighted after input, attrs={:?}",
+            active_attrs
+        );
+    }
+
+    #[test]
+    fn allpads_snes_adapter_scenario_is_deterministic() {
+        let config = ControllerConfig::snes_adapter_port1();
+        let script = script_enter_snes_test_and_press(Button::Right);
+        let result1 = run_allpads(&config, &script, 430, 0);
+        let result2 = run_allpads(&config, &script, 430, 0);
+
+        assert_eq!(
+            result1.captures[0].nametable_raw, result2.captures[0].nametable_raw,
+            "Nametable should be identical across repeated SNES adapter runs"
+        );
+        assert_eq!(
+            result1.captures[0].oam_data, result2.captures[0].oam_data,
+            "OAM data should be identical across repeated SNES adapter runs"
+        );
+    }
+
+    /////////////////////////////////////
     // Allpads Zapper scenario (#1556)
     /////////////////////////////////////
 

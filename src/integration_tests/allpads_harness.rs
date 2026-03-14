@@ -24,6 +24,13 @@ pub(crate) mod tests {
             }
         }
 
+        pub fn snes_adapter_port1() -> Self {
+            Self {
+                port1: ControllerType::SnesAdapter,
+                port2: ControllerType::SnesAdapter,
+            }
+        }
+
         pub fn zapper() -> Self {
             Self {
                 port1: ControllerType::Joypad,

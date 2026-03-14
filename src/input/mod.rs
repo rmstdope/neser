@@ -1,6 +1,7 @@
 mod arkanoid_controller;
 mod controller;
 mod nes_joypad;
+mod snes_adapter;
 mod zapper;
 
 pub use arkanoid_controller::ArkanoidController;
@@ -10,5 +11,6 @@ pub use controller::{
 };
 pub use nes_joypad::JoypadState;
 pub use nes_joypad::{Button, NesJoypad};
+pub use snes_adapter::{SnesAdapter, SnesAdapterState};
 pub use zapper::Zapper;
 pub use zapper::ZapperState;

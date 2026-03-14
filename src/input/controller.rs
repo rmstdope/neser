@@ -1,12 +1,14 @@
 use crate::input::Button;
 use crate::input::arkanoid_controller::ArkanoidState;
 use crate::input::nes_joypad::JoypadState;
+use crate::input::snes_adapter::SnesAdapterState;
 use crate::input::zapper::ZapperState;
 
 /// Unified controller state for save-state support.
 #[derive(Debug, Clone)]
 pub enum ControllerState {
     Joypad(JoypadState),
+    SnesAdapter(SnesAdapterState),
     Paddle(ArkanoidState),
     Zapper(ZapperState),
 }
@@ -15,6 +17,7 @@ pub enum ControllerState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ControllerType {
     Joypad,
+    SnesAdapter,
     Arkanoid,
     Zapper,
 }
@@ -24,6 +27,7 @@ impl ControllerType {
     pub fn parse(value: &str) -> Option<Self> {
         match value.to_lowercase().as_str() {
             "joypad" => Some(Self::Joypad),
+            "snes-adapter" | "snes_adapter" | "snesadapter" | "snes" => Some(Self::SnesAdapter),
             "arkanoid" | "paddle" => Some(Self::Arkanoid),
             "zapper" => Some(Self::Zapper),
             _ => None,
@@ -45,6 +49,7 @@ pub enum ControllerInput {
 pub fn controller_input_type(controller_type: ControllerType) -> ControllerInput {
     match controller_type {
         ControllerType::Joypad => ControllerInput::Gamepad,
+        ControllerType::SnesAdapter => ControllerInput::Gamepad,
         ControllerType::Arkanoid => ControllerInput::Mouse,
         ControllerType::Zapper => ControllerInput::Mouse,
     }
