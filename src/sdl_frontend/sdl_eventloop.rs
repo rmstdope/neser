@@ -1153,7 +1153,9 @@ impl SdlEventLoop {
                             }
                             _ => {}
                         },
-                        Event::MouseMotion { x, y, xrel, yrel, .. } => {
+                        Event::MouseMotion {
+                            x, y, xrel, yrel, ..
+                        } => {
                             let mouse_controller_active = !Self::mouse_ports(nes).is_empty();
                             if mouse_controller_active && !self.mouse_grabbed {
                                 continue;
@@ -1169,8 +1171,13 @@ impl SdlEventLoop {
                                     window_height,
                                 );
                             } else {
-                                self.last_zapper_position =
-                                    Self::update_mouse_motion(nes, x, y, window_width, window_height);
+                                self.last_zapper_position = Self::update_mouse_motion(
+                                    nes,
+                                    x,
+                                    y,
+                                    window_width,
+                                    window_height,
+                                );
                             }
                         }
                         Event::MouseButtonDown { mouse_btn, .. } => {
@@ -3567,13 +3574,7 @@ mod tests {
             .borrow_mut()
             .set_controller_type(1, crate::input::ControllerType::SnesMouse);
 
-        SdlEventLoop::apply_snes_mouse_relative_motion(
-            &mut nes,
-            10,
-            10,
-            320,
-            240,
-        );
+        SdlEventLoop::apply_snes_mouse_relative_motion(&mut nes, 10, 10, 320, 240);
 
         let state_after_first =
             read_snes_adapter_state(&mut nes, 1).expect("Expected SNES adapter state");
