@@ -123,7 +123,7 @@ mod tests {
 
             for candidate in lines.iter().skip(idx).take(3) {
                 let numbers = parse_signed_numbers(candidate);
-                if let Some(value) = numbers.last() {
+                if let Some(value) = numbers.first() {
                     return Some(*value);
                 }
             }
