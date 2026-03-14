@@ -19,9 +19,9 @@ pub struct ZapperState {
 /// Bright pixels above this threshold will trigger light detection
 const LIGHT_DETECTION_THRESHOLD: f32 = 85.0;
 
-/// Maximum number of scanlines behind the beam where light can still be detected
-/// This matches real Zapper hardware latency
-const MAX_SCANLINES_BEHIND: i32 = 25;
+/// Maximum number of scanlines behind the beam where light can still be detected.
+/// A short persistence window better matches empirical allpads/Zap Ruder behavior.
+const MAX_SCANLINES_BEHIND: i32 = 2;
 
 /// NES Zapper controller.
 ///
@@ -425,6 +425,44 @@ mod tests {
         assert!(
             !zapper.capture_state().light,
             "Cannot detect light too far behind beam"
+        );
+    }
+
+    #[test]
+    fn test_zapper_light_persistence_is_short_hardware_like_window() {
+        let (mut zapper, ppu) = create_zapper_with_ppu(0);
+        zapper.set_mouse_x_position(100);
+        zapper.set_mouse_y_position(100);
+
+        ppu.borrow_mut()
+            .screen_buffer_mut()
+            .set_pixel(100, 100, 255, 255, 255);
+
+        advance_ppu_to(&ppu, 100, 100);
+        ppu.borrow_mut()
+            .screen_buffer_mut()
+            .set_pixel(100, 100, 255, 255, 255);
+        zapper.read(false);
+        assert!(zapper.capture_state().light, "Light should be detected on target line");
+
+        advance_ppu_to(&ppu, 102, 100);
+        ppu.borrow_mut()
+            .screen_buffer_mut()
+            .set_pixel(100, 100, 255, 255, 255);
+        zapper.read(false);
+        assert!(
+            zapper.capture_state().light,
+            "Light should still be detected within a short persistence window"
+        );
+
+        advance_ppu_to(&ppu, 103, 100);
+        ppu.borrow_mut()
+            .screen_buffer_mut()
+            .set_pixel(100, 100, 255, 255, 255);
+        zapper.read(false);
+        assert!(
+            !zapper.capture_state().light,
+            "Light should no longer be detected after the short persistence window"
         );
     }
 

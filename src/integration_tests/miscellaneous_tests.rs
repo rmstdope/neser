@@ -53,6 +53,22 @@ mod tests {
     }
 
     fn parse_metric_value(nametable_text: &str, label: &str) -> Option<u32> {
+        fn parse_token_number(token: &str) -> Option<u32> {
+            if let Ok(value) = token.parse::<u32>() {
+                return Some(value);
+            }
+            let digits: String = token
+                .chars()
+                .skip_while(|c| !c.is_ascii_digit())
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
+            if digits.is_empty() {
+                None
+            } else {
+                digits.parse::<u32>().ok()
+            }
+        }
+
         let lines: Vec<&str> = nametable_text.lines().collect();
         for (idx, line) in lines.iter().enumerate() {
             if !line.contains(label) {
@@ -64,7 +80,7 @@ mod tests {
             // "Y 19").
             for candidate in lines.iter().skip(idx).take(3) {
                 for token in candidate.split_whitespace().rev() {
-                    if let Ok(value) = token.parse::<u32>() {
+                    if let Some(value) = parse_token_number(token) {
                         return Some(value);
                     }
                 }
@@ -258,6 +274,91 @@ mod tests {
             pull_time_early,
             pull_time_late
         );
+    }
+
+    #[test]
+    fn allpads_zapper_y_sweep_reports_light_metrics() {
+        let config = ControllerConfig::zapper();
+        let sample_ys: [u8; 9] = [0, 1, 2, 118, 119, 120, 237, 238, 239];
+        let mut script = vec![
+            crate::integration_tests::allpads_harness::tests::ScriptEntry {
+                frame: 360,
+                actions: vec![
+                    crate::integration_tests::allpads_harness::tests::InputAction::MouseX(80),
+                    crate::integration_tests::allpads_harness::tests::InputAction::MouseY(0),
+                ],
+            },
+            crate::integration_tests::allpads_harness::tests::ScriptEntry {
+                frame: 400,
+                actions: vec![
+                    crate::integration_tests::allpads_harness::tests::InputAction::MouseButton(
+                        true,
+                    ),
+                ],
+            },
+        ];
+
+        let mut frame = 420;
+        for y in sample_ys {
+            script.push(crate::integration_tests::allpads_harness::tests::ScriptEntry {
+                frame,
+                actions: vec![
+                    crate::integration_tests::allpads_harness::tests::InputAction::MouseY(y),
+                ],
+            });
+            frame += 20;
+        }
+
+        let total_frames = frame + 20;
+        let result = run_allpads(&config, &script, total_frames, 20);
+
+        let mut sample_frame = 440;
+        let mut observed: Vec<(u8, u32, u32)> = Vec::new();
+        for y in sample_ys {
+            let cap = result
+                .captures
+                .iter()
+                .find(|capture| capture.frame == sample_frame)
+                .unwrap_or_else(|| panic!("Expected capture at frame {}", sample_frame));
+            let light_y = parse_metric_value(&cap.nametable_text, "LIGHT Y").unwrap_or_else(|| {
+                panic!(
+                    "Expected LIGHT Y metric at frame {}, got:\n{}",
+                    sample_frame, cap.nametable_text
+                )
+            });
+            let height = parse_metric_value(&cap.nametable_text, "HEIGHT").unwrap_or_else(|| {
+                panic!(
+                    "Expected HEIGHT metric at frame {}, got:\n{}",
+                    sample_frame, cap.nametable_text
+                )
+            });
+            println!("allpads y={} => LIGHT Y={}, HEIGHT={}", y, light_y, height);
+            observed.push((y, light_y, height));
+            sample_frame += 20;
+        }
+
+        for (y, light_y, height) in observed.iter().copied() {
+            match y {
+                0 | 1 | 2 | 237 | 238 | 239 => {
+                    assert_eq!(
+                        (light_y, height),
+                        (192, 0),
+                        "Top/bottom edge should be off-window sentinel at y={y}"
+                    );
+                }
+                118 | 119 | 120 => {
+                    assert!(
+                        light_y < 192,
+                        "Mid-screen sample should detect light (LIGHT Y < 192) at y={y}, got {light_y}"
+                    );
+                    assert!(
+                        (1..=6).contains(&height),
+                        "Mid-screen detected light height should be short (1..=6) at y={y}, got {height}"
+                    );
+                }
+                _ => unreachable!("Unexpected y sample"),
+            }
+        }
     }
 
     setup_rom_console_test!(
