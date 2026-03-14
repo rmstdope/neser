@@ -276,9 +276,8 @@ impl Mapper for Mapper260 {
         snap.push(u8::from(self.locked));
         // Mapper260 snapshot version
         snap.push(0); // version 0
-        // Store MMC3 snapshot length as u16 LE
         let mmc3_len_u16 = mmc3_len as u16;
-        snap.push((mmc3_len_u16 & 0x00FF) as u8);
+        snap.push((mmc3_len_u16 & 0xFF) as u8);
         snap.push((mmc3_len_u16 >> 8) as u8);
         snap
     }
@@ -325,7 +324,6 @@ impl Mapper for Mapper260 {
         let ex_end = ex_start + EX_REGS_LEN;
         let locked_idx = ex_end;
 
-        // Ensure the mapper260 fields all lie before the footer.
         if locked_idx + 1 > total - FOOTER_LEN {
             return;
         }
