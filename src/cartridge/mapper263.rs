@@ -37,7 +37,7 @@
 //! Standard MMC3: eight 1 KiB banks across `$0000–$1FFF`.
 //!
 //! ## Mirroring
-//! Dynamic via scrambled write to remapped `$A000`.
+//! Dynamic via scrambled write to `$A000` (value-scrambled only; address is not remapped).
 //!
 //! ## IRQ
 //! Standard MMC3 scanline counter (A12 rising-edge), accessed via the
