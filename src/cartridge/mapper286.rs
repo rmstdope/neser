@@ -199,7 +199,7 @@ mod tests {
         assert_eq!(
             mapper.read_prg(0xA000),
             last_prg,
-            "PRG slot 2 ($A000) must be last bank at power-on"
+            "PRG slot 1 ($A000) must be last bank at power-on"
         );
         assert_eq!(
             mapper.read_prg(0xE000),
