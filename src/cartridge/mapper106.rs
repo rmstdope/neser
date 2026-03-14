@@ -72,13 +72,13 @@ impl Mapper for Mapper106 {
         MAPPER_NUMBER
     }
 
+    fn write_prg(&mut self, addr: u16, value: u8) {
         // Delegate to PRG-RAM handling first (e.g., $6000-$7FFF) if enabled.
         if self.base.try_write_prg_ram(addr, value) {
             return;
         }
 
         // Only decode mapper registers for $8000-$FFFF.
-    fn write_prg(&mut self, addr: u16, value: u8) {
         if addr < 0x8000 {
             return;
         }
@@ -181,6 +181,27 @@ mod tests {
             NametableLayout::Vertical,
         ));
         assert!(mapper.is_ok(), "Mapper 106 must be registered in factory");
+    }
+
+    #[test]
+    fn header_defined_prg_ram_is_allocated_and_writable_at_6000_7fff() {
+        let metadata = MapperContext {
+            prg_ram_banks_8k: 2,
+            ..MapperContext::new_for_test(
+                MAPPER_NUMBER,
+                banked_data(PRG_BANK_SIZE, PRG_BANKS_8K),
+                banked_data(CHR_BANK_SIZE, CHR_BANKS_1K),
+                NametableLayout::Vertical,
+            )
+        };
+        let mut mapper = create_mapper(metadata).expect("Mapper 106 should be created");
+
+        assert_eq!(mapper.wram_size(), 16 * 1024);
+
+        mapper.write_prg(0x6000, 0xA5);
+        mapper.write_prg(0x7FFF, 0x5A);
+        assert_eq!(mapper.read_prg(0x6000), 0xA5);
+        assert_eq!(mapper.read_prg(0x7FFF), 0x5A);
     }
 
     #[test]
