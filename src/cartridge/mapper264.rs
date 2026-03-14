@@ -295,16 +295,34 @@ mod tests {
     fn registers_snapshot_restore_round_trips_state() {
         let mut mapper = make_mapper();
 
-        // Set PRG=2, CHR=1, NT=1
+        // Write distinct bytes into each CHR bank so we can prove the
+        // restored mapper selects the correct bank (not just reads 0).
+        mapper.write_prg(0x5000, 0x00); // CHR bank 0 selected
+        mapper.write_chr(0x0100, 0xAA); // bank 0, offset $100 ← 0xAA
+
+        mapper.write_prg(0x5000, 0x10); // CHR bank 1 selected
+        mapper.write_chr(0x0100, 0xBB); // bank 1, offset $100 ← 0xBB
+
+        // Set PRG=2, CHR=1 (bit4), NT=1 (bit5)
         mapper.write_prg(0x5000, 0x32); // 0b0011_0010
         assert!(mapper.write_nametable(0x2000, 0x5A));
-        let snapshot = mapper.registers_snapshot();
+
+        let reg_snapshot = mapper.registers_snapshot();
+        let chr_snapshot = mapper.chr_ram_snapshot();
 
         let mut restored = make_mapper();
-        restored.restore_registers(&snapshot);
+        // Restore CHR-RAM content first, then registers (bank selection).
+        restored.restore_chr_ram(&chr_snapshot);
+        restored.restore_registers(&reg_snapshot);
 
+        // PRG bank mapping is restored correctly.
         assert_eq!(restored.read_prg(0x8000), mapper.read_prg(0x8000));
-        assert_eq!(restored.read_chr(0x0000), mapper.read_chr(0x0000));
+
+        // CHR bank 1 must be selected: reading offset $100 must return 0xBB
+        // (bank 1's value), not 0xAA (bank 0's value).
+        assert_eq!(restored.read_chr(0x0100), 0xBB);
+
+        // Nametable state is restored.
         assert_eq!(restored.read_nametable(0x2000), Some(0x5A));
     }
 
