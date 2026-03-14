@@ -40,8 +40,9 @@
 //! Dynamic via scrambled write to `$A000` (value-scrambled only; address is not remapped).
 //!
 //! ## IRQ
-//! Standard MMC3 scanline counter (A12 rising-edge), accessed via the
-//! remapped `$C001`, `$E000`, `$E001` addresses.
+//! Standard MMC3 scanline counter (A12 rising-edge), with reload and
+//! enable registers reached via remapped writes `$D000`→`$C001` and
+//! `$F000`→`$E001` (other IRQ registers as per standard MMC3).
 //!
 //! ## PRG-RAM
 //! 8 KiB at `$6000–$7FFF` (standard MMC3).
