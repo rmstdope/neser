@@ -7,6 +7,14 @@ pub struct SnesAdapterState {
     pub strobe: bool,
     pub bit_index: u8,
     pub button_states: u16,
+    pub mouse_mode: bool,
+    pub mouse_left_button: bool,
+    pub mouse_speed: u8,
+    pub mouse_x_position: u8,
+    pub mouse_y_position: u8,
+    pub mouse_last_reported_x: u8,
+    pub mouse_last_reported_y: u8,
+    pub mouse_packet: [u8; 4],
 }
 
 /// Super NES controller connected through a NES pin adapter.
@@ -25,6 +33,11 @@ pub struct SnesAdapter {
     mouse_mode: bool,
     mouse_left_button: bool,
     mouse_speed: u8,
+    mouse_x_position: u8,
+    mouse_y_position: u8,
+    mouse_last_reported_x: u8,
+    mouse_last_reported_y: u8,
+    mouse_packet: [u8; 4],
 }
 
 impl Default for SnesAdapter {
@@ -42,6 +55,11 @@ impl SnesAdapter {
             mouse_mode: false,
             mouse_left_button: false,
             mouse_speed: 0,
+            mouse_x_position: 0,
+            mouse_y_position: 0,
+            mouse_last_reported_x: 0,
+            mouse_last_reported_y: 0,
+            mouse_packet: [0; 4],
         }
     }
 
@@ -49,6 +67,9 @@ impl SnesAdapter {
         let new_strobe = value & 0x01 != 0;
         if self.strobe && !new_strobe {
             self.bit_index = 0;
+            if self.mouse_mode {
+                self.mouse_packet = self.build_mouse_packet();
+            }
         }
         self.strobe = new_strobe;
     }
@@ -76,12 +97,11 @@ impl SnesAdapter {
     }
 
     fn current_serial_bit_mouse(&self) -> u8 {
-        match self.bit_index {
-            9 => u8::from(self.mouse_left_button),
-            11 => self.mouse_speed & 0x01,
-            15 => 1,
-            16..=31 => 1,
-            _ => 0,
+        if self.bit_index < 32 {
+            let byte = self.mouse_packet[(self.bit_index / 8) as usize];
+            (byte >> (7 - (self.bit_index % 8))) & 0x01
+        } else {
+            1
         }
     }
 
@@ -95,6 +115,27 @@ impl SnesAdapter {
 
     fn enable_mouse_mode(&mut self) {
         self.mouse_mode = true;
+    }
+
+    fn to_signed_magnitude_delta(current: u8, previous: u8) -> u8 {
+        let delta = (current as i16 - previous as i16).clamp(-127, 127);
+        if delta < 0 {
+            (delta.unsigned_abs() as u8) | 0x80
+        } else {
+            delta as u8
+        }
+    }
+
+    fn build_mouse_packet(&mut self) -> [u8; 4] {
+        let dx = Self::to_signed_magnitude_delta(self.mouse_x_position, self.mouse_last_reported_x);
+        let dy = Self::to_signed_magnitude_delta(self.mouse_y_position, self.mouse_last_reported_y);
+        self.mouse_last_reported_x = self.mouse_x_position;
+        self.mouse_last_reported_y = self.mouse_y_position;
+
+        let speed_bits = (self.mouse_speed & 0x03) << 4;
+        let left_button_bit = if self.mouse_left_button { 0x40 } else { 0x00 };
+
+        [0x00, left_button_bit | speed_bits | 0x01, dy, dx]
     }
 
     pub fn read(&mut self, is_dummy_read: bool) -> u8 {
@@ -124,6 +165,14 @@ impl SnesAdapter {
             strobe: self.strobe,
             bit_index: self.bit_index,
             button_states: self.button_states,
+            mouse_mode: self.mouse_mode,
+            mouse_left_button: self.mouse_left_button,
+            mouse_speed: self.mouse_speed,
+            mouse_x_position: self.mouse_x_position,
+            mouse_y_position: self.mouse_y_position,
+            mouse_last_reported_x: self.mouse_last_reported_x,
+            mouse_last_reported_y: self.mouse_last_reported_y,
+            mouse_packet: self.mouse_packet,
         }
     }
 
@@ -131,6 +180,14 @@ impl SnesAdapter {
         self.strobe = state.strobe;
         self.bit_index = state.bit_index;
         self.button_states = state.button_states;
+        self.mouse_mode = state.mouse_mode;
+        self.mouse_left_button = state.mouse_left_button;
+        self.mouse_speed = state.mouse_speed;
+        self.mouse_x_position = state.mouse_x_position;
+        self.mouse_y_position = state.mouse_y_position;
+        self.mouse_last_reported_x = state.mouse_last_reported_x;
+        self.mouse_last_reported_y = state.mouse_last_reported_y;
+        self.mouse_packet = state.mouse_packet;
     }
 }
 
@@ -158,13 +215,15 @@ impl crate::input::Controller for SnesAdapter {
         true
     }
 
-    fn set_mouse_x_position(&mut self, _position: u8) -> bool {
+    fn set_mouse_x_position(&mut self, position: u8) -> bool {
         self.enable_mouse_mode();
+        self.mouse_x_position = position;
         true
     }
 
-    fn set_mouse_y_position(&mut self, _position: u8) -> bool {
+    fn set_mouse_y_position(&mut self, position: u8) -> bool {
         self.enable_mouse_mode();
+        self.mouse_y_position = position;
         true
     }
 

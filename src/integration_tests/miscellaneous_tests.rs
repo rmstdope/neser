@@ -404,6 +404,111 @@ mod tests {
         );
     }
 
+    fn script_enter_snes_mouse_test() -> Vec<ScriptEntry> {
+        vec![
+            ScriptEntry {
+                frame: 1,
+                actions: vec![InputAction::MouseX(96), InputAction::MouseY(96)],
+            },
+            ScriptEntry {
+                frame: 300,
+                actions: vec![InputAction::MouseButton(true)],
+            },
+            ScriptEntry {
+                frame: 305,
+                actions: vec![InputAction::MouseButton(false)],
+            },
+        ]
+    }
+
+    #[test]
+    fn allpads_snes_mouse_adapter_left_click_enters_mouse_test_screen() {
+        let config = ControllerConfig::snes_adapter_port1();
+        let script = script_enter_snes_mouse_test();
+        let result = run_allpads(&config, &script, 420, 0);
+        let cap = &result.captures[0];
+        let text = cap.nametable_text.to_ascii_uppercase();
+
+        assert!(
+            text.contains("MOUSE ON") && text.contains("POSITION"),
+            "Mouse test screen should be active after left click, got:\n{}",
+            cap.nametable_text
+        );
+    }
+
+    #[test]
+    fn allpads_snes_mouse_adapter_scripted_movement_updates_position_metrics() {
+        let config = ControllerConfig::snes_adapter_port1();
+        let mut script = script_enter_snes_mouse_test();
+        script.push(ScriptEntry {
+            frame: 360,
+            actions: vec![InputAction::MouseX(128), InputAction::MouseY(100)],
+        });
+        script.push(ScriptEntry {
+            frame: 420,
+            actions: vec![InputAction::MouseX(40), InputAction::MouseY(140)],
+        });
+
+        let result = run_allpads(&config, &script, 460, 20);
+        let cap_before_move = result
+            .captures
+            .iter()
+            .find(|capture| capture.frame == 380)
+            .expect("Expected capture at frame 380");
+        let cap_after_move = result
+            .captures
+            .iter()
+            .find(|capture| capture.frame == 440)
+            .expect("Expected capture at frame 440");
+
+        let pos_before = parse_metric_signed_pair(&cap_before_move.nametable_text, "POSITION")
+            .unwrap_or_else(|| {
+                panic!(
+                    "Expected POSITION metric before movement, got:\n{}",
+                    cap_before_move.nametable_text
+                )
+            });
+        let pos_after = parse_metric_signed_pair(&cap_after_move.nametable_text, "POSITION")
+            .unwrap_or_else(|| {
+                panic!(
+                    "Expected POSITION metric after movement, got:\n{}",
+                    cap_after_move.nametable_text
+                )
+            });
+
+        assert_ne!(
+            pos_before, pos_after,
+            "Scripted SNES mouse movement should update POSITION (before={:?}, after={:?})",
+            pos_before, pos_after
+        );
+    }
+
+    #[test]
+    fn allpads_snes_mouse_adapter_scenario_is_deterministic() {
+        let config = ControllerConfig::snes_adapter_port1();
+        let mut script = script_enter_snes_mouse_test();
+        script.push(ScriptEntry {
+            frame: 360,
+            actions: vec![InputAction::MouseX(128), InputAction::MouseY(100)],
+        });
+        script.push(ScriptEntry {
+            frame: 420,
+            actions: vec![InputAction::MouseX(40), InputAction::MouseY(140)],
+        });
+
+        let result1 = run_allpads(&config, &script, 460, 0);
+        let result2 = run_allpads(&config, &script, 460, 0);
+
+        assert_eq!(
+            result1.captures[0].nametable_raw, result2.captures[0].nametable_raw,
+            "Nametable should be identical across repeated SNES mouse adapter runs"
+        );
+        assert_eq!(
+            result1.captures[0].oam_data, result2.captures[0].oam_data,
+            "OAM data should be identical across repeated SNES mouse adapter runs"
+        );
+    }
+
     /////////////////////////////////////
     // Allpads Zapper scenario (#1556)
     /////////////////////////////////////
