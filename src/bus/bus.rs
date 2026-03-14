@@ -123,10 +123,13 @@ impl Bus {
             controller.ppu.clone(),
             controller.cartridge.clone(),
         )));
-        controller.register_device(Box::new(ControllerDevice::new(
+        let four_score_enabled = controller.app_context.borrow().config().four_score_enabled;
+        let mut controller_device = ControllerDevice::new(
             controller.controllers[0].clone(),
             controller.controllers[1].clone(),
-        )));
+        );
+        controller_device.set_four_score_enabled(four_score_enabled);
+        controller.register_device(Box::new(controller_device));
         controller.register_device(Box::new(ApuDevice::new(controller.apu.clone())));
         controller.register_device(Box::new(OamDmaDevice::new(
             controller.oam_dma_page.clone(),
