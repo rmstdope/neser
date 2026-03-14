@@ -324,6 +324,16 @@ impl crate::input::Controller for SnesAdapter {
         true
     }
 
+    fn add_mouse_delta(&mut self, dx: i16, dy: i16) -> bool {
+        if !self.enable_mouse_mode() {
+            return false;
+        }
+
+        self.mouse_x_position = (self.mouse_x_position as i16 + dx).clamp(0, 255) as u8;
+        self.mouse_y_position = (self.mouse_y_position as i16 + dy).clamp(0, 255) as u8;
+        true
+    }
+
     fn set_mouse_right_button(&mut self, pressed: bool) -> bool {
         if !self.enable_mouse_mode() {
             return false;

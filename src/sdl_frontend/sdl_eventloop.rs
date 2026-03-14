@@ -167,6 +167,26 @@ impl SdlEventLoop {
         }
     }
 
+    fn map_relative_mouse_delta_to_axis_delta(delta: i32, window_extent: u32) -> i16 {
+        if window_extent <= 1 {
+            return 0;
+        }
+        let scaled = (delta as f32) * (255.0 / (window_extent.saturating_sub(1) as f32));
+        scaled.round().clamp(-255.0, 255.0) as i16
+    }
+
+    fn apply_snes_mouse_relative_motion(
+        nes: &mut Nes,
+        xrel: i32,
+        yrel: i32,
+        window_width: u32,
+        window_height: u32,
+    ) {
+        let dx = Self::map_relative_mouse_delta_to_axis_delta(xrel, window_width);
+        let dy = Self::map_relative_mouse_delta_to_axis_delta(yrel, window_height);
+        nes.add_mouse_delta(dx, dy);
+    }
+
     /// Maps left mouse button presses to mouse-emulated controller.
     ///
     /// This is a no-op if no mouse-emulated controller is connected.
@@ -178,6 +198,10 @@ impl SdlEventLoop {
                 _ => {}
             }
         }
+    }
+
+    fn should_use_relative_mouse_mode(should_grab: bool, snes_mouse_active: bool) -> bool {
+        should_grab && snes_mouse_active
     }
 
     fn gamepad_ports(nes: &Nes) -> Vec<u8> {
@@ -1123,20 +1147,31 @@ impl SdlEventLoop {
                                 self.window_focused = false;
                                 self.mouse_released_by_escape = true;
                                 let _ = gl_backend.set_mouse_grab(false);
+                                self._sdl_context.mouse().set_relative_mouse_mode(false);
                                 self.mouse_grabbed = false;
                                 self.update_cursor_visibility(false);
                             }
                             _ => {}
                         },
-                        Event::MouseMotion { x, y, .. } => {
+                        Event::MouseMotion { x, y, xrel, yrel, .. } => {
                             let mouse_controller_active = !Self::mouse_ports(nes).is_empty();
                             if mouse_controller_active && !self.mouse_grabbed {
                                 continue;
                             }
 
                             let (window_width, window_height) = gl_backend.window_size();
-                            self.last_zapper_position =
-                                Self::update_mouse_motion(nes, x, y, window_width, window_height);
+                            if nes.has_snes_mouse() && Self::zapper_ports(nes).is_empty() {
+                                Self::apply_snes_mouse_relative_motion(
+                                    nes,
+                                    xrel,
+                                    yrel,
+                                    window_width,
+                                    window_height,
+                                );
+                            } else {
+                                self.last_zapper_position =
+                                    Self::update_mouse_motion(nes, x, y, window_width, window_height);
+                            }
                         }
                         Event::MouseButtonDown { mouse_btn, .. } => {
                             let mouse_controller_active = !Self::mouse_ports(nes).is_empty();
@@ -1149,6 +1184,12 @@ impl SdlEventLoop {
                                 );
                                 if should_grab {
                                     let _ = gl_backend.set_mouse_grab(true);
+                                    self._sdl_context.mouse().set_relative_mouse_mode(
+                                        Self::should_use_relative_mouse_mode(
+                                            true,
+                                            nes.has_snes_mouse(),
+                                        ),
+                                    );
                                     self.mouse_grabbed = true;
                                     self.update_cursor_visibility(true);
                                 }
@@ -1200,6 +1241,9 @@ impl SdlEventLoop {
                     );
                     if self.mouse_grabbed != should_grab {
                         let _ = gl_backend.set_mouse_grab(should_grab);
+                        self._sdl_context.mouse().set_relative_mouse_mode(
+                            Self::should_use_relative_mouse_mode(should_grab, nes.has_snes_mouse()),
+                        );
                         self.mouse_grabbed = should_grab;
                     }
                     self.update_cursor_visibility(should_grab);
@@ -1310,6 +1354,9 @@ impl SdlEventLoop {
                 );
                 if self.mouse_grabbed != should_grab {
                     let _ = gl_backend.set_mouse_grab(should_grab);
+                    self._sdl_context.mouse().set_relative_mouse_mode(
+                        Self::should_use_relative_mouse_mode(should_grab, nes.has_snes_mouse()),
+                    );
                     self.mouse_grabbed = should_grab;
                 }
                 self.update_cursor_visibility(should_grab);
@@ -3509,6 +3556,42 @@ mod tests {
         SdlEventLoop::update_mouse_button(&mut nes, MouseButton::Right, false);
         let released = read_snes_adapter_state(&mut nes, 1).expect("Expected SNES adapter state");
         assert!(!released.mouse_right_button);
+    }
+
+    #[test]
+    fn test_snes_mouse_relative_motion_accumulates_from_event_deltas() {
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        nes.bus()
+            .borrow_mut()
+            .set_controller_type(1, crate::input::ControllerType::SnesMouse);
+
+        SdlEventLoop::apply_snes_mouse_relative_motion(
+            &mut nes,
+            10,
+            10,
+            320,
+            240,
+        );
+
+        let state_after_first =
+            read_snes_adapter_state(&mut nes, 1).expect("Expected SNES adapter state");
+        assert_eq!(state_after_first.mouse_x_position, 8);
+        assert_eq!(state_after_first.mouse_y_position, 11);
+
+        SdlEventLoop::apply_snes_mouse_relative_motion(&mut nes, 10, 10, 320, 240);
+        let state_after_second =
+            read_snes_adapter_state(&mut nes, 1).expect("Expected SNES adapter state");
+        assert_eq!(state_after_second.mouse_x_position, 16);
+        assert_eq!(state_after_second.mouse_y_position, 22);
+    }
+
+    #[test]
+    fn test_should_use_relative_mouse_mode_for_grabbed_snes_mouse() {
+        assert!(SdlEventLoop::should_use_relative_mouse_mode(true, true));
+        assert!(!SdlEventLoop::should_use_relative_mouse_mode(false, true));
+        assert!(!SdlEventLoop::should_use_relative_mouse_mode(true, false));
     }
 
     #[test]

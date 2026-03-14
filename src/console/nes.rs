@@ -512,6 +512,11 @@ impl Nes {
         self.bus.borrow_mut().set_mouse_y_position(position);
     }
 
+    /// Apply relative mouse delta for mouse-emulated controllers.
+    pub fn add_mouse_delta(&mut self, dx: i16, dy: i16) {
+        self.bus.borrow_mut().add_mouse_delta(dx, dy);
+    }
+
     /// Update the left mouse button status for any mouse-emulated controller.
     ///
     /// # Arguments

@@ -144,6 +144,13 @@ pub trait Controller {
     /// Returns true if the operation was successful, false if not supported.
     fn set_mouse_left_button(&mut self, pressed: bool) -> bool;
 
+    /// Apply relative mouse delta for mouse-emulated controllers.
+    ///
+    /// Returns true if the controller consumed the delta.
+    fn add_mouse_delta(&mut self, _dx: i16, _dy: i16) -> bool {
+        false
+    }
+
     /// Set mouse right button state for mouse-emulated controllers.
     /// Returns true if the operation was successful, false if not supported.
     fn set_mouse_right_button(&mut self, _pressed: bool) -> bool {
