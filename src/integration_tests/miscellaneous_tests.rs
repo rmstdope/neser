@@ -372,6 +372,39 @@ mod tests {
     }
 
     /////////////////////////////////////
+    // Allpads SNES mouse adapter scenario (#1578)
+    /////////////////////////////////////
+
+    #[test]
+    fn allpads_snes_mouse_adapter_probe_identifies_super_nes_mouse() {
+        let config = ControllerConfig::snes_adapter_port1();
+        let script = vec![
+            ScriptEntry {
+                frame: 1,
+                actions: vec![InputAction::MouseX(96), InputAction::MouseY(96)],
+            },
+            ScriptEntry {
+                frame: 2,
+                actions: vec![InputAction::MouseButton(true)],
+            },
+            ScriptEntry {
+                frame: 6,
+                actions: vec![InputAction::MouseButton(false)],
+            },
+        ];
+
+        let result = run_allpads(&config, &script, 340, 0);
+        let cap = &result.captures[0];
+        let text = cap.nametable_text.to_ascii_uppercase();
+
+        assert!(
+            text.contains("SUPER NES") && text.contains("MOUSE"),
+            "Probe screen should identify Super NES Mouse via adapter, got:\n{}",
+            cap.nametable_text
+        );
+    }
+
+    /////////////////////////////////////
     // Allpads Zapper scenario (#1556)
     /////////////////////////////////////
 

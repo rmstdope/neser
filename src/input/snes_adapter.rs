@@ -22,6 +22,9 @@ pub struct SnesAdapter {
     strobe: bool,
     bit_index: u8,
     button_states: u16,
+    mouse_mode: bool,
+    mouse_left_button: bool,
+    mouse_speed: u8,
 }
 
 impl Default for SnesAdapter {
@@ -36,6 +39,9 @@ impl SnesAdapter {
             strobe: false,
             bit_index: 0,
             button_states: 0,
+            mouse_mode: false,
+            mouse_left_button: false,
+            mouse_speed: 0,
         }
     }
 
@@ -60,7 +66,7 @@ impl SnesAdapter {
         }
     }
 
-    fn current_serial_bit(&self) -> u8 {
+    fn current_serial_bit_controller(&self) -> u8 {
         match self.bit_index {
             0..=7 => ((self.button_states >> self.bit_index) & 0x01) as u8,
             8..=11 => 1,
@@ -69,14 +75,38 @@ impl SnesAdapter {
         }
     }
 
+    fn current_serial_bit_mouse(&self) -> u8 {
+        match self.bit_index {
+            9 => u8::from(self.mouse_left_button),
+            11 => self.mouse_speed & 0x01,
+            15 => 1,
+            16..=31 => 1,
+            _ => 0,
+        }
+    }
+
+    fn current_serial_bit(&self) -> u8 {
+        if self.mouse_mode {
+            self.current_serial_bit_mouse()
+        } else {
+            self.current_serial_bit_controller()
+        }
+    }
+
+    fn enable_mouse_mode(&mut self) {
+        self.mouse_mode = true;
+    }
+
     pub fn read(&mut self, is_dummy_read: bool) -> u8 {
         let bit = self.current_serial_bit();
 
-        if !self.strobe && !is_dummy_read {
+        if self.mouse_mode && self.strobe && !is_dummy_read {
+            self.mouse_speed ^= 0x01;
+        } else if !self.strobe && !is_dummy_read {
             self.bit_index = self.bit_index.saturating_add(1);
         }
 
-        if bit != 0 { 0x03 } else { 0x00 }
+        if bit != 0 { 0x02 } else { 0x00 }
     }
 
     pub fn set_button(&mut self, button: crate::input::Button, pressed: bool) {
@@ -129,15 +159,19 @@ impl crate::input::Controller for SnesAdapter {
     }
 
     fn set_mouse_x_position(&mut self, _position: u8) -> bool {
-        false
+        self.enable_mouse_mode();
+        true
     }
 
     fn set_mouse_y_position(&mut self, _position: u8) -> bool {
-        false
+        self.enable_mouse_mode();
+        true
     }
 
-    fn set_mouse_left_button(&mut self, _pressed: bool) -> bool {
-        false
+    fn set_mouse_left_button(&mut self, pressed: bool) -> bool {
+        self.enable_mouse_mode();
+        self.mouse_left_button = pressed;
+        true
     }
 
     fn input_type(&self) -> ControllerInput {
