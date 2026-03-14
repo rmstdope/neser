@@ -344,7 +344,7 @@ mod tests {
         assert_eq!(
             mapper.read_prg(0xA000),
             2,
-            "PRG slot 2 ($A000) → slot 1, bank 2"
+            "PRG slot 1 ($A000) bank 2"
         );
         assert_eq!(mapper.read_prg(0xC000), 3, "PRG slot 2 ($C000) bank 3");
         assert_eq!(mapper.read_prg(0xE000), 4, "PRG slot 3 ($E000) bank 4");
