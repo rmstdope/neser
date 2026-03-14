@@ -3385,13 +3385,14 @@ filter=invalid-shader
     }
 
     #[test]
-    fn test_config_enable_4_score_flag_is_accepted() {
+    fn test_config_enable_4_score_enables_four_score() {
         let args = vec!["neser".to_string(), "--enable-4-score".to_string()];
-        let _config = parse_config(args);
+        let config = parse_config(args);
+        assert!(config.four_score_enabled);
     }
 
     #[test]
-    fn test_config_enable_4_score_with_value_preserves_positional_rom() {
+    fn test_config_enable_4_score_with_value_false_disables_four_score() {
         let args = vec![
             "neser".to_string(),
             "--enable-4-score".to_string(),
@@ -3399,19 +3400,33 @@ filter=invalid-shader
             "game.nes".to_string(),
         ];
         let config = parse_config(args);
+        assert!(!config.four_score_enabled);
         assert_eq!(config.rom_path.as_deref(), Some("game.nes"));
     }
 
     #[test]
-    fn test_config_no_4_score_flag_is_accepted() {
+    fn test_config_no_4_score_disables_four_score() {
         let args = vec!["neser".to_string(), "--no-4-score".to_string()];
-        let _config = parse_config(args);
+        let config = parse_config(args);
+        assert!(!config.four_score_enabled);
     }
 
     #[test]
-    fn test_config_disable_4_score_flag_is_accepted() {
+    fn test_config_disable_4_score_disables_four_score() {
         let args = vec!["neser".to_string(), "--disable-4-score".to_string()];
-        let _config = parse_config(args);
+        let config = parse_config(args);
+        assert!(!config.four_score_enabled);
+    }
+
+    #[test]
+    fn test_config_no_4_score_overrides_enable_4_score() {
+        let args = vec![
+            "neser".to_string(),
+            "--enable-4-score".to_string(),
+            "--no-4-score".to_string(),
+        ];
+        let config = parse_config(args);
+        assert!(!config.four_score_enabled);
     }
 
     #[test]
