@@ -117,7 +117,9 @@ const CLI_FLAGS: &[CliFlag] = &[
     },
     CliFlag {
         flag: "--expansion-port",
-        help: Some("Expansion port controller: none or famicom-four-players (default: none)"),
+        help: Some(
+            "Expansion port controller: none, famicom-four-players, or arkanoid (default: none)",
+        ),
         has_value: true,
     },
     CliFlag {
@@ -478,6 +480,7 @@ pub enum HardwareMode {
 pub enum ExpansionPort {
     None,
     FamicomFourPlayers,
+    ArkanoidFamicom,
 }
 
 impl ExpansionPort {
@@ -486,6 +489,8 @@ impl ExpansionPort {
             Some(Self::None)
         } else if value.eq_ignore_ascii_case("famicom-four-players") {
             Some(Self::FamicomFourPlayers)
+        } else if value.eq_ignore_ascii_case("arkanoid") {
+            Some(Self::ArkanoidFamicom)
         } else {
             None
         }
@@ -771,7 +776,7 @@ impl Config {
         if let Some(expansion_port) = Self::parse_string_arg(args, "--expansion-port") {
             let parsed = ExpansionPort::parse(&expansion_port).ok_or_else(|| {
                 format!(
-                    "Invalid --expansion-port value: '{}'. Valid options are: none, famicom-four-players",
+                    "Invalid --expansion-port value: '{}'. Valid options are: none, famicom-four-players, arkanoid",
                     expansion_port
                 )
             })?;
@@ -1968,6 +1973,47 @@ impl Config {
         changed
     }
 
+    pub fn apply_rom_db_arkanoid_famicom_hint(&mut self, has_hint: bool) -> bool {
+        if !has_hint {
+            return false;
+        }
+
+        let mut changed = false;
+
+        if !self.hardware_mode_explicit && self.hardware_mode != HardwareMode::Famicom {
+            self.hardware_mode = HardwareMode::Famicom;
+            changed = true;
+        }
+
+        if !self.hardware_model_explicit && self.hardware_model != HardwareModel::NesNtsc {
+            self.hardware_model = HardwareModel::NesNtsc;
+            changed = true;
+        }
+
+        if !self.expansion_port_explicit
+            && self.hardware_mode == HardwareMode::Famicom
+            && self.expansion_port != ExpansionPort::ArkanoidFamicom
+        {
+            self.expansion_port = ExpansionPort::ArkanoidFamicom;
+            changed = true;
+        }
+
+        changed
+    }
+
+    pub fn apply_rom_db_famicom_region_hint(&mut self, is_japan: bool) -> bool {
+        if !is_japan {
+            return false;
+        }
+
+        if !self.hardware_mode_explicit && self.hardware_mode != HardwareMode::Famicom {
+            self.hardware_mode = HardwareMode::Famicom;
+            return true;
+        }
+
+        false
+    }
+
     /// Parse a boolean value from config file.
     /// Accepts: true, false, yes, no, 1, 0 (case-insensitive)
     fn parse_bool(value: &str) -> Result<bool, ()> {
@@ -2396,6 +2442,75 @@ mod tests {
         assert!(changed);
         assert_eq!(config.hardware_mode, HardwareMode::Famicom);
         assert_eq!(config.expansion_port, ExpansionPort::FamicomFourPlayers);
+    }
+
+    #[test]
+    fn test_config_apply_rom_db_arkanoid_famicom_hint_sets_hardware_and_expansion() {
+        let mut config = Config::default();
+        let changed = config.apply_rom_db_arkanoid_famicom_hint(true);
+
+        assert!(changed);
+        assert_eq!(config.hardware_mode, HardwareMode::Famicom);
+        assert_eq!(config.hardware_model, HardwareModel::NesNtsc);
+        assert_eq!(config.expansion_port, ExpansionPort::ArkanoidFamicom);
+    }
+
+    #[test]
+    fn test_config_apply_rom_db_arkanoid_famicom_hint_respects_explicit_expansion_override() {
+        let mut config = Config {
+            expansion_port: ExpansionPort::None,
+            expansion_port_explicit: true,
+            ..Default::default()
+        };
+
+        let changed = config.apply_rom_db_arkanoid_famicom_hint(true);
+
+        // Hardware mode changes but expansion stays explicit
+        assert!(changed);
+        assert_eq!(config.hardware_mode, HardwareMode::Famicom);
+        assert_eq!(config.expansion_port, ExpansionPort::None);
+    }
+
+    #[test]
+    fn test_config_apply_rom_db_arkanoid_famicom_hint_false_is_noop() {
+        let mut config = Config::default();
+        let changed = config.apply_rom_db_arkanoid_famicom_hint(false);
+
+        assert!(!changed);
+        assert_eq!(config.hardware_mode, HardwareMode::Nes);
+        assert_eq!(config.expansion_port, ExpansionPort::None);
+    }
+
+    #[test]
+    fn test_config_apply_rom_db_famicom_region_hint_sets_famicom_mode() {
+        let mut config = Config::default();
+        let changed = config.apply_rom_db_famicom_region_hint(true);
+
+        assert!(changed);
+        assert_eq!(config.hardware_mode, HardwareMode::Famicom);
+    }
+
+    #[test]
+    fn test_config_apply_rom_db_famicom_region_hint_respects_explicit_hardware() {
+        let mut config = Config {
+            hardware_mode: HardwareMode::Nes,
+            hardware_mode_explicit: true,
+            ..Default::default()
+        };
+
+        let changed = config.apply_rom_db_famicom_region_hint(true);
+
+        assert!(!changed);
+        assert_eq!(config.hardware_mode, HardwareMode::Nes);
+    }
+
+    #[test]
+    fn test_config_apply_rom_db_famicom_region_hint_false_is_noop() {
+        let mut config = Config::default();
+        let changed = config.apply_rom_db_famicom_region_hint(false);
+
+        assert!(!changed);
+        assert_eq!(config.hardware_mode, HardwareMode::Nes);
     }
 
     #[test]
@@ -3817,6 +3932,30 @@ filter=invalid-shader
         ];
         let result = config_new(args);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_config_expansion_port_flag_arkanoid_is_accepted() {
+        let args = vec![
+            "neser".to_string(),
+            "--hardware".to_string(),
+            "famicom".to_string(),
+            "--expansion-port".to_string(),
+            "arkanoid".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.expansion_port, ExpansionPort::ArkanoidFamicom);
+    }
+
+    #[test]
+    fn test_config_expansion_port_flag_arkanoid_invalid_value_errors() {
+        let args = vec![
+            "neser".to_string(),
+            "--expansion-port".to_string(),
+            "invalid-arkanoid".to_string(),
+        ];
+        let result = config_new(args);
+        assert!(result.is_err());
     }
 
     #[test]

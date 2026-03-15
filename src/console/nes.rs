@@ -157,11 +157,32 @@ impl Nes {
             .borrow()
             .rom_db()
             .has_famicom_four_players_expansion(cartridge_crc32);
+        let has_arkanoid_famicom_expansion = self
+            .app_context
+            .borrow()
+            .rom_db()
+            .has_arkanoid_famicom_expansion(cartridge_crc32);
+        let is_japan_region = self
+            .app_context
+            .borrow()
+            .rom_db()
+            .is_japan_region(cartridge_crc32);
+
+        // Auto-detect Famicom hardware mode for Japan-region ROMs
+        self.app_context
+            .borrow_mut()
+            .config_mut()
+            .apply_rom_db_famicom_region_hint(is_japan_region);
 
         self.app_context
             .borrow_mut()
             .config_mut()
             .apply_rom_db_famicom_four_players_hint(has_famicom_four_players_expansion);
+
+        self.app_context
+            .borrow_mut()
+            .config_mut()
+            .apply_rom_db_arkanoid_famicom_hint(has_arkanoid_famicom_expansion);
 
         // Propagate any hardware-mode change from ROM DB hint to the live PPU
         let is_famicom = self.app_context.borrow().config().hardware_mode
@@ -506,6 +527,11 @@ impl Nes {
     /// Return the input type for a controller port.
     pub fn controller_input_type(&self, port: u8) -> Option<crate::input::ControllerInput> {
         self.bus.borrow().controller_input_type(port)
+    }
+
+    /// Check if the expansion port has a mouse-controlled device.
+    pub fn has_expansion_mouse_controller(&self) -> bool {
+        self.bus.borrow().has_expansion_mouse_controller()
     }
 
     /// Check if a Zapper is active on the specified port.

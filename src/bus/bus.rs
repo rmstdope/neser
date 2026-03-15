@@ -35,6 +35,8 @@ pub struct BusState {
     pub oam_dma_page: Option<u8>,
     pub port1_controller: ControllerStateWrapper,
     pub port2_controller: ControllerStateWrapper,
+    #[serde(default)]
+    pub expansion_arkanoid: Option<ArkanoidState>,
 }
 
 /// Mapper state (opaque serialization).
@@ -57,6 +59,7 @@ pub trait BusDevice {
         _four_score_enabled: bool,
         _famicom_four_players_enabled: bool,
         _famicom_mode: bool,
+        _arkanoid_famicom_enabled: bool,
     ) {
     }
 }
@@ -74,6 +77,7 @@ pub struct Bus {
     dma_triggered: Rc<RefCell<bool>>,
     controllers: [Rc<RefCell<Box<dyn Controller>>>; 2], // Port 1 and Port 2 controllers
     four_score_extra_button_states: Rc<RefCell<[u8; 2]>>, // Emulated players 3 and 4 button states
+    expansion_arkanoid: Rc<RefCell<ArkanoidController>>, // Famicom expansion Arkanoid controller
     open_bus: u8, // Last value on the data bus for open bus behavior
     devices: Vec<Box<dyn BusDevice>>,
 }
@@ -118,6 +122,8 @@ impl Bus {
         let ram_init_mode = app_context.borrow().config().ram_init_mode;
         crate::console::initialize_ram(&mut cpu_ram[0..0x800], ram_init_mode);
 
+        let expansion_arkanoid = Rc::new(RefCell::new(ArkanoidController::new()));
+
         let mut controller = Self {
             cpu_ram: Rc::new(RefCell::new(cpu_ram)),
             cartridge: Rc::new(RefCell::new(None)),
@@ -128,6 +134,7 @@ impl Bus {
             dma_triggered: Rc::new(RefCell::new(false)),
             controllers,
             four_score_extra_button_states: Rc::new(RefCell::new([0, 0])),
+            expansion_arkanoid,
             open_bus: 0xFF, // Initialize to 0xFF (common power-on state)
             devices: Vec::new(),
         };
@@ -148,6 +155,8 @@ impl Bus {
         );
         controller_device.set_four_score_enabled(four_score_enabled);
         controller_device.set_famicom_four_players_enabled(famicom_four_players_enabled);
+        controller_device
+            .set_arkanoid_famicom_expansion(Some(controller.expansion_arkanoid.clone()));
         controller.register_device(Box::new(controller_device));
         controller.register_device(Box::new(ApuDevice::new(controller.apu.clone())));
         controller.register_device(Box::new(OamDmaDevice::new(
@@ -169,6 +178,7 @@ impl Bus {
         let four_score_enabled = app_context.config().four_score_enabled;
         let famicom_four_players_enabled = Self::is_famicom_four_players(app_context.config());
         let famicom_mode = app_context.config().hardware_mode == HardwareMode::Famicom;
+        let arkanoid_famicom_enabled = Self::is_arkanoid_famicom(app_context.config());
         drop(app_context);
 
         for device in self.devices.iter_mut() {
@@ -176,6 +186,7 @@ impl Bus {
                 four_score_enabled,
                 famicom_four_players_enabled,
                 famicom_mode,
+                arkanoid_famicom_enabled,
             );
         }
     }
@@ -187,6 +198,11 @@ impl Bus {
     fn is_famicom_four_players(config: &crate::console::Config) -> bool {
         config.hardware_mode == HardwareMode::Famicom
             && config.expansion_port == ExpansionPort::FamicomFourPlayers
+    }
+
+    fn is_arkanoid_famicom(config: &crate::console::Config) -> bool {
+        config.hardware_mode == HardwareMode::Famicom
+            && config.expansion_port == ExpansionPort::ArkanoidFamicom
     }
 
     fn has_player34_serial_enabled(&self) -> bool {
@@ -604,6 +620,7 @@ impl Bus {
         for controller in &self.controllers {
             controller.borrow_mut().set_mouse_x_position(position);
         }
+        self.expansion_arkanoid.borrow_mut().set_position(position);
     }
 
     /// Update mouse Y position for any mouse-emulated controller (0..255).
@@ -625,6 +642,7 @@ impl Bus {
         for controller in &self.controllers {
             controller.borrow_mut().set_mouse_left_button(pressed);
         }
+        self.expansion_arkanoid.borrow_mut().set_trigger(pressed);
     }
 
     /// Update mouse right button state for any mouse-emulated controller.
@@ -652,6 +670,15 @@ impl Bus {
         }
 
         Some(self.controllers[(port - 1) as usize].borrow().input_type())
+    }
+
+    /// Check if the expansion port has a mouse-controlled device (e.g. Famicom Arkanoid).
+    pub fn has_expansion_mouse_controller(&self) -> bool {
+        self.is_arkanoid_famicom_configured()
+    }
+
+    fn is_arkanoid_famicom_configured(&self) -> bool {
+        Self::is_arkanoid_famicom(self.app_context.borrow().config())
     }
 
     /// Check if a Zapper is active on the specified port.
@@ -745,6 +772,7 @@ impl Bus {
                 crate::input::ControllerState::Paddle(s) => ControllerStateWrapper::Arkanoid(s),
                 crate::input::ControllerState::Zapper(s) => ControllerStateWrapper::Zapper(s),
             },
+            expansion_arkanoid: Some(self.expansion_arkanoid.borrow().capture_state()),
         }
     }
 
@@ -832,6 +860,13 @@ impl Bus {
                 controller.restore_state(&crate::input::ControllerState::Zapper(s.clone()));
                 *self.controllers[1].borrow_mut() = controller;
             }
+        }
+
+        // Restore expansion Arkanoid state
+        if let Some(ref arkanoid_state) = state.expansion_arkanoid {
+            self.expansion_arkanoid
+                .borrow_mut()
+                .restore_state(arkanoid_state);
         }
     }
 }
@@ -1407,6 +1442,31 @@ mod tests {
             restored.read(0x4016, false) & 0x18,
         ];
         assert_eq!(restored_paddle, expected_paddle);
+    }
+
+    #[test]
+    fn test_bus_save_state_roundtrip_with_expansion_arkanoid() {
+        let memory = create_test_memory();
+
+        // Set position on the expansion Arkanoid controller
+        memory.expansion_arkanoid.borrow_mut().set_position(0xB0);
+        memory.expansion_arkanoid.borrow_mut().set_trigger(true);
+
+        let saved_state = memory.capture_state();
+
+        // Verify the save state includes expansion Arkanoid
+        assert!(saved_state.expansion_arkanoid.is_some());
+        let arkanoid_state = saved_state.expansion_arkanoid.as_ref().unwrap();
+        assert_eq!(arkanoid_state.position, 0xB0);
+        assert!(arkanoid_state.trigger);
+
+        // Restore and verify
+        let mut restored = create_test_memory();
+        restored.restore_state(&saved_state);
+
+        let restored_state = restored.expansion_arkanoid.borrow().capture_state();
+        assert_eq!(restored_state.position, 0xB0);
+        assert!(restored_state.trigger);
     }
 
     #[test]

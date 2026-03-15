@@ -1,4 +1,5 @@
 use crate::bus::bus::BusDevice;
+use crate::input::ArkanoidController;
 use crate::input::Controller;
 use std::cell::RefCell;
 use std::ops::RangeInclusive;
@@ -14,6 +15,8 @@ pub(crate) struct ControllerDevice {
     famicom_four_players_strobe: bool,
     famicom_four_players_index: [u8; 2],
     famicom_mode: bool,
+    arkanoid_expansion: Option<Rc<RefCell<ArkanoidController>>>,
+    arkanoid_famicom_enabled: bool,
 }
 
 impl ControllerDevice {
@@ -48,6 +51,8 @@ impl ControllerDevice {
             famicom_four_players_strobe: false,
             famicom_four_players_index: [0, 0],
             famicom_mode: false,
+            arkanoid_expansion: None,
+            arkanoid_famicom_enabled: false,
         }
     }
 
@@ -61,6 +66,36 @@ impl ControllerDevice {
         self.famicom_four_players_enabled = enabled;
         self.famicom_four_players_index = [0, 0];
         self.famicom_four_players_strobe = false;
+    }
+
+    pub(crate) fn set_arkanoid_famicom_expansion(
+        &mut self,
+        expansion: Option<Rc<RefCell<ArkanoidController>>>,
+    ) {
+        self.arkanoid_expansion = expansion;
+    }
+
+    pub(crate) fn set_arkanoid_famicom_enabled(&mut self, enabled: bool) {
+        self.arkanoid_famicom_enabled = enabled;
+    }
+
+    fn read_arkanoid_famicom_bit(&mut self, port_index: usize, is_dummy_read: bool) -> u8 {
+        let mut controller_state = self.controllers[port_index]
+            .borrow_mut()
+            .read(is_dummy_read);
+
+        if let Some(ref arkanoid) = self.arkanoid_expansion {
+            let expansion_bit = if port_index == 0 {
+                // $4016: fire button on bit 1
+                arkanoid.borrow().read_expansion_trigger()
+            } else {
+                // $4017: serial knob data on bit 1
+                arkanoid.borrow_mut().read_expansion_knob(is_dummy_read)
+            };
+            controller_state = (controller_state & !0x02) | expansion_bit;
+        }
+
+        controller_state
     }
 
     fn read_four_score_bit(&mut self, port_index: usize, is_dummy_read: bool) -> u8 {
@@ -133,6 +168,8 @@ impl BusDevice for ControllerDevice {
             self.read_four_score_bit(index, is_dummy_read)
         } else if self.famicom_four_players_enabled {
             self.read_famicom_four_players_bit(index, is_dummy_read)
+        } else if self.arkanoid_famicom_enabled {
+            self.read_arkanoid_famicom_bit(index, is_dummy_read)
         } else {
             self.controllers[index].borrow_mut().read(is_dummy_read)
         };
@@ -166,6 +203,11 @@ impl BusDevice for ControllerDevice {
 
                 self.controllers[0].borrow_mut().write_strobe(value);
                 self.controllers[1].borrow_mut().write_strobe(value);
+
+                if let Some(ref arkanoid) = self.arkanoid_expansion {
+                    arkanoid.borrow_mut().write_strobe(value);
+                }
+
                 true
             }
             0x4017 => false,
@@ -182,10 +224,12 @@ impl BusDevice for ControllerDevice {
         four_score_enabled: bool,
         famicom_four_players_enabled: bool,
         famicom_mode: bool,
+        arkanoid_famicom_enabled: bool,
     ) {
         self.set_four_score_enabled(four_score_enabled);
         self.set_famicom_four_players_enabled(famicom_four_players_enabled);
         self.famicom_mode = famicom_mode;
+        self.set_arkanoid_famicom_enabled(arkanoid_famicom_enabled);
     }
 }
 
@@ -494,5 +538,109 @@ mod tests {
                 value
             );
         }
+    }
+
+    fn create_arkanoid_expansion_device() -> (ControllerDevice, Rc<RefCell<ArkanoidController>>) {
+        let reads = Rc::new(RefCell::new(0));
+        let dummy_reads = Rc::new(RefCell::new(0));
+        let controller1: Rc<RefCell<Box<dyn Controller>>> = Rc::new(RefCell::new(Box::new(
+            TestController::new(reads.clone(), dummy_reads.clone()),
+        )));
+        let controller2: Rc<RefCell<Box<dyn Controller>>> = Rc::new(RefCell::new(Box::new(
+            TestController::new(reads, dummy_reads),
+        )));
+        let arkanoid = Rc::new(RefCell::new(ArkanoidController::new()));
+        let mut device = ControllerDevice::new(controller1, controller2);
+        device.set_arkanoid_famicom_expansion(Some(arkanoid.clone()));
+        device.set_arkanoid_famicom_enabled(true);
+        device.famicom_mode = true;
+        (device, arkanoid)
+    }
+
+    #[test]
+    fn test_arkanoid_famicom_expansion_fire_on_4016_bit1() {
+        let (mut device, arkanoid) = create_arkanoid_expansion_device();
+
+        // Fire not pressed
+        let value = device.read(0x4016, 0x00, false).unwrap();
+        assert_eq!(
+            value & 0x02,
+            0x00,
+            "Fire should be 0 when not pressed, got ${:02X}",
+            value
+        );
+
+        // Fire pressed
+        arkanoid.borrow_mut().set_trigger(true);
+        let value = device.read(0x4016, 0x00, false).unwrap();
+        assert_eq!(
+            value & 0x02,
+            0x02,
+            "Fire should be 1 on bit 1 when pressed, got ${:02X}",
+            value
+        );
+    }
+
+    #[test]
+    fn test_arkanoid_famicom_expansion_knob_on_4017_bit1() {
+        let (mut device, arkanoid) = create_arkanoid_expansion_device();
+        arkanoid.borrow_mut().set_position(0x92); // inverted: 0b0110_1101
+
+        // Strobe to latch position
+        assert!(device.write(0x4016, 1, false));
+        assert!(device.write(0x4016, 0, false));
+
+        // Read MSB first (inverted) on bit 1 of $4017
+        let expected_bits = [0, 1, 1, 0, 1, 1, 0, 1];
+        for (i, expected) in expected_bits.iter().enumerate() {
+            let value = device.read(0x4017, 0x00, false).unwrap();
+            assert_eq!(
+                (value >> 1) & 0x01,
+                *expected,
+                "Bit {} expected {}, got value 0x{:02X}",
+                i,
+                expected,
+                value
+            );
+        }
+    }
+
+    #[test]
+    fn test_arkanoid_famicom_expansion_strobe_forwarded() {
+        let (mut device, arkanoid) = create_arkanoid_expansion_device();
+        arkanoid.borrow_mut().set_position(0x92);
+
+        // Strobe and read first bit
+        assert!(device.write(0x4016, 1, false));
+        assert!(device.write(0x4016, 0, false));
+
+        let first = device.read(0x4017, 0x00, false).unwrap();
+        let _ = device.read(0x4017, 0x00, false).unwrap(); // advance
+
+        // Strobe again - should reset shift register
+        assert!(device.write(0x4016, 1, false));
+        assert!(device.write(0x4016, 0, false));
+
+        let after_strobe = device.read(0x4017, 0x00, false).unwrap();
+        assert_eq!(
+            first & 0x02,
+            after_strobe & 0x02,
+            "Strobe should reset shift register to first bit"
+        );
+    }
+
+    #[test]
+    fn test_arkanoid_famicom_expansion_does_not_affect_port_controller_bit0() {
+        let (mut device, _arkanoid) = create_arkanoid_expansion_device();
+
+        // Port controller returns 0 for all reads (TestController always returns 0)
+        // Arkanoid expansion should only set bit 1, leaving bit 0 from port controller
+        let value = device.read(0x4016, 0x00, false).unwrap();
+        assert_eq!(
+            value & 0x01,
+            0x00,
+            "Bit 0 should come from port controller, got ${:02X}",
+            value
+        );
     }
 }
