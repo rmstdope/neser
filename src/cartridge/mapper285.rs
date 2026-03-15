@@ -80,6 +80,7 @@ impl Mapper285 {
         let mut base = BaseMapper::new(&ctx, capabilities);
         base.configure_prg_banking(PRG_BANK_SIZE_BYTES);
         base.configure_chr_banking(CHR_BANK_SIZE_BYTES);
+        base.select_chr_page(0, 0);
 
         let mut mapper = Self { base, register: 0 };
         mapper.apply_register(0);
@@ -105,7 +106,6 @@ impl Mapper285 {
             self.base.select_prg_page(0, outer | inner);
             self.base.select_prg_page(1, outer | 0x07);
         }
-        self.base.select_chr_page(0, 0);
     }
 
     fn apply_mirroring(&mut self, value: u8) {
@@ -152,6 +152,7 @@ impl Mapper for Mapper285 {
     }
 
     fn reset(&mut self) {
+        self.base.select_chr_page(0, 0);
         self.apply_register(0);
     }
 }
