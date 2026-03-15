@@ -415,6 +415,17 @@ impl Vrc2Vrc4Mapper {
         }
     }
 
+    /// Return the raw (non-wrapped) CHR bank register value for the 1KB slot
+    /// that covers the given PPU address.
+    ///
+    /// Each 1KB slot covers 0x400 bytes. The raw value is the value stored in
+    /// the CHR bank register _before_ modulo-wrapping against CHR-ROM size, which
+    /// allows callers to detect special-meaning bank numbers (e.g., CHR-RAM banks).
+    pub fn raw_chr_1k_bank(&self, ppu_addr: u16) -> u16 {
+        let slot = (ppu_addr as usize) >> 10; // divide by 1024
+        self.chr_banks_1k[slot & 7]
+    }
+
     /// Handle a normalised IRQ register write ($F000-$F003).
     ///
     /// VRC2 variants silently ignore these writes (no IRQ hardware).
