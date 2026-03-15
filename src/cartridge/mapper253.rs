@@ -137,10 +137,16 @@ impl Mapper for Mapper253 {
 
     fn restore_registers(&mut self, data: &[u8]) {
         const CHR_RAM_SIZE: usize = 2 * 1024;
+
         if data.len() >= CHR_RAM_SIZE {
+            // New-style snapshot: inner VRC4 registers followed by 2 KiB of CHR-RAM.
             let (vrc4_data, chr_ram_data) = data.split_at(data.len() - CHR_RAM_SIZE);
             self.inner.restore_registers(vrc4_data);
             self.chr_ram.copy_from_slice(chr_ram_data);
+        } else {
+            // Legacy or truncated snapshot: only inner VRC4 registers are present.
+            // Restore what we can and leave CHR-RAM as-is.
+            self.inner.restore_registers(data);
         }
     }
 
