@@ -1,4 +1,4 @@
-use crate::console::TimingMode;
+use crate::console::{ExpansionPort, HardwareMode, TimingMode};
 
 pub fn gamepad_init_toast_message(gamepads_enabled: bool, detected_controllers: usize) -> String {
     if !gamepads_enabled {
@@ -23,6 +23,28 @@ pub fn cartridge_load_toast_message(rom_path: &str, success: bool) -> String {
 
 pub fn emulator_timing_toast_message(tv_system: TimingMode) -> String {
     format!("Emulator timing: {}", tv_system_toast_label(tv_system))
+}
+
+pub fn hardware_mode_toast_message(
+    mode: HardwareMode,
+    model: crate::console::HardwareModel,
+    expansion: ExpansionPort,
+) -> String {
+    match mode {
+        HardwareMode::Nes => {
+            let timing = match model {
+                crate::console::HardwareModel::NesNtsc => "NTSC",
+                crate::console::HardwareModel::NesPal => "PAL",
+            };
+            format!("Hardware: NES {}", timing)
+        }
+        HardwareMode::Famicom => match expansion {
+            ExpansionPort::FamicomFourPlayers => {
+                "Hardware: Famicom (4-player expansion)".to_string()
+            }
+            ExpansionPort::None => "Hardware: Famicom".to_string(),
+        },
+    }
 }
 
 fn tv_system_toast_label(tv_system: TimingMode) -> &'static str {
@@ -83,5 +105,49 @@ mod tests {
     fn emulator_timing_toast_uses_pal_label() {
         let message = emulator_timing_toast_message(TimingMode::Pal);
         assert_eq!(message, "Emulator timing: PAL");
+    }
+
+    #[test]
+    fn hardware_mode_toast_nes_ntsc_default() {
+        use crate::console::HardwareModel;
+        let message = hardware_mode_toast_message(
+            HardwareMode::Nes,
+            HardwareModel::NesNtsc,
+            ExpansionPort::None,
+        );
+        assert_eq!(message, "Hardware: NES NTSC");
+    }
+
+    #[test]
+    fn hardware_mode_toast_nes_pal() {
+        use crate::console::HardwareModel;
+        let message = hardware_mode_toast_message(
+            HardwareMode::Nes,
+            HardwareModel::NesPal,
+            ExpansionPort::None,
+        );
+        assert_eq!(message, "Hardware: NES PAL");
+    }
+
+    #[test]
+    fn hardware_mode_toast_famicom_no_expansion() {
+        use crate::console::HardwareModel;
+        let message = hardware_mode_toast_message(
+            HardwareMode::Famicom,
+            HardwareModel::NesNtsc,
+            ExpansionPort::None,
+        );
+        assert_eq!(message, "Hardware: Famicom");
+    }
+
+    #[test]
+    fn hardware_mode_toast_famicom_with_four_players() {
+        use crate::console::HardwareModel;
+        let message = hardware_mode_toast_message(
+            HardwareMode::Famicom,
+            HardwareModel::NesNtsc,
+            ExpansionPort::FamicomFourPlayers,
+        );
+        assert_eq!(message, "Hardware: Famicom (4-player expansion)");
     }
 }

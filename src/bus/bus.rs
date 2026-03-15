@@ -7,6 +7,7 @@ use super::ram_device::RamDevice;
 use crate::app_context::SharedAppContext;
 use crate::apu::SharedApu;
 use crate::cartridge::Cartridge;
+use crate::console::{ExpansionPort, HardwareMode};
 use crate::debugging::log_info;
 use crate::input::{
     ArkanoidController, ArkanoidState, Button, Controller, ControllerType, JoypadState, NesJoypad,
@@ -51,6 +52,13 @@ pub trait BusDevice {
     fn read(&mut self, addr: u16, open_bus: u8, is_dummy_read: bool) -> Option<u8>;
     fn write(&mut self, addr: u16, value: u8, is_dummy_write: bool) -> bool;
     fn address_range(&self) -> RangeInclusive<u16>;
+    fn sync_controller_modes(
+        &mut self,
+        _four_score_enabled: bool,
+        _famicom_four_players_enabled: bool,
+        _famicom_mode: bool,
+    ) {
+    }
 }
 
 pub type SharedBus = Rc<RefCell<Bus>>;
@@ -130,13 +138,16 @@ impl Bus {
             controller.cartridge.clone(),
         )));
         let four_score_enabled = controller.app_context.borrow().config().four_score_enabled;
+        let famicom_four_players_enabled = controller.is_famicom_four_players_configured();
         let mut controller_device = ControllerDevice::new_with_four_score_state(
             controller.controllers[0].clone(),
             controller.controllers[1].clone(),
             four_score_enabled,
+            famicom_four_players_enabled,
             controller.four_score_extra_button_states.clone(),
         );
         controller_device.set_four_score_enabled(four_score_enabled);
+        controller_device.set_famicom_four_players_enabled(famicom_four_players_enabled);
         controller.register_device(Box::new(controller_device));
         controller.register_device(Box::new(ApuDevice::new(controller.apu.clone())));
         controller.register_device(Box::new(OamDmaDevice::new(
@@ -148,7 +159,39 @@ impl Bus {
             controller.ppu.clone(),
         )));
 
+        controller.sync_controller_modes_from_config();
+
         controller
+    }
+
+    pub fn sync_controller_modes_from_config(&mut self) {
+        let app_context = self.app_context.borrow();
+        let four_score_enabled = app_context.config().four_score_enabled;
+        let famicom_four_players_enabled = Self::is_famicom_four_players(app_context.config());
+        let famicom_mode = app_context.config().hardware_mode == HardwareMode::Famicom;
+        drop(app_context);
+
+        for device in self.devices.iter_mut() {
+            device.sync_controller_modes(
+                four_score_enabled,
+                famicom_four_players_enabled,
+                famicom_mode,
+            );
+        }
+    }
+
+    fn is_famicom_four_players_configured(&self) -> bool {
+        Self::is_famicom_four_players(self.app_context.borrow().config())
+    }
+
+    fn is_famicom_four_players(config: &crate::console::Config) -> bool {
+        config.hardware_mode == HardwareMode::Famicom
+            && config.expansion_port == ExpansionPort::FamicomFourPlayers
+    }
+
+    fn has_player34_serial_enabled(&self) -> bool {
+        let config = self.app_context.borrow();
+        config.config().four_score_enabled || Self::is_famicom_four_players(config.config())
     }
 
     pub fn register_device(&mut self, device: Box<dyn BusDevice>) {
@@ -495,7 +538,7 @@ impl Bus {
             return;
         }
 
-        if !self.app_context.borrow().config().four_score_enabled {
+        if !self.has_player34_serial_enabled() {
             return;
         }
 
@@ -527,7 +570,7 @@ impl Bus {
     /// Get joypad button states as a u8 bitmask (for autorun recording).
     /// Returns 0 if the controller is not a joypad.
     pub fn get_joypad_button_states(&self, port: u8) -> u8 {
-        if self.app_context.borrow().config().four_score_enabled && (3..=4).contains(&port) {
+        if self.has_player34_serial_enabled() && (3..=4).contains(&port) {
             return self.four_score_extra_button_states.borrow()[(port - 3) as usize];
         }
 
@@ -600,7 +643,7 @@ impl Bus {
 
     /// Return the input type for a controller port.
     pub fn controller_input_type(&self, port: u8) -> Option<crate::input::ControllerInput> {
-        if self.app_context.borrow().config().four_score_enabled && (3..=4).contains(&port) {
+        if self.has_player34_serial_enabled() && (3..=4).contains(&port) {
             return Some(crate::input::ControllerInput::Gamepad);
         }
 

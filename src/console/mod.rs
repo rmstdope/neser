@@ -13,6 +13,9 @@ pub use cartridge_catalog::{
 pub use config::ApuChannels;
 pub use config::AutorunMode;
 pub use config::Config;
+pub use config::ExpansionPort;
+pub use config::HardwareMode;
+#[allow(unused_imports)] // Used by integration tests and lib consumers
 pub use config::HardwareModel;
 pub use config::ParseResult;
 pub use config::RamInitMode;

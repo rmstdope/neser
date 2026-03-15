@@ -4,6 +4,8 @@ use super::screen_buffer::ScreenBuffer;
 pub struct Rendering {
     /// Screen buffer for rendered pixels
     screen_buffer: ScreenBuffer,
+    /// Whether Famicom emphasis bit swap is active (green/blue swapped)
+    pub(crate) famicom_emphasis: bool,
 }
 
 impl Default for Rendering {
@@ -17,6 +19,7 @@ impl Rendering {
     pub fn new() -> Self {
         Self {
             screen_buffer: ScreenBuffer::new(),
+            famicom_emphasis: false,
         }
     }
 
@@ -66,7 +69,13 @@ impl Rendering {
         let (mut r, mut g, mut b) = system_palette_lookup(color_value);
 
         // Apply color emphasis/tint
-        (r, g, b) = crate::ppu::color_effects::apply_color_emphasis(r, g, b, color_emphasis);
+        (r, g, b) = crate::ppu::color_effects::apply_color_emphasis(
+            r,
+            g,
+            b,
+            color_emphasis,
+            self.famicom_emphasis,
+        );
 
         // Write to the screen buffer
         self.screen_buffer.set_pixel(screen_x, screen_y, r, g, b);
@@ -234,7 +243,7 @@ mod tests {
 
     #[test]
     fn test_apply_color_emphasis_red_only() {
-        let (r, g, b) = apply_color_emphasis(100, 100, 100, 0x01);
+        let (r, g, b) = apply_color_emphasis(100, 100, 100, 0x01, false);
         assert_eq!(r, 110);
         assert_eq!(g, 75);
         assert_eq!(b, 75);

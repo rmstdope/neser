@@ -8,7 +8,7 @@ use crate::debugging::ppu_viewer::{
 };
 use crate::frontend_toasts::{
     cartridge_load_toast_message, emulator_timing_toast_message,
-    gamepad_init_toast_message as shared_gamepad_init_toast_message,
+    gamepad_init_toast_message as shared_gamepad_init_toast_message, hardware_mode_toast_message,
 };
 use crate::input::{Button, ControllerType, SnesButton};
 use crate::wasm_autorun::WasmAutorunState;
@@ -146,6 +146,14 @@ impl WasmNes {
                 .hardware_model
                 .timing_mode(),
         ));
+        {
+            let config = self.nes.app_context().borrow().config().clone();
+            self.pending_toasts.push(hardware_mode_toast_message(
+                config.hardware_mode,
+                config.hardware_model,
+                config.expansion_port,
+            ));
+        }
         web_sys::console::log_1(&JsValue::from_str("ROM loaded successfully"));
         Ok(())
     }
@@ -483,6 +491,76 @@ impl WasmNes {
             .borrow_mut()
             .set_controller_type(port, controller_type);
         Ok(())
+    }
+
+    /// Set the hardware mode: "nes-ntsc", "nes-pal", or "famicom".
+    ///
+    /// This updates the configuration and controller modes only; it does not
+    /// retroactively change the timing or PPU behavior of the currently
+    /// running emulator instance. The new hardware mode will take effect
+    /// on the next ROM load or emulator reset that re-initializes the core.
+    #[wasm_bindgen]
+    pub fn set_hardware_mode(&mut self, mode: &str) -> Result<(), JsValue> {
+        let app_context = self.app_context.clone();
+        {
+            let mut ctx = app_context.borrow_mut();
+            ctx.config_mut()
+                .apply_hardware_value(mode)
+                .map_err(|e| JsValue::from_str(&e))?;
+        }
+        self.nes
+            .bus()
+            .borrow_mut()
+            .sync_controller_modes_from_config();
+
+        // Inform the frontend that the hardware mode was updated in the
+        // configuration, and that it will apply on the next ROM load.
+        {
+            let config = app_context.borrow().config().clone();
+            self.pending_toasts.push(hardware_mode_toast_message(
+                config.hardware_mode,
+                config.hardware_model,
+                config.expansion_port,
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Set the expansion port: "none" or "famicom-four-players".
+    #[wasm_bindgen]
+    pub fn set_expansion_port(&mut self, port: &str) -> Result<(), JsValue> {
+        let app_context = self.app_context.clone();
+        {
+            let mut ctx = app_context.borrow_mut();
+            ctx.config_mut()
+                .apply_expansion_port_value(port)
+                .map_err(|e| JsValue::from_str(&e))?;
+        }
+        self.nes
+            .bus()
+            .borrow_mut()
+            .sync_controller_modes_from_config();
+        Ok(())
+    }
+
+    /// Get the current hardware mode as a string.
+    #[wasm_bindgen]
+    pub fn get_hardware_mode(&self) -> String {
+        let config = self.app_context.borrow().config().clone();
+        match config.hardware_mode {
+            crate::console::HardwareMode::Nes => config.hardware_model.as_str().to_string(),
+            crate::console::HardwareMode::Famicom => "famicom".to_string(),
+        }
+    }
+
+    /// Get the current expansion port as a string.
+    #[wasm_bindgen]
+    pub fn get_expansion_port(&self) -> String {
+        match self.app_context.borrow().config().expansion_port {
+            crate::console::ExpansionPort::None => "none".to_string(),
+            crate::console::ExpansionPort::FamicomFourPlayers => "famicom-four-players".to_string(),
+        }
     }
 
     /// Check if mouse-emulated controller input is enabled on a port.

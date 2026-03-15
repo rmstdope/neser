@@ -10,6 +10,10 @@ pub(crate) struct ControllerDevice {
     four_score_enabled: bool,
     four_score_strobe: bool,
     four_score_index: [u8; 2],
+    famicom_four_players_enabled: bool,
+    famicom_four_players_strobe: bool,
+    famicom_four_players_index: [u8; 2],
+    famicom_mode: bool,
 }
 
 impl ControllerDevice {
@@ -22,6 +26,7 @@ impl ControllerDevice {
             port1_controller,
             port2_controller,
             false,
+            false,
             Rc::new(RefCell::new([0, 0])),
         )
     }
@@ -30,6 +35,7 @@ impl ControllerDevice {
         port1_controller: Rc<RefCell<Box<dyn Controller>>>,
         port2_controller: Rc<RefCell<Box<dyn Controller>>>,
         four_score_enabled: bool,
+        famicom_four_players_enabled: bool,
         four_score_extra_button_states: Rc<RefCell<[u8; 2]>>,
     ) -> Self {
         Self {
@@ -38,6 +44,10 @@ impl ControllerDevice {
             four_score_enabled,
             four_score_strobe: false,
             four_score_index: [0, 0],
+            famicom_four_players_enabled,
+            famicom_four_players_strobe: false,
+            famicom_four_players_index: [0, 0],
+            famicom_mode: false,
         }
     }
 
@@ -45,6 +55,12 @@ impl ControllerDevice {
         self.four_score_enabled = enabled;
         self.four_score_index = [0, 0];
         self.four_score_strobe = false;
+    }
+
+    pub(crate) fn set_famicom_four_players_enabled(&mut self, enabled: bool) {
+        self.famicom_four_players_enabled = enabled;
+        self.famicom_four_players_index = [0, 0];
+        self.famicom_four_players_strobe = false;
     }
 
     fn read_four_score_bit(&mut self, port_index: usize, is_dummy_read: bool) -> u8 {
@@ -84,21 +100,54 @@ impl ControllerDevice {
 
         controller_state
     }
+
+    fn read_famicom_four_players_bit(&mut self, port_index: usize, is_dummy_read: bool) -> u8 {
+        let mut controller_state = self.controllers[port_index]
+            .borrow_mut()
+            .read(is_dummy_read);
+
+        let idx = self.famicom_four_players_index[port_index];
+        let extra_state = self.four_score_extra_button_states.borrow()[port_index];
+        let serial_bit = if idx < 8 {
+            (extra_state >> idx) & 0x01
+        } else {
+            1
+        };
+
+        controller_state = (controller_state & !0x02) | (serial_bit << 1);
+
+        if !is_dummy_read && !self.famicom_four_players_strobe {
+            self.famicom_four_players_index[port_index] =
+                self.famicom_four_players_index[port_index].saturating_add(1);
+        }
+
+        controller_state
+    }
 }
 
 impl BusDevice for ControllerDevice {
     fn read(&mut self, addr: u16, open_bus: u8, is_dummy_read: bool) -> Option<u8> {
         let index = (addr - 0x4016) as usize;
 
-        let controller_state = if self.four_score_enabled {
+        let mut controller_state = if self.four_score_enabled {
             self.read_four_score_bit(index, is_dummy_read)
+        } else if self.famicom_four_players_enabled {
+            self.read_famicom_four_players_bit(index, is_dummy_read)
         } else {
             self.controllers[index].borrow_mut().read(is_dummy_read)
         };
-        // NES-001 open bus: only bits 5-7 are unconnected (open bus).
-        // Bits 0-4 are driven by the controller I/O register:
-        //   bit 0 = serial data, bits 1-2 = grounded, bits 3-4 = controller port.
-        Some((open_bus & 0xE0) | controller_state)
+        // In Famicom mode, $4016 bit 2 is the controller 2 microphone line.
+        // Until mic input is implemented, we explicitly stub it as always 0
+        // to match hardware docs/tests and avoid leaking controller state.
+        if self.famicom_mode && addr == 0x4016 {
+            controller_state &= !0x04;
+        }
+        // Open bus behavior differs by hardware model:
+        // NES-001: bits 5-7 are open bus; bits 0-4 driven by controller I/O.
+        // Famicom (HVC-001): bits 3-7 are open bus; bits 0-2 driven
+        //   (bit 0 = serial data, bit 1 = expansion port, bit 2 = mic/$4016 only).
+        let open_bus_mask = if self.famicom_mode { 0xF8 } else { 0xE0 };
+        Some((open_bus & open_bus_mask) | (controller_state & !open_bus_mask))
     }
 
     fn write(&mut self, addr: u16, value: u8, _is_dummy_write: bool) -> bool {
@@ -109,6 +158,11 @@ impl BusDevice for ControllerDevice {
                     self.four_score_index = [0, 0];
                 }
                 self.four_score_strobe = new_strobe;
+
+                if self.famicom_four_players_strobe && !new_strobe {
+                    self.famicom_four_players_index = [0, 0];
+                }
+                self.famicom_four_players_strobe = new_strobe;
 
                 self.controllers[0].borrow_mut().write_strobe(value);
                 self.controllers[1].borrow_mut().write_strobe(value);
@@ -121,6 +175,17 @@ impl BusDevice for ControllerDevice {
 
     fn address_range(&self) -> RangeInclusive<u16> {
         0x4016..=0x4017
+    }
+
+    fn sync_controller_modes(
+        &mut self,
+        four_score_enabled: bool,
+        famicom_four_players_enabled: bool,
+        famicom_mode: bool,
+    ) {
+        self.set_four_score_enabled(four_score_enabled);
+        self.set_famicom_four_players_enabled(famicom_four_players_enabled);
+        self.famicom_mode = famicom_mode;
     }
 }
 
@@ -256,6 +321,48 @@ mod tests {
         );
     }
 
+    /// On Famicom (HVC-001), bits 3-7 of $4016/$4017 are open bus.
+    /// Bits 0-2 are driven (serial data, expansion, microphone).
+    /// With open_bus = $40 and controller returning 0,
+    /// the result should be $40 (bits 3-7 from open bus).
+    #[test]
+    fn test_famicom_open_bus_bits_3_to_7() {
+        let mut device = create_test_controller_device();
+        device.famicom_mode = true;
+
+        let result = device.read(0x4016, 0x40, false).unwrap();
+        assert_eq!(
+            result, 0x40,
+            "Expected $40 (bits 3-7 from open bus $40), got ${:02X}",
+            result
+        );
+    }
+
+    /// On Famicom, bits 3-4 should come from open bus, unlike NES-001.
+    /// With open_bus = $18 (bits 3-4 set), controller returning 0,
+    /// the result should be $18 on Famicom but $00 on NES-001.
+    #[test]
+    fn test_famicom_open_bus_bits_3_4_differ_from_nes() {
+        let mut device = create_test_controller_device();
+
+        // NES-001: bits 3-4 are driven (grounded), not open bus
+        let nes_result = device.read(0x4016, 0x18, false).unwrap();
+        assert_eq!(
+            nes_result, 0x00,
+            "NES-001 should ground bits 3-4, got ${:02X}",
+            nes_result
+        );
+
+        // Famicom: bits 3-4 are open bus
+        device.famicom_mode = true;
+        let famicom_result = device.read(0x4016, 0x18, false).unwrap();
+        assert_eq!(
+            famicom_result, 0x18,
+            "Famicom should pass bits 3-4 from open bus, got ${:02X}",
+            famicom_result
+        );
+    }
+
     #[test]
     fn test_four_score_port1_sequence() {
         let reads = Rc::new(RefCell::new(0));
@@ -300,5 +407,92 @@ mod tests {
         // P2 byte (all 0 in this fixture), P4 byte (all 0 in this fixture), signature $20.
         let bits = read_24_bits(&mut device, 0x4017);
         assert_eq!(bits, 0x0020_0000);
+    }
+
+    #[test]
+    fn test_famicom_four_players_sets_player3_serial_on_4016_bit1() {
+        let reads = Rc::new(RefCell::new(0));
+        let dummy_reads = Rc::new(RefCell::new(0));
+        let controller1: Rc<RefCell<Box<dyn Controller>>> = Rc::new(RefCell::new(Box::new(
+            TestController::new(reads.clone(), dummy_reads.clone()),
+        )));
+        let controller2: Rc<RefCell<Box<dyn Controller>>> = Rc::new(RefCell::new(Box::new(
+            TestController::new(reads, dummy_reads),
+        )));
+        let extra_states = Rc::new(RefCell::new([0x01, 0x00]));
+        let mut device = ControllerDevice::new_with_four_score_state(
+            controller1,
+            controller2,
+            false,
+            true,
+            extra_states,
+        );
+
+        assert!(device.write(0x4016, 1, false));
+        assert!(device.write(0x4016, 0, false));
+
+        let first = device.read(0x4016, 0x00, false).unwrap();
+        assert_eq!(first & 0x02, 0x02);
+    }
+
+    #[test]
+    fn test_famicom_four_players_sets_player4_serial_on_4017_bit1() {
+        let reads = Rc::new(RefCell::new(0));
+        let dummy_reads = Rc::new(RefCell::new(0));
+        let controller1: Rc<RefCell<Box<dyn Controller>>> = Rc::new(RefCell::new(Box::new(
+            TestController::new(reads.clone(), dummy_reads.clone()),
+        )));
+        let controller2: Rc<RefCell<Box<dyn Controller>>> = Rc::new(RefCell::new(Box::new(
+            TestController::new(reads, dummy_reads),
+        )));
+        let extra_states = Rc::new(RefCell::new([0x00, 0x01]));
+        let mut device = ControllerDevice::new_with_four_score_state(
+            controller1,
+            controller2,
+            false,
+            true,
+            extra_states,
+        );
+
+        assert!(device.write(0x4016, 1, false));
+        assert!(device.write(0x4016, 0, false));
+
+        let first = device.read(0x4017, 0x00, false).unwrap();
+        assert_eq!(first & 0x02, 0x02);
+    }
+
+    /// Famicom controller 2 has a microphone whose state is read on $4016 bit 2.
+    /// This is a silent stub: bit 2 always reads 0 (no microphone input).
+    #[test]
+    fn test_famicom_microphone_bit2_of_4016_is_always_zero() {
+        let reads = Rc::new(RefCell::new(0));
+        let dummy_reads = Rc::new(RefCell::new(0));
+        let controller1: Rc<RefCell<Box<dyn Controller>>> = Rc::new(RefCell::new(Box::new(
+            TestController::new(reads.clone(), dummy_reads.clone()),
+        )));
+        let controller2: Rc<RefCell<Box<dyn Controller>>> = Rc::new(RefCell::new(Box::new(
+            TestController::new(reads, dummy_reads),
+        )));
+        let mut device = ControllerDevice::new_with_four_score_state(
+            controller1,
+            controller2,
+            false,
+            true,                                // famicom_four_players_enabled (Famicom mode)
+            Rc::new(RefCell::new([0xFF, 0xFF])), // all buttons pressed
+        );
+
+        // Strobe and read multiple times
+        assert!(device.write(0x4016, 1, false));
+        assert!(device.write(0x4016, 0, false));
+
+        for _ in 0..16 {
+            let value = device.read(0x4016, 0x00, false).unwrap();
+            assert_eq!(
+                value & 0x04,
+                0,
+                "Microphone bit (bit 2) should always be 0, got ${:02X}",
+                value
+            );
+        }
     }
 }

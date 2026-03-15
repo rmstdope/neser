@@ -175,6 +175,24 @@ pub(crate) mod tests {
         total_frames: u32,
         capture_interval: u32,
     ) -> AllpadsResult {
+        let config = Config {
+            ram_init_mode: RamInitMode::Zero,
+            controller_port1: controller_config.port1,
+            controller_port2: controller_config.port2,
+            controller_port1_explicit: true,
+            controller_port2_explicit: true,
+            ..Default::default()
+        };
+        run_allpads_with_config(&config, script, total_frames, capture_interval)
+    }
+
+    /// Run `allpads.nes` with a fully specified config and frame script.
+    pub(crate) fn run_allpads_with_config(
+        config: &Config,
+        script: &[ScriptEntry],
+        total_frames: u32,
+        capture_interval: u32,
+    ) -> AllpadsResult {
         let rom_data =
             std::fs::read(ALLPADS_ROM_PATH).expect("allpads218.nes ROM should be readable");
         let cartridge = Cartridge::load_from_file(
@@ -184,16 +202,9 @@ pub(crate) mod tests {
         )
         .expect("allpads218.nes ROM should parse successfully");
 
-        let config = Config {
-            ram_init_mode: RamInitMode::Zero,
-            controller_port1: controller_config.port1,
-            controller_port2: controller_config.port2,
-            controller_port1_explicit: true,
-            controller_port2_explicit: true,
-            ..Default::default()
-        };
-
-        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            config.clone(),
+        ));
         nes.insert_cartridge(cartridge);
         nes.reset(false);
 

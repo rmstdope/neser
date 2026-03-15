@@ -18,7 +18,9 @@ use console::{
     default_catalog_csv_path, log_rom_timing_mode_selection, refresh_cartridge_catalog,
 };
 use debugging::log_info;
-use frontend_toasts::{cartridge_load_toast_message, emulator_timing_toast_message};
+use frontend_toasts::{
+    cartridge_load_toast_message, emulator_timing_toast_message, hardware_mode_toast_message,
+};
 use sdl_frontend::{SdlEventLoop, SdlNesAudio};
 use std::cell::RefCell;
 use std::fs;
@@ -301,6 +303,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app_context
         .borrow_mut()
         .add_toast(emulator_timing_toast_message(tv_system));
+    {
+        let config = app_context.borrow().config().clone();
+        app_context
+            .borrow_mut()
+            .add_toast(hardware_mode_toast_message(
+                config.hardware_mode,
+                config.hardware_model,
+                config.expansion_port,
+            ));
+    }
 
     if let Some(actual_rate) = audio_sample_rate {
         nes_instance.apu().borrow_mut().set_sample_rate(actual_rate);

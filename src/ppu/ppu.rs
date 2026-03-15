@@ -144,6 +144,8 @@ pub struct Ppu {
     /// - Proper mapper integration for pattern table access
     /// - Hardware-accurate CHR-ROM and CHR-RAM behavior
     cartridge: Option<Rc<RefCell<Cartridge>>>,
+    /// Whether Famicom emphasis bit swap is active (green/blue swapped)
+    pub(crate) famicom_emphasis: bool,
 }
 
 impl Ppu {
@@ -203,6 +205,11 @@ impl Ppu {
         self.vblank_for_nmi = false;
     }
 
+    pub fn set_famicom_emphasis(&mut self, enabled: bool) {
+        self.famicom_emphasis = enabled;
+        self.rendering.famicom_emphasis = enabled;
+    }
+
     /// Create a new modular PPU instance
     pub fn new(tv_system: TimingMode, ram_init_mode: crate::console::RamInitMode) -> Self {
         let mut sprites = Sprites::new(ram_init_mode);
@@ -221,6 +228,7 @@ impl Ppu {
             recent_pixels: [None, None],
             prev_a12: false,
             cartridge: None,
+            famicom_emphasis: false,
         }
     }
 

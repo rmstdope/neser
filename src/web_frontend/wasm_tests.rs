@@ -154,13 +154,19 @@ fn load_rom_success_enqueues_loaded_and_timing_toasts() {
         .expect("valid rom should load");
 
     let drained = nes.drain_toasts();
-    assert_eq!(drained.len(), 2);
+    assert_eq!(drained.len(), 3);
     assert_eq!(
         drained[0].as_string().as_deref(),
         Some("Cartridge loaded: mario.nes")
     );
     let timing = drained[1].as_string().unwrap_or_default();
     assert!(timing == "Emulator timing: NTSC" || timing == "Emulator timing: PAL");
+    let hardware = drained[2].as_string().unwrap_or_default();
+    assert!(
+        hardware.starts_with("Hardware: "),
+        "expected hardware toast, got: {}",
+        hardware
+    );
 }
 
 #[wasm_bindgen_test]
