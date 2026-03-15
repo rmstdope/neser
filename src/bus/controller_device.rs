@@ -13,6 +13,7 @@ pub(crate) struct ControllerDevice {
     famicom_four_players_enabled: bool,
     famicom_four_players_strobe: bool,
     famicom_four_players_index: [u8; 2],
+    famicom_mode: bool,
 }
 
 impl ControllerDevice {
@@ -46,6 +47,7 @@ impl ControllerDevice {
             famicom_four_players_enabled,
             famicom_four_players_strobe: false,
             famicom_four_players_index: [0, 0],
+            famicom_mode: false,
         }
     }
 
@@ -134,10 +136,12 @@ impl BusDevice for ControllerDevice {
         } else {
             self.controllers[index].borrow_mut().read(is_dummy_read)
         };
-        // NES-001 open bus: only bits 5-7 are unconnected (open bus).
-        // Bits 0-4 are driven by the controller I/O register:
-        //   bit 0 = serial data, bits 1-2 = grounded, bits 3-4 = controller port.
-        Some((open_bus & 0xE0) | controller_state)
+        // Open bus behavior differs by hardware model:
+        // NES-001: bits 5-7 are open bus; bits 0-4 driven by controller I/O.
+        // Famicom (HVC-001): bits 3-7 are open bus; bits 0-2 driven
+        //   (bit 0 = serial data, bit 1 = expansion port, bit 2 = mic/$4016 only).
+        let open_bus_mask = if self.famicom_mode { 0xF8 } else { 0xE0 };
+        Some((open_bus & open_bus_mask) | (controller_state & !open_bus_mask))
     }
 
     fn write(&mut self, addr: u16, value: u8, _is_dummy_write: bool) -> bool {
@@ -171,9 +175,11 @@ impl BusDevice for ControllerDevice {
         &mut self,
         four_score_enabled: bool,
         famicom_four_players_enabled: bool,
+        famicom_mode: bool,
     ) {
         self.set_four_score_enabled(four_score_enabled);
         self.set_famicom_four_players_enabled(famicom_four_players_enabled);
+        self.famicom_mode = famicom_mode;
     }
 }
 
@@ -306,6 +312,48 @@ mod tests {
             result, 0x40,
             "Expected $40 (bits 5-7 from open bus $40), got ${:02X}",
             result
+        );
+    }
+
+    /// On Famicom (HVC-001), bits 3-7 of $4016/$4017 are open bus.
+    /// Bits 0-2 are driven (serial data, expansion, microphone).
+    /// With open_bus = $40 and controller returning 0,
+    /// the result should be $40 (bits 3-7 from open bus).
+    #[test]
+    fn test_famicom_open_bus_bits_3_to_7() {
+        let mut device = create_test_controller_device();
+        device.famicom_mode = true;
+
+        let result = device.read(0x4016, 0x40, false).unwrap();
+        assert_eq!(
+            result, 0x40,
+            "Expected $40 (bits 3-7 from open bus $40), got ${:02X}",
+            result
+        );
+    }
+
+    /// On Famicom, bits 3-4 should come from open bus, unlike NES-001.
+    /// With open_bus = $18 (bits 3-4 set), controller returning 0,
+    /// the result should be $18 on Famicom but $00 on NES-001.
+    #[test]
+    fn test_famicom_open_bus_bits_3_4_differ_from_nes() {
+        let mut device = create_test_controller_device();
+
+        // NES-001: bits 3-4 are driven (grounded), not open bus
+        let nes_result = device.read(0x4016, 0x18, false).unwrap();
+        assert_eq!(
+            nes_result, 0x00,
+            "NES-001 should ground bits 3-4, got ${:02X}",
+            nes_result
+        );
+
+        // Famicom: bits 3-4 are open bus
+        device.famicom_mode = true;
+        let famicom_result = device.read(0x4016, 0x18, false).unwrap();
+        assert_eq!(
+            famicom_result, 0x18,
+            "Famicom should pass bits 3-4 from open bus, got ${:02X}",
+            famicom_result
         );
     }
 

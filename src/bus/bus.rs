@@ -56,6 +56,7 @@ pub trait BusDevice {
         &mut self,
         _four_score_enabled: bool,
         _famicom_four_players_enabled: bool,
+        _famicom_mode: bool,
     ) {
     }
 }
@@ -167,10 +168,15 @@ impl Bus {
         let app_context = self.app_context.borrow();
         let four_score_enabled = app_context.config().four_score_enabled;
         let famicom_four_players_enabled = Self::is_famicom_four_players(app_context.config());
+        let famicom_mode = app_context.config().hardware_mode == HardwareMode::Famicom;
         drop(app_context);
 
         for device in self.devices.iter_mut() {
-            device.sync_controller_modes(four_score_enabled, famicom_four_players_enabled);
+            device.sync_controller_modes(
+                four_score_enabled,
+                famicom_four_players_enabled,
+                famicom_mode,
+            );
         }
     }
 

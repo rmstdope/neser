@@ -2,8 +2,8 @@
 mod tests {
     use crate::input::{Button, SnesButton};
     use crate::integration_tests::allpads_harness::tests::{
-        ControllerConfig, InputAction, ScriptEntry, run_allpads, script_enter_test,
-        script_enter_test_and_press,
+        ControllerConfig, InputAction, ScriptEntry, run_allpads, run_allpads_with_config,
+        script_enter_test, script_enter_test_and_press,
     };
     use crate::setup_rom_console_test;
 
@@ -185,6 +185,34 @@ mod tests {
         assert!(
             cap.nametable_text.contains("NES-001"),
             "Console probe should identify as 'NES-001', got:\n{}",
+            cap.nametable_text
+        );
+    }
+
+    /// Issue #1601: allpads console probe should identify HVC-001 (Famicom)
+    /// when hardware mode is set to Famicom. On Famicom, bits 3-4 of $4016
+    /// are open bus (not grounded), so allpads detects HVC-001.
+    #[test]
+    fn allpads_probe_identifies_famicom_model() {
+        use crate::console::{Config, HardwareMode, RamInitMode};
+        let config = Config {
+            hardware_mode: HardwareMode::Famicom,
+            hardware_mode_explicit: true,
+            ram_init_mode: RamInitMode::Zero,
+            controller_port1_explicit: true,
+            controller_port2_explicit: true,
+            ..Default::default()
+        };
+        let result = run_allpads_with_config(&config, &[], 120, 0);
+        let cap = &result.captures[0];
+        assert!(
+            !cap.nametable_text.contains("Unknown console"),
+            "Console probe should NOT show 'Unknown console', got:\n{}",
+            cap.nametable_text
+        );
+        assert!(
+            cap.nametable_text.contains("FAMILY COMPUTER"),
+            "Console probe should identify as 'FAMILY COMPUTER' (Famicom), got:\n{}",
             cap.nametable_text
         );
     }
