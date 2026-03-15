@@ -1491,9 +1491,14 @@ impl Config {
     fn apply_config_value(&mut self, key: &str, value: &str) -> Result<(), String> {
         match key {
             "hardware_model" => {
-                if let Some(hardware_model) = HardwareModel::parse(value) {
-                    self.hardware_model = hardware_model;
-                    self.hardware_model_explicit = true;
+                match HardwareModel::parse(value) {
+                    Some(hardware_model) => {
+                        self.hardware_model = hardware_model;
+                        self.hardware_model_explicit = true;
+                    }
+                    None => {
+                        return Err(format!("Invalid hardware_model value: '{}'", value));
+                    }
                 }
             }
             "audio" => {
@@ -1514,11 +1519,6 @@ impl Config {
             "enable_4_score" => {
                 if let Ok(b) = Self::parse_bool(value) {
                     self.four_score_enabled = b;
-                }
-            }
-            "fullscreen" => {
-                if let Ok(b) = Self::parse_bool(value) {
-                    self.fullscreen = b;
                 }
             }
             "display" => {
