@@ -43,6 +43,7 @@ pub fn hardware_mode_toast_message(
                 "Hardware: Famicom (4-player expansion)".to_string()
             }
             ExpansionPort::ArkanoidFamicom => "Hardware: Famicom (Arkanoid expansion)".to_string(),
+            ExpansionPort::ZapperFamicom => "Hardware: Famicom (Zapper expansion)".to_string(),
             ExpansionPort::None => "Hardware: Famicom".to_string(),
         },
     }

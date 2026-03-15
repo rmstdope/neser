@@ -37,6 +37,8 @@ pub struct BusState {
     pub port2_controller: ControllerStateWrapper,
     #[serde(default)]
     pub expansion_arkanoid: Option<ArkanoidState>,
+    #[serde(default)]
+    pub expansion_zapper: Option<ZapperState>,
 }
 
 /// Mapper state (opaque serialization).
@@ -60,6 +62,7 @@ pub trait BusDevice {
         _famicom_four_players_enabled: bool,
         _famicom_mode: bool,
         _arkanoid_famicom_enabled: bool,
+        _zapper_famicom_enabled: bool,
     ) {
     }
 }
@@ -78,6 +81,7 @@ pub struct Bus {
     controllers: [Rc<RefCell<Box<dyn Controller>>>; 2], // Port 1 and Port 2 controllers
     four_score_extra_button_states: Rc<RefCell<[u8; 2]>>, // Emulated players 3 and 4 button states
     expansion_arkanoid: Rc<RefCell<ArkanoidController>>, // Famicom expansion Arkanoid controller
+    expansion_zapper: Rc<RefCell<Zapper>>,              // Famicom expansion Zapper controller
     open_bus: u8, // Last value on the data bus for open bus behavior
     devices: Vec<Box<dyn BusDevice>>,
 }
@@ -123,6 +127,7 @@ impl Bus {
         crate::console::initialize_ram(&mut cpu_ram[0..0x800], ram_init_mode);
 
         let expansion_arkanoid = Rc::new(RefCell::new(ArkanoidController::new()));
+        let expansion_zapper = Rc::new(RefCell::new(Zapper::new(ppu.clone(), app_context.clone())));
 
         let mut controller = Self {
             cpu_ram: Rc::new(RefCell::new(cpu_ram)),
@@ -135,6 +140,7 @@ impl Bus {
             controllers,
             four_score_extra_button_states: Rc::new(RefCell::new([0, 0])),
             expansion_arkanoid,
+            expansion_zapper,
             open_bus: 0xFF, // Initialize to 0xFF (common power-on state)
             devices: Vec::new(),
         };
@@ -157,6 +163,7 @@ impl Bus {
         controller_device.set_famicom_four_players_enabled(famicom_four_players_enabled);
         controller_device
             .set_arkanoid_famicom_expansion(Some(controller.expansion_arkanoid.clone()));
+        controller_device.set_zapper_famicom_expansion(Some(controller.expansion_zapper.clone()));
         controller.register_device(Box::new(controller_device));
         controller.register_device(Box::new(ApuDevice::new(controller.apu.clone())));
         controller.register_device(Box::new(OamDmaDevice::new(
@@ -179,6 +186,7 @@ impl Bus {
         let famicom_four_players_enabled = Self::is_famicom_four_players(app_context.config());
         let famicom_mode = app_context.config().hardware_mode == HardwareMode::Famicom;
         let arkanoid_famicom_enabled = Self::is_arkanoid_famicom(app_context.config());
+        let zapper_famicom_enabled = Self::is_zapper_famicom(app_context.config());
         drop(app_context);
 
         for device in self.devices.iter_mut() {
@@ -187,6 +195,7 @@ impl Bus {
                 famicom_four_players_enabled,
                 famicom_mode,
                 arkanoid_famicom_enabled,
+                zapper_famicom_enabled,
             );
         }
     }
@@ -203,6 +212,11 @@ impl Bus {
     fn is_arkanoid_famicom(config: &crate::console::Config) -> bool {
         config.hardware_mode == HardwareMode::Famicom
             && config.expansion_port == ExpansionPort::ArkanoidFamicom
+    }
+
+    fn is_zapper_famicom(config: &crate::console::Config) -> bool {
+        config.hardware_mode == HardwareMode::Famicom
+            && config.expansion_port == ExpansionPort::ZapperFamicom
     }
 
     fn has_player34_serial_enabled(&self) -> bool {
@@ -621,6 +635,9 @@ impl Bus {
             controller.borrow_mut().set_mouse_x_position(position);
         }
         self.expansion_arkanoid.borrow_mut().set_position(position);
+        self.expansion_zapper
+            .borrow_mut()
+            .set_mouse_x_position(position);
     }
 
     /// Update mouse Y position for any mouse-emulated controller (0..255).
@@ -628,6 +645,9 @@ impl Bus {
         for controller in &self.controllers {
             controller.borrow_mut().set_mouse_y_position(position);
         }
+        self.expansion_zapper
+            .borrow_mut()
+            .set_mouse_y_position(position);
     }
 
     /// Apply relative mouse delta for mouse-emulated controllers.
@@ -643,6 +663,9 @@ impl Bus {
             controller.borrow_mut().set_mouse_left_button(pressed);
         }
         self.expansion_arkanoid.borrow_mut().set_trigger(pressed);
+        self.expansion_zapper
+            .borrow_mut()
+            .set_mouse_left_button(pressed);
     }
 
     /// Update mouse right button state for any mouse-emulated controller.
@@ -672,19 +695,33 @@ impl Bus {
         Some(self.controllers[(port - 1) as usize].borrow().input_type())
     }
 
-    /// Check if the expansion port has a mouse-controlled device (e.g. Famicom Arkanoid).
+    /// Check if the expansion port has a mouse-controlled device (e.g. Famicom Arkanoid or Zapper).
     pub fn has_expansion_mouse_controller(&self) -> bool {
-        self.is_arkanoid_famicom_configured()
+        self.is_arkanoid_famicom_configured() || self.is_zapper_famicom_configured()
+    }
+
+    /// Check if a Zapper is connected to the Famicom expansion port.
+    pub fn has_expansion_zapper(&self) -> bool {
+        self.is_zapper_famicom_configured()
     }
 
     fn is_arkanoid_famicom_configured(&self) -> bool {
         Self::is_arkanoid_famicom(self.app_context.borrow().config())
     }
 
-    /// Check if a Zapper is active on the specified port.
+    fn is_zapper_famicom_configured(&self) -> bool {
+        Self::is_zapper_famicom(self.app_context.borrow().config())
+    }
+
+    /// Check if a Zapper is active on the specified port or expansion port.
     /// This method is primarily used by the WASM frontend.
     #[allow(dead_code)]
     pub fn is_zapper_active(&self, port: u8) -> bool {
+        // Check expansion port Zapper
+        if self.is_zapper_famicom_configured() {
+            return true;
+        }
+
         if !(1..=2).contains(&port) {
             return false;
         }
@@ -774,6 +811,11 @@ impl Bus {
             },
             expansion_arkanoid: if self.is_arkanoid_famicom_configured() {
                 Some(self.expansion_arkanoid.borrow().capture_state())
+            } else {
+                None
+            },
+            expansion_zapper: if self.is_zapper_famicom_configured() {
+                Some(self.expansion_zapper.borrow().capture_state())
             } else {
                 None
             },
@@ -871,6 +913,13 @@ impl Bus {
             self.expansion_arkanoid
                 .borrow_mut()
                 .restore_state(arkanoid_state);
+        }
+
+        // Restore expansion Zapper state
+        if let Some(ref zapper_state) = state.expansion_zapper {
+            self.expansion_zapper
+                .borrow_mut()
+                .restore_state(zapper_state);
         }
     }
 }

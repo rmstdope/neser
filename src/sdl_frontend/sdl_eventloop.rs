@@ -154,7 +154,8 @@ impl SdlEventLoop {
         window_width: u32,
         window_height: u32,
     ) -> Option<(u8, u8)> {
-        if !Self::zapper_ports(nes).is_empty() || nes.has_snes_mouse() {
+        if !Self::zapper_ports(nes).is_empty() || nes.has_expansion_zapper() || nes.has_snes_mouse()
+        {
             let x_position = Self::map_mouse_axis_to_zapper_position(x, window_width);
             let y_position = Self::map_mouse_axis_to_zapper_position(y, window_height);
             nes.set_mouse_x_position(x_position);
@@ -225,7 +226,7 @@ impl SdlEventLoop {
     }
 
     fn zapper_crosshair(&self, nes: &Nes) -> Option<Crosshair> {
-        if Self::zapper_ports(nes).is_empty() {
+        if Self::zapper_ports(nes).is_empty() && !nes.has_expansion_zapper() {
             None
         } else {
             self.last_zapper_position.map(|(x, y)| Crosshair {

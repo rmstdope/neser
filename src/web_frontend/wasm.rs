@@ -561,6 +561,7 @@ impl WasmNes {
             crate::console::ExpansionPort::None => "none".to_string(),
             crate::console::ExpansionPort::FamicomFourPlayers => "famicom-four-players".to_string(),
             crate::console::ExpansionPort::ArkanoidFamicom => "arkanoid".to_string(),
+            crate::console::ExpansionPort::ZapperFamicom => "zapper".to_string(),
         }
     }
 
