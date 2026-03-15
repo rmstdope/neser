@@ -406,4 +406,39 @@ mod tests {
         let first = device.read(0x4017, 0x00, false).unwrap();
         assert_eq!(first & 0x02, 0x02);
     }
+
+    /// Famicom controller 2 has a microphone whose state is read on $4016 bit 2.
+    /// This is a silent stub: bit 2 always reads 0 (no microphone input).
+    #[test]
+    fn test_famicom_microphone_bit2_of_4016_is_always_zero() {
+        let reads = Rc::new(RefCell::new(0));
+        let dummy_reads = Rc::new(RefCell::new(0));
+        let controller1: Rc<RefCell<Box<dyn Controller>>> = Rc::new(RefCell::new(Box::new(
+            TestController::new(reads.clone(), dummy_reads.clone()),
+        )));
+        let controller2: Rc<RefCell<Box<dyn Controller>>> = Rc::new(RefCell::new(Box::new(
+            TestController::new(reads, dummy_reads),
+        )));
+        let mut device = ControllerDevice::new_with_four_score_state(
+            controller1,
+            controller2,
+            false,
+            true,                                // famicom_four_players_enabled (Famicom mode)
+            Rc::new(RefCell::new([0xFF, 0xFF])), // all buttons pressed
+        );
+
+        // Strobe and read multiple times
+        assert!(device.write(0x4016, 1, false));
+        assert!(device.write(0x4016, 0, false));
+
+        for _ in 0..16 {
+            let value = device.read(0x4016, 0x00, false).unwrap();
+            assert_eq!(
+                value & 0x04,
+                0,
+                "Microphone bit (bit 2) should always be 0, got ${:02X}",
+                value
+            );
+        }
+    }
 }
