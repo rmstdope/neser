@@ -425,7 +425,10 @@ impl Vrc2Vrc4Mapper {
     ///
     /// `ppu_addr` is expected to be in the pattern table range ($0000-$1FFF).
     pub fn raw_chr_1k_bank(&self, ppu_addr: u16) -> u16 {
-        debug_assert!(ppu_addr < 0x2000, "raw_chr_1k_bank called with non-pattern-table PPU address: {ppu_addr:04X}");
+        debug_assert!(
+            ppu_addr < 0x2000,
+            "raw_chr_1k_bank called with non-pattern-table PPU address: {ppu_addr:04X}"
+        );
 
         // Normalise to $0000-$1FFF in case callers accidentally pass a mirrored address.
         let ppu = (ppu_addr & 0x1FFF) as usize;
