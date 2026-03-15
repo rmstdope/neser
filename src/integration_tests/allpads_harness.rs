@@ -187,7 +187,6 @@ pub(crate) mod tests {
     }
 
     /// Run `allpads.nes` with a fully specified config and frame script.
-    #[allow(dead_code)]
     pub(crate) fn run_allpads_with_config(
         config: &Config,
         script: &[ScriptEntry],
