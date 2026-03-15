@@ -8,7 +8,7 @@ use crate::debugging::ppu_viewer::{
 };
 use crate::frontend_toasts::{
     cartridge_load_toast_message, emulator_timing_toast_message,
-    gamepad_init_toast_message as shared_gamepad_init_toast_message,
+    gamepad_init_toast_message as shared_gamepad_init_toast_message, hardware_mode_toast_message,
 };
 use crate::input::{Button, ControllerType, SnesButton};
 use crate::wasm_autorun::WasmAutorunState;
@@ -146,6 +146,14 @@ impl WasmNes {
                 .hardware_model
                 .timing_mode(),
         ));
+        {
+            let config = self.nes.app_context().borrow().config().clone();
+            self.pending_toasts.push(hardware_mode_toast_message(
+                config.hardware_mode,
+                config.hardware_model,
+                config.expansion_port,
+            ));
+        }
         web_sys::console::log_1(&JsValue::from_str("ROM loaded successfully"));
         Ok(())
     }
