@@ -324,14 +324,12 @@ mod tests {
     #[test]
     fn prg_outer_base_bits_from_ex_reg1_bits_2_3() {
         // exRegs[1] = 0x04 (bit2 set):
-        //   base = 0 | 0 | (0x04 & 0x0C)<<2 = 0x10 | 0 = 0x10
-        //   base<<4 = 0x100
-        //   mask = 0x3F (no changes to mask bits from reg1 bit2)
-        //   bank = (0x100 & ~0x3F) | (inner & 0x3F)
-        //        = 0xC0 | inner  (since 0x100 & 0xFFC0 = 0x100, but 0x100 > 0xFF, hmm)
-        // Let me recalculate: ~0x3F as usize is all-ones except bits 0-5.
-        // 0x100 & ~(0x3F as usize) = 0x100. So bank = 0x100 | inner.
-        // With PRG_8K_BANKS=9: (0x100 | 0) % 9 = 256 % 9 = 256 - 28*9 = 256-252 = 4
+        //   base = (0x04 & 0x0C) << 2 = 0x10
+        //   base << 4 = 0x100
+        //   mask = 0x3F (no changes to mask bits from exRegs[1])
+        //   bank = (0x100 & !0x3F) | (inner & 0x3F) = 0x100 | inner
+        // With inner = 0 and PRG_8K_BANKS = 9:
+        //   bank % PRG_8K_BANKS = 0x100 % 9 = 256 % 9 = 4
         let mut mapper = make_mapper();
         mapper.write_prg(0x6001, 0x04); // ex_regs[1] = 0x04
 
