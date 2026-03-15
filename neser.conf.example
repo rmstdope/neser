@@ -22,7 +22,7 @@
 # Boolean values: true/false, yes/no, 1/0 (case-insensitive)
 #
 # Command-line arguments use the same keys with -- prefix and hyphens:
-#   hardware_model=nes-pal  →  --hardware-model nes-pal
+#   hardware=nes-pal  →  --hardware nes-pal
 #   audio=false       →  --audio false  OR  --audio=0  OR  --no-audio  OR  --disable-audio
 #   audio=true        →  --audio  OR  --audio true  OR  --audio=1
 #   pulse1=true       →  --pulse1  OR  --pulse1 true  OR  --pulse1=1
@@ -35,12 +35,14 @@
 # =============================================================================
 
 # -----------------------------------------------------------------------------
-# Hardware Model
+# Hardware
 # -----------------------------------------------------------------------------
-# Set to "nes-ntsc" or "nes-pal". NES-NTSC runs at ~60 FPS, NES-PAL at ~50 FPS.
+# Set to "nes-ntsc", "nes-pal", or "famicom".
+# NES-NTSC runs at ~60 FPS, NES-PAL at ~50 FPS.
 # nes-ntsc is the standard for North American and Japanese NES consoles.
 # nes-pal is used for European NES consoles.
-hardware_model=nes-ntsc
+# famicom uses Famicom hardware mode and NTSC timing.
+hardware=nes-ntsc
 
 # -----------------------------------------------------------------------------
 # Audio Settings

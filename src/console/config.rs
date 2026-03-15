@@ -111,6 +111,16 @@ const CLI_FLAGS: &[CliFlag] = &[
         has_value: true,
     },
     CliFlag {
+        flag: "--hardware",
+        help: Some("Hardware mode: nes-ntsc, nes-pal, or famicom (default: nes-ntsc)"),
+        has_value: true,
+    },
+    CliFlag {
+        flag: "--expansion-port",
+        help: Some("Expansion port controller: none or famicom-four-players (default: none)"),
+        has_value: true,
+    },
+    CliFlag {
         flag: "--zapper-detection-size",
         help: Some(
             "Zapper light detection square radius in pixels (0..=255, default: 0; higher values are more tolerant but slower)",
@@ -119,11 +129,6 @@ const CLI_FLAGS: &[CliFlag] = &[
     },
     // Aligned flags matching config file keys with same value ranges
     // Support both value-based (--audio true) and prefix negation (--no-audio, --disable-audio)
-    CliFlag {
-        flag: "--hardware-model",
-        help: Some("Hardware model: nes-ntsc or nes-pal (default: nes-ntsc)"),
-        has_value: true,
-    },
     CliFlag {
         flag: "--oam-dram-decay",
         help: Some("Enable OAM DRAM decay emulation (true/false, default: false)"),
@@ -461,12 +466,26 @@ impl HardwareModel {
             Self::NesPal => "nes-pal",
         }
     }
+}
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HardwareMode {
+    Nes,
+    Famicom,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExpansionPort {
+    None,
+    FamicomFourPlayers,
+}
+
+impl ExpansionPort {
     fn parse(value: &str) -> Option<Self> {
-        if value.eq_ignore_ascii_case("nes-ntsc") {
-            Some(Self::NesNtsc)
-        } else if value.eq_ignore_ascii_case("nes-pal") {
-            Some(Self::NesPal)
+        if value.eq_ignore_ascii_case("none") {
+            Some(Self::None)
+        } else if value.eq_ignore_ascii_case("famicom-four-players") {
+            Some(Self::FamicomFourPlayers)
         } else {
             None
         }
@@ -476,6 +495,14 @@ impl HardwareModel {
 /// Emulator configuration.
 #[derive(Debug, Clone)]
 pub struct Config {
+    /// Emulated hardware family mode.
+    pub hardware_mode: HardwareMode,
+    /// Whether hardware mode was explicitly configured.
+    pub hardware_mode_explicit: bool,
+    /// Controller type connected to expansion port.
+    pub expansion_port: ExpansionPort,
+    /// Whether expansion port type was explicitly configured.
+    pub expansion_port_explicit: bool,
     /// Emulated hardware model.
     pub hardware_model: HardwareModel,
     /// Whether the hardware model was explicitly configured.
@@ -661,6 +688,10 @@ bitflags! {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            hardware_mode: HardwareMode::Nes,
+            hardware_mode_explicit: false,
+            expansion_port: ExpansionPort::None,
+            expansion_port_explicit: false,
             hardware_model: HardwareModel::NesNtsc,
             hardware_model_explicit: false,
             audio_enabled: true,
@@ -707,6 +738,71 @@ impl Default for Config {
 }
 
 impl Config {
+    fn parse_hardware_value(value: &str) -> Option<(HardwareMode, HardwareModel)> {
+        if value.eq_ignore_ascii_case("nes-ntsc") {
+            Some((HardwareMode::Nes, HardwareModel::NesNtsc))
+        } else if value.eq_ignore_ascii_case("nes-pal") {
+            Some((HardwareMode::Nes, HardwareModel::NesPal))
+        } else if value.eq_ignore_ascii_case("famicom") {
+            Some((HardwareMode::Famicom, HardwareModel::NesNtsc))
+        } else {
+            None
+        }
+    }
+
+    fn parse_hardware_arg(
+        args: &[String],
+    ) -> Result<Option<(HardwareMode, HardwareModel)>, String> {
+        if let Some(hardware) = Self::parse_string_arg(args, "--hardware") {
+            if let Some(parsed) = Self::parse_hardware_value(&hardware) {
+                Ok(Some(parsed))
+            } else {
+                Err(format!(
+                    "Invalid --hardware value: '{}'. Valid options are: nes-ntsc, nes-pal, famicom",
+                    hardware
+                ))
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn parse_expansion_port_arg(args: &[String]) -> Result<Option<ExpansionPort>, String> {
+        if let Some(expansion_port) = Self::parse_string_arg(args, "--expansion-port") {
+            let parsed = ExpansionPort::parse(&expansion_port).ok_or_else(|| {
+                format!(
+                    "Invalid --expansion-port value: '{}'. Valid options are: none, famicom-four-players",
+                    expansion_port
+                )
+            })?;
+            Ok(Some(parsed))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn apply_hardware_value(&mut self, value: &str) -> Result<(), String> {
+        let (hardware_mode, hardware_model) =
+            Self::parse_hardware_value(value).ok_or_else(|| {
+                format!(
+                    "Invalid hardware value: '{}'. Valid options are: nes-ntsc, nes-pal, famicom",
+                    value
+                )
+            })?;
+        self.hardware_mode = hardware_mode;
+        self.hardware_mode_explicit = true;
+        self.hardware_model = hardware_model;
+        self.hardware_model_explicit = true;
+        Ok(())
+    }
+
+    fn apply_expansion_port_value(&mut self, value: &str) -> Result<(), String> {
+        self.expansion_port = ExpansionPort::parse(value)
+            .ok_or_else(|| format!("Invalid expansion_port value: '{}'", value))?;
+        self.expansion_port_explicit = true;
+        Ok(())
+    }
+
     fn help_section_for_flag(flag: &str) -> &'static str {
         if flag.starts_with("--trace")
             || matches!(flag, "--debugger" | "--debugger-alpha" | "--breakpoint")
@@ -716,6 +812,7 @@ impl Config {
             flag,
             "--controller-port1"
                 | "--controller-port2"
+                | "--expansion-port"
                 | "--zapper-detection-size"
                 | "--gamepads"
                 | "--enable-4-score"
@@ -825,7 +922,7 @@ impl Config {
         .unwrap();
         writeln!(
             &mut help,
-            "  neser --hardware-model nes-pal game.nes      # Use NES PAL hardware model"
+            "  neser --hardware nes-pal game.nes            # Use NES PAL hardware"
         )
         .unwrap();
         writeln!(
@@ -966,14 +1063,16 @@ impl Config {
     /// Apply command-line arguments to the config.
     /// Arguments override any values set by defaults or config file.
     fn apply_args(&mut self, args: &[String]) -> Result<(), String> {
-        if let Some(hardware_model) = Self::parse_string_arg(args, "--hardware-model") {
-            self.hardware_model = HardwareModel::parse(&hardware_model).ok_or_else(|| {
-                format!(
-                    "Invalid --hardware-model value: '{}'. Valid options are: nes-ntsc, nes-pal",
-                    hardware_model
-                )
-            })?;
+        if let Some((hardware_mode, hardware_model)) = Self::parse_hardware_arg(args)? {
+            self.hardware_mode = hardware_mode;
+            self.hardware_mode_explicit = true;
+            self.hardware_model = hardware_model;
             self.hardware_model_explicit = true;
+        }
+
+        if let Some(expansion_port) = Self::parse_expansion_port_arg(args)? {
+            self.expansion_port = expansion_port;
+            self.expansion_port_explicit = true;
         }
 
         // OAM DRAM decay: --oam-dram-decay true/false
@@ -1523,8 +1622,11 @@ impl Config {
     ///
     /// # Example config file:
     /// ```text
-    /// # Hardware model: nes-ntsc or nes-pal
-    /// hardware_model=nes-ntsc
+    /// # Hardware mode: nes-ntsc, nes-pal, or famicom
+    /// hardware=nes-ntsc
+    ///
+    /// # Expansion port: none or famicom-four-players
+    /// expansion_port=none
     ///
     /// # Audio settings
     /// audio=true
@@ -1594,15 +1696,8 @@ impl Config {
     /// Apply a single config file key-value pair.
     fn apply_config_value(&mut self, key: &str, value: &str) -> Result<(), String> {
         match key {
-            "hardware_model" => match HardwareModel::parse(value) {
-                Some(hardware_model) => {
-                    self.hardware_model = hardware_model;
-                    self.hardware_model_explicit = true;
-                }
-                None => {
-                    return Err(format!("Invalid hardware_model value: '{}'", value));
-                }
-            },
+            "hardware" => self.apply_hardware_value(value)?,
+            "expansion_port" => self.apply_expansion_port_value(value)?,
             "audio" => {
                 if let Ok(b) = Self::parse_bool(value) {
                     self.audio_enabled = b;
@@ -1954,6 +2049,22 @@ impl Config {
     }
 
     fn validate_controller_ports(&self) -> Result<(), String> {
+        if self.hardware_mode == HardwareMode::Famicom
+            && (self.controller_port1_explicit || self.controller_port2_explicit)
+        {
+            return Err(
+                "In Famicom mode, --controller-port1 and --controller-port2 are not allowed because ports 1 and 2 are hardwired joypads".to_string(),
+            );
+        }
+
+        if self.hardware_mode == HardwareMode::Nes
+            && self.expansion_port == ExpansionPort::FamicomFourPlayers
+        {
+            return Err(
+                "expansion_port=famicom-four-players requires hardware=famicom".to_string(),
+            );
+        }
+
         let mouse_emulated_controller_count = [self.controller_port1, self.controller_port2]
             .iter()
             .filter(|controller| {
@@ -2158,18 +2269,18 @@ mod tests {
     }
 
     #[test]
-    fn test_help_text_examples_use_hardware_model_flag() {
+    fn test_help_text_examples_use_hardware_flag() {
         let help = Config::help_text();
 
-        assert!(help.contains("neser --hardware-model nes-pal game.nes"));
+        assert!(help.contains("neser --hardware nes-pal game.nes"));
         assert!(!help.contains("--tv-system"));
     }
 
     #[test]
-    fn test_config_hardware_model_nes_pal() {
+    fn test_config_hardware_nes_pal() {
         let args = vec![
             "neser".to_string(),
-            "--hardware-model".to_string(),
+            "--hardware".to_string(),
             "nes-pal".to_string(),
         ];
         let config = parse_config(args);
@@ -2178,7 +2289,7 @@ mod tests {
     }
 
     #[test]
-    fn test_hardware_model_timing_mode_values_match_expected_cpu_clock_and_scanlines() {
+    fn test_timing_mode_values_match_expected_cpu_clock_and_scanlines() {
         let ntsc_timing = HardwareModel::NesNtsc.timing_mode();
         assert_eq!(ntsc_timing.cpu_clock_hz(), 1_789_773.0);
         assert_eq!(ntsc_timing.scanlines_per_frame(), 262);
@@ -2545,7 +2656,7 @@ mod tests {
     fn test_config_multiple_flags() {
         let args = vec![
             "neser".to_string(),
-            "--hardware-model".to_string(),
+            "--hardware".to_string(),
             "nes-pal".to_string(),
             "--audio".to_string(),
             "false".to_string(),
@@ -2732,40 +2843,51 @@ mod tests {
     // Config file tests
 
     #[test]
-    fn test_config_file_hardware_model_nes_pal() {
+    fn test_config_file_hardware_nes_pal() {
         let mut config = Config::default();
-        config
-            .apply_config_value("hardware_model", "nes-pal")
-            .unwrap();
+        config.apply_config_value("hardware", "nes-pal").unwrap();
         assert_eq!(config.hardware_model, HardwareModel::NesPal);
         assert!(config.hardware_model_explicit);
+        assert_eq!(config.hardware_mode, HardwareMode::Nes);
+        assert!(config.hardware_mode_explicit);
     }
 
     #[test]
-    fn test_config_file_hardware_model_nes_ntsc() {
+    fn test_config_file_hardware_nes_ntsc() {
         let mut config = Config {
             hardware_model: HardwareModel::NesPal,
             ..Default::default()
         };
-        config
-            .apply_config_value("hardware_model", "nes-ntsc")
-            .unwrap();
+        config.apply_config_value("hardware", "nes-ntsc").unwrap();
         assert_eq!(config.hardware_model, HardwareModel::NesNtsc);
         assert!(config.hardware_model_explicit);
+        assert_eq!(config.hardware_mode, HardwareMode::Nes);
+        assert!(config.hardware_mode_explicit);
     }
 
     #[test]
-    fn test_config_file_hardware_model_case_insensitive() {
+    fn test_config_file_hardware_case_insensitive() {
         let mut config = Config::default();
-        config
-            .apply_config_value("hardware_model", "NES-PAL")
-            .unwrap();
+        config.apply_config_value("hardware", "NES-PAL").unwrap();
         assert_eq!(config.hardware_model, HardwareModel::NesPal);
+        assert_eq!(config.hardware_mode, HardwareMode::Nes);
 
-        config
-            .apply_config_value("hardware_model", "NES-NTSC")
-            .unwrap();
+        config.apply_config_value("hardware", "NES-NTSC").unwrap();
         assert_eq!(config.hardware_model, HardwareModel::NesNtsc);
+        assert_eq!(config.hardware_mode, HardwareMode::Nes);
+    }
+
+    #[test]
+    fn test_config_file_hardware_famicom_sets_mode_and_model() {
+        let mut config = Config {
+            hardware_model: HardwareModel::NesPal,
+            ..Default::default()
+        };
+        config.apply_config_value("hardware", "famicom").unwrap();
+        assert_eq!(config.hardware_mode, HardwareMode::Famicom);
+        assert!(config.hardware_mode_explicit);
+        assert_eq!(config.hardware_model, HardwareModel::NesNtsc);
+        assert!(config.hardware_model_explicit);
     }
 
     #[test]
@@ -3223,7 +3345,7 @@ mod tests {
 
         let content = r#"
 # Test config file
-hardware_model=nes-pal
+hardware=nes-pal
 audio=false
 fullscreen=true
 display=2
@@ -3259,7 +3381,7 @@ pulse1=false
 
         // Create config file that sets PAL and disables audio
         let content = r#"
-hardware_model=nes-pal
+    hardware=nes-pal
 audio=false
 "#;
         let mut file = NamedTempFile::new().unwrap();
@@ -3283,11 +3405,11 @@ audio=false
     }
 
     #[test]
-    fn test_config_hardware_model_flag_overrides_config_file() {
+    fn test_config_hardware_flag_overrides_config_file() {
         use std::io::Write;
         use tempfile::NamedTempFile;
 
-        let content = "hardware_model=nes-pal\n";
+        let content = "hardware=nes-pal\n";
         let mut file = NamedTempFile::new().unwrap();
         file.write_all(content.as_bytes()).unwrap();
 
@@ -3295,7 +3417,7 @@ audio=false
             "neser".to_string(),
             "--config".to_string(),
             file.path().to_string_lossy().to_string(),
-            "--hardware-model".to_string(),
+            "--hardware".to_string(),
             "nes-ntsc".to_string(),
         ];
 
@@ -3342,7 +3464,7 @@ controller_port2=arkanoid
         use std::io::Write;
         use tempfile::NamedTempFile;
 
-        let content = "hardware_model=nes-pal\naudio=false\n";
+        let content = "hardware=nes-pal\naudio=false\n";
         let mut file = NamedTempFile::new().unwrap();
         file.write_all(content.as_bytes()).unwrap();
 
@@ -3362,7 +3484,7 @@ controller_port2=arkanoid
         use tempfile::NamedTempFile;
 
         let content = r#"
-hardware_model=nes-pal
+    hardware=nes-pal
 filter=invalid-shader
 "#;
         let mut file = NamedTempFile::new().unwrap();
@@ -3407,7 +3529,7 @@ filter=invalid-shader
         use tempfile::NamedTempFile;
 
         // Create a config file with --config that sets PAL
-        let content = "hardware_model=nes-pal\n";
+        let content = "hardware=nes-pal\n";
         let mut explicit_file = NamedTempFile::new().unwrap();
         explicit_file.write_all(content.as_bytes()).unwrap();
 
@@ -3548,10 +3670,10 @@ filter=invalid-shader
     }
 
     #[test]
-    fn test_config_hardware_model_flag_nes_pal() {
+    fn test_config_hardware_flag_nes_pal() {
         let args = vec![
             "neser".to_string(),
-            "--hardware-model".to_string(),
+            "--hardware".to_string(),
             "nes-pal".to_string(),
         ];
         let config = parse_config(args);
@@ -3559,10 +3681,10 @@ filter=invalid-shader
     }
 
     #[test]
-    fn test_config_hardware_model_flag_nes_ntsc() {
+    fn test_config_hardware_flag_nes_ntsc() {
         let args = vec![
             "neser".to_string(),
-            "--hardware-model".to_string(),
+            "--hardware".to_string(),
             "nes-ntsc".to_string(),
         ];
         let config = parse_config(args);
@@ -3570,14 +3692,60 @@ filter=invalid-shader
     }
 
     #[test]
-    fn test_config_hardware_model_flag_invalid_value_errors() {
+    fn test_config_hardware_flag_invalid_timing_value_errors() {
         let args = vec![
             "neser".to_string(),
-            "--hardware-model".to_string(),
+            "--hardware".to_string(),
             "pal".to_string(),
         ];
         let result = config_new(args);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_config_hardware_flag_famicom_is_accepted() {
+        let args = vec![
+            "neser".to_string(),
+            "--hardware".to_string(),
+            "famicom".to_string(),
+        ];
+        let result = config_new(args);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_config_hardware_flag_nes_ntsc_is_accepted() {
+        let args = vec![
+            "neser".to_string(),
+            "--hardware".to_string(),
+            "nes-ntsc".to_string(),
+        ];
+        let result = config_new(args);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_config_hardware_flag_invalid_value_errors() {
+        let args = vec![
+            "neser".to_string(),
+            "--hardware".to_string(),
+            "pal".to_string(),
+        ];
+        let result = config_new(args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_config_expansion_port_flag_famicom_four_players_is_accepted() {
+        let args = vec![
+            "neser".to_string(),
+            "--hardware".to_string(),
+            "famicom".to_string(),
+            "--expansion-port".to_string(),
+            "famicom-four-players".to_string(),
+        ];
+        let result = config_new(args);
+        assert!(result.is_ok());
     }
 
     #[test]
