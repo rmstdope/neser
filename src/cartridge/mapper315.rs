@@ -147,9 +147,14 @@ impl Mapper for Mapper315 {
     }
 
     fn read_prg(&self, addr: u16) -> u8 {
+        if (0x6000..=0x7FFF).contains(&addr) {
+            // Delegate WRAM window directly to MMC3 so PRG-RAM and $A001 work correctly.
+            return self.mmc3.read_prg(addr);
+        }
         if !(0x8000..=0xFFFF).contains(&addr) {
             return 0;
         }
+        // Use Mapper 315's custom outer/inner banking for PRG-ROM above $8000.
         let bank = self.mapped_prg_bank_for_addr(addr);
         let offset = (addr as usize) & Self::PRG_BANK_MASK;
         self.mmc3.read_prg_at_bank(bank, offset)
@@ -157,7 +162,13 @@ impl Mapper for Mapper315 {
 
     fn write_prg(&mut self, addr: u16, value: u8) {
         if (0x6800..=0x68FF).contains(&addr) {
+            // Writes in this subrange select the outer bank based on the low address byte.
             self.outer_reg = (addr & 0xFF) as u8;
+            // Also forward to MMC3 so any WRAM/control behavior remains visible.
+            self.mmc3.write_prg(addr, value);
+        } else if (0x6000..=0x7FFF).contains(&addr) {
+            // Forward all other WRAM-window writes to MMC3.
+            self.mmc3.write_prg(addr, value);
         } else if (0x8000..=0xFFFF).contains(&addr) {
             self.mmc3.write_prg(addr, value);
         }
