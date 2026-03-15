@@ -527,7 +527,7 @@ impl WasmNes {
         Ok(())
     }
 
-    /// Set the expansion port: "none" or "famicom-four-players".
+    /// Set the expansion port: "none", "famicom-four-players", or "arkanoid".
     #[wasm_bindgen]
     pub fn set_expansion_port(&mut self, port: &str) -> Result<(), JsValue> {
         let app_context = self.app_context.clone();
@@ -560,6 +560,7 @@ impl WasmNes {
         match self.app_context.borrow().config().expansion_port {
             crate::console::ExpansionPort::None => "none".to_string(),
             crate::console::ExpansionPort::FamicomFourPlayers => "famicom-four-players".to_string(),
+            crate::console::ExpansionPort::ArkanoidFamicom => "arkanoid".to_string(),
         }
     }
 
@@ -575,6 +576,12 @@ impl WasmNes {
     #[wasm_bindgen]
     pub fn is_snes_mouse_active(&self, port: u8) -> bool {
         (1..=2).contains(&port) && self.nes.has_snes_mouse()
+    }
+
+    /// Check if the expansion port has a mouse-controlled device (e.g. Famicom Arkanoid).
+    #[wasm_bindgen]
+    pub fn has_expansion_mouse_controller(&self) -> bool {
+        self.nes.has_expansion_mouse_controller()
     }
 
     /// Check if a Zapper light gun is active on the specified port.

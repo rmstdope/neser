@@ -394,6 +394,24 @@ fn is_mouse_emulated_controller_reflects_port_configuration() {
     assert!(!nes.is_mouse_emulated_controller(2));
 }
 
+#[wasm_bindgen_test]
+fn has_expansion_mouse_controller_reflects_expansion_arkanoid() {
+    let mut nes = WasmNes::new();
+    assert!(!nes.has_expansion_mouse_controller());
+
+    nes.set_hardware_mode("famicom").expect("set famicom mode");
+    nes.set_expansion_port("arkanoid")
+        .expect("set expansion port");
+    assert!(nes.has_expansion_mouse_controller());
+}
+
+#[wasm_bindgen_test]
+fn has_expansion_mouse_controller_is_false_for_port_arkanoid() {
+    let mut nes = WasmNes::new();
+    enable_arkanoid_on_port1(&mut nes);
+    assert!(!nes.has_expansion_mouse_controller());
+}
+
 // --- Debugger API tests ---
 
 #[wasm_bindgen_test]

@@ -2451,7 +2451,8 @@ function isArkanoidControllerActive(nesInstance) {
 
     const mouseOnAnyPort =
         nesInstance.is_mouse_emulated_controller(1) ||
-        nesInstance.is_mouse_emulated_controller(2);
+        nesInstance.is_mouse_emulated_controller(2) ||
+        nesInstance.has_expansion_mouse_controller();
     return mouseOnAnyPort && !isZapperActive(nesInstance);
 }
 
@@ -2462,7 +2463,8 @@ function isMouseControllerActive(nesInstance) {
 
     return (
         nesInstance.is_mouse_emulated_controller(1) ||
-        nesInstance.is_mouse_emulated_controller(2)
+        nesInstance.is_mouse_emulated_controller(2) ||
+        nesInstance.has_expansion_mouse_controller()
     );
 }
 

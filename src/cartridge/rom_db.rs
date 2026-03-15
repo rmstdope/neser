@@ -239,6 +239,22 @@ impl RomDb {
         )
     }
 
+    /// Return whether ROM DB expansion type implies Famicom Arkanoid controller on expansion port.
+    pub fn has_arkanoid_famicom_expansion(&self, crc32: u32) -> bool {
+        matches!(
+            self.get_by_crc(crc32)
+                .and_then(|entry| entry.expansion_type),
+            Some(ExpansionType::ArkanoidVausFamicom)
+        )
+    }
+
+    /// Return whether ROM DB rom_class indicates a Japan-region (Famicom) ROM.
+    pub fn is_japan_region(&self, crc32: u32) -> bool {
+        self.get_by_crc(crc32)
+            .and_then(|entry| entry.rom_class.as_ref())
+            .is_some_and(|rc| rc.contains("Japan"))
+    }
+
     pub(crate) fn from_csv_content(content: &str) -> Self {
         let mut entries = HashMap::new();
 
@@ -569,6 +585,64 @@ mod tests {
 
         assert!(!db.has_famicom_four_players_expansion(0x24598791));
         assert!(!db.has_famicom_four_players_expansion(0xDEADBEEF));
+    }
+
+    #[test]
+    fn test_rom_db_has_arkanoid_famicom_expansion_when_expansion_is_arkanoid_vaus_famicom() {
+        // ExpansionType::ArkanoidVausFamicom = 0x10 = 16
+        let csv = "1,Arkanoid FC,,24598791,,,,,,,,,,,,,,,,,,16\n";
+        let db = RomDb::from_csv_content(csv);
+
+        assert!(db.has_arkanoid_famicom_expansion(0x24598791));
+    }
+
+    #[test]
+    fn test_rom_db_has_arkanoid_famicom_expansion_is_false_for_nes_arkanoid() {
+        // ExpansionType::ArkanoidVausNes = 0x0F = 15
+        let csv = "1,Arkanoid NES,,24598791,,,,,,,,,,,,,,,,,,15\n";
+        let db = RomDb::from_csv_content(csv);
+
+        assert!(!db.has_arkanoid_famicom_expansion(0x24598791));
+    }
+
+    #[test]
+    fn test_rom_db_has_arkanoid_famicom_expansion_is_false_for_unknown_crc() {
+        let csv = "1,Arkanoid FC,,24598791,,,,,,,,,,,,,,,,,,16\n";
+        let db = RomDb::from_csv_content(csv);
+
+        assert!(!db.has_arkanoid_famicom_expansion(0xDEADBEEF));
+    }
+
+    #[test]
+    fn test_rom_db_is_japan_region_for_licensed_japan() {
+        let csv = "1,Japanese Game,,24598791,,,Licensed Japan,,,,,,,,,,,,,,,\n";
+        let db = RomDb::from_csv_content(csv);
+
+        assert!(db.is_japan_region(0x24598791));
+    }
+
+    #[test]
+    fn test_rom_db_is_japan_region_for_unlicensed_japan() {
+        let csv = "1,Unlicensed Game,,24598791,,,Unlicensed Japan,,,,,,,,,,,,,,,\n";
+        let db = RomDb::from_csv_content(csv);
+
+        assert!(db.is_japan_region(0x24598791));
+    }
+
+    #[test]
+    fn test_rom_db_is_japan_region_is_false_for_north_america() {
+        let csv = "1,NA Game,,24598791,,,Licensed North America,,,,,,,,,,,,,,,\n";
+        let db = RomDb::from_csv_content(csv);
+
+        assert!(!db.is_japan_region(0x24598791));
+    }
+
+    #[test]
+    fn test_rom_db_is_japan_region_is_false_for_unknown_crc() {
+        let csv = "1,Japanese Game,,24598791,,,Licensed Japan,,,,,,,,,,,,,,,\n";
+        let db = RomDb::from_csv_content(csv);
+
+        assert!(!db.is_japan_region(0xDEADBEEF));
     }
 
     #[test]

@@ -90,6 +90,32 @@ impl ArkanoidController {
         response
     }
 
+    /// Read fire button state for Famicom expansion port ($4016 bit 1).
+    pub fn read_expansion_trigger(&self) -> u8 {
+        (self.trigger as u8) << 1
+    }
+
+    /// Read serial knob data for Famicom expansion port ($4017 bit 1).
+    /// Advances the shift register on non-dummy reads when strobe is low.
+    pub fn read_expansion_knob(&mut self, is_dummy_read: bool) -> u8 {
+        let position = self
+            .latched_position
+            .clamp(Self::MIN_POSITION, Self::MAX_POSITION);
+        let inverted = position ^ 0xFF;
+        let bit = if self.shift_index >= 8 {
+            1
+        } else {
+            let bit_index = 7u8.saturating_sub(self.shift_index);
+            (inverted >> bit_index) & 0x01
+        };
+
+        if !self.strobe && !is_dummy_read {
+            self.shift_index = self.shift_index.saturating_add(1);
+        }
+
+        bit << 1
+    }
+
     /// Capture current paddle state for save-state.
     pub fn capture_state(&self) -> ArkanoidState {
         ArkanoidState {
@@ -231,5 +257,94 @@ mod tests {
         paddle.write_strobe(0);
         let high = read_position(&mut paddle);
         assert_eq!(high, 0x0D);
+    }
+
+    #[test]
+    fn test_expansion_trigger_returns_fire_on_bit1() {
+        let mut paddle = ArkanoidController::new();
+
+        // Trigger not pressed
+        let value = paddle.read_expansion_trigger();
+        assert_eq!(value, 0x00);
+
+        // Trigger pressed
+        paddle.set_trigger(true);
+        let value = paddle.read_expansion_trigger();
+        assert_eq!(value, 0x02);
+
+        // Trigger released
+        paddle.set_trigger(false);
+        let value = paddle.read_expansion_trigger();
+        assert_eq!(value, 0x00);
+    }
+
+    #[test]
+    fn test_expansion_knob_returns_serial_data_on_bit1() {
+        let mut paddle = ArkanoidController::new();
+        paddle.set_position(0x92); // 0b1001_0010 -> inverted 0b0110_1101
+
+        paddle.write_strobe(1);
+        paddle.write_strobe(0);
+
+        // Expected bits (MSB first, inverted): 0, 1, 1, 0, 1, 1, 0, 1
+        let expected_bits = [0, 1, 1, 0, 1, 1, 0, 1];
+        for expected in expected_bits {
+            let value = paddle.read_expansion_knob(false);
+            assert_eq!(
+                (value >> 1) & 0x01,
+                expected,
+                "Expected bit {} on bit 1, got value 0x{:02X}",
+                expected,
+                value
+            );
+        }
+    }
+
+    #[test]
+    fn test_expansion_knob_advances_shift_register() {
+        let mut paddle = ArkanoidController::new();
+        paddle.set_position(0x92);
+
+        paddle.write_strobe(1);
+        paddle.write_strobe(0);
+
+        // Read all 8 bits
+        for _ in 0..8 {
+            paddle.read_expansion_knob(false);
+        }
+
+        // 9th+ reads should return 1 on bit 1
+        let value = paddle.read_expansion_knob(false);
+        assert_eq!(value & 0x02, 0x02);
+    }
+
+    #[test]
+    fn test_expansion_knob_dummy_read_does_not_advance() {
+        let mut paddle = ArkanoidController::new();
+        paddle.set_position(0x92);
+
+        paddle.write_strobe(1);
+        paddle.write_strobe(0);
+
+        // Read first bit (non-dummy), advances shift index from 0 to 1
+        let first = paddle.read_expansion_knob(false);
+        // Dummy read at index 1 should NOT advance the shift index
+        let dummy = paddle.read_expansion_knob(true);
+        // Next non-dummy read should return the same bit as the dummy
+        // (both read from index 1), proving the dummy did not consume a position
+        let second = paddle.read_expansion_knob(false);
+
+        // Dummy and second should match — both read from the same shift position
+        assert_eq!(dummy, second);
+
+        // Verify against a reference paddle that reads normally
+        let mut expected_paddle = ArkanoidController::new();
+        expected_paddle.set_position(0x92);
+        expected_paddle.write_strobe(1);
+        expected_paddle.write_strobe(0);
+        let expected_first = expected_paddle.read_expansion_knob(false);
+        let expected_second = expected_paddle.read_expansion_knob(false);
+        assert_eq!(first, expected_first);
+        assert_eq!(second, expected_second);
     }
 }

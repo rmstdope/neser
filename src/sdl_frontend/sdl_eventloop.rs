@@ -191,7 +191,7 @@ impl SdlEventLoop {
     ///
     /// This is a no-op if no mouse-emulated controller is connected.
     fn update_mouse_button(nes: &mut Nes, button: MouseButton, pressed: bool) {
-        if !Self::mouse_ports(nes).is_empty() {
+        if Self::has_any_mouse_controller(nes) {
             match button {
                 MouseButton::Left => nes.set_mouse_left_button(pressed),
                 MouseButton::Right => nes.set_mouse_right_button(pressed),
@@ -218,6 +218,10 @@ impl SdlEventLoop {
                 nes.controller_input_type(port) == Some(crate::input::ControllerInput::Mouse)
             })
             .collect()
+    }
+
+    fn has_any_mouse_controller(nes: &Nes) -> bool {
+        !Self::mouse_ports(nes).is_empty() || nes.has_expansion_mouse_controller()
     }
 
     fn zapper_crosshair(&self, nes: &Nes) -> Option<Crosshair> {
@@ -1161,7 +1165,7 @@ impl SdlEventLoop {
                         Event::MouseMotion {
                             x, y, xrel, yrel, ..
                         } => {
-                            let mouse_controller_active = !Self::mouse_ports(nes).is_empty();
+                            let mouse_controller_active = Self::has_any_mouse_controller(nes);
                             if mouse_controller_active && !self.mouse_grabbed {
                                 continue;
                             }
@@ -1186,7 +1190,7 @@ impl SdlEventLoop {
                             }
                         }
                         Event::MouseButtonDown { mouse_btn, .. } => {
-                            let mouse_controller_active = !Self::mouse_ports(nes).is_empty();
+                            let mouse_controller_active = Self::has_any_mouse_controller(nes);
                             if mouse_controller_active && !self.mouse_grabbed {
                                 self.mouse_released_by_escape = false;
                                 let should_grab = Self::should_grab_mouse_input(
@@ -1214,7 +1218,7 @@ impl SdlEventLoop {
                             Self::update_mouse_button(nes, mouse_btn, true);
                         }
                         Event::MouseButtonUp { mouse_btn, .. } => {
-                            let mouse_controller_active = !Self::mouse_ports(nes).is_empty();
+                            let mouse_controller_active = Self::has_any_mouse_controller(nes);
                             if mouse_controller_active && !self.mouse_grabbed {
                                 continue;
                             }
@@ -1245,7 +1249,7 @@ impl SdlEventLoop {
                     );
 
                     let overlay_text = self.overlay_render_text(nes);
-                    let mouse_controller_active = !Self::mouse_ports(nes).is_empty();
+                    let mouse_controller_active = Self::has_any_mouse_controller(nes);
                     let should_grab = Self::should_grab_mouse_input(
                         mouse_controller_active,
                         self.window_focused,
@@ -1358,7 +1362,7 @@ impl SdlEventLoop {
 
                 // 3. Render the frame (always present the NES frame; show debugger if requested)
                 let overlay_text = self.overlay_render_text(nes);
-                let mouse_controller_active = !Self::mouse_ports(nes).is_empty();
+                let mouse_controller_active = Self::has_any_mouse_controller(nes);
                 let should_grab = Self::should_grab_mouse_input(
                     mouse_controller_active,
                     self.window_focused,
