@@ -488,7 +488,7 @@ impl Mapper for Mapper281 {
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        let mut v = Vec::with_capacity(34);
+        let mut v = Vec::with_capacity(35);
         v.push(self.prg_mode | (self.last_bank_sw as u8) << 2 | (self.prg_at_6000 as u8) << 7);
         v.push(self.chr_mode);
         v.push(self.mirror_reg | (self.extended_mirroring as u8) << 3);
@@ -512,7 +512,7 @@ impl Mapper for Mapper281 {
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        if data.len() < 34 {
+        if data.len() < 35 {
             return;
         }
         let d0 = data[0];
@@ -830,5 +830,58 @@ mod tests {
         mapper.write_prg(0x5801, 11);
         assert_eq!(mapper.read_prg_open_bus(0x5800, 0xFF), 77);
         assert_eq!(mapper.read_prg_open_bus(0x5801, 0xFF), 0);
+    }
+
+    // ── Snapshot / restore ────────────────────────────────────────────────────
+
+    #[test]
+    fn snapshot_restore_roundtrip_preserves_all_state() {
+        let mut mapper = make_mapper();
+        // Configure distinctive state across all register groups
+        mapper.write_prg(0xD000, 0x12); // prg_mode=2, chr_mode=2
+        mapper.write_prg(0xD001, 0x01); // mirror_reg=1 (Horizontal)
+        mapper.write_prg(0xD003, 0x01); // outer_bank=1
+        mapper.write_prg(0x8001, 5);    // prg_regs[1] = 5
+        mapper.write_prg(0x9002, 7);    // chr_low[2] = 7
+        mapper.write_prg(0xA003, 2);    // chr_high[3] = 2
+        mapper.write_prg(0xC001, 0x44); // irq_count_dir=1, small_prescaler, cpu clock source
+        mapper.write_prg(0xC004, 0x10); // irq_prescaler = 0x10
+        mapper.write_prg(0xC005, 0x20); // irq_counter = 0x20
+        mapper.write_prg(0xC003, 0);    // enable IRQ
+        mapper.write_prg(0x5800, 3);    // mul_a = 3
+        mapper.write_prg(0x5801, 9);    // mul_b = 9
+
+        let snap = mapper.registers_snapshot();
+        assert_eq!(snap.len(), 35, "snapshot must be exactly 35 bytes");
+
+        let mut restored = make_mapper();
+        restored.restore_registers(&snap);
+
+        assert_eq!(restored.prg_mode, mapper.prg_mode, "prg_mode mismatch");
+        assert_eq!(restored.chr_mode, mapper.chr_mode, "chr_mode mismatch");
+        assert_eq!(restored.mirror_reg, mapper.mirror_reg, "mirror_reg mismatch");
+        assert_eq!(restored.outer_bank, mapper.outer_bank, "outer_bank mismatch");
+        assert_eq!(restored.irq_enabled, mapper.irq_enabled, "irq_enabled mismatch");
+        assert_eq!(restored.irq_prescaler, mapper.irq_prescaler, "irq_prescaler mismatch");
+        assert_eq!(restored.irq_counter, mapper.irq_counter, "irq_counter mismatch");
+        assert_eq!(restored.mul_a, mapper.mul_a, "mul_a mismatch");
+        assert_eq!(restored.mul_b, mapper.mul_b, "mul_b mismatch");
+        assert_eq!(restored.prg_regs, mapper.prg_regs, "prg_regs mismatch");
+        assert_eq!(restored.chr_low, mapper.chr_low, "chr_low mismatch");
+        assert_eq!(restored.chr_high, mapper.chr_high, "chr_high mismatch");
+        assert_eq!(restored.nt_low, mapper.nt_low, "nt_low mismatch");
+        assert_eq!(
+            restored.get_mirroring(),
+            mapper.get_mirroring(),
+            "mirroring mismatch"
+        );
+    }
+
+    #[test]
+    fn restore_with_short_data_is_noop() {
+        let mut mapper = make_mapper();
+        mapper.write_prg(0x8000, 5); // prg_regs[0] = 5
+        mapper.restore_registers(&[0u8; 34]); // 34 bytes → must be ignored (need ≥35)
+        assert_eq!(mapper.prg_regs[0], 5, "state must be unchanged after short restore");
     }
 }
