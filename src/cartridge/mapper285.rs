@@ -280,11 +280,10 @@ mod tests {
     #[test]
     fn prg_16k_mode_both_outer_bits_set() {
         let mut mapper = make_mapper();
-        // value = 0x33: bit6=0, bits[5:4]=11, outer=((0x30)>>1)=24, inner=3
-        // lower = 24|3 = 24? No: outer = ((0x33 & 0x30)>>1) = (0x30>>1) = 0x18 = 24, inner = 3
-        // lower = 24|3 = 27? No wait: 24 | 3 = 0b11000 | 0b011 = 0b11011 = 27 -- but we only have 24 banks
-        // Use 24 banks: 27 % 24 = 3 -- that's bank 3. But we want distinct check.
-        // Let's just check with value that stays in range: value = 0x12 → outer=((0x10)>>1)=8, inner=2 → lower=10, upper=15
+        // value = 0x12: bit6=0, bits[5:4]=01
+        // outer = ((0x12 & 0x30) >> 1) = (0x10 >> 1) = 8, inner = 0x12 & 0x07 = 2
+        // lower window = outer | inner = 8 | 2 = 10
+        // upper window = outer | 7 = 8 | 7 = 15
         mapper.write_prg(0x8000, 0x12);
         assert_eq!(
             mapper.read_prg(0x8000),
