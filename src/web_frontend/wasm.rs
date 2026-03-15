@@ -515,7 +515,14 @@ impl WasmNes {
 
         // Inform the frontend that the hardware mode was updated in the
         // configuration, and that it will apply on the next ROM load.
-       hardware_mode_toast_message(mode);
+        {
+            let config = app_context.borrow().config().clone();
+            self.pending_toasts.push(hardware_mode_toast_message(
+                config.hardware_mode,
+                config.hardware_model,
+                config.expansion_port,
+            ));
+        }
 
         Ok(())
     }
