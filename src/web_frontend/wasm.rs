@@ -494,6 +494,11 @@ impl WasmNes {
     }
 
     /// Set the hardware mode: "nes-ntsc", "nes-pal", or "famicom".
+    ///
+    /// This updates the configuration and controller modes only; it does not
+    /// retroactively change the timing or PPU behavior of the currently
+    /// running emulator instance. The new hardware mode will take effect
+    /// on the next ROM load or emulator reset that re-initializes the core.
     #[wasm_bindgen]
     pub fn set_hardware_mode(&mut self, mode: &str) -> Result<(), JsValue> {
         let app_context = self.app_context.clone();
@@ -507,6 +512,11 @@ impl WasmNes {
             .bus()
             .borrow_mut()
             .sync_controller_modes_from_config();
+
+        // Inform the frontend that the hardware mode was updated in the
+        // configuration, and that it will apply on the next ROM load.
+       hardware_mode_toast_message(mode);
+
         Ok(())
     }
 
