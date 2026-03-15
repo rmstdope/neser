@@ -31,7 +31,7 @@ use crate::cartridge::{Mapper, MapperCapabilities};
 /// - For bank values ≥ 0x20: subtracts 0x20 then applies the CHR scrambling formula
 ///
 /// CHR scrambling (when bit 1 of $5000 is set):
-/// - Permutes bits `[p7..p0]` → `[p5, p4, p2, p7, p6, p3, p1, p0]`
+/// - Permutes bits `[p7..p0]` → `[p5, p4, p2, p6, p7, p3, p1, p0]`
 pub struct Mapper249 {
     pub(crate) mmc3: MMC3Mapper,
     ex_reg: u8,
