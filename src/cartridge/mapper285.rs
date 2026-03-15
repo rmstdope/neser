@@ -145,7 +145,7 @@ impl Mapper for Mapper285 {
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        if data.is_empty() {
+        if data.len() != 1 {
             return;
         }
         self.apply_register(data[0]);
