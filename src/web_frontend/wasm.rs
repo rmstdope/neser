@@ -493,6 +493,59 @@ impl WasmNes {
         Ok(())
     }
 
+    /// Set the hardware mode: "nes-ntsc", "nes-pal", or "famicom".
+    #[wasm_bindgen]
+    pub fn set_hardware_mode(&mut self, mode: &str) -> Result<(), JsValue> {
+        let app_context = self.app_context.clone();
+        {
+            let mut ctx = app_context.borrow_mut();
+            ctx.config_mut()
+                .apply_hardware_value(mode)
+                .map_err(|e| JsValue::from_str(&e))?;
+        }
+        self.nes
+            .bus()
+            .borrow_mut()
+            .sync_controller_modes_from_config();
+        Ok(())
+    }
+
+    /// Set the expansion port: "none" or "famicom-four-players".
+    #[wasm_bindgen]
+    pub fn set_expansion_port(&mut self, port: &str) -> Result<(), JsValue> {
+        let app_context = self.app_context.clone();
+        {
+            let mut ctx = app_context.borrow_mut();
+            ctx.config_mut()
+                .apply_expansion_port_value(port)
+                .map_err(|e| JsValue::from_str(&e))?;
+        }
+        self.nes
+            .bus()
+            .borrow_mut()
+            .sync_controller_modes_from_config();
+        Ok(())
+    }
+
+    /// Get the current hardware mode as a string.
+    #[wasm_bindgen]
+    pub fn get_hardware_mode(&self) -> String {
+        let config = self.app_context.borrow().config().clone();
+        match config.hardware_mode {
+            crate::console::HardwareMode::Nes => config.hardware_model.as_str().to_string(),
+            crate::console::HardwareMode::Famicom => "famicom".to_string(),
+        }
+    }
+
+    /// Get the current expansion port as a string.
+    #[wasm_bindgen]
+    pub fn get_expansion_port(&self) -> String {
+        match self.app_context.borrow().config().expansion_port {
+            crate::console::ExpansionPort::None => "none".to_string(),
+            crate::console::ExpansionPort::FamicomFourPlayers => "famicom-four-players".to_string(),
+        }
+    }
+
     /// Check if mouse-emulated controller input is enabled on a port.
     /// Returns true if a mouse-emulated controller is active on the specified port.
     /// This is used by the JavaScript frontend to determine whether to suppress joypad input for that port.

@@ -738,7 +738,7 @@ impl Default for Config {
 }
 
 impl Config {
-    fn parse_hardware_value(value: &str) -> Option<(HardwareMode, HardwareModel)> {
+    pub(crate) fn parse_hardware_value(value: &str) -> Option<(HardwareMode, HardwareModel)> {
         if value.eq_ignore_ascii_case("nes-ntsc") {
             Some((HardwareMode::Nes, HardwareModel::NesNtsc))
         } else if value.eq_ignore_ascii_case("nes-pal") {
@@ -781,7 +781,7 @@ impl Config {
         }
     }
 
-    fn apply_hardware_value(&mut self, value: &str) -> Result<(), String> {
+    pub(crate) fn apply_hardware_value(&mut self, value: &str) -> Result<(), String> {
         let (hardware_mode, hardware_model) =
             Self::parse_hardware_value(value).ok_or_else(|| {
                 format!(
@@ -796,7 +796,7 @@ impl Config {
         Ok(())
     }
 
-    fn apply_expansion_port_value(&mut self, value: &str) -> Result<(), String> {
+    pub(crate) fn apply_expansion_port_value(&mut self, value: &str) -> Result<(), String> {
         self.expansion_port = ExpansionPort::parse(value)
             .ok_or_else(|| format!("Invalid expansion_port value: '{}'", value))?;
         self.expansion_port_explicit = true;
