@@ -143,12 +143,23 @@ impl Nes {
     /// Auto-configures Arkanoid or Zapper controllers for known ROMs only when no controller
     /// ports were explicitly configured by the user.
     pub fn insert_cartridge(&mut self, mut cartridge: Cartridge) {
+        let cartridge_crc32 = cartridge.crc32();
         let zapper_port = self
             .app_context
             .borrow()
             .rom_db()
-            .default_zapper_on_port(cartridge.crc32());
-        let arkanoid_port = crate::cartridge::default_arkanoid_on_port(cartridge.crc32());
+            .default_zapper_on_port(cartridge_crc32);
+        let arkanoid_port = crate::cartridge::default_arkanoid_on_port(cartridge_crc32);
+        let has_famicom_four_players_expansion = self
+            .app_context
+            .borrow()
+            .rom_db()
+            .has_famicom_four_players_expansion(cartridge_crc32);
+
+        self.app_context
+            .borrow_mut()
+            .config_mut()
+            .apply_rom_db_famicom_four_players_hint(has_famicom_four_players_expansion);
 
         // Initialize cartridge RAM (PRG-RAM and CHR-RAM) based on config
         let ram_init_mode = self.app_context.borrow().config().ram_init_mode;
@@ -156,6 +167,9 @@ impl Nes {
 
         let mut bus = self.bus.borrow_mut();
         bus.map_cartridge(cartridge);
+
+        // Sync controller modes so the bus reflects any config changes from ROM DB auto-detection
+        bus.sync_controller_modes_from_config();
 
         // Get controller config and explicit flags from stored config
         let app_context = self.app_context.borrow();
@@ -2315,5 +2329,54 @@ mod tests {
         assert_eq!(restored.version, state.version);
         assert_eq!(restored.cpu.x, state.cpu.x);
         assert_eq!(restored.cpu.y, state.cpu.y);
+    }
+
+    #[test]
+    fn test_insert_cartridge_syncs_famicom_four_player_mode_to_bus() {
+        use crate::console::{ExpansionPort, HardwareMode};
+        use crate::input::Button;
+
+        // Start with default NES mode — bus is constructed in NES mode
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+
+        // Manually apply the Famicom four-player hint (simulating ROM DB auto-detect)
+        // This updates the config but insert_cartridge must also sync the bus.
+        nes.app_context
+            .borrow_mut()
+            .config_mut()
+            .apply_rom_db_famicom_four_players_hint(true);
+
+        // Verify config was set correctly
+        assert_eq!(
+            nes.app_context.borrow().config().hardware_mode,
+            HardwareMode::Famicom
+        );
+        assert_eq!(
+            nes.app_context.borrow().config().expansion_port,
+            ExpansionPort::FamicomFourPlayers
+        );
+
+        // Now insert cartridge — this should sync the bus with the updated config
+        let rom_data = create_minimal_rom();
+        let cartridge = load_test_cartridge(&rom_data);
+        nes.insert_cartridge(cartridge);
+
+        // Set player 3's A button (port 3 maps to four_score_extra_button_states[0])
+        nes.bus.borrow_mut().set_button(3, Button::A, true);
+
+        // Strobe controller
+        nes.bus.borrow_mut().write_for_testing(0x4016, 1);
+        nes.bus.borrow_mut().write_for_testing(0x4016, 0);
+
+        // Read $4016 — in Famicom four-player mode, bit 1 should carry player 3 serial data.
+        // Player 3 has A button pressed, so the first serial bit (bit 0 of button state) should be 1.
+        let value = nes.bus.borrow_mut().read_for_testing(0x4016);
+        assert_eq!(
+            value & 0x02,
+            0x02,
+            "Player 3 A button should appear on bit 1 of $4016 in Famicom four-player mode"
+        );
     }
 }
