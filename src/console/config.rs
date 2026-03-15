@@ -11,6 +11,7 @@ use crate::debugging::Tracing;
 use crate::debugging::breakpoints::BreakpointKind;
 use crate::input::ControllerType;
 use bitflags::bitflags;
+use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
@@ -125,19 +126,7 @@ const CLI_FLAGS: &[CliFlag] = &[
     },
     CliFlag {
         flag: "--oam-dram-decay",
-        help: Some(
-            "Enable OAM DRAM decay emulation (use --no-oam-dram-decay or --disable-oam-dram-decay to disable)",
-        ),
-        has_value: false,
-    },
-    CliFlag {
-        flag: "--no-oam-dram-decay",
-        help: Some("Disable OAM DRAM decay emulation (equivalent to --oam-dram-decay false)"),
-        has_value: false,
-    },
-    CliFlag {
-        flag: "--disable-oam-dram-decay",
-        help: Some("Disable OAM DRAM decay emulation (equivalent to --oam-dram-decay false)"),
+        help: Some("Enable OAM DRAM decay emulation (true/false, default: false)"),
         has_value: false,
     },
     CliFlag {
@@ -175,16 +164,6 @@ const CLI_FLAGS: &[CliFlag] = &[
         help: Some(
             "Enable gamepad/joystick support (optionally: true/false, default when flag present: true)",
         ),
-        has_value: false,
-    },
-    CliFlag {
-        flag: "--no-gamepads",
-        help: Some("Disable gamepad/joystick support (equivalent to --gamepads false)"),
-        has_value: false,
-    },
-    CliFlag {
-        flag: "--disable-gamepads",
-        help: Some("Disable gamepad/joystick support (equivalent to --gamepads false)"),
         has_value: false,
     },
     CliFlag {
@@ -296,19 +275,7 @@ const CLI_FLAGS: &[CliFlag] = &[
     },
     CliFlag {
         flag: "--load-state",
-        help: Some(
-            "Load save-state on startup (optionally: true/false, default when flag present: true)",
-        ),
-        has_value: false,
-    },
-    CliFlag {
-        flag: "--no-load-state",
-        help: Some("Do not load save-state on startup (equivalent to --load-state false)"),
-        has_value: false,
-    },
-    CliFlag {
-        flag: "--disable-load-state",
-        help: Some("Do not load save-state on startup (equivalent to --load-state false)"),
+        help: Some("Load save-state on startup"),
         has_value: false,
     },
     CliFlag {
@@ -410,6 +377,7 @@ const CLI_FLAGS: &[CliFlag] = &[
 
 /// Boolean flags that accept optional values (shared by validate_args and parse_rom_arg).
 const OPTIONAL_BOOL_FLAGS: &[&str] = &[
+    "--oam-dram-decay",
     "--audio",
     "--vsync",
     "--gamepads",
@@ -739,6 +707,182 @@ impl Default for Config {
 }
 
 impl Config {
+    fn help_section_for_flag(flag: &str) -> &'static str {
+        if flag.starts_with("--trace")
+            || matches!(flag, "--debugger" | "--debugger-alpha" | "--breakpoint")
+        {
+            "Trace and Debugging"
+        } else if matches!(
+            flag,
+            "--controller-port1"
+                | "--controller-port2"
+                | "--zapper-detection-size"
+                | "--gamepads"
+                | "--enable-4-score"
+                | "--no-4-score"
+                | "--disable-4-score"
+        ) {
+            "Input"
+        } else if matches!(
+            flag,
+            "--audio"
+                | "--no-audio"
+                | "--disable-audio"
+                | "--pulse1"
+                | "--no-pulse1"
+                | "--disable-pulse1"
+                | "--pulse2"
+                | "--no-pulse2"
+                | "--disable-pulse2"
+                | "--triangle"
+                | "--no-triangle"
+                | "--disable-triangle"
+                | "--noise"
+                | "--no-noise"
+                | "--disable-noise"
+                | "--dmc"
+                | "--no-dmc"
+                | "--disable-dmc"
+        ) {
+            "Sound"
+        } else if matches!(
+            flag,
+            "--fullscreen"
+                | "--display"
+                | "--filter"
+                | "--window-height"
+                | "--vsync"
+                | "--no-vsync"
+                | "--disable-vsync"
+                | "--horizontal-overscan"
+                | "--vertical-overscan"
+        ) {
+            "Video and Display"
+        } else if matches!(
+            flag,
+            "--create-recording"
+                | "--extend-recording"
+                | "--playback"
+                | "--playback-headless"
+                | "--playback-from-checkpoint"
+                | "--playback-headless-from-checkpoint"
+                | "--trim-checkpoints"
+                | "--convert-autorun"
+                | "--recalculate-autorun"
+        ) {
+            "Autorun"
+        } else if matches!(
+            flag,
+            "--cartridge-search-paths"
+                | "--scan-cartridges"
+                | "--no-scan-cartridges"
+                | "--rebuild-cartridge-catalog"
+        ) {
+            "Cartridge Catalog"
+        } else {
+            "General"
+        }
+    }
+
+    fn help_text() -> String {
+        const HELP_SECTIONS: [&str; 7] = [
+            "General",
+            "Input",
+            "Trace and Debugging",
+            "Sound",
+            "Video and Display",
+            "Autorun",
+            "Cartridge Catalog",
+        ];
+
+        let mut help = String::new();
+        writeln!(&mut help, "NES Emulator").unwrap();
+        writeln!(&mut help, "\nUsage: neser [OPTIONS] [ROM]").unwrap();
+
+        for section in HELP_SECTIONS {
+            let mut wrote_section = false;
+            for flag in CLI_FLAGS {
+                if flag.help.is_none() || Self::help_section_for_flag(flag.flag) != section {
+                    continue;
+                }
+
+                if !wrote_section {
+                    writeln!(&mut help, "\n{section}:").unwrap();
+                    wrote_section = true;
+                }
+
+                if let Some(flag_help) = flag.help {
+                    writeln!(&mut help, "  {:<19} {}", flag.flag, flag_help).unwrap();
+                }
+            }
+        }
+
+        writeln!(&mut help, "\nExamples:").unwrap();
+        writeln!(
+            &mut help,
+            "  neser game.nes                               # Load and run a ROM"
+        )
+        .unwrap();
+        writeln!(
+            &mut help,
+            "  neser --tv-system pal game.nes               # Use PAL timing"
+        )
+        .unwrap();
+        writeln!(
+            &mut help,
+            "  neser --debugger game.nes                    # Enable debugger (no value = true)"
+        )
+        .unwrap();
+        writeln!(
+            &mut help,
+            "  neser --breakpoint frame=120 game.nes           # Break on frame 120"
+        )
+        .unwrap();
+        writeln!(
+            &mut help,
+            "  neser --audio game.nes                       # Enable audio (no value = true)"
+        )
+        .unwrap();
+        writeln!(
+            &mut help,
+            "  neser --audio=1 game.nes                     # Enable audio (equals syntax)"
+        )
+        .unwrap();
+        writeln!(
+            &mut help,
+            "  neser --audio false game.nes                 # Disable audio (value-based)"
+        )
+        .unwrap();
+        writeln!(
+            &mut help,
+            "  neser --audio=0 game.nes                     # Disable audio (equals syntax)"
+        )
+        .unwrap();
+        writeln!(
+            &mut help,
+            "  neser --no-audio game.nes                    # Disable audio (prefix negation)"
+        )
+        .unwrap();
+        writeln!(
+            &mut help,
+            "  neser --disable-pulse1 --disable-pulse2 game.nes # Disable specific channels"
+        )
+        .unwrap();
+        writeln!(&mut help).unwrap();
+        writeln!(
+            &mut help,
+            "Note: Boolean flags can be used without value (defaults to true), with value (true/false/yes/no/1/0),"
+        )
+        .unwrap();
+        writeln!(
+            &mut help,
+            "      or with prefix negation (--no-*, --disable-*). All forms: --audio, --audio=1, --audio true are equivalent."
+        )
+        .unwrap();
+
+        help
+    }
+
     fn valid_controller_values() -> &'static str {
         "joypad, snes-controller, snes-mouse, zapper, arkanoid"
     }
@@ -832,12 +976,9 @@ impl Config {
             self.hardware_model_explicit = true;
         }
 
-        // OAM DRAM decay: --oam-dram-decay true/false, --no-oam-dram-decay, --disable-oam-dram-decay
+        // OAM DRAM decay: --oam-dram-decay true/false
         if let Some(oam_dram_decay) = Self::parse_bool_arg(args, "--oam-dram-decay")? {
             self.oam_dram_decay_enabled = oam_dram_decay;
-        }
-        if Self::has_negation_flag(args, &["--no-oam-dram-decay", "--disable-oam-dram-decay"]) {
-            self.oam_dram_decay_enabled = false;
         }
 
         // Boolean flags (support both value-based and prefix negation)
@@ -857,12 +998,9 @@ impl Config {
             self.vsync_enabled = false;
         }
 
-        // Gamepads: --gamepads true/false, --no-gamepads, --disable-gamepads
+        // Gamepads: --gamepads true/false
         if let Some(gamepads) = Self::parse_bool_arg(args, "--gamepads")? {
             self.gamepads_enabled = gamepads;
-        }
-        if Self::has_negation_flag(args, &["--no-gamepads", "--disable-gamepads"]) {
-            self.gamepads_enabled = false;
         }
 
         // Four Score: --enable-4-score true/false, --no-4-score, --disable-4-score
@@ -878,12 +1016,9 @@ impl Config {
             self.debugger_enabled = debugger;
         }
 
-        // Load state: --load-state true/false, --no-load-state, --disable-load-state
+        // Load state: --load-state true/false
         if let Some(load_state) = Self::parse_bool_arg(args, "--load-state")? {
             self.load_state = load_state;
-        }
-        if Self::has_negation_flag(args, &["--no-load-state", "--disable-load-state"]) {
-            self.load_state = false;
         }
 
         // Fullscreen (value-based)
@@ -1134,38 +1269,7 @@ impl Config {
         Ok(())
     }
     pub fn print_help() {
-        println!("NES Emulator");
-        println!("\nUsage: neser [OPTIONS] [ROM]");
-        println!("\nOptions:");
-
-        for flag in CLI_FLAGS {
-            if let Some(help) = flag.help {
-                println!("  {:<19} {}", flag.flag, help);
-            }
-        }
-
-        println!("\nExamples:");
-        println!("  neser game.nes                               # Load and run a ROM");
-        println!("  neser --hardware-model nes-pal game.nes      # Use NES PAL timing");
-        println!(
-            "  neser --debugger game.nes                    # Enable debugger (no value = true)"
-        );
-        println!("  neser --breakpoint frame=120 game.nes           # Break on frame 120");
-        println!("  neser --audio game.nes                       # Enable audio (no value = true)");
-        println!("  neser --audio=1 game.nes                     # Enable audio (equals syntax)");
-        println!("  neser --audio false game.nes                 # Disable audio (value-based)");
-        println!("  neser --audio=0 game.nes                     # Disable audio (equals syntax)");
-        println!(
-            "  neser --no-audio game.nes                    # Disable audio (prefix negation)"
-        );
-        println!("  neser --disable-pulse1 --disable-pulse2 game.nes # Disable specific channels");
-        println!();
-        println!(
-            "Note: Boolean flags can be used without value (defaults to true), with value (true/false/yes/no/1/0),"
-        );
-        println!(
-            "      or with prefix negation (--no-*, --disable-*). All forms: --audio, --audio=1, --audio true are equivalent."
-        );
+        print!("{}", Self::help_text());
     }
 
     /// Validate command-line arguments.
@@ -2013,6 +2117,49 @@ mod tests {
     }
 
     #[test]
+    fn test_help_text_groups_flags_into_readable_sections() {
+        let help = Config::help_text();
+
+        assert!(help.contains("\nInput:"));
+        assert!(help.contains("\nTrace and Debugging:"));
+        assert!(help.contains("\nSound:"));
+        assert!(help.contains("\nVideo and Display:"));
+        assert!(help.contains("\nAutorun:"));
+        assert!(help.contains("\nCartridge Catalog:"));
+
+        let input_section = help.find("\nInput:").unwrap();
+        let input_flag = help.find("--controller-port1").unwrap();
+        assert!(input_section < input_flag);
+
+        let trace_section = help.find("\nTrace and Debugging:").unwrap();
+        let trace_flag = help.find("--trace-cpu").unwrap();
+        assert!(trace_section < trace_flag);
+
+        let sound_section = help.find("\nSound:").unwrap();
+        let sound_flag = help.find("--audio").unwrap();
+        assert!(sound_section < sound_flag);
+    }
+
+    #[test]
+    fn test_help_text_load_state_is_presence_only_flag() {
+        let help = Config::help_text();
+
+        assert!(help.contains("--load-state"));
+        assert!(!help.contains("--no-load-state"));
+        assert!(!help.contains("--disable-load-state"));
+    }
+
+    #[test]
+    fn test_help_text_oam_dram_decay_shows_default_and_no_negation_aliases() {
+        let help = Config::help_text();
+
+        assert!(help.contains("--oam-dram-decay"));
+        assert!(help.contains("default: false"));
+        assert!(!help.contains("--no-oam-dram-decay"));
+        assert!(!help.contains("--disable-oam-dram-decay"));
+    }
+
+    #[test]
     fn test_config_hardware_model_nes_pal() {
         let args = vec![
             "neser".to_string(),
@@ -2110,11 +2257,7 @@ mod tests {
 
     #[test]
     fn test_config_load_state_flag() {
-        let args = vec![
-            "neser".to_string(),
-            "--load-state".to_string(),
-            "true".to_string(),
-        ];
+        let args = vec!["neser".to_string(), "--load-state".to_string()];
         let config = parse_config(args);
         assert!(config.load_state);
     }
@@ -3514,8 +3657,15 @@ filter=invalid-shader
     #[test]
     fn test_config_no_gamepads_disables_gamepads() {
         let args = vec!["neser".to_string(), "--no-gamepads".to_string()];
-        let config = parse_config(args);
-        assert!(!config.gamepads_enabled);
+        let result = config_new(args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_config_disable_gamepads_is_rejected() {
+        let args = vec!["neser".to_string(), "--disable-gamepads".to_string()];
+        let result = config_new(args);
+        assert!(result.is_err());
     }
 
     #[test]
@@ -3667,15 +3817,15 @@ filter=invalid-shader
     #[test]
     fn test_config_no_load_state_disables_load_state() {
         let args = vec!["neser".to_string(), "--no-load-state".to_string()];
-        let config = parse_config(args);
-        assert!(!config.load_state);
+        let result = config_new(args);
+        assert!(result.is_err());
     }
 
     #[test]
     fn test_config_disable_load_state_disables_load_state() {
         let args = vec!["neser".to_string(), "--disable-load-state".to_string()];
-        let config = parse_config(args);
-        assert!(!config.load_state);
+        let result = config_new(args);
+        assert!(result.is_err());
     }
 
     #[test]
@@ -3715,9 +3865,8 @@ filter=invalid-shader
             "--no-load-state".to_string(),
             "game.nes".to_string(),
         ];
-        let config = parse_config(args);
-        assert!(!config.load_state);
-        assert_eq!(config.rom_path.as_deref(), Some("game.nes"));
+        let result = config_new(args);
+        assert!(result.is_err());
     }
 
     #[test]
@@ -3826,6 +3975,30 @@ filter=invalid-shader
         ];
         let config = parse_config(args);
         assert!(config.oam_dram_decay_enabled);
+    }
+
+    #[test]
+    fn test_config_cmdline_oam_dram_decay_disabled() {
+        let args = vec![
+            "neser".to_string(),
+            "--oam-dram-decay".to_string(),
+            "false".to_string(),
+        ];
+        let config = parse_config(args);
+        assert!(!config.oam_dram_decay_enabled);
+    }
+
+    #[test]
+    fn test_config_cmdline_oam_dram_decay_with_rom() {
+        let args = vec![
+            "neser".to_string(),
+            "--oam-dram-decay".to_string(),
+            "true".to_string(),
+            "game.nes".to_string(),
+        ];
+        let config = parse_config(args);
+        assert!(config.oam_dram_decay_enabled);
+        assert_eq!(config.rom_path.as_deref(), Some("game.nes"));
     }
 
     #[test]

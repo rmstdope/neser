@@ -94,11 +94,10 @@ pub struct CpuTraceLine {
 }
 
 pub struct Nes {
-    // TODO pub fields smell
     app_context: SharedAppContext,
     ppu: SharedPpu,
-    apu: Rc<RefCell<Apu>>,
-    bus: Rc<RefCell<Bus>>,
+    apu: SharedApu,
+    bus: SharedBus,
     cpu: Cpu,
     fractional_ppu_cycles: f64,
     ready_to_render: bool,
