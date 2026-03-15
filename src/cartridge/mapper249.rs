@@ -183,9 +183,9 @@ impl Mapper for Mapper249 {
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        self.mmc3.restore_registers(data);
-        if let Some(&v) = data.last() {
-            self.ex_reg = v;
+        if let Some((&outer, mmc3_data)) = data.split_last() {
+            self.mmc3.restore_registers(mmc3_data);
+            self.ex_reg = outer;
         }
     }
 
