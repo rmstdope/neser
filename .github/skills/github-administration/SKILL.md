@@ -92,8 +92,12 @@ gh issue close <number> --comment "<closure note>"
 
 ```sh
 git push origin <branch>
-gh pr create --title "Fix #<issue>: ..." --body "...\n\nFixes #<issue>" --head <branch>
+mkdir -p .tmp
+# Write PR body to file to avoid terminal escaping issues
+gh pr create --title "Fix #<issue>: ..." --body-file .tmp/pr-body.md --head <branch>
 ```
+
+**Warning**: Never use `--body` with multi-line content in persistent terminal sessions. Terminal escaping issues (garbled output, stuck heredocs) will corrupt the PR body. Always use `--body-file` instead.
 
 ## Troubleshooting
 
