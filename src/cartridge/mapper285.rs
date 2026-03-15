@@ -227,7 +227,7 @@ mod tests {
 
     #[test]
     fn power_on_chr_bank_is_0() {
-        let mapper = make_mapper();
+        let mut mapper = make_mapper();
         assert_eq!(
             mapper.read_chr(0x0000),
             0,
