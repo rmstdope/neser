@@ -77,37 +77,6 @@ pub fn controller_input_type(controller_type: ControllerType) -> ControllerInput
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn controller_type_parse_supports_explicit_snes_controller_and_snes_mouse() {
-        assert_eq!(
-            ControllerType::parse("snes-controller"),
-            Some(ControllerType::SnesController)
-        );
-        assert_eq!(
-            ControllerType::parse("snes-mouse"),
-            Some(ControllerType::SnesMouse)
-        );
-        assert_eq!(ControllerType::parse("snes-adapter"), None);
-        assert_eq!(ControllerType::parse("snes"), None);
-    }
-
-    #[test]
-    fn controller_input_type_reports_expected_inputs_for_explicit_snes_types() {
-        assert_eq!(
-            controller_input_type(ControllerType::SnesController),
-            ControllerInput::Gamepad
-        );
-        assert_eq!(
-            controller_input_type(ControllerType::SnesMouse),
-            ControllerInput::Mouse
-        );
-    }
-}
-
 /// Trait for NES controller devices (Joypad, Arkanoid controller, etc.).
 pub trait Controller {
     /// Write to strobe register ($4016).
@@ -164,4 +133,35 @@ pub trait Controller {
 
     // Get the type of input this controller needs.
     fn input_type(&self) -> ControllerInput;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn controller_type_parse_supports_explicit_snes_controller_and_snes_mouse() {
+        assert_eq!(
+            ControllerType::parse("snes-controller"),
+            Some(ControllerType::SnesController)
+        );
+        assert_eq!(
+            ControllerType::parse("snes-mouse"),
+            Some(ControllerType::SnesMouse)
+        );
+        assert_eq!(ControllerType::parse("snes-adapter"), None);
+        assert_eq!(ControllerType::parse("snes"), None);
+    }
+
+    #[test]
+    fn controller_input_type_reports_expected_inputs_for_explicit_snes_types() {
+        assert_eq!(
+            controller_input_type(ControllerType::SnesController),
+            ControllerInput::Gamepad
+        );
+        assert_eq!(
+            controller_input_type(ControllerType::SnesMouse),
+            ControllerInput::Mouse
+        );
+    }
 }

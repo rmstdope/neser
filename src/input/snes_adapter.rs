@@ -89,13 +89,15 @@ impl SnesAdapter {
     }
 
     pub fn write_strobe(&mut self, value: u8) {
-        let new_strobe = value & 0x01 != 0;
+        let new_strobe = (value & 0x01) != 0;
+
         if self.strobe && !new_strobe {
             self.bit_index = 0;
             if self.is_mouse_mode() {
                 self.mouse_packet = self.build_mouse_packet();
             }
         }
+
         self.strobe = new_strobe;
     }
 
