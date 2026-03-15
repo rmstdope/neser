@@ -114,6 +114,8 @@ impl Nes {
         let ppu = Rc::new(RefCell::new(Ppu::new(tv_system, ram_init_mode)));
         ppu.borrow_mut()
             .set_oam_dram_decay_enabled(oam_dram_decay_enabled);
+        ppu.borrow_mut()
+            .set_famicom_emphasis(config.hardware_mode == crate::console::HardwareMode::Famicom);
         let apu = Rc::new(RefCell::new(Apu::new_with_tv_system(tv_system)));
         let memory = Rc::new(RefCell::new(Bus::new(
             ppu.clone(),

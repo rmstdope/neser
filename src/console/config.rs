@@ -1940,6 +1940,34 @@ impl Config {
         }
     }
 
+    pub fn apply_rom_db_famicom_four_players_hint(&mut self, has_hint: bool) -> bool {
+        if !has_hint {
+            return false;
+        }
+
+        let mut changed = false;
+
+        if !self.hardware_mode_explicit && self.hardware_mode != HardwareMode::Famicom {
+            self.hardware_mode = HardwareMode::Famicom;
+            changed = true;
+        }
+
+        if !self.hardware_model_explicit && self.hardware_model != HardwareModel::NesNtsc {
+            self.hardware_model = HardwareModel::NesNtsc;
+            changed = true;
+        }
+
+        if !self.expansion_port_explicit
+            && self.hardware_mode == HardwareMode::Famicom
+            && self.expansion_port != ExpansionPort::FamicomFourPlayers
+        {
+            self.expansion_port = ExpansionPort::FamicomFourPlayers;
+            changed = true;
+        }
+
+        changed
+    }
+
     /// Parse a boolean value from config file.
     /// Accepts: true, false, yes, no, 1, 0 (case-insensitive)
     fn parse_bool(value: &str) -> Result<bool, ()> {
@@ -2325,6 +2353,49 @@ mod tests {
         let applied = config.apply_rom_timing_mode(crate::cartridge::TimingMode::Unknown(0));
         assert!(!applied);
         assert_eq!(config.hardware_model, HardwareModel::NesNtsc);
+    }
+
+    #[test]
+    fn test_config_apply_rom_db_famicom_four_players_hint_sets_hardware_and_expansion() {
+        let mut config = Config::default();
+        let changed = config.apply_rom_db_famicom_four_players_hint(true);
+
+        assert!(changed);
+        assert_eq!(config.hardware_mode, HardwareMode::Famicom);
+        assert_eq!(config.hardware_model, HardwareModel::NesNtsc);
+        assert_eq!(config.expansion_port, ExpansionPort::FamicomFourPlayers);
+    }
+
+    #[test]
+    fn test_config_apply_rom_db_famicom_four_players_hint_respects_explicit_nes_hardware_override()
+    {
+        let mut config = Config {
+            hardware_mode: HardwareMode::Nes,
+            hardware_mode_explicit: true,
+            ..Default::default()
+        };
+
+        let changed = config.apply_rom_db_famicom_four_players_hint(true);
+
+        assert!(!changed);
+        assert_eq!(config.hardware_mode, HardwareMode::Nes);
+        assert_eq!(config.expansion_port, ExpansionPort::None);
+    }
+
+    #[test]
+    fn test_config_apply_rom_db_famicom_four_players_hint_sets_expansion_when_hardware_explicit_famicom()
+     {
+        let mut config = Config {
+            hardware_mode: HardwareMode::Famicom,
+            hardware_mode_explicit: true,
+            ..Default::default()
+        };
+
+        let changed = config.apply_rom_db_famicom_four_players_hint(true);
+
+        assert!(changed);
+        assert_eq!(config.hardware_mode, HardwareMode::Famicom);
+        assert_eq!(config.expansion_port, ExpansionPort::FamicomFourPlayers);
     }
 
     #[test]
@@ -3746,6 +3817,21 @@ filter=invalid-shader
         ];
         let result = config_new(args);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_config_famicom_mode_rejects_controller_port_overrides() {
+        let args = vec![
+            "neser".to_string(),
+            "--hardware".to_string(),
+            "famicom".to_string(),
+            "--controller-port1".to_string(),
+            "zapper".to_string(),
+            "--controller-port2".to_string(),
+            "arkanoid".to_string(),
+        ];
+        let result = config_new(args);
+        assert!(result.is_err());
     }
 
     #[test]

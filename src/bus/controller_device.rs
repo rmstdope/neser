@@ -10,6 +10,9 @@ pub(crate) struct ControllerDevice {
     four_score_enabled: bool,
     four_score_strobe: bool,
     four_score_index: [u8; 2],
+    famicom_four_players_enabled: bool,
+    famicom_four_players_strobe: bool,
+    famicom_four_players_index: [u8; 2],
 }
 
 impl ControllerDevice {
@@ -22,6 +25,7 @@ impl ControllerDevice {
             port1_controller,
             port2_controller,
             false,
+            false,
             Rc::new(RefCell::new([0, 0])),
         )
     }
@@ -30,6 +34,7 @@ impl ControllerDevice {
         port1_controller: Rc<RefCell<Box<dyn Controller>>>,
         port2_controller: Rc<RefCell<Box<dyn Controller>>>,
         four_score_enabled: bool,
+        famicom_four_players_enabled: bool,
         four_score_extra_button_states: Rc<RefCell<[u8; 2]>>,
     ) -> Self {
         Self {
@@ -38,6 +43,9 @@ impl ControllerDevice {
             four_score_enabled,
             four_score_strobe: false,
             four_score_index: [0, 0],
+            famicom_four_players_enabled,
+            famicom_four_players_strobe: false,
+            famicom_four_players_index: [0, 0],
         }
     }
 
@@ -45,6 +53,12 @@ impl ControllerDevice {
         self.four_score_enabled = enabled;
         self.four_score_index = [0, 0];
         self.four_score_strobe = false;
+    }
+
+    pub(crate) fn set_famicom_four_players_enabled(&mut self, enabled: bool) {
+        self.famicom_four_players_enabled = enabled;
+        self.famicom_four_players_index = [0, 0];
+        self.famicom_four_players_strobe = false;
     }
 
     fn read_four_score_bit(&mut self, port_index: usize, is_dummy_read: bool) -> u8 {
@@ -84,6 +98,29 @@ impl ControllerDevice {
 
         controller_state
     }
+
+    fn read_famicom_four_players_bit(&mut self, port_index: usize, is_dummy_read: bool) -> u8 {
+        let mut controller_state = self.controllers[port_index]
+            .borrow_mut()
+            .read(is_dummy_read);
+
+        let idx = self.famicom_four_players_index[port_index];
+        let extra_state = self.four_score_extra_button_states.borrow()[port_index];
+        let serial_bit = if idx < 8 {
+            (extra_state >> idx) & 0x01
+        } else {
+            1
+        };
+
+        controller_state = (controller_state & !0x02) | (serial_bit << 1);
+
+        if !is_dummy_read && !self.famicom_four_players_strobe {
+            self.famicom_four_players_index[port_index] =
+                self.famicom_four_players_index[port_index].saturating_add(1);
+        }
+
+        controller_state
+    }
 }
 
 impl BusDevice for ControllerDevice {
@@ -92,6 +129,8 @@ impl BusDevice for ControllerDevice {
 
         let controller_state = if self.four_score_enabled {
             self.read_four_score_bit(index, is_dummy_read)
+        } else if self.famicom_four_players_enabled {
+            self.read_famicom_four_players_bit(index, is_dummy_read)
         } else {
             self.controllers[index].borrow_mut().read(is_dummy_read)
         };
@@ -110,6 +149,11 @@ impl BusDevice for ControllerDevice {
                 }
                 self.four_score_strobe = new_strobe;
 
+                if self.famicom_four_players_strobe && !new_strobe {
+                    self.famicom_four_players_index = [0, 0];
+                }
+                self.famicom_four_players_strobe = new_strobe;
+
                 self.controllers[0].borrow_mut().write_strobe(value);
                 self.controllers[1].borrow_mut().write_strobe(value);
                 true
@@ -121,6 +165,15 @@ impl BusDevice for ControllerDevice {
 
     fn address_range(&self) -> RangeInclusive<u16> {
         0x4016..=0x4017
+    }
+
+    fn sync_controller_modes(
+        &mut self,
+        four_score_enabled: bool,
+        famicom_four_players_enabled: bool,
+    ) {
+        self.set_four_score_enabled(four_score_enabled);
+        self.set_famicom_four_players_enabled(famicom_four_players_enabled);
     }
 }
 
@@ -300,5 +353,57 @@ mod tests {
         // P2 byte (all 0 in this fixture), P4 byte (all 0 in this fixture), signature $20.
         let bits = read_24_bits(&mut device, 0x4017);
         assert_eq!(bits, 0x0020_0000);
+    }
+
+    #[test]
+    fn test_famicom_four_players_sets_player3_serial_on_4016_bit1() {
+        let reads = Rc::new(RefCell::new(0));
+        let dummy_reads = Rc::new(RefCell::new(0));
+        let controller1: Rc<RefCell<Box<dyn Controller>>> = Rc::new(RefCell::new(Box::new(
+            TestController::new(reads.clone(), dummy_reads.clone()),
+        )));
+        let controller2: Rc<RefCell<Box<dyn Controller>>> = Rc::new(RefCell::new(Box::new(
+            TestController::new(reads, dummy_reads),
+        )));
+        let extra_states = Rc::new(RefCell::new([0x01, 0x00]));
+        let mut device = ControllerDevice::new_with_four_score_state(
+            controller1,
+            controller2,
+            false,
+            true,
+            extra_states,
+        );
+
+        assert!(device.write(0x4016, 1, false));
+        assert!(device.write(0x4016, 0, false));
+
+        let first = device.read(0x4016, 0x00, false).unwrap();
+        assert_eq!(first & 0x02, 0x02);
+    }
+
+    #[test]
+    fn test_famicom_four_players_sets_player4_serial_on_4017_bit1() {
+        let reads = Rc::new(RefCell::new(0));
+        let dummy_reads = Rc::new(RefCell::new(0));
+        let controller1: Rc<RefCell<Box<dyn Controller>>> = Rc::new(RefCell::new(Box::new(
+            TestController::new(reads.clone(), dummy_reads.clone()),
+        )));
+        let controller2: Rc<RefCell<Box<dyn Controller>>> = Rc::new(RefCell::new(Box::new(
+            TestController::new(reads, dummy_reads),
+        )));
+        let extra_states = Rc::new(RefCell::new([0x00, 0x01]));
+        let mut device = ControllerDevice::new_with_four_score_state(
+            controller1,
+            controller2,
+            false,
+            true,
+            extra_states,
+        );
+
+        assert!(device.write(0x4016, 1, false));
+        assert!(device.write(0x4016, 0, false));
+
+        let first = device.read(0x4017, 0x00, false).unwrap();
+        assert_eq!(first & 0x02, 0x02);
     }
 }

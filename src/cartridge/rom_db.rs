@@ -230,6 +230,15 @@ impl RomDb {
         }
     }
 
+    /// Return whether ROM DB expansion type implies Famicom four-player expansion wiring.
+    pub fn has_famicom_four_players_expansion(&self, crc32: u32) -> bool {
+        matches!(
+            self.get_by_crc(crc32)
+                .and_then(|entry| entry.expansion_type),
+            Some(ExpansionType::FamicomFourPlayersSimple)
+        )
+    }
+
     pub(crate) fn from_csv_content(content: &str) -> Self {
         let mut entries = HashMap::new();
 
@@ -543,6 +552,23 @@ mod tests {
         let db = RomDb::from_csv_content(csv);
 
         assert_eq!(db.default_zapper_on_port(0xDEADBEEF), 0);
+    }
+
+    #[test]
+    fn test_rom_db_has_famicom_four_players_expansion_when_expansion_is_famicom_four_players() {
+        let csv = "1,4P Demo,,24598791,,,,,,,,,,,,,,,,,,3\n";
+        let db = RomDb::from_csv_content(csv);
+
+        assert!(db.has_famicom_four_players_expansion(0x24598791));
+    }
+
+    #[test]
+    fn test_rom_db_has_famicom_four_players_expansion_is_false_for_other_expansion() {
+        let csv = "1,2P Demo,,24598791,,,,,,,,,,,,,,,,,,2\n";
+        let db = RomDb::from_csv_content(csv);
+
+        assert!(!db.has_famicom_four_players_expansion(0x24598791));
+        assert!(!db.has_famicom_four_players_expansion(0xDEADBEEF));
     }
 
     #[test]
