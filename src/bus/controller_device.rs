@@ -1,6 +1,7 @@
 use crate::bus::bus::BusDevice;
 use crate::input::ArkanoidController;
 use crate::input::Controller;
+use crate::input::Zapper;
 use std::cell::RefCell;
 use std::ops::RangeInclusive;
 use std::rc::Rc;
@@ -17,6 +18,8 @@ pub(crate) struct ControllerDevice {
     famicom_mode: bool,
     arkanoid_expansion: Option<Rc<RefCell<ArkanoidController>>>,
     arkanoid_famicom_enabled: bool,
+    zapper_expansion: Option<Rc<RefCell<Zapper>>>,
+    zapper_famicom_enabled: bool,
 }
 
 impl ControllerDevice {
@@ -53,6 +56,8 @@ impl ControllerDevice {
             famicom_mode: false,
             arkanoid_expansion: None,
             arkanoid_famicom_enabled: false,
+            zapper_expansion: None,
+            zapper_famicom_enabled: false,
         }
     }
 
@@ -77,6 +82,14 @@ impl ControllerDevice {
 
     pub(crate) fn set_arkanoid_famicom_enabled(&mut self, enabled: bool) {
         self.arkanoid_famicom_enabled = enabled;
+    }
+
+    pub(crate) fn set_zapper_famicom_expansion(&mut self, expansion: Option<Rc<RefCell<Zapper>>>) {
+        self.zapper_expansion = expansion;
+    }
+
+    pub(crate) fn set_zapper_famicom_enabled(&mut self, enabled: bool) {
+        self.zapper_famicom_enabled = enabled;
     }
 
     fn read_arkanoid_famicom_bit(&mut self, port_index: usize, is_dummy_read: bool) -> u8 {
@@ -158,6 +171,23 @@ impl ControllerDevice {
 
         controller_state
     }
+
+    fn read_zapper_famicom_bit(&mut self, port_index: usize, is_dummy_read: bool) -> u8 {
+        let mut controller_state = self.controllers[port_index]
+            .borrow_mut()
+            .read(is_dummy_read);
+
+        // Famicom expansion connector only routes bits 1-4 on $4017;
+        // $4016 only exposes bit 1 from expansion, so Zapper bits 3-4
+        // are not connected on $4016 reads.
+        if let (1, Some(zapper)) = (port_index, &self.zapper_expansion) {
+            // Zapper expansion port: trigger on bit 4, light sense on bit 3
+            let zapper_bits = zapper.borrow_mut().read(is_dummy_read);
+            controller_state = (controller_state & !0x18) | (zapper_bits & 0x18);
+        }
+
+        controller_state
+    }
 }
 
 impl BusDevice for ControllerDevice {
@@ -170,6 +200,8 @@ impl BusDevice for ControllerDevice {
             self.read_famicom_four_players_bit(index, is_dummy_read)
         } else if self.arkanoid_famicom_enabled {
             self.read_arkanoid_famicom_bit(index, is_dummy_read)
+        } else if self.zapper_famicom_enabled {
+            self.read_zapper_famicom_bit(index, is_dummy_read)
         } else {
             self.controllers[index].borrow_mut().read(is_dummy_read)
         };
@@ -183,7 +215,16 @@ impl BusDevice for ControllerDevice {
         // NES-001: bits 5-7 are open bus; bits 0-4 driven by controller I/O.
         // Famicom (HVC-001): bits 3-7 are open bus; bits 0-2 driven
         //   (bit 0 = serial data, bit 1 = expansion port, bit 2 = mic/$4016 only).
-        let open_bus_mask = if self.famicom_mode { 0xF8 } else { 0xE0 };
+        // When Zapper expansion is active on $4017, bits 3-4 are driven by
+        //   the Zapper via the expansion port pins, so only bits 5-7 are open bus.
+        //   $4016 keeps the standard Famicom mask since bits 3-4 are not routed
+        //   to the expansion connector on that port.
+        let open_bus_mask = if self.famicom_mode && !(self.zapper_famicom_enabled && addr == 0x4017)
+        {
+            0xF8
+        } else {
+            0xE0
+        };
         Some((open_bus & open_bus_mask) | (controller_state & !open_bus_mask))
     }
 
@@ -225,11 +266,13 @@ impl BusDevice for ControllerDevice {
         famicom_four_players_enabled: bool,
         famicom_mode: bool,
         arkanoid_famicom_enabled: bool,
+        zapper_famicom_enabled: bool,
     ) {
         self.set_four_score_enabled(four_score_enabled);
         self.set_famicom_four_players_enabled(famicom_four_players_enabled);
         self.famicom_mode = famicom_mode;
         self.set_arkanoid_famicom_enabled(arkanoid_famicom_enabled);
+        self.set_zapper_famicom_enabled(zapper_famicom_enabled);
     }
 }
 
@@ -640,6 +683,137 @@ mod tests {
             value & 0x01,
             0x00,
             "Bit 0 should come from port controller, got ${:02X}",
+            value
+        );
+    }
+
+    fn create_zapper_expansion_device() -> (ControllerDevice, Rc<RefCell<crate::input::Zapper>>) {
+        let reads = Rc::new(RefCell::new(0));
+        let dummy_reads = Rc::new(RefCell::new(0));
+        let controller1: Rc<RefCell<Box<dyn Controller>>> = Rc::new(RefCell::new(Box::new(
+            TestController::new(reads.clone(), dummy_reads.clone()),
+        )));
+        let controller2: Rc<RefCell<Box<dyn Controller>>> = Rc::new(RefCell::new(Box::new(
+            TestController::new(reads, dummy_reads),
+        )));
+
+        let ppu = Rc::new(RefCell::new(crate::ppu::Ppu::new_for_testing(
+            crate::console::TimingMode::Ntsc,
+        )));
+        let app_context = Rc::new(RefCell::new(
+            crate::app_context::AppContext::new_with_config(crate::console::Config::default()),
+        ));
+        let zapper = Rc::new(RefCell::new(crate::input::Zapper::new(ppu, app_context)));
+
+        let mut device = ControllerDevice::new(controller1, controller2);
+        device.set_zapper_famicom_expansion(Some(zapper.clone()));
+        device.set_zapper_famicom_enabled(true);
+        device.famicom_mode = true;
+        (device, zapper)
+    }
+
+    /// Famicom Zapper expansion port: trigger should appear on bit 4 of $4017 reads.
+    #[test]
+    fn test_zapper_famicom_expansion_trigger_on_4017_bit4() {
+        let (mut device, zapper) = create_zapper_expansion_device();
+
+        // Trigger not pressed
+        let value = device.read(0x4017, 0x00, false).unwrap();
+        assert_eq!(
+            value & 0x10,
+            0x00,
+            "Trigger bit 4 should be 0 when not pressed, got ${:02X}",
+            value
+        );
+
+        // Trigger pressed
+        zapper.borrow_mut().set_mouse_left_button(true);
+        let value = device.read(0x4017, 0x00, false).unwrap();
+        assert_eq!(
+            value & 0x10,
+            0x10,
+            "Trigger bit 4 should be 1 when pressed, got ${:02X}",
+            value
+        );
+    }
+
+    /// Famicom expansion connector only routes bits 1-4 on $4017; $4016 does
+    /// not carry Zapper bits 3-4, so trigger must NOT appear on $4016.
+    #[test]
+    fn test_zapper_famicom_expansion_trigger_not_on_4016() {
+        let (mut device, zapper) = create_zapper_expansion_device();
+
+        zapper.borrow_mut().set_mouse_left_button(true);
+        let value = device.read(0x4016, 0x00, false).unwrap();
+        assert_eq!(
+            value & 0x10,
+            0x00,
+            "Trigger bit 4 should NOT appear on $4016 (expansion bits only on $4017), got ${:02X}",
+            value
+        );
+    }
+
+    /// Famicom Zapper expansion port: light sense (no light) should set bit 3.
+    #[test]
+    fn test_zapper_famicom_expansion_light_sense_no_light_on_bit3() {
+        let (mut device, _zapper) = create_zapper_expansion_device();
+
+        // With no light detected (default state), bit 3 should be 1
+        let value = device.read(0x4017, 0x00, false).unwrap();
+        assert_eq!(
+            value & 0x08,
+            0x08,
+            "Light sense bit 3 should be 1 when no light detected, got ${:02X}",
+            value
+        );
+    }
+
+    /// Famicom Zapper expansion port: standard controller bit 0 is preserved.
+    #[test]
+    fn test_zapper_famicom_expansion_does_not_affect_bit0() {
+        let (mut device, _zapper) = create_zapper_expansion_device();
+
+        // TestController always returns 0, so bit 0 should be 0
+        let value = device.read(0x4017, 0x00, false).unwrap();
+        assert_eq!(
+            value & 0x01,
+            0x00,
+            "Bit 0 should come from port controller, got ${:02X}",
+            value
+        );
+    }
+
+    /// When Zapper expansion is active in Famicom mode, bits 3-4 on $4017
+    /// should NOT be masked as open bus (the Zapper drives these expansion port pins).
+    /// With open_bus = 0x00, the only source for bits 3-4 is the Zapper.
+    #[test]
+    fn test_zapper_famicom_expansion_open_bus_preserves_bits_3_4_on_4017() {
+        let (mut device, zapper) = create_zapper_expansion_device();
+
+        // Trigger pressed (bit 4), no light (bit 3) → both should come from Zapper, not open bus
+        zapper.borrow_mut().set_mouse_left_button(true);
+        let value = device.read(0x4017, 0x00, false).unwrap();
+        assert_eq!(
+            value & 0x18,
+            0x18,
+            "Bits 3-4 should be driven by Zapper expansion (not open bus 0x00). Got ${:02X}",
+            value
+        );
+    }
+
+    /// On $4016, bits 3-4 should remain open bus even with Zapper expansion active,
+    /// since the Famicom expansion connector doesn't route those bits to $4016.
+    #[test]
+    fn test_zapper_famicom_expansion_open_bus_4016_keeps_famicom_mask() {
+        let (mut device, zapper) = create_zapper_expansion_device();
+
+        // Trigger pressed, but $4016 should use Famicom open bus mask (0xF8)
+        zapper.borrow_mut().set_mouse_left_button(true);
+        let value = device.read(0x4016, 0xFF, false).unwrap();
+        assert_eq!(
+            value & 0xF8,
+            0xF8,
+            "$4016 bits 3-7 should be open bus (mask 0xF8) even with Zapper expansion. Got ${:02X}",
             value
         );
     }

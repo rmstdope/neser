@@ -481,6 +481,7 @@ pub enum ExpansionPort {
     None,
     FamicomFourPlayers,
     ArkanoidFamicom,
+    ZapperFamicom,
 }
 
 impl ExpansionPort {
@@ -491,6 +492,8 @@ impl ExpansionPort {
             Some(Self::FamicomFourPlayers)
         } else if value.eq_ignore_ascii_case("arkanoid") {
             Some(Self::ArkanoidFamicom)
+        } else if value.eq_ignore_ascii_case("zapper") {
+            Some(Self::ZapperFamicom)
         } else {
             None
         }
@@ -776,7 +779,7 @@ impl Config {
         if let Some(expansion_port) = Self::parse_string_arg(args, "--expansion-port") {
             let parsed = ExpansionPort::parse(&expansion_port).ok_or_else(|| {
                 format!(
-                    "Invalid --expansion-port value: '{}'. Valid options are: none, famicom-four-players, arkanoid",
+                    "Invalid --expansion-port value: '{}'. Valid options are: none, famicom-four-players, arkanoid, zapper",
                     expansion_port
                 )
             })?;
@@ -1999,6 +2002,24 @@ impl Config {
         }
 
         changed
+    }
+
+    pub fn apply_rom_db_zapper_famicom_hint(&mut self, has_hint: bool) -> bool {
+        if !has_hint {
+            return false;
+        }
+
+        // Only set expansion port if hardware mode is already Famicom.
+        // For NES mode, the Zapper is handled via standard controller ports.
+        if !self.expansion_port_explicit
+            && self.hardware_mode == HardwareMode::Famicom
+            && self.expansion_port != ExpansionPort::ZapperFamicom
+        {
+            self.expansion_port = ExpansionPort::ZapperFamicom;
+            return true;
+        }
+
+        false
     }
 
     pub fn apply_rom_db_famicom_region_hint(&mut self, is_japan: bool) -> bool {
@@ -5045,5 +5066,64 @@ filter=invalid-shader
             .apply_config_value("rebuild_cartridge_catalog", "true")
             .unwrap();
         assert!(config.rebuild_cartridge_catalog);
+    }
+
+    #[test]
+    fn test_config_apply_rom_db_zapper_famicom_hint_sets_expansion_when_already_famicom() {
+        let mut config = Config {
+            hardware_mode: HardwareMode::Famicom,
+            ..Default::default()
+        };
+
+        let changed = config.apply_rom_db_zapper_famicom_hint(true);
+
+        assert!(changed);
+        assert_eq!(config.expansion_port, ExpansionPort::ZapperFamicom);
+    }
+
+    #[test]
+    fn test_config_apply_rom_db_zapper_famicom_hint_no_change_when_nes_mode() {
+        let mut config = Config::default(); // Default is NES mode
+
+        let changed = config.apply_rom_db_zapper_famicom_hint(true);
+
+        assert!(!changed);
+        assert_eq!(config.expansion_port, ExpansionPort::None);
+    }
+
+    #[test]
+    fn test_config_apply_rom_db_zapper_famicom_hint_respects_explicit_expansion_override() {
+        let mut config = Config {
+            hardware_mode: HardwareMode::Famicom,
+            expansion_port: ExpansionPort::None,
+            expansion_port_explicit: true,
+            ..Default::default()
+        };
+
+        let changed = config.apply_rom_db_zapper_famicom_hint(true);
+
+        assert!(!changed);
+        assert_eq!(config.expansion_port, ExpansionPort::None);
+    }
+
+    #[test]
+    fn test_config_apply_rom_db_zapper_famicom_hint_false_is_noop() {
+        let mut config = Config {
+            hardware_mode: HardwareMode::Famicom,
+            ..Default::default()
+        };
+
+        let changed = config.apply_rom_db_zapper_famicom_hint(false);
+
+        assert!(!changed);
+        assert_eq!(config.expansion_port, ExpansionPort::None);
+    }
+
+    #[test]
+    fn test_config_expansion_port_parse_zapper() {
+        assert_eq!(
+            ExpansionPort::parse("zapper"),
+            Some(ExpansionPort::ZapperFamicom)
+        );
     }
 }

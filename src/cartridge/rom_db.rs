@@ -248,6 +248,15 @@ impl RomDb {
         )
     }
 
+    /// Return whether ROM DB expansion type implies Famicom Zapper on expansion port.
+    pub fn has_zapper_famicom_expansion(&self, crc32: u32) -> bool {
+        matches!(
+            self.get_by_crc(crc32)
+                .and_then(|entry| entry.expansion_type),
+            Some(ExpansionType::Zapper4016 | ExpansionType::Zapper4017)
+        )
+    }
+
     /// Return whether ROM DB rom_class indicates a Japan-region (Famicom) ROM.
     pub fn is_japan_region(&self, crc32: u32) -> bool {
         self.get_by_crc(crc32)
@@ -756,5 +765,37 @@ mod tests {
             .expect("patched Sweet Home CRC should be present in ROM DB");
 
         assert_eq!(entry.mapper, Some(1));
+    }
+
+    #[test]
+    fn test_has_zapper_famicom_expansion_for_zapper_4017() {
+        let csv = "1,Duck Hunt Famicom,,24598791,,,,,,,,,,,,,,,,,,8\n";
+        let db = RomDb::from_csv_content(csv);
+
+        assert!(db.has_zapper_famicom_expansion(0x24598791));
+    }
+
+    #[test]
+    fn test_has_zapper_famicom_expansion_for_zapper_4016() {
+        let csv = "1,Zapper Game,,24598791,,,,,,,,,,,,,,,,,,73\n";
+        let db = RomDb::from_csv_content(csv);
+
+        assert!(db.has_zapper_famicom_expansion(0x24598791));
+    }
+
+    #[test]
+    fn test_has_zapper_famicom_expansion_false_for_standard_controllers() {
+        let csv = "1,Normal Game,,24598791,,,,,,,,,,,,,,,,,,1\n";
+        let db = RomDb::from_csv_content(csv);
+
+        assert!(!db.has_zapper_famicom_expansion(0x24598791));
+    }
+
+    #[test]
+    fn test_has_zapper_famicom_expansion_false_for_unknown_crc() {
+        let csv = "1,Duck Hunt Famicom,,24598791,,,,,,,,,,,,,,,,,,8\n";
+        let db = RomDb::from_csv_content(csv);
+
+        assert!(!db.has_zapper_famicom_expansion(0xDEADBEEF));
     }
 }

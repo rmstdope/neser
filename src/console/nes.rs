@@ -162,6 +162,11 @@ impl Nes {
             .borrow()
             .rom_db()
             .has_arkanoid_famicom_expansion(cartridge_crc32);
+        let has_zapper_famicom_expansion = self
+            .app_context
+            .borrow()
+            .rom_db()
+            .has_zapper_famicom_expansion(cartridge_crc32);
         let is_japan_region = self
             .app_context
             .borrow()
@@ -183,6 +188,11 @@ impl Nes {
             .borrow_mut()
             .config_mut()
             .apply_rom_db_arkanoid_famicom_hint(has_arkanoid_famicom_expansion);
+
+        self.app_context
+            .borrow_mut()
+            .config_mut()
+            .apply_rom_db_zapper_famicom_hint(has_zapper_famicom_expansion);
 
         // Propagate any hardware-mode change from ROM DB hint to the live PPU
         let is_famicom = self.app_context.borrow().config().hardware_mode
@@ -216,7 +226,12 @@ impl Nes {
             return;
         }
 
-        let auto_controller = if zapper_port != 0 {
+        // When the Zapper is on the Famicom expansion port, don't also put it on a
+        // standard controller port — the expansion port read path handles it.
+        let zapper_on_expansion = self.app_context.borrow().config().expansion_port
+            == crate::console::ExpansionPort::ZapperFamicom;
+
+        let auto_controller = if zapper_port != 0 && !zapper_on_expansion {
             Some((zapper_port, ControllerType::Zapper))
         } else if arkanoid_port != 0 {
             Some((arkanoid_port, ControllerType::Arkanoid))
@@ -532,6 +547,11 @@ impl Nes {
     /// Check if the expansion port has a mouse-controlled device.
     pub fn has_expansion_mouse_controller(&self) -> bool {
         self.bus.borrow().has_expansion_mouse_controller()
+    }
+
+    /// Check if a Zapper is connected to the Famicom expansion port.
+    pub fn has_expansion_zapper(&self) -> bool {
+        self.bus.borrow().has_expansion_zapper()
     }
 
     /// Check if a Zapper is active on the specified port.
@@ -2088,6 +2108,8 @@ mod tests {
     fn test_insert_cartridge_enables_zapper_for_known_crc() {
         let rom_data = create_minimal_nrom_rom();
         let mut cartridge = load_test_cartridge(&rom_data);
+        // Duck Hunt (Japan) — Famicom ROM with Zapper4017 expansion type.
+        // On Famicom, the Zapper goes to the expansion port, not a controller port.
         cartridge.set_crc32_for_test(0x24598791);
 
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
@@ -2095,6 +2117,7 @@ mod tests {
         ));
         nes.insert_cartridge(cartridge);
 
+        // Both controller ports should remain Joypads
         let bus_state = nes.bus.borrow().capture_state();
         assert!(matches!(
             bus_state.port1_controller,
@@ -2102,8 +2125,14 @@ mod tests {
         ));
         assert!(matches!(
             bus_state.port2_controller,
-            crate::bus::ControllerStateWrapper::Zapper(_)
+            crate::bus::ControllerStateWrapper::Joypad(_)
         ));
+
+        // Expansion port should be configured for Zapper
+        assert_eq!(
+            nes.app_context.borrow().config().expansion_port,
+            crate::console::ExpansionPort::ZapperFamicom
+        );
     }
 
     #[test]
