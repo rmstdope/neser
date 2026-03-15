@@ -657,12 +657,13 @@ mod tests {
 
     #[test]
     fn test_unsupported_mapper() {
-        let rom_data = create_test_rom_with_mapper(1, 1, 0xFD, false, 1);
+        // Use mapper 252 (not yet implemented) to test the unsupported-mapper error path.
+        let rom_data = create_test_rom_with_mapper(1, 1, 0xFC, false, 1);
 
         let result = load_cartridge_from_bytes(&rom_data);
         assert!(matches!(
             result,
-            Err(CartridgeError::UnsupportedMapper(0xFD))
+            Err(CartridgeError::UnsupportedMapper(0xFC))
         ));
     }
 

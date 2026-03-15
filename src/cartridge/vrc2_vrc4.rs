@@ -415,6 +415,24 @@ impl Vrc2Vrc4Mapper {
         }
     }
 
+    /// Return the raw (non-wrapped) CHR bank register value for the 1KB slot
+    /// that covers the given PPU address.
+    ///
+    /// Each 1KB slot covers 0x400 bytes in the pattern table range $0000-$1FFF.
+    /// The raw value is the value stored in the CHR bank register _before_
+    /// modulo-wrapping against CHR-ROM size, which allows callers to detect
+    /// special-meaning bank numbers (e.g., CHR-RAM banks).
+    ///
+    /// `ppu_addr` is expected to be in the pattern table range ($0000-$1FFF).
+    pub fn raw_chr_1k_bank(&self, ppu_addr: u16) -> u16 {
+        debug_assert!(ppu_addr < 0x2000, "raw_chr_1k_bank called with non-pattern-table PPU address: {ppu_addr:04X}");
+
+        // Normalise to $0000-$1FFF in case callers accidentally pass a mirrored address.
+        let ppu = (ppu_addr & 0x1FFF) as usize;
+        let slot = ppu >> 10; // divide by 1024 (1KB slots)
+        self.chr_banks_1k[slot & 7]
+    }
+
     /// Handle a normalised IRQ register write ($F000-$F003).
     ///
     /// VRC2 variants silently ignore these writes (no IRQ hardware).
