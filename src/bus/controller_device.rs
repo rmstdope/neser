@@ -129,13 +129,19 @@ impl BusDevice for ControllerDevice {
     fn read(&mut self, addr: u16, open_bus: u8, is_dummy_read: bool) -> Option<u8> {
         let index = (addr - 0x4016) as usize;
 
-        let controller_state = if self.four_score_enabled {
+        let mut controller_state = if self.four_score_enabled {
             self.read_four_score_bit(index, is_dummy_read)
         } else if self.famicom_four_players_enabled {
             self.read_famicom_four_players_bit(index, is_dummy_read)
         } else {
             self.controllers[index].borrow_mut().read(is_dummy_read)
         };
+        // In Famicom mode, $4016 bit 2 is the controller 2 microphone line.
+        // Until mic input is implemented, we explicitly stub it as always 0
+        // to match hardware docs/tests and avoid leaking controller state.
+        if self.famicom_mode && addr == 0x4016 {
+            controller_state &= !0x04;
+        }
         // Open bus behavior differs by hardware model:
         // NES-001: bits 5-7 are open bus; bits 0-4 driven by controller I/O.
         // Famicom (HVC-001): bits 3-7 are open bus; bits 0-2 driven
