@@ -207,12 +207,17 @@ impl Mapper for Mapper268 {
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        if data.len() >= 4 {
+        // Only treat the last 4 bytes as ex_regs if there is enough data left
+        // for a valid MMC3 snapshot (minimum 13 bytes).
+        if data.len() >= 4 + 13 {
             let (mmc3_part, ex_part) = data.split_at(data.len() - 4);
             self.mmc3.restore_registers(mmc3_part);
             self.ex_regs.copy_from_slice(ex_part);
         } else {
+            // Snapshot does not contain separate ex_regs; restore MMC3 only
+            // and reset ex_regs to a known default state.
             self.mmc3.restore_registers(data);
+            self.ex_regs = [0u8; 4];
         }
     }
 
