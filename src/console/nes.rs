@@ -163,6 +163,11 @@ impl Nes {
             .config_mut()
             .apply_rom_db_famicom_four_players_hint(has_famicom_four_players_expansion);
 
+        // Propagate any hardware-mode change from ROM DB hint to the live PPU
+        let is_famicom = self.app_context.borrow().config().hardware_mode
+            == crate::console::HardwareMode::Famicom;
+        self.ppu.borrow_mut().set_famicom_emphasis(is_famicom);
+
         // Initialize cartridge RAM (PRG-RAM and CHR-RAM) based on config
         let ram_init_mode = self.app_context.borrow().config().ram_init_mode;
         cartridge.initialize_ram(ram_init_mode);
@@ -2379,6 +2384,34 @@ mod tests {
             value & 0x02,
             0x02,
             "Player 3 A button should appear on bit 1 of $4016 in Famicom four-player mode"
+        );
+    }
+
+    #[test]
+    fn test_insert_cartridge_propagates_famicom_emphasis_to_ppu() {
+        // Start with default NES mode — PPU has famicom_emphasis=false
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        assert!(
+            !nes.ppu.borrow().famicom_emphasis,
+            "PPU should start without Famicom emphasis in NES mode"
+        );
+
+        // Manually set the ROM DB hint so insert_cartridge triggers Famicom auto-detect
+        nes.app_context
+            .borrow_mut()
+            .config_mut()
+            .apply_rom_db_famicom_four_players_hint(true);
+
+        let rom_data = create_minimal_rom();
+        let cartridge = load_test_cartridge(&rom_data);
+        nes.insert_cartridge(cartridge);
+
+        // After insert_cartridge, the PPU emphasis should now reflect Famicom mode
+        assert!(
+            nes.ppu.borrow().famicom_emphasis,
+            "PPU should have Famicom emphasis after ROM DB hint sets Famicom mode"
         );
     }
 }
