@@ -94,7 +94,6 @@ pub struct CpuTraceLine {
 }
 
 pub struct Nes {
-    // TODO pub fields smell
     app_context: SharedAppContext,
     ppu: SharedPpu,
     apu: SharedApu,
