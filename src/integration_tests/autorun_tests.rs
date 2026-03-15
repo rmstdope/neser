@@ -5,7 +5,7 @@ mod tests {
     use crate::app_context::AppContext;
     use crate::autorun::{headless_playback::run_headless_playback, load_autorun_file};
     use crate::cartridge::{Cartridge, TimingMode as CartridgeTimingMode};
-    use crate::console::{Config, Nes, RamInitMode, TimingMode};
+    use crate::console::{Config, HardwareModel, Nes, RamInitMode};
 
     fn deterministic_config() -> Config {
         Config {
@@ -14,14 +14,8 @@ mod tests {
         }
     }
 
-    fn timing_mode_for_cartridge(timing_mode: CartridgeTimingMode) -> TimingMode {
-        match timing_mode {
-            CartridgeTimingMode::Pal => TimingMode::Pal,
-            CartridgeTimingMode::Ntsc => TimingMode::Ntsc,
-            CartridgeTimingMode::MultiRegion
-            | CartridgeTimingMode::Dendy
-            | CartridgeTimingMode::Unknown(_) => TimingMode::Ntsc,
-        }
+    fn hardware_model_for_cartridge(timing_mode: CartridgeTimingMode) -> HardwareModel {
+        HardwareModel::from_timing_mode(timing_mode)
     }
 
     #[allow(dead_code)]
@@ -32,7 +26,7 @@ mod tests {
             .map_err(|e| format!("Failed to parse ROM {}: {e}", rom_path.display()))?;
 
         let mut config = deterministic_config();
-        config.tv_system = timing_mode_for_cartridge(cartridge.rom_timing_mode());
+        config.hardware_model = hardware_model_for_cartridge(cartridge.rom_timing_mode());
 
         let mut nes = Nes::new(AppContext::new_with_config(config));
         nes.insert_cartridge(cartridge);

@@ -22,7 +22,7 @@ pub(crate) mod tests {
     ///   function is called to determine pass/fail.
     ///
     use crate::cartridge::Cartridge;
-    use crate::console::{Config, Nes, RamInitMode};
+    use crate::console::{Config, HardwareModel, Nes, RamInitMode};
     use crate::debugging::{Tracing, init_tracing};
     use crate::input::Button;
     use std::fs;
@@ -152,23 +152,11 @@ pub(crate) mod tests {
             let mut config = test_default_config();
 
             // Use override if provided, otherwise auto-detect from ROM header
-            if let Some(tv_system) = self.tv_system_override {
-                config.tv_system = tv_system;
+            if let Some(timing_mode_override) = self.tv_system_override {
+                config.hardware_model = HardwareModel::from_timing_mode(timing_mode_override);
             } else {
-                match cartridge.rom_timing_mode() {
-                    crate::cartridge::TimingMode::Pal => {
-                        config.tv_system = crate::console::TimingMode::Pal;
-                    }
-                    crate::cartridge::TimingMode::Ntsc => {
-                        config.tv_system = crate::console::TimingMode::Ntsc;
-                    }
-                    crate::cartridge::TimingMode::MultiRegion
-                    | crate::cartridge::TimingMode::Dendy
-                    | crate::cartridge::TimingMode::Unknown(_) => {
-                        // Default to NTSC for unknown region
-                        config.tv_system = crate::console::TimingMode::Ntsc;
-                    }
-                }
+                config.hardware_model =
+                    HardwareModel::from_timing_mode(cartridge.rom_timing_mode());
             }
 
             // Use RAM init mode override if provided
@@ -182,12 +170,9 @@ pub(crate) mod tests {
             nes.reset(false);
 
             // CPU cycles per frame depends on TV system
-            let cpu_cycles_per_frame = match nes.app_context().borrow().config().tv_system {
-                crate::console::TimingMode::Ntsc => 29_780u32,
-                crate::console::TimingMode::Pal => 33_247u32,
-                crate::console::TimingMode::MultiRegion
-                | crate::console::TimingMode::Dendy
-                | crate::console::TimingMode::Unknown(_) => 29_780u32,
+            let cpu_cycles_per_frame = match nes.app_context().borrow().config().hardware_model {
+                HardwareModel::NesNtsc => 29_780u32,
+                HardwareModel::NesPal => 33_247u32,
             };
 
             let mut running = false;
@@ -388,32 +373,16 @@ pub(crate) mod tests {
 
         // Create NES with configuration based on cartridge's TV system
         let mut config = test_default_config();
-        match cartridge.rom_timing_mode() {
-            crate::cartridge::TimingMode::Pal => {
-                config.tv_system = crate::console::TimingMode::Pal;
-            }
-            crate::cartridge::TimingMode::Ntsc => {
-                config.tv_system = crate::console::TimingMode::Ntsc;
-            }
-            crate::cartridge::TimingMode::MultiRegion
-            | crate::cartridge::TimingMode::Dendy
-            | crate::cartridge::TimingMode::Unknown(_) => {
-                // Default to NTSC for unknown region
-                config.tv_system = crate::console::TimingMode::Ntsc;
-            }
-        }
+        config.hardware_model = HardwareModel::from_timing_mode(cartridge.rom_timing_mode());
 
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
         nes.insert_cartridge(cartridge);
         nes.reset(false);
 
         // CPU cycles per frame depends on TV system
-        let cpu_cycles_per_frame = match nes.app_context().borrow().config().tv_system {
-            crate::console::TimingMode::Ntsc => 29_780u32,
-            crate::console::TimingMode::Pal => 33_247u32,
-            crate::console::TimingMode::MultiRegion
-            | crate::console::TimingMode::Dendy
-            | crate::console::TimingMode::Unknown(_) => 29_780u32,
+        let cpu_cycles_per_frame = match nes.app_context().borrow().config().hardware_model {
+            HardwareModel::NesNtsc => 29_780u32,
+            HardwareModel::NesPal => 33_247u32,
         };
 
         for _frame in 1..=max_frames {
@@ -680,19 +649,8 @@ pub(crate) mod tests {
                     ram_init_mode: $crate::console::RamInitMode::Zero,
                     ..Default::default()
                 };
-                match cartridge.rom_timing_mode() {
-                    $crate::cartridge::TimingMode::Pal => {
-                        config.tv_system = $crate::console::TimingMode::Pal;
-                    }
-                    $crate::cartridge::TimingMode::Ntsc => {
-                        config.tv_system = $crate::console::TimingMode::Ntsc;
-                    }
-                    $crate::cartridge::TimingMode::MultiRegion
-                    | $crate::cartridge::TimingMode::Dendy
-                    | $crate::cartridge::TimingMode::Unknown(_) => {
-                        config.tv_system = $crate::console::TimingMode::Ntsc;
-                    }
-                }
+                config.hardware_model =
+                    $crate::console::HardwareModel::from_timing_mode(cartridge.rom_timing_mode());
 
                 let mut nes = $crate::console::Nes::new(
                     $crate::app_context::AppContext::new_with_config(config),
