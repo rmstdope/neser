@@ -27,7 +27,7 @@ use crate::cartridge::{Mapper, MapperCapabilities};
 /// - Bit 1 (`0x02`): when set, enables PRG and CHR bank address scrambling
 ///
 /// PRG scrambling (when bit 1 of $5000 is set):
-/// - For bank values < 0x20: permutes bits `[p4, p3, p2, p1, p0]` → `[p2, p1, p4, p3, p0]`
+/// - For bank values < 0x20: permutes bits `[p4, p3, p2, p1, p0]` → `[p2, p1, p3, p4, p0]`
 /// - For bank values ≥ 0x20: subtracts 0x20 then applies the CHR scrambling formula
 ///
 /// CHR scrambling (when bit 1 of $5000 is set):
