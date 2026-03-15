@@ -552,7 +552,8 @@ impl WasmNes {
             .app_context()
             .borrow()
             .config()
-            .tv_system
+            .hardware_model
+            .timing_mode()
             .frame_rate_hz()
     }
 

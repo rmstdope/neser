@@ -1521,6 +1521,11 @@ impl Config {
                     self.four_score_enabled = b;
                 }
             }
+            "fullscreen" => {
+                if let Ok(b) = Self::parse_bool(value) {
+                    self.fullscreen = b;
+                }
+            }
             "display" => {
                 if let Ok(d) = value.parse::<i32>()
                     && d >= 0
