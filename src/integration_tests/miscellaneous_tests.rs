@@ -1086,6 +1086,258 @@ mod tests {
         );
     }
 
+    /////////////////////////////////////
+    // Allpads Famicom controller scenario (#1574)
+    /////////////////////////////////////
+
+    /// Returns a Famicom-mode config with two explicitly configured joypads so
+    /// that allpads can detect them as Famicom hardwired controllers (FC 1P / FC 2P).
+    fn famicom_two_joypads_config() -> crate::console::Config {
+        use crate::console::{Config, HardwareMode, RamInitMode};
+        use crate::input::ControllerType;
+        Config {
+            hardware_mode: HardwareMode::Famicom,
+            hardware_mode_explicit: true,
+            ram_init_mode: RamInitMode::Zero,
+            controller_port1: ControllerType::Joypad,
+            controller_port2: ControllerType::Joypad,
+            controller_port1_explicit: true,
+            controller_port2_explicit: true,
+            ..Default::default()
+        }
+    }
+
+    /// Issue #1574: allpads probe should identify both Famicom hardwired controllers
+    /// when hardware mode is set to Famicom with two standard joypads. allpads
+    /// recognises the open-bus signature (bits 3-4 floating) and two D0 controllers,
+    /// then replaces them with TYPE_FC_1P ("Famicom Controller") and TYPE_FC_2P
+    /// ("Famicom Mic Controller").
+    #[test]
+    fn allpads_famicom_probe_identifies_famicom_controllers() {
+        let config = famicom_two_joypads_config();
+        let result = run_allpads_with_config(&config, &[], 300, 0);
+        let cap = &result.captures[0];
+        assert!(
+            cap.nametable_text.contains("FAMICOM"),
+            "Probe should identify Famicom 1P controller, got:\n{}",
+            cap.nametable_text
+        );
+        assert!(
+            cap.nametable_text.contains("MIC"),
+            "Probe should identify Famicom Mic (2P) controller, got:\n{}",
+            cap.nametable_text
+        );
+    }
+
+    /// Issue #1574: pressing A on port 1 should select the Famicom 1P hardwired
+    /// controller, which maps to the standard NES controller test.
+    #[test]
+    fn allpads_famicom_1p_a_press_enters_nes_controller_test() {
+        let config = famicom_two_joypads_config();
+        let script = script_enter_test_and_press(Button::A);
+        let result = run_allpads_with_config(&config, &script, 420, 0);
+        let cap = &result.captures[0];
+        assert!(
+            cap.nametable_text.contains("NES CONTROLLER"),
+            "Pressing A on 1P should enter NES controller test, got:\n{}",
+            cap.nametable_text
+        );
+        assert_only_sprite_highlighted(&cap.oam_data, 0);
+    }
+
+    // NES serial bit order: A=0, B=1, Select=2, Start=3, Up=4, Down=5, Left=6, Right=7
+    // Each maps to sprite index 0-7 on the NES CONTROLLER test screen.
+
+    #[test]
+    fn allpads_famicom_1p_b_press_highlighted() {
+        let config = famicom_two_joypads_config();
+        let script = script_enter_test_and_press(Button::B);
+        let result = run_allpads_with_config(&config, &script, 420, 0);
+        assert_only_sprite_highlighted(&result.captures[0].oam_data, 1);
+    }
+
+    #[test]
+    fn allpads_famicom_1p_select_press_highlighted() {
+        let config = famicom_two_joypads_config();
+        let script = script_enter_test_and_press(Button::Select);
+        let result = run_allpads_with_config(&config, &script, 420, 0);
+        assert_only_sprite_highlighted(&result.captures[0].oam_data, 2);
+    }
+
+    #[test]
+    fn allpads_famicom_1p_start_press_highlighted() {
+        let config = famicom_two_joypads_config();
+        let script = script_enter_test_and_press(Button::Start);
+        let result = run_allpads_with_config(&config, &script, 420, 0);
+        assert_only_sprite_highlighted(&result.captures[0].oam_data, 3);
+    }
+
+    #[test]
+    fn allpads_famicom_1p_up_press_highlighted() {
+        let config = famicom_two_joypads_config();
+        let script = script_enter_test_and_press(Button::Up);
+        let result = run_allpads_with_config(&config, &script, 420, 0);
+        assert_only_sprite_highlighted(&result.captures[0].oam_data, 4);
+    }
+
+    #[test]
+    fn allpads_famicom_1p_down_press_highlighted() {
+        let config = famicom_two_joypads_config();
+        let script = script_enter_test_and_press(Button::Down);
+        let result = run_allpads_with_config(&config, &script, 420, 0);
+        assert_only_sprite_highlighted(&result.captures[0].oam_data, 5);
+    }
+
+    #[test]
+    fn allpads_famicom_1p_left_press_highlighted() {
+        let config = famicom_two_joypads_config();
+        let script = script_enter_test_and_press(Button::Left);
+        let result = run_allpads_with_config(&config, &script, 420, 0);
+        assert_only_sprite_highlighted(&result.captures[0].oam_data, 6);
+    }
+
+    #[test]
+    fn allpads_famicom_1p_right_press_highlighted() {
+        let config = famicom_two_joypads_config();
+        let script = script_enter_test_and_press(Button::Right);
+        let result = run_allpads_with_config(&config, &script, 420, 0);
+        assert_only_sprite_highlighted(&result.captures[0].oam_data, 7);
+    }
+
+    /// Issue #1574: pressing A on port 2 should select the Famicom 2P hardwired
+    /// controller, which maps to the Famicom Mic controller test.
+    #[test]
+    fn allpads_famicom_2p_a_press_enters_mic_controller_test() {
+        let config = famicom_two_joypads_config();
+        let script = vec![
+            ScriptEntry {
+                frame: 300,
+                actions: vec![InputAction::Button {
+                    port: 2,
+                    button: Button::A,
+                    pressed: true,
+                }],
+            },
+            ScriptEntry {
+                frame: 305,
+                actions: vec![InputAction::Button {
+                    port: 2,
+                    button: Button::A,
+                    pressed: false,
+                }],
+            },
+        ];
+        let result = run_allpads_with_config(&config, &script, 420, 0);
+        let cap = &result.captures[0];
+        assert!(
+            cap.nametable_text.contains("FAMICOM MIC CONTROLLER"),
+            "Pressing A on 2P should enter Famicom Mic controller test, got:\n{}",
+            cap.nametable_text
+        );
+    }
+
+    /// Builds a script that enters the FC 2P (Mic) test by pressing A on port 2
+    /// at frame 300, then presses `button` on port 2 at frame 400.
+    ///
+    /// Note: pressing Select or Start on FC 2P causes allpads to switch to the
+    /// NES controller test screen, so those buttons are intentionally excluded.
+    fn script_enter_famicom_2p_test_and_press(button: Button) -> Vec<ScriptEntry> {
+        vec![
+            ScriptEntry {
+                frame: 300,
+                actions: vec![InputAction::Button {
+                    port: 2,
+                    button: Button::A,
+                    pressed: true,
+                }],
+            },
+            ScriptEntry {
+                frame: 305,
+                actions: vec![InputAction::Button {
+                    port: 2,
+                    button: Button::A,
+                    pressed: false,
+                }],
+            },
+            ScriptEntry {
+                frame: 400,
+                actions: vec![InputAction::Button {
+                    port: 2,
+                    button,
+                    pressed: true,
+                }],
+            },
+        ]
+    }
+
+    // FC 2P (Mic) controller: NES serial bit order A=0, B=1, Up=4, Down=5, Left=6, Right=7.
+    // Select (sprite 2) and Start (sprite 3) are hidden off-screen on FC 2P and pressing
+    // them causes allpads to switch screens, so they are not tested here.
+
+    #[test]
+    fn allpads_famicom_2p_a_press_highlighted() {
+        let config = famicom_two_joypads_config();
+        let script = script_enter_famicom_2p_test_and_press(Button::A);
+        let result = run_allpads_with_config(&config, &script, 420, 0);
+        assert_only_sprite_highlighted(&result.captures[0].oam_data, 0);
+    }
+
+    #[test]
+    fn allpads_famicom_2p_b_press_highlighted() {
+        let config = famicom_two_joypads_config();
+        let script = script_enter_famicom_2p_test_and_press(Button::B);
+        let result = run_allpads_with_config(&config, &script, 420, 0);
+        assert_only_sprite_highlighted(&result.captures[0].oam_data, 1);
+    }
+
+    #[test]
+    fn allpads_famicom_2p_up_press_highlighted() {
+        let config = famicom_two_joypads_config();
+        let script = script_enter_famicom_2p_test_and_press(Button::Up);
+        let result = run_allpads_with_config(&config, &script, 420, 0);
+        assert_only_sprite_highlighted(&result.captures[0].oam_data, 4);
+    }
+
+    #[test]
+    fn allpads_famicom_2p_down_press_highlighted() {
+        let config = famicom_two_joypads_config();
+        let script = script_enter_famicom_2p_test_and_press(Button::Down);
+        let result = run_allpads_with_config(&config, &script, 420, 0);
+        assert_only_sprite_highlighted(&result.captures[0].oam_data, 5);
+    }
+
+    #[test]
+    fn allpads_famicom_2p_left_press_highlighted() {
+        let config = famicom_two_joypads_config();
+        let script = script_enter_famicom_2p_test_and_press(Button::Left);
+        let result = run_allpads_with_config(&config, &script, 420, 0);
+        assert_only_sprite_highlighted(&result.captures[0].oam_data, 6);
+    }
+
+    #[test]
+    fn allpads_famicom_2p_right_press_highlighted() {
+        let config = famicom_two_joypads_config();
+        let script = script_enter_famicom_2p_test_and_press(Button::Right);
+        let result = run_allpads_with_config(&config, &script, 420, 0);
+        assert_only_sprite_highlighted(&result.captures[0].oam_data, 7);
+    }
+
+    /// Issue #1574: Famicom controller probe results should be fully deterministic.
+    #[test]
+    fn allpads_famicom_controller_scenario_is_deterministic() {
+        let config = famicom_two_joypads_config();
+        let result1 = run_allpads_with_config(&config, &[], 300, 0);
+        let result2 = run_allpads_with_config(&config, &[], 300, 0);
+        assert_eq!(
+            result1.captures[0].nametable_raw, result2.captures[0].nametable_raw,
+            "Famicom controller probe should be deterministic"
+        );
+        assert_eq!(
+            result1.captures[0].oam_data, result2.captures[0].oam_data,
+            "Famicom controller OAM should be deterministic"
+        );
+    }
+
     setup_rom_console_test!(
         test_read_joy3_count_errors,
         "roms/automated_tests/read_joy3/count_errors.nes",
