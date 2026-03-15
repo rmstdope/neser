@@ -779,7 +779,7 @@ impl Config {
         if let Some(expansion_port) = Self::parse_string_arg(args, "--expansion-port") {
             let parsed = ExpansionPort::parse(&expansion_port).ok_or_else(|| {
                 format!(
-                    "Invalid --expansion-port value: '{}'. Valid options are: none, famicom-four-players, arkanoid",
+                    "Invalid --expansion-port value: '{}'. Valid options are: none, famicom-four-players, arkanoid, zapper",
                     expansion_port
                 )
             })?;

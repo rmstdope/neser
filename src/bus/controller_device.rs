@@ -177,7 +177,10 @@ impl ControllerDevice {
             .borrow_mut()
             .read(is_dummy_read);
 
-        if let Some(ref zapper) = self.zapper_expansion {
+        // Famicom expansion connector only routes bits 1-4 on $4017;
+        // $4016 only exposes bit 1 from expansion, so Zapper bits 3-4
+        // are not connected on $4016 reads.
+        if let (1, Some(zapper)) = (port_index, &self.zapper_expansion) {
             // Zapper expansion port: trigger on bit 4, light sense on bit 3
             let zapper_bits = zapper.borrow_mut().read(is_dummy_read);
             controller_state = (controller_state & !0x18) | (zapper_bits & 0x18);
@@ -212,9 +215,12 @@ impl BusDevice for ControllerDevice {
         // NES-001: bits 5-7 are open bus; bits 0-4 driven by controller I/O.
         // Famicom (HVC-001): bits 3-7 are open bus; bits 0-2 driven
         //   (bit 0 = serial data, bit 1 = expansion port, bit 2 = mic/$4016 only).
-        // When Zapper expansion is active, bits 3-4 are driven by the Zapper
-        //   via the expansion port pins, so only bits 5-7 are open bus.
-        let open_bus_mask = if self.famicom_mode && !self.zapper_famicom_enabled {
+        // When Zapper expansion is active on $4017, bits 3-4 are driven by
+        //   the Zapper via the expansion port pins, so only bits 5-7 are open bus.
+        //   $4016 keeps the standard Famicom mask since bits 3-4 are not routed
+        //   to the expansion connector on that port.
+        let open_bus_mask = if self.famicom_mode && !(self.zapper_famicom_enabled && addr == 0x4017)
+        {
             0xF8
         } else {
             0xE0
@@ -731,17 +737,18 @@ mod tests {
         );
     }
 
-    /// Famicom Zapper expansion port: trigger should also appear on bit 4 of $4016 reads.
+    /// Famicom expansion connector only routes bits 1-4 on $4017; $4016 does
+    /// not carry Zapper bits 3-4, so trigger must NOT appear on $4016.
     #[test]
-    fn test_zapper_famicom_expansion_trigger_on_4016_bit4() {
+    fn test_zapper_famicom_expansion_trigger_not_on_4016() {
         let (mut device, zapper) = create_zapper_expansion_device();
 
         zapper.borrow_mut().set_mouse_left_button(true);
         let value = device.read(0x4016, 0x00, false).unwrap();
         assert_eq!(
             value & 0x10,
-            0x10,
-            "Trigger bit 4 should be 1 on $4016 when pressed, got ${:02X}",
+            0x00,
+            "Trigger bit 4 should NOT appear on $4016 (expansion bits only on $4017), got ${:02X}",
             value
         );
     }
@@ -776,11 +783,11 @@ mod tests {
         );
     }
 
-    /// When Zapper expansion is active in Famicom mode, bits 3-4 should NOT
-    /// be masked as open bus (the Zapper drives these expansion port pins).
+    /// When Zapper expansion is active in Famicom mode, bits 3-4 on $4017
+    /// should NOT be masked as open bus (the Zapper drives these expansion port pins).
     /// With open_bus = 0x00, the only source for bits 3-4 is the Zapper.
     #[test]
-    fn test_zapper_famicom_expansion_open_bus_preserves_bits_3_4() {
+    fn test_zapper_famicom_expansion_open_bus_preserves_bits_3_4_on_4017() {
         let (mut device, zapper) = create_zapper_expansion_device();
 
         // Trigger pressed (bit 4), no light (bit 3) → both should come from Zapper, not open bus
@@ -790,6 +797,23 @@ mod tests {
             value & 0x18,
             0x18,
             "Bits 3-4 should be driven by Zapper expansion (not open bus 0x00). Got ${:02X}",
+            value
+        );
+    }
+
+    /// On $4016, bits 3-4 should remain open bus even with Zapper expansion active,
+    /// since the Famicom expansion connector doesn't route those bits to $4016.
+    #[test]
+    fn test_zapper_famicom_expansion_open_bus_4016_keeps_famicom_mask() {
+        let (mut device, zapper) = create_zapper_expansion_device();
+
+        // Trigger pressed, but $4016 should use Famicom open bus mask (0xF8)
+        zapper.borrow_mut().set_mouse_left_button(true);
+        let value = device.read(0x4016, 0xFF, false).unwrap();
+        assert_eq!(
+            value & 0xF8,
+            0xF8,
+            "$4016 bits 3-7 should be open bus (mask 0xF8) even with Zapper expansion. Got ${:02X}",
             value
         );
     }
