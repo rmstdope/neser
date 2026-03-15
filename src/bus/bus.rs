@@ -772,7 +772,11 @@ impl Bus {
                 crate::input::ControllerState::Paddle(s) => ControllerStateWrapper::Arkanoid(s),
                 crate::input::ControllerState::Zapper(s) => ControllerStateWrapper::Zapper(s),
             },
-            expansion_arkanoid: Some(self.expansion_arkanoid.borrow().capture_state()),
+            expansion_arkanoid: if self.is_arkanoid_famicom_configured() {
+                Some(self.expansion_arkanoid.borrow().capture_state())
+            } else {
+                None
+            },
         }
     }
 
@@ -1446,7 +1450,18 @@ mod tests {
 
     #[test]
     fn test_bus_save_state_roundtrip_with_expansion_arkanoid() {
-        let memory = create_test_memory();
+        let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
+        let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
+        let config = crate::console::Config {
+            ram_init_mode: crate::console::RamInitMode::Zero,
+            hardware_mode: HardwareMode::Famicom,
+            expansion_port: ExpansionPort::ArkanoidFamicom,
+            ..Default::default()
+        };
+        let app_context = Rc::new(RefCell::new(
+            crate::app_context::AppContext::new_with_config(config),
+        ));
+        let memory = Bus::new(ppu, apu, app_context.clone());
 
         // Set position on the expansion Arkanoid controller
         memory.expansion_arkanoid.borrow_mut().set_position(0xB0);
@@ -1461,12 +1476,23 @@ mod tests {
         assert!(arkanoid_state.trigger);
 
         // Restore and verify
-        let mut restored = create_test_memory();
+        let mut restored = Bus::new(
+            Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc))),
+            Rc::new(RefCell::new(crate::apu::Apu::new())),
+            app_context,
+        );
         restored.restore_state(&saved_state);
 
         let restored_state = restored.expansion_arkanoid.borrow().capture_state();
         assert_eq!(restored_state.position, 0xB0);
         assert!(restored_state.trigger);
+    }
+
+    #[test]
+    fn test_bus_save_state_omits_expansion_arkanoid_when_not_configured() {
+        let memory = create_test_memory();
+        let saved_state = memory.capture_state();
+        assert!(saved_state.expansion_arkanoid.is_none());
     }
 
     #[test]

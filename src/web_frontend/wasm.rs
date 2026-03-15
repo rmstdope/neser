@@ -527,7 +527,7 @@ impl WasmNes {
         Ok(())
     }
 
-    /// Set the expansion port: "none" or "famicom-four-players".
+    /// Set the expansion port: "none", "famicom-four-players", or "arkanoid".
     #[wasm_bindgen]
     pub fn set_expansion_port(&mut self, port: &str) -> Result<(), JsValue> {
         let app_context = self.app_context.clone();

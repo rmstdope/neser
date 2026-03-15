@@ -326,15 +326,25 @@ mod tests {
         paddle.write_strobe(1);
         paddle.write_strobe(0);
 
+        // Read first bit (non-dummy), advances shift index from 0 to 1
         let first = paddle.read_expansion_knob(false);
-        // Dummy read should return same bit position
-        paddle.write_strobe(1);
-        paddle.write_strobe(0);
-        let after_dummy = paddle.read_expansion_knob(true);
+        // Dummy read at index 1 should NOT advance the shift index
+        let dummy = paddle.read_expansion_knob(true);
+        // Next non-dummy read should return the same bit as the dummy
+        // (both read from index 1), proving the dummy did not consume a position
         let second = paddle.read_expansion_knob(false);
 
-        // First and second should be the same (dummy didn't advance)
-        assert_eq!(first, after_dummy);
-        assert_eq!(first, second);
+        // Dummy and second should match — both read from the same shift position
+        assert_eq!(dummy, second);
+
+        // Verify against a reference paddle that reads normally
+        let mut expected_paddle = ArkanoidController::new();
+        expected_paddle.set_position(0x92);
+        expected_paddle.write_strobe(1);
+        expected_paddle.write_strobe(0);
+        let expected_first = expected_paddle.read_expansion_knob(false);
+        let expected_second = expected_paddle.read_expansion_knob(false);
+        assert_eq!(first, expected_first);
+        assert_eq!(second, expected_second);
     }
 }
