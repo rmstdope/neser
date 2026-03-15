@@ -64,11 +64,8 @@ impl Mapper263 {
     const MAPPER_NUMBER: u16 = 263;
 
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
-        let prg_rom = ctx.prg_rom;
-        let chr_rom = ctx.chr_rom;
-        let mirroring = ctx.mirroring;
         Self {
-            mmc3: MMC3Mapper::new_with_irq_mode(prg_rom, chr_rom, mirroring, false),
+            mmc3: MMC3Mapper::new_with_irq_mode(ctx.prg_rom, ctx.chr_rom, ctx.mirroring, false),
         }
     }
 
@@ -126,17 +123,13 @@ impl Mapper for Mapper263 {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
-        if (0x6000..=0x7FFF).contains(&addr) {
-            self.mmc3.write_prg(addr, value);
-            return;
-        }
-        if (0x8000..=0xFFFF).contains(&addr) {
+        if addr >= 0x8000 {
             let scrambled = Self::scramble_value(value);
             let remapped = Self::remap_address(addr);
             self.mmc3.write_prg(remapped, scrambled);
-            return;
+        } else {
+            self.mmc3.write_prg(addr, value);
         }
-        self.mmc3.write_prg(addr, value);
     }
 
     fn read_chr(&mut self, addr: u16) -> u8 {

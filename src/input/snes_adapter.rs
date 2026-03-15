@@ -155,15 +155,11 @@ impl SnesAdapter {
     }
 
     fn can_use_mouse_mode(&self) -> bool {
-        !matches!(self.mode, SnesAdapterMode::Controller)
+        self.is_mouse_mode()
     }
 
     fn enable_mouse_mode(&mut self) -> bool {
-        if self.can_use_mouse_mode() {
-            true
-        } else {
-            false
-        }
+        self.can_use_mouse_mode()
     }
 
     fn to_signed_magnitude_delta(delta: i16) -> u8 {

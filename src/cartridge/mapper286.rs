@@ -117,16 +117,8 @@ impl Mapper for Mapper286 {
 
     fn registers_snapshot(&self) -> Vec<u8> {
         let mut data = Vec::with_capacity(16);
-        for &b in self.prg_banks.iter() {
-            let bytes = b.to_le_bytes();
-            data.push(bytes[0]);
-            data.push(bytes[1]);
-        }
-        for &b in self.chr_banks.iter() {
-            let bytes = b.to_le_bytes();
-            data.push(bytes[0]);
-            data.push(bytes[1]);
-        }
+        data.extend(self.prg_banks.iter().flat_map(|b| b.to_le_bytes()));
+        data.extend(self.chr_banks.iter().flat_map(|b| b.to_le_bytes()));
         data
     }
 
