@@ -4,7 +4,7 @@
 //! - Main: <https://www.nesdev.org/wiki/INES_Mapper_052>
 //!
 //! Known Limitations:
-//! - Submapper 13/14 (CHR RAM variants) are not implemented.
+//! - None currently known for submapper 0/13/14 CHR behavior.
 
 use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mmc3::MMC3Mapper;
@@ -17,8 +17,8 @@ use crate::trace_mapper;
 ///
 /// Specifications:
 /// - Main: <https://www.nesdev.org/wiki/INES_Mapper_052>
-/// - PRG-ROM: Up to 512 KiB (outer block extends MMC3 PRG banking)
-/// - CHR: Up to 512 KiB (outer block extends MMC3 CHR banking)
+/// - PRG-ROM: Up to 1 MiB on submapper 14 (outer block extends MMC3 PRG banking)
+/// - CHR: Up to 1 MiB on submapper 14 (outer block extends MMC3 CHR banking)
 /// - Mirroring: MMC3-controlled
 ///
 /// Outer bank register ($6000-$7FFF, write):
@@ -47,6 +47,9 @@ pub struct Mapper52 {
     pub(crate) mmc3: MMC3Mapper,
     outer: u8,
     locked: bool,
+    submapper: u8,
+    chr_ram_8k: Vec<u8>,
+    legacy_1mb_profile: bool,
 }
 
 impl Mapper52 {
@@ -58,14 +61,28 @@ impl Mapper52 {
     const CHR_1K_SIZE: usize = 0x0400; // 1 KiB
     const CHR_BANK_MASK: usize = Self::CHR_1K_SIZE - 1;
 
+    fn is_legacy_1mb_profile(submapper: u8, prg_len: usize, chr_len: usize) -> bool {
+        submapper == 0 && prg_len == 1024 * 1024 && chr_len == 1024 * 1024
+    }
+
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let legacy_1mb_profile =
+            Self::is_legacy_1mb_profile(ctx.submapper, ctx.prg_rom.len(), ctx.chr_rom.len());
         let prg_rom = ctx.prg_rom;
         let chr_rom = ctx.chr_rom;
         let mirroring = ctx.mirroring;
+        let submapper = ctx.submapper;
         Self {
             mmc3: MMC3Mapper::new_with_irq_mode(prg_rom, chr_rom, mirroring, false),
             outer: 0,
             locked: false,
+            submapper,
+            chr_ram_8k: if submapper == 13 || submapper == 14 {
+                vec![0; 8 * 1024]
+            } else {
+                Vec::new()
+            },
+            legacy_1mb_profile,
         }
     }
 
@@ -75,12 +92,21 @@ impl Mapper52 {
         prg_rom: Vec<u8>,
         chr_rom: Vec<u8>,
         mirroring: NametableLayout,
-        _submapper: u8,
+        submapper: u8,
     ) -> Self {
+        let legacy_1mb_profile =
+            Self::is_legacy_1mb_profile(submapper, prg_rom.len(), chr_rom.len());
         Self {
             mmc3: MMC3Mapper::new_with_irq_mode(prg_rom, chr_rom, mirroring, false),
             outer: 0,
             locked: false,
+            submapper,
+            chr_ram_8k: if submapper == 13 || submapper == 14 {
+                vec![0; 8 * 1024]
+            } else {
+                Vec::new()
+            },
+            legacy_1mb_profile,
         }
     }
 
@@ -100,21 +126,60 @@ impl Mapper52 {
     }
 
     fn apply_chr_block(&self, mmc3_raw_bank: usize) -> usize {
-        let b = ((self.outer >> 2) & 0x01) as usize; // B = bit 2
-        let c_bit = ((self.outer >> 5) & 0x01) as usize; // C = bit 5
-        let c_lo = ((self.outer >> 4) & 0x01) as usize; // c = bit 4
-        let t = ((self.outer >> 6) & 0x01) as usize; // T = bit 6
+        if self.legacy_1mb_profile {
+            let mode_a = ((self.outer >> 6) & 0x01) as usize;
+            let chr_block_bit2_b = ((self.outer >> 5) & 0x01) as usize;
+            let chr_block_bit0_c = ((self.outer >> 4) & 0x01) as usize;
+            let chr_block_bit1_e = ((self.outer >> 2) & 0x01) as usize;
+            let mmc3_chr_a17 = (mmc3_raw_bank >> 7) & 1;
 
+            let block = (chr_block_bit2_b << 2)
+                | (chr_block_bit1_e << 1)
+                | if mode_a != 0 {
+                    chr_block_bit0_c
+                } else {
+                    mmc3_chr_a17
+                };
+            let low = mmc3_raw_bank & 0x7F;
+            return (block << 7) | low;
+        }
+
+        let t = ((self.outer >> 6) & 0x01) as usize;
+        let c_lo = ((self.outer >> 4) & 0x01) as usize;
         let a17 = if t != 0 {
             c_lo
         } else {
             (mmc3_raw_bank >> 7) & 1
         };
         let low = mmc3_raw_bank & 0x7F;
-        let final_bank = (b << 9) | (c_bit << 8) | (a17 << 7) | low;
+
+        let final_bank = if self.submapper == 14 {
+            let bb = ((self.outer >> 1) & 0x03) as usize;
+            (bb << 8) | (a17 << 7) | low
+        } else {
+            let b = ((self.outer >> 2) & 0x01) as usize;
+            let c_bit = ((self.outer >> 5) & 0x01) as usize;
+            (b << 9) | (c_bit << 8) | (a17 << 7) | low
+        };
+
         trace_mapper!(3; "[52] CHR bank: outer=0x{:02X} T={} B={} C={} c={} raw={} -> final={}",
-            self.outer, t, b, c_bit, c_lo, mmc3_raw_bank, final_bank);
+            self.outer,
+            t,
+            (self.outer >> 2) & 1,
+            (self.outer >> 5) & 1,
+            c_lo,
+            mmc3_raw_bank,
+            final_bank
+        );
         final_bank
+    }
+
+    fn chr_ram_selected(&self) -> bool {
+        match self.submapper {
+            13 => (self.outer & 0x03) == 0x03,
+            14 => (self.outer & 0x20) != 0,
+            _ => false,
+        }
     }
 
     fn is_wram_window(addr: u16) -> bool {
@@ -195,17 +260,45 @@ impl Mapper for Mapper52 {
     }
 
     fn read_chr(&mut self, addr: u16) -> u8 {
-        let raw_bank = self.mmc3.mapped_chr_1k_bank(addr);
+        if self.chr_ram_selected() {
+            return self.chr_ram_8k[(addr as usize) & 0x1FFF];
+        }
+
+        let raw_bank = self.mmc3.raw_chr_1k_bank(addr);
         let final_bank = self.apply_chr_block(raw_bank);
         let offset = (addr as usize) & Self::CHR_BANK_MASK;
         self.mmc3.read_chr_1k_at(final_bank, offset)
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
-        let raw_bank = self.mmc3.mapped_chr_1k_bank(addr);
+        if self.chr_ram_selected() {
+            let index = (addr as usize) & 0x1FFF;
+            self.chr_ram_8k[index] = value;
+            return;
+        }
+
+        let raw_bank = self.mmc3.raw_chr_1k_bank(addr);
         let final_bank = self.apply_chr_block(raw_bank);
         let offset = (addr as usize) & Self::CHR_BANK_MASK;
         self.mmc3.write_chr_1k_at(final_bank, offset, value);
+    }
+
+    fn chr_ram_snapshot(&self) -> Vec<u8> {
+        if self.chr_ram_8k.is_empty() {
+            self.mmc3.chr_ram_snapshot()
+        } else {
+            self.chr_ram_8k.clone()
+        }
+    }
+
+    fn restore_chr_ram(&mut self, data: &[u8]) {
+        if self.chr_ram_8k.is_empty() {
+            self.mmc3.restore_chr_ram(data);
+            return;
+        }
+
+        let len = data.len().min(self.chr_ram_8k.len());
+        self.chr_ram_8k[..len].copy_from_slice(&data[..len]);
     }
 
     fn mapper_number(&self) -> u16 {
@@ -276,6 +369,14 @@ mod tests {
             chr,
             NametableLayout::Vertical,
         ))
+    }
+
+    fn make_mapper_with_submapper(submapper: u8, chr: Vec<u8>) -> Mapper52 {
+        let prg = banked_data(8 * 1024, PRG_BANKS);
+        Mapper52::new(
+            MapperContext::new_for_test(52, prg, chr, NametableLayout::Vertical)
+                .with_submapper(submapper),
+        )
     }
 
     #[test]
@@ -421,5 +522,91 @@ mod tests {
 
         let open_bus = 0x5A;
         assert_eq!(mapper.read_prg_open_bus(0x6000, open_bus), open_bus);
+    }
+
+    #[test]
+    fn submapper13_chr_ram_is_selected_when_prg_a18_and_a17_are_high() {
+        let chr_rom = vec![0x55; 1024 * CHR_1K_BANKS];
+        let mut mapper = make_mapper_with_submapper(13, chr_rom);
+
+        mapper.write_prg(0x6000, 0x03);
+        mapper.write_chr(0x0123, 0xAB);
+
+        assert_eq!(
+            mapper.read_chr(0x0123),
+            0xAB,
+            "Submapper 13 must route CHR reads/writes to 8KB CHR-RAM when PRG A18/A17 are both 1"
+        );
+    }
+
+    #[test]
+    fn submapper14_bit5_selects_chr_ram() {
+        let chr_rom = vec![0x33; 1024 * CHR_1K_BANKS];
+        let mut mapper = make_mapper_with_submapper(14, chr_rom);
+
+        mapper.write_prg(0x6000, 0x20);
+        mapper.write_chr(0x0042, 0xBE);
+
+        assert_eq!(
+            mapper.read_chr(0x0042),
+            0xBE,
+            "Submapper 14 must select CHR-RAM when outer bit 5 (R) is set"
+        );
+    }
+
+    #[test]
+    fn submapper14_uses_shared_bb_bits_for_chr_a19_a18() {
+        let chr_1k_banks = 1024;
+        let mut chr_rom = vec![0; chr_1k_banks * 1024];
+        for bank in 0..chr_1k_banks {
+            let value = ((bank >> 8) & 0xFF) as u8;
+            let start = bank * 1024;
+            let end = start + 1024;
+            chr_rom[start..end].fill(value);
+        }
+        let mut mapper = make_mapper_with_submapper(14, chr_rom);
+
+        mapper.write_prg(0x8000, 0x82);
+        mapper.write_prg(0x8001, 0x00);
+        mapper.write_prg(0x6000, 0x42);
+
+        assert_eq!(
+            mapper.read_chr(0x1000),
+            0x01,
+            "Submapper 14 must use shared BB bits (outer[2:1]) as CHR A19..A18"
+        );
+    }
+
+    #[test]
+    fn submapper0_1mb_profile_uses_legacy_chr_outer_decode() {
+        let prg = banked_data(8 * 1024, 128); // 1 MiB PRG
+        let chr_1k_banks = 1024; // 1 MiB CHR
+        let mut chr = vec![0; chr_1k_banks * 1024];
+        for bank in 0..chr_1k_banks {
+            let value = ((bank / 128) & 0xFF) as u8;
+            let start = bank * 1024;
+            let end = start + 1024;
+            chr[start..end].fill(value);
+        }
+
+        let mut mapper = Mapper52::new(MapperContext::new_for_test(
+            52,
+            prg,
+            chr,
+            NametableLayout::Vertical,
+        ));
+
+        // Program MMC3 R2 (used at PPU $1000 in CHR mode 0) to raw 1KB bank 43.
+        mapper.write_prg(0x8000, 0x82);
+        mapper.write_prg(0x8001, 43);
+
+        // Observed in trace for this ROM: outer register is 0xCC.
+        mapper.write_prg(0x6000, 0xCC);
+
+        assert_eq!(
+            mapper.read_chr(0x1000),
+            2,
+            "1MiB mapper52 carts must decode CHR outer bits using legacy xABCDEFG mapping"
+        );
     }
 }
