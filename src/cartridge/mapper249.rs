@@ -192,7 +192,7 @@ impl Mapper for Mapper249 {
     fn capabilities(&self) -> MapperCapabilities {
         MapperCapabilities {
             has_irq: true,
-            has_chr_banking: self.mmc3.chr_bank_count_1k() > 8,
+            has_chr_banking: true,
             has_dynamic_mirroring: true,
             max_prg_ram_kb: 8,
             prg_bank_size_kb: 8,
