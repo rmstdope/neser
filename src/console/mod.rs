@@ -29,12 +29,12 @@ pub fn log_rom_timing_mode_selection(
     let config = binding.config();
     if !config.hardware_model_explicit && !rom_timing_mode.is_ntsc_or_pal() {
         log_info(format!(
-            "ROM TV system unknown; using configured {}",
+            "ROM hardware model not detected; using configured hardware model {}",
             config.hardware_model.as_str()
         ));
     } else if applied {
         log_info(format!(
-            "ROM TV system detected as {}; applying timing",
+            "ROM hardware model detected as {}; applying timing",
             rom_timing_mode.as_str()
         ));
     }
