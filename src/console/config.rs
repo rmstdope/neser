@@ -825,7 +825,7 @@ impl Config {
         .unwrap();
         writeln!(
             &mut help,
-            "  neser --tv-system pal game.nes               # Use PAL timing"
+            "  neser --hardware-model nes-pal game.nes      # Use NES PAL hardware model"
         )
         .unwrap();
         writeln!(
@@ -2157,6 +2157,14 @@ mod tests {
         assert!(help.contains("default: false"));
         assert!(!help.contains("--no-oam-dram-decay"));
         assert!(!help.contains("--disable-oam-dram-decay"));
+    }
+
+    #[test]
+    fn test_help_text_examples_use_hardware_model_flag() {
+        let help = Config::help_text();
+
+        assert!(help.contains("neser --hardware-model nes-pal game.nes"));
+        assert!(!help.contains("--tv-system"));
     }
 
     #[test]
