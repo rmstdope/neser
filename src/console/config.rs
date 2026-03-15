@@ -1594,17 +1594,15 @@ impl Config {
     /// Apply a single config file key-value pair.
     fn apply_config_value(&mut self, key: &str, value: &str) -> Result<(), String> {
         match key {
-            "hardware_model" => {
-                match HardwareModel::parse(value) {
-                    Some(hardware_model) => {
-                        self.hardware_model = hardware_model;
-                        self.hardware_model_explicit = true;
-                    }
-                    None => {
-                        return Err(format!("Invalid hardware_model value: '{}'", value));
-                    }
+            "hardware_model" => match HardwareModel::parse(value) {
+                Some(hardware_model) => {
+                    self.hardware_model = hardware_model;
+                    self.hardware_model_explicit = true;
                 }
-            }
+                None => {
+                    return Err(format!("Invalid hardware_model value: '{}'", value));
+                }
+            },
             "audio" => {
                 if let Ok(b) = Self::parse_bool(value) {
                     self.audio_enabled = b;
