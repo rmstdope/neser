@@ -167,16 +167,6 @@ const CLI_FLAGS: &[CliFlag] = &[
         has_value: false,
     },
     CliFlag {
-        flag: "--no-gamepads",
-        help: Some("Disable gamepad/joystick support (equivalent to --gamepads false)"),
-        has_value: false,
-    },
-    CliFlag {
-        flag: "--disable-gamepads",
-        help: Some("Disable gamepad/joystick support (equivalent to --gamepads false)"),
-        has_value: false,
-    },
-    CliFlag {
         flag: "--enable-4-score",
         help: Some(
             "Enable Four Score mode (optionally: true/false, default when flag present: true)",
@@ -686,8 +676,6 @@ impl Config {
                 | "--controller-port2"
                 | "--zapper-detection-size"
                 | "--gamepads"
-                | "--no-gamepads"
-                | "--disable-gamepads"
                 | "--enable-4-score"
                 | "--no-4-score"
                 | "--disable-4-score"
@@ -974,12 +962,9 @@ impl Config {
             self.vsync_enabled = false;
         }
 
-        // Gamepads: --gamepads true/false, --no-gamepads, --disable-gamepads
+        // Gamepads: --gamepads true/false
         if let Some(gamepads) = Self::parse_bool_arg(args, "--gamepads")? {
             self.gamepads_enabled = gamepads;
-        }
-        if Self::has_negation_flag(args, &["--no-gamepads", "--disable-gamepads"]) {
-            self.gamepads_enabled = false;
         }
 
         // Four Score: --enable-4-score true/false, --no-4-score, --disable-4-score
@@ -3569,8 +3554,15 @@ filter=invalid-shader
     #[test]
     fn test_config_no_gamepads_disables_gamepads() {
         let args = vec!["neser".to_string(), "--no-gamepads".to_string()];
-        let config = parse_config(args);
-        assert!(!config.gamepads_enabled);
+        let result = config_new(args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_config_disable_gamepads_is_rejected() {
+        let args = vec!["neser".to_string(), "--disable-gamepads".to_string()];
+        let result = config_new(args);
+        assert!(result.is_err());
     }
 
     #[test]
