@@ -19,7 +19,7 @@ use crate::trace_mapper;
 /// Specifications:
 /// - Main: <https://www.nesdev.org/wiki/AxROM>
 /// - Variants: <https://www.nesdev.org/wiki/AxROM#Variants>
-/// - PRG-ROM: Up to 256KB (8 32KB banks)
+/// - PRG-ROM: Up to 512KB (16 32KB banks, oversized AxROM)
 /// - PRG-RAM: None (some bootleg boards have 8KB)
 /// - CHR: 8KB CHR-RAM fixed (no CHR-ROM support)
 /// - Mirroring: Programmable one-screen (selectable A or B nametable)
@@ -28,7 +28,7 @@ use crate::trace_mapper;
 ///
 /// Notes:
 /// - Register at any write to $8000-$FFFF
-/// - Bits 0-2: Select 32KB PRG bank
+/// - Bits 0-3: Select 32KB PRG bank (4 bits for up to 512KB)
 /// - Bit 4: One-screen mirroring (0 = lower/A, 1 = upper/B)
 /// - Used in Battletoads, Marble Madness, Wizards & Warriors
 pub struct AxROMMapper {
@@ -98,12 +98,12 @@ impl Mapper for AxROMMapper {
         }
 
         // Register at $8000-$FFFF
-        // Bits 0-2: PRG bank select
+        // Bits 0-3: PRG bank select (4 bits for up to 512KB oversized AxROM)
         // Bit 4: One-screen mirroring (0 = lower, 1 = upper)
         if (0x8000..=0xFFFF).contains(&addr) {
             let register_value = self.base.apply_bus_conflict(addr, value);
             self.register = register_value;
-            self.base.select_prg_page(0, (register_value & 0x07) as i16);
+            self.base.select_prg_page(0, (register_value & 0x0F) as i16);
             let mirroring = if (register_value & 0x10) != 0 {
                 NametableLayout::SingleScreenUpper
             } else {
@@ -116,7 +116,7 @@ impl Mapper for AxROMMapper {
                 addr,
                 value,
                 register_value,
-                register_value & 0x07,
+                register_value & 0x0F,
                 if (register_value & 0x10) != 0 { "upper" } else { "lower" },
                 self.base.has_bus_conflicts()
             );
@@ -130,7 +130,7 @@ impl Mapper for AxROMMapper {
     fn restore_registers(&mut self, data: &[u8]) {
         if let Some(&value) = data.first() {
             self.register = value;
-            self.base.select_prg_page(0, (value & 0x07) as i16);
+            self.base.select_prg_page(0, (value & 0x0F) as i16);
             let mirroring = if (value & 0x10) != 0 {
                 NametableLayout::SingleScreenUpper
             } else {
@@ -174,7 +174,7 @@ mod tests {
 
     #[test]
     fn test_axrom_bank_select_bits_0_2() {
-        // Test that bits 0-2 select the bank (3-bit bank select = 8 banks max)
+        // Test bank selection with a 256KB ROM (8 banks, uses bits 0-2)
         let mut prg_rom = vec![0; 256 * 1024];
 
         for bank in 0..8 {
@@ -197,9 +197,37 @@ mod tests {
         mapper.write_prg(0x8000, 0x07); // Bank 7
         assert_eq!(mapper.read_prg(0x8000), 107);
 
-        // Test that upper bits are ignored (only bits 0-2 matter for bank)
-        mapper.write_prg(0x8000, 0xF2); // 0b11110010 -> bank 2
+        // Test that bits above 3 are ignored for bank selection
+        mapper.write_prg(0x8000, 0xE2); // 0b11100010 -> bank 2 (bits 4+ ignored)
         assert_eq!(mapper.read_prg(0x8000), 102);
+    }
+
+    #[test]
+    fn test_axrom_512kb_prg_bank_switching() {
+        // Oversized AxROM with 512KB (16 banks × 32KB)
+        // NESdev: "Some emulators allow bit 3 to be used to select up to 512 KB"
+        let mut prg_rom = vec![0; 512 * 1024];
+
+        for bank in 0..16 {
+            let start = bank * 32 * 1024;
+            let end = start + 32 * 1024;
+            for byte in &mut prg_rom[start..end] {
+                *byte = (bank + 200) as u8;
+            }
+        }
+
+        let mut mapper = create_axrom_mapper(prg_rom, NametableLayout::Horizontal);
+
+        // All 16 banks should be independently accessible via bits 0-3
+        for bank in 0..16u8 {
+            mapper.write_prg(0x8000, bank);
+            assert_eq!(
+                mapper.read_prg(0x8000),
+                bank.wrapping_add(200),
+                "Bank {} should be accessible with 4-bit select",
+                bank
+            );
+        }
     }
 
     #[test]
