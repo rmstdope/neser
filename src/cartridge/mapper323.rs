@@ -324,7 +324,7 @@ mod tests {
             .with_prg_ram_banks(0),
         );
 
-        let mut mapper = result.expect("Mapper 323 must be registered in the factory");
+        let mapper = result.expect("Mapper 323 must be registered in the factory");
 
         let open_bus = 0xAB;
         assert_eq!(
