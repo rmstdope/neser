@@ -28,7 +28,7 @@ pub struct SnesAdapterState {
 ///
 /// Serial protocol:
 /// - bits 0..=11: SNES buttons (B, Y, Select, Start, Up, Down, Left, Right, A, X, L, R)
-/// - bits 12..=15: always 1
+/// - bits 12..=15: always 0 (unused)
 /// - bits 16+: always 1
 ///
 /// The adapter exposes serial data on D0 (bit 0), matching the standard
