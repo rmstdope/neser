@@ -128,10 +128,7 @@ mod tests {
                 }
                 let after = after_label.strip_prefix('=').unwrap_or(after_label);
                 let trimmed = after.trim_start();
-                let digits: String = trimmed
-                    .chars()
-                    .take_while(|c| c.is_ascii_digit())
-                    .collect();
+                let digits: String = trimmed.chars().take_while(|c| c.is_ascii_digit()).collect();
                 if !digits.is_empty() {
                     return digits.parse().ok();
                 }
