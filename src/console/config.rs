@@ -118,7 +118,7 @@ const CLI_FLAGS: &[CliFlag] = &[
     CliFlag {
         flag: "--expansion-port",
         help: Some(
-            "Expansion port controller: none, famicom-four-players, or arkanoid (default: none)",
+            "Expansion port controller: none, famicom-four-players, arkanoid, zapper, or power-pad (default: none)",
         ),
         has_value: true,
     },
@@ -482,6 +482,7 @@ pub enum ExpansionPort {
     FamicomFourPlayers,
     ArkanoidFamicom,
     ZapperFamicom,
+    PowerPadFamicom,
 }
 
 impl ExpansionPort {
@@ -494,9 +495,22 @@ impl ExpansionPort {
             Some(Self::ArkanoidFamicom)
         } else if value.eq_ignore_ascii_case("zapper") {
             Some(Self::ZapperFamicom)
+        } else if value.eq_ignore_ascii_case("power-pad") || value.eq_ignore_ascii_case("powerpad")
+        {
+            Some(Self::PowerPadFamicom)
         } else {
             None
         }
+    }
+
+    fn is_famicom_only(self) -> bool {
+        matches!(
+            self,
+            Self::FamicomFourPlayers
+                | Self::ArkanoidFamicom
+                | Self::ZapperFamicom
+                | Self::PowerPadFamicom
+        )
     }
 }
 
@@ -779,7 +793,7 @@ impl Config {
         if let Some(expansion_port) = Self::parse_string_arg(args, "--expansion-port") {
             let parsed = ExpansionPort::parse(&expansion_port).ok_or_else(|| {
                 format!(
-                    "Invalid --expansion-port value: '{}'. Valid options are: none, famicom-four-players, arkanoid, zapper",
+                    "Invalid --expansion-port value: '{}'. Valid options are: none, famicom-four-players, arkanoid, zapper, power-pad",
                     expansion_port
                 )
             })?;
@@ -2152,12 +2166,8 @@ impl Config {
             );
         }
 
-        if self.hardware_mode == HardwareMode::Nes
-            && self.expansion_port == ExpansionPort::FamicomFourPlayers
-        {
-            return Err(
-                "expansion_port=famicom-four-players requires hardware=famicom".to_string(),
-            );
+        if self.hardware_mode == HardwareMode::Nes && self.expansion_port.is_famicom_only() {
+            return Err("famicom expansion_port requires hardware=famicom".to_string());
         }
 
         let mouse_emulated_controller_count = [self.controller_port1, self.controller_port2]
@@ -3980,6 +3990,19 @@ filter=invalid-shader
     }
 
     #[test]
+    fn test_config_expansion_port_flag_power_pad_is_accepted() {
+        let args = vec![
+            "neser".to_string(),
+            "--hardware".to_string(),
+            "famicom".to_string(),
+            "--expansion-port".to_string(),
+            "power-pad".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.expansion_port, ExpansionPort::PowerPadFamicom);
+    }
+
+    #[test]
     fn test_config_expansion_port_flag_arkanoid_invalid_value_errors() {
         let args = vec![
             "neser".to_string(),
@@ -5135,6 +5158,18 @@ filter=invalid-shader
         assert_eq!(
             ExpansionPort::parse("zapper"),
             Some(ExpansionPort::ZapperFamicom)
+        );
+    }
+
+    #[test]
+    fn test_config_expansion_port_parse_power_pad() {
+        assert_eq!(
+            ExpansionPort::parse("power-pad"),
+            Some(ExpansionPort::PowerPadFamicom)
+        );
+        assert_eq!(
+            ExpansionPort::parse("powerpad"),
+            Some(ExpansionPort::PowerPadFamicom)
         );
     }
 }

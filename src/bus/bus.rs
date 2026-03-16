@@ -41,6 +41,8 @@ pub struct BusState {
     pub expansion_arkanoid: Option<ArkanoidState>,
     #[serde(default)]
     pub expansion_zapper: Option<ZapperState>,
+    #[serde(default)]
+    pub expansion_power_pad: Option<PowerPadState>,
 }
 
 /// Mapper state (opaque serialization).
@@ -65,6 +67,7 @@ pub trait BusDevice {
         _famicom_mode: bool,
         _arkanoid_famicom_enabled: bool,
         _zapper_famicom_enabled: bool,
+        _power_pad_famicom_enabled: bool,
     ) {
     }
 }
@@ -84,6 +87,7 @@ pub struct Bus {
     four_score_extra_button_states: Rc<RefCell<[u8; 2]>>, // Emulated players 3 and 4 button states
     expansion_arkanoid: Rc<RefCell<ArkanoidController>>, // Famicom expansion Arkanoid controller
     expansion_zapper: Rc<RefCell<Zapper>>,              // Famicom expansion Zapper controller
+    expansion_power_pad: Rc<RefCell<PowerPad>>,         // Famicom expansion Power Pad controller
     open_bus: u8, // Last value on the data bus for open bus behavior
     devices: Vec<Box<dyn BusDevice>>,
 }
@@ -131,6 +135,7 @@ impl Bus {
 
         let expansion_arkanoid = Rc::new(RefCell::new(ArkanoidController::new()));
         let expansion_zapper = Rc::new(RefCell::new(Zapper::new(ppu.clone(), app_context.clone())));
+        let expansion_power_pad = Rc::new(RefCell::new(PowerPad::new()));
 
         let mut controller = Self {
             cpu_ram: Rc::new(RefCell::new(cpu_ram)),
@@ -144,6 +149,7 @@ impl Bus {
             four_score_extra_button_states: Rc::new(RefCell::new([0, 0])),
             expansion_arkanoid,
             expansion_zapper,
+            expansion_power_pad,
             open_bus: 0xFF, // Initialize to 0xFF (common power-on state)
             devices: Vec::new(),
         };
@@ -167,6 +173,8 @@ impl Bus {
         controller_device
             .set_arkanoid_famicom_expansion(Some(controller.expansion_arkanoid.clone()));
         controller_device.set_zapper_famicom_expansion(Some(controller.expansion_zapper.clone()));
+        controller_device
+            .set_power_pad_famicom_expansion(Some(controller.expansion_power_pad.clone()));
         controller.register_device(Box::new(controller_device));
         controller.register_device(Box::new(ApuDevice::new(controller.apu.clone())));
         controller.register_device(Box::new(OamDmaDevice::new(
@@ -190,6 +198,7 @@ impl Bus {
         let famicom_mode = app_context.config().hardware_mode == HardwareMode::Famicom;
         let arkanoid_famicom_enabled = Self::is_arkanoid_famicom(app_context.config());
         let zapper_famicom_enabled = Self::is_zapper_famicom(app_context.config());
+        let power_pad_famicom_enabled = Self::is_power_pad_famicom(app_context.config());
         drop(app_context);
 
         for device in self.devices.iter_mut() {
@@ -199,6 +208,7 @@ impl Bus {
                 famicom_mode,
                 arkanoid_famicom_enabled,
                 zapper_famicom_enabled,
+                power_pad_famicom_enabled,
             );
         }
     }
@@ -220,6 +230,11 @@ impl Bus {
     fn is_zapper_famicom(config: &crate::console::Config) -> bool {
         config.hardware_mode == HardwareMode::Famicom
             && config.expansion_port == ExpansionPort::ZapperFamicom
+    }
+
+    fn is_power_pad_famicom(config: &crate::console::Config) -> bool {
+        config.hardware_mode == HardwareMode::Famicom
+            && config.expansion_port == ExpansionPort::PowerPadFamicom
     }
 
     fn has_player34_serial_enabled(&self) -> bool {
@@ -616,6 +631,20 @@ impl Bus {
             .set_power_pad_button(button, pressed)
     }
 
+    pub fn set_expansion_power_pad_button(
+        &mut self,
+        button: PowerPadButton,
+        pressed: bool,
+    ) -> bool {
+        if !self.is_power_pad_famicom_configured() {
+            return false;
+        }
+        self.expansion_power_pad
+            .borrow_mut()
+            .set_button(button, pressed);
+        true
+    }
+
     /// Get joypad button states as a u8 bitmask (for autorun recording).
     /// Returns 0 if the controller is not a joypad.
     pub fn get_joypad_button_states(&self, port: u8) -> u8 {
@@ -719,6 +748,10 @@ impl Bus {
         self.is_arkanoid_famicom_configured() || self.is_zapper_famicom_configured()
     }
 
+    pub fn has_expansion_power_pad(&self) -> bool {
+        self.is_power_pad_famicom_configured()
+    }
+
     /// Check if a Zapper is connected to the Famicom expansion port.
     pub fn has_expansion_zapper(&self) -> bool {
         self.is_zapper_famicom_configured()
@@ -730,6 +763,10 @@ impl Bus {
 
     fn is_zapper_famicom_configured(&self) -> bool {
         Self::is_zapper_famicom(self.app_context.borrow().config())
+    }
+
+    fn is_power_pad_famicom_configured(&self) -> bool {
+        Self::is_power_pad_famicom(self.app_context.borrow().config())
     }
 
     /// Check if a Zapper is active on the specified port or expansion port.
@@ -837,6 +874,11 @@ impl Bus {
             },
             expansion_zapper: if self.is_zapper_famicom_configured() {
                 Some(self.expansion_zapper.borrow().capture_state())
+            } else {
+                None
+            },
+            expansion_power_pad: if self.is_power_pad_famicom_configured() {
+                Some(self.expansion_power_pad.borrow().capture_state())
             } else {
                 None
             },
@@ -959,6 +1001,12 @@ impl Bus {
             self.expansion_zapper
                 .borrow_mut()
                 .restore_state(zapper_state);
+        }
+
+        if let Some(ref power_pad_state) = state.expansion_power_pad {
+            self.expansion_power_pad
+                .borrow_mut()
+                .restore_state(power_pad_state);
         }
     }
 }

@@ -526,6 +526,16 @@ impl Nes {
             .set_power_pad_button(controller, button, pressed)
     }
 
+    pub fn set_expansion_power_pad_button(
+        &mut self,
+        button: crate::input::PowerPadButton,
+        pressed: bool,
+    ) -> bool {
+        self.bus
+            .borrow_mut()
+            .set_expansion_power_pad_button(button, pressed)
+    }
+
     /// Set all joypad button states from a u8 bitmask (for autorun playback).
     ///
     /// Each bit corresponds to a [`crate::input::Button`] variant by its discriminant index.
@@ -565,6 +575,10 @@ impl Nes {
     /// Check if a Zapper is connected to the Famicom expansion port.
     pub fn has_expansion_zapper(&self) -> bool {
         self.bus.borrow().has_expansion_zapper()
+    }
+
+    pub fn has_expansion_power_pad(&self) -> bool {
+        self.bus.borrow().has_expansion_power_pad()
     }
 
     /// Check if a Zapper is active on the specified port.

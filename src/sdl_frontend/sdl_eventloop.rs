@@ -358,6 +358,9 @@ impl SdlEventLoop {
         for port in ports {
             handled |= nes.set_power_pad_button(*port, button, pressed);
         }
+        if !handled {
+            handled |= nes.set_expansion_power_pad_button(button, pressed);
+        }
         handled
     }
 
@@ -3140,6 +3143,23 @@ mod tests {
         (d3, d4)
     }
 
+    fn read_expansion_power_pad_lines_4017(nes: &mut Nes) -> ([u8; 8], [u8; 8]) {
+        {
+            let mut mem = nes.bus().borrow_mut();
+            mem.write(0x4016, 1, false);
+            mem.write(0x4016, 0, false);
+        }
+
+        let mut d3 = [0u8; 8];
+        let mut d4 = [0u8; 8];
+        for i in 0..8 {
+            let value = nes.bus().borrow_mut().read(0x4017, false);
+            d3[i] = (value >> 3) & 0x01;
+            d4[i] = (value >> 4) & 0x01;
+        }
+        (d3, d4)
+    }
+
     fn tick_headless_once(event_loop: &mut SdlEventLoop, nes: &mut Nes) {
         let _should_quit = event_loop.tick_headless_once_for_run(nes);
     }
@@ -3402,6 +3422,25 @@ mod tests {
         // D3 reads [2,1,5,9,6,10,11,7] so d3[1]=1 means button 1 pressed.
         assert_eq!(d3, [0, 1, 0, 0, 0, 0, 0, 0]);
         // D4 reads [4,3,12,8,high,high,high,high] so d4[0]=1 means button 4 pressed.
+        assert_eq!(d4, [1, 0, 0, 0, 1, 1, 1, 1]);
+    }
+
+    #[test]
+    #[serial]
+    fn test_keyboard_controls_power_pad_famicom_expansion() {
+        let mut config = Config::with_defaults();
+        config.hardware_mode = crate::console::HardwareMode::Famicom;
+        config.expansion_port = crate::console::ExpansionPort::PowerPadFamicom;
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
+        nes.bus().borrow_mut().sync_controller_modes_from_config();
+
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::Num1);
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::Q);
+
+        let (d3, d4) = read_expansion_power_pad_lines_4017(&mut nes);
+        assert_eq!(d3, [0, 1, 0, 0, 0, 0, 0, 0]);
         assert_eq!(d4, [1, 0, 0, 0, 1, 1, 1, 1]);
     }
 
