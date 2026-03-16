@@ -109,16 +109,34 @@ mod tests {
     /// Handles both "LABEL=NNN" format (Y tracking, X tracking) and
     /// "LABEL   NN" format (trigger test) by looking for `label` then
     /// skipping any trailing '=' and whitespace before the digits.
+    ///
+    /// To avoid ambiguous matches (e.g. searching for "Y" in "Y1="),
+    /// this requires that the character immediately following `label`
+    /// is either '=' or ASCII whitespace.
     fn parse_ruder_value(text: &str, label: &str) -> Option<u32> {
         for line in text.lines() {
-            if let Some(pos) = line.find(label) {
-                let after = &line[pos + label.len()..];
-                let after = after.strip_prefix('=').unwrap_or(after);
+            let mut search_start = 0;
+            while let Some(rel_pos) = line[search_start..].find(label) {
+                let pos = search_start + rel_pos;
+                let after_label = &line[pos + label.len()..];
+                // Require a token boundary: next char must be '=' or whitespace (if any).
+                if let Some(next_char) = after_label.chars().next() {
+                    if next_char != '=' && !next_char.is_ascii_whitespace() {
+                        search_start = pos + label.len();
+                        continue;
+                    }
+                }
+                let after = after_label.strip_prefix('=').unwrap_or(after_label);
                 let trimmed = after.trim_start();
-                let digits: String = trimmed.chars().take_while(|c| c.is_ascii_digit()).collect();
+                let digits: String = trimmed
+                    .chars()
+                    .take_while(|c| c.is_ascii_digit())
+                    .collect();
                 if !digits.is_empty() {
                     return digits.parse().ok();
                 }
+                // No digits after this occurrence; continue searching later in the line.
+                search_start = pos + label.len();
             }
         }
         None
