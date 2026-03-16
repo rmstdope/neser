@@ -130,6 +130,7 @@ use super::mapper292::Mapper292;
 use super::mapper294::Mapper294;
 use super::mapper300::Mapper300;
 use super::mapper302::Mapper302;
+use super::mapper304::Mapper304;
 use super::mapper307::Mapper307;
 use super::mapper308::Mapper308;
 use super::mapper313::Mapper313;
@@ -873,6 +874,7 @@ mapper_registry! {
     287 => Mapper287::new,
     286 => Mapper286::new,
     302 => Mapper302::new,
+    304 => Mapper304::new,
     307 => Mapper307::new,
     308 => Mapper308::new,
     313 => Mapper313::new,
