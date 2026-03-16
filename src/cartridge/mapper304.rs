@@ -209,7 +209,7 @@ impl Mapper for Mapper304 {
                 (data[BANKING_BYTES] as u16) | ((data[BANKING_BYTES + 1] as u16) << 8);
             self.irq_enabled = data[BANKING_BYTES + 2] != 0;
             self.irq_pending = data[BANKING_BYTES + 3] != 0;
-            self.prg_bank_select = data[BANKING_BYTES + 4];
+            self.prg_bank_select = data[BANKING_BYTES + 4] & 0x01;
         }
     }
 
