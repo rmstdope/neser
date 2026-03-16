@@ -1,0 +1,440 @@
+; test_prg_banking.s — PRG Bank Switching Verification
+;
+; Tests that PRG bank switching works correctly by reading signature
+; bytes embedded in each bank.
+;
+; Bank N contains signature: $A5, N, ~N, $5A at the start of the bank.
+; The test selects each bank and verifies the signature.
+;
+; For mappers with a fixed bank, also verifies the fixed bank remains stable.
+; For MMC1 submapper 5 (FIXED_PRG), verifies that bank writes are ignored.
+
+.include "test_macros.inc"
+
+; Include the mapper-specific definitions
+.include "mapper_config.inc"
+
+; Signature read address: start of banked window
+.if PRG_BANK_SIZE = 8
+    BANK_WINDOW = $8000         ; 8KB: $8000-$9FFF
+    FIXED_WINDOW = $E000        ; Fixed bank at $E000-$FFFF
+.elseif PRG_BANK_SIZE = 16
+    BANK_WINDOW = $8000         ; 16KB: $8000-$BFFF
+    FIXED_WINDOW = $C000        ; Fixed bank at $C000-$FFFF
+.elseif PRG_BANK_SIZE = 32
+    BANK_WINDOW = $8000         ; 32KB: $8000-$FFFF (whole space)
+    FIXED_WINDOW = $8000        ; No separate fixed window
+.endif
+
+.ifndef COMBINED
+.export run_tests
+.export test_title_string
+
+.segment "RODATA"
+test_title_string:
+    .byte "PRG Banking m"
+    ; Mapper number as ASCII
+    .byte '0' + (MAPPER_NUM / 100)
+    .byte '0' + ((MAPPER_NUM / 10) .mod 10)
+    .byte '0' + (MAPPER_NUM .mod 10)
+    .byte ".", '0' + SUBMAPPER_NUM
+    .byte 0
+.endif
+
+.segment "CODE"
+
+.proc run_tests
+.if .not HAS_PRG_BANKING
+    ; === MMC1 Submapper 5: Negative test ===
+    ; Verify that PRG banking writes are IGNORED
+    start_test 1, "PRG fixed"
+    ; Read initial signature at $8000
+    lda BANK_WINDOW
+    sta TEST_TEMP              ; Save initial value
+    ; Try to switch PRG bank
+    select_prg_bank 0, 1
+    ; Read again — should be unchanged
+    lda BANK_WINDOW
+    cmp TEST_TEMP
+    beq @fixed_ok
+    ; Failed: bank changed when it shouldn't have
+    tax
+    lda TEST_TEMP
+    fail_test
+@fixed_ok:
+    pass_test
+
+    start_test 2, "PRG fixed 2"
+    select_prg_bank 0, 2
+    lda BANK_WINDOW
+    cmp TEST_TEMP
+    beq @fixed_ok2
+    tax
+    lda TEST_TEMP
+    fail_test
+@fixed_ok2:
+    pass_test
+.else
+    ; === Normal PRG banking tests ===
+
+    .if PRG_BANK_SIZE = 32
+        ; --- 32KB banking (AxROM, GxROM) ---
+        ; Code lives in bank 0. To test other banks, we use a
+        ; RAM-based trampoline that switches bank, reads the signature,
+        ; stores it, then switches back to bank 0.
+
+        ; First, install the trampoline into RAM at TRAMPOLINE_ADDR
+        jsr install_trampoline
+
+        ; Test 1: Bank 1 signature
+        start_test 1, "Bank 1 sig"
+        lda #1
+        jsr call_trampoline
+        lda tramp_result
+        assert_a_eq $A5
+        pass_test
+
+        start_test 2, "Bank 1 id"
+        lda tramp_result+1
+        assert_a_eq 1
+        pass_test
+
+        ; Test 3: Bank 2 signature
+        start_test 3, "Bank 2 sig"
+        lda #2
+        jsr call_trampoline
+        lda tramp_result
+        assert_a_eq $A5
+        pass_test
+
+        start_test 4, "Bank 2 id"
+        lda tramp_result+1
+        assert_a_eq 2
+        pass_test
+
+        ; Test 5: Bank 3 signature
+        start_test 5, "Bank 3 sig"
+        lda #3
+        jsr call_trampoline
+        lda tramp_result
+        assert_a_eq $A5
+        pass_test
+
+        start_test 6, "Bank 3 id"
+        lda tramp_result+1
+        assert_a_eq 3
+        pass_test
+
+    .elseif PRG_BANK_SIZE = 16
+        ; --- 16KB banking (UxROM, MMC1 mode 3) ---
+        ; Switchable bank at $8000-$BFFF, fixed bank at $C000-$FFFF
+
+        start_test 1, "Bank 0 sig"
+        select_prg_bank 0, 0
+        lda BANK_WINDOW
+        assert_a_eq $A5
+        pass_test
+
+        start_test 2, "Bank 0 id"
+        lda BANK_WINDOW + 1
+        assert_a_eq 0
+        pass_test
+
+        start_test 3, "Bank 1 sig"
+        select_prg_bank 0, 1
+        lda BANK_WINDOW
+        assert_a_eq $A5
+        pass_test
+
+        start_test 4, "Bank 1 id"
+        lda BANK_WINDOW + 1
+        assert_a_eq 1
+        pass_test
+
+        start_test 5, "Bank 2"
+        select_prg_bank 0, 2
+        lda BANK_WINDOW + 1
+        assert_a_eq 2
+        pass_test
+
+        ; Verify fixed bank stays stable while switching variable bank
+        ; We check the reset vector at $FFFC-$FFFD (always in fixed bank)
+        start_test 6, "Fixed bank"
+        lda $FFFC               ; Read reset vector low byte
+        sta TEST_TEMP            ; Save it
+        select_prg_bank 0, 0    ; Switch variable bank
+        lda $FFFC               ; Read reset vector again
+        cmp TEST_TEMP
+        beq :+
+        tax
+        lda TEST_TEMP
+        fail_test
+:       pass_test
+
+        start_test 7, "Fixed stable"
+        select_prg_bank 0, 2    ; Switch to different variable bank
+        lda $FFFC               ; Reset vector should still be the same
+        cmp TEST_TEMP
+        beq :+
+        tax
+        lda TEST_TEMP
+        fail_test
+:       pass_test
+
+        ; === MMC1 Shift Register Reset ===
+        .if MAPPER_NUM = 1
+        start_test 8, "Shift reset"
+        ; Select bank 0 first
+        select_prg_bank 0, 0
+        lda BANK_WINDOW + 1
+        assert_a_eq 0
+        ; Start partial write (3 of 5 bits) — incomplete load
+        lda #1
+        sta MMC1_PRG
+        sta MMC1_PRG
+        sta MMC1_PRG
+        ; Reset shift register with bit 7 write
+        mmc1_reset
+        ; Normal bank switch should work after reset
+        select_prg_bank 0, 1
+        lda BANK_WINDOW + 1
+        assert_a_eq 1
+        pass_test
+        .endif
+
+    .elseif PRG_BANK_SIZE = 8
+        ; --- 8KB banking (MMC3) ---
+        ; Switchable banks at $8000-$9FFF (R6) and $A000-$BFFF (R7)
+        ; Fixed banks at $C000-$DFFF and $E000-$FFFF
+
+        start_test 1, "R6 Bank 0"
+        select_prg_bank 0, 0
+        lda BANK_WINDOW
+        assert_a_eq $A5
+        pass_test
+
+        start_test 2, "R6 Bank 0 id"
+        lda BANK_WINDOW + 1
+        assert_a_eq 0
+        pass_test
+
+        start_test 3, "R6 Bank 1"
+        select_prg_bank 0, 1
+        lda BANK_WINDOW + 1
+        assert_a_eq 1
+        pass_test
+
+        start_test 4, "R6 Bank 2"
+        select_prg_bank 0, 2
+        lda BANK_WINDOW + 1
+        assert_a_eq 2
+        pass_test
+
+        start_test 5, "R7 Bank 0"
+        select_prg_bank 1, 0
+        lda $A000               ; R7 window
+        assert_a_eq $A5
+        pass_test
+
+        start_test 6, "R7 Bank 1"
+        select_prg_bank 1, 1
+        lda $A001
+        assert_a_eq 1
+        pass_test
+
+        ; Verify fixed bank stability via reset vector
+        start_test 7, "Fixed $E000"
+        lda $FFFC               ; Read reset vector low byte
+        sta TEST_TEMP
+        select_prg_bank 0, 3    ; Switch variable bank
+        lda $FFFC               ; Reset vector should be unchanged
+        cmp TEST_TEMP
+        beq :+
+        tax
+        lda TEST_TEMP
+        fail_test
+:       pass_test
+
+        ; === MMC3 PRG Mode Bit (bit 6 of $8000) ===
+        .if MAPPER_NUM = 4
+        start_test 8, "PRG mode 1"
+        ; Mode 1: bit 6 → R6 at $C000, $8000 = 2nd-to-last bank
+        lda #(6 | $40)          ; R6 + PRG mode 1
+        sta MMC3_BANK_SELECT
+        lda #0                  ; R6 = bank 0
+        sta MMC3_BANK_DATA
+        ; $C000 should now be bank 0 (R6 in mode 1)
+        lda $C001
+        assert_a_eq 0
+        pass_test
+
+        start_test 9, "Mode1 $8000"
+        ; $8000 should be second-to-last bank (bank 6) in mode 1
+        lda $8001
+        assert_a_eq 6
+        ; Restore mode 0
+        lda #6                  ; R6, PRG mode 0
+        sta MMC3_BANK_SELECT
+        lda #0
+        sta MMC3_BANK_DATA
+        pass_test
+        .endif
+
+    .endif
+.endif
+    rts
+.endproc
+
+; Export unique name for combined ROM builds
+run_prg_banking = run_tests
+.export run_prg_banking
+; When we switch the entire 32KB PRG space, we lose our code.
+; This routine copies a small bank-test snippet to RAM, calls it
+; from RAM, and it switches back to bank 0 before returning.
+; ============================================================
+.if PRG_BANK_SIZE = 32
+
+.segment "BSS"
+tramp_result: .res 4         ; Signature bytes read from target bank
+
+; We reserve space in BSS for the trampoline code
+TRAMPOLINE_ADDR = $0300      ; Address in RAM for trampoline
+TRAMPOLINE_SIZE = trampoline_end - trampoline_code
+
+.segment "CODE"
+
+; Copy trampoline to RAM
+.proc install_trampoline
+    ldx #0
+@copy:
+    lda trampoline_code, x
+    sta TRAMPOLINE_ADDR, x
+    inx
+    cpx #TRAMPOLINE_SIZE
+    bne @copy
+    rts
+.endproc
+
+; Call the RAM trampoline with bank number in A
+.proc call_trampoline
+    ; Store bank number at a known location in RAM for the trampoline
+    sta tramp_result        ; Reuse as temp: bank number
+    jmp TRAMPOLINE_ADDR     ; Jump to RAM code (it will RTS back)
+.endproc
+
+; This code is copied to RAM and executed there.
+; Input: tramp_result = bank number to read
+; Output: tramp_result[0..3] = 4 signature bytes from target bank
+; NOTE: Uses $FFF0 for bank select writes to avoid bus conflicts.
+; $FFF0 is in the fill region ($FF) so the AND gives the correct value.
+trampoline_code:
+    lda tramp_result        ; Bank number
+    sta $FFF0               ; Select target bank (bus-conflict-safe: $FF fill)
+    ; Read 4 signature bytes from $8000
+    lda $8000
+    sta tramp_result
+    lda $8001
+    sta tramp_result+1
+    lda $8002
+    sta tramp_result+2
+    lda $8003
+    sta tramp_result+3
+    ; Switch back to bank 0 (where code lives)
+    lda #0
+    sta $FFF0
+    rts
+trampoline_end:
+
+.export tramp_result
+
+.endif ; PRG_BANK_SIZE = 32
+
+; ============================================================
+; Bank signature data
+; Each PRG bank gets a 4-byte signature: $A5, bank_num, ~bank_num, $5A
+; Only switchable banks get signatures (not the code/fixed bank)
+; Only emitted for mappers that have PRG banking
+; ============================================================
+
+.if HAS_PRG_BANKING
+
+; For 32KB banking (AxROM): code is in bank 0, sigs in banks 1-3
+; For other sizes: bank 0 is switchable and gets a signature
+.if PRG_BANK_SIZE <> 32
+.segment "PRG_SIG0"
+    .byte $A5, 0, $FF, $5A
+.endif
+
+.segment "PRG_SIG1"
+    .byte $A5, 1, $FE, $5A
+
+.segment "PRG_SIG2"
+    .byte $A5, 2, $FD, $5A
+
+; Banks 3-7: only emit if the mapper has enough PRG banks
+; The code/fixed bank doesn't get a signature segment
+.if PRG_BANK_SIZE = 32
+    ; AxROM: 4 × 32KB banks, bank 0 is code, banks 1-3 get signatures
+    .segment "PRG_SIG3"
+        .byte $A5, 3, $FC, $5A
+.elseif PRG_BANK_SIZE = 8
+    ; MMC3: 8 × 8KB banks, banks 0-5 are switchable, 6-7 are fixed
+    .segment "PRG_SIG3"
+        .byte $A5, 3, $FC, $5A
+    .segment "PRG_SIG4"
+        .byte $A5, 4, $FB, $5A
+    .segment "PRG_SIG5"
+        .byte $A5, 5, $FA, $5A
+    .segment "PRG_SIG6"
+        .byte $A5, 6, $F9, $5A
+    ; PRG_SIG7 is the code bank — no signature segment
+.elseif PRG_BANK_SIZE = 16
+    .if PRG_BANK_COUNT > 3
+        ; UxROM with 8 banks: emit sigs 3-6 (7 is code bank)
+        .segment "PRG_SIG3"
+            .byte $A5, 3, $FC, $5A
+        .segment "PRG_SIG4"
+            .byte $A5, 4, $FB, $5A
+        .segment "PRG_SIG5"
+            .byte $A5, 5, $FA, $5A
+        .segment "PRG_SIG6"
+            .byte $A5, 6, $F9, $5A
+    .endif
+    ; MMC1 with 4 banks: PRG_SIG3 is code bank — skip
+.endif
+
+.endif ; HAS_PRG_BANKING
+
+; ============================================================
+; Bus conflict lookup table (for mappers that need it)
+; Each byte at offset N contains the value N, so writing N to
+; address (bank_table + N) results in N AND N = N (safe write)
+; ============================================================
+.if HAS_BUS_CONFLICTS
+.ifndef COMBINED
+.segment "RODATA"
+.export bank_table
+bank_table:
+    .repeat 16, i
+        .byte i
+    .endrepeat
+.else
+    .import bank_table
+.endif
+.endif
+
+.ifndef COMBINED
+; ============================================================
+; NES 2.0 Header
+; ============================================================
+.include "nes20_header.inc"
+nes20_header
+
+; ============================================================
+; CHR data: ASCII font for console output
+; ============================================================
+.if CHR_ROM_8K > 0
+.segment "CHARS"
+    .incbin "ascii.chr"
+.endif
+.endif ; COMBINED

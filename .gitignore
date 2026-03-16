@@ -66,3 +66,9 @@ test-results/
 
 # doit agent
 .doit
+
+# CA64 files
+*.o
+*.debug
+*.map
+
