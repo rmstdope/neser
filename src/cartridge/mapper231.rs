@@ -98,8 +98,8 @@ impl Mapper for Mapper231 {
         if data.len() >= expected_banking_len + 2 {
             // Full snapshot: banking state plus 2-byte reg_addr.
             self.base.restore_banking(&data[..expected_banking_len]);
-            self.reg_addr =
-                (data[expected_banking_len] as u16) | ((data[expected_banking_len + 1] as u16) << 8);
+            self.reg_addr = (data[expected_banking_len] as u16)
+                | ((data[expected_banking_len + 1] as u16) << 8);
             self.apply_banks();
         } else {
             // Legacy/truncated/corrupt snapshot: treat all bytes as banking data.
