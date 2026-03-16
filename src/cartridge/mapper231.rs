@@ -57,7 +57,7 @@ impl Mapper231 {
         let hi = lo | (((self.reg_addr >> 5) & 1) as i16);
         self.base.select_prg_page(0, lo);
         self.base.select_prg_page(1, hi);
-        let horizontal = (self.reg_addr >> 7) & 1 == 1;
+        let horizontal = self.reg_addr & 0x80 != 0;
         self.base.set_mirroring_hv(horizontal);
     }
 }
