@@ -161,6 +161,9 @@ impl Mapper for Mapper304 {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
+        if self.base.try_write_prg_ram(addr, value) {
+            return;
+        }
         match addr {
             0x4022 if self.large_prg => {
                 self.prg_bank_select = value & 0x01;
