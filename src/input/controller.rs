@@ -1,6 +1,7 @@
 use crate::input::Button;
 use crate::input::arkanoid_controller::ArkanoidState;
 use crate::input::nes_joypad::JoypadState;
+use crate::input::power_pad::PowerPadState;
 use crate::input::snes_adapter::SnesAdapterState;
 use crate::input::zapper::ZapperState;
 
@@ -11,6 +12,7 @@ pub enum ControllerState {
     SnesAdapter(SnesAdapterState),
     Paddle(ArkanoidState),
     Zapper(ZapperState),
+    PowerPad(PowerPadState),
 }
 
 /// Controller type for a port.
@@ -22,6 +24,7 @@ pub enum ControllerType {
     SnesMouse,
     Arkanoid,
     Zapper,
+    PowerPad,
 }
 
 /// SNES-specific button identifiers.
@@ -41,6 +44,22 @@ pub enum SnesButton {
     R,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PowerPadButton {
+    One = 0,
+    Two,
+    Three,
+    Four,
+    Five,
+    Six,
+    Seven,
+    Eight,
+    Nine,
+    Ten,
+    Eleven,
+    Twelve,
+}
+
 impl ControllerType {
     /// Parse a controller type from a string configuration value.
     pub fn parse(value: &str) -> Option<Self> {
@@ -50,6 +69,7 @@ impl ControllerType {
             "snes-mouse" | "snes_mouse" | "snesmouse" => Some(Self::SnesMouse),
             "arkanoid" | "paddle" => Some(Self::Arkanoid),
             "zapper" => Some(Self::Zapper),
+            "power-pad" | "power_pad" | "powerpad" => Some(Self::PowerPad),
             _ => None,
         }
     }
@@ -61,6 +81,8 @@ impl ControllerType {
 pub enum ControllerInput {
     // Gamepad (or keyboard as fallback) needed to provide input.
     Gamepad,
+    // Keyboard-only input.
+    Keyboard,
     // Mouse needed to provide input.
     Mouse,
 }
@@ -74,6 +96,7 @@ pub fn controller_input_type(controller_type: ControllerType) -> ControllerInput
         ControllerType::SnesMouse => ControllerInput::Mouse,
         ControllerType::Arkanoid => ControllerInput::Mouse,
         ControllerType::Zapper => ControllerInput::Mouse,
+        ControllerType::PowerPad => ControllerInput::Keyboard,
     }
 }
 
@@ -98,6 +121,12 @@ pub trait Controller {
     /// Set SNES button state (for SNES controller emulation).
     /// Returns true if the operation was successful, false if not supported.
     fn set_snes_button(&mut self, _button: SnesButton, _pressed: bool) -> bool {
+        false
+    }
+
+    /// Set Power Pad button state.
+    /// Returns true if the operation was successful, false if not supported.
+    fn set_power_pad_button(&mut self, _button: PowerPadButton, _pressed: bool) -> bool {
         false
     }
 
@@ -154,6 +183,22 @@ mod tests {
     }
 
     #[test]
+    fn controller_type_parse_supports_power_pad_aliases() {
+        assert_eq!(
+            ControllerType::parse("power-pad"),
+            Some(ControllerType::PowerPad)
+        );
+        assert_eq!(
+            ControllerType::parse("power_pad"),
+            Some(ControllerType::PowerPad)
+        );
+        assert_eq!(
+            ControllerType::parse("powerpad"),
+            Some(ControllerType::PowerPad)
+        );
+    }
+
+    #[test]
     fn controller_input_type_reports_expected_inputs_for_explicit_snes_types() {
         assert_eq!(
             controller_input_type(ControllerType::SnesController),
@@ -162,6 +207,14 @@ mod tests {
         assert_eq!(
             controller_input_type(ControllerType::SnesMouse),
             ControllerInput::Mouse
+        );
+    }
+
+    #[test]
+    fn controller_input_type_reports_keyboard_for_power_pad() {
+        assert_eq!(
+            controller_input_type(ControllerType::PowerPad),
+            ControllerInput::Keyboard
         );
     }
 }

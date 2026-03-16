@@ -99,14 +99,14 @@ const CLI_FLAGS: &[CliFlag] = &[
     CliFlag {
         flag: "--controller-port1",
         help: Some(
-            "Controller type for port 1: joypad, snes-controller, snes-mouse, zapper, arkanoid",
+            "Controller type for port 1: joypad, snes-controller, snes-mouse, zapper, arkanoid, power-pad",
         ),
         has_value: true,
     },
     CliFlag {
         flag: "--controller-port2",
         help: Some(
-            "Controller type for port 2: joypad, snes-controller, snes-mouse, zapper, arkanoid",
+            "Controller type for port 2: joypad, snes-controller, snes-mouse, zapper, arkanoid, power-pad",
         ),
         has_value: true,
     },
@@ -989,7 +989,7 @@ impl Config {
     }
 
     fn valid_controller_values() -> &'static str {
-        "joypad, snes-controller, snes-mouse, zapper, arkanoid"
+        "joypad, snes-controller, snes-mouse, zapper, arkanoid, power-pad"
     }
 
     fn parse_controller_arg(flag: &str, value: &str) -> Result<ControllerType, String> {
@@ -3311,7 +3311,7 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err(),
-            "Invalid value 'unknown' for 'controller_port1'. Valid options are: joypad, snes-controller, snes-mouse, zapper, arkanoid"
+            "Invalid value 'unknown' for 'controller_port1'. Valid options are: joypad, snes-controller, snes-mouse, zapper, arkanoid, power-pad"
         );
     }
 
@@ -3362,6 +3362,17 @@ mod tests {
     }
 
     #[test]
+    fn test_config_controller_port1_flag_power_pad() {
+        let args = vec![
+            "neser".to_string(),
+            "--controller-port1=power-pad".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.controller_port1, ControllerType::PowerPad);
+        assert!(config.controller_port1_explicit);
+    }
+
+    #[test]
     fn test_config_controller_port_cli_overrides_config_file() {
         use std::io::Write;
         use tempfile::NamedTempFile;
@@ -3390,7 +3401,7 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err(),
-            "Invalid value 'unknown' for '--controller-port1'. Valid options are: joypad, snes-controller, snes-mouse, zapper, arkanoid"
+            "Invalid value 'unknown' for '--controller-port1'. Valid options are: joypad, snes-controller, snes-mouse, zapper, arkanoid, power-pad"
         );
     }
 
@@ -3413,7 +3424,7 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err(),
-            "Invalid value 'unknown' for '--controller-port1'. Valid options are: joypad, snes-controller, snes-mouse, zapper, arkanoid"
+            "Invalid value 'unknown' for '--controller-port1'. Valid options are: joypad, snes-controller, snes-mouse, zapper, arkanoid, power-pad"
         );
     }
 
@@ -3427,7 +3438,7 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err(),
-            "Invalid value 'snes-adapter' for '--controller-port1'. Valid options are: joypad, snes-controller, snes-mouse, zapper, arkanoid"
+            "Invalid value 'snes-adapter' for '--controller-port1'. Valid options are: joypad, snes-controller, snes-mouse, zapper, arkanoid, power-pad"
         );
     }
 

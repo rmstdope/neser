@@ -11,7 +11,8 @@ use crate::console::{ExpansionPort, HardwareMode};
 use crate::debugging::log_info;
 use crate::input::{
     ArkanoidController, ArkanoidState, Button, Controller, ControllerType, JoypadState, NesJoypad,
-    SnesAdapter, SnesAdapterState, SnesButton, Zapper, ZapperState,
+    PowerPad, PowerPadButton, PowerPadState, SnesAdapter, SnesAdapterState, SnesButton, Zapper,
+    ZapperState,
 };
 use crate::ppu::{self, SharedPpu};
 use serde::{Deserialize, Serialize};
@@ -26,6 +27,7 @@ pub enum ControllerStateWrapper {
     SnesAdapter(SnesAdapterState),
     Arkanoid(ArkanoidState),
     Zapper(ZapperState),
+    PowerPad(PowerPadState),
 }
 
 /// Bus state for save-state support.
@@ -99,6 +101,7 @@ impl Bus {
             ControllerType::SnesMouse => Box::new(SnesAdapter::new_mouse()),
             ControllerType::Arkanoid => Box::new(ArkanoidController::new()),
             ControllerType::Zapper => Box::new(Zapper::new(ppu, app_context)),
+            ControllerType::PowerPad => Box::new(PowerPad::new()),
         }
     }
 
@@ -597,6 +600,22 @@ impl Bus {
             .set_snes_button(button, pressed)
     }
 
+    /// Set Power Pad button state for a controller.
+    pub fn set_power_pad_button(
+        &mut self,
+        port: u8,
+        button: PowerPadButton,
+        pressed: bool,
+    ) -> bool {
+        if !(1..=2).contains(&port) {
+            return false;
+        }
+
+        self.controllers[(port - 1) as usize]
+            .borrow_mut()
+            .set_power_pad_button(button, pressed)
+    }
+
     /// Get joypad button states as a u8 bitmask (for autorun recording).
     /// Returns 0 if the controller is not a joypad.
     pub fn get_joypad_button_states(&self, port: u8) -> u8 {
@@ -800,6 +819,7 @@ impl Bus {
                 }
                 crate::input::ControllerState::Paddle(s) => ControllerStateWrapper::Arkanoid(s),
                 crate::input::ControllerState::Zapper(s) => ControllerStateWrapper::Zapper(s),
+                crate::input::ControllerState::PowerPad(s) => ControllerStateWrapper::PowerPad(s),
             },
             port2_controller: match port2_state {
                 crate::input::ControllerState::Joypad(s) => ControllerStateWrapper::Joypad(s),
@@ -808,6 +828,7 @@ impl Bus {
                 }
                 crate::input::ControllerState::Paddle(s) => ControllerStateWrapper::Arkanoid(s),
                 crate::input::ControllerState::Zapper(s) => ControllerStateWrapper::Zapper(s),
+                crate::input::ControllerState::PowerPad(s) => ControllerStateWrapper::PowerPad(s),
             },
             expansion_arkanoid: if self.is_arkanoid_famicom_configured() {
                 Some(self.expansion_arkanoid.borrow().capture_state())
@@ -866,6 +887,15 @@ impl Bus {
                 controller.restore_state(&crate::input::ControllerState::Zapper(s.clone()));
                 *self.controllers[0].borrow_mut() = controller;
             }
+            ControllerStateWrapper::PowerPad(s) => {
+                let mut controller = Self::build_controller(
+                    self.ppu.clone(),
+                    self.app_context.clone(),
+                    ControllerType::PowerPad,
+                );
+                controller.restore_state(&crate::input::ControllerState::PowerPad(s.clone()));
+                *self.controllers[0].borrow_mut() = controller;
+            }
         }
 
         // Restore port 2 controller - replace if type changed
@@ -904,6 +934,15 @@ impl Bus {
                     ControllerType::Zapper,
                 );
                 controller.restore_state(&crate::input::ControllerState::Zapper(s.clone()));
+                *self.controllers[1].borrow_mut() = controller;
+            }
+            ControllerStateWrapper::PowerPad(s) => {
+                let mut controller = Self::build_controller(
+                    self.ppu.clone(),
+                    self.app_context.clone(),
+                    ControllerType::PowerPad,
+                );
+                controller.restore_state(&crate::input::ControllerState::PowerPad(s.clone()));
                 *self.controllers[1].borrow_mut() = controller;
             }
         }
@@ -1495,6 +1534,34 @@ mod tests {
             restored.read(0x4016, false) & 0x18,
         ];
         assert_eq!(restored_paddle, expected_paddle);
+    }
+
+    #[test]
+    fn test_bus_save_state_roundtrip_with_power_pad() {
+        let mut memory = create_test_memory();
+        memory.set_controller_type(1, ControllerType::PowerPad);
+        assert!(memory.set_power_pad_button(1, crate::input::PowerPadButton::One, true));
+        assert!(memory.set_power_pad_button(1, crate::input::PowerPadButton::Four, true));
+        memory.write(0x4016, 0x01, false);
+        memory.write(0x4016, 0x00, false);
+        memory.read(0x4016, false);
+        memory.read(0x4016, false);
+
+        let saved_state = memory.capture_state();
+
+        let mut restored = create_test_memory();
+        restored.restore_state(&saved_state);
+        restored.write(0x4016, 0x01, false);
+        restored.write(0x4016, 0x00, false);
+
+        assert_eq!(restored.read(0x4016, false) & 0x18, 0x10); // button 2 on D3, button 4 on D4
+        assert_eq!(restored.read(0x4016, false) & 0x18, 0x08); // button 1 on D3, button 3 on D4
+        assert_eq!(restored.read(0x4016, false) & 0x18, 0x00); // button 5 on D3, button 12 on D4
+        assert_eq!(restored.read(0x4016, false) & 0x18, 0x00); // button 9 on D3
+        assert_eq!(restored.read(0x4016, false) & 0x18, 0x10); // button 6 on D3, D4 hardwired high
+        assert_eq!(restored.read(0x4016, false) & 0x18, 0x10); // button 10 on D3, D4 hardwired high
+        assert_eq!(restored.read(0x4016, false) & 0x18, 0x10); // button 11 on D3, D4 hardwired high
+        assert_eq!(restored.read(0x4016, false) & 0x18, 0x10); // button 7 on D3, D4 hardwired high
     }
 
     #[test]

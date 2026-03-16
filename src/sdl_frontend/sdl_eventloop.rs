@@ -28,7 +28,7 @@ use crate::debugging::{
     breakpoints::{BreakpointKind, BreakpointList},
     log_info, snapshot, ui,
 };
-use crate::input::{Button, SnesButton};
+use crate::input::{Button, PowerPadButton, SnesButton};
 use crate::rendering::Crosshair;
 
 // Type alias to simplify the complex return type used when initializing gamepads.
@@ -293,19 +293,26 @@ impl SdlEventLoop {
     ) -> (Option<u8>, Option<u8>) {
         let four_score_enabled = nes.app_context().borrow().config().four_score_enabled;
         let gamepad_ports = Self::gamepad_ports(nes);
+        let keyboard_eligible_ports: Vec<u8> = (1..=2)
+            .filter(|&port| {
+                matches!(
+                    nes.controller_input_type(port),
+                    Some(crate::input::ControllerInput::Gamepad)
+                        | Some(crate::input::ControllerInput::Keyboard)
+                )
+            })
+            .collect();
         let assigned_count = controller_player_map.len().min(gamepad_ports.len());
 
         if !four_score_enabled {
-            let port_1 = if assigned_count == 0 {
-                gamepad_ports.first().copied()
-            } else {
-                None
-            };
-            let port_2 = if assigned_count <= 1 {
-                gamepad_ports.get(1).copied()
-            } else {
-                None
-            };
+            let reserved_gamepad_ports: Vec<u8> =
+                gamepad_ports.iter().take(assigned_count).copied().collect();
+            let available_keyboard_ports: Vec<u8> = keyboard_eligible_ports
+                .into_iter()
+                .filter(|port| !reserved_gamepad_ports.contains(port))
+                .collect();
+            let port_1 = available_keyboard_ports.first().copied();
+            let port_2 = available_keyboard_ports.get(1).copied();
             return (port_1, port_2);
         }
 
@@ -341,6 +348,19 @@ impl SdlEventLoop {
         }
     }
 
+    fn apply_keyboard_power_pad_button(
+        nes: &mut Nes,
+        ports: &[u8],
+        button: PowerPadButton,
+        pressed: bool,
+    ) -> bool {
+        let mut handled = false;
+        for port in ports {
+            handled |= nes.set_power_pad_button(*port, button, pressed);
+        }
+        handled
+    }
+
     fn apply_keyboard_button_or_snes_button(
         nes: &mut Nes,
         ports: &[u8],
@@ -352,6 +372,37 @@ impl SdlEventLoop {
             if !nes.set_snes_button(*port, snes_button, pressed) {
                 nes.set_button(*port, joypad_button, pressed);
             }
+        }
+    }
+
+    fn apply_keyboard_power_pad_or_joypad_or_snes_button(
+        nes: &mut Nes,
+        ports: &[u8],
+        power_pad_button: PowerPadButton,
+        joypad_button: Button,
+        snes_button: SnesButton,
+        pressed: bool,
+    ) {
+        if !Self::apply_keyboard_power_pad_button(nes, ports, power_pad_button, pressed) {
+            Self::apply_keyboard_button_or_snes_button(
+                nes,
+                ports,
+                joypad_button,
+                snes_button,
+                pressed,
+            );
+        }
+    }
+
+    fn apply_keyboard_power_pad_or_joypad_button(
+        nes: &mut Nes,
+        ports: &[u8],
+        power_pad_button: PowerPadButton,
+        joypad_button: Button,
+        pressed: bool,
+    ) {
+        if !Self::apply_keyboard_power_pad_button(nes, ports, power_pad_button, pressed) {
+            Self::apply_keyboard_button(nes, ports, joypad_button, pressed);
         }
     }
 
@@ -2365,35 +2416,73 @@ impl SdlEventLoop {
         let p1 = port_1.as_slice();
         let p2 = port_2.as_slice();
         match keycode {
+            Keycode::Num1 => {
+                let _ =
+                    Self::apply_keyboard_power_pad_button(nes, p1, PowerPadButton::One, pressed);
+            }
+            Keycode::Num2 => {
+                let _ =
+                    Self::apply_keyboard_power_pad_button(nes, p1, PowerPadButton::Two, pressed);
+            }
+            Keycode::Num3 => {
+                let _ =
+                    Self::apply_keyboard_power_pad_button(nes, p1, PowerPadButton::Three, pressed);
+            }
             // Player 1: W/A/S/D + R/T/F/G/Q/E (SNES Y/X/B/A/L/R) + 4/5 (Select/Start)
-            Keycode::W => Self::apply_keyboard_button_or_snes_button(
+            Keycode::Q => {
+                if !Self::apply_keyboard_power_pad_button(nes, p1, PowerPadButton::Four, pressed) {
+                    Self::apply_keyboard_snes_button(nes, p1, SnesButton::L, pressed);
+                }
+            }
+            Keycode::W => Self::apply_keyboard_power_pad_or_joypad_or_snes_button(
                 nes,
                 p1,
+                PowerPadButton::Five,
                 Button::Up,
                 SnesButton::Up,
                 pressed,
             ),
-            Keycode::S => Self::apply_keyboard_button_or_snes_button(
+            Keycode::E => {
+                if !Self::apply_keyboard_power_pad_button(nes, p1, PowerPadButton::Six, pressed) {
+                    Self::apply_keyboard_snes_button(nes, p1, SnesButton::R, pressed);
+                }
+            }
+            Keycode::A => Self::apply_keyboard_power_pad_or_joypad_or_snes_button(
                 nes,
                 p1,
-                Button::Down,
-                SnesButton::Down,
-                pressed,
-            ),
-            Keycode::A => Self::apply_keyboard_button_or_snes_button(
-                nes,
-                p1,
+                PowerPadButton::Seven,
                 Button::Left,
                 SnesButton::Left,
                 pressed,
             ),
-            Keycode::D => Self::apply_keyboard_button_or_snes_button(
+            Keycode::S => Self::apply_keyboard_power_pad_or_joypad_or_snes_button(
                 nes,
                 p1,
+                PowerPadButton::Eight,
+                Button::Down,
+                SnesButton::Down,
+                pressed,
+            ),
+            Keycode::D => Self::apply_keyboard_power_pad_or_joypad_or_snes_button(
+                nes,
+                p1,
+                PowerPadButton::Nine,
                 Button::Right,
                 SnesButton::Right,
                 pressed,
             ),
+            Keycode::Z => {
+                let _ =
+                    Self::apply_keyboard_power_pad_button(nes, p1, PowerPadButton::Ten, pressed);
+            }
+            Keycode::X => {
+                let _ =
+                    Self::apply_keyboard_power_pad_button(nes, p1, PowerPadButton::Eleven, pressed);
+            }
+            Keycode::C => {
+                let _ =
+                    Self::apply_keyboard_power_pad_button(nes, p1, PowerPadButton::Twelve, pressed);
+            }
             Keycode::R => Self::apply_keyboard_button_or_snes_button(
                 nes,
                 p1,
@@ -2410,8 +2499,6 @@ impl SdlEventLoop {
             ),
             Keycode::F => Self::apply_keyboard_snes_button(nes, p1, SnesButton::B, pressed),
             Keycode::G => Self::apply_keyboard_snes_button(nes, p1, SnesButton::A, pressed),
-            Keycode::Q => Self::apply_keyboard_snes_button(nes, p1, SnesButton::L, pressed),
-            Keycode::E => Self::apply_keyboard_snes_button(nes, p1, SnesButton::R, pressed),
             Keycode::Num4 => Self::apply_keyboard_button_or_snes_button(
                 nes,
                 p1,
@@ -2427,13 +2514,75 @@ impl SdlEventLoop {
                 pressed,
             ),
             // Player 2: I/J/K/L + O/P (A/B) + 9/0 (Select/Start)
-            Keycode::I => Self::apply_keyboard_button(nes, p2, Button::Up, pressed),
-            Keycode::K => Self::apply_keyboard_button(nes, p2, Button::Down, pressed),
-            Keycode::J => Self::apply_keyboard_button(nes, p2, Button::Left, pressed),
-            Keycode::L => Self::apply_keyboard_button(nes, p2, Button::Right, pressed),
+            Keycode::Num7 => {
+                let _ =
+                    Self::apply_keyboard_power_pad_button(nes, p2, PowerPadButton::One, pressed);
+            }
+            Keycode::Num8 => {
+                let _ =
+                    Self::apply_keyboard_power_pad_button(nes, p2, PowerPadButton::Two, pressed);
+            }
+            Keycode::Num9 => Self::apply_keyboard_power_pad_or_joypad_button(
+                nes,
+                p2,
+                PowerPadButton::Three,
+                // Intentional overlap: requested Power Pad port-2 mapping uses Num9.
+                // For non-PowerPad controllers this preserves legacy Player-2 Select.
+                Button::Select,
+                pressed,
+            ),
+            Keycode::U => {
+                let _ =
+                    Self::apply_keyboard_power_pad_button(nes, p2, PowerPadButton::Four, pressed);
+            }
+            Keycode::I => Self::apply_keyboard_power_pad_or_joypad_button(
+                nes,
+                p2,
+                PowerPadButton::Five,
+                Button::Up,
+                pressed,
+            ),
+            Keycode::O => Self::apply_keyboard_power_pad_or_joypad_button(
+                nes,
+                p2,
+                PowerPadButton::Six,
+                Button::A,
+                pressed,
+            ),
+            Keycode::J => Self::apply_keyboard_power_pad_or_joypad_button(
+                nes,
+                p2,
+                PowerPadButton::Seven,
+                Button::Left,
+                pressed,
+            ),
+            Keycode::K => Self::apply_keyboard_power_pad_or_joypad_button(
+                nes,
+                p2,
+                PowerPadButton::Eight,
+                Button::Down,
+                pressed,
+            ),
+            Keycode::L => Self::apply_keyboard_power_pad_or_joypad_button(
+                nes,
+                p2,
+                PowerPadButton::Nine,
+                Button::Right,
+                pressed,
+            ),
+            Keycode::M => {
+                let _ =
+                    Self::apply_keyboard_power_pad_button(nes, p2, PowerPadButton::Ten, pressed);
+            }
+            Keycode::Comma => {
+                let _ =
+                    Self::apply_keyboard_power_pad_button(nes, p2, PowerPadButton::Eleven, pressed);
+            }
+            Keycode::Period => {
+                let _ =
+                    Self::apply_keyboard_power_pad_button(nes, p2, PowerPadButton::Twelve, pressed);
+            }
             Keycode::P => Self::apply_keyboard_button(nes, p2, Button::B, pressed),
-            Keycode::O => Self::apply_keyboard_button(nes, p2, Button::A, pressed),
-            Keycode::Num9 => Self::apply_keyboard_button(nes, p2, Button::Select, pressed),
             Keycode::Num0 => Self::apply_keyboard_button(nes, p2, Button::Start, pressed),
             _ => {}
         }
@@ -2973,6 +3122,24 @@ mod tests {
         read_paddle_position_for_port(nes, 1)
     }
 
+    fn read_power_pad_lines(nes: &mut Nes, port: u8) -> ([u8; 8], [u8; 8]) {
+        {
+            let mut mem = nes.bus().borrow_mut();
+            mem.write(0x4016, 1, false);
+            mem.write(0x4016, 0, false);
+        }
+
+        let addr = if port == 1 { 0x4016 } else { 0x4017 };
+        let mut d3 = [0u8; 8];
+        let mut d4 = [0u8; 8];
+        for i in 0..8 {
+            let value = nes.bus().borrow_mut().read(addr, false);
+            d3[i] = (value >> 3) & 0x01;
+            d4[i] = (value >> 4) & 0x01;
+        }
+        (d3, d4)
+    }
+
     fn tick_headless_once(event_loop: &mut SdlEventLoop, nes: &mut Nes) {
         let _should_quit = event_loop.tick_headless_once_for_run(nes);
     }
@@ -3168,6 +3335,17 @@ mod tests {
     }
 
     #[test]
+    fn test_keyboard_targets_include_power_pad_ports() {
+        let mut config = Config::with_defaults();
+        config.controller_port1 = crate::input::ControllerType::PowerPad;
+        let nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
+        let controller_player_map = HashMap::new();
+
+        let targets = SdlEventLoop::keyboard_target_ports(&nes, &controller_player_map);
+        assert_eq!(targets, vec![1, 2]);
+    }
+
+    #[test]
     fn test_paddle_mode_suppresses_keyboard_joypad_input() {
         let mut paused = false;
         let mut debugger_open_requested = false;
@@ -3191,6 +3369,40 @@ mod tests {
         assert_eq!(read_joypad1_buttons(&mut nes), [0; 8]);
         assert_eq!(read_paddle_position(&mut nes), 0x80);
         assert_eq!(read_paddle_trigger_bit(&mut nes), 1);
+    }
+
+    #[test]
+    fn test_power_pad_is_not_assignable_to_gamepad() {
+        let mut config = Config::with_defaults();
+        config.controller_port1 = crate::input::ControllerType::PowerPad;
+        let nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
+        let mut controller_player_map = HashMap::new();
+        controller_player_map.insert(42, 1);
+
+        assert_eq!(
+            SdlEventLoop::assigned_gamepad_port(&nes, &controller_player_map, 1),
+            Some(2)
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_keyboard_controls_power_pad_port1() {
+        let mut config = Config::with_defaults();
+        config.controller_port1 = crate::input::ControllerType::PowerPad;
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
+
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::Num1);
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::Q);
+
+        let (d3, d4) = read_power_pad_lines(&mut nes, 1);
+        // Protocol order:
+        // D3 reads [2,1,5,9,6,10,11,7] so d3[1]=1 means button 1 pressed.
+        assert_eq!(d3, [0, 1, 0, 0, 0, 0, 0, 0]);
+        // D4 reads [4,3,12,8,high,high,high,high] so d4[0]=1 means button 4 pressed.
+        assert_eq!(d4, [1, 0, 0, 0, 1, 1, 1, 1]);
     }
 
     #[test]
