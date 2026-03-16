@@ -71,9 +71,9 @@ impl Mapper for Mapper250 {
         }
     }
 
-    fn write_prg(&mut self, addr: u16, _value: u8) {
+    fn write_prg(&mut self, addr: u16, value: u8) {
         match addr {
-            0x6000..=0x7FFF => self.mmc3.write_prg(addr, _value),
+            0x6000..=0x7FFF => self.mmc3.write_prg(addr, value),
             0x8000..=0xFFFF => {
                 let effective_addr = (addr & 0xE000) | ((addr & 0x0400) >> 10);
                 let effective_value = (addr & 0xFF) as u8;
@@ -209,15 +209,16 @@ mod tests {
         let mut mapper = create_mapper250(prg_rom, chr_rom, NametableLayout::Vertical).unwrap();
 
         // If this were standard MMC3: write(0x8000, 6) selects R6; write(0x8001, 4) → R6=4
-        // In mapper 250: write(0x8000, 6) → bank_select=0 (R0 selected!); write(0x8001, 1) → bank_data=1 for R0
-        // So writing (0x8001) with addr & 0xFF = 1 → sets R0=1, not R6
+        // In mapper 250: write(0x8000, 6) → bank_select=0 (R0 selected!); write(0x8401, 4) → bank_data=1 for R0
+        // addr & 0xFF for 0x8000 = 0 → selects R0; for 0x8401 = 1 → sets R0=1 (a CHR register, not PRG R6)
         mapper.write_prg(0x8000, 6); // selects R0 (not R6) because addr & 0xFF = 0
-        mapper.write_prg(0x8401, 4); // bank data, value=1 (addr & 0xFF=1 for 0x8401)... wait
+        mapper.write_prg(0x8401, 4); // bank data, value=1 (addr & 0xFF=1 for 0x8401) → sets CHR R0=1
 
-        // The point: use the mapper250 API correctly to select bank 5 for $8000,
-        // and confirm an attempt to use "MMC3 style" writes with data-bus=5 yields
-        // different result (data bus byte is 0xFF, but addr & 0xFF = 0 selects R0).
-        // Select R6 properly (mapper250 style):
+        // These "MMC3-style" writes only touched a CHR register; PRG bank at $8000 is still the
+        // power-on default (bank 0), not any bank we tried to select via the data bus.
+        assert_eq!(mapper.read_prg(0x8000), 0);
+
+        // Now use mapper250-correct address encoding to select bank 5 for $8000:
         mapper.write_prg(0x8006, 0xFF); // bank select R6
         mapper.write_prg(0x8405, 0xFF); // bank data = 5 (0x8405 & 0xFF = 5, bit10=1)
         assert_eq!(mapper.read_prg(0x8000), 5);
