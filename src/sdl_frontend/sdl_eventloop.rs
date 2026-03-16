@@ -307,12 +307,23 @@ impl SdlEventLoop {
         if !four_score_enabled {
             let reserved_gamepad_ports: Vec<u8> =
                 gamepad_ports.iter().take(assigned_count).copied().collect();
-            let available_keyboard_ports: Vec<u8> = keyboard_eligible_ports
-                .into_iter()
-                .filter(|port| !reserved_gamepad_ports.contains(port))
-                .collect();
-            let port_1 = available_keyboard_ports.first().copied();
-            let port_2 = available_keyboard_ports.get(1).copied();
+
+            let port_1 = if keyboard_eligible_ports.contains(&1)
+                && !reserved_gamepad_ports.contains(&1)
+            {
+                Some(1)
+            } else {
+                None
+            };
+
+            let port_2 = if keyboard_eligible_ports.contains(&2)
+                && !reserved_gamepad_ports.contains(&2)
+            {
+                Some(2)
+            } else {
+                None
+            };
+
             return (port_1, port_2);
         }
 
