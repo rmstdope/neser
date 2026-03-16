@@ -35,7 +35,7 @@ mod tests {
         })
     }
 
-    /// Extract (x, y) positions of OAM sprites with the lights tile for
+    /// player 1 (X offset < 100, i.e. left half of screen).
     /// player 1 (X offset ≤ 100, i.e. left half of screen).
     fn spadtest_lit_positions(oam: &[u8]) -> Vec<(u8, u8)> {
         oam.chunks(4)
