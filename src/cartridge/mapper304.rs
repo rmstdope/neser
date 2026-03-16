@@ -303,7 +303,7 @@ mod tests {
     // ── Fixed PRG pages at $5000–$7FFF ────────────────────────────────────────
 
     #[test]
-    fn fixed_page_at_5000_is_last_minus_2() {
+    fn fixed_page_at_5000_is_last_minus_3() {
         // PRG_BANKS_SMALL = 11 → page count-3 = page 8
         let mapper = make_mapper_small();
         assert_eq!(
