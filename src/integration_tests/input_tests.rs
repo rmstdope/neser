@@ -20,8 +20,9 @@ mod tests {
     /// OAM tile used by spadtest to indicate a lit button.
     const LIGHTS_TILE: u8 = 0xEF;
 
-    /// Run spadtest ROM with an SNES controller on port 1 and the given
-    /// scripted input.
+    /// Run spadtest ROM using the `snes_controller_port1` controller config
+    /// (SNES controller on port 1; currently also configures port 2) and the
+    /// given scripted input.
     fn run_spadtest(script: &[ScriptEntry], total_frames: u32) -> RomTestResult {
         let config = ControllerConfig::snes_controller_port1().to_config();
         run_rom_with_script(SPADTEST_ROM_PATH, &config, script, total_frames, 0, |b| {
