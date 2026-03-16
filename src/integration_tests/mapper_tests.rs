@@ -434,4 +434,40 @@ mod tests {
         test_mv_m006_0_prg_ram,
         "roms/automated_tests/mapper_verification/bin/rom_singles/m006.0_prg_ram.nes"
     );
+
+    // ================================================================
+    // Mapper 11 (Color Dreams), Submapper 0
+    // ================================================================
+
+    // Combined
+    setup_rom_test!(
+        test_mv_m011_0_combined,
+        "roms/automated_tests/mapper_verification/bin/m011.0.nes"
+    );
+
+    // Singles
+    setup_rom_test!(
+        test_mv_m011_0_prg_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m011.0_prg_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m011_0_chr_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m011.0_chr_banking.nes"
+    );
+
+    // ================================================================
+    // Mapper 13 (CPROM), Submapper 0
+    // ================================================================
+
+    // Combined
+    setup_rom_test!(
+        test_mv_m013_0_combined,
+        "roms/automated_tests/mapper_verification/bin/m013.0.nes"
+    );
+
+    // Singles
+    setup_rom_test!(
+        test_mv_m013_0_chr_ram_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m013.0_chr_ram_banking.nes"
+    );
 }

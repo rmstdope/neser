@@ -35,6 +35,9 @@
 .ifdef HAS_TEST_MULTIPLIER
     .import run_multiplier
 .endif
+.ifdef HAS_TEST_CHR_RAM_BANKING
+    .import run_chr_ram_banking
+.endif
 
 .segment "RODATA"
 test_title_string:
@@ -108,6 +111,15 @@ test_title_string:
     jsr console_flush
     jsr console_newline
     jsr run_multiplier
+    jsr console_show
+.endif
+
+.ifdef HAS_TEST_CHR_RAM_BANKING
+    jsr console_print_inline
+    .byte "-- CHR RAM Banking --", 0
+    jsr console_flush
+    jsr console_newline
+    jsr run_chr_ram_banking
     jsr console_show
 .endif
 

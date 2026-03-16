@@ -63,7 +63,10 @@ SINGLES := \
 	$(SINGLES_DIR)/m006.0_chr_banking.nes \
 	$(SINGLES_DIR)/m006.0_nametable.nes \
 	$(SINGLES_DIR)/m006.0_irq.nes \
-	$(SINGLES_DIR)/m006.0_prg_ram.nes
+	$(SINGLES_DIR)/m006.0_prg_ram.nes \
+	$(SINGLES_DIR)/m011.0_prg_banking.nes \
+	$(SINGLES_DIR)/m011.0_chr_banking.nes \
+	$(SINGLES_DIR)/m013.0_chr_ram_banking.nes
 
 # ============================================================
 # Combined ROM target list (all tests per mapper/submapper)
@@ -82,7 +85,9 @@ COMBINED := \
 	$(BIN_DIR)/m007.0.nes \
 	$(BIN_DIR)/m007.1.nes \
 	$(BIN_DIR)/m005.0.nes \
-	$(BIN_DIR)/m006.0.nes
+	$(BIN_DIR)/m006.0.nes \
+	$(BIN_DIR)/m011.0.nes \
+	$(BIN_DIR)/m013.0.nes
 
 .PHONY: all clean check-tools singles combined
 
@@ -234,6 +239,13 @@ $(eval $(call ROM_RULE,$(SINGLES_DIR)/m006.0_nametable.nes,nametable,m006.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m006.0_irq.nes,irq,m006.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m006.0_prg_ram.nes,prg_ram,m006.0))
 
+# Mapper 11, Submapper 0 (Color Dreams)
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m011.0_prg_banking.nes,prg_banking,m011.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m011.0_chr_banking.nes,chr_banking,m011.0))
+
+# Mapper 13, Submapper 0 (CPROM)
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m013.0_chr_ram_banking.nes,chr_ram_banking,m013.0))
+
 # ============================================================
 # Combined ROM targets
 # $(call COMBINED_RULE, target, mapper_id, aspects...)
@@ -252,3 +264,5 @@ $(eval $(call COMBINED_RULE,$(BIN_DIR)/m007.0.nes,m007.0,prg_banking nametable))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m007.1.nes,m007.1,prg_banking nametable))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m005.0.nes,m005.0,prg_banking chr_banking nametable irq prg_ram multiplier))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m006.0.nes,m006.0,prg_banking chr_banking nametable irq prg_ram))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m011.0.nes,m011.0,prg_banking chr_banking))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m013.0.nes,m013.0,chr_ram_banking))
