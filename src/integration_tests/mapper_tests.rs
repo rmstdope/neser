@@ -470,4 +470,56 @@ mod tests {
         test_mv_m013_0_chr_ram_banking,
         "roms/automated_tests/mapper_verification/bin/rom_singles/m013.0_chr_ram_banking.nes"
     );
+
+    // ================================================================
+    // Mapper 9 (MMC2), Submapper 0
+    // ================================================================
+
+    // Combined
+    setup_rom_test!(
+        test_mv_m009_0_combined,
+        "roms/automated_tests/mapper_verification/bin/m009.0.nes"
+    );
+
+    // Singles
+    setup_rom_test!(
+        test_mv_m009_0_prg_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m009.0_prg_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m009_0_chr_latch,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m009.0_chr_latch.nes"
+    );
+    setup_rom_test!(
+        test_mv_m009_0_nametable,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m009.0_nametable.nes"
+    );
+
+    // ================================================================
+    // Mapper 10 (MMC4), Submapper 0
+    // ================================================================
+
+    // Combined
+    setup_rom_test!(
+        test_mv_m010_0_combined,
+        "roms/automated_tests/mapper_verification/bin/m010.0.nes"
+    );
+
+    // Singles
+    setup_rom_test!(
+        test_mv_m010_0_prg_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m010.0_prg_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m010_0_chr_latch,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m010.0_chr_latch.nes"
+    );
+    setup_rom_test!(
+        test_mv_m010_0_nametable,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m010.0_nametable.nes"
+    );
+    setup_rom_test!(
+        test_mv_m010_0_prg_ram,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m010.0_prg_ram.nes"
+    );
 }

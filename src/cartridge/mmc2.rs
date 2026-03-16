@@ -42,7 +42,8 @@ pub struct MMC2Mapper {
 
 impl MMC2Mapper {
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
-        let has_prg_ram = matches!(ctx.console_type, ConsoleType::Playchoice10);
+        let has_prg_ram = matches!(ctx.console_type, ConsoleType::Playchoice10)
+            || (ctx.prg_ram_size_specified && ctx.prg_ram_banks_8k > 0);
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
             has_dynamic_mirroring: true,

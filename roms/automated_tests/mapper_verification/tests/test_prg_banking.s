@@ -230,6 +230,8 @@ test_title_string:
         assert_a_eq 2
         pass_test
 
+        ; R7 (second 8KB slot) — MMC3/MMC5 only (not MMC2)
+        .if MAPPER_NUM <> 9
         start_test 5, "R7 Bank 0"
         select_prg_bank 1, 0
         lda $A000               ; R7 window
@@ -241,6 +243,7 @@ test_title_string:
         lda $A001
         assert_a_eq 1
         pass_test
+        .endif
 
         ; Verify fixed bank stability via reset vector
         start_test 7, "Fixed $E000"

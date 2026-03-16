@@ -66,7 +66,14 @@ SINGLES := \
 	$(SINGLES_DIR)/m006.0_prg_ram.nes \
 	$(SINGLES_DIR)/m011.0_prg_banking.nes \
 	$(SINGLES_DIR)/m011.0_chr_banking.nes \
-	$(SINGLES_DIR)/m013.0_chr_ram_banking.nes
+	$(SINGLES_DIR)/m013.0_chr_ram_banking.nes \
+	$(SINGLES_DIR)/m009.0_prg_banking.nes \
+	$(SINGLES_DIR)/m009.0_chr_latch.nes \
+	$(SINGLES_DIR)/m009.0_nametable.nes \
+	$(SINGLES_DIR)/m010.0_prg_banking.nes \
+	$(SINGLES_DIR)/m010.0_chr_latch.nes \
+	$(SINGLES_DIR)/m010.0_nametable.nes \
+	$(SINGLES_DIR)/m010.0_prg_ram.nes
 
 # ============================================================
 # Combined ROM target list (all tests per mapper/submapper)
@@ -87,7 +94,9 @@ COMBINED := \
 	$(BIN_DIR)/m005.0.nes \
 	$(BIN_DIR)/m006.0.nes \
 	$(BIN_DIR)/m011.0.nes \
-	$(BIN_DIR)/m013.0.nes
+	$(BIN_DIR)/m013.0.nes \
+	$(BIN_DIR)/m009.0.nes \
+	$(BIN_DIR)/m010.0.nes
 
 .PHONY: all clean check-tools singles combined
 
@@ -246,6 +255,17 @@ $(eval $(call ROM_RULE,$(SINGLES_DIR)/m011.0_chr_banking.nes,chr_banking,m011.0)
 # Mapper 13, Submapper 0 (CPROM)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m013.0_chr_ram_banking.nes,chr_ram_banking,m013.0))
 
+# Mapper 9, Submapper 0 (MMC2)
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m009.0_prg_banking.nes,prg_banking,m009.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m009.0_chr_latch.nes,chr_latch,m009.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m009.0_nametable.nes,nametable,m009.0))
+
+# Mapper 10, Submapper 0 (MMC4)
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m010.0_prg_banking.nes,prg_banking,m010.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m010.0_chr_latch.nes,chr_latch,m010.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m010.0_nametable.nes,nametable,m010.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m010.0_prg_ram.nes,prg_ram,m010.0))
+
 # ============================================================
 # Combined ROM targets
 # $(call COMBINED_RULE, target, mapper_id, aspects...)
@@ -266,3 +286,5 @@ $(eval $(call COMBINED_RULE,$(BIN_DIR)/m005.0.nes,m005.0,prg_banking chr_banking
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m006.0.nes,m006.0,prg_banking chr_banking nametable irq prg_ram))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m011.0.nes,m011.0,prg_banking chr_banking))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m013.0.nes,m013.0,chr_ram_banking))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m009.0.nes,m009.0,prg_banking chr_latch nametable))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m010.0.nes,m010.0,prg_banking chr_latch nametable prg_ram))
