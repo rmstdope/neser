@@ -177,7 +177,11 @@ impl Mapper for Mapper323 {
     }
 
     fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
-        self.inner.read_prg_open_bus(addr, open_bus)
+        match addr {
+            // Mapper 323 spec: $6000–$7FFF is write-only (no PRG-RAM), so reads are open bus.
+            0x6000..=0x7FFF => open_bus,
+            _ => self.inner.read_prg_open_bus(addr, open_bus),
+        }
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
