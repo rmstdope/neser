@@ -1,7 +1,7 @@
 #[cfg(test)]
 pub(crate) mod tests {
     use crate::cartridge::Cartridge;
-    use crate::console::{Config, Nes, RamInitMode};
+    use crate::console::{Config, ExpansionPort, HardwareMode, Nes, RamInitMode};
     use crate::input::{Button, ControllerType, SnesButton};
     use crate::integration_tests::rom_test_runner::tests::run_nes_for_frames;
 
@@ -11,25 +11,38 @@ pub(crate) mod tests {
     pub(crate) struct ControllerConfig {
         pub port1: ControllerType,
         pub port2: ControllerType,
+        pub hardware_mode: Option<HardwareMode>,
+        pub expansion_port: Option<ExpansionPort>,
     }
 
     #[allow(dead_code)]
     impl ControllerConfig {
         pub fn to_config(&self) -> Config {
-            Config {
+            let mut config = Config {
                 ram_init_mode: RamInitMode::Zero,
                 controller_port1: self.port1,
                 controller_port2: self.port2,
                 controller_port1_explicit: true,
                 controller_port2_explicit: true,
                 ..Default::default()
+            };
+            if let Some(hw_mode) = self.hardware_mode {
+                config.hardware_mode = hw_mode;
+                config.hardware_mode_explicit = true;
             }
+            if let Some(exp_port) = self.expansion_port {
+                config.expansion_port = exp_port;
+                config.expansion_port_explicit = true;
+            }
+            config
         }
 
         pub fn joypad_port1() -> Self {
             Self {
                 port1: ControllerType::Joypad,
                 port2: ControllerType::Joypad,
+                hardware_mode: None,
+                expansion_port: None,
             }
         }
 
@@ -37,6 +50,8 @@ pub(crate) mod tests {
             Self {
                 port1: ControllerType::SnesController,
                 port2: ControllerType::SnesController,
+                hardware_mode: None,
+                expansion_port: None,
             }
         }
 
@@ -44,6 +59,8 @@ pub(crate) mod tests {
             Self {
                 port1: ControllerType::SnesMouse,
                 port2: ControllerType::SnesMouse,
+                hardware_mode: None,
+                expansion_port: None,
             }
         }
 
@@ -51,6 +68,17 @@ pub(crate) mod tests {
             Self {
                 port1: ControllerType::Joypad,
                 port2: ControllerType::Zapper,
+                hardware_mode: None,
+                expansion_port: None,
+            }
+        }
+
+        pub fn famicom_joypad() -> Self {
+            Self {
+                port1: ControllerType::Joypad,
+                port2: ControllerType::Joypad,
+                hardware_mode: Some(HardwareMode::Famicom),
+                expansion_port: None,
             }
         }
 
@@ -58,6 +86,26 @@ pub(crate) mod tests {
             Self {
                 port1: ControllerType::Arkanoid,
                 port2: ControllerType::Joypad,
+                hardware_mode: None,
+                expansion_port: None,
+            }
+        }
+
+        pub fn arkanoid_port2() -> Self {
+            Self {
+                port1: ControllerType::Joypad,
+                port2: ControllerType::Arkanoid,
+                hardware_mode: None,
+                expansion_port: None,
+            }
+        }
+
+        pub fn arkanoid_famicom_expansion() -> Self {
+            Self {
+                port1: ControllerType::Joypad,
+                port2: ControllerType::Joypad,
+                hardware_mode: Some(HardwareMode::Famicom),
+                expansion_port: Some(ExpansionPort::ArkanoidFamicom),
             }
         }
     }
