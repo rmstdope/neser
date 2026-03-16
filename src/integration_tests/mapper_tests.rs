@@ -5,9 +5,25 @@ mod tests {
     use crate::cartridge::Cartridge;
     use crate::console::{Config, Nes, RamInitMode};
     use crate::integration_tests::rom_test_runner::tests::run_nes_for_frames;
-    use crate::setup_rom_test;
+    use crate::{setup_rom_crc_test, setup_rom_test};
 
-    // TODO bntest
+    // bntest — BxROM (mapper 34) and AxROM (mapper 7) function tests
+    // Verified output: PRG banks readable as hex digits, nametable mirroring pattern
+    setup_rom_crc_test!(
+        test_bntest_h,
+        "roms/automated_tests/bntest/bntest_h.nes",
+        [(300, 3291074823)]
+    );
+    setup_rom_crc_test!(
+        test_bntest_v,
+        "roms/automated_tests/bntest/bntest_v.nes",
+        [(300, 4160665903)]
+    );
+    setup_rom_crc_test!(
+        test_bntest_aorom,
+        "roms/automated_tests/bntest/bntest_aorom.nes",
+        [(300, 1193424937)]
+    );
 
     // TODO FME7
 
