@@ -4,14 +4,133 @@ mod tests {
     // Input
     /////////////////////////////////////
 
-    // TODO integrate spadtest-nes-0.01 ROM suite
-
     // TODO integrate vaus-test-0.02 ROM suite
 
-    use crate::input::{Button, ControllerType};
+    use crate::input::{Button, ControllerType, SnesButton};
     use crate::integration_tests::romtest_harness::tests::{
         ControllerConfig, InputAction, RomTestResult, ScriptEntry, run_rom_with_script,
     };
+
+    /////////////////////////////////////
+    // spadtest-nes-0.01 SNES controller test suite (#1608)
+    /////////////////////////////////////
+
+    const SPADTEST_ROM_PATH: &str = "roms/automated_tests/spadtest-nes-0.01/spadtest-nes.nes";
+
+    /// OAM tile used by spadtest to indicate a lit button.
+    const LIGHTS_TILE: u8 = 0xEF;
+
+    /// Run spadtest ROM using the `snes_controller_port1` controller config
+    /// (SNES controller on port 1; currently also configures port 2) and the
+    /// given scripted input.
+    fn run_spadtest(script: &[ScriptEntry], total_frames: u32) -> RomTestResult {
+        let config = ControllerConfig::snes_controller_port1().to_config();
+        run_rom_with_script(SPADTEST_ROM_PATH, &config, script, total_frames, 0, |b| {
+            let ascii = b.wrapping_add(0x20);
+            if (0x20..=0x7E).contains(&ascii) {
+                ascii as char
+            } else {
+                ' '
+            }
+        })
+    }
+
+    /// player 1 (X offset < 100, i.e. left half of screen).
+    /// player 1 (X offset ≤ 100, i.e. left half of screen).
+    fn spadtest_lit_positions(oam: &[u8]) -> Vec<(u8, u8)> {
+        oam.chunks(4)
+            .filter(|entry| {
+                entry[1] == LIGHTS_TILE // tile = lights indicator
+                    && entry[0] < 240   // Y on-screen
+                    && entry[3] < 100 // X in player 1 region
+            })
+            .map(|entry| (entry[3], entry[0]))
+            .collect()
+    }
+
+    /// Expected (X, Y) for each SNES button on player 1, derived from the
+    /// ROM source `lights.s` button_x/button_y tables.
+    /// Player 1 base: X_base = 32, Y_base = 63.
+    fn expected_button_position(index: usize) -> (u8, u8) {
+        //                B   Y   Sel Sta Up  Dn  Lt  Rt  A   X   L   R
+        let button_x: [u8; 12] = [48, 41, 24, 31, 11, 11, 7, 15, 55, 48, 19, 41];
+        // button_y values from lights.s; negative values wrap via i8→u8 cast
+        let button_y: [i8; 12] = [20, 13, 15, 15, 8, 17, 13, 13, 14, 7, -3, -3];
+        let x = 32u8.wrapping_add(button_x[index]);
+        let y = 63u8.wrapping_add(button_y[index] as u8);
+        (x, y)
+    }
+
+    #[test]
+    fn spadtest_no_buttons_shows_no_lights() {
+        let result = run_spadtest(&[], 120);
+        let lit = spadtest_lit_positions(&result.captures[0].oam_data);
+        assert!(
+            lit.is_empty(),
+            "No buttons pressed → no light sprites expected, got {:?}",
+            lit
+        );
+    }
+
+    #[test]
+    fn spadtest_snes_b_press_shows_light_at_correct_position() {
+        let script = vec![ScriptEntry {
+            frame: 30,
+            actions: vec![InputAction::SnesButton {
+                port: 1,
+                button: SnesButton::B,
+                pressed: true,
+            }],
+        }];
+        let result = run_spadtest(&script, 60);
+        let lit = spadtest_lit_positions(&result.captures[0].oam_data);
+        let expected = expected_button_position(0); // B
+        assert!(
+            lit.contains(&expected),
+            "B button should light at {:?}, got {:?}",
+            expected,
+            lit
+        );
+    }
+
+    #[test]
+    fn spadtest_snes_each_button_lights_correct_position() {
+        let cases: &[(SnesButton, usize, &str)] = &[
+            (SnesButton::B, 0, "B"),
+            (SnesButton::Y, 1, "Y"),
+            (SnesButton::Select, 2, "Select"),
+            (SnesButton::Start, 3, "Start"),
+            (SnesButton::Up, 4, "Up"),
+            (SnesButton::Down, 5, "Down"),
+            (SnesButton::Left, 6, "Left"),
+            (SnesButton::Right, 7, "Right"),
+            (SnesButton::A, 8, "A"),
+            (SnesButton::X, 9, "X"),
+            (SnesButton::L, 10, "L"),
+            (SnesButton::R, 11, "R"),
+        ];
+
+        for (button, index, label) in cases {
+            let script = vec![ScriptEntry {
+                frame: 30,
+                actions: vec![InputAction::SnesButton {
+                    port: 1,
+                    button: *button,
+                    pressed: true,
+                }],
+            }];
+            let result = run_spadtest(&script, 60);
+            let lit = spadtest_lit_positions(&result.captures[0].oam_data);
+            let expected = expected_button_position(*index);
+            assert!(
+                lit.contains(&expected),
+                "{} button should light at {:?}, got {:?}",
+                label,
+                expected,
+                lit
+            );
+        }
+    }
 
     /////////////////////////////////////
     // ruder-0.03 Zapper test suite (#1607)
@@ -120,11 +239,12 @@ mod tests {
                 let pos = search_start + rel_pos;
                 let after_label = &line[pos + label.len()..];
                 // Require a token boundary: next char must be '=' or whitespace (if any).
-                if let Some(next_char) = after_label.chars().next() {
-                    if next_char != '=' && !next_char.is_ascii_whitespace() {
-                        search_start = pos + label.len();
-                        continue;
-                    }
+                if let Some(next_char) = after_label.chars().next()
+                    && next_char != '='
+                    && !next_char.is_ascii_whitespace()
+                {
+                    search_start = pos + label.len();
+                    continue;
                 }
                 let after = after_label.strip_prefix('=').unwrap_or(after_label);
                 let trimmed = after.trim_start();

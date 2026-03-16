@@ -28,11 +28,11 @@ pub struct SnesAdapterState {
 ///
 /// Serial protocol:
 /// - bits 0..=11: SNES buttons (B, Y, Select, Start, Up, Down, Left, Right, A, X, L, R)
-/// - bits 12..=15: always 1
+/// - bits 12..=15: always 0 (unused)
 /// - bits 16+: always 1
 ///
-/// The adapter exposes serial data on D1 (bit 1), which is what allpads-r9
-/// probes for the SNES controller adapter path.
+/// The adapter exposes serial data on D0 (bit 0), matching the standard
+/// NES controller port pin adapter wiring.
 pub struct SnesAdapter {
     mode: SnesAdapterMode,
     strobe: bool,
@@ -208,7 +208,7 @@ impl SnesAdapter {
             self.bit_index = self.bit_index.saturating_add(1);
         }
 
-        if bit != 0 { 0x02 } else { 0x00 }
+        if bit != 0 { 0x01 } else { 0x00 }
     }
 
     pub fn set_button(&mut self, button: crate::input::Button, pressed: bool) {
@@ -366,7 +366,7 @@ mod tests {
 
         let mut bits = Vec::new();
         for _ in 0..24 {
-            bits.push((adapter.read(false) >> 1) & 0x01);
+            bits.push(adapter.read(false) & 0x01);
         }
 
         assert_eq!(&bits[0..12], &[0; 12]);
@@ -383,11 +383,11 @@ mod tests {
         adapter.write_strobe(1);
         adapter.write_strobe(0);
 
-        let first = (adapter.read(false) >> 1) & 0x01;
+        let first = adapter.read(false) & 0x01;
         for _ in 0..6 {
             adapter.read(false);
         }
-        let eighth = (adapter.read(false) >> 1) & 0x01;
+        let eighth = adapter.read(false) & 0x01;
 
         assert_eq!(first, 1);
         assert_eq!(eighth, 1);
@@ -442,5 +442,23 @@ mod tests {
         adapter.write_strobe(0);
 
         assert_eq!(adapter.mouse_packet[1] & 0x80, 0x80);
+    }
+
+    #[test]
+    fn snes_adapter_returns_serial_data_on_d0() {
+        let mut adapter = SnesAdapter::new();
+        adapter.set_snes_button(crate::input::SnesButton::B, true);
+
+        adapter.write_strobe(1);
+        adapter.write_strobe(0);
+
+        // First serial bit = B button — should appear on D0 (bit 0)
+        let value = adapter.read(false);
+        assert_eq!(
+            value & 0x01,
+            0x01,
+            "SNES adapter serial data must appear on D0 (bit 0), got 0x{:02X}",
+            value
+        );
     }
 }
