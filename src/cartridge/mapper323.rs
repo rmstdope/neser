@@ -299,27 +299,43 @@ mod tests {
     }
 
     fn make_mapper() -> Mapper323 {
-        Mapper323::new(MapperContext::new_for_test(
+        let ctx = MapperContext::new_for_test(
             MAPPER_NUMBER,
             banked_data(PRG_BANK_SIZE, PRG_BANKS_16K),
             banked_data(CHR_BANK_SIZE, CHR_BANKS_4K),
             NametableLayout::Horizontal,
-        ))
+        )
+        .with_prg_ram_banks(0);
+
+        Mapper323::new(ctx)
     }
 
     // ── Factory registration ─────────────────────────────────────────────────
 
     #[test]
     fn mapper_323_is_registered_in_factory() {
-        let result = create_mapper(MapperContext::new_for_test(
-            MAPPER_NUMBER,
-            banked_data(PRG_BANK_SIZE, PRG_BANKS_16K),
-            banked_data(CHR_BANK_SIZE, CHR_BANKS_4K),
-            NametableLayout::Horizontal,
-        ));
-        assert!(
-            result.is_ok(),
-            "Mapper 323 must be registered in the factory"
+        let result = create_mapper(
+            MapperContext::new_for_test(
+                MAPPER_NUMBER,
+                banked_data(PRG_BANK_SIZE, PRG_BANKS_16K),
+                banked_data(CHR_BANK_SIZE, CHR_BANKS_4K),
+                NametableLayout::Horizontal,
+            )
+            .with_prg_ram_banks(0),
+        );
+
+        let mut mapper = result.expect("Mapper 323 must be registered in the factory");
+
+        let open_bus = 0xAB;
+        assert_eq!(
+            mapper.wram_size(),
+            0,
+            "Mapper 323 must report zero WRAM size (no PRG-RAM)"
+        );
+        assert_eq!(
+            mapper.read_prg_open_bus(0x6000, open_bus),
+            open_bus,
+            "Mapper 323 must treat $6000 as open bus when no PRG-RAM is present"
         );
     }
 
