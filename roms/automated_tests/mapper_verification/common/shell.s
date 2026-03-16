@@ -11,7 +11,7 @@ __SHELL_S__ = 1
 
 ; Import from other modules
 .import init_nes, wait_vbl
-.import console_init, console_flush, console_newline
+.import console_init, console_flush, console_newline, console_show
 .import console_print_inline, console_print_hex, console_print
 
 ; Import from the test-specific source file

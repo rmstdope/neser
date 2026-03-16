@@ -46,6 +46,7 @@
     jsr console_print_inline
     .byte "PASSED", 0
     jsr console_flush
+    jsr console_show
     lda #STATUS_PASS
     sta TEST_STATUS
     ; Infinite loop
