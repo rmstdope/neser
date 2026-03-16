@@ -2,7 +2,7 @@
 description: "Start implementation planning for a GitHub issue number with mandatory clarification questions when needed"
 name: "do-issue"
 argument-hint: "issueNumber (for example: 1585)"
-agent: "plan"
+agent: "Plan"
 ---
 
 Lets start working on #${input:issueNumber}.
