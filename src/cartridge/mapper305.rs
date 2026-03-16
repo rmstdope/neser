@@ -53,9 +53,9 @@
 //! - Mirroring: Vertical.
 //! - CHR: bank 0 (fixed).
 
+use crate::cartridge::NametableLayout;
 use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
-use crate::cartridge::NametableLayout;
 
 const MAPPER_NUMBER: u16 = 305;
 const PRG_PAGE_SIZE: usize = 0x800; // 2 KiB
