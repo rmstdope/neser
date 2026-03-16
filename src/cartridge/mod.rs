@@ -89,6 +89,7 @@ mod mapper314;
 mod mapper315;
 mod mapper319;
 mod mapper320;
+mod mapper323;
 mod mapper324;
 mod mapper325;
 mod mapper326;
