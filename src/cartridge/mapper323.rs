@@ -260,7 +260,11 @@ impl Mapper for Mapper323 {
     }
 
     fn capabilities(&self) -> MapperCapabilities {
-        self.inner.capabilities()
+        // Mapper 323 hardware has no PRG-RAM; $6000-$7FFF is a register window,
+        // so make sure capabilities reflect that instead of the MMC1 default.
+        let mut caps = self.inner.capabilities();
+        caps.max_prg_ram_kb = 0;
+        caps
     }
 
     fn irq_pending(&self) -> bool {
