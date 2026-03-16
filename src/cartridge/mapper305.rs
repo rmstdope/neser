@@ -48,13 +48,14 @@
 //!
 //! # Power-on / reset state
 //!
-//! - regs[0..4] = 0 (all `$6000–$7FFF` windows point to PRG bank 0).
+//! - regs[0..NUM_REGS] = 0 (all `$6000–$7FFF` windows point to PRG bank 0).
 //! - `$8000–$FFFF`: slot i → bank (15 − i) for i in 0..16.
 //! - Mirroring: Vertical.
 //! - CHR: bank 0 (fixed).
 
 use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
+use crate::cartridge::NametableLayout;
 
 const MAPPER_NUMBER: u16 = 305;
 const PRG_PAGE_SIZE: usize = 0x800; // 2 KiB
@@ -92,12 +93,14 @@ impl Mapper305 {
             self.base.select_prg_page(i, 15 - i as i16);
         }
         // regs already zeroed, so $6000–$7FFF all point to bank 0
+        // KS7031 always uses fixed Vertical mirroring regardless of ROM header.
+        self.base.set_mirroring(NametableLayout::Vertical);
     }
 
     /// Read a byte from the `$6000–$7FFF` PRG-ROM windows.
     fn read_prg_6000_window(&self, addr: u16) -> u8 {
         debug_assert!((0x6000..=0x7FFF).contains(&addr));
-        let slot = ((addr - 0x6000) >> 11) as usize; // 0..4
+        let slot = ((addr - 0x6000) >> 11) as usize; // yields slot index 0..=3 for the four 2 KiB windows
         let bank = self.regs[slot] as usize;
         let offset = (addr as usize - 0x6000) & (PRG_PAGE_SIZE - 1);
         let prg = self.base.prg_rom();
@@ -341,11 +344,18 @@ mod tests {
     #[test]
     fn mapper_305_uses_vertical_mirroring() {
         let prg_rom = banked_data(2048, 16);
-        let mapper = create_mapper305(prg_rom);
+        // Deliberately pass Horizontal header mirroring to verify the mapper overrides it.
+        let mapper = create_mapper(MapperContext::new_for_test(
+            305,
+            prg_rom,
+            vec![],
+            NametableLayout::Horizontal,
+        ))
+        .expect("mapper 305 should be implemented");
         assert_eq!(
             mapper.base().mirroring(),
             NametableLayout::Vertical,
-            "mapper 305 should use fixed Vertical mirroring"
+            "mapper 305 should enforce fixed Vertical mirroring regardless of ROM header"
         );
     }
 
