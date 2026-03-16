@@ -1,11 +1,103 @@
 #[cfg(test)]
 mod tests {
+    use crate::console::Config;
     use crate::input::{Button, SnesButton};
-    use crate::integration_tests::allpads_harness::tests::{
-        ControllerConfig, InputAction, ScriptEntry, run_allpads, run_allpads_with_config,
-        script_enter_test, script_enter_test_and_press,
+    use crate::integration_tests::romtest_harness::tests::{
+        ControllerConfig, InputAction, RomTestResult, ScriptEntry, run_rom_with_script,
     };
     use crate::setup_rom_console_test;
+
+    const ALLPADS_ROM_PATH: &str = "roms/automated_tests/allpads-r9/allpads218.nes";
+
+    /// Run `allpads.nes` with the given controller configuration and frame script.
+    fn run_allpads(
+        controller_config: &ControllerConfig,
+        script: &[ScriptEntry],
+        total_frames: u32,
+        capture_interval: u32,
+    ) -> RomTestResult {
+        let config = controller_config.to_config();
+        run_allpads_with_config(&config, script, total_frames, capture_interval)
+    }
+
+    /// Run `allpads.nes` with a fully specified config and frame script.
+    fn run_allpads_with_config(
+        config: &Config,
+        script: &[ScriptEntry],
+        total_frames: u32,
+        capture_interval: u32,
+    ) -> RomTestResult {
+        run_rom_with_script(
+            ALLPADS_ROM_PATH,
+            config,
+            script,
+            total_frames,
+            capture_interval,
+            |b| {
+                // allpads218.nes tiles are ASCII - 0x20 (tile 0x21 = 'A', tile 0x10 = '0')
+                let ascii = b.wrapping_add(0x20);
+                if (0x20..=0x7E).contains(&ascii) {
+                    ascii as char
+                } else {
+                    ' '
+                }
+            },
+        )
+    }
+
+    /// Build a script that enters the controller test (A press+release at frames
+    /// 300/305) then presses the given button at frame 400.
+    fn script_enter_test_and_press(button: Button) -> Vec<ScriptEntry> {
+        vec![
+            ScriptEntry {
+                frame: 300,
+                actions: vec![InputAction::Button {
+                    port: 1,
+                    button: Button::A,
+                    pressed: true,
+                }],
+            },
+            ScriptEntry {
+                frame: 305,
+                actions: vec![InputAction::Button {
+                    port: 1,
+                    button: Button::A,
+                    pressed: false,
+                }],
+            },
+            ScriptEntry {
+                frame: 400,
+                actions: vec![InputAction::Button {
+                    port: 1,
+                    button,
+                    pressed: true,
+                }],
+            },
+        ]
+    }
+
+    /// Build a script that enters the controller test (A press+release at frames
+    /// 300/305) without pressing any additional button.
+    fn script_enter_test() -> Vec<ScriptEntry> {
+        vec![
+            ScriptEntry {
+                frame: 300,
+                actions: vec![InputAction::Button {
+                    port: 1,
+                    button: Button::A,
+                    pressed: true,
+                }],
+            },
+            ScriptEntry {
+                frame: 305,
+                actions: vec![InputAction::Button {
+                    port: 1,
+                    button: Button::A,
+                    pressed: false,
+                }],
+            },
+        ]
+    }
 
     /////////////////////////////////////
     // Allpads harness smoke test

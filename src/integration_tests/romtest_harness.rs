@@ -5,8 +5,6 @@ pub(crate) mod tests {
     use crate::input::{Button, ControllerType, SnesButton};
     use crate::integration_tests::rom_test_runner::tests::run_nes_for_frames;
 
-    const ALLPADS_ROM_PATH: &str = "roms/automated_tests/allpads-r9/allpads218.nes";
-
     /// Controller configuration for a test scenario.
     #[derive(Debug, Clone)]
     #[allow(dead_code)]
@@ -17,6 +15,17 @@ pub(crate) mod tests {
 
     #[allow(dead_code)]
     impl ControllerConfig {
+        pub fn to_config(&self) -> Config {
+            Config {
+                ram_init_mode: RamInitMode::Zero,
+                controller_port1: self.port1,
+                controller_port2: self.port2,
+                controller_port1_explicit: true,
+                controller_port2_explicit: true,
+                ..Default::default()
+            }
+        }
+
         pub fn joypad_port1() -> Self {
             Self {
                 port1: ControllerType::Joypad,
@@ -96,111 +105,27 @@ pub(crate) mod tests {
         pub oam_data: Vec<u8>,
     }
 
-    /// Build a script that enters the controller test (A press+release at frames
-    /// 300/305) then presses the given button at frame 400.
-    #[allow(dead_code)]
-    pub(crate) fn script_enter_test_and_press(button: Button) -> Vec<ScriptEntry> {
-        vec![
-            ScriptEntry {
-                frame: 300,
-                actions: vec![InputAction::Button {
-                    port: 1,
-                    button: Button::A,
-                    pressed: true,
-                }],
-            },
-            ScriptEntry {
-                frame: 305,
-                actions: vec![InputAction::Button {
-                    port: 1,
-                    button: Button::A,
-                    pressed: false,
-                }],
-            },
-            ScriptEntry {
-                frame: 400,
-                actions: vec![InputAction::Button {
-                    port: 1,
-                    button,
-                    pressed: true,
-                }],
-            },
-        ]
-    }
-
-    /// Build a script that enters the controller test (A press+release at frames
-    /// 300/305) without pressing any additional button.
-    #[allow(dead_code)]
-    pub(crate) fn script_enter_test() -> Vec<ScriptEntry> {
-        vec![
-            ScriptEntry {
-                frame: 300,
-                actions: vec![InputAction::Button {
-                    port: 1,
-                    button: Button::A,
-                    pressed: true,
-                }],
-            },
-            ScriptEntry {
-                frame: 305,
-                actions: vec![InputAction::Button {
-                    port: 1,
-                    button: Button::A,
-                    pressed: false,
-                }],
-            },
-        ]
-    }
-
-    /// Result of running the allpads harness.
+    /// Result of running a ROM test harness.
     #[derive(Debug, Clone)]
-    pub(crate) struct AllpadsResult {
+    pub(crate) struct RomTestResult {
         pub captures: Vec<FrameCapture>,
     }
 
-    /// Run `allpads.nes` with the given controller configuration and frame script.
-    ///
-    /// The script is a list of `ScriptEntry` items, each specifying a frame number
-    /// and a set of input actions to apply at that frame. The harness runs
-    /// `total_frames` frames, capturing nametable text at each `capture_interval` frame.
-    ///
-    /// # Arguments
-    /// * `controller_config` - Controller types for port 1 and port 2
-    /// * `script` - Scripted input actions sorted by frame number
-    /// * `total_frames` - Total number of frames to run
-    /// * `capture_interval` - Capture nametable text every N frames (0 = only at end)
-    pub(crate) fn run_allpads(
-        controller_config: &ControllerConfig,
-        script: &[ScriptEntry],
-        total_frames: u32,
-        capture_interval: u32,
-    ) -> AllpadsResult {
-        let config = Config {
-            ram_init_mode: RamInitMode::Zero,
-            controller_port1: controller_config.port1,
-            controller_port2: controller_config.port2,
-            controller_port1_explicit: true,
-            controller_port2_explicit: true,
-            ..Default::default()
-        };
-        run_allpads_with_config(&config, script, total_frames, capture_interval)
-    }
-
-    /// Run `allpads.nes` with a fully specified config and frame script.
-    pub(crate) fn run_allpads_with_config(
+    /// Run any ROM with the given config and frame script, using a custom
+    /// tile-to-char function for nametable text conversion.
+    pub(crate) fn run_rom_with_script(
+        rom_path: &str,
         config: &Config,
         script: &[ScriptEntry],
         total_frames: u32,
         capture_interval: u32,
-    ) -> AllpadsResult {
+        tile_to_char: impl Fn(u8) -> char,
+    ) -> RomTestResult {
         let rom_data =
-            std::fs::read(ALLPADS_ROM_PATH).expect("allpads218.nes ROM should be readable");
-        let cartridge = Cartridge::load_from_file(
-            &rom_data,
-            ALLPADS_ROM_PATH,
-            crate::app_context::AppContext::new(),
-        )
-        .expect("allpads218.nes ROM should parse successfully");
+            std::fs::read(rom_path).unwrap_or_else(|_| panic!("{rom_path} ROM should be readable"));
+        let cartridge =
+            Cartridge::load_from_file(&rom_data, rom_path, crate::app_context::AppContext::new())
+                .unwrap_or_else(|_| panic!("{rom_path} ROM should parse successfully"));
 
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
             config.clone(),
@@ -260,20 +185,12 @@ pub(crate) mod tests {
             if should_capture {
                 let base_addr = nes.base_nametable_addr();
                 let nametable_raw = nes.read_nametable_raw(base_addr, 32 * 30);
-                // allpads218.nes tiles are ASCII - 0x20 (tile 0x21 = 'A', tile 0x10 = '0')
                 let nametable_text = nametable_raw
                     .chunks(32)
                     .map(|chunk| {
                         chunk
                             .iter()
-                            .map(|&b| {
-                                let ascii = b.wrapping_add(0x20);
-                                if (0x20..=0x7E).contains(&ascii) {
-                                    ascii as char
-                                } else {
-                                    ' '
-                                }
-                            })
+                            .map(|&b| tile_to_char(b))
                             .collect::<String>()
                             .trim_end()
                             .to_string()
@@ -293,6 +210,6 @@ pub(crate) mod tests {
             }
         }
 
-        AllpadsResult { captures }
+        RomTestResult { captures }
     }
 }
