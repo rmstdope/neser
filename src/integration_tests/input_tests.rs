@@ -120,11 +120,12 @@ mod tests {
                 let pos = search_start + rel_pos;
                 let after_label = &line[pos + label.len()..];
                 // Require a token boundary: next char must be '=' or whitespace (if any).
-                if let Some(next_char) = after_label.chars().next() {
-                    if next_char != '=' && !next_char.is_ascii_whitespace() {
-                        search_start = pos + label.len();
-                        continue;
-                    }
+                if let Some(next_char) = after_label.chars().next()
+                    && next_char != '='
+                    && !next_char.is_ascii_whitespace()
+                {
+                    search_start = pos + label.len();
+                    continue;
                 }
                 let after = after_label.strip_prefix('=').unwrap_or(after_label);
                 let trimmed = after.trim_start();

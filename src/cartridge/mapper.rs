@@ -102,6 +102,7 @@ use super::mapper185::Mapper185;
 use super::mapper205::Mapper205;
 use super::mapper218::Mapper218;
 use super::mapper231::Mapper231;
+use super::mapper236::Mapper236;
 use super::mapper241::Mapper241;
 use super::mapper242::Mapper242;
 use super::mapper243::Mapper243;
@@ -848,6 +849,7 @@ mapper_registry! {
     206 => Namco118Mapper::new,
     218 => Mapper218::new,
     231 => Mapper231::new,
+    236 => Mapper236::new,
     241 => Mapper241::new,
     242 => Mapper242::new,
     243 => Mapper243::new,
