@@ -110,11 +110,12 @@ impl Mapper285 {
 
     fn apply_mirroring(&mut self, value: u8) {
         if value & 0x80 != 0 {
-            if value & 0x20 != 0 {
-                self.base.set_mirroring(NametableLayout::SingleScreenUpper);
+            let layout = if value & 0x20 != 0 {
+                NametableLayout::SingleScreenUpper
             } else {
-                self.base.set_mirroring(NametableLayout::SingleScreenLower);
-            }
+                NametableLayout::SingleScreenLower
+            };
+            self.base.set_mirroring(layout);
         } else {
             self.base.set_mirroring_hv(value & 0x08 != 0);
         }
