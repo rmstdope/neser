@@ -4,9 +4,7 @@ mod tests {
     // Input
     /////////////////////////////////////
 
-    // TODO integrate vaus-test-0.02 ROM suite
-
-    use crate::input::{Button, ControllerType, SnesButton};
+    use crate::input::{Button, SnesButton};
     use crate::integration_tests::romtest_harness::tests::{
         ControllerConfig, InputAction, RomTestResult, ScriptEntry, run_rom_with_script,
     };
@@ -413,10 +411,7 @@ mod tests {
     fn paddletest3_no_controller_shows_not_connected() {
         // With a joypad on port 1 (no Arkanoid), the ROM reads $4016 bit 4
         // as all-zero → PaddleButtons = 0xFF → "no controller" branch.
-        let config = ControllerConfig {
-            port1: ControllerType::Joypad,
-            port2: ControllerType::Joypad,
-        };
+        let config = ControllerConfig::joypad_port1();
         let result = run_paddletest3(&config, &[], 300, 0);
         let cap = &result.captures[0];
         let (y, _tile, _attr, _x) = sprite0(&cap.oam_data);
@@ -508,6 +503,213 @@ mod tests {
         assert_ne!(
             tile_fire, tile_no,
             "Sprite tile should change between fire pressed and released"
+        );
+    }
+
+    /////////////////////////////////////
+    // vaus-test-0.02 Arkanoid Vaus controller test suite (#1609)
+    /////////////////////////////////////
+
+    const VAUS_TEST_ROM_PATH: &str = "roms/automated_tests/vaus-test-0.02/vaus-test.nes";
+
+    /// Indicator sprite tile IDs used by vaus-test when an Arkanoid controller
+    /// is detected (`control_type >= 2`).
+    const INDICATOR_TILE_ARROW: u8 = 0x04;
+    const INDICATOR_TILE_MARKER: u8 = 0x05;
+
+    /// Run the vaus-test ROM with the given controller configuration and script.
+    fn run_vaus_test(
+        config: &ControllerConfig,
+        script: &[ScriptEntry],
+        total_frames: u32,
+        capture_interval: u32,
+    ) -> RomTestResult {
+        let cfg = config.to_config();
+        run_rom_with_script(
+            VAUS_TEST_ROM_PATH,
+            &cfg,
+            script,
+            total_frames,
+            capture_interval,
+            |b| {
+                let ascii = b.wrapping_add(0x20);
+                if (0x20..=0x7E).contains(&ascii) {
+                    ascii as char
+                } else {
+                    ' '
+                }
+            },
+        )
+    }
+
+    /// Find indicator sprites in OAM data. When the vaus-test ROM detects an
+    /// Arkanoid controller (`control_type >= 2`), it draws 4 indicator sprites:
+    ///   +0: Y=127, tile=$04, X=paddle_min
+    ///   +4: Y=127, tile=$04 (hflip), X=paddle_max
+    ///   +8: Y=127, tile=$05, X=indicator_x (= position ^ $FF)
+    ///  +12: Y=160, tile=$05, X=target_x
+    fn find_indicator_sprites(oam: &[u8]) -> Vec<(u8, u8, u8, u8)> {
+        oam.chunks(4)
+            .filter(|entry| {
+                (entry[1] == INDICATOR_TILE_ARROW || entry[1] == INDICATOR_TILE_MARKER)
+                    && (entry[0] == 127 || entry[0] == 160)
+            })
+            .map(|entry| (entry[0], entry[1], entry[2], entry[3]))
+            .collect()
+    }
+
+    /// Extract the indicator_x sprite (Y=127, tile=$05, no hflip) from OAM.
+    /// Returns the sprite X position, which equals `position ^ $FF`.
+    fn find_indicator_x_sprite(oam: &[u8]) -> Option<u8> {
+        oam.chunks(4)
+            .find(|entry| {
+                entry[0] == 127 && entry[1] == INDICATOR_TILE_MARKER && entry[2] & 0x40 == 0 // not horizontally flipped
+            })
+            .map(|entry| entry[3])
+    }
+
+    /// Build a script that triggers Arkanoid detection by holding the fire
+    /// button. Works for both NES port 2 (ROM checks `cur_keys_d3+1 == $FF`)
+    /// and Famicom expansion (ROM checks `cur_keys_d1 == $FF`).
+    fn script_vaus_detect() -> Vec<ScriptEntry> {
+        vec![ScriptEntry {
+            frame: 60,
+            actions: vec![InputAction::MouseButton(true)],
+        }]
+    }
+
+    // ---- NES port 2 tests ----
+
+    #[test]
+    fn vaus_test_nes_detects_arkanoid_on_port2() {
+        let config = ControllerConfig::arkanoid_port2();
+        let script = script_vaus_detect();
+        let result = run_vaus_test(&config, &script, 180, 0);
+        let indicators = find_indicator_sprites(&result.captures[0].oam_data);
+        assert!(
+            !indicators.is_empty(),
+            "After holding fire on NES port 2, indicator sprites should appear (Arkanoid detected), got none"
+        );
+    }
+
+    #[test]
+    fn vaus_test_nes_position_tracking_moves_indicator() {
+        let config = ControllerConfig::arkanoid_port2();
+        let mut script = script_vaus_detect();
+        // Set a low paddle position after detection
+        script.push(ScriptEntry {
+            frame: 120,
+            actions: vec![InputAction::MouseX(0x70)],
+        });
+        // Then a high paddle position
+        script.push(ScriptEntry {
+            frame: 200,
+            actions: vec![InputAction::MouseX(0xD0)],
+        });
+
+        let result = run_vaus_test(&config, &script, 260, 20);
+
+        let cap_low = result
+            .captures
+            .iter()
+            .find(|c| c.frame == 160)
+            .expect("Expected capture at frame 160 (low position)");
+        let cap_high = result
+            .captures
+            .iter()
+            .find(|c| c.frame == 240)
+            .expect("Expected capture at frame 240 (high position)");
+
+        let x_low = find_indicator_x_sprite(&cap_low.oam_data)
+            .expect("Indicator x sprite should be present at low position");
+        let x_high = find_indicator_x_sprite(&cap_high.oam_data)
+            .expect("Indicator x sprite should be present at high position");
+
+        assert_ne!(
+            x_low, x_high,
+            "Indicator X should differ between low (0x70) and high (0xD0) paddle positions"
+        );
+    }
+
+    #[test]
+    fn vaus_test_nes_fire_button_detected() {
+        // Without Arkanoid on port 2, the ROM should NOT show indicator sprites
+        let config_no_arkanoid = ControllerConfig::joypad_port1();
+        let script = script_vaus_detect();
+        let result = run_vaus_test(&config_no_arkanoid, &script, 180, 0);
+        let indicators = find_indicator_sprites(&result.captures[0].oam_data);
+        assert!(
+            indicators.is_empty(),
+            "Without Arkanoid controller, no indicator sprites should appear, got {:?}",
+            indicators
+        );
+    }
+
+    // ---- Famicom expansion port tests ----
+
+    #[test]
+    fn vaus_test_fc_detects_arkanoid_expansion() {
+        let config = ControllerConfig::arkanoid_famicom_expansion();
+        let script = script_vaus_detect();
+        let result = run_vaus_test(&config, &script, 180, 0);
+        let indicators = find_indicator_sprites(&result.captures[0].oam_data);
+        assert!(
+            !indicators.is_empty(),
+            "After holding fire on Famicom expansion port, indicator sprites should appear (Arkanoid detected), got none"
+        );
+    }
+
+    #[test]
+    fn vaus_test_fc_position_tracking_moves_indicator() {
+        let config = ControllerConfig::arkanoid_famicom_expansion();
+        let mut script = script_vaus_detect();
+        // Set a low paddle position after detection
+        script.push(ScriptEntry {
+            frame: 120,
+            actions: vec![InputAction::MouseX(0x70)],
+        });
+        // Then a high paddle position
+        script.push(ScriptEntry {
+            frame: 200,
+            actions: vec![InputAction::MouseX(0xD0)],
+        });
+
+        let result = run_vaus_test(&config, &script, 260, 20);
+
+        let cap_low = result
+            .captures
+            .iter()
+            .find(|c| c.frame == 160)
+            .expect("Expected capture at frame 160 (low position)");
+        let cap_high = result
+            .captures
+            .iter()
+            .find(|c| c.frame == 240)
+            .expect("Expected capture at frame 240 (high position)");
+
+        let x_low = find_indicator_x_sprite(&cap_low.oam_data)
+            .expect("Indicator x sprite should be present at low position");
+        let x_high = find_indicator_x_sprite(&cap_high.oam_data)
+            .expect("Indicator x sprite should be present at high position");
+
+        assert_ne!(
+            x_low, x_high,
+            "Indicator X should differ between low (0x70) and high (0xD0) paddle positions"
+        );
+    }
+
+    #[test]
+    fn vaus_test_fc_fire_button_detected() {
+        // With Famicom mode but WITHOUT expansion Arkanoid, indicator sprites
+        // should not appear even when mouse button is held.
+        let config_no_arkanoid = ControllerConfig::famicom_joypad();
+        let script = script_vaus_detect();
+        let result = run_vaus_test(&config_no_arkanoid, &script, 180, 0);
+        let indicators = find_indicator_sprites(&result.captures[0].oam_data);
+        assert!(
+            indicators.is_empty(),
+            "Without Arkanoid expansion, no indicator sprites should appear in Famicom mode, got {:?}",
+            indicators
         );
     }
 }
