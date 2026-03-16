@@ -91,11 +91,21 @@ impl Mapper for Mapper231 {
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        let banking_len = data.len().saturating_sub(2);
-        self.base.restore_banking(&data[..banking_len]);
-        if data.len() >= 2 {
-            self.reg_addr = (data[banking_len] as u16) | ((data[banking_len + 1] as u16) << 8);
+        // Determine the expected size of the base banking snapshot so we can
+        // safely distinguish it from the trailing reg_addr bytes.
+        let expected_banking_len = self.base.banking_snapshot().len();
+
+        if data.len() >= expected_banking_len + 2 {
+            // Full snapshot: banking state plus 2-byte reg_addr.
+            self.base.restore_banking(&data[..expected_banking_len]);
+            self.reg_addr =
+                (data[expected_banking_len] as u16) | ((data[expected_banking_len + 1] as u16) << 8);
             self.apply_banks();
+        } else {
+            // Legacy/truncated/corrupt snapshot: treat all bytes as banking data.
+            // Do not attempt to parse reg_addr or apply banks from potentially
+            // misaligned data.
+            self.base.restore_banking(data);
         }
     }
 }
