@@ -5,9 +5,46 @@ mod tests {
     use crate::cartridge::Cartridge;
     use crate::console::{Config, Nes, RamInitMode};
     use crate::integration_tests::rom_test_runner::tests::run_nes_for_frames;
-    use crate::setup_rom_test;
+    use crate::{setup_rom_crc_test, setup_rom_test};
 
-    // TODO bntest
+    // bntest — BxROM (mapper 34) and AxROM (mapper 7) function tests
+    // Verified output: PRG banks readable as hex digits, nametable mirroring pattern
+    setup_rom_crc_test!(
+        test_bntest_h,
+        "roms/automated_tests/bntest/bntest_h.nes",
+        [(300, 3291074823)]
+    );
+    setup_rom_crc_test!(
+        test_bntest_v,
+        "roms/automated_tests/bntest/bntest_v.nes",
+        [(300, 4160665903)]
+    );
+    #[test]
+    #[ignore = "AxROM PRG bank truncation bug — emulator shows 0123456701234567 instead of 0123456789ABCDEF"]
+    fn test_bntest_aorom() {
+        // Will be enabled once the AxROM bank switching bug is fixed.
+        // Expected: all 16 PRG banks accessible, one-screen nametable mirroring (00004444).
+        let rom_path = "roms/automated_tests/bntest/bntest_aorom.nes";
+        let rom_data = fs::read(rom_path).expect("ROM should load");
+        let cartridge =
+            Cartridge::load_from_file(&rom_data, rom_path, crate::app_context::AppContext::new())
+                .expect("ROM should parse");
+
+        let mut config = Config {
+            ram_init_mode: RamInitMode::Zero,
+            ..Default::default()
+        };
+        config.hardware_model =
+            crate::console::HardwareModel::from_timing_mode(cartridge.rom_timing_mode());
+
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+
+        run_nes_for_frames(&mut nes, 300);
+        let crc = nes.get_screen_buffer().crc32();
+        assert_ne!(crc, 0, "bntest_aorom should render something by frame 300");
+    }
 
     // TODO FME7
 
