@@ -361,12 +361,15 @@ mod tests {
 
     #[test]
     fn test_mmc2_standard_board_has_no_prg_ram_window() {
-        let mut mapper = MMC2Mapper::new(MapperContext::new_for_test(
-            9,
-            vec![0; 128 * 1024],
-            vec![0; 128 * 1024],
-            NametableLayout::Horizontal,
-        ));
+        let mut mapper = MMC2Mapper::new(
+            MapperContext::new_for_test(
+                9,
+                vec![0; 128 * 1024],
+                vec![0; 128 * 1024],
+                NametableLayout::Horizontal,
+            )
+            .with_unspecified_prg_ram_size(),
+        );
 
         mapper.write_prg(0x6000, 0xA5);
 

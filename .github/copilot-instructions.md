@@ -105,6 +105,11 @@ Unit test should be of both black and white box variety. Black box tests should 
 
 Integration tests should cover end-to-end scenarios that validate the overall functionality of the emulator. These tests should simulate real-world usage and interactions, ensuring that all components work together as expected. Integration tests can include running actual NES ROMs and verifying their output against known good results, as well as testing the emulator's performance and stability under various conditions. Integration tests should always be defined against either a well known ROMs behaviour or specifications found on https://www.nesdev.org/wiki/.
 
+### Mapper testing
+
+In roms/automated_tests/mapper_verification/ there is a makefile system to create mapper ROMs. ROMs to be used for verifying mapper implementations. The system should be used to create ROMs that test specific features and behaviors of the mappers, ensuring that they are implemented correctly and function as intended. When creating new ROMs for testing mappers, it is imperative that you NEVER NEVER EVER look at the implementation of the mapper being tested. This ensures that the tests are unbiased and truly validate the functionality of the mapper based on its specifications rather than its implementation details. Specifications for mappers can be found on https://www.nesdev.org/wiki/Mapper and sub pages. Should that not be available, there are fallback specifications on https://nesdev-wiki.nes.science/wikipages/Special_AllPages.xhtml#INES.
+When implementing verification ROM for a mapper, ensure to cover all relevant submappers for that specific mapper.
+
 ## Communication with user
 
 When asking questions to the user, always try to use the questions UI/tool with pre-defined answers. This makes communication more efficient and reduces the risk of misunderstandings. If the question cannot be answered with predefined options there also need to be a free text option to use.

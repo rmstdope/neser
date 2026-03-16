@@ -522,4 +522,48 @@ mod tests {
         test_mv_m010_0_prg_ram,
         "roms/automated_tests/mapper_verification/bin/rom_singles/m010.0_prg_ram.nes"
     );
+
+    // ============================
+    // Mapper 8 (SMC GNROM mode 4)
+    // ============================
+    setup_rom_test!(
+        test_mv_m008_0_combined,
+        "roms/automated_tests/mapper_verification/bin/m008.0.nes"
+    );
+    setup_rom_test!(
+        test_mv_m008_0_prg_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m008.0_prg_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m008_0_chr_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m008.0_chr_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m008_0_nametable,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m008.0_nametable.nes"
+    );
+    setup_rom_test!(
+        test_mv_m008_0_irq,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m008.0_irq.nes"
+    );
+    setup_rom_test!(
+        test_mv_m008_0_prg_ram,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m008.0_prg_ram.nes"
+    );
+
+    // ============================
+    // Mapper 15 (K-1029 multicart)
+    // ============================
+    setup_rom_test!(
+        test_mv_m015_0_combined,
+        "roms/automated_tests/mapper_verification/bin/m015.0.nes"
+    );
+    setup_rom_test!(
+        test_mv_m015_0_prg_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m015.0_prg_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m015_0_nametable,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m015.0_nametable.nes"
+    );
 }

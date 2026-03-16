@@ -129,6 +129,14 @@ test_title_string:
         ; --- 16KB banking (UxROM, MMC1 mode 3) ---
         ; Switchable bank at $8000-$BFFF, fixed bank at $C000-$FFFF
 
+        ; Configurable test bank numbers (mapper 15 skips bank 1 = bootstrap)
+        .ifndef TEST_BANK_B
+            TEST_BANK_B = 1
+        .endif
+        .ifndef TEST_BANK_C
+            TEST_BANK_C = 2
+        .endif
+
         start_test 1, "Bank 0 sig"
         select_prg_bank 0, 0
         lda BANK_WINDOW
@@ -140,21 +148,21 @@ test_title_string:
         assert_a_eq 0
         pass_test
 
-        start_test 3, "Bank 1 sig"
-        select_prg_bank 0, 1
+        start_test 3, "Bank B sig"
+        select_prg_bank 0, TEST_BANK_B
         lda BANK_WINDOW
         assert_a_eq $A5
         pass_test
 
-        start_test 4, "Bank 1 id"
+        start_test 4, "Bank B id"
         lda BANK_WINDOW + 1
-        assert_a_eq 1
+        assert_a_eq TEST_BANK_B
         pass_test
 
-        start_test 5, "Bank 2"
-        select_prg_bank 0, 2
+        start_test 5, "Bank C"
+        select_prg_bank 0, TEST_BANK_C
         lda BANK_WINDOW + 1
-        assert_a_eq 2
+        assert_a_eq TEST_BANK_C
         pass_test
 
         ; Verify fixed bank stays stable while switching variable bank
@@ -330,8 +338,14 @@ TRAMPOLINE_SIZE = trampoline_end - trampoline_code
 ; Output: tramp_result[0..3] = 4 signature bytes from target bank
 ; NOTE: Uses $FFF0 for bank select writes to avoid bus conflicts.
 ; $FFF0 is in the fill region ($FF) so the AND gives the correct value.
+.ifndef TRAMPOLINE_BANK_SHIFT
+    TRAMPOLINE_BANK_SHIFT = 0   ; Default: bank number in low bits
+.endif
 trampoline_code:
     lda tramp_result        ; Bank number
+    .repeat TRAMPOLINE_BANK_SHIFT
+    asl a
+    .endrepeat
     sta $FFF0               ; Select target bank (bus-conflict-safe: $FF fill)
     ; Read 4 signature bytes from $8000
     lda $8000
@@ -368,8 +382,11 @@ trampoline_end:
     .byte $A5, 0, $FF, $5A
 .endif
 
+; Bank 1 sig: skip for mapper 15 (bank 1 = bootstrap)
+.if MAPPER_NUM <> 15
 .segment "PRG_SIG1"
     .byte $A5, 1, $FE, $5A
+.endif
 
 .segment "PRG_SIG2"
     .byte $A5, 2, $FD, $5A

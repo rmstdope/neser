@@ -41,9 +41,11 @@ got_val:      .res 1       ; Temp for fail handler
     txs
 
     ; Enable PRG-RAM early so we can write the status byte at $6000.
-    ; For MMC3: $A001 bit 7 = chip enable. Safe no-op for other mappers.
+    ; For MMC3: $A001 bit 7 = chip enable. Only for mappers where $A001 is the RAM protect register.
+    .if MAPPER_NUM = 4 .or MAPPER_NUM = 12 .or MAPPER_NUM = 14
     lda #$80
     sta $A001
+    .endif
 
     ; Mapper-specific early init
     .if MAPPER_NUM = 4
@@ -176,8 +178,8 @@ got_val:      .res 1       ; Temp for fail handler
     .elseif MAPPER_NUM = 5
     ; MMC5: read $5204 to clear pending flag
     lda $5204
-    .elseif MAPPER_NUM = 6
-    ; Mapper 6: write $4502 to ack IRQ (also sets latch LSB as side-effect)
+    .elseif MAPPER_NUM = 6 .or MAPPER_NUM = 8
+    ; Mapper 6/8: write $4502 to ack IRQ (also sets latch LSB as side-effect)
     ; ($4501 would ack + disable counting; $4502 acks + loads latch LSB)
     ; The latch side-effect is harmless — running counter is unaffected.
     lda #0
@@ -194,3 +196,34 @@ got_val:      .res 1       ; Temp for fail handler
     .word nmi_handler
     .word reset
     .word irq_handler
+
+; ============================================================
+; Mapper 15 power-on bootstrap
+; On power-on, mode 0 (NROM-256) maps bank 1 to $C000.
+; This code runs from bank 1, copies a mode-switch routine
+; to RAM, switches to mode 1, then jumps to the real reset.
+; ============================================================
+.if MAPPER_NUM = 15
+.segment "BOOT"
+.proc boot_reset
+    sei
+    ldx #0
+@copy:
+    lda m15_switch, x
+    sta $0300, x
+    inx
+    cpx #(m15_switch_end - m15_switch)
+    bne @copy
+    jmp $0300
+m15_switch:
+    lda #0
+    sta $8001               ; Switch to mode 1 (UNROM), bank 0, vertical
+    jmp reset               ; Bank 7 now at $C000
+m15_switch_end:
+.endproc
+
+.segment "BOOT_VECS"
+    .word $0000             ; NMI (won't fire during bootstrap)
+    .word boot_reset        ; Reset → bootstrap
+    .word $0000             ; IRQ (won't fire during bootstrap)
+.endif
