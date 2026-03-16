@@ -54,6 +54,7 @@ impl Mapper236 {
         let has_chr_rom = !ctx.chr_rom.is_empty();
         let capabilities = MapperCapabilities {
             has_dynamic_mirroring: true,
+            has_chr_banking: has_chr_rom,
             prg_bank_size_kb: 16,
             chr_bank_size_kb: 8,
             ..Default::default()
@@ -130,7 +131,9 @@ impl Mapper for Mapper236 {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
-        let _ = value;
+        if self.base.try_write_prg_ram(addr, value) {
+            return;
+        }
         match addr {
             0x8000..=0xBFFF => {
                 // Lower address latch
