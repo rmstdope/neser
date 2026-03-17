@@ -1,0 +1,29 @@
+#!/bin/sh
+# Pre-commit hook: auto-format staged Rust files with cargo fmt.
+#
+# If any .rs files are staged for commit, cargo fmt is run and the
+# originally staged files are re-staged with the formatted content.
+#
+# NOTE: If you staged only a partial hunk (git add -p), re-staging the
+# formatted file will include any unstaged changes in that file too.
+# In that case, review the staged diff after the commit with git show HEAD.
+
+staged_rs=$(git diff --cached --name-only --diff-filter=ACMR | grep '\.rs$')
+
+if [ -z "$staged_rs" ]; then
+    exit 0
+fi
+
+echo "Running cargo fmt on staged Rust files..."
+cargo fmt
+fmt_exit=$?
+
+if [ $fmt_exit -ne 0 ]; then
+    echo "cargo fmt failed (exit $fmt_exit). Aborting commit."
+    exit 1
+fi
+
+# Re-stage the originally staged .rs files so formatting changes are included.
+echo "$staged_rs" | xargs git add
+
+exit 0
