@@ -43,21 +43,17 @@ CHR_RAM_SHIFT = 0
 .define PRG_BANK_COUNT 4       ; 4 × 8KB slots
 .define CHR_BANK_COUNT 8       ; 8 × 1KB slots
 
-; MMC3 register addresses
-MMC3_BANK_SELECT = $8000
-MMC3_BANK_DATA   = $8001
-MMC3_MIRRORING   = $A000
-MMC3_PRG_RAM     = $A001
-MMC3_IRQ_LATCH   = $C000
-MMC3_IRQ_RELOAD  = $C001
-MMC3_IRQ_DISABLE = $E000
-MMC3_IRQ_ENABLE  = $E001
-
-; Supervisor register
+; Supervisor register (Mapper 14 specific)
 SUPERVISOR_REG   = $A131
 
 ; ============================================================
-; Register macros
+; MMC3 Core Macros (shared with mappers 4, 12, 14)
+; ============================================================
+
+.include "mmc3_core_macros.inc"
+
+; ============================================================
+; Mapper 14 Specific Macros
 ; ============================================================
 
 ; Switch to MMC3 mode via supervisor register
@@ -65,79 +61,6 @@ SUPERVISOR_REG   = $A131
 .macro set_mmc3_mode
     lda #$02                ; M=1 (MMC3 mode), all CHR A18=0
     sta SUPERVISOR_REG
-.endmacro
-
-; Select 8KB PRG bank (MMC3 mode)
-.macro select_prg_bank slot, bank
-    .if slot = 0
-        lda #6
-        sta MMC3_BANK_SELECT
-        lda #bank
-        sta MMC3_BANK_DATA
-    .elseif slot = 1
-        lda #7
-        sta MMC3_BANK_SELECT
-        lda #bank
-        sta MMC3_BANK_DATA
-    .endif
-.endmacro
-
-; Select 1KB CHR bank (MMC3 mode)
-.macro select_chr_bank slot, bank
-    lda #slot
-    sta MMC3_BANK_SELECT
-    lda #bank
-    sta MMC3_BANK_DATA
-.endmacro
-
-; Set mirroring: 0=vertical, 1=horizontal (MMC3 mode)
-.macro set_mirroring mode
-    .if mode = 0
-        lda #0
-        sta MMC3_MIRRORING
-    .elseif mode = 1
-        lda #1
-        sta MMC3_MIRRORING
-    .else
-        lda #0
-        sta MMC3_MIRRORING
-    .endif
-.endmacro
-
-; IRQ control (MMC3 mode)
-.macro set_irq_counter value
-    lda #value
-    sta MMC3_IRQ_LATCH
-    lda #0
-    sta MMC3_IRQ_RELOAD
-.endmacro
-
-.macro enable_irq
-    cli
-    lda #0
-    sta MMC3_IRQ_ENABLE
-.endmacro
-
-.macro disable_irq
-    lda #0
-    sta MMC3_IRQ_DISABLE
-    sei
-.endmacro
-
-; PRG-RAM control (MMC3)
-.macro enable_prg_ram
-    lda #%10000000
-    sta MMC3_PRG_RAM
-.endmacro
-
-.macro disable_prg_ram
-    lda #%00000000
-    sta MMC3_PRG_RAM
-.endmacro
-
-.macro write_protect_prg_ram
-    lda #%11000000
-    sta MMC3_PRG_RAM
 .endmacro
 
 ; Map font CHR banks to $0000-$07FF via R0
