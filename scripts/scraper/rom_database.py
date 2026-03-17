@@ -52,9 +52,14 @@ _REGION_TEXT_MAP = {
 
 
 def hardware_from_console_type_and_region(
-    console_type_str: Optional[str], region_str: Optional[str]
+    console_type_str: Optional[str], region_str: Optional[str],
+    country: Optional[str] = None,
 ) -> Optional[int]:
     """Compute a HardwareType integer from iNES 2.0 console type and region strings.
+
+    If ``country`` contains "japan" (case-insensitive) and the console type is
+    NES/Famicom (0), the result is FAMICOM regardless of region (unless the
+    region is explicitly PAL).
 
     Returns None when the inputs cannot be mapped.
     """
@@ -76,7 +81,8 @@ def hardware_from_console_type_and_region(
 
     # ct == 0: NES/Famicom — determine from region
     if region_str is None:
-        return HardwareType.NES_NTSC.value
+        is_japan = country and "japan" in country.lower()
+        return HardwareType.FAMICOM.value if is_japan else HardwareType.NES_NTSC.value
     try:
         cr = int(region_str)
     except (ValueError, TypeError):
@@ -92,7 +98,13 @@ def hardware_from_console_type_and_region(
         3: HardwareType.DENDY,
     }
     hw = region_map.get(cr)
-    return hw.value if hw is not None else None
+    if hw is None:
+        return None
+    # NES_NTSC and NES_MULTI_REGION are upgraded to FAMICOM for Japan releases
+    is_japan = country and "japan" in country.lower()
+    if is_japan and hw in (HardwareType.NES_NTSC, HardwareType.NES_MULTI_REGION):
+        return HardwareType.FAMICOM.value
+    return hw.value
 
 class NametableLayout(IntEnum):
     """ iNES 2.0 Hardwired nametable layouts """

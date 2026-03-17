@@ -308,6 +308,26 @@ class TestHardwareFromConsoleTypeAndRegion(unittest.TestCase):
         result = hardware_from_console_type_and_region("0", "1")
         self.assertEqual(result, HardwareType.NES_PAL.value)
 
+    def test_japan_ntsc_is_famicom(self):
+        """NTSC + Japan country must yield Famicom, not NES_NTSC."""
+        result = hardware_from_console_type_and_region("0", "0", country="Licensed Japan")
+        self.assertEqual(result, HardwareType.FAMICOM.value)
+
+    def test_japan_multi_region_is_famicom(self):
+        """Multi-region + Japan country must yield Famicom, not NES_MULTI_REGION."""
+        result = hardware_from_console_type_and_region("0", "2", country="Licensed Japan")
+        self.assertEqual(result, HardwareType.FAMICOM.value)
+
+    def test_japan_pal_remains_pal(self):
+        """PAL + Japan country must remain NES_PAL (contradictory, keep as-is)."""
+        result = hardware_from_console_type_and_region("0", "1", country="Japan")
+        self.assertEqual(result, HardwareType.NES_PAL.value)
+
+    def test_non_japan_ntsc_remains_nes_ntsc(self):
+        """NTSC without Japan country must remain NES_NTSC."""
+        result = hardware_from_console_type_and_region("0", "0", country="USA")
+        self.assertEqual(result, HardwareType.NES_NTSC.value)
+
 
 if __name__ == "__main__":
     unittest.main()

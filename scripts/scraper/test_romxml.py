@@ -243,7 +243,7 @@ class TestRomXml(unittest.TestCase):
                 RomDbKey.SUBMAPPER.value: "0",
                 RomDbKey.NAMETABLE_LAYOUT.value: "H",
                 RomDbKey.BATTERY.value: "0",
-                RomDbKey.HARDWARE.value: "0",
+                RomDbKey.HARDWARE.value: "2",
                 RomDbKey.EXPANSION_TYPE.value: "1",
                 RomDbKey.VS_HARDWARE_TYPE.value: "0",
                 RomDbKey.VS_PPU_TYPE.value: "5",

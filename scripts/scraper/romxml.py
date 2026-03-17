@@ -139,7 +139,8 @@ class RomXml:
         if console is not None:
             console_type = console.get("type")
             region = console.get("region")
-            hw = hardware_from_console_type_and_region(console_type, region)
+            country = data.get(RomDbKey.CONSOLE_CLASS.value)
+            hw = hardware_from_console_type_and_region(console_type, region, country=country)
             if hw is not None:
                 data[RomDbKey.HARDWARE.value] = str(hw)
 

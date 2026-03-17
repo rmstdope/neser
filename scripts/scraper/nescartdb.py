@@ -7,9 +7,9 @@ from urllib.request import Request, urlopen
 from bs4 import BeautifulSoup
 
 try:
-    from .rom_database import HardwareType, ControllerType, RomDbKey
+    from .rom_database import HardwareType, ControllerType, RomDbKey, hardware_from_console_type_and_region
 except ImportError:  # pragma: no cover - allow running as a script
-    from rom_database import HardwareType, ControllerType, RomDbKey
+    from rom_database import HardwareType, ControllerType, RomDbKey, hardware_from_console_type_and_region
 
 BASE_URL = "https://nescartdb.com/profile/view/{}"
 
@@ -339,7 +339,8 @@ class NesCartDb:
         if video_system == "PAL":
             result[RomDbKey.HARDWARE.value] = HardwareType.NES_PAL.value
         else:
-            result[RomDbKey.HARDWARE.value] = HardwareType.NES_NTSC.value
+            hw = hardware_from_console_type_and_region("0", "0", country=region_text)
+            result[RomDbKey.HARDWARE.value] = hw if hw is not None else HardwareType.NES_NTSC.value
         mapper = self._first_value(kv, ["iNES Mapper", "Mapper"])
         submapper = self._first_value(kv, ["Submapper", "SubMapper"])
         chr_ram = self._first_value(kv, ["CHR RAM", "CHR-RAM", "VRAM"])

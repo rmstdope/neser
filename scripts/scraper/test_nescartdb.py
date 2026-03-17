@@ -738,6 +738,15 @@ class TestNesCartDb(unittest.TestCase):
         result = scraper._build_result(1, pal_html)
         self.assertEqual(result[RomDbKey.HARDWARE.value], HardwareType.NES_PAL)
 
+    def test_build_result_japan_ntsc_sets_famicom_hardware(self) -> None:
+        """A Japan (NTSC) entry must set hardware to FAMICOM, not NES_NTSC."""
+        japan_html = self._static_html().replace(
+            "USA (NTSC)", "Japan (NTSC)"
+        )
+        scraper = NesCartDb(1)
+        result = scraper._build_result(1, japan_html)
+        self.assertEqual(result[RomDbKey.HARDWARE.value], HardwareType.FAMICOM)
+
 
 if __name__ == "__main__":
     unittest.main()
