@@ -57,9 +57,11 @@ def hardware_from_console_type_and_region(
 ) -> Optional[int]:
     """Compute a HardwareType integer from iNES 2.0 console type and region strings.
 
-    If ``country`` contains "japan" (case-insensitive) and the console type is
-    NES/Famicom (0), the result is FAMICOM regardless of region (unless the
-    region is explicitly PAL).
+    For console type 0 (NES/Famicom), the region normally selects between
+    NES_NTSC, NES_PAL, NES_MULTI_REGION, and DENDY. If ``country`` contains
+    "japan" (case-insensitive), NES_NTSC is upgraded to FAMICOM, but other
+    region-derived types (including NES_PAL and NES_MULTI_REGION) are left
+    unchanged.
 
     Returns None when the inputs cannot be mapped.
     """
