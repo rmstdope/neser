@@ -39,6 +39,7 @@ CHR_RAM_SHIFT = 0
 .define CHR_BANK_SIZE 1       ; 1KB switchable
 .define PRG_BANK_COUNT 2      ; 1 × 16KB switchable + code region (fixed $E000)
 .define CHR_BANK_COUNT 8      ; 8 × 1KB slots
+CHR_1K_LINEAR = 1      ; Linear 1KB slots from $0000 to $1FFF
 
 ; VRC6a address offsets (A0=bit0, A1=bit1)
 VRC6_OFFSET_0    = $0000
@@ -112,17 +113,18 @@ VRC6_IRQ_ACK    = $F000 | VRC6_OFFSET_A1     ; IRQ acknowledge
     .endif
 .endmacro
 
-; Set mirroring via $B003 (N=CIRAM bit 5 must remain set)
-; mirror bits 3-2: 00=V, 01=H, 10=1A, 11=1B; PPU banking mode bits 1-0 = 00
+; Set mirroring via $B003 while keeping PRG-RAM enabled for the test-status byte.
+; bit 7 = W (PRG-RAM enable), bit 5 = N (CIRAM), mirror bits 3-2 = V/H/1A/1B,
+; and PPU banking mode bits 1-0 stay in mode 0.
 .macro set_mirroring mode
     .if mode = 0
-        lda #$20            ; N=1 (CIRAM), mirror bits 3-2=00 (vertical)
+        lda #$A0            ; W=1, N=1, mirror=vertical
     .elseif mode = 1
-        lda #$24            ; N=1, mirror=01 (horizontal)
+        lda #$A4            ; W=1, N=1, mirror=horizontal
     .elseif mode = 2
-        lda #$28            ; N=1, mirror=10 (1-screen A)
+        lda #$A8            ; W=1, N=1, mirror=1-screen A
     .elseif mode = 3
-        lda #$2C            ; N=1, mirror=11 (1-screen B)
+        lda #$AC            ; W=1, N=1, mirror=1-screen B
     .endif
     sta VRC6_MODE
 .endmacro

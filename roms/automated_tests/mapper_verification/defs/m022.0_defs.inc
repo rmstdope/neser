@@ -35,6 +35,7 @@ CHR_RAM_SHIFT = 0
 .define CHR_BANK_SIZE 1       ; 1KB switchable
 .define PRG_BANK_COUNT 4      ; 4 windows: 2 switchable + 2 fixed
 .define CHR_BANK_COUNT 8      ; 8 × 1KB slots
+CHR_1K_LINEAR = 1      ; Linear 1KB slots from $0000 to $1FFF
 
 ; VRC2a address wiring: A0=NES_A1 (bit 1 offset), A1=NES_A0 (bit 0 offset)
 VRC2A_A0 = $02              ; NES address bit A1

@@ -14,6 +14,10 @@
 ; Include the mapper-specific definitions
 .include "mapper_config.inc"
 
+.ifndef SKIP_PRG_SIG1
+    SKIP_PRG_SIG1 = 0
+.endif
+
 ; Signature read address: start of banked window
 .if PRG_BANK_SIZE = 4
     BANK_WINDOW = $8000         ; 4KB: $8000-$8FFF (slot 0)
@@ -451,8 +455,10 @@ trampoline_end:
 
 ; Bank 1 sig: skip for mapper 15 (bank 1 = bootstrap)
 .if MAPPER_NUM <> 15
+    .if .not SKIP_PRG_SIG1
 .segment "PRG_SIG1"
     .byte $A5, 1, $FE, $5A
+    .endif
 .endif
 
 .segment "PRG_SIG2"

@@ -28,6 +28,7 @@ CHR_RAM_SHIFT = 8        ; 32KB CHR-RAM (4 × 8KB)
 .define HAS_PRG_BANKING 1
 .define HAS_CHR_BANKING 0        ; No CHR-ROM banking
 .define HAS_CHR_RAM_BANKING 1    ; CHR-RAM bank switching
+.define HAS_CHR_FIXED_LOWER 0   ; No fixed lower CHR page; entire 8KB window switches
 .define HAS_MIRRORING_CONTROL 0
 .define HAS_IRQ 0
 .define HAS_PRG_RAM 0

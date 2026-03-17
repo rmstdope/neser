@@ -10,11 +10,9 @@
 ;   Slot 10 ($D000): PPU $2800-$2BFF (nametable C)
 ;   Slot 11 ($D800): PPU $2C00-$2FFF (nametable D)
 ;
-; This test ROM places CHR signature data at the start of CHR bank 8 (the
-; first half of the CHR_FONT region: $B6, 8, $F7, $6B). Mapping bank 8
-; to NT $2000 allows PPU reads from $2000 to return that signature.
-
-.ifdef HAS_NT_FROM_CHR
+; This test ROM uses a dedicated CHR signature bank rather than the font bank.
+; Bank 10 contains the standard signature header ($B6, 10, $F7, $6B), and bank
+; 11 lets us verify a second nametable quadrant without overlapping the font.
 
 .include "test_macros.inc"
 .include "mapper_config.inc"
@@ -40,92 +38,63 @@ nt_read_val: .res 1
 
 .segment "CODE"
 
-; Disable rendering for safe PPU access
-.proc disable_rendering
-    lda #0
-    sta PPUMASK
-    sta ppumask_shadow
-    rts
-.endproc
-
-; Re-enable rendering
-.proc enable_rendering
-    lda #%00001010
-    sta PPUMASK
-    sta ppumask_shadow
-    lda #0
-    sta PPUSCROLL
-    sta PPUSCROLL
-    rts
-.endproc
-
 .proc run_tests
-    jsr disable_rendering
+.if HAS_NT_FROM_CHR
+    ; Disable rendering for safe PPU access
+    lda #0
+    sta PPUMASK
+    sta ppumask_shadow
 
-    ; ========================================
-    ; Test 1: NT $2000 mapped from CHR bank 8
-    ; ========================================
-    ; Write bank 8 to the NT select register for PPU $2000-$23FF (slot 8 at $C000)
-    ; CHR bank 8 starts with signature: $B6, 8, $F7, $6B
+    ; Test 1: NT $2000 mapped from CHR bank 10
     start_test 1, "NT from CHR"
 
-    lda #8
-    sta $C000               ; Slot 8: map CHR bank 8 to PPU $2000-$23FF
+    lda #10
+    sta $C000               ; Slot 8: map CHR bank 10 to PPU $2000-$23FF
 
-    ; Read from PPU $2000 (first byte of CHR bank 8 should be $B6)
     bit PPUSTATUS
     lda #$20
     sta PPUADDR
     lda #$00
     sta PPUADDR
-    lda PPUDATA             ; Dummy read (PPU read buffer)
-    lda PPUDATA             ; Actual byte from CHR bank 8 at $2000
+    lda PPUDATA             ; Dummy read
+    lda PPUDATA             ; First byte from CHR bank 10 at $2000
     sta nt_read_val
 
-    ; Restore CIRAM before console output: write $E8 (chip RAM) to slot 8
     lda #$E8
-    sta $C000
+    sta $C000               ; Restore CIRAM: write $E8 (chip RAM) to slot 8
 
     lda nt_read_val
-    assert_a_eq $B6         ; CHR bank 8 signature marker
+    assert_a_eq $B6
     pass_test
 
-    ; ========================================
     ; Test 2: NT bank ID byte (offset +1)
-    ; ========================================
     start_test 2, "NT CHR id"
 
-    lda #8
-    sta $C000               ; Re-map CHR bank 8 to NT $2000
+    lda #10
+    sta $C000               ; Re-map CHR bank 10 to NT $2000
 
-    ; Read offset +1 from $2001 (bank ID byte)
     bit PPUSTATUS
     lda #$20
     sta PPUADDR
     lda #$01
     sta PPUADDR
     lda PPUDATA             ; Dummy read
-    lda PPUDATA             ; Should be bank 8 ID
+    lda PPUDATA             ; Bank ID byte at offset +1
     sta nt_read_val
 
     lda #$E8
     sta $C000               ; Restore CIRAM
 
     lda nt_read_val
-    assert_a_eq 8           ; CHR bank 8 ID
+    assert_a_eq 10
     pass_test
 
-    ; ========================================
     ; Test 3: NT from CIRAM (internal RAM mode)
-    ; ========================================
-    ; Write $E8 to NT select → maps to internal chip RAM (CIRAM-like)
-    ; Then write a pattern to PPU $2000 and verify read-back
     start_test 3, "NT CIRAM"
 
     lda #$E8
     sta $C000               ; Slot 8: map internal chip RAM to $2000-$23FF
 
-    ; Write test pattern to PPU $200F
     bit PPUSTATUS
     lda #$20
     sta PPUADDR
@@ -134,7 +103,6 @@ nt_read_val: .res 1
     lda #$55
     sta PPUDATA
 
-    ; Read back from PPU $200F
     bit PPUSTATUS
     lda #$20
     sta PPUADDR
@@ -146,32 +114,36 @@ nt_read_val: .res 1
     assert_a_eq $55
     pass_test
 
-    ; ========================================
-    ; Test 4: NT $2400 mapped from CHR bank 9
-    ; ========================================
+    ; Test 4: NT $2400 mapped from CHR bank 11
     start_test 4, "NT CHR $2400"
 
-    lda #9
-    sta $C800               ; Slot 9: map CHR bank 9 to PPU $2400-$27FF
+    lda #11
+    sta $C800               ; Slot 9: map CHR bank 11 to PPU $2400-$27FF
 
-    ; CHR bank 9 signature: $B6, 9, $F6, $6B
     bit PPUSTATUS
     lda #$24
     sta PPUADDR
     lda #$01
     sta PPUADDR
     lda PPUDATA             ; Dummy read
-    lda PPUDATA             ; Bank 9 ID
+    lda PPUDATA             ; Bank 11 ID
     sta nt_read_val
 
     lda #$E8
     sta $C800               ; Restore slot 9 to chip RAM
 
     lda nt_read_val
-    assert_a_eq 9           ; CHR bank 9 ID
+    assert_a_eq 11
     pass_test
 
-    jsr enable_rendering
+    ; Re-enable rendering
+    lda #%00001010
+    sta PPUMASK
+    sta ppumask_shadow
+    lda #0
+    sta PPUSCROLL
+    sta PPUSCROLL
+.endif
     rts
 .endproc
 
@@ -179,10 +151,13 @@ nt_read_val: .res 1
 run_nt_from_chr = run_tests
 .export run_nt_from_chr
 
+.segment "CHR_SIG10"
+    .byte $B6, 10, $F7, $6B
+
+.segment "CHR_SIG11"
+    .byte $B6, 11, $F7, $6B
+
 .ifndef COMBINED
-; NES 2.0 Header
 .include "nes20_header.inc"
 nes20_header
-.endif ; COMBINED
-
-.endif ; HAS_NT_FROM_CHR
+.endif

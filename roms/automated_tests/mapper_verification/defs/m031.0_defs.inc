@@ -4,9 +4,8 @@
 ; Address bits 2-0 select the 4KB slot (0=$8000, 1=$9000, ..., 7=$F000).
 ; Data = 4KB bank number to map into that slot.
 ;
-; Power-on: last bank appears in slot 7 ($F000-$FFFF).
-; This test ROM keeps slot 6 fixed to bank 14 and slot 7 to bank 15 (code).
-; Slots 0-5 are used for the PRG banking test (switching slot 0 at $8000).
+; Power-on: only slot 7 ($F000-$FFFF) is guaranteed to hold the last bank.
+; This test ROM therefore keeps all startup code in slot 7 and only exercises slot 0.
 ;
 ; Features:
 ;   - PRG banking: 4KB switchable per slot ($5FF8-$5FFD for slots 0-5)

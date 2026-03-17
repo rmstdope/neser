@@ -9,7 +9,7 @@
 ;   - PRG banking: 16KB switchable at $8000, last bank fixed at $C000
 ;   - CHR-RAM banking: 4 × 8KB banks
 ;   - Fixed mirroring (solder pads; vertical for this test ROM)
-;   - No IRQ, No PRG-RAM, No bus conflicts
+;   - No IRQ, No PRG-RAM, bus conflicts apply
 ;
 ; Note: PRG and CHR share one register. select_prg_bank sets CHR bits to 0;
 ; select_chr_bank sets PRG bits to 0. Safe because the fixed $C000 bank is
@@ -27,11 +27,12 @@ CHR_RAM_SHIFT = 8        ; 32KB CHR-RAM (4 × 8KB)
 .define HAS_PRG_BANKING 1
 .define HAS_CHR_BANKING 0
 .define HAS_CHR_RAM_BANKING 1    ; CHR-RAM bank switching
+.define HAS_CHR_FIXED_LOWER 0   ; No fixed lower CHR page; entire 8KB window switches
 .define HAS_MIRRORING_CONTROL 0
 .define HAS_IRQ 0
 .define HAS_PRG_RAM 0
 .define HAS_PRG_RAM_PROTECT 0
-.define HAS_BUS_CONFLICTS 0
+.define HAS_BUS_CONFLICTS 1
 .define MAX_MIRRORING_MODES 0       ; SM0: no mirroring control
 
 ; Bank sizes
@@ -44,16 +45,17 @@ CHR_RAM_SHIFT = 8        ; 32KB CHR-RAM (4 × 8KB)
 ; Register macros
 ; ============================================================
 
-; Select 16KB PRG bank at $8000 (CHR bits 6-5 left as 0)
+; Select 16KB PRG bank using a write address that stays at linker fill ($FF)
+; in the currently mapped bank, so real bus conflicts do not corrupt the value.
 .macro select_prg_bank slot, bank
     lda #(bank & $1F)       ; bits 4-0 = PRG bank; bits 6-5 = CHR (0)
-    sta $8000
+    sta $BFFF
 .endmacro
 
-; Select 8KB CHR-RAM bank (PRG bits 4-0 left as 0)
+; Select 8KB CHR-RAM bank using the same bus-conflict-safe write address.
 .macro select_chr_bank slot, bank
     lda #((bank & $03) << 5)  ; bits 6-5 = CHR bank; bits 4-0 = PRG (0)
-    sta $8000
+    sta $BFFF
 .endmacro
 
 ; No mirroring control in SM0

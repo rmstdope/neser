@@ -102,6 +102,7 @@ SINGLES := \
 	$(SINGLES_DIR)/m019.0_chr_banking.nes \
 	$(SINGLES_DIR)/m019.0_nametable.nes \
 	$(SINGLES_DIR)/m019.0_irq.nes \
+	$(SINGLES_DIR)/m019.0_nt_from_chr.nes \
 	$(SINGLES_DIR)/m019.2_prg_banking.nes \
 	$(SINGLES_DIR)/m019.2_chr_banking.nes \
 	$(SINGLES_DIR)/m019.2_nametable.nes \
@@ -427,6 +428,7 @@ $(eval $(call ROM_RULE,$(SINGLES_DIR)/m019.0_prg_banking.nes,prg_banking,m019.0)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m019.0_chr_banking.nes,chr_banking,m019.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m019.0_nametable.nes,nametable,m019.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m019.0_irq.nes,irq,m019.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m019.0_nt_from_chr.nes,nt_from_chr,m019.0))
 
 # Mapper 19, Submapper 2 (Namco 163, no expansion audio)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m019.2_prg_banking.nes,prg_banking,m019.2))
@@ -507,7 +509,7 @@ $(eval $(call COMBINED_RULE,$(BIN_DIR)/m012.0.nes,m012.0,prg_banking chr_banking
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m013.0.nes,m013.0,chr_ram_banking))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m014.0.nes,m014.0,prg_banking chr_banking nametable irq prg_ram))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m015.0.nes,m015.0,prg_banking nametable))
-$(eval $(call COMBINED_RULE,$(BIN_DIR)/m019.0.nes,m019.0,prg_banking chr_banking nametable irq))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m019.0.nes,m019.0,prg_banking chr_banking nametable irq nt_from_chr))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m019.2.nes,m019.2,prg_banking chr_banking nametable irq))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m021.1.nes,m021.1,prg_banking chr_banking nametable irq))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m021.2.nes,m021.2,prg_banking chr_banking nametable irq))

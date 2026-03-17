@@ -30,7 +30,7 @@ impl Mapper18 {
             has_irq: true,
             has_chr_banking: true,
             has_dynamic_mirroring: true,
-            max_prg_ram_kb: 0,
+            max_prg_ram_kb: ctx.prg_ram_banks_8k as usize * 8,
             prg_bank_size_kb: 8,
             chr_bank_size_kb: 1,
             ..Default::default()
@@ -101,6 +101,10 @@ impl Mapper for Mapper18 {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
+        if self.base.try_write_prg_ram(addr, value) {
+            return;
+        }
+
         let update_upper_bits = (addr & 0x0001) == 0x0001;
         let nibble = value & 0x0F;
 

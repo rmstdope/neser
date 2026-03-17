@@ -38,6 +38,7 @@ CHR_RAM_SHIFT = 0
 .define CHR_BANK_SIZE 1       ; 1KB switchable
 .define PRG_BANK_COUNT 4      ; 3 switchable + 1 fixed
 .define CHR_BANK_COUNT 8      ; 8 × 1KB slots
+CHR_1K_LINEAR = 1      ; Linear 1KB slots from $0000 to $1FFF
 
 ; ============================================================
 ; Register addresses
@@ -147,37 +148,49 @@ M18_IRQ_MIRROR = $F002  ; Mirroring (bits 1-0: 0=H, 1=V, 2=1A, 3=1B)
     .endif
 .endmacro
 
-; Set mirroring: 0=horizontal, 1=vertical, 2=1-screen A, 3=1-screen B
+; Shared test modes are 0=vertical, 1=horizontal, 2=1-screen A, 3=1-screen B.
+; Jaleco encodes 0=horizontal, 1=vertical, 2=1A, 3=1B at $F002.
 .macro set_mirroring mode
-    lda #mode
+    .if mode = 0
+        lda #1
+    .elseif mode = 1
+        lda #0
+    .elseif mode = 2
+        lda #2
+    .elseif mode = 3
+        lda #3
+    .endif
     sta M18_IRQ_MIRROR
 .endmacro
 
-; Set IRQ counter (fire after 'value' M2 cycles); use 16-bit mode
+; The shared IRQ test was written around scanline-style counters and uses very
+; small abstract values (5, 10). Mapper 18 counts raw M2 cycles, so using those
+; values directly causes an IRQ storm that starves the test loop. Scale each
+; abstract unit to roughly one scanline worth of CPU cycles.
 .macro set_irq_counter value
-    lda #(value & $0F)
+    lda #((value * 114) & $0F)
     sta M18_IRQ_LATCH0
-    lda #((value >> 4) & $0F)
+    lda #(((value * 114) >> 4) & $0F)
     sta M18_IRQ_LATCH1
-    lda #((value >> 8) & $0F)
+    lda #(((value * 114) >> 8) & $0F)
     sta M18_IRQ_LATCH2
-    lda #((value >> 12) & $0F)
+    lda #(((value * 114) >> 12) & $0F)
     sta M18_IRQ_LATCH3
-    lda #$08                ; 16-bit counter mode
-    sta M18_IRQ_SIZE
 .endmacro
 
 ; Enable IRQ: reload counter from latch and start counting
 .macro enable_irq
+    lda #$01
+    sta M18_IRQ_SIZE        ; enable + 16-bit mode
     lda #1
-    sta M18_IRQ_RELOAD      ; Reload and start counter
+    sta M18_IRQ_RELOAD      ; Reload counter from latch
     cli
 .endmacro
 
 ; Disable IRQ: write 0 to size register stops counting
 .macro disable_irq
     lda #0
-    sta M18_IRQ_SIZE        ; Clear mode → counter halts
+    sta M18_IRQ_SIZE        ; disable
     sei
 .endmacro
 

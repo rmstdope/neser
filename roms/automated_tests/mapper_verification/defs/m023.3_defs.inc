@@ -32,6 +32,7 @@ CHR_RAM_SHIFT = 0
 .define CHR_BANK_SIZE 1        ; 1KB switchable
 .define PRG_BANK_COUNT 4       ; 4 × 8KB slots (0,1 switchable; 2,3 fixed)
 .define CHR_BANK_COUNT 8       ; 8 × 1KB slots
+CHR_1K_LINEAR = 1      ; Linear 1KB slots from $0000 to $1FFF
 
 ; ============================================================
 ; VRC2 address pin configuration

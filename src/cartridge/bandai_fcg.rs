@@ -70,6 +70,7 @@ impl BandaiFcgMapper {
             has_dynamic_mirroring: true,
             prg_bank_size_kb: 16,
             chr_bank_size_kb: 1,
+            max_prg_ram_kb: ctx.prg_ram_banks_8k as usize * 8,
             ..Default::default()
         };
         let mut base = BaseMapper::new(&ctx, capabilities);
@@ -105,6 +106,11 @@ impl Mapper for BandaiFcgMapper {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
+        // Always attempt PRG-RAM write; do NOT return so register writes also proceed.
+        // For SM4 (FCG-1/2), $6000-$7FFF doubles as both register and PRG-RAM space,
+        // allowing the test status byte protocol at $6000-$6003 to function.
+        let _ = self.base.try_write_prg_ram(addr, value);
+
         // Determine which address range this write falls into and if it's valid
         let is_6000_range = (0x6000..=0x7FFF).contains(&addr);
         let is_8000_range = (0x8000..=0xFFFF).contains(&addr);
@@ -203,18 +209,15 @@ impl Mapper for BandaiFcgMapper {
     }
 
     fn wram_size(&self) -> usize {
-        // Mapper 16 does not have traditional PRG-RAM.
-        // Save data is stored in EEPROM (not yet implemented).
-        0
+        self.base.wram_size()
     }
 
     fn wram_snapshot(&self) -> Vec<u8> {
-        // No WRAM to snapshot - EEPROM save data is separate
-        Vec::new()
+        self.base.wram_snapshot()
     }
 
-    fn load_wram_snapshot(&mut self, _data: &[u8]) {
-        // No WRAM to restore - EEPROM save data is separate
+    fn load_wram_snapshot(&mut self, data: &[u8]) {
+        self.base.load_wram_snapshot(data);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {

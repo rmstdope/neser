@@ -35,6 +35,7 @@ CHR_RAM_SHIFT = 8        ; 16KB CHR-RAM (64 << 8 = 16384)
 .define HAS_PRG_RAM_PROTECT 0
 .define HAS_BUS_CONFLICTS 1
 .define HAS_CHR_RAM_BANKING 1    ; CHR-RAM bank switching
+.define HAS_CHR_FIXED_LOWER 1   ; PPU $0000-$0FFF fixed at page 0; $1000-$1FFF switchable
 .define MAX_MIRRORING_MODES 0       ; No mirroring control
 
 ; Bank sizes

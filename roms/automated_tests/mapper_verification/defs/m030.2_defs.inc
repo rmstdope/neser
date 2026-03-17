@@ -9,7 +9,7 @@
 ;   - PRG banking: 16KB switchable at $8000, last bank fixed at $C000
 ;   - CHR-RAM banking: 4 × 8KB banks
 ;   - Mirroring: 1-screen A (mode 0) or 1-screen B (mode 1) via bit 7
-;   - No IRQ, No PRG-RAM, No bus conflicts
+;   - No IRQ, No PRG-RAM, bus conflicts apply
 ;
 ; set_mirroring sets PRG=0 and CHR=0 as side effects (safe from fixed bank).
 
@@ -25,11 +25,12 @@ CHR_RAM_SHIFT = 8        ; 32KB CHR-RAM (4 × 8KB)
 .define HAS_PRG_BANKING 1
 .define HAS_CHR_BANKING 0
 .define HAS_CHR_RAM_BANKING 1    ; CHR-RAM bank switching
+.define HAS_CHR_FIXED_LOWER 0   ; No fixed lower CHR page; entire 8KB window switches
 .define HAS_MIRRORING_CONTROL 1
 .define HAS_IRQ 0
 .define HAS_PRG_RAM 0
 .define HAS_PRG_RAM_PROTECT 0
-.define HAS_BUS_CONFLICTS 0
+.define HAS_BUS_CONFLICTS 1
 .define MAX_MIRRORING_MODES 2       ; 1-screen A and 1-screen B only
 
 ; Bank sizes
@@ -42,16 +43,16 @@ CHR_RAM_SHIFT = 8        ; 32KB CHR-RAM (4 × 8KB)
 ; Register macros
 ; ============================================================
 
-; Select 16KB PRG bank at $8000 (CHR and mirror bits left as 0)
+; Select 16KB PRG bank via a bus-conflict-safe address in the switchable bank.
 .macro select_prg_bank slot, bank
     lda #(bank & $1F)
-    sta $8000
+    sta $BFFF
 .endmacro
 
-; Select 8KB CHR-RAM bank (PRG and mirror bits left as 0)
+; Select 8KB CHR-RAM bank via a bus-conflict-safe address.
 .macro select_chr_bank slot, bank
     lda #((bank & $03) << 5)
-    sta $8000
+    sta $BFFF
 .endmacro
 
 ; Set 1-screen mirroring: mode 0=1-screen A (lower), mode 1=1-screen B (upper)
@@ -62,5 +63,5 @@ CHR_RAM_SHIFT = 8        ; 32KB CHR-RAM (4 × 8KB)
     .else
         lda #$80            ; bit 7=1: 1-screen B
     .endif
-    sta $8000
+    sta $BFFF
 .endmacro

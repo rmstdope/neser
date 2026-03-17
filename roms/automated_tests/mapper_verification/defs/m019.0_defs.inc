@@ -14,7 +14,7 @@
 
 PRG_ROM_16K   = 4        ; 64KB = 4 × 16KB (= 8 × 8KB banks)
 CHR_ROM_8K    = 2        ; 16KB = 16 × 1KB banks
-PRG_RAM_SHIFT = 0        ; No WRAM for test
+PRG_RAM_SHIFT = 7        ; 8KB PRG-RAM for status byte protocol
 CHR_RAM_SHIFT = 0
 
 ; Capability flags
@@ -22,7 +22,7 @@ CHR_RAM_SHIFT = 0
 .define HAS_CHR_BANKING 1
 .define HAS_MIRRORING_CONTROL 1
 .define HAS_IRQ 1
-.define HAS_PRG_RAM 0
+.define HAS_PRG_RAM 1
 .define HAS_PRG_RAM_PROTECT 0
 .define HAS_BUS_CONFLICTS 0
 .define HAS_NT_FROM_CHR 1           ; SM0 tests NT-from-CHR feature
@@ -36,6 +36,7 @@ CHR_RAM_SHIFT = 0
 .define CHR_BANK_SIZE 1        ; 1KB switchable
 .define PRG_BANK_COUNT 4       ; 4 × 8KB slots (0,1,2 switchable; 3 fixed)
 .define CHR_BANK_COUNT 8       ; 8 × 1KB PPU $0000-$1FFF slots
+CHR_1K_LINEAR = 1      ; Linear 1KB slots from $0000 to $1FFF
 
 ; ============================================================
 ; N163 Register Addresses
@@ -148,13 +149,14 @@ N163_PRG2_REG     = $F000       ; PRG bank at $C000 — bits 5-0
 ; IRQ control (15-bit CPU cycle counter)
 ; ============================================================
 
-; Set IRQ counter to fire after approximately 'value' CPU cycles
+; Scale the shared abstract IRQ test values so the reload test does not end up
+; firing every handful of CPU cycles on the raw Namco 163 counter.
 ; 15-bit counter fires on $7FFF→$0000 wrap
 ; To fire after N cycles: load ($8000 - N)
 .macro set_irq_counter value
-    lda #<($8000 - value)
+    lda #<($8000 - (value * 114))
     sta N163_IRQ_CTR_LO
-    lda #(>($8000 - value) & $7F)   ; bit 7 = 0 = IRQ enabled
+    lda #(>($8000 - (value * 114)) & $7F)   ; bit 7 = 0 = IRQ enabled
     sta N163_IRQ_CTR_HI
 .endmacro
 

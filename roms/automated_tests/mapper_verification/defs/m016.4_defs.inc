@@ -32,12 +32,14 @@ CHR_RAM_SHIFT = 0
 
 ; IRQ behavior (M2 cycle down-counter)
 .define IRQ_MODE 0
+CONSOLE_BG_PPUCTRL = $18
 
 ; Bank sizes
 .define PRG_BANK_SIZE 16      ; 16KB switchable
 .define CHR_BANK_SIZE 1       ; 1KB switchable
 .define PRG_BANK_COUNT 2      ; 1 switchable + 1 fixed
 .define CHR_BANK_COUNT 8      ; 8 × 1KB slots
+CHR_1K_LINEAR = 1      ; Linear 1KB slots from $0000 to $1FFF
 
 ; FCG-1/2 base address ($6000 for SM4)
 FCG_BASE = $6000
@@ -71,11 +73,12 @@ FCG_IRQ_HI  = FCG_BASE + $0C    ; IRQ counter high 8 bits
     sta FCG_MIRROR
 .endmacro
 
-; Set IRQ counter (fire after 'value' M2 cycles)
+; Mapper 16 IRQ counts raw M2 cycles. Scale the shared abstract test values
+; so the IRQ tests do not end up in a tight interrupt storm.
 .macro set_irq_counter value
-    lda #<value
+    lda #<(value * 114)
     sta FCG_IRQ_LO
-    lda #>value
+    lda #>(value * 114)
     sta FCG_IRQ_HI
 .endmacro
 
@@ -94,10 +97,11 @@ FCG_IRQ_HI  = FCG_BASE + $0C    ; IRQ counter high 8 bits
     sei
 .endmacro
 
-; Map font CHR banks (8+9) to PPU $0000-$07FF via slots 0 and 1
+; Map font CHR banks (8+9) to PPU $1000-$17FF via slots 4 and 5 so the shared
+; TEST_STATUS/TEST_CODE writes at $6000/$6001 do not clobber the visible font.
 .macro init_chr_font
     lda #8
-    sta FCG_BASE + 0
+    sta FCG_BASE + 4
     lda #9
-    sta FCG_BASE + 1
+    sta FCG_BASE + 5
 .endmacro

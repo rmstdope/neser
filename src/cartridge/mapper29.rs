@@ -46,8 +46,8 @@ impl Mapper29 {
 
     fn apply_register(&mut self, value: u8) {
         self.register = value;
-        self.base.select_chr_page(0, (value & 0b11) as i16);
-        self.base.select_prg_page(0, ((value >> 2) & 0b111) as i16);
+        self.base.select_chr_page(0, ((value >> 3) & 0b11) as i16); // bits 4:3
+        self.base.select_prg_page(0, (value & 0b111) as i16); // bits 2:0
         self.base.select_prg_page(1, -1);
     }
 }
@@ -113,7 +113,7 @@ mod tests {
     fn write_register_selects_switchable_prg_and_chr_ram_bank() {
         let mut mapper = create_mapper29();
 
-        mapper.write_prg(0x8000, 0b0000_1001); // PRG=2, CHR=1
+        mapper.write_prg(0x8000, 0b0000_1010); // PRG=2, CHR=1
 
         assert_eq!(mapper.read_prg(0x8000), 2);
         assert_eq!(mapper.read_prg(0xC000), 7);
@@ -126,13 +126,13 @@ mod tests {
 
         assert_eq!(mapper.chr_ram_snapshot().len(), 32 * 1024);
 
-        mapper.write_prg(0x8000, 0b0000_0011); // CHR=3
+        mapper.write_prg(0x8000, 0b0001_1000); // CHR=3
         mapper.write_chr(0x0100, 0xA5);
 
         mapper.write_prg(0x8000, 0b0000_0000); // CHR=0
         assert_eq!(mapper.read_chr(0x0100), 0x00);
 
-        mapper.write_prg(0x8000, 0b0000_0011); // CHR=3
+        mapper.write_prg(0x8000, 0b0001_1000); // CHR=3
         assert_eq!(mapper.read_chr(0x0100), 0xA5);
     }
 

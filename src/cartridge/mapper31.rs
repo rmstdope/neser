@@ -34,7 +34,7 @@ impl Mapper31 {
             has_chr_banking: true,
             prg_bank_size_kb: 4,
             chr_bank_size_kb: 8,
-            max_prg_ram_kb: 0,
+            max_prg_ram_kb: ctx.prg_ram_banks_8k as usize * 8,
             ..Default::default()
         };
 
@@ -73,6 +73,10 @@ impl Mapper for Mapper31 {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
+        if (0x6000..=0x7FFF).contains(&addr) {
+            self.base.try_write_prg_ram(addr, value);
+            return;
+        }
         if (0x5000..=0x5FFF).contains(&addr) {
             let window = (addr & 0x07) as usize;
             self.apply_register(window, value);

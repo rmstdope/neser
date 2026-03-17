@@ -39,6 +39,7 @@ CHR_RAM_SHIFT = 0
 .define CHR_BANK_SIZE 1       ; 1KB switchable
 .define PRG_BANK_COUNT 2      ; 1 × 16KB switchable + code region
 .define CHR_BANK_COUNT 8      ; 8 × 1KB slots
+CHR_1K_LINEAR = 1      ; Linear 1KB slots from $0000 to $1FFF
 
 ; VRC6b address offsets: A0 and A1 are swapped vs VRC6a
 VRC6_OFFSET_0    = $0000
@@ -112,13 +113,13 @@ VRC6_IRQ_ACK    = $F000 | VRC6_OFFSET_A1     ; $F001: IRQ acknowledge (VRC6b: A1
 
 .macro set_mirroring mode
     .if mode = 0
-        lda #$20            ; N=1 (CIRAM), vertical
+        lda #$A0            ; W=1, N=1 (CIRAM), vertical
     .elseif mode = 1
-        lda #$24            ; N=1, horizontal
+        lda #$A4            ; W=1, N=1, horizontal
     .elseif mode = 2
-        lda #$28            ; N=1, 1-screen A
+        lda #$A8            ; W=1, N=1, 1-screen A
     .elseif mode = 3
-        lda #$2C            ; N=1, 1-screen B
+        lda #$AC            ; W=1, N=1, 1-screen B
     .endif
     sta VRC6_MODE
 .endmacro
