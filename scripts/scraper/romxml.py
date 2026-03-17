@@ -2,10 +2,11 @@
 import xml.etree.ElementTree as ET
 from typing import Dict, Optional
 
+
 try:
-    from .rom_database import ControllerType, RomDbKey, hardware_from_console_type_and_region
+    from .rom_database import ControllerType, RomDbKey, hardware_from_console_type_and_region, HardwareType
 except ImportError:  # pragma: no cover - allow running as a script
-    from rom_database import ControllerType, RomDbKey, hardware_from_console_type_and_region
+    from rom_database import ControllerType, RomDbKey, hardware_from_console_type_and_region, HardwareType
 
 
 class RomXml:
@@ -172,12 +173,10 @@ class RomXml:
             return
         # Gauntlet (USA) with CRCs EC968C51 and CD50A092 should have 2kB VRAM according to component
         # list on nescart
-        # TODO Try the actual ROM
         if crc in ["EC968C51", "CD50A092"]:
             record[RomDbKey.CHR_RAM_SIZE.value] = 2048
         # Tetris (343C7BB0) is a mapper 3, not 148 according to component list
         # on nescart
-        # TODO Investigate
         if crc == "343C7BB0":
             record[RomDbKey.MAPPER.value] = 3
         # Volley Ball (A23CB659) is Mapper 79 (discrete 74xx‑based unlicensed board), not Mapper 36
@@ -221,6 +220,9 @@ class RomXml:
         # Thomas The Tank Engine & Friends Prototype (E46AEE21) also had 8kB PRG NVRAM
         if crc in ["E46AEE21"]:
             record[RomDbKey.PRG_NVRAM_SIZE.value] = 8192
+        # Same CRC but different regions. Align on multi-region
+        if crc in ["638DBC52", "C4C3949A"]:
+            record[RomDbKey.HARDWARE.value] = HardwareType.NES_MULTI_REGION.value
 
     def next_record(self) -> Optional[Dict[str, str]]:
         """Return the next parsed game record dict, or None if finished."""

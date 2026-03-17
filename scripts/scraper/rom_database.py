@@ -499,7 +499,6 @@ class RomDatabase:
                         updates[key] = value  # FAMICOM upgrades generic NES_NTSC
                     else:
                         print(f"\nConflict on CRC {crc}: column '{key}' has existing value '{old_value}', new value '{value}'")
-                        print(data)
                         has_conflict = True
                 # Extra merge of controller types
                 elif key == RomDbKey.EXPANSION_TYPE.value:
