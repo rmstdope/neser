@@ -196,16 +196,6 @@ impl TimingMode {
             Self::NTSC_SCANLINES
         }
     }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Ntsc => "ntsc",
-            Self::Pal => "pal",
-            Self::MultiRegion => "multi-region",
-            Self::Dendy => "dendy",
-            Self::Unknown(_) => "unknown",
-        }
-    }
 }
 
 /// Parsed iNES / NES 2.0 header information.

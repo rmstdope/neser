@@ -4,8 +4,7 @@ use super::sdl_gl_wrapper::SdlGlWrapper;
 use crate::app_context::{AppContext, IntoSharedAppContext, SharedAppContext};
 use crate::bus::ControllerStateWrapper;
 use crate::console::{
-    AutorunMode, Nes, SaveState, TimingMode, default_catalog_csv_path,
-    log_rom_timing_mode_selection,
+    AutorunMode, Nes, SaveState, TimingMode, default_catalog_csv_path, log_hardware_selection,
 };
 use crate::frontend_toasts::gamepad_init_toast_message;
 use sdl2::event::Event;
@@ -1813,13 +1812,12 @@ impl SdlEventLoop {
     fn apply_cartridge_timing_mode_from_rom(
         app_context: &SharedAppContext,
         cartridge: &crate::cartridge::Cartridge,
-    ) {
+    ) -> bool {
         let rom_timing_mode = cartridge.rom_timing_mode();
-        let applied = app_context
+        app_context
             .borrow_mut()
             .config_mut()
-            .apply_rom_timing_mode(rom_timing_mode);
-        log_rom_timing_mode_selection(app_context, rom_timing_mode, applied);
+            .apply_rom_timing_mode(rom_timing_mode)
     }
 
     fn request_cartridge_switch_dialog(&mut self) -> KeyDownOutcome {
@@ -2110,13 +2108,14 @@ impl SdlEventLoop {
         rom_path: &str,
     ) -> Result<(), String> {
         let rom_bytes = Self::read_rom_bytes(rom_path)?;
-        let app_context = nes.app_context();
+        let app_context = nes.app_context().clone();
         let cartridge =
             self.load_cartridge_from_rom_bytes(rom_path, &rom_bytes, app_context.clone())?;
 
-        Self::apply_cartridge_timing_mode_from_rom(&app_context.clone(), &cartridge);
+        let applied = Self::apply_cartridge_timing_mode_from_rom(&app_context, &cartridge);
 
         nes.insert_cartridge(cartridge);
+        log_hardware_selection(&app_context, applied);
         nes.reset(false);
         Ok(())
     }
