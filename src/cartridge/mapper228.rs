@@ -11,6 +11,9 @@ use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
 const MAPPER_NUMBER: u16 = 228;
+/// Size of `banking_snapshot()` base output: 2 PRG slots + 1 CHR slot + 1 mirroring byte.
+/// The full registers snapshot appends one additional byte for `chip_select` (total 5 bytes).
+const BANKING_SNAPSHOT_SIZE: usize = 4;
 
 /// Mapper 228 – Action Enterprises (Action 52, Cheetahmen II)
 ///
@@ -54,12 +57,14 @@ const MAPPER_NUMBER: u16 = 228;
 /// Bank 0, CHR bank 0, Vertical mirroring (emulated by writing 0 to $8000).
 pub struct Mapper228 {
     base: BaseMapper,
+    chip_select: u8,
 }
 
 impl Mapper228 {
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_dynamic_mirroring: true,
+            has_chr_banking: true,
             prg_bank_size_kb: 16,
             chr_bank_size_kb: 8,
             ..Default::default()
@@ -67,15 +72,19 @@ impl Mapper228 {
         let mut base = BaseMapper::new(&ctx, capabilities);
         base.configure_prg_banking(16 * 1024);
         base.configure_chr_banking(8 * 1024);
-        let mut mapper = Self { base };
+        let mut mapper = Self {
+            base,
+            chip_select: 0,
+        };
         mapper.apply_register(0x8000, 0);
         mapper
     }
 
     fn apply_register(&mut self, addr: u16, value: u8) {
-        let chip_select = (addr >> 11) & 0x03;
+        self.chip_select = ((addr >> 11) & 0x03) as u8;
         // Chip 3 maps to linear index 2 (ROM layout: chips 0, 1, 3 → indices 0, 1, 2)
-        let chip_remap = if chip_select == 3 { 2 } else { chip_select };
+        // Chip 2 is absent (open bus); PRG pages are set but reads return open bus.
+        let chip_remap = if self.chip_select == 3 { 2u16 } else { self.chip_select as u16 };
 
         let prg_page = ((addr >> 6) & 0x1F) | (chip_remap << 5);
         if addr & 0x20 != 0 {
@@ -109,18 +118,40 @@ impl Mapper for Mapper228 {
         MAPPER_NUMBER
     }
 
+    fn reset(&mut self) {
+        self.apply_register(0x8000, 0);
+    }
+
     fn write_prg(&mut self, addr: u16, value: u8) {
+        if self.base.try_write_prg_ram(addr, value) {
+            return;
+        }
         if (0x8000..=0xFFFF).contains(&addr) {
             self.apply_register(addr, value);
         }
     }
 
+    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        if self.chip_select == 2 && addr >= 0x8000 {
+            return open_bus;
+        }
+        self.base()
+            .read_prg_open_bus(addr, open_bus, |address| self.read_prg(address))
+    }
+
     fn registers_snapshot(&self) -> Vec<u8> {
-        self.base.banking_snapshot()
+        let mut snap = self.base.banking_snapshot();
+        snap.push(self.chip_select);
+        snap
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        self.base.restore_banking(data);
+        if data.len() > BANKING_SNAPSHOT_SIZE {
+            self.base.restore_banking(&data[..BANKING_SNAPSHOT_SIZE]);
+            self.chip_select = data[BANKING_SNAPSHOT_SIZE];
+        } else {
+            self.base.restore_banking(data);
+        }
     }
 }
 
@@ -281,6 +312,25 @@ mod tests {
         );
     }
 
+    #[test]
+    fn chip_select_2_returns_open_bus() {
+        let mut mapper = make_default_mapper();
+        // chip 2 (A12=1, A11=0): (addr >> 11) & 3 = 2 → absent chip, open bus
+        // addr = 0x8000 | (2 << 11) | 0x20 = 0x9020 (S=1 for 16KB mode)
+        mapper.write_prg(0x9020, 0x00);
+        let open_bus: u8 = 0xAB;
+        assert_eq!(
+            mapper.read_prg_open_bus(0x8000, open_bus),
+            open_bus,
+            "chip 2 ($8000) should return open bus"
+        );
+        assert_eq!(
+            mapper.read_prg_open_bus(0xFFFF, open_bus),
+            open_bus,
+            "chip 2 ($FFFF) should return open bus"
+        );
+    }
+
     // ─── CHR banking ────────────────────────────────────────────────────────
 
     #[test]
@@ -311,6 +361,31 @@ mod tests {
             mapper.read_chr(0x0000),
             62,
             "CHR bank 62: A3-A0=15, D1-D0=2"
+        );
+    }
+
+    // ─── Reset ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn reset_restores_power_on_state() {
+        let mut mapper = make_default_mapper();
+        // Modify state
+        mapper.write_prg(0x9820, 0x00); // chip 3, bank 0, 16KB mode
+        assert_eq!(mapper.read_prg(0x8000), 64);
+        // Reset should restore power-on: bank 0/1 pair, vertical mirroring
+        mapper.reset();
+        assert_eq!(mapper.read_prg(0x8000), 0, "PRG $8000 after reset");
+        assert_eq!(mapper.read_prg(0xC000), 1, "PRG $C000 after reset");
+        assert_eq!(
+            mapper.get_mirroring(),
+            NametableLayout::Vertical,
+            "mirroring after reset"
+        );
+        // chip_select should be 0 again (not chip 2/3)
+        assert_eq!(
+            mapper.read_prg_open_bus(0x8000, 0xAB),
+            0,
+            "after reset, PRG reads return ROM data (not open bus)"
         );
     }
 
@@ -370,5 +445,32 @@ mod tests {
             "upper PRG bank after restore"
         );
         assert_eq!(restored.read_chr(0x0000), 7, "CHR bank after restore");
+        // chip_select 1 is valid, so open bus should NOT be returned
+        assert_eq!(
+            restored.read_prg_open_bus(0x8000, 0xAB),
+            40,
+            "chip_select 1 after restore: ROM data returned"
+        );
+    }
+
+    #[test]
+    fn snapshot_preserves_chip_select_2_open_bus() {
+        let prg = banked_data(16 * 1024, PRG_BANKS);
+        let chr = banked_data(8 * 1024, CHR_BANKS);
+        let mut mapper = make_mapper(prg.clone(), chr.clone());
+        // Select chip 2 (absent chip), 16KB mode
+        // addr = 0x8000 | (2 << 11) | 0x20 = 0x9020
+        mapper.write_prg(0x9020, 0x00);
+
+        let snap = mapper.registers_snapshot();
+
+        let mut restored = make_mapper(prg, chr);
+        restored.restore_registers(&snap);
+        let open_bus: u8 = 0xCD;
+        assert_eq!(
+            restored.read_prg_open_bus(0x8000, open_bus),
+            open_bus,
+            "chip_select 2 restored: open bus returned"
+        );
     }
 }
