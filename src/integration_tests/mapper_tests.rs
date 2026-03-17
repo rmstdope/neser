@@ -276,12 +276,10 @@ mod tests {
         test_mv_m011_0_combined,
         "roms/automated_tests/mapper_verification/bin/m011.0.nes"
     );
-    // Known emulator bug: Mapper 11 submapper 1 not implemented (ColorDreamsMapper hardcodes bus conflicts)
-    // TODO: Remove comment-out once emulator implements submapper 1
-    // setup_rom_test!(
-    //     test_mv_m011_1_combined,
-    //     "roms/automated_tests/mapper_verification/bin/m011.1.nes"
-    // );
+    setup_rom_test!(
+        test_mv_m011_1_combined,
+        "roms/automated_tests/mapper_verification/bin/m011.1.nes"
+    );
     setup_rom_test!(
         test_mv_m012_0_combined,
         "roms/automated_tests/mapper_verification/bin/m012.0.nes"
@@ -572,15 +570,10 @@ mod tests {
     );
     // Known emulator bug: Mapper 11 submapper 1 not implemented (ColorDreamsMapper hardcodes bus conflicts)
     // TODO: Remove #[ignore] once emulator implements submapper 1
-    #[ignore]
-    #[allow(dead_code)]
-    fn test_mv_m011_1_chr_banking_ignored() {
-        // Placeholder for ignored test - actual test is disabled
-    }
-    // setup_rom_test!(
-    //     test_mv_m011_1_chr_banking,
-    //     "roms/automated_tests/mapper_verification/bin/rom_singles/m011.1_chr_banking.nes"
-    // );
+    setup_rom_test!(
+        test_mv_m011_1_chr_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m011.1_chr_banking.nes"
+    );
 
     // ================================================================
     // Mapper 12 (SL-5020B / MMC3 + outer CHR), Submapper 0

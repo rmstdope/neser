@@ -39,14 +39,14 @@
     jsr do_fail_test
 .endmacro
 
-; Report all tests passed
+; Report all tests passed and re-enable rendering
 .macro all_passed
     jsr console_flush
     jsr console_newline
     jsr console_print_inline
     .byte "PASSED", 0
     jsr console_flush
-    jsr console_show
+    jsr console_show       ; Re-enable rendering to ensure console output is visible
     lda #STATUS_PASS
     sta TEST_STATUS
     ; Infinite loop

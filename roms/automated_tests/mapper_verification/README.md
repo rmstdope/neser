@@ -69,6 +69,8 @@ mapper_verification/
    - **`$6000` status byte** — machine-readable, for automated test runners
    - **Console text output** — human-readable, rendered to the PPU nametable
 
+   The test harness automatically re-enables rendering when displaying pass/fail results. Some tests (e.g., CHR banking) may disable rendering during execution to avoid PPU bus conflicts, but `all_passed` and `do_fail_test` both call `console_show` to ensure the console output is always visible to the user.
+
 3. **Conditional assembly**: Tests use `.ifdef` / `.if` guards to include or skip functionality based on mapper capabilities. The same `test_prg_banking.s` handles 8KB (MMC3), 16KB (UxROM), and 32KB (AxROM) banking modes via `PRG_BANK_SIZE`.
 
 4. **Specification-driven**: Tests are designed against the [NESdev wiki](https://www.nesdev.org/wiki/) specifications for each mapper, not against any particular emulator implementation.

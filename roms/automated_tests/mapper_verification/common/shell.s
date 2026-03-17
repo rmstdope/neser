@@ -156,6 +156,9 @@ got_val:      .res 1       ; Temp for fail handler
     .byte "FAILED", 0
     jsr console_flush
 
+    ; Re-enable rendering to ensure console output is visible
+    jsr console_show
+
     ; Set status byte to failing test number
     lda TEST_CODE
     sta TEST_STATUS
