@@ -566,4 +566,60 @@ mod tests {
         test_mv_m015_0_nametable,
         "roms/automated_tests/mapper_verification/bin/rom_singles/m015.0_nametable.nes"
     );
+
+    // ============================
+    // Mapper 12 (SL-5020B / MMC3 + outer CHR)
+    // ============================
+    setup_rom_test!(
+        test_mv_m012_0_combined,
+        "roms/automated_tests/mapper_verification/bin/m012.0.nes"
+    );
+    setup_rom_test!(
+        test_mv_m012_0_prg_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m012.0_prg_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m012_0_chr_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m012.0_chr_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m012_0_nametable,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m012.0_nametable.nes"
+    );
+    setup_rom_test!(
+        test_mv_m012_0_irq,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m012.0_irq.nes"
+    );
+    setup_rom_test!(
+        test_mv_m012_0_prg_ram,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m012.0_prg_ram.nes"
+    );
+
+    // ============================
+    // Mapper 14 (SL-1632 / MMC3+VRC2 hybrid)
+    // ============================
+    setup_rom_test!(
+        test_mv_m014_0_combined,
+        "roms/automated_tests/mapper_verification/bin/m014.0.nes"
+    );
+    setup_rom_test!(
+        test_mv_m014_0_prg_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m014.0_prg_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m014_0_chr_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m014.0_chr_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m014_0_nametable,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m014.0_nametable.nes"
+    );
+    setup_rom_test!(
+        test_mv_m014_0_irq,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m014.0_irq.nes"
+    );
+    setup_rom_test!(
+        test_mv_m014_0_prg_ram,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m014.0_prg_ram.nes"
+    );
 }

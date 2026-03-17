@@ -50,6 +50,15 @@ got_val:      .res 1       ; Temp for fail handler
     ; Mapper-specific early init
     .if MAPPER_NUM = 4
     init_chr_font
+    .elseif MAPPER_NUM = 12
+    ; SL-5020B: clear outer CHR register, map font
+    lda #0
+    sta $4132
+    init_chr_font
+    .elseif MAPPER_NUM = 14
+    ; SL-1632: set MMC3 mode via supervisor, map font
+    set_mmc3_mode
+    init_chr_font
     .elseif MAPPER_NUM = 5
     ; MMC5: set PRG mode 3 (4×8KB) and enable PRG-RAM
     lda #3
@@ -170,8 +179,8 @@ got_val:      .res 1       ; Temp for fail handler
     pha
     inc irq_fired
     inc irq_count
-    .if MAPPER_NUM = 4
-    ; MMC3: acknowledge + re-enable
+    .if MAPPER_NUM = 4 .or MAPPER_NUM = 12 .or MAPPER_NUM = 14
+    ; MMC3/MMC3-clone: acknowledge + re-enable
     lda #0
     sta $E000               ; IRQ acknowledge (disable)
     sta $E001               ; IRQ re-enable
