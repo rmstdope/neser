@@ -277,6 +277,10 @@ mod tests {
         "roms/automated_tests/mapper_verification/bin/m011.0.nes"
     );
     setup_rom_test!(
+        test_mv_m011_1_combined,
+        "roms/automated_tests/mapper_verification/bin/m011.1.nes"
+    );
+    setup_rom_test!(
         test_mv_m012_0_combined,
         "roms/automated_tests/mapper_verification/bin/m012.0.nes"
     );
@@ -541,6 +545,20 @@ mod tests {
     setup_rom_test!(
         test_mv_m011_0_chr_banking,
         "roms/automated_tests/mapper_verification/bin/rom_singles/m011.0_chr_banking.nes"
+    );
+
+    // ================================================================
+    // Mapper 11 (Color Dreams), Submapper 1 — No Bus Conflicts
+    // ================================================================
+
+    // Singles
+    setup_rom_test!(
+        test_mv_m011_1_prg_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m011.1_prg_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m011_1_chr_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m011.1_chr_banking.nes"
     );
 
     // ================================================================

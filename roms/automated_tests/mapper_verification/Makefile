@@ -78,6 +78,8 @@ SINGLES := \
 	$(SINGLES_DIR)/m010.0_prg_ram.nes \
 	$(SINGLES_DIR)/m011.0_prg_banking.nes \
 	$(SINGLES_DIR)/m011.0_chr_banking.nes \
+	$(SINGLES_DIR)/m011.1_prg_banking.nes \
+	$(SINGLES_DIR)/m011.1_chr_banking.nes \
 	$(SINGLES_DIR)/m012.0_prg_banking.nes \
 	$(SINGLES_DIR)/m012.0_chr_banking.nes \
 	$(SINGLES_DIR)/m012.0_nametable.nes \
@@ -114,6 +116,7 @@ COMBINED := \
 	$(BIN_DIR)/m009.0.nes \
 	$(BIN_DIR)/m010.0.nes \
 	$(BIN_DIR)/m011.0.nes \
+	$(BIN_DIR)/m011.1.nes \
 	$(BIN_DIR)/m012.0.nes \
 	$(BIN_DIR)/m013.0.nes \
 	$(BIN_DIR)/m014.0.nes \
@@ -291,6 +294,10 @@ $(eval $(call ROM_RULE,$(SINGLES_DIR)/m010.0_prg_ram.nes,prg_ram,m010.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m011.0_prg_banking.nes,prg_banking,m011.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m011.0_chr_banking.nes,chr_banking,m011.0))
 
+# Mapper 11, Submapper 1 (Color Dreams, no bus conflicts)
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m011.1_prg_banking.nes,prg_banking,m011.1))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m011.1_chr_banking.nes,chr_banking,m011.1))
+
 # Mapper 12, Submapper 0 (SL-5020B, MMC3 + outer CHR)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m012.0_prg_banking.nes,prg_banking,m012.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m012.0_chr_banking.nes,chr_banking,m012.0))
@@ -334,6 +341,7 @@ $(eval $(call COMBINED_RULE,$(BIN_DIR)/m008.0.nes,m008.0,prg_banking chr_banking
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m009.0.nes,m009.0,prg_banking chr_latch nametable))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m010.0.nes,m010.0,prg_banking chr_latch nametable prg_ram))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m011.0.nes,m011.0,prg_banking chr_banking))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m011.1.nes,m011.1,prg_banking chr_banking))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m012.0.nes,m012.0,prg_banking chr_banking nametable irq prg_ram))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m013.0.nes,m013.0,chr_ram_banking))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m014.0.nes,m014.0,prg_banking chr_banking nametable irq prg_ram))
