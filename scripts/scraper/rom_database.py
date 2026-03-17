@@ -41,12 +41,13 @@ _EXTENDED_CONSOLE_MAP = {
 }
 
 # Mapping from iNES 2.0 region to HardwareType (for console type 0 = NES/Famicom)
+# iNES 2.0 spec: 0=NTSC, 1=PAL, 2=Multi-region, 3=Dendy
 _REGION_TEXT_MAP = {
     "ntsc": 0,
     "pal": 1,
-    "dendy": 2,
-    "universal": 3,
-    "multi": 3,
+    "universal": 2,
+    "multi": 2,
+    "dendy": 3,
 }
 
 
@@ -83,11 +84,12 @@ def hardware_from_console_type_and_region(
         if cr is None:
             return None
 
+    # iNES 2.0 spec: region 2=Multi-region, 3=Dendy
     region_map = {
         0: HardwareType.NES_NTSC,
         1: HardwareType.NES_PAL,
-        2: HardwareType.DENDY,
-        3: HardwareType.NES_MULTI_REGION,
+        2: HardwareType.NES_MULTI_REGION,
+        3: HardwareType.DENDY,
     }
     hw = region_map.get(cr)
     return hw.value if hw is not None else None
@@ -468,7 +470,18 @@ class RomDatabase:
                 updates[key] = value
             elif str(old_value) != str(value):
                 # Extra merge of controller types
-                if key == RomDbKey.EXPANSION_TYPE.value:
+                if key == RomDbKey.HARDWARE.value:
+                    # NES_NTSC (0) is the least-specific fallback produced by the
+                    # nescartdb.com scraper.  If the existing value is a more-specific
+                    # hardware type set by an XML import (e.g. NES_PAL or
+                    # NES_MULTI_REGION), treat the incoming NTSC as a no-op.
+                    if str(value) == str(HardwareType.NES_NTSC.value):
+                        pass  # keep existing more-specific value, no conflict
+                    else:
+                        print(f"\nConflict on CRC {crc}: column '{key}' has existing value '{old_value}', new value '{value}'")
+                        has_conflict = True
+                # Extra merge of controller types
+                elif key == RomDbKey.EXPANSION_TYPE.value:
                     # if new value is multicart, update to that
                     if value == ControllerType.MULTICART.value:
                         updates[key] = value

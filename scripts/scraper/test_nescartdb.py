@@ -729,6 +729,15 @@ class TestNesCartDb(unittest.TestCase):
         self.assertEqual(result[RomDbKey.EXPANSION_TYPE.value], 1)
         self.assertNotIn(RomDbKey.SUBMAPPER.value, result)
 
+    def test_build_result_pal_region_sets_nes_pal_hardware(self) -> None:
+        """A PAL entry (Region = 'PAL (Europe)') must set hardware to NES_PAL, not NES_NTSC."""
+        pal_html = self._static_html().replace(
+            "USA (NTSC)", "PAL (Europe)"
+        )
+        scraper = NesCartDb(1)
+        result = scraper._build_result(1, pal_html)
+        self.assertEqual(result[RomDbKey.HARDWARE.value], HardwareType.NES_PAL)
+
 
 if __name__ == "__main__":
     unittest.main()

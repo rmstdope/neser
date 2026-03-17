@@ -8,7 +8,7 @@ import os
 import tempfile
 import unittest
 
-from scripts.scraper.rom_database import RomDatabase, RomDbKey
+from scripts.scraper.rom_database import RomDatabase, RomDbKey, HardwareType, hardware_from_console_type_and_region
 
 
 class TestRomDatabase(unittest.TestCase):
@@ -225,6 +225,88 @@ class TestRomDatabase(unittest.TestCase):
         self.assertIsNotNone(fetched)
         for key, value in payload.items():
             self.assertEqual(str(fetched.get(key)), str(value))
+
+
+    def test_hardware_ntsc_does_not_overwrite_more_specific_xml_value(self) -> None:
+        """When XML import sets hardware=NES_MULTI_REGION and scraper says NES_NTSC,
+        scraper must not overwrite the more-specific XML value — no conflict either."""
+        crc = "MULTIREGCRC"
+        # Simulate: XML import already set hardware to NES_MULTI_REGION (6)
+        self.db.insert_rom_by_crc({
+            RomDbKey.CRC.value: crc,
+            RomDbKey.HARDWARE.value: HardwareType.NES_MULTI_REGION.value,
+        })
+        # Simulate: scraper says NTSC (0) — should be silently ignored, no conflict
+        result = self.db.process_record_by_crc({
+            RomDbKey.CRC.value: crc,
+            RomDbKey.HARDWARE.value: HardwareType.NES_NTSC.value,
+        })
+        self.assertNotEqual(result, (0, 0, 0, 1), "Should not produce a conflict")
+        # Existing more-specific value must be preserved
+        row = self.db.get_rom_by_crc(crc)
+        self.assertEqual(str(row[RomDbKey.HARDWARE.value]), str(HardwareType.NES_MULTI_REGION.value))
+
+    def test_hardware_ntsc_does_not_overwrite_pal(self) -> None:
+        """When XML/prior import set hardware=NES_PAL, scraper NES_NTSC must not conflict or overwrite."""
+        crc = "PALOVERNTSC"
+        self.db.insert_rom_by_crc({
+            RomDbKey.CRC.value: crc,
+            RomDbKey.HARDWARE.value: HardwareType.NES_PAL.value,
+        })
+        result = self.db.process_record_by_crc({
+            RomDbKey.CRC.value: crc,
+            RomDbKey.HARDWARE.value: HardwareType.NES_NTSC.value,
+        })
+        self.assertNotEqual(result, (0, 0, 0, 1), "Should not produce a conflict")
+        row = self.db.get_rom_by_crc(crc)
+        self.assertEqual(str(row[RomDbKey.HARDWARE.value]), str(HardwareType.NES_PAL.value))
+
+    def test_hardware_conflict_between_two_specific_values(self) -> None:
+        """Two genuinely different specific hardware values must still conflict."""
+        crc = "HWCONFLICT"
+        self.db.insert_rom_by_crc({
+            RomDbKey.CRC.value: crc,
+            RomDbKey.HARDWARE.value: HardwareType.NES_PAL.value,
+        })
+        result = self.db.process_record_by_crc({
+            RomDbKey.CRC.value: crc,
+            RomDbKey.HARDWARE.value: HardwareType.NES_MULTI_REGION.value,
+        })
+        self.assertEqual(result, (0, 0, 0, 1), "Two differing specific values must conflict")
+
+
+class TestHardwareFromConsoleTypeAndRegion(unittest.TestCase):
+    """Tests for hardware_from_console_type_and_region()."""
+
+    def test_region_2_numeric_is_multi_region(self):
+        """Region string '2' (iNES spec: multi-region) must map to NES_MULTI_REGION, not Dendy."""
+        result = hardware_from_console_type_and_region("0", "2")
+        self.assertEqual(result, HardwareType.NES_MULTI_REGION.value)
+
+    def test_region_3_numeric_is_dendy(self):
+        """Region string '3' (iNES spec: Dendy) must map to DENDY, not NES_MULTI_REGION."""
+        result = hardware_from_console_type_and_region("0", "3")
+        self.assertEqual(result, HardwareType.DENDY.value)
+
+    def test_region_text_dendy_is_dendy(self):
+        """Text region 'dendy' must map to DENDY hardware type."""
+        result = hardware_from_console_type_and_region("0", "dendy")
+        self.assertEqual(result, HardwareType.DENDY.value)
+
+    def test_region_text_universal_is_multi_region(self):
+        """Text region 'universal' must map to NES_MULTI_REGION hardware type."""
+        result = hardware_from_console_type_and_region("0", "universal")
+        self.assertEqual(result, HardwareType.NES_MULTI_REGION.value)
+
+    def test_region_0_is_ntsc(self):
+        """Region '0' must remain NES_NTSC."""
+        result = hardware_from_console_type_and_region("0", "0")
+        self.assertEqual(result, HardwareType.NES_NTSC.value)
+
+    def test_region_1_is_pal(self):
+        """Region '1' must remain NES_PAL."""
+        result = hardware_from_console_type_and_region("0", "1")
+        self.assertEqual(result, HardwareType.NES_PAL.value)
 
 
 if __name__ == "__main__":

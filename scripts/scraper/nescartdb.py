@@ -334,7 +334,12 @@ class NesCartDb:
             result[RomDbKey.NAME.value] = game_name
         if rom_details.get("crc"):
             result[RomDbKey.CRC.value] = rom_details.get("crc")
-        result[RomDbKey.HARDWARE.value] = HardwareType.NES_NTSC.value
+        region_text = self._first_value(kv, ["Region"])
+        video_system = self._parse_video_system(region_text)
+        if video_system == "PAL":
+            result[RomDbKey.HARDWARE.value] = HardwareType.NES_PAL.value
+        else:
+            result[RomDbKey.HARDWARE.value] = HardwareType.NES_NTSC.value
         mapper = self._first_value(kv, ["iNES Mapper", "Mapper"])
         submapper = self._first_value(kv, ["Submapper", "SubMapper"])
         chr_ram = self._first_value(kv, ["CHR RAM", "CHR-RAM", "VRAM"])
