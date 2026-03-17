@@ -488,9 +488,15 @@ class RomDatabase:
                     # overwrites a more-specific value set by an XML import.
                     # NES_MULTI_REGION is authoritative from XML — any incoming
                     # value is silently ignored.
-                    if (str(value) == str(HardwareType.NES_NTSC.value)
-                            or str(old_value) == str(HardwareType.NES_MULTI_REGION.value)):
+                    # FAMICOM (2) is a Japan-specific NES_NTSC — allow it to
+                    # upgrade an existing generic NES_NTSC entry.
+                    if str(value) == str(HardwareType.NES_NTSC.value):
                         pass  # keep existing value, no conflict
+                    elif str(old_value) == str(HardwareType.NES_MULTI_REGION.value):
+                        pass  # NES_MULTI_REGION is authoritative, keep it
+                    elif (str(old_value) == str(HardwareType.NES_NTSC.value)
+                            and str(value) == str(HardwareType.FAMICOM.value)):
+                        updates[key] = value  # FAMICOM upgrades generic NES_NTSC
                     else:
                         print(f"\nConflict on CRC {crc}: column '{key}' has existing value '{old_value}', new value '{value}'")
                         print(data)

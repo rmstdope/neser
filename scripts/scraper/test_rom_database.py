@@ -295,6 +295,27 @@ class TestRomDatabase(unittest.TestCase):
         )
 
 
+    def test_hardware_famicom_upgrades_ntsc(self) -> None:
+        """When existing hardware is NES_NTSC (generic XML value) and the scraper
+        detects Japan and sets FAMICOM, FAMICOM must overwrite NES_NTSC — no conflict."""
+        crc = "FAMICOM_UP"
+        self.db.insert_rom_by_crc({
+            RomDbKey.CRC.value: crc,
+            RomDbKey.HARDWARE.value: HardwareType.NES_NTSC.value,
+        })
+        result = self.db.process_record_by_crc({
+            RomDbKey.CRC.value: crc,
+            RomDbKey.HARDWARE.value: HardwareType.FAMICOM.value,
+        })
+        self.assertNotEqual(result, (0, 0, 0, 1), "FAMICOM upgrading NES_NTSC must not conflict")
+        row = self.db.get_rom_by_crc(crc)
+        self.assertEqual(
+            str(row[RomDbKey.HARDWARE.value]),
+            str(HardwareType.FAMICOM.value),
+            "FAMICOM must overwrite NES_NTSC",
+        )
+
+
 class TestHardwareFromConsoleTypeAndRegion(unittest.TestCase):
     """Tests for hardware_from_console_type_and_region()."""
 
