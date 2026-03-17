@@ -78,6 +78,29 @@ got_val:      .res 1       ; Temp for fail handler
     ; Set nametable to vertical mirroring
     lda #$44
     sta $5105
+    .elseif MAPPER_NUM = 22
+    ; VRC2a: map font banks 8+9 to PPU $0000-$07FF
+    init_chr_font
+    .elseif MAPPER_NUM = 16
+    ; Bandai FCG/LZ93D50: map font banks 8+9 to PPU $0000-$07FF
+    init_chr_font
+    .elseif MAPPER_NUM = 18
+    ; Jaleco SS 88006: enable PRG-RAM writes, map font
+    enable_prg_ram
+    init_chr_font
+    .elseif MAPPER_NUM = 24 .or MAPPER_NUM = 26
+    ; VRC6a/b: set standard PPU banking mode (mode 0, CIRAM, vertical), map font
+    lda #$20                ; N=1 (CIRAM), mode 0, vertical mirroring
+    sta $B003
+    init_chr_font
+    .elseif MAPPER_NUM = 28
+    ; Action 53: configure PRG mode 2, horizontal mirroring
+    init_action53
+    .elseif MAPPER_NUM = 31
+    ; NSF mapper: set slot 6 to second-to-last bank (bank 14 = $E000 code)
+    lda #(PRG_ROM_16K * 4 - 2)
+    sta $5FFE
+    ; Slot 7 already has last bank at power-on
     .endif
 
     jsr init_nes
@@ -196,6 +219,25 @@ got_val:      .res 1       ; Temp for fail handler
     ; The latch side-effect is harmless — running counter is unaffected.
     lda #0
     sta $4502
+    .elseif MAPPER_NUM = 16
+    ; Bandai FCG/LZ93D50: acknowledge by writing 0 then re-enabling with small count
+    ; Re-enable with same small counter for continuous firing in reload test
+    lda #0
+    sta FCG_IRQ_EN          ; Acknowledge + disable
+    lda #10
+    sta FCG_IRQ_LO          ; Reload with small count
+    lda #0
+    sta FCG_IRQ_HI
+    lda #1
+    sta FCG_IRQ_EN          ; Re-enable
+    .elseif MAPPER_NUM = 18
+    ; Jaleco SS 88006: write to reload register to ack and restart counter
+    lda #1
+    sta M18_IRQ_RELOAD
+    .elseif MAPPER_NUM = 24 .or MAPPER_NUM = 26
+    ; VRC6a/b: write to IRQ ACK register (auto-reloads if A bit was set)
+    lda #0
+    sta VRC6_IRQ_ACK
     .endif
     pla
     rti
