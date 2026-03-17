@@ -1,4 +1,4 @@
-use crate::cartridge::ines::TimingMode;
+use crate::cartridge::ines::{ConsoleType, TimingMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
@@ -34,6 +34,23 @@ impl HardwareType {
             Self::NesPal => TimingMode::Pal,
             Self::Dendy => TimingMode::Dendy,
             Self::NesMultiRegion => TimingMode::MultiRegion,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn from_console_type_and_timing(
+        console_type: ConsoleType,
+        timing_mode: TimingMode,
+    ) -> Self {
+        match console_type {
+            ConsoleType::VsSystem => Self::VsSystem,
+            ConsoleType::Playchoice10 => Self::Playchoice10,
+            ConsoleType::NesFamicom | ConsoleType::Extended(_) => match timing_mode {
+                TimingMode::Pal => Self::NesPal,
+                TimingMode::Dendy => Self::Dendy,
+                TimingMode::MultiRegion => Self::NesMultiRegion,
+                TimingMode::Ntsc | TimingMode::Unknown(_) => Self::NesNtsc,
+            },
         }
     }
 }
@@ -128,6 +145,65 @@ mod tests {
         assert_eq!(
             HardwareType::NesMultiRegion.timing_mode(),
             TimingMode::MultiRegion
+        );
+    }
+
+    #[test]
+    fn from_console_nes_famicom_ntsc_returns_nes_ntsc() {
+        assert_eq!(
+            HardwareType::from_console_type_and_timing(ConsoleType::NesFamicom, TimingMode::Ntsc),
+            HardwareType::NesNtsc
+        );
+    }
+
+    #[test]
+    fn from_console_nes_famicom_pal_returns_nes_pal() {
+        assert_eq!(
+            HardwareType::from_console_type_and_timing(ConsoleType::NesFamicom, TimingMode::Pal),
+            HardwareType::NesPal
+        );
+    }
+
+    #[test]
+    fn from_console_nes_famicom_dendy_returns_dendy() {
+        assert_eq!(
+            HardwareType::from_console_type_and_timing(ConsoleType::NesFamicom, TimingMode::Dendy),
+            HardwareType::Dendy
+        );
+    }
+
+    #[test]
+    fn from_console_nes_famicom_multi_region_returns_nes_multi_region() {
+        assert_eq!(
+            HardwareType::from_console_type_and_timing(
+                ConsoleType::NesFamicom,
+                TimingMode::MultiRegion
+            ),
+            HardwareType::NesMultiRegion
+        );
+    }
+
+    #[test]
+    fn from_console_vs_system_returns_vs_system() {
+        assert_eq!(
+            HardwareType::from_console_type_and_timing(ConsoleType::VsSystem, TimingMode::Ntsc),
+            HardwareType::VsSystem
+        );
+    }
+
+    #[test]
+    fn from_console_playchoice10_returns_playchoice10() {
+        assert_eq!(
+            HardwareType::from_console_type_and_timing(ConsoleType::Playchoice10, TimingMode::Ntsc),
+            HardwareType::Playchoice10
+        );
+    }
+
+    #[test]
+    fn from_console_extended_defaults_to_nes_ntsc() {
+        assert_eq!(
+            HardwareType::from_console_type_and_timing(ConsoleType::Extended(5), TimingMode::Ntsc),
+            HardwareType::NesNtsc
         );
     }
 }
