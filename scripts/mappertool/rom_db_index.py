@@ -15,13 +15,13 @@ class RomDbIndex:
     def from_csv(cls, csv_path: Path) -> "RomDbIndex":
         """Load ROM DB rows, skipping comment lines."""
 
-        column_count = 22
+        column_count = 21
 
         def normalize_columns(line: str) -> list[str]:
             columns = line.split(",")
             if len(columns) <= column_count:
                 return columns
-            tail_start = len(columns) - 20
+            tail_start = len(columns) - (column_count - 2)
             normalized = [columns[0], ",".join(columns[1:tail_start])]
             normalized.extend(columns[tail_start:])
             return normalized
@@ -45,8 +45,8 @@ class RomDbIndex:
                     rom_id=row[0].strip(),
                     name=row[1].strip(),
                     crc=crc_key,
-                    mapper=row[7].strip(),
-                    submapper=row[8].strip(),
+                    mapper=row[6].strip(),
+                    submapper=row[7].strip(),
                 )
 
         return cls(by_crc)

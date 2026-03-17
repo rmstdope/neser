@@ -7,9 +7,9 @@ from urllib.request import Request, urlopen
 from bs4 import BeautifulSoup
 
 try:
-    from .rom_database import ConsoleType, ControllerType, RomDbKey
+    from .rom_database import HardwareType, ControllerType, RomDbKey
 except ImportError:  # pragma: no cover - allow running as a script
-    from rom_database import ConsoleType, ControllerType, RomDbKey
+    from rom_database import HardwareType, ControllerType, RomDbKey
 
 BASE_URL = "https://nescartdb.com/profile/view/{}"
 
@@ -334,7 +334,7 @@ class NesCartDb:
             result[RomDbKey.NAME.value] = game_name
         if rom_details.get("crc"):
             result[RomDbKey.CRC.value] = rom_details.get("crc")
-        result[RomDbKey.CONSOLE_TYPE.value] = ConsoleType.NES_FAMICOM.value
+        result[RomDbKey.HARDWARE.value] = HardwareType.NES_NTSC.value
         mapper = self._first_value(kv, ["iNES Mapper", "Mapper"])
         submapper = self._first_value(kv, ["Submapper", "SubMapper"])
         chr_ram = self._first_value(kv, ["CHR RAM", "CHR-RAM", "VRAM"])

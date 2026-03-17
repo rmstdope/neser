@@ -3,9 +3,9 @@ import xml.etree.ElementTree as ET
 from typing import Dict, Optional
 
 try:
-    from .rom_database import ControllerType, RomDbKey
+    from .rom_database import ControllerType, RomDbKey, hardware_from_console_type_and_region
 except ImportError:  # pragma: no cover - allow running as a script
-    from rom_database import ControllerType, RomDbKey
+    from rom_database import ControllerType, RomDbKey, hardware_from_console_type_and_region
 
 
 class RomXml:
@@ -138,11 +138,10 @@ class RomXml:
         console = game_elem.find("console")
         if console is not None:
             console_type = console.get("type")
-            if console_type:
-                data[RomDbKey.CONSOLE_TYPE.value] = console_type
             region = console.get("region")
-            if region:
-                data[RomDbKey.CONSOLE_REGION.value] = region
+            hw = hardware_from_console_type_and_region(console_type, region)
+            if hw is not None:
+                data[RomDbKey.HARDWARE.value] = str(hw)
 
         expansion = game_elem.find("expansion")
         if expansion is not None:

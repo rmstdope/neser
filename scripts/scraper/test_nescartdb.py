@@ -4,10 +4,10 @@ import unittest
 
 try:
     from .nescartdb import NesCartDb, BeautifulSoup
-    from .rom_database import RomDbKey, ConsoleType
+    from .rom_database import RomDbKey, HardwareType
 except ImportError:  # pragma: no cover - allow running as a script
     from nescartdb import NesCartDb, BeautifulSoup
-    from rom_database import RomDbKey, ConsoleType
+    from rom_database import RomDbKey, HardwareType
 
 
 @unittest.skipIf(BeautifulSoup is None, "BeautifulSoup4 is required for nescartdb tests")
@@ -718,7 +718,7 @@ class TestNesCartDb(unittest.TestCase):
 
         self.assertEqual(result[RomDbKey.NAME.value], "Super Mario Bros.")
         self.assertEqual(result[RomDbKey.CRC.value], "D445F698")
-        self.assertEqual(result[RomDbKey.CONSOLE_TYPE.value], ConsoleType.NES_FAMICOM)
+        self.assertEqual(result[RomDbKey.HARDWARE.value], HardwareType.NES_NTSC)
         self.assertEqual(result[RomDbKey.MAPPER.value], 0)
         self.assertEqual(result[RomDbKey.PRG_ROM_SIZE.value], 32768)
         self.assertEqual(result[RomDbKey.CHR_ROM_SIZE.value], 8192)

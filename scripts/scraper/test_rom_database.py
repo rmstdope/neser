@@ -48,7 +48,7 @@ class TestRomDatabase(unittest.TestCase):
         """Insert a minimal row by CRC and retrieve it via get_rom_by_crc."""
         data = {
             RomDbKey.CRC.value: "DEADBEEF",
-            RomDbKey.CONSOLE_REGION.value: 0,
+            RomDbKey.HARDWARE.value: 0,
             RomDbKey.NAMETABLE_LAYOUT.value: "horizontal",
         }
         self.db.insert_rom_by_crc(data)
@@ -56,7 +56,7 @@ class TestRomDatabase(unittest.TestCase):
         self.assertIsNotNone(fetched)
         self.assertEqual(fetched.get(RomDbKey.CRC.value), "DEADBEEF")
         # Accept integer or string storage representation
-        self.assertEqual(str(fetched.get(RomDbKey.CONSOLE_REGION.value)), "0")
+        self.assertEqual(str(fetched.get(RomDbKey.HARDWARE.value)), "0")
 
     def test_upsert_and_get_rom(self):
         """Upsert a full row and retrieve it by rom_id."""
@@ -64,7 +64,7 @@ class TestRomDatabase(unittest.TestCase):
         payload = {
             RomDbKey.NAME.value: "Test ROM",
             RomDbKey.CRC.value: "ABCD1234",
-            RomDbKey.CONSOLE_TYPE.value: 0,
+            RomDbKey.HARDWARE.value: 0,
             RomDbKey.MAPPER.value: 1,
             RomDbKey.PRG_ROM_SIZE.value: 2,
         }

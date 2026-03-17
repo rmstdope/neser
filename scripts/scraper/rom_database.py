@@ -7,28 +7,90 @@ from typing import Dict, Optional
 from enum import Enum
 from enum import IntEnum
 
-class ConsoleType(IntEnum):
-    """ iNES 2.0 console types """
-    NES_FAMICOM = 0
-    VS_SYSTEM = 1
-    PLAYCHOICE_10 = 2
-    FAMICLONE = 3
-    NES_FAMICOM_EPSM = 4
-    VT01 = 5
-    VT02 = 6
-    VT03 = 7
-    VT09 = 8
-    VT32 = 9
-    VT369 = 10
-    UM6578 = 11
-    FAMICOM_NETWORK_SYSTEM = 12
+class HardwareType(IntEnum):
+    """ ROM database hardware types (merged console type + region) """
+    NES_NTSC = 0
+    NES_PAL = 1
+    FAMICOM = 2
+    VS_SYSTEM = 3
+    DENDY = 4
+    PLAYCHOICE_10 = 5
+    NES_MULTI_REGION = 6
+    VT01_MONOCHROME = 7
+    VT01_STN = 8
+    VT02 = 9
+    VT03 = 10
+    VT09 = 11
+    VT32 = 12
+    VT369 = 13
+    UMC_UM6578 = 14
+    FAMICOM_NETWORK_SYSTEM = 15
 
-class ConsoleRegion(IntEnum):
-    """ iNES 2.0 CPU/PPU timings """
-    NTSC = 0
-    PAL = 1
-    DENDY = 2
-    UNIVERSAL = 3
+
+# Mapping from iNES 2.0 extended console type to HardwareType
+_EXTENDED_CONSOLE_MAP = {
+    3: HardwareType.VT01_MONOCHROME,
+    4: HardwareType.VT01_STN,
+    5: HardwareType.VT02,
+    6: HardwareType.VT03,
+    7: HardwareType.VT09,
+    8: HardwareType.VT32,
+    9: HardwareType.VT369,
+    10: HardwareType.UMC_UM6578,
+    11: HardwareType.FAMICOM_NETWORK_SYSTEM,
+}
+
+# Mapping from iNES 2.0 region to HardwareType (for console type 0 = NES/Famicom)
+_REGION_TEXT_MAP = {
+    "ntsc": 0,
+    "pal": 1,
+    "dendy": 2,
+    "universal": 3,
+    "multi": 3,
+}
+
+
+def hardware_from_console_type_and_region(
+    console_type_str: Optional[str], region_str: Optional[str]
+) -> Optional[int]:
+    """Compute a HardwareType integer from iNES 2.0 console type and region strings.
+
+    Returns None when the inputs cannot be mapped.
+    """
+    if console_type_str is None and region_str is None:
+        return None
+
+    try:
+        ct = int(console_type_str) if console_type_str is not None else 0
+    except (ValueError, TypeError):
+        return None
+
+    if ct == 1:
+        return HardwareType.VS_SYSTEM.value
+    if ct == 2:
+        return HardwareType.PLAYCHOICE_10.value
+    if ct >= 3:
+        hw = _EXTENDED_CONSOLE_MAP.get(ct)
+        return hw.value if hw is not None else None
+
+    # ct == 0: NES/Famicom — determine from region
+    if region_str is None:
+        return HardwareType.NES_NTSC.value
+    try:
+        cr = int(region_str)
+    except (ValueError, TypeError):
+        cr = _REGION_TEXT_MAP.get(str(region_str).strip().lower())
+        if cr is None:
+            return None
+
+    region_map = {
+        0: HardwareType.NES_NTSC,
+        1: HardwareType.NES_PAL,
+        2: HardwareType.DENDY,
+        3: HardwareType.NES_MULTI_REGION,
+    }
+    hw = region_map.get(cr)
+    return hw.value if hw is not None else None
 
 class NametableLayout(IntEnum):
     """ iNES 2.0 Hardwired nametable layouts """
@@ -154,8 +216,7 @@ class RomDbKey(str, Enum):
     CRC = "crc"
     NAME = "name"
     COUNTRY = "country"
-    CONSOLE_TYPE = "console_type"
-    CONSOLE_REGION = "console_region"
+    HARDWARE = "hardware"
     CONSOLE_CLASS = "rom_class"
     MAPPER = "mapper"
     SUBMAPPER = "submapper"
@@ -182,8 +243,7 @@ class RomDatabase:
             RomDbKey.NAME.value: "TEXT",
             RomDbKey.COUNTRY.value: "TEXT",
             RomDbKey.CRC.value: "TEXT",
-            RomDbKey.CONSOLE_TYPE.value: "INTEGER",
-            RomDbKey.CONSOLE_REGION.value: "INTEGER",
+            RomDbKey.HARDWARE.value: "INTEGER",
             RomDbKey.CONSOLE_CLASS.value: "TEXT",
             RomDbKey.MAPPER.value: "INTEGER",
             RomDbKey.SUBMAPPER.value: "INTEGER",
