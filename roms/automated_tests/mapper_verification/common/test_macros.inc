@@ -47,8 +47,10 @@
     .byte "PASSED", 0
     jsr console_flush
     jsr console_show       ; Re-enable rendering to ensure console output is visible
+    .ifndef CONSOLE_VERIFICATION
     lda #STATUS_PASS
     sta TEST_STATUS
+    .endif
     ; Infinite loop
 :   jmp :-
 .endmacro

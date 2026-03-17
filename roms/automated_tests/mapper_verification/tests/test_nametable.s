@@ -316,6 +316,97 @@ nt_read: .res 1
         pass_test
     .endif
 
+    ; ========================================
+    ; Test Hardwired 1-Screen (mapper 32.1)
+    ; ========================================
+    .ifdef HARDWIRED_1SCREEN
+        ; Verify all nametables mirror the same page
+        ; Write $EE to NT A ($2000)
+        lda #$EE
+        ldx #$20
+        ldy #$0F
+        jsr write_nt
+
+        ; Read from $2400 — should mirror A
+        ldx #$24
+        ldy #$0F
+        jsr read_nt
+        sta nt_read
+
+        start_test 1, "1Scr $2400"
+        lda nt_read
+        assert_a_eq $EE
+        pass_test
+
+        ; Read from $2800 — should mirror A
+        ldx #$28
+        ldy #$0F
+        jsr read_nt
+        sta nt_read
+
+        start_test 2, "1Scr $2800"
+        lda nt_read
+        assert_a_eq $EE
+        pass_test
+
+        ; Read from $2C00 — should mirror A
+        ldx #$2C
+        ldy #$0F
+        jsr read_nt
+        sta nt_read
+
+        start_test 3, "1Scr $2C00"
+        lda nt_read
+        assert_a_eq $EE
+        pass_test
+
+        ; Verify that $9000 writes don't affect mirroring
+        ; Write a different pattern, then write to $9000, then verify
+        lda #$DD
+        ldx #$20
+        ldy #$10
+        jsr write_nt
+
+        ; Try to change mirroring via $9000 (bit 0 = 1 for H, bit 1 for mode)
+        lda #$01
+        sta $9000
+        lda #$02
+        sta $9000
+        lda #$03
+        sta $9000
+
+        ; Verify all NTs still mirror — writes to $9000 should be ignored
+        ldx #$24
+        ldy #$10
+        jsr read_nt
+        sta nt_read
+
+        start_test 4, "$9000 ign24"
+        lda nt_read
+        assert_a_eq $DD
+        pass_test
+
+        ldx #$28
+        ldy #$10
+        jsr read_nt
+        sta nt_read
+
+        start_test 5, "$9000 ign28"
+        lda nt_read
+        assert_a_eq $DD
+        pass_test
+
+        ldx #$2C
+        ldy #$10
+        jsr read_nt
+        sta nt_read
+
+        start_test 6, "$9000 ign2C"
+        lda nt_read
+        assert_a_eq $DD
+        pass_test
+    .endif
+
     jsr enable_rendering
     rts
 .endproc

@@ -10,11 +10,14 @@ The ideas behind this test harness — particularly the `$6000` status byte prot
 mapper_verification/
 ├── Makefile                     # Builds all test ROMs (combined + singles)
 ├── common/                      # Shared infrastructure
-│   ├── shell.s                  # Test shell: init, $6000 protocol, IRQ handler
+│   ├── shell.s                  # Test shell: init, status/console reporting, IRQ handler
 │   ├── nes_init.s               # PPU/APU init, RAM clear, VBL sync
 │   ├── console.s                # Nametable-based text console (30×28)
 │   ├── nes20_header.inc         # NES 2.0 header generation macro
-│   ├── mmc3_core_macros.inc     # Shared MMC3 register definitions (mappers 4/12/14)
+│   ├── mmc3_core_macros.inc     # Shared MMC3-family register definitions
+│   ├── vrc4_core_macros.inc     # Shared VRC2/VRC4 register definitions
+│   ├── taito_core_macros.inc    # Shared Taito mapper register definitions
+│   ├── jy_company_macros.inc    # Shared J.Y. Company helper macros
 │   ├── test_macros.inc          # Assertions (assert_a_eq, etc.) and lifecycle
 │   ├── nes.inc                  # NES register and constant definitions
 │   └── ascii.chr                # 8KB ASCII font (96 tiles, embedded in CHR)
@@ -28,31 +31,19 @@ mapper_verification/
 │   ├── test_bus_conflicts.s     # Bus conflict AND behavior
 │   ├── test_chr_latch.s         # PPU-triggered CHR latch (MMC2/MMC4)
 │   ├── test_chr_ram_banking.s   # CHR-RAM bank switching (CPROM)
-│   ├── test_multiplier.s        # MMC5 hardware 8×8 multiplier
+│   ├── test_nt_from_chr.s       # Namco 163 nametable-from-CHR verification
+│   ├── test_multiplier.s        # Mapper-provided hardware multiplier verification
+│   ├── test_prg_mode.s          # Mapper-specific PRG mode behavior
+│   ├── test_block_select.s      # Multicart outer-bank/block-select verification
 │   └── test_combined.s          # Meta-runner: all tests in sequence
 ├── defs/                        # Per-mapper capability and register definitions
 │   ├── m000.0_defs.inc          # NROM
-│   ├── m001.0_defs.inc          # MMC1 submapper 0
-│   ├── m001.5_defs.inc          # MMC1 submapper 5 (fixed PRG)
-│   ├── m002.0_defs.inc          # UxROM submapper 0 (bus conflicts)
-│   ├── m002.2_defs.inc          # UxROM submapper 2 (no bus conflicts)
-│   ├── m003.0_defs.inc          # CNROM submapper 0 (bus conflicts)
-│   ├── m003.1_defs.inc          # CNROM submapper 1 (no bus conflicts)
-│   ├── m004.0_defs.inc          # MMC3 submapper 0 (Sharp IRQ)
-│   ├── m004.1_defs.inc          # MMC3 submapper 1 (NEC IRQ)
-│   ├── m005.0_defs.inc          # MMC5
-│   ├── m006.0_defs.inc          # Front Fareast Magic Card
-│   ├── m007.0_defs.inc          # AxROM submapper 0 (bus conflicts)
-│   ├── m007.1_defs.inc          # AxROM submapper 1 (no bus conflicts)
-│   ├── m008.0_defs.inc          # SMC GNROM mode 4
-│   ├── m009.0_defs.inc          # MMC2
-│   ├── m010.0_defs.inc          # MMC4
-│   ├── m011.0_defs.inc          # Color Dreams submapper 0 (bus conflicts)
-│   ├── m011.1_defs.inc          # Color Dreams submapper 1 (no bus conflicts)
-│   ├── m012.0_defs.inc          # SL-5020B (MMC3 + outer CHR)
-│   ├── m013.0_defs.inc          # CPROM
-│   ├── m014.0_defs.inc          # SL-1632 (MMC3/VRC2 hybrid)
-│   └── m015.0_defs.inc          # K-1029 multicart
+│   ├── m004.0_defs.inc          # MMC3 submapper 0
+│   ├── m019.0_defs.inc          # Namco 163
+│   ├── m032.0_defs.inc          # Irem G-101
+│   ├── m035.0_defs.inc          # J.Y. Company ASIC
+│   ├── m045.0_defs.inc          # X-007 multicart
+│   └── ...                      # One defs file per covered mapper/submapper
 ├── configs/                     # Per-mapper linker configurations
 │   └── m{NNN}.{S}.cfg           # One .cfg per mapper.submapper variant
 └── bin/                         # Built ROM files
@@ -65,11 +56,11 @@ mapper_verification/
 
 1. **Configuration-driven**: Test logic lives in shared `.s` files. Per-mapper behavior is controlled entirely through capability flags and register macros in `defs/*.inc` files, plus memory layout in `configs/*.cfg` files. Adding a new mapper requires no changes to shared test code — only new definition and config files.
 
-2. **Dual feedback**: Every test reports results through **two channels** simultaneously:
-   - **`$6000` status byte** — machine-readable, for automated test runners
+2. **Dual feedback**: The framework supports two result-reporting channels:
+   - **`$6000` status byte** — machine-readable, for automated test runners on mappers with usable PRG-RAM at `$6000-$7FFF`
    - **Console text output** — human-readable, rendered to the PPU nametable
 
-   The test harness automatically re-enables rendering when displaying pass/fail results. Some tests (e.g., CHR banking) may disable rendering during execution to avoid PPU bus conflicts, but `all_passed` and `do_fail_test` both call `console_show` to ensure the console output is always visible to the user.
+   Most ROMs use both channels. ROMs whose hardware maps registers or PRG-ROM at `$6000-$7FFF` instead use **console verification** only. The test harness automatically re-enables rendering when displaying pass/fail results. Some tests (e.g., CHR banking) may disable rendering during execution to avoid PPU bus conflicts, but `all_passed` and `do_fail_test` both call `console_show` to ensure the console output is always visible to the user.
 
 3. **Conditional assembly**: Tests use `.ifdef` / `.if` guards to include or skip functionality based on mapper capabilities. The same `test_prg_banking.s` handles 8KB (MMC3), 16KB (UxROM), and 32KB (AxROM) banking modes via `PRG_BANK_SIZE`.
 
@@ -77,7 +68,7 @@ mapper_verification/
 
 ## The $6000 Status Byte Protocol
 
-Inspired by Blargg's test ROMs, every test ROM uses memory address `$6000` as a status indicator:
+Inspired by Blargg's test ROMs, most test ROMs use memory address `$6000` as a status indicator:
 
 | Value | Meaning |
 |-------|---------|
@@ -85,9 +76,11 @@ Inspired by Blargg's test ROMs, every test ROM uses memory address `$6000` as a 
 | `$00` | All tests passed |
 | `$01`–`$7F` | Test N failed (value = failing test number) |
 
-The test shell (`shell.s`) writes `$80` to `$6000` during reset, then calls the test-specific `run_tests` procedure. If all sub-tests pass, the `all_passed` macro writes `$00`. If any assertion fails, the `fail_test` macro writes the current test number (stored in `TEST_CODE` at `$6001`).
+In status-byte mode, the test shell (`shell.s`) writes `$80` to `$6000` during reset, then calls the test-specific `run_tests` procedure. If all sub-tests pass, the `all_passed` macro writes `$00`. If any assertion fails, the `fail_test` macro writes the current test number.
 
 This protocol requires PRG-RAM at `$6000`–`$7FFF`. For mappers that don't natively provide PRG-RAM, the NES 2.0 header specifies 8KB PRG-RAM, which emulators allocate.
+
+For mappers where `$6000-$7FFF` is used for banking registers or PRG-ROM, the suite instead uses **console verification**. Those ROMs still print the same `PASSED` / `FAILED` result text, and the Rust integration runner checks the console output rather than polling a status byte.
 
 ## How Various Functionality Is Verified
 
@@ -141,6 +134,10 @@ Tests the four standard mirroring modes by writing unique values to one nametabl
 
 The mirroring mode is set via the mapper's `set_mirroring` macro, which abstracts away the vastly different register encodings (MMC1 shift register, AxROM bit 4, MMC3 `$A000`, mapper 6 `$42FE`/`$42FF`, etc.).
 
+### PRG Mode (`test_prg_mode.s`)
+
+Some mappers expose mode bits that rearrange which PRG window is fixed and which is switchable without changing the underlying bank register format. `test_prg_mode.s` verifies those mode transitions directly. The first current use is mapper 32, where `$9000` bit 1 selects whether the fixed 16KB window lives at `$8000` or `$C000`.
+
 ### IRQ (`test_irq.s`)
 
 Tests mapper-generated interrupt requests. The approach varies by IRQ type:
@@ -158,7 +155,7 @@ The IRQ handler in `shell.s` increments `irq_count`, sets `irq_fired`, and perfo
 
 ### PRG-RAM (`test_prg_ram.s`)
 
-Writes known patterns to `$6004`–`$7FFF` (reserving `$6000`–`$6003` for the status protocol) and reads them back. Tests include:
+Writes known patterns to `$6004`–`$7FFF` (leaving the low `$6000` area available for status-byte compatibility) and reads them back. Tests include:
 
 1. Write ascending values, verify readback
 2. Write `$FF` pattern, verify readback
@@ -181,9 +178,13 @@ For CPROM (mapper 13), CHR is RAM rather than ROM, so there are no pre-embedded 
 3. Verifies each bank preserved its data independently
 4. Confirms the fixed bank at `$0000`–`$0FFF` is unaffected by switches
 
+### Nametable from CHR (`test_nt_from_chr.s`)
+
+Namco 163 can route nametable fetches to CHR ROM instead of CIRAM. `test_nt_from_chr.s` programs the nametable mapping slots, then reads back PPU nametable data to verify that the selected CHR signature banks appear at the expected nametable quadrants and that CIRAM fallback still works when CHR mapping is disabled.
+
 ### Hardware Multiplier (`test_multiplier.s`)
 
-MMC5 provides an 8×8 unsigned hardware multiplier at `$5205`/`$5206`. The test verifies edge cases: `0×0=0`, `1×1=1`, `255×255=65025`, and intermediate values.
+`test_multiplier.s` verifies mapper-provided 8×8 unsigned hardware multipliers via mapper-defined register symbols. It is currently used for MMC5 (`$5205`/`$5206`) and the J.Y. Company ASIC (`$5800`/`$5801`). The test covers edge cases such as `0×0=0`, `1×1=1`, `255×255=65025`, and representative intermediate values.
 
 ### PRG-RAM Write-Protection (`test_write_protect.s`)
 
@@ -195,6 +196,10 @@ For mappers with write-protection registers (MMC3, MMC5, MMC3-derivatives), this
 4. Write-protection preserves data integrity under attempted corruption
 
 The test writes patterns to `$6000`+, enables write-protect via the mapper-specific `write_protect_prg_ram` macro, attempts to overwrite, and verifies original data is preserved.
+
+### Block Select / Outer Banking (`test_block_select.s`)
+
+Multicart mappers often add an outer block selector on top of an inner banking core. `test_block_select.s` copies a small trampoline into CPU RAM, changes the outer block there, reads a PRG signature from the remapped `$8000` window, then restores the original block before returning to ROM code. This lets the same shared test cover mapper 44 and the later console-verified multicart mappers 37, 45, and 47.
 
 ## Mapper Definition Files
 
@@ -247,7 +252,7 @@ These macros vary dramatically per mapper:
 
 ### Shared MMC3 Macros
 
-To eliminate duplication, MMC3 derivative mappers (4, 12, 14) include `common/mmc3_core_macros.inc`, which defines:
+To eliminate duplication, MMC3-based boards and wrappers (such as 4, 12, 14, 37, 44, 45, and 47) include `common/mmc3_core_macros.inc`, which defines:
 
 - **Register addresses**: `MMC3_BANK_SELECT`, `MMC3_BANK_DATA`, `MMC3_MIRRORING`, `MMC3_PRG_RAM`, `MMC3_IRQ_LATCH`, etc.
 - **Core macros**: `select_prg_bank`, `select_chr_bank`, `set_mirroring`, IRQ control, PRG-RAM enable/disable/write-protect
@@ -256,7 +261,15 @@ Each mapper's defs file then includes the shared macros and adds mapper-specific
 - **Mapper 12**: Outer CHR A18 register (`$4132`) via `set_chr_ext` macro
 - **Mapper 14**: Supervisor mode register (`$A131`) via `set_mmc3_mode` macro
 
-This approach reduced code by ~373 lines across the three mapper definitions.
+### Shared VRC2/VRC4, Taito, and J.Y. Company Macros
+
+Other mapper families also share helper macro layers:
+
+- `common/vrc4_core_macros.inc` centralizes the register encodings used by the VRC2/VRC4-family definitions (`21`, `23`, `25`)
+- `common/taito_core_macros.inc` centralizes common Taito register layouts reused by mapper `33` and mapper `48`
+- `common/jy_company_macros.inc` provides the banking / IRQ / multiplier helpers shared by mapper `35`
+
+This approach keeps mapper-specific definitions small while letting MMC3-style boards share one core register vocabulary.
 
 ## Linker Configurations
 
@@ -329,32 +342,39 @@ Examples:
 
 | Type | Count |
 |------|-------|
-| Combined ROMs | 22 |
-| Single test ROMs | 67 |
-| **Total** | **89** |
+| Combined ROMs | 62 |
+| Single test ROMs | 190 |
+| **Total** | **252** |
 
 ## Automated Testing Integration
 
 ### Rust Test Runner
 
-The emulator's Rust test suite (`src/integration_tests/mapper_tests.rs`) integrates the verification ROMs using the `setup_rom_test!` macro:
+The emulator's Rust test suite (`src/integration_tests/mapper_tests.rs`) integrates the verification ROMs using both `setup_rom_test!` and `setup_rom_console_test!`:
 
 ```rust
 setup_rom_test!(
     test_mv_m004_0_prg_banking,
     "roms/automated_tests/mapper_verification/bin/rom_singles/m004.0_prg_banking.nes"
 );
+
+setup_rom_console_test!(
+    test_mv_m045_0_block_select,
+    "roms/automated_tests/mapper_verification/bin/rom_singles/m045.0_block_select.nes"
+);
 ```
 
-This generates a `#[test]` function that:
+These macros generate `#[test]` functions that:
 
 1. Loads the ROM file and creates a `Cartridge`
 2. Auto-detects the TV system (NTSC/PAL) from the NES 2.0 header
 3. Creates an NES instance and inserts the cartridge
-4. Runs the emulator frame-by-frame, polling `$6000` every 256 CPU cycles
-5. Returns **Pass** when `$6000 = $00`, **Fail** when `$6000 = $01–$7F` (with console text as the error message), or **Timeout** after 30 seconds of wall-clock time
+4. Runs the emulator frame-by-frame
+5. Verifies either:
+   - a `$6000` status byte transition (`setup_rom_test!`), or
+   - console text containing the configured pass string (`setup_rom_console_test!`)
 
-The test runner first waits for `$6000` to become `$80` (test running), then watches for the final result. This two-phase approach prevents false positives from uninitialized RAM.
+For status-byte tests, the runner first waits for `$6000` to become `$80` (test running), then watches for the final result. This two-phase approach prevents false positives from uninitialized RAM. Console-verified tests instead watch the rendered nametable text for `PASSED` / `FAILED` output.
 
 ### Running Tests
 
@@ -371,7 +391,7 @@ cargo test --no-default-features -- "test_mv_m004_0_prg_banking"
 
 ### CI Integration
 
-The pre-built ROM binaries are committed to `bin/` so that CI can run the tests without requiring the cc65 toolchain. The CI workflow runs `cargo test --lib --examples --all-features`, which includes all mapper verification tests.
+The pre-built ROM binaries are committed to `bin/` so that CI can run the tests without requiring the cc65 toolchain. Locally, `cargo test --no-default-features` exercises the mapper verification suite in this repository. CI consumes the same committed ROM binaries as part of the broader Rust test jobs.
 
 ## Adding a New Mapper
 
@@ -387,11 +407,17 @@ To add tests for a new mapper (e.g. mapper 99):
 
 5. **Add mapper-specific init to `shell.s`** (if needed) — For example, font loading for MMC3 clones, or mode switching for multicart mappers
 
-6. **Add Rust test entries** — Add `setup_rom_test!` invocations to `src/integration_tests/mapper_tests.rs`
+6. **Add Rust test entries** — Add `setup_rom_test!` for `$6000`-status ROMs or `setup_rom_console_test!` for console-verified ROMs
 
 7. **Build and commit** — Run `make` to build the ROMs, then commit the binaries to `bin/`
 
 ## Covered Mappers
+
+All mapper numbers from `0` through `48` have been reviewed against NESdev documentation.
+
+- **Implemented coverage:** 45 of 49 mapper numbers have at least one verification ROM.
+- **Not yet implemented:** 4 mapper numbers (`17, 20, 27, 36`)
+- **Main reasons for the remaining deferrals:** FDS/dump-specific formats, unusual one-off hardware control schemes, or low incremental value compared to already-covered equivalents.
 
 | Mapper | Name | Submappers | Tests |
 |--------|------|------------|-------|
@@ -411,20 +437,48 @@ To add tests for a new mapper (e.g. mapper 99):
 | 13 | CPROM | 0 | CHR-RAM banking |
 | 14 | SL-1632 | 0 | PRG banking, CHR banking, nametable, IRQ, PRG-RAM, write-protect |
 | 15 | K-1029 | 0 | PRG banking, nametable |
+| 16 | Bandai FCG | 4, 5 | PRG banking, CHR banking, nametable, IRQ |
+| 18 | Jaleco SS 88006 | 0 | PRG banking, CHR banking, nametable, IRQ, PRG-RAM |
+| 19 | Namco 163 | 0, 2 | PRG banking, CHR banking, nametable, IRQ, NT from CHR |
+| 21 | VRC4a/c | 1, 2 | PRG banking, CHR banking, nametable, IRQ |
+| 22 | VRC2a | 0 | PRG banking, CHR banking, nametable |
+| 23 | VRC4e/f, VRC2b | 1, 2, 3 | PRG banking, CHR banking, nametable, IRQ |
+| 24 | VRC6a | 0 | PRG banking, CHR banking, nametable, IRQ |
+| 25 | VRC4b/d, VRC2c | 1, 2, 3 | PRG banking, CHR banking, nametable, IRQ |
+| 26 | VRC6b | 0 | PRG banking, CHR banking, nametable, IRQ |
+| 28 | Action 53 | 0 | PRG banking, nametable |
+| 29 | RET-CUFROM | 0 | PRG banking, CHR-RAM banking |
+| 30 | UNROM 512 | 0, 2 | PRG banking, CHR-RAM banking, nametable |
+| 31 | NSF subset | 0 | PRG banking |
+| 32 | Irem G-101 | 0, 1 | PRG banking, CHR banking, nametable, PRG-RAM, PRG mode |
+| 33 | Taito TC0190 | 0 | PRG banking, CHR banking, nametable, PRG-RAM |
+| 34 | BNROM/NINA-001 | 0, 1, 2 | PRG banking, CHR banking, PRG-RAM, bus conflicts |
+| 35 | J.Y. Company ASIC | 0 | PRG banking, CHR banking, nametable, PRG-RAM, multiplier |
+| 37 | MMC3 multicart | 0 | Block select |
+| 38 | Bit Corp. PCI556 | 0 | PRG banking, CHR banking, PRG-RAM |
+| 39 | BNROM clone | 0 | PRG banking |
+| 40 | SMB2j pirate | 0 | PRG banking |
+| 41 | Caltron 6-in-1 | 0 | PRG banking |
+| 42 | Sachen SA-72007 | 0 | PRG banking, CHR banking, nametable |
+| 43 | Sachen SA-0036 | 0 | PRG banking |
+| 44 | Super Big 7-in-1 | 0 | PRG banking, CHR banking, nametable, IRQ, block select |
+| 45 | X-007 multicart | 0 | Block select |
+| 46 | Game Station / Rumblestation | 0 | PRG banking, CHR banking |
+| 47 | Super Spike / Nintendo World Cup multicart | 0 | Block select |
+| 48 | Taito TC0690 | 0 | PRG banking, CHR banking, nametable, IRQ, PRG-RAM |
 
-### Known Emulator Issues
+Several of the later multicart / register-at-`$6000` mappers (`37`, `40`, `41`, `42`, `43`, `45`, `46`, `47`) are covered through console verification rather than the `$6000` status-byte protocol.
 
-The test ROMs have successfully identified emulator bugs:
+### Mappers Reviewed but Not Yet Implemented
 
-1. **Mapper 11 Submapper 1**: Not implemented in emulator (ColorDreamsMapper hardcodes bus conflicts)
-   - `m011.1_prg_banking.nes`: ✅ PASS
-   - `m011.1_chr_banking.nes`: ❌ FAIL (expected — emulator missing feature)
-   - `m011.1_combined.nes`: ❌ FAIL (expected — emulator missing feature)
+| Mapper | Reason not implemented yet |
+|--------|-----------------------------|
+| 17 | Super Magic Card dump format rather than a normal cartridge target; trainer relocation and dump-specific startup behavior are outside the current cartridge verification framework. |
+| 20 | Reserved for Famicom Disk System in iNES; not a standard cartridge mapper, so it is outside the scope of this ROM suite. |
+| 27 | Pirate VRC2/VRC4 variant believed to be effectively a mapper 23-style duplicate; lower priority because existing VRC2/VRC4 coverage already exercises the interesting banking and IRQ behavior. |
+| 36 | Safe for the `$6000` protocol, but the TXC board uses a `$4100-$4103` state machine plus `$8000` commit step, making it a specialized one-off that was deferred in favor of broader coverage first. |
 
-2. **Mapper 12 Write-Protection Re-Enable**: Fails to restore write capability after protection
-   - `m012.0_write_protect.nes`: ❌ FAIL on test 3 (expected — emulator bug)
-
-These failures are documented and expected. The test ROMs are correct per NESdev specifications.
+Mappers `37`, `40`, `41`, `42`, `43`, `45`, `46`, and `47` were added after the suite gained console-verification support for boards that cannot safely use the `$6000` status-byte protocol. Mapper 36 is now the only remaining unimplemented mapper in the `32-48` range.
 
 ## Acknowledgments
 

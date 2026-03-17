@@ -100,7 +100,11 @@ impl BnromNinaMapper {
             has_chr_banking: is_nina,
             has_dynamic_mirroring: false,
             has_expansion_audio: false,
-            max_prg_ram_kb: if is_nina { 8 } else { 0 },
+            max_prg_ram_kb: if is_nina {
+                8
+            } else {
+                ctx.prg_ram_banks_8k as usize * 8
+            },
             prg_bank_size_kb: 32,
             chr_bank_size_kb: if is_nina { 4 } else { 8 },
             trainer_jsr: false,
@@ -741,12 +745,15 @@ mod tests {
 
     #[test]
     fn test_bnrom_has_no_prg_ram_per_spec() {
-        let mut mapper = BnromNinaMapper::new(MapperContext::new_for_test(
-            34,
-            vec![0xFF; 128 * 1024],
-            vec![],
-            NametableLayout::Horizontal,
-        ));
+        let mut mapper = BnromNinaMapper::new(
+            MapperContext::new_for_test(
+                34,
+                vec![0xFF; 128 * 1024],
+                vec![],
+                NametableLayout::Horizontal,
+            )
+            .with_prg_ram_banks(0),
+        );
 
         mapper.write_prg(0x6000, 0xAB);
         assert_eq!(mapper.read_prg(0x6000), 0);
@@ -755,12 +762,15 @@ mod tests {
 
     #[test]
     fn test_mapper34_capabilities_reflect_variant_ram_size() {
-        let mapper_bnrom = BnromNinaMapper::new(MapperContext::new_for_test(
-            34,
-            vec![0xFF; 128 * 1024],
-            vec![],
-            NametableLayout::Horizontal,
-        ));
+        let mapper_bnrom = BnromNinaMapper::new(
+            MapperContext::new_for_test(
+                34,
+                vec![0xFF; 128 * 1024],
+                vec![],
+                NametableLayout::Horizontal,
+            )
+            .with_prg_ram_banks(0),
+        );
         assert_eq!(mapper_bnrom.capabilities().max_prg_ram_kb, 0);
 
         let mapper_nina = BnromNinaMapper::new(MapperContext::new_for_test(

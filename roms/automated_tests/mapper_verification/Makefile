@@ -170,7 +170,57 @@ SINGLES := \
 	$(SINGLES_DIR)/m030.2_prg_banking.nes \
 	$(SINGLES_DIR)/m030.2_chr_ram_banking.nes \
 	$(SINGLES_DIR)/m030.2_nametable.nes \
-	$(SINGLES_DIR)/m031.0_prg_banking.nes
+	$(SINGLES_DIR)/m031.0_prg_banking.nes \
+	$(SINGLES_DIR)/m032.0_prg_banking.nes \
+	$(SINGLES_DIR)/m032.0_chr_banking.nes \
+	$(SINGLES_DIR)/m032.0_nametable.nes \
+	$(SINGLES_DIR)/m032.0_prg_ram.nes \
+	$(SINGLES_DIR)/m032.0_prg_mode.nes \
+	$(SINGLES_DIR)/m032.1_prg_banking.nes \
+	$(SINGLES_DIR)/m032.1_chr_banking.nes \
+	$(SINGLES_DIR)/m032.1_nametable.nes \
+	$(SINGLES_DIR)/m032.1_prg_ram.nes \
+	$(SINGLES_DIR)/m033.0_prg_banking.nes \
+	$(SINGLES_DIR)/m033.0_chr_banking.nes \
+	$(SINGLES_DIR)/m033.0_nametable.nes \
+	$(SINGLES_DIR)/m033.0_prg_ram.nes \
+	$(SINGLES_DIR)/m034.0_prg_banking.nes \
+	$(SINGLES_DIR)/m034.0_chr_banking.nes \
+	$(SINGLES_DIR)/m034.0_prg_ram.nes \
+	$(SINGLES_DIR)/m034.1_prg_banking.nes \
+	$(SINGLES_DIR)/m034.1_chr_banking.nes \
+	$(SINGLES_DIR)/m034.1_prg_ram.nes \
+	$(SINGLES_DIR)/m034.2_prg_banking.nes \
+	$(SINGLES_DIR)/m037.0_block_select.nes \
+	$(SINGLES_DIR)/m038.0_prg_banking.nes \
+	$(SINGLES_DIR)/m038.0_chr_banking.nes \
+	$(SINGLES_DIR)/m038.0_prg_ram.nes \
+	$(SINGLES_DIR)/m044.0_prg_banking.nes \
+	$(SINGLES_DIR)/m044.0_chr_banking.nes \
+	$(SINGLES_DIR)/m044.0_nametable.nes \
+	$(SINGLES_DIR)/m044.0_irq.nes \
+	$(SINGLES_DIR)/m044.0_block_select.nes \
+	$(SINGLES_DIR)/m048.0_prg_banking.nes \
+	$(SINGLES_DIR)/m048.0_chr_banking.nes \
+	$(SINGLES_DIR)/m048.0_nametable.nes \
+	$(SINGLES_DIR)/m048.0_irq.nes \
+	$(SINGLES_DIR)/m048.0_prg_ram.nes \
+	$(SINGLES_DIR)/m035.0_prg_banking.nes \
+	$(SINGLES_DIR)/m035.0_chr_banking.nes \
+	$(SINGLES_DIR)/m035.0_nametable.nes \
+	$(SINGLES_DIR)/m035.0_prg_ram.nes \
+	$(SINGLES_DIR)/m035.0_multiplier.nes \
+	$(SINGLES_DIR)/m039.0_prg_banking.nes \
+	$(SINGLES_DIR)/m040.0_prg_banking.nes \
+	$(SINGLES_DIR)/m041.0_prg_banking.nes \
+	$(SINGLES_DIR)/m042.0_prg_banking.nes \
+	$(SINGLES_DIR)/m042.0_chr_banking.nes \
+	$(SINGLES_DIR)/m042.0_nametable.nes \
+	$(SINGLES_DIR)/m043.0_prg_banking.nes \
+	$(SINGLES_DIR)/m045.0_block_select.nes \
+	$(SINGLES_DIR)/m046.0_prg_banking.nes \
+	$(SINGLES_DIR)/m046.0_chr_banking.nes \
+	$(SINGLES_DIR)/m047.0_block_select.nes
 
 # ============================================================
 # Combined ROM target list (all tests per mapper/submapper)
@@ -219,7 +269,26 @@ COMBINED := \
 	$(BIN_DIR)/m029.0.nes \
 	$(BIN_DIR)/m030.0.nes \
 	$(BIN_DIR)/m030.2.nes \
-	$(BIN_DIR)/m031.0.nes
+	$(BIN_DIR)/m031.0.nes \
+	$(BIN_DIR)/m032.0.nes \
+	$(BIN_DIR)/m032.1.nes \
+	$(BIN_DIR)/m033.0.nes \
+	$(BIN_DIR)/m034.0.nes \
+	$(BIN_DIR)/m034.1.nes \
+	$(BIN_DIR)/m034.2.nes \
+	$(BIN_DIR)/m037.0.nes \
+	$(BIN_DIR)/m038.0.nes \
+	$(BIN_DIR)/m040.0.nes \
+	$(BIN_DIR)/m044.0.nes \
+	$(BIN_DIR)/m048.0.nes \
+	$(BIN_DIR)/m035.0.nes \
+	$(BIN_DIR)/m039.0.nes \
+	$(BIN_DIR)/m041.0.nes \
+	$(BIN_DIR)/m042.0.nes \
+	$(BIN_DIR)/m043.0.nes \
+	$(BIN_DIR)/m045.0.nes \
+	$(BIN_DIR)/m046.0.nes \
+	$(BIN_DIR)/m047.0.nes
 
 .PHONY: all clean check-tools singles combined
 
@@ -586,3 +655,110 @@ $(eval $(call COMBINED_RULE,$(BIN_DIR)/m030.2.nes,m030.2,prg_banking chr_ram_ban
 # Mapper 31, Submapper 0 (NSF subset mapper)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m031.0_prg_banking.nes,prg_banking,m031.0))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m031.0.nes,m031.0,prg_banking))
+
+# Mapper 32, Submapper 0 (Irem G-101 — Standard)
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m032.0_prg_banking.nes,prg_banking,m032.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m032.0_chr_banking.nes,chr_banking,m032.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m032.0_nametable.nes,nametable,m032.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m032.0_prg_ram.nes,prg_ram,m032.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m032.0_prg_mode.nes,prg_mode,m032.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m032.0.nes,m032.0,prg_banking chr_banking nametable prg_ram prg_mode))
+
+# Mapper 32, Submapper 1 (Irem G-101 — Major League)
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m032.1_prg_banking.nes,prg_banking,m032.1))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m032.1_chr_banking.nes,chr_banking,m032.1))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m032.1_nametable.nes,nametable,m032.1))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m032.1_prg_ram.nes,prg_ram,m032.1))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m032.1.nes,m032.1,prg_banking chr_banking nametable prg_ram))
+
+# Mapper 33, Submapper 0 (Taito TC0190)
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m033.0_prg_banking.nes,prg_banking,m033.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m033.0_chr_banking.nes,chr_banking,m033.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m033.0_nametable.nes,nametable,m033.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m033.0_prg_ram.nes,prg_ram,m033.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m033.0.nes,m033.0,prg_banking chr_banking nametable prg_ram))
+
+# Mapper 34, Submapper 0 (BNROM/NINA-001 combined)
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m034.0_prg_banking.nes,prg_banking,m034.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m034.0_chr_banking.nes,chr_banking,m034.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m034.0_prg_ram.nes,prg_ram,m034.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m034.0.nes,m034.0,prg_banking chr_banking prg_ram))
+
+# Mapper 34, Submapper 1 (NINA-001)
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m034.1_prg_banking.nes,prg_banking,m034.1))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m034.1_chr_banking.nes,chr_banking,m034.1))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m034.1_prg_ram.nes,prg_ram,m034.1))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m034.1.nes,m034.1,prg_banking chr_banking prg_ram))
+
+# Mapper 34, Submapper 2 (BNROM)
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m034.2_prg_banking.nes,prg_banking,m034.2))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m034.2.nes,m034.2,prg_banking))
+
+# Mapper 38, Submapper 0 (Bit Corp. PCI556)
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m038.0_prg_banking.nes,prg_banking,m038.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m038.0_chr_banking.nes,chr_banking,m038.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m038.0_prg_ram.nes,prg_ram,m038.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m038.0.nes,m038.0,prg_banking chr_banking prg_ram))
+
+# Mapper 44, Submapper 0 (Super Big 7-in-1, MMC3 multicart)
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m044.0_prg_banking.nes,prg_banking,m044.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m044.0_chr_banking.nes,chr_banking,m044.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m044.0_nametable.nes,nametable,m044.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m044.0_irq.nes,irq,m044.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m044.0_block_select.nes,block_select,m044.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m044.0.nes,m044.0,prg_banking chr_banking nametable irq block_select))
+
+# Mapper 48, Submapper 0 (Taito TC0690)
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m048.0_prg_banking.nes,prg_banking,m048.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m048.0_chr_banking.nes,chr_banking,m048.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m048.0_nametable.nes,nametable,m048.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m048.0_irq.nes,irq,m048.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m048.0_prg_ram.nes,prg_ram,m048.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m048.0.nes,m048.0,prg_banking chr_banking nametable irq prg_ram))
+
+# Mapper 35, Submapper 0 (J.Y. Company ASIC)
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m035.0_prg_banking.nes,prg_banking,m035.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m035.0_chr_banking.nes,chr_banking,m035.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m035.0_nametable.nes,nametable,m035.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m035.0_prg_ram.nes,prg_ram,m035.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m035.0_multiplier.nes,multiplier,m035.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m035.0.nes,m035.0,prg_banking chr_banking nametable prg_ram multiplier))
+
+# Mapper 39, Submapper 0 (BNROM clone — Study & Game 32-in-1)
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m039.0_prg_banking.nes,prg_banking,m039.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m039.0.nes,m039.0,prg_banking))
+
+# Mapper 37, Submapper 0 (SMB + Tetris + Nintendo World Cup)
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m037.0_block_select.nes,block_select,m037.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m037.0.nes,m037.0,block_select))
+
+# Mapper 40, Submapper 0 (NTDEC 2722)
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m040.0_prg_banking.nes,prg_banking,m040.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m040.0.nes,m040.0,prg_banking))
+
+# Mapper 41, Submapper 0 (Caltron 6-in-1)
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m041.0_prg_banking.nes,prg_banking,m041.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m041.0.nes,m041.0,prg_banking))
+
+# Mapper 42, Submapper 0 (Mario Baby / Ai Senshi Nicol)
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m042.0_prg_banking.nes,prg_banking,m042.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m042.0_chr_banking.nes,chr_banking,m042.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m042.0_nametable.nes,nametable,m042.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m042.0.nes,m042.0,prg_banking chr_banking nametable))
+
+# Mapper 43, Submapper 0 (TONY-I / YS-612)
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m043.0_prg_banking.nes,prg_banking,m043.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m043.0.nes,m043.0,prg_banking))
+
+# Mapper 45, Submapper 0 (GA23C multicart)
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m045.0_block_select.nes,block_select,m045.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m045.0.nes,m045.0,block_select))
+
+# Mapper 46, Submapper 0 (Rumble Station)
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m046.0_prg_banking.nes,prg_banking,m046.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m046.0_chr_banking.nes,chr_banking,m046.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m046.0.nes,m046.0,prg_banking chr_banking))
+
+# Mapper 47, Submapper 0 (Super Spike V'Ball + Nintendo World Cup)
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m047.0_block_select.nes,block_select,m047.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m047.0.nes,m047.0,block_select))

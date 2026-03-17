@@ -311,10 +311,12 @@ impl BaseMapper {
     /// Read PRG with open-bus handling.
     ///
     /// Returns `open_bus` for addresses below $6000 and for $6000-$7FFF when
-    /// no PRG-RAM is present. Otherwise delegates to the provided `read_prg` function.
+    /// neither PRG-RAM nor mapper-controlled PRG-ROM banking is present there.
+    /// Otherwise delegates to the provided `read_prg` function.
     pub fn read_prg_open_bus(&self, addr: u16, open_bus: u8, read_prg: impl Fn(u16) -> u8) -> u8 {
         match addr {
             0x0000..=0x5FFF => open_bus,
+            0x6000..=0x7FFF if self.prg_6000_bank.is_some() => read_prg(addr),
             0x6000..=0x7FFF if self.prg_ram.is_none() => open_bus,
             _ => read_prg(addr),
         }
@@ -793,6 +795,19 @@ mod tests {
 
         // $6000-$7FFF with PRG-RAM: delegates to read_prg
         assert_eq!(base.read_prg_open_bus(0x6000, 0x42, |_| 0xBB), 0xBB);
+    }
+
+    #[test]
+    fn test_base_mapper_open_bus_uses_prg_6000_mapping_without_prg_ram() {
+        let base = make_prg_6000_mapper(6);
+
+        assert_eq!(
+            base.read_prg_open_bus(0x6000, 0x42, |addr| {
+                base.try_read_prg_6000(addr).unwrap_or(0x99)
+            }),
+            0,
+            "$6000 banking must override open bus even when no PRG-RAM exists"
+        );
     }
 
     #[test]

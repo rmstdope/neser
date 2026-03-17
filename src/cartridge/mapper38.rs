@@ -39,7 +39,7 @@ impl Mapper38 {
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
-            max_prg_ram_kb: 0,
+            max_prg_ram_kb: 8,
             prg_bank_size_kb: 32,
             chr_bank_size_kb: 8,
             ..Default::default()
@@ -72,12 +72,13 @@ impl Mapper for Mapper38 {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
-        if !(0x7000..=0x7FFF).contains(&addr) {
+        if (0x7000..=0x7FFF).contains(&addr) {
+            self.prg_bank = value & 0x03;
+            self.chr_bank = (value >> 2) & 0x03;
+            self.update_banks();
             return;
         }
-        self.prg_bank = value & 0x03;
-        self.chr_bank = (value >> 2) & 0x03;
-        self.update_banks();
+        self.base.try_write_prg_ram(addr, value);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {

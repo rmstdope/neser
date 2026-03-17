@@ -53,7 +53,7 @@ impl IremG101Mapper {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
             has_dynamic_mirroring: submapper != 1,
-            max_prg_ram_kb: 0,
+            max_prg_ram_kb: 8,
             prg_bank_size_kb: 8,
             chr_bank_size_kb: 1,
             ..Default::default()
@@ -123,6 +123,9 @@ impl Mapper for IremG101Mapper {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
+        if self.base.try_write_prg_ram(addr, value) {
+            return;
+        }
         match addr & 0xF000 {
             0x8000 => {
                 self.prg_regs[0] = value & 0x1F;

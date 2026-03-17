@@ -175,14 +175,20 @@ bank_table:
 
 ; PRG bank signatures (for PRG banking mappers)
 .if HAS_PRG_BANKING
+.if PRG_BANK_SIZE <> 32
 .segment "PRG_SIG0"
     .byte $A5, 0, $FF, $5A
+.endif
 .segment "PRG_SIG1"
     .byte $A5, 1, $FE, $5A
+.if PRG_BANK_SIZE <> 32 .or PRG_ROM_16K >= 6
 .segment "PRG_SIG2"
     .byte $A5, 2, $FD, $5A
+.endif
+.if PRG_BANK_SIZE <> 32 .or PRG_ROM_16K >= 8
 .segment "PRG_SIG3"
     .byte $A5, 3, $FC, $5A
+.endif
 .endif
 
 ; CHR bank signatures (for CHR banking mappers)
