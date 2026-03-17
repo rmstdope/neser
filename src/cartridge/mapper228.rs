@@ -84,7 +84,11 @@ impl Mapper228 {
         self.chip_select = ((addr >> 11) & 0x03) as u8;
         // Chip 3 maps to linear index 2 (ROM layout: chips 0, 1, 3 → indices 0, 1, 2)
         // Chip 2 is absent (open bus); PRG pages are set but reads return open bus.
-        let chip_remap = if self.chip_select == 3 { 2u16 } else { self.chip_select as u16 };
+        let chip_remap = if self.chip_select == 3 {
+            2u16
+        } else {
+            self.chip_select as u16
+        };
 
         let prg_page = ((addr >> 6) & 0x1F) | (chip_remap << 5);
         if addr & 0x20 != 0 {
