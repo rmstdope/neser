@@ -14,8 +14,15 @@
 ; Include the mapper-specific definitions
 .include "mapper_config.inc"
 
+.ifndef SKIP_PRG_SIG1
+    SKIP_PRG_SIG1 = 0
+.endif
+
 ; Signature read address: start of banked window
-.if PRG_BANK_SIZE = 8
+.if PRG_BANK_SIZE = 4
+    BANK_WINDOW = $8000         ; 4KB: $8000-$8FFF (slot 0)
+    FIXED_WINDOW = $F000        ; Fixed bank at $F000-$FFFF (slot 7)
+.elseif PRG_BANK_SIZE = 8
     BANK_WINDOW = $8000         ; 8KB: $8000-$9FFF
     FIXED_WINDOW = $E000        ; Fixed bank at $E000-$FFFF
 .elseif PRG_BANK_SIZE = 16
@@ -48,6 +55,7 @@ test_title_string:
     ; === MMC1 Submapper 5: Negative test ===
     ; Verify that PRG banking writes are IGNORED
     start_test 1, "PRG fixed"
+
     ; Read initial signature at $8000
     lda BANK_WINDOW
     sta TEST_TEMP              ; Save initial value
@@ -124,6 +132,68 @@ test_title_string:
         lda tramp_result+1
         assert_a_eq 3
         pass_test
+
+    .elseif PRG_BANK_SIZE = 4
+        ; --- 4KB banking (NSF mapper 31) ---
+        ; Single 4KB slot at $8000-$8FFF; $F000-$FFFF fixed to last bank
+
+        .ifndef TEST_BANK_B
+            TEST_BANK_B = 1
+        .endif
+        .ifndef TEST_BANK_C
+            TEST_BANK_C = 2
+        .endif
+
+        start_test 1, "Bank 0 sig"
+        select_prg_bank 0, 0
+        lda BANK_WINDOW
+        assert_a_eq $A5
+        pass_test
+
+        start_test 2, "Bank 0 id"
+        lda BANK_WINDOW + 1
+        assert_a_eq 0
+        pass_test
+
+        start_test 3, "Bank B sig"
+        select_prg_bank 0, TEST_BANK_B
+        lda BANK_WINDOW
+        assert_a_eq $A5
+        pass_test
+
+        start_test 4, "Bank B id"
+        lda BANK_WINDOW + 1
+        assert_a_eq TEST_BANK_B
+        pass_test
+
+        start_test 5, "Bank C"
+        select_prg_bank 0, TEST_BANK_C
+        lda BANK_WINDOW + 1
+        assert_a_eq TEST_BANK_C
+        pass_test
+
+        ; Verify fixed slot 7 ($F000-$FFFF) is unaffected by slot 0 switching
+        start_test 6, "Fixed slot7"
+        lda $FFFC               ; Read reset vector low byte
+        sta TEST_TEMP
+        select_prg_bank 0, 0    ; Switch slot 0 — should not disturb slot 7
+        lda $FFFC               ; Should be unchanged
+        cmp TEST_TEMP
+        beq :+
+        tax
+        lda TEST_TEMP
+        fail_test
+:       pass_test
+
+        start_test 7, "Fixed stable"
+        select_prg_bank 0, TEST_BANK_C
+        lda $FFFC
+        cmp TEST_TEMP
+        beq :+
+        tax
+        lda TEST_TEMP
+        fail_test
+:       pass_test
 
     .elseif PRG_BANK_SIZE = 16
         ; --- 16KB banking (UxROM, MMC1 mode 3) ---
@@ -385,8 +455,10 @@ trampoline_end:
 
 ; Bank 1 sig: skip for mapper 15 (bank 1 = bootstrap)
 .if MAPPER_NUM <> 15
+    .if .not SKIP_PRG_SIG1
 .segment "PRG_SIG1"
     .byte $A5, 1, $FE, $5A
+    .endif
 .endif
 
 .segment "PRG_SIG2"

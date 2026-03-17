@@ -151,9 +151,9 @@ test_title_string:
 
     ; === Verify fixed bank at $0000 is unaffected by bank switching ===
     ; $0000-$0FFF is always page 0 (same physical memory as bank 0 at $1000).
-    ; After writing $AA to bank 0 at $1000 (test 1), $0000 should be $AA.
-    ; After switching to bank 2, $0000 should STILL be $AA.
+    ; Only for mappers with split 4KB/4KB CHR-RAM (CPROM style); controlled by HAS_CHR_FIXED_LOWER.
 
+.if HAS_CHR_FIXED_LOWER
     start_test 9, "Fixed $0"
     select_chr_bank 0, 2        ; Switch to bank 2 at $1000
     bit PPUSTATUS
@@ -165,7 +165,13 @@ test_title_string:
     lda PPUDATA                 ; Read from $0000 (fixed page 0)
     assert_a_eq $AA             ; Should match bank 0 write from test 1
     pass_test
+.endif
 
+    ; Whole-window CHR-RAM banking leaves the last tested bank selected.
+    ; Restore bank 0 so the console font copied during startup is visible again.
+.if .not HAS_CHR_FIXED_LOWER
+    select_chr_bank 0, 0
+.endif
     jsr enable_rendering
     rts
 .endproc

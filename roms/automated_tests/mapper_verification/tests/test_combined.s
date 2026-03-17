@@ -41,6 +41,9 @@
 .ifdef HAS_TEST_CHR_LATCH
     .import run_chr_latch
 .endif
+.ifdef HAS_TEST_NT_FROM_CHR
+    .import run_nt_from_chr
+.endif
 
 .segment "RODATA"
 test_title_string:
@@ -132,6 +135,15 @@ test_title_string:
     jsr console_flush
     jsr console_newline
     jsr run_chr_latch
+    jsr console_show
+.endif
+
+.ifdef HAS_TEST_NT_FROM_CHR
+    jsr console_print_inline
+    .byte "-- NT from CHR --", 0
+    jsr console_flush
+    jsr console_newline
+    jsr run_nt_from_chr
     jsr console_show
 .endif
 

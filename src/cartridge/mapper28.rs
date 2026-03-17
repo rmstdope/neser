@@ -55,7 +55,7 @@ impl Mapper28 {
             has_dynamic_mirroring: true,
             prg_bank_size_kb: 16,
             chr_bank_size_kb: 8,
-            max_prg_ram_kb: 0,
+            max_prg_ram_kb: ctx.prg_ram_banks_8k as usize * 8,
             ..Default::default()
         };
         let mut base = BaseMapper::new(&ctx, capabilities);
@@ -136,6 +136,9 @@ impl Mapper for Mapper28 {
 
     fn write_prg(&mut self, addr: u16, value: u8) {
         match addr {
+            0x6000..=0x7FFF => {
+                self.base.try_write_prg_ram(addr, value);
+            }
             0x5000..=0x5FFF => {
                 self.selected_reg = ((value & 0x80) >> 6) | (value & 0x01);
             }

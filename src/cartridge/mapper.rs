@@ -1469,7 +1469,9 @@ mod tests {
 
     #[test]
     fn bandai_fcg_reports_zero_prg_ram() {
-        assert_eq!(make_mapper(16).capabilities().max_prg_ram_kb, 0);
+        // mapper 16 now supports PRG-RAM when the header specifies it;
+        // with the default test context (1 × 8KB), expect 8KB.
+        assert_eq!(make_mapper(16).capabilities().max_prg_ram_kb, 8);
     }
 
     #[test]

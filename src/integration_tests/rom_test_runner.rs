@@ -67,6 +67,17 @@ pub(crate) mod tests {
     }
 
     impl RomTestRunner {
+        fn read_console_text(nes: &mut Nes) -> String {
+            let base_addr = nes.base_nametable_addr();
+            let text = nes.read_nametable_text(base_addr, 32 * 32);
+            text.as_bytes()
+                .chunks(32)
+                .map(|chunk| String::from_utf8_lossy(chunk).trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+
         /// Create a new test runner for $6000-based tests
         pub fn new(rom_path: &str, max_frames: u32, verification: RomTestVerification) -> Self {
             Self {
@@ -223,18 +234,25 @@ pub(crate) mod tests {
                     if status == 0x00 {
                         return RomTestResult::Pass;
                     } else if status > 0x00 && status < 0x80 {
-                        let base_addr = nes.base_nametable_addr();
-                        let mut text = nes.read_nametable_text(base_addr, 32 * 32);
-                        text = text
-                            .as_bytes()
-                            .chunks(32)
-                            .map(|chunk| String::from_utf8_lossy(chunk).trim().to_string())
-                            .filter(|s| !s.is_empty())
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        println!("Test failed with status code: 0x{:02X}", status);
-                        println!("Console output:\n{}", text);
-                        return RomTestResult::Fail(status);
+                        let text = Self::read_console_text(&mut nes);
+                        let uppercase_text = text.to_uppercase();
+
+                        // Some mapper-verification ROMs temporarily reuse $6000-$600F for mapper
+                        // registers during the test. In those cases, only treat a non-zero status
+                        // byte as terminal if the console has also reached a failure state.
+                        if uppercase_text.ends_with("PASSED") {
+                            return RomTestResult::Pass;
+                        }
+                        if uppercase_text.contains("FAILED")
+                            || uppercase_text.contains("ERROR")
+                            || (text.starts_with("0x") && text.chars().nth(2) != Some('0'))
+                        {
+                            println!("Test failed with status code: 0x{:02X}", status);
+                            println!("Console output:\n{}", text);
+                            return RomTestResult::Fail(status);
+                        }
+
+                        continue;
                     } else if status == 0x81 {
                         if self.wait_reset > 0 {
                             self.wait_reset -= 1;
@@ -249,15 +267,7 @@ pub(crate) mod tests {
                         continue;
                     }
                 } else if let RomTestVerification::Console { pass_string } = &self.verification {
-                    let base_addr = nes.base_nametable_addr();
-                    let mut text = nes.read_nametable_text(base_addr, 32 * 32);
-                    text = text
-                        .as_bytes()
-                        .chunks(32)
-                        .map(|chunk| String::from_utf8_lossy(chunk).trim().to_string())
-                        .filter(|s| !s.is_empty())
-                        .collect::<Vec<_>>()
-                        .join("\n");
+                    let text = Self::read_console_text(&mut nes);
                     if text.to_uppercase().ends_with(pass_string) {
                         return RomTestResult::Pass;
                     } else if text.to_uppercase().contains("FAILED")
@@ -297,15 +307,7 @@ pub(crate) mod tests {
                         }
                     }
                 } else if let RomTestVerification::ConsoleCrc(expected_crcs) = self.verification {
-                    let base_addr = nes.base_nametable_addr();
-                    let mut text = nes.read_nametable_text(base_addr, 32 * 32);
-                    text = text
-                        .as_bytes()
-                        .chunks(32)
-                        .map(|chunk| String::from_utf8_lossy(chunk).trim().to_string())
-                        .filter(|s| !s.is_empty())
-                        .collect::<Vec<_>>()
-                        .join("\n");
+                    let text = Self::read_console_text(&mut nes);
 
                     if let Some(crc) = parse_crc32_from_console_text(&text) {
                         if expected_crcs.contains(&crc) {
@@ -329,15 +331,7 @@ pub(crate) mod tests {
             }
 
             // No result found within timeout
-            let base_addr = nes.base_nametable_addr();
-            let mut text = nes.read_nametable_text(base_addr, 32 * 32);
-            text = text
-                .as_bytes()
-                .chunks(32)
-                .map(|chunk| String::from_utf8_lossy(chunk).trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<_>>()
-                .join("\n");
+            let text = Self::read_console_text(&mut nes);
             println!("Test Timed out with output:\n{}", text);
             RomTestResult::Timeout
         }

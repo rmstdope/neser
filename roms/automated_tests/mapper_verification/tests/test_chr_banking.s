@@ -14,6 +14,20 @@
 
 .importzp ppumask_shadow
 
+.ifndef CHR_1K_LINEAR
+    CHR_1K_LINEAR = 0
+.endif
+
+.if CHR_1K_LINEAR
+    CHR_R2_HI = $08
+    CHR_R3_HI = $0C
+    CHR_R4_HI = $10
+.else
+    CHR_R2_HI = $10
+    CHR_R3_HI = $14
+    CHR_R4_HI = $18
+.endif
+
 .ifndef COMBINED
 .export run_tests
 .export test_title_string
@@ -216,15 +230,15 @@ chr_read_val: .res 1
 
         start_test 1, "CHR R2 B0"
         jsr disable_rendering
-        select_chr_bank 2, 0    ; R2: 1KB at $1000
-        lda #$10
+        select_chr_bank 2, 0
+        lda #CHR_R2_HI
         ldx #$00
         jsr read_chr_byte
         assert_a_eq $B6
         pass_test
 
         start_test 2, "CHR R2 id"
-        lda #$10
+        lda #CHR_R2_HI
         ldx #$01
         jsr read_chr_byte
         assert_a_eq 0
@@ -232,23 +246,23 @@ chr_read_val: .res 1
 
         start_test 3, "CHR R2 B1"
         select_chr_bank 2, 1
-        lda #$10
+        lda #CHR_R2_HI
         ldx #$01
         jsr read_chr_byte
         assert_a_eq 1
         pass_test
 
         start_test 4, "CHR R3 B2"
-        select_chr_bank 3, 2    ; R3: 1KB at $1400
-        lda #$14
+        select_chr_bank 3, 2
+        lda #CHR_R3_HI
         ldx #$01
         jsr read_chr_byte
         assert_a_eq 2
         pass_test
 
         start_test 5, "CHR R4 B3"
-        select_chr_bank 4, 3    ; R4: 1KB at $1800
-        lda #$18
+        select_chr_bank 4, 3
+        lda #CHR_R4_HI
         ldx #$01
         jsr read_chr_byte
         assert_a_eq 3

@@ -162,7 +162,7 @@ impl Namco163Mapper {
     }
 
     fn irq_status_register_value(&self) -> u8 {
-        ((self.irq_counter >> 8) as u8 & 0x7F) | ((self.irq_enabled as u8) << 7)
+        ((self.irq_counter >> 8) as u8 & 0x7F) | (((!self.irq_enabled) as u8) << 7)
     }
 
     fn handle_register_write(&mut self, reg: usize, value: u8) {
@@ -174,8 +174,8 @@ impl Namco163Mapper {
                 self.load_irq_counter_from_regs();
             }
             Self::IRQ_HIGH_ENABLE_REG => {
-                // IRQ counter high bits + enable flag (bit 7)
-                self.irq_enabled = (value & 0x80) != 0;
+                // IRQ counter high bits + disable flag (bit 7: 1=disabled, 0=enabled)
+                self.irq_enabled = (value & 0x80) == 0;
                 self.load_irq_counter_from_regs();
             }
             _ => {}
@@ -443,6 +443,15 @@ impl Mapper for Namco163Mapper {
         &mut self.base
     }
 
+    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        match addr {
+            // N163 PRG-RAM at $6000-$7FFF is always accessible (no enable gate).
+            0x6000..=0x7FFF => self.read_prg(addr),
+            _ if addr < 0x6000 => open_bus,
+            _ => self.read_prg(addr),
+        }
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
         match addr & 0xF800 {
             0x4800 => self.audio_read_data(),
@@ -607,7 +616,7 @@ impl Mapper for Namco163Mapper {
         snapshot.extend_from_slice(&self.regs);
         snapshot.extend_from_slice(&self.namco_ram);
         snapshot.push((self.irq_counter & 0xFF) as u8);
-        snapshot.push(((self.irq_counter >> 8) as u8) | ((self.irq_enabled as u8) << 7));
+        snapshot.push(((self.irq_counter >> 8) as u8) | (((!self.irq_enabled) as u8) << 7));
         let flags = (self.irq_pending as u8) | ((self.audio_disabled as u8) << 1);
         snapshot.push(flags);
         snapshot.push(self.audio_addr.get());
@@ -628,7 +637,7 @@ impl Mapper for Namco163Mapper {
             self.map_mirroring(self.regs[Self::MIRRORING_REG]);
             self.namco_ram.copy_from_slice(&data[16..144]);
             self.irq_counter = (data[144] as u16) | (((data[145] & 0x7F) as u16) << 8);
-            self.irq_enabled = (data[145] & 0x80) != 0;
+            self.irq_enabled = (data[145] & 0x80) == 0;
             let flags = data[146];
             self.irq_pending = (flags & 1) != 0;
             self.audio_disabled = (flags & 2) != 0;
@@ -736,16 +745,16 @@ mod tests {
         let mut mapper = create_namco163_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("Mapper 19 should be implemented");
 
-        // Load counter to 0x7FFF and enable (bit 7 of reg 13).
+        // Load counter to 0x7FFF and enable (bit 7 clear in reg 13).
         mapper.write_prg(0x5000, 0xFF);
-        mapper.write_prg(0x5800, 0xFF);
+        mapper.write_prg(0x5800, 0x7F);
 
         assert!(!mapper.irq_pending());
         mapper.cpu_cycle();
         assert!(mapper.irq_pending());
 
-        // Writing to reg 13 should clear the pending IRQ and disable when bit7 is 0.
-        mapper.write_prg(0x5800, 0x00);
+        // Writing to reg 13 should clear the pending IRQ and disable when bit7 is 1.
+        mapper.write_prg(0x5800, 0x80);
         assert!(!mapper.irq_pending());
         mapper.cpu_cycle();
         assert!(!mapper.irq_pending());
@@ -796,7 +805,7 @@ mod tests {
 
         // Given a pending IRQ from counter overflow
         mapper.write_prg(0x5000, 0xFF);
-        mapper.write_prg(0x5800, 0x80 | 0x7F);
+        mapper.write_prg(0x5800, 0x7F);
         mapper.cpu_cycle();
         assert!(mapper.irq_pending());
 
@@ -901,18 +910,18 @@ mod tests {
 
         // Given IRQ counter at $7FFF and enabled
         mapper.write_prg(0x5000, 0xFF);
-        mapper.write_prg(0x5800, 0xFF);
+        mapper.write_prg(0x5800, 0x7F);
 
         // When clocked, IRQ should assert and counter should remain saturated at $7FFF
         mapper.cpu_cycle();
         assert!(mapper.irq_pending());
         assert_eq!(mapper.read_prg(0x5000), 0xFF);
-        assert_eq!(mapper.read_prg(0x5800), 0xFF);
+        assert_eq!(mapper.read_prg(0x5800), 0x7F);
 
         // Additional clocks should keep it saturated
         mapper.cpu_cycle();
         assert_eq!(mapper.read_prg(0x5000), 0xFF);
-        assert_eq!(mapper.read_prg(0x5800), 0xFF);
+        assert_eq!(mapper.read_prg(0x5800), 0x7F);
     }
 
     #[test]

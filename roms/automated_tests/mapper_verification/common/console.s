@@ -15,6 +15,10 @@
 .include "nes.inc"
 .include "mapper_config.inc"
 
+.ifndef CONSOLE_BG_PPUCTRL
+    CONSOLE_BG_PPUCTRL = $08
+.endif
+
 .import wait_vbl
 
 ; Export public routines
@@ -148,7 +152,7 @@ FONT_SIZE = 1536            ; 96 tiles × 16 bytes
     jsr clear_line_buf
 
     ; Enable rendering: background on
-    lda #%00001000          ; BG pattern table at $0000 (or $1000 via bit 4)
+    lda #CONSOLE_BG_PPUCTRL
     sta PPUCTRL
     lda #%00001010          ; Show background, no clipping
     sta PPUMASK
@@ -428,7 +432,7 @@ FONT_SIZE = 1536            ; 96 tiles × 16 bytes
 ; Restore display state: PPUCTRL + PPUMASK + scroll
 ; Call after test code that may have disabled or altered rendering
 .proc console_show
-    lda #%00001000          ; BG pattern at $0000, NT $2000
+    lda #CONSOLE_BG_PPUCTRL
     sta PPUCTRL
     lda #%00001010          ; Show background + leftmost pixels
     sta PPUMASK

@@ -78,6 +78,42 @@ got_val:      .res 1       ; Temp for fail handler
     ; Set nametable to vertical mirroring
     lda #$44
     sta $5105
+    .elseif MAPPER_NUM = 21 .or MAPPER_NUM = 23 .or MAPPER_NUM = 25
+    ; VRC4a/b/c/d/e/f / VRC2b/c: map font CHR banks 8+9 to PPU $0000-$07FF.
+    ; VRC4 submappers (SM != 3) also need PRG-RAM explicitly enabled via WRAM reg.
+    .if SUBMAPPER_NUM <> 3
+    lda #$01                ; bit 0 = WRAM enable (PRG-RAM on), bit 1 = 0 (no swap)
+    sta VRC4_WRAM_REG
+    .endif
+    init_chr_font
+    .elseif MAPPER_NUM = 22
+    ; VRC2a: map font banks 8+9 to PPU $0000-$07FF
+    init_chr_font
+    .elseif MAPPER_NUM = 16
+    ; Bandai FCG/LZ93D50: map font banks 8+9 to PPU $0000-$07FF
+    init_chr_font
+    .elseif MAPPER_NUM = 18
+    ; Jaleco SS 88006: enable PRG-RAM writes, map font
+    enable_prg_ram
+    init_chr_font
+    .elseif MAPPER_NUM = 19
+    ; Namco 163/129: disable IRQ (bit 7=1), enable PRG-RAM writes (wram_protect=$40),
+    ; then map font CHR banks 8+9 to PPU $0000-$07FF.
+    ; init_chr_font also sets CIRAM nametables (vertical mirroring default).
+    lda #$80
+    sta $5800                   ; disable IRQ (bit 7 = 1) before init
+    lda #$40
+    sta $F800                   ; set wram_protect=$40 → all windows writable
+    init_chr_font
+    .elseif MAPPER_NUM = 24 .or MAPPER_NUM = 26
+    ; VRC6a/b: set standard PPU banking mode (mode 0, CIRAM, vertical),
+    ; and keep PRG-RAM enabled so the $6000 test-status byte stays readable.
+    lda #$A0                ; W=1, N=1 (CIRAM), mode 0, vertical mirroring
+    sta $B003
+    init_chr_font
+    .elseif MAPPER_NUM = 28
+    ; Action 53: configure PRG mode 2, horizontal mirroring
+    init_action53
     .endif
 
     jsr init_nes
@@ -196,6 +232,35 @@ got_val:      .res 1       ; Temp for fail handler
     ; The latch side-effect is harmless — running counter is unaffected.
     lda #0
     sta $4502
+    .elseif MAPPER_NUM = 16
+    ; Bandai FCG/LZ93D50: acknowledge by writing 0 then re-enabling with small count
+    ; Re-enable with same small counter for continuous firing in reload test
+    lda #0
+    sta FCG_IRQ_EN          ; Acknowledge + disable
+    lda #<(10 * 114)
+    sta FCG_IRQ_LO          ; Reload with small count
+    lda #>(10 * 114)
+    sta FCG_IRQ_HI
+    lda #1
+    sta FCG_IRQ_EN          ; Re-enable
+    .elseif MAPPER_NUM = 18
+    ; Jaleco SS 88006: write to reload register to ack and restart counter
+    lda #1
+    sta M18_IRQ_RELOAD
+    .elseif MAPPER_NUM = 19
+    ; Namco 163: reload a small test interval and re-enable counting.
+    lda #<($8000 - (10 * 114))
+    sta $5000
+    lda #(>($8000 - (10 * 114)) & $7F)
+    sta $5800
+    .elseif MAPPER_NUM = 21 .or MAPPER_NUM = 23 .or MAPPER_NUM = 25
+    ; VRC4a/b/c/d/e/f: acknowledge IRQ by writing to the VRC4 IRQ ACK register
+    lda #0
+    sta VRC4_IRQ_ACK
+    .elseif MAPPER_NUM = 24 .or MAPPER_NUM = 26
+    ; VRC6a/b: write to IRQ ACK register (auto-reloads if A bit was set)
+    lda #0
+    sta VRC6_IRQ_ACK
     .endif
     pla
     rti

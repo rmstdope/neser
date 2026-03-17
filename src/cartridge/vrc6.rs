@@ -362,8 +362,21 @@ impl Mapper for VRC6Mapper {
         &mut self.base
     }
 
+    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        match addr {
+            0x6000..=0x7FFF => {
+                // PRG-RAM is gated by $B003 bit 7 (W); when disabled reads return open bus.
+                if !self.prg_ram_enabled {
+                    return open_bus;
+                }
+                self.read_prg(addr)
+            }
+            _ if addr < 0x6000 => open_bus,
+            _ => self.read_prg(addr),
+        }
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
-        // PRG-RAM at $6000-$7FFF, enabled by $B003 bit 7 (W)
         if self.prg_ram_enabled
             && let Some(value) = self.prg_ram.try_read(addr)
         {

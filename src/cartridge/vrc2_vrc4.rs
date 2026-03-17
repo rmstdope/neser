@@ -461,6 +461,20 @@ impl Mapper for Vrc2Vrc4Mapper {
         &mut self.base
     }
 
+    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        match addr {
+            0x6000..=0x7FFF => {
+                // VRC4 variants gate PRG-RAM on $9002 bit 0; VRC2 variants always expose it.
+                if self.variant.has_irq() && !self.prg_ram_enabled {
+                    return open_bus;
+                }
+                self.read_prg(addr)
+            }
+            _ if addr < 0x6000 => open_bus,
+            _ => self.read_prg(addr),
+        }
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
         // PRG-RAM at $6000-$7FFF (only when WRAM is enabled; VRC2 is always enabled)
         if (!self.variant.has_irq() || self.prg_ram_enabled)

@@ -51,7 +51,7 @@ impl Mapper30 {
             has_dynamic_mirroring: true,
             prg_bank_size_kb: 16,
             chr_bank_size_kb: 8,
-            max_prg_ram_kb: 0,
+            max_prg_ram_kb: ctx.prg_ram_banks_8k as usize * 8,
             ..Default::default()
         };
 
@@ -126,6 +126,10 @@ impl Mapper for Mapper30 {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
+        if (0x6000..=0x7FFF).contains(&addr) {
+            self.base.try_write_prg_ram(addr, value);
+            return;
+        }
         if (0x8000..=0xFFFF).contains(&addr) {
             let effective = self.base.apply_bus_conflict(addr, value);
             self.apply_register(effective);
