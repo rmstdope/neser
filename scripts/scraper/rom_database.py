@@ -484,11 +484,13 @@ class RomDatabase:
                 # Extra merge of controller types
                 if key == RomDbKey.HARDWARE.value:
                     # NES_NTSC (0) is the least-specific fallback produced by the
-                    # nescartdb.com scraper.  If the existing value is a more-specific
-                    # hardware type set by an XML import (e.g. NES_PAL or
-                    # NES_MULTI_REGION), treat the incoming NTSC as a no-op.
-                    if str(value) == str(HardwareType.NES_NTSC.value):
-                        pass  # keep existing more-specific value, no conflict
+                    # nescartdb.com scraper — treat it as a no-op so it never
+                    # overwrites a more-specific value set by an XML import.
+                    # NES_MULTI_REGION is authoritative from XML — any incoming
+                    # value is silently ignored.
+                    if (str(value) == str(HardwareType.NES_NTSC.value)
+                            or str(old_value) == str(HardwareType.NES_MULTI_REGION.value)):
+                        pass  # keep existing value, no conflict
                     else:
                         print(f"\nConflict on CRC {crc}: column '{key}' has existing value '{old_value}', new value '{value}'")
                         print(data)

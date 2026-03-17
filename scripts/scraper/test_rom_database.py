@@ -274,6 +274,26 @@ class TestRomDatabase(unittest.TestCase):
         })
         self.assertEqual(result, (0, 0, 0, 1), "Two differing specific values must conflict")
 
+    def test_hardware_multi_region_existing_ignores_incoming(self) -> None:
+        """When existing hardware is NES_MULTI_REGION, any incoming value must be
+        silently ignored — no overwrite and no conflict reported."""
+        crc = "MULTIREG_LOCK"
+        self.db.insert_rom_by_crc({
+            RomDbKey.CRC.value: crc,
+            RomDbKey.HARDWARE.value: HardwareType.NES_MULTI_REGION.value,
+        })
+        result = self.db.process_record_by_crc({
+            RomDbKey.CRC.value: crc,
+            RomDbKey.HARDWARE.value: HardwareType.NES_PAL.value,
+        })
+        self.assertNotEqual(result, (0, 0, 0, 1), "NES_MULTI_REGION existing must not conflict")
+        row = self.db.get_rom_by_crc(crc)
+        self.assertEqual(
+            str(row[RomDbKey.HARDWARE.value]),
+            str(HardwareType.NES_MULTI_REGION.value),
+            "NES_MULTI_REGION must be preserved",
+        )
+
 
 class TestHardwareFromConsoleTypeAndRegion(unittest.TestCase):
     """Tests for hardware_from_console_type_and_region()."""
