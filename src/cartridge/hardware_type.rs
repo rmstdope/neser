@@ -1,7 +1,6 @@
 use crate::cartridge::ines::{ConsoleType, TimingMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum HardwareType {
     NesNtsc,
     NesPal,
@@ -22,7 +21,6 @@ pub enum HardwareType {
 }
 
 impl HardwareType {
-    #[allow(dead_code)]
     pub fn from_db_value(value: u8) -> Option<Self> {
         match value {
             0 => Some(Self::NesNtsc),
@@ -45,7 +43,6 @@ impl HardwareType {
         }
     }
 
-    #[allow(dead_code)]
     pub fn timing_mode(self) -> TimingMode {
         match self {
             Self::NesNtsc
@@ -67,7 +64,6 @@ impl HardwareType {
         }
     }
 
-    #[allow(dead_code)]
     pub fn from_console_type_and_timing(
         console_type: ConsoleType,
         timing_mode: TimingMode,

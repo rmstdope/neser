@@ -7,10 +7,10 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-use crate::cartridge::{ConsoleType, NametableLayout, TimingMode};
+use crate::cartridge::{HardwareType, NametableLayout};
 use num_enum::TryFromPrimitive;
 
-const ROM_DB_COLUMN_COUNT: usize = 22;
+const ROM_DB_COLUMN_COUNT: usize = 21;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RomDbEntry {
@@ -18,8 +18,7 @@ pub struct RomDbEntry {
     pub name: Option<String>,
     pub country: Option<String>,
     pub crc: Option<u32>,
-    pub console_type: Option<ConsoleType>,
-    pub console_region: Option<TimingMode>,
+    pub hardware: Option<HardwareType>,
     pub rom_class: Option<String>,
     pub mapper: Option<u16>,
     pub submapper: Option<u8>,
@@ -164,24 +163,23 @@ impl RomDbEntry {
             name: parse_optional_field(&columns[1]),
             country: parse_optional_field(&columns[2]),
             crc: parse_optional_u32_hex(&columns[3]),
-            console_type: parse_optional_console_type(&columns[4]),
-            console_region: parse_optional_timing_mode(&columns[5]),
-            rom_class: parse_optional_field(&columns[6]),
-            mapper: parse_optional_u16_decimal(&columns[7]),
-            submapper: parse_optional_u8_decimal(&columns[8]),
-            nametable_layout: parse_optional_nametable_layout(&columns[9]),
-            prg_rom_size: parse_optional_u32_decimal(&columns[10]),
-            prg_rom_crc: parse_optional_u32_hex(&columns[11]),
-            prg_nvram_size: parse_optional_u32_decimal(&columns[12]),
-            prg_ram_size: parse_optional_u32_decimal(&columns[13]),
-            chr_rom_size: parse_optional_u32_decimal(&columns[14]),
-            chr_rom_crc: parse_optional_u32_hex(&columns[15]),
-            chr_nvram_size: parse_optional_u32_decimal(&columns[16]),
-            chr_ram_size: parse_optional_u32_decimal(&columns[17]),
-            battery: parse_optional_bool(&columns[18]),
-            vs_hardware_type: parse_optional_vs_hardware_type(&columns[19]),
-            vs_ppu_type: parse_optional_vs_ppu_type(&columns[20]),
-            expansion_type: parse_optional_expansion_type(&columns[21]),
+            hardware: parse_optional_hardware_type(&columns[4]),
+            rom_class: parse_optional_field(&columns[5]),
+            mapper: parse_optional_u16_decimal(&columns[6]),
+            submapper: parse_optional_u8_decimal(&columns[7]),
+            nametable_layout: parse_optional_nametable_layout(&columns[8]),
+            prg_rom_size: parse_optional_u32_decimal(&columns[9]),
+            prg_rom_crc: parse_optional_u32_hex(&columns[10]),
+            prg_nvram_size: parse_optional_u32_decimal(&columns[11]),
+            prg_ram_size: parse_optional_u32_decimal(&columns[12]),
+            chr_rom_size: parse_optional_u32_decimal(&columns[13]),
+            chr_rom_crc: parse_optional_u32_hex(&columns[14]),
+            chr_nvram_size: parse_optional_u32_decimal(&columns[15]),
+            chr_ram_size: parse_optional_u32_decimal(&columns[16]),
+            battery: parse_optional_bool(&columns[17]),
+            vs_hardware_type: parse_optional_vs_hardware_type(&columns[18]),
+            vs_ppu_type: parse_optional_vs_ppu_type(&columns[19]),
+            expansion_type: parse_optional_expansion_type(&columns[20]),
         }
     }
 }
@@ -314,25 +312,9 @@ fn parse_optional_bool(raw: &str) -> Option<bool> {
     }
 }
 
-fn parse_optional_console_type(raw: &str) -> Option<ConsoleType> {
+fn parse_optional_hardware_type(raw: &str) -> Option<HardwareType> {
     let value = parse_optional_u8_decimal(raw)?;
-    Some(match value {
-        0 => ConsoleType::NesFamicom,
-        1 => ConsoleType::VsSystem,
-        2 => ConsoleType::Playchoice10,
-        other => ConsoleType::Extended(other),
-    })
-}
-
-fn parse_optional_timing_mode(raw: &str) -> Option<TimingMode> {
-    let value = parse_optional_u8_decimal(raw)?;
-    Some(match value {
-        0 => TimingMode::Ntsc,
-        1 => TimingMode::Pal,
-        2 => TimingMode::MultiRegion,
-        3 => TimingMode::Dendy,
-        other => TimingMode::Unknown(other),
-    })
+    HardwareType::from_db_value(value)
 }
 
 fn parse_optional_nametable_layout(raw: &str) -> Option<NametableLayout> {
@@ -410,7 +392,7 @@ fn normalize_columns(line: &str) -> Vec<String> {
         return raw_columns;
     }
 
-    let tail_start = raw_columns.len() - 20;
+    let tail_start = raw_columns.len() - (ROM_DB_COLUMN_COUNT - 2);
     let mut normalized = Vec::with_capacity(ROM_DB_COLUMN_COUNT);
 
     normalized.push(raw_columns[0].clone());
@@ -533,7 +515,7 @@ mod tests {
 
     #[test]
     fn test_rom_db_default_zapper_on_port_when_expansion_is_zapper_4017() {
-        let csv = "1,Zapper Demo,,24598791,,,,,,,,,,,,,,,,,,8\n";
+        let csv = "1,Zapper Demo,,24598791,,,,,,,,,,,,,,,,,8\n";
         let db = RomDb::from_csv_content(csv);
 
         assert_eq!(db.default_zapper_on_port(0x24598791), 2);
@@ -541,7 +523,7 @@ mod tests {
 
     #[test]
     fn test_rom_db_default_zapper_on_port_when_expansion_is_zapper_4016() {
-        let csv = "1,Zapper Demo,,24598791,,,,,,,,,,,,,,,,,,73\n";
+        let csv = "1,Zapper Demo,,24598791,,,,,,,,,,,,,,,,,73\n";
         let db = RomDb::from_csv_content(csv);
 
         assert_eq!(db.default_zapper_on_port(0x24598791), 1);
@@ -549,7 +531,7 @@ mod tests {
 
     #[test]
     fn test_rom_db_default_zapper_on_port_when_expansion_is_two_zappers() {
-        let csv = "1,Zapper Demo,,24598791,,,,,,,,,,,,,,,,,,9\n";
+        let csv = "1,Zapper Demo,,24598791,,,,,,,,,,,,,,,,,9\n";
         let db = RomDb::from_csv_content(csv);
 
         assert_eq!(db.default_zapper_on_port(0x24598791), 2);
@@ -557,7 +539,7 @@ mod tests {
 
     #[test]
     fn test_rom_db_default_zapper_on_port_when_expansion_is_vs_zapper() {
-        let csv = "1,Zapper Demo,,24598791,,,,,,,,,,,,,,,,,,7\n";
+        let csv = "1,Zapper Demo,,24598791,,,,,,,,,,,,,,,,,7\n";
         let db = RomDb::from_csv_content(csv);
 
         assert_eq!(db.default_zapper_on_port(0x24598791), 2);
@@ -565,7 +547,7 @@ mod tests {
 
     #[test]
     fn test_rom_db_default_zapper_on_port_when_expansion_is_not_zapper_4017() {
-        let csv = "1,No Zapper,,24598791,,,,,,,,,,,,,,,,,,1\n";
+        let csv = "1,No Zapper,,24598791,,,,,,,,,,,,,,,,,1\n";
         let db = RomDb::from_csv_content(csv);
 
         assert_eq!(db.default_zapper_on_port(0x24598791), 0);
@@ -573,7 +555,7 @@ mod tests {
 
     #[test]
     fn test_rom_db_default_zapper_on_port_when_crc_is_missing() {
-        let csv = "1,Zapper Demo,,24598791,,,,,,,,,,,,,,,,,,8\n";
+        let csv = "1,Zapper Demo,,24598791,,,,,,,,,,,,,,,,,8\n";
         let db = RomDb::from_csv_content(csv);
 
         assert_eq!(db.default_zapper_on_port(0xDEADBEEF), 0);
@@ -581,7 +563,7 @@ mod tests {
 
     #[test]
     fn test_rom_db_has_famicom_four_players_expansion_when_expansion_is_famicom_four_players() {
-        let csv = "1,4P Demo,,24598791,,,,,,,,,,,,,,,,,,3\n";
+        let csv = "1,4P Demo,,24598791,,,,,,,,,,,,,,,,,3\n";
         let db = RomDb::from_csv_content(csv);
 
         assert!(db.has_famicom_four_players_expansion(0x24598791));
@@ -589,7 +571,7 @@ mod tests {
 
     #[test]
     fn test_rom_db_has_famicom_four_players_expansion_is_false_for_other_expansion() {
-        let csv = "1,2P Demo,,24598791,,,,,,,,,,,,,,,,,,2\n";
+        let csv = "1,2P Demo,,24598791,,,,,,,,,,,,,,,,,2\n";
         let db = RomDb::from_csv_content(csv);
 
         assert!(!db.has_famicom_four_players_expansion(0x24598791));
@@ -599,7 +581,7 @@ mod tests {
     #[test]
     fn test_rom_db_has_arkanoid_famicom_expansion_when_expansion_is_arkanoid_vaus_famicom() {
         // ExpansionType::ArkanoidVausFamicom = 0x10 = 16
-        let csv = "1,Arkanoid FC,,24598791,,,,,,,,,,,,,,,,,,16\n";
+        let csv = "1,Arkanoid FC,,24598791,,,,,,,,,,,,,,,,,16\n";
         let db = RomDb::from_csv_content(csv);
 
         assert!(db.has_arkanoid_famicom_expansion(0x24598791));
@@ -608,7 +590,7 @@ mod tests {
     #[test]
     fn test_rom_db_has_arkanoid_famicom_expansion_is_false_for_nes_arkanoid() {
         // ExpansionType::ArkanoidVausNes = 0x0F = 15
-        let csv = "1,Arkanoid NES,,24598791,,,,,,,,,,,,,,,,,,15\n";
+        let csv = "1,Arkanoid NES,,24598791,,,,,,,,,,,,,,,,,15\n";
         let db = RomDb::from_csv_content(csv);
 
         assert!(!db.has_arkanoid_famicom_expansion(0x24598791));
@@ -616,7 +598,7 @@ mod tests {
 
     #[test]
     fn test_rom_db_has_arkanoid_famicom_expansion_is_false_for_unknown_crc() {
-        let csv = "1,Arkanoid FC,,24598791,,,,,,,,,,,,,,,,,,16\n";
+        let csv = "1,Arkanoid FC,,24598791,,,,,,,,,,,,,,,,,16\n";
         let db = RomDb::from_csv_content(csv);
 
         assert!(!db.has_arkanoid_famicom_expansion(0xDEADBEEF));
@@ -624,7 +606,7 @@ mod tests {
 
     #[test]
     fn test_rom_db_is_japan_region_for_licensed_japan() {
-        let csv = "1,Japanese Game,,24598791,,,Licensed Japan,,,,,,,,,,,,,,,\n";
+        let csv = "1,Japanese Game,,24598791,,Licensed Japan,,,,,,,,,,,,,,\n";
         let db = RomDb::from_csv_content(csv);
 
         assert!(db.is_japan_region(0x24598791));
@@ -632,7 +614,7 @@ mod tests {
 
     #[test]
     fn test_rom_db_is_japan_region_for_unlicensed_japan() {
-        let csv = "1,Unlicensed Game,,24598791,,,Unlicensed Japan,,,,,,,,,,,,,,,\n";
+        let csv = "1,Unlicensed Game,,24598791,,Unlicensed Japan,,,,,,,,,,,,,,\n";
         let db = RomDb::from_csv_content(csv);
 
         assert!(db.is_japan_region(0x24598791));
@@ -640,7 +622,7 @@ mod tests {
 
     #[test]
     fn test_rom_db_is_japan_region_is_false_for_north_america() {
-        let csv = "1,NA Game,,24598791,,,Licensed North America,,,,,,,,,,,,,,,\n";
+        let csv = "1,NA Game,,24598791,,Licensed North America,,,,,,,,,,,,,,\n";
         let db = RomDb::from_csv_content(csv);
 
         assert!(!db.is_japan_region(0x24598791));
@@ -648,7 +630,7 @@ mod tests {
 
     #[test]
     fn test_rom_db_is_japan_region_is_false_for_unknown_crc() {
-        let csv = "1,Japanese Game,,24598791,,,Licensed Japan,,,,,,,,,,,,,,,\n";
+        let csv = "1,Japanese Game,,24598791,,Licensed Japan,,,,,,,,,,,,,,\n";
         let db = RomDb::from_csv_content(csv);
 
         assert!(!db.is_japan_region(0xDEADBEEF));
@@ -666,7 +648,7 @@ mod tests {
 
     #[test]
     fn test_rom_db_omitted_values_are_unknown() {
-        let csv = "1,Demo,,ABCDEF01,,,\n";
+        let csv = "1,Demo,,ABCDEF01,,\n";
         let db = RomDb::from_csv_content(csv);
         let entry = db
             .get_by_crc(0xABCDEF01)
@@ -681,7 +663,7 @@ mod tests {
 
     #[test]
     fn test_rom_db_handles_name_with_comma() {
-        let csv = "844,F-1 Hero 2, Nakajima Satoru Kanshuu,,1C2A58FF,,,Licensed Japan,4,,H,131072,B2AB361E,,,131072,89AAD993,,,,,,1\n";
+        let csv = "844,F-1 Hero 2, Nakajima Satoru Kanshuu,,1C2A58FF,,Licensed Japan,4,,H,131072,B2AB361E,,,131072,89AAD993,,,,,,1\n";
         let db = RomDb::from_csv_content(csv);
         let entry = db
             .get_by_crc(0x1C2A58FF)
@@ -698,14 +680,14 @@ mod tests {
 
     #[test]
     fn test_rom_db_parses_nes2_typed_fields() {
-        let csv = "63,Battletoads,,9806CB84,0,1,Licensed Japan,7,2,H,262144,9806CB84,,8192,, , ,8192,1,5,10,2\n";
+        // hardware=1 (NesPal), rom_class=Licensed Japan, mapper=7, submapper=2, etc.
+        let csv = "63,Battletoads,,9806CB84,1,Licensed Japan,7,2,H,262144,9806CB84,,8192,, , ,8192,1,5,10,2\n";
         let db = RomDb::from_csv_content(csv);
         let entry = db
             .get_by_crc(0x9806CB84)
             .expect("entry should be found by CRC");
 
-        assert_eq!(entry.console_type, Some(ConsoleType::NesFamicom));
-        assert_eq!(entry.console_region, Some(TimingMode::Pal));
+        assert_eq!(entry.hardware, Some(HardwareType::NesPal));
         assert_eq!(entry.submapper, Some(2));
         assert_eq!(entry.nametable_layout, Some(NametableLayout::Horizontal));
         assert_eq!(entry.prg_rom_size, Some(262144));
@@ -734,7 +716,7 @@ mod tests {
 
     #[test]
     fn test_rom_db_nametable_layout_uses_mirroring_mode_enum() {
-        let csv = "63,Battletoads,,9806CB84,0,1,Licensed Japan,7,2,H,262144,9806CB84,,8192,, , ,8192,1,5,10,2\n";
+        let csv = "63,Battletoads,,9806CB84,1,Licensed Japan,7,2,H,262144,9806CB84,,8192,, , ,8192,1,5,10,2\n";
         let db = RomDb::from_csv_content(csv);
         let entry = db
             .get_by_crc(0x9806CB84)
@@ -748,7 +730,7 @@ mod tests {
 
     #[test]
     fn test_rom_db_nametable_layout_mapper_controlled_is_none() {
-        let csv = "1,Demo,,ABCDEF01,0,0,Class,0,0,5,16384,ABCDEF01,0,0,0,0,0,0,0,0,0,0\n";
+        let csv = "1,Demo,,ABCDEF01,0,Class,0,0,5,16384,ABCDEF01,0,0,0,0,0,0,0,0,0,0\n";
         let db = RomDb::from_csv_content(csv);
         let entry = db
             .get_by_crc(0xABCDEF01)
@@ -769,7 +751,7 @@ mod tests {
 
     #[test]
     fn test_has_zapper_famicom_expansion_for_zapper_4017() {
-        let csv = "1,Duck Hunt Famicom,,24598791,,,,,,,,,,,,,,,,,,8\n";
+        let csv = "1,Duck Hunt Famicom,,24598791,,,,,,,,,,,,,,,,,8\n";
         let db = RomDb::from_csv_content(csv);
 
         assert!(db.has_zapper_famicom_expansion(0x24598791));
@@ -777,7 +759,7 @@ mod tests {
 
     #[test]
     fn test_has_zapper_famicom_expansion_for_zapper_4016() {
-        let csv = "1,Zapper Game,,24598791,,,,,,,,,,,,,,,,,,73\n";
+        let csv = "1,Zapper Game,,24598791,,,,,,,,,,,,,,,,,73\n";
         let db = RomDb::from_csv_content(csv);
 
         assert!(db.has_zapper_famicom_expansion(0x24598791));
@@ -785,7 +767,7 @@ mod tests {
 
     #[test]
     fn test_has_zapper_famicom_expansion_false_for_standard_controllers() {
-        let csv = "1,Normal Game,,24598791,,,,,,,,,,,,,,,,,,1\n";
+        let csv = "1,Normal Game,,24598791,,,,,,,,,,,,,,,,,1\n";
         let db = RomDb::from_csv_content(csv);
 
         assert!(!db.has_zapper_famicom_expansion(0x24598791));
@@ -793,7 +775,7 @@ mod tests {
 
     #[test]
     fn test_has_zapper_famicom_expansion_false_for_unknown_crc() {
-        let csv = "1,Duck Hunt Famicom,,24598791,,,,,,,,,,,,,,,,,,8\n";
+        let csv = "1,Duck Hunt Famicom,,24598791,,,,,,,,,,,,,,,,,8\n";
         let db = RomDb::from_csv_content(csv);
 
         assert!(!db.has_zapper_famicom_expansion(0xDEADBEEF));
