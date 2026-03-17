@@ -308,21 +308,19 @@ impl SdlEventLoop {
             let reserved_gamepad_ports: Vec<u8> =
                 gamepad_ports.iter().take(assigned_count).copied().collect();
 
-            let port_1 = if keyboard_eligible_ports.contains(&1)
-                && !reserved_gamepad_ports.contains(&1)
-            {
-                Some(1)
-            } else {
-                None
-            };
+            let port_1 =
+                if keyboard_eligible_ports.contains(&1) && !reserved_gamepad_ports.contains(&1) {
+                    Some(1)
+                } else {
+                    None
+                };
 
-            let port_2 = if keyboard_eligible_ports.contains(&2)
-                && !reserved_gamepad_ports.contains(&2)
-            {
-                Some(2)
-            } else {
-                None
-            };
+            let port_2 =
+                if keyboard_eligible_ports.contains(&2) && !reserved_gamepad_ports.contains(&2) {
+                    Some(2)
+                } else {
+                    None
+                };
 
             return (port_1, port_2);
         }
@@ -3404,9 +3402,12 @@ mod tests {
 
     #[test]
     fn test_power_pad_is_not_assignable_to_gamepad() {
-        let mut config = Config::with_defaults();
-        config.controller_port1 = crate::input::ControllerType::PowerPad;
-        let nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::with_defaults(),
+        ));
+        nes.bus()
+            .borrow_mut()
+            .set_controller_type(1, crate::input::ControllerType::PowerPad);
         let mut controller_player_map = HashMap::new();
         controller_player_map.insert(42, 1);
 
@@ -3419,11 +3420,14 @@ mod tests {
     #[test]
     #[serial]
     fn test_keyboard_controls_power_pad_port1() {
-        let mut config = Config::with_defaults();
-        config.controller_port1 = crate::input::ControllerType::PowerPad;
+        let config = Config::with_defaults();
         let mut event_loop =
             SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
+        nes.bus()
+            .borrow_mut()
+            .set_controller_type(1, crate::input::ControllerType::PowerPad);
+        event_loop.controller_player_map.clear();
 
         let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::Num1);
         let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::Q);
