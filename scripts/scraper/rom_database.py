@@ -7,28 +7,106 @@ from typing import Dict, Optional
 from enum import Enum
 from enum import IntEnum
 
-class ConsoleType(IntEnum):
-    """ iNES 2.0 console types """
-    NES_FAMICOM = 0
-    VS_SYSTEM = 1
-    PLAYCHOICE_10 = 2
-    FAMICLONE = 3
-    NES_FAMICOM_EPSM = 4
-    VT01 = 5
-    VT02 = 6
-    VT03 = 7
-    VT09 = 8
-    VT32 = 9
-    VT369 = 10
-    UM6578 = 11
-    FAMICOM_NETWORK_SYSTEM = 12
+class HardwareType(IntEnum):
+    """ ROM database hardware types (merged console type + region) """
+    NES_NTSC = 0
+    NES_PAL = 1
+    FAMICOM = 2
+    VS_SYSTEM = 3
+    DENDY = 4
+    PLAYCHOICE_10 = 5
+    NES_MULTI_REGION = 6
+    VT01_MONOCHROME = 7
+    VT01_STN = 8
+    VT02 = 9
+    VT03 = 10
+    VT09 = 11
+    VT32 = 12
+    VT369 = 13
+    UMC_UM6578 = 14
+    FAMICOM_NETWORK_SYSTEM = 15
 
-class ConsoleRegion(IntEnum):
-    """ iNES 2.0 CPU/PPU timings """
-    NTSC = 0
-    PAL = 1
-    DENDY = 2
-    UNIVERSAL = 3
+
+# Mapping from iNES 2.0 extended console type to HardwareType
+_EXTENDED_CONSOLE_MAP = {
+    3: HardwareType.VT01_MONOCHROME,
+    4: HardwareType.VT01_STN,
+    5: HardwareType.VT02,
+    6: HardwareType.VT03,
+    7: HardwareType.VT09,
+    8: HardwareType.VT32,
+    9: HardwareType.VT369,
+    10: HardwareType.UMC_UM6578,
+    11: HardwareType.FAMICOM_NETWORK_SYSTEM,
+}
+
+# Mapping from iNES 2.0 region to HardwareType (for console type 0 = NES/Famicom)
+# iNES 2.0 spec: 0=NTSC, 1=PAL, 2=Multi-region, 3=Dendy
+_REGION_TEXT_MAP = {
+    "ntsc": 0,
+    "pal": 1,
+    "universal": 2,
+    "multi": 2,
+    "dendy": 3,
+}
+
+
+def hardware_from_console_type_and_region(
+    console_type_str: Optional[str], region_str: Optional[str],
+    country: Optional[str] = None,
+) -> Optional[int]:
+    """Compute a HardwareType integer from iNES 2.0 console type and region strings.
+
+    For console type 0 (NES/Famicom), the region normally selects between
+    NES_NTSC, NES_PAL, NES_MULTI_REGION, and DENDY. If ``country`` contains
+    "japan" (case-insensitive), NES_NTSC is upgraded to FAMICOM, but other
+    region-derived types (including NES_PAL and NES_MULTI_REGION) are left
+    unchanged.
+
+    Returns None when the inputs cannot be mapped.
+    """
+    if console_type_str is None and region_str is None:
+        return None
+
+    try:
+        ct = int(console_type_str) if console_type_str is not None else 0
+    except (ValueError, TypeError):
+        return None
+
+    if ct == 1:
+        return HardwareType.VS_SYSTEM.value
+    if ct == 2:
+        return HardwareType.PLAYCHOICE_10.value
+    if ct >= 3:
+        hw = _EXTENDED_CONSOLE_MAP.get(ct)
+        return hw.value if hw is not None else None
+
+    # ct == 0: NES/Famicom — determine from region
+    if region_str is None:
+        is_japan = country and "japan" in country.lower()
+        return HardwareType.FAMICOM.value if is_japan else HardwareType.NES_NTSC.value
+    try:
+        cr = int(region_str)
+    except (ValueError, TypeError):
+        cr = _REGION_TEXT_MAP.get(str(region_str).strip().lower())
+        if cr is None:
+            return None
+
+    # iNES 2.0 spec: region 2=Multi-region, 3=Dendy
+    region_map = {
+        0: HardwareType.NES_NTSC,
+        1: HardwareType.NES_PAL,
+        2: HardwareType.NES_MULTI_REGION,
+        3: HardwareType.DENDY,
+    }
+    hw = region_map.get(cr)
+    if hw is None:
+        return None
+    # NES_NTSC is upgraded to FAMICOM for Japan releases; NES_MULTI_REGION stays as-is
+    is_japan = country and "japan" in country.lower()
+    if is_japan and hw == HardwareType.NES_NTSC:
+        return HardwareType.FAMICOM.value
+    return hw.value
 
 class NametableLayout(IntEnum):
     """ iNES 2.0 Hardwired nametable layouts """
@@ -154,8 +232,7 @@ class RomDbKey(str, Enum):
     CRC = "crc"
     NAME = "name"
     COUNTRY = "country"
-    CONSOLE_TYPE = "console_type"
-    CONSOLE_REGION = "console_region"
+    HARDWARE = "hardware"
     CONSOLE_CLASS = "rom_class"
     MAPPER = "mapper"
     SUBMAPPER = "submapper"
@@ -182,8 +259,7 @@ class RomDatabase:
             RomDbKey.NAME.value: "TEXT",
             RomDbKey.COUNTRY.value: "TEXT",
             RomDbKey.CRC.value: "TEXT",
-            RomDbKey.CONSOLE_TYPE.value: "INTEGER",
-            RomDbKey.CONSOLE_REGION.value: "INTEGER",
+            RomDbKey.HARDWARE.value: "INTEGER",
             RomDbKey.CONSOLE_CLASS.value: "TEXT",
             RomDbKey.MAPPER.value: "INTEGER",
             RomDbKey.SUBMAPPER.value: "INTEGER",
@@ -408,7 +484,26 @@ class RomDatabase:
                 updates[key] = value
             elif str(old_value) != str(value):
                 # Extra merge of controller types
-                if key == RomDbKey.EXPANSION_TYPE.value:
+                if key == RomDbKey.HARDWARE.value:
+                    # NES_NTSC (0) is the least-specific fallback produced by the
+                    # nescartdb.com scraper — treat it as a no-op so it never
+                    # overwrites a more-specific value set by an XML import.
+                    # NES_MULTI_REGION is authoritative from XML — any incoming
+                    # value is silently ignored.
+                    # FAMICOM (2) is a Japan-specific NES_NTSC — allow it to
+                    # upgrade an existing generic NES_NTSC entry.
+                    if str(value) == str(HardwareType.NES_NTSC.value):
+                        pass  # keep existing value, no conflict
+                    elif str(old_value) == str(HardwareType.NES_MULTI_REGION.value):
+                        pass  # NES_MULTI_REGION is authoritative, keep it
+                    elif (str(old_value) == str(HardwareType.NES_NTSC.value)
+                            and str(value) == str(HardwareType.FAMICOM.value)):
+                        updates[key] = value  # FAMICOM upgrades generic NES_NTSC
+                    else:
+                        print(f"\nConflict on CRC {crc}: column '{key}' has existing value '{old_value}', new value '{value}'")
+                        has_conflict = True
+                # Extra merge of controller types
+                elif key == RomDbKey.EXPANSION_TYPE.value:
                     # if new value is multicart, update to that
                     if value == ControllerType.MULTICART.value:
                         updates[key] = value

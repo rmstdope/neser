@@ -3,6 +3,7 @@
 import csv
 from pathlib import Path
 import sys
+from typing import Callable
 
 try:
     from scripts.sort_roms import calculate_rom_crc32, parse_ines_header
@@ -111,7 +112,7 @@ class RomFileDatabase:
         self,
         rom_root: Path,
         rom_db_index: RomDbIndex,
-        should_cancel: callable | None = None,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> tuple[dict[str, RomFileRecord], list[RomFileRecord], int, int, list[str], bool]:
         """Scan ROMs, append new ones, reconcile existing rows, return diagnostics."""
 

@@ -23,22 +23,28 @@ pub use nes::Nes;
 pub use nes::SaveState;
 pub use ram_init::initialize_ram;
 
-pub fn log_rom_timing_mode_selection(
-    app_context: &SharedAppContext,
-    rom_timing_mode: TimingMode,
-    applied: bool,
-) {
+pub fn log_hardware_selection(app_context: &SharedAppContext, timing_applied: bool) {
     let binding = app_context.borrow();
-    let config = binding.config();
-    if !config.hardware_model_explicit && !rom_timing_mode.is_ntsc_or_pal() {
-        log_info(format!(
-            "ROM hardware model not detected; using configured hardware model {}",
-            config.hardware_model.as_str()
-        ));
-    } else if applied {
-        log_info(format!(
-            "ROM hardware model detected as {}; applying timing",
-            rom_timing_mode.as_str()
-        ));
-    }
+    let cfg = binding.config();
+
+    let hardware_desc = match cfg.hardware_mode {
+        config::HardwareMode::Famicom => "Famicom".to_string(),
+        config::HardwareMode::Nes => match cfg.hardware_model {
+            config::HardwareModel::NesNtsc => "NES NTSC".to_string(),
+            config::HardwareModel::NesPal => "NES PAL".to_string(),
+        },
+    };
+
+    let source =
+        if cfg.hardware_mode == config::HardwareMode::Famicom && !cfg.hardware_mode_explicit {
+            "from ROM DB"
+        } else if cfg.hardware_mode_explicit || cfg.hardware_model_explicit {
+            "from configuration"
+        } else if timing_applied {
+            "detected from ROM"
+        } else {
+            "default"
+        };
+
+    log_info(format!("Emulating {hardware_desc} ({source})"));
 }

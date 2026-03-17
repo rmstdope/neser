@@ -229,7 +229,7 @@ class MapperToolAppLayoutTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir_str:
             csv_path = Path(temp_dir_str) / "rom_db.csv"
             csv_path.write_text(
-                "1,Demo Game,,44D21F83,0,0,Licensed Japan,1,0,H,0,0,0,0,0,0,0,0,0,,,1\n",
+                "1,Demo Game,,44D21F83,0,Licensed Japan,1,0,H,0,0,0,0,0,0,0,0,0,,,1\n",
                 encoding="utf-8",
             )
 

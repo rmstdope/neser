@@ -1,5 +1,6 @@
 use crate::cartridge::NametableLayout;
-use crate::cartridge::ines::{ConsoleType, ParsedRom};
+use crate::cartridge::hardware_type::HardwareType;
+use crate::cartridge::ines::ParsedRom;
 use std::io;
 
 use super::axrom::AxROMMapper;
@@ -200,8 +201,8 @@ pub struct MapperContext {
     pub submapper: u8,
     /// PPU nametable mirroring mode from the header.
     pub mirroring: NametableLayout,
-    /// Console type from iNES/NES 2.0 header.
-    pub console_type: ConsoleType,
+    /// Hardware type derived from console type and timing mode.
+    pub hardware_type: HardwareType,
     /// PRG ROM bytes.
     pub prg_rom: Vec<u8>,
     /// CHR ROM bytes (empty when CHR-RAM).
@@ -229,7 +230,10 @@ impl MapperContext {
             mapper: info.mapper,
             submapper: info.submapper,
             mirroring: info.mirroring,
-            console_type: info.console_type,
+            hardware_type: HardwareType::from_console_type_and_timing(
+                info.console_type,
+                info.timing_mode,
+            ),
             prg_rom: parsed.prg_rom.clone(),
             chr_rom: parsed.chr_rom.clone(),
             prg_ram_banks_8k: Self::prg_ram_banks_8k(info.prg_ram_size_bytes),
@@ -265,7 +269,7 @@ impl MapperContext {
             mapper,
             submapper: 0,
             mirroring,
-            console_type: ConsoleType::NesFamicom,
+            hardware_type: HardwareType::NesNtsc,
             prg_rom,
             chr_rom,
             prg_ram_banks_8k: 1,

@@ -15,7 +15,7 @@ mod sdl_frontend;
 use app_context::AppContext;
 use console::{
     ApuChannels, CartridgeCatalogOptions, Config, Nes, ParseResult, SaveState,
-    default_catalog_csv_path, log_rom_timing_mode_selection, refresh_cartridge_catalog,
+    default_catalog_csv_path, log_hardware_selection, refresh_cartridge_catalog,
 };
 use debugging::log_info;
 use frontend_toasts::{
@@ -295,10 +295,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .borrow_mut()
         .config_mut()
         .apply_rom_timing_mode(rom_timing_mode);
-    log_rom_timing_mode_selection(&app_context, rom_timing_mode, applied);
 
     let mut nes_instance = Nes::new(app_context.clone());
     nes_instance.insert_cartridge(cart);
+    log_hardware_selection(&app_context, applied);
     let tv_system = app_context.borrow().config().hardware_model.timing_mode();
     app_context
         .borrow_mut()

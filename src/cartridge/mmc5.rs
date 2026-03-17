@@ -272,7 +272,7 @@ impl MMC5Mapper {
             mapper: 5,
             submapper: 0,
             mirroring,
-            console_type: crate::cartridge::ConsoleType::NesFamicom,
+            hardware_type: crate::cartridge::HardwareType::NesNtsc,
             prg_rom,
             chr_rom,
             prg_ram_banks_8k,

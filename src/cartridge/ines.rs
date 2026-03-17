@@ -196,16 +196,6 @@ impl TimingMode {
             Self::NTSC_SCANLINES
         }
     }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Ntsc => "ntsc",
-            Self::Pal => "pal",
-            Self::MultiRegion => "multi-region",
-            Self::Dendy => "dendy",
-            Self::Unknown(_) => "unknown",
-        }
-    }
 }
 
 /// Parsed iNES / NES 2.0 header information.
@@ -529,7 +519,7 @@ impl ParsedRom {
         if let Some(mirroring) = entry.nametable_layout {
             self.header.mirroring = mirroring;
         }
-        if let Some(timing) = entry.console_region {
+        if let Some(timing) = entry.hardware.map(|h| h.timing_mode()) {
             self.header.timing_mode = timing;
         }
 
@@ -880,7 +870,7 @@ mod tests {
     fn db_with_override_for_rom(rom: &[u8], csv_fields: &str) -> RomDb {
         let parsed = ParsedRom::parse(rom, None).expect("test ROM should parse");
         let crc_hex = format!("{:08X}", parsed.crc32);
-        // CSV: rom_id,name,country,crc,console_type,console_region,rom_class,
+        // CSV: rom_id,name,country,crc,hardware,rom_class,
         //      mapper,submapper,nametable_layout,prg_rom_size,prg_rom_crc,
         //      prg_nvram_size,prg_ram_size,chr_rom_size,chr_rom_crc,
         //      chr_nvram_size,chr_ram_size,battery,vs_hardware,vs_ppu,expansion
@@ -891,8 +881,8 @@ mod tests {
     #[test]
     fn db_overrides_mapper() {
         let rom = build_test_rom(1, 1);
-        // Override mapper to 4 (col 7 = csv_fields position 3)
-        let db = db_with_override_for_rom(&rom, ",,,4,,,,,,,,,,,,,,");
+        // Override mapper to 4 (col 6 = csv_fields position 2)
+        let db = db_with_override_for_rom(&rom, ",,4,,,,,,,,,,,,,,");
         let parsed = ParsedRom::parse(&rom, Some(&db)).expect("parse with db");
         assert_eq!(parsed.header.mapper, 4);
     }
@@ -900,8 +890,8 @@ mod tests {
     #[test]
     fn db_overrides_submapper() {
         let rom = build_test_rom(1, 1);
-        // Override submapper to 2 (col 8 = csv_fields position 4)
-        let db = db_with_override_for_rom(&rom, ",,,,2,,,,,,,,,,,,,");
+        // Override submapper to 2 (col 7 = csv_fields position 3)
+        let db = db_with_override_for_rom(&rom, ",,,2,,,,,,,,,,,,,");
         let parsed = ParsedRom::parse(&rom, Some(&db)).expect("parse with db");
         assert_eq!(parsed.header.submapper, 2);
     }
@@ -909,8 +899,8 @@ mod tests {
     #[test]
     fn db_overrides_mirroring() {
         let rom = build_test_rom(1, 1);
-        // Override nametable_layout to V (col 9 = csv_fields position 5)
-        let db = db_with_override_for_rom(&rom, ",,,,,V,,,,,,,,,,,,");
+        // Override nametable_layout to V (col 8 = csv_fields position 4)
+        let db = db_with_override_for_rom(&rom, ",,,,V,,,,,,,,,,,,");
         let parsed = ParsedRom::parse(&rom, Some(&db)).expect("parse with db");
         assert_eq!(parsed.header.mirroring, NametableLayout::Vertical);
     }
@@ -918,8 +908,8 @@ mod tests {
     #[test]
     fn db_overrides_timing_mode() {
         let rom = build_test_rom(1, 1);
-        // Override console_region to 1 (col 5) = PAL
-        let db = db_with_override_for_rom(&rom, ",1,,,,,,,,,,,,,,,,");
+        // Override hardware to 1 (col 4) = NesPal -> timing_mode = PAL
+        let db = db_with_override_for_rom(&rom, "1,,,,,,,,,,,,,,,,");
         let parsed = ParsedRom::parse(&rom, Some(&db)).expect("parse with db");
         assert_eq!(parsed.header.timing_mode, TimingMode::Pal);
     }
@@ -928,7 +918,7 @@ mod tests {
     fn db_no_match_leaves_header_unchanged() {
         let rom = build_test_rom(1, 1);
         // DB with a CRC that doesn't match
-        let db = RomDb::from_csv_content("1,Other,,DEADBEEF,,,,4,,,,,,,,,,,,,\n");
+        let db = RomDb::from_csv_content("1,Other,,DEADBEEF,,,4,,,,,,,,,,,,,,\n");
         let without_db = ParsedRom::parse(&rom, None).expect("parse without db");
         let with_db = ParsedRom::parse(&rom, Some(&db)).expect("parse with db");
         assert_eq!(without_db.header.mapper, with_db.header.mapper);

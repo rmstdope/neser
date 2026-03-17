@@ -1,7 +1,7 @@
 use crate::app_context::{AppContext, SharedAppContext};
 use crate::autorun::crc32;
 use crate::cartridge::Cartridge;
-use crate::console::{Config, Nes, SaveState, log_rom_timing_mode_selection};
+use crate::console::{Config, Nes, SaveState, log_hardware_selection};
 use crate::debugging::DebuggerViewState;
 use crate::debugging::ppu_viewer::{
     PpuViewerSnapshot, render_nametables_rgba, render_pattern_tables_rgba,
@@ -129,10 +129,9 @@ impl WasmNes {
             .borrow_mut()
             .config_mut()
             .apply_rom_timing_mode(rom_timing_mode);
-        log_rom_timing_mode_selection(&app_context, rom_timing_mode, applied);
-
-        self.nes = Nes::new(app_context);
+        self.nes = Nes::new(app_context.clone());
         self.nes.insert_cartridge(cart);
+        log_hardware_selection(&app_context, applied);
         self.nes.reset(false);
         self.debugger_view_state = DebuggerViewState::default();
         self.rom_loaded = true;
