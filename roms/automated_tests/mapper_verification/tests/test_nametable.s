@@ -89,8 +89,8 @@ nt_read: .res 1
     ; ========================================
     ; Test Vertical Mirroring
     ; ========================================
-    .if MAPPER_NUM = 7
-        ; AxROM only supports single-screen, skip V/H test
+    .if MAX_MIRRORING_MODES < 4
+        ; Mapper only supports single-screen, skip V/H test
     .else
         start_test 1, "Vert mirror"
         .if MAPPER_NUM = 1 .or MAPPER_NUM = 5 .or MAPPER_NUM = 6 .or MAPPER_NUM = 8 .or MAPPER_NUM = 15

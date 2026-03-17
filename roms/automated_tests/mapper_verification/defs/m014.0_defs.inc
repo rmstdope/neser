@@ -33,6 +33,7 @@ CHR_RAM_SHIFT = 0
 .define HAS_PRG_RAM 1
 .define HAS_PRG_RAM_PROTECT 1
 .define HAS_BUS_CONFLICTS 0
+.define MAX_MIRRORING_MODES 4       ; Supports V/H/1A/1B
 
 ; IRQ behavior
 .define IRQ_MODE 0             ; 0 = Sharp/MMC3

@@ -36,6 +36,7 @@ CHR_RAM_SHIFT = 7         ; 8KB CHR-RAM (64 << 7 = 8KB)
 .define HAS_PRG_RAM 0
 .define HAS_PRG_RAM_PROTECT 0
 .define HAS_BUS_CONFLICTS 0
+.define MAX_MIRRORING_MODES 4       ; Supports V/H/1A/1B
 
 ; Bank sizes
 .define PRG_BANK_SIZE 16      ; 16KB switchable (mode 1)
