@@ -129,6 +129,14 @@ test_title_string:
         ; --- 16KB banking (UxROM, MMC1 mode 3) ---
         ; Switchable bank at $8000-$BFFF, fixed bank at $C000-$FFFF
 
+        ; Configurable test bank numbers (mapper 15 skips bank 1 = bootstrap)
+        .ifndef TEST_BANK_B
+            TEST_BANK_B = 1
+        .endif
+        .ifndef TEST_BANK_C
+            TEST_BANK_C = 2
+        .endif
+
         start_test 1, "Bank 0 sig"
         select_prg_bank 0, 0
         lda BANK_WINDOW
@@ -140,21 +148,21 @@ test_title_string:
         assert_a_eq 0
         pass_test
 
-        start_test 3, "Bank 1 sig"
-        select_prg_bank 0, 1
+        start_test 3, "Bank B sig"
+        select_prg_bank 0, TEST_BANK_B
         lda BANK_WINDOW
         assert_a_eq $A5
         pass_test
 
-        start_test 4, "Bank 1 id"
+        start_test 4, "Bank B id"
         lda BANK_WINDOW + 1
-        assert_a_eq 1
+        assert_a_eq TEST_BANK_B
         pass_test
 
-        start_test 5, "Bank 2"
-        select_prg_bank 0, 2
+        start_test 5, "Bank C"
+        select_prg_bank 0, TEST_BANK_C
         lda BANK_WINDOW + 1
-        assert_a_eq 2
+        assert_a_eq TEST_BANK_C
         pass_test
 
         ; Verify fixed bank stays stable while switching variable bank
@@ -230,6 +238,8 @@ test_title_string:
         assert_a_eq 2
         pass_test
 
+        ; R7 (second 8KB slot) — MMC3/MMC5 only (not MMC2)
+        .if MAPPER_NUM <> 9
         start_test 5, "R7 Bank 0"
         select_prg_bank 1, 0
         lda $A000               ; R7 window
@@ -241,6 +251,7 @@ test_title_string:
         lda $A001
         assert_a_eq 1
         pass_test
+        .endif
 
         ; Verify fixed bank stability via reset vector
         start_test 7, "Fixed $E000"
@@ -256,7 +267,7 @@ test_title_string:
 :       pass_test
 
         ; === MMC3 PRG Mode Bit (bit 6 of $8000) ===
-        .if MAPPER_NUM = 4
+        .if MAPPER_NUM = 4 .or MAPPER_NUM = 12 .or MAPPER_NUM = 14
         start_test 8, "PRG mode 1"
         ; Mode 1: bit 6 → R6 at $C000, $8000 = 2nd-to-last bank
         lda #(6 | $40)          ; R6 + PRG mode 1
@@ -269,9 +280,10 @@ test_title_string:
         pass_test
 
         start_test 9, "Mode1 $8000"
-        ; $8000 should be second-to-last bank (bank 6) in mode 1
+        ; $8000 should be second-to-last bank in mode 1
+        ; For N 8KB banks, second-to-last = N-2 = PRG_ROM_16K*2-2
         lda $8001
-        assert_a_eq 6
+        assert_a_eq (PRG_ROM_16K * 2 - 2)
         ; Restore mode 0
         lda #6                  ; R6, PRG mode 0
         sta MMC3_BANK_SELECT
@@ -327,8 +339,14 @@ TRAMPOLINE_SIZE = trampoline_end - trampoline_code
 ; Output: tramp_result[0..3] = 4 signature bytes from target bank
 ; NOTE: Uses $FFF0 for bank select writes to avoid bus conflicts.
 ; $FFF0 is in the fill region ($FF) so the AND gives the correct value.
+.ifndef TRAMPOLINE_BANK_SHIFT
+    TRAMPOLINE_BANK_SHIFT = 0   ; Default: bank number in low bits
+.endif
 trampoline_code:
     lda tramp_result        ; Bank number
+    .repeat TRAMPOLINE_BANK_SHIFT
+    asl a
+    .endrepeat
     sta $FFF0               ; Select target bank (bus-conflict-safe: $FF fill)
     ; Read 4 signature bytes from $8000
     lda $8000
@@ -365,8 +383,11 @@ trampoline_end:
     .byte $A5, 0, $FF, $5A
 .endif
 
+; Bank 1 sig: skip for mapper 15 (bank 1 = bootstrap)
+.if MAPPER_NUM <> 15
 .segment "PRG_SIG1"
     .byte $A5, 1, $FE, $5A
+.endif
 
 .segment "PRG_SIG2"
     .byte $A5, 2, $FD, $5A
@@ -378,7 +399,8 @@ trampoline_end:
     .segment "PRG_SIG3"
         .byte $A5, 3, $FC, $5A
 .elseif PRG_BANK_SIZE = 8
-    ; MMC3: 8 × 8KB banks, banks 0-5 are switchable, 6-7 are fixed
+    ; MMC3/MMC3-clone: 8KB banks. Banks 0 to N-3 are switchable,
+    ; N-2 is fixed second-to-last, N-1 is code bank.
     .segment "PRG_SIG3"
         .byte $A5, 3, $FC, $5A
     .segment "PRG_SIG4"
@@ -387,7 +409,26 @@ trampoline_end:
         .byte $A5, 5, $FA, $5A
     .segment "PRG_SIG6"
         .byte $A5, 6, $F9, $5A
-    ; PRG_SIG7 is the code bank — no signature segment
+    ; Banks 7+ only if more than 8 banks
+    .if PRG_ROM_16K > 4
+    .segment "PRG_SIG7"
+        .byte $A5, 7, $F8, $5A
+    .segment "PRG_SIG8"
+        .byte $A5, 8, $F7, $5A
+    .segment "PRG_SIG9"
+        .byte $A5, 9, $F6, $5A
+    .segment "PRG_SIG10"
+        .byte $A5, 10, $F5, $5A
+    .segment "PRG_SIG11"
+        .byte $A5, 11, $F4, $5A
+    .segment "PRG_SIG12"
+        .byte $A5, 12, $F3, $5A
+    .segment "PRG_SIG13"
+        .byte $A5, 13, $F2, $5A
+    ; PRG_SIG14 = fixed second-to-last bank (needs sig for mode 1 test)
+    .segment "PRG_SIG14"
+        .byte $A5, 14, $F1, $5A
+    .endif
 .elseif PRG_BANK_SIZE = 16
     .if PRG_BANK_COUNT > 3
         ; UxROM with 8 banks: emit sigs 3-6 (7 is code bank)

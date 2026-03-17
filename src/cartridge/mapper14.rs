@@ -92,9 +92,18 @@ impl Mapper for Mapper14 {
         &mut self.mmc3.base
     }
 
+    fn mmc3_delegate(&self) -> Option<&MMC3Mapper> {
+        Some(&self.mmc3)
+    }
+
+    fn mmc3_delegate_mut(&mut self) -> Option<&mut MMC3Mapper> {
+        Some(&mut self.mmc3)
+    }
+
     fn write_prg(&mut self, addr: u16, value: u8) {
         if addr == Self::SUPERVISOR_REGISTER {
             self.mode = value;
+            return;
         }
 
         if self.in_mmc3_mode() {
@@ -137,6 +146,13 @@ impl Mapper for Mapper14 {
             0x8000..=0xFFFF => self.base().read_prg_rom(addr),
             _ => 0,
         }
+    }
+
+    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        if self.in_mmc3_mode() {
+            return self.mmc3.read_prg_open_bus(addr, open_bus);
+        }
+        self.read_prg(addr)
     }
 
     fn read_chr(&mut self, addr: u16) -> u8 {

@@ -5,6 +5,7 @@
 //! - Edge-case behavior may still differ from hardware in untested timing and board-variant scenarios.
 //! - See CARTRIDGE_REVIEW.md sections 5 and 6 for remaining mapper test/documentation follow-up.
 
+use crate::cartridge::mapper::MapperContext;
 use crate::cartridge::mapper_templates::DualBank32Mapper;
 
 /// Mapper 11 - Color Dreams
@@ -20,18 +21,74 @@ use crate::cartridge::mapper_templates::DualBank32Mapper;
 ///
 /// Common boards: Unlicensed Color Dreams boards
 ///
+/// Submappers:
+/// - Submapper 0: Standard with bus conflicts (74LS377 latch)
+/// - Submapper 1: No bus conflicts (Free Fall prototype variant)
+///
 /// Notes:
 /// - Single register at any write to $8000-$FFFF
 /// - Register layout: CCCC LLPP
 /// - Bits 0-1: Select 32KB PRG bank
 /// - Bits 4-7: Select 8KB CHR bank
-/// - Bus conflicts: yes
 /// - Used in unlicensed games like Crystal Mines, Bible Adventures
 /// - Some variants support different bank counts
 ///
 /// Implementation:
-/// - Uses `DualBank32Mapper` template with PRG bits 0-1, CHR bits 4-7, bus conflicts enabled
-pub type ColorDreamsMapper = DualBank32Mapper<0b0011, 0, 0b1111, 4, true, 11>;
+/// - Wrapper enum that selects between bus-conflict and no-conflict variants
+/// - Uses `DualBank32Mapper` template with PRG bits 0-1, CHR bits 4-7
+pub enum ColorDreamsMapper {
+    WithBusConflicts(DualBank32Mapper<0b0011, 0, 0b1111, 4, true, 11>),
+    NoBusConflicts(DualBank32Mapper<0b0011, 0, 0b1111, 4, false, 11>),
+}
+
+impl ColorDreamsMapper {
+    pub fn new(ctx: MapperContext) -> Self {
+        // Submapper 1 is the no-bus-conflict variant (Free Fall prototype)
+        // Submapper 0 (and default) has bus conflicts
+        if ctx.submapper == 1 {
+            Self::NoBusConflicts(DualBank32Mapper::new(ctx))
+        } else {
+            Self::WithBusConflicts(DualBank32Mapper::new(ctx))
+        }
+    }
+}
+
+impl crate::cartridge::Mapper for ColorDreamsMapper {
+    fn base(&self) -> &crate::cartridge::base_mapper::BaseMapper {
+        match self {
+            Self::WithBusConflicts(m) => m.base(),
+            Self::NoBusConflicts(m) => m.base(),
+        }
+    }
+
+    fn base_mut(&mut self) -> &mut crate::cartridge::base_mapper::BaseMapper {
+        match self {
+            Self::WithBusConflicts(m) => m.base_mut(),
+            Self::NoBusConflicts(m) => m.base_mut(),
+        }
+    }
+
+    fn write_prg(&mut self, addr: u16, value: u8) {
+        match self {
+            Self::WithBusConflicts(m) => m.write_prg(addr, value),
+            Self::NoBusConflicts(m) => m.write_prg(addr, value),
+        }
+    }
+
+    fn registers_snapshot(&self) -> Vec<u8> {
+        match self {
+            Self::WithBusConflicts(m) => m.registers_snapshot(),
+            Self::NoBusConflicts(m) => m.registers_snapshot(),
+        }
+    }
+
+    fn restore_registers(&mut self, data: &[u8]) {
+        match self {
+            Self::WithBusConflicts(m) => m.restore_registers(data),
+            Self::NoBusConflicts(m) => m.restore_registers(data),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -239,5 +296,88 @@ mod tests {
         // Initial bank at $8000 reads 0x00, so conflict masks write 0x01 -> 0x00.
         mapper.write_prg(0x8000, 0x01);
         assert_eq!(mapper.read_prg(0x8000), 0x00);
+    }
+
+    // ========================================================================
+    // Submapper 1: No Bus Conflicts
+    // ========================================================================
+
+    fn create_colordreams_submapper1_mapper(
+        prg_rom: Vec<u8>,
+        chr_rom: Vec<u8>,
+        mirroring: NametableLayout,
+    ) -> std::io::Result<Box<dyn Mapper>> {
+        create_mapper(
+            MapperContext::new_for_test(11, prg_rom, chr_rom, mirroring)
+                .with_submapper(1)
+                .with_prg_ram_banks(0),
+        )
+    }
+
+    #[test]
+    fn test_colordreams_submapper1_does_not_have_bus_conflicts() {
+        // Submapper 1 should NOT apply bus conflicts (Free Fall prototype variant)
+        // Create ROM where each bank is filled with its bank number
+        let mut prg_rom = banked_data(32 * 1024, 4);
+        // Overwrite bank 0 address $0000 with 0x00 (where we'll write the bank select)
+        prg_rom[0] = 0x00;
+        let chr_rom = banked_data(8 * 1024, 16);
+
+        let mut mapper =
+            create_colordreams_submapper1_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
+                .expect("ColorDreams submapper 1 should be implemented");
+
+        // Write 0x01 to select bank 1 at address $8000.
+        // In submapper 0 with bus conflicts, this would AND with ROM value 0x00 → bank 0
+        // In submapper 1 without bus conflicts, write value 0x01 is used directly → bank 1
+        mapper.write_prg(0x8000, 0x01);
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            1,
+            "Submapper 1 should select bank 1 without bus conflicts"
+        );
+    }
+
+    #[test]
+    fn test_colordreams_submapper1_chr_banking_works_without_conflicts() {
+        // Test that CHR banking also works without bus conflicts
+        let prg_rom = vec![0xFF; 4 * 32 * 1024]; // All 0xFF to avoid PRG conflicts
+        let chr_rom = banked_data(8 * 1024, 16);
+
+        let mut mapper =
+            create_colordreams_submapper1_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
+                .expect("ColorDreams submapper 1 should be implemented");
+
+        // Select CHR bank 5 via bits 4-7: 0x50
+        mapper.write_prg(0x8000, 0x50);
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            5,
+            "Submapper 1 should select CHR bank 5"
+        );
+
+        // Select CHR bank 10 via bits 4-7: 0xA0
+        mapper.write_prg(0x8000, 0xA0);
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            10,
+            "Submapper 1 should select CHR bank 10"
+        );
+    }
+
+    #[test]
+    fn test_colordreams_submapper1_combined_prg_and_chr() {
+        // Test combined PRG and CHR selection without bus conflicts
+        let prg_rom = banked_data(32 * 1024, 4);
+        let chr_rom = banked_data(8 * 1024, 16);
+
+        let mut mapper =
+            create_colordreams_submapper1_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
+                .expect("ColorDreams submapper 1 should be implemented");
+
+        // Select PRG bank 2 and CHR bank 7: 0b0111_0010 = 0x72
+        mapper.write_prg(0x8000, 0x72);
+        assert_eq!(mapper.read_prg(0x8000), 2, "Should select PRG bank 2");
+        assert_eq!(mapper.read_chr(0x0000), 7, "Should select CHR bank 7");
     }
 }

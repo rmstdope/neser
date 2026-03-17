@@ -79,6 +79,13 @@ impl Mapper for Mapper12 {
         self.inner.read_prg(addr)
     }
 
+    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        if Self::is_outer_reg(addr) {
+            return self.chr_ext_lo as u8;
+        }
+        self.inner.read_prg_open_bus(addr, open_bus)
+    }
+
     fn write_prg(&mut self, addr: u16, value: u8) {
         if Self::is_outer_reg(addr) {
             self.chr_ext_lo = value & 0x01 != 0;
@@ -202,6 +209,39 @@ mod tests {
     }
 
     // --- PRG banking (full MMC3 delegation) ---
+
+    #[test]
+    fn fixed_e000_bank_stable_after_r6_switch_16_banks() {
+        // Reproduce the ROM test: 16 PRG banks (128KB), not 32
+        let prg = banked_data(8 * 1024, 16);
+        let chr = banked_data(1024, CHR_1K_BANKS);
+        let mut mapper = create_mapper(MapperContext::new_for_test(
+            12,
+            prg,
+            chr,
+            NametableLayout::Vertical,
+        ))
+        .unwrap();
+
+        // Fixed-last bank ($E000) = bank 15 (last of 16)
+        assert_eq!(
+            mapper.read_prg(0xE000),
+            15,
+            "Fixed-last PRG bank must be 15 for 16 banks"
+        );
+
+        let before = mapper.read_prg(0xFFFC);
+
+        // Switch R6 to bank 3
+        mapper.write_prg(0x8000, 0b0000_0110); // bank_select = R6
+        mapper.write_prg(0x8001, 3);
+
+        let after = mapper.read_prg(0xFFFC);
+        assert_eq!(
+            before, after,
+            "Fixed $E000 bank must not change after R6 switch"
+        );
+    }
 
     #[test]
     fn all_mmc3_prg_banking_works() {

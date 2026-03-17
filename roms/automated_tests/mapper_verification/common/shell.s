@@ -11,7 +11,7 @@ __SHELL_S__ = 1
 
 ; Import from other modules
 .import init_nes, wait_vbl
-.import console_init, console_flush, console_newline
+.import console_init, console_flush, console_newline, console_show
 .import console_print_inline, console_print_hex, console_print
 
 ; Import from the test-specific source file
@@ -41,12 +41,23 @@ got_val:      .res 1       ; Temp for fail handler
     txs
 
     ; Enable PRG-RAM early so we can write the status byte at $6000.
-    ; For MMC3: $A001 bit 7 = chip enable. Safe no-op for other mappers.
+    ; For MMC3: $A001 bit 7 = chip enable. Only for mappers where $A001 is the RAM protect register.
+    .if MAPPER_NUM = 4 .or MAPPER_NUM = 12 .or MAPPER_NUM = 14
     lda #$80
     sta $A001
+    .endif
 
     ; Mapper-specific early init
     .if MAPPER_NUM = 4
+    init_chr_font
+    .elseif MAPPER_NUM = 12
+    ; SL-5020B: clear outer CHR register, map font
+    lda #0
+    sta $4132
+    init_chr_font
+    .elseif MAPPER_NUM = 14
+    ; SL-1632: set MMC3 mode via supervisor, map font
+    set_mmc3_mode
     init_chr_font
     .elseif MAPPER_NUM = 5
     ; MMC5: set PRG mode 3 (4×8KB) and enable PRG-RAM
@@ -145,6 +156,9 @@ got_val:      .res 1       ; Temp for fail handler
     .byte "FAILED", 0
     jsr console_flush
 
+    ; Re-enable rendering to ensure console output is visible
+    jsr console_show
+
     ; Set status byte to failing test number
     lda TEST_CODE
     sta TEST_STATUS
@@ -168,16 +182,16 @@ got_val:      .res 1       ; Temp for fail handler
     pha
     inc irq_fired
     inc irq_count
-    .if MAPPER_NUM = 4
-    ; MMC3: acknowledge + re-enable
+    .if MAPPER_NUM = 4 .or MAPPER_NUM = 12 .or MAPPER_NUM = 14
+    ; MMC3/MMC3-clone: acknowledge + re-enable
     lda #0
     sta $E000               ; IRQ acknowledge (disable)
     sta $E001               ; IRQ re-enable
     .elseif MAPPER_NUM = 5
     ; MMC5: read $5204 to clear pending flag
     lda $5204
-    .elseif MAPPER_NUM = 6
-    ; Mapper 6: write $4502 to ack IRQ (also sets latch LSB as side-effect)
+    .elseif MAPPER_NUM = 6 .or MAPPER_NUM = 8
+    ; Mapper 6/8: write $4502 to ack IRQ (also sets latch LSB as side-effect)
     ; ($4501 would ack + disable counting; $4502 acks + loads latch LSB)
     ; The latch side-effect is harmless — running counter is unaffected.
     lda #0
@@ -194,3 +208,34 @@ got_val:      .res 1       ; Temp for fail handler
     .word nmi_handler
     .word reset
     .word irq_handler
+
+; ============================================================
+; Mapper 15 power-on bootstrap
+; On power-on, mode 0 (NROM-256) maps bank 1 to $C000.
+; This code runs from bank 1, copies a mode-switch routine
+; to RAM, switches to mode 1, then jumps to the real reset.
+; ============================================================
+.if MAPPER_NUM = 15
+.segment "BOOT"
+.proc boot_reset
+    sei
+    ldx #0
+@copy:
+    lda m15_switch, x
+    sta $0300, x
+    inx
+    cpx #(m15_switch_end - m15_switch)
+    bne @copy
+    jmp $0300
+m15_switch:
+    lda #0
+    sta $8001               ; Switch to mode 1 (UNROM), bank 0, vertical
+    jmp reset               ; Bank 7 now at $C000
+m15_switch_end:
+.endproc
+
+.segment "BOOT_VECS"
+    .word $0000             ; NMI (won't fire during bootstrap)
+    .word boot_reset        ; Reset → bootstrap
+    .word $0000             ; IRQ (won't fire during bootstrap)
+.endif

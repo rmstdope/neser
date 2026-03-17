@@ -89,11 +89,11 @@ nt_read: .res 1
     ; ========================================
     ; Test Vertical Mirroring
     ; ========================================
-    .if MAPPER_NUM = 7
-        ; AxROM only supports single-screen, skip V/H test
+    .if MAX_MIRRORING_MODES < 4
+        ; Mapper only supports single-screen, skip V/H test
     .else
         start_test 1, "Vert mirror"
-        .if MAPPER_NUM = 1 .or MAPPER_NUM = 5 .or MAPPER_NUM = 6
+        .if MAPPER_NUM = 1 .or MAPPER_NUM = 5 .or MAPPER_NUM = 6 .or MAPPER_NUM = 8 .or MAPPER_NUM = 15
             set_mirroring 2     ; MMC1: 2 = vertical
         .else
             set_mirroring 0     ; MMC3/generic: 0 = vertical
@@ -131,7 +131,7 @@ nt_read: .res 1
         ; Test Horizontal Mirroring
         ; ========================================
         start_test 3, "Horiz mirror"
-        .if MAPPER_NUM = 1 .or MAPPER_NUM = 5 .or MAPPER_NUM = 6
+        .if MAPPER_NUM = 1 .or MAPPER_NUM = 5 .or MAPPER_NUM = 6 .or MAPPER_NUM = 8 .or MAPPER_NUM = 15
             set_mirroring 3     ; MMC1: 3 = horizontal
         .else
             set_mirroring 1     ; MMC3/generic: 1 = horizontal
@@ -157,7 +157,7 @@ nt_read: .res 1
         assert_a_eq $CC
 
         ; Restore vertical before console output
-        .if MAPPER_NUM = 1 .or MAPPER_NUM = 5 .or MAPPER_NUM = 6
+        .if MAPPER_NUM = 1 .or MAPPER_NUM = 5 .or MAPPER_NUM = 6 .or MAPPER_NUM = 8 .or MAPPER_NUM = 15
             set_mirroring 2
         .else
             set_mirroring 0
@@ -165,7 +165,7 @@ nt_read: .res 1
         pass_test
 
         start_test 4, "Horiz mirror2"
-        .if MAPPER_NUM = 1 .or MAPPER_NUM = 5 .or MAPPER_NUM = 6
+        .if MAPPER_NUM = 1 .or MAPPER_NUM = 5 .or MAPPER_NUM = 6 .or MAPPER_NUM = 8 .or MAPPER_NUM = 15
             set_mirroring 3     ; Re-enter horizontal
         .else
             set_mirroring 1
@@ -176,7 +176,7 @@ nt_read: .res 1
         jsr read_nt
         assert_a_eq $DD
         ; Restore vertical before console output
-        .if MAPPER_NUM = 1 .or MAPPER_NUM = 5 .or MAPPER_NUM = 6
+        .if MAPPER_NUM = 1 .or MAPPER_NUM = 5 .or MAPPER_NUM = 6 .or MAPPER_NUM = 8 .or MAPPER_NUM = 15
             set_mirroring 2
         .else
             set_mirroring 0
@@ -187,9 +187,9 @@ nt_read: .res 1
     ; ========================================
     ; Test Single-Screen A (if supported)
     ; ========================================
-    .if MAPPER_NUM = 1 .or MAPPER_NUM = 5 .or MAPPER_NUM = 6 .or MAPPER_NUM = 7
+    .if MAPPER_NUM = 1 .or MAPPER_NUM = 5 .or MAPPER_NUM = 6 .or MAPPER_NUM = 7 .or MAPPER_NUM = 8
         ; Set 1-Screen A, do PPU writes/reads, then restore before console output
-        .if MAPPER_NUM = 1 .or MAPPER_NUM = 5 .or MAPPER_NUM = 6
+        .if MAPPER_NUM = 1 .or MAPPER_NUM = 5 .or MAPPER_NUM = 6 .or MAPPER_NUM = 8
             set_mirroring 0     ; MMC1: 0 = single-screen A
         .else
             set_mirroring 0     ; AxROM: 0 = screen A
@@ -208,7 +208,7 @@ nt_read: .res 1
         sta nt_read             ; Save result
 
         ; Restore mirroring before console output
-        .if MAPPER_NUM = 1 .or MAPPER_NUM = 5 .or MAPPER_NUM = 6
+        .if MAPPER_NUM = 1 .or MAPPER_NUM = 5 .or MAPPER_NUM = 6 .or MAPPER_NUM = 8
             set_mirroring 2
         .else
             set_mirroring 0
@@ -220,7 +220,7 @@ nt_read: .res 1
         pass_test
 
         ; Test $2800 mirror
-        .if MAPPER_NUM = 1 .or MAPPER_NUM = 5 .or MAPPER_NUM = 6
+        .if MAPPER_NUM = 1 .or MAPPER_NUM = 5 .or MAPPER_NUM = 6 .or MAPPER_NUM = 8
             set_mirroring 0
         .else
             set_mirroring 0
@@ -229,7 +229,7 @@ nt_read: .res 1
         ldy #$0F
         jsr read_nt
         sta nt_read
-        .if MAPPER_NUM = 1 .or MAPPER_NUM = 5 .or MAPPER_NUM = 6
+        .if MAPPER_NUM = 1 .or MAPPER_NUM = 5 .or MAPPER_NUM = 6 .or MAPPER_NUM = 8
             set_mirroring 2
         .else
             set_mirroring 0
@@ -241,7 +241,7 @@ nt_read: .res 1
         pass_test
 
         ; Test $2C00 mirror
-        .if MAPPER_NUM = 1 .or MAPPER_NUM = 5 .or MAPPER_NUM = 6
+        .if MAPPER_NUM = 1 .or MAPPER_NUM = 5 .or MAPPER_NUM = 6 .or MAPPER_NUM = 8
             set_mirroring 0
         .else
             set_mirroring 0
@@ -250,7 +250,7 @@ nt_read: .res 1
         ldy #$0F
         jsr read_nt
         sta nt_read
-        .if MAPPER_NUM = 1 .or MAPPER_NUM = 5 .or MAPPER_NUM = 6
+        .if MAPPER_NUM = 1 .or MAPPER_NUM = 5 .or MAPPER_NUM = 6 .or MAPPER_NUM = 8
             set_mirroring 2
         .else
             set_mirroring 0
@@ -264,7 +264,7 @@ nt_read: .res 1
         ; ========================================
         ; Test Single-Screen B
         ; ========================================
-        .if MAPPER_NUM = 1 .or MAPPER_NUM = 5 .or MAPPER_NUM = 6
+        .if MAPPER_NUM = 1 .or MAPPER_NUM = 5 .or MAPPER_NUM = 6 .or MAPPER_NUM = 8
             set_mirroring 1     ; MMC1: 1 = single-screen B
         .else
             set_mirroring 1     ; AxROM: 1 = screen B
@@ -283,7 +283,7 @@ nt_read: .res 1
         sta nt_read
 
         ; Restore mirroring before console output
-        .if MAPPER_NUM = 1 .or MAPPER_NUM = 5 .or MAPPER_NUM = 6
+        .if MAPPER_NUM = 1 .or MAPPER_NUM = 5 .or MAPPER_NUM = 6 .or MAPPER_NUM = 8
             set_mirroring 2
         .else
             set_mirroring 0
@@ -295,7 +295,7 @@ nt_read: .res 1
         pass_test
 
         ; Test $2800 mirror
-        .if MAPPER_NUM = 1 .or MAPPER_NUM = 5 .or MAPPER_NUM = 6
+        .if MAPPER_NUM = 1 .or MAPPER_NUM = 5 .or MAPPER_NUM = 6 .or MAPPER_NUM = 8
             set_mirroring 1
         .else
             set_mirroring 1
@@ -304,7 +304,7 @@ nt_read: .res 1
         ldy #$0F
         jsr read_nt
         sta nt_read
-        .if MAPPER_NUM = 1 .or MAPPER_NUM = 5 .or MAPPER_NUM = 6
+        .if MAPPER_NUM = 1 .or MAPPER_NUM = 5 .or MAPPER_NUM = 6 .or MAPPER_NUM = 8
             set_mirroring 2
         .else
             set_mirroring 0

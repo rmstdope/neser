@@ -42,7 +42,8 @@ pub struct MMC2Mapper {
 
 impl MMC2Mapper {
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
-        let has_prg_ram = matches!(ctx.console_type, ConsoleType::Playchoice10);
+        let has_prg_ram = matches!(ctx.console_type, ConsoleType::Playchoice10)
+            || (ctx.prg_ram_size_specified && ctx.prg_ram_banks_8k > 0);
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
             has_dynamic_mirroring: true,
@@ -360,12 +361,15 @@ mod tests {
 
     #[test]
     fn test_mmc2_standard_board_has_no_prg_ram_window() {
-        let mut mapper = MMC2Mapper::new(MapperContext::new_for_test(
-            9,
-            vec![0; 128 * 1024],
-            vec![0; 128 * 1024],
-            NametableLayout::Horizontal,
-        ));
+        let mut mapper = MMC2Mapper::new(
+            MapperContext::new_for_test(
+                9,
+                vec![0; 128 * 1024],
+                vec![0; 128 * 1024],
+                NametableLayout::Horizontal,
+            )
+            .with_unspecified_prg_ram_size(),
+        );
 
         mapper.write_prg(0x6000, 0xA5);
 

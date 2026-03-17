@@ -18,6 +18,7 @@ CHR_RAM_SHIFT = 0
 .define HAS_PRG_RAM 0
 .define HAS_PRG_RAM_PROTECT 0
 .define HAS_BUS_CONFLICTS 0
+.define MAX_MIRRORING_MODES 0       ; No mirroring control
 
 ; Bank sizes
 .define PRG_BANK_SIZE 32
