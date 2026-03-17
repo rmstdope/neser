@@ -143,7 +143,6 @@ mod tests {
     /// Use 16 16-KB banks (256 KB) to cover all 4 blocks × 4 pages.
     const PRG_BANKS: usize = 16;
 
-
     fn make_mapper(prg_rom: Vec<u8>) -> Mapper232 {
         Mapper232::new(
             MapperContext::new_for_test(MAPPER_NUMBER, prg_rom, vec![], NametableLayout::Vertical)
