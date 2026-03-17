@@ -254,6 +254,7 @@ impl Nes {
                 ControllerType::SnesAdapter => "SNES adapter",
                 ControllerType::SnesController => "SNES controller",
                 ControllerType::SnesMouse => "SNES mouse",
+                ControllerType::PowerPad => "Power Pad",
             };
             log_info(format!(
                 "Enabling {} controller on port {} for inserted cartridge. If you don't want this behavior, explicitly configure controller_port1/controller_port2 in config (or via CLI). Note that some games expect the controller on a specific port, so be sure to configure the correct one if you have issues with input not working in certain games.",
@@ -513,6 +514,28 @@ impl Nes {
             .set_snes_button(controller, button, pressed)
     }
 
+    /// Set Power Pad button state for a controller.
+    pub fn set_power_pad_button(
+        &mut self,
+        controller: u8,
+        button: crate::input::PowerPadButton,
+        pressed: bool,
+    ) -> bool {
+        self.bus
+            .borrow_mut()
+            .set_power_pad_button(controller, button, pressed)
+    }
+
+    pub fn set_expansion_power_pad_button(
+        &mut self,
+        button: crate::input::PowerPadButton,
+        pressed: bool,
+    ) -> bool {
+        self.bus
+            .borrow_mut()
+            .set_expansion_power_pad_button(button, pressed)
+    }
+
     /// Set all joypad button states from a u8 bitmask (for autorun playback).
     ///
     /// Each bit corresponds to a [`crate::input::Button`] variant by its discriminant index.
@@ -552,6 +575,10 @@ impl Nes {
     /// Check if a Zapper is connected to the Famicom expansion port.
     pub fn has_expansion_zapper(&self) -> bool {
         self.bus.borrow().has_expansion_zapper()
+    }
+
+    pub fn has_expansion_power_pad(&self) -> bool {
+        self.bus.borrow().has_expansion_power_pad()
     }
 
     /// Check if a Zapper is active on the specified port.

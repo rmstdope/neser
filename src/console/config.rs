@@ -99,14 +99,14 @@ const CLI_FLAGS: &[CliFlag] = &[
     CliFlag {
         flag: "--controller-port1",
         help: Some(
-            "Controller type for port 1: joypad, snes-controller, snes-mouse, zapper, arkanoid",
+            "Controller type for port 1: joypad, snes-controller, snes-mouse, zapper, arkanoid, power-pad",
         ),
         has_value: true,
     },
     CliFlag {
         flag: "--controller-port2",
         help: Some(
-            "Controller type for port 2: joypad, snes-controller, snes-mouse, zapper, arkanoid",
+            "Controller type for port 2: joypad, snes-controller, snes-mouse, zapper, arkanoid, power-pad",
         ),
         has_value: true,
     },
@@ -118,7 +118,7 @@ const CLI_FLAGS: &[CliFlag] = &[
     CliFlag {
         flag: "--expansion-port",
         help: Some(
-            "Expansion port controller: none, famicom-four-players, or arkanoid (default: none)",
+            "Expansion port controller: none, famicom-four-players, arkanoid, zapper, or power-pad (default: none)",
         ),
         has_value: true,
     },
@@ -482,6 +482,7 @@ pub enum ExpansionPort {
     FamicomFourPlayers,
     ArkanoidFamicom,
     ZapperFamicom,
+    PowerPadFamicom,
 }
 
 impl ExpansionPort {
@@ -494,9 +495,22 @@ impl ExpansionPort {
             Some(Self::ArkanoidFamicom)
         } else if value.eq_ignore_ascii_case("zapper") {
             Some(Self::ZapperFamicom)
+        } else if value.eq_ignore_ascii_case("power-pad") || value.eq_ignore_ascii_case("powerpad")
+        {
+            Some(Self::PowerPadFamicom)
         } else {
             None
         }
+    }
+
+    fn is_famicom_only(self) -> bool {
+        matches!(
+            self,
+            Self::FamicomFourPlayers
+                | Self::ArkanoidFamicom
+                | Self::ZapperFamicom
+                | Self::PowerPadFamicom
+        )
     }
 }
 
@@ -779,7 +793,7 @@ impl Config {
         if let Some(expansion_port) = Self::parse_string_arg(args, "--expansion-port") {
             let parsed = ExpansionPort::parse(&expansion_port).ok_or_else(|| {
                 format!(
-                    "Invalid --expansion-port value: '{}'. Valid options are: none, famicom-four-players, arkanoid, zapper",
+                    "Invalid --expansion-port value: '{}'. Valid options are: none, famicom-four-players, arkanoid, zapper, power-pad",
                     expansion_port
                 )
             })?;
@@ -989,7 +1003,7 @@ impl Config {
     }
 
     fn valid_controller_values() -> &'static str {
-        "joypad, snes-controller, snes-mouse, zapper, arkanoid"
+        "joypad, snes-controller, snes-mouse, zapper, arkanoid, power-pad"
     }
 
     fn parse_controller_arg(flag: &str, value: &str) -> Result<ControllerType, String> {
@@ -2152,12 +2166,8 @@ impl Config {
             );
         }
 
-        if self.hardware_mode == HardwareMode::Nes
-            && self.expansion_port == ExpansionPort::FamicomFourPlayers
-        {
-            return Err(
-                "expansion_port=famicom-four-players requires hardware=famicom".to_string(),
-            );
+        if self.hardware_mode == HardwareMode::Nes && self.expansion_port.is_famicom_only() {
+            return Err("famicom expansion_port requires hardware=famicom".to_string());
         }
 
         let mouse_emulated_controller_count = [self.controller_port1, self.controller_port2]
@@ -3311,7 +3321,7 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err(),
-            "Invalid value 'unknown' for 'controller_port1'. Valid options are: joypad, snes-controller, snes-mouse, zapper, arkanoid"
+            "Invalid value 'unknown' for 'controller_port1'. Valid options are: joypad, snes-controller, snes-mouse, zapper, arkanoid, power-pad"
         );
     }
 
@@ -3362,6 +3372,17 @@ mod tests {
     }
 
     #[test]
+    fn test_config_controller_port1_flag_power_pad() {
+        let args = vec![
+            "neser".to_string(),
+            "--controller-port1=power-pad".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.controller_port1, ControllerType::PowerPad);
+        assert!(config.controller_port1_explicit);
+    }
+
+    #[test]
     fn test_config_controller_port_cli_overrides_config_file() {
         use std::io::Write;
         use tempfile::NamedTempFile;
@@ -3390,7 +3411,7 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err(),
-            "Invalid value 'unknown' for '--controller-port1'. Valid options are: joypad, snes-controller, snes-mouse, zapper, arkanoid"
+            "Invalid value 'unknown' for '--controller-port1'. Valid options are: joypad, snes-controller, snes-mouse, zapper, arkanoid, power-pad"
         );
     }
 
@@ -3413,7 +3434,7 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err(),
-            "Invalid value 'unknown' for '--controller-port1'. Valid options are: joypad, snes-controller, snes-mouse, zapper, arkanoid"
+            "Invalid value 'unknown' for '--controller-port1'. Valid options are: joypad, snes-controller, snes-mouse, zapper, arkanoid, power-pad"
         );
     }
 
@@ -3427,7 +3448,7 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err(),
-            "Invalid value 'snes-adapter' for '--controller-port1'. Valid options are: joypad, snes-controller, snes-mouse, zapper, arkanoid"
+            "Invalid value 'snes-adapter' for '--controller-port1'. Valid options are: joypad, snes-controller, snes-mouse, zapper, arkanoid, power-pad"
         );
     }
 
@@ -3966,6 +3987,19 @@ filter=invalid-shader
         ];
         let config = parse_config(args);
         assert_eq!(config.expansion_port, ExpansionPort::ArkanoidFamicom);
+    }
+
+    #[test]
+    fn test_config_expansion_port_flag_power_pad_is_accepted() {
+        let args = vec![
+            "neser".to_string(),
+            "--hardware".to_string(),
+            "famicom".to_string(),
+            "--expansion-port".to_string(),
+            "power-pad".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.expansion_port, ExpansionPort::PowerPadFamicom);
     }
 
     #[test]
@@ -5124,6 +5158,18 @@ filter=invalid-shader
         assert_eq!(
             ExpansionPort::parse("zapper"),
             Some(ExpansionPort::ZapperFamicom)
+        );
+    }
+
+    #[test]
+    fn test_config_expansion_port_parse_power_pad() {
+        assert_eq!(
+            ExpansionPort::parse("power-pad"),
+            Some(ExpansionPort::PowerPadFamicom)
+        );
+        assert_eq!(
+            ExpansionPort::parse("powerpad"),
+            Some(ExpansionPort::PowerPadFamicom)
         );
     }
 }

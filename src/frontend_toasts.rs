@@ -44,6 +44,7 @@ pub fn hardware_mode_toast_message(
             }
             ExpansionPort::ArkanoidFamicom => "Hardware: Famicom (Arkanoid expansion)".to_string(),
             ExpansionPort::ZapperFamicom => "Hardware: Famicom (Zapper expansion)".to_string(),
+            ExpansionPort::PowerPadFamicom => "Hardware: Famicom (Power Pad expansion)".to_string(),
             ExpansionPort::None => "Hardware: Famicom".to_string(),
         },
     }
@@ -151,5 +152,16 @@ mod tests {
             ExpansionPort::FamicomFourPlayers,
         );
         assert_eq!(message, "Hardware: Famicom (4-player expansion)");
+    }
+
+    #[test]
+    fn hardware_mode_toast_famicom_with_power_pad() {
+        use crate::console::HardwareModel;
+        let message = hardware_mode_toast_message(
+            HardwareMode::Famicom,
+            HardwareModel::NesNtsc,
+            ExpansionPort::PowerPadFamicom,
+        );
+        assert_eq!(message, "Hardware: Famicom (Power Pad expansion)");
     }
 }

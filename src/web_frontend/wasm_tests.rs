@@ -60,6 +60,7 @@ fn port1_arkanoid_state(state: &SaveState) -> ArkanoidState {
             panic!("expected Arkanoid controller on port 1")
         }
         ControllerStateWrapper::Zapper(_) => panic!("expected Arkanoid controller on port 1"),
+        ControllerStateWrapper::PowerPad(_) => panic!("expected Arkanoid controller on port 1"),
     }
 }
 

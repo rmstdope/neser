@@ -11,7 +11,8 @@ use crate::console::{ExpansionPort, HardwareMode};
 use crate::debugging::log_info;
 use crate::input::{
     ArkanoidController, ArkanoidState, Button, Controller, ControllerType, JoypadState, NesJoypad,
-    SnesAdapter, SnesAdapterState, SnesButton, Zapper, ZapperState,
+    PowerPad, PowerPadButton, PowerPadState, SnesAdapter, SnesAdapterState, SnesButton, Zapper,
+    ZapperState,
 };
 use crate::ppu::{self, SharedPpu};
 use serde::{Deserialize, Serialize};
@@ -26,6 +27,7 @@ pub enum ControllerStateWrapper {
     SnesAdapter(SnesAdapterState),
     Arkanoid(ArkanoidState),
     Zapper(ZapperState),
+    PowerPad(PowerPadState),
 }
 
 /// Bus state for save-state support.
@@ -39,6 +41,8 @@ pub struct BusState {
     pub expansion_arkanoid: Option<ArkanoidState>,
     #[serde(default)]
     pub expansion_zapper: Option<ZapperState>,
+    #[serde(default)]
+    pub expansion_power_pad: Option<PowerPadState>,
 }
 
 /// Mapper state (opaque serialization).
@@ -63,6 +67,7 @@ pub trait BusDevice {
         _famicom_mode: bool,
         _arkanoid_famicom_enabled: bool,
         _zapper_famicom_enabled: bool,
+        _power_pad_famicom_enabled: bool,
     ) {
     }
 }
@@ -82,6 +87,7 @@ pub struct Bus {
     four_score_extra_button_states: Rc<RefCell<[u8; 2]>>, // Emulated players 3 and 4 button states
     expansion_arkanoid: Rc<RefCell<ArkanoidController>>, // Famicom expansion Arkanoid controller
     expansion_zapper: Rc<RefCell<Zapper>>,              // Famicom expansion Zapper controller
+    expansion_power_pad: Rc<RefCell<PowerPad>>,         // Famicom expansion Power Pad controller
     open_bus: u8, // Last value on the data bus for open bus behavior
     devices: Vec<Box<dyn BusDevice>>,
 }
@@ -99,6 +105,7 @@ impl Bus {
             ControllerType::SnesMouse => Box::new(SnesAdapter::new_mouse()),
             ControllerType::Arkanoid => Box::new(ArkanoidController::new()),
             ControllerType::Zapper => Box::new(Zapper::new(ppu, app_context)),
+            ControllerType::PowerPad => Box::new(PowerPad::new()),
         }
     }
 
@@ -128,6 +135,7 @@ impl Bus {
 
         let expansion_arkanoid = Rc::new(RefCell::new(ArkanoidController::new()));
         let expansion_zapper = Rc::new(RefCell::new(Zapper::new(ppu.clone(), app_context.clone())));
+        let expansion_power_pad = Rc::new(RefCell::new(PowerPad::new()));
 
         let mut controller = Self {
             cpu_ram: Rc::new(RefCell::new(cpu_ram)),
@@ -141,6 +149,7 @@ impl Bus {
             four_score_extra_button_states: Rc::new(RefCell::new([0, 0])),
             expansion_arkanoid,
             expansion_zapper,
+            expansion_power_pad,
             open_bus: 0xFF, // Initialize to 0xFF (common power-on state)
             devices: Vec::new(),
         };
@@ -164,6 +173,8 @@ impl Bus {
         controller_device
             .set_arkanoid_famicom_expansion(Some(controller.expansion_arkanoid.clone()));
         controller_device.set_zapper_famicom_expansion(Some(controller.expansion_zapper.clone()));
+        controller_device
+            .set_power_pad_famicom_expansion(Some(controller.expansion_power_pad.clone()));
         controller.register_device(Box::new(controller_device));
         controller.register_device(Box::new(ApuDevice::new(controller.apu.clone())));
         controller.register_device(Box::new(OamDmaDevice::new(
@@ -187,6 +198,7 @@ impl Bus {
         let famicom_mode = app_context.config().hardware_mode == HardwareMode::Famicom;
         let arkanoid_famicom_enabled = Self::is_arkanoid_famicom(app_context.config());
         let zapper_famicom_enabled = Self::is_zapper_famicom(app_context.config());
+        let power_pad_famicom_enabled = Self::is_power_pad_famicom(app_context.config());
         drop(app_context);
 
         for device in self.devices.iter_mut() {
@@ -196,6 +208,7 @@ impl Bus {
                 famicom_mode,
                 arkanoid_famicom_enabled,
                 zapper_famicom_enabled,
+                power_pad_famicom_enabled,
             );
         }
     }
@@ -217,6 +230,11 @@ impl Bus {
     fn is_zapper_famicom(config: &crate::console::Config) -> bool {
         config.hardware_mode == HardwareMode::Famicom
             && config.expansion_port == ExpansionPort::ZapperFamicom
+    }
+
+    fn is_power_pad_famicom(config: &crate::console::Config) -> bool {
+        config.hardware_mode == HardwareMode::Famicom
+            && config.expansion_port == ExpansionPort::PowerPadFamicom
     }
 
     fn has_player34_serial_enabled(&self) -> bool {
@@ -597,6 +615,36 @@ impl Bus {
             .set_snes_button(button, pressed)
     }
 
+    /// Set Power Pad button state for a controller.
+    pub fn set_power_pad_button(
+        &mut self,
+        port: u8,
+        button: PowerPadButton,
+        pressed: bool,
+    ) -> bool {
+        if !(1..=2).contains(&port) {
+            return false;
+        }
+
+        self.controllers[(port - 1) as usize]
+            .borrow_mut()
+            .set_power_pad_button(button, pressed)
+    }
+
+    pub fn set_expansion_power_pad_button(
+        &mut self,
+        button: PowerPadButton,
+        pressed: bool,
+    ) -> bool {
+        if !self.is_power_pad_famicom_configured() {
+            return false;
+        }
+        self.expansion_power_pad
+            .borrow_mut()
+            .set_button(button, pressed);
+        true
+    }
+
     /// Get joypad button states as a u8 bitmask (for autorun recording).
     /// Returns 0 if the controller is not a joypad.
     pub fn get_joypad_button_states(&self, port: u8) -> u8 {
@@ -700,6 +748,10 @@ impl Bus {
         self.is_arkanoid_famicom_configured() || self.is_zapper_famicom_configured()
     }
 
+    pub fn has_expansion_power_pad(&self) -> bool {
+        self.is_power_pad_famicom_configured()
+    }
+
     /// Check if a Zapper is connected to the Famicom expansion port.
     pub fn has_expansion_zapper(&self) -> bool {
         self.is_zapper_famicom_configured()
@@ -711,6 +763,10 @@ impl Bus {
 
     fn is_zapper_famicom_configured(&self) -> bool {
         Self::is_zapper_famicom(self.app_context.borrow().config())
+    }
+
+    fn is_power_pad_famicom_configured(&self) -> bool {
+        Self::is_power_pad_famicom(self.app_context.borrow().config())
     }
 
     /// Check if a Zapper is active on the specified port or expansion port.
@@ -800,6 +856,7 @@ impl Bus {
                 }
                 crate::input::ControllerState::Paddle(s) => ControllerStateWrapper::Arkanoid(s),
                 crate::input::ControllerState::Zapper(s) => ControllerStateWrapper::Zapper(s),
+                crate::input::ControllerState::PowerPad(s) => ControllerStateWrapper::PowerPad(s),
             },
             port2_controller: match port2_state {
                 crate::input::ControllerState::Joypad(s) => ControllerStateWrapper::Joypad(s),
@@ -808,6 +865,7 @@ impl Bus {
                 }
                 crate::input::ControllerState::Paddle(s) => ControllerStateWrapper::Arkanoid(s),
                 crate::input::ControllerState::Zapper(s) => ControllerStateWrapper::Zapper(s),
+                crate::input::ControllerState::PowerPad(s) => ControllerStateWrapper::PowerPad(s),
             },
             expansion_arkanoid: if self.is_arkanoid_famicom_configured() {
                 Some(self.expansion_arkanoid.borrow().capture_state())
@@ -816,6 +874,11 @@ impl Bus {
             },
             expansion_zapper: if self.is_zapper_famicom_configured() {
                 Some(self.expansion_zapper.borrow().capture_state())
+            } else {
+                None
+            },
+            expansion_power_pad: if self.is_power_pad_famicom_configured() {
+                Some(self.expansion_power_pad.borrow().capture_state())
             } else {
                 None
             },
@@ -866,6 +929,15 @@ impl Bus {
                 controller.restore_state(&crate::input::ControllerState::Zapper(s.clone()));
                 *self.controllers[0].borrow_mut() = controller;
             }
+            ControllerStateWrapper::PowerPad(s) => {
+                let mut controller = Self::build_controller(
+                    self.ppu.clone(),
+                    self.app_context.clone(),
+                    ControllerType::PowerPad,
+                );
+                controller.restore_state(&crate::input::ControllerState::PowerPad(s.clone()));
+                *self.controllers[0].borrow_mut() = controller;
+            }
         }
 
         // Restore port 2 controller - replace if type changed
@@ -906,6 +978,15 @@ impl Bus {
                 controller.restore_state(&crate::input::ControllerState::Zapper(s.clone()));
                 *self.controllers[1].borrow_mut() = controller;
             }
+            ControllerStateWrapper::PowerPad(s) => {
+                let mut controller = Self::build_controller(
+                    self.ppu.clone(),
+                    self.app_context.clone(),
+                    ControllerType::PowerPad,
+                );
+                controller.restore_state(&crate::input::ControllerState::PowerPad(s.clone()));
+                *self.controllers[1].borrow_mut() = controller;
+            }
         }
 
         // Restore expansion Arkanoid state
@@ -920,6 +1001,12 @@ impl Bus {
             self.expansion_zapper
                 .borrow_mut()
                 .restore_state(zapper_state);
+        }
+
+        if let Some(ref power_pad_state) = state.expansion_power_pad {
+            self.expansion_power_pad
+                .borrow_mut()
+                .restore_state(power_pad_state);
         }
     }
 }
@@ -1495,6 +1582,34 @@ mod tests {
             restored.read(0x4016, false) & 0x18,
         ];
         assert_eq!(restored_paddle, expected_paddle);
+    }
+
+    #[test]
+    fn test_bus_save_state_roundtrip_with_power_pad() {
+        let mut memory = create_test_memory();
+        memory.set_controller_type(1, ControllerType::PowerPad);
+        assert!(memory.set_power_pad_button(1, crate::input::PowerPadButton::One, true));
+        assert!(memory.set_power_pad_button(1, crate::input::PowerPadButton::Four, true));
+        memory.write(0x4016, 0x01, false);
+        memory.write(0x4016, 0x00, false);
+        memory.read(0x4016, false);
+        memory.read(0x4016, false);
+
+        let saved_state = memory.capture_state();
+
+        let mut restored = create_test_memory();
+        restored.restore_state(&saved_state);
+        restored.write(0x4016, 0x01, false);
+        restored.write(0x4016, 0x00, false);
+
+        assert_eq!(restored.read(0x4016, false) & 0x18, 0x10); // button 2 on D3, button 4 on D4
+        assert_eq!(restored.read(0x4016, false) & 0x18, 0x08); // button 1 on D3, button 3 on D4
+        assert_eq!(restored.read(0x4016, false) & 0x18, 0x00); // button 5 on D3, button 12 on D4
+        assert_eq!(restored.read(0x4016, false) & 0x18, 0x00); // button 9 on D3
+        assert_eq!(restored.read(0x4016, false) & 0x18, 0x10); // button 6 on D3, D4 hardwired high
+        assert_eq!(restored.read(0x4016, false) & 0x18, 0x10); // button 10 on D3, D4 hardwired high
+        assert_eq!(restored.read(0x4016, false) & 0x18, 0x10); // button 11 on D3, D4 hardwired high
+        assert_eq!(restored.read(0x4016, false) & 0x18, 0x10); // button 7 on D3, D4 hardwired high
     }
 
     #[test]

@@ -527,7 +527,7 @@ impl WasmNes {
         Ok(())
     }
 
-    /// Set the expansion port: "none", "famicom-four-players", or "arkanoid".
+    /// Set the expansion port: "none", "famicom-four-players", "arkanoid", "zapper", or "power-pad".
     #[wasm_bindgen]
     pub fn set_expansion_port(&mut self, port: &str) -> Result<(), JsValue> {
         let app_context = self.app_context.clone();
@@ -562,6 +562,7 @@ impl WasmNes {
             crate::console::ExpansionPort::FamicomFourPlayers => "famicom-four-players".to_string(),
             crate::console::ExpansionPort::ArkanoidFamicom => "arkanoid".to_string(),
             crate::console::ExpansionPort::ZapperFamicom => "zapper".to_string(),
+            crate::console::ExpansionPort::PowerPadFamicom => "power-pad".to_string(),
         }
     }
 

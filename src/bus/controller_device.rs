@@ -1,6 +1,7 @@
 use crate::bus::bus::BusDevice;
 use crate::input::ArkanoidController;
 use crate::input::Controller;
+use crate::input::PowerPad;
 use crate::input::Zapper;
 use std::cell::RefCell;
 use std::ops::RangeInclusive;
@@ -20,6 +21,8 @@ pub(crate) struct ControllerDevice {
     arkanoid_famicom_enabled: bool,
     zapper_expansion: Option<Rc<RefCell<Zapper>>>,
     zapper_famicom_enabled: bool,
+    power_pad_expansion: Option<Rc<RefCell<PowerPad>>>,
+    power_pad_famicom_enabled: bool,
 }
 
 impl ControllerDevice {
@@ -58,6 +61,8 @@ impl ControllerDevice {
             arkanoid_famicom_enabled: false,
             zapper_expansion: None,
             zapper_famicom_enabled: false,
+            power_pad_expansion: None,
+            power_pad_famicom_enabled: false,
         }
     }
 
@@ -90,6 +95,17 @@ impl ControllerDevice {
 
     pub(crate) fn set_zapper_famicom_enabled(&mut self, enabled: bool) {
         self.zapper_famicom_enabled = enabled;
+    }
+
+    pub(crate) fn set_power_pad_famicom_expansion(
+        &mut self,
+        expansion: Option<Rc<RefCell<PowerPad>>>,
+    ) {
+        self.power_pad_expansion = expansion;
+    }
+
+    pub(crate) fn set_power_pad_famicom_enabled(&mut self, enabled: bool) {
+        self.power_pad_famicom_enabled = enabled;
     }
 
     fn read_arkanoid_famicom_bit(&mut self, port_index: usize, is_dummy_read: bool) -> u8 {
@@ -188,6 +204,25 @@ impl ControllerDevice {
 
         controller_state
     }
+
+    fn read_power_pad_famicom_bit(&mut self, port_index: usize, is_dummy_read: bool) -> u8 {
+        if port_index != 1 {
+            return self.controllers[port_index]
+                .borrow_mut()
+                .read(is_dummy_read);
+        }
+
+        let mut controller_state = self.controllers[port_index]
+            .borrow_mut()
+            .read(is_dummy_read);
+
+        if let Some(power_pad) = &self.power_pad_expansion {
+            let power_pad_bits = power_pad.borrow_mut().read(is_dummy_read);
+            controller_state = (controller_state & !0x18) | (power_pad_bits & 0x18);
+        }
+
+        controller_state
+    }
 }
 
 impl BusDevice for ControllerDevice {
@@ -202,6 +237,8 @@ impl BusDevice for ControllerDevice {
             self.read_arkanoid_famicom_bit(index, is_dummy_read)
         } else if self.zapper_famicom_enabled {
             self.read_zapper_famicom_bit(index, is_dummy_read)
+        } else if self.power_pad_famicom_enabled {
+            self.read_power_pad_famicom_bit(index, is_dummy_read)
         } else {
             self.controllers[index].borrow_mut().read(is_dummy_read)
         };
@@ -219,7 +256,9 @@ impl BusDevice for ControllerDevice {
         //   the Zapper via the expansion port pins, so only bits 5-7 are open bus.
         //   $4016 keeps the standard Famicom mask since bits 3-4 are not routed
         //   to the expansion connector on that port.
-        let open_bus_mask = if self.famicom_mode && !(self.zapper_famicom_enabled && addr == 0x4017)
+        let open_bus_mask = if self.famicom_mode
+            && !(self.zapper_famicom_enabled && addr == 0x4017)
+            && !(self.power_pad_famicom_enabled && addr == 0x4017)
         {
             0xF8
         } else {
@@ -248,6 +287,9 @@ impl BusDevice for ControllerDevice {
                 if let Some(ref arkanoid) = self.arkanoid_expansion {
                     arkanoid.borrow_mut().write_strobe(value);
                 }
+                if let Some(ref power_pad) = self.power_pad_expansion {
+                    power_pad.borrow_mut().write_strobe(value);
+                }
 
                 true
             }
@@ -267,19 +309,21 @@ impl BusDevice for ControllerDevice {
         famicom_mode: bool,
         arkanoid_famicom_enabled: bool,
         zapper_famicom_enabled: bool,
+        power_pad_famicom_enabled: bool,
     ) {
         self.set_four_score_enabled(four_score_enabled);
         self.set_famicom_four_players_enabled(famicom_four_players_enabled);
         self.famicom_mode = famicom_mode;
         self.set_arkanoid_famicom_enabled(arkanoid_famicom_enabled);
         self.set_zapper_famicom_enabled(zapper_famicom_enabled);
+        self.set_power_pad_famicom_enabled(power_pad_famicom_enabled);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::input::{Button, ControllerInput};
+    use crate::input::{Button, ControllerInput, PowerPad};
 
     fn read_24_bits(device: &mut ControllerDevice, addr: u16) -> u32 {
         let mut value = 0u32;
@@ -710,6 +754,43 @@ mod tests {
         device.set_zapper_famicom_enabled(true);
         device.famicom_mode = true;
         (device, zapper)
+    }
+
+    fn create_power_pad_expansion_device() -> (ControllerDevice, Rc<RefCell<PowerPad>>) {
+        let reads = Rc::new(RefCell::new(0));
+        let dummy_reads = Rc::new(RefCell::new(0));
+        let controller1: Rc<RefCell<Box<dyn Controller>>> = Rc::new(RefCell::new(Box::new(
+            TestController::new(reads.clone(), dummy_reads.clone()),
+        )));
+        let controller2: Rc<RefCell<Box<dyn Controller>>> = Rc::new(RefCell::new(Box::new(
+            TestController::new(reads, dummy_reads),
+        )));
+
+        let power_pad = Rc::new(RefCell::new(PowerPad::new()));
+        let mut device = ControllerDevice::new(controller1, controller2);
+        device.set_power_pad_famicom_expansion(Some(power_pad.clone()));
+        device.set_power_pad_famicom_enabled(true);
+        device.famicom_mode = true;
+        (device, power_pad)
+    }
+
+    #[test]
+    fn test_power_pad_famicom_expansion_serial_on_4017_bits_3_4() {
+        let (mut device, power_pad) = create_power_pad_expansion_device();
+        power_pad
+            .borrow_mut()
+            .set_button(crate::input::PowerPadButton::One, true);
+        power_pad
+            .borrow_mut()
+            .set_button(crate::input::PowerPadButton::Four, true);
+
+        assert!(device.write(0x4016, 1, false));
+        assert!(device.write(0x4016, 0, false));
+
+        let first = device.read(0x4017, 0x00, false).unwrap();
+        let second = device.read(0x4017, 0x00, false).unwrap();
+        assert_eq!(first & 0x18, 0x10);
+        assert_eq!(second & 0x18, 0x08);
     }
 
     /// Famicom Zapper expansion port: trigger should appear on bit 4 of $4017 reads.
