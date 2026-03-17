@@ -1,5 +1,6 @@
 use crate::cartridge::NametableLayout;
-use crate::cartridge::ines::{ConsoleType, ParsedRom};
+use crate::cartridge::hardware_type::HardwareType;
+use crate::cartridge::ines::ParsedRom;
 use std::io;
 
 use super::axrom::AxROMMapper;
@@ -102,6 +103,7 @@ use super::mapper185::Mapper185;
 use super::mapper205::Mapper205;
 use super::mapper218::Mapper218;
 use super::mapper228::Mapper228;
+use super::mapper230::Mapper230;
 use super::mapper231::Mapper231;
 use super::mapper232::Mapper232;
 use super::mapper233::Mapper233;
@@ -201,8 +203,8 @@ pub struct MapperContext {
     pub submapper: u8,
     /// PPU nametable mirroring mode from the header.
     pub mirroring: NametableLayout,
-    /// Console type from iNES/NES 2.0 header.
-    pub console_type: ConsoleType,
+    /// Hardware type derived from console type and timing mode.
+    pub hardware_type: HardwareType,
     /// PRG ROM bytes.
     pub prg_rom: Vec<u8>,
     /// CHR ROM bytes (empty when CHR-RAM).
@@ -230,7 +232,10 @@ impl MapperContext {
             mapper: info.mapper,
             submapper: info.submapper,
             mirroring: info.mirroring,
-            console_type: info.console_type,
+            hardware_type: HardwareType::from_console_type_and_timing(
+                info.console_type,
+                info.timing_mode,
+            ),
             prg_rom: parsed.prg_rom.clone(),
             chr_rom: parsed.chr_rom.clone(),
             prg_ram_banks_8k: Self::prg_ram_banks_8k(info.prg_ram_size_bytes),
@@ -266,7 +271,7 @@ impl MapperContext {
             mapper,
             submapper: 0,
             mirroring,
-            console_type: ConsoleType::NesFamicom,
+            hardware_type: HardwareType::NesNtsc,
             prg_rom,
             chr_rom,
             prg_ram_banks_8k: 1,
@@ -856,6 +861,7 @@ mapper_registry! {
     206 => Namco118Mapper::new,
     218 => Mapper218::new,
     228 => Mapper228::new,
+    230 => Mapper230::new,
     231 => Mapper231::new,
     232 => Mapper232::new,
     233 => Mapper233::new,
@@ -905,10 +911,10 @@ const SUPPORTED_MAPPERS: &[u16] = &[
     50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73,
     74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96,
     100, 101, 102, 103, 104, 106, 110, 114, 115, 117, 118, 120, 121, 122, 123, 129, 132, 133, 140,
-    155, 185, 205, 206, 218, 228, 231, 232, 233, 234, 236, 241, 242, 243, 244, 245, 246, 249, 250,
-    251, 253, 254, 255, 257, 260, 262, 263, 264, 268, 271, 281, 285, 286, 287, 288, 291, 292, 294,
-    300, 302, 304, 305, 307, 308, 313, 314, 315, 319, 320, 323, 324, 326, 327, 328, 329, 330, 332,
-    335, 337, 338, 339, 340, 342, 343, 344, 345, 346, 347, 348, 349, 350,
+    155, 185, 205, 206, 218, 228, 230, 231, 232, 233, 234, 236, 241, 242, 243, 244, 245, 246, 249,
+    250, 251, 253, 254, 255, 257, 260, 262, 263, 264, 268, 271, 281, 285, 286, 287, 288, 291, 292,
+    294, 300, 302, 304, 305, 307, 308, 313, 314, 315, 319, 320, 323, 324, 326, 327, 328, 329, 330,
+    332, 335, 337, 338, 339, 340, 342, 343, 344, 345, 346, 347, 348, 349, 350,
 ];
 
 /// List of supported iNES mapper IDs handled by the factory.

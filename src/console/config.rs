@@ -462,6 +462,7 @@ impl HardwareModel {
         }
     }
 
+    #[allow(dead_code)] // Used by the wasm frontend
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::NesNtsc => "nes-ntsc",

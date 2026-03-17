@@ -399,7 +399,6 @@ mod tests {
             "".to_string(),
             format!("{expected_crc:08X}"),
             "".to_string(),
-            "".to_string(),
             "Licensed Test".to_string(),
             "4".to_string(),
             "".to_string(),

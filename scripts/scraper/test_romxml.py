@@ -58,7 +58,7 @@ class TestRomXml(unittest.TestCase):
             {
                 RomDbKey.CRC.value: "A1B2C3D4",
                 RomDbKey.NAMETABLE_LAYOUT.value: "horizontal",
-                RomDbKey.CONSOLE_REGION.value: "PAL",
+                RomDbKey.HARDWARE.value: "1",
                 RomDbKey.PRG_ROM_SIZE.value: "0",
                 RomDbKey.PRG_RAM_SIZE.value: "0",
                 RomDbKey.PRG_NVRAM_SIZE.value: "0",
@@ -243,8 +243,7 @@ class TestRomXml(unittest.TestCase):
                 RomDbKey.SUBMAPPER.value: "0",
                 RomDbKey.NAMETABLE_LAYOUT.value: "H",
                 RomDbKey.BATTERY.value: "0",
-                RomDbKey.CONSOLE_TYPE.value: "0",
-                RomDbKey.CONSOLE_REGION.value: "0",
+                RomDbKey.HARDWARE.value: "2",
                 RomDbKey.EXPANSION_TYPE.value: "1",
                 RomDbKey.VS_HARDWARE_TYPE.value: "0",
                 RomDbKey.VS_PPU_TYPE.value: "5",

@@ -11,6 +11,7 @@ mod common;
 mod cprom;
 mod cpu_cycle_irq;
 mod gxrom;
+mod hardware_type;
 mod ines;
 mod irem_g101;
 mod mapper;
@@ -46,6 +47,7 @@ mod mapper20;
 mod mapper205;
 mod mapper218;
 mod mapper228;
+mod mapper230;
 mod mapper231;
 mod mapper232;
 mod mapper233;
@@ -206,6 +208,8 @@ pub use cartridge::Cartridge;
 pub use common::{BankSwitch, BankedRom};
 #[allow(unused_imports)]
 pub use common::{ChrMemory, DEFAULT_CHR_RAM_SIZE, DEFAULT_PRG_RAM_SIZE, PrgRam, StateSnapshot};
+#[allow(unused_imports)]
+pub use hardware_type::HardwareType;
 #[allow(unused_imports)]
 pub use ines::{ConsoleType, InesHeader, NametableLayout, ParsedRom, RomParseError, TimingMode};
 #[allow(unused_imports)]

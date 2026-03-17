@@ -4,10 +4,10 @@ import unittest
 
 try:
     from .nescartdb import NesCartDb, BeautifulSoup
-    from .rom_database import RomDbKey, ConsoleType
+    from .rom_database import RomDbKey, HardwareType
 except ImportError:  # pragma: no cover - allow running as a script
     from nescartdb import NesCartDb, BeautifulSoup
-    from rom_database import RomDbKey, ConsoleType
+    from rom_database import RomDbKey, HardwareType
 
 
 @unittest.skipIf(BeautifulSoup is None, "BeautifulSoup4 is required for nescartdb tests")
@@ -718,7 +718,7 @@ class TestNesCartDb(unittest.TestCase):
 
         self.assertEqual(result[RomDbKey.NAME.value], "Super Mario Bros.")
         self.assertEqual(result[RomDbKey.CRC.value], "D445F698")
-        self.assertEqual(result[RomDbKey.CONSOLE_TYPE.value], ConsoleType.NES_FAMICOM)
+        self.assertEqual(result[RomDbKey.HARDWARE.value], HardwareType.NES_NTSC)
         self.assertEqual(result[RomDbKey.MAPPER.value], 0)
         self.assertEqual(result[RomDbKey.PRG_ROM_SIZE.value], 32768)
         self.assertEqual(result[RomDbKey.CHR_ROM_SIZE.value], 8192)
@@ -728,6 +728,24 @@ class TestNesCartDb(unittest.TestCase):
         self.assertEqual(result[RomDbKey.BATTERY.value], 0)
         self.assertEqual(result[RomDbKey.EXPANSION_TYPE.value], 1)
         self.assertNotIn(RomDbKey.SUBMAPPER.value, result)
+
+    def test_build_result_pal_region_sets_nes_pal_hardware(self) -> None:
+        """A PAL entry (Region = 'PAL (Europe)') must set hardware to NES_PAL, not NES_NTSC."""
+        pal_html = self._static_html().replace(
+            "USA (NTSC)", "PAL (Europe)"
+        )
+        scraper = NesCartDb(1)
+        result = scraper._build_result(1, pal_html)
+        self.assertEqual(result[RomDbKey.HARDWARE.value], HardwareType.NES_PAL)
+
+    def test_build_result_japan_ntsc_sets_famicom_hardware(self) -> None:
+        """A Japan (NTSC) entry must set hardware to FAMICOM, not NES_NTSC."""
+        japan_html = self._static_html().replace(
+            "USA (NTSC)", "Japan (NTSC)"
+        )
+        scraper = NesCartDb(1)
+        result = scraper._build_result(1, japan_html)
+        self.assertEqual(result[RomDbKey.HARDWARE.value], HardwareType.FAMICOM)
 
 
 if __name__ == "__main__":

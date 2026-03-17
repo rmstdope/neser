@@ -17,7 +17,7 @@ class RomDbIndexTests(unittest.TestCase):
             csv_path = Path(temp_dir_str) / "rom_db.csv"
             csv_path.write_text(
                 "# comment\n"
-                "1,Test Game,,836C4FA7,0,0,Licensed Japan,4,2,H,0,0,0,0,0,0,0,0,0,,,1\n",
+                "1,Test Game,,836C4FA7,0,Licensed Japan,4,2,H,0,0,0,0,0,0,0,0,0,,,1\n",
                 encoding="utf-8",
             )
 
@@ -36,7 +36,7 @@ class RomDbIndexTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir_str:
             csv_path = Path(temp_dir_str) / "rom_db.csv"
             csv_path.write_text(
-                "1,Name, With Comma,,1234ABCD,0,0,Licensed Japan,7,1,H,0,0,0,0,0,0,0,0,0,,,1\n",
+                "1,Name, With Comma,,1234ABCD,0,Licensed Japan,7,1,H,0,0,0,0,0,0,0,0,0,,,1\n",
                 encoding="utf-8",
             )
 

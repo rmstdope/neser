@@ -8,6 +8,14 @@ NESER - NES Emulator in Rust
 cargo build --release --features sdl
 ```
 
+## Development Setup
+
+After cloning, activate the shared git hooks (runs `cargo fmt` automatically before each commit):
+
+```bash
+git config core.hooksPath .githooks
+```
+
 ## Running
 
 ```bash

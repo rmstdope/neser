@@ -50,7 +50,7 @@ class RomFileDatabaseTests(unittest.TestCase):
             crc = crc_from_rom_bytes(rom_bytes)
             rom_db_path = temp_root / "rom_db.csv"
             rom_db_path.write_text(
-                f"1,Override Test,,{crc},0,0,Licensed Japan,66,3,H,0,0,0,0,0,0,0,0,0,,,1\n",
+                f"1,Override Test,,{crc},0,Licensed Japan,66,3,H,0,0,0,0,0,0,0,0,0,,,1\n",
                 encoding="utf-8",
             )
 
@@ -98,7 +98,7 @@ class RomFileDatabaseTests(unittest.TestCase):
             crc = crc_from_rom_bytes(rom_bytes)
             rom_db_path = temp_root / "rom_db.csv"
             rom_db_path.write_text(
-                f"1,Override Existing,,{crc},0,0,Licensed Japan,9,4,H,0,0,0,0,0,0,0,0,0,,,1\n",
+                f"1,Override Existing,,{crc},0,Licensed Japan,9,4,H,0,0,0,0,0,0,0,0,0,,,1\n",
                 encoding="utf-8",
             )
 
