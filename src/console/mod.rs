@@ -25,21 +25,21 @@ pub use ram_init::initialize_ram;
 
 pub fn log_hardware_selection(app_context: &SharedAppContext, timing_applied: bool) {
     let binding = app_context.borrow();
-    let config = binding.config();
+    let cfg = binding.config();
 
-    let hardware_desc = match config.hardware_mode {
+    let hardware_desc = match cfg.hardware_mode {
         config::HardwareMode::Famicom => "Famicom".to_string(),
-        config::HardwareMode::Nes => match config.hardware_model {
+        config::HardwareMode::Nes => match cfg.hardware_model {
             config::HardwareModel::NesNtsc => "NES NTSC".to_string(),
             config::HardwareModel::NesPal => "NES PAL".to_string(),
         },
     };
 
-    let source = if config.hardware_mode == config::HardwareMode::Famicom
-        && !config.hardware_mode_explicit
+    let source = if cfg.hardware_mode == config::HardwareMode::Famicom
+        && !cfg.hardware_mode_explicit
     {
         "from ROM DB"
-    } else if config.hardware_mode_explicit || config.hardware_model_explicit {
+    } else if cfg.hardware_mode_explicit || cfg.hardware_model_explicit {
         "from configuration"
     } else if timing_applied {
         "detected from ROM"
