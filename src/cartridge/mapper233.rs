@@ -64,6 +64,9 @@ pub struct Mapper233 {
     reg1: u8,
     /// Toggle bit that flips on each soft reset; becomes PRG-page bit 5.
     reset_toggle: u8,
+    /// Flag indicating that the next call to `reset()` should be treated as a hard reset.
+    /// This is set by `initialize_ram()` (hard reset only) and consumed by `reset()`.
+    hard_reset_pending: bool,
 }
 
 impl Mapper233 {
@@ -81,6 +84,7 @@ impl Mapper233 {
             reg0: 0,
             reg1: 0,
             reset_toggle: 0,
+            hard_reset_pending: false,
         };
         mapper.apply_banks();
         mapper
@@ -131,8 +135,20 @@ impl Mapper for Mapper233 {
         self.apply_banks();
     }
 
+    fn initialize_ram(&mut self) {
+        // Called on hard reset only; mark that the next reset should be treated as hard.
+        self.hard_reset_pending = true;
+    }
+
     fn reset(&mut self) {
-        self.reset_toggle ^= 0x01;
+        if self.hard_reset_pending {
+            // Hard reset semantics: force reset_toggle to 0.
+            self.reset_toggle = 0;
+            self.hard_reset_pending = false;
+        } else {
+            // Soft reset semantics: toggle reset_toggle.
+            self.reset_toggle ^= 0x01;
+        }
         self.reg0 = 0;
         self.reg1 = 0;
         self.apply_banks();
@@ -143,16 +159,27 @@ impl Mapper for Mapper233 {
         snap.push(self.reg0);
         snap.push(self.reg1);
         snap.push(self.reset_toggle);
+        snap.push(self.hard_reset_pending as u8);
         snap
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
         let expected_banking_len = self.base.banking_snapshot().len();
-        if data.len() >= expected_banking_len + 3 {
+        if data.len() >= expected_banking_len + 4 {
+            // New-format snapshot with hard_reset_pending included.
             self.base.restore_banking(&data[..expected_banking_len]);
             self.reg0 = data[expected_banking_len];
             self.reg1 = data[expected_banking_len + 1];
             self.reset_toggle = data[expected_banking_len + 2];
+            self.hard_reset_pending = data[expected_banking_len + 3] != 0;
+            self.apply_banks();
+        } else if data.len() >= expected_banking_len + 3 {
+            // Backward-compatible path: older snapshots without hard_reset_pending.
+            self.base.restore_banking(&data[..expected_banking_len]);
+            self.reg0 = data[expected_banking_len];
+            self.reg1 = data[expected_banking_len + 1];
+            self.reset_toggle = data[expected_banking_len + 2];
+            self.hard_reset_pending = false;
             self.apply_banks();
         } else {
             self.base.restore_banking(data);
