@@ -8,7 +8,7 @@
 //! - No known gameplay-blocking functional limitations are currently documented.
 
 use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::cartridge::mapper::{Mapper, MapperCapabilities, RamInitMode};
 
 const MAPPER_NUMBER: u16 = 233;
 
@@ -362,19 +362,42 @@ mod tests {
             mapper.read_prg(0xC000),
             33,
             "after first soft reset, upper window should be bank 33"
-        );
-    }
-
+    fn hard_reset_forces_reset_toggle_and_clears_registers() {
+        // Put the existing mapper into a non-default state:
+        // - reset_toggle = 1 (after a soft reset)
+        // - reg0 and reg1 = non-zero (after writes)
     #[test]
-    fn soft_reset_toggles_reset_toggle_each_time() {
-        let mut mapper = make_mapper(banked_data(16 * 1024, PRG_BANKS));
         // reset_toggle starts at 0
-        assert_eq!(mapper.read_prg(0x8000), 0, "initial lower window = bank 0");
-
+        // First soft reset: this should toggle reset_toggle and clear the registers.
         mapper.reset();
-        // reset_toggle = 1 → page bit5 = 1 → page = 32; lower=32, upper=33
+
+        // Now write non-zero values into both registers via the normal PRG interface.
+        mapper.write_prg(0x8000, 0xA5);
+        mapper.write_prg(0x8001, 0x01);
+
+        // Sanity-check that we're not in the power-on default state anymore.
+        assert_ne!(mapper.reset_toggle, 0, "reset_toggle should be non-zero after soft reset");
+        assert_ne!(mapper.reg0, 0, "reg0 should be non-zero after writes");
+        assert_ne!(mapper.reg1, 0, "reg1 should be non-zero after writes");
+
+        // Emulate the emulator's hard reset path:
+        // Bus::reset_cartridge calls initialize_ram(RamInitMode::Zero) then reset()
+        // on the existing mapper instance.
+        mapper.initialize_ram(RamInitMode::Zero);
+        mapper.reset();
+
+        // Hard reset must force reset_toggle back to 0 and clear both registers.
+        mapper.reset();
+            mapper.reset_toggle, 0,
+            "hard reset should force reset_toggle back to 0"
+        );
         assert_eq!(
-            mapper.read_prg(0x8000),
+            mapper.reg0, 0,
+            "hard reset should clear reg0"
+        );
+        assert_eq!(
+            mapper.reg1, 0,
+            "hard reset should clear reg1"
             32,
             "1st soft reset → bank 32 (reset_toggle=1)"
         );
