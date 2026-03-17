@@ -314,9 +314,9 @@ class TestHardwareFromConsoleTypeAndRegion(unittest.TestCase):
         self.assertEqual(result, HardwareType.FAMICOM.value)
 
     def test_japan_multi_region_is_famicom(self):
-        """Multi-region + Japan country must yield Famicom, not NES_MULTI_REGION."""
+        """Multi-region + Japan country must stay NES_MULTI_REGION, not Famicom."""
         result = hardware_from_console_type_and_region("0", "2", country="Licensed Japan")
-        self.assertEqual(result, HardwareType.FAMICOM.value)
+        self.assertEqual(result, HardwareType.NES_MULTI_REGION.value)
 
     def test_japan_pal_remains_pal(self):
         """PAL + Japan country must remain NES_PAL (contradictory, keep as-is)."""

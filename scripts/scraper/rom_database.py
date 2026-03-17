@@ -100,9 +100,9 @@ def hardware_from_console_type_and_region(
     hw = region_map.get(cr)
     if hw is None:
         return None
-    # NES_NTSC and NES_MULTI_REGION are upgraded to FAMICOM for Japan releases
+    # NES_NTSC is upgraded to FAMICOM for Japan releases; NES_MULTI_REGION stays as-is
     is_japan = country and "japan" in country.lower()
-    if is_japan and hw in (HardwareType.NES_NTSC, HardwareType.NES_MULTI_REGION):
+    if is_japan and hw == HardwareType.NES_NTSC:
         return HardwareType.FAMICOM.value
     return hw.value
 
@@ -491,6 +491,7 @@ class RomDatabase:
                         pass  # keep existing more-specific value, no conflict
                     else:
                         print(f"\nConflict on CRC {crc}: column '{key}' has existing value '{old_value}', new value '{value}'")
+                        print(data)
                         has_conflict = True
                 # Extra merge of controller types
                 elif key == RomDbKey.EXPANSION_TYPE.value:
