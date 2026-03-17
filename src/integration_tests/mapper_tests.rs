@@ -384,11 +384,19 @@ mod tests {
         test_mv_m004_0_prg_ram,
         "roms/automated_tests/mapper_verification/bin/rom_singles/m004.0_prg_ram.nes"
     );
+    setup_rom_test!(
+        test_mv_m004_0_write_protect,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m004.0_write_protect.nes"
+    );
 
     // Mapper 4, Submapper 1 (NEC IRQ)
     setup_rom_test!(
         test_mv_m004_1_irq,
         "roms/automated_tests/mapper_verification/bin/rom_singles/m004.1_irq.nes"
+    );
+    setup_rom_test!(
+        test_mv_m004_1_write_protect,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m004.1_write_protect.nes"
     );
 
     // Mapper 7 (AxROM), Submapper 0 (Bus Conflicts)
@@ -439,6 +447,10 @@ mod tests {
     setup_rom_test!(
         test_mv_m005_0_multiplier,
         "roms/automated_tests/mapper_verification/bin/rom_singles/m005.0_multiplier.nes"
+    );
+    setup_rom_test!(
+        test_mv_m005_0_write_protect,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m005.0_write_protect.nes"
     );
 
     // ================================================================
@@ -586,6 +598,10 @@ mod tests {
         test_mv_m012_0_prg_ram,
         "roms/automated_tests/mapper_verification/bin/rom_singles/m012.0_prg_ram.nes"
     );
+    setup_rom_test!(
+        test_mv_m012_0_write_protect,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m012.0_write_protect.nes"
+    );
 
     // ================================================================
     // Mapper 13 (CPROM), Submapper 0
@@ -621,6 +637,10 @@ mod tests {
     setup_rom_test!(
         test_mv_m014_0_prg_ram,
         "roms/automated_tests/mapper_verification/bin/rom_singles/m014.0_prg_ram.nes"
+    );
+    setup_rom_test!(
+        test_mv_m014_0_write_protect,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m014.0_write_protect.nes"
     );
 
     // ================================================================
