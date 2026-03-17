@@ -35,17 +35,16 @@ pub fn log_hardware_selection(app_context: &SharedAppContext, timing_applied: bo
         },
     };
 
-    let source = if cfg.hardware_mode == config::HardwareMode::Famicom
-        && !cfg.hardware_mode_explicit
-    {
-        "from ROM DB"
-    } else if cfg.hardware_mode_explicit || cfg.hardware_model_explicit {
-        "from configuration"
-    } else if timing_applied {
-        "detected from ROM"
-    } else {
-        "default"
-    };
+    let source =
+        if cfg.hardware_mode == config::HardwareMode::Famicom && !cfg.hardware_mode_explicit {
+            "from ROM DB"
+        } else if cfg.hardware_mode_explicit || cfg.hardware_model_explicit {
+            "from configuration"
+        } else if timing_applied {
+            "detected from ROM"
+        } else {
+            "default"
+        };
 
     log_info(format!("Emulating {hardware_desc} ({source})"));
 }
