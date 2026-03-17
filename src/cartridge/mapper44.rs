@@ -95,6 +95,9 @@ impl Mapper for Mapper44 {
     }
 
     fn read_prg(&self, addr: u16) -> u8 {
+        if (0x6000..=0x7FFF).contains(&addr) {
+            return self.mmc3.read_prg(addr);
+        }
         if !(0x8000..=0xFFFF).contains(&addr) {
             return 0;
         }
@@ -103,6 +106,16 @@ impl Mapper for Mapper44 {
         let bank = (raw & and) | or;
         let offset = (addr as usize) & Self::PRG_BANK_MASK;
         self.mmc3.read_prg_at_bank(bank, offset)
+    }
+
+    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        if (0x6000..=0x7FFF).contains(&addr) {
+            return self.mmc3.read_prg_open_bus(addr, open_bus);
+        }
+        if !(0x8000..=0xFFFF).contains(&addr) {
+            return open_bus;
+        }
+        self.read_prg(addr)
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {

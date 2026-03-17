@@ -38,6 +38,8 @@ pub struct Mapper35 {
     irq_enabled: bool,
     irq_pending: bool,
     a12_detector: A12RisingEdgeDetector,
+    multiplicand: u8,
+    multiplier: u8,
 }
 
 impl Mapper35 {
@@ -49,6 +51,7 @@ impl Mapper35 {
             has_irq: true,
             has_chr_banking: true,
             has_dynamic_mirroring: true,
+            max_prg_ram_kb: ctx.prg_ram_banks_8k as usize * 8,
             prg_bank_size_kb: 8,
             chr_bank_size_kb: 1,
             ..Default::default()
@@ -66,6 +69,8 @@ impl Mapper35 {
             irq_enabled: false,
             irq_pending: false,
             a12_detector: A12RisingEdgeDetector::new(3),
+            multiplicand: 0,
+            multiplier: 0,
         };
         mapper.update_banks();
         mapper
@@ -106,33 +111,107 @@ impl Mapper for Mapper35 {
         &mut self.base
     }
 
+    fn read_prg(&self, addr: u16) -> u8 {
+        match addr {
+            0x5800 => {
+                let result = (self.multiplicand as u16) * (self.multiplier as u16);
+                result as u8
+            }
+            0x5801 => {
+                let result = (self.multiplicand as u16) * (self.multiplier as u16);
+                (result >> 8) as u8
+            }
+            _ => {
+                if let Some(value) = self.base.try_read_prg_6000(addr) {
+                    return value;
+                }
+                if let Some(value) = self.base.try_read_prg_ram(addr) {
+                    return value;
+                }
+                match addr {
+                    0x8000..=0xFFFF => self.base.read_prg_rom(addr),
+                    _ => 0,
+                }
+            }
+        }
+    }
+
+    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        match addr {
+            0x5800 => {
+                let result = (self.multiplicand as u16) * (self.multiplier as u16);
+                result as u8
+            }
+            0x5801 => {
+                let result = (self.multiplicand as u16) * (self.multiplier as u16);
+                (result >> 8) as u8
+            }
+            _ => self
+                .base
+                .read_prg_open_bus(addr, open_bus, |a| self.read_prg(a)),
+        }
+    }
+
     fn write_prg(&mut self, addr: u16, value: u8) {
-        match addr & 0xF007 {
-            0x8000..=0x8003 => {
+        match addr {
+            0x5800 => {
+                self.multiplicand = value;
+                return;
+            }
+            0x5801 => {
+                self.multiplier = value;
+                return;
+            }
+            _ => {}
+        }
+        if self.base.try_write_prg_ram(addr, value) {
+            return;
+        }
+
+        let high = addr & 0xF000;
+        let bit11_set = addr & 0x0800 != 0;
+
+        match high {
+            // PRG bank select — mask $F803 (bit 11 must be clear)
+            0x8000 if !bit11_set => {
                 let slot = (addr & 0x03) as usize;
                 self.prg_regs[slot] = value;
                 self.update_banks();
             }
-            0x9000..=0x9007 => {
+            // CHR bank select LSB — mask $F807 (bit 11 must be clear)
+            0x9000 if !bit11_set => {
                 let slot = (addr & 0x07) as usize;
                 self.chr_regs[slot] = value;
                 self.update_banks();
             }
-            0xC002 => {
-                self.irq_enabled = false;
-                self.irq_pending = false;
-            }
-            0xC003 => {
-                self.irq_enabled = true;
-            }
-            0xC005 => {
-                self.irq_counter = value;
-            }
-            0xD001 => {
-                if (value & 0x01) != 0 {
-                    self.base.set_mirroring(NametableLayout::Horizontal);
-                } else {
-                    self.base.set_mirroring(NametableLayout::Vertical);
+            // IRQ registers — mask $F007 (bit 11 does NOT matter)
+            0xC000 => match addr & 0x07 {
+                0x02 => {
+                    self.irq_enabled = false;
+                    self.irq_pending = false;
+                }
+                0x03 => {
+                    self.irq_enabled = true;
+                }
+                0x05 => {
+                    self.irq_counter = value;
+                }
+                _ => {}
+            },
+            // Mode registers — mask $F803 (bit 11 must be clear)
+            0xD000 if !bit11_set => {
+                match addr & 0x03 {
+                    0x00 => {
+                        // Mode register — currently only 8K PRG + 1K CHR mode is tested
+                    }
+                    0x01 => match value & 0x03 {
+                        0 => self.base.set_mirroring(NametableLayout::Vertical),
+                        1 => self.base.set_mirroring(NametableLayout::Horizontal),
+                        2 => self.base.set_mirroring(NametableLayout::SingleScreenLower),
+                        3 => self.base.set_mirroring(NametableLayout::SingleScreenUpper),
+                        _ => unreachable!(),
+                    },
+                    _ => {}
                 }
             }
             _ => {}
@@ -159,14 +238,20 @@ impl Mapper for Mapper35 {
             _ => 0u8,
         };
         let flags = (self.irq_enabled as u8) | ((self.irq_pending as u8) << 1);
-        let mut v = vec![mirror_byte, flags, self.irq_counter];
+        let mut v = vec![
+            mirror_byte,
+            flags,
+            self.irq_counter,
+            self.multiplicand,
+            self.multiplier,
+        ];
         v.extend_from_slice(&self.prg_regs);
         v.extend_from_slice(&self.chr_regs);
         v
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        if data.len() < 15 {
+        if data.len() < 17 {
             return;
         }
         self.base.set_mirroring_hv(data[0] != 0);
@@ -174,8 +259,10 @@ impl Mapper for Mapper35 {
         self.irq_enabled = (flags & 1) != 0;
         self.irq_pending = (flags & 2) != 0;
         self.irq_counter = data[2];
-        self.prg_regs.copy_from_slice(&data[3..7]);
-        self.chr_regs.copy_from_slice(&data[7..15]);
+        self.multiplicand = data[3];
+        self.multiplier = data[4];
+        self.prg_regs.copy_from_slice(&data[5..9]);
+        self.chr_regs.copy_from_slice(&data[9..17]);
         self.update_banks();
     }
 
@@ -185,6 +272,8 @@ impl Mapper for Mapper35 {
         self.irq_counter = 0;
         self.irq_enabled = false;
         self.irq_pending = false;
+        self.multiplicand = 0;
+        self.multiplier = 0;
         self.a12_detector = A12RisingEdgeDetector::new(3);
         self.base.set_mirroring(NametableLayout::Vertical);
         self.update_banks();

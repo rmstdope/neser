@@ -38,11 +38,14 @@ SND_CHN   = $4015
 JOY1      = $4016
 JOY2      = $4017
 
-; Test status byte address
+; Test framework storage
+; TEST_STATUS remains at $6000 for mappers that support the status-byte protocol.
+; TEST_CODE / TEST_TEMP / TEST_TEMP2 live in CPU RAM so mappers with $6000-$7FFF
+; control registers can still use the shared framework safely.
 TEST_STATUS = $6000
-TEST_CODE   = $6001    ; Current sub-test number
-TEST_TEMP   = $6002    ; Temp storage for test framework
-TEST_TEMP2  = $6003    ; Temp storage for test framework
+TEST_CODE   = $0001    ; Current sub-test number
+TEST_TEMP   = $0002    ; Temp storage for test framework
+TEST_TEMP2  = $0003    ; Temp storage for test framework
 
 ; Status byte values
 STATUS_RUNNING = $80

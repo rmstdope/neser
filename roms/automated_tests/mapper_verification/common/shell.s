@@ -114,13 +114,43 @@ got_val:      .res 1       ; Temp for fail handler
     .elseif MAPPER_NUM = 28
     ; Action 53: configure PRG mode 2, horizontal mirroring
     init_action53
+    .elseif MAPPER_NUM = 32
+    ; Irem G-101: map font CHR banks 8+9 to PPU $0000-$07FF
+    ; CHR bank 8 → 1K slot 0 at $B000, CHR bank 9 → 1K slot 1 at $B001
+    lda #8
+    sta $B000
+    lda #9
+    sta $B001
+    .elseif MAPPER_NUM = 33
+    ; Taito TC0190: map font via 2K register ($8002)
+    init_chr_font
+    .elseif MAPPER_NUM = 35
+    ; J.Y. Company ASIC: set mode register, mirroring, and map font
+    ; $D000 = $1A: 8K PRG mode, 1K CHR mode, last bank fixed, WRAM at $6000
+    lda #$1A
+    sta $D000
+    ; Vertical mirroring
+    lda #$00
+    sta $D001
+    ; Map font CHR banks 8+9 to PPU $0000-$07FF
+    init_chr_font
+    .elseif MAPPER_NUM = 44
+    ; Super Big 7-in-1: MMC3 multicart — enable PRG-RAM, select block 0, map font
+    lda #$80                ; E=1, W=0, block=0
+    sta $A001
+    init_chr_font
+    .elseif MAPPER_NUM = 48
+    ; Taito TC0690: map font via 2K register ($8002)
+    init_chr_font
     .endif
 
     jsr init_nes
 
-    ; Set status = running
+    ; Set status = running for mappers using the $6000 status-byte protocol
+    .ifndef CONSOLE_VERIFICATION
     lda #STATUS_RUNNING
     sta TEST_STATUS
+    .endif
 
     ; Initialize console
     jsr console_init
@@ -195,9 +225,11 @@ got_val:      .res 1       ; Temp for fail handler
     ; Re-enable rendering to ensure console output is visible
     jsr console_show
 
-    ; Set status byte to failing test number
+    ; Set status byte to failing test number for status-byte verified mappers
+    .ifndef CONSOLE_VERIFICATION
     lda TEST_CODE
     sta TEST_STATUS
+    .endif
 
     ; Halt
 :   jmp :-
@@ -261,6 +293,21 @@ got_val:      .res 1       ; Temp for fail handler
     ; VRC6a/b: write to IRQ ACK register (auto-reloads if A bit was set)
     lda #0
     sta VRC6_IRQ_ACK
+    .elseif MAPPER_NUM = 44
+    ; Mapper 44 (MMC3 multicart): acknowledge + re-enable
+    lda #0
+    sta $E000               ; IRQ acknowledge (disable)
+    sta $E001               ; IRQ re-enable
+    .elseif MAPPER_NUM = 35
+    ; J.Y. Company ASIC: acknowledge IRQ by disabling then re-enabling
+    lda #0
+    sta $C002               ; IRQ disable (acknowledges pending IRQ)
+    sta $C003               ; IRQ re-enable
+    .elseif MAPPER_NUM = 48
+    ; Taito TC0690: acknowledge IRQ by writing to $C003
+    lda #0
+    sta $C003
+    sta $C002               ; Re-enable
     .endif
     pla
     rti

@@ -374,7 +374,7 @@ mod tests {
     // PaddleTest3 Arkanoid paddle (#1606)
     /////////////////////////////////////
 
-    const PADDLETEST3_ROM_PATH: &str = "roms/manual_tests/PaddleTest3/PaddleTest.nes";
+    const PADDLETEST3_ROM_PATH: &str = "roms/automated_tests/PaddleTest3/PaddleTest.nes";
 
     fn run_paddletest3(
         controller_config: &ControllerConfig,

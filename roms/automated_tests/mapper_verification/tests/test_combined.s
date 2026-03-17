@@ -44,6 +44,12 @@
 .ifdef HAS_TEST_NT_FROM_CHR
     .import run_nt_from_chr
 .endif
+.ifdef HAS_TEST_PRG_MODE
+    .import run_prg_mode
+.endif
+.ifdef HAS_TEST_BLOCK_SELECT
+    .import run_block_select
+.endif
 
 .segment "RODATA"
 test_title_string:
@@ -144,6 +150,24 @@ test_title_string:
     jsr console_flush
     jsr console_newline
     jsr run_nt_from_chr
+    jsr console_show
+.endif
+
+.ifdef HAS_TEST_PRG_MODE
+    jsr console_print_inline
+    .byte "-- PRG Mode --", 0
+    jsr console_flush
+    jsr console_newline
+    jsr run_prg_mode
+    jsr console_show
+.endif
+
+.ifdef HAS_TEST_BLOCK_SELECT
+    jsr console_print_inline
+    .byte "-- Block Select --", 0
+    jsr console_flush
+    jsr console_newline
+    jsr run_block_select
     jsr console_show
 .endif
 

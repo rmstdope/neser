@@ -164,15 +164,23 @@ impl Mapper for Mapper45 {
 
     fn write_prg(&mut self, addr: u16, value: u8) {
         if (0x6000..=0x7FFF).contains(&addr) {
-            if self.locked {
-                self.mmc3.write_prg(addr, value);
-            } else {
-                let reg_index = self.write_ptr;
-                self.regs[reg_index] = value;
-                if reg_index == 3 && (value & 0x40) != 0 {
-                    self.locked = true;
+            match addr & 0xF001 {
+                0x6001 => {
+                    self.reset_outer_bank_registers();
                 }
-                self.write_ptr = (self.write_ptr + 1) % 4;
+                0x6000 => {
+                    if self.locked {
+                        self.mmc3.write_prg(addr, value);
+                    } else {
+                        let reg_index = self.write_ptr;
+                        self.regs[reg_index] = value;
+                        if reg_index == 3 && (value & 0x40) != 0 {
+                            self.locked = true;
+                        }
+                        self.write_ptr = (self.write_ptr + 1) % 4;
+                    }
+                }
+                _ => {}
             }
         } else {
             self.mmc3.write_prg(addr, value);
@@ -325,33 +333,27 @@ mod tests {
     }
 
     #[test]
-    fn write_to_6001_is_data_write_not_pointer_reset() {
+    fn write_to_6001_resets_outer_registers_and_pointer() {
         let mut m = make_direct();
         m.write_prg(0x6000, 0xAA); // reg0 = 0xAA
         m.write_prg(0x6000, 0xBB); // reg1 = 0xBB
-        m.write_prg(0x6001, 0xCC); // reg2 = 0xCC (sequential data write)
+        m.write_prg(0x6001, 0xCC); // reset + unlock per spec
 
-        assert_eq!(m.regs[0], 0xAA);
-        assert_eq!(m.regs[1], 0xBB);
-        assert_eq!(m.regs[2], 0xCC);
-        assert_eq!(m.regs[3], 0x00);
-        assert_eq!(m.write_ptr, 3);
+        assert_eq!(m.regs, [0x00, 0x00, 0x0F, 0x00]);
+        assert_eq!(m.write_ptr, 0);
         assert!(!m.locked);
     }
 
     #[test]
-    fn write_to_6003_is_data_write() {
+    fn write_to_6003_resets_outer_registers_via_address_mask() {
         let mut m = make_direct();
 
         m.write_prg(0x6000, 0x11); // reg0
         m.write_prg(0x6000, 0x22); // reg1
-        m.write_prg(0x6003, 0x33); // reg2 (sequential data write)
+        m.write_prg(0x6003, 0x33); // reset via $F001 mask
 
-        assert_eq!(m.regs[0], 0x11);
-        assert_eq!(m.regs[1], 0x22);
-        assert_eq!(m.regs[2], 0x33);
-        assert_eq!(m.regs[3], 0x00);
-        assert_eq!(m.write_ptr, 3);
+        assert_eq!(m.regs, [0x00, 0x00, 0x0F, 0x00]);
+        assert_eq!(m.write_ptr, 0);
     }
 
     #[test]

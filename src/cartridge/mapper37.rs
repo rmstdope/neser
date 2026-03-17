@@ -25,10 +25,9 @@ use crate::cartridge::{Mapper, MapperCapabilities};
 /// - Power-on state: Q = 0
 ///
 /// PRG bank mapping (8KB banks):
-/// - A16 = (Q1 & Q0) | (Q2 & M16)  where M16 = bit 4 of MMC3's raw PRG bank
+/// - A16 = (Q1 & Q0) | (Q2 & M16)  where M16 = bit 3 of MMC3's raw PRG bank
 /// - A17 = Q2
-/// - outer_block = (A17 << 1) | A16
-/// - final_bank  = (outer_block << 4) | (mmc3_bank & 0x0F)
+/// - final_bank = (A17 << 4) | (A16 << 3) | (mmc3_bank & 0x07)
 ///
 /// CHR 1KB bank mapping:
 /// - final_bank = (Q2 << 7) | (mmc3_1k_bank & 0x7F)
@@ -58,18 +57,17 @@ impl Mapper37 {
 
     /// Adjust the MMC3's raw 8KB PRG bank using the outer register.
     ///
-    /// PRG A16 = (Q1 & Q0) | (Q2 & M16)
+    /// PRG A16 = (Q1 & Q0) | (Q2 & M16), where M16 is MMC3 PRG A16 (raw bit 3)
     /// PRG A17 = Q2
     fn adjust_prg_bank(&self, mmc3_bank: usize) -> usize {
         let q = self.outer_reg as usize;
         let q0 = q & 1;
         let q1 = (q >> 1) & 1;
         let q2 = (q >> 2) & 1;
-        let m16 = (mmc3_bank >> 4) & 1;
+        let m16 = (mmc3_bank >> 3) & 1;
         let a16 = (q1 & q0) | (q2 & m16);
         let a17 = q2;
-        let outer_block = (a17 << 1) | a16;
-        (outer_block << 4) | (mmc3_bank & 0x0F)
+        (a17 << 4) | (a16 << 3) | (mmc3_bank & 0x07)
     }
 
     /// Adjust the MMC3's raw 1KB CHR bank using the outer register.
@@ -172,9 +170,8 @@ mod tests {
     use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
     use crate::cartridge::test_helpers::banked_data;
 
-    // 48 PRG banks × 8 KiB = 384 KiB (non-power-of-two avoids modulo false-positives)
-    // outer_block 0 → banks 0-15, block 1 → banks 16-31, block 2 → banks 32-47
-    const PRG_BANKS: usize = 48;
+    // 32 PRG banks × 8 KiB = 256 KiB.
+    const PRG_BANKS: usize = 32;
     // 256 CHR 1KB banks = 256 KiB (Q2=0 → banks 0-127, Q2=1 → banks 128-255)
     const CHR_1K_BANKS: usize = 256;
 
@@ -208,17 +205,15 @@ mod tests {
 
     // --- Power-on / PRG block 0 ---
 
-    /// At power-on Q=0: outer_block=0, fixed-last PRG = bank 15 (first 128 KiB)
-    ///
-    /// With 48 PRG banks, MMC3 fixed-last = 47 (0x2F).
-    /// Q=0: a16=0, a17=0 → outer_block=0 → final = (0<<4)|(0x2F & 0xF) = 15
+    /// At power-on Q=0, the visible PRG window is $00000-$0FFFF (banks 0-7).
+    /// The fixed-last slot therefore resolves to bank 7.
     #[test]
     fn power_on_outer_reg_is_0_prg_from_first_64kb() {
         let mapper = make_mapper();
         assert_eq!(
             mapper.read_prg(0xE000),
-            15,
-            "Power-on Q=0: fixed-last PRG must be bank 15 (first 128 KiB block)"
+            7,
+            "Power-on Q=0: fixed-last PRG must be bank 7 (first 64 KiB window)"
         );
     }
 
@@ -236,8 +231,7 @@ mod tests {
         );
     }
 
-    /// Q=3 (0b011): a16=(Q1&Q0)|(Q2&M16)=(1&1)|(0&M16)=1, a17=0 → outer_block=1
-    /// fixed-last 47 → final = (1<<4)|(0x2F & 0xF) = 16+15 = 31
+    /// Q=3 (0b011) forces PRG A16 high while A17 stays low, selecting banks 8-15.
     #[test]
     fn outer_reg_q3_selects_second_64kb_prg_block() {
         let mut mapper = make_mapper();
@@ -246,15 +240,13 @@ mod tests {
         mapper.write_prg(0x6000, 0x03); // Q=3
         assert_eq!(
             mapper.read_prg(0xE000),
-            31,
-            "Q=3: fixed-last PRG must be bank 31 (second 128 KiB block)"
+            15,
+            "Q=3: fixed-last PRG must be bank 15 (second 64 KiB window)"
         );
     }
 
     /// Q=4 (0b100): Q2=1, Q1=0, Q0=0.
-    /// fixed-last=47 (0x2F): M16=(47>>4)&1 = 2&1 = 0
-    /// a16=(0&0)|(1&0)=0, a17=1 → outer_block=2
-    /// final = (2<<4)|(0x2F & 0xF) = 32+15 = 47
+    /// This selects the $20000-$3FFFF 128 KiB PRG window; the fixed-last slot resolves to bank 31.
     #[test]
     fn outer_reg_q4_q2_set_selects_third_128kb_prg_block() {
         let mut mapper = make_mapper();
@@ -262,8 +254,8 @@ mod tests {
         mapper.write_prg(0x6000, 0x04); // Q=4
         assert_eq!(
             mapper.read_prg(0xE000),
-            47,
-            "Q=4: fixed-last PRG must be bank 47 (third 128 KiB block)"
+            31,
+            "Q=4: fixed-last PRG must be bank 31 (third 128 KiB window)"
         );
     }
 
@@ -304,8 +296,8 @@ mod tests {
         mapper.write_prg(0x6000, 0x03); // Q=3 accepted (power-on state is writable)
         assert_eq!(
             mapper.read_prg(0xE000),
-            31,
-            "Q=3 accepted at power-on: fixed-last must be 31"
+            15,
+            "Q=3 accepted at power-on: fixed-last must be 15"
         );
 
         // Disable PRG-RAM write-enable ($A001=0xC0: enabled but write-protected)
@@ -313,7 +305,7 @@ mod tests {
         mapper.write_prg(0x6000, 0x00); // attempt to reset Q → must be rejected
         assert_eq!(
             mapper.read_prg(0xE000),
-            31,
+            15,
             "Q write must be rejected when PRG-RAM is write-protected (outer_reg stays 3)"
         );
 
@@ -322,7 +314,7 @@ mod tests {
         mapper.write_prg(0x6000, 0x00); // attempt → must be rejected
         assert_eq!(
             mapper.read_prg(0xE000),
-            31,
+            15,
             "Q write must be rejected when PRG-RAM is disabled"
         );
     }
@@ -390,8 +382,8 @@ mod tests {
 
         assert_eq!(
             mapper2.read_prg(0xE000),
-            31,
-            "After restore with Q=3: fixed-last PRG must be 31"
+            15,
+            "After restore with Q=3: fixed-last PRG must be 15"
         );
     }
 }

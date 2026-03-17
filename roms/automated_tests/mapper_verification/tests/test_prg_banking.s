@@ -19,18 +19,27 @@
 .endif
 
 ; Signature read address: start of banked window
-.if PRG_BANK_SIZE = 4
-    BANK_WINDOW = $8000         ; 4KB: $8000-$8FFF (slot 0)
-    FIXED_WINDOW = $F000        ; Fixed bank at $F000-$FFFF (slot 7)
-.elseif PRG_BANK_SIZE = 8
-    BANK_WINDOW = $8000         ; 8KB: $8000-$9FFF
-    FIXED_WINDOW = $E000        ; Fixed bank at $E000-$FFFF
-.elseif PRG_BANK_SIZE = 16
-    BANK_WINDOW = $8000         ; 16KB: $8000-$BFFF
-    FIXED_WINDOW = $C000        ; Fixed bank at $C000-$FFFF
-.elseif PRG_BANK_SIZE = 32
-    BANK_WINDOW = $8000         ; 32KB: $8000-$FFFF (whole space)
-    FIXED_WINDOW = $8000        ; No separate fixed window
+.ifndef BANK_WINDOW_OVERRIDE
+    .if PRG_BANK_SIZE = 4
+        BANK_WINDOW = $8000         ; 4KB: $8000-$8FFF (slot 0)
+        FIXED_WINDOW = $F000        ; Fixed bank at $F000-$FFFF (slot 7)
+    .elseif PRG_BANK_SIZE = 8
+        BANK_WINDOW = $8000         ; 8KB: $8000-$9FFF
+        FIXED_WINDOW = $E000        ; Fixed bank at $E000-$FFFF
+    .elseif PRG_BANK_SIZE = 16
+        BANK_WINDOW = $8000         ; 16KB: $8000-$BFFF
+        FIXED_WINDOW = $C000        ; Fixed bank at $C000-$FFFF
+    .elseif PRG_BANK_SIZE = 32
+        BANK_WINDOW = $8000         ; 32KB: $8000-$FFFF (whole space)
+        FIXED_WINDOW = $8000        ; No separate fixed window
+    .endif
+.else
+    BANK_WINDOW = BANK_WINDOW_OVERRIDE
+    .ifndef FIXED_WINDOW_OVERRIDE
+        FIXED_WINDOW = $E000
+    .else
+        FIXED_WINDOW = FIXED_WINDOW_OVERRIDE
+    .endif
 .endif
 
 .ifndef COMBINED
@@ -108,6 +117,7 @@ test_title_string:
         pass_test
 
         ; Test 3: Bank 2 signature
+        .if ::PRG_ROM_16K >= 6
         start_test 3, "Bank 2 sig"
         lda #2
         jsr call_trampoline
@@ -119,8 +129,10 @@ test_title_string:
         lda tramp_result+1
         assert_a_eq 2
         pass_test
+        .endif
 
         ; Test 5: Bank 3 signature
+        .if ::PRG_ROM_16K >= 8
         start_test 5, "Bank 3 sig"
         lda #3
         jsr call_trampoline
@@ -132,6 +144,7 @@ test_title_string:
         lda tramp_result+1
         assert_a_eq 3
         pass_test
+        .endif
 
     .elseif PRG_BANK_SIZE = 4
         ; --- 4KB banking (NSF mapper 31) ---
@@ -308,8 +321,8 @@ test_title_string:
         assert_a_eq 2
         pass_test
 
-        ; R7 (second 8KB slot) — MMC3/MMC5 only (not MMC2)
-        .if MAPPER_NUM <> 9
+        ; Optional second 8KB slot test for mappers with two switchable windows.
+        .ifndef SKIP_SECOND_PRG_8K_SLOT_TESTS
         start_test 5, "R7 Bank 0"
         select_prg_bank 1, 0
         lda $A000               ; R7 window
@@ -407,17 +420,47 @@ TRAMPOLINE_SIZE = trampoline_end - trampoline_code
 ; This code is copied to RAM and executed there.
 ; Input: tramp_result = bank number to read
 ; Output: tramp_result[0..3] = 4 signature bytes from target bank
-; NOTE: Uses $FFF0 for bank select writes to avoid bus conflicts.
-; $FFF0 is in the fill region ($FF) so the AND gives the correct value.
+; NOTE: Uses TRAMPOLINE_BANK_ADDR for bank select writes.
+; Default $FFF0 is in the fill region ($FF) for bus-conflict-safe writes.
+; Mappers with register at $7xxx (NINA-001, mapper 38) override this.
 .ifndef TRAMPOLINE_BANK_SHIFT
     TRAMPOLINE_BANK_SHIFT = 0   ; Default: bank number in low bits
 .endif
+.ifndef TRAMPOLINE_BANK_ADDR
+    TRAMPOLINE_BANK_ADDR = $FFF0 ; Default: bus-conflict-safe address
+.endif
+.ifndef TRAMPOLINE_BANK_BY_ADDRESS
+    TRAMPOLINE_BANK_BY_ADDRESS = 0
+.endif
+.ifndef TRAMPOLINE_BANK_BY_SPLIT_OUTER_INNER
+    TRAMPOLINE_BANK_BY_SPLIT_OUTER_INNER = 0
+.endif
+.ifndef TRAMPOLINE_OUTER_BANK_ADDR
+    TRAMPOLINE_OUTER_BANK_ADDR = $6000
+.endif
+.ifndef TRAMPOLINE_INNER_BANK_ADDR
+    TRAMPOLINE_INNER_BANK_ADDR = $FFF0
+.endif
 trampoline_code:
     lda tramp_result        ; Bank number
+    .if TRAMPOLINE_BANK_BY_SPLIT_OUTER_INNER
+    tay
+    tya
+    lsr a
+    sta TRAMPOLINE_OUTER_BANK_ADDR ; Outer bank bits
+    tya
+    and #$01
+    sta TRAMPOLINE_INNER_BANK_ADDR ; Inner bank bit
+    .elseif TRAMPOLINE_BANK_BY_ADDRESS
+    tay
+    lda #0
+    sta TRAMPOLINE_BANK_ADDR, y ; Select target bank via address bits
+    .else
     .repeat TRAMPOLINE_BANK_SHIFT
     asl a
     .endrepeat
-    sta $FFF0               ; Select target bank (bus-conflict-safe: $FF fill)
+    sta TRAMPOLINE_BANK_ADDR ; Select target bank
+    .endif
     ; Read 4 signature bytes from $8000
     lda $8000
     sta tramp_result
@@ -428,8 +471,14 @@ trampoline_code:
     lda $8003
     sta tramp_result+3
     ; Switch back to bank 0 (where code lives)
+    .if TRAMPOLINE_BANK_BY_SPLIT_OUTER_INNER
     lda #0
-    sta $FFF0
+    sta TRAMPOLINE_OUTER_BANK_ADDR
+    sta TRAMPOLINE_INNER_BANK_ADDR
+    .else
+    lda #0
+    sta TRAMPOLINE_BANK_ADDR
+    .endif
     rts
 trampoline_end:
 
@@ -461,15 +510,24 @@ trampoline_end:
     .endif
 .endif
 
+.if PRG_BANK_SIZE = 32
+    .if PRG_ROM_16K >= 6
 .segment "PRG_SIG2"
     .byte $A5, 2, $FD, $5A
+    .endif
+.else
+.segment "PRG_SIG2"
+    .byte $A5, 2, $FD, $5A
+.endif
 
 ; Banks 3-7: only emit if the mapper has enough PRG banks
 ; The code/fixed bank doesn't get a signature segment
 .if PRG_BANK_SIZE = 32
-    ; AxROM: 4 × 32KB banks, bank 0 is code, banks 1-3 get signatures
+    ; 32KB banking: code is in bank 0, sigs in banks 1-3 (if they exist)
+    .if PRG_ROM_16K >= 8
     .segment "PRG_SIG3"
         .byte $A5, 3, $FC, $5A
+    .endif
 .elseif PRG_BANK_SIZE = 8
     ; MMC3/MMC3-clone: 8KB banks. Banks 0 to N-3 are switchable,
     ; N-2 is fixed second-to-last, N-1 is code bank.
