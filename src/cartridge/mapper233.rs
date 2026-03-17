@@ -8,7 +8,7 @@
 //! - No known gameplay-blocking functional limitations are currently documented.
 
 use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities, RamInitMode};
+use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
 const MAPPER_NUMBER: u16 = 233;
 
@@ -124,6 +124,9 @@ impl Mapper for Mapper233 {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
+        if self.base.try_write_prg_ram(addr, value) {
+            return;
+        }
         if !(0x8000..=0xFFFF).contains(&addr) {
             return;
         }
@@ -135,7 +138,8 @@ impl Mapper for Mapper233 {
         self.apply_banks();
     }
 
-    fn initialize_ram(&mut self) {
+    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+        self.base.initialize_ram(mode);
         // Called on hard reset only; mark that the next reset should be treated as hard.
         self.hard_reset_pending = true;
     }
@@ -199,12 +203,10 @@ mod tests {
     const PRG_BANKS: usize = 48;
 
     fn make_mapper(prg_rom: Vec<u8>) -> Mapper233 {
-        Mapper233::new(MapperContext::new_for_test(
-            MAPPER_NUMBER,
-            prg_rom,
-            vec![],
-            NametableLayout::Vertical,
-        ))
+        Mapper233::new(
+            MapperContext::new_for_test(MAPPER_NUMBER, prg_rom, vec![], NametableLayout::Vertical)
+                .with_prg_ram_banks(0),
+        )
     }
 
     // ───────── Factory registration ─────────
@@ -362,46 +364,19 @@ mod tests {
             mapper.read_prg(0xC000),
             33,
             "after first soft reset, upper window should be bank 33"
-    fn hard_reset_forces_reset_toggle_and_clears_registers() {
-        // Put the existing mapper into a non-default state:
-        // - reset_toggle = 1 (after a soft reset)
-        // - reg0 and reg1 = non-zero (after writes)
+        );
+    }
+
     #[test]
-        // reset_toggle starts at 0
-        // First soft reset: this should toggle reset_toggle and clear the registers.
+    fn soft_reset_toggles_reset_toggle_each_time() {
+        let mut mapper = make_mapper(banked_data(16 * 1024, PRG_BANKS));
         mapper.reset();
-
-        // Now write non-zero values into both registers via the normal PRG interface.
-        mapper.write_prg(0x8000, 0xA5);
-        mapper.write_prg(0x8001, 0x01);
-
-        // Sanity-check that we're not in the power-on default state anymore.
-        assert_ne!(mapper.reset_toggle, 0, "reset_toggle should be non-zero after soft reset");
-        assert_ne!(mapper.reg0, 0, "reg0 should be non-zero after writes");
-        assert_ne!(mapper.reg1, 0, "reg1 should be non-zero after writes");
-
-        // Emulate the emulator's hard reset path:
-        // Bus::reset_cartridge calls initialize_ram(RamInitMode::Zero) then reset()
-        // on the existing mapper instance.
-        mapper.initialize_ram(RamInitMode::Zero);
-        mapper.reset();
-
-        // Hard reset must force reset_toggle back to 0 and clear both registers.
-        mapper.reset();
-            mapper.reset_toggle, 0,
-            "hard reset should force reset_toggle back to 0"
-        );
+        // reset_toggle = 1 → page = 32; lower=32, upper=33
         assert_eq!(
-            mapper.reg0, 0,
-            "hard reset should clear reg0"
-        );
-        assert_eq!(
-            mapper.reg1, 0,
-            "hard reset should clear reg1"
+            mapper.read_prg(0x8000),
             32,
             "1st soft reset → bank 32 (reset_toggle=1)"
         );
-
         mapper.reset();
         // reset_toggle = 0 again → page = 0; lower=0, upper=1
         assert_eq!(
@@ -412,19 +387,56 @@ mod tests {
     }
 
     #[test]
+    fn hard_reset_forces_reset_toggle_and_clears_registers() {
+        // Put the existing mapper into a non-default state:
+        // - reset_toggle = 1 (after a soft reset)
+        // - reg0 and reg1 = non-zero (after writes)
+        let mut mapper = make_mapper(banked_data(16 * 1024, PRG_BANKS));
+        // reset_toggle starts at 0.
+        // First soft reset: toggle reset_toggle and clear the registers.
+        mapper.reset();
+
+        // Now write non-zero values into both registers via the normal PRG interface.
+        mapper.write_prg(0x8000, 0xA5);
+        mapper.write_prg(0x8001, 0x01);
+
+        // Sanity-check that we're not in the power-on default state anymore.
+        assert_ne!(
+            mapper.reset_toggle, 0,
+            "reset_toggle should be non-zero after soft reset"
+        );
+        assert_ne!(mapper.reg0, 0, "reg0 should be non-zero after writes");
+        assert_ne!(mapper.reg1, 0, "reg1 should be non-zero after writes");
+
+        // Emulate the emulator's hard reset path:
+        // Bus::reset_cartridge calls initialize_ram(RamInitMode::Zero) then reset()
+        // on the existing mapper instance.
+        mapper.initialize_ram(crate::console::RamInitMode::Zero);
+        mapper.reset();
+
+        // Hard reset must force reset_toggle back to 0 and clear both registers.
+        assert_eq!(
+            mapper.reset_toggle, 0,
+            "hard reset should force reset_toggle back to 0"
+        );
+        assert_eq!(mapper.reg0, 0, "hard reset should clear reg0");
+        assert_eq!(mapper.reg1, 0, "hard reset should clear reg1");
+    }
+
+    #[test]
     fn soft_reset_does_not_affect_reset_toggle_on_hard_reset_path() {
         // Simulate that after multiple soft resets the toggle is 1,
-        // then we create a fresh mapper (hard reset) and toggle must be 0.
+        // then we create a fresh mapper (power-on) and toggle must be 0.
         let mut mapper = make_mapper(banked_data(16 * 1024, PRG_BANKS));
         mapper.reset(); // toggle → 1
         assert_eq!(mapper.read_prg(0x8000), 32);
 
-        // New mapper instance = hard reset, toggle starts at 0
+        // New mapper instance = power-on, toggle starts at 0
         let fresh = make_mapper(banked_data(16 * 1024, PRG_BANKS));
         assert_eq!(
             fresh.read_prg(0x8000),
             0,
-            "hard reset (new instance) starts with reset_toggle=0"
+            "power-on starts with reset_toggle=0"
         );
     }
 
