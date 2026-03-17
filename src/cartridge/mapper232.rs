@@ -141,8 +141,8 @@ mod tests {
     use crate::cartridge::test_helpers::banked_data;
 
     /// Use 16 16-KB banks (256 KB) to cover all 4 blocks × 4 pages.
-    /// Non-power-of-two so no modulo wrapping false-passes.
     const PRG_BANKS: usize = 16;
+
 
     fn make_mapper(prg_rom: Vec<u8>) -> Mapper232 {
         Mapper232::new(
