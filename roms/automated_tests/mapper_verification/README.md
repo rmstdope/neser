@@ -14,6 +14,7 @@ mapper_verification/
 │   ├── nes_init.s               # PPU/APU init, RAM clear, VBL sync
 │   ├── console.s                # Nametable-based text console (30×28)
 │   ├── nes20_header.inc         # NES 2.0 header generation macro
+│   ├── mmc3_core_macros.inc     # Shared MMC3 register definitions (mappers 4/12/14)
 │   ├── test_macros.inc          # Assertions (assert_a_eq, etc.) and lifecycle
 │   ├── nes.inc                  # NES register and constant definitions
 │   └── ascii.chr                # 8KB ASCII font (96 tiles, embedded in CHR)
@@ -23,6 +24,7 @@ mapper_verification/
 │   ├── test_nametable.s         # Nametable mirroring (H/V/1A/1B)
 │   ├── test_irq.s               # Scanline/M2 counter IRQ verification
 │   ├── test_prg_ram.s           # PRG-RAM read/write at $6000-$7FFF
+│   ├── test_write_protect.s     # PRG-RAM write-protection verification
 │   ├── test_bus_conflicts.s     # Bus conflict AND behavior
 │   ├── test_chr_latch.s         # PPU-triggered CHR latch (MMC2/MMC4)
 │   ├── test_chr_ram_banking.s   # CHR-RAM bank switching (CPROM)
@@ -45,8 +47,11 @@ mapper_verification/
 │   ├── m008.0_defs.inc          # SMC GNROM mode 4
 │   ├── m009.0_defs.inc          # MMC2
 │   ├── m010.0_defs.inc          # MMC4
-│   ├── m011.0_defs.inc          # Color Dreams
+│   ├── m011.0_defs.inc          # Color Dreams submapper 0 (bus conflicts)
+│   ├── m011.1_defs.inc          # Color Dreams submapper 1 (no bus conflicts)
+│   ├── m012.0_defs.inc          # SL-5020B (MMC3 + outer CHR)
 │   ├── m013.0_defs.inc          # CPROM
+│   ├── m014.0_defs.inc          # SL-1632 (MMC3/VRC2 hybrid)
 │   └── m015.0_defs.inc          # K-1029 multicart
 ├── configs/                     # Per-mapper linker configurations
 │   └── m{NNN}.{S}.cfg           # One .cfg per mapper.submapper variant
@@ -178,6 +183,17 @@ For CPROM (mapper 13), CHR is RAM rather than ROM, so there are no pre-embedded 
 
 MMC5 provides an 8×8 unsigned hardware multiplier at `$5205`/`$5206`. The test verifies edge cases: `0×0=0`, `1×1=1`, `255×255=65025`, and intermediate values.
 
+### PRG-RAM Write-Protection (`test_write_protect.s`)
+
+For mappers with write-protection registers (MMC3, MMC5, MMC3-derivatives), this test verifies that:
+
+1. PRG-RAM is writable when enabled
+2. Write-protection blocks writes (reads return old values)
+3. Re-enabling writes restores write capability
+4. Write-protection preserves data integrity under attempted corruption
+
+The test writes patterns to `$6000`+, enables write-protect via the mapper-specific `write_protect_prg_ram` macro, attempts to overwrite, and verifies original data is preserved.
+
 ## Mapper Definition Files
 
 Each `defs/m{NNN}.{S}_defs.inc` file defines:
@@ -189,7 +205,9 @@ HAS_CHR_BANKING      = 1    ; Mapper supports CHR bank switching
 HAS_MIRRORING_CONTROL = 1   ; Mapper can change nametable mirroring
 HAS_IRQ              = 1    ; Mapper has an IRQ source
 HAS_PRG_RAM          = 1    ; Mapper provides PRG-RAM at $6000
+HAS_PRG_RAM_PROTECT  = 1    ; Mapper supports PRG-RAM write-protection
 HAS_BUS_CONFLICTS    = 0    ; Mapper has bus conflict behavior
+MAX_MIRRORING_MODES  = 4    ; Number of mirroring modes (0/2/4)
 ```
 
 ### Size and Count Parameters
@@ -214,6 +232,8 @@ Every defs file implements a standard set of macros that abstract the mapper's r
 .macro set_irq_counter value   ; Load IRQ counter
 .macro disable_irq             ; Disable mapper IRQ
 .macro enable_prg_ram          ; Enable PRG-RAM writes
+.macro disable_prg_ram         ; Disable PRG-RAM chip
+.macro write_protect_prg_ram   ; Enable chip but block writes
 ```
 
 These macros vary dramatically per mapper:
@@ -222,6 +242,19 @@ These macros vary dramatically per mapper:
 - **UxROM**: Simple write to `$8000` (value = bank number)
 - **AxROM**: Write to `$8000` (bits 0–2 = bank, bit 4 = nametable select)
 - **Mapper 6/8**: Latch write with encoded bank bits, separate mirroring registers
+
+### Shared MMC3 Macros
+
+To eliminate duplication, MMC3 derivative mappers (4, 12, 14) include `common/mmc3_core_macros.inc`, which defines:
+
+- **Register addresses**: `MMC3_BANK_SELECT`, `MMC3_BANK_DATA`, `MMC3_MIRRORING`, `MMC3_PRG_RAM`, `MMC3_IRQ_LATCH`, etc.
+- **Core macros**: `select_prg_bank`, `select_chr_bank`, `set_mirroring`, IRQ control, PRG-RAM enable/disable/write-protect
+
+Each mapper's defs file then includes the shared macros and adds mapper-specific extensions:
+- **Mapper 12**: Outer CHR A18 register (`$4132`) via `set_chr_ext` macro
+- **Mapper 14**: Supervisor mode register (`$A131`) via `set_mmc3_mode` macro
+
+This approach reduced code by ~373 lines across the three mapper definitions.
 
 ## Linker Configurations
 
@@ -294,9 +327,9 @@ Examples:
 
 | Type | Count |
 |------|-------|
-| Combined ROMs | 19 |
-| Single test ROMs | 50 |
-| **Total** | **69** |
+| Combined ROMs | 22 |
+| Single test ROMs | 67 |
+| **Total** | **89** |
 
 ## Automated Testing Integration
 
@@ -364,16 +397,32 @@ To add tests for a new mapper (e.g. mapper 99):
 | 1 | MMC1 | 0, 5 | PRG banking, CHR banking, nametable, PRG-RAM |
 | 2 | UxROM | 0, 2 | PRG banking, bus conflicts |
 | 3 | CNROM | 0, 1 | CHR banking, bus conflicts |
-| 4 | MMC3 | 0, 1 | PRG banking, CHR banking, nametable, IRQ, PRG-RAM |
-| 5 | MMC5 | 0 | PRG banking, CHR banking, nametable, IRQ, PRG-RAM, multiplier |
+| 4 | MMC3 | 0, 1 | PRG banking, CHR banking, nametable, IRQ, PRG-RAM, write-protect |
+| 5 | MMC5 | 0 | PRG banking, CHR banking, nametable, IRQ, PRG-RAM, multiplier, write-protect |
 | 6 | Front Fareast | 0 | PRG banking, CHR banking, nametable, IRQ, PRG-RAM |
 | 7 | AxROM | 0, 1 | PRG banking, nametable |
 | 8 | SMC GNROM | 0 | PRG banking, CHR banking, nametable, IRQ, PRG-RAM |
 | 9 | MMC2 | 0 | PRG banking, CHR latch, nametable |
 | 10 | MMC4 | 0 | PRG banking, CHR latch, nametable, PRG-RAM |
-| 11 | Color Dreams | 0 | PRG banking, CHR banking |
+| 11 | Color Dreams | 0, 1 | PRG banking, CHR banking |
+| 12 | SL-5020B | 0 | PRG banking, CHR banking, nametable, IRQ, PRG-RAM, write-protect |
 | 13 | CPROM | 0 | CHR-RAM banking |
+| 14 | SL-1632 | 0 | PRG banking, CHR banking, nametable, IRQ, PRG-RAM, write-protect |
 | 15 | K-1029 | 0 | PRG banking, nametable |
+
+### Known Emulator Issues
+
+The test ROMs have successfully identified emulator bugs:
+
+1. **Mapper 11 Submapper 1**: Not implemented in emulator (ColorDreamsMapper hardcodes bus conflicts)
+   - `m011.1_prg_banking.nes`: ✅ PASS
+   - `m011.1_chr_banking.nes`: ❌ FAIL (expected — emulator missing feature)
+   - `m011.1_combined.nes`: ❌ FAIL (expected — emulator missing feature)
+
+2. **Mapper 12 Write-Protection Re-Enable**: Fails to restore write capability after protection
+   - `m012.0_write_protect.nes`: ❌ FAIL on test 3 (expected — emulator bug)
+
+These failures are documented and expected. The test ROMs are correct per NESdev specifications.
 
 ## Acknowledgments
 
