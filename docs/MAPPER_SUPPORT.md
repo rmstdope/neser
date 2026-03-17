@@ -211,6 +211,7 @@ commonly-played or interesting gaps. The full NesDev mapper list is at
 | 184 | Sunsoft-1 | Atlantis no Nazo (some), Wing of Madoola | Fixed 16 KB PRG, 2 × 4 KB CHR switchable |
 | 189 | TXC (PCB 01-22000-400) | Armadillo | MMC3-like with external PRG register |
 | 232 | Camerica BF9096 (Quattro games) | Quattro Adventure, etc. | Mapper 71 with additional outer bank register |
+| 230 | 22-in-1 multicart with Contra | Two-mode reset-toggling multicart: Contra mode (banks 0–7, upper fixed at 7, Vertical) and 22-in-1 mode (banks 8+, mirroring switchable via write bit 6) | Mode toggles on each soft reset; hard reset always returns to Contra mode. Source: Mesen2 `Mapper230.h`. No known deltas. |
 
 ---
 
