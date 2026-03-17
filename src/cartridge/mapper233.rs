@@ -119,14 +119,14 @@ impl Mapper for Mapper233 {
         MAPPER_NUMBER
     }
 
-    fn write_prg(&mut self, addr: u16, _value: u8) {
+    fn write_prg(&mut self, addr: u16, value: u8) {
         if !(0x8000..=0xFFFF).contains(&addr) {
             return;
         }
         if addr & 0x0001 == 0 {
-            self.reg0 = _value;
+            self.reg0 = value;
         } else {
-            self.reg1 = _value;
+            self.reg1 = value;
         }
         self.apply_banks();
     }
