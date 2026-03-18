@@ -38,10 +38,8 @@ test_title_string:
     .byte 0
 .endif
 
-; Set to 1 to enable open-bus CPU read tests (modes 0/1).
 ; Per NESdev spec note (4), CPU reads in modes 0/1 return open bus.
-; Currently disabled because the emulator does not implement this behavior.
-.define TEST_OPEN_BUS 0
+.define TEST_OPEN_BUS 1
 EXRAM_BASE = $5C00
 EXRAM_END  = $5FFF
 
