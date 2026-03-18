@@ -673,6 +673,22 @@ mod tests {
         test_mv_m015_0_combined,
         "roms/automated_tests/mapper_verification/bin/m015.0.nes"
     );
+    setup_rom_test!(
+        test_mv_m015_0_mode0,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m015.0_mode0.nes"
+    );
+    setup_rom_test!(
+        test_mv_m015_0_mode2,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m015.0_mode2.nes"
+    );
+    setup_rom_test!(
+        test_mv_m015_0_mode3,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m015.0_mode3.nes"
+    );
+    setup_rom_test!(
+        test_mv_m015_0_modes_combined,
+        "roms/automated_tests/mapper_verification/bin/m015.0_modes.nes"
+    );
 
     // ================================================================
     // Mapper 16 (Bandai FCG), Submapper 4 (FCG-1/2)
