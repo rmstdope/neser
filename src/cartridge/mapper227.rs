@@ -32,24 +32,24 @@ const MAPPER_NUMBER: u16 = 227;
 ///
 /// Four banking modes selected by M and S:
 ///
-/// | M | S | `$8000` window     | `$C000` window       |
-/// |---|---|--------------------|----------------------|
-/// | 1 | 1 | `bank & 0xFE`      | `(bank & 0xFE) + 1`  |
-/// | 1 | 0 | `bank`             | `bank`               |
-/// | 0 | 1 | `bank & 0x3E`      | `(bank & 0x38) | L ? 0x07 : 0x00` (see spec) |
-/// | 0 | 0 | `bank`             | `(bank & 0x38) | L ? 0x07 : 0x00` (see spec) |
+/// | M | S | `$8000` window     | `$C000` window                                      |
+/// |---|---|--------------------|-----------------------------------------------------|
+/// | 1 | 1 | `bank & 0xFE`      | `(bank & 0xFE) + 1`                                |
+/// | 1 | 0 | `bank`             | `bank`                                             |
+/// | 0 | 1 | `bank & 0x3E`      | `if L { bank | 0x07 } else { bank & 0x38 }`        |
+/// | 0 | 0 | `bank`             | `if L { bank | 0x07 } else { bank & 0x38 }`        |
 ///
-/// Full formula for M=0:
+/// When `M = 0`, this reduces to:
 /// - lower = `if S { bank & 0x3E } else { bank }`
-/// - upper = `if L { bank | 0x07 } else { bank & 0x38 }`  (S does not affect upper in M=0)
-///
-/// Wait, re-reading the Mesen2 source more carefully:
-/// - M=0, S=1, L=1: lo = bank & 0x3E, hi = bank | 0x07
-/// - M=0, S=1, L=0: lo = bank & 0x3E, hi = bank & 0x38
-/// - M=0, S=0, L=1: lo = bank,         hi = bank | 0x07
-/// - M=0, S=0, L=0: lo = bank,         hi = bank & 0x38
+/// - upper = `if L { bank | 0x07 } else { bank & 0x38 }` (independent of `S`)
 ///
 /// ## CHR (8 KB)
+///
+/// Single 8 KB CHR window fixed to bank 0 (no CHR banking).
+///
+/// ## Mirroring
+///
+/// Controlled by address bit A1 (0 = Vertical, 1 = Horizontal).
 ///
 /// Single 8 KB CHR window fixed to bank 0 (no CHR banking).
 ///
