@@ -393,11 +393,11 @@ impl ParsedRom {
             .map_err(|_| RomParseError::InvalidHeader)?;
         let info = InesHeader::parse(&header).ok_or(RomParseError::InvalidHeader)?;
 
-        let trainer_offset = if info.has_trainer { TRAINER_SIZE } else { 0 };
-        let prg_rom_start = HEADER_SIZE + trainer_offset;
+        let mut trainer_offset = if info.has_trainer { TRAINER_SIZE } else { 0 };
+        let mut prg_rom_start = HEADER_SIZE + trainer_offset;
 
         // Extract trainer data if present
-        let trainer = if info.has_trainer {
+        let mut trainer = if info.has_trainer {
             if data.len() < HEADER_SIZE + TRAINER_SIZE {
                 return Err(RomParseError::FileTooSmall {
                     expected: HEADER_SIZE + TRAINER_SIZE,
@@ -437,6 +437,20 @@ impl ParsedRom {
                 } else {
                     return Err(RomParseError::FileTooSmall {
                         expected: chr_end_v1,
+                        actual: data.len(),
+                    });
+                }
+            } else if info.has_trainer {
+                // Trainer bit mislabeled: check if the data fits without the trainer offset.
+                let no_trainer_chr_end = HEADER_SIZE + prg_bytes + chr_bytes;
+                if data.len() >= no_trainer_chr_end {
+                    trainer_offset = 0;
+                    prg_rom_start = HEADER_SIZE;
+                    trainer = None;
+                    header_for_return.has_trainer = false;
+                } else {
+                    return Err(RomParseError::FileTooSmall {
+                        expected: chr_rom_end,
                         actual: data.len(),
                     });
                 }
@@ -1017,5 +1031,38 @@ mod tests {
             let restored = NametableLayout::from_snapshot_byte(byte);
             assert_eq!(restored, layout, "roundtrip failed for {layout:?}");
         }
+    }
+
+    /// Reproduces the 110-in-1 [p1] ROM header bug: trainer bit set but the file
+    /// only contains header + PRG + CHR data (no actual 512-byte trainer block).
+    /// The parser should fall back gracefully and load PRG/CHR from offset 16.
+    #[test]
+    fn parse_rom_with_false_trainer_flag_falls_back_gracefully() {
+        let prg_size = 2 * 16 * 1024; // 2 PRG banks
+        let chr_size = 1 * 8 * 1024; // 1 CHR bank
+
+        let mut rom = vec![0u8; 16];
+        rom[0..4].copy_from_slice(b"NES\x1A");
+        rom[4] = 2; // 2 × 16KB PRG
+        rom[5] = 1; // 1 × 8KB CHR
+        rom[6] = 0x04; // trainer bit set (incorrectly)
+        rom[7] = 0xF0; // mapper 15 in high nibble
+
+        // Append PRG and CHR without any trainer block — file size = 16 + PRG + CHR.
+        rom.extend(vec![0xAAu8; prg_size]);
+        rom.extend(vec![0xBBu8; chr_size]);
+
+        // Must succeed, not error with FileTooSmall.
+        let parsed = ParsedRom::parse(&rom, None).expect("should load ROM with false trainer flag");
+
+        // Trainer mislabeled — should be corrected by loader.
+        assert!(parsed.trainer.is_none());
+        assert!(!parsed.header.has_trainer);
+
+        // PRG and CHR must be read from the start of the data area (offset 16).
+        assert_eq!(parsed.prg_rom.len(), prg_size);
+        assert_eq!(parsed.chr_rom.len(), chr_size);
+        assert_eq!(parsed.prg_rom[0], 0xAA);
+        assert_eq!(parsed.chr_rom[0], 0xBB);
     }
 }
