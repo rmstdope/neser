@@ -393,7 +393,7 @@ impl ParsedRom {
             .map_err(|_| RomParseError::InvalidHeader)?;
         let info = InesHeader::parse(&header).ok_or(RomParseError::InvalidHeader)?;
 
-        let mut trainer_offset = if info.has_trainer { TRAINER_SIZE } else { 0 };
+        let trainer_offset = if info.has_trainer { TRAINER_SIZE } else { 0 };
         let mut prg_rom_start = HEADER_SIZE + trainer_offset;
 
         // Extract trainer data if present
@@ -444,7 +444,6 @@ impl ParsedRom {
                 // Trainer bit mislabeled: check if the data fits without the trainer offset.
                 let no_trainer_chr_end = HEADER_SIZE + prg_bytes + chr_bytes;
                 if data.len() >= no_trainer_chr_end {
-                    trainer_offset = 0;
                     prg_rom_start = HEADER_SIZE;
                     trainer = None;
                     header_for_return.has_trainer = false;
@@ -1039,7 +1038,7 @@ mod tests {
     #[test]
     fn parse_rom_with_false_trainer_flag_falls_back_gracefully() {
         let prg_size = 2 * 16 * 1024; // 2 PRG banks
-        let chr_size = 1 * 8 * 1024; // 1 CHR bank
+        let chr_size = 8 * 1024; // 1 CHR bank
 
         let mut rom = vec![0u8; 16];
         rom[0..4].copy_from_slice(b"NES\x1A");

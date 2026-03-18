@@ -3401,7 +3401,7 @@ mod tests {
 
     #[test]
     fn test_power_pad_is_not_assignable_to_gamepad() {
-        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+        let nes = Nes::new(crate::app_context::AppContext::new_with_config(
             Config::with_defaults(),
         ));
         nes.bus()
