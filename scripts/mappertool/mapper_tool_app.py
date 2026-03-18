@@ -225,6 +225,12 @@ class MapperToolApp(App[None]):
                 yield Label(f"ROM Commands: {rom_name}")
                 if self.autorun_summary:
                     yield Label(self.autorun_summary)
+                yield Button(
+                    "Run ROM",
+                    id="rom-command-run-rom",
+                    variant="warning",
+                    classes="rom-command-button",
+                )
                 if self.has_autorun:
                     yield Button(
                         "Playback recording (headless)",
@@ -239,14 +245,8 @@ class MapperToolApp(App[None]):
                         classes="rom-command-button",
                     )
                     yield Button(
-                        "Etended recording",
+                        "Extended recording",
                         id="rom-command-extend",
-                        variant="warning",
-                        classes="rom-command-button",
-                    )
-                    yield Button(
-                        "Run ROM",
-                        id="rom-command-run-rom",
                         variant="warning",
                         classes="rom-command-button",
                     )
@@ -266,12 +266,6 @@ class MapperToolApp(App[None]):
                     yield Button(
                         "Create autorun recording",
                         id="rom-command-create",
-                        variant="warning",
-                        classes="rom-command-button",
-                    )
-                    yield Button(
-                        "Run ROM",
-                        id="rom-command-run-rom",
                         variant="warning",
                         classes="rom-command-button",
                     )
@@ -373,10 +367,12 @@ class MapperToolApp(App[None]):
             self._rom_name_filter = self._read_setting_text(settings, "rom_name_filter")
             self._rom_mapper_filter_text = self._read_setting_text(settings, "rom_mapper_filter")
             self._show_only_autorun = self._read_setting_bool(settings, "show_only_autorun")
+            self._rebuild_before_run = self._read_setting_bool(settings, "rebuild_before_run", default=True)
         else:
             self._rom_name_filter = ""
             self._rom_mapper_filter_text = ""
             self._show_only_autorun = False
+            self._rebuild_before_run = True
         self._rom_mapper_filter_values: set[int] = self.parse_mapper_filter_values(
             self._rom_mapper_filter_text
         )
@@ -426,6 +422,11 @@ class MapperToolApp(App[None]):
                 with Vertical(id="rom-inventory-section"):
                     yield Label("ROM Inventory")
                     yield Input(value=str(self.rom_root), id="rom-root-input")
+                    yield Checkbox(
+                        "Rebuild before running",
+                        id="rebuild-before-run-checkbox",
+                        value=self._rebuild_before_run,
+                    )
                     yield Button("Drop and rescan", id="drop-rescan-button", variant="warning")
                     yield Button(
                         "Playback All Recordings",
@@ -471,7 +472,7 @@ class MapperToolApp(App[None]):
 
         return self.rom_db_index.lookup(crc)
 
-    def _populate_rom_table(self, rom_table: DataTable) -> None:
+    def _populate_rom_table(self, rom_table: DataTable, restore_path: str | None = None) -> None:
         """Render tracked ROM records in the left-hand ROM list widget."""
 
         self._cancel_rom_name_scroll_timers()
@@ -480,6 +481,7 @@ class MapperToolApp(App[None]):
         self._rom_name_scroll_active = False
         rom_table.clear(columns=False)
         self._rom_table_full_paths = []
+        restore_row: int | None = None
         for record in self._sorted_rom_records():
             rom_table.add_row(
                 self._table_cell(record.mapper),
@@ -489,8 +491,12 @@ class MapperToolApp(App[None]):
                 self._table_cell(record.crc),
                 self._table_cell(record.mapper_source),
             )
+            if restore_path is not None and record.rom_path == restore_path:
+                restore_row = len(self._rom_table_full_paths)
             self._rom_table_full_paths.append(record.rom_path)
         self._update_rom_table_summary(rom_table)
+        if restore_row is not None:
+            rom_table.move_cursor(row=restore_row)
 
     def _table_cell(self, value: str) -> str:
         """Return plain table cell renderable."""
@@ -775,6 +781,12 @@ class MapperToolApp(App[None]):
     def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
         """Update ROM table when checkbox filters change."""
 
+        if event.checkbox.id == "rebuild-before-run-checkbox":
+            self._rebuild_before_run = event.value
+            if self._settings_persistence_enabled:
+                self._save_settings()
+            return
+
         if event.checkbox.id != "autorun-only-filter":
             return
 
@@ -932,6 +944,13 @@ class MapperToolApp(App[None]):
             exclusive=True,
         )
 
+    def _neser_command_prefix(self) -> list[str]:
+        """Return the command prefix for running neser, based on rebuild setting."""
+
+        if self._rebuild_before_run:
+            return ["cargo", "run", "--release", "--features", "sdl", "--bin", "neser", "--"]
+        return [str(REPO_ROOT / "target" / "release" / "neser")]
+
     async def _run_rom_command(self, rom_relative_path: str, command_id: str) -> None:
         """Execute selected ROM command and refresh autorun marker state."""
 
@@ -948,48 +967,20 @@ class MapperToolApp(App[None]):
             self._refresh_record_autorun_state(rom_relative_path)
             return
 
+        prefix = self._neser_command_prefix()
         command: list[str] | None = None
         if command_id == "rom-command-create":
-            command = ["cargo", "run", "--release", "--features", "sdl", "--bin", "neser", "--", "--create-recording"]
+            command = prefix + ["--create-recording"]
         elif command_id == "rom-command-extend":
-            command = ["cargo", "run", "--release", "--features", "sdl", "--bin", "neser", "--", "--extend-recording"]
+            command = prefix + ["--extend-recording"]
         elif command_id == "rom-command-playback-headed":
-            command = ["cargo", "run", "--release", "--features", "sdl", "--bin", "neser", "--", "--playback"]
+            command = prefix + ["--playback"]
         elif command_id == "rom-command-playback-headless":
-            command = [
-                "cargo",
-                "run",
-                "--release",
-                "--features",
-                "sdl",
-                "--bin",
-                "neser",
-                "--",
-                "--playback-headless",
-            ]
+            command = prefix + ["--playback-headless"]
         elif command_id == "rom-command-run-rom":
-            command = [
-                "cargo",
-                "run",
-                "--release",
-                "--features",
-                "sdl",
-                "--bin",
-                "neser",
-                "--",
-            ]
+            command = list(prefix)
         elif command_id == "rom-command-recalculate-crcs":
-            command = [
-                "cargo",
-                "run",
-                "--release",
-                "--features",
-                "sdl",
-                "--bin",
-                "neser",
-                "--",
-                "--recalculate-autorun",
-            ]
+            command = prefix + ["--recalculate-autorun"]
 
         if command is None:
             self._append_log(f"Unknown ROM command: {command_id}")
@@ -1084,15 +1075,7 @@ class MapperToolApp(App[None]):
                 break
 
             rom_absolute_path = self.rom_root / Path(record.rom_path)
-            command = [
-                "cargo",
-                "run",
-                "--release",
-                "--features",
-                "sdl",
-                "--bin",
-                "neser",
-                "--",
+            command = self._neser_command_prefix() + [
                 command_argument,
                 str(rom_absolute_path),
             ]
@@ -1299,7 +1282,7 @@ class MapperToolApp(App[None]):
             rom_table = self.query_one("#rom-database", DataTable)
         except NoMatches:
             return
-        self._populate_rom_table(rom_table)
+        self._populate_rom_table(rom_table, restore_path=rom_relative_path)
 
     def _set_record_autorun_status(self, rom_relative_path: str, status: str) -> None:
         """Persist autorun playback status for one ROM and redraw table."""
@@ -1439,6 +1422,7 @@ class MapperToolApp(App[None]):
             "rom_mapper_filter": self._rom_mapper_filter_text,
             "rom_name_filter": self._rom_name_filter,
             "show_only_autorun": self._show_only_autorun,
+            "rebuild_before_run": self._rebuild_before_run,
         }
         self.settings_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
@@ -1452,17 +1436,17 @@ class MapperToolApp(App[None]):
         return str(value)
 
     @staticmethod
-    def _read_setting_bool(settings: dict[str, Any], key: str) -> bool:
+    def _read_setting_bool(settings: dict[str, Any], key: str, default: bool = False) -> bool:
         """Read a boolean setting from the loaded settings payload."""
 
-        value = settings.get(key, False)
+        value = settings.get(key, default)
         if isinstance(value, bool):
             return value
         if isinstance(value, str):
             return value.strip().lower() in {"1", "true", "yes", "on"}
         if isinstance(value, (int, float)):
             return value != 0
-        return False
+        return default
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         """Show full ROM path tooltip when hovering/highlighting a ROM table row."""
