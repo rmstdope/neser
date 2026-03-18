@@ -58,6 +58,7 @@ SINGLES := \
 	$(SINGLES_DIR)/m005.0_prg_ram.nes \
 	$(SINGLES_DIR)/m005.0_multiplier.nes \
 	$(SINGLES_DIR)/m005.0_write_protect.nes \
+	$(SINGLES_DIR)/m005.0_exram.nes \
 	$(SINGLES_DIR)/m006.0_prg_banking.nes \
 	$(SINGLES_DIR)/m006.0_chr_banking.nes \
 	$(SINGLES_DIR)/m006.0_nametable.nes \
@@ -433,6 +434,7 @@ $(eval $(call ROM_RULE,$(SINGLES_DIR)/m005.0_irq.nes,irq,m005.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m005.0_prg_ram.nes,prg_ram,m005.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m005.0_multiplier.nes,multiplier,m005.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m005.0_write_protect.nes,write_protect,m005.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m005.0_exram.nes,exram,m005.0))
 
 # Mapper 6, Submapper 0 (Front Fareast Magic Card, mode 1 UN1ROM+CHRSW)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m006.0_prg_banking.nes,prg_banking,m006.0))
@@ -579,7 +581,7 @@ $(eval $(call COMBINED_RULE,$(BIN_DIR)/m003.0.nes,m003.0,chr_banking bus_conflic
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m003.1.nes,m003.1,chr_banking))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m004.0.nes,m004.0,prg_banking chr_banking nametable irq prg_ram))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m004.1.nes,m004.1,irq))
-$(eval $(call COMBINED_RULE,$(BIN_DIR)/m005.0.nes,m005.0,prg_banking chr_banking nametable irq prg_ram multiplier))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m005.0.nes,m005.0,prg_banking chr_banking nametable irq prg_ram multiplier exram))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m006.0.nes,m006.0,prg_banking chr_banking nametable irq prg_ram))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m007.0.nes,m007.0,prg_banking nametable))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m007.1.nes,m007.1,prg_banking nametable))
