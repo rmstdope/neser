@@ -198,7 +198,22 @@ mod tests {
 
     // TODO Submappers
 
-    // TODO VRC6
+    // ================================================================
+    // VRC6 community test suite (vrc6test)
+    // Tests CHR banking and nametable mirroring for Mapper 24 (VRC6a) and Mapper 26 (VRC6b).
+    // Reports pass/fail via console text: "All Tests Passed!"
+    // ================================================================
+
+    setup_rom_console_test!(
+        test_vrc6test24,
+        "roms/automated_tests/vrc6test/vrc6test24.nes",
+        "ALL TESTS PASSED!"
+    );
+    setup_rom_console_test!(
+        test_vrc6test26,
+        "roms/automated_tests/vrc6test/vrc6test26.nes",
+        "ALL TESTS PASSED!"
+    );
 
     // ================================================================
     // Mapper Verification Suite — custom test ROMs

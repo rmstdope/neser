@@ -951,11 +951,18 @@ impl Nes {
             } else if tile_index == 0x00 {
                 ' ' // Treat 0x00 as space
             } else {
-                // Assume tile indices 0x10-0x1F maps to ASCII characters [0..9,A..F]
+                // Tile indices 0x10-0x1F map to ASCII characters [0..9,A..F]
+                // (used by Blargg-style mapper verification ROMs)
                 if (0x10..=0x19).contains(&tile_index) {
                     (tile_index + 0x20) as char
                 } else if (0x1A..=0x1F).contains(&tile_index) {
                     (tile_index + 0x27) as char
+                // Tile indices 0xE0-0xEF map to hex digits [0..9,A..F]
+                // (used by vrc6test ROM: donumber adds $E0 to each nibble)
+                } else if (0xE0..=0xE9).contains(&tile_index) {
+                    (tile_index - 0xE0 + b'0') as char
+                } else if (0xEA..=0xEF).contains(&tile_index) {
+                    (tile_index - 0xEA + b'A') as char
                 } else {
                     '?' // Unknown character
                 }
