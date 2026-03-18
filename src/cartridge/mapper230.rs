@@ -61,10 +61,8 @@ impl Mapper230 {
             base,
             contra_mode: false,
             reg: 0,
-            hard_reset_pending: false,
+            hard_reset_pending: true,
         };
-        // Simulate hard reset: initialize_ram sets hard_reset_pending, reset() applies it.
-        mapper.hard_reset_pending = true;
         mapper.reset();
         mapper
     }
@@ -76,7 +74,6 @@ impl Mapper230 {
             self.base.select_prg_page(1, 7);
             self.base.set_mirroring_hv(false); // Vertical
         } else {
-            let base_page = (self.reg & 0x1E) as i16 + 8;
             if self.reg & 0x20 != 0 {
                 // Single-page mode: both windows same bank
                 let page = (self.reg & 0x1F) as i16 + 8;
@@ -84,6 +81,7 @@ impl Mapper230 {
                 self.base.select_prg_page(1, page);
             } else {
                 // Paired mode
+                let base_page = (self.reg & 0x1E) as i16 + 8;
                 self.base.select_prg_page(0, base_page);
                 self.base.select_prg_page(1, base_page + 1);
             }
