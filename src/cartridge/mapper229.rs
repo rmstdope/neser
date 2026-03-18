@@ -211,10 +211,10 @@ mod tests {
     }
 
     #[test]
-    fn max_bank_bits_both_windows_at_bank_31() {
+    fn high_bank_both_windows_at_bank_23() {
         let mut mapper = make_default_mapper();
-        // bank = 0x1F = 31; addr = 0x8000 | 0x1F = 0x801F
-        // Use PRG_BANKS=24 so 31 wraps to 31%24=7 → use bank 23 (max) to avoid wrap
+        // bank = 0x17 = 23; addr = 0x8000 | 0x17 = 0x8017
+        // With PRG_BANKS=24 this is the highest bank we can select without wrap
         mapper.write_prg(0x8017, 0x00); // bank = 23 (0x17)
         assert_eq!(mapper.read_prg(0x8000), 23);
         assert_eq!(mapper.read_prg(0xC000), 23);
