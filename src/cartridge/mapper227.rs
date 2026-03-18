@@ -235,7 +235,7 @@ mod tests {
     #[test]
     fn mode_m0_s0_l1_lower_at_bank_upper_at_bank_or_7() {
         let mut mapper = make_default_mapper();
-        // bank=5, M=0, S=0, L=1: addr = 0x8000|0x200|(5<<2) = 0xA214
+        // bank=5, M=0, S=0, L=1: addr = 0x8000|0x2000|0x200|(5<<2) = 0xA214
         // lo=5, hi=5|0x07=7
         mapper.write_prg(0xA214, 0x00);
         assert_eq!(mapper.read_prg(0x8000), 5, "$8000 = bank 5");
