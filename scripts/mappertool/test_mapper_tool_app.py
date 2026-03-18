@@ -888,7 +888,7 @@ class MapperToolAppLayoutTests(unittest.TestCase):
             asyncio.run(run_assertions())
 
     def test_rom_command_modal_variant_a_places_run_rom_before_cancel(self) -> None:
-        """No-autorun command modal places Run ROM directly before Cancel."""
+        """No-autorun command modal places Run ROM before Create and Cancel."""
 
         with tempfile.TemporaryDirectory() as temp_dir_str:
             temp_root = Path(temp_dir_str)
@@ -920,13 +920,15 @@ class MapperToolAppLayoutTests(unittest.TestCase):
                         if isinstance(child, Button)
                     ]
                     run_index = button_ids.index("rom-command-run-rom")
+                    create_index = button_ids.index("rom-command-create")
                     cancel_index = button_ids.index("rom-command-cancel")
-                    self.assertEqual(run_index + 1, cancel_index)
+                    self.assertEqual(run_index + 1, create_index)
+                    self.assertEqual(create_index + 1, cancel_index)
 
             asyncio.run(run_assertions())
 
-    def test_rom_command_modal_variant_b_places_run_rom_before_recalculate(self) -> None:
-        """Autorun command modal places Run ROM directly before Recalculate CRCs."""
+    def test_rom_command_modal_variant_b_places_run_rom_first_with_autorun(self) -> None:
+        """Autorun command modal places Run ROM first, followed by Playback headless."""
 
         with tempfile.TemporaryDirectory() as temp_dir_str:
             temp_root = Path(temp_dir_str)
@@ -961,9 +963,8 @@ class MapperToolAppLayoutTests(unittest.TestCase):
                         for child in dialog.children
                         if isinstance(child, Button)
                     ]
-                    run_index = button_ids.index("rom-command-run-rom")
-                    recalc_index = button_ids.index("rom-command-recalculate-crcs")
-                    self.assertEqual(run_index + 1, recalc_index)
+                    self.assertEqual(button_ids[0], "rom-command-run-rom")
+                    self.assertEqual(button_ids[1], "rom-command-playback-headless")
 
             asyncio.run(run_assertions())
 
@@ -1718,3 +1719,259 @@ class MapperToolAppLayoutTests(unittest.TestCase):
 
         self.assertTrue(app._autorun_cancel_requested)
         process.terminate.assert_called_once()
+
+    # --- Rebuild before running checkbox ---
+
+    def test_rebuild_checkbox_present_in_config_pane(self) -> None:
+        """A 'Rebuild before running' checkbox exists in the Actions pane."""
+
+        async def run_assertions() -> None:
+            app = MapperToolApp()
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                checkbox = app.query_one("#rebuild-before-run-checkbox", Checkbox)
+                self.assertIsNotNone(checkbox)
+
+        asyncio.run(run_assertions())
+
+    def test_rebuild_setting_persists_between_runs(self) -> None:
+        """Rebuild before running setting round-trips through save/load."""
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            temp_root = Path(temp_dir_str)
+            settings_path = temp_root / "mappertool_settings.json"
+            rom_db_path = temp_root / "rom_db.csv"
+            rom_db_path.write_text("# empty\n", encoding="utf-8")
+            rom_files_db_path = temp_root / "rom_files.csv"
+
+            async def run_assertions() -> None:
+                app = MapperToolApp(
+                    rom_db_csv_path=rom_db_path,
+                    rom_files_csv_path=rom_files_db_path,
+                    settings_path=settings_path,
+                )
+                async with app.run_test() as pilot:
+                    await pilot.pause()
+                    checkbox = app.query_one("#rebuild-before-run-checkbox", Checkbox)
+                    app.on_checkbox_changed(
+                        SimpleNamespace(checkbox=checkbox, value=False)
+                    )
+
+                app_restarted = MapperToolApp(
+                    rom_db_csv_path=rom_db_path,
+                    rom_files_csv_path=rom_files_db_path,
+                    settings_path=settings_path,
+                )
+                self.assertFalse(app_restarted._rebuild_before_run)
+
+            asyncio.run(run_assertions())
+
+    def test_run_rom_uses_binary_when_rebuild_unchecked(self) -> None:
+        """When rebuild is unchecked, run ROM uses prebuilt binary instead of cargo."""
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            temp_root = Path(temp_dir_str)
+            rom_root = temp_root / "roms"
+            rom_root.mkdir(parents=True)
+            (rom_root / "sample.nes").write_bytes(make_ines_rom(mapper=2, submapper=0))
+
+            rom_db_path = temp_root / "rom_db.csv"
+            rom_db_path.write_text("# empty\n", encoding="utf-8")
+            rom_files_db_path = temp_root / "rom_files.csv"
+
+            async def run_assertions() -> None:
+                app = MapperToolApp(
+                    rom_db_csv_path=rom_db_path,
+                    rom_root=rom_root,
+                    rom_files_csv_path=rom_files_db_path,
+                )
+                app._rebuild_before_run = False
+                captured_calls: list[tuple[list[str], str, str, str]] = []
+
+                async def fake_run(
+                    command: list[str],
+                    command_id: str,
+                    full_set_progress_status: str = "",
+                    current_file_progress_status: str = "",
+                ) -> str | None:
+                    captured_calls.append(
+                        (command, command_id, full_set_progress_status, current_file_progress_status)
+                    )
+                    return "passed"
+
+                app._run_autorun_command_with_status_modal = fake_run  # type: ignore[method-assign]
+
+                async with app.run_test() as pilot:
+                    await pilot.pause()
+                    await app._run_rom_command("sample.nes", "rom-command-run-rom")
+
+                self.assertEqual(len(captured_calls), 1)
+                command = captured_calls[0][0]
+                self.assertNotIn("cargo", command)
+                self.assertTrue(any("target/release/neser" in arg for arg in command))
+
+            asyncio.run(run_assertions())
+
+    def test_run_rom_uses_cargo_when_rebuild_checked(self) -> None:
+        """When rebuild is checked (default), run ROM uses cargo run."""
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            temp_root = Path(temp_dir_str)
+            rom_root = temp_root / "roms"
+            rom_root.mkdir(parents=True)
+            (rom_root / "sample.nes").write_bytes(make_ines_rom(mapper=2, submapper=0))
+
+            rom_db_path = temp_root / "rom_db.csv"
+            rom_db_path.write_text("# empty\n", encoding="utf-8")
+            rom_files_db_path = temp_root / "rom_files.csv"
+
+            async def run_assertions() -> None:
+                app = MapperToolApp(
+                    rom_db_csv_path=rom_db_path,
+                    rom_root=rom_root,
+                    rom_files_csv_path=rom_files_db_path,
+                )
+                captured_calls: list[tuple[list[str], str, str, str]] = []
+
+                async def fake_run(
+                    command: list[str],
+                    command_id: str,
+                    full_set_progress_status: str = "",
+                    current_file_progress_status: str = "",
+                ) -> str | None:
+                    captured_calls.append(
+                        (command, command_id, full_set_progress_status, current_file_progress_status)
+                    )
+                    return "passed"
+
+                app._run_autorun_command_with_status_modal = fake_run  # type: ignore[method-assign]
+
+                async with app.run_test() as pilot:
+                    await pilot.pause()
+                    await app._run_rom_command("sample.nes", "rom-command-run-rom")
+
+                self.assertEqual(len(captured_calls), 1)
+                command = captured_calls[0][0]
+                self.assertEqual(command[0], "cargo")
+
+            asyncio.run(run_assertions())
+
+    # --- Popup menu reorder ---
+
+    def test_rom_command_modal_no_autorun_has_run_rom_first(self) -> None:
+        """Without autorun, Run ROM is the first button in the command dialog."""
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            temp_root = Path(temp_dir_str)
+            rom_root = temp_root / "roms"
+            rom_root.mkdir(parents=True)
+            (rom_root / "sample.nes").write_bytes(make_ines_rom(mapper=2, submapper=0))
+
+            rom_db_path = temp_root / "rom_db.csv"
+            rom_db_path.write_text("# empty\n", encoding="utf-8")
+            rom_files_db_path = temp_root / "rom_files.csv"
+
+            async def run_assertions() -> None:
+                app = MapperToolApp(
+                    rom_db_csv_path=rom_db_path,
+                    rom_root=rom_root,
+                    rom_files_csv_path=rom_files_db_path,
+                )
+
+                async with app.run_test() as pilot:
+                    await pilot.pause()
+                    table = app.query_one("#rom-database", DataTable)
+                    app.on_data_table_row_selected(SimpleNamespace(data_table=table, cursor_row=0))
+                    await pilot.pause()
+
+                    dialog = app.screen.query_one("#rom-command-dialog")
+                    button_ids = [
+                        child.id
+                        for child in dialog.children
+                        if isinstance(child, Button)
+                    ]
+                    self.assertEqual(button_ids[0], "rom-command-run-rom")
+                    self.assertEqual(button_ids[1], "rom-command-create")
+
+            asyncio.run(run_assertions())
+
+    def test_rom_command_modal_with_autorun_has_run_rom_first(self) -> None:
+        """With autorun, Run ROM is the first button in the command dialog."""
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            temp_root = Path(temp_dir_str)
+            rom_root = temp_root / "roms"
+            rom_root.mkdir(parents=True)
+            (rom_root / "sample.nes").write_bytes(make_ines_rom(mapper=2, submapper=0))
+            (rom_root / "sample.autorun").write_text(
+                '{"version":3,"frames":[{"player1":0,"player2":0,"repeat":1}],"checkpoints":[]}',
+                encoding="utf-8",
+            )
+
+            rom_db_path = temp_root / "rom_db.csv"
+            rom_db_path.write_text("# empty\n", encoding="utf-8")
+            rom_files_db_path = temp_root / "rom_files.csv"
+
+            async def run_assertions() -> None:
+                app = MapperToolApp(
+                    rom_db_csv_path=rom_db_path,
+                    rom_root=rom_root,
+                    rom_files_csv_path=rom_files_db_path,
+                )
+
+                async with app.run_test() as pilot:
+                    await pilot.pause()
+                    table = app.query_one("#rom-database", DataTable)
+                    app.on_data_table_row_selected(SimpleNamespace(data_table=table, cursor_row=0))
+                    await pilot.pause()
+
+                    dialog = app.screen.query_one("#rom-command-dialog")
+                    button_ids = [
+                        child.id
+                        for child in dialog.children
+                        if isinstance(child, Button)
+                    ]
+                    self.assertEqual(button_ids[0], "rom-command-run-rom")
+
+            asyncio.run(run_assertions())
+
+    # --- Scroll position preservation ---
+
+    def test_cursor_position_preserved_after_refresh_record_autorun_state(self) -> None:
+        """Highlighted ROM row is restored after _refresh_record_autorun_state repopulates table."""
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            temp_root = Path(temp_dir_str)
+            rom_root = temp_root / "roms"
+            rom_root.mkdir(parents=True)
+            (rom_root / "aaa.nes").write_bytes(make_ines_rom(mapper=1, submapper=0))
+            (rom_root / "bbb.nes").write_bytes(make_ines_rom(mapper=2, submapper=0))
+            (rom_root / "ccc.nes").write_bytes(make_ines_rom(mapper=3, submapper=0))
+
+            rom_db_path = temp_root / "rom_db.csv"
+            rom_db_path.write_text("# empty\n", encoding="utf-8")
+            rom_files_db_path = temp_root / "rom_files.csv"
+
+            async def run_assertions() -> None:
+                app = MapperToolApp(
+                    rom_db_csv_path=rom_db_path,
+                    rom_root=rom_root,
+                    rom_files_csv_path=rom_files_db_path,
+                )
+
+                async with app.run_test() as pilot:
+                    await pilot.pause()
+                    table = app.query_one("#rom-database", DataTable)
+
+                    # Move cursor to the second row (bbb.nes)
+                    table.move_cursor(row=1)
+                    await pilot.pause()
+
+                    # Simulate refresh after running a ROM
+                    app._refresh_record_autorun_state("bbb.nes")
+                    await pilot.pause()
+
+                    # Cursor should still be on row 1 (bbb.nes)
+                    self.assertEqual(table.cursor_row, 1)
+
+            asyncio.run(run_assertions())
