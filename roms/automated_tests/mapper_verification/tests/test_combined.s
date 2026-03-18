@@ -50,6 +50,15 @@
 .ifdef HAS_TEST_BLOCK_SELECT
     .import run_block_select
 .endif
+.ifdef HAS_TEST_MODE0
+    .import run_mode0
+.endif
+.ifdef HAS_TEST_MODE2
+    .import run_mode2
+.endif
+.ifdef HAS_TEST_MODE3
+    .import run_mode3
+.endif
 
 .segment "RODATA"
 test_title_string:
@@ -168,6 +177,33 @@ test_title_string:
     jsr console_flush
     jsr console_newline
     jsr run_block_select
+    jsr console_show
+.endif
+
+.ifdef HAS_TEST_MODE0
+    jsr console_print_inline
+    .byte "-- Mode 0 --", 0
+    jsr console_flush
+    jsr console_newline
+    jsr run_mode0
+    jsr console_show
+.endif
+
+.ifdef HAS_TEST_MODE2
+    jsr console_print_inline
+    .byte "-- Mode 2 --", 0
+    jsr console_flush
+    jsr console_newline
+    jsr run_mode2
+    jsr console_show
+.endif
+
+.ifdef HAS_TEST_MODE3
+    jsr console_print_inline
+    .byte "-- Mode 3 --", 0
+    jsr console_flush
+    jsr console_newline
+    jsr run_mode3
     jsr console_show
 .endif
 
