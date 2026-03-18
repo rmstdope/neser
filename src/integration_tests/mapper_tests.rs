@@ -653,6 +653,10 @@ mod tests {
         "roms/automated_tests/mapper_verification/bin/rom_singles/m014.0_write_protect.nes"
     );
     setup_rom_test!(
+        test_mv_m014_0_vrc2,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m014.0_vrc2.nes"
+    );
+    setup_rom_test!(
         test_mv_m014_0_combined,
         "roms/automated_tests/mapper_verification/bin/m014.0.nes"
     );

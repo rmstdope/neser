@@ -72,3 +72,122 @@ SUPERVISOR_REG   = $A131
     lda #8
     sta MMC3_BANK_DATA
 .endmacro
+
+; ============================================================
+; VRC2-mode registers and macros (SL-1632 specific)
+; ============================================================
+;
+; When the supervisor register bit 1 ($A131 & $02) is clear, the mapper
+; operates in VRC2 mode with the following register layout:
+;   $8000       — PRG bank 0 (8KB at $8000-$9FFF)
+;   $9000       — Mirroring (bit 0: 0=V, 1=H)
+;   $A000       — PRG bank 1 (8KB at $A000-$BFFF)
+;   $B000-$E003 — CHR banks 0-7 (nibble-split, 1KB each)
+;
+; CHR register addressing: low nibble at even address, high nibble at odd.
+;   Slot 0: $B000 (lo) / $B001 (hi)
+;   Slot 1: $B002 (lo) / $B003 (hi)
+;   Slot 2: $C000 (lo) / $C001 (hi)
+;   Slot 3: $C002 (lo) / $C003 (hi)
+;   Slot 4: $D000 (lo) / $D001 (hi)
+;   Slot 5: $D002 (lo) / $D003 (hi)
+;   Slot 6: $E000 (lo) / $E001 (hi)
+;   Slot 7: $E002 (lo) / $E003 (hi)
+
+SL1632_VRC2_PRG0      = $8000
+SL1632_VRC2_PRG1      = $A000
+SL1632_VRC2_MIRROR    = $9000
+
+SL1632_VRC2_CHR0_LO   = $B000
+SL1632_VRC2_CHR0_HI   = $B001
+SL1632_VRC2_CHR1_LO   = $B002
+SL1632_VRC2_CHR1_HI   = $B003
+SL1632_VRC2_CHR2_LO   = $C000
+SL1632_VRC2_CHR2_HI   = $C001
+SL1632_VRC2_CHR3_LO   = $C002
+SL1632_VRC2_CHR3_HI   = $C003
+SL1632_VRC2_CHR4_LO   = $D000
+SL1632_VRC2_CHR4_HI   = $D001
+SL1632_VRC2_CHR5_LO   = $D002
+SL1632_VRC2_CHR5_HI   = $D003
+SL1632_VRC2_CHR6_LO   = $E000
+SL1632_VRC2_CHR6_HI   = $E001
+SL1632_VRC2_CHR7_LO   = $E002
+SL1632_VRC2_CHR7_HI   = $E003
+
+; Switch to VRC2 mode via supervisor register
+.macro set_vrc2_mode
+    lda #$00                ; M=0 (VRC2 mode), all CHR A18=0
+    sta SUPERVISOR_REG
+.endmacro
+
+; Select 8KB VRC2 PRG bank
+; slot 0 = $8000-$9FFF, slot 1 = $A000-$BFFF
+.macro select_vrc2_prg_bank slot, bank
+    .if slot = 0
+        lda #bank
+        sta SL1632_VRC2_PRG0
+    .elseif slot = 1
+        lda #bank
+        sta SL1632_VRC2_PRG1
+    .endif
+.endmacro
+
+; Select 1KB VRC2 CHR bank (nibble-split write)
+.macro select_vrc2_chr_bank slot, bank
+    .if slot = 0
+        lda #(bank & $0F)
+        sta SL1632_VRC2_CHR0_LO
+        lda #((bank >> 4) & $0F)
+        sta SL1632_VRC2_CHR0_HI
+    .elseif slot = 1
+        lda #(bank & $0F)
+        sta SL1632_VRC2_CHR1_LO
+        lda #((bank >> 4) & $0F)
+        sta SL1632_VRC2_CHR1_HI
+    .elseif slot = 2
+        lda #(bank & $0F)
+        sta SL1632_VRC2_CHR2_LO
+        lda #((bank >> 4) & $0F)
+        sta SL1632_VRC2_CHR2_HI
+    .elseif slot = 3
+        lda #(bank & $0F)
+        sta SL1632_VRC2_CHR3_LO
+        lda #((bank >> 4) & $0F)
+        sta SL1632_VRC2_CHR3_HI
+    .elseif slot = 4
+        lda #(bank & $0F)
+        sta SL1632_VRC2_CHR4_LO
+        lda #((bank >> 4) & $0F)
+        sta SL1632_VRC2_CHR4_HI
+    .elseif slot = 5
+        lda #(bank & $0F)
+        sta SL1632_VRC2_CHR5_LO
+        lda #((bank >> 4) & $0F)
+        sta SL1632_VRC2_CHR5_HI
+    .elseif slot = 6
+        lda #(bank & $0F)
+        sta SL1632_VRC2_CHR6_LO
+        lda #((bank >> 4) & $0F)
+        sta SL1632_VRC2_CHR6_HI
+    .elseif slot = 7
+        lda #(bank & $0F)
+        sta SL1632_VRC2_CHR7_LO
+        lda #((bank >> 4) & $0F)
+        sta SL1632_VRC2_CHR7_HI
+    .endif
+.endmacro
+
+; Set VRC2 nametable mirroring
+; mode 0 = Vertical, mode 1 = Horizontal
+.macro set_vrc2_mirroring mode
+    lda #mode
+    sta SL1632_VRC2_MIRROR
+.endmacro
+
+; Map font CHR banks in VRC2 mode
+; Puts banks 8 and 9 into slots 0 and 1 ($0000-$07FF)
+.macro init_vrc2_chr_font
+    select_vrc2_chr_bank 0, 8
+    select_vrc2_chr_bank 1, 9
+.endmacro

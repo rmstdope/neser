@@ -96,6 +96,7 @@ SINGLES := \
 	$(SINGLES_DIR)/m014.0_irq.nes \
 	$(SINGLES_DIR)/m014.0_prg_ram.nes \
 	$(SINGLES_DIR)/m014.0_write_protect.nes \
+	$(SINGLES_DIR)/m014.0_vrc2.nes \
 	$(SINGLES_DIR)/m015.0_prg_banking.nes \
 	$(SINGLES_DIR)/m015.0_nametable.nes \
 	$(SINGLES_DIR)/m015.0_mode0.nes \
@@ -491,6 +492,7 @@ $(eval $(call ROM_RULE,$(SINGLES_DIR)/m014.0_nametable.nes,nametable,m014.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m014.0_irq.nes,irq,m014.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m014.0_prg_ram.nes,prg_ram,m014.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m014.0_write_protect.nes,write_protect,m014.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m014.0_vrc2.nes,vrc2,m014.0))
 
 # Mapper 15, Submapper 0 (K-1029 multicart, mode 1 UNROM)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m015.0_prg_banking.nes,prg_banking,m015.0))
