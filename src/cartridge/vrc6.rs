@@ -255,6 +255,9 @@ pub struct VRC6Mapper {
     b003: u8,
     prg_ram_enabled: bool,
 
+    /// Internal 2KB CIRAM (two 1KB nametable pages: A10=0 and A10=1).
+    ciram: Box<[u8; 2048]>,
+
     // --- VRC IRQ (used by VRC6) ---
     irq: VrcIrq,
 
@@ -297,6 +300,7 @@ impl VRC6Mapper {
             chr_banks_1k: [0; 8],
             b003: 0,
             prg_ram_enabled: false,
+            ciram: Box::new([0u8; 2048]),
 
             irq: VrcIrq::new(341, 3),
 
@@ -322,20 +326,62 @@ impl VRC6Mapper {
         a
     }
 
-    fn update_mirroring_from_b003(&mut self) {
-        // bit 7 (W): PRG RAM enable
-        self.prg_ram_enabled = (self.b003 & 0x80) != 0;
+    /// Compute the CIRAM A10 (page select: 0=NTA, 1=NTB) for a given PPU nametable address.
+    ///
+    /// Implements the same logic as vrc6test's `maketesttable.c` `getbankval` for nametables.
+    ///
+    /// Step 1: select the CHR register that drives this nametable quadrant (via `b003 & 7`).
+    /// Step 2: if bit 5 of b003 is set (Mode 0), optionally replace A10 based on `b003 & 0x0F`.
+    /// Step 3: return the LSB of the resulting register value as A10.
+    fn ciram_a10(&self, addr: u16) -> usize {
+        let quadrant = ((addr >> 10) & 3) as usize;
 
-        // Commercial VRC6 games use banking mode 0 and write values where (b003 & 0x0F)
-        // is one of: 0, 4, 8, C (vertical, horizontal, 1-screen A, 1-screen B).
-        let new_mirroring = match self.b003 & 0x0F {
-            0x0 => NametableLayout::Vertical,
-            0x4 => NametableLayout::Horizontal,
-            0x8 => NametableLayout::SingleScreen, // 1-screen A (CIRAM lower bank)
-            0xC => NametableLayout::SingleScreenUpper, // 1-screen B (CIRAM upper bank)
-            _ => self.base.mirroring(),
+        // Step 1: determine which CHR register controls this quadrant.
+        let bankreg: usize = match self.b003 & 0x07 {
+            0 | 6 | 7 => {
+                if quadrant < 2 {
+                    6
+                } else {
+                    7
+                }
+            } // h-pattern: R6-R6-R7-R7
+            2 | 3 | 4 => {
+                if quadrant & 1 == 0 {
+                    6
+                } else {
+                    7
+                }
+            } // v-pattern: R6-R7-R6-R7
+            1 | 5 => 4 + quadrant, // 4-screen: R4-R5-R6-R7
+            _ => unreachable!(),
         };
-        self.base.set_mirroring(new_mirroring);
+        let mut bankval = self.chr_banks_1k[bankreg];
+
+        // Step 2: if bit 5 set (Mode 0), possibly override A10 based on b003 & 0x0F.
+        if (self.b003 & 0x20) != 0 {
+            match self.b003 & 0x0F {
+                0 | 7 => {
+                    bankval = (bankval & !1) | ((quadrant & 1) as u8);
+                } // vertical
+                3 | 4 => {
+                    bankval = (bankval & !1) | ((quadrant >> 1) as u8);
+                } // horizontal
+                8 | 15 => {
+                    bankval &= !1;
+                } // 1-screen A (A10=0)
+                11..=12 => {
+                    bankval |= 1;
+                } // 1-screen B (A10=1)
+                _ => {} // all other values: use register LSB as-is
+            }
+        }
+
+        // Step 3: A10 = LSB of bankval.
+        (bankval & 1) as usize
+    }
+
+    fn update_prg_ram_enable(&mut self) {
+        self.prg_ram_enabled = (self.b003 & 0x80) != 0;
     }
 
     fn update_banks(&mut self) {
@@ -347,9 +393,50 @@ impl VRC6Mapper {
             .select_prg_page(2, (self.prg_bank_8k & 0x1F) as i16);
         self.base.select_prg_page(3, -1);
 
-        // CHR: 8 × 1KB slots
-        for i in 0..8 {
-            self.base.select_chr_page(i, self.chr_banks_1k[i] as i16);
+        // CHR banking: $B003 bits 1-0 (DD) select the banking mode.
+        // Bit 5 (N) controls whether 2KB pairs have independent A10 halves.
+        // When N=1: even block = base & ~1, odd block = (base & ~1) | 1 (proper 2KB).
+        // When N=0 ("Other"): both blocks of a pair get the raw register value.
+        let mode = self.b003 & 0x03;
+        let split_2k = (self.b003 & 0x20) != 0;
+
+        match mode {
+            0 => {
+                // Mode 0: 8 × 1KB, independent R0-R7
+                for i in 0..8 {
+                    self.base.select_chr_page(i, self.chr_banks_1k[i] as i16);
+                }
+            }
+            1 => {
+                // Mode 1: 4 × 2KB — pairs (0,1), (2,3), (4,5), (6,7) from R0-R3
+                for pair in 0..4usize {
+                    let base = self.chr_banks_1k[pair] as i16;
+                    let (even, odd) = if split_2k {
+                        (base & !1, (base & !1) | 1)
+                    } else {
+                        (base, base)
+                    };
+                    self.base.select_chr_page(pair * 2, even);
+                    self.base.select_chr_page(pair * 2 + 1, odd);
+                }
+            }
+            2 | 3 => {
+                // Mode 2/3: R0-R3 independent 1KB; R4 controls 2KB pair (4,5); R5 controls (6,7)
+                for i in 0..4 {
+                    self.base.select_chr_page(i, self.chr_banks_1k[i] as i16);
+                }
+                for (reg_idx, block_base) in [(4usize, 4usize), (5, 6)] {
+                    let base = self.chr_banks_1k[reg_idx] as i16;
+                    let (even, odd) = if split_2k {
+                        (base & !1, (base & !1) | 1)
+                    } else {
+                        (base, base)
+                    };
+                    self.base.select_chr_page(block_base, even);
+                    self.base.select_chr_page(block_base + 1, odd);
+                }
+            }
+            _ => unreachable!(),
         }
     }
 }
@@ -418,7 +505,8 @@ impl Mapper for VRC6Mapper {
                 }
                 0xB003 => {
                     self.b003 = value;
-                    self.update_mirroring_from_b003();
+                    self.update_banks(); // bits 1-0 (DD) affect CHR banking mode
+                    self.update_prg_ram_enable(); // bit 7 (W) gates PRG-RAM
                 }
                 0xF000 => {
                     // IRQ Latch
@@ -453,13 +541,72 @@ impl Mapper for VRC6Mapper {
     }
 
     fn cpu_cycle(&mut self) {
-        trace_mapper!(5; "[vrc6] cpu_cycle (irq)");
         self.audio.cpu_cycle();
         self.irq.tick();
     }
 
     fn irq_pending(&self) -> bool {
         self.irq.pending()
+    }
+
+    fn read_nametable(&mut self, addr: u16) -> Option<u8> {
+        let quadrant = ((addr >> 10) & 3) as usize;
+        let offset = (addr & 0x3FF) as usize;
+
+        if (self.b003 & 0x10) != 0 {
+            // Bit 4 set: nametables sourced from CHR ROM.
+            // Select CHR register using b003 & 7 pattern, then compute bank with A10 override.
+            let bankreg = match self.b003 & 0x07 {
+                0 | 6 | 7 => {
+                    if quadrant < 2 {
+                        6
+                    } else {
+                        7
+                    }
+                }
+                2 | 3 | 4 => {
+                    if quadrant & 1 == 0 {
+                        6
+                    } else {
+                        7
+                    }
+                }
+                1 | 5 => 4 + quadrant,
+                _ => unreachable!(),
+            };
+            let mut bank = self.chr_banks_1k[bankreg] as usize;
+
+            // When bit 5 set (Mode 0), apply A10 override same as CIRAM path.
+            if (self.b003 & 0x20) != 0 {
+                let a10: usize = match self.b003 & 0x0F {
+                    0 | 7 => quadrant & 1,
+                    3 | 4 => quadrant >> 1,
+                    8 | 15 => 0,
+                    11..=12 => 1,
+                    _ => bank & 1,
+                };
+                bank = (bank & !1) | a10;
+            }
+
+            let chr_offset = bank * 0x400 + offset;
+            return Some(self.base.read_chr_at_index(chr_offset));
+        }
+
+        // Bit 4 clear: nametables sourced from CIRAM.
+        // Use ciram_a10 to determine which 1KB CIRAM page this address maps to.
+        let a10 = self.ciram_a10(addr);
+        Some(self.ciram[a10 * 0x400 + offset])
+    }
+
+    fn write_nametable(&mut self, addr: u16, value: u8) -> bool {
+        if (self.b003 & 0x10) != 0 {
+            // CHR ROM nametable mode: ignore writes to read-only ROM.
+            return true;
+        }
+        let a10 = self.ciram_a10(addr);
+        let offset = (addr & 0x3FF) as usize;
+        self.ciram[a10 * 0x400 + offset] = value;
+        true
     }
 
     fn expansion_audio_sample(&self) -> f32 {
