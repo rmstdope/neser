@@ -46,6 +46,7 @@ mod mapper185;
 mod mapper20;
 mod mapper205;
 mod mapper218;
+mod mapper228;
 mod mapper230;
 mod mapper231;
 mod mapper232;
