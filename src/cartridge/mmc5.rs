@@ -1012,15 +1012,8 @@ impl Mapper for MMC5Mapper {
         } else if (0x5C00..=0x5FFF).contains(&addr) {
             let mode = self.ex_ram_mode & 0x03;
             match mode {
-                0x00 => {
-                    if self.ppumask_rendering_enabled {
-                        open_bus
-                    } else {
-                        let index = (addr - 0x5C00) as usize;
-                        self.ex_ram.get(index).copied().unwrap_or(0)
-                    }
-                }
-                0x01 => open_bus,
+                // NESdev note (4): CPU reads in modes 0/1 always return open bus.
+                0x00 | 0x01 => open_bus,
                 _ => self.read_prg(addr),
             }
         } else {
@@ -2786,7 +2779,7 @@ mod tests {
     }
 
     #[test]
-    fn test_mmc5_exram_mode0_allows_cpu_reads_when_rendering_disabled() {
+    fn test_mmc5_exram_mode0_cpu_reads_return_open_bus_when_rendering_disabled() {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 8);
 
@@ -2796,11 +2789,16 @@ mod tests {
         // Disable rendering (PPUMASK = 0).
         mapper.ppu_write_mask(0x00);
 
-        // Mode 0: ExRAM as nametable. CPU reads should be allowed when rendering is disabled.
+        // Mode 0: ExRAM as nametable. CPU reads return open bus per NESdev note (4).
         mapper.write_prg(0x5104, 0x00);
         mapper.write_prg(0x5C00, 0x5A);
 
-        assert_eq!(mapper.read_prg_open_bus(0x5C00, 0x00), 0x5A);
+        let open_bus = 0x00;
+        assert_eq!(
+            mapper.read_prg_open_bus(0x5C00, open_bus),
+            open_bus,
+            "mode 0 should return open bus even when rendering is disabled"
+        );
     }
 
     #[test]
@@ -3095,6 +3093,34 @@ mod tests {
             mapper.read_prg_open_bus(0x5C00, open_bus),
             open_bus,
             "mode 1 should return open bus on CPU read"
+        );
+    }
+
+    #[test]
+    fn test_mmc5_exram_mode0_returns_open_bus_when_rendering_disabled() {
+        // NESdev note (4): CPU reads in modes 0/1 return open bus regardless
+        // of rendering state. Regression: mode 0 previously leaked ExRAM data
+        // when ppumask_rendering_enabled was false.
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1 * 1024, 8);
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
+            .expect("MMC5 should be implemented");
+
+        // Store data in ExRAM via mode 2 (full CPU read/write).
+        mapper.write_prg(0x5104, 0x02);
+        mapper.write_prg(0x5C00, 0x42);
+        assert_eq!(mapper.read_prg(0x5C00), 0x42, "mode 2 write should succeed");
+
+        // Disable rendering (PPUMASK $2001 = $00).
+        mapper.ppu_write_mask(0x00);
+
+        // Switch to mode 0 and read via open bus path.
+        mapper.write_prg(0x5104, 0x00);
+        let open_bus = 0xA5;
+        assert_eq!(
+            mapper.read_prg_open_bus(0x5C00, open_bus),
+            open_bus,
+            "mode 0 should return open bus even when rendering is disabled"
         );
     }
 
