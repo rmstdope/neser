@@ -152,7 +152,7 @@ mod tests {
     use crate::cartridge::test_helpers::banked_data;
 
     /// Non-power-of-two bank count prevents silent modulo-wrap false passes.
-    /// 48 × 16 KB = 768 KB PRG (covers 6-bit bank index range 0..63)
+    /// 48 × 16 KB = 768 KB PRG (uses 48 distinct banks from the 6-bit index space)
     const PRG_BANKS: usize = 48;
 
     fn make_mapper(prg_rom: Vec<u8>) -> Mapper227 {
