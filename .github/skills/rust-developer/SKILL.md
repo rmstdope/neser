@@ -1,6 +1,6 @@
 ---
 name: rust-developer
-description: Guidance for Rust developers on best practices.
+description: Guidance for Rust developers on best practices. Use this skill whenever developing Rust code.
 ---
 
 # Rust Developer Skill
