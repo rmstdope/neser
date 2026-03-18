@@ -59,6 +59,9 @@
 .ifdef HAS_TEST_MODE3
     .import run_mode3
 .endif
+.ifdef HAS_TEST_EXRAM
+    .import run_exram
+.endif
 
 .segment "RODATA"
 test_title_string:
@@ -204,6 +207,15 @@ test_title_string:
     jsr console_flush
     jsr console_newline
     jsr run_mode3
+    jsr console_show
+.endif
+
+.ifdef HAS_TEST_EXRAM
+    jsr console_print_inline
+    .byte "-- ExRAM --", 0
+    jsr console_flush
+    jsr console_newline
+    jsr run_exram
     jsr console_show
 .endif
 
