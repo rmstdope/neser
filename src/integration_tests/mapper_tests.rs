@@ -434,6 +434,10 @@ mod tests {
         test_mv_m006_0_combined,
         "roms/automated_tests/mapper_verification/bin/m006.0.nes"
     );
+    setup_rom_test!(
+        test_mv_m006_0_modes,
+        "roms/automated_tests/mapper_verification/bin/m006.0_modes.nes"
+    );
 
     // ================================================================
     // Mapper 7 (AxROM), Submapper 0 (Bus Conflicts)

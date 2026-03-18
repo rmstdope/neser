@@ -63,6 +63,7 @@ SINGLES := \
 	$(SINGLES_DIR)/m006.0_nametable.nes \
 	$(SINGLES_DIR)/m006.0_irq.nes \
 	$(SINGLES_DIR)/m006.0_prg_ram.nes \
+	$(BIN_DIR)/m006.0_modes.nes \
 	$(SINGLES_DIR)/m007.0_prg_banking.nes \
 	$(SINGLES_DIR)/m007.0_nametable.nes \
 	$(SINGLES_DIR)/m007.1_prg_banking.nes \
@@ -439,6 +440,9 @@ $(eval $(call ROM_RULE,$(SINGLES_DIR)/m006.0_chr_banking.nes,chr_banking,m006.0)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m006.0_nametable.nes,nametable,m006.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m006.0_irq.nes,irq,m006.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m006.0_prg_ram.nes,prg_ram,m006.0))
+
+# Mapper 6, Submapper 0 — Mode tests (GNROM, 2M PRG, write-enable, WRAM banking)
+$(eval $(call ROM_RULE,$(BIN_DIR)/m006.0_modes.nes,modes,m006.0_modes))
 
 # Mapper 7, Submapper 0 (Bus Conflicts)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m007.0_prg_banking.nes,prg_banking,m007.0))
