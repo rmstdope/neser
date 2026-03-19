@@ -148,6 +148,9 @@ got_val:      .res 1       ; Temp for fail handler
     .elseif MAPPER_NUM = 65
     ; Irem H3001: map font CHR banks via $B000/$B001
     init_chr_font
+    .elseif MAPPER_NUM = 67
+    ; Sunsoft 3: map font CHR bank via $8800
+    init_chr_font
     .endif
 
     jsr init_nes
@@ -320,6 +323,17 @@ got_val:      .res 1       ; Temp for fail handler
     sta H3001_IRQ_LOAD      ; Acknowledge + reload counter from reload value
     lda #$80
     sta H3001_IRQ_EN        ; Re-enable (bit 7 = enable)
+    .elseif MAPPER_NUM = 67
+    ; Sunsoft 3: acknowledge + reload counter + re-enable
+    lda #0
+    sta S3_IRQ_ACK          ; Acknowledge IRQ
+    sta S3_IRQ_EN           ; Reset write toggle + pause
+    lda #>(10 * 114)
+    sta S3_IRQ_CTR          ; Reload high byte
+    lda #<(10 * 114)
+    sta S3_IRQ_CTR          ; Reload low byte
+    lda #$10
+    sta S3_IRQ_EN           ; Re-enable counting (bit 4)
     .endif
     pla
     rti
