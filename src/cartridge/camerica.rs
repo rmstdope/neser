@@ -214,13 +214,8 @@ mod tests {
         // Mirroring control is submapper 1 (Fire Hawk) only
         let prg_rom = vec![0; 128 * 1024];
         let mut mapper = CamericaMapper::new(
-            MapperContext::new_for_test(
-                71,
-                prg_rom,
-                vec![],
-                NametableLayout::Horizontal,
-            )
-            .with_submapper(1),
+            MapperContext::new_for_test(71, prg_rom, vec![], NametableLayout::Horizontal)
+                .with_submapper(1),
         );
 
         // Default should be lower nametable (submapper 1 overrides to SingleScreenLower)
@@ -332,13 +327,8 @@ mod tests {
         }
 
         let mut mapper = CamericaMapper::new(
-            MapperContext::new_for_test(
-                71,
-                prg_rom,
-                vec![],
-                NametableLayout::Horizontal,
-            )
-            .with_submapper(1),
+            MapperContext::new_for_test(71, prg_rom, vec![], NametableLayout::Horizontal)
+                .with_submapper(1),
         );
 
         // Set bank to 5 ($C000+ = bank select)
@@ -392,13 +382,8 @@ mod tests {
 
         // Use submapper 1 to test mirroring control
         let mut mapper = CamericaMapper::new(
-            MapperContext::new_for_test(
-                71,
-                prg_rom.clone(),
-                vec![],
-                NametableLayout::Horizontal,
-            )
-            .with_submapper(1),
+            MapperContext::new_for_test(71, prg_rom.clone(), vec![], NametableLayout::Horizontal)
+                .with_submapper(1),
         );
 
         mapper.write_prg(0xC000, 2); // Bank select at $C000+
@@ -409,13 +394,8 @@ mod tests {
         let chr = mapper.chr_ram_snapshot();
 
         let mut restored = CamericaMapper::new(
-            MapperContext::new_for_test(
-                71,
-                prg_rom,
-                vec![],
-                NametableLayout::Horizontal,
-            )
-            .with_submapper(1),
+            MapperContext::new_for_test(71, prg_rom, vec![], NametableLayout::Horizontal)
+                .with_submapper(1),
         );
         restored.restore_registers(&regs);
         restored.restore_chr_ram(&chr);
