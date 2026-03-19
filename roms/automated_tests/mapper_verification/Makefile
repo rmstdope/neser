@@ -201,6 +201,8 @@ SINGLES := \
 	$(SINGLES_DIR)/m034.1_prg_ram.nes \
 	$(SINGLES_DIR)/m034.2_prg_banking.nes \
 	$(SINGLES_DIR)/m037.0_block_select.nes \
+	$(SINGLES_DIR)/m037.0_nametable.nes \
+	$(SINGLES_DIR)/m037.0_irq.nes \
 	$(SINGLES_DIR)/m038.0_prg_banking.nes \
 	$(SINGLES_DIR)/m038.0_chr_banking.nes \
 	$(SINGLES_DIR)/m038.0_prg_ram.nes \
@@ -230,9 +232,13 @@ SINGLES := \
 	$(SINGLES_DIR)/m042.0_irq.nes \
 	$(SINGLES_DIR)/m043.0_prg_banking.nes \
 	$(SINGLES_DIR)/m045.0_block_select.nes \
+	$(SINGLES_DIR)/m045.0_nametable.nes \
+	$(SINGLES_DIR)/m045.0_irq.nes \
 	$(SINGLES_DIR)/m046.0_prg_banking.nes \
 	$(SINGLES_DIR)/m046.0_chr_banking.nes \
 	$(SINGLES_DIR)/m047.0_block_select.nes \
+	$(SINGLES_DIR)/m047.0_nametable.nes \
+	$(SINGLES_DIR)/m047.0_irq.nes \
 	$(SINGLES_DIR)/m064.0_prg_banking.nes \
 	$(SINGLES_DIR)/m064.0_chr_banking.nes \
 	$(SINGLES_DIR)/m064.0_nametable.nes \
@@ -786,7 +792,9 @@ $(eval $(call COMBINED_RULE,$(BIN_DIR)/m039.0.nes,m039.0,prg_banking))
 
 # Mapper 37, Submapper 0 (SMB + Tetris + Nintendo World Cup)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m037.0_block_select.nes,block_select,m037.0))
-$(eval $(call COMBINED_RULE,$(BIN_DIR)/m037.0.nes,m037.0,block_select))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m037.0_nametable.nes,nametable,m037.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m037.0_irq.nes,irq,m037.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m037.0.nes,m037.0,block_select nametable irq))
 
 # Mapper 40, Submapper 0 (NTDEC 2722)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m040.0_prg_banking.nes,prg_banking,m040.0))
@@ -809,7 +817,9 @@ $(eval $(call COMBINED_RULE,$(BIN_DIR)/m043.0.nes,m043.0,prg_banking))
 
 # Mapper 45, Submapper 0 (GA23C multicart)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m045.0_block_select.nes,block_select,m045.0))
-$(eval $(call COMBINED_RULE,$(BIN_DIR)/m045.0.nes,m045.0,block_select))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m045.0_nametable.nes,nametable,m045.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m045.0_irq.nes,irq,m045.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m045.0.nes,m045.0,block_select nametable irq))
 
 # Mapper 46, Submapper 0 (Rumble Station)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m046.0_prg_banking.nes,prg_banking,m046.0))
@@ -818,7 +828,9 @@ $(eval $(call COMBINED_RULE,$(BIN_DIR)/m046.0.nes,m046.0,prg_banking chr_banking
 
 # Mapper 47, Submapper 0 (Super Spike V'Ball + Nintendo World Cup)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m047.0_block_select.nes,block_select,m047.0))
-$(eval $(call COMBINED_RULE,$(BIN_DIR)/m047.0.nes,m047.0,block_select))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m047.0_nametable.nes,nametable,m047.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m047.0_irq.nes,irq,m047.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m047.0.nes,m047.0,block_select nametable irq))
 
 # Mapper 64, Submapper 0 (RAMBO-1)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m064.0_prg_banking.nes,prg_banking,m064.0))

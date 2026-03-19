@@ -1392,6 +1392,14 @@ mod tests {
         "roms/automated_tests/mapper_verification/bin/rom_singles/m037.0_block_select.nes"
     );
     setup_rom_console_test!(
+        test_mv_m037_0_nametable,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m037.0_nametable.nes"
+    );
+    setup_rom_console_test!(
+        test_mv_m037_0_irq,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m037.0_irq.nes"
+    );
+    setup_rom_console_test!(
         test_mv_m037_0_combined,
         "roms/automated_tests/mapper_verification/bin/m037.0.nes"
     );
@@ -1545,6 +1553,14 @@ mod tests {
         "roms/automated_tests/mapper_verification/bin/rom_singles/m045.0_block_select.nes"
     );
     setup_rom_console_test!(
+        test_mv_m045_0_nametable,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m045.0_nametable.nes"
+    );
+    setup_rom_console_test!(
+        test_mv_m045_0_irq,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m045.0_irq.nes"
+    );
+    setup_rom_console_test!(
         test_mv_m045_0_combined,
         "roms/automated_tests/mapper_verification/bin/m045.0.nes"
     );
@@ -1575,6 +1591,14 @@ mod tests {
     setup_rom_console_test!(
         test_mv_m047_0_block_select,
         "roms/automated_tests/mapper_verification/bin/rom_singles/m047.0_block_select.nes"
+    );
+    setup_rom_console_test!(
+        test_mv_m047_0_nametable,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m047.0_nametable.nes"
+    );
+    setup_rom_console_test!(
+        test_mv_m047_0_irq,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m047.0_irq.nes"
     );
     setup_rom_console_test!(
         test_mv_m047_0_combined,

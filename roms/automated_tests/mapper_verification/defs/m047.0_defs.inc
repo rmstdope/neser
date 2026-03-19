@@ -23,12 +23,13 @@ CONSOLE_VERIFICATION = 1
 ; Capability flags for this slice
 .define HAS_PRG_BANKING 0
 .define HAS_CHR_BANKING 0
-.define HAS_MIRRORING_CONTROL 0
-.define HAS_IRQ 0
+.define HAS_MIRRORING_CONTROL 1
+.define HAS_IRQ 1
 .define HAS_PRG_RAM 0
 .define HAS_PRG_RAM_PROTECT 0
 .define HAS_BUS_CONFLICTS 0
-.define MAX_MIRRORING_MODES 0
+.define MAX_MIRRORING_MODES 4
+.define IRQ_MODE 0
 
 .define PRG_BANK_SIZE 8
 .define CHR_BANK_SIZE 8
@@ -36,6 +37,13 @@ CONSOLE_VERIFICATION = 1
 .define CHR_BANK_COUNT 0
 
 .include "mmc3_core_macros.inc"
+
+.macro init_chr_font
+    lda #0                  ; R0: 2KB at $0000-$07FF
+    sta MMC3_BANK_SELECT
+    lda #8                  ; Font is in CHR banks 8+9
+    sta MMC3_BANK_DATA
+.endmacro
 
 BLOCK_SELECT_WRITE_ADDR = $6000
 BLOCK_SELECT_WRITE_OR_MASK = 0
