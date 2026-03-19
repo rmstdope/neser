@@ -212,6 +212,23 @@ impl PrgRam {
         self.data.clone()
     }
 
+    /// Read a byte from PRG-RAM at an absolute byte offset (not CPU address).
+    /// Used for banked RAM access where the caller computes `bank * bank_size + page_offset`.
+    /// Returns 0 (open bus) if `offset` is beyond the allocated RAM size.
+    #[inline]
+    pub fn read_at_offset(&self, offset: usize) -> u8 {
+        self.data.get(offset).copied().unwrap_or(0)
+    }
+
+    /// Write a byte to PRG-RAM at an absolute byte offset (not CPU address).
+    /// No-op if the offset is beyond the allocated RAM size.
+    #[inline]
+    pub fn write_at_offset(&mut self, offset: usize, value: u8) {
+        if offset < self.data.len() {
+            self.data[offset] = value;
+        }
+    }
+
     /// Load a snapshot into PRG-RAM from save persistence.
     pub fn load_snapshot(&mut self, data: &[u8]) {
         let to_copy = data.len().min(self.data.len());

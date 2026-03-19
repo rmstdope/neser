@@ -577,6 +577,7 @@ impl Nes {
         self.bus.borrow().has_expansion_zapper()
     }
 
+    #[allow(dead_code)]
     pub fn has_expansion_power_pad(&self) -> bool {
         self.bus.borrow().has_expansion_power_pad()
     }
