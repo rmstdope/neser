@@ -147,6 +147,10 @@ SINGLES := \
 	$(SINGLES_DIR)/m016.4_chr_banking.nes \
 	$(SINGLES_DIR)/m016.4_nametable.nes \
 	$(SINGLES_DIR)/m016.4_irq.nes \
+	$(SINGLES_DIR)/m016.0_prg_banking.nes \
+	$(SINGLES_DIR)/m016.0_chr_banking.nes \
+	$(SINGLES_DIR)/m016.0_nametable.nes \
+	$(SINGLES_DIR)/m016.0_irq.nes \
 	$(SINGLES_DIR)/m016.5_prg_banking.nes \
 	$(SINGLES_DIR)/m016.5_chr_banking.nes \
 	$(SINGLES_DIR)/m016.5_nametable.nes \
@@ -301,6 +305,7 @@ COMBINED := \
 	$(BIN_DIR)/m025.2.nes \
 	$(BIN_DIR)/m025.3.nes \
 	$(BIN_DIR)/m016.4.nes \
+	$(BIN_DIR)/m016.0.nes \
 	$(BIN_DIR)/m016.5.nes \
 	$(BIN_DIR)/m018.0.nes \
 	$(BIN_DIR)/m022.0.nes \
@@ -653,6 +658,13 @@ $(eval $(call ROM_RULE,$(SINGLES_DIR)/m016.4_chr_banking.nes,chr_banking,m016.4)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m016.4_nametable.nes,nametable,m016.4))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m016.4_irq.nes,irq,m016.4))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m016.4.nes,m016.4,prg_banking chr_banking nametable irq))
+
+# Mapper 16, Submapper 0 (Bandai FCG — unspecified, dual-address)
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m016.0_prg_banking.nes,prg_banking,m016.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m016.0_chr_banking.nes,chr_banking,m016.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m016.0_nametable.nes,nametable,m016.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m016.0_irq.nes,irq,m016.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m016.0.nes,m016.0,prg_banking chr_banking nametable irq))
 
 # Mapper 16, Submapper 5 (Bandai LZ93D50)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m016.5_prg_banking.nes,prg_banking,m016.5))

@@ -743,6 +743,32 @@ mod tests {
     );
 
     // ================================================================
+    // Mapper 16 (Bandai FCG), Submapper 0 (unspecified — dual-address)
+    // Tests the $6000-based register path (matching FCG-1/2 behavior).
+    // ================================================================
+
+    setup_rom_test!(
+        test_mv_m016_0_prg_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m016.0_prg_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m016_0_chr_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m016.0_chr_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m016_0_nametable,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m016.0_nametable.nes"
+    );
+    setup_rom_test!(
+        test_mv_m016_0_irq,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m016.0_irq.nes"
+    );
+    setup_rom_test!(
+        test_mv_m016_0_combined,
+        "roms/automated_tests/mapper_verification/bin/m016.0.nes"
+    );
+
+    // ================================================================
     // Mapper 16 (Bandai FCG), Submapper 5 (LZ93D50)
     // ================================================================
 
