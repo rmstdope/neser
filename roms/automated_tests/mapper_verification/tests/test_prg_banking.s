@@ -415,6 +415,61 @@ test_title_string:
         pass_test
         .endif
 
+        ; === Action 53 PRG Mode Tests ===
+        .if MAPPER_NUM = 28
+
+        ; Mode 0 (32KB banking): inner bank 0 → $8000=bank 0, $C000=bank 1 (code)
+        start_test 8, "Mode0 32K"
+        lda #$01
+        sta $5000               ; Select inner bank register
+        lda #0
+        sta $BFFF               ; Inner bank = 0
+        lda #$80
+        sta $5000               ; Select mode register
+        lda #$13                ; Mode 0 (32KB), H mirror, 64KB outer
+        sta $BFFF
+        ; $8000 should be bank 0 of outer bank
+        lda $8000
+        assert_a_eq $A5
+        pass_test
+
+        start_test 9, "Mode0 B0 id"
+        lda $8001
+        assert_a_eq 0
+        pass_test
+
+        ; Mode 2 (Fixed $8000): inner bank 1 → $8000=bank 0 (fixed), $C000=bank 1 (code)
+        start_test 10, "Mode2 fix"
+        lda #$01
+        sta $5000               ; Select inner bank register
+        lda #1
+        sta $BFFF               ; Inner bank = 1 (keeps code at $C000)
+        lda #$80
+        sta $5000               ; Select mode register
+        lda #$1B                ; Mode 2 (fixed $8000), H mirror, 64KB outer
+        sta $BFFF
+        ; $8000 should be fixed to bank 0 (first bank of outer bank)
+        lda $8000
+        assert_a_eq $A5
+        pass_test
+
+        start_test 11, "Mode2 B0 id"
+        lda $8001
+        assert_a_eq 0
+        pass_test
+
+        ; Restore mode 3 (fixed $C000, switchable $8000) for subsequent tests
+        lda #$80
+        sta $5000
+        lda #$1F                ; Mode 3, H mirror, 64KB outer
+        sta $BFFF
+        lda #$01
+        sta $5000               ; Select inner bank register
+        lda #0
+        sta $BFFF               ; Inner bank = 0
+
+        .endif
+
     .endif
 .endif
     rts
