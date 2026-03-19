@@ -187,9 +187,10 @@ mod tests {
     use crate::cartridge::test_helpers::banked_data;
 
     // Non-power-of-two bank counts to prevent false-pass modulo wrapping.
-    // PRG: 16 KB banks; use 48 banks (3 outer groups × 8 inner banks = 24, but 48 gives room)
+    // PRG: 16 KB banks; mode bits [1:0] select 4 outer groups × 8 inner banks = 32 possible banks;
+    //      use 48 banks to give extra headroom beyond the valid range.
     const PRG_BANKS_16K: usize = 48;
-    // CHR: 4 KB banks; use 48 banks
+    // CHR: 4 KB banks; there are up to 4 × 32 = 128 possible banks; use 48 (non-power-of-two) for testing.
     const CHR_BANKS_4K: usize = 48;
 
     fn make_mapper() -> Mapper331 {
