@@ -432,6 +432,10 @@ mod tests {
         "roms/automated_tests/mapper_verification/bin/rom_singles/m005.0_exram.nes"
     );
     setup_rom_test!(
+        test_mv_m005_0_mmc5_chr,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m005.0_mmc5_chr.nes"
+    );
+    setup_rom_test!(
         test_mv_m005_0_combined,
         "roms/automated_tests/mapper_verification/bin/m005.0.nes"
     );

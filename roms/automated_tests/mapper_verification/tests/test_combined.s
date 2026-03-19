@@ -65,6 +65,9 @@
 .ifdef HAS_TEST_WRITE_PROTECT
     .import run_write_protect
 .endif
+.ifdef HAS_TEST_MMC5_CHR
+    .import run_mmc5_chr
+.endif
 
 .segment "RODATA"
 test_title_string:
@@ -228,6 +231,15 @@ test_title_string:
     jsr console_flush
     jsr console_newline
     jsr run_write_protect
+    jsr console_show
+.endif
+
+.ifdef HAS_TEST_MMC5_CHR
+    jsr console_print_inline
+    .byte "-- MMC5 CHR --", 0
+    jsr console_flush
+    jsr console_newline
+    jsr run_mmc5_chr
     jsr console_show
 .endif
 
