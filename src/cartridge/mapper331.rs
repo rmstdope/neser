@@ -194,24 +194,30 @@ mod tests {
     const CHR_BANKS_4K: usize = 48;
 
     fn make_mapper() -> Mapper331 {
-        Mapper331::new(MapperContext::new_for_test(
-            MAPPER_NUMBER,
-            banked_data(PRG_BANK_SIZE_BYTES, PRG_BANKS_16K),
-            banked_data(CHR_BANK_SIZE_BYTES, CHR_BANKS_4K),
-            NametableLayout::Vertical,
-        ))
+        Mapper331::new(
+            MapperContext::new_for_test(
+                MAPPER_NUMBER,
+                banked_data(PRG_BANK_SIZE_BYTES, PRG_BANKS_16K),
+                banked_data(CHR_BANK_SIZE_BYTES, CHR_BANKS_4K),
+                NametableLayout::Vertical,
+            )
+            .with_prg_ram_banks(0),
+        )
     }
 
     // ── Factory registration ──────────────────────────────────────────────────
 
     #[test]
     fn mapper_331_is_registered_in_factory() {
-        let result = create_mapper(MapperContext::new_for_test(
-            MAPPER_NUMBER,
-            banked_data(PRG_BANK_SIZE_BYTES, PRG_BANKS_16K),
-            banked_data(CHR_BANK_SIZE_BYTES, CHR_BANKS_4K),
-            NametableLayout::Vertical,
-        ));
+        let result = create_mapper(
+            MapperContext::new_for_test(
+                MAPPER_NUMBER,
+                banked_data(PRG_BANK_SIZE_BYTES, PRG_BANKS_16K),
+                banked_data(CHR_BANK_SIZE_BYTES, CHR_BANKS_4K),
+                NametableLayout::Vertical,
+            )
+            .with_prg_ram_banks(0),
+        );
         assert!(result.is_ok(), "Mapper 331 must be registered in factory");
     }
 
