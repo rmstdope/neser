@@ -1462,6 +1462,10 @@ mod tests {
         "roms/automated_tests/mapper_verification/bin/rom_singles/m041.0_prg_banking.nes"
     );
     setup_rom_console_test!(
+        test_mv_m041_0_nametable,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m041.0_nametable.nes"
+    );
+    setup_rom_console_test!(
         test_mv_m041_0_combined,
         "roms/automated_tests/mapper_verification/bin/m041.0.nes"
     );
