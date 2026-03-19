@@ -167,7 +167,7 @@ impl Mapper for Mapper331 {
         }
         self.reg0 = data[0];
         self.reg1 = data[1];
-        self.mode = data[2];
+        self.mode = data[2] & 0x0F;
         self.update_state();
     }
 
