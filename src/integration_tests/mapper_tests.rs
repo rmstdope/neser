@@ -1476,6 +1476,10 @@ mod tests {
         "roms/automated_tests/mapper_verification/bin/rom_singles/m042.0_nametable.nes"
     );
     setup_rom_console_test!(
+        test_mv_m042_0_irq,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m042.0_irq.nes"
+    );
+    setup_rom_console_test!(
         test_mv_m042_0_combined,
         "roms/automated_tests/mapper_verification/bin/m042.0.nes"
     );

@@ -225,6 +225,7 @@ SINGLES := \
 	$(SINGLES_DIR)/m042.0_prg_banking.nes \
 	$(SINGLES_DIR)/m042.0_chr_banking.nes \
 	$(SINGLES_DIR)/m042.0_nametable.nes \
+	$(SINGLES_DIR)/m042.0_irq.nes \
 	$(SINGLES_DIR)/m043.0_prg_banking.nes \
 	$(SINGLES_DIR)/m045.0_block_select.nes \
 	$(SINGLES_DIR)/m046.0_prg_banking.nes \
@@ -795,7 +796,8 @@ $(eval $(call COMBINED_RULE,$(BIN_DIR)/m041.0.nes,m041.0,prg_banking))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m042.0_prg_banking.nes,prg_banking,m042.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m042.0_chr_banking.nes,chr_banking,m042.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m042.0_nametable.nes,nametable,m042.0))
-$(eval $(call COMBINED_RULE,$(BIN_DIR)/m042.0.nes,m042.0,prg_banking chr_banking nametable))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m042.0_irq.nes,irq,m042.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m042.0.nes,m042.0,prg_banking chr_banking nametable irq))
 
 # Mapper 43, Submapper 0 (TONY-I / YS-612)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m043.0_prg_banking.nes,prg_banking,m043.0))
