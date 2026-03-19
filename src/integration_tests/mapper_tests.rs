@@ -25,7 +25,18 @@ mod tests {
         [(300, 1193424937)]
     );
 
-    // TODO FME7
+    // FME-7 (Sunsoft FME-7, Mapper 69)
+    // CRCs verified against expected screen output at frame 120.
+    setup_rom_crc_test!(
+        test_fme7acktest,
+        "roms/automated_tests/fme7acktest-r1/fme7acktest.nes",
+        [(120, 4233388596)]
+    );
+    setup_rom_crc_test!(
+        test_fme7ramtest,
+        "roms/automated_tests/fme7ramtest-r1/fme7ramtest.nes",
+        [(120, 3645558466)]
+    );
 
     // TODO holydiver
 

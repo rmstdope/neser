@@ -53,8 +53,8 @@ pub struct SunsoftFme7Mapper {
 
     // PRG banking (4 x 8KB switchable banks)
     prg_banks: [u8; 4], // Banks for $6000-$7FFF, $8000-$9FFF, $A000-$BFFF, $C000-$DFFF
+    // True when BOTH bit 7 (chip-enable) AND bit 6 (RAM/ROM select) of reg $08 are set.
     prg_ram_enabled: bool,
-    prg_ram_readonly: bool,
 
     // CHR banking (8 x 1KB banks)
     chr_banks: [u8; 8],
@@ -84,7 +84,6 @@ impl SunsoftFme7Mapper {
             command: 0,
             prg_banks: [0, 0, 0, 0],
             prg_ram_enabled: false,
-            prg_ram_readonly: false,
             chr_banks: [0, 1, 2, 3, 4, 5, 6, 7],
             irq: CpuCycleIrq::new(CpuCycleIrqMode::DownUnderflow),
             irq_counter_enabled: false,
@@ -122,11 +121,13 @@ impl SunsoftFme7Mapper {
             }
             0x08 => {
                 // PRG bank 0 ($6000-$7FFF)
-                // Bit 7: RAM enable
-                // Bit 6: RAM write protect (1 = readonly)
-                // Bits 5-0: Bank number
-                self.prg_ram_enabled = (value & 0x80) != 0;
-                self.prg_ram_readonly = (value & 0x40) != 0;
+                // Bit 7: RAM chip-enable (E) — 6264 +CE line
+                // Bit 6: RAM/ROM select (R) — 0 = ROM, 1 = RAM
+                // Bits 5-0: Bank number (applied even when RAM is selected)
+                // RAM accessible only when BOTH E=1 AND R=1.
+                let wram_ce = (value & 0x80) != 0;
+                let ram_select = (value & 0x40) != 0;
+                self.prg_ram_enabled = wram_ce && ram_select;
                 self.prg_banks[0] = value & 0x3F;
             }
             0x09..=0x0B => {
@@ -146,12 +147,10 @@ impl SunsoftFme7Mapper {
             }
             0x0D => {
                 // IRQ control
+                // Per NESdev: "All writes to this register acknowledge an active IRQ."
+                self.irq.acknowledge();
                 self.irq.set_enabled((value & 0x01) != 0);
                 self.irq_counter_enabled = (value & 0x80) != 0;
-
-                if self.irq.enabled() {
-                    self.irq.acknowledge();
-                }
 
                 trace_mapper!(1; "[fme7] IRQ enabled={}, counter_enabled={}", 
                     self.irq.enabled(), self.irq_counter_enabled);
@@ -188,7 +187,19 @@ impl Mapper for SunsoftFme7Mapper {
         match addr {
             0x6000..=0x7FFF => {
                 if self.prg_ram_enabled {
-                    self.base.try_read_prg_ram(addr).unwrap_or(0)
+                    // FME-7 always drives the bank-number address lines even when
+                    // RAM is selected, so bank N of RAM maps to offset N*8KB.
+                    // The RAM chip only sees the lower address bits, so the offset
+                    // wraps modulo the total RAM size when N >= physical bank count.
+                    let raw_offset =
+                        (self.prg_banks[0] as usize * 0x2000) + (addr as usize - 0x6000);
+                    let ram_size = self.base.wram_size();
+                    let offset = if ram_size > 0 {
+                        raw_offset % ram_size
+                    } else {
+                        raw_offset
+                    };
+                    self.base.read_prg_ram_at_offset(offset)
                 } else {
                     self.base.try_read_prg_6000(addr).unwrap_or(0)
                 }
@@ -201,9 +212,17 @@ impl Mapper for SunsoftFme7Mapper {
     fn write_prg(&mut self, addr: u16, value: u8) {
         match addr {
             0x6000..=0x7FFF => {
-                // PRG-RAM writes (if enabled and not readonly)
-                if self.prg_ram_enabled && !self.prg_ram_readonly {
-                    self.base.try_write_prg_ram(addr, value);
+                // PRG-RAM writes (when RAM is fully enabled: E=1 AND R=1)
+                if self.prg_ram_enabled {
+                    let raw_offset =
+                        (self.prg_banks[0] as usize * 0x2000) + (addr as usize - 0x6000);
+                    let ram_size = self.base.wram_size();
+                    let offset = if ram_size > 0 {
+                        raw_offset % ram_size
+                    } else {
+                        raw_offset
+                    };
+                    self.base.write_prg_ram_at_offset(offset, value);
                 }
             }
             0x8000..=0x9FFF => {
@@ -243,7 +262,6 @@ impl Mapper for SunsoftFme7Mapper {
         snapshot.extend_from_slice(&self.prg_banks);
         snapshot.extend_from_slice(&self.chr_banks);
         let flags = (self.prg_ram_enabled as u8)
-            | ((self.prg_ram_readonly as u8) << 1)
             | ((self.irq.enabled() as u8) << 2)
             | ((self.irq_counter_enabled as u8) << 3)
             | ((self.irq.is_pending() as u8) << 4);
@@ -261,7 +279,6 @@ impl Mapper for SunsoftFme7Mapper {
             self.chr_banks.copy_from_slice(&data[5..13]);
             let flags = data[13];
             self.prg_ram_enabled = (flags & 1) != 0;
-            self.prg_ram_readonly = (flags & 2) != 0;
             self.irq.set_enabled((flags & 4) != 0);
             self.irq_counter_enabled = (flags & 8) != 0;
             self.irq.set_pending((flags & 16) != 0);
@@ -342,21 +359,23 @@ mod tests {
             NametableLayout::Horizontal,
         ));
 
-        // Initially RAM is disabled
+        // Initially RAM is disabled: write is ignored, $6000 returns ROM bank 0
         mapper.write_prg(0x6000, 0x42);
-        assert_eq!(mapper.read_prg(0x6000), 0); // Should read ROM bank 0
+        assert_eq!(mapper.read_prg(0x6000), 0); // ROM bank 0
 
-        // Enable RAM (command 8, bit 7 = 1)
+        // Enable RAM: requires BOTH bit 7 (chip-enable) AND bit 6 (RAM select)
         mapper.write_prg(0x8000, 0x08); // Command 8 = PRG bank 0
-        mapper.write_prg(0xA000, 0x80); // Enable RAM (bit 7)
+        mapper.write_prg(0xA000, 0xC0); // E=1, R=1 → writable RAM
 
         // Now writes should work
         mapper.write_prg(0x6000, 0x42);
         assert_eq!(mapper.read_prg(0x6000), 0x42);
     }
 
+    /// FME-7 has no write-protect mode: when RAM is enabled ($C0), writes always succeed.
+    /// Switching to $80 (E=1, R=0) exposes ROM at $6000 instead of RAM.
     #[test]
-    fn test_prg_ram_readonly() {
+    fn test_prg_ram_switching_between_ram_and_rom() {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 8);
         let mut mapper = SunsoftFme7Mapper::new(MapperContext::new_for_test(
@@ -366,19 +385,18 @@ mod tests {
             NametableLayout::Horizontal,
         ));
 
-        // Enable RAM but make it readonly
-        mapper.write_prg(0x8000, 0x08); // Command 8 = PRG bank 0
-        mapper.write_prg(0xA000, 0xC0); // Enable RAM (bit 7) + readonly (bit 6)
-
-        // Writes should be ignored
-        mapper.write_prg(0x6000, 0x42);
-        assert_eq!(mapper.read_prg(0x6000), 0);
-
-        // Make it writable
+        // Enable RAM with $C0 (E=1, R=1) and write
         mapper.write_prg(0x8000, 0x08);
-        mapper.write_prg(0xA000, 0x80); // Enable RAM, writable
-
+        mapper.write_prg(0xA000, 0xC0); // RAM enabled + selected
         mapper.write_prg(0x6000, 0x42);
+        assert_eq!(mapper.read_prg(0x6000), 0x42);
+
+        // Switch to ROM ($80: E=1, R=0) — $6000 maps to ROM bank 0
+        mapper.write_prg(0xA000, 0x80);
+        assert_eq!(mapper.read_prg(0x6000), 0); // ROM bank 0, not RAM
+
+        // Back to RAM ($C0): previous write preserved
+        mapper.write_prg(0xA000, 0xC0);
         assert_eq!(mapper.read_prg(0x6000), 0x42);
     }
 
@@ -548,9 +566,9 @@ mod tests {
             NametableLayout::Horizontal,
         ));
 
-        // Enable RAM (command 8, bit 7 = 1)
+        // Enable RAM (command 8, bit 7 = chip-enable AND bit 6 = RAM select)
         mapper.write_prg(0x8000, 0x08);
-        mapper.write_prg(0xA000, 0x80);
+        mapper.write_prg(0xA000, 0xC0); // E=1, R=1 → writable RAM
 
         mapper.write_prg(0x6000, 0x11);
         mapper.write_prg(0x6100, 0x22);
@@ -570,9 +588,154 @@ mod tests {
         mapper2.load_wram_snapshot(&snapshot);
         // Enable RAM to read back
         mapper2.write_prg(0x8000, 0x08);
-        mapper2.write_prg(0xA000, 0x80);
+        mapper2.write_prg(0xA000, 0xC0); // E=1, R=1 → writable RAM
         assert_eq!(mapper2.read_prg(0x6000), 0x11);
         assert_eq!(mapper2.read_prg(0x6100), 0x22);
         assert_eq!(mapper2.read_prg(0x7FFF), 0x33);
+    }
+
+    // -----------------------------------------------------------------------
+    // Bug-regression tests: correct register $08 and $0D behaviour per spec
+    // -----------------------------------------------------------------------
+
+    /// Per NESdev: bit 7 = RAM chip-enable (E), bit 6 = RAM/ROM select (R).
+    /// RAM is accessible only when BOTH bits are set ($C0 or higher with bits 7+6).
+    /// $C0 → E=1, R=1 → writable RAM at $6000.
+    #[test]
+    fn test_prg_ram_c0_value_enables_writable_ram() {
+        let prg_rom = banked_data(8 * 1024, 8);
+        let chr_rom = banked_data(1024, 8);
+        let mut mapper = SunsoftFme7Mapper::new(MapperContext::new_for_test(
+            69,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Horizontal,
+        ));
+
+        mapper.write_prg(0x8000, 0x08);
+        mapper.write_prg(0xA000, 0xC0); // E=1, R=1 → writable RAM
+
+        mapper.write_prg(0x6000, 0x55);
+        assert_eq!(mapper.read_prg(0x6000), 0x55);
+    }
+
+    /// $80 → E=1, R=0 → ROM at $6000 (not RAM).
+    #[test]
+    fn test_prg_ram_80_value_maps_rom_not_ram() {
+        let prg_rom = banked_data(8 * 1024, 8);
+        let chr_rom = banked_data(1024, 8);
+        let mut mapper = SunsoftFme7Mapper::new(MapperContext::new_for_test(
+            69,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Horizontal,
+        ));
+
+        // Pre-load known data into RAM via snapshot so the test doesn't
+        // depend on write-enable being correct yet.
+        let snapshot = vec![0xAA_u8; 8192];
+        mapper.load_wram_snapshot(&snapshot);
+
+        // With $80: E=1, R=0 → ROM at $6000, not RAM
+        mapper.write_prg(0x8000, 0x08);
+        mapper.write_prg(0xA000, 0x80);
+        // ROM bank 0, byte 0 = 0 (banked_data pattern), not RAM value $AA
+        assert_eq!(mapper.read_prg(0x6000), 0);
+    }
+
+    /// Per NESdev: "All writes to this register acknowledge an active IRQ."
+    /// Writing to $0D with bit 0 = 0 (IRQ disabled) must still clear a
+    /// pending IRQ — the current code's `if self.irq.enabled()` guard is wrong.
+    #[test]
+    fn test_irq_reg_0d_any_write_acknowledges() {
+        let prg_rom = banked_data(8 * 1024, 8);
+        let chr_rom = banked_data(1024, 8);
+        let mut mapper = SunsoftFme7Mapper::new(MapperContext::new_for_test(
+            69,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Horizontal,
+        ));
+
+        // Configure counter = 5 and fire IRQ
+        mapper.write_prg(0x8000, 0x0E);
+        mapper.write_prg(0xA000, 0x05); // counter low = 5
+        mapper.write_prg(0x8000, 0x0F);
+        mapper.write_prg(0xA000, 0x00); // counter high = 0
+        mapper.write_prg(0x8000, 0x0D);
+        mapper.write_prg(0xA000, 0x81); // enable counter (bit 7) + enable IRQ (bit 0)
+        for _ in 0..6 {
+            mapper.cpu_cycle(); // counter 5→4→3→2→1→0→underflow
+        }
+        assert!(
+            mapper.irq_pending(),
+            "IRQ should be pending before acknowledge"
+        );
+
+        // Write $0D = $80 (IRQ disabled, counter enabled) — must acknowledge
+        mapper.write_prg(0x8000, 0x0D);
+        mapper.write_prg(0xA000, 0x80);
+        assert!(
+            !mapper.irq_pending(),
+            "IRQ must be cleared by any write to $0D"
+        );
+    }
+
+    /// When 32KB of RAM is provided (4 banks of 8KB), each bank must be
+    /// independently addressable via bits 5-0 of register $08.
+    #[test]
+    fn test_prg_ram_banked_access_with_32kb_ram() {
+        let prg_rom = banked_data(8 * 1024, 8);
+        let chr_rom = banked_data(1024, 8);
+        let mut mapper = SunsoftFme7Mapper::new(
+            MapperContext::new_for_test(69, prg_rom, chr_rom, NametableLayout::Horizontal)
+                .with_prg_ram_banks(4), // 4 × 8KB = 32KB
+        );
+
+        // Write distinct values to bank 0 and bank 1
+        mapper.write_prg(0x8000, 0x08);
+        mapper.write_prg(0xA000, 0xC0); // bank 0, RAM enabled+selected
+        mapper.write_prg(0x6000, 0xAA);
+
+        mapper.write_prg(0xA000, 0xC1); // bank 1, RAM enabled+selected
+        mapper.write_prg(0x6000, 0xBB);
+
+        // Read back bank 0: must return 0xAA, not 0xBB
+        mapper.write_prg(0xA000, 0xC0);
+        assert_eq!(mapper.read_prg(0x6000), 0xAA);
+
+        // Read back bank 1: must return 0xBB
+        mapper.write_prg(0xA000, 0xC1);
+        assert_eq!(mapper.read_prg(0x6000), 0xBB);
+    }
+
+    /// When the mapper's bank index exceeds the physical bank count, accesses
+    /// must wrap modulo the RAM size — hardware drives the address lines and the
+    /// RAM chip ignores the out-of-range upper bits.
+    /// E.g. with 2 × 8KB banks (16KB): bank 2 wraps to bank 0.
+    #[test]
+    fn test_prg_ram_bank_index_wraps_at_ram_size() {
+        let prg_rom = banked_data(8 * 1024, 8);
+        let chr_rom = banked_data(1024, 8);
+        let mut mapper = SunsoftFme7Mapper::new(
+            MapperContext::new_for_test(69, prg_rom, chr_rom, NametableLayout::Horizontal)
+                .with_prg_ram_banks(2), // 2 × 8KB = 16KB, so bank 2 wraps to bank 0
+        );
+
+        mapper.write_prg(0x8000, 0x08);
+        mapper.write_prg(0xA000, 0xC0); // bank 0, RAM enabled+selected
+        mapper.write_prg(0x6000, 0xAA);
+
+        // Bank 2 should wrap to physical bank 0 (2 mod 2 = 0)
+        mapper.write_prg(0xA000, 0xC2); // bank 2
+        mapper.write_prg(0x6000, 0xBB); // overwrites physical bank 0
+
+        // Reading bank 0 must see BB (overwritten via bank 2)
+        mapper.write_prg(0xA000, 0xC0);
+        assert_eq!(mapper.read_prg(0x6000), 0xBB);
+
+        // Reading bank 2 must also see BB (same physical location)
+        mapper.write_prg(0xA000, 0xC2);
+        assert_eq!(mapper.read_prg(0x6000), 0xBB);
     }
 }

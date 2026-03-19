@@ -748,6 +748,7 @@ impl Bus {
         self.is_arkanoid_famicom_configured() || self.is_zapper_famicom_configured()
     }
 
+    #[allow(dead_code)]
     pub fn has_expansion_power_pad(&self) -> bool {
         self.is_power_pad_famicom_configured()
     }
