@@ -20,29 +20,31 @@ use crate::cartridge::base_mapper::BaseMapper;
 /// - PRG-ROM: Up to 256KB (16 16KB banks)
 /// - PRG-RAM: None
 /// - CHR: 8KB CHR-RAM fixed (no CHR-ROM support)
-/// - Mirroring: Programmable one-screen (selectable A or B nametable)
+/// - Mirroring: Submapper 0 = hardwired H/V; Submapper 1 = programmable one-screen
 ///
 /// Common boards: Camerica/Codemasters unlicensed boards
 ///
-/// Registers:
-/// - $8000-$BFFF: PRG bank select (any write)
-///   - Bits 0-3: Select 16KB PRG bank at $8000-$BFFF
-/// - $C000-$FFFF: Mirroring control (any write)
+/// Registers (per NESdev spec):
+/// - $8000-$9FFF: Mirroring control (submapper 1 / Fire Hawk only)
 ///   - Bit 4: One-screen mirroring (0 = lower/A, 1 = upper/B)
+/// - $C000-$FFFF: PRG bank select (all variants)
+///   - Bits 0-3: Select 16KB PRG bank at $8000-$BFFF
 ///
 /// Notes:
 /// - Last 16KB PRG bank always fixed at $C000-$FFFF
-/// - Similar to UxROM but with programmable mirroring
+/// - Similar to UxROM but with programmable mirroring (submapper 1)
 /// - Used in Micro Machines, Fire Hawk, Dizzy series (Codemasters games)
 pub struct CamericaMapper {
     base: BaseMapper,
     bank_select: u8,
+    has_mirroring_control: bool,
 }
 
 impl CamericaMapper {
     pub fn new(ctx: super::mapper::MapperContext) -> Self {
+        let has_mirroring_control = ctx.submapper == 1;
         let capabilities = MapperCapabilities {
-            has_dynamic_mirroring: true,
+            has_dynamic_mirroring: has_mirroring_control,
             max_prg_ram_kb: 8,
             prg_bank_size_kb: 16,
             chr_bank_size_kb: 8,
@@ -52,11 +54,15 @@ impl CamericaMapper {
         base.configure_prg_banking(16 * 1024);
         // Fixed last bank at slot 1 ($C000-$FFFF)
         base.select_prg_page(1, -1);
-        // Override mirroring to one-screen lower (Camerica default)
-        base.set_mirroring(NametableLayout::SingleScreenLower);
+        if has_mirroring_control {
+            // Fire Hawk (submapper 1): default to one-screen lower
+            base.set_mirroring(NametableLayout::SingleScreenLower);
+        }
+        // Submapper 0: mirroring from iNES header (no override)
         Self {
             base,
             bank_select: 0,
+            has_mirroring_control,
         }
     }
 }
@@ -75,19 +81,19 @@ impl Mapper for CamericaMapper {
             return;
         }
         match addr {
-            0x8000..=0xBFFF => {
-                // PRG bank select (bits 0-3)
-                self.bank_select = value & 0x0F;
-                self.base.select_prg_page(0, self.bank_select as i16);
-            }
-            0xC000..=0xFFFF => {
-                // Mirroring control (bit 4)
+            0x8000..=0x9FFF if self.has_mirroring_control => {
+                // Mirroring control (submapper 1 / Fire Hawk only, bit 4)
                 let upper = (value & 0x10) != 0;
                 self.base.set_mirroring(if upper {
                     NametableLayout::SingleScreenUpper
                 } else {
                     NametableLayout::SingleScreenLower
                 });
+            }
+            0xC000..=0xFFFF => {
+                // PRG bank select (bits 0-3)
+                self.bank_select = value & 0x0F;
+                self.base.select_prg_page(0, self.bank_select as i16);
             }
             _ => {}
         }
@@ -102,11 +108,13 @@ impl Mapper for CamericaMapper {
         if data.len() >= 2 {
             self.bank_select = data[0];
             self.base.select_prg_page(0, self.bank_select as i16);
-            self.base.set_mirroring(if data[1] != 0 {
-                NametableLayout::SingleScreenUpper
-            } else {
-                NametableLayout::SingleScreenLower
-            });
+            if self.has_mirroring_control {
+                self.base.set_mirroring(if data[1] != 0 {
+                    NametableLayout::SingleScreenUpper
+                } else {
+                    NametableLayout::SingleScreenLower
+                });
+            }
         }
     }
 }
@@ -157,8 +165,8 @@ mod tests {
         assert_eq!(mapper.read_prg(0xC000), 15);
         assert_eq!(mapper.read_prg(0xFFFF), 15);
 
-        // Switch to bank 3
-        mapper.write_prg(0x8000, 3);
+        // Switch to bank 3 (bank select at $C000-$FFFF per spec)
+        mapper.write_prg(0xC000, 3);
         assert_eq!(mapper.read_prg(0x8000), 3);
         assert_eq!(mapper.read_prg(0xBFFF), 3);
 
@@ -166,7 +174,7 @@ mod tests {
         assert_eq!(mapper.read_prg(0xC000), 15);
 
         // Switch to bank 10
-        mapper.write_prg(0x9000, 10);
+        mapper.write_prg(0xD000, 10);
         assert_eq!(mapper.read_prg(0x8000), 10);
 
         // Last bank still fixed
@@ -193,16 +201,51 @@ mod tests {
             NametableLayout::Horizontal,
         ));
 
-        // Test that upper bits are masked off
-        mapper.write_prg(0x8000, 0b1111_0101); // Should select bank 5
+        // Test that upper bits are masked off (bank select at $C000+)
+        mapper.write_prg(0xC000, 0b1111_0101); // Should select bank 5
         assert_eq!(mapper.read_prg(0x8000), 50);
 
-        mapper.write_prg(0x8000, 0b0000_1111); // Bank 15
+        mapper.write_prg(0xC000, 0b0000_1111); // Bank 15
         assert_eq!(mapper.read_prg(0x8000), 150);
     }
 
     #[test]
     fn test_mapper71_one_screen_mirroring() {
+        // Mirroring control is submapper 1 (Fire Hawk) only
+        let prg_rom = vec![0; 128 * 1024];
+        let mut mapper = CamericaMapper::new(
+            MapperContext::new_for_test(
+                71,
+                prg_rom,
+                vec![],
+                NametableLayout::Horizontal,
+            )
+            .with_submapper(1),
+        );
+
+        // Default should be lower nametable (submapper 1 overrides to SingleScreenLower)
+        assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenLower);
+
+        // Write to $8000-$9FFF with bit 4 = 0 (lower nametable)
+        mapper.write_prg(0x9000, 0b0000_0000);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenLower);
+
+        // Write with bit 4 = 1 (upper nametable)
+        mapper.write_prg(0x9000, 0b0001_0000);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenUpper);
+
+        // Write with bit 4 = 0 again
+        mapper.write_prg(0x8000, 0b0000_0000);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenLower);
+
+        // Test that other bits don't affect mirroring
+        mapper.write_prg(0x9000, 0b0001_1111); // Bit 4 = 1 (0x1F)
+        assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenUpper);
+    }
+
+    #[test]
+    fn test_mapper71_submapper0_no_mirroring_control() {
+        // Submapper 0 has hardwired mirroring from header
         let prg_rom = vec![0; 128 * 1024];
         let mut mapper = CamericaMapper::new(MapperContext::new_for_test(
             71,
@@ -211,27 +254,12 @@ mod tests {
             NametableLayout::Horizontal,
         ));
 
-        // Default should be lower nametable
-        assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenLower);
+        // Should use header mirroring (horizontal)
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
 
-        // Write to $C000-$FFFF with bit 4 = 0 (lower nametable)
-        mapper.write_prg(0xC000, 0b0000_0000);
-        assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenLower);
-
-        // Write with bit 4 = 1 (upper nametable)
-        mapper.write_prg(0xC000, 0b0001_0000);
-        assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenUpper);
-
-        // Write with bit 4 = 0 again
-        mapper.write_prg(0xD000, 0b0000_0000);
-        assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenLower);
-
-        // Test that other bits don't affect mirroring
-        mapper.write_prg(0xE000, 0b0001_1111); // Bit 4 = 1 (0x1F)
-        assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenUpper);
-
-        mapper.write_prg(0xFFFF, 0b1110_1111); // Bit 4 = 0 (0xEF)
-        assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenLower);
+        // Writes to $8000-$9FFF should NOT change mirroring
+        mapper.write_prg(0x9000, 0x10);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
     }
 
     #[test]
@@ -278,20 +306,21 @@ mod tests {
         assert_eq!(mapper.read_prg(0xC000), 115);
         assert_eq!(mapper.read_prg(0xFFFF), 115);
 
-        // Switch banks several times
-        mapper.write_prg(0x8000, 0);
+        // Switch banks several times (bank select at $C000+)
+        mapper.write_prg(0xC000, 0);
         assert_eq!(mapper.read_prg(0xC000), 115);
 
-        mapper.write_prg(0x8000, 5);
+        mapper.write_prg(0xC000, 5);
         assert_eq!(mapper.read_prg(0xC000), 115);
 
-        mapper.write_prg(0x8000, 10);
+        mapper.write_prg(0xC000, 10);
         assert_eq!(mapper.read_prg(0xC000), 115);
     }
 
     #[test]
     fn test_mapper71_separate_registers() {
         // Verify that bank select and mirroring control are separate registers
+        // Submapper 1 has mirroring control
         let mut prg_rom = vec![0; 256 * 1024];
 
         for bank in 0..16 {
@@ -302,26 +331,29 @@ mod tests {
             }
         }
 
-        let mut mapper = CamericaMapper::new(MapperContext::new_for_test(
-            71,
-            prg_rom,
-            vec![],
-            NametableLayout::Horizontal,
-        ));
+        let mut mapper = CamericaMapper::new(
+            MapperContext::new_for_test(
+                71,
+                prg_rom,
+                vec![],
+                NametableLayout::Horizontal,
+            )
+            .with_submapper(1),
+        );
 
-        // Set bank to 5
-        mapper.write_prg(0x8000, 5);
+        // Set bank to 5 ($C000+ = bank select)
+        mapper.write_prg(0xC000, 5);
         assert_eq!(mapper.read_prg(0x8000), 25);
         assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenLower);
 
-        // Set mirroring to upper
-        mapper.write_prg(0xC000, 0x10);
+        // Set mirroring to upper ($8000-$9FFF = mirroring for submapper 1)
+        mapper.write_prg(0x9000, 0x10);
         assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenUpper);
         // Bank should remain 5
         assert_eq!(mapper.read_prg(0x8000), 25);
 
         // Change bank to 3
-        mapper.write_prg(0x8000, 3);
+        mapper.write_prg(0xC000, 3);
         assert_eq!(mapper.read_prg(0x8000), 23);
         // Mirroring should still be upper
         assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenUpper);
@@ -358,26 +390,33 @@ mod tests {
             }
         }
 
-        let mut mapper = CamericaMapper::new(MapperContext::new_for_test(
-            71,
-            prg_rom.clone(),
-            vec![],
-            NametableLayout::Horizontal,
-        ));
+        // Use submapper 1 to test mirroring control
+        let mut mapper = CamericaMapper::new(
+            MapperContext::new_for_test(
+                71,
+                prg_rom.clone(),
+                vec![],
+                NametableLayout::Horizontal,
+            )
+            .with_submapper(1),
+        );
 
-        mapper.write_prg(0x8000, 2);
-        mapper.write_prg(0xC000, 0x10); // one-screen upper
+        mapper.write_prg(0xC000, 2); // Bank select at $C000+
+        mapper.write_prg(0x9000, 0x10); // Mirroring at $8000-$9FFF (submapper 1)
         mapper.write_chr(0x0000, 0x5A);
 
         let regs = mapper.registers_snapshot();
         let chr = mapper.chr_ram_snapshot();
 
-        let mut restored = CamericaMapper::new(MapperContext::new_for_test(
-            71,
-            prg_rom,
-            vec![],
-            NametableLayout::Horizontal,
-        ));
+        let mut restored = CamericaMapper::new(
+            MapperContext::new_for_test(
+                71,
+                prg_rom,
+                vec![],
+                NametableLayout::Horizontal,
+            )
+            .with_submapper(1),
+        );
         restored.restore_registers(&regs);
         restored.restore_chr_ram(&chr);
 

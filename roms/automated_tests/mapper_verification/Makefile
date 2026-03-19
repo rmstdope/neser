@@ -256,10 +256,13 @@ SINGLES := \
 	$(SINGLES_DIR)/m065.0_chr_banking.nes \
 	$(SINGLES_DIR)/m065.0_nametable.nes \
 	$(SINGLES_DIR)/m065.0_irq.nes \
+	$(SINGLES_DIR)/m066.0_prg_banking.nes \
+	$(SINGLES_DIR)/m066.0_chr_banking.nes \
 	$(SINGLES_DIR)/m067.0_prg_banking.nes \
 	$(SINGLES_DIR)/m067.0_chr_banking.nes \
 	$(SINGLES_DIR)/m067.0_nametable.nes \
 	$(SINGLES_DIR)/m067.0_irq.nes \
+	$(SINGLES_DIR)/m071.0_prg_banking.nes \
 	$(SINGLES_DIR)/m075.0_prg_banking.nes \
 	$(SINGLES_DIR)/m075.0_chr_banking.nes \
 	$(SINGLES_DIR)/m075.0_nametable.nes \
@@ -341,7 +344,9 @@ COMBINED := \
 	$(BIN_DIR)/m047.0.nes \
 	$(BIN_DIR)/m064.0.nes \
 	$(BIN_DIR)/m065.0.nes \
+	$(BIN_DIR)/m066.0.nes \
 	$(BIN_DIR)/m067.0.nes \
+	$(BIN_DIR)/m071.0.nes \
 	$(BIN_DIR)/m075.0.nes \
 	$(BIN_DIR)/m119.0.nes
 
@@ -872,12 +877,21 @@ $(eval $(call ROM_RULE,$(SINGLES_DIR)/m065.0_nametable.nes,nametable,m065.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m065.0_irq.nes,irq,m065.0))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m065.0.nes,m065.0,prg_banking chr_banking nametable irq))
 
+# Mapper 66 (GxROM) — 32KB PRG + 8KB CHR, bus conflicts
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m066.0_prg_banking.nes,prg_banking,m066.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m066.0_chr_banking.nes,chr_banking,m066.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m066.0.nes,m066.0,prg_banking chr_banking))
+
 # Mapper 67 (Sunsoft 3)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m067.0_prg_banking.nes,prg_banking,m067.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m067.0_chr_banking.nes,chr_banking,m067.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m067.0_nametable.nes,nametable,m067.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m067.0_irq.nes,irq,m067.0))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m067.0.nes,m067.0,prg_banking chr_banking nametable irq))
+
+# Mapper 71 (Camerica) — UxROM clone, 16KB PRG, CHR-RAM
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m071.0_prg_banking.nes,prg_banking,m071.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m071.0.nes,m071.0,prg_banking))
 
 # Mapper 75 (VRC1) — no IRQ
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m075.0_prg_banking.nes,prg_banking,m075.0))
