@@ -140,6 +140,10 @@ impl Mapper for Mapper331 {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
+        if self.base.try_write_prg_ram(addr, value) {
+            return;
+        }
+
         match addr & 0xE000 {
             0xA000 => {
                 self.reg0 = value;
