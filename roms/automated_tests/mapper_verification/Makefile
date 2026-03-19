@@ -226,6 +226,7 @@ SINGLES := \
 	$(SINGLES_DIR)/m039.0_prg_banking.nes \
 	$(SINGLES_DIR)/m040.0_prg_banking.nes \
 	$(SINGLES_DIR)/m041.0_prg_banking.nes \
+	$(SINGLES_DIR)/m041.0_nametable.nes \
 	$(SINGLES_DIR)/m042.0_prg_banking.nes \
 	$(SINGLES_DIR)/m042.0_chr_banking.nes \
 	$(SINGLES_DIR)/m042.0_nametable.nes \
@@ -802,7 +803,8 @@ $(eval $(call COMBINED_RULE,$(BIN_DIR)/m040.0.nes,m040.0,prg_banking))
 
 # Mapper 41, Submapper 0 (Caltron 6-in-1)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m041.0_prg_banking.nes,prg_banking,m041.0))
-$(eval $(call COMBINED_RULE,$(BIN_DIR)/m041.0.nes,m041.0,prg_banking))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m041.0_nametable.nes,nametable,m041.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m041.0.nes,m041.0,prg_banking nametable))
 
 # Mapper 42, Submapper 0 (Mario Baby / Ai Senshi Nicol)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m042.0_prg_banking.nes,prg_banking,m042.0))
