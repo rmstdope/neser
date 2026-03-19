@@ -1741,6 +1741,23 @@ mod tests {
     );
 
     // ================================================================
+    // Mapper 66 (GxROM), Submapper 0
+    // ================================================================
+
+    setup_rom_test!(
+        test_mv_m066_0_prg_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m066.0_prg_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m066_0_chr_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m066.0_chr_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m066_0_combined,
+        "roms/automated_tests/mapper_verification/bin/m066.0.nes"
+    );
+
+    // ================================================================
     // Mapper 67 (Sunsoft 3), Submapper 0
     // ================================================================
 
@@ -1763,6 +1780,19 @@ mod tests {
     setup_rom_test!(
         test_mv_m067_0_combined,
         "roms/automated_tests/mapper_verification/bin/m067.0.nes"
+    );
+
+    // ================================================================
+    // Mapper 71 (Camerica), Submapper 0
+    // ================================================================
+
+    setup_rom_test!(
+        test_mv_m071_0_prg_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m071.0_prg_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m071_0_combined,
+        "roms/automated_tests/mapper_verification/bin/m071.0.nes"
     );
 
     // ================================================================
