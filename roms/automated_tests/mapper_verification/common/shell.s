@@ -42,7 +42,7 @@ got_val:      .res 1       ; Temp for fail handler
 
     ; Enable PRG-RAM early so we can write the status byte at $6000.
     ; For MMC3: $A001 bit 7 = chip enable. Only for mappers where $A001 is the RAM protect register.
-    .if MAPPER_NUM = 4 .or MAPPER_NUM = 12 .or MAPPER_NUM = 14 .or MAPPER_NUM = 119
+    .if MAPPER_NUM = 4 .or MAPPER_NUM = 12 .or MAPPER_NUM = 14 .or MAPPER_NUM = 119 .or MAPPER_NUM = 37 .or MAPPER_NUM = 45 .or MAPPER_NUM = 47
     lda #$80
     sta $A001
     .endif
@@ -141,6 +141,12 @@ got_val:      .res 1       ; Temp for fail handler
     ; Super Big 7-in-1: MMC3 multicart — enable PRG-RAM, select block 0, map font
     lda #$80                ; E=1, W=0, block=0
     sta $A001
+    init_chr_font
+    .elseif MAPPER_NUM = 37 .or MAPPER_NUM = 47
+    ; MMC3 multicarts (mapper 37/47): map font (block 0 active at power-on)
+    init_chr_font
+    .elseif MAPPER_NUM = 45
+    ; GA23C multicart: map font (outer regs default at power-on/reset)
     init_chr_font
     .elseif MAPPER_NUM = 48
     ; Taito TC0690: map font via 2K register ($8002)
@@ -265,7 +271,7 @@ got_val:      .res 1       ; Temp for fail handler
     pha
     inc irq_fired
     inc irq_count
-    .if MAPPER_NUM = 4 .or MAPPER_NUM = 12 .or MAPPER_NUM = 14 .or MAPPER_NUM = 64 .or MAPPER_NUM = 119
+    .if MAPPER_NUM = 4 .or MAPPER_NUM = 12 .or MAPPER_NUM = 14 .or MAPPER_NUM = 64 .or MAPPER_NUM = 119 .or MAPPER_NUM = 37 .or MAPPER_NUM = 45 .or MAPPER_NUM = 47
     ; MMC3/MMC3-clone/RAMBO-1: acknowledge + re-enable
     lda #0
     sta $E000               ; IRQ acknowledge (disable)
