@@ -223,6 +223,8 @@ SINGLES := \
 	$(SINGLES_DIR)/m035.0_nametable.nes \
 	$(SINGLES_DIR)/m035.0_prg_ram.nes \
 	$(SINGLES_DIR)/m035.0_multiplier.nes \
+	$(SINGLES_DIR)/m036.0_prg_banking.nes \
+	$(SINGLES_DIR)/m036.0_chr_banking.nes \
 	$(SINGLES_DIR)/m039.0_prg_banking.nes \
 	$(SINGLES_DIR)/m040.0_prg_banking.nes \
 	$(SINGLES_DIR)/m041.0_prg_banking.nes \
@@ -322,6 +324,7 @@ COMBINED := \
 	$(BIN_DIR)/m044.0.nes \
 	$(BIN_DIR)/m048.0.nes \
 	$(BIN_DIR)/m035.0.nes \
+	$(BIN_DIR)/m036.0.nes \
 	$(BIN_DIR)/m039.0.nes \
 	$(BIN_DIR)/m041.0.nes \
 	$(BIN_DIR)/m042.0.nes \
@@ -786,6 +789,11 @@ $(eval $(call ROM_RULE,$(SINGLES_DIR)/m035.0_nametable.nes,nametable,m035.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m035.0_prg_ram.nes,prg_ram,m035.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m035.0_multiplier.nes,multiplier,m035.0))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m035.0.nes,m035.0,prg_banking chr_banking nametable prg_ram multiplier))
+
+# Mapper 36, Submapper 0 (TXC 01-22000-400)
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m036.0_prg_banking.nes,prg_banking,m036.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m036.0_chr_banking.nes,chr_banking,m036.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m036.0.nes,m036.0,prg_banking chr_banking))
 
 # Mapper 39, Submapper 0 (BNROM clone — Study & Game 32-in-1)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m039.0_prg_banking.nes,prg_banking,m039.0))

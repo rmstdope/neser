@@ -530,6 +530,9 @@ TRAMPOLINE_SIZE = trampoline_end - trampoline_code
 .ifndef TRAMPOLINE_BANK_BY_SPLIT_OUTER_INNER
     TRAMPOLINE_BANK_BY_SPLIT_OUTER_INNER = 0
 .endif
+.ifndef TRAMPOLINE_CUSTOM
+    TRAMPOLINE_CUSTOM = 0
+.endif
 .ifndef TRAMPOLINE_OUTER_BANK_ADDR
     TRAMPOLINE_OUTER_BANK_ADDR = $6000
 .endif
@@ -538,7 +541,9 @@ TRAMPOLINE_SIZE = trampoline_end - trampoline_code
 .endif
 trampoline_code:
     lda tramp_result        ; Bank number
-    .if TRAMPOLINE_BANK_BY_SPLIT_OUTER_INNER
+    .if TRAMPOLINE_CUSTOM
+    trampoline_select_bank
+    .elseif TRAMPOLINE_BANK_BY_SPLIT_OUTER_INNER
     tay
     tya
     lsr a
@@ -566,7 +571,9 @@ trampoline_code:
     lda $8003
     sta tramp_result+3
     ; Switch back to bank 0 (where code lives)
-    .if TRAMPOLINE_BANK_BY_SPLIT_OUTER_INNER
+    .if TRAMPOLINE_CUSTOM
+    trampoline_select_bank_zero
+    .elseif TRAMPOLINE_BANK_BY_SPLIT_OUTER_INNER
     lda #0
     sta TRAMPOLINE_OUTER_BANK_ADDR
     sta TRAMPOLINE_INNER_BANK_ADDR

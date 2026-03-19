@@ -163,6 +163,9 @@ got_val:      .res 1       ; Temp for fail handler
     .elseif MAPPER_NUM = 75
     ; VRC1: map font CHR bank via $E000
     init_chr_font
+    .elseif MAPPER_NUM = 36
+    ; TXC ASIC: map font CHR bank via $4200
+    init_chr_font
     .endif
 
     jsr init_nes
