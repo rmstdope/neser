@@ -42,13 +42,16 @@ got_val:      .res 1       ; Temp for fail handler
 
     ; Enable PRG-RAM early so we can write the status byte at $6000.
     ; For MMC3: $A001 bit 7 = chip enable. Only for mappers where $A001 is the RAM protect register.
-    .if MAPPER_NUM = 4 .or MAPPER_NUM = 12 .or MAPPER_NUM = 14
+    .if MAPPER_NUM = 4 .or MAPPER_NUM = 12 .or MAPPER_NUM = 14 .or MAPPER_NUM = 119
     lda #$80
     sta $A001
     .endif
 
     ; Mapper-specific early init
     .if MAPPER_NUM = 4
+    init_chr_font
+    .elseif MAPPER_NUM = 119
+    ; TQROM: same init as MMC3 (font in CHR-ROM banks 8+9)
     init_chr_font
     .elseif MAPPER_NUM = 12
     ; SL-5020B: clear outer CHR register, map font
@@ -262,7 +265,7 @@ got_val:      .res 1       ; Temp for fail handler
     pha
     inc irq_fired
     inc irq_count
-    .if MAPPER_NUM = 4 .or MAPPER_NUM = 12 .or MAPPER_NUM = 14 .or MAPPER_NUM = 64
+    .if MAPPER_NUM = 4 .or MAPPER_NUM = 12 .or MAPPER_NUM = 14 .or MAPPER_NUM = 64 .or MAPPER_NUM = 119
     ; MMC3/MMC3-clone/RAMBO-1: acknowledge + re-enable
     lda #0
     sta $E000               ; IRQ acknowledge (disable)
