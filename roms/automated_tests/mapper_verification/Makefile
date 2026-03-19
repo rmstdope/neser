@@ -209,6 +209,8 @@ SINGLES := \
 	$(SINGLES_DIR)/m044.0_nametable.nes \
 	$(SINGLES_DIR)/m044.0_irq.nes \
 	$(SINGLES_DIR)/m044.0_block_select.nes \
+	$(SINGLES_DIR)/m044.0_prg_ram.nes \
+	$(SINGLES_DIR)/m044.0_write_protect.nes \
 	$(SINGLES_DIR)/m048.0_prg_banking.nes \
 	$(SINGLES_DIR)/m048.0_chr_banking.nes \
 	$(SINGLES_DIR)/m048.0_nametable.nes \
@@ -758,7 +760,9 @@ $(eval $(call ROM_RULE,$(SINGLES_DIR)/m044.0_chr_banking.nes,chr_banking,m044.0)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m044.0_nametable.nes,nametable,m044.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m044.0_irq.nes,irq,m044.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m044.0_block_select.nes,block_select,m044.0))
-$(eval $(call COMBINED_RULE,$(BIN_DIR)/m044.0.nes,m044.0,prg_banking chr_banking nametable irq block_select))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m044.0_prg_ram.nes,prg_ram,m044.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m044.0_write_protect.nes,write_protect,m044.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m044.0.nes,m044.0,prg_banking chr_banking nametable irq block_select prg_ram))
 
 # Mapper 48, Submapper 0 (Taito TC0690)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m048.0_prg_banking.nes,prg_banking,m048.0))
