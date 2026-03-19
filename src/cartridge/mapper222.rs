@@ -206,15 +206,19 @@ impl Mapper for Mapper222 {
 
     fn restore_registers(&mut self, data: &[u8]) {
         let banking_len = self.base.banking_snapshot().len();
-        if data.len() < banking_len {
-            return;
-        }
-        self.base.restore_banking(&data[..banking_len]);
+        // Restore as much banking/mirroring state as is available in `data`,
+        // allowing BaseMapper::restore_banking to safely handle partial snapshots.
+        let banking_bytes = data.len().min(banking_len);
+        self.base.restore_banking(&data[..banking_bytes]);
+
+        // Restore IRQ counter and pending flag if present.
         if data.len() >= banking_len + 3 {
             self.irq_counter =
                 u16::from(data[banking_len]) | (u16::from(data[banking_len + 1]) << 8);
             self.irq_pending = data[banking_len + 2] != 0;
         }
+
+        // Restore A12 edge detector state if present.
         if data.len() >= banking_len + 6 {
             self.a12.set_prev_a12(data[banking_len + 3] != 0);
             self.a12.set_current_a12(data[banking_len + 4] != 0);
