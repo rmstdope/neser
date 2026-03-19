@@ -151,6 +151,9 @@ got_val:      .res 1       ; Temp for fail handler
     .elseif MAPPER_NUM = 67
     ; Sunsoft 3: map font CHR bank via $8800
     init_chr_font
+    .elseif MAPPER_NUM = 75
+    ; VRC1: map font CHR bank via $E000
+    init_chr_font
     .endif
 
     jsr init_nes

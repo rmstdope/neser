@@ -1651,4 +1651,25 @@ mod tests {
         test_mv_m067_0_combined,
         "roms/automated_tests/mapper_verification/bin/m067.0.nes"
     );
+
+    // ================================================================
+    // Mapper 75 (VRC1), Submapper 0
+    // ================================================================
+
+    setup_rom_test!(
+        test_mv_m075_0_prg_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m075.0_prg_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m075_0_chr_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m075.0_chr_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m075_0_nametable,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m075.0_nametable.nes"
+    );
+    setup_rom_test!(
+        test_mv_m075_0_combined,
+        "roms/automated_tests/mapper_verification/bin/m075.0.nes"
+    );
 }

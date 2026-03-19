@@ -144,6 +144,10 @@ chr_read_val: .res 1
             mmc1_reset
             ; Control = mirroring V(2) | PRG mode 3 | CHR 4KB = %11110
             mmc1_write_reg MMC1_CONTROL, %11110
+        .elseif MAPPER_NUM = 75
+            ; VRC1: clear CHR high bits in $9000
+            lda #0
+            sta VRC1_CTRL
         .endif
 
         start_test 1, "CHR0 Bank 0"
