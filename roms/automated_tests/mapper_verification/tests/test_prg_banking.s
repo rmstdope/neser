@@ -400,6 +400,21 @@ test_title_string:
         pass_test
         .endif
 
+        ; === VRC1 Third PRG Slot ($C000) ===
+        .if MAPPER_NUM = 75
+        start_test 8, "Slot2 Bank 0"
+        select_prg_bank 2, 0
+        lda $C000
+        assert_a_eq $A5
+        pass_test
+
+        start_test 9, "Slot2 Bank 1"
+        select_prg_bank 2, 1
+        lda $C001
+        assert_a_eq 1
+        pass_test
+        .endif
+
     .endif
 .endif
     rts

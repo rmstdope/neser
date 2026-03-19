@@ -29,7 +29,7 @@ use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 /// - $8000-$8FFF: PRG bank 0 select [....PPPP]
 /// - $9000-$9FFF: [.....FEA]  A=Mirroring (0=V,1=H), E=CHR bank 0 bit 4, F=CHR bank 1 bit 4
 /// - $A000-$AFFF: PRG bank 1 select [....PPPP]
-/// - $B000-$BFFF: CHR bank 1 low bits [....CCCC]
+/// - $F000-$FFFF: CHR bank 1 low bits [....CCCC]
 /// - $C000-$CFFF: PRG bank 2 select [....PPPP]
 /// - $E000-$EFFF: CHR bank 0 low bits [....CCCC]
 pub struct Mapper75 {
@@ -48,7 +48,7 @@ impl Mapper75 {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
             has_dynamic_mirroring: true,
-            max_prg_ram_kb: 0,
+            max_prg_ram_kb: 8,
             prg_bank_size_kb: 8,
             chr_bank_size_kb: 4,
             ..Default::default()
@@ -99,12 +99,16 @@ impl Mapper for Mapper75 {
 
     fn read_prg(&self, addr: u16) -> u8 {
         match addr {
+            0x6000..=0x7FFF => self.base.try_read_prg_ram(addr).unwrap_or(0),
             0x8000..=0xFFFF => self.base.read_prg_banked(addr),
             _ => 0,
         }
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
+        if self.base.try_write_prg_ram(addr, value) {
+            return;
+        }
         match addr {
             0x8000..=0x8FFF => {
                 self.prg_bank[0] = value & 0x0F;
@@ -123,16 +127,16 @@ impl Mapper for Mapper75 {
                 self.prg_bank[1] = value & 0x0F;
                 self.update_prg_banks();
             }
-            0xB000..=0xBFFF => {
-                self.chr_bank_low[1] = value & 0x0F;
-                self.update_chr_banks();
-            }
             0xC000..=0xCFFF => {
                 self.prg_bank[2] = value & 0x0F;
                 self.update_prg_banks();
             }
             0xE000..=0xEFFF => {
                 self.chr_bank_low[0] = value & 0x0F;
+                self.update_chr_banks();
+            }
+            0xF000..=0xFFFF => {
+                self.chr_bank_low[1] = value & 0x0F;
                 self.update_chr_banks();
             }
             _ => {}
@@ -327,13 +331,13 @@ mod tests {
     }
 
     #[test]
-    fn chr_bank1_low_bits_via_b000_register() {
+    fn chr_bank1_low_bits_via_f000_register() {
         let mut mapper = make_mapper();
-        mapper.write_prg(0xB000, 4);
+        mapper.write_prg(0xF000, 4);
         assert_eq!(
             mapper.read_chr(0x1000),
             4,
-            "$1000-$1FFF must map to CHR bank 4 after writing 4 to $B000"
+            "$1000-$1FFF must map to CHR bank 4 after writing 4 to $F000"
         );
         assert_eq!(
             mapper.read_chr(0x0000),
@@ -405,7 +409,7 @@ mod tests {
         ));
         // Set CHR bank 1 low = 2, high = 1 → effective = 0b10010 = 18 → 18 % 11 = 7
         mapper.write_prg(0x9000, 0x04); // high bit for bank 1 = 1
-        mapper.write_prg(0xB000, 0x02); // low bits = 2
+        mapper.write_prg(0xF000, 0x02); // low bits = 2
         assert_eq!(
             mapper.read_chr(0x1000),
             18 % CHR_BANKS as u8,
@@ -461,7 +465,7 @@ mod tests {
         original.write_prg(0xA000, 2); // prg_bank[1] = 2
         original.write_prg(0xC000, 3); // prg_bank[2] = 3
         original.write_prg(0xE000, 5); // chr_bank_low[0] = 5
-        original.write_prg(0xB000, 7); // chr_bank_low[1] = 7
+        original.write_prg(0xF000, 7); // chr_bank_low[1] = 7
         original.write_prg(0x9000, 0x07); // mirroring=H, chr0_high=1, chr1_high=1
 
         let snap = original.registers_snapshot();
