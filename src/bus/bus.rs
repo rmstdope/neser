@@ -320,6 +320,11 @@ impl Bus {
         }
 
         cartridge.borrow_mut().reset();
+
+        // Sync PPU mirroring after mapper reset — the mapper's reset() may
+        // change mirroring (e.g. mapper 41 clears registers to vertical).
+        let mirroring = cartridge.borrow().mapper().get_mirroring();
+        self.ppu.borrow_mut().set_mirroring(mirroring);
     }
 
     /// Returns `true` if the currently mapped cartridge has a 512-byte trainer block
@@ -748,6 +753,7 @@ impl Bus {
         self.is_arkanoid_famicom_configured() || self.is_zapper_famicom_configured()
     }
 
+    #[allow(dead_code)]
     pub fn has_expansion_power_pad(&self) -> bool {
         self.is_power_pad_famicom_configured()
     }

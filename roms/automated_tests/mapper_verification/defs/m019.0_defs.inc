@@ -23,7 +23,7 @@ CHR_RAM_SHIFT = 0
 .define HAS_MIRRORING_CONTROL 1
 .define HAS_IRQ 1
 .define HAS_PRG_RAM 1
-.define HAS_PRG_RAM_PROTECT 0
+.define HAS_PRG_RAM_PROTECT 1
 .define HAS_BUS_CONFLICTS 0
 .define HAS_NT_FROM_CHR 1           ; SM0 tests NT-from-CHR feature
 .define MAX_MIRRORING_MODES 4       ; V/H/1A/1B via NT select regs
@@ -188,4 +188,31 @@ N163_PRG2_REG     = $F000       ; PRG bank at $C000 — bits 5-0
     lda #$E9
     sta $C800               ; slot 9  = CIRAM page 1
     sta $D800               ; slot 11 = CIRAM page 1
+.endmacro
+
+; ============================================================
+; PRG-RAM control ($F800 write-protect register)
+; ============================================================
+; Spec: upper nibble must equal $4 to enable writes.
+; Bits 0-3 individually write-protect 2KB windows at $6000-$7FFF.
+; Any value outside $40-$4F makes all PRG-RAM read-only.
+
+N163_RAM_PROTECT = $F800
+
+; Enable PRG-RAM writes (all 4 windows writable)
+.macro enable_prg_ram
+    lda #$40
+    sta N163_RAM_PROTECT
+.endmacro
+
+; Disable PRG-RAM writes (all read-only)
+.macro disable_prg_ram
+    lda #$00
+    sta N163_RAM_PROTECT
+.endmacro
+
+; Write-protect PRG-RAM (all read-only)
+.macro write_protect_prg_ram
+    lda #$00
+    sta N163_RAM_PROTECT
 .endmacro

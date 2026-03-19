@@ -375,6 +375,101 @@ test_title_string:
         pass_test
         .endif
 
+        ; === Irem H3001 PRG Mode Bit ($9000 bit 7) ===
+        .if MAPPER_NUM = 65
+        start_test 8, "PRG mode 1"
+        ; Mode 1: $9000 bit 7 → reg0 at $C000, $8000 = second-to-last
+        lda #$80                ; PRG mode 1
+        sta H3001_PRG_MODE
+        lda #0                  ; reg0 = bank 0
+        sta H3001_PRG0
+        ; $C000 should now be bank 0 (reg0 in mode 1)
+        lda $C001
+        assert_a_eq 0
+        pass_test
+
+        start_test 9, "Mode1 $8000"
+        ; $8000 should be second-to-last bank (N-2 = PRG_ROM_16K*2-2)
+        lda $8001
+        assert_a_eq (PRG_ROM_16K * 2 - 2)
+        ; Restore mode 0
+        lda #$00                ; PRG mode 0
+        sta H3001_PRG_MODE
+        lda #0
+        sta H3001_PRG0
+        pass_test
+        .endif
+
+        ; === VRC1 Third PRG Slot ($C000) ===
+        .if MAPPER_NUM = 75
+        start_test 8, "Slot2 Bank 0"
+        select_prg_bank 2, 0
+        lda $C000
+        assert_a_eq $A5
+        pass_test
+
+        start_test 9, "Slot2 Bank 1"
+        select_prg_bank 2, 1
+        lda $C001
+        assert_a_eq 1
+        pass_test
+        .endif
+
+        ; === Action 53 PRG Mode Tests ===
+        .if MAPPER_NUM = 28
+
+        ; Mode 0 (32KB banking): inner bank 0 → $8000=bank 0, $C000=bank 1 (code)
+        start_test 8, "Mode0 32K"
+        lda #$01
+        sta $5000               ; Select inner bank register
+        lda #0
+        sta $BFFF               ; Inner bank = 0
+        lda #$80
+        sta $5000               ; Select mode register
+        lda #$13                ; Mode 0 (32KB), H mirror, 64KB outer
+        sta $BFFF
+        ; $8000 should be bank 0 of outer bank
+        lda $8000
+        assert_a_eq $A5
+        pass_test
+
+        start_test 9, "Mode0 B0 id"
+        lda $8001
+        assert_a_eq 0
+        pass_test
+
+        ; Mode 2 (Fixed $8000): inner bank 1 → $8000=bank 0 (fixed), $C000=bank 1 (code)
+        start_test 10, "Mode2 fix"
+        lda #$01
+        sta $5000               ; Select inner bank register
+        lda #1
+        sta $BFFF               ; Inner bank = 1 (keeps code at $C000)
+        lda #$80
+        sta $5000               ; Select mode register
+        lda #$1B                ; Mode 2 (fixed $8000), H mirror, 64KB outer
+        sta $BFFF
+        ; $8000 should be fixed to bank 0 (first bank of outer bank)
+        lda $8000
+        assert_a_eq $A5
+        pass_test
+
+        start_test 11, "Mode2 B0 id"
+        lda $8001
+        assert_a_eq 0
+        pass_test
+
+        ; Restore mode 3 (fixed $C000, switchable $8000) for subsequent tests
+        lda #$80
+        sta $5000
+        lda #$1F                ; Mode 3, H mirror, 64KB outer
+        sta $BFFF
+        lda #$01
+        sta $5000               ; Select inner bank register
+        lda #0
+        sta $BFFF               ; Inner bank = 0
+
+        .endif
+
     .endif
 .endif
     rts
@@ -435,6 +530,9 @@ TRAMPOLINE_SIZE = trampoline_end - trampoline_code
 .ifndef TRAMPOLINE_BANK_BY_SPLIT_OUTER_INNER
     TRAMPOLINE_BANK_BY_SPLIT_OUTER_INNER = 0
 .endif
+.ifndef TRAMPOLINE_CUSTOM
+    TRAMPOLINE_CUSTOM = 0
+.endif
 .ifndef TRAMPOLINE_OUTER_BANK_ADDR
     TRAMPOLINE_OUTER_BANK_ADDR = $6000
 .endif
@@ -443,7 +541,9 @@ TRAMPOLINE_SIZE = trampoline_end - trampoline_code
 .endif
 trampoline_code:
     lda tramp_result        ; Bank number
-    .if TRAMPOLINE_BANK_BY_SPLIT_OUTER_INNER
+    .if TRAMPOLINE_CUSTOM
+    trampoline_select_bank
+    .elseif TRAMPOLINE_BANK_BY_SPLIT_OUTER_INNER
     tay
     tya
     lsr a
@@ -471,7 +571,9 @@ trampoline_code:
     lda $8003
     sta tramp_result+3
     ; Switch back to bank 0 (where code lives)
-    .if TRAMPOLINE_BANK_BY_SPLIT_OUTER_INNER
+    .if TRAMPOLINE_CUSTOM
+    trampoline_select_bank_zero
+    .elseif TRAMPOLINE_BANK_BY_SPLIT_OUTER_INNER
     lda #0
     sta TRAMPOLINE_OUTER_BANK_ADDR
     sta TRAMPOLINE_INNER_BANK_ADDR

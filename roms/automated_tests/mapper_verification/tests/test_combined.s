@@ -62,6 +62,9 @@
 .ifdef HAS_TEST_EXRAM
     .import run_exram
 .endif
+.ifdef HAS_TEST_WRITE_PROTECT
+    .import run_write_protect
+.endif
 
 .segment "RODATA"
 test_title_string:
@@ -216,6 +219,15 @@ test_title_string:
     jsr console_flush
     jsr console_newline
     jsr run_exram
+    jsr console_show
+.endif
+
+.ifdef HAS_TEST_WRITE_PROTECT
+    jsr console_print_inline
+    .byte "-- Write Protect --", 0
+    jsr console_flush
+    jsr console_newline
+    jsr run_write_protect
     jsr console_show
 .endif
 

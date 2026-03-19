@@ -144,6 +144,10 @@ chr_read_val: .res 1
             mmc1_reset
             ; Control = mirroring V(2) | PRG mode 3 | CHR 4KB = %11110
             mmc1_write_reg MMC1_CONTROL, %11110
+        .elseif MAPPER_NUM = 75
+            ; VRC1: clear CHR high bits in $9000
+            lda #0
+            sta VRC1_CTRL
         .endif
 
         start_test 1, "CHR0 Bank 0"
@@ -224,6 +228,62 @@ chr_read_val: .res 1
 
         jsr enable_rendering
 
+    .elseif CHR_BANK_SIZE = 2
+        ; --- 2KB CHR banking (Sunsoft 3) ---
+        ; Four 2KB slots: $0000-$07FF, $0800-$0FFF, $1000-$17FF, $1800-$1FFF
+
+        start_test 1, "CHR0 Bank 0"
+        jsr disable_rendering
+        select_chr_bank 0, 0
+        lda #$00
+        ldx #$00
+        jsr read_chr_byte
+        assert_a_eq $B6
+        pass_test
+
+        start_test 2, "CHR0 B0 id"
+        lda #$00
+        ldx #$01
+        jsr read_chr_byte
+        assert_a_eq 0
+        pass_test
+
+        start_test 3, "CHR0 Bank 1"
+        select_chr_bank 0, 1
+        lda #$00
+        ldx #$01
+        jsr read_chr_byte
+        assert_a_eq 1
+        pass_test
+
+        start_test 4, "CHR1 Bank 2"
+        select_chr_bank 1, 2
+        lda #$08               ; $0800 for slot 1
+        ldx #$01
+        jsr read_chr_byte
+        assert_a_eq 2
+        pass_test
+
+        start_test 5, "CHR2 Bank 3"
+        select_chr_bank 2, 3
+        lda #$10               ; $1000 for slot 2
+        ldx #$01
+        jsr read_chr_byte
+        assert_a_eq 3
+        pass_test
+
+        start_test 6, "CHR3 Bank 5"
+        select_chr_bank 3, 5
+        lda #$18               ; $1800 for slot 3
+        ldx #$01
+        jsr read_chr_byte
+        assert_a_eq 5
+        pass_test
+
+        ; Restore font bank before enabling rendering
+        init_chr_font
+        jsr enable_rendering
+
     .elseif CHR_BANK_SIZE = 1
         ; --- 1KB CHR banking (MMC3) ---
         ; 8 slots: R0-R5 in bank select register
@@ -277,7 +337,7 @@ chr_read_val: .res 1
         pass_test
 
         ; === MMC3 CHR A12 Inversion ===
-        .if MAPPER_NUM = 4 .or MAPPER_NUM = 12 .or MAPPER_NUM = 14 .or MAPPER_NUM = 64
+        .if MAPPER_NUM = 4 .or MAPPER_NUM = 12 .or MAPPER_NUM = 14 .or MAPPER_NUM = 64 .or MAPPER_NUM = 119
         start_test 7, "CHR invert"
         ; Set CHR A12 inversion: bit 7 of bank select
         ; Inverted: R2→$0000, R3→$0400, R4→$0800, R5→$0C00

@@ -56,6 +56,7 @@ impl Mapper65 {
             has_irq: true,
             has_chr_banking: true,
             has_dynamic_mirroring: true,
+            max_prg_ram_kb: 8,
             prg_bank_size_kb: 8,
             chr_bank_size_kb: 1,
             ..Default::default()
@@ -97,10 +98,6 @@ impl Mapper65 {
             self.base.select_chr_page(i, self.chr_regs[i] as i16);
         }
     }
-
-    fn acknowledge_irq(&mut self) {
-        self.irq.acknowledge();
-    }
 }
 
 impl Mapper for Mapper65 {
@@ -112,6 +109,9 @@ impl Mapper for Mapper65 {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
+        if self.base.try_write_prg_ram(addr, value) {
+            return;
+        }
         match addr {
             0x8000 => {
                 self.prg_regs[0] = value;
@@ -138,11 +138,11 @@ impl Mapper for Mapper65 {
                 });
             }
             0x9003 => {
-                self.acknowledge_irq();
+                self.irq.acknowledge();
                 self.irq.set_enabled((value & 0x80) != 0);
             }
             0x9004 => {
-                self.acknowledge_irq();
+                self.irq.acknowledge();
                 self.irq.reload_counter();
             }
             0x9005 => {

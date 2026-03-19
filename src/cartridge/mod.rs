@@ -106,6 +106,7 @@ mod mapper327;
 mod mapper328;
 mod mapper329;
 mod mapper330;
+mod mapper331;
 mod mapper332;
 mod mapper335;
 mod mapper337;

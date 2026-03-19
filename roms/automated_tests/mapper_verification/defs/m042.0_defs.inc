@@ -7,7 +7,7 @@
 ; - $8000 [.... CCCC] selects CHR bank
 ; - $E000 [.... PPPP] selects PRG bank for $6000-$7FFF
 ; - $E001 [.... M...] sets mirroring (0=vertical, 1=horizontal)
-; - $E002 [......E.] controls a cycle IRQ, not covered by this first ROM slice
+; - $E002 [......E.] controls a 15-bit cycle IRQ (fires after 24576 M2 cycles)
 ; - Register addresses are masked with $E003
 ;
 ; This mapper cannot use the shared $6000 status-byte protocol because
@@ -27,11 +27,12 @@ CONSOLE_VERIFICATION = 1
 .define HAS_PRG_BANKING 1
 .define HAS_CHR_BANKING 1
 .define HAS_MIRRORING_CONTROL 1
-.define HAS_IRQ 0
+.define HAS_IRQ 1
 .define HAS_PRG_RAM 0
 .define HAS_PRG_RAM_PROTECT 0
 .define HAS_BUS_CONFLICTS 0
 .define MAX_MIRRORING_MODES 4
+.define IRQ_MODE 0
 
 ; Bank sizes
 .define PRG_BANK_SIZE 8
@@ -74,4 +75,23 @@ SKIP_SECOND_PRG_8K_SLOT_TESTS = 1
 .endmacro
 
 .macro write_protect_prg_ram
+.endmacro
+
+; IRQ control — 15-bit M2 counter, fixed threshold at 24576 cycles
+; $E002 bit 1: 0 = disable + acknowledge + reset counter, 1 = enable
+
+.macro set_irq_counter value
+    ; No-op: mapper 42 has a fixed 24576-cycle counter (not configurable)
+.endmacro
+
+.macro enable_irq
+    lda #$02                ; Bit 1 = enable IRQ counter
+    sta $E002
+    cli
+.endmacro
+
+.macro disable_irq
+    lda #$00                ; Bit 1 = 0: disable, acknowledge, reset counter
+    sta $E002
+    sei
 .endmacro

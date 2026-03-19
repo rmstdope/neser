@@ -42,13 +42,21 @@ got_val:      .res 1       ; Temp for fail handler
 
     ; Enable PRG-RAM early so we can write the status byte at $6000.
     ; For MMC3: $A001 bit 7 = chip enable. Only for mappers where $A001 is the RAM protect register.
-    .if MAPPER_NUM = 4 .or MAPPER_NUM = 12 .or MAPPER_NUM = 14
+    .if MAPPER_NUM = 4 .or MAPPER_NUM = 12 .or MAPPER_NUM = 14 .or MAPPER_NUM = 119 .or MAPPER_NUM = 37 .or MAPPER_NUM = 45 .or MAPPER_NUM = 47
     lda #$80
     sta $A001
+    .endif
+    ; Namco 163: $F800 write-protect register, $40 = enable all writes
+    .if MAPPER_NUM = 19
+    lda #$40
+    sta $F800
     .endif
 
     ; Mapper-specific early init
     .if MAPPER_NUM = 4
+    init_chr_font
+    .elseif MAPPER_NUM = 119
+    ; TQROM: same init as MMC3 (font in CHR-ROM banks 8+9)
     init_chr_font
     .elseif MAPPER_NUM = 12
     ; SL-5020B: clear outer CHR register, map font
@@ -139,11 +147,29 @@ got_val:      .res 1       ; Temp for fail handler
     lda #$80                ; E=1, W=0, block=0
     sta $A001
     init_chr_font
+    .elseif MAPPER_NUM = 37 .or MAPPER_NUM = 47
+    ; MMC3 multicarts (mapper 37/47): map font (block 0 active at power-on)
+    init_chr_font
+    .elseif MAPPER_NUM = 45
+    ; GA23C multicart: map font (outer regs default at power-on/reset)
+    init_chr_font
     .elseif MAPPER_NUM = 48
     ; Taito TC0690: map font via 2K register ($8002)
     init_chr_font
     .elseif MAPPER_NUM = 64
     ; RAMBO-1: map font CHR banks (same register layout as MMC3)
+    init_chr_font
+    .elseif MAPPER_NUM = 65
+    ; Irem H3001: map font CHR banks via $B000/$B001
+    init_chr_font
+    .elseif MAPPER_NUM = 67
+    ; Sunsoft 3: map font CHR bank via $8800
+    init_chr_font
+    .elseif MAPPER_NUM = 75
+    ; VRC1: map font CHR bank via $E000
+    init_chr_font
+    .elseif MAPPER_NUM = 36
+    ; TXC ASIC: map font CHR bank via $4200
     init_chr_font
     .endif
 
@@ -253,7 +279,7 @@ got_val:      .res 1       ; Temp for fail handler
     pha
     inc irq_fired
     inc irq_count
-    .if MAPPER_NUM = 4 .or MAPPER_NUM = 12 .or MAPPER_NUM = 14 .or MAPPER_NUM = 64
+    .if MAPPER_NUM = 4 .or MAPPER_NUM = 12 .or MAPPER_NUM = 14 .or MAPPER_NUM = 64 .or MAPPER_NUM = 119 .or MAPPER_NUM = 37 .or MAPPER_NUM = 45 .or MAPPER_NUM = 47
     ; MMC3/MMC3-clone/RAMBO-1: acknowledge + re-enable
     lda #0
     sta $E000               ; IRQ acknowledge (disable)
@@ -311,6 +337,30 @@ got_val:      .res 1       ; Temp for fail handler
     lda #0
     sta $C003
     sta $C002               ; Re-enable
+    .elseif MAPPER_NUM = 65
+    ; Irem H3001: acknowledge + reload counter, then re-enable
+    lda #0
+    sta H3001_IRQ_LOAD      ; Acknowledge + reload counter from reload value
+    lda #$80
+    sta H3001_IRQ_EN        ; Re-enable (bit 7 = enable)
+    .elseif MAPPER_NUM = 67
+    ; Sunsoft 3: acknowledge + reload counter + re-enable
+    lda #0
+    sta S3_IRQ_ACK          ; Acknowledge IRQ
+    sta S3_IRQ_EN           ; Reset write toggle + pause
+    lda #>(10 * 114)
+    sta S3_IRQ_CTR          ; Reload high byte
+    lda #<(10 * 114)
+    sta S3_IRQ_CTR          ; Reload low byte
+    lda #$10
+    sta S3_IRQ_EN           ; Re-enable counting (bit 4)
+
+    .elseif MAPPER_NUM = 42
+    ; Mapper 42: acknowledge + reset counter, then re-enable
+    lda #$00
+    sta $E002               ; Disable + acknowledge + reset counter
+    lda #$02
+    sta $E002               ; Re-enable IRQ (bit 1)
     .endif
     pla
     rti

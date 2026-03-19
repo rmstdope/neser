@@ -345,7 +345,7 @@ impl VRC6Mapper {
                     7
                 }
             } // h-pattern: R6-R6-R7-R7
-            2 | 3 | 4 => {
+            2..=4 => {
                 if quadrant & 1 == 0 {
                     6
                 } else {
@@ -564,7 +564,7 @@ impl Mapper for VRC6Mapper {
                         7
                     }
                 }
-                2 | 3 | 4 => {
+                2..=4 => {
                     if quadrant & 1 == 0 {
                         6
                     } else {

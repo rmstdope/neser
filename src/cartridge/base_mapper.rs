@@ -179,6 +179,25 @@ impl BaseMapper {
         self.prg_ram.is_some()
     }
 
+    /// Read a byte from PRG-RAM at an absolute byte offset.
+    /// Used for banked RAM access where the caller computes `bank * bank_size + page_offset`.
+    /// Returns 0 (open bus) if no PRG-RAM is present or if `offset` is beyond the RAM size.
+    #[inline]
+    pub fn read_prg_ram_at_offset(&self, offset: usize) -> u8 {
+        self.prg_ram
+            .as_ref()
+            .map_or(0, |ram| ram.read_at_offset(offset))
+    }
+
+    /// Write a byte to PRG-RAM at an absolute byte offset.
+    /// No-op if no RAM is present or if the offset is past the end.
+    #[inline]
+    pub fn write_prg_ram_at_offset(&mut self, offset: usize, value: u8) {
+        if let Some(ram) = &mut self.prg_ram {
+            ram.write_at_offset(offset, value);
+        }
+    }
+
     // --- CHR memory access ---
 
     /// Read a byte from CHR memory (ROM or RAM) at $0000-$1FFF.
