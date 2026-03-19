@@ -230,7 +230,11 @@ SINGLES := \
 	$(SINGLES_DIR)/m064.0_prg_banking.nes \
 	$(SINGLES_DIR)/m064.0_chr_banking.nes \
 	$(SINGLES_DIR)/m064.0_nametable.nes \
-	$(SINGLES_DIR)/m064.0_irq.nes
+	$(SINGLES_DIR)/m064.0_irq.nes \
+	$(SINGLES_DIR)/m065.0_prg_banking.nes \
+	$(SINGLES_DIR)/m065.0_chr_banking.nes \
+	$(SINGLES_DIR)/m065.0_nametable.nes \
+	$(SINGLES_DIR)/m065.0_irq.nes
 
 # ============================================================
 # Combined ROM target list (all tests per mapper/submapper)
@@ -300,7 +304,8 @@ COMBINED := \
 	$(BIN_DIR)/m045.0.nes \
 	$(BIN_DIR)/m046.0.nes \
 	$(BIN_DIR)/m047.0.nes \
-	$(BIN_DIR)/m064.0.nes
+	$(BIN_DIR)/m064.0.nes \
+	$(BIN_DIR)/m065.0.nes
 
 .PHONY: all clean check-tools singles combined
 
@@ -791,3 +796,10 @@ $(eval $(call ROM_RULE,$(SINGLES_DIR)/m064.0_chr_banking.nes,chr_banking,m064.0)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m064.0_nametable.nes,nametable,m064.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m064.0_irq.nes,irq,m064.0))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m064.0.nes,m064.0,prg_banking chr_banking nametable irq))
+
+# Mapper 65 (Irem H3001)
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m065.0_prg_banking.nes,prg_banking,m065.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m065.0_chr_banking.nes,chr_banking,m065.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m065.0_nametable.nes,nametable,m065.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m065.0_irq.nes,irq,m065.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m065.0.nes,m065.0,prg_banking chr_banking nametable irq))

@@ -145,6 +145,9 @@ got_val:      .res 1       ; Temp for fail handler
     .elseif MAPPER_NUM = 64
     ; RAMBO-1: map font CHR banks (same register layout as MMC3)
     init_chr_font
+    .elseif MAPPER_NUM = 65
+    ; Irem H3001: map font CHR banks via $B000/$B001
+    init_chr_font
     .endif
 
     jsr init_nes
@@ -311,6 +314,12 @@ got_val:      .res 1       ; Temp for fail handler
     lda #0
     sta $C003
     sta $C002               ; Re-enable
+    .elseif MAPPER_NUM = 65
+    ; Irem H3001: acknowledge + reload counter, then re-enable
+    lda #0
+    sta H3001_IRQ_LOAD      ; Acknowledge + reload counter from reload value
+    lda #$80
+    sta H3001_IRQ_EN        ; Re-enable (bit 7 = enable)
     .endif
     pla
     rti
