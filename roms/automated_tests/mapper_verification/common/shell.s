@@ -46,6 +46,11 @@ got_val:      .res 1       ; Temp for fail handler
     lda #$80
     sta $A001
     .endif
+    ; Namco 163: $F800 write-protect register, $40 = enable all writes
+    .if MAPPER_NUM = 19
+    lda #$40
+    sta $F800
+    .endif
 
     ; Mapper-specific early init
     .if MAPPER_NUM = 4

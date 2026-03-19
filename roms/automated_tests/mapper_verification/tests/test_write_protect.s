@@ -31,6 +31,10 @@ test_title_string:
 
 .segment "CODE"
 
+; Export run_write_protect alias for combined-mode runner
+run_write_protect = run_tests
+.export run_write_protect
+
 .proc run_tests
     ; ========================================
     ; Test 1: PRG-RAM writable when enabled
@@ -131,7 +135,9 @@ test_title_string:
     rts
 .endproc
 
-; Export PRG-RAM accessor if needed by combined tests
+; Export PRG-RAM accessor only when not in combined mode
+; (in combined mode, test_prg_ram.s provides this symbol)
+.ifndef COMBINED
 .export run_prg_ram
 .proc run_prg_ram
     lda #$FF
@@ -139,6 +145,7 @@ test_title_string:
     lda $6000
     rts
 .endproc
+.endif
 
 .ifndef COMBINED
 ; Provide CHR data (minimal — not tested by this ROM)
