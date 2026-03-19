@@ -173,6 +173,9 @@ SINGLES := \
 	$(SINGLES_DIR)/m029.0_chr_ram_banking.nes \
 	$(SINGLES_DIR)/m030.0_prg_banking.nes \
 	$(SINGLES_DIR)/m030.0_chr_ram_banking.nes \
+	$(SINGLES_DIR)/m030.0_bus_conflicts.nes \
+	$(SINGLES_DIR)/m030.1_prg_banking.nes \
+	$(SINGLES_DIR)/m030.1_chr_ram_banking.nes \
 	$(SINGLES_DIR)/m030.2_prg_banking.nes \
 	$(SINGLES_DIR)/m030.2_chr_ram_banking.nes \
 	$(SINGLES_DIR)/m030.2_nametable.nes \
@@ -294,6 +297,7 @@ COMBINED := \
 	$(BIN_DIR)/m028.0.nes \
 	$(BIN_DIR)/m029.0.nes \
 	$(BIN_DIR)/m030.0.nes \
+	$(BIN_DIR)/m030.1.nes \
 	$(BIN_DIR)/m030.2.nes \
 	$(BIN_DIR)/m031.0.nes \
 	$(BIN_DIR)/m032.0.nes \
@@ -685,7 +689,13 @@ $(eval $(call COMBINED_RULE,$(BIN_DIR)/m029.0.nes,m029.0,prg_banking chr_ram_ban
 # Mapper 30, Submapper 0 (UNROM 512, fixed mirroring)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m030.0_prg_banking.nes,prg_banking,m030.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m030.0_chr_ram_banking.nes,chr_ram_banking,m030.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m030.0_bus_conflicts.nes,bus_conflicts,m030.0))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m030.0.nes,m030.0,prg_banking chr_ram_banking))
+
+# Mapper 30, Submapper 1 (UNROM 512, flashable, no bus conflicts)
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m030.1_prg_banking.nes,prg_banking,m030.1))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m030.1_chr_ram_banking.nes,chr_ram_banking,m030.1))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m030.1.nes,m030.1,prg_banking chr_ram_banking))
 
 # Mapper 30, Submapper 2 (UNROM 512, 1-screen mirroring)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m030.2_prg_banking.nes,prg_banking,m030.2))

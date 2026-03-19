@@ -1160,8 +1160,29 @@ mod tests {
         "roms/automated_tests/mapper_verification/bin/rom_singles/m030.0_chr_ram_banking.nes"
     );
     setup_rom_test!(
+        test_mv_m030_0_bus_conflicts,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m030.0_bus_conflicts.nes"
+    );
+    setup_rom_test!(
         test_mv_m030_0_combined,
         "roms/automated_tests/mapper_verification/bin/m030.0.nes"
+    );
+
+    // ================================================================
+    // Mapper 30 (UNROM 512), Submapper 1 (flashable, no bus conflicts)
+    // ================================================================
+
+    setup_rom_test!(
+        test_mv_m030_1_prg_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m030.1_prg_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m030_1_chr_ram_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m030.1_chr_ram_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m030_1_combined,
+        "roms/automated_tests/mapper_verification/bin/m030.1.nes"
     );
 
     // ================================================================
