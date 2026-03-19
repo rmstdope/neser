@@ -1383,6 +1383,24 @@ mod tests {
     );
 
     // ================================================================
+    // Mapper 36 (TXC 01-22000-400), Submapper 0
+    // Uses console verification because $6000-$7FFF has no PRG-RAM.
+    // ================================================================
+
+    setup_rom_console_test!(
+        test_mv_m036_0_prg_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m036.0_prg_banking.nes"
+    );
+    setup_rom_console_test!(
+        test_mv_m036_0_chr_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m036.0_chr_banking.nes"
+    );
+    setup_rom_console_test!(
+        test_mv_m036_0_combined,
+        "roms/automated_tests/mapper_verification/bin/m036.0.nes"
+    );
+
+    // ================================================================
     // Mapper 37 (SMB + Tetris + Nintendo World Cup), Submapper 0
     // Uses console verification because $6000-$7FFF is mapper control.
     // ================================================================
