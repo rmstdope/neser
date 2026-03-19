@@ -226,7 +226,11 @@ SINGLES := \
 	$(SINGLES_DIR)/m045.0_block_select.nes \
 	$(SINGLES_DIR)/m046.0_prg_banking.nes \
 	$(SINGLES_DIR)/m046.0_chr_banking.nes \
-	$(SINGLES_DIR)/m047.0_block_select.nes
+	$(SINGLES_DIR)/m047.0_block_select.nes \
+	$(SINGLES_DIR)/m064.0_prg_banking.nes \
+	$(SINGLES_DIR)/m064.0_chr_banking.nes \
+	$(SINGLES_DIR)/m064.0_nametable.nes \
+	$(SINGLES_DIR)/m064.0_irq.nes
 
 # ============================================================
 # Combined ROM target list (all tests per mapper/submapper)
@@ -295,7 +299,8 @@ COMBINED := \
 	$(BIN_DIR)/m043.0.nes \
 	$(BIN_DIR)/m045.0.nes \
 	$(BIN_DIR)/m046.0.nes \
-	$(BIN_DIR)/m047.0.nes
+	$(BIN_DIR)/m047.0.nes \
+	$(BIN_DIR)/m064.0.nes
 
 .PHONY: all clean check-tools singles combined
 
@@ -779,3 +784,10 @@ $(eval $(call COMBINED_RULE,$(BIN_DIR)/m046.0.nes,m046.0,prg_banking chr_banking
 # Mapper 47, Submapper 0 (Super Spike V'Ball + Nintendo World Cup)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m047.0_block_select.nes,block_select,m047.0))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m047.0.nes,m047.0,block_select))
+
+# Mapper 64, Submapper 0 (RAMBO-1)
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m064.0_prg_banking.nes,prg_banking,m064.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m064.0_chr_banking.nes,chr_banking,m064.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m064.0_nametable.nes,nametable,m064.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m064.0_irq.nes,irq,m064.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m064.0.nes,m064.0,prg_banking chr_banking nametable irq))

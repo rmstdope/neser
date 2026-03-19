@@ -62,6 +62,7 @@ impl Mapper64 {
             has_irq: true,
             has_chr_banking: true,
             has_dynamic_mirroring: true,
+            max_prg_ram_kb: 8,
             prg_bank_size_kb: 8,
             chr_bank_size_kb: 1,
             ..Default::default()
@@ -180,6 +181,9 @@ impl Mapper for Mapper64 {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
+        if self.base.try_write_prg_ram(addr, value) {
+            return;
+        }
         let even = (addr & 1) == 0;
         match addr & 0xE000 {
             0x8000 => {
@@ -335,12 +339,9 @@ mod tests {
         ))
     }
 
-    fn set_prg_bank(mapper: &mut Mapper64, reg: u8, bank: u8) {
-        mapper.write_prg(0x8000, reg); // select register
-        mapper.write_prg(0x8001, bank); // set bank value
-    }
-
-    fn set_chr_bank(mapper: &mut Mapper64, reg: u8, bank: u8) {
+    /// Write to the RAMBO-1 bank select register ($8000) then bank data ($8001).
+    /// Used for both PRG (R6, R7, RF) and CHR (R0-R5, R8-R9) registers.
+    fn select_bank(mapper: &mut Mapper64, reg: u8, bank: u8) {
         mapper.write_prg(0x8000, reg);
         mapper.write_prg(0x8001, bank);
     }
@@ -361,21 +362,21 @@ mod tests {
     #[test]
     fn prg_r6_selects_bank_at_8000() {
         let mut mapper = make_mapper();
-        set_prg_bank(&mut mapper, 6, 5);
+        select_bank(&mut mapper, 6, 5);
         assert_eq!(mapper.read_prg(0x8000), 5, "R6 must control $8000 bank");
     }
 
     #[test]
     fn prg_r7_selects_bank_at_a000() {
         let mut mapper = make_mapper();
-        set_prg_bank(&mut mapper, 7, 9);
+        select_bank(&mut mapper, 7, 9);
         assert_eq!(mapper.read_prg(0xA000), 9, "R7 must control $A000 bank");
     }
 
     #[test]
     fn prg_rf_selects_bank_at_c000() {
         let mut mapper = make_mapper();
-        set_prg_bank(&mut mapper, 0x0F, 3);
+        select_bank(&mut mapper, 0x0F, 3);
         assert_eq!(mapper.read_prg(0xC000), 3, "RF must control $C000 bank");
     }
 
@@ -392,8 +393,8 @@ mod tests {
     #[test]
     fn prg_swap_p_bit_swaps_r6_and_rf() {
         let mut mapper = make_mapper();
-        set_prg_bank(&mut mapper, 6, 4);
-        set_prg_bank(&mut mapper, 0x0F, 7);
+        select_bank(&mut mapper, 6, 4);
+        select_bank(&mut mapper, 0x0F, 7);
         mapper.write_prg(0x8000, 0x40); // set P=1
         // P=1: RF@$8000, R6@$C000
         assert_eq!(mapper.read_prg(0x8000), 7, "P=1: RF at $8000");
@@ -406,7 +407,7 @@ mod tests {
     fn chr_r0_2k_bank_fills_slots_0_and_1() {
         let mut mapper = make_mapper();
         // K=0 (default), C=0: R0 is 2KB at $0000-$07FF
-        set_chr_bank(&mut mapper, 0, 10); // R0 = 10 (even)
+        select_bank(&mut mapper, 0, 10); // R0 = 10 (even)
         // slot 0 ($0000): bank = R0 & ~1 = 10
         // slot 1 ($0400): bank = (R0 & ~1) | 1 = 11
         assert_eq!(mapper.read_chr(0x0000), 10, "2KB R0: slot 0 = bank 10");
@@ -419,7 +420,7 @@ mod tests {
         // K=1: set via bank_select bit 5
         mapper.write_prg(0x8000, 0x20); // K=1 bit
         // Now set R0 = 3 and R8 = 5
-        set_chr_bank(&mut mapper, 0, 3); // R0
+        select_bank(&mut mapper, 0, 3); // R0
         mapper.write_prg(0x8000, 0x20 | 8); // K=1, select R8
         mapper.write_prg(0x8001, 5); // R8 = 5
         // slot 0 ($0000): K=1 → bank = R0 = 3
@@ -432,7 +433,7 @@ mod tests {
     fn chr_c_bit_inverts_halves() {
         let mut mapper = make_mapper();
         // Set R2 = 20 (CHR slot 4 in normal mode → goes to slot 0 when C=1)
-        set_chr_bank(&mut mapper, 2, 20);
+        select_bank(&mut mapper, 2, 20);
         // Enable C=1 via $8000
         mapper.write_prg(0x8000, 0x80); // C=1
         // C=1: lower half ($0000-$0FFF) gets R2-R5 (slots 4-7 normally)

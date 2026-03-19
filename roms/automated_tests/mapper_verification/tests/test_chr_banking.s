@@ -277,7 +277,7 @@ chr_read_val: .res 1
         pass_test
 
         ; === MMC3 CHR A12 Inversion ===
-        .if MAPPER_NUM = 4 .or MAPPER_NUM = 12 .or MAPPER_NUM = 14
+        .if MAPPER_NUM = 4 .or MAPPER_NUM = 12 .or MAPPER_NUM = 14 .or MAPPER_NUM = 64
         start_test 7, "CHR invert"
         ; Set CHR A12 inversion: bit 7 of bank select
         ; Inverted: R2→$0000, R3→$0400, R4→$0800, R5→$0C00

@@ -1576,4 +1576,29 @@ mod tests {
         test_mv_m048_0_combined,
         "roms/automated_tests/mapper_verification/bin/m048.0.nes"
     );
+
+    // ================================================================
+    // Mapper 64 (RAMBO-1), Submapper 0
+    // ================================================================
+
+    setup_rom_test!(
+        test_mv_m064_0_prg_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m064.0_prg_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m064_0_chr_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m064.0_chr_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m064_0_nametable,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m064.0_nametable.nes"
+    );
+    setup_rom_test!(
+        test_mv_m064_0_irq,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m064.0_irq.nes"
+    );
+    setup_rom_test!(
+        test_mv_m064_0_combined,
+        "roms/automated_tests/mapper_verification/bin/m064.0.nes"
+    );
 }

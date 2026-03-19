@@ -1,9 +1,10 @@
 ; mmc3_core_macros.inc — Shared MMC3 register macros
 ;
 ; This file contains register definitions and macros shared by all MMC3-based mappers:
-; - Mapper 4 (MMC3/TxROM)
+; - Mapper 4  (MMC3/TxROM)
 ; - Mapper 12 (SL-5020B / MMC3 + outer CHR)
 ; - Mapper 14 (SL-1632 / MMC3+VRC2 hybrid)
+; - Mapper 64 (Tengen RAMBO-1)
 ;
 ; Each mapper-specific defs file includes this and adds its own extensions.
 

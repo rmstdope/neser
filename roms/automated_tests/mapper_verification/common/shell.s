@@ -142,6 +142,9 @@ got_val:      .res 1       ; Temp for fail handler
     .elseif MAPPER_NUM = 48
     ; Taito TC0690: map font via 2K register ($8002)
     init_chr_font
+    .elseif MAPPER_NUM = 64
+    ; RAMBO-1: map font CHR banks (same register layout as MMC3)
+    init_chr_font
     .endif
 
     jsr init_nes
@@ -250,8 +253,8 @@ got_val:      .res 1       ; Temp for fail handler
     pha
     inc irq_fired
     inc irq_count
-    .if MAPPER_NUM = 4 .or MAPPER_NUM = 12 .or MAPPER_NUM = 14
-    ; MMC3/MMC3-clone: acknowledge + re-enable
+    .if MAPPER_NUM = 4 .or MAPPER_NUM = 12 .or MAPPER_NUM = 14 .or MAPPER_NUM = 64
+    ; MMC3/MMC3-clone/RAMBO-1: acknowledge + re-enable
     lda #0
     sta $E000               ; IRQ acknowledge (disable)
     sta $E001               ; IRQ re-enable
