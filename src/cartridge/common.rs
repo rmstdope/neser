@@ -214,6 +214,7 @@ impl PrgRam {
 
     /// Read a byte from PRG-RAM at an absolute byte offset (not CPU address).
     /// Used for banked RAM access where the caller computes `bank * bank_size + page_offset`.
+    /// Returns 0 (open bus) if `offset` is beyond the allocated RAM size.
     #[inline]
     pub fn read_at_offset(&self, offset: usize) -> u8 {
         self.data.get(offset).copied().unwrap_or(0)

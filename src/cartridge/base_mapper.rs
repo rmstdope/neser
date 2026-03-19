@@ -181,6 +181,7 @@ impl BaseMapper {
 
     /// Read a byte from PRG-RAM at an absolute byte offset.
     /// Used for banked RAM access where the caller computes `bank * bank_size + page_offset`.
+    /// Returns 0 (open bus) if no PRG-RAM is present or if `offset` is beyond the RAM size.
     #[inline]
     pub fn read_prg_ram_at_offset(&self, offset: usize) -> u8 {
         self.prg_ram

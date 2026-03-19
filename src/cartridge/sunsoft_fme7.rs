@@ -173,6 +173,21 @@ impl SunsoftFme7Mapper {
         }
         self.update_banks();
     }
+
+    /// Compute the wrapped PRG-RAM byte offset for a CPU address in $6000–$7FFF.
+    ///
+    /// FME-7 always drives the bank-number address lines even when RAM is selected,
+    /// so bank N maps to offset `N * 8KB + page_offset`. The offset wraps modulo
+    /// total RAM size when N >= the physical bank count.
+    fn banked_ram_offset(&self, addr: u16) -> usize {
+        let raw_offset = (self.prg_banks[0] as usize * 0x2000) + (addr as usize - 0x6000);
+        let ram_size = self.base.wram_size();
+        if ram_size > 0 {
+            raw_offset % ram_size
+        } else {
+            raw_offset
+        }
+    }
 }
 
 impl Mapper for SunsoftFme7Mapper {
@@ -187,19 +202,8 @@ impl Mapper for SunsoftFme7Mapper {
         match addr {
             0x6000..=0x7FFF => {
                 if self.prg_ram_enabled {
-                    // FME-7 always drives the bank-number address lines even when
-                    // RAM is selected, so bank N of RAM maps to offset N*8KB.
-                    // The RAM chip only sees the lower address bits, so the offset
-                    // wraps modulo the total RAM size when N >= physical bank count.
-                    let raw_offset =
-                        (self.prg_banks[0] as usize * 0x2000) + (addr as usize - 0x6000);
-                    let ram_size = self.base.wram_size();
-                    let offset = if ram_size > 0 {
-                        raw_offset % ram_size
-                    } else {
-                        raw_offset
-                    };
-                    self.base.read_prg_ram_at_offset(offset)
+                    self.base
+                        .read_prg_ram_at_offset(self.banked_ram_offset(addr))
                 } else {
                     self.base.try_read_prg_6000(addr).unwrap_or(0)
                 }
@@ -214,14 +218,7 @@ impl Mapper for SunsoftFme7Mapper {
             0x6000..=0x7FFF => {
                 // PRG-RAM writes (when RAM is fully enabled: E=1 AND R=1)
                 if self.prg_ram_enabled {
-                    let raw_offset =
-                        (self.prg_banks[0] as usize * 0x2000) + (addr as usize - 0x6000);
-                    let ram_size = self.base.wram_size();
-                    let offset = if ram_size > 0 {
-                        raw_offset % ram_size
-                    } else {
-                        raw_offset
-                    };
+                    let offset = self.banked_ram_offset(addr);
                     self.base.write_prg_ram_at_offset(offset, value);
                 }
             }
