@@ -1523,6 +1523,14 @@ mod tests {
         "roms/automated_tests/mapper_verification/bin/rom_singles/m044.0_block_select.nes"
     );
     setup_rom_test!(
+        test_mv_m044_0_prg_ram,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m044.0_prg_ram.nes"
+    );
+    setup_rom_test!(
+        test_mv_m044_0_write_protect,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m044.0_write_protect.nes"
+    );
+    setup_rom_test!(
         test_mv_m044_0_combined,
         "roms/automated_tests/mapper_verification/bin/m044.0.nes"
     );
