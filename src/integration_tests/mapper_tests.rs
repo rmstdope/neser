@@ -847,6 +847,14 @@ mod tests {
         "roms/automated_tests/mapper_verification/bin/rom_singles/m019.0_irq.nes"
     );
     setup_rom_test!(
+        test_mv_m019_0_prg_ram,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m019.0_prg_ram.nes"
+    );
+    setup_rom_test!(
+        test_mv_m019_0_write_protect,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m019.0_write_protect.nes"
+    );
+    setup_rom_test!(
         test_mv_m019_0_combined,
         "roms/automated_tests/mapper_verification/bin/m019.0.nes"
     );
