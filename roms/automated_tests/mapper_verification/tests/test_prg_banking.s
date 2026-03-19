@@ -375,6 +375,31 @@ test_title_string:
         pass_test
         .endif
 
+        ; === Irem H3001 PRG Mode Bit ($9000 bit 7) ===
+        .if MAPPER_NUM = 65
+        start_test 8, "PRG mode 1"
+        ; Mode 1: $9000 bit 7 → reg0 at $C000, $8000 = second-to-last
+        lda #$80                ; PRG mode 1
+        sta H3001_PRG_MODE
+        lda #0                  ; reg0 = bank 0
+        sta H3001_PRG0
+        ; $C000 should now be bank 0 (reg0 in mode 1)
+        lda $C001
+        assert_a_eq 0
+        pass_test
+
+        start_test 9, "Mode1 $8000"
+        ; $8000 should be second-to-last bank (N-2 = PRG_ROM_16K*2-2)
+        lda $8001
+        assert_a_eq (PRG_ROM_16K * 2 - 2)
+        ; Restore mode 0
+        lda #$00                ; PRG mode 0
+        sta H3001_PRG_MODE
+        lda #0
+        sta H3001_PRG0
+        pass_test
+        .endif
+
     .endif
 .endif
     rts
