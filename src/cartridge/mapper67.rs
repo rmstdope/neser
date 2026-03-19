@@ -67,6 +67,7 @@ impl Mapper67 {
             has_irq: true,
             has_chr_banking: true,
             has_dynamic_mirroring: true,
+            max_prg_ram_kb: 8,
             prg_bank_size_kb: 16,
             chr_bank_size_kb: 2,
             ..Default::default()
@@ -108,6 +109,9 @@ impl Mapper for Mapper67 {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
+        if self.base.try_write_prg_ram(addr, value) {
+            return;
+        }
         match addr & 0xF800 {
             0x8000 => {
                 // IRQ acknowledge
