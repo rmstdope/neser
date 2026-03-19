@@ -340,6 +340,13 @@ got_val:      .res 1       ; Temp for fail handler
     sta S3_IRQ_CTR          ; Reload low byte
     lda #$10
     sta S3_IRQ_EN           ; Re-enable counting (bit 4)
+
+    .elseif MAPPER_NUM = 42
+    ; Mapper 42: acknowledge + reset counter, then re-enable
+    lda #$00
+    sta $E002               ; Disable + acknowledge + reset counter
+    lda #$02
+    sta $E002               ; Re-enable IRQ (bit 1)
     .endif
     pla
     rti
