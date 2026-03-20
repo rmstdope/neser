@@ -35,22 +35,28 @@ test_title_string:
 .segment "CODE"
 
 .proc run_tests
+    ; Ensure PPU is in a known state: rendering off, increment by 1.
+    lda #$00
+    sta PPUCTRL
+    sta PPUMASK
+
     ; === Load palettes ===
+    ; Color 3 is the visible color (both bitplanes set in tile data).
     bit PPUSTATUS
     lda #$3F
     sta PPUADDR
     lda #$00
     sta PPUADDR
 
-    ; BG palette 0: black, white, light blue, dark blue
+    ; BG palette 0: white solid tiles (background)
     lda #$0F
-    sta PPUDATA
-    lda #$30
-    sta PPUDATA
-    lda #$21
-    sta PPUDATA
+    sta PPUDATA                 ; Color 0: black (bg)
     lda #$02
-    sta PPUDATA
+    sta PPUDATA                 ; Color 1: dark blue
+    lda #$21
+    sta PPUDATA                 ; Color 2: light blue
+    lda #$30
+    sta PPUDATA                 ; Color 3: white  ← BG tiles
 
     ; BG palettes 1-3: filler (white)
     ldx #0
@@ -67,15 +73,15 @@ test_title_string:
     cpx #3
     bne @bg_pal_fill
 
-    ; Sprite palette 0: black(transparent), red, green, yellow
+    ; Sprite palette 0: red checkerboard sprites
     lda #$0F
-    sta PPUDATA
-    lda #$16
-    sta PPUDATA
-    lda #$1A
-    sta PPUDATA
+    sta PPUDATA                 ; Color 0: transparent
     lda #$28
-    sta PPUDATA
+    sta PPUDATA                 ; Color 1: yellow
+    lda #$1A
+    sta PPUDATA                 ; Color 2: green
+    lda #$16
+    sta PPUDATA                 ; Color 3: red    ← sprite tiles
 
     ; Sprite palettes 1-3: filler
     ldx #0
@@ -317,13 +323,17 @@ nes20_header
     .byte $00
 
 ; CHR bank 2 (A registers — sprites):
-; Tile $01 = checkerboard, Tile $02 = checkerboard
+; Tile $01 = checkerboard, Tile $02 = checkerboard, Tile $03 = checkerboard
+; (8×16 sprites use tile pairs: $02=top, $03=bottom)
 .segment "CHR_SIG2"
     .res 16, $00                ; Tile $00: empty
     ; Tile $01: checkerboard (color 3 / color 0)
     .byte $AA,$55,$AA,$55,$AA,$55,$AA,$55
     .byte $AA,$55,$AA,$55,$AA,$55,$AA,$55
-    ; Tile $02: checkerboard (color 3 / color 0)
+    ; Tile $02: checkerboard (top half of 8×16 sprite)
+    .byte $AA,$55,$AA,$55,$AA,$55,$AA,$55
+    .byte $AA,$55,$AA,$55,$AA,$55,$AA,$55
+    ; Tile $03: checkerboard (bottom half of 8×16 sprite)
     .byte $AA,$55,$AA,$55,$AA,$55,$AA,$55
     .byte $AA,$55,$AA,$55,$AA,$55,$AA,$55
 

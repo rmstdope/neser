@@ -411,9 +411,30 @@ For these features, the framework uses **CRC-based framebuffer verification**:
 setup_rom_crc_test!(
     test_mv_m005_0_mmc5_ext_attr,
     "roms/automated_tests/mapper_verification/bin/rom_singles/m005.0_mmc5_ext_attr.nes",
-    [(60, 112395508)]
+    [(60, 38994255u32)]
 );
 ```
+
+#### Expected Visual Output
+
+**`m005.0_mmc5_ext_attr`** — Three horizontal bands, each 10 tile rows (80 px) tall, filling the full width:
+- **Top third (rows 0–9):** White solid 8×8 tiles on black — ExRAM selects CHR bank 0, palette 0
+- **Middle third (rows 10–19):** Red horizontal-striped tiles on black — ExRAM selects CHR bank 2, palette 1
+- **Bottom third (rows 20–29):** Cyan vertical-striped tiles on black — ExRAM selects CHR bank 4, palette 2
+
+**`m005.0_mmc5_split`** — Vertical split with left-side split threshold at tile 16:
+- **Columns 0–1:** White solid tiles — these 2 tiles are pre-fetched by the PPU at the end of the previous scanline (fetch counts 32–33), which fall outside the split threshold. This is hardware-accurate: the MMC5 locates the split boundary by counting nametable fetches (34 per scanline), so the pre-fetched tiles for the next line always use main nametable data regardless of the split threshold.
+- **Columns 2–17:** Red horizontal-striped tiles on black — split region active, ExRAM provides tile indices and attributes, split CHR bank 2 provides the stripe pattern, palette 1 (color 3 = red).
+- **Columns 18–31:** White solid tiles on black — main region, CIRAM nametable tile $01, CHR bank 0, palette 0 (color 3 = white).
+- The split region has a 32-pixel vertical scroll offset ($5201 = $20), so the left side's content is shifted up by 4 tile rows compared to the right.
+
+**`m005.0_mmc5_sprite_chr`** — 8×16 sprite CHR A/B register separation:
+- **Background (full screen):** White solid 8×8 tiles — B registers ($5128–$512B) select CHR bank 0 (solid pattern), palette 0 (color 3 = white).
+- **Sprites (4×2 grid):** Red/black checkerboard 8×16 sprites — A registers ($5120–$5127) select CHR bank 2 (checkerboard pattern), sprite palette 0 (color 3 = red).
+  - Top row: 4 sprites at screen positions (80, 49), (96, 49), (112, 49), (128, 49)
+  - Bottom row: 4 sprites at screen positions (80, 81), (96, 81), (112, 81), (128, 81)
+  - Note: screen Y = OAM Y + 1, which is standard NES hardware behavior (the PPU adds 1 to the stored Y value).
+- The key verification: sprites use different CHR data (checkerboard from A registers) than the background (solid from B registers), proving A/B separation works in CHR mode 3 with 8×16 sprites.
 
 **Adding a new rendering verification ROM:**
 

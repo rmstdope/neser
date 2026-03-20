@@ -444,17 +444,17 @@ mod tests {
     setup_rom_crc_test!(
         test_mv_m005_0_mmc5_ext_attr,
         "roms/automated_tests/mapper_verification/bin/rom_singles/m005.0_mmc5_ext_attr.nes",
-        [(60, 112395508u32)]
+        [(60, 38994255u32)]
     );
     setup_rom_crc_test!(
         test_mv_m005_0_mmc5_split,
         "roms/automated_tests/mapper_verification/bin/rom_singles/m005.0_mmc5_split.nes",
-        [(60, 3203578593u32)]
+        [(60, 3080784971u32)]
     );
     setup_rom_crc_test!(
         test_mv_m005_0_mmc5_sprite_chr,
         "roms/automated_tests/mapper_verification/bin/rom_singles/m005.0_mmc5_sprite_chr.nes",
-        [(60, 3803797673u32)]
+        [(60, 2467964881u32)]
     );
 
     // ================================================================

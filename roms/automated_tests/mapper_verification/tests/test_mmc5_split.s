@@ -31,32 +31,38 @@ test_title_string:
 .segment "CODE"
 
 .proc run_tests
+    ; Ensure PPU is in a known state: rendering off, increment by 1.
+    lda #$00
+    sta PPUCTRL
+    sta PPUMASK
+
     ; === Load palettes ===
+    ; Color 3 is the visible color (both bitplanes set in tile data).
     bit PPUSTATUS
     lda #$3F
     sta PPUADDR
     lda #$00
     sta PPUADDR
 
-    ; BG palette 0: black, white, light blue, dark blue (main region)
+    ; BG palette 0: white solid tiles (main region)
     lda #$0F
-    sta PPUDATA
-    lda #$30
-    sta PPUDATA
-    lda #$21
-    sta PPUDATA
+    sta PPUDATA                 ; Color 0: black (bg)
     lda #$02
-    sta PPUDATA
+    sta PPUDATA                 ; Color 1: dark blue
+    lda #$21
+    sta PPUDATA                 ; Color 2: light blue
+    lda #$30
+    sta PPUDATA                 ; Color 3: white  ← main tiles
 
-    ; BG palette 1: black, red, green, yellow (split region)
+    ; BG palette 1: red striped tiles (split region)
     lda #$0F
-    sta PPUDATA
-    lda #$16
-    sta PPUDATA
-    lda #$1A
     sta PPUDATA
     lda #$28
-    sta PPUDATA
+    sta PPUDATA                 ; Color 1: yellow
+    lda #$1A
+    sta PPUDATA                 ; Color 2: green
+    lda #$16
+    sta PPUDATA                 ; Color 3: red    ← split tiles
 
     ; BG palettes 2-3: filler
     lda #$0F

@@ -33,45 +33,52 @@ test_title_string:
 .segment "CODE"
 
 .proc run_tests
-    ; PPU is off after init_nes — safe to write freely.
+    ; Ensure PPU is in a known state: rendering off, increment by 1.
+    ; Console/print_title may have changed PPUCTRL (e.g. increment by 32).
+    lda #$00
+    sta PPUCTRL                 ; Increment by 1, BG from $0000
+    sta PPUMASK                 ; Rendering off
+
     ; === Load palettes ===
+    ; Tile patterns use color 3 (both bitplanes set), so color 3 is the
+    ; visually dominant entry.  Color 0 = background (black).
     bit PPUSTATUS               ; Reset PPU latch
     lda #$3F
     sta PPUADDR
     lda #$00
     sta PPUADDR
 
-    ; BG palette 0: black, white, light blue, dark blue
+    ; BG palette 0: black bg, then white as color 3
     lda #$0F
-    sta PPUDATA
-    lda #$30
-    sta PPUDATA
-    lda #$21
-    sta PPUDATA
+    sta PPUDATA                 ; Color 0: black (bg)
     lda #$02
-    sta PPUDATA
+    sta PPUDATA                 ; Color 1: dark blue
+    lda #$21
+    sta PPUDATA                 ; Color 2: light blue
+    lda #$30
+    sta PPUDATA                 ; Color 3: white  ← solid tiles
 
-    ; BG palette 1: black, red, green, yellow
+    ; BG palette 1: black bg, then red as color 3
     lda #$0F
-    sta PPUDATA
-    lda #$16
-    sta PPUDATA
-    lda #$1A
     sta PPUDATA
     lda #$28
-    sta PPUDATA
+    sta PPUDATA                 ; Color 1: yellow
+    lda #$1A
+    sta PPUDATA                 ; Color 2: green
+    lda #$16
+    sta PPUDATA                 ; Color 3: red    ← h-stripe tiles
 
-    ; BG palette 2: black, cyan, magenta, orange
+    ; BG palette 2: black bg, then cyan as color 3
     lda #$0F
     sta PPUDATA
-    lda #$2C
-    sta PPUDATA
-    lda #$24
-    sta PPUDATA
     lda #$27
-    sta PPUDATA
+    sta PPUDATA                 ; Color 1: orange
+    lda #$24
+    sta PPUDATA                 ; Color 2: magenta
+    lda #$2C
+    sta PPUDATA                 ; Color 3: cyan   ← v-stripe tiles
 
-    ; BG palette 3: black, dark green, dark red, purple
+    ; BG palette 3: unused filler
     lda #$0F
     sta PPUDATA
     lda #$0A
