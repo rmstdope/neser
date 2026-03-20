@@ -393,6 +393,37 @@ cargo test --no-default-features -- "test_mv_m004_0_prg_banking"
 
 The pre-built ROM binaries are committed to `bin/` so that CI can run the tests without requiring the cc65 toolchain. Locally, `cargo test --no-default-features` exercises the mapper verification suite in this repository. CI consumes the same committed ROM binaries as part of the broader Rust test jobs.
 
+### CRC-Based Rendering Verification
+
+Some mapper features only become observable through actual PPU rendering — they cannot be verified through PPUDATA register reads. Examples include:
+
+- MMC5 extended attribute mode (per-tile CHR bank and palette via ExRAM)
+- MMC5 vertical split screen (split region with separate nametable, CHR bank, and scroll)
+- MMC5 8×16 sprite CHR A/B register separation (sprites vs background use different CHR banks)
+
+For these features, the framework uses **CRC-based framebuffer verification**:
+
+1. **ROM side**: A standalone rendering program sets up deterministic CHR, nametable, palette, and mapper state, enables PPU rendering, and loops forever. The ROM uses the standard `ROM_RULE` build flow but never returns from `run_tests`.
+
+2. **Rust side**: The `setup_rom_crc_test!` macro runs the emulator for a fixed number of frames and verifies the screen buffer's CRC-32 against an approved baseline.
+
+```rust
+setup_rom_crc_test!(
+    test_mv_m005_0_mmc5_ext_attr,
+    "roms/automated_tests/mapper_verification/bin/rom_singles/m005.0_mmc5_ext_attr.nes",
+    [(60, 112395508)]
+);
+```
+
+**Adding a new rendering verification ROM:**
+
+1. Create `tests/test_my_feature.s` — set up the rendering state and loop forever
+2. Embed CHR tile data in `CHR_SIG*` segments with distinct per-bank patterns
+3. Add a `ROM_RULE` entry in the Makefile (not `COMBINED_RULE` — rendering tests are standalone)
+4. Build the ROM and run with `NESER_CAPTURE_SCREEN=1` to capture a screenshot and CRC
+5. Visually verify the screenshot shows the expected pattern
+6. Add a `setup_rom_crc_test!` entry with the approved CRC value
+
 ## Adding a New Mapper
 
 To add tests for a new mapper (e.g. mapper 99):
@@ -426,7 +457,7 @@ All mapper numbers from `0` through `48` have been reviewed against NESdev docum
 | 2 | UxROM | 0, 2 | PRG banking, bus conflicts |
 | 3 | CNROM | 0, 1 | CHR banking, bus conflicts |
 | 4 | MMC3 | 0, 1 | PRG banking, CHR banking, nametable, IRQ, PRG-RAM, write-protect |
-| 5 | MMC5 | 0 | PRG banking, CHR banking, nametable, IRQ, PRG-RAM, multiplier, write-protect |
+| 5 | MMC5 | 0 | PRG banking, CHR banking, nametable, IRQ, PRG-RAM, multiplier, write-protect, ext-attr†, split†, sprite-chr† |
 | 6 | Front Fareast | 0 | PRG banking, CHR banking, nametable, IRQ, PRG-RAM |
 | 7 | AxROM | 0, 1 | PRG banking, nametable |
 | 8 | SMC GNROM | 0 | PRG banking, CHR banking, nametable, IRQ, PRG-RAM |
@@ -468,6 +499,8 @@ All mapper numbers from `0` through `48` have been reviewed against NESdev docum
 | 48 | Taito TC0690 | 0 | PRG banking, CHR banking, nametable, IRQ, PRG-RAM |
 
 Several of the later multicart / register-at-`$6000` mappers (`37`, `40`, `41`, `42`, `43`, `45`, `46`, `47`) are covered through console verification rather than the `$6000` status-byte protocol.
+
+†Features marked with † use CRC-based rendering verification instead of the `$6000` status-byte protocol. See [CRC-Based Rendering Verification](#crc-based-rendering-verification) above.
 
 ### Mappers Reviewed but Not Yet Implemented
 

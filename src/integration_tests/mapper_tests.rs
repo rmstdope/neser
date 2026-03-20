@@ -440,6 +440,23 @@ mod tests {
         "roms/automated_tests/mapper_verification/bin/m005.0.nes"
     );
 
+    // MMC5 rendering-dependent verification (CRC-based)
+    setup_rom_crc_test!(
+        test_mv_m005_0_mmc5_ext_attr,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m005.0_mmc5_ext_attr.nes",
+        [(60, 112395508)]
+    );
+    setup_rom_crc_test!(
+        test_mv_m005_0_mmc5_split,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m005.0_mmc5_split.nes",
+        [(60, 3203578593)]
+    );
+    setup_rom_crc_test!(
+        test_mv_m005_0_mmc5_sprite_chr,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m005.0_mmc5_sprite_chr.nes",
+        [(60, 3057847641)]
+    );
+
     // ================================================================
     // Mapper 6 (Front Fareast Magic Card), Submapper 0
     // ================================================================

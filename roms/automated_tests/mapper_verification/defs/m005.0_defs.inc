@@ -60,6 +60,9 @@ MMC5_CHR_A7      = $5127  ; CHR A register 7 (8KB mode uses this)
 MMC5_CHR_B0      = $5128  ; CHR B register 0
 MMC5_CHR_B3      = $512B  ; CHR B register 3 (4KB mode: $0000-$0FFF for BG)
 MMC5_CHR_UPPER   = $5130  ; Upper CHR bank bits (bits 1-0)
+MMC5_SPLIT_MODE  = $5200  ; Split mode (W): ES-TTTTT (E=enable, S=side, T=threshold)
+MMC5_SPLIT_SCROLL = $5201 ; Split vertical scroll (W)
+MMC5_SPLIT_BANK  = $5202  ; Split CHR bank (W): 4KB bank select
 MMC5_IRQ_CMP     = $5203  ; Scanline IRQ compare value (0=disabled)
 MMC5_IRQ_STATUS  = $5204  ; IRQ enable (W bit 7) / status (R bits 7-6)
 MMC5_MULT_A      = $5205  ; Multiplicand (W) / result low (R)

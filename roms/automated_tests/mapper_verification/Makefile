@@ -60,6 +60,9 @@ SINGLES := \
 	$(SINGLES_DIR)/m005.0_write_protect.nes \
 	$(SINGLES_DIR)/m005.0_exram.nes \
 	$(SINGLES_DIR)/m005.0_mmc5_chr.nes \
+	$(SINGLES_DIR)/m005.0_mmc5_ext_attr.nes \
+	$(SINGLES_DIR)/m005.0_mmc5_split.nes \
+	$(SINGLES_DIR)/m005.0_mmc5_sprite_chr.nes \
 	$(SINGLES_DIR)/m006.0_prg_banking.nes \
 	$(SINGLES_DIR)/m006.0_chr_banking.nes \
 	$(SINGLES_DIR)/m006.0_nametable.nes \
@@ -490,6 +493,9 @@ $(eval $(call ROM_RULE,$(SINGLES_DIR)/m005.0_multiplier.nes,multiplier,m005.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m005.0_write_protect.nes,write_protect,m005.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m005.0_exram.nes,exram,m005.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m005.0_mmc5_chr.nes,mmc5_chr,m005.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m005.0_mmc5_ext_attr.nes,mmc5_ext_attr,m005.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m005.0_mmc5_split.nes,mmc5_split,m005.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m005.0_mmc5_sprite_chr.nes,mmc5_sprite_chr,m005.0))
 
 # Mapper 6, Submapper 0 (Front Fareast Magic Card, mode 1 UN1ROM+CHRSW)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m006.0_prg_banking.nes,prg_banking,m006.0))
