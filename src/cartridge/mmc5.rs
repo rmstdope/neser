@@ -821,9 +821,7 @@ impl MMC5Mapper {
 
     fn read_chr_banked(&self, bank: u16, addr: u16) -> u8 {
         // In extended attribute or split mode, CHR banks are always 4KB regardless of chr_mode
-        let bank_size = if self.is_extended_attribute_mode_chr_active()
-            || self.split_chr_active()
-        {
+        let bank_size = if self.is_extended_attribute_mode_chr_active() || self.split_chr_active() {
             4 * 1024 // Extended attribute and split modes always use 4KB banks
         } else {
             match self.chr_mode {
@@ -1520,8 +1518,7 @@ impl Mapper for MMC5Mapper {
             // is off by 1 scanline — this is hardware-accurate (see NESdev MMC5 docs).
             if self.split_active {
                 let split_vertical_scroll = self.split_vertical_scroll();
-                self.split_tile_index =
-                    ((split_vertical_scroll & 0xF8) << 2) | column as u16;
+                self.split_tile_index = ((split_vertical_scroll & 0xF8) << 2) | column as u16;
             }
             self.split_tile_count = self.split_tile_count.saturating_add(1);
         }
@@ -1539,18 +1536,12 @@ impl Mapper for MMC5Mapper {
                 );
             } else {
                 // Attribute byte from ExRAM based on split tile position
-                let shift =
-                    ((self.split_tile_index >> 4) & 0x04) | (self.split_tile_index & 0x02);
+                let shift = ((self.split_tile_index >> 4) & 0x04) | (self.split_tile_index & 0x02);
                 let at_addr = 0x3C0
                     | ((self.split_tile_index & 0x380) >> 4)
                     | ((self.split_tile_index & 0x1F) >> 2);
-                let palette = (self
-                    .ex_ram
-                    .get(at_addr as usize)
-                    .copied()
-                    .unwrap_or(0)
-                    >> shift)
-                    & 0x03;
+                let palette =
+                    (self.ex_ram.get(at_addr as usize).copied().unwrap_or(0) >> shift) & 0x03;
                 return Some(Self::replicate_2bit_attribute(palette));
             }
         }
