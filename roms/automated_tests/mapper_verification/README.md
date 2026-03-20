@@ -393,6 +393,58 @@ cargo test --no-default-features -- "test_mv_m004_0_prg_banking"
 
 The pre-built ROM binaries are committed to `bin/` so that CI can run the tests without requiring the cc65 toolchain. Locally, `cargo test --no-default-features` exercises the mapper verification suite in this repository. CI consumes the same committed ROM binaries as part of the broader Rust test jobs.
 
+### CRC-Based Rendering Verification
+
+Some mapper features only become observable through actual PPU rendering — they cannot be verified through PPUDATA register reads. Examples include:
+
+- MMC5 extended attribute mode (per-tile CHR bank and palette via ExRAM)
+- MMC5 vertical split screen (split region with separate nametable, CHR bank, and scroll)
+- MMC5 8×16 sprite CHR A/B register separation (sprites vs background use different CHR banks)
+
+For these features, the framework uses **CRC-based framebuffer verification**:
+
+1. **ROM side**: A standalone rendering program sets up deterministic CHR, nametable, palette, and mapper state, enables PPU rendering, and loops forever. The ROM uses the standard `ROM_RULE` build flow but never returns from `run_tests`.
+
+2. **Rust side**: The `setup_rom_crc_test!` macro runs the emulator for a fixed number of frames and verifies the screen buffer's CRC-32 against an approved baseline.
+
+```rust
+setup_rom_crc_test!(
+    test_mv_m005_0_mmc5_ext_attr,
+    "roms/automated_tests/mapper_verification/bin/rom_singles/m005.0_mmc5_ext_attr.nes",
+    [(60, 38994255u32)]
+);
+```
+
+#### Expected Visual Output
+
+**`m005.0_mmc5_ext_attr`** — Three horizontal bands, each 10 tile rows (80 px) tall, filling the full width:
+- **Top third (rows 0–9):** White solid 8×8 tiles on black — ExRAM selects CHR bank 0, palette 0
+- **Middle third (rows 10–19):** Red horizontal-striped tiles on black — ExRAM selects CHR bank 2, palette 1
+- **Bottom third (rows 20–29):** Cyan vertical-striped tiles on black — ExRAM selects CHR bank 4, palette 2
+
+**`m005.0_mmc5_split`** — Vertical split with left-side split threshold at tile 16:
+- **Columns 0–1:** White solid tiles — these 2 tiles are pre-fetched by the PPU at the end of the previous scanline (fetch counts 32–33), which fall outside the split threshold. This is hardware-accurate: the MMC5 locates the split boundary by counting nametable fetches (34 per scanline), so the pre-fetched tiles for the next line always use main nametable data regardless of the split threshold.
+- **Columns 2–17:** Red horizontal-striped tiles on black — split region active, ExRAM provides tile indices and attributes, split CHR bank 2 provides the stripe pattern, palette 1 (color 3 = red).
+- **Columns 18–31:** White solid tiles on black — main region, CIRAM nametable tile $01, CHR bank 0, palette 0 (color 3 = white).
+- The split region has a 32-pixel vertical scroll offset ($5201 = $20), so the left side's content is shifted up by 4 tile rows compared to the right.
+
+**`m005.0_mmc5_sprite_chr`** — 8×16 sprite CHR A/B register separation:
+- **Background (full screen):** White solid 8×8 tiles — B registers ($5128–$512B) select CHR bank 0 (solid pattern), palette 0 (color 3 = white).
+- **Sprites (4×2 grid):** Red/black checkerboard 8×16 sprites — A registers ($5120–$5127) select CHR bank 2 (checkerboard pattern), sprite palette 0 (color 3 = red).
+  - Top row: 4 sprites at screen positions (80, 49), (96, 49), (112, 49), (128, 49)
+  - Bottom row: 4 sprites at screen positions (80, 81), (96, 81), (112, 81), (128, 81)
+  - Note: screen Y = OAM Y + 1, which is standard NES hardware behavior (the PPU adds 1 to the stored Y value).
+- The key verification: sprites use different CHR data (checkerboard from A registers) than the background (solid from B registers), proving A/B separation works in CHR mode 3 with 8×16 sprites.
+
+**Adding a new rendering verification ROM:**
+
+1. Create `tests/test_my_feature.s` — set up the rendering state and loop forever
+2. Embed CHR tile data in `CHR_SIG*` segments with distinct per-bank patterns
+3. Add a `ROM_RULE` entry in the Makefile (not `COMBINED_RULE` — rendering tests are standalone)
+4. Build the ROM and run with `NESER_CAPTURE_SCREEN=1` to capture a screenshot and CRC
+5. Visually verify the screenshot shows the expected pattern
+6. Add a `setup_rom_crc_test!` entry with the approved CRC value
+
 ## Adding a New Mapper
 
 To add tests for a new mapper (e.g. mapper 99):
@@ -426,7 +478,7 @@ All mapper numbers from `0` through `48` have been reviewed against NESdev docum
 | 2 | UxROM | 0, 2 | PRG banking, bus conflicts |
 | 3 | CNROM | 0, 1 | CHR banking, bus conflicts |
 | 4 | MMC3 | 0, 1 | PRG banking, CHR banking, nametable, IRQ, PRG-RAM, write-protect |
-| 5 | MMC5 | 0 | PRG banking, CHR banking, nametable, IRQ, PRG-RAM, multiplier, write-protect |
+| 5 | MMC5 | 0 | PRG banking, CHR banking, nametable, IRQ, PRG-RAM, multiplier, write-protect, ext-attr†, split†, sprite-chr† |
 | 6 | Front Fareast | 0 | PRG banking, CHR banking, nametable, IRQ, PRG-RAM |
 | 7 | AxROM | 0, 1 | PRG banking, nametable |
 | 8 | SMC GNROM | 0 | PRG banking, CHR banking, nametable, IRQ, PRG-RAM |
@@ -468,6 +520,8 @@ All mapper numbers from `0` through `48` have been reviewed against NESdev docum
 | 48 | Taito TC0690 | 0 | PRG banking, CHR banking, nametable, IRQ, PRG-RAM |
 
 Several of the later multicart / register-at-`$6000` mappers (`37`, `40`, `41`, `42`, `43`, `45`, `46`, `47`) are covered through console verification rather than the `$6000` status-byte protocol.
+
+†Features marked with † use CRC-based rendering verification instead of the `$6000` status-byte protocol. See [CRC-Based Rendering Verification](#crc-based-rendering-verification) above.
 
 ### Mappers Reviewed but Not Yet Implemented
 
