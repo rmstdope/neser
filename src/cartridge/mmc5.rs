@@ -120,6 +120,7 @@ pub struct MMC5Mapper {
     split_bank: u8,   // $5202
     split_active: bool,
     split_tile_count: u8,
+    split_tile_index: u16, // Computed ExRAM index for current split tile (coarse_y * 32 + column)
 
     // Scanline IRQ
     irq_scanline_compare: u8, // $5203
@@ -354,6 +355,7 @@ impl MMC5Mapper {
             split_bank: 0,
             split_active: false,
             split_tile_count: 0,
+            split_tile_index: 0,
 
             // Scanline IRQ
             irq_scanline_compare: 0,
@@ -792,6 +794,20 @@ impl MMC5Mapper {
             && self.chr_is_rendering_fetch
     }
 
+    /// Compute the split vertical scroll value for the current scanline.
+    /// On real hardware, the MMC5 maintains a separate split scanline counter that resets
+    /// to the $5201 value each vblank and increments by 1 per visible scanline.
+    /// The result is `(split_scroll + visible_scanline) % 240`.
+    /// For non-visible scanlines (pre-render, vblank), use 0 as the visible index.
+    fn split_vertical_scroll(&self) -> u16 {
+        let visible_scanline = if self.scanline_counter < 240 {
+            self.scanline_counter
+        } else {
+            0
+        };
+        (self.split_scroll as u16 + visible_scanline) % 240
+    }
+
     fn reset_scanline_tracking(&mut self, clear_in_frame: bool) {
         if clear_in_frame {
             self.in_frame = false;
@@ -805,9 +821,7 @@ impl MMC5Mapper {
 
     fn read_chr_banked(&self, bank: u16, addr: u16) -> u8 {
         // In extended attribute or split mode, CHR banks are always 4KB regardless of chr_mode
-        let bank_size = if self.is_extended_attribute_mode_chr_active()
-            || self.split_chr_active()
-        {
+        let bank_size = if self.is_extended_attribute_mode_chr_active() || self.split_chr_active() {
             4 * 1024 // Extended attribute and split modes always use 4KB banks
         } else {
             match self.chr_mode {
@@ -1353,6 +1367,21 @@ impl Mapper for MMC5Mapper {
             let _ = (fine_y, tile_in_pattern);
         }
 
+        // MMC5 split mode: override CHR address bits A0-A2 (fine Y) with the lowest
+        // 3 bits of the split vertical scroll counter. Per NESdev:
+        // "The MMC5 provides CHR A0..3 from the lowest 3 bits of the v-split scanline
+        // counter when rendering the split region."
+        //
+        // This allows the split region to have independent vertical scrolling.
+        // During PPU prefetch (pixels 321-336), the scanline counter hasn't incremented
+        // yet, so prefetch tiles naturally get the current scanline's fine Y (off by 1
+        // from the next scanline where they'll be rendered). This is hardware-accurate.
+        if self.split_chr_active() {
+            let split_fine_y = self.split_vertical_scroll() & 0x07;
+            let addr = (addr & !0x07) | split_fine_y as u16;
+            return self.read_chr_banked(bank, addr);
+        }
+
         self.read_chr_banked(bank, addr)
     }
 
@@ -1435,8 +1464,11 @@ impl Mapper for MMC5Mapper {
         if self.ppu_scanline_ready {
             self.ppu_scanline_ready = false;
             self.ppu_nametable_match_count = 0;
-            // Reset tile counter at start of new scanline (issue #385)
-            self.split_tile_count = 0;
+            // Note: split_tile_count is NOT reset here. The ppu_scanline() callback
+            // (which fires at pixel 0) already resets it. Resetting here would cause
+            // a double-reset because the hardware scanline detection fires at the AT
+            // read (pixel 4), shifting the tile count by 1 and misaligning the split
+            // region for prefetch tiles.
 
             if !self.in_frame {
                 self.in_frame = true;
@@ -1464,14 +1496,54 @@ impl Mapper for MMC5Mapper {
         }
 
         // MMC5 split-screen uses horizontal tile count per scanline to select the split region.
+        // The PPU pipeline prefetches tiles 0-1 at the end of each scanline, incrementing
+        // coarse_x past them. The first visible-portion fetch thus corresponds to screen tile 2.
+        // Since split_tile_count starts at 0 (reset by ppu_scanline() at pixel 0), we add 2
+        // to align the counter with actual screen column positions.
+        //
+        // Our PPU emits 36 NT tile reads per scanline: 32 visible + 2 prefetch + 2 dummy.
+        // Using modulo 34 (excluding dummy reads from the wrap cycle) ensures prefetch
+        // counts 32-33 wrap to columns 0-1 correctly. Dummy reads at counts 34-35 get
+        // arbitrary columns but their data is never rendered.
+        //
+        // This is analogous to Mesen's `(_splitTileNumber + 2) % 42` which accounts for
+        // 42 reads (32 visible + 8 sprite garbage + 2 prefetch) in its PPU model.
         if self.ppumask_rendering_enabled && is_tile_fetch {
-            self.split_active = self.split_region_for_tile(self.split_tile_count);
+            let column = (self.split_tile_count + 2) % 34;
+            self.split_active = self.split_region_for_tile(column);
+            // Compute the ExRAM tile index from the split scroll counter and column.
+            // The split region uses its own vertical position: (split_scroll + scanline_counter) % 240.
+            // Coarse Y = vertical_scroll / 8 (tile row), giving ExRAM index = coarse_y * 32 + column.
+            // During prefetch, scanline_counter hasn't incremented yet, so the position
+            // is off by 1 scanline — this is hardware-accurate (see NESdev MMC5 docs).
+            if self.split_active {
+                let split_vertical_scroll = self.split_vertical_scroll();
+                self.split_tile_index = ((split_vertical_scroll & 0xF8) << 2) | column as u16;
+            }
             self.split_tile_count = self.split_tile_count.saturating_add(1);
         }
 
         // When split is active, nametable data comes from ExRAM regardless of $5105.
+        // For tile fetches, use the computed split_tile_index (based on split scroll counter).
+        // For attribute fetches, compute the attribute address from the split tile position.
         if self.split_active {
-            return Some(self.ex_ram.get(page_offset).copied().unwrap_or(0));
+            if is_tile_fetch {
+                return Some(
+                    self.ex_ram
+                        .get(self.split_tile_index as usize)
+                        .copied()
+                        .unwrap_or(0),
+                );
+            } else {
+                // Attribute byte from ExRAM based on split tile position
+                let shift = ((self.split_tile_index >> 4) & 0x04) | (self.split_tile_index & 0x02);
+                let at_addr = 0x3C0
+                    | ((self.split_tile_index & 0x380) >> 4)
+                    | ((self.split_tile_index & 0x1F) >> 2);
+                let palette =
+                    (self.ex_ram.get(at_addr as usize).copied().unwrap_or(0) >> shift) & 0x03;
+                return Some(Self::replicate_2bit_attribute(palette));
+            }
         }
 
         // Extended attribute mode ($5104=1): override attribute-table reads with per-tile
@@ -3151,7 +3223,11 @@ mod tests {
 
     #[test]
     fn test_mmc5_split_screen_left_uses_split_bank_before_threshold() {
-        // Left split (bit 6 clear): tiles 0..T-1 use split region, T+ use normal.
+        // Left split (bit 6 clear): columns 0..T-1 use split region, T+ use normal.
+        // The column is computed as (split_tile_count + 2) % 34, so the first visible
+        // tile read after ppu_scanline() gets column 2 (accounting for PPU prefetch offset).
+        // Use threshold 4 so that the first 2 visible tiles (columns 2-3) are in the
+        // split region and the third (column 4) is not.
 
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(4 * 1024, 8);
@@ -3163,19 +3239,22 @@ mod tests {
         mapper.write_prg(0x5123, 1);
         mapper.write_prg(0x5202, 2);
 
-        let split_tiles: u8 = 2;
+        let split_tiles: u8 = 4;
         mapper.write_prg(0x5200, 0x80 | (split_tiles & 0x1F));
 
         mapper.ppu_write_mask(0x08);
         mapper.ppu_set_chr_fetch_is_sprite(false);
         mapper.ppu_scanline(0, true);
 
+        // First visible tile: column = (0+2)%34 = 2, 2 < 4 → split active
         let _ = mapper.read_nametable(0x2000);
         assert_eq!(mapper.read_chr(0x0000), 2);
 
+        // Second visible tile: column = (1+2)%34 = 3, 3 < 4 → split active
         let _ = mapper.read_nametable(0x2001);
         assert_eq!(mapper.read_chr(0x0000), 2);
 
+        // Third visible tile: column = (2+2)%34 = 4, 4 < 4 = false → normal
         let _ = mapper.read_nametable(0x2002);
         assert_eq!(mapper.read_chr(0x0000), 1);
     }
@@ -3229,7 +3308,9 @@ mod tests {
 
     #[test]
     fn test_mmc5_split_screen_right_uses_split_bank_after_threshold() {
-        // Right split (bit 6 set): tiles 0..T-1 use normal, T+ use split region.
+        // Right split (bit 6 set): columns 0..T-1 use normal, T+ use split region.
+        // With the +2 column offset, use threshold 4 so the first 2 visible tiles
+        // (columns 2-3) are normal and the third (column 4) enters the split region.
 
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(4 * 1024, 8);
@@ -3241,19 +3322,22 @@ mod tests {
         mapper.write_prg(0x5123, 1);
         mapper.write_prg(0x5202, 2);
 
-        let split_tiles: u8 = 2;
+        let split_tiles: u8 = 4;
         mapper.write_prg(0x5200, 0x80 | 0x40 | (split_tiles & 0x1F));
 
         mapper.ppu_write_mask(0x08);
         mapper.ppu_set_chr_fetch_is_sprite(false);
         mapper.ppu_scanline(0, true);
 
+        // First visible tile: column = 2, 2 >= 4 = false → normal
         let _ = mapper.read_nametable(0x2000);
         assert_eq!(mapper.read_chr(0x0000), 1);
 
+        // Second visible tile: column = 3, 3 >= 4 = false → normal
         let _ = mapper.read_nametable(0x2001);
         assert_eq!(mapper.read_chr(0x0000), 1);
 
+        // Third visible tile: column = 4, 4 >= 4 = true → split active
         let _ = mapper.read_nametable(0x2002);
         assert_eq!(mapper.read_chr(0x0000), 2);
     }
@@ -3724,10 +3808,12 @@ mod tests {
     #[test]
     fn test_mmc5_split_tile_count_resets_on_hardware_scanline_detection() {
         // Issue #385: Castlevania III vertical scrolling bug
-        // The split_tile_count must reset to 0 when hardware scanline detection triggers
-        // (3 consecutive reads from same nametable address followed by another read).
-        // Without this reset, tile counting accumulates across scanlines, causing
-        // incorrect split scroll calculations and misaligned backgrounds.
+        // Hardware scanline detection (3 consecutive reads from same nametable address)
+        // resets ppu_nametable_match_count and sets in_frame, but does NOT reset
+        // split_tile_count. Only ppu_scanline() (fired at pixel 0 by the PPU) resets
+        // split_tile_count, because the hardware detection can fire mid-scanline
+        // (at the first AT read after dummy reads) and resetting the tile count there
+        // would misalign the split column calculation.
 
         let mut mmc5 = new_mmc5_for_irq_test();
 
@@ -3752,15 +3838,21 @@ mod tests {
         let _ = mmc5.read_nametable(0x2000);
         let _ = mmc5.read_nametable(0x2000);
         let _ = mmc5.read_nametable(0x2000);
-        // Fourth read triggers scanline increment
+        // Fourth read triggers scanline detection processing
         let _ = mmc5.read_nametable(0x23C0); // Attribute fetch
 
-        // After hardware scanline detection, split_tile_count should reset to 0
-        // (or 1 if the attribute fetch also counts - but definitely not 36!)
-        assert!(
-            mmc5.split_tile_count < 2,
-            "split_tile_count should reset on scanline detection, got {}",
-            mmc5.split_tile_count
+        // split_tile_count should NOT be reset by hardware detection — only ppu_scanline()
+        // resets it. The 3 consecutive tile reads + 1 AT read added 3 more tile counts.
+        assert_eq!(
+            mmc5.split_tile_count, 35,
+            "split_tile_count should continue counting, not reset on hardware detection"
+        );
+
+        // Verify ppu_scanline() DOES reset it
+        mmc5.ppu_scanline(1, true);
+        assert_eq!(
+            mmc5.split_tile_count, 0,
+            "split_tile_count should reset on ppu_scanline()"
         );
     }
 
