@@ -168,6 +168,12 @@ test_title_string:
     ; $5F00-$5FBF done (192 bytes).  Total: 320.
 
     ; === Configure MMC5 for extended attribute rendering ===
+    ; CHR mode 0 (8KB) — extended attributes override this to 4KB banks,
+    ; but set it explicitly so the test is self-contained.
+    lda #$00
+    sta MMC5_CHR_MODE
+    sta MMC5_CHR_A7             ; 8KB bank 0 (overridden by ext attr per-tile)
+
     ; Upper CHR bank bits = 0
     lda #$00
     sta MMC5_CHR_UPPER

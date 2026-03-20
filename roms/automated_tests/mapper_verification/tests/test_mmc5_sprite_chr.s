@@ -127,8 +127,8 @@ test_title_string:
     ; === Set up OAM for 8×16 sprites at $0200 ===
     ; First clear all 64 sprites (Y=$EF = off screen)
     ldx #0
-    lda #$EF
 @clear_oam:
+    lda #$EF
     sta $0200, x            ; Y = $EF (hidden)
     inx
     lda #$00
@@ -138,8 +138,7 @@ test_title_string:
     inx
     sta $0200, x            ; X = 0
     inx
-    lda #$EF
-    bne @clear_oam          ; Loops 64 times (X wraps to 0)
+    bne @clear_oam          ; Branch on X wrapping to 0
 
     ; Place 8 visible 8×16 sprites in a 4×2 grid
     ; Tile byte for 8×16: bit 0 = pattern table (0=$0000),
