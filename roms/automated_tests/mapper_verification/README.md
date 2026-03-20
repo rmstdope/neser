@@ -426,7 +426,7 @@ setup_rom_crc_test!(
 - **Columns 0–15:** Red horizontal-striped tiles on black — split region active, ExRAM provides tile indices and attributes, split CHR bank 2 provides the stripe pattern, palette 1 (color 3 = red).
 - **Columns 16–31:** White solid tiles on black — main region, CIRAM nametable tile $01, CHR bank 0, palette 0 (color 3 = white).
 - The split region has a 32-pixel vertical scroll offset ($5201 = $20), so the left side's content is shifted up by 4 tile rows compared to the right.
-- **Tiles 0–1 fine Y offset:** Starting from screen row 1, tiles 0–1 show a 1-pixel vertical shift in their stripe pattern compared to tiles 2+. This is hardware-accurate: the PPU prefetches tiles 0–1 at the end of the previous scanline, but the MMC5's split scroll counter hasn't incremented yet, so the CHR fine Y (A0–A2) is off by 1 scanline. Row 0 has no offset because the pre-render prefetch and scanline 0 share the same initial scroll value.
+- **CL mode (default):** All commercial ExROM boards use CL mode wiring, where the PPU's own fine Y bits drive CHR A0–A2 (the MMC5's split scroll fine Y is NOT connected to CHR ROM). This means the split region's fine Y matches the PPU's fine Y. The ROM sets $5201 so its low 3 bits match the PPU's fine Y scroll to avoid tile "rolling." No fine Y offset is visible on tiles 0–1 in CL mode.
 
 **`m005.0_mmc5_sprite_chr`** — 8×16 sprite CHR A/B register separation:
 - **Background (full screen):** White solid 8×8 tiles — B registers ($5128–$512B) select CHR bank 0 (solid pattern), palette 0 (color 3 = white).

@@ -449,7 +449,7 @@ mod tests {
     setup_rom_crc_test!(
         test_mv_m005_0_mmc5_split,
         "roms/automated_tests/mapper_verification/bin/rom_singles/m005.0_mmc5_split.nes",
-        [(60, 1739200149u32)]
+        [(60, 3442676414u32)]
     );
     setup_rom_crc_test!(
         test_mv_m005_0_mmc5_sprite_chr,

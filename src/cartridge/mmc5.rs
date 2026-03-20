@@ -1367,20 +1367,29 @@ impl Mapper for MMC5Mapper {
             let _ = (fine_y, tile_in_pattern);
         }
 
-        // MMC5 split mode: override CHR address bits A0-A2 (fine Y) with the lowest
-        // 3 bits of the split vertical scroll counter. Per NESdev:
-        // "The MMC5 provides CHR A0..3 from the lowest 3 bits of the v-split scanline
-        // counter when rendering the split region."
+        // MMC5 split mode CHR fine Y: CL mode vs SL mode
         //
-        // This allows the split region to have independent vertical scrolling.
-        // During PPU prefetch (pixels 321-336), the scanline counter hasn't incremented
-        // yet, so prefetch tiles naturally get the current scanline's fine Y (off by 1
-        // from the next scanline where they'll be rendered). This is hardware-accurate.
-        if self.split_chr_active() {
-            let split_fine_y = self.split_vertical_scroll() & 0x07;
-            let addr = (addr & !0x07) | split_fine_y as u16;
-            return self.read_chr_banked(bank, addr);
-        }
+        // The MMC5 chip outputs CHR A0-A2 from the lowest 3 bits of its split vertical
+        // scroll counter. However, the PCB wiring determines whether these signals
+        // actually reach the CHR ROM:
+        //
+        // - **CL mode** (all commercial ExROM boards): The MMC5's CHR A0-A2 outputs are
+        //   NOT connected to the CHR ROM address pins. Instead, the PPU's own fine Y
+        //   bits drive CHR A0-A2. This means the split region cannot have independent
+        //   fine vertical scrolling — games must set $5201's low 3 bits to match the
+        //   PPU's fine Y scroll, or tiles will appear to "roll" within themselves.
+        //   Per NESdev: "MMC5 boards wired in 'CL' mode should only use vertical scroll
+        //   values whose bottom 3 bits match the PPU's fine vertical scroll value."
+        //
+        // - **SL mode** (never used in any commercial game): The MMC5's CHR A0-A2 would
+        //   drive the CHR ROM, allowing fully independent fine Y scrolling for the split
+        //   region. No known ExROM board uses this configuration.
+        //
+        // We emulate CL mode (the universal default) and do NOT override CHR fine Y.
+        // The PPU's own fine Y bits pass through to CHR ROM unchanged during split reads.
+        //
+        // Reference: https://www.nesdev.org/wiki/MMC5 (Vertical Behavior, $5201)
+        // Reference: https://www.nesdev.org/wiki/MMC5_pinout (CL/SL mode wiring)
 
         self.read_chr_banked(bank, addr)
     }
