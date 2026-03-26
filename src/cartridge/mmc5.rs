@@ -797,7 +797,7 @@ impl MMC5Mapper {
     /// Compute the split vertical scroll value for the current scanline.
     ///
     /// The MMC5 split vertical scroll mirrors the PPU's coarse-Y / fine-Y counter
-    /// (see `PpuRegisters::increment_fine_y`):
+    /// (see `ppu::registers::Registers::increment_fine_y`):
     ///
     /// - **fine_y** (bottom 3 bits): pixel row 0–7 within the current tile row.
     /// - **coarse_y** (upper bits): tile row index.
