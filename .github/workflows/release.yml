@@ -26,7 +26,7 @@ jobs:
         with:
           generate_release_notes: true
 
-      - name: Publish to crates.io
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish
+#      - name: Publish to crates.io
+#        env:
+#          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+#        run: cargo publish
