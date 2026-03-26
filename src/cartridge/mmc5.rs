@@ -796,14 +796,20 @@ impl MMC5Mapper {
 
     /// Compute the split vertical scroll value for the current scanline.
     ///
-    /// The MMC5 split vertical scroll mimics the PPU's own Y-scroll counter:
+    /// The MMC5 split vertical scroll mirrors the PPU's coarse-Y / fine-Y counter
+    /// (see `PpuRegisters::increment_fine_y`):
     ///
-    /// - **split_scroll 0–239**: Normal tile rows (coarse_y 0–29). When the running
-    ///   total reaches 240, wrap to 0 — skipping the attribute region, just like
-    ///   the PPU wraps coarse_y at 29→0.
-    /// - **split_scroll 240–255**: Starts in the attribute table region (coarse_y 30–31).
-    ///   ExRAM bytes $3C0–$3FF are treated as tile indices. When the total exceeds
-    ///   255, wrap to 0 (u8-style, like the PPU's coarse_y 31→0).
+    /// - **fine_y** (bottom 3 bits): pixel row 0–7 within the current tile row.
+    /// - **coarse_y** (upper bits): tile row index.
+    ///
+    /// Two wrapping modes apply:
+    ///
+    /// - **split_scroll 0–239** (normal tile rows, coarse_y 0–29): coarse_y wraps
+    ///   at 30, skipping the 64-byte attribute table region — matching the PPU's
+    ///   coarse_y = 29 → 0 transition.
+    /// - **split_scroll 240–255** (attribute region, coarse_y 30–31): ExRAM bytes
+    ///   $3C0–$3FF are treated as tile indices. The total wraps at 256 (byte
+    ///   overflow), matching the PPU's coarse_y = 31 → 0 transition.
     ///
     /// For non-visible scanlines (pre-render, vblank), use 0 as the visible index.
     fn split_vertical_scroll(&self) -> u16 {
@@ -814,12 +820,15 @@ impl MMC5Mapper {
         };
         let raw = self.split_scroll as u16 + visible_scanline;
         if self.split_scroll >= 240 {
-            // Attribute region start: wrap at 256 (like PPU coarse_y=31→0).
+            // Attribute region start: byte-wrap at 256 (PPU coarse_y 31→0).
             raw & 0xFF
         } else {
-            // Normal scroll: wrap at 240, skipping the attribute region
-            // (like PPU coarse_y=29→0).
-            raw % 240
+            // Normal scroll: decompose into coarse_y / fine_y and wrap coarse_y
+            // at the 30-row boundary, skipping the attribute area
+            // (PPU coarse_y 29→0).
+            let fine_y = raw & 7;
+            let coarse_y = (raw >> 3) % 30;
+            (coarse_y << 3) | fine_y
         }
     }
 
@@ -3567,6 +3576,73 @@ mod tests {
             tile,
             Some(normal_marker),
             "split_scroll=239 + scanline=1 should wrap at 240→0, NOT enter attribute region"
+        );
+    }
+
+    #[test]
+    fn test_mmc5_split_scroll_0_scanline_0_reads_from_row_0() {
+        // Baseline: split_scroll=0, scanline=0 → coarse_y=0, fine_y=0.
+        // Should read from ExRAM offset (0*32)+2 = 2.
+
+        let marker = 0x11;
+        let mut mapper = setup_mmc5_split_with_exram_markers(&[(0x002, marker)], 0);
+
+        mapper.ppu_scanline(0, true);
+        let tile = mapper.read_nametable(0x2000);
+        assert_eq!(
+            tile,
+            Some(marker),
+            "split_scroll=0 + scanline=0 should read from coarse_y=0 (ExRAM offset $002)"
+        );
+    }
+
+    #[test]
+    fn test_mmc5_split_scroll_1_plus_239_wraps_at_240_to_row_0() {
+        // split_scroll=1, scanline=239: raw=240. Since split_scroll < 240,
+        // coarse_y wraps at 30 (skipping attribute area), so effective
+        // coarse_y = 0, fine_y = 0 → ExRAM offset (0*32)+2 = 2.
+
+        let normal_marker = 0x22;
+        let attr_marker = 0xCC;
+        let mut mapper = setup_mmc5_split_with_exram_markers(
+            &[
+                (0x002, normal_marker), // coarse_y=0, column=2
+                (0x3C2, attr_marker),   // coarse_y=30, column=2 (attribute region)
+            ],
+            1,
+        );
+
+        mapper.ppu_scanline(239, true);
+        let tile = mapper.read_nametable(0x2000);
+        assert_eq!(
+            tile,
+            Some(normal_marker),
+            "split_scroll=1 + scanline=239 (raw=240) should wrap to coarse_y=0, not attribute region"
+        );
+    }
+
+    #[test]
+    fn test_mmc5_split_scroll_232_plus_8_wraps_at_coarse_y_30_boundary() {
+        // split_scroll=232 (coarse_y=29, fine_y=0), scanline=8: raw=240.
+        // After 8 scanlines, fine_y overflows and coarse_y would reach 30,
+        // but wraps to 0 (skipping attribute area). Effective: coarse_y=0, fine_y=0.
+
+        let normal_marker = 0x33;
+        let attr_marker = 0xDD;
+        let mut mapper = setup_mmc5_split_with_exram_markers(
+            &[
+                (0x002, normal_marker), // coarse_y=0, column=2
+                (0x3C2, attr_marker),   // coarse_y=30, column=2 (attribute region)
+            ],
+            232,
+        );
+
+        mapper.ppu_scanline(8, true);
+        let tile = mapper.read_nametable(0x2000);
+        assert_eq!(
+            tile,
+            Some(normal_marker),
+            "split_scroll=232 + scanline=8 (raw=240) should wrap at coarse_y=30→0"
         );
     }
 
