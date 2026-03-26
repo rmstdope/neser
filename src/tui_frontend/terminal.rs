@@ -38,6 +38,20 @@ impl TerminalHandle {
     {
         self.terminal.draw(f)
     }
+
+    /// Re-enter raw mode and alternate screen after the emulator child process exits.
+    ///
+    /// Called by `App` to restore the TUI after handing control to the SDL emulator.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if re-entering the alternate screen fails.
+    pub fn restore_alternate_screen(&mut self) -> io::Result<()> {
+        enable_raw_mode()?;
+        execute!(self.terminal.backend_mut(), EnterAlternateScreen)?;
+        self.terminal.clear()?;
+        Ok(())
+    }
 }
 
 impl Drop for TerminalHandle {

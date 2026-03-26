@@ -3,8 +3,10 @@
 //! This module provides an interactive terminal UI for browsing ROMs and
 //! launching the emulator. It requires the `tui` Cargo feature.
 
+mod action_menu;
 mod app;
 mod catalog;
+mod launcher;
 mod rom_entry;
 mod rom_list;
 mod terminal;
