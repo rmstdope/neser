@@ -15,6 +15,8 @@ pub struct RomEntry {
     pub hardware: Option<String>,
     /// CRC32 of the PRG + CHR ROM data (hex, uppercase, 8 chars).
     pub crc: Option<String>,
+    /// Whether a `.autorun` recording exists alongside this ROM.
+    pub has_recording: bool,
 }
 
 impl RomEntry {
@@ -48,6 +50,7 @@ mod tests {
             mapper,
             hardware: hardware.map(str::to_string),
             crc: crc.map(str::to_string),
+            has_recording: false,
         }
     }
 
@@ -85,5 +88,11 @@ mod tests {
     fn test_crc_label_absent() {
         let entry = make_entry(None, None, None);
         assert_eq!(entry.crc_label(), "-");
+    }
+
+    #[test]
+    fn test_has_recording_default_false() {
+        let entry = make_entry(None, None, None);
+        assert!(!entry.has_recording);
     }
 }

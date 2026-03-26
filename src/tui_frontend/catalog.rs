@@ -80,6 +80,7 @@ pub(super) fn build_rom_entry(path: &Path, rom_db: &RomDb) -> RomEntry {
         mapper,
         hardware: Some(hardware_label(hardware)),
         crc: Some(format!("{crc:08X}")),
+        has_recording: has_autorun_file(path),
     }
 }
 
@@ -90,6 +91,7 @@ fn unreadable_entry(path: &Path) -> RomEntry {
         mapper: None,
         hardware: None,
         crc: None,
+        has_recording: has_autorun_file(path),
     }
 }
 
@@ -100,6 +102,7 @@ fn invalid_entry(path: &Path) -> RomEntry {
         mapper: None,
         hardware: None,
         crc: None,
+        has_recording: has_autorun_file(path),
     }
 }
 
@@ -108,6 +111,11 @@ fn file_stem(path: &Path) -> String {
         .and_then(|s| s.to_str())
         .unwrap_or("?")
         .to_string()
+}
+
+/// Return `true` if a `.autorun` recording file exists alongside the ROM.
+fn has_autorun_file(rom_path: &Path) -> bool {
+    rom_path.with_extension("autorun").exists()
 }
 
 fn hardware_label(hw: HardwareType) -> String {
@@ -215,5 +223,33 @@ mod tests {
             .to_string_lossy()
             .to_string();
         assert_eq!(entry.display_name, stem);
+    }
+
+    #[test]
+    fn test_build_rom_entry_has_recording_false_when_no_autorun_file() {
+        let mut tmp = NamedTempFile::with_suffix(".nes").unwrap();
+        tmp.write_all(&minimal_nrom_rom()).unwrap();
+        let db = RomDb::from_csv_content("");
+        let entry = build_rom_entry(tmp.path(), &db);
+        assert!(
+            !entry.has_recording,
+            "no .autorun file should mean has_recording=false"
+        );
+    }
+
+    #[test]
+    fn test_build_rom_entry_has_recording_true_when_autorun_file_exists() {
+        let mut tmp = NamedTempFile::with_suffix(".nes").unwrap();
+        tmp.write_all(&minimal_nrom_rom()).unwrap();
+        // Create a sibling .autorun file
+        let autorun_path = tmp.path().with_extension("autorun");
+        std::fs::write(&autorun_path, b"autorun").unwrap();
+        let db = RomDb::from_csv_content("");
+        let entry = build_rom_entry(tmp.path(), &db);
+        let _ = std::fs::remove_file(&autorun_path);
+        assert!(
+            entry.has_recording,
+            ".autorun file present should mean has_recording=true"
+        );
     }
 }
