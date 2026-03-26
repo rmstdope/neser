@@ -380,6 +380,11 @@ const CLI_FLAGS: &[CliFlag] = &[
         help: Some("Rebuild cartridge catalog from scratch on startup"),
         has_value: false,
     },
+    CliFlag {
+        flag: "--tui",
+        help: Some("Launch the interactive TUI ROM browser (requires tui feature)"),
+        has_value: false,
+    },
 ];
 
 /// Boolean flags that accept optional values (shared by validate_args and parse_rom_arg).
@@ -632,6 +637,8 @@ pub struct Config {
     pub scan_cartridges: bool,
     /// Whether to rebuild the cartridge catalog from scratch on startup.
     pub rebuild_cartridge_catalog: bool,
+    /// Whether to launch the TUI ROM browser instead of the emulator.
+    pub tui_mode: bool,
 }
 
 /// Autorun operating mode.
@@ -756,6 +763,7 @@ impl Default for Config {
             cartridge_search_paths: Vec::new(),
             scan_cartridges: true,
             rebuild_cartridge_catalog: false,
+            tui_mode: false,
         }
     }
 }
@@ -1286,6 +1294,11 @@ impl Config {
         }
 
         self.apply_cartridge_catalog_args(args)?;
+
+        // TUI mode
+        if args.iter().any(|arg| arg == "--tui") {
+            self.tui_mode = true;
+        }
 
         // Autorun mode flags
         let has_create_recording = args.iter().any(|arg| arg == "--create-recording");
@@ -5171,6 +5184,27 @@ filter=invalid-shader
         assert_eq!(
             ExpansionPort::parse("powerpad"),
             Some(ExpansionPort::PowerPadFamicom)
+        );
+    }
+
+    #[test]
+    fn test_tui_mode_default_is_false() {
+        let config = Config::with_defaults();
+        assert!(!config.tui_mode, "tui_mode should default to false");
+    }
+
+    #[test]
+    fn test_tui_flag_sets_tui_mode_true() {
+        let config = parse_config(vec!["neser".to_string(), "--tui".to_string()]);
+        assert!(config.tui_mode, "--tui flag should set tui_mode to true");
+    }
+
+    #[test]
+    fn test_no_tui_flag_leaves_tui_mode_false() {
+        let config = parse_config(vec!["neser".to_string()]);
+        assert!(
+            !config.tui_mode,
+            "tui_mode should remain false without --tui"
         );
     }
 }

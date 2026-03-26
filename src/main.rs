@@ -11,6 +11,8 @@ mod input;
 mod ppu;
 mod rendering;
 mod sdl_frontend;
+#[cfg(feature = "tui")]
+mod tui_frontend;
 
 use app_context::AppContext;
 use console::{
@@ -175,6 +177,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_context = Rc::new(RefCell::new(AppContext::new_with_config(parsed_config)));
 
     refresh_startup_cartridge_catalog(&app_context);
+
+    // Handle --tui: launch the interactive TUI ROM browser and exit.
+    #[cfg(feature = "tui")]
+    if app_context.borrow().config().tui_mode {
+        return tui_frontend::run_tui().map_err(|e| e.to_string().into());
+    }
 
     // Handle --trim-checkpoints: modify recording file and exit immediately.
     let trim_checkpoints = app_context.borrow().config().autorun_trim_checkpoints;
