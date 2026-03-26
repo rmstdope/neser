@@ -17,6 +17,7 @@ use terminal::TerminalHandle;
 /// Launch the TUI ROM browser.
 ///
 /// Sets up the terminal, runs the interactive UI, then restores the terminal.
+/// Catalog load errors are surfaced in the TUI status bar rather than aborting.
 ///
 /// # Errors
 ///
@@ -25,9 +26,16 @@ pub fn run_tui(
     search_paths: &[String],
     rebuild_catalog: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let entries = catalog::load_catalog(search_paths, rebuild_catalog).unwrap_or_else(|_| vec![]);
+    let (entries, catalog_err) = match catalog::load_catalog(search_paths, rebuild_catalog) {
+        Ok(entries) => (entries, None),
+        Err(e) => (vec![], Some(e)),
+    };
+
     let mut terminal = TerminalHandle::new()?;
     let mut app = App::new(entries);
+    if let Some(err) = catalog_err {
+        app = app.with_catalog_error(err);
+    }
     app.run(&mut terminal)?;
     Ok(())
 }

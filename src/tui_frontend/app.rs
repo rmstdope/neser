@@ -3,9 +3,9 @@
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout},
-    style::{Color, Style},
-    widgets::{Block, Borders, Paragraph},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
 };
 use std::{io, time::Duration};
 
@@ -24,6 +24,7 @@ enum InputMode {
     Navigate,
     Search,
     ActionMenu,
+    Help,
 }
 
 /// Main TUI application state.
@@ -33,6 +34,7 @@ pub(crate) struct App {
     input_mode: InputMode,
     action_menu: Option<ActionMenu>,
     last_launch: Option<LaunchResult>,
+    catalog_error: Option<String>,
 }
 
 impl App {
@@ -43,7 +45,14 @@ impl App {
             input_mode: InputMode::Navigate,
             action_menu: None,
             last_launch: None,
+            catalog_error: None,
         }
+    }
+
+    /// Attach a catalog load error to display in the status bar.
+    pub fn with_catalog_error(mut self, error: String) -> Self {
+        self.catalog_error = Some(error);
+        self
     }
 
     /// Run the application event loop until the user quits.
@@ -66,7 +75,7 @@ impl App {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3), // search bar
+                Constraint::Length(3), // search / title bar
                 Constraint::Min(0),    // ROM list
                 Constraint::Length(1), // footer
             ])
@@ -95,19 +104,27 @@ impl App {
         self.rom_list.render(frame, chunks[1]);
 
         // Footer / status
-        let footer_text = self
-            .last_launch
-            .as_ref()
-            .map(|r| r.summary())
-            .unwrap_or_else(|| {
-                " ↑/↓: navigate  Enter: select  /: search  Esc: clear/quit  q: quit".to_string()
-            });
-        let footer = Paragraph::new(footer_text).style(Style::default().fg(Color::DarkGray));
+        let footer_text = if let Some(err) = &self.catalog_error {
+            format!(" ⚠ Catalog error: {err}")
+        } else if let Some(result) = &self.last_launch {
+            result.summary()
+        } else {
+            " ↑/↓: navigate  Enter: select  /: search  ?: help  q/Esc: quit".to_string()
+        };
+        let footer_style = if self.catalog_error.is_some() {
+            Style::default().fg(Color::Red)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        let footer = Paragraph::new(footer_text).style(footer_style);
         frame.render_widget(footer, chunks[2]);
 
-        // Action menu overlay (rendered on top)
+        // Overlays (rendered last, on top of everything)
         if let Some(menu) = self.action_menu.as_mut() {
             menu.render(frame, area);
+        }
+        if self.input_mode == InputMode::Help {
+            render_help_overlay(frame, area);
         }
     }
 
@@ -124,6 +141,7 @@ impl App {
                 InputMode::Search => Ok(self.handle_search_key(key)),
                 InputMode::Navigate => Ok(self.handle_navigate_key(key, terminal)),
                 InputMode::ActionMenu => Ok(self.handle_action_menu_key(key, terminal)),
+                InputMode::Help => Ok(self.handle_help_key(key)),
             };
         }
         Ok(false)
@@ -157,7 +175,7 @@ impl App {
     fn handle_navigate_key(
         &mut self,
         key: crossterm::event::KeyEvent,
-        terminal: &mut TerminalHandle,
+        _terminal: &mut TerminalHandle,
     ) -> bool {
         match key.code {
             KeyCode::Char('q') => return true,
@@ -175,6 +193,10 @@ impl App {
             KeyCode::Char('/') => {
                 self.input_mode = InputMode::Search;
                 self.last_launch = None;
+                self.catalog_error = None;
+            }
+            KeyCode::Char('?') => {
+                self.input_mode = InputMode::Help;
             }
             KeyCode::Down => self.rom_list.select_next(),
             KeyCode::Up => self.rom_list.select_prev(),
@@ -187,9 +209,8 @@ impl App {
                     let name = entry.display_name.clone();
                     self.action_menu = Some(ActionMenu::new(name));
                     self.input_mode = InputMode::ActionMenu;
-                    // Clear previous launch status when opening a new menu
                     self.last_launch = None;
-                    let _ = terminal; // suppress unused warning
+                    self.catalog_error = None;
                 }
             }
             _ => {}
@@ -220,9 +241,7 @@ impl App {
 
                 if let Some(entry) = self.rom_list.selected_entry() {
                     let rom_path = entry.path.to_string_lossy().into_owned();
-                    // Re-enter alternate screen after launch_rom exits the TUI
                     let result = launch_rom(&rom_path, action);
-                    // Restore TUI after the emulator exits
                     let _ = terminal.restore_alternate_screen();
                     self.last_launch = Some(result);
                 }
@@ -230,5 +249,99 @@ impl App {
             _ => {}
         }
         false
+    }
+
+    fn handle_help_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') | KeyCode::Enter => {
+                self.input_mode = InputMode::Navigate;
+            }
+            _ => {}
+        }
+        false
+    }
+}
+
+/// Render a help overlay centred on the screen.
+fn render_help_overlay(frame: &mut Frame, area: Rect) {
+    let width = 50u16.min(area.width);
+    let height = 16u16.min(area.height);
+    let x = area.x + area.width.saturating_sub(width) / 2;
+    let y = area.y + area.height.saturating_sub(height) / 2;
+    let popup = Rect {
+        x,
+        y,
+        width,
+        height,
+    };
+
+    frame.render_widget(Clear, popup);
+
+    let help_lines = vec![
+        ListItem::new("  Navigation"),
+        ListItem::new("  ──────────────────────────────"),
+        ListItem::new("  ↑ / ↓        Move selection"),
+        ListItem::new("  PgUp/PgDn    Scroll by 10 rows"),
+        ListItem::new("  Home/End     Jump to first/last"),
+        ListItem::new(""),
+        ListItem::new("  Search"),
+        ListItem::new("  ──────────────────────────────"),
+        ListItem::new("  /            Open search bar"),
+        ListItem::new("  Esc          Clear search / close"),
+        ListItem::new(""),
+        ListItem::new("  Actions"),
+        ListItem::new("  ──────────────────────────────"),
+        ListItem::new("  Enter        Open action menu"),
+        ListItem::new("  ?            Show this help"),
+        ListItem::new("  q / Esc      Quit"),
+    ];
+
+    let help = List::new(help_lines)
+        .block(
+            Block::default()
+                .title(" Help — press Esc or ? to close ")
+                .title_alignment(Alignment::Center)
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan)),
+        )
+        .style(Style::default().add_modifier(Modifier::DIM));
+
+    frame.render_widget(help, popup);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_entries(names: &[&str]) -> Vec<RomEntry> {
+        use std::path::PathBuf;
+        names
+            .iter()
+            .map(|n| RomEntry {
+                path: PathBuf::from(format!("/roms/{n}.nes")),
+                display_name: n.to_string(),
+                mapper: Some(0),
+                hardware: Some("NES NTSC".to_string()),
+                crc: Some("DEADBEEF".to_string()),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_app_starts_in_navigate_mode() {
+        let app = App::new(make_entries(&["Alpha"]));
+        assert_eq!(app.input_mode, InputMode::Navigate);
+    }
+
+    #[test]
+    fn test_app_empty_catalog_creates_without_panic() {
+        let app = App::new(vec![]);
+        assert_eq!(app.input_mode, InputMode::Navigate);
+    }
+
+    #[test]
+    fn test_app_with_catalog_error_stores_message() {
+        let app = App::new(vec![]).with_catalog_error("test error".to_string());
+        assert!(app.catalog_error.is_some());
     }
 }
