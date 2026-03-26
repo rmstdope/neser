@@ -3,21 +3,44 @@
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use ratatui::{
     Frame,
-    layout::{Alignment, Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout},
     style::{Color, Style},
     widgets::{Block, Borders, Paragraph},
 };
 use std::{io, time::Duration};
 
+use super::rom_entry::RomEntry;
+use super::rom_list::RomList;
 use super::terminal::TerminalHandle;
 
 /// How long to wait for an event before re-drawing (~60 fps).
 const FRAME_DURATION: Duration = Duration::from_millis(16);
 
+/// Tracks whether keyboard input targets the search box or table navigation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InputMode {
+    Navigate,
+    Search,
+}
+
 /// Main TUI application state.
-pub(crate) struct App;
+pub(crate) struct App {
+    rom_list: RomList,
+    search: String,
+    input_mode: InputMode,
+    status_msg: Option<String>,
+}
 
 impl App {
+    pub fn new(entries: Vec<RomEntry>) -> Self {
+        Self {
+            rom_list: RomList::new(entries),
+            search: String::new(),
+            input_mode: InputMode::Navigate,
+            status_msg: None,
+        }
+    }
+
     /// Run the application event loop until the user quits.
     ///
     /// # Errors
@@ -33,26 +56,46 @@ impl App {
         Ok(())
     }
 
-    fn render(&self, frame: &mut Frame) {
+    fn render(&mut self, frame: &mut Frame) {
         let area = frame.area();
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(1)])
+            .constraints([
+                Constraint::Length(3), // search bar
+                Constraint::Min(0),    // ROM list
+                Constraint::Length(1), // footer
+            ])
             .split(area);
 
-        let title_block = Block::default()
-            .title(" Neser TUI ")
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Yellow));
+        // Search bar
+        let search_border_style = if self.input_mode == InputMode::Search {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        let search_label = if self.input_mode == InputMode::Search {
+            format!("Search: {}_", self.search)
+        } else {
+            format!("Search: {} (/ to search)", self.search)
+        };
+        let search_widget = Paragraph::new(search_label).block(
+            Block::default()
+                .title(" Neser TUI ")
+                .borders(Borders::ALL)
+                .border_style(search_border_style),
+        );
+        frame.render_widget(search_widget, chunks[0]);
 
-        let content = Paragraph::new("Welcome to Neser TUI\n\nPress q or Esc to quit.")
-            .block(title_block)
-            .alignment(Alignment::Center);
+        // ROM list
+        self.rom_list.render(frame, chunks[1]);
 
-        frame.render_widget(content, chunks[0]);
-
-        let footer = Paragraph::new(" q/Esc: quit").style(Style::default().fg(Color::DarkGray));
-        frame.render_widget(footer, chunks[1]);
+        // Footer / status
+        let footer_text = self
+            .status_msg
+            .as_deref()
+            .unwrap_or(" ↑/↓: navigate  Enter: select  /: search  Esc: clear/quit  q: quit");
+        let footer = Paragraph::new(footer_text).style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(footer, chunks[2]);
     }
 
     /// Poll for terminal events and return `true` if the user requested quit.
@@ -60,35 +103,68 @@ impl App {
     /// # Errors
     ///
     /// Returns an error if polling or reading a terminal event fails.
-    fn handle_events(&self) -> io::Result<bool> {
+    fn handle_events(&mut self) -> io::Result<bool> {
         if event::poll(FRAME_DURATION)?
             && let Event::Key(key) = event::read()?
         {
-            match key.code {
-                KeyCode::Char('q') | KeyCode::Esc => return Ok(true),
-                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    return Ok(true);
-                }
-                _ => {}
-            }
+            return match self.input_mode {
+                InputMode::Search => Ok(self.handle_search_key(key)),
+                InputMode::Navigate => Ok(self.handle_navigate_key(key)),
+            };
         }
         Ok(false)
     }
-}
 
-impl Default for App {
-    fn default() -> Self {
-        Self
+    fn handle_search_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Esc => {
+                self.input_mode = InputMode::Navigate;
+                self.search.clear();
+                self.rom_list.set_filter("");
+            }
+            KeyCode::Enter => {
+                self.input_mode = InputMode::Navigate;
+            }
+            KeyCode::Backspace => {
+                self.search.pop();
+                let s = self.search.clone();
+                self.rom_list.set_filter(&s);
+            }
+            KeyCode::Char(c) => {
+                self.search.push(c);
+                let s = self.search.clone();
+                self.rom_list.set_filter(&s);
+            }
+            _ => {}
+        }
+        false
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_app_new_creates_successfully() {
-        // Assert — just verifying it constructs without panic
-        let _app = App;
+    fn handle_navigate_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Char('q') => return true,
+            KeyCode::Esc => {
+                if !self.search.is_empty() {
+                    self.search.clear();
+                    self.rom_list.set_filter("");
+                } else {
+                    return true;
+                }
+            }
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                return true;
+            }
+            KeyCode::Char('/') => {
+                self.input_mode = InputMode::Search;
+            }
+            KeyCode::Down => self.rom_list.select_next(),
+            KeyCode::Up => self.rom_list.select_prev(),
+            KeyCode::PageDown => self.rom_list.select_page_down(10),
+            KeyCode::PageUp => self.rom_list.select_page_up(10),
+            KeyCode::Home => self.rom_list.select_page_up(usize::MAX),
+            KeyCode::End => self.rom_list.select_page_down(usize::MAX),
+            _ => {}
+        }
+        false
     }
 }

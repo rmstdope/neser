@@ -181,7 +181,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Handle --tui: launch the interactive TUI ROM browser and exit.
     #[cfg(feature = "tui")]
     if app_context.borrow().config().tui_mode {
-        return tui_frontend::run_tui().map_err(|e| e.to_string().into());
+        let (search_paths, _, rebuild) = cartridge_catalog_startup_config(&app_context);
+        return tui_frontend::run_tui(&search_paths, rebuild).map_err(|e| e.to_string().into());
     }
 
     // Handle --trim-checkpoints: modify recording file and exit immediately.
