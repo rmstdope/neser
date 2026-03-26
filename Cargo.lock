@@ -1826,7 +1826,7 @@ dependencies = [
 
 [[package]]
 name = "neser"
-version = "0.1.1"
+version = "0.1.0"
 dependencies = [
  "bitflags 2.10.0",
  "console_error_panic_hook",
