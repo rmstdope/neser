@@ -1,26 +1,20 @@
 [package]
 name = "neser"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "NESER - NES Emulator in Rust - is a NES emulator written in Rust. It aims to be a high-quality, hardware-accurate emulator that is also easy to use and extend. It supports a wide range of NES games and features, including various mappers, audio processing, and input handling. NESER is designed to be modular and extensible, allowing developers to easily add new features or support for additional hardware.\nIt can be run using one of two frontends: a native desktop application using SDL2, or a web application using WebAssembly. The desktop application provides a high-performance, feature-rich experience with support for various input devices and display options, while the web application allows users to play NES games directly in their browsers without needing to install any software in a BYOR manner (Bring Your Own Roms)."
 license = "MIT"
 repository = "https://github.com/rmstdope/neser"
 exclude = [
     "roms/",
-    "web/",
-    "scripts/",
-    "shaders/",
     "docs/",
     ".github/",
     ".githooks/",
     ".vscode/",
     "target/",
-    "imgui.ini",
-    "gamecontrollerdb.txt",
     "package.json",
     "package-lock.json",
     "playwright.config.mjs",
-    "neser.conf.example",
 ]
 
 [lib]
