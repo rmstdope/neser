@@ -189,7 +189,7 @@ mod tests {
                 mapper: Some(0),
                 hardware: Some("NES NTSC".to_string()),
                 crc: Some("DEADBEEF".to_string()),
-                has_recording: false,
+                recording_duration: None,
             })
             .collect()
     }

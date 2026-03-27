@@ -207,8 +207,9 @@ impl App {
             KeyCode::Enter => {
                 if let Some(entry) = self.rom_list.selected_entry() {
                     let name = entry.display_name.clone();
-                    let has_recording = entry.has_recording;
-                    self.action_menu = Some(ActionMenu::new_with_recording(name, has_recording));
+                    let recording_duration = entry.recording_duration;
+                    self.action_menu =
+                        Some(ActionMenu::new_with_recording(name, recording_duration));
                     self.input_mode = InputMode::ActionMenu;
                     self.last_launch = None;
                     self.catalog_error = None;
@@ -324,7 +325,7 @@ mod tests {
                 mapper: Some(0),
                 hardware: Some("NES NTSC".to_string()),
                 crc: Some("DEADBEEF".to_string()),
-                has_recording: false,
+                recording_duration: None,
             })
             .collect()
     }

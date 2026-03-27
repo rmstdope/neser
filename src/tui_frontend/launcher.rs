@@ -9,9 +9,11 @@ use std::process::{Command, ExitStatus};
 /// The action to perform on a selected ROM.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LaunchAction {
-    Play,
+    PlayFullscreen,
+    PlayWindowed,
     Record,
     Playback,
+    ExtendRecording,
 }
 
 /// Result of a launch operation.
@@ -27,9 +29,11 @@ impl LaunchResult {
     /// Returns a short human-readable summary for the status bar.
     pub fn summary(&self) -> String {
         let action = match self.action {
-            LaunchAction::Play => "Played",
+            LaunchAction::PlayFullscreen => "Played",
+            LaunchAction::PlayWindowed => "Played",
             LaunchAction::Record => "Recorded",
             LaunchAction::Playback => "Played back",
+            LaunchAction::ExtendRecording => "Extended recording",
         };
         let stem = Path::new(&self.rom_path)
             .file_name()
@@ -60,9 +64,11 @@ pub fn build_launch_command(rom_path: &str, action: LaunchAction) -> (String, Ve
 
     let mut args = vec![rom_path.to_string()];
     match action {
-        LaunchAction::Play => {}
+        LaunchAction::PlayFullscreen => args.push("--fullscreen".to_string()),
+        LaunchAction::PlayWindowed => {}
         LaunchAction::Record => args.push("--create-recording".to_string()),
         LaunchAction::Playback => args.push("--playback".to_string()),
+        LaunchAction::ExtendRecording => args.push("--extend-recording".to_string()),
     }
 
     (exe, args)
@@ -105,11 +111,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_build_launch_command_play_has_no_extra_flags() {
-        let (_, args) = build_launch_command("/roms/game.nes", LaunchAction::Play);
+    fn test_build_launch_command_play_windowed_has_no_extra_flags() {
+        let (_, args) = build_launch_command("/roms/game.nes", LaunchAction::PlayWindowed);
         assert_eq!(args, vec!["/roms/game.nes"]);
-        assert!(!args.contains(&"--create-recording".to_string()));
-        assert!(!args.contains(&"--playback".to_string()));
+    }
+
+    #[test]
+    fn test_build_launch_command_play_fullscreen_has_fullscreen_flag() {
+        let (_, args) = build_launch_command("/roms/game.nes", LaunchAction::PlayFullscreen);
+        assert!(
+            args.contains(&"--fullscreen".to_string()),
+            "PlayFullscreen should add --fullscreen"
+        );
     }
 
     #[test]
@@ -131,11 +144,22 @@ mod tests {
     }
 
     #[test]
+    fn test_build_launch_command_extend_recording_has_extend_flag() {
+        let (_, args) = build_launch_command("/roms/game.nes", LaunchAction::ExtendRecording);
+        assert!(
+            args.contains(&"--extend-recording".to_string()),
+            "ExtendRecording should add --extend-recording"
+        );
+    }
+
+    #[test]
     fn test_build_launch_command_rom_path_always_first() {
         for action in [
-            LaunchAction::Play,
+            LaunchAction::PlayFullscreen,
+            LaunchAction::PlayWindowed,
             LaunchAction::Record,
             LaunchAction::Playback,
+            LaunchAction::ExtendRecording,
         ] {
             let (_, args) = build_launch_command("/roms/game.nes", action);
             assert_eq!(args[0], "/roms/game.nes", "ROM path must be first argument");
@@ -145,13 +169,24 @@ mod tests {
     #[test]
     fn test_launch_result_summary_play_success() {
         let result = LaunchResult {
-            action: LaunchAction::Play,
+            action: LaunchAction::PlayWindowed,
             rom_path: "/roms/game.nes".to_string(),
             exit_status: None,
             error: None,
         };
         assert!(result.summary().contains("Played"));
         assert!(result.summary().contains("game.nes"));
+    }
+
+    #[test]
+    fn test_launch_result_summary_extend_recording() {
+        let result = LaunchResult {
+            action: LaunchAction::ExtendRecording,
+            rom_path: "/roms/game.nes".to_string(),
+            exit_status: None,
+            error: None,
+        };
+        assert!(result.summary().contains("Extended recording"));
     }
 
     #[test]

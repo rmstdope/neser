@@ -80,7 +80,7 @@ pub(super) fn build_rom_entry(path: &Path, rom_db: &RomDb) -> RomEntry {
         mapper,
         hardware: Some(hardware_label(hardware)),
         crc: Some(format!("{crc:08X}")),
-        has_recording: has_autorun_file(path),
+        recording_duration: read_recording_duration(path),
     }
 }
 
@@ -91,7 +91,7 @@ fn unreadable_entry(path: &Path) -> RomEntry {
         mapper: None,
         hardware: None,
         crc: None,
-        has_recording: has_autorun_file(path),
+        recording_duration: read_recording_duration(path),
     }
 }
 
@@ -102,7 +102,7 @@ fn invalid_entry(path: &Path) -> RomEntry {
         mapper: None,
         hardware: None,
         crc: None,
-        has_recording: has_autorun_file(path),
+        recording_duration: read_recording_duration(path),
     }
 }
 
@@ -113,9 +113,20 @@ fn file_stem(path: &Path) -> String {
         .to_string()
 }
 
-/// Return `true` if a `.autorun` recording file exists alongside the ROM.
-fn has_autorun_file(rom_path: &Path) -> bool {
-    rom_path.with_extension("autorun").exists()
+/// Return the duration of the `.autorun` recording for `rom_path`, or `None` if no recording
+/// exists. Reads only the `frames` array length to avoid loading large checkpoint `state_bytes`.
+pub(crate) fn read_recording_duration(rom_path: &Path) -> Option<std::time::Duration> {
+    let autorun_path = rom_path.with_extension("autorun");
+    let content = std::fs::read_to_string(&autorun_path).ok()?;
+
+    // Lightweight parse: only count frames, skip large state_bytes in checkpoints.
+    #[derive(serde::Deserialize)]
+    struct AutorunMeta {
+        frames: Vec<serde::de::IgnoredAny>,
+    }
+    let meta: AutorunMeta = serde_json::from_str(&content).ok()?;
+    let frame_count = meta.frames.len() as f64;
+    Some(std::time::Duration::from_secs_f64(frame_count / 60.0))
 }
 
 fn hardware_label(hw: HardwareType) -> String {
@@ -226,30 +237,44 @@ mod tests {
     }
 
     #[test]
-    fn test_build_rom_entry_has_recording_false_when_no_autorun_file() {
+    fn test_build_rom_entry_no_recording_duration_when_no_autorun_file() {
         let mut tmp = NamedTempFile::with_suffix(".nes").unwrap();
         tmp.write_all(&minimal_nrom_rom()).unwrap();
         let db = RomDb::from_csv_content("");
         let entry = build_rom_entry(tmp.path(), &db);
         assert!(
-            !entry.has_recording,
-            "no .autorun file should mean has_recording=false"
+            entry.recording_duration.is_none(),
+            "no .autorun file should mean recording_duration=None"
         );
     }
 
     #[test]
-    fn test_build_rom_entry_has_recording_true_when_autorun_file_exists() {
+    fn test_build_rom_entry_recording_duration_when_autorun_file_exists() {
         let mut tmp = NamedTempFile::with_suffix(".nes").unwrap();
         tmp.write_all(&minimal_nrom_rom()).unwrap();
-        // Create a sibling .autorun file
+        // Create a minimal valid .autorun JSON with 360 frames (~6 seconds at 60fps)
         let autorun_path = tmp.path().with_extension("autorun");
-        std::fs::write(&autorun_path, b"autorun").unwrap();
+        let frames_json: String = (0..360)
+            .map(|_| r#"{"player1":0,"player2":0}"#)
+            .collect::<Vec<_>>()
+            .join(",");
+        let json = format!(r#"{{"version":3,"frames":[{frames_json}],"checkpoints":[]}}"#);
+        std::fs::write(&autorun_path, json.as_bytes()).unwrap();
         let db = RomDb::from_csv_content("");
         let entry = build_rom_entry(tmp.path(), &db);
         let _ = std::fs::remove_file(&autorun_path);
-        assert!(
-            entry.has_recording,
-            ".autorun file present should mean has_recording=true"
-        );
+        let dur = entry.recording_duration.expect("should have duration");
+        assert_eq!(dur.as_secs(), 6, "360 frames at 60fps = 6 seconds");
+    }
+
+    #[test]
+    fn test_read_recording_duration_returns_none_for_invalid_json() {
+        let mut tmp = NamedTempFile::with_suffix(".nes").unwrap();
+        tmp.write_all(&minimal_nrom_rom()).unwrap();
+        let autorun_path = tmp.path().with_extension("autorun");
+        std::fs::write(&autorun_path, b"not valid json").unwrap();
+        let dur = read_recording_duration(tmp.path());
+        let _ = std::fs::remove_file(&autorun_path);
+        assert!(dur.is_none(), "invalid JSON should return None");
     }
 }

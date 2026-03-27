@@ -15,8 +15,8 @@ pub struct RomEntry {
     pub hardware: Option<String>,
     /// CRC32 of the PRG + CHR ROM data (hex, uppercase, 8 chars).
     pub crc: Option<String>,
-    /// Whether a `.autorun` recording exists alongside this ROM.
-    pub has_recording: bool,
+    /// Duration of the `.autorun` recording, or `None` if no recording exists.
+    pub recording_duration: Option<std::time::Duration>,
 }
 
 impl RomEntry {
@@ -50,7 +50,7 @@ mod tests {
             mapper,
             hardware: hardware.map(str::to_string),
             crc: crc.map(str::to_string),
-            has_recording: false,
+            recording_duration: None,
         }
     }
 
@@ -91,8 +91,8 @@ mod tests {
     }
 
     #[test]
-    fn test_has_recording_default_false() {
+    fn test_recording_duration_none_by_default() {
         let entry = make_entry(None, None, None);
-        assert!(!entry.has_recording);
+        assert!(entry.recording_duration.is_none());
     }
 }

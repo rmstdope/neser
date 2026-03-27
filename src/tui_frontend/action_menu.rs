@@ -1,5 +1,7 @@
 //! Action selection popup overlay for a chosen ROM.
 
+use std::time::Duration;
+
 use ratatui::{
     Frame,
     layout::{Alignment, Rect},
@@ -9,30 +11,49 @@ use ratatui::{
 
 use super::launcher::LaunchAction;
 
-/// Actions always available.
-const ACTIONS_BASE: [(&str, LaunchAction); 2] = [
-    ("▶  Play", LaunchAction::Play),
-    ("⏺  Record", LaunchAction::Record),
-];
-
-/// Extra action only available when a recording exists.
-const ACTION_PLAYBACK: (&str, LaunchAction) = ("⏵  Playback", LaunchAction::Playback);
-
 /// State for the action selection popup.
 pub(crate) struct ActionMenu {
     pub rom_name: String,
     list_state: ListState,
-    /// Available actions for this ROM (depends on whether a recording exists).
-    actions: Vec<(&'static str, LaunchAction)>,
+    /// Available actions with their display labels (dynamic, based on recording state).
+    actions: Vec<(String, LaunchAction)>,
 }
 
 impl ActionMenu {
-    /// Create a menu showing Play + Record, plus Playback only when `has_recording` is true.
-    pub fn new_with_recording(rom_name: impl Into<String>, has_recording: bool) -> Self {
-        let mut actions: Vec<(&'static str, LaunchAction)> = ACTIONS_BASE.to_vec();
-        if has_recording {
-            actions.push(ACTION_PLAYBACK);
+    /// Build the action list based on whether a recording exists and its duration.
+    ///
+    /// - Always present: Play (fullscreen), Play (windowed), Record (new/overwrite)
+    /// - When recording exists: Playback (MM:SS), Extend recording
+    pub fn new_with_recording(
+        rom_name: impl Into<String>,
+        recording_duration: Option<Duration>,
+    ) -> Self {
+        let mut actions: Vec<(String, LaunchAction)> = vec![
+            (
+                "▶  Play (fullscreen)".to_string(),
+                LaunchAction::PlayFullscreen,
+            ),
+            ("▶  Play (windowed)".to_string(), LaunchAction::PlayWindowed),
+        ];
+
+        let record_label = if recording_duration.is_some() {
+            "⏺  Record (overwrite)".to_string()
+        } else {
+            "⏺  Record (new)".to_string()
+        };
+        actions.push((record_label, LaunchAction::Record));
+
+        if let Some(duration) = recording_duration {
+            actions.push((
+                format!("⏵  Playback ({})", format_duration(duration)),
+                LaunchAction::Playback,
+            ));
+            actions.push((
+                "⏭  Extend recording".to_string(),
+                LaunchAction::ExtendRecording,
+            ));
         }
+
         let mut list_state = ListState::default();
         list_state.select(Some(0));
         Self {
@@ -42,10 +63,10 @@ impl ActionMenu {
         }
     }
 
-    /// Convenience constructor when no recording exists — only used in tests.
+    /// Convenience constructor — no recording, Play + Play + Record (new) only. Used in tests.
     #[cfg(test)]
     pub fn new(rom_name: impl Into<String>) -> Self {
-        Self::new_with_recording(rom_name, false)
+        Self::new_with_recording(rom_name, None)
     }
 
     pub fn select_next(&mut self) {
@@ -72,7 +93,8 @@ impl ActionMenu {
 
     /// Render the popup centred over `area`.
     pub(crate) fn render(&mut self, frame: &mut Frame, area: Rect) {
-        let popup_area = centered_rect(40, 9, area);
+        let popup_height = (self.actions.len() as u16 + 4).max(7);
+        let popup_area = centered_rect(50, popup_height, area);
 
         frame.render_widget(Clear, popup_area);
 
@@ -81,7 +103,7 @@ impl ActionMenu {
         let items: Vec<ListItem> = self
             .actions
             .iter()
-            .map(|(label, _)| ListItem::new(*label))
+            .map(|(label, _)| ListItem::new(label.as_str()))
             .collect();
 
         let list = List::new(items)
@@ -112,6 +134,20 @@ impl ActionMenu {
         frame.render_widget(hint, hint_area);
     }
 }
+
+/// Format a duration as `MM:SS` or `H:MM:SS` for recordings longer than one hour.
+fn format_duration(d: Duration) -> String {
+    let total_secs = d.as_secs();
+    let hours = total_secs / 3600;
+    let minutes = (total_secs % 3600) / 60;
+    let secs = total_secs % 60;
+    if hours > 0 {
+        format!("{hours}:{minutes:02}:{secs:02}")
+    } else {
+        format!("{minutes:02}:{secs:02}")
+    }
+}
+
 /// Return a rectangle centred in `area` with the given percentage width and fixed height.
 fn centered_rect(percent_x: u16, height: u16, area: Rect) -> Rect {
     let popup_width = area.width * percent_x / 100;
@@ -144,33 +180,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_action_menu_default_selection_is_play() {
+    fn test_action_menu_default_selection_is_play_fullscreen() {
         let menu = ActionMenu::new("Test ROM");
-        assert_eq!(menu.selected_action(), LaunchAction::Play);
+        assert_eq!(menu.selected_action(), LaunchAction::PlayFullscreen);
     }
 
     #[test]
-    fn test_action_menu_select_next_moves_to_record() {
+    fn test_action_menu_select_next_moves_to_play_windowed() {
         let mut menu = ActionMenu::new("Test ROM");
+        menu.select_next();
+        assert_eq!(menu.selected_action(), LaunchAction::PlayWindowed);
+    }
+
+    #[test]
+    fn test_action_menu_select_next_twice_reaches_record() {
+        let mut menu = ActionMenu::new("Test ROM");
+        menu.select_next();
         menu.select_next();
         assert_eq!(menu.selected_action(), LaunchAction::Record);
     }
 
     #[test]
-    fn test_action_menu_select_next_twice_reaches_playback() {
-        let mut menu = ActionMenu::new_with_recording("Test ROM", true);
-        menu.select_next();
-        menu.select_next();
-        assert_eq!(menu.selected_action(), LaunchAction::Playback);
-    }
-
-    #[test]
-    fn test_action_menu_select_next_clamps_at_end() {
-        let mut menu = ActionMenu::new_with_recording("Test ROM", true);
-        menu.select_next();
-        menu.select_next();
-        menu.select_next(); // already at Playback
-        assert_eq!(menu.selected_action(), LaunchAction::Playback);
+    fn test_action_menu_select_next_clamps_at_record_when_no_recording() {
+        let mut menu = ActionMenu::new("Test ROM");
+        for _ in 0..10 {
+            menu.select_next();
+        }
+        assert_eq!(menu.selected_action(), LaunchAction::Record);
     }
 
     #[test]
@@ -178,29 +214,31 @@ mod tests {
         let mut menu = ActionMenu::new("Test ROM");
         menu.select_next();
         menu.select_prev();
-        assert_eq!(menu.selected_action(), LaunchAction::Play);
+        assert_eq!(menu.selected_action(), LaunchAction::PlayFullscreen);
     }
 
     #[test]
-    fn test_action_menu_without_recording_excludes_playback() {
-        let menu = ActionMenu::new_with_recording("Test ROM", false);
-        // Navigate through all available actions — Playback must not appear
-        let mut seen = vec![menu.selected_action()];
-        let mut m = ActionMenu::new_with_recording("Test ROM", false);
+    fn test_action_menu_without_recording_excludes_playback_and_extend() {
+        let mut m = ActionMenu::new_with_recording("Test ROM", None);
+        let mut seen = vec![m.selected_action()];
         for _ in 0..10 {
             m.select_next();
             seen.push(m.selected_action());
         }
         assert!(
             !seen.contains(&LaunchAction::Playback),
-            "Playback should not be available when no recording exists: {seen:?}"
+            "Playback should not appear without recording: {seen:?}"
+        );
+        assert!(
+            !seen.contains(&LaunchAction::ExtendRecording),
+            "ExtendRecording should not appear without recording: {seen:?}"
         );
     }
 
     #[test]
-    fn test_action_menu_with_recording_includes_playback() {
-        let mut menu = ActionMenu::new_with_recording("Test ROM", true);
-        // Step through all options
+    fn test_action_menu_with_recording_includes_playback_and_extend() {
+        let dur = Duration::from_secs(330); // 5m30s
+        let mut menu = ActionMenu::new_with_recording("Test ROM", Some(dur));
         let mut seen = vec![menu.selected_action()];
         for _ in 0..10 {
             menu.select_next();
@@ -208,18 +246,54 @@ mod tests {
         }
         assert!(
             seen.contains(&LaunchAction::Playback),
-            "Playback should be available when a recording exists"
+            "Playback should appear with recording"
+        );
+        assert!(
+            seen.contains(&LaunchAction::ExtendRecording),
+            "ExtendRecording should appear with recording"
         );
     }
 
     #[test]
-    fn test_action_menu_without_recording_has_play_and_record() {
-        let mut menu = ActionMenu::new_with_recording("Test ROM", false);
-        let play = menu.selected_action();
-        menu.select_next();
-        let record = menu.selected_action();
-        assert_eq!(play, LaunchAction::Play);
-        assert_eq!(record, LaunchAction::Record);
+    fn test_action_menu_record_label_is_new_without_recording() {
+        let menu = ActionMenu::new_with_recording("Test ROM", None);
+        let labels: Vec<&str> = menu.actions.iter().map(|(l, _)| l.as_str()).collect();
+        assert!(
+            labels.iter().any(|l| l.contains("Record (new)")),
+            "should show 'Record (new)' without recording"
+        );
+    }
+
+    #[test]
+    fn test_action_menu_record_label_is_overwrite_with_recording() {
+        let menu = ActionMenu::new_with_recording("Test ROM", Some(Duration::from_secs(60)));
+        let labels: Vec<&str> = menu.actions.iter().map(|(l, _)| l.as_str()).collect();
+        assert!(
+            labels.iter().any(|l| l.contains("Record (overwrite)")),
+            "should show 'Record (overwrite)' when recording exists"
+        );
+    }
+
+    #[test]
+    fn test_action_menu_playback_label_shows_duration() {
+        let menu = ActionMenu::new_with_recording("Test ROM", Some(Duration::from_secs(330)));
+        let labels: Vec<&str> = menu.actions.iter().map(|(l, _)| l.as_str()).collect();
+        assert!(
+            labels.iter().any(|l| l.contains("05:30")),
+            "Playback label should contain formatted duration: {labels:?}"
+        );
+    }
+
+    #[test]
+    fn test_format_duration_under_one_hour() {
+        assert_eq!(format_duration(Duration::from_secs(330)), "05:30");
+        assert_eq!(format_duration(Duration::from_secs(90)), "01:30");
+        assert_eq!(format_duration(Duration::from_secs(0)), "00:00");
+    }
+
+    #[test]
+    fn test_format_duration_over_one_hour() {
+        assert_eq!(format_duration(Duration::from_secs(3690)), "1:01:30");
     }
 
     #[test]
