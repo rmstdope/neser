@@ -117,7 +117,7 @@ jobs:
         with:
           version: "latest"
       - name: Test WASM frontend
-        run: wasm-pack test --headless --chrome -- --features wasm
+        run: wasm-pack test --headless --chrome -- --no-default-features --features wasm
 
   web:
     runs-on: ubuntu-latest
