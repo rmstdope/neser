@@ -19,7 +19,7 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             artifact: neser
-          - os: macos-13
+          - os: macos-latest
             target: x86_64-apple-darwin
             artifact: neser
           - os: macos-latest
@@ -118,6 +118,14 @@ jobs:
           mv artifacts/neser-aarch64-apple-darwin/neser artifacts/neser-macos-aarch64
           cd artifacts/neser-x86_64-pc-windows-msvc && zip -r ../neser-windows-x86_64.zip . && cd ../..
 
+      - name: Install git-cliff
+        uses: taiki-e/install-action@v2
+        with:
+          tool: git-cliff
+
+      - name: Generate changelog
+        run: git-cliff --output RELEASE_NOTES.md
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
@@ -126,7 +134,7 @@ jobs:
             artifacts/neser-macos-x86_64
             artifacts/neser-macos-aarch64
             artifacts/neser-windows-x86_64.zip
-          generate_release_notes: true
+          body_path: RELEASE_NOTES.md
           make_latest: true
 
 #  publish:
