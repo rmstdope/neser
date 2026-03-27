@@ -71,4 +71,5 @@ test-results/
 *.o
 *.debug
 *.map
+obj
 
