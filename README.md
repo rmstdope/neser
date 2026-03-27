@@ -2,6 +2,31 @@
 
 NESER - NES Emulator in Rust
 
+## Installation
+
+### Pre-built binaries (recommended)
+
+Download the latest release for your platform from the [GitHub Releases](https://github.com/rmstdope/neser/releases) page.
+
+### From source via cargo install
+
+`neser` requires **SDL2** and **SDL2_ttf** to be installed as system libraries before building from source.
+
+**macOS:**
+```bash
+brew install sdl2 sdl2_ttf
+cargo install neser
+```
+
+**Ubuntu/Debian:**
+```bash
+sudo apt-get install libsdl2-dev libsdl2-ttf-dev
+cargo install neser
+```
+
+**Windows:**
+Download the SDL2 and SDL2_ttf VC development packages from https://github.com/libsdl-org/SDL/releases and https://github.com/libsdl-org/SDL_ttf/releases, then set the `SDL2_LIB_DIR` and `SDL2_TTF_LIB_DIR` environment variables before running `cargo install neser`.
+
 ## Building
 
 ```bash
