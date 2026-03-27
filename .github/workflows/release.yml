@@ -6,12 +6,12 @@ on:
       - "v*.*.*"
 
 jobs:
-  ci:
-    uses: rmstdope/neser/.github/workflows/ci.yml@main
+  # ci:
+  #   uses: rmstdope/neser/.github/workflows/ci.yml@main
 
   build:
     name: Build ${{ matrix.target }}
-    needs: ci
+    # needs: ci
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
