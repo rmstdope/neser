@@ -53,12 +53,12 @@ jobs:
         shell: pwsh
         run: |
           $SDL2_VERSION = "2.30.9"
-          $SDL2_TTF_VERSION = "2.22.0"
+          $SDL2_TTF_VERSION = "2.24.0"
 
           Invoke-WebRequest "https://github.com/libsdl-org/SDL/releases/download/release-$SDL2_VERSION/SDL2-devel-$SDL2_VERSION-VC.zip" -OutFile SDL2-devel.zip
           Expand-Archive SDL2-devel.zip -DestinationPath C:\SDL2
 
-          Invoke-WebRequest "https://github.com/libsdl-org/SDL2_ttf/releases/download/release-$SDL2_TTF_VERSION/SDL2_ttf-devel-$SDL2_TTF_VERSION-VC.zip" -OutFile SDL2_ttf-devel.zip
+          Invoke-WebRequest "https://github.com/libsdl-org/SDL_ttf/releases/download/release-$SDL2_TTF_VERSION/SDL2_ttf-devel-$SDL2_TTF_VERSION-VC.zip" -OutFile SDL2_ttf-devel.zip
           Expand-Archive SDL2_ttf-devel.zip -DestinationPath C:\SDL2_ttf
 
           echo "SDL2_LIB_DIR=C:\SDL2\SDL2-$SDL2_VERSION\lib\x64" >> $env:GITHUB_ENV
@@ -75,7 +75,7 @@ jobs:
         shell: pwsh
         run: |
           $SDL2_VERSION = "2.30.9"
-          $SDL2_TTF_VERSION = "2.22.0"
+          $SDL2_TTF_VERSION = "2.24.0"
           Copy-Item "C:\SDL2\SDL2-$SDL2_VERSION\lib\x64\SDL2.dll" "target\${{ matrix.target }}\release\"
           Copy-Item "C:\SDL2_ttf\SDL2_ttf-$SDL2_TTF_VERSION\lib\x64\SDL2_ttf.dll" "target\${{ matrix.target }}\release\"
 
@@ -126,7 +126,7 @@ jobs:
             artifacts/neser-macos-x86_64
             artifacts/neser-macos-aarch64
             artifacts/neser-windows-x86_64.zip
-          body_path: RELEASE_NOTES.md
+          generate_release_notes: true
           make_latest: true
 
 #  publish:
