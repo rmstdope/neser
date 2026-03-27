@@ -6,12 +6,12 @@ on:
       - "v*.*.*"
 
 jobs:
-  # ci:
-  #   uses: rmstdope/neser/.github/workflows/ci.yml@main
+  ci:
+    uses: rmstdope/neser/.github/workflows/ci.yml@main
 
   build:
     name: Build ${{ matrix.target }}
-    # needs: ci
+    needs: ci
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -118,7 +118,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 0  # full history needed for git-cliff to generate complete changelog
+          fetch-depth: 0 # full history needed for git-cliff to generate complete changelog
 
       - name: Download all artifacts
         uses: actions/download-artifact@v5
@@ -151,18 +151,17 @@ jobs:
           body_path: RELEASE_NOTES.md
           make_latest: true
 
-#  publish:
-#    name: Publish to crates.io
-#    needs: release
-#    runs-on: ubuntu-latest
-#    steps:
-#      - uses: actions/checkout@v6
-#      - name: Install stable toolchain
-#        uses: dtolnay/rust-toolchain@stable
-#      - name: Cache
-#        uses: Swatinem/rust-cache@v2
-#      - name: Publish
-#        run: cargo publish
-#        env:
-#          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-
+  publish:
+    name: Publish to crates.io
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+      - name: Publish
+        run: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
