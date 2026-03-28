@@ -114,19 +114,35 @@ fn file_stem(path: &Path) -> String {
 }
 
 /// Return the duration of the `.autorun` recording for `rom_path`, or `None` if no recording
-/// exists. Reads only the `frames` array length to avoid loading large checkpoint `state_bytes`.
+/// exists.
+///
+/// The v3 `.autorun` format uses RLE compression: each entry in the `frames` array has a
+/// `repeat: u32` count. Duration = sum(repeat) / 60 fps.
+/// The legacy v2 format has no `repeat` field — we default it to 1 (one entry = one frame).
 pub(crate) fn read_recording_duration(rom_path: &Path) -> Option<std::time::Duration> {
     let autorun_path = rom_path.with_extension("autorun");
     let content = std::fs::read_to_string(&autorun_path).ok()?;
 
-    // Lightweight parse: only count frames, skip large state_bytes in checkpoints.
+    // Parse only the `frames` array; skip large `state_bytes` in checkpoints.
+    // `repeat` defaults to 1 so legacy v2 files (no repeat field) are handled correctly.
+    #[derive(serde::Deserialize)]
+    struct RleFrame {
+        #[serde(default = "one")]
+        repeat: u32,
+    }
+    fn one() -> u32 {
+        1
+    }
     #[derive(serde::Deserialize)]
     struct AutorunMeta {
-        frames: Vec<serde::de::IgnoredAny>,
+        frames: Vec<RleFrame>,
     }
+
     let meta: AutorunMeta = serde_json::from_str(&content).ok()?;
-    let frame_count = meta.frames.len() as f64;
-    Some(std::time::Duration::from_secs_f64(frame_count / 60.0))
+    let frame_count: u64 = meta.frames.iter().map(|f| f.repeat as u64).sum();
+    Some(std::time::Duration::from_secs_f64(
+        frame_count as f64 / 60.0,
+    ))
 }
 
 fn hardware_label(hw: HardwareType) -> String {
@@ -276,5 +292,18 @@ mod tests {
         let dur = read_recording_duration(tmp.path());
         let _ = std::fs::remove_file(&autorun_path);
         assert!(dur.is_none(), "invalid JSON should return None");
+    }
+
+    #[test]
+    fn test_read_recording_duration_sums_rle_repeat_fields() {
+        let mut tmp = NamedTempFile::with_suffix(".nes").unwrap();
+        tmp.write_all(&minimal_nrom_rom()).unwrap();
+        let autorun_path = tmp.path().with_extension("autorun");
+        // Two RLE groups totalling 3720 frames = 62 seconds at 60fps
+        let json = r#"{"version":3,"frames":[{"player1":0,"player2":0,"repeat":3480},{"player1":1,"player2":0,"repeat":240}],"checkpoints":[]}"#;
+        std::fs::write(&autorun_path, json.as_bytes()).unwrap();
+        let dur = read_recording_duration(tmp.path()).expect("should have duration");
+        let _ = std::fs::remove_file(&autorun_path);
+        assert_eq!(dur.as_secs(), 62, "3720 frames at 60fps = 62 seconds");
     }
 }

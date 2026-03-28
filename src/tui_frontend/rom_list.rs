@@ -118,6 +118,20 @@ impl RomList {
         self.all.get(idx)
     }
 
+    /// Re-read the `.autorun` recording status for the entry at `path` and update it in place.
+    ///
+    /// Call this after a Record/ExtendRecording launch so newly created recordings are
+    /// discovered without a full catalog reload.
+    pub fn refresh_recording_for(&mut self, path: &std::path::Path) {
+        use super::catalog::read_recording_duration;
+        for entry in self.all.iter_mut() {
+            if entry.path == path {
+                entry.recording_duration = read_recording_duration(path);
+                break;
+            }
+        }
+    }
+
     /// Total number of entries after filtering.
     pub fn filtered_count(&self) -> usize {
         self.filtered.len()
@@ -284,5 +298,39 @@ mod tests {
         list.set_filter("zzz");
         assert_eq!(list.total_count(), 3);
         assert_eq!(list.filtered_count(), 0);
+    }
+
+    #[test]
+    fn test_refresh_recording_for_updates_duration_when_file_appears() {
+        use tempfile::NamedTempFile;
+        // Create a real temp .nes file so the path can have a real sibling .autorun
+        let tmp = NamedTempFile::with_suffix(".nes").unwrap();
+        let rom_path = tmp.path().to_path_buf();
+        let entry = RomEntry {
+            path: rom_path.clone(),
+            display_name: "Test".to_string(),
+            mapper: Some(0),
+            hardware: None,
+            crc: None,
+            recording_duration: None,
+        };
+        let mut list = RomList::new(vec![entry]);
+
+        // Initially no recording
+        assert!(list.all[0].recording_duration.is_none());
+
+        // Create a .autorun file with 600 frames (10 seconds)
+        let autorun_path = rom_path.with_extension("autorun");
+        let json =
+            r#"{"version":3,"frames":[{"player1":0,"player2":0,"repeat":600}],"checkpoints":[]}"#;
+        std::fs::write(&autorun_path, json.as_bytes()).unwrap();
+
+        list.refresh_recording_for(&rom_path);
+        let _ = std::fs::remove_file(&autorun_path);
+
+        let dur = list.all[0]
+            .recording_duration
+            .expect("should have duration after refresh");
+        assert_eq!(dur.as_secs(), 10, "600 frames at 60fps = 10 seconds");
     }
 }

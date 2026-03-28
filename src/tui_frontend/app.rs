@@ -243,8 +243,11 @@ impl App {
 
                 if let Some(entry) = self.rom_list.selected_entry() {
                     let rom_path = entry.path.to_string_lossy().into_owned();
+                    let entry_path = entry.path.clone();
                     let result = launch_rom(&rom_path, action);
                     let _ = terminal.restore_alternate_screen();
+                    // Refresh so newly created/extended recordings are discovered immediately.
+                    self.rom_list.refresh_recording_for(&entry_path);
                     self.last_launch = Some(result);
                 }
             }
