@@ -14,7 +14,7 @@ mod sdl_frontend;
 
 use app_context::AppContext;
 use console::{
-    ApuChannels, CartridgeCatalogOptions, Config, Nes, ParseResult, SaveState,
+    ApuChannels, AutorunFormat, CartridgeCatalogOptions, Config, Nes, ParseResult, SaveState,
     default_catalog_csv_path, log_hardware_selection, refresh_cartridge_catalog,
 };
 use debugging::log_info;
@@ -64,7 +64,7 @@ fn refresh_startup_cartridge_catalog(app_context: &Rc<RefCell<AppContext>>) {
     }
 }
 
-fn convert_autorun_for_rom(rom_path: &str) -> Result<String, String> {
+fn convert_autorun_for_rom(rom_path: &str, format: AutorunFormat) -> Result<String, String> {
     use autorun::{AUTORUN_VERSION, autorun_path_for_rom, convert_autorun_file};
 
     let path = autorun_path_for_rom(&PathBuf::from(rom_path));
@@ -76,7 +76,7 @@ fn convert_autorun_for_rom(rom_path: &str) -> Result<String, String> {
         ));
     }
 
-    convert_autorun_file(&path)?;
+    convert_autorun_file(&path, format)?;
     Ok(format!(
         "Converted autorun file to version {}: {}",
         AUTORUN_VERSION,
@@ -87,6 +87,7 @@ fn convert_autorun_for_rom(rom_path: &str) -> Result<String, String> {
 fn trim_autorun_checkpoints_for_rom(
     rom_path: &str,
     checkpoints_to_trim: usize,
+    format: AutorunFormat,
 ) -> Result<String, String> {
     use autorun::{autorun_path_for_rom, load_autorun_file, save_autorun_file, trim_recording};
     use std::path::PathBuf;
@@ -95,7 +96,7 @@ fn trim_autorun_checkpoints_for_rom(
     let mut file = load_autorun_file(&path)?;
     let checkpoints_before = file.checkpoints.len();
     trim_recording(&mut file, checkpoints_to_trim);
-    save_autorun_file(&path, &file)?;
+    save_autorun_file(&path, &file, format)?;
 
     Ok(format!(
         "Trimmed {} checkpoint(s): {} → {} checkpoints, {} frames remaining",
@@ -106,7 +107,7 @@ fn trim_autorun_checkpoints_for_rom(
     ))
 }
 
-fn recalculate_autorun_for_rom(rom_path: &str) -> Result<String, String> {
+fn recalculate_autorun_for_rom(rom_path: &str, format: AutorunFormat) -> Result<String, String> {
     use autorun::{
         autorun_path_for_rom, headless_playback::recalculate_checkpoint_crcs_with_progress,
         load_autorun_file, save_autorun_file,
@@ -151,7 +152,7 @@ fn recalculate_autorun_for_rom(rom_path: &str) -> Result<String, String> {
     if progress_printed {
         println!("\n");
     }
-    save_autorun_file(&path, &file)?;
+    save_autorun_file(&path, &file, format)?;
 
     Ok(format!(
         "Recalculated {} checkpoint CRC(s) in {}",
@@ -179,10 +180,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Handle --trim-checkpoints: modify recording file and exit immediately.
     let trim_checkpoints = app_context.borrow().config().autorun_trim_checkpoints;
     let trim_rom_path = app_context.borrow().config().rom_path.clone();
+    let trim_format = app_context.borrow().config().autorun_format.clone();
     if let (Some(checkpoints_to_trim), Some(rom_path)) =
         (trim_checkpoints, trim_rom_path.as_deref())
     {
-        let message = trim_autorun_checkpoints_for_rom(rom_path, checkpoints_to_trim)?;
+        let message = trim_autorun_checkpoints_for_rom(rom_path, checkpoints_to_trim, trim_format)?;
         println!("{message}");
         return Ok(());
     }
@@ -190,10 +192,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Handle --convert-autorun: convert recording file format and exit immediately.
     let convert_autorun_requested = app_context.borrow().config().autorun_convert;
     let convert_rom_path = app_context.borrow().config().rom_path.clone();
+    let convert_format = app_context.borrow().config().autorun_format.clone();
     if convert_autorun_requested {
         let rom_path =
             convert_rom_path.ok_or_else(|| "--convert-autorun requires a ROM path".to_string())?;
-        let message = convert_autorun_for_rom(&rom_path)?;
+        let message = convert_autorun_for_rom(&rom_path, convert_format)?;
         println!("{message}");
         return Ok(());
     }
@@ -201,10 +204,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Handle --recalculate-autorun: replay and rewrite checkpoint CRCs, then exit.
     let recalculate_autorun_requested = app_context.borrow().config().autorun_recalculate;
     let recalculate_rom_path = app_context.borrow().config().rom_path.clone();
+    let recalculate_format = app_context.borrow().config().autorun_format.clone();
     if recalculate_autorun_requested {
         let rom_path = recalculate_rom_path
             .ok_or_else(|| "--recalculate-autorun requires a ROM path".to_string())?;
-        let message = recalculate_autorun_for_rom(&rom_path)?;
+        let message = recalculate_autorun_for_rom(&rom_path, recalculate_format)?;
         println!("{message}");
         return Ok(());
     }
@@ -326,7 +330,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         SdlEventLoop::new_with_context(headless, audio_for_frontend, app_context.clone())?;
 
     // Initialize autorun if enabled
-    let (autorun_mode, autorun_overwrite, autorun_extend, autorun_from_checkpoint) = {
+    let (autorun_mode, autorun_overwrite, autorun_extend, autorun_from_checkpoint, autorun_format) = {
         let config = app_context.borrow();
         let config = config.config();
         (
@@ -334,6 +338,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             config.autorun_overwrite,
             config.autorun_extend,
             config.autorun_from_checkpoint,
+            config.autorun_format.clone(),
         )
     };
     let load_state = app_context.borrow().config().load_state;
@@ -360,6 +365,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             autorun_extend,
             autorun_from_checkpoint,
             &mut nes_instance,
+            autorun_format,
         )?;
     }
 

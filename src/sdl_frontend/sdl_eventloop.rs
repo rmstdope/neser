@@ -551,10 +551,11 @@ impl SdlEventLoop {
         extend: bool,
         from_checkpoint: Option<i64>,
         nes: &mut Nes,
+        format: crate::autorun::AutorunFormat,
     ) -> Result<(), String> {
         if mode != AutorunMode::None {
             let (state, pending) =
-                AutorunState::new(mode, rom_path, overwrite, extend, from_checkpoint)?;
+                AutorunState::new(mode, rom_path, overwrite, extend, from_checkpoint, format)?;
             if let Some(restore) = pending {
                 let save_state = crate::console::SaveState::from_bytes(&restore.state_bytes)
                     .map_err(|e| format!("Failed to deserialize checkpoint state: {e}"))?;

@@ -1,6 +1,7 @@
 use crate::autorun::{
-    AUTORUN_VERSION, AutorunCheckpoint, AutorunFile, AutorunFrame, CHECKPOINT_INTERVAL_FRAMES,
-    autorun_path_for_rom, backup_autorun_file, load_autorun_file, save_autorun_file,
+    AUTORUN_VERSION, AutorunCheckpoint, AutorunFile, AutorunFormat, AutorunFrame,
+    CHECKPOINT_INTERVAL_FRAMES, autorun_path_for_rom, backup_autorun_file, load_autorun_file,
+    save_autorun_file,
 };
 use crate::console::AutorunMode;
 use std::path::PathBuf;
@@ -57,6 +58,8 @@ pub struct AutorunState {
     /// Set to `true` when `next_playback_frame` returned a pre-recorded frame this frame.
     /// Cleared by `begin_frame` at the start of each frame cycle.
     current_frame_prerecorded: bool,
+    /// Serialization format to use when saving autorun files.
+    format: AutorunFormat,
 }
 
 impl AutorunState {
@@ -73,12 +76,14 @@ impl AutorunState {
     ///   checkpoint, then continue recording.
     /// * `from_checkpoint` - In `Playback` mode: start from this checkpoint index instead of
     ///   frame 0.
+    /// * `format` - Serialization format for saving autorun files.
     pub fn new(
         mode: AutorunMode,
         rom_path: &str,
         overwrite: bool,
         extend: bool,
         from_checkpoint: Option<i64>,
+        format: AutorunFormat,
     ) -> Result<(Self, Option<PendingRestore>), String> {
         let autorun_path = autorun_path_for_rom(&PathBuf::from(rom_path));
 
@@ -87,7 +92,7 @@ impl AutorunState {
 
             AutorunMode::Record => {
                 if extend && autorun_path.exists() {
-                    Self::new_extend(autorun_path)
+                    Self::new_extend(autorun_path, format)
                 } else {
                     // New recording — back up or clear any existing file
                     if autorun_path.exists() {
@@ -114,6 +119,7 @@ impl AutorunState {
                         crc_mismatches: 0,
                         total_checkpoints_verified: 0,
                         current_frame_prerecorded: false,
+                        format,
                     };
                     Ok((state, None))
                 }
@@ -149,6 +155,7 @@ impl AutorunState {
                     crc_mismatches: 0,
                     total_checkpoints_verified: 0,
                     current_frame_prerecorded: false,
+                    format,
                 };
                 Ok((state, pending))
             }
@@ -162,7 +169,7 @@ impl AutorunState {
     /// * **n = 1 checkpoint**: restores directly from the single checkpoint and starts recording
     ///   immediately — no extend playback is needed.
     /// * **n = 0 checkpoints**: starts from scratch (no state to restore).
-    fn new_extend(autorun_path: PathBuf) -> Result<(Self, Option<PendingRestore>), String> {
+    fn new_extend(autorun_path: PathBuf, format: AutorunFormat) -> Result<(Self, Option<PendingRestore>), String> {
         let existing = load_autorun_file(&autorun_path)?;
 
         let n = existing.checkpoints.len();
@@ -201,6 +208,7 @@ impl AutorunState {
             crc_mismatches: 0,
             total_checkpoints_verified: 0,
             current_frame_prerecorded: false,
+            format,
         };
         Ok((state, pending))
     }
@@ -303,7 +311,7 @@ impl AutorunState {
             screen_crc,
             state_bytes,
         });
-        save_autorun_file(&self.autorun_path, &self.autorun)
+        save_autorun_file(&self.autorun_path, &self.autorun, self.format.clone())
     }
 
     /// Number of CRC mismatches detected during playback so far.
@@ -357,7 +365,7 @@ mod tests {
         let rom_file = NamedTempFile::new().expect("create temp file");
         let rom_path_str = rom_file.path().to_str().expect("rom path to string");
 
-        let (state, _) = AutorunState::new(AutorunMode::Record, rom_path_str, false, false, None)
+        let (state, _) = AutorunState::new(AutorunMode::Record, rom_path_str, false, false, None, AutorunFormat::Json)
             .expect("create autorun state");
 
         assert_eq!(state.total_frames(), 0);
@@ -368,10 +376,10 @@ mod tests {
         let rom_file = NamedTempFile::new().expect("create temp file");
         let autorun_file = make_file_with_checkpoints(3, &[(2, 0xABCD)]);
         let autorun_path = autorun_path_for_rom(rom_file.path());
-        save_autorun_file(&autorun_path, &autorun_file).expect("save file");
+        save_autorun_file(&autorun_path, &autorun_file, AutorunFormat::Json).expect("save file");
 
         let rom_path_str = rom_file.path().to_str().expect("rom path to string");
-        let (state, _) = AutorunState::new(AutorunMode::Playback, rom_path_str, false, false, None)
+        let (state, _) = AutorunState::new(AutorunMode::Playback, rom_path_str, false, false, None, AutorunFormat::Json)
             .expect("create autorun state");
 
         assert_eq!(state.total_frames(), 3);
@@ -382,7 +390,7 @@ mod tests {
         let rom_file = NamedTempFile::new().expect("create temp file");
         let rom_path_str = rom_file.path().to_str().expect("rom path to string");
         let (mut state, _) =
-            AutorunState::new(AutorunMode::Record, rom_path_str, false, false, None)
+            AutorunState::new(AutorunMode::Record, rom_path_str, false, false, None, AutorunFormat::Json)
                 .expect("create autorun state");
 
         // Record 299 frames – none should trigger a checkpoint
@@ -400,7 +408,7 @@ mod tests {
         let rom_file = NamedTempFile::new().expect("create temp file");
         let rom_path_str = rom_file.path().to_str().expect("rom path to string");
         let (mut state, _) =
-            AutorunState::new(AutorunMode::Record, rom_path_str, false, false, None)
+            AutorunState::new(AutorunMode::Record, rom_path_str, false, false, None, AutorunFormat::Json)
                 .expect("create autorun state");
 
         for _ in 0..300 {
@@ -419,11 +427,11 @@ mod tests {
         let rom_file = NamedTempFile::new().expect("create temp file");
         let file = make_file_with_checkpoints(300, &[(299, 0x1234)]);
         let autorun_path = autorun_path_for_rom(rom_file.path());
-        save_autorun_file(&autorun_path, &file).expect("save");
+        save_autorun_file(&autorun_path, &file, AutorunFormat::Json).expect("save");
 
         let rom_path_str = rom_file.path().to_str().expect("rom path to string");
         let (mut state, _) =
-            AutorunState::new(AutorunMode::Playback, rom_path_str, false, false, None)
+            AutorunState::new(AutorunMode::Playback, rom_path_str, false, false, None, AutorunFormat::Json)
                 .expect("create state");
 
         // Consume all 300 frames
@@ -442,11 +450,11 @@ mod tests {
         let rom_file = NamedTempFile::new().expect("create temp file");
         let file = make_file_with_checkpoints(300, &[(299, 0x1234)]);
         let autorun_path = autorun_path_for_rom(rom_file.path());
-        save_autorun_file(&autorun_path, &file).expect("save");
+        save_autorun_file(&autorun_path, &file, AutorunFormat::Json).expect("save");
 
         let rom_path_str = rom_file.path().to_str().expect("rom path to string");
         let (mut state, _) =
-            AutorunState::new(AutorunMode::Playback, rom_path_str, false, false, None)
+            AutorunState::new(AutorunMode::Playback, rom_path_str, false, false, None, AutorunFormat::Json)
                 .expect("create state");
 
         for _ in 0..300 {
@@ -463,11 +471,11 @@ mod tests {
         let rom_file = NamedTempFile::new().expect("create temp file");
         let existing_file = make_file_with_checkpoints(1, &[(0, 0xABCD)]);
         let autorun_path = autorun_path_for_rom(rom_file.path());
-        save_autorun_file(&autorun_path, &existing_file).expect("save existing");
+        save_autorun_file(&autorun_path, &existing_file, AutorunFormat::Json).expect("save existing");
         assert!(autorun_path.exists());
 
         let rom_path_str = rom_file.path().to_str().expect("rom path to string");
-        let _ = AutorunState::new(AutorunMode::Record, rom_path_str, true, false, None)
+        let _ = AutorunState::new(AutorunMode::Record, rom_path_str, true, false, None, AutorunFormat::Json)
             .expect("create state with overwrite");
 
         let bak_path = autorun_path.with_extension("autorun.bak");
@@ -508,10 +516,10 @@ mod tests {
             ],
         };
         let autorun_path = autorun_path_for_rom(rom_file.path());
-        save_autorun_file(&autorun_path, &autorun_file).expect("save file");
+        save_autorun_file(&autorun_path, &autorun_file, AutorunFormat::Json).expect("save file");
 
         let rom_path_str = rom_file.path().to_str().expect("rom path to string");
-        let (state, _) = AutorunState::new(AutorunMode::Record, rom_path_str, false, true, None)
+        let (state, _) = AutorunState::new(AutorunMode::Record, rom_path_str, false, true, None, AutorunFormat::Json)
             .expect("create autorun state");
 
         assert!(state.is_extending_playback());
@@ -554,11 +562,11 @@ mod tests {
             ],
         };
         let autorun_path = autorun_path_for_rom(rom_file.path());
-        save_autorun_file(&autorun_path, &autorun_file).expect("save");
+        save_autorun_file(&autorun_path, &autorun_file, AutorunFormat::Json).expect("save");
 
         let rom_path_str = rom_file.path().to_str().expect("rom path");
         let (state, pending) =
-            AutorunState::new(AutorunMode::Record, rom_path_str, false, true, None)
+            AutorunState::new(AutorunMode::Record, rom_path_str, false, true, None, AutorunFormat::Json)
                 .expect("create state");
 
         // Should start from second-to-last checkpoint (frame 899) + 1 = 900
@@ -600,11 +608,11 @@ mod tests {
             ],
         };
         let autorun_path = autorun_path_for_rom(rom_file.path());
-        save_autorun_file(&autorun_path, &autorun_file).expect("save");
+        save_autorun_file(&autorun_path, &autorun_file, AutorunFormat::Json).expect("save");
 
         let rom_path_str = rom_file.path().to_str().expect("rom path");
         let (state, pending) =
-            AutorunState::new(AutorunMode::Playback, rom_path_str, false, false, Some(0))
+            AutorunState::new(AutorunMode::Playback, rom_path_str, false, false, Some(0), AutorunFormat::Json)
                 .expect("create state");
 
         // frame_index should be 299 + 1 = 300
@@ -618,7 +626,7 @@ mod tests {
         let rom_file = NamedTempFile::new().expect("create temp file");
         let rom_path_str = rom_file.path().to_str().expect("rom path to string");
 
-        let (state, _) = AutorunState::new(AutorunMode::Record, rom_path_str, false, false, None)
+        let (state, _) = AutorunState::new(AutorunMode::Record, rom_path_str, false, false, None, AutorunFormat::Json)
             .expect("create autorun state");
 
         assert!(!state.is_extending_playback());
@@ -640,10 +648,10 @@ mod tests {
             }],
         };
         let autorun_path = autorun_path_for_rom(rom_file.path());
-        save_autorun_file(&autorun_path, &autorun_file).expect("save file");
+        save_autorun_file(&autorun_path, &autorun_file, AutorunFormat::Json).expect("save file");
 
         let rom_path_str = rom_file.path().to_str().expect("rom path to string");
-        let (state, _) = AutorunState::new(AutorunMode::Playback, rom_path_str, false, false, None)
+        let (state, _) = AutorunState::new(AutorunMode::Playback, rom_path_str, false, false, None, AutorunFormat::Json)
             .expect("create autorun state");
 
         assert!(!state.is_extending_playback());
@@ -685,7 +693,7 @@ mod tests {
         };
         let rom_file = NamedTempFile::new().expect("create temp file");
         let autorun_path = autorun_path_for_rom(rom_file.path());
-        save_autorun_file(&autorun_path, &autorun_file).expect("save");
+        save_autorun_file(&autorun_path, &autorun_file, AutorunFormat::Json).expect("save");
         (rom_file, autorun_file)
     }
 
@@ -695,7 +703,7 @@ mod tests {
         let (rom_file, _) = make_file_with_4_checkpoints();
         let rom_path_str = rom_file.path().to_str().expect("rom path");
         let (state, pending) =
-            AutorunState::new(AutorunMode::Playback, rom_path_str, false, false, Some(-1))
+            AutorunState::new(AutorunMode::Playback, rom_path_str, false, false, Some(-1), AutorunFormat::Json)
                 .expect("create state");
 
         // Second-to-last is index 2, frame_index=2, so playback starts at frame 3
@@ -709,7 +717,7 @@ mod tests {
         let (rom_file, _) = make_file_with_4_checkpoints();
         let rom_path_str = rom_file.path().to_str().expect("rom path");
         let (state, pending) =
-            AutorunState::new(AutorunMode::Playback, rom_path_str, false, false, Some(-2))
+            AutorunState::new(AutorunMode::Playback, rom_path_str, false, false, Some(-2), AutorunFormat::Json)
                 .expect("create state");
 
         assert_eq!(state.current_frame_index(), 2);
@@ -721,7 +729,7 @@ mod tests {
         // -4 with 4 checkpoints would resolve to index -1 which is out of range
         let (rom_file, _) = make_file_with_4_checkpoints();
         let rom_path_str = rom_file.path().to_str().expect("rom path");
-        let result = AutorunState::new(AutorunMode::Playback, rom_path_str, false, false, Some(-4));
+        let result = AutorunState::new(AutorunMode::Playback, rom_path_str, false, false, Some(-4), AutorunFormat::Json);
         assert!(result.is_err(), "negative index beyond range should fail");
     }
 
@@ -743,7 +751,7 @@ mod tests {
         };
         let rom_file = NamedTempFile::new().expect("create temp file");
         let autorun_path = autorun_path_for_rom(rom_file.path());
-        save_autorun_file(&autorun_path, &autorun_file).expect("save");
+        save_autorun_file(&autorun_path, &autorun_file, AutorunFormat::Json).expect("save");
         (rom_file, autorun_file)
     }
 
@@ -755,7 +763,7 @@ mod tests {
         };
         let rom_file = NamedTempFile::new().expect("create temp file");
         let autorun_path = autorun_path_for_rom(rom_file.path());
-        save_autorun_file(&autorun_path, &autorun_file).expect("save");
+        save_autorun_file(&autorun_path, &autorun_file, AutorunFormat::Json).expect("save");
         rom_file
     }
 
@@ -766,7 +774,7 @@ mod tests {
         let (rom_file, _) = make_recording_with_single_checkpoint();
         let rom_path_str = rom_file.path().to_str().expect("rom path");
 
-        let (_, pending) = AutorunState::new(AutorunMode::Record, rom_path_str, false, true, None)
+        let (_, pending) = AutorunState::new(AutorunMode::Record, rom_path_str, false, true, None, AutorunFormat::Json)
             .expect("create extend state");
 
         assert!(
@@ -784,7 +792,7 @@ mod tests {
         let (rom_file, _) = make_recording_with_single_checkpoint();
         let rom_path_str = rom_file.path().to_str().expect("rom path");
 
-        let (state, _) = AutorunState::new(AutorunMode::Record, rom_path_str, false, true, None)
+        let (state, _) = AutorunState::new(AutorunMode::Record, rom_path_str, false, true, None, AutorunFormat::Json)
             .expect("create extend state");
 
         // CP[0].frame_index = 299, so recording starts at 300
@@ -800,7 +808,7 @@ mod tests {
         let (rom_file, _) = make_recording_with_single_checkpoint();
         let rom_path_str = rom_file.path().to_str().expect("rom path");
 
-        let (state, _) = AutorunState::new(AutorunMode::Record, rom_path_str, false, true, None)
+        let (state, _) = AutorunState::new(AutorunMode::Record, rom_path_str, false, true, None, AutorunFormat::Json)
             .expect("create extend state");
 
         assert!(
@@ -815,7 +823,7 @@ mod tests {
         let rom_path_str = rom_file.path().to_str().expect("rom path");
 
         let (state, pending) =
-            AutorunState::new(AutorunMode::Record, rom_path_str, false, true, None)
+            AutorunState::new(AutorunMode::Record, rom_path_str, false, true, None, AutorunFormat::Json)
                 .expect("create extend state");
 
         assert!(
@@ -832,7 +840,7 @@ mod tests {
         let rom_file = NamedTempFile::new().expect("create temp file");
         let rom_path_str = rom_file.path().to_str().expect("rom path");
         let (mut state, _) =
-            AutorunState::new(AutorunMode::Record, rom_path_str, false, false, None)
+            AutorunState::new(AutorunMode::Record, rom_path_str, false, false, None, AutorunFormat::Json)
                 .expect("create state");
 
         state.begin_frame();
@@ -855,11 +863,11 @@ mod tests {
             }],
         };
         let autorun_path = autorun_path_for_rom(rom_file.path());
-        save_autorun_file(&autorun_path, &autorun_file).expect("save");
+        save_autorun_file(&autorun_path, &autorun_file, AutorunFormat::Json).expect("save");
 
         let rom_path_str = rom_file.path().to_str().expect("rom path");
         let (mut state, _) =
-            AutorunState::new(AutorunMode::Playback, rom_path_str, false, false, None)
+            AutorunState::new(AutorunMode::Playback, rom_path_str, false, false, None, AutorunFormat::Json)
                 .expect("create state");
 
         state.begin_frame();
@@ -881,11 +889,11 @@ mod tests {
             checkpoints: vec![],
         };
         let autorun_path = autorun_path_for_rom(rom_file.path());
-        save_autorun_file(&autorun_path, &autorun_file).expect("save");
+        save_autorun_file(&autorun_path, &autorun_file, AutorunFormat::Json).expect("save");
 
         let rom_path_str = rom_file.path().to_str().expect("rom path");
         let (mut state, _) =
-            AutorunState::new(AutorunMode::Playback, rom_path_str, false, false, None)
+            AutorunState::new(AutorunMode::Playback, rom_path_str, false, false, None, AutorunFormat::Json)
                 .expect("create state");
 
         state.begin_frame();

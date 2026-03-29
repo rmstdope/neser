@@ -6,6 +6,7 @@
 //! 2. Config file (neser.conf)
 //! 3. Default values
 
+use crate::autorun::AutorunFormat;
 use crate::console::TimingMode;
 use crate::debugging::Tracing;
 use crate::debugging::breakpoints::BreakpointKind;
@@ -333,6 +334,13 @@ const CLI_FLAGS: &[CliFlag] = &[
         has_value: false,
     },
     CliFlag {
+        flag: "--autorun-format",
+        help: Some(
+            "Serialization format for autorun files: binary (default) or json",
+        ),
+        has_value: true,
+    },
+    CliFlag {
         flag: "--ram-init-mode",
         help: Some("RAM initialization mode: zero, random, or seeded-random:SEED (default: zero)"),
         has_value: true,
@@ -400,6 +408,7 @@ const OPTIONAL_BOOL_FLAGS: &[&str] = &[
     "--scan-cartridges",
     "--convert-autorun",
     "--recalculate-autorun",
+    "--autorun-format",
 ];
 
 /// Result of parsing command-line arguments.
@@ -598,6 +607,8 @@ pub struct Config {
     pub autorun_convert: bool,
     /// Recalculate checkpoint CRCs in an existing autorun file and exit (no emulation).
     pub autorun_recalculate: bool,
+    /// Serialization format used when saving autorun files (default: binary).
+    pub autorun_format: AutorunFormat,
     /// RAM initialization mode (config key: `ram_init_mode`).
     ///
     /// Controls how all emulated RAM is initialized on power-on/hard reset:
@@ -744,6 +755,7 @@ impl Default for Config {
             autorun_trim_checkpoints: None,
             autorun_convert: false,
             autorun_recalculate: false,
+            autorun_format: AutorunFormat::Binary,
             // Use Zero for WASM to avoid issues with getrandom in test environments
             #[cfg(target_arch = "wasm32")]
             ram_init_mode: RamInitMode::Zero,
@@ -1340,6 +1352,18 @@ impl Config {
             Self::parse_bool_arg(args, "--recalculate-autorun")?
         {
             self.autorun_recalculate = recalculate_autorun_requested;
+        }
+
+        if let Some(format_str) = Self::parse_string_arg(args, "--autorun-format") {
+            self.autorun_format = match format_str.as_str() {
+                "binary" => AutorunFormat::Binary,
+                "json" => AutorunFormat::Json,
+                other => {
+                    return Err(format!(
+                        "Unknown autorun format '{other}': expected 'binary' or 'json'"
+                    ));
+                }
+            };
         }
 
         if self.autorun_trim_checkpoints.is_some() && self.autorun_convert {
@@ -5171,6 +5195,49 @@ filter=invalid-shader
         assert_eq!(
             ExpansionPort::parse("powerpad"),
             Some(ExpansionPort::PowerPadFamicom)
+        );
+    }
+
+    #[test]
+    fn test_autorun_format_default_is_binary() {
+        let config = Config::default();
+        assert_eq!(config.autorun_format, AutorunFormat::Binary);
+    }
+
+    #[test]
+    fn test_autorun_format_cli_binary() {
+        let args = vec![
+            "neser".to_string(),
+            "--autorun-format".to_string(),
+            "binary".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.autorun_format, AutorunFormat::Binary);
+    }
+
+    #[test]
+    fn test_autorun_format_cli_json() {
+        let args = vec![
+            "neser".to_string(),
+            "--autorun-format".to_string(),
+            "json".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.autorun_format, AutorunFormat::Json);
+    }
+
+    #[test]
+    fn test_autorun_format_cli_unknown_value_returns_error() {
+        let args = vec![
+            "neser".to_string(),
+            "--autorun-format".to_string(),
+            "xml".to_string(),
+        ];
+        let result = Config::new(&args);
+        assert!(result.is_err(), "unknown format should return an error");
+        assert!(
+            result.unwrap_err().contains("xml"),
+            "error should mention the unknown format"
         );
     }
 }

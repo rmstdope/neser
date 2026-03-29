@@ -1,4 +1,4 @@
-use super::types::{AUTORUN_VERSION, AutorunCheckpoint, AutorunFile, AutorunFrame};
+use super::types::{AUTORUN_VERSION, AutorunCheckpoint, AutorunFile, AutorunFrame, AutorunFormat};
 use crate::cartridge::calculate_rom_crc32;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -31,6 +31,22 @@ struct AutorunFileV2 {
     version: u32,
     frames: Vec<AutorunFrame>,
     checkpoints: Vec<AutorunCheckpoint>,
+}
+
+/// Body of a binary autorun file (postcard-encoded, after the magic header).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct AutorunFileBinaryBody {
+    frames: Vec<AutorunRleFrame>,
+    checkpoints: Vec<AutorunCheckpointBinary>,
+}
+
+/// A checkpoint in the binary autorun format.
+/// `state_bytes` contains a postcard-encoded `SaveState` (or is empty when no state was saved).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct AutorunCheckpointBinary {
+    frame_index: u32,
+    screen_crc: u32,
+    state_bytes: Vec<u8>,
 }
 
 fn build_rle_frame(frame: &AutorunFrame, repeat_count: u32) -> AutorunRleFrame {
@@ -148,11 +164,21 @@ pub fn trim_recording(file: &mut AutorunFile, n: usize) {
     file.frames.truncate(frame_limit);
 }
 
-pub fn save_autorun_file(path: &Path, file: &AutorunFile) -> Result<(), String> {
+/// Magic header bytes that identify a binary autorun file.
+pub const BINARY_MAGIC: &[u8; 6] = b"NESRA3";
+
+pub fn save_autorun_file(path: &Path, file: &AutorunFile, format: AutorunFormat) -> Result<(), String> {
     if file.version != AUTORUN_VERSION {
         return Err(format!("Unsupported autorun version: {}", file.version));
     }
 
+    match format {
+        AutorunFormat::Json => save_autorun_file_json(path, file),
+        AutorunFormat::Binary => save_autorun_file_binary(path, file),
+    }
+}
+
+fn save_autorun_file_json(path: &Path, file: &AutorunFile) -> Result<(), String> {
     let encoded_file = AutorunFileV3Ser {
         version: AUTORUN_VERSION,
         frames: encode_rle_frames(&file.frames),
@@ -161,6 +187,52 @@ pub fn save_autorun_file(path: &Path, file: &AutorunFile) -> Result<(), String> 
 
     let data = serde_json::to_vec_pretty(&encoded_file)
         .map_err(|e| format!("Failed to serialize autorun file: {e}"))?;
+    write_autorun_bytes(path, data)
+}
+
+fn encode_checkpoint_to_binary(cp: &AutorunCheckpoint) -> Result<AutorunCheckpointBinary, String> {
+    use crate::console::SaveState;
+
+    let state_bytes = if cp.state_bytes.is_empty() {
+        Vec::new()
+    } else {
+        let state = SaveState::from_bytes(&cp.state_bytes)
+            .map_err(|e| format!("Failed to deserialize checkpoint state: {e}"))?;
+        state
+            .to_binary_bytes()
+            .map_err(|e| format!("Failed to serialize checkpoint state as binary: {e}"))?
+    };
+
+    Ok(AutorunCheckpointBinary {
+        frame_index: cp.frame_index,
+        screen_crc: cp.screen_crc,
+        state_bytes,
+    })
+}
+
+fn save_autorun_file_binary(path: &Path, file: &AutorunFile) -> Result<(), String> {
+    let checkpoints = file
+        .checkpoints
+        .iter()
+        .map(encode_checkpoint_to_binary)
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let body = AutorunFileBinaryBody {
+        frames: encode_rle_frames(&file.frames),
+        checkpoints,
+    };
+
+    let payload = postcard::to_allocvec(&body)
+        .map_err(|e| format!("Failed to serialize binary autorun: {e}"))?;
+
+    let mut data = Vec::with_capacity(BINARY_MAGIC.len() + payload.len());
+    data.extend_from_slice(BINARY_MAGIC);
+    data.extend_from_slice(&payload);
+
+    write_autorun_bytes(path, data)
+}
+
+fn write_autorun_bytes(path: &Path, data: Vec<u8>) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("Failed to create autorun directory: {e}"))?;
@@ -173,10 +245,57 @@ pub fn load_autorun_file(path: &Path) -> Result<AutorunFile, String> {
     let data = std::fs::read(path)
         .map_err(|e| format!("Failed to read autorun file {}: {e}", path.display()))?;
 
+    if data.starts_with(BINARY_MAGIC) {
+        return load_autorun_file_binary(&data);
+    }
+
+    load_autorun_file_json(&data)
+}
+
+fn decode_checkpoint_from_binary(cp: AutorunCheckpointBinary) -> Result<AutorunCheckpoint, String> {
+    use crate::console::SaveState;
+
+    let state_bytes = if cp.state_bytes.is_empty() {
+        Vec::new()
+    } else {
+        let state = SaveState::from_binary_bytes(&cp.state_bytes)
+            .map_err(|e| format!("Failed to deserialize checkpoint state from binary: {e}"))?;
+        state
+            .to_bytes()
+            .map_err(|e| format!("Failed to serialize checkpoint state as JSON: {e}"))?
+    };
+
+    Ok(AutorunCheckpoint {
+        frame_index: cp.frame_index,
+        screen_crc: cp.screen_crc,
+        state_bytes,
+    })
+}
+
+fn load_autorun_file_binary(data: &[u8]) -> Result<AutorunFile, String> {
+    let payload = &data[BINARY_MAGIC.len()..];
+    let body: AutorunFileBinaryBody = postcard::from_bytes(payload)
+        .map_err(|e| format!("Failed to deserialize binary autorun file: {e}"))?;
+
+    let frames = decode_rle_frames(&body.frames)?;
+    let checkpoints = body
+        .checkpoints
+        .into_iter()
+        .map(decode_checkpoint_from_binary)
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(AutorunFile {
+        version: AUTORUN_VERSION,
+        frames,
+        checkpoints,
+    })
+}
+
+fn load_autorun_file_json(data: &[u8]) -> Result<AutorunFile, String> {
     // Parse the JSON once into a generic Value so we can inspect the version field and then
     // re-use the same in-memory representation for the version-specific deserialization —
     // avoiding a second scan of the raw bytes.
-    let json_value: serde_json::Value = serde_json::from_slice(&data)
+    let json_value: serde_json::Value = serde_json::from_slice(data)
         .map_err(|e| format!("Failed to deserialize autorun file: {e}"))?;
 
     let version = json_value["version"]
@@ -207,13 +326,13 @@ pub fn load_autorun_file(path: &Path) -> Result<AutorunFile, String> {
     }
 }
 
-pub fn convert_autorun_file(path: &Path) -> Result<(), String> {
+pub fn convert_autorun_file(path: &Path, target_format: AutorunFormat) -> Result<(), String> {
     if !path.exists() {
         return Err(format!("Autorun file not found: {}", path.display()));
     }
 
     let autorun_file = load_autorun_file(path)?;
-    save_autorun_file(path, &autorun_file)
+    save_autorun_file(path, &autorun_file, target_format)
 }
 
 #[cfg(test)]
@@ -244,6 +363,25 @@ mod tests {
                     state_bytes: vec![],
                 },
             ],
+        }
+    }
+
+    /// Build a sample AutorunFile with many repeated frames (good for size comparison)
+    /// and empty state_bytes (valid for binary roundtrip without a real NES).
+    fn sample_large_file() -> AutorunFile {
+        AutorunFile {
+            version: AUTORUN_VERSION,
+            frames: (0..3000)
+                .map(|i| AutorunFrame {
+                    player1: if i < 2990 { 0 } else { 1 },
+                    player2: 0,
+                })
+                .collect(),
+            checkpoints: vec![AutorunCheckpoint {
+                frame_index: 299,
+                screen_crc: 0xABCDEF01,
+                state_bytes: vec![],
+            }],
         }
     }
 
@@ -282,10 +420,104 @@ mod tests {
             }],
         };
 
-        save_autorun_file(temp.path(), &file).expect("save autorun file");
+        save_autorun_file(temp.path(), &file, AutorunFormat::Json).expect("save autorun file");
         let loaded = load_autorun_file(temp.path()).expect("load autorun file");
 
         assert_eq!(loaded, file);
+    }
+
+    #[test]
+    fn test_save_binary_and_load_roundtrip() {
+        let temp = NamedTempFile::new().expect("create temp file");
+        let file = AutorunFile {
+            version: AUTORUN_VERSION,
+            frames: vec![
+                AutorunFrame {
+                    player1: 0b0000_0001,
+                    player2: 0b0001_0000,
+                },
+                AutorunFrame {
+                    player1: 0b0000_0010,
+                    player2: 0b0010_0000,
+                },
+                AutorunFrame {
+                    player1: 0b0000_0010,
+                    player2: 0b0010_0000,
+                },
+            ],
+            checkpoints: vec![AutorunCheckpoint {
+                frame_index: 2,
+                screen_crc: 0xDEADBEEF,
+                state_bytes: vec![],
+            }],
+        };
+
+        save_autorun_file(temp.path(), &file, AutorunFormat::Binary)
+            .expect("save binary autorun file");
+        let loaded = load_autorun_file(temp.path()).expect("load binary autorun file");
+
+        assert_eq!(loaded, file);
+    }
+
+    #[test]
+    fn test_binary_file_starts_with_magic_header() {
+        let temp = NamedTempFile::new().expect("create temp file");
+        let file = sample_large_file();
+
+        save_autorun_file(temp.path(), &file, AutorunFormat::Binary).expect("save binary");
+
+        let raw = std::fs::read(temp.path()).expect("read binary file");
+        assert!(
+            raw.starts_with(BINARY_MAGIC),
+            "binary file should start with NESRA3 magic, got {:?}",
+            &raw[..BINARY_MAGIC.len().min(raw.len())]
+        );
+    }
+
+    #[test]
+    fn test_load_auto_detects_binary_format() {
+        let temp = NamedTempFile::new().expect("create temp file");
+        let file = sample_large_file();
+
+        save_autorun_file(temp.path(), &file, AutorunFormat::Binary).expect("save binary");
+        let loaded = load_autorun_file(temp.path()).expect("auto-detect binary load");
+
+        assert_eq!(loaded.version, AUTORUN_VERSION);
+        assert_eq!(loaded.frames.len(), file.frames.len());
+    }
+
+    #[test]
+    fn test_load_auto_detects_json_format() {
+        let temp = NamedTempFile::new().expect("create temp file");
+        let file = sample_large_file();
+
+        save_autorun_file(temp.path(), &file, AutorunFormat::Json).expect("save json");
+        let loaded = load_autorun_file(temp.path()).expect("auto-detect json load");
+
+        assert_eq!(loaded.version, AUTORUN_VERSION);
+        assert_eq!(loaded.frames.len(), file.frames.len());
+    }
+
+    #[test]
+    fn test_binary_file_is_smaller_than_json() {
+        let temp_bin = NamedTempFile::new().expect("create temp file");
+        let temp_json = NamedTempFile::new().expect("create temp file");
+        let file = sample_large_file();
+
+        save_autorun_file(temp_bin.path(), &file, AutorunFormat::Binary).expect("save binary");
+        save_autorun_file(temp_json.path(), &file, AutorunFormat::Json).expect("save json");
+
+        let binary_size = std::fs::metadata(temp_bin.path())
+            .expect("get binary size")
+            .len();
+        let json_size = std::fs::metadata(temp_json.path())
+            .expect("get json size")
+            .len();
+
+        assert!(
+            binary_size < json_size,
+            "binary ({binary_size} bytes) should be smaller than JSON ({json_size} bytes)"
+        );
     }
 
     #[test]
@@ -381,7 +613,7 @@ mod tests {
             checkpoints: vec![],
         };
 
-        save_autorun_file(temp.path(), &file).expect("save autorun file");
+        save_autorun_file(temp.path(), &file, AutorunFormat::Json).expect("save autorun file");
         let raw = std::fs::read_to_string(temp.path()).expect("read saved file as text");
         let parsed: serde_json::Value = serde_json::from_str(&raw).expect("parse saved json");
 
@@ -489,7 +721,7 @@ mod tests {
     fn test_convert_autorun_file_fails_when_source_file_missing() {
         let temp_dir = tempfile::TempDir::new().expect("create temp dir");
         let missing_path = temp_dir.path().join("missing.autorun");
-        let result = convert_autorun_file(&missing_path);
+        let result = convert_autorun_file(&missing_path, AutorunFormat::Binary);
         assert!(
             result.is_err(),
             "conversion should fail when file is missing"
@@ -514,7 +746,7 @@ mod tests {
         )
         .expect("write v2 autorun");
 
-        convert_autorun_file(temp.path()).expect("convert file");
+        convert_autorun_file(temp.path(), AutorunFormat::Json).expect("convert file");
 
         let parsed: serde_json::Value =
             serde_json::from_slice(&std::fs::read(temp.path()).expect("read converted file"))
@@ -522,5 +754,54 @@ mod tests {
         assert_eq!(parsed["version"], json!(AUTORUN_VERSION));
         assert_eq!(parsed["frames"].as_array().map(Vec::len), Some(2));
         assert_eq!(parsed["frames"][0]["repeat"], json!(2));
+    }
+
+    #[test]
+    fn test_convert_json_to_binary_format() {
+        let temp = NamedTempFile::new().expect("create temp file");
+        let file = sample_large_file();
+
+        // Start with a JSON file
+        save_autorun_file(temp.path(), &file, AutorunFormat::Json).expect("save json");
+        assert!(
+            !std::fs::read(temp.path())
+                .unwrap()
+                .starts_with(BINARY_MAGIC),
+            "should start as JSON"
+        );
+
+        // Convert to binary
+        convert_autorun_file(temp.path(), AutorunFormat::Binary).expect("convert to binary");
+
+        let raw = std::fs::read(temp.path()).expect("read converted file");
+        assert!(
+            raw.starts_with(BINARY_MAGIC),
+            "converted file should start with binary magic"
+        );
+    }
+
+    #[test]
+    fn test_convert_binary_to_json_format() {
+        let temp = NamedTempFile::new().expect("create temp file");
+        let file = sample_large_file();
+
+        // Start with a binary file
+        save_autorun_file(temp.path(), &file, AutorunFormat::Binary).expect("save binary");
+        assert!(
+            std::fs::read(temp.path())
+                .unwrap()
+                .starts_with(BINARY_MAGIC),
+            "should start as binary"
+        );
+
+        // Convert to JSON
+        convert_autorun_file(temp.path(), AutorunFormat::Json).expect("convert to json");
+
+        let raw = std::fs::read(temp.path()).expect("read converted file");
+        assert!(
+            !raw.starts_with(BINARY_MAGIC),
+            "converted file should no longer have binary magic"
+        );
+        assert_eq!(raw[0], b'{', "converted file should start with JSON object");
     }
 }

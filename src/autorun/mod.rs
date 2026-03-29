@@ -1,10 +1,11 @@
 pub use types::{
-    AUTORUN_VERSION, AutorunCheckpoint, AutorunFile, AutorunFrame, CHECKPOINT_INTERVAL_FRAMES,
+    AUTORUN_VERSION, AutorunCheckpoint, AutorunFile, AutorunFormat, AutorunFrame,
+    CHECKPOINT_INTERVAL_FRAMES,
 };
 #[allow(unused_imports)]
 pub use utils::{
-    autorun_path_for_rom, backup_autorun_file, convert_autorun_file, crc32, load_autorun_file,
-    save_autorun_file, trim_recording,
+    BINARY_MAGIC, autorun_path_for_rom, backup_autorun_file, convert_autorun_file, crc32,
+    load_autorun_file, save_autorun_file, trim_recording,
 };
 pub mod headless_playback;
 

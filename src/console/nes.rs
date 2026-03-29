@@ -82,6 +82,16 @@ impl SaveState {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, serde_json::Error> {
         serde_json::from_slice(bytes)
     }
+
+    /// Serialize the save state to compact binary (postcard) bytes.
+    pub fn to_binary_bytes(&self) -> Result<Vec<u8>, postcard::Error> {
+        postcard::to_allocvec(self)
+    }
+
+    /// Deserialize a save state from compact binary (postcard) bytes.
+    pub fn from_binary_bytes(bytes: &[u8]) -> Result<Self, postcard::Error> {
+        postcard::from_bytes(bytes)
+    }
 }
 
 const MAX_CPU_TRACE_LINES: usize = 512;
@@ -2426,6 +2436,61 @@ mod tests {
         assert_eq!(restored.version, state.version);
         assert_eq!(restored.cpu.x, state.cpu.x);
         assert_eq!(restored.cpu.y, state.cpu.y);
+    }
+
+    #[test]
+    fn test_savestate_binary_bytes_roundtrip() {
+        let rom_data = create_minimal_nrom_rom();
+        let cartridge = load_test_cartridge(&rom_data);
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+        for _ in 0..100 {
+            nes.run_cpu_tick();
+        }
+
+        let state = nes.save_state();
+        let bytes = state
+            .to_binary_bytes()
+            .expect("binary serialization should succeed");
+        let restored =
+            SaveState::from_binary_bytes(&bytes).expect("binary deserialization should succeed");
+
+        assert_eq!(restored.version, state.version);
+        assert_eq!(restored.cpu.a, state.cpu.a);
+        assert_eq!(restored.cpu.x, state.cpu.x);
+        assert_eq!(restored.cpu.y, state.cpu.y);
+        assert_eq!(restored.ppu.timing.scanline, state.ppu.timing.scanline);
+        assert_eq!(restored.ram, state.ram);
+    }
+
+    #[test]
+    fn test_savestate_binary_bytes_are_smaller_than_json() {
+        let rom_data = create_minimal_nrom_rom();
+        let cartridge = load_test_cartridge(&rom_data);
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+        for _ in 0..100 {
+            nes.run_cpu_tick();
+        }
+
+        let state = nes.save_state();
+        let json_bytes = state.to_bytes().expect("json serialization should succeed");
+        let binary_bytes = state
+            .to_binary_bytes()
+            .expect("binary serialization should succeed");
+
+        assert!(
+            binary_bytes.len() < json_bytes.len(),
+            "binary ({} bytes) should be smaller than JSON ({} bytes)",
+            binary_bytes.len(),
+            json_bytes.len()
+        );
     }
 
     #[test]
