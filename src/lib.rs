@@ -26,3 +26,5 @@ pub mod integration_tests;
 pub mod rendering;
 #[cfg(feature = "sdl")]
 pub mod sdl_frontend;
+#[cfg(feature = "tui")]
+pub mod tui_frontend;
