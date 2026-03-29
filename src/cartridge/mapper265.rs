@@ -17,7 +17,9 @@
 //!
 //! If NOT locked:
 //!   - `_base  = ((addr & 0x60) >> 2) | ((addr & 0x100) >> 3)`
-//!     (addr bits [6:5] → result bits [4:3]; addr bit [8] → result bit [5])
+//!     Addr bits [6:5] are placed into base bits [4:3];
+//!     addr bit [8] is placed into base bit [5].
+//!     All other base bits remain zero.
 //!   - `_mode   = (addr & 0x80) != 0`
 //!   - `_locked = (addr & 0x2000) != 0`
 //!   - Mirroring: addr bit 1 set → Horizontal, else Vertical
@@ -50,6 +52,13 @@ pub struct Mapper265 {
     mode: bool,
 }
 
+/// PRG bank index written to slot 1 when `_mode` is false.
+///
+/// This is the final bank within each 8-bank "group" (bank index 7 within
+/// the group selected by `_base`), effectively pinning $C000–$FFFF to
+/// the last bank of the current outer-bank set.
+const FIXED_SLOT1_BANK: u8 = 7;
+
 impl Mapper265 {
     pub fn new(ctx: MapperContext) -> Self {
         let capabilities = MapperCapabilities {
@@ -75,7 +84,12 @@ impl Mapper265 {
 
     fn apply_banking(&mut self) {
         let p0 = (self.base_prg | self.bank) as i16;
-        let p1 = (self.base_prg | (if self.mode { self.bank } else { 7 })) as i16;
+        let slot1_bank = if self.mode {
+            self.bank
+        } else {
+            FIXED_SLOT1_BANK
+        };
+        let p1 = (self.base_prg | slot1_bank) as i16;
         self.base.select_prg_page(0, p0);
         self.base.select_prg_page(1, p1);
         self.base.select_chr_page(0, 0);
@@ -99,7 +113,9 @@ impl Mapper for Mapper265 {
             return;
         }
         if !self.locked {
-            self.base_prg = (((addr & 0x60) >> 2) | ((addr & 0x100) >> 3)) as u8;
+            let bits_6_5 = (addr & 0x60) >> 2; // addr bits [6:5] → base bits [4:3]
+            let bit_8 = (addr & 0x100) >> 3; // addr bit [8] → base bit [5]
+            self.base_prg = (bits_6_5 | bit_8) as u8;
             self.mode = (addr & 0x80) != 0;
             self.locked = (addr & 0x2000) != 0;
             let mirroring = if (addr & 0x02) != 0 {
