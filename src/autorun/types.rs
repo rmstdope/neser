@@ -37,9 +37,41 @@ pub struct AutorunFile {
     pub checkpoints: Vec<AutorunCheckpoint>,
 }
 
+/// The serialization format for autorun files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutorunFormat {
+    Binary,
+    Json,
+}
+
+impl Default for AutorunFormat {
+    fn default() -> Self {
+        Self::Binary
+    }
+}
+
+impl std::fmt::Display for AutorunFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Binary => write!(f, "binary"),
+            Self::Json => write!(f, "json"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_autorun_format_default_is_binary() {
+        assert_eq!(AutorunFormat::default(), AutorunFormat::Binary);
+    }
+
+    #[test]
+    fn test_autorun_format_variants_are_distinct() {
+        assert_ne!(AutorunFormat::Binary, AutorunFormat::Json);
+    }
 
     #[test]
     fn test_autorun_version_is_3() {

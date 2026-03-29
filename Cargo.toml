@@ -29,6 +29,7 @@ rand = "0.9.2"
 ringbuf = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+postcard = { version = "1", features = ["alloc"] }
 sdl2 = { version = "0.37", optional = true, features = ["ttf"] }
 winit = "0.28"
 gl = { version = "0.14", optional = true }

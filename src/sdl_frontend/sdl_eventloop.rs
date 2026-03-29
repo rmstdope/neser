@@ -543,6 +543,7 @@ impl SdlEventLoop {
     /// * `from_checkpoint` - In `Playback` mode: start playback from this checkpoint index
     ///   (negative = from end, -1 = second-to-last, etc.).
     /// * `nes` - The NES instance; used to restore saved state when starting from a checkpoint.
+    /// * `format` - The serialization format (`Binary` or `Json`) to use when writing the `.autorun` file.
     pub fn init_autorun(
         &mut self,
         mode: AutorunMode,
@@ -551,10 +552,11 @@ impl SdlEventLoop {
         extend: bool,
         from_checkpoint: Option<i64>,
         nes: &mut Nes,
+        format: crate::autorun::AutorunFormat,
     ) -> Result<(), String> {
         if mode != AutorunMode::None {
             let (state, pending) =
-                AutorunState::new(mode, rom_path, overwrite, extend, from_checkpoint)?;
+                AutorunState::new(mode, rom_path, overwrite, extend, from_checkpoint, format)?;
             if let Some(restore) = pending {
                 let save_state = crate::console::SaveState::from_bytes(&restore.state_bytes)
                     .map_err(|e| format!("Failed to deserialize checkpoint state: {e}"))?;
