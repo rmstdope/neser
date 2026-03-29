@@ -324,6 +324,7 @@ mod tests {
                 path: PathBuf::from(format!("/roms/{n}.nes")),
                 display_name: n.to_string(),
                 search_key: n.to_lowercase(),
+                mapper_label: "0".to_string(),
                 mapper: Some(0),
                 hardware: Some("NES NTSC".to_string()),
                 crc: Some("DEADBEEF".to_string()),

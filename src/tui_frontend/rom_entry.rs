@@ -11,6 +11,8 @@ pub struct RomEntry {
     pub display_name: String,
     /// Pre-computed lowercase version of `display_name` used for fast case-insensitive filtering.
     pub search_key: String,
+    /// Pre-computed mapper label (e.g. "4" or "-") to avoid per-frame allocations.
+    pub mapper_label: String,
     /// Mapper number parsed from the iNES header.
     pub mapper: Option<u16>,
     /// Hardware type (e.g. NES NTSC, Famicom, VS System) from ROM DB or header.
@@ -27,14 +29,6 @@ impl RomEntry {
         self.hardware.as_deref().unwrap_or("-")
     }
 
-    /// Return a mapper label suitable for display in a table column.
-    pub fn mapper_label(&self) -> String {
-        match self.mapper {
-            Some(m) => m.to_string(),
-            None => "-".to_string(),
-        }
-    }
-
     /// Return a CRC label suitable for display in a table column.
     pub fn crc_label(&self) -> &str {
         self.crc.as_deref().unwrap_or("-")
@@ -48,10 +42,12 @@ mod tests {
     fn make_entry(mapper: Option<u16>, hardware: Option<&str>, crc: Option<&str>) -> RomEntry {
         let display_name = "Test ROM".to_string();
         let search_key = display_name.to_lowercase();
+        let mapper_label = mapper.map_or_else(|| "-".to_string(), |m| m.to_string());
         RomEntry {
             path: PathBuf::from("/roms/test.nes"),
             display_name,
             search_key,
+            mapper_label,
             mapper,
             hardware: hardware.map(str::to_string),
             crc: crc.map(str::to_string),
@@ -74,13 +70,13 @@ mod tests {
     #[test]
     fn test_mapper_label_present() {
         let entry = make_entry(Some(4), None, None);
-        assert_eq!(entry.mapper_label(), "4");
+        assert_eq!(entry.mapper_label, "4");
     }
 
     #[test]
     fn test_mapper_label_absent() {
         let entry = make_entry(None, None, None);
-        assert_eq!(entry.mapper_label(), "-");
+        assert_eq!(entry.mapper_label, "-");
     }
 
     #[test]

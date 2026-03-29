@@ -77,6 +77,7 @@ pub(super) fn build_rom_entry(path: &Path, rom_db: &RomDb) -> RomEntry {
     RomEntry {
         path: path.to_path_buf(),
         search_key: display_name.to_lowercase(),
+        mapper_label: mapper.map_or_else(|| "-".to_string(), |m| m.to_string()),
         display_name,
         mapper,
         hardware: Some(hardware_label(hardware)),
@@ -90,6 +91,7 @@ fn unreadable_entry(path: &Path) -> RomEntry {
     RomEntry {
         path: path.to_path_buf(),
         search_key: display_name.to_lowercase(),
+        mapper_label: "-".to_string(),
         display_name,
         mapper: None,
         hardware: None,
@@ -103,6 +105,7 @@ fn invalid_entry(path: &Path) -> RomEntry {
     RomEntry {
         path: path.to_path_buf(),
         search_key: display_name.to_lowercase(),
+        mapper_label: "-".to_string(),
         display_name,
         mapper: None,
         hardware: None,

@@ -162,7 +162,7 @@ impl RomList {
                 let e = &self.all[i];
                 Row::new([
                     Cell::from(e.display_name.as_str()),
-                    Cell::from(e.mapper_label()),
+                    Cell::from(e.mapper_label.as_str()),
                     Cell::from(e.hardware_label()),
                     Cell::from(e.crc_label()),
                 ])
@@ -201,6 +201,7 @@ mod tests {
                 path: PathBuf::from(format!("/roms/{n}.nes")),
                 display_name: n.to_string(),
                 search_key: n.to_lowercase(),
+                mapper_label: "0".to_string(),
                 mapper: Some(0),
                 hardware: Some("NES NTSC".to_string()),
                 crc: Some("DEADBEEF".to_string()),
@@ -311,6 +312,7 @@ mod tests {
             path: rom_path.clone(),
             display_name: "Test".to_string(),
             search_key: "test".to_string(),
+            mapper_label: "0".to_string(),
             mapper: Some(0),
             hardware: None,
             crc: None,

@@ -5199,10 +5199,26 @@ filter=invalid-shader
         assert!(!config.tui_mode, "tui_mode should default to false");
     }
 
+    #[cfg(feature = "tui")]
     #[test]
     fn test_tui_flag_sets_tui_mode_true() {
         let config = parse_config(vec!["neser".to_string(), "--tui".to_string()]);
         assert!(config.tui_mode, "--tui flag should set tui_mode to true");
+    }
+
+    #[cfg(not(feature = "tui"))]
+    #[test]
+    fn test_tui_flag_errors_without_tui_feature() {
+        let result = Config::new(&["neser".to_string(), "--tui".to_string()]);
+        assert!(
+            result.is_err(),
+            "--tui should return an error when tui feature is not enabled"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("tui"),
+            "error message should mention 'tui': {err}"
+        );
     }
 
     #[test]
