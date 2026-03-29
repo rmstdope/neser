@@ -518,9 +518,11 @@ mod tests {
             .expect("get json size")
             .len();
 
+        let ratio = binary_size as f64 / json_size as f64;
         assert!(
-            binary_size < json_size,
-            "binary ({binary_size} bytes) should be smaller than JSON ({json_size} bytes)"
+            ratio <= 0.25,
+            "binary ({binary_size} bytes) should be <=25% of JSON ({json_size} bytes), got {:.1}%",
+            ratio * 100.0
         );
     }
 

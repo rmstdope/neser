@@ -50,6 +50,15 @@ impl Default for AutorunFormat {
     }
 }
 
+impl std::fmt::Display for AutorunFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Binary => write!(f, "binary"),
+            Self::Json => write!(f, "json"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

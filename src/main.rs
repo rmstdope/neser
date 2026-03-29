@@ -80,7 +80,8 @@ fn convert_autorun_for_rom(rom_path: &str, format: AutorunFormat) -> Result<Stri
 
     convert_autorun_file(&path, format)?;
     Ok(format!(
-        "Converted autorun file to version {}: {}",
+        "Converted autorun file to {} format (version {}): {}",
+        format,
         AUTORUN_VERSION,
         path.display()
     ))
