@@ -38,7 +38,7 @@ pub struct AutorunFile {
 }
 
 /// The serialization format for autorun files.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AutorunFormat {
     Binary,
     Json,
