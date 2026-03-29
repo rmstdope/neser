@@ -4136,6 +4136,250 @@ mod tests {
         );
     }
 
+    /// Helper: create an MMC5 mapper configured for split-screen tile-index testing.
+    ///
+    /// Sets up ExRAM mode 0 (nametable), left split with threshold 4,
+    /// CHR mode 1 (4KB), split CHR bank 2, and writes marker values into ExRAM
+    /// at given offsets so that `read_nametable` returns a distinguishable tile index.
+    fn setup_mmc5_split_with_exram_markers(
+        exram_writes: &[(u16, u8)],
+        split_scroll: u8,
+    ) -> Box<dyn Mapper> {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(4 * 1024, 8);
+
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+
+        // ExRAM mode 0 (nametable mode) — required for split to work (mode < 2).
+        mapper.write_prg(0x5104, 0x00);
+
+        // CHR mode 1 (4KB), normal CHR bank 1, split CHR bank 2.
+        mapper.write_prg(0x5101, 0x01);
+        mapper.write_prg(0x5123, 1);
+        mapper.write_prg(0x5202, 2);
+
+        // Enable left split, threshold 4.
+        mapper.write_prg(0x5200, 0x80 | 4);
+
+        // Write marker values into ExRAM.
+        for &(offset, value) in exram_writes {
+            mapper.write_prg(0x5C00 + offset, value);
+        }
+
+        // Set split scroll.
+        mapper.write_prg(0x5201, split_scroll);
+
+        // Enable rendering + configure for BG tile fetches.
+        mapper.ppu_write_mask(0x08);
+        mapper.ppu_set_chr_fetch_is_sprite(false);
+
+        mapper
+    }
+
+    #[test]
+    fn test_mmc5_split_scroll_0_scanline_0_reads_from_row_0() {
+        // Baseline: split_scroll=0, scanline=0 → coarse_y=0, fine_y=0.
+        // Should read from ExRAM offset (0*32)+2 = 2.
+
+        let marker = 0x11;
+        let mut mapper = setup_mmc5_split_with_exram_markers(&[(0x002, marker)], 0);
+
+        mapper.ppu_scanline(0, true);
+        let tile = mapper.read_nametable(0x2000);
+        assert_eq!(
+            tile,
+            Some(marker),
+            "split_scroll=0 + scanline=0 should read from coarse_y=0 (ExRAM offset $002)"
+        );
+    }
+
+    #[test]
+    fn test_mmc5_split_scroll_1_plus_239_wraps_at_240_to_row_0() {
+        // split_scroll=1, scanline=239: raw=240. Since split_scroll < 240,
+        // coarse_y wraps at 30 (skipping attribute area), so effective
+        // coarse_y = 0, fine_y = 0 → ExRAM offset (0*32)+2 = 2.
+
+        let normal_marker = 0x22;
+        let attr_marker = 0xCC;
+        let mut mapper = setup_mmc5_split_with_exram_markers(
+            &[
+                (0x002, normal_marker), // coarse_y=0, column=2
+                (0x3C2, attr_marker),   // coarse_y=30, column=2 (attribute region)
+            ],
+            1,
+        );
+
+        mapper.ppu_scanline(239, true);
+        let tile = mapper.read_nametable(0x2000);
+        assert_eq!(
+            tile,
+            Some(normal_marker),
+            "split_scroll=1 + scanline=239 (raw=240) should wrap to coarse_y=0, not attribute region"
+        );
+    }
+
+    #[test]
+    fn test_mmc5_split_scroll_232_plus_8_wraps_at_coarse_y_30_boundary() {
+        // split_scroll=232 (coarse_y=29, fine_y=0), scanline=8: raw=240.
+        // After 8 scanlines, fine_y overflows and coarse_y would reach 30,
+        // but wraps to 0 (skipping attribute area). Effective: coarse_y=0, fine_y=0.
+
+        let normal_marker = 0x33;
+        let attr_marker = 0xDD;
+        let mut mapper = setup_mmc5_split_with_exram_markers(
+            &[
+                (0x002, normal_marker), // coarse_y=0, column=2
+                (0x3C2, attr_marker),   // coarse_y=30, column=2 (attribute region)
+            ],
+            232,
+        );
+
+        mapper.ppu_scanline(8, true);
+        let tile = mapper.read_nametable(0x2000);
+        assert_eq!(
+            tile,
+            Some(normal_marker),
+            "split_scroll=232 + scanline=8 (raw=240) should wrap at coarse_y=30→0"
+        );
+    }
+
+    #[test]
+    fn test_mmc5_split_scroll_240_reads_from_attribute_region() {
+        // When split_scroll=240, the vertical scroll starts at coarse_y=30
+        // (the attribute table region). The tile fetch should read from
+        // ExRAM offset $3C0 + column, not from offset $000.
+
+        // ExRAM offset for coarse_y=30, column=2: (30*32)+2 = 962 = $3C2
+        let marker = 0xAB;
+        let mut mapper = setup_mmc5_split_with_exram_markers(
+            &[(0x3C2, marker)], // ExRAM attribute region
+            240,                // split_scroll in attribute region
+        );
+
+        mapper.ppu_scanline(0, true);
+
+        // First visible tile in split region: column = (0+2)%34 = 2
+        let tile = mapper.read_nametable(0x2000);
+        assert_eq!(
+            tile,
+            Some(marker),
+            "split_scroll=240 should read tile index from ExRAM attribute region ($3C2)"
+        );
+    }
+
+    #[test]
+    fn test_mmc5_split_scroll_248_reads_from_second_attribute_row() {
+        // split_scroll=248 → coarse_y=31, which is the second attribute row.
+        // ExRAM offset for coarse_y=31, column=2: (31*32)+2 = 994 = $3E2
+
+        let marker = 0xCD;
+        let mut mapper = setup_mmc5_split_with_exram_markers(&[(0x3E2, marker)], 248);
+
+        mapper.ppu_scanline(0, true);
+
+        let tile = mapper.read_nametable(0x2000);
+        assert_eq!(
+            tile,
+            Some(marker),
+            "split_scroll=248 should read from ExRAM offset $3E2 (coarse_y=31, column=2)"
+        );
+    }
+
+    #[test]
+    fn test_mmc5_split_scroll_255_reads_from_attribute_region() {
+        // split_scroll=255 → coarse_y=31, fine_y=7 (last pixel row of second attribute row).
+        // ExRAM offset for coarse_y=31, column=2: (31*32)+2 = 994 = $3E2
+
+        let marker = 0xEF;
+        let mut mapper = setup_mmc5_split_with_exram_markers(&[(0x3E2, marker)], 255);
+
+        mapper.ppu_scanline(0, true);
+
+        let tile = mapper.read_nametable(0x2000);
+        assert_eq!(
+            tile,
+            Some(marker),
+            "split_scroll=255 should read from ExRAM offset $3E2 (coarse_y=31, column=2)"
+        );
+    }
+
+    #[test]
+    fn test_mmc5_split_scroll_255_wraps_to_zero_on_next_tile_row() {
+        // split_scroll=255, fine_y=7. After 1 scanline (fine_y overflow),
+        // the effective scroll wraps to 0 (past 255→0). At scanline 1,
+        // the tile fetch should read from ExRAM offset (0*32)+2 = 2.
+
+        let normal_marker = 0x42;
+        let attr_marker = 0xEF;
+        let mut mapper = setup_mmc5_split_with_exram_markers(
+            &[
+                (0x002, normal_marker), // coarse_y=0, column=2
+                (0x3E2, attr_marker),   // coarse_y=31, column=2
+            ],
+            255,
+        );
+
+        // Scanline 0: should read from attribute region (coarse_y=31)
+        mapper.ppu_scanline(0, true);
+        let tile_scanline0 = mapper.read_nametable(0x2000);
+        assert_eq!(tile_scanline0, Some(attr_marker));
+
+        // Scanline 1: split_scroll(255)+1=256→wraps to 0 → coarse_y=0
+        mapper.ppu_scanline(1, true);
+        let tile_scanline1 = mapper.read_nametable(0x2000);
+        assert_eq!(
+            tile_scanline1,
+            Some(normal_marker),
+            "split_scroll=255 + scanline=1 should wrap to 0 (coarse_y=0)"
+        );
+    }
+
+    #[test]
+    fn test_mmc5_split_scroll_240_wraps_to_zero_after_16_scanlines() {
+        // split_scroll=240, scanline=16: (240+16)=256 → wraps to 0.
+        // The tile fetch should read from ExRAM offset (0*32)+2 = 2.
+
+        let normal_marker = 0x33;
+        let mut mapper = setup_mmc5_split_with_exram_markers(
+            &[(0x002, normal_marker)], // coarse_y=0, column=2
+            240,
+        );
+
+        mapper.ppu_scanline(16, true);
+        let tile = mapper.read_nametable(0x2000);
+        assert_eq!(
+            tile,
+            Some(normal_marker),
+            "split_scroll=240 + scanline=16 (=256) should wrap to coarse_y=0"
+        );
+    }
+
+    #[test]
+    fn test_mmc5_split_scroll_239_plus_1_wraps_at_240_not_into_attribute_region() {
+        // split_scroll=239, scanline=1: (239+1)=240, but since split_scroll < 240,
+        // the PPU-like behavior wraps at 240→0 (skipping attribute region).
+        // This verifies coarse_y wrapping still works for normal scroll values.
+
+        let normal_marker = 0x77;
+        let attr_marker = 0xBB;
+        let mut mapper = setup_mmc5_split_with_exram_markers(
+            &[
+                (0x002, normal_marker), // coarse_y=0, column=2
+                (0x3C2, attr_marker),   // coarse_y=30, column=2 (attribute region)
+            ],
+            239,
+        );
+
+        mapper.ppu_scanline(1, true);
+        let tile = mapper.read_nametable(0x2000);
+        assert_eq!(
+            tile,
+            Some(normal_marker),
+            "split_scroll=239 + scanline=1 should wrap at 240→0, NOT enter attribute region"
+        );
+    }
+
     #[test]
     fn test_mmc5_scanline_counter_matches_ppu_scanline_when_irq_fires() {
         // Issue #385: Castlevania III vertical scrolling bug

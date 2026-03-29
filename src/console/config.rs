@@ -388,6 +388,11 @@ const CLI_FLAGS: &[CliFlag] = &[
         help: Some("Rebuild cartridge catalog from scratch on startup"),
         has_value: false,
     },
+    CliFlag {
+        flag: "--tui",
+        help: Some("Launch the interactive TUI ROM browser (requires tui feature)"),
+        has_value: false,
+    },
 ];
 
 /// Boolean flags that accept optional values (shared by validate_args and parse_rom_arg).
@@ -643,6 +648,8 @@ pub struct Config {
     pub scan_cartridges: bool,
     /// Whether to rebuild the cartridge catalog from scratch on startup.
     pub rebuild_cartridge_catalog: bool,
+    /// Whether to launch the TUI ROM browser instead of the emulator.
+    pub tui_mode: bool,
 }
 
 /// Autorun operating mode.
@@ -768,6 +775,7 @@ impl Default for Config {
             cartridge_search_paths: Vec::new(),
             scan_cartridges: true,
             rebuild_cartridge_catalog: false,
+            tui_mode: false,
         }
     }
 }
@@ -1298,6 +1306,17 @@ impl Config {
         }
 
         self.apply_cartridge_catalog_args(args)?;
+
+        // TUI mode
+        #[cfg(feature = "tui")]
+        if args.iter().any(|arg| arg == "--tui") {
+            self.tui_mode = true;
+        }
+
+        #[cfg(not(feature = "tui"))]
+        if args.iter().any(|arg| arg == "--tui") {
+            return Err("--tui requires the `tui` feature (build with --features tui)".to_string());
+        }
 
         // Autorun mode flags
         let has_create_recording = args.iter().any(|arg| arg == "--create-recording");
@@ -5238,6 +5257,41 @@ filter=invalid-shader
         assert!(
             result.unwrap_err().contains("xml"),
             "error should mention the unknown format"
+
+    #[test]
+    fn test_tui_mode_default_is_false() {
+        let config = Config::with_defaults();
+        assert!(!config.tui_mode, "tui_mode should default to false");
+    }
+
+    #[cfg(feature = "tui")]
+    #[test]
+    fn test_tui_flag_sets_tui_mode_true() {
+        let config = parse_config(vec!["neser".to_string(), "--tui".to_string()]);
+        assert!(config.tui_mode, "--tui flag should set tui_mode to true");
+    }
+
+    #[cfg(not(feature = "tui"))]
+    #[test]
+    fn test_tui_flag_errors_without_tui_feature() {
+        let result = Config::new(&["neser".to_string(), "--tui".to_string()]);
+        assert!(
+            result.is_err(),
+            "--tui should return an error when tui feature is not enabled"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("tui"),
+            "error message should mention 'tui': {err}"
+        );
+    }
+
+    #[test]
+    fn test_no_tui_flag_leaves_tui_mode_false() {
+        let config = parse_config(vec!["neser".to_string()]);
+        assert!(
+            !config.tui_mode,
+            "tui_mode should remain false without --tui"
         );
     }
 }
