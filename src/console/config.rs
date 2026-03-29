@@ -1296,8 +1296,14 @@ impl Config {
         self.apply_cartridge_catalog_args(args)?;
 
         // TUI mode
+        #[cfg(feature = "tui")]
         if args.iter().any(|arg| arg == "--tui") {
             self.tui_mode = true;
+        }
+
+        #[cfg(not(feature = "tui"))]
+        if args.iter().any(|arg| arg == "--tui") {
+            return Err("--tui requires the `tui` feature (build with --features tui)".to_string());
         }
 
         // Autorun mode flags

@@ -9,6 +9,8 @@ pub struct RomEntry {
     pub path: PathBuf,
     /// Display name — from ROM DB if available, otherwise the file stem.
     pub display_name: String,
+    /// Pre-computed lowercase version of `display_name` used for fast case-insensitive filtering.
+    pub search_key: String,
     /// Mapper number parsed from the iNES header.
     pub mapper: Option<u16>,
     /// Hardware type (e.g. NES NTSC, Famicom, VS System) from ROM DB or header.
@@ -44,9 +46,12 @@ mod tests {
     use super::*;
 
     fn make_entry(mapper: Option<u16>, hardware: Option<&str>, crc: Option<&str>) -> RomEntry {
+        let display_name = "Test ROM".to_string();
+        let search_key = display_name.to_lowercase();
         RomEntry {
             path: PathBuf::from("/roms/test.nes"),
-            display_name: "Test ROM".to_string(),
+            display_name,
+            search_key,
             mapper,
             hardware: hardware.map(str::to_string),
             crc: crc.map(str::to_string),
@@ -94,5 +99,11 @@ mod tests {
     fn test_recording_duration_none_by_default() {
         let entry = make_entry(None, None, None);
         assert!(entry.recording_duration.is_none());
+    }
+
+    #[test]
+    fn test_search_key_is_lowercase_display_name() {
+        let entry = make_entry(None, None, None);
+        assert_eq!(entry.search_key, "test rom");
     }
 }

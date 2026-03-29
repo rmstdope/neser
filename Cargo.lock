@@ -2004,14 +2004,13 @@ dependencies = [
  "pixels",
  "png 0.17.16",
  "rand",
- "ratatui 0.29.0",
+ "ratatui",
  "ringbuf",
  "sdl2",
  "serde",
  "serde_json",
  "serial_test",
  "tempfile",
- "tui-input",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "wasm-bindgen-test",
@@ -2540,27 +2539,6 @@ name = "range-alloc"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d6831663a5098ea164f89cff59c6284e95f4e3c76ce9848d4529f5ccca9bde"
-
-[[package]]
-name = "ratatui"
-version = "0.28.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fdef7f9be5c0122f890d58bdf4d964349ba6a6161f705907526d891efabba57d"
-dependencies = [
- "bitflags 2.10.0",
- "cassowary",
- "compact_str",
- "crossterm",
- "instability",
- "itertools",
- "lru",
- "paste",
- "strum",
- "strum_macros",
- "unicode-segmentation",
- "unicode-truncate",
- "unicode-width 0.1.14",
-]
 
 [[package]]
 name = "ratatui"
@@ -3281,16 +3259,6 @@ name = "ttf-parser"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
-
-[[package]]
-name = "tui-input"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bd137780d743c103a391e06fe952487f914b299a4fe2c3626677f6a6339a7c6b"
-dependencies = [
- "ratatui 0.28.1",
- "unicode-width 0.1.14",
-]
 
 [[package]]
 name = "ultraviolet"

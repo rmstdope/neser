@@ -159,13 +159,11 @@ impl App {
             }
             KeyCode::Backspace => {
                 self.search.pop();
-                let s = self.search.clone();
-                self.rom_list.set_filter(&s);
+                self.rom_list.set_filter(&self.search);
             }
             KeyCode::Char(c) => {
                 self.search.push(c);
-                let s = self.search.clone();
-                self.rom_list.set_filter(&s);
+                self.rom_list.set_filter(&self.search);
             }
             _ => {}
         }
@@ -325,6 +323,7 @@ mod tests {
             .map(|n| RomEntry {
                 path: PathBuf::from(format!("/roms/{n}.nes")),
                 display_name: n.to_string(),
+                search_key: n.to_lowercase(),
                 mapper: Some(0),
                 hardware: Some("NES NTSC".to_string()),
                 crc: Some("DEADBEEF".to_string()),

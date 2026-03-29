@@ -52,7 +52,7 @@ impl RomList {
             .all
             .iter()
             .enumerate()
-            .filter(|(_, e)| e.display_name.to_lowercase().contains(needle.as_str()))
+            .filter(|(_, e)| e.search_key.contains(needle.as_str()))
             .map(|(i, _)| i)
             .collect();
 
@@ -161,10 +161,10 @@ impl RomList {
             .map(|&i| {
                 let e = &self.all[i];
                 Row::new([
-                    Cell::from(e.display_name.clone()),
+                    Cell::from(e.display_name.as_str()),
                     Cell::from(e.mapper_label()),
-                    Cell::from(e.hardware_label().to_string()),
-                    Cell::from(e.crc_label().to_string()),
+                    Cell::from(e.hardware_label()),
+                    Cell::from(e.crc_label()),
                 ])
             })
             .collect();
@@ -200,6 +200,7 @@ mod tests {
             .map(|n| RomEntry {
                 path: PathBuf::from(format!("/roms/{n}.nes")),
                 display_name: n.to_string(),
+                search_key: n.to_lowercase(),
                 mapper: Some(0),
                 hardware: Some("NES NTSC".to_string()),
                 crc: Some("DEADBEEF".to_string()),
@@ -309,6 +310,7 @@ mod tests {
         let entry = RomEntry {
             path: rom_path.clone(),
             display_name: "Test".to_string(),
+            search_key: "test".to_string(),
             mapper: Some(0),
             hardware: None,
             crc: None,

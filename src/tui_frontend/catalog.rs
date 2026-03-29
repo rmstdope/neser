@@ -76,6 +76,7 @@ pub(super) fn build_rom_entry(path: &Path, rom_db: &RomDb) -> RomEntry {
 
     RomEntry {
         path: path.to_path_buf(),
+        search_key: display_name.to_lowercase(),
         display_name,
         mapper,
         hardware: Some(hardware_label(hardware)),
@@ -85,9 +86,11 @@ pub(super) fn build_rom_entry(path: &Path, rom_db: &RomDb) -> RomEntry {
 }
 
 fn unreadable_entry(path: &Path) -> RomEntry {
+    let display_name = file_stem(path);
     RomEntry {
         path: path.to_path_buf(),
-        display_name: file_stem(path),
+        search_key: display_name.to_lowercase(),
+        display_name,
         mapper: None,
         hardware: None,
         crc: None,
@@ -96,9 +99,11 @@ fn unreadable_entry(path: &Path) -> RomEntry {
 }
 
 fn invalid_entry(path: &Path) -> RomEntry {
+    let display_name = file_stem(path);
     RomEntry {
         path: path.to_path_buf(),
-        display_name: file_stem(path),
+        search_key: display_name.to_lowercase(),
+        display_name,
         mapper: None,
         hardware: None,
         crc: None,
@@ -147,13 +152,17 @@ pub(crate) fn read_recording_duration(rom_path: &Path) -> Option<std::time::Dura
 
 fn hardware_label(hw: HardwareType) -> String {
     match hw {
-        HardwareType::NesNtsc => "NES NTSC".to_string(),
-        HardwareType::NesPal => "NES PAL".to_string(),
-        HardwareType::Famicom => "Famicom".to_string(),
-        HardwareType::VsSystem => "VS System".to_string(),
-        HardwareType::FamicomNetworkSystem => "FDS".to_string(),
-        _ => "NES NTSC".to_string(),
+        HardwareType::NesNtsc => "NES NTSC",
+        HardwareType::NesPal => "NES PAL",
+        HardwareType::Famicom => "Famicom",
+        HardwareType::VsSystem => "VS System",
+        HardwareType::Dendy => "Dendy",
+        HardwareType::Playchoice10 => "PlayChoice-10",
+        HardwareType::NesMultiRegion => "Multi-region",
+        HardwareType::FamicomNetworkSystem => "Famicom Net",
+        _ => "NES NTSC",
     }
+    .to_string()
 }
 
 #[cfg(test)]
