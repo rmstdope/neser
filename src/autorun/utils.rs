@@ -1,4 +1,4 @@
-use super::types::{AUTORUN_VERSION, AutorunCheckpoint, AutorunFile, AutorunFrame, AutorunFormat};
+use super::types::{AUTORUN_VERSION, AutorunCheckpoint, AutorunFile, AutorunFormat, AutorunFrame};
 use crate::cartridge::calculate_rom_crc32;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -167,7 +167,11 @@ pub fn trim_recording(file: &mut AutorunFile, n: usize) {
 /// Magic header bytes that identify a binary autorun file.
 pub const BINARY_MAGIC: &[u8; 6] = b"NESRA3";
 
-pub fn save_autorun_file(path: &Path, file: &AutorunFile, format: AutorunFormat) -> Result<(), String> {
+pub fn save_autorun_file(
+    path: &Path,
+    file: &AutorunFile,
+    format: AutorunFormat,
+) -> Result<(), String> {
     if file.version != AUTORUN_VERSION {
         return Err(format!("Unsupported autorun version: {}", file.version));
     }

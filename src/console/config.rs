@@ -335,9 +335,7 @@ const CLI_FLAGS: &[CliFlag] = &[
     },
     CliFlag {
         flag: "--autorun-format",
-        help: Some(
-            "Serialization format for autorun files: binary (default) or json",
-        ),
+        help: Some("Serialization format for autorun files: binary (default) or json"),
         has_value: true,
     },
     CliFlag {

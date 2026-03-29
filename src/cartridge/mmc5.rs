@@ -4135,5 +4135,4 @@ mod tests {
             "split_tile_count should reset on ppu_scanline()"
         );
     }
-
 }
