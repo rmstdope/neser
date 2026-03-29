@@ -5257,6 +5257,8 @@ filter=invalid-shader
         assert!(
             result.unwrap_err().contains("xml"),
             "error should mention the unknown format"
+        );
+    }
 
     #[test]
     fn test_tui_mode_default_is_false() {
