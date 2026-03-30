@@ -71,7 +71,7 @@ mod tests {
         decode_holymapperel_tiles(&raw)
             .as_bytes()
             .chunks(32)
-            .map(|chunk| String::from_utf8_lossy(chunk).trim().to_string())
+            .map(|chunk| String::from_utf8_lossy(chunk).trim_end().to_string())
             .filter(|s| !s.is_empty())
             .collect::<Vec<_>>()
             .join("\n")

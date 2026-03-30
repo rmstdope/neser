@@ -1211,6 +1211,57 @@ mod tests {
     }
 
     #[test]
+    fn test_mmc1_snrom_chr_a16_gates_prg_ram() {
+        // SNROM boards route CHR A16 (bit 4 of the CHR bank register written
+        // via $A000) to PRG-RAM /CE.  When bit 4 is set, PRG-RAM is disabled
+        // even if $E000 bit 4 would otherwise enable it.
+        // SNROM = CHR-RAM (no CHR ROM) + single 8KB PRG-RAM bank.
+        let prg_rom = vec![0; 128 * 1024];
+        let chr_rom = vec![]; // no CHR ROM → CHR-RAM → SNROM
+        let mut mapper = MMC1Mapper::new(MapperContext::new_for_test(
+            1,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Horizontal,
+        ));
+
+        // Enable WRAM via $E000 (clear bit 4 of PRG bank register)
+        write_register(&mut mapper, 0xE000, 0b00000);
+
+        // CHR bank bit 4 is clear by default → PRG-RAM should be enabled
+        mapper.write_prg(0x6000, 0xAB);
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            0xAB,
+            "SNROM: WRAM should be enabled when CHR A16 is clear"
+        );
+
+        // Set CHR A16 (bit 4) via $A000 → PRG-RAM should become disabled
+        write_register(&mut mapper, 0xA000, 0b10000);
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            0x00,
+            "SNROM: WRAM should be disabled when CHR A16 is set"
+        );
+
+        // Writes while disabled should be ignored
+        mapper.write_prg(0x6000, 0xCD);
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            0x00,
+            "SNROM: writes should be ignored when WRAM is disabled"
+        );
+
+        // Clear CHR A16 → PRG-RAM should be re-enabled and old data preserved
+        write_register(&mut mapper, 0xA000, 0b00000);
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            0xAB,
+            "SNROM: WRAM should be re-enabled and data preserved"
+        );
+    }
+
+    #[test]
     fn test_mmc1_default_revision_is_mmc1b() {
         // Default constructor should use MMC1B for backward compatibility
         let prg_rom = vec![0; 128 * 1024];
