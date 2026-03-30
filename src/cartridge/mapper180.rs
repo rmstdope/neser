@@ -36,15 +36,7 @@ mod tests {
 
     fn make_128k_prg() -> Vec<u8> {
         // 8 banks of 16KB; each bank is filled with its own bank number
-        let mut prg = vec![0u8; 128 * 1024];
-        for bank in 0..8usize {
-            let start = bank * 16 * 1024;
-            let end = start + 16 * 1024;
-            for byte in &mut prg[start..end] {
-                *byte = bank as u8;
-            }
-        }
-        prg
+        (0u8..8).flat_map(|bank| vec![bank; 16 * 1024]).collect()
     }
 
     #[test]
