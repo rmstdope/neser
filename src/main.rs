@@ -192,7 +192,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Handle --trim-checkpoints: modify recording file and exit immediately.
     let trim_checkpoints = app_context.borrow().config().autorun_trim_checkpoints;
     let trim_rom_path = app_context.borrow().config().rom_path.clone();
-    let trim_format = app_context.borrow().config().autorun_format.clone();
+    let trim_format = app_context.borrow().config().autorun_format;
     if let (Some(checkpoints_to_trim), Some(rom_path)) =
         (trim_checkpoints, trim_rom_path.as_deref())
     {
@@ -204,7 +204,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Handle --convert-autorun: convert recording file format and exit immediately.
     let convert_autorun_requested = app_context.borrow().config().autorun_convert;
     let convert_rom_path = app_context.borrow().config().rom_path.clone();
-    let convert_format = app_context.borrow().config().autorun_format.clone();
+    let convert_format = app_context.borrow().config().autorun_format;
     if convert_autorun_requested {
         let rom_path =
             convert_rom_path.ok_or_else(|| "--convert-autorun requires a ROM path".to_string())?;
@@ -216,7 +216,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Handle --recalculate-autorun: replay and rewrite checkpoint CRCs, then exit.
     let recalculate_autorun_requested = app_context.borrow().config().autorun_recalculate;
     let recalculate_rom_path = app_context.borrow().config().rom_path.clone();
-    let recalculate_format = app_context.borrow().config().autorun_format.clone();
+    let recalculate_format = app_context.borrow().config().autorun_format;
     if recalculate_autorun_requested {
         let rom_path = recalculate_rom_path
             .ok_or_else(|| "--recalculate-autorun requires a ROM path".to_string())?;
@@ -350,7 +350,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             config.autorun_overwrite,
             config.autorun_extend,
             config.autorun_from_checkpoint,
-            config.autorun_format.clone(),
+            config.autorun_format,
         )
     };
     let load_state = app_context.borrow().config().load_state;
@@ -466,7 +466,10 @@ mod tests {
         let temp_dir = TempDir::new().expect("create temp dir");
         let rom_path = temp_dir.path().join("missing.nes");
 
-        let result = convert_autorun_for_rom(rom_path.to_str().expect("rom path to str"));
+        let result = convert_autorun_for_rom(
+            rom_path.to_str().expect("rom path to str"),
+            AutorunFormat::default(),
+        );
 
         assert!(
             result.is_err(),
@@ -495,8 +498,11 @@ mod tests {
         )
         .expect("write v2 autorun file");
 
-        convert_autorun_for_rom(rom_path.to_str().expect("rom path to str"))
-            .expect("convert v2 to v3");
+        convert_autorun_for_rom(
+            rom_path.to_str().expect("rom path to str"),
+            AutorunFormat::default(),
+        )
+        .expect("convert v2 to v3");
 
         let converted: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&autorun_path).expect("read converted file"))
@@ -515,7 +521,10 @@ mod tests {
         let temp_dir = TempDir::new().expect("create temp dir");
         let rom_path = temp_dir.path().join("missing.nes");
 
-        let result = recalculate_autorun_for_rom(rom_path.to_str().expect("rom path to str"));
+        let result = recalculate_autorun_for_rom(
+            rom_path.to_str().expect("rom path to str"),
+            AutorunFormat::default(),
+        );
 
         assert!(
             result.is_err(),

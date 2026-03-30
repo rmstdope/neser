@@ -38,7 +38,290 @@ mod tests {
         [(120, 3645558466)]
     );
 
-    // TODO holydiver
+    // ================================================================
+    // Holy Mapperel ROM Test Suite
+    // PCB manufacturing test for multiple NES mappers.
+    // Uses custom tile encoding (tiles 0x01-0x1A = A-Z).
+    // Pass condition: "DETAILED TEST RESULT: 0000" in decoded nametable.
+    // ================================================================
+
+    /// Decode raw nametable tiles using holy-mapperel's tile encoding.
+    /// Tiles 0x01-0x1A map to 'A'-'Z', tiles 0x20-0x7E are standard ASCII,
+    /// tile 0x00 is space, everything else is '?'.
+    fn decode_holymapperel_tiles(raw: &[u8]) -> String {
+        raw.iter()
+            .map(|&tile| {
+                if (0x01..=0x1A).contains(&tile) {
+                    (tile - 0x01 + b'A') as char
+                } else if (0x20..=0x7E).contains(&tile) {
+                    tile as char
+                } else if tile == 0x00 {
+                    ' '
+                } else {
+                    '?'
+                }
+            })
+            .collect()
+    }
+
+    /// Read and decode holy-mapperel nametable text from the NES.
+    fn read_holymapperel_console(nes: &Nes) -> String {
+        let base_addr = nes.base_nametable_addr();
+        let raw = nes.read_nametable_raw(base_addr, 32 * 30);
+        decode_holymapperel_tiles(&raw)
+            .as_bytes()
+            .chunks(32)
+            .map(|chunk| String::from_utf8_lossy(chunk).trim_end().to_string())
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    macro_rules! setup_holymapperel_test {
+        ($test_name:ident, $rom_path:expr) => {
+            setup_holymapperel_test!(@impl [] $test_name, $rom_path);
+        };
+        (ignored, $test_name:ident, $rom_path:expr) => {
+            setup_holymapperel_test!(@impl [#[ignore]] $test_name, $rom_path);
+        };
+        (@impl [$($attr:tt)*] $test_name:ident, $rom_path:expr) => {
+            #[test]
+            $($attr)*
+            fn $test_name() {
+                let rom_data =
+                    fs::read($rom_path).expect(concat!("ROM should load: ", $rom_path));
+                let cartridge = Cartridge::load_from_file(
+                    &rom_data,
+                    $rom_path,
+                    &crate::app_context::AppContext::new(),
+                )
+                .expect(concat!("ROM should parse: ", $rom_path));
+
+                let mut config = Config {
+                    ram_init_mode: RamInitMode::Zero,
+                    ..Default::default()
+                };
+                config.hardware_model =
+                    crate::console::HardwareModel::from_timing_mode(cartridge.rom_timing_mode());
+
+                let mut nes =
+                    Nes::new(crate::app_context::AppContext::new_with_config(config));
+                nes.insert_cartridge(cartridge);
+                nes.reset(false);
+
+                run_nes_for_frames(&mut nes, 60 * 30);
+
+                let text = read_holymapperel_console(&nes);
+                let rom_name = $rom_path.split('/').last().unwrap();
+                assert!(
+                    text.contains("DETAILED TEST RESULT: 0000"),
+                    "{} should pass with DETAILED TEST RESULT: 0000, but got:\n{}",
+                    rom_name,
+                    text
+                );
+            }
+        };
+    }
+
+    // Mapper 0 (NROM)
+    setup_holymapperel_test!(
+        test_holymapperel_m0_p32k_c8k_v,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M0_P32K_C8K_V.nes"
+    );
+    setup_holymapperel_test!(
+        test_holymapperel_m0_p32k_cr32k_v,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M0_P32K_CR32K_V.nes"
+    );
+    setup_holymapperel_test!(
+        test_holymapperel_m0_p32k_cr8k_v,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M0_P32K_CR8K_V.nes"
+    );
+
+    // Mapper 1 (SxROM / MMC1)
+    setup_holymapperel_test!(
+        test_holymapperel_m1_p128k,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M1_P128K.nes"
+    );
+    setup_holymapperel_test!(
+        test_holymapperel_m1_p128k_c128k,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M1_P128K_C128K.nes"
+    );
+    setup_holymapperel_test!(
+        test_holymapperel_m1_p128k_c128k_s8k,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M1_P128K_C128K_S8K.nes"
+    );
+    setup_holymapperel_test!(
+        test_holymapperel_m1_p128k_c128k_w8k,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M1_P128K_C128K_W8K.nes"
+    );
+    setup_holymapperel_test!(
+        test_holymapperel_m1_p128k_c32k,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M1_P128K_C32K.nes"
+    );
+    setup_holymapperel_test!(
+        test_holymapperel_m1_p128k_c32k_s8k,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M1_P128K_C32K_S8K.nes"
+    );
+    setup_holymapperel_test!(
+        test_holymapperel_m1_p128k_c32k_w8k,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M1_P128K_C32K_W8K.nes"
+    );
+    setup_holymapperel_test!(
+        test_holymapperel_m1_p128k_cr8k,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M1_P128K_CR8K.nes"
+    );
+    setup_holymapperel_test!(
+        test_holymapperel_m1_p512k_cr8k_s32k,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M1_P512K_CR8K_S32K.nes"
+    );
+    setup_holymapperel_test!(
+        test_holymapperel_m1_p512k_cr8k_s8k,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M1_P512K_CR8K_S8K.nes"
+    );
+    setup_holymapperel_test!(
+        test_holymapperel_m1_p512k_s32k,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M1_P512K_S32K.nes"
+    );
+    setup_holymapperel_test!(
+        test_holymapperel_m1_p512k_s8k,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M1_P512K_S8K.nes"
+    );
+
+    // Mapper 2 (UxROM)
+    setup_holymapperel_test!(
+        test_holymapperel_m2_p128k_cr8k_v,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M2_P128K_CR8K_V.nes"
+    );
+    setup_holymapperel_test!(
+        test_holymapperel_m2_p128k_v,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M2_P128K_V.nes"
+    );
+
+    // Mapper 3 (CNROM)
+    setup_holymapperel_test!(
+        test_holymapperel_m3_p32k_c32k_h,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M3_P32K_C32K_H.nes"
+    );
+
+    // Mapper 4 (TxROM / MMC3)
+    setup_holymapperel_test!(
+        test_holymapperel_m4_p128k,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M4_P128K.nes"
+    );
+    setup_holymapperel_test!(
+        test_holymapperel_m4_p128k_cr32k,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M4_P128K_CR32K.nes"
+    );
+    setup_holymapperel_test!(
+        test_holymapperel_m4_p128k_cr8k,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M4_P128K_CR8K.nes"
+    );
+    setup_holymapperel_test!(
+        test_holymapperel_m4_p256k_c256k,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M4_P256K_C256K.nes"
+    );
+
+    // Mapper 7 (AxROM)
+    setup_holymapperel_test!(
+        test_holymapperel_m7_p128k,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M7_P128K.nes"
+    );
+    setup_holymapperel_test!(
+        test_holymapperel_m7_p128k_cr8k,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M7_P128K_CR8K.nes"
+    );
+
+    // Mapper 9 (PxROM / MMC2)
+    setup_holymapperel_test!(
+        test_holymapperel_m9_p128k_c64k,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M9_P128K_C64K.nes"
+    );
+
+    // Mapper 10 (FxROM / MMC4)
+    setup_holymapperel_test!(
+        test_holymapperel_m10_p128k_c64k_s8k,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M10_P128K_C64K_S8K.nes"
+    );
+    setup_holymapperel_test!(
+        test_holymapperel_m10_p128k_c64k_w8k,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M10_P128K_C64K_W8K.nes"
+    );
+
+    // Mapper 11 (Color Dreams)
+    setup_holymapperel_test!(
+        test_holymapperel_m11_p64k_c64k_v,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M11_P64K_C64K_V.nes"
+    );
+    setup_holymapperel_test!(
+        test_holymapperel_m11_p64k_cr32k_v,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M11_P64K_CR32K_V.nes"
+    );
+
+    // Mapper 28 (Action 53 / INL-ROM)
+    // Ignored: ROM produces blank output — mapper 28 needs investigation
+    setup_holymapperel_test!(
+        ignored,
+        test_holymapperel_m28_p512k,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M28_P512K.nes"
+    );
+    setup_holymapperel_test!(
+        ignored,
+        test_holymapperel_m28_p512k_cr32k,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M28_P512K_CR32K.nes"
+    );
+
+    // Mapper 34 (BNROM)
+    setup_holymapperel_test!(
+        test_holymapperel_m34_p128k_cr8k_h,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M34_P128K_CR8K_H.nes"
+    );
+    setup_holymapperel_test!(
+        test_holymapperel_m34_p128k_h,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M34_P128K_H.nes"
+    );
+
+    // Mapper 66 (GxROM)
+    setup_holymapperel_test!(
+        test_holymapperel_m66_p64k_c16k_v,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M66_P64K_C16K_V.nes"
+    );
+
+    // Mapper 69 (FME-7 / Sunsoft)
+    setup_holymapperel_test!(
+        test_holymapperel_m69_p128k_c64k_s8k,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M69_P128K_C64K_S8K.nes"
+    );
+    // Ignored: WRAM detailed test fails (result 1000) — FME-7 WRAM disable needs fix
+    setup_holymapperel_test!(
+        ignored,
+        test_holymapperel_m69_p128k_c64k_w8k,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M69_P128K_C64K_W8K.nes"
+    );
+
+    // Mapper 78, Submapper 3 (IF-12 / Holy Diver)
+    setup_holymapperel_test!(
+        test_holymapperel_m78_3_p128k_c64k,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M78.3_P128K_C64K.nes"
+    );
+
+    // Mapper 118 (TxSROM)
+    setup_holymapperel_test!(
+        test_holymapperel_m118_p128k_c64k,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M118_P128K_C64K.nes"
+    );
+
+    // Mapper 180 (UNROM variant / Crazy Climber)
+    // Ignored: Mapper 180 not implemented yet
+    setup_holymapperel_test!(
+        ignored,
+        test_holymapperel_m180_p128k_cr8k_h,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M180_P128K_CR8K_H.nes"
+    );
+    setup_holymapperel_test!(
+        ignored,
+        test_holymapperel_m180_p128k_h,
+        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M180_P128K_H.nes"
+    );
 
     // TODO Homebrew Mappers
 

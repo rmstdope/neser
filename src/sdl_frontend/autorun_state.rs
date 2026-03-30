@@ -314,7 +314,7 @@ impl AutorunState {
             screen_crc,
             state_bytes,
         });
-        save_autorun_file(&self.autorun_path, &self.autorun, self.format.clone())
+        save_autorun_file(&self.autorun_path, &self.autorun, self.format)
     }
 
     /// Number of CRC mismatches detected during playback so far.

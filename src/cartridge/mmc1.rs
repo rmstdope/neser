@@ -95,6 +95,7 @@ pub struct MMC1Mapper {
     // SxROM board variant flags (detected from ROM metadata at construction)
     surom: bool, // SUROM: 512KB PRG-ROM; chr_bank_0[4] selects 256KB outer bank
     sorom: bool, // SOROM/SXROM: >8KB PRG-RAM; chr_bank_0[3] selects 8KB PRG-RAM bank
+    snrom: bool, // SNROM: CHR-RAM + 8KB PRG-RAM; chr_bank bit 4 gates PRG-RAM /CE
     submapper: u8,
     hardwired_mirroring: Option<NametableLayout>,
     last_chr_reg_addr: u16,
@@ -132,6 +133,9 @@ impl MMC1Mapper {
         let prg_ram_size = (ctx.prg_ram_banks_8k as usize) * 8192;
         let surom = ctx.prg_rom.len() > 256 * 1024;
         let sorom = ctx.prg_ram_banks_8k >= 2;
+        // SNROM: CHR is RAM (no CHR ROM), PRG-ROM <= 256KB, single 8KB PRG-RAM bank.
+        // On SNROM, CHR A16 (bit 4 of CHR bank register) gates PRG-RAM /CE.
+        let snrom = ctx.chr_rom.is_empty() && !surom && !sorom && prg_ram_size > 0;
         let revision = Self::revision_from_mapper(ctx.mapper);
 
         let capabilities = MapperCapabilities {
@@ -159,6 +163,7 @@ impl MMC1Mapper {
             revision,
             surom,
             sorom,
+            snrom,
             submapper: ctx.submapper,
             hardwired_mirroring: Self::hardwired_mirroring_from_header(
                 ctx.submapper,
@@ -212,6 +217,7 @@ impl MMC1Mapper {
             revision,
             surom,
             sorom: false,
+            snrom: ctx.chr_rom.is_empty() && !surom,
             submapper: 0,
             hardwired_mirroring: None,
             last_chr_reg_addr: 0xA000,
@@ -353,7 +359,16 @@ impl MMC1Mapper {
             Mmc1Revision::Mmc1B => {
                 // MMC1B/C: Bit 4 of prg_bank register controls WRAM
                 // 0 = enabled, 1 = disabled
-                (self.prg_bank & 0x10) == 0
+                let prg_enabled = (self.prg_bank & 0x10) == 0;
+
+                // SNROM: CHR A16 (bit 4 of the active CHR bank register) is
+                // routed to PRG-RAM /CE. When set, PRG-RAM is disabled.
+                if self.snrom {
+                    let chr_a16_clear = (self.get_extra_chr_reg() & 0x10) == 0;
+                    prg_enabled && chr_a16_clear
+                } else {
+                    prg_enabled
+                }
             }
         }
     }
@@ -1192,6 +1207,57 @@ mod tests {
         assert!(
             !mapper.is_wram_enabled(),
             "MMC1B should power on with WRAM disabled by default"
+        );
+    }
+
+    #[test]
+    fn test_mmc1_snrom_chr_a16_gates_prg_ram() {
+        // SNROM boards route CHR A16 (bit 4 of the CHR bank register written
+        // via $A000) to PRG-RAM /CE.  When bit 4 is set, PRG-RAM is disabled
+        // even if $E000 bit 4 would otherwise enable it.
+        // SNROM = CHR-RAM (no CHR ROM) + single 8KB PRG-RAM bank.
+        let prg_rom = vec![0; 128 * 1024];
+        let chr_rom = vec![]; // no CHR ROM → CHR-RAM → SNROM
+        let mut mapper = MMC1Mapper::new(MapperContext::new_for_test(
+            1,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Horizontal,
+        ));
+
+        // Enable WRAM via $E000 (clear bit 4 of PRG bank register)
+        write_register(&mut mapper, 0xE000, 0b00000);
+
+        // CHR bank bit 4 is clear by default → PRG-RAM should be enabled
+        mapper.write_prg(0x6000, 0xAB);
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            0xAB,
+            "SNROM: WRAM should be enabled when CHR A16 is clear"
+        );
+
+        // Set CHR A16 (bit 4) via $A000 → PRG-RAM should become disabled
+        write_register(&mut mapper, 0xA000, 0b10000);
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            0x00,
+            "SNROM: WRAM should be disabled when CHR A16 is set"
+        );
+
+        // Writes while disabled should be ignored
+        mapper.write_prg(0x6000, 0xCD);
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            0x00,
+            "SNROM: writes should be ignored when WRAM is disabled"
+        );
+
+        // Clear CHR A16 → PRG-RAM should be re-enabled and old data preserved
+        write_register(&mut mapper, 0xA000, 0b00000);
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            0xAB,
+            "SNROM: WRAM should be re-enabled and data preserved"
         );
     }
 
