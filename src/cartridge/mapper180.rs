@@ -52,6 +52,8 @@ mod tests {
         // Spec: CPU $8000–$BFFF is always fixed to PRG bank 0
         let mut mapper = Mapper180::new(
             MapperContext::new_for_test(180, make_128k_prg(), vec![], NametableLayout::Horizontal)
+                .with_prg_ram_banks(0)
+                .with_unspecified_prg_ram_size()
                 .with_submapper(2),
         );
 
@@ -94,6 +96,8 @@ mod tests {
         // Spec: CPU $C000–$FFFF is the switchable bank, selected by bits 0–2 of register
         let mut mapper = Mapper180::new(
             MapperContext::new_for_test(180, make_128k_prg(), vec![], NametableLayout::Horizontal)
+                .with_prg_ram_banks(0)
+                .with_unspecified_prg_ram_size()
                 .with_submapper(2),
         );
 
@@ -130,6 +134,8 @@ mod tests {
         // at $C000–$FFFF. The lower window ($8000) stays fixed at bank 0.
         let mut mapper = Mapper180::new(
             MapperContext::new_for_test(180, make_128k_prg(), vec![], NametableLayout::Horizontal)
+                .with_prg_ram_banks(0)
+                .with_unspecified_prg_ram_size()
                 .with_submapper(2),
         );
 
@@ -155,6 +161,8 @@ mod tests {
         let prg = make_128k_prg();
         let mut original = Mapper180::new(
             MapperContext::new_for_test(180, prg.clone(), vec![], NametableLayout::Horizontal)
+                .with_prg_ram_banks(0)
+                .with_unspecified_prg_ram_size()
                 .with_submapper(2),
         );
         original.write_prg(0x8000, 5);
@@ -165,6 +173,8 @@ mod tests {
 
         let mut restored = Mapper180::new(
             MapperContext::new_for_test(180, prg, vec![], NametableLayout::Horizontal)
+                .with_prg_ram_banks(0)
+                .with_unspecified_prg_ram_size()
                 .with_submapper(2),
         );
         restored.restore_registers(&snapshot);
@@ -196,7 +206,9 @@ mod tests {
             make_128k_prg(),
             vec![],
             NametableLayout::Horizontal,
-        ));
+        )
+        .with_prg_ram_banks(0)
+        .with_unspecified_prg_ram_size());
 
         mapper.write_chr(0x0000, 0x55);
         mapper.write_chr(0x1000, 0xAA);
@@ -214,7 +226,9 @@ mod tests {
             make_128k_prg(),
             vec![],
             NametableLayout::Horizontal,
-        ));
+        )
+        .with_prg_ram_banks(0)
+        .with_unspecified_prg_ram_size());
         assert_eq!(mapper.mapper_number(), 180);
     }
 }
