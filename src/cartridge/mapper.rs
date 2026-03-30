@@ -99,6 +99,7 @@ use super::mapper123::Mapper123;
 use super::mapper132::Mapper132;
 use super::mapper133::Mapper133;
 use super::mapper140::Mapper140;
+use super::mapper180::Mapper180;
 use super::mapper185::Mapper185;
 use super::mapper205::Mapper205;
 use super::mapper218::Mapper218;
@@ -861,6 +862,7 @@ mapper_registry! {
     133 => Mapper133::new,
     140 => Mapper140::new,
     155 => MMC1Mapper::new,
+    180 => Mapper180::new,
     185 => Mapper185::new,
     205 => Mapper205::new,
     206 => Namco118Mapper::new,

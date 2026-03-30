@@ -60,7 +60,7 @@
 //!
 //! ```rust,ignore
 //! // Example: Define a new UxROM-style mapper with 16KB banks
-//! pub type MyBankedPrgMapper = SimpleBankedPrgMapper<16, 94>;
+//! pub type MyBankedPrgMapper = SimpleBankedPrgMapper<16, 94, true>;
 //!
 //! let mapper = MyBankedPrgMapper::new(prg_rom, chr_rom, MirroringMode::Vertical);
 //! ```
@@ -209,16 +209,22 @@ impl<const CHR_BANK_KB: usize, const MAPPER_NUM: u8> Mapper
 ///
 /// - `PRG_BANK_KB`: Size of PRG banks in kilobytes (typically 16)
 /// - `MAPPER_NUM`: Mapper number for identification
+/// - `FIXED_LAST`: When `true`, fixes the last bank at `$C000–$FFFF` (UxROM pattern).
+///   When `false`, fixes the first bank at `$8000–$BFFF` (Mapper 180 pattern).
 ///
 /// # Example
 ///
 /// ```rust,ignore
-/// // UxROM (Mapper 2) with 16KB PRG banks
-/// type UxROMMapper = SimpleBankedPrgMapper<16, 2>;
+/// // UxROM (Mapper 2) with 16KB PRG banks, fixed last bank
+/// type UxROMMapper = SimpleBankedPrgMapper<16, 2, true>;
 ///
 /// let mapper = UxROMMapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
 /// ```
-pub struct SimpleBankedPrgMapper<const PRG_BANK_KB: usize, const MAPPER_NUM: u8> {
+pub struct SimpleBankedPrgMapper<
+    const PRG_BANK_KB: usize,
+    const MAPPER_NUM: u8,
+    const FIXED_LAST: bool,
+> {
     base: BaseMapper,
     /// Current PRG bank selection register value.
     bank_select: u8,
@@ -226,8 +232,8 @@ pub struct SimpleBankedPrgMapper<const PRG_BANK_KB: usize, const MAPPER_NUM: u8>
     bank_select_mask: u8,
 }
 
-impl<const PRG_BANK_KB: usize, const MAPPER_NUM: u8>
-    SimpleBankedPrgMapper<PRG_BANK_KB, MAPPER_NUM>
+impl<const PRG_BANK_KB: usize, const MAPPER_NUM: u8, const FIXED_LAST: bool>
+    SimpleBankedPrgMapper<PRG_BANK_KB, MAPPER_NUM, FIXED_LAST>
 {
     /// Create a new SimpleBankedPrgMapper.
     ///
@@ -250,8 +256,13 @@ impl<const PRG_BANK_KB: usize, const MAPPER_NUM: u8>
 
         let mut base = BaseMapper::new(&ctx, capabilities);
         base.configure_prg_banking(prg_bank_size);
-        // Fixed last bank at upper window
-        base.select_prg_page(1, -1);
+        if FIXED_LAST {
+            // UxROM pattern: fix the last bank at the upper window ($C000–$FFFF)
+            base.select_prg_page(1, -1);
+        } else {
+            // Mapper 180 pattern: fix bank 0 at the lower window ($8000–$BFFF)
+            base.select_prg_page(0, 0);
+        }
         base.set_bus_conflicts(bus_conflicts);
 
         Self {
@@ -262,8 +273,8 @@ impl<const PRG_BANK_KB: usize, const MAPPER_NUM: u8>
     }
 }
 
-impl<const PRG_BANK_KB: usize, const MAPPER_NUM: u8> Mapper
-    for SimpleBankedPrgMapper<PRG_BANK_KB, MAPPER_NUM>
+impl<const PRG_BANK_KB: usize, const MAPPER_NUM: u8, const FIXED_LAST: bool> Mapper
+    for SimpleBankedPrgMapper<PRG_BANK_KB, MAPPER_NUM, FIXED_LAST>
 {
     fn base(&self) -> &BaseMapper {
         &self.base
@@ -282,7 +293,13 @@ impl<const PRG_BANK_KB: usize, const MAPPER_NUM: u8> Mapper
         if (0x8000..=0xFFFF).contains(&addr) {
             let effective = self.base.apply_bus_conflict(addr, value);
             self.bank_select = effective & self.bank_select_mask;
-            self.base.select_prg_page(0, self.bank_select as i16);
+            if FIXED_LAST {
+                // UxROM: lower window ($8000–$BFFF) is switchable
+                self.base.select_prg_page(0, self.bank_select as i16);
+            } else {
+                // Mapper 180: upper window ($C000–$FFFF) is switchable
+                self.base.select_prg_page(1, self.bank_select as i16);
+            }
         }
     }
 
@@ -293,7 +310,11 @@ impl<const PRG_BANK_KB: usize, const MAPPER_NUM: u8> Mapper
     fn restore_registers(&mut self, data: &[u8]) {
         if !data.is_empty() {
             self.bank_select = data[0];
-            self.base.select_prg_page(0, self.bank_select as i16);
+            if FIXED_LAST {
+                self.base.select_prg_page(0, self.bank_select as i16);
+            } else {
+                self.base.select_prg_page(1, self.bank_select as i16);
+            }
         }
     }
 }
@@ -574,7 +595,7 @@ mod tests {
     mod simple_banked_prg {
         use super::*;
 
-        type TestMapper = SimpleBankedPrgMapper<16, 2>;
+        type TestMapper = SimpleBankedPrgMapper<16, 2, true>;
 
         #[test]
         fn test_prg_bank_switching() {
