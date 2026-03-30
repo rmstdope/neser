@@ -74,9 +74,13 @@ impl Mapper28 {
             hard_reset_pending: false,
         };
         mapper.update_banks();
-        // NESdev: "At power on, the last 16 KiB of the ROM is mapped into $C000-$FFFF."
-        mapper.base.select_prg_page(1, -1);
+        mapper.apply_power_on_mapping();
         mapper
+    }
+
+    fn apply_power_on_mapping(&mut self) {
+        // NESdev: "At power on, the last 16 KiB of the ROM is mapped into $C000-$FFFF."
+        self.base.select_prg_page(1, -1);
     }
 
     fn update_banks(&mut self) {
@@ -184,7 +188,7 @@ impl Mapper for Mapper28 {
             self.regs = [0; 4];
             self.mirroring_bit = 0;
             self.update_banks();
-            self.base.select_prg_page(1, -1);
+            self.apply_power_on_mapping();
         }
     }
 

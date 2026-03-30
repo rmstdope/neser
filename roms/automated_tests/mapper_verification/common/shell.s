@@ -427,6 +427,7 @@ m28_switch:
     init_action53                   ; Switches $C000 from bank 7 → bank 1
     jmp reset                       ; Bank 1 now at $C000
 m28_switch_end:
+.assert (m28_switch_end - m28_switch) <= $100, error, "m28_switch stub exceeds 256 bytes ($0300-$03FF buffer)"
 .endproc
 
 .segment "BOOT_VECS"
