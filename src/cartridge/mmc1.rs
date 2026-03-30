@@ -95,6 +95,7 @@ pub struct MMC1Mapper {
     // SxROM board variant flags (detected from ROM metadata at construction)
     surom: bool, // SUROM: 512KB PRG-ROM; chr_bank_0[4] selects 256KB outer bank
     sorom: bool, // SOROM/SXROM: >8KB PRG-RAM; chr_bank_0[3] selects 8KB PRG-RAM bank
+    snrom: bool, // SNROM: CHR-RAM + 8KB PRG-RAM; chr_bank bit 4 gates PRG-RAM /CE
     submapper: u8,
     hardwired_mirroring: Option<NametableLayout>,
     last_chr_reg_addr: u16,
@@ -132,6 +133,9 @@ impl MMC1Mapper {
         let prg_ram_size = (ctx.prg_ram_banks_8k as usize) * 8192;
         let surom = ctx.prg_rom.len() > 256 * 1024;
         let sorom = ctx.prg_ram_banks_8k >= 2;
+        // SNROM: CHR is RAM (no CHR ROM), PRG-ROM <= 256KB, single 8KB PRG-RAM bank.
+        // On SNROM, CHR A16 (bit 4 of CHR bank register) gates PRG-RAM /CE.
+        let snrom = ctx.chr_rom.is_empty() && !surom && !sorom && prg_ram_size > 0;
         let revision = Self::revision_from_mapper(ctx.mapper);
 
         let capabilities = MapperCapabilities {
@@ -159,6 +163,7 @@ impl MMC1Mapper {
             revision,
             surom,
             sorom,
+            snrom,
             submapper: ctx.submapper,
             hardwired_mirroring: Self::hardwired_mirroring_from_header(
                 ctx.submapper,
@@ -212,6 +217,7 @@ impl MMC1Mapper {
             revision,
             surom,
             sorom: false,
+            snrom: ctx.chr_rom.is_empty() && !surom,
             submapper: 0,
             hardwired_mirroring: None,
             last_chr_reg_addr: 0xA000,
@@ -353,7 +359,16 @@ impl MMC1Mapper {
             Mmc1Revision::Mmc1B => {
                 // MMC1B/C: Bit 4 of prg_bank register controls WRAM
                 // 0 = enabled, 1 = disabled
-                (self.prg_bank & 0x10) == 0
+                let prg_enabled = (self.prg_bank & 0x10) == 0;
+
+                // SNROM: CHR A16 (bit 4 of the active CHR bank register) is
+                // routed to PRG-RAM /CE. When set, PRG-RAM is disabled.
+                if self.snrom {
+                    let chr_a16_clear = (self.get_extra_chr_reg() & 0x10) == 0;
+                    prg_enabled && chr_a16_clear
+                } else {
+                    prg_enabled
+                }
             }
         }
     }

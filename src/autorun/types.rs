@@ -38,16 +38,11 @@ pub struct AutorunFile {
 }
 
 /// The serialization format for autorun files.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum AutorunFormat {
+    #[default]
     Binary,
     Json,
-}
-
-impl Default for AutorunFormat {
-    fn default() -> Self {
-        Self::Binary
-    }
 }
 
 impl std::fmt::Display for AutorunFormat {

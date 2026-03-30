@@ -544,6 +544,7 @@ impl SdlEventLoop {
     ///   (negative = from end, -1 = second-to-last, etc.).
     /// * `nes` - The NES instance; used to restore saved state when starting from a checkpoint.
     /// * `format` - The serialization format (`Binary` or `Json`) to use when writing the `.autorun` file.
+    #[allow(clippy::too_many_arguments)]
     pub fn init_autorun(
         &mut self,
         mode: AutorunMode,
