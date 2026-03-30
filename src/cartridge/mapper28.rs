@@ -46,6 +46,7 @@ pub struct Mapper28 {
     selected_reg: u8,
     regs: [u8; 4],
     mirroring_bit: u8,
+    hard_reset_pending: bool,
 }
 
 impl Mapper28 {
@@ -70,9 +71,16 @@ impl Mapper28 {
             selected_reg: 0,
             regs: [0; 4],
             mirroring_bit: 0,
+            hard_reset_pending: false,
         };
         mapper.update_banks();
+        mapper.apply_power_on_mapping();
         mapper
+    }
+
+    fn apply_power_on_mapping(&mut self) {
+        // NESdev: "At power on, the last 16 KiB of the ROM is mapped into $C000-$FFFF."
+        self.base.select_prg_page(1, -1);
     }
 
     fn update_banks(&mut self) {
@@ -173,10 +181,20 @@ impl Mapper for Mapper28 {
     }
 
     fn reset(&mut self) {
-        self.selected_reg = 0;
-        self.regs = [0; 4];
-        self.mirroring_bit = 0;
-        self.update_banks();
+        // NESdev: "The mapper state is unchanged on reset."
+        if self.hard_reset_pending {
+            self.hard_reset_pending = false;
+            self.selected_reg = 0;
+            self.regs = [0; 4];
+            self.mirroring_bit = 0;
+            self.update_banks();
+            self.apply_power_on_mapping();
+        }
+    }
+
+    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+        self.base.initialize_ram(mode);
+        self.hard_reset_pending = true;
     }
 }
 
@@ -210,15 +228,16 @@ mod tests {
         assert!(result.is_ok(), "mapper 28 must be available in factory");
     }
 
-    // ── Default state ─────────────────────────────────────────────────────
+    // ── Power-on state (NESdev: last 16 KiB in $C000-$FFFF) ─────────────
 
     #[test]
-    fn default_state_maps_first_32kb() {
-        // prgSize=0 (32KB mode), gameSize=0, outer=0, inner=0
-        // page0 = bank 0, page1 = bank 1
+    fn power_on_maps_last_page_to_c000() {
+        // NESdev spec: "At power on, the last 16 KiB of the ROM is mapped
+        // into $C000-$FFFF."
+        // 32 banks × 16 KB = banks 0..31; last bank = 31.
         let mapper = make_mapper();
         assert_eq!(mapper.read_prg(0x8000), 0, "page 0 → bank 0");
-        assert_eq!(mapper.read_prg(0xC000), 1, "page 1 → bank 1");
+        assert_eq!(mapper.read_prg(0xC000), 31, "page 1 → last bank");
     }
 
     #[test]
@@ -428,21 +447,63 @@ mod tests {
         assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenLower);
     }
 
-    // ── Reset ─────────────────────────────────────────────────────────────
+    // ── Reset (NESdev: "mapper state is unchanged on reset") ────────────
 
     #[test]
-    fn reset_restores_default_state() {
+    fn soft_reset_preserves_mapper_state() {
+        // NESdev spec: "The mapper state is unchanged on reset."
         let mut mapper = make_mapper();
 
-        // Change state
-        mapper.write_prg(0x5000, 0x80);
-        mapper.write_prg(0x8000, 0x3B); // some mode
+        // Change state: set mode with horizontal mirroring
+        mapper.write_prg(0x5000, 0x80); // select reg 2
+        mapper.write_prg(0x8000, 0x3B); // gameSize=3, prgSize=1, slotSelect=0, H-mirror
 
-        // Reset
+        let prg_8000_before = mapper.read_prg(0x8000);
+        let prg_c000_before = mapper.read_prg(0xC000);
+        let mirroring_before = mapper.get_mirroring();
+
+        // Soft reset should NOT change state
         mapper.reset();
 
-        assert_eq!(mapper.read_prg(0x8000), 0);
-        assert_eq!(mapper.read_prg(0xC000), 1);
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            prg_8000_before,
+            "soft reset must preserve $8000"
+        );
+        assert_eq!(
+            mapper.read_prg(0xC000),
+            prg_c000_before,
+            "soft reset must preserve $C000"
+        );
+        assert_eq!(
+            mapper.get_mirroring(),
+            mirroring_before,
+            "soft reset must preserve mirroring"
+        );
+    }
+
+    #[test]
+    fn hard_reset_restores_power_on_state() {
+        use crate::console::RamInitMode;
+
+        let mut mapper = make_mapper();
+
+        // Change state away from power-on defaults
+        mapper.write_prg(0x5000, 0x80); // select reg 2
+        mapper.write_prg(0x8000, 0x3B); // some mode
+        mapper.write_prg(0x5000, 0x01); // select reg 1
+        mapper.write_prg(0x8000, 0x07); // inner = 7
+
+        // Hard reset = initialize_ram + reset
+        mapper.initialize_ram(RamInitMode::Zero);
+        mapper.reset();
+
+        assert_eq!(mapper.read_prg(0x8000), 0, "hard reset: page 0 → bank 0");
+        assert_eq!(
+            mapper.read_prg(0xC000),
+            31,
+            "hard reset: page 1 → last bank"
+        );
         assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenLower);
     }
 

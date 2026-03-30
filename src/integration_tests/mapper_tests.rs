@@ -258,14 +258,11 @@ mod tests {
     );
 
     // Mapper 28 (Action 53 / INL-ROM)
-    // Ignored: ROM produces blank output — mapper 28 needs investigation
     setup_holymapperel_test!(
-        ignored,
         test_holymapperel_m28_p512k,
         "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M28_P512K.nes"
     );
     setup_holymapperel_test!(
-        ignored,
         test_holymapperel_m28_p512k_cr32k,
         "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M28_P512K_CR32K.nes"
     );

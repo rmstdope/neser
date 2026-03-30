@@ -404,3 +404,34 @@ m15_switch_end:
     .word boot_reset        ; Reset → bootstrap
     .word $0000             ; IRQ (won't fire during bootstrap)
 .endif
+
+; ============================================================
+; Mapper 28 power-on bootstrap
+; On power-on, the last bank (7) is at $C000 (NESdev spec).
+; This code runs from bank 7, copies init_action53 to RAM,
+; executes it to switch $C000 to bank 1, then jumps to reset.
+; ============================================================
+.if MAPPER_NUM = 28
+.segment "BOOT"
+.proc boot_reset
+    sei
+    ldx #0
+@copy:
+    lda m28_switch, x
+    sta $0300, x
+    inx
+    cpx #(m28_switch_end - m28_switch)
+    bne @copy
+    jmp $0300
+m28_switch:
+    init_action53                   ; Switches $C000 from bank 7 → bank 1
+    jmp reset                       ; Bank 1 now at $C000
+m28_switch_end:
+.assert (m28_switch_end - m28_switch) <= $100, error, "m28_switch stub exceeds 256 bytes ($0300-$03FF buffer)"
+.endproc
+
+.segment "BOOT_VECS"
+    .word $0000             ; NMI (won't fire during bootstrap)
+    .word boot_reset        ; Reset → bootstrap
+    .word $0000             ; IRQ (won't fire during bootstrap)
+.endif
