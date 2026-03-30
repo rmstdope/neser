@@ -199,9 +199,9 @@ impl<const CHR_BANK_KB: usize, const MAPPER_NUM: u8> Mapper
 
 /// Simple mapper with bank-selectable PRG and CHR-RAM.
 ///
-/// This template implements the UxROM pattern used by several simple mappers:
-/// - Switchable PRG bank at lower address
-/// - Fixed last PRG bank at upper address
+/// Supports two PRG banking layouts, selected by the `FIXED_LAST` const generic:
+/// - `FIXED_LAST = true` (UxROM): switchable lower bank, fixed last bank at upper window
+/// - `FIXED_LAST = false` (Mapper 180): fixed first bank at lower window, switchable upper bank
 /// - CHR-RAM (not CHR-ROM)
 /// - Any write to $8000-$FFFF selects PRG bank
 ///
@@ -293,13 +293,8 @@ impl<const PRG_BANK_KB: usize, const MAPPER_NUM: u8, const FIXED_LAST: bool> Map
         if (0x8000..=0xFFFF).contains(&addr) {
             let effective = self.base.apply_bus_conflict(addr, value);
             self.bank_select = effective & self.bank_select_mask;
-            if FIXED_LAST {
-                // UxROM: lower window ($8000–$BFFF) is switchable
-                self.base.select_prg_page(0, self.bank_select as i16);
-            } else {
-                // Mapper 180: upper window ($C000–$FFFF) is switchable
-                self.base.select_prg_page(1, self.bank_select as i16);
-            }
+            let switchable_page = if FIXED_LAST { 0 } else { 1 };
+            self.base.select_prg_page(switchable_page, self.bank_select as i16);
         }
     }
 
@@ -310,11 +305,8 @@ impl<const PRG_BANK_KB: usize, const MAPPER_NUM: u8, const FIXED_LAST: bool> Map
     fn restore_registers(&mut self, data: &[u8]) {
         if !data.is_empty() {
             self.bank_select = data[0];
-            if FIXED_LAST {
-                self.base.select_prg_page(0, self.bank_select as i16);
-            } else {
-                self.base.select_prg_page(1, self.bank_select as i16);
-            }
+            let switchable_page = if FIXED_LAST { 0 } else { 1 };
+            self.base.select_prg_page(switchable_page, self.bank_select as i16);
         }
     }
 }
