@@ -29,7 +29,7 @@ use crate::cartridge::mapper_templates::SimpleBankedPrgMapper;
 ///
 /// Implementation:
 /// - Uses `SimpleBankedPrgMapper` template with 16KB PRG banks
-pub type UxROMMapper = SimpleBankedPrgMapper<16, 2>;
+pub type UxROMMapper = SimpleBankedPrgMapper<16, 2, true>;
 
 #[cfg(test)]
 mod tests {

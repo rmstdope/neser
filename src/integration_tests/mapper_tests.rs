@@ -311,14 +311,11 @@ mod tests {
     );
 
     // Mapper 180 (UNROM variant / Crazy Climber)
-    // Ignored: Mapper 180 not implemented yet
     setup_holymapperel_test!(
-        ignored,
         test_holymapperel_m180_p128k_cr8k_h,
         "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M180_P128K_CR8K_H.nes"
     );
     setup_holymapperel_test!(
-        ignored,
         test_holymapperel_m180_p128k_h,
         "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M180_P128K_H.nes"
     );
