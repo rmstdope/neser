@@ -24,6 +24,8 @@ safe-outputs:
     labels: [feature, mapper, automation]
     reviewers: [copilot]
     expires: 1d
+  noop:
+    max: 10
 
 network:
   allowed:
@@ -114,6 +116,19 @@ When starting implementation:
 - Assign the selected issue to yourself.
 - Create a branch from `main` named `<issue-number>-implement-mapper-<mapper-id>`.
 - Keep all work on that branch.
+
+## MCP session keepalive
+
+The safeoutputs MCP server has a **30-minute idle session timeout**. This workflow can easily run for 30+ minutes. If the session expires, every subsequent `create_pull_request` call will fail with `session not found`.
+
+To prevent this, you MUST emit a `noop` ping immediately after completing each of these phases:
+
+1. **After issue selection** — before any research or coding
+2. **After the branch is created** — before implementation begins
+3. **After implementation is committed and pushed** — before running validations
+4. **If any individual validation step takes more than 10 minutes** — emit a `noop` to reset the idle timer
+
+These keepalive noops should say something like `"Keepalive: phase X complete, continuing..."`. They are not the final output — the final `create_pull_request` call is.
 
 ## Required validation (must pass before PR)
 
