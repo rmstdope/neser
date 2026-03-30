@@ -201,14 +201,11 @@ mod tests {
     #[test]
     fn test_chr_ram_read_write() {
         // CHR-RAM should be available and writable
-        let mut mapper = Mapper180::new(MapperContext::new_for_test(
-            180,
-            make_128k_prg(),
-            vec![],
-            NametableLayout::Horizontal,
-        )
-        .with_prg_ram_banks(0)
-        .with_unspecified_prg_ram_size());
+        let mut mapper = Mapper180::new(
+            MapperContext::new_for_test(180, make_128k_prg(), vec![], NametableLayout::Horizontal)
+                .with_prg_ram_banks(0)
+                .with_unspecified_prg_ram_size(),
+        );
 
         mapper.write_chr(0x0000, 0x55);
         mapper.write_chr(0x1000, 0xAA);
@@ -221,14 +218,11 @@ mod tests {
 
     #[test]
     fn test_mapper_number() {
-        let mapper = Mapper180::new(MapperContext::new_for_test(
-            180,
-            make_128k_prg(),
-            vec![],
-            NametableLayout::Horizontal,
-        )
-        .with_prg_ram_banks(0)
-        .with_unspecified_prg_ram_size());
+        let mapper = Mapper180::new(
+            MapperContext::new_for_test(180, make_128k_prg(), vec![], NametableLayout::Horizontal)
+                .with_prg_ram_banks(0)
+                .with_unspecified_prg_ram_size(),
+        );
         assert_eq!(mapper.mapper_number(), 180);
     }
 }
