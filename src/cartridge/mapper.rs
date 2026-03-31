@@ -173,7 +173,7 @@ use super::unlicensed::mapper263::Mapper263;
 use super::unlicensed::mapper264::Mapper264;
 use super::unlicensed::mapper268::Mapper268;
 use super::unlicensed::mapper271::Mapper271;
-use super::mapper274::Mapper274;
+use super::unlicensed::mapper274::Mapper274;
 use super::unlicensed::mapper281::Mapper281;
 use super::unlicensed::mapper285::Mapper285;
 use super::unlicensed::mapper286::Mapper286;

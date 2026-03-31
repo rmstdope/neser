@@ -47,7 +47,7 @@
 //! reg0 = 0, reg1 = 0, mode = 0: PRG page 0 = 0, PRG page 1 = 0, Horizontal mirroring.
 
 use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
 
 const MAPPER_NUMBER: u16 = 274;
 const PRG_BANK_SIZE_BYTES: usize = 16 * 1024;
@@ -67,7 +67,7 @@ pub struct Mapper274 {
 }
 
 impl Mapper274 {
-    pub fn new(ctx: super::mapper::MapperContext) -> Self {
+    pub fn new(ctx: MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_dynamic_mirroring: true,
             has_chr_banking: false,
