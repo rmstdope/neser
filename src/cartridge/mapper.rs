@@ -145,6 +145,7 @@ use super::mapper300::Mapper300;
 use super::mapper302::Mapper302;
 use super::mapper304::Mapper304;
 use super::mapper305::Mapper305;
+use super::mapper306::Mapper306;
 use super::mapper307::Mapper307;
 use super::mapper308::Mapper308;
 use super::mapper313::Mapper313;
@@ -244,23 +245,31 @@ impl MapperContext {
             ),
             prg_rom: parsed.prg_rom.clone(),
             chr_rom: parsed.chr_rom.clone(),
-            prg_ram_banks_8k: Self::prg_ram_banks_8k(info.prg_ram_size_bytes),
-            prg_ram_size_specified: info.prg_ram_size_bytes.is_some(),
+            prg_ram_banks_8k: Self::prg_ram_banks_8k_total(
+                info.prg_ram_size_bytes,
+                info.prg_nvram_size_bytes,
+            ),
+            prg_ram_size_specified: info.prg_ram_size_bytes.is_some()
+                || info.prg_nvram_size_bytes.is_some(),
             battery_backed_prg_ram: info.battery_backed_prg_ram,
             crc32: parsed.crc32,
         }
     }
 
-    fn prg_ram_banks_8k(prg_ram_size_bytes: Option<usize>) -> u8 {
-        prg_ram_size_bytes
-            .map(|size| {
-                if size == 0 {
-                    return 0;
-                }
-
-                size.div_ceil(PRG_RAM_BANK_SIZE).clamp(1, u8::MAX as usize) as u8
-            })
-            .unwrap_or(DEFAULT_PRG_RAM_BANKS_8K)
+    fn prg_ram_banks_8k_total(
+        prg_ram_size_bytes: Option<usize>,
+        prg_nvram_size_bytes: Option<usize>,
+    ) -> u8 {
+        // Both PRG-RAM and PRG-NVRAM sizes are 0/unspecified in ParsedRom metadata
+        // → use default PRG-RAM bank count (1 × 8KB) for callers that ignore
+        //    prg_ram_size_specified.
+        if prg_ram_size_bytes.is_none() && prg_nvram_size_bytes.is_none() {
+            return DEFAULT_PRG_RAM_BANKS_8K;
+        }
+        let bytes = prg_ram_size_bytes
+            .unwrap_or(0)
+            .max(prg_nvram_size_bytes.unwrap_or(0));
+        bytes.div_ceil(PRG_RAM_BANK_SIZE).min(u8::MAX as usize) as u8
     }
 
     /// Create mapper metadata with default submapper 0, 1×8KB PRG-RAM (not battery-backed),
@@ -909,6 +918,7 @@ mapper_registry! {
     302 => Mapper302::new,
     304 => Mapper304::new,
     305 => Mapper305::new,
+    306 => Mapper306::new,
     307 => Mapper307::new,
     308 => Mapper308::new,
     313 => Mapper313::new,
@@ -925,9 +935,9 @@ const SUPPORTED_MAPPERS: &[u16] = &[
     100, 101, 102, 103, 104, 106, 110, 114, 115, 117, 118, 120, 121, 122, 123, 129, 132, 133, 140,
     155, 180, 185, 205, 206, 218, 222, 227, 228, 229, 230, 231, 232, 233, 234, 236, 241, 242, 243,
     244, 245, 246, 249, 250, 251, 253, 254, 255, 257, 260, 262, 263, 264, 268, 271, 281, 285, 286,
-    287, 288, 291, 292, 294, 296, 300, 302, 304, 305, 307, 308, 313, 314, 315, 319, 320, 323, 324,
-    326, 327, 328, 329, 330, 331, 332, 335, 337, 338, 339, 340, 342, 343, 344, 345, 346, 347, 348,
-    349, 350,
+    287, 288, 291, 292, 294, 296, 300, 302, 304, 305, 306, 307, 308, 313, 314, 315, 319, 320, 323,
+    324, 326, 327, 328, 329, 330, 331, 332, 335, 337, 338, 339, 340, 342, 343, 344, 345, 346, 347,
+    348, 349, 350,
 ];
 
 /// List of supported iNES mapper IDs handled by the factory.
@@ -1677,5 +1687,104 @@ mod tests {
         assert_irq_contract(&mut mapper);
         assert_audio_contract(&mut mapper);
         assert_state_contract(&mut mapper);
+    }
+
+    // --- NES 2.0 NVRAM allocation tests ---
+
+    #[test]
+    fn from_parsed_rom_allocates_prg_ram_from_nvram_when_volatile_absent() {
+        use crate::cartridge::ines::{ConsoleType, InesHeader, ParsedRom, TimingMode};
+
+        // Given: NES 2.0 ROM where only NVRAM (battery-backed) is present — no volatile PRG-RAM.
+        // This is the S8K holy-mapperel pattern: header byte 10 = 0x70 → volatile=0, NVRAM=8KB.
+        let header = InesHeader {
+            mapper: 69,
+            submapper: 0,
+            console_type: ConsoleType::NesFamicom,
+            mirroring: NametableLayout::Horizontal,
+            has_trainer: false,
+            header_version: "2.0",
+            battery_backed_prg_ram: true,
+            prg_rom_size_bytes: 128 * 1024,
+            chr_rom_size_bytes: 64 * 1024,
+            prg_ram_size_bytes: None,         // no volatile RAM
+            prg_nvram_size_bytes: Some(8192), // 8KB NVRAM (battery-backed)
+            chr_ram_size_bytes: None,
+            chr_nvram_size_bytes: None,
+            timing_mode: TimingMode::Ntsc,
+            vs_ppu_type: None,
+            vs_hardware_type: None,
+            misc_roms: 0,
+            default_expansion_device: 0,
+        };
+        let parsed = ParsedRom {
+            header,
+            prg_rom: vec![0u8; 128 * 1024],
+            chr_rom: vec![0u8; 64 * 1024],
+            trainer: None,
+            crc32: 0,
+            payload_crc32: 0,
+        };
+
+        // When: creating MapperContext from the parsed NES 2.0 ROM
+        let ctx = MapperContext::from_parsed_rom(&parsed);
+
+        // Then: 1 bank of PRG-RAM should be allocated (from the NVRAM field)
+        assert_eq!(
+            ctx.prg_ram_banks_8k, 1,
+            "NVRAM should count as PRG-RAM banks when volatile RAM is absent"
+        );
+        assert!(
+            ctx.prg_ram_size_specified,
+            "prg_ram_size_specified should be true when NVRAM is present"
+        );
+    }
+
+    #[test]
+    fn from_parsed_rom_uses_larger_of_volatile_and_nvram_when_both_present() {
+        use crate::cartridge::ines::{ConsoleType, InesHeader, ParsedRom, TimingMode};
+
+        // Given: a ROM with both volatile RAM (8KB) and NVRAM (16KB)
+        let header = InesHeader {
+            mapper: 69,
+            submapper: 0,
+            console_type: ConsoleType::NesFamicom,
+            mirroring: NametableLayout::Horizontal,
+            has_trainer: false,
+            header_version: "2.0",
+            battery_backed_prg_ram: true,
+            prg_rom_size_bytes: 128 * 1024,
+            chr_rom_size_bytes: 64 * 1024,
+            prg_ram_size_bytes: Some(8192),    // 8KB volatile
+            prg_nvram_size_bytes: Some(16384), // 16KB NVRAM
+            chr_ram_size_bytes: None,
+            chr_nvram_size_bytes: None,
+            timing_mode: TimingMode::Ntsc,
+            vs_ppu_type: None,
+            vs_hardware_type: None,
+            misc_roms: 0,
+            default_expansion_device: 0,
+        };
+        let parsed = ParsedRom {
+            header,
+            prg_rom: vec![0u8; 128 * 1024],
+            chr_rom: vec![0u8; 64 * 1024],
+            trainer: None,
+            crc32: 0,
+            payload_crc32: 0,
+        };
+
+        // When: creating MapperContext from the parsed NES 2.0 ROM
+        let ctx = MapperContext::from_parsed_rom(&parsed);
+
+        // Then: should allocate enough banks for the larger (NVRAM = 16KB = 2 banks)
+        assert_eq!(
+            ctx.prg_ram_banks_8k, 2,
+            "Should allocate banks for max(volatile, nvram)"
+        );
+        assert!(
+            ctx.prg_ram_size_specified,
+            "prg_ram_size_specified should be true when NVRAM is present"
+        );
     }
 }

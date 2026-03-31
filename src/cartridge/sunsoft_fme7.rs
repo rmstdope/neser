@@ -53,8 +53,14 @@ pub struct SunsoftFme7Mapper {
 
     // PRG banking (4 x 8KB switchable banks)
     prg_banks: [u8; 4], // Banks for $6000-$7FFF, $8000-$9FFF, $A000-$BFFF, $C000-$DFFF
-    // True when BOTH bit 7 (chip-enable) AND bit 6 (RAM/ROM select) of reg $08 are set.
+    // Derived from wram_chip_enabled && prg_slot_selects_ram; kept as a field so
+    // read_prg/write_prg can check a single bool in the hot path. All three are
+    // always updated together in write_parameter ($08).
     prg_ram_enabled: bool,
+    // Bit 7 of reg $08: WRAM chip-enable line. Set means the chip is powered.
+    wram_chip_enabled: bool,
+    // Bit 6 of reg $08: RAM/ROM select. Set means the $6000-$7FFF slot routes to RAM.
+    prg_slot_selects_ram: bool,
 
     // CHR banking (8 x 1KB banks)
     chr_banks: [u8; 8],
@@ -84,6 +90,8 @@ impl SunsoftFme7Mapper {
             command: 0,
             prg_banks: [0, 0, 0, 0],
             prg_ram_enabled: false,
+            wram_chip_enabled: false,
+            prg_slot_selects_ram: false,
             chr_banks: [0, 1, 2, 3, 4, 5, 6, 7],
             irq: CpuCycleIrq::new(CpuCycleIrqMode::DownUnderflow),
             irq_counter_enabled: false,
@@ -125,9 +133,11 @@ impl SunsoftFme7Mapper {
                 // Bit 6: RAM/ROM select (R) — 0 = ROM, 1 = RAM
                 // Bits 5-0: Bank number (applied even when RAM is selected)
                 // RAM accessible only when BOTH E=1 AND R=1.
-                let wram_ce = (value & 0x80) != 0;
-                let ram_select = (value & 0x40) != 0;
-                self.prg_ram_enabled = wram_ce && ram_select;
+                let chip_enabled = (value & 0x80) != 0;
+                let ram_selected = (value & 0x40) != 0;
+                self.wram_chip_enabled = chip_enabled;
+                self.prg_slot_selects_ram = ram_selected;
+                self.prg_ram_enabled = chip_enabled && ram_selected;
                 self.prg_banks[0] = value & 0x3F;
             }
             0x09..=0x0B => {
@@ -213,6 +223,16 @@ impl Mapper for SunsoftFme7Mapper {
         }
     }
 
+    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        // Per NESdev FME-7 spec: when RAM is selected but the chip is disabled
+        // ($40-$7F in reg $08), neither RAM nor ROM drives the bus.
+        if matches!(addr, 0x6000..=0x7FFF) && self.prg_slot_selects_ram && !self.wram_chip_enabled {
+            return open_bus;
+        }
+        self.base
+            .read_prg_open_bus(addr, open_bus, |a| self.read_prg(a))
+    }
+
     fn write_prg(&mut self, addr: u16, value: u8) {
         match addr {
             0x6000..=0x7FFF => {
@@ -251,7 +271,14 @@ impl Mapper for SunsoftFme7Mapper {
         // [0]: command
         // [1-4]: prg_banks[0-3]
         // [5-12]: chr_banks[0-7]
-        // [13]: flags (prg_ram_enabled, prg_ram_readonly, irq_enabled, irq_counter_enabled, irq_pending)
+        // [13]: flags byte — original IRQ bits preserved at 2-4 for save-state
+        //         compatibility; new WRAM bits placed in previously-unused positions:
+        //         bit 0 = prg_ram_enabled (E=1 AND R=1)
+        //         bit 1 = wram_chip_enabled (E bit)   ← NEW (was unused)
+        //         bit 2 = irq_enabled                 ← UNCHANGED from original
+        //         bit 3 = irq_counter_enabled         ← UNCHANGED from original
+        //         bit 4 = irq_pending                 ← UNCHANGED from original
+        //         bit 5 = prg_slot_selects_ram (R bit) ← NEW (was unused)
         // [14-15]: irq_counter (little endian)
         // [16]: mirroring
         let mut snapshot = Vec::with_capacity(17);
@@ -259,9 +286,11 @@ impl Mapper for SunsoftFme7Mapper {
         snapshot.extend_from_slice(&self.prg_banks);
         snapshot.extend_from_slice(&self.chr_banks);
         let flags = (self.prg_ram_enabled as u8)
+            | ((self.wram_chip_enabled as u8) << 1)
             | ((self.irq.enabled() as u8) << 2)
             | ((self.irq_counter_enabled as u8) << 3)
-            | ((self.irq.is_pending() as u8) << 4);
+            | ((self.irq.is_pending() as u8) << 4)
+            | ((self.prg_slot_selects_ram as u8) << 5);
         snapshot.push(flags);
         snapshot.push((self.irq.counter() & 0xFF) as u8);
         snapshot.push((self.irq.counter() >> 8) as u8);
@@ -275,10 +304,12 @@ impl Mapper for SunsoftFme7Mapper {
             self.prg_banks.copy_from_slice(&data[1..5]);
             self.chr_banks.copy_from_slice(&data[5..13]);
             let flags = data[13];
-            self.prg_ram_enabled = (flags & 1) != 0;
-            self.irq.set_enabled((flags & 4) != 0);
-            self.irq_counter_enabled = (flags & 8) != 0;
-            self.irq.set_pending((flags & 16) != 0);
+            self.prg_ram_enabled = (flags & 0x01) != 0;
+            self.wram_chip_enabled = (flags & 0x02) != 0;
+            self.irq.set_enabled((flags & 0x04) != 0);
+            self.irq_counter_enabled = (flags & 0x08) != 0;
+            self.irq.set_pending((flags & 0x10) != 0);
+            self.prg_slot_selects_ram = (flags & 0x20) != 0;
             self.irq
                 .set_counter((data[14] as u16) | ((data[15] as u16) << 8));
             self.base
@@ -734,5 +765,110 @@ mod tests {
         // Reading bank 2 must also see BB (same physical location)
         mapper.write_prg(0xA000, 0xC2);
         assert_eq!(mapper.read_prg(0x6000), 0xBB);
+    }
+
+    // --- WRAM chip-enable (E bit) open-bus tests ---
+
+    /// When E=0 (chip-enable bit 7 of reg $08 is clear), $6000-$7FFF should
+    /// return open bus — neither RAM nor ROM is driven onto the data bus.
+    /// Per NESdev FME-7 spec: E=0 → open bus; E=1,R=0 → ROM; E=1,R=1 → RAM.
+    #[test]
+    fn test_wram_chip_disabled_returns_open_bus_not_ram_data() {
+        let prg_rom = banked_data(8 * 1024, 16);
+        let chr_rom = banked_data(1024, 8);
+        let mut mapper = SunsoftFme7Mapper::new(MapperContext::new_for_test(
+            69,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Horizontal,
+        ));
+
+        // Enable WRAM (E=1, R=1 = $C0) and write a sentinel value
+        mapper.write_prg(0x8000, 0x08);
+        mapper.write_prg(0xA000, 0xC0);
+        mapper.write_prg(0x6000, 0x5A);
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            0x5A,
+            "precondition: RAM write visible"
+        );
+
+        // Disable chip-enable: E=0, R=1 ($40) — neither RAM nor ROM mapped
+        mapper.write_prg(0x8000, 0x08);
+        mapper.write_prg(0xA000, 0x40);
+
+        // When reading $6000-$7FFF via open-bus path
+        let open_bus_value: u8 = 0xFF;
+        let result = mapper.read_prg_open_bus(0x6000, open_bus_value);
+
+        // Then: open bus is returned, not the written RAM value
+        assert_eq!(result, open_bus_value, "E=0 should return open bus");
+        assert_ne!(result, 0x5A, "E=0 must not expose RAM data");
+    }
+
+    #[test]
+    fn test_wram_chip_disabled_with_rom_select_returns_open_bus() {
+        // E=0, R=1 ($40-$7F): RAM selected but chip disabled → open bus.
+        // Per NESdev spec: "Open bus occurs if the RAM/ROM Select Bit is 1 (RAM selected),
+        // but the RAM Enable Bit is 0 (disabled), i.e. any value in the range $40-$7F."
+        let prg_rom = banked_data(8 * 1024, 16);
+        let chr_rom = banked_data(1024, 8);
+        let mut mapper = SunsoftFme7Mapper::new(MapperContext::new_for_test(
+            69,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Horizontal,
+        ));
+
+        // $40: E=0, R=1 → open bus
+        mapper.write_prg(0x8000, 0x08);
+        mapper.write_prg(0xA000, 0x40); // E=0, R=1
+
+        let open_bus_value: u8 = 0xAB;
+        assert_eq!(
+            mapper.read_prg_open_bus(0x6000, open_bus_value),
+            open_bus_value,
+            "E=0,R=1 ($40) should return open bus"
+        );
+        assert_eq!(
+            mapper.read_prg_open_bus(0x7FFF, open_bus_value),
+            open_bus_value,
+            "E=0,R=1 open bus at $7FFF"
+        );
+
+        // $00: E=0, R=0 → ROM bank at $6000 (NOT open bus)
+        mapper.write_prg(0x8000, 0x08);
+        mapper.write_prg(0xA000, 0x00); // E=0, R=0 → ROM
+        let result = mapper.read_prg_open_bus(0x6000, open_bus_value);
+        assert_ne!(
+            result, open_bus_value,
+            "E=0,R=0 ($00) should map ROM not return open bus"
+        );
+    }
+
+    #[test]
+    fn test_wram_rom_select_still_reads_rom_when_chip_enabled() {
+        // E=1, R=0 ($80): chip enabled but ROM selected — $6000 maps to ROM bank
+        // This verifies that the E=1/R=0 path still returns ROM, not open bus.
+        let prg_rom = banked_data(8 * 1024, 16);
+        let chr_rom = banked_data(1024, 8);
+        let mut mapper = SunsoftFme7Mapper::new(MapperContext::new_for_test(
+            69,
+            prg_rom,
+            chr_rom,
+            NametableLayout::Horizontal,
+        ));
+
+        mapper.write_prg(0x8000, 0x08);
+        mapper.write_prg(0xA000, 0x80); // E=1, R=0 → ROM bank 0
+
+        let open_bus_value: u8 = 0xFF;
+        // ROM bank 0 byte 0 is known (banked_data fills each bank with its index)
+        let result = mapper.read_prg_open_bus(0x6000, open_bus_value);
+        // Should NOT return open bus — chip is enabled, ROM is mapped
+        assert_ne!(
+            result, open_bus_value,
+            "E=1,R=0 should NOT return open bus — ROM is mapped"
+        );
     }
 }
