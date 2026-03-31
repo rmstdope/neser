@@ -10,6 +10,9 @@
 //! - `$7EFA-$7EFB`: PRG bank at `$8000-$9FFF`
 //! - `$7EFC-$7EFD`: PRG bank at `$A000-$BFFF`
 //! - `$7EFE-$7EFF`: PRG bank at `$C000-$DFFF` (`$E000-$FFFF` fixed to last)
+//!
+//! Known Limitations:
+//! - No known gameplay-blocking functional limitations are currently documented.
 
 use crate::cartridge::NametableLayout;
 use crate::cartridge::base_mapper::BaseMapper;
@@ -43,7 +46,7 @@ const DEFAULT_PRG_BANKS: [u8; PRG_REG_COUNT] = [0, 1, 2];
 const DEFAULT_CHR_BANKS: [u8; CHR_REG_COUNT] = [0, 2, 4, 5, 6, 7];
 
 /// Mapper 80 - Taito X1-005
-pub struct Mapper80 {
+pub struct TaitoX1005Mapper {
     base: BaseMapper,
     prg_banks: [u8; PRG_REG_COUNT],
     chr_banks: [u8; CHR_REG_COUNT],
@@ -53,7 +56,7 @@ pub struct Mapper80 {
     unhandled_write_trace_budget: u16,
 }
 
-impl Mapper80 {
+impl TaitoX1005Mapper {
     pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
@@ -137,7 +140,7 @@ impl Mapper80 {
     }
 }
 
-impl Mapper for Mapper80 {
+impl Mapper for TaitoX1005Mapper {
     fn base(&self) -> &BaseMapper {
         &self.base
     }

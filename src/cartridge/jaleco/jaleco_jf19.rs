@@ -10,13 +10,13 @@ use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// Mapper 092 - Jaleco JF-19/JF-21
-pub struct Mapper92 {
+pub struct JalecoJf19Mapper {
     base: BaseMapper,
     prg_bank: u8,
     chr_bank: u8,
 }
 
-impl Mapper92 {
+impl JalecoJf19Mapper {
     pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
@@ -50,7 +50,7 @@ impl Mapper92 {
     }
 }
 
-impl Mapper for Mapper92 {
+impl Mapper for JalecoJf19Mapper {
     fn base(&self) -> &BaseMapper {
         &self.base
     }
@@ -103,8 +103,8 @@ mod tests {
     const PRG_BANKS: usize = 11;
     const CHR_BANKS: usize = 13;
 
-    fn make_test_mapper(mirroring: NametableLayout) -> Mapper92 {
-        Mapper92::new(MapperContext::new_for_test(
+    fn make_test_mapper(mirroring: NametableLayout) -> JalecoJf19Mapper {
+        JalecoJf19Mapper::new(MapperContext::new_for_test(
             92,
             banked_data(16 * 1024, PRG_BANKS),
             banked_data(8 * 1024, CHR_BANKS),
@@ -189,7 +189,7 @@ mod tests {
 
     #[test]
     fn chr_ram_is_used_when_chr_rom_is_absent() {
-        let mut mapper = Mapper92::new(MapperContext::new_for_test(
+        let mut mapper = JalecoJf19Mapper::new(MapperContext::new_for_test(
             92,
             banked_data(16 * 1024, PRG_BANKS),
             vec![],

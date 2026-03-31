@@ -39,7 +39,7 @@ use crate::cartridge::cpu_cycle_irq::{CpuCycleIrq, CpuCycleIrqMode};
 /// $E000-$FFFF: always fixed to last bank.
 ///
 /// Power-on state: prg[0]=0x00, prg[1]=0x01, IRQ disabled.
-pub struct Mapper65 {
+pub struct IremH3001Mapper {
     base: BaseMapper,
     prg_regs: [u8; 2], // reg0 ($8000), reg1 ($A000)
     chr_regs: [u8; 8], // $B000-$B007
@@ -47,7 +47,7 @@ pub struct Mapper65 {
     irq: CpuCycleIrq,
 }
 
-impl Mapper65 {
+impl IremH3001Mapper {
     const PRG_BANK_SIZE: usize = 0x2000; // 8 KiB
     const CHR_BANK_SIZE: usize = 0x0400; // 1 KiB
 
@@ -100,7 +100,7 @@ impl Mapper65 {
     }
 }
 
-impl Mapper for Mapper65 {
+impl Mapper for IremH3001Mapper {
     fn base(&self) -> &BaseMapper {
         &self.base
     }
@@ -231,10 +231,10 @@ mod tests {
     const PRG_BANKS: usize = 32;
     const CHR_BANKS: usize = 64;
 
-    fn make_mapper() -> Mapper65 {
+    fn make_mapper() -> IremH3001Mapper {
         let prg = banked_data(8 * 1024, PRG_BANKS);
         let chr = banked_data(1024, CHR_BANKS);
-        Mapper65::new(MapperContext::new_for_test(
+        IremH3001Mapper::new(MapperContext::new_for_test(
             65,
             prg,
             chr,

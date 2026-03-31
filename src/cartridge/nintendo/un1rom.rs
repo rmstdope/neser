@@ -3,18 +3,21 @@
 //! Specifications:
 //! - NesDev wiki: <https://www.nesdev.org/wiki/UN1ROM>
 //! - Mesen2 mapper implementation: <https://github.com/SourMesen/Mesen2/blob/master/Core/Database/Mappers/Mapper094.cpp>
+//!
+//! Known Limitations:
+//! - No known gameplay-blocking functional limitations are currently documented.
 
 use crate::cartridge::NametableLayout;
 use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::common::ChrMemory;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
-pub struct Mapper94 {
+pub struct Un1romMapper {
     base: BaseMapper,
     prg_bank: u8,
 }
 
-impl Mapper94 {
+impl Un1romMapper {
     pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
         let chr_seed = ctx.chr_rom.clone();
         let capabilities = MapperCapabilities {
@@ -41,7 +44,7 @@ impl Mapper94 {
     }
 }
 
-impl Mapper for Mapper94 {
+impl Mapper for Un1romMapper {
     fn base(&self) -> &BaseMapper {
         &self.base
     }
@@ -91,12 +94,12 @@ mod tests {
         prg
     }
 
-    fn read_prg_bank(mapper: &Mapper94, base: u16) -> u8 {
+    fn read_prg_bank(mapper: &Un1romMapper, base: u16) -> u8 {
         mapper.read_prg(base + 0x123)
     }
 
-    fn make_mapper() -> Mapper94 {
-        Mapper94::new(MapperContext::new_for_test(
+    fn make_mapper() -> Un1romMapper {
+        Un1romMapper::new(MapperContext::new_for_test(
             94,
             make_prg_rom(),
             vec![],
@@ -162,7 +165,7 @@ mod tests {
     fn chr_rom_payload_is_treated_as_seeded_chr_ram() {
         let mut chr_seed = vec![0; 8 * 1024];
         chr_seed[0x0100] = 0x3A;
-        let mut mapper = Mapper94::new(MapperContext::new_for_test(
+        let mut mapper = Un1romMapper::new(MapperContext::new_for_test(
             94,
             make_prg_rom(),
             chr_seed,
@@ -178,7 +181,7 @@ mod tests {
     fn bus_conflicts_apply_before_bank_selection() {
         let mut prg = make_prg_rom();
         prg[0] = 0x14;
-        let mut mapper = Mapper94::new(MapperContext::new_for_test(
+        let mut mapper = Un1romMapper::new(MapperContext::new_for_test(
             94,
             prg,
             vec![],
@@ -193,7 +196,7 @@ mod tests {
     fn bus_conflicts_can_mask_bank_bits_to_zero() {
         let mut prg = make_prg_rom();
         prg[0] = 0x03;
-        let mut mapper = Mapper94::new(MapperContext::new_for_test(
+        let mut mapper = Un1romMapper::new(MapperContext::new_for_test(
             94,
             prg,
             vec![],

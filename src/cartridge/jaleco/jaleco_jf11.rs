@@ -18,12 +18,12 @@ use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 /// - CHR: 8KB bank at `$0000-$1FFF` selected by bits 0-3
 /// - No PRG-RAM (registers occupy `$6000-$7FFF`)
 /// - Mirroring: fixed from iNES header
-pub struct Mapper140 {
+pub struct JalecoJf11Mapper {
     base: BaseMapper,
     register: u8,
 }
 
-impl Mapper140 {
+impl JalecoJf11Mapper {
     pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
@@ -45,7 +45,7 @@ impl Mapper140 {
     }
 }
 
-impl Mapper for Mapper140 {
+impl Mapper for JalecoJf11Mapper {
     fn base(&self) -> &BaseMapper {
         &self.base
     }

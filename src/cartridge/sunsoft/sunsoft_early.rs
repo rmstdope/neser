@@ -3,6 +3,9 @@
 //! Specifications:
 //! - Main: <https://www.nesdev.org/wiki/INES_Mapper_089>
 //! - Mesen2 reference: `Sunsoft89.h`
+//!
+//! Known Limitations:
+//! - No known gameplay-blocking functional limitations are currently documented.
 
 use crate::cartridge::NametableLayout;
 use crate::cartridge::base_mapper::BaseMapper;
@@ -11,12 +14,12 @@ use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 const PRG_BANK_SIZE: usize = 16 * 1024;
 const CHR_BANK_SIZE: usize = 8 * 1024;
 
-pub struct Mapper89 {
+pub struct SunsoftEarlyMapper {
     base: BaseMapper,
     reg: u8,
 }
 
-impl Mapper89 {
+impl SunsoftEarlyMapper {
     pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
@@ -53,7 +56,7 @@ impl Mapper89 {
     }
 }
 
-impl Mapper for Mapper89 {
+impl Mapper for SunsoftEarlyMapper {
     fn base(&self) -> &BaseMapper {
         &self.base
     }
@@ -94,8 +97,8 @@ mod tests {
     const PRG_BANKS_16K: usize = 11;
     const CHR_BANKS_8K: usize = 13;
 
-    fn make_mapper() -> Mapper89 {
-        Mapper89::new(MapperContext::new_for_test(
+    fn make_mapper() -> SunsoftEarlyMapper {
+        SunsoftEarlyMapper::new(MapperContext::new_for_test(
             89,
             banked_data(PRG_BANK_SIZE, PRG_BANKS_16K),
             banked_data(CHR_BANK_SIZE, CHR_BANKS_8K),
