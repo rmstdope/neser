@@ -549,7 +549,10 @@ mod tests {
         assert!(!caps.has_irq, "no IRQ");
         assert!(!caps.has_expansion_audio, "no expansion audio");
         assert!(caps.has_dynamic_mirroring, "dynamic mirroring required");
-        assert!(!caps.has_chr_banking, "CHR is fixed to bank 0, no CHR banking");
+        assert!(
+            !caps.has_chr_banking,
+            "CHR is fixed to bank 0, no CHR banking"
+        );
         assert_eq!(caps.prg_bank_size_kb, 16, "16 KB PRG banks");
         assert_eq!(caps.chr_bank_size_kb, 8, "8 KB CHR bank");
         assert_eq!(caps.max_prg_ram_kb, 0, "no PRG-RAM");
