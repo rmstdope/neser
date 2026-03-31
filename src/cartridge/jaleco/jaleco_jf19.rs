@@ -25,16 +25,10 @@ impl JalecoJf19Mapper {
             chr_bank_size_kb: 8,
             ..Default::default()
         };
-        let num_prg_banks = ctx.prg_rom.len() / (16 * 1024);
         let mut base = BaseMapper::new(&ctx, capabilities);
         base.configure_prg_banking(16 * 1024);
         base.configure_chr_banking(8 * 1024);
-        let last_bank = if num_prg_banks > 0 {
-            (num_prg_banks - 1) as i16
-        } else {
-            0
-        };
-        base.select_prg_page(1, last_bank);
+        base.select_prg_page(1, -1); // slot 1 fixed to last bank
         let mut mapper = Self {
             base,
             prg_bank: 0,
