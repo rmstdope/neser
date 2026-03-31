@@ -288,9 +288,7 @@ mod tests {
         test_holymapperel_m69_p128k_c64k_s8k,
         "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M69_P128K_C64K_S8K.nes"
     );
-    // Ignored: WRAM detailed test fails (result 1000) — FME-7 WRAM disable needs fix
     setup_holymapperel_test!(
-        ignored,
         test_holymapperel_m69_p128k_c64k_w8k,
         "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M69_P128K_C64K_W8K.nes"
     );
