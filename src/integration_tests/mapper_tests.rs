@@ -541,8 +541,12 @@ mod tests {
                 }
 
                 let module_path = trimmed.strip_prefix("use super::")?;
-                let module = module_path.split("::").next()?;
-                Some(format!("src/cartridge/{}.rs", module))
+                let parts: Vec<&str> = module_path.split("::").collect();
+                if parts.len() >= 2 {
+                    Some(format!("src/cartridge/{}/{}.rs", parts[0], parts[1]))
+                } else {
+                    None
+                }
             })
             .collect();
 
