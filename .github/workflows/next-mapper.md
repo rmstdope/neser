@@ -23,7 +23,6 @@ safe-outputs:
     title-prefix: "[next-mapper] "
     labels: [feature, mapper, automation]
     reviewers: [copilot]
-    expires: 1d
   noop:
     max: 10
 
