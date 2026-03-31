@@ -268,10 +268,20 @@ pub(crate) mod tests {
                     }
                 } else if let RomTestVerification::Console { pass_string } = &self.verification {
                     let text = Self::read_console_text(&mut nes);
-                    if text.to_uppercase().ends_with(pass_string) {
+                    let uppercase_text = text.to_uppercase();
+
+                    // Check for FAIL first — a FAIL anywhere trumps a PASS at the end.
+                    // Use "FAIL" (not "FAILED") so ROMs that print "FAIL" without "ED"
+                    // (e.g. Mapper 31 test ROMs) are also caught.
+                    // NOTE: "ERROR" is checked AFTER the pass condition because some
+                    // pass strings legitimately contain "ERROR" (e.g. "ERRORS: 0/1000").
+                    if uppercase_text.contains("FAIL") {
+                        println!("Test failed!");
+                        println!("Console output:\n{}", text);
+                        return RomTestResult::Fail(1);
+                    } else if uppercase_text.ends_with(pass_string) {
                         return RomTestResult::Pass;
-                    } else if text.to_uppercase().contains("FAILED")
-                        || text.to_uppercase().contains("ERROR")
+                    } else if uppercase_text.contains("ERROR")
                         || (text.starts_with("0x") && text.chars().nth(2) != Some('0'))
                     {
                         println!("Test failed!");
