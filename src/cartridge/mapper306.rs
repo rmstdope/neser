@@ -22,8 +22,9 @@
 //!
 //! # Register encoding
 //!
-//! Writes to any address in `$8000–$FFFF` update `prg_reg`.  The register
-//! value is encoded in the *address*, not the data byte.
+//! Writes to addresses in `$8000–$FFFF` whose value matches the patterns
+//! below update `prg_reg`; other writes in this range have no effect. The
+//! register value is encoded in the *address*, not the data byte.
 //!
 //! ```text
 //! mode  = (addr & 0x30) == 0x30
