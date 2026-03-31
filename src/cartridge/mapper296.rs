@@ -56,7 +56,7 @@
 
 use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mmc3::MMC3Mapper;
-use crate::cartridge::{Mapper, MapperCapabilities};
+use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
 const CHR_RAM_SIZE: usize = 8 * 1024;
 const PRG_BANK_MASK: usize = 0x1FFF; // 8 KiB bank offset mask
@@ -188,9 +188,11 @@ impl Mapper296 {
             // 16 KiB selected bank at $8000–$BFFF (two 8 KiB halves)
             0x8000..=0x9FFF => outer | (self.unrom_bank as usize * 2),
             0xA000..=0xBFFF => outer | (self.unrom_bank as usize * 2 + 1),
-            // Fixed last 16 KiB at $C000–$FFFF
-            0xC000..=0xDFFF => count.saturating_sub(2),
-            0xE000..=0xFFFF => count.saturating_sub(1),
+            // Fixed last 16 KiB at $C000–$FFFF (two 8 KiB banks at the end,
+            // still extended by the outer PRG bank bits; wrapping is handled
+            // by read_prg_at_bank)
+            0xC000..=0xDFFF => outer | count.saturating_sub(2),
+            0xE000..=0xFFFF => outer | count.saturating_sub(1),
             _ => 0,
         };
         let offset = (addr as usize) & PRG_BANK_MASK;
@@ -230,8 +232,8 @@ impl Mapper296 {
             _ => match addr {
                 0x8000..=0x9FFF => outer | (bank_16kb * 2),
                 0xA000..=0xBFFF => outer | (bank_16kb * 2 + 1),
-                0xC000..=0xDFFF => count.saturating_sub(2),
-                0xE000..=0xFFFF => count.saturating_sub(1),
+                0xC000..=0xDFFF => outer | count.saturating_sub(2),
+                0xE000..=0xFFFF => outer | count.saturating_sub(1),
                 _ => 0,
             },
         };
@@ -278,9 +280,23 @@ impl Mapper296 {
     }
 
     fn read_chr_unrom(&mut self, addr: u16) -> u8 {
-        // UNROM mode: CHR is fixed bank 0 (CHR-RAM used when C=1, handled in read_chr)
+        // UNROM mode: CHR window is 8 KiB; select the 1 KiB sub-bank from PPU
+        // address bits 12:10, extended by the outer CHR bits.
+        let outer_1kb = self.chr_1kb_outer_offset();
+        let bank_1kb = outer_1kb | (((addr as usize) & 0x1FFF) >> 10);
         let offset = (addr as usize) & CHR_1KB_BANK_MASK;
-        self.mmc3.read_chr_1k_at(0, offset)
+        self.mmc3.read_chr_1k_at(bank_1kb, offset)
+    }
+
+    // ─── MMC1 mirroring ─────────────────────────────────────────────────────
+
+    fn mmc1_mirroring(&self) -> NametableLayout {
+        match self.mmc1_control & 0x03 {
+            0 => NametableLayout::SingleScreenLower,
+            1 => NametableLayout::SingleScreenUpper,
+            2 => NametableLayout::Vertical,
+            _ => NametableLayout::Horizontal,
+        }
     }
 
     // ─── MMC1 serial write handler ──────────────────────────────────────────
@@ -302,10 +318,13 @@ impl Mapper296 {
             self.mmc1_count = 0;
             // Select target register by address bits 14:13
             match addr & 0x6000 {
-                0x0000 => self.mmc1_control = val & 0x1F, // $8000–$9FFF
-                0x2000 => self.mmc1_chr0 = val & 0x1F,    // $A000–$BFFF
-                0x4000 => self.mmc1_chr1 = val & 0x1F,    // $C000–$DFFF
-                0x6000 => self.mmc1_prg = val & 0x1F,     // $E000–$FFFF
+                0x0000 => {
+                    self.mmc1_control = val & 0x1F; // $8000–$9FFF
+                    self.mmc3.base.set_mirroring(self.mmc1_mirroring());
+                }
+                0x2000 => self.mmc1_chr0 = val & 0x1F, // $A000–$BFFF
+                0x4000 => self.mmc1_chr1 = val & 0x1F, // $C000–$DFFF
+                0x6000 => self.mmc1_prg = val & 0x1F,  // $E000–$FFFF
                 _ => {}
             }
         }
@@ -378,9 +397,12 @@ impl Mapper for Mapper296 {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
+        if self.mmc3.base.try_write_prg_ram(addr, value) {
+            return;
+        }
         match addr {
             0x411D => self.config_reg = value & 0x07,
-            0x411E => { /* encryption control: stored implicitly, not acted upon */ }
+            0x411E => { /* CPU opcode / CHR encryption control: not implemented, writes ignored */ }
             0x412C => self.outer_reg = value & 0x0F,
             0x412E => self.outer_reg2 = value & 0x01,
             0x8000..=0xFFFF => match self.mapper_mode() {
@@ -453,11 +475,25 @@ impl Mapper for Mapper296 {
         self.mmc3.restore_registers(mmc3_data);
     }
 
+    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+        self.mmc3.initialize_ram(mode);
+        crate::console::initialize_ram(&mut self.chr_ram, mode);
+    }
+
     fn wram_snapshot(&self) -> Vec<u8> {
+        // Mapper 296 does not provide battery-backed WRAM.
+        Vec::new()
+    }
+
+    fn load_wram_snapshot(&mut self, _data: &[u8]) {
+        // No WRAM to restore for this mapper.
+    }
+
+    fn chr_ram_snapshot(&self) -> Vec<u8> {
         self.chr_ram.clone()
     }
 
-    fn load_wram_snapshot(&mut self, data: &[u8]) {
+    fn restore_chr_ram(&mut self, data: &[u8]) {
         let len = data.len().min(CHR_RAM_SIZE);
         self.chr_ram[..len].copy_from_slice(&data[..len]);
     }
@@ -821,14 +857,14 @@ mod tests {
     }
 
     #[test]
-    fn test_wram_snapshot_roundtrip() {
+    fn test_chr_ram_snapshot_roundtrip() {
         let mut m = create_mapper();
         m.write_prg(0x411D, 0x04); // CHR-RAM mode
         m.write_chr(0x0100, 0xDE);
         m.write_chr(0x0200, 0xAD);
-        let snap = m.wram_snapshot();
+        let snap = m.chr_ram_snapshot();
         m.chr_ram.fill(0);
-        m.load_wram_snapshot(&snap);
+        m.restore_chr_ram(&snap);
         assert_eq!(m.read_chr(0x0100), 0xDE);
         assert_eq!(m.read_chr(0x0200), 0xAD);
     }
