@@ -356,8 +356,8 @@ mod tests {
 
     // Mapper 28 (Action 53 / test28)
     // Requires Start button press to begin automated tests, then a soft reset
-    // to complete the final bank-persistence check. Uses 16px font (non-ASCII
-    // tile encoding) so we verify by screen CRC instead of console text.
+    // to complete the final bank-persistence check. Uses A=1 tile encoding
+    // (same as Holy Mapperel), so we reuse the same tile decoder.
     #[test]
     fn test_homebrew_test28() {
         let rom_path = "roms/automated_tests/test28-0.04/test28.nes";
@@ -366,10 +366,12 @@ mod tests {
             Cartridge::load_from_file(&rom_data, rom_path, crate::app_context::AppContext::new())
                 .expect("ROM should parse");
 
-        let config = Config {
+        let mut config = Config {
             ram_init_mode: RamInitMode::Zero,
             ..Default::default()
         };
+        config.hardware_model =
+            crate::console::HardwareModel::from_timing_mode(cartridge.rom_timing_mode());
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
         nes.insert_cartridge(cartridge);
         nes.reset(false);
@@ -394,13 +396,12 @@ mod tests {
         // Phase 5: Wait for result to display
         run_nes_for_frames(&mut nes, 120);
 
-        // Phase 6: Verify the screen shows PASS (CRC of the pass screen)
-        let screen = nes.get_screen_buffer();
-        let crc = screen.crc32();
-        assert_eq!(
-            crc, 0x75C81870,
-            "test28 should show PASS screen after reset (actual CRC: 0x{:08X})",
-            crc
+        // Phase 6: Verify the nametable text contains PASS!
+        let text = read_holymapperel_console(&nes);
+        assert!(
+            text.contains("PASS!"),
+            "test28 should show PASS! after reset, but got:\n{}",
+            text
         );
     }
 
