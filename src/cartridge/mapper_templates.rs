@@ -294,7 +294,8 @@ impl<const PRG_BANK_KB: usize, const MAPPER_NUM: u8, const FIXED_LAST: bool> Map
             let effective = self.base.apply_bus_conflict(addr, value);
             self.bank_select = effective & self.bank_select_mask;
             let switchable_page = if FIXED_LAST { 0 } else { 1 };
-            self.base.select_prg_page(switchable_page, self.bank_select as i16);
+            self.base
+                .select_prg_page(switchable_page, self.bank_select as i16);
         }
     }
 
@@ -306,7 +307,8 @@ impl<const PRG_BANK_KB: usize, const MAPPER_NUM: u8, const FIXED_LAST: bool> Map
         if !data.is_empty() {
             self.bank_select = data[0];
             let switchable_page = if FIXED_LAST { 0 } else { 1 };
-            self.base.select_prg_page(switchable_page, self.bank_select as i16);
+            self.base
+                .select_prg_page(switchable_page, self.bank_select as i16);
         }
     }
 }
