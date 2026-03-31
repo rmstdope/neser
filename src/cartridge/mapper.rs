@@ -3,200 +3,224 @@ use crate::cartridge::hardware_type::HardwareType;
 use crate::cartridge::ines::ParsedRom;
 use std::io;
 
-use super::axrom::AxROMMapper;
-use super::bandai_fcg::BandaiFcgMapper;
-use super::bnrom_nina::BnromNinaMapper;
-use super::camerica::CamericaMapper;
-use super::cnrom::CNROMMapper;
-use super::colordreams::ColorDreamsMapper;
-use super::cprom::CpromMapper;
-use super::gxrom::GxROMMapper;
-use super::irem_g101::IremG101Mapper;
-use super::mapper12::Mapper12;
-use super::mapper14::Mapper14;
-use super::mapper18::Mapper18;
-use super::mapper20::Mapper20;
-use super::mapper28::Mapper28;
-use super::mapper29::Mapper29;
-use super::mapper30::Mapper30;
-use super::mapper31::Mapper31;
-use super::mapper35::Mapper35;
-use super::mapper36::Mapper36;
-use super::mapper37::Mapper37;
-use super::mapper38::Mapper38;
-use super::mapper39::Mapper39;
-use super::mapper41::Mapper41;
-use super::mapper42::Mapper42;
-use super::mapper43::Mapper43;
-use super::mapper44::Mapper44;
-use super::mapper45::Mapper45;
-use super::mapper46::Mapper46;
-use super::mapper47::Mapper47;
-use super::mapper48::Mapper48;
-use super::mapper49::Mapper49;
-use super::mapper50::Mapper50;
-use super::mapper51::Mapper51;
-use super::mapper52::Mapper52;
-use super::mapper53::Mapper53;
-use super::mapper54::Mapper54;
-use super::mapper55::Mapper55;
-use super::mapper56::Mapper56;
-use super::mapper57::Mapper57;
-use super::mapper58::Mapper58;
-use super::mapper59::Mapper59;
-use super::mapper60::Mapper60;
-use super::mapper61::Mapper61;
-use super::mapper62::Mapper62;
-use super::mapper63::Mapper63;
-use super::mapper64::Mapper64;
-use super::mapper65::Mapper65;
-use super::mapper67::Mapper67;
-use super::mapper70::Mapper70;
-use super::mapper72::Mapper72;
-use super::mapper73::Mapper73;
-use super::mapper74::Mapper74;
-use super::mapper75::Mapper75;
-use super::mapper76::Mapper76;
-use super::mapper77::Mapper77;
-use super::mapper79::Mapper79;
-use super::mapper80::Mapper80;
-use super::mapper81::Mapper81;
-use super::mapper82::Mapper82;
-use super::mapper83::Mapper83;
-use super::mapper86::Mapper86;
-use super::mapper87::Mapper87;
-use super::mapper88::Mapper88;
-use super::mapper89::Mapper89;
-use super::mapper90::Mapper90;
-use super::mapper91::Mapper91;
-use super::mapper92::Mapper92;
-use super::mapper93::Mapper93;
-use super::mapper94::Mapper94;
-use super::mapper95::Mapper95;
-use super::mapper96::Mapper96;
-use super::mapper97::Mapper97;
-use super::mapper100::Mapper100;
-use super::mapper101::Mapper101;
-use super::mapper103::Mapper103;
-use super::mapper104::Mapper104;
-use super::mapper105::Mapper105;
-use super::mapper106::Mapper106;
-use super::mapper107::Mapper107;
-use super::mapper110::Mapper110;
-use super::mapper111::GtromMapper;
-use super::mapper112::Mapper112;
-use super::mapper113::Mapper113;
-use super::mapper114::Mapper114;
-use super::mapper115::Mapper115;
-use super::mapper116::Mapper116;
-use super::mapper117::Mapper117;
-use super::mapper118::Mapper118;
-use super::mapper119::Mapper119;
-use super::mapper120::Mapper120;
-use super::mapper121::Mapper121;
-use super::mapper122::Mapper122;
-use super::mapper123::Mapper123;
-use super::mapper132::Mapper132;
-use super::mapper133::Mapper133;
-use super::mapper140::Mapper140;
-use super::mapper180::Mapper180;
-use super::mapper185::Mapper185;
-use super::mapper205::Mapper205;
-use super::mapper218::Mapper218;
-use super::mapper222::Mapper222;
-use super::mapper227::Mapper227;
-use super::mapper228::Mapper228;
-use super::mapper229::Mapper229;
-use super::mapper230::Mapper230;
-use super::mapper231::Mapper231;
-use super::mapper232::Mapper232;
-use super::mapper233::Mapper233;
-use super::mapper234::Mapper234;
-use super::mapper236::Mapper236;
-use super::mapper241::Mapper241;
-use super::mapper242::Mapper242;
-use super::mapper243::Mapper243;
-use super::mapper244::Mapper244;
-use super::mapper245::Mapper245;
-use super::mapper246::Mapper246;
-use super::mapper249::Mapper249;
-use super::mapper250::Mapper250;
-use super::mapper251::Mapper251;
-use super::mapper253::Mapper253;
-use super::mapper254::Mapper254;
-use super::mapper255::Mapper255;
-use super::mapper257::Mapper257;
-use super::mapper260::Mapper260;
-use super::mapper262::Mapper262;
-use super::mapper263::Mapper263;
-use super::mapper264::Mapper264;
-use super::mapper268::Mapper268;
-use super::mapper271::Mapper271;
-use super::mapper281::Mapper281;
-use super::mapper285::Mapper285;
-use super::mapper286::Mapper286;
-use super::mapper287::Mapper287;
-use super::mapper288::Mapper288;
-use super::mapper291::Mapper291;
-use super::mapper292::Mapper292;
-use super::mapper294::Mapper294;
-use super::mapper300::Mapper300;
-use super::mapper302::Mapper302;
-use super::mapper304::Mapper304;
-use super::mapper305::Mapper305;
-use super::mapper306::Mapper306;
-use super::mapper307::Mapper307;
-use super::mapper308::Mapper308;
-use super::mapper313::Mapper313;
-use super::mapper314::Mapper314;
-use super::mapper315::Mapper315;
-use super::mapper319::Mapper319;
-use super::mapper320::Mapper320;
-use super::mapper323::Mapper323;
-use super::mapper324::Mapper324;
-use super::mapper325::Mapper325;
-use super::mapper326::Mapper326;
-use super::mapper327::Mapper327;
-use super::mapper328::Mapper328;
-use super::mapper329::Mapper329;
-use super::mapper330::Mapper330;
-use super::mapper331::Mapper331;
-use super::mapper332::Mapper332;
-use super::mapper335::Mapper335;
-use super::mapper337::Mapper337;
-use super::mapper338::Mapper338;
-use super::mapper339::Mapper339;
-use super::mapper340::Mapper340;
-use super::mapper341::Mapper341;
-use super::mapper342::Mapper342;
-use super::mapper344::Mapper344;
-use super::mapper345::Mapper345;
-use super::mapper346::Mapper346;
-use super::mapper347::Mapper347;
-use super::mapper348::Mapper348;
-use super::mapper349::Mapper349;
-use super::mapper350::Mapper350;
-use super::mmc1::MMC1Mapper;
-use super::mmc2::MMC2Mapper;
-use super::mmc3::MMC3Mapper;
-use super::mmc4::MMC4Mapper;
-use super::mmc5::MMC5Mapper;
-use super::multicart_15::Multicart15Mapper;
-use super::namco118::Namco118Mapper;
-use super::namco163::Namco163Mapper;
-use super::nina_tengen::NinaTengenMapper;
-use super::nrom::NROMMapper;
-use super::ntdec_2722::Ntdec2722Mapper;
+// Nintendo mappers
+use super::nintendo::axrom::AxROMMapper;
+use super::nintendo::bnrom_nina::BnromNinaMapper;
+use super::nintendo::cnrom::CNROMMapper;
+use super::nintendo::cnrom_security::CnromSecurityMapper;
+use super::nintendo::cprom::CpromMapper;
+use super::nintendo::fds::FdsMapper;
+use super::nintendo::gxrom::GxROMMapper;
+use super::nintendo::mapper100::Mapper100;
+use super::nintendo::mmc1::MMC1Mapper;
+use super::nintendo::mmc2::MMC2Mapper;
+use super::nintendo::mmc3::MMC3Mapper;
+use super::nintendo::mmc4::MMC4Mapper;
+use super::nintendo::mmc5::MMC5Mapper;
+use super::nintendo::nes_event::NesEventMapper;
+use super::nintendo::nrom::NROMMapper;
+use super::nintendo::tqrom::TqromMapper;
+use super::nintendo::txsrom::TxsromMapper;
+use super::nintendo::un1rom::Un1romMapper;
+use super::nintendo::uxrom::UxROMMapper;
+use super::nintendo::uxrom_inverted::UxromInvertedMapper;
+
+// Konami mappers
+use super::konami::vrc1::Vrc1Mapper;
+use super::konami::vrc2_vrc4::Vrc2Vrc4Mapper;
+use super::konami::vrc3::Vrc3Mapper;
+use super::konami::vrc6::VRC6Mapper;
+use super::konami::vrc7::VRC7Mapper;
+
+// Namco mappers
+use super::namco::namco118::Namco118Mapper;
+use super::namco::namco163::Namco163Mapper;
+use super::namco::namcot_3425::Namcot3425Mapper;
+use super::namco::namcot_3443::Namcot3443Mapper;
+use super::namco::namcot_3446::Namcot3446Mapper;
+
+// Bandai mappers
+use super::bandai::bandai_fcg::BandaiFcgMapper;
+use super::bandai::mapper70::Mapper70;
+use super::bandai::mapper96::Mapper96;
+
+// Sunsoft mappers
+use super::sunsoft::sunsoft_2::Sunsoft2Mapper;
+use super::sunsoft::sunsoft_3::Sunsoft3Mapper;
+use super::sunsoft::sunsoft_4::Sunsoft4Mapper;
+use super::sunsoft::sunsoft_early::SunsoftEarlyMapper;
+use super::sunsoft::sunsoft_fme7::SunsoftFme7Mapper;
+
+// Taito mappers
+use super::taito::taito_tc0190::TaitoTc0190Mapper;
+use super::taito::taito_tc0350::TaitoTc0350Mapper;
+use super::taito::taito_x1005::TaitoX1005Mapper;
+use super::taito::taito_x1017::TaitoX1017Mapper;
+
+// Jaleco mappers
+use super::jaleco::jaleco_jf10::JalecoJf10Mapper;
+use super::jaleco::jaleco_jf11::JalecoJf11Mapper;
+use super::jaleco::jaleco_jf13::JalecoJf13Mapper;
+use super::jaleco::jaleco_jf17::JalecoJf17Mapper;
+use super::jaleco::jaleco_jf19::JalecoJf19Mapper;
+use super::jaleco::jaleco_ss88006::JalecoSs88006Mapper;
+use super::jaleco::mapper87::Mapper87;
+
+// Irem mappers
+use super::irem::irem_g101::IremG101Mapper;
+use super::irem::irem_h3001::IremH3001Mapper;
+use super::irem::irem_lrog017::IremLrog017Mapper;
+use super::irem::irem_tam_s1::IremTamS1Mapper;
+use super::irem::nina_tengen::NinaTengenMapper;
+
+// Camerica mappers
+use super::camerica::camerica::CamericaMapper;
+
+// Tengen mappers
+use super::tengen::tengen_rambo1::TengenRambo1Mapper;
+
+// Sachen mappers
+use super::sachen::mapper36::Mapper36;
+use super::sachen::mapper132::Mapper132;
+use super::sachen::mapper133::Mapper133;
+use super::sachen::mapper243::Mapper243;
+
+// Unlicensed/other mappers
 #[cfg(test)]
 use super::rom_db;
-use super::sunsoft_4::Sunsoft4Mapper;
-use super::sunsoft_fme7::SunsoftFme7Mapper;
-use super::super_magic_card::SuperMagicCardMapper;
-use super::taito_tc0190::TaitoTc0190Mapper;
-use super::uxrom::UxROMMapper;
-use super::vrc2_vrc4::Vrc2Vrc4Mapper;
-use super::vrc6::VRC6Mapper;
-use super::vrc7::VRC7Mapper;
+use super::unlicensed::action53::Action53Mapper;
+use super::unlicensed::colordreams::ColorDreamsMapper;
+use super::unlicensed::jy_company::JyCompanyMapper;
+use super::unlicensed::mapper12::Mapper12;
+use super::unlicensed::mapper14::Mapper14;
+use super::unlicensed::mapper29::Mapper29;
+use super::unlicensed::mapper31::Mapper31;
+use super::unlicensed::mapper35::Mapper35;
+use super::unlicensed::mapper37::Mapper37;
+use super::unlicensed::mapper38::Mapper38;
+use super::unlicensed::mapper39::Mapper39;
+use super::unlicensed::mapper41::Mapper41;
+use super::unlicensed::mapper42::Mapper42;
+use super::unlicensed::mapper43::Mapper43;
+use super::unlicensed::mapper44::Mapper44;
+use super::unlicensed::mapper45::Mapper45;
+use super::unlicensed::mapper46::Mapper46;
+use super::unlicensed::mapper47::Mapper47;
+use super::unlicensed::mapper49::Mapper49;
+use super::unlicensed::mapper50::Mapper50;
+use super::unlicensed::mapper51::Mapper51;
+use super::unlicensed::mapper52::Mapper52;
+use super::unlicensed::mapper53::Mapper53;
+use super::unlicensed::mapper54::Mapper54;
+use super::unlicensed::mapper55::Mapper55;
+use super::unlicensed::mapper56::Mapper56;
+use super::unlicensed::mapper57::Mapper57;
+use super::unlicensed::mapper58::Mapper58;
+use super::unlicensed::mapper59::Mapper59;
+use super::unlicensed::mapper60::Mapper60;
+use super::unlicensed::mapper61::Mapper61;
+use super::unlicensed::mapper62::Mapper62;
+use super::unlicensed::mapper63::Mapper63;
+use super::unlicensed::mapper74::Mapper74;
+use super::unlicensed::mapper79::Mapper79;
+use super::unlicensed::mapper81::Mapper81;
+use super::unlicensed::mapper83::Mapper83;
+use super::unlicensed::mapper91::Mapper91;
+use super::unlicensed::mapper103::Mapper103;
+use super::unlicensed::mapper104::Mapper104;
+use super::unlicensed::mapper106::Mapper106;
+use super::unlicensed::mapper107::Mapper107;
+use super::unlicensed::mapper110::Mapper110;
+use super::unlicensed::mapper111::GtromMapper;
+use super::unlicensed::mapper112::Mapper112;
+use super::unlicensed::mapper113::Mapper113;
+use super::unlicensed::mapper114::Mapper114;
+use super::unlicensed::mapper115::Mapper115;
+use super::unlicensed::mapper116::Mapper116;
+use super::unlicensed::mapper117::Mapper117;
+use super::unlicensed::mapper120::Mapper120;
+use super::unlicensed::mapper121::Mapper121;
+use super::unlicensed::mapper122::Mapper122;
+use super::unlicensed::mapper123::Mapper123;
+use super::unlicensed::mapper205::Mapper205;
+use super::unlicensed::mapper218::Mapper218;
+use super::unlicensed::mapper222::Mapper222;
+use super::unlicensed::mapper227::Mapper227;
+use super::unlicensed::mapper228::Mapper228;
+use super::unlicensed::mapper229::Mapper229;
+use super::unlicensed::mapper230::Mapper230;
+use super::unlicensed::mapper231::Mapper231;
+use super::unlicensed::mapper232::Mapper232;
+use super::unlicensed::mapper233::Mapper233;
+use super::unlicensed::mapper234::Mapper234;
+use super::unlicensed::mapper236::Mapper236;
+use super::unlicensed::mapper241::Mapper241;
+use super::unlicensed::mapper242::Mapper242;
+use super::unlicensed::mapper244::Mapper244;
+use super::unlicensed::mapper245::Mapper245;
+use super::unlicensed::mapper246::Mapper246;
+use super::unlicensed::mapper249::Mapper249;
+use super::unlicensed::mapper250::Mapper250;
+use super::unlicensed::mapper251::Mapper251;
+use super::unlicensed::mapper253::Mapper253;
+use super::unlicensed::mapper254::Mapper254;
+use super::unlicensed::mapper255::Mapper255;
+use super::unlicensed::mapper257::Mapper257;
+use super::unlicensed::mapper260::Mapper260;
+use super::unlicensed::mapper262::Mapper262;
+use super::unlicensed::mapper263::Mapper263;
+use super::unlicensed::mapper264::Mapper264;
+use super::unlicensed::mapper268::Mapper268;
+use super::unlicensed::mapper271::Mapper271;
+use super::unlicensed::mapper281::Mapper281;
+use super::unlicensed::mapper285::Mapper285;
+use super::unlicensed::mapper286::Mapper286;
+use super::unlicensed::mapper287::Mapper287;
+use super::unlicensed::mapper288::Mapper288;
+use super::unlicensed::mapper291::Mapper291;
+use super::unlicensed::mapper292::Mapper292;
+use super::unlicensed::mapper294::Mapper294;
+use super::unlicensed::mapper296::Mapper296;
+use super::unlicensed::mapper300::Mapper300;
+use super::unlicensed::mapper302::Mapper302;
+use super::unlicensed::mapper304::Mapper304;
+use super::unlicensed::mapper305::Mapper305;
+use super::unlicensed::mapper306::Mapper306;
+use super::unlicensed::mapper307::Mapper307;
+use super::unlicensed::mapper308::Mapper308;
+use super::unlicensed::mapper313::Mapper313;
+use super::unlicensed::mapper314::Mapper314;
+use super::unlicensed::mapper315::Mapper315;
+use super::unlicensed::mapper319::Mapper319;
+use super::unlicensed::mapper320::Mapper320;
+use super::unlicensed::mapper323::Mapper323;
+use super::unlicensed::mapper324::Mapper324;
+use super::unlicensed::mapper325::Mapper325;
+use super::unlicensed::mapper326::Mapper326;
+use super::unlicensed::mapper327::Mapper327;
+use super::unlicensed::mapper328::Mapper328;
+use super::unlicensed::mapper329::Mapper329;
+use super::unlicensed::mapper330::Mapper330;
+use super::unlicensed::mapper331::Mapper331;
+use super::unlicensed::mapper332::Mapper332;
+use super::unlicensed::mapper335::Mapper335;
+use super::unlicensed::mapper337::Mapper337;
+use super::unlicensed::mapper338::Mapper338;
+use super::unlicensed::mapper339::Mapper339;
+use super::unlicensed::mapper340::Mapper340;
+use super::unlicensed::mapper341::Mapper341;
+use super::unlicensed::mapper342::Mapper342;
+use super::unlicensed::mapper344::Mapper344;
+use super::unlicensed::mapper345::Mapper345;
+use super::unlicensed::mapper346::Mapper346;
+use super::unlicensed::mapper347::Mapper347;
+use super::unlicensed::mapper348::Mapper348;
+use super::unlicensed::mapper349::Mapper349;
+use super::unlicensed::mapper350::Mapper350;
+use super::unlicensed::multicart_15::Multicart15Mapper;
+use super::unlicensed::ntdec_2722::Ntdec2722Mapper;
+use super::unlicensed::super_magic_card::SuperMagicCardMapper;
+use super::unlicensed::unrom512::Unrom512Mapper;
 
 /// Metadata for constructing a mapper, containing cartridge header details and
 /// derived values (e.g., CRC32) used by the factory.
@@ -735,9 +759,9 @@ mapper_registry! {
     15 => Multicart15Mapper::new,
     16 => BandaiFcgMapper::new,
     17 => SuperMagicCardMapper::new,
-    18 => Mapper18::new,
+    18 => JalecoSs88006Mapper::new,
     19 => Namco163Mapper::new,
-    20 => Mapper20::new,
+    20 => FdsMapper::new,
     21 => Vrc2Vrc4Mapper::new,
     22 => Vrc2Vrc4Mapper::new,
     23 => Vrc2Vrc4Mapper::new,
@@ -745,9 +769,9 @@ mapper_registry! {
     25 => Vrc2Vrc4Mapper::new,
     26 => VRC6Mapper::new,
     27 => Vrc2Vrc4Mapper::new,
-    28 => Mapper28::new,
+    28 => Action53Mapper::new,
     29 => Mapper29::new,
-    30 => Mapper30::new,
+    30 => Unrom512Mapper::new,
     31 => Mapper31::new,
     300 => Mapper300::new,
     315 => Mapper315::new,
@@ -792,7 +816,7 @@ mapper_registry! {
     45 => Mapper45::new,
     46 => Mapper46::new,
     47 => Mapper47::new,
-    48 => Mapper48::new,
+    48 => TaitoTc0350Mapper::new,
     49 => Mapper49::new,
     50 => Mapper50::new,
     51 => Mapper51::new,
@@ -810,46 +834,46 @@ mapper_registry! {
     61 => Mapper61::new,
     62 => Mapper62::new,
     63 => Mapper63::new,
-    64 => Mapper64::new,
-    65 => Mapper65::new,
+    64 => TengenRambo1Mapper::new,
+    65 => IremH3001Mapper::new,
     66 => GxROMMapper::new,
-    67 => Mapper67::new,
+    67 => Sunsoft3Mapper::new,
     68 => Sunsoft4Mapper::new,
     69 => SunsoftFme7Mapper::new,
     70 => Mapper70::new,
     71 => CamericaMapper::new,
-    72 => Mapper72::new,
-    73 => Mapper73::new,
+    72 => JalecoJf17Mapper::new,
+    73 => Vrc3Mapper::new,
     74 => Mapper74::new,
-    75 => Mapper75::new,
-    76 => Mapper76::new,
-    77 => Mapper77::new,
+    75 => Vrc1Mapper::new,
+    76 => Namcot3446Mapper::new,
+    77 => IremLrog017Mapper::new,
     78 => NinaTengenMapper::new,
     79 => Mapper79::new,
-    80 => Mapper80::new,
+    80 => TaitoX1005Mapper::new,
     81 => Mapper81::new,
-    82 => Mapper82::new,
+    82 => TaitoX1017Mapper::new,
     83 => Mapper83::new,
     84 => Ntdec2722Mapper::new,
     85 => VRC7Mapper::new,
-    86 => Mapper86::new,
+    86 => JalecoJf13Mapper::new,
     87 => Mapper87::new,
-    88 => Mapper88::new,
-    89 => Mapper89::new,
-    90 => Mapper90::new,
+    88 => Namcot3443Mapper::new,
+    89 => SunsoftEarlyMapper::new,
+    90 => JyCompanyMapper::new,
     91 => Mapper91::new,
-    92 => Mapper92::new,
-    93 => Mapper93::new,
-    94 => Mapper94::new,
-    95 => Mapper95::new,
+    92 => JalecoJf19Mapper::new,
+    93 => Sunsoft2Mapper::new,
+    94 => Un1romMapper::new,
+    95 => Namcot3425Mapper::new,
     96 => Mapper96::new,
-    97 => Mapper97::new,
+    97 => IremTamS1Mapper::new,
     100 => Mapper100::new,
-    101 => Mapper101::new,
+    101 => JalecoJf10Mapper::new,
     102 => NROMMapper::new,
     103 => Mapper103::new,
     104 => Mapper104::new,
-    105 => Mapper105::new,
+    105 => NesEventMapper::new,
     106 => Mapper106::new,
     107 => Mapper107::new,
     110 => Mapper110::new,
@@ -860,8 +884,8 @@ mapper_registry! {
     115 => Mapper115::new,
     116 => Mapper116::new,
     117 => Mapper117::new,
-    118 => Mapper118::new,
-    119 => Mapper119::new,
+    118 => TxsromMapper::new,
+    119 => TqromMapper::new,
     120 => Mapper120::new,
     121 => Mapper121::new,
     122 => Mapper122::new,
@@ -869,10 +893,10 @@ mapper_registry! {
     129 => Mapper58::new,
     132 => Mapper132::new,
     133 => Mapper133::new,
-    140 => Mapper140::new,
+    140 => JalecoJf11Mapper::new,
     155 => MMC1Mapper::new,
-    180 => Mapper180::new,
-    185 => Mapper185::new,
+    180 => UxromInvertedMapper::new,
+    185 => CnromSecurityMapper::new,
     205 => Mapper205::new,
     206 => Namco118Mapper::new,
     218 => Mapper218::new,
@@ -910,6 +934,7 @@ mapper_registry! {
     292 => Mapper292::new,
     291 => Mapper291::new,
     294 => Mapper294::new,
+    296 => Mapper296::new,
     288 => Mapper288::new,
     287 => Mapper287::new,
     286 => Mapper286::new,
@@ -933,9 +958,9 @@ const SUPPORTED_MAPPERS: &[u16] = &[
     100, 101, 102, 103, 104, 106, 110, 114, 115, 117, 118, 120, 121, 122, 123, 129, 132, 133, 140,
     155, 180, 185, 205, 206, 218, 222, 227, 228, 229, 230, 231, 232, 233, 234, 236, 241, 242, 243,
     244, 245, 246, 249, 250, 251, 253, 254, 255, 257, 260, 262, 263, 264, 268, 271, 281, 285, 286,
-    287, 288, 291, 292, 294, 300, 302, 304, 305, 306, 307, 308, 313, 314, 315, 319, 320, 323, 324,
-    326, 327, 328, 329, 330, 331, 332, 335, 337, 338, 339, 340, 342, 343, 344, 345, 346, 347, 348,
-    349, 350,
+    287, 288, 291, 292, 294, 296, 300, 302, 304, 305, 306, 307, 308, 313, 314, 315, 319, 320, 323,
+    324, 326, 327, 328, 329, 330, 331, 332, 335, 337, 338, 339, 340, 342, 343, 344, 345, 346, 347,
+    348, 349, 350,
 ];
 
 /// List of supported iNES mapper IDs handled by the factory.
