@@ -32,7 +32,7 @@ const CHR_RAM_SIZE: usize = 2 * 1024;
 /// - `$1000–$17FF`: 2 KB CHR-RAM (fixed, not bankable)
 /// - `$1800–$1FFF`: mirror of CHR-RAM ($1000–$17FF) on the cartridge; nametable RAM
 ///   remains in CIRAM and is accessed via `read_nametable`/`write_nametable`
-pub struct Mapper77 {
+pub struct IremLrog017Mapper {
     base: BaseMapper,
     /// Currently selected 4 KB CHR-ROM bank (bits [3:0] of the write register).
     chr_bank: u8,
@@ -40,7 +40,7 @@ pub struct Mapper77 {
     chr_ram: [u8; CHR_RAM_SIZE],
 }
 
-impl Mapper77 {
+impl IremLrog017Mapper {
     pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
@@ -77,7 +77,7 @@ impl Mapper77 {
     }
 }
 
-impl Mapper for Mapper77 {
+impl Mapper for IremLrog017Mapper {
     fn base(&self) -> &BaseMapper {
         &self.base
     }
@@ -152,11 +152,11 @@ mod tests {
     use crate::cartridge::mapper::{MapperContext, create_mapper};
     use crate::cartridge::test_helpers::banked_data;
 
-    /// Create a Mapper77 with 32 KB PRG-ROM and 16 KB CHR-ROM (4 banks of 4 KB).
-    fn make_mapper() -> Mapper77 {
+    /// Create a IremLrog017Mapper with 32 KB PRG-ROM and 16 KB CHR-ROM (4 banks of 4 KB).
+    fn make_mapper() -> IremLrog017Mapper {
         let prg = vec![0u8; 32 * 1024];
         let chr = banked_data(4 * 1024, 4);
-        Mapper77::new(MapperContext::new_for_test(
+        IremLrog017Mapper::new(MapperContext::new_for_test(
             77,
             prg,
             chr,

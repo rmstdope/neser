@@ -32,14 +32,14 @@ use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 /// - $F000-$FFFF: CHR bank 1 low bits [....CCCC]
 /// - $C000-$CFFF: PRG bank 2 select [....PPPP]
 /// - $E000-$EFFF: CHR bank 0 low bits [....CCCC]
-pub struct Mapper75 {
+pub struct Vrc1Mapper {
     base: BaseMapper,
     pub(crate) prg_bank: [u8; 3],
     pub(crate) chr_bank_low: [u8; 2],
     pub(crate) chr_bank_high: [u8; 2],
 }
 
-impl Mapper75 {
+impl Vrc1Mapper {
     const PRG_BANK_SIZE: usize = 0x2000; // 8 KiB
     const CHR_BANK_SIZE: usize = 0x1000; // 4 KiB
 
@@ -88,7 +88,7 @@ impl Mapper75 {
     }
 }
 
-impl Mapper for Mapper75 {
+impl Mapper for Vrc1Mapper {
     fn base(&self) -> &BaseMapper {
         &self.base
     }
@@ -189,10 +189,10 @@ mod tests {
     const PRG_BANKS: usize = 11; // 11 × 8KB = 88KB
     const CHR_BANKS: usize = 11; // 11 × 4KB = 44KB
 
-    fn make_mapper() -> Mapper75 {
+    fn make_mapper() -> Vrc1Mapper {
         let prg = banked_data(8 * 1024, PRG_BANKS);
         let chr = banked_data(4 * 1024, CHR_BANKS);
-        Mapper75::new(MapperContext::new_for_test(
+        Vrc1Mapper::new(MapperContext::new_for_test(
             75,
             prg,
             chr,
@@ -381,7 +381,7 @@ mod tests {
         // Use CHR_BANKS=11: high=1,low=1 → bank 17 → 17%11 = 6
         let prg = banked_data(8 * 1024, PRG_BANKS);
         let chr = banked_data(4 * 1024, CHR_BANKS);
-        let mut mapper = Mapper75::new(MapperContext::new_for_test(
+        let mut mapper = Vrc1Mapper::new(MapperContext::new_for_test(
             75,
             prg,
             chr,
@@ -401,7 +401,7 @@ mod tests {
     fn chr_bank1_uses_combined_high_and_low_bits() {
         let prg = banked_data(8 * 1024, PRG_BANKS);
         let chr = banked_data(4 * 1024, CHR_BANKS);
-        let mut mapper = Mapper75::new(MapperContext::new_for_test(
+        let mut mapper = Vrc1Mapper::new(MapperContext::new_for_test(
             75,
             prg,
             chr,

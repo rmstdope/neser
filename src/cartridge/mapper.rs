@@ -7,37 +7,37 @@ use std::io;
 use super::nintendo::axrom::AxROMMapper;
 use super::nintendo::bnrom_nina::BnromNinaMapper;
 use super::nintendo::cnrom::CNROMMapper;
+use super::nintendo::cnrom_security::CnromSecurityMapper;
 use super::nintendo::cprom::CpromMapper;
+use super::nintendo::fds::FdsMapper;
 use super::nintendo::gxrom::GxROMMapper;
-use super::nintendo::mapper20::Mapper20;
-use super::nintendo::mapper94::Mapper94;
 use super::nintendo::mapper100::Mapper100;
-use super::nintendo::mapper105::Mapper105;
-use super::nintendo::mapper118::Mapper118;
-use super::nintendo::mapper119::Mapper119;
-use super::nintendo::mapper180::Mapper180;
-use super::nintendo::mapper185::Mapper185;
 use super::nintendo::mmc1::MMC1Mapper;
 use super::nintendo::mmc2::MMC2Mapper;
 use super::nintendo::mmc3::MMC3Mapper;
 use super::nintendo::mmc4::MMC4Mapper;
 use super::nintendo::mmc5::MMC5Mapper;
+use super::nintendo::nes_event::NesEventMapper;
 use super::nintendo::nrom::NROMMapper;
+use super::nintendo::tqrom::TqromMapper;
+use super::nintendo::txsrom::TxsromMapper;
+use super::nintendo::un1rom::Un1romMapper;
 use super::nintendo::uxrom::UxROMMapper;
+use super::nintendo::uxrom_inverted::UxromInvertedMapper;
 
 // Konami mappers
-use super::konami::mapper73::Mapper73;
-use super::konami::mapper75::Mapper75;
+use super::konami::vrc1::Vrc1Mapper;
 use super::konami::vrc2_vrc4::Vrc2Vrc4Mapper;
+use super::konami::vrc3::Vrc3Mapper;
 use super::konami::vrc6::VRC6Mapper;
 use super::konami::vrc7::VRC7Mapper;
 
 // Namco mappers
-use super::namco::mapper76::Mapper76;
-use super::namco::mapper88::Mapper88;
-use super::namco::mapper95::Mapper95;
 use super::namco::namco118::Namco118Mapper;
 use super::namco::namco163::Namco163Mapper;
+use super::namco::namcot_3425::Namcot3425Mapper;
+use super::namco::namcot_3443::Namcot3443Mapper;
+use super::namco::namcot_3446::Namcot3446Mapper;
 
 // Bandai mappers
 use super::bandai::bandai_fcg::BandaiFcgMapper;
@@ -45,39 +45,39 @@ use super::bandai::mapper70::Mapper70;
 use super::bandai::mapper96::Mapper96;
 
 // Sunsoft mappers
-use super::sunsoft::mapper67::Mapper67;
-use super::sunsoft::mapper89::Mapper89;
-use super::sunsoft::mapper93::Mapper93;
+use super::sunsoft::sunsoft_2::Sunsoft2Mapper;
+use super::sunsoft::sunsoft_3::Sunsoft3Mapper;
 use super::sunsoft::sunsoft_4::Sunsoft4Mapper;
+use super::sunsoft::sunsoft_early::SunsoftEarlyMapper;
 use super::sunsoft::sunsoft_fme7::SunsoftFme7Mapper;
 
 // Taito mappers
-use super::taito::mapper48::Mapper48;
-use super::taito::mapper80::Mapper80;
-use super::taito::mapper82::Mapper82;
 use super::taito::taito_tc0190::TaitoTc0190Mapper;
+use super::taito::taito_tc0350::TaitoTc0350Mapper;
+use super::taito::taito_x1005::TaitoX1005Mapper;
+use super::taito::taito_x1017::TaitoX1017Mapper;
 
 // Jaleco mappers
-use super::jaleco::mapper18::Mapper18;
-use super::jaleco::mapper72::Mapper72;
-use super::jaleco::mapper86::Mapper86;
+use super::jaleco::jaleco_jf10::JalecoJf10Mapper;
+use super::jaleco::jaleco_jf11::JalecoJf11Mapper;
+use super::jaleco::jaleco_jf13::JalecoJf13Mapper;
+use super::jaleco::jaleco_jf17::JalecoJf17Mapper;
+use super::jaleco::jaleco_jf19::JalecoJf19Mapper;
+use super::jaleco::jaleco_ss88006::JalecoSs88006Mapper;
 use super::jaleco::mapper87::Mapper87;
-use super::jaleco::mapper92::Mapper92;
-use super::jaleco::mapper101::Mapper101;
-use super::jaleco::mapper140::Mapper140;
 
 // Irem mappers
 use super::irem::irem_g101::IremG101Mapper;
-use super::irem::mapper65::Mapper65;
-use super::irem::mapper77::Mapper77;
-use super::irem::mapper97::Mapper97;
+use super::irem::irem_h3001::IremH3001Mapper;
+use super::irem::irem_lrog017::IremLrog017Mapper;
+use super::irem::irem_tam_s1::IremTamS1Mapper;
 use super::irem::nina_tengen::NinaTengenMapper;
 
 // Camerica mappers
 use super::camerica::camerica::CamericaMapper;
 
 // Tengen mappers
-use super::tengen::mapper64::Mapper64;
+use super::tengen::tengen_rambo1::TengenRambo1Mapper;
 
 // Sachen mappers
 use super::sachen::mapper36::Mapper36;
@@ -88,12 +88,12 @@ use super::sachen::mapper243::Mapper243;
 // Unlicensed/other mappers
 #[cfg(test)]
 use super::rom_db;
+use super::unlicensed::action53::Action53Mapper;
 use super::unlicensed::colordreams::ColorDreamsMapper;
+use super::unlicensed::jy_company::JyCompanyMapper;
 use super::unlicensed::mapper12::Mapper12;
 use super::unlicensed::mapper14::Mapper14;
-use super::unlicensed::mapper28::Mapper28;
 use super::unlicensed::mapper29::Mapper29;
-use super::unlicensed::mapper30::Mapper30;
 use super::unlicensed::mapper31::Mapper31;
 use super::unlicensed::mapper35::Mapper35;
 use super::unlicensed::mapper37::Mapper37;
@@ -125,7 +125,6 @@ use super::unlicensed::mapper74::Mapper74;
 use super::unlicensed::mapper79::Mapper79;
 use super::unlicensed::mapper81::Mapper81;
 use super::unlicensed::mapper83::Mapper83;
-use super::unlicensed::mapper90::Mapper90;
 use super::unlicensed::mapper91::Mapper91;
 use super::unlicensed::mapper103::Mapper103;
 use super::unlicensed::mapper104::Mapper104;
@@ -221,6 +220,7 @@ use super::unlicensed::mapper350::Mapper350;
 use super::unlicensed::multicart_15::Multicart15Mapper;
 use super::unlicensed::ntdec_2722::Ntdec2722Mapper;
 use super::unlicensed::super_magic_card::SuperMagicCardMapper;
+use super::unlicensed::unrom512::Unrom512Mapper;
 
 /// Metadata for constructing a mapper, containing cartridge header details and
 /// derived values (e.g., CRC32) used by the factory.
@@ -759,9 +759,9 @@ mapper_registry! {
     15 => Multicart15Mapper::new,
     16 => BandaiFcgMapper::new,
     17 => SuperMagicCardMapper::new,
-    18 => Mapper18::new,
+    18 => JalecoSs88006Mapper::new,
     19 => Namco163Mapper::new,
-    20 => Mapper20::new,
+    20 => FdsMapper::new,
     21 => Vrc2Vrc4Mapper::new,
     22 => Vrc2Vrc4Mapper::new,
     23 => Vrc2Vrc4Mapper::new,
@@ -769,9 +769,9 @@ mapper_registry! {
     25 => Vrc2Vrc4Mapper::new,
     26 => VRC6Mapper::new,
     27 => Vrc2Vrc4Mapper::new,
-    28 => Mapper28::new,
+    28 => Action53Mapper::new,
     29 => Mapper29::new,
-    30 => Mapper30::new,
+    30 => Unrom512Mapper::new,
     31 => Mapper31::new,
     300 => Mapper300::new,
     315 => Mapper315::new,
@@ -816,7 +816,7 @@ mapper_registry! {
     45 => Mapper45::new,
     46 => Mapper46::new,
     47 => Mapper47::new,
-    48 => Mapper48::new,
+    48 => TaitoTc0350Mapper::new,
     49 => Mapper49::new,
     50 => Mapper50::new,
     51 => Mapper51::new,
@@ -834,46 +834,46 @@ mapper_registry! {
     61 => Mapper61::new,
     62 => Mapper62::new,
     63 => Mapper63::new,
-    64 => Mapper64::new,
-    65 => Mapper65::new,
+    64 => TengenRambo1Mapper::new,
+    65 => IremH3001Mapper::new,
     66 => GxROMMapper::new,
-    67 => Mapper67::new,
+    67 => Sunsoft3Mapper::new,
     68 => Sunsoft4Mapper::new,
     69 => SunsoftFme7Mapper::new,
     70 => Mapper70::new,
     71 => CamericaMapper::new,
-    72 => Mapper72::new,
-    73 => Mapper73::new,
+    72 => JalecoJf17Mapper::new,
+    73 => Vrc3Mapper::new,
     74 => Mapper74::new,
-    75 => Mapper75::new,
-    76 => Mapper76::new,
-    77 => Mapper77::new,
+    75 => Vrc1Mapper::new,
+    76 => Namcot3446Mapper::new,
+    77 => IremLrog017Mapper::new,
     78 => NinaTengenMapper::new,
     79 => Mapper79::new,
-    80 => Mapper80::new,
+    80 => TaitoX1005Mapper::new,
     81 => Mapper81::new,
-    82 => Mapper82::new,
+    82 => TaitoX1017Mapper::new,
     83 => Mapper83::new,
     84 => Ntdec2722Mapper::new,
     85 => VRC7Mapper::new,
-    86 => Mapper86::new,
+    86 => JalecoJf13Mapper::new,
     87 => Mapper87::new,
-    88 => Mapper88::new,
-    89 => Mapper89::new,
-    90 => Mapper90::new,
+    88 => Namcot3443Mapper::new,
+    89 => SunsoftEarlyMapper::new,
+    90 => JyCompanyMapper::new,
     91 => Mapper91::new,
-    92 => Mapper92::new,
-    93 => Mapper93::new,
-    94 => Mapper94::new,
-    95 => Mapper95::new,
+    92 => JalecoJf19Mapper::new,
+    93 => Sunsoft2Mapper::new,
+    94 => Un1romMapper::new,
+    95 => Namcot3425Mapper::new,
     96 => Mapper96::new,
-    97 => Mapper97::new,
+    97 => IremTamS1Mapper::new,
     100 => Mapper100::new,
-    101 => Mapper101::new,
+    101 => JalecoJf10Mapper::new,
     102 => NROMMapper::new,
     103 => Mapper103::new,
     104 => Mapper104::new,
-    105 => Mapper105::new,
+    105 => NesEventMapper::new,
     106 => Mapper106::new,
     107 => Mapper107::new,
     110 => Mapper110::new,
@@ -884,8 +884,8 @@ mapper_registry! {
     115 => Mapper115::new,
     116 => Mapper116::new,
     117 => Mapper117::new,
-    118 => Mapper118::new,
-    119 => Mapper119::new,
+    118 => TxsromMapper::new,
+    119 => TqromMapper::new,
     120 => Mapper120::new,
     121 => Mapper121::new,
     122 => Mapper122::new,
@@ -893,10 +893,10 @@ mapper_registry! {
     129 => Mapper58::new,
     132 => Mapper132::new,
     133 => Mapper133::new,
-    140 => Mapper140::new,
+    140 => JalecoJf11Mapper::new,
     155 => MMC1Mapper::new,
-    180 => Mapper180::new,
-    185 => Mapper185::new,
+    180 => UxromInvertedMapper::new,
+    185 => CnromSecurityMapper::new,
     205 => Mapper205::new,
     206 => Namco118Mapper::new,
     218 => Mapper218::new,

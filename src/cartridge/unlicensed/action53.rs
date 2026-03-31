@@ -41,7 +41,7 @@ use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 const CHR_RAM_SIZE: usize = 32 * 1024;
 
 /// Mapper 028 – Action 53 multicart.
-pub struct Mapper28 {
+pub struct Action53Mapper {
     base: BaseMapper,
     selected_reg: u8,
     regs: [u8; 4],
@@ -49,7 +49,7 @@ pub struct Mapper28 {
     hard_reset_pending: bool,
 }
 
-impl Mapper28 {
+impl Action53Mapper {
     pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
@@ -133,7 +133,7 @@ impl Mapper28 {
     }
 }
 
-impl Mapper for Mapper28 {
+impl Mapper for Action53Mapper {
     fn base(&self) -> &BaseMapper {
         &self.base
     }
@@ -206,8 +206,8 @@ mod tests {
     use crate::cartridge::test_helpers::banked_data;
 
     /// 32 banks × 16 KB = 512 KB PRG-ROM; no CHR-ROM (uses CHR-RAM).
-    fn make_mapper() -> Mapper28 {
-        Mapper28::new(MapperContext::new_for_test(
+    fn make_mapper() -> Action53Mapper {
+        Action53Mapper::new(MapperContext::new_for_test(
             28,
             banked_data(16 * 1024, 32),
             vec![],

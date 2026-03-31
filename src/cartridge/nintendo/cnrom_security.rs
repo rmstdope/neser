@@ -6,6 +6,9 @@
 //! return PPU open bus (0).
 //!
 //! See: <https://www.nesdev.org/wiki/CNROM#Mapper_185>
+//!
+//! Known Limitations:
+//! - No known gameplay-blocking functional limitations are currently documented.
 
 use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mapper::MapperContext;
@@ -19,14 +22,14 @@ use crate::cartridge::{Mapper, MapperCapabilities};
 /// - CHR-ROM: Up to 8KB (1 bank); reads gated by chip-select
 /// - Mirroring: Fixed (from header)
 /// - NES 2.0 submapper: encodes which low-2-bit value enables CHR reads
-pub struct Mapper185 {
+pub struct CnromSecurityMapper {
     base: BaseMapper,
     register: u8,
     chr_enabled: bool,
     chr_enable_mask: u8, // low 2 bits that must match to enable CHR
 }
 
-impl Mapper185 {
+impl CnromSecurityMapper {
     pub fn new(ctx: MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             max_prg_ram_kb: 8,
@@ -52,7 +55,7 @@ impl Mapper185 {
     }
 }
 
-impl Mapper for Mapper185 {
+impl Mapper for CnromSecurityMapper {
     fn base(&self) -> &BaseMapper {
         &self.base
     }

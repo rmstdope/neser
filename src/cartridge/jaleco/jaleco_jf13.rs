@@ -27,13 +27,13 @@ use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 /// - Bits [1:0] and bit[6] (→ bit[2]): select 8 KiB CHR bank mapped at $0000
 ///
 /// Power-on state: PRG bank 0, CHR bank 0.
-pub struct Mapper86 {
+pub struct JalecoJf13Mapper {
     base: BaseMapper,
     prg_bank: u8,
     chr_bank: u8,
 }
 
-impl Mapper86 {
+impl JalecoJf13Mapper {
     pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
@@ -61,7 +61,7 @@ impl Mapper86 {
     }
 }
 
-impl Mapper for Mapper86 {
+impl Mapper for JalecoJf13Mapper {
     fn base(&self) -> &BaseMapper {
         &self.base
     }
@@ -110,10 +110,10 @@ mod tests {
     const PRG_BANKS: usize = 3; // 3 × 32KB = 96KB
     const CHR_BANKS: usize = 5; // 5 × 8KB  = 40KB
 
-    fn make_mapper() -> Mapper86 {
+    fn make_mapper() -> JalecoJf13Mapper {
         let prg = banked_data(32 * 1024, PRG_BANKS);
         let chr = banked_data(8 * 1024, CHR_BANKS);
-        Mapper86::new(MapperContext::new_for_test(
+        JalecoJf13Mapper::new(MapperContext::new_for_test(
             86,
             prg,
             chr,
@@ -261,7 +261,7 @@ mod tests {
         // Use 8 CHR banks so bank 7 (=3|4) is in range.
         let prg = banked_data(32 * 1024, PRG_BANKS);
         let chr = banked_data(8 * 1024, 8);
-        let mut mapper = Mapper86::new(MapperContext::new_for_test(
+        let mut mapper = JalecoJf13Mapper::new(MapperContext::new_for_test(
             86,
             prg,
             chr,
@@ -370,7 +370,7 @@ mod tests {
     #[test]
     fn chr_ram_works_when_no_chr_rom() {
         let prg = banked_data(32 * 1024, PRG_BANKS);
-        let mut mapper = Mapper86::new(MapperContext::new_for_test(
+        let mut mapper = JalecoJf13Mapper::new(MapperContext::new_for_test(
             86,
             prg,
             vec![],

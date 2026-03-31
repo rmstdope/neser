@@ -50,7 +50,7 @@ use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 /// - `$C002`: IRQ enable
 /// - `$C003`: IRQ disable and acknowledge
 /// - `$E000` [.M.. ....]: M=Mirroring (0=Vert, 1=Horz) at bit 6
-pub struct Mapper48 {
+pub struct TaitoTc0350Mapper {
     base: BaseMapper,
 
     prg_bank: [u8; 2],
@@ -66,7 +66,7 @@ pub struct Mapper48 {
     a12_detector: A12RisingEdgeDetector,
 }
 
-impl Mapper48 {
+impl TaitoTc0350Mapper {
     const PRG_BANK_SIZE: usize = 0x2000; // 8KB
     const CHR_BANK_1K_SIZE: usize = 0x0400; // 1KB
     const REGISTER_MASK: u16 = 0xE003;
@@ -139,7 +139,7 @@ impl Mapper48 {
     }
 }
 
-impl Mapper for Mapper48 {
+impl Mapper for TaitoTc0350Mapper {
     fn base(&self) -> &BaseMapper {
         &self.base
     }

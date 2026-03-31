@@ -27,14 +27,14 @@ use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 /// - Bits [3:0] (D): bank number
 ///
 /// Power-on state: PRG bank 0 at $8000, CHR bank 0, latch = 0.
-pub struct Mapper72 {
+pub struct JalecoJf17Mapper {
     base: BaseMapper,
     pub(crate) prg_bank: u8,
     pub(crate) chr_bank: u8,
     pub(crate) latch: u8,
 }
 
-impl Mapper72 {
+impl JalecoJf17Mapper {
     pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
@@ -64,7 +64,7 @@ impl Mapper72 {
     }
 }
 
-impl Mapper for Mapper72 {
+impl Mapper for JalecoJf17Mapper {
     fn base(&self) -> &BaseMapper {
         &self.base
     }
@@ -127,11 +127,11 @@ mod tests {
     const PRG_BANKS: usize = 3; // 3 × 16KB = 48KB
     const CHR_BANKS: usize = 5; // 5 × 8KB  = 40KB
 
-    /// Build a Mapper72 whose PRG ROM is filled with 0xFF so bus-conflict AND is transparent.
-    fn make_mapper() -> Mapper72 {
+    /// Build a JalecoJf17Mapper whose PRG ROM is filled with 0xFF so bus-conflict AND is transparent.
+    fn make_mapper() -> JalecoJf17Mapper {
         let prg = vec![0xFFu8; PRG_BANKS * 16 * 1024];
         let chr = banked_data(8 * 1024, CHR_BANKS);
-        Mapper72::new(MapperContext::new_for_test(
+        JalecoJf17Mapper::new(MapperContext::new_for_test(
             72,
             prg,
             chr,
@@ -141,7 +141,7 @@ mod tests {
 
     // Helper: write a register value; since PRG ROM is 0xFF the effective value
     // equals the written value (no bus-conflict masking).
-    fn write(mapper: &mut Mapper72, value: u8) {
+    fn write(mapper: &mut JalecoJf17Mapper, value: u8) {
         mapper.write_prg(0x8000, value);
     }
 
@@ -191,7 +191,7 @@ mod tests {
         // Use a distinct fill so we can verify the last bank.
         let prg = banked_data(16 * 1024, PRG_BANKS);
         let chr = banked_data(8 * 1024, CHR_BANKS);
-        let mapper = Mapper72::new(MapperContext::new_for_test(
+        let mapper = JalecoJf17Mapper::new(MapperContext::new_for_test(
             72,
             prg,
             chr,
@@ -304,7 +304,7 @@ mod tests {
     #[test]
     fn chr_ram_works_when_no_chr_rom() {
         let prg = vec![0xFFu8; PRG_BANKS * 16 * 1024];
-        let mut mapper = Mapper72::new(MapperContext::new_for_test(
+        let mut mapper = JalecoJf17Mapper::new(MapperContext::new_for_test(
             72,
             prg,
             vec![],

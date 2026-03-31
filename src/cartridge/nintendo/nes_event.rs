@@ -21,7 +21,7 @@ use crate::cartridge::mmc1::MMC1Mapper;
 /// - bit 4 set: timer reset/disabled, pending IRQ cleared
 /// - bit 4 clear: timer armed
 /// - bits 0-3: countdown value (in CPU cycles, with 0 treated as 1)
-pub struct Mapper105 {
+pub struct NesEventMapper {
     inner: MMC1Mapper,
     irq_counter: u8,
     irq_reload: u8,
@@ -30,7 +30,7 @@ pub struct Mapper105 {
     last_chr_bank_0: u8,
 }
 
-impl Mapper105 {
+impl NesEventMapper {
     const SNAPSHOT_SIZE: usize = 5;
     const CHR_BANK_MASK: u8 = 0x1F;
     const MMC1_WRITE_COMPLETE_COUNT: u8 = 4;
@@ -131,7 +131,7 @@ impl Mapper105 {
     }
 }
 
-impl Mapper for Mapper105 {
+impl Mapper for NesEventMapper {
     fn base(&self) -> &BaseMapper {
         self.inner.base()
     }

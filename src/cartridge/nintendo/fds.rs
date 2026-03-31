@@ -51,7 +51,7 @@ const SNAPSHOT_MIN_LEN: usize = SNAPSHOT_HEADER_LEN + WAVE_RAM_LEN + AUDIO_REGS_
 ///
 /// Mirroring: Fixed horizontal (hardwired on FDS hardware).
 /// IRQ: 16-bit CPU-cycle count-down timer; fires on reach-zero; optional reload.
-pub struct Mapper20 {
+pub struct FdsMapper {
     base: BaseMapper,
 
     /// 32 KiB work RAM ($6000–$DFFF).
@@ -77,7 +77,7 @@ pub struct Mapper20 {
     audio_regs: [u8; 16],
 }
 
-impl Mapper20 {
+impl FdsMapper {
     pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_irq: true,
@@ -124,7 +124,7 @@ impl Mapper20 {
     }
 }
 
-impl Mapper for Mapper20 {
+impl Mapper for FdsMapper {
     fn base(&self) -> &BaseMapper {
         &self.base
     }
@@ -280,12 +280,12 @@ impl Mapper for Mapper20 {
 
 #[cfg(test)]
 mod tests {
-    use super::Mapper20;
+    use super::FdsMapper;
     use crate::cartridge::NametableLayout;
     use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
 
-    fn make_mapper() -> Mapper20 {
-        Mapper20::new(MapperContext::new_for_test(
+    fn make_mapper() -> FdsMapper {
+        FdsMapper::new(MapperContext::new_for_test(
             20,
             vec![0u8; 8 * 1024], // 8 KiB BIOS placeholder
             vec![],              // CHR-RAM
@@ -363,7 +363,7 @@ mod tests {
         let mut bios = vec![0u8; 8 * 1024];
         bios[0] = 0x42;
         bios[8 * 1024 - 1] = 0x99;
-        let mapper = Mapper20::new(MapperContext::new_for_test(
+        let mapper = FdsMapper::new(MapperContext::new_for_test(
             20,
             bios,
             vec![],

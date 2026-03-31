@@ -30,7 +30,7 @@ use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 /// - $C000-$CFFF: IRQ Control [.... .MEA]
 /// - $D000-$DFFF: IRQ Acknowledge
 /// - $F000-$FFFF: PRG bank select [.... .PPP]
-pub struct Mapper73 {
+pub struct Vrc3Mapper {
     base: BaseMapper,
     prg_bank: u8,
     irq_latch: u16,
@@ -41,7 +41,7 @@ pub struct Mapper73 {
     irq_pending: bool,
 }
 
-impl Mapper73 {
+impl Vrc3Mapper {
     const PRG_BANK_SIZE: usize = 0x4000; // 16 KiB
 
     pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
@@ -102,7 +102,7 @@ impl Mapper73 {
     }
 }
 
-impl Mapper for Mapper73 {
+impl Mapper for Vrc3Mapper {
     fn base(&self) -> &BaseMapper {
         &self.base
     }
@@ -213,9 +213,9 @@ mod tests {
     // Use a non-power-of-two bank count to prevent modulo-wrapping false-passes
     const PRG_BANKS: usize = 3; // 3 × 16KB = 48KB
 
-    fn make_mapper() -> Mapper73 {
+    fn make_mapper() -> Vrc3Mapper {
         let prg = banked_data(16 * 1024, PRG_BANKS);
-        Mapper73::new(MapperContext::new_for_test(
+        Vrc3Mapper::new(MapperContext::new_for_test(
             73,
             prg,
             vec![],

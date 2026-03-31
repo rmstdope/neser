@@ -34,14 +34,14 @@ use crate::cartridge::{Mapper, MapperCapabilities};
 /// Notes:
 /// - All writes to $8000–$FFFF are redirected to $8000/$8001 (no mirroring, no IRQ)
 /// - Used in games such as Dragon Spirit: The New Legend, Youkai Douchuuki
-pub struct Mapper88 {
+pub struct Namcot3443Mapper {
     base: BaseMapper,
 
     bank_select: u8,
     regs: [u8; 8],
 }
 
-impl Mapper88 {
+impl Namcot3443Mapper {
     const REG_SELECT_MASK: u8 = 0b0000_0111;
 
     pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
@@ -96,7 +96,7 @@ impl Mapper88 {
     }
 }
 
-impl Mapper for Mapper88 {
+impl Mapper for Namcot3443Mapper {
     fn base(&self) -> &BaseMapper {
         &self.base
     }
