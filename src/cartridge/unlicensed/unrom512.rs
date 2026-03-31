@@ -18,7 +18,7 @@
 //! - Submapper 2: bus conflicts apply
 //! - Submapper 3 (V/H switchable): no bus conflicts
 //!
-//! Known limitations:
+//! Known Limitations:
 //! - NES 2.0 self-flash PRG-ROM write emulation is not implemented.
 
 use crate::cartridge::NametableLayout;
@@ -34,14 +34,14 @@ const CHR_BANK_MASK: u8 = 0x03;
 const MIRRORING_BIT: u8 = 0x80; // bit 7
 
 /// Mapper 030 – UNROM-512 homebrew board.
-pub struct Mapper30 {
+pub struct Unrom512Mapper {
     base: BaseMapper,
     register: u8,
     enable_mirroring_bit: bool,
     submapper3_mode: bool,
 }
 
-impl Mapper30 {
+impl Unrom512Mapper {
     pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
         let submapper = ctx.submapper;
         let header_mirroring = ctx.mirroring;
@@ -116,7 +116,7 @@ impl Mapper30 {
     }
 }
 
-impl Mapper for Mapper30 {
+impl Mapper for Unrom512Mapper {
     fn base(&self) -> &BaseMapper {
         &self.base
     }

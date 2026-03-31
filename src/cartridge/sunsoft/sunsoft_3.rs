@@ -50,7 +50,7 @@ use crate::cartridge::cpu_cycle_irq::{CpuCycleIrq, CpuCycleIrqMode};
 /// - `$D800`: IRQ enable [.... E...] bit 4; also resets write-twice toggle
 /// - `$E800`: Mirroring [.... ..MM] 0=Vert 1=Horz 2=1-screenA 3=1-screenB
 /// - `$F800`: PRG bank [.... PPPP] (16KB bank at $8000)
-pub struct Mapper67 {
+pub struct Sunsoft3Mapper {
     base: BaseMapper,
     prg_bank: u8,
     chr_banks: [u8; 4],
@@ -58,7 +58,7 @@ pub struct Mapper67 {
     irq_write_hi_next: bool,
 }
 
-impl Mapper67 {
+impl Sunsoft3Mapper {
     const PRG_BANK_SIZE: usize = 0x4000; // 16 KiB
     const CHR_BANK_SIZE: usize = 0x0800; // 2 KiB
 
@@ -100,7 +100,7 @@ impl Mapper67 {
     }
 }
 
-impl Mapper for Mapper67 {
+impl Mapper for Sunsoft3Mapper {
     fn base(&self) -> &BaseMapper {
         &self.base
     }
@@ -235,10 +235,10 @@ mod tests {
     const PRG_BANKS: usize = 16; // non-power-of-two not needed for 16KB banks
     const CHR_BANKS: usize = 3; // non-power-of-two to avoid modulo false-passes
 
-    fn make_mapper() -> Mapper67 {
+    fn make_mapper() -> Sunsoft3Mapper {
         let prg = banked_data(16 * 1024, PRG_BANKS);
         let chr = banked_data(2 * 1024, CHR_BANKS);
-        Mapper67::new(MapperContext::new_for_test(
+        Sunsoft3Mapper::new(MapperContext::new_for_test(
             67,
             prg,
             chr,

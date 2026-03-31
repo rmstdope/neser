@@ -28,7 +28,7 @@ use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 ///   - `r0 = (R0 >> 5) & 1`
 ///   - `r1 = (R1 >> 5) & 1`
 ///   - `(0,0) -> SingleScreenLower`, `(1,1) -> SingleScreenUpper`, mixed -> Horizontal
-pub struct Mapper95 {
+pub struct Namcot3425Mapper {
     base: BaseMapper,
 
     bank_select: u8,
@@ -37,7 +37,7 @@ pub struct Mapper95 {
 
 const REGISTERS_SNAPSHOT_LEN: usize = 9; // bank_select (1) + regs (8)
 
-impl Mapper95 {
+impl Namcot3425Mapper {
     const PRG_MODE_MASK: u8 = 0b0100_0000;
     const CHR_MODE_MASK: u8 = 0b1000_0000;
     const REG_SELECT_MASK: u8 = 0b0000_0111;
@@ -132,7 +132,7 @@ impl Mapper95 {
     }
 }
 
-impl Mapper for Mapper95 {
+impl Mapper for Namcot3425Mapper {
     fn base(&self) -> &BaseMapper {
         &self.base
     }

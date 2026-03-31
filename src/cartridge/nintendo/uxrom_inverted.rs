@@ -26,7 +26,7 @@ use crate::cartridge::mapper_templates::SimpleBankedPrgMapper;
 ///
 /// Implementation:
 /// - Uses `SimpleBankedPrgMapper` template with `FIXED_LAST = false` for inverted bank layout
-pub type Mapper180 = SimpleBankedPrgMapper<16, 180, false>;
+pub type UxromInvertedMapper = SimpleBankedPrgMapper<16, 180, false>;
 
 #[cfg(test)]
 mod tests {
@@ -42,7 +42,7 @@ mod tests {
     #[test]
     fn test_lower_window_fixed_to_bank_0() {
         // Spec: CPU $8000–$BFFF is always fixed to PRG bank 0
-        let mut mapper = Mapper180::new(
+        let mut mapper = UxromInvertedMapper::new(
             MapperContext::new_for_test(180, make_128k_prg(), vec![], NametableLayout::Horizontal)
                 .with_prg_ram_banks(0)
                 .with_unspecified_prg_ram_size()
@@ -86,7 +86,7 @@ mod tests {
     #[test]
     fn test_upper_window_switchable() {
         // Spec: CPU $C000–$FFFF is the switchable bank, selected by bits 0–2 of register
-        let mut mapper = Mapper180::new(
+        let mut mapper = UxromInvertedMapper::new(
             MapperContext::new_for_test(180, make_128k_prg(), vec![], NametableLayout::Horizontal)
                 .with_prg_ram_banks(0)
                 .with_unspecified_prg_ram_size()
@@ -124,7 +124,7 @@ mod tests {
         // Spec: bank select uses 3 bits (8 banks for 128KB)
         // Writing 0b0000_1101 (13) should mask to 5 (13 & 7 = 5), selecting bank 5
         // at $C000–$FFFF. The lower window ($8000) stays fixed at bank 0.
-        let mut mapper = Mapper180::new(
+        let mut mapper = UxromInvertedMapper::new(
             MapperContext::new_for_test(180, make_128k_prg(), vec![], NametableLayout::Horizontal)
                 .with_prg_ram_banks(0)
                 .with_unspecified_prg_ram_size()
@@ -151,7 +151,7 @@ mod tests {
     fn test_registers_snapshot_restore() {
         // Snapshot bank_select and restore it correctly on a fresh instance
         let prg = make_128k_prg();
-        let mut original = Mapper180::new(
+        let mut original = UxromInvertedMapper::new(
             MapperContext::new_for_test(180, prg.clone(), vec![], NametableLayout::Horizontal)
                 .with_prg_ram_banks(0)
                 .with_unspecified_prg_ram_size()
@@ -163,7 +163,7 @@ mod tests {
         let snapshot = original.registers_snapshot();
         let chr_snapshot = original.chr_ram_snapshot();
 
-        let mut restored = Mapper180::new(
+        let mut restored = UxromInvertedMapper::new(
             MapperContext::new_for_test(180, prg, vec![], NametableLayout::Horizontal)
                 .with_prg_ram_banks(0)
                 .with_unspecified_prg_ram_size()
@@ -193,7 +193,7 @@ mod tests {
     #[test]
     fn test_chr_ram_read_write() {
         // CHR-RAM should be available and writable
-        let mut mapper = Mapper180::new(
+        let mut mapper = UxromInvertedMapper::new(
             MapperContext::new_for_test(180, make_128k_prg(), vec![], NametableLayout::Horizontal)
                 .with_prg_ram_banks(0)
                 .with_unspecified_prg_ram_size(),
@@ -210,7 +210,7 @@ mod tests {
 
     #[test]
     fn test_mapper_number() {
-        let mapper = Mapper180::new(
+        let mapper = UxromInvertedMapper::new(
             MapperContext::new_for_test(180, make_128k_prg(), vec![], NametableLayout::Horizontal)
                 .with_prg_ram_banks(0)
                 .with_unspecified_prg_ram_size(),

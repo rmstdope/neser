@@ -11,13 +11,13 @@ use crate::cartridge::NametableLayout;
 use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
-pub struct Mapper97 {
+pub struct IremTamS1Mapper {
     base: BaseMapper,
     c000_bank: u8,
     initial_mirroring: NametableLayout,
 }
 
-impl Mapper97 {
+impl IremTamS1Mapper {
     pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_dynamic_mirroring: true,
@@ -42,7 +42,7 @@ impl Mapper97 {
     }
 }
 
-impl Mapper for Mapper97 {
+impl Mapper for IremTamS1Mapper {
     fn base(&self) -> &BaseMapper {
         &self.base
     }
@@ -97,8 +97,8 @@ mod tests {
 
     const PRG_BANKS: usize = 5;
 
-    fn make_mapper() -> Mapper97 {
-        Mapper97::new(MapperContext::new_for_test(
+    fn make_mapper() -> IremTamS1Mapper {
+        IremTamS1Mapper::new(MapperContext::new_for_test(
             97,
             banked_data(16 * 1024, PRG_BANKS),
             vec![],

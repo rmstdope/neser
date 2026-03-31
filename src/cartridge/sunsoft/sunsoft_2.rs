@@ -31,13 +31,13 @@ use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 /// ```
 ///
 /// Power-on state: PRG bank 0, CHR-RAM disabled.
-pub struct Mapper93 {
+pub struct Sunsoft2Mapper {
     base: BaseMapper,
     prg_bank: u8,
     chr_enabled: bool,
 }
 
-impl Mapper93 {
+impl Sunsoft2Mapper {
     pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             max_prg_ram_kb: 0,
@@ -63,7 +63,7 @@ impl Mapper93 {
     }
 }
 
-impl Mapper for Mapper93 {
+impl Mapper for Sunsoft2Mapper {
     fn base(&self) -> &BaseMapper {
         &self.base
     }
@@ -139,8 +139,8 @@ mod tests {
         rom
     }
 
-    fn make_mapper() -> Mapper93 {
-        Mapper93::new(MapperContext::new_for_test(
+    fn make_mapper() -> Sunsoft2Mapper {
+        Sunsoft2Mapper::new(MapperContext::new_for_test(
             93,
             make_prg_rom(),
             vec![],
@@ -149,7 +149,7 @@ mod tests {
     }
 
     /// Read bank index from a 16 KiB window by sampling offset 0x100.
-    fn read_prg_bank(mapper: &Mapper93, window_base: u16) -> u8 {
+    fn read_prg_bank(mapper: &Sunsoft2Mapper, window_base: u16) -> u8 {
         mapper.read_prg(window_base + 0x100)
     }
 
@@ -329,7 +329,7 @@ mod tests {
         for bank in 0..PRG_BANKS {
             prg_rom[bank * bank_size + 0x100] = bank as u8;
         }
-        let mut mapper = Mapper93::new(MapperContext::new_for_test(
+        let mut mapper = Sunsoft2Mapper::new(MapperContext::new_for_test(
             93,
             prg_rom,
             vec![],

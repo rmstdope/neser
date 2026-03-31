@@ -3,6 +3,9 @@
 //! Specifications:
 //! - Main: <https://www.nesdev.org/wiki/INES_Mapper_018>
 //! - Hardware reference: Mesen `JalecoSs88006`
+//!
+//! Known Limitations:
+//! - No known gameplay-blocking functional limitations are currently documented.
 
 use crate::cartridge::BaseMapper;
 use crate::cartridge::NametableLayout;
@@ -10,7 +13,7 @@ use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
 const IRQ_MASKS: [u16; 4] = [0xFFFF, 0x0FFF, 0x00FF, 0x000F];
 
-pub struct Mapper18 {
+pub struct JalecoSs88006Mapper {
     base: BaseMapper,
     prg_banks: [u8; 3],
     chr_banks: [u8; 8],
@@ -21,7 +24,7 @@ pub struct Mapper18 {
     irq_pending: bool,
 }
 
-impl Mapper18 {
+impl JalecoSs88006Mapper {
     const PRG_BANK_SIZE: usize = 0x2000; // 8 KB
     const CHR_BANK_SIZE: usize = 0x0400; // 1 KB
 
@@ -91,7 +94,7 @@ impl Mapper18 {
     }
 }
 
-impl Mapper for Mapper18 {
+impl Mapper for JalecoSs88006Mapper {
     fn base(&self) -> &BaseMapper {
         &self.base
     }
@@ -236,7 +239,7 @@ impl Mapper for Mapper18 {
 
 #[cfg(test)]
 mod tests {
-    use super::Mapper18;
+    use super::JalecoSs88006Mapper;
     use crate::cartridge::NametableLayout;
     use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
     use crate::cartridge::test_helpers::banked_data;
@@ -244,8 +247,8 @@ mod tests {
     const PRG_BANKS: usize = 32;
     const CHR_BANKS: usize = 128;
 
-    fn make_mapper() -> Mapper18 {
-        Mapper18::new(MapperContext::new_for_test(
+    fn make_mapper() -> JalecoSs88006Mapper {
+        JalecoSs88006Mapper::new(MapperContext::new_for_test(
             18,
             banked_data(8 * 1024, PRG_BANKS),
             banked_data(1024, CHR_BANKS),

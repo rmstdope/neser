@@ -71,7 +71,7 @@ use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 /// - `$7EFC`: PRG bank 2 (bits[7:2]) for $C000-$DFFF
 ///
 /// Power-on state: all registers zero, RAM disabled, page 3 fixed to last bank.
-pub struct Mapper82 {
+pub struct TaitoX1017Mapper {
     base: BaseMapper,
     /// PRG bank selectors for pages 0–2 (bits[7:2] of write value).
     prg_regs: [u8; 3],
@@ -85,7 +85,7 @@ pub struct Mapper82 {
     ram_perm: [u8; 3],
 }
 
-impl Mapper82 {
+impl TaitoX1017Mapper {
     const PRG_BANK_SIZE: usize = 0x2000; // 8 KiB
     const CHR_BANK_SIZE: usize = 0x0400; // 1 KiB
 
@@ -195,7 +195,7 @@ impl Mapper82 {
     }
 }
 
-impl Mapper for Mapper82 {
+impl Mapper for TaitoX1017Mapper {
     fn base(&self) -> &BaseMapper {
         &self.base
     }
@@ -310,10 +310,10 @@ mod tests {
     const PRG_BANKS: usize = 11; // 11 × 8 KB
     const CHR_BANKS: usize = 13; // 13 × 1 KB
 
-    fn make_mapper() -> Mapper82 {
+    fn make_mapper() -> TaitoX1017Mapper {
         let prg = banked_data(8 * 1024, PRG_BANKS);
         let chr = banked_data(1024, CHR_BANKS);
-        Mapper82::new(MapperContext::new_for_test(
+        TaitoX1017Mapper::new(MapperContext::new_for_test(
             82,
             prg,
             chr,

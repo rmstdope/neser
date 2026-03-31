@@ -1,4 +1,7 @@
 //! Mapper 119 - TQROM (MMC3 with mixed CHR-ROM/CHR-RAM banking)
+//!
+//! Known Limitations:
+//! - No known gameplay-blocking functional limitations are currently documented.
 
 use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mmc3::MMC3Mapper;
@@ -6,12 +9,12 @@ use crate::cartridge::{Mapper, MapperCapabilities};
 
 const CHR_RAM_SIZE: usize = 8 * 1024;
 
-pub struct Mapper119 {
+pub struct TqromMapper {
     pub(crate) inner: MMC3Mapper,
     chr_ram: [u8; CHR_RAM_SIZE],
 }
 
-impl Mapper119 {
+impl TqromMapper {
     const MAPPER_NUMBER: u16 = 119;
     const CHR_1K_BANK_SIZE: usize = 0x0400;
     const CHR_BANK_MASK: usize = Self::CHR_1K_BANK_SIZE - 1;
@@ -30,7 +33,7 @@ impl Mapper119 {
     }
 }
 
-impl Mapper for Mapper119 {
+impl Mapper for TqromMapper {
     fn base(&self) -> &BaseMapper {
         &self.inner.base
     }
@@ -132,7 +135,7 @@ impl Mapper for Mapper119 {
 
 #[cfg(test)]
 mod tests {
-    use super::{CHR_RAM_SIZE, Mapper119};
+    use super::{CHR_RAM_SIZE, TqromMapper};
     use crate::cartridge::NametableLayout;
     use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
     use crate::cartridge::test_helpers::banked_data;
@@ -140,8 +143,8 @@ mod tests {
     const PRG_BANKS: usize = 6;
     const CHR_ROM_1K_BANKS: usize = 13;
 
-    fn make_mapper_direct_with_chr_banks(chr_rom_1k_banks: usize) -> Mapper119 {
-        Mapper119::new(MapperContext::new_for_test(
+    fn make_mapper_direct_with_chr_banks(chr_rom_1k_banks: usize) -> TqromMapper {
+        TqromMapper::new(MapperContext::new_for_test(
             119,
             banked_data(8 * 1024, PRG_BANKS),
             banked_data(1024, chr_rom_1k_banks),
@@ -149,7 +152,7 @@ mod tests {
         ))
     }
 
-    fn make_mapper_direct() -> Mapper119 {
+    fn make_mapper_direct() -> TqromMapper {
         make_mapper_direct_with_chr_banks(CHR_ROM_1K_BANKS)
     }
 

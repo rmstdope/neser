@@ -43,7 +43,7 @@ impl IrqSource {
 }
 
 /// Mapper 090 – J.Y. Company ASIC
-pub struct Mapper90 {
+pub struct JyCompanyMapper {
     base: BaseMapper,
 
     // PRG state
@@ -80,7 +80,7 @@ pub struct Mapper90 {
     a12: A12RisingEdgeDetector,
 }
 
-impl Mapper90 {
+impl JyCompanyMapper {
     const PRG_BANK_SIZE: usize = 0x2000;
     const CHR_BANK_SIZE: usize = 0x0400;
 
@@ -282,7 +282,7 @@ impl Mapper90 {
     }
 }
 
-impl Mapper for Mapper90 {
+impl Mapper for JyCompanyMapper {
     fn base(&self) -> &BaseMapper {
         &self.base
     }
@@ -481,10 +481,10 @@ mod tests {
     const PRG_8K_BANKS: usize = 11;
     const CHR_1K_BANKS: usize = 13;
 
-    fn make_mapper() -> Mapper90 {
+    fn make_mapper() -> JyCompanyMapper {
         let prg = banked_data(8 * 1024, PRG_8K_BANKS);
         let chr = banked_data(1024, CHR_1K_BANKS);
-        Mapper90::new(MapperContext::new_for_test(
+        JyCompanyMapper::new(MapperContext::new_for_test(
             90,
             prg,
             chr,
@@ -651,7 +651,7 @@ mod tests {
         // Use upper-marker data so bank 256 (marker=1) differs from bank 0 (marker=0)
         let prg = banked_data(8 * 1024, PRG_8K_BANKS);
         let chr = crate::cartridge::test_helpers::banked_data_with_upper_marker(1024, 300);
-        let mut mapper = Mapper90::new(MapperContext::new_for_test(
+        let mut mapper = JyCompanyMapper::new(MapperContext::new_for_test(
             90,
             prg,
             chr,
@@ -697,7 +697,7 @@ mod tests {
     fn chr_8k_mode_maps_single_8kb_window() {
         let prg = banked_data(8 * 1024, PRG_8K_BANKS);
         let chr = banked_data(1024, 16); // 16 1KB banks
-        let mut mapper = Mapper90::new(MapperContext::new_for_test(
+        let mut mapper = JyCompanyMapper::new(MapperContext::new_for_test(
             90,
             prg,
             chr,

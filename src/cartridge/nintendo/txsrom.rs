@@ -11,12 +11,12 @@ use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mmc3::MMC3Mapper;
 use crate::cartridge::{Mapper, MapperCapabilities};
 
-pub struct Mapper118 {
+pub struct TxsromMapper {
     mmc3: MMC3Mapper,
     ciram: [u8; Self::CIRAM_SIZE],
 }
 
-impl Mapper118 {
+impl TxsromMapper {
     const MAPPER_NUMBER: u16 = 118;
     const CIRAM_SIZE: usize = 0x0800;
     const NAMETABLE_PAGE_SIZE: usize = 0x0400;
@@ -34,7 +34,7 @@ impl Mapper118 {
     }
 }
 
-impl Mapper for Mapper118 {
+impl Mapper for TxsromMapper {
     fn base(&self) -> &BaseMapper {
         &self.mmc3.base
     }

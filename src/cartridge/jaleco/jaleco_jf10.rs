@@ -1,16 +1,19 @@
 //! Mapper 101 – Jaleco JF-10
+//!
+//! Known Limitations:
+//! - No known gameplay-blocking functional limitations are currently documented.
 
 use crate::cartridge::base_mapper::BaseMapper;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
 const CHR_BANK_SIZE: usize = 8 * 1024;
 
-pub struct Mapper101 {
+pub struct JalecoJf10Mapper {
     base: BaseMapper,
     chr_bank: u8,
 }
 
-impl Mapper101 {
+impl JalecoJf10Mapper {
     pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
@@ -31,7 +34,7 @@ impl Mapper101 {
     }
 }
 
-impl Mapper for Mapper101 {
+impl Mapper for JalecoJf10Mapper {
     fn base(&self) -> &BaseMapper {
         &self.base
     }
@@ -74,8 +77,8 @@ mod tests {
 
     const CHR_BANKS: usize = 5;
 
-    fn make_mapper() -> Mapper101 {
-        Mapper101::new(MapperContext::new_for_test(
+    fn make_mapper() -> JalecoJf10Mapper {
+        JalecoJf10Mapper::new(MapperContext::new_for_test(
             101,
             vec![0xAB; 32 * 1024],
             banked_data(8 * 1024, CHR_BANKS),

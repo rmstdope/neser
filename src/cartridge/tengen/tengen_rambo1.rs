@@ -37,7 +37,7 @@ use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 ///
 /// PRG windows: R6@$8000 (or RF if P=1), R7@$A000, RF@$C000 (or R6 if P=1), fixed-last@$E000
 /// CHR: see NesDev table; K=0 → R0/R1 are 2KB banks; K=1 → all 1KB
-pub struct Mapper64 {
+pub struct TengenRambo1Mapper {
     base: BaseMapper,
     regs: [u8; 16],    // R0-R9 at indices 0-9, RF at index 15
     bank_select: u8,   // last $8000 write
@@ -56,7 +56,7 @@ pub struct Mapper64 {
     a12_detector: A12RisingEdgeDetector,
 }
 
-impl Mapper64 {
+impl TengenRambo1Mapper {
     pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_irq: true,
@@ -172,7 +172,7 @@ impl Mapper64 {
     }
 }
 
-impl Mapper for Mapper64 {
+impl Mapper for TengenRambo1Mapper {
     fn base(&self) -> &BaseMapper {
         &self.base
     }
@@ -328,10 +328,10 @@ mod tests {
     const PRG_BANKS: usize = 32;
     const CHR_1K_BANKS: usize = 256;
 
-    fn make_mapper() -> Mapper64 {
+    fn make_mapper() -> TengenRambo1Mapper {
         let prg = banked_data(8 * 1024, PRG_BANKS);
         let chr = banked_data(1024, CHR_1K_BANKS);
-        Mapper64::new(MapperContext::new_for_test(
+        TengenRambo1Mapper::new(MapperContext::new_for_test(
             64,
             prg,
             chr,
@@ -341,7 +341,7 @@ mod tests {
 
     /// Write to the RAMBO-1 bank select register ($8000) then bank data ($8001).
     /// Used for both PRG (R6, R7, RF) and CHR (R0-R5, R8-R9) registers.
-    fn select_bank(mapper: &mut Mapper64, reg: u8, bank: u8) {
+    fn select_bank(mapper: &mut TengenRambo1Mapper, reg: u8, bank: u8) {
         mapper.write_prg(0x8000, reg);
         mapper.write_prg(0x8001, bank);
     }
