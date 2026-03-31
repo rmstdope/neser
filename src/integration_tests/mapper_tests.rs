@@ -315,7 +315,94 @@ mod tests {
         "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M180_P128K_H.nes"
     );
 
-    // TODO Homebrew Mappers
+    // Homebrew Mappers
+
+    // Mapper 31 (NSF / homebrew)
+    setup_rom_console_test!(
+        test_homebrew_31_test_16,
+        "roms/automated_tests/31_test_roms/31_test_16.nes",
+        "PASS"
+    );
+    setup_rom_console_test!(
+        test_homebrew_31_test_32,
+        "roms/automated_tests/31_test_roms/31_test_32.nes",
+        "PASS"
+    );
+    setup_rom_console_test!(
+        test_homebrew_31_test_64,
+        "roms/automated_tests/31_test_roms/31_test_64.nes",
+        "PASS"
+    );
+    setup_rom_console_test!(
+        test_homebrew_31_test_128,
+        "roms/automated_tests/31_test_roms/31_test_128.nes",
+        "PASS"
+    );
+    setup_rom_console_test!(
+        test_homebrew_31_test_256,
+        "roms/automated_tests/31_test_roms/31_test_256.nes",
+        "PASS"
+    );
+    setup_rom_console_test!(
+        test_homebrew_31_test_512,
+        "roms/automated_tests/31_test_roms/31_test_512.nes",
+        "PASS"
+    );
+    setup_rom_console_test!(
+        test_homebrew_31_test_1024,
+        "roms/automated_tests/31_test_roms/31_test_1024.nes",
+        "PASS"
+    );
+
+    // Mapper 28 (Action 53 / test28)
+    // Requires Start button press to begin automated tests, then a soft reset
+    // to complete the final bank-persistence check. Uses 16px font (non-ASCII
+    // tile encoding) so we verify by screen CRC instead of console text.
+    #[test]
+    fn test_homebrew_test28() {
+        let rom_path = "roms/automated_tests/test28-0.04/test28.nes";
+        let rom_data = fs::read(rom_path).expect("ROM should load");
+        let cartridge =
+            Cartridge::load_from_file(&rom_data, rom_path, crate::app_context::AppContext::new())
+                .expect("ROM should parse");
+
+        let config = Config {
+            ram_init_mode: RamInitMode::Zero,
+            ..Default::default()
+        };
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+
+        // Phase 1: Boot and wait for interactive mode to display
+        run_nes_for_frames(&mut nes, 120);
+
+        // Phase 2: Press Start to begin automated tests
+        nes.set_button(1, crate::input::Button::Start, true);
+        run_nes_for_frames(&mut nes, 2);
+        nes.set_button(1, crate::input::Button::Start, false);
+
+        // Phase 3: Run automated tests (~17s for 512K ROM = ~1020 frames)
+        // Wait 1500 frames (~25s) for generous margin
+        run_nes_for_frames(&mut nes, 1500);
+
+        // Phase 4: Trigger soft reset (preserves RAM, like pressing Reset button)
+        // test28 displays "One last thing: Please press the Reset Button"
+        // After reset, wrongbanks.s checks warm boot signature and bank persistence
+        nes.reset(true);
+
+        // Phase 5: Wait for result to display
+        run_nes_for_frames(&mut nes, 120);
+
+        // Phase 6: Verify the screen shows PASS (CRC of the pass screen)
+        let screen = nes.get_screen_buffer();
+        let crc = screen.crc32();
+        assert_eq!(
+            crc, 0x75C81870,
+            "test28 should show PASS screen after reset (actual CRC: 0x{:08X})",
+            crc
+        );
+    }
 
     // MMC3
     setup_rom_test!(

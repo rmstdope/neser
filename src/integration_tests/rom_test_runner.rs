@@ -268,10 +268,12 @@ pub(crate) mod tests {
                     }
                 } else if let RomTestVerification::Console { pass_string } = &self.verification {
                     let text = Self::read_console_text(&mut nes);
-                    if text.to_uppercase().ends_with(pass_string) {
+                    let uppercase_text = text.to_uppercase();
+
+                    if uppercase_text.ends_with(pass_string) {
                         return RomTestResult::Pass;
-                    } else if text.to_uppercase().contains("FAILED")
-                        || text.to_uppercase().contains("ERROR")
+                    } else if uppercase_text.contains("FAILED")
+                        || uppercase_text.contains("ERROR")
                         || (text.starts_with("0x") && text.chars().nth(2) != Some('0'))
                     {
                         println!("Test failed!");
