@@ -541,8 +541,9 @@ mod tests {
                 }
 
                 let module_path = trimmed.strip_prefix("use super::")?;
-                let module = module_path.split("::").next()?;
-                Some(format!("src/cartridge/{}.rs", module))
+                let (manufacturer, rest) = module_path.split_once("::")?;
+                let (module, _) = rest.split_once("::")?;
+                Some(format!("src/cartridge/{}/{}.rs", manufacturer, module))
             })
             .collect();
 
