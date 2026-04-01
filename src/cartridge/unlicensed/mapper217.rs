@@ -96,18 +96,18 @@ impl Mapper217 {
 
     /// Reads a PRG byte in NROM override mode ($5000 bit 7 set).
     ///
-    /// All four 8KB slots are mapped to a 32KB block determined by ex_regs[0]
-    /// and ex_regs[1]; slots 0/2 → even page, slots 1/3 → odd page.
+    /// All four 8KB slots are mapped to consecutive pages within the 32KB block
+    /// determined by ex_regs[0] and ex_regs[1]: slots 0–3 map to pages base+0..=base+3.
     fn read_prg_nrom(&self, addr: u16) -> u8 {
         // base_v is a 6-bit page index: low 4 bits from ex_regs[0], next 2 from ex_regs[1]
         let base_v =
             ((self.ex_regs[0] as usize) & 0x0F) | (((self.ex_regs[1] as usize) << 4) & 0x30);
-        let page = base_v << 1; // convert to 8KB unit
+        let page = base_v << 2; // first 8KB page index in the 32KB block (block × 4)
         let slot_page = match addr {
             0x8000..=0x9FFF => page,
             0xA000..=0xBFFF => page + 1,
-            0xC000..=0xDFFF => page,
-            0xE000..=0xFFFF => page + 1,
+            0xC000..=0xDFFF => page + 2,
+            0xE000..=0xFFFF => page + 3,
             _ => return 0,
         };
         let final_bank = self.adjust_prg_bank(slot_page);
@@ -140,7 +140,10 @@ impl Mapper for Mapper217 {
                 if self.ex_regs[0] & 0x80 != 0 {
                     self.read_prg_nrom(addr)
                 } else {
-                    let raw_bank = self.mmc3.mapped_prg_bank(addr);
+                    // Use the raw MMC3 8KB page number (register value, including 0xFE/0xFF
+                    // fixed-bank sentinels) so mapper 217's inner/outer bank logic is applied
+                    // to the logical page number before modulo-wrapping.
+                    let raw_bank = self.mmc3.raw_prg_8k_page_number(addr) as usize;
                     let adjusted = self.adjust_prg_bank(raw_bank);
                     let offset = (addr as usize) & Self::PRG_BANK_MASK;
                     self.mmc3.read_prg_at_bank(adjusted, offset)
@@ -254,13 +257,21 @@ impl Mapper for Mapper217 {
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        // Layout: [MMC3 snapshot bytes...][ex_regs[0..4]][staged_reg]
-        // Minimum extra bytes: 5 (4 ex_regs + 1 staged_reg)
-        if data.len() < 5 {
+        // Layout: [MMC3 snapshot bytes (16)][ex_regs[0..4]][staged_reg]
+        // MMC3_SNAPSHOT_SIZE = 16: 1 bank_select + 8 regs + 1 irq_latch + 1 irq_counter
+        //                          + 1 flags + 1 mirroring + 3 A12-detector bytes.
+        // See MMC3Mapper::registers_snapshot for the authoritative format.
+        const MMC3_SNAPSHOT_SIZE: usize = 16;
+        const EXTRA_BYTES: usize = 5; // 4 ex_regs + 1 staged_reg
+
+        // If the snapshot predates mapper 217 extras (or is truncated), pass the
+        // entire buffer to MMC3 and keep ex_regs/staged_reg at their current values.
+        if data.len() < MMC3_SNAPSHOT_SIZE + EXTRA_BYTES {
             self.mmc3.restore_registers(data);
             return;
         }
-        let (mmc3_data, extra) = data.split_at(data.len() - 5);
+
+        let (mmc3_data, extra) = data.split_at(data.len() - EXTRA_BYTES);
         self.mmc3.restore_registers(mmc3_data);
         self.ex_regs.copy_from_slice(&extra[0..4]);
         self.staged_reg = extra[4];
@@ -293,6 +304,7 @@ mod tests {
     // Helper constants
     const PRG_BANKS_32: usize = 32; // 32 × 8KB = 256KB
     const PRG_BANKS_64: usize = 64; // 64 × 8KB = 512KB
+    const PRG_BANKS_128: usize = 128; // 128 × 8KB = 1MB
     const CHR_1K_BANKS_8: usize = 8; // 8 × 1KB = 8KB
     const CHR_1K_BANKS_256: usize = 256; // 256 × 1KB = 256KB
 
@@ -355,49 +367,30 @@ mod tests {
     /// and outer = (ex_regs[1] << 5 & 0x60) | inner.
     #[test]
     fn test_prg_outer_bank_bits_mode_4bit_inner() {
-        // Use mode A ($5007=0) so standard MMC3 register writes work normally
-        let mut mapper = make_mapper(PRG_BANKS_64, CHR_1K_BANKS_8);
+        // 128 × 8KB PRG so outer bits produce a different bank without wrapping
+        let mut mapper = make_mapper(PRG_BANKS_128, CHR_1K_BANKS_8);
 
-        // Switch to mode A
+        // Use mode A for direct MMC3 register writes
         mapper.write_prg(0x5007, 0x00);
 
-        // Set ex_regs[1]: bit 3 = 0, outer bits: ex_regs[1]=0x20 → outer = 0x20<<5 & 0x60 = 0x40
-        mapper.write_prg(0x5001, 0x20);
+        // Fix R6 = 2 for all sub-cases
+        mapper.write_prg(0x8000, 6);
+        mapper.write_prg(0x8001, 2);
 
-        // Select R6 = bank 2 (R6 → $8000-$9FFF in MMC3 PRG mode 0)
-        mapper.write_prg(0x8000, 6); // bank_select → select R6
-        mapper.write_prg(0x8001, 2); // R6 = 2
-
-        // adjusted = (0x20 << 5 & 0x60) | (2 & 0x0F) = 0x40 | 2 = 0x42 = 66
-        // 66 % 64 = 2 (wraps back to bank 2 due to ROM size) — not ideal, let's try non-wrapping:
-        // With 64 banks, any adjusted bank 0-63 is valid. 0x42 = 66 > 63, wraps to 2. Hmm.
-        // Let's use ex_regs[1] = 0x04 (bit 3=0, outer = (0x04<<5)&0x60 = 0x80&0x60 = 0x00, bit4=0)
-        // inner = 2 & 0x0F = 2; adjusted = 0 | 2 = 2 → reads bank 2 ✓
-        mapper.write_prg(0x5001, 0x04); // bit 3 = 0, outer bits = 0
+        // ex_regs[1] = 0x04: bit3=0, outer = (0x04<<5)&0x60 = 0x00, bit4 = 0
+        // adjusted = 0x00 | (2 & 0x0F) = 2
+        mapper.write_prg(0x5001, 0x04);
         assert_eq!(mapper.read_prg(0x8000), 2);
 
-        // Now set ex_regs[1]=0x44 (bit 3=0, bit 6=1 → outer = (0x44<<5)&0x60 = 0x880&0x60 = no...)
-        // Let me compute: 0x44 = 0b01000100. 0x44<<5 = 0b1000_1000_0000 & 0x60 = 0b0110_0000.
-        // 0b1000_1000_0000 = 0x880. 0x880 & 0x60 = 0x00. Hmm.
-        // Actually 0x44 as u8: bits are [7:0] = 0100_0100.
-        // 0x44 << 5 as usize = 0x880. & 0x60 = 0x00. Because bit 6 of 0x44 is 1, 0x44<<5 bit 11 = 1.
-        // 0x60 = 0b0110_0000. 0x880 = 0b1000_1000_0000. AND = 0b0000_0000_0000 = 0.
-        // Let me use ex_regs[1] that would set outer bit 6: need bit 1 of ex_regs[1] to be 1.
-        // outer = (ex_regs[1] << 5) & 0x60: bit 6 comes from ex_regs[1] bit 1, bit 5 from bit 0.
-        // 0x02: bit 1 = 1 → outer = (0x02<<5)&0x60 = 0x40 & 0x60 = 0x40
-        mapper.write_prg(0x5001, 0x02); // outer = 0x40, bit3=0, bit4=0
-        // inner = 2 & 0x0F | (0x02 & 0x10) = 2 | 0 = 2
-        // adjusted = 0x40 | 2 = 0x42 = 66; 66 % 64 = 2
-        // With 64 banks, still wraps... let's just verify the inner is correct
-        // Use 4 PRG banks to avoid wrapping: with 4 banks and outer=0x40, adjusted=0x42, 0x42%4=2
-        // That still wraps to 2. We need a different strategy.
-        // The outer bank bits are meant to address beyond the MMC3's native range.
-        // Let's use a smaller inner bank and verify the adjusted index properly.
-        // inner = 1, outer = 0x40: adjusted = 0x41. 0x41 % 64 = 65 % 64 = 1. Still wraps.
-        // With 128 banks (64*8KB=512KB isn't the max in this test), but we only have 64.
-        // Let's just verify that with ex_regs[1]=0x02 and R6=1, we get bank 1 (wraps from 65%64)
-        mapper.write_prg(0x8001, 1); // R6 = 1
-        assert_eq!(mapper.read_prg(0x8000), 1); // 0x41 % 64 = 1 (bank 65 wraps to 1)
+        // ex_regs[1] = 0x02: bit3=0, outer = (0x02<<5)&0x60 = 0x40, bit4 = 0
+        // adjusted = 0x40 | (2 & 0x0F) = 0x42 = 66
+        mapper.write_prg(0x5001, 0x02);
+        assert_eq!(mapper.read_prg(0x8000), 66);
+
+        // ex_regs[1] = 0x10: bit3=0, outer = (0x10<<5)&0x60 = 0x00, bit4 = 1
+        // adjusted = 0x00 | (2 & 0x0F) | (0x10 & 0x10) = 2 | 16 = 18
+        mapper.write_prg(0x5001, 0x10);
+        assert_eq!(mapper.read_prg(0x8000), 18);
     }
 
     /// When ex_regs[1] bit 3 = 1: inner PRG = raw & 0x1F (5-bit pass-through)
@@ -470,7 +463,7 @@ mod tests {
     // -------------------------------------------------------------------------
 
     /// When ex_regs[0] bit 7 is set, all PRG slots use a fixed 32KB block.
-    /// Slots 0/2 → even page, slots 1/3 → odd page.
+    /// Slots 0–3 map to consecutive 8KB pages within that block.
     #[test]
     fn test_nrom_override_mode() {
         let mut mapper = make_mapper(PRG_BANKS_32, CHR_1K_BANKS_8);
@@ -482,18 +475,18 @@ mod tests {
         mapper.write_prg(0x5001, 0x08);
 
         // Enable NROM mode, block 1 ($5000 = 0x81): ex_regs[0]=0x81
-        // base_v = (0x81 & 0x0F) | ((0x08 << 4) & 0x30) = 0x01 | (0x80 & 0x30) = 1 | 0 = 1
-        // page = 1 << 1 = 2
-        // Slot 0 ($8000) → page 2 → adjust_prg_bank(2): inner = 2&0x1F=2, outer=0 → final=2
-        // Slot 1 ($A000) → page 3 → final=3
-        // Slot 2 ($C000) → page 2 → final=2
-        // Slot 3 ($E000) → page 3 → final=3
+        // base_v = (0x81 & 0x0F) | ((0x08 << 4) & 0x30) = 0x01 | 0 = 1
+        // page = 1 << 2 = 4
+        // Slot 0 ($8000) → page 4 → adjust(4): inner=4, outer=0 → final=4
+        // Slot 1 ($A000) → page 5 → final=5
+        // Slot 2 ($C000) → page 6 → final=6
+        // Slot 3 ($E000) → page 7 → final=7
         mapper.write_prg(0x5000, 0x81);
 
-        assert_eq!(mapper.read_prg(0x8000), 2, "slot 0 should be page 2");
-        assert_eq!(mapper.read_prg(0xA000), 3, "slot 1 should be page 3");
-        assert_eq!(mapper.read_prg(0xC000), 2, "slot 2 should be page 2");
-        assert_eq!(mapper.read_prg(0xE000), 3, "slot 3 should be page 3");
+        assert_eq!(mapper.read_prg(0x8000), 4, "slot 0 should be page 4");
+        assert_eq!(mapper.read_prg(0xA000), 5, "slot 1 should be page 5");
+        assert_eq!(mapper.read_prg(0xC000), 6, "slot 2 should be page 6");
+        assert_eq!(mapper.read_prg(0xE000), 7, "slot 3 should be page 7");
     }
 
     /// NROM mode off (bit 7 cleared) → normal MMC3 PRG banking resumes
