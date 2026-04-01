@@ -21,7 +21,9 @@ impl GtromMapper {
     const NAMETABLE_RAM_SIZE: usize = 2 * Self::NAMETABLE_BANK_SIZE;
 
     pub fn new(ctx: MapperContext) -> Self {
-        let chr_ram_size = ctx.chr_rom.len().max(8 * 1024);
+        // GTROM contains 32KB of RAM: first 16KB is CHR RAM (2 × 8KB banks),
+        // remainder is nametable RAM. Always allocate 16KB regardless of chr_rom input.
+        let chr_ram_size = 2 * 8 * 1024;
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
             has_dynamic_mirroring: true,
@@ -327,5 +329,26 @@ mod tests {
         assert_eq!(mapper.read_nametable(0x2400), Some(0x66));
         assert_eq!(mapper.read_nametable(0x2800), Some(0x77));
         assert_eq!(mapper.read_nametable(0x2C00), Some(0x88));
+    }
+
+    #[test]
+    fn chr_bank_switching_with_no_chr_rom_input_uses_two_independent_banks() {
+        // GTROM always has 16KB CHR-RAM (2 × 8KB banks). This test uses
+        // empty CHR-ROM input to match real-world GTROM ROM files.
+        let mut mapper = GtromMapper::new(MapperContext::new_for_test(
+            111,
+            banked_data(32 * 1024, PRG_BANKS_32K),
+            vec![], // No CHR-ROM — real GTROM ROMs have 0 CHR-ROM
+            NametableLayout::Horizontal,
+        ));
+
+        mapper.write_prg(0x5000, 0x00); // CHR bank 0
+        mapper.write_chr(0x0010, 0xAA);
+
+        mapper.write_prg(0x5000, 0x10); // CHR bank 1
+        mapper.write_chr(0x0010, 0xBB);
+
+        mapper.write_prg(0x5000, 0x00); // Back to CHR bank 0
+        assert_eq!(mapper.read_chr(0x0010), 0xAA);
     }
 }

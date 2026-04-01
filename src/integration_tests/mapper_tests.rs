@@ -4,6 +4,7 @@ mod tests {
 
     use crate::cartridge::Cartridge;
     use crate::console::{Config, Nes, RamInitMode};
+    use crate::input::Button;
     use crate::integration_tests::rom_test_runner::tests::run_nes_for_frames;
     use crate::{setup_rom_console_test, setup_rom_crc_test, setup_rom_test};
 
@@ -2236,4 +2237,117 @@ mod tests {
         test_mv_m119_0_combined,
         "roms/automated_tests/mapper_verification/bin/m119.0.nes"
     );
+
+    // ================================================================
+    // Mapper 111 (GTROM / Cheapocabra), Submapper 0
+    // Uses console verification; $7000-$7FFF is register mirror,
+    // $6000-$6FFF is unmapped (no PRG-RAM).
+    // ================================================================
+
+    setup_rom_console_test!(
+        test_mv_m111_0_prg_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m111.0_prg_banking.nes"
+    );
+    setup_rom_console_test!(
+        test_mv_m111_0_chr_ram_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m111.0_chr_ram_banking.nes"
+    );
+    setup_rom_console_test!(
+        test_mv_m111_0_combined,
+        "roms/automated_tests/mapper_verification/bin/m111.0.nes"
+    );
+
+    // ================================================================
+    // GTROM_CC_Test1 — CHR RAM bank-switching functional test
+    // Input: D(60f), R(60f), U(60f), L(60f), Select(1f),
+    //        D(60f), R(60f), U(60f), L(60f)
+    // CRC captured after each button hold completes.
+    // ================================================================
+
+    fn load_gtrom_cc_test1() -> Nes {
+        let rom_path = "roms/automated_tests/GTROM_CC_Test1/GTROM_CC_Test1.nes";
+        let rom_data = fs::read(rom_path).expect("GTROM_CC_Test1 ROM should load");
+        let cartridge =
+            Cartridge::load_from_file(&rom_data, rom_path, crate::app_context::AppContext::new())
+                .expect("GTROM_CC_Test1 ROM should parse");
+        let config = Config {
+            ram_init_mode: RamInitMode::Zero,
+            ..Config::default()
+        };
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+        nes
+    }
+
+    fn hold_button(nes: &mut Nes, button: Button, frames: u32) {
+        nes.set_button(1, button, true);
+        run_nes_for_frames(nes, frames);
+        nes.set_button(1, button, false);
+        run_nes_for_frames(nes, 5);
+    }
+
+    fn capture_gtrom_checkpoint(nes: &Nes, label: &str, checkpoints: &mut Vec<u32>) {
+        let screen = nes.get_screen_buffer();
+        let crc = screen.crc32();
+        if std::env::var_os("NESER_CAPTURE_SCREEN").is_some() {
+            let rgb = screen.snapshot();
+            let path = std::path::Path::new("target/crc_checkpoints/gtrom_cc_test1")
+                .join(format!("{}_crc_{:08X}.png", label, crc));
+            std::fs::create_dir_all(path.parent().unwrap()).ok();
+            crate::integration_tests::rom_test_runner::tests::write_checkpoint_png(
+                &path, &rgb, 256, 240,
+            );
+        }
+        drop(screen);
+        checkpoints.push(crc);
+    }
+
+    #[test]
+    fn test_gtrom_cc_test1_scripted_input_crc_checkpoints() {
+        let mut nes = load_gtrom_cc_test1();
+
+        // Wait for title/splash to settle
+        run_nes_for_frames(&mut nes, 180);
+
+        let mut checkpoints: Vec<u32> = Vec::new();
+
+        hold_button(&mut nes, Button::Down, 60);
+        capture_gtrom_checkpoint(&nes, "01_down", &mut checkpoints);
+
+        hold_button(&mut nes, Button::Right, 60);
+        capture_gtrom_checkpoint(&nes, "02_right", &mut checkpoints);
+
+        hold_button(&mut nes, Button::Up, 60);
+        capture_gtrom_checkpoint(&nes, "03_up", &mut checkpoints);
+
+        hold_button(&mut nes, Button::Left, 60);
+        capture_gtrom_checkpoint(&nes, "04_left", &mut checkpoints);
+
+        hold_button(&mut nes, Button::Select, 1);
+        capture_gtrom_checkpoint(&nes, "05_select", &mut checkpoints);
+
+        hold_button(&mut nes, Button::Down, 60);
+        capture_gtrom_checkpoint(&nes, "06_down2", &mut checkpoints);
+
+        hold_button(&mut nes, Button::Right, 60);
+        capture_gtrom_checkpoint(&nes, "07_right2", &mut checkpoints);
+
+        hold_button(&mut nes, Button::Up, 60);
+        capture_gtrom_checkpoint(&nes, "08_up2", &mut checkpoints);
+
+        hold_button(&mut nes, Button::Left, 60);
+        capture_gtrom_checkpoint(&nes, "09_left2", &mut checkpoints);
+
+        let expected: [u32; 9] = [
+            3414281789, 2959920216, 3182446030, 112968524, 1003019069, 3116593985, 494050857,
+            3651320253, 1003019069,
+        ];
+
+        assert_eq!(
+            checkpoints.as_slice(),
+            &expected,
+            "GTROM_CC_Test1 CRC mismatch — run with NESER_CAPTURE_SCREEN=1 to inspect frames"
+        );
+    }
 }
