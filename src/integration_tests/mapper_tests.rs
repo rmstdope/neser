@@ -2284,6 +2284,7 @@ mod tests {
         nes.set_button(1, button, true);
         run_nes_for_frames(nes, frames);
         nes.set_button(1, button, false);
+        // 5-frame settle after release so the ROM processes the input before the next action
         run_nes_for_frames(nes, 5);
     }
 
@@ -2340,8 +2341,15 @@ mod tests {
         capture_gtrom_checkpoint(&nes, "09_left2", &mut checkpoints);
 
         let expected: [u32; 9] = [
-            3414281789, 2959920216, 3182446030, 112968524, 1003019069, 3116593985, 494050857,
-            3651320253, 1003019069,
+            0xCB81_CE3D, // 01: After Down(60f)   — first D/R/U/L cycle
+            0xB06C_CC58, // 02: After Right(60f)
+            0xBDB0_45CE, // 03: After Up(60f)
+            0x06BB_C34C, // 04: After Left(60f)
+            0x3BC8_DB3D, // 05: After Select(1f)  — bank transition
+            0xB9C3_7341, // 06: After Down(60f)   — second D/R/U/L cycle
+            0x1D72_9E29, // 07: After Right(60f)
+            0xD9A2_B9BD, // 08: After Up(60f)
+            0x3BC8_DB3D, // 09: After Left(60f)   — matches checkpoint 05
         ];
 
         assert_eq!(
