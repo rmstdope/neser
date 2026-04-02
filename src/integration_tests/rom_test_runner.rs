@@ -720,7 +720,9 @@ pub(crate) mod tests {
     ///
     /// `$inputs` is a slice of `(frame, Button, pressed)` tuples specifying when to
     /// press/release buttons. `$checkpoints` is the usual `[(frame, expected_crc)]` list.
-    /// Button events and CRC checkpoints share the same frame timeline starting from 0.
+    /// Both use the same frame timeline. Input events at frame N are applied before the
+    /// emulator steps frame N, and CRC checkpoints at frame N are captured after stepping.
+    /// Both must be in non-decreasing frame order.
     ///
     /// # Example
     /// ```ignore
@@ -762,6 +764,21 @@ pub(crate) mod tests {
 
                 let inputs: &[(u32, $crate::input::Button, bool)] = &$inputs;
                 let checkpoints: &[(u32, u32)] = &$checkpoints;
+
+                // Validate non-decreasing frame order for both inputs and checkpoints
+                for w in inputs.windows(2) {
+                    assert!(
+                        w[0].0 <= w[1].0,
+                        "input frames must be in non-decreasing order"
+                    );
+                }
+                for w in checkpoints.windows(2) {
+                    assert!(
+                        w[0].0 <= w[1].0,
+                        "checkpoint frames must be in non-decreasing order"
+                    );
+                }
+
                 let capture_screen = std::env::var_os("NESER_CAPTURE_SCREEN").is_some();
                 let capture_dir =
                     std::path::PathBuf::from("target/crc_checkpoints").join(stringify!($test_name));
@@ -779,18 +796,17 @@ pub(crate) mod tests {
                 let mut actual: Vec<(u32, u32)> = Vec::with_capacity(checkpoints.len());
 
                 for frame in 0..=max_frame {
-                    if frame > 0 {
-                        $crate::integration_tests::rom_test_runner::tests::run_nes_for_frames(
-                            &mut nes, 1,
-                        );
-                    }
-
-                    // Apply any input events scheduled for this frame
+                    // Apply any input events scheduled for this frame (before stepping)
                     while input_idx < inputs.len() && inputs[input_idx].0 == frame {
                         let (_, button, pressed) = inputs[input_idx];
                         nes.set_button(1, button, pressed);
                         input_idx += 1;
                     }
+
+                    // Advance emulator by one frame
+                    $crate::integration_tests::rom_test_runner::tests::run_nes_for_frames(
+                        &mut nes, 1,
+                    );
 
                     // Check any CRC checkpoints scheduled for this frame
                     while checkpoint_idx < checkpoints.len()
