@@ -6,7 +6,9 @@ mod tests {
     use crate::console::{Config, Nes, RamInitMode};
     use crate::input::Button;
     use crate::integration_tests::rom_test_runner::tests::run_nes_for_frames;
-    use crate::{setup_rom_console_test, setup_rom_crc_test, setup_rom_test};
+    use crate::{
+        setup_rom_console_test, setup_rom_crc_test, setup_rom_crc_test_with_input, setup_rom_test,
+    };
 
     // bntest — BxROM (mapper 34) and AxROM (mapper 7) function tests
     // Verified output: PRG banks readable as hex digits, nametable mirroring pattern
@@ -431,7 +433,16 @@ mod tests {
         test_mmc3_test_2_6_mmc3_alt,
         "roms/automated_tests/mmc3_test_2/rom_singles/6-MMC3_alt.nes"
     );
-    // TODO mmc3bigchrram
+
+    // MMC3 big CHR-RAM test (mmc3bigchrram)
+    // Uses 16px-tall characters so nametable text cannot be decoded by read_nametable_text.
+    // Instead we verify the final screen via frame CRC after pressing START to begin tests.
+    setup_rom_crc_test_with_input!(
+        test_mmc3bigchrram,
+        "roms/automated_tests/mmc3bigchrram-0.01/mmc3bigchrram.nes",
+        [(10, Button::Start, true), (12, Button::Start, false),],
+        [(612, 0x18B2C3DA)]
+    );
 
     // MMC5
     #[test]

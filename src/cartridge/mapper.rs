@@ -247,6 +247,8 @@ pub struct MapperContext {
     pub prg_ram_size_specified: bool,
     /// Whether PRG-RAM is battery backed.
     pub battery_backed_prg_ram: bool,
+    /// CHR-RAM size in bytes from NES 2.0 header (None = use default 8 KiB).
+    pub chr_ram_size_bytes: Option<usize>,
     /// CRC32 of concatenated PRG/CHR; may be overridden for tests.
     pub crc32: u32,
 }
@@ -277,6 +279,7 @@ impl MapperContext {
             prg_ram_size_specified: info.prg_ram_size_bytes.is_some()
                 || info.prg_nvram_size_bytes.is_some(),
             battery_backed_prg_ram: info.battery_backed_prg_ram,
+            chr_ram_size_bytes: info.chr_ram_size_bytes,
             crc32: parsed.crc32,
         }
     }
@@ -317,6 +320,7 @@ impl MapperContext {
             prg_ram_banks_8k: 1,
             prg_ram_size_specified: true,
             battery_backed_prg_ram: false,
+            chr_ram_size_bytes: None,
             crc32,
         }
     }

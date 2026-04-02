@@ -88,6 +88,7 @@ impl Sunsoft4Mapper {
             prg_ram_banks_8k,
             prg_ram_size_specified: true,
             battery_backed_prg_ram: false,
+            chr_ram_size_bytes: None,
             crc32: 0,
         };
         Self::new(ctx)

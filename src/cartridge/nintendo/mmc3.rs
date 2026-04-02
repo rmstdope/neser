@@ -114,6 +114,7 @@ impl MMC3Mapper {
             prg_ram_size_specified: true,
             battery_backed_prg_ram: false,
             hardware_type: crate::cartridge::HardwareType::NesNtsc,
+            chr_ram_size_bytes: None,
             crc32: 0,
         };
         Self::new_internal(ctx, Self::DEFAULT_PRG_RAM_BANKS_8K, use_alternate_irq)
@@ -139,6 +140,7 @@ impl MMC3Mapper {
             prg_ram_size_specified: true,
             battery_backed_prg_ram: false,
             hardware_type: crate::cartridge::HardwareType::NesNtsc,
+            chr_ram_size_bytes: None,
             crc32: 0,
         };
         Self::new_internal(ctx, prg_ram_banks_8k, use_alternate_irq)
