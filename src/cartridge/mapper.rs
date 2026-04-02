@@ -281,8 +281,7 @@ impl MapperContext {
             battery_backed_prg_ram: info.battery_backed_prg_ram,
             chr_ram_size_bytes: match (info.chr_ram_size_bytes, info.chr_nvram_size_bytes) {
                 (Some(a), Some(b)) => Some(a.max(b)),
-                (Some(a), None) => Some(a),
-                (None, Some(b)) => Some(b),
+                (Some(a), None) | (None, Some(a)) => Some(a),
                 (None, None) => None,
             },
             crc32: parsed.crc32,
