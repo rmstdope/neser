@@ -444,35 +444,63 @@ mod tests {
         [(612, 0x18B2C3DA)]
     );
 
-    // MMC5
-    #[test]
-    fn test_mmc5_exram_crc_sequence() {
-        let rom_path = "roms/automated_tests/exram/mmc5exram.nes";
-        let rom_data = fs::read(rom_path).expect("mmc5exram ROM should load");
-        let cartridge =
-            Cartridge::load_from_file(&rom_data, rom_path, crate::app_context::AppContext::new())
-                .expect("mmc5exram ROM should parse");
+    // ================================================================
+    // MMC5 community test suite (mmc5test_v2 + exram)
+    // Verifies MMC5 CHR banking and ExRAM behaviour via frame CRC
+    // checkpoints. mmc5test_v2 is interactive and uses scripted input;
+    // exram (copper bars demo) runs unattended.
+    // ================================================================
 
-        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
-            Config::default(),
-        ));
-        nes.insert_cartridge(cartridge);
-        nes.reset(false);
+    setup_rom_crc_test!(
+        test_mmc5_exram_crc_sequence,
+        "roms/automated_tests/exram/mmc5exram.nes",
+        [
+            (60, 0x90428465u32),
+            (120, 0x4E2BA407u32),
+            (180, 0x01ECA2E8u32),
+            (240, 0x138E5FE2u32),
+            (300, 0xC7C91CC3u32),
+            (360, 0xEFBFD0D1u32),
+            (420, 0xD57CD303u32),
+        ]
+    );
 
-        let expected_crcs = [
-            0x90428465, 0x4E2BA407, 0x01ECA2E8, 0x138E5FE2, 0xC7C91CC3, 0xEFBFD0D1, 0xD57CD303,
-        ];
-        for (index, expected_crc) in expected_crcs.iter().enumerate() {
-            run_nes_for_frames(&mut nes, 60);
-            let crc = nes.get_screen_buffer().crc32();
-            assert_eq!(
-                crc,
-                *expected_crc,
-                "unexpected frame CRC at checkpoint {} for mmc5exram",
-                index + 1
-            );
-        }
-    }
+    // mmc5test_v2: Interactive CHR bank test ROM.
+    // Cycles through 4 bank orders (Right button), then toggles
+    // OBJ pattern table (A), BG pattern table (B), and EXRAM mode (Select).
+    setup_rom_crc_test_with_input!(
+        test_mmc5test_v2_chr_banking,
+        "roms/automated_tests/mmc5test_v2/mmc5test.nes",
+        [
+            // Bank order 0 → 1
+            (62, Button::Right, true),
+            (64, Button::Right, false),
+            // Bank order 1 → 2
+            (122, Button::Right, true),
+            (124, Button::Right, false),
+            // Bank order 2 → 3
+            (182, Button::Right, true),
+            (184, Button::Right, false),
+            // Toggle OBJ pattern table
+            (242, Button::A, true),
+            (244, Button::A, false),
+            // Toggle BG pattern table
+            (302, Button::B, true),
+            (304, Button::B, false),
+            // Toggle EXRAM mode
+            (362, Button::Select, true),
+            (364, Button::Select, false),
+        ],
+        [
+            (60, 0xD5004B41u32),  // Bank order 0, initial state
+            (120, 0x3474E3F9u32), // Bank order 1
+            (180, 0x40114FC8u32), // Bank order 2
+            (240, 0xDB5A3579u32), // Bank order 3
+            (300, 0xEF42C8C6u32), // Bank order 3 + OBJ pattern toggled
+            (360, 0x866A1D08u32), // Bank order 3 + OBJ + BG pattern toggled
+            (420, 0x7AFF2B53u32), // Bank order 3 + OBJ + BG + EXRAM toggled
+        ]
+    );
 
     fn build_mapper95_test_rom() -> Vec<u8> {
         let prg_rom_banks_16k = 8u8;
@@ -581,7 +609,6 @@ mod tests {
             );
         }
     }
-    // TODO mmc5test_v2
 
     // TODO Submappers
 
