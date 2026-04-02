@@ -303,7 +303,6 @@ mod tests {
 
     // Helper constants
     const PRG_BANKS_32: usize = 32; // 32 × 8KB = 256KB
-    const PRG_BANKS_64: usize = 64; // 64 × 8KB = 512KB
     const PRG_BANKS_128: usize = 128; // 128 × 8KB = 1MB
     const CHR_1K_BANKS_8: usize = 8; // 8 × 1KB = 8KB
     const CHR_1K_BANKS_256: usize = 256; // 256 × 1KB = 256KB

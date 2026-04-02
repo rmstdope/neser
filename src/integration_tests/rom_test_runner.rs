@@ -716,6 +716,135 @@ pub(crate) mod tests {
         };
     }
 
+    /// CRC-based ROM test macro with scripted button input.
+    ///
+    /// `$inputs` is a slice of `(frame, Button, pressed)` tuples specifying when to
+    /// press/release buttons. `$checkpoints` is the usual `[(frame, expected_crc)]` list.
+    /// Both use the same frame timeline. Input events at frame N are applied before the
+    /// emulator steps frame N, and CRC checkpoints at frame N are captured after stepping.
+    /// Both must be in non-decreasing frame order.
+    ///
+    /// # Example
+    /// ```ignore
+    /// setup_rom_crc_test_with_input!(
+    ///     test_my_rom,
+    ///     "roms/automated_tests/my_rom.nes",
+    ///     [
+    ///         (10, Button::Start, true),
+    ///         (12, Button::Start, false),
+    ///     ],
+    ///     [(600, 0xDEADBEEF)]
+    /// );
+    /// ```
+    #[macro_export]
+    macro_rules! setup_rom_crc_test_with_input {
+        ($test_name:ident, $rom_path:expr, $inputs:expr, $checkpoints:expr) => {
+            #[test]
+            fn $test_name() {
+                let rom_data = std::fs::read($rom_path).expect("ROM should load");
+                let cartridge = $crate::cartridge::Cartridge::load_from_file(
+                    &rom_data,
+                    $rom_path,
+                    &$crate::app_context::AppContext::new(),
+                )
+                .expect("ROM should parse");
+
+                let mut config = $crate::console::Config {
+                    ram_init_mode: $crate::console::RamInitMode::Zero,
+                    ..Default::default()
+                };
+                config.hardware_model =
+                    $crate::console::HardwareModel::from_timing_mode(cartridge.rom_timing_mode());
+
+                let mut nes = $crate::console::Nes::new(
+                    $crate::app_context::AppContext::new_with_config(config),
+                );
+                nes.insert_cartridge(cartridge);
+                nes.reset(false);
+
+                let inputs: &[(u32, $crate::input::Button, bool)] = &$inputs;
+                let checkpoints: &[(u32, u32)] = &$checkpoints;
+
+                // Validate non-decreasing frame order for both inputs and checkpoints
+                for w in inputs.windows(2) {
+                    assert!(
+                        w[0].0 <= w[1].0,
+                        "input frames must be in non-decreasing order"
+                    );
+                }
+                for w in checkpoints.windows(2) {
+                    assert!(
+                        w[0].0 <= w[1].0,
+                        "checkpoint frames must be in non-decreasing order"
+                    );
+                }
+
+                let capture_screen = std::env::var_os("NESER_CAPTURE_SCREEN").is_some();
+                let capture_dir =
+                    std::path::PathBuf::from("target/crc_checkpoints").join(stringify!($test_name));
+
+                // Collect all event frames (inputs + checkpoints) in order
+                let max_frame = inputs
+                    .iter()
+                    .map(|(f, _, _)| *f)
+                    .chain(checkpoints.iter().map(|(f, _)| *f))
+                    .max()
+                    .unwrap_or(0);
+
+                let mut input_idx = 0;
+                let mut checkpoint_idx = 0;
+                let mut actual: Vec<(u32, u32)> = Vec::with_capacity(checkpoints.len());
+
+                for frame in 0..=max_frame {
+                    // Apply any input events scheduled for this frame (before stepping)
+                    while input_idx < inputs.len() && inputs[input_idx].0 == frame {
+                        let (_, button, pressed) = inputs[input_idx];
+                        nes.set_button(1, button, pressed);
+                        input_idx += 1;
+                    }
+
+                    // Advance emulator by one frame
+                    $crate::integration_tests::rom_test_runner::tests::run_nes_for_frames(
+                        &mut nes, 1,
+                    );
+
+                    // Check any CRC checkpoints scheduled for this frame
+                    while checkpoint_idx < checkpoints.len()
+                        && checkpoints[checkpoint_idx].0 == frame
+                    {
+                        let screen = nes.get_screen_buffer();
+                        let crc = screen.crc32();
+                        actual.push((frame, crc));
+
+                        if capture_screen {
+                            let rgb = screen.snapshot();
+                            let file_name = format!("f{:05}_crc_{:08X}.png", frame, crc);
+                            let path = capture_dir.join(file_name);
+                            $crate::integration_tests::rom_test_runner::tests::write_checkpoint_png(
+                                &path, &rgb, 256, 240,
+                            );
+                        }
+                        checkpoint_idx += 1;
+                    }
+                }
+
+                let expected: Vec<(u32, u32)> = checkpoints.iter().copied().collect();
+                assert_eq!(
+                    actual, expected,
+                    "CRC checkpoints mismatch for {}",
+                    $rom_path
+                );
+
+                if capture_screen {
+                    println!(
+                        "[crc-checkpoint] generated checkpoint artifacts in {}",
+                        capture_dir.display()
+                    );
+                }
+            }
+        };
+    }
+
     #[macro_export]
     macro_rules! setup_rom_address_test {
         ($test_name:ident, $rom_path:expr, $stop_address:expr, $verify_fn:expr, $timeout:expr) => {

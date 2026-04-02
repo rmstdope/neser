@@ -3,7 +3,7 @@
 //! Mappers embed `BaseMapper` via composition and delegate boilerplate to it,
 //! only implementing the truly mapper-specific logic themselves.
 
-use super::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
+use super::common::{ChrMemory, DEFAULT_CHR_RAM_SIZE, DEFAULT_PRG_RAM_SIZE, PrgRam};
 use super::mapper::{MapperCapabilities, MapperContext};
 use crate::cartridge::NametableLayout;
 
@@ -101,7 +101,15 @@ impl BaseMapper {
         Self {
             prg_rom: ctx.prg_rom.clone(),
             prg_ram,
-            chr_memory: ChrMemory::new(ctx.chr_rom.clone()),
+            chr_memory: if ctx.chr_rom.is_empty() {
+                let size = ctx
+                    .chr_ram_size_bytes
+                    .unwrap_or(DEFAULT_CHR_RAM_SIZE)
+                    .max(DEFAULT_CHR_RAM_SIZE);
+                ChrMemory::new_ram(size)
+            } else {
+                ChrMemory::new(ctx.chr_rom.clone())
+            },
             mirroring: ctx.mirroring,
             mapper_number: ctx.mapper,
             capabilities,
