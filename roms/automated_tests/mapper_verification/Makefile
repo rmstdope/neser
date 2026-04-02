@@ -270,6 +270,8 @@ SINGLES := \
 	$(SINGLES_DIR)/m075.0_prg_banking.nes \
 	$(SINGLES_DIR)/m075.0_chr_banking.nes \
 	$(SINGLES_DIR)/m075.0_nametable.nes \
+	$(SINGLES_DIR)/m111.0_prg_banking.nes \
+	$(SINGLES_DIR)/m111.0_chr_ram_banking.nes \
 	$(SINGLES_DIR)/m119.0_prg_banking.nes \
 	$(SINGLES_DIR)/m119.0_chr_banking.nes \
 	$(SINGLES_DIR)/m119.0_nametable.nes \
@@ -352,6 +354,7 @@ COMBINED := \
 	$(BIN_DIR)/m067.0.nes \
 	$(BIN_DIR)/m071.0.nes \
 	$(BIN_DIR)/m075.0.nes \
+	$(BIN_DIR)/m111.0.nes \
 	$(BIN_DIR)/m119.0.nes
 
 .PHONY: all clean check-tools singles combined
@@ -906,6 +909,11 @@ $(eval $(call ROM_RULE,$(SINGLES_DIR)/m075.0_prg_banking.nes,prg_banking,m075.0)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m075.0_chr_banking.nes,chr_banking,m075.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m075.0_nametable.nes,nametable,m075.0))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m075.0.nes,m075.0,prg_banking chr_banking nametable))
+
+# Mapper 111 (GTROM / Cheapocabra) — 32KB PRG, 8KB CHR-RAM, 4-screen nametable
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m111.0_prg_banking.nes,prg_banking,m111.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m111.0_chr_ram_banking.nes,chr_ram_banking,m111.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m111.0.nes,m111.0,prg_banking chr_ram_banking))
 
 # Mapper 119 (TQROM) — MMC3-based with CHR-ROM/CHR-RAM mixing
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m119.0_prg_banking.nes,prg_banking,m119.0))
