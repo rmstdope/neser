@@ -24,14 +24,16 @@ doctest = false
 [dependencies]
 bitflags = "2.9"
 crc = "3.3"
-pixels = "0.15"
 rand = "0.9.2"
 ringbuf = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 postcard = { version = "1", features = ["alloc"] }
 sdl2 = { version = "0.37", optional = true, features = ["ttf"] }
-winit = "0.28"
+winit = { version = "0.30", optional = true }
+glutin = { version = "0.32", optional = true, default-features = false, features = ["egl", "wgl"] }
+glutin-winit = { version = "0.5", optional = true, default-features = false }
+raw-window-handle = { version = "0.6", optional = true }
 gl = { version = "0.14", optional = true }
 imgui-opengl-renderer = { version = "0.12.1", optional = true }
 glow = { version = "0.14", optional = true }
@@ -52,6 +54,17 @@ crossterm = { version = "0.28", optional = true }
 default = ["sdl"]
 sdl = [
 	"dep:sdl2",
+	"dep:gl",
+	"dep:glow",
+	"dep:imgui",
+	"dep:imgui-opengl-renderer",
+	"dep:librashader",
+]
+native = [
+	"dep:winit",
+	"dep:glutin",
+	"dep:glutin-winit",
+	"dep:raw-window-handle",
 	"dep:gl",
 	"dep:glow",
 	"dep:imgui",

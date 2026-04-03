@@ -22,7 +22,9 @@ pub mod wasm_autorun;
 mod wasm_tests;
 
 pub mod integration_tests;
-#[cfg(feature = "sdl")]
+#[cfg(feature = "native")]
+pub mod native_frontend;
+#[cfg(any(feature = "sdl", feature = "native"))]
 pub mod rendering;
 #[cfg(feature = "sdl")]
 pub mod sdl_frontend;

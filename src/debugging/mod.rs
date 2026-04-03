@@ -6,7 +6,7 @@ mod snapshot;
 mod tracing;
 mod types;
 
-#[cfg(feature = "sdl")]
+#[cfg(any(feature = "sdl", feature = "native"))]
 pub mod ui;
 
 pub use logging::log_info;
