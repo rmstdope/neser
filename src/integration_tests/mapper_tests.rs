@@ -2218,6 +2218,77 @@ mod tests {
     );
 
     // ================================================================
+    // Mapper 68 (Sunsoft 4), Submapper 0
+    // ================================================================
+
+    setup_rom_test!(
+        test_mv_m068_0_prg_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m068.0_prg_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m068_0_chr_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m068.0_chr_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m068_0_nametable,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m068.0_nametable.nes"
+    );
+    setup_rom_test!(
+        test_mv_m068_0_prg_ram,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m068.0_prg_ram.nes"
+    );
+    setup_rom_test!(
+        test_mv_m068_0_combined,
+        "roms/automated_tests/mapper_verification/bin/m068.0.nes"
+    );
+
+    // ================================================================
+    // Mapper 69 (Sunsoft FME-7), Submapper 0
+    // ================================================================
+
+    setup_rom_test!(
+        test_mv_m069_0_prg_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m069.0_prg_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m069_0_chr_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m069.0_chr_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m069_0_nametable,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m069.0_nametable.nes"
+    );
+    setup_rom_test!(
+        test_mv_m069_0_irq,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m069.0_irq.nes"
+    );
+    setup_rom_test!(
+        test_mv_m069_0_prg_ram,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m069.0_prg_ram.nes"
+    );
+    setup_rom_test!(
+        test_mv_m069_0_combined,
+        "roms/automated_tests/mapper_verification/bin/m069.0.nes"
+    );
+
+    // ================================================================
+    // Mapper 70 (Bandai), Submapper 0
+    // ================================================================
+
+    setup_rom_test!(
+        test_mv_m070_0_prg_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m070.0_prg_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m070_0_chr_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m070.0_chr_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m070_0_combined,
+        "roms/automated_tests/mapper_verification/bin/m070.0.nes"
+    );
+
+    // ================================================================
     // Mapper 71 (Camerica), Submapper 0
     // ================================================================
 
@@ -2228,6 +2299,77 @@ mod tests {
     setup_rom_test!(
         test_mv_m071_0_combined,
         "roms/automated_tests/mapper_verification/bin/m071.0.nes"
+    );
+
+    // ================================================================
+    // Mapper 72 (Jaleco JF-17), Submapper 0
+    // ================================================================
+
+    setup_rom_test!(
+        test_mv_m072_0_prg_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m072.0_prg_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m072_0_chr_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m072.0_chr_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m072_0_combined,
+        "roms/automated_tests/mapper_verification/bin/m072.0.nes"
+    );
+
+    // ================================================================
+    // Mapper 73 (VRC3), Submapper 0
+    // ================================================================
+
+    setup_rom_test!(
+        test_mv_m073_0_prg_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m073.0_prg_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m073_0_irq,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m073.0_irq.nes"
+    );
+    setup_rom_test!(
+        test_mv_m073_0_prg_ram,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m073.0_prg_ram.nes"
+    );
+    setup_rom_test!(
+        test_mv_m073_0_combined,
+        "roms/automated_tests/mapper_verification/bin/m073.0.nes"
+    );
+
+    // ================================================================
+    // Mapper 74 (MMC3 variant with CHR-RAM), Submapper 0
+    // ================================================================
+
+    setup_rom_test!(
+        test_mv_m074_0_prg_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m074.0_prg_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m074_0_chr_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m074.0_chr_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m074_0_nametable,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m074.0_nametable.nes"
+    );
+    setup_rom_test!(
+        test_mv_m074_0_irq,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m074.0_irq.nes"
+    );
+    setup_rom_test!(
+        test_mv_m074_0_prg_ram,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m074.0_prg_ram.nes"
+    );
+    setup_rom_test!(
+        test_mv_m074_0_write_protect,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m074.0_write_protect.nes"
+    );
+    setup_rom_test!(
+        test_mv_m074_0_combined,
+        "roms/automated_tests/mapper_verification/bin/m074.0.nes"
     );
 
     // ================================================================

@@ -38,7 +38,11 @@ impl Mapper70 {
     pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
-            max_prg_ram_kb: 0,
+            max_prg_ram_kb: if ctx.prg_ram_size_specified && ctx.prg_ram_banks_8k > 0 {
+                ctx.prg_ram_banks_8k as usize * 8
+            } else {
+                0
+            },
             prg_bank_size_kb: 16,
             chr_bank_size_kb: 8,
             ..Default::default()
@@ -78,6 +82,9 @@ impl Mapper for Mapper70 {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
+        if self.base.try_write_prg_ram(addr, value) {
+            return;
+        }
         if !(0x8000..=0xFFFF).contains(&addr) {
             return;
         }

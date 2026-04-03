@@ -42,7 +42,7 @@ got_val:      .res 1       ; Temp for fail handler
 
     ; Enable PRG-RAM early so we can write the status byte at $6000.
     ; For MMC3: $A001 bit 7 = chip enable. Only for mappers where $A001 is the RAM protect register.
-    .if MAPPER_NUM = 4 .or MAPPER_NUM = 12 .or MAPPER_NUM = 14 .or MAPPER_NUM = 119 .or MAPPER_NUM = 37 .or MAPPER_NUM = 45 .or MAPPER_NUM = 47
+    .if MAPPER_NUM = 4 .or MAPPER_NUM = 12 .or MAPPER_NUM = 14 .or MAPPER_NUM = 74 .or MAPPER_NUM = 119 .or MAPPER_NUM = 37 .or MAPPER_NUM = 45 .or MAPPER_NUM = 47
     lda #$80
     sta $A001
     .endif
@@ -165,6 +165,23 @@ got_val:      .res 1       ; Temp for fail handler
     .elseif MAPPER_NUM = 67
     ; Sunsoft 3: map font CHR bank via $8800
     init_chr_font
+    .elseif MAPPER_NUM = 68
+    ; Sunsoft 4: enable PRG-RAM, map font CHR bank via $8000
+    init_prg_ram
+    init_chr_font
+    .elseif MAPPER_NUM = 69
+    ; Sunsoft FME-7: enable PRG-RAM at $6000, map font CHR banks via commands $00/$01
+    init_prg_ram
+    init_chr_font
+    .elseif MAPPER_NUM = 72
+    ; Jaleco JF-17: no init needed (font in CHR bank 0, mapped at power-on)
+    .elseif MAPPER_NUM = 73
+    ; VRC3: no special init needed (CHR-RAM, font not in CHR-ROM)
+    .elseif MAPPER_NUM = 74
+    ; MMC3 variant (CHR-RAM at banks 8-9): enable PRG-RAM, map font via R0=10
+    lda #$80
+    sta $A001
+    init_chr_font
     .elseif MAPPER_NUM = 75
     ; VRC1: map font CHR bank via $E000
     init_chr_font
@@ -279,7 +296,7 @@ got_val:      .res 1       ; Temp for fail handler
     pha
     inc irq_fired
     inc irq_count
-    .if MAPPER_NUM = 4 .or MAPPER_NUM = 12 .or MAPPER_NUM = 14 .or MAPPER_NUM = 64 .or MAPPER_NUM = 119 .or MAPPER_NUM = 37 .or MAPPER_NUM = 45 .or MAPPER_NUM = 47
+    .if MAPPER_NUM = 4 .or MAPPER_NUM = 12 .or MAPPER_NUM = 14 .or MAPPER_NUM = 64 .or MAPPER_NUM = 119 .or MAPPER_NUM = 37 .or MAPPER_NUM = 45 .or MAPPER_NUM = 47 .or MAPPER_NUM = 74
     ; MMC3/MMC3-clone/RAMBO-1: acknowledge + re-enable
     lda #0
     sta $E000               ; IRQ acknowledge (disable)
@@ -361,6 +378,18 @@ got_val:      .res 1       ; Temp for fail handler
     sta $E002               ; Disable + acknowledge + reset counter
     lda #$02
     sta $E002               ; Re-enable IRQ (bit 1)
+    .elseif MAPPER_NUM = 69
+    ; FME-7: acknowledge IRQ by writing to command $0D, then re-enable
+    lda #$0D
+    sta $8000               ; Select IRQ control command
+    lda #$81
+    sta $A000               ; Counter enable + IRQ enable (also acknowledges)
+    .elseif MAPPER_NUM = 73
+    ; VRC3: acknowledge + reload + re-enable
+    lda #$00
+    sta $D000               ; Acknowledge IRQ
+    lda #$02
+    sta $C000               ; E=1: reload from latch + re-enable
     .endif
     pla
     rti
