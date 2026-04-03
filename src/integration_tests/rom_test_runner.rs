@@ -831,7 +831,8 @@ pub(crate) mod tests {
                 let expected: Vec<(u32, u32)> = checkpoints.iter().copied().collect();
 
                 // Print diagnostic info for mismatches (only visible in failing tests)
-                if actual != expected {
+                // OR when NESER_DIAG_CRC is set (to capture baseline row CRCs)
+                if actual != expected || std::env::var_os("NESER_DIAG_CRC").is_some() {
                     let screen = nes.get_screen_buffer();
                     let rgb = screen.snapshot();
                     let crc_algo = crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC);

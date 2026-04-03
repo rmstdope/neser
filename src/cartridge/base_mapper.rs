@@ -106,8 +106,15 @@ impl BaseMapper {
                     .chr_ram_size_bytes
                     .unwrap_or(DEFAULT_CHR_RAM_SIZE)
                     .max(DEFAULT_CHR_RAM_SIZE);
+                #[cfg(test)]
+                eprintln!(
+                    "[base_mapper] CHR-RAM: chr_rom empty, chr_ram_size_bytes={:?}, allocated={}",
+                    ctx.chr_ram_size_bytes, size
+                );
                 ChrMemory::new_ram(size)
             } else {
+                #[cfg(test)]
+                eprintln!("[base_mapper] CHR-ROM: {} bytes", ctx.chr_rom.len());
                 ChrMemory::new(ctx.chr_rom.clone())
             },
             mirroring: ctx.mirroring,
