@@ -912,6 +912,7 @@ mapper_registry! {
     206 => Namco118Mapper::new,
     217 => Mapper217::new,
     218 => Mapper218::new,
+    // 220: FCEUX debug mapper — not real hardware, never implement.
     222 => Mapper222::new,
     227 => Mapper227::new,
     228 => Mapper228::new,
