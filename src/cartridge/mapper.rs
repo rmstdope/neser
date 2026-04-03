@@ -182,6 +182,7 @@ use super::unlicensed::mapper288::Mapper288;
 use super::unlicensed::mapper291::Mapper291;
 use super::unlicensed::mapper292::Mapper292;
 use super::unlicensed::mapper294::Mapper294;
+use super::unlicensed::mapper295::Mapper295;
 use super::unlicensed::mapper296::Mapper296;
 use super::unlicensed::mapper300::Mapper300;
 use super::unlicensed::mapper302::Mapper302;
@@ -281,8 +282,7 @@ impl MapperContext {
             battery_backed_prg_ram: info.battery_backed_prg_ram,
             chr_ram_size_bytes: match (info.chr_ram_size_bytes, info.chr_nvram_size_bytes) {
                 (Some(a), Some(b)) => Some(a.max(b)),
-                (Some(a), None) => Some(a),
-                (None, Some(b)) => Some(b),
+                (Some(a), None) | (None, Some(a)) => Some(a),
                 (None, None) => None,
             },
             crc32: parsed.crc32,
@@ -948,6 +948,7 @@ mapper_registry! {
     292 => Mapper292::new,
     291 => Mapper291::new,
     294 => Mapper294::new,
+    295 => Mapper295::new,
     296 => Mapper296::new,
     288 => Mapper288::new,
     287 => Mapper287::new,
@@ -972,9 +973,9 @@ const SUPPORTED_MAPPERS: &[u16] = &[
     100, 101, 102, 103, 104, 106, 110, 114, 115, 117, 118, 120, 121, 122, 123, 129, 132, 133, 140,
     155, 180, 185, 205, 206, 217, 218, 222, 227, 228, 229, 230, 231, 232, 233, 234, 236, 241, 242,
     243, 244, 245, 246, 249, 250, 251, 253, 254, 255, 257, 260, 262, 263, 264, 268, 271, 274, 281,
-    285, 286, 287, 288, 291, 292, 294, 296, 300, 302, 304, 305, 306, 307, 308, 313, 314, 315, 319,
-    320, 323, 324, 326, 327, 328, 329, 330, 331, 332, 335, 337, 338, 339, 340, 342, 343, 344, 345,
-    346, 347, 348, 349, 350,
+    285, 286, 287, 288, 291, 292, 294, 295, 296, 300, 302, 304, 305, 306, 307, 308, 313, 314, 315,
+    319, 320, 323, 324, 326, 327, 328, 329, 330, 331, 332, 335, 337, 338, 339, 340, 342, 343, 344,
+    345, 346, 347, 348, 349, 350,
 ];
 
 /// List of supported iNES mapper IDs handled by the factory.
