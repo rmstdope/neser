@@ -37,21 +37,18 @@ impl NativeGlWrapper {
         event_loop: &winit::event_loop::ActiveEventLoop,
         app_context: SharedAppContext,
     ) -> Result<Self, String> {
-        let (fullscreen, vsync_enabled, shader_path, debugger_alpha) = {
+        let (fullscreen, vsync_enabled, shader_path, debugger_alpha, window_width, window_height) = {
             let ctx = app_context.borrow();
             let config = ctx.config();
+            let (window_width, window_height) = GlBackend::windowed_dimensions(config.window_height);
             (
                 config.fullscreen,
                 config.vsync_enabled,
                 config.shader_path.clone(),
                 config.debugger_alpha,
+                window_width,
+                window_height,
             )
-        };
-
-        let (window_width, window_height) = {
-            let ctx = app_context.borrow();
-            let config = ctx.config();
-            GlBackend::windowed_dimensions(config.window_height)
         };
 
         // Build the window

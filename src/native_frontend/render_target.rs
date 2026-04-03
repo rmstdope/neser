@@ -37,7 +37,7 @@ impl WinitRenderTarget {
     /// Sets the swap interval (vsync) on the GL surface.
     pub fn set_swap_interval(&self, vsync: bool) -> Result<(), String> {
         let interval = if vsync {
-            SwapInterval::Wait(NonZeroU32::new(1).expect("non-zero"))
+            SwapInterval::Wait(NonZeroU32::MIN)
         } else {
             SwapInterval::DontWait
         };
@@ -75,12 +75,8 @@ impl RenderTarget for WinitRenderTarget {
     }
 
     fn set_fullscreen(&mut self, enabled: bool) -> Result<(), String> {
-        let mode = if enabled {
-            Some(winit::window::Fullscreen::Borderless(None))
-        } else {
-            None
-        };
-        self.window.set_fullscreen(mode);
+        self.window
+            .set_fullscreen(enabled.then_some(winit::window::Fullscreen::Borderless(None)));
         Ok(())
     }
 
