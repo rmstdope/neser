@@ -10,5 +10,3 @@ mod render_target;
 
 pub use audio::NativeAudio;
 pub use event_loop::NativeEventLoop;
-pub use gl_wrapper::NativeGlWrapper;
-pub use render_target::WinitRenderTarget;

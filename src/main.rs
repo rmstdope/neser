@@ -22,13 +22,11 @@ mod tui_frontend;
 
 use app_context::AppContext;
 use console::{
-    ApuChannels, AutorunFormat, CartridgeCatalogOptions, Config, Nes, ParseResult, SaveState,
-    default_catalog_csv_path, log_hardware_selection, refresh_cartridge_catalog,
+    AutorunFormat, CartridgeCatalogOptions, Config, Nes, ParseResult, default_catalog_csv_path,
+    refresh_cartridge_catalog,
 };
 use debugging::log_info;
-use frontend_toasts::{
-    cartridge_load_toast_message, emulator_timing_toast_message, hardware_mode_toast_message,
-};
+use frontend_toasts::cartridge_load_toast_message;
 #[cfg(feature = "sdl")]
 use sdl_frontend::{SdlEventLoop, SdlNesAudio};
 use std::cell::RefCell;
@@ -260,6 +258,8 @@ fn run_sdl_frontend(
     app_context: Rc<RefCell<AppContext>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use crate::audio::NesAudio;
+    use console::{ApuChannels, SaveState, log_hardware_selection};
+    use frontend_toasts::{emulator_timing_toast_message, hardware_mode_toast_message};
 
     // Initialize SDL2
     let sdl_context = sdl2::init()?;

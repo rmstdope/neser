@@ -1,3 +1,4 @@
+#![allow(dead_code)] // Public API for future use in native frontend
 use crate::rendering::RenderTarget;
 
 use glutin::context::PossiblyCurrentContext;

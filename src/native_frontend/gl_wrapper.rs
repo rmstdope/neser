@@ -1,3 +1,4 @@
+#![allow(dead_code)] // Public API for future use in native frontend
 use super::render_target::WinitRenderTarget;
 use crate::app_context::SharedAppContext;
 use crate::debugging::breakpoints::BreakpointList;
