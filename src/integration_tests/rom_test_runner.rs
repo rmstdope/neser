@@ -742,6 +742,19 @@ pub(crate) mod tests {
             #[test]
             fn $test_name() {
                 let rom_data = std::fs::read($rom_path).expect("ROM should load");
+
+                // Diagnostic: dump header bytes for debugging CI mismatches
+                if rom_data.len() >= 16 {
+                    let hdr = &rom_data[..16];
+                    eprintln!(
+                        "[diag] ROM header ({}):\n  {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X}",
+                        $rom_path,
+                        hdr[0], hdr[1], hdr[2], hdr[3], hdr[4], hdr[5], hdr[6], hdr[7],
+                        hdr[8], hdr[9], hdr[10], hdr[11], hdr[12], hdr[13], hdr[14], hdr[15]
+                    );
+                    eprintln!("[diag] ROM file size: {} bytes", rom_data.len());
+                }
+
                 let cartridge = $crate::cartridge::Cartridge::load_from_file(
                     &rom_data,
                     $rom_path,
