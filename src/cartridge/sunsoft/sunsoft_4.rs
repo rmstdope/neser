@@ -179,6 +179,18 @@ impl Mapper for Sunsoft4Mapper {
         }
     }
 
+    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        // Sunsoft-4 manages PRG-RAM separately from BaseMapper.
+        // When PRG-RAM is disabled, $6000-$7FFF returns open bus.
+        if matches!(addr, 0x6000..=0x7FFF) && !self.prg_ram_enabled {
+            return open_bus;
+        }
+        if matches!(addr, 0x6000..=0xFFFF) {
+            return self.read_prg(addr);
+        }
+        open_bus
+    }
+
     fn write_prg(&mut self, addr: u16, value: u8) {
         if self.prg_ram_enabled && self.prg_ram.try_write(addr, value) {
             return;

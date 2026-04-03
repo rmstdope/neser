@@ -742,19 +742,6 @@ pub(crate) mod tests {
             #[test]
             fn $test_name() {
                 let rom_data = std::fs::read($rom_path).expect("ROM should load");
-
-                // Diagnostic: dump header bytes for debugging CI mismatches
-                if rom_data.len() >= 16 {
-                    let hdr = &rom_data[..16];
-                    eprintln!(
-                        "[diag] ROM header ({}):\n  {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X}",
-                        $rom_path,
-                        hdr[0], hdr[1], hdr[2], hdr[3], hdr[4], hdr[5], hdr[6], hdr[7],
-                        hdr[8], hdr[9], hdr[10], hdr[11], hdr[12], hdr[13], hdr[14], hdr[15]
-                    );
-                    eprintln!("[diag] ROM file size: {} bytes", rom_data.len());
-                }
-
                 let cartridge = $crate::cartridge::Cartridge::load_from_file(
                     &rom_data,
                     $rom_path,
@@ -842,35 +829,6 @@ pub(crate) mod tests {
                 }
 
                 let expected: Vec<(u32, u32)> = checkpoints.iter().copied().collect();
-
-                // Print diagnostic info for mismatches (only visible in failing tests)
-                // OR when NESER_DIAG_CRC is set (to capture baseline row CRCs)
-                if actual != expected || std::env::var_os("NESER_DIAG_CRC").is_some() {
-                    let screen = nes.get_screen_buffer();
-                    let rgb = screen.snapshot();
-                    let crc_algo = crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC);
-                    eprintln!("[diag] Screen buffer size: {} bytes", rgb.len());
-                    eprintln!("[diag] Per-row CRC32 (256 pixels x 3 bytes = 768 bytes/row):");
-                    for row in 0..240u32 {
-                        let start = (row * 256 * 3) as usize;
-                        let end = start + 768;
-                        let row_crc = crc_algo.checksum(&rgb[start..end]);
-                        eprintln!("[diag] row {:>3}: {:08X}", row, row_crc);
-                    }
-                    // Print first 16 pixels of first 4 rows as hex
-                    eprintln!("[diag] First 16 pixels of rows 0-3:");
-                    for row in 0..4u32 {
-                        let start = (row * 256 * 3) as usize;
-                        let pixels: Vec<String> = (0..16)
-                            .map(|px| {
-                                let off = start + px * 3;
-                                format!("{:02X}{:02X}{:02X}", rgb[off], rgb[off + 1], rgb[off + 2])
-                            })
-                            .collect();
-                        eprintln!("[diag] row {}: {}", row, pixels.join(" "));
-                    }
-                }
-
                 assert_eq!(
                     actual, expected,
                     "CRC checkpoints mismatch for {}",
