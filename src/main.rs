@@ -10,6 +10,8 @@ mod cpu;
 mod debugging;
 mod frontend_toasts;
 mod input;
+#[cfg(all(feature = "native", not(feature = "sdl")))]
+mod native_frontend;
 mod ppu;
 #[cfg(any(feature = "sdl", feature = "native"))]
 mod rendering;
@@ -241,9 +243,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     #[cfg(all(feature = "native", not(feature = "sdl")))]
     {
-        eprintln!("Native frontend event loop not yet implemented (Phase 2c).");
-        eprintln!("Use --features sdl (default) for now.");
-        std::process::exit(1);
+        run_native_frontend(app_context)?;
     }
 
     #[cfg(not(any(feature = "sdl", feature = "native")))]
@@ -451,6 +451,81 @@ fn run_sdl_frontend(
     }
 
     run_result.map_err(|e| e.into())
+}
+
+#[cfg(all(feature = "native", not(feature = "sdl")))]
+fn run_native_frontend(
+    app_context: Rc<RefCell<AppContext>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use audio::NesAudio;
+    use native_frontend::{NativeAudio, NativeEventLoop};
+
+    // Create audio output (request 44.1 kHz) unless disabled.
+    let mut audio_sample_rate = None;
+    let audio_enabled = app_context.borrow().config().audio_enabled;
+    let audio = if !audio_enabled {
+        None
+    } else {
+        let audio = NativeAudio::new(44100)?;
+        audio_sample_rate = Some(audio.actual_sample_rate() as f32);
+        Some(audio)
+    };
+
+    // Load ROM
+    let default_rom_path = "roms/games/mappers/6/Air Fortress (J) [hFFE].nes";
+    let rom_path = app_context
+        .borrow()
+        .config()
+        .rom_path
+        .clone()
+        .unwrap_or_else(|| default_rom_path.to_string());
+
+    let rom_bytes = match fs::read(&rom_path) {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            app_context
+                .borrow_mut()
+                .add_toast(cartridge_load_toast_message(&rom_path, false));
+            return Err(err.into());
+        }
+    };
+
+    let cart =
+        match cartridge::Cartridge::load_from_file(&rom_bytes, &rom_path, app_context.clone()) {
+            Ok(cartridge) => {
+                app_context
+                    .borrow_mut()
+                    .add_toast(cartridge_load_toast_message(&rom_path, true));
+                cartridge
+            }
+            Err(err) => {
+                app_context
+                    .borrow_mut()
+                    .add_toast(cartridge_load_toast_message(&rom_path, false));
+                return Err(err.into());
+            }
+        };
+
+    let rom_timing_mode = cart.rom_timing_mode();
+    app_context
+        .borrow_mut()
+        .config_mut()
+        .apply_rom_timing_mode(rom_timing_mode);
+
+    let mut nes_instance = Nes::new(app_context.clone());
+    nes_instance.insert_cartridge(cart);
+
+    if let Some(actual_rate) = audio_sample_rate {
+        nes_instance.apu().borrow_mut().set_sample_rate(actual_rate);
+    }
+
+    nes_instance.reset(false);
+
+    let tracing = app_context.borrow().config().tracing;
+    let event_loop = NativeEventLoop::new(app_context, nes_instance, audio, tracing);
+    event_loop.run()?;
+
+    Ok(())
 }
 
 #[cfg(all(test, feature = "sdl"))]
