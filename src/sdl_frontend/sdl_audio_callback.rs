@@ -1,5 +1,5 @@
-use crate::sdl_frontend::sdl_audio::{AudioConsumer, AudioStats};
-use crate::sdl_frontend::sdl_audio_resampler::SdlAudioResampler;
+use crate::audio::types::{AudioStats, process_sample};
+use crate::audio::{AudioConsumer, AudioResampler};
 use ringbuf::traits::Consumer;
 use sdl2::audio::AudioCallback;
 use std::sync::{
@@ -13,7 +13,7 @@ pub(crate) struct SdlAudioCallbackImpl {
     pub(crate) volume: Arc<AtomicU32>,
     pub(crate) stats: Arc<AudioStats>,
     pub(crate) fill_level: Arc<AtomicUsize>,
-    pub(crate) resampler: SdlAudioResampler,
+    pub(crate) resampler: AudioResampler,
 }
 
 impl AudioCallback for SdlAudioCallbackImpl {
@@ -37,18 +37,7 @@ impl AudioCallback for SdlAudioCallbackImpl {
             match raw_sample {
                 Some(raw_sample) => {
                     self.stats.received_samples.fetch_add(1, Ordering::Relaxed);
-                    // NES APU mix() outputs 0.0-1.177, where 0.0 represents silence
-                    // SDL2 f32 format expects -1.0 to +1.0 where 0.0 is silence
-                    // The NES output needs to be scaled to use the full SDL2 range
-                    // and shifted so NES silence (0.0) maps to SDL2 silence (0.0)
-                    //
-                    // Strategy: Map NES 0.0-1.177 to SDL2 0.0-1.0
-                    const NES_APU_MAX: f32 = 1.177;
-                    let normalized = raw_sample / NES_APU_MAX;
-                    let final_sample = normalized * volume;
-
-                    // Safety clamp to prevent any unexpected clipping
-                    *sample = final_sample.clamp(-1.0, 1.0);
+                    *sample = process_sample(raw_sample, volume);
                 }
                 None => {
                     self.stats.underrun_samples.fetch_add(1, Ordering::Relaxed);

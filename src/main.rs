@@ -1,5 +1,7 @@
 mod app_context;
 mod apu;
+#[cfg(any(feature = "sdl", feature = "native"))]
+mod audio;
 mod autorun;
 mod bus;
 mod cartridge;
@@ -9,7 +11,9 @@ mod debugging;
 mod frontend_toasts;
 mod input;
 mod ppu;
+#[cfg(any(feature = "sdl", feature = "native"))]
 mod rendering;
+#[cfg(feature = "sdl")]
 mod sdl_frontend;
 #[cfg(feature = "tui")]
 mod tui_frontend;
@@ -23,6 +27,7 @@ use debugging::log_info;
 use frontend_toasts::{
     cartridge_load_toast_message, emulator_timing_toast_message, hardware_mode_toast_message,
 };
+#[cfg(feature = "sdl")]
 use sdl_frontend::{SdlEventLoop, SdlNesAudio};
 use std::cell::RefCell;
 use std::fs;
@@ -229,6 +234,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tracing_config = app_context.borrow().config().tracing;
     debugging::init_tracing(tracing_config);
 
+    #[cfg(feature = "sdl")]
+    {
+        run_sdl_frontend(app_context)?;
+    }
+
+    #[cfg(all(feature = "native", not(feature = "sdl")))]
+    {
+        eprintln!("Native frontend event loop not yet implemented (Phase 2c).");
+        eprintln!("Use --features sdl (default) for now.");
+        std::process::exit(1);
+    }
+
+    #[cfg(not(any(feature = "sdl", feature = "native")))]
+    {
+        eprintln!("No frontend feature enabled. Enable 'sdl' or 'native'.");
+        std::process::exit(1);
+    }
+
+    Ok(())
+}
+
+#[cfg(feature = "sdl")]
+fn run_sdl_frontend(
+    app_context: Rc<RefCell<AppContext>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::audio::NesAudio;
+
     // Initialize SDL2
     let sdl_context = sdl2::init()?;
 
@@ -421,7 +453,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     run_result.map_err(|e| e.into())
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "sdl"))]
 mod tests {
     use super::*;
     use crate::autorun::AUTORUN_VERSION;
