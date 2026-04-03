@@ -92,7 +92,7 @@ getrandom = { version = "0.3", features = ["wasm_js"] }
 [[bin]]
 name = "neser"
 path = "src/main.rs"
-required-features = ["sdl"]
+required-features = []
 
 [[bin]]
 name = "joysticks"
