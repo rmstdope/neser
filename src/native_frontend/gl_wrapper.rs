@@ -221,9 +221,10 @@ impl NativeGlWrapper {
 
     /// Translates a winit cursor-moved event into a renderer mouse motion event.
     pub fn handle_cursor_moved(&mut self, position: winit::dpi::PhysicalPosition<f64>) {
+        let scale_factor = self.render_target_window.scale_factor();
         self.gl_backend.handle_input(&InputEvent::MouseMotion {
-            x: position.x as f32,
-            y: position.y as f32,
+            x: (position.x / scale_factor) as f32,
+            y: (position.y / scale_factor) as f32,
         });
     }
 
@@ -247,7 +248,10 @@ impl NativeGlWrapper {
     pub fn handle_mouse_wheel(&mut self, delta: MouseScrollDelta) {
         let (x, y) = match delta {
             MouseScrollDelta::LineDelta(x, y) => (x, y),
-            MouseScrollDelta::PixelDelta(pos) => (pos.x as f32, pos.y as f32),
+            MouseScrollDelta::PixelDelta(pos) => {
+                let scale_factor = self.render_target_window.scale_factor();
+                ((pos.x / scale_factor) as f32, (pos.y / scale_factor) as f32)
+            }
         };
         self.gl_backend
             .handle_input(&InputEvent::MouseWheel { x, y });

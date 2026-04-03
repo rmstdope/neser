@@ -49,18 +49,23 @@ impl WinitRenderTarget {
 
 impl RenderTarget for WinitRenderTarget {
     fn window_size(&self) -> (u32, u32) {
-        let size = self.window.inner_size();
+        let size = self
+            .window
+            .inner_size()
+            .to_logical::<u32>(self.window.scale_factor());
         (size.width, size.height)
     }
 
     fn drawable_size(&self) -> (u32, u32) {
-        // On winit, inner_size already returns physical (HiDPI-aware) pixels.
+        // inner_size() returns physical (HiDPI-aware) pixels.
         let size = self.window.inner_size();
         (size.width, size.height)
     }
 
     fn swap_buffers(&self) {
-        let _ = self.surface.swap_buffers(&self.gl_context);
+        if let Err(e) = self.surface.swap_buffers(&self.gl_context) {
+            eprintln!("failed to swap GL buffers: {e}");
+        }
     }
 
     fn make_current(&self) -> Result<(), String> {
