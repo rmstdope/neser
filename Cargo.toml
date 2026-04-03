@@ -53,7 +53,13 @@ crossterm = { version = "0.28", optional = true }
 
 [features]
 default = ["sdl"]
+# Meta-feature: any native desktop frontend. Required by the neser binary so
+# that wasm/lib-only builds don't also compile the binary (which would cause a
+# filename collision between the bin and lib wasm outputs and produce an empty
+# pkg/neser.js with no wasm-bindgen exports).
+frontend = []
 sdl = [
+	"frontend",
 	"dep:sdl2",
 	"dep:gl",
 	"dep:glow",
@@ -62,6 +68,7 @@ sdl = [
 	"dep:librashader",
 ]
 native = [
+	"frontend",
 	"dep:winit",
 	"dep:glutin",
 	"dep:glutin-winit",
@@ -92,7 +99,7 @@ getrandom = { version = "0.3", features = ["wasm_js"] }
 [[bin]]
 name = "neser"
 path = "src/main.rs"
-required-features = []
+required-features = ["frontend"]
 
 [[bin]]
 name = "joysticks"
