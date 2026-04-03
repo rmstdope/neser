@@ -829,6 +829,34 @@ pub(crate) mod tests {
                 }
 
                 let expected: Vec<(u32, u32)> = checkpoints.iter().copied().collect();
+
+                // Print diagnostic info for mismatches (only visible in failing tests)
+                if actual != expected {
+                    let screen = nes.get_screen_buffer();
+                    let rgb = screen.snapshot();
+                    let crc_algo = crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC);
+                    eprintln!("[diag] Screen buffer size: {} bytes", rgb.len());
+                    eprintln!("[diag] Per-row CRC32 (256 pixels x 3 bytes = 768 bytes/row):");
+                    for row in 0..240u32 {
+                        let start = (row * 256 * 3) as usize;
+                        let end = start + 768;
+                        let row_crc = crc_algo.checksum(&rgb[start..end]);
+                        eprintln!("[diag] row {:>3}: {:08X}", row, row_crc);
+                    }
+                    // Print first 16 pixels of first 4 rows as hex
+                    eprintln!("[diag] First 16 pixels of rows 0-3:");
+                    for row in 0..4u32 {
+                        let start = (row * 256 * 3) as usize;
+                        let pixels: Vec<String> = (0..16)
+                            .map(|px| {
+                                let off = start + px * 3;
+                                format!("{:02X}{:02X}{:02X}", rgb[off], rgb[off + 1], rgb[off + 2])
+                            })
+                            .collect();
+                        eprintln!("[diag] row {}: {}", row, pixels.join(" "));
+                    }
+                }
+
                 assert_eq!(
                     actual, expected,
                     "CRC checkpoints mismatch for {}",
