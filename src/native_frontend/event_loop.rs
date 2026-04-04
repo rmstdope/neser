@@ -41,12 +41,16 @@ impl NativeEventLoop {
         audio: Option<NativeAudio>,
         tracing: Tracing,
     ) -> Self {
+        let fullscreen = app_context.borrow().config().fullscreen;
         Self {
             app_context,
             nes,
             audio,
             tracing,
-            state: NativeAppState::new(),
+            state: NativeAppState {
+                fullscreen,
+                ..NativeAppState::default()
+            },
             gl_wrapper: None,
             last_audio_stats_print: Instant::now(),
             initialized: false,
@@ -56,7 +60,6 @@ impl NativeEventLoop {
     pub fn run(mut self) -> Result<(), String> {
         let event_loop =
             EventLoop::new().map_err(|e| format!("Failed to create event loop: {e}"))?;
-        event_loop.set_control_flow(ControlFlow::Poll);
         event_loop
             .run_app(&mut self)
             .map_err(|e| format!("Event loop error: {e}"))
@@ -202,9 +205,16 @@ impl ApplicationHandler for NativeEventLoop {
         }
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        // Request a redraw for every iteration (polling mode)
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         if let Some(ref gl) = self.gl_wrapper {
+            if self.state.paused {
+                // Throttle to ~20fps while paused to avoid spinning the CPU/GPU.
+                event_loop.set_control_flow(ControlFlow::WaitUntil(
+                    Instant::now() + Duration::from_millis(50),
+                ));
+            } else {
+                event_loop.set_control_flow(ControlFlow::Poll);
+            }
             gl.window().request_redraw();
         }
     }

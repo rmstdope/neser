@@ -119,6 +119,9 @@ fn cart_switch_overlay_text(cart_switch: &CartridgeSwitchState) -> String {
         return "Cartridge Switch\n[No catalog loaded]\n\nPress Escape to cancel".to_string();
     }
 
+    // TODO: cache the filtered list and rendered lines in CartridgeSwitchState
+    // and only recompute when entries/filter/selection changes, to avoid
+    // allocating a Vec at 60fps while the dialog is open with a large catalog.
     let visible: Vec<&str> = cart_switch
         .entries
         .iter()

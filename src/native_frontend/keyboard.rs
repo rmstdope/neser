@@ -103,8 +103,8 @@ fn handle_unmodified_key(
                 "Load state: not yet implemented in native frontend".to_string(),
             );
         }
-        KeyCode::F10 => step_debugger(nes, app_state),
-        KeyCode::F11 => step_debugger(nes, app_state),
+        KeyCode::F10 => step_over(nes, app_state),
+        KeyCode::F11 => step_into(nes, app_state),
         _ => handle_controller_key(nes, key_code, true),
     }
 
@@ -117,9 +117,34 @@ fn toggle_debugger(app_state: &mut NativeAppState) {
     app_state.paused = open;
 }
 
-fn step_debugger(nes: &mut Nes, app_state: &mut NativeAppState) {
+/// F11: step-into — execute exactly one CPU tick.
+fn step_into(nes: &mut Nes, app_state: &mut NativeAppState) {
     enter_debugger_paused(app_state);
     nes.run_cpu_tick();
+}
+
+/// F10: step-over — if the current instruction is a JSR, run until the
+/// matching return; otherwise behave like step-into.
+fn step_over(nes: &mut Nes, app_state: &mut NativeAppState) {
+    enter_debugger_paused(app_state);
+
+    const JSR_OPCODE: u8 = 0x20;
+    let pc = nes.cpu_ref().pc();
+    let opcode = nes.bus().borrow().read_cpu_for_debugger(pc);
+
+    if opcode == JSR_OPCODE {
+        let next_pc = pc.wrapping_add(3);
+        nes.run_cpu_tick(); // execute the JSR (enters subroutine)
+        const MAX_STEPS: usize = 1_000_000;
+        for _ in 0..MAX_STEPS {
+            if nes.cpu_ref().pc() == next_pc || nes.cpu_ref().is_halted() {
+                break;
+            }
+            nes.run_cpu_tick();
+        }
+    } else {
+        nes.run_cpu_tick();
+    }
 }
 
 fn enter_debugger_paused(app_state: &mut NativeAppState) {
@@ -137,6 +162,12 @@ fn adjust_volume(audio: Option<&dyn NesAudio>, delta: f32) {
 
 /// Maps a [`KeyCode`] to NES/SNES/Power Pad button presses or releases for
 /// both player ports simultaneously.  Shared between press and release paths.
+///
+/// Note: Player 1 keys are intentionally applied to both ports because the
+/// native frontend has no gamepad support yet, so a single keyboard must cover
+/// both players. When gamepad support is added, this should target only the
+/// port not already claimed by a gamepad.  Player 2-specific keys (IJKL etc.)
+/// remain port-2 only.
 fn handle_controller_key(nes: &mut Nes, key_code: KeyCode, pressed: bool) {
     match key_code {
         // ── Player 1: 1/2/3 → Power Pad buttons ──────────────────────────
