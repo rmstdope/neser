@@ -41,7 +41,8 @@ impl NativeGlWrapper {
         let (fullscreen, vsync_enabled, shader_path, debugger_alpha, window_width, window_height) = {
             let ctx = app_context.borrow();
             let config = ctx.config();
-            let (window_width, window_height) = GlBackend::windowed_dimensions(config.window_height);
+            let (window_width, window_height) =
+                GlBackend::windowed_dimensions(config.window_height);
             (
                 config.fullscreen,
                 config.vsync_enabled,

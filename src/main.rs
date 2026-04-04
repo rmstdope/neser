@@ -1,17 +1,27 @@
 mod app_context;
+#[cfg_attr(not(feature = "sdl"), allow(dead_code))]
 mod apu;
 #[cfg(any(feature = "sdl", feature = "native"))]
 mod audio;
+#[cfg_attr(not(feature = "sdl"), allow(dead_code))]
 mod autorun;
+#[cfg_attr(not(feature = "sdl"), allow(dead_code))]
 mod bus;
+#[cfg_attr(not(feature = "sdl"), allow(dead_code))]
 mod cartridge;
+#[cfg_attr(not(feature = "sdl"), allow(dead_code))]
 mod console;
+#[cfg_attr(not(feature = "sdl"), allow(dead_code))]
 mod cpu;
+#[cfg_attr(not(feature = "sdl"), allow(dead_code))]
 mod debugging;
+#[cfg_attr(not(feature = "sdl"), allow(dead_code))]
 mod frontend_toasts;
+#[cfg_attr(not(feature = "sdl"), allow(dead_code))]
 mod input;
 #[cfg(all(feature = "native", not(feature = "sdl")))]
 mod native_frontend;
+#[cfg_attr(not(feature = "sdl"), allow(dead_code))]
 mod ppu;
 #[cfg(any(feature = "sdl", feature = "native"))]
 mod rendering;

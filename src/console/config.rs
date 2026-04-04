@@ -647,6 +647,7 @@ pub struct Config {
     /// Whether to rebuild the cartridge catalog from scratch on startup.
     pub rebuild_cartridge_catalog: bool,
     /// Whether to launch the TUI ROM browser instead of the emulator.
+    #[cfg_attr(not(feature = "tui"), allow(dead_code))]
     pub tui_mode: bool,
 }
 
