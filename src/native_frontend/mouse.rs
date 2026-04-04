@@ -45,7 +45,7 @@ pub fn update_mouse_motion(
     window_width: u32,
     window_height: u32,
 ) -> Option<(u8, u8)> {
-    if has_zapper(nes) || nes.has_expansion_zapper() || nes.has_snes_mouse() {
+    if has_zapper(nes) || nes.has_snes_mouse() {
         let x_pos = mouse_mapping::map_mouse_axis_to_zapper_position(x, window_width);
         let y_pos = mouse_mapping::map_mouse_axis_to_zapper_position(y, window_height);
         nes.set_mouse_x_position(x_pos);
@@ -223,10 +223,22 @@ mod tests {
     #[test]
     fn snes_mouse_relative_motion_applies_delta() {
         let mut nes = make_nes_with_controller(1, crate::input::ControllerType::SnesMouse);
-        apply_snes_mouse_relative_motion(&mut nes, 10, 10, 320, 240);
-        // Verify that a second call accumulates (tests that add_mouse_delta works)
-        apply_snes_mouse_relative_motion(&mut nes, 10, 10, 320, 240);
-        // If we got here without panic, the routing works.
+        apply_snes_mouse_relative_motion(&mut nes, 10, 5, 320, 240);
+        let state = nes.bus().borrow().capture_state();
+        if let crate::bus::ControllerStateWrapper::SnesAdapter(snes) = state.port1_controller {
+            // Accumulator starts at 0, so after a (+10,+5) delta the positions
+            // must both be non-zero.
+            assert!(
+                snes.mouse_x_position > 0,
+                "Expected non-zero x after positive delta"
+            );
+            assert!(
+                snes.mouse_y_position > 0,
+                "Expected non-zero y after positive delta"
+            );
+        } else {
+            panic!("Expected SnesAdapter state on port 1");
+        }
     }
 
     // ── Mouse button routing ─────────────────────────────────────────────
@@ -240,11 +252,27 @@ mod tests {
     }
 
     #[test]
-    fn button_routes_to_mouse_controller() {
+    fn button_routes_left_to_zapper_trigger() {
         let mut nes = make_nes_with_controller(1, crate::input::ControllerType::Zapper);
+
         update_mouse_button(&mut nes, MouseButton::Left, true);
+        let state = nes.bus().borrow().capture_state();
+        if let crate::bus::ControllerStateWrapper::Zapper(z) = state.port1_controller {
+            assert!(z.trigger, "Expected trigger set after left-button press");
+        } else {
+            panic!("Expected Zapper state on port 1");
+        }
+
         update_mouse_button(&mut nes, MouseButton::Left, false);
-        // No panic = button routing works.
+        let state = nes.bus().borrow().capture_state();
+        if let crate::bus::ControllerStateWrapper::Zapper(z) = state.port1_controller {
+            assert!(
+                !z.trigger,
+                "Expected trigger cleared after left-button release"
+            );
+        } else {
+            panic!("Expected Zapper state on port 1");
+        }
     }
 
     // ── Crosshair ────────────────────────────────────────────────────────

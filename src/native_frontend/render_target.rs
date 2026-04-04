@@ -97,10 +97,7 @@ impl RenderTarget for WinitRenderTarget {
                 // Mouse uses the explicit set_mouse_grab_locked() instead.
                 Ok(())
             } else {
-                // Releasing should always work; try clearing Locked too.
-                self.window
-                    .set_cursor_grab(winit::window::CursorGrabMode::None)
-                    .map_err(|_| format!("failed to release cursor grab: {e}"))
+                Err(format!("failed to release cursor grab: {e}"))
             }
         })
     }

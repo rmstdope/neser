@@ -129,9 +129,14 @@ impl NativeEventLoop {
                     // ourselves via DeviceEvent::MouseMotion deltas.
                     let _ = gl.set_mouse_grab_locked();
                     gl.window().set_cursor_visible(false);
-                    // Centre the virtual cursor when grabbing.
+                    // Centre virtual cursor and immediately sync NES coords so
+                    // there is no stale position before the first delta arrives.
                     let (w, h) = gl.window_size();
-                    self.state.virtual_cursor = (w as f32 / 2.0, h as f32 / 2.0);
+                    let cx = w as f32 / 2.0;
+                    let cy = h as f32 / 2.0;
+                    self.state.virtual_cursor = (cx, cy);
+                    self.state.last_zapper_position =
+                        mouse::update_mouse_motion(&mut self.nes, cx as i32, cy as i32, w, h);
                 } else {
                     let _ = gl.set_mouse_grab(false);
                     gl.window().set_cursor_visible(true);
@@ -265,22 +270,39 @@ impl ApplicationHandler for NativeEventLoop {
 
                 let has_mouse = mouse::has_any_mouse_controller(&self.nes);
 
-                // Left-click clears mouse_released_by_escape and lets
-                // sync_mouse_grab_state pick up the grab on the next frame.
+                // Left-click grabs immediately so the same click is also forwarded
+                // as a button press (unlike deferring to the next frame, which
+                // would swallow Zapper shots and Arkanoid trigger presses).
                 if has_mouse
                     && !self.state.mouse_grabbed
                     && state == ElementState::Pressed
                     && button == winit::event::MouseButton::Left
                 {
                     self.state.mouse_released_by_escape = false;
-                    // Immediately initialise virtual cursor to window centre so
-                    // the first delta lands in a predictable position.
-                    let (w, h) = self
-                        .gl_wrapper
-                        .as_ref()
-                        .map(|gl| gl.window_size())
-                        .unwrap_or((320, 240));
-                    self.state.virtual_cursor = (w as f32 / 2.0, h as f32 / 2.0);
+                    let should_grab = crate::input::mouse_mapping::should_grab_mouse_input(
+                        true,
+                        self.state.window_focused,
+                        false,
+                    );
+                    if should_grab {
+                        if let Some(ref mut gl) = self.gl_wrapper {
+                            let _ = gl.set_mouse_grab_locked();
+                            gl.window().set_cursor_visible(false);
+                            // Centre virtual cursor and immediately sync NES coords.
+                            let (w, h) = gl.window_size();
+                            let cx = w as f32 / 2.0;
+                            let cy = h as f32 / 2.0;
+                            self.state.virtual_cursor = (cx, cy);
+                            self.state.last_zapper_position = mouse::update_mouse_motion(
+                                &mut self.nes,
+                                cx as i32,
+                                cy as i32,
+                                w,
+                                h,
+                            );
+                        }
+                        self.state.mouse_grabbed = true;
+                    }
                 }
 
                 // Route button to NES controller if grabbed.
@@ -352,8 +374,10 @@ impl ApplicationHandler for NativeEventLoop {
                 .map(|gl| gl.window_size())
                 .unwrap_or((320, 240));
 
-            if self.nes.has_snes_mouse() {
+            if self.nes.has_snes_mouse() && !mouse::has_zapper(&self.nes) {
                 // SNES Mouse: pass raw deltas directly.
+                // Zapper takes precedence — if a Zapper is also connected,
+                // fall through to the virtual-cursor path (matching SDL logic).
                 mouse::apply_snes_mouse_relative_motion(&mut self.nes, dx as i32, dy as i32, w, h);
             } else {
                 // Zapper / Arkanoid: accumulate deltas into a virtual cursor
