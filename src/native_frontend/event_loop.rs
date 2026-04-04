@@ -31,6 +31,8 @@ pub struct NativeEventLoop {
     tracing: Tracing,
     state: NativeAppState,
     gamepad: Option<GamepadManager>,
+    gamepads_enabled: bool,
+    gamepad_toast_shown: bool,
 
     // Initialized on resume (when the window is ready)
     gl_wrapper: Option<NativeGlWrapper>,
@@ -66,12 +68,6 @@ impl NativeEventLoop {
             None
         };
 
-        let toast = gamepad_init_toast_message(
-            gamepads_enabled,
-            gamepad.as_ref().map_or(0, |g| g.connected_count()),
-        );
-        app_context.borrow_mut().add_toast(&toast);
-
         Self {
             app_context,
             nes,
@@ -83,6 +79,8 @@ impl NativeEventLoop {
                 ..NativeAppState::default()
             },
             gamepad,
+            gamepads_enabled,
+            gamepad_toast_shown: false,
             gl_wrapper: None,
             last_audio_stats_print: Instant::now(),
             initialized: false,
@@ -433,6 +431,16 @@ impl ApplicationHandler for NativeEventLoop {
         // Poll gamepad events before requesting redraw.
         if let Some(ref mut gp) = self.gamepad {
             gp.process_events(&mut self.nes);
+        }
+
+        // Show the gamepad toast after the first process_events() call.
+        // On macOS, IOKit enumerates gamepads asynchronously so Connected
+        // events aren't available until the event loop is running.
+        if !self.gamepad_toast_shown {
+            self.gamepad_toast_shown = true;
+            let count = self.gamepad.as_ref().map_or(0, |g| g.connected_count());
+            let toast = gamepad_init_toast_message(self.gamepads_enabled, count);
+            self.app_context.borrow_mut().add_toast(&toast);
         }
 
         if let Some(ref gl) = self.gl_wrapper {
