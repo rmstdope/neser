@@ -115,9 +115,8 @@ fn handle_unmodified_key(
 }
 
 fn toggle_debugger(app_state: &mut NativeAppState) {
-    let open = !app_state.debugger_open;
-    app_state.debugger_open = open;
-    app_state.paused = open;
+    app_state.debugger_open = !app_state.debugger_open;
+    app_state.paused = app_state.debugger_open;
 }
 
 /// F11: step-into — execute exactly one CPU tick.
@@ -252,13 +251,15 @@ fn handle_controller_key(nes: &mut Nes, key_code: KeyCode, pressed: bool) {
 // ── Dual-port (P1 + P2) button helpers ───────────────────────────────────────
 
 fn pp_both(nes: &mut Nes, pp: PowerPadButton, pressed: bool) {
-    nes.set_power_pad_button(1, pp, pressed);
-    nes.set_power_pad_button(2, pp, pressed);
+    for port in [1, 2] {
+        nes.set_power_pad_button(port, pp, pressed);
+    }
 }
 
 fn snes_both(nes: &mut Nes, snes: SnesButton, pressed: bool) {
-    nes.set_snes_button(1, snes, pressed);
-    nes.set_snes_button(2, snes, pressed);
+    for port in [1, 2] {
+        nes.set_snes_button(port, snes, pressed);
+    }
 }
 
 fn btn_or_snes_both(nes: &mut Nes, btn: Button, snes: SnesButton, pressed: bool) {
