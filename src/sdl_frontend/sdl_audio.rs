@@ -1,21 +1,18 @@
+use crate::audio::types::queue_sample_to_producer;
+use crate::audio::{AudioProducer, AudioResampler, AudioStats, NesAudio};
 use crate::debugging::log_info;
 /// Audio output module for the NES APU
 ///
 /// This module handles SDL2 audio initialization and manages the audio callback
 /// that retrieves samples from the APU.
 use crate::sdl_frontend::sdl_audio_callback::SdlAudioCallbackImpl;
-use crate::sdl_frontend::sdl_audio_resampler::SdlAudioResampler;
 use ringbuf::HeapRb;
-use ringbuf::traits::{Producer, Split};
+use ringbuf::traits::Split;
 use sdl2::audio::{AudioDevice, AudioSpecDesired};
 use std::sync::{
     Arc,
-    atomic::AtomicU64,
     atomic::{AtomicU32, AtomicUsize, Ordering},
 };
-
-pub(crate) type AudioProducer = <HeapRb<f32> as Split>::Prod;
-pub(crate) type AudioConsumer = <HeapRb<f32> as Split>::Cons;
 
 /// Audio output handler that receives samples from the NES APU
 pub struct SdlNesAudio {
@@ -25,13 +22,6 @@ pub struct SdlNesAudio {
     stats: Arc<AudioStats>,
     fill_level: Arc<AtomicUsize>,
     actual_sample_rate: i32,
-}
-
-#[derive(Default)]
-pub(crate) struct AudioStats {
-    pub(crate) received_samples: AtomicU64,
-    pub(crate) dropped_samples: AtomicU64,
-    pub(crate) underrun_samples: AtomicU64,
 }
 
 impl SdlNesAudio {
@@ -78,7 +68,7 @@ impl SdlNesAudio {
                 volume: volume_clone,
                 stats: stats_clone,
                 fill_level: fill_level_clone,
-                resampler: SdlAudioResampler::new(Self::BUFFER_SIZE / 2),
+                resampler: AudioResampler::new(Self::BUFFER_SIZE / 2),
             })?;
 
         let actual_rate = device.spec().freq;
@@ -99,19 +89,15 @@ impl SdlNesAudio {
         })
     }
 
-    /// Returns the actual sample rate of the opened SDL audio device.
-    pub fn actual_sample_rate(&self) -> i32 {
-        self.actual_sample_rate
+    /// Returns the current buffered sample count in the ring buffer.
+    #[cfg(test)]
+    pub fn buffered_samples(&self) -> usize {
+        self.fill_level.load(Ordering::Relaxed)
     }
+}
 
-    /// Send an audio sample to the audio output
-    ///
-    /// Sends a sample to the audio callback for playback.
-    /// If the buffer is full, this will block until the audio callback consumes samples.
-    ///
-    /// # Arguments
-    /// * `sample` - Audio sample in range 0.0 to 1.0
-    pub fn queue_sample(&mut self, sample: f32) {
+impl NesAudio for SdlNesAudio {
+    fn queue_sample(&mut self, sample: f32) {
         queue_sample_to_producer(
             &mut self.sample_producer,
             sample,
@@ -120,30 +106,24 @@ impl SdlNesAudio {
         );
     }
 
-    /// Returns and resets audio stats counters.
-    ///
-    /// Useful for debugging pops/clicks: underruns correspond to the audio callback
-    /// outputting silence because it had no queued samples available.
-    pub fn take_and_reset_stats(&self) -> (u64, u64, u64) {
-        let received = self.stats.received_samples.swap(0, Ordering::Relaxed);
-        let dropped = self.stats.dropped_samples.swap(0, Ordering::Relaxed);
-        let underrun = self.stats.underrun_samples.swap(0, Ordering::Relaxed);
-        (received, dropped, underrun)
-    }
-
-    /// Returns the current buffered sample count in the ring buffer.
-    #[cfg(test)]
-    pub fn buffered_samples(&self) -> usize {
-        self.fill_level.load(Ordering::Relaxed)
-    }
-
-    /// Start audio playback
-    pub fn resume(&self) {
+    fn resume(&self) {
         self.device.resume();
     }
 
-    /// Pre-fills the audio buffer with silence to avoid startup underruns.
-    pub fn prime_startup(&mut self, samples: usize) {
+    fn pause(&self) {
+        self.device.pause();
+    }
+
+    fn set_volume(&self, volume: f32) {
+        let clamped = volume.clamp(0.0, 1.0);
+        self.volume.store(f32::to_bits(clamped), Ordering::Relaxed);
+    }
+
+    fn get_volume(&self) -> f32 {
+        f32::from_bits(self.volume.load(Ordering::Relaxed))
+    }
+
+    fn prime_startup(&mut self, samples: usize) {
         for _ in 0..samples {
             queue_sample_to_producer(
                 &mut self.sample_producer,
@@ -154,60 +134,24 @@ impl SdlNesAudio {
         }
     }
 
-    /// Pause audio playback
-    #[cfg(test)]
-    pub fn pause(&self) {
-        self.device.pause();
+    fn take_and_reset_stats(&self) -> (u64, u64, u64) {
+        let received = self.stats.received_samples.swap(0, Ordering::Relaxed);
+        let dropped = self.stats.dropped_samples.swap(0, Ordering::Relaxed);
+        let underrun = self.stats.underrun_samples.swap(0, Ordering::Relaxed);
+        (received, dropped, underrun)
     }
 
-    /// Set audio volume
-    ///
-    /// # Arguments
-    /// * `volume` - Volume level from 0.0 (mute) to 1.0 (full volume)
-    pub fn set_volume(&self, volume: f32) {
-        let clamped = volume.clamp(0.0, 1.0);
-        self.volume.store(f32::to_bits(clamped), Ordering::Relaxed);
-    }
-
-    /// Get current audio volume
-    ///
-    /// # Returns
-    /// Current volume level from 0.0 to 1.0
-    pub fn get_volume(&self) -> f32 {
-        f32::from_bits(self.volume.load(Ordering::Relaxed))
-    }
-}
-
-fn queue_sample_to_producer(
-    producer: &mut AudioProducer,
-    sample: f32,
-    _stats: &AudioStats,
-    fill_level: &AtomicUsize,
-) {
-    // Blocking push provides backpressure instead of dropping samples.
-    // Dropped samples create discontinuities that can manifest as audible clicks.
-    let mut pending = sample;
-    loop {
-        match producer.try_push(pending) {
-            Ok(()) => {
-                fill_level.fetch_add(1, Ordering::Relaxed);
-                return;
-            }
-            Err(sample) => {
-                pending = sample;
-                std::thread::yield_now();
-            }
-        }
+    fn actual_sample_rate(&self) -> i32 {
+        self.actual_sample_rate
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sdl_frontend::sdl_audio_resampler::SdlAudioResampler;
+    use crate::audio::types::queue_sample_to_producer;
     use ringbuf::traits::{Consumer, Split};
     use serial_test::serial;
-    use std::collections::VecDeque;
     use std::env;
     use std::sync::{Arc, Barrier};
     use std::time::{Duration, Instant};
@@ -315,15 +259,11 @@ mod tests {
 
     #[test]
     fn test_queue_sample_does_not_drop_when_buffer_full() {
-        // Desired behavior: when the bounded audio buffer is full, do NOT drop samples.
-        // Dropping samples introduces discontinuities that can manifest as clicks.
-
         let stats = Arc::new(AudioStats::default());
         let ring_buffer = HeapRb::<f32>::new(1);
         let (mut producer, mut consumer) = ring_buffer.split();
         let fill_level = Arc::new(AtomicUsize::new(0));
 
-        // Fill the buffer.
         queue_sample_to_producer(&mut producer, 0.1, &stats, &fill_level);
 
         let barrier = Arc::new(Barrier::new(2));
@@ -333,7 +273,6 @@ mod tests {
 
         let fill_level_consumer = Arc::clone(&fill_level);
         let consumer = std::thread::spawn(move || {
-            // Ensure producer attempts to enqueue while the queue is full.
             barrier_consumer.wait();
 
             let first = {
@@ -372,14 +311,12 @@ mod tests {
         let stats_producer = Arc::clone(&stats);
         let fill_level_producer = Arc::clone(&fill_level);
         let producer = std::thread::spawn(move || {
-            // Signal that we're about to attempt enqueue while the queue is full.
             producer_ready_tx
                 .send(())
                 .expect("failed to signal producer readiness");
             queue_sample_to_producer(&mut producer, 0.2, &stats_producer, &fill_level_producer);
         });
 
-        // Ensure the producer has started the enqueue attempt before letting the consumer drain.
         producer_ready_rx
             .recv_timeout(Duration::from_millis(200))
             .expect("producer did not become ready");
@@ -397,42 +334,5 @@ mod tests {
 
         let dropped = stats.dropped_samples.load(Ordering::Relaxed);
         assert_eq!(dropped, 0, "no samples should be dropped");
-    }
-
-    #[test]
-    fn test_resampler_rate_clamps_to_limits() {
-        let mut resampler = SdlAudioResampler::new(100);
-
-        resampler.update_rate(100);
-        assert!((resampler.rate() - 1.0).abs() < 0.00001);
-
-        resampler.update_rate(0);
-        assert!((resampler.rate() - (1.0 - SdlAudioResampler::MAX_RATE_ADJUST)).abs() < 0.00001);
-
-        resampler.update_rate(200);
-        assert!((resampler.rate() - (1.0 + SdlAudioResampler::MAX_RATE_ADJUST)).abs() < 0.00001);
-    }
-
-    #[test]
-    fn test_resampler_outputs_source_sequence_at_unity_rate() {
-        let mut resampler = SdlAudioResampler::new(4);
-        resampler.set_rate_for_test(1.0);
-
-        let mut samples = VecDeque::from([0.0, 1.0, 0.0, 1.0]);
-        let mut pop_sample = || samples.pop_front();
-
-        let first = resampler
-            .render_next(&mut pop_sample)
-            .expect("first sample");
-        let second = resampler
-            .render_next(&mut pop_sample)
-            .expect("second sample");
-        let third = resampler
-            .render_next(&mut pop_sample)
-            .expect("third sample");
-
-        assert!((first - 0.0).abs() < 0.00001);
-        assert!((second - 1.0).abs() < 0.00001);
-        assert!((third - 0.0).abs() < 0.00001);
     }
 }

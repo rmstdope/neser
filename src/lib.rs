@@ -21,6 +21,8 @@ pub mod wasm_autorun;
 #[path = "web_frontend/wasm_tests.rs"]
 mod wasm_tests;
 
+#[cfg(any(feature = "sdl", feature = "native"))]
+pub mod audio;
 pub mod integration_tests;
 #[cfg(feature = "native")]
 pub mod native_frontend;

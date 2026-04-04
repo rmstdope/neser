@@ -10,6 +10,7 @@ mod types;
 pub mod ui;
 
 pub use logging::log_info;
+#[allow(unused_imports)] // SDL-only item; unused until native frontend uses it
 pub use snapshot::{DebuggerViewState, snapshot};
 pub use tracing::*;
 pub use types::DebuggerSnapshot;

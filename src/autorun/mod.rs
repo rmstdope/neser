@@ -1,3 +1,4 @@
+#[allow(unused_imports)] // SDL-only items; unused until native autorun support
 pub use types::{
     AUTORUN_VERSION, AutorunCheckpoint, AutorunFile, AutorunFormat, AutorunFrame,
     CHECKPOINT_INTERVAL_FRAMES,

@@ -1,0 +1,379 @@
+use crate::audio::types::{AudioConsumer, AudioStats, process_sample, queue_sample_to_producer};
+use crate::audio::{AudioProducer, AudioResampler, NesAudio};
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::{BufferSize, FromSample, SampleFormat, SampleRate, SizedSample, StreamConfig};
+use ringbuf::HeapRb;
+use ringbuf::traits::Consumer;
+use ringbuf::traits::Split;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+
+use crate::debugging::log_info;
+
+/// Audio output handler using cpal for the native frontend.
+///
+/// Mirrors the SDL audio backend's pipeline architecture:
+/// ring buffer → adaptive resampler → volume scaling → audio device.
+pub struct NativeAudio {
+    _stream: Option<cpal::Stream>,
+    sample_producer: AudioProducer,
+    volume: Arc<AtomicU32>,
+    stats: Arc<AudioStats>,
+    fill_level: Arc<AtomicUsize>,
+    actual_sample_rate: i32,
+    paused: Arc<AtomicBool>,
+}
+
+impl NativeAudio {
+    /// Audio buffer size in samples.
+    /// At 44.1kHz, this provides ~0.5 seconds of buffering.
+    const BUFFER_SIZE: usize = 22050;
+
+    /// Create a new cpal-based audio output handler.
+    ///
+    /// # Arguments
+    /// * `sample_rate` - Target sample rate in Hz (e.g., 44100)
+    ///
+    /// # Errors
+    /// Returns an error if no audio output device is found or stream creation fails.
+    pub fn new(sample_rate: i32) -> Result<Self, String> {
+        let host = cpal::default_host();
+        let device = host
+            .default_output_device()
+            .ok_or_else(|| "No audio output device found".to_string())?;
+
+        let (channels, actual_rate, sample_format, stream_config) =
+            Self::select_stream_config(&device, sample_rate)?;
+
+        if actual_rate != sample_rate {
+            log_info(format!(
+                "Audio: requested {} Hz, got {} Hz from cpal device",
+                sample_rate, actual_rate
+            ));
+        }
+
+        let ring_buffer = HeapRb::<f32>::new(Self::BUFFER_SIZE);
+        let (producer, consumer) = ring_buffer.split();
+        let fill_level = Arc::new(AtomicUsize::new(0));
+        let volume = Arc::new(AtomicU32::new(f32::to_bits(0.75)));
+        let stats = Arc::new(AudioStats::default());
+        let paused = Arc::new(AtomicBool::new(true));
+
+        let stream = Self::build_stream(
+            &device,
+            &stream_config,
+            channels,
+            sample_format,
+            consumer,
+            Arc::clone(&volume),
+            Arc::clone(&stats),
+            Arc::clone(&fill_level),
+            Arc::clone(&paused),
+        )?;
+
+        stream
+            .play()
+            .map_err(|e| format!("Failed to start audio stream: {e}"))?;
+
+        Ok(Self {
+            _stream: Some(stream),
+            sample_producer: producer,
+            volume,
+            stats,
+            fill_level,
+            actual_sample_rate: actual_rate,
+            paused,
+        })
+    }
+
+    /// Selects the best available stream config for the device.
+    ///
+    /// Prefers mono f32 at the requested rate; falls back to the device default
+    /// (preserving its actual channel count and sample format).
+    fn select_stream_config(
+        device: &cpal::Device,
+        desired_rate: i32,
+    ) -> Result<(u16, i32, SampleFormat, StreamConfig), String> {
+        let desired_sample_rate = SampleRate(desired_rate as u32);
+
+        // Prefer mono f32 at the desired sample rate.
+        if let Ok(mut configs) = device.supported_output_configs() {
+            if configs.any(|r| {
+                r.channels() == 1
+                    && r.sample_format() == SampleFormat::F32
+                    && r.min_sample_rate() <= desired_sample_rate
+                    && r.max_sample_rate() >= desired_sample_rate
+            }) {
+                return Ok((
+                    1,
+                    desired_rate,
+                    SampleFormat::F32,
+                    StreamConfig {
+                        channels: 1,
+                        sample_rate: desired_sample_rate,
+                        buffer_size: BufferSize::Fixed(1024),
+                    },
+                ));
+            }
+        }
+
+        // Fall back to the device default, keeping its actual channel count and
+        // sample format so build_output_stream does not fail on format mismatch.
+        let default = device
+            .default_output_config()
+            .map_err(|e| format!("Failed to get default audio config: {e}"))?;
+        let channels = default.channels();
+        let rate = default.sample_rate().0 as i32;
+        let format = default.sample_format();
+        let config = StreamConfig {
+            channels,
+            sample_rate: default.sample_rate(),
+            buffer_size: BufferSize::Fixed(1024),
+        };
+        Ok((channels, rate, format, config))
+    }
+
+    /// Dispatches stream construction to the correct typed builder based on the
+    /// device's native sample format.
+    fn build_stream(
+        device: &cpal::Device,
+        config: &StreamConfig,
+        channels: u16,
+        sample_format: SampleFormat,
+        consumer: AudioConsumer,
+        volume: Arc<AtomicU32>,
+        stats: Arc<AudioStats>,
+        fill_level: Arc<AtomicUsize>,
+        paused: Arc<AtomicBool>,
+    ) -> Result<cpal::Stream, String> {
+        match sample_format {
+            SampleFormat::F32 => Self::build_typed_stream::<f32>(
+                device, config, channels, consumer, volume, stats, fill_level, paused,
+            ),
+            SampleFormat::I16 => Self::build_typed_stream::<i16>(
+                device, config, channels, consumer, volume, stats, fill_level, paused,
+            ),
+            SampleFormat::U16 => Self::build_typed_stream::<u16>(
+                device, config, channels, consumer, volume, stats, fill_level, paused,
+            ),
+            _ => Err(format!(
+                "Unsupported audio sample format: {sample_format:?}"
+            )),
+        }
+    }
+
+    /// Builds a typed cpal output stream for the given sample type.
+    ///
+    /// Converts the mono f32 NES audio signal to the device's sample format `T`
+    /// and duplicates each mono sample to all output channels (handles stereo).
+    fn build_typed_stream<T: SizedSample + FromSample<f32>>(
+        device: &cpal::Device,
+        config: &StreamConfig,
+        channels: u16,
+        mut consumer: AudioConsumer,
+        volume: Arc<AtomicU32>,
+        stats: Arc<AudioStats>,
+        fill_level: Arc<AtomicUsize>,
+        paused: Arc<AtomicBool>,
+    ) -> Result<cpal::Stream, String> {
+        let mut resampler = AudioResampler::new(Self::BUFFER_SIZE / 2);
+
+        device
+            .build_output_stream(
+                config,
+                move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
+                    if paused.load(Ordering::Relaxed) {
+                        data.fill(T::EQUILIBRIUM);
+                        return;
+                    }
+
+                    let vol = f32::from_bits(volume.load(Ordering::Relaxed));
+                    let fill = fill_level.load(Ordering::Relaxed);
+                    resampler.update_rate(fill);
+
+                    // `data` is interleaved: [L, R, L, R, ...] for stereo.
+                    // We generate one mono sample and duplicate it to all channels.
+                    for frame in data.chunks_mut(channels as usize) {
+                        let raw = resampler.render_next(&mut || {
+                            let s = consumer.try_pop();
+                            if s.is_some() {
+                                // Saturating to prevent underflow if the callback
+                                // races ahead of the fill_level increment.
+                                let _ = fill_level.fetch_update(
+                                    Ordering::Relaxed,
+                                    Ordering::Relaxed,
+                                    |level| Some(level.saturating_sub(1)),
+                                );
+                            }
+                            s
+                        });
+
+                        let sample: T = match raw {
+                            Some(s) => {
+                                stats.received_samples.fetch_add(1, Ordering::Relaxed);
+                                T::from_sample(process_sample(s, vol))
+                            }
+                            None => {
+                                stats.underrun_samples.fetch_add(1, Ordering::Relaxed);
+                                T::EQUILIBRIUM
+                            }
+                        };
+
+                        for ch in frame.iter_mut() {
+                            *ch = sample;
+                        }
+                    }
+                },
+                move |err| {
+                    eprintln!("cpal audio stream error: {err}");
+                },
+                None,
+            )
+            .map_err(|e| format!("Failed to build audio stream: {e}"))
+    }
+
+    /// Returns the current buffered sample count in the ring buffer.
+    #[cfg(test)]
+    pub fn buffered_samples(&self) -> usize {
+        self.fill_level.load(Ordering::Relaxed)
+    }
+
+    /// Creates a `NativeAudio` without opening a real cpal device or stream.
+    ///
+    /// Intended for unit tests that exercise pure logic (volume, stats, buffering)
+    /// without requiring audio hardware.
+    #[cfg(test)]
+    fn new_without_stream(sample_rate: i32) -> Self {
+        let ring_buffer = HeapRb::<f32>::new(Self::BUFFER_SIZE);
+        let (producer, _consumer) = ring_buffer.split();
+        Self {
+            _stream: None,
+            sample_producer: producer,
+            volume: Arc::new(AtomicU32::new(f32::to_bits(0.75))),
+            stats: Arc::new(AudioStats::default()),
+            fill_level: Arc::new(AtomicUsize::new(0)),
+            actual_sample_rate: sample_rate,
+            paused: Arc::new(AtomicBool::new(true)),
+        }
+    }
+}
+
+impl NesAudio for NativeAudio {
+    fn queue_sample(&mut self, sample: f32) {
+        queue_sample_to_producer(
+            &mut self.sample_producer,
+            sample,
+            &self.stats,
+            &self.fill_level,
+        );
+    }
+
+    fn resume(&self) {
+        self.paused.store(false, Ordering::Relaxed);
+    }
+
+    fn pause(&self) {
+        self.paused.store(true, Ordering::Relaxed);
+    }
+
+    fn set_volume(&self, volume: f32) {
+        let clamped = volume.clamp(0.0, 1.0);
+        self.volume.store(f32::to_bits(clamped), Ordering::Relaxed);
+    }
+
+    fn get_volume(&self) -> f32 {
+        f32::from_bits(self.volume.load(Ordering::Relaxed))
+    }
+
+    fn prime_startup(&mut self, samples: usize) {
+        for _ in 0..samples {
+            queue_sample_to_producer(
+                &mut self.sample_producer,
+                0.0,
+                &self.stats,
+                &self.fill_level,
+            );
+        }
+    }
+
+    fn take_and_reset_stats(&self) -> (u64, u64, u64) {
+        let received = self.stats.received_samples.swap(0, Ordering::Relaxed);
+        let dropped = self.stats.dropped_samples.swap(0, Ordering::Relaxed);
+        let underrun = self.stats.underrun_samples.swap(0, Ordering::Relaxed);
+        (received, dropped, underrun)
+    }
+
+    fn actual_sample_rate(&self) -> i32 {
+        self.actual_sample_rate
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_volume_clamping() {
+        let audio = NativeAudio::new_without_stream(44100);
+
+        audio.set_volume(0.5);
+        assert_eq!(audio.get_volume(), 0.5);
+
+        audio.set_volume(2.0);
+        assert_eq!(audio.get_volume(), 1.0);
+
+        audio.set_volume(-0.5);
+        assert_eq!(audio.get_volume(), 0.0);
+    }
+
+    #[test]
+    fn test_default_volume_is_75_percent() {
+        let audio = NativeAudio::new_without_stream(44100);
+        assert_eq!(audio.get_volume(), 0.75);
+    }
+
+    #[test]
+    fn test_stats_reset() {
+        let audio = NativeAudio::new_without_stream(44100);
+
+        let (received, dropped, underrun) = audio.take_and_reset_stats();
+        assert_eq!(received, 0);
+        assert_eq!(dropped, 0);
+        // While paused, the callback returns early and does not record underruns.
+        assert_eq!(underrun, 0);
+
+        // Second call should also return zeros
+        let (received2, dropped2, underrun2) = audio.take_and_reset_stats();
+        assert_eq!(received2, 0);
+        assert_eq!(dropped2, 0);
+        assert_eq!(underrun2, 0);
+    }
+
+    #[test]
+    fn test_prime_startup_and_queue_sample() {
+        let mut audio = NativeAudio::new_without_stream(44100);
+
+        // Prime buffer
+        audio.prime_startup(100);
+        assert!(audio.buffered_samples() >= 100);
+
+        // Queue additional samples
+        audio.queue_sample(0.5);
+        audio.queue_sample(0.3);
+        assert!(audio.buffered_samples() >= 102);
+    }
+
+    #[test]
+    fn test_resume_and_pause() {
+        let audio = NativeAudio::new_without_stream(44100);
+
+        // Starts paused
+        assert!(audio.paused.load(Ordering::Relaxed));
+
+        audio.resume();
+        assert!(!audio.paused.load(Ordering::Relaxed));
+
+        audio.pause();
+        assert!(audio.paused.load(Ordering::Relaxed));
+    }
+}

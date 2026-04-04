@@ -1,5 +1,7 @@
 mod app_context;
 mod apu;
+#[cfg(any(feature = "sdl", feature = "native"))]
+mod audio;
 mod autorun;
 mod bus;
 mod cartridge;
@@ -8,21 +10,24 @@ mod cpu;
 mod debugging;
 mod frontend_toasts;
 mod input;
+#[cfg(all(feature = "native", not(feature = "sdl")))]
+mod native_frontend;
 mod ppu;
+#[cfg(any(feature = "sdl", feature = "native"))]
 mod rendering;
+#[cfg(feature = "sdl")]
 mod sdl_frontend;
 #[cfg(feature = "tui")]
 mod tui_frontend;
 
 use app_context::AppContext;
 use console::{
-    ApuChannels, AutorunFormat, CartridgeCatalogOptions, Config, Nes, ParseResult, SaveState,
-    default_catalog_csv_path, log_hardware_selection, refresh_cartridge_catalog,
+    AutorunFormat, CartridgeCatalogOptions, Config, Nes, ParseResult, default_catalog_csv_path,
+    refresh_cartridge_catalog,
 };
 use debugging::log_info;
-use frontend_toasts::{
-    cartridge_load_toast_message, emulator_timing_toast_message, hardware_mode_toast_message,
-};
+use frontend_toasts::cartridge_load_toast_message;
+#[cfg(feature = "sdl")]
 use sdl_frontend::{SdlEventLoop, SdlNesAudio};
 use std::cell::RefCell;
 use std::fs;
@@ -229,6 +234,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tracing_config = app_context.borrow().config().tracing;
     debugging::init_tracing(tracing_config);
 
+    #[cfg(feature = "sdl")]
+    {
+        run_sdl_frontend(app_context)?;
+    }
+
+    #[cfg(all(feature = "native", not(feature = "sdl")))]
+    {
+        run_native_frontend(app_context)?;
+    }
+
+    #[cfg(not(any(feature = "sdl", feature = "native")))]
+    {
+        eprintln!("No frontend feature enabled. Enable 'sdl' or 'native'.");
+        std::process::exit(1);
+    }
+
+    Ok(())
+}
+
+#[cfg(feature = "sdl")]
+fn run_sdl_frontend(
+    app_context: Rc<RefCell<AppContext>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::audio::NesAudio;
+    use console::{ApuChannels, SaveState, log_hardware_selection};
+    use frontend_toasts::{emulator_timing_toast_message, hardware_mode_toast_message};
+
     // Initialize SDL2
     let sdl_context = sdl2::init()?;
 
@@ -421,7 +453,82 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     run_result.map_err(|e| e.into())
 }
 
-#[cfg(test)]
+#[cfg(all(feature = "native", not(feature = "sdl")))]
+fn run_native_frontend(
+    app_context: Rc<RefCell<AppContext>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use audio::NesAudio;
+    use native_frontend::{NativeAudio, NativeEventLoop};
+
+    // Create audio output (request 44.1 kHz) unless disabled.
+    let mut audio_sample_rate = None;
+    let audio_enabled = app_context.borrow().config().audio_enabled;
+    let audio = if !audio_enabled {
+        None
+    } else {
+        let audio = NativeAudio::new(44100)?;
+        audio_sample_rate = Some(audio.actual_sample_rate() as f32);
+        Some(audio)
+    };
+
+    // Load ROM
+    let default_rom_path = "roms/games/mappers/6/Air Fortress (J) [hFFE].nes";
+    let rom_path = app_context
+        .borrow()
+        .config()
+        .rom_path
+        .clone()
+        .unwrap_or_else(|| default_rom_path.to_string());
+
+    let rom_bytes = match fs::read(&rom_path) {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            app_context
+                .borrow_mut()
+                .add_toast(cartridge_load_toast_message(&rom_path, false));
+            return Err(err.into());
+        }
+    };
+
+    let cart =
+        match cartridge::Cartridge::load_from_file(&rom_bytes, &rom_path, app_context.clone()) {
+            Ok(cartridge) => {
+                app_context
+                    .borrow_mut()
+                    .add_toast(cartridge_load_toast_message(&rom_path, true));
+                cartridge
+            }
+            Err(err) => {
+                app_context
+                    .borrow_mut()
+                    .add_toast(cartridge_load_toast_message(&rom_path, false));
+                return Err(err.into());
+            }
+        };
+
+    let rom_timing_mode = cart.rom_timing_mode();
+    app_context
+        .borrow_mut()
+        .config_mut()
+        .apply_rom_timing_mode(rom_timing_mode);
+
+    let mut nes_instance = Nes::new(app_context.clone());
+    nes_instance.insert_cartridge(cart);
+
+    if let Some(actual_rate) = audio_sample_rate {
+        nes_instance.apu().borrow_mut().set_sample_rate(actual_rate);
+    }
+
+    nes_instance.reset(false);
+
+    let tracing = app_context.borrow().config().tracing;
+    let event_loop = NativeEventLoop::new(app_context, nes_instance, audio, tracing);
+    event_loop.run()?;
+
+    Ok(())
+}
+
+#[cfg(all(test, feature = "sdl"))]
 mod tests {
     use super::*;
     use crate::autorun::AUTORUN_VERSION;

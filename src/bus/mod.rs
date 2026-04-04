@@ -11,4 +11,5 @@ pub use bus::Bus;
 #[cfg(test)]
 pub(crate) use bus::BusDevice;
 pub use bus::SharedBus;
+#[allow(unused_imports)] // SDL-only item; unused until native frontend uses it
 pub use bus::{BusState, ControllerStateWrapper, MapperState};
