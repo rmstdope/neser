@@ -7,8 +7,10 @@ use crate::app_context::SharedAppContext;
 use crate::audio::NesAudio;
 use crate::console::Nes;
 use crate::debugging::Tracing;
+use crate::frontend_toasts::gamepad_init_toast_message;
 use crate::native_frontend::app_state::NativeAppState;
 use crate::native_frontend::audio::NativeAudio;
+use crate::native_frontend::gamepad::GamepadManager;
 use crate::native_frontend::gl_wrapper::NativeGlWrapper;
 use crate::native_frontend::keyboard::{self, KeyOutcome};
 use crate::native_frontend::mouse;
@@ -28,6 +30,7 @@ pub struct NativeEventLoop {
     audio: Option<NativeAudio>,
     tracing: Tracing,
     state: NativeAppState,
+    gamepad: Option<GamepadManager>,
 
     // Initialized on resume (when the window is ready)
     gl_wrapper: Option<NativeGlWrapper>,
@@ -42,7 +45,33 @@ impl NativeEventLoop {
         audio: Option<NativeAudio>,
         tracing: Tracing,
     ) -> Self {
-        let fullscreen = app_context.borrow().config().fullscreen;
+        let (gamepads_enabled, four_score, fullscreen) = {
+            let config = app_context.borrow().config().clone();
+            (
+                config.gamepads_enabled,
+                config.four_score_enabled,
+                config.fullscreen,
+            )
+        };
+
+        let gamepad = if gamepads_enabled {
+            match GamepadManager::new(four_score) {
+                Ok(gp) => Some(gp),
+                Err(e) => {
+                    crate::debugging::log_info(format!("Gamepad init failed: {e}"));
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        let toast = gamepad_init_toast_message(
+            gamepads_enabled,
+            gamepad.as_ref().map_or(0, |g| g.connected_count()),
+        );
+        app_context.borrow_mut().add_toast(&toast);
+
         Self {
             app_context,
             nes,
@@ -53,6 +82,7 @@ impl NativeEventLoop {
                 window_focused: true,
                 ..NativeAppState::default()
             },
+            gamepad,
             gl_wrapper: None,
             last_audio_stats_print: Instant::now(),
             initialized: false,
@@ -400,6 +430,11 @@ impl ApplicationHandler for NativeEventLoop {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // Poll gamepad events before requesting redraw.
+        if let Some(ref mut gp) = self.gamepad {
+            gp.process_events(&mut self.nes);
+        }
+
         if let Some(ref gl) = self.gl_wrapper {
             if self.state.paused {
                 // Throttle to ~20fps while paused to avoid spinning the CPU/GPU.
