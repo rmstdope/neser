@@ -205,19 +205,30 @@ impl GamepadManager {
     pub fn process_events(&mut self, nes: &mut Nes) {
         while let Some(event) = self.gilrs.next_event() {
             match event.event {
-                EventType::ButtonPressed(button, _) => {
+                EventType::ButtonPressed(button, code) => {
+                    crate::debugging::log_info(format!(
+                        "Gamepad btn press: {:?} (code {:?}) from {:?}",
+                        button, code, event.id
+                    ));
                     self.handle_button(nes, event.id, button, true);
                 }
-                EventType::ButtonReleased(button, _) => {
+                EventType::ButtonReleased(button, code) => {
                     self.handle_button(nes, event.id, button, false);
                 }
-                EventType::ButtonChanged(button, value, _) => {
-                    // Some gamepads (especially generic USB ones) report face
-                    // buttons as analog values. Treat them as digital using a
-                    // threshold to convert to pressed/released.
+                EventType::ButtonChanged(button, value, code) => {
+                    crate::debugging::log_info(format!(
+                        "Gamepad btn changed: {:?} val={value} (code {:?}) from {:?}",
+                        button, code, event.id
+                    ));
                     self.handle_button(nes, event.id, button, is_button_pressed(value));
                 }
-                EventType::AxisChanged(axis, value, _) => {
+                EventType::AxisChanged(axis, value, code) => {
+                    if value.abs() > AXIS_DEAD_ZONE {
+                        crate::debugging::log_info(format!(
+                            "Gamepad axis: {:?} val={value} (code {:?}) from {:?}",
+                            axis, code, event.id
+                        ));
+                    }
                     self.handle_axis(nes, event.id, axis, value);
                 }
                 EventType::Connected => {
@@ -339,9 +350,13 @@ impl GamepadManager {
     /// Handles a button press or release, dispatching to the correct NES port.
     fn handle_button(&self, nes: &mut Nes, id: GamepadId, button: gilrs::Button, pressed: bool) {
         let Some(&player_num) = self.player_map.get(&id) else {
+            crate::debugging::log_info(format!("Gamepad dispatch: id {:?} not in player_map", id));
             return;
         };
         let Some(port) = Self::assigned_port(nes, &self.player_map, player_num) else {
+            crate::debugging::log_info(format!(
+                "Gamepad dispatch: player {player_num} has no assigned port"
+            ));
             return;
         };
 
@@ -353,6 +368,11 @@ impl GamepadManager {
         }
         if let Some(nes_btn) = map_button_to_nes(button) {
             nes.set_button(port, nes_btn, pressed);
+        } else {
+            crate::debugging::log_info(format!(
+                "Gamepad dispatch: button {:?} has no NES mapping",
+                button
+            ));
         }
     }
 
