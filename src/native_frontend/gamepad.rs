@@ -30,8 +30,8 @@ pub fn map_button_to_nes(button: gilrs::Button) -> Option<Button> {
         gilrs::Button::East => Some(Button::B),
         gilrs::Button::West => Some(Button::A),
         gilrs::Button::North => Some(Button::B),
-        gilrs::Button::Start => Some(Button::Start),
-        gilrs::Button::Select => Some(Button::Select),
+        gilrs::Button::Start | gilrs::Button::RightTrigger2 => Some(Button::Start),
+        gilrs::Button::Select | gilrs::Button::LeftTrigger2 => Some(Button::Select),
         gilrs::Button::DPadUp => Some(Button::Up),
         gilrs::Button::DPadDown => Some(Button::Down),
         gilrs::Button::DPadLeft => Some(Button::Left),
@@ -442,6 +442,19 @@ mod tests {
     fn nes_mapping_shoulder_returns_none() {
         assert_eq!(map_button_to_nes(gilrs::Button::LeftTrigger), None);
         assert_eq!(map_button_to_nes(gilrs::Button::RightTrigger), None);
+    }
+
+    #[test]
+    fn nes_mapping_trigger2_maps_to_select_start() {
+        // Many generic USB gamepads report Select/Start as LeftTrigger2/RightTrigger2.
+        assert_eq!(
+            map_button_to_nes(gilrs::Button::LeftTrigger2),
+            Some(Button::Select)
+        );
+        assert_eq!(
+            map_button_to_nes(gilrs::Button::RightTrigger2),
+            Some(Button::Start)
+        );
     }
 
     #[test]
