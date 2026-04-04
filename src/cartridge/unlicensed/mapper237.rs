@@ -166,6 +166,16 @@ impl Mapper for Mapper237 {
         self.apply_banks();
     }
 
+    fn reset(&mut self) {
+        self.inner_bank = 0;
+        self.outer_bank = 0;
+        self.mode = false;
+        self.transparency = false;
+        self.mirroring_vertical = false;
+        self.locked = false;
+        self.apply_banks();
+    }
+
     fn registers_snapshot(&self) -> Vec<u8> {
         let mut snap = self.base.banking_snapshot();
         snap.push(self.inner_bank);
@@ -541,6 +551,41 @@ mod tests {
             mapper.read_prg(0x8000),
             23,
             "second write while locked: outer stays 2, inner=7 → bank 23"
+        );
+    }
+
+    // ───────── Reset ─────────
+
+    #[test]
+    fn reset_clears_lock_and_restores_power_on_state() {
+        let mut mapper = make_mapper(banked_data(16 * 1024, PRG_BANKS));
+        // Set NROM-16, vertical mirroring, outer=3, inner=5, with lock (A3=1)
+        mapper.write_prg(0x8008, 0xBD); // A3=1(lock), 0xBD=1011_1101: m=1,M=1,outer bits,inner=5
+        // Verify locked state is active
+        mapper.write_prg(0x8000, 0x00); // This should only update inner (locked)
+        // After reset, all state should return to power-on defaults
+        mapper.reset();
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            0,
+            "$8000 should return to bank 0 after reset"
+        );
+        assert_eq!(
+            mapper.read_prg(0xC000),
+            7,
+            "$C000 should return to bank 7 (UNROM last in outer 0) after reset"
+        );
+        assert_eq!(
+            mapper.get_mirroring(),
+            NametableLayout::Horizontal,
+            "mirroring should return to horizontal after reset"
+        );
+        // Verify lock is cleared: a new write should update outer bank
+        mapper.write_prg(0x8000, 0x10); // D4=1 → outer=2, inner=0 → bank 16
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            16,
+            "outer bank should be updatable after reset (lock cleared)"
         );
     }
 
