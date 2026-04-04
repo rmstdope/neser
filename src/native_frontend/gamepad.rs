@@ -15,23 +15,11 @@ use std::collections::HashMap;
 /// Values beyond ±AXIS_DEAD_ZONE trigger the corresponding direction.
 const AXIS_DEAD_ZONE: f32 = 0.5;
 
-/// Threshold for converting analog button values to digital presses.
-/// Some gamepads (especially generic USB ones) report face buttons as
-/// analog values via `ButtonChanged` rather than `ButtonPressed`/`Released`.
-const BUTTON_PRESS_THRESHOLD: f32 = 0.5;
-
 /// Maximum number of controllers supported in normal mode.
 const MAX_CONTROLLERS: usize = 2;
 
 /// Maximum number of controllers supported in Four Score mode.
 const MAX_CONTROLLERS_FOUR_SCORE: usize = 4;
-
-/// Converts an analog button value to a digital pressed/released state.
-///
-/// Returns `true` (pressed) when `value > BUTTON_PRESS_THRESHOLD`.
-pub fn is_button_pressed(value: f32) -> bool {
-    value > BUTTON_PRESS_THRESHOLD
-}
 
 /// Maps a gilrs button to a standard NES joypad button.
 ///
@@ -205,30 +193,19 @@ impl GamepadManager {
     pub fn process_events(&mut self, nes: &mut Nes) {
         while let Some(event) = self.gilrs.next_event() {
             match event.event {
-                EventType::ButtonPressed(button, code) => {
-                    crate::debugging::log_info(format!(
-                        "Gamepad btn press: {:?} (code {:?}) from {:?}",
-                        button, code, event.id
-                    ));
+                EventType::ButtonPressed(button, _) => {
                     self.handle_button(nes, event.id, button, true);
                 }
-                EventType::ButtonReleased(button, code) => {
+                EventType::ButtonReleased(button, _) => {
                     self.handle_button(nes, event.id, button, false);
                 }
-                EventType::ButtonChanged(button, value, code) => {
-                    crate::debugging::log_info(format!(
-                        "Gamepad btn changed: {:?} val={value} (code {:?}) from {:?}",
-                        button, code, event.id
-                    ));
-                    self.handle_button(nes, event.id, button, is_button_pressed(value));
-                }
-                EventType::AxisChanged(axis, value, code) => {
-                    if value.abs() > AXIS_DEAD_ZONE {
-                        crate::debugging::log_info(format!(
-                            "Gamepad axis: {:?} val={value} (code {:?}) from {:?}",
-                            axis, code, event.id
-                        ));
-                    }
+                // ButtonChanged is intentionally NOT handled here.
+                // gilrs generates ButtonPressed/ButtonReleased for digital
+                // state transitions (including from analog thresholds via the
+                // default filter). Handling ButtonChanged causes the button
+                // to be released immediately when val=0 arrives in the same
+                // event batch as ButtonPressed, before the NES frame runs.
+                EventType::AxisChanged(axis, value, _) => {
                     self.handle_axis(nes, event.id, axis, value);
                 }
                 EventType::Connected => {
@@ -350,13 +327,9 @@ impl GamepadManager {
     /// Handles a button press or release, dispatching to the correct NES port.
     fn handle_button(&self, nes: &mut Nes, id: GamepadId, button: gilrs::Button, pressed: bool) {
         let Some(&player_num) = self.player_map.get(&id) else {
-            crate::debugging::log_info(format!("Gamepad dispatch: id {:?} not in player_map", id));
             return;
         };
         let Some(port) = Self::assigned_port(nes, &self.player_map, player_num) else {
-            crate::debugging::log_info(format!(
-                "Gamepad dispatch: player {player_num} has no assigned port"
-            ));
             return;
         };
 
@@ -368,11 +341,6 @@ impl GamepadManager {
         }
         if let Some(nes_btn) = map_button_to_nes(button) {
             nes.set_button(port, nes_btn, pressed);
-        } else {
-            crate::debugging::log_info(format!(
-                "Gamepad dispatch: button {:?} has no NES mapping",
-                button
-            ));
         }
     }
 
@@ -582,36 +550,6 @@ mod tests {
     fn snes_mapping_unknown_returns_none() {
         assert_eq!(map_button_to_snes(gilrs::Button::Unknown), None);
         assert_eq!(map_button_to_snes(gilrs::Button::Mode), None);
-    }
-
-    // ── is_button_pressed (analog → digital threshold) ────────────────────
-
-    #[test]
-    fn analog_button_zero_is_released() {
-        assert!(!is_button_pressed(0.0));
-    }
-
-    #[test]
-    fn analog_button_at_threshold_is_released() {
-        assert!(
-            !is_button_pressed(BUTTON_PRESS_THRESHOLD),
-            "exactly at threshold should be released (> not >=)"
-        );
-    }
-
-    #[test]
-    fn analog_button_above_threshold_is_pressed() {
-        assert!(is_button_pressed(BUTTON_PRESS_THRESHOLD + 0.01));
-    }
-
-    #[test]
-    fn analog_button_fully_pressed_is_pressed() {
-        assert!(is_button_pressed(1.0));
-    }
-
-    #[test]
-    fn analog_button_below_zero_is_released() {
-        assert!(!is_button_pressed(-0.1));
     }
 
     // ── AxisState ─────────────────────────────────────────────────────────
