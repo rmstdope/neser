@@ -50,6 +50,16 @@ pub struct NativeAppState {
     /// Whether the mouse cursor is currently grabbed (relative mode).
     pub mouse_grabbed: bool,
 
+    /// Set when the user presses Escape to release the mouse grab.
+    /// Prevents auto-re-grab until the next left-click.
+    pub mouse_released_by_escape: bool,
+
+    /// Whether the window currently has focus.
+    pub window_focused: bool,
+
+    /// Last known Zapper position for crosshair rendering.
+    pub last_zapper_position: Option<(u8, u8)>,
+
     /// Current state of modifier keys (Ctrl, Shift, Alt, …).
     pub modifiers: ModifiersState,
 

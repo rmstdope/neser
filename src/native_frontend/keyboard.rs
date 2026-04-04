@@ -84,7 +84,10 @@ fn handle_unmodified_key(
     audio: Option<&dyn NesAudio>,
 ) -> KeyOutcome {
     match key_code {
-        KeyCode::Escape => app_state.mouse_grabbed = false,
+        KeyCode::Escape => {
+            app_state.mouse_grabbed = false;
+            app_state.mouse_released_by_escape = true;
+        }
         KeyCode::Space => app_state.paused = !app_state.paused,
         KeyCode::KeyH => app_state.help_overlay_visible = !app_state.help_overlay_visible,
         KeyCode::F2 => adjust_volume(audio, 0.1),
@@ -444,6 +447,10 @@ mod tests {
         state.mouse_grabbed = true;
         handle_key_pressed(&mut nes, KeyCode::Escape, &mut state, None);
         assert!(!state.mouse_grabbed, "Escape should release mouse grab");
+        assert!(
+            state.mouse_released_by_escape,
+            "Escape should set mouse_released_by_escape"
+        );
     }
 
     #[test]

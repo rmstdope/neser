@@ -116,32 +116,11 @@ impl SdlEventLoop {
     /// make the edges respond faster than the center. The result is scaled to
     /// the Arkanoid controller range ($62$-$F2$) and clamped.
     fn map_mouse_x_to_paddle_position(x: i32, window_width: u32) -> u8 {
-        const MIN_POSITION: f32 = 0x62 as f32;
-        const MAX_POSITION: f32 = 0xF2 as f32;
-        const RANGE: f32 = MAX_POSITION - MIN_POSITION;
-
-        if window_width <= 1 {
-            return MIN_POSITION as u8;
-        }
-
-        let max_x = window_width.saturating_sub(1) as i32;
-        let clamped_x = x.clamp(0, max_x);
-        let width_minus_one = max_x as f32;
-        let normalized = (clamped_x as f32 / width_minus_one) * 2.0 - 1.0;
-        let curved = normalized.signum() * normalized.abs().powf(1.5);
-        let scaled = (curved + 1.0) * 0.5 * RANGE + MIN_POSITION;
-        scaled.round().clamp(MIN_POSITION, MAX_POSITION) as u8
+        crate::input::mouse_mapping::map_mouse_x_to_paddle_position(x, window_width)
     }
 
     fn map_mouse_axis_to_zapper_position(axis: i32, window_extent: u32) -> u8 {
-        if window_extent <= 1 {
-            return 0;
-        }
-
-        let max_axis = window_extent.saturating_sub(1) as i32;
-        let clamped_axis = axis.clamp(0, max_axis);
-        let normalized = clamped_axis as f32 / max_axis as f32;
-        (normalized * 255.0).round().clamp(0.0, 255.0) as u8
+        crate::input::mouse_mapping::map_mouse_axis_to_zapper_position(axis, window_extent)
     }
 
     /// Applies mouse motion to mouse-emulated controller.
@@ -169,11 +148,7 @@ impl SdlEventLoop {
     }
 
     fn map_relative_mouse_delta_to_axis_delta(delta: i32, window_extent: u32) -> i16 {
-        if window_extent <= 1 {
-            return 0;
-        }
-        let scaled = (delta as f32) * (255.0 / (window_extent.saturating_sub(1) as f32));
-        scaled.round().clamp(-255.0, 255.0) as i16
+        crate::input::mouse_mapping::map_relative_mouse_delta_to_axis_delta(delta, window_extent)
     }
 
     fn apply_snes_mouse_relative_motion(
@@ -202,7 +177,7 @@ impl SdlEventLoop {
     }
 
     fn should_use_relative_mouse_mode(should_grab: bool, snes_mouse_active: bool) -> bool {
-        should_grab && snes_mouse_active
+        crate::input::mouse_mapping::should_use_relative_mouse_mode(should_grab, snes_mouse_active)
     }
 
     fn gamepad_ports(nes: &Nes) -> Vec<u8> {
@@ -251,7 +226,11 @@ impl SdlEventLoop {
         window_focused: bool,
         mouse_released_by_escape: bool,
     ) -> bool {
-        mouse_controller_active && window_focused && !mouse_released_by_escape
+        crate::input::mouse_mapping::should_grab_mouse_input(
+            mouse_controller_active,
+            window_focused,
+            mouse_released_by_escape,
+        )
     }
 
     fn zapper_ports(nes: &Nes) -> Vec<u8> {

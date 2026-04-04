@@ -202,6 +202,16 @@ impl NativeGlWrapper {
         self.gl_backend.set_mouse_grab(enabled)
     }
 
+    /// Enables locked cursor mode (for SNES Mouse relative motion).
+    ///
+    /// Uses `CursorGrabMode::Locked` which hides the cursor and provides
+    /// raw deltas via `DeviceEvent::MouseMotion`.
+    pub fn set_mouse_grab_locked(&mut self) -> Result<(), String> {
+        self.render_target_window
+            .set_cursor_grab(winit::window::CursorGrabMode::Locked)
+            .map_err(|e| format!("failed to set locked cursor grab: {e}"))
+    }
+
     /// Returns a reference to the underlying window.
     pub fn window(&self) -> &Window {
         &self.render_target_window

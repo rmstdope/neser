@@ -8,6 +8,7 @@ mod audio;
 mod event_loop;
 mod gl_wrapper;
 pub mod keyboard;
+mod mouse;
 mod render_target;
 
 pub use audio::NativeAudio;
