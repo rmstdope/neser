@@ -15,11 +15,23 @@ use std::collections::HashMap;
 /// Values beyond ±AXIS_DEAD_ZONE trigger the corresponding direction.
 const AXIS_DEAD_ZONE: f32 = 0.5;
 
+/// Threshold for converting analog button values to digital presses.
+/// Some gamepads (especially generic USB ones) report face buttons as
+/// analog values via `ButtonChanged` rather than `ButtonPressed`/`Released`.
+const BUTTON_PRESS_THRESHOLD: f32 = 0.5;
+
 /// Maximum number of controllers supported in normal mode.
 const MAX_CONTROLLERS: usize = 2;
 
 /// Maximum number of controllers supported in Four Score mode.
 const MAX_CONTROLLERS_FOUR_SCORE: usize = 4;
+
+/// Converts an analog button value to a digital pressed/released state.
+///
+/// Returns `true` (pressed) when `value > BUTTON_PRESS_THRESHOLD`.
+pub fn is_button_pressed(value: f32) -> bool {
+    value > BUTTON_PRESS_THRESHOLD
+}
 
 /// Maps a gilrs button to a standard NES joypad button.
 ///
@@ -147,9 +159,19 @@ impl GamepadManager {
     ///
     /// `four_score` — when true, supports up to 4 gamepads instead of 2.
     pub fn new(four_score: bool) -> Result<Self, String> {
-        let gilrs = GilrsBuilder::new()
+        let mut builder = GilrsBuilder::new()
             .with_default_filters(true)
-            .add_env_mappings(true)
+            .add_env_mappings(true);
+
+        // Load additional controller mappings from gamecontrollerdb.txt.
+        // This is the same SDL-format mapping database the SDL frontend uses,
+        // providing coverage for generic "USB gamepad" controllers and others
+        // that aren't in gilrs's built-in database.
+        if let Ok(mappings) = std::fs::read_to_string("gamecontrollerdb.txt") {
+            builder = builder.add_mappings(&mappings);
+        }
+
+        let gilrs = builder
             .build()
             .map_err(|e| format!("failed to initialize gilrs: {e}"))?;
 
@@ -166,7 +188,11 @@ impl GamepadManager {
             max_controllers,
         };
 
+        // Two-phase detection: first scan the gamepads iterator (synchronous
+        // on Linux, may return empty on macOS where IOKit enumerates async),
+        // then drain any pending Connected events from the event queue.
         manager.enumerate_connected();
+        manager.drain_pending_connections();
         Ok(manager)
     }
 
@@ -184,6 +210,12 @@ impl GamepadManager {
                 }
                 EventType::ButtonReleased(button, _) => {
                     self.handle_button(nes, event.id, button, false);
+                }
+                EventType::ButtonChanged(button, value, _) => {
+                    // Some gamepads (especially generic USB ones) report face
+                    // buttons as analog values. Treat them as digital using a
+                    // threshold to convert to pressed/released.
+                    self.handle_button(nes, event.id, button, is_button_pressed(value));
                 }
                 EventType::AxisChanged(axis, value, _) => {
                     self.handle_axis(nes, event.id, axis, value);
@@ -210,6 +242,20 @@ impl GamepadManager {
 
         for id in connected_ids {
             self.handle_connected(id);
+        }
+    }
+
+    /// Drains any pending `Connected` events from the gilrs event queue.
+    ///
+    /// On macOS, IOKit enumerates gamepads asynchronously so `gamepads()` may
+    /// return empty right after `build()`. The `Connected` events arrive in
+    /// the event queue shortly after. This method consumes them so that
+    /// `connected_count()` reflects reality before the toast is shown.
+    fn drain_pending_connections(&mut self) {
+        while let Some(event) = self.gilrs.next_event() {
+            if let EventType::Connected = event.event {
+                self.handle_connected(event.id);
+            }
         }
     }
 
@@ -516,6 +562,36 @@ mod tests {
     fn snes_mapping_unknown_returns_none() {
         assert_eq!(map_button_to_snes(gilrs::Button::Unknown), None);
         assert_eq!(map_button_to_snes(gilrs::Button::Mode), None);
+    }
+
+    // ── is_button_pressed (analog → digital threshold) ────────────────────
+
+    #[test]
+    fn analog_button_zero_is_released() {
+        assert!(!is_button_pressed(0.0));
+    }
+
+    #[test]
+    fn analog_button_at_threshold_is_released() {
+        assert!(
+            !is_button_pressed(BUTTON_PRESS_THRESHOLD),
+            "exactly at threshold should be released (> not >=)"
+        );
+    }
+
+    #[test]
+    fn analog_button_above_threshold_is_pressed() {
+        assert!(is_button_pressed(BUTTON_PRESS_THRESHOLD + 0.01));
+    }
+
+    #[test]
+    fn analog_button_fully_pressed_is_pressed() {
+        assert!(is_button_pressed(1.0));
+    }
+
+    #[test]
+    fn analog_button_below_zero_is_released() {
+        assert!(!is_button_pressed(-0.1));
     }
 
     // ── AxisState ─────────────────────────────────────────────────────────
