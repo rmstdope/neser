@@ -87,18 +87,19 @@ impl RenderTarget for WinitRenderTarget {
         } else {
             winit::window::CursorGrabMode::None
         };
-        self.window
-            .set_cursor_grab(mode)
-            .or_else(|_| {
-                // Confined not supported on all platforms, fall back to Locked
-                if enabled {
-                    self.window
-                        .set_cursor_grab(winit::window::CursorGrabMode::Locked)
-                } else {
-                    Ok(())
-                }
-            })
-            .map_err(|e| format!("failed to set cursor grab: {e}"))
+        self.window.set_cursor_grab(mode).or_else(|e| {
+            if enabled {
+                // Confined is unsupported on some platforms (e.g. macOS).
+                // Silently succeed — cursor hiding via set_cursor_visible
+                // is sufficient. We must NOT fall back to Locked because
+                // Locked stops delivering absolute CursorMoved positions,
+                // which breaks Arkanoid/Zapper coordinate tracking. SNES
+                // Mouse uses the explicit set_mouse_grab_locked() instead.
+                Ok(())
+            } else {
+                Err(format!("failed to release cursor grab: {e}"))
+            }
+        })
     }
 }
 

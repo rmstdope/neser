@@ -50,6 +50,22 @@ pub struct NativeAppState {
     /// Whether the mouse cursor is currently grabbed (relative mode).
     pub mouse_grabbed: bool,
 
+    /// Set when the user presses Escape to release the mouse grab.
+    /// Prevents auto-re-grab until the next left-click.
+    pub mouse_released_by_escape: bool,
+
+    /// Whether the window currently has focus.
+    pub window_focused: bool,
+
+    /// Virtual cursor position in logical pixels, accumulated from raw
+    /// `DeviceEvent::MouseMotion` deltas when the cursor is locked.
+    /// Used for Zapper and Arkanoid absolute-position mapping while
+    /// the real cursor is kept at the window centre via `Locked` grab.
+    pub virtual_cursor: (f32, f32),
+
+    /// Last known Zapper position in NES coordinates for crosshair rendering.
+    pub last_zapper_position: Option<(u8, u8)>,
+
     /// Current state of modifier keys (Ctrl, Shift, Alt, …).
     pub modifiers: ModifiersState,
 
@@ -58,11 +74,6 @@ pub struct NativeAppState {
 }
 
 impl NativeAppState {
-    /// Creates a new [`NativeAppState`] with all flags at their defaults.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Returns the overlay text to display on top of the rendered frame, if any.
     ///
     /// Priority (highest first):
@@ -169,13 +180,13 @@ mod tests {
 
     #[test]
     fn test_overlay_text_returns_none_when_nothing_visible() {
-        let state = NativeAppState::new();
+        let state = NativeAppState::default();
         assert!(state.overlay_text(&make_nes()).is_none());
     }
 
     #[test]
     fn test_overlay_text_returns_controls_when_help_visible() {
-        let mut state = NativeAppState::new();
+        let mut state = NativeAppState::default();
         state.help_overlay_visible = true;
         let text = state.overlay_text(&make_nes());
         assert!(
@@ -190,7 +201,7 @@ mod tests {
 
     #[test]
     fn test_overlay_text_help_contains_wasd() {
-        let mut state = NativeAppState::new();
+        let mut state = NativeAppState::default();
         state.help_overlay_visible = true;
         let text = state.overlay_text(&make_nes()).unwrap();
         assert!(
@@ -201,7 +212,7 @@ mod tests {
 
     #[test]
     fn test_overlay_text_help_contains_hotkeys() {
-        let mut state = NativeAppState::new();
+        let mut state = NativeAppState::default();
         state.help_overlay_visible = true;
         let text = state.overlay_text(&make_nes()).unwrap();
         assert!(
@@ -218,7 +229,7 @@ mod tests {
 
     #[test]
     fn test_overlay_text_returns_cart_switch_when_open() {
-        let mut state = NativeAppState::new();
+        let mut state = NativeAppState::default();
         state.cart_switch.open = true;
         let text = state.overlay_text(&make_nes());
         assert!(
@@ -233,7 +244,7 @@ mod tests {
 
     #[test]
     fn test_overlay_text_cart_switch_takes_priority_over_help() {
-        let mut state = NativeAppState::new();
+        let mut state = NativeAppState::default();
         state.cart_switch.open = true;
         state.help_overlay_visible = true;
         let text = state.overlay_text(&make_nes()).unwrap();

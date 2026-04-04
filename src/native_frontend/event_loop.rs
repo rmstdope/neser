@@ -11,9 +11,10 @@ use crate::native_frontend::app_state::NativeAppState;
 use crate::native_frontend::audio::NativeAudio;
 use crate::native_frontend::gl_wrapper::NativeGlWrapper;
 use crate::native_frontend::keyboard::{self, KeyOutcome};
+use crate::native_frontend::mouse;
 
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, WindowEvent};
+use winit::event::{DeviceEvent, DeviceId, ElementState, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::PhysicalKey;
 use winit::window::WindowId;
@@ -49,6 +50,7 @@ impl NativeEventLoop {
             tracing,
             state: NativeAppState {
                 fullscreen,
+                window_focused: true,
                 ..NativeAppState::default()
             },
             gl_wrapper: None,
@@ -105,6 +107,44 @@ impl NativeEventLoop {
             self.last_audio_stats_print = Instant::now();
         }
     }
+
+    /// Synchronizes the actual mouse grab state with the desired state.
+    ///
+    /// Called once per frame to ensure grab/visibility stay in sync after
+    /// cartridge switches, focus changes, or controller hot-swaps.
+    fn sync_mouse_grab_state(&mut self) {
+        let has_mouse = mouse::has_any_mouse_controller(&self.nes);
+        let should_grab = crate::input::mouse_mapping::should_grab_mouse_input(
+            has_mouse,
+            self.state.window_focused,
+            self.state.mouse_released_by_escape,
+        );
+
+        if self.state.mouse_grabbed != should_grab {
+            if let Some(ref mut gl) = self.gl_wrapper {
+                if should_grab {
+                    // Use Locked for ALL controllers — on macOS, Confined is
+                    // not supported, so the cursor would escape the window.
+                    // Locked keeps the cursor pinned and we track position
+                    // ourselves via DeviceEvent::MouseMotion deltas.
+                    let _ = gl.set_mouse_grab_locked();
+                    gl.window().set_cursor_visible(false);
+                    // Centre virtual cursor and immediately sync NES coords so
+                    // there is no stale position before the first delta arrives.
+                    let (w, h) = gl.window_size();
+                    let cx = w as f32 / 2.0;
+                    let cy = h as f32 / 2.0;
+                    self.state.virtual_cursor = (cx, cy);
+                    self.state.last_zapper_position =
+                        mouse::update_mouse_motion(&mut self.nes, cx as i32, cy as i32, w, h);
+                } else {
+                    let _ = gl.set_mouse_grab(false);
+                    gl.window().set_cursor_visible(true);
+                }
+            }
+            self.state.mouse_grabbed = should_grab;
+        }
+    }
 }
 
 impl ApplicationHandler for NativeEventLoop {
@@ -137,6 +177,24 @@ impl ApplicationHandler for NativeEventLoop {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
 
+            WindowEvent::Focused(focused) => {
+                self.state.window_focused = focused;
+                if !focused {
+                    // Release grab on focus loss, but do NOT set
+                    // mouse_released_by_escape — that flag is only for
+                    // explicit Escape key presses. Keeping it clear means
+                    // auto-grab resumes when focus returns, which is the
+                    // right behaviour. (On macOS, Focused(false) also fires
+                    // briefly during window initialisation, so setting the
+                    // flag here would permanently block auto-grab.)
+                    self.state.mouse_grabbed = false;
+                    if let Some(ref mut gl) = self.gl_wrapper {
+                        let _ = gl.set_mouse_grab(false);
+                        gl.window().set_cursor_visible(true);
+                    }
+                }
+            }
+
             WindowEvent::ModifiersChanged(mods) => {
                 self.state.modifiers = mods.state();
             }
@@ -153,6 +211,8 @@ impl ApplicationHandler for NativeEventLoop {
                 let PhysicalKey::Code(key_code) = event.physical_key else {
                     return;
                 };
+
+                let mouse_grabbed_before = self.state.mouse_grabbed;
 
                 if event.state == ElementState::Pressed {
                     let fullscreen_before = self.state.fullscreen;
@@ -182,26 +242,160 @@ impl ApplicationHandler for NativeEventLoop {
                 } else {
                     keyboard::handle_key_released(&mut self.nes, key_code);
                 }
+
+                // If keyboard handler released the mouse grab (Escape), apply it.
+                if mouse_grabbed_before && !self.state.mouse_grabbed {
+                    if let Some(ref mut gl) = self.gl_wrapper {
+                        let _ = gl.set_mouse_grab(false);
+                        gl.window().set_cursor_visible(true);
+                    }
+                }
+            }
+
+            WindowEvent::CursorMoved { position, .. } => {
+                // Forward to imgui/UI layer always.
+                if let Some(ref mut gl) = self.gl_wrapper {
+                    gl.handle_cursor_moved(position);
+                }
+                // When grabbed, all position input comes via DeviceEvent::MouseMotion
+                // (accumulated into virtual_cursor). CursorMoved is unreliable in
+                // Locked grab mode — the reported position is always the lock point.
+            }
+
+            WindowEvent::MouseInput { button, state, .. } => {
+                // Forward to imgui/UI layer.
+                if let Some(ref mut gl) = self.gl_wrapper {
+                    gl.handle_mouse_button(button, state);
+                }
+
+                let has_mouse = mouse::has_any_mouse_controller(&self.nes);
+
+                // Left-click grabs immediately so the same click is also forwarded
+                // as a button press (unlike deferring to the next frame, which
+                // would swallow Zapper shots and Arkanoid trigger presses).
+                if has_mouse
+                    && !self.state.mouse_grabbed
+                    && state == ElementState::Pressed
+                    && button == winit::event::MouseButton::Left
+                {
+                    self.state.mouse_released_by_escape = false;
+                    let should_grab = crate::input::mouse_mapping::should_grab_mouse_input(
+                        true,
+                        self.state.window_focused,
+                        false,
+                    );
+                    if should_grab {
+                        if let Some(ref mut gl) = self.gl_wrapper {
+                            let _ = gl.set_mouse_grab_locked();
+                            gl.window().set_cursor_visible(false);
+                            // Centre virtual cursor and immediately sync NES coords.
+                            let (w, h) = gl.window_size();
+                            let cx = w as f32 / 2.0;
+                            let cy = h as f32 / 2.0;
+                            self.state.virtual_cursor = (cx, cy);
+                            self.state.last_zapper_position = mouse::update_mouse_motion(
+                                &mut self.nes,
+                                cx as i32,
+                                cy as i32,
+                                w,
+                                h,
+                            );
+                        }
+                        self.state.mouse_grabbed = true;
+                    }
+                }
+
+                // Route button to NES controller if grabbed.
+                if has_mouse && self.state.mouse_grabbed {
+                    let btn = match button {
+                        winit::event::MouseButton::Left => Some(mouse::MouseButton::Left),
+                        winit::event::MouseButton::Right => Some(mouse::MouseButton::Right),
+                        _ => None,
+                    };
+                    if let Some(btn) = btn {
+                        mouse::update_mouse_button(
+                            &mut self.nes,
+                            btn,
+                            state == ElementState::Pressed,
+                        );
+                    }
+                }
+            }
+
+            WindowEvent::MouseWheel { delta, .. } => {
+                if let Some(ref mut gl) = self.gl_wrapper {
+                    gl.handle_mouse_wheel(delta);
+                }
             }
 
             WindowEvent::RedrawRequested => {
                 // Run one frame of emulation
                 self.run_frame();
 
+                // Sync mouse grab state each frame.
+                self.sync_mouse_grab_state();
+
                 // Render
                 if let Some(ref mut gl) = self.gl_wrapper {
                     let overlay = self.state.overlay_text(&self.nes);
+                    let crosshair =
+                        mouse::zapper_crosshair(&self.nes, self.state.last_zapper_position);
                     gl.render(
                         &self.nes,
                         self.state.debugger_open,
                         overlay.as_deref(),
                         false,
-                        None,
+                        crosshair,
                     );
                 }
             }
 
             _ => {}
+        }
+    }
+
+    fn device_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _device_id: DeviceId,
+        event: DeviceEvent,
+    ) {
+        // DeviceEvent::MouseMotion delivers raw deltas regardless of whether
+        // the cursor is inside the window — this is the winit equivalent of
+        // SDL2's SDL_CaptureMouse(true) + SDL_SetRelativeMouseMode(false).
+        if let DeviceEvent::MouseMotion { delta: (dx, dy) } = event {
+            if !self.state.mouse_grabbed {
+                return;
+            }
+
+            let (w, h) = self
+                .gl_wrapper
+                .as_ref()
+                .map(|gl| gl.window_size())
+                .unwrap_or((320, 240));
+
+            if self.nes.has_snes_mouse() && !mouse::has_zapper(&self.nes) {
+                // SNES Mouse: pass raw deltas directly.
+                // Zapper takes precedence — if a Zapper is also connected,
+                // fall through to the virtual-cursor path (matching SDL logic).
+                mouse::apply_snes_mouse_relative_motion(&mut self.nes, dx as i32, dy as i32, w, h);
+            } else {
+                // Zapper / Arkanoid: accumulate deltas into a virtual cursor
+                // position clamped to the window, then map to NES coordinates.
+                // This replicates SDL2's behaviour where absolute x,y was still
+                // available because SDL2 synthesised it from deltas internally.
+                let (new_vx, new_vy) = mouse::accumulate_virtual_cursor(
+                    self.state.virtual_cursor,
+                    dx as f32,
+                    dy as f32,
+                    w,
+                    h,
+                );
+                self.state.virtual_cursor = (new_vx, new_vy);
+
+                self.state.last_zapper_position =
+                    mouse::update_mouse_motion(&mut self.nes, new_vx as i32, new_vy as i32, w, h);
+            }
         }
     }
 

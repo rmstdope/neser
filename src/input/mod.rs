@@ -1,5 +1,6 @@
 mod arkanoid_controller;
 mod controller;
+pub mod mouse_mapping;
 mod nes_joypad;
 mod power_pad;
 mod snes_adapter;
