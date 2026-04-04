@@ -355,7 +355,7 @@ mod tests {
     }
 
     fn make_state() -> NativeAppState {
-        NativeAppState::new()
+        NativeAppState::default()
     }
 
     fn with_ctrl(state: &mut NativeAppState) {
