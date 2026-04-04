@@ -133,15 +133,12 @@ fn cart_switch_overlay_text(cart_switch: &CartridgeSwitchState) -> String {
     // TODO: cache the filtered list and rendered lines in CartridgeSwitchState
     // and only recompute when entries/filter/selection changes, to avoid
     // allocating a Vec at 60fps while the dialog is open with a large catalog.
+    let filter_lower = cart_switch.filter.to_lowercase();
     let visible: Vec<&str> = cart_switch
         .entries
         .iter()
         .map(String::as_str)
-        .filter(|e| {
-            cart_switch.filter.is_empty()
-                || e.to_lowercase()
-                    .contains(&cart_switch.filter.to_lowercase())
-        })
+        .filter(|e| cart_switch.filter.is_empty() || e.to_lowercase().contains(&filter_lower))
         .collect();
 
     let mut lines = vec!["Cartridge Switch".to_string()];
