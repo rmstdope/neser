@@ -1,3 +1,7 @@
+// In non-SDL builds, many public APIs used by the SDL frontend appear unused.
+// These are intentional public APIs that will be used as other frontends mature.
+#![cfg_attr(not(feature = "sdl"), allow(dead_code))]
+
 mod app_context;
 mod apu;
 #[cfg(any(feature = "sdl", feature = "native"))]

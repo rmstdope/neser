@@ -265,9 +265,6 @@ mod tests {
     /// so the XOR signature is $E0, mapping to "NES-001".
     #[test]
     fn allpads_probe_identifies_console_model() {
-        let config = ControllerConfig::joypad_port1();
-        // Capture at frame 120 (title/probe screen) where model name is displayed
-        let result = run_allpads(&config, &[], 120, 0);
         let cap = &result.captures[0];
         assert!(
             !cap.nametable_text.contains("Unknown console"),
