@@ -94,6 +94,34 @@ pub fn zapper_crosshair(nes: &Nes, last_position: Option<(u8, u8)>) -> Option<Cr
     }
 }
 
+/// Scales factor applied to raw `DeviceEvent::MouseMotion` deltas when
+/// building the virtual cursor position for Zapper / Arkanoid.
+/// A value of 2.0 matches typical SDL2 grab sensitivity.
+pub const VIRTUAL_CURSOR_SENSITIVITY: f32 = 2.0;
+
+/// Applies a raw mouse delta to a virtual cursor position, clamped to the
+/// window dimensions.
+///
+/// Used for Zapper and Arkanoid when the cursor is locked (`CursorGrabMode::Locked`):
+/// SDL2 synthesised absolute x,y from accumulated deltas internally;
+/// this function replicates that behaviour in the winit frontend.
+pub fn accumulate_virtual_cursor(
+    current: (f32, f32),
+    dx: f32,
+    dy: f32,
+    window_width: u32,
+    window_height: u32,
+) -> (f32, f32) {
+    if window_width == 0 || window_height == 0 {
+        return (0.0, 0.0);
+    }
+    let new_x =
+        (current.0 + dx * VIRTUAL_CURSOR_SENSITIVITY).clamp(0.0, (window_width as f32) - 1.0);
+    let new_y =
+        (current.1 + dy * VIRTUAL_CURSOR_SENSITIVITY).clamp(0.0, (window_height as f32) - 1.0);
+    (new_x, new_y)
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -241,5 +269,32 @@ mod tests {
         let ch = ch.unwrap();
         assert_eq!(ch.x, 100.0);
         assert_eq!(ch.y, 200.0);
+    }
+
+    // ── Virtual cursor accumulation ───────────────────────────────────────
+
+    #[test]
+    fn virtual_cursor_accumulates_delta_from_centre() {
+        let (nx, ny) = accumulate_virtual_cursor((160.0, 120.0), 10.0, -5.0, 320, 240);
+        assert_eq!(nx, 160.0 + 10.0 * VIRTUAL_CURSOR_SENSITIVITY);
+        assert_eq!(ny, 120.0 + (-5.0) * VIRTUAL_CURSOR_SENSITIVITY);
+    }
+
+    #[test]
+    fn virtual_cursor_clamps_to_window_bounds() {
+        let (nx, ny) = accumulate_virtual_cursor((0.0, 0.0), -100.0, -100.0, 320, 240);
+        assert_eq!(nx, 0.0);
+        assert_eq!(ny, 0.0);
+
+        let (nx, ny) = accumulate_virtual_cursor((319.0, 239.0), 100.0, 100.0, 320, 240);
+        assert_eq!(nx, 319.0);
+        assert_eq!(ny, 239.0);
+    }
+
+    #[test]
+    fn virtual_cursor_degenerate_window() {
+        let (nx, ny) = accumulate_virtual_cursor((0.0, 0.0), 10.0, 10.0, 0, 0);
+        assert_eq!(nx, 0.0);
+        assert_eq!(ny, 0.0);
     }
 }

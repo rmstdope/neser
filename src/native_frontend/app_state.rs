@@ -57,7 +57,13 @@ pub struct NativeAppState {
     /// Whether the window currently has focus.
     pub window_focused: bool,
 
-    /// Last known Zapper position for crosshair rendering.
+    /// Virtual cursor position in logical pixels, accumulated from raw
+    /// `DeviceEvent::MouseMotion` deltas when the cursor is locked.
+    /// Used for Zapper and Arkanoid absolute-position mapping while
+    /// the real cursor is kept at the window centre via `Locked` grab.
+    pub virtual_cursor: (f32, f32),
+
+    /// Last known Zapper position in NES coordinates for crosshair rendering.
     pub last_zapper_position: Option<(u8, u8)>,
 
     /// Current state of modifier keys (Ctrl, Shift, Alt, …).
