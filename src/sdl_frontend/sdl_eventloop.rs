@@ -2941,7 +2941,7 @@ mod tests {
     #[test]
     fn test_paddle_mode_suppresses_keyboard_joypad_input() {
         let mut paused = false;
-        let mut debugger_open_requested = false;
+        let _debugger_open_requested = false;
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
             Config::default(),
         ));
@@ -3679,7 +3679,7 @@ mod tests {
             Config::default(),
         ));
         let mut paused = false;
-        let mut debugger_open_requested = false;
+        let _debugger_open_requested = false;
 
         let before = audio.get_volume();
         SdlEventLoop::handle_key_down(&mut nes, Keycode::F2, Some(&audio), &mut paused);
@@ -3707,7 +3707,7 @@ mod tests {
         nes.reset(false);
 
         let mut paused = false;
-        let mut debugger_open_requested = false;
+        let _debugger_open_requested = false;
         SdlEventLoop::handle_key_down(&mut nes, Keycode::F6, None, &mut paused);
 
         let state_path = rom_path.with_extension("state");
@@ -3732,7 +3732,7 @@ mod tests {
 
         let saved_pc = nes.cpu_ref().pc();
         let mut paused = false;
-        let mut debugger_open_requested = false;
+        let _debugger_open_requested = false;
         SdlEventLoop::handle_key_down(&mut nes, Keycode::F6, None, &mut paused);
 
         nes.cpu_mut().set_pc(saved_pc.wrapping_add(1));
@@ -4240,7 +4240,7 @@ mod tests {
             Config::default(),
         ));
         let mut paused = false;
-        let mut debugger_open_requested = false;
+        let _debugger_open_requested = false;
 
         let _ = SdlEventLoop::handle_key_down(&mut nes, Keycode::Space, None, &mut paused);
         assert!(paused);
@@ -5328,7 +5328,7 @@ mod tests {
             Config::default(),
         ));
         let mut paused = false;
-        let mut debugger_open_requested = false;
+        let _debugger_open_requested = false;
 
         // Reset reads the reset vector from $FFFC-$FFFD. Inserting a minimal cartridge
         // avoids panicking on unmapped reads.
@@ -5431,7 +5431,7 @@ mod tests {
         // - A:      R
         // - B:      T
         let mut paused = false;
-        let mut debugger_open_requested = false;
+        let _debugger_open_requested = false;
 
         // W => Up
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(

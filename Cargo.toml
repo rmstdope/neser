@@ -51,6 +51,7 @@ gilrs = { version = "0.11", optional = true }
 num_enum = "0.7"
 ratatui = { version = "0.29", optional = true }
 crossterm = { version = "0.28", optional = true }
+nosleep = { version = "0.2.1", optional = true }
 
 [features]
 default = ["sdl"]
@@ -81,6 +82,7 @@ native = [
 	"dep:librashader",
 	"dep:cpal",
 	"dep:gilrs",
+	"dep:nosleep",
 ]
 wasm = [
 	"dep:wasm-bindgen",

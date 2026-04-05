@@ -97,24 +97,24 @@ impl NativeAudio {
         let desired_sample_rate = SampleRate(desired_rate as u32);
 
         // Prefer mono f32 at the desired sample rate.
-        if let Ok(mut configs) = device.supported_output_configs() {
-            if configs.any(|r| {
+        if let Ok(mut configs) = device.supported_output_configs()
+            && configs.any(|r| {
                 r.channels() == 1
                     && r.sample_format() == SampleFormat::F32
                     && r.min_sample_rate() <= desired_sample_rate
                     && r.max_sample_rate() >= desired_sample_rate
-            }) {
-                return Ok((
-                    1,
-                    desired_rate,
-                    SampleFormat::F32,
-                    StreamConfig {
-                        channels: 1,
-                        sample_rate: desired_sample_rate,
-                        buffer_size: BufferSize::Fixed(1024),
-                    },
-                ));
-            }
+            })
+        {
+            return Ok((
+                1,
+                desired_rate,
+                SampleFormat::F32,
+                StreamConfig {
+                    channels: 1,
+                    sample_rate: desired_sample_rate,
+                    buffer_size: BufferSize::Fixed(1024),
+                },
+            ));
         }
 
         // Fall back to the device default, keeping its actual channel count and
@@ -135,6 +135,7 @@ impl NativeAudio {
 
     /// Dispatches stream construction to the correct typed builder based on the
     /// device's native sample format.
+    #[allow(clippy::too_many_arguments)]
     fn build_stream(
         device: &cpal::Device,
         config: &StreamConfig,
@@ -166,6 +167,7 @@ impl NativeAudio {
     ///
     /// Converts the mono f32 NES audio signal to the device's sample format `T`
     /// and duplicates each mono sample to all output channels (handles stereo).
+    #[allow(clippy::too_many_arguments)]
     fn build_typed_stream<T: SizedSample + FromSample<f32>>(
         device: &cpal::Device,
         config: &StreamConfig,
