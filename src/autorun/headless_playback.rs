@@ -159,7 +159,10 @@ where
 
 /// Emulate the NES until the PPU signals a completed frame, then clear the flag.
 #[allow(dead_code)]
-fn run_one_frame(nes: &mut Nes) {
+/// Run a single NES frame without audio, draining samples.
+///
+/// Used by headless playback and the native frontend's headless autorun loop.
+pub fn run_one_frame(nes: &mut Nes) {
     while !nes.is_ready_to_render() && !nes.cpu_ref().is_halted() {
         nes.run_cpu_tick();
         // Drain audio samples to avoid unbounded accumulation

@@ -304,4 +304,73 @@ mod tests {
             "cart-switch overlay should not show help text"
         );
     }
+
+    // ── overlay_text: autorun ─────────────────────────────────────────────────
+
+    fn make_recording_autorun_state() -> AutorunState {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let rom_path = dir.path().join("test.nes");
+        std::fs::write(&rom_path, b"dummy").expect("write dummy rom");
+        let (state, _) = AutorunState::new(
+            AutorunMode::Record,
+            rom_path.to_str().unwrap(),
+            true,
+            false,
+            None,
+            crate::autorun::AutorunFormat::Json,
+        )
+        .expect("create recording autorun state");
+        state
+    }
+
+    #[test]
+    fn test_overlay_text_shows_autorun_when_active() {
+        let state = NativeAppState::default();
+        let autorun = make_recording_autorun_state();
+        let text = state.overlay_text(&make_nes(), Some(&autorun));
+        assert!(text.is_some(), "overlay_text should be Some for autorun");
+        assert!(
+            text.unwrap().contains("Recording"),
+            "autorun overlay should show 'Recording'"
+        );
+    }
+
+    #[test]
+    fn test_overlay_text_autorun_takes_priority_over_help() {
+        let mut state = NativeAppState::default();
+        state.help_overlay_visible = true;
+        let autorun = make_recording_autorun_state();
+        let text = state.overlay_text(&make_nes(), Some(&autorun)).unwrap();
+        assert!(
+            text.contains("Recording"),
+            "autorun overlay should take priority over help"
+        );
+        assert!(
+            !text.contains("W/A/S/D"),
+            "help overlay should not appear when autorun is active"
+        );
+    }
+
+    #[test]
+    fn test_overlay_text_cart_switch_takes_priority_over_autorun() {
+        let mut state = NativeAppState::default();
+        state.cart_switch.open = true;
+        let autorun = make_recording_autorun_state();
+        let text = state.overlay_text(&make_nes(), Some(&autorun)).unwrap();
+        assert!(
+            text.contains("Cartridge Switch"),
+            "cart-switch should take priority over autorun"
+        );
+    }
+
+    // ── format helpers ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_format_mm_ss() {
+        assert_eq!(format_mm_ss(0), "00:00");
+        assert_eq!(format_mm_ss(59), "00:59");
+        assert_eq!(format_mm_ss(60), "01:00");
+        assert_eq!(format_mm_ss(125), "02:05");
+        assert_eq!(format_mm_ss(3661), "61:01");
+    }
 }

@@ -491,8 +491,9 @@ fn run_native_frontend(
         )
     };
 
-    // In headless autorun mode, skip audio
-    let headless = autorun_headless && autorun_mode != console::AutorunMode::None;
+    // Headless autorun is only supported in playback mode because
+    // record/extend have no guaranteed termination condition.
+    let headless = autorun_headless && autorun_mode == console::AutorunMode::Playback;
 
     // Create audio output (request 44.1 kHz) unless disabled or headless.
     let mut audio_sample_rate = None;

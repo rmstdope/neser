@@ -410,14 +410,7 @@ impl NativeEventLoop {
 
             let checkpoint_due = self.handle_autorun_after_input();
 
-            // Emulate one frame without audio
-            while !self.nes.is_ready_to_render() && !self.nes.cpu_ref().is_halted() {
-                self.nes.run_cpu_tick();
-                while self.nes.sample_ready() {
-                    self.nes.get_sample();
-                }
-            }
-            self.nes.clear_ready_to_render();
+            crate::autorun::headless_playback::run_one_frame(&mut self.nes);
 
             self.handle_autorun_after_frame(checkpoint_due);
         }
@@ -455,7 +448,9 @@ impl ApplicationHandler for NativeEventLoop {
     ) {
         match event {
             WindowEvent::CloseRequested => {
-                let _ = self.finish_recording();
+                if let Err(e) = self.finish_recording() {
+                    eprintln!("Failed to finish recording on window close: {e}");
+                }
                 self.debugger_controller
                     .save_breakpoints_to_debug_file(&self.nes);
                 event_loop.exit();
@@ -510,7 +505,9 @@ impl ApplicationHandler for NativeEventLoop {
                     );
                     match outcome {
                         KeyOutcome::Quit => {
-                            let _ = self.finish_recording();
+                            if let Err(e) = self.finish_recording() {
+                                eprintln!("Failed to finish recording on quit: {e}");
+                            }
                             self.debugger_controller
                                 .save_breakpoints_to_debug_file(&self.nes);
                             event_loop.exit();
