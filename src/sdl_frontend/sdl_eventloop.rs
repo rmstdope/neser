@@ -24,9 +24,8 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use crate::debugging::{
-    DebuggerSnapshot, Tracing,
-    breakpoints::{BreakpointKind, BreakpointList},
-    log_info, snapshot, ui,
+    DebuggerSnapshot, Tracing, breakpoints::BreakpointKind, control::DebuggerController, log_info,
+    snapshot, ui,
 };
 use crate::input::{Button, PowerPadButton, SnesButton};
 use crate::rendering::Crosshair;
@@ -62,12 +61,7 @@ pub struct SdlEventLoop {
     paused: bool,
     help_overlay_visible: bool,
     debugger_open_requested: bool,
-    breakpoints: BreakpointList,
-    last_post_instruction_cycles: u64,
-    last_post_instruction_frame: u64,
-    temporary_breakpoint: Option<TemporaryBreakpoint>,
-    arm_temporary_breakpoint_after_next_instruction: bool,
-    breakpoint_ignore_once_at_pc: Option<u16>,
+    debugger_controller: DebuggerController,
     #[cfg_attr(not(test), allow(dead_code))]
     debugger_renderer: Option<Box<dyn DebuggerRenderer>>,
     audio: Option<SdlNesAudio>,
@@ -86,15 +80,6 @@ pub struct SdlEventLoop {
     cartridge_switch_selected_index: usize,
     cartridge_switch_filter_query: String,
     cartridge_switch_filtered_indices: Vec<usize>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct TemporaryBreakpoint {
-    pc: u16,
-    already_present: bool,
-    required_interrupt: Option<crate::cpu::InterruptKind>,
-    has_exited_required_interrupt: bool,
-    ignore_other_breakpoints: bool,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -477,12 +462,7 @@ impl SdlEventLoop {
             paused: false,
             help_overlay_visible: false,
             debugger_open_requested: false,
-            breakpoints: BreakpointList::new(),
-            last_post_instruction_cycles: 0,
-            last_post_instruction_frame: 0,
-            temporary_breakpoint: None,
-            arm_temporary_breakpoint_after_next_instruction: false,
-            breakpoint_ignore_once_at_pc: None,
+            debugger_controller: DebuggerController::new(&[]),
             debugger_renderer: None,
             audio,
             controllers,
@@ -870,11 +850,6 @@ impl SdlEventLoop {
         !vsync_enabled
     }
 
-    fn enter_debugger(&mut self) {
-        self.paused = true;
-        self.debugger_open_requested = true;
-    }
-
     fn toggle_fullscreen(&mut self, gl_backend: Option<&mut SdlGlWrapper>) {
         let next_fullscreen_state = !self.fullscreen;
 
@@ -888,197 +863,34 @@ impl SdlEventLoop {
         self.fullscreen = next_fullscreen_state;
     }
 
-    fn read_vector_target(nes: &Nes, vector_addr: u16) -> u16 {
-        let memory = nes.bus().borrow();
-        let lo = memory.read_cpu_for_debugger(vector_addr);
-        let hi = memory.read_cpu_for_debugger(vector_addr.wrapping_add(1));
-        u16::from_le_bytes([lo, hi])
-    }
-
-    fn clear_temporary_breakpoint(&mut self) {
-        if let Some(tb) = self.temporary_breakpoint.take()
-            && !tb.already_present
-        {
-            self.remove_breakpoint(tb.pc);
+    /// Sync pause/debugger state from the controller after any controller call.
+    fn sync_from_controller(&mut self) {
+        if self.debugger_controller.is_debugger_open() {
+            self.paused = true;
+            self.debugger_open_requested = true;
+        } else if self.debugger_open_requested {
+            // Controller closed the debugger (continue was called)
+            self.paused = false;
+            self.debugger_open_requested = false;
         }
     }
 
-    fn set_temporary_breakpoint(&mut self, pc: u16) {
-        self.clear_temporary_breakpoint();
-
-        let already_present = self.breakpoints.has_pc_breakpoint_at(pc);
-        if !already_present {
-            self.add_breakpoint(pc);
-        }
-
-        self.temporary_breakpoint = Some(TemporaryBreakpoint {
-            pc,
-            already_present,
-            required_interrupt: None,
-            has_exited_required_interrupt: true,
-            ignore_other_breakpoints: false,
-        });
-    }
-
-    fn set_temporary_breakpoint_for_interrupt(
-        &mut self,
-        nes: &Nes,
-        pc: u16,
-        required_interrupt: crate::cpu::InterruptKind,
-    ) {
-        self.clear_temporary_breakpoint();
-
-        let already_present = self.breakpoints.has_pc_breakpoint_at(pc);
-        if !already_present {
-            self.add_breakpoint(pc);
-        }
-
-        // If we're already inside this interrupt handler, we want the *next* time we enter it.
-        // So wait until we have exited the interrupt at least once.
-        let currently_in_interrupt = nes.cpu_ref().current_interrupt() == Some(required_interrupt);
-        let has_exited_required_interrupt = !currently_in_interrupt;
-        self.temporary_breakpoint = Some(TemporaryBreakpoint {
-            pc,
-            already_present,
-            required_interrupt: Some(required_interrupt),
-            has_exited_required_interrupt,
-            ignore_other_breakpoints: true,
-        });
-    }
-
-    fn arm_temporary_breakpoint_after_next_instruction(&mut self) {
-        self.arm_temporary_breakpoint_after_next_instruction = true;
-    }
-
-    fn maybe_arm_temporary_breakpoint_after_instruction(&mut self, nes: &Nes) {
-        if !self.arm_temporary_breakpoint_after_next_instruction {
-            return;
-        }
-
-        self.arm_temporary_breakpoint_after_next_instruction = false;
-        self.set_temporary_breakpoint(nes.cpu_ref().pc());
-    }
-
-    fn continue_from_debugger(&mut self, nes: &Nes) {
-        // Prevent immediately re-breaking on the same instruction.
-        if self
-            .breakpoints
-            .has_enabled_pc_breakpoint_at(nes.cpu_ref().pc())
-        {
-            self.breakpoint_ignore_once_at_pc = Some(nes.cpu_ref().pc());
-        }
-
-        // Sync the cycle tracker so threshold breakpoints don't fire spuriously.
-        // Debugger actions (e.g. run-to-next-frame, step) may advance CPU cycles
-        // and frame counts without going through check_post_instruction_breakpoints,
-        // leaving trackers stale. Syncing here means threshold breakpoints can only
-        // fire when crossed going forward from this point.
-        self.last_post_instruction_cycles = nes.cpu_ref().get_total_cycles();
-        self.last_post_instruction_frame = nes.ppu().borrow().frame_count();
-
-        self.paused = false;
-        self.debugger_open_requested = false;
-    }
-
-    fn check_breakpoint_hit(
-        &mut self,
-        pc: u16,
-        current_interrupt: Option<crate::cpu::InterruptKind>,
-    ) -> bool {
-        if let Some(tb) = self.temporary_breakpoint.as_mut()
-            && let Some(required_interrupt) = tb.required_interrupt
-            && !tb.has_exited_required_interrupt
-            && current_interrupt != Some(required_interrupt)
-        {
-            tb.has_exited_required_interrupt = true;
-        }
-
-        // If we just continued from a breakpoint, allow executing that instruction once.
-        if self.breakpoint_ignore_once_at_pc == Some(pc) {
-            self.breakpoint_ignore_once_at_pc = None;
-            return false;
-        }
-
-        let has_pc_bp = |addr: u16| self.breakpoints.has_enabled_pc_breakpoint_at(addr);
-
-        // While a temporary "run to" breakpoint is active, ignore all other breakpoint hits.
-        // This matches the expected debugger UX: run-to should run until the target, not stop
-        // early due to unrelated breakpoints (including ones inside the current interrupt).
-        if let Some(tb) = self.temporary_breakpoint
-            && tb.ignore_other_breakpoints
-            && has_pc_bp(pc)
-            && pc != tb.pc
-        {
-            return false;
-        }
-
-        if has_pc_bp(pc) {
-            if let Some(tb) = self.temporary_breakpoint {
-                if tb.pc == pc {
-                    // This is our one-shot temp breakpoint. Only break when the CPU has actually
-                    // entered the interrupt handler (and, if we were already in it, after we have
-                    // exited it at least once).
-                    if let Some(required_interrupt) = tb.required_interrupt {
-                        if current_interrupt == Some(required_interrupt)
-                            && tb.has_exited_required_interrupt
-                        {
-                            self.temporary_breakpoint = None;
-                            if !tb.already_present {
-                                self.remove_breakpoint(pc);
-                            }
-                        } else {
-                            // Temp breakpoint not armed yet; ignore this breakpoint hit.
-                            return false;
-                        }
-                    } else {
-                        // Plain one-shot breakpoint (used for stepping).
-                        self.temporary_breakpoint = None;
-                        if !tb.already_present {
-                            self.remove_breakpoint(pc);
+    /// Run one emulation frame via the controller, draining audio samples per tick.
+    fn run_frame_with_audio_drain(&mut self, nes: &mut Nes, tracing: &Tracing) {
+        let audio = self.audio.take();
+        let audio_cell = std::cell::RefCell::new(audio);
+        self.debugger_controller
+            .run_frame(nes, tracing, &mut |nes| {
+                if let Some(ref mut audio) = *audio_cell.borrow_mut() {
+                    while nes.sample_ready() {
+                        if let Some(sample) = nes.get_sample() {
+                            audio.queue_sample(sample);
                         }
                     }
-                } else if !tb.ignore_other_breakpoints {
-                    // We hit some other breakpoint while a step is pending; cancel the step.
-                    self.clear_temporary_breakpoint();
                 }
-            }
-
-            self.enter_debugger();
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Check cycle, frame, and write-address breakpoints after an instruction has executed.
-    fn check_post_instruction_breakpoints(&mut self, nes: &Nes) {
-        use crate::debugging::breakpoints::EvalContext;
-        if self.paused {
-            return;
-        }
-        let prev_cycles = self.last_post_instruction_cycles;
-        let current_cycles = nes.cpu_ref().get_total_cycles();
-        let prev_frame = self.last_post_instruction_frame;
-        let current_frame = nes.ppu().borrow().frame_count();
-        let ctx = EvalContext {
-            pc: nes.cpu_ref().pc(),
-            prev_cpu_cycles: prev_cycles,
-            cpu_cycles: current_cycles,
-            prev_frame,
-            frame: current_frame,
-            write_addr: nes.cpu_ref().last_cpu_write_addr(),
-        };
-        self.last_post_instruction_cycles = current_cycles;
-        self.last_post_instruction_frame = current_frame;
-        // Only check non-PC conditions here; PC breakpoints are
-        // checked before each instruction in check_breakpoint_hit.
-        let hit = self
-            .breakpoints
-            .iter()
-            .any(|bp| bp.enabled && !matches!(bp.kind, BreakpointKind::Pc(_)) && bp.is_hit(&ctx));
-        if hit {
-            self.enter_debugger();
-        }
+            });
+        self.audio = audio_cell.into_inner();
+        self.sync_from_controller();
     }
 
     // Checks if the user has requested to quit via Escape key or window close.
@@ -1311,7 +1123,7 @@ impl SdlEventLoop {
                     self.update_cursor_visibility(should_grab);
                     let crosshair = self.zapper_crosshair(nes);
                     let overlay_blink_red = self.should_overlay_blink_red(nes);
-                    gl_backend.update_breakpoints(&self.breakpoints);
+                    gl_backend.update_breakpoints(self.debugger_controller.breakpoints());
                     let action = gl_backend.render(
                         nes,
                         self.debugger_open_requested,
@@ -1350,29 +1162,8 @@ impl SdlEventLoop {
                 // The PPU runs at 3x CPU clock (NTSC) or 3.2x (PAL), so run_cpu_tick()
                 // automatically runs the correct number of PPU cycles per CPU instruction.
                 // A full frame is 262 scanlines × 341 pixels = 89,342 PPU cycles for NTSC
-                while !nes.is_ready_to_render() && !nes.cpu_ref().is_halted() {
-                    if self
-                        .check_breakpoint_hit(nes.cpu_ref().pc(), nes.cpu_ref().current_interrupt())
-                    {
-                        break;
-                    }
-
-                    nes.run(&tracing);
-                    self.maybe_arm_temporary_breakpoint_after_instruction(nes);
-                    self.check_post_instruction_breakpoints(nes);
-
-                    if self.paused {
-                        break;
-                    }
-
-                    // Poll audio samples from APU and queue them
-                    if let Some(ref mut audio) = self.audio {
-                        while nes.sample_ready() {
-                            if let Some(sample) = nes.get_sample() {
-                                audio.queue_sample(sample);
-                            }
-                        }
-                    }
+                {
+                    self.run_frame_with_audio_drain(nes, &tracing);
                 }
 
                 // If we paused due to a breakpoint, restart the loop so the "paused" branch
@@ -1424,7 +1215,7 @@ impl SdlEventLoop {
                 self.update_cursor_visibility(should_grab);
                 let crosshair = self.zapper_crosshair(nes);
                 let overlay_blink_red = self.should_overlay_blink_red(nes);
-                gl_backend.update_breakpoints(&self.breakpoints);
+                gl_backend.update_breakpoints(self.debugger_controller.breakpoints());
                 let _ = gl_backend.render(
                     nes,
                     self.debugger_open_requested,
@@ -1531,79 +1322,68 @@ impl SdlEventLoop {
 
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn request_debugger_open(&mut self) {
-        self.paused = true;
-        self.debugger_open_requested = true;
+        self.debugger_controller.enter_debugger();
+        self.sync_from_controller();
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn add_breakpoint(&mut self, addr: u16) {
-        self.breakpoints.add(BreakpointKind::Pc(addr));
+        self.debugger_controller
+            .breakpoints_mut()
+            .add(BreakpointKind::Pc(addr));
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn remove_breakpoint(&mut self, addr: u16) {
-        if let Some(idx) = self
-            .breakpoints
+        let breakpoints = self.debugger_controller.breakpoints_mut();
+        if let Some(idx) = breakpoints
             .iter()
             .position(|b| b.kind == BreakpointKind::Pc(addr))
         {
-            self.breakpoints.remove(idx);
+            breakpoints.remove(idx);
         }
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn add_cycle_breakpoint(&mut self, cycle: u64) {
-        self.breakpoints.add(BreakpointKind::Cycle(cycle));
+        self.debugger_controller
+            .breakpoints_mut()
+            .add(BreakpointKind::Cycle(cycle));
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn add_frame_breakpoint(&mut self, frame: u64) {
-        self.breakpoints.add(BreakpointKind::Frame(frame));
+        self.debugger_controller
+            .breakpoints_mut()
+            .add(BreakpointKind::Frame(frame));
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn add_write_address_breakpoint(&mut self, addr: u16) {
-        self.breakpoints.add(BreakpointKind::WriteAddress(addr));
+        self.debugger_controller
+            .breakpoints_mut()
+            .add(BreakpointKind::WriteAddress(addr));
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn breakpoint_count(&self) -> usize {
-        if self.breakpoints.is_empty() {
-            0
-        } else {
-            self.breakpoints.len()
-        }
+        self.debugger_controller.breakpoints().len()
     }
 
     pub(crate) fn load_breakpoints_from_debug_file(&mut self, nes: &Nes) {
-        let Some(path) = nes.debug_path() else { return };
-        let Ok(text) = std::fs::read_to_string(&path) else {
-            return;
-        };
-        self.breakpoints = BreakpointList::load_from_str(&text);
+        self.debugger_controller
+            .load_breakpoints_from_debug_file(nes);
     }
 
     pub(crate) fn save_breakpoints_to_debug_file(&self, nes: &Nes) {
-        let Some(path) = nes.debug_path() else { return };
-        if self.breakpoints.is_empty() {
-            if path.exists()
-                && let Err(err) = std::fs::remove_file(&path)
-            {
-                log_info(format!("Failed to remove .debug file: {err}"));
-            }
-            return;
-        }
-        let content = self.breakpoints.save_to_string();
-        if let Err(err) = std::fs::write(&path, content) {
-            log_info(format!("Failed to save breakpoints: {err}"));
-        }
+        self.debugger_controller.save_breakpoints_to_debug_file(nes);
     }
 
     pub(crate) fn load_breakpoints_from_context(&mut self, app_context: &SharedAppContext) {
         let app_context = app_context.borrow();
         let config = app_context.config();
         for &kind in &config.breakpoints {
-            self.breakpoints.add(kind);
+            self.debugger_controller.breakpoints_mut().add(kind);
         }
     }
 
@@ -1675,35 +1455,11 @@ impl SdlEventLoop {
             return false;
         }
 
-        if self.check_breakpoint_hit(nes.cpu_ref().pc(), nes.cpu_ref().current_interrupt()) {
-            return false;
-        }
-
         false
     }
 
     fn tick_headless_frame_for_run(&mut self, nes: &mut Nes, tracing: &Tracing) {
-        while !nes.is_ready_to_render() && !nes.cpu_ref().is_halted() {
-            if self.check_breakpoint_hit(nes.cpu_ref().pc(), nes.cpu_ref().current_interrupt()) {
-                break;
-            }
-
-            nes.run(tracing);
-            self.maybe_arm_temporary_breakpoint_after_instruction(nes);
-            self.check_post_instruction_breakpoints(nes);
-
-            if self.paused {
-                break;
-            }
-
-            if let Some(ref mut audio) = self.audio {
-                while nes.sample_ready() {
-                    if let Some(sample) = nes.get_sample() {
-                        audio.queue_sample(sample);
-                    }
-                }
-            }
-        }
+        self.run_frame_with_audio_drain(nes, tracing);
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -1716,9 +1472,8 @@ impl SdlEventLoop {
             return false;
         }
 
-        nes.run_cpu_tick();
-        self.maybe_arm_temporary_breakpoint_after_instruction(nes);
-        self.check_post_instruction_breakpoints(nes);
+        self.debugger_controller.tick_once(nes);
+        self.sync_from_controller();
         false
     }
 
@@ -1740,68 +1495,8 @@ impl SdlEventLoop {
     }
 
     fn apply_debugger_ui_action(&mut self, nes: &mut Nes, action: ui::DebuggerUiAction) {
-        if !self.debugger_open_requested {
-            return;
-        }
-
-        let mut should_continue = action.continue_run;
-
-        if action.step_over {
-            let pc = nes.cpu_ref().pc();
-            let opcode = {
-                let memory = nes.bus().borrow();
-                memory.read_cpu_for_debugger(pc)
-            };
-
-            if opcode == 0x20 {
-                // JSR: break at the return address (the instruction after the JSR).
-                let return_pc = pc.wrapping_add(3);
-                self.set_temporary_breakpoint(return_pc);
-            } else {
-                // Non-JSR: step one instruction.
-                self.arm_temporary_breakpoint_after_next_instruction();
-            }
-
-            should_continue = true;
-        }
-
-        if action.step_into {
-            self.arm_temporary_breakpoint_after_next_instruction();
-            should_continue = true;
-        }
-
-        if action.run_to_next_frame {
-            Self::debugger_run_to_next_frame(nes);
-        }
-        if action.run_to_next_scanline {
-            Self::debugger_run_to_next_scanline(nes);
-        }
-        if action.run_to_nmi {
-            should_continue |=
-                self.arm_run_to_interrupt(nes, 0xFFFA, crate::cpu::InterruptKind::Nmi);
-        }
-        if action.run_to_irq {
-            should_continue |=
-                self.arm_run_to_interrupt(nes, 0xFFFE, crate::cpu::InterruptKind::Irq);
-        }
-
-        if should_continue {
-            self.continue_from_debugger(nes);
-        }
-
-        // Breakpoint management actions from the UI panel.
-        if let Some(kind) = action.add_breakpoint {
-            self.breakpoints.add(kind);
-        }
-        if let Some(index) = action.remove_breakpoint {
-            self.breakpoints.remove(index);
-        }
-        if let Some(index) = action.enable_breakpoint {
-            self.breakpoints.enable(index);
-        }
-        if let Some(index) = action.disable_breakpoint {
-            self.breakpoints.disable(index);
-        }
+        self.debugger_controller.apply_ui_action(nes, action);
+        self.sync_from_controller();
     }
 
     #[cfg(test)]
@@ -2196,14 +1891,21 @@ impl SdlEventLoop {
 
         // When the debugger is open, make F5 behave exactly like the Continue button.
         // This ensures breakpoint ignore-once semantics apply equally.
-        if keycode == Keycode::F5 && self.debugger_open_requested {
-            self.apply_debugger_ui_action(
-                nes,
-                ui::DebuggerUiAction {
-                    continue_run: true,
-                    ..Default::default()
-                },
-            );
+        if keycode == Keycode::F5 {
+            self.debugger_controller.toggle_debugger(nes);
+            self.sync_from_controller();
+            return KeyDownOutcome::Continue;
+        }
+
+        if keycode == Keycode::F10 {
+            self.debugger_controller.step_over(nes);
+            self.sync_from_controller();
+            return KeyDownOutcome::Continue;
+        }
+
+        if keycode == Keycode::F11 {
+            self.debugger_controller.step_into(nes);
+            self.sync_from_controller();
             return KeyDownOutcome::Continue;
         }
 
@@ -2213,104 +1915,18 @@ impl SdlEventLoop {
         }
 
         let (port_1, port_2) = Self::keyboard_ports(nes, &self.controller_player_map);
-        Self::handle_key_down_with_keyboard_ports(
+        let outcome = Self::handle_key_down_with_keyboard_ports(
             nes,
             keycode,
             self.audio.as_ref(),
             &mut self.paused,
-            &mut self.debugger_open_requested,
             port_1,
             port_2,
-        )
-    }
-
-    fn debugger_run_to_next_frame(nes: &mut Nes) {
-        const MAX_STEPS: usize = 2_000_000;
-
-        let mut previous_scanline = { nes.ppu().borrow().scanline() };
-
-        for _step in 0..MAX_STEPS {
-            if nes.cpu_ref().is_halted() {
-                break;
-            }
-
-            nes.run_cpu_tick();
-
-            let (scanline, _pixel) =
-                { (nes.ppu().borrow().scanline(), nes.ppu().borrow().pixel()) };
-
-            // Stop once we have crossed into the next frame.
-            //
-            // Important: this emulator advances the PPU timing in bulk per executed CPU
-            // instruction, so we may cross the frame boundary *during* an instruction.
-            // Requiring the instruction boundary to land exactly at (0,0) can cause this
-            // command to run far past the frame start.
-            if scanline < previous_scanline {
-                break;
-            }
-
-            previous_scanline = scanline;
-        }
-    }
-
-    fn arm_run_to_interrupt(
-        &mut self,
-        nes: &Nes,
-        vector_addr: u16,
-        kind: crate::cpu::InterruptKind,
-    ) -> bool {
-        let target = Self::read_vector_target(nes, vector_addr);
-        self.set_temporary_breakpoint_for_interrupt(nes, target, kind);
-        true
-    }
-
-    fn debugger_run_to_next_scanline(nes: &mut Nes) {
-        const MAX_STEPS: usize = 100_000;
-
-        let start_scanline = { nes.ppu().borrow().scanline() };
-
-        for _step in 0..MAX_STEPS {
-            if nes.cpu_ref().is_halted() {
-                break;
-            }
-
-            nes.run_cpu_tick();
-
-            let scanline = { nes.ppu().borrow().scanline() };
-
-            if scanline != start_scanline {
-                break;
-            }
-        }
-    }
-
-    fn debugger_step_over(nes: &mut Nes) {
-        const JSR_OPCODE: u8 = 0x20;
-
-        let pc = nes.cpu_ref().pc();
-        let opcode = {
-            let memory = nes.bus().borrow();
-            memory.read_cpu_for_debugger(pc)
-        };
-
-        if opcode == JSR_OPCODE {
-            let next_pc = pc.wrapping_add(3);
-
-            // Execute the JSR itself (enter subroutine).
-            nes.run_cpu_tick();
-
-            // Run until we return to the instruction after the original JSR.
-            const MAX_STEPS: usize = 1_000_000;
-            for _ in 0..MAX_STEPS {
-                if nes.cpu_ref().pc() == next_pc || nes.cpu_ref().is_halted() {
-                    break;
-                }
-                nes.run_cpu_tick();
-            }
-        } else {
-            // Non-JSR: step one instruction.
-            nes.run_cpu_tick();
-        }
+        );
+        // Re-sync so the debugger's pause state overrides any Space-key toggle
+        // that would otherwise desynchronize the frontend from the controller.
+        self.sync_from_controller();
+        outcome
     }
 
     /// Handle keyboard key press events
@@ -2346,37 +1962,12 @@ impl SdlEventLoop {
         keycode: Keycode,
         audio: Option<&SdlNesAudio>,
         paused: &mut bool,
-        debugger_open_requested: &mut bool,
         port_1: Option<u8>,
         port_2: Option<u8>,
     ) -> KeyDownOutcome {
         match keycode {
             Keycode::Space => {
                 *paused = !*paused;
-            }
-            Keycode::F5 => {
-                // Debugger toggle/continue:
-                // - If debugger is closed: open it and pause.
-                // - If debugger is open: continue running and close it.
-                if *debugger_open_requested {
-                    *paused = false;
-                    *debugger_open_requested = false;
-                } else {
-                    *paused = true;
-                    *debugger_open_requested = true;
-                }
-            }
-            Keycode::F10 => {
-                // Debugger step-over.
-                *paused = true;
-                *debugger_open_requested = true;
-                Self::debugger_step_over(nes);
-            }
-            Keycode::F11 => {
-                // Debugger step-into: execute one CPU tick and remain paused.
-                *paused = true;
-                *debugger_open_requested = true;
-                nes.run_cpu_tick();
             }
             Keycode::F2 => {
                 if let Some(audio) = audio {
@@ -2588,20 +2179,11 @@ impl SdlEventLoop {
         keycode: Keycode,
         audio: Option<&SdlNesAudio>,
         paused: &mut bool,
-        debugger_open_requested: &mut bool,
     ) -> KeyDownOutcome {
         let gamepad_ports = Self::gamepad_ports(nes);
         let port_1 = gamepad_ports.first().copied();
         let port_2 = gamepad_ports.get(1).copied();
-        Self::handle_key_down_with_keyboard_ports(
-            nes,
-            keycode,
-            audio,
-            paused,
-            debugger_open_requested,
-            port_1,
-            port_2,
-        )
+        Self::handle_key_down_with_keyboard_ports(nes, keycode, audio, paused, port_1, port_2)
     }
 
     fn handle_key_up_with_keyboard_ports(
@@ -3369,13 +2951,7 @@ mod tests {
         nes.set_mouse_x_position(0x80);
         nes.set_mouse_left_button(true);
 
-        let _ = SdlEventLoop::handle_key_down(
-            &mut nes,
-            Keycode::W,
-            None,
-            &mut paused,
-            &mut debugger_open_requested,
-        );
+        let _ = SdlEventLoop::handle_key_down(&mut nes, Keycode::W, None, &mut paused);
 
         assert_eq!(read_joypad1_buttons(&mut nes), [0; 8]);
         assert_eq!(read_paddle_position(&mut nes), 0x80);
@@ -4106,21 +3682,9 @@ mod tests {
         let mut debugger_open_requested = false;
 
         let before = audio.get_volume();
-        SdlEventLoop::handle_key_down(
-            &mut nes,
-            Keycode::F2,
-            Some(&audio),
-            &mut paused,
-            &mut debugger_open_requested,
-        );
+        SdlEventLoop::handle_key_down(&mut nes, Keycode::F2, Some(&audio), &mut paused);
         assert!((audio.get_volume() - (before + 0.1)).abs() < 1e-6);
-        SdlEventLoop::handle_key_down(
-            &mut nes,
-            Keycode::F3,
-            Some(&audio),
-            &mut paused,
-            &mut debugger_open_requested,
-        );
+        SdlEventLoop::handle_key_down(&mut nes, Keycode::F3, Some(&audio), &mut paused);
         assert!((audio.get_volume() - before).abs() < 1e-6);
 
         drop(restore);
@@ -4144,13 +3708,7 @@ mod tests {
 
         let mut paused = false;
         let mut debugger_open_requested = false;
-        SdlEventLoop::handle_key_down(
-            &mut nes,
-            Keycode::F6,
-            None,
-            &mut paused,
-            &mut debugger_open_requested,
-        );
+        SdlEventLoop::handle_key_down(&mut nes, Keycode::F6, None, &mut paused);
 
         let state_path = rom_path.with_extension("state");
         assert!(state_path.exists(), "Expected state file to be created");
@@ -4175,22 +3733,10 @@ mod tests {
         let saved_pc = nes.cpu_ref().pc();
         let mut paused = false;
         let mut debugger_open_requested = false;
-        SdlEventLoop::handle_key_down(
-            &mut nes,
-            Keycode::F6,
-            None,
-            &mut paused,
-            &mut debugger_open_requested,
-        );
+        SdlEventLoop::handle_key_down(&mut nes, Keycode::F6, None, &mut paused);
 
         nes.cpu_mut().set_pc(saved_pc.wrapping_add(1));
-        SdlEventLoop::handle_key_down(
-            &mut nes,
-            Keycode::F7,
-            None,
-            &mut paused,
-            &mut debugger_open_requested,
-        );
+        SdlEventLoop::handle_key_down(&mut nes, Keycode::F7, None, &mut paused);
 
         assert_eq!(nes.cpu_ref().pc(), saved_pc);
     }
@@ -4696,21 +4242,9 @@ mod tests {
         let mut paused = false;
         let mut debugger_open_requested = false;
 
-        let _ = SdlEventLoop::handle_key_down(
-            &mut nes,
-            Keycode::Space,
-            None,
-            &mut paused,
-            &mut debugger_open_requested,
-        );
+        let _ = SdlEventLoop::handle_key_down(&mut nes, Keycode::Space, None, &mut paused);
         assert!(paused);
-        let _ = SdlEventLoop::handle_key_down(
-            &mut nes,
-            Keycode::Space,
-            None,
-            &mut paused,
-            &mut debugger_open_requested,
-        );
+        let _ = SdlEventLoop::handle_key_down(&mut nes, Keycode::Space, None, &mut paused);
         assert!(!paused);
     }
 
@@ -4936,43 +4470,39 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_handle_key_down_f5_pauses_emulation() {
         // Desired behavior: F5 opens debugger windows, which immediately pauses emulation.
+        let config = default_config();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
             Config::default(),
         ));
-        let mut paused = false;
-        let mut debugger_open_requested = false;
 
-        let _ = SdlEventLoop::handle_key_down(
-            &mut nes,
-            Keycode::F5,
-            None,
-            &mut paused,
-            &mut debugger_open_requested,
-        );
-        assert!(paused);
-        assert!(debugger_open_requested);
+        event_loop.handle_key_down_for_run(&mut nes, Keycode::F5);
+        assert!(event_loop.is_paused());
+        assert!(event_loop.debugger_open_requested());
     }
 
     #[test]
+    #[serial]
     fn test_handle_key_down_f5_when_debugger_open_continues_and_closes_debugger() {
+        let config = default_config();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
             Config::default(),
         ));
-        let mut paused = true;
-        let mut debugger_open_requested = true;
 
-        let _ = SdlEventLoop::handle_key_down(
-            &mut nes,
-            Keycode::F5,
-            None,
-            &mut paused,
-            &mut debugger_open_requested,
-        );
+        event_loop.request_debugger_open();
+        assert!(event_loop.is_paused());
+        assert!(event_loop.debugger_open_requested());
 
-        assert!(!paused);
-        assert!(!debugger_open_requested);
+        event_loop.handle_key_down_for_run(&mut nes, Keycode::F5);
+
+        assert!(!event_loop.is_paused());
+        assert!(!event_loop.debugger_open_requested());
     }
 
     #[test]
@@ -5010,7 +4540,17 @@ mod tests {
         );
 
         let cpu_cycles_before = nes_actual.cpu_ref().get_total_cycles();
-        SdlEventLoop::debugger_run_to_next_frame(&mut nes_actual);
+        {
+            let mut dc = DebuggerController::new(&[]);
+            dc.enter_debugger();
+            dc.apply_ui_action(
+                &mut nes_actual,
+                crate::debugging::ui::DebuggerUiAction {
+                    run_to_next_frame: true,
+                    ..Default::default()
+                },
+            );
+        }
         let cpu_cycles_after = nes_actual.cpu_ref().get_total_cycles();
 
         let (actual_scanline, actual_pixel) = {
@@ -5039,7 +4579,7 @@ mod tests {
         let config = Config::default();
         let mut event_loop =
             SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
-        event_loop.debugger_open_requested = true;
+        event_loop.request_debugger_open();
 
         {
             let binding = nes_expected.ppu();
@@ -5079,24 +4619,33 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_handle_key_down_f10_step_over_jsr_runs_until_return() {
+        let config = default_config();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
         let mut nes = nes_with_jsr_program();
         nes.cpu_mut().set_x(0);
 
-        let mut paused = true;
-        let mut debugger_open_requested = true;
+        event_loop.handle_key_down_for_run(&mut nes, Keycode::F10);
 
-        let _ = SdlEventLoop::handle_key_down(
-            &mut nes,
-            Keycode::F10,
-            None,
-            &mut paused,
-            &mut debugger_open_requested,
+        // Controller's step_over for JSR sets a temporary breakpoint and continues,
+        // so we need to run until it hits the breakpoint.
+        assert!(
+            !event_loop.is_paused(),
+            "step-over for JSR should continue (temp breakpoint approach)"
         );
 
-        assert!(paused, "step-over should keep emulator paused");
+        for _ in 0..1_000_000 {
+            tick_headless_once(&mut event_loop, &mut nes);
+            if event_loop.is_paused() {
+                break;
+            }
+        }
+
+        assert!(event_loop.is_paused(), "should pause at return address");
         assert!(
-            debugger_open_requested,
+            event_loop.debugger_open_requested(),
             "step-over should keep debugger open"
         );
         assert_eq!(
@@ -5112,24 +4661,22 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_handle_key_down_f11_step_into_jsr_enters_subroutine() {
+        let config = default_config();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
         let mut nes = nes_with_jsr_program();
         nes.cpu_mut().set_x(0);
 
-        let mut paused = true;
-        let mut debugger_open_requested = true;
+        event_loop.handle_key_down_for_run(&mut nes, Keycode::F11);
 
-        let _ = SdlEventLoop::handle_key_down(
-            &mut nes,
-            Keycode::F11,
-            None,
-            &mut paused,
-            &mut debugger_open_requested,
-        );
-
-        assert!(paused, "step-into should keep emulator paused");
         assert!(
-            debugger_open_requested,
+            event_loop.is_paused(),
+            "step-into should keep emulator paused"
+        );
+        assert!(
+            event_loop.debugger_open_requested(),
             "step-into should keep debugger open"
         );
         assert_eq!(
@@ -5303,12 +4850,9 @@ mod tests {
         assert!(event_loop.debugger_open_requested());
         assert_eq!(nes.cpu_ref().pc(), nmi_vector);
         assert!(
-            event_loop.temporary_breakpoint.is_none(),
-            "temporary breakpoint should clear after being hit"
-        );
-        assert!(
             !event_loop
-                .breakpoints
+                .debugger_controller
+                .breakpoints()
                 .iter()
                 .any(|b| b.kind == BreakpointKind::Pc(nmi_vector)),
             "temporary breakpoint should be removed after being hit"
@@ -5378,12 +4922,9 @@ mod tests {
         assert!(event_loop.debugger_open_requested());
         assert_eq!(nes.cpu_ref().pc(), irq_vector);
         assert!(
-            event_loop.temporary_breakpoint.is_none(),
-            "temporary breakpoint should clear after being hit"
-        );
-        assert!(
             !event_loop
-                .breakpoints
+                .debugger_controller
+                .breakpoints()
                 .iter()
                 .any(|b| b.kind == BreakpointKind::Pc(irq_vector)),
             "temporary breakpoint should be removed after being hit"
@@ -5803,13 +5344,7 @@ mod tests {
         nes.insert_cartridge(cartridge);
 
         nes.cpu_mut().set_pc(0x1234);
-        let _ = SdlEventLoop::handle_key_down(
-            &mut nes,
-            Keycode::F1,
-            None,
-            &mut paused,
-            &mut debugger_open_requested,
-        );
+        let _ = SdlEventLoop::handle_key_down(&mut nes, Keycode::F1, None, &mut paused);
         assert_eq!(nes.cpu_ref().pc(), 0x1234);
     }
 
@@ -5902,104 +5437,56 @@ mod tests {
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
             Config::default(),
         ));
-        let _ = SdlEventLoop::handle_key_down(
-            &mut nes,
-            Keycode::W,
-            None,
-            &mut paused,
-            &mut debugger_open_requested,
-        );
+        let _ = SdlEventLoop::handle_key_down(&mut nes, Keycode::W, None, &mut paused);
         assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 0, 0, 1, 0, 0, 0]);
 
         // S => Down
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
             Config::default(),
         ));
-        let _ = SdlEventLoop::handle_key_down(
-            &mut nes,
-            Keycode::S,
-            None,
-            &mut paused,
-            &mut debugger_open_requested,
-        );
+        let _ = SdlEventLoop::handle_key_down(&mut nes, Keycode::S, None, &mut paused);
         assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 0, 0, 0, 1, 0, 0]);
 
         // A => Left
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
             Config::default(),
         ));
-        let _ = SdlEventLoop::handle_key_down(
-            &mut nes,
-            Keycode::A,
-            None,
-            &mut paused,
-            &mut debugger_open_requested,
-        );
+        let _ = SdlEventLoop::handle_key_down(&mut nes, Keycode::A, None, &mut paused);
         assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 0, 0, 0, 0, 1, 0]);
 
         // D => Right
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
             Config::default(),
         ));
-        let _ = SdlEventLoop::handle_key_down(
-            &mut nes,
-            Keycode::D,
-            None,
-            &mut paused,
-            &mut debugger_open_requested,
-        );
+        let _ = SdlEventLoop::handle_key_down(&mut nes, Keycode::D, None, &mut paused);
         assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 0, 0, 0, 0, 0, 1]);
 
         // 4 => Select
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
             Config::default(),
         ));
-        let _ = SdlEventLoop::handle_key_down(
-            &mut nes,
-            Keycode::Num4,
-            None,
-            &mut paused,
-            &mut debugger_open_requested,
-        );
+        let _ = SdlEventLoop::handle_key_down(&mut nes, Keycode::Num4, None, &mut paused);
         assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 1, 0, 0, 0, 0, 0]);
 
         // 5 => Start
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
             Config::default(),
         ));
-        let _ = SdlEventLoop::handle_key_down(
-            &mut nes,
-            Keycode::Num5,
-            None,
-            &mut paused,
-            &mut debugger_open_requested,
-        );
+        let _ = SdlEventLoop::handle_key_down(&mut nes, Keycode::Num5, None, &mut paused);
         assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 0, 1, 0, 0, 0, 0]);
 
         // R => A
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
             Config::default(),
         ));
-        let _ = SdlEventLoop::handle_key_down(
-            &mut nes,
-            Keycode::R,
-            None,
-            &mut paused,
-            &mut debugger_open_requested,
-        );
+        let _ = SdlEventLoop::handle_key_down(&mut nes, Keycode::R, None, &mut paused);
         assert_eq!(read_joypad1_buttons(&mut nes), [1, 0, 0, 0, 0, 0, 0, 0]);
 
         // T => B
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
             Config::default(),
         ));
-        let _ = SdlEventLoop::handle_key_down(
-            &mut nes,
-            Keycode::T,
-            None,
-            &mut paused,
-            &mut debugger_open_requested,
-        );
+        let _ = SdlEventLoop::handle_key_down(&mut nes, Keycode::T, None, &mut paused);
         assert_eq!(read_joypad1_buttons(&mut nes), [0, 1, 0, 0, 0, 0, 0, 0]);
     }
 
@@ -6323,7 +5810,8 @@ mod tests {
         nes.cpu_mut().set_total_cycles(27395);
 
         // User presses Continue — this should sync the cycle tracker.
-        event_loop.continue_from_debugger(&nes);
+        event_loop.debugger_controller.continue_from_debugger(&nes);
+        event_loop.sync_from_controller();
 
         // Running one more instruction should NOT trigger the CYC=100 breakpoint
         // because 27395 > 100 and the threshold has already been passed.
