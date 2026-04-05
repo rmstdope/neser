@@ -103,16 +103,10 @@ fn handle_unmodified_key(
         KeyCode::F4 => return KeyOutcome::CycleShader,
         KeyCode::F5 => return KeyOutcome::ToggleDebugger,
         KeyCode::F6 => {
-            // TODO(#1772): port save_state_to_disk from SDL2 frontend
-            crate::debugging::log_info(
-                "Save state: not yet implemented in native frontend".to_string(),
-            );
+            crate::console::save_state_io::save_state_to_disk(nes);
         }
         KeyCode::F7 => {
-            // TODO(#1772): port load_state_from_disk from SDL2 frontend
-            crate::debugging::log_info(
-                "Load state: not yet implemented in native frontend".to_string(),
-            );
+            crate::console::save_state_io::load_state_from_disk(nes);
         }
         KeyCode::F10 => return KeyOutcome::StepOver,
         KeyCode::F11 => return KeyOutcome::StepInto,

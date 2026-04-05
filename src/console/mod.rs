@@ -2,6 +2,7 @@ mod cartridge_catalog;
 mod config;
 mod nes;
 mod ram_init;
+pub mod save_state_io;
 
 use crate::app_context::SharedAppContext;
 use crate::debugging::log_info;
