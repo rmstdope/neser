@@ -29,6 +29,8 @@ pub enum KeyOutcome {
     SwitchCartridge(String),
     /// The user requested the cartridge-switch dialog (Ctrl+O).
     OpenCartridgeSwitch,
+    /// The user closed the cartridge-switch dialog (Escape).
+    CloseCartridgeSwitch,
 }
 
 /// Handles a key-press event.
@@ -275,7 +277,7 @@ fn handle_cartridge_switch_key(key_code: KeyCode, app_state: &mut NativeAppState
     match key_code {
         KeyCode::Escape => {
             app_state.cart_switch.close();
-            KeyOutcome::Continue
+            KeyOutcome::CloseCartridgeSwitch
         }
         KeyCode::ArrowDown => {
             app_state.cart_switch.move_selection_next();
@@ -299,7 +301,7 @@ fn handle_cartridge_switch_key(key_code: KeyCode, app_state: &mut NativeAppState
             }
         }
         _ => {
-            if let Some(ch) = key_code_to_filter_char(key_code) {
+            if let Some(ch) = key_code_to_filter_char(key_code, app_state.modifiers.shift_key()) {
                 app_state.cart_switch.filter.push(ch);
                 app_state.cart_switch.refresh_filtered();
             }
@@ -309,7 +311,7 @@ fn handle_cartridge_switch_key(key_code: KeyCode, app_state: &mut NativeAppState
 }
 
 /// Maps a physical key code to its lowercase character for the filter field.
-fn key_code_to_filter_char(key_code: KeyCode) -> Option<char> {
+fn key_code_to_filter_char(key_code: KeyCode, shift: bool) -> Option<char> {
     match key_code {
         KeyCode::KeyA => Some('a'),
         KeyCode::KeyB => Some('b'),
@@ -348,7 +350,7 @@ fn key_code_to_filter_char(key_code: KeyCode) -> Option<char> {
         KeyCode::Digit8 => Some('8'),
         KeyCode::Digit9 => Some('9'),
         KeyCode::Space => Some(' '),
-        KeyCode::Minus => Some('-'),
+        KeyCode::Minus => Some(if shift { '_' } else { '-' }),
         KeyCode::Period => Some('.'),
         KeyCode::Slash => Some('/'),
         _ => None,
@@ -936,6 +938,45 @@ mod tests {
             buttons(&nes, 1) & BIT_UP,
             0,
             "W should not control NES when dialog is open"
+        );
+    }
+
+    // ── Review fix: Escape returns CloseCartridgeSwitch ───────────────────────
+
+    #[test]
+    fn test_cart_switch_escape_returns_close_outcome() {
+        let mut nes = make_nes();
+        let mut state = make_cart_switch_state(&["a.nes"]);
+        let outcome = handle_key_pressed(&mut nes, KeyCode::Escape, &mut state, None);
+        assert_eq!(
+            outcome,
+            KeyOutcome::CloseCartridgeSwitch,
+            "Escape should return CloseCartridgeSwitch so event loop can restore pause"
+        );
+    }
+
+    // ── Review fix: underscore via Shift+Minus ────────────────────────────────
+
+    #[test]
+    fn test_cart_switch_shift_minus_types_underscore() {
+        let mut nes = make_nes();
+        let mut state = make_cart_switch_state(&["a_b.nes"]);
+        state.modifiers = ModifiersState::SHIFT;
+        handle_key_pressed(&mut nes, KeyCode::Minus, &mut state, None);
+        assert_eq!(
+            state.cart_switch.filter, "_",
+            "Shift+Minus should type underscore"
+        );
+    }
+
+    #[test]
+    fn test_cart_switch_minus_without_shift_types_dash() {
+        let mut nes = make_nes();
+        let mut state = make_cart_switch_state(&["a-b.nes"]);
+        handle_key_pressed(&mut nes, KeyCode::Minus, &mut state, None);
+        assert_eq!(
+            state.cart_switch.filter, "-",
+            "Minus without Shift should type dash"
         );
     }
 }

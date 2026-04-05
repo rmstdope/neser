@@ -36,6 +36,8 @@ pub struct NativeEventLoop {
     /// Whether the user had manually paused before the debugger opened,
     /// so we can restore pause state when the debugger closes.
     paused_before_debugger: bool,
+    /// Whether the user had manually paused before the cart-switch dialog opened.
+    paused_before_cart_switch: bool,
     gamepad: Option<GamepadManager>,
     gamepads_enabled: bool,
     gamepad_toast_shown: bool,
@@ -96,6 +98,7 @@ impl NativeEventLoop {
             },
             debugger_controller,
             paused_before_debugger: false,
+            paused_before_cart_switch: false,
             gamepad,
             gamepads_enabled,
             gamepad_toast_shown: false,
@@ -244,6 +247,7 @@ impl NativeEventLoop {
 
     /// Opens the cartridge-switch dialog, loading the catalog CSV first.
     fn open_cartridge_switch_dialog(&mut self) {
+        self.paused_before_cart_switch = self.state.paused;
         self.state.cart_switch.open = true;
         self.state.cart_switch.filter.clear();
         self.state.cart_switch.selection = 0;
@@ -253,6 +257,12 @@ impl NativeEventLoop {
         }
 
         self.state.paused = true;
+    }
+
+    /// Restores the pause state that was active before the dialog opened.
+    fn restore_pause_after_cart_switch(&mut self) {
+        self.state.paused = self.state.debugger_open || self.paused_before_cart_switch;
+        self.paused_before_cart_switch = false;
     }
 
     /// Loads cartridge catalog entries from the default CSV path.
@@ -599,9 +609,13 @@ impl ApplicationHandler for NativeEventLoop {
                         }
                         KeyOutcome::SwitchCartridge(path) => {
                             self.switch_to_cartridge(&path);
+                            self.restore_pause_after_cart_switch();
                         }
                         KeyOutcome::OpenCartridgeSwitch => {
                             self.open_cartridge_switch_dialog();
+                        }
+                        KeyOutcome::CloseCartridgeSwitch => {
+                            self.restore_pause_after_cart_switch();
                         }
                         KeyOutcome::Continue => {
                             if self.state.fullscreen != fullscreen_before {

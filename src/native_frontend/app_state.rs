@@ -38,9 +38,20 @@ impl CartridgeSwitchState {
         self.filtered_indices.clear();
     }
 
+    /// Returns true when a non-empty filter is active and
+    /// `filtered_indices` is populated.
+    pub fn has_active_filter(&self) -> bool {
+        !self.filter.is_empty()
+    }
+
     /// Recomputes `filtered_indices` from the current filter text.
     /// Clamps `selection` so it stays within the visible range.
     pub fn refresh_filtered(&mut self) {
+        if self.filter.is_empty() {
+            self.filtered_indices.clear();
+            return;
+        }
+
         let needle = self.filter.to_ascii_lowercase();
         self.filtered_indices = self
             .entries
@@ -660,6 +671,18 @@ mod tests {
         assert!(!cs.open);
         assert!(cs.filter.is_empty());
         assert_eq!(cs.selection, 0);
+    }
+
+    #[test]
+    fn test_refresh_filtered_empty_filter_does_not_populate_indices() {
+        let mut cs = make_cart_switch(&["a.nes", "b.nes", "c.nes"]);
+        cs.filter.clear();
+        cs.refresh_filtered();
+        assert!(
+            !cs.has_active_filter(),
+            "empty filter should not populate filtered_indices"
+        );
+        assert_eq!(cs.visible_count(), 3, "all entries visible without filter");
     }
 
     // ── overlay text: cartridge switch ────────────────────────────────────────
