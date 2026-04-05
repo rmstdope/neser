@@ -112,11 +112,21 @@ impl Mapper for Mapper216 {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
-        let _ = value;
+        if self.base.try_write_prg_ram(addr, value) {
+            return;
+        }
         match addr {
             0x5000 | 0x8000..=0xFFFF => self.bank_select_from_addr(addr),
             _ => {}
         }
+    }
+
+    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        if addr == 0x5000 {
+            return 0;
+        }
+        self.base
+            .read_prg_open_bus(addr, open_bus, |a| self.read_prg(a))
     }
 
     fn reset(&mut self) {
@@ -131,8 +141,8 @@ impl Mapper for Mapper216 {
 
     fn restore_registers(&mut self, data: &[u8]) {
         if data.len() >= 2 {
-            self.prg_bank = data[0];
-            self.chr_bank = data[1];
+            self.prg_bank = data[0] & 0x01;
+            self.chr_bank = data[1] & 0x07;
             self.apply_banking();
         }
     }
@@ -280,8 +290,12 @@ mod tests {
     #[test]
     fn read_from_5000_returns_zero() {
         let mapper = make_mapper();
-        // The default read_prg returns 0 for addresses outside $8000–$FFFF
-        assert_eq!(mapper.read_prg(0x5000), 0, "reads from $5000 must return 0");
+        // read_prg_open_bus must return 0 for $5000 regardless of open_bus value
+        assert_eq!(
+            mapper.read_prg_open_bus(0x5000, 0xFF),
+            0,
+            "reads from $5000 must return 0"
+        );
     }
 
     // ── Writes outside $5000 and $8000–$FFFF are ignored ─────────────────────
