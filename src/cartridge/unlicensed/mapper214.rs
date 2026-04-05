@@ -82,8 +82,12 @@ impl Mapper for Mapper214 {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
-        let _ = value; // data bus ignored; bank selection is from address lines
+        if self.base.try_write_prg_ram(addr, value) {
+            return;
+        }
         if addr >= 0x8000 {
+            // data bus ignored; bank selection is from address lines
+            let _ = value;
             self.chr_bank = (addr & 0x03) as u8;
             self.prg_bank = ((addr >> 2) & 0x03) as u8;
             self.update_banks();
