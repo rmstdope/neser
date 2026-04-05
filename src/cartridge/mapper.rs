@@ -144,6 +144,7 @@ use super::unlicensed::mapper122::Mapper122;
 use super::unlicensed::mapper123::Mapper123;
 use super::unlicensed::mapper205::Mapper205;
 use super::unlicensed::mapper214::Mapper214;
+use super::unlicensed::mapper215::Mapper215;
 use super::unlicensed::mapper216::Mapper216;
 use super::unlicensed::mapper217::Mapper217;
 use super::unlicensed::mapper218::Mapper218;
@@ -918,6 +919,7 @@ mapper_registry! {
     205 => Mapper205::new,
     206 => Namco118Mapper::new,
     214 => Mapper214::new,
+    215 => Mapper215::new,
     216 => Mapper216::new,
     217 => Mapper217::new,
     218 => Mapper218::new,
