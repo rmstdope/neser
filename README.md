@@ -10,27 +10,16 @@ Download the latest release for your platform from the [GitHub Releases](https:/
 
 ### From source via cargo install
 
-`neser` requires **SDL2** and **SDL2_ttf** to be installed as system libraries before building from source.
-
-**macOS:**
 ```bash
-brew install sdl2 sdl2_ttf
 cargo install neser
 ```
 
-**Ubuntu/Debian:**
-```bash
-sudo apt-get install libsdl2-dev libsdl2-ttf-dev
-cargo install neser
-```
-
-**Windows:**
-Download the SDL2 and SDL2_ttf VC development packages from https://github.com/libsdl-org/SDL/releases and https://github.com/libsdl-org/SDL_ttf/releases, then set the `SDL2_LIB_DIR` and `SDL2_TTF_LIB_DIR` environment variables before running `cargo install neser`.
+No external system libraries are required — the native frontend uses pure-Rust crates for windowing (winit), audio (cpal), and gamepad input (gilrs).
 
 ## Building
 
 ```bash
-cargo build --release --features sdl
+cargo build --release
 ```
 
 ## Development Setup
@@ -44,7 +33,7 @@ git config core.hooksPath .githooks
 ## Running
 
 ```bash
-cargo run --release --features sdl
+cargo run --release
 ```
 
 ### Autorunner
@@ -52,9 +41,9 @@ cargo run --release --features sdl
 Record or play back joypad input alongside a ROM:
 
 ```bash
-cargo run --release --features sdl --bin autorunner -- --record roms/games/pac-man.nes
-cargo run --release --features sdl --bin autorunner -- --playback roms/games/pac-man.nes
-cargo run --release --features sdl --bin autorunner -- --playback --headless roms/games/pac-man.nes
+cargo run --release -- --record roms/games/pac-man.nes
+cargo run --release -- --playback roms/games/pac-man.nes
+cargo run --release -- --playback --headless roms/games/pac-man.nes
 ```
 
 Or after building:
@@ -171,7 +160,7 @@ When a known ROM is loaded and no controller ports are explicitly configured, yo
 Enabling Arkanoid controller on port 2 for inserted cartridge
 ```
 
-### Paddle Controller Input (SDL Frontend)
+### Paddle Controller Input
 
 When a paddle controller is enabled on either port:
 
@@ -206,7 +195,7 @@ controller_port2=arkanoid
 
 ### Validation Steps
 
-1. Run the SDL frontend with a paddle-enabled ROM:
+1. Run the emulator with a paddle-enabled ROM:
    - roms/games/arkanoid.nes (if available)
    - roms/automated_tests/PaddleTest3 (if available)
 2. Move the mouse left/right and confirm the paddle moves across the full range.

@@ -12,9 +12,9 @@ pub use crate::cartridge::TimingMode;
 pub use cartridge_catalog::{
     CartridgeCatalogOptions, default_catalog_csv_path, refresh_cartridge_catalog,
 };
-#[allow(unused_imports)] // SDL-only items; unused until native frontend uses them
+#[allow(unused_imports)] // Used by frontend features
 pub use config::ApuChannels;
-#[allow(unused_imports)] // SDL-only item; unused until native frontend uses it
+#[allow(unused_imports)] // Used by frontend features
 pub use config::AutorunMode;
 pub use config::Config;
 pub use config::ExpansionPort;

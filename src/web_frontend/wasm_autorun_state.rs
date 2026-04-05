@@ -5,7 +5,7 @@ use crate::console::AutorunMode;
 
 /// In-memory autorun state for the WASM frontend.
 ///
-/// Unlike [`crate::sdl_frontend::autorun_state::AutorunState`] this variant never
+/// Unlike the native frontend's `AutorunState` this variant never
 /// touches the file system – recordings are created in memory and returned as raw
 /// bytes that the JavaScript layer can trigger the browser to download.
 pub struct WasmAutorunState {

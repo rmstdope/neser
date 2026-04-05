@@ -1,4 +1,4 @@
-#[cfg(any(feature = "sdl", feature = "native"))]
+#[cfg(feature = "native")]
 use super::DebuggerSnapshot;
 use crate::debugging::breakpoints::{Breakpoint, BreakpointKind, BreakpointList};
 
@@ -92,7 +92,7 @@ pub fn layout_model(display_size: [f32; 2]) -> (&'static str, [f32; 2], [f32; 2]
     ("CPU/PPU Data", [margin, margin], [available_w, available_h])
 }
 
-#[cfg(any(feature = "sdl", feature = "native"))]
+#[cfg(feature = "native")]
 pub fn render(
     ui: &imgui::Ui,
     snapshot: &DebuggerSnapshot,
@@ -135,7 +135,7 @@ struct CpuWindowLayout {
     right_pos: [f32; 2],
 }
 
-#[cfg(any(feature = "sdl", feature = "native"))]
+#[cfg(feature = "native")]
 fn cpu_window_layout(avail: [f32; 2], cursor: [f32; 2]) -> CpuWindowLayout {
     // Layout: left code view, right column split into registers (top) + PRG hexdump (bottom)
     let gap = 8.0;
@@ -168,7 +168,7 @@ fn code_panel_disasm_height_for_line_height(line_height_with_spacing: f32) -> f3
     line_height_with_spacing * CODE_PANEL_VISIBLE_LINES as f32
 }
 
-#[cfg(any(feature = "sdl", feature = "native"))]
+#[cfg(feature = "native")]
 fn render_cpu_window(
     ui: &imgui::Ui,
     snapshot: &DebuggerSnapshot,
@@ -200,7 +200,7 @@ fn render_cpu_window(
     );
 }
 
-#[cfg(any(feature = "sdl", feature = "native"))]
+#[cfg(feature = "native")]
 fn render_breakpoint_panel(
     ui: &imgui::Ui,
     breakpoints: &BreakpointList,
@@ -216,7 +216,7 @@ fn render_breakpoint_panel(
     render_add_breakpoint_row(ui, add_state, action);
 }
 
-#[cfg(any(feature = "sdl", feature = "native"))]
+#[cfg(feature = "native")]
 fn render_existing_breakpoints(
     ui: &imgui::Ui,
     breakpoints: &BreakpointList,
@@ -240,7 +240,7 @@ fn render_existing_breakpoints(
     }
 }
 
-#[cfg(any(feature = "sdl", feature = "native"))]
+#[cfg(feature = "native")]
 fn render_add_breakpoint_row(
     ui: &imgui::Ui,
     add_state: &mut BreakpointAddUiState,

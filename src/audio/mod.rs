@@ -1,7 +1,7 @@
 //! Shared audio infrastructure for NES emulator frontends.
 //!
 //! This module provides backend-agnostic audio types and utilities
-//! shared between the SDL and native frontend audio implementations.
+//! shared audio infrastructure for the native frontend.
 
 mod audio_trait;
 mod resampler;
@@ -9,6 +9,6 @@ pub(crate) mod types;
 
 pub use audio_trait::NesAudio;
 pub use resampler::AudioResampler;
-// AudioConsumer and AudioStats are used by the SDL backend; AudioProducer by both.
+// AudioConsumer and AudioStats are used by the audio callback; AudioProducer by the emulation loop.
 #[allow(unused_imports)]
 pub use types::{AudioConsumer, AudioProducer, AudioStats};
