@@ -1,7 +1,6 @@
 use std::fs;
 
-use crate::console::SaveState;
-use crate::console::nes::Nes;
+use crate::console::{Nes, SaveState};
 use crate::debugging::log_info;
 
 /// Saves the current NES state to disk.
@@ -48,6 +47,7 @@ pub fn save_state_to_disk(nes: &mut Nes) {
 
     if let Err(err) = fs::rename(&tmp_path, &state_path) {
         log_info(format!("Failed to finalize save-state: {err}"));
+        let _ = fs::remove_file(&tmp_path);
         nes.app_context()
             .borrow_mut()
             .add_toast("Failed to save state");
@@ -65,15 +65,14 @@ pub fn load_state_from_disk(nes: &mut Nes) {
         return;
     };
 
-    if !state_path.exists() {
-        nes.app_context()
-            .borrow_mut()
-            .add_toast("No save state found");
-        return;
-    }
-
     let bytes = match fs::read(&state_path) {
         Ok(bytes) => bytes,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            nes.app_context()
+                .borrow_mut()
+                .add_toast("No save state found");
+            return;
+        }
         Err(err) => {
             log_info(format!("Failed to read save-state: {err}"));
             nes.app_context()
