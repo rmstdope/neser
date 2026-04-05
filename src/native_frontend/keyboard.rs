@@ -517,23 +517,33 @@ mod tests {
     }
 
     #[test]
-    fn test_f5_opens_debugger_when_closed() {
+    fn test_f5_returns_toggle_debugger() {
         let mut nes = make_nes();
         let mut state = make_state();
-        handle_key_pressed(&mut nes, KeyCode::F5, &mut state, None);
-        assert!(state.debugger_open);
-        assert!(state.paused, "Opening debugger should pause emulation");
+        assert_eq!(
+            handle_key_pressed(&mut nes, KeyCode::F5, &mut state, None),
+            KeyOutcome::ToggleDebugger
+        );
     }
 
     #[test]
-    fn test_f5_closes_debugger_when_open() {
+    fn test_f10_returns_step_over() {
         let mut nes = make_nes();
         let mut state = make_state();
-        state.debugger_open = true;
-        state.paused = true;
-        handle_key_pressed(&mut nes, KeyCode::F5, &mut state, None);
-        assert!(!state.debugger_open);
-        assert!(!state.paused, "Closing debugger should resume emulation");
+        assert_eq!(
+            handle_key_pressed(&mut nes, KeyCode::F10, &mut state, None),
+            KeyOutcome::StepOver
+        );
+    }
+
+    #[test]
+    fn test_f11_returns_step_into() {
+        let mut nes = make_nes();
+        let mut state = make_state();
+        assert_eq!(
+            handle_key_pressed(&mut nes, KeyCode::F11, &mut state, None),
+            KeyOutcome::StepInto
+        );
     }
 
     #[test]

@@ -32,6 +32,9 @@ pub struct NativeEventLoop {
     tracing: Tracing,
     state: NativeAppState,
     debugger_controller: DebuggerController,
+    /// Whether the user had manually paused before the debugger opened,
+    /// so we can restore pause state when the debugger closes.
+    paused_before_debugger: bool,
     gamepad: Option<GamepadManager>,
     gamepads_enabled: bool,
     gamepad_toast_shown: bool,
@@ -84,6 +87,7 @@ impl NativeEventLoop {
                 ..NativeAppState::default()
             },
             debugger_controller,
+            paused_before_debugger: false,
             gamepad,
             gamepads_enabled,
             gamepad_toast_shown: false,
@@ -148,10 +152,15 @@ impl NativeEventLoop {
     /// Sync frontend state from the debugger controller.
     fn sync_from_controller(&mut self) {
         if self.debugger_controller.is_debugger_open() {
+            if !self.state.debugger_open {
+                // Debugger just opened — remember manual pause state.
+                self.paused_before_debugger = self.state.paused;
+            }
             self.state.paused = true;
             self.state.debugger_open = true;
         } else if self.state.debugger_open {
-            self.state.paused = false;
+            // Debugger just closed — restore manual pause state.
+            self.state.paused = self.paused_before_debugger;
             self.state.debugger_open = false;
         }
     }
@@ -279,7 +288,11 @@ impl ApplicationHandler for NativeEventLoop {
                         audio_ref,
                     );
                     match outcome {
-                        KeyOutcome::Quit => event_loop.exit(),
+                        KeyOutcome::Quit => {
+                            self.debugger_controller
+                                .save_breakpoints_to_debug_file(&self.nes);
+                            event_loop.exit();
+                        }
                         KeyOutcome::CycleShader => {
                             if let Some(ref mut gl) = self.gl_wrapper {
                                 gl.cycle_shader();
