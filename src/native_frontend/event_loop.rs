@@ -33,6 +33,7 @@ pub struct NativeEventLoop {
     gamepad: Option<GamepadManager>,
     gamepads_enabled: bool,
     gamepad_toast_shown: bool,
+    gamepad_init_failed: bool,
 
     // Initialized on resume (when the window is ready)
     gl_wrapper: Option<NativeGlWrapper>,
@@ -56,16 +57,16 @@ impl NativeEventLoop {
             )
         };
 
-        let gamepad = if gamepads_enabled {
+        let (gamepad, gamepad_init_failed) = if gamepads_enabled {
             match GamepadManager::new(four_score) {
-                Ok(gp) => Some(gp),
+                Ok(gp) => (Some(gp), false),
                 Err(e) => {
                     crate::debugging::log_info(format!("Gamepad init failed: {e}"));
-                    None
+                    (None, true)
                 }
             }
         } else {
-            None
+            (None, false)
         };
 
         Self {
@@ -81,6 +82,7 @@ impl NativeEventLoop {
             gamepad,
             gamepads_enabled,
             gamepad_toast_shown: false,
+            gamepad_init_failed,
             gl_wrapper: None,
             last_audio_stats_print: Instant::now(),
             initialized: false,
@@ -438,8 +440,12 @@ impl ApplicationHandler for NativeEventLoop {
         // events aren't available until the event loop is running.
         if !self.gamepad_toast_shown {
             self.gamepad_toast_shown = true;
-            let count = self.gamepad.as_ref().map_or(0, |g| g.connected_count());
-            let toast = gamepad_init_toast_message(self.gamepads_enabled, count);
+            let toast = if self.gamepad_init_failed {
+                "Gamepad init failed: using keyboard controls".to_string()
+            } else {
+                let count = self.gamepad.as_ref().map_or(0, |g| g.connected_count());
+                gamepad_init_toast_message(self.gamepads_enabled, count)
+            };
             self.app_context.borrow_mut().add_toast(&toast);
         }
 

@@ -40,6 +40,19 @@ pub fn map_button_to_nes(button: gilrs::Button) -> Option<Button> {
     }
 }
 
+/// Converts a NES D-pad [`Button`] to its [`SnesButton`] equivalent.
+///
+/// Only maps directional buttons; returns `None` for A/B/Start/Select.
+pub fn nes_dpad_to_snes(button: Button) -> Option<SnesButton> {
+    match button {
+        Button::Up => Some(SnesButton::Up),
+        Button::Down => Some(SnesButton::Down),
+        Button::Left => Some(SnesButton::Left),
+        Button::Right => Some(SnesButton::Right),
+        _ => None,
+    }
+}
+
 /// Maps a gilrs button to an SNES adapter button.
 ///
 /// The mapping follows the physical position convention:
@@ -104,10 +117,13 @@ impl AxisState {
 
     /// Updates the vertical axis (left stick Y) and returns which
     /// buttons changed state as `(button, pressed)` pairs.
+    ///
+    /// gilrs on macOS reverses the Y axis so positive = up, negative = down
+    /// (Cartesian convention), unlike SDL's positive = down convention.
     pub fn update_y(&mut self, value: f32) -> Vec<(Button, bool)> {
         let mut changes = Vec::new();
-        let new_up = value < -AXIS_DEAD_ZONE;
-        let new_down = value > AXIS_DEAD_ZONE;
+        let new_up = value > AXIS_DEAD_ZONE;
+        let new_down = value < -AXIS_DEAD_ZONE;
 
         if new_up != self.up {
             changes.push((Button::Up, new_up));
@@ -212,7 +228,7 @@ impl GamepadManager {
                     self.handle_connected(event.id);
                 }
                 EventType::Disconnected => {
-                    self.handle_disconnected(event.id);
+                    self.handle_disconnected(nes, event.id);
                 }
                 _ => {}
             }
@@ -269,8 +285,37 @@ impl GamepadManager {
     }
 
     /// Handles a gamepad disconnection event.
-    fn handle_disconnected(&mut self, id: GamepadId) {
-        if let Some(player_num) = self.player_map.remove(&id) {
+    ///
+    /// Releases any buttons that may be held on the disconnected gamepad's
+    /// port before removing the gamepad from the player map.
+    fn handle_disconnected(&mut self, nes: &mut Nes, id: GamepadId) {
+        if let Some(player_num) = self.player_map.get(&id).copied() {
+            // Release all held buttons for this gamepad's port before removing.
+            if let Some(port) = Self::assigned_port(nes, &self.player_map, player_num) {
+                use Button::{A, B, Down, Left, Right, Select, Start, Up};
+                for button in [A, B, Select, Start, Up, Down, Left, Right] {
+                    nes.set_button(port, button, false);
+                }
+                use SnesButton as S;
+                for snes_btn in [
+                    S::A,
+                    S::B,
+                    S::X,
+                    S::Y,
+                    S::L,
+                    S::R,
+                    S::Start,
+                    S::Select,
+                    S::Up,
+                    S::Down,
+                    S::Left,
+                    S::Right,
+                ] {
+                    nes.set_snes_button(port, snes_btn, false);
+                }
+            }
+
+            self.player_map.remove(&id);
             self.gamepad_states.remove(&id);
             crate::debugging::log_info(format!("Gamepad disconnected (was player {player_num})"));
             self.reassign_players();
@@ -363,6 +408,12 @@ impl GamepadManager {
         };
 
         for (button, pressed) in changes {
+            // Mirror handle_button: try SNES D-pad first, fall back to NES.
+            if let Some(snes_btn) = nes_dpad_to_snes(button)
+                && nes.set_snes_button(port, snes_btn, pressed)
+            {
+                continue;
+            }
             nes.set_button(port, button, pressed);
         }
     }
@@ -373,6 +424,24 @@ impl GamepadManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── nes_dpad_to_snes ──────────────────────────────────────────────────
+
+    #[test]
+    fn nes_dpad_to_snes_maps_directions() {
+        assert_eq!(nes_dpad_to_snes(Button::Up), Some(SnesButton::Up));
+        assert_eq!(nes_dpad_to_snes(Button::Down), Some(SnesButton::Down));
+        assert_eq!(nes_dpad_to_snes(Button::Left), Some(SnesButton::Left));
+        assert_eq!(nes_dpad_to_snes(Button::Right), Some(SnesButton::Right));
+    }
+
+    #[test]
+    fn nes_dpad_to_snes_returns_none_for_non_dpad() {
+        assert_eq!(nes_dpad_to_snes(Button::A), None);
+        assert_eq!(nes_dpad_to_snes(Button::B), None);
+        assert_eq!(nes_dpad_to_snes(Button::Start), None);
+        assert_eq!(nes_dpad_to_snes(Button::Select), None);
+    }
 
     // ── map_button_to_nes ─────────────────────────────────────────────────
 
@@ -628,7 +697,8 @@ mod tests {
     #[test]
     fn axis_y_up_press() {
         let mut state = AxisState::default();
-        let changes = state.update_y(-0.8);
+        // gilrs on macOS: positive Y = up (Cartesian convention)
+        let changes = state.update_y(0.8);
         assert_eq!(changes, vec![(Button::Up, true)]);
         assert!(state.up);
     }
@@ -636,7 +706,8 @@ mod tests {
     #[test]
     fn axis_y_down_press() {
         let mut state = AxisState::default();
-        let changes = state.update_y(0.8);
+        // gilrs on macOS: negative Y = down (Cartesian convention)
+        let changes = state.update_y(-0.8);
         assert_eq!(changes, vec![(Button::Down, true)]);
         assert!(state.down);
     }
@@ -644,7 +715,7 @@ mod tests {
     #[test]
     fn axis_y_release_on_return_to_neutral() {
         let mut state = AxisState::default();
-        state.update_y(0.8);
+        state.update_y(-0.8);
         let changes = state.update_y(0.0);
         assert_eq!(changes, vec![(Button::Down, false)]);
         assert!(!state.down);
@@ -673,10 +744,12 @@ mod tests {
 
     /// A minimal test harness for player assignment logic.
     ///
-    /// We test the pure `next_available_player` and `reassign_players` logic
-    /// via a lightweight wrapper that doesn't require actual gilrs hardware.
+    /// Uses `usize` as the key type instead of `GamepadId` to avoid unsafe
+    /// `transmute` for creating opaque `GamepadId` values in tests. The
+    /// player assignment algorithm is key-type-agnostic (it only uses
+    /// HashMap operations), so this exercises the same logic.
     struct TestPlayerMap {
-        player_map: HashMap<GamepadId, u8>,
+        player_map: HashMap<usize, u8>,
         max_controllers: usize,
     }
 
@@ -698,7 +771,7 @@ mod tests {
             (self.player_map.len() + 1) as u8
         }
 
-        fn add(&mut self, id: GamepadId) -> Option<u8> {
+        fn add(&mut self, id: usize) -> Option<u8> {
             if self.player_map.len() >= self.max_controllers {
                 return None;
             }
@@ -710,7 +783,7 @@ mod tests {
             Some(num)
         }
 
-        fn remove(&mut self, id: GamepadId) -> Option<u8> {
+        fn remove(&mut self, id: usize) -> Option<u8> {
             let removed = self.player_map.remove(&id);
             if removed.is_some() {
                 self.reassign_players();
@@ -719,7 +792,7 @@ mod tests {
         }
 
         fn reassign_players(&mut self) {
-            let mut ids: Vec<GamepadId> = self.player_map.keys().copied().collect();
+            let mut ids: Vec<usize> = self.player_map.keys().copied().collect();
             ids.sort_by_key(|id| self.player_map[id]);
             self.player_map.clear();
             for (idx, id) in ids.into_iter().enumerate() {
@@ -728,61 +801,53 @@ mod tests {
         }
     }
 
-    /// Creates a fake GamepadId for testing. gilrs::GamepadId is opaque but
-    /// can be created from usize via internal representation.
-    fn fake_id(n: usize) -> GamepadId {
-        // gilrs::GamepadId wraps a usize internally. We use transmute because
-        // there's no public constructor. This is only safe in tests.
-        unsafe { std::mem::transmute::<usize, GamepadId>(n) }
-    }
-
     #[test]
     fn player_assignment_first_connected_is_p1() {
         let mut map = TestPlayerMap::new(2);
-        let num = map.add(fake_id(0));
+        let num = map.add(0);
         assert_eq!(num, Some(1));
     }
 
     #[test]
     fn player_assignment_second_connected_is_p2() {
         let mut map = TestPlayerMap::new(2);
-        map.add(fake_id(0));
-        let num = map.add(fake_id(1));
+        map.add(0);
+        let num = map.add(1);
         assert_eq!(num, Some(2));
     }
 
     #[test]
     fn player_assignment_rejects_third_in_normal_mode() {
         let mut map = TestPlayerMap::new(2);
-        map.add(fake_id(0));
-        map.add(fake_id(1));
-        let num = map.add(fake_id(2));
+        map.add(0);
+        map.add(1);
+        let num = map.add(2);
         assert_eq!(num, None);
     }
 
     #[test]
     fn player_assignment_allows_four_in_four_score() {
         let mut map = TestPlayerMap::new(4);
-        assert_eq!(map.add(fake_id(0)), Some(1));
-        assert_eq!(map.add(fake_id(1)), Some(2));
-        assert_eq!(map.add(fake_id(2)), Some(3));
-        assert_eq!(map.add(fake_id(3)), Some(4));
+        assert_eq!(map.add(0), Some(1));
+        assert_eq!(map.add(1), Some(2));
+        assert_eq!(map.add(2), Some(3));
+        assert_eq!(map.add(3), Some(4));
     }
 
     #[test]
     fn player_assignment_rejects_fifth_in_four_score() {
         let mut map = TestPlayerMap::new(4);
         for i in 0..4 {
-            map.add(fake_id(i));
+            map.add(i);
         }
-        assert_eq!(map.add(fake_id(4)), None);
+        assert_eq!(map.add(4), None);
     }
 
     #[test]
     fn player_assignment_duplicate_returns_existing() {
         let mut map = TestPlayerMap::new(2);
-        map.add(fake_id(0));
-        let second = map.add(fake_id(0));
+        map.add(0);
+        let second = map.add(0);
         assert_eq!(second, Some(1));
         assert_eq!(map.player_map.len(), 1);
     }
@@ -790,38 +855,38 @@ mod tests {
     #[test]
     fn player_assignment_disconnect_and_reassign() {
         let mut map = TestPlayerMap::new(2);
-        map.add(fake_id(0));
-        map.add(fake_id(1));
+        map.add(0);
+        map.add(1);
         // Disconnect P1
-        map.remove(fake_id(0));
+        map.remove(0);
         // Remaining gamepad (was P2) should be reassigned to P1
-        assert_eq!(map.player_map.get(&fake_id(1)), Some(&1));
+        assert_eq!(map.player_map.get(&1), Some(&1));
     }
 
     #[test]
     fn player_assignment_reconnect_after_disconnect() {
         let mut map = TestPlayerMap::new(2);
-        map.add(fake_id(0));
-        map.add(fake_id(1));
+        map.add(0);
+        map.add(1);
         // Disconnect P1
-        map.remove(fake_id(0));
+        map.remove(0);
         // New gamepad connects
-        let num = map.add(fake_id(2));
+        let num = map.add(2);
         assert_eq!(num, Some(2), "new gamepad should fill the P2 slot");
     }
 
     #[test]
     fn player_assignment_disconnect_middle_reassigns_consecutively() {
         let mut map = TestPlayerMap::new(4);
-        map.add(fake_id(0));
-        map.add(fake_id(1));
-        map.add(fake_id(2));
+        map.add(0);
+        map.add(1);
+        map.add(2);
 
         // Disconnect P2 (middle)
-        map.remove(fake_id(1));
+        map.remove(1);
 
         // P1 stays, P3 becomes P2
-        assert_eq!(map.player_map.get(&fake_id(0)), Some(&1));
-        assert_eq!(map.player_map.get(&fake_id(2)), Some(&2));
+        assert_eq!(map.player_map.get(&0), Some(&1));
+        assert_eq!(map.player_map.get(&2), Some(&2));
     }
 }

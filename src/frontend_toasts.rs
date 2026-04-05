@@ -5,9 +5,7 @@ pub fn gamepad_init_toast_message(gamepads_enabled: bool, detected_controllers: 
         return "Gamepads disabled: using keyboard controls".to_string();
     }
 
-    let used_controllers = detected_controllers.min(2);
-
-    match used_controllers {
+    match detected_controllers {
         0 => "No gamepads found: using keyboard controls".to_string(),
         1 => "Gamepad found: using 1 gamepad".to_string(),
         count => format!("Gamepads found: using {} gamepads", count),
@@ -81,9 +79,9 @@ mod tests {
     }
 
     #[test]
-    fn gamepad_init_toast_caps_reported_gamepads_to_two() {
+    fn gamepad_init_toast_reports_three_gamepads_in_four_score() {
         let message = gamepad_init_toast_message(true, 3);
-        assert_eq!(message, "Gamepads found: using 2 gamepads");
+        assert_eq!(message, "Gamepads found: using 3 gamepads");
     }
 
     #[test]

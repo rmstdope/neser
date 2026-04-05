@@ -6,7 +6,7 @@
 mod app_state;
 mod audio;
 mod event_loop;
-pub mod gamepad;
+pub(crate) mod gamepad;
 mod gl_wrapper;
 pub mod keyboard;
 mod mouse;
