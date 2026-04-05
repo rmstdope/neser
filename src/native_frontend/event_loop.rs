@@ -5,8 +5,10 @@
 
 use crate::app_context::SharedAppContext;
 use crate::audio::NesAudio;
-use crate::console::Nes;
+use crate::autorun::state::AutorunState;
+use crate::console::{AutorunMode, Nes};
 use crate::debugging::Tracing;
+use crate::debugging::control::DebuggerController;
 use crate::frontend_toasts::gamepad_init_toast_message;
 use crate::native_frontend::app_state::NativeAppState;
 use crate::native_frontend::audio::NativeAudio;
@@ -31,6 +33,10 @@ pub struct NativeEventLoop {
     audio: Option<NativeAudio>,
     tracing: Tracing,
     state: NativeAppState,
+    debugger_controller: DebuggerController,
+    /// Whether the user had manually paused before the debugger opened,
+    /// so we can restore pause state when the debugger closes.
+    paused_before_debugger: bool,
     gamepad: Option<GamepadManager>,
     gamepads_enabled: bool,
     gamepad_toast_shown: bool,
@@ -41,6 +47,12 @@ pub struct NativeEventLoop {
     gl_wrapper: Option<NativeGlWrapper>,
     last_audio_stats_print: Instant,
     initialized: bool,
+
+    autorun_state: Option<AutorunState>,
+    /// Set when autorun playback completes; the exit string is propagated on next redraw.
+    autorun_exit: Option<String>,
+    /// Whether to run without a window (headless autorun mode).
+    headless: bool,
 }
 
 impl NativeEventLoop {
@@ -49,13 +61,16 @@ impl NativeEventLoop {
         nes: Nes,
         audio: Option<NativeAudio>,
         tracing: Tracing,
+        headless: bool,
     ) -> Self {
-        let (gamepads_enabled, four_score, fullscreen) = {
+        let (gamepads_enabled, four_score, fullscreen, debugger_controller) = {
             let config = app_context.borrow().config().clone();
+            let dc = DebuggerController::new(&config.breakpoints);
             (
                 config.gamepads_enabled,
                 config.four_score_enabled,
                 config.fullscreen,
+                dc,
             )
         };
 
@@ -89,6 +104,8 @@ impl NativeEventLoop {
                 window_focused: true,
                 ..NativeAppState::default()
             },
+            debugger_controller,
+            paused_before_debugger: false,
             gamepad,
             gamepads_enabled,
             gamepad_toast_shown: false,
@@ -97,15 +114,26 @@ impl NativeEventLoop {
             gl_wrapper: None,
             last_audio_stats_print: Instant::now(),
             initialized: false,
+            autorun_state: None,
+            autorun_exit: None,
+            headless,
         }
     }
 
     pub fn run(mut self) -> Result<(), String> {
+        if self.headless {
+            return self.run_headless();
+        }
         let event_loop =
             EventLoop::new().map_err(|e| format!("Failed to create event loop: {e}"))?;
         event_loop
             .run_app(&mut self)
-            .map_err(|e| format!("Event loop error: {e}"))
+            .map_err(|e| format!("Event loop error: {e}"))?;
+        // Propagate deferred autorun exit if set during the event loop.
+        if let Some(exit_str) = self.autorun_exit.take() {
+            return Err(exit_str);
+        }
+        Ok(())
     }
 
     fn initialize_audio(&mut self) {
@@ -116,24 +144,44 @@ impl NativeEventLoop {
     }
 
     fn run_frame(&mut self) {
-        if self.state.paused {
+        if self.state.paused && !self.debugger_controller.is_paused() {
+            // Manually paused (not debugger) — skip frame
             return;
         }
 
-        // Emulate until PPU completes a frame
-        while !self.nes.is_ready_to_render() && !self.nes.cpu_ref().is_halted() {
-            self.nes.run(&self.tracing);
-
-            // Drain audio samples from APU
-            if let Some(ref mut audio) = self.audio {
-                while self.nes.sample_ready() {
-                    if let Some(sample) = self.nes.get_sample() {
-                        audio.queue_sample(sample);
-                    }
-                }
+        // Apply button states from autorun before emulation
+        match self.handle_autorun_before_frame() {
+            Ok(true) => {}
+            Ok(false) => {
+                let _ = self.finish_recording();
+                return;
+            }
+            Err(exit_str) => {
+                self.autorun_exit = Some(exit_str);
+                return;
             }
         }
+
+        // Record button states after input processing
+        let autorun_checkpoint_due = self.handle_autorun_after_input();
+
+        let audio = self.audio.take();
+        let audio_cell = std::cell::RefCell::new(audio);
+        self.debugger_controller
+            .run_frame(&mut self.nes, &self.tracing, &mut |nes| {
+                if let Some(ref mut audio) = *audio_cell.borrow_mut() {
+                    while nes.sample_ready() {
+                        if let Some(sample) = nes.get_sample() {
+                            audio.queue_sample(sample);
+                        }
+                    }
+                }
+            });
+        self.audio = audio_cell.into_inner();
+        self.sync_from_controller();
         self.nes.clear_ready_to_render();
+
+        self.handle_autorun_after_frame(autorun_checkpoint_due);
 
         // Log audio stats every second
         if let Some(ref audio) = self.audio
@@ -146,6 +194,22 @@ impl NativeEventLoop {
                 ));
             }
             self.last_audio_stats_print = Instant::now();
+        }
+    }
+
+    /// Sync frontend state from the debugger controller.
+    fn sync_from_controller(&mut self) {
+        if self.debugger_controller.is_debugger_open() {
+            if !self.state.debugger_open {
+                // Debugger just opened — remember manual pause state.
+                self.paused_before_debugger = self.state.paused;
+            }
+            self.state.paused = true;
+            self.state.debugger_open = true;
+        } else if self.state.debugger_open {
+            // Debugger just closed — restore manual pause state.
+            self.state.paused = self.paused_before_debugger;
+            self.state.debugger_open = false;
         }
     }
 
@@ -186,6 +250,182 @@ impl NativeEventLoop {
             self.state.mouse_grabbed = should_grab;
         }
     }
+
+    // ── Autorun ──────────────────────────────────────────────────────────────
+
+    /// Initialize autorun recording or playback.
+    #[allow(clippy::too_many_arguments)]
+    pub fn init_autorun(
+        &mut self,
+        mode: AutorunMode,
+        rom_path: &str,
+        overwrite: bool,
+        extend: bool,
+        from_checkpoint: Option<i64>,
+        format: crate::autorun::AutorunFormat,
+    ) -> Result<(), String> {
+        if mode != AutorunMode::None {
+            let (state, pending) =
+                AutorunState::new(mode, rom_path, overwrite, extend, from_checkpoint, format)?;
+            if let Some(restore) = pending {
+                let save_state = crate::console::SaveState::from_bytes(&restore.state_bytes)
+                    .map_err(|e| format!("Failed to deserialize checkpoint state: {e}"))?;
+                self.nes
+                    .load_state(&save_state)
+                    .map_err(|e| format!("Failed to restore checkpoint state: {e}"))?;
+            }
+            self.autorun_state = Some(state);
+        }
+        Ok(())
+    }
+
+    /// Handle autorun logic before emulating a frame.
+    ///
+    /// In playback or extend mode, applies button states from the recording.
+    /// Returns `Ok(true)` if emulation should continue, or `Err(exit_string)`
+    /// when playback completes.
+    fn handle_autorun_before_frame(&mut self) -> Result<bool, String> {
+        let Some(ref mut autorun_state) = self.autorun_state else {
+            return Ok(true);
+        };
+
+        autorun_state.begin_frame();
+
+        if autorun_state.mode() == AutorunMode::Playback || autorun_state.is_extending_playback() {
+            if let Some(frame) = autorun_state.next_playback_frame() {
+                self.nes.set_joypad_button_states(1, frame.player1);
+                self.nes.set_joypad_button_states(2, frame.player2);
+                return Ok(true);
+            }
+
+            if autorun_state.mode() == AutorunMode::Playback {
+                return self.finish_playback();
+            }
+        }
+
+        Ok(true)
+    }
+
+    /// Handle autorun logic after processing input but before rendering.
+    ///
+    /// In record mode, captures current button states. Returns `true` if a
+    /// checkpoint should be captured after the frame is fully rendered.
+    fn handle_autorun_after_input(&mut self) -> bool {
+        let Some(ref mut autorun_state) = self.autorun_state else {
+            return false;
+        };
+
+        if autorun_state.mode() == AutorunMode::Record
+            && !autorun_state.is_extending_playback()
+            && !autorun_state.current_frame_was_prerecorded()
+        {
+            let player1 = self.nes.get_joypad_button_states(1);
+            let player2 = self.nes.get_joypad_button_states(2);
+            return autorun_state.record_frame(player1, player2);
+        }
+        false
+    }
+
+    /// Handle autorun actions after a frame has been fully rendered.
+    ///
+    /// Captures checkpoints in record mode and verifies CRCs in playback mode.
+    fn handle_autorun_after_frame(&mut self, checkpoint_due: bool) {
+        if checkpoint_due {
+            let crc = self.nes.ppu().borrow().screen_buffer().crc32();
+            let state_bytes = self.nes.save_state().to_bytes().unwrap_or_default();
+            if let Some(ref mut autorun_state) = self.autorun_state {
+                autorun_state.record_checkpoint(crc, state_bytes);
+            }
+        }
+
+        if let Some(ref mut autorun_state) = self.autorun_state
+            && (autorun_state.mode() == AutorunMode::Playback
+                || autorun_state.is_extending_playback())
+        {
+            let crc = self.nes.ppu().borrow().screen_buffer().crc32();
+            if let Some(matched) = autorun_state.check_playback_checkpoint(crc) {
+                let current_frame = autorun_state.current_frame_index();
+                let total_frames = autorun_state.total_frames();
+                let current_checkpoint = autorun_state.total_checkpoints_verified();
+                let total_checkpoints = autorun_state.total_checkpoints();
+                if matched {
+                    crate::debugging::log_info(format!(
+                        "Autorun checkpoint CRC match (0x{crc:08X}) at frame {current_frame}/{total_frames}, checkpoint {current_checkpoint}/{total_checkpoints}",
+                    ));
+                } else {
+                    crate::debugging::log_info(format!(
+                        "Autorun checkpoint CRC MISMATCH at frame {current_frame}/{total_frames}, checkpoint {current_checkpoint}/{total_checkpoints}: got 0x{crc:08X}",
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Finish playback by reporting CRC verification results.
+    fn finish_playback(&mut self) -> Result<bool, String> {
+        let Some(ref autorun_state) = self.autorun_state else {
+            return Ok(true);
+        };
+
+        let mismatches = autorun_state.crc_mismatches();
+        let verified = autorun_state.total_checkpoints_verified();
+        let crc = self.nes.ppu().borrow().screen_buffer().crc32();
+
+        if mismatches == 0 {
+            crate::debugging::log_info(format!(
+                "Autorun playback successful: {verified} checkpoints verified, final CRC 0x{crc:08X}",
+            ));
+            Err("AUTORUN_EXIT:0".to_string())
+        } else {
+            crate::debugging::log_info(format!(
+                "Autorun playback failed: {mismatches}/{verified} CRC mismatches",
+            ));
+            Err("AUTORUN_EXIT:1".to_string())
+        }
+    }
+
+    /// Finish recording by saving the autorun file with a final checkpoint.
+    fn finish_recording(&mut self) -> Result<(), String> {
+        let Some(ref mut autorun_state) = self.autorun_state else {
+            return Ok(());
+        };
+
+        if autorun_state.mode() != AutorunMode::Record {
+            return Ok(());
+        }
+
+        let crc = self.nes.ppu().borrow().screen_buffer().crc32();
+        let state_bytes = self.nes.save_state().to_bytes().unwrap_or_default();
+
+        autorun_state.save_with_final_checkpoint(crc, state_bytes)?;
+        crate::debugging::log_info(format!(
+            "Autorun recording saved: {} frames, final CRC 0x{crc:08X}",
+            autorun_state.total_frames(),
+        ));
+
+        Ok(())
+    }
+
+    /// Run in headless mode (no window, no GL, no audio). Returns when playback
+    /// finishes or recording is interrupted.
+    pub fn run_headless(mut self) -> Result<(), String> {
+        loop {
+            match self.handle_autorun_before_frame() {
+                Ok(true) => {}
+                Ok(false) => {
+                    self.finish_recording()?;
+                    return Ok(());
+                }
+                Err(exit_str) => return Err(exit_str),
+            }
+
+            let checkpoint_due = self.handle_autorun_after_input();
+
+            crate::autorun::headless_playback::run_one_frame(&mut self.nes);
+
+            self.handle_autorun_after_frame(checkpoint_due);
+        }
+    }
 }
 
 impl ApplicationHandler for NativeEventLoop {
@@ -199,6 +439,8 @@ impl ApplicationHandler for NativeEventLoop {
                 self.gl_wrapper = Some(gl);
                 if !self.initialized {
                     self.initialize_audio();
+                    self.debugger_controller
+                        .load_breakpoints_from_debug_file(&self.nes);
                     self.initialized = true;
                 }
             }
@@ -216,7 +458,14 @@ impl ApplicationHandler for NativeEventLoop {
         event: WindowEvent,
     ) {
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CloseRequested => {
+                if let Err(e) = self.finish_recording() {
+                    eprintln!("Failed to finish recording on window close: {e}");
+                }
+                self.debugger_controller
+                    .save_breakpoints_to_debug_file(&self.nes);
+                event_loop.exit();
+            }
 
             WindowEvent::Focused(focused) => {
                 self.state.window_focused = focused;
@@ -266,11 +515,30 @@ impl ApplicationHandler for NativeEventLoop {
                         audio_ref,
                     );
                     match outcome {
-                        KeyOutcome::Quit => event_loop.exit(),
+                        KeyOutcome::Quit => {
+                            if let Err(e) = self.finish_recording() {
+                                eprintln!("Failed to finish recording on quit: {e}");
+                            }
+                            self.debugger_controller
+                                .save_breakpoints_to_debug_file(&self.nes);
+                            event_loop.exit();
+                        }
                         KeyOutcome::CycleShader => {
                             if let Some(ref mut gl) = self.gl_wrapper {
                                 gl.cycle_shader();
                             }
+                        }
+                        KeyOutcome::ToggleDebugger => {
+                            self.debugger_controller.toggle_debugger(&self.nes);
+                            self.sync_from_controller();
+                        }
+                        KeyOutcome::StepOver => {
+                            self.debugger_controller.step_over(&mut self.nes);
+                            self.sync_from_controller();
+                        }
+                        KeyOutcome::StepInto => {
+                            self.debugger_controller.step_into(&mut self.nes);
+                            self.sync_from_controller();
                         }
                         KeyOutcome::Continue => {
                             if self.state.fullscreen != fullscreen_before
@@ -371,15 +639,30 @@ impl ApplicationHandler for NativeEventLoop {
             }
 
             WindowEvent::RedrawRequested => {
+                // If autorun signalled exit during the last frame, exit now.
+                if self.autorun_exit.is_some() {
+                    event_loop.exit();
+                    return;
+                }
+
                 // Run one frame of emulation
                 self.run_frame();
+
+                // If autorun signalled exit during this frame, exit now.
+                if self.autorun_exit.is_some() {
+                    event_loop.exit();
+                    return;
+                }
 
                 // Sync mouse grab state each frame.
                 self.sync_mouse_grab_state();
 
-                // Render
-                if let Some(ref mut gl) = self.gl_wrapper {
-                    let overlay = self.state.overlay_text(&self.nes);
+                // Render and apply debugger UI actions
+                let action = if let Some(ref mut gl) = self.gl_wrapper {
+                    gl.update_breakpoints(self.debugger_controller.breakpoints());
+                    let overlay = self
+                        .state
+                        .overlay_text(&self.nes, self.autorun_state.as_ref());
                     let crosshair =
                         mouse::zapper_crosshair(&self.nes, self.state.last_zapper_position);
                     gl.render(
@@ -388,8 +671,13 @@ impl ApplicationHandler for NativeEventLoop {
                         overlay.as_deref(),
                         false,
                         crosshair,
-                    );
-                }
+                    )
+                } else {
+                    Default::default()
+                };
+                self.debugger_controller
+                    .apply_ui_action(&mut self.nes, action);
+                self.sync_from_controller();
             }
 
             _ => {}
