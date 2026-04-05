@@ -6,7 +6,7 @@
 use crate::app_context::SharedAppContext;
 use crate::audio::NesAudio;
 use crate::autorun::state::AutorunState;
-use crate::console::{AutorunMode, Nes};
+use crate::console::{AutorunMode, Nes, TimingMode};
 use crate::debugging::Tracing;
 use crate::debugging::control::DebuggerController;
 use crate::frontend_toasts::gamepad_init_toast_message;
@@ -57,8 +57,8 @@ pub struct NativeEventLoop {
     headless: bool,
     /// Whether VSync is enabled (glutin swap interval handles timing).
     vsync_enabled: bool,
-    /// Timestamp of the last frame start, for manual frame limiting.
-    last_frame_time: Instant,
+    /// Deadline for the next frame, used for manual frame limiting when VSync is off.
+    next_frame_deadline: Instant,
 }
 
 impl NativeEventLoop {
@@ -126,7 +126,7 @@ impl NativeEventLoop {
             autorun_exit: None,
             headless,
             vsync_enabled,
-            last_frame_time: Instant::now(),
+            next_frame_deadline: Instant::now(),
         }
     }
 
@@ -855,11 +855,22 @@ impl ApplicationHandler for NativeEventLoop {
                     si.deactivate();
                 }
             } else if !self.vsync_enabled {
-                // Manual frame limiting: schedule next frame at target interval.
-                let target = target_frame_duration(&self.nes);
-                let next = self.last_frame_time + target;
-                self.last_frame_time = Instant::now();
-                event_loop.set_control_flow(ControlFlow::WaitUntil(next));
+                // Manual frame limiting: advance deadline by target interval.
+                let timing_mode = self
+                    .nes
+                    .app_context()
+                    .borrow()
+                    .config()
+                    .hardware_model
+                    .timing_mode();
+                let target = target_frame_duration(timing_mode);
+                self.next_frame_deadline += target;
+                // Clamp to at least now to avoid spinning on past deadlines.
+                let now = Instant::now();
+                if self.next_frame_deadline < now {
+                    self.next_frame_deadline = now;
+                }
+                event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame_deadline));
                 // Prevent display from sleeping while emulating.
                 if let Some(ref mut si) = self.sleep_inhibitor {
                     si.activate();
@@ -876,37 +887,34 @@ impl ApplicationHandler for NativeEventLoop {
     }
 }
 
-/// Returns the target duration per frame based on the NES timing mode.
-fn target_frame_duration(nes: &Nes) -> Duration {
-    let fps = nes
-        .app_context()
-        .borrow()
-        .config()
-        .hardware_model
-        .timing_mode()
-        .frame_rate_hz();
-    Duration::from_secs_f64(1.0 / fps)
+/// Returns the target duration per frame for the given timing mode.
+fn target_frame_duration(timing_mode: TimingMode) -> Duration {
+    Duration::from_secs_f64(1.0 / timing_mode.frame_rate_hz())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app_context::AppContext;
-    use crate::console::Config;
-
-    fn make_nes() -> Nes {
-        Nes::new(AppContext::new_with_config(Config::default()))
-    }
 
     #[test]
     fn test_target_frame_duration_ntsc() {
-        let nes = make_nes();
-        let duration = target_frame_duration(&nes);
+        let duration = target_frame_duration(TimingMode::Ntsc);
         // NTSC: ~60.098 FPS → ~16.64ms per frame
         let ms = duration.as_secs_f64() * 1000.0;
         assert!(
             (16.0..=17.0).contains(&ms),
             "NTSC frame duration should be ~16.6ms, got {ms:.2}ms"
+        );
+    }
+
+    #[test]
+    fn test_target_frame_duration_pal() {
+        let duration = target_frame_duration(TimingMode::Pal);
+        // PAL: ~50.007 FPS → ~20.0ms per frame
+        let ms = duration.as_secs_f64() * 1000.0;
+        assert!(
+            (19.5..=20.5).contains(&ms),
+            "PAL frame duration should be ~20.0ms, got {ms:.2}ms"
         );
     }
 }
