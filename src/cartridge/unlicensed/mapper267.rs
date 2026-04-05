@@ -63,6 +63,9 @@ pub struct Mapper267 {
     mmc3: MMC3Mapper,
     /// The single outer-bank register, written at $6000–$7FFF.
     ex_reg: u8,
+    /// Set by `initialize_ram` (hard reset); consumed by `reset()` to decide
+    /// whether to clear `ex_reg`.  Soft resets must leave the lock bit intact.
+    hard_reset_pending: bool,
 }
 
 impl Mapper267 {
@@ -82,6 +85,7 @@ impl Mapper267 {
                 0,     // no PRG-RAM; $6000–$7FFF is the outer-bank register
             ),
             ex_reg: 0,
+            hard_reset_pending: false,
         }
     }
 
@@ -131,7 +135,8 @@ impl Mapper for Mapper267 {
     }
 
     fn read_prg(&self, addr: u16) -> u8 {
-        // $6000–$7FFF: outer-bank register range – no PRG-RAM, return open bus.
+        // $6000–$7FFF: outer-bank register range – no PRG-RAM.
+        // `read_prg` returns 0; open-bus callers should use `read_prg_open_bus`.
         if (0x6000..=0x7FFF).contains(&addr) {
             return 0;
         }
@@ -142,6 +147,14 @@ impl Mapper for Mapper267 {
         let bank = self.apply_prg_outer(inner);
         let offset = (addr as usize) & Self::PRG_BANK_MASK;
         self.mmc3.read_prg_at_bank(bank, offset)
+    }
+
+    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        // $6000–$7FFF is unmapped (no PRG-RAM); return the CPU open-bus value.
+        if (0x6000..=0x7FFF).contains(&addr) {
+            return open_bus;
+        }
+        self.read_prg(addr)
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
@@ -191,12 +204,14 @@ impl Mapper for Mapper267 {
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        if data.len() > 13 {
-            // The last byte is ex_reg; everything before goes to MMC3.
+        let mmc3_snap_len = self.mmc3.registers_snapshot().len();
+        if data.len() == mmc3_snap_len + 1 {
+            // New-format snapshot: last byte is ex_reg, rest goes to MMC3.
             let (mmc3_part, ex_part) = data.split_at(data.len() - 1);
             self.mmc3.restore_registers(mmc3_part);
             self.ex_reg = ex_part[0];
         } else {
+            // Older / truncated snapshot without ex_reg; pass it all to MMC3.
             self.mmc3.restore_registers(data);
             self.ex_reg = 0;
         }
@@ -204,11 +219,16 @@ impl Mapper for Mapper267 {
 
     fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
         self.mmc3.initialize_ram(mode);
+        self.hard_reset_pending = true;
     }
 
     fn reset(&mut self) {
         self.mmc3.reset();
-        self.ex_reg = 0;
+        if self.hard_reset_pending {
+            self.ex_reg = 0;
+            self.hard_reset_pending = false;
+        }
+        // Soft reset: leave ex_reg (and the lock bit) intact.
     }
 }
 
@@ -286,10 +306,23 @@ mod tests {
         let mut mapper = make_mapper();
         mapper.write_prg(0x6000, 0x06); // set outer bits
         assert_ne!(mapper.ex_reg, 0);
+        mapper.initialize_ram(crate::console::RamInitMode::Zero);
         mapper.reset();
         assert_eq!(
             mapper.ex_reg, 0,
-            "outer-bank register must be 0 after reset"
+            "outer-bank register must be 0 after hard reset"
+        );
+    }
+
+    #[test]
+    fn soft_reset_does_not_clear_outer_reg() {
+        let mut mapper = make_mapper();
+        mapper.write_prg(0x6000, 0x06); // set outer bits
+        assert_ne!(mapper.ex_reg, 0);
+        mapper.reset(); // soft reset only
+        assert_eq!(
+            mapper.ex_reg, 0x06,
+            "outer-bank register must be preserved across soft reset"
         );
     }
 
@@ -312,10 +345,11 @@ mod tests {
     }
 
     #[test]
-    fn read_from_6000_returns_zero_no_prg_ram() {
+    fn read_from_6000_returns_open_bus_no_prg_ram() {
         let mapper = make_mapper();
-        // No PRG-RAM; reads from $6000–$7FFF return open bus (0).
-        assert_eq!(mapper.read_prg(0x6000), 0);
+        let open_bus = 0xA5;
+        // No PRG-RAM; reads from $6000–$7FFF must preserve the CPU open-bus value.
+        assert_eq!(mapper.read_prg_open_bus(0x6000, open_bus), open_bus);
     }
 
     // -------------------------------------------------------------------------
@@ -336,9 +370,10 @@ mod tests {
     fn reset_clears_lock() {
         let mut mapper = make_mapper();
         mapper.write_prg(0x6000, 0x86); // lock
+        mapper.initialize_ram(crate::console::RamInitMode::Zero);
         mapper.reset();
         mapper.write_prg(0x6000, 0x04); // should work now
-        assert_eq!(mapper.ex_reg, 0x04, "write after reset must succeed");
+        assert_eq!(mapper.ex_reg, 0x04, "write after hard reset must succeed");
     }
 
     // -------------------------------------------------------------------------
