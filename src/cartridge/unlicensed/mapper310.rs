@@ -67,8 +67,8 @@ use crate::cartridge::BaseMapper;
 use crate::cartridge::Mapper;
 use crate::cartridge::MapperCapabilities;
 use crate::cartridge::NametableLayout;
+use crate::cartridge::common::ChrMemory;
 
-#[cfg(test)]
 const CHR_RAM_SIZE: usize = 32 * 1024; // 32 KiB
 
 /// Mapper 310 — K-1053 multicart board.
@@ -90,7 +90,6 @@ pub struct Mapper310 {
 
 impl Mapper310 {
     pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
-        let mirroring = ctx.mirroring;
         let capabilities = MapperCapabilities {
             has_irq: false,
             has_chr_banking: true,
@@ -103,13 +102,16 @@ impl Mapper310 {
             ..Default::default()
         };
         let mut base = BaseMapper::new(&ctx, capabilities);
+        if ctx.chr_rom.is_empty() {
+            base.set_chr_memory(ChrMemory::new_ram(CHR_RAM_SIZE));
+        }
         base.configure_prg_banking(0x2000); // 4 × 8 KiB slots
         base.configure_chr_banking(0x2000); // 1 × 8 KiB CHR slot
         let mut mapper = Self {
             base,
             prg_bank: 0,
             p_bit: 0,
-            mirroring,
+            mirroring: NametableLayout::Vertical,
             prg_high: 0,
             mode: 0,
             chr_bank: 0,
@@ -175,6 +177,16 @@ impl Mapper for Mapper310 {
         &mut self.base
     }
 
+    fn reset(&mut self) {
+        self.prg_bank = 0;
+        self.p_bit = 0;
+        self.mirroring = NametableLayout::Vertical;
+        self.prg_high = 0;
+        self.mode = 0;
+        self.chr_bank = 0;
+        self.update_banks();
+    }
+
     fn write_prg(&mut self, addr: u16, value: u8) {
         if self.base.try_write_prg_ram(addr, value) {
             return;
@@ -222,12 +234,12 @@ impl Mapper for Mapper310 {
 
     fn restore_registers(&mut self, data: &[u8]) {
         if data.len() >= 6 {
-            self.prg_bank = data[0];
-            self.p_bit = data[1];
+            self.prg_bank = data[0] & 0x3F;
+            self.p_bit = data[1] & 0x01;
             self.mirroring = NametableLayout::from_snapshot_byte(data[2]);
-            self.prg_high = data[3];
-            self.mode = data[4];
-            self.chr_bank = data[5];
+            self.prg_high = data[3] & 0x03;
+            self.mode = data[4] & 0x03;
+            self.chr_bank = data[5] & 0x03;
             self.update_banks();
         }
     }
@@ -261,8 +273,7 @@ mod tests {
                 vec![],
                 NametableLayout::Vertical,
             )
-            .with_prg_ram_banks(0)
-            .with_chr_ram_size(CHR_RAM_SIZE),
+            .with_prg_ram_banks(0),
         )
     }
 
@@ -591,6 +602,61 @@ mod tests {
         assert_eq!(
             m.prg_bank, saved_bank,
             "short snapshot should not change state"
+        );
+    }
+
+    // ── RED: restore_registers masks corrupted values ─────────────────────────
+
+    #[test]
+    fn test_restore_registers_masks_invalid_values() {
+        let mut m = new_mapper(128);
+        // Supply out-of-range values for each field
+        m.restore_registers(&[
+            0xFF, // prg_bank: only 6 bits valid → 0x3F
+            0xFF, // p_bit: only 1 bit valid → 0x01
+            NametableLayout::Horizontal.to_snapshot_byte(),
+            0xFF, // prg_high: only 2 bits valid → 0x03
+            0xFF, // mode: only 2 bits valid → 0x03
+            0xFF, // chr_bank: only 2 bits valid → 0x03
+        ]);
+        assert_eq!(m.prg_bank, 0x3F);
+        assert_eq!(m.p_bit, 0x01);
+        assert_eq!(m.prg_high, 0x03);
+        assert_eq!(m.mode, 0x03);
+        assert_eq!(m.chr_bank, 0x03);
+    }
+
+    // ── RED: reset clears all registers ───────────────────────────────────────
+
+    #[test]
+    fn test_reset_clears_all_registers() {
+        let mut m = new_mapper(128);
+        m.write_prg(0xC005, 0x02); // mode 1, PP=1, chr_bank=2
+        m.write_prg(0x8000, 0xC5); // prg_bank=5, mirroring=H, p_bit=1
+
+        m.reset();
+
+        assert_eq!(m.prg_bank, 0);
+        assert_eq!(m.p_bit, 0);
+        assert_eq!(m.mirroring, NametableLayout::Vertical);
+        assert_eq!(m.prg_high, 0);
+        assert_eq!(m.mode, 0);
+        assert_eq!(m.chr_bank, 0);
+    }
+
+    // ── RED: power-on mirroring is vertical per spec ─────────────────────────
+
+    #[test]
+    fn test_power_on_mirroring_is_vertical_regardless_of_header() {
+        // Even if header says Horizontal, power-on state spec says all-clear = vertical
+        let m = Mapper310::new(
+            MapperContext::new_for_test(310, make_prg_rom(32), vec![], NametableLayout::Horizontal)
+                .with_prg_ram_banks(0),
+        );
+        assert_eq!(
+            m.mirroring,
+            NametableLayout::Vertical,
+            "power-on mirroring should be vertical per spec (bit 6 = 0)"
         );
     }
 }

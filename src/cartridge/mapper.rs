@@ -356,13 +356,6 @@ impl MapperContext {
         self.prg_ram_size_specified = false;
         self
     }
-
-    /// Override CHR-RAM size in bytes. Used to test mappers with non-default CHR-RAM sizes.
-    #[cfg(test)]
-    pub fn with_chr_ram_size(mut self, size_bytes: usize) -> Self {
-        self.chr_ram_size_bytes = Some(size_bytes);
-        self
-    }
 }
 
 /// Describes the hardware capabilities of a mapper.
