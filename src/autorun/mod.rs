@@ -9,6 +9,8 @@ pub use utils::{
     load_autorun_file, save_autorun_file, trim_recording,
 };
 pub mod headless_playback;
+#[cfg(any(feature = "sdl", feature = "native"))]
+pub mod state;
 
 mod types;
 mod utils;
