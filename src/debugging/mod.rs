@@ -1,8 +1,12 @@
 pub mod breakpoints;
+// Depends on DebuggerUiAction from `ui` module (also feature-gated).
+// Tests run under `cargo test --lib` (default features include `sdl`).
+#[cfg(any(feature = "sdl", feature = "native"))]
+pub mod control;
 mod disasm;
 mod logging;
 pub mod ppu_viewer;
-mod snapshot;
+pub(crate) mod snapshot;
 mod tracing;
 mod types;
 
