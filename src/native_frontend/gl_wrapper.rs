@@ -62,8 +62,8 @@ impl NativeGlWrapper {
             )
         };
 
-        let monitor_count = event_loop.available_monitors().count().max(1);
-        let target_display = select_target_display(fullscreen, fullscreen_display, monitor_count)?;
+        let monitors: Vec<_> = event_loop.available_monitors().collect();
+        let target_display = select_target_display(fullscreen, fullscreen_display, monitors.len())?;
 
         // Build the window
         let mut window_attrs = WindowAttributes::default()
@@ -72,7 +72,7 @@ impl NativeGlWrapper {
             .with_resizable(!fullscreen);
 
         if let Some(display_index) = target_display {
-            let monitor = event_loop.available_monitors().nth(display_index);
+            let monitor = monitors.into_iter().nth(display_index);
             window_attrs =
                 window_attrs.with_fullscreen(Some(winit::window::Fullscreen::Borderless(monitor)));
         }
@@ -333,6 +333,10 @@ fn select_target_display(
         return Ok(None);
     }
 
+    if monitor_count == 0 {
+        return Err("No monitors detected. Cannot enter fullscreen mode.".to_string());
+    }
+
     let target = match fullscreen_display {
         Some(display) => display,
         None => {
@@ -347,7 +351,7 @@ fn select_target_display(
     if target < 0 || (target as usize) >= monitor_count {
         return Err(format!(
             "Invalid --display {target}. Available displays: 0..{}",
-            monitor_count.saturating_sub(1)
+            monitor_count - 1
         ));
     }
 
@@ -466,5 +470,14 @@ mod tests {
     fn select_target_display_rejects_negative_index() {
         let result = select_target_display(true, Some(-1), 2);
         assert!(result.is_err(), "should error for negative display index");
+    }
+
+    #[test]
+    fn select_target_display_errors_when_no_monitors_detected() {
+        let result = select_target_display(true, None, 0);
+        assert!(
+            result.is_err(),
+            "should error when no monitors are detected"
+        );
     }
 }
