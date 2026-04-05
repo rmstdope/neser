@@ -246,10 +246,8 @@ mod tests {
     #[test]
     fn write_8000_to_9fff_updates_both_registers() {
         let mut mapper = make_mapper();
-        // Writing 0x88 to $8000: reg1 = 0x88 (inner = 0, mode bit1=0), reg2 = 0x88 (outer=bit4,5,0; mode bit0=0; mirror=1)
-        // With reg2=0x88: M=1 (horiz), P=0, 1=0, 0=0, 2=0 → outer=0; mode bit0 = 0
-        // With reg1=0x88: inner=0, mode bit1=0 → mode=0
-        // mirror should be horizontal because reg2[7]=1
+        // Writing 0x80 to $8000 updates both registers to 0x80.
+        // reg2[7]=1 selects horizontal mirroring, and reg1[2:0]=0 keeps inner bank 0.
         mapper.write_prg(0x8000, 0x80);
         assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
         assert_eq!(mapper.inner_bank(), 0); // reg1[2:0]=0
