@@ -53,7 +53,7 @@ use crate::cartridge::{Mapper, MapperCapabilities};
 /// ## Mirroring / IRQ
 ///
 /// Writes to `$A000–$FFFF` are forwarded unchanged to the MMC3 core, providing
-/// standard H/V mirroring (`$A001`) and scanline-timed IRQ (`$C000–$E001`).
+/// standard H/V mirroring (`$A000`) and scanline-timed IRQ (`$C000–$E001`).
 pub struct Mapper219 {
     pub(crate) mmc3: MMC3Mapper,
     /// 4 × 8 KB PRG page selections.  Index 0 = `$8000`, index 3 = `$E000`.
