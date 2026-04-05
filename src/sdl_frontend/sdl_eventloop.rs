@@ -1915,14 +1915,18 @@ impl SdlEventLoop {
         }
 
         let (port_1, port_2) = Self::keyboard_ports(nes, &self.controller_player_map);
-        Self::handle_key_down_with_keyboard_ports(
+        let outcome = Self::handle_key_down_with_keyboard_ports(
             nes,
             keycode,
             self.audio.as_ref(),
             &mut self.paused,
             port_1,
             port_2,
-        )
+        );
+        // Re-sync so the debugger's pause state overrides any Space-key toggle
+        // that would otherwise desynchronize the frontend from the controller.
+        self.sync_from_controller();
+        outcome
     }
 
     /// Handle keyboard key press events
