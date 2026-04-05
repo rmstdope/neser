@@ -37,6 +37,7 @@ const JSR_OPCODE: u8 = 0x20;
 pub struct DebuggerController {
     paused: bool,
     debugger_open: bool,
+    #[allow(dead_code)] // Used once GlBackend is refactored to accept external view_state
     view_state: DebuggerViewState,
     breakpoints: BreakpointList,
     temporary_breakpoint: Option<TemporaryBreakpoint>,
@@ -68,6 +69,7 @@ impl DebuggerController {
 
     // ── State getters ──────────────────────────────────────────────────
 
+    #[allow(dead_code)] // Used by native frontend and tests
     pub fn is_paused(&self) -> bool {
         self.paused
     }
@@ -80,6 +82,11 @@ impl DebuggerController {
         &self.breakpoints
     }
 
+    pub fn breakpoints_mut(&mut self) -> &mut BreakpointList {
+        &mut self.breakpoints
+    }
+
+    #[allow(dead_code)] // Used once GlBackend is refactored to accept external view_state
     pub fn view_state_mut(&mut self) -> &mut DebuggerViewState {
         &mut self.view_state
     }
