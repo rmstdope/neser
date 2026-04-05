@@ -38,7 +38,15 @@ impl NativeGlWrapper {
         event_loop: &winit::event_loop::ActiveEventLoop,
         app_context: SharedAppContext,
     ) -> Result<Self, String> {
-        let (fullscreen, vsync_enabled, shader_path, debugger_alpha, window_width, window_height) = {
+        let (
+            fullscreen,
+            vsync_enabled,
+            shader_path,
+            debugger_alpha,
+            fullscreen_display,
+            window_width,
+            window_height,
+        ) = {
             let ctx = app_context.borrow();
             let config = ctx.config();
             let (window_width, window_height) =
@@ -48,10 +56,14 @@ impl NativeGlWrapper {
                 config.vsync_enabled,
                 config.shader_path.clone(),
                 config.debugger_alpha,
+                config.fullscreen_display,
                 window_width,
                 window_height,
             )
         };
+
+        let monitor_count = event_loop.available_monitors().count().max(1);
+        let target_display = select_target_display(fullscreen, fullscreen_display, monitor_count)?;
 
         // Build the window
         let mut window_attrs = WindowAttributes::default()
@@ -59,9 +71,10 @@ impl NativeGlWrapper {
             .with_inner_size(LogicalSize::new(window_width, window_height))
             .with_resizable(!fullscreen);
 
-        if fullscreen {
+        if let Some(display_index) = target_display {
+            let monitor = event_loop.available_monitors().nth(display_index);
             window_attrs =
-                window_attrs.with_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
+                window_attrs.with_fullscreen(Some(winit::window::Fullscreen::Borderless(monitor)));
         }
 
         // Configure glutin
@@ -307,6 +320,40 @@ fn map_winit_key(key: &PhysicalKey) -> Option<imgui::Key> {
     }
 }
 
+/// Selects the target display index for fullscreen mode.
+///
+/// Returns `None` if not in fullscreen mode, `Ok(Some(index))` for a valid
+/// display, or `Err` if the requested display index is out of range.
+fn select_target_display(
+    fullscreen: bool,
+    fullscreen_display: Option<i32>,
+    monitor_count: usize,
+) -> Result<Option<usize>, String> {
+    if !fullscreen {
+        return Ok(None);
+    }
+
+    let target = match fullscreen_display {
+        Some(display) => display,
+        None => {
+            if monitor_count >= 2 {
+                1
+            } else {
+                0
+            }
+        }
+    };
+
+    if target < 0 || (target as usize) >= monitor_count {
+        return Err(format!(
+            "Invalid --display {target}. Available displays: 0..{}",
+            monitor_count.saturating_sub(1)
+        ));
+    }
+
+    Ok(Some(target as usize))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -374,5 +421,50 @@ mod tests {
             map_winit_key(&PhysicalKey::Code(KeyCode::F11)),
             Some(imgui::Key::F11)
         );
+    }
+
+    #[test]
+    fn select_target_display_returns_none_when_not_fullscreen() {
+        assert_eq!(select_target_display(false, None, 2).unwrap(), None);
+        assert_eq!(select_target_display(false, Some(1), 2).unwrap(), None);
+    }
+
+    #[test]
+    fn select_target_display_defaults_to_1_with_multiple_monitors() {
+        assert_eq!(
+            select_target_display(true, None, 3).unwrap(),
+            Some(1),
+            "should default to display 1 when ≥2 monitors are available"
+        );
+    }
+
+    #[test]
+    fn select_target_display_defaults_to_0_with_single_monitor() {
+        assert_eq!(
+            select_target_display(true, None, 1).unwrap(),
+            Some(0),
+            "should default to display 0 when only 1 monitor available"
+        );
+    }
+
+    #[test]
+    fn select_target_display_uses_configured_display() {
+        assert_eq!(
+            select_target_display(true, Some(2), 4).unwrap(),
+            Some(2),
+            "should use the configured display index"
+        );
+    }
+
+    #[test]
+    fn select_target_display_rejects_out_of_range() {
+        let result = select_target_display(true, Some(5), 3);
+        assert!(result.is_err(), "should error for out-of-range display");
+    }
+
+    #[test]
+    fn select_target_display_rejects_negative_index() {
+        let result = select_target_display(true, Some(-1), 2);
+        assert!(result.is_err(), "should error for negative display index");
     }
 }
