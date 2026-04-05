@@ -55,6 +55,10 @@ pub struct NativeEventLoop {
     autorun_exit: Option<String>,
     /// Whether to run without a window (headless autorun mode).
     headless: bool,
+    /// Whether VSync is enabled (glutin swap interval handles timing).
+    vsync_enabled: bool,
+    /// Timestamp of the last frame start, for manual frame limiting.
+    last_frame_time: Instant,
 }
 
 impl NativeEventLoop {
@@ -65,13 +69,14 @@ impl NativeEventLoop {
         tracing: Tracing,
         headless: bool,
     ) -> Self {
-        let (gamepads_enabled, four_score, fullscreen, debugger_controller) = {
+        let (gamepads_enabled, four_score, fullscreen, vsync_enabled, debugger_controller) = {
             let config = app_context.borrow().config().clone();
             let dc = DebuggerController::new(&config.breakpoints);
             (
                 config.gamepads_enabled,
                 config.four_score_enabled,
                 config.fullscreen,
+                config.vsync_enabled,
                 dc,
             )
         };
@@ -120,6 +125,8 @@ impl NativeEventLoop {
             autorun_state: None,
             autorun_exit: None,
             headless,
+            vsync_enabled,
+            last_frame_time: Instant::now(),
         }
     }
 
@@ -847,6 +854,16 @@ impl ApplicationHandler for NativeEventLoop {
                 if let Some(ref mut si) = self.sleep_inhibitor {
                     si.deactivate();
                 }
+            } else if !self.vsync_enabled {
+                // Manual frame limiting: schedule next frame at target interval.
+                let target = target_frame_duration(&self.nes);
+                let next = self.last_frame_time + target;
+                self.last_frame_time = Instant::now();
+                event_loop.set_control_flow(ControlFlow::WaitUntil(next));
+                // Prevent display from sleeping while emulating.
+                if let Some(ref mut si) = self.sleep_inhibitor {
+                    si.activate();
+                }
             } else {
                 event_loop.set_control_flow(ControlFlow::Poll);
                 // Prevent display from sleeping while emulating.
@@ -856,5 +873,40 @@ impl ApplicationHandler for NativeEventLoop {
             }
             gl.window().request_redraw();
         }
+    }
+}
+
+/// Returns the target duration per frame based on the NES timing mode.
+fn target_frame_duration(nes: &Nes) -> Duration {
+    let fps = nes
+        .app_context()
+        .borrow()
+        .config()
+        .hardware_model
+        .timing_mode()
+        .frame_rate_hz();
+    Duration::from_secs_f64(1.0 / fps)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app_context::AppContext;
+    use crate::console::Config;
+
+    fn make_nes() -> Nes {
+        Nes::new(AppContext::new_with_config(Config::default()))
+    }
+
+    #[test]
+    fn test_target_frame_duration_ntsc() {
+        let nes = make_nes();
+        let duration = target_frame_duration(&nes);
+        // NTSC: ~60.098 FPS → ~16.64ms per frame
+        let ms = duration.as_secs_f64() * 1000.0;
+        assert!(
+            (16.0..=17.0).contains(&ms),
+            "NTSC frame duration should be ~16.6ms, got {ms:.2}ms"
+        );
     }
 }
