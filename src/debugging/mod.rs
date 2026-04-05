@@ -1,8 +1,10 @@
 pub mod breakpoints;
+#[cfg(any(feature = "sdl", feature = "native"))]
+pub mod control;
 mod disasm;
 mod logging;
 pub mod ppu_viewer;
-mod snapshot;
+pub(crate) mod snapshot;
 mod tracing;
 mod types;
 
