@@ -25,6 +25,12 @@ pub enum KeyOutcome {
     StepOver,
     /// Step into the current instruction (F11).
     StepInto,
+    /// The user selected a cartridge to load (Enter in cart-switch dialog).
+    SwitchCartridge(String),
+    /// The user requested the cartridge-switch dialog (Ctrl+O).
+    OpenCartridgeSwitch,
+    /// The user closed the cartridge-switch dialog (Escape).
+    CloseCartridgeSwitch,
 }
 
 /// Handles a key-press event.
@@ -40,8 +46,7 @@ pub fn handle_key_pressed(
     audio: Option<&dyn NesAudio>,
 ) -> KeyOutcome {
     if app_state.cart_switch.open {
-        handle_cartridge_switch_key(key_code, app_state);
-        return KeyOutcome::Continue;
+        return handle_cartridge_switch_key(key_code, app_state);
     }
 
     if app_state.modifiers.control_key() {
@@ -71,10 +76,7 @@ fn handle_ctrl_hotkey(
             nes.reset(!app_state.modifiers.shift_key());
             KeyOutcome::Continue
         }
-        KeyCode::KeyO => {
-            app_state.cart_switch.open = true;
-            KeyOutcome::Continue
-        }
+        KeyCode::KeyO => KeyOutcome::OpenCartridgeSwitch,
         KeyCode::KeyF => {
             app_state.fullscreen = !app_state.fullscreen;
             KeyOutcome::Continue
@@ -271,18 +273,87 @@ fn pp_or_btn_p2(nes: &mut Nes, pp: PowerPadButton, btn: Button, pressed: bool) {
 
 // ── Cartridge-switch dialog ───────────────────────────────────────────────────
 
-fn handle_cartridge_switch_key(key_code: KeyCode, app_state: &mut NativeAppState) {
+fn handle_cartridge_switch_key(key_code: KeyCode, app_state: &mut NativeAppState) -> KeyOutcome {
     match key_code {
-        KeyCode::Escape => app_state.cart_switch.close(),
+        KeyCode::Escape => {
+            app_state.cart_switch.close();
+            KeyOutcome::CloseCartridgeSwitch
+        }
         KeyCode::ArrowDown => {
-            if app_state.cart_switch.selection + 1 < app_state.cart_switch.entries.len() {
-                app_state.cart_switch.selection += 1;
-            }
+            app_state.cart_switch.move_selection_next();
+            KeyOutcome::Continue
         }
         KeyCode::ArrowUp => {
-            app_state.cart_switch.selection = app_state.cart_switch.selection.saturating_sub(1);
+            app_state.cart_switch.move_selection_prev();
+            KeyOutcome::Continue
         }
-        _ => {}
+        KeyCode::Backspace => {
+            app_state.cart_switch.filter.pop();
+            app_state.cart_switch.refresh_filtered();
+            KeyOutcome::Continue
+        }
+        KeyCode::Enter | KeyCode::NumpadEnter => {
+            if let Some(path) = app_state.cart_switch.selected_entry().map(str::to_string) {
+                app_state.cart_switch.close();
+                KeyOutcome::SwitchCartridge(path)
+            } else {
+                KeyOutcome::Continue
+            }
+        }
+        _ => {
+            if let Some(ch) = key_code_to_filter_char(key_code, app_state.modifiers.shift_key()) {
+                app_state.cart_switch.filter.push(ch);
+                app_state.cart_switch.refresh_filtered();
+            }
+            KeyOutcome::Continue
+        }
+    }
+}
+
+/// Maps a physical key code to its lowercase character for the filter field.
+fn key_code_to_filter_char(key_code: KeyCode, shift: bool) -> Option<char> {
+    match key_code {
+        KeyCode::KeyA => Some('a'),
+        KeyCode::KeyB => Some('b'),
+        KeyCode::KeyC => Some('c'),
+        KeyCode::KeyD => Some('d'),
+        KeyCode::KeyE => Some('e'),
+        KeyCode::KeyF => Some('f'),
+        KeyCode::KeyG => Some('g'),
+        KeyCode::KeyH => Some('h'),
+        KeyCode::KeyI => Some('i'),
+        KeyCode::KeyJ => Some('j'),
+        KeyCode::KeyK => Some('k'),
+        KeyCode::KeyL => Some('l'),
+        KeyCode::KeyM => Some('m'),
+        KeyCode::KeyN => Some('n'),
+        KeyCode::KeyO => Some('o'),
+        KeyCode::KeyP => Some('p'),
+        KeyCode::KeyQ => Some('q'),
+        KeyCode::KeyR => Some('r'),
+        KeyCode::KeyS => Some('s'),
+        KeyCode::KeyT => Some('t'),
+        KeyCode::KeyU => Some('u'),
+        KeyCode::KeyV => Some('v'),
+        KeyCode::KeyW => Some('w'),
+        KeyCode::KeyX => Some('x'),
+        KeyCode::KeyY => Some('y'),
+        KeyCode::KeyZ => Some('z'),
+        KeyCode::Digit0 => Some('0'),
+        KeyCode::Digit1 => Some('1'),
+        KeyCode::Digit2 => Some('2'),
+        KeyCode::Digit3 => Some('3'),
+        KeyCode::Digit4 => Some('4'),
+        KeyCode::Digit5 => Some('5'),
+        KeyCode::Digit6 => Some('6'),
+        KeyCode::Digit7 => Some('7'),
+        KeyCode::Digit8 => Some('8'),
+        KeyCode::Digit9 => Some('9'),
+        KeyCode::Space => Some(' '),
+        KeyCode::Minus => Some(if shift { '_' } else { '-' }),
+        KeyCode::Period => Some('.'),
+        KeyCode::Slash => Some('/'),
+        _ => None,
     }
 }
 
@@ -762,6 +833,150 @@ mod tests {
             buttons(&nes, 2) & BIT_UP,
             0,
             "Releasing I should clear Up on P2"
+        );
+    }
+
+    // ── Cartridge-switch dialog keyboard ──────────────────────────────────────
+
+    fn make_cart_switch_state(entries: &[&str]) -> NativeAppState {
+        let mut state = make_state();
+        state.cart_switch.open = true;
+        state.cart_switch.entries = entries.iter().map(|s| s.to_string()).collect();
+        state
+    }
+
+    #[test]
+    fn test_cart_switch_typing_adds_to_filter() {
+        let mut nes = make_nes();
+        let mut state = make_cart_switch_state(&["alpha.nes", "beta.nes"]);
+        handle_key_pressed(&mut nes, KeyCode::KeyA, &mut state, None);
+        assert_eq!(state.cart_switch.filter, "a");
+        handle_key_pressed(&mut nes, KeyCode::KeyB, &mut state, None);
+        assert_eq!(state.cart_switch.filter, "ab");
+    }
+
+    #[test]
+    fn test_cart_switch_backspace_removes_char() {
+        let mut nes = make_nes();
+        let mut state = make_cart_switch_state(&["a.nes"]);
+        state.cart_switch.filter = "abc".to_string();
+        let outcome = handle_key_pressed(&mut nes, KeyCode::Backspace, &mut state, None);
+        assert_eq!(state.cart_switch.filter, "ab");
+        assert_eq!(outcome, KeyOutcome::Continue);
+    }
+
+    #[test]
+    fn test_cart_switch_backspace_on_empty_filter() {
+        let mut nes = make_nes();
+        let mut state = make_cart_switch_state(&["a.nes"]);
+        let outcome = handle_key_pressed(&mut nes, KeyCode::Backspace, &mut state, None);
+        assert!(state.cart_switch.filter.is_empty());
+        assert_eq!(outcome, KeyOutcome::Continue);
+    }
+
+    #[test]
+    fn test_cart_switch_enter_returns_switch_cartridge() {
+        let mut nes = make_nes();
+        let mut state = make_cart_switch_state(&["game.nes", "other.nes"]);
+        state.cart_switch.selection = 0;
+        let outcome = handle_key_pressed(&mut nes, KeyCode::Enter, &mut state, None);
+        assert_eq!(outcome, KeyOutcome::SwitchCartridge("game.nes".to_string()));
+        assert!(!state.cart_switch.open, "dialog should close after Enter");
+    }
+
+    #[test]
+    fn test_cart_switch_enter_with_no_entries_returns_continue() {
+        let mut nes = make_nes();
+        let mut state = make_cart_switch_state(&[]);
+        let outcome = handle_key_pressed(&mut nes, KeyCode::Enter, &mut state, None);
+        assert_eq!(outcome, KeyOutcome::Continue);
+    }
+
+    #[test]
+    fn test_cart_switch_escape_closes_dialog() {
+        let mut nes = make_nes();
+        let mut state = make_cart_switch_state(&["a.nes"]);
+        handle_key_pressed(&mut nes, KeyCode::Escape, &mut state, None);
+        assert!(!state.cart_switch.open);
+    }
+
+    #[test]
+    fn test_cart_switch_arrow_down_wraps() {
+        let mut nes = make_nes();
+        let mut state = make_cart_switch_state(&["a.nes", "b.nes"]);
+        state.cart_switch.selection = 1;
+        handle_key_pressed(&mut nes, KeyCode::ArrowDown, &mut state, None);
+        assert_eq!(state.cart_switch.selection, 0, "should wrap to first");
+    }
+
+    #[test]
+    fn test_cart_switch_arrow_up_wraps() {
+        let mut nes = make_nes();
+        let mut state = make_cart_switch_state(&["a.nes", "b.nes"]);
+        state.cart_switch.selection = 0;
+        handle_key_pressed(&mut nes, KeyCode::ArrowUp, &mut state, None);
+        assert_eq!(state.cart_switch.selection, 1, "should wrap to last");
+    }
+
+    #[test]
+    fn test_cart_switch_typing_filters_entries() {
+        let mut nes = make_nes();
+        let mut state = make_cart_switch_state(&["alpha.nes", "beta.nes", "gamma.nes"]);
+        // Type 'b' — only "beta.nes" matches (fuzzy on filename)
+        handle_key_pressed(&mut nes, KeyCode::KeyB, &mut state, None);
+        assert_eq!(state.cart_switch.visible_count(), 1);
+        assert_eq!(state.cart_switch.selected_entry(), Some("beta.nes"));
+    }
+
+    #[test]
+    fn test_cart_switch_keys_dont_trigger_controller() {
+        let mut nes = make_nes_with_cartridge();
+        let mut state = make_cart_switch_state(&["a.nes"]);
+        // Pressing W while cart switch is open should NOT set Up on P1
+        handle_key_pressed(&mut nes, KeyCode::KeyW, &mut state, None);
+        assert_eq!(
+            buttons(&nes, 1) & BIT_UP,
+            0,
+            "W should not control NES when dialog is open"
+        );
+    }
+
+    // ── Review fix: Escape returns CloseCartridgeSwitch ───────────────────────
+
+    #[test]
+    fn test_cart_switch_escape_returns_close_outcome() {
+        let mut nes = make_nes();
+        let mut state = make_cart_switch_state(&["a.nes"]);
+        let outcome = handle_key_pressed(&mut nes, KeyCode::Escape, &mut state, None);
+        assert_eq!(
+            outcome,
+            KeyOutcome::CloseCartridgeSwitch,
+            "Escape should return CloseCartridgeSwitch so event loop can restore pause"
+        );
+    }
+
+    // ── Review fix: underscore via Shift+Minus ────────────────────────────────
+
+    #[test]
+    fn test_cart_switch_shift_minus_types_underscore() {
+        let mut nes = make_nes();
+        let mut state = make_cart_switch_state(&["a_b.nes"]);
+        state.modifiers = ModifiersState::SHIFT;
+        handle_key_pressed(&mut nes, KeyCode::Minus, &mut state, None);
+        assert_eq!(
+            state.cart_switch.filter, "_",
+            "Shift+Minus should type underscore"
+        );
+    }
+
+    #[test]
+    fn test_cart_switch_minus_without_shift_types_dash() {
+        let mut nes = make_nes();
+        let mut state = make_cart_switch_state(&["a-b.nes"]);
+        handle_key_pressed(&mut nes, KeyCode::Minus, &mut state, None);
+        assert_eq!(
+            state.cart_switch.filter, "-",
+            "Minus without Shift should type dash"
         );
     }
 }

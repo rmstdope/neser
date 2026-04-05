@@ -36,6 +36,8 @@ pub struct NativeEventLoop {
     /// Whether the user had manually paused before the debugger opened,
     /// so we can restore pause state when the debugger closes.
     paused_before_debugger: bool,
+    /// Whether the user had manually paused before the cart-switch dialog opened.
+    paused_before_cart_switch: bool,
     gamepad: Option<GamepadManager>,
     gamepads_enabled: bool,
     gamepad_toast_shown: bool,
@@ -96,6 +98,7 @@ impl NativeEventLoop {
             },
             debugger_controller,
             paused_before_debugger: false,
+            paused_before_cart_switch: false,
             gamepad,
             gamepads_enabled,
             gamepad_toast_shown: false,
@@ -238,6 +241,81 @@ impl NativeEventLoop {
             }
             self.state.mouse_grabbed = should_grab;
         }
+    }
+
+    // ── Cartridge switching ──────────────────────────────────────────────────
+
+    /// Opens the cartridge-switch dialog, loading the catalog CSV first.
+    fn open_cartridge_switch_dialog(&mut self) {
+        self.paused_before_cart_switch = self.state.paused;
+        self.state.cart_switch.open = true;
+        self.state.cart_switch.filter.clear();
+        self.state.cart_switch.selection = 0;
+
+        if self.state.cart_switch.entries.is_empty() {
+            self.load_catalog_entries();
+        }
+
+        self.state.paused = true;
+    }
+
+    /// Restores the pause state that was active before the dialog opened.
+    fn restore_pause_after_cart_switch(&mut self) {
+        self.state.paused = self.state.debugger_open || self.paused_before_cart_switch;
+        self.paused_before_cart_switch = false;
+    }
+
+    /// Loads cartridge catalog entries from the default CSV path.
+    fn load_catalog_entries(&mut self) {
+        if let Some(home) = std::env::var_os("HOME") {
+            let catalog_path =
+                crate::console::default_catalog_csv_path(std::path::PathBuf::from(home).as_path());
+            if let Ok(content) = std::fs::read_to_string(&catalog_path) {
+                self.state.cart_switch.entries = content
+                    .lines()
+                    .skip(1)
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty())
+                    .map(ToString::to_string)
+                    .collect();
+            }
+        }
+    }
+
+    /// Loads a new cartridge from the given ROM path and resets the emulator.
+    fn switch_to_cartridge(&mut self, rom_path: &str) {
+        let rom_bytes = match std::fs::read(rom_path) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                crate::debugging::log_info(format!("Failed to read ROM: {err}"));
+                return;
+            }
+        };
+
+        let app_context = self.nes.app_context().clone();
+        let cartridge = match crate::cartridge::Cartridge::load_from_file(
+            &rom_bytes,
+            rom_path,
+            app_context.clone(),
+        ) {
+            Ok(c) => c,
+            Err(err) => {
+                crate::debugging::log_info(format!("Failed to load ROM cartridge: {err}"));
+                return;
+            }
+        };
+
+        let applied = {
+            let rom_timing = cartridge.rom_timing_mode();
+            app_context
+                .borrow_mut()
+                .config_mut()
+                .apply_rom_timing_mode(rom_timing)
+        };
+
+        self.nes.insert_cartridge(cartridge);
+        crate::console::log_hardware_selection(&app_context, applied);
+        self.nes.reset(false);
     }
 
     // ── Autorun ──────────────────────────────────────────────────────────────
@@ -528,6 +606,16 @@ impl ApplicationHandler for NativeEventLoop {
                         KeyOutcome::StepInto => {
                             self.debugger_controller.step_into(&mut self.nes);
                             self.sync_from_controller();
+                        }
+                        KeyOutcome::SwitchCartridge(path) => {
+                            self.switch_to_cartridge(&path);
+                            self.restore_pause_after_cart_switch();
+                        }
+                        KeyOutcome::OpenCartridgeSwitch => {
+                            self.open_cartridge_switch_dialog();
+                        }
+                        KeyOutcome::CloseCartridgeSwitch => {
+                            self.restore_pause_after_cart_switch();
                         }
                         KeyOutcome::Continue => {
                             if self.state.fullscreen != fullscreen_before {
