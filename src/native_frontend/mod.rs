@@ -11,6 +11,7 @@ mod gl_wrapper;
 pub mod keyboard;
 mod mouse;
 mod render_target;
+mod sleep_inhibitor;
 
 pub use audio::NativeAudio;
 pub use event_loop::NativeEventLoop;

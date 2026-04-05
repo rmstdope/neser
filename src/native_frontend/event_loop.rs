@@ -14,6 +14,7 @@ use crate::native_frontend::gamepad::GamepadManager;
 use crate::native_frontend::gl_wrapper::NativeGlWrapper;
 use crate::native_frontend::keyboard::{self, KeyOutcome};
 use crate::native_frontend::mouse;
+use crate::native_frontend::sleep_inhibitor::SleepInhibitor;
 
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, DeviceId, ElementState, WindowEvent};
@@ -34,6 +35,7 @@ pub struct NativeEventLoop {
     gamepads_enabled: bool,
     gamepad_toast_shown: bool,
     gamepad_init_failed: bool,
+    sleep_inhibitor: Option<SleepInhibitor>,
 
     // Initialized on resume (when the window is ready)
     gl_wrapper: Option<NativeGlWrapper>,
@@ -69,6 +71,14 @@ impl NativeEventLoop {
             (None, false)
         };
 
+        let sleep_inhibitor = match SleepInhibitor::new() {
+            Ok(si) => Some(si),
+            Err(e) => {
+                crate::debugging::log_info(format!("Sleep inhibitor init failed: {e}"));
+                None
+            }
+        };
+
         Self {
             app_context,
             nes,
@@ -83,6 +93,7 @@ impl NativeEventLoop {
             gamepads_enabled,
             gamepad_toast_shown: false,
             gamepad_init_failed,
+            sleep_inhibitor,
             gl_wrapper: None,
             last_audio_stats_print: Instant::now(),
             initialized: false,
@@ -262,10 +273,10 @@ impl ApplicationHandler for NativeEventLoop {
                             }
                         }
                         KeyOutcome::Continue => {
-                            if self.state.fullscreen != fullscreen_before {
-                                if let Some(ref mut gl) = self.gl_wrapper {
-                                    let _ = gl.set_fullscreen(self.state.fullscreen);
-                                }
+                            if self.state.fullscreen != fullscreen_before
+                                && let Some(ref mut gl) = self.gl_wrapper
+                            {
+                                let _ = gl.set_fullscreen(self.state.fullscreen);
                             }
                         }
                     }
@@ -274,11 +285,12 @@ impl ApplicationHandler for NativeEventLoop {
                 }
 
                 // If keyboard handler released the mouse grab (Escape), apply it.
-                if mouse_grabbed_before && !self.state.mouse_grabbed {
-                    if let Some(ref mut gl) = self.gl_wrapper {
-                        let _ = gl.set_mouse_grab(false);
-                        gl.window().set_cursor_visible(true);
-                    }
+                if mouse_grabbed_before
+                    && !self.state.mouse_grabbed
+                    && let Some(ref mut gl) = self.gl_wrapper
+                {
+                    let _ = gl.set_mouse_grab(false);
+                    gl.window().set_cursor_visible(true);
                 }
             }
 
@@ -455,8 +467,16 @@ impl ApplicationHandler for NativeEventLoop {
                 event_loop.set_control_flow(ControlFlow::WaitUntil(
                     Instant::now() + Duration::from_millis(50),
                 ));
+                // Allow display to sleep when paused.
+                if let Some(ref mut si) = self.sleep_inhibitor {
+                    si.deactivate();
+                }
             } else {
                 event_loop.set_control_flow(ControlFlow::Poll);
+                // Prevent display from sleeping while emulating.
+                if let Some(ref mut si) = self.sleep_inhibitor {
+                    si.activate();
+                }
             }
             gl.window().request_redraw();
         }

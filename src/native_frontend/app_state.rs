@@ -183,8 +183,10 @@ mod tests {
 
     #[test]
     fn test_overlay_text_returns_controls_when_help_visible() {
-        let mut state = NativeAppState::default();
-        state.help_overlay_visible = true;
+        let state = NativeAppState {
+            help_overlay_visible: true,
+            ..NativeAppState::default()
+        };
         let text = state.overlay_text(&make_nes());
         assert!(
             text.is_some(),
@@ -198,8 +200,10 @@ mod tests {
 
     #[test]
     fn test_overlay_text_help_contains_wasd() {
-        let mut state = NativeAppState::default();
-        state.help_overlay_visible = true;
+        let state = NativeAppState {
+            help_overlay_visible: true,
+            ..NativeAppState::default()
+        };
         let text = state.overlay_text(&make_nes()).unwrap();
         assert!(
             text.contains("W/A/S/D"),
@@ -209,8 +213,10 @@ mod tests {
 
     #[test]
     fn test_overlay_text_help_contains_hotkeys() {
-        let mut state = NativeAppState::default();
-        state.help_overlay_visible = true;
+        let state = NativeAppState {
+            help_overlay_visible: true,
+            ..NativeAppState::default()
+        };
         let text = state.overlay_text(&make_nes()).unwrap();
         assert!(
             text.contains("Ctrl+Q"),
