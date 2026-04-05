@@ -342,7 +342,7 @@ fn autorun_overlay_text(autorun_state: &AutorunState, tv_system: TimingMode) -> 
             let (elapsed, _) = format_time_pair(current, current, tv_system);
             format!("Recording\n{elapsed} / {elapsed}")
         }
-        _ => String::new(),
+        AutorunMode::None => String::new(),
     }
 }
 
