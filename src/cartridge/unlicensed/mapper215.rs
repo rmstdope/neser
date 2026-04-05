@@ -227,7 +227,7 @@ impl Mapper215 {
             }
         } else {
             // Normal MMC3 mode with outer banking.
-            let inner_page = self.mmc3.mapped_prg_bank(addr);
+            let inner_page = self.mmc3.raw_prg_8k_page_number(addr) as usize;
             let (mask, sbank) = if c_flag { (0x0F, r1 & 0x10) } else { (0x1F, 0) };
             let extra = if self.submapper == 1 {
                 (r1 & 0x08) << 4
@@ -291,17 +291,28 @@ impl Mapper for Mapper215 {
         }
     }
 
+    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        match addr {
+            0x6000..=0x7FFF => self.mmc3.read_prg_open_bus(addr, open_bus),
+            0x8000..=0xFFFF => self.read_prg(addr),
+            _ => open_bus,
+        }
+    }
+
     fn write_prg(&mut self, addr: u16, value: u8) {
         match addr {
-            0x5000 => {
-                self.ex_regs[0] = value;
-            }
-            0x5001 => {
-                self.ex_regs[1] = value;
-            }
-            0x5007 => {
-                self.ex_regs[2] = value;
-            }
+            0x5000..=0x5FFF => match addr & 0xF007 {
+                0x5000 => {
+                    self.ex_regs[0] = value;
+                }
+                0x5001 => {
+                    self.ex_regs[1] = value;
+                }
+                0x5007 => {
+                    self.ex_regs[2] = value;
+                }
+                _ => {}
+            },
             0x6000..=0x7FFF => {
                 self.mmc3.write_prg(addr, value);
             }
@@ -442,10 +453,11 @@ mod tests {
     fn default_state_prg_fixed_last_bank_at_e000() {
         let mapper = make_mapper();
         // With default ex_regs[1]=0x03: outer = 96, mask=0x1F
-        // Last bank = PRG_8K_BANKS - 1 = 8; actual = 96 | (8 & 0x1F) = 104; 104 % 9 = 5
+        // raw_prg_8k_page_number(0xE000) = 0xFF; 0xFF as usize & 0x1F = 31
+        // actual = 96 | 31 = 127; 127 % 9 = 1
         assert_eq!(
             mapper.read_prg(0xE000),
-            104usize.wrapping_rem(PRG_8K_BANKS) as u8
+            127usize.wrapping_rem(PRG_8K_BANKS) as u8
         );
     }
 
@@ -720,10 +732,10 @@ mod tests {
     fn mode_3_scrambles_address_8000_to_c001() {
         let mut mapper = make_mapper();
         // Mode 3: LUT_ADDR[3][0] = 5 → (5&1) | ((5&6)<<12) | 0x8000 = 1 | 0x4000 | 0x8000 = 0xC001
-        // $8000 write in mode 3 → $C001 (IRQ enable)
-        // We can verify IRQ is enabled afterward
+        // $8000 write in mode 3 → $C001 (IRQ reload)
+        // We can verify IRQ reload is triggered afterward
         mapper.write_prg(0x5007, 3);
-        mapper.write_prg(0x8000, 0xFF); // any value; goes to $C001 → IRQ enable
+        mapper.write_prg(0x8000, 0xFF); // any value; goes to $C001 → IRQ reload
 
         // In standard MMC3, $C001 (odd) = IRQ reload
         // After this, the mmc3 should have had its IRQ reload flag set
