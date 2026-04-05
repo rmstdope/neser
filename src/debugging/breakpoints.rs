@@ -200,6 +200,30 @@ impl BreakpointList {
             .any(|b| b.kind == BreakpointKind::Pc(addr) && b.enabled)
     }
 
+    /// Force-enables the PC breakpoint at `addr` and returns its previous enabled state.
+    /// Returns `None` if no PC breakpoint exists at `addr`.
+    pub fn force_enable_pc_breakpoint_at(&mut self, addr: u16) -> Option<bool> {
+        self.items
+            .iter_mut()
+            .find(|b| b.kind == BreakpointKind::Pc(addr))
+            .map(|b| {
+                let was_enabled = b.enabled;
+                b.enabled = true;
+                was_enabled
+            })
+    }
+
+    /// Sets the enabled state of the PC breakpoint at `addr`.
+    pub fn set_pc_breakpoint_enabled(&mut self, addr: u16, enabled: bool) {
+        if let Some(b) = self
+            .items
+            .iter_mut()
+            .find(|b| b.kind == BreakpointKind::Pc(addr))
+        {
+            b.enabled = enabled;
+        }
+    }
+
     /// Serialize all breakpoints to a multi-line string for `.debug` file storage.
     pub fn save_to_string(&self) -> String {
         self.items
@@ -734,5 +758,55 @@ mod tests {
             loaded.iter().nth(2).map(|b| &b.kind),
             Some(BreakpointKind::WriteAddress(0x2006))
         ));
+    }
+
+    #[test]
+    fn test_force_enable_pc_breakpoint_enables_disabled() {
+        let mut list = BreakpointList::new();
+        list.add(BreakpointKind::Pc(0x8000));
+        list.disable(0);
+        assert!(!list.has_enabled_pc_breakpoint_at(0x8000));
+
+        let was_enabled = list.force_enable_pc_breakpoint_at(0x8000);
+        assert_eq!(was_enabled, Some(false));
+        assert!(list.has_enabled_pc_breakpoint_at(0x8000));
+    }
+
+    #[test]
+    fn test_force_enable_pc_breakpoint_returns_true_when_already_enabled() {
+        let mut list = BreakpointList::new();
+        list.add(BreakpointKind::Pc(0x8000));
+
+        let was_enabled = list.force_enable_pc_breakpoint_at(0x8000);
+        assert_eq!(was_enabled, Some(true));
+        assert!(list.has_enabled_pc_breakpoint_at(0x8000));
+    }
+
+    #[test]
+    fn test_force_enable_pc_breakpoint_returns_none_when_missing() {
+        let mut list = BreakpointList::new();
+        let was_enabled = list.force_enable_pc_breakpoint_at(0x8000);
+        assert_eq!(was_enabled, None);
+    }
+
+    #[test]
+    fn test_set_pc_breakpoint_enabled_disables() {
+        let mut list = BreakpointList::new();
+        list.add(BreakpointKind::Pc(0x8000));
+        assert!(list.has_enabled_pc_breakpoint_at(0x8000));
+
+        list.set_pc_breakpoint_enabled(0x8000, false);
+        assert!(!list.has_enabled_pc_breakpoint_at(0x8000));
+        assert!(list.has_pc_breakpoint_at(0x8000));
+    }
+
+    #[test]
+    fn test_set_pc_breakpoint_enabled_re_enables() {
+        let mut list = BreakpointList::new();
+        list.add(BreakpointKind::Pc(0x8000));
+        list.disable(0);
+
+        list.set_pc_breakpoint_enabled(0x8000, true);
+        assert!(list.has_enabled_pc_breakpoint_at(0x8000));
     }
 }

@@ -18,6 +18,10 @@ struct TemporaryBreakpoint {
     /// Whether a user-defined PC breakpoint already existed at this address
     /// before we added the temporary one (so we don't remove it on cleanup).
     already_present: bool,
+    /// Whether the pre-existing breakpoint was enabled before we took over.
+    /// On cleanup we restore this state so the user's disabled breakpoint
+    /// stays disabled.
+    was_enabled_before: bool,
     /// If set, the breakpoint only fires when the CPU is inside this interrupt.
     required_interrupt: Option<InterruptKind>,
     /// Tracks whether we have left the required interrupt at least once.
@@ -132,10 +136,15 @@ impl DebuggerController {
     // ── Temporary breakpoints ──────────────────────────────────────────
 
     fn clear_temporary_breakpoint(&mut self) {
-        if let Some(tb) = self.temporary_breakpoint.take()
-            && !tb.already_present
-        {
-            self.remove_pc_breakpoint(tb.pc);
+        if let Some(tb) = self.temporary_breakpoint.take() {
+            if tb.already_present {
+                // Restore original enabled state if we force-enabled a disabled breakpoint.
+                if !tb.was_enabled_before {
+                    self.breakpoints.set_pc_breakpoint_enabled(tb.pc, false);
+                }
+            } else {
+                self.remove_pc_breakpoint(tb.pc);
+            }
         }
     }
 
@@ -143,13 +152,20 @@ impl DebuggerController {
         self.clear_temporary_breakpoint();
 
         let already_present = self.breakpoints.has_pc_breakpoint_at(pc);
-        if !already_present {
+        let was_enabled_before = if already_present {
+            // Force-enable a disabled breakpoint so check_breakpoint_hit sees it.
+            self.breakpoints
+                .force_enable_pc_breakpoint_at(pc)
+                .unwrap_or(false)
+        } else {
             self.add_pc_breakpoint(pc);
-        }
+            true
+        };
 
         self.temporary_breakpoint = Some(TemporaryBreakpoint {
             pc,
             already_present,
+            was_enabled_before,
             required_interrupt: None,
             has_exited_required_interrupt: true,
             ignore_other_breakpoints: false,
@@ -165,15 +181,21 @@ impl DebuggerController {
         self.clear_temporary_breakpoint();
 
         let already_present = self.breakpoints.has_pc_breakpoint_at(pc);
-        if !already_present {
+        let was_enabled_before = if already_present {
+            self.breakpoints
+                .force_enable_pc_breakpoint_at(pc)
+                .unwrap_or(false)
+        } else {
             self.add_pc_breakpoint(pc);
-        }
+            true
+        };
 
         let currently_in_interrupt = nes.cpu_ref().current_interrupt() == Some(required_interrupt);
         let has_exited_required_interrupt = !currently_in_interrupt;
         self.temporary_breakpoint = Some(TemporaryBreakpoint {
             pc,
             already_present,
+            was_enabled_before,
             required_interrupt: Some(required_interrupt),
             has_exited_required_interrupt,
             ignore_other_breakpoints: true,
@@ -274,7 +296,11 @@ impl DebuggerController {
     /// it was added by the controller (not a pre-existing user breakpoint).
     fn cleanup_temporary_breakpoint(&mut self, tb: TemporaryBreakpoint) {
         self.temporary_breakpoint = None;
-        if !tb.already_present {
+        if tb.already_present {
+            if !tb.was_enabled_before {
+                self.breakpoints.set_pc_breakpoint_enabled(tb.pc, false);
+            }
+        } else {
             self.remove_pc_breakpoint(tb.pc);
         }
     }
@@ -383,6 +409,12 @@ impl DebuggerController {
     // ── UI action handling ─────────────────────────────────────────────
 
     /// Process a `DebuggerUiAction` returned from the ImGui render pass.
+    ///
+    /// This handles control-flow actions (stepping, continue, breakpoint CRUD,
+    /// run-to-interrupt). View-state actions (toggle PPU viewer, opacity,
+    /// hexdump base, watch addresses) are currently applied by `GlBackend`
+    /// which still owns `DebuggerViewState`. Once GlBackend is refactored
+    /// (Sub-issues B/C), those actions will move here.
     pub fn apply_ui_action(&mut self, nes: &mut Nes, action: DebuggerUiAction) {
         if !self.debugger_open {
             return;
@@ -802,6 +834,91 @@ mod tests {
         );
         assert!(ctrl.is_paused());
         assert!(ctrl.is_debugger_open());
+    }
+
+    #[test]
+    fn test_step_over_jsr_with_disabled_breakpoint_at_return_addr() {
+        let mut ctrl = default_controller();
+        let mut nes = nes_with_jsr_program();
+        nes.cpu_mut().set_x(0);
+
+        // Add a *disabled* breakpoint at the return address ($8003).
+        ctrl.breakpoints.add(BreakpointKind::Pc(0x8003));
+        ctrl.breakpoints.disable(0);
+        assert!(!ctrl.breakpoints.has_enabled_pc_breakpoint_at(0x8003));
+
+        ctrl.enter_debugger();
+        ctrl.step_over(&mut nes);
+
+        // The disabled breakpoint should be force-enabled for the step-over.
+        assert!(!ctrl.is_paused(), "step-over JSR should continue running");
+
+        for _ in 0..1_000_000 {
+            ctrl.tick_once(&mut nes);
+            if ctrl.is_paused() {
+                break;
+            }
+        }
+
+        assert_eq!(
+            nes.cpu_ref().pc(),
+            0x8003,
+            "should stop at return address despite disabled breakpoint"
+        );
+        assert!(ctrl.is_paused());
+    }
+
+    #[test]
+    fn test_step_over_cleanup_restores_disabled_state() {
+        let mut ctrl = default_controller();
+        let mut nes = nes_with_jsr_program();
+
+        // Add a *disabled* breakpoint at the return address ($8003).
+        ctrl.breakpoints.add(BreakpointKind::Pc(0x8003));
+        ctrl.breakpoints.disable(0);
+
+        ctrl.enter_debugger();
+        ctrl.step_over(&mut nes);
+
+        // Run until breakpoint hits.
+        for _ in 0..1_000_000 {
+            ctrl.tick_once(&mut nes);
+            if ctrl.is_paused() {
+                break;
+            }
+        }
+
+        // After cleanup, the user's breakpoint should be restored to disabled.
+        assert!(
+            ctrl.breakpoints.has_pc_breakpoint_at(0x8003),
+            "user breakpoint should still exist"
+        );
+        assert!(
+            !ctrl.breakpoints.has_enabled_pc_breakpoint_at(0x8003),
+            "user breakpoint should be restored to disabled"
+        );
+    }
+
+    #[test]
+    fn test_step_over_cleanup_keeps_enabled_breakpoint_enabled() {
+        let mut ctrl = default_controller();
+        let mut nes = nes_with_jsr_program();
+
+        // Add an *enabled* breakpoint at the return address ($8003).
+        ctrl.breakpoints.add(BreakpointKind::Pc(0x8003));
+
+        ctrl.enter_debugger();
+        ctrl.step_over(&mut nes);
+
+        for _ in 0..1_000_000 {
+            ctrl.tick_once(&mut nes);
+            if ctrl.is_paused() {
+                break;
+            }
+        }
+
+        // After cleanup, the user's breakpoint should remain enabled.
+        assert!(ctrl.breakpoints.has_enabled_pc_breakpoint_at(0x8003));
     }
 
     // ── UI action tests ────────────────────────────────────────────────
