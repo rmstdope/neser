@@ -547,7 +547,14 @@ impl ApplicationHandler for NativeEventLoop {
 
             WindowEvent::Focused(focused) => {
                 self.state.window_focused = focused;
-                if !focused {
+                if focused {
+                    if let Some(ref audio) = self.audio {
+                        audio.resume();
+                    }
+                } else {
+                    if let Some(ref audio) = self.audio {
+                        audio.pause();
+                    }
                     // Release grab on focus loss, but do NOT set
                     // mouse_released_by_escape — that flag is only for
                     // explicit Escape key presses. Keeping it clear means
