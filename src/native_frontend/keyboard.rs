@@ -19,6 +19,12 @@ pub enum KeyOutcome {
     Continue,
     /// The shader preset should be cycled (F4).
     CycleShader,
+    /// Toggle the debugger open/closed (F5).
+    ToggleDebugger,
+    /// Step over the current instruction (F10).
+    StepOver,
+    /// Step into the current instruction (F11).
+    StepInto,
 }
 
 /// Handles a key-press event.
@@ -93,7 +99,7 @@ fn handle_unmodified_key(
         KeyCode::F2 => adjust_volume(audio, 0.1),
         KeyCode::F3 => adjust_volume(audio, -0.1),
         KeyCode::F4 => return KeyOutcome::CycleShader,
-        KeyCode::F5 => toggle_debugger(app_state),
+        KeyCode::F5 => return KeyOutcome::ToggleDebugger,
         KeyCode::F6 => {
             // TODO(#1772): port save_state_to_disk from SDL2 frontend
             crate::debugging::log_info(
@@ -106,52 +112,12 @@ fn handle_unmodified_key(
                 "Load state: not yet implemented in native frontend".to_string(),
             );
         }
-        KeyCode::F10 => step_over(nes, app_state),
-        KeyCode::F11 => step_into(nes, app_state),
+        KeyCode::F10 => return KeyOutcome::StepOver,
+        KeyCode::F11 => return KeyOutcome::StepInto,
         _ => handle_controller_key(nes, key_code, true),
     }
 
     KeyOutcome::Continue
-}
-
-fn toggle_debugger(app_state: &mut NativeAppState) {
-    app_state.debugger_open = !app_state.debugger_open;
-    app_state.paused = app_state.debugger_open;
-}
-
-/// F11: step-into — execute exactly one CPU tick.
-fn step_into(nes: &mut Nes, app_state: &mut NativeAppState) {
-    enter_debugger_paused(app_state);
-    nes.run_cpu_tick();
-}
-
-/// F10: step-over — if the current instruction is a JSR, run until the
-/// matching return; otherwise behave like step-into.
-fn step_over(nes: &mut Nes, app_state: &mut NativeAppState) {
-    enter_debugger_paused(app_state);
-
-    const JSR_OPCODE: u8 = 0x20;
-    let pc = nes.cpu_ref().pc();
-    let opcode = nes.bus().borrow().read_cpu_for_debugger(pc);
-
-    if opcode == JSR_OPCODE {
-        let next_pc = pc.wrapping_add(3);
-        nes.run_cpu_tick(); // execute the JSR (enters subroutine)
-        const MAX_STEPS: usize = 1_000_000;
-        for _ in 0..MAX_STEPS {
-            if nes.cpu_ref().pc() == next_pc || nes.cpu_ref().is_halted() {
-                break;
-            }
-            nes.run_cpu_tick();
-        }
-    } else {
-        nes.run_cpu_tick();
-    }
-}
-
-fn enter_debugger_paused(app_state: &mut NativeAppState) {
-    app_state.paused = true;
-    app_state.debugger_open = true;
 }
 
 fn adjust_volume(audio: Option<&dyn NesAudio>, delta: f32) {

@@ -7,6 +7,7 @@ use crate::app_context::SharedAppContext;
 use crate::audio::NesAudio;
 use crate::console::Nes;
 use crate::debugging::Tracing;
+use crate::debugging::control::DebuggerController;
 use crate::frontend_toasts::gamepad_init_toast_message;
 use crate::native_frontend::app_state::NativeAppState;
 use crate::native_frontend::audio::NativeAudio;
@@ -30,6 +31,7 @@ pub struct NativeEventLoop {
     audio: Option<NativeAudio>,
     tracing: Tracing,
     state: NativeAppState,
+    debugger_controller: DebuggerController,
     gamepad: Option<GamepadManager>,
     gamepads_enabled: bool,
     gamepad_toast_shown: bool,
@@ -48,12 +50,14 @@ impl NativeEventLoop {
         audio: Option<NativeAudio>,
         tracing: Tracing,
     ) -> Self {
-        let (gamepads_enabled, four_score, fullscreen) = {
+        let (gamepads_enabled, four_score, fullscreen, debugger_controller) = {
             let config = app_context.borrow().config().clone();
+            let dc = DebuggerController::new(&config.breakpoints);
             (
                 config.gamepads_enabled,
                 config.four_score_enabled,
                 config.fullscreen,
+                dc,
             )
         };
 
@@ -79,6 +83,7 @@ impl NativeEventLoop {
                 window_focused: true,
                 ..NativeAppState::default()
             },
+            debugger_controller,
             gamepad,
             gamepads_enabled,
             gamepad_toast_shown: false,
@@ -105,23 +110,25 @@ impl NativeEventLoop {
     }
 
     fn run_frame(&mut self) {
-        if self.state.paused {
+        if self.state.paused && !self.debugger_controller.is_paused() {
+            // Manually paused (not debugger) — skip frame
             return;
         }
 
-        // Emulate until PPU completes a frame
-        while !self.nes.is_ready_to_render() && !self.nes.cpu_ref().is_halted() {
-            self.nes.run(&self.tracing);
-
-            // Drain audio samples from APU
-            if let Some(ref mut audio) = self.audio {
-                while self.nes.sample_ready() {
-                    if let Some(sample) = self.nes.get_sample() {
-                        audio.queue_sample(sample);
+        let audio = self.audio.take();
+        let audio_cell = std::cell::RefCell::new(audio);
+        self.debugger_controller
+            .run_frame(&mut self.nes, &self.tracing, &mut |nes| {
+                if let Some(ref mut audio) = *audio_cell.borrow_mut() {
+                    while nes.sample_ready() {
+                        if let Some(sample) = nes.get_sample() {
+                            audio.queue_sample(sample);
+                        }
                     }
                 }
-            }
-        }
+            });
+        self.audio = audio_cell.into_inner();
+        self.sync_from_controller();
         self.nes.clear_ready_to_render();
 
         // Log audio stats every second
@@ -135,6 +142,17 @@ impl NativeEventLoop {
                 ));
             }
             self.last_audio_stats_print = Instant::now();
+        }
+    }
+
+    /// Sync frontend state from the debugger controller.
+    fn sync_from_controller(&mut self) {
+        if self.debugger_controller.is_debugger_open() {
+            self.state.paused = true;
+            self.state.debugger_open = true;
+        } else if self.state.debugger_open {
+            self.state.paused = false;
+            self.state.debugger_open = false;
         }
     }
 
@@ -188,6 +206,8 @@ impl ApplicationHandler for NativeEventLoop {
                 self.gl_wrapper = Some(gl);
                 if !self.initialized {
                     self.initialize_audio();
+                    self.debugger_controller
+                        .load_breakpoints_from_debug_file(&self.nes);
                     self.initialized = true;
                 }
             }
@@ -205,7 +225,11 @@ impl ApplicationHandler for NativeEventLoop {
         event: WindowEvent,
     ) {
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CloseRequested => {
+                self.debugger_controller
+                    .save_breakpoints_to_debug_file(&self.nes);
+                event_loop.exit();
+            }
 
             WindowEvent::Focused(focused) => {
                 self.state.window_focused = focused;
@@ -260,6 +284,18 @@ impl ApplicationHandler for NativeEventLoop {
                             if let Some(ref mut gl) = self.gl_wrapper {
                                 gl.cycle_shader();
                             }
+                        }
+                        KeyOutcome::ToggleDebugger => {
+                            self.debugger_controller.toggle_debugger(&self.nes);
+                            self.sync_from_controller();
+                        }
+                        KeyOutcome::StepOver => {
+                            self.debugger_controller.step_over(&mut self.nes);
+                            self.sync_from_controller();
+                        }
+                        KeyOutcome::StepInto => {
+                            self.debugger_controller.step_into(&mut self.nes);
+                            self.sync_from_controller();
                         }
                         KeyOutcome::Continue => {
                             if self.state.fullscreen != fullscreen_before {
@@ -365,8 +401,9 @@ impl ApplicationHandler for NativeEventLoop {
                 // Sync mouse grab state each frame.
                 self.sync_mouse_grab_state();
 
-                // Render
-                if let Some(ref mut gl) = self.gl_wrapper {
+                // Render and apply debugger UI actions
+                let action = if let Some(ref mut gl) = self.gl_wrapper {
+                    gl.update_breakpoints(self.debugger_controller.breakpoints());
                     let overlay = self.state.overlay_text(&self.nes);
                     let crosshair =
                         mouse::zapper_crosshair(&self.nes, self.state.last_zapper_position);
@@ -376,8 +413,13 @@ impl ApplicationHandler for NativeEventLoop {
                         overlay.as_deref(),
                         false,
                         crosshair,
-                    );
-                }
+                    )
+                } else {
+                    Default::default()
+                };
+                self.debugger_controller
+                    .apply_ui_action(&mut self.nes, action);
+                self.sync_from_controller();
             }
 
             _ => {}
