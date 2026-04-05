@@ -328,23 +328,24 @@ fn cart_switch_overlay_text(cart_switch: &CartridgeSwitchState) -> String {
 /// Generate autorun overlay text showing playback/recording progress.
 fn autorun_overlay_text(autorun_state: &AutorunState, tv_system: TimingMode) -> String {
     match autorun_state.mode() {
+        // Both pure playback and extend-playback (record mode replaying existing frames)
+        // display the same progress indicator.
         AutorunMode::Playback => {
             let current = autorun_state.current_frame_index();
             let total = autorun_state.total_frames();
             let (elapsed, total_str) = format_time_pair(current, total, tv_system);
             format!("Playback\n{elapsed} / {total_str}")
         }
+        AutorunMode::Record if autorun_state.is_extending_playback() => {
+            let current = autorun_state.current_frame_index();
+            let total = autorun_state.total_frames();
+            let (elapsed, total_str) = format_time_pair(current, total, tv_system);
+            format!("Playback\n{elapsed} / {total_str}")
+        }
         AutorunMode::Record => {
-            if autorun_state.is_extending_playback() {
-                let current = autorun_state.current_frame_index();
-                let total = autorun_state.total_frames();
-                let (elapsed, total_str) = format_time_pair(current, total, tv_system);
-                format!("Playback\n{elapsed} / {total_str}")
-            } else {
-                let current = autorun_state.total_frames();
-                let (elapsed, _) = format_time_pair(current, current, tv_system);
-                format!("Recording\n{elapsed} / {elapsed}")
-            }
+            let current = autorun_state.total_frames();
+            let (elapsed, _) = format_time_pair(current, current, tv_system);
+            format!("Recording\n{elapsed} / {elapsed}")
         }
         AutorunMode::None => String::new(),
     }

@@ -181,15 +181,9 @@ impl Mapper for Mapper311 {
         // [0] prg_bank
         // [1] flags: bit 0 = irq_enabled
         // [2..5] irq_count (little-endian u32)
-        let flags = self.irq_enabled as u8;
-        vec![
-            self.prg_bank,
-            flags,
-            (self.irq_count & 0xFF) as u8,
-            ((self.irq_count >> 8) & 0xFF) as u8,
-            ((self.irq_count >> 16) & 0xFF) as u8,
-            ((self.irq_count >> 24) & 0xFF) as u8,
-        ]
+        let mut snap = vec![self.prg_bank, self.irq_enabled as u8];
+        snap.extend_from_slice(&self.irq_count.to_le_bytes());
+        snap
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
@@ -198,10 +192,7 @@ impl Mapper for Mapper311 {
         }
         self.prg_bank = data[0] & 0x01;
         self.irq_enabled = (data[1] & 0x01) != 0;
-        self.irq_count = (data[2] as u32)
-            | ((data[3] as u32) << 8)
-            | ((data[4] as u32) << 16)
-            | ((data[5] as u32) << 24);
+        self.irq_count = u32::from_le_bytes([data[2], data[3], data[4], data[5]]);
         self.apply_prg_banking();
     }
 }
@@ -222,22 +213,10 @@ mod tests {
     /// - Bytes 0x12000–0x13FFF (8 KiB bank 9):    0x09 (fixed at $6000)
     fn make_prg_rom_128k() -> Vec<u8> {
         let mut rom = vec![0u8; 128 * 1024];
-        // 32 KiB bank 0 → $8000 when prg_bank=0
-        for b in &mut rom[0..0x8000] {
-            *b = 0xAA;
-        }
-        // 32 KiB bank 1 → $8000 when prg_bank=1
-        for b in &mut rom[0x8000..0x10000] {
-            *b = 0xBB;
-        }
-        // 4 KiB bank 17 (offset 17 * 4096 = 0x11000) → fixed at $5000
-        for b in &mut rom[0x11000..0x12000] {
-            *b = 0x17;
-        }
-        // 8 KiB bank 9 (offset 9 * 8192 = 0x12000) → fixed at $6000
-        for b in &mut rom[0x12000..0x14000] {
-            *b = 0x09;
-        }
+        rom[0x00000..0x08000].fill(0xAA); // 32 KiB bank 0 → $8000 when prg_bank=0
+        rom[0x08000..0x10000].fill(0xBB); // 32 KiB bank 1 → $8000 when prg_bank=1
+        rom[0x11000..0x12000].fill(0x17); // 4 KiB bank 17 (offset 17 * 4096) → fixed at $5000
+        rom[0x12000..0x14000].fill(0x09); // 8 KiB bank 9 (offset 9 * 8192) → fixed at $6000
         rom
     }
 
