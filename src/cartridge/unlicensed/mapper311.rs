@@ -73,8 +73,6 @@ pub struct Mapper311 {
     irq_enabled: bool,
     /// 32-bit CPU cycle counter; IRQ is asserted when count ≥ IRQ_THRESHOLD.
     irq_count: u32,
-    /// Whether the IRQ line is currently asserted.
-    irq_pending: bool,
 }
 
 impl Mapper311 {
@@ -93,7 +91,6 @@ impl Mapper311 {
             prg_bank: 0,
             irq_enabled: false,
             irq_count: 0,
-            irq_pending: false,
         };
         mapper.apply_prg_banking();
         mapper
@@ -158,7 +155,6 @@ impl Mapper for Mapper311 {
             0x4122 => {
                 self.irq_enabled = (value & 0x01) != 0;
                 self.irq_count = 0;
-                self.irq_pending = false;
             }
             _ => {}
         }
@@ -166,30 +162,26 @@ impl Mapper for Mapper311 {
 
     fn cpu_cycle(&mut self) {
         if self.irq_enabled {
-            self.irq_count = self.irq_count.saturating_add(1);
-            if self.irq_count >= IRQ_THRESHOLD {
-                self.irq_pending = true;
-            }
+            self.irq_count = self.irq_count.wrapping_add(1);
         }
     }
 
     fn irq_pending(&self) -> bool {
-        self.irq_pending
+        self.irq_enabled && self.irq_count >= IRQ_THRESHOLD
     }
 
     fn reset(&mut self) {
         self.prg_bank = 0;
         self.irq_enabled = false;
         self.irq_count = 0;
-        self.irq_pending = false;
         self.apply_prg_banking();
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
         // [0] prg_bank
-        // [1] flags: bit 0 = irq_enabled, bit 1 = irq_pending
+        // [1] flags: bit 0 = irq_enabled
         // [2..5] irq_count (little-endian u32)
-        let flags = (self.irq_enabled as u8) | ((self.irq_pending as u8) << 1);
+        let flags = self.irq_enabled as u8;
         vec![
             self.prg_bank,
             flags,
@@ -206,7 +198,6 @@ impl Mapper for Mapper311 {
         }
         self.prg_bank = data[0] & 0x01;
         self.irq_enabled = (data[1] & 0x01) != 0;
-        self.irq_pending = (data[1] & 0x02) != 0;
         self.irq_count = (data[2] as u32)
             | ((data[3] as u32) << 8)
             | ((data[4] as u32) << 16)
@@ -645,6 +636,26 @@ mod tests {
             "Restored IRQ enabled state must match"
         );
         assert_eq!(restored.irq_count, 100, "Restored IRQ counter must match");
+    }
+
+    #[test]
+    fn snapshot_restore_derives_irq_pending_from_count() {
+        let mut mapper = make_mapper_direct();
+        mapper.write_prg(0x4122, 0x01); // enable IRQ
+        for _ in 0..IRQ_THRESHOLD {
+            mapper.cpu_cycle();
+        }
+        assert!(mapper.irq_pending(), "IRQ must be pending before snapshot");
+
+        let snap = mapper.registers_snapshot();
+
+        let mut restored = make_mapper_direct();
+        restored.restore_registers(&snap);
+
+        assert!(
+            restored.irq_pending(),
+            "Restored mapper must derive irq_pending from count >= threshold"
+        );
     }
 
     #[test]
