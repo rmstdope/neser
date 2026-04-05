@@ -298,6 +298,9 @@ fn map_winit_key(key: &PhysicalKey) -> Option<imgui::Key> {
             KeyCode::KeyY => Some(imgui::Key::Y),
             KeyCode::KeyZ => Some(imgui::Key::Z),
             KeyCode::F1 => Some(imgui::Key::F1),
+            KeyCode::F5 => Some(imgui::Key::F5),
+            KeyCode::F10 => Some(imgui::Key::F10),
+            KeyCode::F11 => Some(imgui::Key::F11),
             _ => None,
         },
         _ => None,
@@ -355,5 +358,21 @@ mod tests {
     fn map_winit_key_returns_none_for_unspecified_physical_key() {
         let key = PhysicalKey::Unidentified(winit::keyboard::NativeKeyCode::Unidentified);
         assert_eq!(map_winit_key(&key), None);
+    }
+
+    #[test]
+    fn map_winit_key_maps_debugger_function_keys() {
+        assert_eq!(
+            map_winit_key(&PhysicalKey::Code(KeyCode::F5)),
+            Some(imgui::Key::F5)
+        );
+        assert_eq!(
+            map_winit_key(&PhysicalKey::Code(KeyCode::F10)),
+            Some(imgui::Key::F10)
+        );
+        assert_eq!(
+            map_winit_key(&PhysicalKey::Code(KeyCode::F11)),
+            Some(imgui::Key::F11)
+        );
     }
 }
