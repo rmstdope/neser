@@ -470,10 +470,35 @@ fn run_native_frontend(
     use audio::NesAudio;
     use native_frontend::{NativeAudio, NativeEventLoop};
 
-    // Create audio output (request 44.1 kHz) unless disabled.
+    // Read autorun config up front
+    let (
+        autorun_mode,
+        autorun_headless,
+        autorun_overwrite,
+        autorun_extend,
+        autorun_from_checkpoint,
+        autorun_format,
+    ) = {
+        let config = app_context.borrow();
+        let config = config.config();
+        (
+            config.autorun_mode,
+            config.autorun_headless,
+            config.autorun_overwrite,
+            config.autorun_extend,
+            config.autorun_from_checkpoint,
+            config.autorun_format,
+        )
+    };
+
+    // Headless autorun is only supported in playback mode because
+    // record/extend have no guaranteed termination condition.
+    let headless = autorun_headless && autorun_mode == console::AutorunMode::Playback;
+
+    // Create audio output (request 44.1 kHz) unless disabled or headless.
     let mut audio_sample_rate = None;
     let audio_enabled = app_context.borrow().config().audio_enabled;
-    let audio = if !audio_enabled {
+    let audio = if !audio_enabled || headless {
         None
     } else {
         let audio = NativeAudio::new(44100)?;
@@ -532,10 +557,33 @@ fn run_native_frontend(
     nes_instance.reset(false);
 
     let tracing = app_context.borrow().config().tracing;
-    let event_loop = NativeEventLoop::new(app_context, nes_instance, audio, tracing);
-    event_loop.run()?;
+    let mut event_loop =
+        NativeEventLoop::new(app_context.clone(), nes_instance, audio, tracing, headless);
 
-    Ok(())
+    // Initialize autorun AFTER reset so checkpoint state restore is not overwritten.
+    if autorun_mode != console::AutorunMode::None {
+        event_loop.init_autorun(
+            autorun_mode,
+            &rom_path,
+            autorun_overwrite,
+            autorun_extend,
+            autorun_from_checkpoint,
+            autorun_format,
+        )?;
+    }
+
+    let run_result = event_loop.run();
+
+    // Handle autorun exit codes
+    if let Err(ref e) = run_result
+        && let Some(exit_code) = e
+            .strip_prefix("AUTORUN_EXIT:")
+            .and_then(|s| s.parse::<i32>().ok())
+    {
+        std::process::exit(exit_code);
+    }
+
+    run_result.map_err(|e| e.into())
 }
 
 #[cfg(all(test, feature = "sdl"))]
