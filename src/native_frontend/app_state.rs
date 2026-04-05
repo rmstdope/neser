@@ -20,8 +20,13 @@ pub struct CartridgeSwitchState {
     /// Text currently typed into the filter box.
     pub filter: String,
 
-    /// Index of the currently highlighted entry.
+    /// Index of the currently highlighted entry within the visible
+    /// (filtered) list.
     pub selection: usize,
+
+    /// Indices into `entries` that pass the current filter.
+    /// Empty when no filter is active (all entries are visible).
+    filtered_indices: Vec<usize>,
 }
 
 impl CartridgeSwitchState {
@@ -30,7 +35,124 @@ impl CartridgeSwitchState {
         self.open = false;
         self.filter.clear();
         self.selection = 0;
+        self.filtered_indices.clear();
     }
+
+    /// Recomputes `filtered_indices` from the current filter text.
+    /// Clamps `selection` so it stays within the visible range.
+    pub fn refresh_filtered(&mut self) {
+        let needle = self.filter.to_ascii_lowercase();
+        self.filtered_indices = self
+            .entries
+            .iter()
+            .enumerate()
+            .filter_map(|(i, path)| {
+                if entry_matches_filter(path, &needle) {
+                    Some(i)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let count = self.visible_count();
+        if count == 0 {
+            self.selection = 0;
+        } else {
+            self.selection = self.selection.min(count - 1);
+        }
+    }
+
+    /// Number of entries currently visible (after filtering).
+    pub fn visible_count(&self) -> usize {
+        if self.filter.is_empty() {
+            self.entries.len()
+        } else {
+            self.filtered_indices.len()
+        }
+    }
+
+    /// Moves the selection cursor down, wrapping around.
+    pub fn move_selection_next(&mut self) {
+        let count = self.visible_count();
+        if count == 0 {
+            self.selection = 0;
+            return;
+        }
+        self.selection = (self.selection + 1) % count;
+    }
+
+    /// Moves the selection cursor up, wrapping around.
+    pub fn move_selection_prev(&mut self) {
+        let count = self.visible_count();
+        if count == 0 {
+            self.selection = 0;
+            return;
+        }
+        self.selection = if self.selection == 0 {
+            count - 1
+        } else {
+            self.selection - 1
+        };
+    }
+
+    /// Returns the full path of the currently selected entry, if any.
+    pub fn selected_entry(&self) -> Option<&str> {
+        self.visible_entry_at(self.selection)
+    }
+
+    /// Returns the entry at the given visible (post-filter) index.
+    fn visible_entry_at(&self, visible_idx: usize) -> Option<&str> {
+        let entry_idx = if self.filter.is_empty() {
+            Some(visible_idx)
+        } else {
+            self.filtered_indices.get(visible_idx).copied()
+        };
+        entry_idx
+            .and_then(|i| self.entries.get(i))
+            .map(String::as_str)
+    }
+}
+
+/// Returns true if the needle characters appear in order (fuzzy) in the
+/// haystack filename, or if the needle is a substring of the directory.
+fn entry_matches_filter(path: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    let filename_haystack = std::path::Path::new(path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(path)
+        .to_ascii_lowercase();
+    if fuzzy_matches(needle, &filename_haystack) {
+        return true;
+    }
+    let dir_haystack = std::path::Path::new(path)
+        .parent()
+        .and_then(|p| p.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    dir_haystack.contains(needle)
+}
+
+/// Fuzzy subsequence match: every character in `needle` must appear in
+/// `haystack` in order, but not necessarily consecutively.
+fn fuzzy_matches(needle: &str, haystack: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    let mut needle_chars = needle.chars();
+    let mut current = needle_chars.next().expect("needle is non-empty");
+    for ch in haystack.chars() {
+        if ch == current {
+            match needle_chars.next() {
+                Some(next) => current = next,
+                None => return true,
+            }
+        }
+    }
+    false
 }
 
 /// All runtime state owned by the native frontend event loop.
@@ -138,37 +260,57 @@ P: B\n\
 
 fn cart_switch_overlay_text(cart_switch: &CartridgeSwitchState) -> String {
     if cart_switch.entries.is_empty() {
-        return "Cartridge Switch\n[No catalog loaded]\n\nPress Escape to cancel".to_string();
+        return "Switch cartridge\nNo catalog entries found\n\nPress Esc to close".to_string();
     }
 
-    // TODO: cache the filtered list and rendered lines in CartridgeSwitchState
-    // and only recompute when entries/filter/selection changes, to avoid
-    // allocating a Vec at 60fps while the dialog is open with a large catalog.
-    let filter_lower = cart_switch.filter.to_lowercase();
-    let visible: Vec<&str> = cart_switch
-        .entries
-        .iter()
-        .map(String::as_str)
-        .filter(|e| cart_switch.filter.is_empty() || e.to_lowercase().contains(&filter_lower))
-        .collect();
+    let filter_label = if cart_switch.filter.is_empty() {
+        "(none)"
+    } else {
+        cart_switch.filter.as_str()
+    };
+    let visible_count = cart_switch.visible_count();
+    let total_count = cart_switch.entries.len();
+    let matches_label = format!("Matches: {visible_count}/{total_count}");
 
-    let mut lines = vec!["Cartridge Switch".to_string()];
-    if !cart_switch.filter.is_empty() {
-        lines.push(format!("Filter: {}", cart_switch.filter));
+    if visible_count == 0 {
+        return format!(
+            "Switch cartridge\nFilter: {filter_label}\n{matches_label}\n\
+             No matching entries\n\nBackspace: Edit filter    Esc: Cancel"
+        );
     }
-    lines.push(String::new());
 
-    for (i, entry) in visible.iter().enumerate() {
-        let marker = if i == cart_switch.selection {
-            "> "
-        } else {
-            "  "
+    const MAX_VISIBLE: usize = 12;
+    let selected = cart_switch.selection.min(visible_count.saturating_sub(1));
+    let mut start = selected.saturating_sub(MAX_VISIBLE / 2);
+    let mut end = (start + MAX_VISIBLE).min(visible_count);
+    if end - start < MAX_VISIBLE {
+        start = end.saturating_sub(MAX_VISIBLE);
+    }
+    end = (start + MAX_VISIBLE).min(visible_count);
+
+    let mut lines = vec![
+        "Switch cartridge".to_string(),
+        format!("Filter: {filter_label}"),
+        matches_label,
+        "Up/Down: Select".to_string(),
+        "Type to filter    Backspace: Delete".to_string(),
+        "Enter: Load    Esc: Cancel".to_string(),
+        String::new(),
+    ];
+
+    for visible_idx in start..end {
+        let Some(entry_text) = cart_switch.visible_entry_at(visible_idx) else {
+            continue;
         };
-        lines.push(format!("{marker}{entry}"));
+
+        let line = if visible_idx == selected {
+            format!(">> {entry_text} <<")
+        } else {
+            format!("   {entry_text}")
+        };
+        lines.push(line);
     }
 
-    lines.push(String::new());
-    lines.push("Enter: Load  Escape: Cancel".to_string());
     lines.join("\n")
 }
 
@@ -287,8 +429,8 @@ mod tests {
             "overlay_text should be Some when cart-switch is open"
         );
         assert!(
-            text.unwrap().contains("Escape"),
-            "cart-switch overlay should mention Escape to cancel"
+            text.unwrap().contains("Esc"),
+            "cart-switch overlay should mention Esc to close"
         );
     }
 
@@ -358,7 +500,7 @@ mod tests {
         let autorun = make_recording_autorun_state();
         let text = state.overlay_text(&make_nes(), Some(&autorun)).unwrap();
         assert!(
-            text.contains("Cartridge Switch"),
+            text.contains("Switch cartridge"),
             "cart-switch should take priority over autorun"
         );
     }
@@ -372,5 +514,220 @@ mod tests {
         assert_eq!(format_mm_ss(60), "01:00");
         assert_eq!(format_mm_ss(125), "02:05");
         assert_eq!(format_mm_ss(3661), "61:01");
+    }
+
+    // ── fuzzy matching ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_fuzzy_matches_empty_needle() {
+        assert!(fuzzy_matches("", "anything"));
+    }
+
+    #[test]
+    fn test_fuzzy_matches_consecutive_chars() {
+        assert!(fuzzy_matches("abc", "abc"));
+    }
+
+    #[test]
+    fn test_fuzzy_matches_non_consecutive_chars() {
+        assert!(fuzzy_matches("ac", "abc"));
+    }
+
+    #[test]
+    fn test_fuzzy_matches_spread_chars() {
+        assert!(fuzzy_matches("smb", "super mario bros"));
+    }
+
+    #[test]
+    fn test_fuzzy_matches_no_match() {
+        assert!(!fuzzy_matches("ba", "abc"));
+    }
+
+    #[test]
+    fn test_fuzzy_matches_partial_match_at_end() {
+        assert!(!fuzzy_matches("abcd", "abc"));
+    }
+
+    #[test]
+    fn test_entry_matches_filter_empty_needle() {
+        assert!(entry_matches_filter("/roms/test.nes", ""));
+    }
+
+    #[test]
+    fn test_entry_matches_filter_by_filename() {
+        assert!(entry_matches_filter("/roms/super_mario.nes", "smr"));
+    }
+
+    #[test]
+    fn test_entry_matches_filter_by_directory_substring() {
+        assert!(entry_matches_filter("/home/user/roms/game.nes", "roms"));
+    }
+
+    #[test]
+    fn test_entry_matches_filter_case_insensitive() {
+        assert!(entry_matches_filter("/roms/Zelda.nes", "zelda"));
+    }
+
+    // ── CartridgeSwitchState ─────────────────────────────────────────────────
+
+    fn make_cart_switch(entries: &[&str]) -> CartridgeSwitchState {
+        CartridgeSwitchState {
+            open: true,
+            entries: entries.iter().map(|s| s.to_string()).collect(),
+            filter: String::new(),
+            selection: 0,
+            filtered_indices: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn test_visible_count_no_filter() {
+        let cs = make_cart_switch(&["a.nes", "b.nes", "c.nes"]);
+        assert_eq!(cs.visible_count(), 3);
+    }
+
+    #[test]
+    fn test_visible_count_with_filter() {
+        let mut cs = make_cart_switch(&["alpha.nes", "beta.nes", "gamma.nes"]);
+        cs.filter = "lph".to_string();
+        cs.refresh_filtered();
+        assert_eq!(cs.visible_count(), 1, "only alpha matches 'lph'");
+    }
+
+    #[test]
+    fn test_refresh_filtered_clamps_selection() {
+        let mut cs = make_cart_switch(&["alpha.nes", "beta.nes", "gamma.nes"]);
+        cs.selection = 2;
+        cs.filter = "beta".to_string();
+        cs.refresh_filtered();
+        assert_eq!(cs.selection, 0, "selection clamped to single match");
+    }
+
+    #[test]
+    fn test_move_selection_next_wraps() {
+        let mut cs = make_cart_switch(&["a.nes", "b.nes", "c.nes"]);
+        cs.selection = 2;
+        cs.move_selection_next();
+        assert_eq!(cs.selection, 0, "should wrap to first");
+    }
+
+    #[test]
+    fn test_move_selection_prev_wraps() {
+        let mut cs = make_cart_switch(&["a.nes", "b.nes", "c.nes"]);
+        cs.selection = 0;
+        cs.move_selection_prev();
+        assert_eq!(cs.selection, 2, "should wrap to last");
+    }
+
+    #[test]
+    fn test_move_selection_next_empty() {
+        let mut cs = make_cart_switch(&[]);
+        cs.move_selection_next();
+        assert_eq!(cs.selection, 0);
+    }
+
+    #[test]
+    fn test_selected_entry_no_filter() {
+        let mut cs = make_cart_switch(&["a.nes", "b.nes", "c.nes"]);
+        cs.selection = 1;
+        assert_eq!(cs.selected_entry(), Some("b.nes"));
+    }
+
+    #[test]
+    fn test_selected_entry_with_filter() {
+        let mut cs = make_cart_switch(&["alpha.nes", "beta.nes", "gamma.nes"]);
+        cs.filter = "mm".to_string();
+        cs.refresh_filtered();
+        // Only gamma matches 'mm' (g-a-m-m-a)
+        assert_eq!(cs.visible_count(), 1);
+        cs.selection = 0;
+        assert_eq!(cs.selected_entry(), Some("gamma.nes"));
+    }
+
+    #[test]
+    fn test_selected_entry_empty() {
+        let cs = make_cart_switch(&[]);
+        assert_eq!(cs.selected_entry(), None);
+    }
+
+    #[test]
+    fn test_close_resets_filter_and_selection() {
+        let mut cs = make_cart_switch(&["a.nes", "b.nes"]);
+        cs.filter = "test".to_string();
+        cs.selection = 1;
+        cs.refresh_filtered();
+        cs.close();
+        assert!(!cs.open);
+        assert!(cs.filter.is_empty());
+        assert_eq!(cs.selection, 0);
+    }
+
+    // ── overlay text: cartridge switch ────────────────────────────────────────
+
+    #[test]
+    fn test_cart_switch_overlay_no_catalog() {
+        let cs = CartridgeSwitchState {
+            open: true,
+            ..Default::default()
+        };
+        let text = cart_switch_overlay_text(&cs);
+        assert!(
+            text.contains("No catalog"),
+            "should show no-catalog message"
+        );
+    }
+
+    #[test]
+    fn test_cart_switch_overlay_shows_filter() {
+        let mut cs = make_cart_switch(&["a.nes", "b.nes"]);
+        cs.filter = "test".to_string();
+        cs.refresh_filtered();
+        let text = cart_switch_overlay_text(&cs);
+        assert!(text.contains("Filter: test"), "should show filter text");
+    }
+
+    #[test]
+    fn test_cart_switch_overlay_shows_match_count() {
+        let mut cs = make_cart_switch(&["alpha.nes", "beta.nes", "gamma.nes"]);
+        cs.filter = "lph".to_string();
+        cs.refresh_filtered();
+        let text = cart_switch_overlay_text(&cs);
+        assert!(
+            text.contains("Matches: 1/3"),
+            "should show 1/3 matches, got: {text}"
+        );
+    }
+
+    #[test]
+    fn test_cart_switch_overlay_no_filter_shows_all() {
+        let cs = make_cart_switch(&["a.nes", "b.nes"]);
+        let text = cart_switch_overlay_text(&cs);
+        assert!(text.contains("Matches: 2/2"), "got: {text}");
+    }
+
+    #[test]
+    fn test_cart_switch_overlay_selected_entry_marked() {
+        let cs = make_cart_switch(&["a.nes", "b.nes"]);
+        let text = cart_switch_overlay_text(&cs);
+        assert!(
+            text.contains(">> a.nes <<"),
+            "first entry should be selected, got: {text}"
+        );
+        assert!(
+            text.contains("   b.nes"),
+            "second entry should not be selected, got: {text}"
+        );
+    }
+
+    #[test]
+    fn test_cart_switch_overlay_no_matches() {
+        let mut cs = make_cart_switch(&["a.nes", "b.nes"]);
+        cs.filter = "zzzzz".to_string();
+        cs.refresh_filtered();
+        let text = cart_switch_overlay_text(&cs);
+        assert!(
+            text.contains("No matching entries"),
+            "should show no-match message, got: {text}"
+        );
     }
 }
