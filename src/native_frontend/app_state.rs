@@ -4,7 +4,8 @@
 //! keyboard handler, event loop, and rendering code share a single source of
 //! truth without borrowing individual fields piecemeal.
 
-use crate::console::Nes;
+use crate::autorun::state::AutorunState;
+use crate::console::{AutorunMode, Nes, TimingMode};
 use winit::keyboard::ModifiersState;
 
 /// State for the in-game cartridge-switch dialog.
@@ -78,10 +79,20 @@ impl NativeAppState {
     ///
     /// Priority (highest first):
     /// 1. Cartridge-switch dialog (always shown when open, even with no entries).
-    /// 2. Help overlay.
-    pub fn overlay_text(&self, _nes: &Nes) -> Option<String> {
+    /// 2. Autorun status (playback/recording progress).
+    /// 3. Help overlay.
+    pub fn overlay_text(&self, nes: &Nes, autorun_state: Option<&AutorunState>) -> Option<String> {
         if self.cart_switch.open {
             return Some(cart_switch_overlay_text(&self.cart_switch));
+        }
+        if let Some(autorun) = autorun_state {
+            let tv_system = nes
+                .app_context()
+                .borrow()
+                .config()
+                .hardware_model
+                .timing_mode();
+            return Some(autorun_overlay_text(autorun, tv_system));
         }
         if self.help_overlay_visible {
             return Some(help_overlay_text());
@@ -161,6 +172,48 @@ fn cart_switch_overlay_text(cart_switch: &CartridgeSwitchState) -> String {
     lines.join("\n")
 }
 
+/// Generate autorun overlay text showing playback/recording progress.
+fn autorun_overlay_text(autorun_state: &AutorunState, tv_system: TimingMode) -> String {
+    match autorun_state.mode() {
+        AutorunMode::Playback => {
+            let current = autorun_state.current_frame_index();
+            let total = autorun_state.total_frames();
+            let (elapsed, total_str) = format_time_pair(current, total, tv_system);
+            format!("Playback\n{elapsed} / {total_str}")
+        }
+        AutorunMode::Record => {
+            if autorun_state.is_extending_playback() {
+                let current = autorun_state.current_frame_index();
+                let total = autorun_state.total_frames();
+                let (elapsed, total_str) = format_time_pair(current, total, tv_system);
+                format!("Playback\n{elapsed} / {total_str}")
+            } else {
+                let current = autorun_state.total_frames();
+                let (elapsed, _) = format_time_pair(current, current, tv_system);
+                format!("Recording\n{elapsed} / {elapsed}")
+            }
+        }
+        AutorunMode::None => String::new(),
+    }
+}
+
+fn format_time_pair(
+    current_frames: usize,
+    total_frames: usize,
+    tv_system: TimingMode,
+) -> (String, String) {
+    let fps = tv_system.frame_rate_hz().round().max(1.0) as usize;
+    let current_secs = current_frames / fps;
+    let total_secs = total_frames / fps;
+    (format_mm_ss(current_secs), format_mm_ss(total_secs))
+}
+
+fn format_mm_ss(seconds: usize) -> String {
+    let minutes = seconds / 60;
+    let secs = seconds % 60;
+    format!("{minutes:02}:{secs:02}")
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -178,14 +231,14 @@ mod tests {
     #[test]
     fn test_overlay_text_returns_none_when_nothing_visible() {
         let state = NativeAppState::default();
-        assert!(state.overlay_text(&make_nes()).is_none());
+        assert!(state.overlay_text(&make_nes(), None).is_none());
     }
 
     #[test]
     fn test_overlay_text_returns_controls_when_help_visible() {
         let mut state = NativeAppState::default();
         state.help_overlay_visible = true;
-        let text = state.overlay_text(&make_nes());
+        let text = state.overlay_text(&make_nes(), None);
         assert!(
             text.is_some(),
             "overlay_text should be Some when help is visible"
@@ -200,7 +253,7 @@ mod tests {
     fn test_overlay_text_help_contains_wasd() {
         let mut state = NativeAppState::default();
         state.help_overlay_visible = true;
-        let text = state.overlay_text(&make_nes()).unwrap();
+        let text = state.overlay_text(&make_nes(), None).unwrap();
         assert!(
             text.contains("W/A/S/D"),
             "help overlay should list W/A/S/D keys"
@@ -211,7 +264,7 @@ mod tests {
     fn test_overlay_text_help_contains_hotkeys() {
         let mut state = NativeAppState::default();
         state.help_overlay_visible = true;
-        let text = state.overlay_text(&make_nes()).unwrap();
+        let text = state.overlay_text(&make_nes(), None).unwrap();
         assert!(
             text.contains("Ctrl+Q"),
             "help overlay should mention Ctrl+Q"
@@ -228,7 +281,7 @@ mod tests {
     fn test_overlay_text_returns_cart_switch_when_open() {
         let mut state = NativeAppState::default();
         state.cart_switch.open = true;
-        let text = state.overlay_text(&make_nes());
+        let text = state.overlay_text(&make_nes(), None);
         assert!(
             text.is_some(),
             "overlay_text should be Some when cart-switch is open"
@@ -244,7 +297,7 @@ mod tests {
         let mut state = NativeAppState::default();
         state.cart_switch.open = true;
         state.help_overlay_visible = true;
-        let text = state.overlay_text(&make_nes()).unwrap();
+        let text = state.overlay_text(&make_nes(), None).unwrap();
         // Cart-switch takes priority; help text should NOT appear
         assert!(
             !text.contains("W/A/S/D"),
