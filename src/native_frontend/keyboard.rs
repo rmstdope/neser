@@ -165,11 +165,9 @@ fn adjust_volume(audio: Option<&dyn NesAudio>, delta: f32) {
 /// Maps a [`KeyCode`] to NES/SNES/Power Pad button presses or releases for
 /// both player ports simultaneously.  Shared between press and release paths.
 ///
-/// Note: Player 1 keys are intentionally applied to both ports because the
-/// native frontend has no gamepad support yet, so a single keyboard must cover
-/// both players. When gamepad support is added, this should target only the
-/// port not already claimed by a gamepad.  Player 2-specific keys (IJKL etc.)
-/// remain port-2 only.
+/// Note: Player 1 keys are intentionally applied to both ports so a single
+/// keyboard can cover both players when no gamepad is connected.  Player
+/// 2-specific keys (IJKL etc.) remain port-2 only.
 fn handle_controller_key(nes: &mut Nes, key_code: KeyCode, pressed: bool) {
     match key_code {
         // ── Player 1: 1/2/3 → Power Pad buttons ──────────────────────────

@@ -47,6 +47,7 @@ web-sys = { version = "0.3", optional = true, features = ["Window", "console"] }
 wasm-bindgen-test = { version = "0.3.45", optional = true }
 imgui = { version = "0.11", optional = true }
 cpal = { version = "0.15", optional = true }
+gilrs = { version = "0.11", optional = true }
 num_enum = "0.7"
 ratatui = { version = "0.29", optional = true }
 crossterm = { version = "0.28", optional = true }
@@ -79,6 +80,7 @@ native = [
 	"dep:imgui-opengl-renderer",
 	"dep:librashader",
 	"dep:cpal",
+	"dep:gilrs",
 ]
 wasm = [
 	"dep:wasm-bindgen",
