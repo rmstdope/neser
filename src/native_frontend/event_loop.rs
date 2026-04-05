@@ -6,7 +6,7 @@
 use crate::app_context::SharedAppContext;
 use crate::audio::NesAudio;
 use crate::autorun::state::AutorunState;
-use crate::console::{AutorunMode, Nes};
+use crate::console::{AutorunMode, Nes, TimingMode};
 use crate::debugging::Tracing;
 use crate::debugging::control::DebuggerController;
 use crate::frontend_toasts::gamepad_init_toast_message;
@@ -55,6 +55,10 @@ pub struct NativeEventLoop {
     autorun_exit: Option<String>,
     /// Whether to run without a window (headless autorun mode).
     headless: bool,
+    /// Whether VSync is enabled (glutin swap interval handles timing).
+    vsync_enabled: bool,
+    /// Deadline for the next frame, used for manual frame limiting when VSync is off.
+    next_frame_deadline: Instant,
 }
 
 impl NativeEventLoop {
@@ -65,13 +69,14 @@ impl NativeEventLoop {
         tracing: Tracing,
         headless: bool,
     ) -> Self {
-        let (gamepads_enabled, four_score, fullscreen, debugger_controller) = {
+        let (gamepads_enabled, four_score, fullscreen, vsync_enabled, debugger_controller) = {
             let config = app_context.borrow().config().clone();
             let dc = DebuggerController::new(&config.breakpoints);
             (
                 config.gamepads_enabled,
                 config.four_score_enabled,
                 config.fullscreen,
+                config.vsync_enabled,
                 dc,
             )
         };
@@ -120,6 +125,8 @@ impl NativeEventLoop {
             autorun_state: None,
             autorun_exit: None,
             headless,
+            vsync_enabled,
+            next_frame_deadline: Instant::now(),
         }
     }
 
@@ -854,6 +861,27 @@ impl ApplicationHandler for NativeEventLoop {
                 if let Some(ref mut si) = self.sleep_inhibitor {
                     si.deactivate();
                 }
+            } else if !self.vsync_enabled {
+                // Manual frame limiting: advance deadline by target interval.
+                let timing_mode = self
+                    .nes
+                    .app_context()
+                    .borrow()
+                    .config()
+                    .hardware_model
+                    .timing_mode();
+                let target = target_frame_duration(timing_mode);
+                self.next_frame_deadline += target;
+                // Clamp to at least now to avoid spinning on past deadlines.
+                let now = Instant::now();
+                if self.next_frame_deadline < now {
+                    self.next_frame_deadline = now;
+                }
+                event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame_deadline));
+                // Prevent display from sleeping while emulating.
+                if let Some(ref mut si) = self.sleep_inhibitor {
+                    si.activate();
+                }
             } else {
                 event_loop.set_control_flow(ControlFlow::Poll);
                 // Prevent display from sleeping while emulating.
@@ -863,5 +891,37 @@ impl ApplicationHandler for NativeEventLoop {
             }
             gl.window().request_redraw();
         }
+    }
+}
+
+/// Returns the target duration per frame for the given timing mode.
+fn target_frame_duration(timing_mode: TimingMode) -> Duration {
+    Duration::from_secs_f64(1.0 / timing_mode.frame_rate_hz())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_target_frame_duration_ntsc() {
+        let duration = target_frame_duration(TimingMode::Ntsc);
+        // NTSC: ~60.098 FPS → ~16.64ms per frame
+        let ms = duration.as_secs_f64() * 1000.0;
+        assert!(
+            (16.0..=17.0).contains(&ms),
+            "NTSC frame duration should be ~16.6ms, got {ms:.2}ms"
+        );
+    }
+
+    #[test]
+    fn test_target_frame_duration_pal() {
+        let duration = target_frame_duration(TimingMode::Pal);
+        // PAL: ~50.007 FPS → ~20.0ms per frame
+        let ms = duration.as_secs_f64() * 1000.0;
+        assert!(
+            (19.5..=20.5).contains(&ms),
+            "PAL frame duration should be ~20.0ms, got {ms:.2}ms"
+        );
     }
 }
