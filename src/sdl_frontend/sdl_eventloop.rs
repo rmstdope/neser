@@ -1,8 +1,8 @@
-use super::autorun_state::AutorunState;
 use super::sdl_audio::SdlNesAudio;
 use super::sdl_gl_wrapper::SdlGlWrapper;
 use crate::app_context::{AppContext, IntoSharedAppContext, SharedAppContext};
 use crate::audio::NesAudio;
+use crate::autorun::state::AutorunState;
 use crate::bus::ControllerStateWrapper;
 use crate::console::{
     AutorunMode, Nes, SaveState, TimingMode, default_catalog_csv_path, log_hardware_selection,
