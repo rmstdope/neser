@@ -19,7 +19,9 @@
 //!
 //! # Register map
 //!
-//! Writes to `$8000–$FFFF`; register selected by `addr & 0x8001`:
+//! Writes to `$8000–$FFFF`; register selected by the low address bit
+//! (`addr & 1`, i.e. even/odd addresses). Within this decoded range, this is
+//! equivalent to `addr & 0x8001`:
 //!
 //! | Effective address | Register | Bit layout          |
 //! |-------------------|----------|---------------------|
