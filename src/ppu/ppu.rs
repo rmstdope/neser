@@ -1,7 +1,8 @@
-use crate::cartridge::{Cartridge, NametableLayout};
+use crate::cartridge::{Cartridge, NametableLayout, VsPpuType};
 use crate::console::{Nes, TimingMode};
 use crate::ppu::color_effects::apply_grayscale;
 use crate::ppu::sprites::SpritesState;
+use crate::ppu::vs_palettes;
 use crate::ppu::{Background, Memory, Registers, Rendering, Sprites, Status, Timing};
 use crate::trace_ppu;
 use serde::{Deserialize, Serialize};
@@ -147,7 +148,9 @@ pub struct Ppu {
     /// Whether Famicom emphasis bit swap is active (green/blue swapped)
     pub(crate) famicom_emphasis: bool,
     /// VS System PPU type, set during cartridge insertion.
-    vs_ppu_type: Option<crate::cartridge::VsPpuType>,
+    vs_ppu_type: Option<VsPpuType>,
+    /// VS System palette override (set from vs_ppu_type).
+    vs_palette: Option<&'static [(u8, u8, u8); 64]>,
 }
 
 impl Ppu {
@@ -212,12 +215,25 @@ impl Ppu {
         self.rendering.famicom_emphasis = enabled;
     }
 
-    pub fn set_vs_ppu_type(&mut self, vs_ppu_type: Option<crate::cartridge::VsPpuType>) {
+    pub fn set_vs_ppu_type(&mut self, vs_ppu_type: Option<VsPpuType>) {
+        self.vs_palette = vs_ppu_type.as_ref().and_then(vs_palettes::vs_palette);
         self.vs_ppu_type = vs_ppu_type;
     }
 
-    pub fn vs_ppu_type(&self) -> Option<crate::cartridge::VsPpuType> {
+    pub fn vs_ppu_type(&self) -> Option<VsPpuType> {
         self.vs_ppu_type
+    }
+
+    /// Look up an NES color index (0–63) in the active system palette.
+    ///
+    /// Returns the VS System palette color when a VS PPU type is active,
+    /// otherwise falls back to the standard NTSC palette.
+    pub fn lookup_system_palette(&self, color_index: u8) -> (u8, u8, u8) {
+        let index = (color_index & 0x3F) as usize;
+        match self.vs_palette {
+            Some(palette) => palette[index],
+            None => Nes::lookup_system_palette(color_index),
+        }
     }
 
     /// Create a new modular PPU instance
@@ -240,6 +256,7 @@ impl Ppu {
             cartridge: None,
             famicom_emphasis: false,
             vs_ppu_type: None,
+            vs_palette: None,
         }
     }
 
@@ -423,7 +440,7 @@ impl Ppu {
             // Grayscale masks the palette *output*, not the palette index.
             // This preserves correct brightness selection while removing chroma.
             color_value = apply_grayscale(color_value, grayscale);
-            let (r, g, b) = Nes::lookup_system_palette(color_value);
+            let (r, g, b) = self.lookup_system_palette(color_value);
             self.rendering
                 .screen_buffer_mut()
                 .set_pixel(entry.x, entry.y, r, g, b);
@@ -1103,7 +1120,7 @@ impl Ppu {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
+    use crate::cartridge::{NametableLayout, VsPpuType};
     use crate::console::Nes;
     use crate::ppu::{
         background, memory, registers, rendering, screen_buffer, sprites, status, timing,
@@ -3247,8 +3264,6 @@ mod tests {
 
     #[test]
     fn set_vs_ppu_type_stores_and_retrieves_value() {
-        use crate::cartridge::VsPpuType;
-
         let mut ppu = Ppu::new(TimingMode::Ntsc, crate::console::RamInitMode::Zero);
 
         // Initially None
@@ -3261,5 +3276,56 @@ mod tests {
         // Clear back to None
         ppu.set_vs_ppu_type(None);
         assert_eq!(ppu.vs_ppu_type(), None);
+    }
+
+    #[test]
+    fn ppu_lookup_uses_vs_palette_when_set() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+
+        // Without VS type, lookup returns standard NTSC palette
+        let standard = Nes::lookup_system_palette(0x00);
+        assert_eq!(ppu.lookup_system_palette(0x00), standard);
+
+        // With RP2C04-0001, entry $00 should be DAC 755 = (0xFF, 0xB6, 0xB6)
+        ppu.set_vs_ppu_type(Some(VsPpuType::Rp2c04_0001));
+        assert_eq!(
+            ppu.lookup_system_palette(0x00),
+            (0xFF, 0xB6, 0xB6),
+            "RP2C04-0001 $00 should be 755 (light pink)"
+        );
+        // Standard palette entry $00 is NOT (0xFF, 0xB6, 0xB6) — the VS palette is different
+        assert_ne!(ppu.lookup_system_palette(0x00), standard);
+    }
+
+    #[test]
+    fn ppu_lookup_falls_back_to_standard_when_no_vs_type() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+
+        // Set VS type, then clear it
+        ppu.set_vs_ppu_type(Some(VsPpuType::Rp2c04_0001));
+        ppu.set_vs_ppu_type(None);
+
+        // Should fall back to standard
+        assert_eq!(
+            ppu.lookup_system_palette(0x00),
+            Nes::lookup_system_palette(0x00)
+        );
+    }
+
+    #[test]
+    fn ppu_lookup_masks_to_6_bits() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.set_vs_ppu_type(Some(VsPpuType::Rp2c04_0001));
+
+        // 0x40 should wrap to index 0x00
+        assert_eq!(
+            ppu.lookup_system_palette(0x40),
+            ppu.lookup_system_palette(0x00)
+        );
+        // 0xFF should wrap to 0x3F
+        assert_eq!(
+            ppu.lookup_system_palette(0xFF),
+            ppu.lookup_system_palette(0x3F)
+        );
     }
 }

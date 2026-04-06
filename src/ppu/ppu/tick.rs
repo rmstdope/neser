@@ -1,5 +1,5 @@
 use super::Ppu;
-use crate::console::{Nes, TimingMode};
+use crate::console::TimingMode;
 use crate::debugging::ppu_trace_level;
 use crate::ppu::color_effects::{apply_color_emphasis, apply_grayscale};
 use crate::ppu::timing::{
@@ -525,7 +525,7 @@ fn tick_pixel_output(ppu: &mut Ppu) {
             // PPUMASK grayscale removes color by masking the palette *value* (hardware behavior),
             // which affects only chroma while preserving brightness selection.
             color_value = apply_grayscale(color_value, grayscale);
-            let (r, g, b) = Nes::lookup_system_palette(color_value);
+            let (r, g, b) = ppu.lookup_system_palette(color_value);
 
             // Apply color emphasis/tint
             let (final_r, final_g, final_b) =
@@ -592,7 +592,7 @@ fn tick_pixel_output(ppu: &mut Ppu) {
                 ppu.memory.read_palette(palette_base)
             };
             color_value = apply_grayscale(color_value, ppu.registers.is_grayscale());
-            let (r, g, b) = Nes::lookup_system_palette(color_value);
+            let (r, g, b) = ppu.lookup_system_palette(color_value);
             let (final_r, final_g, final_b) = apply_color_emphasis(
                 r,
                 g,
