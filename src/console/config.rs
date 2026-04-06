@@ -89,7 +89,7 @@ const CLI_FLAGS: &[CliFlag] = &[
     },
     CliFlag {
         flag: "--window-height",
-        help: Some("Window height in pixels (windowed mode only, e.g., --window-height 720)"),
+        help: Some("Window height in pixels (windowed mode only, e.g., --window-height 896)"),
         has_value: true,
     },
     CliFlag {
@@ -745,7 +745,7 @@ impl Default for Config {
             load_state: false,
             tracing: Tracing::default(),
             apu_channels: ApuChannels::ALL,
-            window_height: 960,
+            window_height: 896,
             debugger_alpha: 0.7,
             rom_path: None,
             controller_port1: ControllerType::Joypad,
