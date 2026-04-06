@@ -204,6 +204,10 @@ fn handle_controller_key(nes: &mut Nes, key_code: KeyCode, pressed: bool) {
         KeyCode::Period => pp_p2(nes, PowerPadButton::Twelve, pressed),
         KeyCode::KeyP => nes.set_button(2, Button::B, pressed),
 
+        // ── VS System: coin insert / service button ──────────────────────
+        KeyCode::Digit6 => nes.set_vs_coin_insert(0, pressed),
+        KeyCode::Minus => nes.set_vs_service_button(pressed),
+
         _ => {}
     }
 }

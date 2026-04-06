@@ -496,6 +496,7 @@ pub enum ExpansionPort {
     ArkanoidFamicom,
     ZapperFamicom,
     PowerPadFamicom,
+    VsSystem,
 }
 
 impl ExpansionPort {
@@ -511,6 +512,9 @@ impl ExpansionPort {
         } else if value.eq_ignore_ascii_case("power-pad") || value.eq_ignore_ascii_case("powerpad")
         {
             Some(Self::PowerPadFamicom)
+        } else if value.eq_ignore_ascii_case("vs-system") || value.eq_ignore_ascii_case("vssystem")
+        {
+            Some(Self::VsSystem)
         } else {
             None
         }
@@ -538,6 +542,8 @@ pub struct Config {
     pub expansion_port: ExpansionPort,
     /// Whether expansion port type was explicitly configured.
     pub expansion_port_explicit: bool,
+    /// VS System DIP switch value (8-bit, one bit per switch).
+    pub vs_dip_switches: u8,
     /// Emulated hardware model.
     pub hardware_model: HardwareModel,
     /// Whether the hardware model was explicitly configured.
@@ -732,6 +738,7 @@ impl Default for Config {
             hardware_mode_explicit: false,
             expansion_port: ExpansionPort::None,
             expansion_port_explicit: false,
+            vs_dip_switches: 0x00,
             hardware_model: HardwareModel::NesNtsc,
             hardware_model_explicit: false,
             audio_enabled: true,
@@ -813,7 +820,7 @@ impl Config {
         if let Some(expansion_port) = Self::parse_string_arg(args, "--expansion-port") {
             let parsed = ExpansionPort::parse(&expansion_port).ok_or_else(|| {
                 format!(
-                    "Invalid --expansion-port value: '{}'. Valid options are: none, famicom-four-players, arkanoid, zapper, power-pad",
+                    "Invalid --expansion-port value: '{}'. Valid options are: none, famicom-four-players, arkanoid, zapper, power-pad, vs-system",
                     expansion_port
                 )
             })?;
@@ -1763,6 +1770,14 @@ impl Config {
         match key {
             "hardware" => self.apply_hardware_value(value)?,
             "expansion_port" => self.apply_expansion_port_value(value)?,
+            "vs_dip_switches" => {
+                self.vs_dip_switches = Self::parse_hex_u8(value).map_err(|_| {
+                    format!(
+                        "Invalid vs_dip_switches value: '{}'. Expected hex (0x00-0xFF) or decimal (0-255)",
+                        value
+                    )
+                })?;
+            }
             "audio" => {
                 if let Ok(b) = Self::parse_bool(value) {
                     self.audio_enabled = b;
@@ -2092,6 +2107,19 @@ impl Config {
         false
     }
 
+    pub fn apply_rom_db_vs_system_hint(&mut self, is_vs: bool) -> bool {
+        if !is_vs {
+            return false;
+        }
+
+        if !self.expansion_port_explicit && self.expansion_port != ExpansionPort::VsSystem {
+            self.expansion_port = ExpansionPort::VsSystem;
+            return true;
+        }
+
+        false
+    }
+
     /// Parse a boolean value from config file.
     /// Accepts: true, false, yes, no, 1, 0 (case-insensitive)
     fn parse_bool(value: &str) -> Result<bool, ()> {
@@ -2099,6 +2127,19 @@ impl Config {
             "true" | "yes" | "1" => Ok(true),
             "false" | "no" | "0" => Ok(false),
             _ => Err(()),
+        }
+    }
+
+    /// Parse a u8 from hex (0x..) or decimal string.
+    fn parse_hex_u8(value: &str) -> Result<u8, ()> {
+        let trimmed = value.trim();
+        if let Some(hex) = trimmed
+            .strip_prefix("0x")
+            .or_else(|| trimmed.strip_prefix("0X"))
+        {
+            u8::from_str_radix(hex, 16).map_err(|_| ())
+        } else {
+            trimmed.parse::<u8>().map_err(|_| ())
         }
     }
 
@@ -5293,6 +5334,90 @@ filter=invalid-shader
         assert!(
             !config.tui_mode,
             "tui_mode should remain false without --tui"
+        );
+    }
+
+    // ── VS System config tests ───────────────────────────────────────────────
+
+    #[test]
+    fn test_config_expansion_port_parse_vs_system() {
+        assert_eq!(
+            ExpansionPort::parse("vs-system"),
+            Some(ExpansionPort::VsSystem)
+        );
+        assert_eq!(
+            ExpansionPort::parse("vssystem"),
+            Some(ExpansionPort::VsSystem)
+        );
+    }
+
+    #[test]
+    fn test_config_vs_dip_switches_default() {
+        let config = Config::default();
+        assert_eq!(config.vs_dip_switches, 0x00);
+    }
+
+    #[test]
+    fn test_config_vs_dip_switches_hex_parse() {
+        let mut config = Config::default();
+        config
+            .apply_config_value("vs_dip_switches", "0xFF")
+            .unwrap();
+        assert_eq!(config.vs_dip_switches, 0xFF);
+    }
+
+    #[test]
+    fn test_config_vs_dip_switches_decimal_parse() {
+        let mut config = Config::default();
+        config.apply_config_value("vs_dip_switches", "42").unwrap();
+        assert_eq!(config.vs_dip_switches, 42);
+    }
+
+    #[test]
+    fn test_config_vs_dip_switches_invalid_parse() {
+        let mut config = Config::default();
+        assert!(config.apply_config_value("vs_dip_switches", "xyz").is_err());
+    }
+
+    #[test]
+    fn test_config_apply_rom_db_vs_system_hint_sets_expansion_port() {
+        let mut config = Config::default();
+
+        let changed = config.apply_rom_db_vs_system_hint(true);
+
+        assert!(changed);
+        assert_eq!(config.expansion_port, ExpansionPort::VsSystem);
+    }
+
+    #[test]
+    fn test_config_apply_rom_db_vs_system_hint_respects_explicit_expansion() {
+        let mut config = Config {
+            expansion_port: ExpansionPort::None,
+            expansion_port_explicit: true,
+            ..Default::default()
+        };
+
+        let changed = config.apply_rom_db_vs_system_hint(true);
+
+        assert!(!changed);
+        assert_eq!(config.expansion_port, ExpansionPort::None);
+    }
+
+    #[test]
+    fn test_config_apply_rom_db_vs_system_hint_false_is_noop() {
+        let mut config = Config::default();
+
+        let changed = config.apply_rom_db_vs_system_hint(false);
+
+        assert!(!changed);
+        assert_eq!(config.expansion_port, ExpansionPort::None);
+    }
+
+    #[test]
+    fn test_config_vs_system_not_famicom_only() {
+        assert!(
+            !ExpansionPort::VsSystem.is_famicom_only(),
+            "VS System should not be classified as Famicom-only"
         );
     }
 }

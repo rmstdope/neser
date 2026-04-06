@@ -562,6 +562,7 @@ impl WasmNes {
             crate::console::ExpansionPort::ArkanoidFamicom => "arkanoid".to_string(),
             crate::console::ExpansionPort::ZapperFamicom => "zapper".to_string(),
             crate::console::ExpansionPort::PowerPadFamicom => "power-pad".to_string(),
+            crate::console::ExpansionPort::VsSystem => "vs-system".to_string(),
         }
     }
 

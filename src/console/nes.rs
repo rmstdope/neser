@@ -204,6 +204,14 @@ impl Nes {
             .config_mut()
             .apply_rom_db_zapper_famicom_hint(has_zapper_famicom_expansion);
 
+        // Auto-detect VS System mode from cartridge VS metadata
+        let is_vs_system =
+            cartridge.vs_ppu_type().is_some() || cartridge.vs_hardware_type().is_some();
+        self.app_context
+            .borrow_mut()
+            .config_mut()
+            .apply_rom_db_vs_system_hint(is_vs_system);
+
         // Propagate any hardware-mode change from ROM DB hint to the live PPU
         let is_famicom = self.app_context.borrow().config().hardware_mode
             == crate::console::HardwareMode::Famicom;
@@ -544,6 +552,16 @@ impl Nes {
         self.bus
             .borrow_mut()
             .set_expansion_power_pad_button(button, pressed)
+    }
+
+    /// Set VS System coin insert state for a specific slot (0 or 1).
+    pub fn set_vs_coin_insert(&self, slot: u8, pressed: bool) {
+        self.bus.borrow().set_vs_coin_insert(slot, pressed);
+    }
+
+    /// Set VS System service button state.
+    pub fn set_vs_service_button(&self, pressed: bool) {
+        self.bus.borrow().set_vs_service_button(pressed);
     }
 
     /// Set all joypad button states from a u8 bitmask (for autorun playback).
