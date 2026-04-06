@@ -271,6 +271,8 @@ fn toast_background_rgba() -> [f32; 4] {
 
 impl GlBackend {
     // NES pixel aspect (8:7) times NTSC display correction (16:15).
+    // Used in tests to pass a representative full-frame aspect ratio to letterbox_size.
+    #[cfg(test)]
     const NTSC_ASPECT: f32 = 8.0 / 7.0 * 16.0 / 15.0;
 
     /// Returns the aspect ratio used for rendering the NES output.
@@ -314,9 +316,16 @@ impl GlBackend {
     }
 
     /// Computes windowed mode dimensions preserving the target aspect ratio.
-    pub(crate) fn windowed_dimensions(height: u32) -> (u32, u32) {
+    ///
+    /// Overscan is taken into account so that the window width exactly matches
+    /// the aspect ratio of the visible (cropped) pixel area, matching what the
+    /// renderer will display at runtime.
+    pub(crate) fn windowed_dimensions(height: u32, h_overscan: u32, v_overscan: u32) -> (u32, u32) {
         let clamped_height = height.max(1);
-        let width = (clamped_height as f32 * Self::NTSC_ASPECT).round() as u32;
+        let visible_w = 256u32.saturating_sub(2 * h_overscan).max(1) as f32;
+        let visible_h = 240u32.saturating_sub(2 * v_overscan).max(1) as f32;
+        let aspect = (visible_w / visible_h) * (8.0 / 7.0);
+        let width = (clamped_height as f32 * aspect).round() as u32;
         (width.max(1), clamped_height)
     }
 
@@ -756,16 +765,37 @@ mod tests_windowed_dimensions {
 
     #[test]
     fn test_windowed_dimensions_from_height_240() {
-        let (w, h) = GlBackend::windowed_dimensions(240);
+        let (w, h) = GlBackend::windowed_dimensions(240, 0, 0);
         assert_eq!(h, 240);
         assert_eq!(w, 293);
     }
 
     #[test]
     fn test_windowed_dimensions_from_height_960() {
-        let (w, h) = GlBackend::windowed_dimensions(960);
+        let (w, h) = GlBackend::windowed_dimensions(960, 0, 0);
         assert_eq!(h, 960);
         assert_eq!(w, 1170);
+    }
+
+    /// With 8px horizontal overscan the visible area is 240×240 pixels.
+    /// Correct aspect = (240/240) * (8/7) = 8/7, so width = round(240 * 8/7) = 274.
+    /// Without overscan awareness the function would return 293 (wrong).
+    #[test]
+    fn test_windowed_dimensions_h_overscan_narrows_window() {
+        let (w, h) = GlBackend::windowed_dimensions(240, 8, 0);
+        assert_eq!(h, 240);
+        assert_eq!(w, 274); // round(240 * (240/240) * (8/7))
+    }
+
+    /// With 8px vertical overscan the visible area is 256×224 pixels.
+    /// Correct aspect = (256/224) * (8/7) = (8/7)^2 ≈ 1.30612,
+    /// so width = round(240 * 1.30612) = 313.
+    /// Without overscan awareness the function would return 293 (wrong).
+    #[test]
+    fn test_windowed_dimensions_v_overscan_widens_window() {
+        let (w, h) = GlBackend::windowed_dimensions(240, 0, 8);
+        assert_eq!(h, 240);
+        assert_eq!(w, 313); // round(240 * (256/224) * (8/7))
     }
 }
 
