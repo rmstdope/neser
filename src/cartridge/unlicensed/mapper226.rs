@@ -179,8 +179,13 @@ mod tests {
 
     fn make_mapper(prg_rom: Vec<u8>) -> Mapper226 {
         Mapper226::new(
-            MapperContext::new_for_test(MAPPER_NUMBER, prg_rom, vec![], NametableLayout::Horizontal)
-                .with_prg_ram_banks(0),
+            MapperContext::new_for_test(
+                MAPPER_NUMBER,
+                prg_rom,
+                vec![],
+                NametableLayout::Horizontal,
+            )
+            .with_prg_ram_banks(0),
         )
     }
 
