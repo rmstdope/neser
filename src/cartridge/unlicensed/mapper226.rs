@@ -178,12 +178,10 @@ mod tests {
     const PRG_BANKS: usize = 130;
 
     fn make_mapper(prg_rom: Vec<u8>) -> Mapper226 {
-        Mapper226::new(MapperContext::new_for_test(
-            MAPPER_NUMBER,
-            prg_rom,
-            vec![],
-            NametableLayout::Horizontal,
-        ))
+        Mapper226::new(
+            MapperContext::new_for_test(MAPPER_NUMBER, prg_rom, vec![], NametableLayout::Horizontal)
+                .with_prg_ram_banks(0),
+        )
     }
 
     fn make_default_mapper() -> Mapper226 {
@@ -194,14 +192,17 @@ mod tests {
 
     #[test]
     fn mapper_226_is_registered() {
-        let result = create_mapper(MapperContext::new_for_test(
-            MAPPER_NUMBER,
-            banked_data(16 * 1024, PRG_BANKS),
-            vec![],
-            NametableLayout::Horizontal,
-        ));
+        let result = create_mapper(
+            MapperContext::new_for_test(
+                MAPPER_NUMBER,
+                banked_data(16 * 1024, PRG_BANKS),
+                vec![],
+                NametableLayout::Horizontal,
+            )
+            .with_prg_ram_banks(0),
+        );
         assert!(result.is_ok(), "mapper 226 should be registered");
-        assert_eq!(result.unwrap().mapper_number(), 226);
+        assert_eq!(result.unwrap().mapper_number(), MAPPER_NUMBER);
     }
 
     // ── Power-on state ────────────────────────────────────────────────────────
@@ -426,8 +427,7 @@ mod tests {
 
     #[test]
     fn snapshot_and_restore_preserves_prg_and_mirroring() {
-        let prg = banked_data(16 * 1024, PRG_BANKS);
-        let mut mapper = make_mapper(prg.clone());
+        let mut mapper = make_default_mapper();
         // reg0=0x69 = 0110_1001: bits[4:0]=9, O=1 (bit5, mode1), M=1 (bit6, vertical), bit7=0
         // reg1=0x01: bit0=1 → PRG bit6=64
         // page = 9 | 64 = 73, mode1: both windows = 73
@@ -436,7 +436,7 @@ mod tests {
 
         let snap = mapper.registers_snapshot();
 
-        let mut restored = make_mapper(prg);
+        let mut restored = make_default_mapper();
         restored.restore_registers(&snap);
 
         assert_eq!(
