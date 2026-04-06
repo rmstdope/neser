@@ -34,7 +34,7 @@
 //! | $C000–$DFFF | fixed second-last | `prg_regs[0]` |
 //! | $E000–$FFFF | fixed last    | fixed last         |
 //!
-//! ## CHR banking (`$B000–$E003`)
+//! ## CHR banking (`$B000–$EFFF`)
 //!
 //! Each of the 8 × 1 KB CHR slots is controlled by two nibble writes. The raw
 //! address is first remapped via:
@@ -61,7 +61,7 @@
 //! |---------|--------|-------------------------------------------|
 //! | $F000   | $F003  | Load IRQ reload low nibble (bits 3:0)     |
 //! | $F002   | $F003  | Load IRQ reload high nibble (bits 7:4)    |
-//! | $F001   | $F003  | Enable IRQ; counter ← reload; clear IRQ  |
+//! | $F001   | $F003  | Set IRQ enable from bit 1; counter ← reload; clear IRQ |
 //! | $F003   | $F003  | Acknowledge (clear) IRQ                  |
 //!
 //! Power-on / reset: all counters and flags 0.
@@ -152,7 +152,7 @@ impl Mapper298 {
         let shift = (effective & 0x02) << 1; // 0 or 4
         let mask: u8 = 0xF0 >> shift; // keep bits we're not writing
         self.chr_regs[slot] = (self.chr_regs[slot] & mask) | ((value & 0x0F) << shift);
-        self.update_chr();
+        self.base.select_chr_page(slot, self.chr_regs[slot] as i16);
     }
 }
 
@@ -187,7 +187,7 @@ impl Mapper for Mapper298 {
                 self.base.set_mirroring_hv(value & 0x01 != 0);
             }
             0x9001 => {
-                self.swap_prg = (value & 0x03) != 0;
+                self.swap_prg = value != 0;
                 self.update_prg();
             }
             0xA000 => {
