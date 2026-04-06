@@ -236,7 +236,7 @@ mod tests {
         );
     }
 
-    // ── Register selection via addr & 0x8001 ─────────────────────────────────
+    // ── Register selection via addr & 1 (even/odd addresses) ─────────────────
 
     #[test]
     fn write_8000_updates_reg0() {
