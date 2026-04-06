@@ -143,6 +143,7 @@ use super::unlicensed::mapper120::Mapper120;
 use super::unlicensed::mapper121::Mapper121;
 use super::unlicensed::mapper122::Mapper122;
 use super::unlicensed::mapper123::Mapper123;
+use super::unlicensed::mapper202::Mapper202;
 use super::unlicensed::mapper205::Mapper205;
 use super::unlicensed::mapper212::Mapper212;
 use super::unlicensed::mapper214::Mapper214;
@@ -928,6 +929,7 @@ mapper_registry! {
     155 => MMC1Mapper::new,
     180 => UxromInvertedMapper::new,
     185 => CnromSecurityMapper::new,
+    202 => Mapper202::new,
     205 => Mapper205::new,
     206 => Namco118Mapper::new,
     212 => Mapper212::new,
