@@ -49,6 +49,34 @@ pub enum VsHardwareType {
     Unknown(u8),
 }
 
+impl VsHardwareType {
+    pub fn from_raw(value: u8) -> Self {
+        match value {
+            0 => Self::Unisystem,
+            1 => Self::RbiBaseball,
+            2 => Self::TkoBoxing,
+            3 => Self::SuperXevious,
+            4 => Self::IceClimberJapan,
+            5 => Self::VsDualSystem,
+            6 => Self::RaidOnBungelingBay,
+            other => Self::Unknown(other),
+        }
+    }
+
+    pub fn to_raw(&self) -> u8 {
+        match self {
+            Self::Unisystem => 0,
+            Self::RbiBaseball => 1,
+            Self::TkoBoxing => 2,
+            Self::SuperXevious => 3,
+            Self::IceClimberJapan => 4,
+            Self::VsDualSystem => 5,
+            Self::RaidOnBungelingBay => 6,
+            Self::Unknown(v) => *v,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VsPpuType {
     Rp2c03b,
@@ -65,6 +93,46 @@ pub enum VsPpuType {
     Rc2c05_04,
     Rc2c05_05,
     Unknown(u8),
+}
+
+impl VsPpuType {
+    pub fn from_raw(value: u8) -> Self {
+        match value {
+            0 => Self::Rp2c03b,
+            1 => Self::Rp2c03g,
+            2 => Self::Rp2c04_0001,
+            3 => Self::Rp2c04_0002,
+            4 => Self::Rp2c04_0003,
+            5 => Self::Rp2c04_0004,
+            6 => Self::Rc2c03b,
+            7 => Self::Rc2c03c,
+            8 => Self::Rc2c05_01,
+            9 => Self::Rc2c05_02,
+            10 => Self::Rc2c05_03,
+            11 => Self::Rc2c05_04,
+            12 => Self::Rc2c05_05,
+            other => Self::Unknown(other),
+        }
+    }
+
+    pub fn to_raw(&self) -> u8 {
+        match self {
+            Self::Rp2c03b => 0,
+            Self::Rp2c03g => 1,
+            Self::Rp2c04_0001 => 2,
+            Self::Rp2c04_0002 => 3,
+            Self::Rp2c04_0003 => 4,
+            Self::Rp2c04_0004 => 5,
+            Self::Rc2c03b => 6,
+            Self::Rc2c03c => 7,
+            Self::Rc2c05_01 => 8,
+            Self::Rc2c05_02 => 9,
+            Self::Rc2c05_03 => 10,
+            Self::Rc2c05_04 => 11,
+            Self::Rc2c05_05 => 12,
+            Self::Unknown(v) => *v,
+        }
+    }
 }
 
 /// iNES 2.0 Controller types
@@ -334,36 +402,12 @@ fn parse_optional_nametable_layout(raw: &str) -> Option<NametableLayout> {
 
 fn parse_optional_vs_hardware_type(raw: &str) -> Option<VsHardwareType> {
     let value = parse_optional_u8_decimal(raw)?;
-    Some(match value {
-        0 => VsHardwareType::Unisystem,
-        1 => VsHardwareType::RbiBaseball,
-        2 => VsHardwareType::TkoBoxing,
-        3 => VsHardwareType::SuperXevious,
-        4 => VsHardwareType::IceClimberJapan,
-        5 => VsHardwareType::VsDualSystem,
-        6 => VsHardwareType::RaidOnBungelingBay,
-        other => VsHardwareType::Unknown(other),
-    })
+    Some(VsHardwareType::from_raw(value))
 }
 
 fn parse_optional_vs_ppu_type(raw: &str) -> Option<VsPpuType> {
     let value = parse_optional_u8_decimal(raw)?;
-    Some(match value {
-        0 => VsPpuType::Rp2c03b,
-        1 => VsPpuType::Rp2c03g,
-        2 => VsPpuType::Rp2c04_0001,
-        3 => VsPpuType::Rp2c04_0002,
-        4 => VsPpuType::Rp2c04_0003,
-        5 => VsPpuType::Rp2c04_0004,
-        6 => VsPpuType::Rc2c03b,
-        7 => VsPpuType::Rc2c03c,
-        8 => VsPpuType::Rc2c05_01,
-        9 => VsPpuType::Rc2c05_02,
-        10 => VsPpuType::Rc2c05_03,
-        11 => VsPpuType::Rc2c05_04,
-        12 => VsPpuType::Rc2c05_05,
-        other => VsPpuType::Unknown(other),
-    })
+    Some(VsPpuType::from_raw(value))
 }
 
 fn parse_optional_expansion_type(raw: &str) -> Option<ExpansionType> {
@@ -779,5 +823,44 @@ mod tests {
         let db = RomDb::from_csv_content(csv);
 
         assert!(!db.has_zapper_famicom_expansion(0xDEADBEEF));
+    }
+
+    #[test]
+    fn vs_hardware_type_from_raw_maps_known_values() {
+        assert_eq!(VsHardwareType::from_raw(0), VsHardwareType::Unisystem);
+        assert_eq!(VsHardwareType::from_raw(1), VsHardwareType::RbiBaseball);
+        assert_eq!(VsHardwareType::from_raw(2), VsHardwareType::TkoBoxing);
+        assert_eq!(VsHardwareType::from_raw(3), VsHardwareType::SuperXevious);
+        assert_eq!(VsHardwareType::from_raw(4), VsHardwareType::IceClimberJapan);
+        assert_eq!(VsHardwareType::from_raw(5), VsHardwareType::VsDualSystem);
+        assert_eq!(
+            VsHardwareType::from_raw(6),
+            VsHardwareType::RaidOnBungelingBay
+        );
+        assert_eq!(VsHardwareType::from_raw(7), VsHardwareType::Unknown(7));
+    }
+
+    #[test]
+    fn vs_hardware_type_to_raw_roundtrips() {
+        for raw in 0..=6 {
+            assert_eq!(VsHardwareType::from_raw(raw).to_raw(), raw);
+        }
+    }
+
+    #[test]
+    fn vs_ppu_type_from_raw_maps_known_values() {
+        assert_eq!(VsPpuType::from_raw(0), VsPpuType::Rp2c03b);
+        assert_eq!(VsPpuType::from_raw(2), VsPpuType::Rp2c04_0001);
+        assert_eq!(VsPpuType::from_raw(5), VsPpuType::Rp2c04_0004);
+        assert_eq!(VsPpuType::from_raw(8), VsPpuType::Rc2c05_01);
+        assert_eq!(VsPpuType::from_raw(12), VsPpuType::Rc2c05_05);
+        assert_eq!(VsPpuType::from_raw(13), VsPpuType::Unknown(13));
+    }
+
+    #[test]
+    fn vs_ppu_type_to_raw_roundtrips() {
+        for raw in 0..=12 {
+            assert_eq!(VsPpuType::from_raw(raw).to_raw(), raw);
+        }
     }
 }

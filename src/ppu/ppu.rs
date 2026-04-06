@@ -146,6 +146,8 @@ pub struct Ppu {
     cartridge: Option<Rc<RefCell<Cartridge>>>,
     /// Whether Famicom emphasis bit swap is active (green/blue swapped)
     pub(crate) famicom_emphasis: bool,
+    /// VS System PPU type, set during cartridge insertion.
+    vs_ppu_type: Option<crate::cartridge::VsPpuType>,
 }
 
 impl Ppu {
@@ -210,6 +212,14 @@ impl Ppu {
         self.rendering.famicom_emphasis = enabled;
     }
 
+    pub fn set_vs_ppu_type(&mut self, vs_ppu_type: Option<crate::cartridge::VsPpuType>) {
+        self.vs_ppu_type = vs_ppu_type;
+    }
+
+    pub fn vs_ppu_type(&self) -> Option<crate::cartridge::VsPpuType> {
+        self.vs_ppu_type
+    }
+
     /// Create a new modular PPU instance
     pub fn new(tv_system: TimingMode, ram_init_mode: crate::console::RamInitMode) -> Self {
         let mut sprites = Sprites::new(ram_init_mode);
@@ -229,6 +239,7 @@ impl Ppu {
             prev_a12: false,
             cartridge: None,
             famicom_emphasis: false,
+            vs_ppu_type: None,
         }
     }
 
@@ -3232,5 +3243,23 @@ mod tests {
             ppu.registers.oam_address, 0x51,
             "OAMADDR should be incremented at pixel 256 (end of sprite evaluation)"
         );
+    }
+
+    #[test]
+    fn set_vs_ppu_type_stores_and_retrieves_value() {
+        use crate::cartridge::VsPpuType;
+
+        let mut ppu = Ppu::new(TimingMode::Ntsc, crate::console::RamInitMode::Zero);
+
+        // Initially None
+        assert_eq!(ppu.vs_ppu_type(), None);
+
+        // Set to a VS PPU type
+        ppu.set_vs_ppu_type(Some(VsPpuType::Rp2c04_0001));
+        assert_eq!(ppu.vs_ppu_type(), Some(VsPpuType::Rp2c04_0001));
+
+        // Clear back to None
+        ppu.set_vs_ppu_type(None);
+        assert_eq!(ppu.vs_ppu_type(), None);
     }
 }

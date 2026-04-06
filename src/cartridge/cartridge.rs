@@ -11,6 +11,7 @@ use crate::app_context::IntoSharedAppContext;
 #[cfg(test)]
 use crate::cartridge::NametableLayout;
 use crate::cartridge::mapper::MapperContext;
+use crate::cartridge::rom_db::{VsHardwareType, VsPpuType};
 use crate::cartridge::{Mapper, TimingMode};
 
 #[derive(Debug)]
@@ -72,6 +73,11 @@ pub struct Cartridge {
     /// Optional 512-byte trainer data loaded from iNES header.
     /// If present, should be loaded into CPU memory at $7000-$71FF.
     trainer: Option<Vec<u8>>,
+
+    /// VS System PPU type from iNES 2.0 header or ROM database.
+    vs_ppu_type: Option<VsPpuType>,
+    /// VS System hardware type from iNES 2.0 header or ROM database.
+    vs_hardware_type: Option<VsHardwareType>,
 }
 
 impl Cartridge {
@@ -162,6 +168,8 @@ impl Cartridge {
             rom_path: Some(rom_path),
             battery_backed_prg_ram: parsed.header.battery_backed_prg_ram,
             trainer: parsed.trainer,
+            vs_ppu_type: parsed.header.vs_ppu_type.map(VsPpuType::from_raw),
+            vs_hardware_type: parsed.header.vs_hardware_type.map(VsHardwareType::from_raw),
         };
 
         cart.load_save_ram_from_disk()?;
@@ -253,6 +261,16 @@ impl Cartridge {
         self.trainer.is_some()
     }
 
+    /// VS System PPU type, if this is a VS System cartridge.
+    pub fn vs_ppu_type(&self) -> Option<VsPpuType> {
+        self.vs_ppu_type
+    }
+
+    /// VS System hardware type, if this is a VS System cartridge.
+    pub fn vs_hardware_type(&self) -> Option<VsHardwareType> {
+        self.vs_hardware_type
+    }
+
     /// Create a cartridge directly from components (for testing)
     #[cfg(test)]
     pub fn from_parts(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
@@ -269,6 +287,8 @@ impl Cartridge {
             save_path: None,
             battery_backed_prg_ram: false,
             trainer: None,
+            vs_ppu_type: None,
+            vs_hardware_type: None,
         }
     }
 
@@ -282,12 +302,19 @@ impl Cartridge {
             save_path: None,
             battery_backed_prg_ram: false,
             trainer: None,
+            vs_ppu_type: None,
+            vs_hardware_type: None,
         }
     }
 
     #[cfg(test)]
     pub fn set_crc32_for_test(&mut self, crc32: u32) {
         self.crc32 = crc32;
+    }
+
+    #[cfg(test)]
+    pub fn set_vs_ppu_type_for_test(&mut self, vs_ppu_type: Option<VsPpuType>) {
+        self.vs_ppu_type = vs_ppu_type;
     }
 }
 

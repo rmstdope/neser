@@ -1,6 +1,7 @@
 use crate::cartridge::NametableLayout;
 use crate::cartridge::hardware_type::HardwareType;
 use crate::cartridge::ines::ParsedRom;
+use crate::cartridge::rom_db::VsHardwareType;
 use std::io;
 
 // Nintendo mappers
@@ -264,6 +265,8 @@ pub struct MapperContext {
     pub chr_ram_size_bytes: Option<usize>,
     /// CRC32 of concatenated PRG/CHR; may be overridden for tests.
     pub crc32: u32,
+    /// VS System hardware type for game-specific protection quirks.
+    pub vs_hardware_type: Option<VsHardwareType>,
 }
 
 const PRG_RAM_BANK_SIZE: usize = 8 * 1024;
@@ -298,6 +301,7 @@ impl MapperContext {
                 (None, None) => None,
             },
             crc32: parsed.crc32,
+            vs_hardware_type: parsed.header.vs_hardware_type.map(VsHardwareType::from_raw),
         }
     }
 
@@ -339,6 +343,7 @@ impl MapperContext {
             battery_backed_prg_ram: false,
             chr_ram_size_bytes: None,
             crc32,
+            vs_hardware_type: None,
         }
     }
 
@@ -1848,5 +1853,88 @@ mod tests {
             ctx.prg_ram_size_specified,
             "prg_ram_size_specified should be true when NVRAM is present"
         );
+    }
+
+    #[test]
+    fn from_parsed_rom_propagates_vs_hardware_type() {
+        use crate::cartridge::ines::{ConsoleType, InesHeader, ParsedRom, TimingMode};
+        use crate::cartridge::rom_db::VsHardwareType;
+
+        // Given: a VS System ROM with vs_hardware_type=1 (RbiBaseball) in the header
+        let header = InesHeader {
+            mapper: 99,
+            submapper: 0,
+            console_type: ConsoleType::VsSystem,
+            mirroring: NametableLayout::Horizontal,
+            has_trainer: false,
+            header_version: "2.0",
+            battery_backed_prg_ram: false,
+            prg_rom_size_bytes: 32 * 1024,
+            chr_rom_size_bytes: 8 * 1024,
+            prg_ram_size_bytes: None,
+            prg_nvram_size_bytes: None,
+            chr_ram_size_bytes: None,
+            chr_nvram_size_bytes: None,
+            timing_mode: TimingMode::Ntsc,
+            vs_ppu_type: Some(0),
+            vs_hardware_type: Some(1),
+            misc_roms: 0,
+            default_expansion_device: 0,
+        };
+        let parsed = ParsedRom {
+            header,
+            prg_rom: vec![0u8; 32 * 1024],
+            chr_rom: vec![0u8; 8 * 1024],
+            trainer: None,
+            crc32: 0,
+            payload_crc32: 0,
+        };
+
+        // When
+        let ctx = MapperContext::from_parsed_rom(&parsed);
+
+        // Then: vs_hardware_type should be propagated as a typed enum
+        assert_eq!(ctx.vs_hardware_type, Some(VsHardwareType::RbiBaseball));
+    }
+
+    #[test]
+    fn from_parsed_rom_non_vs_rom_has_no_vs_hardware_type() {
+        use crate::cartridge::ines::{ConsoleType, InesHeader, ParsedRom, TimingMode};
+
+        // Given: a standard NES ROM (not VS System)
+        let header = InesHeader {
+            mapper: 0,
+            submapper: 0,
+            console_type: ConsoleType::NesFamicom,
+            mirroring: NametableLayout::Horizontal,
+            has_trainer: false,
+            header_version: "1.0",
+            battery_backed_prg_ram: false,
+            prg_rom_size_bytes: 32 * 1024,
+            chr_rom_size_bytes: 8 * 1024,
+            prg_ram_size_bytes: None,
+            prg_nvram_size_bytes: None,
+            chr_ram_size_bytes: None,
+            chr_nvram_size_bytes: None,
+            timing_mode: TimingMode::Ntsc,
+            vs_ppu_type: None,
+            vs_hardware_type: None,
+            misc_roms: 0,
+            default_expansion_device: 0,
+        };
+        let parsed = ParsedRom {
+            header,
+            prg_rom: vec![0u8; 32 * 1024],
+            chr_rom: vec![0u8; 8 * 1024],
+            trainer: None,
+            crc32: 0,
+            payload_crc32: 0,
+        };
+
+        // When
+        let ctx = MapperContext::from_parsed_rom(&parsed);
+
+        // Then
+        assert_eq!(ctx.vs_hardware_type, None);
     }
 }
