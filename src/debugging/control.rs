@@ -48,15 +48,16 @@ pub struct DebuggerController {
 }
 
 impl DebuggerController {
-    /// Create a new controller, optionally pre-loaded with config breakpoints.
-    pub fn new(config_breakpoints: &[BreakpointKind]) -> Self {
+    /// Create a new controller, optionally pre-loaded with config breakpoints
+    /// and optionally entering the debugger immediately.
+    pub fn new(config_breakpoints: &[BreakpointKind], debugger_enabled: bool) -> Self {
         let mut breakpoints = BreakpointList::new();
         for &kind in config_breakpoints {
             breakpoints.add(kind);
         }
         Self {
-            paused: false,
-            debugger_open: false,
+            paused: debugger_enabled,
+            debugger_open: debugger_enabled,
             view_state: DebuggerViewState::default(),
             breakpoints,
             temporary_breakpoint: None,
@@ -569,7 +570,7 @@ mod tests {
     // ── Test helpers ───────────────────────────────────────────────────
 
     fn default_controller() -> DebuggerController {
-        DebuggerController::new(&[])
+        DebuggerController::new(&[], false)
     }
 
     fn nes_with_nop_loop() -> Nes {
@@ -649,8 +650,10 @@ mod tests {
 
     #[test]
     fn test_new_controller_with_config_breakpoints() {
-        let ctrl =
-            DebuggerController::new(&[BreakpointKind::Pc(0x8000), BreakpointKind::Cycle(1000)]);
+        let ctrl = DebuggerController::new(
+            &[BreakpointKind::Pc(0x8000), BreakpointKind::Cycle(1000)],
+            false,
+        );
         assert_eq!(ctrl.breakpoints().len(), 2);
     }
 
@@ -1031,7 +1034,7 @@ mod tests {
 
     #[test]
     fn test_apply_ui_action_remove_breakpoint() {
-        let mut ctrl = DebuggerController::new(&[BreakpointKind::Pc(0xC000)]);
+        let mut ctrl = DebuggerController::new(&[BreakpointKind::Pc(0xC000)], false);
         let mut nes = nes_with_nop_loop();
 
         ctrl.enter_debugger();
@@ -1179,5 +1182,15 @@ mod tests {
                 "cycle breakpoint should not fire before target"
             );
         }
+    }
+
+    #[test]
+    fn test_new_with_debugger_enabled_starts_paused_and_open() {
+        let ctrl = DebuggerController::new(&[], true);
+        assert!(ctrl.is_paused(), "controller should start paused");
+        assert!(
+            ctrl.is_debugger_open(),
+            "controller should start with debugger open"
+        );
     }
 }
