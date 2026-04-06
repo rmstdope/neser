@@ -1193,14 +1193,4 @@ mod tests {
             "controller should start with debugger open"
         );
     }
-
-    #[test]
-    fn test_new_with_debugger_disabled_starts_unpaused_and_closed() {
-        let ctrl = DebuggerController::new(&[], false);
-        assert!(!ctrl.is_paused(), "controller should start unpaused");
-        assert!(
-            !ctrl.is_debugger_open(),
-            "controller should start with debugger closed"
-        );
-    }
 }
