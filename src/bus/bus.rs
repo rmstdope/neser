@@ -260,6 +260,7 @@ impl Bus {
     pub fn map_cartridge(&mut self, cartridge: Cartridge) {
         // Extract trainer data before wrapping in Rc<RefCell<>>
         let trainer_data = cartridge.trainer().map(|t| t.to_vec());
+        let vs_ppu_type = cartridge.vs_ppu_type();
 
         // Wrap cartridge in Rc<RefCell<>> for shared access between CPU and PPU
         let cartridge_rc = Rc::new(RefCell::new(cartridge));
@@ -279,6 +280,7 @@ impl Bus {
         let mut ppu = self.ppu.borrow_mut();
         ppu.set_cartridge(cartridge_rc.clone());
         ppu.set_mirroring(cartridge_rc.borrow().mapper().get_mirroring());
+        ppu.set_vs_ppu_type(vs_ppu_type);
 
         *self.cartridge.borrow_mut() = Some(cartridge_rc);
     }
@@ -1020,6 +1022,7 @@ impl Bus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cartridge::NametableLayout;
     use crate::console::TimingMode;
     use std::rc::Rc;
 
@@ -2705,5 +2708,29 @@ mod tests {
                 addr
             );
         }
+    }
+
+    #[test]
+    fn map_cartridge_sets_vs_ppu_type_on_ppu() {
+        use crate::cartridge::VsPpuType;
+
+        let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
+        let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
+        let app_context = Rc::new(RefCell::new(crate::app_context::AppContext::new()));
+        let mut bus = Bus::new(ppu.clone(), apu, app_context);
+
+        // Given: a cartridge with a VS PPU type
+        let mut cartridge = Cartridge::from_parts(
+            vec![0u8; 32 * 1024],
+            vec![0u8; 8 * 1024],
+            NametableLayout::Horizontal,
+        );
+        cartridge.set_vs_ppu_type_for_test(Some(VsPpuType::Rp2c04_0002));
+
+        // When: mapping the cartridge
+        bus.map_cartridge(cartridge);
+
+        // Then: PPU should have the VS PPU type set
+        assert_eq!(ppu.borrow().vs_ppu_type(), Some(VsPpuType::Rp2c04_0002));
     }
 }

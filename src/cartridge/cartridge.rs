@@ -311,6 +311,11 @@ impl Cartridge {
     pub fn set_crc32_for_test(&mut self, crc32: u32) {
         self.crc32 = crc32;
     }
+
+    #[cfg(test)]
+    pub fn set_vs_ppu_type_for_test(&mut self, vs_ppu_type: Option<VsPpuType>) {
+        self.vs_ppu_type = vs_ppu_type;
+    }
 }
 
 #[cfg(test)]
