@@ -158,14 +158,13 @@ impl Mapper for Mapper224 {
     }
 
     fn capabilities(&self) -> MapperCapabilities {
-        MapperCapabilities {
-            has_irq: true,
-            has_chr_banking: true,
-            has_dynamic_mirroring: true,
-            prg_bank_size_kb: 8,
-            chr_bank_size_kb: 1,
-            ..Default::default()
-        }
+        let mut capabilities = self.mmc3.capabilities();
+        capabilities.has_irq = true;
+        capabilities.has_chr_banking = true;
+        capabilities.has_dynamic_mirroring = true;
+        capabilities.prg_bank_size_kb = 8;
+        capabilities.chr_bank_size_kb = 1;
+        capabilities
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
