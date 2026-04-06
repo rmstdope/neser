@@ -368,7 +368,7 @@ impl GlBackend {
             &mut imgui_glow_renderer::SimpleTextureMap::default(),
             true,
         )
-        .expect("Failed to initialise imgui glow renderer");
+        .map_err(|e| format!("Failed to initialise imgui glow renderer: {e:?}"))?;
 
         let (nes_texture, nes_texture_id) = unsafe {
             let mut tex: gl::types::GLuint = 0;
@@ -684,13 +684,13 @@ impl GlBackend {
         }
 
         let draw_data = self.imgui.render();
-        self.imgui_renderer
-            .render(
-                &self.glow_context,
-                &imgui_glow_renderer::SimpleTextureMap::default(),
-                draw_data,
-            )
-            .expect("imgui render failed");
+        if let Err(err) = self.imgui_renderer.render(
+            &self.glow_context,
+            &imgui_glow_renderer::SimpleTextureMap::default(),
+            draw_data,
+        ) {
+            log_info(format!("imgui render failed: {}", err));
+        }
 
         self.render_target.swap_buffers();
 
@@ -1033,12 +1033,13 @@ fn update_ppu_viewer_textures(
 impl Drop for GlBackend {
     fn drop(&mut self) {
         // Best-effort: make current and clean up GL resources.
-        let _ = self.render_target.make_current();
-        self.imgui_renderer.destroy(&self.glow_context);
-        unsafe {
-            gl::DeleteTextures(1, &self.nes_texture);
-            gl::DeleteTextures(1, &self.ppu_viewer_nt_texture);
-            gl::DeleteTextures(1, &self.ppu_viewer_tiles_texture);
+        if self.render_target.make_current().is_ok() {
+            self.imgui_renderer.destroy(&self.glow_context);
+            unsafe {
+                gl::DeleteTextures(1, &self.nes_texture);
+                gl::DeleteTextures(1, &self.ppu_viewer_nt_texture);
+                gl::DeleteTextures(1, &self.ppu_viewer_tiles_texture);
+            }
         }
     }
 }
