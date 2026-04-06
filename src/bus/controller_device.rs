@@ -1,8 +1,9 @@
 use crate::bus::bus::{BusDevice, ControllerModes};
+use crate::cartridge::VsHardwareType;
 use crate::input::ArkanoidController;
 use crate::input::Controller;
-use crate::input::PowerPad;
 use crate::input::Zapper;
+use crate::input::{Button, PowerPad};
 use std::cell::{Cell, RefCell};
 use std::ops::RangeInclusive;
 use std::rc::Rc;
@@ -32,6 +33,7 @@ pub(crate) struct ControllerDevice {
     vs_system_enabled: bool,
     vs_arcade_input: Rc<Cell<u8>>,
     vs_dip_switches: u8,
+    vs_hardware_type: Option<VsHardwareType>,
 }
 
 impl ControllerDevice {
@@ -75,6 +77,7 @@ impl ControllerDevice {
             vs_system_enabled: false,
             vs_arcade_input: Rc::new(Cell::new(0)),
             vs_dip_switches: 0,
+            vs_hardware_type: None,
         }
     }
 
@@ -357,6 +360,20 @@ impl BusDevice for ControllerDevice {
                 self.controllers[0].borrow_mut().write_strobe(value);
                 self.controllers[1].borrow_mut().write_strobe(value);
 
+                // Ice Climber Japan and Raid on Bungeling Bay force Start on
+                // both controllers as an anti-piracy measure.
+                if matches!(
+                    self.vs_hardware_type,
+                    Some(VsHardwareType::IceClimberJapan | VsHardwareType::RaidOnBungelingBay)
+                ) {
+                    self.controllers[0]
+                        .borrow_mut()
+                        .set_button(Button::Start, true);
+                    self.controllers[1]
+                        .borrow_mut()
+                        .set_button(Button::Start, true);
+                }
+
                 if let Some(ref arkanoid) = self.arkanoid_expansion {
                     arkanoid.borrow_mut().write_strobe(value);
                 }
@@ -384,6 +401,7 @@ impl BusDevice for ControllerDevice {
         self.set_power_pad_famicom_enabled(modes.power_pad_famicom_enabled);
         self.set_vs_system_enabled(modes.vs_system_enabled);
         self.set_vs_dip_switches(modes.vs_dip_switches);
+        self.vs_hardware_type = modes.vs_hardware_type;
     }
 }
 
@@ -1152,6 +1170,80 @@ mod tests {
             result, 0x3C,
             "VS $4016 combined: service + DIP 1,2 + coin1 = $3C, got ${:02X}",
             result
+        );
+    }
+
+    // ── VS System protection (forced Start button) tests ─────────────────
+
+    fn create_vs_joypad_device(
+        hw_type: VsHardwareType,
+    ) -> (
+        ControllerDevice,
+        Rc<RefCell<Box<dyn Controller>>>,
+        Rc<RefCell<Box<dyn Controller>>>,
+    ) {
+        let joypad1 = crate::input::NesJoypad::new();
+        let joypad2 = crate::input::NesJoypad::new();
+        let ctrl1: Rc<RefCell<Box<dyn Controller>>> = Rc::new(RefCell::new(Box::new(joypad1)));
+        let ctrl2: Rc<RefCell<Box<dyn Controller>>> = Rc::new(RefCell::new(Box::new(joypad2)));
+        let mut device = ControllerDevice::new(Rc::clone(&ctrl1), Rc::clone(&ctrl2));
+        device.set_vs_system_enabled(true);
+        device.vs_hardware_type = Some(hw_type);
+        (device, ctrl1, ctrl2)
+    }
+
+    /// Read a specific serial bit from the controller by doing N+1 reads
+    /// after a strobe. Returns bit 0 of the Nth read (0-indexed).
+    fn read_nth_serial_bit(device: &mut ControllerDevice, addr: u16, n: usize) -> u8 {
+        // Strobe: write 1 then 0 to $4016
+        device.write(0x4016, 1, false);
+        device.write(0x4016, 0, false);
+        for _ in 0..n {
+            device.read(addr, 0x00, false);
+        }
+        device.read(addr, 0x00, false).unwrap() & 0x01
+    }
+
+    #[test]
+    fn ice_climber_protection_forces_start_bit_on_port1() {
+        let (mut device, _ctrl1, _ctrl2) = create_vs_joypad_device(VsHardwareType::IceClimberJapan);
+        // No buttons pressed — Start (bit 3, read index 3) should still be 1
+        let start_bit = read_nth_serial_bit(&mut device, 0x4016, 3);
+        assert_eq!(
+            start_bit, 1,
+            "Ice Climber: Start bit on $4016 (right stick) should be forced to 1"
+        );
+    }
+
+    #[test]
+    fn ice_climber_protection_forces_start_bit_on_port2() {
+        let (mut device, _ctrl1, _ctrl2) = create_vs_joypad_device(VsHardwareType::IceClimberJapan);
+        let start_bit = read_nth_serial_bit(&mut device, 0x4017, 3);
+        assert_eq!(
+            start_bit, 1,
+            "Ice Climber: Start bit on $4017 (left stick) should be forced to 1"
+        );
+    }
+
+    #[test]
+    fn raid_on_bungeling_bay_forces_start_bit() {
+        let (mut device, _ctrl1, _ctrl2) =
+            create_vs_joypad_device(VsHardwareType::RaidOnBungelingBay);
+        let start_bit = read_nth_serial_bit(&mut device, 0x4016, 3);
+        assert_eq!(
+            start_bit, 1,
+            "Raid on Bungeling Bay: Start bit should be forced to 1"
+        );
+    }
+
+    #[test]
+    fn unisystem_does_not_force_start_bit() {
+        let (mut device, _ctrl1, _ctrl2) = create_vs_joypad_device(VsHardwareType::Unisystem);
+        // No buttons pressed — Start should be 0
+        let start_bit = read_nth_serial_bit(&mut device, 0x4016, 3);
+        assert_eq!(
+            start_bit, 0,
+            "Unisystem (no protection): Start bit should NOT be forced"
         );
     }
 }

@@ -70,6 +70,7 @@ pub struct ControllerModes {
     pub power_pad_famicom_enabled: bool,
     pub vs_system_enabled: bool,
     pub vs_dip_switches: u8,
+    pub vs_hardware_type: Option<crate::cartridge::VsHardwareType>,
 }
 
 pub trait BusDevice {
@@ -214,6 +215,7 @@ impl Bus {
             power_pad_famicom_enabled: Self::is_power_pad_famicom(config),
             vs_system_enabled: Self::is_vs_system(config),
             vs_dip_switches: config.vs_dip_switches,
+            vs_hardware_type: None, // Set during cartridge insertion via apply_rom_db hints
         };
         drop(app_context);
 

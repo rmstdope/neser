@@ -34,21 +34,26 @@ impl BusDevice for PpuDevice {
     fn write(&mut self, addr: u16, value: u8, is_dummy_write: bool) -> bool {
         let reg = addr & 0x2007;
         match reg {
-            0x2000 => {
-                self.ppu.borrow_mut().write_control(value);
-                if addr == 0x2000
-                    && let Some(cartridge) = self.cartridge.borrow().as_ref().cloned()
-                {
-                    cartridge.borrow_mut().mapper_mut().ppu_write_ctrl(value);
+            0x2000 | 0x2001 => {
+                let mut ppu = self.ppu.borrow_mut();
+                let swapped = ppu.is_vs_register_swapped();
+                // RC2C05 PPUs swap $2000 (ctrl) and $2001 (mask) meanings
+                let is_ctrl_write = (reg == 0x2000) ^ swapped;
+                if is_ctrl_write {
+                    ppu.write_control(value);
+                } else {
+                    ppu.write_mask(value);
                 }
-                true
-            }
-            0x2001 => {
-                self.ppu.borrow_mut().write_mask(value);
-                if addr == 0x2001
+                drop(ppu);
+                // Only notify mapper for canonical (non-mirrored) addresses
+                if addr == reg
                     && let Some(cartridge) = self.cartridge.borrow().as_ref().cloned()
                 {
-                    cartridge.borrow_mut().mapper_mut().ppu_write_mask(value);
+                    if is_ctrl_write {
+                        cartridge.borrow_mut().mapper_mut().ppu_write_ctrl(value);
+                    } else {
+                        cartridge.borrow_mut().mapper_mut().ppu_write_mask(value);
+                    }
                 }
                 true
             }
@@ -189,5 +194,82 @@ mod tests {
         // Write to the fully decoded $2001 should notify the mapper.
         device.write(0x2001, 0x18, false);
         assert_eq!(mask_writes.get(), 1);
+    }
+
+    #[test]
+    fn rc2c05_write_to_2000_sets_mask_register() {
+        let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
+        ppu.borrow_mut()
+            .set_vs_ppu_type(Some(crate::cartridge::VsPpuType::Rc2c05_01));
+
+        let cartridge_slot: Rc<RefCell<Option<Rc<RefCell<Cartridge>>>>> =
+            Rc::new(RefCell::new(None));
+        let mut device = PpuDevice::new(Rc::clone(&ppu), Rc::clone(&cartridge_slot));
+
+        // Write NMI enable (bit 7) to $2000 — on 2C05 this should go to mask register
+        device.write(0x2000, 0x80, false);
+
+        // Mask register should have the value, control register should be unchanged
+        let ppu_ref = ppu.borrow();
+        assert_eq!(
+            ppu_ref.peek_mask(),
+            0x80,
+            "RC2C05: writing $2000 should set PPUMASK"
+        );
+        assert_eq!(
+            ppu_ref.peek_control(),
+            0x00,
+            "RC2C05: writing $2000 should NOT set PPUCTRL"
+        );
+    }
+
+    #[test]
+    fn rc2c05_write_to_2001_sets_control_register() {
+        let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
+        ppu.borrow_mut()
+            .set_vs_ppu_type(Some(crate::cartridge::VsPpuType::Rc2c05_01));
+
+        let cartridge_slot: Rc<RefCell<Option<Rc<RefCell<Cartridge>>>>> =
+            Rc::new(RefCell::new(None));
+        let mut device = PpuDevice::new(Rc::clone(&ppu), Rc::clone(&cartridge_slot));
+
+        // Write rendering enable bits to $2001 — on 2C05 this should go to control register
+        device.write(0x2001, 0x80, false);
+
+        let ppu_ref = ppu.borrow();
+        assert_eq!(
+            ppu_ref.peek_control(),
+            0x80,
+            "RC2C05: writing $2001 should set PPUCTRL"
+        );
+        assert_eq!(
+            ppu_ref.peek_mask(),
+            0x00,
+            "RC2C05: writing $2001 should NOT set PPUMASK"
+        );
+    }
+
+    #[test]
+    fn non_rc2c05_writes_are_not_swapped() {
+        let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
+        // Standard PPU — no VS type set
+
+        let cartridge_slot: Rc<RefCell<Option<Rc<RefCell<Cartridge>>>>> =
+            Rc::new(RefCell::new(None));
+        let mut device = PpuDevice::new(Rc::clone(&ppu), Rc::clone(&cartridge_slot));
+
+        device.write(0x2000, 0x80, false);
+
+        let ppu_ref = ppu.borrow();
+        assert_eq!(
+            ppu_ref.peek_control(),
+            0x80,
+            "Standard PPU: writing $2000 should set PPUCTRL"
+        );
+        assert_eq!(
+            ppu_ref.peek_mask(),
+            0x00,
+            "Standard PPU: writing $2000 should NOT set PPUMASK"
+        );
     }
 }
