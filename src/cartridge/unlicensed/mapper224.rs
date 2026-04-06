@@ -122,6 +122,18 @@ impl Mapper for Mapper224 {
         }
     }
 
+    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        match addr {
+            0x6000..=0x7FFF => self.mmc3.read_prg_open_bus(addr, open_bus),
+            0x8000..=0xFFFF => {
+                let raw_page = self.mmc3.raw_prg_8k_page_number(addr);
+                let bank = self.apply_outer_prg(raw_page);
+                let offset = (addr as usize) & PRG_BANK_MASK;
+                self.mmc3.read_prg_at_bank(bank, offset)
+            }
+            _ => open_bus,
+        }
+    }
     fn write_prg(&mut self, addr: u16, value: u8) {
         match addr {
             0x5000 => {
