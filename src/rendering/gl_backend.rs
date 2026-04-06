@@ -50,7 +50,7 @@ pub struct GlBackend {
     render_target: Box<dyn RenderTarget>,
     glow_context: std::sync::Arc<glow::Context>,
     imgui: imgui::Context,
-    renderer: imgui_opengl_renderer::Renderer,
+    imgui_renderer: imgui_glow_renderer::Renderer,
     nes_texture: gl::types::GLuint,
     nes_texture_id: imgui::TextureId,
     ppu_viewer_nt_texture: gl::types::GLuint,
@@ -354,7 +354,21 @@ impl GlBackend {
             imgui.fonts().add_font(&sources)
         };
 
-        let renderer = imgui_opengl_renderer::Renderer::new(&mut imgui, |s| (proc_address)(s) as _);
+        // Create glow context (shared by imgui renderer and librashader).
+        let glow_context = unsafe {
+            let proc_address = proc_address.clone();
+            std::sync::Arc::new(glow::Context::from_loader_function(|s| {
+                (proc_address)(s) as *const _
+            }))
+        };
+
+        let imgui_renderer = imgui_glow_renderer::Renderer::new(
+            &glow_context,
+            &mut imgui,
+            &mut imgui_glow_renderer::SimpleTextureMap::default(),
+            true,
+        )
+        .expect("Failed to initialise imgui glow renderer");
 
         let (nes_texture, nes_texture_id) = unsafe {
             let mut tex: gl::types::GLuint = 0;
@@ -393,14 +407,6 @@ impl GlBackend {
             )
         };
 
-        // Create glow context for librashader
-        let glow_context = unsafe {
-            let proc_address = proc_address.clone();
-            std::sync::Arc::new(glow::Context::from_loader_function(|s| {
-                (proc_address)(s) as *const _
-            }))
-        };
-
         let mut shader_manager = ShaderManager::new();
 
         // Load shader preset if specified
@@ -418,7 +424,7 @@ impl GlBackend {
             render_target,
             glow_context,
             imgui,
-            renderer,
+            imgui_renderer,
             nes_texture,
             nes_texture_id,
             ppu_viewer_nt_texture,
@@ -583,11 +589,6 @@ impl GlBackend {
 
             // Only draw the NES texture as a background if no shader is active.
             // When a shader is active, we draw the shader output texture.
-            //
-            // Note: imgui 0.11 may produce draw_data with CmdLists=null when nothing is drawn.
-            // imgui-opengl-renderer iterates draw_lists() unconditionally, which will panic
-            // on a null pointer even when the count is 0. Ensure we always emit at least one
-            // (invisible) draw command so the draw list pointer is non-null.
             let background_texture = shader_output_texture_id.unwrap_or(self.nes_texture_id);
             draw_frame_background(ui, background_texture, x0, y0, draw_w, draw_h);
 
@@ -682,7 +683,14 @@ impl GlBackend {
             }
         }
 
-        self.renderer.render(&mut self.imgui);
+        let draw_data = self.imgui.render();
+        self.imgui_renderer
+            .render(
+                &self.glow_context,
+                &imgui_glow_renderer::SimpleTextureMap::default(),
+                draw_data,
+            )
+            .expect("imgui render failed");
 
         self.render_target.swap_buffers();
 
@@ -1024,8 +1032,9 @@ fn update_ppu_viewer_textures(
 
 impl Drop for GlBackend {
     fn drop(&mut self) {
-        // Best-effort: make current and delete textures.
+        // Best-effort: make current and clean up GL resources.
         let _ = self.render_target.make_current();
+        self.imgui_renderer.destroy(&self.glow_context);
         unsafe {
             gl::DeleteTextures(1, &self.nes_texture);
             gl::DeleteTextures(1, &self.ppu_viewer_nt_texture);
