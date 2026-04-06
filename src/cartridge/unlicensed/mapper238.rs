@@ -124,12 +124,15 @@ impl Mapper for Mapper238 {
             self.ex_reg = data[16];
         } else {
             self.mmc3.restore_registers(data);
+            self.ex_reg = 0;
         }
     }
 
     fn capabilities(&self) -> MapperCapabilities {
         MapperCapabilities {
+            has_irq: true,
             has_chr_banking: true,
+            has_dynamic_mirroring: true,
             prg_bank_size_kb: 8,
             chr_bank_size_kb: 1,
             ..Default::default()
@@ -308,11 +311,15 @@ mod tests {
         let legacy = snap[..16].to_vec();
 
         let mut restored = create_mapper238(prg_rom, chr_rom, NametableLayout::Vertical).unwrap();
+        // Set exReg to a non-zero value before restoring to confirm it gets reset
+        restored.write_prg(0x6000, 0x03);
+        assert_eq!(restored.read_prg(0x6000), 0x03);
+
         restored.restore_registers(&legacy);
 
         // MMC3 banking is restored
         assert_eq!(restored.read_prg(0x8000), 5);
-        // exReg defaults to 0 on legacy restore
+        // exReg must be reset to 0 on legacy restore (not retain previous value)
         assert_eq!(restored.read_prg(0x6000), 0x00);
     }
 }
