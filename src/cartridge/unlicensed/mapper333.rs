@@ -21,7 +21,7 @@
 //! ```text
 //! D~7654 3210
 //!   ...M OOOO
-//!      | ++++- OOOO: outer 16 KiB PRG bank (NROM mode) / outer CHR/PRG high bits (MMC3 mode)
+//!      | ++++- OOOO: outer 32 KiB PRG block (NROM mode) / outer CHR/PRG high bits (MMC3 mode)
 //!      +------ M: 0=NROM mode, 1=MMC3 mode
 //! ```
 //! Power-up: `$00`.
@@ -200,9 +200,9 @@ impl Mapper for Mapper333 {
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        if let Some((&outer, mmc3_data)) = data.split_last() {
-            self.mmc3.restore_registers(mmc3_data);
-            self.reg = outer;
+        if data.len() >= 17 {
+            self.mmc3.restore_registers(&data[..16]);
+            self.reg = data[16];
         } else {
             self.mmc3.restore_registers(data);
             self.reg = 0;
@@ -481,6 +481,23 @@ mod tests {
         assert_eq!(
             mapper.reg, 0,
             "outer reg must default to 0 for legacy snapshots"
+        );
+    }
+
+    #[test]
+    fn restore_registers_with_16byte_snapshot_does_not_misparse_as_outer_reg() {
+        let mut mapper = make_mapper();
+        // A 16-byte MMC3-only snapshot must NOT be split_last'd into 15 bytes of MMC3
+        // state + 1 byte of outer reg. The last byte (formerly a12_low_cycles) must
+        // remain part of the MMC3 snapshot, and outer reg must be reset to 0.
+        let mut snap16 = vec![0u8; 16];
+        // Set the last byte to a sentinel value; old split_last() code would have
+        // incorrectly stored it as `reg`.
+        snap16[15] = 0xAB;
+        mapper.restore_registers(&snap16);
+        assert_eq!(
+            mapper.reg, 0,
+            "16-byte snapshot must not pollute outer reg (legacy MMC3-only snapshot)"
         );
     }
 }
