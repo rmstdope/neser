@@ -1,5 +1,7 @@
 use super::apu_device::ApuDevice;
-use super::controller_device::ControllerDevice;
+use super::controller_device::{
+    ControllerDevice, VS_INPUT_COIN_SLOT1, VS_INPUT_COIN_SLOT2, VS_INPUT_SERVICE,
+};
 use super::mapper_device::MapperDevice;
 use super::oam_dma_device::OamDmaDevice;
 use super::ppu_device::PpuDevice;
@@ -16,7 +18,7 @@ use crate::input::{
 };
 use crate::ppu::{self, SharedPpu};
 use serde::{Deserialize, Serialize};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::io;
 use std::ops::RangeInclusive;
 
@@ -56,20 +58,25 @@ pub struct MapperState {
 use std::path::PathBuf;
 use std::rc::Rc;
 
+/// Configuration passed to [`BusDevice::sync_controller_modes`] when the
+/// emulator config changes (e.g. expansion-port auto-detection from ROM DB).
+#[derive(Debug, Clone, Default)]
+pub struct ControllerModes {
+    pub four_score_enabled: bool,
+    pub famicom_four_players_enabled: bool,
+    pub famicom_mode: bool,
+    pub arkanoid_famicom_enabled: bool,
+    pub zapper_famicom_enabled: bool,
+    pub power_pad_famicom_enabled: bool,
+    pub vs_system_enabled: bool,
+    pub vs_dip_switches: u8,
+}
+
 pub trait BusDevice {
     fn read(&mut self, addr: u16, open_bus: u8, is_dummy_read: bool) -> Option<u8>;
     fn write(&mut self, addr: u16, value: u8, is_dummy_write: bool) -> bool;
     fn address_range(&self) -> RangeInclusive<u16>;
-    fn sync_controller_modes(
-        &mut self,
-        _four_score_enabled: bool,
-        _famicom_four_players_enabled: bool,
-        _famicom_mode: bool,
-        _arkanoid_famicom_enabled: bool,
-        _zapper_famicom_enabled: bool,
-        _power_pad_famicom_enabled: bool,
-    ) {
-    }
+    fn sync_controller_modes(&mut self, _modes: &ControllerModes) {}
 }
 
 pub type SharedBus = Rc<RefCell<Bus>>;
@@ -88,6 +95,7 @@ pub struct Bus {
     expansion_arkanoid: Rc<RefCell<ArkanoidController>>, // Famicom expansion Arkanoid controller
     expansion_zapper: Rc<RefCell<Zapper>>,              // Famicom expansion Zapper controller
     expansion_power_pad: Rc<RefCell<PowerPad>>,         // Famicom expansion Power Pad controller
+    vs_arcade_input: Rc<Cell<u8>>,                      // VS System coin/service input state
     open_bus: u8, // Last value on the data bus for open bus behavior
     devices: Vec<Box<dyn BusDevice>>,
 }
@@ -136,6 +144,7 @@ impl Bus {
         let expansion_arkanoid = Rc::new(RefCell::new(ArkanoidController::new()));
         let expansion_zapper = Rc::new(RefCell::new(Zapper::new(ppu.clone(), app_context.clone())));
         let expansion_power_pad = Rc::new(RefCell::new(PowerPad::new()));
+        let vs_arcade_input = Rc::new(Cell::new(0u8));
 
         let mut controller = Self {
             cpu_ram: Rc::new(RefCell::new(cpu_ram)),
@@ -150,6 +159,7 @@ impl Bus {
             expansion_arkanoid,
             expansion_zapper,
             expansion_power_pad,
+            vs_arcade_input,
             open_bus: 0xFF, // Initialize to 0xFF (common power-on state)
             devices: Vec::new(),
         };
@@ -175,6 +185,7 @@ impl Bus {
         controller_device.set_zapper_famicom_expansion(Some(controller.expansion_zapper.clone()));
         controller_device
             .set_power_pad_famicom_expansion(Some(controller.expansion_power_pad.clone()));
+        controller_device.set_vs_arcade_input(controller.vs_arcade_input.clone());
         controller.register_device(Box::new(controller_device));
         controller.register_device(Box::new(ApuDevice::new(controller.apu.clone())));
         controller.register_device(Box::new(OamDmaDevice::new(
@@ -193,23 +204,21 @@ impl Bus {
 
     pub fn sync_controller_modes_from_config(&mut self) {
         let app_context = self.app_context.borrow();
-        let four_score_enabled = app_context.config().four_score_enabled;
-        let famicom_four_players_enabled = Self::is_famicom_four_players(app_context.config());
-        let famicom_mode = app_context.config().hardware_mode == HardwareMode::Famicom;
-        let arkanoid_famicom_enabled = Self::is_arkanoid_famicom(app_context.config());
-        let zapper_famicom_enabled = Self::is_zapper_famicom(app_context.config());
-        let power_pad_famicom_enabled = Self::is_power_pad_famicom(app_context.config());
+        let config = app_context.config();
+        let modes = ControllerModes {
+            four_score_enabled: config.four_score_enabled,
+            famicom_four_players_enabled: Self::is_famicom_four_players(config),
+            famicom_mode: config.hardware_mode == HardwareMode::Famicom,
+            arkanoid_famicom_enabled: Self::is_arkanoid_famicom(config),
+            zapper_famicom_enabled: Self::is_zapper_famicom(config),
+            power_pad_famicom_enabled: Self::is_power_pad_famicom(config),
+            vs_system_enabled: Self::is_vs_system(config),
+            vs_dip_switches: config.vs_dip_switches,
+        };
         drop(app_context);
 
         for device in self.devices.iter_mut() {
-            device.sync_controller_modes(
-                four_score_enabled,
-                famicom_four_players_enabled,
-                famicom_mode,
-                arkanoid_famicom_enabled,
-                zapper_famicom_enabled,
-                power_pad_famicom_enabled,
-            );
+            device.sync_controller_modes(&modes);
         }
     }
 
@@ -235,6 +244,10 @@ impl Bus {
     fn is_power_pad_famicom(config: &crate::console::Config) -> bool {
         config.hardware_mode == HardwareMode::Famicom
             && config.expansion_port == ExpansionPort::PowerPadFamicom
+    }
+
+    fn is_vs_system(config: &crate::console::Config) -> bool {
+        config.expansion_port == ExpansionPort::VsSystem
     }
 
     fn has_player34_serial_enabled(&self) -> bool {
@@ -608,6 +621,31 @@ impl Bus {
             states[player_index] |= 1 << bit;
         } else {
             states[player_index] &= !(1 << bit);
+        }
+    }
+
+    /// Set VS System coin insert state for a specific slot (0 or 1).
+    pub fn set_vs_coin_insert(&self, slot: u8, pressed: bool) {
+        let bit = if slot == 0 {
+            VS_INPUT_COIN_SLOT1
+        } else {
+            VS_INPUT_COIN_SLOT2
+        };
+        let current = self.vs_arcade_input.get();
+        if pressed {
+            self.vs_arcade_input.set(current | bit);
+        } else {
+            self.vs_arcade_input.set(current & !bit);
+        }
+    }
+
+    /// Set VS System service button state.
+    pub fn set_vs_service_button(&self, pressed: bool) {
+        let current = self.vs_arcade_input.get();
+        if pressed {
+            self.vs_arcade_input.set(current | VS_INPUT_SERVICE);
+        } else {
+            self.vs_arcade_input.set(current & !VS_INPUT_SERVICE);
         }
     }
 

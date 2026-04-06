@@ -1,11 +1,17 @@
-use crate::bus::bus::BusDevice;
+use crate::bus::bus::{BusDevice, ControllerModes};
 use crate::input::ArkanoidController;
 use crate::input::Controller;
 use crate::input::PowerPad;
 use crate::input::Zapper;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::ops::RangeInclusive;
 use std::rc::Rc;
+
+/// Packed bit flags for VS System arcade input, shared between Bus and
+/// ControllerDevice via `Rc<Cell<u8>>`.
+pub(crate) const VS_INPUT_COIN_SLOT1: u8 = 0x01;
+pub(crate) const VS_INPUT_COIN_SLOT2: u8 = 0x02;
+pub(crate) const VS_INPUT_SERVICE: u8 = 0x04;
 
 pub(crate) struct ControllerDevice {
     controllers: [Rc<RefCell<Box<dyn Controller>>>; 2],
@@ -23,6 +29,9 @@ pub(crate) struct ControllerDevice {
     zapper_famicom_enabled: bool,
     power_pad_expansion: Option<Rc<RefCell<PowerPad>>>,
     power_pad_famicom_enabled: bool,
+    vs_system_enabled: bool,
+    vs_arcade_input: Rc<Cell<u8>>,
+    vs_dip_switches: u8,
 }
 
 impl ControllerDevice {
@@ -63,6 +72,9 @@ impl ControllerDevice {
             zapper_famicom_enabled: false,
             power_pad_expansion: None,
             power_pad_famicom_enabled: false,
+            vs_system_enabled: false,
+            vs_arcade_input: Rc::new(Cell::new(0)),
+            vs_dip_switches: 0,
         }
     }
 
@@ -106,6 +118,62 @@ impl ControllerDevice {
 
     pub(crate) fn set_power_pad_famicom_enabled(&mut self, enabled: bool) {
         self.power_pad_famicom_enabled = enabled;
+    }
+
+    pub(crate) fn set_vs_system_enabled(&mut self, enabled: bool) {
+        self.vs_system_enabled = enabled;
+    }
+
+    pub(crate) fn set_vs_arcade_input(&mut self, input: Rc<Cell<u8>>) {
+        self.vs_arcade_input = input;
+    }
+
+    pub(crate) fn set_vs_dip_switches(&mut self, value: u8) {
+        self.vs_dip_switches = value;
+    }
+
+    /// Read VS System controller register.
+    ///
+    /// In VS System mode all 8 bits of $4016/$4017 are hardware-defined
+    /// (no open-bus bits).
+    ///
+    /// $4016 read: `PCCD DS0B`
+    ///   bit 0: right stick serial data
+    ///   bit 1: always 0
+    ///   bit 2: service button
+    ///   bits 3-4: DIP switches 1-2
+    ///   bits 5-6: coin inserted (slot 1, slot 2)
+    ///   bit 7: 0 = primary CPU (UniSystem)
+    ///
+    /// $4017 read: `DDDD DD0B`
+    ///   bit 0: left stick serial data
+    ///   bit 1: always 0
+    ///   bits 2-7: DIP switches 3-8
+    fn read_vs_system_bit(&mut self, port_index: usize, is_dummy_read: bool) -> u8 {
+        let controller_bit = self.controllers[port_index]
+            .borrow_mut()
+            .read(is_dummy_read)
+            & 0x01;
+
+        if port_index == 0 {
+            let arcade = self.vs_arcade_input.get();
+            let mut value = controller_bit;
+            if arcade & VS_INPUT_SERVICE != 0 {
+                value |= 0x04;
+            }
+            value |= (self.vs_dip_switches & 0x03) << 3;
+            if arcade & VS_INPUT_COIN_SLOT1 != 0 {
+                value |= 0x20;
+            }
+            if arcade & VS_INPUT_COIN_SLOT2 != 0 {
+                value |= 0x40;
+            }
+            value
+        } else {
+            let mut value = controller_bit;
+            value |= self.vs_dip_switches & 0xFC;
+            value
+        }
     }
 
     fn read_arkanoid_famicom_bit(&mut self, port_index: usize, is_dummy_read: bool) -> u8 {
@@ -229,6 +297,11 @@ impl BusDevice for ControllerDevice {
     fn read(&mut self, addr: u16, open_bus: u8, is_dummy_read: bool) -> Option<u8> {
         let index = (addr - 0x4016) as usize;
 
+        // VS System: all 8 bits are hardware-defined, no open bus
+        if self.vs_system_enabled {
+            return Some(self.read_vs_system_bit(index, is_dummy_read));
+        }
+
         let mut controller_state = if self.four_score_enabled {
             self.read_four_score_bit(index, is_dummy_read)
         } else if self.famicom_four_players_enabled {
@@ -302,21 +375,15 @@ impl BusDevice for ControllerDevice {
         0x4016..=0x4017
     }
 
-    fn sync_controller_modes(
-        &mut self,
-        four_score_enabled: bool,
-        famicom_four_players_enabled: bool,
-        famicom_mode: bool,
-        arkanoid_famicom_enabled: bool,
-        zapper_famicom_enabled: bool,
-        power_pad_famicom_enabled: bool,
-    ) {
-        self.set_four_score_enabled(four_score_enabled);
-        self.set_famicom_four_players_enabled(famicom_four_players_enabled);
-        self.famicom_mode = famicom_mode;
-        self.set_arkanoid_famicom_enabled(arkanoid_famicom_enabled);
-        self.set_zapper_famicom_enabled(zapper_famicom_enabled);
-        self.set_power_pad_famicom_enabled(power_pad_famicom_enabled);
+    fn sync_controller_modes(&mut self, modes: &ControllerModes) {
+        self.set_four_score_enabled(modes.four_score_enabled);
+        self.set_famicom_four_players_enabled(modes.famicom_four_players_enabled);
+        self.famicom_mode = modes.famicom_mode;
+        self.set_arkanoid_famicom_enabled(modes.arkanoid_famicom_enabled);
+        self.set_zapper_famicom_enabled(modes.zapper_famicom_enabled);
+        self.set_power_pad_famicom_enabled(modes.power_pad_famicom_enabled);
+        self.set_vs_system_enabled(modes.vs_system_enabled);
+        self.set_vs_dip_switches(modes.vs_dip_switches);
     }
 }
 
@@ -896,6 +963,195 @@ mod tests {
             0xF8,
             "$4016 bits 3-7 should be open bus (mask 0xF8) even with Zapper expansion. Got ${:02X}",
             value
+        );
+    }
+
+    // ── VS System tests ──────────────────────────────────────────────────────
+
+    /// Create a VS System-enabled controller device with a shared arcade input cell.
+    fn create_vs_controller_device() -> (ControllerDevice, Rc<Cell<u8>>) {
+        let mut device = create_test_controller_device();
+        let arcade_input = Rc::new(Cell::new(0u8));
+        device.set_vs_arcade_input(arcade_input.clone());
+        device.set_vs_system_enabled(true);
+        (device, arcade_input)
+    }
+
+    #[test]
+    fn test_vs_system_4016_read_has_zero_on_bit_1() {
+        let (mut device, _) = create_vs_controller_device();
+        let result = device.read(0x4016, 0xFF, false).unwrap();
+        assert_eq!(result & 0x02, 0x00, "VS $4016 bit 1 should always be 0");
+    }
+
+    #[test]
+    fn test_vs_system_4016_read_service_button_on_bit_2() {
+        let (mut device, arcade_input) = create_vs_controller_device();
+
+        // Service button not pressed
+        let result = device.read(0x4016, 0xFF, false).unwrap();
+        assert_eq!(
+            result & 0x04,
+            0x00,
+            "Service button should be 0 when not pressed"
+        );
+
+        // Service button pressed
+        arcade_input.set(VS_INPUT_SERVICE);
+        let result = device.read(0x4016, 0xFF, false).unwrap();
+        assert_eq!(
+            result & 0x04,
+            0x04,
+            "Service button should set bit 2 of $4016"
+        );
+    }
+
+    #[test]
+    fn test_vs_system_4016_read_dip_switches_on_bits_3_4() {
+        let (mut device, _) = create_vs_controller_device();
+
+        // DIP 1 on (bit 0 of dip_switches) → $4016 bit 3
+        device.set_vs_dip_switches(0x01);
+        let result = device.read(0x4016, 0xFF, false).unwrap();
+        assert_eq!(
+            result & 0x18,
+            0x08,
+            "DIP switch 1 should map to $4016 bit 3"
+        );
+
+        // DIP 2 on (bit 1 of dip_switches) → $4016 bit 4
+        device.set_vs_dip_switches(0x02);
+        let result = device.read(0x4016, 0xFF, false).unwrap();
+        assert_eq!(
+            result & 0x18,
+            0x10,
+            "DIP switch 2 should map to $4016 bit 4"
+        );
+
+        // Both DIP 1 and 2 on
+        device.set_vs_dip_switches(0x03);
+        let result = device.read(0x4016, 0xFF, false).unwrap();
+        assert_eq!(result & 0x18, 0x18, "DIP switches 1+2 should set bits 3-4");
+    }
+
+    #[test]
+    fn test_vs_system_4016_read_coin_on_bits_5_6() {
+        let (mut device, arcade_input) = create_vs_controller_device();
+
+        // No coin
+        let result = device.read(0x4016, 0xFF, false).unwrap();
+        assert_eq!(result & 0x60, 0x00, "No coin bits when nothing inserted");
+
+        // Coin slot 1
+        arcade_input.set(VS_INPUT_COIN_SLOT1);
+        let result = device.read(0x4016, 0xFF, false).unwrap();
+        assert_eq!(result & 0x60, 0x20, "Coin slot 1 should set $4016 bit 5");
+
+        // Coin slot 2
+        arcade_input.set(VS_INPUT_COIN_SLOT2);
+        let result = device.read(0x4016, 0xFF, false).unwrap();
+        assert_eq!(result & 0x60, 0x40, "Coin slot 2 should set $4016 bit 6");
+
+        // Both coin slots
+        arcade_input.set(VS_INPUT_COIN_SLOT1 | VS_INPUT_COIN_SLOT2);
+        let result = device.read(0x4016, 0xFF, false).unwrap();
+        assert_eq!(result & 0x60, 0x60, "Both coin slots should set bits 5-6");
+    }
+
+    #[test]
+    fn test_vs_system_4016_read_primary_cpu_bit_7_is_zero() {
+        let (mut device, _) = create_vs_controller_device();
+        let result = device.read(0x4016, 0xFF, false).unwrap();
+        assert_eq!(
+            result & 0x80,
+            0x00,
+            "VS $4016 bit 7 should be 0 (primary CPU)"
+        );
+    }
+
+    #[test]
+    fn test_vs_system_4017_read_has_zero_on_bit_1() {
+        let (mut device, _) = create_vs_controller_device();
+        let result = device.read(0x4017, 0xFF, false).unwrap();
+        assert_eq!(result & 0x02, 0x00, "VS $4017 bit 1 should always be 0");
+    }
+
+    #[test]
+    fn test_vs_system_4017_read_dip_switches_on_bits_2_7() {
+        let (mut device, _) = create_vs_controller_device();
+
+        // DIP 3 (bit 2 of dip_switches) → $4017 bit 2
+        device.set_vs_dip_switches(0x04);
+        let result = device.read(0x4017, 0xFF, false).unwrap();
+        assert_eq!(
+            result & 0xFC,
+            0x04,
+            "DIP switch 3 should map to $4017 bit 2"
+        );
+
+        // DIP 8 (bit 7 of dip_switches) → $4017 bit 7
+        device.set_vs_dip_switches(0x80);
+        let result = device.read(0x4017, 0xFF, false).unwrap();
+        assert_eq!(
+            result & 0xFC,
+            0x80,
+            "DIP switch 8 should map to $4017 bit 7"
+        );
+
+        // All DIP 3-8 on
+        device.set_vs_dip_switches(0xFC);
+        let result = device.read(0x4017, 0xFF, false).unwrap();
+        assert_eq!(
+            result & 0xFC,
+            0xFC,
+            "DIP switches 3-8 should set $4017 bits 2-7"
+        );
+    }
+
+    #[test]
+    fn test_vs_system_all_bits_defined_no_open_bus() {
+        let (mut device, _) = create_vs_controller_device();
+        // Open bus should be ignored — all 8 bits are hardware-defined in VS mode
+        let result = device.read(0x4016, 0xFF, false).unwrap();
+        assert_eq!(
+            result, 0x00,
+            "VS $4016 with no inputs should be 0x00 regardless of open bus"
+        );
+
+        let result = device.read(0x4017, 0xFF, false).unwrap();
+        assert_eq!(
+            result, 0x00,
+            "VS $4017 with no inputs should be 0x00 regardless of open bus"
+        );
+    }
+
+    #[test]
+    fn test_vs_system_does_not_affect_non_vs_reads() {
+        let mut device = create_test_controller_device();
+        // VS mode NOT enabled — normal NES open bus behavior
+        let result = device.read(0x4016, 0xFF, false).unwrap();
+        assert_eq!(
+            result & 0xE0,
+            0xE0,
+            "Non-VS mode should apply NES open bus (bits 5-7)"
+        );
+    }
+
+    #[test]
+    fn test_vs_system_4016_combined_bits() {
+        let (mut device, arcade_input) = create_vs_controller_device();
+
+        // Set DIP 1+2, coin slot 1, and service button
+        device.set_vs_dip_switches(0x03);
+        arcade_input.set(VS_INPUT_COIN_SLOT1 | VS_INPUT_SERVICE);
+
+        let result = device.read(0x4016, 0xFF, false).unwrap();
+        // Expected: bit 0 = 0 (controller), bit 1 = 0, bit 2 = 1 (service),
+        //           bits 3-4 = 11 (DIP 1+2), bit 5 = 1 (coin), bits 6-7 = 0
+        assert_eq!(
+            result, 0x3C,
+            "VS $4016 combined: service + DIP 1,2 + coin1 = $3C, got ${:02X}",
+            result
         );
     }
 }
