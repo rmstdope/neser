@@ -10,6 +10,31 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
 use crate::debugging::log_info;
 
+/// Shared state between the `NativeAudio` owner and the cpal audio callback.
+///
+/// All fields are `Arc`-wrapped atomics so both sides can read/write without locks.
+struct StreamSharedState {
+    volume: Arc<AtomicU32>,
+    stats: Arc<AudioStats>,
+    fill_level: Arc<AtomicUsize>,
+    paused: Arc<AtomicBool>,
+    /// Number of stale pre-pause ring-buffer samples to discard silently on resume.
+    /// Written by `NativeAudio::pause()`, decremented by the cpal callback.
+    drain_stale: Arc<AtomicUsize>,
+}
+
+impl StreamSharedState {
+    fn new() -> Self {
+        Self {
+            volume: Arc::new(AtomicU32::new(f32::to_bits(0.75))),
+            stats: Arc::new(AudioStats::default()),
+            fill_level: Arc::new(AtomicUsize::new(0)),
+            paused: Arc::new(AtomicBool::new(true)),
+            drain_stale: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+}
+
 /// Audio output handler using cpal for the native frontend.
 ///
 /// Mirrors the SDL audio backend's pipeline architecture:
@@ -22,6 +47,12 @@ pub struct NativeAudio {
     fill_level: Arc<AtomicUsize>,
     actual_sample_rate: i32,
     paused: Arc<AtomicBool>,
+    /// Number of stale ring-buffer samples to discard silently on the next resume.
+    ///
+    /// Snapshotted from `fill_level` in `pause()`.  The cpal callback drains
+    /// exactly this many samples (outputting silence) before switching to normal
+    /// playback, preventing pre-pause audio from bleeding into post-resume audio.
+    drain_stale: Arc<AtomicUsize>,
 }
 
 impl NativeAudio {
@@ -54,10 +85,7 @@ impl NativeAudio {
 
         let ring_buffer = HeapRb::<f32>::new(Self::BUFFER_SIZE);
         let (producer, consumer) = ring_buffer.split();
-        let fill_level = Arc::new(AtomicUsize::new(0));
-        let volume = Arc::new(AtomicU32::new(f32::to_bits(0.75)));
-        let stats = Arc::new(AudioStats::default());
-        let paused = Arc::new(AtomicBool::new(true));
+        let shared = StreamSharedState::new();
 
         let stream = Self::build_stream(
             &device,
@@ -65,10 +93,7 @@ impl NativeAudio {
             channels,
             sample_format,
             consumer,
-            Arc::clone(&volume),
-            Arc::clone(&stats),
-            Arc::clone(&fill_level),
-            Arc::clone(&paused),
+            &shared,
         )?;
 
         stream
@@ -78,11 +103,12 @@ impl NativeAudio {
         Ok(Self {
             _stream: Some(stream),
             sample_producer: producer,
-            volume,
-            stats,
-            fill_level,
+            volume: shared.volume,
+            stats: shared.stats,
+            fill_level: shared.fill_level,
             actual_sample_rate: actual_rate,
-            paused,
+            paused: shared.paused,
+            drain_stale: shared.drain_stale,
         })
     }
 
@@ -135,28 +161,24 @@ impl NativeAudio {
 
     /// Dispatches stream construction to the correct typed builder based on the
     /// device's native sample format.
-    #[allow(clippy::too_many_arguments)]
     fn build_stream(
         device: &cpal::Device,
         config: &StreamConfig,
         channels: u16,
         sample_format: SampleFormat,
         consumer: AudioConsumer,
-        volume: Arc<AtomicU32>,
-        stats: Arc<AudioStats>,
-        fill_level: Arc<AtomicUsize>,
-        paused: Arc<AtomicBool>,
+        shared: &StreamSharedState,
     ) -> Result<cpal::Stream, String> {
         match sample_format {
-            SampleFormat::F32 => Self::build_typed_stream::<f32>(
-                device, config, channels, consumer, volume, stats, fill_level, paused,
-            ),
-            SampleFormat::I16 => Self::build_typed_stream::<i16>(
-                device, config, channels, consumer, volume, stats, fill_level, paused,
-            ),
-            SampleFormat::U16 => Self::build_typed_stream::<u16>(
-                device, config, channels, consumer, volume, stats, fill_level, paused,
-            ),
+            SampleFormat::F32 => {
+                Self::build_typed_stream::<f32>(device, config, channels, consumer, shared)
+            }
+            SampleFormat::I16 => {
+                Self::build_typed_stream::<i16>(device, config, channels, consumer, shared)
+            }
+            SampleFormat::U16 => {
+                Self::build_typed_stream::<u16>(device, config, channels, consumer, shared)
+            }
             _ => Err(format!(
                 "Unsupported audio sample format: {sample_format:?}"
             )),
@@ -167,17 +189,18 @@ impl NativeAudio {
     ///
     /// Converts the mono f32 NES audio signal to the device's sample format `T`
     /// and duplicates each mono sample to all output channels (handles stereo).
-    #[allow(clippy::too_many_arguments)]
     fn build_typed_stream<T: SizedSample + FromSample<f32>>(
         device: &cpal::Device,
         config: &StreamConfig,
         channels: u16,
         mut consumer: AudioConsumer,
-        volume: Arc<AtomicU32>,
-        stats: Arc<AudioStats>,
-        fill_level: Arc<AtomicUsize>,
-        paused: Arc<AtomicBool>,
+        shared: &StreamSharedState,
     ) -> Result<cpal::Stream, String> {
+        let volume = Arc::clone(&shared.volume);
+        let stats = Arc::clone(&shared.stats);
+        let fill_level = Arc::clone(&shared.fill_level);
+        let paused = Arc::clone(&shared.paused);
+        let drain_stale = Arc::clone(&shared.drain_stale);
         let mut resampler = AudioResampler::new(Self::BUFFER_SIZE / 2);
 
         device
@@ -196,6 +219,25 @@ impl NativeAudio {
                     // `data` is interleaved: [L, R, L, R, ...] for stereo.
                     // We generate one mono sample and duplicate it to all channels.
                     for frame in data.chunks_mut(channels as usize) {
+                        // Drain stale pre-pause samples silently before playing
+                        // fresh emulation audio.  When drain_stale > 0, pop one
+                        // sample from the ring buffer and output silence instead.
+                        let stale = drain_stale.load(Ordering::Relaxed);
+                        if stale > 0 {
+                            if consumer.try_pop().is_some() {
+                                let _ = fill_level.fetch_update(
+                                    Ordering::Relaxed,
+                                    Ordering::Relaxed,
+                                    |l| Some(l.saturating_sub(1)),
+                                );
+                                drain_stale.fetch_sub(1, Ordering::Relaxed);
+                                if drain_stale.load(Ordering::Relaxed) == 0 {
+                                    resampler.reset();
+                                }
+                            }
+                            frame.fill(T::EQUILIBRIUM);
+                            continue;
+                        }
                         let raw = resampler.render_next(&mut || {
                             let s = consumer.try_pop();
                             if s.is_some() {
@@ -240,6 +282,18 @@ impl NativeAudio {
         self.fill_level.load(Ordering::Relaxed)
     }
 
+    /// Returns `true` if audio output is currently paused.
+    #[cfg(test)]
+    pub fn is_paused(&self) -> bool {
+        self.paused.load(Ordering::Relaxed)
+    }
+
+    /// Returns the number of stale samples to be drained silently on next resume.
+    #[cfg(test)]
+    pub fn drain_stale_count(&self) -> usize {
+        self.drain_stale.load(Ordering::Relaxed)
+    }
+
     /// Creates a `NativeAudio` without opening a real cpal device or stream.
     ///
     /// Intended for unit tests that exercise pure logic (volume, stats, buffering)
@@ -248,20 +302,27 @@ impl NativeAudio {
     fn new_without_stream(sample_rate: i32) -> Self {
         let ring_buffer = HeapRb::<f32>::new(Self::BUFFER_SIZE);
         let (producer, _consumer) = ring_buffer.split();
+        let shared = StreamSharedState::new();
         Self {
             _stream: None,
             sample_producer: producer,
-            volume: Arc::new(AtomicU32::new(f32::to_bits(0.75))),
-            stats: Arc::new(AudioStats::default()),
-            fill_level: Arc::new(AtomicUsize::new(0)),
+            volume: shared.volume,
+            stats: shared.stats,
+            fill_level: shared.fill_level,
             actual_sample_rate: sample_rate,
-            paused: Arc::new(AtomicBool::new(true)),
+            paused: shared.paused,
+            drain_stale: shared.drain_stale,
         }
     }
 }
 
 impl NesAudio for NativeAudio {
     fn queue_sample(&mut self, sample: f32) {
+        // Drop silently when paused: the cpal callback stops draining while paused,
+        // so pushing would fill the ring buffer and spin-block the main thread.
+        if self.paused.load(Ordering::Relaxed) {
+            return;
+        }
         queue_sample_to_producer(
             &mut self.sample_producer,
             sample,
@@ -275,6 +336,11 @@ impl NesAudio for NativeAudio {
     }
 
     fn pause(&self) {
+        // Snapshot fill_level so the cpal callback discards these stale samples
+        // silently on the next resume, preventing pre-pause audio from bleeding
+        // into post-resume audio.
+        self.drain_stale
+            .store(self.fill_level.load(Ordering::Relaxed), Ordering::Relaxed);
         self.paused.store(true, Ordering::Relaxed);
     }
 
@@ -355,11 +421,12 @@ mod tests {
     fn test_prime_startup_and_queue_sample() {
         let mut audio = NativeAudio::new_without_stream(44100);
 
-        // Prime buffer
+        // Prime buffer (bypasses queue_sample, so works regardless of paused state)
         audio.prime_startup(100);
         assert!(audio.buffered_samples() >= 100);
 
-        // Queue additional samples
+        // queue_sample only pushes when resumed
+        audio.resume();
         audio.queue_sample(0.5);
         audio.queue_sample(0.3);
         assert!(audio.buffered_samples() >= 102);
@@ -370,12 +437,54 @@ mod tests {
         let audio = NativeAudio::new_without_stream(44100);
 
         // Starts paused
-        assert!(audio.paused.load(Ordering::Relaxed));
+        assert!(audio.is_paused());
 
         audio.resume();
-        assert!(!audio.paused.load(Ordering::Relaxed));
+        assert!(!audio.is_paused());
 
         audio.pause();
-        assert!(audio.paused.load(Ordering::Relaxed));
+        assert!(audio.is_paused());
+    }
+
+    #[test]
+    fn test_queue_sample_does_not_push_when_paused() {
+        let mut audio = NativeAudio::new_without_stream(44100);
+        assert!(audio.is_paused(), "starts paused");
+
+        for i in 0..5 {
+            audio.queue_sample(i as f32 * 0.1);
+        }
+
+        assert_eq!(
+            audio.buffered_samples(),
+            0,
+            "queue_sample while paused must not push into the ring buffer"
+        );
+    }
+
+    #[test]
+    fn test_pause_snapshots_stale_sample_count_for_drain_on_resume() {
+        // When audio.pause() is called (e.g. on focus loss), the ring buffer
+        // still contains samples queued before the pause.  The callback stops
+        // draining while paused, so those stale samples would play back
+        // immediately on resume — producing an audible artifact.
+        //
+        // pause() must snapshot the current fill_level so the callback knows
+        // exactly how many samples to discard silently when it resumes.
+        let mut audio = NativeAudio::new_without_stream(44100);
+        audio.resume();
+
+        for _ in 0..10 {
+            audio.queue_sample(0.5);
+        }
+        assert_eq!(audio.buffered_samples(), 10);
+
+        audio.pause();
+
+        assert_eq!(
+            audio.drain_stale_count(),
+            10,
+            "pause() must snapshot fill_level into drain_stale so stale samples are discarded on resume"
+        );
     }
 }

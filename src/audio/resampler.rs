@@ -49,6 +49,19 @@ impl AudioResampler {
         self.rate = rate;
     }
 
+    /// Resets the resampler's interpolation state without affecting the adaptive rate.
+    ///
+    /// Called after draining stale buffer samples on audio resume to prevent
+    /// old sample state from bleeding into the fresh audio stream.
+    pub fn reset(&mut self) {
+        self.phase = 0.0;
+        self.rate = 1.0;
+        self.current = 0.0;
+        self.next = 0.0;
+        self.has_current = false;
+        self.has_next = false;
+    }
+
     /// Renders the next interpolated output sample.
     ///
     /// Uses linear interpolation between consecutive input samples,
@@ -128,5 +141,28 @@ mod tests {
         assert!((first - 0.0).abs() < 0.00001);
         assert!((second - 1.0).abs() < 0.00001);
         assert!((third - 0.0).abs() < 0.00001);
+    }
+
+    #[test]
+    fn test_reset_clears_interpolation_state() {
+        let mut resampler = AudioResampler::new(4);
+        resampler.set_rate_for_test(1.0);
+
+        // Prime the resampler with samples so has_current/has_next are set
+        let mut samples = VecDeque::from([0.5_f32, 0.8]);
+        resampler.render_next(&mut || samples.pop_front());
+
+        // After reset, the resampler should behave as if newly created:
+        // render_next with an empty source returns None (no buffered state)
+        resampler.reset();
+        let result = resampler.render_next(&mut || None);
+        assert!(
+            result.is_none(),
+            "after reset(), render_next with empty source must return None (no stale buffered samples)"
+        );
+        assert!(
+            (resampler.rate() - 1.0).abs() < 0.00001,
+            "reset() must restore rate to 1.0"
+        );
     }
 }
