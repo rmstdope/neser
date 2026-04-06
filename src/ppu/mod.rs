@@ -13,6 +13,7 @@ mod status;
 #[cfg(test)]
 mod test_utils;
 mod timing;
+pub(crate) mod vs_palettes;
 
 pub use background::Background;
 pub use memory::Memory;
