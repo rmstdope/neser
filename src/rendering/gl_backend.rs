@@ -40,6 +40,15 @@ pub trait RenderTarget {
     fn set_fullscreen(&mut self, enabled: bool) -> Result<(), String>;
     /// Enables or disables mouse confinement to the render target window.
     fn set_mouse_grab(&mut self, enabled: bool) -> Result<(), String>;
+    /// Notifies the render target that the physical window size has changed.
+    ///
+    /// Must be called whenever the OS sends a resize event (including fullscreen
+    /// transitions) so that the platform surface can be updated to match the new
+    /// physical pixel dimensions. Without this, the presented surface may remain
+    /// at the old size, causing the rendered image to be clipped.
+    ///
+    /// The default implementation is a no-op for platforms that resize automatically.
+    fn notify_resize(&mut self, _w: u32, _h: u32) {}
 }
 
 /// Loader for GL procedure addresses used by OpenGL and related backends.
@@ -294,6 +303,14 @@ impl GlBackend {
     /// Enables or disables mouse grab on the render target window.
     pub fn set_mouse_grab(&mut self, enabled: bool) -> Result<(), String> {
         self.render_target.set_mouse_grab(enabled)
+    }
+
+    /// Notifies the render target of a physical window resize.
+    ///
+    /// Must be called from the OS window-resize event handler (including fullscreen
+    /// transitions) so the underlying GL surface stays in sync with the new dimensions.
+    pub fn notify_resize(&mut self, w: u32, h: u32) {
+        self.render_target.notify_resize(w, h);
     }
 
     /// Computes windowed mode dimensions preserving the target aspect ratio.
@@ -1041,6 +1058,62 @@ impl Drop for GlBackend {
                 gl::DeleteTextures(1, &self.ppu_viewer_tiles_texture);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests_notify_resize {
+    use super::RenderTarget;
+
+    /// Mock render target that records whether notify_resize was called and
+    /// with which dimensions.
+    struct TrackingMockRenderTarget {
+        resize_called_with: Option<(u32, u32)>,
+    }
+
+    impl TrackingMockRenderTarget {
+        fn new() -> Self {
+            Self {
+                resize_called_with: None,
+            }
+        }
+    }
+
+    impl RenderTarget for TrackingMockRenderTarget {
+        fn notify_resize(&mut self, w: u32, h: u32) {
+            self.resize_called_with = Some((w, h));
+        }
+        fn window_size(&self) -> (u32, u32) {
+            (800, 600)
+        }
+        fn drawable_size(&self) -> (u32, u32) {
+            (800, 600)
+        }
+        fn swap_buffers(&self) {}
+        fn make_current(&self) -> Result<(), String> {
+            Ok(())
+        }
+        fn set_fullscreen(&mut self, _enabled: bool) -> Result<(), String> {
+            Ok(())
+        }
+        fn set_mouse_grab(&mut self, _enabled: bool) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_render_target_notify_resize_records_new_dimensions() {
+        let mut mock = TrackingMockRenderTarget::new();
+        mock.notify_resize(1920, 1080);
+        assert_eq!(mock.resize_called_with, Some((1920, 1080)));
+    }
+
+    #[test]
+    fn test_render_target_notify_resize_updates_on_each_call() {
+        let mut mock = TrackingMockRenderTarget::new();
+        mock.notify_resize(800, 600);
+        mock.notify_resize(1920, 1080);
+        assert_eq!(mock.resize_called_with, Some((1920, 1080)));
     }
 }
 

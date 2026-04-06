@@ -215,6 +215,14 @@ impl NativeGlWrapper {
         self.gl_backend.set_mouse_grab(enabled)
     }
 
+    /// Notifies the render target that the physical window size has changed.
+    ///
+    /// Call this from `WindowEvent::Resized` and `WindowEvent::ScaleFactorChanged`
+    /// so the glutin surface is resized to match the new physical dimensions.
+    pub fn notify_resize(&mut self, w: u32, h: u32) {
+        self.gl_backend.notify_resize(w, h);
+    }
+
     /// Enables locked cursor mode (for SNES Mouse relative motion).
     ///
     /// Uses `CursorGrabMode::Locked` which hides the cursor and provides

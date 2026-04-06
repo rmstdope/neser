@@ -101,6 +101,12 @@ impl RenderTarget for WinitRenderTarget {
             }
         })
     }
+
+    fn notify_resize(&mut self, w: u32, h: u32) {
+        if let (Some(w), Some(h)) = (NonZeroU32::new(w), NonZeroU32::new(h)) {
+            self.surface.resize(&self.gl_context, w, h);
+        }
+    }
 }
 
 #[cfg(test)]

@@ -552,6 +552,16 @@ impl ApplicationHandler for NativeEventLoop {
                 event_loop.exit();
             }
 
+            // Resize the glutin surface whenever the physical window size changes.
+            // This covers both manual window resizes and fullscreen transitions.
+            // Without this, the GL surface stays at the original windowed size and
+            // the rendered image is clipped instead of filling the display.
+            WindowEvent::Resized(physical_size) => {
+                if let Some(ref mut gl) = self.gl_wrapper {
+                    gl.notify_resize(physical_size.width, physical_size.height);
+                }
+            }
+
             WindowEvent::Focused(focused) => {
                 self.state.window_focused = focused;
                 if focused {
