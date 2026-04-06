@@ -535,6 +535,12 @@ impl ParsedRom {
         if let Some(timing) = entry.hardware.map(|h| h.timing_mode()) {
             self.header.timing_mode = timing;
         }
+        if let Some(vs_hw) = entry.vs_hardware_type {
+            self.header.vs_hardware_type = Some(vs_hw.to_raw());
+        }
+        if let Some(vs_ppu) = entry.vs_ppu_type {
+            self.header.vs_ppu_type = Some(vs_ppu.to_raw());
+        }
 
         Ok(())
     }
@@ -1063,5 +1069,38 @@ mod tests {
         assert_eq!(parsed.chr_rom.len(), chr_size);
         assert_eq!(parsed.prg_rom[0], 0xAA);
         assert_eq!(parsed.chr_rom[0], 0xBB);
+    }
+
+    #[test]
+    fn apply_db_overrides_merges_vs_types_from_rom_db() {
+        use crate::cartridge::rom_db::RomDb;
+
+        // Given: a VS System ROM with no VS types in the header,
+        // and a ROM DB entry that specifies VS types
+        let csv = "1,VS Game,,DEADBEEF,3,Licensed,99,0,,32768,,,,8192,,,,0,1,2,\n";
+        let db = RomDb::from_csv_content(csv);
+
+        // Build a minimal valid iNES header (16 bytes) with PRG=32KB, CHR=8KB
+        let mut data = vec![0u8; 16 + 32768 + 8192];
+        data[0..4].copy_from_slice(b"NES\x1A"); // magic
+        data[4] = 2; // 2 × 16KB PRG = 32KB
+        data[5] = 1; // 1 × 8KB CHR = 8KB
+
+        let mut parsed = ParsedRom::parse(&data, Some(&db)).unwrap();
+        // Override CRC to match the DB entry
+        parsed.crc32 = 0xDEADBEEF;
+        parsed.apply_db_overrides(&data, &db).unwrap();
+
+        // Then: header should have VS types from the ROM DB
+        assert_eq!(
+            parsed.header.vs_hardware_type,
+            Some(1),
+            "DB vs_hardware_type=1 (RbiBaseball) should override header"
+        );
+        assert_eq!(
+            parsed.header.vs_ppu_type,
+            Some(2),
+            "DB vs_ppu_type=2 (Rp2c04_0001) should override header"
+        );
     }
 }

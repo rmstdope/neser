@@ -90,6 +90,7 @@ impl Sunsoft4Mapper {
             battery_backed_prg_ram: false,
             chr_ram_size_bytes: None,
             crc32: 0,
+            vs_hardware_type: None,
         };
         Self::new(ctx)
     }

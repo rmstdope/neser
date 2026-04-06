@@ -281,6 +281,7 @@ impl MMC5Mapper {
             battery_backed_prg_ram: false,
             chr_ram_size_bytes: None,
             crc32: 0,
+            vs_hardware_type: None,
         };
 
         let capabilities = MapperCapabilities {
