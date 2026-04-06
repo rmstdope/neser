@@ -101,7 +101,7 @@ impl Mapper for Mapper212 {
     }
 
     fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
-        // $6000-$7FFF with A[14,13,4]=011,0 → return open_bus | 0x80.
+        // $6000-$7FFF with A15..A13 = 011 and A4 = 0 → return open_bus | 0x80.
         if (addr & 0xE010) == 0x6000 {
             return open_bus | 0x80;
         }
@@ -110,6 +110,9 @@ impl Mapper for Mapper212 {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
+        if self.base.try_write_prg_ram(addr, value) {
+            return;
+        }
         if addr < 0x8000 {
             return;
         }
