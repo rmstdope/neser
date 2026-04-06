@@ -68,6 +68,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+      - name: Install native frontend system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libdbus-1-dev
       - name: Cache Rust dependencies and build outputs
         uses: Swatinem/rust-cache@v2
       - name: Run tests
@@ -79,6 +81,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+      - name: Install native frontend system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libdbus-1-dev
       - name: Cache Rust dependencies and build outputs
         uses: Swatinem/rust-cache@v2
       - name: Run clippy (PR fast path)
@@ -92,6 +96,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+      - name: Install native frontend system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libdbus-1-dev
       - name: Cache Rust dependencies and build outputs
         uses: Swatinem/rust-cache@v2
       - name: Run clippy (main full coverage)
