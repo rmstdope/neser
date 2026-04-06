@@ -14,7 +14,8 @@ Download the latest release for your platform from the [GitHub Releases](https:/
 cargo install neser
 ```
 
-No external system libraries are required — the native frontend uses pure-Rust crates for windowing (winit), audio (cpal), and gamepad input (gilrs).
+No SDL2 setup is required — the native frontend uses Rust crates for windowing (winit), audio (cpal), and gamepad input (gilrs).
+On Linux, building from source may still require system development packages for backend libraries used by those crates, such as ALSA and Wayland/X11.
 
 ## Building
 
