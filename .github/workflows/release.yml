@@ -42,54 +42,12 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      - name: Install SDL2 (Linux)
+      - name: Install native dependencies (Linux)
         if: matrix.os == 'ubuntu-latest'
-        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev libsdl2-ttf-dev
-
-      - name: Install SDL2 (macOS ARM native)
-        if: matrix.target == 'aarch64-apple-darwin'
-        run: brew install sdl2 sdl2_ttf
-
-      - name: Install SDL2 (macOS x86_64 cross-compile)
-        if: matrix.target == 'x86_64-apple-darwin'
-        run: |
-          # Install x86_64 Homebrew at /usr/local alongside the ARM one at /opt/homebrew
-          NONINTERACTIVE=1 arch -x86_64 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-          arch -x86_64 /usr/local/bin/brew install sdl2 sdl2_ttf
-          echo "LIBRARY_PATH=/usr/local/lib${LIBRARY_PATH:+:$LIBRARY_PATH}" >> $GITHUB_ENV
-          echo "PKG_CONFIG_PATH=/usr/local/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" >> $GITHUB_ENV
-          echo "PKG_CONFIG_ALLOW_CROSS=1" >> $GITHUB_ENV
-
-      - name: Install SDL2 (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          $SDL2_VERSION = "2.30.9"
-          $SDL2_TTF_VERSION = "2.24.0"
-
-          Invoke-WebRequest "https://github.com/libsdl-org/SDL/releases/download/release-$SDL2_VERSION/SDL2-devel-$SDL2_VERSION-VC.zip" -OutFile SDL2-devel.zip
-          Expand-Archive SDL2-devel.zip -DestinationPath C:\SDL2
-
-          Invoke-WebRequest "https://github.com/libsdl-org/SDL_ttf/releases/download/release-$SDL2_TTF_VERSION/SDL2_ttf-devel-$SDL2_TTF_VERSION-VC.zip" -OutFile SDL2_ttf-devel.zip
-          Expand-Archive SDL2_ttf-devel.zip -DestinationPath C:\SDL2_ttf
-
-          echo "SDL2_LIB_DIR=C:\SDL2\SDL2-$SDL2_VERSION\lib\x64" >> $env:GITHUB_ENV
-          echo "SDL2_TTF_LIB_DIR=C:\SDL2_ttf\SDL2_ttf-$SDL2_TTF_VERSION\lib\x64" >> $env:GITHUB_ENV
-          echo "SDL2_INCLUDE_DIR=C:\SDL2\SDL2-$SDL2_VERSION\include" >> $env:GITHUB_ENV
-          # Make the .lib files visible to the MSVC linker
-          echo "LIB=C:\SDL2\SDL2-$SDL2_VERSION\lib\x64;C:\SDL2_ttf\SDL2_ttf-$SDL2_TTF_VERSION\lib\x64" >> $env:GITHUB_ENV
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libwayland-dev libxkbcommon-dev
 
       - name: Build
-        run: cargo build --release --features sdl --target ${{ matrix.target }}
-
-      - name: Bundle Windows DLLs
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          $SDL2_VERSION = "2.30.9"
-          $SDL2_TTF_VERSION = "2.24.0"
-          Copy-Item "C:\SDL2\SDL2-$SDL2_VERSION\lib\x64\SDL2.dll" "target\${{ matrix.target }}\release\"
-          Copy-Item "C:\SDL2_ttf\SDL2_ttf-$SDL2_TTF_VERSION\lib\x64\SDL2_ttf.dll" "target\${{ matrix.target }}\release\"
+        run: cargo build --release --features native --target ${{ matrix.target }}
 
       - name: Upload artifact (Unix)
         if: matrix.os != 'windows-latest'
@@ -105,8 +63,6 @@ jobs:
           name: neser-${{ matrix.target }}
           path: |
             target/${{ matrix.target }}/release/neser.exe
-            target/${{ matrix.target }}/release/SDL2.dll
-            target/${{ matrix.target }}/release/SDL2_ttf.dll
 
   release:
     name: Create GitHub Release

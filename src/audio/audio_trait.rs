@@ -1,6 +1,6 @@
 /// Audio output trait for the NES APU.
 ///
-/// Implemented by both `SdlNesAudio` (SDL2 backend) and `NativeAudio` (cpal backend)
+/// Implemented by `NativeAudio` (cpal backend)
 /// to provide a common interface for audio playback.
 #[allow(dead_code)]
 pub trait NesAudio {

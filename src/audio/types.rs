@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 /// Producer half of the audio ring buffer.
 pub type AudioProducer = <HeapRb<f32> as Split>::Prod;
 
-/// Consumer half of the audio ring buffer; used by SDL audio callback.
+/// Consumer half of the audio ring buffer; used by the audio callback.
 #[allow(dead_code)]
 pub type AudioConsumer = <HeapRb<f32> as Split>::Cons;
 
