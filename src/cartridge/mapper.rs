@@ -217,6 +217,7 @@ use super::unlicensed::mapper329::Mapper329;
 use super::unlicensed::mapper330::Mapper330;
 use super::unlicensed::mapper331::Mapper331;
 use super::unlicensed::mapper332::Mapper332;
+use super::unlicensed::mapper333::Mapper333;
 use super::unlicensed::mapper335::Mapper335;
 use super::unlicensed::mapper337::Mapper337;
 use super::unlicensed::mapper338::Mapper338;
@@ -806,6 +807,7 @@ mapper_registry! {
     330 => Mapper330::new,
     331 => Mapper331::new,
     332 => Mapper332::new,
+    333 => Mapper333::new,
     335 => Mapper335::new,
     337 => Mapper337::new,
     324 => Mapper324::new,
