@@ -96,7 +96,16 @@ fn handle_unmodified_key(
             app_state.mouse_grabbed = false;
             app_state.mouse_released_by_escape = true;
         }
-        KeyCode::Space => app_state.paused = !app_state.paused,
+        KeyCode::Space => {
+            app_state.paused = !app_state.paused;
+            if let Some(audio) = audio {
+                if app_state.paused {
+                    audio.pause();
+                } else {
+                    audio.resume();
+                }
+            }
+        }
         KeyCode::KeyH => app_state.help_overlay_visible = !app_state.help_overlay_visible,
         KeyCode::F2 => adjust_volume(audio, 0.1),
         KeyCode::F3 => adjust_volume(audio, -0.1),
@@ -412,10 +421,49 @@ mod tests {
     // ── Mock audio ────────────────────────────────────────────────────────────
 
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
     struct MockAudio {
         volume: Arc<AtomicU32>,
+    }
+
+    /// Mock audio that tracks whether pause() and resume() have been called.
+    struct TrackingMockAudio {
+        pause_called: Arc<AtomicBool>,
+        resume_called: Arc<AtomicBool>,
+    }
+
+    impl TrackingMockAudio {
+        fn new() -> (Self, Arc<AtomicBool>, Arc<AtomicBool>) {
+            let pause_called = Arc::new(AtomicBool::new(false));
+            let resume_called = Arc::new(AtomicBool::new(false));
+            let audio = Self {
+                pause_called: Arc::clone(&pause_called),
+                resume_called: Arc::clone(&resume_called),
+            };
+            (audio, pause_called, resume_called)
+        }
+    }
+
+    impl NesAudio for TrackingMockAudio {
+        fn queue_sample(&mut self, _sample: f32) {}
+        fn resume(&self) {
+            self.resume_called.store(true, Ordering::Relaxed);
+        }
+        fn pause(&self) {
+            self.pause_called.store(true, Ordering::Relaxed);
+        }
+        fn set_volume(&self, _volume: f32) {}
+        fn get_volume(&self) -> f32 {
+            0.0
+        }
+        fn prime_startup(&mut self, _samples: usize) {}
+        fn take_and_reset_stats(&self) -> (u64, u64, u64) {
+            (0, 0, 0)
+        }
+        fn actual_sample_rate(&self) -> i32 {
+            44100
+        }
     }
 
     impl MockAudio {
@@ -498,6 +546,42 @@ mod tests {
         state.paused = true;
         handle_key_pressed(&mut nes, KeyCode::Space, &mut state, None);
         assert!(!state.paused, "Space should unpause when paused");
+    }
+
+    #[test]
+    fn test_space_calls_audio_pause_when_pausing() {
+        let mut nes = make_nes();
+        let mut state = make_state();
+        state.paused = false;
+        let (audio, pause_called, _resume_called) = TrackingMockAudio::new();
+        handle_key_pressed(
+            &mut nes,
+            KeyCode::Space,
+            &mut state,
+            Some(&audio as &dyn NesAudio),
+        );
+        assert!(
+            pause_called.load(Ordering::Relaxed),
+            "Space (pause) should call audio.pause() to prevent ring buffer drain"
+        );
+    }
+
+    #[test]
+    fn test_space_calls_audio_resume_when_resuming() {
+        let mut nes = make_nes();
+        let mut state = make_state();
+        state.paused = true;
+        let (audio, _pause_called, resume_called) = TrackingMockAudio::new();
+        handle_key_pressed(
+            &mut nes,
+            KeyCode::Space,
+            &mut state,
+            Some(&audio as &dyn NesAudio),
+        );
+        assert!(
+            resume_called.load(Ordering::Relaxed),
+            "Space (resume) should call audio.resume() to restore audio after pause"
+        );
     }
 
     #[test]
