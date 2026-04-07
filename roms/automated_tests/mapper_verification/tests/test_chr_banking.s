@@ -140,6 +140,29 @@ chr_read_val: .res 1
         pass_test
     .endif
 
+        ; === Mapper 99.1: PRG/CHR coupling via $4016 ===
+        ; $4016 bit 2 switches PRG slot 0 and CHR simultaneously.
+        ; Verify that select_prg_bank also switches the CHR bank.
+    .if MAPPER_NUM = 99 .and SUBMAPPER_NUM = 1
+        start_test 5, "PRG->CHR1"
+        jsr disable_rendering
+        select_prg_bank 0, 1    ; writes $04 to $4016 → CHR bank 1
+        lda #$00
+        ldx #$01
+        jsr read_chr_byte       ; PPU $0001: bank ID byte
+        assert_a_eq 1           ; Coupling: PRG sel also selects CHR bank 1
+        pass_test
+
+        start_test 6, "PRG->CHR0"
+        jsr disable_rendering
+        select_prg_bank 0, 0    ; writes $00 to $4016 → CHR bank 0
+        lda #$00
+        ldx #$01
+        jsr read_chr_byte       ; PPU $0001: bank ID byte
+        assert_a_eq 0           ; Coupling: PRG sel also selects CHR bank 0
+        pass_test
+    .endif
+
         ; Switch back to bank 0 for console (has ASCII font)
         select_chr_bank 0, 0
         jsr enable_rendering

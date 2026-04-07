@@ -39,7 +39,7 @@ HAS_FOUR_SCREEN_VRAM = 1      ; Hardware four-screen VRAM
 ; Bank sizes
 .define PRG_BANK_SIZE 8       ; 8KB switchable
 .define CHR_BANK_SIZE 4       ; 4KB switchable
-.define PRG_BANK_COUNT 3      ; 3 switchable slots
+.define PRG_BANK_COUNT 4      ; 3 switchable + 1 fixed
 .define CHR_BANK_COUNT 2      ; 2 × 4KB slots
 
 ; Skip the second PRG slot test (slot 1 at $A000) — VRC1 has 3 independent

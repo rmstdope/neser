@@ -196,6 +196,21 @@ fs_read: .res 1
     assert_a_eq $CC
     pass_test
 
+    ; ========================================
+    ; Test 7: NT D still independent after NT A change
+    ; ========================================
+    jsr disable_rendering
+    ldx #$2C
+    ldy #$0F
+    jsr read_nt
+    sta fs_read
+
+    jsr enable_rendering
+    start_test 7, "D after A"
+    lda fs_read
+    assert_a_eq $DD
+    pass_test
+
     rts
 .endproc
 

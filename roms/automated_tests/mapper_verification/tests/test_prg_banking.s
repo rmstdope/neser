@@ -19,8 +19,6 @@
 .endif
 
 ; Signature read address: start of banked window
-
-; Signature read address: start of banked window
 .ifndef BANK_WINDOW_OVERRIDE
     .if PRG_BANK_SIZE = 4
         BANK_WINDOW = $8000         ; 4KB: $8000-$8FFF (slot 0)
@@ -406,7 +404,7 @@ test_title_string:
         .endif
 
         ; === VRC1 Third PRG Slot ($C000) ===
-        .if MAPPER_NUM = 75
+        .if MAPPER_NUM = 75 .or MAPPER_NUM = 151
         start_test 8, "Slot2 Bank 0"
         select_prg_bank 2, 0
         lda $C000

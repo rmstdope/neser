@@ -7,7 +7,7 @@
 ;     $8000: switchable (bank 0 or bank 4, via $4016 bit 2)
 ;     $A000: bank 1 (fixed)
 ;     $C000: bank 2 (fixed)
-;     $E000: bank 4 (fixed, last bank — code runs here)
+;     $E000: bank 3 (fixed — code runs here)
 ;   - CHR: 16KB = 2 × 8KB banks, selected by $4016 bit 2
 ;   - Mirroring: Four-screen (hardwired on VS System board)
 ;   - PRG-RAM: 2KB at $6000-$67FF
