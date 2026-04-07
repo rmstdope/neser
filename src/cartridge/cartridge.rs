@@ -323,6 +323,11 @@ impl Cartridge {
     pub fn set_vs_ppu_type_for_test(&mut self, vs_ppu_type: Option<VsPpuType>) {
         self.vs_ppu_type = vs_ppu_type;
     }
+
+    #[cfg(test)]
+    pub fn set_rom_path_for_test(&mut self, path: std::path::PathBuf) {
+        self.rom_path = Some(path);
+    }
 }
 
 #[cfg(test)]

@@ -542,20 +542,47 @@ impl DebuggerController {
 
     /// Save breakpoints to a `.debug` file next to the ROM.
     pub fn save_breakpoints_to_debug_file(&self, nes: &Nes) {
+        self.save_debug_state_to_file(nes, &[]);
+    }
+
+    /// Load breakpoints **and** watch addresses from the `.debug` file next to the ROM.
+    ///
+    /// Returns the watch addresses found in the file (may be empty).
+    pub fn load_debug_state_from_file(&mut self, nes: &Nes) -> Vec<u16> {
+        let Some(path) = nes.debug_path() else {
+            return vec![];
+        };
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return vec![];
+        };
+        self.breakpoints = BreakpointList::load_from_str(&text);
+        crate::debugging::breakpoints::parse_watch_addresses(&text)
+    }
+
+    /// Save breakpoints **and** watch addresses to the `.debug` file next to the ROM.
+    ///
+    /// Removes the file when both are empty.
+    pub fn save_debug_state_to_file(&self, nes: &Nes, watch_addresses: &[u16]) {
         let Some(path) = nes.debug_path() else {
             return;
         };
-        if self.breakpoints.is_empty() {
-            if path.exists()
-                && let Err(err) = std::fs::remove_file(&path)
-            {
-                crate::debugging::log_info(format!("Failed to remove .debug file: {err}"));
+        let bp_str = self.breakpoints.save_to_string();
+        let watch_str = crate::debugging::breakpoints::serialize_watch_addresses(watch_addresses);
+        if bp_str.is_empty() && watch_str.is_empty() {
+            if path.exists() {
+                if let Err(err) = std::fs::remove_file(&path) {
+                    crate::debugging::log_info(format!("Failed to remove .debug file: {err}"));
+                }
             }
             return;
         }
-        let content = self.breakpoints.save_to_string();
+        let content = [bp_str, watch_str]
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
         if let Err(err) = std::fs::write(&path, content) {
-            crate::debugging::log_info(format!("Failed to save breakpoints: {err}"));
+            crate::debugging::log_info(format!("Failed to save debug state: {err}"));
         }
     }
 }
@@ -1191,6 +1218,117 @@ mod tests {
         assert!(
             ctrl.is_debugger_open(),
             "controller should start with debugger open"
+        );
+    }
+
+    // ── Watch address persistence (#1860) ─────────────────────────────────────
+
+    /// Returns a NES with a cartridge whose `rom_path` is set to a temp file,
+    /// so that `debug_path()` returns something useful in tests.
+    fn nes_with_rom_path(rom_path: &std::path::Path) -> Nes {
+        let mut prg_rom = vec![0xEAu8; 0x8000];
+        let reset: u16 = 0x8000;
+        for off in [0x7FFAusize, 0x7FFC, 0x7FFE] {
+            prg_rom[off] = (reset & 0xFF) as u8;
+            prg_rom[off + 1] = (reset >> 8) as u8;
+        }
+        let mut cart = Cartridge::from_parts(prg_rom, vec![], NametableLayout::Horizontal);
+        cart.set_rom_path_for_test(rom_path.to_path_buf());
+        let mut nes = Nes::new(AppContext::new_with_config(Config::default()));
+        nes.insert_cartridge(cart);
+        nes
+    }
+
+    #[test]
+    fn test_save_debug_state_includes_watch_addresses() {
+        let dir = tempfile::tempdir().expect("temp dir must be created");
+        let rom_path = dir.path().join("test.nes");
+        let debug_path = dir.path().join("test.debug");
+
+        let nes = nes_with_rom_path(&rom_path);
+        let mut ctrl = default_controller();
+        ctrl.breakpoints.add(BreakpointKind::Pc(0x8000));
+
+        ctrl.save_debug_state_to_file(&nes, &[0x0300, 0x00FF]);
+
+        let content = std::fs::read_to_string(&debug_path).expect("debug file must exist");
+        assert!(
+            content.contains("watch 0x0300"),
+            "debug file must contain watch 0x0300; got:\n{content}"
+        );
+        assert!(
+            content.contains("watch 0x00FF"),
+            "debug file must contain watch 0x00FF; got:\n{content}"
+        );
+        assert!(
+            content.contains("pc 0x8000"),
+            "debug file must still contain breakpoint; got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn test_load_debug_state_returns_watch_addresses() {
+        let dir = tempfile::tempdir().expect("temp dir must be created");
+        let rom_path = dir.path().join("test.nes");
+        let debug_path = dir.path().join("test.debug");
+
+        std::fs::write(
+            &debug_path,
+            "pc 0x8000 enabled\nwatch 0x0300\nwatch 0x00FF\n",
+        )
+        .expect("write debug file");
+
+        let nes = nes_with_rom_path(&rom_path);
+        let mut ctrl = default_controller();
+
+        let watches = ctrl.load_debug_state_from_file(&nes);
+
+        assert_eq!(
+            watches,
+            vec![0x0300u16, 0x00FF],
+            "loaded watches must match the debug file"
+        );
+        assert!(
+            ctrl.breakpoints.has_enabled_pc_breakpoint_at(0x8000),
+            "breakpoints must also be loaded"
+        );
+    }
+
+    #[test]
+    fn test_save_debug_state_watch_only_creates_file() {
+        // Even when there are no breakpoints, a file should be created if
+        // there are watch addresses to persist.
+        let dir = tempfile::tempdir().expect("temp dir must be created");
+        let rom_path = dir.path().join("test.nes");
+        let debug_path = dir.path().join("test.debug");
+
+        let nes = nes_with_rom_path(&rom_path);
+        let ctrl = default_controller();
+        ctrl.save_debug_state_to_file(&nes, &[0x0400]);
+
+        assert!(
+            debug_path.exists(),
+            "debug file should exist with watch-only content"
+        );
+        let content = std::fs::read_to_string(&debug_path).unwrap();
+        assert!(content.contains("watch 0x0400"));
+    }
+
+    #[test]
+    fn test_save_debug_state_empty_removes_file() {
+        // Both breakpoints and watches are empty → existing file must be removed.
+        let dir = tempfile::tempdir().expect("temp dir must be created");
+        let rom_path = dir.path().join("test.nes");
+        let debug_path = dir.path().join("test.debug");
+        std::fs::write(&debug_path, "pc 0x8000 enabled\nwatch 0x0300\n").unwrap();
+
+        let nes = nes_with_rom_path(&rom_path);
+        let ctrl = default_controller();
+        ctrl.save_debug_state_to_file(&nes, &[]);
+
+        assert!(
+            !debug_path.exists(),
+            "empty state should remove the debug file"
         );
     }
 }

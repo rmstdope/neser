@@ -214,6 +214,22 @@ impl NativeEventLoop {
         }
     }
 
+    /// Syncs the audio device's paused/playing state to match the current
+    /// window focus and debugger state.  Should be called whenever either
+    /// changes to avoid underruns while paused.
+    fn sync_audio_state(&self) {
+        if let Some(ref audio) = self.audio {
+            if audio_should_be_paused(
+                self.state.window_focused,
+                self.debugger_controller.is_paused(),
+            ) {
+                audio.pause();
+            } else {
+                audio.resume();
+            }
+        }
+    }
+
     /// Sync frontend state from the debugger controller.
     fn sync_from_controller(&mut self) {
         if self.debugger_controller.is_debugger_open() {
@@ -228,6 +244,7 @@ impl NativeEventLoop {
             self.state.paused = self.paused_before_debugger;
             self.state.debugger_open = false;
         }
+        self.sync_audio_state();
     }
 
     /// Synchronizes the actual mouse grab state with the desired state.
@@ -531,8 +548,13 @@ impl ApplicationHandler for NativeEventLoop {
                 self.gl_wrapper = Some(gl);
                 if !self.initialized {
                     self.initialize_audio();
-                    self.debugger_controller
-                        .load_breakpoints_from_debug_file(&self.nes);
+                    self.sync_audio_state();
+                    let watches = self
+                        .debugger_controller
+                        .load_debug_state_from_file(&self.nes);
+                    if let Some(ref mut gl) = self.gl_wrapper {
+                        gl.set_watch_addresses(watches);
+                    }
                     self.initialized = true;
                 }
             }
@@ -554,8 +576,13 @@ impl ApplicationHandler for NativeEventLoop {
                 if let Err(e) = self.finish_recording() {
                     eprintln!("Failed to finish recording on window close: {e}");
                 }
+                let watches = self
+                    .gl_wrapper
+                    .as_ref()
+                    .map(|gl| gl.watch_addresses())
+                    .unwrap_or_default();
                 self.debugger_controller
-                    .save_breakpoints_to_debug_file(&self.nes);
+                    .save_debug_state_to_file(&self.nes, &watches);
                 if let Err(e) = self.nes.save_ram() {
                     eprintln!("Failed to save battery-backed RAM on exit: {e}");
                 }
@@ -574,14 +601,8 @@ impl ApplicationHandler for NativeEventLoop {
 
             WindowEvent::Focused(focused) => {
                 self.state.window_focused = focused;
-                if focused {
-                    if let Some(ref audio) = self.audio {
-                        audio.resume();
-                    }
-                } else {
-                    if let Some(ref audio) = self.audio {
-                        audio.pause();
-                    }
+                self.sync_audio_state();
+                if !focused {
                     // Release grab on focus loss, but do NOT set
                     // mouse_released_by_escape — that flag is only for
                     // explicit Escape key presses. Keeping it clear means
@@ -608,6 +629,14 @@ impl ApplicationHandler for NativeEventLoop {
 
                 if let Some(ref mut gl) = self.gl_wrapper {
                     gl.handle_key_event(&event);
+                    // Forward character text to imgui for debugger input fields
+                    // (breakpoint address, memory-watch).  Without this, typing
+                    // in imgui text fields has no effect (#1859).
+                    if self.state.keyboard_captured_by_imgui()
+                        && let Some(ref text) = event.text
+                    {
+                        gl.handle_text_input(text.to_string());
+                    }
                 }
 
                 let PhysicalKey::Code(key_code) = event.physical_key else {
@@ -631,8 +660,13 @@ impl ApplicationHandler for NativeEventLoop {
                             if let Err(e) = self.finish_recording() {
                                 eprintln!("Failed to finish recording on quit: {e}");
                             }
+                            let watches = self
+                                .gl_wrapper
+                                .as_ref()
+                                .map(|gl| gl.watch_addresses())
+                                .unwrap_or_default();
                             self.debugger_controller
-                                .save_breakpoints_to_debug_file(&self.nes);
+                                .save_debug_state_to_file(&self.nes, &watches);
                             if let Err(e) = self.nes.save_ram() {
                                 eprintln!("Failed to save battery-backed RAM on quit: {e}");
                             }
@@ -976,6 +1010,17 @@ fn target_frame_duration(timing_mode: TimingMode) -> Duration {
     Duration::from_secs_f64(1.0 / timing_mode.frame_rate_hz())
 }
 
+/// Returns true when the audio device should be paused (cpal callback outputs
+/// silence without counting underruns).
+///
+/// Audio must be paused both when the window loses focus (existing behaviour)
+/// and when the emulator is paused in the debugger.  Without the debugger
+/// guard, starting with `--debugger` resumes the audio device immediately but
+/// never produces samples, causing continuous underrun warnings.
+fn audio_should_be_paused(window_focused: bool, debugger_paused: bool) -> bool {
+    !window_focused || debugger_paused
+}
+
 /// Returns true when frames must be throttled with a manual timer (WaitUntil)
 /// rather than relying on vsync to pace the event loop.
 ///
@@ -1035,6 +1080,43 @@ mod tests {
         assert!(
             (19.5..=20.5).contains(&ms),
             "PAL frame duration should be ~20.0ms, got {ms:.2}ms"
+        );
+    }
+
+    // ── audio_should_be_paused (#1858) ────────────────────────────────────────
+
+    #[test]
+    fn audio_paused_when_debugger_active_and_window_focused() {
+        // Starting with --debugger keeps the emulator paused before the first
+        // frame.  Audio must also be paused so the cpal callback outputs
+        // silence rather than counting underruns.
+        assert!(
+            audio_should_be_paused(true, true),
+            "audio must be paused when debugger is active, even if window is focused"
+        );
+    }
+
+    #[test]
+    fn audio_paused_when_debugger_active_and_window_unfocused() {
+        assert!(
+            audio_should_be_paused(false, true),
+            "audio must be paused when debugger is active and window is unfocused"
+        );
+    }
+
+    #[test]
+    fn audio_paused_when_window_not_focused_and_not_debugging() {
+        assert!(
+            audio_should_be_paused(false, false),
+            "audio must be paused when window lacks focus (existing behaviour)"
+        );
+    }
+
+    #[test]
+    fn audio_plays_when_focused_and_emulator_running() {
+        assert!(
+            !audio_should_be_paused(true, false),
+            "audio must play when window is focused and emulator is running"
         );
     }
 }

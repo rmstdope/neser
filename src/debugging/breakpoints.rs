@@ -240,6 +240,30 @@ impl BreakpointList {
     }
 }
 
+/// Serialize a slice of watch addresses to lines suitable for a `.debug` file.
+///
+/// Returns an empty string when `addresses` is empty.
+pub fn serialize_watch_addresses(addresses: &[u16]) -> String {
+    addresses
+        .iter()
+        .map(|a| format!("watch {:#06X}", a))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Parse watch addresses from the text of a `.debug` file.
+///
+/// Lines that look like `watch 0x????` are collected; all other lines are
+/// silently ignored so this function can be called on the full file content.
+pub fn parse_watch_addresses(text: &str) -> Vec<u16> {
+    text.lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            line.strip_prefix("watch ").and_then(parse_u16)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -808,5 +832,62 @@ mod tests {
 
         list.set_pc_breakpoint_enabled(0x8000, true);
         assert!(list.has_enabled_pc_breakpoint_at(0x8000));
+    }
+
+    // ── Watch address serialization (#1860) ───────────────────────────────────
+
+    #[test]
+    fn test_serialize_watch_addresses_empty() {
+        assert_eq!(serialize_watch_addresses(&[]), "");
+    }
+
+    #[test]
+    fn test_serialize_watch_addresses_single() {
+        assert_eq!(serialize_watch_addresses(&[0x0300]), "watch 0x0300");
+    }
+
+    #[test]
+    fn test_serialize_watch_addresses_multiple() {
+        let s = serialize_watch_addresses(&[0x0300, 0x00FF]);
+        assert_eq!(s, "watch 0x0300\nwatch 0x00FF");
+    }
+
+    #[test]
+    fn test_parse_watch_addresses_empty_string() {
+        assert!(parse_watch_addresses("").is_empty());
+    }
+
+    #[test]
+    fn test_parse_watch_addresses_single_hex() {
+        assert_eq!(parse_watch_addresses("watch 0x0300"), vec![0x0300u16]);
+    }
+
+    #[test]
+    fn test_parse_watch_addresses_multiple_lines() {
+        let text = "watch 0x0300\nwatch 0x00FF";
+        assert_eq!(parse_watch_addresses(text), vec![0x0300u16, 0x00FF]);
+    }
+
+    #[test]
+    fn test_parse_watch_addresses_ignores_breakpoint_lines() {
+        let text = "pc 0x8000 enabled\nwatch 0x0300\ncycle 100 disabled";
+        assert_eq!(parse_watch_addresses(text), vec![0x0300u16]);
+    }
+
+    #[test]
+    fn test_watch_address_roundtrip() {
+        let original = vec![0x0300u16, 0x00FF, 0x2006];
+        let serialized = serialize_watch_addresses(&original);
+        let parsed = parse_watch_addresses(&serialized);
+        assert_eq!(parsed, original);
+    }
+
+    #[test]
+    fn test_breakpoint_list_load_from_str_ignores_watch_lines() {
+        // Watch lines must be silently ignored when loading breakpoints so
+        // files with both kinds parse correctly.
+        let text = "pc 0x8000 enabled\nwatch 0x0300\nframe 5 disabled";
+        let list = BreakpointList::load_from_str(text);
+        assert_eq!(list.len(), 2, "only the two breakpoints should be loaded");
     }
 }

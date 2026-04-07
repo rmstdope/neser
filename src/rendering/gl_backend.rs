@@ -497,6 +497,19 @@ impl GlBackend {
         self.breakpoints = breakpoints.clone();
     }
 
+    /// Returns a copy of the watch addresses currently tracked in the debugger.
+    pub fn watch_addresses(&self) -> Vec<u16> {
+        self.debugger_view_state.watch_addresses()
+    }
+
+    /// Replaces the debugger's watch address list with the provided addresses.
+    pub fn set_watch_addresses(&mut self, addresses: Vec<u16>) {
+        self.debugger_view_state.clear_watch_addresses();
+        for addr in addresses {
+            self.debugger_view_state.add_watch_address(addr);
+        }
+    }
+
     /// Renders the current NES frame and optional debugger overlay.
     pub fn render(
         &mut self,
