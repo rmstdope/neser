@@ -671,7 +671,11 @@ impl ApplicationHandler for NativeEventLoop {
                         }
                     }
                 } else {
-                    keyboard::handle_key_released(&mut self.nes, key_code);
+                    keyboard::handle_key_released(
+                        &mut self.nes,
+                        key_code,
+                        self.state.gamepad_count,
+                    );
                 }
 
                 // If keyboard handler released the mouse grab (Escape), apply it.
@@ -855,6 +859,7 @@ impl ApplicationHandler for NativeEventLoop {
         // Poll gamepad events before requesting redraw.
         if let Some(ref mut gp) = self.gamepad {
             gp.process_events(&mut self.nes);
+            self.state.gamepad_count = gp.connected_count();
         }
 
         // Show the gamepad toast after the first process_events() call.
