@@ -79,20 +79,8 @@ impl Mapper165 {
     /// Returns the MMC3 register index for the given 4KB window and current latch state.
     fn reg_index_for_window(&self, window: usize) -> usize {
         match window {
-            0 => {
-                if self.chr_latch[0] {
-                    1
-                } else {
-                    0
-                }
-            }
-            1 => {
-                if self.chr_latch[1] {
-                    4
-                } else {
-                    2
-                }
-            }
+            0 => if self.chr_latch[0] { 1 } else { 0 },
+            1 => if self.chr_latch[1] { 4 } else { 2 },
             _ => 0,
         }
     }
@@ -185,16 +173,9 @@ impl Mapper for Mapper165 {
         // MMC2-style latch: detect $xFD8-$xFDF and $xFE8-$xFEF patterns
         // addr & 0x2FF8 == 0x0FD8  →  latch[(addr>>12)&1] = false
         // addr & 0x2FF8 == 0x0FE8  →  latch[(addr>>12)&1] = true
-        match addr & 0x2FF8 {
-            0x0FD8 => {
-                let latch_index = ((addr >> 12) & 0x01) as usize;
-                self.pending_latch_update = Some((latch_index, false));
-            }
-            0x0FE8 => {
-                let latch_index = ((addr >> 12) & 0x01) as usize;
-                self.pending_latch_update = Some((latch_index, true));
-            }
-            _ => {}
+        if let pattern @ (0x0FD8 | 0x0FE8) = addr & 0x2FF8 {
+            let latch_index = ((addr >> 12) & 0x01) as usize;
+            self.pending_latch_update = Some((latch_index, pattern == 0x0FE8));
         }
     }
 
