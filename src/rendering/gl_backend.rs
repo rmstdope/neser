@@ -601,10 +601,13 @@ impl GlBackend {
             let shader_out_w = (shader_out_w_f as u32).max(1);
             let shader_out_h = (shader_out_h_f as u32).max(1);
 
-            if let Err(e) =
-                self.shader_manager
-                    .apply_shader(self.nes_texture, shader_out_w, shader_out_h)
-            {
+            if let Err(e) = self.shader_manager.apply_shader(
+                self.nes_texture,
+                tex_w as u32,
+                tex_h as u32,
+                shader_out_w,
+                shader_out_h,
+            ) {
                 log_info(format!("Shader application error: {}", e));
             } else if let Some(tex) = self.shader_manager.output_texture() {
                 shader_output_texture_id = Some((tex as usize).into());

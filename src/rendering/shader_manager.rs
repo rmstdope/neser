@@ -146,10 +146,18 @@ impl ShaderManager {
         Ok(())
     }
 
-    /// Apply the loaded shader to transform input texture to output framebuffer.
+    /// Apply the loaded shader to transform `input_texture` into an internal
+    /// output texture (retrievable via [`output_texture`](Self::output_texture)).
+    ///
+    /// `input_width` × `input_height` must match the actual texture dimensions
+    /// (i.e. after overscan cropping). Shaders use these as `SourceSize` for
+    /// pixel-level calculations (CRT scanlines, NTSC encoding, etc.), so
+    /// passing incorrect dimensions causes visible artifacts (see bug #1851).
     pub fn apply_shader(
         &mut self,
         input_texture: gl::types::GLuint,
+        input_width: u32,
+        input_height: u32,
         viewport_width: u32,
         viewport_height: u32,
     ) -> Result<(), String> {
@@ -164,13 +172,15 @@ impl ShaderManager {
             .as_mut()
             .expect("filter_chain must be present");
 
+        let input_size = Size::new(input_width, input_height);
+
         // Create GLImage from input NES texture
         let image = GLImage {
             handle: Some(glow::NativeTexture(
                 std::num::NonZero::new(input_texture).ok_or("Invalid texture ID")?,
             )),
             format: gl::RGB8,
-            size: Size::new(256, 240),
+            size: input_size,
         };
 
         // Output image that will receive the final pass.
