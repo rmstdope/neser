@@ -231,7 +231,13 @@ impl Cartridge {
     /// This should be called when the cartridge is inserted or on hard reset.
     /// Soft resets should NOT call this (RAM contents persist).
     pub fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        self.mapper.initialize_ram(mode);
+        if self.battery_backed_prg_ram {
+            // PRG-RAM was already loaded from the .sav file in load_from_file().
+            // Only initialize volatile CHR-RAM; leave PRG-RAM (save data) intact.
+            self.mapper.initialize_chr_ram(mode);
+        } else {
+            self.mapper.initialize_ram(mode);
+        }
     }
 
     pub fn crc32(&self) -> u32 {
@@ -497,6 +503,52 @@ mod tests {
         assert_eq!(sav.len(), 0x2000);
         assert_eq!(sav[0], 0xAB);
         assert_eq!(sav[0x1FFF], 0xCD);
+
+        remove_files_if_exist(&[&rom_path, &sav_path]);
+    }
+
+    #[test]
+    fn test_initialize_ram_preserves_battery_backed_save_ram() {
+        // When a battery-backed cartridge is loaded, its PRG-RAM is populated from
+        // the .sav file.  insert_cartridge() then calls initialize_ram() to
+        // randomise/zero volatile RAM — but this must NOT overwrite battery-backed
+        // PRG-RAM, which represents persistent save data.
+        //
+        // This is the core bug behind #1826 D8: LoZ save names were erased on reload.
+        let rom_data = create_test_rom(1, 1, 0x02, false); // flags6 bit 1 = battery-backed
+        let rom_path = unique_temp_path("init_ram_preserves_save.nes");
+        std::fs::write(&rom_path, &rom_data).unwrap();
+
+        // Write a known save file
+        let mut sav = vec![0u8; 0x2000];
+        sav[0x0000] = 0x42;
+        sav[0x1000] = 0xDE;
+        sav[0x1FFF] = 0x99;
+        let sav_path = rom_path.with_extension("sav");
+        std::fs::write(&sav_path, &sav).unwrap();
+
+        let app_context = AppContext::new();
+        let mut cart = load_cartridge_from_disk(&rom_path, &app_context);
+
+        // Simulate what insert_cartridge does: initialize_ram with Zero mode
+        cart.initialize_ram(crate::console::RamInitMode::Zero);
+
+        // Battery-backed PRG-RAM must NOT be zeroed out
+        assert_eq!(
+            cart.mapper().read_prg(0x6000),
+            0x42,
+            "initialize_ram must not overwrite battery-backed PRG-RAM at $6000"
+        );
+        assert_eq!(
+            cart.mapper().read_prg(0x7000),
+            0xDE,
+            "initialize_ram must not overwrite battery-backed PRG-RAM at $7000"
+        );
+        assert_eq!(
+            cart.mapper().read_prg(0x7FFF),
+            0x99,
+            "initialize_ram must not overwrite battery-backed PRG-RAM at $7FFF"
+        );
 
         remove_files_if_exist(&[&rom_path, &sav_path]);
     }

@@ -604,6 +604,15 @@ pub trait Mapper {
         }
     }
 
+    /// Initialize only CHR-RAM, leaving PRG-RAM untouched.
+    ///
+    /// Called when inserting a battery-backed cartridge whose PRG-RAM was
+    /// already restored from disk and must not be overwritten.
+    /// Default delegates to `BaseMapper::initialize_chr_ram`.
+    fn initialize_chr_ram(&mut self, mode: crate::console::RamInitMode) {
+        self.base_mut().initialize_chr_ram(mode);
+    }
+
     /// Whether the mapper is currently asserting IRQ.
     ///
     /// This is used to model mapper-generated IRQs (e.g., MMC3 scanline IRQ).
