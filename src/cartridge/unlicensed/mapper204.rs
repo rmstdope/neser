@@ -111,8 +111,7 @@ impl Mapper for Mapper204 {
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        // Encode state: high nibble = pages, low nibble = flags.
-        // byte0: prg_page0, byte1: prg_page1, byte2: mirroring flag
+        // byte0: prg_page0, byte1: prg_page1, byte2: mirroring flag (0=vertical, 1=horizontal)
         vec![
             self.prg_page0,
             self.prg_page1,
