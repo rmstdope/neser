@@ -116,6 +116,9 @@ fn handle_unmodified_key(
         }
         KeyCode::F7 => {
             crate::console::save_state_io::load_state_from_disk(nes);
+            if let Some(audio) = audio {
+                audio.drain_buffer();
+            }
         }
         KeyCode::F10 => return KeyOutcome::StepOver,
         KeyCode::F11 => return KeyOutcome::StepInto,
@@ -427,21 +430,24 @@ mod tests {
         volume: Arc<AtomicU32>,
     }
 
-    /// Mock audio that tracks whether pause() and resume() have been called.
+    /// Mock audio that tracks whether pause(), resume(), and drain_buffer() have been called.
     struct TrackingMockAudio {
         pause_called: Arc<AtomicBool>,
         resume_called: Arc<AtomicBool>,
+        drain_buffer_called: Arc<AtomicBool>,
     }
 
     impl TrackingMockAudio {
-        fn new() -> (Self, Arc<AtomicBool>, Arc<AtomicBool>) {
+        fn new() -> (Self, Arc<AtomicBool>, Arc<AtomicBool>, Arc<AtomicBool>) {
             let pause_called = Arc::new(AtomicBool::new(false));
             let resume_called = Arc::new(AtomicBool::new(false));
+            let drain_buffer_called = Arc::new(AtomicBool::new(false));
             let audio = Self {
                 pause_called: Arc::clone(&pause_called),
                 resume_called: Arc::clone(&resume_called),
+                drain_buffer_called: Arc::clone(&drain_buffer_called),
             };
-            (audio, pause_called, resume_called)
+            (audio, pause_called, resume_called, drain_buffer_called)
         }
     }
 
@@ -452,6 +458,9 @@ mod tests {
         }
         fn pause(&self) {
             self.pause_called.store(true, Ordering::Relaxed);
+        }
+        fn drain_buffer(&self) {
+            self.drain_buffer_called.store(true, Ordering::Relaxed);
         }
         fn set_volume(&self, _volume: f32) {}
         fn get_volume(&self) -> f32 {
@@ -553,7 +562,7 @@ mod tests {
         let mut nes = make_nes();
         let mut state = make_state();
         state.paused = false;
-        let (audio, pause_called, _resume_called) = TrackingMockAudio::new();
+        let (audio, pause_called, _resume_called, _drain_buffer_called) = TrackingMockAudio::new();
         handle_key_pressed(
             &mut nes,
             KeyCode::Space,
@@ -571,7 +580,7 @@ mod tests {
         let mut nes = make_nes();
         let mut state = make_state();
         state.paused = true;
-        let (audio, _pause_called, resume_called) = TrackingMockAudio::new();
+        let (audio, _pause_called, resume_called, _drain_buffer_called) = TrackingMockAudio::new();
         handle_key_pressed(
             &mut nes,
             KeyCode::Space,
@@ -1055,6 +1064,26 @@ mod tests {
         assert_eq!(
             state.cart_switch.filter, "-",
             "Minus without Shift should type dash"
+        );
+    }
+
+    #[test]
+    fn test_f7_drains_audio_buffer_after_state_load() {
+        // When F7 (load state) is pressed, any pre-restore samples still buffered
+        // in the audio ring buffer must be discarded silently so they do not
+        // bleed into the post-restore playback.
+        let mut nes = make_nes();
+        let mut state = make_state();
+        let (audio, _pause_called, _resume_called, drain_buffer_called) = TrackingMockAudio::new();
+        handle_key_pressed(
+            &mut nes,
+            KeyCode::F7,
+            &mut state,
+            Some(&audio as &dyn NesAudio),
+        );
+        assert!(
+            drain_buffer_called.load(Ordering::Relaxed),
+            "F7 (load state) must call audio.drain_buffer() to discard stale samples"
         );
     }
 }

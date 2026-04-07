@@ -374,6 +374,15 @@ impl NesAudio for NativeAudio {
     fn actual_sample_rate(&self) -> i32 {
         self.actual_sample_rate
     }
+
+    fn drain_buffer(&self) {
+        // Snapshot the current fill level so the cpal callback discards exactly
+        // these samples silently before switching to fresh audio.  This is the
+        // same mechanism as pause() but without changing the paused flag, so
+        // the emulator continues queuing new samples immediately.
+        self.drain_stale
+            .store(self.fill_level.load(Ordering::Relaxed), Ordering::Relaxed);
+    }
 }
 
 #[cfg(test)]
@@ -459,6 +468,34 @@ mod tests {
             audio.buffered_samples(),
             0,
             "queue_sample while paused must not push into the ring buffer"
+        );
+    }
+
+    #[test]
+    fn test_drain_buffer_marks_buffered_samples_as_stale_without_pausing() {
+        // When a save-state is restored (F7), the ring buffer still contains
+        // pre-restore samples.  drain_buffer() must snapshot fill_level into
+        // drain_stale (so the cpal callback discards those samples silently)
+        // WITHOUT changing the paused state, so emulation audio resumes
+        // immediately without an explicit resume() call.
+        let mut audio = NativeAudio::new_without_stream(44100);
+        audio.resume();
+
+        for _ in 0..10 {
+            audio.queue_sample(0.5);
+        }
+        assert_eq!(audio.buffered_samples(), 10);
+
+        audio.drain_buffer();
+
+        assert_eq!(
+            audio.drain_stale_count(),
+            10,
+            "drain_buffer must set drain_stale to the current fill_level"
+        );
+        assert!(
+            !audio.is_paused(),
+            "drain_buffer must not change the paused state"
         );
     }
 

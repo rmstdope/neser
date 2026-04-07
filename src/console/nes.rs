@@ -14,6 +14,7 @@ use crate::ppu::{Ppu, PpuState, SharedPpu};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::io;
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -284,6 +285,10 @@ impl Nes {
 
     pub fn state_path(&self) -> Option<PathBuf> {
         self.bus.borrow().cartridge_state_path()
+    }
+
+    pub fn save_ram(&self) -> io::Result<()> {
+        self.bus.borrow().save_ram()
     }
 
     pub fn debug_path(&self) -> Option<PathBuf> {
@@ -2567,6 +2572,19 @@ mod tests {
         assert!(
             nes.ppu.borrow().famicom_emphasis,
             "PPU should have Famicom emphasis after ROM DB hint sets Famicom mode"
+        );
+    }
+
+    #[test]
+    fn test_save_ram_returns_ok_with_no_cartridge() {
+        // When no cartridge is inserted, save_ram() has nothing to persist
+        // and should return Ok(()) rather than an error.
+        let nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        assert!(
+            nes.save_ram().is_ok(),
+            "save_ram with no cartridge must return Ok"
         );
     }
 }
