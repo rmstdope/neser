@@ -31,7 +31,7 @@
 //! | 1      | MMC3 R2     | MMC3 R4   |
 //!
 //! The latch for window W is toggled by PPU address patterns matching
-//! `addr & 0x2FF8 == 0x0FD0` (set false) or `addr & 0x2FF8 == 0x0FE8` (set true),
+//! `addr & 0x2FF8 == 0x0FD8` (set false) or `addr & 0x2FF8 == 0x0FE8` (set true),
 //! where bit 12 of addr selects which window's latch is updated.
 //!
 //! ## CHR Memory Routing
@@ -183,10 +183,10 @@ impl Mapper for Mapper165 {
         self.inner.ppu_address_changed(addr);
 
         // MMC2-style latch: detect $xFD8-$xFDF and $xFE8-$xFEF patterns
-        // addr & 0x2FF8 == 0x0FD0  →  latch[(addr>>12)&1] = false
+        // addr & 0x2FF8 == 0x0FD8  →  latch[(addr>>12)&1] = false
         // addr & 0x2FF8 == 0x0FE8  →  latch[(addr>>12)&1] = true
         match addr & 0x2FF8 {
-            0x0FD0 => {
+            0x0FD8 => {
                 let latch_index = ((addr >> 12) & 0x01) as usize;
                 self.pending_latch_update = Some((latch_index, false));
             }
@@ -270,7 +270,7 @@ impl Mapper for Mapper165 {
             has_expansion_audio: false,
             max_prg_ram_kb: 8,
             prg_bank_size_kb: 8,
-            chr_bank_size_kb: 1,
+            chr_bank_size_kb: 4,
             ..Default::default()
         }
     }
@@ -439,7 +439,7 @@ mod tests {
     }
 
     #[test]
-    fn latch0_becomes_false_on_fd0_pattern() {
+    fn latch0_becomes_false_on_fd8_pattern() {
         let mut mapper = make_mapper();
         // First set latch[0] = true via $0FE8 pattern
         trigger_latch(&mut mapper, 0x0FE8);
@@ -451,12 +451,12 @@ mod tests {
         // After FE8: latch[0]=true → uses R1=0 → CHR-RAM
         mapper.write_chr(0x0000, 0x77);
 
-        // Now trigger $0FD0 → latch[0] = false → uses R0=4 → CHR-ROM page 1
-        trigger_latch(&mut mapper, 0x0FD0);
+        // Now trigger $0FD8 → latch[0] = false → uses R0=4 → CHR-ROM page 1
+        trigger_latch(&mut mapper, 0x0FD8);
         assert_eq!(
             mapper.read_chr(0x0000),
             1,
-            "After FD0 latch: window0 must use R0=4 → CHR-ROM page 1 (marker=1)"
+            "After FD8 latch: window0 must use R0=4 → CHR-ROM page 1 (marker=1)"
         );
     }
 
@@ -508,7 +508,7 @@ mod tests {
     }
 
     #[test]
-    fn latch1_becomes_false_on_1fd0_pattern() {
+    fn latch1_becomes_false_on_1fd8_pattern() {
         let mut mapper = make_mapper();
         // First set latch[1] = true
         trigger_latch(&mut mapper, 0x1FE8);
@@ -521,12 +521,12 @@ mod tests {
         // With latch[1]=true → uses R4=8 → page 2
         assert_eq!(mapper.read_chr(0x1000), 2, "After 1FE8: uses R4=8 → page 2");
 
-        // Trigger $1FD0 → latch[1] = false → window1 switches back to R2=4 → page 1
-        trigger_latch(&mut mapper, 0x1FD0);
+        // Trigger $1FD8 → latch[1] = false → window1 switches back to R2=4 → page 1
+        trigger_latch(&mut mapper, 0x1FD8);
         assert_eq!(
             mapper.read_chr(0x1000),
             1,
-            "After 1FD0 latch: window1 must use R2=4 → CHR-ROM page 1 (marker=1)"
+            "After 1FD8 latch: window1 must use R2=4 → CHR-ROM page 1 (marker=1)"
         );
     }
 
