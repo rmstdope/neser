@@ -237,6 +237,14 @@ impl NativeAppState {
         }
         None
     }
+
+    /// Returns `true` when keyboard text characters should be forwarded to the
+    /// ImGui layer (for debugger input fields such as breakpoint address and
+    /// memory-watch entries) rather than being consumed only by the game
+    /// controller handler.
+    pub fn keyboard_captured_by_imgui(&self) -> bool {
+        self.debugger_open
+    }
 }
 
 fn help_overlay_text(gamepad_count: usize) -> String {
@@ -834,6 +842,33 @@ mod tests {
         assert!(
             text.contains("No matching entries"),
             "should show no-match message, got: {text}"
+        );
+    }
+
+    // ── keyboard_captured_by_imgui (#1859) ────────────────────────────────────
+
+    #[test]
+    fn keyboard_not_captured_by_imgui_when_debugger_closed() {
+        // When the debugger is closed, text characters should NOT be forwarded
+        // to imgui (normal gameplay).
+        let state = NativeAppState::default();
+        assert!(
+            !state.keyboard_captured_by_imgui(),
+            "imgui must not capture keyboard during normal gameplay"
+        );
+    }
+
+    #[test]
+    fn keyboard_captured_by_imgui_when_debugger_open() {
+        // When the debugger is open, typed characters must be forwarded to
+        // imgui so the breakpoint and memory-watch input fields accept input.
+        let state = NativeAppState {
+            debugger_open: true,
+            ..NativeAppState::default()
+        };
+        assert!(
+            state.keyboard_captured_by_imgui(),
+            "imgui must capture keyboard when debugger is open"
         );
     }
 }

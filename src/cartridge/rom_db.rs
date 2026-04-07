@@ -63,7 +63,7 @@ impl VsHardwareType {
         }
     }
 
-    pub fn to_raw(&self) -> u8 {
+    pub fn to_raw(self) -> u8 {
         match self {
             Self::Unisystem => 0,
             Self::RbiBaseball => 1,
@@ -72,7 +72,7 @@ impl VsHardwareType {
             Self::IceClimberJapan => 4,
             Self::VsDualSystem => 5,
             Self::RaidOnBungelingBay => 6,
-            Self::Unknown(v) => *v,
+            Self::Unknown(v) => v,
         }
     }
 }
@@ -115,7 +115,7 @@ impl VsPpuType {
         }
     }
 
-    pub fn to_raw(&self) -> u8 {
+    pub fn to_raw(self) -> u8 {
         match self {
             Self::Rp2c03b => 0,
             Self::Rp2c03g => 1,
@@ -130,7 +130,7 @@ impl VsPpuType {
             Self::Rc2c05_03 => 10,
             Self::Rc2c05_04 => 11,
             Self::Rc2c05_05 => 12,
-            Self::Unknown(v) => *v,
+            Self::Unknown(v) => v,
         }
     }
 }
