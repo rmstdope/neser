@@ -2394,6 +2394,46 @@ mod tests {
     );
 
     // ================================================================
+    // Mapper 99 (VS System), Submapper 0 — standard 32KB PRG
+    // $4016 bit 2 controls CHR bank switching. Four-screen mirroring.
+    // ================================================================
+
+    setup_rom_test!(
+        test_mv_m099_0_chr_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m099.0_chr_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m099_0_four_screen,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m099.0_four_screen.nes"
+    );
+    setup_rom_test!(
+        test_mv_m099_0_combined,
+        "roms/automated_tests/mapper_verification/bin/m099.0.nes"
+    );
+
+    // ================================================================
+    // Mapper 99 (VS System), Submapper 1 — 40KB PRG variant
+    // $4016 bit 2 controls both PRG slot 0 and CHR bank switching.
+    // ================================================================
+
+    setup_rom_test!(
+        test_mv_m099_1_prg_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m099.1_prg_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m099_1_chr_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m099.1_chr_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m099_1_four_screen,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m099.1_four_screen.nes"
+    );
+    setup_rom_test!(
+        test_mv_m099_1_combined,
+        "roms/automated_tests/mapper_verification/bin/m099.1.nes"
+    );
+
+    // ================================================================
     // Mapper 119 (TQROM), Submapper 0
     // ================================================================
 
@@ -2416,6 +2456,29 @@ mod tests {
     setup_rom_test!(
         test_mv_m119_0_combined,
         "roms/automated_tests/mapper_verification/bin/m119.0.nes"
+    );
+
+    // ================================================================
+    // Mapper 151 (VRC1 on VS System), Submapper 0
+    // Same banking as VRC1 but four-screen mirroring (hardwired)
+    // and full 8-bit CHR registers ($E000/$F000).
+    // ================================================================
+
+    setup_rom_test!(
+        test_mv_m151_0_prg_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m151.0_prg_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m151_0_chr_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m151.0_chr_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m151_0_four_screen,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m151.0_four_screen.nes"
+    );
+    setup_rom_test!(
+        test_mv_m151_0_combined,
+        "roms/automated_tests/mapper_verification/bin/m151.0.nes"
     );
 
     // ================================================================
