@@ -426,6 +426,14 @@ impl MMC3Mapper {
         self.regs.get(index).copied().unwrap_or(0)
     }
 
+    /// Returns the current value of the bank-select register ($8000 even writes).
+    ///
+    /// Useful for MMC3 variant mappers that need to inspect the bank-select value
+    /// when intercepting bank-data writes ($8001).
+    pub fn bank_select_reg(&self) -> u8 {
+        self.bank_select
+    }
+
     // ============================================================================
     // PPU A12 Edge Detection for IRQ Timing
     // ============================================================================
