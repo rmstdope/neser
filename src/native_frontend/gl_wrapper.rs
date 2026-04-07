@@ -199,8 +199,8 @@ impl NativeGlWrapper {
     }
 
     /// Cycles through available shader presets.
-    pub fn cycle_shader(&mut self) {
-        self.gl_backend.cycle_shader();
+    pub fn cycle_shader(&mut self) -> Option<String> {
+        self.gl_backend.cycle_shader()
     }
 
     /// Updates the breakpoint list used by the debugger UI.

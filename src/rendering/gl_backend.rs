@@ -724,12 +724,30 @@ impl GlBackend {
     }
 
     /// Cycles through available shader presets, if any.
-    pub fn cycle_shader(&mut self) {
+    ///
+    /// Returns the name of the newly active preset on success, or `None` when
+    /// no shader is active (e.g. cycling landed on "no shader" / no presets).
+    pub fn cycle_shader(&mut self) -> Option<String> {
         if let Err(e) = self.shader_manager.cycle_shader(self.glow_context.clone()) {
             log_info(format!("Error cycling shader: {}", e));
-        } else if let Some(name) = self.shader_manager.current_preset_name() {
-            log_info(format!("Switched to shader: {}", name));
         }
+        let name = self.shader_manager.current_preset_name().map(str::to_owned);
+        log_info(format!(
+            "Switched to shader: {}",
+            name.as_deref().unwrap_or("off")
+        ));
+        name
+    }
+}
+
+/// Returns the toast message to display when the shader preset changes.
+///
+/// * `Some(name)` → `"Shader: <name>"`
+/// * `None`       → `"Shader: off"`
+pub fn shader_toast_message(preset_name: Option<&str>) -> String {
+    match preset_name {
+        Some(name) => format!("Shader: {name}"),
+        None => "Shader: off".to_owned(),
     }
 }
 
@@ -1185,5 +1203,20 @@ mod tests {
             overlay_text_rgba(OverlayTextColor::Black, false),
             [0.0, 0.0, 0.0, 1.0]
         );
+    }
+
+    #[test]
+    fn test_shader_toast_message_with_name_shows_shader_name() {
+        // When cycle_shader returns Some(name), the toast should name the shader.
+        assert_eq!(
+            super::shader_toast_message(Some("ntsc-256px-composite")),
+            "Shader: ntsc-256px-composite"
+        );
+    }
+
+    #[test]
+    fn test_shader_toast_message_with_none_shows_no_shader() {
+        // When no shader is active (cycled to "no shader"), the toast says so.
+        assert_eq!(super::shader_toast_message(None), "Shader: off");
     }
 }

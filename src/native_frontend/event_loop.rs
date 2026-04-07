@@ -633,7 +633,11 @@ impl ApplicationHandler for NativeEventLoop {
                         }
                         KeyOutcome::CycleShader => {
                             if let Some(ref mut gl) = self.gl_wrapper {
-                                gl.cycle_shader();
+                                let preset_name = gl.cycle_shader();
+                                let toast = crate::rendering::gl_backend::shader_toast_message(
+                                    preset_name.as_deref(),
+                                );
+                                self.nes.app_context().borrow_mut().add_toast(toast);
                             }
                         }
                         KeyOutcome::ToggleDebugger => {
