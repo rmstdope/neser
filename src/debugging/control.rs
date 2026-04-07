@@ -1241,11 +1241,9 @@ mod tests {
 
     #[test]
     fn test_save_debug_state_includes_watch_addresses() {
-        let dir = std::env::temp_dir().join("neser_test_save_watch");
-        let _ = std::fs::create_dir_all(&dir);
-        let rom_path = dir.join("test.nes");
-        let debug_path = dir.join("test.debug");
-        let _ = std::fs::remove_file(&debug_path);
+        let dir = tempfile::tempdir().expect("temp dir must be created");
+        let rom_path = dir.path().join("test.nes");
+        let debug_path = dir.path().join("test.debug");
 
         let nes = nes_with_rom_path(&rom_path);
         let mut ctrl = default_controller();
@@ -1270,10 +1268,9 @@ mod tests {
 
     #[test]
     fn test_load_debug_state_returns_watch_addresses() {
-        let dir = std::env::temp_dir().join("neser_test_load_watch");
-        let _ = std::fs::create_dir_all(&dir);
-        let rom_path = dir.join("test.nes");
-        let debug_path = dir.join("test.debug");
+        let dir = tempfile::tempdir().expect("temp dir must be created");
+        let rom_path = dir.path().join("test.nes");
+        let debug_path = dir.path().join("test.debug");
 
         std::fs::write(
             &debug_path,
@@ -1301,11 +1298,9 @@ mod tests {
     fn test_save_debug_state_watch_only_creates_file() {
         // Even when there are no breakpoints, a file should be created if
         // there are watch addresses to persist.
-        let dir = std::env::temp_dir().join("neser_test_watch_only");
-        let _ = std::fs::create_dir_all(&dir);
-        let rom_path = dir.join("test.nes");
-        let debug_path = dir.join("test.debug");
-        let _ = std::fs::remove_file(&debug_path);
+        let dir = tempfile::tempdir().expect("temp dir must be created");
+        let rom_path = dir.path().join("test.nes");
+        let debug_path = dir.path().join("test.debug");
 
         let nes = nes_with_rom_path(&rom_path);
         let ctrl = default_controller();
@@ -1322,10 +1317,9 @@ mod tests {
     #[test]
     fn test_save_debug_state_empty_removes_file() {
         // Both breakpoints and watches are empty → existing file must be removed.
-        let dir = std::env::temp_dir().join("neser_test_empty_removes");
-        let _ = std::fs::create_dir_all(&dir);
-        let rom_path = dir.join("test.nes");
-        let debug_path = dir.join("test.debug");
+        let dir = tempfile::tempdir().expect("temp dir must be created");
+        let rom_path = dir.path().join("test.nes");
+        let debug_path = dir.path().join("test.debug");
         std::fs::write(&debug_path, "pc 0x8000 enabled\nwatch 0x0300\n").unwrap();
 
         let nes = nes_with_rom_path(&rom_path);

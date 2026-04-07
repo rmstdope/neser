@@ -51,6 +51,10 @@ impl DebuggerViewState {
         self.prg_hexdump_base = Some(normalize_prg_hexdump_base(nudged));
     }
 
+    pub fn clear_watch_addresses(&mut self) {
+        self.watch_addresses.clear();
+    }
+
     pub fn add_watch_address(&mut self, address: u16) {
         if !self.watch_addresses.contains(&address) {
             self.watch_addresses.push(address);

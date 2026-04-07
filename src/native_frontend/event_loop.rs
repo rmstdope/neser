@@ -548,6 +548,7 @@ impl ApplicationHandler for NativeEventLoop {
                 self.gl_wrapper = Some(gl);
                 if !self.initialized {
                     self.initialize_audio();
+                    self.sync_audio_state();
                     let watches = self
                         .debugger_controller
                         .load_debug_state_from_file(&self.nes);
@@ -1016,7 +1017,7 @@ fn target_frame_duration(timing_mode: TimingMode) -> Duration {
 /// and when the emulator is paused in the debugger.  Without the debugger
 /// guard, starting with `--debugger` resumes the audio device immediately but
 /// never produces samples, causing continuous underrun warnings.
-pub fn audio_should_be_paused(window_focused: bool, debugger_paused: bool) -> bool {
+fn audio_should_be_paused(window_focused: bool, debugger_paused: bool) -> bool {
     !window_focused || debugger_paused
 }
 
