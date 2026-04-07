@@ -111,10 +111,7 @@ impl Mapper for Mapper283 {
             return;
         }
         self.prg_group = value & 0x07;
-        let base_bank = self.prg_group as i16 * 4;
-        for slot in 0..4i16 {
-            self.base.select_prg_page(slot as usize, base_bank + slot);
-        }
+        self.apply_banks();
     }
 
     fn reset(&mut self) {
