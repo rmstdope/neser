@@ -16,6 +16,7 @@
 //! - Undersize ROM open-bus behavior is not implemented (no known game relies on it).
 
 use crate::cartridge::BaseMapper;
+use crate::cartridge::NametableLayout;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
 
 /// Mapper 099 — VS System
@@ -35,7 +36,6 @@ impl Mapper99 {
     const CHR_BANK_SIZE: usize = 0x2000; // 8 KiB
 
     pub fn new(ctx: MapperContext) -> Self {
-        let mirroring = ctx.mirroring;
         let has_extended_prg = ctx.prg_rom.len() > 0x8000; // >32KB = 40KB Gumshoe variant
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
@@ -49,7 +49,8 @@ impl Mapper99 {
         let mut base = BaseMapper::new(&ctx, capabilities);
         base.configure_prg_banking(Self::PRG_BANK_SIZE);
         base.configure_chr_banking(Self::CHR_BANK_SIZE);
-        base.set_mirroring(mirroring);
+        // Mapper 99 has hardwired four-screen mirroring regardless of what the header says.
+        base.set_mirroring(NametableLayout::FourScreen);
 
         let mut mapper = Self {
             base,
@@ -90,14 +91,40 @@ impl Mapper for Mapper99 {
 
     fn read_prg(&self, addr: u16) -> u8 {
         match addr {
-            0x6000..=0x7FFF => self.base.try_read_prg_ram(addr).unwrap_or(0),
+            0x6000..=0x7FFF => {
+                // Mapper 99 has 2KB PRG-RAM; mirror within the $6000-$7FFF window.
+                let masked = 0x6000 | ((addr - 0x6000) & 0x07FF);
+                self.base.try_read_prg_ram(masked).unwrap_or(0)
+            }
             0x8000..=0xFFFF => self.base.read_prg_banked(addr),
             _ => 0,
         }
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
-        self.base.try_write_prg_ram(addr, value);
+        if (0x6000..=0x7FFF).contains(&addr) {
+            // Mapper 99 has 2KB PRG-RAM; mirror within the $6000-$7FFF window.
+            let masked = 0x6000 | ((addr - 0x6000) & 0x07FF);
+            self.base.try_write_prg_ram(masked, value);
+        }
+    }
+
+    fn wram_size(&self) -> usize {
+        if self.base.has_prg_ram() {
+            2 * 1024
+        } else {
+            0
+        }
+    }
+
+    fn wram_snapshot(&self) -> Vec<u8> {
+        let full = self.base.wram_snapshot();
+        full.into_iter().take(2 * 1024).collect()
+    }
+
+    fn load_wram_snapshot(&mut self, data: &[u8]) {
+        let capped = &data[..data.len().min(2 * 1024)];
+        self.base_mut().load_wram_snapshot(capped);
     }
 
     fn on_controller_port_write(&mut self, addr: u16, value: u8) {
@@ -123,6 +150,7 @@ impl Mapper for Mapper99 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cartridge::NametableLayout;
     use crate::cartridge::mapper::create_mapper;
     use crate::cartridge::test_helpers::banked_data;
 
@@ -297,6 +325,63 @@ mod tests {
             mapper.read_prg(0x6000),
             0xAB,
             "PRG-RAM write/read at $6000 must work"
+        );
+    }
+
+    #[test]
+    fn prg_ram_mirrors_at_2kb_boundary() {
+        let mut mapper = make_mapper();
+        // Write to $6000 (2KB window base) and read it back via mirror at $6800
+        mapper.write_prg(0x6000, 0xCD);
+        assert_eq!(
+            mapper.read_prg(0x6800),
+            0xCD,
+            "$6800 must mirror $6000 (2KB PRG-RAM mirrors within $6000-$7FFF)"
+        );
+        // Write to $67FF (last byte of 2KB window) and verify via mirror
+        mapper.write_prg(0x67FF, 0xEF);
+        assert_eq!(
+            mapper.read_prg(0x6FFF),
+            0xEF,
+            "$6FFF must mirror $67FF"
+        );
+    }
+
+    #[test]
+    fn wram_size_is_2kb() {
+        let mapper = make_mapper();
+        assert_eq!(
+            mapper.wram_size(),
+            2 * 1024,
+            "wram_size() must report 2KB for mapper 99"
+        );
+    }
+
+    #[test]
+    fn wram_snapshot_is_2kb() {
+        let mapper = make_mapper();
+        assert_eq!(
+            mapper.wram_snapshot().len(),
+            2 * 1024,
+            "wram_snapshot() must return exactly 2KB"
+        );
+    }
+
+    #[test]
+    fn mirroring_is_four_screen_regardless_of_header() {
+        // Even if the header says Horizontal, mapper 99 must override to FourScreen.
+        let prg = banked_data(8 * 1024, 4);
+        let chr = banked_data(8 * 1024, 2);
+        let mapper = Mapper99::new(MapperContext::new_for_test(
+            99,
+            prg,
+            chr,
+            NametableLayout::Horizontal,
+        ));
+        assert_eq!(
+            mapper.get_mirroring(),
+            NametableLayout::FourScreen,
+            "Mapper 99 must always use FourScreen mirroring"
         );
     }
 
