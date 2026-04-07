@@ -904,7 +904,10 @@ impl ApplicationHandler for NativeEventLoop {
                 if let Some(ref mut si) = self.sleep_inhibitor {
                     si.deactivate();
                 }
-            } else if !self.vsync_enabled {
+            } else if should_use_manual_frame_throttle(
+                self.vsync_enabled,
+                self.state.window_focused,
+            ) {
                 // Manual frame limiting: advance deadline by target interval.
                 let timing_mode = self
                     .nes
@@ -942,9 +945,45 @@ fn target_frame_duration(timing_mode: TimingMode) -> Duration {
     Duration::from_secs_f64(1.0 / timing_mode.frame_rate_hz())
 }
 
+/// Returns true when frames must be throttled with a manual timer (WaitUntil)
+/// rather than relying on vsync to pace the event loop.
+///
+/// When `vsync_enabled` is false the manual timer is always needed.  When the
+/// window loses focus the OS may stop blocking on vsync (especially on macOS),
+/// and the audio device is paused, removing the ring-buffer back-pressure that
+/// would otherwise limit frame rate.  Using a manual WaitUntil deadline in that
+/// case prevents the emulator from running at unconstrained speed.
+pub fn should_use_manual_frame_throttle(vsync_enabled: bool, window_focused: bool) -> bool {
+    !vsync_enabled || !window_focused
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn manual_throttle_required_when_vsync_enabled_but_unfocused() {
+        // Regression: window unfocused → audio paused → no ring-buffer back-pressure.
+        // vsync may not block on non-focused windows, so we must throttle manually.
+        assert!(
+            should_use_manual_frame_throttle(true, false),
+            "vsync=true, focused=false must require manual throttle"
+        );
+    }
+
+    #[test]
+    fn manual_throttle_not_required_when_vsync_enabled_and_focused() {
+        assert!(
+            !should_use_manual_frame_throttle(true, true),
+            "vsync=true, focused=true should let vsync drive timing"
+        );
+    }
+
+    #[test]
+    fn manual_throttle_required_when_vsync_disabled() {
+        assert!(should_use_manual_frame_throttle(false, true));
+        assert!(should_use_manual_frame_throttle(false, false));
+    }
 
     #[test]
     fn test_target_frame_duration_ntsc() {
