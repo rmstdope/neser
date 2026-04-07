@@ -101,7 +101,7 @@ impl Mapper322 {
         let chr_rom = ctx.chr_rom;
         let mirroring = ctx.mirroring;
         Self {
-            mmc3: MMC3Mapper::new_with_irq_mode(prg_rom, chr_rom, mirroring, false),
+            mmc3: MMC3Mapper::new(prg_rom, chr_rom, mirroring, 0, false),
             reg: 0,
         }
     }
