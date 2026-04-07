@@ -311,13 +311,10 @@ mod tests {
 
     #[test]
     fn chr_bank_uses_full_value_not_lower_4_bits() {
-        // Verify the full 8-bit value is used, not just lower 4 bits like standard VRC1
-        // Bank 12 (0x0C) — if only lower 4 bits used, this would be the same as bank 12.
-        // But bank 11 (0x0B) vs masked value (0x0B & 0x0F = 0x0B) are the same.
-        // Use a value > 15 to prove full 8 bits are used: bank index 12 with 13 total banks.
-        // Actually, with 13 banks, index 12 wraps to 12. Let's write a value > 15:
-        // We have 13 CHR banks. Write value 0x1C = 28. 28 % 13 = 2. Lower nibble = 0x0C = 12. 12 % 13 = 12.
-        // So full 8-bit: bank 2, lower-4-bit: bank 12. These differ → test proves full 8-bit usage.
+        // Write a value whose full 8-bit bank number differs from its lower nibble.
+        // With 13 CHR banks, 0x1C (28) selects bank 2 when the full value is used,
+        // but would select bank 12 if the mapper incorrectly masked to 0x0C.
+        // The two outcomes differ, so this proves mapper 151 honors the full 8-bit CHR bank value.
         let mut mapper = make_mapper();
         mapper.write_prg(0xE000, 0x1C); // full value = 28, lower nibble = 12
         let expected_full_8bit = (28 % CHR_BANKS) as u8; // 28 % 13 = 2
