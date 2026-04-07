@@ -93,7 +93,7 @@ impl Mapper for Mapper99 {
         match addr {
             0x6000..=0x7FFF => {
                 // Mapper 99 has 2KB PRG-RAM; mirror within the $6000-$7FFF window.
-                let masked = 0x6000 | ((addr - 0x6000) & 0x07FF);
+                let masked = 0x6000 | (addr & 0x07FF);
                 self.base.try_read_prg_ram(masked).unwrap_or(0)
             }
             0x8000..=0xFFFF => self.base.read_prg_banked(addr),
@@ -104,7 +104,7 @@ impl Mapper for Mapper99 {
     fn write_prg(&mut self, addr: u16, value: u8) {
         if (0x6000..=0x7FFF).contains(&addr) {
             // Mapper 99 has 2KB PRG-RAM; mirror within the $6000-$7FFF window.
-            let masked = 0x6000 | ((addr - 0x6000) & 0x07FF);
+            let masked = 0x6000 | (addr & 0x07FF);
             self.base.try_write_prg_ram(masked, value);
         }
     }
