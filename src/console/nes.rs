@@ -163,6 +163,11 @@ impl Nes {
             .rom_db()
             .default_zapper_on_port(cartridge_crc32);
         let arkanoid_port = crate::cartridge::default_arkanoid_on_port(cartridge_crc32);
+        let power_pad_port = self
+            .app_context
+            .borrow()
+            .rom_db()
+            .default_power_pad_on_port(cartridge_crc32);
         let has_famicom_four_players_expansion = self
             .app_context
             .borrow()
@@ -178,6 +183,11 @@ impl Nes {
             .borrow()
             .rom_db()
             .has_zapper_famicom_expansion(cartridge_crc32);
+        let has_power_pad_famicom_expansion = self
+            .app_context
+            .borrow()
+            .rom_db()
+            .has_power_pad_famicom_expansion(cartridge_crc32);
         let is_japan_region = self
             .app_context
             .borrow()
@@ -204,6 +214,11 @@ impl Nes {
             .borrow_mut()
             .config_mut()
             .apply_rom_db_zapper_famicom_hint(has_zapper_famicom_expansion);
+
+        self.app_context
+            .borrow_mut()
+            .config_mut()
+            .apply_rom_db_power_pad_famicom_hint(has_power_pad_famicom_expansion);
 
         // Auto-detect VS System mode from cartridge VS metadata
         let is_vs_system =
@@ -266,11 +281,13 @@ impl Nes {
             Some((zapper_port, ControllerType::Zapper))
         } else if arkanoid_port != 0 {
             Some((arkanoid_port, ControllerType::Arkanoid))
+        } else if power_pad_port != 0 {
+            Some((power_pad_port, ControllerType::PowerPad))
         } else {
             None
         };
 
-        // Auto-configure mouse-emulated controller when detected.
+        // Auto-configure special controller when detected.
         // This branch only runs when neither controller port was explicitly configured.
         if let Some((auto_port, auto_type)) = auto_controller {
             let other_port_type = if auto_port == 1 {
@@ -280,16 +297,27 @@ impl Nes {
             };
             let auto_label = auto_type.display_label();
             log_info(format!(
-                "Enabling {} controller on port {} for inserted cartridge. If you don't want this behavior, explicitly configure controller_port1/controller_port2 in config (or via CLI). Note that some games expect the controller on a specific port, so be sure to configure the correct one if you have issues with input not working in certain games.",
-                auto_label, auto_port
+                "Auto-detected {} on port {} for this cartridge. Override with --controller-port{}=<type> if needed.",
+                auto_label, auto_port, auto_port
             ));
             bus.set_controller_type(auto_port, auto_type);
+
+            // Update config to reflect the auto-detected controller type
+            {
+                let mut ctx = self.app_context.borrow_mut();
+                let config = ctx.config_mut();
+                if auto_port == 1 {
+                    config.controller_port1 = auto_type;
+                } else {
+                    config.controller_port2 = auto_type;
+                }
+            }
 
             // Apply the other port's configuration
             let other_port = if auto_port == 1 { 2 } else { 1 };
             bus.set_controller_type(other_port, other_port_type);
         } else {
-            // No mouse-emulated controller detected, just apply user config
+            // No special controller detected, just apply user config
             bus.set_controller_type(1, port1_type);
             bus.set_controller_type(2, port2_type);
         }
@@ -2264,6 +2292,60 @@ mod tests {
             bus_state.port2_controller,
             crate::bus::ControllerStateWrapper::Joypad(_)
         ));
+    }
+
+    #[test]
+    fn test_insert_cartridge_auto_detects_power_pad_on_port2() {
+        let rom_data = create_minimal_nrom_rom();
+        let mut cartridge = load_test_cartridge(&rom_data);
+        // World Class Track Meet (U) — PowerPadSideA (expansion_type=11)
+        cartridge.set_crc32_for_test(0x5734EB9E);
+
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        nes.insert_cartridge(cartridge);
+
+        let bus_state = nes.bus.borrow().capture_state();
+        assert!(
+            matches!(
+                bus_state.port2_controller,
+                crate::bus::ControllerStateWrapper::PowerPad(_)
+            ),
+            "Power Pad should be auto-detected on port 2 for World Class Track Meet"
+        );
+        assert!(
+            matches!(
+                bus_state.port1_controller,
+                crate::bus::ControllerStateWrapper::Joypad(_)
+            ),
+            "Port 1 should remain Joypad when Power Pad is on port 2"
+        );
+    }
+
+    #[test]
+    fn test_insert_cartridge_does_not_auto_detect_power_pad_when_port_is_explicit() {
+        let rom_data = create_minimal_nrom_rom();
+        let mut cartridge = load_test_cartridge(&rom_data);
+        cartridge.set_crc32_for_test(0x5734EB9E); // World Class Track Meet
+
+        let config = Config {
+            controller_port2: crate::input::ControllerType::Joypad,
+            controller_port2_explicit: true,
+            ..Default::default()
+        };
+
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
+        nes.insert_cartridge(cartridge);
+
+        let bus_state = nes.bus.borrow().capture_state();
+        assert!(
+            matches!(
+                bus_state.port2_controller,
+                crate::bus::ControllerStateWrapper::Joypad(_)
+            ),
+            "Explicit port config should override Power Pad auto-detection"
+        );
     }
 
     #[test]

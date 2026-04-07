@@ -333,6 +333,31 @@ impl RomDb {
         )
     }
 
+    /// Return the default Power Pad controller port for a ROM CRC.
+    ///
+    /// Returns 2 for NES Power Pad games (PowerPadSideA/B), since the
+    /// Power Pad connects to controller port 2 on the NES.
+    /// Returns 0 when no NES Power Pad is detected.
+    pub fn default_power_pad_on_port(&self, crc32: u32) -> u8 {
+        match self
+            .get_by_crc(crc32)
+            .and_then(|entry| entry.expansion_type)
+        {
+            Some(ExpansionType::PowerPadSideA | ExpansionType::PowerPadSideB) => 2,
+            _ => 0,
+        }
+    }
+
+    /// Return whether ROM DB expansion type implies a Famicom Family Trainer
+    /// (the Japanese equivalent of the Power Pad) on the expansion port.
+    pub fn has_power_pad_famicom_expansion(&self, crc32: u32) -> bool {
+        matches!(
+            self.get_by_crc(crc32)
+                .and_then(|entry| entry.expansion_type),
+            Some(ExpansionType::FamilyTrainerSideA | ExpansionType::FamilyTrainerSideB)
+        )
+    }
+
     /// Return whether ROM DB rom_class indicates a Japan-region (Famicom) ROM.
     pub fn is_japan_region(&self, crc32: u32) -> bool {
         self.get_by_crc(crc32)
@@ -872,5 +897,69 @@ mod tests {
         for raw in 0..=12 {
             assert_eq!(VsPpuType::from_raw(raw).to_raw(), raw);
         }
+    }
+
+    // --- Power Pad ROM DB detection tests ---
+
+    #[test]
+    fn test_default_power_pad_on_port_returns_2_for_power_pad_side_b() {
+        // expansion_type 12 = PowerPadSideB
+        let csv = "1,World Class Track Meet,,ABCD1234,,,,,,,,,,,,,,,,,12\n";
+        let db = RomDb::from_csv_content(csv);
+        assert_eq!(db.default_power_pad_on_port(0xABCD1234), 2);
+    }
+
+    #[test]
+    fn test_default_power_pad_on_port_returns_2_for_power_pad_side_a() {
+        // expansion_type 11 = PowerPadSideA
+        let csv = "1,Power Pad Game,,ABCD1234,,,,,,,,,,,,,,,,,11\n";
+        let db = RomDb::from_csv_content(csv);
+        assert_eq!(db.default_power_pad_on_port(0xABCD1234), 2);
+    }
+
+    #[test]
+    fn test_default_power_pad_on_port_returns_0_for_family_trainer() {
+        // expansion_type 13 = FamilyTrainerSideA (Famicom expansion, not NES port)
+        let csv = "1,Family Trainer,,ABCD1234,,,,,,,,,,,,,,,,,13\n";
+        let db = RomDb::from_csv_content(csv);
+        assert_eq!(db.default_power_pad_on_port(0xABCD1234), 0);
+    }
+
+    #[test]
+    fn test_default_power_pad_on_port_returns_0_for_standard_controllers() {
+        let csv = "1,Normal Game,,ABCD1234,,,,,,,,,,,,,,,,,1\n";
+        let db = RomDb::from_csv_content(csv);
+        assert_eq!(db.default_power_pad_on_port(0xABCD1234), 0);
+    }
+
+    #[test]
+    fn test_has_power_pad_famicom_expansion_true_for_family_trainer_side_a() {
+        // expansion_type 13 = FamilyTrainerSideA
+        let csv = "1,Athletic World,,ABCD1234,,,,,,,,,,,,,,,,,13\n";
+        let db = RomDb::from_csv_content(csv);
+        assert!(db.has_power_pad_famicom_expansion(0xABCD1234));
+    }
+
+    #[test]
+    fn test_has_power_pad_famicom_expansion_true_for_family_trainer_side_b() {
+        // expansion_type 14 = FamilyTrainerSideB
+        let csv = "1,Running Stadium,,ABCD1234,,,,,,,,,,,,,,,,,14\n";
+        let db = RomDb::from_csv_content(csv);
+        assert!(db.has_power_pad_famicom_expansion(0xABCD1234));
+    }
+
+    #[test]
+    fn test_has_power_pad_famicom_expansion_false_for_nes_power_pad() {
+        // expansion_type 12 = PowerPadSideB (NES port, not Famicom expansion)
+        let csv = "1,World Class Track Meet,,ABCD1234,,,,,,,,,,,,,,,,,12\n";
+        let db = RomDb::from_csv_content(csv);
+        assert!(!db.has_power_pad_famicom_expansion(0xABCD1234));
+    }
+
+    #[test]
+    fn test_has_power_pad_famicom_expansion_false_for_standard() {
+        let csv = "1,Normal,,ABCD1234,,,,,,,,,,,,,,,,,1\n";
+        let db = RomDb::from_csv_content(csv);
+        assert!(!db.has_power_pad_famicom_expansion(0xABCD1234));
     }
 }

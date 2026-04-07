@@ -2130,6 +2130,26 @@ impl Config {
         false
     }
 
+    /// Apply ROM DB hint for Famicom Power Pad (Family Trainer) expansion.
+    ///
+    /// Only sets the expansion port if hardware mode is already Famicom.
+    /// For NES mode, the Power Pad is handled via standard controller port 2.
+    pub fn apply_rom_db_power_pad_famicom_hint(&mut self, has_hint: bool) -> bool {
+        if !has_hint {
+            return false;
+        }
+
+        if !self.expansion_port_explicit
+            && self.hardware_mode == HardwareMode::Famicom
+            && self.expansion_port != ExpansionPort::PowerPadFamicom
+        {
+            self.expansion_port = ExpansionPort::PowerPadFamicom;
+            return true;
+        }
+
+        false
+    }
+
     pub fn apply_rom_db_famicom_region_hint(&mut self, is_japan: bool) -> bool {
         if !is_japan {
             return false;
@@ -5294,6 +5314,60 @@ filter=invalid-shader
         };
 
         let changed = config.apply_rom_db_zapper_famicom_hint(false);
+
+        assert!(!changed);
+        assert_eq!(config.expansion_port, ExpansionPort::None);
+    }
+
+    // --- Power Pad Famicom hint tests ---
+
+    #[test]
+    fn test_config_apply_rom_db_power_pad_famicom_hint_sets_expansion_when_already_famicom() {
+        let mut config = Config {
+            hardware_mode: HardwareMode::Famicom,
+            ..Default::default()
+        };
+
+        let changed = config.apply_rom_db_power_pad_famicom_hint(true);
+
+        assert!(changed);
+        assert_eq!(config.expansion_port, ExpansionPort::PowerPadFamicom);
+    }
+
+    #[test]
+    fn test_config_apply_rom_db_power_pad_famicom_hint_no_change_when_nes_mode() {
+        let mut config = Config::default();
+        assert_eq!(config.hardware_mode, HardwareMode::Nes);
+
+        let changed = config.apply_rom_db_power_pad_famicom_hint(true);
+
+        assert!(!changed);
+        assert_eq!(config.expansion_port, ExpansionPort::None);
+    }
+
+    #[test]
+    fn test_config_apply_rom_db_power_pad_famicom_hint_respects_explicit_expansion_override() {
+        let mut config = Config {
+            hardware_mode: HardwareMode::Famicom,
+            expansion_port: ExpansionPort::FamicomFourPlayers,
+            expansion_port_explicit: true,
+            ..Default::default()
+        };
+
+        let changed = config.apply_rom_db_power_pad_famicom_hint(true);
+
+        assert!(!changed);
+        assert_eq!(config.expansion_port, ExpansionPort::FamicomFourPlayers);
+    }
+
+    #[test]
+    fn test_config_apply_rom_db_power_pad_famicom_hint_false_is_noop() {
+        let mut config = Config {
+            hardware_mode: HardwareMode::Famicom,
+            ..Default::default()
+        };
+
+        let changed = config.apply_rom_db_power_pad_famicom_hint(false);
 
         assert!(!changed);
         assert_eq!(config.expansion_port, ExpansionPort::None);
