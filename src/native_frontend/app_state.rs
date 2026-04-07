@@ -238,9 +238,12 @@ impl NativeAppState {
             return Some(autorun_overlay_text(autorun, tv_system));
         }
         if self.help_overlay_visible {
+            let config = nes.app_context().borrow().config().clone();
             return Some(help_overlay_text(
                 self.gamepad_count,
                 self.four_score_enabled,
+                config.controller_port1,
+                config.controller_port2,
             ));
         }
         None
@@ -255,7 +258,14 @@ impl NativeAppState {
     }
 }
 
-fn help_overlay_text(gamepad_count: usize, four_score: bool) -> String {
+fn help_overlay_text(
+    gamepad_count: usize,
+    four_score: bool,
+    port1_type: crate::input::ControllerType,
+    port2_type: crate::input::ControllerType,
+) -> String {
+    use crate::input::ControllerType;
+
     let hotkeys = "Controls\n\
 Ctrl+Q: Quit\n\
 Space: Pause\n\
@@ -278,36 +288,76 @@ F11: Step into";
     let keyboard_ports =
         crate::native_frontend::keyboard::keyboard_target_ports(gamepad_count, four_score);
 
+    let controller_type_for = |port: usize| match port {
+        1 => port1_type,
+        2 => port2_type,
+        _ => ControllerType::Joypad,
+    };
+
     let mut controllers = String::new();
 
     for port in 1..=max_ports {
         let port_u8 = port as u8;
         if port <= gamepad_count {
             controllers.push_str(&format!("\n\nPort {port}: Gamepad"));
-        } else if keyboard_ports.first() == Some(&port_u8) {
-            controllers.push_str(&format!(
-                "\n\nPort {port}: Keyboard\n\
-W/A/S/D: D-Pad\n\
-R: A\n\
-T: B\n\
-4: Select\n\
-5: Start"
-            ));
-        } else if keyboard_ports.get(1) == Some(&port_u8) {
-            controllers.push_str(&format!(
-                "\n\nPort {port}: Keyboard\n\
-I/J/K/L: D-Pad\n\
-O: A\n\
-P: B\n\
-9: Select\n\
-0: Start"
-            ));
+        } else if let Some(slot) = keyboard_ports.iter().position(|&p| p == port_u8) {
+            if controller_type_for(port) == ControllerType::PowerPad {
+                controllers.push_str(&power_pad_keyboard_section(port, slot));
+            } else {
+                controllers.push_str(&joypad_keyboard_section(port, slot));
+            }
         } else {
             controllers.push_str(&format!("\n\nPort {port}: Empty"));
         }
     }
 
     format!("{hotkeys}{controllers}")
+}
+
+/// Power Pad key bindings for a given keyboard slot (0 = primary keys, 1 = secondary keys).
+fn power_pad_keyboard_section(port: usize, slot: usize) -> String {
+    if slot == 0 {
+        format!(
+            "\n\nPower Pad (Port {port} via keyboard)\n\
+1/2/3: Buttons 1-3\n\
+Q/W/E: Buttons 4-6\n\
+A/S/D: Buttons 7-9\n\
+Z/X/C: Buttons 10-12\n\
+4: Select  5: Start"
+        )
+    } else {
+        format!(
+            "\n\nPower Pad (Port {port} via keyboard)\n\
+7/8/9: Buttons 1-3\n\
+U/I/O: Buttons 4-6\n\
+J/K/L: Buttons 7-9\n\
+M/,/.: Buttons 10-12\n\
+9: Select  0: Start"
+        )
+    }
+}
+
+/// Joypad key bindings for a given keyboard slot (0 = primary WASD, 1 = secondary IJKL).
+fn joypad_keyboard_section(port: usize, slot: usize) -> String {
+    if slot == 0 {
+        format!(
+            "\n\nPort {port}: Keyboard\n\
+W/A/S/D: D-Pad\n\
+R: A\n\
+T: B\n\
+4: Select\n\
+5: Start"
+        )
+    } else {
+        format!(
+            "\n\nPort {port}: Keyboard\n\
+I/J/K/L: D-Pad\n\
+O: A\n\
+P: B\n\
+9: Select\n\
+0: Start"
+        )
+    }
 }
 
 fn cart_switch_overlay_text(cart_switch: &CartridgeSwitchState) -> String {
@@ -971,6 +1021,65 @@ mod tests {
         assert!(
             state.keyboard_captured_by_imgui(),
             "imgui must capture keyboard when debugger is open"
+        );
+    }
+
+    // --- Power Pad help overlay tests ---
+
+    #[test]
+    fn test_help_overlay_shows_power_pad_section_when_port2_is_power_pad() {
+        let config = Config {
+            controller_port2: crate::input::ControllerType::PowerPad,
+            ..Default::default()
+        };
+        let nes = Nes::new(AppContext::new_with_config(config));
+        let state = NativeAppState {
+            help_overlay_visible: true,
+            ..NativeAppState::default()
+        };
+        let text = state.overlay_text(&nes, None).unwrap();
+        assert!(
+            text.contains("Power Pad"),
+            "Help overlay should show Power Pad section when port 2 is Power Pad, got:\n{text}"
+        );
+        assert!(
+            text.contains("7/8/9"),
+            "Help overlay should show P2 Power Pad keys, got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn test_help_overlay_shows_power_pad_section_when_port1_is_power_pad() {
+        let config = Config {
+            controller_port1: crate::input::ControllerType::PowerPad,
+            ..Default::default()
+        };
+        let nes = Nes::new(AppContext::new_with_config(config));
+        let state = NativeAppState {
+            help_overlay_visible: true,
+            ..NativeAppState::default()
+        };
+        let text = state.overlay_text(&nes, None).unwrap();
+        assert!(
+            text.contains("Power Pad"),
+            "Help overlay should show Power Pad section when port 1 is Power Pad, got:\n{text}"
+        );
+        assert!(
+            text.contains("1/2/3"),
+            "Help overlay should show P1 Power Pad keys, got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn test_help_overlay_no_power_pad_section_for_default_joypads() {
+        let state = NativeAppState {
+            help_overlay_visible: true,
+            ..NativeAppState::default()
+        };
+        let text = state.overlay_text(&make_nes(), None).unwrap();
+        assert!(
+            !text.contains("Power Pad"),
+            "Help overlay should not show Power Pad section for default joypads, got:\n{text}"
         );
     }
 }
