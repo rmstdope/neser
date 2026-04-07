@@ -548,8 +548,12 @@ impl ApplicationHandler for NativeEventLoop {
                 self.gl_wrapper = Some(gl);
                 if !self.initialized {
                     self.initialize_audio();
-                    self.debugger_controller
-                        .load_breakpoints_from_debug_file(&self.nes);
+                    let watches = self
+                        .debugger_controller
+                        .load_debug_state_from_file(&self.nes);
+                    if let Some(ref mut gl) = self.gl_wrapper {
+                        gl.set_watch_addresses(watches);
+                    }
                     self.initialized = true;
                 }
             }
@@ -571,8 +575,13 @@ impl ApplicationHandler for NativeEventLoop {
                 if let Err(e) = self.finish_recording() {
                     eprintln!("Failed to finish recording on window close: {e}");
                 }
+                let watches = self
+                    .gl_wrapper
+                    .as_ref()
+                    .map(|gl| gl.watch_addresses())
+                    .unwrap_or_default();
                 self.debugger_controller
-                    .save_breakpoints_to_debug_file(&self.nes);
+                    .save_debug_state_to_file(&self.nes, &watches);
                 if let Err(e) = self.nes.save_ram() {
                     eprintln!("Failed to save battery-backed RAM on exit: {e}");
                 }
@@ -650,8 +659,13 @@ impl ApplicationHandler for NativeEventLoop {
                             if let Err(e) = self.finish_recording() {
                                 eprintln!("Failed to finish recording on quit: {e}");
                             }
+                            let watches = self
+                                .gl_wrapper
+                                .as_ref()
+                                .map(|gl| gl.watch_addresses())
+                                .unwrap_or_default();
                             self.debugger_controller
-                                .save_breakpoints_to_debug_file(&self.nes);
+                                .save_debug_state_to_file(&self.nes, &watches);
                             if let Err(e) = self.nes.save_ram() {
                                 eprintln!("Failed to save battery-backed RAM on quit: {e}");
                             }

@@ -75,7 +75,6 @@ impl DebuggerViewState {
         self.prg_hexdump_base
     }
 
-    #[cfg(test)]
     pub fn watch_addresses(&self) -> Vec<u16> {
         self.watch_addresses.clone()
     }
