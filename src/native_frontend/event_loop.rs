@@ -61,6 +61,10 @@ pub struct NativeEventLoop {
     vsync_enabled: bool,
     /// Deadline for the next frame, used for manual frame limiting when VSync is off.
     next_frame_deadline: Instant,
+    /// Time of the last executed emulation frame, used to guard against
+    /// OS-triggered redraws arriving faster than our WaitUntil deadline
+    /// (e.g. macOS ProMotion delivering RedrawRequested at 120 Hz).
+    last_frame_rendered: Instant,
 }
 
 impl NativeEventLoop {
@@ -129,6 +133,7 @@ impl NativeEventLoop {
             headless,
             vsync_enabled,
             next_frame_deadline: Instant::now(),
+            last_frame_rendered: Instant::now(),
         }
     }
 
@@ -781,8 +786,34 @@ impl ApplicationHandler for NativeEventLoop {
                     return;
                 }
 
-                // Run one frame of emulation
-                self.run_frame();
+                // When using manual frame throttle (vsync off or window unfocused),
+                // the OS (e.g. macOS ProMotion at 120 Hz) may deliver RedrawRequested
+                // more frequently than our WaitUntil deadline. Guard against double-
+                // stepping the emulator by skipping emulation if not enough time has
+                // elapsed since the last frame.
+                let using_manual_throttle =
+                    should_use_manual_frame_throttle(self.vsync_enabled, self.state.window_focused);
+                let skip_emulation = if using_manual_throttle {
+                    let timing_mode = self
+                        .nes
+                        .app_context()
+                        .borrow()
+                        .config()
+                        .hardware_model
+                        .timing_mode();
+                    let target = target_frame_duration(timing_mode);
+                    // Allow a small tolerance (half a frame) to avoid skipping
+                    // frames when the deadline fires slightly early.
+                    self.last_frame_rendered.elapsed() < target / 2
+                } else {
+                    false
+                };
+
+                if !skip_emulation {
+                    // Run one frame of emulation
+                    self.run_frame();
+                    self.last_frame_rendered = Instant::now();
+                }
 
                 // If autorun signalled exit during this frame, exit now.
                 if self.autorun_exit.is_some() {
