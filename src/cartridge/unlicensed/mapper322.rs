@@ -97,11 +97,14 @@ pub struct Mapper322 {
 
 impl Mapper322 {
     pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
-        let prg_rom = ctx.prg_rom;
-        let chr_rom = ctx.chr_rom;
-        let mirroring = ctx.mirroring;
         Self {
-            mmc3: MMC3Mapper::new(prg_rom, chr_rom, mirroring, 0, false),
+            mmc3: MMC3Mapper::new_with_irq_mode_and_prg_ram_banks(
+                ctx.prg_rom,
+                ctx.chr_rom,
+                ctx.mirroring,
+                false, // standard MMC3 IRQ
+                0,     // no PRG-RAM; $6000–$7FFF is the outer-bank register
+            ),
             reg: 0,
         }
     }
