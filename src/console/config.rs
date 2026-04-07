@@ -2187,12 +2187,23 @@ impl Config {
     /// Intended to be logged at ROM load time so the user can see what
     /// peripherals are active.
     pub fn hardware_summary(&self) -> String {
+        self.hardware_summary_with(self.controller_port1, self.controller_port2)
+    }
+
+    /// Like [`hardware_summary`] but uses the supplied effective controller types instead of
+    /// those stored in the config. Useful when auto-detection overrides the config values for the
+    /// current cartridge without permanently mutating them.
+    pub fn hardware_summary_with(
+        &self,
+        port1: crate::input::ControllerType,
+        port2: crate::input::ControllerType,
+    ) -> String {
         let mut parts = vec![format!(
             "Hardware: {} ({}) | Port 1: {} | Port 2: {}",
             self.hardware_mode.display_label(),
             self.hardware_model.display_label(),
-            self.controller_port1.display_label(),
-            self.controller_port2.display_label(),
+            port1.display_label(),
+            port2.display_label(),
         )];
 
         if let Some(label) = self.expansion_port.display_label() {
@@ -5627,6 +5638,25 @@ filter=invalid-shader
         assert!(
             !summary.contains("Expansion"),
             "Summary should not mention expansion when None: {summary}"
+        );
+    }
+
+    #[test]
+    fn test_hardware_summary_with_overrides_controller_types() {
+        let config = Config::default(); // port1=Joypad, port2=Joypad
+        let summary = config.hardware_summary_with(
+            crate::input::ControllerType::Joypad,
+            crate::input::ControllerType::PowerPad,
+        );
+        assert!(
+            summary.contains("Power Pad"),
+            "hardware_summary_with should use the supplied port2 type: {summary}"
+        );
+        // The config itself should be unchanged.
+        assert_eq!(
+            config.controller_port2,
+            crate::input::ControllerType::Joypad,
+            "hardware_summary_with must not mutate config.controller_port2"
         );
     }
 }

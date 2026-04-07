@@ -238,12 +238,15 @@ impl NativeAppState {
             return Some(autorun_overlay_text(autorun, tv_system));
         }
         if self.help_overlay_visible {
-            let config = nes.app_context().borrow().config().clone();
+            // Use the effective controller types for the current cartridge.
+            // These reflect auto-detected overrides without permanently mutating config.
+            let controller_port1 = nes.active_controller_port_type(1);
+            let controller_port2 = nes.active_controller_port_type(2);
             return Some(help_overlay_text(
                 self.gamepad_count,
                 self.four_score_enabled,
-                config.controller_port1,
-                config.controller_port2,
+                controller_port1,
+                controller_port2,
             ));
         }
         None
@@ -322,8 +325,7 @@ fn power_pad_keyboard_section(port: usize, slot: usize) -> String {
 1/2/3: Buttons 1-3\n\
 Q/W/E: Buttons 4-6\n\
 A/S/D: Buttons 7-9\n\
-Z/X/C: Buttons 10-12\n\
-4: Select  5: Start"
+Z/X/C: Buttons 10-12"
         )
     } else {
         format!(
@@ -331,8 +333,7 @@ Z/X/C: Buttons 10-12\n\
 7/8/9: Buttons 1-3\n\
 U/I/O: Buttons 4-6\n\
 J/K/L: Buttons 7-9\n\
-M/,/.: Buttons 10-12\n\
-9: Select  0: Start"
+M/,/.: Buttons 10-12"
         )
     }
 }

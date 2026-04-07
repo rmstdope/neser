@@ -113,6 +113,10 @@ pub struct Nes {
     fractional_ppu_cycles: f64,
     ready_to_render: bool,
     recent_cpu_trace: VecDeque<CpuTraceLine>,
+    /// Effective controller types for the current cartridge.
+    /// May differ from config when auto-detection overrides user defaults.
+    active_controller_port1: ControllerType,
+    active_controller_port2: ControllerType,
 }
 
 impl Nes {
@@ -149,6 +153,8 @@ impl Nes {
             fractional_ppu_cycles: 0.0,
             ready_to_render: false,
             recent_cpu_trace: VecDeque::with_capacity(MAX_CPU_TRACE_LINES),
+            active_controller_port1: config.controller_port1,
+            active_controller_port2: config.controller_port2,
         }
     }
 
@@ -302,15 +308,15 @@ impl Nes {
             ));
             bus.set_controller_type(auto_port, auto_type);
 
-            // Update config to reflect the auto-detected controller type
-            {
-                let mut ctx = self.app_context.borrow_mut();
-                let config = ctx.config_mut();
-                if auto_port == 1 {
-                    config.controller_port1 = auto_type;
-                } else {
-                    config.controller_port2 = auto_type;
-                }
+            // Track effective controller types as per-cartridge runtime state.
+            // Config is intentionally NOT mutated so subsequent ROM loads start
+            // from the user-configured defaults, not from a previous auto-detection.
+            if auto_port == 1 {
+                self.active_controller_port1 = auto_type;
+                self.active_controller_port2 = other_port_type;
+            } else {
+                self.active_controller_port1 = other_port_type;
+                self.active_controller_port2 = auto_type;
             }
 
             // Apply the other port's configuration
@@ -320,13 +326,29 @@ impl Nes {
             // No special controller detected, just apply user config
             bus.set_controller_type(1, port1_type);
             bus.set_controller_type(2, port2_type);
+            self.active_controller_port1 = port1_type;
+            self.active_controller_port2 = port2_type;
         }
 
         self.log_hardware_summary();
     }
 
+    /// Returns the effective controller type for the given port (1 or 2) for the currently
+    /// loaded cartridge. May differ from config when auto-detection overrides user defaults.
+    pub fn active_controller_port_type(&self, port: u8) -> ControllerType {
+        match port {
+            1 => self.active_controller_port1,
+            2 => self.active_controller_port2,
+            _ => ControllerType::Joypad,
+        }
+    }
+
     fn log_hardware_summary(&self) {
-        let summary = self.app_context.borrow().config().hardware_summary();
+        let summary = self
+            .app_context
+            .borrow()
+            .config()
+            .hardware_summary_with(self.active_controller_port1, self.active_controller_port2);
         log_info(summary);
     }
 
@@ -2399,7 +2421,49 @@ mod tests {
         );
     }
 
-    // ── Trainer JSR $7003 (#636) ──────────────────────────────────────────────
+    #[test]
+    fn test_switch_cartridge_from_power_pad_to_normal_resets_to_joypad() {
+        // Regression: after auto-detecting Power Pad for ROM A, loading a normal
+        // ROM B (no special controller) must NOT keep Power Pad on port 2.
+        let rom_data = create_minimal_nrom_rom();
+
+        // Step 1: Load a Power Pad game.
+        let mut power_pad_cartridge = load_test_cartridge(&rom_data);
+        power_pad_cartridge.set_crc32_for_test(0x5734EB9E); // World Class Track Meet
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        nes.insert_cartridge(power_pad_cartridge);
+
+        assert_eq!(
+            nes.active_controller_port_type(2),
+            ControllerType::PowerPad,
+            "Power Pad should be active after World Class Track Meet"
+        );
+
+        // Step 2: Switch to a normal joypad game.
+        let mut joypad_cartridge = load_test_cartridge(&rom_data);
+        joypad_cartridge.set_crc32_for_test(0xDEADBEEF); // Unknown CRC → joypad default
+        nes.insert_cartridge(joypad_cartridge);
+
+        // Bus and active types must both revert to joypad.
+        let bus_state = nes.bus.borrow().capture_state();
+        assert!(
+            matches!(
+                bus_state.port2_controller,
+                crate::bus::ControllerStateWrapper::Joypad(_)
+            ),
+            "Port 2 bus controller should reset to joypad after switching to a normal game, got {:?}",
+            bus_state.port2_controller
+        );
+        assert_eq!(
+            nes.active_controller_port_type(2),
+            ControllerType::Joypad,
+            "active_controller_port2 should reset to joypad"
+        );
+    }
+
+
     //
     // On hard reset, if the cartridge has a trainer, the CPU must start at
     // $7003 (not the game's reset vector). The game's reset vector is pushed
