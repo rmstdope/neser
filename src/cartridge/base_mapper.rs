@@ -80,7 +80,7 @@ pub struct BaseMapper {
     vs_hardware_type: Option<VsHardwareType>,
     /// Protection counter for VS System per-game copy protection (TKO Boxing, RBI Baseball,
     /// Super Xevious). Uses `Cell` for interior mutability in the `&self` read path.
-    vs_protection_counter: Cell<u8>,
+    pub(crate) vs_protection_counter: Cell<u8>,
 }
 
 /// Resolve a signed bank number to an unsigned index, wrapping to available banks.

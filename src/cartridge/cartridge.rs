@@ -231,6 +231,7 @@ impl Cartridge {
     /// This delegates to the mapper's reset method to reset bank registers,
     /// IRQ counters, and other mapper-specific state. PRG-RAM is typically preserved.
     pub fn reset(&mut self) {
+        self.mapper.base_mut().vs_protection_counter.set(0);
         self.mapper.reset();
     }
 

@@ -97,6 +97,7 @@ pub struct Bus {
     expansion_zapper: Rc<RefCell<Zapper>>,              // Famicom expansion Zapper controller
     expansion_power_pad: Rc<RefCell<PowerPad>>,         // Famicom expansion Power Pad controller
     vs_arcade_input: Rc<Cell<u8>>,                      // VS System coin/service input state
+    vs_hardware_type: Option<crate::cartridge::VsHardwareType>, // VS System hardware type from cartridge
     open_bus: u8, // Last value on the data bus for open bus behavior
     devices: Vec<Box<dyn BusDevice>>,
 }
@@ -161,6 +162,7 @@ impl Bus {
             expansion_zapper,
             expansion_power_pad,
             vs_arcade_input,
+            vs_hardware_type: None,
             open_bus: 0xFF, // Initialize to 0xFF (common power-on state)
             devices: Vec::new(),
         };
@@ -215,7 +217,7 @@ impl Bus {
             power_pad_famicom_enabled: Self::is_power_pad_famicom(config),
             vs_system_enabled: Self::is_vs_system(config),
             vs_dip_switches: config.vs_dip_switches,
-            vs_hardware_type: None, // Set during cartridge insertion via apply_rom_db hints
+            vs_hardware_type: self.vs_hardware_type,
         };
         drop(app_context);
 
@@ -276,6 +278,7 @@ impl Bus {
         // Extract trainer data before wrapping in Rc<RefCell<>>
         let trainer_data = cartridge.trainer().map(|t| t.to_vec());
         let vs_ppu_type = cartridge.vs_ppu_type();
+        let vs_hardware_type = cartridge.vs_hardware_type();
 
         // Wrap cartridge in Rc<RefCell<>> for shared access between CPU and PPU
         let cartridge_rc = Rc::new(RefCell::new(cartridge));
@@ -292,12 +295,18 @@ impl Bus {
         }
 
         // Share cartridge reference with PPU for dynamic CHR access
-        let mut ppu = self.ppu.borrow_mut();
-        ppu.set_cartridge(cartridge_rc.clone());
-        ppu.set_mirroring(cartridge_rc.borrow().mapper().get_mirroring());
-        ppu.set_vs_ppu_type(vs_ppu_type);
+        {
+            let mut ppu = self.ppu.borrow_mut();
+            ppu.set_cartridge(cartridge_rc.clone());
+            ppu.set_mirroring(cartridge_rc.borrow().mapper().get_mirroring());
+            ppu.set_vs_ppu_type(vs_ppu_type);
+        }
 
         *self.cartridge.borrow_mut() = Some(cartridge_rc);
+
+        // Propagate VS hardware type to controller device for game-specific quirks
+        self.vs_hardware_type = vs_hardware_type;
+        self.sync_controller_modes_from_config();
     }
 
     /// Reset the bus and its components.
