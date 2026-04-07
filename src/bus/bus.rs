@@ -619,12 +619,36 @@ impl Bus {
 
     /// Set button state for a controller.
     ///
-    /// In VS System mode, Start and Select are swapped because the arcade
-    /// cabinet's Start button is wired to the NES serial protocol's Select
-    /// bit position (bit 2), and vice versa.
+    /// In VS System mode, two remappings are applied (matching Mesen's behavior):
+    ///
+    /// 1. **Start↔Select swap** (all VS games): The arcade cabinet's Start button
+    ///    is wired to the NES serial protocol's Select bit position (bit 2),
+    ///    and vice versa.
+    ///
+    /// 2. **Port swap** (VsSystem4017 / "VsSystemSwapped" games only): The arcade
+    ///    cabinet reads P1 from $4017 (left stick) and P2 from $4016 (right stick).
+    ///    D-pad and action buttons are swapped between ports, while Start/Select
+    ///    stay on their original port (so Start↔Select swap targets the correct
+    ///    controller port for the game's "1P Start" / "2P Start" detection).
     pub fn set_button(&mut self, port: u8, button: Button, pressed: bool) {
         if (1..=2).contains(&port) {
-            let effective_button = if Self::is_vs_system(self.app_context.borrow().config()) {
+            let config = self.app_context.borrow();
+            let cfg = config.config();
+            let is_vs = Self::is_vs_system(cfg);
+            let vs_swapped = cfg.vs_controllers_swapped;
+            drop(config);
+
+            // Step 1: For VsSystem4017 games, swap ports for d-pad/action buttons only.
+            // Start/Select stay on their original port.
+            let effective_port = if vs_swapped && !matches!(button, Button::Start | Button::Select)
+            {
+                3 - port // swap: 1→2, 2→1
+            } else {
+                port
+            };
+
+            // Step 2: For all VS games, swap Start↔Select.
+            let effective_button = if is_vs {
                 match button {
                     Button::Start => Button::Select,
                     Button::Select => Button::Start,
@@ -633,7 +657,8 @@ impl Bus {
             } else {
                 button
             };
-            self.controllers[(port - 1) as usize]
+
+            self.controllers[(effective_port - 1) as usize]
                 .borrow_mut()
                 .set_button(effective_button, pressed);
             return;
@@ -2781,7 +2806,7 @@ mod tests {
         }
     }
 
-    // ── VS System Start↔Select button swap tests ─────────────────────────
+    // ── VS System controller remapping tests ─────────────────────────
 
     fn create_test_memory_with_vs_system() -> Bus {
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
@@ -2797,12 +2822,26 @@ mod tests {
         Bus::new(ppu, apu, app_context)
     }
 
+    fn create_test_memory_with_vs_system_swapped() -> Bus {
+        let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
+        let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
+        let config = crate::console::Config {
+            ram_init_mode: crate::console::RamInitMode::Zero,
+            expansion_port: ExpansionPort::VsSystem,
+            vs_controllers_swapped: true,
+            ..Default::default()
+        };
+        let app_context = Rc::new(RefCell::new(
+            crate::app_context::AppContext::new_with_config(config),
+        ));
+        Bus::new(ppu, apu, app_context)
+    }
+
     fn read_joypad_button_from_port(bus: &mut Bus, port_addr: u16, button: Button) -> bool {
         // Strobe controller
         bus.write(0x4016, 0x01, false);
         bus.write(0x4016, 0x00, false);
 
-        // Read serial bits until we reach the target button index
         // Button order: A(0), B(1), Select(2), Start(3), Up(4), Down(5), Left(6), Right(7)
         for _ in 0..button as u8 {
             bus.read(port_addr, false);
@@ -2810,86 +2849,123 @@ mod tests {
         (bus.read(port_addr, false) & 0x01) != 0
     }
 
+    // --- Start↔Select swap (all VS games) ---
+
     #[test]
     fn vs_system_swaps_start_to_select_bit_position() {
         let mut bus = create_test_memory_with_vs_system();
-
-        // Frontend sends "Start" for player 1
         bus.set_button(1, Button::Start, true);
 
-        // In VS System, Start maps to Select bit position (bit 2) in serial data
         let select_bit = read_joypad_button_from_port(&mut bus, 0x4016, Button::Select);
-        assert!(
-            select_bit,
-            "VS System: pressing Start should appear at Select bit position in serial data"
-        );
+        assert!(select_bit, "VS: Start should appear at Select bit position");
 
-        // The Start bit position (bit 3) should NOT be set
         let start_bit = read_joypad_button_from_port(&mut bus, 0x4016, Button::Start);
         assert!(
             !start_bit,
-            "VS System: pressing Start should NOT appear at Start bit position in serial data"
+            "VS: Start should NOT appear at Start bit position"
         );
     }
 
     #[test]
     fn vs_system_swaps_select_to_start_bit_position() {
         let mut bus = create_test_memory_with_vs_system();
-
-        // Frontend sends "Select" for player 1
         bus.set_button(1, Button::Select, true);
 
-        // In VS System, Select maps to Start bit position (bit 3) in serial data
         let start_bit = read_joypad_button_from_port(&mut bus, 0x4016, Button::Start);
-        assert!(
-            start_bit,
-            "VS System: pressing Select should appear at Start bit position in serial data"
-        );
+        assert!(start_bit, "VS: Select should appear at Start bit position");
     }
 
     #[test]
     fn vs_system_does_not_swap_other_buttons() {
         let mut bus = create_test_memory_with_vs_system();
-
-        // Frontend sends "A" for player 1
         bus.set_button(1, Button::A, true);
 
-        // A should still appear at A bit position (bit 0)
         let a_bit = read_joypad_button_from_port(&mut bus, 0x4016, Button::A);
         assert!(
             a_bit,
-            "VS System: A button should not be affected by Start/Select swap"
+            "VS: A button should not be affected by Start/Select swap"
         );
     }
 
     #[test]
     fn vs_system_swaps_start_select_on_port2() {
         let mut bus = create_test_memory_with_vs_system();
-
-        // Frontend sends "Start" for player 2
         bus.set_button(2, Button::Start, true);
 
-        // Should appear at Select bit position on $4017
         let select_bit = read_joypad_button_from_port(&mut bus, 0x4017, Button::Select);
         assert!(
             select_bit,
-            "VS System: P2 Start should appear at Select bit position on $4017"
+            "VS: P2 Start should appear at Select bit on $4017"
         );
     }
 
     #[test]
     fn non_vs_system_does_not_swap_start_select() {
         let mut bus = create_test_memory();
-
-        // Frontend sends "Start" for player 1
         bus.set_button(1, Button::Start, true);
 
-        // Start should appear at Start bit position (bit 3), not Select
         let start_bit = read_joypad_button_from_port(&mut bus, 0x4016, Button::Start);
         assert!(
             start_bit,
             "Non-VS: Start should appear at Start bit position"
         );
+    }
+
+    // --- Port swap (VsSystem4017 / VsSystemSwapped games only) ---
+
+    #[test]
+    fn vs_swapped_routes_p1_action_buttons_to_port2() {
+        let mut bus = create_test_memory_with_vs_system_swapped();
+        bus.set_button(1, Button::A, true);
+
+        let a_on_4017 = read_joypad_button_from_port(&mut bus, 0x4017, Button::A);
+        assert!(
+            a_on_4017,
+            "VS swapped: P1 A should appear on $4017 (left stick)"
+        );
+
+        let a_on_4016 = read_joypad_button_from_port(&mut bus, 0x4016, Button::A);
+        assert!(!a_on_4016, "VS swapped: P1 A should NOT appear on $4016");
+    }
+
+    #[test]
+    fn vs_swapped_routes_p2_action_buttons_to_port1() {
+        let mut bus = create_test_memory_with_vs_system_swapped();
+        bus.set_button(2, Button::A, true);
+
+        let a_on_4016 = read_joypad_button_from_port(&mut bus, 0x4016, Button::A);
+        assert!(
+            a_on_4016,
+            "VS swapped: P2 A should appear on $4016 (right stick)"
+        );
+    }
+
+    #[test]
+    fn vs_swapped_keeps_start_on_original_port() {
+        let mut bus = create_test_memory_with_vs_system_swapped();
+        bus.set_button(1, Button::Start, true);
+
+        // Start→Select swap puts it at Select bit on $4016 (original port, not swapped)
+        let select_on_4016 = read_joypad_button_from_port(&mut bus, 0x4016, Button::Select);
+        assert!(
+            select_on_4016,
+            "VS swapped: P1 Start→Select on $4016 (original port)"
+        );
+
+        let select_on_4017 = read_joypad_button_from_port(&mut bus, 0x4017, Button::Select);
+        assert!(
+            !select_on_4017,
+            "VS swapped: P1 Start should NOT appear on $4017"
+        );
+    }
+
+    #[test]
+    fn vs_non_swapped_does_not_swap_ports() {
+        let mut bus = create_test_memory_with_vs_system();
+        bus.set_button(1, Button::A, true);
+
+        let a_on_4016 = read_joypad_button_from_port(&mut bus, 0x4016, Button::A);
+        assert!(a_on_4016, "VS non-swapped: P1 A should stay on $4016");
     }
 
     #[test]

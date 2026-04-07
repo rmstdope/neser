@@ -544,6 +544,10 @@ pub struct Config {
     pub expansion_port_explicit: bool,
     /// VS System DIP switch value (8-bit, one bit per switch).
     pub vs_dip_switches: u8,
+    /// VS System swapped controller wiring (VsSystem4017 / VsSystemSwapped).
+    /// When true, the arcade cabinet reads P1 from $4017 (left stick) and
+    /// P2 from $4016 (right stick), so d-pad/A/B are swapped between ports.
+    pub vs_controllers_swapped: bool,
     /// Emulated hardware model.
     pub hardware_model: HardwareModel,
     /// Whether the hardware model was explicitly configured.
@@ -739,6 +743,7 @@ impl Default for Config {
             expansion_port: ExpansionPort::None,
             expansion_port_explicit: false,
             vs_dip_switches: 0x00,
+            vs_controllers_swapped: false,
             hardware_model: HardwareModel::NesNtsc,
             hardware_model_explicit: false,
             audio_enabled: true,
@@ -2118,6 +2123,11 @@ impl Config {
         }
 
         false
+    }
+
+    /// Apply ROM DB hint for VS System swapped controller wiring.
+    pub fn apply_rom_db_vs_controllers_swapped_hint(&mut self, swapped: bool) {
+        self.vs_controllers_swapped = swapped;
     }
 
     /// Parse a boolean value from config file.

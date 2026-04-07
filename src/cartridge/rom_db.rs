@@ -323,6 +323,16 @@ impl RomDb {
         )
     }
 
+    /// Return whether ROM DB expansion type is VsSystem4017 (swapped controller wiring).
+    /// These VS games read P1 from $4017 (left stick) instead of $4016.
+    pub fn has_vs_swapped_controllers(&self, crc32: u32) -> bool {
+        matches!(
+            self.get_by_crc(crc32)
+                .and_then(|entry| entry.expansion_type),
+            Some(ExpansionType::VsSystem4017)
+        )
+    }
+
     /// Return whether ROM DB rom_class indicates a Japan-region (Famicom) ROM.
     pub fn is_japan_region(&self, crc32: u32) -> bool {
         self.get_by_crc(crc32)

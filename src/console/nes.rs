@@ -213,6 +213,17 @@ impl Nes {
             .config_mut()
             .apply_rom_db_vs_system_hint(is_vs_system);
 
+        // Auto-detect VS System swapped controller wiring from ROM DB expansion type
+        let vs_controllers_swapped = self
+            .app_context
+            .borrow()
+            .rom_db()
+            .has_vs_swapped_controllers(cartridge_crc32);
+        self.app_context
+            .borrow_mut()
+            .config_mut()
+            .apply_rom_db_vs_controllers_swapped_hint(vs_controllers_swapped);
+
         // Propagate any hardware-mode change from ROM DB hint to the live PPU
         let is_famicom = self.app_context.borrow().config().hardware_mode
             == crate::console::HardwareMode::Famicom;
