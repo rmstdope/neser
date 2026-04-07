@@ -21,8 +21,8 @@
 //! - 16 KB mode: both `$8000–$BFFF` and `$C000–$FFFF` map to page R.
 //! - 32 KB mode: `$8000–$BFFF` maps to page R, `$C000–$FFFF` maps to page R+1.
 //!
-//! **CHR banking:** always R (addr bits [3:1] / 2) as an 8 KB bank at
-//! `$0000–$1FFF`.
+//! **CHR banking:** always bank register R = (addr >> 1) & 0x07 as an
+//! 8 KB bank at `$0000–$1FFF`.
 //!
 //! **Mirroring:** A0=0 → Vertical, A0=1 → Horizontal.
 //!
@@ -461,11 +461,9 @@ mod tests {
     // ── Snapshot / restore ────────────────────────────────────────────────────
 
     #[test]
-    fn registers_snapshot_round_trips() {
+    fn registers_snapshot_round_trips_16kb_mode() {
         let mut mapper = make_mapper();
-        // 32 KB mode, bank 2, horizontal mirroring: addr bits A[3:1]=010, A0=1, A3=1
-        // addr = 0x8009 gives R=4, but let's use a simpler address:
-        // addr = 0x8005: A[3:1]=010 → R=2, A0=1 → H mirror, A3=0 → 16 KB mode
+        // addr=0x8005: A[3:1]=010 → R=2, A0=1 → H mirror, A3=0 → 16 KB mode
         mapper.write_prg(0x8005, 0);
 
         let snap = mapper.registers_snapshot();
@@ -479,12 +477,18 @@ mod tests {
         );
         assert_eq!(
             restored.prg_mode_32k, mapper.prg_mode_32k,
-            "Snapshot must preserve PRG mode"
+            "Snapshot must preserve PRG mode (16 KB)"
         );
+        assert!(!restored.prg_mode_32k, "PRG mode must be 16 KB");
         assert_eq!(
             restored.read_prg(0x8000),
             mapper.read_prg(0x8000),
-            "Restored mapper must read same PRG data"
+            "Restored mapper must read same PRG data at $8000"
+        );
+        assert_eq!(
+            restored.read_prg(0xC000),
+            mapper.read_prg(0xC000),
+            "Restored mapper must read same PRG data at $C000"
         );
         assert_eq!(
             restored.read_chr(0x0000),
@@ -495,6 +499,53 @@ mod tests {
             restored.get_mirroring(),
             mapper.get_mirroring(),
             "Restored mapper must have same mirroring"
+        );
+    }
+
+    #[test]
+    fn registers_snapshot_round_trips_32kb_mode() {
+        let mut mapper = make_mapper();
+        // addr=0x8009: A0=1, A3=1 → 32 KB mode; R = (0x8009 >> 1) & 0x07 = 4
+        // $8000–$BFFF = bank 4; $C000–$FFFF = bank 5 mod 5 = 0
+        mapper.write_prg(0x8009, 0);
+
+        assert!(mapper.prg_mode_32k, "PRG mode must be 32 KB");
+        assert_eq!(mapper.bank, 4, "Bank register must be 4");
+
+        let snap = mapper.registers_snapshot();
+        let mut restored = make_mapper();
+        restored.restore_registers(&snap);
+
+        assert_eq!(restored.bank, mapper.bank, "Snapshot must preserve bank");
+        assert_eq!(
+            restored.mirroring_h, mapper.mirroring_h,
+            "Snapshot must preserve mirroring"
+        );
+        assert_eq!(
+            restored.prg_mode_32k, mapper.prg_mode_32k,
+            "Snapshot must preserve PRG mode (32 KB)"
+        );
+        assert!(restored.prg_mode_32k, "Restored PRG mode must be 32 KB");
+        assert_eq!(
+            restored.read_prg(0x8000),
+            mapper.read_prg(0x8000),
+            "Restored $8000 must map to bank R"
+        );
+        assert_eq!(
+            restored.read_prg(0xC000),
+            mapper.read_prg(0xC000),
+            "Restored $C000 must map to bank R+1"
+        );
+        // Verify the $C000 bank is R+1 = 5, which wraps to 0 (mod PRG_BANKS=5), distinct from $8000 = bank 4
+        assert_ne!(
+            restored.read_prg(0x8000),
+            restored.read_prg(0xC000),
+            "$8000 and $C000 must map to different banks in 32 KB mode"
+        );
+        assert_eq!(
+            restored.read_chr(0x0000),
+            mapper.read_chr(0x0000),
+            "Restored mapper must read same CHR data"
         );
     }
 
