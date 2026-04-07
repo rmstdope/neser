@@ -118,7 +118,9 @@ impl Mapper165 {
         let offset = (addr as usize) & (Self::CHR_4K_PAGE_SIZE - 1);
         let reg_index = self.reg_index_for_window(window);
         let reg_val = self.inner.chr_bank_reg(reg_index) as usize;
-        if reg_val == 0 && let Some(slot) = self.chr_ram.get_mut(offset) {
+        if reg_val == 0
+            && let Some(slot) = self.chr_ram.get_mut(offset)
+        {
             *slot = value;
         }
     }
