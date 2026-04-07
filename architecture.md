@@ -149,7 +149,7 @@ The `src/bin/roms.rs` file is a library binary (accessed via `cargo run --bin ro
 | Directory | Mapper Count | Notable Mappers |
 |-----------|:------------:|-----------------|
 | `nintendo/` | 21 | NROM (0), MMC1 (1), UxROM (2), CNROM (3), MMC3 (4), MMC5 (5), AxROM (7), MMC2/MMC4 (9/10), FDS (20) |
-| `konami/` | 6 | VRC1 (75), VRC2/VRC4 (21–25), VRC3 (73), VRC6 (24/26), VRC7 (85) |
+| `konami/` | 7 | VRC1 (75), Mapper 151, VRC2/VRC4 (21–25), VRC3 (73), VRC6 (24/26), VRC7 (85) |
 | `namco/` | 5 | Namco 118 (206), Namco 163 (19), Namcot 3425/3443/3446 |
 | `sunsoft/` | 5 | Sunsoft-2 (93), Sunsoft-3 (67), Sunsoft-4 (68), FME-7 (69) |
 | `irem/` | 5 | G-101 (32), H-3001 (65), TAM-S1 (97), LROG017 (77), NINA/Tengen (34) |

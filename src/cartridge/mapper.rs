@@ -27,6 +27,7 @@ use super::nintendo::uxrom::UxROMMapper;
 use super::nintendo::uxrom_inverted::UxromInvertedMapper;
 
 // Konami mappers
+use super::konami::mapper151::Mapper151;
 use super::konami::vrc1::Vrc1Mapper;
 use super::konami::vrc2_vrc4::Vrc2Vrc4Mapper;
 use super::konami::vrc3::Vrc3Mapper;
@@ -934,6 +935,7 @@ mapper_registry! {
     132 => Mapper132::new,
     133 => Mapper133::new,
     140 => JalecoJf11Mapper::new,
+    151 => Mapper151::new,
     155 => MMC1Mapper::new,
     180 => UxromInvertedMapper::new,
     185 => CnromSecurityMapper::new,
