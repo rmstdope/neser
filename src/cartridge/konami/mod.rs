@@ -1,3 +1,4 @@
+pub(crate) mod mapper151;
 pub(crate) mod vrc1;
 pub(crate) mod vrc2_vrc4;
 pub(crate) mod vrc3;
