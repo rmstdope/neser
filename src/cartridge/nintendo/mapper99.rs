@@ -110,11 +110,7 @@ impl Mapper for Mapper99 {
     }
 
     fn wram_size(&self) -> usize {
-        if self.base.has_prg_ram() {
-            2 * 1024
-        } else {
-            0
-        }
+        if self.base.has_prg_ram() { 2 * 1024 } else { 0 }
     }
 
     fn wram_snapshot(&self) -> Vec<u8> {
@@ -340,11 +336,7 @@ mod tests {
         );
         // Write to $67FF (last byte of 2KB window) and verify via mirror
         mapper.write_prg(0x67FF, 0xEF);
-        assert_eq!(
-            mapper.read_prg(0x6FFF),
-            0xEF,
-            "$6FFF must mirror $67FF"
-        );
+        assert_eq!(mapper.read_prg(0x6FFF), 0xEF, "$6FFF must mirror $67FF");
     }
 
     #[test]
