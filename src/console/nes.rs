@@ -2463,7 +2463,6 @@ mod tests {
         );
     }
 
-
     //
     // On hard reset, if the cartridge has a trainer, the CPU must start at
     // $7003 (not the game's reset vector). The game's reset vector is pushed
