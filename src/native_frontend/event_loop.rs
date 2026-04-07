@@ -711,11 +711,15 @@ impl ApplicationHandler for NativeEventLoop {
                 // Left-click grabs immediately so the same click is also forwarded
                 // as a button press (unlike deferring to the next frame, which
                 // would swallow Zapper shots and Arkanoid trigger presses).
+                // Exception: if the mouse was released by Escape, the click only
+                // re-grabs and must NOT be forwarded to the NES controller.
+                let mut should_discard_grab_click = false;
                 if has_mouse
                     && !self.state.mouse_grabbed
                     && state == ElementState::Pressed
                     && button == winit::event::MouseButton::Left
                 {
+                    let was_released_by_escape = self.state.mouse_released_by_escape;
                     self.state.mouse_released_by_escape = false;
                     let should_grab = crate::input::mouse_mapping::should_grab_mouse_input(
                         true,
@@ -740,11 +744,15 @@ impl ApplicationHandler for NativeEventLoop {
                             );
                         }
                         self.state.mouse_grabbed = true;
+                        if !mouse::should_forward_grab_click(was_released_by_escape) {
+                            should_discard_grab_click = true;
+                        }
                     }
                 }
 
-                // Route button to NES controller if grabbed.
-                if has_mouse && self.state.mouse_grabbed {
+                // Route button to NES controller if grabbed (but not for the
+                // re-grab click itself, which is silently discarded).
+                if has_mouse && self.state.mouse_grabbed && !should_discard_grab_click {
                     let btn = match button {
                         winit::event::MouseButton::Left => Some(mouse::MouseButton::Left),
                         winit::event::MouseButton::Right => Some(mouse::MouseButton::Right),
