@@ -1175,6 +1175,7 @@ mod tests {
 
     // ── VS System protection (forced Start button) tests ─────────────────
 
+    #[allow(clippy::type_complexity)]
     fn create_vs_joypad_device(
         hw_type: VsHardwareType,
     ) -> (

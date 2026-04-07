@@ -114,6 +114,7 @@ impl NativeEventLoop {
             tracing,
             state: NativeAppState {
                 fullscreen,
+                four_score_enabled: four_score,
                 window_focused: true,
                 ..NativeAppState::default()
             },
@@ -682,6 +683,7 @@ impl ApplicationHandler for NativeEventLoop {
                         &mut self.nes,
                         key_code,
                         self.state.gamepad_count,
+                        self.state.four_score_enabled,
                     );
                 }
 

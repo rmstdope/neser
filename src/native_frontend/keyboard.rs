@@ -60,22 +60,45 @@ pub fn handle_key_pressed(
 ///
 /// Releases the NES / SNES / Power Pad button corresponding to the given key.
 /// `gamepad_count` determines which ports keyboard input is routed to.
-pub fn handle_key_released(nes: &mut Nes, key_code: KeyCode, gamepad_count: usize) {
-    let ports = keyboard_target_ports(gamepad_count);
+pub fn handle_key_released(
+    nes: &mut Nes,
+    key_code: KeyCode,
+    gamepad_count: usize,
+    four_score: bool,
+) {
+    let ports = keyboard_target_ports(gamepad_count, four_score);
     handle_controller_key(nes, key_code, false, ports);
 }
 
 /// Returns the NES ports that keyboard input should be routed to, based on
-/// how many gamepads are connected.
+/// how many gamepads are connected and whether Four Score mode is active.
 ///
+/// Without Four Score (max 2 ports):
 /// - 0 gamepads → `[1, 2]` (keyboard covers both ports)
 /// - 1 gamepad  → `[2]`    (gamepad takes port 1; keyboard takes port 2)
 /// - 2+ gamepads → `[]`    (both ports owned by gamepads; keyboard disabled)
-pub fn keyboard_target_ports(gamepad_count: usize) -> &'static [u8] {
-    match gamepad_count {
-        0 => &[1, 2],
-        1 => &[2],
-        _ => &[],
+///
+/// With Four Score (max 4 ports):
+/// - 0 gamepads → `[1, 2]`
+/// - 1 gamepad  → `[2, 3]`
+/// - 2 gamepads → `[3, 4]`
+/// - 3 gamepads → `[4]`
+/// - 4+ gamepads → `[]`
+pub fn keyboard_target_ports(gamepad_count: usize, four_score: bool) -> &'static [u8] {
+    if four_score {
+        match gamepad_count {
+            0 => &[1, 2],
+            1 => &[2, 3],
+            2 => &[3, 4],
+            3 => &[4],
+            _ => &[],
+        }
+    } else {
+        match gamepad_count {
+            0 => &[1, 2],
+            1 => &[2],
+            _ => &[],
+        }
     }
 }
 
@@ -139,7 +162,8 @@ fn handle_unmodified_key(
         KeyCode::F10 => return KeyOutcome::StepOver,
         KeyCode::F11 => return KeyOutcome::StepInto,
         _ => {
-            let ports = keyboard_target_ports(app_state.gamepad_count);
+            let ports =
+                keyboard_target_ports(app_state.gamepad_count, app_state.four_score_enabled);
             handle_controller_key(nes, key_code, true, ports);
         }
     }
@@ -225,11 +249,7 @@ fn handle_controller_key(nes: &mut Nes, key_code: KeyCode, pressed: bool, ports:
         KeyCode::Digit7 => pp_p2(nes, PowerPadButton::One, pressed, ports),
         KeyCode::Digit8 => pp_p2(nes, PowerPadButton::Two, pressed, ports),
         KeyCode::Digit9 => pp_or_btn_p2(nes, PowerPadButton::Three, Button::Select, pressed, ports),
-        KeyCode::Digit0 => {
-            if ports.contains(&1) && ports.contains(&2) {
-                nes.set_button(2, Button::Start, pressed);
-            }
-        }
+        KeyCode::Digit0 => btn_p2(nes, Button::Start, pressed, ports),
 
         // ── Player 2: UIOJKL M,. = D-pad / Power Pad ─────────────────────
         KeyCode::KeyU => pp_p2(nes, PowerPadButton::Four, pressed, ports),
@@ -241,11 +261,7 @@ fn handle_controller_key(nes: &mut Nes, key_code: KeyCode, pressed: bool, ports:
         KeyCode::KeyM => pp_p2(nes, PowerPadButton::Ten, pressed, ports),
         KeyCode::Comma => pp_p2(nes, PowerPadButton::Eleven, pressed, ports),
         KeyCode::Period => pp_p2(nes, PowerPadButton::Twelve, pressed, ports),
-        KeyCode::KeyP => {
-            if ports.contains(&1) && ports.contains(&2) {
-                nes.set_button(2, Button::B, pressed);
-            }
-        }
+        KeyCode::KeyP => btn_p2(nes, Button::B, pressed, ports),
 
         // ── VS System: coin insert / service button ──────────────────────
         KeyCode::Digit6 => nes.set_vs_coin_insert(0, pressed),
@@ -303,15 +319,23 @@ fn pp_or_btn_or_snes_p1(
 
 // ── Player-2-only button helpers ─────────────────────────────────────────────
 
+fn btn_p2(nes: &mut Nes, btn: Button, pressed: bool, ports: &[u8]) {
+    if let Some(&port) = ports.get(1) {
+        nes.set_button(port, btn, pressed);
+    }
+}
+
 fn pp_p2(nes: &mut Nes, pp: PowerPadButton, pressed: bool, ports: &[u8]) {
-    if ports.contains(&1) && ports.contains(&2) {
-        nes.set_power_pad_button(2, pp, pressed);
+    if let Some(&port) = ports.get(1) {
+        nes.set_power_pad_button(port, pp, pressed);
     }
 }
 
 fn pp_or_btn_p2(nes: &mut Nes, pp: PowerPadButton, btn: Button, pressed: bool, ports: &[u8]) {
-    if ports.contains(&1) && ports.contains(&2) && !nes.set_power_pad_button(2, pp, pressed) {
-        nes.set_button(2, btn, pressed);
+    if let Some(&port) = ports.get(1)
+        && !nes.set_power_pad_button(port, pp, pressed)
+    {
+        nes.set_button(port, btn, pressed);
     }
 }
 
@@ -414,6 +438,13 @@ mod tests {
 
     fn make_nes() -> Nes {
         Nes::new(AppContext::new_with_config(Config::default()))
+    }
+
+    fn make_nes_four_score() -> Nes {
+        Nes::new(AppContext::new_with_config(Config {
+            four_score_enabled: true,
+            ..Config::default()
+        }))
     }
 
     fn make_nes_with_cartridge() -> Nes {
@@ -842,7 +873,7 @@ mod tests {
         let mut state = make_state();
         handle_key_pressed(&mut nes, KeyCode::KeyW, &mut state, None);
         assert_ne!(buttons(&nes, 1) & BIT_UP, 0);
-        handle_key_released(&mut nes, KeyCode::KeyW, 0);
+        handle_key_released(&mut nes, KeyCode::KeyW, 0, false);
         assert_eq!(buttons(&nes, 1) & BIT_UP, 0, "Releasing W should clear Up");
     }
 
@@ -851,7 +882,7 @@ mod tests {
         let mut nes = make_nes();
         let mut state = make_state();
         handle_key_pressed(&mut nes, KeyCode::KeyR, &mut state, None);
-        handle_key_released(&mut nes, KeyCode::KeyR, 0);
+        handle_key_released(&mut nes, KeyCode::KeyR, 0, false);
         assert_eq!(buttons(&nes, 1) & BIT_A, 0, "Releasing R should clear A");
     }
 
@@ -961,7 +992,7 @@ mod tests {
         let mut nes = make_nes();
         let mut state = make_state();
         handle_key_pressed(&mut nes, KeyCode::KeyI, &mut state, None);
-        handle_key_released(&mut nes, KeyCode::KeyI, 0);
+        handle_key_released(&mut nes, KeyCode::KeyI, 0, false);
         assert_eq!(
             buttons(&nes, 2) & BIT_UP,
             0,
@@ -1240,6 +1271,125 @@ mod tests {
         assert!(
             !text.contains("I/J/K/L"),
             "help overlay must NOT list I/J/K/L when 1 gamepad connected; got:\n{text}"
+        );
+    }
+
+    // ── Four Score: keyboard_target_ports ─────────────────────────────────────
+
+    #[test]
+    fn test_keyboard_target_ports_four_score_0_gamepads() {
+        // With four-score and 0 gamepads, keyboard covers ports 1 and 2 (same as without).
+        assert_eq!(keyboard_target_ports(0, true), &[1, 2]);
+    }
+
+    #[test]
+    fn test_keyboard_target_ports_four_score_1_gamepad() {
+        // Gamepad on port 1; keyboard fills ports 2 and 3.
+        assert_eq!(keyboard_target_ports(1, true), &[2, 3]);
+    }
+
+    #[test]
+    fn test_keyboard_target_ports_four_score_2_gamepads() {
+        // Gamepads on ports 1-2; keyboard fills ports 3 and 4.
+        assert_eq!(keyboard_target_ports(2, true), &[3, 4]);
+    }
+
+    #[test]
+    fn test_keyboard_target_ports_four_score_3_gamepads() {
+        // Gamepads on ports 1-3; keyboard fills port 4 only.
+        assert_eq!(keyboard_target_ports(3, true), &[4]);
+    }
+
+    #[test]
+    fn test_keyboard_target_ports_four_score_4_gamepads() {
+        // All ports owned by gamepads; keyboard disabled.
+        assert_eq!(keyboard_target_ports(4, true), &[] as &[u8]);
+    }
+
+    #[test]
+    fn test_keyboard_target_ports_no_four_score_unchanged() {
+        // Without four-score, existing behavior is preserved.
+        assert_eq!(keyboard_target_ports(0, false), &[1, 2]);
+        assert_eq!(keyboard_target_ports(1, false), &[2]);
+        assert_eq!(keyboard_target_ports(2, false), &[] as &[u8]);
+        assert_eq!(keyboard_target_ports(3, false), &[] as &[u8]);
+    }
+
+    // ── Four Score: keyboard routes P1 keys to port 3 with 2 gamepads ────────
+
+    #[test]
+    fn test_wasd_routes_to_port3_with_four_score_and_2_gamepads() {
+        let mut nes = make_nes_four_score();
+        let mut state = NativeAppState {
+            gamepad_count: 2,
+            four_score_enabled: true,
+            ..NativeAppState::default()
+        };
+        handle_key_pressed(&mut nes, KeyCode::KeyW, &mut state, None);
+        assert_ne!(
+            buttons(&nes, 3) & BIT_UP,
+            0,
+            "W should set Up on port 3 with four-score and 2 gamepads"
+        );
+        assert_eq!(
+            buttons(&nes, 1) & BIT_UP,
+            0,
+            "W should NOT affect port 1 (owned by gamepad)"
+        );
+        assert_eq!(
+            buttons(&nes, 2) & BIT_UP,
+            0,
+            "W should NOT affect port 2 (owned by gamepad)"
+        );
+    }
+
+    #[test]
+    fn test_ijkl_routes_to_port4_with_four_score_and_2_gamepads() {
+        let mut nes = make_nes_four_score();
+        let mut state = NativeAppState {
+            gamepad_count: 2,
+            four_score_enabled: true,
+            ..NativeAppState::default()
+        };
+        handle_key_pressed(&mut nes, KeyCode::KeyI, &mut state, None);
+        assert_ne!(
+            buttons(&nes, 4) & BIT_UP,
+            0,
+            "I should set Up on port 4 with four-score and 2 gamepads"
+        );
+    }
+
+    #[test]
+    fn test_p2_start_routes_to_port4_with_four_score_and_2_gamepads() {
+        let mut nes = make_nes_four_score();
+        let mut state = NativeAppState {
+            gamepad_count: 2,
+            four_score_enabled: true,
+            ..NativeAppState::default()
+        };
+        handle_key_pressed(&mut nes, KeyCode::Digit0, &mut state, None);
+        assert_ne!(
+            buttons(&nes, 4) & BIT_START,
+            0,
+            "0 should set Start on port 4 with four-score and 2 gamepads"
+        );
+    }
+
+    #[test]
+    fn test_key_release_works_on_port3_with_four_score() {
+        let mut nes = make_nes_four_score();
+        let mut state = NativeAppState {
+            gamepad_count: 2,
+            four_score_enabled: true,
+            ..NativeAppState::default()
+        };
+        handle_key_pressed(&mut nes, KeyCode::KeyW, &mut state, None);
+        assert_ne!(buttons(&nes, 3) & BIT_UP, 0);
+        handle_key_released(&mut nes, KeyCode::KeyW, 2, true);
+        assert_eq!(
+            buttons(&nes, 3) & BIT_UP,
+            0,
+            "Releasing W should clear Up on port 3"
         );
     }
 }

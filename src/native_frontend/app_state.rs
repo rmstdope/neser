@@ -210,6 +210,11 @@ pub struct NativeAppState {
     /// Controls keyboard input routing: 0 → keyboard covers ports 1+2;
     /// 1 → keyboard covers port 2 only; 2+ → keyboard disabled for controllers.
     pub gamepad_count: usize,
+
+    /// Whether Four Score mode is enabled, allowing up to 4 players.
+    /// When true, keyboard input is routed to ports beyond the first two
+    /// when gamepads occupy the lower ports.
+    pub four_score_enabled: bool,
 }
 
 impl NativeAppState {
@@ -233,13 +238,16 @@ impl NativeAppState {
             return Some(autorun_overlay_text(autorun, tv_system));
         }
         if self.help_overlay_visible {
-            return Some(help_overlay_text(self.gamepad_count));
+            return Some(help_overlay_text(
+                self.gamepad_count,
+                self.four_score_enabled,
+            ));
         }
         None
     }
 }
 
-fn help_overlay_text(gamepad_count: usize) -> String {
+fn help_overlay_text(gamepad_count: usize, four_score: bool) -> String {
     let hotkeys = "Controls\n\
 Ctrl+Q: Quit\n\
 Space: Pause\n\
@@ -258,34 +266,39 @@ F7: Load state\n\
 F10: Step over\n\
 F11: Step into";
 
-    let controllers = match gamepad_count {
-        0 => "\n\nController (Port 1 via keyboard)\n\
-W/A/S/D: D-Pad\n\
-R: A\n\
-T: B\n\
-4: Select\n\
-5: Start\n\
-\n\
-Controller (Port 2 also via keyboard)\n\
-I/J/K/L: D-Pad\n\
-O: A\n\
-P: B\n\
-9: Select\n\
-0: Start"
-            .to_owned(),
-        1 => "\n\nPort 1: Gamepad\n\
-\n\
-Controller (Port 2 via keyboard)\n\
+    let max_ports: usize = if four_score { 4 } else { 2 };
+    let keyboard_ports =
+        crate::native_frontend::keyboard::keyboard_target_ports(gamepad_count, four_score);
+
+    let mut controllers = String::new();
+
+    // Show gamepad-owned ports
+    for port in 1..=gamepad_count.min(max_ports) {
+        controllers.push_str(&format!("\n\nPort {port}: Gamepad"));
+    }
+
+    // Show keyboard-owned ports
+    if let Some(&first_port) = keyboard_ports.first() {
+        controllers.push_str(&format!(
+            "\n\nPort {first_port}: Keyboard\n\
 W/A/S/D: D-Pad\n\
 R: A\n\
 T: B\n\
 4: Select\n\
 5: Start"
-            .to_owned(),
-        _ => "\n\nPort 1: Gamepad\n\
-Port 2: Gamepad"
-            .to_owned(),
-    };
+        ));
+    }
+
+    if let Some(&second_port) = keyboard_ports.get(1) {
+        controllers.push_str(&format!(
+            "\n\nPort {second_port}: Keyboard\n\
+I/J/K/L: D-Pad\n\
+O: A\n\
+P: B\n\
+9: Select\n\
+0: Start"
+        ));
+    }
 
     format!("{hotkeys}{controllers}")
 }
@@ -834,6 +847,96 @@ mod tests {
         assert!(
             text.contains("No matching entries"),
             "should show no-match message, got: {text}"
+        );
+    }
+
+    // ── Four Score: help overlay ──────────────────────────────────────────────
+
+    #[test]
+    fn test_help_overlay_four_score_2_gamepads_shows_ports_3_4_keyboard() {
+        let state = NativeAppState {
+            help_overlay_visible: true,
+            gamepad_count: 2,
+            four_score_enabled: true,
+            ..NativeAppState::default()
+        };
+        let text = state.overlay_text(&make_nes(), None).unwrap();
+        assert!(
+            text.contains("Port 3"),
+            "four-score with 2 gamepads should mention Port 3, got:\n{text}"
+        );
+        assert!(
+            text.contains("Port 4"),
+            "four-score with 2 gamepads should mention Port 4, got:\n{text}"
+        );
+        assert!(
+            text.contains("W/A/S/D"),
+            "four-score with 2 gamepads should show keyboard keys for port 3, got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn test_help_overlay_four_score_1_gamepad_shows_ports_2_3_keyboard() {
+        let state = NativeAppState {
+            help_overlay_visible: true,
+            gamepad_count: 1,
+            four_score_enabled: true,
+            ..NativeAppState::default()
+        };
+        let text = state.overlay_text(&make_nes(), None).unwrap();
+        assert!(
+            text.contains("Port 1: Gamepad"),
+            "port 1 should be gamepad, got:\n{text}"
+        );
+        assert!(
+            text.contains("Port 2"),
+            "should mention Port 2 for keyboard, got:\n{text}"
+        );
+        assert!(
+            text.contains("Port 3"),
+            "should mention Port 3 for keyboard, got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn test_help_overlay_four_score_3_gamepads_shows_port_4_keyboard() {
+        let state = NativeAppState {
+            help_overlay_visible: true,
+            gamepad_count: 3,
+            four_score_enabled: true,
+            ..NativeAppState::default()
+        };
+        let text = state.overlay_text(&make_nes(), None).unwrap();
+        assert!(
+            text.contains("Port 4"),
+            "four-score with 3 gamepads should mention Port 4, got:\n{text}"
+        );
+        assert!(
+            text.contains("W/A/S/D"),
+            "should show keyboard keys for port 4, got:\n{text}"
+        );
+        assert!(
+            !text.contains("I/J/K/L"),
+            "should NOT show P2 keyboard keys (only one keyboard slot), got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn test_help_overlay_four_score_4_gamepads_no_keyboard() {
+        let state = NativeAppState {
+            help_overlay_visible: true,
+            gamepad_count: 4,
+            four_score_enabled: true,
+            ..NativeAppState::default()
+        };
+        let text = state.overlay_text(&make_nes(), None).unwrap();
+        assert!(
+            text.contains("Port 4: Gamepad"),
+            "all 4 ports should be gamepads, got:\n{text}"
+        );
+        assert!(
+            !text.contains("W/A/S/D"),
+            "no keyboard keys when all 4 ports have gamepads, got:\n{text}"
         );
     }
 }
