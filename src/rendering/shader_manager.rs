@@ -18,16 +18,27 @@ pub struct ShaderManager {
 impl ShaderManager {
     pub fn new() -> Self {
         let available_presets = Self::discover_presets();
+        let current_index = Self::initial_current_index(&available_presets);
 
         ShaderManager {
             filter_chain: None,
             current_preset: None,
             available_presets,
-            current_index: 0,
+            current_index,
             frame_count: 0,
             output_texture: None,
             output_size: None,
         }
+    }
+
+    /// Returns the index of the stock (passthrough) preset in `presets`, or 0
+    /// if not found. This ensures cycling begins immediately after stock when
+    /// no preset has been loaded at startup.
+    fn initial_current_index(presets: &[PathBuf]) -> usize {
+        presets
+            .iter()
+            .position(|p| p.file_name().and_then(|n| n.to_str()) == Some("stock.slangp"))
+            .unwrap_or(0)
     }
 
     fn ensure_output_texture(
@@ -246,11 +257,12 @@ mod tests {
 
     impl ShaderManager {
         fn with_presets(presets: Vec<PathBuf>) -> Self {
+            let current_index = ShaderManager::initial_current_index(&presets);
             ShaderManager {
                 filter_chain: None,
                 current_preset: None,
                 available_presets: presets,
-                current_index: 0,
+                current_index,
                 frame_count: 0,
                 output_texture: None,
                 output_size: None,
@@ -277,6 +289,28 @@ mod tests {
         assert_eq!(
             mgr.available_presets[next_index],
             PathBuf::from("shaders/xbrz-freescale.slangp")
+        );
+    }
+
+    #[test]
+    fn test_initial_cycle_without_loaded_shader_starts_after_stock() {
+        // When no shader is configured at startup, cycling should behave as if
+        // the current position is "stock" (the passthrough preset), so the first
+        // F4 press goes to xbrz (the preset after stock in sorted order).
+        let presets = vec![
+            PathBuf::from("shaders/crt-lottes.slangp"),           // 0
+            PathBuf::from("shaders/ntsc-256px-composite.slangp"), // 1
+            PathBuf::from("shaders/stock.slangp"),                // 2
+            PathBuf::from("shaders/xbrz-freescale.slangp"),       // 3
+        ];
+        let mgr = ShaderManager::with_presets(presets); // no load_preset called
+
+        let next_index = (mgr.current_index + 1) % mgr.available_presets.len();
+        assert_eq!(
+            mgr.available_presets[next_index],
+            PathBuf::from("shaders/xbrz-freescale.slangp"),
+            "first F4 from 'no shader' state should land on xbrz, not index {}",
+            next_index
         );
     }
 }
