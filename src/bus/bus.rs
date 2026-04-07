@@ -555,6 +555,15 @@ impl Bus {
             {
                 cartridge.borrow_mut().mapper_mut().on_oam_dma();
             }
+            if addr == 0x4016
+                && !is_dummy_write
+                && let Some(cartridge) = self.cartridge.borrow().as_ref().cloned()
+            {
+                cartridge
+                    .borrow_mut()
+                    .mapper_mut()
+                    .on_controller_port_write(addr, value);
+            }
             return self.dma_triggered.replace(false);
         }
 

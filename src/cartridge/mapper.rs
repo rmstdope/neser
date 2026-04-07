@@ -12,6 +12,7 @@ use super::nintendo::cnrom_security::CnromSecurityMapper;
 use super::nintendo::cprom::CpromMapper;
 use super::nintendo::fds::FdsMapper;
 use super::nintendo::gxrom::GxROMMapper;
+use super::nintendo::mapper99::Mapper99;
 use super::nintendo::mapper100::Mapper100;
 use super::nintendo::mmc1::MMC1Mapper;
 use super::nintendo::mmc2::MMC2Mapper;
@@ -555,6 +556,13 @@ pub trait Mapper {
     /// Default implementation is a no-op.
     fn on_oam_dma(&mut self) {}
 
+    /// Notify mapper of a CPU write to a controller port ($4016).
+    ///
+    /// Called by the bus after ControllerDevice has processed the write.
+    /// Mapper 99 (VS System) uses bit 2 of $4016 writes to select CHR/PRG banks.
+    /// Default implementation is a no-op.
+    fn on_controller_port_write(&mut self, _addr: u16, _value: u8) {}
+
     /// Notify mapper of a CPU read from an interrupt vector ($FFFA-$FFFF).
     ///
     /// The `_addr` argument indicates which vector was read:
@@ -908,6 +916,7 @@ mapper_registry! {
     95 => Namcot3425Mapper::new,
     96 => Mapper96::new,
     97 => IremTamS1Mapper::new,
+    99 => Mapper99::new,
     100 => Mapper100::new,
     101 => JalecoJf10Mapper::new,
     102 => NROMMapper::new,
