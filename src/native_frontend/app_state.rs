@@ -280,12 +280,7 @@ W/A/S/D: D-Pad\n\
 R: A\n\
 T: B\n\
 4: Select\n\
-5: Start\n\
-I/J/K/L: D-Pad\n\
-O: A\n\
-P: B\n\
-9: Select\n\
-0: Start"
+5: Start"
             .to_owned(),
         _ => "\n\nPort 1: Gamepad\n\
 Port 2: Gamepad"

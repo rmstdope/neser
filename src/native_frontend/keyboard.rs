@@ -226,7 +226,7 @@ fn handle_controller_key(nes: &mut Nes, key_code: KeyCode, pressed: bool, ports:
         KeyCode::Digit8 => pp_p2(nes, PowerPadButton::Two, pressed, ports),
         KeyCode::Digit9 => pp_or_btn_p2(nes, PowerPadButton::Three, Button::Select, pressed, ports),
         KeyCode::Digit0 => {
-            if ports.contains(&2) {
+            if ports.contains(&1) && ports.contains(&2) {
                 nes.set_button(2, Button::Start, pressed);
             }
         }
@@ -242,7 +242,7 @@ fn handle_controller_key(nes: &mut Nes, key_code: KeyCode, pressed: bool, ports:
         KeyCode::Comma => pp_p2(nes, PowerPadButton::Eleven, pressed, ports),
         KeyCode::Period => pp_p2(nes, PowerPadButton::Twelve, pressed, ports),
         KeyCode::KeyP => {
-            if ports.contains(&2) {
+            if ports.contains(&1) && ports.contains(&2) {
                 nes.set_button(2, Button::B, pressed);
             }
         }
@@ -266,18 +266,18 @@ fn snes_p1(nes: &mut Nes, snes: SnesButton, pressed: bool, ports: &[u8]) {
 }
 
 fn btn_or_snes_p1(nes: &mut Nes, btn: Button, snes: SnesButton, pressed: bool, ports: &[u8]) {
-    if let Some(&port) = ports.first() {
-        if !nes.set_snes_button(port, snes, pressed) {
-            nes.set_button(port, btn, pressed);
-        }
+    if let Some(&port) = ports.first()
+        && !nes.set_snes_button(port, snes, pressed)
+    {
+        nes.set_button(port, btn, pressed);
     }
 }
 
 fn pp_or_snes_p1(nes: &mut Nes, pp: PowerPadButton, snes: SnesButton, pressed: bool, ports: &[u8]) {
-    if let Some(&port) = ports.first() {
-        if !nes.set_power_pad_button(port, pp, pressed) {
-            nes.set_snes_button(port, snes, pressed);
-        }
+    if let Some(&port) = ports.first()
+        && !nes.set_power_pad_button(port, pp, pressed)
+    {
+        nes.set_snes_button(port, snes, pressed);
     }
 }
 
@@ -289,24 +289,24 @@ fn pp_or_btn_or_snes_p1(
     pressed: bool,
     ports: &[u8],
 ) {
-    if let Some(&port) = ports.first() {
-        if !nes.set_power_pad_button(port, pp, pressed) && !nes.set_snes_button(port, snes, pressed)
-        {
-            nes.set_button(port, btn, pressed);
-        }
+    if let Some(&port) = ports.first()
+        && !nes.set_power_pad_button(port, pp, pressed)
+        && !nes.set_snes_button(port, snes, pressed)
+    {
+        nes.set_button(port, btn, pressed);
     }
 }
 
 // ── Player-2-only button helpers ─────────────────────────────────────────────
 
 fn pp_p2(nes: &mut Nes, pp: PowerPadButton, pressed: bool, ports: &[u8]) {
-    if ports.contains(&2) {
+    if ports.contains(&1) && ports.contains(&2) {
         nes.set_power_pad_button(2, pp, pressed);
     }
 }
 
 fn pp_or_btn_p2(nes: &mut Nes, pp: PowerPadButton, btn: Button, pressed: bool, ports: &[u8]) {
-    if ports.contains(&2) && !nes.set_power_pad_button(2, pp, pressed) {
+    if ports.contains(&1) && ports.contains(&2) && !nes.set_power_pad_button(2, pp, pressed) {
         nes.set_button(2, btn, pressed);
     }
 }
@@ -1192,6 +1192,50 @@ mod tests {
             buttons(&nes, 2) & BIT_UP,
             0,
             "I (P2 Up) should be disabled when two gamepads are connected"
+        );
+    }
+
+    #[test]
+    fn test_ijkl_disabled_when_one_gamepad() {
+        // With 1 gamepad, port 1 is owned by the gamepad.  The keyboard player
+        // on port 2 should use WASD (the P1 key set, which shifts to track
+        // ports.first()).  The P2-specific IJKL keys should be disabled because
+        // there is no dedicated keyboard "player 2" slot.
+        let mut nes = make_nes();
+        let mut state = NativeAppState {
+            gamepad_count: 1,
+            ..NativeAppState::default()
+        };
+        handle_key_pressed(&mut nes, KeyCode::KeyI, &mut state, None);
+        assert_eq!(
+            buttons(&nes, 2) & BIT_UP,
+            0,
+            "I (P2 Up) should be disabled when one gamepad is connected; use WASD instead"
+        );
+    }
+
+    #[test]
+    fn test_help_overlay_port2_shows_wasd_not_ijkl_when_one_gamepad() {
+        // When 1 gamepad is connected the keyboard player is on port 2 using
+        // the WASD key set (P1 keys shift to ports.first() = port 2).
+        // The IJKL keys do nothing, so the help text must NOT list them for
+        // port 2 and MUST list WASD for port 2.
+        let state = crate::native_frontend::app_state::NativeAppState {
+            help_overlay_visible: true,
+            gamepad_count: 1,
+            ..Default::default()
+        };
+        let nes = make_nes();
+        let text = state
+            .overlay_text(&nes, None)
+            .expect("help overlay must be present");
+        assert!(
+            text.contains("W/A/S/D"),
+            "help overlay must list W/A/S/D for port 2 with 1 gamepad; got:\n{text}"
+        );
+        assert!(
+            !text.contains("I/J/K/L"),
+            "help overlay must NOT list I/J/K/L when 1 gamepad connected; got:\n{text}"
         );
     }
 }
