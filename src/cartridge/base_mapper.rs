@@ -528,6 +528,15 @@ impl BaseMapper {
         )
     }
 
+    /// Disable 8KB PRG-ROM banking at $6000-$7FFF.
+    ///
+    /// After calling this, reads from $6000-$7FFF fall through to PRG-RAM
+    /// (if present) or open bus, as if `configure_prg_6000_banking()` had
+    /// never been called.
+    pub fn disable_prg_6000_banking(&mut self) {
+        self.prg_6000_bank = None;
+    }
+
     /// Returns `true` if $6000-$7FFF PRG-ROM banking is configured.
     pub fn has_prg_6000_banking(&self) -> bool {
         self.prg_6000_bank.is_some()
