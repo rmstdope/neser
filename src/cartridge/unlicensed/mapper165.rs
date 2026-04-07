@@ -79,20 +79,8 @@ impl Mapper165 {
     /// Returns the MMC3 register index for the given 4KB window and current latch state.
     fn reg_index_for_window(&self, window: usize) -> usize {
         match window {
-            0 => {
-                if self.chr_latch[0] {
-                    1
-                } else {
-                    0
-                }
-            }
-            1 => {
-                if self.chr_latch[1] {
-                    4
-                } else {
-                    2
-                }
-            }
+            0 => if self.chr_latch[0] { 1 } else { 0 },
+            1 => if self.chr_latch[1] { 4 } else { 2 },
             _ => 0,
         }
     }
@@ -130,9 +118,7 @@ impl Mapper165 {
         let offset = (addr as usize) & (Self::CHR_4K_PAGE_SIZE - 1);
         let reg_index = self.reg_index_for_window(window);
         let reg_val = self.inner.chr_bank_reg(reg_index) as usize;
-        if reg_val == 0
-            && let Some(slot) = self.chr_ram.get_mut(offset)
-        {
+        if reg_val == 0 && let Some(slot) = self.chr_ram.get_mut(offset) {
             *slot = value;
         }
     }

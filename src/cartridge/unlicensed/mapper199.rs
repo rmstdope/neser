@@ -140,10 +140,6 @@ impl Mapper for Mapper199 {
         }
     }
 
-    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
-        self.inner.read_prg_open_bus(addr, open_bus)
-    }
-
     fn write_prg(&mut self, addr: u16, value: u8) {
         // Intercept odd writes to $8000–$9FFF when bank_select bit 3 is set.
         // These writes go to ex_regs instead of the standard MMC3 bank data reg.
@@ -216,11 +212,11 @@ impl Mapper for Mapper199 {
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        const MMC3_SNAP_LEN: usize = 16;
         const EX_REGS_LEN: usize = 4;
         const EXTRA_LEN: usize = EX_REGS_LEN + CHR_RAM_SIZE;
+        let min_expected_len = self.inner.registers_snapshot().len() + EXTRA_LEN;
 
-        if data.len() >= MMC3_SNAP_LEN + EXTRA_LEN {
+        if data.len() >= min_expected_len {
             let (mmc3_data, rest) = data.split_at(data.len() - EXTRA_LEN);
             self.inner.restore_registers(mmc3_data);
             self.ex_regs.copy_from_slice(&rest[..EX_REGS_LEN]);
@@ -384,6 +380,32 @@ mod tests {
             mapper.read_prg(0xE000),
             2,
             "$E000 should map to bank 2 via ex_regs[1]"
+        );
+    }
+
+    #[test]
+    fn read_prg_open_bus_c000_uses_ex_reg0_override() {
+        // read_prg_open_bus must honour ex_regs overrides for $C000–$FFFF,
+        // not bypass them by calling the inner MMC3 mapper directly.
+        let mut mapper = make_mapper_prg_pattern(8);
+        mapper.write_prg(0x8000, 0x08); // bit3=1, reg index 0
+        mapper.write_prg(0x8001, 0x03); // ex_regs[0] = 3
+        assert_eq!(
+            mapper.read_prg_open_bus(0xC000, 0x00),
+            3,
+            "read_prg_open_bus at $C000 must use ex_regs[0]=3"
+        );
+    }
+
+    #[test]
+    fn read_prg_open_bus_e000_uses_ex_reg1_override() {
+        let mut mapper = make_mapper_prg_pattern(8);
+        mapper.write_prg(0x8000, 0x09); // bit3=1, reg index 1
+        mapper.write_prg(0x8001, 0x02); // ex_regs[1] = 2
+        assert_eq!(
+            mapper.read_prg_open_bus(0xE000, 0x00),
+            2,
+            "read_prg_open_bus at $E000 must use ex_regs[1]=2"
         );
     }
 
