@@ -2237,6 +2237,57 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn test_switch_cartridge_from_joypad_game_to_arkanoid_auto_detects_controller() {
+        // Reproduce: starting a NES joypad game then switching to Arkanoid via
+        // Ctrl-O should auto-detect the Arkanoid controller just as it would when
+        // loading Arkanoid directly from the command line.
+        let rom_data = create_minimal_nrom_rom();
+
+        // Step 1: Insert a non-Arkanoid cartridge (simulates an NES game running).
+        let mut joypad_cartridge = load_test_cartridge(&rom_data);
+        joypad_cartridge.set_crc32_for_test(0xDEADBEEF); // unknown CRC → joypad default
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        nes.insert_cartridge(joypad_cartridge);
+
+        // Confirm the baseline: port 2 is a joypad.
+        let bus_state = nes.bus.borrow().capture_state();
+        assert!(
+            matches!(
+                bus_state.port2_controller,
+                crate::bus::ControllerStateWrapper::Joypad(_)
+            ),
+            "Expected joypad on port 2 after non-Arkanoid ROM, got {:?}",
+            bus_state.port2_controller
+        );
+
+        // Step 2: Switch to Arkanoid (simulates Ctrl-O ROM switch).
+        let mut arkanoid_cartridge = load_test_cartridge(&rom_data);
+        arkanoid_cartridge.set_crc32_for_test(0x32FB0583); // NES Arkanoid (port 2)
+        nes.insert_cartridge(arkanoid_cartridge);
+
+        // Port 2 should now be an Arkanoid controller.
+        let bus_state = nes.bus.borrow().capture_state();
+        assert!(
+            matches!(
+                bus_state.port2_controller,
+                crate::bus::ControllerStateWrapper::Arkanoid(_)
+            ),
+            "Expected Arkanoid on port 2 after ROM switch, got {:?}",
+            bus_state.port2_controller
+        );
+        // Port 1 should remain joypad.
+        assert!(
+            matches!(
+                bus_state.port1_controller,
+                crate::bus::ControllerStateWrapper::Joypad(_)
+            ),
+            "Expected joypad on port 1 after ROM switch"
+        );
+    }
+
     // ── Trainer JSR $7003 (#636) ──────────────────────────────────────────────
     //
     // On hard reset, if the cartridge has a trainer, the CPU must start at
