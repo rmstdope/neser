@@ -626,6 +626,9 @@ impl ApplicationHandler for NativeEventLoop {
                             }
                             self.debugger_controller
                                 .save_breakpoints_to_debug_file(&self.nes);
+                            if let Err(e) = self.nes.save_ram() {
+                                eprintln!("Failed to save battery-backed RAM on quit: {e}");
+                            }
                             event_loop.exit();
                         }
                         KeyOutcome::CycleShader => {
