@@ -6,6 +6,7 @@ pub(crate) mod cprom;
 pub(crate) mod fds;
 pub(crate) mod gxrom;
 pub(crate) mod mapper100;
+pub(crate) mod mapper99;
 pub(crate) mod mmc1;
 pub(crate) mod mmc2;
 pub(crate) mod mmc2_mmc4_latch;
