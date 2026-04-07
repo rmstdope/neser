@@ -9,6 +9,15 @@ use crate::input::{Button, ControllerInput, SnesButton};
 
 use gilrs::{Axis, EventType, GamepadId, Gilrs, GilrsBuilder};
 
+/// A hot-plug event reported by [`GamepadManager::process_events`].
+#[derive(Debug, PartialEq)]
+pub enum GamepadChange {
+    /// A gamepad connected and was assigned this player number (1-based).
+    Connected(u8),
+    /// A gamepad disconnected; `player_num` was its assigned player (1-based).
+    Disconnected(u8),
+}
+
 use std::collections::HashMap;
 
 /// Threshold for converting analog stick axes to digital D-pad presses.
@@ -205,8 +214,10 @@ impl GamepadManager {
         self.player_map.len()
     }
 
-    /// Polls all pending gilrs events and applies them to `nes`.
-    pub fn process_events(&mut self, nes: &mut Nes) {
+    /// Polls all pending gilrs events, applies them to `nes`, and returns
+    /// any hot-plug connect/disconnect events that occurred.
+    pub fn process_events(&mut self, nes: &mut Nes) -> Vec<GamepadChange> {
+        let mut changes = Vec::new();
         while let Some(event) = self.gilrs.next_event() {
             match event.event {
                 EventType::ButtonPressed(button, _) => {
@@ -225,14 +236,19 @@ impl GamepadManager {
                     self.handle_axis(nes, event.id, axis, value);
                 }
                 EventType::Connected => {
-                    self.handle_connected(event.id);
+                    if let Some(change) = self.handle_connected(event.id) {
+                        changes.push(change);
+                    }
                 }
                 EventType::Disconnected => {
-                    self.handle_disconnected(nes, event.id);
+                    if let Some(change) = self.handle_disconnected(nes, event.id) {
+                        changes.push(change);
+                    }
                 }
                 _ => {}
             }
         }
+        changes
     }
 
     /// Enumerates already-connected gamepads at startup.
@@ -264,12 +280,14 @@ impl GamepadManager {
     }
 
     /// Handles a gamepad connection event.
-    fn handle_connected(&mut self, id: GamepadId) {
+    ///
+    /// Returns a [`GamepadChange::Connected`] if the gamepad was assigned a player slot.
+    fn handle_connected(&mut self, id: GamepadId) -> Option<GamepadChange> {
         if self.player_map.len() >= self.max_controllers {
-            return;
+            return None;
         }
         if self.player_map.contains_key(&id) {
-            return;
+            return None;
         }
 
         let player_num = self.next_available_player();
@@ -282,13 +300,17 @@ impl GamepadManager {
                 gamepad.name()
             ));
         }
+        Some(GamepadChange::Connected(player_num))
     }
 
     /// Handles a gamepad disconnection event.
     ///
     /// Releases any buttons that may be held on the disconnected gamepad's
     /// port before removing the gamepad from the player map.
-    fn handle_disconnected(&mut self, nes: &mut Nes, id: GamepadId) {
+    ///
+    /// Returns a [`GamepadChange::Disconnected`] with the player number that
+    /// was assigned to the gamepad, or `None` if the gamepad wasn't tracked.
+    fn handle_disconnected(&mut self, nes: &mut Nes, id: GamepadId) -> Option<GamepadChange> {
         if let Some(player_num) = self.player_map.get(&id).copied() {
             // Release all held buttons for this gamepad's port before removing.
             if let Some(port) = Self::assigned_port(nes, &self.player_map, player_num) {
@@ -319,6 +341,9 @@ impl GamepadManager {
             self.gamepad_states.remove(&id);
             crate::debugging::log_info(format!("Gamepad disconnected (was player {player_num})"));
             self.reassign_players();
+            Some(GamepadChange::Disconnected(player_num))
+        } else {
+            None
         }
     }
 

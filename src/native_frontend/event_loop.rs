@@ -9,10 +9,12 @@ use crate::autorun::state::AutorunState;
 use crate::console::{AutorunMode, Nes, TimingMode};
 use crate::debugging::Tracing;
 use crate::debugging::control::DebuggerController;
-use crate::frontend_toasts::gamepad_init_toast_message;
+use crate::frontend_toasts::{
+    gamepad_connected_toast_message, gamepad_disconnected_toast_message, gamepad_init_toast_message,
+};
 use crate::native_frontend::app_state::NativeAppState;
 use crate::native_frontend::audio::NativeAudio;
-use crate::native_frontend::gamepad::GamepadManager;
+use crate::native_frontend::gamepad::{GamepadChange, GamepadManager};
 use crate::native_frontend::gl_wrapper::NativeGlWrapper;
 use crate::native_frontend::keyboard::{self, KeyOutcome};
 use crate::native_frontend::mouse;
@@ -41,7 +43,7 @@ pub struct NativeEventLoop {
     paused_before_cart_switch: bool,
     gamepad: Option<GamepadManager>,
     gamepads_enabled: bool,
-    gamepad_toast_shown: bool,
+    gamepad_init_toast_shown: bool,
     gamepad_init_failed: bool,
     sleep_inhibitor: Option<SleepInhibitor>,
 
@@ -116,7 +118,7 @@ impl NativeEventLoop {
             paused_before_cart_switch: false,
             gamepad,
             gamepads_enabled,
-            gamepad_toast_shown: false,
+            gamepad_init_toast_shown: false,
             gamepad_init_failed,
             sleep_inhibitor,
             gl_wrapper: None,
@@ -858,22 +860,30 @@ impl ApplicationHandler for NativeEventLoop {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         // Poll gamepad events before requesting redraw.
         if let Some(ref mut gp) = self.gamepad {
-            gp.process_events(&mut self.nes);
+            let changes = gp.process_events(&mut self.nes);
             self.state.gamepad_count = gp.connected_count();
-        }
 
-        // Show the gamepad toast after the first process_events() call.
-        // On macOS, IOKit enumerates gamepads asynchronously so Connected
-        // events aren't available until the event loop is running.
-        if !self.gamepad_toast_shown {
-            self.gamepad_toast_shown = true;
-            let toast = if self.gamepad_init_failed {
-                "Gamepad init failed: using keyboard controls".to_string()
+            if self.gamepad_init_toast_shown {
+                // Show hot-plug toasts. The init toast guard avoids
+                // double-toasting the startup connections on macOS where
+                // IOKit enumerates asynchronously.
+                for change in changes {
+                    let toast = match change {
+                        GamepadChange::Connected(p) => gamepad_connected_toast_message(p),
+                        GamepadChange::Disconnected(p) => gamepad_disconnected_toast_message(p),
+                    };
+                    self.app_context.borrow_mut().add_toast(&toast);
+                }
             } else {
-                let count = self.gamepad.as_ref().map_or(0, |g| g.connected_count());
-                gamepad_init_toast_message(self.gamepads_enabled, count)
-            };
-            self.app_context.borrow_mut().add_toast(&toast);
+                // Show the one-shot init toast on the first process_events() call.
+                self.gamepad_init_toast_shown = true;
+                let toast = if self.gamepad_init_failed {
+                    "Gamepad init failed: using keyboard controls".to_string()
+                } else {
+                    gamepad_init_toast_message(self.gamepads_enabled, gp.connected_count())
+                };
+                self.app_context.borrow_mut().add_toast(&toast);
+            }
         }
 
         if let Some(ref gl) = self.gl_wrapper {
