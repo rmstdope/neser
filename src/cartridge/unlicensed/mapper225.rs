@@ -251,9 +251,8 @@ mod tests {
     #[test]
     fn mode_32k_even_page_from_addr_bits() {
         let mut mapper = make_mapper();
-        // addr=$8080: A[11:6] = (0x80 >> 6 not right)
-        // addr=0x8080: binary: 1000_0000_1000_0000
-        // A14=0, A13=0, A12=0, A11..A6 = 0b00_0010 = 2 → prgPage=2, O=0
+        // addr=$8080: binary 1000_0000_1000_0000
+        // A14=0, A13=0, A12=0, and A11..A6 = 0b00_0010 = 2, so prgPage=2 and O=0
         // lower = 2 & 0xFE = 2, upper = 3
         mapper.write_prg(0x8080, 0);
         assert_eq!(mapper.read_prg(0x8000), 2, "lower must be bank 2");
@@ -493,9 +492,7 @@ mod tests {
     #[test]
     fn reset_restores_power_on_state() {
         let mut mapper = make_mapper();
-        // Change state: 16 KB mode, bank 10, Horizontal
-        mapper.write_prg(0xA280, 0); // A13=1→H, A12=0→32KB... let me use 0xB280 (A12=1)
-        // Actually just set to some non-default state
+        // Put the mapper into a clearly non-default state before reset.
         mapper.write_prg(0xD040, 0); // A14=1,A13=0,A12=1(O=1),prgPage=64|1=65
         mapper.reset();
 
