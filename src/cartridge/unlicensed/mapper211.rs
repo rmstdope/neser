@@ -223,6 +223,14 @@ impl Mapper211 {
                 self.base.select_prg_page(3, last);
             }
         }
+
+        // $D000 bit 7: map PRG register 0 to $6000-$7FFF when enabled
+        if self.prg_at_6000 {
+            self.base.configure_prg_6000_banking();
+            self.base.select_prg_6000_page(cooked(0, &self.prg_regs));
+        } else {
+            self.base.disable_prg_6000_banking();
+        }
     }
 
     fn update_chr(&mut self) {
@@ -464,7 +472,7 @@ impl Mapper for Mapper211 {
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        if data.len() < 34 {
+        if data.len() < 30 {
             return;
         }
         let d0 = data[0];
@@ -474,7 +482,6 @@ impl Mapper for Mapper211 {
         self.chr_mode = data[1];
         let d2 = data[2];
         self.mirror_reg = d2 & 0x03;
-        self.extended_mirroring = (d2 & 0x08) != 0;
         let flags = data[3];
         self.irq_enabled = (flags & 1) != 0;
         self.irq_pending = (flags & 2) != 0;
@@ -490,7 +497,13 @@ impl Mapper for Mapper211 {
         self.prg_regs.copy_from_slice(&data[10..14]);
         self.chr_low.copy_from_slice(&data[14..22]);
         self.chr_high.copy_from_slice(&data[22..30]);
-        self.nt_low.copy_from_slice(&data[30..34]);
+        if data.len() >= 34 {
+            self.extended_mirroring = (d2 & 0x08) != 0;
+            self.nt_low.copy_from_slice(&data[30..34]);
+        } else {
+            self.extended_mirroring = false;
+            self.nt_low = [0; 4];
+        }
         self.update_banks();
         self.update_mirroring();
     }
@@ -913,6 +926,68 @@ mod tests {
         assert_eq!(b.irq_enabled, a.irq_enabled);
         assert_eq!(b.extended_mirroring, a.extended_mirroring);
         assert_eq!(b.nt_low, a.nt_low);
+    }
+
+    // ── PRG at $6000 ──────────────────────────────────────────────────
+
+    #[test]
+    fn prg_at_6000_disabled_by_default() {
+        let mapper = make_mapper();
+        // Without prg_at_6000, $6000 should not return banked PRG-ROM
+        assert!(!mapper.base.has_prg_6000_banking());
+    }
+
+    #[test]
+    fn prg_at_6000_enables_6000_window() {
+        let mut mapper = make_mapper();
+        mapper.write_prg(0xD000, 0x82); // 8KB mode + prg_at_6000 (bit 7)
+        mapper.write_prg(0x8000, 3); // select bank 3 for reg 0
+        // $6000 must now read bank 3
+        assert_eq!(mapper.read_prg(0x6000), 3);
+        assert!(mapper.base.has_prg_6000_banking());
+    }
+
+    #[test]
+    fn prg_at_6000_disable_removes_6000_window() {
+        let mut mapper = make_mapper();
+        mapper.write_prg(0xD000, 0x82); // enable
+        assert!(mapper.base.has_prg_6000_banking());
+        mapper.write_prg(0xD000, 0x02); // disable (bit 7 clear)
+        assert!(!mapper.base.has_prg_6000_banking());
+    }
+
+    // ── Snapshot / restore – 30-byte (mapper 90/209) compatibility ────
+
+    #[test]
+    fn restore_registers_accepts_30_byte_snapshot() {
+        let mut a = make_mapper();
+        a.write_prg(0xD000, 0x02); // 8KB mode
+        a.write_prg(0x8000, 2);
+        a.write_prg(0xD001, 0x01); // horizontal
+
+        // Build a 30-byte snapshot (mapper 90/209 format, no nt_low)
+        let snap_34 = a.registers_snapshot();
+        assert_eq!(snap_34.len(), 34);
+        let snap_30 = snap_34[..30].to_vec();
+
+        let mut b = make_mapper();
+        b.restore_registers(&snap_30);
+
+        assert_eq!(b.read_prg(0x8000), a.read_prg(0x8000));
+        assert_eq!(b.get_mirroring(), a.get_mirroring());
+        // extended_mirroring and nt_low default to initial values
+        assert!(!b.extended_mirroring);
+        assert_eq!(b.nt_low, [0u8; 4]);
+    }
+
+    #[test]
+    fn restore_registers_rejects_snapshot_shorter_than_30_bytes() {
+        let mut mapper = make_mapper();
+        mapper.write_prg(0x8000, 5);
+        let bank_before = mapper.read_prg(0x8000);
+        mapper.restore_registers(&[0u8; 29]);
+        // State must be unchanged
+        assert_eq!(mapper.read_prg(0x8000), bank_before);
     }
 
     // ── Reset ─────────────────────────────────────────────────────────
