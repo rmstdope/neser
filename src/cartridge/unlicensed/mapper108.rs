@@ -33,7 +33,7 @@ pub struct Mapper108 {
     base: BaseMapper,
     /// Current 8 KB PRG bank index mapped to `$6000-$7FFF`.
     /// Stored as `u8`; wraps modulo the available bank count.
-    /// Initialised to `0xFF` so that typical power-of-two ROM sizes map to the last bank.
+    /// Initialized to `0xFF` so that typical power-of-two ROM sizes map to the last bank.
     prg_reg: u8,
     /// Current 8 KB CHR bank index mapped to `$0000-$1FFF`.
     chr_reg: u8,
