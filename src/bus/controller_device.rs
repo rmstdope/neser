@@ -1175,14 +1175,9 @@ mod tests {
 
     // ── VS System protection (forced Start button) tests ─────────────────
 
-    #[allow(clippy::type_complexity)]
-    fn create_vs_joypad_device(
-        hw_type: VsHardwareType,
-    ) -> (
-        ControllerDevice,
-        Rc<RefCell<Box<dyn Controller>>>,
-        Rc<RefCell<Box<dyn Controller>>>,
-    ) {
+    type CtrlRef = Rc<RefCell<Box<dyn Controller>>>;
+
+    fn create_vs_joypad_device(hw_type: VsHardwareType) -> (ControllerDevice, CtrlRef, CtrlRef) {
         let joypad1 = crate::input::NesJoypad::new();
         let joypad2 = crate::input::NesJoypad::new();
         let ctrl1: Rc<RefCell<Box<dyn Controller>>> = Rc::new(RefCell::new(Box::new(joypad1)));

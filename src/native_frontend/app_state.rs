@@ -245,6 +245,14 @@ impl NativeAppState {
         }
         None
     }
+
+    /// Returns `true` when keyboard text characters should be forwarded to the
+    /// ImGui layer (for debugger input fields such as breakpoint address and
+    /// memory-watch entries) rather than being consumed only by the game
+    /// controller handler.
+    pub fn keyboard_captured_by_imgui(&self) -> bool {
+        self.debugger_open
+    }
 }
 
 fn help_overlay_text(gamepad_count: usize, four_score: bool) -> String {
@@ -272,32 +280,31 @@ F11: Step into";
 
     let mut controllers = String::new();
 
-    // Show gamepad-owned ports
-    for port in 1..=gamepad_count.min(max_ports) {
-        controllers.push_str(&format!("\n\nPort {port}: Gamepad"));
-    }
-
-    // Show keyboard-owned ports
-    if let Some(&first_port) = keyboard_ports.first() {
-        controllers.push_str(&format!(
-            "\n\nPort {first_port}: Keyboard\n\
+    for port in 1..=max_ports {
+        let port_u8 = port as u8;
+        if port <= gamepad_count {
+            controllers.push_str(&format!("\n\nPort {port}: Gamepad"));
+        } else if keyboard_ports.first() == Some(&port_u8) {
+            controllers.push_str(&format!(
+                "\n\nPort {port}: Keyboard\n\
 W/A/S/D: D-Pad\n\
 R: A\n\
 T: B\n\
 4: Select\n\
 5: Start"
-        ));
-    }
-
-    if let Some(&second_port) = keyboard_ports.get(1) {
-        controllers.push_str(&format!(
-            "\n\nPort {second_port}: Keyboard\n\
+            ));
+        } else if keyboard_ports.get(1) == Some(&port_u8) {
+            controllers.push_str(&format!(
+                "\n\nPort {port}: Keyboard\n\
 I/J/K/L: D-Pad\n\
 O: A\n\
 P: B\n\
 9: Select\n\
 0: Start"
-        ));
+            ));
+        } else {
+            controllers.push_str(&format!("\n\nPort {port}: Empty"));
+        }
     }
 
     format!("{hotkeys}{controllers}")
@@ -850,6 +857,19 @@ mod tests {
         );
     }
 
+    // ── keyboard_captured_by_imgui (#1859) ────────────────────────────────────
+
+    #[test]
+    fn keyboard_not_captured_by_imgui_when_debugger_closed() {
+        // When the debugger is closed, text characters should NOT be forwarded
+        // to imgui (normal gameplay).
+        let state = NativeAppState::default();
+        assert!(
+            !state.keyboard_captured_by_imgui(),
+            "imgui must not capture keyboard during normal gameplay"
+        );
+    }
+
     // ── Four Score: help overlay ──────────────────────────────────────────────
 
     #[test]
@@ -937,6 +957,20 @@ mod tests {
         assert!(
             !text.contains("W/A/S/D"),
             "no keyboard keys when all 4 ports have gamepads, got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn keyboard_captured_by_imgui_when_debugger_open() {
+        // When the debugger is open, typed characters must be forwarded to
+        // imgui so the breakpoint and memory-watch input fields accept input.
+        let state = NativeAppState {
+            debugger_open: true,
+            ..NativeAppState::default()
+        };
+        assert!(
+            state.keyboard_captured_by_imgui(),
+            "imgui must capture keyboard when debugger is open"
         );
     }
 }

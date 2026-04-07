@@ -59,7 +59,8 @@ pub fn handle_key_pressed(
 /// Handles a key-release event.
 ///
 /// Releases the NES / SNES / Power Pad button corresponding to the given key.
-/// `gamepad_count` determines which ports keyboard input is routed to.
+/// `gamepad_count` and `four_score` determine which ports keyboard input is
+/// routed to.
 pub fn handle_key_released(
     nes: &mut Nes,
     key_code: KeyCode,

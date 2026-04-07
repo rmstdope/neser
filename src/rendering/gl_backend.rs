@@ -497,6 +497,19 @@ impl GlBackend {
         self.breakpoints = breakpoints.clone();
     }
 
+    /// Returns a copy of the watch addresses currently tracked in the debugger.
+    pub fn watch_addresses(&self) -> Vec<u16> {
+        self.debugger_view_state.watch_addresses()
+    }
+
+    /// Replaces the debugger's watch address list with the provided addresses.
+    pub fn set_watch_addresses(&mut self, addresses: Vec<u16>) {
+        self.debugger_view_state.clear_watch_addresses();
+        for addr in addresses {
+            self.debugger_view_state.add_watch_address(addr);
+        }
+    }
+
     /// Renders the current NES frame and optional debugger overlay.
     pub fn render(
         &mut self,
@@ -588,10 +601,13 @@ impl GlBackend {
             let shader_out_w = (shader_out_w_f as u32).max(1);
             let shader_out_h = (shader_out_h_f as u32).max(1);
 
-            if let Err(e) =
-                self.shader_manager
-                    .apply_shader(self.nes_texture, shader_out_w, shader_out_h)
-            {
+            if let Err(e) = self.shader_manager.apply_shader(
+                self.nes_texture,
+                tex_w as u32,
+                tex_h as u32,
+                shader_out_w,
+                shader_out_h,
+            ) {
                 log_info(format!("Shader application error: {}", e));
             } else if let Some(tex) = self.shader_manager.output_texture() {
                 shader_output_texture_id = Some((tex as usize).into());

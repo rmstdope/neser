@@ -208,6 +208,16 @@ impl NativeGlWrapper {
         self.gl_backend.update_breakpoints(breakpoints);
     }
 
+    /// Returns the current watch addresses from the debugger.
+    pub fn watch_addresses(&self) -> Vec<u16> {
+        self.gl_backend.watch_addresses()
+    }
+
+    /// Replaces the debugger's watch address list.
+    pub fn set_watch_addresses(&mut self, addresses: Vec<u16>) {
+        self.gl_backend.set_watch_addresses(addresses);
+    }
+
     /// Enables or disables fullscreen mode.
     pub fn set_fullscreen(&mut self, enabled: bool) -> Result<(), String> {
         self.gl_backend.set_fullscreen(enabled)
