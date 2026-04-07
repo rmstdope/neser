@@ -224,6 +224,37 @@ impl Ppu {
         self.vs_ppu_type
     }
 
+    /// Returns the RC2C05 security byte for the current VS PPU type, or `None`
+    /// if the PPU is not an RC2C05 variant.
+    ///
+    /// The security byte replaces the open-bus bits (and sometimes bit 5) in
+    /// the $2002 PPUSTATUS return value as a form of copy protection.
+    pub fn vs_security_value(&self) -> Option<u8> {
+        match self.vs_ppu_type {
+            Some(VsPpuType::Rc2c05_01) => Some(0x1B),
+            Some(VsPpuType::Rc2c05_02) => Some(0x3D),
+            Some(VsPpuType::Rc2c05_03) => Some(0x1C),
+            Some(VsPpuType::Rc2c05_04) => Some(0x1B),
+            Some(VsPpuType::Rc2c05_05) => Some(0x00),
+            _ => None,
+        }
+    }
+
+    /// Returns `true` when the PPU is an RC2C05 variant that swaps the
+    /// meanings of $2000 (PPUCTRL) and $2001 (PPUMASK) writes.
+    pub fn is_vs_register_swapped(&self) -> bool {
+        matches!(
+            self.vs_ppu_type,
+            Some(
+                VsPpuType::Rc2c05_01
+                    | VsPpuType::Rc2c05_02
+                    | VsPpuType::Rc2c05_03
+                    | VsPpuType::Rc2c05_04
+                    | VsPpuType::Rc2c05_05
+            )
+        )
+    }
+
     /// Look up an NES color index (0–63) in the active system palette.
     ///
     /// Returns the VS System palette color when a VS PPU type is active,
@@ -480,7 +511,16 @@ impl Ppu {
             self.clear_vblank_for_nmi();
         }
         self.registers.clear_w(); // Reading status clears write toggle
-        // Update I/O bus: status bits go to bits 5-7, bits 0-4 remain from previous value
+
+        // RC2C05 PPUs return a hardcoded security identifier instead of open bus
+        // in the lower bits. All 8 bits are hardware-driven (no open bus).
+        if let Some(security) = self.vs_security_value() {
+            let new_io_bus = (status & 0xE0) | security;
+            self.registers.set_io_bus_with_mask(new_io_bus, 0xFF);
+            return new_io_bus;
+        }
+
+        // Standard PPU: bits 5-7 from status, bits 0-4 from previous I/O bus
         let io_bus = self.registers.io_bus();
         let new_io_bus = (status & 0xE0) | (io_bus & 0x1F);
         // Only refresh bits 5-7, not bits 0-4
@@ -844,6 +884,18 @@ impl Ppu {
     #[allow(dead_code)]
     pub fn base_nametable_addr(&self) -> u16 {
         self.registers.base_nametable_addr()
+    }
+
+    /// Get control register value (for testing)
+    #[cfg(test)]
+    pub fn peek_control(&self) -> u8 {
+        self.registers.control()
+    }
+
+    /// Get mask register value (for testing)
+    #[cfg(test)]
+    pub fn peek_mask(&self) -> u8 {
+        self.registers.mask()
     }
 
     /// Get w register (for testing)
@@ -3326,6 +3378,158 @@ mod tests {
         assert_eq!(
             ppu.lookup_system_palette(0xFF),
             ppu.lookup_system_palette(0x3F)
+        );
+    }
+
+    // ── RC2C05 security byte tests ────────────────────────────────────────
+
+    #[test]
+    fn rc2c05_01_status_returns_security_byte_0x1b() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.set_vs_ppu_type(Some(VsPpuType::Rc2c05_01));
+        let status = ppu.get_status();
+        assert_eq!(
+            status & 0x1F,
+            0x1B,
+            "RC2C05-01 should return 0x1B in bits 0-4, got {:#04X}",
+            status
+        );
+    }
+
+    #[test]
+    fn rc2c05_02_status_returns_security_byte_0x3d() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.set_vs_ppu_type(Some(VsPpuType::Rc2c05_02));
+        let status = ppu.get_status();
+        // 2C05-02 returns 0x3D which includes bit 5 (overrides sprite overflow)
+        assert_eq!(
+            status & 0x3F,
+            0x3D,
+            "RC2C05-02 should return 0x3D in bits 0-5, got {:#04X}",
+            status
+        );
+    }
+
+    #[test]
+    fn rc2c05_03_status_returns_security_byte_0x1c() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.set_vs_ppu_type(Some(VsPpuType::Rc2c05_03));
+        let status = ppu.get_status();
+        assert_eq!(
+            status & 0x1F,
+            0x1C,
+            "RC2C05-03 should return 0x1C in bits 0-4, got {:#04X}",
+            status
+        );
+    }
+
+    #[test]
+    fn rc2c05_04_status_returns_security_byte_0x1b() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.set_vs_ppu_type(Some(VsPpuType::Rc2c05_04));
+        let status = ppu.get_status();
+        assert_eq!(
+            status & 0x1F,
+            0x1B,
+            "RC2C05-04 should return 0x1B in bits 0-4, got {:#04X}",
+            status
+        );
+    }
+
+    #[test]
+    fn rc2c05_05_status_returns_zero_in_lower_bits() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.set_vs_ppu_type(Some(VsPpuType::Rc2c05_05));
+        let status = ppu.get_status();
+        assert_eq!(
+            status & 0x1F,
+            0x00,
+            "RC2C05-05 should return 0x00 in bits 0-4, got {:#04X}",
+            status
+        );
+    }
+
+    #[test]
+    fn non_rc2c05_status_uses_io_bus_in_lower_bits() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        // Standard PPU — no VS type set
+        ppu.set_io_bus(0x1F); // Pre-load I/O bus with 0x1F
+        let status = ppu.get_status();
+        assert_eq!(
+            status & 0x1F,
+            0x1F,
+            "Non-RC2C05 PPU should return I/O bus in bits 0-4, got {:#04X}",
+            status
+        );
+    }
+
+    #[test]
+    fn rc2c05_security_preserves_vblank_flag() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.set_vs_ppu_type(Some(VsPpuType::Rc2c05_01));
+        // Force VBlank flag to 1
+        ppu.status.enter_vblank();
+        let status = ppu.get_status();
+        assert_eq!(
+            status & 0x80,
+            0x80,
+            "VBlank flag (bit 7) should still be set"
+        );
+        assert_eq!(status & 0x1F, 0x1B, "Security byte should still be present");
+    }
+
+    #[test]
+    fn rp2c04_status_uses_io_bus_not_security() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.set_vs_ppu_type(Some(VsPpuType::Rp2c04_0001));
+        ppu.set_io_bus(0x0A);
+        let status = ppu.get_status();
+        // RP2C04 is NOT an RC2C05 — should use I/O bus in lower bits
+        assert_eq!(
+            status & 0x1F,
+            0x0A,
+            "RP2C04 should use I/O bus, not security byte"
+        );
+    }
+
+    // ── RC2C05 register swap tests (PPU side) ────────────────────────────
+
+    #[test]
+    fn rc2c05_is_register_swapped() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.set_vs_ppu_type(Some(VsPpuType::Rc2c05_01));
+        assert!(
+            ppu.is_vs_register_swapped(),
+            "RC2C05-01 should report register swap"
+        );
+    }
+
+    #[test]
+    fn rc2c05_05_is_register_swapped() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.set_vs_ppu_type(Some(VsPpuType::Rc2c05_05));
+        assert!(
+            ppu.is_vs_register_swapped(),
+            "RC2C05-05 should report register swap"
+        );
+    }
+
+    #[test]
+    fn rp2c04_is_not_register_swapped() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.set_vs_ppu_type(Some(VsPpuType::Rp2c04_0001));
+        assert!(
+            !ppu.is_vs_register_swapped(),
+            "RP2C04 should NOT report register swap"
+        );
+    }
+
+    #[test]
+    fn standard_ppu_is_not_register_swapped() {
+        let ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        assert!(
+            !ppu.is_vs_register_swapped(),
+            "Standard PPU should NOT report register swap"
         );
     }
 }

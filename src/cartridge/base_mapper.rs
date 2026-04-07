@@ -5,7 +5,26 @@
 
 use super::common::{ChrMemory, DEFAULT_CHR_RAM_SIZE, DEFAULT_PRG_RAM_SIZE, PrgRam};
 use super::mapper::{MapperCapabilities, MapperContext};
+use super::rom_db::VsHardwareType;
 use crate::cartridge::NametableLayout;
+use std::cell::Cell;
+
+/// VS System copy protection lookup tables (from Mesen2 / Nocash documentation).
+/// Each game reads $5E01 sequentially; the counter wraps at 32.
+const TKO_BOXING_PROTECTION: [u8; 32] = [
+    0xFF, 0xBF, 0xB7, 0x97, 0x97, 0x17, 0x57, 0x4F, 0x6F, 0x6B, 0xEB, 0xA9, 0xB1, 0x90, 0x94, 0x14,
+    0x56, 0x4E, 0x6F, 0x6B, 0xEB, 0xA9, 0xB1, 0x90, 0xD4, 0x5C, 0x3E, 0x26, 0x87, 0x83, 0x13, 0x00,
+];
+
+const RBI_BASEBALL_PROTECTION: [u8; 32] = [
+    0x00, 0x00, 0x00, 0x00, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x6F, 0x00, 0x00, 0x00, 0x00, 0x94, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
+const SUPER_XEVIOUS_PROTECTION: [u8; 32] = [
+    0x05, 0x01, 0x89, 0x37, 0x05, 0x00, 0xD1, 0x3E, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
 
 /// Shared mapper infrastructure holding common state
 /// (PRG-ROM, PRG-RAM, CHR memory, mirroring, mapper number) and providing
@@ -57,6 +76,11 @@ pub struct BaseMapper {
     /// Optional PRG-ROM bank resolved for the $6000-$7FFF region.
     /// `None` means $6000 banking is not configured (default: PRG-RAM or open bus).
     prg_6000_bank: Option<usize>,
+    /// VS System hardware type — drives copy protection behavior ($5E00/$5E01).
+    vs_hardware_type: Option<VsHardwareType>,
+    /// Protection counter for VS System per-game copy protection (TKO Boxing, RBI Baseball,
+    /// Super Xevious). Uses `Cell` for interior mutability in the `&self` read path.
+    pub(crate) vs_protection_counter: Cell<u8>,
 }
 
 /// Resolve a signed bank number to an unsigned index, wrapping to available banks.
@@ -119,6 +143,8 @@ impl BaseMapper {
             chr_pages: Vec::new(),
             bus_conflicts: false,
             prg_6000_bank: None,
+            vs_hardware_type: ctx.vs_hardware_type,
+            vs_protection_counter: Cell::new(0),
         }
     }
 
@@ -340,13 +366,64 @@ impl BaseMapper {
     /// Returns `open_bus` for addresses below $6000 and for $6000-$7FFF when
     /// neither PRG-RAM nor mapper-controlled PRG-ROM banking is present there.
     /// Otherwise delegates to the provided `read_prg` function.
+    ///
+    /// For VS System games with copy protection, addresses $5E00/$5E01
+    /// (and the full $4020-$5FFF range for Super Xevious) return per-game
+    /// protection data instead of open bus.
     pub fn read_prg_open_bus(&self, addr: u16, open_bus: u8, read_prg: impl Fn(u16) -> u8) -> u8 {
+        if let Some(value) = self.try_read_vs_protection(addr) {
+            return value;
+        }
         match addr {
             0x0000..=0x5FFF => open_bus,
             0x6000..=0x7FFF if self.prg_6000_bank.is_some() => read_prg(addr),
             0x6000..=0x7FFF if self.prg_ram.is_none() => open_bus,
             _ => read_prg(addr),
         }
+    }
+
+    /// Attempt to read a VS System copy protection register.
+    ///
+    /// Returns `Some(value)` for addresses handled by the protection circuit,
+    /// or `None` to fall through to normal open-bus / mapper behavior.
+    fn try_read_vs_protection(&self, addr: u16) -> Option<u8> {
+        match self.vs_hardware_type {
+            Some(VsHardwareType::TkoBoxing) => {
+                self.read_protection_register(addr, &TKO_BOXING_PROTECTION)
+            }
+            Some(VsHardwareType::RbiBaseball) => {
+                self.read_protection_register(addr, &RBI_BASEBALL_PROTECTION)
+            }
+            Some(VsHardwareType::SuperXevious) => match addr {
+                0x5E00 => {
+                    self.vs_protection_counter.set(0);
+                    Some(0)
+                }
+                // Super Xevious responds to the entire $4020-$5FFF range
+                0x4020..=0x5FFF => Some(self.next_protection_byte(&SUPER_XEVIOUS_PROTECTION)),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Read a standard protection register ($5E00 resets counter, $5E01 returns data).
+    fn read_protection_register(&self, addr: u16, data: &[u8; 32]) -> Option<u8> {
+        match addr {
+            0x5E00 => {
+                self.vs_protection_counter.set(0);
+                Some(0)
+            }
+            0x5E01 => Some(self.next_protection_byte(data)),
+            _ => None,
+        }
+    }
+
+    /// Advance the protection counter and return the next byte from the table.
+    fn next_protection_byte(&self, data: &[u8; 32]) -> u8 {
+        let idx = self.vs_protection_counter.get();
+        self.vs_protection_counter.set(idx.wrapping_add(1));
+        data[(idx & 0x1F) as usize]
     }
 
     /// Get the mapper capabilities.
@@ -1352,5 +1429,103 @@ mod tests {
         base.set_bus_conflicts(true);
         base.select_prg_page(0, 1);
         assert_eq!(base.apply_bus_conflict(0x8000, 0xFF), 0x01);
+    }
+
+    // ── VS System protection register tests ──────────────────────────────
+
+    fn make_vs_mapper(hw_type: VsHardwareType) -> BaseMapper {
+        let ctx = MapperContext::new_for_test(
+            0,
+            vec![0; 0x8000],
+            vec![0; 8192],
+            NametableLayout::Horizontal,
+        )
+        .with_vs_hardware_type(hw_type);
+        BaseMapper::new(&ctx, MapperCapabilities::default())
+    }
+
+    #[test]
+    fn tko_boxing_5e00_resets_protection_counter() {
+        let base = make_vs_mapper(VsHardwareType::TkoBoxing);
+        // Read $5E01 to advance counter
+        base.read_prg_open_bus(0x5E01, 0xFF, |_| 0);
+        base.read_prg_open_bus(0x5E01, 0xFF, |_| 0);
+        // Read $5E00 to reset counter
+        base.read_prg_open_bus(0x5E00, 0xFF, |_| 0);
+        // Next read from $5E01 should return data[0] (counter was reset)
+        let val = base.read_prg_open_bus(0x5E01, 0xFF, |_| 0);
+        assert_eq!(
+            val, 0xFF,
+            "After $5E00 reset, $5E01 should return data[0] = 0xFF"
+        );
+    }
+
+    #[test]
+    fn tko_boxing_5e01_returns_sequential_protection_data() {
+        let base = make_vs_mapper(VsHardwareType::TkoBoxing);
+        // First read should return data[0]
+        let val0 = base.read_prg_open_bus(0x5E01, 0x42, |_| 0);
+        assert_eq!(val0, 0xFF, "TKO Boxing data[0] should be 0xFF");
+        // Second read should return data[1]
+        let val1 = base.read_prg_open_bus(0x5E01, 0x42, |_| 0);
+        assert_eq!(val1, 0xBF, "TKO Boxing data[1] should be 0xBF");
+    }
+
+    #[test]
+    fn rbi_baseball_5e01_returns_sequential_protection_data() {
+        let base = make_vs_mapper(VsHardwareType::RbiBaseball);
+        let val0 = base.read_prg_open_bus(0x5E01, 0x42, |_| 0);
+        assert_eq!(val0, 0x00, "RBI Baseball data[0] should be 0x00");
+        // data[4] = 0xB4
+        for _ in 0..3 {
+            base.read_prg_open_bus(0x5E01, 0x42, |_| 0);
+        }
+        let val4 = base.read_prg_open_bus(0x5E01, 0x42, |_| 0);
+        assert_eq!(val4, 0xB4, "RBI Baseball data[4] should be 0xB4");
+    }
+
+    #[test]
+    fn super_xevious_all_reads_return_protection_data() {
+        let base = make_vs_mapper(VsHardwareType::SuperXevious);
+        // $5E00 resets counter
+        base.read_prg_open_bus(0x5E00, 0x42, |_| 0);
+        // Any address in $4020-$5FFF (except $5E00) should return protection data
+        let val = base.read_prg_open_bus(0x4020, 0x42, |_| 0);
+        assert_eq!(
+            val, 0x05,
+            "Super Xevious data[0] should be 0x05, got {:#04X}",
+            val
+        );
+        let val = base.read_prg_open_bus(0x5000, 0x42, |_| 0);
+        assert_eq!(
+            val, 0x01,
+            "Super Xevious data[1] should be 0x01, got {:#04X}",
+            val
+        );
+    }
+
+    #[test]
+    fn non_protected_vs_game_returns_open_bus() {
+        let base = make_vs_mapper(VsHardwareType::Unisystem);
+        let val = base.read_prg_open_bus(0x5E01, 0x42, |_| 0);
+        assert_eq!(
+            val, 0x42,
+            "Unisystem (no protection) should return open bus at $5E01"
+        );
+    }
+
+    #[test]
+    fn protection_counter_wraps_at_32() {
+        let base = make_vs_mapper(VsHardwareType::TkoBoxing);
+        // Read 32 values to cycle through entire table
+        for _ in 0..32 {
+            base.read_prg_open_bus(0x5E01, 0x42, |_| 0);
+        }
+        // 33rd read should wrap back to data[0]
+        let val = base.read_prg_open_bus(0x5E01, 0x42, |_| 0);
+        assert_eq!(
+            val, 0xFF,
+            "After 32 reads, counter should wrap to data[0] = 0xFF"
+        );
     }
 }

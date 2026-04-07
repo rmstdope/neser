@@ -371,6 +371,13 @@ impl MapperContext {
         self.prg_ram_size_specified = false;
         self
     }
+
+    /// Set VS System hardware type for copy protection testing.
+    #[cfg(test)]
+    pub fn with_vs_hardware_type(mut self, hw_type: VsHardwareType) -> Self {
+        self.vs_hardware_type = Some(hw_type);
+        self
+    }
 }
 
 /// Describes the hardware capabilities of a mapper.
