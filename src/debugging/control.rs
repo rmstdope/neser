@@ -569,10 +569,10 @@ impl DebuggerController {
         let bp_str = self.breakpoints.save_to_string();
         let watch_str = crate::debugging::breakpoints::serialize_watch_addresses(watch_addresses);
         if bp_str.is_empty() && watch_str.is_empty() {
-            if path.exists() {
-                if let Err(err) = std::fs::remove_file(&path) {
-                    crate::debugging::log_info(format!("Failed to remove .debug file: {err}"));
-                }
+            if path.exists()
+                && let Err(err) = std::fs::remove_file(&path)
+            {
+                crate::debugging::log_info(format!("Failed to remove .debug file: {err}"));
             }
             return;
         }
