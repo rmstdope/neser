@@ -30,7 +30,7 @@
 //!     bit 1 → PRG/CHR A24   bit 0 → PRG/CHR A25
 //!     Read: bit 3 = DIP switch state
 //!   Submapper 3 (Bittboy 300-in-1):
-//!     bit 2 → PRG/CHR A24
+//!     bit 2 → PRG/CHR A25
 //!
 //! $4242 – CHR memory control (write)
 //!   bit 0: 1 = enable unbanked 8 KiB CHR-RAM; 0 = use CHR-ROM via MMC3 banking
@@ -173,10 +173,13 @@ impl Mapper for Mapper270 {
     }
 
     fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        let value = self
+            .base()
+            .read_prg_open_bus(addr, open_bus, |a| self.read_prg(a));
         if addr == 0x412C && self.submapper == 2 {
-            return (open_bus & !0x08) | (if self.dip { 0x08 } else { 0x00 });
+            return (value & !0x08) | (if self.dip { 0x08 } else { 0x00 });
         }
-        open_bus
+        value
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
@@ -237,8 +240,9 @@ impl Mapper for Mapper270 {
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        // 16 bytes MMC3 + 3 extra; only restore extra fields when present.
-        if data.len() >= 16 + 3 {
+        let mmc3_len = self.mmc3.registers_snapshot().len();
+        // mmc3_len bytes MMC3 + 3 extra; only restore extra fields when present.
+        if data.len() >= mmc3_len + 3 {
             let (mmc3_part, extra) = data.split_at(data.len() - 3);
             self.mmc3.restore_registers(mmc3_part);
             self.outer_reg = extra[0];
