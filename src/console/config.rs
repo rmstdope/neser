@@ -481,12 +481,30 @@ impl HardwareModel {
             Self::NesPal => "nes-pal",
         }
     }
+
+    /// Human-readable label for display in logs and summaries.
+    pub const fn display_label(self) -> &'static str {
+        match self {
+            Self::NesNtsc => "NTSC",
+            Self::NesPal => "PAL",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HardwareMode {
     Nes,
     Famicom,
+}
+
+impl HardwareMode {
+    /// Human-readable label for display in logs and summaries.
+    pub const fn display_label(self) -> &'static str {
+        match self {
+            Self::Nes => "NES",
+            Self::Famicom => "Famicom",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -500,6 +518,19 @@ pub enum ExpansionPort {
 }
 
 impl ExpansionPort {
+    /// Human-readable label for display in logs and summaries.
+    /// Returns `None` for `ExpansionPort::None`.
+    pub fn display_label(self) -> Option<&'static str> {
+        match self {
+            Self::None => None,
+            Self::FamicomFourPlayers => Some("Famicom Four Players"),
+            Self::ArkanoidFamicom => Some("Arkanoid"),
+            Self::ZapperFamicom => Some("Zapper"),
+            Self::PowerPadFamicom => Some("Power Pad"),
+            Self::VsSystem => Some("VS System"),
+        }
+    }
+
     fn parse(value: &str) -> Option<Self> {
         if value.eq_ignore_ascii_case("none") {
             Some(Self::None)
@@ -2128,6 +2159,27 @@ impl Config {
     /// Apply ROM DB hint for VS System swapped controller wiring.
     pub fn apply_rom_db_vs_controllers_swapped_hint(&mut self, swapped: bool) {
         self.vs_controllers_swapped = swapped;
+    }
+
+    /// Build a human-readable summary of the emulated hardware configuration.
+    ///
+    /// Includes hardware mode/model, controller port types, and expansion port.
+    /// Intended to be logged at ROM load time so the user can see what
+    /// peripherals are active.
+    pub fn hardware_summary(&self) -> String {
+        let mut parts = vec![format!(
+            "Hardware: {} ({}) | Port 1: {} | Port 2: {}",
+            self.hardware_mode.display_label(),
+            self.hardware_model.display_label(),
+            self.controller_port1.display_label(),
+            self.controller_port2.display_label(),
+        )];
+
+        if let Some(label) = self.expansion_port.display_label() {
+            parts.push(format!("Expansion: {}", label));
+        }
+
+        parts.join(" | ")
     }
 
     /// Parse a boolean value from config file.
@@ -5428,6 +5480,79 @@ filter=invalid-shader
         assert!(
             !ExpansionPort::VsSystem.is_famicom_only(),
             "VS System should not be classified as Famicom-only"
+        );
+    }
+
+    // --- hardware_summary tests ---
+
+    #[test]
+    fn test_hardware_summary_default_nes_ntsc() {
+        let config = Config::default();
+        let summary = config.hardware_summary();
+        assert!(
+            summary.contains("NES"),
+            "Summary should mention NES hardware mode: {summary}"
+        );
+        assert!(
+            summary.contains("NTSC"),
+            "Summary should mention NTSC timing: {summary}"
+        );
+        assert!(
+            summary.contains("Joypad"),
+            "Summary should mention Joypad controllers: {summary}"
+        );
+    }
+
+    #[test]
+    fn test_hardware_summary_famicom_with_power_pad_expansion() {
+        let mut config = Config::default();
+        config.hardware_mode = HardwareMode::Famicom;
+        config.expansion_port = ExpansionPort::PowerPadFamicom;
+        let summary = config.hardware_summary();
+        assert!(
+            summary.contains("Famicom"),
+            "Summary should mention Famicom hardware mode: {summary}"
+        );
+        assert!(
+            summary.contains("Power Pad"),
+            "Summary should mention Power Pad expansion: {summary}"
+        );
+    }
+
+    #[test]
+    fn test_hardware_summary_nes_pal_with_zapper() {
+        let mut config = Config::default();
+        config.hardware_model = HardwareModel::NesPal;
+        config.controller_port2 = crate::input::ControllerType::Zapper;
+        let summary = config.hardware_summary();
+        assert!(
+            summary.contains("PAL"),
+            "Summary should mention PAL timing: {summary}"
+        );
+        assert!(
+            summary.contains("Zapper"),
+            "Summary should mention Zapper on port 2: {summary}"
+        );
+    }
+
+    #[test]
+    fn test_hardware_summary_power_pad_on_port2() {
+        let mut config = Config::default();
+        config.controller_port2 = crate::input::ControllerType::PowerPad;
+        let summary = config.hardware_summary();
+        assert!(
+            summary.contains("Power Pad"),
+            "Summary should mention Power Pad on port 2: {summary}"
+        );
+    }
+
+    #[test]
+    fn test_hardware_summary_no_expansion_omits_expansion_line() {
+        let config = Config::default();
+        let summary = config.hardware_summary();
+        assert!(
+            !summary.contains("Expansion"),
+            "Summary should not mention expansion when None: {summary}"
         );
     }
 }

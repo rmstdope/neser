@@ -61,6 +61,19 @@ pub enum PowerPadButton {
 }
 
 impl ControllerType {
+    /// Human-readable label for display in logs and summaries.
+    pub fn display_label(self) -> &'static str {
+        match self {
+            Self::Joypad => "Joypad",
+            Self::SnesAdapter => "SNES Adapter",
+            Self::SnesController => "SNES Controller",
+            Self::SnesMouse => "SNES Mouse",
+            Self::Arkanoid => "Arkanoid",
+            Self::Zapper => "Zapper",
+            Self::PowerPad => "Power Pad",
+        }
+    }
+
     /// Parse a controller type from a string configuration value.
     pub fn parse(value: &str) -> Option<Self> {
         match value.to_lowercase().as_str() {

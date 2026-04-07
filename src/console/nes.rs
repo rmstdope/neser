@@ -253,6 +253,7 @@ impl Nes {
         if port1_explicit || port2_explicit {
             bus.set_controller_type(1, port1_type);
             bus.set_controller_type(2, port2_type);
+            self.log_hardware_summary();
             return;
         }
 
@@ -277,15 +278,7 @@ impl Nes {
             } else {
                 port1_type
             };
-            let auto_label = match auto_type {
-                ControllerType::Arkanoid => "Arkanoid",
-                ControllerType::Zapper => "Zapper",
-                ControllerType::Joypad => "Joypad",
-                ControllerType::SnesAdapter => "SNES adapter",
-                ControllerType::SnesController => "SNES controller",
-                ControllerType::SnesMouse => "SNES mouse",
-                ControllerType::PowerPad => "Power Pad",
-            };
+            let auto_label = auto_type.display_label();
             log_info(format!(
                 "Enabling {} controller on port {} for inserted cartridge. If you don't want this behavior, explicitly configure controller_port1/controller_port2 in config (or via CLI). Note that some games expect the controller on a specific port, so be sure to configure the correct one if you have issues with input not working in certain games.",
                 auto_label, auto_port
@@ -300,6 +293,13 @@ impl Nes {
             bus.set_controller_type(1, port1_type);
             bus.set_controller_type(2, port2_type);
         }
+
+        self.log_hardware_summary();
+    }
+
+    fn log_hardware_summary(&self) {
+        let summary = self.app_context.borrow().config().hardware_summary();
+        log_info(summary);
     }
 
     pub fn state_path(&self) -> Option<PathBuf> {
