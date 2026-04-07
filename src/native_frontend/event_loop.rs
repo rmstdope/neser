@@ -9,10 +9,12 @@ use crate::autorun::state::AutorunState;
 use crate::console::{AutorunMode, Nes, TimingMode};
 use crate::debugging::Tracing;
 use crate::debugging::control::DebuggerController;
-use crate::frontend_toasts::gamepad_init_toast_message;
+use crate::frontend_toasts::{
+    gamepad_connected_toast_message, gamepad_disconnected_toast_message, gamepad_init_toast_message,
+};
 use crate::native_frontend::app_state::NativeAppState;
 use crate::native_frontend::audio::NativeAudio;
-use crate::native_frontend::gamepad::GamepadManager;
+use crate::native_frontend::gamepad::{GamepadChange, GamepadManager};
 use crate::native_frontend::gl_wrapper::NativeGlWrapper;
 use crate::native_frontend::keyboard::{self, KeyOutcome};
 use crate::native_frontend::mouse;
@@ -41,7 +43,7 @@ pub struct NativeEventLoop {
     paused_before_cart_switch: bool,
     gamepad: Option<GamepadManager>,
     gamepads_enabled: bool,
-    gamepad_toast_shown: bool,
+    gamepad_init_toast_shown: bool,
     gamepad_init_failed: bool,
     sleep_inhibitor: Option<SleepInhibitor>,
 
@@ -59,6 +61,10 @@ pub struct NativeEventLoop {
     vsync_enabled: bool,
     /// Deadline for the next frame, used for manual frame limiting when VSync is off.
     next_frame_deadline: Instant,
+    /// Time of the last executed emulation frame, used to guard against
+    /// OS-triggered redraws arriving faster than our WaitUntil deadline
+    /// (e.g. macOS ProMotion delivering RedrawRequested at 120 Hz).
+    last_frame_rendered: Instant,
 }
 
 impl NativeEventLoop {
@@ -116,7 +122,7 @@ impl NativeEventLoop {
             paused_before_cart_switch: false,
             gamepad,
             gamepads_enabled,
-            gamepad_toast_shown: false,
+            gamepad_init_toast_shown: false,
             gamepad_init_failed,
             sleep_inhibitor,
             gl_wrapper: None,
@@ -127,6 +133,7 @@ impl NativeEventLoop {
             headless,
             vsync_enabled,
             next_frame_deadline: Instant::now(),
+            last_frame_rendered: Instant::now(),
         }
     }
 
@@ -549,7 +556,20 @@ impl ApplicationHandler for NativeEventLoop {
                 }
                 self.debugger_controller
                     .save_breakpoints_to_debug_file(&self.nes);
+                if let Err(e) = self.nes.save_ram() {
+                    eprintln!("Failed to save battery-backed RAM on exit: {e}");
+                }
                 event_loop.exit();
+            }
+
+            // Resize the glutin surface whenever the physical window size changes.
+            // This covers both manual window resizes and fullscreen transitions.
+            // Without this, the GL surface stays at the original windowed size and
+            // the rendered image is clipped instead of filling the display.
+            WindowEvent::Resized(physical_size) => {
+                if let Some(ref mut gl) = self.gl_wrapper {
+                    gl.notify_resize(physical_size.width, physical_size.height);
+                }
             }
 
             WindowEvent::Focused(focused) => {
@@ -613,11 +633,18 @@ impl ApplicationHandler for NativeEventLoop {
                             }
                             self.debugger_controller
                                 .save_breakpoints_to_debug_file(&self.nes);
+                            if let Err(e) = self.nes.save_ram() {
+                                eprintln!("Failed to save battery-backed RAM on quit: {e}");
+                            }
                             event_loop.exit();
                         }
                         KeyOutcome::CycleShader => {
                             if let Some(ref mut gl) = self.gl_wrapper {
-                                gl.cycle_shader();
+                                let preset_name = gl.cycle_shader();
+                                let toast = crate::rendering::gl_backend::shader_toast_message(
+                                    preset_name.as_deref(),
+                                );
+                                self.nes.app_context().borrow_mut().add_toast(toast);
                             }
                         }
                         KeyOutcome::ToggleDebugger => {
@@ -651,7 +678,11 @@ impl ApplicationHandler for NativeEventLoop {
                         }
                     }
                 } else {
-                    keyboard::handle_key_released(&mut self.nes, key_code);
+                    keyboard::handle_key_released(
+                        &mut self.nes,
+                        key_code,
+                        self.state.gamepad_count,
+                    );
                 }
 
                 // If keyboard handler released the mouse grab (Escape), apply it.
@@ -685,11 +716,15 @@ impl ApplicationHandler for NativeEventLoop {
                 // Left-click grabs immediately so the same click is also forwarded
                 // as a button press (unlike deferring to the next frame, which
                 // would swallow Zapper shots and Arkanoid trigger presses).
+                // Exception: if the mouse was released by Escape, the click only
+                // re-grabs and must NOT be forwarded to the NES controller.
+                let mut should_discard_grab_click = false;
                 if has_mouse
                     && !self.state.mouse_grabbed
                     && state == ElementState::Pressed
                     && button == winit::event::MouseButton::Left
                 {
+                    let was_released_by_escape = self.state.mouse_released_by_escape;
                     self.state.mouse_released_by_escape = false;
                     let should_grab = crate::input::mouse_mapping::should_grab_mouse_input(
                         true,
@@ -714,11 +749,15 @@ impl ApplicationHandler for NativeEventLoop {
                             );
                         }
                         self.state.mouse_grabbed = true;
+                        if !mouse::should_forward_grab_click(was_released_by_escape) {
+                            should_discard_grab_click = true;
+                        }
                     }
                 }
 
-                // Route button to NES controller if grabbed.
-                if has_mouse && self.state.mouse_grabbed {
+                // Route button to NES controller if grabbed (but not for the
+                // re-grab click itself, which is silently discarded).
+                if has_mouse && self.state.mouse_grabbed && !should_discard_grab_click {
                     let btn = match button {
                         winit::event::MouseButton::Left => Some(mouse::MouseButton::Left),
                         winit::event::MouseButton::Right => Some(mouse::MouseButton::Right),
@@ -747,8 +786,34 @@ impl ApplicationHandler for NativeEventLoop {
                     return;
                 }
 
-                // Run one frame of emulation
-                self.run_frame();
+                // When using manual frame throttle (vsync off or window unfocused),
+                // the OS (e.g. macOS ProMotion at 120 Hz) may deliver RedrawRequested
+                // more frequently than our WaitUntil deadline. Guard against double-
+                // stepping the emulator by skipping emulation if not enough time has
+                // elapsed since the last frame.
+                let using_manual_throttle =
+                    should_use_manual_frame_throttle(self.vsync_enabled, self.state.window_focused);
+                let skip_emulation = if using_manual_throttle {
+                    let timing_mode = self
+                        .nes
+                        .app_context()
+                        .borrow()
+                        .config()
+                        .hardware_model
+                        .timing_mode();
+                    let target = target_frame_duration(timing_mode);
+                    // Allow a small tolerance (half a frame) to avoid skipping
+                    // frames when the deadline fires slightly early.
+                    self.last_frame_rendered.elapsed() < target / 2
+                } else {
+                    false
+                };
+
+                if !skip_emulation {
+                    // Run one frame of emulation
+                    self.run_frame();
+                    self.last_frame_rendered = Instant::now();
+                }
 
                 // If autorun signalled exit during this frame, exit now.
                 if self.autorun_exit.is_some() {
@@ -834,21 +899,30 @@ impl ApplicationHandler for NativeEventLoop {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         // Poll gamepad events before requesting redraw.
         if let Some(ref mut gp) = self.gamepad {
-            gp.process_events(&mut self.nes);
-        }
+            let changes = gp.process_events(&mut self.nes);
+            self.state.gamepad_count = gp.connected_count();
 
-        // Show the gamepad toast after the first process_events() call.
-        // On macOS, IOKit enumerates gamepads asynchronously so Connected
-        // events aren't available until the event loop is running.
-        if !self.gamepad_toast_shown {
-            self.gamepad_toast_shown = true;
-            let toast = if self.gamepad_init_failed {
-                "Gamepad init failed: using keyboard controls".to_string()
+            if self.gamepad_init_toast_shown {
+                // Show hot-plug toasts. The init toast guard avoids
+                // double-toasting the startup connections on macOS where
+                // IOKit enumerates asynchronously.
+                for change in changes {
+                    let toast = match change {
+                        GamepadChange::Connected(p) => gamepad_connected_toast_message(p),
+                        GamepadChange::Disconnected(p) => gamepad_disconnected_toast_message(p),
+                    };
+                    self.app_context.borrow_mut().add_toast(&toast);
+                }
             } else {
-                let count = self.gamepad.as_ref().map_or(0, |g| g.connected_count());
-                gamepad_init_toast_message(self.gamepads_enabled, count)
-            };
-            self.app_context.borrow_mut().add_toast(&toast);
+                // Show the one-shot init toast on the first process_events() call.
+                self.gamepad_init_toast_shown = true;
+                let toast = if self.gamepad_init_failed {
+                    "Gamepad init failed: using keyboard controls".to_string()
+                } else {
+                    gamepad_init_toast_message(self.gamepads_enabled, gp.connected_count())
+                };
+                self.app_context.borrow_mut().add_toast(&toast);
+            }
         }
 
         if let Some(ref gl) = self.gl_wrapper {
@@ -861,7 +935,10 @@ impl ApplicationHandler for NativeEventLoop {
                 if let Some(ref mut si) = self.sleep_inhibitor {
                     si.deactivate();
                 }
-            } else if !self.vsync_enabled {
+            } else if should_use_manual_frame_throttle(
+                self.vsync_enabled,
+                self.state.window_focused,
+            ) {
                 // Manual frame limiting: advance deadline by target interval.
                 let timing_mode = self
                     .nes
@@ -899,9 +976,45 @@ fn target_frame_duration(timing_mode: TimingMode) -> Duration {
     Duration::from_secs_f64(1.0 / timing_mode.frame_rate_hz())
 }
 
+/// Returns true when frames must be throttled with a manual timer (WaitUntil)
+/// rather than relying on vsync to pace the event loop.
+///
+/// When `vsync_enabled` is false the manual timer is always needed.  When the
+/// window loses focus the OS may stop blocking on vsync (especially on macOS),
+/// and the audio device is paused, removing the ring-buffer back-pressure that
+/// would otherwise limit frame rate.  Using a manual WaitUntil deadline in that
+/// case prevents the emulator from running at unconstrained speed.
+pub fn should_use_manual_frame_throttle(vsync_enabled: bool, window_focused: bool) -> bool {
+    !vsync_enabled || !window_focused
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn manual_throttle_required_when_vsync_enabled_but_unfocused() {
+        // Regression: window unfocused → audio paused → no ring-buffer back-pressure.
+        // vsync may not block on non-focused windows, so we must throttle manually.
+        assert!(
+            should_use_manual_frame_throttle(true, false),
+            "vsync=true, focused=false must require manual throttle"
+        );
+    }
+
+    #[test]
+    fn manual_throttle_not_required_when_vsync_enabled_and_focused() {
+        assert!(
+            !should_use_manual_frame_throttle(true, true),
+            "vsync=true, focused=true should let vsync drive timing"
+        );
+    }
+
+    #[test]
+    fn manual_throttle_required_when_vsync_disabled() {
+        assert!(should_use_manual_frame_throttle(false, true));
+        assert!(should_use_manual_frame_throttle(false, false));
+    }
 
     #[test]
     fn test_target_frame_duration_ntsc() {

@@ -41,4 +41,12 @@ pub trait NesAudio {
 
     /// Returns the actual sample rate of the opened audio device.
     fn actual_sample_rate(&self) -> i32;
+
+    /// Marks all currently buffered samples as stale so the audio callback
+    /// discards them silently before playing new audio.
+    ///
+    /// Intended to be called after an abrupt state change (e.g. save-state
+    /// restore) so pre-change audio does not bleed into post-change playback.
+    /// Unlike `pause()`, this does *not* change the paused state.
+    fn drain_buffer(&self) {}
 }

@@ -49,8 +49,11 @@ impl NativeGlWrapper {
         ) = {
             let ctx = app_context.borrow();
             let config = ctx.config();
-            let (window_width, window_height) =
-                GlBackend::windowed_dimensions(config.window_height);
+            let (window_width, window_height) = GlBackend::windowed_dimensions(
+                config.window_height,
+                config.horizontal_overscan as u32,
+                config.vertical_overscan as u32,
+            );
             (
                 config.fullscreen,
                 config.vsync_enabled,
@@ -196,8 +199,8 @@ impl NativeGlWrapper {
     }
 
     /// Cycles through available shader presets.
-    pub fn cycle_shader(&mut self) {
-        self.gl_backend.cycle_shader();
+    pub fn cycle_shader(&mut self) -> Option<String> {
+        self.gl_backend.cycle_shader()
     }
 
     /// Updates the breakpoint list used by the debugger UI.
@@ -213,6 +216,14 @@ impl NativeGlWrapper {
     /// Enables or disables mouse confinement.
     pub fn set_mouse_grab(&mut self, enabled: bool) -> Result<(), String> {
         self.gl_backend.set_mouse_grab(enabled)
+    }
+
+    /// Notifies the render target that the physical window size has changed.
+    ///
+    /// Call this from `WindowEvent::Resized` and `WindowEvent::ScaleFactorChanged`
+    /// so the glutin surface is resized to match the new physical dimensions.
+    pub fn notify_resize(&mut self, w: u32, h: u32) {
+        self.gl_backend.notify_resize(w, h);
     }
 
     /// Enables locked cursor mode (for SNES Mouse relative motion).

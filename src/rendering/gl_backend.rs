@@ -40,6 +40,15 @@ pub trait RenderTarget {
     fn set_fullscreen(&mut self, enabled: bool) -> Result<(), String>;
     /// Enables or disables mouse confinement to the render target window.
     fn set_mouse_grab(&mut self, enabled: bool) -> Result<(), String>;
+    /// Notifies the render target that the physical window size has changed.
+    ///
+    /// Must be called whenever the OS sends a resize event (including fullscreen
+    /// transitions) so that the platform surface can be updated to match the new
+    /// physical pixel dimensions. Without this, the presented surface may remain
+    /// at the old size, causing the rendered image to be clipped.
+    ///
+    /// The default implementation is a no-op for platforms that resize automatically.
+    fn notify_resize(&mut self, _w: u32, _h: u32) {}
 }
 
 /// Loader for GL procedure addresses used by OpenGL and related backends.
@@ -262,6 +271,8 @@ fn toast_background_rgba() -> [f32; 4] {
 
 impl GlBackend {
     // NES pixel aspect (8:7) times NTSC display correction (16:15).
+    // Used in tests to pass a representative full-frame aspect ratio to letterbox_size.
+    #[cfg(test)]
     const NTSC_ASPECT: f32 = 8.0 / 7.0 * 16.0 / 15.0;
 
     /// Returns the aspect ratio used for rendering the NES output.
@@ -296,10 +307,25 @@ impl GlBackend {
         self.render_target.set_mouse_grab(enabled)
     }
 
+    /// Notifies the render target of a physical window resize.
+    ///
+    /// Must be called from the OS window-resize event handler (including fullscreen
+    /// transitions) so the underlying GL surface stays in sync with the new dimensions.
+    pub fn notify_resize(&mut self, w: u32, h: u32) {
+        self.render_target.notify_resize(w, h);
+    }
+
     /// Computes windowed mode dimensions preserving the target aspect ratio.
-    pub(crate) fn windowed_dimensions(height: u32) -> (u32, u32) {
+    ///
+    /// Overscan is taken into account so that the window width exactly matches
+    /// the aspect ratio of the visible (cropped) pixel area, matching what the
+    /// renderer will display at runtime.
+    pub(crate) fn windowed_dimensions(height: u32, h_overscan: u32, v_overscan: u32) -> (u32, u32) {
         let clamped_height = height.max(1);
-        let width = (clamped_height as f32 * Self::NTSC_ASPECT).round() as u32;
+        let visible_w = 256u32.saturating_sub(2 * h_overscan).max(1) as f32;
+        let visible_h = 240u32.saturating_sub(2 * v_overscan).max(1) as f32;
+        let aspect = (visible_w / visible_h) * (8.0 / 7.0);
+        let width = (clamped_height as f32 * aspect).round() as u32;
         (width.max(1), clamped_height)
     }
 
@@ -698,12 +724,30 @@ impl GlBackend {
     }
 
     /// Cycles through available shader presets, if any.
-    pub fn cycle_shader(&mut self) {
+    ///
+    /// Returns the name of the newly active preset on success, or `None` when
+    /// no shader is active (e.g. cycling landed on "no shader" / no presets).
+    pub fn cycle_shader(&mut self) -> Option<String> {
         if let Err(e) = self.shader_manager.cycle_shader(self.glow_context.clone()) {
             log_info(format!("Error cycling shader: {}", e));
-        } else if let Some(name) = self.shader_manager.current_preset_name() {
-            log_info(format!("Switched to shader: {}", name));
         }
+        let name = self.shader_manager.current_preset_name().map(str::to_owned);
+        log_info(format!(
+            "Switched to shader: {}",
+            name.as_deref().unwrap_or("off")
+        ));
+        name
+    }
+}
+
+/// Returns the toast message to display when the shader preset changes.
+///
+/// * `Some(name)` → `"Shader: <name>"`
+/// * `None`       → `"Shader: off"`
+pub fn shader_toast_message(preset_name: Option<&str>) -> String {
+    match preset_name {
+        Some(name) => format!("Shader: {name}"),
+        None => "Shader: off".to_owned(),
     }
 }
 
@@ -739,16 +783,37 @@ mod tests_windowed_dimensions {
 
     #[test]
     fn test_windowed_dimensions_from_height_240() {
-        let (w, h) = GlBackend::windowed_dimensions(240);
+        let (w, h) = GlBackend::windowed_dimensions(240, 0, 0);
         assert_eq!(h, 240);
         assert_eq!(w, 293);
     }
 
     #[test]
     fn test_windowed_dimensions_from_height_960() {
-        let (w, h) = GlBackend::windowed_dimensions(960);
+        let (w, h) = GlBackend::windowed_dimensions(960, 0, 0);
         assert_eq!(h, 960);
         assert_eq!(w, 1170);
+    }
+
+    /// With 8px horizontal overscan the visible area is 240×240 pixels.
+    /// Correct aspect = (240/240) * (8/7) = 8/7, so width = round(240 * 8/7) = 274.
+    /// Without overscan awareness the function would return 293 (wrong).
+    #[test]
+    fn test_windowed_dimensions_h_overscan_narrows_window() {
+        let (w, h) = GlBackend::windowed_dimensions(240, 8, 0);
+        assert_eq!(h, 240);
+        assert_eq!(w, 274); // round(240 * (240/240) * (8/7))
+    }
+
+    /// With 8px vertical overscan the visible area is 256×224 pixels.
+    /// Correct aspect = (256/224) * (8/7) = (8/7)^2 ≈ 1.30612,
+    /// so width = round(240 * 1.30612) = 313.
+    /// Without overscan awareness the function would return 293 (wrong).
+    #[test]
+    fn test_windowed_dimensions_v_overscan_widens_window() {
+        let (w, h) = GlBackend::windowed_dimensions(240, 0, 8);
+        assert_eq!(h, 240);
+        assert_eq!(w, 313); // round(240 * (256/224) * (8/7))
     }
 }
 
@@ -1045,6 +1110,62 @@ impl Drop for GlBackend {
 }
 
 #[cfg(test)]
+mod tests_notify_resize {
+    use super::RenderTarget;
+
+    /// Mock render target that records whether notify_resize was called and
+    /// with which dimensions.
+    struct TrackingMockRenderTarget {
+        resize_called_with: Option<(u32, u32)>,
+    }
+
+    impl TrackingMockRenderTarget {
+        fn new() -> Self {
+            Self {
+                resize_called_with: None,
+            }
+        }
+    }
+
+    impl RenderTarget for TrackingMockRenderTarget {
+        fn notify_resize(&mut self, w: u32, h: u32) {
+            self.resize_called_with = Some((w, h));
+        }
+        fn window_size(&self) -> (u32, u32) {
+            (800, 600)
+        }
+        fn drawable_size(&self) -> (u32, u32) {
+            (800, 600)
+        }
+        fn swap_buffers(&self) {}
+        fn make_current(&self) -> Result<(), String> {
+            Ok(())
+        }
+        fn set_fullscreen(&mut self, _enabled: bool) -> Result<(), String> {
+            Ok(())
+        }
+        fn set_mouse_grab(&mut self, _enabled: bool) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_render_target_notify_resize_records_new_dimensions() {
+        let mut mock = TrackingMockRenderTarget::new();
+        mock.notify_resize(1920, 1080);
+        assert_eq!(mock.resize_called_with, Some((1920, 1080)));
+    }
+
+    #[test]
+    fn test_render_target_notify_resize_updates_on_each_call() {
+        let mut mock = TrackingMockRenderTarget::new();
+        mock.notify_resize(800, 600);
+        mock.notify_resize(1920, 1080);
+        assert_eq!(mock.resize_called_with, Some((1920, 1080)));
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1082,5 +1203,20 @@ mod tests {
             overlay_text_rgba(OverlayTextColor::Black, false),
             [0.0, 0.0, 0.0, 1.0]
         );
+    }
+
+    #[test]
+    fn test_shader_toast_message_with_name_shows_shader_name() {
+        // When cycle_shader returns Some(name), the toast should name the shader.
+        assert_eq!(
+            super::shader_toast_message(Some("ntsc-256px-composite")),
+            "Shader: ntsc-256px-composite"
+        );
+    }
+
+    #[test]
+    fn test_shader_toast_message_with_none_shows_no_shader() {
+        // When no shader is active (cycled to "no shader"), the toast says so.
+        assert_eq!(super::shader_toast_message(None), "Shader: off");
     }
 }

@@ -361,6 +361,14 @@ impl BaseMapper {
         self.chr_memory.initialize(mode);
     }
 
+    /// Initialize only CHR-RAM, leaving PRG-RAM untouched.
+    ///
+    /// Used when inserting a battery-backed cartridge: PRG-RAM was already
+    /// loaded from disk and must not be overwritten.
+    pub fn initialize_chr_ram(&mut self, mode: crate::console::RamInitMode) {
+        self.chr_memory.initialize(mode);
+    }
+
     /// Read PRG with open-bus handling.
     ///
     /// Returns `open_bus` for addresses below $6000 and for $6000-$7FFF when

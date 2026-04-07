@@ -1,5 +1,13 @@
 use crate::console::{ExpansionPort, HardwareMode, TimingMode};
 
+pub fn gamepad_connected_toast_message(player_num: u8) -> String {
+    format!("Gamepad connected: Player {player_num}")
+}
+
+pub fn gamepad_disconnected_toast_message(player_num: u8) -> String {
+    format!("Gamepad disconnected: was Player {player_num}")
+}
+
 pub fn gamepad_init_toast_message(gamepads_enabled: bool, detected_controllers: usize) -> String {
     if !gamepads_enabled {
         return "Gamepads disabled: using keyboard controls".to_string();
@@ -162,5 +170,31 @@ mod tests {
             ExpansionPort::PowerPadFamicom,
         );
         assert_eq!(message, "Hardware: Famicom (Power Pad expansion)");
+    }
+
+    // ── Gamepad hot-plug toast messages ───────────────────────────────────────
+
+    #[test]
+    fn gamepad_connected_toast_player_1() {
+        let message = gamepad_connected_toast_message(1);
+        assert_eq!(message, "Gamepad connected: Player 1");
+    }
+
+    #[test]
+    fn gamepad_connected_toast_player_2() {
+        let message = gamepad_connected_toast_message(2);
+        assert_eq!(message, "Gamepad connected: Player 2");
+    }
+
+    #[test]
+    fn gamepad_disconnected_toast_player_1() {
+        let message = gamepad_disconnected_toast_message(1);
+        assert_eq!(message, "Gamepad disconnected: was Player 1");
+    }
+
+    #[test]
+    fn gamepad_disconnected_toast_player_2() {
+        let message = gamepad_disconnected_toast_message(2);
+        assert_eq!(message, "Gamepad disconnected: was Player 2");
     }
 }

@@ -89,7 +89,7 @@ const CLI_FLAGS: &[CliFlag] = &[
     },
     CliFlag {
         flag: "--window-height",
-        help: Some("Window height in pixels (windowed mode only, e.g., --window-height 720)"),
+        help: Some("Window height in pixels (windowed mode only, e.g., --window-height 896)"),
         has_value: true,
     },
     CliFlag {
@@ -752,7 +752,7 @@ impl Default for Config {
             load_state: false,
             tracing: Tracing::default(),
             apu_channels: ApuChannels::ALL,
-            window_height: 960,
+            window_height: 896,
             debugger_alpha: 0.7,
             rom_path: None,
             controller_port1: ControllerType::Joypad,
@@ -1709,7 +1709,7 @@ impl Config {
     /// display=0
     ///
     /// # Window settings (windowed mode only)
-    /// window_height=960
+    /// window_height=896
     ///
     /// # Shader/filter
     /// # Valid values: crt, ntsc, smooth, none
@@ -2366,7 +2366,7 @@ mod tests {
         assert!(config.apu_channels.contains(ApuChannels::TRIANGLE));
         assert!(config.apu_channels.contains(ApuChannels::NOISE));
         assert!(config.apu_channels.contains(ApuChannels::DMC));
-        assert_eq!(config.window_height, 960);
+        assert_eq!(config.window_height, 896);
         assert_eq!(config.rom_path, None);
         assert_eq!(config.controller_port1, ControllerType::Joypad);
         assert_eq!(config.controller_port2, ControllerType::Joypad);
@@ -2391,7 +2391,7 @@ mod tests {
         assert!(config.vsync_enabled);
         assert!(config.gamepads_enabled);
         assert!(!config.fullscreen);
-        assert_eq!(config.window_height, 960);
+        assert_eq!(config.window_height, 896);
         assert_eq!(config.controller_port1, ControllerType::Joypad);
         assert_eq!(config.controller_port2, ControllerType::Joypad);
     }

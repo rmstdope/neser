@@ -205,6 +205,11 @@ pub struct NativeAppState {
 
     /// State of the in-game cartridge-switch dialog.
     pub cart_switch: CartridgeSwitchState,
+
+    /// Number of gamepads currently connected.
+    /// Controls keyboard input routing: 0 → keyboard covers ports 1+2;
+    /// 1 → keyboard covers port 2 only; 2+ → keyboard disabled for controllers.
+    pub gamepad_count: usize,
 }
 
 impl NativeAppState {
@@ -228,14 +233,14 @@ impl NativeAppState {
             return Some(autorun_overlay_text(autorun, tv_system));
         }
         if self.help_overlay_visible {
-            return Some(help_overlay_text());
+            return Some(help_overlay_text(self.gamepad_count));
         }
         None
     }
 }
 
-fn help_overlay_text() -> String {
-    "Controls\n\
+fn help_overlay_text(gamepad_count: usize) -> String {
+    let hotkeys = "Controls\n\
 Ctrl+Q: Quit\n\
 Space: Pause\n\
 H: Toggle help\n\
@@ -251,22 +256,38 @@ F5: Debugger (open/continue)\n\
 F6: Save state\n\
 F7: Load state\n\
 F10: Step over\n\
-F11: Step into\n\
-\n\
-Controller (Player 1)\n\
+F11: Step into";
+
+    let controllers = match gamepad_count {
+        0 => "\n\nController (Port 1 via keyboard)\n\
 W/A/S/D: D-Pad\n\
 R: A\n\
 T: B\n\
 4: Select\n\
 5: Start\n\
 \n\
-Controller (Player 2)\n\
+Controller (Port 2 also via keyboard)\n\
 I/J/K/L: D-Pad\n\
 O: A\n\
 P: B\n\
 9: Select\n\
 0: Start"
-        .to_string()
+            .to_owned(),
+        1 => "\n\nPort 1: Gamepad\n\
+\n\
+Controller (Port 2 via keyboard)\n\
+W/A/S/D: D-Pad\n\
+R: A\n\
+T: B\n\
+4: Select\n\
+5: Start"
+            .to_owned(),
+        _ => "\n\nPort 1: Gamepad\n\
+Port 2: Gamepad"
+            .to_owned(),
+    };
+
+    format!("{hotkeys}{controllers}")
 }
 
 fn cart_switch_overlay_text(cart_switch: &CartridgeSwitchState) -> String {
@@ -432,6 +453,59 @@ mod tests {
         assert!(
             text.contains("Ctrl+R"),
             "help overlay should mention Ctrl+R"
+        );
+    }
+
+    #[test]
+    fn test_help_overlay_wasd_labeled_as_port1_only_when_no_gamepad() {
+        // Given: no gamepads connected
+        let state = NativeAppState {
+            help_overlay_visible: true,
+            gamepad_count: 0,
+            ..NativeAppState::default()
+        };
+        // When: help overlay is generated
+        let text = state.overlay_text(&make_nes(), None).unwrap();
+        // Then: WASD is labelled as Port 1 only — not "Port 1 + Port 2"
+        assert!(
+            !text.contains("Port 1 + Port 2"),
+            "WASD should not be labelled 'Port 1 + Port 2'; each keyboard set controls one port, got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn test_help_overlay_shows_gamepad_for_port1_when_one_gamepad_connected() {
+        // Given: one gamepad connected
+        let state = NativeAppState {
+            help_overlay_visible: true,
+            gamepad_count: 1,
+            ..NativeAppState::default()
+        };
+        // When: help overlay is generated
+        let text = state.overlay_text(&make_nes(), None).unwrap();
+        // Then: port 1 is labelled as gamepad-controlled
+        let lower = text.to_lowercase();
+        assert!(
+            lower.contains("gamepad"),
+            "help overlay should mention 'gamepad' when one is connected, got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn test_help_overlay_keyboard_disabled_note_when_two_gamepads() {
+        // Given: two gamepads connected
+        let state = NativeAppState {
+            help_overlay_visible: true,
+            gamepad_count: 2,
+            ..NativeAppState::default()
+        };
+        // When: help overlay is generated
+        let text = state.overlay_text(&make_nes(), None).unwrap();
+        // Then: the overlay does NOT list keyboard controller keys
+        // (both ports are owned by gamepads)
+        assert!(
+            !text.contains("W/A/S/D"),
+            "help overlay should NOT show WASD when two gamepads control both ports, got:\n{text}"
         );
     }
 

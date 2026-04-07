@@ -122,6 +122,18 @@ pub fn accumulate_virtual_cursor(
     (new_x, new_y)
 }
 
+/// Returns `true` when a left-click that also triggers a mouse grab should be
+/// forwarded to the NES controller as a button press.
+///
+/// When the mouse was explicitly released by Escape (`was_released_by_escape`
+/// is `true`), the click serves only to re-grab the cursor and must be
+/// silently discarded so Zapper shots / Arkanoid button presses are not
+/// accidentally triggered.  In all other cases (initial grab) the click is
+/// also forwarded.
+pub fn should_forward_grab_click(was_released_by_escape: bool) -> bool {
+    !was_released_by_escape
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -324,5 +336,28 @@ mod tests {
         let (nx, ny) = accumulate_virtual_cursor((0.0, 0.0), 10.0, 10.0, 0, 0);
         assert_eq!(nx, 0.0);
         assert_eq!(ny, 0.0);
+    }
+
+    // ── Grab-click forwarding ─────────────────────────────────────────────
+
+    #[test]
+    fn grab_click_is_forwarded_on_initial_grab() {
+        // Given: mouse was NOT released by Escape (initial grab)
+        // Then: click is forwarded to the NES controller
+        assert!(
+            should_forward_grab_click(false),
+            "Initial grab click should be forwarded to the NES"
+        );
+    }
+
+    #[test]
+    fn grab_click_is_discarded_after_escape_release() {
+        // Given: mouse was released by pressing Escape
+        // When: user clicks to re-grab
+        // Then: the click is NOT forwarded (it is silently discarded)
+        assert!(
+            !should_forward_grab_click(true),
+            "Re-grab click after Escape should be silently discarded"
+        );
     }
 }
