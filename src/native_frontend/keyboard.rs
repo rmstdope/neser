@@ -158,19 +158,19 @@ fn adjust_volume(audio: Option<&dyn NesAudio>, delta: f32) {
 /// Maps a [`KeyCode`] to NES/SNES/Power Pad button presses or releases.
 ///
 /// `ports` is the set of NES ports keyboard input should be routed to,
-/// determined by [`keyboard_target_ports`].  P1 keys (WASD etc.) are sent to
-/// every port in `ports`; P2-specific keys (IJKL etc.) are sent to port 2
+/// determined by [`keyboard_target_ports`].  P1 keys (WASD etc.) are sent to the first
+/// port in `ports` (ports.first()); P2-specific keys (IJKL etc.) are sent to port 2
 /// only if 2 is in `ports`.
 fn handle_controller_key(nes: &mut Nes, key_code: KeyCode, pressed: bool, ports: &[u8]) {
     match key_code {
         // ── Player 1: 1/2/3 → Power Pad buttons ──────────────────────────
-        KeyCode::Digit1 => pp_both(nes, PowerPadButton::One, pressed, ports),
-        KeyCode::Digit2 => pp_both(nes, PowerPadButton::Two, pressed, ports),
-        KeyCode::Digit3 => pp_both(nes, PowerPadButton::Three, pressed, ports),
+        KeyCode::Digit1 => pp_p1(nes, PowerPadButton::One, pressed, ports),
+        KeyCode::Digit2 => pp_p1(nes, PowerPadButton::Two, pressed, ports),
+        KeyCode::Digit3 => pp_p1(nes, PowerPadButton::Three, pressed, ports),
 
         // ── Player 1: QWEASD (D-pad / SNES L/R / Power Pad) ──────────────
-        KeyCode::KeyQ => pp_or_snes_both(nes, PowerPadButton::Four, SnesButton::L, pressed, ports),
-        KeyCode::KeyW => pp_or_btn_or_snes_both(
+        KeyCode::KeyQ => pp_or_snes_p1(nes, PowerPadButton::Four, SnesButton::L, pressed, ports),
+        KeyCode::KeyW => pp_or_btn_or_snes_p1(
             nes,
             PowerPadButton::Five,
             Button::Up,
@@ -178,8 +178,8 @@ fn handle_controller_key(nes: &mut Nes, key_code: KeyCode, pressed: bool, ports:
             pressed,
             ports,
         ),
-        KeyCode::KeyE => pp_or_snes_both(nes, PowerPadButton::Six, SnesButton::R, pressed, ports),
-        KeyCode::KeyA => pp_or_btn_or_snes_both(
+        KeyCode::KeyE => pp_or_snes_p1(nes, PowerPadButton::Six, SnesButton::R, pressed, ports),
+        KeyCode::KeyA => pp_or_btn_or_snes_p1(
             nes,
             PowerPadButton::Seven,
             Button::Left,
@@ -187,7 +187,7 @@ fn handle_controller_key(nes: &mut Nes, key_code: KeyCode, pressed: bool, ports:
             pressed,
             ports,
         ),
-        KeyCode::KeyS => pp_or_btn_or_snes_both(
+        KeyCode::KeyS => pp_or_btn_or_snes_p1(
             nes,
             PowerPadButton::Eight,
             Button::Down,
@@ -195,7 +195,7 @@ fn handle_controller_key(nes: &mut Nes, key_code: KeyCode, pressed: bool, ports:
             pressed,
             ports,
         ),
-        KeyCode::KeyD => pp_or_btn_or_snes_both(
+        KeyCode::KeyD => pp_or_btn_or_snes_p1(
             nes,
             PowerPadButton::Nine,
             Button::Right,
@@ -205,23 +205,21 @@ fn handle_controller_key(nes: &mut Nes, key_code: KeyCode, pressed: bool, ports:
         ),
 
         // ── Player 1: ZXC → Power Pad ────────────────────────────────────
-        KeyCode::KeyZ => pp_both(nes, PowerPadButton::Ten, pressed, ports),
-        KeyCode::KeyX => pp_both(nes, PowerPadButton::Eleven, pressed, ports),
-        KeyCode::KeyC => pp_both(nes, PowerPadButton::Twelve, pressed, ports),
+        KeyCode::KeyZ => pp_p1(nes, PowerPadButton::Ten, pressed, ports),
+        KeyCode::KeyX => pp_p1(nes, PowerPadButton::Eleven, pressed, ports),
+        KeyCode::KeyC => pp_p1(nes, PowerPadButton::Twelve, pressed, ports),
 
         // ── Player 1: R/T = A/B (joypad or SNES Y/X) ─────────────────────
-        KeyCode::KeyR => btn_or_snes_both(nes, Button::A, SnesButton::Y, pressed, ports),
-        KeyCode::KeyT => btn_or_snes_both(nes, Button::B, SnesButton::X, pressed, ports),
+        KeyCode::KeyR => btn_or_snes_p1(nes, Button::A, SnesButton::Y, pressed, ports),
+        KeyCode::KeyT => btn_or_snes_p1(nes, Button::B, SnesButton::X, pressed, ports),
 
         // ── Player 1: F/G = SNES B/A only ────────────────────────────────
-        KeyCode::KeyF => snes_both(nes, SnesButton::B, pressed, ports),
-        KeyCode::KeyG => snes_both(nes, SnesButton::A, pressed, ports),
+        KeyCode::KeyF => snes_p1(nes, SnesButton::B, pressed, ports),
+        KeyCode::KeyG => snes_p1(nes, SnesButton::A, pressed, ports),
 
         // ── Player 1: 4/5 = Select/Start ─────────────────────────────────
-        KeyCode::Digit4 => {
-            btn_or_snes_both(nes, Button::Select, SnesButton::Select, pressed, ports)
-        }
-        KeyCode::Digit5 => btn_or_snes_both(nes, Button::Start, SnesButton::Start, pressed, ports),
+        KeyCode::Digit4 => btn_or_snes_p1(nes, Button::Select, SnesButton::Select, pressed, ports),
+        KeyCode::Digit5 => btn_or_snes_p1(nes, Button::Start, SnesButton::Start, pressed, ports),
 
         // ── Player 2: 7/8 → Power Pad; 9 = PP3/Select; 0 = Start ─────────
         KeyCode::Digit7 => pp_p2(nes, PowerPadButton::One, pressed, ports),
@@ -253,43 +251,37 @@ fn handle_controller_key(nes: &mut Nes, key_code: KeyCode, pressed: bool, ports:
     }
 }
 
-// ── Dual-port (P1 + P2) button helpers ───────────────────────────────────────
+// ── Player-1 button helpers (route to the primary keyboard port) ───────────────────────────────────────
 
-fn pp_both(nes: &mut Nes, pp: PowerPadButton, pressed: bool, ports: &[u8]) {
-    for &port in ports {
+fn pp_p1(nes: &mut Nes, pp: PowerPadButton, pressed: bool, ports: &[u8]) {
+    if let Some(&port) = ports.first() {
         nes.set_power_pad_button(port, pp, pressed);
     }
 }
 
-fn snes_both(nes: &mut Nes, snes: SnesButton, pressed: bool, ports: &[u8]) {
-    for &port in ports {
+fn snes_p1(nes: &mut Nes, snes: SnesButton, pressed: bool, ports: &[u8]) {
+    if let Some(&port) = ports.first() {
         nes.set_snes_button(port, snes, pressed);
     }
 }
 
-fn btn_or_snes_both(nes: &mut Nes, btn: Button, snes: SnesButton, pressed: bool, ports: &[u8]) {
-    for &port in ports {
+fn btn_or_snes_p1(nes: &mut Nes, btn: Button, snes: SnesButton, pressed: bool, ports: &[u8]) {
+    if let Some(&port) = ports.first() {
         if !nes.set_snes_button(port, snes, pressed) {
             nes.set_button(port, btn, pressed);
         }
     }
 }
 
-fn pp_or_snes_both(
-    nes: &mut Nes,
-    pp: PowerPadButton,
-    snes: SnesButton,
-    pressed: bool,
-    ports: &[u8],
-) {
-    for &port in ports {
+fn pp_or_snes_p1(nes: &mut Nes, pp: PowerPadButton, snes: SnesButton, pressed: bool, ports: &[u8]) {
+    if let Some(&port) = ports.first() {
         if !nes.set_power_pad_button(port, pp, pressed) {
             nes.set_snes_button(port, snes, pressed);
         }
     }
 }
 
-fn pp_or_btn_or_snes_both(
+fn pp_or_btn_or_snes_p1(
     nes: &mut Nes,
     pp: PowerPadButton,
     btn: Button,
@@ -297,7 +289,7 @@ fn pp_or_btn_or_snes_both(
     pressed: bool,
     ports: &[u8],
 ) {
-    for &port in ports {
+    if let Some(&port) = ports.first() {
         if !nes.set_power_pad_button(port, pp, pressed) && !nes.set_snes_button(port, snes, pressed)
         {
             nes.set_button(port, btn, pressed);
@@ -930,24 +922,32 @@ mod tests {
         assert_ne!(buttons(&nes, 2) & BIT_START, 0, "0 should set Start on P2");
     }
 
-    // ── Shared keys target both ports ─────────────────────────────────────────
+    // ── P1 keys target port 1 only (not port 2) when no gamepad ─────────────
 
     #[test]
-    fn test_w_targets_both_p1_and_p2() {
+    fn test_w_targets_port1_only_when_no_gamepad() {
         let mut nes = make_nes();
-        let mut state = make_state();
+        let mut state = make_state(); // gamepad_count = 0
         handle_key_pressed(&mut nes, KeyCode::KeyW, &mut state, None);
         assert_ne!(buttons(&nes, 1) & BIT_UP, 0, "W should set Up on P1");
-        assert_ne!(buttons(&nes, 2) & BIT_UP, 0, "W should also set Up on P2");
+        assert_eq!(
+            buttons(&nes, 2) & BIT_UP,
+            0,
+            "W should NOT set Up on P2 (port 2 has dedicated IJKL keys)"
+        );
     }
 
     #[test]
-    fn test_s_targets_both_p1_and_p2() {
+    fn test_s_targets_port1_only_when_no_gamepad() {
         let mut nes = make_nes();
         let mut state = make_state();
         handle_key_pressed(&mut nes, KeyCode::KeyS, &mut state, None);
-        assert_ne!(buttons(&nes, 1) & BIT_DOWN, 0);
-        assert_ne!(buttons(&nes, 2) & BIT_DOWN, 0);
+        assert_ne!(buttons(&nes, 1) & BIT_DOWN, 0, "S should set Down on P1");
+        assert_eq!(
+            buttons(&nes, 2) & BIT_DOWN,
+            0,
+            "S should NOT set Down on P2"
+        );
     }
 
     // ── Player 2 key release ──────────────────────────────────────────────────

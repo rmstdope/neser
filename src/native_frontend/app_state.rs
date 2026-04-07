@@ -259,7 +259,7 @@ F10: Step over\n\
 F11: Step into";
 
     let controllers = match gamepad_count {
-        0 => "\n\nController (Port 1 + Port 2 via keyboard)\n\
+        0 => "\n\nController (Port 1 via keyboard)\n\
 W/A/S/D: D-Pad\n\
 R: A\n\
 T: B\n\
@@ -458,6 +458,23 @@ mod tests {
         assert!(
             text.contains("Ctrl+R"),
             "help overlay should mention Ctrl+R"
+        );
+    }
+
+    #[test]
+    fn test_help_overlay_wasd_labeled_as_port1_only_when_no_gamepad() {
+        // Given: no gamepads connected
+        let state = NativeAppState {
+            help_overlay_visible: true,
+            gamepad_count: 0,
+            ..NativeAppState::default()
+        };
+        // When: help overlay is generated
+        let text = state.overlay_text(&make_nes(), None).unwrap();
+        // Then: WASD is labelled as Port 1 only — not "Port 1 + Port 2"
+        assert!(
+            !text.contains("Port 1 + Port 2"),
+            "WASD should not be labelled 'Port 1 + Port 2'; each keyboard set controls one port, got:\n{text}"
         );
     }
 
