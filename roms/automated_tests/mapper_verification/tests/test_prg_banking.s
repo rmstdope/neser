@@ -19,6 +19,8 @@
 .endif
 
 ; Signature read address: start of banked window
+
+; Signature read address: start of banked window
 .ifndef BANK_WINDOW_OVERRIDE
     .if PRG_BANK_SIZE = 4
         BANK_WINDOW = $8000         ; 4KB: $8000-$8FFF (slot 0)
@@ -315,11 +317,14 @@ test_title_string:
         assert_a_eq 1
         pass_test
 
+        ; Skip bank 2 test when slot 0 has only 2 switchable banks (e.g. mapper 99 40KB)
+        .ifndef PRG_8K_SLOT0_BANKS_2
         start_test 4, "R6 Bank 2"
         select_prg_bank 0, 2
         lda BANK_WINDOW + 1
         assert_a_eq 2
         pass_test
+        .endif
 
         ; Optional second 8KB slot test for mappers with two switchable windows.
         .ifndef SKIP_SECOND_PRG_8K_SLOT_TESTS

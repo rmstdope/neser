@@ -14,6 +14,13 @@
 
 .importzp ppumask_shadow
 
+; Number of CHR banks at configured granularity (computed early for guards)
+.if CHR_BANK_SIZE > 0
+    CHR_NUM_BANKS = CHR_ROM_8K * (8 / CHR_BANK_SIZE)
+.else
+    CHR_NUM_BANKS = 0
+.endif
+
 .ifndef CHR_1K_LINEAR
     CHR_1K_LINEAR = 0
 .endif
@@ -115,6 +122,7 @@ chr_read_val: .res 1
         assert_a_eq 1
         pass_test
 
+    .ifndef SKIP_CHR_BANK_2_3_TESTS
         start_test 5, "CHR Bank 2"
         select_chr_bank 0, 2
         lda #$00
@@ -130,6 +138,7 @@ chr_read_val: .res 1
         jsr read_chr_byte
         assert_a_eq 3
         pass_test
+    .endif
 
         ; Switch back to bank 0 for console (has ASCII font)
         select_chr_bank 0, 0
@@ -385,24 +394,19 @@ run_chr_banking = run_tests
 ; at offset 0 of each CHR bank
 ; ============================================================
 
-; Number of CHR banks at configured granularity
-.if CHR_BANK_SIZE > 0
-    CHR_NUM_BANKS = CHR_ROM_8K * (8 / CHR_BANK_SIZE)
-.else
-    CHR_NUM_BANKS = 0
-.endif
-
 .segment "CHR_SIG0"
     .byte $B6, 0, $FF, $6B
 
 .segment "CHR_SIG1"
     .byte $B6, 1, $FE, $6B
 
+.if CHR_NUM_BANKS > 2
 .segment "CHR_SIG2"
     .byte $B6, 2, $FD, $6B
 
 .segment "CHR_SIG3"
     .byte $B6, 3, $FC, $6B
+.endif
 
 .if CHR_NUM_BANKS > 4
 .segment "CHR_SIG4"
