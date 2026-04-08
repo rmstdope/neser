@@ -348,18 +348,21 @@ fn run_native_frontend(
         .config_mut()
         .apply_rom_timing_mode(rom_timing_mode);
 
-    let mut nes_instance = Nes::new(app_context.clone());
-    nes_instance.insert_cartridge(cart);
-
-    if let Some(actual_rate) = audio_sample_rate {
-        nes_instance.apu().borrow_mut().set_sample_rate(actual_rate);
+    let mut console = emulator::Console::new_nes(app_context.clone());
+    {
+        let emulator::Console::Nes(nes) = &mut console;
+        nes.insert_cartridge(cart);
     }
 
-    nes_instance.reset(false);
+    if let Some(actual_rate) = audio_sample_rate {
+        console.set_audio_sample_rate(actual_rate);
+    }
+
+    console.reset(false);
 
     let tracing = app_context.borrow().config().frontend.tracing;
     let mut event_loop =
-        NativeEventLoop::new(app_context.clone(), nes_instance, audio, tracing, headless);
+        NativeEventLoop::new(app_context.clone(), console, audio, tracing, headless);
 
     // Initialize autorun AFTER reset so checkpoint state restore is not overwritten.
     if autorun_mode != console::AutorunMode::None {

@@ -9,6 +9,7 @@ use crate::autorun::state::AutorunState;
 use crate::console::{AutorunMode, Nes, TimingMode};
 use crate::debugging::Tracing;
 use crate::debugging::control::DebuggerController;
+use crate::emulator::Console;
 use crate::frontend_toasts::{
     gamepad_connected_toast_message, gamepad_disconnected_toast_message, gamepad_init_toast_message,
 };
@@ -31,7 +32,7 @@ use std::time::{Duration, Instant};
 /// Native event loop that runs the NES emulator using winit + glutin.
 pub struct NativeEventLoop {
     app_context: SharedAppContext,
-    nes: Nes,
+    console: Console,
     audio: Option<NativeAudio>,
     tracing: Tracing,
     state: NativeAppState,
@@ -70,7 +71,7 @@ pub struct NativeEventLoop {
 impl NativeEventLoop {
     pub fn new(
         app_context: SharedAppContext,
-        nes: Nes,
+        console: Console,
         audio: Option<NativeAudio>,
         tracing: Tracing,
         headless: bool,
@@ -110,7 +111,7 @@ impl NativeEventLoop {
 
         Self {
             app_context,
-            nes,
+            console,
             audio,
             tracing,
             state: NativeAppState {
@@ -137,6 +138,18 @@ impl NativeEventLoop {
             next_frame_deadline: Instant::now(),
             last_frame_rendered: Instant::now(),
         }
+    }
+
+    /// Extract the inner NES emulator for NES-specific operations.
+    fn nes(&self) -> &Nes {
+        let Console::Nes(nes) = &self.console;
+        nes
+    }
+
+    /// Extract the inner NES emulator mutably for NES-specific operations.
+    fn nes_mut(&mut self) -> &mut Nes {
+        let Console::Nes(nes) = &mut self.console;
+        nes
     }
 
     pub fn run(mut self) -> Result<(), String> {
@@ -186,8 +199,9 @@ impl NativeEventLoop {
 
         let audio = self.audio.take();
         let audio_cell = std::cell::RefCell::new(audio);
+        let Console::Nes(nes) = &mut self.console;
         self.debugger_controller
-            .run_frame(&mut self.nes, &self.tracing, &mut |nes| {
+            .run_frame(nes, &self.tracing, &mut |nes| {
                 if let Some(ref mut audio) = *audio_cell.borrow_mut() {
                     while nes.sample_ready() {
                         if let Some(sample) = nes.get_sample() {
@@ -198,7 +212,7 @@ impl NativeEventLoop {
             });
         self.audio = audio_cell.into_inner();
         self.sync_from_controller();
-        self.nes.clear_ready_to_render();
+        self.console.clear_ready_to_render();
 
         self.handle_autorun_after_frame(autorun_checkpoint_due);
 
@@ -254,7 +268,7 @@ impl NativeEventLoop {
     /// Called once per frame to ensure grab/visibility stay in sync after
     /// cartridge switches, focus changes, or controller hot-swaps.
     fn sync_mouse_grab_state(&mut self) {
-        let has_mouse = mouse::has_any_mouse_controller(&self.nes);
+        let has_mouse = mouse::has_any_mouse_controller(self.nes());
         let should_grab = crate::input::mouse_mapping::should_grab_mouse_input(
             has_mouse,
             self.state.window_focused,
@@ -277,7 +291,7 @@ impl NativeEventLoop {
                     let cy = h as f32 / 2.0;
                     self.state.virtual_cursor = (cx, cy);
                     self.state.last_zapper_position =
-                        mouse::update_mouse_motion(&mut self.nes, cx as i32, cy as i32, w, h);
+                        mouse::update_mouse_motion(self.nes_mut(), cx as i32, cy as i32, w, h);
                 } else {
                     let _ = gl.set_mouse_grab(false);
                     gl.window().set_cursor_visible(true);
@@ -336,7 +350,7 @@ impl NativeEventLoop {
             }
         };
 
-        let app_context = self.nes.app_context().clone();
+        let app_context = self.console.app_context().clone();
         let cartridge = match crate::cartridge::Cartridge::load_from_file(
             &rom_bytes,
             rom_path,
@@ -357,9 +371,9 @@ impl NativeEventLoop {
                 .apply_rom_timing_mode(rom_timing)
         };
 
-        self.nes.insert_cartridge(cartridge);
+        self.nes_mut().insert_cartridge(cartridge);
         crate::console::log_hardware_selection(&app_context, applied);
-        self.nes.reset(false);
+        self.console.reset(false);
     }
 
     // ── Autorun ──────────────────────────────────────────────────────────────
@@ -381,7 +395,7 @@ impl NativeEventLoop {
             if let Some(restore) = pending {
                 let save_state = crate::console::SaveState::from_bytes(&restore.state_bytes)
                     .map_err(|e| format!("Failed to deserialize checkpoint state: {e}"))?;
-                self.nes
+                self.nes_mut()
                     .load_state(&save_state)
                     .map_err(|e| format!("Failed to restore checkpoint state: {e}"))?;
             }
@@ -404,8 +418,8 @@ impl NativeEventLoop {
 
         if autorun_state.mode() == AutorunMode::Playback || autorun_state.is_extending_playback() {
             if let Some(frame) = autorun_state.next_playback_frame() {
-                self.nes.set_joypad_button_states(1, frame.player1);
-                self.nes.set_joypad_button_states(2, frame.player2);
+                self.console.set_joypad_button_states(1, frame.player1);
+                self.console.set_joypad_button_states(2, frame.player2);
                 return Ok(true);
             }
 
@@ -430,8 +444,8 @@ impl NativeEventLoop {
             && !autorun_state.is_extending_playback()
             && !autorun_state.current_frame_was_prerecorded()
         {
-            let player1 = self.nes.get_joypad_button_states(1);
-            let player2 = self.nes.get_joypad_button_states(2);
+            let player1 = self.console.get_joypad_button_states(1);
+            let player2 = self.console.get_joypad_button_states(2);
             return autorun_state.record_frame(player1, player2);
         }
         false
@@ -442,8 +456,8 @@ impl NativeEventLoop {
     /// Captures checkpoints in record mode and verifies CRCs in playback mode.
     fn handle_autorun_after_frame(&mut self, checkpoint_due: bool) {
         if checkpoint_due {
-            let crc = self.nes.ppu().borrow().screen_buffer().crc32();
-            let state_bytes = self.nes.save_state().to_bytes().unwrap_or_default();
+            let crc = self.console.screen_crc32();
+            let state_bytes = self.console.save_state_bytes().unwrap_or_default();
             if let Some(ref mut autorun_state) = self.autorun_state {
                 autorun_state.record_checkpoint(crc, state_bytes);
             }
@@ -453,7 +467,7 @@ impl NativeEventLoop {
             && (autorun_state.mode() == AutorunMode::Playback
                 || autorun_state.is_extending_playback())
         {
-            let crc = self.nes.ppu().borrow().screen_buffer().crc32();
+            let crc = self.console.screen_crc32();
             if let Some(matched) = autorun_state.check_playback_checkpoint(crc) {
                 let current_frame = autorun_state.current_frame_index();
                 let total_frames = autorun_state.total_frames();
@@ -480,7 +494,7 @@ impl NativeEventLoop {
 
         let mismatches = autorun_state.crc_mismatches();
         let verified = autorun_state.total_checkpoints_verified();
-        let crc = self.nes.ppu().borrow().screen_buffer().crc32();
+        let crc = self.console.screen_crc32();
 
         if mismatches == 0 {
             crate::debugging::log_info(format!(
@@ -505,8 +519,8 @@ impl NativeEventLoop {
             return Ok(());
         }
 
-        let crc = self.nes.ppu().borrow().screen_buffer().crc32();
-        let state_bytes = self.nes.save_state().to_bytes().unwrap_or_default();
+        let crc = self.console.screen_crc32();
+        let state_bytes = self.console.save_state_bytes().unwrap_or_default();
 
         autorun_state.save_with_final_checkpoint(crc, state_bytes)?;
         crate::debugging::log_info(format!(
@@ -532,7 +546,7 @@ impl NativeEventLoop {
 
             let checkpoint_due = self.handle_autorun_after_input();
 
-            crate::autorun::headless_playback::run_one_frame(&mut self.nes);
+            crate::autorun::headless_playback::run_one_frame(self.nes_mut());
 
             self.handle_autorun_after_frame(checkpoint_due);
         }
@@ -551,9 +565,8 @@ impl ApplicationHandler for NativeEventLoop {
                 if !self.initialized {
                     self.initialize_audio();
                     self.sync_audio_state();
-                    let watches = self
-                        .debugger_controller
-                        .load_debug_state_from_file(&self.nes);
+                    let Console::Nes(nes) = &self.console;
+                    let watches = self.debugger_controller.load_debug_state_from_file(nes);
                     if let Some(ref mut gl) = self.gl_wrapper {
                         gl.set_watch_addresses(watches);
                     }
@@ -583,9 +596,10 @@ impl ApplicationHandler for NativeEventLoop {
                     .as_ref()
                     .map(|gl| gl.watch_addresses())
                     .unwrap_or_default();
+                let Console::Nes(nes) = &self.console;
                 self.debugger_controller
-                    .save_debug_state_to_file(&self.nes, &watches);
-                if let Err(e) = self.nes.save_ram() {
+                    .save_debug_state_to_file(nes, &watches);
+                if let Err(e) = self.console.save_ram() {
                     eprintln!("Failed to save battery-backed RAM on exit: {e}");
                 }
                 event_loop.exit();
@@ -651,12 +665,9 @@ impl ApplicationHandler for NativeEventLoop {
                     let fullscreen_before = self.state.fullscreen;
                     let audio_ref: Option<&dyn NesAudio> =
                         self.audio.as_ref().map(|a| a as &dyn NesAudio);
-                    let outcome = keyboard::handle_key_pressed(
-                        &mut self.nes,
-                        key_code,
-                        &mut self.state,
-                        audio_ref,
-                    );
+                    let Console::Nes(nes) = &mut self.console;
+                    let outcome =
+                        keyboard::handle_key_pressed(nes, key_code, &mut self.state, audio_ref);
                     match outcome {
                         KeyOutcome::Quit => {
                             if let Err(e) = self.finish_recording() {
@@ -667,9 +678,10 @@ impl ApplicationHandler for NativeEventLoop {
                                 .as_ref()
                                 .map(|gl| gl.watch_addresses())
                                 .unwrap_or_default();
+                            let Console::Nes(nes) = &self.console;
                             self.debugger_controller
-                                .save_debug_state_to_file(&self.nes, &watches);
-                            if let Err(e) = self.nes.save_ram() {
+                                .save_debug_state_to_file(nes, &watches);
+                            if let Err(e) = self.console.save_ram() {
                                 eprintln!("Failed to save battery-backed RAM on quit: {e}");
                             }
                             event_loop.exit();
@@ -680,19 +692,22 @@ impl ApplicationHandler for NativeEventLoop {
                                 let toast = crate::rendering::gl_backend::shader_toast_message(
                                     preset_name.as_deref(),
                                 );
-                                self.nes.app_context().borrow_mut().add_toast(toast);
+                                self.console.app_context().borrow_mut().add_toast(toast);
                             }
                         }
                         KeyOutcome::ToggleDebugger => {
-                            self.debugger_controller.toggle_debugger(&self.nes);
+                            let Console::Nes(nes) = &self.console;
+                            self.debugger_controller.toggle_debugger(nes);
                             self.sync_from_controller();
                         }
                         KeyOutcome::StepOver => {
-                            self.debugger_controller.step_over(&mut self.nes);
+                            let Console::Nes(nes) = &mut self.console;
+                            self.debugger_controller.step_over(nes);
                             self.sync_from_controller();
                         }
                         KeyOutcome::StepInto => {
-                            self.debugger_controller.step_into(&mut self.nes);
+                            let Console::Nes(nes) = &mut self.console;
+                            self.debugger_controller.step_into(nes);
                             self.sync_from_controller();
                         }
                         KeyOutcome::SwitchCartridge(path) => {
@@ -714,8 +729,9 @@ impl ApplicationHandler for NativeEventLoop {
                         }
                     }
                 } else {
+                    let Console::Nes(nes) = &mut self.console;
                     keyboard::handle_key_released(
-                        &mut self.nes,
+                        nes,
                         key_code,
                         self.state.gamepad_count,
                         self.state.four_score_enabled,
@@ -748,7 +764,7 @@ impl ApplicationHandler for NativeEventLoop {
                     gl.handle_mouse_button(button, state);
                 }
 
-                let has_mouse = mouse::has_any_mouse_controller(&self.nes);
+                let has_mouse = mouse::has_any_mouse_controller(self.nes());
 
                 // Left-click grabs immediately so the same click is also forwarded
                 // as a button press (unlike deferring to the next frame, which
@@ -778,7 +794,7 @@ impl ApplicationHandler for NativeEventLoop {
                             let cy = h as f32 / 2.0;
                             self.state.virtual_cursor = (cx, cy);
                             self.state.last_zapper_position = mouse::update_mouse_motion(
-                                &mut self.nes,
+                                self.nes_mut(),
                                 cx as i32,
                                 cy as i32,
                                 w,
@@ -802,7 +818,7 @@ impl ApplicationHandler for NativeEventLoop {
                     };
                     if let Some(btn) = btn {
                         mouse::update_mouse_button(
-                            &mut self.nes,
+                            self.nes_mut(),
                             btn,
                             state == ElementState::Pressed,
                         );
@@ -832,7 +848,7 @@ impl ApplicationHandler for NativeEventLoop {
                     should_use_manual_frame_throttle(self.vsync_enabled, self.state.window_focused);
                 let skip_emulation = if using_manual_throttle {
                     let timing_mode = self
-                        .nes
+                        .console
                         .app_context()
                         .borrow()
                         .config()
@@ -865,13 +881,11 @@ impl ApplicationHandler for NativeEventLoop {
                 // Render and apply debugger UI actions
                 let action = if let Some(ref mut gl) = self.gl_wrapper {
                     gl.update_breakpoints(self.debugger_controller.breakpoints());
-                    let overlay = self
-                        .state
-                        .overlay_text(&self.nes, self.autorun_state.as_ref());
-                    let crosshair =
-                        mouse::zapper_crosshair(&self.nes, self.state.last_zapper_position);
+                    let Console::Nes(nes) = &self.console;
+                    let overlay = self.state.overlay_text(nes, self.autorun_state.as_ref());
+                    let crosshair = mouse::zapper_crosshair(nes, self.state.last_zapper_position);
                     gl.render(
-                        &self.nes,
+                        nes,
                         self.state.debugger_open,
                         overlay.as_deref(),
                         false,
@@ -880,8 +894,10 @@ impl ApplicationHandler for NativeEventLoop {
                 } else {
                     Default::default()
                 };
-                self.debugger_controller
-                    .apply_ui_action(&mut self.nes, action);
+                {
+                    let Console::Nes(nes) = &mut self.console;
+                    self.debugger_controller.apply_ui_action(nes, action);
+                }
                 self.sync_from_controller();
             }
 
@@ -909,11 +925,11 @@ impl ApplicationHandler for NativeEventLoop {
                 .map(|gl| gl.window_size())
                 .unwrap_or((320, 240));
 
-            if self.nes.has_snes_mouse() && !mouse::has_zapper(&self.nes) {
+            if self.nes().has_snes_mouse() && !mouse::has_zapper(self.nes()) {
                 // SNES Mouse: pass raw deltas directly.
                 // Zapper takes precedence — if a Zapper is also connected,
                 // fall through to the virtual-cursor path (matching SDL logic).
-                mouse::apply_snes_mouse_relative_motion(&mut self.nes, dx as i32, dy as i32, w, h);
+                mouse::apply_snes_mouse_relative_motion(self.nes_mut(), dx as i32, dy as i32, w, h);
             } else {
                 // Zapper / Arkanoid: accumulate deltas into a virtual cursor
                 // position clamped to the window, then map to NES coordinates.
@@ -929,7 +945,7 @@ impl ApplicationHandler for NativeEventLoop {
                 self.state.virtual_cursor = (new_vx, new_vy);
 
                 self.state.last_zapper_position =
-                    mouse::update_mouse_motion(&mut self.nes, new_vx as i32, new_vy as i32, w, h);
+                    mouse::update_mouse_motion(self.nes_mut(), new_vx as i32, new_vy as i32, w, h);
             }
         }
     }
@@ -937,7 +953,8 @@ impl ApplicationHandler for NativeEventLoop {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         // Poll gamepad events before requesting redraw.
         if let Some(ref mut gp) = self.gamepad {
-            let changes = gp.process_events(&mut self.nes);
+            let Console::Nes(nes) = &mut self.console;
+            let changes = gp.process_events(nes);
             self.state.gamepad_count = gp.connected_count();
 
             if self.gamepad_init_toast_shown {
@@ -979,7 +996,7 @@ impl ApplicationHandler for NativeEventLoop {
             ) {
                 // Manual frame limiting: advance deadline by target interval.
                 let timing_mode = self
-                    .nes
+                    .console
                     .app_context()
                     .borrow()
                     .config()

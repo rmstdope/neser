@@ -208,6 +208,27 @@ impl Console {
             Console::Nes(nes) => nes.reset(soft_reset),
         }
     }
+
+    /// Access the shared application context (config, ROM database, toasts).
+    pub fn app_context(&self) -> &SharedAppContext {
+        match self {
+            Console::Nes(nes) => nes.app_context(),
+        }
+    }
+
+    /// Save battery-backed RAM to disk (if applicable).
+    pub fn save_ram(&self) -> Result<(), String> {
+        match self {
+            Console::Nes(nes) => nes.save_ram().map_err(|e| e.to_string()),
+        }
+    }
+
+    /// Set the audio output sample rate (Hz) for the emulator's APU.
+    pub fn set_audio_sample_rate(&mut self, rate: f32) {
+        match self {
+            Console::Nes(nes) => nes.apu().borrow_mut().set_sample_rate(rate),
+        }
+    }
 }
 
 fn nes_button_from_id(id: u8) -> Option<crate::input::Button> {
