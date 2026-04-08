@@ -49,8 +49,9 @@ const PRG_RAM_SIZE: usize = (PRG_RAM_END - PRG_RAM_START + 1) as usize;
 const RAM_ENABLE_VALUE: u8 = 0xA3;
 const CIRAM_SIZE: usize = 2 * 1024;
 
-/// Snapshot size: 3 PRG banks + 6 CHR banks + 1 NT select byte + 1 RAM permission
-const SNAPSHOT_SIZE: usize = PRG_REG_COUNT + CHR_REG_COUNT + 1 + 1;
+/// Snapshot size: 3 PRG banks + 6 CHR banks + 1 NT select byte + 1 RAM permission + 2KB CIRAM
+const SNAPSHOT_REGS_SIZE: usize = PRG_REG_COUNT + CHR_REG_COUNT + 1 + 1;
+const SNAPSHOT_SIZE: usize = SNAPSHOT_REGS_SIZE + CIRAM_SIZE;
 
 const DEFAULT_PRG_BANKS: [u8; PRG_REG_COUNT] = [0, 1, 2];
 const DEFAULT_CHR_BANKS: [u8; CHR_REG_COUNT] = [0, 2, 4, 5, 6, 7];
@@ -293,11 +294,12 @@ impl Mapper for TaitoX1005_207Mapper {
         snapshot.extend_from_slice(&self.chr_banks);
         snapshot.push(self.nt_select);
         snapshot.push(self.ram_permission);
+        snapshot.extend_from_slice(&self.ciram);
         snapshot
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        if data.len() < SNAPSHOT_SIZE {
+        if data.len() < SNAPSHOT_REGS_SIZE {
             return;
         }
         self.prg_banks.copy_from_slice(&data[0..PRG_REG_COUNT]);
@@ -305,6 +307,11 @@ impl Mapper for TaitoX1005_207Mapper {
             .copy_from_slice(&data[PRG_REG_COUNT..(PRG_REG_COUNT + CHR_REG_COUNT)]);
         self.nt_select = data[PRG_REG_COUNT + CHR_REG_COUNT];
         self.ram_permission = data[PRG_REG_COUNT + CHR_REG_COUNT + 1];
+        // Restore CIRAM if present (backwards-compatible with legacy snapshots)
+        if data.len() >= SNAPSHOT_SIZE {
+            self.ciram
+                .copy_from_slice(&data[SNAPSHOT_REGS_SIZE..SNAPSHOT_REGS_SIZE + CIRAM_SIZE]);
+        }
         self.apply_banks();
     }
 
@@ -382,6 +389,15 @@ mod tests {
             NametableLayout::Horizontal,
         ));
         assert!(result.is_ok(), "Mapper 207 must be creatable via factory");
+    }
+
+    #[test]
+    fn mapper_207_is_in_supported_mappers_list() {
+        use crate::cartridge::mapper::supported_mappers;
+        assert!(
+            supported_mappers().contains(&207),
+            "Mapper 207 must be in the SUPPORTED_MAPPERS list"
+        );
     }
 
     // -------------------------------------------------------------------------
@@ -719,6 +735,48 @@ mod tests {
             mapper2.read_nametable(0x2000),
             Some(0xBB),
             "NT0 must use bank B after restore"
+        );
+    }
+
+    #[test]
+    fn snapshot_restore_preserves_ciram_contents() {
+        let mut mapper = make_mapper();
+
+        // Put NT0/NT1 on bank A, NT2/NT3 on bank B
+        mapper.write_prg(0x7EF0, 0x00); // M=0 → NT0/NT1 bank A
+        mapper.write_prg(0x7EF1, 0x80); // M=1 → NT2/NT3 bank B
+
+        // Write distinct data to each CIRAM bank
+        mapper.write_nametable(0x2000, 0xAA); // bank A offset 0
+        mapper.write_nametable(0x2001, 0xAB); // bank A offset 1
+        mapper.write_nametable(0x2800, 0xCC); // bank B offset 0
+        mapper.write_nametable(0x2801, 0xCD); // bank B offset 1
+
+        let reg_snapshot = mapper.registers_snapshot();
+
+        let mut mapper2 = make_mapper();
+        mapper2.restore_registers(&reg_snapshot);
+
+        // CIRAM contents must survive the round-trip
+        assert_eq!(
+            mapper2.read_nametable(0x2000),
+            Some(0xAA),
+            "bank A offset 0 must be preserved after restore"
+        );
+        assert_eq!(
+            mapper2.read_nametable(0x2001),
+            Some(0xAB),
+            "bank A offset 1 must be preserved after restore"
+        );
+        assert_eq!(
+            mapper2.read_nametable(0x2800),
+            Some(0xCC),
+            "bank B offset 0 must be preserved after restore"
+        );
+        assert_eq!(
+            mapper2.read_nametable(0x2801),
+            Some(0xCD),
+            "bank B offset 1 must be preserved after restore"
         );
     }
 
