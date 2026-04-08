@@ -5,6 +5,7 @@ pub(crate) mod mapper103;
 pub(crate) mod mapper104;
 pub(crate) mod mapper106;
 pub(crate) mod mapper107;
+pub(crate) mod mapper108;
 pub(crate) mod mapper110;
 pub(crate) mod mapper111;
 pub(crate) mod mapper112;
