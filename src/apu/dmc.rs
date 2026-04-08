@@ -104,10 +104,8 @@ impl Dmc {
     pub fn new_with_tv_system(tv_system: TimingMode) -> Self {
         let timer_period = match tv_system {
             TimingMode::Ntsc => DMC_RATE_TABLE_NTSC[0],
-            TimingMode::Pal => DMC_RATE_TABLE_PAL[0],
-            TimingMode::MultiRegion | TimingMode::Dendy | TimingMode::Unknown(_) => {
-                DMC_RATE_TABLE_NTSC[0]
-            }
+            TimingMode::Pal | TimingMode::Dendy => DMC_RATE_TABLE_PAL[0],
+            TimingMode::MultiRegion | TimingMode::Unknown(_) => DMC_RATE_TABLE_NTSC[0],
         };
 
         Dmc {
@@ -218,10 +216,8 @@ impl Dmc {
         let rate_index = (value & 0x0F) as usize;
         self.timer_period = match self.tv_system {
             TimingMode::Ntsc => DMC_RATE_TABLE_NTSC[rate_index],
-            TimingMode::Pal => DMC_RATE_TABLE_PAL[rate_index],
-            TimingMode::MultiRegion | TimingMode::Dendy | TimingMode::Unknown(_) => {
-                DMC_RATE_TABLE_NTSC[rate_index]
-            }
+            TimingMode::Pal | TimingMode::Dendy => DMC_RATE_TABLE_PAL[rate_index],
+            TimingMode::MultiRegion | TimingMode::Unknown(_) => DMC_RATE_TABLE_NTSC[rate_index],
         };
 
         trace_apu!(2; "dmc write_flags_and_rate value=0x{:02X} irq_enabled={} loop={} rate_index={} period={}", value, self.irq_enabled, self.loop_flag, rate_index, self.timer_period);

@@ -118,6 +118,8 @@ pub enum TimingMode {
 impl TimingMode {
     const CPU_CLOCK_NTSC: f32 = 1_789_773.0;
     const CPU_CLOCK_PAL: f32 = 1_662_607.0;
+    /// Dendy master clock: 26.601712 MHz / 15 CPU divider = 1,773,447.5 Hz, rounded to 1,773,448.
+    const CPU_CLOCK_DENDY: f32 = 1_773_448.0;
     const NTSC_SCANLINES: u16 = 262;
     const PAL_SCANLINES: u16 = 312;
     const DOTS_PER_SCANLINE: u16 = 341;
@@ -155,7 +157,8 @@ impl TimingMode {
         match self {
             Self::Ntsc => Self::Ntsc,
             Self::Pal => Self::Pal,
-            Self::MultiRegion | Self::Dendy | Self::Unknown(_) => Self::Unknown(0),
+            Self::Dendy => Self::Dendy,
+            Self::MultiRegion | Self::Unknown(_) => Self::Unknown(0),
         }
     }
 
@@ -164,16 +167,17 @@ impl TimingMode {
     }
 
     pub fn cpu_clock_hz(self) -> f32 {
-        if matches!(self, Self::Pal) {
-            Self::CPU_CLOCK_PAL
-        } else {
-            Self::CPU_CLOCK_NTSC
+        match self {
+            Self::Pal => Self::CPU_CLOCK_PAL,
+            Self::Dendy => Self::CPU_CLOCK_DENDY,
+            _ => Self::CPU_CLOCK_NTSC,
         }
     }
 
     pub fn frame_rate_hz(self) -> f64 {
         let cpu_clock = f64::from(self.cpu_clock_hz());
-        let ppu_cycles_per_frame = if matches!(self, Self::Pal) {
+        // Dendy and PAL both use 312 scanlines with no odd-frame dot skip.
+        let ppu_cycles_per_frame = if matches!(self, Self::Pal | Self::Dendy) {
             f64::from(Self::PAL_SCANLINES) * f64::from(Self::DOTS_PER_SCANLINE)
         } else {
             let even_ppu_cycles =
@@ -186,11 +190,13 @@ impl TimingMode {
     }
 
     pub fn ppu_cycles_per_cpu_cycle(self) -> f64 {
+        // PAL: 16 CPU divider, 5 PPU divider from 21.47727 MHz master → 3.2
+        // Dendy: 15 CPU divider, 5 PPU divider from 26.601712 MHz master → 3.0 (same as NTSC)
         if matches!(self, Self::Pal) { 3.2 } else { 3.0 }
     }
 
     pub fn scanlines_per_frame(self) -> u16 {
-        if matches!(self, Self::Pal) {
+        if matches!(self, Self::Pal | Self::Dendy) {
             Self::PAL_SCANLINES
         } else {
             Self::NTSC_SCANLINES
@@ -863,6 +869,40 @@ mod tests {
         assert_eq!(TimingMode::MultiRegion.header_value(), 0x02);
         assert_eq!(TimingMode::Dendy.header_value(), 0x03);
         assert_eq!(TimingMode::Unknown(0x0A).header_value(), 0x0A);
+    }
+
+    #[test]
+    fn timing_mode_dendy_cpu_clock_hz_matches_nesdev_spec() {
+        // Dendy master clock: 26.601712 MHz / 15 = 1,773,447.5 Hz
+        // NESdev rounds to 1,773,448 Hz
+        assert_eq!(TimingMode::Dendy.cpu_clock_hz(), 1_773_448.0);
+    }
+
+    #[test]
+    fn timing_mode_dendy_scanlines_per_frame_is_312_like_pal() {
+        assert_eq!(TimingMode::Dendy.scanlines_per_frame(), 312);
+    }
+
+    #[test]
+    fn timing_mode_dendy_ppu_cycles_per_cpu_cycle_is_3_like_ntsc() {
+        // Dendy PPU runs at master/5, CPU at master/15: ratio = 15/5 = 3.0
+        assert_eq!(TimingMode::Dendy.ppu_cycles_per_cpu_cycle(), 3.0);
+    }
+
+    #[test]
+    fn timing_mode_dendy_normalize_returns_dendy_not_unknown() {
+        assert_eq!(
+            TimingMode::Dendy.normalize_rom_timing_mode(),
+            TimingMode::Dendy
+        );
+    }
+
+    #[test]
+    fn timing_mode_dendy_differs_from_ntsc_cpu_clock() {
+        assert_ne!(
+            TimingMode::Dendy.cpu_clock_hz(),
+            TimingMode::Ntsc.cpu_clock_hz()
+        );
     }
 
     #[test]

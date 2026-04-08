@@ -42,6 +42,7 @@ pub fn hardware_mode_toast_message(
             let timing = match model {
                 crate::console::HardwareModel::NesNtsc => "NTSC",
                 crate::console::HardwareModel::NesPal => "PAL",
+                crate::console::HardwareModel::Dendy => "Dendy",
             };
             if four_score_enabled {
                 format!("Hardware: NES {} (Four Score)", timing)
@@ -66,7 +67,8 @@ fn tv_system_toast_label(tv_system: TimingMode) -> &'static str {
     match tv_system {
         TimingMode::Ntsc => "NTSC",
         TimingMode::Pal => "PAL",
-        TimingMode::MultiRegion | TimingMode::Dendy | TimingMode::Unknown(_) => "NTSC",
+        TimingMode::Dendy => "Dendy",
+        TimingMode::MultiRegion | TimingMode::Unknown(_) => "NTSC",
     }
 }
 
@@ -120,6 +122,36 @@ mod tests {
     fn emulator_timing_toast_uses_pal_label() {
         let message = emulator_timing_toast_message(TimingMode::Pal);
         assert_eq!(message, "Emulator timing: PAL");
+    }
+
+    #[test]
+    fn emulator_timing_toast_uses_dendy_label() {
+        let message = emulator_timing_toast_message(TimingMode::Dendy);
+        assert_eq!(message, "Emulator timing: Dendy");
+    }
+
+    #[test]
+    fn hardware_mode_toast_nes_dendy() {
+        use crate::console::HardwareModel;
+        let message = hardware_mode_toast_message(
+            HardwareMode::Nes,
+            HardwareModel::Dendy,
+            ExpansionPort::None,
+            false,
+        );
+        assert_eq!(message, "Hardware: NES Dendy");
+    }
+
+    #[test]
+    fn hardware_mode_toast_nes_dendy_with_four_score() {
+        use crate::console::HardwareModel;
+        let message = hardware_mode_toast_message(
+            HardwareMode::Nes,
+            HardwareModel::Dendy,
+            ExpansionPort::None,
+            true,
+        );
+        assert_eq!(message, "Hardware: NES Dendy (Four Score)");
     }
 
     #[test]

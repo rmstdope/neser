@@ -73,10 +73,8 @@ impl Noise {
     pub fn new_with_tv_system(tv_system: TimingMode) -> Self {
         let timer_period = match tv_system {
             TimingMode::Ntsc => NOISE_PERIOD_TABLE_NTSC[0],
-            TimingMode::Pal => NOISE_PERIOD_TABLE_PAL[0],
-            TimingMode::MultiRegion | TimingMode::Dendy | TimingMode::Unknown(_) => {
-                NOISE_PERIOD_TABLE_NTSC[0]
-            }
+            TimingMode::Pal | TimingMode::Dendy => NOISE_PERIOD_TABLE_PAL[0],
+            TimingMode::MultiRegion | TimingMode::Unknown(_) => NOISE_PERIOD_TABLE_NTSC[0],
         };
 
         Noise {
@@ -166,8 +164,8 @@ impl Noise {
         let period_index = (value & 0x0F) as usize;
         self.timer_period = match self.tv_system {
             TimingMode::Ntsc => NOISE_PERIOD_TABLE_NTSC[period_index],
-            TimingMode::Pal => NOISE_PERIOD_TABLE_PAL[period_index],
-            TimingMode::MultiRegion | TimingMode::Dendy | TimingMode::Unknown(_) => {
+            TimingMode::Pal | TimingMode::Dendy => NOISE_PERIOD_TABLE_PAL[period_index],
+            TimingMode::MultiRegion | TimingMode::Unknown(_) => {
                 NOISE_PERIOD_TABLE_NTSC[period_index]
             }
         };

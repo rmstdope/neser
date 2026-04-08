@@ -178,7 +178,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Config::print_help();
             return Ok(());
         }
-        ParseResult::Config(c) => c,
+        ParseResult::Config(c) => *c,
     };
 
     let app_context = Rc::new(RefCell::new(AppContext::new_with_config(parsed_config)));
