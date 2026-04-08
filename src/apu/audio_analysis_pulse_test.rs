@@ -975,10 +975,15 @@ mod tests {
 
     #[test]
     fn test_pulse_sweep_negate_underflow_differs_between_channels() {
-        // Verify that negate underflow can mute Pulse 1 while Pulse 2 remains audible.
+        // Verify that ones' complement (pulse 1) and two's complement (pulse 2)
+        // produce different target periods.
         //
-        // With timer=9 and shift=3, change=1. Pulse 1 target=7 (<8) mutes,
-        // Pulse 2 target=8 (not muted).
+        // With timer=9 and shift=3, change=1:
+        //   Pulse 1 target = 9 - 1 - 1 = 7 (ones' complement)
+        //   Pulse 2 target = 9 - 1 = 8 (two's complement)
+        //
+        // Per real NES hardware, negate mode never mutes via the target > $7FF check,
+        // so both channels are audible. They differ only in their computed target.
         let timer = 0x0009;
         let period_samples = 16 * (timer as usize + 1);
 
@@ -1008,17 +1013,24 @@ mod tests {
         write_pulse_sweep(&mut device1, PulseChannel::Pulse1, 0x8B);
         write_pulse_sweep(&mut device2, PulseChannel::Pulse2, 0x8B);
 
+        // Both channels should be audible with negate mode (target check is skipped).
         let outputs1 = collect_samples(&apu1, period_samples * 2);
         let outputs2 = collect_samples(&apu2, period_samples * 2);
 
         assert!(
-            outputs1.iter().all(|&value| value == 0.0),
-            "expected pulse1 mute"
+            outputs1.iter().any(|&value| value > 0.0),
+            "expected pulse1 output (negate mode does not mute via target check)"
         );
         assert!(
             outputs2.iter().any(|&value| value > 0.0),
             "expected pulse2 output"
         );
+
+        // Verify different target periods: pulse 1 = 7 (ones' complement), pulse 2 = 8
+        let p1_target = apu1.borrow().pulse1().get_sweep_target_period();
+        let p2_target = apu2.borrow().pulse2().get_sweep_target_period();
+        assert_eq!(p1_target, 7, "pulse1 ones' complement: 9 - 1 - 1 = 7");
+        assert_eq!(p2_target, 8, "pulse2 two's complement: 9 - 1 = 8");
     }
 
     #[test]

@@ -271,9 +271,15 @@ impl Pulse {
     }
 
     /// Calculate target period for sweep
-    /// Target = current period + (current period >> shift)
-    /// Pulse 1 uses ones' complement: -change - 1
-    /// Pulse 2 uses two's complement: -change
+    ///
+    /// Target = current period + change, where change depends on negate mode:
+    /// - Non-negate: change = +(period >> shift)
+    /// - Pulse 1 negate (ones' complement): change = -(period >> shift) - 1
+    /// - Pulse 2 negate (two's complement): change = -(period >> shift)
+    ///
+    /// Negative results (pulse 1 negate underflow at shift=0) are clamped to 0.
+    /// The muting check (target > $7FF) only applies when negate is false,
+    /// matching real NES hardware behavior (Mesen reference).
     pub fn get_sweep_target_period(&self) -> u16 {
         let change = (self.timer_period >> self.sweep_shift) as i32;
         let current = self.timer_period as i32;
@@ -293,11 +299,12 @@ impl Pulse {
     }
 
     /// Check if sweep is muting the channel
-    /// Mutes if: current period < 8 OR target period > $7FF
-    /// Note: Muting check runs continuously, even when sweep is disabled
+    /// Mutes if: current period < 8 OR (negate is false AND target period > $7FF)
+    /// The target > $7FF check only applies for upward sweep (negate=false),
+    /// matching real NES hardware (Mesen reference).
     #[cfg(test)]
     pub fn is_sweep_muting(&self) -> bool {
-        self.timer_period < 8 || self.get_sweep_target_period() > 0x7FF
+        self.timer_period < 8 || (!self.sweep_negate && self.get_sweep_target_period() > 0x7FF)
     }
 
     /// Clock the sweep unit (called by half frame)
@@ -342,7 +349,7 @@ impl Pulse {
     /// 1. Sequencer output is 0 (duty cycle low point)
     /// 2. Length counter is 0
     /// 3. Timer period < 8
-    /// 4. Sweep target period > $7FF
+    /// 4. Sweep negate is false AND target period > $7FF
     pub fn output(&self) -> u8 {
         // Check all muting conditions
         let target_period = self.get_sweep_target_period();
@@ -350,7 +357,7 @@ impl Pulse {
             || !self.length_counter.is_enabled() // Channel disabled via $4015
             || self.length_counter.value() == 0
             || self.timer_period < 8
-            || !(8..=0x7FF).contains(&target_period)
+            || (!self.sweep_negate && target_period > 0x7FF)
         {
             0
         } else {
