@@ -367,14 +367,15 @@ impl RomDb {
         )
     }
 
-    // NOTE: Several ExpansionType variants have no auto-detection function because the
-    // corresponding peripherals are not emulated:
-    //   - ArkanoidVausNes (0x0F): NES Arkanoid controller — not currently emulated
-    //   - VsZapper (0x07) / TwoZappers (0x09) / BandaiHyperShot (0x0A): VS/spare zappers
-    //   - PowerPadSideA/B (0x0B/0x0C): NES Power Pad handled via default_power_pad_on_port()
-    //   - FamicomFourPlayersLong (0x04 / similar): alternative 4-player Famicom wiring
-    //   - Keyboard / MIDI / Mahjong / Excitebike controllers and similar: not emulated
-    // These may be added in the future when the relevant peripherals are implemented.
+    // NOTE: Not every ExpansionType variant needs a dedicated auto-detection helper here.
+    // Some supported peripherals are handled by other logic, for example:
+    //   - ArkanoidVausNes (0x0F): handled by Arkanoid/NES-specific controller logic
+    //   - VsZapper (0x07) / TwoZappers (0x09): handled by default_zapper_on_port()
+    //   - PowerPadSideA/B (0x0B/0x0C): handled by default_power_pad_on_port()
+    // Others still have no helper in this module because the corresponding peripherals or
+    // wiring are not currently supported here, e.g. BandaiHyperShot, FamicomFourPlayersLong,
+    // and keyboard / MIDI / Mahjong / Excitebike-style devices. Additional helpers can be
+    // added in the future if ROM DB metadata becomes useful for those cases.
 
     /// Return whether ROM DB rom_class indicates a Japan-region (Famicom) ROM.
     pub fn is_japan_region(&self, crc32: u32) -> bool {
