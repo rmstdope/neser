@@ -103,8 +103,8 @@ impl Dmc {
 
     pub fn new_with_tv_system(tv_system: TimingMode) -> Self {
         let timer_period = match tv_system {
-            TimingMode::Ntsc => DMC_RATE_TABLE_NTSC[0],
-            TimingMode::Pal | TimingMode::Dendy => DMC_RATE_TABLE_PAL[0],
+            TimingMode::Ntsc | TimingMode::Dendy => DMC_RATE_TABLE_NTSC[0],
+            TimingMode::Pal => DMC_RATE_TABLE_PAL[0],
             TimingMode::MultiRegion | TimingMode::Unknown(_) => DMC_RATE_TABLE_NTSC[0],
         };
 
@@ -215,8 +215,8 @@ impl Dmc {
         self.loop_flag = (value >> 6) & 1 == 1;
         let rate_index = (value & 0x0F) as usize;
         self.timer_period = match self.tv_system {
-            TimingMode::Ntsc => DMC_RATE_TABLE_NTSC[rate_index],
-            TimingMode::Pal | TimingMode::Dendy => DMC_RATE_TABLE_PAL[rate_index],
+            TimingMode::Ntsc | TimingMode::Dendy => DMC_RATE_TABLE_NTSC[rate_index],
+            TimingMode::Pal => DMC_RATE_TABLE_PAL[rate_index],
             TimingMode::MultiRegion | TimingMode::Unknown(_) => DMC_RATE_TABLE_NTSC[rate_index],
         };
 
@@ -883,6 +883,34 @@ mod tests {
         assert_eq!(
             dmc.output_level, 2,
             "output level should change on the {period}th cycle (full period)"
+        );
+    }
+
+    #[test]
+    fn test_dendy_dmc_power_on_uses_ntsc_rate_table() {
+        // Dendy APU works with NTSC timings.
+        // Spec: Mesen2 NesApu.cpp GetApuRegion() — Dendy routes to ConsoleRegion::Ntsc
+        // NTSC rate[0]=428, PAL rate[0]=398 — they differ, use index 0.
+        let dmc = Dmc::new_with_tv_system(TimingMode::Dendy);
+        assert_eq!(
+            dmc.timer_period, DMC_RATE_TABLE_NTSC[0],
+            "Dendy DMC must use NTSC rate table at power-on (got {}, expected NTSC[0]={})",
+            dmc.timer_period, DMC_RATE_TABLE_NTSC[0]
+        );
+    }
+
+    #[test]
+    fn test_dendy_dmc_write_flags_uses_ntsc_rate_table() {
+        // At rate index 1: NTSC=380, PAL=354 — use write_flags_and_rate to distinguish.
+        let mut dmc = Dmc::new_with_tv_system(TimingMode::Dendy);
+        dmc.write_flags_and_rate(0b0000_0001); // rate_index=1
+        assert_ne!(
+            dmc.timer_period, DMC_RATE_TABLE_PAL[1],
+            "Dendy DMC must NOT use PAL rate table"
+        );
+        assert_eq!(
+            dmc.timer_period, DMC_RATE_TABLE_NTSC[1],
+            "Dendy DMC must use NTSC rate table at index 1"
         );
     }
 }

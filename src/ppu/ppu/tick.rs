@@ -23,6 +23,17 @@ pub(super) fn prerender_scanline(tv_system: TimingMode) -> u16 {
     }
 }
 
+/// Returns the scanline at which VBlank (NMI) begins for the given TV system.
+/// - NTSC: 241
+/// - PAL:  241
+/// - Dendy: 291 (50 extra post-render scanlines before VBlank; ref: Mesen2 NesPpu.cpp UpdateTimings)
+pub(super) fn vblank_start_scanline(tv_system: TimingMode) -> u16 {
+    match tv_system {
+        TimingMode::Dendy => 291,
+        _ => VBLANK_START_SCANLINE,
+    }
+}
+
 #[inline(always)]
 fn is_rendering_pixel(pixel: u16) -> bool {
     (FIRST_VISIBLE_PIXEL..=LAST_VISIBLE_PIXEL).contains(&pixel)
@@ -35,8 +46,13 @@ fn is_bg_fetch_pixel(pixel: u16) -> bool {
 }
 
 #[inline(always)]
-fn should_trace_vblank_enter(scanline: u16, pixel: u16, vblank_suppressed: bool) -> bool {
-    scanline == VBLANK_START_SCANLINE && pixel == FIRST_VISIBLE_PIXEL && !vblank_suppressed
+fn should_trace_vblank_enter(
+    scanline: u16,
+    vblank_scanline: u16,
+    pixel: u16,
+    vblank_suppressed: bool,
+) -> bool {
+    scanline == vblank_scanline && pixel == FIRST_VISIBLE_PIXEL && !vblank_suppressed
 }
 
 #[inline(always)]
@@ -118,10 +134,16 @@ fn tick_vblank_and_nmi(ppu: &mut Ppu) {
     let scanline = ppu.timing.scanline();
     let pixel = ppu.timing.pixel();
     let prerender = prerender_scanline(ppu.timing.tv_system());
+    let vblank_start = vblank_start_scanline(ppu.timing.tv_system());
 
-    // Enter VBlank at scanline 241, pixel 1.
+    // Enter VBlank at the VBlank start scanline, pixel 1.
     // Note: reading PPUSTATUS right at VBlank set time can suppress VBlank for the frame.
-    if should_trace_vblank_enter(scanline, pixel, ppu.vblank_suppressed_for_frame) {
+    if should_trace_vblank_enter(
+        scanline,
+        vblank_start,
+        pixel,
+        ppu.vblank_suppressed_for_frame,
+    ) {
         trace_ppu!(1; "vblank enter y={} x={} status={:02X}",
             scanline,
             pixel,
@@ -129,7 +151,7 @@ fn tick_vblank_and_nmi(ppu: &mut Ppu) {
         );
     }
 
-    if scanline == VBLANK_START_SCANLINE && pixel == FIRST_VISIBLE_PIXEL {
+    if scanline == vblank_start && pixel == FIRST_VISIBLE_PIXEL {
         // The frame is always complete at the VBlank start boundary, even when the CPU-visible
         // VBlank flag is suppressed. Without this, the emulator render loop would spin forever
         // when VBlank suppression is triggered (e.g., by reading $2002 at dot 241/0).
@@ -144,7 +166,7 @@ fn tick_vblank_and_nmi(ppu: &mut Ppu) {
     }
 
     // Latch the VBlank-start NMI edge one dot after the VBlank flag is set.
-    if scanline == VBLANK_START_SCANLINE
+    if scanline == vblank_start
         && pixel == VBLANK_NMI_LATCH_PIXEL
         && !ppu.vblank_suppressed_for_frame
         && ppu.status.is_in_vblank()
@@ -635,24 +657,42 @@ mod tests {
     fn test_should_trace_vblank_enter() {
         assert!(should_trace_vblank_enter(
             VBLANK_START_SCANLINE,
+            VBLANK_START_SCANLINE,
             FIRST_VISIBLE_PIXEL,
             false
         ));
         assert!(!should_trace_vblank_enter(
+            VBLANK_START_SCANLINE,
             VBLANK_START_SCANLINE,
             FIRST_VISIBLE_PIXEL,
             true
         ));
         assert!(!should_trace_vblank_enter(
             LAST_VISIBLE_SCANLINE_PLUS_ONE - 1,
+            VBLANK_START_SCANLINE,
             FIRST_VISIBLE_PIXEL,
             false
         ));
         assert!(!should_trace_vblank_enter(
             VBLANK_START_SCANLINE,
+            VBLANK_START_SCANLINE,
             VBLANK_NMI_LATCH_PIXEL,
             false
         ));
+    }
+
+    #[test]
+    fn test_vblank_start_scanline_ntsc_and_pal_is_241() {
+        assert_eq!(vblank_start_scanline(TimingMode::Ntsc), 241);
+        assert_eq!(vblank_start_scanline(TimingMode::Pal), 241);
+        assert_eq!(vblank_start_scanline(TimingMode::MultiRegion), 241);
+    }
+
+    #[test]
+    fn test_vblank_start_scanline_dendy_is_291() {
+        // Dendy hardware fires NMI at scanline 291, not 241.
+        // Spec: Mesen2 NesPpu.cpp UpdateTimings() — ConsoleRegion::Dendy: _nmiScanline = 291
+        assert_eq!(vblank_start_scanline(TimingMode::Dendy), 291);
     }
 
     #[test]

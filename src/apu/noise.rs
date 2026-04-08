@@ -72,8 +72,8 @@ impl Noise {
 
     pub fn new_with_tv_system(tv_system: TimingMode) -> Self {
         let timer_period = match tv_system {
-            TimingMode::Ntsc => NOISE_PERIOD_TABLE_NTSC[0],
-            TimingMode::Pal | TimingMode::Dendy => NOISE_PERIOD_TABLE_PAL[0],
+            TimingMode::Ntsc | TimingMode::Dendy => NOISE_PERIOD_TABLE_NTSC[0],
+            TimingMode::Pal => NOISE_PERIOD_TABLE_PAL[0],
             TimingMode::MultiRegion | TimingMode::Unknown(_) => NOISE_PERIOD_TABLE_NTSC[0],
         };
 
@@ -163,8 +163,8 @@ impl Noise {
         self.mode = (value >> 7) & 1 == 1;
         let period_index = (value & 0x0F) as usize;
         self.timer_period = match self.tv_system {
-            TimingMode::Ntsc => NOISE_PERIOD_TABLE_NTSC[period_index],
-            TimingMode::Pal | TimingMode::Dendy => NOISE_PERIOD_TABLE_PAL[period_index],
+            TimingMode::Ntsc | TimingMode::Dendy => NOISE_PERIOD_TABLE_NTSC[period_index],
+            TimingMode::Pal => NOISE_PERIOD_TABLE_PAL[period_index],
             TimingMode::MultiRegion | TimingMode::Unknown(_) => {
                 NOISE_PERIOD_TABLE_NTSC[period_index]
             }
@@ -428,6 +428,35 @@ mod tests {
 
         assert!(noise.mode);
         assert_eq!(noise.timer_period, NOISE_PERIOD_TABLE_NTSC[10]);
+    }
+
+    #[test]
+    fn test_dendy_noise_write_period_uses_ntsc_period_table() {
+        // Dendy APU works with NTSC timings.
+        // Spec: Mesen2 NesApu.cpp GetApuRegion() — Dendy routes to ConsoleRegion::Ntsc
+        // Use index 2 because NTSC and PAL differ there (NTSC=16, PAL=14).
+        let mut noise = Noise::new_with_tv_system(TimingMode::Dendy);
+        noise.write_period(0b0000_0010); // mode=0, period_index=2
+        assert_eq!(
+            noise.timer_period, NOISE_PERIOD_TABLE_NTSC[2],
+            "Dendy noise must use NTSC period table after write_period (got {}, expected NTSC[2]={})",
+            noise.timer_period, NOISE_PERIOD_TABLE_NTSC[2]
+        );
+    }
+
+    #[test]
+    fn test_dendy_noise_period_is_not_pal() {
+        // At index 2: NTSC=16, PAL=14 — they differ so we can distinguish.
+        let mut noise = Noise::new_with_tv_system(TimingMode::Dendy);
+        noise.write_period(0b0000_0010); // mode=0, period_index=2
+        assert_ne!(
+            noise.timer_period, NOISE_PERIOD_TABLE_PAL[2],
+            "Dendy noise must NOT use PAL period table"
+        );
+        assert_eq!(
+            noise.timer_period, NOISE_PERIOD_TABLE_NTSC[2],
+            "Dendy noise must use NTSC period table at index 2"
+        );
     }
 
     #[test]

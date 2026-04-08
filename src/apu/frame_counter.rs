@@ -416,8 +416,8 @@ impl FrameCounter {
         const IRQ_ASSERT_CYCLES: u8 = 3; // How long the internal IRQ signal keeps asserting
 
         let (step_1, step_2, step_3, step_4, irq_cycle, frame_cycles) = match self.tv_system {
-            TimingMode::Ntsc => (7457, 14913, 22371, 29829, 29828, 29830),
-            TimingMode::Pal | TimingMode::Dendy => (8313, 16627, 24939, 33253, 33252, 33254),
+            TimingMode::Ntsc | TimingMode::Dendy => (7457, 14913, 22371, 29829, 29828, 29830),
+            TimingMode::Pal => (8313, 16627, 24939, 33253, 33252, 33254),
             TimingMode::MultiRegion | TimingMode::Unknown(_) => {
                 (7457, 14913, 22371, 29829, 29828, 29830)
             }
@@ -463,8 +463,8 @@ impl FrameCounter {
     /// - 37281: HalfFrame (envelope + length)
     fn clock_five_step(&mut self) -> (bool, bool) {
         let (step_1_base, step_2_base, step_3_base, step_5_base) = match self.tv_system {
-            TimingMode::Ntsc => (7457, 14913, 22371, 37281),
-            TimingMode::Pal | TimingMode::Dendy => (8313, 16627, 24939, 41565),
+            TimingMode::Ntsc | TimingMode::Dendy => (7457, 14913, 22371, 37281),
+            TimingMode::Pal => (8313, 16627, 24939, 41565),
             TimingMode::MultiRegion | TimingMode::Unknown(_) => (7457, 14913, 22371, 37281),
         };
 
@@ -507,6 +507,52 @@ mod tests {
         assert!(!fc.get_mode()); // Default to 4-step (false)
         assert!(!fc.is_irq_inhibited());
         assert_eq!(fc.get_cycle_counter(), 0);
+    }
+
+    #[test]
+    fn test_dendy_frame_counter_4step_uses_ntsc_timing() {
+        // Dendy APU works with NTSC timings.
+        // Spec: Mesen2 NesApu.cpp GetApuRegion() — Dendy routes to ConsoleRegion::Ntsc
+        // NTSC 4-step quarter-frame at cycle 7457; PAL at 8313.
+        let mut fc = FrameCounter::new_with_tv_system(TimingMode::Dendy);
+        fc.write_register(0b0000_0000); // 4-step, no IRQ inhibit
+
+        // Run to cycle 7457: should clock a quarter frame (NTSC step_1)
+        for i in 0..7457u32 {
+            fc.cycle_counter = i;
+            let (quarter, _) = fc.clock_four_step();
+            assert!(!quarter, "unexpected quarter frame at cycle {i}");
+        }
+        fc.cycle_counter = 7457;
+        let (quarter_at_7457, _) = fc.clock_four_step();
+        assert!(
+            quarter_at_7457,
+            "Dendy should quarter-frame at NTSC step_1 cycle 7457"
+        );
+    }
+
+    #[test]
+    fn test_dendy_frame_counter_4step_not_pal_timing() {
+        // PAL 4-step fires first quarter frame at cycle 8313. Dendy must NOT do this.
+        let mut fc = FrameCounter::new_with_tv_system(TimingMode::Dendy);
+        fc.write_register(0b0000_0000);
+        fc.cycle_counter = 8313;
+
+        let (quarter_at_8313, _) = fc.clock_four_step();
+        assert!(
+            !quarter_at_8313,
+            "Dendy must not quarter-frame at PAL step_1 cycle 8313"
+        );
+
+        // Dendy follows NTSC frame timing, so it must not trigger IRQ at PAL's irq cycle.
+        let mut fc2 = FrameCounter::new_with_tv_system(TimingMode::Dendy);
+        fc2.write_register(0b0000_0000);
+        fc2.cycle_counter = 33252; // PAL irq_cycle — must not fire for Dendy
+        let (_, _) = fc2.clock_four_step();
+        assert!(
+            !fc2.get_irq_flag(),
+            "Dendy must not fire IRQ at PAL irq_cycle 33252"
+        );
     }
 
     #[test]
