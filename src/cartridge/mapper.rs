@@ -162,6 +162,7 @@ use super::unlicensed::mapper217::Mapper217;
 use super::unlicensed::mapper218::Mapper218;
 use super::unlicensed::mapper219::Mapper219;
 use super::unlicensed::mapper222::Mapper222;
+use super::unlicensed::mapper223::Mapper223;
 use super::unlicensed::mapper224::Mapper224;
 use super::unlicensed::mapper225::Mapper225;
 use super::unlicensed::mapper226::Mapper226;
@@ -991,6 +992,7 @@ mapper_registry! {
     219 => Mapper219::new,
     // 220: FCEUX debug mapper — not real hardware, never implement.
     222 => Mapper222::new,
+    223 => Mapper223::new,
     224 => Mapper224::new,
     225 => Mapper225::new,
     226 => Mapper226::new,
