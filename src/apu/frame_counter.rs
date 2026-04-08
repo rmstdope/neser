@@ -536,18 +536,15 @@ mod tests {
         // PAL 4-step fires first quarter frame at cycle 8313. Dendy must NOT do this.
         let mut fc = FrameCounter::new_with_tv_system(TimingMode::Dendy);
         fc.write_register(0b0000_0000);
+        fc.cycle_counter = 8313;
 
-        for i in 0..8313u32 {
-            fc.cycle_counter = i;
-            let (quarter, _) = fc.clock_four_step();
-            if i > 7457 {
-                // After NTSC step_1, the counter resets; we're past the interesting range.
-                break;
-            }
-            _ = quarter;
-        }
-        // The frame counter resets at NTSC frame length (29830), not PAL (33254).
-        // Fast-forward to the PAL IRQ cycle; Dendy must not trigger IRQ there.
+        let (quarter_at_8313, _) = fc.clock_four_step();
+        assert!(
+            !quarter_at_8313,
+            "Dendy must not quarter-frame at PAL step_1 cycle 8313"
+        );
+
+        // Dendy follows NTSC frame timing, so it must not trigger IRQ at PAL's irq cycle.
         let mut fc2 = FrameCounter::new_with_tv_system(TimingMode::Dendy);
         fc2.write_register(0b0000_0000);
         fc2.cycle_counter = 33252; // PAL irq_cycle — must not fire for Dendy
