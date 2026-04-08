@@ -418,9 +418,7 @@ impl FrameCounter {
         let (step_1, step_2, step_3, step_4, irq_cycle, frame_cycles) = match self.tv_system {
             TimingMode::Ntsc | TimingMode::Dendy => (7457, 14913, 22371, 29829, 29828, 29830),
             TimingMode::Pal => (8313, 16627, 24939, 33253, 33252, 33254),
-            TimingMode::MultiRegion | TimingMode::Unknown(_) => {
-                (7457, 14913, 22371, 29829, 29828, 29830)
-            }
+            TimingMode::MultiRegion | TimingMode::Unknown(_) => (7457, 14913, 22371, 29829, 29828, 29830),
         };
 
         let quarter_frame = self.cycle_counter == step_1

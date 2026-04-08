@@ -165,9 +165,7 @@ impl Noise {
         self.timer_period = match self.tv_system {
             TimingMode::Ntsc | TimingMode::Dendy => NOISE_PERIOD_TABLE_NTSC[period_index],
             TimingMode::Pal => NOISE_PERIOD_TABLE_PAL[period_index],
-            TimingMode::MultiRegion | TimingMode::Unknown(_) => {
-                NOISE_PERIOD_TABLE_NTSC[period_index]
-            }
+            TimingMode::MultiRegion | TimingMode::Unknown(_) => NOISE_PERIOD_TABLE_NTSC[period_index],
         };
         trace_apu!(3; "noise write_period value=0x{:02X} mode={} period_index={} period={}", value, self.mode, period_index, self.timer_period);
     }
