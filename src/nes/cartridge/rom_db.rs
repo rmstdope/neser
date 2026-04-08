@@ -261,6 +261,7 @@ impl RomDb {
     pub fn new() -> io::Result<Self> {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("src")
+            .join("nes")
             .join("cartridge")
             .join("rom_db.csv");
         Self::from_path(path)

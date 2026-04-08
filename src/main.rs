@@ -2,21 +2,26 @@
 // by the library or test code, producing dead_code warnings in the binary crate.
 #![allow(dead_code)]
 
+mod nes;
+
+// Re-exports for backward compatibility during migration.
+pub use nes::apu;
+pub use nes::bus;
+pub use nes::cartridge;
+pub use nes::console;
+pub use nes::cpu;
+pub use nes::integration_tests;
+pub use nes::ppu;
+
 mod app_context;
-mod apu;
 #[cfg(feature = "native")]
 mod audio;
 mod autorun;
-mod bus;
-mod cartridge;
-mod console;
-mod cpu;
 mod debugging;
 mod frontend_toasts;
 mod input;
 #[cfg(feature = "native")]
 mod native_frontend;
-mod ppu;
 #[cfg(feature = "native")]
 mod rendering;
 #[cfg(feature = "tui")]

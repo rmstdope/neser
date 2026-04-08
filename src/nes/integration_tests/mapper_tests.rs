@@ -569,7 +569,7 @@ mod tests {
 
     #[test]
     fn test_complex_mapper_files_document_limitations() {
-        let mapper_registry = fs::read_to_string("src/cartridge/mapper.rs")
+        let mapper_registry = fs::read_to_string("src/nes/cartridge/mapper.rs")
             .expect("mapper registry source should be readable");
 
         let mut mapper_files: Vec<String> = mapper_registry
@@ -583,7 +583,7 @@ mod tests {
                 let module_path = trimmed.strip_prefix("use super::")?;
                 let (manufacturer, rest) = module_path.split_once("::")?;
                 let (module, _) = rest.split_once("::")?;
-                Some(format!("src/cartridge/{}/{}.rs", manufacturer, module))
+                Some(format!("src/nes/cartridge/{}/{}.rs", manufacturer, module))
             })
             .collect();
 

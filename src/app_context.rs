@@ -58,7 +58,7 @@ fn load_rom_db() -> RomDb {
 #[cfg(target_arch = "wasm32")]
 fn load_rom_db() -> RomDb {
     // cvs database is not accessible in wasm, so we include it as a string and parse it at runtime
-    RomDb::from_csv_content(include_str!("cartridge/rom_db.csv"))
+    RomDb::from_csv_content(include_str!("nes/cartridge/rom_db.csv"))
 }
 
 impl AppContext {
