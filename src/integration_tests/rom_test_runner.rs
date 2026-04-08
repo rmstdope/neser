@@ -184,7 +184,7 @@ pub(crate) mod tests {
             let cpu_cycles_per_frame = match nes.app_context().borrow().config().hardware_model {
                 HardwareModel::NesNtsc => 29_780u32,
                 HardwareModel::NesPal => 33_247u32,
-                HardwareModel::Dendy => 35_469u32, // 312 scanlines * 341 dots / 3 PPU:CPU
+                HardwareModel::Dendy => 35_464u32, // 312 scanlines * 341 dots / 3 PPU:CPU
             };
 
             let mut running = false;
@@ -388,7 +388,7 @@ pub(crate) mod tests {
         let cpu_cycles_per_frame = match nes.app_context().borrow().config().hardware_model {
             HardwareModel::NesNtsc => 29_780u32,
             HardwareModel::NesPal => 33_247u32,
-            HardwareModel::Dendy => 35_469u32, // 312 scanlines * 341 dots / 3 PPU:CPU
+            HardwareModel::Dendy => 35_464u32, // 312 scanlines * 341 dots / 3 PPU:CPU
         };
 
         for _frame in 1..=max_frames {
