@@ -1356,7 +1356,138 @@ mod tests {
     //     }
     // }
 
-    // TODO test_tri_lin_ctr
+    // test_tri_lin_ctr
+    #[test]
+    fn test_tri_lin_ctr() {
+        // The ROM tests the triangle linear counter in three phases:
+        //   1. Silence – various linear-counter manipulations that should produce no sound
+        //   2. Noise marker – a brief noise burst separating the phases
+        //   3. Continuous triangle – linear counter reloaded and sustained
+        //
+        // Strategy: two captures (triangle-only + noise-only) to locate the noise
+        // marker via RMS, then verify silence before it and sustained activity after.
+
+        let rom_path = "roms/automated_tests/test_tri_lin_ctr/lin_ctr.nes";
+
+        // ~8 seconds of capture to cover the full ROM execution with margin.
+        let capture_samples = (SAMPLE_RATE_HZ as usize) * 8;
+        let total_cycles = capture_cycles_for_samples(capture_samples, WARMUP_SAMPLES, 20_000);
+
+        // Capture 1: triangle-only
+        let tri_samples = collect_forced_channel_samples(
+            rom_path,
+            total_cycles,
+            false, // pulse1
+            false, // pulse2
+            true,  // triangle
+            false, // noise
+            false, // dmc
+        );
+
+        // Capture 2: noise-only
+        let noise_samples = collect_forced_channel_samples(
+            rom_path,
+            total_cycles,
+            false, // pulse1
+            false, // pulse2
+            false, // triangle
+            true,  // noise
+            false, // dmc
+        );
+
+        let tri_samples = trim_warmup(&tri_samples, WARMUP_SAMPLES);
+        let noise_samples = trim_warmup(&noise_samples, WARMUP_SAMPLES);
+
+        // 200ms non-overlapping RMS windows (matches ROM delay granularity).
+        let window_samples = (SAMPLE_RATE_HZ * 0.20) as usize;
+        let hop_samples = window_samples;
+
+        let tri_rms = rms_windows(tri_samples, window_samples, hop_samples);
+        let noise_rms = rms_windows(noise_samples, window_samples, hop_samples);
+        assert!(
+            !tri_rms.is_empty(),
+            "triangle RMS windowing produced no samples"
+        );
+        assert!(
+            !noise_rms.is_empty(),
+            "noise RMS windowing produced no samples"
+        );
+
+        // Locate the noise marker: contiguous windows above 5% of peak noise RMS.
+        let noise_max = noise_rms.iter().copied().fold(0.0f32, f32::max);
+        assert!(noise_max > 0.0, "no noise audio captured");
+        let noise_threshold = noise_max * 0.05;
+
+        let noise_indices: Vec<usize> = noise_rms
+            .iter()
+            .enumerate()
+            .filter(|(_, value)| **value > noise_threshold)
+            .map(|(index, _)| index)
+            .collect();
+        assert!(!noise_indices.is_empty(), "expected a noise marker");
+
+        let noise_start = *noise_indices.first().unwrap();
+        let noise_end = *noise_indices.last().unwrap() + 1;
+        assert!(
+            noise_end - noise_start <= 3,
+            "noise marker spans too many windows: {}",
+            noise_end - noise_start
+        );
+
+        // Triangle threshold: 5% of peak triangle RMS.
+        let tri_max = tri_rms.iter().copied().fold(0.0f32, f32::max);
+        assert!(tri_max > 0.0, "no triangle audio captured");
+        let silence_threshold = tri_max * 0.05;
+
+        // Phase 1 – Silence: all triangle windows before the noise marker must be silent.
+        for (index, &rms) in tri_rms.iter().enumerate().take(noise_start) {
+            assert!(
+                rms <= silence_threshold,
+                "expected silence in window {} before noise marker (rms={}, threshold={})",
+                index,
+                rms,
+                silence_threshold
+            );
+        }
+
+        // Phase 2 – During the noise marker, triangle should also be silent.
+        for index in noise_start..noise_end.min(tri_rms.len()) {
+            assert!(
+                tri_rms[index] <= silence_threshold,
+                "expected triangle silence during noise marker window {} (rms={})",
+                index,
+                tri_rms[index]
+            );
+        }
+
+        // Phase 3 – Continuous triangle: windows after the noise marker should be active.
+        // Allow a brief transition window right after the noise marker.
+        let continuous_start = (noise_end + 1).min(tri_rms.len());
+        let continuous_windows: Vec<(usize, f32)> = tri_rms
+            .iter()
+            .enumerate()
+            .skip(continuous_start)
+            .take_while(|(_, rms)| **rms > silence_threshold)
+            .map(|(i, &rms)| (i, rms))
+            .collect();
+
+        assert!(
+            continuous_windows.len() >= 5,
+            "expected at least 5 continuous active triangle windows after noise marker, got {}",
+            continuous_windows.len()
+        );
+
+        // Verify no silent gaps within the continuous region.
+        let continuous_end = continuous_start + continuous_windows.len();
+        for index in continuous_start..continuous_end {
+            assert!(
+                tri_rms[index] > silence_threshold,
+                "unexpected silence gap in continuous triangle phase at window {} (rms={})",
+                index,
+                tri_rms[index]
+            );
+        }
+    }
 
     // ── volume_tests helpers ────────────────────────────────────────────
 
