@@ -3,7 +3,7 @@ mod tests {
     use std::fs;
 
     use crate::cartridge::Cartridge;
-    use crate::console::{Config, Nes, RamInitMode};
+    use crate::console::{Config, Nes, NesConfig, RamInitMode};
     use crate::input::Button;
     use crate::integration_tests::rom_test_runner::tests::run_nes_for_frames;
     use crate::{
@@ -101,10 +101,13 @@ mod tests {
                 .expect(concat!("ROM should parse: ", $rom_path));
 
                 let mut config = Config {
-                    ram_init_mode: RamInitMode::Zero,
+                    nes: NesConfig {
+                        ram_init_mode: RamInitMode::Zero,
+                        ..Default::default()
+                    },
                     ..Default::default()
                 };
-                config.hardware_model =
+                config.nes.hardware_model =
                     crate::console::HardwareModel::from_timing_mode(cartridge.rom_timing_mode());
 
                 let mut nes =
@@ -370,10 +373,13 @@ mod tests {
                 .expect("ROM should parse");
 
         let mut config = Config {
-            ram_init_mode: RamInitMode::Zero,
+            nes: NesConfig {
+                ram_init_mode: RamInitMode::Zero,
+                ..Default::default()
+            },
             ..Default::default()
         };
-        config.hardware_model =
+        config.nes.hardware_model =
             crate::console::HardwareModel::from_timing_mode(cartridge.rom_timing_mode());
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
         nes.insert_cartridge(cartridge);
@@ -547,7 +553,10 @@ mod tests {
                 .expect("in-memory mapper95 ROM should parse");
 
         let config = Config {
-            ram_init_mode: RamInitMode::Zero,
+            nes: NesConfig {
+                ram_init_mode: RamInitMode::Zero,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
@@ -2533,7 +2542,10 @@ mod tests {
             Cartridge::load_from_file(&rom_data, rom_path, crate::app_context::AppContext::new())
                 .expect("GTROM_CC_Test1 ROM should parse");
         let config = Config {
-            ram_init_mode: RamInitMode::Zero,
+            nes: NesConfig {
+                ram_init_mode: RamInitMode::Zero,
+                ..Default::default()
+            },
             ..Config::default()
         };
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));

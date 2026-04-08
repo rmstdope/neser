@@ -140,7 +140,7 @@ impl Bus {
 
         // Initialize CPU RAM based on config
         let mut cpu_ram = vec![0; 0x10000];
-        let ram_init_mode = app_context.borrow().config().ram_init_mode;
+        let ram_init_mode = app_context.borrow().config().nes.ram_init_mode;
         crate::console::initialize_ram(&mut cpu_ram[0..0x800], ram_init_mode);
 
         let expansion_arkanoid = Rc::new(RefCell::new(ArkanoidController::new()));
@@ -172,7 +172,12 @@ impl Bus {
             controller.ppu.clone(),
             controller.cartridge.clone(),
         )));
-        let four_score_enabled = controller.app_context.borrow().config().four_score_enabled;
+        let four_score_enabled = controller
+            .app_context
+            .borrow()
+            .config()
+            .nes
+            .four_score_enabled;
         let famicom_four_players_enabled = controller.is_famicom_four_players_configured();
         let mut controller_device = ControllerDevice::new_with_four_score_state(
             controller.controllers[0].clone(),
@@ -209,14 +214,14 @@ impl Bus {
         let app_context = self.app_context.borrow();
         let config = app_context.config();
         let modes = ControllerModes {
-            four_score_enabled: config.four_score_enabled,
+            four_score_enabled: config.nes.four_score_enabled,
             famicom_four_players_enabled: Self::is_famicom_four_players(config),
-            famicom_mode: config.hardware_mode == HardwareMode::Famicom,
+            famicom_mode: config.nes.hardware_mode == HardwareMode::Famicom,
             arkanoid_famicom_enabled: Self::is_arkanoid_famicom(config),
             zapper_famicom_enabled: Self::is_zapper_famicom(config),
             power_pad_famicom_enabled: Self::is_power_pad_famicom(config),
             vs_system_enabled: Self::is_vs_system(config),
-            vs_dip_switches: config.vs_dip_switches,
+            vs_dip_switches: config.nes.vs_dip_switches,
             vs_hardware_type: self.vs_hardware_type,
         };
         drop(app_context);
@@ -231,32 +236,32 @@ impl Bus {
     }
 
     fn is_famicom_four_players(config: &crate::console::Config) -> bool {
-        config.hardware_mode == HardwareMode::Famicom
-            && config.expansion_port == ExpansionPort::FamicomFourPlayers
+        config.nes.hardware_mode == HardwareMode::Famicom
+            && config.nes.expansion_port == ExpansionPort::FamicomFourPlayers
     }
 
     fn is_arkanoid_famicom(config: &crate::console::Config) -> bool {
-        config.hardware_mode == HardwareMode::Famicom
-            && config.expansion_port == ExpansionPort::ArkanoidFamicom
+        config.nes.hardware_mode == HardwareMode::Famicom
+            && config.nes.expansion_port == ExpansionPort::ArkanoidFamicom
     }
 
     fn is_zapper_famicom(config: &crate::console::Config) -> bool {
-        config.hardware_mode == HardwareMode::Famicom
-            && config.expansion_port == ExpansionPort::ZapperFamicom
+        config.nes.hardware_mode == HardwareMode::Famicom
+            && config.nes.expansion_port == ExpansionPort::ZapperFamicom
     }
 
     fn is_power_pad_famicom(config: &crate::console::Config) -> bool {
-        config.hardware_mode == HardwareMode::Famicom
-            && config.expansion_port == ExpansionPort::PowerPadFamicom
+        config.nes.hardware_mode == HardwareMode::Famicom
+            && config.nes.expansion_port == ExpansionPort::PowerPadFamicom
     }
 
     fn is_vs_system(config: &crate::console::Config) -> bool {
-        config.expansion_port == ExpansionPort::VsSystem
+        config.nes.expansion_port == ExpansionPort::VsSystem
     }
 
     fn has_player34_serial_enabled(&self) -> bool {
         let config = self.app_context.borrow();
-        config.config().four_score_enabled || Self::is_famicom_four_players(config.config())
+        config.config().nes.four_score_enabled || Self::is_famicom_four_players(config.config())
     }
 
     pub fn register_device(&mut self, device: Box<dyn BusDevice>) {
@@ -635,7 +640,7 @@ impl Bus {
             let config = self.app_context.borrow();
             let cfg = config.config();
             let is_vs = Self::is_vs_system(cfg);
-            let vs_swapped = cfg.vs_controllers_swapped;
+            let vs_swapped = cfg.nes.vs_controllers_swapped;
             drop(config);
 
             // Step 1: For VsSystem4017 games, swap ports for d-pad/action buttons only.
@@ -1119,7 +1124,7 @@ impl Bus {
 mod tests {
     use super::*;
     use crate::cartridge::NametableLayout;
-    use crate::console::TimingMode;
+    use crate::console::{NesConfig, TimingMode};
     use std::rc::Rc;
 
     struct TestBusDevice {
@@ -1379,7 +1384,10 @@ mod tests {
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
         let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
         let config = crate::console::Config {
-            ram_init_mode: crate::console::RamInitMode::Zero,
+            nes: NesConfig {
+                ram_init_mode: crate::console::RamInitMode::Zero,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let app_context = Rc::new(RefCell::new(
@@ -1392,8 +1400,11 @@ mod tests {
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
         let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
         let config = crate::console::Config {
-            ram_init_mode: crate::console::RamInitMode::Zero,
-            four_score_enabled: true,
+            nes: NesConfig {
+                ram_init_mode: crate::console::RamInitMode::Zero,
+                four_score_enabled: true,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let app_context = Rc::new(RefCell::new(
@@ -1722,9 +1733,12 @@ mod tests {
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
         let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
         let config = crate::console::Config {
-            ram_init_mode: crate::console::RamInitMode::Zero,
-            hardware_mode: HardwareMode::Famicom,
-            expansion_port: ExpansionPort::ArkanoidFamicom,
+            nes: NesConfig {
+                ram_init_mode: crate::console::RamInitMode::Zero,
+                hardware_mode: HardwareMode::Famicom,
+                expansion_port: ExpansionPort::ArkanoidFamicom,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let app_context = Rc::new(RefCell::new(
@@ -2812,8 +2826,11 @@ mod tests {
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
         let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
         let config = crate::console::Config {
-            ram_init_mode: crate::console::RamInitMode::Zero,
-            expansion_port: ExpansionPort::VsSystem,
+            nes: NesConfig {
+                ram_init_mode: crate::console::RamInitMode::Zero,
+                expansion_port: ExpansionPort::VsSystem,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let app_context = Rc::new(RefCell::new(
@@ -2826,9 +2843,12 @@ mod tests {
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
         let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
         let config = crate::console::Config {
-            ram_init_mode: crate::console::RamInitMode::Zero,
-            expansion_port: ExpansionPort::VsSystem,
-            vs_controllers_swapped: true,
+            nes: NesConfig {
+                ram_init_mode: crate::console::RamInitMode::Zero,
+                expansion_port: ExpansionPort::VsSystem,
+                vs_controllers_swapped: true,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let app_context = Rc::new(RefCell::new(

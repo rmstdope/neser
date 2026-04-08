@@ -7,8 +7,8 @@
 //! 3. Default values
 
 use crate::autorun::AutorunFormat;
+use crate::config::{AutorunMode, FrontendConfig};
 use crate::console::TimingMode;
-use crate::debugging::Tracing;
 use crate::debugging::breakpoints::BreakpointKind;
 use crate::input::ControllerType;
 use bitflags::bitflags;
@@ -564,9 +564,12 @@ impl ExpansionPort {
     }
 }
 
-/// Emulator configuration.
+/// NES-specific hardware configuration.
+///
+/// These settings control NES hardware behavior: CPU/PPU model, expansion
+/// ports, controller types, RAM initialization, APU channel enables, etc.
 #[derive(Debug, Clone)]
-pub struct Config {
+pub struct NesConfig {
     /// Emulated hardware family mode.
     pub hardware_mode: HardwareMode,
     /// Whether hardware mode was explicitly configured.
@@ -585,36 +588,12 @@ pub struct Config {
     pub hardware_model: HardwareModel,
     /// Whether the hardware model was explicitly configured.
     pub hardware_model_explicit: bool,
-    /// Whether audio is enabled.
-    pub audio_enabled: bool,
-    /// Whether VSync is enabled.
-    pub vsync_enabled: bool,
-    /// Whether gamepad support is enabled.
-    pub gamepads_enabled: bool,
     /// Whether Four Score mode is enabled.
     pub four_score_enabled: bool,
     /// Whether Four Score mode was explicitly configured.
     pub four_score_enabled_explicit: bool,
-    /// Whether to run in fullscreen mode.
-    pub fullscreen: bool,
-    /// Which display to use for fullscreen (None = auto-select).
-    pub fullscreen_display: Option<i32>,
-    /// Path to shader preset file.
-    pub shader_path: Option<String>,
-    /// Whether to open debugger on startup.
-    pub debugger_enabled: bool,
-    /// Whether to load save-state on startup.
-    pub load_state: bool,
-    /// Tracing configuration.
-    pub tracing: Tracing,
     /// APU channel enable flags.
     pub apu_channels: ApuChannels,
-    /// Window height in pixels (windowed mode only).
-    pub window_height: u32,
-    /// Debugger window background opacity (0.1 = nearly transparent, 0.7 = opaque).
-    pub debugger_alpha: f32,
-    /// Optional ROM path from CLI positional argument.
-    pub rom_path: Option<String>,
     /// Controller type connected to port 1.
     pub controller_port1: ControllerType,
     /// Controller type connected to port 2.
@@ -624,138 +603,61 @@ pub struct Config {
     /// Whether controller_port2 was explicitly configured (not default).
     pub controller_port2_explicit: bool,
     /// Zapper light detection size (config key: `zapper_detection_size`).
-    ///
-    /// This controls the side length of the square area sampled around the Zapper
-    /// cursor when checking for light hits:
-    /// - `0` = single pixel
-    /// - `1` = 3×3 square
-    /// - `2` = 5×5 square
-    /// - `n` = (2·n + 1)² pixels sampled
-    ///
-    /// Default: `0` (single pixel).
-    ///
-    /// Valid range: `0..=255` (full `u8` range). Larger values increase the
-    /// number of pixels sampled per check and can noticeably impact performance,
-    /// so values above 10 are generally not recommended.
     pub zapper_detection_size: u8,
-    /// Autorun mode (None, Record, or Playback).
-    pub autorun_mode: AutorunMode,
-    /// Whether to run in headless mode (no display, requires playback).
-    pub autorun_headless: bool,
-    /// Whether to extend an existing recording (requires record mode).
-    pub autorun_extend: bool,
-    /// Whether to overwrite an existing recording (requires record mode).
-    pub autorun_overwrite: bool,
-    /// Start playback from this checkpoint index (0-based, or negative for from-end).
-    /// Negative: -1 = second-to-last, -2 = third-to-last, etc.
-    pub autorun_from_checkpoint: Option<i64>,
-    /// Trim this many checkpoints from the end of the recording file and exit (no emulation).
-    pub autorun_trim_checkpoints: Option<usize>,
-    /// Convert an existing autorun file to the latest format and exit (no emulation).
-    pub autorun_convert: bool,
-    /// Recalculate checkpoint CRCs in an existing autorun file and exit (no emulation).
-    pub autorun_recalculate: bool,
-    /// Serialization format used when saving autorun files (default: binary).
-    pub autorun_format: AutorunFormat,
     /// RAM initialization mode (config key: `ram_init_mode`).
-    ///
-    /// Controls how all emulated RAM is initialized on power-on/hard reset:
-    /// - `zero`: All RAM initialized to 0x00
-    /// - `random`: All RAM initialized to pseudo-random values (hardware-accurate)
-    /// - `seeded-random`: All RAM initialized to pseudo-random values with a fixed seed
-    ///
-    /// Default: `Zero` (deterministic for testing; users can configure Random for hardware accuracy).
-    ///
-    /// Soft resets preserve RAM contents (no re-initialization).
     pub ram_init_mode: RamInitMode,
     /// Enable dynamic OAM DRAM decay emulation.
-    ///
-    /// This models NTSC primary OAM row decay behavior; PAL behavior is handled
-    /// by the PPU implementation and this flag acts as a global on/off switch.
-    ///
-    /// Default: `false`.
     pub oam_dram_decay_enabled: bool,
     /// Breakpoints to set on startup (from --breakpoint / --frame CLI flags).
     pub breakpoints: Vec<BreakpointKind>,
     /// Horizontal overscan removal in pixels (removed from both left and right edges).
-    ///
-    /// Valid range: `0..=8`. Default: `0`.
     pub horizontal_overscan: u8,
     /// Vertical overscan removal in pixels (removed from both top and bottom edges).
-    ///
-    /// Valid range: `0..=16`. Default: `8`.
     pub vertical_overscan: u8,
-    /// Comma-separated configured search paths for cartridge discovery.
-    pub cartridge_search_paths: Vec<String>,
-    /// Whether startup cartridge scanning is enabled.
-    pub scan_cartridges: bool,
-    /// Whether to rebuild the cartridge catalog from scratch on startup.
-    pub rebuild_cartridge_catalog: bool,
-    /// Whether to launch the TUI ROM browser instead of the emulator.
-    #[cfg_attr(not(feature = "tui"), allow(dead_code))]
-    pub tui_mode: bool,
 }
 
-/// Autorun operating mode.
+impl Default for NesConfig {
+    fn default() -> Self {
+        Self {
+            hardware_mode: HardwareMode::Nes,
+            hardware_mode_explicit: false,
+            expansion_port: ExpansionPort::None,
+            expansion_port_explicit: false,
+            vs_dip_switches: 0x00,
+            vs_controllers_swapped: false,
+            hardware_model: HardwareModel::NesNtsc,
+            hardware_model_explicit: false,
+            four_score_enabled: false,
+            four_score_enabled_explicit: false,
+            apu_channels: ApuChannels::ALL,
+            controller_port1: ControllerType::Joypad,
+            controller_port2: ControllerType::Joypad,
+            controller_port1_explicit: false,
+            controller_port2_explicit: false,
+            zapper_detection_size: 0,
+            #[cfg(target_arch = "wasm32")]
+            ram_init_mode: RamInitMode::Zero,
+            #[cfg(not(target_arch = "wasm32"))]
+            ram_init_mode: RamInitMode::Random,
+            oam_dram_decay_enabled: false,
+            breakpoints: Vec::new(),
+            horizontal_overscan: 0,
+            vertical_overscan: 8,
+        }
+    }
+}
+
+/// Full emulator configuration (frontend + NES-specific).
 ///
-/// This enum defines the primary operating mode for the emulator's autorun feature,
-/// which enables recording and playback of controller input for deterministic testing
-/// and automation.
-///
-/// The mode is typically derived from command-line flags (`--create-recording`, `--extend-recording`, `--playback`, `--playback-headless`)
-/// and determines how controller input is processed:
-/// - In `None` mode, controller input is handled interactively as normal
-/// - In `Record` mode, controller input is captured and saved to an `.autorun` file
-/// - In `Playback` mode, controller input is read from an existing `.autorun` file
-///
-/// Additional behavior is configured via related fields on [`Config`]:
-///
-/// - [`Config::autorun_headless`]: Run without display during playback (set by `--playback-headless`)
-/// - [`Config::autorun_extend`]: When `Record` is active, load an existing recording,
-///   play it back to the end, then continue recording new input (set by `--extend-recording`)
-/// - [`Config::autorun_overwrite`]: When `Record` is active, replace any existing
-///   recording file instead of failing if it already exists (set by `--create-recording`)
-///
-/// # Example Usage
-///
-/// ```bash
-/// # Record gameplay to game.autorun (overwrite if exists)
-/// neser --create-recording game.nes
-///
-/// # Extend existing recording
-/// neser --extend-recording game.nes
-///
-/// # Play back and verify checksum
-/// neser --playback game.nes
-///
-/// # Headless playback for CI
-/// neser --playback-headless game.nes
-/// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AutorunMode {
-    /// Normal interactive operation (no autorun).
-    ///
-    /// Controller input is handled interactively from keyboard, gamepad, or mouse.
-    /// No `.autorun` file is read or written.
-    None,
-    /// Record controller input to an autorun file.
-    ///
-    /// Captures controller button states every frame and saves them to a `.autorun` file
-    /// alongside the ROM. When recording completes, a CRC32 checksum of the final screen
-    /// buffer is also saved for verification during playback.
-    ///
-    /// If [`Config::autorun_extend`] is true, any existing recording is loaded first,
-    /// played back to the end, then new input is appended (extend mode).
-    Record,
-    /// Play back controller input from an existing autorun file.
-    ///
-    /// Replays controller input from a previously recorded `.autorun` file. Live controller
-    /// input from keyboard/gamepad is ignored. When playback completes, the final screen
-    /// buffer's CRC32 checksum is verified against the stored value, and the emulator exits
-    /// with success (0) or failure (non-zero) status based on whether the checksum matches.
-    ///
-    /// Can be combined with [`Config::autorun_headless`] to run without display.
-    Playback,
+/// Composed of [`FrontendConfig`] (generic frontend settings) and
+/// [`NesConfig`] (NES hardware-specific settings). Parsing from CLI
+/// arguments and config files populates both sub-configs.
+#[derive(Debug, Clone)]
+pub struct Config {
+    /// Generic frontend configuration.
+    pub frontend: FrontendConfig,
+    /// NES-specific hardware configuration.
+    pub nes: NesConfig,
 }
 
 bitflags! {
@@ -773,56 +675,8 @@ bitflags! {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            hardware_mode: HardwareMode::Nes,
-            hardware_mode_explicit: false,
-            expansion_port: ExpansionPort::None,
-            expansion_port_explicit: false,
-            vs_dip_switches: 0x00,
-            vs_controllers_swapped: false,
-            hardware_model: HardwareModel::NesNtsc,
-            hardware_model_explicit: false,
-            audio_enabled: true,
-            vsync_enabled: true,
-            gamepads_enabled: true,
-            four_score_enabled: false,
-            four_score_enabled_explicit: false,
-            fullscreen: false,
-            fullscreen_display: None,
-            shader_path: None,
-            debugger_enabled: false,
-            load_state: false,
-            tracing: Tracing::default(),
-            apu_channels: ApuChannels::ALL,
-            window_height: 896,
-            debugger_alpha: 0.7,
-            rom_path: None,
-            controller_port1: ControllerType::Joypad,
-            controller_port2: ControllerType::Joypad,
-            controller_port1_explicit: false,
-            controller_port2_explicit: false,
-            zapper_detection_size: 0,
-            autorun_mode: AutorunMode::None,
-            autorun_headless: false,
-            autorun_extend: false,
-            autorun_overwrite: false,
-            autorun_from_checkpoint: None,
-            autorun_trim_checkpoints: None,
-            autorun_convert: false,
-            autorun_recalculate: false,
-            autorun_format: AutorunFormat::Binary,
-            // Use Zero for WASM to avoid issues with getrandom in test environments
-            #[cfg(target_arch = "wasm32")]
-            ram_init_mode: RamInitMode::Zero,
-            #[cfg(not(target_arch = "wasm32"))]
-            ram_init_mode: RamInitMode::Random,
-            oam_dram_decay_enabled: false,
-            breakpoints: Vec::new(),
-            horizontal_overscan: 0,
-            vertical_overscan: 8,
-            cartridge_search_paths: Vec::new(),
-            scan_cartridges: true,
-            rebuild_cartridge_catalog: false,
-            tui_mode: false,
+            frontend: FrontendConfig::default(),
+            nes: NesConfig::default(),
         }
     }
 }
@@ -881,17 +735,17 @@ impl Config {
                     value
                 )
             })?;
-        self.hardware_mode = hardware_mode;
-        self.hardware_mode_explicit = true;
-        self.hardware_model = hardware_model;
-        self.hardware_model_explicit = true;
+        self.nes.hardware_mode = hardware_mode;
+        self.nes.hardware_mode_explicit = true;
+        self.nes.hardware_model = hardware_model;
+        self.nes.hardware_model_explicit = true;
         Ok(())
     }
 
     pub(crate) fn apply_expansion_port_value(&mut self, value: &str) -> Result<(), String> {
-        self.expansion_port = ExpansionPort::parse(value)
+        self.nes.expansion_port = ExpansionPort::parse(value)
             .ok_or_else(|| format!("Invalid expansion_port value: '{}'", value))?;
-        self.expansion_port_explicit = true;
+        self.nes.expansion_port_explicit = true;
         Ok(())
     }
 
@@ -1156,169 +1010,169 @@ impl Config {
     /// Arguments override any values set by defaults or config file.
     fn apply_args(&mut self, args: &[String]) -> Result<(), String> {
         if let Some((hardware_mode, hardware_model)) = Self::parse_hardware_arg(args)? {
-            self.hardware_mode = hardware_mode;
-            self.hardware_mode_explicit = true;
-            self.hardware_model = hardware_model;
-            self.hardware_model_explicit = true;
+            self.nes.hardware_mode = hardware_mode;
+            self.nes.hardware_mode_explicit = true;
+            self.nes.hardware_model = hardware_model;
+            self.nes.hardware_model_explicit = true;
         }
 
         if let Some(expansion_port) = Self::parse_expansion_port_arg(args)? {
-            self.expansion_port = expansion_port;
-            self.expansion_port_explicit = true;
+            self.nes.expansion_port = expansion_port;
+            self.nes.expansion_port_explicit = true;
         }
 
         // OAM DRAM decay: --oam-dram-decay true/false
         if let Some(oam_dram_decay) = Self::parse_bool_arg(args, "--oam-dram-decay")? {
-            self.oam_dram_decay_enabled = oam_dram_decay;
+            self.nes.oam_dram_decay_enabled = oam_dram_decay;
         }
 
         // Boolean flags (support both value-based and prefix negation)
         // Audio: --audio true/false, --no-audio, --disable-audio
         if let Some(audio) = Self::parse_bool_arg(args, "--audio")? {
-            self.audio_enabled = audio;
+            self.frontend.audio_enabled = audio;
         }
         if Self::has_negation_flag(args, &["--no-audio", "--disable-audio"]) {
-            self.audio_enabled = false;
+            self.frontend.audio_enabled = false;
         }
 
         // VSync: --vsync true/false, --no-vsync, --disable-vsync
         if let Some(vsync) = Self::parse_bool_arg(args, "--vsync")? {
-            self.vsync_enabled = vsync;
+            self.frontend.vsync_enabled = vsync;
         }
         if Self::has_negation_flag(args, &["--no-vsync", "--disable-vsync"]) {
-            self.vsync_enabled = false;
+            self.frontend.vsync_enabled = false;
         }
 
         // Gamepads: --gamepads true/false
         if let Some(gamepads) = Self::parse_bool_arg(args, "--gamepads")? {
-            self.gamepads_enabled = gamepads;
+            self.frontend.gamepads_enabled = gamepads;
         }
 
         // Four Score: --enable-4-score true/false, --no-4-score, --disable-4-score
         if let Some(four_score) = Self::parse_bool_arg(args, "--enable-4-score")? {
-            self.four_score_enabled = four_score;
-            self.four_score_enabled_explicit = true;
+            self.nes.four_score_enabled = four_score;
+            self.nes.four_score_enabled_explicit = true;
         }
         if Self::has_negation_flag(args, &["--no-4-score", "--disable-4-score"]) {
-            self.four_score_enabled = false;
-            self.four_score_enabled_explicit = true;
+            self.nes.four_score_enabled = false;
+            self.nes.four_score_enabled_explicit = true;
         }
 
         // Debugger: --debugger true/false
         if let Some(debugger) = Self::parse_bool_arg(args, "--debugger")? {
-            self.debugger_enabled = debugger;
+            self.frontend.debugger_enabled = debugger;
         }
 
         // Load state: --load-state true/false
         if let Some(load_state) = Self::parse_bool_arg(args, "--load-state")? {
-            self.load_state = load_state;
+            self.frontend.load_state = load_state;
         }
 
         // Fullscreen (value-based)
         if let Some(fullscreen) = Self::parse_bool_arg(args, "--fullscreen")? {
-            self.fullscreen = fullscreen;
+            self.frontend.fullscreen = fullscreen;
         }
 
         // Display argument (only applies if fullscreen is set)
-        if self.fullscreen
+        if self.frontend.fullscreen
             && let Some(display) = Self::parse_display_arg(args)?
         {
-            self.fullscreen_display = Some(display);
+            self.frontend.fullscreen_display = Some(display);
         }
 
         // Shader path
         if let Some(filter_name) = Self::parse_shader_arg(args) {
-            self.shader_path = Some(Self::map_filter_name(&filter_name)?);
+            self.frontend.shader_path = Some(Self::map_filter_name(&filter_name)?);
         }
 
         if let Some(path) = Self::parse_rom_arg(args)? {
-            self.rom_path = Some(path);
+            self.frontend.rom_path = Some(path);
         }
 
         // Tracing (merge with existing config file values)
-        self.tracing.apply_args(args);
+        self.frontend.tracing.apply_args(args);
 
         // APU channel enable/disable flags (support both value-based and prefix negation)
         // Pulse1: --pulse1 true/false, --no-pulse1, --disable-pulse1
         if let Some(pulse1) = Self::parse_bool_arg(args, "--pulse1")? {
             if pulse1 {
-                self.apu_channels.insert(ApuChannels::PULSE1);
+                self.nes.apu_channels.insert(ApuChannels::PULSE1);
             } else {
-                self.apu_channels.remove(ApuChannels::PULSE1);
+                self.nes.apu_channels.remove(ApuChannels::PULSE1);
             }
         }
         if Self::has_negation_flag(args, &["--no-pulse1", "--disable-pulse1"]) {
-            self.apu_channels.remove(ApuChannels::PULSE1);
+            self.nes.apu_channels.remove(ApuChannels::PULSE1);
         }
 
         // Pulse2: --pulse2 true/false, --no-pulse2, --disable-pulse2
         if let Some(pulse2) = Self::parse_bool_arg(args, "--pulse2")? {
             if pulse2 {
-                self.apu_channels.insert(ApuChannels::PULSE2);
+                self.nes.apu_channels.insert(ApuChannels::PULSE2);
             } else {
-                self.apu_channels.remove(ApuChannels::PULSE2);
+                self.nes.apu_channels.remove(ApuChannels::PULSE2);
             }
         }
         if Self::has_negation_flag(args, &["--no-pulse2", "--disable-pulse2"]) {
-            self.apu_channels.remove(ApuChannels::PULSE2);
+            self.nes.apu_channels.remove(ApuChannels::PULSE2);
         }
 
         // Triangle: --triangle true/false, --no-triangle, --disable-triangle
         if let Some(triangle) = Self::parse_bool_arg(args, "--triangle")? {
             if triangle {
-                self.apu_channels.insert(ApuChannels::TRIANGLE);
+                self.nes.apu_channels.insert(ApuChannels::TRIANGLE);
             } else {
-                self.apu_channels.remove(ApuChannels::TRIANGLE);
+                self.nes.apu_channels.remove(ApuChannels::TRIANGLE);
             }
         }
         if Self::has_negation_flag(args, &["--no-triangle", "--disable-triangle"]) {
-            self.apu_channels.remove(ApuChannels::TRIANGLE);
+            self.nes.apu_channels.remove(ApuChannels::TRIANGLE);
         }
 
         // Noise: --noise true/false, --no-noise, --disable-noise
         if let Some(noise) = Self::parse_bool_arg(args, "--noise")? {
             if noise {
-                self.apu_channels.insert(ApuChannels::NOISE);
+                self.nes.apu_channels.insert(ApuChannels::NOISE);
             } else {
-                self.apu_channels.remove(ApuChannels::NOISE);
+                self.nes.apu_channels.remove(ApuChannels::NOISE);
             }
         }
         if Self::has_negation_flag(args, &["--no-noise", "--disable-noise"]) {
-            self.apu_channels.remove(ApuChannels::NOISE);
+            self.nes.apu_channels.remove(ApuChannels::NOISE);
         }
 
         // DMC: --dmc true/false, --no-dmc, --disable-dmc
         if let Some(dmc) = Self::parse_bool_arg(args, "--dmc")? {
             if dmc {
-                self.apu_channels.insert(ApuChannels::DMC);
+                self.nes.apu_channels.insert(ApuChannels::DMC);
             } else {
-                self.apu_channels.remove(ApuChannels::DMC);
+                self.nes.apu_channels.remove(ApuChannels::DMC);
             }
         }
         if Self::has_negation_flag(args, &["--no-dmc", "--disable-dmc"]) {
-            self.apu_channels.remove(ApuChannels::DMC);
+            self.nes.apu_channels.remove(ApuChannels::DMC);
         }
 
         // Window height
         if let Some(height) = Self::parse_u32_arg(args, "--window-height")? {
-            self.window_height = height;
+            self.frontend.window_height = height;
         }
 
         // Debugger alpha
         if let Some(alpha) = Self::parse_f32_arg(args, "--debugger-alpha")? {
-            self.debugger_alpha = alpha.clamp(0.1, 1.0);
+            self.frontend.debugger_alpha = alpha.clamp(0.1, 1.0);
         }
 
         // Controller ports
         if let Some(controller_port1) = Self::parse_string_arg(args, "--controller-port1") {
-            self.controller_port1 =
+            self.nes.controller_port1 =
                 Self::parse_controller_arg("--controller-port1", &controller_port1)?;
-            self.controller_port1_explicit = true;
+            self.nes.controller_port1_explicit = true;
         }
         if let Some(controller_port2) = Self::parse_string_arg(args, "--controller-port2") {
-            self.controller_port2 =
+            self.nes.controller_port2 =
                 Self::parse_controller_arg("--controller-port2", &controller_port2)?;
-            self.controller_port2_explicit = true;
+            self.nes.controller_port2_explicit = true;
         }
 
         // Zapper detection size
@@ -1329,7 +1183,7 @@ impl Config {
                     size
                 )
             })?;
-            self.zapper_detection_size = size_u8;
+            self.nes.zapper_detection_size = size_u8;
 
             if size_u8 > 10 {
                 eprintln!(
@@ -1350,10 +1204,10 @@ impl Config {
 
         // Overscan
         if let Some(v) = Self::parse_u32_arg(args, "--horizontal-overscan")? {
-            self.horizontal_overscan = (v as u8).min(8);
+            self.nes.horizontal_overscan = (v as u8).min(8);
         }
         if let Some(v) = Self::parse_u32_arg(args, "--vertical-overscan")? {
-            self.vertical_overscan = (v as u8).min(16);
+            self.nes.vertical_overscan = (v as u8).min(16);
         }
 
         self.apply_cartridge_catalog_args(args)?;
@@ -1361,7 +1215,7 @@ impl Config {
         // TUI mode
         #[cfg(feature = "tui")]
         if args.iter().any(|arg| arg == "--tui") {
-            self.tui_mode = true;
+            self.frontend.tui_mode = true;
         }
 
         #[cfg(not(feature = "tui"))]
@@ -1386,46 +1240,46 @@ impl Config {
         }
 
         if has_create_recording {
-            self.autorun_mode = AutorunMode::Record;
-            self.autorun_overwrite = true;
+            self.frontend.autorun_mode = AutorunMode::Record;
+            self.frontend.autorun_overwrite = true;
         } else if has_extend_recording {
-            self.autorun_mode = AutorunMode::Record;
-            self.autorun_extend = true;
+            self.frontend.autorun_mode = AutorunMode::Record;
+            self.frontend.autorun_extend = true;
         } else if has_playback || has_playback_headless {
-            self.autorun_mode = AutorunMode::Playback;
-            self.autorun_headless = has_playback_headless;
+            self.frontend.autorun_mode = AutorunMode::Playback;
+            self.frontend.autorun_headless = has_playback_headless;
         }
 
         if let Some(v) = Self::parse_i64_arg(args, "--playback-from-checkpoint")? {
-            self.autorun_from_checkpoint = Some(v);
+            self.frontend.autorun_from_checkpoint = Some(v);
             // Implies playback mode if no explicit mode was set
-            if self.autorun_mode == AutorunMode::None {
-                self.autorun_mode = AutorunMode::Playback;
+            if self.frontend.autorun_mode == AutorunMode::None {
+                self.frontend.autorun_mode = AutorunMode::Playback;
             }
         }
 
         if let Some(v) = Self::parse_i64_arg(args, "--playback-headless-from-checkpoint")? {
-            self.autorun_from_checkpoint = Some(v);
-            self.autorun_mode = AutorunMode::Playback;
-            self.autorun_headless = true;
+            self.frontend.autorun_from_checkpoint = Some(v);
+            self.frontend.autorun_mode = AutorunMode::Playback;
+            self.frontend.autorun_headless = true;
         }
 
         if let Some(v) = Self::parse_u32_arg(args, "--trim-checkpoints")? {
-            self.autorun_trim_checkpoints = Some(v as usize);
+            self.frontend.autorun_trim_checkpoints = Some(v as usize);
         }
 
         if let Some(convert_autorun_requested) = Self::parse_bool_arg(args, "--convert-autorun")? {
-            self.autorun_convert = convert_autorun_requested;
+            self.frontend.autorun_convert = convert_autorun_requested;
         }
 
         if let Some(recalculate_autorun_requested) =
             Self::parse_bool_arg(args, "--recalculate-autorun")?
         {
-            self.autorun_recalculate = recalculate_autorun_requested;
+            self.frontend.autorun_recalculate = recalculate_autorun_requested;
         }
 
         if let Some(format_str) = Self::parse_string_arg(args, "--autorun-format") {
-            self.autorun_format = match format_str.as_str() {
+            self.frontend.autorun_format = match format_str.as_str() {
                 "binary" => AutorunFormat::Binary,
                 "json" => AutorunFormat::Json,
                 other => {
@@ -1436,29 +1290,29 @@ impl Config {
             };
         }
 
-        if self.autorun_trim_checkpoints.is_some() && self.autorun_convert {
+        if self.frontend.autorun_trim_checkpoints.is_some() && self.frontend.autorun_convert {
             return Err("Cannot specify both --trim-checkpoints and --convert-autorun".to_string());
         }
 
-        if self.autorun_trim_checkpoints.is_some() && self.autorun_recalculate {
+        if self.frontend.autorun_trim_checkpoints.is_some() && self.frontend.autorun_recalculate {
             return Err(
                 "Cannot specify both --trim-checkpoints and --recalculate-autorun".to_string(),
             );
         }
 
-        if self.autorun_convert && self.autorun_recalculate {
+        if self.frontend.autorun_convert && self.frontend.autorun_recalculate {
             return Err(
                 "Cannot specify both --convert-autorun and --recalculate-autorun".to_string(),
             );
         }
 
-        if self.autorun_recalculate && self.autorun_mode != AutorunMode::None {
+        if self.frontend.autorun_recalculate && self.frontend.autorun_mode != AutorunMode::None {
             return Err(
                 "Cannot combine --recalculate-autorun with recording/playback flags".to_string(),
             );
         }
 
-        if self.autorun_recalculate && self.autorun_from_checkpoint.is_some() {
+        if self.frontend.autorun_recalculate && self.frontend.autorun_from_checkpoint.is_some() {
             return Err(
                 "Cannot combine --recalculate-autorun with checkpoint playback flags".to_string(),
             );
@@ -1467,18 +1321,18 @@ impl Config {
         // Autorun recording/playback must be deterministic.
         // Force zero-initialized RAM when autorun is active, and reject an explicit
         // non-zero CLI --ram-init-mode for these modes.
-        if self.autorun_mode != AutorunMode::None || self.autorun_recalculate {
+        if self.frontend.autorun_mode != AutorunMode::None || self.frontend.autorun_recalculate {
             if let Some(value) = cli_ram_init_mode.as_ref()
                 && !value.eq_ignore_ascii_case("zero")
             {
                 return Err("Autorun recording/playback requires --ram-init-mode zero".to_string());
             }
-            self.ram_init_mode = RamInitMode::Zero;
+            self.nes.ram_init_mode = RamInitMode::Zero;
         }
 
         // Breakpoints from --breakpoint flag (comma-separated list)
         if let Some(value) = Self::parse_string_arg(args, "--breakpoint") {
-            self.breakpoints =
+            self.nes.breakpoints =
                 parse_breakpoint_list(&value).map_err(|e| format!("--breakpoint: {e}"))?;
         }
 
@@ -1816,7 +1670,7 @@ impl Config {
             "hardware" => self.apply_hardware_value(value)?,
             "expansion_port" => self.apply_expansion_port_value(value)?,
             "vs_dip_switches" => {
-                self.vs_dip_switches = Self::parse_hex_u8(value).map_err(|_| {
+                self.nes.vs_dip_switches = Self::parse_hex_u8(value).map_err(|_| {
                     format!(
                         "Invalid vs_dip_switches value: '{}'. Expected hex (0x00-0xFF) or decimal (0-255)",
                         value
@@ -1825,118 +1679,118 @@ impl Config {
             }
             "audio" => {
                 if let Ok(b) = Self::parse_bool(value) {
-                    self.audio_enabled = b;
+                    self.frontend.audio_enabled = b;
                 }
             }
             "vsync" => {
                 if let Ok(b) = Self::parse_bool(value) {
-                    self.vsync_enabled = b;
+                    self.frontend.vsync_enabled = b;
                 }
             }
             "gamepads" => {
                 if let Ok(b) = Self::parse_bool(value) {
-                    self.gamepads_enabled = b;
+                    self.frontend.gamepads_enabled = b;
                 }
             }
             "enable_4_score" => {
                 if let Ok(b) = Self::parse_bool(value) {
-                    self.four_score_enabled = b;
-                    self.four_score_enabled_explicit = true;
+                    self.nes.four_score_enabled = b;
+                    self.nes.four_score_enabled_explicit = true;
                 }
             }
             "fullscreen" => {
                 if let Ok(b) = Self::parse_bool(value) {
-                    self.fullscreen = b;
+                    self.frontend.fullscreen = b;
                 }
             }
             "display" => {
                 if let Ok(d) = value.parse::<i32>()
                     && d >= 0
                 {
-                    self.fullscreen_display = Some(d);
+                    self.frontend.fullscreen_display = Some(d);
                 }
             }
             "filter" => {
                 if !value.is_empty() {
-                    self.shader_path = Some(Self::map_filter_name(value)?);
+                    self.frontend.shader_path = Some(Self::map_filter_name(value)?);
                 }
             }
             "debugger" => {
                 if let Ok(b) = Self::parse_bool(value) {
-                    self.debugger_enabled = b;
+                    self.frontend.debugger_enabled = b;
                 }
             }
             "load_state" => {
                 if let Ok(b) = Self::parse_bool(value) {
-                    self.load_state = b;
+                    self.frontend.load_state = b;
                 }
             }
             "pulse1" => {
                 if let Ok(b) = Self::parse_bool(value) {
                     if b {
-                        self.apu_channels.insert(ApuChannels::PULSE1);
+                        self.nes.apu_channels.insert(ApuChannels::PULSE1);
                     } else {
-                        self.apu_channels.remove(ApuChannels::PULSE1);
+                        self.nes.apu_channels.remove(ApuChannels::PULSE1);
                     }
                 }
             }
             "pulse2" => {
                 if let Ok(b) = Self::parse_bool(value) {
                     if b {
-                        self.apu_channels.insert(ApuChannels::PULSE2);
+                        self.nes.apu_channels.insert(ApuChannels::PULSE2);
                     } else {
-                        self.apu_channels.remove(ApuChannels::PULSE2);
+                        self.nes.apu_channels.remove(ApuChannels::PULSE2);
                     }
                 }
             }
             "triangle" => {
                 if let Ok(b) = Self::parse_bool(value) {
                     if b {
-                        self.apu_channels.insert(ApuChannels::TRIANGLE);
+                        self.nes.apu_channels.insert(ApuChannels::TRIANGLE);
                     } else {
-                        self.apu_channels.remove(ApuChannels::TRIANGLE);
+                        self.nes.apu_channels.remove(ApuChannels::TRIANGLE);
                     }
                 }
             }
             "noise" => {
                 if let Ok(b) = Self::parse_bool(value) {
                     if b {
-                        self.apu_channels.insert(ApuChannels::NOISE);
+                        self.nes.apu_channels.insert(ApuChannels::NOISE);
                     } else {
-                        self.apu_channels.remove(ApuChannels::NOISE);
+                        self.nes.apu_channels.remove(ApuChannels::NOISE);
                     }
                 }
             }
             "dmc" => {
                 if let Ok(b) = Self::parse_bool(value) {
                     if b {
-                        self.apu_channels.insert(ApuChannels::DMC);
+                        self.nes.apu_channels.insert(ApuChannels::DMC);
                     } else {
-                        self.apu_channels.remove(ApuChannels::DMC);
+                        self.nes.apu_channels.remove(ApuChannels::DMC);
                     }
                 }
             }
             "window_height" => {
                 if let Ok(s) = value.parse::<u32>() {
-                    self.window_height = s;
+                    self.frontend.window_height = s;
                 }
             }
             "debugger_alpha" => {
                 if let Ok(v) = value.parse::<f32>() {
-                    self.debugger_alpha = v.clamp(0.1, 1.0);
+                    self.frontend.debugger_alpha = v.clamp(0.1, 1.0);
                 }
             }
             "controller_port1" => {
-                self.controller_port1 = Self::parse_controller_arg("controller_port1", value)?;
-                self.controller_port1_explicit = true;
+                self.nes.controller_port1 = Self::parse_controller_arg("controller_port1", value)?;
+                self.nes.controller_port1_explicit = true;
             }
             "controller_port2" => {
-                self.controller_port2 = Self::parse_controller_arg("controller_port2", value)?;
-                self.controller_port2_explicit = true;
+                self.nes.controller_port2 = Self::parse_controller_arg("controller_port2", value)?;
+                self.nes.controller_port2_explicit = true;
             }
             "zapper_detection_size" => {
                 if let Ok(size) = value.parse::<u8>() {
-                    self.zapper_detection_size = size;
+                    self.nes.zapper_detection_size = size;
                     // Warn about performance implications of large values
                     if size > 10 {
                         eprintln!(
@@ -1957,48 +1811,49 @@ impl Config {
             }
             "trace-cpu" => {
                 if let Ok(level) = value.parse::<u8>() {
-                    self.tracing.cpu = level;
+                    self.frontend.tracing.cpu = level;
                     if level > 0 {
-                        self.tracing.enabled = true;
+                        self.frontend.tracing.enabled = true;
                     }
                 }
             }
             "trace-ppu" => {
                 if let Ok(level) = value.parse::<u8>() {
-                    self.tracing.ppu = crate::debugging::Tracing::clamp_ppu_level(level);
+                    self.frontend.tracing.ppu = crate::debugging::Tracing::clamp_ppu_level(level);
                     if level > 0 {
-                        self.tracing.enabled = true;
+                        self.frontend.tracing.enabled = true;
                     }
                 }
             }
             "trace-apu" => {
                 if let Ok(level) = value.parse::<u8>() {
-                    self.tracing.apu = level;
+                    self.frontend.tracing.apu = level;
                     if level > 0 {
-                        self.tracing.enabled = true;
+                        self.frontend.tracing.enabled = true;
                     }
                 }
             }
             "trace-mapper" => {
                 if let Ok(level) = value.parse::<u8>() {
-                    self.tracing.mapper = crate::debugging::Tracing::clamp_mapper_level(level);
+                    self.frontend.tracing.mapper =
+                        crate::debugging::Tracing::clamp_mapper_level(level);
                     if level > 0 {
-                        self.tracing.enabled = true;
+                        self.frontend.tracing.enabled = true;
                     }
                 }
             }
             "trace-nestest" => {
                 if let Ok(b) = Self::parse_bool(value) {
-                    self.tracing.nestest = b;
+                    self.frontend.tracing.nestest = b;
                     if b {
-                        self.tracing.enabled = true;
+                        self.frontend.tracing.enabled = true;
                     }
                 }
             }
             "ram_init_mode" => {
                 match value.to_lowercase().as_str() {
-                    "zero" => self.ram_init_mode = RamInitMode::Zero,
-                    "random" => self.ram_init_mode = RamInitMode::Random,
+                    "zero" => self.nes.ram_init_mode = RamInitMode::Zero,
+                    "random" => self.nes.ram_init_mode = RamInitMode::Random,
                     _ => {
                         // Try parsing as seeded-random with a seed value
                         if let Some(seed_str) = value
@@ -2006,7 +1861,7 @@ impl Config {
                             .or_else(|| value.strip_prefix("seeded_random:"))
                         {
                             if let Ok(seed) = seed_str.parse::<u64>() {
-                                self.ram_init_mode = RamInitMode::SeededRandom(seed);
+                                self.nes.ram_init_mode = RamInitMode::SeededRandom(seed);
                             } else {
                                 eprintln!(
                                     "Warning: invalid seed '{}' for 'ram_init_mode'; \
@@ -2026,7 +1881,7 @@ impl Config {
             }
             "oam_dram_decay" | "oam_dram_decay_enabled" => {
                 if let Ok(b) = Self::parse_bool(value) {
-                    self.oam_dram_decay_enabled = b;
+                    self.nes.oam_dram_decay_enabled = b;
                 } else {
                     eprintln!(
                         "Warning: invalid value '{}' for 'oam_dram_decay'; keeping current value. \
@@ -2037,12 +1892,12 @@ impl Config {
             }
             "horizontal_overscan" => {
                 if let Ok(v) = value.parse::<u8>() {
-                    self.horizontal_overscan = v.min(8);
+                    self.nes.horizontal_overscan = v.min(8);
                 }
             }
             "vertical_overscan" => {
                 if let Ok(v) = value.parse::<u8>() {
-                    self.vertical_overscan = v.min(16);
+                    self.nes.vertical_overscan = v.min(16);
                 }
             }
             "cartridge_search_paths" | "scan_cartridges" | "rebuild_cartridge_catalog" => {
@@ -2054,14 +1909,14 @@ impl Config {
     }
 
     pub fn apply_rom_timing_mode(&mut self, rom_timing_mode: crate::cartridge::TimingMode) -> bool {
-        if self.hardware_model_explicit {
+        if self.nes.hardware_model_explicit {
             return false;
         }
 
         if rom_timing_mode.is_ntsc_or_pal()
             || matches!(rom_timing_mode, crate::cartridge::TimingMode::Dendy)
         {
-            self.hardware_model = HardwareModel::from_timing_mode(rom_timing_mode);
+            self.nes.hardware_model = HardwareModel::from_timing_mode(rom_timing_mode);
             true
         } else {
             false
@@ -2075,21 +1930,21 @@ impl Config {
 
         let mut changed = false;
 
-        if !self.hardware_mode_explicit && self.hardware_mode != HardwareMode::Famicom {
-            self.hardware_mode = HardwareMode::Famicom;
+        if !self.nes.hardware_mode_explicit && self.nes.hardware_mode != HardwareMode::Famicom {
+            self.nes.hardware_mode = HardwareMode::Famicom;
             changed = true;
         }
 
-        if !self.hardware_model_explicit && self.hardware_model != HardwareModel::NesNtsc {
-            self.hardware_model = HardwareModel::NesNtsc;
+        if !self.nes.hardware_model_explicit && self.nes.hardware_model != HardwareModel::NesNtsc {
+            self.nes.hardware_model = HardwareModel::NesNtsc;
             changed = true;
         }
 
-        if !self.expansion_port_explicit
-            && self.hardware_mode == HardwareMode::Famicom
-            && self.expansion_port != ExpansionPort::FamicomFourPlayers
+        if !self.nes.expansion_port_explicit
+            && self.nes.hardware_mode == HardwareMode::Famicom
+            && self.nes.expansion_port != ExpansionPort::FamicomFourPlayers
         {
-            self.expansion_port = ExpansionPort::FamicomFourPlayers;
+            self.nes.expansion_port = ExpansionPort::FamicomFourPlayers;
             changed = true;
         }
 
@@ -2103,21 +1958,21 @@ impl Config {
 
         let mut changed = false;
 
-        if !self.hardware_mode_explicit && self.hardware_mode != HardwareMode::Famicom {
-            self.hardware_mode = HardwareMode::Famicom;
+        if !self.nes.hardware_mode_explicit && self.nes.hardware_mode != HardwareMode::Famicom {
+            self.nes.hardware_mode = HardwareMode::Famicom;
             changed = true;
         }
 
-        if !self.hardware_model_explicit && self.hardware_model != HardwareModel::NesNtsc {
-            self.hardware_model = HardwareModel::NesNtsc;
+        if !self.nes.hardware_model_explicit && self.nes.hardware_model != HardwareModel::NesNtsc {
+            self.nes.hardware_model = HardwareModel::NesNtsc;
             changed = true;
         }
 
-        if !self.expansion_port_explicit
-            && self.hardware_mode == HardwareMode::Famicom
-            && self.expansion_port != ExpansionPort::ArkanoidFamicom
+        if !self.nes.expansion_port_explicit
+            && self.nes.hardware_mode == HardwareMode::Famicom
+            && self.nes.expansion_port != ExpansionPort::ArkanoidFamicom
         {
-            self.expansion_port = ExpansionPort::ArkanoidFamicom;
+            self.nes.expansion_port = ExpansionPort::ArkanoidFamicom;
             changed = true;
         }
 
@@ -2131,11 +1986,11 @@ impl Config {
 
         // Only set expansion port if hardware mode is already Famicom.
         // For NES mode, the Zapper is handled via standard controller ports.
-        if !self.expansion_port_explicit
-            && self.hardware_mode == HardwareMode::Famicom
-            && self.expansion_port != ExpansionPort::ZapperFamicom
+        if !self.nes.expansion_port_explicit
+            && self.nes.hardware_mode == HardwareMode::Famicom
+            && self.nes.expansion_port != ExpansionPort::ZapperFamicom
         {
-            self.expansion_port = ExpansionPort::ZapperFamicom;
+            self.nes.expansion_port = ExpansionPort::ZapperFamicom;
             return true;
         }
 
@@ -2151,11 +2006,11 @@ impl Config {
             return false;
         }
 
-        if !self.expansion_port_explicit
-            && self.hardware_mode == HardwareMode::Famicom
-            && self.expansion_port != ExpansionPort::PowerPadFamicom
+        if !self.nes.expansion_port_explicit
+            && self.nes.hardware_mode == HardwareMode::Famicom
+            && self.nes.expansion_port != ExpansionPort::PowerPadFamicom
         {
-            self.expansion_port = ExpansionPort::PowerPadFamicom;
+            self.nes.expansion_port = ExpansionPort::PowerPadFamicom;
             return true;
         }
 
@@ -2167,8 +2022,8 @@ impl Config {
             return false;
         }
 
-        if !self.hardware_mode_explicit && self.hardware_mode != HardwareMode::Famicom {
-            self.hardware_mode = HardwareMode::Famicom;
+        if !self.nes.hardware_mode_explicit && self.nes.hardware_mode != HardwareMode::Famicom {
+            self.nes.hardware_mode = HardwareMode::Famicom;
             return true;
         }
 
@@ -2180,8 +2035,8 @@ impl Config {
             return false;
         }
 
-        if !self.expansion_port_explicit && self.expansion_port != ExpansionPort::VsSystem {
-            self.expansion_port = ExpansionPort::VsSystem;
+        if !self.nes.expansion_port_explicit && self.nes.expansion_port != ExpansionPort::VsSystem {
+            self.nes.expansion_port = ExpansionPort::VsSystem;
             return true;
         }
 
@@ -2190,7 +2045,7 @@ impl Config {
 
     /// Apply ROM DB hint for VS System swapped controller wiring.
     pub fn apply_rom_db_vs_controllers_swapped_hint(&mut self, swapped: bool) {
-        self.vs_controllers_swapped = swapped;
+        self.nes.vs_controllers_swapped = swapped;
     }
 
     /// Apply ROM DB hint for NES Four Score adapter.
@@ -2199,17 +2054,17 @@ impl Config {
     /// when `has_hint` is `false` and not explicitly configured, so that swapping from a
     /// Four Score ROM to a standard ROM correctly disables Four Score mode.
     pub fn apply_rom_db_nes_four_score_hint(&mut self, has_hint: bool) -> bool {
-        if self.four_score_enabled_explicit {
+        if self.nes.four_score_enabled_explicit {
             return false;
         }
 
-        if has_hint && !self.four_score_enabled {
-            self.four_score_enabled = true;
+        if has_hint && !self.nes.four_score_enabled {
+            self.nes.four_score_enabled = true;
             return true;
         }
 
-        if !has_hint && self.four_score_enabled {
-            self.four_score_enabled = false;
+        if !has_hint && self.nes.four_score_enabled {
+            self.nes.four_score_enabled = false;
             return true;
         }
 
@@ -2222,7 +2077,7 @@ impl Config {
     /// Intended to be logged at ROM load time so the user can see what
     /// peripherals are active.
     pub fn hardware_summary(&self) -> String {
-        self.hardware_summary_with(self.controller_port1, self.controller_port2)
+        self.hardware_summary_with(self.nes.controller_port1, self.nes.controller_port2)
     }
 
     /// Like [`hardware_summary`] but uses the supplied effective controller types instead of
@@ -2235,13 +2090,13 @@ impl Config {
     ) -> String {
         let mut parts = vec![format!(
             "Hardware: {} ({}) | Port 1: {} | Port 2: {}",
-            self.hardware_mode.display_label(),
-            self.hardware_model.display_label(),
+            self.nes.hardware_mode.display_label(),
+            self.nes.hardware_model.display_label(),
             port1.display_label(),
             port2.display_label(),
         )];
 
-        if self.four_score_enabled {
+        if self.nes.four_score_enabled {
             let joypad_label = crate::input::ControllerType::Joypad.display_label();
             parts.push(format!(
                 "Port 3: {} | Port 4: {} | Four Score: enabled",
@@ -2249,7 +2104,7 @@ impl Config {
             ));
         }
 
-        if let Some(label) = self.expansion_port.display_label() {
+        if let Some(label) = self.nes.expansion_port.display_label() {
             parts.push(format!("Expansion: {}", label));
         }
 
@@ -2290,18 +2145,18 @@ impl Config {
 
     fn apply_cartridge_catalog_args(&mut self, args: &[String]) -> Result<(), String> {
         if let Some(paths) = Self::parse_string_arg(args, "--cartridge-search-paths") {
-            self.cartridge_search_paths = Self::parse_search_paths(&paths);
+            self.frontend.cartridge_search_paths = Self::parse_search_paths(&paths);
         }
 
         if let Some(scan) = Self::parse_bool_arg(args, "--scan-cartridges")? {
-            self.scan_cartridges = scan;
+            self.frontend.scan_cartridges = scan;
         }
         if Self::has_negation_flag(args, &["--no-scan-cartridges"]) {
-            self.scan_cartridges = false;
+            self.frontend.scan_cartridges = false;
         }
 
         if args.iter().any(|arg| arg == "--rebuild-cartridge-catalog") {
-            self.rebuild_cartridge_catalog = true;
+            self.frontend.rebuild_cartridge_catalog = true;
         }
 
         Ok(())
@@ -2310,16 +2165,16 @@ impl Config {
     fn apply_cartridge_catalog_config_value(&mut self, key: &str, value: &str) {
         match key {
             "cartridge_search_paths" => {
-                self.cartridge_search_paths = Self::parse_search_paths(value);
+                self.frontend.cartridge_search_paths = Self::parse_search_paths(value);
             }
             "scan_cartridges" => {
                 if let Ok(scan) = Self::parse_bool(value) {
-                    self.scan_cartridges = scan;
+                    self.frontend.scan_cartridges = scan;
                 }
             }
             "rebuild_cartridge_catalog" => {
                 if let Ok(rebuild) = Self::parse_bool(value) {
-                    self.rebuild_cartridge_catalog = rebuild;
+                    self.frontend.rebuild_cartridge_catalog = rebuild;
                 }
             }
             _ => {}
@@ -2378,27 +2233,31 @@ impl Config {
     }
 
     fn validate_controller_ports(&self) -> Result<(), String> {
-        if self.hardware_mode == HardwareMode::Famicom
-            && (self.controller_port1_explicit || self.controller_port2_explicit)
+        if self.nes.hardware_mode == HardwareMode::Famicom
+            && (self.nes.controller_port1_explicit || self.nes.controller_port2_explicit)
         {
             return Err(
                 "In Famicom mode, --controller-port1 and --controller-port2 are not allowed because ports 1 and 2 are hardwired joypads".to_string(),
             );
         }
 
-        if self.hardware_mode == HardwareMode::Nes && self.expansion_port.is_famicom_only() {
+        if self.nes.hardware_mode == HardwareMode::Nes && self.nes.expansion_port.is_famicom_only()
+        {
             return Err("famicom expansion_port requires hardware=famicom".to_string());
         }
 
-        let mouse_emulated_controller_count = [self.controller_port1, self.controller_port2]
-            .iter()
-            .filter(|controller| {
-                matches!(
-                    **controller,
-                    ControllerType::Arkanoid | ControllerType::Zapper | ControllerType::SnesMouse
-                )
-            })
-            .count();
+        let mouse_emulated_controller_count =
+            [self.nes.controller_port1, self.nes.controller_port2]
+                .iter()
+                .filter(|controller| {
+                    matches!(
+                        **controller,
+                        ControllerType::Arkanoid
+                            | ControllerType::Zapper
+                            | ControllerType::SnesMouse
+                    )
+                })
+                .count();
 
         if mouse_emulated_controller_count > 1 {
             return Err(
@@ -2488,24 +2347,24 @@ mod tests {
     #[test]
     fn test_config_default_values() {
         let config = Config::with_defaults();
-        assert_eq!(config.hardware_model, HardwareModel::NesNtsc);
-        assert!(config.audio_enabled);
-        assert!(config.vsync_enabled);
-        assert!(config.gamepads_enabled);
-        assert!(!config.fullscreen);
-        assert_eq!(config.fullscreen_display, None);
-        assert_eq!(config.shader_path, None);
-        assert!(!config.debugger_enabled);
-        assert!(!config.load_state);
-        assert!(config.apu_channels.contains(ApuChannels::PULSE1));
-        assert!(config.apu_channels.contains(ApuChannels::PULSE2));
-        assert!(config.apu_channels.contains(ApuChannels::TRIANGLE));
-        assert!(config.apu_channels.contains(ApuChannels::NOISE));
-        assert!(config.apu_channels.contains(ApuChannels::DMC));
-        assert_eq!(config.window_height, 896);
-        assert_eq!(config.rom_path, None);
-        assert_eq!(config.controller_port1, ControllerType::Joypad);
-        assert_eq!(config.controller_port2, ControllerType::Joypad);
+        assert_eq!(config.nes.hardware_model, HardwareModel::NesNtsc);
+        assert!(config.frontend.audio_enabled);
+        assert!(config.frontend.vsync_enabled);
+        assert!(config.frontend.gamepads_enabled);
+        assert!(!config.frontend.fullscreen);
+        assert_eq!(config.frontend.fullscreen_display, None);
+        assert_eq!(config.frontend.shader_path, None);
+        assert!(!config.frontend.debugger_enabled);
+        assert!(!config.frontend.load_state);
+        assert!(config.nes.apu_channels.contains(ApuChannels::PULSE1));
+        assert!(config.nes.apu_channels.contains(ApuChannels::PULSE2));
+        assert!(config.nes.apu_channels.contains(ApuChannels::TRIANGLE));
+        assert!(config.nes.apu_channels.contains(ApuChannels::NOISE));
+        assert!(config.nes.apu_channels.contains(ApuChannels::DMC));
+        assert_eq!(config.frontend.window_height, 896);
+        assert_eq!(config.frontend.rom_path, None);
+        assert_eq!(config.nes.controller_port1, ControllerType::Joypad);
+        assert_eq!(config.nes.controller_port2, ControllerType::Joypad);
     }
 
     #[test]
@@ -2522,14 +2381,14 @@ mod tests {
             file.path().to_string_lossy().to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.hardware_model, HardwareModel::NesNtsc);
-        assert!(config.audio_enabled);
-        assert!(config.vsync_enabled);
-        assert!(config.gamepads_enabled);
-        assert!(!config.fullscreen);
-        assert_eq!(config.window_height, 896);
-        assert_eq!(config.controller_port1, ControllerType::Joypad);
-        assert_eq!(config.controller_port2, ControllerType::Joypad);
+        assert_eq!(config.nes.hardware_model, HardwareModel::NesNtsc);
+        assert!(config.frontend.audio_enabled);
+        assert!(config.frontend.vsync_enabled);
+        assert!(config.frontend.gamepads_enabled);
+        assert!(!config.frontend.fullscreen);
+        assert_eq!(config.frontend.window_height, 896);
+        assert_eq!(config.nes.controller_port1, ControllerType::Joypad);
+        assert_eq!(config.nes.controller_port2, ControllerType::Joypad);
     }
 
     #[test]
@@ -2609,8 +2468,8 @@ mod tests {
             "nes-pal".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.hardware_model, HardwareModel::NesPal);
-        assert!(config.hardware_model_explicit);
+        assert_eq!(config.nes.hardware_model, HardwareModel::NesPal);
+        assert!(config.nes.hardware_model_explicit);
     }
 
     #[test]
@@ -2629,19 +2488,22 @@ mod tests {
         let mut config = Config::default();
         let applied = config.apply_rom_timing_mode(crate::cartridge::TimingMode::Pal);
         assert!(applied);
-        assert_eq!(config.hardware_model, HardwareModel::NesPal);
+        assert_eq!(config.nes.hardware_model, HardwareModel::NesPal);
     }
 
     #[test]
     fn test_config_apply_rom_timing_mode_does_not_override_explicit() {
         let mut config = Config {
-            hardware_model: HardwareModel::NesPal,
-            hardware_model_explicit: true,
+            nes: NesConfig {
+                hardware_model: HardwareModel::NesPal,
+                hardware_model_explicit: true,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let applied = config.apply_rom_timing_mode(crate::cartridge::TimingMode::Ntsc);
         assert!(!applied);
-        assert_eq!(config.hardware_model, HardwareModel::NesPal);
+        assert_eq!(config.nes.hardware_model, HardwareModel::NesPal);
     }
 
     #[test]
@@ -2649,7 +2511,7 @@ mod tests {
         let mut config = Config::default();
         let applied = config.apply_rom_timing_mode(crate::cartridge::TimingMode::Unknown(0));
         assert!(!applied);
-        assert_eq!(config.hardware_model, HardwareModel::NesNtsc);
+        assert_eq!(config.nes.hardware_model, HardwareModel::NesNtsc);
     }
 
     #[test]
@@ -2657,7 +2519,7 @@ mod tests {
         let mut config = Config::default();
         let applied = config.apply_rom_timing_mode(crate::cartridge::TimingMode::Dendy);
         assert!(applied);
-        assert_eq!(config.hardware_model, HardwareModel::Dendy);
+        assert_eq!(config.nes.hardware_model, HardwareModel::Dendy);
     }
 
     #[test]
@@ -2711,21 +2573,24 @@ mod tests {
             "dendy".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.hardware_model, HardwareModel::Dendy);
-        assert!(config.hardware_model_explicit);
-        assert_eq!(config.hardware_mode, HardwareMode::Nes);
+        assert_eq!(config.nes.hardware_model, HardwareModel::Dendy);
+        assert!(config.nes.hardware_model_explicit);
+        assert_eq!(config.nes.hardware_mode, HardwareMode::Nes);
     }
 
     #[test]
     fn test_config_apply_rom_timing_mode_dendy_does_not_override_explicit() {
         let mut config = Config {
-            hardware_model: HardwareModel::NesNtsc,
-            hardware_model_explicit: true,
+            nes: NesConfig {
+                hardware_model: HardwareModel::NesNtsc,
+                hardware_model_explicit: true,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let applied = config.apply_rom_timing_mode(crate::cartridge::TimingMode::Dendy);
         assert!(!applied);
-        assert_eq!(config.hardware_model, HardwareModel::NesNtsc);
+        assert_eq!(config.nes.hardware_model, HardwareModel::NesNtsc);
     }
 
     #[test]
@@ -2734,41 +2599,47 @@ mod tests {
         let changed = config.apply_rom_db_famicom_four_players_hint(true);
 
         assert!(changed);
-        assert_eq!(config.hardware_mode, HardwareMode::Famicom);
-        assert_eq!(config.hardware_model, HardwareModel::NesNtsc);
-        assert_eq!(config.expansion_port, ExpansionPort::FamicomFourPlayers);
+        assert_eq!(config.nes.hardware_mode, HardwareMode::Famicom);
+        assert_eq!(config.nes.hardware_model, HardwareModel::NesNtsc);
+        assert_eq!(config.nes.expansion_port, ExpansionPort::FamicomFourPlayers);
     }
 
     #[test]
     fn test_config_apply_rom_db_famicom_four_players_hint_respects_explicit_nes_hardware_override()
     {
         let mut config = Config {
-            hardware_mode: HardwareMode::Nes,
-            hardware_mode_explicit: true,
+            nes: NesConfig {
+                hardware_mode: HardwareMode::Nes,
+                hardware_mode_explicit: true,
+                ..Default::default()
+            },
             ..Default::default()
         };
 
         let changed = config.apply_rom_db_famicom_four_players_hint(true);
 
         assert!(!changed);
-        assert_eq!(config.hardware_mode, HardwareMode::Nes);
-        assert_eq!(config.expansion_port, ExpansionPort::None);
+        assert_eq!(config.nes.hardware_mode, HardwareMode::Nes);
+        assert_eq!(config.nes.expansion_port, ExpansionPort::None);
     }
 
     #[test]
     fn test_config_apply_rom_db_famicom_four_players_hint_sets_expansion_when_hardware_explicit_famicom()
      {
         let mut config = Config {
-            hardware_mode: HardwareMode::Famicom,
-            hardware_mode_explicit: true,
+            nes: NesConfig {
+                hardware_mode: HardwareMode::Famicom,
+                hardware_mode_explicit: true,
+                ..Default::default()
+            },
             ..Default::default()
         };
 
         let changed = config.apply_rom_db_famicom_four_players_hint(true);
 
         assert!(changed);
-        assert_eq!(config.hardware_mode, HardwareMode::Famicom);
-        assert_eq!(config.expansion_port, ExpansionPort::FamicomFourPlayers);
+        assert_eq!(config.nes.hardware_mode, HardwareMode::Famicom);
+        assert_eq!(config.nes.expansion_port, ExpansionPort::FamicomFourPlayers);
     }
 
     #[test]
@@ -2777,16 +2648,19 @@ mod tests {
         let changed = config.apply_rom_db_arkanoid_famicom_hint(true);
 
         assert!(changed);
-        assert_eq!(config.hardware_mode, HardwareMode::Famicom);
-        assert_eq!(config.hardware_model, HardwareModel::NesNtsc);
-        assert_eq!(config.expansion_port, ExpansionPort::ArkanoidFamicom);
+        assert_eq!(config.nes.hardware_mode, HardwareMode::Famicom);
+        assert_eq!(config.nes.hardware_model, HardwareModel::NesNtsc);
+        assert_eq!(config.nes.expansion_port, ExpansionPort::ArkanoidFamicom);
     }
 
     #[test]
     fn test_config_apply_rom_db_arkanoid_famicom_hint_respects_explicit_expansion_override() {
         let mut config = Config {
-            expansion_port: ExpansionPort::None,
-            expansion_port_explicit: true,
+            nes: NesConfig {
+                expansion_port: ExpansionPort::None,
+                expansion_port_explicit: true,
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -2794,8 +2668,8 @@ mod tests {
 
         // Hardware mode changes but expansion stays explicit
         assert!(changed);
-        assert_eq!(config.hardware_mode, HardwareMode::Famicom);
-        assert_eq!(config.expansion_port, ExpansionPort::None);
+        assert_eq!(config.nes.hardware_mode, HardwareMode::Famicom);
+        assert_eq!(config.nes.expansion_port, ExpansionPort::None);
     }
 
     #[test]
@@ -2804,8 +2678,8 @@ mod tests {
         let changed = config.apply_rom_db_arkanoid_famicom_hint(false);
 
         assert!(!changed);
-        assert_eq!(config.hardware_mode, HardwareMode::Nes);
-        assert_eq!(config.expansion_port, ExpansionPort::None);
+        assert_eq!(config.nes.hardware_mode, HardwareMode::Nes);
+        assert_eq!(config.nes.expansion_port, ExpansionPort::None);
     }
 
     #[test]
@@ -2814,21 +2688,24 @@ mod tests {
         let changed = config.apply_rom_db_famicom_region_hint(true);
 
         assert!(changed);
-        assert_eq!(config.hardware_mode, HardwareMode::Famicom);
+        assert_eq!(config.nes.hardware_mode, HardwareMode::Famicom);
     }
 
     #[test]
     fn test_config_apply_rom_db_famicom_region_hint_respects_explicit_hardware() {
         let mut config = Config {
-            hardware_mode: HardwareMode::Nes,
-            hardware_mode_explicit: true,
+            nes: NesConfig {
+                hardware_mode: HardwareMode::Nes,
+                hardware_mode_explicit: true,
+                ..Default::default()
+            },
             ..Default::default()
         };
 
         let changed = config.apply_rom_db_famicom_region_hint(true);
 
         assert!(!changed);
-        assert_eq!(config.hardware_mode, HardwareMode::Nes);
+        assert_eq!(config.nes.hardware_mode, HardwareMode::Nes);
     }
 
     #[test]
@@ -2837,7 +2714,7 @@ mod tests {
         let changed = config.apply_rom_db_famicom_region_hint(false);
 
         assert!(!changed);
-        assert_eq!(config.hardware_mode, HardwareMode::Nes);
+        assert_eq!(config.nes.hardware_mode, HardwareMode::Nes);
     }
 
     #[test]
@@ -2848,7 +2725,7 @@ mod tests {
             "false".to_string(),
         ];
         let config = parse_config(args);
-        assert!(!config.audio_enabled);
+        assert!(!config.frontend.audio_enabled);
     }
 
     #[test]
@@ -2859,7 +2736,7 @@ mod tests {
             "false".to_string(),
         ];
         let config = parse_config(args);
-        assert!(!config.vsync_enabled);
+        assert!(!config.frontend.vsync_enabled);
     }
 
     #[test]
@@ -2870,7 +2747,7 @@ mod tests {
             "false".to_string(),
         ];
         let config = parse_config(args);
-        assert!(!config.gamepads_enabled);
+        assert!(!config.frontend.gamepads_enabled);
     }
 
     #[test]
@@ -2881,15 +2758,15 @@ mod tests {
             "true".to_string(),
         ];
         let config = parse_config(args);
-        assert!(config.fullscreen);
-        assert_eq!(config.fullscreen_display, None);
+        assert!(config.frontend.fullscreen);
+        assert_eq!(config.frontend.fullscreen_display, None);
     }
 
     #[test]
     fn test_config_load_state_flag() {
         let args = vec!["neser".to_string(), "--load-state".to_string()];
         let config = parse_config(args);
-        assert!(config.load_state);
+        assert!(config.frontend.load_state);
     }
 
     #[test]
@@ -2902,8 +2779,8 @@ mod tests {
             "1".to_string(),
         ];
         let config = parse_config(args);
-        assert!(config.fullscreen);
-        assert_eq!(config.fullscreen_display, Some(1));
+        assert!(config.frontend.fullscreen);
+        assert_eq!(config.frontend.fullscreen_display, Some(1));
     }
 
     #[test]
@@ -2914,8 +2791,8 @@ mod tests {
             "1".to_string(),
         ];
         let config = parse_config(args);
-        assert!(!config.fullscreen);
-        assert_eq!(config.fullscreen_display, None);
+        assert!(!config.frontend.fullscreen);
+        assert_eq!(config.frontend.fullscreen_display, None);
     }
 
     #[test]
@@ -2976,7 +2853,7 @@ mod tests {
             "true".to_string(),
         ];
         let config = parse_config(args);
-        assert!(config.debugger_enabled);
+        assert!(config.frontend.debugger_enabled);
     }
 
     #[test]
@@ -2987,8 +2864,8 @@ mod tests {
             "false".to_string(),
         ];
         let config = parse_config(args);
-        assert!(!config.apu_channels.contains(ApuChannels::PULSE1));
-        assert!(config.apu_channels.contains(ApuChannels::PULSE2));
+        assert!(!config.nes.apu_channels.contains(ApuChannels::PULSE1));
+        assert!(config.nes.apu_channels.contains(ApuChannels::PULSE2));
     }
 
     #[test]
@@ -2999,8 +2876,8 @@ mod tests {
             "false".to_string(),
         ];
         let config = parse_config(args);
-        assert!(config.apu_channels.contains(ApuChannels::PULSE1));
-        assert!(!config.apu_channels.contains(ApuChannels::PULSE2));
+        assert!(config.nes.apu_channels.contains(ApuChannels::PULSE1));
+        assert!(!config.nes.apu_channels.contains(ApuChannels::PULSE2));
     }
 
     #[test]
@@ -3011,7 +2888,7 @@ mod tests {
             "false".to_string(),
         ];
         let config = parse_config(args);
-        assert!(!config.apu_channels.contains(ApuChannels::TRIANGLE));
+        assert!(!config.nes.apu_channels.contains(ApuChannels::TRIANGLE));
     }
 
     #[test]
@@ -3022,7 +2899,7 @@ mod tests {
             "false".to_string(),
         ];
         let config = parse_config(args);
-        assert!(!config.apu_channels.contains(ApuChannels::NOISE));
+        assert!(!config.nes.apu_channels.contains(ApuChannels::NOISE));
     }
 
     #[test]
@@ -3033,7 +2910,7 @@ mod tests {
             "false".to_string(),
         ];
         let config = parse_config(args);
-        assert!(!config.apu_channels.contains(ApuChannels::DMC));
+        assert!(!config.nes.apu_channels.contains(ApuChannels::DMC));
     }
 
     #[test]
@@ -3050,103 +2927,103 @@ mod tests {
     fn test_config_positional_argument_is_rom_path() {
         let args = vec!["neser".to_string(), "somefile.nes".to_string()];
         let config = parse_config(args);
-        assert_eq!(config.rom_path.as_deref(), Some("somefile.nes"));
+        assert_eq!(config.frontend.rom_path.as_deref(), Some("somefile.nes"));
     }
 
     #[test]
     fn test_config_tracing_enabled() {
         let args = vec!["neser".to_string(), "--trace".to_string()];
         let config = parse_config(args);
-        assert!(config.tracing.enabled);
-        assert_eq!(config.tracing.cpu, 1); // --trace enables CPU tracing at level 1
+        assert!(config.frontend.tracing.enabled);
+        assert_eq!(config.frontend.tracing.cpu, 1); // --trace enables CPU tracing at level 1
     }
 
     #[test]
     fn test_config_tracing_nestest() {
         let args = vec!["neser".to_string(), "--trace-nestest".to_string()];
         let config = parse_config(args);
-        assert!(config.tracing.enabled);
-        assert!(config.tracing.nestest);
+        assert!(config.frontend.tracing.enabled);
+        assert!(config.frontend.tracing.nestest);
     }
 
     #[test]
     fn test_config_tracing_cpu() {
         let args = vec!["neser".to_string(), "--trace-cpu".to_string()];
         let config = parse_config(args);
-        assert!(config.tracing.enabled);
-        assert_eq!(config.tracing.cpu, 1);
+        assert!(config.frontend.tracing.enabled);
+        assert_eq!(config.frontend.tracing.cpu, 1);
     }
 
     #[test]
     fn test_config_tracing_ppu() {
         let args = vec!["neser".to_string(), "--trace-ppu".to_string()];
         let config = parse_config(args);
-        assert!(config.tracing.enabled);
-        assert_eq!(config.tracing.ppu, 1);
+        assert!(config.frontend.tracing.enabled);
+        assert_eq!(config.frontend.tracing.ppu, 1);
     }
 
     #[test]
     fn test_config_tracing_apu() {
         let args = vec!["neser".to_string(), "--trace-apu".to_string()];
         let config = parse_config(args);
-        assert!(config.tracing.enabled);
-        assert_eq!(config.tracing.apu, 1);
+        assert!(config.frontend.tracing.enabled);
+        assert_eq!(config.frontend.tracing.apu, 1);
     }
 
     #[test]
     fn test_config_tracing_mapper() {
         let args = vec!["neser".to_string(), "--trace-mapper".to_string()];
         let config = parse_config(args);
-        assert!(config.tracing.enabled);
-        assert_eq!(config.tracing.mapper, 1);
+        assert!(config.frontend.tracing.enabled);
+        assert_eq!(config.frontend.tracing.mapper, 1);
     }
 
     #[test]
     fn test_config_tracing_cpu_with_level() {
         let args = vec!["neser".to_string(), "--trace-cpu=2".to_string()];
         let config = parse_config(args);
-        assert!(config.tracing.enabled);
-        assert_eq!(config.tracing.cpu, 2);
+        assert!(config.frontend.tracing.enabled);
+        assert_eq!(config.frontend.tracing.cpu, 2);
     }
 
     #[test]
     fn test_config_tracing_ppu_with_level() {
         let args = vec!["neser".to_string(), "--trace-ppu=3".to_string()];
         let config = parse_config(args);
-        assert!(config.tracing.enabled);
-        assert_eq!(config.tracing.ppu, 3);
+        assert!(config.frontend.tracing.enabled);
+        assert_eq!(config.frontend.tracing.ppu, 3);
     }
 
     #[test]
     fn test_config_tracing_ppu_level_is_capped_at_five() {
         let args = vec!["neser".to_string(), "--trace-ppu=9".to_string()];
         let config = parse_config(args);
-        assert!(config.tracing.enabled);
-        assert_eq!(config.tracing.ppu, 5);
+        assert!(config.frontend.tracing.enabled);
+        assert_eq!(config.frontend.tracing.ppu, 5);
     }
 
     #[test]
     fn test_config_tracing_apu_with_level() {
         let args = vec!["neser".to_string(), "--trace-apu=4".to_string()];
         let config = parse_config(args);
-        assert!(config.tracing.enabled);
-        assert_eq!(config.tracing.apu, 4);
+        assert!(config.frontend.tracing.enabled);
+        assert_eq!(config.frontend.tracing.apu, 4);
     }
 
     #[test]
     fn test_config_tracing_mapper_with_level() {
         let args = vec!["neser".to_string(), "--trace-mapper=5".to_string()];
         let config = parse_config(args);
-        assert!(config.tracing.enabled);
-        assert_eq!(config.tracing.mapper, 5);
+        assert!(config.frontend.tracing.enabled);
+        assert_eq!(config.frontend.tracing.mapper, 5);
     }
 
     #[test]
     fn test_config_tracing_mapper_level_is_capped_at_five() {
         let args = vec!["neser".to_string(), "--trace-mapper=9".to_string()];
         let config = parse_config(args);
-        assert!(config.tracing.enabled);
-        assert_eq!(config.tracing.mapper, 5);
+        assert!(config.frontend.tracing.enabled);
+        assert_eq!(config.frontend.tracing.mapper, 5);
     }
 
     #[test]
@@ -3158,11 +3035,11 @@ mod tests {
             "--trace-apu=1".to_string(),
         ];
         let config = parse_config(args);
-        assert!(config.tracing.enabled);
-        assert_eq!(config.tracing.cpu, 3);
-        assert_eq!(config.tracing.ppu, 2);
-        assert_eq!(config.tracing.apu, 1);
-        assert_eq!(config.tracing.mapper, 0);
+        assert!(config.frontend.tracing.enabled);
+        assert_eq!(config.frontend.tracing.cpu, 3);
+        assert_eq!(config.frontend.tracing.ppu, 2);
+        assert_eq!(config.frontend.tracing.apu, 1);
+        assert_eq!(config.frontend.tracing.mapper, 0);
     }
 
     #[test]
@@ -3183,13 +3060,13 @@ mod tests {
             "false".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.hardware_model, HardwareModel::NesPal);
-        assert!(!config.audio_enabled);
-        assert!(config.fullscreen);
-        assert_eq!(config.fullscreen_display, Some(2));
-        assert!(!config.apu_channels.contains(ApuChannels::PULSE1));
-        assert!(config.apu_channels.contains(ApuChannels::PULSE2));
-        assert!(!config.apu_channels.contains(ApuChannels::NOISE));
+        assert_eq!(config.nes.hardware_model, HardwareModel::NesPal);
+        assert!(!config.frontend.audio_enabled);
+        assert!(config.frontend.fullscreen);
+        assert_eq!(config.frontend.fullscreen_display, Some(2));
+        assert!(!config.nes.apu_channels.contains(ApuChannels::PULSE1));
+        assert!(config.nes.apu_channels.contains(ApuChannels::PULSE2));
+        assert!(!config.nes.apu_channels.contains(ApuChannels::NOISE));
     }
 
     #[test]
@@ -3200,7 +3077,7 @@ mod tests {
             "720".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.window_height, 720);
+        assert_eq!(config.frontend.window_height, 720);
     }
 
     #[test]
@@ -3222,14 +3099,14 @@ mod tests {
             "3".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.zapper_detection_size, 3);
+        assert_eq!(config.nes.zapper_detection_size, 3);
     }
 
     #[test]
     fn test_config_zapper_detection_size_cli_equals_syntax() {
         let args = vec!["neser".to_string(), "--zapper-detection-size=7".to_string()];
         let config = parse_config(args);
-        assert_eq!(config.zapper_detection_size, 7);
+        assert_eq!(config.nes.zapper_detection_size, 7);
     }
 
     #[test]
@@ -3246,13 +3123,13 @@ mod tests {
     #[test]
     fn test_config_default_horizontal_overscan_is_8() {
         let config = Config::default();
-        assert_eq!(config.horizontal_overscan, 0);
+        assert_eq!(config.nes.horizontal_overscan, 0);
     }
 
     #[test]
     fn test_config_default_vertical_overscan_is_8() {
         let config = Config::default();
-        assert_eq!(config.vertical_overscan, 8);
+        assert_eq!(config.nes.vertical_overscan, 8);
     }
 
     #[test]
@@ -3261,7 +3138,7 @@ mod tests {
         config
             .apply_config_value("horizontal_overscan", "4")
             .unwrap();
-        assert_eq!(config.horizontal_overscan, 4);
+        assert_eq!(config.nes.horizontal_overscan, 4);
     }
 
     #[test]
@@ -3270,7 +3147,7 @@ mod tests {
         config
             .apply_config_value("vertical_overscan", "12")
             .unwrap();
-        assert_eq!(config.vertical_overscan, 12);
+        assert_eq!(config.nes.vertical_overscan, 12);
     }
 
     #[test]
@@ -3280,8 +3157,8 @@ mod tests {
             .apply_config_value("horizontal_overscan", "0")
             .unwrap();
         config.apply_config_value("vertical_overscan", "0").unwrap();
-        assert_eq!(config.horizontal_overscan, 0);
-        assert_eq!(config.vertical_overscan, 0);
+        assert_eq!(config.nes.horizontal_overscan, 0);
+        assert_eq!(config.nes.vertical_overscan, 0);
     }
 
     #[test]
@@ -3290,7 +3167,7 @@ mod tests {
         config
             .apply_config_value("horizontal_overscan", "8")
             .unwrap();
-        assert_eq!(config.horizontal_overscan, 8);
+        assert_eq!(config.nes.horizontal_overscan, 8);
     }
 
     #[test]
@@ -3299,7 +3176,7 @@ mod tests {
         config
             .apply_config_value("vertical_overscan", "16")
             .unwrap();
-        assert_eq!(config.vertical_overscan, 16);
+        assert_eq!(config.nes.vertical_overscan, 16);
     }
 
     #[test]
@@ -3308,7 +3185,7 @@ mod tests {
         config
             .apply_config_value("horizontal_overscan", "9")
             .unwrap();
-        assert_eq!(config.horizontal_overscan, 8);
+        assert_eq!(config.nes.horizontal_overscan, 8);
     }
 
     #[test]
@@ -3317,7 +3194,7 @@ mod tests {
         config
             .apply_config_value("vertical_overscan", "17")
             .unwrap();
-        assert_eq!(config.vertical_overscan, 16);
+        assert_eq!(config.nes.vertical_overscan, 16);
     }
 
     #[test]
@@ -3328,7 +3205,7 @@ mod tests {
             "4".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.horizontal_overscan, 4);
+        assert_eq!(config.nes.horizontal_overscan, 4);
     }
 
     #[test]
@@ -3339,7 +3216,7 @@ mod tests {
             "0".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.vertical_overscan, 0);
+        assert_eq!(config.nes.vertical_overscan, 0);
     }
 
     #[test]
@@ -3359,105 +3236,111 @@ mod tests {
     fn test_config_file_hardware_nes_pal() {
         let mut config = Config::default();
         config.apply_config_value("hardware", "nes-pal").unwrap();
-        assert_eq!(config.hardware_model, HardwareModel::NesPal);
-        assert!(config.hardware_model_explicit);
-        assert_eq!(config.hardware_mode, HardwareMode::Nes);
-        assert!(config.hardware_mode_explicit);
+        assert_eq!(config.nes.hardware_model, HardwareModel::NesPal);
+        assert!(config.nes.hardware_model_explicit);
+        assert_eq!(config.nes.hardware_mode, HardwareMode::Nes);
+        assert!(config.nes.hardware_mode_explicit);
     }
 
     #[test]
     fn test_config_file_hardware_nes_ntsc() {
         let mut config = Config {
-            hardware_model: HardwareModel::NesPal,
+            nes: NesConfig {
+                hardware_model: HardwareModel::NesPal,
+                ..Default::default()
+            },
             ..Default::default()
         };
         config.apply_config_value("hardware", "nes-ntsc").unwrap();
-        assert_eq!(config.hardware_model, HardwareModel::NesNtsc);
-        assert!(config.hardware_model_explicit);
-        assert_eq!(config.hardware_mode, HardwareMode::Nes);
-        assert!(config.hardware_mode_explicit);
+        assert_eq!(config.nes.hardware_model, HardwareModel::NesNtsc);
+        assert!(config.nes.hardware_model_explicit);
+        assert_eq!(config.nes.hardware_mode, HardwareMode::Nes);
+        assert!(config.nes.hardware_mode_explicit);
     }
 
     #[test]
     fn test_config_file_hardware_case_insensitive() {
         let mut config = Config::default();
         config.apply_config_value("hardware", "NES-PAL").unwrap();
-        assert_eq!(config.hardware_model, HardwareModel::NesPal);
-        assert_eq!(config.hardware_mode, HardwareMode::Nes);
+        assert_eq!(config.nes.hardware_model, HardwareModel::NesPal);
+        assert_eq!(config.nes.hardware_mode, HardwareMode::Nes);
 
         config.apply_config_value("hardware", "NES-NTSC").unwrap();
-        assert_eq!(config.hardware_model, HardwareModel::NesNtsc);
-        assert_eq!(config.hardware_mode, HardwareMode::Nes);
+        assert_eq!(config.nes.hardware_model, HardwareModel::NesNtsc);
+        assert_eq!(config.nes.hardware_mode, HardwareMode::Nes);
     }
 
     #[test]
     fn test_config_file_hardware_famicom_sets_mode_and_model() {
         let mut config = Config {
-            hardware_model: HardwareModel::NesPal,
+            nes: NesConfig {
+                hardware_model: HardwareModel::NesPal,
+                ..Default::default()
+            },
             ..Default::default()
         };
         config.apply_config_value("hardware", "famicom").unwrap();
-        assert_eq!(config.hardware_mode, HardwareMode::Famicom);
-        assert!(config.hardware_mode_explicit);
-        assert_eq!(config.hardware_model, HardwareModel::NesNtsc);
-        assert!(config.hardware_model_explicit);
+        assert_eq!(config.nes.hardware_mode, HardwareMode::Famicom);
+        assert!(config.nes.hardware_mode_explicit);
+        assert_eq!(config.nes.hardware_model, HardwareModel::NesNtsc);
+        assert!(config.nes.hardware_model_explicit);
     }
 
     #[test]
     fn test_config_file_audio() {
         let mut config = Config::default();
         config.apply_config_value("audio", "false").unwrap();
-        assert!(!config.audio_enabled);
+        assert!(!config.frontend.audio_enabled);
 
         config.apply_config_value("audio", "true").unwrap();
-        assert!(config.audio_enabled);
+        assert!(config.frontend.audio_enabled);
     }
 
     #[test]
     fn test_config_file_vsync() {
         let mut config = Config::default();
         config.apply_config_value("vsync", "false").unwrap();
-        assert!(!config.vsync_enabled);
+        assert!(!config.frontend.vsync_enabled);
 
         config.apply_config_value("vsync", "true").unwrap();
-        assert!(config.vsync_enabled);
+        assert!(config.frontend.vsync_enabled);
     }
 
     #[test]
     fn test_config_file_gamepads() {
         let mut config = Config::default();
         config.apply_config_value("gamepads", "false").unwrap();
-        assert!(!config.gamepads_enabled);
+        assert!(!config.frontend.gamepads_enabled);
 
         config.apply_config_value("gamepads", "true").unwrap();
-        assert!(config.gamepads_enabled);
+        assert!(config.frontend.gamepads_enabled);
     }
 
     #[test]
     fn test_config_file_fullscreen() {
         let mut config = Config::default();
         config.apply_config_value("fullscreen", "true").unwrap();
-        assert!(config.fullscreen);
+        assert!(config.frontend.fullscreen);
 
         config.apply_config_value("fullscreen", "false").unwrap();
-        assert!(!config.fullscreen);
+        assert!(!config.frontend.fullscreen);
     }
 
     #[test]
     fn test_config_file_display() {
         let mut config = Config::default();
         config.apply_config_value("display", "1").unwrap();
-        assert_eq!(config.fullscreen_display, Some(1));
+        assert_eq!(config.frontend.fullscreen_display, Some(1));
 
         config.apply_config_value("display", "0").unwrap();
-        assert_eq!(config.fullscreen_display, Some(0));
+        assert_eq!(config.frontend.fullscreen_display, Some(0));
     }
 
     #[test]
     fn test_config_file_display_negative_ignored() {
         let mut config = Config::default();
         config.apply_config_value("display", "-1").unwrap();
-        assert_eq!(config.fullscreen_display, None);
+        assert_eq!(config.frontend.fullscreen_display, None);
     }
 
     #[test]
@@ -3475,7 +3358,7 @@ mod tests {
     fn test_config_file_filter_empty_ignored() {
         let mut config = Config::default();
         config.apply_config_value("filter", "").unwrap();
-        assert_eq!(config.shader_path, None);
+        assert_eq!(config.frontend.shader_path, None);
     }
 
     #[test]
@@ -3483,7 +3366,7 @@ mod tests {
         let mut config = Config::default();
         config.apply_config_value("filter", "crt").unwrap();
         assert_eq!(
-            config.shader_path,
+            config.frontend.shader_path,
             Some("shaders/crt-lottes.slangp".to_string())
         );
     }
@@ -3493,7 +3376,7 @@ mod tests {
         let mut config = Config::default();
         config.apply_config_value("filter", "ntsc").unwrap();
         assert_eq!(
-            config.shader_path,
+            config.frontend.shader_path,
             Some("shaders/ntsc-256px-composite.slangp".to_string())
         );
     }
@@ -3503,7 +3386,7 @@ mod tests {
         let mut config = Config::default();
         config.apply_config_value("filter", "smooth").unwrap();
         assert_eq!(
-            config.shader_path,
+            config.frontend.shader_path,
             Some("shaders/xbrz-freescale.slangp".to_string())
         );
     }
@@ -3512,7 +3395,10 @@ mod tests {
     fn test_config_file_filter_none() {
         let mut config = Config::default();
         config.apply_config_value("filter", "none").unwrap();
-        assert_eq!(config.shader_path, Some("shaders/stock.slangp".to_string()));
+        assert_eq!(
+            config.frontend.shader_path,
+            Some("shaders/stock.slangp".to_string())
+        );
     }
 
     #[test]
@@ -3524,7 +3410,7 @@ mod tests {
         ];
         let config = parse_config(args);
         assert_eq!(
-            config.shader_path,
+            config.frontend.shader_path,
             Some("shaders/crt-lottes.slangp".to_string())
         );
     }
@@ -3538,7 +3424,7 @@ mod tests {
         ];
         let config = parse_config(args);
         assert_eq!(
-            config.shader_path,
+            config.frontend.shader_path,
             Some("shaders/ntsc-256px-composite.slangp".to_string())
         );
     }
@@ -3552,7 +3438,7 @@ mod tests {
         ];
         let config = parse_config(args);
         assert_eq!(
-            config.shader_path,
+            config.frontend.shader_path,
             Some("shaders/xbrz-freescale.slangp".to_string())
         );
     }
@@ -3565,14 +3451,17 @@ mod tests {
             "none".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.shader_path, Some("shaders/stock.slangp".to_string()));
+        assert_eq!(
+            config.frontend.shader_path,
+            Some("shaders/stock.slangp".to_string())
+        );
     }
 
     #[test]
     fn test_config_file_debugger() {
         let mut config = Config::default();
         config.apply_config_value("debugger", "true").unwrap();
-        assert!(config.debugger_enabled);
+        assert!(config.frontend.debugger_enabled);
     }
 
     #[test]
@@ -3584,18 +3473,18 @@ mod tests {
         config.apply_config_value("noise", "false").unwrap();
         config.apply_config_value("dmc", "false").unwrap();
 
-        assert!(!config.apu_channels.contains(ApuChannels::PULSE1));
-        assert!(!config.apu_channels.contains(ApuChannels::PULSE2));
-        assert!(!config.apu_channels.contains(ApuChannels::TRIANGLE));
-        assert!(!config.apu_channels.contains(ApuChannels::NOISE));
-        assert!(!config.apu_channels.contains(ApuChannels::DMC));
+        assert!(!config.nes.apu_channels.contains(ApuChannels::PULSE1));
+        assert!(!config.nes.apu_channels.contains(ApuChannels::PULSE2));
+        assert!(!config.nes.apu_channels.contains(ApuChannels::TRIANGLE));
+        assert!(!config.nes.apu_channels.contains(ApuChannels::NOISE));
+        assert!(!config.nes.apu_channels.contains(ApuChannels::DMC));
     }
 
     #[test]
     fn test_config_file_window_height() {
         let mut config = Config::default();
         config.apply_config_value("window_height", "720").unwrap();
-        assert_eq!(config.window_height, 720);
+        assert_eq!(config.frontend.window_height, 720);
     }
 
     #[test]
@@ -3604,10 +3493,10 @@ mod tests {
         let _ = config.apply_config_value("controller_port1", "arkanoid");
         let _ = config.apply_config_value("controller_port2", "joypad");
 
-        assert_eq!(config.controller_port1, ControllerType::Arkanoid);
-        assert_eq!(config.controller_port2, ControllerType::Joypad);
-        assert!(config.controller_port1_explicit);
-        assert!(config.controller_port2_explicit);
+        assert_eq!(config.nes.controller_port1, ControllerType::Arkanoid);
+        assert_eq!(config.nes.controller_port2, ControllerType::Joypad);
+        assert!(config.nes.controller_port1_explicit);
+        assert!(config.nes.controller_port2_explicit);
     }
 
     #[test]
@@ -3625,7 +3514,7 @@ mod tests {
     fn test_config_controller_port1_flag_zapper() {
         let args = vec!["neser".to_string(), "--controller-port1=zapper".to_string()];
         let config = parse_config(args);
-        assert_eq!(config.controller_port1, ControllerType::Zapper);
+        assert_eq!(config.nes.controller_port1, ControllerType::Zapper);
     }
 
     #[test]
@@ -3635,7 +3524,7 @@ mod tests {
             "--controller-port1=arkanoid".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.controller_port1, ControllerType::Arkanoid);
+        assert_eq!(config.nes.controller_port1, ControllerType::Arkanoid);
     }
 
     #[test]
@@ -3645,8 +3534,8 @@ mod tests {
             "--controller-port1=snes-controller".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.controller_port1, ControllerType::SnesController);
-        assert!(config.controller_port1_explicit);
+        assert_eq!(config.nes.controller_port1, ControllerType::SnesController);
+        assert!(config.nes.controller_port1_explicit);
     }
 
     #[test]
@@ -3656,15 +3545,15 @@ mod tests {
             "--controller-port1=snes-mouse".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.controller_port1, ControllerType::SnesMouse);
-        assert!(config.controller_port1_explicit);
+        assert_eq!(config.nes.controller_port1, ControllerType::SnesMouse);
+        assert!(config.nes.controller_port1_explicit);
     }
 
     #[test]
     fn test_config_controller_port2_flag_zapper() {
         let args = vec!["neser".to_string(), "--controller-port2=zapper".to_string()];
         let config = parse_config(args);
-        assert_eq!(config.controller_port2, ControllerType::Zapper);
+        assert_eq!(config.nes.controller_port2, ControllerType::Zapper);
     }
 
     #[test]
@@ -3674,8 +3563,8 @@ mod tests {
             "--controller-port1=power-pad".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.controller_port1, ControllerType::PowerPad);
-        assert!(config.controller_port1_explicit);
+        assert_eq!(config.nes.controller_port1, ControllerType::PowerPad);
+        assert!(config.nes.controller_port1_explicit);
     }
 
     #[test]
@@ -3694,7 +3583,7 @@ mod tests {
             "--controller-port1=joypad".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.controller_port1, ControllerType::Joypad);
+        assert_eq!(config.nes.controller_port1, ControllerType::Joypad);
     }
 
     #[test]
@@ -3763,14 +3652,14 @@ mod tests {
     fn test_config_zapper_detection_size() {
         let mut config = Config::default();
         let _ = config.apply_config_value("zapper_detection_size", "2");
-        assert_eq!(config.zapper_detection_size, 2);
+        assert_eq!(config.nes.zapper_detection_size, 2);
     }
 
     #[test]
     fn test_config_zapper_detection_size_invalid() {
         let mut config = Config::default();
         let _ = config.apply_config_value("zapper_detection_size", "invalid");
-        assert_eq!(config.zapper_detection_size, 0); // Should remain default
+        assert_eq!(config.nes.zapper_detection_size, 0); // Should remain default
     }
 
     #[test]
@@ -3783,55 +3672,55 @@ mod tests {
         let mut config = Config::default();
         config.load_from_file(&config_path).unwrap();
 
-        assert_eq!(config.zapper_detection_size, 1);
+        assert_eq!(config.nes.zapper_detection_size, 1);
     }
 
     #[test]
     fn test_config_file_trace_cpu() {
         let mut config = Config::default();
         config.apply_config_value("trace-cpu", "2").unwrap();
-        assert!(config.tracing.enabled);
-        assert_eq!(config.tracing.cpu, 2);
+        assert!(config.frontend.tracing.enabled);
+        assert_eq!(config.frontend.tracing.cpu, 2);
     }
 
     #[test]
     fn test_config_file_trace_ppu() {
         let mut config = Config::default();
         config.apply_config_value("trace-ppu", "3").unwrap();
-        assert!(config.tracing.enabled);
-        assert_eq!(config.tracing.ppu, 3);
+        assert!(config.frontend.tracing.enabled);
+        assert_eq!(config.frontend.tracing.ppu, 3);
     }
 
     #[test]
     fn test_config_file_trace_apu() {
         let mut config = Config::default();
         config.apply_config_value("trace-apu", "1").unwrap();
-        assert!(config.tracing.enabled);
-        assert_eq!(config.tracing.apu, 1);
+        assert!(config.frontend.tracing.enabled);
+        assert_eq!(config.frontend.tracing.apu, 1);
     }
 
     #[test]
     fn test_config_file_trace_mapper() {
         let mut config = Config::default();
         config.apply_config_value("trace-mapper", "4").unwrap();
-        assert!(config.tracing.enabled);
-        assert_eq!(config.tracing.mapper, 4);
+        assert!(config.frontend.tracing.enabled);
+        assert_eq!(config.frontend.tracing.mapper, 4);
     }
 
     #[test]
     fn test_config_file_trace_nestest() {
         let mut config = Config::default();
         config.apply_config_value("trace-nestest", "true").unwrap();
-        assert!(config.tracing.enabled);
-        assert!(config.tracing.nestest);
+        assert!(config.frontend.tracing.enabled);
+        assert!(config.frontend.tracing.nestest);
     }
 
     #[test]
     fn test_config_file_trace_zero_does_not_enable() {
         let mut config = Config::default();
         config.apply_config_value("trace-cpu", "0").unwrap();
-        assert!(!config.tracing.enabled);
-        assert_eq!(config.tracing.cpu, 0);
+        assert!(!config.frontend.tracing.enabled);
+        assert_eq!(config.frontend.tracing.cpu, 0);
     }
 
     #[test]
@@ -3840,15 +3729,15 @@ mod tests {
 
         // Test "yes"/"no"
         config.apply_config_value("audio", "no").unwrap();
-        assert!(!config.audio_enabled);
+        assert!(!config.frontend.audio_enabled);
         config.apply_config_value("audio", "yes").unwrap();
-        assert!(config.audio_enabled);
+        assert!(config.frontend.audio_enabled);
 
         // Test "1"/"0"
         config.apply_config_value("audio", "0").unwrap();
-        assert!(!config.audio_enabled);
+        assert!(!config.frontend.audio_enabled);
         config.apply_config_value("audio", "1").unwrap();
-        assert!(config.audio_enabled);
+        assert!(config.frontend.audio_enabled);
     }
 
     #[test]
@@ -3859,7 +3748,7 @@ mod tests {
             .apply_config_value("unknown_key", "some_value")
             .unwrap();
         // Config should remain unchanged
-        assert_eq!(config.hardware_model, HardwareModel::NesNtsc);
+        assert_eq!(config.nes.hardware_model, HardwareModel::NesNtsc);
     }
 
     #[test]
@@ -3884,18 +3773,18 @@ pulse1=false
         let mut config = Config::default();
         config.load_from_file(file.path()).unwrap();
 
-        assert_eq!(config.hardware_model, HardwareModel::NesPal);
-        assert!(!config.audio_enabled);
-        assert!(config.fullscreen);
-        assert_eq!(config.fullscreen_display, Some(2));
+        assert_eq!(config.nes.hardware_model, HardwareModel::NesPal);
+        assert!(!config.frontend.audio_enabled);
+        assert!(config.frontend.fullscreen);
+        assert_eq!(config.frontend.fullscreen_display, Some(2));
         assert_eq!(
-            config.shader_path,
+            config.frontend.shader_path,
             Some("shaders/crt-lottes.slangp".to_string())
         );
-        assert!(!config.apu_channels.contains(ApuChannels::PULSE1));
+        assert!(!config.nes.apu_channels.contains(ApuChannels::PULSE1));
         // Other values should remain default
-        assert!(config.vsync_enabled);
-        assert!(config.apu_channels.contains(ApuChannels::PULSE2));
+        assert!(config.frontend.vsync_enabled);
+        assert!(config.nes.apu_channels.contains(ApuChannels::PULSE2));
     }
 
     #[test]
@@ -3916,16 +3805,16 @@ audio=false
 
         // Load from config file
         config.load_from_file(file.path()).unwrap();
-        assert_eq!(config.hardware_model, HardwareModel::NesPal);
-        assert!(!config.audio_enabled);
+        assert_eq!(config.nes.hardware_model, HardwareModel::NesPal);
+        assert!(!config.frontend.audio_enabled);
 
         // Apply args - no args means config file values should remain
         let args = vec!["neser".to_string()];
         config.apply_args(&args).unwrap();
 
         // Config file values should persist since args don't override them
-        assert_eq!(config.hardware_model, HardwareModel::NesPal);
-        assert!(!config.audio_enabled);
+        assert_eq!(config.nes.hardware_model, HardwareModel::NesPal);
+        assert!(!config.frontend.audio_enabled);
     }
 
     #[test]
@@ -3946,8 +3835,8 @@ audio=false
         ];
 
         let config = parse_config(args);
-        assert_eq!(config.hardware_model, HardwareModel::NesNtsc);
-        assert!(config.hardware_model_explicit);
+        assert_eq!(config.nes.hardware_model, HardwareModel::NesNtsc);
+        assert!(config.nes.hardware_model_explicit);
     }
 
     #[test]
@@ -3979,8 +3868,8 @@ controller_port2=arkanoid
             .load_from_file(Path::new("/nonexistent/path/neser.conf"))
             .unwrap();
         // Should not panic, config should remain default
-        assert_eq!(config.hardware_model, HardwareModel::NesNtsc);
-        assert!(config.audio_enabled);
+        assert_eq!(config.nes.hardware_model, HardwareModel::NesNtsc);
+        assert!(config.frontend.audio_enabled);
     }
 
     #[test]
@@ -3998,8 +3887,8 @@ controller_port2=arkanoid
             file.path().to_str().unwrap().to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.hardware_model, HardwareModel::NesPal);
-        assert!(!config.audio_enabled);
+        assert_eq!(config.nes.hardware_model, HardwareModel::NesPal);
+        assert!(!config.frontend.audio_enabled);
     }
 
     #[test]
@@ -4064,7 +3953,7 @@ filter=invalid-shader
             explicit_file.path().to_str().unwrap().to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.hardware_model, HardwareModel::NesPal);
+        assert_eq!(config.nes.hardware_model, HardwareModel::NesPal);
     }
 
     #[test]
@@ -4095,7 +3984,7 @@ filter=invalid-shader
             "true".to_string(),
         ];
         let config = parse_config(args);
-        assert!(config.audio_enabled);
+        assert!(config.frontend.audio_enabled);
     }
 
     #[test]
@@ -4106,7 +3995,7 @@ filter=invalid-shader
             "yes".to_string(),
         ];
         let config = parse_config(args);
-        assert!(config.audio_enabled);
+        assert!(config.frontend.audio_enabled);
     }
 
     #[test]
@@ -4117,7 +4006,7 @@ filter=invalid-shader
             "true".to_string(),
         ];
         let config = parse_config(args);
-        assert!(config.vsync_enabled);
+        assert!(config.frontend.vsync_enabled);
     }
 
     #[test]
@@ -4128,7 +4017,7 @@ filter=invalid-shader
             "true".to_string(),
         ];
         let config = parse_config(args);
-        assert!(config.gamepads_enabled);
+        assert!(config.frontend.gamepads_enabled);
     }
 
     #[test]
@@ -4139,7 +4028,7 @@ filter=invalid-shader
             "true".to_string(),
         ];
         let config = parse_config(args);
-        assert!(config.apu_channels.contains(ApuChannels::PULSE1));
+        assert!(config.nes.apu_channels.contains(ApuChannels::PULSE1));
     }
 
     #[test]
@@ -4150,7 +4039,7 @@ filter=invalid-shader
             "true".to_string(),
         ];
         let config = parse_config(args);
-        assert!(config.apu_channels.contains(ApuChannels::PULSE2));
+        assert!(config.nes.apu_channels.contains(ApuChannels::PULSE2));
     }
 
     #[test]
@@ -4161,7 +4050,7 @@ filter=invalid-shader
             "true".to_string(),
         ];
         let config = parse_config(args);
-        assert!(config.apu_channels.contains(ApuChannels::TRIANGLE));
+        assert!(config.nes.apu_channels.contains(ApuChannels::TRIANGLE));
     }
 
     #[test]
@@ -4172,14 +4061,14 @@ filter=invalid-shader
             "true".to_string(),
         ];
         let config = parse_config(args);
-        assert!(config.apu_channels.contains(ApuChannels::NOISE));
+        assert!(config.nes.apu_channels.contains(ApuChannels::NOISE));
     }
 
     #[test]
     fn test_config_dmc_flag_true() {
         let args = vec!["neser".to_string(), "--dmc".to_string(), "true".to_string()];
         let config = parse_config(args);
-        assert!(config.apu_channels.contains(ApuChannels::DMC));
+        assert!(config.nes.apu_channels.contains(ApuChannels::DMC));
     }
 
     #[test]
@@ -4190,7 +4079,7 @@ filter=invalid-shader
             "true".to_string(),
         ];
         let config = parse_config(args);
-        assert!(config.debugger_enabled);
+        assert!(config.frontend.debugger_enabled);
     }
 
     #[test]
@@ -4201,7 +4090,7 @@ filter=invalid-shader
             "nes-pal".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.hardware_model, HardwareModel::NesPal);
+        assert_eq!(config.nes.hardware_model, HardwareModel::NesPal);
     }
 
     #[test]
@@ -4212,7 +4101,7 @@ filter=invalid-shader
             "nes-ntsc".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.hardware_model, HardwareModel::NesNtsc);
+        assert_eq!(config.nes.hardware_model, HardwareModel::NesNtsc);
     }
 
     #[test]
@@ -4282,7 +4171,7 @@ filter=invalid-shader
             "arkanoid".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.expansion_port, ExpansionPort::ArkanoidFamicom);
+        assert_eq!(config.nes.expansion_port, ExpansionPort::ArkanoidFamicom);
     }
 
     #[test]
@@ -4295,7 +4184,7 @@ filter=invalid-shader
             "power-pad".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.expansion_port, ExpansionPort::PowerPadFamicom);
+        assert_eq!(config.nes.expansion_port, ExpansionPort::PowerPadFamicom);
     }
 
     #[test]
@@ -4330,7 +4219,7 @@ filter=invalid-shader
         config
             .apply_config_value("tv_system", "pal")
             .expect("legacy key should be ignored gracefully");
-        assert_eq!(config.hardware_model, HardwareModel::NesNtsc);
+        assert_eq!(config.nes.hardware_model, HardwareModel::NesNtsc);
     }
 
     #[test]
@@ -4355,8 +4244,8 @@ filter=invalid-shader
         ];
         let config = parse_config(args);
         // Flag defaults to true, and "game.nes" is treated as ROM path
-        assert!(config.audio_enabled);
-        assert_eq!(config.rom_path.as_deref(), Some("game.nes"));
+        assert!(config.frontend.audio_enabled);
+        assert_eq!(config.frontend.rom_path.as_deref(), Some("game.nes"));
     }
 
     #[test]
@@ -4364,14 +4253,14 @@ filter=invalid-shader
         // When a boolean flag is the last argument, it defaults to true
         let args = vec!["neser".to_string(), "--audio".to_string()];
         let config = parse_config(args);
-        assert!(config.audio_enabled);
+        assert!(config.frontend.audio_enabled);
     }
 
     #[test]
     fn test_config_file_load_state() {
         let mut config = Config::default();
         config.apply_config_value("load_state", "true").unwrap();
-        assert!(config.load_state);
+        assert!(config.frontend.load_state);
     }
 
     // Tests for negation flags (--no-*, --disable-*)
@@ -4380,28 +4269,28 @@ filter=invalid-shader
     fn test_config_no_audio_disables_audio() {
         let args = vec!["neser".to_string(), "--no-audio".to_string()];
         let config = parse_config(args);
-        assert!(!config.audio_enabled);
+        assert!(!config.frontend.audio_enabled);
     }
 
     #[test]
     fn test_config_disable_audio_disables_audio() {
         let args = vec!["neser".to_string(), "--disable-audio".to_string()];
         let config = parse_config(args);
-        assert!(!config.audio_enabled);
+        assert!(!config.frontend.audio_enabled);
     }
 
     #[test]
     fn test_config_no_vsync_disables_vsync() {
         let args = vec!["neser".to_string(), "--no-vsync".to_string()];
         let config = parse_config(args);
-        assert!(!config.vsync_enabled);
+        assert!(!config.frontend.vsync_enabled);
     }
 
     #[test]
     fn test_config_disable_vsync_disables_vsync() {
         let args = vec!["neser".to_string(), "--disable-vsync".to_string()];
         let config = parse_config(args);
-        assert!(!config.vsync_enabled);
+        assert!(!config.frontend.vsync_enabled);
     }
 
     #[test]
@@ -4422,7 +4311,7 @@ filter=invalid-shader
     fn test_config_enable_4_score_enables_four_score() {
         let args = vec!["neser".to_string(), "--enable-4-score".to_string()];
         let config = parse_config(args);
-        assert!(config.four_score_enabled);
+        assert!(config.nes.four_score_enabled);
     }
 
     #[test]
@@ -4434,22 +4323,22 @@ filter=invalid-shader
             "game.nes".to_string(),
         ];
         let config = parse_config(args);
-        assert!(!config.four_score_enabled);
-        assert_eq!(config.rom_path.as_deref(), Some("game.nes"));
+        assert!(!config.nes.four_score_enabled);
+        assert_eq!(config.frontend.rom_path.as_deref(), Some("game.nes"));
     }
 
     #[test]
     fn test_config_no_4_score_disables_four_score() {
         let args = vec!["neser".to_string(), "--no-4-score".to_string()];
         let config = parse_config(args);
-        assert!(!config.four_score_enabled);
+        assert!(!config.nes.four_score_enabled);
     }
 
     #[test]
     fn test_config_disable_4_score_disables_four_score() {
         let args = vec!["neser".to_string(), "--disable-4-score".to_string()];
         let config = parse_config(args);
-        assert!(!config.four_score_enabled);
+        assert!(!config.nes.four_score_enabled);
     }
 
     #[test]
@@ -4460,44 +4349,44 @@ filter=invalid-shader
             "--no-4-score".to_string(),
         ];
         let config = parse_config(args);
-        assert!(!config.four_score_enabled);
+        assert!(!config.nes.four_score_enabled);
     }
 
     #[test]
     fn test_config_disable_pulse1_removes_channel() {
         let args = vec!["neser".to_string(), "--disable-pulse1".to_string()];
         let config = parse_config(args);
-        assert!(!config.apu_channels.contains(ApuChannels::PULSE1));
-        assert!(config.apu_channels.contains(ApuChannels::PULSE2));
+        assert!(!config.nes.apu_channels.contains(ApuChannels::PULSE1));
+        assert!(config.nes.apu_channels.contains(ApuChannels::PULSE2));
     }
 
     #[test]
     fn test_config_no_pulse2_removes_channel() {
         let args = vec!["neser".to_string(), "--no-pulse2".to_string()];
         let config = parse_config(args);
-        assert!(config.apu_channels.contains(ApuChannels::PULSE1));
-        assert!(!config.apu_channels.contains(ApuChannels::PULSE2));
+        assert!(config.nes.apu_channels.contains(ApuChannels::PULSE1));
+        assert!(!config.nes.apu_channels.contains(ApuChannels::PULSE2));
     }
 
     #[test]
     fn test_config_disable_triangle_removes_channel() {
         let args = vec!["neser".to_string(), "--disable-triangle".to_string()];
         let config = parse_config(args);
-        assert!(!config.apu_channels.contains(ApuChannels::TRIANGLE));
+        assert!(!config.nes.apu_channels.contains(ApuChannels::TRIANGLE));
     }
 
     #[test]
     fn test_config_audio_value_equals_syntax() {
         let args = vec!["neser".to_string(), "--audio=0".to_string()];
         let config = parse_config(args);
-        assert!(!config.audio_enabled);
+        assert!(!config.frontend.audio_enabled);
     }
 
     #[test]
     fn test_config_audio_value_equals_syntax_true() {
         let args = vec!["neser".to_string(), "--audio=1".to_string()];
         let config = parse_config(args);
-        assert!(config.audio_enabled);
+        assert!(config.frontend.audio_enabled);
     }
 
     #[test]
@@ -4510,9 +4399,9 @@ filter=invalid-shader
             "--disable-pulse1".to_string(),
         ];
         let config = parse_config(args);
-        assert!(config.audio_enabled);
-        assert!(!config.vsync_enabled);
-        assert!(!config.apu_channels.contains(ApuChannels::PULSE1));
+        assert!(config.frontend.audio_enabled);
+        assert!(!config.frontend.vsync_enabled);
+        assert!(!config.nes.apu_channels.contains(ApuChannels::PULSE1));
     }
 
     // Tests for valueless boolean flags (defaults to true)
@@ -4521,21 +4410,21 @@ filter=invalid-shader
     fn test_config_audio_no_value_defaults_true() {
         let args = vec!["neser".to_string(), "--audio".to_string()];
         let config = parse_config(args);
-        assert!(config.audio_enabled);
+        assert!(config.frontend.audio_enabled);
     }
 
     #[test]
     fn test_config_vsync_no_value_defaults_true() {
         let args = vec!["neser".to_string(), "--vsync".to_string()];
         let config = parse_config(args);
-        assert!(config.vsync_enabled);
+        assert!(config.frontend.vsync_enabled);
     }
 
     #[test]
     fn test_config_debugger_no_value_defaults_true() {
         let args = vec!["neser".to_string(), "--debugger".to_string()];
         let config = parse_config(args);
-        assert!(config.debugger_enabled);
+        assert!(config.frontend.debugger_enabled);
     }
 
     #[test]
@@ -4546,22 +4435,22 @@ filter=invalid-shader
             "game.nes".to_string(),
         ];
         let config = parse_config(args);
-        assert!(config.audio_enabled);
-        assert_eq!(config.rom_path.as_deref(), Some("game.nes"));
+        assert!(config.frontend.audio_enabled);
+        assert_eq!(config.frontend.rom_path.as_deref(), Some("game.nes"));
     }
 
     #[test]
     fn test_config_fullscreen_no_value_defaults_true() {
         let args = vec!["neser".to_string(), "--fullscreen".to_string()];
         let config = parse_config(args);
-        assert!(config.fullscreen);
+        assert!(config.frontend.fullscreen);
     }
 
     #[test]
     fn test_config_load_state_no_value_defaults_true() {
         let args = vec!["neser".to_string(), "--load-state".to_string()];
         let config = parse_config(args);
-        assert!(config.load_state);
+        assert!(config.frontend.load_state);
     }
 
     #[test]
@@ -4586,14 +4475,14 @@ filter=invalid-shader
             "false".to_string(),
         ];
         let config = parse_config(args);
-        assert!(!config.load_state);
+        assert!(!config.frontend.load_state);
     }
 
     #[test]
     fn test_config_load_state_equals_zero() {
         let args = vec!["neser".to_string(), "--load-state=0".to_string()];
         let config = parse_config(args);
-        assert!(!config.load_state);
+        assert!(!config.frontend.load_state);
     }
 
     #[test]
@@ -4604,8 +4493,8 @@ filter=invalid-shader
             "game.nes".to_string(),
         ];
         let config = parse_config(args);
-        assert!(config.load_state);
-        assert_eq!(config.rom_path.as_deref(), Some("game.nes"));
+        assert!(config.frontend.load_state);
+        assert_eq!(config.frontend.rom_path.as_deref(), Some("game.nes"));
     }
 
     #[test]
@@ -4623,7 +4512,7 @@ filter=invalid-shader
     fn test_config_pulse1_no_value_defaults_true() {
         let args = vec!["neser".to_string(), "--pulse1".to_string()];
         let config = parse_config(args);
-        assert!(config.apu_channels.contains(ApuChannels::PULSE1));
+        assert!(config.nes.apu_channels.contains(ApuChannels::PULSE1));
     }
 
     #[test]
@@ -4634,24 +4523,24 @@ filter=invalid-shader
             "--vsync".to_string(),
         ];
         let config = parse_config(args);
-        assert!(config.audio_enabled);
-        assert!(config.vsync_enabled);
+        assert!(config.frontend.audio_enabled);
+        assert!(config.frontend.vsync_enabled);
     }
 
     #[test]
     fn test_config_ram_init_mode_default() {
         let config = Config::with_defaults();
         #[cfg(target_arch = "wasm32")]
-        assert_eq!(config.ram_init_mode, RamInitMode::Zero);
+        assert_eq!(config.nes.ram_init_mode, RamInitMode::Zero);
         #[cfg(not(target_arch = "wasm32"))]
-        assert_eq!(config.ram_init_mode, RamInitMode::Random);
+        assert_eq!(config.nes.ram_init_mode, RamInitMode::Random);
     }
 
     #[test]
     fn test_config_file_ram_init_mode_zero() {
         let mut config = Config::default();
         config.apply_config_value("ram_init_mode", "zero").unwrap();
-        assert_eq!(config.ram_init_mode, RamInitMode::Zero);
+        assert_eq!(config.nes.ram_init_mode, RamInitMode::Zero);
     }
 
     #[test]
@@ -4660,7 +4549,7 @@ filter=invalid-shader
         config
             .apply_config_value("ram_init_mode", "random")
             .unwrap();
-        assert_eq!(config.ram_init_mode, RamInitMode::Random);
+        assert_eq!(config.nes.ram_init_mode, RamInitMode::Random);
     }
 
     #[test]
@@ -4669,7 +4558,7 @@ filter=invalid-shader
         config
             .apply_config_value("ram_init_mode", "seeded-random:42")
             .unwrap();
-        assert_eq!(config.ram_init_mode, RamInitMode::SeededRandom(42));
+        assert_eq!(config.nes.ram_init_mode, RamInitMode::SeededRandom(42));
     }
 
     #[test]
@@ -4678,7 +4567,7 @@ filter=invalid-shader
         config
             .apply_config_value("ram_init_mode", "seeded_random:12345")
             .unwrap();
-        assert_eq!(config.ram_init_mode, RamInitMode::SeededRandom(12345));
+        assert_eq!(config.nes.ram_init_mode, RamInitMode::SeededRandom(12345));
     }
 
     #[test]
@@ -4689,7 +4578,7 @@ filter=invalid-shader
             "zero".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.ram_init_mode, RamInitMode::Zero);
+        assert_eq!(config.nes.ram_init_mode, RamInitMode::Zero);
     }
 
     #[test]
@@ -4700,20 +4589,20 @@ filter=invalid-shader
             "seeded-random:999".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.ram_init_mode, RamInitMode::SeededRandom(999));
+        assert_eq!(config.nes.ram_init_mode, RamInitMode::SeededRandom(999));
     }
 
     #[test]
     fn test_config_oam_dram_decay_default_disabled() {
         let config = Config::with_defaults();
-        assert!(!config.oam_dram_decay_enabled);
+        assert!(!config.nes.oam_dram_decay_enabled);
     }
 
     #[test]
     fn test_config_file_oam_dram_decay_enabled() {
         let mut config = Config::default();
         config.apply_config_value("oam_dram_decay", "true").unwrap();
-        assert!(config.oam_dram_decay_enabled);
+        assert!(config.nes.oam_dram_decay_enabled);
     }
 
     #[test]
@@ -4724,7 +4613,7 @@ filter=invalid-shader
             "true".to_string(),
         ];
         let config = parse_config(args);
-        assert!(config.oam_dram_decay_enabled);
+        assert!(config.nes.oam_dram_decay_enabled);
     }
 
     #[test]
@@ -4735,7 +4624,7 @@ filter=invalid-shader
             "false".to_string(),
         ];
         let config = parse_config(args);
-        assert!(!config.oam_dram_decay_enabled);
+        assert!(!config.nes.oam_dram_decay_enabled);
     }
 
     #[test]
@@ -4747,8 +4636,8 @@ filter=invalid-shader
             "game.nes".to_string(),
         ];
         let config = parse_config(args);
-        assert!(config.oam_dram_decay_enabled);
-        assert_eq!(config.rom_path.as_deref(), Some("game.nes"));
+        assert!(config.nes.oam_dram_decay_enabled);
+        assert_eq!(config.frontend.rom_path.as_deref(), Some("game.nes"));
     }
 
     #[test]
@@ -4761,7 +4650,7 @@ filter=invalid-shader
         ];
         let config = parse_config(args);
         assert!(
-            config.breakpoints.contains(&BreakpointKind::Pc(0xC000)),
+            config.nes.breakpoints.contains(&BreakpointKind::Pc(0xC000)),
             "expected PC breakpoint at 0xC000"
         );
     }
@@ -4776,7 +4665,10 @@ filter=invalid-shader
         ];
         let config = parse_config(args);
         assert!(
-            config.breakpoints.contains(&BreakpointKind::Cycle(12345)),
+            config
+                .nes
+                .breakpoints
+                .contains(&BreakpointKind::Cycle(12345)),
             "expected Cycle breakpoint at 12345"
         );
     }
@@ -4791,7 +4683,7 @@ filter=invalid-shader
         ];
         let config = parse_config(args);
         assert!(
-            config.breakpoints.contains(&BreakpointKind::Frame(42)),
+            config.nes.breakpoints.contains(&BreakpointKind::Frame(42)),
             "expected Frame breakpoint at frame 42"
         );
     }
@@ -4806,7 +4698,7 @@ filter=invalid-shader
         ];
         let config = parse_config(args);
         assert!(
-            config.breakpoints.contains(&BreakpointKind::Frame(42)),
+            config.nes.breakpoints.contains(&BreakpointKind::Frame(42)),
             "expected Frame breakpoint at frame 42"
         );
     }
@@ -4822,6 +4714,7 @@ filter=invalid-shader
         let config = parse_config(args);
         assert!(
             config
+                .nes
                 .breakpoints
                 .contains(&BreakpointKind::WriteAddress(0x2006)),
             "expected WriteAddress breakpoint at 0x2006"
@@ -4837,7 +4730,7 @@ filter=invalid-shader
         ];
         let config = parse_config(args);
         assert_eq!(
-            config.breakpoints.len(),
+            config.nes.breakpoints.len(),
             2,
             "expected 2 breakpoints from comma-separated list"
         );
@@ -4970,16 +4863,16 @@ filter=invalid-shader
         let args = vec!["neser".to_string(), "--create-recording".to_string()];
         let config = parse_config(args);
         assert_eq!(
-            config.autorun_mode,
+            config.frontend.autorun_mode,
             AutorunMode::Record,
             "--create-recording should set Record mode"
         );
         assert!(
-            config.autorun_overwrite,
+            config.frontend.autorun_overwrite,
             "--create-recording should set autorun_overwrite"
         );
         assert!(
-            !config.autorun_extend,
+            !config.frontend.autorun_extend,
             "--create-recording should not set autorun_extend"
         );
     }
@@ -4989,16 +4882,16 @@ filter=invalid-shader
         let args = vec!["neser".to_string(), "--extend-recording".to_string()];
         let config = parse_config(args);
         assert_eq!(
-            config.autorun_mode,
+            config.frontend.autorun_mode,
             AutorunMode::Record,
             "--extend-recording should set Record mode"
         );
         assert!(
-            config.autorun_extend,
+            config.frontend.autorun_extend,
             "--extend-recording should set autorun_extend"
         );
         assert!(
-            !config.autorun_overwrite,
+            !config.frontend.autorun_overwrite,
             "--extend-recording should not set autorun_overwrite"
         );
     }
@@ -5008,12 +4901,12 @@ filter=invalid-shader
         let args = vec!["neser".to_string(), "--playback-headless".to_string()];
         let config = parse_config(args);
         assert_eq!(
-            config.autorun_mode,
+            config.frontend.autorun_mode,
             AutorunMode::Playback,
             "--playback-headless should set Playback mode"
         );
         assert!(
-            config.autorun_headless,
+            config.frontend.autorun_headless,
             "--playback-headless should set autorun_headless"
         );
     }
@@ -5023,12 +4916,12 @@ filter=invalid-shader
         let args = vec!["neser".to_string(), "--playback".to_string()];
         let config = parse_config(args);
         assert_eq!(
-            config.autorun_mode,
+            config.frontend.autorun_mode,
             AutorunMode::Playback,
             "--playback should still set Playback mode"
         );
         assert!(
-            !config.autorun_headless,
+            !config.frontend.autorun_headless,
             "--playback alone should not set autorun_headless"
         );
     }
@@ -5085,7 +4978,7 @@ filter=invalid-shader
             "3".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.autorun_from_checkpoint, Some(3));
+        assert_eq!(config.frontend.autorun_from_checkpoint, Some(3));
     }
 
     #[test]
@@ -5096,7 +4989,7 @@ filter=invalid-shader
             "2".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.autorun_trim_checkpoints, Some(2));
+        assert_eq!(config.frontend.autorun_trim_checkpoints, Some(2));
     }
 
     #[test]
@@ -5109,7 +5002,7 @@ filter=invalid-shader
         ];
         let config = parse_config(args);
         assert_eq!(
-            config.autorun_from_checkpoint,
+            config.frontend.autorun_from_checkpoint,
             Some(4),
             "--playback-from-checkpoint=N (equals syntax) should be parsed"
         );
@@ -5120,7 +5013,7 @@ filter=invalid-shader
         let args = vec!["neser".to_string(), "--trim-checkpoints=3".to_string()];
         let config = parse_config(args);
         assert_eq!(
-            config.autorun_trim_checkpoints,
+            config.frontend.autorun_trim_checkpoints,
             Some(3),
             "--trim-checkpoints=N (equals syntax) should be parsed"
         );
@@ -5130,28 +5023,28 @@ filter=invalid-shader
     fn test_cli_convert_autorun_sets_autorun_convert_true() {
         let args = vec!["neser".to_string(), "--convert-autorun".to_string()];
         let config = parse_config(args);
-        assert!(config.autorun_convert);
+        assert!(config.frontend.autorun_convert);
     }
 
     #[test]
     fn test_cli_convert_autorun_equals_syntax_true() {
         let args = vec!["neser".to_string(), "--convert-autorun=true".to_string()];
         let config = parse_config(args);
-        assert!(config.autorun_convert);
+        assert!(config.frontend.autorun_convert);
     }
 
     #[test]
     fn test_cli_convert_autorun_equals_syntax_false() {
         let args = vec!["neser".to_string(), "--convert-autorun=false".to_string()];
         let config = parse_config(args);
-        assert!(!config.autorun_convert);
+        assert!(!config.frontend.autorun_convert);
     }
 
     #[test]
     fn test_cli_recalculate_autorun_sets_autorun_recalculate_true() {
         let args = vec!["neser".to_string(), "--recalculate-autorun".to_string()];
         let config = parse_config(args);
-        assert!(config.autorun_recalculate);
+        assert!(config.frontend.autorun_recalculate);
     }
 
     #[test]
@@ -5161,7 +5054,7 @@ filter=invalid-shader
             "--recalculate-autorun=false".to_string(),
         ];
         let config = parse_config(args);
-        assert!(!config.autorun_recalculate);
+        assert!(!config.frontend.autorun_recalculate);
     }
 
     #[test]
@@ -5217,11 +5110,11 @@ filter=invalid-shader
         ];
         let config = parse_config(args);
         assert_eq!(
-            config.autorun_mode,
+            config.frontend.autorun_mode,
             AutorunMode::Playback,
             "--playback-from-checkpoint should imply Playback mode"
         );
-        assert_eq!(config.autorun_from_checkpoint, Some(4));
+        assert_eq!(config.frontend.autorun_from_checkpoint, Some(4));
     }
 
     #[test]
@@ -5234,11 +5127,11 @@ filter=invalid-shader
         ];
         let config = parse_config(args);
         assert_eq!(
-            config.autorun_from_checkpoint,
+            config.frontend.autorun_from_checkpoint,
             Some(-1),
             "--playback-from-checkpoint=-1 should parse as -1"
         );
-        assert_eq!(config.autorun_mode, AutorunMode::Playback);
+        assert_eq!(config.frontend.autorun_mode, AutorunMode::Playback);
     }
 
     #[test]
@@ -5248,7 +5141,7 @@ filter=invalid-shader
             "--playback-from-checkpoint=-2".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.autorun_from_checkpoint, Some(-2));
+        assert_eq!(config.frontend.autorun_from_checkpoint, Some(-2));
     }
 
     #[test]
@@ -5261,16 +5154,16 @@ filter=invalid-shader
         ];
         let config = parse_config(args);
         assert_eq!(
-            config.autorun_mode,
+            config.frontend.autorun_mode,
             AutorunMode::Playback,
             "--playback-headless-from-checkpoint should set Playback mode"
         );
         assert!(
-            config.autorun_headless,
+            config.frontend.autorun_headless,
             "--playback-headless-from-checkpoint should set headless mode"
         );
         assert_eq!(
-            config.autorun_from_checkpoint,
+            config.frontend.autorun_from_checkpoint,
             Some(3),
             "--playback-headless-from-checkpoint should set checkpoint index"
         );
@@ -5283,9 +5176,9 @@ filter=invalid-shader
             "--playback-headless-from-checkpoint=5".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.autorun_mode, AutorunMode::Playback);
-        assert!(config.autorun_headless);
-        assert_eq!(config.autorun_from_checkpoint, Some(5));
+        assert_eq!(config.frontend.autorun_mode, AutorunMode::Playback);
+        assert!(config.frontend.autorun_headless);
+        assert_eq!(config.frontend.autorun_from_checkpoint, Some(5));
     }
 
     #[test]
@@ -5295,25 +5188,25 @@ filter=invalid-shader
             "--playback-headless-from-checkpoint=-1".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.autorun_mode, AutorunMode::Playback);
-        assert!(config.autorun_headless);
-        assert_eq!(config.autorun_from_checkpoint, Some(-1));
+        assert_eq!(config.frontend.autorun_mode, AutorunMode::Playback);
+        assert!(config.frontend.autorun_headless);
+        assert_eq!(config.frontend.autorun_from_checkpoint, Some(-1));
     }
 
     #[test]
     fn test_cli_create_recording_forces_zero_ram_init_mode() {
         let args = vec!["neser".to_string(), "--create-recording".to_string()];
         let config = parse_config(args);
-        assert_eq!(config.autorun_mode, AutorunMode::Record);
-        assert_eq!(config.ram_init_mode, RamInitMode::Zero);
+        assert_eq!(config.frontend.autorun_mode, AutorunMode::Record);
+        assert_eq!(config.nes.ram_init_mode, RamInitMode::Zero);
     }
 
     #[test]
     fn test_cli_playback_forces_zero_ram_init_mode() {
         let args = vec!["neser".to_string(), "--playback".to_string()];
         let config = parse_config(args);
-        assert_eq!(config.autorun_mode, AutorunMode::Playback);
-        assert_eq!(config.ram_init_mode, RamInitMode::Zero);
+        assert_eq!(config.frontend.autorun_mode, AutorunMode::Playback);
+        assert_eq!(config.nes.ram_init_mode, RamInitMode::Zero);
     }
 
     #[test]
@@ -5323,8 +5216,8 @@ filter=invalid-shader
             "--playback-from-checkpoint=1".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.autorun_mode, AutorunMode::Playback);
-        assert_eq!(config.ram_init_mode, RamInitMode::Zero);
+        assert_eq!(config.frontend.autorun_mode, AutorunMode::Playback);
+        assert_eq!(config.nes.ram_init_mode, RamInitMode::Zero);
     }
 
     #[test]
@@ -5371,7 +5264,7 @@ filter=invalid-shader
         ];
         let config = parse_config(args);
         assert_eq!(
-            config.cartridge_search_paths,
+            config.frontend.cartridge_search_paths,
             vec!["roms".to_string(), "games/custom".to_string()]
         );
     }
@@ -5379,14 +5272,14 @@ filter=invalid-shader
     #[test]
     fn given_no_cartridge_paths_when_using_defaults_then_paths_are_empty() {
         let config = Config::with_defaults();
-        assert!(config.cartridge_search_paths.is_empty());
+        assert!(config.frontend.cartridge_search_paths.is_empty());
     }
 
     #[test]
     fn given_no_scan_cartridges_cli_when_parsed_then_startup_scan_is_disabled() {
         let args = vec!["neser".to_string(), "--no-scan-cartridges".to_string()];
         let config = parse_config(args);
-        assert!(!config.scan_cartridges);
+        assert!(!config.frontend.scan_cartridges);
     }
 
     #[test]
@@ -5395,20 +5288,23 @@ filter=invalid-shader
         config
             .apply_config_value("rebuild_cartridge_catalog", "true")
             .unwrap();
-        assert!(config.rebuild_cartridge_catalog);
+        assert!(config.frontend.rebuild_cartridge_catalog);
     }
 
     #[test]
     fn test_config_apply_rom_db_zapper_famicom_hint_sets_expansion_when_already_famicom() {
         let mut config = Config {
-            hardware_mode: HardwareMode::Famicom,
+            nes: NesConfig {
+                hardware_mode: HardwareMode::Famicom,
+                ..Default::default()
+            },
             ..Default::default()
         };
 
         let changed = config.apply_rom_db_zapper_famicom_hint(true);
 
         assert!(changed);
-        assert_eq!(config.expansion_port, ExpansionPort::ZapperFamicom);
+        assert_eq!(config.nes.expansion_port, ExpansionPort::ZapperFamicom);
     }
 
     #[test]
@@ -5418,35 +5314,41 @@ filter=invalid-shader
         let changed = config.apply_rom_db_zapper_famicom_hint(true);
 
         assert!(!changed);
-        assert_eq!(config.expansion_port, ExpansionPort::None);
+        assert_eq!(config.nes.expansion_port, ExpansionPort::None);
     }
 
     #[test]
     fn test_config_apply_rom_db_zapper_famicom_hint_respects_explicit_expansion_override() {
         let mut config = Config {
-            hardware_mode: HardwareMode::Famicom,
-            expansion_port: ExpansionPort::None,
-            expansion_port_explicit: true,
+            nes: NesConfig {
+                hardware_mode: HardwareMode::Famicom,
+                expansion_port: ExpansionPort::None,
+                expansion_port_explicit: true,
+                ..Default::default()
+            },
             ..Default::default()
         };
 
         let changed = config.apply_rom_db_zapper_famicom_hint(true);
 
         assert!(!changed);
-        assert_eq!(config.expansion_port, ExpansionPort::None);
+        assert_eq!(config.nes.expansion_port, ExpansionPort::None);
     }
 
     #[test]
     fn test_config_apply_rom_db_zapper_famicom_hint_false_is_noop() {
         let mut config = Config {
-            hardware_mode: HardwareMode::Famicom,
+            nes: NesConfig {
+                hardware_mode: HardwareMode::Famicom,
+                ..Default::default()
+            },
             ..Default::default()
         };
 
         let changed = config.apply_rom_db_zapper_famicom_hint(false);
 
         assert!(!changed);
-        assert_eq!(config.expansion_port, ExpansionPort::None);
+        assert_eq!(config.nes.expansion_port, ExpansionPort::None);
     }
 
     // --- Power Pad Famicom hint tests ---
@@ -5454,53 +5356,62 @@ filter=invalid-shader
     #[test]
     fn test_config_apply_rom_db_power_pad_famicom_hint_sets_expansion_when_already_famicom() {
         let mut config = Config {
-            hardware_mode: HardwareMode::Famicom,
+            nes: NesConfig {
+                hardware_mode: HardwareMode::Famicom,
+                ..Default::default()
+            },
             ..Default::default()
         };
 
         let changed = config.apply_rom_db_power_pad_famicom_hint(true);
 
         assert!(changed);
-        assert_eq!(config.expansion_port, ExpansionPort::PowerPadFamicom);
+        assert_eq!(config.nes.expansion_port, ExpansionPort::PowerPadFamicom);
     }
 
     #[test]
     fn test_config_apply_rom_db_power_pad_famicom_hint_no_change_when_nes_mode() {
         let mut config = Config::default();
-        assert_eq!(config.hardware_mode, HardwareMode::Nes);
+        assert_eq!(config.nes.hardware_mode, HardwareMode::Nes);
 
         let changed = config.apply_rom_db_power_pad_famicom_hint(true);
 
         assert!(!changed);
-        assert_eq!(config.expansion_port, ExpansionPort::None);
+        assert_eq!(config.nes.expansion_port, ExpansionPort::None);
     }
 
     #[test]
     fn test_config_apply_rom_db_power_pad_famicom_hint_respects_explicit_expansion_override() {
         let mut config = Config {
-            hardware_mode: HardwareMode::Famicom,
-            expansion_port: ExpansionPort::FamicomFourPlayers,
-            expansion_port_explicit: true,
+            nes: NesConfig {
+                hardware_mode: HardwareMode::Famicom,
+                expansion_port: ExpansionPort::FamicomFourPlayers,
+                expansion_port_explicit: true,
+                ..Default::default()
+            },
             ..Default::default()
         };
 
         let changed = config.apply_rom_db_power_pad_famicom_hint(true);
 
         assert!(!changed);
-        assert_eq!(config.expansion_port, ExpansionPort::FamicomFourPlayers);
+        assert_eq!(config.nes.expansion_port, ExpansionPort::FamicomFourPlayers);
     }
 
     #[test]
     fn test_config_apply_rom_db_power_pad_famicom_hint_false_is_noop() {
         let mut config = Config {
-            hardware_mode: HardwareMode::Famicom,
+            nes: NesConfig {
+                hardware_mode: HardwareMode::Famicom,
+                ..Default::default()
+            },
             ..Default::default()
         };
 
         let changed = config.apply_rom_db_power_pad_famicom_hint(false);
 
         assert!(!changed);
-        assert_eq!(config.expansion_port, ExpansionPort::None);
+        assert_eq!(config.nes.expansion_port, ExpansionPort::None);
     }
 
     #[test]
@@ -5526,7 +5437,7 @@ filter=invalid-shader
     #[test]
     fn test_autorun_format_default_is_binary() {
         let config = Config::default();
-        assert_eq!(config.autorun_format, AutorunFormat::Binary);
+        assert_eq!(config.frontend.autorun_format, AutorunFormat::Binary);
     }
 
     #[test]
@@ -5537,7 +5448,7 @@ filter=invalid-shader
             "binary".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.autorun_format, AutorunFormat::Binary);
+        assert_eq!(config.frontend.autorun_format, AutorunFormat::Binary);
     }
 
     #[test]
@@ -5548,7 +5459,7 @@ filter=invalid-shader
             "json".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.autorun_format, AutorunFormat::Json);
+        assert_eq!(config.frontend.autorun_format, AutorunFormat::Json);
     }
 
     #[test]
@@ -5569,14 +5480,20 @@ filter=invalid-shader
     #[test]
     fn test_tui_mode_default_is_false() {
         let config = Config::with_defaults();
-        assert!(!config.tui_mode, "tui_mode should default to false");
+        assert!(
+            !config.frontend.tui_mode,
+            "tui_mode should default to false"
+        );
     }
 
     #[cfg(feature = "tui")]
     #[test]
     fn test_tui_flag_sets_tui_mode_true() {
         let config = parse_config(vec!["neser".to_string(), "--tui".to_string()]);
-        assert!(config.tui_mode, "--tui flag should set tui_mode to true");
+        assert!(
+            config.frontend.tui_mode,
+            "--tui flag should set tui_mode to true"
+        );
     }
 
     #[cfg(not(feature = "tui"))]
@@ -5598,7 +5515,7 @@ filter=invalid-shader
     fn test_no_tui_flag_leaves_tui_mode_false() {
         let config = parse_config(vec!["neser".to_string()]);
         assert!(
-            !config.tui_mode,
+            !config.frontend.tui_mode,
             "tui_mode should remain false without --tui"
         );
     }
@@ -5620,7 +5537,7 @@ filter=invalid-shader
     #[test]
     fn test_config_vs_dip_switches_default() {
         let config = Config::default();
-        assert_eq!(config.vs_dip_switches, 0x00);
+        assert_eq!(config.nes.vs_dip_switches, 0x00);
     }
 
     #[test]
@@ -5629,14 +5546,14 @@ filter=invalid-shader
         config
             .apply_config_value("vs_dip_switches", "0xFF")
             .unwrap();
-        assert_eq!(config.vs_dip_switches, 0xFF);
+        assert_eq!(config.nes.vs_dip_switches, 0xFF);
     }
 
     #[test]
     fn test_config_vs_dip_switches_decimal_parse() {
         let mut config = Config::default();
         config.apply_config_value("vs_dip_switches", "42").unwrap();
-        assert_eq!(config.vs_dip_switches, 42);
+        assert_eq!(config.nes.vs_dip_switches, 42);
     }
 
     #[test]
@@ -5652,21 +5569,24 @@ filter=invalid-shader
         let changed = config.apply_rom_db_vs_system_hint(true);
 
         assert!(changed);
-        assert_eq!(config.expansion_port, ExpansionPort::VsSystem);
+        assert_eq!(config.nes.expansion_port, ExpansionPort::VsSystem);
     }
 
     #[test]
     fn test_config_apply_rom_db_vs_system_hint_respects_explicit_expansion() {
         let mut config = Config {
-            expansion_port: ExpansionPort::None,
-            expansion_port_explicit: true,
+            nes: NesConfig {
+                expansion_port: ExpansionPort::None,
+                expansion_port_explicit: true,
+                ..Default::default()
+            },
             ..Default::default()
         };
 
         let changed = config.apply_rom_db_vs_system_hint(true);
 
         assert!(!changed);
-        assert_eq!(config.expansion_port, ExpansionPort::None);
+        assert_eq!(config.nes.expansion_port, ExpansionPort::None);
     }
 
     #[test]
@@ -5676,7 +5596,7 @@ filter=invalid-shader
         let changed = config.apply_rom_db_vs_system_hint(false);
 
         assert!(!changed);
-        assert_eq!(config.expansion_port, ExpansionPort::None);
+        assert_eq!(config.nes.expansion_port, ExpansionPort::None);
     }
 
     #[test]
@@ -5710,8 +5630,11 @@ filter=invalid-shader
     #[test]
     fn test_hardware_summary_famicom_with_power_pad_expansion() {
         let config = Config {
-            hardware_mode: HardwareMode::Famicom,
-            expansion_port: ExpansionPort::PowerPadFamicom,
+            nes: NesConfig {
+                hardware_mode: HardwareMode::Famicom,
+                expansion_port: ExpansionPort::PowerPadFamicom,
+                ..Default::default()
+            },
             ..Config::default()
         };
         let summary = config.hardware_summary();
@@ -5728,8 +5651,11 @@ filter=invalid-shader
     #[test]
     fn test_hardware_summary_nes_pal_with_zapper() {
         let config = Config {
-            hardware_model: HardwareModel::NesPal,
-            controller_port2: crate::input::ControllerType::Zapper,
+            nes: NesConfig {
+                hardware_model: HardwareModel::NesPal,
+                controller_port2: crate::input::ControllerType::Zapper,
+                ..Default::default()
+            },
             ..Config::default()
         };
         let summary = config.hardware_summary();
@@ -5746,7 +5672,10 @@ filter=invalid-shader
     #[test]
     fn test_hardware_summary_power_pad_on_port2() {
         let config = Config {
-            controller_port2: crate::input::ControllerType::PowerPad,
+            nes: NesConfig {
+                controller_port2: crate::input::ControllerType::PowerPad,
+                ..Default::default()
+            },
             ..Config::default()
         };
         let summary = config.hardware_summary();
@@ -5769,7 +5698,10 @@ filter=invalid-shader
     #[test]
     fn test_hardware_summary_includes_four_score_when_enabled() {
         let config = Config {
-            four_score_enabled: true,
+            nes: NesConfig {
+                four_score_enabled: true,
+                ..Default::default()
+            },
             ..Config::default()
         };
         let summary = config.hardware_summary();
@@ -5824,9 +5756,9 @@ filter=invalid-shader
         );
         // The config itself should be unchanged.
         assert_eq!(
-            config.controller_port2,
+            config.nes.controller_port2,
             crate::input::ControllerType::Joypad,
-            "hardware_summary_with must not mutate config.controller_port2"
+            "hardware_summary_with must not mutate config.nes.controller_port2"
         );
     }
 
@@ -5836,13 +5768,13 @@ filter=invalid-shader
     fn test_config_apply_rom_db_nes_four_score_hint_enables_four_score_when_hint_true() {
         // Given: default config with four_score_enabled = false
         let mut config = Config::default();
-        assert!(!config.four_score_enabled);
+        assert!(!config.nes.four_score_enabled);
 
         // When: hint is true (ROM DB says this ROM uses NES Four Score)
         let changed = config.apply_rom_db_nes_four_score_hint(true);
 
         // Then: four_score_enabled is set to true and changed is true
-        assert!(config.four_score_enabled);
+        assert!(config.nes.four_score_enabled);
         assert!(changed);
     }
 
@@ -5850,7 +5782,10 @@ filter=invalid-shader
     fn test_config_apply_rom_db_nes_four_score_hint_disables_four_score_when_hint_false() {
         // Given: config where four_score was previously auto-enabled
         let mut config = Config {
-            four_score_enabled: true, // simulates a previous auto-enable (not explicit)
+            nes: NesConfig {
+                four_score_enabled: true,
+                ..Default::default()
+            },
             ..Config::default()
         };
 
@@ -5858,7 +5793,7 @@ filter=invalid-shader
         let changed = config.apply_rom_db_nes_four_score_hint(false);
 
         // Then: four_score_enabled is reset to false (ROM swap resets auto-detection)
-        assert!(!config.four_score_enabled);
+        assert!(!config.nes.four_score_enabled);
         assert!(changed);
     }
 
@@ -5866,7 +5801,10 @@ filter=invalid-shader
     fn test_config_apply_rom_db_nes_four_score_hint_no_change_when_already_enabled_and_hint_true() {
         // Given: config already has four_score_enabled = true (not via explicit)
         let mut config = Config {
-            four_score_enabled: true,
+            nes: NesConfig {
+                four_score_enabled: true,
+                ..Default::default()
+            },
             ..Config::default()
         };
 
@@ -5874,7 +5812,7 @@ filter=invalid-shader
         let changed = config.apply_rom_db_nes_four_score_hint(true);
 
         // Then: still enabled, but changed is false (no mutation needed)
-        assert!(config.four_score_enabled);
+        assert!(config.nes.four_score_enabled);
         assert!(!changed);
     }
 
@@ -5882,8 +5820,11 @@ filter=invalid-shader
     fn test_config_apply_rom_db_nes_four_score_hint_respects_explicit_true_when_hint_false() {
         // Given: user explicitly enabled four_score
         let mut config = Config {
-            four_score_enabled: true,
-            four_score_enabled_explicit: true,
+            nes: NesConfig {
+                four_score_enabled: true,
+                four_score_enabled_explicit: true,
+                ..Default::default()
+            },
             ..Config::default()
         };
 
@@ -5891,7 +5832,7 @@ filter=invalid-shader
         let changed = config.apply_rom_db_nes_four_score_hint(false);
 
         // Then: explicit config wins — four_score stays enabled, no change
-        assert!(config.four_score_enabled);
+        assert!(config.nes.four_score_enabled);
         assert!(!changed);
     }
 
@@ -5899,8 +5840,11 @@ filter=invalid-shader
     fn test_config_apply_rom_db_nes_four_score_hint_respects_explicit_false_when_hint_true() {
         // Given: user explicitly disabled four_score
         let mut config = Config {
-            four_score_enabled: false,
-            four_score_enabled_explicit: true,
+            nes: NesConfig {
+                four_score_enabled: false,
+                four_score_enabled_explicit: true,
+                ..Default::default()
+            },
             ..Config::default()
         };
 
@@ -5908,7 +5852,7 @@ filter=invalid-shader
         let changed = config.apply_rom_db_nes_four_score_hint(true);
 
         // Then: explicit config wins — four_score stays disabled, no change
-        assert!(!config.four_score_enabled);
+        assert!(!config.nes.four_score_enabled);
         assert!(!changed);
     }
 }

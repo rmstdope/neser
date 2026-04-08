@@ -3423,7 +3423,10 @@ mod tests {
         )));
         let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
         let config = crate::console::Config {
-            ram_init_mode: crate::console::RamInitMode::Zero,
+            nes: crate::console::NesConfig {
+                ram_init_mode: crate::console::RamInitMode::Zero,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let app_context = Rc::new(RefCell::new(
@@ -3441,7 +3444,10 @@ mod tests {
         let ppu = Rc::new(RefCell::new(crate::ppu::Ppu::new_for_testing(tv_system)));
         let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
         let config = crate::console::Config {
-            ram_init_mode: crate::console::RamInitMode::Zero,
+            nes: crate::console::NesConfig {
+                ram_init_mode: crate::console::RamInitMode::Zero,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let app_context = Rc::new(RefCell::new(

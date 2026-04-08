@@ -6,6 +6,8 @@ use crate::cartridge::Cartridge;
 use crate::cartridge::TimingMode;
 #[cfg(test)]
 use crate::console::Config;
+#[cfg(test)]
+use crate::console::NesConfig;
 use crate::cpu::lookup;
 use crate::cpu::{Cpu, CpuState};
 use crate::debugging::{Tracing, log_info};
@@ -123,14 +125,15 @@ impl Nes {
     pub fn new<C: IntoSharedAppContext>(app_context: C) -> Self {
         let app_context = app_context.into_shared();
         let config = app_context.borrow().config().clone();
-        let tv_system = config.hardware_model.timing_mode();
-        let ram_init_mode = config.ram_init_mode;
-        let oam_dram_decay_enabled = config.oam_dram_decay_enabled;
+        let tv_system = config.nes.hardware_model.timing_mode();
+        let ram_init_mode = config.nes.ram_init_mode;
+        let oam_dram_decay_enabled = config.nes.oam_dram_decay_enabled;
         let ppu = Rc::new(RefCell::new(Ppu::new(tv_system, ram_init_mode)));
         ppu.borrow_mut()
             .set_oam_dram_decay_enabled(oam_dram_decay_enabled);
-        ppu.borrow_mut()
-            .set_famicom_emphasis(config.hardware_mode == crate::console::HardwareMode::Famicom);
+        ppu.borrow_mut().set_famicom_emphasis(
+            config.nes.hardware_mode == crate::console::HardwareMode::Famicom,
+        );
         let apu = Rc::new(RefCell::new(Apu::new_with_tv_system(tv_system)));
         let memory = Rc::new(RefCell::new(Bus::new(
             ppu.clone(),
@@ -153,8 +156,8 @@ impl Nes {
             fractional_ppu_cycles: 0.0,
             ready_to_render: false,
             recent_cpu_trace: VecDeque::with_capacity(MAX_CPU_TRACE_LINES),
-            active_controller_port1: config.controller_port1,
-            active_controller_port2: config.controller_port2,
+            active_controller_port1: config.nes.controller_port1,
+            active_controller_port2: config.nes.controller_port2,
         }
     }
 
@@ -256,12 +259,12 @@ impl Nes {
             .apply_rom_db_vs_controllers_swapped_hint(vs_controllers_swapped);
 
         // Propagate any hardware-mode change from ROM DB hint to the live PPU
-        let is_famicom = self.app_context.borrow().config().hardware_mode
+        let is_famicom = self.app_context.borrow().config().nes.hardware_mode
             == crate::console::HardwareMode::Famicom;
         self.ppu.borrow_mut().set_famicom_emphasis(is_famicom);
 
         // Initialize cartridge RAM (PRG-RAM and CHR-RAM) based on config
-        let ram_init_mode = self.app_context.borrow().config().ram_init_mode;
+        let ram_init_mode = self.app_context.borrow().config().nes.ram_init_mode;
         cartridge.initialize_ram(ram_init_mode);
 
         let mut bus = self.bus.borrow_mut();
@@ -273,10 +276,10 @@ impl Nes {
         // Get controller config and explicit flags from stored config
         let app_context = self.app_context.borrow();
         let config = app_context.config();
-        let port1_type = config.controller_port1;
-        let port2_type = config.controller_port2;
-        let port1_explicit = config.controller_port1_explicit;
-        let port2_explicit = config.controller_port2_explicit;
+        let port1_type = config.nes.controller_port1;
+        let port2_type = config.nes.controller_port2;
+        let port1_explicit = config.nes.controller_port1_explicit;
+        let port2_explicit = config.nes.controller_port2_explicit;
         drop(app_context); // Release borrow early
 
         // If any controller port is explicitly configured, disable ROM DB auto-detection
@@ -290,7 +293,7 @@ impl Nes {
 
         // When the Zapper is on the Famicom expansion port, don't also put it on a
         // standard controller port — the expansion port read path handles it.
-        let zapper_on_expansion = self.app_context.borrow().config().expansion_port
+        let zapper_on_expansion = self.app_context.borrow().config().nes.expansion_port
             == crate::console::ExpansionPort::ZapperFamicom;
 
         let auto_controller = if zapper_port != 0 && !zapper_on_expansion {
@@ -404,7 +407,7 @@ impl Nes {
     pub fn reset(&mut self, soft_reset: bool) {
         // Get CPU cycle count before reset for coordinated APU timing
         let cpu_cycle = self.cpu.get_total_cycles();
-        let ram_init_mode = self.app_context.borrow().config().ram_init_mode;
+        let ram_init_mode = self.app_context.borrow().config().nes.ram_init_mode;
 
         // Reset components - each handles its own RAM initialization on hard reset
         self.ppu.borrow_mut().reset(soft_reset, ram_init_mode);
@@ -1308,7 +1311,10 @@ mod tests {
     #[test]
     fn test_pal_ppu_runs_3_2x_cpu_cycles() {
         let config = Config {
-            hardware_model: crate::console::HardwareModel::NesPal,
+            nes: NesConfig {
+                hardware_model: crate::console::HardwareModel::NesPal,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
@@ -1326,7 +1332,10 @@ mod tests {
     #[test]
     fn test_pal_ppu_accumulates_fractional_cycles() {
         let config = Config {
-            hardware_model: crate::console::HardwareModel::NesPal,
+            nes: NesConfig {
+                hardware_model: crate::console::HardwareModel::NesPal,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
@@ -2222,10 +2231,13 @@ mod tests {
         cartridge.set_crc32_for_test(0x32FB0583);
 
         let config = Config {
-            controller_port1: crate::input::ControllerType::Arkanoid,
-            controller_port1_explicit: true,
-            controller_port2: crate::input::ControllerType::Joypad,
-            controller_port2_explicit: false,
+            nes: NesConfig {
+                controller_port1: crate::input::ControllerType::Arkanoid,
+                controller_port1_explicit: true,
+                controller_port2: crate::input::ControllerType::Joypad,
+                controller_port2_explicit: false,
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -2269,7 +2281,7 @@ mod tests {
 
         // Expansion port should be configured for Zapper
         assert_eq!(
-            nes.app_context.borrow().config().expansion_port,
+            nes.app_context.borrow().config().nes.expansion_port,
             crate::console::ExpansionPort::ZapperFamicom
         );
     }
@@ -2281,10 +2293,13 @@ mod tests {
         cartridge.set_crc32_for_test(0x24598791);
 
         let config = Config {
-            controller_port1: crate::input::ControllerType::Joypad,
-            controller_port1_explicit: false,
-            controller_port2: crate::input::ControllerType::Joypad,
-            controller_port2_explicit: true,
+            nes: NesConfig {
+                controller_port1: crate::input::ControllerType::Joypad,
+                controller_port1_explicit: false,
+                controller_port2: crate::input::ControllerType::Joypad,
+                controller_port2_explicit: true,
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -2305,10 +2320,13 @@ mod tests {
         cartridge.set_crc32_for_test(0x24598791); // ROM DB maps this to Zapper on port 2
 
         let config = Config {
-            controller_port1: crate::input::ControllerType::Joypad,
-            controller_port1_explicit: true,
-            controller_port2: crate::input::ControllerType::Joypad,
-            controller_port2_explicit: false,
+            nes: NesConfig {
+                controller_port1: crate::input::ControllerType::Joypad,
+                controller_port1_explicit: true,
+                controller_port2: crate::input::ControllerType::Joypad,
+                controller_port2_explicit: false,
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -2362,8 +2380,11 @@ mod tests {
         cartridge.set_crc32_for_test(0x5734EB9E); // World Class Track Meet
 
         let config = Config {
-            controller_port2: crate::input::ControllerType::Joypad,
-            controller_port2_explicit: true,
+            nes: NesConfig {
+                controller_port2: crate::input::ControllerType::Joypad,
+                controller_port2_explicit: true,
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -2752,11 +2773,11 @@ mod tests {
 
         // Verify config was set correctly
         assert_eq!(
-            nes.app_context.borrow().config().hardware_mode,
+            nes.app_context.borrow().config().nes.hardware_mode,
             HardwareMode::Famicom
         );
         assert_eq!(
-            nes.app_context.borrow().config().expansion_port,
+            nes.app_context.borrow().config().nes.expansion_port,
             ExpansionPort::FamicomFourPlayers
         );
 

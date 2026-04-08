@@ -353,7 +353,10 @@ impl GlBackend {
         let (h_overscan, v_overscan) = {
             let ctx = app_context.borrow();
             let cfg = ctx.config();
-            (cfg.horizontal_overscan as u32, cfg.vertical_overscan as u32)
+            (
+                cfg.nes.horizontal_overscan as u32,
+                cfg.nes.vertical_overscan as u32,
+            )
         };
         let tex_w = 256 - 2 * h_overscan;
         let tex_h = 240 - 2 * v_overscan;

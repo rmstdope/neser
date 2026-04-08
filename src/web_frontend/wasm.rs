@@ -70,8 +70,8 @@ impl WasmNes {
         let cfg = self.app_context.borrow();
         let config = cfg.config();
         (
-            config.horizontal_overscan as u32,
-            config.vertical_overscan as u32,
+            config.nes.horizontal_overscan as u32,
+            config.nes.vertical_overscan as u32,
         )
     }
 
@@ -148,10 +148,10 @@ impl WasmNes {
         {
             let config = self.nes.app_context().borrow().config().clone();
             self.pending_toasts.push(hardware_mode_toast_message(
-                config.hardware_mode,
-                config.hardware_model,
-                config.expansion_port,
-                config.four_score_enabled,
+                config.nes.hardware_mode,
+                config.nes.hardware_model,
+                config.nes.expansion_port,
+                config.nes.four_score_enabled,
             ));
         }
         web_sys::console::log_1(&JsValue::from_str("ROM loaded successfully"));
@@ -474,7 +474,12 @@ impl WasmNes {
 
     #[wasm_bindgen]
     pub fn is_four_score_enabled(&self) -> bool {
-        self.nes.app_context().borrow().config().four_score_enabled
+        self.nes
+            .app_context()
+            .borrow()
+            .config()
+            .nes
+            .four_score_enabled
     }
 
     /// Set the controller type for a port.
@@ -518,10 +523,10 @@ impl WasmNes {
         {
             let config = app_context.borrow().config().clone();
             self.pending_toasts.push(hardware_mode_toast_message(
-                config.hardware_mode,
-                config.hardware_model,
-                config.expansion_port,
-                config.four_score_enabled,
+                config.nes.hardware_mode,
+                config.nes.hardware_model,
+                config.nes.expansion_port,
+                config.nes.four_score_enabled,
             ));
         }
 
@@ -549,8 +554,8 @@ impl WasmNes {
     #[wasm_bindgen]
     pub fn get_hardware_mode(&self) -> String {
         let config = self.app_context.borrow().config().clone();
-        match config.hardware_mode {
-            crate::console::HardwareMode::Nes => config.hardware_model.as_str().to_string(),
+        match config.nes.hardware_mode {
+            crate::console::HardwareMode::Nes => config.nes.hardware_model.as_str().to_string(),
             crate::console::HardwareMode::Famicom => "famicom".to_string(),
         }
     }
@@ -558,7 +563,7 @@ impl WasmNes {
     /// Get the current expansion port as a string.
     #[wasm_bindgen]
     pub fn get_expansion_port(&self) -> String {
-        match self.app_context.borrow().config().expansion_port {
+        match self.app_context.borrow().config().nes.expansion_port {
             crate::console::ExpansionPort::None => "none".to_string(),
             crate::console::ExpansionPort::FamicomFourPlayers => "famicom-four-players".to_string(),
             crate::console::ExpansionPort::ArkanoidFamicom => "arkanoid".to_string(),

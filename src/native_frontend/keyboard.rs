@@ -432,7 +432,7 @@ fn key_code_to_filter_char(key_code: KeyCode, shift: bool) -> Option<char> {
 mod tests {
     use super::*;
     use crate::app_context::AppContext;
-    use crate::console::Config;
+    use crate::console::{Config, NesConfig};
     use winit::keyboard::ModifiersState;
 
     // ── Test helpers ──────────────────────────────────────────────────────────
@@ -443,7 +443,10 @@ mod tests {
 
     fn make_nes_four_score() -> Nes {
         Nes::new(AppContext::new_with_config(Config {
-            four_score_enabled: true,
+            nes: NesConfig {
+                four_score_enabled: true,
+                ..Default::default()
+            },
             ..Config::default()
         }))
     }

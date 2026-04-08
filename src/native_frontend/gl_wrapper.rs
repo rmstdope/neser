@@ -50,16 +50,16 @@ impl NativeGlWrapper {
             let ctx = app_context.borrow();
             let config = ctx.config();
             let (window_width, window_height) = GlBackend::windowed_dimensions(
-                config.window_height,
-                config.horizontal_overscan as u32,
-                config.vertical_overscan as u32,
+                config.frontend.window_height,
+                config.nes.horizontal_overscan as u32,
+                config.nes.vertical_overscan as u32,
             );
             (
-                config.fullscreen,
-                config.vsync_enabled,
-                config.shader_path.clone(),
-                config.debugger_alpha,
-                config.fullscreen_display,
+                config.frontend.fullscreen,
+                config.frontend.vsync_enabled,
+                config.frontend.shader_path.clone(),
+                config.frontend.debugger_alpha,
+                config.frontend.fullscreen_display,
                 window_width,
                 window_height,
             )

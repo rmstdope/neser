@@ -15,6 +15,7 @@ pub use nes::ppu;
 
 pub mod app_context;
 pub mod autorun;
+pub mod config;
 pub mod debugging;
 pub mod emulator;
 pub mod frontend_toasts;

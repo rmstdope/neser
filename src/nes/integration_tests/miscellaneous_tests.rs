@@ -286,13 +286,16 @@ mod tests {
     /// are open bus (not grounded), so allpads detects HVC-001.
     #[test]
     fn allpads_probe_identifies_famicom_model() {
-        use crate::console::{Config, HardwareMode, RamInitMode};
+        use crate::console::{Config, HardwareMode, NesConfig, RamInitMode};
         let config = Config {
-            hardware_mode: HardwareMode::Famicom,
-            hardware_mode_explicit: true,
-            ram_init_mode: RamInitMode::Zero,
-            controller_port1_explicit: true,
-            controller_port2_explicit: true,
+            nes: NesConfig {
+                hardware_mode: HardwareMode::Famicom,
+                hardware_mode_explicit: true,
+                ram_init_mode: RamInitMode::Zero,
+                controller_port1_explicit: true,
+                controller_port2_explicit: true,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let result = run_allpads_with_config(&config, &[], 120, 0);
@@ -1185,16 +1188,19 @@ mod tests {
     /// Returns a Famicom-mode config with two explicitly configured joypads so
     /// that allpads can detect them as Famicom hardwired controllers (FC 1P / FC 2P).
     fn famicom_two_joypads_config() -> crate::console::Config {
-        use crate::console::{Config, HardwareMode, RamInitMode};
+        use crate::console::{Config, HardwareMode, NesConfig, RamInitMode};
         use crate::input::ControllerType;
         Config {
-            hardware_mode: HardwareMode::Famicom,
-            hardware_mode_explicit: true,
-            ram_init_mode: RamInitMode::Zero,
-            controller_port1: ControllerType::Joypad,
-            controller_port2: ControllerType::Joypad,
-            controller_port1_explicit: true,
-            controller_port2_explicit: true,
+            nes: NesConfig {
+                hardware_mode: HardwareMode::Famicom,
+                hardware_mode_explicit: true,
+                ram_init_mode: RamInitMode::Zero,
+                controller_port1: ControllerType::Joypad,
+                controller_port2: ControllerType::Joypad,
+                controller_port1_explicit: true,
+                controller_port2_explicit: true,
+                ..Default::default()
+            },
             ..Default::default()
         }
     }

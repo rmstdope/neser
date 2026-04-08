@@ -178,7 +178,7 @@ mod tests {
     use super::*;
     use crate::app_context::AppContext;
     use crate::autorun::{AUTORUN_VERSION, AutorunCheckpoint, AutorunFile, AutorunFrame};
-    use crate::console::{Config, Nes, RamInitMode};
+    use crate::console::{Config, Nes, NesConfig, RamInitMode};
 
     /// Minimal NROM-128 ROM that just loops forever with no audio/PPU effects.
     fn minimal_nrom_rom() -> Vec<u8> {
@@ -203,7 +203,10 @@ mod tests {
 
     fn make_nes() -> Nes {
         let config = Config {
-            ram_init_mode: RamInitMode::Zero,
+            nes: NesConfig {
+                ram_init_mode: RamInitMode::Zero,
+                ..Default::default()
+            },
             ..Default::default()
         };
         Nes::new(AppContext::new_with_config(config))

@@ -5,7 +5,7 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use crate::cartridge::Cartridge;
-    use crate::console::{Config, Nes, RamInitMode, TimingMode};
+    use crate::console::{Config, Nes, NesConfig, RamInitMode, TimingMode};
     use crate::input::Button;
     use crate::integration_tests::rom_test_runner::tests::run_nes_for_frames;
     use crate::{
@@ -198,7 +198,10 @@ mod tests {
         let mut nes = create_nes_from_rom(
             "roms/automated_tests/misc_oam_tests/read2004.nes",
             crate::app_context::AppContext::new_with_config(Config {
-                ram_init_mode: RamInitMode::Zero,
+                nes: NesConfig {
+                    ram_init_mode: RamInitMode::Zero,
+                    ..Default::default()
+                },
                 ..Default::default()
             }),
             "read2004",
@@ -255,9 +258,12 @@ AA AA 01 01 10 10 01 01 00 00\n\
         let mut nes = create_nes_from_rom(
             "roms/automated_tests/misc_oam_tests/oam-decay-test.nes",
             crate::app_context::AppContext::new_with_config(Config {
-                hardware_model,
-                oam_dram_decay_enabled: true,
-                ram_init_mode: RamInitMode::Zero,
+                nes: NesConfig {
+                    hardware_model,
+                    oam_dram_decay_enabled: true,
+                    ram_init_mode: RamInitMode::Zero,
+                    ..Default::default()
+                },
                 ..Default::default()
             }),
             "oam-decay-test",
@@ -351,7 +357,10 @@ AA AA 01 01 10 10 01 01 00 00\n\
         let mut nes = create_nes_from_rom(
             "roms/automated_tests/nmi_sync/demo_pal.nes",
             crate::app_context::AppContext::new_with_config(Config {
-                hardware_model: crate::console::HardwareModel::NesPal,
+                nes: NesConfig {
+                    hardware_model: crate::console::HardwareModel::NesPal,
+                    ..Default::default()
+                },
                 ..Default::default()
             }),
             "demo_pal",
@@ -398,7 +407,10 @@ AA AA 01 01 10 10 01 01 00 00\n\
                 .expect("oam3 ROM should parse");
 
         let config = Config {
-            ram_init_mode: RamInitMode::SeededRandom(0x5760_0000_0000_0001),
+            nes: NesConfig {
+                ram_init_mode: RamInitMode::SeededRandom(0x5760_0000_0000_0001),
+                ..Default::default()
+            },
             ..Config::default()
         };
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));

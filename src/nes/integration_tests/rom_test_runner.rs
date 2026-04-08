@@ -22,7 +22,7 @@ pub(crate) mod tests {
     ///   function is called to determine pass/fail.
     ///
     use crate::cartridge::Cartridge;
-    use crate::console::{Config, HardwareModel, Nes, RamInitMode};
+    use crate::console::{Config, HardwareModel, Nes, NesConfig, RamInitMode};
     use crate::debugging::{Tracing, init_tracing};
     use crate::input::Button;
     use std::fs;
@@ -51,7 +51,10 @@ pub(crate) mod tests {
 
     fn test_default_config() -> Config {
         Config {
-            ram_init_mode: RamInitMode::Zero,
+            nes: NesConfig {
+                ram_init_mode: RamInitMode::Zero,
+                ..Default::default()
+            },
             ..Default::default()
         }
     }
@@ -164,15 +167,15 @@ pub(crate) mod tests {
 
             // Use override if provided, otherwise auto-detect from ROM header
             if let Some(timing_mode_override) = self.tv_system_override {
-                config.hardware_model = HardwareModel::from_timing_mode(timing_mode_override);
+                config.nes.hardware_model = HardwareModel::from_timing_mode(timing_mode_override);
             } else {
-                config.hardware_model =
+                config.nes.hardware_model =
                     HardwareModel::from_timing_mode(cartridge.rom_timing_mode());
             }
 
             // Use RAM init mode override if provided
             if let Some(ram_init_mode) = self.ram_init_mode_override {
-                config.ram_init_mode = ram_init_mode;
+                config.nes.ram_init_mode = ram_init_mode;
             }
 
             let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
@@ -181,7 +184,8 @@ pub(crate) mod tests {
             nes.reset(false);
 
             // CPU cycles per frame depends on TV system
-            let cpu_cycles_per_frame = match nes.app_context().borrow().config().hardware_model {
+            let cpu_cycles_per_frame = match nes.app_context().borrow().config().nes.hardware_model
+            {
                 HardwareModel::NesNtsc => 29_780u32,
                 HardwareModel::NesPal => 33_247u32,
                 HardwareModel::Dendy => 35_464u32, // 312 scanlines * 341 dots / 3 PPU:CPU
@@ -378,14 +382,14 @@ pub(crate) mod tests {
 
         // Create NES with configuration based on cartridge's TV system
         let mut config = test_default_config();
-        config.hardware_model = HardwareModel::from_timing_mode(cartridge.rom_timing_mode());
+        config.nes.hardware_model = HardwareModel::from_timing_mode(cartridge.rom_timing_mode());
 
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
         nes.insert_cartridge(cartridge);
         nes.reset(false);
 
         // CPU cycles per frame depends on TV system
-        let cpu_cycles_per_frame = match nes.app_context().borrow().config().hardware_model {
+        let cpu_cycles_per_frame = match nes.app_context().borrow().config().nes.hardware_model {
             HardwareModel::NesNtsc => 29_780u32,
             HardwareModel::NesPal => 33_247u32,
             HardwareModel::Dendy => 35_464u32, // 312 scanlines * 341 dots / 3 PPU:CPU
@@ -652,10 +656,13 @@ pub(crate) mod tests {
                 .expect("ROM should parse");
 
                 let mut config = $crate::console::Config {
-                    ram_init_mode: $crate::console::RamInitMode::Zero,
+                    nes: $crate::console::NesConfig {
+                        ram_init_mode: $crate::console::RamInitMode::Zero,
+                        ..Default::default()
+                    },
                     ..Default::default()
                 };
-                config.hardware_model =
+                config.nes.hardware_model =
                     $crate::console::HardwareModel::from_timing_mode(cartridge.rom_timing_mode());
 
                 let mut nes = $crate::console::Nes::new(
@@ -752,10 +759,13 @@ pub(crate) mod tests {
                 .expect("ROM should parse");
 
                 let mut config = $crate::console::Config {
-                    ram_init_mode: $crate::console::RamInitMode::Zero,
+                    nes: $crate::console::NesConfig {
+                        ram_init_mode: $crate::console::RamInitMode::Zero,
+                        ..Default::default()
+                    },
                     ..Default::default()
                 };
-                config.hardware_model =
+                config.nes.hardware_model =
                     $crate::console::HardwareModel::from_timing_mode(cartridge.rom_timing_mode());
 
                 let mut nes = $crate::console::Nes::new(

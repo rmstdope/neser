@@ -71,7 +71,7 @@ impl crate::input::Controller for Zapper {
     fn write_strobe(&mut self, _value: u8) {}
 
     fn read(&mut self, _is_dummy_read: bool) -> u8 {
-        let detection_size = self.app_context.borrow().config().zapper_detection_size;
+        let detection_size = self.app_context.borrow().config().nes.zapper_detection_size;
         let ppu = self.ppu.borrow();
         let scanline = ppu.timing().scanline();
         let pixel = ppu.timing().pixel();
@@ -188,7 +188,10 @@ mod tests {
 
     fn test_app_context_with_size(size: u8) -> Rc<RefCell<crate::app_context::AppContext>> {
         let config = crate::console::Config {
-            zapper_detection_size: size,
+            nes: crate::console::NesConfig {
+                zapper_detection_size: size,
+                ..Default::default()
+            },
             ..Default::default()
         };
         Rc::new(RefCell::new(

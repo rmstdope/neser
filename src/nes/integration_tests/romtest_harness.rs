@@ -1,7 +1,7 @@
 #[cfg(test)]
 pub(crate) mod tests {
     use crate::cartridge::Cartridge;
-    use crate::console::{Config, ExpansionPort, HardwareMode, Nes, RamInitMode};
+    use crate::console::{Config, ExpansionPort, HardwareMode, Nes, NesConfig, RamInitMode};
     use crate::input::{Button, ControllerType, SnesButton};
     use crate::integration_tests::rom_test_runner::tests::run_nes_for_frames;
 
@@ -19,20 +19,23 @@ pub(crate) mod tests {
     impl ControllerConfig {
         pub fn to_config(&self) -> Config {
             let mut config = Config {
-                ram_init_mode: RamInitMode::Zero,
-                controller_port1: self.port1,
-                controller_port2: self.port2,
-                controller_port1_explicit: true,
-                controller_port2_explicit: true,
+                nes: NesConfig {
+                    ram_init_mode: RamInitMode::Zero,
+                    controller_port1: self.port1,
+                    controller_port2: self.port2,
+                    controller_port1_explicit: true,
+                    controller_port2_explicit: true,
+                    ..Default::default()
+                },
                 ..Default::default()
             };
             if let Some(hw_mode) = self.hardware_mode {
-                config.hardware_mode = hw_mode;
-                config.hardware_mode_explicit = true;
+                config.nes.hardware_mode = hw_mode;
+                config.nes.hardware_mode_explicit = true;
             }
             if let Some(exp_port) = self.expansion_port {
-                config.expansion_port = exp_port;
-                config.expansion_port_explicit = true;
+                config.nes.expansion_port = exp_port;
+                config.nes.expansion_port_explicit = true;
             }
             config
         }
