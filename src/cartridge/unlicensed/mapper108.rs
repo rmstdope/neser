@@ -188,13 +188,21 @@ mod tests {
     fn reset_maps_prg_6000_to_last_bank_for_power_of_two_rom() {
         let mapper = make_mapper();
         // 0xFF % 8 = 7, so the last 8 KB bank is mapped to $6000-$7FFF.
-        assert_eq!(mapper.read_prg(0x6000), 7, "$6000 should read last bank (7) on reset");
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            7,
+            "$6000 should read last bank (7) on reset"
+        );
     }
 
     #[test]
     fn reset_maps_chr_to_bank_0() {
         let mapper = make_mapper();
-        assert_eq!(mapper.read_chr(0x0000), 0, "CHR bank 0 should be selected on reset");
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            0,
+            "CHR bank 0 should be selected on reset"
+        );
     }
 
     #[test]
@@ -214,10 +222,18 @@ mod tests {
         let mut mapper = make_mapper();
 
         mapper.write_prg(0xF000, 3);
-        assert_eq!(mapper.read_prg(0x6000), 3, "bank 3 should be mapped to $6000");
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            3,
+            "bank 3 should be mapped to $6000"
+        );
 
         mapper.write_prg(0xFFFF, 5);
-        assert_eq!(mapper.read_prg(0x7FFF), 5, "bank 5 should be mapped to $7FFF");
+        assert_eq!(
+            mapper.read_prg(0x7FFF),
+            5,
+            "bank 5 should be mapped to $7FFF"
+        );
     }
 
     #[test]
@@ -233,7 +249,11 @@ mod tests {
         let mut mapper = make_mapper();
 
         mapper.write_prg(0x8000, 1);
-        assert_eq!(mapper.read_prg(0x6000), 1, "PRG bank 1 at $6000 after $8000 write");
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            1,
+            "PRG bank 1 at $6000 after $8000 write"
+        );
         assert_eq!(mapper.read_chr(0x0000), 1, "CHR bank 1 after $8000 write");
     }
 
@@ -242,7 +262,11 @@ mod tests {
         let mut mapper = make_mapper();
 
         mapper.write_prg(0xA000, 2);
-        assert_eq!(mapper.read_prg(0x6000), 2, "PRG bank 2 at $6000 after $A000 write");
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            2,
+            "PRG bank 2 at $6000 after $A000 write"
+        );
         assert_eq!(mapper.read_chr(0x0000), 2, "CHR bank 2 after $A000 write");
     }
 
@@ -251,7 +275,11 @@ mod tests {
         let mut mapper = make_mapper();
 
         mapper.write_prg(0xC000, 3);
-        assert_eq!(mapper.read_prg(0x6000), 3, "PRG bank 3 at $6000 after $C000 write");
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            3,
+            "PRG bank 3 at $6000 after $C000 write"
+        );
         assert_eq!(mapper.read_chr(0x0000), 3, "CHR bank 3 after $C000 write");
     }
 
@@ -260,7 +288,11 @@ mod tests {
         let mut mapper = make_mapper();
 
         mapper.write_prg(0xE000, 4);
-        assert_eq!(mapper.read_prg(0x6000), 4, "PRG bank 4 at $6000 after $E000 write");
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            4,
+            "PRG bank 4 at $6000 after $E000 write"
+        );
         assert_eq!(mapper.read_chr(0x0000), 4, "CHR bank 4 after $E000 write");
     }
 
@@ -276,7 +308,11 @@ mod tests {
 
         // Write to $9000 with value 0x05 → CHR = 0x05 & 0x01 = 1; PRG unchanged
         mapper.write_prg(0x9000, 0x05);
-        assert_eq!(mapper.read_prg(0x6000), 3, "PRG bank must not change on $9000 write");
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            3,
+            "PRG bank must not change on $9000 write"
+        );
         assert_eq!(mapper.read_chr(0x0000), 1, "CHR bank must be value & 0x01");
     }
 
@@ -286,7 +322,11 @@ mod tests {
 
         mapper.write_prg(0x8000, 2);
         mapper.write_prg(0xB000, 0x03); // CHR = 0x03 & 0x01 = 1; PRG = 2
-        assert_eq!(mapper.read_prg(0x6000), 2, "PRG must be unchanged after $B000 write");
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            2,
+            "PRG must be unchanged after $B000 write"
+        );
         assert_eq!(mapper.read_chr(0x0000), 1, "CHR must be 0x03 & 0x01 = 1");
     }
 
@@ -296,7 +336,11 @@ mod tests {
 
         mapper.write_prg(0x8000, 5);
         mapper.write_prg(0xD000, 0x02); // CHR = 0x02 & 0x01 = 0; PRG = 5
-        assert_eq!(mapper.read_prg(0x6000), 5, "PRG must be unchanged after $D000 write");
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            5,
+            "PRG must be unchanged after $D000 write"
+        );
         assert_eq!(mapper.read_chr(0x0000), 0, "CHR must be 0x02 & 0x01 = 0");
     }
 
@@ -314,10 +358,26 @@ mod tests {
 
         mapper.write_prg(0xF000, 0);
 
-        assert_eq!(mapper.read_prg(0x8000), before.0, "bank at $8000 must be fixed");
-        assert_eq!(mapper.read_prg(0xA000), before.1, "bank at $A000 must be fixed");
-        assert_eq!(mapper.read_prg(0xC000), before.2, "bank at $C000 must be fixed");
-        assert_eq!(mapper.read_prg(0xE000), before.3, "bank at $E000 must be fixed");
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            before.0,
+            "bank at $8000 must be fixed"
+        );
+        assert_eq!(
+            mapper.read_prg(0xA000),
+            before.1,
+            "bank at $A000 must be fixed"
+        );
+        assert_eq!(
+            mapper.read_prg(0xC000),
+            before.2,
+            "bank at $C000 must be fixed"
+        );
+        assert_eq!(
+            mapper.read_prg(0xE000),
+            before.3,
+            "bank at $E000 must be fixed"
+        );
     }
 
     // ── Mirroring is hard-wired ───────────────────────────────────────────────
@@ -354,11 +414,7 @@ mod tests {
             7,
             "reset must restore PRG bank 7 (last) at $6000"
         );
-        assert_eq!(
-            mapper.read_chr(0x0000),
-            0,
-            "reset must restore CHR bank 0"
-        );
+        assert_eq!(mapper.read_chr(0x0000), 0, "reset must restore CHR bank 0");
     }
 
     // ── Snapshot / restore ────────────────────────────────────────────────────
@@ -372,16 +428,8 @@ mod tests {
         let mut restored = make_mapper();
         restored.restore_registers(&snapshot);
 
-        assert_eq!(
-            restored.read_prg(0x6000),
-            5,
-            "restored PRG bank must be 5"
-        );
-        assert_eq!(
-            restored.read_chr(0x0000),
-            5,
-            "restored CHR bank must be 5"
-        );
+        assert_eq!(restored.read_prg(0x6000), 5, "restored PRG bank must be 5");
+        assert_eq!(restored.read_chr(0x0000), 5, "restored CHR bank must be 5");
     }
 
     #[test]
