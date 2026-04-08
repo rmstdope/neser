@@ -591,6 +591,8 @@ pub struct Config {
     pub gamepads_enabled: bool,
     /// Whether Four Score mode is enabled.
     pub four_score_enabled: bool,
+    /// Whether Four Score mode was explicitly configured.
+    pub four_score_enabled_explicit: bool,
     /// Whether to run in fullscreen mode.
     pub fullscreen: bool,
     /// Which display to use for fullscreen (None = auto-select).
@@ -781,6 +783,7 @@ impl Default for Config {
             vsync_enabled: true,
             gamepads_enabled: true,
             four_score_enabled: false,
+            four_score_enabled_explicit: false,
             fullscreen: false,
             fullscreen_display: None,
             shader_path: None,
@@ -1190,9 +1193,11 @@ impl Config {
         // Four Score: --enable-4-score true/false, --no-4-score, --disable-4-score
         if let Some(four_score) = Self::parse_bool_arg(args, "--enable-4-score")? {
             self.four_score_enabled = four_score;
+            self.four_score_enabled_explicit = true;
         }
         if Self::has_negation_flag(args, &["--no-4-score", "--disable-4-score"]) {
             self.four_score_enabled = false;
+            self.four_score_enabled_explicit = true;
         }
 
         // Debugger: --debugger true/false
@@ -1832,6 +1837,7 @@ impl Config {
             "enable_4_score" => {
                 if let Ok(b) = Self::parse_bool(value) {
                     self.four_score_enabled = b;
+                    self.four_score_enabled_explicit = true;
                 }
             }
             "fullscreen" => {
@@ -2181,6 +2187,29 @@ impl Config {
         self.vs_controllers_swapped = swapped;
     }
 
+    /// Apply ROM DB hint for NES Four Score adapter.
+    ///
+    /// Unlike other hints, this method also **resets** `four_score_enabled` to `false`
+    /// when `has_hint` is `false` and not explicitly configured, so that swapping from a
+    /// Four Score ROM to a standard ROM correctly disables Four Score mode.
+    pub fn apply_rom_db_nes_four_score_hint(&mut self, has_hint: bool) -> bool {
+        if self.four_score_enabled_explicit {
+            return false;
+        }
+
+        if has_hint && !self.four_score_enabled {
+            self.four_score_enabled = true;
+            return true;
+        }
+
+        if !has_hint && self.four_score_enabled {
+            self.four_score_enabled = false;
+            return true;
+        }
+
+        false
+    }
+
     /// Build a human-readable summary of the emulated hardware configuration.
     ///
     /// Includes hardware mode/model, controller port types, and expansion port.
@@ -2205,6 +2234,14 @@ impl Config {
             port1.display_label(),
             port2.display_label(),
         )];
+
+        if self.four_score_enabled {
+            let joypad_label = crate::input::ControllerType::Joypad.display_label();
+            parts.push(format!(
+                "Port 3: {} | Port 4: {} | Four Score: enabled",
+                joypad_label, joypad_label
+            ));
+        }
 
         if let Some(label) = self.expansion_port.display_label() {
             parts.push(format!("Expansion: {}", label));
@@ -5642,6 +5679,49 @@ filter=invalid-shader
     }
 
     #[test]
+    fn test_hardware_summary_includes_four_score_when_enabled() {
+        let mut config = Config::default();
+        config.four_score_enabled = true;
+        let summary = config.hardware_summary();
+        assert!(
+            summary.contains("Four Score"),
+            "Summary should mention Four Score when enabled: {summary}"
+        );
+        assert!(
+            summary.contains("Port 3"),
+            "Summary should show Port 3 when Four Score enabled: {summary}"
+        );
+        assert!(
+            summary.contains("Port 4"),
+            "Summary should show Port 4 when Four Score enabled: {summary}"
+        );
+    }
+
+    #[test]
+    fn test_hardware_summary_omits_ports_3_4_when_four_score_disabled() {
+        let config = Config::default();
+        let summary = config.hardware_summary();
+        assert!(
+            !summary.contains("Port 3"),
+            "Summary should not show Port 3 when Four Score disabled: {summary}"
+        );
+        assert!(
+            !summary.contains("Port 4"),
+            "Summary should not show Port 4 when Four Score disabled: {summary}"
+        );
+    }
+
+    #[test]
+    fn test_hardware_summary_omits_four_score_when_disabled() {
+        let config = Config::default();
+        let summary = config.hardware_summary();
+        assert!(
+            !summary.contains("Four Score"),
+            "Summary should not mention Four Score when disabled: {summary}"
+        );
+    }
+
+    #[test]
     fn test_hardware_summary_with_overrides_controller_types() {
         let config = Config::default(); // port1=Joypad, port2=Joypad
         let summary = config.hardware_summary_with(
@@ -5658,5 +5738,79 @@ filter=invalid-shader
             crate::input::ControllerType::Joypad,
             "hardware_summary_with must not mutate config.controller_port2"
         );
+    }
+
+    // --- apply_rom_db_nes_four_score_hint ---
+
+    #[test]
+    fn test_config_apply_rom_db_nes_four_score_hint_enables_four_score_when_hint_true() {
+        // Given: default config with four_score_enabled = false
+        let mut config = Config::default();
+        assert!(!config.four_score_enabled);
+
+        // When: hint is true (ROM DB says this ROM uses NES Four Score)
+        let changed = config.apply_rom_db_nes_four_score_hint(true);
+
+        // Then: four_score_enabled is set to true and changed is true
+        assert!(config.four_score_enabled);
+        assert!(changed);
+    }
+
+    #[test]
+    fn test_config_apply_rom_db_nes_four_score_hint_disables_four_score_when_hint_false() {
+        // Given: config where four_score was previously auto-enabled
+        let mut config = Config::default();
+        config.four_score_enabled = true; // simulates a previous auto-enable (not explicit)
+
+        // When: hint is false (new ROM has no Four Score entry)
+        let changed = config.apply_rom_db_nes_four_score_hint(false);
+
+        // Then: four_score_enabled is reset to false (ROM swap resets auto-detection)
+        assert!(!config.four_score_enabled);
+        assert!(changed);
+    }
+
+    #[test]
+    fn test_config_apply_rom_db_nes_four_score_hint_no_change_when_already_enabled_and_hint_true() {
+        // Given: config already has four_score_enabled = true (not via explicit)
+        let mut config = Config::default();
+        config.four_score_enabled = true;
+
+        // When: hint is true
+        let changed = config.apply_rom_db_nes_four_score_hint(true);
+
+        // Then: still enabled, but changed is false (no mutation needed)
+        assert!(config.four_score_enabled);
+        assert!(!changed);
+    }
+
+    #[test]
+    fn test_config_apply_rom_db_nes_four_score_hint_respects_explicit_true_when_hint_false() {
+        // Given: user explicitly enabled four_score
+        let mut config = Config::default();
+        config.four_score_enabled = true;
+        config.four_score_enabled_explicit = true;
+
+        // When: hint is false (ROM has no Four Score entry)
+        let changed = config.apply_rom_db_nes_four_score_hint(false);
+
+        // Then: explicit config wins — four_score stays enabled, no change
+        assert!(config.four_score_enabled);
+        assert!(!changed);
+    }
+
+    #[test]
+    fn test_config_apply_rom_db_nes_four_score_hint_respects_explicit_false_when_hint_true() {
+        // Given: user explicitly disabled four_score
+        let mut config = Config::default();
+        config.four_score_enabled = false;
+        config.four_score_enabled_explicit = true;
+
+        // When: hint is true (ROM DB says Four Score)
+        let changed = config.apply_rom_db_nes_four_score_hint(true);
+
+        // Then: explicit config wins — four_score stays disabled, no change
+        assert!(!config.four_score_enabled);
+        assert!(!changed);
     }
 }

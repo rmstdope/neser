@@ -358,6 +358,25 @@ impl RomDb {
         )
     }
 
+    /// Return whether ROM DB expansion type implies NES Four Score adapter.
+    pub fn has_nes_four_score_expansion(&self, crc32: u32) -> bool {
+        matches!(
+            self.get_by_crc(crc32)
+                .and_then(|entry| entry.expansion_type),
+            Some(ExpansionType::NesFourScore)
+        )
+    }
+
+    // NOTE: Not every ExpansionType variant needs a dedicated auto-detection helper here.
+    // Some supported peripherals are handled by other logic, for example:
+    //   - ArkanoidVausNes (0x0F): handled by Arkanoid/NES-specific controller logic
+    //   - VsZapper (0x07) / TwoZappers (0x09): handled by default_zapper_on_port()
+    //   - PowerPadSideA/B (0x0B/0x0C): handled by default_power_pad_on_port()
+    // Others still have no helper in this module because the corresponding peripherals or
+    // wiring are not currently supported here, e.g. BandaiHyperShot, FamicomFourPlayersLong,
+    // and keyboard / MIDI / Mahjong / Excitebike-style devices. Additional helpers can be
+    // added in the future if ROM DB metadata becomes useful for those cases.
+
     /// Return whether ROM DB rom_class indicates a Japan-region (Famicom) ROM.
     pub fn is_japan_region(&self, crc32: u32) -> bool {
         self.get_by_crc(crc32)
@@ -961,5 +980,40 @@ mod tests {
         let csv = "1,Normal,,ABCD1234,,,,,,,,,,,,,,,,,1\n";
         let db = RomDb::from_csv_content(csv);
         assert!(!db.has_power_pad_famicom_expansion(0xABCD1234));
+    }
+
+    // ExpansionType::NesFourScore = 0x02
+    #[test]
+    fn test_rom_db_has_nes_four_score_expansion_when_expansion_is_nes_four_score() {
+        let csv = "1,Bomberman II,,DEADC0DE,,,,,,,,,,,,,,,,,2\n";
+        let db = RomDb::from_csv_content(csv);
+
+        assert!(db.has_nes_four_score_expansion(0xDEADC0DE));
+    }
+
+    #[test]
+    fn test_rom_db_has_nes_four_score_expansion_is_false_for_other_expansion() {
+        // ExpansionType::StandardControllers = 0x01
+        let csv = "1,Standard Game,,DEADC0DE,,,,,,,,,,,,,,,,,1\n";
+        let db = RomDb::from_csv_content(csv);
+
+        assert!(!db.has_nes_four_score_expansion(0xDEADC0DE));
+    }
+
+    #[test]
+    fn test_rom_db_has_nes_four_score_expansion_is_false_for_unknown_crc() {
+        let csv = "1,Bomberman II,,DEADC0DE,,,,,,,,,,,,,,,,,2\n";
+        let db = RomDb::from_csv_content(csv);
+
+        assert!(!db.has_nes_four_score_expansion(0xDEADBEEF));
+    }
+
+    #[test]
+    fn test_rom_db_has_nes_four_score_expansion_is_false_for_famicom_four_players() {
+        // ExpansionType::FamicomFourPlayersSimple = 0x03 — should NOT trigger NES Four Score
+        let csv = "1,Famicom 4P,,DEADC0DE,,,,,,,,,,,,,,,,,3\n";
+        let db = RomDb::from_csv_content(csv);
+
+        assert!(!db.has_nes_four_score_expansion(0xDEADC0DE));
     }
 }

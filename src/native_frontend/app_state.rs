@@ -270,22 +270,17 @@ fn help_overlay_text(
     use crate::input::ControllerType;
 
     let hotkeys = "Controls\n\
+H: Toggle help\n\
 Ctrl+Q: Quit\n\
 Space: Pause\n\
-H: Toggle help\n\
-\n\
-System\n\
-Ctrl+R: Soft reset\n\
-Shift+Ctrl+R: Hard reset\n\
+(Shift+)Ctrl+R: Reset emulator (use Shift for hard reset)\n\
 Ctrl+F: Toggle fullscreen\n\
 Ctrl+O: Switch cartridge\n\
 F2/F3: Volume up/down\n\
 F4: Cycle shader\n\
 F5: Debugger (open/continue)\n\
-F6: Save state\n\
-F7: Load state\n\
-F10: Step over\n\
-F11: Step into";
+F10/F11: Step over/into\n\
+F6/F7: Save/Load state";
 
     let max_ports: usize = if four_score { 4 } else { 2 };
     let keyboard_ports =

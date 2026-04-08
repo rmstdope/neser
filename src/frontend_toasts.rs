@@ -35,6 +35,7 @@ pub fn hardware_mode_toast_message(
     mode: HardwareMode,
     model: crate::console::HardwareModel,
     expansion: ExpansionPort,
+    four_score_enabled: bool,
 ) -> String {
     match mode {
         HardwareMode::Nes => {
@@ -42,7 +43,11 @@ pub fn hardware_mode_toast_message(
                 crate::console::HardwareModel::NesNtsc => "NTSC",
                 crate::console::HardwareModel::NesPal => "PAL",
             };
-            format!("Hardware: NES {}", timing)
+            if four_score_enabled {
+                format!("Hardware: NES {} (Four Score)", timing)
+            } else {
+                format!("Hardware: NES {}", timing)
+            }
         }
         HardwareMode::Famicom => match expansion {
             ExpansionPort::FamicomFourPlayers => {
@@ -124,6 +129,7 @@ mod tests {
             HardwareMode::Nes,
             HardwareModel::NesNtsc,
             ExpansionPort::None,
+            false,
         );
         assert_eq!(message, "Hardware: NES NTSC");
     }
@@ -135,8 +141,21 @@ mod tests {
             HardwareMode::Nes,
             HardwareModel::NesPal,
             ExpansionPort::None,
+            false,
         );
         assert_eq!(message, "Hardware: NES PAL");
+    }
+
+    #[test]
+    fn hardware_mode_toast_nes_ntsc_with_four_score() {
+        use crate::console::HardwareModel;
+        let message = hardware_mode_toast_message(
+            HardwareMode::Nes,
+            HardwareModel::NesNtsc,
+            ExpansionPort::None,
+            true,
+        );
+        assert_eq!(message, "Hardware: NES NTSC (Four Score)");
     }
 
     #[test]
@@ -146,6 +165,7 @@ mod tests {
             HardwareMode::Famicom,
             HardwareModel::NesNtsc,
             ExpansionPort::None,
+            false,
         );
         assert_eq!(message, "Hardware: Famicom");
     }
@@ -157,6 +177,7 @@ mod tests {
             HardwareMode::Famicom,
             HardwareModel::NesNtsc,
             ExpansionPort::FamicomFourPlayers,
+            false,
         );
         assert_eq!(message, "Hardware: Famicom (4-player expansion)");
     }
@@ -168,6 +189,7 @@ mod tests {
             HardwareMode::Famicom,
             HardwareModel::NesNtsc,
             ExpansionPort::PowerPadFamicom,
+            false,
         );
         assert_eq!(message, "Hardware: Famicom (Power Pad expansion)");
     }

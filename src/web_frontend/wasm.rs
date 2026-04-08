@@ -151,6 +151,7 @@ impl WasmNes {
                 config.hardware_mode,
                 config.hardware_model,
                 config.expansion_port,
+                config.four_score_enabled,
             ));
         }
         web_sys::console::log_1(&JsValue::from_str("ROM loaded successfully"));
@@ -520,6 +521,7 @@ impl WasmNes {
                 config.hardware_mode,
                 config.hardware_model,
                 config.expansion_port,
+                config.four_score_enabled,
             ));
         }
 
