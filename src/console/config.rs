@@ -113,7 +113,7 @@ const CLI_FLAGS: &[CliFlag] = &[
     },
     CliFlag {
         flag: "--hardware",
-        help: Some("Hardware mode: nes-ntsc, nes-pal, or famicom (default: nes-ntsc)"),
+        help: Some("Hardware mode: nes-ntsc, nes-pal, famicom, or dendy (default: nes-ntsc)"),
         has_value: true,
     },
     CliFlag {
@@ -420,7 +420,7 @@ pub enum ParseResult {
     /// User requested help - print and exit.
     Help,
     /// Successfully parsed configuration.
-    Config(Config),
+    Config(Box<Config>),
 }
 
 /// RAM initialization mode for power-on/hard reset.
@@ -454,16 +454,15 @@ pub enum RamInitMode {
 pub enum HardwareModel {
     NesNtsc,
     NesPal,
+    Dendy,
 }
 
 impl HardwareModel {
     pub const fn from_timing_mode(timing_mode: TimingMode) -> Self {
         match timing_mode {
             TimingMode::Pal => Self::NesPal,
-            TimingMode::Ntsc
-            | TimingMode::MultiRegion
-            | TimingMode::Dendy
-            | TimingMode::Unknown(_) => Self::NesNtsc,
+            TimingMode::Dendy => Self::Dendy,
+            TimingMode::Ntsc | TimingMode::MultiRegion | TimingMode::Unknown(_) => Self::NesNtsc,
         }
     }
 
@@ -471,6 +470,7 @@ impl HardwareModel {
         match self {
             Self::NesNtsc => TimingMode::Ntsc,
             Self::NesPal => TimingMode::Pal,
+            Self::Dendy => TimingMode::Dendy,
         }
     }
 
@@ -479,6 +479,7 @@ impl HardwareModel {
         match self {
             Self::NesNtsc => "nes-ntsc",
             Self::NesPal => "nes-pal",
+            Self::Dendy => "dendy",
         }
     }
 
@@ -487,6 +488,7 @@ impl HardwareModel {
         match self {
             Self::NesNtsc => "NTSC",
             Self::NesPal => "PAL",
+            Self::Dendy => "Dendy",
         }
     }
 }
@@ -833,6 +835,8 @@ impl Config {
             Some((HardwareMode::Nes, HardwareModel::NesPal))
         } else if value.eq_ignore_ascii_case("famicom") {
             Some((HardwareMode::Famicom, HardwareModel::NesNtsc))
+        } else if value.eq_ignore_ascii_case("dendy") {
+            Some((HardwareMode::Nes, HardwareModel::Dendy))
         } else {
             None
         }
@@ -846,7 +850,7 @@ impl Config {
                 Ok(Some(parsed))
             } else {
                 Err(format!(
-                    "Invalid --hardware value: '{}'. Valid options are: nes-ntsc, nes-pal, famicom",
+                    "Invalid --hardware value: '{}'. Valid options are: nes-ntsc, nes-pal, famicom, dendy",
                     hardware
                 ))
             }
@@ -873,7 +877,7 @@ impl Config {
         let (hardware_mode, hardware_model) =
             Self::parse_hardware_value(value).ok_or_else(|| {
                 format!(
-                    "Invalid hardware value: '{}'. Valid options are: nes-ntsc, nes-pal, famicom",
+                    "Invalid hardware value: '{}'. Valid options are: nes-ntsc, nes-pal, famicom, dendy",
                     value
                 )
             })?;
@@ -1145,7 +1149,7 @@ impl Config {
 
         config.validate_controller_ports()?;
 
-        Ok(ParseResult::Config(config))
+        Ok(ParseResult::Config(Box::new(config)))
     }
 
     /// Apply command-line arguments to the config.
@@ -1735,7 +1739,7 @@ impl Config {
     ///
     /// # Example config file:
     /// ```text
-    /// # Hardware mode: nes-ntsc, nes-pal, or famicom
+    /// # Hardware mode: nes-ntsc, nes-pal, famicom, or dendy
     /// hardware=nes-ntsc
     ///
     /// # Expansion port: none or famicom-four-players
@@ -2054,7 +2058,9 @@ impl Config {
             return false;
         }
 
-        if rom_timing_mode.is_ntsc_or_pal() {
+        if rom_timing_mode.is_ntsc_or_pal()
+            || matches!(rom_timing_mode, crate::cartridge::TimingMode::Dendy)
+        {
             self.hardware_model = HardwareModel::from_timing_mode(rom_timing_mode);
             true
         } else {
@@ -2474,7 +2480,7 @@ mod tests {
 
     fn parse_config(args: Vec<String>) -> Config {
         match config_new(args).unwrap() {
-            ParseResult::Config(c) => c,
+            ParseResult::Config(c) => *c,
             ParseResult::Help => panic!("Expected Config, got Help"),
         }
     }
@@ -2642,6 +2648,82 @@ mod tests {
     fn test_config_apply_rom_timing_mode_unknown_keeps_default() {
         let mut config = Config::default();
         let applied = config.apply_rom_timing_mode(crate::cartridge::TimingMode::Unknown(0));
+        assert!(!applied);
+        assert_eq!(config.hardware_model, HardwareModel::NesNtsc);
+    }
+
+    #[test]
+    fn test_config_apply_rom_timing_mode_dendy_sets_dendy_model() {
+        let mut config = Config::default();
+        let applied = config.apply_rom_timing_mode(crate::cartridge::TimingMode::Dendy);
+        assert!(applied);
+        assert_eq!(config.hardware_model, HardwareModel::Dendy);
+    }
+
+    #[test]
+    fn test_parse_hardware_value_dendy_returns_nes_dendy() {
+        let result = Config::parse_hardware_value("dendy");
+        assert_eq!(result, Some((HardwareMode::Nes, HardwareModel::Dendy)));
+    }
+
+    #[test]
+    fn test_parse_hardware_value_dendy_is_case_insensitive() {
+        assert_eq!(
+            Config::parse_hardware_value("DENDY"),
+            Some((HardwareMode::Nes, HardwareModel::Dendy))
+        );
+        assert_eq!(
+            Config::parse_hardware_value("Dendy"),
+            Some((HardwareMode::Nes, HardwareModel::Dendy))
+        );
+    }
+
+    #[test]
+    fn test_hardware_model_dendy_timing_mode_is_dendy() {
+        assert_eq!(
+            HardwareModel::Dendy.timing_mode(),
+            crate::cartridge::TimingMode::Dendy
+        );
+    }
+
+    #[test]
+    fn test_hardware_model_dendy_display_label_is_dendy() {
+        assert_eq!(HardwareModel::Dendy.display_label(), "Dendy");
+    }
+
+    #[test]
+    fn test_hardware_model_dendy_as_str_is_dendy() {
+        assert_eq!(HardwareModel::Dendy.as_str(), "dendy");
+    }
+
+    #[test]
+    fn test_timing_mode_dendy_cpu_clock_and_scanlines_via_hardware_model() {
+        let dendy_timing = HardwareModel::Dendy.timing_mode();
+        assert_eq!(dendy_timing.cpu_clock_hz(), 1_773_448.0);
+        assert_eq!(dendy_timing.scanlines_per_frame(), 312);
+    }
+
+    #[test]
+    fn test_hardware_arg_dendy_sets_hardware_model() {
+        let args = vec![
+            "neser".to_string(),
+            "--hardware".to_string(),
+            "dendy".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.hardware_model, HardwareModel::Dendy);
+        assert!(config.hardware_model_explicit);
+        assert_eq!(config.hardware_mode, HardwareMode::Nes);
+    }
+
+    #[test]
+    fn test_config_apply_rom_timing_mode_dendy_does_not_override_explicit() {
+        let mut config = Config {
+            hardware_model: HardwareModel::NesNtsc,
+            hardware_model_explicit: true,
+            ..Default::default()
+        };
+        let applied = config.apply_rom_timing_mode(crate::cartridge::TimingMode::Dendy);
         assert!(!applied);
         assert_eq!(config.hardware_model, HardwareModel::NesNtsc);
     }
@@ -5627,9 +5709,11 @@ filter=invalid-shader
 
     #[test]
     fn test_hardware_summary_famicom_with_power_pad_expansion() {
-        let mut config = Config::default();
-        config.hardware_mode = HardwareMode::Famicom;
-        config.expansion_port = ExpansionPort::PowerPadFamicom;
+        let config = Config {
+            hardware_mode: HardwareMode::Famicom,
+            expansion_port: ExpansionPort::PowerPadFamicom,
+            ..Config::default()
+        };
         let summary = config.hardware_summary();
         assert!(
             summary.contains("Famicom"),
@@ -5643,9 +5727,11 @@ filter=invalid-shader
 
     #[test]
     fn test_hardware_summary_nes_pal_with_zapper() {
-        let mut config = Config::default();
-        config.hardware_model = HardwareModel::NesPal;
-        config.controller_port2 = crate::input::ControllerType::Zapper;
+        let config = Config {
+            hardware_model: HardwareModel::NesPal,
+            controller_port2: crate::input::ControllerType::Zapper,
+            ..Config::default()
+        };
         let summary = config.hardware_summary();
         assert!(
             summary.contains("PAL"),
@@ -5659,8 +5745,10 @@ filter=invalid-shader
 
     #[test]
     fn test_hardware_summary_power_pad_on_port2() {
-        let mut config = Config::default();
-        config.controller_port2 = crate::input::ControllerType::PowerPad;
+        let config = Config {
+            controller_port2: crate::input::ControllerType::PowerPad,
+            ..Config::default()
+        };
         let summary = config.hardware_summary();
         assert!(
             summary.contains("Power Pad"),
@@ -5680,8 +5768,10 @@ filter=invalid-shader
 
     #[test]
     fn test_hardware_summary_includes_four_score_when_enabled() {
-        let mut config = Config::default();
-        config.four_score_enabled = true;
+        let config = Config {
+            four_score_enabled: true,
+            ..Config::default()
+        };
         let summary = config.hardware_summary();
         assert!(
             summary.contains("Four Score"),
@@ -5759,8 +5849,10 @@ filter=invalid-shader
     #[test]
     fn test_config_apply_rom_db_nes_four_score_hint_disables_four_score_when_hint_false() {
         // Given: config where four_score was previously auto-enabled
-        let mut config = Config::default();
-        config.four_score_enabled = true; // simulates a previous auto-enable (not explicit)
+        let mut config = Config {
+            four_score_enabled: true, // simulates a previous auto-enable (not explicit)
+            ..Config::default()
+        };
 
         // When: hint is false (new ROM has no Four Score entry)
         let changed = config.apply_rom_db_nes_four_score_hint(false);
@@ -5773,8 +5865,10 @@ filter=invalid-shader
     #[test]
     fn test_config_apply_rom_db_nes_four_score_hint_no_change_when_already_enabled_and_hint_true() {
         // Given: config already has four_score_enabled = true (not via explicit)
-        let mut config = Config::default();
-        config.four_score_enabled = true;
+        let mut config = Config {
+            four_score_enabled: true,
+            ..Config::default()
+        };
 
         // When: hint is true
         let changed = config.apply_rom_db_nes_four_score_hint(true);
@@ -5787,9 +5881,11 @@ filter=invalid-shader
     #[test]
     fn test_config_apply_rom_db_nes_four_score_hint_respects_explicit_true_when_hint_false() {
         // Given: user explicitly enabled four_score
-        let mut config = Config::default();
-        config.four_score_enabled = true;
-        config.four_score_enabled_explicit = true;
+        let mut config = Config {
+            four_score_enabled: true,
+            four_score_enabled_explicit: true,
+            ..Config::default()
+        };
 
         // When: hint is false (ROM has no Four Score entry)
         let changed = config.apply_rom_db_nes_four_score_hint(false);
@@ -5802,9 +5898,11 @@ filter=invalid-shader
     #[test]
     fn test_config_apply_rom_db_nes_four_score_hint_respects_explicit_false_when_hint_true() {
         // Given: user explicitly disabled four_score
-        let mut config = Config::default();
-        config.four_score_enabled = false;
-        config.four_score_enabled_explicit = true;
+        let mut config = Config {
+            four_score_enabled: false,
+            four_score_enabled_explicit: true,
+            ..Config::default()
+        };
 
         // When: hint is true (ROM DB says Four Score)
         let changed = config.apply_rom_db_nes_four_score_hint(true);

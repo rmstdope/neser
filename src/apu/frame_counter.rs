@@ -417,8 +417,8 @@ impl FrameCounter {
 
         let (step_1, step_2, step_3, step_4, irq_cycle, frame_cycles) = match self.tv_system {
             TimingMode::Ntsc => (7457, 14913, 22371, 29829, 29828, 29830),
-            TimingMode::Pal => (8313, 16627, 24939, 33253, 33252, 33254),
-            TimingMode::MultiRegion | TimingMode::Dendy | TimingMode::Unknown(_) => {
+            TimingMode::Pal | TimingMode::Dendy => (8313, 16627, 24939, 33253, 33252, 33254),
+            TimingMode::MultiRegion | TimingMode::Unknown(_) => {
                 (7457, 14913, 22371, 29829, 29828, 29830)
             }
         };
@@ -464,10 +464,8 @@ impl FrameCounter {
     fn clock_five_step(&mut self) -> (bool, bool) {
         let (step_1_base, step_2_base, step_3_base, step_5_base) = match self.tv_system {
             TimingMode::Ntsc => (7457, 14913, 22371, 37281),
-            TimingMode::Pal => (8313, 16627, 24939, 41565),
-            TimingMode::MultiRegion | TimingMode::Dendy | TimingMode::Unknown(_) => {
-                (7457, 14913, 22371, 37281)
-            }
+            TimingMode::Pal | TimingMode::Dendy => (8313, 16627, 24939, 41565),
+            TimingMode::MultiRegion | TimingMode::Unknown(_) => (7457, 14913, 22371, 37281),
         };
 
         // The 5-step sequence length is odd for both PAL and NTSC , which causes the relative phase to

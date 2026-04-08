@@ -18,10 +18,8 @@ use crate::trace_ppu;
 pub(super) fn prerender_scanline(tv_system: TimingMode) -> u16 {
     match tv_system {
         TimingMode::Ntsc => NTSC_PRERENDER_SCANLINE,
-        TimingMode::Pal => PAL_PRERENDER_SCANLINE,
-        TimingMode::MultiRegion | TimingMode::Dendy | TimingMode::Unknown(_) => {
-            NTSC_PRERENDER_SCANLINE
-        }
+        TimingMode::Pal | TimingMode::Dendy => PAL_PRERENDER_SCANLINE,
+        TimingMode::MultiRegion | TimingMode::Unknown(_) => NTSC_PRERENDER_SCANLINE,
     }
 }
 

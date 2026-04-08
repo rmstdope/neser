@@ -1452,12 +1452,14 @@ mod tests {
         }
 
         // Phase 2 – During the noise marker, triangle should also be silent.
-        for index in noise_start..noise_end.min(tri_rms.len()) {
+        let noise_window_end = noise_end.min(tri_rms.len());
+        for (offset, &rms) in tri_rms[noise_start..noise_window_end].iter().enumerate() {
+            let window = noise_start + offset;
             assert!(
-                tri_rms[index] <= silence_threshold,
+                rms <= silence_threshold,
                 "expected triangle silence during noise marker window {} (rms={})",
-                index,
-                tri_rms[index]
+                window,
+                rms
             );
         }
 
@@ -1482,14 +1484,15 @@ mod tests {
         // Verify no silent gaps appear *after* the active region restarts (i.e., the
         // active region is truly contiguous — once it stops, it stays stopped).
         let after_active = continuous_start + active_count;
-        for index in after_active..tri_rms.len() {
+        for (offset, &rms) in tri_rms[after_active..].iter().enumerate() {
+            let window = after_active + offset;
             assert!(
-                tri_rms[index] <= silence_threshold,
+                rms <= silence_threshold,
                 "unexpected triangle activity at window {} after continuous region ended at {} \
                  (rms={}); indicates a silent gap within what should be continuous playback",
-                index,
+                window,
                 after_active,
-                tri_rms[index]
+                rms
             );
         }
     }
@@ -1546,7 +1549,7 @@ mod tests {
             if !a_pressed && frame >= press_frame {
                 nes.set_button(1, crate::input::Button::A, true);
                 a_pressed = true;
-            } else if a_pressed && !a_released && frame >= press_frame + 1 {
+            } else if a_pressed && !a_released && frame > press_frame {
                 nes.set_button(1, crate::input::Button::A, false);
                 a_released = true;
             }
