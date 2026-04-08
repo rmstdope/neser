@@ -236,14 +236,14 @@ mod tests {
     fn chr_rom_bank_8_reads_correctly() {
         // 32 1-KiB CHR-ROM banks (bank 0–31), filled with index value
         let mut mapper = make_mapper_chr_pattern(32);
-        // Select bank 8 (CHR-ROM, first ROM bank) for PPU $1000 (slot 4)
-        mapper.write_prg(0x8000, 0x02); // bank_select = reg 2 (CHR 2K for $1000)
-        mapper.write_prg(0x8001, 0x10); // bank 16 (aligned to 2KB → pages 16&17)
-        // slot 4 → page 16 from CHR-ROM
+        // Select CHR-ROM page 8 for PPU $1000 via MMC3 CHR register R2
+        mapper.write_prg(0x8000, 0x02); // bank_select = reg 2 (1 KiB CHR bank at $1000)
+        mapper.write_prg(0x8001, 0x08); // page 8
+        // $1000 should now read from CHR-ROM page 8
         assert_eq!(
             mapper.read_chr(0x1000),
-            16,
-            "CHR-ROM page 16 should read 16"
+            8,
+            "CHR-ROM page 8 should read 8"
         );
     }
 
