@@ -21,11 +21,10 @@ impl MasterClock {
         //   PAL   – cpu=16, ppu=5, start=8  (PPU:CPU = 3.2, symmetric)
         //   Dendy – cpu=15, ppu=5, start=7  (PPU:CPU = 3.0, asymmetric: end=8)
         let (cpu_divider, ppu_divider, start_clock) = match tv_system {
-            TimingMode::Ntsc => (12, 4, 6),
+            TimingMode::Ntsc | TimingMode::MultiRegion | TimingMode::Unknown(_) => (12, 4, 6),
             TimingMode::Pal => (16, 5, 8),
             // Dendy: master 26.601712 MHz / 15 = 1,773,448 Hz CPU; PPU:CPU = 3.0 (asymmetric split 7/8)
-            // MultiRegion and Unknown also fall back to Dendy-like timings.
-            TimingMode::Dendy | TimingMode::MultiRegion | TimingMode::Unknown(_) => (15, 5, 7),
+            TimingMode::Dendy => (15, 5, 7),
         };
         Self {
             master_clock: 0,
@@ -166,7 +165,7 @@ mod tests {
 
     #[test]
     fn test_dendy_cpu_divider_is_15() {
-        // Currently falls to PAL else-branch giving 16; should be 15.
+        // Regression check: Dendy timing must use a 15-tick CPU divider, not 16.
         let clock = MasterClock::new(TimingMode::Dendy);
         assert_eq!(clock.cpu_divider(), 15);
     }
@@ -203,6 +202,34 @@ mod tests {
         clock.before_cpu_cycle(true);
         clock.after_cpu_cycle(true);
         assert_eq!(clock.master_cycles(), 15);
+    }
+
+    #[test]
+    fn test_dendy_one_cpu_cycle_yields_3_ppu_cycles_with_no_remainder() {
+        // ppu_divider=5: 15 master ticks per CPU cycle -> 15/5 = 3 PPU cycles exactly.
+        // Validates that the asymmetric 7/8 split leaves ppu_clock perfectly aligned.
+
+        // Read cycle: before(6) + after(9) = 15
+        let mut clock = MasterClock::new(TimingMode::Dendy);
+        clock.before_cpu_cycle(false);
+        clock.after_cpu_cycle(false);
+        assert_eq!(clock.ppu_cycles_since_last(), 3);
+        assert_eq!(
+            clock.ppu_cycles_since_last(),
+            0,
+            "ppu_clock must be aligned with no remainder after read"
+        );
+
+        // Write cycle: before(8) + after(7) = 15
+        let mut clock = MasterClock::new(TimingMode::Dendy);
+        clock.before_cpu_cycle(true);
+        clock.after_cpu_cycle(true);
+        assert_eq!(clock.ppu_cycles_since_last(), 3);
+        assert_eq!(
+            clock.ppu_cycles_since_last(),
+            0,
+            "ppu_clock must be aligned with no remainder after write"
+        );
     }
 
     #[test]

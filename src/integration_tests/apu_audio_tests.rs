@@ -896,7 +896,7 @@ mod tests {
         // only the triangle. The RMS envelope should decrease significantly.
         let window_size = (SAMPLE_RATE_HZ as usize / 50).max(1); // 20ms windows
         let hop_size = (window_size / 2).max(1);
-        let mixed_rms = rms_windows(&mixed_samples, window_size, hop_size);
+        let mixed_rms = rms_windows(mixed_samples, window_size, hop_size);
         let max_rms = mixed_rms.iter().copied().fold(0.0f32, f32::max);
         let min_rms = mixed_rms.iter().copied().fold(f32::INFINITY, f32::min);
 
@@ -929,7 +929,7 @@ mod tests {
 
         // --- Assertion 2: Triangle output is active (not silence) ---
         // The triangle channel should produce non-silent output throughout.
-        let tri_rms = rms_windows(&tri_samples, window_size, hop_size);
+        let tri_rms = rms_windows(tri_samples, window_size, hop_size);
         let tri_avg_rms: f32 = tri_rms.iter().sum::<f32>() / tri_rms.len().max(1) as f32;
         assert!(
             tri_avg_rms > 0.05,
@@ -952,7 +952,7 @@ mod tests {
         // --- Assertion 3: Triangle frequency stability ---
         // The triangle channel should produce a stable ~196 Hz tone (period ~225 samples
         // at 44100 Hz sample rate).
-        let periods = period_series(&tri_samples);
+        let periods = period_series(tri_samples);
         assert!(
             periods.len() > 100,
             "expected >100 triangle periods for reliable measurement, got {}",
