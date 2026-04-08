@@ -194,6 +194,11 @@ impl Nes {
             .borrow()
             .rom_db()
             .has_power_pad_famicom_expansion(cartridge_crc32);
+        let has_nes_four_score_expansion = self
+            .app_context
+            .borrow()
+            .rom_db()
+            .has_nes_four_score_expansion(cartridge_crc32);
         let is_japan_region = self
             .app_context
             .borrow()
@@ -225,6 +230,11 @@ impl Nes {
             .borrow_mut()
             .config_mut()
             .apply_rom_db_power_pad_famicom_hint(has_power_pad_famicom_expansion);
+
+        self.app_context
+            .borrow_mut()
+            .config_mut()
+            .apply_rom_db_nes_four_score_hint(has_nes_four_score_expansion);
 
         // Auto-detect VS System mode from cartridge VS metadata
         let is_vs_system =
