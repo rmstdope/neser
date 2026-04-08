@@ -1,28 +1,37 @@
 use crate::console::TimingMode;
 
-/// Tracks the master clock used to derive CPU/PPU timing.
-///
-/// per-CPU-cycle master clock advancement around each bus access.
+/// Tracks the master clock used to derive CPU and PPU timing,
+/// advancing per-CPU-cycle around each bus access.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MasterClock {
     master_clock: u64,
     ppu_clock: u64,
     cpu_divider: u64,
     ppu_divider: u64,
+    /// Master-clock ticks consumed before the bus access within one CPU cycle.
+    /// For NTSC=6, PAL=8, Dendy=7 (asymmetric: end = cpu_divider - start_clock = 8).
+    start_clock: u64,
 }
 
 impl MasterClock {
     const READ_WRITE_SHIFT: u64 = 1;
     pub fn new(tv_system: TimingMode) -> Self {
+        // Dividers from Mesen2 NesCpu.cpp SetMasterClockDivider():
+        //   NTSC  – cpu=12, ppu=4, start=6  (PPU:CPU = 3.0, symmetric)
+        //   PAL   – cpu=16, ppu=5, start=8  (PPU:CPU = 3.2, symmetric)
+        //   Dendy – cpu=15, ppu=5, start=7  (PPU:CPU = 3.0, asymmetric: end=8)
+        let (cpu_divider, ppu_divider, start_clock) = match tv_system {
+            TimingMode::Ntsc | TimingMode::MultiRegion | TimingMode::Unknown(_) => (12, 4, 6),
+            TimingMode::Pal => (16, 5, 8),
+            // Dendy: master 26.601712 MHz / 15 = 1,773,448 Hz CPU; PPU:CPU = 3.0 (asymmetric split 7/8)
+            TimingMode::Dendy => (15, 5, 7),
+        };
         Self {
             master_clock: 0,
             ppu_clock: 0,
-            cpu_divider: if tv_system == TimingMode::Ntsc {
-                12
-            } else {
-                16
-            },
-            ppu_divider: if tv_system == TimingMode::Ntsc { 4 } else { 5 },
+            cpu_divider,
+            ppu_divider,
+            start_clock,
         }
     }
 
@@ -40,17 +49,18 @@ impl MasterClock {
 
     pub fn before_cpu_cycle(&mut self, is_write: bool) {
         self.master_clock += if is_write {
-            self.cpu_divider / 2 + Self::READ_WRITE_SHIFT
+            self.start_clock + Self::READ_WRITE_SHIFT
         } else {
-            self.cpu_divider / 2 - Self::READ_WRITE_SHIFT
+            self.start_clock - Self::READ_WRITE_SHIFT
         };
     }
 
     pub fn after_cpu_cycle(&mut self, is_write: bool) {
+        let end_clock = self.cpu_divider - self.start_clock;
         self.master_clock += if is_write {
-            self.cpu_divider / 2 - Self::READ_WRITE_SHIFT
+            end_clock - Self::READ_WRITE_SHIFT
         } else {
-            self.cpu_divider / 2 + Self::READ_WRITE_SHIFT
+            end_clock + Self::READ_WRITE_SHIFT
         };
     }
 
@@ -147,6 +157,79 @@ mod tests {
 
         clock.set_master_cycles(10);
         assert_eq!(clock.ppu_cycles_since_last(), 1);
+    }
+
+    // --- Dendy master clock correctness (issue #1889) ---
+    // Spec (Mesen2 NesCpu.cpp): Dendy cpu_divider=15, ppu_divider=5,
+    // start_clock=7, end_clock=8. PPU:CPU ratio = 15/5 = 3.0.
+
+    #[test]
+    fn test_dendy_cpu_divider_is_15() {
+        // Regression check: Dendy timing must use a 15-tick CPU divider, not 16.
+        let clock = MasterClock::new(TimingMode::Dendy);
+        assert_eq!(clock.cpu_divider(), 15);
+    }
+
+    #[test]
+    fn test_dendy_before_read_cycle_is_6_master_ticks() {
+        // start_clock=7, READ: start_clock - 1 = 6
+        let mut clock = MasterClock::new(TimingMode::Dendy);
+        clock.before_cpu_cycle(false);
+        assert_eq!(clock.master_cycles(), 6);
+    }
+
+    #[test]
+    fn test_dendy_before_write_cycle_is_8_master_ticks() {
+        // start_clock=7, WRITE: start_clock + 1 = 8
+        let mut clock = MasterClock::new(TimingMode::Dendy);
+        clock.before_cpu_cycle(true);
+        assert_eq!(clock.master_cycles(), 8);
+    }
+
+    #[test]
+    fn test_dendy_read_cycle_total_is_15_master_ticks() {
+        // before(6) + after(9) = 15 — one full CPU read cycle
+        let mut clock = MasterClock::new(TimingMode::Dendy);
+        clock.before_cpu_cycle(false);
+        clock.after_cpu_cycle(false);
+        assert_eq!(clock.master_cycles(), 15);
+    }
+
+    #[test]
+    fn test_dendy_write_cycle_total_is_15_master_ticks() {
+        // before(8) + after(7) = 15 — one full CPU write cycle
+        let mut clock = MasterClock::new(TimingMode::Dendy);
+        clock.before_cpu_cycle(true);
+        clock.after_cpu_cycle(true);
+        assert_eq!(clock.master_cycles(), 15);
+    }
+
+    #[test]
+    fn test_dendy_one_cpu_cycle_yields_3_ppu_cycles_with_no_remainder() {
+        // ppu_divider=5: 15 master ticks per CPU cycle -> 15/5 = 3 PPU cycles exactly.
+        // Validates that the asymmetric 7/8 split leaves ppu_clock perfectly aligned.
+
+        // Read cycle: before(6) + after(9) = 15
+        let mut clock = MasterClock::new(TimingMode::Dendy);
+        clock.before_cpu_cycle(false);
+        clock.after_cpu_cycle(false);
+        assert_eq!(clock.ppu_cycles_since_last(), 3);
+        assert_eq!(
+            clock.ppu_cycles_since_last(),
+            0,
+            "ppu_clock must be aligned with no remainder after read"
+        );
+
+        // Write cycle: before(8) + after(7) = 15
+        let mut clock = MasterClock::new(TimingMode::Dendy);
+        clock.before_cpu_cycle(true);
+        clock.after_cpu_cycle(true);
+        assert_eq!(clock.ppu_cycles_since_last(), 3);
+        assert_eq!(
+            clock.ppu_cycles_since_last(),
+            0,
+            "ppu_clock must be aligned with no remainder after write"
+        );
     }
 
     #[test]
