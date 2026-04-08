@@ -197,7 +197,7 @@ mod tests {
 
     #[test]
     fn reset_maps_chr_to_bank_0() {
-        let mapper = make_mapper();
+        let mut mapper = make_mapper();
         assert_eq!(
             mapper.read_chr(0x0000),
             0,
