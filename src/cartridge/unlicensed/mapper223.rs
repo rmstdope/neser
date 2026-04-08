@@ -240,11 +240,7 @@ mod tests {
         mapper.write_prg(0x8000, 0x02); // bank_select = reg 2 (1 KiB CHR bank at $1000)
         mapper.write_prg(0x8001, 0x08); // page 8
         // $1000 should now read from CHR-ROM page 8
-        assert_eq!(
-            mapper.read_chr(0x1000),
-            8,
-            "CHR-ROM page 8 should read 8"
-        );
+        assert_eq!(mapper.read_chr(0x1000), 8, "CHR-ROM page 8 should read 8");
     }
 
     #[test]
