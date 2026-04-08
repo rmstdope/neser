@@ -968,7 +968,13 @@ mod tests {
             .copied()
             .filter(|&p| (p - median_period).abs() / median_period < 0.1)
             .collect();
-        let avg_period: f32 = filtered.iter().sum::<f32>() / filtered.len().max(1) as f32;
+        assert!(
+            !filtered.is_empty(),
+            "expected at least one triangle period within ±10% of median ({:.1}), got 0 out of {} periods",
+            median_period,
+            periods.len()
+        );
+        let avg_period: f32 = filtered.iter().sum::<f32>() / filtered.len() as f32;
         let freq = SAMPLE_RATE_HZ / avg_period;
 
         // Triangle frequency should be within ±10% of expected ~196 Hz.
