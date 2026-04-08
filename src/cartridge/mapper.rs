@@ -175,6 +175,7 @@ use super::unlicensed::mapper234::Mapper234;
 use super::unlicensed::mapper236::Mapper236;
 use super::unlicensed::mapper237::Mapper237;
 use super::unlicensed::mapper238::Mapper238;
+use super::unlicensed::mapper240::Mapper240;
 use super::unlicensed::mapper241::Mapper241;
 use super::unlicensed::mapper242::Mapper242;
 use super::unlicensed::mapper244::Mapper244;
@@ -1001,6 +1002,7 @@ mapper_registry! {
     236 => Mapper236::new,
     237 => Mapper237::new,
     238 => Mapper238::new,
+    240 => Mapper240::new,
     241 => Mapper241::new,
     242 => Mapper242::new,
     243 => Mapper243::new,
