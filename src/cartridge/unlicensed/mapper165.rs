@@ -79,8 +79,20 @@ impl Mapper165 {
     /// Returns the MMC3 register index for the given 4KB window and current latch state.
     fn reg_index_for_window(&self, window: usize) -> usize {
         match window {
-            0 => if self.chr_latch[0] { 1 } else { 0 },
-            1 => if self.chr_latch[1] { 4 } else { 2 },
+            0 => {
+                if self.chr_latch[0] {
+                    1
+                } else {
+                    0
+                }
+            }
+            1 => {
+                if self.chr_latch[1] {
+                    4
+                } else {
+                    2
+                }
+            }
             _ => 0,
         }
     }
