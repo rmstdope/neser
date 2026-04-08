@@ -6,9 +6,9 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
-use crate::cartridge::NametableLayout;
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::NametableLayout;
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// Mapper 059 – BMC-T3H53 / BMC-D1038
 ///
@@ -51,7 +51,7 @@ pub struct Mapper59 {
 }
 
 impl Mapper59 {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
             has_dynamic_mirroring: true,
@@ -158,9 +158,9 @@ impl Mapper for Mapper59 {
 #[cfg(test)]
 mod tests {
     use super::Mapper59;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     const CHR_BANKS: usize = 5; // non-power-of-two to catch wrapping bugs
     const PRG_BANKS: usize = 6; // 6 × 16KB = 96KB

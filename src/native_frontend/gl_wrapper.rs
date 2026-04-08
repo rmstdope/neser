@@ -183,7 +183,7 @@ impl NativeGlWrapper {
     /// Renders a frame and optional debugger overlay.
     pub fn render(
         &mut self,
-        nes: &crate::console::Nes,
+        nes: &crate::nes::console::Nes,
         show_debugger: bool,
         overlay_text: Option<&str>,
         overlay_blink_red: bool,

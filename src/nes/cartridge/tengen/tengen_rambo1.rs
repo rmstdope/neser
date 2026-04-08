@@ -7,10 +7,10 @@
 //! - IRQ delay (M2 cycles) is approximated; edge cases in Hard Drivin' prototype may differ.
 //! - Skull & Crossbones "Continue" screen glitch is a known timing issue across emulators.
 
-use crate::cartridge::BaseMapper;
-use crate::cartridge::NametableLayout;
-use crate::cartridge::common::A12RisingEdgeDetector;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::BaseMapper;
+use crate::nes::cartridge::NametableLayout;
+use crate::nes::cartridge::common::A12RisingEdgeDetector;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// Mapper 064 - Tengen RAMBO-1
 ///
@@ -57,7 +57,7 @@ pub struct TengenRambo1Mapper {
 }
 
 impl TengenRambo1Mapper {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_irq: true,
             has_chr_banking: true,
@@ -322,8 +322,8 @@ impl Mapper for TengenRambo1Mapper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     const PRG_BANKS: usize = 32;
     const CHR_1K_BANKS: usize = 256;

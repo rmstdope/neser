@@ -1,8 +1,8 @@
 //! Mapper 121 - JY Company MMC3 variant
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mmc3::MMC3Mapper;
-use crate::cartridge::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mmc3::MMC3Mapper;
+use crate::nes::cartridge::{Mapper, MapperCapabilities};
 
 pub struct Mapper121 {
     mmc3: MMC3Mapper,
@@ -18,7 +18,7 @@ impl Mapper121 {
     // MMC3-only snapshots from extended Mapper121 snapshots.
     const MMC3_MIN_SNAPSHOT_SIZE: usize = 13;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let mut mapper = Self {
             mmc3: MMC3Mapper::new_with_irq_mode(ctx.prg_rom, ctx.chr_rom, ctx.mirroring, false),
             ex_regs: [0; Self::EX_REGS_SIZE],
@@ -210,9 +210,9 @@ impl Mapper for Mapper121 {
 #[cfg(test)]
 mod tests {
     use super::Mapper121;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     const MAPPER_ID: u16 = 121;
     const PRG_BANKS_8K: usize = 48;

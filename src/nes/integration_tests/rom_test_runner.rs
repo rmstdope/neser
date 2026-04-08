@@ -1,5 +1,7 @@
 #[cfg(test)]
 pub(crate) mod tests {
+    use crate::debugging::{Tracing, init_tracing};
+    use crate::input::Button;
     /// OAM test infrastructure for automated testing of test ROMs
     ///
     /// This module provides infrastructure to run OAM test ROMs (oam_read, oam_stress, oam3)
@@ -21,10 +23,8 @@ pub(crate) mod tests {
     /// - The test ROM runs until a specific CPU address is reached, at which point a custom verifier
     ///   function is called to determine pass/fail.
     ///
-    use crate::cartridge::Cartridge;
-    use crate::console::{Config, HardwareModel, Nes, NesConfig, RamInitMode};
-    use crate::debugging::{Tracing, init_tracing};
-    use crate::input::Button;
+    use crate::nes::cartridge::Cartridge;
+    use crate::nes::console::{Config, HardwareModel, Nes, NesConfig, RamInitMode};
     use std::fs;
 
     /// Result of running an test ROM
@@ -65,8 +65,8 @@ pub(crate) mod tests {
         max_frames: u32,
         wait_reset: u32,
         verification: RomTestVerification,
-        tv_system_override: Option<crate::console::TimingMode>,
-        ram_init_mode_override: Option<crate::console::RamInitMode>,
+        tv_system_override: Option<crate::nes::console::TimingMode>,
+        ram_init_mode_override: Option<crate::nes::console::RamInitMode>,
     }
 
     impl RomTestRunner {
@@ -98,7 +98,7 @@ pub(crate) mod tests {
             rom_path: &str,
             max_frames: u32,
             verification: RomTestVerification,
-            tv_system: crate::console::TimingMode,
+            tv_system: crate::nes::console::TimingMode,
         ) -> Self {
             Self {
                 rom_path: rom_path.to_string(),
@@ -115,7 +115,7 @@ pub(crate) mod tests {
             rom_path: &str,
             max_frames: u32,
             verification: RomTestVerification,
-            ram_init_mode: crate::console::RamInitMode,
+            ram_init_mode: crate::nes::console::RamInitMode,
         ) -> Self {
             Self {
                 rom_path: rom_path.to_string(),
@@ -522,16 +522,16 @@ pub(crate) mod tests {
         ($test_name:ident, $rom_path:expr, $timeout:expr) => {
             #[test]
             fn $test_name() {
-                let mut runner = $crate::integration_tests::rom_test_runner::tests::RomTestRunner::new(
+                let mut runner = $crate::nes::integration_tests::rom_test_runner::tests::RomTestRunner::new(
                     $rom_path,
                     $timeout,
-                    $crate::integration_tests::rom_test_runner::tests::RomTestVerification::StatusByte,
+                    $crate::nes::integration_tests::rom_test_runner::tests::RomTestVerification::StatusByte,
                 );
                 let result = runner.run_test();
                 let rom_name = $rom_path.split('/').last().unwrap();
                 assert_eq!(
                     result,
-                    $crate::integration_tests::rom_test_runner::tests::RomTestResult::Pass,
+                    $crate::nes::integration_tests::rom_test_runner::tests::RomTestResult::Pass,
                     "{} should pass",
                     rom_name
                 );
@@ -550,10 +550,10 @@ pub(crate) mod tests {
         ($test_name:ident, $rom_path:expr, $pass_string:expr) => {
             #[test]
             fn $test_name() {
-                let mut runner = $crate::integration_tests::rom_test_runner::tests::RomTestRunner::new(
+                let mut runner = $crate::nes::integration_tests::rom_test_runner::tests::RomTestRunner::new(
                     $rom_path,
                     60 * 30,
-                    $crate::integration_tests::rom_test_runner::tests::RomTestVerification::Console {
+                    $crate::nes::integration_tests::rom_test_runner::tests::RomTestVerification::Console {
                         pass_string: $pass_string.to_string(),
                     },
                 );
@@ -561,7 +561,7 @@ pub(crate) mod tests {
                 let rom_name = $rom_path.split('/').last().unwrap();
                 assert_eq!(
                     result,
-                    $crate::integration_tests::rom_test_runner::tests::RomTestResult::Pass,
+                    $crate::nes::integration_tests::rom_test_runner::tests::RomTestResult::Pass,
                     "{} should pass",
                     rom_name
                 );
@@ -570,10 +570,10 @@ pub(crate) mod tests {
         ($test_name:ident, $rom_path:expr, $pass_string:expr, $tv_system:expr) => {
             #[test]
             fn $test_name() {
-                let mut runner = $crate::integration_tests::rom_test_runner::tests::RomTestRunner::new_with_tv_system(
+                let mut runner = $crate::nes::integration_tests::rom_test_runner::tests::RomTestRunner::new_with_tv_system(
                     $rom_path,
                     60 * 30,
-                    $crate::integration_tests::rom_test_runner::tests::RomTestVerification::Console {
+                    $crate::nes::integration_tests::rom_test_runner::tests::RomTestVerification::Console {
                         pass_string: $pass_string.to_string(),
                     },
                     $tv_system,
@@ -582,7 +582,7 @@ pub(crate) mod tests {
                 let rom_name = $rom_path.split('/').last().unwrap();
                 assert_eq!(
                     result,
-                    $crate::integration_tests::rom_test_runner::tests::RomTestResult::Pass,
+                    $crate::nes::integration_tests::rom_test_runner::tests::RomTestResult::Pass,
                     "{} should pass",
                     rom_name
                 );
@@ -595,10 +595,10 @@ pub(crate) mod tests {
         ($test_name:ident, $rom_path:expr, $pass_string:expr, $ram_init_mode:expr) => {
             #[test]
             fn $test_name() {
-                let mut runner = $crate::integration_tests::rom_test_runner::tests::RomTestRunner::new_with_ram_init_mode(
+                let mut runner = $crate::nes::integration_tests::rom_test_runner::tests::RomTestRunner::new_with_ram_init_mode(
                     $rom_path,
                     60 * 30,
-                    $crate::integration_tests::rom_test_runner::tests::RomTestVerification::Console {
+                    $crate::nes::integration_tests::rom_test_runner::tests::RomTestVerification::Console {
                         pass_string: $pass_string.to_string(),
                     },
                     $ram_init_mode,
@@ -607,7 +607,7 @@ pub(crate) mod tests {
                 let rom_name = $rom_path.split('/').last().unwrap();
                 assert_eq!(
                     result,
-                    $crate::integration_tests::rom_test_runner::tests::RomTestResult::Pass,
+                    $crate::nes::integration_tests::rom_test_runner::tests::RomTestResult::Pass,
                     "{} should pass",
                     rom_name
                 );
@@ -620,10 +620,10 @@ pub(crate) mod tests {
         ($test_name:ident, $rom_path:expr, $timeout:expr, $expected:expr) => {
             #[test]
             fn $test_name() {
-                let mut runner = $crate::integration_tests::rom_test_runner::tests::RomTestRunner::new(
+                let mut runner = $crate::nes::integration_tests::rom_test_runner::tests::RomTestRunner::new(
                     $rom_path,
                     $timeout,
-                    $crate::integration_tests::rom_test_runner::tests::RomTestVerification::ConsoleCrc(
+                    $crate::nes::integration_tests::rom_test_runner::tests::RomTestVerification::ConsoleCrc(
                         $expected,
                     ),
                 );
@@ -631,7 +631,7 @@ pub(crate) mod tests {
                 let rom_name = $rom_path.split('/').last().unwrap();
                 assert_eq!(
                     result,
-                    $crate::integration_tests::rom_test_runner::tests::RomTestResult::Pass,
+                    $crate::nes::integration_tests::rom_test_runner::tests::RomTestResult::Pass,
                     "{} should pass",
                     rom_name
                 );
@@ -648,24 +648,24 @@ pub(crate) mod tests {
             #[test]
             fn $test_name() {
                 let rom_data = std::fs::read($rom_path).expect("ROM should load");
-                let cartridge = $crate::cartridge::Cartridge::load_from_file(
+                let cartridge = $crate::nes::cartridge::Cartridge::load_from_file(
                     &rom_data,
                     $rom_path,
                     &$crate::app_context::AppContext::new(),
                 )
                 .expect("ROM should parse");
 
-                let mut config = $crate::console::Config {
-                    nes: $crate::console::NesConfig {
-                        ram_init_mode: $crate::console::RamInitMode::Zero,
+                let mut config = $crate::nes::console::Config {
+                    nes: $crate::nes::console::NesConfig {
+                        ram_init_mode: $crate::nes::console::RamInitMode::Zero,
                         ..Default::default()
                     },
                     ..Default::default()
                 };
                 config.nes.hardware_model =
-                    $crate::console::HardwareModel::from_timing_mode(cartridge.rom_timing_mode());
+                    $crate::nes::console::HardwareModel::from_timing_mode(cartridge.rom_timing_mode());
 
-                let mut nes = $crate::console::Nes::new(
+                let mut nes = $crate::nes::console::Nes::new(
                     $crate::app_context::AppContext::new_with_config(config),
                 );
                 nes.insert_cartridge(cartridge);
@@ -687,7 +687,7 @@ pub(crate) mod tests {
 
                     let delta = frame - previous_frame;
                     if delta > 0 {
-                        $crate::integration_tests::rom_test_runner::tests::run_nes_for_frames(
+                        $crate::nes::integration_tests::rom_test_runner::tests::run_nes_for_frames(
                             &mut nes, delta,
                         );
                     }
@@ -700,7 +700,7 @@ pub(crate) mod tests {
                         let rgb = screen.snapshot();
                         let file_name = format!("f{:05}_crc_{:08X}.png", frame, crc);
                         let path = capture_dir.join(file_name);
-                        $crate::integration_tests::rom_test_runner::tests::write_checkpoint_png(
+                        $crate::nes::integration_tests::rom_test_runner::tests::write_checkpoint_png(
                             &path, &rgb, 256, 240,
                         );
                     }
@@ -751,24 +751,24 @@ pub(crate) mod tests {
             #[test]
             fn $test_name() {
                 let rom_data = std::fs::read($rom_path).expect("ROM should load");
-                let cartridge = $crate::cartridge::Cartridge::load_from_file(
+                let cartridge = $crate::nes::cartridge::Cartridge::load_from_file(
                     &rom_data,
                     $rom_path,
                     &$crate::app_context::AppContext::new(),
                 )
                 .expect("ROM should parse");
 
-                let mut config = $crate::console::Config {
-                    nes: $crate::console::NesConfig {
-                        ram_init_mode: $crate::console::RamInitMode::Zero,
+                let mut config = $crate::nes::console::Config {
+                    nes: $crate::nes::console::NesConfig {
+                        ram_init_mode: $crate::nes::console::RamInitMode::Zero,
                         ..Default::default()
                     },
                     ..Default::default()
                 };
                 config.nes.hardware_model =
-                    $crate::console::HardwareModel::from_timing_mode(cartridge.rom_timing_mode());
+                    $crate::nes::console::HardwareModel::from_timing_mode(cartridge.rom_timing_mode());
 
-                let mut nes = $crate::console::Nes::new(
+                let mut nes = $crate::nes::console::Nes::new(
                     $crate::app_context::AppContext::new_with_config(config),
                 );
                 nes.insert_cartridge(cartridge);
@@ -816,7 +816,7 @@ pub(crate) mod tests {
                     }
 
                     // Advance emulator by one frame
-                    $crate::integration_tests::rom_test_runner::tests::run_nes_for_frames(
+                    $crate::nes::integration_tests::rom_test_runner::tests::run_nes_for_frames(
                         &mut nes, 1,
                     );
 
@@ -832,7 +832,7 @@ pub(crate) mod tests {
                             let rgb = screen.snapshot();
                             let file_name = format!("f{:05}_crc_{:08X}.png", frame, crc);
                             let path = capture_dir.join(file_name);
-                            $crate::integration_tests::rom_test_runner::tests::write_checkpoint_png(
+                            $crate::nes::integration_tests::rom_test_runner::tests::write_checkpoint_png(
                                 &path, &rgb, 256, 240,
                             );
                         }
@@ -862,16 +862,17 @@ pub(crate) mod tests {
         ($test_name:ident, $rom_path:expr, $stop_address:expr, $verify_fn:expr, $timeout:expr) => {
             #[test]
             fn $test_name() {
-                let result = $crate::integration_tests::rom_test_runner::tests::run_address_test(
-                    $rom_path,
-                    $timeout,
-                    $stop_address,
-                    $verify_fn,
-                );
+                let result =
+                    $crate::nes::integration_tests::rom_test_runner::tests::run_address_test(
+                        $rom_path,
+                        $timeout,
+                        $stop_address,
+                        $verify_fn,
+                    );
                 let rom_name = $rom_path.split('/').last().unwrap();
                 assert_eq!(
                     result,
-                    $crate::integration_tests::rom_test_runner::tests::RomTestResult::Pass,
+                    $crate::nes::integration_tests::rom_test_runner::tests::RomTestResult::Pass,
                     "{} should pass",
                     rom_name
                 );

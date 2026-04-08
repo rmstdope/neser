@@ -30,9 +30,9 @@
 //! - No known functional limitations beyond the scrambling differences documented
 //!   above.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mmc3::MMC3Mapper;
-use crate::cartridge::{Mapper, MapperCapabilities, mapper::MapperContext};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mmc3::MMC3Mapper;
+use crate::nes::cartridge::{Mapper, MapperCapabilities, mapper::MapperContext};
 
 /// Mapper 325 – Mali Splash Bomb MMC3 variant.
 ///
@@ -190,9 +190,9 @@ impl Mapper for Mapper325 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     /// 8 PRG 8 KiB banks = 64 KiB PRG (the known ROM size for Mali Splash Bomb).
     /// Non-power-of-2 would be 12; we stay at 8 since PRG scrambling of 0xFF/0xFE

@@ -8,10 +8,10 @@
 //! - FM audio (YM2413/OPLL) is stubbed with silence. Full YM2413 emulation
 //!   is out of scope for this implementation.
 
-use crate::cartridge::BaseMapper;
-use crate::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
-use crate::cartridge::vrc_irq::VrcIrq;
-use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
+use crate::nes::cartridge::BaseMapper;
+use crate::nes::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::nes::cartridge::vrc_irq::VrcIrq;
+use crate::nes::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
 /// Mapper 85 - Konami VRC7 (FM audio stubbed with silence)
 ///
@@ -57,7 +57,7 @@ pub struct VRC7Mapper {
 }
 
 impl VRC7Mapper {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let mirroring = ctx.mirroring;
         let capabilities = MapperCapabilities {
             has_irq: true,
@@ -251,7 +251,7 @@ impl Mapper for VRC7Mapper {
         self.prg_ram.load_snapshot(data);
     }
 
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+    fn initialize_ram(&mut self, mode: crate::nes::console::RamInitMode) {
         self.prg_ram.initialize(mode);
         self.base.initialize_ram(mode);
     }
@@ -327,9 +327,9 @@ impl Mapper for VRC7Mapper {
 
 #[cfg(test)]
 mod tests {
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     fn create_vrc7(
         prg_rom: Vec<u8>,

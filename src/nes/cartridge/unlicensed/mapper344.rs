@@ -8,9 +8,9 @@
 //!   is not emulated.
 //! - The common dump PRG 128KB bank reorder quirk (`0,3,1,2`) is not auto-corrected.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
-use crate::cartridge::mmc3::MMC3Mapper;
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::mmc3::MMC3Mapper;
 
 pub struct Mapper344 {
     mmc3: MMC3Mapper,
@@ -38,7 +38,7 @@ impl Mapper344 {
     const CHR_A17_SHIFT: usize = 7;
     const CHR_A18_SHIFT: usize = 8;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         Self {
             mmc3: MMC3Mapper::new_with_irq_mode(ctx.prg_rom, ctx.chr_rom, ctx.mirroring, false),
             outer_reg: 0,
@@ -252,9 +252,9 @@ impl Mapper for Mapper344 {
 
 #[cfg(test)]
 mod tests {
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     const PRG_BANKS_8K: usize = 64;
     const CHR_BANKS_1K: usize = 512;

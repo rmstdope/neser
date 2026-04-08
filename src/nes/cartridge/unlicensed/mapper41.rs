@@ -6,8 +6,8 @@
 //! Known Limitations:
 //! - Bus-conflict nuances are not modeled beyond normal write-path behavior.
 
-use crate::cartridge::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// Mapper 041 - Caltron 6-in-1
 pub struct Mapper41 {
@@ -29,7 +29,7 @@ impl Mapper41 {
     const MIRROR_HORIZONTAL_ADDR_BIT: u16 = 0x0020;
     const INNER_ENABLE_PRG_THRESHOLD: u8 = 4;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
             has_dynamic_mirroring: true,
@@ -88,7 +88,7 @@ impl Mapper for Mapper41 {
     fn registers_snapshot(&self) -> Vec<u8> {
         let mirroring_h = matches!(
             self.base.mirroring(),
-            crate::cartridge::NametableLayout::Horizontal
+            crate::nes::cartridge::NametableLayout::Horizontal
         );
         vec![self.prg_bank, self.chr_bank, mirroring_h as u8]
     }
@@ -108,7 +108,7 @@ impl Mapper for Mapper41 {
         self.prg_bank = 0;
         self.chr_bank = 0;
         self.base
-            .set_mirroring(crate::cartridge::NametableLayout::Vertical);
+            .set_mirroring(crate::nes::cartridge::NametableLayout::Vertical);
         self.update_mapping();
     }
 }
@@ -116,9 +116,9 @@ impl Mapper for Mapper41 {
 #[cfg(test)]
 mod tests {
     use super::Mapper41;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     const PRG_BANKS_32K: usize = 11;
     const CHR_BANKS_8K: usize = 13;

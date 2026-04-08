@@ -5,8 +5,8 @@
 //! - Edge-case behavior may still differ from hardware in untested timing and board-variant scenarios.
 //! - See CARTRIDGE_REVIEW.md sections 5 and 6 for remaining mapper test/documentation follow-up.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::{Mapper, MapperCapabilities};
 
 /// Mapper 076 - Namco 109 (Megami Tensei: Digital Devil Story)
 ///
@@ -47,7 +47,7 @@ pub struct Namcot3446Mapper {
 impl Namcot3446Mapper {
     const REG_SELECT_MASK: u8 = 0b0000_0111;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
             prg_bank_size_kb: 8,
@@ -142,9 +142,9 @@ impl Mapper for Namcot3446Mapper {
 
 #[cfg(test)]
 mod tests {
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     fn create_mapper76(
         prg_rom: Vec<u8>,

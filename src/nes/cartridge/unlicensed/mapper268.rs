@@ -68,9 +68,9 @@
 //! - Source: Mesen2 `MMC3_Coolboy.h`. No known discrepancies for the features
 //!   that are implemented.
 
-use crate::cartridge::Mapper;
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mmc3::MMC3Mapper;
+use crate::nes::cartridge::Mapper;
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mmc3::MMC3Mapper;
 
 /// Mapper 268 – Coolboy (MMC3 variant with outer bank registers)
 pub struct Mapper268 {
@@ -85,7 +85,7 @@ impl Mapper268 {
     const CHR_1K_BANK_SIZE: usize = 0x0400; // 1 KiB
     const CHR_BANK_MASK: usize = Self::CHR_1K_BANK_SIZE - 1;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         Self {
             mmc3: MMC3Mapper::new_with_irq_mode(ctx.prg_rom, ctx.chr_rom, ctx.mirroring, false),
             ex_regs: [0u8; 4],
@@ -221,7 +221,7 @@ impl Mapper for Mapper268 {
         }
     }
 
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+    fn initialize_ram(&mut self, mode: crate::nes::console::RamInitMode) {
         self.mmc3.initialize_ram(mode);
     }
 
@@ -234,9 +234,9 @@ impl Mapper for Mapper268 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     // Non-power-of-2 bank counts to avoid modulo-wrap false passes.
     const PRG_8K_BANKS: usize = 9;

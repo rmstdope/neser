@@ -4,8 +4,8 @@
 //! buttons and analog axes to NES/SNES controller inputs, and manages
 //! hot-plug player assignment.
 
-use crate::console::Nes;
 use crate::input::{Button, ControllerInput, SnesButton};
+use crate::nes::console::Nes;
 
 use gilrs::{Axis, EventType, GamepadId, Gilrs, GilrsBuilder};
 

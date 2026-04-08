@@ -62,14 +62,16 @@ impl Rendering {
         let (palette_index, sprite_0_hit) = select_palette_index(bg_pixel, sprite_pixel);
 
         // Look up the color in the palette RAM
-        let color_value =
-            crate::ppu::color_effects::apply_grayscale(palette_lookup(palette_index), grayscale);
+        let color_value = crate::nes::ppu::color_effects::apply_grayscale(
+            palette_lookup(palette_index),
+            grayscale,
+        );
 
         // Convert to RGB using the system palette
         let (mut r, mut g, mut b) = system_palette_lookup(color_value);
 
         // Apply color emphasis/tint
-        (r, g, b) = crate::ppu::color_effects::apply_color_emphasis(
+        (r, g, b) = crate::nes::ppu::color_effects::apply_color_emphasis(
             r,
             g,
             b,
@@ -122,7 +124,7 @@ fn select_palette_index(bg_pixel: u8, sprite_pixel: Option<(u8, usize, bool)>) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ppu::color_effects::{apply_color_emphasis, apply_grayscale};
+    use crate::nes::ppu::color_effects::{apply_color_emphasis, apply_grayscale};
 
     #[test]
     fn test_rendering_new() {

@@ -7,9 +7,9 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mmc3::MMC3Mapper;
-use crate::cartridge::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mmc3::MMC3Mapper;
+use crate::nes::cartridge::{Mapper, MapperCapabilities};
 
 pub struct TxsromMapper {
     mmc3: MMC3Mapper,
@@ -21,7 +21,7 @@ impl TxsromMapper {
     const CIRAM_SIZE: usize = 0x0800;
     const NAMETABLE_PAGE_SIZE: usize = 0x0400;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         Self {
             mmc3: MMC3Mapper::new_with_irq_mode(ctx.prg_rom, ctx.chr_rom, ctx.mirroring, false),
             ciram: [0; Self::CIRAM_SIZE],
@@ -110,9 +110,9 @@ impl Mapper for TxsromMapper {
         self.mmc3.load_wram_snapshot(data);
     }
 
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+    fn initialize_ram(&mut self, mode: crate::nes::console::RamInitMode) {
         self.mmc3.initialize_ram(mode);
-        crate::console::initialize_ram(&mut self.ciram, mode);
+        crate::nes::console::initialize_ram(&mut self.ciram, mode);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -142,10 +142,10 @@ impl Mapper for TxsromMapper {
 
 #[cfg(test)]
 mod tests {
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
-    use crate::console::RamInitMode;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
+    use crate::nes::console::RamInitMode;
 
     const PRG_BANKS_8K: usize = 64;
     const CHR_BANKS_1K: usize = 256;

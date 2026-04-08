@@ -1,4 +1,4 @@
-use crate::bus::bus::BusDevice;
+use crate::nes::bus::bus::BusDevice;
 use std::cell::RefCell;
 use std::ops::RangeInclusive;
 use std::rc::Rc;

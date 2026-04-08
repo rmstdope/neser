@@ -1,6 +1,6 @@
 // Test utilities for PPU tests
 #[cfg(test)]
-use crate::cartridge::Cartridge;
+use crate::nes::cartridge::Cartridge;
 
 #[cfg(test)]
 pub struct InesRomBuilder {

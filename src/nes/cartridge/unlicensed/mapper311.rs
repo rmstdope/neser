@@ -51,8 +51,8 @@
 //!
 //! All registers zero; IRQ disabled; all PRG windows at bank 0 / fixed offsets.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
 
 const MAPPER_NUMBER: u16 = 311;
 const PRG_32K_BANK_SIZE: usize = 0x8000;
@@ -200,8 +200,8 @@ impl Mapper for Mapper311 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
 
     /// Build a 128 KiB PRG-ROM with distinctive fill patterns for each
     /// relevant window so tests can distinguish each one unambiguously.

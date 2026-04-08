@@ -2,10 +2,10 @@
 mod tests {
     use std::fs;
 
-    use crate::cartridge::Cartridge;
-    use crate::console::{Config, Nes, NesConfig, RamInitMode};
     use crate::input::Button;
-    use crate::integration_tests::rom_test_runner::tests::run_nes_for_frames;
+    use crate::nes::cartridge::Cartridge;
+    use crate::nes::console::{Config, Nes, NesConfig, RamInitMode};
+    use crate::nes::integration_tests::rom_test_runner::tests::run_nes_for_frames;
     use crate::{
         setup_rom_console_test, setup_rom_crc_test, setup_rom_crc_test_with_input, setup_rom_test,
     };
@@ -108,7 +108,7 @@ mod tests {
                     ..Default::default()
                 };
                 config.nes.hardware_model =
-                    crate::console::HardwareModel::from_timing_mode(cartridge.rom_timing_mode());
+                    crate::nes::console::HardwareModel::from_timing_mode(cartridge.rom_timing_mode());
 
                 let mut nes =
                     Nes::new(crate::app_context::AppContext::new_with_config(config));
@@ -380,7 +380,7 @@ mod tests {
             ..Default::default()
         };
         config.nes.hardware_model =
-            crate::console::HardwareModel::from_timing_mode(cartridge.rom_timing_mode());
+            crate::nes::console::HardwareModel::from_timing_mode(cartridge.rom_timing_mode());
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
         nes.insert_cartridge(cartridge);
         nes.reset(false);
@@ -2570,7 +2570,7 @@ mod tests {
             let path = std::path::Path::new("target/crc_checkpoints/gtrom_cc_test1")
                 .join(format!("{}_crc_{:08X}.png", label, crc));
             std::fs::create_dir_all(path.parent().unwrap()).ok();
-            crate::integration_tests::rom_test_runner::tests::write_checkpoint_png(
+            crate::nes::integration_tests::rom_test_runner::tests::write_checkpoint_png(
                 &path, &rgb, 256, 240,
             );
         }

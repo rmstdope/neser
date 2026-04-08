@@ -2,7 +2,7 @@
 /// Generates square waves with variable duty cycle
 use super::envelope::Envelope;
 use super::length_counter::LengthCounter;
-use crate::apu::envelope::EnvelopeState;
+use crate::nes::apu::envelope::EnvelopeState;
 use crate::trace_apu;
 use serde::{Deserialize, Serialize};
 

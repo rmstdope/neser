@@ -6,8 +6,8 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 const MAPPER_NUMBER: u16 = 341;
 const PRG_BANK_SIZE_BYTES: usize = 16 * 1024;
@@ -23,7 +23,7 @@ pub struct Mapper341 {
 }
 
 impl Mapper341 {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
             has_dynamic_mirroring: true,
@@ -34,7 +34,7 @@ impl Mapper341 {
         let mut base = BaseMapper::new(&ctx, capabilities);
         base.configure_prg_banking(PRG_BANK_SIZE_BYTES);
         base.configure_chr_banking(CHR_BANK_SIZE_BYTES);
-        base.set_mirroring(crate::cartridge::NametableLayout::Vertical);
+        base.set_mirroring(crate::nes::cartridge::NametableLayout::Vertical);
 
         let mut mapper = Self { base, bank: 0 };
         mapper.update_banks();
@@ -86,7 +86,7 @@ impl Mapper for Mapper341 {
             self.bank,
             (matches!(
                 self.base.mirroring(),
-                crate::cartridge::NametableLayout::Horizontal
+                crate::nes::cartridge::NametableLayout::Horizontal
             )) as u8,
         ]
     }
@@ -104,7 +104,7 @@ impl Mapper for Mapper341 {
     fn reset(&mut self) {
         self.bank = 0;
         self.base
-            .set_mirroring(crate::cartridge::NametableLayout::Vertical);
+            .set_mirroring(crate::nes::cartridge::NametableLayout::Vertical);
         self.update_banks();
     }
 }
@@ -112,9 +112,9 @@ impl Mapper for Mapper341 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     fn make_mapper() -> Mapper341 {
         Mapper341::new(MapperContext::new_for_test(

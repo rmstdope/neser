@@ -1,18 +1,18 @@
 use crate::app_context::{IntoSharedAppContext, SharedAppContext};
-use crate::apu::{Apu, ApuState, SharedApu};
-use crate::bus::{Bus, BusState, MapperState, SharedBus};
-use crate::cartridge::Cartridge;
-#[cfg(test)]
-use crate::cartridge::TimingMode;
-#[cfg(test)]
-use crate::console::Config;
-#[cfg(test)]
-use crate::console::NesConfig;
-use crate::cpu::lookup;
-use crate::cpu::{Cpu, CpuState};
 use crate::debugging::{Tracing, log_info};
 use crate::input::ControllerType;
-use crate::ppu::{Ppu, PpuState, SharedPpu};
+use crate::nes::apu::{Apu, ApuState, SharedApu};
+use crate::nes::bus::{Bus, BusState, MapperState, SharedBus};
+use crate::nes::cartridge::Cartridge;
+#[cfg(test)]
+use crate::nes::cartridge::TimingMode;
+#[cfg(test)]
+use crate::nes::console::Config;
+#[cfg(test)]
+use crate::nes::console::NesConfig;
+use crate::nes::cpu::lookup;
+use crate::nes::cpu::{Cpu, CpuState};
+use crate::nes::ppu::{Ppu, PpuState, SharedPpu};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -132,7 +132,7 @@ impl Nes {
         ppu.borrow_mut()
             .set_oam_dram_decay_enabled(oam_dram_decay_enabled);
         ppu.borrow_mut().set_famicom_emphasis(
-            config.nes.hardware_mode == crate::console::HardwareMode::Famicom,
+            config.nes.hardware_mode == crate::nes::console::HardwareMode::Famicom,
         );
         let apu = Rc::new(RefCell::new(Apu::new_with_tv_system(tv_system)));
         let memory = Rc::new(RefCell::new(Bus::new(
@@ -171,7 +171,7 @@ impl Nes {
             .borrow()
             .rom_db()
             .default_zapper_on_port(cartridge_crc32);
-        let arkanoid_port = crate::cartridge::default_arkanoid_on_port(cartridge_crc32);
+        let arkanoid_port = crate::nes::cartridge::default_arkanoid_on_port(cartridge_crc32);
         let power_pad_port = self
             .app_context
             .borrow()
@@ -260,7 +260,7 @@ impl Nes {
 
         // Propagate any hardware-mode change from ROM DB hint to the live PPU
         let is_famicom = self.app_context.borrow().config().nes.hardware_mode
-            == crate::console::HardwareMode::Famicom;
+            == crate::nes::console::HardwareMode::Famicom;
         self.ppu.borrow_mut().set_famicom_emphasis(is_famicom);
 
         // Initialize cartridge RAM (PRG-RAM and CHR-RAM) based on config
@@ -294,7 +294,7 @@ impl Nes {
         // When the Zapper is on the Famicom expansion port, don't also put it on a
         // standard controller port — the expansion port read path handles it.
         let zapper_on_expansion = self.app_context.borrow().config().nes.expansion_port
-            == crate::console::ExpansionPort::ZapperFamicom;
+            == crate::nes::console::ExpansionPort::ZapperFamicom;
 
         let auto_controller = if zapper_port != 0 && !zapper_on_expansion {
             Some((zapper_port, ControllerType::Zapper))
@@ -553,7 +553,7 @@ impl Nes {
     /// Get a reference to the PPU's screen buffer
     ///
     /// Returns a mutable reference to the 256x240 RGB buffer containing the current frame.
-    pub fn get_screen_buffer(&self) -> std::cell::RefMut<'_, crate::ppu::ScreenBuffer> {
+    pub fn get_screen_buffer(&self) -> std::cell::RefMut<'_, crate::nes::ppu::ScreenBuffer> {
         std::cell::RefMut::map(self.ppu.borrow_mut(), |ppu| ppu.screen_buffer_mut())
     }
 
@@ -1153,7 +1153,11 @@ impl Nes {
     }
 }
 
-fn format_compact_trace_instruction(meta: &crate::cpu::OpCode, addr: u16, bytes: &[u8]) -> String {
+fn format_compact_trace_instruction(
+    meta: &crate::nes::cpu::OpCode,
+    addr: u16,
+    bytes: &[u8],
+) -> String {
     let operand = match meta.mode {
         "IMP" => String::new(),
         "ACC" => "A".to_string(),
@@ -1312,7 +1316,7 @@ mod tests {
     fn test_pal_ppu_runs_3_2x_cpu_cycles() {
         let config = Config {
             nes: NesConfig {
-                hardware_model: crate::console::HardwareModel::NesPal,
+                hardware_model: crate::nes::console::HardwareModel::NesPal,
                 ..Default::default()
             },
             ..Default::default()
@@ -1333,7 +1337,7 @@ mod tests {
     fn test_pal_ppu_accumulates_fractional_cycles() {
         let config = Config {
             nes: NesConfig {
-                hardware_model: crate::console::HardwareModel::NesPal,
+                hardware_model: crate::nes::console::HardwareModel::NesPal,
                 ..Default::default()
             },
             ..Default::default()
@@ -1385,7 +1389,7 @@ mod tests {
         // Reset just the PPU to test the counter is cleared
         nes.ppu
             .borrow_mut()
-            .reset(false, crate::console::RamInitMode::Zero);
+            .reset(false, crate::nes::console::RamInitMode::Zero);
         assert_eq!(nes.ppu.borrow().total_cycles(), 0);
     }
 
@@ -2247,11 +2251,11 @@ mod tests {
         let bus_state = nes.bus.borrow().capture_state();
         assert!(matches!(
             bus_state.port1_controller,
-            crate::bus::ControllerStateWrapper::Arkanoid(_)
+            crate::nes::bus::ControllerStateWrapper::Arkanoid(_)
         ));
         assert!(matches!(
             bus_state.port2_controller,
-            crate::bus::ControllerStateWrapper::Joypad(_)
+            crate::nes::bus::ControllerStateWrapper::Joypad(_)
         ));
     }
 
@@ -2272,17 +2276,17 @@ mod tests {
         let bus_state = nes.bus.borrow().capture_state();
         assert!(matches!(
             bus_state.port1_controller,
-            crate::bus::ControllerStateWrapper::Joypad(_)
+            crate::nes::bus::ControllerStateWrapper::Joypad(_)
         ));
         assert!(matches!(
             bus_state.port2_controller,
-            crate::bus::ControllerStateWrapper::Joypad(_)
+            crate::nes::bus::ControllerStateWrapper::Joypad(_)
         ));
 
         // Expansion port should be configured for Zapper
         assert_eq!(
             nes.app_context.borrow().config().nes.expansion_port,
-            crate::console::ExpansionPort::ZapperFamicom
+            crate::nes::console::ExpansionPort::ZapperFamicom
         );
     }
 
@@ -2309,7 +2313,7 @@ mod tests {
         let bus_state = nes.bus.borrow().capture_state();
         assert!(matches!(
             bus_state.port2_controller,
-            crate::bus::ControllerStateWrapper::Joypad(_)
+            crate::nes::bus::ControllerStateWrapper::Joypad(_)
         ));
     }
 
@@ -2336,11 +2340,11 @@ mod tests {
         let bus_state = nes.bus.borrow().capture_state();
         assert!(matches!(
             bus_state.port1_controller,
-            crate::bus::ControllerStateWrapper::Joypad(_)
+            crate::nes::bus::ControllerStateWrapper::Joypad(_)
         ));
         assert!(matches!(
             bus_state.port2_controller,
-            crate::bus::ControllerStateWrapper::Joypad(_)
+            crate::nes::bus::ControllerStateWrapper::Joypad(_)
         ));
     }
 
@@ -2360,14 +2364,14 @@ mod tests {
         assert!(
             matches!(
                 bus_state.port2_controller,
-                crate::bus::ControllerStateWrapper::PowerPad(_)
+                crate::nes::bus::ControllerStateWrapper::PowerPad(_)
             ),
             "Power Pad should be auto-detected on port 2 for World Class Track Meet"
         );
         assert!(
             matches!(
                 bus_state.port1_controller,
-                crate::bus::ControllerStateWrapper::Joypad(_)
+                crate::nes::bus::ControllerStateWrapper::Joypad(_)
             ),
             "Port 1 should remain Joypad when Power Pad is on port 2"
         );
@@ -2395,7 +2399,7 @@ mod tests {
         assert!(
             matches!(
                 bus_state.port2_controller,
-                crate::bus::ControllerStateWrapper::Joypad(_)
+                crate::nes::bus::ControllerStateWrapper::Joypad(_)
             ),
             "Explicit port config should override Power Pad auto-detection"
         );
@@ -2421,7 +2425,7 @@ mod tests {
         assert!(
             matches!(
                 bus_state.port2_controller,
-                crate::bus::ControllerStateWrapper::Joypad(_)
+                crate::nes::bus::ControllerStateWrapper::Joypad(_)
             ),
             "Expected joypad on port 2 after non-Arkanoid ROM, got {:?}",
             bus_state.port2_controller
@@ -2437,7 +2441,7 @@ mod tests {
         assert!(
             matches!(
                 bus_state.port2_controller,
-                crate::bus::ControllerStateWrapper::Arkanoid(_)
+                crate::nes::bus::ControllerStateWrapper::Arkanoid(_)
             ),
             "Expected Arkanoid on port 2 after ROM switch, got {:?}",
             bus_state.port2_controller
@@ -2446,7 +2450,7 @@ mod tests {
         assert!(
             matches!(
                 bus_state.port1_controller,
-                crate::bus::ControllerStateWrapper::Joypad(_)
+                crate::nes::bus::ControllerStateWrapper::Joypad(_)
             ),
             "Expected joypad on port 1 after ROM switch"
         );
@@ -2482,7 +2486,7 @@ mod tests {
         assert!(
             matches!(
                 bus_state.port2_controller,
-                crate::bus::ControllerStateWrapper::Joypad(_)
+                crate::nes::bus::ControllerStateWrapper::Joypad(_)
             ),
             "Port 2 bus controller should reset to joypad after switching to a normal game, got {:?}",
             bus_state.port2_controller
@@ -2627,10 +2631,10 @@ mod tests {
         // Reset vector -> $8000
         prg_rom[0x7FFC] = 0x00;
         prg_rom[0x7FFD] = 0x80;
-        let cartridge = crate::cartridge::Cartridge::from_parts(
+        let cartridge = crate::nes::cartridge::Cartridge::from_parts(
             prg_rom,
             vec![],
-            crate::cartridge::NametableLayout::Horizontal,
+            crate::nes::cartridge::NametableLayout::Horizontal,
         );
         nes.insert_cartridge(cartridge);
         nes.cpu.set_pc(0x8000);
@@ -2756,8 +2760,8 @@ mod tests {
 
     #[test]
     fn test_insert_cartridge_syncs_famicom_four_player_mode_to_bus() {
-        use crate::console::{ExpansionPort, HardwareMode};
         use crate::input::Button;
+        use crate::nes::console::{ExpansionPort, HardwareMode};
 
         // Start with default NES mode — bus is constructed in NES mode
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(

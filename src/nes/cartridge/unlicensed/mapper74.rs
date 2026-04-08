@@ -6,9 +6,9 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mmc3::MMC3Mapper;
-use crate::cartridge::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mmc3::MMC3Mapper;
+use crate::nes::cartridge::{Mapper, MapperCapabilities};
 
 /// Mapper 074 - MMC3 with CHR-RAM at banks 8–9
 ///
@@ -38,7 +38,7 @@ impl Mapper74 {
     const CHR_RAM_FIRST_BANK: usize = 8;
     const CHR_RAM_LAST_BANK: usize = 9;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let prg_rom = ctx.prg_rom;
         let chr_rom = ctx.chr_rom;
         let mirroring = ctx.mirroring;
@@ -85,9 +85,9 @@ impl Mapper for Mapper74 {
         self.inner.write_prg(addr, value);
     }
 
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+    fn initialize_ram(&mut self, mode: crate::nes::console::RamInitMode) {
         self.inner.initialize_ram(mode);
-        crate::console::initialize_ram(&mut self.chr_ram, mode);
+        crate::nes::console::initialize_ram(&mut self.chr_ram, mode);
     }
 
     fn read_chr(&mut self, ppu_addr: u16) -> u8 {
@@ -164,9 +164,9 @@ impl Mapper for Mapper74 {
 
 #[cfg(test)]
 mod tests {
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     // Use non-power-of-two PRG bank count to prevent modulo-wrapping false-passes
     const PRG_BANKS: usize = 6; // 6 × 8KB = 48KB

@@ -5,7 +5,7 @@
 //! - Edge-case behavior may still differ from hardware in untested timing and board-variant scenarios.
 //! - See CARTRIDGE_REVIEW.md sections 5 and 6 for remaining mapper test/documentation follow-up.
 
-use crate::cartridge::mapper_templates::SimpleFixedPrgMapper;
+use crate::nes::cartridge::mapper_templates::SimpleFixedPrgMapper;
 
 /// Mapper 3 - CNROM
 ///
@@ -33,8 +33,8 @@ pub type CNROMMapper = SimpleFixedPrgMapper<8, 3>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::mapper::MapperContext;
-    use crate::cartridge::{Mapper, NametableLayout};
+    use crate::nes::cartridge::mapper::MapperContext;
+    use crate::nes::cartridge::{Mapper, NametableLayout};
 
     #[test]
     fn test_cnrom_32kb_prg_no_banking() {

@@ -9,8 +9,8 @@
 //! - COOLGIRL mapper-code emulation modes, advanced banking, and flash behavior
 //!   are not implemented yet.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 const MAPPER_NUMBER: u16 = 342;
 const PRG_BANK_SIZE_BYTES: usize = 32 * 1024;
@@ -26,7 +26,7 @@ pub struct Mapper342 {
 }
 
 impl Mapper342 {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             max_prg_ram_kb: MAX_PRG_RAM_KB,
             prg_bank_size_kb: 32,
@@ -63,9 +63,9 @@ impl Mapper for Mapper342 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     fn mapper_342_context(prg_bank_count: usize, chr_bank_count: usize) -> MapperContext {
         MapperContext::new_for_test(

@@ -5,8 +5,8 @@
 //!
 //! Specification: <https://www.nesdev.org/wiki/INES_Mapper_032>
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
 /// Mapper 032 - Irem G-101
 ///
@@ -48,7 +48,7 @@ impl IremG101Mapper {
     // CHR register select: low 3 bits of address in $B000 range
     const CHR_REG_SELECT_MASK: u16 = 0x0007;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let submapper = ctx.submapper;
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
@@ -77,8 +77,9 @@ impl IremG101Mapper {
 
     #[cfg(test)]
     pub fn new_internal(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
-        let ctx =
-            crate::cartridge::mapper::MapperContext::new_for_test(32, prg_rom, chr_rom, mirroring);
+        let ctx = crate::nes::cartridge::mapper::MapperContext::new_for_test(
+            32, prg_rom, chr_rom, mirroring,
+        );
         Self::new(ctx)
     }
 
@@ -178,9 +179,9 @@ impl Mapper for IremG101Mapper {
 #[cfg(test)]
 mod tests {
     use super::IremG101Mapper;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     fn make_mapper(prg_banks: usize, chr_banks_1k: usize) -> Box<dyn Mapper> {
         let prg_rom = banked_data(8 * 1024, prg_banks);

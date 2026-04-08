@@ -5,10 +5,10 @@
 //! - Edge-case behavior may still differ from hardware in untested timing and board-variant scenarios.
 //! - See CARTRIDGE_REVIEW.md sections 5 and 6 for remaining mapper test/documentation follow-up.
 
-use crate::cartridge::Mapper;
-use crate::cartridge::MapperCapabilities;
-use crate::cartridge::NametableLayout;
-use crate::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::Mapper;
+use crate::nes::cartridge::MapperCapabilities;
+use crate::nes::cartridge::NametableLayout;
+use crate::nes::cartridge::base_mapper::BaseMapper;
 
 /// Mapper 71 - Camerica / Codemasters
 ///
@@ -41,7 +41,7 @@ pub struct CamericaMapper {
 }
 
 impl CamericaMapper {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let has_mirroring_control = ctx.submapper == 1;
         let capabilities = MapperCapabilities {
             has_dynamic_mirroring: has_mirroring_control,
@@ -122,7 +122,7 @@ impl Mapper for CamericaMapper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
 
     #[test]
     fn test_mapper_71_is_wired_in_factory() {

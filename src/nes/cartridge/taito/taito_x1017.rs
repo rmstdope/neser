@@ -6,9 +6,9 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
-use crate::cartridge::BaseMapper;
-use crate::cartridge::NametableLayout;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::BaseMapper;
+use crate::nes::cartridge::NametableLayout;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// Mapper 082 – Taito X1-017
 ///
@@ -92,7 +92,7 @@ impl TaitoX1017Mapper {
     /// Passwords required to enable each RAM region.
     const RAM_PASS: [u8; 3] = [0xCA, 0x69, 0x84];
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
             has_dynamic_mirroring: true,
@@ -281,8 +281,8 @@ impl Mapper for TaitoX1017Mapper {
         self.update_banks();
     }
 
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        crate::console::initialize_ram(&mut self.ram, mode);
+    fn initialize_ram(&mut self, mode: crate::nes::console::RamInitMode) {
+        crate::nes::console::initialize_ram(&mut self.ram, mode);
         self.base.initialize_ram(mode);
     }
 
@@ -303,8 +303,8 @@ impl Mapper for TaitoX1017Mapper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     // Use non-power-of-two sizes to prevent false-pass modulo wrapping.
     const PRG_BANKS: usize = 11; // 11 × 8 KB

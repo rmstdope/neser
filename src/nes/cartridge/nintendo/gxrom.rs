@@ -5,7 +5,7 @@
 //! - Edge-case behavior may still differ from hardware in untested timing and board-variant scenarios.
 //! - See CARTRIDGE_REVIEW.md sections 5 and 6 for remaining mapper test/documentation follow-up.
 
-use crate::cartridge::mapper_templates::DualBank32Mapper;
+use crate::nes::cartridge::mapper_templates::DualBank32Mapper;
 
 /// Mapper 66 - GxROM / GNROM
 ///
@@ -32,9 +32,9 @@ pub type GxROMMapper = DualBank32Mapper<0b0011, 4, 0b0011, 0, false, 66>;
 
 #[cfg(test)]
 mod tests {
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     fn create_gxrom_mapper(
         prg_rom: Vec<u8>,

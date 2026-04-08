@@ -1,4 +1,4 @@
-use crate::console::{ExpansionPort, HardwareMode, TimingMode};
+use crate::nes::console::{ExpansionPort, HardwareMode, TimingMode};
 
 pub fn gamepad_connected_toast_message(player_num: u8) -> String {
     format!("Gamepad connected: Player {player_num}")
@@ -33,16 +33,16 @@ pub fn emulator_timing_toast_message(tv_system: TimingMode) -> String {
 
 pub fn hardware_mode_toast_message(
     mode: HardwareMode,
-    model: crate::console::HardwareModel,
+    model: crate::nes::console::HardwareModel,
     expansion: ExpansionPort,
     four_score_enabled: bool,
 ) -> String {
     match mode {
         HardwareMode::Nes => {
             let timing = match model {
-                crate::console::HardwareModel::NesNtsc => "NTSC",
-                crate::console::HardwareModel::NesPal => "PAL",
-                crate::console::HardwareModel::Dendy => "Dendy",
+                crate::nes::console::HardwareModel::NesNtsc => "NTSC",
+                crate::nes::console::HardwareModel::NesPal => "PAL",
+                crate::nes::console::HardwareModel::Dendy => "Dendy",
             };
             if four_score_enabled {
                 format!("Hardware: NES {} (Four Score)", timing)
@@ -132,7 +132,7 @@ mod tests {
 
     #[test]
     fn hardware_mode_toast_nes_dendy() {
-        use crate::console::HardwareModel;
+        use crate::nes::console::HardwareModel;
         let message = hardware_mode_toast_message(
             HardwareMode::Nes,
             HardwareModel::Dendy,
@@ -144,7 +144,7 @@ mod tests {
 
     #[test]
     fn hardware_mode_toast_nes_dendy_with_four_score() {
-        use crate::console::HardwareModel;
+        use crate::nes::console::HardwareModel;
         let message = hardware_mode_toast_message(
             HardwareMode::Nes,
             HardwareModel::Dendy,
@@ -156,7 +156,7 @@ mod tests {
 
     #[test]
     fn hardware_mode_toast_nes_ntsc_default() {
-        use crate::console::HardwareModel;
+        use crate::nes::console::HardwareModel;
         let message = hardware_mode_toast_message(
             HardwareMode::Nes,
             HardwareModel::NesNtsc,
@@ -168,7 +168,7 @@ mod tests {
 
     #[test]
     fn hardware_mode_toast_nes_pal() {
-        use crate::console::HardwareModel;
+        use crate::nes::console::HardwareModel;
         let message = hardware_mode_toast_message(
             HardwareMode::Nes,
             HardwareModel::NesPal,
@@ -180,7 +180,7 @@ mod tests {
 
     #[test]
     fn hardware_mode_toast_nes_ntsc_with_four_score() {
-        use crate::console::HardwareModel;
+        use crate::nes::console::HardwareModel;
         let message = hardware_mode_toast_message(
             HardwareMode::Nes,
             HardwareModel::NesNtsc,
@@ -192,7 +192,7 @@ mod tests {
 
     #[test]
     fn hardware_mode_toast_famicom_no_expansion() {
-        use crate::console::HardwareModel;
+        use crate::nes::console::HardwareModel;
         let message = hardware_mode_toast_message(
             HardwareMode::Famicom,
             HardwareModel::NesNtsc,
@@ -204,7 +204,7 @@ mod tests {
 
     #[test]
     fn hardware_mode_toast_famicom_with_four_players() {
-        use crate::console::HardwareModel;
+        use crate::nes::console::HardwareModel;
         let message = hardware_mode_toast_message(
             HardwareMode::Famicom,
             HardwareModel::NesNtsc,
@@ -216,7 +216,7 @@ mod tests {
 
     #[test]
     fn hardware_mode_toast_famicom_with_power_pad() {
-        use crate::console::HardwareModel;
+        use crate::nes::console::HardwareModel;
         let message = hardware_mode_toast_message(
             HardwareMode::Famicom,
             HardwareModel::NesNtsc,

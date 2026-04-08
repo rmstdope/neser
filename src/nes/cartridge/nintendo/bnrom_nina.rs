@@ -5,10 +5,10 @@
 //! - Edge-case behavior may still differ from hardware in untested timing and board-variant scenarios.
 //! - See CARTRIDGE_REVIEW.md sections 5 and 6 for remaining mapper test/documentation follow-up.
 
-use crate::cartridge::BaseMapper;
-use crate::cartridge::Mapper;
-use crate::cartridge::MapperCapabilities;
-use crate::cartridge::NametableLayout;
+use crate::nes::cartridge::BaseMapper;
+use crate::nes::cartridge::Mapper;
+use crate::nes::cartridge::MapperCapabilities;
+use crate::nes::cartridge::NametableLayout;
 use std::env;
 
 /// Mapper 34 - BNROM / NINA-001
@@ -80,7 +80,7 @@ impl BnromNinaMapper {
         );
     }
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let mirroring = ctx.mirroring;
         // Detect variant using explicit NES 2.0 submappers where available.
         // Submapper 1 = NINA-001/NINA-002, submapper 2 = BNROM.
@@ -259,7 +259,7 @@ impl Mapper for BnromNinaMapper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::mapper::MapperContext;
+    use crate::nes::cartridge::mapper::MapperContext;
 
     // BNROM tests (CHR-RAM)
     #[test]
@@ -822,8 +822,8 @@ mod tests {
 
     #[test]
     fn test_bnrom_banked_rom_replacement() {
-        use crate::cartridge::common::BankedRom;
-        use crate::cartridge::test_helpers::banked_data;
+        use crate::nes::cartridge::common::BankedRom;
+        use crate::nes::cartridge::test_helpers::banked_data;
 
         const PRG_BANK_SIZE: usize = 0x8000; // 32KB
 

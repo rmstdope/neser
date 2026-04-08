@@ -9,10 +9,10 @@
 //! - Cycle-accuracy edge cases and less-common board wiring variants are not yet
 //!   comprehensively validated by dedicated ROM test suites.
 
-use crate::cartridge::BaseMapper;
-use crate::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
-use crate::cartridge::vrc_irq::VrcIrq;
-use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
+use crate::nes::cartridge::BaseMapper;
+use crate::nes::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::nes::cartridge::vrc_irq::VrcIrq;
+use crate::nes::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 use crate::trace_mapper;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -266,7 +266,7 @@ pub struct VRC6Mapper {
 }
 
 impl VRC6Mapper {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let mapper_number = ctx.mapper as u8;
         let variant = match mapper_number {
             24 => Vrc6Variant::Mapper24,
@@ -756,9 +756,9 @@ impl Mapper for VRC6Mapper {
 
 #[cfg(test)]
 mod tests {
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     fn create_vrc6_mapper(
         mapper_number: u16,

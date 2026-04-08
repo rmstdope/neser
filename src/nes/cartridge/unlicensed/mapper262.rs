@@ -34,9 +34,9 @@
 //! - No known gameplay-blocking functional limitations are currently documented.
 //!   Source: Mesen2 `MMC3_StreetHeroes.h`. No known deltas.
 
-use crate::cartridge::Mapper;
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mmc3::MMC3Mapper;
+use crate::nes::cartridge::Mapper;
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mmc3::MMC3Mapper;
 
 /// Mapper 262 – Street Heroes (MMC3 variant with CHR-RAM and soft-reset switch)
 pub struct Mapper262 {
@@ -52,7 +52,7 @@ impl Mapper262 {
     const CHR_BANK_MASK: usize = Self::CHR_1K_BANK_SIZE - 1;
     const CHR_RAM_SIZE: usize = 8 * 1024;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let prg_rom = ctx.prg_rom;
         let chr_rom = ctx.chr_rom;
         let mirroring = ctx.mirroring;
@@ -190,9 +190,9 @@ impl Mapper for Mapper262 {
         }
     }
 
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+    fn initialize_ram(&mut self, mode: crate::nes::console::RamInitMode) {
         self.mmc3.initialize_ram(mode);
-        crate::console::initialize_ram(&mut self.chr_ram, mode);
+        crate::nes::console::initialize_ram(&mut self.chr_ram, mode);
     }
 
     fn reset(&mut self) {
@@ -208,10 +208,10 @@ impl Mapper for Mapper262 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
-    use crate::console::RamInitMode;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
+    use crate::nes::console::RamInitMode;
 
     // Use a non-power-of-2 CHR bank count to catch modulo-wrap false passes.
     const CHR_1K_BANKS: usize = 48;

@@ -6,9 +6,9 @@
 //! Known Limitations:
 //! - None currently known for submapper 0/13/14 CHR behavior.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mmc3::MMC3Mapper;
-use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mmc3::MMC3Mapper;
+use crate::nes::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 use crate::trace_mapper;
 
 /// Mapper 052 - Realtec 8213 MMC3-based multicart
@@ -65,7 +65,7 @@ impl Mapper52 {
         submapper == 0 && prg_len == 1024 * 1024 && chr_len == 1024 * 1024
     }
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let legacy_1mb_profile =
             Self::is_legacy_1mb_profile(ctx.submapper, ctx.prg_rom.len(), ctx.chr_rom.len());
         let prg_rom = ctx.prg_rom;
@@ -352,8 +352,8 @@ impl Mapper for Mapper52 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     // 2 outer blocks × 16 PRG 8KB banks = 32 banks × 8 KiB = 256 KiB PRG
     // 4 outer blocks × 128 CHR 1KB banks = 512 CHR 1KB banks = 512 KiB CHR

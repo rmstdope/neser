@@ -8,9 +8,9 @@
 
 use crate::autorun::AutorunFormat;
 use crate::config::{AutorunMode, FrontendConfig};
-use crate::console::TimingMode;
 use crate::debugging::breakpoints::BreakpointKind;
 use crate::input::ControllerType;
+use crate::nes::console::TimingMode;
 use bitflags::bitflags;
 use std::fmt::Write as _;
 use std::fs;
@@ -1908,13 +1908,16 @@ impl Config {
         Ok(())
     }
 
-    pub fn apply_rom_timing_mode(&mut self, rom_timing_mode: crate::cartridge::TimingMode) -> bool {
+    pub fn apply_rom_timing_mode(
+        &mut self,
+        rom_timing_mode: crate::nes::cartridge::TimingMode,
+    ) -> bool {
         if self.nes.hardware_model_explicit {
             return false;
         }
 
         if rom_timing_mode.is_ntsc_or_pal()
-            || matches!(rom_timing_mode, crate::cartridge::TimingMode::Dendy)
+            || matches!(rom_timing_mode, crate::nes::cartridge::TimingMode::Dendy)
         {
             self.nes.hardware_model = HardwareModel::from_timing_mode(rom_timing_mode);
             true
@@ -2486,7 +2489,7 @@ mod tests {
     #[test]
     fn test_config_apply_rom_timing_mode_when_not_explicit() {
         let mut config = Config::default();
-        let applied = config.apply_rom_timing_mode(crate::cartridge::TimingMode::Pal);
+        let applied = config.apply_rom_timing_mode(crate::nes::cartridge::TimingMode::Pal);
         assert!(applied);
         assert_eq!(config.nes.hardware_model, HardwareModel::NesPal);
     }
@@ -2501,7 +2504,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let applied = config.apply_rom_timing_mode(crate::cartridge::TimingMode::Ntsc);
+        let applied = config.apply_rom_timing_mode(crate::nes::cartridge::TimingMode::Ntsc);
         assert!(!applied);
         assert_eq!(config.nes.hardware_model, HardwareModel::NesPal);
     }
@@ -2509,7 +2512,7 @@ mod tests {
     #[test]
     fn test_config_apply_rom_timing_mode_unknown_keeps_default() {
         let mut config = Config::default();
-        let applied = config.apply_rom_timing_mode(crate::cartridge::TimingMode::Unknown(0));
+        let applied = config.apply_rom_timing_mode(crate::nes::cartridge::TimingMode::Unknown(0));
         assert!(!applied);
         assert_eq!(config.nes.hardware_model, HardwareModel::NesNtsc);
     }
@@ -2517,7 +2520,7 @@ mod tests {
     #[test]
     fn test_config_apply_rom_timing_mode_dendy_sets_dendy_model() {
         let mut config = Config::default();
-        let applied = config.apply_rom_timing_mode(crate::cartridge::TimingMode::Dendy);
+        let applied = config.apply_rom_timing_mode(crate::nes::cartridge::TimingMode::Dendy);
         assert!(applied);
         assert_eq!(config.nes.hardware_model, HardwareModel::Dendy);
     }
@@ -2544,7 +2547,7 @@ mod tests {
     fn test_hardware_model_dendy_timing_mode_is_dendy() {
         assert_eq!(
             HardwareModel::Dendy.timing_mode(),
-            crate::cartridge::TimingMode::Dendy
+            crate::nes::cartridge::TimingMode::Dendy
         );
     }
 
@@ -2588,7 +2591,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let applied = config.apply_rom_timing_mode(crate::cartridge::TimingMode::Dendy);
+        let applied = config.apply_rom_timing_mode(crate::nes::cartridge::TimingMode::Dendy);
         assert!(!applied);
         assert_eq!(config.nes.hardware_model, HardwareModel::NesNtsc);
     }

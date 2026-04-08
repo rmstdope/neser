@@ -2,8 +2,8 @@
 
 #![cfg(test)]
 
-use crate::cartridge::Cartridge;
-use crate::console::{Config, Nes, RamInitMode};
+use crate::nes::cartridge::Cartridge;
+use crate::nes::console::{Config, Nes, RamInitMode};
 
 /// Helper to create a minimal NROM ROM (mapper 0) for testing.
 fn create_test_rom() -> Vec<u8> {

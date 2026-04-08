@@ -1,4 +1,4 @@
-use crate::cpu;
+use crate::nes::cpu;
 
 use super::types::{CpuDisasmLineSnapshot, CpuDisasmWindowState};
 

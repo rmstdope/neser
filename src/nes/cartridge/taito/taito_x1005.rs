@@ -14,9 +14,9 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
-use crate::cartridge::NametableLayout;
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::NametableLayout;
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 use crate::trace_mapper;
 
 const PRG_BANK_SIZE: usize = 8 * 1024;
@@ -57,7 +57,7 @@ pub struct TaitoX1005Mapper {
 }
 
 impl TaitoX1005Mapper {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
             has_dynamic_mirroring: true,
@@ -272,7 +272,7 @@ impl Mapper for TaitoX1005Mapper {
         self.apply_banks();
     }
 
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+    fn initialize_ram(&mut self, mode: crate::nes::console::RamInitMode) {
         self.ram.fill(0);
         self.base.initialize_ram(mode);
     }
@@ -303,9 +303,9 @@ impl Mapper for TaitoX1005Mapper {
 #[cfg(test)]
 mod tests {
     use super::{CHR_BANK_SIZE, PRG_BANK_SIZE, RAM_SIZE, RAM_START};
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     const PRG_BANKS: usize = 13;
     const CHR_BANKS: usize = 11;
@@ -534,7 +534,7 @@ mod tests {
         let mut mapper = make_mapper();
         mapper.write_prg(0x7004, 0x9D);
         mapper.write_prg(0x7024, 0xEE);
-        mapper.initialize_ram(crate::console::RamInitMode::Random);
+        mapper.initialize_ram(crate::nes::console::RamInitMode::Random);
         mapper.write_prg(0x7EF8, 0xA3);
 
         assert_eq!(mapper.read_prg(0x7004), 0x9D);

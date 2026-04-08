@@ -1,9 +1,9 @@
 use super::master_clock::MasterClock;
 use super::opcode::*;
-use crate::apu::Apu;
-use crate::bus::Bus;
-use crate::console::TimingMode;
-use crate::ppu::Ppu;
+use crate::nes::apu::Apu;
+use crate::nes::bus::Bus;
+use crate::nes::console::TimingMode;
+use crate::nes::ppu::Ppu;
 use crate::trace_cpu;
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
@@ -31,7 +31,7 @@ pub struct CpuState {
     pub master_clock: u64,
     pub master_clock_ppu: u64,
     pub dmc_dma_phase: DmcDmaPhase,
-    pub interrupt_stack: Vec<crate::cpu::InterruptKind>,
+    pub interrupt_stack: Vec<crate::nes::cpu::InterruptKind>,
     pub current_tick_info: Option<(u8, u8)>,
 }
 
@@ -2435,8 +2435,8 @@ impl Cpu {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::{Cartridge, NametableLayout};
-    use crate::cpu::opcode;
+    use crate::nes::cartridge::{Cartridge, NametableLayout};
+    use crate::nes::cpu::opcode;
     use std::cell::RefCell;
     use std::rc::Rc;
 
@@ -2797,12 +2797,12 @@ mod tests {
 
     #[test]
     fn test_cpu_new_stores_provided_ppu_and_apu_instances() {
-        let ppu = Rc::new(RefCell::new(crate::ppu::Ppu::new_for_testing(
+        let ppu = Rc::new(RefCell::new(crate::nes::ppu::Ppu::new_for_testing(
             TimingMode::Ntsc,
         )));
-        let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
+        let apu = Rc::new(RefCell::new(crate::nes::apu::Apu::new()));
         let app_context = Rc::new(RefCell::new(
-            crate::app_context::AppContext::new_with_config(crate::console::Config::default()),
+            crate::app_context::AppContext::new_with_config(crate::nes::console::Config::default()),
         ));
         let memory = Rc::new(RefCell::new(Bus::new(
             Rc::clone(&ppu),
@@ -2912,7 +2912,7 @@ mod tests {
         rom.extend(vec![0u8; 2 * 16 * 1024]);
         rom.extend(vec![0u8; 8 * 1024]);
 
-        let cart = crate::cartridge::Cartridge::load_from_file(
+        let cart = crate::nes::cartridge::Cartridge::load_from_file(
             &rom,
             "cpu-reset-test.nes",
             crate::app_context::AppContext::new(),
@@ -3418,13 +3418,13 @@ mod tests {
 
     // Test helper function to create a Memory instance with a PPU/APU for testing
     fn create_test_memory() -> TestMemory {
-        let ppu = Rc::new(RefCell::new(crate::ppu::Ppu::new_for_testing(
+        let ppu = Rc::new(RefCell::new(crate::nes::ppu::Ppu::new_for_testing(
             TimingMode::Ntsc,
         )));
-        let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
-        let config = crate::console::Config {
-            nes: crate::console::NesConfig {
-                ram_init_mode: crate::console::RamInitMode::Zero,
+        let apu = Rc::new(RefCell::new(crate::nes::apu::Apu::new()));
+        let config = crate::nes::console::Config {
+            nes: crate::nes::console::NesConfig {
+                ram_init_mode: crate::nes::console::RamInitMode::Zero,
                 ..Default::default()
             },
             ..Default::default()
@@ -3441,11 +3441,13 @@ mod tests {
     }
 
     fn create_test_memory_for(tv_system: TimingMode) -> TestMemory {
-        let ppu = Rc::new(RefCell::new(crate::ppu::Ppu::new_for_testing(tv_system)));
-        let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
-        let config = crate::console::Config {
-            nes: crate::console::NesConfig {
-                ram_init_mode: crate::console::RamInitMode::Zero,
+        let ppu = Rc::new(RefCell::new(crate::nes::ppu::Ppu::new_for_testing(
+            tv_system,
+        )));
+        let apu = Rc::new(RefCell::new(crate::nes::apu::Apu::new()));
+        let config = crate::nes::console::Config {
+            nes: crate::nes::console::NesConfig {
+                ram_init_mode: crate::nes::console::RamInitMode::Zero,
                 ..Default::default()
             },
             ..Default::default()
@@ -3499,7 +3501,7 @@ mod tests {
 
     fn setup_pending_dmc_dma_with_sample(
         cpu: &mut Cpu,
-        apu: &Rc<RefCell<crate::apu::Apu>>,
+        apu: &Rc<RefCell<crate::nes::apu::Apu>>,
         sample_byte: u8,
     ) {
         fake_cartridge(cpu, &[sample_byte]);
@@ -7518,7 +7520,7 @@ mod tests {
 
     #[test]
     fn test_master_clock_ntsc_read_cycle_ticks_master_clock() {
-        let mut clock = crate::cpu::MasterClock::new(TimingMode::Ntsc);
+        let mut clock = crate::nes::cpu::MasterClock::new(TimingMode::Ntsc);
 
         assert_eq!(clock.master_cycles(), 0);
 
@@ -7534,7 +7536,7 @@ mod tests {
 
     #[test]
     fn test_master_clock_ntsc_write_cycle_ticks_master_clock() {
-        let mut clock = crate::cpu::MasterClock::new(TimingMode::Ntsc);
+        let mut clock = crate::nes::cpu::MasterClock::new(TimingMode::Ntsc);
 
         assert_eq!(clock.master_cycles(), 0);
 

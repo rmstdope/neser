@@ -4,10 +4,10 @@
 //! - Main: <https://www.nesdev.org/wiki/NES_2.0_Mapper_345>
 //! - Reference behavior: MAME `nes_bmc_l6in1_device` (`mmc3_clones.cpp`)
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::common::ChrMemory;
-use crate::cartridge::mmc3::MMC3Mapper;
-use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::common::ChrMemory;
+use crate::nes::cartridge::mmc3::MMC3Mapper;
+use crate::nes::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
 /// Mapper 345 - BMC-L6IN1 multicart.
 ///
@@ -30,7 +30,7 @@ impl Mapper345 {
     const CHR_1K_BANK_SIZE: usize = 0x0400;
     const CHR_1K_BANK_MASK: usize = Self::CHR_1K_BANK_SIZE - 1;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let prg_rom = ctx.prg_rom;
         let chr_seed = ctx.chr_rom;
         let mirroring = ctx.mirroring;
@@ -212,9 +212,9 @@ impl Mapper for Mapper345 {
 
 #[cfg(test)]
 mod tests {
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     const PRG_8K_BANKS: usize = 64;
 

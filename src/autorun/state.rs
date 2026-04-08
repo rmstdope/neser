@@ -3,7 +3,7 @@ use crate::autorun::{
     CHECKPOINT_INTERVAL_FRAMES, autorun_path_for_rom, backup_autorun_file, load_autorun_file,
     save_autorun_file,
 };
-use crate::console::AutorunMode;
+use crate::nes::console::AutorunMode;
 use std::path::PathBuf;
 
 /// Resolves a checkpoint index (possibly negative) to a concrete `usize` index.
@@ -35,7 +35,7 @@ fn resolve_checkpoint_index(raw: i64, total: usize) -> Result<usize, String> {
 /// Returned by [`AutorunState::new`] when the caller must restore emulator state before
 /// beginning playback or extend playback.
 pub struct PendingRestore {
-    /// Serialized [`crate::console::SaveState`] bytes.
+    /// Serialized [`crate::nes::console::SaveState`] bytes.
     pub state_bytes: Vec<u8>,
 }
 

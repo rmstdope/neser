@@ -239,8 +239,8 @@ impl PrgRam {
     ///
     /// This should be called on cartridge insertion or hard reset.
     /// Soft resets should NOT call this (RAM contents persist).
-    pub fn initialize(&mut self, mode: crate::console::RamInitMode) {
-        crate::console::initialize_ram(&mut self.data, mode);
+    pub fn initialize(&mut self, mode: crate::nes::console::RamInitMode) {
+        crate::nes::console::initialize_ram(&mut self.data, mode);
     }
 }
 
@@ -361,9 +361,9 @@ impl ChrMemory {
     /// This should be called on cartridge insertion or hard reset.
     /// Only applies to CHR-RAM (CHR-ROM is read-only and ignored).
     /// Soft resets should NOT call this (RAM contents persist).
-    pub fn initialize(&mut self, mode: crate::console::RamInitMode) {
+    pub fn initialize(&mut self, mode: crate::nes::console::RamInitMode) {
         if self.is_ram {
-            crate::console::initialize_ram(&mut self.data, mode);
+            crate::nes::console::initialize_ram(&mut self.data, mode);
         }
     }
 }
@@ -969,7 +969,7 @@ impl VrcIrqCounter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     #[test]
     fn test_prg_ram_read_write() {

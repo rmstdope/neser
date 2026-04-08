@@ -5,10 +5,10 @@
 //! - Edge-case behavior may still differ from hardware in untested timing and board-variant scenarios.
 //! - See CARTRIDGE_REVIEW.md sections 5 and 6 for remaining mapper test/documentation follow-up.
 
-use crate::cartridge::BaseMapper;
-use crate::cartridge::Mapper;
-use crate::cartridge::MapperCapabilities;
-use crate::cartridge::NametableLayout;
+use crate::nes::cartridge::BaseMapper;
+use crate::nes::cartridge::Mapper;
+use crate::nes::cartridge::MapperCapabilities;
+use crate::nes::cartridge::NametableLayout;
 
 /// Mapper 78 - Irem Holy Diver / Jaleco JF-16
 ///
@@ -43,7 +43,7 @@ pub struct NinaTengenMapper {
 }
 
 impl NinaTengenMapper {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let mirroring = ctx.mirroring;
         let capabilities = MapperCapabilities {
             has_irq: false,
@@ -135,7 +135,7 @@ impl Mapper for NinaTengenMapper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::mapper::MapperContext;
+    use crate::nes::cartridge::mapper::MapperContext;
 
     #[test]
     fn test_nina_tengen_prg_bank_switching() {
@@ -446,8 +446,8 @@ mod tests {
 
     #[test]
     fn test_nina_tengen_banked_rom_replacement() {
-        use crate::cartridge::common::BankedRom;
-        use crate::cartridge::test_helpers::banked_data;
+        use crate::nes::cartridge::common::BankedRom;
+        use crate::nes::cartridge::test_helpers::banked_data;
 
         const PRG_BANK_SIZE: usize = 0x4000; // 16KB
         const CHR_BANK_SIZE: usize = 0x2000; // 8KB

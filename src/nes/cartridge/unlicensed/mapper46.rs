@@ -6,8 +6,8 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// Mapper 046 - Rumble Station (Color Dreams multicart)
 ///
@@ -36,7 +36,7 @@ pub struct Mapper46 {
 }
 
 impl Mapper46 {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
             max_prg_ram_kb: 0,
@@ -101,9 +101,9 @@ impl Mapper for Mapper46 {
 #[cfg(test)]
 mod tests {
     use super::Mapper46;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     // Use non-power-of-two bank counts to prevent false-pass wrapping.
     const PRG_PAGES: usize = 5; // 5 × 32 KiB = 160 KiB PRG

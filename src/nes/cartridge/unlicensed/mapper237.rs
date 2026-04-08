@@ -8,8 +8,8 @@
 //!   The original hardware forces PRG A1 high when T=1, making the ROM appear to return
 //!   a cartridge-type identifier, but no known software requires this to be accurate.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
 
 const MAPPER_NUMBER: u16 = 237;
 
@@ -209,9 +209,9 @@ impl Mapper for Mapper237 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     // 8 outer banks × 8 inner banks = 64 × 16 KiB = 1 MiB maximum
     const PRG_BANKS: usize = 64;

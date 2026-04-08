@@ -7,8 +7,8 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 const MAPPER_NUMBER: u16 = 233;
 
@@ -70,7 +70,7 @@ pub struct Mapper233 {
 }
 
 impl Mapper233 {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_dynamic_mirroring: true,
             prg_bank_size_kb: 16,
@@ -138,7 +138,7 @@ impl Mapper for Mapper233 {
         self.apply_banks();
     }
 
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+    fn initialize_ram(&mut self, mode: crate::nes::console::RamInitMode) {
         self.base.initialize_ram(mode);
         // Called on hard reset only; mark that the next reset should be treated as hard.
         self.hard_reset_pending = true;
@@ -194,9 +194,9 @@ impl Mapper for Mapper233 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     /// Number of 16 KB PRG banks.  Use a non-power-of-two count to avoid
     /// modulo-wrapping false-passes in bank-selection assertions.
@@ -411,7 +411,7 @@ mod tests {
         // Emulate the emulator's hard reset path:
         // Bus::reset_cartridge calls initialize_ram(RamInitMode::Zero) then reset()
         // on the existing mapper instance.
-        mapper.initialize_ram(crate::console::RamInitMode::Zero);
+        mapper.initialize_ram(crate::nes::console::RamInitMode::Zero);
         mapper.reset();
 
         // Hard reset must force reset_toggle back to 0 and clear both registers.

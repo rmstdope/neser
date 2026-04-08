@@ -22,8 +22,8 @@
 //! Known Limitations:
 //! - No IRQ or expansion audio behavior; the board does not expose either.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 const MAPPER_NUMBER: u16 = 108;
 const PRG_BANK_SIZE: usize = 8 * 1024;
@@ -40,7 +40,7 @@ pub struct Mapper108 {
 }
 
 impl Mapper108 {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
             prg_bank_size_kb: 8,
@@ -139,9 +139,9 @@ impl Mapper for Mapper108 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     // Use a power-of-two bank count so 0xFF wraps to the last bank, matching
     // Mesen's initialisation behaviour for typical Bubble Bobble ROM sizes.

@@ -14,9 +14,9 @@
 //! Known limitations:
 //! - No known gameplay-blocking limitations are currently documented.
 
-use crate::cartridge::NametableLayout;
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::NametableLayout;
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 const PRG_BANK_SIZE: usize = 32 * 1024;
 const CHR_BANK_SIZE: usize = 8 * 1024;
@@ -29,7 +29,7 @@ pub struct Mapper113 {
 }
 
 impl Mapper113 {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
             has_dynamic_mirroring: true,
@@ -98,9 +98,9 @@ impl Mapper for Mapper113 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     const PRG_BANKS_32K: usize = 8;
     const CHR_BANKS_8K: usize = 16;

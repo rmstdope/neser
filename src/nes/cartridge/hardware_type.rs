@@ -1,4 +1,4 @@
-use crate::cartridge::ines::{ConsoleType, TimingMode};
+use crate::nes::cartridge::ines::{ConsoleType, TimingMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HardwareType {

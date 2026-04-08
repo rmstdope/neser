@@ -6,8 +6,8 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 const MAPPER_NUMBER: u16 = 230;
 
@@ -48,7 +48,7 @@ pub struct Mapper230 {
 }
 
 impl Mapper230 {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_dynamic_mirroring: true,
             prg_bank_size_kb: 16,
@@ -114,7 +114,7 @@ impl Mapper for Mapper230 {
         }
     }
 
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+    fn initialize_ram(&mut self, mode: crate::nes::console::RamInitMode) {
         self.base.initialize_ram(mode);
         self.contra_mode = false;
         self.hard_reset_pending = true;
@@ -156,9 +156,9 @@ impl Mapper for Mapper230 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     /// 48 banks × 16 KiB (non-power-of-two to catch modulo-wrapping false passes)
     const PRG_BANKS: usize = 48;
@@ -183,7 +183,7 @@ mod tests {
 
     /// Helper: simulate a hard reset on mapper
     fn hard_reset(mapper: &mut Mapper230) {
-        mapper.initialize_ram(crate::console::RamInitMode::Zero);
+        mapper.initialize_ram(crate::nes::console::RamInitMode::Zero);
         mapper.reset();
     }
 

@@ -27,7 +27,7 @@
 //! |-------------|---------------------------------------------|
 //! | $0000–$1FFF | Switchable 8 KB CHR bank (bits [1:0] of write address)  |
 
-use crate::cartridge::{BaseMapper, Mapper, MapperCapabilities};
+use crate::nes::cartridge::{BaseMapper, Mapper, MapperCapabilities};
 
 const PRG_BANK_SIZE: usize = 16 * 1024;
 const CHR_BANK_SIZE: usize = 8 * 1024;
@@ -44,7 +44,7 @@ pub struct Mapper81 {
 }
 
 impl Mapper81 {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
             max_prg_ram_kb: 0,
@@ -117,9 +117,9 @@ impl Mapper for Mapper81 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     // Use non-power-of-two bank counts to prevent false-pass via modulo wrapping.
     // PRG: 3 × 16KB = 48 KB; CHR: 3 × 8KB = 24 KB.

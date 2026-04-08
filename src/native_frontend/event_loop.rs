@@ -6,7 +6,6 @@
 use crate::app_context::SharedAppContext;
 use crate::audio::NesAudio;
 use crate::autorun::state::AutorunState;
-use crate::console::{AutorunMode, Nes, TimingMode};
 use crate::debugging::Tracing;
 use crate::debugging::control::DebuggerController;
 use crate::emulator::Console;
@@ -20,6 +19,7 @@ use crate::native_frontend::gl_wrapper::NativeGlWrapper;
 use crate::native_frontend::keyboard::{self, KeyOutcome};
 use crate::native_frontend::mouse;
 use crate::native_frontend::sleep_inhibitor::SleepInhibitor;
+use crate::nes::console::{AutorunMode, Nes, TimingMode};
 
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, DeviceId, ElementState, WindowEvent};
@@ -326,8 +326,9 @@ impl NativeEventLoop {
     /// Loads cartridge catalog entries from the default CSV path.
     fn load_catalog_entries(&mut self) {
         if let Some(home) = std::env::var_os("HOME") {
-            let catalog_path =
-                crate::console::default_catalog_csv_path(std::path::PathBuf::from(home).as_path());
+            let catalog_path = crate::nes::console::default_catalog_csv_path(
+                std::path::PathBuf::from(home).as_path(),
+            );
             if let Ok(content) = std::fs::read_to_string(&catalog_path) {
                 self.state.cart_switch.entries = content
                     .lines()
@@ -351,7 +352,7 @@ impl NativeEventLoop {
         };
 
         let app_context = self.console.app_context().clone();
-        let cartridge = match crate::cartridge::Cartridge::load_from_file(
+        let cartridge = match crate::nes::cartridge::Cartridge::load_from_file(
             &rom_bytes,
             rom_path,
             app_context.clone(),
@@ -372,7 +373,7 @@ impl NativeEventLoop {
         };
 
         self.nes_mut().insert_cartridge(cartridge);
-        crate::console::log_hardware_selection(&app_context, applied);
+        crate::nes::console::log_hardware_selection(&app_context, applied);
         self.console.reset(false);
     }
 
@@ -393,8 +394,9 @@ impl NativeEventLoop {
             let (state, pending) =
                 AutorunState::new(mode, rom_path, overwrite, extend, from_checkpoint, format)?;
             if let Some(restore) = pending {
-                let save_state = crate::console::SaveState::from_bytes(&restore.state_bytes)
-                    .map_err(|e| format!("Failed to deserialize checkpoint state: {e}"))?;
+                let save_state =
+                    crate::nes::console::SaveState::from_bytes(&restore.state_bytes)
+                        .map_err(|e| format!("Failed to deserialize checkpoint state: {e}"))?;
                 self.nes_mut()
                     .load_state(&save_state)
                     .map_err(|e| format!("Failed to restore checkpoint state: {e}"))?;

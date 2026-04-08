@@ -7,10 +7,10 @@
 //! Notes:
 //! - iNES mapper 251 is treated as mapper 45 compatibility behavior.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper45::Mapper45;
-use crate::cartridge::mmc3::MMC3Mapper;
-use crate::cartridge::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper45::Mapper45;
+use crate::nes::cartridge::mmc3::MMC3Mapper;
+use crate::nes::cartridge::{Mapper, MapperCapabilities};
 
 /// Mapper 251 implemented as a thin wrapper around Mapper 45 behavior.
 pub struct Mapper251 {
@@ -20,7 +20,7 @@ pub struct Mapper251 {
 impl Mapper251 {
     const MAPPER_NUMBER: u8 = 251;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let prg_rom = ctx.prg_rom;
         let chr_rom = ctx.chr_rom;
         let mirroring = ctx.mirroring;
@@ -94,9 +94,9 @@ impl Mapper for Mapper251 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     fn create_mapper251(
         prg_rom: Vec<u8>,

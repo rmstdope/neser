@@ -54,9 +54,9 @@
 //! consistent with both the NesDev note ("the cart seems to run just fine when
 //! ignoring the two unknown bits") and the FCEUmm reference implementation.
 
-use crate::cartridge::Mapper;
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::nintendo::mmc3::MMC3Mapper;
+use crate::nes::cartridge::Mapper;
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::nintendo::mmc3::MMC3Mapper;
 
 /// Mapper 267 – 8-in-1 JY-119
 pub struct Mapper267 {
@@ -75,7 +75,7 @@ impl Mapper267 {
     const CHR_1K_BANK_SIZE: usize = 0x0400; // 1 KiB
     const CHR_BANK_MASK: usize = Self::CHR_1K_BANK_SIZE - 1;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         Self {
             mmc3: MMC3Mapper::new_with_irq_mode_and_prg_ram_banks(
                 ctx.prg_rom,
@@ -217,7 +217,7 @@ impl Mapper for Mapper267 {
         }
     }
 
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+    fn initialize_ram(&mut self, mode: crate::nes::console::RamInitMode) {
         self.mmc3.initialize_ram(mode);
         self.hard_reset_pending = true;
     }
@@ -235,9 +235,9 @@ impl Mapper for Mapper267 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     // Non-power-of-2 bank counts to avoid modulo-wrap false passes.
     const PRG_8K_BANKS: usize = 9; // 9 × 8 KiB = 72 KiB PRG-ROM
@@ -306,7 +306,7 @@ mod tests {
         let mut mapper = make_mapper();
         mapper.write_prg(0x6000, 0x06); // set outer bits
         assert_ne!(mapper.ex_reg, 0);
-        mapper.initialize_ram(crate::console::RamInitMode::Zero);
+        mapper.initialize_ram(crate::nes::console::RamInitMode::Zero);
         mapper.reset();
         assert_eq!(
             mapper.ex_reg, 0,
@@ -370,7 +370,7 @@ mod tests {
     fn reset_clears_lock() {
         let mut mapper = make_mapper();
         mapper.write_prg(0x6000, 0x86); // lock
-        mapper.initialize_ram(crate::console::RamInitMode::Zero);
+        mapper.initialize_ram(crate::nes::console::RamInitMode::Zero);
         mapper.reset();
         mapper.write_prg(0x6000, 0x04); // should work now
         assert_eq!(mapper.ex_reg, 0x04, "write after hard reset must succeed");

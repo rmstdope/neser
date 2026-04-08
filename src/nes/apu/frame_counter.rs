@@ -1,7 +1,7 @@
 /// Frame Counter for the NES APU
 /// Sequences envelope, sweep, and length counter clocks
 /// Operates in two modes: 4-step and 5-step
-use crate::console::TimingMode;
+use crate::nes::console::TimingMode;
 use crate::trace_apu;
 pub struct FrameCounter {
     tv_system: TimingMode,
@@ -499,7 +499,7 @@ impl FrameCounter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::console::TimingMode;
+    use crate::nes::console::TimingMode;
 
     #[test]
     fn test_frame_counter_new() {

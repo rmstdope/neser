@@ -6,9 +6,9 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::common::ChrMemory;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::common::ChrMemory;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
 
 pub struct GtromMapper {
     base: BaseMapper,
@@ -105,9 +105,9 @@ impl Mapper for GtromMapper {
         snapshot
     }
 
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+    fn initialize_ram(&mut self, mode: crate::nes::console::RamInitMode) {
         self.base.initialize_ram(mode);
-        crate::console::initialize_ram(&mut self.nametable_ram, mode);
+        crate::nes::console::initialize_ram(&mut self.nametable_ram, mode);
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
@@ -132,10 +132,10 @@ impl Mapper for GtromMapper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::create_mapper;
-    use crate::cartridge::test_helpers::banked_data;
-    use crate::console::RamInitMode;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::create_mapper;
+    use crate::nes::cartridge::test_helpers::banked_data;
+    use crate::nes::console::RamInitMode;
 
     const PRG_BANKS_32K: usize = 6;
     const CHR_BANKS_8K: usize = 2;

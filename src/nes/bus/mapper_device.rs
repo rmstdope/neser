@@ -1,7 +1,7 @@
-use crate::bus::bus::BusDevice;
-use crate::cartridge::Cartridge;
 use crate::debugging::log_info;
-use crate::ppu;
+use crate::nes::bus::bus::BusDevice;
+use crate::nes::cartridge::Cartridge;
+use crate::nes::ppu;
 use std::cell::RefCell;
 use std::ops::RangeInclusive;
 use std::rc::Rc;

@@ -1,7 +1,7 @@
-use crate::cartridge::NametableLayout;
-use crate::cartridge::hardware_type::HardwareType;
-use crate::cartridge::ines::ParsedRom;
-use crate::cartridge::rom_db::VsHardwareType;
+use crate::nes::cartridge::NametableLayout;
+use crate::nes::cartridge::hardware_type::HardwareType;
+use crate::nes::cartridge::ines::ParsedRom;
+use crate::nes::cartridge::rom_db::VsHardwareType;
 use std::io;
 
 // Nintendo mappers
@@ -452,7 +452,7 @@ pub trait Mapper {
     /// The default trait methods for mirroring, WRAM, CHR-RAM, capabilities, etc.
     /// then delegate to the `BaseMapper`, eliminating boilerplate.
     ///
-    /// [`BaseMapper`]: crate::cartridge::base_mapper::BaseMapper
+    /// [`BaseMapper`]: crate::nes::cartridge::base_mapper::BaseMapper
     fn base(&self) -> &super::base_mapper::BaseMapper;
 
     /// Return a mutable reference to the embedded [`BaseMapper`].
@@ -635,7 +635,7 @@ pub trait Mapper {
     /// RAM contents. Soft resets should NOT call this method (RAM should be preserved).
     ///
     /// Default delegates to MMC3 when available, otherwise delegates to `BaseMapper`.
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+    fn initialize_ram(&mut self, mode: crate::nes::console::RamInitMode) {
         if let Some(mmc3) = self.mmc3_delegate_mut() {
             mmc3.initialize_ram(mode);
         } else {
@@ -648,7 +648,7 @@ pub trait Mapper {
     /// Called when inserting a battery-backed cartridge whose PRG-RAM was
     /// already restored from disk and must not be overwritten.
     /// Default delegates to `BaseMapper::initialize_chr_ram`.
-    fn initialize_chr_ram(&mut self, mode: crate::console::RamInitMode) {
+    fn initialize_chr_ram(&mut self, mode: crate::nes::console::RamInitMode) {
         self.base_mut().initialize_chr_ram(mode);
     }
 
@@ -1091,7 +1091,7 @@ pub fn create_mapper(metadata: MapperContext) -> io::Result<Box<dyn Mapper>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
+    use crate::nes::cartridge::NametableLayout;
 
     #[test]
     fn test_supported_mappers_contains_common_ids() {
@@ -1841,7 +1841,7 @@ mod tests {
 
     #[test]
     fn from_parsed_rom_allocates_prg_ram_from_nvram_when_volatile_absent() {
-        use crate::cartridge::ines::{ConsoleType, InesHeader, ParsedRom, TimingMode};
+        use crate::nes::cartridge::ines::{ConsoleType, InesHeader, ParsedRom, TimingMode};
 
         // Given: NES 2.0 ROM where only NVRAM (battery-backed) is present — no volatile PRG-RAM.
         // This is the S8K holy-mapperel pattern: header byte 10 = 0x70 → volatile=0, NVRAM=8KB.
@@ -1890,7 +1890,7 @@ mod tests {
 
     #[test]
     fn from_parsed_rom_uses_larger_of_volatile_and_nvram_when_both_present() {
-        use crate::cartridge::ines::{ConsoleType, InesHeader, ParsedRom, TimingMode};
+        use crate::nes::cartridge::ines::{ConsoleType, InesHeader, ParsedRom, TimingMode};
 
         // Given: a ROM with both volatile RAM (8KB) and NVRAM (16KB)
         let header = InesHeader {
@@ -1938,8 +1938,8 @@ mod tests {
 
     #[test]
     fn from_parsed_rom_propagates_vs_hardware_type() {
-        use crate::cartridge::ines::{ConsoleType, InesHeader, ParsedRom, TimingMode};
-        use crate::cartridge::rom_db::VsHardwareType;
+        use crate::nes::cartridge::ines::{ConsoleType, InesHeader, ParsedRom, TimingMode};
+        use crate::nes::cartridge::rom_db::VsHardwareType;
 
         // Given: a VS System ROM with vs_hardware_type=1 (RbiBaseball) in the header
         let header = InesHeader {
@@ -1980,7 +1980,7 @@ mod tests {
 
     #[test]
     fn from_parsed_rom_non_vs_rom_has_no_vs_hardware_type() {
-        use crate::cartridge::ines::{ConsoleType, InesHeader, ParsedRom, TimingMode};
+        use crate::nes::cartridge::ines::{ConsoleType, InesHeader, ParsedRom, TimingMode};
 
         // Given: a standard NES ROM (not VS System)
         let header = InesHeader {

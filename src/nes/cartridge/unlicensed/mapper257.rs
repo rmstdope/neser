@@ -8,8 +8,8 @@
 //! - PEC586Hack (PC display mode vs NES display mode) is not emulated.
 //! - 512KB custom PRG unscrambling for the NES-mode-disabled case is only partially implemented (via `unscrambled_prg_index`/`read_prg_512k`) and may not match all hardware.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// Mapper 257 - PEC-586 FC-Based Computer (DUNDA)
 ///
@@ -70,7 +70,7 @@ impl Mapper257 {
         0x02,
     ];
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let prg_size = ctx.prg_rom.len();
 
         let mut reg = [0u8; 8];
@@ -216,9 +216,9 @@ impl Mapper for Mapper257 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     fn create_mapper257(
         prg_rom: Vec<u8>,

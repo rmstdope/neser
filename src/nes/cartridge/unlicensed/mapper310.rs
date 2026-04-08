@@ -63,11 +63,11 @@
 //!
 //! Power-on/reset value: all bits clear.
 
-use crate::cartridge::BaseMapper;
-use crate::cartridge::Mapper;
-use crate::cartridge::MapperCapabilities;
-use crate::cartridge::NametableLayout;
-use crate::cartridge::common::ChrMemory;
+use crate::nes::cartridge::BaseMapper;
+use crate::nes::cartridge::Mapper;
+use crate::nes::cartridge::MapperCapabilities;
+use crate::nes::cartridge::NametableLayout;
+use crate::nes::cartridge::common::ChrMemory;
 
 const CHR_RAM_SIZE: usize = 32 * 1024; // 32 KiB
 
@@ -89,7 +89,7 @@ pub struct Mapper310 {
 }
 
 impl Mapper310 {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_irq: false,
             has_chr_banking: true,
@@ -248,7 +248,7 @@ impl Mapper for Mapper310 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::mapper::MapperContext;
+    use crate::nes::cartridge::mapper::MapperContext;
 
     const PRG_BANK_SIZE_8K: usize = 0x2000;
 

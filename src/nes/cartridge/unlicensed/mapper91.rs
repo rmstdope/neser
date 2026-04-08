@@ -24,9 +24,9 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
-use crate::cartridge::BaseMapper;
-use crate::cartridge::common::A12RisingEdgeDetector;
-use crate::cartridge::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::BaseMapper;
+use crate::nes::cartridge::common::A12RisingEdgeDetector;
+use crate::nes::cartridge::{Mapper, MapperCapabilities};
 
 /// Mapper 091 – JY Company / MMC3-style pirate board
 pub struct Mapper91 {
@@ -49,7 +49,7 @@ impl Mapper91 {
     const CHR_BANK_SIZE: usize = 0x0800; // 2 KB
     const IRQ_LATCH: u8 = 7;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let mirroring = ctx.mirroring;
         let capabilities = MapperCapabilities {
             has_irq: true,
@@ -247,9 +247,9 @@ impl Mapper for Mapper91 {
 
 #[cfg(test)]
 mod tests {
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     // Non-power-of-two bank counts to avoid modulo-wrapping false-passes
     const PRG_BANKS: usize = 6; // 6 × 8KB = 48 KB

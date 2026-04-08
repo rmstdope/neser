@@ -8,10 +8,10 @@
 //! - Bus conflicts: writes to `$8000-$FFFF` are subject to bus conflicts with PRG-ROM data.
 //! - See CARTRIDGE_REVIEW.md sections 5 and 6 for remaining mapper test/documentation follow-up.
 
-use crate::cartridge::Mapper;
-use crate::cartridge::MapperCapabilities;
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::common::ChrMemory;
+use crate::nes::cartridge::Mapper;
+use crate::nes::cartridge::MapperCapabilities;
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::common::ChrMemory;
 
 const CHR_RAM_SIZE: usize = 0x4000; // 16 KiB total (4 banks)
 
@@ -30,7 +30,7 @@ pub struct CpromMapper {
 }
 
 impl CpromMapper {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
             max_prg_ram_kb: 8,
@@ -88,8 +88,8 @@ impl Mapper for CpromMapper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::MapperContext;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::MapperContext;
 
     #[test]
     fn test_cprom_32kb_prg_fixed() {

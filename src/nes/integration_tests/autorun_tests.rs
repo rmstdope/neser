@@ -4,8 +4,8 @@ mod tests {
 
     use crate::app_context::AppContext;
     use crate::autorun::{headless_playback::run_headless_playback, load_autorun_file};
-    use crate::cartridge::{Cartridge, TimingMode as CartridgeTimingMode};
-    use crate::console::{Config, HardwareModel, Nes, NesConfig, RamInitMode};
+    use crate::nes::cartridge::{Cartridge, TimingMode as CartridgeTimingMode};
+    use crate::nes::console::{Config, HardwareModel, Nes, NesConfig, RamInitMode};
 
     fn deterministic_config() -> Config {
         Config {

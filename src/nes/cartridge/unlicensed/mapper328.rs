@@ -9,8 +9,8 @@
 //!   constant 0xFF instead of pseudo-random hardware noise.  Games relying on
 //!   value variation across successive reads may not pass the protection check.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// Mapper 328 – RT-01 board
 ///
@@ -35,7 +35,7 @@ pub struct Mapper328 {
 }
 
 impl Mapper328 {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             prg_bank_size_kb: 16,
             chr_bank_size_kb: 2,
@@ -102,9 +102,9 @@ impl Mapper for Mapper328 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     // Non-power-of-two bank counts to prevent false-pass modulo wrapping.
     const PRG_BANKS: usize = 3; // 3 × 16KB = 48KB

@@ -6,9 +6,9 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::common::ChrMemory;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::common::ChrMemory;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// Mapper 294 – 63-1601 multicart PCB (強捧 16-in-1 multicart, UNROM games)
 ///
@@ -42,7 +42,7 @@ const INNER_PRG_MASK: u8 = 0x07;
 const MIRRORING_BIT: u8 = 0x10;
 
 impl Mapper294 {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_dynamic_mirroring: true,
             has_chr_banking: false,
@@ -133,8 +133,8 @@ impl Mapper for Mapper294 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
 
     /// Non-power-of-2 count avoids modulo-wrap false-passes in bank assertions.
     const PRG_BANKS_16K: usize = 48; // 6 outer blocks × 8 inner banks

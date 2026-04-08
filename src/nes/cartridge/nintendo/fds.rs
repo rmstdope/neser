@@ -9,9 +9,9 @@
 //! - FDS audio channels (wave table, modulation) are stored but not mixed.
 //! - BIOS ROM is taken from PRG-ROM; no user-supplied BIOS loading.
 
-use crate::cartridge::BaseMapper;
-use crate::cartridge::NametableLayout;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::BaseMapper;
+use crate::nes::cartridge::NametableLayout;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// FDS work-RAM region: $6000–$DFFF (32 KiB).
 const WORK_RAM_SIZE: usize = 0x8000;
@@ -78,7 +78,7 @@ pub struct FdsMapper {
 }
 
 impl FdsMapper {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_irq: true,
             has_expansion_audio: true,
@@ -281,8 +281,8 @@ impl Mapper for FdsMapper {
 #[cfg(test)]
 mod tests {
     use super::FdsMapper;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
 
     fn make_mapper() -> FdsMapper {
         FdsMapper::new(MapperContext::new_for_test(

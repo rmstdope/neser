@@ -80,9 +80,9 @@
 //! - Source: FCEUX mapper270/onebus. No known discrepancies for the features
 //!   that are implemented.
 
-use crate::cartridge::Mapper;
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mmc3::MMC3Mapper;
+use crate::nes::cartridge::Mapper;
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mmc3::MMC3Mapper;
 
 const CHR_RAM_SIZE: usize = 8 * 1024;
 const PRG_BANK_MASK: usize = 0x1FFF; // 8 KiB
@@ -106,7 +106,7 @@ pub struct Mapper270 {
 impl Mapper270 {
     const MAPPER_NUMBER: u16 = 270;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let submapper = ctx.submapper;
         let mmc3 = MMC3Mapper::new_with_irq_mode(ctx.prg_rom, ctx.chr_rom, ctx.mirroring, false);
         Self {
@@ -256,7 +256,7 @@ impl Mapper for Mapper270 {
         }
     }
 
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+    fn initialize_ram(&mut self, mode: crate::nes::console::RamInitMode) {
         self.mmc3.initialize_ram(mode);
         self.chr_ram = vec![0u8; CHR_RAM_SIZE];
     }
@@ -270,9 +270,9 @@ impl Mapper for Mapper270 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     /// Non-power-of-2 bank counts to avoid modulo-wrap false passes.
     const PRG_8K_BANKS: usize = 9;

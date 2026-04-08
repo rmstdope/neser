@@ -6,10 +6,10 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
-use crate::cartridge::mmc3::MMC3Mapper;
-use crate::cartridge::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::nes::cartridge::mmc3::MMC3Mapper;
+use crate::nes::cartridge::{Mapper, MapperCapabilities};
 
 /// Mapper 254 - Pikachu Y2K (MMC3 variant with copy protection)
 ///
@@ -37,7 +37,7 @@ pub struct Mapper254 {
 impl Mapper254 {
     const MAPPER_NUMBER: u8 = 254;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let prg_rom = ctx.prg_rom;
         let chr_rom = ctx.chr_rom;
         let mirroring = ctx.mirroring;
@@ -158,7 +158,7 @@ impl Mapper for Mapper254 {
         }
     }
 
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+    fn initialize_ram(&mut self, mode: crate::nes::console::RamInitMode) {
         self.prg_ram.initialize(mode);
     }
 
@@ -176,9 +176,9 @@ impl Mapper for Mapper254 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     fn create_mapper254(
         prg_rom: Vec<u8>,

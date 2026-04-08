@@ -1,7 +1,7 @@
 use super::ControllerInput;
 use crate::app_context::AppContext;
 use crate::input::Button;
-use crate::ppu::Ppu;
+use crate::nes::ppu::Ppu;
 use serde::{Deserialize, Serialize};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -126,7 +126,7 @@ impl Zapper {
         &self,
         current_scanline: u16,
         current_pixel: u16,
-        screen_buffer: &crate::ppu::ScreenBuffer,
+        screen_buffer: &crate::nes::ppu::ScreenBuffer,
         detection_size: u8,
     ) -> bool {
         let zapper_x = self.x as i32;
@@ -180,15 +180,15 @@ impl Zapper {
 #[cfg(test)]
 mod tests {
     use super::Zapper;
-    use crate::console::TimingMode;
     use crate::input::Controller;
-    use crate::ppu::Ppu;
+    use crate::nes::console::TimingMode;
+    use crate::nes::ppu::Ppu;
     use std::cell::RefCell;
     use std::rc::Rc;
 
     fn test_app_context_with_size(size: u8) -> Rc<RefCell<crate::app_context::AppContext>> {
-        let config = crate::console::Config {
-            nes: crate::console::NesConfig {
+        let config = crate::nes::console::Config {
+            nes: crate::nes::console::NesConfig {
                 zapper_detection_size: size,
                 ..Default::default()
             },

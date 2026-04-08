@@ -50,10 +50,10 @@
 //! ## Known Limitations
 //! - No known gameplay-blocking functional limitations are currently documented.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::ines::NametableLayout;
-use crate::cartridge::mmc3::MMC3Mapper;
-use crate::cartridge::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::ines::NametableLayout;
+use crate::nes::cartridge::mmc3::MMC3Mapper;
+use crate::nes::cartridge::{Mapper, MapperCapabilities};
 
 const CHR_RAM_SIZE: usize = 8 * 1024;
 const CHR_RAM_PAGE_SIZE: usize = 1024;
@@ -77,7 +77,7 @@ impl Mapper199 {
     const MAPPER_NUMBER: u16 = 199;
     const CHR_BANK_MASK: usize = CHR_RAM_PAGE_SIZE - 1;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let prg_rom = ctx.prg_rom;
         let chr_rom = ctx.chr_rom;
         let mirroring = ctx.mirroring;
@@ -183,9 +183,9 @@ impl Mapper for Mapper199 {
         // CHR-ROM writes are silently ignored.
     }
 
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+    fn initialize_ram(&mut self, mode: crate::nes::console::RamInitMode) {
         self.inner.initialize_ram(mode);
-        crate::console::initialize_ram(&mut self.chr_ram, mode);
+        crate::nes::console::initialize_ram(&mut self.chr_ram, mode);
     }
 
     fn mapper_number(&self) -> u16 {
@@ -243,7 +243,7 @@ impl Mapper for Mapper199 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
 
     fn make_mapper(prg_kb: usize, chr_kb: usize) -> Box<dyn Mapper> {
         let prg_rom = vec![0u8; prg_kb * 1024];

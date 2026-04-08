@@ -7,8 +7,8 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
 
 /// Mapper 307 – Kaiser KS7037
 ///
@@ -273,8 +273,8 @@ impl Mapper for Mapper307 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::MapperContext;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::MapperContext;
 
     /// Create 128 KiB PRG-ROM with each 4 KiB bank filled with the bank number.
     fn make_prg_rom(num_banks: usize) -> Vec<u8> {

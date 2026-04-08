@@ -28,8 +28,8 @@
 //!
 //! Register = 0: PRG-ROM bank 0 at $8000–$FFFF; PRG-RAM page 0 at $6000–$7FFF.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// Total PRG-RAM size: 32 KiB (4 pages × 8 KiB).
 const WRAM_SIZE: usize = 32 * 1024;
@@ -48,7 +48,7 @@ pub struct Mapper329 {
 }
 
 impl Mapper329 {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             prg_bank_size_kb: 32,
             chr_bank_size_kb: 8,
@@ -142,9 +142,9 @@ impl Mapper for Mapper329 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     // Non-power-of-two bank counts to prevent false-pass modulo wrapping.
     const PRG_BANKS: usize = 11; // 11 × 32 KB = 352 KB

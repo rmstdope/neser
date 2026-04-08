@@ -6,9 +6,9 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
-use crate::cartridge::NametableLayout;
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::NametableLayout;
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// Mapper 061 - NTDEC address latch multicart
 ///
@@ -49,7 +49,7 @@ pub struct Mapper61 {
 }
 
 impl Mapper61 {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let submapper = ctx.submapper;
         let capabilities = MapperCapabilities {
             has_dynamic_mirroring: true,
@@ -75,7 +75,7 @@ impl Mapper61 {
 
     #[cfg(test)]
     pub fn new_internal(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
-        Self::new(crate::cartridge::mapper::MapperContext::new_for_test(
+        Self::new(crate::nes::cartridge::mapper::MapperContext::new_for_test(
             61, prg_rom, chr_rom, mirroring,
         ))
     }
@@ -87,8 +87,9 @@ impl Mapper61 {
         mirroring: NametableLayout,
         submapper: u8,
     ) -> Self {
-        let mut ctx =
-            crate::cartridge::mapper::MapperContext::new_for_test(61, prg_rom, chr_rom, mirroring);
+        let mut ctx = crate::nes::cartridge::mapper::MapperContext::new_for_test(
+            61, prg_rom, chr_rom, mirroring,
+        );
         ctx.submapper = submapper;
         Self::new(ctx)
     }
@@ -170,8 +171,8 @@ impl Mapper for Mapper61 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     fn make_mapper() -> Mapper61 {
         let prg = banked_data(16 * 1024, 32);

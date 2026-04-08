@@ -5,8 +5,8 @@
 //! - Edge-case behavior may still differ from hardware in untested timing and board-variant scenarios.
 //! - See CARTRIDGE_REVIEW.md sections 5 and 6 for remaining mapper test/documentation follow-up.
 
-use crate::cartridge::mapper::MapperContext;
-use crate::cartridge::mapper_templates::DualBank32Mapper;
+use crate::nes::cartridge::mapper::MapperContext;
+use crate::nes::cartridge::mapper_templates::DualBank32Mapper;
 
 /// Mapper 11 - Color Dreams
 ///
@@ -53,15 +53,15 @@ impl ColorDreamsMapper {
     }
 }
 
-impl crate::cartridge::Mapper for ColorDreamsMapper {
-    fn base(&self) -> &crate::cartridge::base_mapper::BaseMapper {
+impl crate::nes::cartridge::Mapper for ColorDreamsMapper {
+    fn base(&self) -> &crate::nes::cartridge::base_mapper::BaseMapper {
         match self {
             Self::WithBusConflicts(m) => m.base(),
             Self::NoBusConflicts(m) => m.base(),
         }
     }
 
-    fn base_mut(&mut self) -> &mut crate::cartridge::base_mapper::BaseMapper {
+    fn base_mut(&mut self) -> &mut crate::nes::cartridge::base_mapper::BaseMapper {
         match self {
             Self::WithBusConflicts(m) => m.base_mut(),
             Self::NoBusConflicts(m) => m.base_mut(),
@@ -93,9 +93,9 @@ impl crate::cartridge::Mapper for ColorDreamsMapper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
     const BUS_CONFLICT_SAFE_ADDR: u16 = 0x8001;
 
     fn banked_prg_with_conflict_safe_write(num_banks: usize) -> Vec<u8> {
@@ -219,8 +219,8 @@ mod tests {
 
     #[test]
     fn test_colordreams_banked_rom_replacement() {
-        use crate::cartridge::common::BankedRom;
-        use crate::cartridge::test_helpers::banked_data;
+        use crate::nes::cartridge::common::BankedRom;
+        use crate::nes::cartridge::test_helpers::banked_data;
 
         const PRG_BANK_SIZE: usize = 32 * 1024;
         const CHR_BANK_SIZE: usize = 8 * 1024;

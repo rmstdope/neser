@@ -4,9 +4,9 @@
 /// but they could help catch gross APU emulation errors in the future.
 #[cfg(test)]
 mod tests {
-    use crate::cartridge::Cartridge;
-    use crate::console::{Config, Nes, TimingMode};
-    use crate::integration_tests::rom_test_runner::tests::init_tracing_from_env;
+    use crate::nes::cartridge::Cartridge;
+    use crate::nes::console::{Config, Nes, TimingMode};
+    use crate::nes::integration_tests::rom_test_runner::tests::init_tracing_from_env;
     use crate::{setup_rom_address_test, setup_rom_test};
     use std::fs;
 

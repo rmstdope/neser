@@ -7,9 +7,9 @@
 //! - IRQ behavior is inherited from the inner MMC3 (see `mmc3.rs` Known Limitations).
 //! - Board-specific clone quirks that deviate from the NesDev spec are not modeled.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mmc3::MMC3Mapper;
-use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mmc3::MMC3Mapper;
+use crate::nes::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
 /// Mapper 045 - MMC3-based multicart with 4 sequentially-written outer bank registers
 ///
@@ -49,7 +49,7 @@ impl Mapper45 {
     const CHR_1K_BANK_SIZE: usize = 0x0400; // 1 KiB
     const CHR_BANK_MASK: usize = Self::CHR_1K_BANK_SIZE - 1;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let prg_rom = ctx.prg_rom;
         let chr_rom = ctx.chr_rom;
         let mirroring = ctx.mirroring;
@@ -254,9 +254,9 @@ impl Mapper for Mapper45 {
 #[cfg(test)]
 mod tests {
     use super::Mapper45;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     // 128 8KB PRG banks = 1 MiB. Non-power-of-two.
     const PRG_BANKS: usize = 96; // non-pow2, 768 KiB

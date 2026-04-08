@@ -54,9 +54,9 @@
 //! - Two-channel PCM expansion sound ($4031–$4036) is not implemented.
 //! - VT3x extended palette is not implemented.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mmc3::MMC3Mapper;
-use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mmc3::MMC3Mapper;
+use crate::nes::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
 const CHR_RAM_SIZE: usize = 8 * 1024;
 const PRG_BANK_MASK: usize = 0x1FFF; // 8 KiB bank offset mask
@@ -113,7 +113,7 @@ impl Mapper296 {
     const MMC1_PRG_MODE_MASK: u8 = 0x0C; // bits 3:2
     const MMC1_CHR_MODE_BIT: u8 = 0x10; // bit 4
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         // No PRG-RAM on VT3x (it is a SOC, RAM is on-chip and not accessible here)
         let mmc3 = MMC3Mapper::new_with_irq_mode_and_prg_ram_banks(
             ctx.prg_rom,
@@ -475,9 +475,9 @@ impl Mapper for Mapper296 {
         self.mmc3.restore_registers(mmc3_data);
     }
 
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+    fn initialize_ram(&mut self, mode: crate::nes::console::RamInitMode) {
         self.mmc3.initialize_ram(mode);
-        crate::console::initialize_ram(&mut self.chr_ram, mode);
+        crate::nes::console::initialize_ram(&mut self.chr_ram, mode);
     }
 
     fn wram_snapshot(&self) -> Vec<u8> {
@@ -517,8 +517,8 @@ impl Mapper for Mapper296 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::MapperContext;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::MapperContext;
 
     const PRG_8KB_BANKS: usize = 32; // 256 KiB PRG-ROM
     const CHR_1KB_BANKS: usize = 64; // 64 KiB CHR-ROM (for CNROM needs 8KB multiples)

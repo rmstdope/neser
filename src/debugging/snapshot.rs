@@ -1,4 +1,4 @@
-use crate::console::Nes;
+use crate::nes::console::Nes;
 
 use super::disasm::{DisasmWindowConfig, disassemble_window, disassemble_window_with_state};
 use super::types::{
@@ -291,9 +291,9 @@ pub fn snapshot_with_disasm_state(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::Cartridge;
-    use crate::cartridge::NametableLayout;
-    use crate::console::{Config, Nes};
+    use crate::nes::cartridge::Cartridge;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::console::{Config, Nes};
 
     #[test]
     fn test_snapshot_contains_basic_cpu_ppu_apu_info() {

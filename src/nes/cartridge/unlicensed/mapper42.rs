@@ -6,11 +6,11 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
-use crate::cartridge::BaseMapper;
-use crate::cartridge::NametableLayout;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::BaseMapper;
+use crate::nes::cartridge::NametableLayout;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
-use crate::cartridge::cpu_cycle_irq::{CpuCycleIrq, CpuCycleIrqMode};
+use crate::nes::cartridge::cpu_cycle_irq::{CpuCycleIrq, CpuCycleIrqMode};
 
 /// Mapper 042 - FDS game conversions
 ///
@@ -36,7 +36,7 @@ impl Mapper42 {
     const PRG_BANK_SIZE: usize = 0x2000; // 8 KiB
     const CHR_BANK_SIZE: usize = 0x2000; // 8 KiB
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let mirroring = ctx.mirroring;
         let capabilities = MapperCapabilities {
             has_irq: true,
@@ -161,9 +161,9 @@ impl Mapper for Mapper42 {
 #[cfg(test)]
 mod tests {
     use super::Mapper42;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     // Use 11 banks (non-power-of-two) to prevent false-pass wrapping.
     const PRG_BANKS: usize = 11;

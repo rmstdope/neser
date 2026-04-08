@@ -66,8 +66,8 @@
 //!
 //! Power-on / reset: all counters and flags 0.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::{Mapper, MapperCapabilities};
 
 /// Mapper 298 – NTDEC TF-1201
 pub struct Mapper298 {
@@ -95,7 +95,7 @@ impl Mapper298 {
     const PRG_BANK_SIZE: usize = 0x2000; // 8 KB
     const CHR_BANK_SIZE: usize = 0x0400; // 1 KB
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let mirroring = ctx.mirroring;
         let capabilities = MapperCapabilities {
             has_irq: true,
@@ -309,9 +309,9 @@ impl Mapper for Mapper298 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     const PRG_BANK_SIZE: usize = 8 * 1024;
     const CHR_BANK_SIZE: usize = 1024;

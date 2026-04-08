@@ -46,8 +46,8 @@
 //!
 //! reg0 = 0, reg1 = 0, mode = 0: PRG page 0 = 0, PRG page 1 = 0, Horizontal mirroring.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
 
 const MAPPER_NUMBER: u16 = 274;
 const PRG_BANK_SIZE_BYTES: usize = 16 * 1024;
@@ -157,9 +157,9 @@ impl Mapper for Mapper274 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     // Non-power-of-two bank counts to detect false-pass from modulo wrapping.
     const PRG_BANKS_16K: usize = 11;

@@ -406,4 +406,111 @@ mod tests {
         console.clear_ready_to_render();
         assert!(!console.is_ready_to_render());
     }
+
+    // ---------------------------------------------------------------
+    // GameBoy stub — proves the Console enum can hold multiple systems
+    // ---------------------------------------------------------------
+
+    /// Minimal stub that satisfies the Console interface to validate
+    /// that the enum dispatch pattern works for a second hardware target.
+    struct GameBoyStub {
+        frame_ready: bool,
+        cycles_in_frame: u32,
+        screen: Vec<u8>,
+    }
+
+    impl GameBoyStub {
+        const WIDTH: u32 = 160;
+        const HEIGHT: u32 = 144;
+        const CYCLES_PER_FRAME: u32 = 70224; // ~4.19 MHz / ~59.73 Hz
+
+        fn new() -> Self {
+            Self {
+                frame_ready: false,
+                cycles_in_frame: 0,
+                screen: vec![0; (Self::WIDTH * Self::HEIGHT * 3) as usize],
+            }
+        }
+
+        fn run_tick(&mut self) -> u8 {
+            let cycles = 4; // GB instructions are 4-cycle minimum
+            self.cycles_in_frame += cycles as u32;
+            if self.cycles_in_frame >= Self::CYCLES_PER_FRAME {
+                self.cycles_in_frame -= Self::CYCLES_PER_FRAME;
+                self.frame_ready = true;
+            }
+            cycles
+        }
+    }
+
+    /// Extended Console that includes the GameBoy stub variant.
+    enum MultiConsole {
+        Nes(Console),
+        GameBoy(GameBoyStub),
+    }
+
+    impl MultiConsole {
+        fn run_tick(&mut self) -> u8 {
+            match self {
+                MultiConsole::Nes(c) => c.run_tick(),
+                MultiConsole::GameBoy(gb) => gb.run_tick(),
+            }
+        }
+
+        fn is_ready_to_render(&self) -> bool {
+            match self {
+                MultiConsole::Nes(c) => c.is_ready_to_render(),
+                MultiConsole::GameBoy(gb) => gb.frame_ready,
+            }
+        }
+
+        fn screen_width(&self) -> u32 {
+            match self {
+                MultiConsole::Nes(c) => c.screen_width(),
+                MultiConsole::GameBoy(_) => GameBoyStub::WIDTH,
+            }
+        }
+
+        fn screen_height(&self) -> u32 {
+            match self {
+                MultiConsole::Nes(c) => c.screen_height(),
+                MultiConsole::GameBoy(_) => GameBoyStub::HEIGHT,
+            }
+        }
+
+        fn screen_snapshot(&self) -> Vec<u8> {
+            match self {
+                MultiConsole::Nes(c) => c.screen_snapshot(),
+                MultiConsole::GameBoy(gb) => gb.screen.clone(),
+            }
+        }
+    }
+
+    #[test]
+    fn test_multi_console_gameboy_stub_runs_to_frame() {
+        let mut mc = MultiConsole::GameBoy(GameBoyStub::new());
+        assert_eq!(mc.screen_width(), 160);
+        assert_eq!(mc.screen_height(), 144);
+
+        let mut total = 0u64;
+        while !mc.is_ready_to_render() && total < 200_000 {
+            total += mc.run_tick() as u64;
+        }
+        assert!(mc.is_ready_to_render());
+        assert_eq!(mc.screen_snapshot().len(), (160 * 144 * 3) as usize,);
+    }
+
+    #[test]
+    fn test_multi_console_nes_variant_still_works() {
+        let (console, _) = make_console_with_rom();
+        let mut mc = MultiConsole::Nes(console);
+        assert_eq!(mc.screen_width(), 256);
+        assert_eq!(mc.screen_height(), 240);
+
+        let mut total = 0u64;
+        while !mc.is_ready_to_render() && total < 100_000 {
+            total += mc.run_tick() as u64;
+        }
+        assert!(mc.is_ready_to_render());
+    }
 }

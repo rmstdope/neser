@@ -6,8 +6,8 @@
 //! Known Limitations:
 //! - Gluk no-ASIC compatibility path (NINA-06-like fallback) is not implemented.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 const TXC_MASK: u8 = 0x07;
 
@@ -74,7 +74,7 @@ pub struct Mapper36 {
 }
 
 impl Mapper36 {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
             max_prg_ram_kb: 0,
@@ -190,9 +190,9 @@ impl Mapper for Mapper36 {
 
 #[cfg(test)]
 mod tests {
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     fn make_mapper() -> Box<dyn Mapper> {
         let prg = banked_data(32 * 1024, 4);

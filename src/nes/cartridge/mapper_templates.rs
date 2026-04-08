@@ -88,7 +88,7 @@
 
 use super::base_mapper::BaseMapper;
 use super::mapper::MapperContext;
-use crate::cartridge::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::{Mapper, MapperCapabilities};
 
 /// Compute the PRG-RAM size in KB from a mapper context.
 ///
@@ -443,7 +443,7 @@ impl<
 mod tests {
     use super::super::mapper::MapperContext;
     use super::*;
-    use crate::cartridge::NametableLayout;
+    use crate::nes::cartridge::NametableLayout;
 
     // Test helper to create banked data
     fn banked_data(bank_size: usize, num_banks: usize) -> Vec<u8> {

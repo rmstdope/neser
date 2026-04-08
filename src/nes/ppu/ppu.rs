@@ -1,9 +1,9 @@
-use crate::cartridge::{Cartridge, NametableLayout, VsPpuType};
-use crate::console::{Nes, TimingMode};
-use crate::ppu::color_effects::apply_grayscale;
-use crate::ppu::sprites::SpritesState;
-use crate::ppu::vs_palettes;
-use crate::ppu::{Background, Memory, Registers, Rendering, Sprites, Status, Timing};
+use crate::nes::cartridge::{Cartridge, NametableLayout, VsPpuType};
+use crate::nes::console::{Nes, TimingMode};
+use crate::nes::ppu::color_effects::apply_grayscale;
+use crate::nes::ppu::sprites::SpritesState;
+use crate::nes::ppu::vs_palettes;
+use crate::nes::ppu::{Background, Memory, Registers, Rendering, Sprites, Status, Timing};
 use crate::trace_ppu;
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
@@ -55,7 +55,7 @@ pub struct PpuState {
     pub palette: Vec<u8>,
     pub last_palette_index: Option<u8>,
     pub last_palette_value: u8,
-    pub mirroring_mode: crate::cartridge::NametableLayout,
+    pub mirroring_mode: crate::nes::cartridge::NametableLayout,
     pub oam: Vec<u8>,
     pub secondary_oam: Vec<u8>,
     pub sprites_found: u8,
@@ -156,7 +156,7 @@ pub struct Ppu {
 impl Ppu {
     fn with_mapper_mut<F>(&mut self, f: F)
     where
-        F: FnOnce(&mut dyn crate::cartridge::Mapper),
+        F: FnOnce(&mut dyn crate::nes::cartridge::Mapper),
     {
         if let Some(ref cartridge) = self.cartridge {
             let mut cartridge = cartridge.borrow_mut();
@@ -268,7 +268,7 @@ impl Ppu {
     }
 
     /// Create a new modular PPU instance
-    pub fn new(tv_system: TimingMode, ram_init_mode: crate::console::RamInitMode) -> Self {
+    pub fn new(tv_system: TimingMode, ram_init_mode: crate::nes::console::RamInitMode) -> Self {
         let mut sprites = Sprites::new(ram_init_mode);
         sprites.set_oam_decay_enabled(matches!(tv_system, TimingMode::Ntsc));
 
@@ -294,7 +294,7 @@ impl Ppu {
     /// Create a new PPU instance for testing with default Zero RAM initialization.
     #[cfg(test)]
     pub fn new_for_testing(tv_system: TimingMode) -> Self {
-        Self::new(tv_system, crate::console::RamInitMode::Zero)
+        Self::new(tv_system, crate::nes::console::RamInitMode::Zero)
     }
 
     #[cfg(test)]
@@ -307,7 +307,7 @@ impl Ppu {
     ///
     /// - `soft_reset`: true for a reset-button style reset, false for power-on/hard reset
     /// - `ram_init_mode`: RAM initialization mode (only used for hard reset)
-    pub fn reset(&mut self, soft_reset: bool, ram_init_mode: crate::console::RamInitMode) {
+    pub fn reset(&mut self, soft_reset: bool, ram_init_mode: crate::nes::console::RamInitMode) {
         self.timing.reset();
         self.status.reset();
         self.vblank_suppressed_for_frame = false;
@@ -1087,7 +1087,7 @@ impl Ppu {
         self.status.set_frame_complete(state.frame_complete);
 
         self.background
-            .restore_state(&crate::ppu::background::BackgroundState {
+            .restore_state(&crate::nes::ppu::background::BackgroundState {
                 bg_pattern_shift_lo: state.bg_pattern_shift_lo,
                 bg_pattern_shift_hi: state.bg_pattern_shift_hi,
                 bg_attribute_shift_lo: state.bg_attribute_shift_lo,
@@ -1167,33 +1167,36 @@ impl Ppu {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::{NametableLayout, VsPpuType};
-    use crate::console::Nes;
-    use crate::ppu::{
+    use crate::nes::cartridge::{NametableLayout, VsPpuType};
+    use crate::nes::console::Nes;
+    use crate::nes::ppu::{
         background, memory, registers, rendering, screen_buffer, sprites, status, timing,
     };
 
-    fn create_test_base_mapper() -> crate::cartridge::BaseMapper {
-        let ctx = crate::cartridge::MapperContext::new_for_test(
+    fn create_test_base_mapper() -> crate::nes::cartridge::BaseMapper {
+        let ctx = crate::nes::cartridge::MapperContext::new_for_test(
             0,
             vec![0; 0x8000],
             vec![0; 8192],
             NametableLayout::Horizontal,
         );
-        crate::cartridge::BaseMapper::new(&ctx, crate::cartridge::MapperCapabilities::default())
+        crate::nes::cartridge::BaseMapper::new(
+            &ctx,
+            crate::nes::cartridge::MapperCapabilities::default(),
+        )
     }
 
     struct ScanlineSpyMapper {
-        base: crate::cartridge::BaseMapper,
+        base: crate::nes::cartridge::BaseMapper,
         calls: Rc<RefCell<Vec<(u16, bool)>>>,
     }
 
-    impl crate::cartridge::Mapper for ScanlineSpyMapper {
-        fn base(&self) -> &crate::cartridge::BaseMapper {
+    impl crate::nes::cartridge::Mapper for ScanlineSpyMapper {
+        fn base(&self) -> &crate::nes::cartridge::BaseMapper {
             &self.base
         }
 
-        fn base_mut(&mut self) -> &mut crate::cartridge::BaseMapper {
+        fn base_mut(&mut self) -> &mut crate::nes::cartridge::BaseMapper {
             &mut self.base
         }
 
@@ -1491,16 +1494,16 @@ mod tests {
     }
 
     struct EndFrameSpyMapper {
-        base: crate::cartridge::BaseMapper,
+        base: crate::nes::cartridge::BaseMapper,
         calls: Rc<RefCell<u32>>,
     }
 
-    impl crate::cartridge::Mapper for EndFrameSpyMapper {
-        fn base(&self) -> &crate::cartridge::BaseMapper {
+    impl crate::nes::cartridge::Mapper for EndFrameSpyMapper {
+        fn base(&self) -> &crate::nes::cartridge::BaseMapper {
             &self.base
         }
 
-        fn base_mut(&mut self) -> &mut crate::cartridge::BaseMapper {
+        fn base_mut(&mut self) -> &mut crate::nes::cartridge::BaseMapper {
             &mut self.base
         }
 
@@ -1555,16 +1558,16 @@ mod tests {
     }
 
     struct ChrFetchKindSpyMapper {
-        base: crate::cartridge::BaseMapper,
+        base: crate::nes::cartridge::BaseMapper,
         events: Rc<RefCell<Vec<ChrFetchEvent>>>,
     }
 
-    impl crate::cartridge::Mapper for ChrFetchKindSpyMapper {
-        fn base(&self) -> &crate::cartridge::BaseMapper {
+    impl crate::nes::cartridge::Mapper for ChrFetchKindSpyMapper {
+        fn base(&self) -> &crate::nes::cartridge::BaseMapper {
             &self.base
         }
 
-        fn base_mut(&mut self) -> &mut crate::cartridge::BaseMapper {
+        fn base_mut(&mut self) -> &mut crate::nes::cartridge::BaseMapper {
             &mut self.base
         }
 
@@ -1596,16 +1599,16 @@ mod tests {
     }
 
     struct A12PrimingSpyMapper {
-        base: crate::cartridge::BaseMapper,
+        base: crate::nes::cartridge::BaseMapper,
         calls: Rc<RefCell<Vec<u16>>>,
     }
 
-    impl crate::cartridge::Mapper for A12PrimingSpyMapper {
-        fn base(&self) -> &crate::cartridge::BaseMapper {
+    impl crate::nes::cartridge::Mapper for A12PrimingSpyMapper {
+        fn base(&self) -> &crate::nes::cartridge::BaseMapper {
             &self.base
         }
 
-        fn base_mut(&mut self) -> &mut crate::cartridge::BaseMapper {
+        fn base_mut(&mut self) -> &mut crate::nes::cartridge::BaseMapper {
             &mut self.base
         }
 
@@ -1691,7 +1694,7 @@ mod tests {
     fn test_ppu_reset() {
         let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
         ppu.run_ppu_cycles(100);
-        ppu.reset(false, crate::console::RamInitMode::Zero);
+        ppu.reset(false, crate::nes::console::RamInitMode::Zero);
         assert_eq!(ppu.scanline(), 0);
         assert_eq!(ppu.pixel(), 0);
     }
@@ -2465,7 +2468,7 @@ mod tests {
     #[test]
     fn test_vertical_mirroring() {
         let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
-        ppu.set_mirroring(crate::cartridge::NametableLayout::Vertical);
+        ppu.set_mirroring(crate::nes::cartridge::NametableLayout::Vertical);
 
         // Write to nametable 0
         ppu.write_address(0x20, false);
@@ -2482,7 +2485,7 @@ mod tests {
     #[test]
     fn test_horizontal_mirroring() {
         let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
-        ppu.set_mirroring(crate::cartridge::NametableLayout::Horizontal);
+        ppu.set_mirroring(crate::nes::cartridge::NametableLayout::Horizontal);
 
         // Write to nametable 0
         ppu.write_address(0x20, false);
@@ -3311,7 +3314,7 @@ mod tests {
 
     #[test]
     fn set_vs_ppu_type_stores_and_retrieves_value() {
-        let mut ppu = Ppu::new(TimingMode::Ntsc, crate::console::RamInitMode::Zero);
+        let mut ppu = Ppu::new(TimingMode::Ntsc, crate::nes::console::RamInitMode::Zero);
 
         // Initially None
         assert_eq!(ppu.vs_ppu_type(), None);

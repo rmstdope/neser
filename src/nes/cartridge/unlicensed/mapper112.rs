@@ -7,9 +7,9 @@
 //! Known Limitations:
 //! - No IRQ support (matching mapper hardware).
 
-use crate::cartridge::NametableLayout;
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
+use crate::nes::cartridge::NametableLayout;
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
 
 /// Mapper 112 - NTDEC multicart
 pub struct Mapper112 {
@@ -144,9 +144,9 @@ impl Mapper for Mapper112 {
 #[cfg(test)]
 mod tests {
     use super::Mapper112;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     const TEST_PRG_BANKS_8K: usize = 11;
     const TEST_CHR_BANKS_1K: usize = 48;

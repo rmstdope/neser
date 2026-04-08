@@ -7,16 +7,16 @@ use super::oam_dma_device::OamDmaDevice;
 use super::ppu_device::PpuDevice;
 use super::ram_device::RamDevice;
 use crate::app_context::SharedAppContext;
-use crate::apu::SharedApu;
-use crate::cartridge::Cartridge;
-use crate::console::{ExpansionPort, HardwareMode};
 use crate::debugging::log_info;
 use crate::input::{
     ArkanoidController, ArkanoidState, Button, Controller, ControllerType, JoypadState, NesJoypad,
     PowerPad, PowerPadButton, PowerPadState, SnesAdapter, SnesAdapterState, SnesButton, Zapper,
     ZapperState,
 };
-use crate::ppu::{self, SharedPpu};
+use crate::nes::apu::SharedApu;
+use crate::nes::cartridge::Cartridge;
+use crate::nes::console::{ExpansionPort, HardwareMode};
+use crate::nes::ppu::{self, SharedPpu};
 use serde::{Deserialize, Serialize};
 use std::cell::{Cell, RefCell};
 use std::io;
@@ -70,7 +70,7 @@ pub struct ControllerModes {
     pub power_pad_famicom_enabled: bool,
     pub vs_system_enabled: bool,
     pub vs_dip_switches: u8,
-    pub vs_hardware_type: Option<crate::cartridge::VsHardwareType>,
+    pub vs_hardware_type: Option<crate::nes::cartridge::VsHardwareType>,
 }
 
 pub trait BusDevice {
@@ -97,7 +97,7 @@ pub struct Bus {
     expansion_zapper: Rc<RefCell<Zapper>>,              // Famicom expansion Zapper controller
     expansion_power_pad: Rc<RefCell<PowerPad>>,         // Famicom expansion Power Pad controller
     vs_arcade_input: Rc<Cell<u8>>,                      // VS System coin/service input state
-    vs_hardware_type: Option<crate::cartridge::VsHardwareType>, // VS System hardware type from cartridge
+    vs_hardware_type: Option<crate::nes::cartridge::VsHardwareType>, // VS System hardware type from cartridge
     open_bus: u8, // Last value on the data bus for open bus behavior
     devices: Vec<Box<dyn BusDevice>>,
 }
@@ -141,7 +141,7 @@ impl Bus {
         // Initialize CPU RAM based on config
         let mut cpu_ram = vec![0; 0x10000];
         let ram_init_mode = app_context.borrow().config().nes.ram_init_mode;
-        crate::console::initialize_ram(&mut cpu_ram[0..0x800], ram_init_mode);
+        crate::nes::console::initialize_ram(&mut cpu_ram[0..0x800], ram_init_mode);
 
         let expansion_arkanoid = Rc::new(RefCell::new(ArkanoidController::new()));
         let expansion_zapper = Rc::new(RefCell::new(Zapper::new(ppu.clone(), app_context.clone())));
@@ -235,27 +235,27 @@ impl Bus {
         Self::is_famicom_four_players(self.app_context.borrow().config())
     }
 
-    fn is_famicom_four_players(config: &crate::console::Config) -> bool {
+    fn is_famicom_four_players(config: &crate::nes::console::Config) -> bool {
         config.nes.hardware_mode == HardwareMode::Famicom
             && config.nes.expansion_port == ExpansionPort::FamicomFourPlayers
     }
 
-    fn is_arkanoid_famicom(config: &crate::console::Config) -> bool {
+    fn is_arkanoid_famicom(config: &crate::nes::console::Config) -> bool {
         config.nes.hardware_mode == HardwareMode::Famicom
             && config.nes.expansion_port == ExpansionPort::ArkanoidFamicom
     }
 
-    fn is_zapper_famicom(config: &crate::console::Config) -> bool {
+    fn is_zapper_famicom(config: &crate::nes::console::Config) -> bool {
         config.nes.hardware_mode == HardwareMode::Famicom
             && config.nes.expansion_port == ExpansionPort::ZapperFamicom
     }
 
-    fn is_power_pad_famicom(config: &crate::console::Config) -> bool {
+    fn is_power_pad_famicom(config: &crate::nes::console::Config) -> bool {
         config.nes.hardware_mode == HardwareMode::Famicom
             && config.nes.expansion_port == ExpansionPort::PowerPadFamicom
     }
 
-    fn is_vs_system(config: &crate::console::Config) -> bool {
+    fn is_vs_system(config: &crate::nes::console::Config) -> bool {
         config.nes.expansion_port == ExpansionPort::VsSystem
     }
 
@@ -321,11 +321,11 @@ impl Bus {
     ///
     /// - `soft_reset`: true for a reset-button style reset, false for power-on/hard reset
     /// - `ram_init_mode`: RAM initialization mode (only used for hard reset)
-    pub fn reset(&mut self, soft_reset: bool, ram_init_mode: crate::console::RamInitMode) {
+    pub fn reset(&mut self, soft_reset: bool, ram_init_mode: crate::nes::console::RamInitMode) {
         // On hard reset, re-initialize CPU RAM
         if !soft_reset {
             let mut cpu_ram = self.cpu_ram.borrow_mut();
-            crate::console::initialize_ram(&mut cpu_ram[0..0x800], ram_init_mode);
+            crate::nes::console::initialize_ram(&mut cpu_ram[0..0x800], ram_init_mode);
         }
 
         // Reset cartridge (and its RAM on hard reset)
@@ -339,7 +339,7 @@ impl Bus {
     pub fn reset_cartridge(
         &mut self,
         soft_reset: bool,
-        ram_init_mode: crate::console::RamInitMode,
+        ram_init_mode: crate::nes::console::RamInitMode,
     ) {
         let Some(cartridge) = self.cartridge.borrow().as_ref().cloned() else {
             return;
@@ -1123,8 +1123,8 @@ impl Bus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::console::{NesConfig, TimingMode};
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::console::{NesConfig, TimingMode};
     use std::rc::Rc;
 
     struct TestBusDevice {
@@ -1133,18 +1133,21 @@ mod tests {
         last_write: Rc<RefCell<Option<(u16, u8)>>>,
     }
 
-    fn create_test_base_mapper() -> crate::cartridge::BaseMapper {
-        let ctx = crate::cartridge::MapperContext::new_for_test(
+    fn create_test_base_mapper() -> crate::nes::cartridge::BaseMapper {
+        let ctx = crate::nes::cartridge::MapperContext::new_for_test(
             0,
             vec![0; 0x8000],
             vec![0; 8192],
-            crate::cartridge::NametableLayout::Horizontal,
+            crate::nes::cartridge::NametableLayout::Horizontal,
         );
-        crate::cartridge::BaseMapper::new(&ctx, crate::cartridge::MapperCapabilities::default())
+        crate::nes::cartridge::BaseMapper::new(
+            &ctx,
+            crate::nes::cartridge::MapperCapabilities::default(),
+        )
     }
 
     struct OamDmaCountingMapper {
-        base: crate::cartridge::BaseMapper,
+        base: crate::nes::cartridge::BaseMapper,
         oam_dma_calls: Rc<RefCell<u32>>,
     }
 
@@ -1194,12 +1197,12 @@ mod tests {
         }
     }
 
-    impl crate::cartridge::Mapper for OamDmaCountingMapper {
-        fn base(&self) -> &crate::cartridge::BaseMapper {
+    impl crate::nes::cartridge::Mapper for OamDmaCountingMapper {
+        fn base(&self) -> &crate::nes::cartridge::BaseMapper {
             &self.base
         }
 
-        fn base_mut(&mut self) -> &mut crate::cartridge::BaseMapper {
+        fn base_mut(&mut self) -> &mut crate::nes::cartridge::BaseMapper {
             &mut self.base
         }
 
@@ -1221,8 +1224,8 @@ mod tests {
             *self.oam_dma_calls.borrow_mut() += 1;
         }
 
-        fn get_mirroring(&self) -> crate::cartridge::NametableLayout {
-            crate::cartridge::NametableLayout::Horizontal
+        fn get_mirroring(&self) -> crate::nes::cartridge::NametableLayout {
+            crate::nes::cartridge::NametableLayout::Horizontal
         }
     }
 
@@ -1294,7 +1297,7 @@ mod tests {
     #[test]
     fn test_restore_mapper_state_updates_ppu_mirroring() {
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
-        let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
+        let apu = Rc::new(RefCell::new(crate::nes::apu::Apu::new()));
         let app_context = Rc::new(RefCell::new(crate::app_context::AppContext::new()));
         let mut bus = Bus::new(ppu.clone(), apu, app_context.clone());
 
@@ -1382,10 +1385,10 @@ mod tests {
 
     fn create_test_memory() -> Bus {
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
-        let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
-        let config = crate::console::Config {
+        let apu = Rc::new(RefCell::new(crate::nes::apu::Apu::new()));
+        let config = crate::nes::console::Config {
             nes: NesConfig {
-                ram_init_mode: crate::console::RamInitMode::Zero,
+                ram_init_mode: crate::nes::console::RamInitMode::Zero,
                 ..Default::default()
             },
             ..Default::default()
@@ -1398,10 +1401,10 @@ mod tests {
 
     fn create_test_memory_with_four_score_enabled() -> Bus {
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
-        let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
-        let config = crate::console::Config {
+        let apu = Rc::new(RefCell::new(crate::nes::apu::Apu::new()));
+        let config = crate::nes::console::Config {
             nes: NesConfig {
-                ram_init_mode: crate::console::RamInitMode::Zero,
+                ram_init_mode: crate::nes::console::RamInitMode::Zero,
                 four_score_enabled: true,
                 ..Default::default()
             },
@@ -1574,7 +1577,7 @@ mod tests {
     #[test]
     fn test_oam_dma_write_notifies_mapper_only_on_real_write() {
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
-        let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
+        let apu = Rc::new(RefCell::new(crate::nes::apu::Apu::new()));
         let app_context = Rc::new(RefCell::new(crate::app_context::AppContext::new()));
         let mut memory = Bus::new(ppu, apu, app_context.clone());
 
@@ -1605,7 +1608,7 @@ mod tests {
     fn test_unmapped_cartridge_space_returns_open_bus_with_mapper() {
         let mut memory = create_test_memory();
         let rom = create_mmc1_rom();
-        let cartridge = crate::cartridge::Cartridge::load_from_file(
+        let cartridge = crate::nes::cartridge::Cartridge::load_from_file(
             &rom,
             "bus-open-bus-mmc1.nes",
             Rc::new(RefCell::new(crate::app_context::AppContext::new())),
@@ -1624,7 +1627,7 @@ mod tests {
     fn test_unmapped_cartridge_space_returns_open_bus_with_nrom() {
         let mut memory = create_test_memory();
         let rom = create_nrom_rom();
-        let cartridge = crate::cartridge::Cartridge::load_from_file(
+        let cartridge = crate::nes::cartridge::Cartridge::load_from_file(
             &rom,
             "bus-open-bus-nrom.nes",
             Rc::new(RefCell::new(crate::app_context::AppContext::new())),
@@ -1731,10 +1734,10 @@ mod tests {
     #[test]
     fn test_bus_save_state_roundtrip_with_expansion_arkanoid() {
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
-        let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
-        let config = crate::console::Config {
+        let apu = Rc::new(RefCell::new(crate::nes::apu::Apu::new()));
+        let config = crate::nes::console::Config {
             nes: NesConfig {
-                ram_init_mode: crate::console::RamInitMode::Zero,
+                ram_init_mode: crate::nes::console::RamInitMode::Zero,
                 hardware_mode: HardwareMode::Famicom,
                 expansion_port: ExpansionPort::ArkanoidFamicom,
                 ..Default::default()
@@ -1761,7 +1764,7 @@ mod tests {
         // Restore and verify
         let mut restored = Bus::new(
             Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc))),
-            Rc::new(RefCell::new(crate::apu::Apu::new())),
+            Rc::new(RefCell::new(crate::nes::apu::Apu::new())),
             app_context,
         );
         restored.restore_state(&saved_state);
@@ -1785,7 +1788,7 @@ mod tests {
         // a nametable boundary can show duplicated screens.
 
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
-        let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
+        let apu = Rc::new(RefCell::new(crate::nes::apu::Apu::new()));
         let app_context = Rc::new(RefCell::new(crate::app_context::AppContext::new()));
         let mut mem = Bus::new(ppu.clone(), apu, app_context.clone());
 
@@ -1923,7 +1926,7 @@ mod tests {
 
     #[test]
     fn test_cartridge_prg_rom_16kb_read() {
-        use crate::cartridge::Cartridge;
+        use crate::nes::cartridge::Cartridge;
 
         let mut memory = create_test_memory();
 
@@ -1935,7 +1938,7 @@ mod tests {
         let cartridge = Cartridge::from_parts(
             prg_rom,
             vec![],
-            crate::cartridge::NametableLayout::Horizontal,
+            crate::nes::cartridge::NametableLayout::Horizontal,
         );
 
         memory.map_cartridge(cartridge);
@@ -1952,7 +1955,7 @@ mod tests {
 
     #[test]
     fn test_cartridge_prg_rom_32kb_read() {
-        use crate::cartridge::Cartridge;
+        use crate::nes::cartridge::Cartridge;
 
         let mut memory = create_test_memory();
 
@@ -1965,7 +1968,7 @@ mod tests {
         let cartridge = Cartridge::from_parts(
             prg_rom,
             vec![],
-            crate::cartridge::NametableLayout::Horizontal,
+            crate::nes::cartridge::NametableLayout::Horizontal,
         );
 
         memory.map_cartridge(cartridge);
@@ -1980,14 +1983,14 @@ mod tests {
 
     #[test]
     fn test_ram_still_writable_with_cartridge() {
-        use crate::cartridge::Cartridge;
+        use crate::nes::cartridge::Cartridge;
 
         let mut memory = create_test_memory();
 
         let cartridge = Cartridge::from_parts(
             vec![0; 0x4000],
             vec![],
-            crate::cartridge::NametableLayout::Horizontal,
+            crate::nes::cartridge::NametableLayout::Horizontal,
         );
 
         memory.map_cartridge(cartridge);
@@ -2715,7 +2718,7 @@ mod tests {
         rom.extend(vec![0xBB; 8 * 1024]);
 
         // Create cartridge and map it
-        let cartridge = crate::cartridge::Cartridge::load_from_file(
+        let cartridge = crate::nes::cartridge::Cartridge::load_from_file(
             &rom,
             "bus-trainer-load.nes",
             Rc::new(RefCell::new(crate::app_context::AppContext::new())),
@@ -2759,7 +2762,7 @@ mod tests {
         rom.extend(vec![0xBB; 8 * 1024]);
 
         // Create cartridge and map it
-        let cartridge = crate::cartridge::Cartridge::load_from_file(
+        let cartridge = crate::nes::cartridge::Cartridge::load_from_file(
             &rom,
             "bus-no-trainer.nes",
             Rc::new(RefCell::new(crate::app_context::AppContext::new())),
@@ -2800,7 +2803,7 @@ mod tests {
         }
         rom.extend(vec![0xFF; 16 * 1024]); // PRG ROM
 
-        let cartridge = crate::cartridge::Cartridge::load_from_file(
+        let cartridge = crate::nes::cartridge::Cartridge::load_from_file(
             &rom,
             "bus-m17-sub1-trainer.nes",
             Rc::new(RefCell::new(crate::app_context::AppContext::new())),
@@ -2824,10 +2827,10 @@ mod tests {
 
     fn create_test_memory_with_vs_system() -> Bus {
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
-        let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
-        let config = crate::console::Config {
+        let apu = Rc::new(RefCell::new(crate::nes::apu::Apu::new()));
+        let config = crate::nes::console::Config {
             nes: NesConfig {
-                ram_init_mode: crate::console::RamInitMode::Zero,
+                ram_init_mode: crate::nes::console::RamInitMode::Zero,
                 expansion_port: ExpansionPort::VsSystem,
                 ..Default::default()
             },
@@ -2841,10 +2844,10 @@ mod tests {
 
     fn create_test_memory_with_vs_system_swapped() -> Bus {
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
-        let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
-        let config = crate::console::Config {
+        let apu = Rc::new(RefCell::new(crate::nes::apu::Apu::new()));
+        let config = crate::nes::console::Config {
             nes: NesConfig {
-                ram_init_mode: crate::console::RamInitMode::Zero,
+                ram_init_mode: crate::nes::console::RamInitMode::Zero,
                 expansion_port: ExpansionPort::VsSystem,
                 vs_controllers_swapped: true,
                 ..Default::default()
@@ -2990,10 +2993,10 @@ mod tests {
 
     #[test]
     fn map_cartridge_sets_vs_ppu_type_on_ppu() {
-        use crate::cartridge::VsPpuType;
+        use crate::nes::cartridge::VsPpuType;
 
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
-        let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
+        let apu = Rc::new(RefCell::new(crate::nes::apu::Apu::new()));
         let app_context = Rc::new(RefCell::new(crate::app_context::AppContext::new()));
         let mut bus = Bus::new(ppu.clone(), apu, app_context);
 

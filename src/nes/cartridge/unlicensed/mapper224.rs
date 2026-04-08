@@ -54,9 +54,9 @@
 //! ### Power-on/reset state
 //! `outer_bank = 0` (first 512 KiB block, pure MMC3 behavior).
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mmc3::MMC3Mapper;
-use crate::cartridge::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mmc3::MMC3Mapper;
+use crate::nes::cartridge::{Mapper, MapperCapabilities};
 
 const MAPPER_NUMBER: u16 = 224;
 const PRG_BANK_SIZE: usize = 0x2000; // 8 KiB
@@ -72,7 +72,7 @@ pub struct Mapper224 {
 }
 
 impl Mapper224 {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         Self {
             mmc3: MMC3Mapper::new_with_irq_mode(ctx.prg_rom, ctx.chr_rom, ctx.mirroring, false),
             outer_bank: 0,
@@ -183,7 +183,7 @@ impl Mapper for Mapper224 {
         }
     }
 
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+    fn initialize_ram(&mut self, mode: crate::nes::console::RamInitMode) {
         self.mmc3.initialize_ram(mode);
     }
 
@@ -208,9 +208,9 @@ impl Mapper for Mapper224 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     // 128 PRG banks = 1024 KiB (full addressable range for mapper 224).
     const PRG_8K_BANKS: usize = 128;

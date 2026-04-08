@@ -9,8 +9,8 @@
 /// - Length counter
 use super::envelope::Envelope;
 use super::length_counter::LengthCounter;
-use crate::apu::envelope::EnvelopeState;
-use crate::console::TimingMode;
+use crate::nes::apu::envelope::EnvelopeState;
+use crate::nes::console::TimingMode;
 use crate::trace_apu;
 use serde::{Deserialize, Serialize};
 
@@ -263,7 +263,7 @@ impl Noise {
 #[allow(clippy::unusual_byte_groupings)]
 mod tests {
     use super::*;
-    use crate::console::TimingMode;
+    use crate::nes::console::TimingMode;
 
     fn write_length(noise: &mut Noise, value: u8) {
         noise.write_length(value);

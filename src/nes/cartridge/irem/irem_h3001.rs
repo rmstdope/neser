@@ -6,11 +6,11 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
-use crate::cartridge::BaseMapper;
-use crate::cartridge::NametableLayout;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::BaseMapper;
+use crate::nes::cartridge::NametableLayout;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
-use crate::cartridge::cpu_cycle_irq::{CpuCycleIrq, CpuCycleIrqMode};
+use crate::nes::cartridge::cpu_cycle_irq::{CpuCycleIrq, CpuCycleIrqMode};
 
 /// Mapper 065 - Irem H3001
 ///
@@ -51,7 +51,7 @@ impl IremH3001Mapper {
     const PRG_BANK_SIZE: usize = 0x2000; // 8 KiB
     const CHR_BANK_SIZE: usize = 0x0400; // 1 KiB
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_irq: true,
             has_chr_banking: true,
@@ -225,8 +225,8 @@ impl Mapper for IremH3001Mapper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     const PRG_BANKS: usize = 32;
     const CHR_BANKS: usize = 64;

@@ -39,11 +39,11 @@
 //! Known Limitations:
 //! - **Expansion audio not implemented** (5B audio chip)
 
-use crate::cartridge::BaseMapper;
-use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
+use crate::nes::cartridge::BaseMapper;
+use crate::nes::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 use crate::trace_mapper;
 
-use crate::cartridge::cpu_cycle_irq::{CpuCycleIrq, CpuCycleIrqMode};
+use crate::nes::cartridge::cpu_cycle_irq::{CpuCycleIrq, CpuCycleIrqMode};
 
 pub struct SunsoftFme7Mapper {
     base: BaseMapper,
@@ -71,7 +71,7 @@ pub struct SunsoftFme7Mapper {
 }
 
 impl SunsoftFme7Mapper {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_irq: true,
             has_chr_banking: true,
@@ -322,8 +322,8 @@ impl Mapper for SunsoftFme7Mapper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     #[test]
     fn test_mapper_69_is_wired_in_factory() {

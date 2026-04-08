@@ -1,9 +1,9 @@
 #[cfg(test)]
 mod tests {
-    use crate::apu::Apu;
-    use crate::bus::BusDevice;
-    use crate::bus::apu_device::ApuDevice;
-    use crate::console::TimingMode;
+    use crate::nes::apu::Apu;
+    use crate::nes::bus::BusDevice;
+    use crate::nes::bus::apu_device::ApuDevice;
+    use crate::nes::console::TimingMode;
     use std::cell::RefCell;
     use std::rc::Rc;
 

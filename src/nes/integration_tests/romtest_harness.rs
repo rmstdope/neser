@@ -1,9 +1,9 @@
 #[cfg(test)]
 pub(crate) mod tests {
-    use crate::cartridge::Cartridge;
-    use crate::console::{Config, ExpansionPort, HardwareMode, Nes, NesConfig, RamInitMode};
     use crate::input::{Button, ControllerType, SnesButton};
-    use crate::integration_tests::rom_test_runner::tests::run_nes_for_frames;
+    use crate::nes::cartridge::Cartridge;
+    use crate::nes::console::{Config, ExpansionPort, HardwareMode, Nes, NesConfig, RamInitMode};
+    use crate::nes::integration_tests::rom_test_runner::tests::run_nes_for_frames;
 
     /// Controller configuration for a test scenario.
     #[derive(Debug, Clone)]

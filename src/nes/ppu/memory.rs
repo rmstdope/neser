@@ -1,4 +1,4 @@
-use crate::cartridge::{Cartridge, NametableLayout};
+use crate::nes::cartridge::{Cartridge, NametableLayout};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -24,26 +24,27 @@ pub struct Memory {
 impl Default for Memory {
     fn default() -> Self {
         // Default to Zero mode for tests that don't specify
-        Self::new(crate::console::RamInitMode::Zero)
+        Self::new(crate::nes::console::RamInitMode::Zero)
     }
 }
 
 impl Memory {
     /// Create a new Memory instance
-    pub fn new(ram_init_mode: crate::console::RamInitMode) -> Self {
+    pub fn new(ram_init_mode: crate::nes::console::RamInitMode) -> Self {
         let mut ppu_ram = [0u8; 4096];
         let mut palette_ram = [0u8; 32];
 
         // Initialize nametable RAM based on mode
-        crate::console::initialize_ram(&mut ppu_ram, ram_init_mode);
+        crate::nes::console::initialize_ram(&mut ppu_ram, ram_init_mode);
 
         // Initialize palette RAM based on mode
         // Note: For Random mode, use hardware-measured power-up pattern
         match ram_init_mode {
-            crate::console::RamInitMode::Zero => {
+            crate::nes::console::RamInitMode::Zero => {
                 // Palette RAM is already zero-initialized above
             }
-            crate::console::RamInitMode::Random | crate::console::RamInitMode::SeededRandom(_) => {
+            crate::nes::console::RamInitMode::Random
+            | crate::nes::console::RamInitMode::SeededRandom(_) => {
                 // Use hardware-measured power-up palette pattern for hardware accuracy
                 palette_ram = DEFAULT_PALETTE_RAM;
             }
@@ -73,17 +74,18 @@ impl Memory {
     /// Re-initialize RAM (nametable and palette) based on the given mode.
     ///
     /// This should be called on hard reset only. Soft resets preserve RAM contents.
-    pub fn reinitialize(&mut self, mode: crate::console::RamInitMode) {
+    pub fn reinitialize(&mut self, mode: crate::nes::console::RamInitMode) {
         // Initialize nametable RAM
-        crate::console::initialize_ram(&mut self.ppu_ram, mode);
+        crate::nes::console::initialize_ram(&mut self.ppu_ram, mode);
 
         // Initialize palette RAM
         // Note: For Random mode, use hardware-measured power-up pattern
         match mode {
-            crate::console::RamInitMode::Zero => {
-                crate::console::initialize_ram(&mut self.palette_ram, mode);
+            crate::nes::console::RamInitMode::Zero => {
+                crate::nes::console::initialize_ram(&mut self.palette_ram, mode);
             }
-            crate::console::RamInitMode::Random | crate::console::RamInitMode::SeededRandom(_) => {
+            crate::nes::console::RamInitMode::Random
+            | crate::nes::console::RamInitMode::SeededRandom(_) => {
                 // Use hardware-measured power-up palette pattern for hardware accuracy
                 self.palette_ram = DEFAULT_PALETTE_RAM;
             }
@@ -372,28 +374,31 @@ impl Memory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::Cartridge;
+    use crate::nes::cartridge::Cartridge;
 
-    fn create_test_base_mapper() -> crate::cartridge::BaseMapper {
-        let ctx = crate::cartridge::MapperContext::new_for_test(
+    fn create_test_base_mapper() -> crate::nes::cartridge::BaseMapper {
+        let ctx = crate::nes::cartridge::MapperContext::new_for_test(
             0,
             vec![0; 0x8000],
             vec![0; 8192],
-            crate::cartridge::NametableLayout::Horizontal,
+            crate::nes::cartridge::NametableLayout::Horizontal,
         );
-        crate::cartridge::BaseMapper::new(&ctx, crate::cartridge::MapperCapabilities::default())
+        crate::nes::cartridge::BaseMapper::new(
+            &ctx,
+            crate::nes::cartridge::MapperCapabilities::default(),
+        )
     }
 
     struct TestNametableOverrideMapper {
-        base: crate::cartridge::BaseMapper,
+        base: crate::nes::cartridge::BaseMapper,
     }
 
-    impl crate::cartridge::Mapper for TestNametableOverrideMapper {
-        fn base(&self) -> &crate::cartridge::BaseMapper {
+    impl crate::nes::cartridge::Mapper for TestNametableOverrideMapper {
+        fn base(&self) -> &crate::nes::cartridge::BaseMapper {
             &self.base
         }
 
-        fn base_mut(&mut self) -> &mut crate::cartridge::BaseMapper {
+        fn base_mut(&mut self) -> &mut crate::nes::cartridge::BaseMapper {
             &mut self.base
         }
 

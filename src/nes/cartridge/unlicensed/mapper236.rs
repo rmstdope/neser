@@ -6,8 +6,8 @@
 //! Known Limitations:
 //! - Solder pad (DIP switch) value is always treated as 0 (no physical switch emulation).
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 const MAPPER_NUMBER: u16 = 236;
 
@@ -50,7 +50,7 @@ pub struct Mapper236 {
 }
 
 impl Mapper236 {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let has_chr_rom = !ctx.chr_rom.is_empty();
         let capabilities = MapperCapabilities {
             has_dynamic_mirroring: true,
@@ -182,9 +182,9 @@ impl Mapper for Mapper236 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     const PRG_BANKS: usize = 8; // 8 x 16KB = 128KB (CHR-ROM variant)
     const CHR_BANKS: usize = 8; // 8 x 8KB = 64KB

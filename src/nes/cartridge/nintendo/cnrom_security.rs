@@ -10,9 +10,9 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::MapperContext;
-use crate::cartridge::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::MapperContext;
+use crate::nes::cartridge::{Mapper, MapperCapabilities};
 
 /// Mapper 185 - CNROM variant with CHR-ROM chip select gating.
 ///
@@ -97,8 +97,8 @@ impl Mapper for CnromSecurityMapper {
 
 #[cfg(test)]
 mod tests {
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
 
     fn chr_rom_with_banks(num_banks: usize) -> Vec<u8> {
         let mut chr = vec![0; num_banks * 8 * 1024];

@@ -2,7 +2,7 @@
 // in `src/cartridge/ines.rs`. The local copies were removed to avoid
 // dead-code warnings.
 
-use neser::cartridge::{ConsoleType, ParsedRom, RomDb, RomParseError, TimingMode};
+use neser::nes::cartridge::{ConsoleType, ParsedRom, RomDb, RomParseError, TimingMode};
 
 const DEFAULT_LIST_ROOT: &str = "roms/games";
 

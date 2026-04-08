@@ -9,10 +9,10 @@
 //!   mapper 116 clone hardware behavior differs from Nintendo MMC1 timing.
 //! - Submapper variants currently share the same behavior path.
 
-use crate::cartridge::NametableLayout;
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mmc3::MMC3Mapper;
-use crate::cartridge::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::NametableLayout;
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mmc3::MMC3Mapper;
+use crate::nes::cartridge::{Mapper, MapperCapabilities};
 
 pub struct Mapper116 {
     mmc3: MMC3Mapper,
@@ -31,7 +31,7 @@ pub struct Mapper116 {
 impl Mapper116 {
     const MODE_SELECT_MASK: u16 = 0x4100;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let mmc3_mirroring = u8::from(matches!(ctx.mirroring, NametableLayout::Horizontal));
         let mut mapper = Self {
             mmc3: MMC3Mapper::new_with_irq_mode(ctx.prg_rom, ctx.chr_rom, ctx.mirroring, false),
@@ -403,9 +403,9 @@ impl Mapper for Mapper116 {
 
 #[cfg(test)]
 mod tests {
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     const MAPPER_ID: u16 = 116;
     // Non-power-of-two sizes avoid modulo-wrapping false positives in bank assertions.

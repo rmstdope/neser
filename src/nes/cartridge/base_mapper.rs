@@ -6,7 +6,7 @@
 use super::common::{ChrMemory, DEFAULT_CHR_RAM_SIZE, DEFAULT_PRG_RAM_SIZE, PrgRam};
 use super::mapper::{MapperCapabilities, MapperContext};
 use super::rom_db::VsHardwareType;
-use crate::cartridge::NametableLayout;
+use crate::nes::cartridge::NametableLayout;
 use std::cell::Cell;
 
 /// VS System copy protection lookup tables (from Mesen2 / Nocash documentation).
@@ -354,7 +354,7 @@ impl BaseMapper {
     }
 
     /// Re-initialize all RAM (PRG-RAM + CHR-RAM) for cartridge insertion / hard reset.
-    pub fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+    pub fn initialize_ram(&mut self, mode: crate::nes::console::RamInitMode) {
         if let Some(prg_ram) = &mut self.prg_ram {
             prg_ram.initialize(mode);
         }
@@ -365,7 +365,7 @@ impl BaseMapper {
     ///
     /// Used when inserting a battery-backed cartridge: PRG-RAM was already
     /// loaded from disk and must not be overwritten.
-    pub fn initialize_chr_ram(&mut self, mode: crate::console::RamInitMode) {
+    pub fn initialize_chr_ram(&mut self, mode: crate::nes::console::RamInitMode) {
         self.chr_memory.initialize(mode);
     }
 

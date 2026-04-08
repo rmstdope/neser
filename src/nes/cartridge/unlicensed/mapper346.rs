@@ -7,8 +7,8 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 const PRG_BANK_SIZE_KB: usize = 32;
 const CHR_BANK_SIZE_KB: usize = 8;
@@ -34,7 +34,7 @@ impl Mapper346 {
         }
     }
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             prg_bank_size_kb: PRG_BANK_SIZE_KB,
             chr_bank_size_kb: CHR_BANK_SIZE_KB,
@@ -76,9 +76,9 @@ impl Mapper for Mapper346 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     fn test_context() -> MapperContext {
         MapperContext::new_for_test(

@@ -55,9 +55,9 @@
 //!
 //! 32 KB mode, PRG banks 0 + 1, CHR bank 0, Vertical mirroring.
 
-use crate::cartridge::NametableLayout;
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
+use crate::nes::cartridge::NametableLayout;
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
 
 const MAPPER_NUMBER: u16 = 225;
 
@@ -152,8 +152,8 @@ impl Mapper for Mapper225 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     /// Non-power-of-two bank counts prevent modulo-wrap false positives.
     /// 131 × 16 KiB covers the full 7-bit PRG page range (0–127) and is odd.

@@ -6,9 +6,9 @@
 //! Known Limitations:
 //! - DIP switch read at $5000 always returns 0x00; DIP bits are not emulated.
 
-use crate::cartridge::NametableLayout;
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::NametableLayout;
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// Mapper 083 – Caltron 6-in-1 / bootleg multicart
 ///
@@ -101,7 +101,7 @@ impl Mapper83 {
     const IRQ_COUNTER_RESET: u16 = 0xFFFF;
     const SNAPSHOT_SIZE: usize = 22; // 7 header + 11 regs + 4 ex_regs
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_irq: true,
             has_chr_banking: true,
@@ -316,8 +316,8 @@ impl Mapper for Mapper83 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     // Use non-power-of-two bank counts to prevent false-pass modulo wrapping.
     const PRG_BANKS: usize = 33; // 33 × 8KB = 264KB

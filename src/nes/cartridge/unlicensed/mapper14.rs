@@ -8,9 +8,9 @@
 //! - CHR outer-bit behavior in MMC3 mode follows widely used emulator behavior,
 //!   but some hardware edge cases remain unverified.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mmc3::MMC3Mapper;
-use crate::cartridge::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mmc3::MMC3Mapper;
+use crate::nes::cartridge::{Mapper, MapperCapabilities};
 
 pub struct Mapper14 {
     mmc3: MMC3Mapper,
@@ -28,7 +28,7 @@ impl Mapper14 {
     const CHR_OUTER_MID_HALF: u8 = 0x20;
     const CHR_OUTER_HIGH_HALF: u8 = 0x80;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let mut mapper = Self {
             mmc3: MMC3Mapper::new_with_irq_mode(ctx.prg_rom, ctx.chr_rom, ctx.mirroring, false),
             mode: 0,
@@ -247,9 +247,9 @@ impl Mapper for Mapper14 {
 #[cfg(test)]
 mod tests {
     use super::Mapper14;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::{banked_data, banked_data_with_upper_marker};
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::{banked_data, banked_data_with_upper_marker};
 
     const PRG_BANKS_8K: usize = 41;
     const CHR_BANKS_1K: usize = 513;

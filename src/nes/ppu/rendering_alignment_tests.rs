@@ -2,9 +2,9 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::console::{Nes, TimingMode};
-    use crate::ppu::ppu::Ppu;
-    use crate::ppu::test_utils::InesRomBuilder;
+    use crate::nes::console::{Nes, TimingMode};
+    use crate::nes::ppu::ppu::Ppu;
+    use crate::nes::ppu::test_utils::InesRomBuilder;
     use std::cell::RefCell;
     use std::rc::Rc;
 

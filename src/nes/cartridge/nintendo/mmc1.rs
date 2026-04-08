@@ -5,10 +5,10 @@
 //! - Edge-case behavior may still differ from hardware in untested timing and board-variant scenarios.
 //! - See CARTRIDGE_REVIEW.md sections 5 and 6 for remaining mapper test/documentation follow-up.
 
-use crate::cartridge::BaseMapper;
-use crate::cartridge::Mapper;
-use crate::cartridge::MapperCapabilities;
-use crate::cartridge::NametableLayout;
+use crate::nes::cartridge::BaseMapper;
+use crate::nes::cartridge::Mapper;
+use crate::nes::cartridge::MapperCapabilities;
+use crate::nes::cartridge::NametableLayout;
 use crate::trace_mapper;
 
 // Memory size constants
@@ -129,7 +129,7 @@ impl MMC1Mapper {
         (submapper == MMC1_SUBMAPPER_HARDWIRED_MIRRORING).then_some(header_mirroring)
     }
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let prg_ram_size = (ctx.prg_ram_banks_8k as usize) * 8192;
         let surom = ctx.prg_rom.len() > 256 * 1024;
         let sorom = ctx.prg_ram_banks_8k >= 2;
@@ -186,7 +186,7 @@ impl MMC1Mapper {
         mirroring: NametableLayout,
         revision: Mmc1Revision,
     ) -> Self {
-        use crate::cartridge::mapper::MapperContext;
+        use crate::nes::cartridge::mapper::MapperContext;
 
         let surom = prg_rom.len() > 256 * 1024;
         let prg_bank = Self::power_on_prg_bank_for_revision(revision);
@@ -551,8 +551,8 @@ impl Mapper for MMC1Mapper {
         self.prg_ram[..to_copy].copy_from_slice(&data[..to_copy]);
     }
 
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        crate::console::initialize_ram(&mut self.prg_ram, mode);
+    fn initialize_ram(&mut self, mode: crate::nes::console::RamInitMode) {
+        crate::nes::console::initialize_ram(&mut self.prg_ram, mode);
         self.base.initialize_ram(mode); // Only initializes CHR-RAM (no PRG-RAM in base)
     }
 
@@ -651,7 +651,7 @@ impl Mapper for MMC1Mapper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
 
     const TEST_PRG_ROM_SIZE: usize = 128 * 1024;
     const TEST_CHR_ROM_SIZE: usize = 8 * 1024;

@@ -1,8 +1,8 @@
 //! Mapper 123 - MMC3 variant used by unlicensed Taiwan/Hong Kong cartridges
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
-use crate::cartridge::mmc3::MMC3Mapper;
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::mmc3::MMC3Mapper;
 
 const MAPPER_NUMBER: u16 = 123;
 
@@ -11,7 +11,7 @@ pub struct Mapper123 {
 }
 
 impl Mapper123 {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         Self {
             mmc3: MMC3Mapper::new(ctx),
         }
@@ -90,9 +90,9 @@ impl Mapper for Mapper123 {
 
 #[cfg(test)]
 mod tests {
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     const PRG_BANKS_8K: usize = 96;
     const CHR_BANKS_1K: usize = 192;

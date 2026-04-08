@@ -31,9 +31,9 @@
 //! - No PRG-RAM on SLROM hardware; the `$6000–$7FFF` range is write-only (outer bank reg).
 //! - Soft-reset vs hard-reset distinction not preserved; both reset to power-on state.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
-use crate::cartridge::mmc1::MMC1Mapper;
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::mmc1::MMC1Mapper;
 
 // Indices into MMC1 `registers_snapshot()` output.
 const MMC1_SNAP_CONTROL: usize = 2;
@@ -59,7 +59,7 @@ pub struct Mapper323 {
 }
 
 impl Mapper323 {
-    pub fn new(mut ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(mut ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         // Farid SLROM has no PRG-RAM; force MMC1 to allocate none, regardless of header.
         ctx.prg_ram_banks_8k = 0;
         ctx.prg_ram_size_specified = true;
@@ -217,7 +217,7 @@ impl Mapper for Mapper323 {
         self.inner.cpu_cycle();
     }
 
-    fn get_mirroring(&self) -> crate::cartridge::NametableLayout {
+    fn get_mirroring(&self) -> crate::nes::cartridge::NametableLayout {
         self.inner.get_mirroring()
     }
 
@@ -233,7 +233,7 @@ impl Mapper for Mapper323 {
         self.inner.load_wram_snapshot(data);
     }
 
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+    fn initialize_ram(&mut self, mode: crate::nes::console::RamInitMode) {
         self.inner.initialize_ram(mode);
     }
 
@@ -275,9 +275,9 @@ impl Mapper for Mapper323 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     const MAPPER_NUMBER: u16 = 323;
     // Non-power-of-two to catch modulo-wrapping false-passes.

@@ -4,9 +4,9 @@
 //! - Main: <https://www.nesdev.org/wiki/INES_Mapper_114>
 //! - Mesen reference: `MMC3_114`
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mmc3::MMC3Mapper;
-use crate::cartridge::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mmc3::MMC3Mapper;
+use crate::nes::cartridge::{Mapper, MapperCapabilities};
 
 pub struct Mapper114 {
     mmc3: MMC3Mapper,
@@ -25,7 +25,7 @@ impl Mapper114 {
     const SECURITY_INDEX_MASK: u8 = 0x07;
     const USE_ALTERNATE_IRQ: bool = false;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         Self {
             mmc3: MMC3Mapper::new_with_irq_mode(
                 ctx.prg_rom,
@@ -178,9 +178,9 @@ impl Mapper for Mapper114 {
 
 #[cfg(test)]
 mod tests {
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     const PRG_BANKS_8K: usize = 48;
     const CHR_BANKS_1K: usize = 96;

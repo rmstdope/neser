@@ -7,7 +7,7 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-use crate::cartridge::{HardwareType, NametableLayout};
+use crate::nes::cartridge::{HardwareType, NametableLayout};
 use num_enum::TryFromPrimitive;
 
 const ROM_DB_COLUMN_COUNT: usize = 21;
@@ -823,7 +823,7 @@ mod tests {
 
         assert_eq!(
             entry.nametable_layout,
-            Some(crate::cartridge::NametableLayout::Horizontal)
+            Some(crate::nes::cartridge::NametableLayout::Horizontal)
         );
     }
 

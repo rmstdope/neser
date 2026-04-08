@@ -6,10 +6,10 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
-use crate::cartridge::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
-use crate::cartridge::cpu_cycle_irq::{CpuCycleIrq, CpuCycleIrqMode};
+use crate::nes::cartridge::cpu_cycle_irq::{CpuCycleIrq, CpuCycleIrqMode};
 
 /// Mapper 043 - TONY-I / YS-612 (SMB2 Japanese FDS conversion)
 ///
@@ -45,7 +45,7 @@ impl Mapper43 {
     const PRG_BANK_SIZE: usize = 0x2000;
     const BANK_LOOKUP: [u8; 8] = [4, 3, 4, 4, 4, 7, 5, 6];
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let mirroring = ctx.mirroring;
         let capabilities = MapperCapabilities {
             has_irq: true,
@@ -155,8 +155,8 @@ impl Mapper for Mapper43 {
 #[cfg(test)]
 mod tests {
     use super::Mapper43;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
 
     const PRG_SIZE: usize = 80 * 1024; // 80 KiB
     const CHR_SIZE: usize = 8 * 1024; // 8 KiB

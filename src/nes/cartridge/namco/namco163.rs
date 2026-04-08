@@ -7,9 +7,9 @@
 
 use std::cell::Cell;
 
-use crate::cartridge::BaseMapper;
-use crate::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
-use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
+use crate::nes::cartridge::BaseMapper;
+use crate::nes::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::nes::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
 /// Mapper 19 - Namco 163 (Namco 129/163 with expansion audio)
 ///
@@ -68,7 +68,7 @@ impl Namco163Mapper {
     const IRQ_LOW_REG: usize = 12;
     const IRQ_HIGH_ENABLE_REG: usize = 13;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let mirroring = ctx.mirroring;
         let capabilities = MapperCapabilities {
             has_irq: true,
@@ -678,10 +678,10 @@ impl Mapper for Namco163Mapper {
 
 #[cfg(test)]
 mod tests {
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::namco163::Namco163Mapper;
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::namco163::Namco163Mapper;
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     fn create_namco163_mapper(
         prg_rom: Vec<u8>,

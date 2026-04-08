@@ -61,9 +61,9 @@
 //! ## PRG-RAM
 //! Optional 8 KiB PRG-RAM at $6000–$7FFF, controlled by MMC3's $A001 register.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mmc3::MMC3Mapper;
-use crate::cartridge::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mmc3::MMC3Mapper;
+use crate::nes::cartridge::{Mapper, MapperCapabilities};
 
 /// Mapper 333 – BMC-8-in-1, an MMC3 variant with an outer bank register.
 pub struct Mapper333 {
@@ -79,7 +79,7 @@ impl Mapper333 {
     const CHR_BANK_SIZE: usize = 0x0400;
     const CHR_BANK_MASK: usize = Self::CHR_BANK_SIZE - 1;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         Self {
             mmc3: MMC3Mapper::new_with_irq_mode(ctx.prg_rom, ctx.chr_rom, ctx.mirroring, false),
             reg: 0,
@@ -229,9 +229,9 @@ impl Mapper for Mapper333 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     // Use non-power-of-two bank counts to expose modulo-wrap issues.
     const PRG_8K_BANKS: usize = 9;

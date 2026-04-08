@@ -13,9 +13,9 @@
 //!   emulated.  Only the MMC3-compatible PRG/CHR/IRQ register interface is
 //!   implemented here.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
-use crate::cartridge::mmc3::MMC3Mapper;
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::mmc3::MMC3Mapper;
 
 const MAPPER_NUMBER: u16 = 124;
 
@@ -31,7 +31,7 @@ pub struct Mapper124 {
 }
 
 impl Mapper124 {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         Self {
             mmc3: MMC3Mapper::new(ctx),
         }
@@ -110,9 +110,9 @@ impl Mapper for Mapper124 {
 
 #[cfg(test)]
 mod tests {
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     const PRG_BANKS_8K: usize = 8;
     const CHR_BANKS_1K: usize = 16;

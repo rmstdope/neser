@@ -13,8 +13,8 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
-use crate::cartridge::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
+use crate::nes::cartridge::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
 
 /// Mapper 151 — VRC1 on VS System
 ///
@@ -148,9 +148,9 @@ impl Mapper for Mapper151 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::create_mapper;
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::create_mapper;
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     // Non-power-of-two to prevent modulo-wrapping false-passes
     const PRG_BANKS: usize = 11; // 11 × 8KB = 88KB

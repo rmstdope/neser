@@ -8,9 +8,9 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mmc3::MMC3Mapper;
-use crate::cartridge::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mmc3::MMC3Mapper;
+use crate::nes::cartridge::{Mapper, MapperCapabilities};
 
 /// Mapper 217 - MMC3 variant with extended outer-bank and operation-mode registers
 ///
@@ -59,7 +59,7 @@ impl Mapper217 {
     /// LUT used in mode B to remap the lower 3 bits of a $8001 write value.
     const LUT: [u8; 8] = [0, 6, 3, 7, 5, 2, 4, 1];
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let mut mapper = Self {
             mmc3: MMC3Mapper::new_with_irq_mode(ctx.prg_rom, ctx.chr_rom, ctx.mirroring, false),
             // Power-on state from Mesen: ex_regs[0]=0, [1]=0xFF, [2]=0x03, [3]=0
@@ -297,9 +297,9 @@ impl Mapper for Mapper217 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     // Helper constants
     const PRG_BANKS_32: usize = 32; // 32 × 8KB = 256KB

@@ -4,10 +4,10 @@
 //! - No mapper-specific gameplay-blocking functional limitations are currently documented.
 //! - Edge-case behavior may still differ from hardware in untested timing scenarios.
 
-use crate::cartridge::BaseMapper;
-use crate::cartridge::Mapper;
-use crate::cartridge::MapperCapabilities;
-use crate::cartridge::NametableLayout;
+use crate::nes::cartridge::BaseMapper;
+use crate::nes::cartridge::Mapper;
+use crate::nes::cartridge::MapperCapabilities;
+use crate::nes::cartridge::NametableLayout;
 
 /// Size of the switchable CHR-ROM page (4 KB).
 const CHR_ROM_PAGE_SIZE: usize = 4 * 1024;
@@ -41,7 +41,7 @@ pub struct IremLrog017Mapper {
 }
 
 impl IremLrog017Mapper {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
             chr_bank_size_kb: 4,
@@ -138,19 +138,19 @@ impl Mapper for IremLrog017Mapper {
         self.chr_ram[..len].copy_from_slice(&data[..len]);
     }
 
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+    fn initialize_ram(&mut self, mode: crate::nes::console::RamInitMode) {
         // Initialize the base mapper's RAM (PRG-RAM, if any).
         self.base_mut().initialize_ram(mode);
         // Also initialize the on-board CHR-RAM that is managed directly by this mapper.
-        crate::console::initialize_ram(&mut self.chr_ram, mode);
+        crate::nes::console::initialize_ram(&mut self.chr_ram, mode);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     /// Create a IremLrog017Mapper with 32 KB PRG-ROM and 16 KB CHR-ROM (4 banks of 4 KB).
     fn make_mapper() -> IremLrog017Mapper {

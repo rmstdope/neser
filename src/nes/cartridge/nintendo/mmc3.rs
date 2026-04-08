@@ -9,10 +9,10 @@
 //
 // ============================================================================
 
-use crate::cartridge::BaseMapper;
-use crate::cartridge::common::A12RisingEdgeDetector;
-use crate::cartridge::rom_db;
-use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
+use crate::nes::cartridge::BaseMapper;
+use crate::nes::cartridge::common::A12RisingEdgeDetector;
+use crate::nes::cartridge::rom_db;
+use crate::nes::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 use crate::trace_mapper;
 
 // ============================================================================
@@ -85,7 +85,7 @@ impl MMC3Mapper {
     const PRG_RAM_ENABLE_MASK: u8 = 0b1000_0000;
     const PRG_RAM_WRITE_PROTECT_MASK: u8 = 0b0100_0000;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let crc32 = ctx.crc32;
         let use_alternate_irq = rom_db::requires_mmc3_alternate_irq(crc32);
         let prg_ram_banks_8k = if ctx.prg_ram_size_specified {
@@ -104,7 +104,7 @@ impl MMC3Mapper {
         mirroring: NametableLayout,
         use_alternate_irq: bool,
     ) -> Self {
-        let ctx = crate::cartridge::mapper::MapperContext {
+        let ctx = crate::nes::cartridge::mapper::MapperContext {
             mapper: 4,
             submapper: 0,
             prg_rom,
@@ -113,7 +113,7 @@ impl MMC3Mapper {
             prg_ram_banks_8k: Self::DEFAULT_PRG_RAM_BANKS_8K,
             prg_ram_size_specified: true,
             battery_backed_prg_ram: false,
-            hardware_type: crate::cartridge::HardwareType::NesNtsc,
+            hardware_type: crate::nes::cartridge::HardwareType::NesNtsc,
             chr_ram_size_bytes: None,
             crc32: 0,
             vs_hardware_type: None,
@@ -131,7 +131,7 @@ impl MMC3Mapper {
         use_alternate_irq: bool,
         prg_ram_banks_8k: u8,
     ) -> Self {
-        let ctx = crate::cartridge::mapper::MapperContext {
+        let ctx = crate::nes::cartridge::mapper::MapperContext {
             mapper: 4,
             submapper: 0,
             prg_rom,
@@ -140,7 +140,7 @@ impl MMC3Mapper {
             prg_ram_banks_8k,
             prg_ram_size_specified: true,
             battery_backed_prg_ram: false,
-            hardware_type: crate::cartridge::HardwareType::NesNtsc,
+            hardware_type: crate::nes::cartridge::HardwareType::NesNtsc,
             chr_ram_size_bytes: None,
             crc32: 0,
             vs_hardware_type: None,
@@ -149,7 +149,7 @@ impl MMC3Mapper {
     }
 
     fn new_internal(
-        ctx: crate::cartridge::mapper::MapperContext,
+        ctx: crate::nes::cartridge::mapper::MapperContext,
         prg_ram_banks_8k: u8,
         use_alternate_irq: bool,
     ) -> Self {
@@ -622,10 +622,10 @@ impl MMC3Mapper {
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod tests {
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::mmc3::MMC3Mapper;
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::mmc3::MMC3Mapper;
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     fn create_mmc3_mapper(
         prg_rom: Vec<u8>,
@@ -1579,8 +1579,8 @@ impl Mapper for MMC3Mapper {
         self.prg_ram[..to_copy].copy_from_slice(&data[..to_copy]);
     }
 
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        crate::console::initialize_ram(&mut self.prg_ram, mode);
+    fn initialize_ram(&mut self, mode: crate::nes::console::RamInitMode) {
+        crate::nes::console::initialize_ram(&mut self.prg_ram, mode);
         self.base.initialize_ram(mode);
     }
 

@@ -7,10 +7,10 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
-use crate::cartridge::NametableLayout;
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::common::ChrMemory;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::NametableLayout;
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::common::ChrMemory;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 pub struct Un1romMapper {
     base: BaseMapper,
@@ -18,7 +18,7 @@ pub struct Un1romMapper {
 }
 
 impl Un1romMapper {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let chr_seed = ctx.chr_rom.clone();
         let capabilities = MapperCapabilities {
             max_prg_ram_kb: 0,
@@ -79,8 +79,8 @@ impl Mapper for Un1romMapper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
 
     const PRG_BANK_SIZE: usize = 16 * 1024;
     const PRG_BANKS: usize = 13;

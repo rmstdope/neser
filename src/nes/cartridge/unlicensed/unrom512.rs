@@ -21,10 +21,10 @@
 //! Known Limitations:
 //! - NES 2.0 self-flash PRG-ROM write emulation is not implemented.
 
-use crate::cartridge::NametableLayout;
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::common::ChrMemory;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::NametableLayout;
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::common::ChrMemory;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 const CHR_RAM_SIZE: usize = 32 * 1024;
 
@@ -42,7 +42,7 @@ pub struct Unrom512Mapper {
 }
 
 impl Unrom512Mapper {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let submapper = ctx.submapper;
         let header_mirroring = ctx.mirroring;
 
@@ -149,9 +149,9 @@ impl Mapper for Unrom512Mapper {
 
 #[cfg(test)]
 mod tests {
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     /// Create a mapper 30 with submapper 1 (no bus conflicts) and H mirroring.
     fn make_mapper30() -> Box<dyn Mapper> {

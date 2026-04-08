@@ -58,9 +58,9 @@
 //! Horizontal mirroring.
 //! The multicart clears both registers on soft reset.
 
-use crate::cartridge::NametableLayout;
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
+use crate::nes::cartridge::NametableLayout;
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
 
 const MAPPER_NUMBER: u16 = 226;
 const NUM_REGS: usize = 2;
@@ -169,8 +169,8 @@ impl Mapper for Mapper226 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     /// Use a non-power-of-two bank count to catch modulo-wrap false passes.
     /// 130 × 16 KiB covers the full 7-bit page index range (0..=127) while staying

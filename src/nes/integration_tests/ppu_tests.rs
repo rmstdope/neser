@@ -4,10 +4,10 @@ mod tests {
     use std::io::Write;
     use std::path::{Path, PathBuf};
 
-    use crate::cartridge::Cartridge;
-    use crate::console::{Config, Nes, NesConfig, RamInitMode, TimingMode};
     use crate::input::Button;
-    use crate::integration_tests::rom_test_runner::tests::run_nes_for_frames;
+    use crate::nes::cartridge::Cartridge;
+    use crate::nes::console::{Config, Nes, NesConfig, RamInitMode, TimingMode};
+    use crate::nes::integration_tests::rom_test_runner::tests::run_nes_for_frames;
     use crate::{
         setup_rom_console_test, setup_rom_console_test_with_ram_init, setup_rom_crc_test,
         setup_rom_test,
@@ -133,7 +133,7 @@ mod tests {
         test_blargg_ppu_tests_2005_09_15b_power_up_palette,
         "roms/automated_tests/blargg_ppu_tests_2005.09.15b/power_up_palette.nes",
         "$01",
-        crate::console::RamInitMode::Random
+        crate::nes::console::RamInitMode::Random
     );
     setup_rom_console_test!(
         test_blargg_ppu_tests_2005_09_15b_sprite_ram,
@@ -254,7 +254,7 @@ AA AA 01 01 10 10 01 01 00 00\n\
     }
 
     fn run_oam_decay_crc_test(tv_system: TimingMode, expected_crc: u32, capture_name: &str) {
-        let hardware_model = crate::console::HardwareModel::from_timing_mode(tv_system);
+        let hardware_model = crate::nes::console::HardwareModel::from_timing_mode(tv_system);
         let mut nes = create_nes_from_rom(
             "roms/automated_tests/misc_oam_tests/oam-decay-test.nes",
             crate::app_context::AppContext::new_with_config(Config {
@@ -277,7 +277,7 @@ AA AA 01 01 10 10 01 01 00 00\n\
         if std::env::var_os("NESER_CAPTURE_SCREEN").is_some() {
             let rgb = screen.snapshot();
             let path = PathBuf::from("target/crc_checkpoints").join(capture_name);
-            crate::integration_tests::rom_test_runner::tests::write_checkpoint_png(
+            crate::nes::integration_tests::rom_test_runner::tests::write_checkpoint_png(
                 &path, &rgb, 256, 240,
             );
             println!(
@@ -358,7 +358,7 @@ AA AA 01 01 10 10 01 01 00 00\n\
             "roms/automated_tests/nmi_sync/demo_pal.nes",
             crate::app_context::AppContext::new_with_config(Config {
                 nes: NesConfig {
-                    hardware_model: crate::console::HardwareModel::NesPal,
+                    hardware_model: crate::nes::console::HardwareModel::NesPal,
                     ..Default::default()
                 },
                 ..Default::default()

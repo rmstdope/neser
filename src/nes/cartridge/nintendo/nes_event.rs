@@ -10,9 +10,9 @@
 //! - This implementation focuses on mapper-level correctness needed for bank/mirroring control and IRQ
 //!   signaling, not full discrete-logic cycle accuracy.
 
-use crate::cartridge::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
-use crate::cartridge::mmc1::MMC1Mapper;
+use crate::nes::cartridge::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::mmc1::MMC1Mapper;
 
 /// Mapper 105 (NES-EVENT).
 ///
@@ -41,7 +41,7 @@ impl NesEventMapper {
     const MMC1_LAST_CHR_REG_ADDR_HI_IDX: usize = 24;
     const MMC1_MIN_REG_SNAPSHOT_SIZE: usize = Self::MMC1_LAST_CHR_REG_ADDR_HI_IDX + 1;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let mut inner = MMC1Mapper::new(ctx);
         Self::force_timer_disable_bit_on_powerup(&mut inner);
         let chr_bank_0 = Self::chr_bank_0_from_mapper(&inner);
@@ -172,7 +172,7 @@ impl Mapper for NesEventMapper {
         self.irq_pending
     }
 
-    fn get_mirroring(&self) -> crate::cartridge::NametableLayout {
+    fn get_mirroring(&self) -> crate::nes::cartridge::NametableLayout {
         self.inner.get_mirroring()
     }
 
@@ -188,7 +188,7 @@ impl Mapper for NesEventMapper {
         self.inner.load_wram_snapshot(data);
     }
 
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+    fn initialize_ram(&mut self, mode: crate::nes::console::RamInitMode) {
         self.inner.initialize_ram(mode);
     }
 
@@ -234,9 +234,9 @@ impl Mapper for NesEventMapper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     const PRG_BANKS_16K: usize = 11;
     const CHR_BANKS_4K: usize = 9;

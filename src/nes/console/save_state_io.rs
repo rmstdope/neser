@@ -1,7 +1,7 @@
 use std::fs;
 
-use crate::console::{Nes, SaveState};
 use crate::debugging::log_info;
+use crate::nes::console::{Nes, SaveState};
 
 /// Saves the current NES state to disk.
 ///
@@ -108,8 +108,8 @@ pub fn load_state_from_disk(nes: &mut Nes) {
 mod tests {
     use super::*;
     use crate::app_context::AppContext;
-    use crate::cartridge::Cartridge;
-    use crate::console::Config;
+    use crate::nes::cartridge::Cartridge;
+    use crate::nes::console::Config;
     use std::fs;
     use std::time::Instant;
     use tempfile::TempDir;

@@ -9,10 +9,10 @@ use std::{error, fmt};
 
 use crate::app_context::IntoSharedAppContext;
 #[cfg(test)]
-use crate::cartridge::NametableLayout;
-use crate::cartridge::mapper::MapperContext;
-use crate::cartridge::rom_db::{VsHardwareType, VsPpuType};
-use crate::cartridge::{Mapper, TimingMode};
+use crate::nes::cartridge::NametableLayout;
+use crate::nes::cartridge::mapper::MapperContext;
+use crate::nes::cartridge::rom_db::{VsHardwareType, VsPpuType};
+use crate::nes::cartridge::{Mapper, TimingMode};
 
 #[derive(Debug)]
 pub enum CartridgeError {
@@ -81,21 +81,23 @@ pub struct Cartridge {
 }
 
 impl Cartridge {
-    fn map_parse_error(err: crate::cartridge::ines::RomParseError) -> CartridgeError {
+    fn map_parse_error(err: crate::nes::cartridge::ines::RomParseError) -> CartridgeError {
         match err {
-            crate::cartridge::ines::RomParseError::InvalidHeader => CartridgeError::InvalidHeader,
-            crate::cartridge::ines::RomParseError::FileTooSmall { expected, actual } => {
+            crate::nes::cartridge::ines::RomParseError::InvalidHeader => {
+                CartridgeError::InvalidHeader
+            }
+            crate::nes::cartridge::ines::RomParseError::FileTooSmall { expected, actual } => {
                 CartridgeError::FileTooSmall { expected, actual }
             }
         }
     }
 
     fn create_mapper(
-        parsed: &crate::cartridge::ines::ParsedRom,
+        parsed: &crate::nes::cartridge::ines::ParsedRom,
     ) -> Result<Box<dyn Mapper>, CartridgeError> {
         let context = MapperContext::from_parsed_rom(parsed);
         let mapper_number = context.mapper;
-        crate::cartridge::mapper::create_mapper(context).map_err(|err| {
+        crate::nes::cartridge::mapper::create_mapper(context).map_err(|err| {
             if err.kind() == io::ErrorKind::Unsupported {
                 CartridgeError::UnsupportedMapper(mapper_number)
             } else {
@@ -149,7 +151,7 @@ impl Cartridge {
         let rom_path = path.as_ref().to_path_buf();
         let ctx = app_context.borrow();
         let rom_db = ctx.rom_db();
-        let parsed = crate::cartridge::ParsedRom::parse(data, Some(rom_db))
+        let parsed = crate::nes::cartridge::ParsedRom::parse(data, Some(rom_db))
             .map_err(Self::map_parse_error)?;
 
         crate::debugging::log_info(format!(
@@ -239,7 +241,7 @@ impl Cartridge {
     ///
     /// This should be called when the cartridge is inserted or on hard reset.
     /// Soft resets should NOT call this (RAM contents persist).
-    pub fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+    pub fn initialize_ram(&mut self, mode: crate::nes::console::RamInitMode) {
         if self.battery_backed_prg_ram {
             // PRG-RAM was already loaded from the .sav file in load_from_file().
             // Only initialize volatile CHR-RAM; leave PRG-RAM (save data) intact.
@@ -281,8 +283,8 @@ impl Cartridge {
     /// Create a cartridge directly from components (for testing)
     #[cfg(test)]
     pub fn from_parts(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
-        use crate::cartridge::nrom::NROMMapper;
-        let crc32 = crate::cartridge::calculate_rom_crc32(&prg_rom, &chr_rom);
+        use crate::nes::cartridge::nrom::NROMMapper;
+        let crc32 = crate::nes::cartridge::calculate_rom_crc32(&prg_rom, &chr_rom);
         let mapper = Box::new(NROMMapper::new(MapperContext::new_for_test(
             0, prg_rom, chr_rom, mirroring,
         )));
@@ -564,7 +566,7 @@ mod tests {
         let mut cart = load_cartridge_from_disk(&rom_path, &app_context);
 
         // Simulate what insert_cartridge does: initialize_ram with Zero mode
-        cart.initialize_ram(crate::console::RamInitMode::Zero);
+        cart.initialize_ram(crate::nes::console::RamInitMode::Zero);
 
         // Battery-backed PRG-RAM must NOT be zeroed out
         assert_eq!(
@@ -702,7 +704,7 @@ mod tests {
 
     #[test]
     fn test_timing_mode_to_rom_timing_mode_maps_non_ntsc_pal_to_unknown() {
-        let tv = crate::cartridge::TimingMode::MultiRegion.normalize_rom_timing_mode();
+        let tv = crate::nes::cartridge::TimingMode::MultiRegion.normalize_rom_timing_mode();
         assert!(matches!(tv, TimingMode::Unknown(_)));
     }
 

@@ -59,9 +59,9 @@
 //!
 //! All registers zero: 32 KB at $8000 bank 0, CHR bank 0, Horizontal mirroring.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::ines::NametableLayout;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::ines::NametableLayout;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
 
 const MAPPER_NUMBER: u16 = 295;
 const PRG_BANK_SIZE_8K: usize = 8 * 1024;
@@ -233,8 +233,8 @@ impl Mapper for Mapper295 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     // 16 banks × 8 KB = 128 KB PRG-ROM; 1 bank × 8 KB = 8 KB CHR-ROM
     const PRG_BANKS_8K: usize = 16;

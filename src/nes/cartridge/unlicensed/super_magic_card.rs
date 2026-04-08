@@ -14,9 +14,9 @@
 //!   (requires CPU/console-layer changes; tracked separately).
 use std::cell::Cell;
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::common::{A12RisingEdgeDetector, ChrMemory};
-use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::common::{A12RisingEdgeDetector, ChrMemory};
+use crate::nes::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
 const PRG_BANK_SIZE_8K: usize = 0x2000;
 const CHR_BANK_SIZE_8K: usize = 0x2000;
@@ -113,7 +113,7 @@ impl SuperMagicCardMapper {
     /// * `chr_rom`   — CHR-ROM data when present; otherwise mapper uses CHR-RAM
     /// * `mirroring` — initial nametable mirroring from the iNES header
     /// * `submapper` — iNES 2.0 submapper (0 is remapped to 1 per spec)
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let mapper = ctx.mapper;
         let submapper = ctx.submapper;
         let chr_is_ram = ctx.chr_rom.is_empty();
@@ -736,8 +736,8 @@ impl Mapper for SuperMagicCardMapper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     const PRG_BANK_SIZE_16K: usize = 0x4000;
 

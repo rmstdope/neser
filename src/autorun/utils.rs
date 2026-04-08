@@ -1,5 +1,5 @@
 use super::types::{AUTORUN_VERSION, AutorunCheckpoint, AutorunFile, AutorunFormat, AutorunFrame};
-use crate::cartridge::calculate_rom_crc32;
+use crate::nes::cartridge::calculate_rom_crc32;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -195,7 +195,7 @@ fn save_autorun_file_json(path: &Path, file: &AutorunFile) -> Result<(), String>
 }
 
 fn encode_checkpoint_to_binary(cp: &AutorunCheckpoint) -> Result<AutorunCheckpointBinary, String> {
-    use crate::console::SaveState;
+    use crate::nes::console::SaveState;
 
     let state_bytes = if cp.state_bytes.is_empty() {
         Vec::new()
@@ -257,7 +257,7 @@ pub fn load_autorun_file(path: &Path) -> Result<AutorunFile, String> {
 }
 
 fn decode_checkpoint_from_binary(cp: AutorunCheckpointBinary) -> Result<AutorunCheckpoint, String> {
-    use crate::console::SaveState;
+    use crate::nes::console::SaveState;
 
     let state_bytes = if cp.state_bytes.is_empty() {
         Vec::new()

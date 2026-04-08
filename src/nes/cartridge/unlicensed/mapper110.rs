@@ -8,7 +8,7 @@
 //! - Mapper 110 is an obsolete duplicate assignment for Sachen SA-020A.
 //! - This implementation intentionally mirrors mapper 243 behavior.
 
-use crate::cartridge::mapper243::Mapper243;
+use crate::nes::cartridge::mapper243::Mapper243;
 
 /// Mapper 110 - obsolete iNES duplicate assignment for Sachen SA-020A.
 ///
@@ -18,9 +18,9 @@ pub type Mapper110 = Mapper243;
 
 #[cfg(test)]
 mod tests {
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     fn create_mapper110(
         prg_rom: Vec<u8>,

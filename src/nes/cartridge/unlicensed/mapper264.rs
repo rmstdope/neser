@@ -22,10 +22,10 @@
 //! - SST39SF040 flash programming / self-flash is not emulated.
 //! - Open-bus register read side-effect is not emulated.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::common::ChrMemory;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
-use crate::console::RamInitMode;
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::common::ChrMemory;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
+use crate::nes::console::RamInitMode;
 
 pub struct Mapper264 {
     base: BaseMapper,
@@ -141,7 +141,7 @@ impl Mapper for Mapper264 {
 
     fn initialize_ram(&mut self, mode: RamInitMode) {
         self.base.initialize_ram(mode);
-        crate::console::initialize_ram(&mut self.nametable_ram, mode);
+        crate::nes::console::initialize_ram(&mut self.nametable_ram, mode);
     }
 
     fn reset(&mut self) {
@@ -153,9 +153,9 @@ impl Mapper for Mapper264 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::create_mapper;
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::create_mapper;
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     // 3 banks (non-power-of-2 to catch modulo-wrap false passes)
     const PRG_BANKS_32K: usize = 3;

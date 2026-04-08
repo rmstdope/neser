@@ -5,11 +5,11 @@
 //! - Edge-case behavior may still differ from hardware in untested timing/board-variant scenarios.
 //! - See CARTRIDGE_REVIEW.md sections 5 and 6 for remaining mapper test/documentation follow-up.
 
-use crate::cartridge::Mapper;
-use crate::cartridge::MapperCapabilities;
-use crate::cartridge::NametableLayout;
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::common::ChrMemory;
+use crate::nes::cartridge::Mapper;
+use crate::nes::cartridge::MapperCapabilities;
+use crate::nes::cartridge::NametableLayout;
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::common::ChrMemory;
 use crate::trace_mapper;
 
 /// Mapper 7 - AxROM (AMROM, ANROM, AN1ROM, AOROM boards)
@@ -37,7 +37,7 @@ pub struct AxROMMapper {
 }
 
 impl AxROMMapper {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let submapper = if ctx.submapper == 0 && ctx.crc32 == 0x41D3_2FD7 {
             2
         } else {
@@ -53,7 +53,7 @@ impl AxROMMapper {
     }
 
     fn new_internal(
-        mut ctx: crate::cartridge::mapper::MapperContext,
+        mut ctx: crate::nes::cartridge::mapper::MapperContext,
         submapper: u8,
         prg_ram_banks_8k: u8,
     ) -> Self {
@@ -144,7 +144,7 @@ impl Mapper for AxROMMapper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
 
     fn create_axrom_mapper(prg_rom: Vec<u8>, mirroring: NametableLayout) -> Box<dyn Mapper> {
         create_mapper(MapperContext::new_for_test(7, prg_rom, vec![], mirroring).with_submapper(1))

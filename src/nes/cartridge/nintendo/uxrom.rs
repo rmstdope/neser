@@ -5,7 +5,7 @@
 //! - Edge-case behavior may still differ from hardware in untested timing and board-variant scenarios.
 //! - See CARTRIDGE_REVIEW.md sections 5 and 6 for remaining mapper test/documentation follow-up.
 
-use crate::cartridge::mapper_templates::SimpleBankedPrgMapper;
+use crate::nes::cartridge::mapper_templates::SimpleBankedPrgMapper;
 
 /// Mapper 2 - UxROM (UNROM, UOROM boards)
 ///
@@ -34,8 +34,8 @@ pub type UxROMMapper = SimpleBankedPrgMapper<16, 2, true>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::mapper::MapperContext;
-    use crate::cartridge::{Mapper, NametableLayout};
+    use crate::nes::cartridge::mapper::MapperContext;
+    use crate::nes::cartridge::{Mapper, NametableLayout};
 
     #[test]
     fn test_uxrom_128kb_prg_bank_switching() {

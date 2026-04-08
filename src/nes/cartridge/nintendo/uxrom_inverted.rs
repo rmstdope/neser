@@ -5,7 +5,7 @@
 //! - Edge-case behavior may still differ from hardware in untested timing and board-variant scenarios.
 //! - See CARTRIDGE_REVIEW.md sections 5 and 6 for remaining mapper test/documentation follow-up.
 
-use crate::cartridge::mapper_templates::SimpleBankedPrgMapper;
+use crate::nes::cartridge::mapper_templates::SimpleBankedPrgMapper;
 
 /// Mapper 180 - UxROM (inverted, UNROM board)
 ///
@@ -31,8 +31,8 @@ pub type UxromInvertedMapper = SimpleBankedPrgMapper<16, 180, false>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::mapper::MapperContext;
-    use crate::cartridge::{Mapper, NametableLayout};
+    use crate::nes::cartridge::mapper::MapperContext;
+    use crate::nes::cartridge::{Mapper, NametableLayout};
 
     fn make_128k_prg() -> Vec<u8> {
         // 8 banks of 16KB; each bank is filled with its own bank number

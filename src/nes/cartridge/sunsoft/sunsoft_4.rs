@@ -26,9 +26,9 @@
 //! - Edge-case behavior may still differ from hardware in untested timing and board-variant scenarios.
 //! - See CARTRIDGE_REVIEW.md sections 5 and 6 for remaining mapper test/documentation follow-up.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
-use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::nes::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
 const PRG_BANK_SIZE: usize = 0x4000; // 16KB
 const CHR_BANK_SIZE_2K: usize = 0x0800; // 2KB
@@ -45,7 +45,7 @@ pub struct Sunsoft4Mapper {
 }
 
 impl Sunsoft4Mapper {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let prg_ram_banks_8k = ctx.prg_ram_banks_8k;
         let caps = MapperCapabilities {
             has_irq: false,
@@ -78,11 +78,11 @@ impl Sunsoft4Mapper {
         mirroring: NametableLayout,
         prg_ram_banks_8k: u8,
     ) -> Self {
-        let ctx = crate::cartridge::mapper::MapperContext {
+        let ctx = crate::nes::cartridge::mapper::MapperContext {
             mapper: 68,
             submapper: 0,
             mirroring,
-            hardware_type: crate::cartridge::HardwareType::NesNtsc,
+            hardware_type: crate::nes::cartridge::HardwareType::NesNtsc,
             prg_rom,
             chr_rom,
             prg_ram_banks_8k,

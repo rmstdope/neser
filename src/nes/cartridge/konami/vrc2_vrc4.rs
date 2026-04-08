@@ -3,10 +3,10 @@
 //! Known Limitations:
 //! - Edge-case behavior may still differ from hardware in untested timing and board-variant scenarios.
 
-use crate::cartridge::BaseMapper;
-use crate::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
-use crate::cartridge::vrc_irq::VrcIrq;
-use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
+use crate::nes::cartridge::BaseMapper;
+use crate::nes::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::nes::cartridge::vrc_irq::VrcIrq;
+use crate::nes::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 use crate::trace_mapper;
 
 /// Mappers 21, 22, 23, 25, 27 - Konami VRC2/VRC4
@@ -188,7 +188,7 @@ impl Vrc2Vrc4Mapper {
 
     const FLAG_PRG_RAM_ENABLED: u8 = 1 << 5;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let mapper_number = ctx.mapper as u8;
         let submapper = ctx.submapper;
         let mirroring = ctx.mirroring;
@@ -615,9 +615,9 @@ impl Mapper for Vrc2Vrc4Mapper {
 
 #[cfg(test)]
 mod tests {
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::{banked_data, banked_data_with_upper_marker};
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::{banked_data, banked_data_with_upper_marker};
 
     fn create_vrc_mapper(
         mapper_number: u16,

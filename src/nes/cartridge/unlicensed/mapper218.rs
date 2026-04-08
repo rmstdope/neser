@@ -8,9 +8,9 @@
 //! - Four-screen mirroring metadata is coerced to single-screen-lower because
 //!   mapper context does not preserve iNES flag 6 bit 0 alongside `FourScreen`.
 
-use crate::cartridge::NametableLayout;
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::Mapper;
+use crate::nes::cartridge::NametableLayout;
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::Mapper;
 
 const MAPPER_NUMBER: u16 = 218;
 
@@ -19,7 +19,7 @@ pub struct Mapper218 {
 }
 
 impl Mapper218 {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let mut base = BaseMapper::new(&ctx, Default::default());
         base.set_mirroring(Self::resolve_mirroring(ctx.mirroring));
         Self { base }
@@ -54,8 +54,8 @@ impl Mapper for Mapper218 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     fn make_mapper(mirroring: NametableLayout) -> Mapper218 {
         Mapper218::new(MapperContext::new_for_test(

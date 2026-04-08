@@ -34,9 +34,9 @@
 
 use std::cell::Cell;
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mmc3::MMC3Mapper;
-use crate::cartridge::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mmc3::MMC3Mapper;
+use crate::nes::cartridge::{Mapper, MapperCapabilities};
 
 /// Mapper 292 – BMW8544 (Dragon Fighter protected MMC3 variant)
 pub struct Mapper292 {
@@ -60,7 +60,7 @@ pub struct Mapper292 {
 impl Mapper292 {
     const MAPPER_NUMBER: u16 = 292;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         // Dragon Fighter has no PRG-RAM; $6000–$7FFF is the protection window.
         // Pass prg_ram_banks_8k = 0 so the inner MMC3 does not allocate PRG-RAM.
         let inner = MMC3Mapper::new_with_irq_mode_and_prg_ram_banks(
@@ -267,9 +267,9 @@ impl Mapper for Mapper292 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     // PRG: 12 × 8KB = 96KB  (non-power-of-2 avoids wrap false-passes)
     const PRG_BANKS_8K: usize = 12;

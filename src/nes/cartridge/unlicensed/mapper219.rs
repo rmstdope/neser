@@ -8,9 +8,9 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::nintendo::mmc3::MMC3Mapper;
-use crate::cartridge::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::nintendo::mmc3::MMC3Mapper;
+use crate::nes::cartridge::{Mapper, MapperCapabilities};
 
 /// Mapper 219 – Custom MMC3 variant used by unlicensed multicart boards.
 ///
@@ -70,7 +70,7 @@ impl Mapper219 {
     const PRG_BANK_SIZE: usize = 0x2000; // 8 KB
     const CHR_BANK_SIZE: usize = 0x0400; // 1 KB
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let prg_bank_count = ctx.prg_rom.len() / Self::PRG_BANK_SIZE;
         // Power-on: map the last 4 banks across the four 8 KB slots.
         let prg_pages = [
@@ -283,9 +283,9 @@ impl Mapper for Mapper219 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     const PRG_8K_BANKS: usize = 8; // 64 KB PRG
     const CHR_1K_BANKS: usize = 16; // 16 KB CHR
@@ -589,7 +589,7 @@ mod tests {
 
     #[test]
     fn test_mirroring_horizontal_via_a000() {
-        use crate::cartridge::NametableLayout;
+        use crate::nes::cartridge::NametableLayout;
         let mut mapper = make_mapper(PRG_8K_BANKS, CHR_1K_BANKS);
         // MMC3 $A000 bit 0 = 1 → horizontal mirroring
         mapper.write_prg(0xA000, 0x01);
@@ -602,7 +602,7 @@ mod tests {
 
     #[test]
     fn test_mirroring_vertical_via_a000() {
-        use crate::cartridge::NametableLayout;
+        use crate::nes::cartridge::NametableLayout;
         let mut mapper = create_mapper(MapperContext::new_for_test(
             219,
             banked_data(8 * 1024, PRG_8K_BANKS),

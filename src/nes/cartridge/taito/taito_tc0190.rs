@@ -5,8 +5,8 @@
 //! - Edge-case behavior may still differ from hardware in untested timing and board-variant scenarios.
 //! - See CARTRIDGE_REVIEW.md sections 5 and 6 for remaining mapper test/documentation follow-up.
 
-use crate::cartridge::BaseMapper;
-use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
+use crate::nes::cartridge::BaseMapper;
+use crate::nes::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
 /// Mapper 033 – Taito TC0190
 ///
@@ -54,7 +54,7 @@ pub struct TaitoTc0190Mapper {
 impl TaitoTc0190Mapper {
     const REGISTER_MASK: u16 = 0xA003; // bits 13, 1, 0 select the active register
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let mirroring = ctx.mirroring;
         let capabilities = MapperCapabilities {
             has_irq: false,
@@ -195,10 +195,10 @@ impl Mapper for TaitoTc0190Mapper {
 
 #[cfg(test)]
 mod tests {
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::taito_tc0190::TaitoTc0190Mapper;
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::taito_tc0190::TaitoTc0190Mapper;
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     fn create_tc0190(
         prg_rom: Vec<u8>,

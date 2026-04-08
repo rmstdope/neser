@@ -47,8 +47,8 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
 
 /// Mapper 293 – NewStar 12-in-1 / 76-in-1 Multicart
 pub struct Mapper293 {
@@ -192,9 +192,9 @@ impl Mapper for Mapper293 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     fn make_mapper() -> Mapper293 {
         // 8 outer × 8 inner × 16 KiB = 1 MiB PRG-ROM; 8 KiB CHR-RAM (empty vec → RAM)

@@ -36,9 +36,9 @@
 //! Known Limitations:
 //! - DIP switch not supported (treated as 0); NROM mode activates only when bit 3 is set.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mmc3::MMC3Mapper;
-use crate::cartridge::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mmc3::MMC3Mapper;
+use crate::nes::cartridge::{Mapper, MapperCapabilities};
 
 /// Mapper 287 – BMC-411120C multicart
 pub struct Mapper287 {
@@ -63,7 +63,7 @@ impl Mapper287 {
     const NROM_INNER_SHIFT: u8 = 4;
     const NROM_INNER_MASK: u8 = 0x03;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let mmc3 = MMC3Mapper::new_with_irq_mode_and_prg_ram_banks(
             ctx.prg_rom,
             ctx.chr_rom,
@@ -185,8 +185,8 @@ impl Mapper for Mapper287 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::MapperContext;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::MapperContext;
 
     // PRG: 512 KiB = 64 × 8 KiB banks
     const PRG_BANKS: usize = 64;
@@ -446,7 +446,7 @@ mod tests {
 
     #[test]
     fn test_mapper_is_registered_in_factory() {
-        use crate::cartridge::mapper::create_mapper;
+        use crate::nes::cartridge::mapper::create_mapper;
         create_mapper(MapperContext::new_for_test(
             287,
             make_prg_rom(),

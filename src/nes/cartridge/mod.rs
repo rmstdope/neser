@@ -27,7 +27,7 @@ mod rom_db;
 pub mod test_helpers;
 
 // Re-export sub-module internals used by cross-module references
-// so that `crate::cartridge::mmc3::MMC3Mapper` etc. still resolve.
+// so that `crate::nes::cartridge::mmc3::MMC3Mapper` etc. still resolve.
 pub(crate) use konami::vrc_irq;
 pub(crate) use konami::vrc2_vrc4;
 pub(crate) use nintendo::mmc1;

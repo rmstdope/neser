@@ -4,15 +4,6 @@
 
 mod nes;
 
-// Re-exports for backward compatibility during migration.
-pub use nes::apu;
-pub use nes::bus;
-pub use nes::cartridge;
-pub use nes::console;
-pub use nes::cpu;
-pub use nes::integration_tests;
-pub use nes::ppu;
-
 mod app_context;
 #[cfg(feature = "native")]
 mod audio;
@@ -30,12 +21,12 @@ mod rendering;
 mod tui_frontend;
 
 use app_context::AppContext;
-use console::{
+use debugging::log_info;
+use frontend_toasts::cartridge_load_toast_message;
+use nes::console::{
     AutorunFormat, CartridgeCatalogOptions, Config, Nes, ParseResult, default_catalog_csv_path,
     refresh_cartridge_catalog,
 };
-use debugging::log_info;
-use frontend_toasts::cartridge_load_toast_message;
 use std::cell::RefCell;
 use std::fs;
 use std::path::PathBuf;
@@ -127,9 +118,9 @@ fn recalculate_autorun_for_rom(rom_path: &str, format: AutorunFormat) -> Result<
         autorun_path_for_rom, headless_playback::recalculate_checkpoint_crcs_with_progress,
         load_autorun_file, save_autorun_file,
     };
-    use cartridge::Cartridge;
-    use console::NesConfig;
-    use console::RamInitMode;
+    use nes::cartridge::Cartridge;
+    use nes::console::NesConfig;
+    use nes::console::RamInitMode;
     use std::io::{self, Write};
 
     let path = autorun_path_for_rom(&PathBuf::from(rom_path));
@@ -293,7 +284,7 @@ fn run_native_frontend(
 
     // Headless autorun is only supported in playback mode because
     // record/extend have no guaranteed termination condition.
-    let headless = autorun_headless && autorun_mode == console::AutorunMode::Playback;
+    let headless = autorun_headless && autorun_mode == nes::console::AutorunMode::Playback;
 
     // Create audio output (request 44.1 kHz) unless disabled or headless.
     let mut audio_sample_rate = None;
@@ -327,7 +318,8 @@ fn run_native_frontend(
     };
 
     let cart =
-        match cartridge::Cartridge::load_from_file(&rom_bytes, &rom_path, app_context.clone()) {
+        match nes::cartridge::Cartridge::load_from_file(&rom_bytes, &rom_path, app_context.clone())
+        {
             Ok(cartridge) => {
                 app_context
                     .borrow_mut()
@@ -365,7 +357,7 @@ fn run_native_frontend(
         NativeEventLoop::new(app_context.clone(), console, audio, tracing, headless);
 
     // Initialize autorun AFTER reset so checkpoint state restore is not overwritten.
-    if autorun_mode != console::AutorunMode::None {
+    if autorun_mode != nes::console::AutorunMode::None {
         event_loop.init_autorun(
             autorun_mode,
             &rom_path,

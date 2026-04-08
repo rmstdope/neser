@@ -42,10 +42,10 @@
 //! | $D001        | $F803  | Mirroring / extended-mirroring enable ($D001 bit 3) |
 //! | $D003        | $F803  | (unused for 211; no outer bank)                     |
 
-use crate::cartridge::BaseMapper;
-use crate::cartridge::NametableLayout;
-use crate::cartridge::common::A12RisingEdgeDetector;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::BaseMapper;
+use crate::nes::cartridge::NametableLayout;
+use crate::nes::cartridge::common::A12RisingEdgeDetector;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// IRQ clock source selection
 #[derive(Clone, Copy, PartialEq)]
@@ -113,7 +113,7 @@ impl Mapper211 {
     const PRG_BANK_SIZE: usize = 0x2000;
     const CHR_BANK_SIZE: usize = 0x0400;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_irq: true,
             has_chr_banking: true,
@@ -538,8 +538,8 @@ impl Mapper for Mapper211 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     const PRG_8K_BANKS: usize = 11;
     const CHR_1K_BANKS: usize = 13;

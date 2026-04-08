@@ -5,9 +5,9 @@
 //! - Edge-case behavior may still differ from hardware in untested timing and board-variant scenarios.
 //! - See CARTRIDGE_REVIEW.md sections 5 and 6 for remaining mapper test/documentation follow-up.
 
-use crate::cartridge::Mapper;
-use crate::cartridge::MapperCapabilities;
-use crate::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::Mapper;
+use crate::nes::cartridge::MapperCapabilities;
+use crate::nes::cartridge::base_mapper::BaseMapper;
 
 /// Mapper 0 - NROM
 ///
@@ -33,7 +33,7 @@ pub struct NROMMapper {
 impl NROMMapper {
     /// Create a new NROM mapper
     /// If chr_rom is empty, 8KB of CHR-RAM is allocated
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_irq: false,
             has_chr_banking: false,
@@ -73,8 +73,8 @@ impl Mapper for NROMMapper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::MapperContext;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::MapperContext;
 
     #[test]
     fn test_nrom_32kb_prg_rom_read() {

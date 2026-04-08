@@ -33,8 +33,8 @@
 //! Power-on/reset state: equivalent to writing to `$8000` (all banks 0,
 //! vertical mirroring, 16 KB mode).
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 const MAPPER_NUMBER: u16 = 212;
 const PRG_BANK_SIZE: usize = 16 * 1024;
@@ -54,7 +54,7 @@ pub struct Mapper212 {
 }
 
 impl Mapper212 {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
             has_dynamic_mirroring: true,
@@ -153,9 +153,9 @@ impl Mapper for Mapper212 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     // Non-power-of-two bank counts prevent modulo-wrapping false positives.
     const PRG_BANKS: usize = 5;

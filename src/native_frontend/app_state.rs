@@ -5,7 +5,7 @@
 //! truth without borrowing individual fields piecemeal.
 
 use crate::autorun::state::AutorunState;
-use crate::console::{AutorunMode, Nes, TimingMode};
+use crate::nes::console::{AutorunMode, Nes, TimingMode};
 use winit::keyboard::ModifiersState;
 
 /// State for the in-game cartridge-switch dialog.
@@ -462,7 +462,7 @@ fn format_mm_ss(seconds: usize) -> String {
 mod tests {
     use super::*;
     use crate::app_context::AppContext;
-    use crate::console::{Config, NesConfig};
+    use crate::nes::console::{Config, NesConfig};
 
     fn make_nes() -> Nes {
         Nes::new(AppContext::new_with_config(Config::default()))

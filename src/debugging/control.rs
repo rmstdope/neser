@@ -4,12 +4,12 @@
 //! and view state. Frontends delegate to this controller for emulation
 //! control flow and sync their own UI state from the controller's getters.
 
-use crate::console::Nes;
-use crate::cpu::InterruptKind;
 use crate::debugging::breakpoints::{BreakpointKind, BreakpointList, EvalContext};
 use crate::debugging::snapshot::DebuggerViewState;
 use crate::debugging::tracing::Tracing;
 use crate::debugging::ui::DebuggerUiAction;
+use crate::nes::console::Nes;
+use crate::nes::cpu::InterruptKind;
 
 /// One-shot breakpoint used for stepping and run-to-interrupt operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -591,8 +591,8 @@ impl DebuggerController {
 mod tests {
     use super::*;
     use crate::app_context::AppContext;
-    use crate::cartridge::{Cartridge, NametableLayout};
-    use crate::console::Config;
+    use crate::nes::cartridge::{Cartridge, NametableLayout};
+    use crate::nes::console::Config;
 
     // ── Test helpers ───────────────────────────────────────────────────
 

@@ -3,16 +3,6 @@
 
 pub mod nes;
 
-// Re-exports for backward compatibility during migration.
-// Callers can use `crate::cpu`, `crate::ppu`, etc. as before.
-pub use nes::apu;
-pub use nes::bus;
-pub use nes::cartridge;
-pub use nes::console;
-pub use nes::cpu;
-pub use nes::integration_tests;
-pub use nes::ppu;
-
 pub mod app_context;
 pub mod autorun;
 pub mod config;

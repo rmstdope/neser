@@ -8,7 +8,7 @@
 //! Source: NESdev Wiki — PPU palettes
 //! <https://www.nesdev.org/wiki/PPU_palettes>
 
-use crate::cartridge::VsPpuType;
+use crate::nes::cartridge::VsPpuType;
 
 /// Returns the VS System palette for the given PPU type, or `None` if the
 /// type uses the standard composite (NTSC/PAL) palette.

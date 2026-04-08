@@ -1,4 +1,4 @@
-use crate::console::TimingMode;
+use crate::nes::console::TimingMode;
 
 /// Number of PPU cycles (pixels) per scanline
 pub(crate) const PIXELS_PER_SCANLINE: u16 = 341;

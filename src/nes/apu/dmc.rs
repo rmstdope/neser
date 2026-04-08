@@ -8,7 +8,7 @@
 //! - Output unit (shift register + 7-bit output level 0-127)
 //! - IRQ flag
 //! - Loop flag for sample restart
-use crate::console::TimingMode;
+use crate::nes::console::TimingMode;
 use crate::trace_apu;
 use serde::{Deserialize, Serialize};
 
@@ -559,7 +559,7 @@ impl Dmc {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::console::TimingMode;
+    use crate::nes::console::TimingMode;
 
     #[test]
     fn test_dmc_new() {
@@ -921,8 +921,8 @@ mod sample_tests {
     use std::rc::Rc;
 
     use super::*;
-    use crate::cartridge::Cartridge;
-    use crate::console::{Config, Nes};
+    use crate::nes::cartridge::Cartridge;
+    use crate::nes::console::{Config, Nes};
 
     fn make_ines_nrom_32k(prg_rom: &[u8]) -> Vec<u8> {
         assert_eq!(prg_rom.len(), 2 * 16 * 1024);

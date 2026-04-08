@@ -33,8 +33,8 @@
 //! On reset, a write of 0 to $8000 is simulated:
 //! PRG bank 0, CHR bank 0, horizontal mirroring.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 const MAPPER_NUMBER: u16 = 299;
 const PRG_BANK_SIZE: usize = 32 * 1024;
@@ -50,7 +50,7 @@ pub struct Mapper299 {
 }
 
 impl Mapper299 {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
             has_dynamic_mirroring: true,
@@ -121,9 +121,9 @@ impl Mapper for Mapper299 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     // Use non-power-of-two bank counts while still covering every bank this
     // mapper can select directly (PRG 0..=7, CHR 0..=31).

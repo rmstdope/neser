@@ -10,9 +10,9 @@
 //! - WRAM: 8KB at `$6000-$7FFF`
 //! - Mirroring: fixed from iNES header
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::common::ChrMemory;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::common::ChrMemory;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 const CHR_RAM_SIZE: usize = 32 * 1024;
 
@@ -22,7 +22,7 @@ pub struct Mapper29 {
 }
 
 impl Mapper29 {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
             max_prg_ram_kb: 8,
@@ -83,9 +83,9 @@ impl Mapper for Mapper29 {
 
 #[cfg(test)]
 mod tests {
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     fn create_mapper29() -> Box<dyn Mapper> {
         let prg_rom = banked_data(16 * 1024, 8);

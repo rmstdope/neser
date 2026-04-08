@@ -45,8 +45,8 @@
 //! - CHR: bank 0.
 //! - IRQ: disabled, counter = 0.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 const MAPPER_NUMBER: u16 = 304;
 const PRG_PAGE_SIZE: usize = 4 * 1024; // 4 KiB
@@ -73,7 +73,7 @@ pub struct Mapper304 {
 }
 
 impl Mapper304 {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let large_prg = ctx.prg_rom.len() >= LARGE_PRG_THRESHOLD;
         let capabilities = MapperCapabilities {
             has_irq: true,
@@ -221,9 +221,9 @@ impl Mapper for Mapper304 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     // Non-power-of-two bank counts to prevent modulo false-pass.
     const PRG_BANKS_SMALL: usize = 11; // 11 × 4 KiB = 44 KiB (< 64 KiB, no $4022)

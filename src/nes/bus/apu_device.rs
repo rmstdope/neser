@@ -1,6 +1,6 @@
-use crate::apu;
-use crate::bus::bus::BusDevice;
 use crate::debugging::log_info;
+use crate::nes::apu;
+use crate::nes::bus::bus::BusDevice;
 use crate::trace_apu;
 use std::cell::RefCell;
 use std::ops::RangeInclusive;

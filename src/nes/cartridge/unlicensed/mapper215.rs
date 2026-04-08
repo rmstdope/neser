@@ -125,9 +125,9 @@
 //! single-game cartridges is not emulated (no ROM images in the neser database
 //! require it).
 
-use crate::cartridge::Mapper;
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mmc3::MMC3Mapper;
+use crate::nes::cartridge::Mapper;
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mmc3::MMC3Mapper;
 
 /// Address unscramble LUT: `LUT_ADDR[mode][addr_idx]` → real MMC3 address index.
 /// The address index is `((addr >> 12) & 0x06) | (addr & 0x01)`.
@@ -172,7 +172,7 @@ impl Mapper215 {
     const CHR_1K_BANK_SIZE: usize = 0x0400;
     const CHR_BANK_MASK: usize = Self::CHR_1K_BANK_SIZE - 1;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let submapper = ctx.submapper;
         Self {
             mmc3: MMC3Mapper::new_with_irq_mode(ctx.prg_rom, ctx.chr_rom, ctx.mirroring, false),
@@ -370,7 +370,7 @@ impl Mapper for Mapper215 {
         }
     }
 
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+    fn initialize_ram(&mut self, mode: crate::nes::console::RamInitMode) {
         self.mmc3.initialize_ram(mode);
     }
 
@@ -386,9 +386,9 @@ impl Mapper for Mapper215 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     // Non power-of-2 bank counts to expose modulo-wrap issues.
     const PRG_8K_BANKS: usize = 9;

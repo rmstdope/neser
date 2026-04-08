@@ -15,9 +15,9 @@
 //! - VS DualSystem RaidOnBungelingBay PRG variant is not implemented (requires dual-console).
 //! - Undersize ROM open-bus behavior is not implemented (no known game relies on it).
 
-use crate::cartridge::BaseMapper;
-use crate::cartridge::NametableLayout;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
+use crate::nes::cartridge::BaseMapper;
+use crate::nes::cartridge::NametableLayout;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
 
 /// Mapper 099 — VS System
 ///
@@ -146,9 +146,9 @@ impl Mapper for Mapper99 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::create_mapper;
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::create_mapper;
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     // Standard 32KB PRG (4 × 8KB) + 16KB CHR (2 × 8KB)
     fn make_mapper() -> Mapper99 {

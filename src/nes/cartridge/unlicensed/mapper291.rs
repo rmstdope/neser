@@ -36,9 +36,9 @@
 //! Known Limitations:
 //! - Bit 7 of the outer register has unknown function and is ignored.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mmc3::MMC3Mapper;
-use crate::cartridge::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mmc3::MMC3Mapper;
+use crate::nes::cartridge::{Mapper, MapperCapabilities};
 
 /// Mapper 291 – Kasheng 2-in-1 Multicart
 pub struct Mapper291 {
@@ -65,7 +65,7 @@ impl Mapper291 {
     const PRG_BANK_SIZE: usize = 0x2000; // 8 KiB
     const PRG_BANK_MASK: usize = Self::PRG_BANK_SIZE - 1;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         // No PRG-RAM on this board
         let mmc3 = MMC3Mapper::new_with_irq_mode_and_prg_ram_banks(
             ctx.prg_rom,
@@ -217,8 +217,8 @@ impl Mapper for Mapper291 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::MapperContext;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::MapperContext;
 
     // PRG: 256 KiB = 32 × 8 KiB banks
     const PRG_BANKS: usize = 32;

@@ -57,9 +57,9 @@
 //!
 //! No known gameplay-blocking limitations.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mmc3::MMC3Mapper;
-use crate::cartridge::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mmc3::MMC3Mapper;
+use crate::nes::cartridge::{Mapper, MapperCapabilities};
 
 const MAPPER_NUMBER: u16 = 315;
 
@@ -76,7 +76,7 @@ impl Mapper315 {
     const CHR_1K_BANK_SIZE: usize = 0x0400;
     const CHR_BANK_MASK: usize = Self::CHR_1K_BANK_SIZE - 1;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let prg_rom = ctx.prg_rom;
         let chr_rom = ctx.chr_rom;
         let mirroring = ctx.mirroring;
@@ -222,9 +222,9 @@ impl Mapper for Mapper315 {
 
 #[cfg(test)]
 mod tests {
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::{banked_data, banked_data_with_upper_marker};
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::{banked_data, banked_data_with_upper_marker};
 
     // Use non-power-of-two counts to prevent modulo-wrap false-passes.
     const PRG_BANKS_8K: usize = 96;

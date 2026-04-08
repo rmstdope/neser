@@ -8,9 +8,9 @@
 //! - The lockout defeat control register ($FFC0-$FFDF) is not implemented
 //!   (emulators do not need to implement it per spec).
 
-use crate::cartridge::NametableLayout;
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::NametableLayout;
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 use std::cell::Cell;
 
 const MAPPER_NUMBER: u16 = 234;
@@ -59,7 +59,7 @@ pub struct Mapper234 {
 }
 
 impl Mapper234 {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_dynamic_mirroring: true,
             ..Default::default()
@@ -202,9 +202,9 @@ impl Mapper for Mapper234 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     const PRG_BANKS: usize = 16; // 16 × 32 KB = 512 KB
     const CHR_BANKS: usize = 64; // 64 × 8 KB = 512 KB

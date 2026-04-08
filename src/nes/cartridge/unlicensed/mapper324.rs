@@ -7,8 +7,8 @@
 //! - Soft-reset vs hard-reset distinction is not preserved: both reset to power-on
 //!   state (`_reg = 0`). On hardware, soft reset preserves outer-bank bits and bit 7.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// Mapper 324 - Farid UNROM-8 (homebrew enhanced UNROM).
 ///
@@ -35,7 +35,7 @@ pub struct Mapper324 {
 }
 
 impl Mapper324 {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_chr_banking: false,
             prg_bank_size_kb: 16,
@@ -105,8 +105,8 @@ impl Mapper for Mapper324 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
 
     const NUM_BANKS: usize = 48; // Non-power-of-2 to catch wrap-around bugs
 

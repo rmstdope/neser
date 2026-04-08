@@ -13,10 +13,10 @@
 //! - MMC4-like automatic CHR bankswitching ($D003 bit 7) is not implemented.
 //! - Reverse-bit PRG mode 3 is implemented.
 
-use crate::cartridge::BaseMapper;
-use crate::cartridge::NametableLayout;
-use crate::cartridge::common::A12RisingEdgeDetector;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::BaseMapper;
+use crate::nes::cartridge::NametableLayout;
+use crate::nes::cartridge::common::A12RisingEdgeDetector;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 // IRQ clock source selection
 #[derive(Clone, Copy, PartialEq)]
@@ -84,7 +84,7 @@ impl JyCompanyMapper {
     const PRG_BANK_SIZE: usize = 0x2000;
     const CHR_BANK_SIZE: usize = 0x0400;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_irq: true,
             has_chr_banking: true,
@@ -474,8 +474,8 @@ impl Mapper for JyCompanyMapper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     // Use non-power-of-two to catch modulo-wrap false-passes
     const PRG_8K_BANKS: usize = 11;
@@ -650,7 +650,7 @@ mod tests {
     fn chr_1k_msb_a000_extends_bank_number() {
         // Use upper-marker data so bank 256 (marker=1) differs from bank 0 (marker=0)
         let prg = banked_data(8 * 1024, PRG_8K_BANKS);
-        let chr = crate::cartridge::test_helpers::banked_data_with_upper_marker(1024, 300);
+        let chr = crate::nes::cartridge::test_helpers::banked_data_with_upper_marker(1024, 300);
         let mut mapper = JyCompanyMapper::new(MapperContext::new_for_test(
             90,
             prg,

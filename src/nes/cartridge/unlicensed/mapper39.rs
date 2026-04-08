@@ -5,7 +5,7 @@
 //! - Edge-case behavior may still differ from hardware in untested timing and board-variant scenarios.
 //! - See CARTRIDGE_REVIEW.md sections 5 and 6 for remaining mapper test/documentation follow-up.
 
-use crate::cartridge::mapper_templates::DualBank32Mapper;
+use crate::nes::cartridge::mapper_templates::DualBank32Mapper;
 
 /// Mapper 39 - BMC-STUDYNGAME / Study and Game 32-in-1
 ///
@@ -34,9 +34,9 @@ pub type Mapper39 = DualBank32Mapper<0xFF, 0, 0, 0, false, 39>;
 
 #[cfg(test)]
 mod tests {
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     fn create_mapper39(
         prg_rom: Vec<u8>,

@@ -33,10 +33,10 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
-use crate::cartridge::NametableLayout;
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::common::ChrMemory;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::NametableLayout;
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::common::ChrMemory;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 const CHR_RAM_SIZE: usize = 32 * 1024;
 
@@ -50,7 +50,7 @@ pub struct Action53Mapper {
 }
 
 impl Action53Mapper {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
             has_dynamic_mirroring: true,
@@ -192,7 +192,7 @@ impl Mapper for Action53Mapper {
         }
     }
 
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+    fn initialize_ram(&mut self, mode: crate::nes::console::RamInitMode) {
         self.base.initialize_ram(mode);
         self.hard_reset_pending = true;
     }
@@ -201,9 +201,9 @@ impl Mapper for Action53Mapper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     /// 32 banks × 16 KB = 512 KB PRG-ROM; no CHR-ROM (uses CHR-RAM).
     fn make_mapper() -> Action53Mapper {
@@ -484,7 +484,7 @@ mod tests {
 
     #[test]
     fn hard_reset_restores_power_on_state() {
-        use crate::console::RamInitMode;
+        use crate::nes::console::RamInitMode;
 
         let mut mapper = make_mapper();
 

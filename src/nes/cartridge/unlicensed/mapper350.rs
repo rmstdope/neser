@@ -9,9 +9,9 @@
 //!   writable in UNROM modes (2/3). No additional undocumented protection
 //!   behavior is currently emulated.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::common::ChrMemory;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::common::ChrMemory;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// Mapper 350 - BMC-891227 multicart.
 ///
@@ -42,7 +42,7 @@ pub struct Mapper350 {
 }
 
 impl Mapper350 {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let chr_seed = ctx.chr_rom.clone();
         let capabilities = MapperCapabilities {
             has_dynamic_mirroring: true,
@@ -172,9 +172,9 @@ impl Mapper for Mapper350 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     const PRG_16K_BANKS: usize = 48;
     const PRG_8K_BANKS: usize = PRG_16K_BANKS * 2;

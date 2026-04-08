@@ -44,9 +44,9 @@
 //!
 //! Standard MMC3 scanline IRQ via A12 rising-edge detection.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mmc3::MMC3Mapper;
-use crate::cartridge::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mmc3::MMC3Mapper;
+use crate::nes::cartridge::{Mapper, MapperCapabilities};
 
 const CHR_RAM_SIZE: usize = 0x1000; // 4 KiB
 
@@ -64,7 +64,7 @@ impl Mapper165 {
     const MAPPER_NUMBER: u8 = 165;
     const CHR_4K_PAGE_SIZE: usize = 0x1000;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let prg_rom = ctx.prg_rom;
         let chr_rom = ctx.chr_rom;
         let mirroring = ctx.mirroring;
@@ -217,9 +217,9 @@ impl Mapper for Mapper165 {
         self.inner.load_wram_snapshot(data);
     }
 
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+    fn initialize_ram(&mut self, mode: crate::nes::console::RamInitMode) {
         self.inner.initialize_ram(mode);
-        crate::console::initialize_ram(&mut self.chr_ram, mode);
+        crate::nes::console::initialize_ram(&mut self.chr_ram, mode);
     }
 
     fn reset(&mut self) {
@@ -270,16 +270,16 @@ impl Mapper for Mapper165 {
         }
     }
 
-    fn get_mirroring(&self) -> crate::cartridge::NametableLayout {
+    fn get_mirroring(&self) -> crate::nes::cartridge::NametableLayout {
         self.inner.get_mirroring()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     // PRG: 8 × 8KB = 64KB
     const PRG_BANKS_8K: usize = 8;

@@ -7,8 +7,8 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// Mapper 093 – Sunsoft-2 IC (Sunsoft-3R board)
 ///
@@ -38,7 +38,7 @@ pub struct Sunsoft2Mapper {
 }
 
 impl Sunsoft2Mapper {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             max_prg_ram_kb: 0,
             prg_bank_size_kb: 16,
@@ -120,8 +120,8 @@ impl Mapper for Sunsoft2Mapper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
 
     // Non-power-of-two PRG bank count prevents false-pass modulo wrapping.
     // Mapper 93 supports up to 8 banks (3 bits); use 5 banks here.

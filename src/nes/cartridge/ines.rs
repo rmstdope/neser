@@ -1,7 +1,7 @@
 // iNES / NES 2.0 header parsing helpers
 // Purpose: centralize header parsing so multiple callers can reuse the logic.
 
-use crate::cartridge::rom_db::RomDb;
+use crate::nes::cartridge::rom_db::RomDb;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -471,14 +471,14 @@ impl ParsedRom {
         let chr_rom =
             data[(prg_rom_start + prg_bytes)..(prg_rom_start + prg_bytes + chr_bytes)].to_vec();
 
-        let crc = crate::cartridge::calculate_rom_crc32(&prg_rom, &chr_rom);
+        let crc = crate::nes::cartridge::calculate_rom_crc32(&prg_rom, &chr_rom);
 
         let payload = if prg_rom_start <= data.len() {
             &data[prg_rom_start..]
         } else {
             &[]
         };
-        let payload_crc32 = crate::cartridge::calculate_rom_crc32(payload, &[]);
+        let payload_crc32 = crate::nes::cartridge::calculate_rom_crc32(payload, &[]);
 
         let mut parsed = Self {
             header: header_for_return,
@@ -587,7 +587,7 @@ impl ParsedRom {
 
         let prg_rom = data[prg_start..prg_end].to_vec();
         let chr_rom = data[chr_start..chr_end].to_vec();
-        let crc32 = crate::cartridge::calculate_rom_crc32(&prg_rom, &chr_rom);
+        let crc32 = crate::nes::cartridge::calculate_rom_crc32(&prg_rom, &chr_rom);
 
         Ok((prg_rom, chr_rom, crc32))
     }
@@ -699,7 +699,7 @@ mod tests {
         assert!(parsed.trainer.is_none());
         assert_eq!(
             parsed.crc32,
-            crate::cartridge::calculate_rom_crc32(&parsed.prg_rom, &parsed.chr_rom)
+            crate::nes::cartridge::calculate_rom_crc32(&parsed.prg_rom, &parsed.chr_rom)
         );
     }
 
@@ -1113,7 +1113,7 @@ mod tests {
 
     #[test]
     fn apply_db_overrides_merges_vs_types_from_rom_db() {
-        use crate::cartridge::rom_db::RomDb;
+        use crate::nes::cartridge::rom_db::RomDb;
 
         // Given: a VS System ROM with no VS types in the header,
         // and a ROM DB entry that specifies VS types

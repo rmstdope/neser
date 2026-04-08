@@ -7,9 +7,9 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
-use crate::cartridge::NametableLayout;
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::NametableLayout;
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// Mapper 302 – Kaiser7057
 ///
@@ -70,7 +70,7 @@ const FIXED_B_BASE: i16 = 0x38; // $C000–$DFFF fixed bank start
 const FIXED_C_BASE: i16 = 0x3C; // $E000–$FFFF fixed bank start
 
 impl Mapper302 {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_dynamic_mirroring: true,
             prg_bank_size_kb: 2,
@@ -213,8 +213,8 @@ impl Mapper for Mapper302 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
 
     // 64 × 2 KiB = 128 KiB. Bank indices 0x00..0x3F are all valid, including
     // the fixed windows (0x34–0x3F). 64 is 2^6 — to avoid modulo-wrapping

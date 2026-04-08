@@ -23,7 +23,7 @@ pub struct AutorunCheckpoint {
     pub frame_index: u32,
     /// CRC-32 of the screen buffer at this frame.
     pub screen_crc: u32,
-    /// Full serialized emulator state ([`crate::console::SaveState`] as JSON bytes).
+    /// Full serialized emulator state ([`crate::nes::console::SaveState`] as JSON bytes).
     pub state_bytes: Vec<u8>,
 }
 

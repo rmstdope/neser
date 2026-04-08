@@ -5,9 +5,9 @@
 //! - Edge-case behavior may still differ from hardware in untested timing and board-variant scenarios.
 //! - See CARTRIDGE_REVIEW.md sections 5 and 6 for remaining mapper test/documentation follow-up.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mmc2_mmc4_latch::{LatchTriggerMode, Mmc2Mmc4Latch};
-use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mmc2_mmc4_latch::{LatchTriggerMode, Mmc2Mmc4Latch};
+use crate::nes::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
 /// Mapper 10 - MMC4 (FxROM boards)
 ///
@@ -39,7 +39,7 @@ pub struct MMC4Mapper {
 }
 
 impl MMC4Mapper {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
             has_dynamic_mirroring: true,
@@ -179,7 +179,7 @@ impl Mapper for MMC4Mapper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::mapper::MapperContext;
+    use crate::nes::cartridge::mapper::MapperContext;
 
     fn filled_banks(bank_size: usize, banks: usize) -> Vec<u8> {
         (0..banks)

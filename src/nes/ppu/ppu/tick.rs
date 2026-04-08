@@ -1,8 +1,8 @@
 use super::Ppu;
-use crate::console::TimingMode;
 use crate::debugging::ppu_trace_level;
-use crate::ppu::color_effects::{apply_color_emphasis, apply_grayscale};
-use crate::ppu::timing::{
+use crate::nes::console::TimingMode;
+use crate::nes::ppu::color_effects::{apply_color_emphasis, apply_grayscale};
+use crate::nes::ppu::timing::{
     BG_PREFETCH_END, BG_PREFETCH_SHIFT_START, BG_PREFETCH_START, DUMMY_NT_FETCH_1,
     DUMMY_NT_FETCH_2, FINE_Y_INCREMENT_PIXEL, FIRST_DOT, FIRST_VISIBLE_PIXEL,
     HORIZONTAL_BITS_COPY_PIXEL, LAST_DOT, LAST_VISIBLE_PIXEL, LAST_VISIBLE_SCANLINE_PLUS_ONE,
@@ -12,7 +12,7 @@ use crate::ppu::timing::{
 };
 
 #[cfg(test)]
-use crate::ppu::timing::FIRST_VISIBLE_SCANLINE;
+use crate::nes::ppu::timing::FIRST_VISIBLE_SCANLINE;
 use crate::trace_ppu;
 
 pub(super) fn prerender_scanline(tv_system: TimingMode) -> u16 {

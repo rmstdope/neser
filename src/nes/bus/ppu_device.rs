@@ -1,6 +1,6 @@
-use crate::bus::bus::BusDevice;
-use crate::cartridge::Cartridge;
-use crate::ppu;
+use crate::nes::bus::bus::BusDevice;
+use crate::nes::cartridge::Cartridge;
+use crate::nes::ppu;
 use std::cell::RefCell;
 use std::ops::RangeInclusive;
 use std::rc::Rc;
@@ -93,21 +93,21 @@ impl BusDevice for PpuDevice {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::{Cartridge, Mapper, NametableLayout};
-    use crate::console::TimingMode;
+    use crate::nes::cartridge::{Cartridge, Mapper, NametableLayout};
+    use crate::nes::console::TimingMode;
     use std::cell::Cell;
 
     struct MaskTrackingMapper {
-        base: crate::cartridge::BaseMapper,
+        base: crate::nes::cartridge::BaseMapper,
         mask_writes: Rc<Cell<usize>>,
     }
 
     impl Mapper for MaskTrackingMapper {
-        fn base(&self) -> &crate::cartridge::BaseMapper {
+        fn base(&self) -> &crate::nes::cartridge::BaseMapper {
             &self.base
         }
 
-        fn base_mut(&mut self) -> &mut crate::cartridge::BaseMapper {
+        fn base_mut(&mut self) -> &mut crate::nes::cartridge::BaseMapper {
             &mut self.base
         }
 
@@ -167,15 +167,15 @@ mod tests {
         let mask_writes = Rc::new(Cell::new(0));
         let mapper = Box::new(MaskTrackingMapper {
             base: {
-                let ctx = crate::cartridge::MapperContext::new_for_test(
+                let ctx = crate::nes::cartridge::MapperContext::new_for_test(
                     0,
                     vec![0; 0x8000],
                     vec![0; 8192],
                     NametableLayout::Horizontal,
                 );
-                crate::cartridge::BaseMapper::new(
+                crate::nes::cartridge::BaseMapper::new(
                     &ctx,
-                    crate::cartridge::MapperCapabilities::default(),
+                    crate::nes::cartridge::MapperCapabilities::default(),
                 )
             },
             mask_writes: Rc::clone(&mask_writes),
@@ -200,7 +200,7 @@ mod tests {
     fn rc2c05_write_to_2000_sets_mask_register() {
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
         ppu.borrow_mut()
-            .set_vs_ppu_type(Some(crate::cartridge::VsPpuType::Rc2c05_01));
+            .set_vs_ppu_type(Some(crate::nes::cartridge::VsPpuType::Rc2c05_01));
 
         let cartridge_slot: Rc<RefCell<Option<Rc<RefCell<Cartridge>>>>> =
             Rc::new(RefCell::new(None));
@@ -227,7 +227,7 @@ mod tests {
     fn rc2c05_write_to_2001_sets_control_register() {
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
         ppu.borrow_mut()
-            .set_vs_ppu_type(Some(crate::cartridge::VsPpuType::Rc2c05_01));
+            .set_vs_ppu_type(Some(crate::nes::cartridge::VsPpuType::Rc2c05_01));
 
         let cartridge_slot: Rc<RefCell<Option<Rc<RefCell<Cartridge>>>>> =
             Rc::new(RefCell::new(None));

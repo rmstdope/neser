@@ -5,10 +5,10 @@
 //!
 //! Specification: <https://www.nesdev.org/wiki/INES_Mapper_040>
 
-use crate::cartridge::BaseMapper;
-use crate::cartridge::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::BaseMapper;
+use crate::nes::cartridge::{Mapper, MapperCapabilities};
 
-use crate::cartridge::cpu_cycle_irq::{CpuCycleIrq, CpuCycleIrqMode};
+use crate::nes::cartridge::cpu_cycle_irq::{CpuCycleIrq, CpuCycleIrqMode};
 
 /// Mapper 040 - NTDEC 2722
 ///
@@ -48,7 +48,7 @@ impl Ntdec2722Mapper {
     // Fixed PRG window bank assignments (hardwired per spec)
     const BANK_AT_6000: usize = 6;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let mirroring = ctx.mirroring;
         let capabilities = MapperCapabilities {
             has_irq: true,
@@ -150,9 +150,9 @@ impl Mapper for Ntdec2722Mapper {
 #[cfg(test)]
 mod tests {
     use super::Ntdec2722Mapper;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     // 11 banks × 8KB = non-power-of-two to prevent false-pass wrapping.
     const PRG_BANKS: usize = 11;

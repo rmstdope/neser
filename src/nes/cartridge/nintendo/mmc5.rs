@@ -62,9 +62,9 @@
 // Imports & Dependencies
 // ============================================================================
 
-use crate::cartridge::BaseMapper;
-use crate::cartridge::NametableLayout;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::BaseMapper;
+use crate::nes::cartridge::NametableLayout;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 use crate::trace_mapper;
 use std::cell::Cell;
 
@@ -253,7 +253,7 @@ impl MMC5Mapper {
     const PRG_RAM_BANK_COUNT_MAX: usize = 8;
     const PRG_ROM_BANK_SIZE: usize = 8 * 1024;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let prg_ram_banks_8k = ctx.prg_ram_banks_8k;
         let prg_rom = ctx.prg_rom;
         let chr_rom = ctx.chr_rom;
@@ -267,13 +267,13 @@ impl MMC5Mapper {
         mirroring: NametableLayout,
         prg_ram_banks_8k: u8,
     ) -> Self {
-        use crate::cartridge::mapper::MapperContext;
+        use crate::nes::cartridge::mapper::MapperContext;
 
         let ctx = MapperContext {
             mapper: 5,
             submapper: 0,
             mirroring,
-            hardware_type: crate::cartridge::HardwareType::NesNtsc,
+            hardware_type: crate::nes::cartridge::HardwareType::NesNtsc,
             prg_rom,
             chr_rom,
             prg_ram_banks_8k,
@@ -1808,8 +1808,8 @@ impl Mapper for MMC5Mapper {
         self.prg_ram[..to_copy].copy_from_slice(&data[..to_copy]);
     }
 
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        crate::console::initialize_ram(&mut self.prg_ram, mode);
+    fn initialize_ram(&mut self, mode: crate::nes::console::RamInitMode) {
+        crate::nes::console::initialize_ram(&mut self.prg_ram, mode);
         self.base.initialize_ram(mode);
     }
 
@@ -2244,11 +2244,11 @@ impl Mapper for MMC5Mapper {
 #[cfg(test)]
 #[allow(clippy::identity_op)]
 mod tests {
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::cartridge::Cartridge;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::{banked_data, banked_data_with_upper_marker};
     use crate::debugging::*;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::cartridge::Cartridge;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::{banked_data, banked_data_with_upper_marker};
 
     use super::MMC5Mapper;
 

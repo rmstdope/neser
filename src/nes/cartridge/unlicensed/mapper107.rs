@@ -8,8 +8,8 @@
 //! - PRG bank (32KB at `$8000-$FFFF`): `((value >> 2) & 0x0F)` (original bits `[5:2]`).
 //! - CHR bank (8KB at `$0000-$1FFF`): `value & 0x03`.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 const MAPPER_NUMBER: u16 = 107;
 const PRG_BANK_SIZE: usize = 32 * 1024;
@@ -21,7 +21,7 @@ pub struct Mapper107 {
 }
 
 impl Mapper107 {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
             prg_bank_size_kb: 32,
@@ -85,9 +85,9 @@ impl Mapper for Mapper107 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     // Non-power-of-two bank counts prevent modulo-wrapping false positives.
     const TEST_PRG_BANK_COUNT: usize = 19;

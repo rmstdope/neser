@@ -9,9 +9,9 @@
 //!   notes no better information than FCEUX's source was available at time of
 //!   specification.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::common::A12RisingEdgeDetector;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::common::A12RisingEdgeDetector;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 const MAPPER_NUMBER: u16 = 222;
 
@@ -71,7 +71,7 @@ pub struct Mapper222 {
 }
 
 impl Mapper222 {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_irq: true,
             has_dynamic_mirroring: true,
@@ -230,9 +230,9 @@ impl Mapper for Mapper222 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     /// 11 × 8 KB PRG banks (non-power-of-two to prevent silent modulo wrap)
     const PRG_BANKS: usize = 11;

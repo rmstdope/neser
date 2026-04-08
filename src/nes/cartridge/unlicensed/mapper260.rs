@@ -64,9 +64,9 @@
 //! # Known Limitations
 //! - DIP switch reads at `$5000–$5FFF` return 0 (4-switch DIP not emulated).
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mmc3::MMC3Mapper;
-use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mmc3::MMC3Mapper;
+use crate::nes::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
 /// Mapper 260 – BMC-HPXX
 pub struct Mapper260 {
@@ -86,7 +86,7 @@ impl Mapper260 {
     const CHR_BANK_SIZE: usize = 0x0400; // 1 KiB
     const CHR_BANK_MASK: usize = Self::CHR_BANK_SIZE - 1;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let mmc3 = MMC3Mapper::new_with_irq_mode(ctx.prg_rom, ctx.chr_rom, ctx.mirroring, false);
         Self {
             mmc3,
@@ -345,7 +345,7 @@ impl Mapper for Mapper260 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
 
     // ROM dimensions
     // PRG: 64 × 8 KiB = 512 KiB (banks 0..63)

@@ -1,5 +1,4 @@
 use crate::app_context::SharedAppContext;
-use crate::console::Nes;
 use crate::debugging::DebuggerViewState;
 use crate::debugging::breakpoints::BreakpointList;
 use crate::debugging::log_info;
@@ -9,6 +8,7 @@ use crate::debugging::ppu_viewer::{
 use crate::debugging::ui::{
     self as debugger_ui, BreakpointAddUiState, HexdumpUiState, WatchlistUiState,
 };
+use crate::nes::console::Nes;
 use crate::rendering::input::{InputEvent, apply_input};
 use crate::rendering::shader_manager::ShaderManager;
 use std::ffi::c_void;

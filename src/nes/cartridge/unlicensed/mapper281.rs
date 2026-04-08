@@ -43,10 +43,10 @@
 //! | $5800     | [7:0] | Multiplier input A / result low byte     |
 //! | $5801     | [7:0] | Multiplier input B / result high byte    |
 
-use crate::cartridge::BaseMapper;
-use crate::cartridge::NametableLayout;
-use crate::cartridge::common::A12RisingEdgeDetector;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::BaseMapper;
+use crate::nes::cartridge::NametableLayout;
+use crate::nes::cartridge::common::A12RisingEdgeDetector;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// IRQ clock source selection
 #[derive(Clone, Copy, PartialEq)]
@@ -117,7 +117,7 @@ impl Mapper281 {
     const PRG_BANK_SIZE: usize = 0x2000;
     const CHR_BANK_SIZE: usize = 0x0400;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_irq: true,
             has_chr_banking: true,
@@ -575,8 +575,8 @@ impl Mapper for Mapper281 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::{banked_data, banked_data_with_upper_marker};
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::{banked_data, banked_data_with_upper_marker};
 
     // Non-power-of-two bank counts to catch modulo-wrapping false-passes
     // PRG: needs at least 64+32=96 banks to test outer bank 2 (base=64, reg up to 31 → max 95)

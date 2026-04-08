@@ -5,10 +5,10 @@
 //! - Edge-case behavior may still differ from hardware in untested timing and board-variant scenarios.
 //! - See CARTRIDGE_REVIEW.md sections 5 and 6 for remaining mapper test/documentation follow-up.
 
-use crate::cartridge::BaseMapper;
-use crate::cartridge::Mapper;
-use crate::cartridge::MapperCapabilities;
-use crate::cartridge::NametableLayout;
+use crate::nes::cartridge::BaseMapper;
+use crate::nes::cartridge::Mapper;
+use crate::nes::cartridge::MapperCapabilities;
+use crate::nes::cartridge::NametableLayout;
 
 #[cfg(test)]
 const PRG_BANK_SIZE_8K: usize = 0x2000; // 8KB
@@ -45,7 +45,7 @@ pub struct Multicart15Mapper {
 }
 
 impl Multicart15Mapper {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let mirroring = ctx.mirroring;
         let capabilities = MapperCapabilities {
             has_irq: false,
@@ -164,7 +164,7 @@ impl Mapper for Multicart15Mapper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::mapper::MapperContext;
+    use crate::nes::cartridge::mapper::MapperContext;
 
     fn create_test_prg_rom(num_16k_banks: usize) -> Vec<u8> {
         let mut prg_rom = vec![0; num_16k_banks * 16 * 1024];

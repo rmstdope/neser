@@ -75,9 +75,9 @@
 //!
 //! Snapshot = 16 bytes (MMC3 core) + 1 byte (`reg`) = 17 bytes total.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::nintendo::mmc3::MMC3Mapper;
-use crate::cartridge::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::nintendo::mmc3::MMC3Mapper;
+use crate::nes::cartridge::{Mapper, MapperCapabilities};
 
 const MAPPER_NUMBER: u16 = 322;
 const MMC3_SNAPSHOT_LEN: usize = 16;
@@ -93,7 +93,7 @@ pub struct Mapper322 {
 }
 
 impl Mapper322 {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         Self {
             mmc3: MMC3Mapper::new_with_irq_mode_and_prg_ram_banks(
                 ctx.prg_rom,
@@ -232,9 +232,9 @@ impl Mapper for Mapper322 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     const PRG_BANK_SIZE: usize = 8 * 1024;
     const CHR_BANK_SIZE: usize = 1024;
@@ -559,7 +559,7 @@ mod tests {
 
     #[test]
     fn mirroring_follows_mmc3_a000_register() {
-        use crate::cartridge::NametableLayout;
+        use crate::nes::cartridge::NametableLayout;
         let mut m = make_mapper(16, 8);
         // MMC3 default mirroring matches header (Vertical)
         assert_eq!(m.get_mirroring(), NametableLayout::Vertical);

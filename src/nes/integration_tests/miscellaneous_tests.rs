@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
-    use crate::console::Config;
     use crate::input::{Button, SnesButton};
-    use crate::integration_tests::romtest_harness::tests::{
+    use crate::nes::console::Config;
+    use crate::nes::integration_tests::romtest_harness::tests::{
         ControllerConfig, InputAction, RomTestResult, ScriptEntry, run_rom_with_script,
     };
     use crate::setup_rom_console_test;
@@ -286,7 +286,7 @@ mod tests {
     /// are open bus (not grounded), so allpads detects HVC-001.
     #[test]
     fn allpads_probe_identifies_famicom_model() {
-        use crate::console::{Config, HardwareMode, NesConfig, RamInitMode};
+        use crate::nes::console::{Config, HardwareMode, NesConfig, RamInitMode};
         let config = Config {
             nes: NesConfig {
                 hardware_mode: HardwareMode::Famicom,
@@ -1187,9 +1187,9 @@ mod tests {
 
     /// Returns a Famicom-mode config with two explicitly configured joypads so
     /// that allpads can detect them as Famicom hardwired controllers (FC 1P / FC 2P).
-    fn famicom_two_joypads_config() -> crate::console::Config {
-        use crate::console::{Config, HardwareMode, NesConfig, RamInitMode};
+    fn famicom_two_joypads_config() -> crate::nes::console::Config {
         use crate::input::ControllerType;
+        use crate::nes::console::{Config, HardwareMode, NesConfig, RamInitMode};
         Config {
             nes: NesConfig {
                 hardware_mode: HardwareMode::Famicom,

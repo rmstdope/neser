@@ -6,8 +6,8 @@
 //! Known Limitations:
 //! - FDS expansion audio output is not currently synthesized.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 pub struct Mapper347 {
     base: BaseMapper,
@@ -25,7 +25,7 @@ impl Mapper347 {
     const FIXED_REGION_BASE: usize = 96 * 1024;
     const PRG_RAM_SIZE: usize = 8 * 1024;
 
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_dynamic_mirroring: true,
             has_chr_banking: false,
@@ -182,8 +182,8 @@ impl Mapper for Mapper347 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
 
     const PRG_SIZE: usize = 128 * 1024;
 

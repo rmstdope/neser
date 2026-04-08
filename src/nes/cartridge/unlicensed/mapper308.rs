@@ -9,10 +9,10 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
-use crate::cartridge::vrc2_vrc4::Vrc2Vrc4Mapper;
-use crate::console::RamInitMode;
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
+use crate::nes::cartridge::vrc2_vrc4::Vrc2Vrc4Mapper;
+use crate::nes::console::RamInitMode;
 
 /// Mapper 308 – UNL-TH2131-1 (Batman bootleg)
 ///
@@ -223,9 +223,9 @@ impl Mapper for Mapper308 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     /// Non-power-of-two bank counts to prevent false-pass modulo wrapping.
     const PRG_BANKS: usize = 11; // 11 × 8 KiB = 88 KiB

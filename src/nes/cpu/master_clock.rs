@@ -1,4 +1,4 @@
-use crate::console::TimingMode;
+use crate::nes::console::TimingMode;
 
 /// Tracks the master clock used to derive CPU and PPU timing,
 /// advancing per-CPU-cycle around each bus access.
@@ -98,7 +98,7 @@ impl MasterClock {
 #[cfg(test)]
 mod tests {
     use super::MasterClock;
-    use crate::console::TimingMode;
+    use crate::nes::console::TimingMode;
 
     #[test]
     fn test_ppu_cycles_since_last_ntsc_rounds_down_and_tracks_remainder() {

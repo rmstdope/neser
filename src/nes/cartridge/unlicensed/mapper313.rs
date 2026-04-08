@@ -45,9 +45,9 @@
 //! bus only invokes `initialize_ram` for hard resets, so that method sets a
 //! pending-hard-reset flag that `reset()` consumes.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
-use crate::cartridge::mmc3::MMC3Mapper;
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::mmc3::MMC3Mapper;
 
 const MAPPER_NUMBER: u16 = 313;
 const PRG_INNER_BANK_MASK: usize = 0x0F;
@@ -66,7 +66,7 @@ pub struct Mapper313 {
 }
 
 impl Mapper313 {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         Self {
             mmc3: MMC3Mapper::new_with_irq_mode(ctx.prg_rom, ctx.chr_rom, ctx.mirroring, false),
             reset_counter: 0,
@@ -189,7 +189,7 @@ impl Mapper for Mapper313 {
         }
     }
 
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+    fn initialize_ram(&mut self, mode: crate::nes::console::RamInitMode) {
         self.mmc3.initialize_ram(mode);
         self.hard_reset_pending = true;
     }
@@ -211,9 +211,9 @@ impl Mapper for Mapper313 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     // 64 8 KB PRG banks → 512 KB; each game slot (16 banks) is distinct
     const PRG_BANKS_8K: usize = 64;
@@ -351,7 +351,7 @@ mod tests {
             "Counter should be 2 before hard reset"
         );
 
-        mapper.initialize_ram(crate::console::RamInitMode::Zero);
+        mapper.initialize_ram(crate::nes::console::RamInitMode::Zero);
         mapper.reset(); // hard reset → counter=0
         assert_eq!(
             mapper.reset_counter, 0,
@@ -363,7 +363,7 @@ mod tests {
     fn subsequent_soft_reset_after_hard_reset_increments_to_1() {
         let mut mapper = make_mapper();
         mapper.reset(); // soft → counter=1
-        mapper.initialize_ram(crate::console::RamInitMode::Zero);
+        mapper.initialize_ram(crate::nes::console::RamInitMode::Zero);
         mapper.reset(); // hard → counter=0
         mapper.reset(); // soft → counter=1
         assert_eq!(

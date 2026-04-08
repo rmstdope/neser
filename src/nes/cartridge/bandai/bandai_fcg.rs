@@ -26,10 +26,10 @@
 //! - Games requiring EEPROM cannot save progress
 use crate::trace_mapper;
 
-use crate::cartridge::BaseMapper;
-use crate::cartridge::NametableLayout;
-use crate::cartridge::cpu_cycle_irq::{CpuCycleIrq, CpuCycleIrqMode};
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::BaseMapper;
+use crate::nes::cartridge::NametableLayout;
+use crate::nes::cartridge::cpu_cycle_irq::{CpuCycleIrq, CpuCycleIrqMode};
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// Submapper variants for Bandai FCG
 #[allow(dead_code)]
@@ -59,12 +59,12 @@ pub struct BandaiFcgMapper {
 }
 
 impl BandaiFcgMapper {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         Self::new_with_variant(ctx, BandaiFcgVariant::Both)
     }
 
     pub fn new_with_variant(
-        ctx: crate::cartridge::mapper::MapperContext,
+        ctx: crate::nes::cartridge::mapper::MapperContext,
         variant: BandaiFcgVariant,
     ) -> Self {
         let capabilities = MapperCapabilities {
@@ -264,8 +264,8 @@ impl Mapper for BandaiFcgMapper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     #[test]
     fn test_mapper_16_is_wired_in_factory() {
@@ -674,8 +674,8 @@ mod tests {
 
     #[test]
     fn test_bandai_fcg_banked_rom_replacement() {
-        use crate::cartridge::common::BankedRom;
-        use crate::cartridge::test_helpers::banked_data;
+        use crate::nes::cartridge::common::BankedRom;
+        use crate::nes::cartridge::test_helpers::banked_data;
 
         const PRG_BANK_SIZE: usize = 16 * 1024; // 16KB
         const CHR_BANK_SIZE: usize = 1024; // 1KB

@@ -6,8 +6,8 @@
 //! Known Limitations:
 //! - No known gameplay-blocking functional limitations are currently documented.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// Mapper 060 - Reset-based NROM-128 4-in-1
 ///
@@ -32,7 +32,7 @@ pub struct Mapper60 {
 }
 
 impl Mapper60 {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             prg_bank_size_kb: 16,
             chr_bank_size_kb: 8,
@@ -90,7 +90,7 @@ impl Mapper for Mapper60 {
 
     /// On hard reset, pre-set `game_select` to 3 so that the subsequent
     /// `reset()` call during hard reset advances to 0 (power-on game).
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+    fn initialize_ram(&mut self, mode: crate::nes::console::RamInitMode) {
         self.game_select = 3;
         self.apply_game_select();
         self.base_mut().initialize_ram(mode);
@@ -100,9 +100,9 @@ impl Mapper for Mapper60 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     fn make_mapper() -> Mapper60 {
         let prg = banked_data(16 * 1024, 4);
@@ -206,7 +206,7 @@ mod tests {
         mapper.reset(); // reset -> game 1
         mapper.reset(); // reset -> game 2
         // Simulate hard reset: initialize_ram then reset
-        mapper.initialize_ram(crate::console::RamInitMode::Zero);
+        mapper.initialize_ram(crate::nes::console::RamInitMode::Zero);
         mapper.reset();
         assert_eq!(mapper.game_select, 0, "hard reset must start at game 0");
         assert_eq!(mapper.read_prg(0x8000), 0);

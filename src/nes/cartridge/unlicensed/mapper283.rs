@@ -39,8 +39,8 @@
 //! - `$8000–$FFFF`: PRG-ROM banks 28–31 (base_bank = `0x07 << 2 = 28`).
 //! - CHR: bank 0.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
 
 const MAPPER_NUMBER: u16 = 283;
 const PRG_BANK_SIZE_BYTES: usize = 8 * 1024;
@@ -135,9 +135,9 @@ impl Mapper for Mapper283 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     // 35 banks (non-power-of-two) so that bank 32 is a real distinct bank.
     const PRG_BANKS: usize = 35;

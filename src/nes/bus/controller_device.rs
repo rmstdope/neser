@@ -1,9 +1,9 @@
-use crate::bus::bus::{BusDevice, ControllerModes};
-use crate::cartridge::VsHardwareType;
 use crate::input::ArkanoidController;
 use crate::input::Controller;
 use crate::input::Zapper;
 use crate::input::{Button, PowerPad};
+use crate::nes::bus::bus::{BusDevice, ControllerModes};
+use crate::nes::cartridge::VsHardwareType;
 use std::cell::{Cell, RefCell};
 use std::ops::RangeInclusive;
 use std::rc::Rc;
@@ -826,11 +826,11 @@ mod tests {
             TestController::new(reads, dummy_reads),
         )));
 
-        let ppu = Rc::new(RefCell::new(crate::ppu::Ppu::new_for_testing(
-            crate::console::TimingMode::Ntsc,
+        let ppu = Rc::new(RefCell::new(crate::nes::ppu::Ppu::new_for_testing(
+            crate::nes::console::TimingMode::Ntsc,
         )));
         let app_context = Rc::new(RefCell::new(
-            crate::app_context::AppContext::new_with_config(crate::console::Config::default()),
+            crate::app_context::AppContext::new_with_config(crate::nes::console::Config::default()),
         ));
         let zapper = Rc::new(RefCell::new(crate::input::Zapper::new(ppu, app_context)));
 

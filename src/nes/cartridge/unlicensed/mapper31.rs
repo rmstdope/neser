@@ -13,9 +13,9 @@
 //! Power-on state: window 7 = bank `$FF` (wraps to available banks); windows 0–6 = bank 0.
 //! No PRG-RAM. CHR: fixed 8 KB at bank 0 (CHR-ROM or CHR-RAM). Mirroring: fixed from header.
 
-use crate::cartridge::base_mapper::BaseMapper;
-use crate::cartridge::common::ChrMemory;
-use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+use crate::nes::cartridge::base_mapper::BaseMapper;
+use crate::nes::cartridge::common::ChrMemory;
+use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
 const CHR_RAM_SIZE: usize = 8 * 1024;
 const PRG_BANK_SIZE: usize = 4 * 1024;
@@ -29,7 +29,7 @@ pub struct Mapper31 {
 }
 
 impl Mapper31 {
-    pub fn new(ctx: crate::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
             prg_bank_size_kb: 4,
@@ -98,9 +98,9 @@ impl Mapper for Mapper31 {
 
 #[cfg(test)]
 mod tests {
-    use crate::cartridge::NametableLayout;
-    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::NametableLayout;
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     // 48 banks (non-power-of-two) prevents false passes from modulo wrapping
     const NUM_BANKS: usize = 48;
