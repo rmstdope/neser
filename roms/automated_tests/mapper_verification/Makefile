@@ -305,7 +305,9 @@ SINGLES := \
 	$(SINGLES_DIR)/m119.0_irq.nes \
 	$(SINGLES_DIR)/m151.0_prg_banking.nes \
 	$(SINGLES_DIR)/m151.0_chr_banking.nes \
-	$(SINGLES_DIR)/m151.0_four_screen.nes
+	$(SINGLES_DIR)/m151.0_four_screen.nes \
+	$(SINGLES_DIR)/m207.0_prg_banking.nes \
+	$(SINGLES_DIR)/m207.0_chr_banking.nes
 
 # ============================================================
 # Combined ROM target list (all tests per mapper/submapper)
@@ -394,7 +396,8 @@ COMBINED := \
 	$(BIN_DIR)/m099.1.nes \
 	$(BIN_DIR)/m111.0.nes \
 	$(BIN_DIR)/m119.0.nes \
-	$(BIN_DIR)/m151.0.nes
+	$(BIN_DIR)/m151.0.nes \
+	$(BIN_DIR)/m207.0.nes
 
 .PHONY: all clean check-tools singles combined
 
@@ -1017,3 +1020,9 @@ $(eval $(call ROM_RULE,$(SINGLES_DIR)/m151.0_prg_banking.nes,prg_banking,m151.0)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m151.0_chr_banking.nes,chr_banking,m151.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m151.0_four_screen.nes,four_screen,m151.0))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m151.0.nes,m151.0,prg_banking chr_banking four_screen))
+
+# Mapper 207 (Taito X1-005 Alternate Mirroring) — 3 switchable 8KB PRG slots, mixed 2K+1K CHR
+# CONSOLE_VERIFICATION: registers at $7EF0–$7EFF prevent use of $6000 status protocol.
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m207.0_prg_banking.nes,prg_banking,m207.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m207.0_chr_banking.nes,chr_banking,m207.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m207.0.nes,m207.0,prg_banking chr_banking))

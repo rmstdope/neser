@@ -58,6 +58,7 @@ use super::sunsoft::sunsoft_fme7::SunsoftFme7Mapper;
 use super::taito::taito_tc0190::TaitoTc0190Mapper;
 use super::taito::taito_tc0350::TaitoTc0350Mapper;
 use super::taito::taito_x1005::TaitoX1005Mapper;
+use super::taito::taito_x1005_207::TaitoX1005_207Mapper;
 use super::taito::taito_x1017::TaitoX1017Mapper;
 
 // Jaleco mappers
@@ -978,6 +979,7 @@ mapper_registry! {
     204 => Mapper204::new,
     205 => Mapper205::new,
     206 => Namco118Mapper::new,
+    207 => TaitoX1005_207Mapper::new,
     211 => Mapper211::new,
     212 => Mapper212::new,
     214 => Mapper214::new,

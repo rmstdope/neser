@@ -403,8 +403,8 @@ test_title_string:
         pass_test
         .endif
 
-        ; === VRC1 Third PRG Slot ($C000) ===
-        .if MAPPER_NUM = 75 .or MAPPER_NUM = 151
+        ; === Third PRG Slot ($C000) — VRC1 and Mapper 207 ===
+        .if MAPPER_NUM = 75 .or MAPPER_NUM = 151 .or MAPPER_NUM = 207
         start_test 8, "Slot2 Bank 0"
         select_prg_bank 2, 0
         lda $C000
