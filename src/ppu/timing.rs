@@ -209,8 +209,8 @@ impl Timing {
         let is_visible_scanline = self.scanline < LAST_VISIBLE_SCANLINE_PLUS_ONE;
         let is_prerender_scanline = match self.tv_system {
             TimingMode::Ntsc => self.scanline == NTSC_PRERENDER_SCANLINE,
-            TimingMode::Pal => self.scanline == PAL_PRERENDER_SCANLINE,
-            TimingMode::MultiRegion | TimingMode::Dendy | TimingMode::Unknown(_) => {
+            TimingMode::Pal | TimingMode::Dendy => self.scanline == PAL_PRERENDER_SCANLINE,
+            TimingMode::MultiRegion | TimingMode::Unknown(_) => {
                 self.scanline == NTSC_PRERENDER_SCANLINE
             }
         };

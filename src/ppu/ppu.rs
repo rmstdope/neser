@@ -792,13 +792,8 @@ impl Ppu {
     /// Returns true if we're on scanlines 0-239 or the pre-render scanline
     fn is_on_rendering_scanline(&self) -> bool {
         let scanline = self.timing.scanline();
-        let prerender_scanline = match self.timing.tv_system() {
-            TimingMode::Ntsc => 261,
-            TimingMode::Pal => 311,
-            TimingMode::MultiRegion | TimingMode::Dendy | TimingMode::Unknown(_) => 261,
-        };
         let is_visible_scanline = scanline < 240;
-        let is_prerender = scanline == prerender_scanline;
+        let is_prerender = scanline == tick::prerender_scanline(self.timing.tv_system());
         is_visible_scanline || is_prerender
     }
 

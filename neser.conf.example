@@ -37,11 +37,12 @@
 # -----------------------------------------------------------------------------
 # Hardware
 # -----------------------------------------------------------------------------
-# Set to "nes-ntsc", "nes-pal", or "famicom".
+# Set to "nes-ntsc", "nes-pal", "famicom", or "dendy".
 # NES-NTSC runs at ~60 FPS, NES-PAL at ~50 FPS.
 # nes-ntsc is the standard for North American and Japanese NES consoles.
 # nes-pal is used for European NES consoles.
 # famicom uses Famicom hardware mode and NTSC timing.
+# dendy emulates the Soviet-era Dendy clone (~50 FPS, 312 scanlines, ~1.77 MHz CPU).
 hardware=nes-ntsc
 
 # -----------------------------------------------------------------------------

@@ -36,6 +36,7 @@ pub fn log_hardware_selection(app_context: &SharedAppContext, timing_applied: bo
         config::HardwareMode::Nes => match cfg.hardware_model {
             config::HardwareModel::NesNtsc => "NES NTSC".to_string(),
             config::HardwareModel::NesPal => "NES PAL".to_string(),
+            config::HardwareModel::Dendy => "NES Dendy".to_string(),
         },
     };
 

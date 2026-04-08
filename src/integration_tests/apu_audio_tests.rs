@@ -834,7 +834,168 @@ mod tests {
         check_zero_irq_fired
     );
 
-    // TODO fadeout_and_triangle_tests
+    // fadeout_and_triangle_tests
+    #[test]
+    fn test_fadeout_and_triangle() {
+        init_tracing_from_env();
+        let rom_path =
+            "roms/automated_tests/fadeout_and_triangle_tests/fadeout_and_triangle_test.nes";
+
+        // Run for ~4 seconds to capture at least one full fade cycle (~3.25s).
+        let total_cycles = NTSC_CPU_CYCLES_PER_FRAME * 240;
+
+        // --- Collect mixed output (all channels) for fadeout envelope analysis ---
+        let rom_data = fs::read(rom_path).expect("ROM should load");
+        let cartridge = load_test_cartridge(&rom_data, rom_path);
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+        {
+            let mut apu = nes.apu().borrow_mut();
+            apu.set_sample_rate(SAMPLE_RATE_HZ);
+        }
+        let mut mixed_samples = Vec::new();
+        let mut cycles_run = 0u32;
+        while cycles_run < total_cycles {
+            let consumed = nes.run_cpu_tick() as u32;
+            cycles_run = cycles_run.saturating_add(consumed.max(1));
+            while nes.sample_ready() {
+                if let Some(sample) = nes.get_sample() {
+                    mixed_samples.push(sample);
+                }
+            }
+        }
+        let mixed_samples = trim_warmup(&mixed_samples, WARMUP_SAMPLES);
+        assert!(
+            mixed_samples.len() > 10_000,
+            "expected sufficient mixed samples, got {}",
+            mixed_samples.len()
+        );
+
+        // --- Collect triangle-only output for frequency analysis ---
+        let tri_samples = collect_forced_channel_samples(
+            rom_path,
+            total_cycles,
+            false, // pulse1
+            false, // pulse2
+            true,  // triangle
+            false, // noise
+            false, // dmc
+        );
+        let tri_samples = trim_warmup(&tri_samples, WARMUP_SAMPLES);
+        assert!(
+            tri_samples.len() > 10_000,
+            "expected sufficient triangle samples, got {}",
+            tri_samples.len()
+        );
+
+        // --- Assertion 1: Fadeout envelope in mixed output ---
+        // The ROM plays multiple channels initially, then they fade out leaving
+        // only the triangle. The RMS envelope should decrease significantly.
+        let window_size = (SAMPLE_RATE_HZ as usize / 50).max(1); // 20ms windows
+        let hop_size = (window_size / 2).max(1);
+        let mixed_rms = rms_windows(&mixed_samples, window_size, hop_size);
+        let max_rms = mixed_rms.iter().copied().fold(0.0f32, f32::max);
+        let min_rms = mixed_rms.iter().copied().fold(f32::INFINITY, f32::min);
+
+        // The peak RMS should be substantially higher than the trough (fadeout occurred).
+        let fadeout_ratio = max_rms / min_rms.max(f32::EPSILON);
+        assert!(
+            fadeout_ratio > 1.5,
+            "expected significant fadeout (peak/trough ratio > 1.5), got {:.3} \
+             (max_rms={:.4}, min_rms={:.4})",
+            fadeout_ratio,
+            max_rms,
+            min_rms
+        );
+
+        // Verify the envelope generally decreases: the first quarter of RMS windows
+        // should have a higher average than the middle portion (post-fade steady state).
+        let q1_end = mixed_rms.len() / 4;
+        let q2_start = mixed_rms.len() / 4;
+        let q2_end = mixed_rms.len() / 2;
+        let q1_avg: f32 = mixed_rms[..q1_end].iter().sum::<f32>() / q1_end.max(1) as f32;
+        let q2_avg: f32 =
+            mixed_rms[q2_start..q2_end].iter().sum::<f32>() / (q2_end - q2_start).max(1) as f32;
+        assert!(
+            q1_avg > q2_avg,
+            "expected first quarter RMS ({:.4}) > second quarter RMS ({:.4}) — fadeout \
+             envelope should decrease over time",
+            q1_avg,
+            q2_avg
+        );
+
+        // --- Assertion 2: Triangle output is active (not silence) ---
+        // The triangle channel should produce non-silent output throughout.
+        let tri_rms = rms_windows(&tri_samples, window_size, hop_size);
+        let tri_avg_rms: f32 = tri_rms.iter().sum::<f32>() / tri_rms.len().max(1) as f32;
+        assert!(
+            tri_avg_rms > 0.05,
+            "expected non-silent triangle output (avg RMS > 0.05), got {:.4} — \
+             triangle channel may be broken",
+            tri_avg_rms
+        );
+
+        // The steady-state mixed RMS (post-fade) should also be non-zero,
+        // confirming the triangle continues playing after other channels fade.
+        let steady_region = &mixed_rms[mixed_rms.len() / 2..mixed_rms.len() * 3 / 4];
+        let steady_avg: f32 = steady_region.iter().sum::<f32>() / steady_region.len().max(1) as f32;
+        assert!(
+            steady_avg > 0.05,
+            "expected non-silent steady region (avg RMS > 0.05), got {:.4} — triangle \
+             may have been silenced prematurely",
+            steady_avg
+        );
+
+        // --- Assertion 3: Triangle frequency stability ---
+        // The triangle channel should produce a stable ~196 Hz tone (period ~225 samples
+        // at 44100 Hz sample rate).
+        let periods = period_series(&tri_samples);
+        assert!(
+            periods.len() > 100,
+            "expected >100 triangle periods for reliable measurement, got {}",
+            periods.len()
+        );
+
+        // Use median-filtered periods to ignore outliers from warmup edges.
+        let mut sorted_periods = periods.clone();
+        sorted_periods.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let median_period = sorted_periods[sorted_periods.len() / 2];
+        let filtered: Vec<f32> = periods
+            .iter()
+            .copied()
+            .filter(|&p| (p - median_period).abs() / median_period < 0.1)
+            .collect();
+        assert!(
+            !filtered.is_empty(),
+            "expected at least one triangle period within ±10% of median ({:.1}), got 0 out of {} periods",
+            median_period,
+            periods.len()
+        );
+        let avg_period: f32 = filtered.iter().sum::<f32>() / filtered.len() as f32;
+        let freq = SAMPLE_RATE_HZ / avg_period;
+
+        // Triangle frequency should be within ±10% of expected ~196 Hz.
+        assert!(
+            (176.0..=216.0).contains(&freq),
+            "expected triangle frequency ~196 Hz (±10%), got {:.1} Hz (period={:.1} samples)",
+            freq,
+            avg_period
+        );
+
+        // Most periods should be within ±10% of median (frequency stability).
+        let stable_ratio = filtered.len() as f32 / periods.len() as f32;
+        assert!(
+            stable_ratio > 0.90,
+            "expected >90% of periods within ±10% of median ({:.1}), got {:.1}% ({}/{})",
+            median_period,
+            stable_ratio * 100.0,
+            filtered.len(),
+            periods.len()
+        );
+    }
 
     // square_timer_div2
     #[test]
@@ -1452,12 +1613,14 @@ mod tests {
         }
 
         // Phase 2 – During the noise marker, triangle should also be silent.
-        for index in noise_start..noise_end.min(tri_rms.len()) {
+        let noise_window_end = noise_end.min(tri_rms.len());
+        for (offset, &rms) in tri_rms[noise_start..noise_window_end].iter().enumerate() {
+            let window = noise_start + offset;
             assert!(
-                tri_rms[index] <= silence_threshold,
+                rms <= silence_threshold,
                 "expected triangle silence during noise marker window {} (rms={})",
-                index,
-                tri_rms[index]
+                window,
+                rms
             );
         }
 
@@ -1482,14 +1645,15 @@ mod tests {
         // Verify no silent gaps appear *after* the active region restarts (i.e., the
         // active region is truly contiguous — once it stops, it stays stopped).
         let after_active = continuous_start + active_count;
-        for index in after_active..tri_rms.len() {
+        for (offset, &rms) in tri_rms[after_active..].iter().enumerate() {
+            let window = after_active + offset;
             assert!(
-                tri_rms[index] <= silence_threshold,
+                rms <= silence_threshold,
                 "unexpected triangle activity at window {} after continuous region ended at {} \
                  (rms={}); indicates a silent gap within what should be continuous playback",
-                index,
+                window,
                 after_active,
-                tri_rms[index]
+                rms
             );
         }
     }
@@ -1546,7 +1710,7 @@ mod tests {
             if !a_pressed && frame >= press_frame {
                 nes.set_button(1, crate::input::Button::A, true);
                 a_pressed = true;
-            } else if a_pressed && !a_released && frame >= press_frame + 1 {
+            } else if a_pressed && !a_released && frame > press_frame {
                 nes.set_button(1, crate::input::Button::A, false);
                 a_released = true;
             }
