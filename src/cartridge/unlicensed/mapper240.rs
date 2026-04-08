@@ -297,13 +297,19 @@ mod tests {
     #[test]
     fn write_below_4020_is_ignored() {
         let mut mapper = make_mapper();
-        mapper.write_prg(0x4020, 0x10); // PRG bank 1
+        mapper.write_prg(0x4020, 0x10); // P=1, C=0
         // Write below $4020 should be ignored by register logic
         // (address $4000 is below the mapper's register range)
+        mapper.write_prg(0x4000, 0xFF);
         assert_eq!(
             mapper.read_prg(0x8000),
             1,
             "PRG bank must remain 1 after non-register write"
+        );
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            0,
+            "CHR bank must remain 0 after non-register write"
         );
     }
 
