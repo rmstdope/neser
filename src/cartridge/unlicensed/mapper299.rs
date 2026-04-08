@@ -125,9 +125,10 @@ mod tests {
     use crate::cartridge::mapper::{MapperContext, create_mapper};
     use crate::cartridge::test_helpers::banked_data;
 
-    // Use non-power-of-two bank counts to catch modulo-wrapping bugs.
+    // Use non-power-of-two bank counts while still covering every bank this
+    // mapper can select directly (PRG 0..=7, CHR 0..=31).
     const PRG_BANKS: usize = 9;
-    const CHR_BANKS: usize = 37; // 8 PRG × 4 CHR sub-banks = 32; use 37 to be safe
+    const CHR_BANKS: usize = 37; // Covers the full reachable CHR bank range with headroom.
 
     fn make_mapper() -> Mapper299 {
         Mapper299::new(
