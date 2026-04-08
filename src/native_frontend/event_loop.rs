@@ -836,6 +836,7 @@ impl ApplicationHandler for NativeEventLoop {
                         .app_context()
                         .borrow()
                         .config()
+                        .nes
                         .hardware_model
                         .timing_mode();
                     let target = target_frame_duration(timing_mode);
@@ -982,6 +983,7 @@ impl ApplicationHandler for NativeEventLoop {
                     .app_context()
                     .borrow()
                     .config()
+                    .nes
                     .hardware_model
                     .timing_mode();
                 let target = target_frame_duration(timing_mode);

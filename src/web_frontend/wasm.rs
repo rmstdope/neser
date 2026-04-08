@@ -142,6 +142,7 @@ impl WasmNes {
                 .app_context()
                 .borrow()
                 .config()
+                .nes
                 .hardware_model
                 .timing_mode(),
         ));
@@ -646,6 +647,7 @@ impl WasmNes {
             .app_context()
             .borrow()
             .config()
+            .nes
             .hardware_model
             .timing_mode()
             .frame_rate_hz()

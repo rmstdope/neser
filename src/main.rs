@@ -128,6 +128,7 @@ fn recalculate_autorun_for_rom(rom_path: &str, format: AutorunFormat) -> Result<
         load_autorun_file, save_autorun_file,
     };
     use cartridge::Cartridge;
+    use console::NesConfig;
     use console::RamInitMode;
     use std::io::{self, Write};
 
@@ -145,7 +146,10 @@ fn recalculate_autorun_for_rom(rom_path: &str, format: AutorunFormat) -> Result<
         fs::read(rom_path).map_err(|e| format!("Failed to read ROM {}: {e}", rom_path))?;
 
     let config = Config {
-        ram_init_mode: RamInitMode::Zero,
+        nes: NesConfig {
+            ram_init_mode: RamInitMode::Zero,
+            ..Default::default()
+        },
         ..Default::default()
     };
     let app_context = AppContext::new_with_config(config);
@@ -307,6 +311,7 @@ fn run_native_frontend(
     let rom_path = app_context
         .borrow()
         .config()
+        .frontend
         .rom_path
         .clone()
         .unwrap_or_else(|| default_rom_path.to_string());

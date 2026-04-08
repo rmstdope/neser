@@ -233,6 +233,7 @@ impl NativeAppState {
                 .app_context()
                 .borrow()
                 .config()
+                .nes
                 .hardware_model
                 .timing_mode();
             return Some(autorun_overlay_text(autorun, tv_system));
