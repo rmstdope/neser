@@ -2482,6 +2482,25 @@ mod tests {
     );
 
     // ================================================================
+    // Mapper 207 (Taito X1-005 Alternate Mirroring), Submapper 0
+    // Identical to Mapper 80 but with per-pair nametable select via
+    // CHR register bit 7. Registers at $7EF0–$7EFF → console verification.
+    // ================================================================
+
+    setup_rom_console_test!(
+        test_mv_m207_0_prg_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m207.0_prg_banking.nes"
+    );
+    setup_rom_console_test!(
+        test_mv_m207_0_chr_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m207.0_chr_banking.nes"
+    );
+    setup_rom_console_test!(
+        test_mv_m207_0_combined,
+        "roms/automated_tests/mapper_verification/bin/m207.0.nes"
+    );
+
+    // ================================================================
     // Mapper 111 (GTROM / Cheapocabra), Submapper 0
     // Uses console verification; $7000-$7FFF is register mirror,
     // $6000-$6FFF is unmapped (no PRG-RAM).
