@@ -431,16 +431,16 @@ mod tests {
     }
 
     #[test]
-    fn test_dendy_noise_power_on_uses_ntsc_period_table() {
+    fn test_dendy_noise_write_period_uses_ntsc_period_table() {
         // Dendy APU works with NTSC timings.
         // Spec: Mesen2 NesApu.cpp GetApuRegion() — Dendy routes to ConsoleRegion::Ntsc
-        // NTSC period[0] = 4; PAL period[0] = 4 (same, use index 1 to differentiate)
+        // Use index 2 because NTSC and PAL differ there (NTSC=16, PAL=14).
         let mut noise = Noise::new_with_tv_system(TimingMode::Dendy);
-        noise.write_period(0b0000_0001); // mode=0, period_index=1
+        noise.write_period(0b0000_0010); // mode=0, period_index=2
         assert_eq!(
-            noise.timer_period, NOISE_PERIOD_TABLE_NTSC[1],
-            "Dendy noise must use NTSC period table (got {}, expected NTSC[1]={})",
-            noise.timer_period, NOISE_PERIOD_TABLE_NTSC[1]
+            noise.timer_period, NOISE_PERIOD_TABLE_NTSC[2],
+            "Dendy noise must use NTSC period table after write_period (got {}, expected NTSC[2]={})",
+            noise.timer_period, NOISE_PERIOD_TABLE_NTSC[2]
         );
     }
 
