@@ -18,6 +18,7 @@ mod app_context;
 mod audio;
 mod autorun;
 mod debugging;
+mod emulator;
 mod frontend_toasts;
 mod input;
 #[cfg(feature = "native")]

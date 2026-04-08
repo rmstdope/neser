@@ -16,6 +16,7 @@ pub use nes::ppu;
 pub mod app_context;
 pub mod autorun;
 pub mod debugging;
+pub mod emulator;
 pub mod frontend_toasts;
 pub mod input;
 #[cfg(feature = "wasm")]
