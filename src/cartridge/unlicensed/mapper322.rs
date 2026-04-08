@@ -2,53 +2,50 @@
 //!
 //! ## Specifications
 //!
-//! - Primary source: NesDev wiki `INES_Mapper_322` (HTTP 403 at implementation time)
-//! - Fallback source: FCEUMM `src/mappers/mapper322.c` (K-3033 board)
+//! - Primary source: <https://nesdev-wiki.nes.science/wikipages/NES_2_0_Mapper_322.xhtml>
 //!
 //! ## Overview
 //!
 //! K-3033 is an MMC3-based multicart board ("35-in-1"). It wraps the standard MMC3
 //! with a single outer bank register that selects a block of PRG/CHR ROM pages for
-//! the inner MMC3 bank registers to address. Writes to `$6000–$7FFF` store the
-//! **address low byte** (A[7:0]) as the outer register value (not the data byte).
+//! the inner MMC3 bank registers to address. The register is written via address bus
+//! bits A[7:0] at `$6000–$7FFF` (the data byte is ignored). WRAM must be enabled via
+//! MMC3 register `$A001` bit 7 before writing the outer bank register.
 //!
 //! ## Outer bank register (`$6000–$7FFF`, write)
 //!
 //! ```text
-//! reg = addr & 0xFF   (address low byte)
-//! ```
+//! Mask: $E000   (A[15:13] = 011 selects $6000–$7FFF)
+//! reg = addr & 0xFF   (address low byte A[7:0] carries the register value)
 //!
-//! Bit layout of `reg`:
-//! ```text
-//! Bit 7: Size flag – 0 = inner 128 KB PRG/1 MB CHR window, 1 = inner 256 KB PRG/2 MB CHR window
-//! Bit 6: Outer PRG/CHR bank bit 2
-//! Bit 5: MMC3 bypass flag – 0 = fixed PRG window, 1 = pass-through MMC3 PRG banking
-//! Bit 4: Outer PRG/CHR bank bit 1
-//! Bit 3: Outer PRG/CHR bank bit 0
-//! Bits[2:0]: Inner PRG page select (used in bypass mode)
+//! A~FEDC BA98 7654 3210
+//!   011. .... SONO OIII
+//!             |||| |+++- Bits[2:0]: inner PRG-ROM bank select (NROM mode)
+//!             |+|+-+---- Bits[6,4,3]: outer bank number (0–7)
+//!             | +------- Bit 5: mode select (0=NROM, 1=MMC3 PRG)
+//!             +--------- Bit 7: outer bank size (0=128 KiB PRG/1 MB CHR, 1=256 KiB PRG/2 MB CHR)
 //! ```
 //!
 //! Outer bank index: `outer = ((reg >> 4) & 0x04) | ((reg >> 3) & 0x03)` → 3-bit value 0–7
 //!
 //! ## PRG banking
 //!
-//! ### Bypass mode (bit 5 = 0)
+//! ### NROM mode (bit 5 = 0)
 //!
-//! The inner MMC3 PRG registers are ignored for $8000–$FFFF:
+//! Outer PRG/CHR-ROM bank size is fixed at 128 KiB. MMC3 PRG registers are ignored.
 //!
 //! ```text
 //! bank_16k = (outer << 3) | (reg & 0x07)
 //! ```
 //!
-//! If `reg & 0x03 != 0` → 32 KB fixed: both halves of $8000–$FFFF map to `bank_16k >> 1`
-//! in 32 KB units.
-//!
-//! If `reg & 0x03 == 0` → 16 KB mirror: both halves of $8000–$FFFF map to the same
-//! `bank_16k` in 16 KB units.
+//! - Inner banks 0 and 4 (`reg & 0x03 == 0`): NROM-128 – both $8000–$BFFF and $C000–$FFFF
+//!   mirror the same 16 KiB block.
+//! - Inner banks 1–3 and 5–7 (`reg & 0x03 != 0`): NROM-256 – bit 0 of inner bank is
+//!   replaced by CPU A14, yielding a fixed 32 KiB window across $8000–$FFFF.
 //!
 //! ### MMC3 mode (bit 5 = 1)
 //!
-//! The MMC3's raw 8 KB page number is masked by the outer bank:
+//! The MMC3's raw 8 KB page number is windowed by the outer bank:
 //!
 //! ```text
 //! prg_base = outer << 4      (8 KB units)
@@ -58,7 +55,7 @@
 //!
 //! ## CHR banking
 //!
-//! Always uses MMC3 CHR registers with outer bank masking (same formula as MMC3 mode PRG):
+//! Always uses MMC3 CHR registers with outer bank windowing (both modes):
 //!
 //! ```text
 //! chr_base = outer << 7      (1 KB units)
