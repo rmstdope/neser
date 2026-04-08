@@ -1358,5 +1358,221 @@ mod tests {
 
     // TODO test_tri_lin_ctr
 
-    // TODO volume_tests
+    // ── volume_tests helpers ────────────────────────────────────────────
+
+    /// Compute AC-coupled RMS (DC offset removed) for a slice of audio samples.
+    ///
+    /// Subtracts the mean before computing RMS so that only the alternating
+    /// signal energy is measured.  This matches real NES hardware behavior where
+    /// a high-pass filter removes the DC component from the unsigned DACs.
+    fn ac_coupled_rms(samples: &[f32]) -> f32 {
+        if samples.is_empty() {
+            return 0.0;
+        }
+        let mean = samples.iter().sum::<f32>() / samples.len() as f32;
+        let variance =
+            samples.iter().map(|&s| (s - mean).powi(2)).sum::<f32>() / samples.len() as f32;
+        variance.sqrt()
+    }
+
+    /// Run a ROM for a total number of CPU cycles with all APU channels enabled,
+    /// pressing the A button on controller 1 at `press_frame` and releasing it
+    /// one frame later.
+    ///
+    /// Returns the collected audio samples (mixed, all channels).
+    fn collect_samples_with_a_press(
+        rom_path: &str,
+        total_cycles: u32,
+        press_frame: u64,
+    ) -> Vec<f32> {
+        let rom_data = fs::read(rom_path).expect("ROM should load");
+        let cartridge = load_test_cartridge(&rom_data, rom_path);
+
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+
+        {
+            let mut apu = nes.apu().borrow_mut();
+            apu.set_sample_rate(SAMPLE_RATE_HZ);
+        }
+
+        let mut samples = Vec::new();
+        let mut cycles_run = 0u32;
+        let mut a_pressed = false;
+        let mut a_released = false;
+
+        while cycles_run < total_cycles {
+            let frame = nes.ppu().borrow().frame_count();
+
+            if !a_pressed && frame >= press_frame {
+                nes.set_button(1, crate::input::Button::A, true);
+                a_pressed = true;
+            } else if a_pressed && !a_released && frame >= press_frame + 1 {
+                nes.set_button(1, crate::input::Button::A, false);
+                a_released = true;
+            }
+
+            let consumed = nes.run_cpu_tick() as u32;
+            cycles_run = cycles_run.saturating_add(consumed.max(1));
+
+            while nes.sample_ready() {
+                if let Some(sample) = nes.get_sample() {
+                    samples.push(sample);
+                }
+            }
+        }
+
+        samples
+    }
+
+    /// Frame offsets (relative to A-press) for each tone within a single DMC pass.
+    ///
+    /// Derived from the ROM's `sound.s` assembly: each tone occupies 72 frames
+    /// (8-frame setup silence + 64-frame volume sweep 15→0 at 4 frames/step).
+    /// The peak-volume audio starts at offset + 8 frames.
+    const TONE_PASS_OFFSETS: [u64; 12] = [
+        0,   // Tone 1:  Sq1 1/8 duty
+        72,  // Tone 2:  Sq1 1/4 duty
+        144, // Tone 3:  Sq1 1/2 duty
+        216, // Tone 4:  Sq1 3/4 duty
+        288, // Tone 5:  Sq1+Sq2 1/8 duty
+        360, // Tone 6:  Sq1+Sq2 1/4 duty
+        432, // Tone 7:  Sq1+Sq2 1/2 duty
+        504, // Tone 8:  Sq1+Sq2 3/4 duty
+        576, // Tone 9:  Triangle
+        648, // Tone 10: Noise long LFSR
+        720, // Tone 11: Noise short LFSR
+        792, // Tone 12: DMC amplitude 30
+    ];
+
+    /// Frames of silence before volume starts within each tone.
+    const TONE_SETUP_FRAMES: u64 = 8;
+
+    /// Frames of peak-volume audio to measure RMS over.
+    const PEAK_MEASURE_FRAMES: u64 = 8;
+
+    /// Total frames per DMC pass (4 initial + 12 tones).
+    /// Tones 1-8: 576 frames, tone 9: 72, tones 10-11: 144, tone 12: ~88 = ~880.
+    const FRAMES_PER_PASS: u64 = 880;
+
+    /// Initial silence frames at the start of volume_test (before pass 0).
+    const INITIAL_SILENCE_FRAMES: u64 = 4;
+
+    /// Approximate samples per NTSC frame at 44100 Hz.
+    const SAMPLES_PER_FRAME: f32 = SAMPLE_RATE_HZ / 60.0988;
+
+    /// Extract RMS values for all 12 tones in a given DMC pass from raw samples.
+    ///
+    /// `press_frame` is the PPU frame at which A was pressed.
+    /// `pass_index` is 0, 1, or 2 (DMC baseline 0, 48, 96).
+    /// `samples` is the full audio buffer.
+    fn extract_tone_rms_values(samples: &[f32], press_frame: u64, pass_index: u64) -> [f32; 12] {
+        let pass_start_frame = press_frame + INITIAL_SILENCE_FRAMES + pass_index * FRAMES_PER_PASS;
+
+        let mut rms_values = [0.0f32; 12];
+        for (i, &tone_offset) in TONE_PASS_OFFSETS.iter().enumerate() {
+            let peak_start_frame = pass_start_frame + tone_offset + TONE_SETUP_FRAMES;
+            let peak_start_sample = (peak_start_frame as f32 * SAMPLES_PER_FRAME) as usize;
+            let peak_end_sample =
+                ((peak_start_frame + PEAK_MEASURE_FRAMES) as f32 * SAMPLES_PER_FRAME) as usize;
+
+            if peak_end_sample <= samples.len() {
+                rms_values[i] = ac_coupled_rms(&samples[peak_start_sample..peak_end_sample]);
+            }
+        }
+        rms_values
+    }
+
+    /// Assert relative volume relationships for one DMC pass.
+    fn assert_volume_relationships(rms: &[f32; 12], pass_label: &str) {
+        // Tones 1-4: duty cycle ordering.
+        // Tone 3 (1/2 duty) should be the loudest single-channel tone.
+        // Tone 4 (3/4 duty) should be approximately equal to tone 3 (by waveform symmetry).
+        // Tone 1 (1/8 duty) should be the quietest.
+        assert!(
+            rms[2] > rms[0],
+            "{}: tone 3 (1/2 duty, rms={:.6}) should be louder than tone 1 (1/8 duty, rms={:.6})",
+            pass_label,
+            rms[2],
+            rms[0]
+        );
+        assert!(
+            rms[1] > rms[0],
+            "{}: tone 2 (1/4 duty, rms={:.6}) should be louder than tone 1 (1/8 duty, rms={:.6})",
+            pass_label,
+            rms[1],
+            rms[0]
+        );
+
+        // Tones 5-8 (combined sq1+sq2) should each be louder than tones 1-4 (single sq1).
+        for i in 0..4 {
+            assert!(
+                rms[4 + i] > rms[i],
+                "{}: combined tone {} (rms={:.6}) should be louder than single tone {} (rms={:.6})",
+                pass_label,
+                5 + i,
+                rms[4 + i],
+                1 + i,
+                rms[i]
+            );
+        }
+
+        // Tone 9 (triangle): audible
+        assert!(
+            rms[8] > 1e-5,
+            "{}: tone 9 (triangle, rms={:.6}) should be audible",
+            pass_label,
+            rms[8]
+        );
+
+        // Tone 10 (noise long LFSR): audible
+        assert!(
+            rms[9] > 1e-5,
+            "{}: tone 10 (noise long, rms={:.6}) should be audible",
+            pass_label,
+            rms[9]
+        );
+
+        // Tone 11 (noise short LFSR): audible
+        assert!(
+            rms[10] > 1e-5,
+            "{}: tone 11 (noise short, rms={:.6}) should be audible",
+            pass_label,
+            rms[10]
+        );
+
+        // Tone 12 (DMC amplitude 30): audible
+        assert!(
+            rms[11] > 1e-5,
+            "{}: tone 12 (DMC, rms={:.6}) should be audible",
+            pass_label,
+            rms[11]
+        );
+    }
+
+    #[test]
+    fn test_volume_tests() {
+        init_tracing_from_env();
+
+        let rom_path = "roms/automated_tests/volume_tests/volumes.nes";
+
+        // Press A after 5 frames to let the ROM initialize.
+        let press_frame: u64 = 5;
+
+        // Total frames needed: 5 (warmup) + 4 (initial silence) + 3 * 880 (passes) ≈ 2649.
+        // Add margin for ramps between passes and measurement slack.
+        let total_frames: u64 = press_frame + INITIAL_SILENCE_FRAMES + 3 * FRAMES_PER_PASS + 50;
+        let total_cycles = (total_frames as f32 * NTSC_CPU_CYCLES_PER_FRAME as f32) as u32;
+
+        let samples = collect_samples_with_a_press(rom_path, total_cycles, press_frame);
+
+        for pass in 0..3u64 {
+            let rms = extract_tone_rms_values(&samples, press_frame, pass);
+            let pass_label = format!("pass {} (DMC={})", pass, pass * 48);
+            assert_volume_relationships(&rms, &pass_label);
+        }
+    }
 }
