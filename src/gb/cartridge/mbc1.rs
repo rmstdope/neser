@@ -35,7 +35,9 @@ impl Mbc1 {
     }
 
     fn rom_bank_count(&self) -> usize {
-        self.rom.len() / 0x4000
+        // Valid GB ROMs are always a multiple of 16 KB (0x4000).
+        // A count of 0 would indicate a malformed ROM; callers guard via load_cartridge.
+        (self.rom.len() / 0x4000).max(1)
     }
 
     /// Effective lower ROM bank number: writes of 0 select bank 1.

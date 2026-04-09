@@ -31,6 +31,7 @@ fn compute_header_checksum(bytes: &[u8]) -> u8 {
 /// Derive the RAM size (in bytes) from the RAM size byte at 0x0149.
 fn ram_size_from_byte(byte: u8) -> usize {
     match byte {
+        0x01 => 2 * 1024,
         0x02 => 8 * 1024,
         0x03 => 32 * 1024,
         0x04 => 128 * 1024,
@@ -49,6 +50,10 @@ pub fn load_cartridge(bytes: &[u8]) -> Result<Box<dyn GbCartridge>, RomError> {
     if bytes.len() < 0x8000 {
         return Err(RomError::TooShort);
     }
+    // Valid GB ROMs are always a multiple of 16 KB.  Passing a non-aligned slice
+    // is harmless — the MBC implementations compute bank count as `len / 0x4000`,
+    // so any trailing partial bank simply becomes unreachable (reads return 0xFF
+    // via slice::get + unwrap_or).
 
     let expected = compute_header_checksum(bytes);
     let actual = bytes[0x014D];

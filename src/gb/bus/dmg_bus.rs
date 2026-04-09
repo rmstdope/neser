@@ -70,7 +70,7 @@ impl GbBus for DmgBus {
             0xFE00..=0xFE9F => self.oam[(addr - 0xFE00) as usize],
             0xFEA0..=0xFEFF => 0xFF,
             0xFF04..=0xFF07 => self.timer.read(addr),
-            0xFF0F => self.if_reg,
+            0xFF0F => self.if_reg | 0xE0,
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
             0xFFFF => self.ie_reg,
             _ => 0xFF, // unmapped I/O stubs
@@ -87,7 +87,7 @@ impl GbBus for DmgBus {
             0xFE00..=0xFE9F => self.oam[(addr - 0xFE00) as usize] = val,
             0xFEA0..=0xFEFF => {} // forbidden; writes ignored
             0xFF04..=0xFF07 => self.timer.write(addr, val),
-            0xFF0F => self.if_reg = val,
+            0xFF0F => self.if_reg = val & 0x1F,
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize] = val,
             0xFFFF => self.ie_reg = val,
             _ => {} // unmapped I/O stubs; writes ignored
@@ -234,9 +234,27 @@ mod tests {
 
     #[test]
     fn test_if_register_read_write() {
+        // Given: write valid interrupt bits; Then: read back with upper 3 bits as 1
         let mut bus = make_bus();
-        bus.write(0xFF0F, 0x05);
-        assert_eq!(bus.read(0xFF0F), 0x05);
+        bus.write(0xFF0F, 0x05); // bits 0 and 2
+        // Upper 3 bits ($E0) always read as 1 per Pan Docs open-bus behavior
+        assert_eq!(bus.read(0xFF0F), 0xE5);
+    }
+
+    #[test]
+    fn test_if_upper_bits_always_read_as_1() {
+        // Given: clear IF; Then: upper 3 bits still read as 1
+        let mut bus = make_bus();
+        bus.write(0xFF0F, 0x00);
+        assert_eq!(bus.read(0xFF0F), 0xE0);
+    }
+
+    #[test]
+    fn test_if_write_ignores_upper_3_bits() {
+        // Given: write 0xFF to IF; Then: upper bits not stored, lower 5 bits + open-bus = 0xFF
+        let mut bus = make_bus();
+        bus.write(0xFF0F, 0xFF);
+        assert_eq!(bus.read(0xFF0F), 0xFF); // 0xE0 | 0x1F = 0xFF
     }
 
     // ── Timer routing ─────────────────────────────────────────────────────────
