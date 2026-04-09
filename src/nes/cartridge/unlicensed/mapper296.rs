@@ -263,9 +263,9 @@ impl Mapper296 {
         let outer_1kb = self.chr_1kb_outer_offset();
         let chr_mode_8kb = (self.mmc1_control & Self::MMC1_CHR_MODE_BIT) == 0;
         let bank_1kb = if chr_mode_8kb {
-            // 8 KiB mode: chr0 selects 8 KiB (bit 0 ignored)
-            let base_8kb = (self.mmc1_chr0 & 0xFE) as usize;
-            outer_1kb | (base_8kb * 8 + (((addr as usize) & 0x1FFF) >> 10))
+            // 8 KiB mode: chr0 is a 4 KiB bank index with bit 0 ignored (aligned to even bank).
+            let base_4kb = (self.mmc1_chr0 & 0xFE) as usize;
+            outer_1kb | (base_4kb * 4 + (((addr as usize) & 0x1FFF) >> 10))
         } else {
             // 4 KiB mode: chr0 at $0000, chr1 at $1000
             let (bank_4kb, sub) = if (addr & 0x1000) == 0 {
@@ -909,9 +909,9 @@ mod tests {
     #[test]
     fn test_mmc1_chr_8kb_mode_bank0_selects_8kb_block() {
         // MMC1 default control bit4=0 → 8 KiB CHR mode.
-        // In 8KB mode bit 0 of chr0 is ignored (aligned to even bank).
-        // chr0=2 → 8 KiB block 2 (base_8kb=2) → 1 KiB banks 16..23.
-        // PPU $0000 → 1KB bank 16, filled with 16.
+        // In 8 KiB mode chr0 is a 4 KiB bank index; bit 0 is ignored (aligned to even bank).
+        // chr0=2 → 4 KiB bank 2 (bit0 already 0) → 1 KiB banks 8..15.
+        // PPU $0000 → 1 KiB bank 8, filled with 8.
         let mut m = create_mapper();
         m.write_prg(0x411D, 0x01); // MMC1 mode
         // Write chr0=2 to $A000 (5 bits: 0b00010)
@@ -919,7 +919,19 @@ mod tests {
             m.write_prg(0xA000, bit);
         }
         let val = m.read_chr(0x0000);
-        assert_eq!(val, 16, "MMC1 8KB CHR: chr0=2 → 1KB bank 16 → value 16");
+        assert_eq!(val, 8, "MMC1 8KB CHR: chr0=2 → 1KB bank 8 → value 8");
+
+        // chr0=3 (bit 0 set) must map to the same 8 KiB block as chr0=2.
+        let mut m2 = create_mapper();
+        m2.write_prg(0x411D, 0x01);
+        for bit in [1u8, 1, 0, 0, 0] {
+            m2.write_prg(0xA000, bit);
+        }
+        assert_eq!(
+            m2.read_chr(0x0000),
+            8,
+            "MMC1 8KB CHR: chr0=3 (bit0 ignored) → same 1KB bank 8"
+        );
     }
 
     #[test]
