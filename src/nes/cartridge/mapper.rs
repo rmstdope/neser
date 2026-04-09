@@ -154,6 +154,7 @@ use super::unlicensed::mapper128::Mapper128;
 use super::unlicensed::mapper165::Mapper165;
 use super::unlicensed::mapper199::Mapper199;
 use super::unlicensed::mapper200::Mapper200;
+use super::unlicensed::mapper201::Mapper201;
 use super::unlicensed::mapper202::Mapper202;
 use super::unlicensed::mapper204::Mapper204;
 use super::unlicensed::mapper205::Mapper205;
@@ -987,6 +988,7 @@ mapper_registry! {
     185 => CnromSecurityMapper::new,
     199 => Mapper199::new,
     200 => Mapper200::new,
+    201 => Mapper201::new,
     202 => Mapper202::new,
     204 => Mapper204::new,
     205 => Mapper205::new,
