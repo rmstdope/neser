@@ -197,11 +197,14 @@ impl Mapper for Mapper126 {
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        if data.len() >= 4 {
-            let (mmc3_data, ex_data) = data.split_at(data.len() - 4);
+        let mmc3_snapshot_len = self.mmc3.registers_snapshot().len();
+
+        if data.len() >= mmc3_snapshot_len + self.ex_regs.len() {
+            let (mmc3_data, ex_data) = data.split_at(data.len() - self.ex_regs.len());
             self.ex_regs.copy_from_slice(ex_data);
             self.mmc3.restore_registers(mmc3_data);
         } else {
+            self.ex_regs = [0; 4];
             self.mmc3.restore_registers(data);
         }
     }
