@@ -306,6 +306,9 @@ SINGLES := \
 	$(SINGLES_DIR)/m151.0_prg_banking.nes \
 	$(SINGLES_DIR)/m151.0_chr_banking.nes \
 	$(SINGLES_DIR)/m151.0_four_screen.nes \
+	$(SINGLES_DIR)/m158.0_prg_banking.nes \
+	$(SINGLES_DIR)/m158.0_chr_banking.nes \
+	$(SINGLES_DIR)/m158.0_irq.nes \
 	$(SINGLES_DIR)/m207.0_prg_banking.nes \
 	$(SINGLES_DIR)/m207.0_chr_banking.nes
 
@@ -397,6 +400,7 @@ COMBINED := \
 	$(BIN_DIR)/m111.0.nes \
 	$(BIN_DIR)/m119.0.nes \
 	$(BIN_DIR)/m151.0.nes \
+	$(BIN_DIR)/m158.0.nes \
 	$(BIN_DIR)/m207.0.nes
 
 .PHONY: all clean check-tools singles combined
@@ -1020,6 +1024,13 @@ $(eval $(call ROM_RULE,$(SINGLES_DIR)/m151.0_prg_banking.nes,prg_banking,m151.0)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m151.0_chr_banking.nes,chr_banking,m151.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m151.0_four_screen.nes,four_screen,m151.0))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m151.0.nes,m151.0,prg_banking chr_banking four_screen))
+
+# Mapper 158 (Tengen 800037 — RAMBO-1 with CHR-bit7 CIRAM A10 routing, Alien Syndrome)
+# No HAS_MIRRORING_CONTROL: mirroring is driven by CHR bank bit 7, not $A000 register.
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m158.0_prg_banking.nes,prg_banking,m158.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m158.0_chr_banking.nes,chr_banking,m158.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m158.0_irq.nes,irq,m158.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m158.0.nes,m158.0,prg_banking chr_banking irq))
 
 # Mapper 207 (Taito X1-005 Alternate Mirroring) — 3 switchable 8KB PRG slots, mixed 2K+1K CHR
 # CONSOLE_VERIFICATION: registers at $7EF0–$7EFF prevent use of $6000 status protocol.

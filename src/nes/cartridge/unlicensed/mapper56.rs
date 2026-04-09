@@ -26,7 +26,7 @@ use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 /// - $9000-$9FFF: IRQ latch nibble 1 [7:4]
 /// - $A000-$AFFF: IRQ latch nibble 2 [11:8]
 /// - $B000-$BFFF: IRQ latch nibble 3 [15:12]
-/// - $C000-$CFFF: IRQ control (bit1=E: enable-now; bit0 is stored but has no effect)
+/// - $C000-$CFFF: IRQ control (bit1=E: enable-now; bit0 is ignored, unlike VRC3)
 /// - $D000-$DFFF: IRQ acknowledge
 /// - $E000-$EFFF: Bank register select (bits [2:0], values 1/2/3 for $8000/$A000/$C000)
 /// - $F000-$FFFF: Bank data and sub-registers (superimposed):
@@ -137,8 +137,10 @@ impl Mapper for Mapper56 {
                 self.irq_latch = (self.irq_latch & 0x0FFF) | (((value as u16) & 0x0F) << 12);
             }
             0xC000..=0xCFFF => {
-                // IRQ control: bit1=E (enable now). Bit0 is stored in hardware but
-                // has no effect (no enable-after-ack on KS202, per Mesen).
+                // IRQ control: bit1=E (enable now); bit0 is ignored on KS202
+                // (unlike VRC3 where bit0 re-enables after acknowledge).
+                // Spec (KS202/Mesen): reload counter from latch immediately when E=1;
+                // always clear pending IRQ.
                 self.irq_enabled = (value & 0x02) != 0;
                 if self.irq_enabled {
                     self.irq_counter = self.irq_latch;
@@ -443,6 +445,31 @@ mod tests {
         assert_eq!(
             mapper.irq_counter, 5,
             "counter must be reloaded from latch on E=1"
+        );
+    }
+
+    /// KS202 (mapper 142 wiki): bit 0 of $C000 ("A") must NOT re-enable IRQ after
+    /// acknowledge, unlike VRC3. Disabling (E=0) then re-writing E=1 is fine, but
+    /// a plain $D000 acknowledge must leave the IRQ disabled.
+    #[test]
+    fn irq_bit0_of_c000_does_not_reenable_after_acknowledge() {
+        let mut mapper = make_mapper();
+        mapper.write_prg(0x8000, 0x0E); // latch = 0xFFFE
+        mapper.write_prg(0x9000, 0x0F);
+        mapper.write_prg(0xA000, 0x0F);
+        mapper.write_prg(0xB000, 0x0F);
+        // Write $C000 with bits A=1 and E=1
+        mapper.write_prg(0xC000, 0x03);
+        mapper.cpu_cycle(); // counter reaches 0xFFFF → IRQ fires, E cleared
+        assert!(mapper.irq_pending());
+        mapper.write_prg(0xD000, 0); // acknowledge
+        // IRQ must remain disabled; running more cycles must NOT fire again
+        for _ in 0..10 {
+            mapper.cpu_cycle();
+        }
+        assert!(
+            !mapper.irq_pending(),
+            "bit0 (A) of $C000 must not re-enable IRQ after acknowledge"
         );
     }
 
