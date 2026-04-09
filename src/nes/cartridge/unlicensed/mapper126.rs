@@ -409,7 +409,7 @@ mod tests {
     }
 
     #[test]
-    fn chr_outer_bank_from_ex_reg0_bit5() {
+    fn chr_outer_bank_from_ex_reg0_bit7_and_bit3() {
         // exRegs[0] = 0x20 (bit 5 set): chr_outer = (0x20 << 3) & 0x0100 = 0x100 = 256
         // But CHR_1K_BANKS = 256, so bank 256 wraps to 0.
         // Let me use a value where the outer bank stays in range.
