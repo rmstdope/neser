@@ -45,6 +45,8 @@
 //! - Mirroring: Vertical.
 //! - IRQ counter = 0, IRQ disabled.
 
+use std::cell::Cell;
+
 use crate::nes::cartridge::NametableLayout;
 use crate::nes::cartridge::base_mapper::BaseMapper;
 use crate::nes::cartridge::cpu_cycle_irq::{CpuCycleIrq, CpuCycleIrqMode};
@@ -64,12 +66,15 @@ pub struct Mapper303 {
     irq: CpuCycleIrq,
     /// Staging register for IRQ counter, low byte.
     irq_counter_low: u8,
+    /// Interior-mutable pending flag so $4030 read can clear it in &self context.
+    irq_pending_latch: Cell<bool>,
 }
 
 impl Mapper303 {
     pub fn new(ctx: MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_dynamic_mirroring: true,
+            has_irq: true,
             prg_bank_size_kb: 16,
             ..Default::default()
         };
@@ -82,6 +87,7 @@ impl Mapper303 {
             prg_bank: 0,
             irq: CpuCycleIrq::new(CpuCycleIrqMode::DownToZero),
             irq_counter_low: 0,
+            irq_pending_latch: Cell::new(false),
         };
         mapper.apply_state();
         mapper
@@ -113,7 +119,9 @@ impl Mapper for Mapper303 {
 
     fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
         if addr == 0x4030 {
-            return self.irq.is_pending() as u8;
+            let pending = self.irq_pending_latch.get();
+            self.irq_pending_latch.set(false);
+            return (open_bus & 0xFE) | (pending as u8);
         }
         self.base
             .read_prg_open_bus(addr, open_bus, |a| self.read_prg(a))
@@ -126,10 +134,12 @@ impl Mapper for Mapper303 {
         match addr {
             0x4020 => {
                 self.irq.acknowledge();
+                self.irq_pending_latch.set(false);
                 self.irq_counter_low = value;
             }
             0x4021 => {
                 self.irq.acknowledge();
+                self.irq_pending_latch.set(false);
                 let counter = (self.irq_counter_low as u16) | ((value as u16) << 8);
                 self.irq.set_counter(counter);
                 self.irq.set_enabled(true);
@@ -156,10 +166,15 @@ impl Mapper for Mapper303 {
 
     fn cpu_cycle(&mut self) {
         self.irq.tick();
+        if self.irq.is_pending() {
+            self.irq.set_enabled(false);
+            self.irq.set_pending(false);
+            self.irq_pending_latch.set(true);
+        }
     }
 
     fn irq_pending(&self) -> bool {
-        self.irq.is_pending()
+        self.irq_pending_latch.get()
     }
 
     fn reset(&mut self) {
@@ -167,11 +182,12 @@ impl Mapper for Mapper303 {
         self.prg_bank = 0;
         self.irq = CpuCycleIrq::new(CpuCycleIrqMode::DownToZero);
         self.irq_counter_low = 0;
+        self.irq_pending_latch.set(false);
         self.apply_state();
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        let flags = (self.irq.enabled() as u8) | ((self.irq.is_pending() as u8) << 1);
+        let flags = (self.irq.enabled() as u8) | ((self.irq_pending_latch.get() as u8) << 1);
         vec![
             self.prg_bank_latch,
             self.prg_bank,
@@ -179,6 +195,7 @@ impl Mapper for Mapper303 {
             (self.irq.counter() & 0xFF) as u8,
             (self.irq.counter() >> 8) as u8,
             self.irq_counter_low,
+            self.base.mirroring().to_snapshot_byte(),
         ]
     }
 
@@ -190,10 +207,16 @@ impl Mapper for Mapper303 {
         self.prg_bank = data[1];
         let flags = data[2];
         self.irq.set_enabled(flags & 0x01 != 0);
-        self.irq.set_pending(flags & 0x02 != 0);
+        let pending = flags & 0x02 != 0;
+        self.irq.set_pending(false);
+        self.irq_pending_latch.set(pending);
         self.irq
             .set_counter((data[3] as u16) | ((data[4] as u16) << 8));
         self.irq_counter_low = data[5];
+        if data.len() >= 7 {
+            self.base
+                .set_mirroring(NametableLayout::from_snapshot_byte(data[6]));
+        }
         self.base.select_prg_page(0, self.prg_bank as i16);
         self.base.select_prg_page(1, FIXED_PRG_BANK);
     }
@@ -448,17 +471,14 @@ mod tests {
         mapper.cpu_cycle();
         assert!(mapper.irq_pending());
 
-        // read_prg_open_bus clears IRQ pending and returns status
+        // read_prg_open_bus returns status and clears pending IRQ
         let status = mapper.read_prg_open_bus(0x4030, 0xFF);
         assert_eq!(
             status & 0x01,
             0x01,
             "$4030 bit 0 should be 1 when IRQ pending"
         );
-
-        // After read, mapper state should have IRQ cleared (via IRQ line check at bus level,
-        // but read_prg_open_bus only reads the current pending flag without side effects –
-        // IRQ clearing on read is tracked separately via irq_pending which is polled).
+        assert!(!mapper.irq_pending(), "$4030 read should clear pending IRQ");
     }
 
     /// $4030 returns 0 when IRQ is not pending.
@@ -575,6 +595,31 @@ mod tests {
         assert!(
             mapper.irq_pending(),
             "IRQ should fire after restoring counter=5 and 5 cycles"
+        );
+    }
+
+    #[test]
+    fn snapshot_and_restore_preserves_mirroring() {
+        let prg_rom = banked_data(PRG_BANK_SIZE, 4);
+        let mut mapper = create_mapper303(prg_rom);
+
+        mapper.write_prg(0x4025, 0x08); // switch to Horizontal
+        assert_eq!(mapper.base().mirroring(), NametableLayout::Horizontal);
+
+        let snap = mapper.registers_snapshot();
+
+        mapper.reset();
+        assert_eq!(
+            mapper.base().mirroring(),
+            NametableLayout::Vertical,
+            "after reset, mirroring should be Vertical"
+        );
+
+        mapper.restore_registers(&snap);
+        assert_eq!(
+            mapper.base().mirroring(),
+            NametableLayout::Horizontal,
+            "after restore, mirroring should be Horizontal"
         );
     }
 }
