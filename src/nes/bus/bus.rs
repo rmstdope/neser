@@ -8,14 +8,14 @@ use super::ppu_device::PpuDevice;
 use super::ram_device::RamDevice;
 use crate::app_context::SharedAppContext;
 use crate::debugging::log_info;
-use crate::input::{
+use crate::nes::apu::SharedApu;
+use crate::nes::cartridge::Cartridge;
+use crate::nes::console::{ExpansionPort, HardwareMode};
+use crate::nes::input::{
     ArkanoidController, ArkanoidState, Button, Controller, ControllerType, JoypadState, NesJoypad,
     PowerPad, PowerPadButton, PowerPadState, SnesAdapter, SnesAdapterState, SnesButton, Zapper,
     ZapperState,
 };
-use crate::nes::apu::SharedApu;
-use crate::nes::cartridge::Cartridge;
-use crate::nes::console::{ExpansionPort, HardwareMode};
 use crate::nes::ppu::{self, SharedPpu};
 use serde::{Deserialize, Serialize};
 use std::cell::{Cell, RefCell};
@@ -768,7 +768,7 @@ impl Bus {
         let state = controller.capture_state();
 
         match state {
-            crate::input::ControllerState::Joypad(joypad_state) => joypad_state.button_states,
+            crate::nes::input::ControllerState::Joypad(joypad_state) => joypad_state.button_states,
             _ => 0, // Not a joypad
         }
     }
@@ -839,9 +839,9 @@ impl Bus {
     }
 
     /// Return the input type for a controller port.
-    pub fn controller_input_type(&self, port: u8) -> Option<crate::input::ControllerInput> {
+    pub fn controller_input_type(&self, port: u8) -> Option<crate::nes::input::ControllerInput> {
         if self.has_player34_serial_enabled() && (3..=4).contains(&port) {
-            return Some(crate::input::ControllerInput::Gamepad);
+            return Some(crate::nes::input::ControllerInput::Gamepad);
         }
 
         if !(1..=2).contains(&port) {
@@ -895,7 +895,7 @@ impl Bus {
             self.controllers[(port - 1) as usize]
                 .borrow()
                 .capture_state(),
-            crate::input::ControllerState::Zapper(_)
+            crate::nes::input::ControllerState::Zapper(_)
         )
     }
 
@@ -959,22 +959,30 @@ impl Bus {
             open_bus: self.open_bus,
             oam_dma_page: *self.oam_dma_page.borrow(),
             port1_controller: match port1_state {
-                crate::input::ControllerState::Joypad(s) => ControllerStateWrapper::Joypad(s),
-                crate::input::ControllerState::SnesAdapter(s) => {
+                crate::nes::input::ControllerState::Joypad(s) => ControllerStateWrapper::Joypad(s),
+                crate::nes::input::ControllerState::SnesAdapter(s) => {
                     ControllerStateWrapper::SnesAdapter(s)
                 }
-                crate::input::ControllerState::Paddle(s) => ControllerStateWrapper::Arkanoid(s),
-                crate::input::ControllerState::Zapper(s) => ControllerStateWrapper::Zapper(s),
-                crate::input::ControllerState::PowerPad(s) => ControllerStateWrapper::PowerPad(s),
+                crate::nes::input::ControllerState::Paddle(s) => {
+                    ControllerStateWrapper::Arkanoid(s)
+                }
+                crate::nes::input::ControllerState::Zapper(s) => ControllerStateWrapper::Zapper(s),
+                crate::nes::input::ControllerState::PowerPad(s) => {
+                    ControllerStateWrapper::PowerPad(s)
+                }
             },
             port2_controller: match port2_state {
-                crate::input::ControllerState::Joypad(s) => ControllerStateWrapper::Joypad(s),
-                crate::input::ControllerState::SnesAdapter(s) => {
+                crate::nes::input::ControllerState::Joypad(s) => ControllerStateWrapper::Joypad(s),
+                crate::nes::input::ControllerState::SnesAdapter(s) => {
                     ControllerStateWrapper::SnesAdapter(s)
                 }
-                crate::input::ControllerState::Paddle(s) => ControllerStateWrapper::Arkanoid(s),
-                crate::input::ControllerState::Zapper(s) => ControllerStateWrapper::Zapper(s),
-                crate::input::ControllerState::PowerPad(s) => ControllerStateWrapper::PowerPad(s),
+                crate::nes::input::ControllerState::Paddle(s) => {
+                    ControllerStateWrapper::Arkanoid(s)
+                }
+                crate::nes::input::ControllerState::Zapper(s) => ControllerStateWrapper::Zapper(s),
+                crate::nes::input::ControllerState::PowerPad(s) => {
+                    ControllerStateWrapper::PowerPad(s)
+                }
             },
             expansion_arkanoid: if self.is_arkanoid_famicom_configured() {
                 Some(self.expansion_arkanoid.borrow().capture_state())
@@ -1008,7 +1016,7 @@ impl Bus {
                     self.app_context.clone(),
                     ControllerType::Joypad,
                 );
-                controller.restore_state(&crate::input::ControllerState::Joypad(s.clone()));
+                controller.restore_state(&crate::nes::input::ControllerState::Joypad(s.clone()));
                 *self.controllers[0].borrow_mut() = controller;
             }
             ControllerStateWrapper::SnesAdapter(s) => {
@@ -1017,7 +1025,8 @@ impl Bus {
                     self.app_context.clone(),
                     ControllerType::SnesAdapter,
                 );
-                controller.restore_state(&crate::input::ControllerState::SnesAdapter(s.clone()));
+                controller
+                    .restore_state(&crate::nes::input::ControllerState::SnesAdapter(s.clone()));
                 *self.controllers[0].borrow_mut() = controller;
             }
             ControllerStateWrapper::Arkanoid(s) => {
@@ -1026,7 +1035,7 @@ impl Bus {
                     self.app_context.clone(),
                     ControllerType::Arkanoid,
                 );
-                controller.restore_state(&crate::input::ControllerState::Paddle(s.clone()));
+                controller.restore_state(&crate::nes::input::ControllerState::Paddle(s.clone()));
                 *self.controllers[0].borrow_mut() = controller;
             }
             ControllerStateWrapper::Zapper(s) => {
@@ -1035,7 +1044,7 @@ impl Bus {
                     self.app_context.clone(),
                     ControllerType::Zapper,
                 );
-                controller.restore_state(&crate::input::ControllerState::Zapper(s.clone()));
+                controller.restore_state(&crate::nes::input::ControllerState::Zapper(s.clone()));
                 *self.controllers[0].borrow_mut() = controller;
             }
             ControllerStateWrapper::PowerPad(s) => {
@@ -1044,7 +1053,7 @@ impl Bus {
                     self.app_context.clone(),
                     ControllerType::PowerPad,
                 );
-                controller.restore_state(&crate::input::ControllerState::PowerPad(s.clone()));
+                controller.restore_state(&crate::nes::input::ControllerState::PowerPad(s.clone()));
                 *self.controllers[0].borrow_mut() = controller;
             }
         }
@@ -1057,7 +1066,7 @@ impl Bus {
                     self.app_context.clone(),
                     ControllerType::Joypad,
                 );
-                controller.restore_state(&crate::input::ControllerState::Joypad(s.clone()));
+                controller.restore_state(&crate::nes::input::ControllerState::Joypad(s.clone()));
                 *self.controllers[1].borrow_mut() = controller;
             }
             ControllerStateWrapper::SnesAdapter(s) => {
@@ -1066,7 +1075,8 @@ impl Bus {
                     self.app_context.clone(),
                     ControllerType::SnesAdapter,
                 );
-                controller.restore_state(&crate::input::ControllerState::SnesAdapter(s.clone()));
+                controller
+                    .restore_state(&crate::nes::input::ControllerState::SnesAdapter(s.clone()));
                 *self.controllers[1].borrow_mut() = controller;
             }
             ControllerStateWrapper::Arkanoid(s) => {
@@ -1075,7 +1085,7 @@ impl Bus {
                     self.app_context.clone(),
                     ControllerType::Arkanoid,
                 );
-                controller.restore_state(&crate::input::ControllerState::Paddle(s.clone()));
+                controller.restore_state(&crate::nes::input::ControllerState::Paddle(s.clone()));
                 *self.controllers[1].borrow_mut() = controller;
             }
             ControllerStateWrapper::Zapper(s) => {
@@ -1084,7 +1094,7 @@ impl Bus {
                     self.app_context.clone(),
                     ControllerType::Zapper,
                 );
-                controller.restore_state(&crate::input::ControllerState::Zapper(s.clone()));
+                controller.restore_state(&crate::nes::input::ControllerState::Zapper(s.clone()));
                 *self.controllers[1].borrow_mut() = controller;
             }
             ControllerStateWrapper::PowerPad(s) => {
@@ -1093,7 +1103,7 @@ impl Bus {
                     self.app_context.clone(),
                     ControllerType::PowerPad,
                 );
-                controller.restore_state(&crate::input::ControllerState::PowerPad(s.clone()));
+                controller.restore_state(&crate::nes::input::ControllerState::PowerPad(s.clone()));
                 *self.controllers[1].borrow_mut() = controller;
             }
         }
@@ -1472,7 +1482,7 @@ mod tests {
         let mut memory = create_test_memory_with_four_score_enabled();
 
         // Player 3 A should appear as bit 8 in the 24-bit $4016 stream.
-        memory.set_button(3, crate::input::Button::A, true);
+        memory.set_button(3, crate::nes::input::Button::A, true);
         memory.write(0x4016, 0x01, false);
         memory.write(0x4016, 0x00, false);
 
@@ -1486,7 +1496,7 @@ mod tests {
 
         // Player 4 B should appear as bit 9 in the 24-bit $4017 stream
         // (B is bit 1 within the P4 byte at offset 8).
-        memory.set_button(4, crate::input::Button::B, true);
+        memory.set_button(4, crate::nes::input::Button::B, true);
         memory.write(0x4016, 0x01, false);
         memory.write(0x4016, 0x00, false);
 
@@ -1650,8 +1660,8 @@ mod tests {
         memory.write(0x4014, 0x22, false);
 
         // Test with joypad on port 1
-        memory.set_button(1, crate::input::Button::A, true);
-        memory.set_button(1, crate::input::Button::Right, true);
+        memory.set_button(1, crate::nes::input::Button::A, true);
+        memory.set_button(1, crate::nes::input::Button::Right, true);
         memory.write(0x4016, 0x01, false); // Strobe high
         memory.write(0x4016, 0x00, false); // Strobe low - latches and resets index
         memory.read(0x4016, false); // Read A button
@@ -1707,8 +1717,8 @@ mod tests {
     fn test_bus_save_state_roundtrip_with_power_pad() {
         let mut memory = create_test_memory();
         memory.set_controller_type(1, ControllerType::PowerPad);
-        assert!(memory.set_power_pad_button(1, crate::input::PowerPadButton::One, true));
-        assert!(memory.set_power_pad_button(1, crate::input::PowerPadButton::Four, true));
+        assert!(memory.set_power_pad_button(1, crate::nes::input::PowerPadButton::One, true));
+        assert!(memory.set_power_pad_button(1, crate::nes::input::PowerPadButton::Four, true));
         memory.write(0x4016, 0x01, false);
         memory.write(0x4016, 0x00, false);
         memory.read(0x4016, false);
@@ -2562,7 +2572,7 @@ mod tests {
         // RED: Test that paddle can be configured on port 1 (0x4016)
         let mut memory = create_test_memory();
         // Configure paddle on port 1
-        memory.set_controller_type(1, crate::input::ControllerType::Arkanoid);
+        memory.set_controller_type(1, crate::nes::input::ControllerType::Arkanoid);
         memory.set_mouse_x_position(0xA5);
         memory.set_mouse_left_button(true);
 
@@ -2583,7 +2593,7 @@ mod tests {
     fn test_zapper_on_port_2_reports_trigger_and_light_bits() {
         let mut memory = create_test_memory();
 
-        memory.set_controller_type(2, crate::input::ControllerType::Zapper);
+        memory.set_controller_type(2, crate::nes::input::ControllerType::Zapper);
         memory.set_mouse_x_position(0x10);
         memory.set_mouse_y_position(0x20);
         memory.set_mouse_left_button(true);
@@ -2600,7 +2610,7 @@ mod tests {
         let mut memory = create_test_memory();
 
         // Configure paddle on port 2
-        memory.set_controller_type(2, crate::input::ControllerType::Arkanoid);
+        memory.set_controller_type(2, crate::nes::input::ControllerType::Arkanoid);
         memory.set_mouse_x_position(0xB3);
         memory.set_mouse_left_button(false);
 
@@ -2627,12 +2637,12 @@ mod tests {
         let mut memory = create_test_memory();
 
         // Configure joypad on port 1, paddle on port 2
-        memory.set_controller_type(1, crate::input::ControllerType::Joypad);
-        memory.set_controller_type(2, crate::input::ControllerType::Arkanoid);
+        memory.set_controller_type(1, crate::nes::input::ControllerType::Joypad);
+        memory.set_controller_type(2, crate::nes::input::ControllerType::Arkanoid);
 
         // Set joypad buttons
-        memory.set_button(1, crate::input::Button::A, true);
-        memory.set_button(1, crate::input::Button::B, true);
+        memory.set_button(1, crate::nes::input::Button::A, true);
+        memory.set_button(1, crate::nes::input::Button::B, true);
 
         // Strobe the controllers
         memory.write(0x4016, 0x01, false);
@@ -2657,8 +2667,8 @@ mod tests {
         let mut memory = create_test_memory();
 
         // Configure paddle on port 2
-        memory.set_controller_type(1, crate::input::ControllerType::Joypad);
-        memory.set_controller_type(2, crate::input::ControllerType::Arkanoid);
+        memory.set_controller_type(1, crate::nes::input::ControllerType::Joypad);
+        memory.set_controller_type(2, crate::nes::input::ControllerType::Arkanoid);
         memory.set_mouse_x_position(0xC7);
         memory.set_mouse_left_button(true); // Set trigger so bit 3 is set
 
@@ -2666,14 +2676,14 @@ mod tests {
         let saved_state = memory.capture_state();
 
         // Change configuration
-        memory.set_controller_type(1, crate::input::ControllerType::Arkanoid);
-        memory.set_controller_type(2, crate::input::ControllerType::Joypad);
+        memory.set_controller_type(1, crate::nes::input::ControllerType::Arkanoid);
+        memory.set_controller_type(2, crate::nes::input::ControllerType::Joypad);
 
         // Restore state
         memory.restore_state(&saved_state);
 
         // Verify port 1 has joypad and port 2 has paddle
-        memory.set_button(1, crate::input::Button::A, true);
+        memory.set_button(1, crate::nes::input::Button::A, true);
         memory.write(0x4016, 0x01, false);
         memory.write(0x4016, 0x00, false);
 

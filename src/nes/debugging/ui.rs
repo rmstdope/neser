@@ -788,8 +788,8 @@ pub(crate) fn format_oam_entries(oam: &[u8]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::debugging::snapshot;
     use crate::nes::console::{Config, Nes};
+    use crate::nes::debugging::snapshot;
 
     fn assert_close(actual: f32, expected: f32) {
         let eps = 0.0001;

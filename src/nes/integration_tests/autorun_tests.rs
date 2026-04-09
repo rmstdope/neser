@@ -3,7 +3,8 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use crate::app_context::AppContext;
-    use crate::autorun::{headless_playback::run_headless_playback, load_autorun_file};
+    use crate::autorun::load_autorun_file;
+    use crate::nes::autorun::headless_playback::run_headless_playback;
     use crate::nes::cartridge::{Cartridge, TimingMode as CartridgeTimingMode};
     use crate::nes::console::{Config, HardwareModel, Nes, NesConfig, RamInitMode};
 

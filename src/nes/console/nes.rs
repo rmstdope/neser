@@ -1,6 +1,5 @@
 use crate::app_context::{IntoSharedAppContext, SharedAppContext};
 use crate::debugging::{Tracing, log_info};
-use crate::input::ControllerType;
 use crate::nes::apu::{Apu, ApuState, SharedApu};
 use crate::nes::bus::{Bus, BusState, MapperState, SharedBus};
 use crate::nes::cartridge::Cartridge;
@@ -12,6 +11,7 @@ use crate::nes::console::Config;
 use crate::nes::console::NesConfig;
 use crate::nes::cpu::lookup;
 use crate::nes::cpu::{Cpu, CpuState};
+use crate::nes::input::ControllerType;
 use crate::nes::ppu::{Ppu, PpuState, SharedPpu};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
@@ -603,7 +603,7 @@ impl Nes {
     /// * `controller` - Controller number (1 or 2)
     /// * `button` - Which button to set
     /// * `pressed` - true if pressed, false if released
-    pub fn set_button(&mut self, controller: u8, button: crate::input::Button, pressed: bool) {
+    pub fn set_button(&mut self, controller: u8, button: crate::nes::input::Button, pressed: bool) {
         self.bus
             .borrow_mut()
             .set_button(controller, button, pressed);
@@ -613,7 +613,7 @@ impl Nes {
     pub fn set_snes_button(
         &mut self,
         controller: u8,
-        button: crate::input::SnesButton,
+        button: crate::nes::input::SnesButton,
         pressed: bool,
     ) -> bool {
         self.bus
@@ -625,7 +625,7 @@ impl Nes {
     pub fn set_power_pad_button(
         &mut self,
         controller: u8,
-        button: crate::input::PowerPadButton,
+        button: crate::nes::input::PowerPadButton,
         pressed: bool,
     ) -> bool {
         self.bus
@@ -635,7 +635,7 @@ impl Nes {
 
     pub fn set_expansion_power_pad_button(
         &mut self,
-        button: crate::input::PowerPadButton,
+        button: crate::nes::input::PowerPadButton,
         pressed: bool,
     ) -> bool {
         self.bus
@@ -655,10 +655,10 @@ impl Nes {
 
     /// Set all joypad button states from a u8 bitmask (for autorun playback).
     ///
-    /// Each bit corresponds to a [`crate::input::Button`] variant by its discriminant index.
+    /// Each bit corresponds to a [`crate::nes::input::Button`] variant by its discriminant index.
     #[allow(dead_code)]
     pub fn set_joypad_button_states(&mut self, port: u8, state: u8) {
-        use crate::input::Button;
+        use crate::nes::input::Button;
         for button in [
             Button::A,
             Button::B,
@@ -680,7 +680,7 @@ impl Nes {
     }
 
     /// Return the input type for a controller port.
-    pub fn controller_input_type(&self, port: u8) -> Option<crate::input::ControllerInput> {
+    pub fn controller_input_type(&self, port: u8) -> Option<crate::nes::input::ControllerInput> {
         self.bus.borrow().controller_input_type(port)
     }
 
@@ -2231,7 +2231,7 @@ mod tests {
         // Should have joypad on both ports by default
         nes.bus
             .borrow_mut()
-            .set_button(2, crate::input::Button::A, true);
+            .set_button(2, crate::nes::input::Button::A, true);
         nes.bus.borrow_mut().write(0x4016, 0x01, false);
         nes.bus.borrow_mut().write(0x4016, 0x00, false);
         let joypad_bit = nes.bus.borrow_mut().read(0x4017, false) & 0x01;
@@ -2246,9 +2246,9 @@ mod tests {
 
         let config = Config {
             nes: NesConfig {
-                controller_port1: crate::input::ControllerType::Arkanoid,
+                controller_port1: crate::nes::input::ControllerType::Arkanoid,
                 controller_port1_explicit: true,
-                controller_port2: crate::input::ControllerType::Joypad,
+                controller_port2: crate::nes::input::ControllerType::Joypad,
                 controller_port2_explicit: false,
                 ..Default::default()
             },
@@ -2308,9 +2308,9 @@ mod tests {
 
         let config = Config {
             nes: NesConfig {
-                controller_port1: crate::input::ControllerType::Joypad,
+                controller_port1: crate::nes::input::ControllerType::Joypad,
                 controller_port1_explicit: false,
-                controller_port2: crate::input::ControllerType::Joypad,
+                controller_port2: crate::nes::input::ControllerType::Joypad,
                 controller_port2_explicit: true,
                 ..Default::default()
             },
@@ -2335,9 +2335,9 @@ mod tests {
 
         let config = Config {
             nes: NesConfig {
-                controller_port1: crate::input::ControllerType::Joypad,
+                controller_port1: crate::nes::input::ControllerType::Joypad,
                 controller_port1_explicit: true,
-                controller_port2: crate::input::ControllerType::Joypad,
+                controller_port2: crate::nes::input::ControllerType::Joypad,
                 controller_port2_explicit: false,
                 ..Default::default()
             },
@@ -2395,7 +2395,7 @@ mod tests {
 
         let config = Config {
             nes: NesConfig {
-                controller_port2: crate::input::ControllerType::Joypad,
+                controller_port2: crate::nes::input::ControllerType::Joypad,
                 controller_port2_explicit: true,
                 ..Default::default()
             },
@@ -2770,8 +2770,8 @@ mod tests {
 
     #[test]
     fn test_insert_cartridge_syncs_famicom_four_player_mode_to_bus() {
-        use crate::input::Button;
         use crate::nes::console::{ExpansionPort, HardwareMode};
+        use crate::nes::input::Button;
 
         // Start with default NES mode — bus is constructed in NES mode
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(

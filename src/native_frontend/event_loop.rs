@@ -4,15 +4,11 @@
 //! with rendering via `NativeGlWrapper` and audio via `NativeAudio`.
 
 use crate::app_context::SharedAppContext;
-use crate::audio::NesAudio;
+use crate::audio::EmulatorAudio;
 use crate::autorun::AutorunMode;
 use crate::autorun::state::AutorunState;
 use crate::debugging::Tracing;
-use crate::debugging::control::DebuggerController;
 use crate::emulator::Console;
-use crate::frontend_toasts::{
-    gamepad_connected_toast_message, gamepad_disconnected_toast_message, gamepad_init_toast_message,
-};
 use crate::native_frontend::app_state::NativeAppState;
 use crate::native_frontend::audio::NativeAudio;
 use crate::native_frontend::gamepad::{GamepadChange, GamepadManager};
@@ -21,6 +17,10 @@ use crate::native_frontend::keyboard::{self, KeyOutcome};
 use crate::native_frontend::mouse;
 use crate::native_frontend::sleep_inhibitor::SleepInhibitor;
 use crate::nes::console::{Nes, TimingMode};
+use crate::nes::debugging::control::DebuggerController;
+use crate::nes::frontend_toasts::{
+    gamepad_connected_toast_message, gamepad_disconnected_toast_message, gamepad_init_toast_message,
+};
 
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, DeviceId, ElementState, WindowEvent};
@@ -270,7 +270,7 @@ impl NativeEventLoop {
     /// cartridge switches, focus changes, or controller hot-swaps.
     fn sync_mouse_grab_state(&mut self) {
         let has_mouse = mouse::has_any_mouse_controller(self.nes());
-        let should_grab = crate::input::mouse_mapping::should_grab_mouse_input(
+        let should_grab = crate::nes::input::mouse_mapping::should_grab_mouse_input(
             has_mouse,
             self.state.window_focused,
             self.state.mouse_released_by_escape,
@@ -549,7 +549,7 @@ impl NativeEventLoop {
 
             let checkpoint_due = self.handle_autorun_after_input();
 
-            crate::autorun::headless_playback::run_one_frame(self.nes_mut());
+            crate::nes::autorun::headless_playback::run_one_frame(self.nes_mut());
 
             self.handle_autorun_after_frame(checkpoint_due);
         }
@@ -666,8 +666,8 @@ impl ApplicationHandler for NativeEventLoop {
 
                 if event.state == ElementState::Pressed {
                     let fullscreen_before = self.state.fullscreen;
-                    let audio_ref: Option<&dyn NesAudio> =
-                        self.audio.as_ref().map(|a| a as &dyn NesAudio);
+                    let audio_ref: Option<&dyn EmulatorAudio> =
+                        self.audio.as_ref().map(|a| a as &dyn EmulatorAudio);
                     let Console::Nes(nes) = &mut self.console;
                     let outcome =
                         keyboard::handle_key_pressed(nes, key_code, &mut self.state, audio_ref);
@@ -782,7 +782,7 @@ impl ApplicationHandler for NativeEventLoop {
                 {
                     let was_released_by_escape = self.state.mouse_released_by_escape;
                     self.state.mouse_released_by_escape = false;
-                    let should_grab = crate::input::mouse_mapping::should_grab_mouse_input(
+                    let should_grab = crate::nes::input::mouse_mapping::should_grab_mouse_input(
                         true,
                         self.state.window_focused,
                         false,

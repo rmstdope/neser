@@ -1,6 +1,6 @@
 use super::ControllerInput;
 use crate::app_context::AppContext;
-use crate::input::Button;
+use crate::nes::input::Button;
 use crate::nes::ppu::Ppu;
 use serde::{Deserialize, Serialize};
 use std::cell::{Cell, RefCell};
@@ -67,7 +67,7 @@ impl Zapper {
     }
 }
 
-impl crate::input::Controller for Zapper {
+impl crate::nes::input::Controller for Zapper {
     fn write_strobe(&mut self, _value: u8) {}
 
     fn read(&mut self, _is_dummy_read: bool) -> u8 {
@@ -83,12 +83,12 @@ impl crate::input::Controller for Zapper {
         trigger_bit | light_bit
     }
 
-    fn capture_state(&self) -> crate::input::ControllerState {
-        crate::input::ControllerState::Zapper(self.capture_state())
+    fn capture_state(&self) -> crate::nes::input::ControllerState {
+        crate::nes::input::ControllerState::Zapper(self.capture_state())
     }
 
-    fn restore_state(&mut self, state: &crate::input::ControllerState) {
-        if let crate::input::ControllerState::Zapper(zapper_state) = state {
+    fn restore_state(&mut self, state: &crate::nes::input::ControllerState) {
+        if let crate::nes::input::ControllerState::Zapper(zapper_state) = state {
             self.restore_state(zapper_state);
         }
     }
@@ -113,7 +113,7 @@ impl crate::input::Controller for Zapper {
     }
 
     fn input_type(&self) -> ControllerInput {
-        crate::input::controller_input_type(crate::input::ControllerType::Zapper)
+        crate::nes::input::controller_input_type(crate::nes::input::ControllerType::Zapper)
     }
 }
 
@@ -180,8 +180,8 @@ impl Zapper {
 #[cfg(test)]
 mod tests {
     use super::Zapper;
-    use crate::input::Controller;
     use crate::nes::console::TimingMode;
+    use crate::nes::input::Controller;
     use crate::nes::ppu::Ppu;
     use std::cell::RefCell;
     use std::rc::Rc;

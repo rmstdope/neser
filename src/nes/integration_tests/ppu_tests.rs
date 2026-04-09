@@ -4,9 +4,9 @@ mod tests {
     use std::io::Write;
     use std::path::{Path, PathBuf};
 
-    use crate::input::Button;
     use crate::nes::cartridge::Cartridge;
     use crate::nes::console::{Config, Nes, NesConfig, RamInitMode, TimingMode};
+    use crate::nes::input::Button;
     use crate::nes::integration_tests::rom_test_runner::tests::run_nes_for_frames;
     use crate::{
         setup_rom_console_test, setup_rom_console_test_with_ram_init, setup_rom_crc_test,

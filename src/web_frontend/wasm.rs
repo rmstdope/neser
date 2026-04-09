@@ -1,16 +1,16 @@
 use crate::app_context::{AppContext, SharedAppContext};
 use crate::autorun::crc32;
-use crate::debugging::DebuggerViewState;
-use crate::debugging::ppu_viewer::{
+use crate::nes::cartridge::Cartridge;
+use crate::nes::console::{Config, Nes, SaveState, log_hardware_selection};
+use crate::nes::debugging::DebuggerViewState;
+use crate::nes::debugging::ppu_viewer::{
     PpuViewerSnapshot, render_nametables_rgba, render_pattern_tables_rgba,
 };
-use crate::frontend_toasts::{
+use crate::nes::frontend_toasts::{
     cartridge_load_toast_message, emulator_timing_toast_message,
     gamepad_init_toast_message as shared_gamepad_init_toast_message, hardware_mode_toast_message,
 };
-use crate::input::{Button, ControllerType, SnesButton};
-use crate::nes::cartridge::Cartridge;
-use crate::nes::console::{Config, Nes, SaveState, log_hardware_selection};
+use crate::nes::input::{Button, ControllerType, SnesButton};
 use crate::wasm_autorun::WasmAutorunState;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -583,7 +583,7 @@ impl WasmNes {
     /// This is used by the JavaScript frontend to determine whether to suppress joypad input for that port.
     #[wasm_bindgen]
     pub fn is_mouse_emulated_controller(&self, port: u8) -> bool {
-        self.nes.controller_input_type(port) == Some(crate::input::ControllerInput::Mouse)
+        self.nes.controller_input_type(port) == Some(crate::nes::input::ControllerInput::Mouse)
     }
 
     /// Check if a Super NES mouse is active on a specific port.
@@ -928,7 +928,7 @@ fn interrupt_to_json_str(interrupt: Option<crate::nes::cpu::InterruptKind>) -> &
 ///
 /// The snapshot is accepted (rather than the inner `cpu_regs` directly) because
 /// `CpuRegsSnapshot` is a private type.
-fn serialize_debugger_snapshot_json(snap: &crate::debugging::DebuggerSnapshot) -> String {
+fn serialize_debugger_snapshot_json(snap: &crate::nes::debugging::DebuggerSnapshot) -> String {
     let r = snap.cpu_regs;
     let interrupt = interrupt_to_json_str(r.interrupt);
     let prg_hexdump_bytes = bytes_to_json_array(&snap.prg_hexdump_bytes);
@@ -959,7 +959,7 @@ fn serialize_debugger_snapshot_json(snap: &crate::debugging::DebuggerSnapshot) -
     )
 }
 
-fn watch_values_to_json_array(snap: &crate::debugging::DebuggerSnapshot) -> String {
+fn watch_values_to_json_array(snap: &crate::nes::debugging::DebuggerSnapshot) -> String {
     let mut json = String::from("[");
     for (index, entry) in snap.watch_values.iter().enumerate() {
         if index > 0 {
@@ -974,7 +974,7 @@ fn watch_values_to_json_array(snap: &crate::debugging::DebuggerSnapshot) -> Stri
     json
 }
 
-fn recent_trace_to_json_array(snap: &crate::debugging::DebuggerSnapshot) -> String {
+fn recent_trace_to_json_array(snap: &crate::nes::debugging::DebuggerSnapshot) -> String {
     let mut json = String::from("[");
     for (index, entry) in snap.recent_trace.iter().enumerate() {
         if index > 0 {
@@ -1134,7 +1134,7 @@ fn run_to_interrupt_entry(nes: &mut Nes, vector_addr: u16, kind: crate::nes::cpu
 mod tests {
     use super::*;
     use crate::app_context::AppContext;
-    use crate::debugging::snapshot;
+    use crate::nes::debugging::snapshot;
 
     #[test]
     fn test_serialize_debugger_snapshot_json_includes_oam_field() {

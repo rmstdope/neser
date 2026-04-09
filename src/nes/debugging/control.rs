@@ -4,10 +4,10 @@
 //! and view state. Frontends delegate to this controller for emulation
 //! control flow and sync their own UI state from the controller's getters.
 
+use super::snapshot::DebuggerViewState;
+use super::ui::DebuggerUiAction;
+use crate::debugging::Tracing;
 use crate::debugging::breakpoints::{BreakpointKind, BreakpointList, EvalContext};
-use crate::debugging::snapshot::DebuggerViewState;
-use crate::debugging::tracing::Tracing;
-use crate::debugging::ui::DebuggerUiAction;
 use crate::nes::console::Nes;
 use crate::nes::cpu::InterruptKind;
 

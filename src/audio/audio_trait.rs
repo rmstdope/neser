@@ -3,7 +3,7 @@
 /// Implemented by `NativeAudio` (cpal backend)
 /// to provide a common interface for audio playback.
 #[allow(dead_code)]
-pub trait NesAudio {
+pub trait EmulatorAudio {
     /// Send an audio sample to the audio output.
     ///
     /// Sends a sample to the audio callback for playback.

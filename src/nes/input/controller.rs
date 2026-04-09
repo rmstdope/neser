@@ -1,9 +1,9 @@
-use crate::input::Button;
-use crate::input::arkanoid_controller::ArkanoidState;
-use crate::input::nes_joypad::JoypadState;
-use crate::input::power_pad::PowerPadState;
-use crate::input::snes_adapter::SnesAdapterState;
-use crate::input::zapper::ZapperState;
+use crate::nes::input::Button;
+use crate::nes::input::arkanoid_controller::ArkanoidState;
+use crate::nes::input::nes_joypad::JoypadState;
+use crate::nes::input::power_pad::PowerPadState;
+use crate::nes::input::snes_adapter::SnesAdapterState;
+use crate::nes::input::zapper::ZapperState;
 
 /// Unified controller state for save-state support.
 #[derive(Debug, Clone)]
