@@ -1,3 +1,4 @@
+use crate::gb::bus::DmgBus;
 use crate::gb::bus::GbBus;
 use crate::gb::cpu::Sm83;
 
@@ -27,6 +28,24 @@ impl<B: GbBus> Gb<B> {
     /// Total M-cycles elapsed.
     pub fn cycles(&self) -> u64 {
         self.cpu.cycles()
+    }
+}
+
+/// DMG-specific screen and frame API.
+impl Gb<DmgBus> {
+    /// Snapshot the current rendered screen as a 160×144 RGB byte vector.
+    pub fn screen_snapshot(&self) -> Vec<u8> {
+        self.cpu.bus.ppu.screen_buffer().snapshot()
+    }
+
+    /// True if the PPU has completed a full frame since the last `clear_frame_ready`.
+    pub fn is_frame_ready(&self) -> bool {
+        self.cpu.bus.ppu.is_frame_ready()
+    }
+
+    /// Clear the frame-ready flag.
+    pub fn clear_frame_ready(&mut self) {
+        self.cpu.bus.ppu.clear_frame_ready();
     }
 }
 
