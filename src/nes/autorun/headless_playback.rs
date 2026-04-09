@@ -4,7 +4,7 @@
 //! screen CRCs at every checkpoint. It has no SDL dependencies and can be called from
 //! integration tests or other non-SDL frontends (e.g. web).
 
-use super::types::AutorunFile;
+use crate::autorun::AutorunFile;
 use crate::nes::console::{Nes, SaveState};
 
 /// Summary of a headless playback run.
