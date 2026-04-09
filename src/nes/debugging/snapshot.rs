@@ -297,7 +297,7 @@ mod tests {
 
     #[test]
     fn test_snapshot_contains_basic_cpu_ppu_apu_info() {
-        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+        let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
             Config::default(),
         ));
 
@@ -366,7 +366,7 @@ mod tests {
 
     #[test]
     fn test_snapshot_includes_disassembly_around_pc() {
-        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+        let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
             Config::default(),
         ));
 
@@ -419,7 +419,7 @@ mod tests {
 
     #[test]
     fn test_snapshot_oam_contains_256_bytes() {
-        let nes = Nes::new(crate::app_context::AppContext::new_with_config(
+        let nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
             Config::default(),
         ));
         let snap = snapshot(&nes);
@@ -428,7 +428,7 @@ mod tests {
 
     #[test]
     fn test_snapshot_oam_reflects_ppu_oam_state() {
-        let nes = Nes::new(crate::app_context::AppContext::new_with_config(
+        let nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
             Config::default(),
         ));
 
@@ -465,7 +465,7 @@ mod tests {
 
     #[test]
     fn test_snapshot_includes_memory_watch_values_for_selected_addresses() {
-        let nes = Nes::new(crate::app_context::AppContext::new_with_config(
+        let nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
             Config::default(),
         ));
         {
@@ -488,7 +488,7 @@ mod tests {
 
     #[test]
     fn test_snapshot_includes_recent_cpu_trace_lines() {
-        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+        let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
             Config::default(),
         ));
 

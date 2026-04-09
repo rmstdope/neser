@@ -6,8 +6,6 @@ use super::mapper_device::MapperDevice;
 use super::oam_dma_device::OamDmaDevice;
 use super::ppu_device::PpuDevice;
 use super::ram_device::RamDevice;
-use crate::app_context::SharedAppContext;
-use crate::debugging::log_info;
 use crate::nes::apu::SharedApu;
 use crate::nes::cartridge::Cartridge;
 use crate::nes::console::{ExpansionPort, HardwareMode};
@@ -17,6 +15,8 @@ use crate::nes::input::{
     ZapperState,
 };
 use crate::nes::ppu::{self, SharedPpu};
+use crate::platform::app_context::SharedAppContext;
+use crate::platform::debugging::log_info;
 use serde::{Deserialize, Serialize};
 use std::cell::{Cell, RefCell};
 use std::io;
@@ -105,7 +105,7 @@ pub struct Bus {
 impl Bus {
     fn build_controller(
         ppu: Rc<RefCell<ppu::Ppu>>,
-        app_context: Rc<RefCell<crate::app_context::AppContext>>,
+        app_context: Rc<RefCell<crate::platform::app_context::AppContext>>,
         controller_type: ControllerType,
     ) -> Box<dyn Controller> {
         match controller_type {
@@ -123,7 +123,7 @@ impl Bus {
     pub fn new(
         ppu: Rc<RefCell<ppu::Ppu>>,
         apu: SharedApu,
-        app_context: Rc<RefCell<crate::app_context::AppContext>>,
+        app_context: Rc<RefCell<crate::platform::app_context::AppContext>>,
     ) -> Self {
         let controllers = [
             Rc::new(RefCell::new(Self::build_controller(
@@ -1308,7 +1308,7 @@ mod tests {
     fn test_restore_mapper_state_updates_ppu_mirroring() {
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
         let apu = Rc::new(RefCell::new(crate::nes::apu::Apu::new()));
-        let app_context = Rc::new(RefCell::new(crate::app_context::AppContext::new()));
+        let app_context = Rc::new(RefCell::new(crate::platform::app_context::AppContext::new()));
         let mut bus = Bus::new(ppu.clone(), apu, app_context.clone());
 
         let rom = create_mmc1_rom();
@@ -1403,7 +1403,7 @@ mod tests {
             ..Default::default()
         };
         let app_context = Rc::new(RefCell::new(
-            crate::app_context::AppContext::new_with_config(config),
+            crate::platform::app_context::AppContext::new_with_config(config),
         ));
         Bus::new(ppu, apu, app_context.clone())
     }
@@ -1420,7 +1420,7 @@ mod tests {
             ..Default::default()
         };
         let app_context = Rc::new(RefCell::new(
-            crate::app_context::AppContext::new_with_config(config),
+            crate::platform::app_context::AppContext::new_with_config(config),
         ));
         Bus::new(ppu, apu, app_context.clone())
     }
@@ -1587,7 +1587,7 @@ mod tests {
     fn test_oam_dma_write_notifies_mapper_only_on_real_write() {
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
         let apu = Rc::new(RefCell::new(crate::nes::apu::Apu::new()));
-        let app_context = Rc::new(RefCell::new(crate::app_context::AppContext::new()));
+        let app_context = Rc::new(RefCell::new(crate::platform::app_context::AppContext::new()));
         let mut memory = Bus::new(ppu, apu, app_context.clone());
 
         let oam_dma_calls = Rc::new(RefCell::new(0u32));
@@ -1748,7 +1748,7 @@ mod tests {
             ..Default::default()
         };
         let app_context = Rc::new(RefCell::new(
-            crate::app_context::AppContext::new_with_config(config),
+            crate::platform::app_context::AppContext::new_with_config(config),
         ));
         let memory = Bus::new(ppu, apu, app_context.clone());
 
@@ -1792,7 +1792,7 @@ mod tests {
 
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
         let apu = Rc::new(RefCell::new(crate::nes::apu::Apu::new()));
-        let app_context = Rc::new(RefCell::new(crate::app_context::AppContext::new()));
+        let app_context = Rc::new(RefCell::new(crate::platform::app_context::AppContext::new()));
         let mut mem = Bus::new(ppu.clone(), apu, app_context.clone());
 
         let cart = Cartridge::load_from_file(
@@ -2818,7 +2818,7 @@ mod tests {
             ..Default::default()
         };
         let app_context = Rc::new(RefCell::new(
-            crate::app_context::AppContext::new_with_config(config),
+            crate::platform::app_context::AppContext::new_with_config(config),
         ));
         Bus::new(ppu, apu, app_context)
     }
@@ -2836,7 +2836,7 @@ mod tests {
             ..Default::default()
         };
         let app_context = Rc::new(RefCell::new(
-            crate::app_context::AppContext::new_with_config(config),
+            crate::platform::app_context::AppContext::new_with_config(config),
         ));
         Bus::new(ppu, apu, app_context)
     }
@@ -2978,7 +2978,7 @@ mod tests {
 
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
         let apu = Rc::new(RefCell::new(crate::nes::apu::Apu::new()));
-        let app_context = Rc::new(RefCell::new(crate::app_context::AppContext::new()));
+        let app_context = Rc::new(RefCell::new(crate::platform::app_context::AppContext::new()));
         let mut bus = Bus::new(ppu.clone(), apu, app_context);
 
         // Given: a cartridge with a VS PPU type

@@ -109,7 +109,7 @@ mod tests {
         let rom_path = "roms/automated_tests/dma_sync_test_v2/dma_sync_test.nes";
         let rom_data = fs::read(rom_path).expect("DMA Sync Test v2 ROM should load");
         let cartridge = load_test_cartridge(&rom_data, rom_path);
-        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+        let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
             deterministic_config(),
         ));
         nes.insert_cartridge(cartridge);
@@ -130,7 +130,7 @@ mod tests {
         let rom_path = "roms/automated_tests/dma_sync_test_v2/dma_sync_test.nes";
         let rom_data = fs::read(rom_path).expect("DMA Sync Test v2 ROM should load");
         let cartridge = load_test_cartridge(&rom_data, rom_path);
-        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+        let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
             deterministic_config(),
         ));
         nes.insert_cartridge(cartridge);
@@ -183,7 +183,7 @@ mod tests {
         let rom_data = fs::read(rom_path).expect("dpcmletterbox ROM should load");
         let cartridge = load_test_cartridge(&rom_data, rom_path);
 
-        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+        let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
             deterministic_config(),
         ));
         nes.insert_cartridge(cartridge);
@@ -379,7 +379,7 @@ mod tests {
     // nestest
     #[test]
     fn test_nestest() {
-        use crate::debugging::Tracing;
+        use crate::platform::debugging::Tracing;
 
         // Load the golden log from file
         let golden_log = fs::read_to_string("roms/automated_tests/nestest/nestest.log")
@@ -391,7 +391,7 @@ mod tests {
         let cartridge = load_test_cartridge(&rom_data, "roms/automated_tests/nestest/nestest.nes");
 
         // Create NES and insert cartridge
-        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+        let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
             deterministic_config(),
         ));
         nes.insert_cartridge(cartridge);

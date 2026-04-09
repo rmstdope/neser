@@ -111,7 +111,7 @@ mod tests {
                     crate::nes::console::HardwareModel::from_timing_mode(cartridge.rom_timing_mode());
 
                 let mut nes =
-                    Nes::new(crate::app_context::AppContext::new_with_config(config));
+                    Nes::new(crate::platform::app_context::AppContext::new_with_config(config));
                 nes.insert_cartridge(cartridge);
                 nes.reset(false);
 
@@ -380,7 +380,9 @@ mod tests {
         };
         config.nes.hardware_model =
             crate::nes::console::HardwareModel::from_timing_mode(cartridge.rom_timing_mode());
-        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
+        let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+            config,
+        ));
         nes.insert_cartridge(cartridge);
         nes.reset(false);
 
@@ -557,7 +559,9 @@ mod tests {
             },
             ..Default::default()
         };
-        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
+        let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+            config,
+        ));
         nes.insert_cartridge(cartridge);
         nes.reset(false);
 
@@ -2545,7 +2549,9 @@ mod tests {
             },
             ..Config::default()
         };
-        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
+        let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+            config,
+        ));
         nes.insert_cartridge(cartridge);
         nes.reset(false);
         nes

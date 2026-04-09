@@ -27,7 +27,9 @@ fn load_test_cartridge(rom_data: &[u8], rom_name: &str) -> Cartridge {
 fn test_cpu_ram_initialization_zero_mode() {
     let mut config = Config::with_defaults();
     config.nes.ram_init_mode = RamInitMode::Zero;
-    let nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
+    let nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+        config,
+    ));
 
     // Check that CPU RAM is initialized to zero (first 2KB mirrored 4 times)
     let bus = nes.bus().borrow();
@@ -44,11 +46,15 @@ fn test_cpu_ram_initialization_zero_mode() {
 fn test_cpu_ram_initialization_seeded_random_mode_deterministic() {
     let mut config1 = Config::with_defaults();
     config1.nes.ram_init_mode = RamInitMode::SeededRandom(42);
-    let nes1 = Nes::new(crate::app_context::AppContext::new_with_config(config1));
+    let nes1 = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+        config1,
+    ));
 
     let mut config2 = Config::with_defaults();
     config2.nes.ram_init_mode = RamInitMode::SeededRandom(42);
-    let nes2 = Nes::new(crate::app_context::AppContext::new_with_config(config2));
+    let nes2 = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+        config2,
+    ));
 
     // Check that both have identical RAM
     let bus1 = nes1.bus().borrow();
@@ -72,11 +78,15 @@ fn test_cpu_ram_initialization_seeded_random_mode_deterministic() {
 fn test_cpu_ram_initialization_different_seeds_produce_different_values() {
     let mut config1 = Config::with_defaults();
     config1.nes.ram_init_mode = RamInitMode::SeededRandom(42);
-    let nes1 = Nes::new(crate::app_context::AppContext::new_with_config(config1));
+    let nes1 = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+        config1,
+    ));
 
     let mut config2 = Config::with_defaults();
     config2.nes.ram_init_mode = RamInitMode::SeededRandom(43);
-    let nes2 = Nes::new(crate::app_context::AppContext::new_with_config(config2));
+    let nes2 = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+        config2,
+    ));
 
     let bus1 = nes1.bus().borrow();
     let ram1 = bus1.cpu_ram_ref();
@@ -105,7 +115,9 @@ fn test_cpu_ram_initialization_different_seeds_produce_different_values() {
 fn test_ppu_ram_initialization_zero_mode() {
     let mut config = Config::with_defaults();
     config.nes.ram_init_mode = RamInitMode::Zero;
-    let nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
+    let nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+        config,
+    ));
 
     // Check nametable RAM (0x2000-0x2FFF range)
     for addr in 0x2000..0x3000 {
@@ -122,11 +134,15 @@ fn test_ppu_ram_initialization_zero_mode() {
 fn test_ppu_ram_initialization_seeded_random_deterministic() {
     let mut config1 = Config::with_defaults();
     config1.nes.ram_init_mode = RamInitMode::SeededRandom(42);
-    let nes1 = Nes::new(crate::app_context::AppContext::new_with_config(config1));
+    let nes1 = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+        config1,
+    ));
 
     let mut config2 = Config::with_defaults();
     config2.nes.ram_init_mode = RamInitMode::SeededRandom(42);
-    let nes2 = Nes::new(crate::app_context::AppContext::new_with_config(config2));
+    let nes2 = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+        config2,
+    ));
 
     // Check that nametable RAM is identical
     for addr in 0x2000..0x3000 {
@@ -143,7 +159,9 @@ fn test_ppu_ram_initialization_seeded_random_deterministic() {
 fn test_cartridge_ram_initialization_zero_mode() {
     let mut config = Config::with_defaults();
     config.nes.ram_init_mode = RamInitMode::Zero;
-    let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
+    let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+        config,
+    ));
 
     let rom_data = create_test_rom();
     let cartridge = load_test_cartridge(&rom_data, "ram-init-zero.nes");
@@ -165,7 +183,9 @@ fn test_cartridge_ram_initialization_zero_mode() {
 fn test_cartridge_ram_initialization_seeded_random_deterministic() {
     let mut config1 = Config::with_defaults();
     config1.nes.ram_init_mode = RamInitMode::SeededRandom(42);
-    let mut nes1 = Nes::new(crate::app_context::AppContext::new_with_config(config1));
+    let mut nes1 = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+        config1,
+    ));
 
     let rom_data1 = create_test_rom();
     let cartridge1 = load_test_cartridge(&rom_data1, "ram-init-seeded-a.nes");
@@ -173,7 +193,9 @@ fn test_cartridge_ram_initialization_seeded_random_deterministic() {
 
     let mut config2 = Config::with_defaults();
     config2.nes.ram_init_mode = RamInitMode::SeededRandom(42);
-    let mut nes2 = Nes::new(crate::app_context::AppContext::new_with_config(config2));
+    let mut nes2 = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+        config2,
+    ));
 
     let rom_data2 = create_test_rom();
     let cartridge2 = load_test_cartridge(&rom_data2, "ram-init-seeded-b.nes");
@@ -197,7 +219,9 @@ fn test_cartridge_ram_initialization_seeded_random_deterministic() {
 fn test_hard_reset_reinitializes_ram() {
     let mut config = Config::with_defaults();
     config.nes.ram_init_mode = RamInitMode::Zero;
-    let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
+    let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+        config,
+    ));
 
     // Insert a cartridge so reset works
     let rom_data = create_test_rom();
@@ -227,7 +251,9 @@ fn test_hard_reset_reinitializes_ram() {
 fn test_soft_reset_preserves_ram() {
     let mut config = Config::with_defaults();
     config.nes.ram_init_mode = RamInitMode::Zero;
-    let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
+    let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+        config,
+    ));
 
     // Insert a cartridge so reset works
     let rom_data = create_test_rom();
@@ -257,7 +283,9 @@ fn test_soft_reset_preserves_ram() {
 fn test_ppu_hard_reset_reinitializes_ram() {
     let mut config = Config::with_defaults();
     config.nes.ram_init_mode = RamInitMode::Zero;
-    let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
+    let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+        config,
+    ));
 
     // Insert a cartridge so reset works
     let rom_data = create_test_rom();
@@ -287,7 +315,9 @@ fn test_ppu_hard_reset_reinitializes_ram() {
 fn test_ppu_soft_reset_preserves_ram() {
     let mut config = Config::with_defaults();
     config.nes.ram_init_mode = RamInitMode::Zero;
-    let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
+    let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+        config,
+    ));
 
     // Insert a cartridge so reset works
     let rom_data = create_test_rom();
@@ -318,7 +348,9 @@ fn test_ppu_palette_ram_init_zero_mode() {
     // the configured RAM init mode, using the PPU register interface.
     let mut config = Config::with_defaults();
     config.nes.ram_init_mode = RamInitMode::Zero;
-    let nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
+    let nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+        config,
+    ));
 
     // Access palette RAM via PPUADDR ($2006) and PPUDATA ($2007).
     // For Zero mode, all palette entries should read back as 0x00.
@@ -348,7 +380,9 @@ fn test_ppu_palette_ram_init_zero_mode() {
 fn test_oam_ram_initialization_zero_mode() {
     let mut config = Config::with_defaults();
     config.nes.ram_init_mode = RamInitMode::Zero;
-    let nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
+    let nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+        config,
+    ));
 
     // Access OAM via OAMDATA ($2004) after setting OAMADDR ($2003)
     {
@@ -371,11 +405,15 @@ fn test_oam_ram_initialization_zero_mode() {
 fn test_oam_ram_initialization_seeded_random_deterministic() {
     let mut config1 = Config::with_defaults();
     config1.nes.ram_init_mode = RamInitMode::SeededRandom(42);
-    let nes1 = Nes::new(crate::app_context::AppContext::new_with_config(config1));
+    let nes1 = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+        config1,
+    ));
 
     let mut config2 = Config::with_defaults();
     config2.nes.ram_init_mode = RamInitMode::SeededRandom(42);
-    let nes2 = Nes::new(crate::app_context::AppContext::new_with_config(config2));
+    let nes2 = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+        config2,
+    ));
 
     // OAM should be identical for same seed
     {
@@ -403,7 +441,9 @@ fn test_oam_ram_initialization_seeded_random_deterministic() {
 fn test_oam_hard_reset_reinitializes() {
     let mut config = Config::with_defaults();
     config.nes.ram_init_mode = RamInitMode::Zero;
-    let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
+    let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+        config,
+    ));
 
     // Insert a cartridge so reset works
     let rom_data = create_test_rom();
@@ -443,7 +483,9 @@ fn test_oam_hard_reset_reinitializes() {
 fn test_oam_soft_reset_preserves() {
     let mut config = Config::with_defaults();
     config.nes.ram_init_mode = RamInitMode::Zero;
-    let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
+    let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+        config,
+    ));
 
     // Insert a cartridge so reset works
     let rom_data = create_test_rom();

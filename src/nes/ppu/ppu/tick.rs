@@ -1,5 +1,4 @@
 use super::Ppu;
-use crate::debugging::ppu_trace_level;
 use crate::nes::console::TimingMode;
 use crate::nes::ppu::color_effects::{apply_color_emphasis, apply_grayscale};
 use crate::nes::ppu::timing::{
@@ -10,6 +9,7 @@ use crate::nes::ppu::timing::{
     VBLANK_NMI_LATCH_PIXEL, VBLANK_START_SCANLINE, VERTICAL_BITS_COPY_END,
     VERTICAL_BITS_COPY_START,
 };
+use crate::platform::debugging::ppu_trace_level;
 
 #[cfg(test)]
 use crate::nes::ppu::timing::FIRST_VISIBLE_SCANLINE;

@@ -522,7 +522,7 @@ fn normalize_columns(line: &str) -> Vec<String> {
 /// Calculate CRC32 of ROM data (PRG + CHR combined).
 /// Uses the standard CRC-32 (ISO 3309) polynomial.
 pub fn calculate_rom_crc32(prg_rom: &[u8], chr_rom: &[u8]) -> u32 {
-    crate::crc32::crc32(&[prg_rom, chr_rom])
+    crate::platform::crc32::crc32(&[prg_rom, chr_rom])
 }
 
 /// CRC32 values for ROMs that require alternate (NEC) MMC3 IRQ behavior.

@@ -831,7 +831,9 @@ mod tests {
             crate::nes::console::TimingMode::Ntsc,
         )));
         let app_context = Rc::new(RefCell::new(
-            crate::app_context::AppContext::new_with_config(crate::nes::console::Config::default()),
+            crate::platform::app_context::AppContext::new_with_config(
+                crate::nes::console::Config::default(),
+            ),
         ));
         let zapper = Rc::new(RefCell::new(crate::nes::input::Zapper::new(
             ppu,

@@ -1,5 +1,3 @@
-use crate::app_context::{AppContext, SharedAppContext};
-use crate::autorun::crc32;
 use crate::nes::cartridge::Cartridge;
 use crate::nes::console::{Config, Nes, SaveState, log_hardware_selection};
 use crate::nes::debugging::DebuggerViewState;
@@ -11,6 +9,8 @@ use crate::nes::frontend_toasts::{
     gamepad_init_toast_message as shared_gamepad_init_toast_message, hardware_mode_toast_message,
 };
 use crate::nes::input::{Button, ControllerType, SnesButton};
+use crate::platform::app_context::{AppContext, SharedAppContext};
+use crate::platform::autorun::crc32;
 use crate::wasm_autorun::WasmAutorunState;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -1133,8 +1133,8 @@ fn run_to_interrupt_entry(nes: &mut Nes, vector_addr: u16, kind: crate::nes::cpu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app_context::AppContext;
     use crate::nes::debugging::snapshot;
+    use crate::platform::app_context::AppContext;
 
     #[test]
     fn test_serialize_debugger_snapshot_json_includes_oam_field() {

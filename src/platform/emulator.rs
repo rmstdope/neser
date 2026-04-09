@@ -5,8 +5,8 @@
 //! NES-specific features (debugging, PPU viewer, etc.) are accessed by
 //! matching on the [`Console::Nes`] variant directly.
 
-use crate::app_context::{IntoSharedAppContext, SharedAppContext};
 use crate::nes::console::Nes;
+use crate::platform::app_context::{IntoSharedAppContext, SharedAppContext};
 
 /// Identifies which emulated system a [`Console`] instance is running.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -221,8 +221,8 @@ impl Console {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app_context::AppContext;
     use crate::nes::console::Config;
+    use crate::platform::app_context::AppContext;
 
     /// Create a minimal valid iNES ROM for testing.
     fn create_minimal_rom() -> Vec<u8> {

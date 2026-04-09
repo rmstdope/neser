@@ -3,12 +3,6 @@
 //! Uses winit's `ApplicationHandler` to drive the emulation loop
 //! with rendering via `NativeGlWrapper` and audio via `NativeAudio`.
 
-use crate::app_context::SharedAppContext;
-use crate::audio::EmulatorAudio;
-use crate::autorun::AutorunMode;
-use crate::autorun::state::AutorunState;
-use crate::debugging::Tracing;
-use crate::emulator::Console;
 use crate::frontends::native::app_state::NativeAppState;
 use crate::frontends::native::audio::NativeAudio;
 use crate::frontends::native::gamepad::{GamepadChange, GamepadManager};
@@ -21,6 +15,12 @@ use crate::nes::debugging::control::DebuggerController;
 use crate::nes::frontend_toasts::{
     gamepad_connected_toast_message, gamepad_disconnected_toast_message, gamepad_init_toast_message,
 };
+use crate::platform::app_context::SharedAppContext;
+use crate::platform::audio::EmulatorAudio;
+use crate::platform::autorun::AutorunMode;
+use crate::platform::autorun::state::AutorunState;
+use crate::platform::debugging::Tracing;
+use crate::platform::emulator::Console;
 
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, DeviceId, ElementState, WindowEvent};
@@ -94,7 +94,7 @@ impl NativeEventLoop {
             match GamepadManager::new(four_score) {
                 Ok(gp) => (Some(gp), false),
                 Err(e) => {
-                    crate::debugging::log_info(format!("Gamepad init failed: {e}"));
+                    crate::platform::debugging::log_info(format!("Gamepad init failed: {e}"));
                     (None, true)
                 }
             }
@@ -105,7 +105,7 @@ impl NativeEventLoop {
         let sleep_inhibitor = match SleepInhibitor::new() {
             Ok(si) => Some(si),
             Err(e) => {
-                crate::debugging::log_info(format!("Sleep inhibitor init failed: {e}"));
+                crate::platform::debugging::log_info(format!("Sleep inhibitor init failed: {e}"));
                 None
             }
         };
@@ -223,7 +223,7 @@ impl NativeEventLoop {
         {
             let (received, dropped, underrun) = audio.take_and_reset_stats();
             if dropped != 0 || underrun != 0 {
-                crate::debugging::log_info(format!(
+                crate::platform::debugging::log_info(format!(
                     "Audio stats (last ~1s): received={received}, dropped={dropped}, underrun={underrun}"
                 ));
             }
@@ -347,7 +347,7 @@ impl NativeEventLoop {
         let rom_bytes = match std::fs::read(rom_path) {
             Ok(bytes) => bytes,
             Err(err) => {
-                crate::debugging::log_info(format!("Failed to read ROM: {err}"));
+                crate::platform::debugging::log_info(format!("Failed to read ROM: {err}"));
                 return;
             }
         };
@@ -359,7 +359,9 @@ impl NativeEventLoop {
         ) {
             Ok(c) => c,
             Err(err) => {
-                crate::debugging::log_info(format!("Failed to load ROM cartridge: {err}"));
+                crate::platform::debugging::log_info(format!(
+                    "Failed to load ROM cartridge: {err}"
+                ));
                 return;
             }
         };
@@ -389,7 +391,7 @@ impl NativeEventLoop {
         overwrite: bool,
         extend: bool,
         from_checkpoint: Option<i64>,
-        format: crate::autorun::AutorunFormat,
+        format: crate::platform::autorun::AutorunFormat,
     ) -> Result<(), String> {
         if mode != AutorunMode::None {
             let (state, pending) =
@@ -477,11 +479,11 @@ impl NativeEventLoop {
                 let current_checkpoint = autorun_state.total_checkpoints_verified();
                 let total_checkpoints = autorun_state.total_checkpoints();
                 if matched {
-                    crate::debugging::log_info(format!(
+                    crate::platform::debugging::log_info(format!(
                         "Autorun checkpoint CRC match (0x{crc:08X}) at frame {current_frame}/{total_frames}, checkpoint {current_checkpoint}/{total_checkpoints}",
                     ));
                 } else {
-                    crate::debugging::log_info(format!(
+                    crate::platform::debugging::log_info(format!(
                         "Autorun checkpoint CRC MISMATCH at frame {current_frame}/{total_frames}, checkpoint {current_checkpoint}/{total_checkpoints}: got 0x{crc:08X}",
                     ));
                 }
@@ -500,12 +502,12 @@ impl NativeEventLoop {
         let crc = self.console.screen_crc32();
 
         if mismatches == 0 {
-            crate::debugging::log_info(format!(
+            crate::platform::debugging::log_info(format!(
                 "Autorun playback successful: {verified} checkpoints verified, final CRC 0x{crc:08X}",
             ));
             Err("AUTORUN_EXIT:0".to_string())
         } else {
-            crate::debugging::log_info(format!(
+            crate::platform::debugging::log_info(format!(
                 "Autorun playback failed: {mismatches}/{verified} CRC mismatches",
             ));
             Err("AUTORUN_EXIT:1".to_string())
@@ -526,7 +528,7 @@ impl NativeEventLoop {
         let state_bytes = self.console.save_state_bytes().unwrap_or_default();
 
         autorun_state.save_with_final_checkpoint(crc, state_bytes)?;
-        crate::debugging::log_info(format!(
+        crate::platform::debugging::log_info(format!(
             "Autorun recording saved: {} frames, final CRC 0x{crc:08X}",
             autorun_state.total_frames(),
         ));
@@ -692,9 +694,10 @@ impl ApplicationHandler for NativeEventLoop {
                         KeyOutcome::CycleShader => {
                             if let Some(ref mut gl) = self.gl_wrapper {
                                 let preset_name = gl.cycle_shader();
-                                let toast = crate::rendering::gl_backend::shader_toast_message(
-                                    preset_name.as_deref(),
-                                );
+                                let toast =
+                                    crate::platform::rendering::gl_backend::shader_toast_message(
+                                        preset_name.as_deref(),
+                                    );
                                 self.console.app_context().borrow_mut().add_toast(toast);
                             }
                         }

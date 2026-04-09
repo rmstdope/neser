@@ -2244,11 +2244,11 @@ impl Mapper for MMC5Mapper {
 #[cfg(test)]
 #[allow(clippy::identity_op)]
 mod tests {
-    use crate::debugging::*;
     use crate::nes::cartridge::NametableLayout;
     use crate::nes::cartridge::cartridge::Cartridge;
     use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
     use crate::nes::cartridge::test_helpers::{banked_data, banked_data_with_upper_marker};
+    use crate::platform::debugging::*;
 
     use super::MMC5Mapper;
 

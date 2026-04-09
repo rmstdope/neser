@@ -1,5 +1,5 @@
-use crate::autorun::AutorunMode;
-use crate::autorun::{
+use crate::platform::autorun::AutorunMode;
+use crate::platform::autorun::{
     AUTORUN_VERSION, AutorunCheckpoint, AutorunFile, AutorunFormat, AutorunFrame,
     CHECKPOINT_INTERVAL_FRAMES, autorun_path_for_rom, backup_autorun_file, load_autorun_file,
     save_autorun_file,

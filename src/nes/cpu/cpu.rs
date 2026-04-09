@@ -1625,7 +1625,7 @@ impl Cpu {
         // Use read_for_testing to avoid affecting the open bus state
         // Only execute this code when CPU tracing is actually enabled
         #[cfg(debug_assertions)]
-        if crate::debugging::is_cpu_tracing_enabled() {
+        if crate::platform::debugging::is_cpu_tracing_enabled() {
             let pc = self.pc;
             let mut memory = self.bus.borrow_mut();
             let opcode_byte = memory.read_for_testing(pc);
@@ -2802,7 +2802,9 @@ mod tests {
         )));
         let apu = Rc::new(RefCell::new(crate::nes::apu::Apu::new()));
         let app_context = Rc::new(RefCell::new(
-            crate::app_context::AppContext::new_with_config(crate::nes::console::Config::default()),
+            crate::platform::app_context::AppContext::new_with_config(
+                crate::nes::console::Config::default(),
+            ),
         ));
         let memory = Rc::new(RefCell::new(Bus::new(
             Rc::clone(&ppu),
@@ -3423,7 +3425,7 @@ mod tests {
             ..Default::default()
         };
         let app_context = Rc::new(RefCell::new(
-            crate::app_context::AppContext::new_with_config(config),
+            crate::platform::app_context::AppContext::new_with_config(config),
         ));
         let memory = Rc::new(RefCell::new(Bus::new(
             Rc::clone(&ppu),
@@ -3446,7 +3448,7 @@ mod tests {
             ..Default::default()
         };
         let app_context = Rc::new(RefCell::new(
-            crate::app_context::AppContext::new_with_config(config),
+            crate::platform::app_context::AppContext::new_with_config(config),
         ));
         let memory = Rc::new(RefCell::new(Bus::new(
             Rc::clone(&ppu),

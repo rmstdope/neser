@@ -6,11 +6,11 @@
 //! 2. Config file (neser.conf)
 //! 3. Default values
 
-use crate::autorun::AutorunFormat;
-use crate::autorun::AutorunMode;
-use crate::debugging::breakpoints::BreakpointKind;
 use crate::nes::console::TimingMode;
 use crate::nes::input::ControllerType;
+use crate::platform::autorun::AutorunFormat;
+use crate::platform::autorun::AutorunMode;
+use crate::platform::debugging::breakpoints::BreakpointKind;
 use bitflags::bitflags;
 use std::fmt::Write as _;
 use std::fs;
@@ -647,7 +647,7 @@ impl Default for NesConfig {
     }
 }
 
-use crate::config::Config;
+use crate::platform::config::Config;
 
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1799,7 +1799,8 @@ impl Config {
             }
             "trace-ppu" => {
                 if let Ok(level) = value.parse::<u8>() {
-                    self.frontend.tracing.ppu = crate::debugging::Tracing::clamp_ppu_level(level);
+                    self.frontend.tracing.ppu =
+                        crate::platform::debugging::Tracing::clamp_ppu_level(level);
                     if level > 0 {
                         self.frontend.tracing.enabled = true;
                     }
@@ -1816,7 +1817,7 @@ impl Config {
             "trace-mapper" => {
                 if let Ok(level) = value.parse::<u8>() {
                     self.frontend.tracing.mapper =
-                        crate::debugging::Tracing::clamp_mapper_level(level);
+                        crate::platform::debugging::Tracing::clamp_mapper_level(level);
                     if level > 0 {
                         self.frontend.tracing.enabled = true;
                     }
@@ -4625,7 +4626,7 @@ filter=invalid-shader
 
     #[test]
     fn test_cli_breakpoint_pc_flag_adds_pc_breakpoint() {
-        use crate::debugging::breakpoints::BreakpointKind;
+        use crate::platform::debugging::breakpoints::BreakpointKind;
         let args = vec![
             "neser".to_string(),
             "--breakpoint".to_string(),
@@ -4640,7 +4641,7 @@ filter=invalid-shader
 
     #[test]
     fn test_cli_breakpoint_cycle_flag_adds_cycle_breakpoint() {
-        use crate::debugging::breakpoints::BreakpointKind;
+        use crate::platform::debugging::breakpoints::BreakpointKind;
         let args = vec![
             "neser".to_string(),
             "--breakpoint".to_string(),
@@ -4658,7 +4659,7 @@ filter=invalid-shader
 
     #[test]
     fn test_cli_frame_flag_adds_frame_breakpoint() {
-        use crate::debugging::breakpoints::BreakpointKind;
+        use crate::platform::debugging::breakpoints::BreakpointKind;
         let args = vec![
             "neser".to_string(),
             "--breakpoint".to_string(),
@@ -4673,7 +4674,7 @@ filter=invalid-shader
 
     #[test]
     fn test_cli_breakpoint_frame_flag_adds_frame_breakpoint() {
-        use crate::debugging::breakpoints::BreakpointKind;
+        use crate::platform::debugging::breakpoints::BreakpointKind;
         let args = vec![
             "neser".to_string(),
             "--breakpoint".to_string(),
@@ -4688,7 +4689,7 @@ filter=invalid-shader
 
     #[test]
     fn test_cli_breakpoint_write_flag_adds_write_breakpoint() {
-        use crate::debugging::breakpoints::BreakpointKind;
+        use crate::platform::debugging::breakpoints::BreakpointKind;
         let args = vec![
             "neser".to_string(),
             "--breakpoint".to_string(),

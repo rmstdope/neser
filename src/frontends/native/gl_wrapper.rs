@@ -1,10 +1,10 @@
 #![allow(dead_code)] // Public API for future use in native frontend
 use super::render_target::WinitRenderTarget;
-use crate::app_context::SharedAppContext;
-use crate::debugging::breakpoints::BreakpointList;
 use crate::nes::debugging::ui::DebuggerUiAction;
-use crate::rendering::input::{InputEvent, MouseButton as RenderMouseButton};
-use crate::rendering::{Crosshair, GlBackend, ProcAddressLoader};
+use crate::platform::app_context::SharedAppContext;
+use crate::platform::debugging::breakpoints::BreakpointList;
+use crate::platform::rendering::input::{InputEvent, MouseButton as RenderMouseButton};
+use crate::platform::rendering::{Crosshair, GlBackend, ProcAddressLoader};
 
 use glutin::config::ConfigTemplateBuilder;
 use glutin::context::{ContextApi, ContextAttributesBuilder, Version};
@@ -160,7 +160,8 @@ impl NativeGlWrapper {
 
         render_target.set_swap_interval(vsync_enabled)?;
 
-        let render_target_boxed: Box<dyn crate::rendering::RenderTarget> = Box::new(render_target);
+        let render_target_boxed: Box<dyn crate::platform::rendering::RenderTarget> =
+            Box::new(render_target);
         let mut gl_backend = GlBackend::new(
             render_target_boxed,
             proc_address,

@@ -295,7 +295,7 @@ impl GamepadManager {
         self.gamepad_states.insert(id, GamepadState::default());
 
         if let Some(gamepad) = self.gilrs.connected_gamepad(id) {
-            crate::debugging::log_info(format!(
+            crate::platform::debugging::log_info(format!(
                 "Gamepad connected for player {player_num}: {}",
                 gamepad.name()
             ));
@@ -339,7 +339,9 @@ impl GamepadManager {
 
             self.player_map.remove(&id);
             self.gamepad_states.remove(&id);
-            crate::debugging::log_info(format!("Gamepad disconnected (was player {player_num})"));
+            crate::platform::debugging::log_info(format!(
+                "Gamepad disconnected (was player {player_num})"
+            ));
             self.reassign_players();
             Some(GamepadChange::Disconnected(player_num))
         } else {

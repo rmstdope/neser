@@ -177,7 +177,7 @@ pub(crate) mod tests {
         let cartridge = Cartridge::load_from_file(&rom_data, rom_path, None)
             .unwrap_or_else(|_| panic!("{rom_path} ROM should parse successfully"));
 
-        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+        let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
             config.clone(),
         ));
         nes.insert_cartridge(cartridge);

@@ -4,8 +4,8 @@
 //! screen CRCs at every checkpoint. It has no SDL dependencies and can be called from
 //! integration tests or other non-SDL frontends (e.g. web).
 
-use crate::autorun::AutorunFile;
 use crate::nes::console::{Nes, SaveState};
+use crate::platform::autorun::AutorunFile;
 
 /// Summary of a headless playback run.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -176,9 +176,9 @@ pub fn run_one_frame(nes: &mut Nes) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app_context::AppContext;
-    use crate::autorun::{AUTORUN_VERSION, AutorunCheckpoint, AutorunFile, AutorunFrame};
     use crate::nes::console::{Config, Nes, NesConfig, RamInitMode};
+    use crate::platform::app_context::AppContext;
+    use crate::platform::autorun::{AUTORUN_VERSION, AutorunCheckpoint, AutorunFile, AutorunFrame};
 
     /// Minimal NROM-128 ROM that just loops forever with no audio/PPU effects.
     fn minimal_nrom_rom() -> Vec<u8> {

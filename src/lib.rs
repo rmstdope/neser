@@ -3,13 +3,8 @@
 
 pub mod gb;
 pub mod nes;
+pub mod platform;
 
-pub mod app_context;
-pub mod autorun;
-pub mod config;
-pub mod crc32;
-pub mod debugging;
-pub mod emulator;
 #[cfg(feature = "wasm")]
 #[path = "frontends/web/wasm.rs"]
 pub mod wasm;
@@ -19,8 +14,4 @@ pub mod wasm_autorun;
 #[path = "frontends/web/wasm_tests.rs"]
 mod wasm_tests;
 
-#[cfg(feature = "native")]
-pub mod audio;
 pub mod frontends;
-#[cfg(feature = "native")]
-pub mod rendering;

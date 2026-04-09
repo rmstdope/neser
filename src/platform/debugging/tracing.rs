@@ -144,12 +144,12 @@ pub fn is_cpu_tracing_enabled() -> bool {
 #[cfg(debug_assertions)]
 macro_rules! trace_cpu {
     ($level:literal; $($arg:tt)*) => {
-        if $crate::debugging::cpu_trace_level() >= $level {
+        if $crate::platform::debugging::cpu_trace_level() >= $level {
             println!("[CPU] {}", format!($($arg)*));
         }
     };
     ($($arg:tt)*) => {
-        if $crate::debugging::cpu_trace_level() >= 1 {
+        if $crate::platform::debugging::cpu_trace_level() >= 1 {
             println!("[CPU] {}", format!($($arg)*));
         }
     };
@@ -196,12 +196,12 @@ pub fn ppu_trace_level() -> u8 {
 #[cfg(debug_assertions)]
 macro_rules! trace_ppu {
     ($level:literal; $($arg:tt)*) => {
-        if $crate::debugging::ppu_trace_level() >= $level {
+        if $crate::platform::debugging::ppu_trace_level() >= $level {
             println!("[PPU] {}", format!($($arg)*));
         }
     };
     ($($arg:tt)*) => {
-        if $crate::debugging::ppu_trace_level() >= 1 {
+        if $crate::platform::debugging::ppu_trace_level() >= 1 {
             println!("[PPU] {}", format!($($arg)*));
         }
     };
@@ -248,12 +248,12 @@ pub fn apu_trace_level() -> u8 {
 #[cfg(debug_assertions)]
 macro_rules! trace_apu {
     ($level:literal; $($arg:tt)*) => {
-        if $crate::debugging::apu_trace_level() >= $level {
+        if $crate::platform::debugging::apu_trace_level() >= $level {
             println!("[APU] {}", format!($($arg)*));
         }
     };
     ($($arg:tt)*) => {
-        if $crate::debugging::apu_trace_level() >= 1 {
+        if $crate::platform::debugging::apu_trace_level() >= 1 {
             println!("[APU] {}", format!($($arg)*));
         }
     };
@@ -300,13 +300,13 @@ pub fn mapper_trace_level() -> u8 {
 #[cfg(debug_assertions)]
 macro_rules! trace_mapper {
     ($level:literal; $($arg:tt)*) => {
-        if $crate::debugging::mapper_trace_level() >= $level {
-            $crate::debugging::emit_mapper_trace(format!("[MAP] {}", format!($($arg)*)));
+        if $crate::platform::debugging::mapper_trace_level() >= $level {
+            $crate::platform::debugging::emit_mapper_trace(format!("[MAP] {}", format!($($arg)*)));
         }
     };
     ($($arg:tt)*) => {
-        if $crate::debugging::mapper_trace_level() >= 1 {
-            $crate::debugging::emit_mapper_trace(format!("[MAP] {}", format!($($arg)*)));
+        if $crate::platform::debugging::mapper_trace_level() >= 1 {
+            $crate::platform::debugging::emit_mapper_trace(format!("[MAP] {}", format!($($arg)*)));
         }
     };
 }

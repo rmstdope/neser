@@ -146,7 +146,7 @@ impl Cartridge {
         let parsed =
             crate::nes::cartridge::ParsedRom::parse(data, rom_db).map_err(Self::map_parse_error)?;
 
-        crate::debugging::log_info(format!(
+        crate::platform::debugging::log_info(format!(
             "Loaded rom with CRC32: {:08X}, mapper={}, submapper={}, PRG-ROM={}KB, CHR-ROM={}KB",
             parsed.crc32,
             parsed.header.mapper,

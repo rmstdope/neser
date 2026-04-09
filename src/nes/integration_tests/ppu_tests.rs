@@ -77,7 +77,7 @@ mod tests {
 
     fn create_nes_from_rom(
         rom_path: &str,
-        app_context: crate::app_context::AppContext,
+        app_context: crate::platform::app_context::AppContext,
         rom_name: &str,
     ) -> Nes {
         let rom_data =
@@ -196,7 +196,7 @@ mod tests {
     fn test_read2004() {
         let mut nes = create_nes_from_rom(
             "roms/automated_tests/misc_oam_tests/read2004.nes",
-            crate::app_context::AppContext::new_with_config(Config {
+            crate::platform::app_context::AppContext::new_with_config(Config {
                 nes: NesConfig {
                     ram_init_mode: RamInitMode::Zero,
                     ..Default::default()
@@ -256,7 +256,7 @@ AA AA 01 01 10 10 01 01 00 00\n\
         let hardware_model = crate::nes::console::HardwareModel::from_timing_mode(tv_system);
         let mut nes = create_nes_from_rom(
             "roms/automated_tests/misc_oam_tests/oam-decay-test.nes",
-            crate::app_context::AppContext::new_with_config(Config {
+            crate::platform::app_context::AppContext::new_with_config(Config {
                 nes: NesConfig {
                     hardware_model,
                     oam_dram_decay_enabled: true,
@@ -319,7 +319,7 @@ AA AA 01 01 10 10 01 01 00 00\n\
     fn test_nmi_sync_demo_ntsc() {
         let mut nes = create_nes_from_rom(
             "roms/automated_tests/nmi_sync/demo_ntsc.nes",
-            crate::app_context::AppContext::new_with_config(Config::default()),
+            crate::platform::app_context::AppContext::new_with_config(Config::default()),
             "demo_ntsc",
         );
 
@@ -355,7 +355,7 @@ AA AA 01 01 10 10 01 01 00 00\n\
     fn test_nmi_sync_demo_pal() {
         let mut nes = create_nes_from_rom(
             "roms/automated_tests/nmi_sync/demo_pal.nes",
-            crate::app_context::AppContext::new_with_config(Config {
+            crate::platform::app_context::AppContext::new_with_config(Config {
                 nes: NesConfig {
                     hardware_model: crate::nes::console::HardwareModel::NesPal,
                     ..Default::default()
@@ -411,7 +411,9 @@ AA AA 01 01 10 10 01 01 00 00\n\
             },
             ..Config::default()
         };
-        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
+        let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+            config,
+        ));
         nes.insert_cartridge(cartridge);
         nes.reset(false);
         // Remove sprites 4-63 to avoid random garbage
@@ -845,7 +847,7 @@ AA AA 01 01 10 10 01 01 00 00\n\
     fn test_scanline_a1() {
         let mut nes = create_nes_from_rom(
             "roms/automated_tests/scanline-a1/scanline.nes",
-            crate::app_context::AppContext::new_with_config(Config::default()),
+            crate::platform::app_context::AppContext::new_with_config(Config::default()),
             "scanline-a1",
         );
 

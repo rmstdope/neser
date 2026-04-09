@@ -1,5 +1,7 @@
-use crate::audio::types::{AudioConsumer, AudioStats, process_sample, queue_sample_to_producer};
-use crate::audio::{AudioProducer, AudioResampler, EmulatorAudio};
+use crate::platform::audio::types::{
+    AudioConsumer, AudioStats, process_sample, queue_sample_to_producer,
+};
+use crate::platform::audio::{AudioProducer, AudioResampler, EmulatorAudio};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BufferSize, FromSample, SampleFormat, SampleRate, SizedSample, StreamConfig};
 use ringbuf::HeapRb;
@@ -8,7 +10,7 @@ use ringbuf::traits::Split;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
-use crate::debugging::log_info;
+use crate::platform::debugging::log_info;
 
 /// Shared state between the `NativeAudio` owner and the cpal audio callback.
 ///

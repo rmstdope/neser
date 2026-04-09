@@ -4,10 +4,10 @@
 //! buttons, and Power Pad buttons, and dispatches system hotkeys such as
 //! Ctrl+Q (quit), Ctrl+R (reset), Space (pause), and so on.
 
-use crate::audio::EmulatorAudio;
 use crate::frontends::native::app_state::NativeAppState;
 use crate::nes::console::Nes;
 use crate::nes::input::{Button, PowerPadButton, SnesButton};
+use crate::platform::audio::EmulatorAudio;
 use winit::keyboard::KeyCode;
 
 /// The result of processing a key-press event.
@@ -431,8 +431,8 @@ fn key_code_to_filter_char(key_code: KeyCode, shift: bool) -> Option<char> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app_context::AppContext;
     use crate::nes::console::{Config, NesConfig};
+    use crate::platform::app_context::AppContext;
     use winit::keyboard::ModifiersState;
 
     // ── Test helpers ──────────────────────────────────────────────────────────

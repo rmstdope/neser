@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use crate::config::Config;
+use crate::platform::config::Config;
 
 pub const TOAST_LIFETIME_SECS: u64 = 4;
 pub const MAX_VISIBLE_TOASTS: usize = 3;
