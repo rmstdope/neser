@@ -5,7 +5,7 @@
 //! Ctrl+Q (quit), Ctrl+R (reset), Space (pause), and so on.
 
 use crate::audio::EmulatorAudio;
-use crate::native_frontend::app_state::NativeAppState;
+use crate::frontends::native::app_state::NativeAppState;
 use crate::nes::console::Nes;
 use crate::nes::input::{Button, PowerPadButton, SnesButton};
 use winit::keyboard::KeyCode;
@@ -1259,7 +1259,7 @@ mod tests {
         // the WASD key set (P1 keys shift to ports.first() = port 2).
         // The IJKL keys do nothing, so the help text must NOT list them for
         // port 2 and MUST list WASD for port 2.
-        let state = crate::native_frontend::app_state::NativeAppState {
+        let state = crate::frontends::native::app_state::NativeAppState {
             help_overlay_visible: true,
             gamepad_count: 1,
             ..Default::default()

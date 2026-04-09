@@ -9,19 +9,16 @@ pub mod config;
 pub mod debugging;
 pub mod emulator;
 #[cfg(feature = "wasm")]
-#[path = "web_frontend/wasm.rs"]
+#[path = "frontends/web/wasm.rs"]
 pub mod wasm;
-#[path = "web_frontend/wasm_autorun_state.rs"]
+#[path = "frontends/web/wasm_autorun_state.rs"]
 pub mod wasm_autorun;
 #[cfg(all(test, feature = "wasm", target_arch = "wasm32"))]
-#[path = "web_frontend/wasm_tests.rs"]
+#[path = "frontends/web/wasm_tests.rs"]
 mod wasm_tests;
 
 #[cfg(feature = "native")]
 pub mod audio;
-#[cfg(feature = "native")]
-pub mod native_frontend;
+pub mod frontends;
 #[cfg(feature = "native")]
 pub mod rendering;
-#[cfg(feature = "tui")]
-pub mod tui_frontend;

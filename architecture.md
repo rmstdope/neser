@@ -208,26 +208,26 @@ All NES-specific hardware and supporting code lives under `src/nes/`.
 
 | Directory/File | Description |
 | ---------------- | ------------- |
-| `src/native_frontend/` | Desktop frontend using winit + OpenGL. |
-| `src/native_frontend/event_loop.rs` | Main event loop — holds `Console` enum, handles input events, frame timing, VSync, autorun integration, pause/resume, and hot-reload of ROMs. NES-specific features (debugger, Zapper, SNES mouse) accessed by extracting the inner `Nes` via pattern match. |
-| `src/native_frontend/audio.rs` | Native audio device setup and sample queuing. |
-| `src/native_frontend/keyboard.rs` | Keyboard input handling — maps physical keys to NES buttons, debugger hotkeys, and system commands. |
-| `src/native_frontend/gamepad.rs` | Gamepad input using gilrs — maps controller axes/buttons to NES joypads. |
-| `src/native_frontend/mouse.rs` | Mouse input — Zapper light gun, SNES mouse, and Arkanoid paddle coordinate mapping. |
-| `src/native_frontend/gl_wrapper.rs` | OpenGL context management for native windows. |
+| `src/frontends/native/` | Desktop frontend using winit + OpenGL. |
+| `src/frontends/native/event_loop.rs` | Main event loop — holds `Console` enum, handles input events, frame timing, VSync, autorun integration, pause/resume, and hot-reload of ROMs. NES-specific features (debugger, Zapper, SNES mouse) accessed by extracting the inner `Nes` via pattern match. |
+| `src/frontends/native/audio.rs` | Native audio device setup and sample queuing. |
+| `src/frontends/native/keyboard.rs` | Keyboard input handling — maps physical keys to NES buttons, debugger hotkeys, and system commands. |
+| `src/frontends/native/gamepad.rs` | Gamepad input using gilrs — maps controller axes/buttons to NES joypads. |
+| `src/frontends/native/mouse.rs` | Mouse input — Zapper light gun, SNES mouse, and Arkanoid paddle coordinate mapping. |
+| `src/frontends/native/gl_wrapper.rs` | OpenGL context management for native windows. |
 | `src/rendering/` | Shared rendering infrastructure (native feature). |
 | `src/rendering/gl_backend.rs` | OpenGL framebuffer, texture management, and imgui debugger UI. |
 | `src/rendering/shader_manager.rs` | Shader pipeline using librashader — loads `.slangp` presets (CRT, NTSC, xBRZ). |
-| `src/tui_frontend/` | Terminal UI ROM launcher using `ratatui` + `crossterm`. |
-| `src/tui_frontend/app.rs` | TUI application state and event loop. |
-| `src/tui_frontend/rom_list.rs` | Scrollable ROM list widget. |
-| `src/tui_frontend/catalog.rs` | Integration with the cartridge catalog for ROM discovery. |
-| `src/tui_frontend/launcher.rs` | Launches the SDL emulator for a selected ROM. |
-| `src/tui_frontend/action_menu.rs` | Context menu for ROM actions. |
-| `src/web_frontend/` | WebAssembly frontend. |
-| `src/web_frontend/wasm.rs` | `wasm-bindgen` bindings — exposes `NesEmulator` to JavaScript with methods for frame stepping, input, audio sample retrieval, and save states. |
-| `src/web_frontend/wasm_autorun_state.rs` | Autorun state management for the WASM frontend. |
-| `src/web_frontend/wasm_tests.rs` | WASM-specific integration tests (run via `wasm-pack test`). |
+| `src/frontends/tui/` | Terminal UI ROM launcher using `ratatui` + `crossterm`. |
+| `src/frontends/tui/app.rs` | TUI application state and event loop. |
+| `src/frontends/tui/rom_list.rs` | Scrollable ROM list widget. |
+| `src/frontends/tui/catalog.rs` | Integration with the cartridge catalog for ROM discovery. |
+| `src/frontends/tui/launcher.rs` | Launches the SDL emulator for a selected ROM. |
+| `src/frontends/tui/action_menu.rs` | Context menu for ROM actions. |
+| `src/frontends/web/` | WebAssembly frontend. |
+| `src/frontends/web/wasm.rs` | `wasm-bindgen` bindings — exposes `NesEmulator` to JavaScript with methods for frame stepping, input, audio sample retrieval, and save states. |
+| `src/frontends/web/wasm_autorun_state.rs` | Autorun state management for the WASM frontend. |
+| `src/frontends/web/wasm_tests.rs` | WASM-specific integration tests (run via `wasm-pack test`). |
 
 #### Debugging
 

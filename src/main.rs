@@ -11,12 +11,9 @@ mod autorun;
 pub mod config;
 mod debugging;
 mod emulator;
-#[cfg(feature = "native")]
-mod native_frontend;
+mod frontends;
 #[cfg(feature = "native")]
 mod rendering;
-#[cfg(feature = "tui")]
-mod tui_frontend;
 
 use app_context::AppContext;
 use autorun::AutorunFormat;
@@ -188,7 +185,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(feature = "tui")]
     if app_context.borrow().config().frontend.tui_mode {
         let (search_paths, _, rebuild) = cartridge_catalog_startup_config(&app_context);
-        return tui_frontend::run_tui(&search_paths, rebuild);
+        return frontends::tui::run_tui(&search_paths, rebuild);
     }
 
     refresh_startup_cartridge_catalog(&app_context);
@@ -256,7 +253,7 @@ fn run_native_frontend(
     app_context: Rc<RefCell<AppContext>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use audio::EmulatorAudio;
-    use native_frontend::{NativeAudio, NativeEventLoop};
+    use frontends::native::{NativeAudio, NativeEventLoop};
 
     // Read autorun config up front
     let (
