@@ -6,10 +6,10 @@
 
 use super::snapshot::DebuggerViewState;
 use super::ui::DebuggerUiAction;
-use crate::debugging::Tracing;
-use crate::debugging::breakpoints::{BreakpointKind, BreakpointList, EvalContext};
 use crate::nes::console::Nes;
 use crate::nes::cpu::InterruptKind;
+use crate::platform::debugging::Tracing;
+use crate::platform::debugging::breakpoints::{BreakpointKind, BreakpointList, EvalContext};
 
 /// One-shot breakpoint used for stepping and run-to-interrupt operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -556,7 +556,7 @@ impl DebuggerController {
             return vec![];
         };
         self.breakpoints = BreakpointList::load_from_str(&text);
-        crate::debugging::breakpoints::parse_watch_addresses(&text)
+        crate::platform::debugging::breakpoints::parse_watch_addresses(&text)
     }
 
     /// Save breakpoints **and** watch addresses to the `.debug` file next to the ROM.
@@ -567,12 +567,15 @@ impl DebuggerController {
             return;
         };
         let bp_str = self.breakpoints.save_to_string();
-        let watch_str = crate::debugging::breakpoints::serialize_watch_addresses(watch_addresses);
+        let watch_str =
+            crate::platform::debugging::breakpoints::serialize_watch_addresses(watch_addresses);
         if bp_str.is_empty() && watch_str.is_empty() {
             if path.exists()
                 && let Err(err) = std::fs::remove_file(&path)
             {
-                crate::debugging::log_info(format!("Failed to remove .debug file: {err}"));
+                crate::platform::debugging::log_info(format!(
+                    "Failed to remove .debug file: {err}"
+                ));
             }
             return;
         }
@@ -582,7 +585,7 @@ impl DebuggerController {
             .collect::<Vec<_>>()
             .join("\n");
         if let Err(err) = std::fs::write(&path, content) {
-            crate::debugging::log_info(format!("Failed to save debug state: {err}"));
+            crate::platform::debugging::log_info(format!("Failed to save debug state: {err}"));
         }
     }
 }
@@ -590,9 +593,9 @@ impl DebuggerController {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app_context::AppContext;
     use crate::nes::cartridge::{Cartridge, NametableLayout};
     use crate::nes::console::Config;
+    use crate::platform::app_context::AppContext;
 
     // ── Test helpers ───────────────────────────────────────────────────
 

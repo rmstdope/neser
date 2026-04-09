@@ -1,6 +1,3 @@
-use crate::app_context::SharedAppContext;
-use crate::debugging::breakpoints::BreakpointList;
-use crate::debugging::log_info;
 use crate::nes::console::Nes;
 use crate::nes::debugging::DebuggerViewState;
 use crate::nes::debugging::ppu_viewer::{
@@ -9,8 +6,11 @@ use crate::nes::debugging::ppu_viewer::{
 use crate::nes::debugging::ui::{
     self as debugger_ui, BreakpointAddUiState, HexdumpUiState, WatchlistUiState,
 };
-use crate::rendering::input::{InputEvent, apply_input};
-use crate::rendering::shader_manager::ShaderManager;
+use crate::platform::app_context::SharedAppContext;
+use crate::platform::debugging::breakpoints::BreakpointList;
+use crate::platform::debugging::log_info;
+use crate::platform::rendering::input::{InputEvent, apply_input};
+use crate::platform::rendering::shader_manager::ShaderManager;
 use std::ffi::c_void;
 use std::rc::Rc;
 use std::time::Instant;

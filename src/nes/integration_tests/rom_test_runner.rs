@@ -1,6 +1,5 @@
 #[cfg(test)]
 pub(crate) mod tests {
-    use crate::debugging::{Tracing, init_tracing};
     /// OAM test infrastructure for automated testing of test ROMs
     ///
     /// This module provides infrastructure to run OAM test ROMs (oam_read, oam_stress, oam3)
@@ -25,6 +24,7 @@ pub(crate) mod tests {
     use crate::nes::cartridge::Cartridge;
     use crate::nes::console::{Config, HardwareModel, Nes, NesConfig, RamInitMode};
     use crate::nes::input::Button;
+    use crate::platform::debugging::{Tracing, init_tracing};
     use std::fs;
 
     /// Result of running an test ROM
@@ -174,7 +174,9 @@ pub(crate) mod tests {
                 config.nes.ram_init_mode = ram_init_mode;
             }
 
-            let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
+            let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+                config,
+            ));
             nes.insert_cartridge(cartridge);
             // Initial reset is treated as power-on.
             nes.reset(false);
@@ -376,7 +378,9 @@ pub(crate) mod tests {
         let mut config = test_default_config();
         config.nes.hardware_model = HardwareModel::from_timing_mode(cartridge.rom_timing_mode());
 
-        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
+        let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+            config,
+        ));
         nes.insert_cartridge(cartridge);
         nes.reset(false);
 
@@ -658,7 +662,7 @@ pub(crate) mod tests {
                     $crate::nes::console::HardwareModel::from_timing_mode(cartridge.rom_timing_mode());
 
                 let mut nes = $crate::nes::console::Nes::new(
-                    $crate::app_context::AppContext::new_with_config(config),
+                    $crate::platform::app_context::AppContext::new_with_config(config),
                 );
                 nes.insert_cartridge(cartridge);
                 nes.reset(false);
@@ -761,7 +765,7 @@ pub(crate) mod tests {
                     $crate::nes::console::HardwareModel::from_timing_mode(cartridge.rom_timing_mode());
 
                 let mut nes = $crate::nes::console::Nes::new(
-                    $crate::app_context::AppContext::new_with_config(config),
+                    $crate::platform::app_context::AppContext::new_with_config(config),
                 );
                 nes.insert_cartridge(cartridge);
                 nes.reset(false);

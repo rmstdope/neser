@@ -1,7 +1,7 @@
 use super::ControllerInput;
-use crate::app_context::AppContext;
 use crate::nes::input::Button;
 use crate::nes::ppu::Ppu;
+use crate::platform::app_context::AppContext;
 use serde::{Deserialize, Serialize};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -186,7 +186,9 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    fn test_app_context_with_size(size: u8) -> Rc<RefCell<crate::app_context::AppContext>> {
+    fn test_app_context_with_size(
+        size: u8,
+    ) -> Rc<RefCell<crate::platform::app_context::AppContext>> {
         let config = crate::nes::console::Config {
             nes: crate::nes::console::NesConfig {
                 zapper_detection_size: size,
@@ -195,7 +197,7 @@ mod tests {
             ..Default::default()
         };
         Rc::new(RefCell::new(
-            crate::app_context::AppContext::new_with_config(config),
+            crate::platform::app_context::AppContext::new_with_config(config),
         ))
     }
 

@@ -4,11 +4,11 @@ mod nes;
 mod ram_init;
 pub mod save_state_io;
 
-use crate::app_context::SharedAppContext;
-use crate::debugging::log_info;
+use crate::platform::app_context::SharedAppContext;
+use crate::platform::debugging::log_info;
 
-pub use crate::config::Config;
 pub use crate::nes::cartridge::TimingMode;
+pub use crate::platform::config::Config;
 pub use cartridge_catalog::{
     CartridgeCatalogOptions, default_catalog_csv_path, refresh_cartridge_catalog,
 };

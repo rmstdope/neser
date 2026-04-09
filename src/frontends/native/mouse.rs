@@ -7,7 +7,7 @@
 use crate::nes::console::Nes;
 use crate::nes::input::ControllerInput;
 use crate::nes::input::mouse_mapping;
-use crate::rendering::Crosshair;
+use crate::platform::rendering::Crosshair;
 
 /// Mouse button abstraction (frontend-independent).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,8 +139,8 @@ pub fn should_forward_grab_click(was_released_by_escape: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app_context::AppContext;
     use crate::nes::console::Config;
+    use crate::platform::app_context::AppContext;
 
     fn make_nes() -> Nes {
         Nes::new(AppContext::new_with_config(Config::default()))

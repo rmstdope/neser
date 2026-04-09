@@ -4,26 +4,17 @@
 
 mod nes;
 
-mod app_context;
-#[cfg(feature = "native")]
-mod audio;
-mod autorun;
-pub mod config;
-mod crc32;
-mod debugging;
-mod emulator;
 mod frontends;
-#[cfg(feature = "native")]
-mod rendering;
+mod platform;
 
-use app_context::AppContext;
-use autorun::AutorunFormat;
-use debugging::log_info;
 use nes::console::{
     CartridgeCatalogOptions, Config, Nes, ParseResult, default_catalog_csv_path,
     refresh_cartridge_catalog,
 };
 use nes::frontend_toasts::cartridge_load_toast_message;
+use platform::app_context::AppContext;
+use platform::autorun::AutorunFormat;
+use platform::debugging::log_info;
 use std::cell::RefCell;
 use std::fs;
 use std::path::PathBuf;
@@ -67,7 +58,7 @@ fn refresh_startup_cartridge_catalog(app_context: &Rc<RefCell<AppContext>>) {
 }
 
 fn convert_autorun_for_rom(rom_path: &str, format: AutorunFormat) -> Result<String, String> {
-    use autorun::{AUTORUN_VERSION, autorun_path_for_rom, convert_autorun_file};
+    use platform::autorun::{AUTORUN_VERSION, autorun_path_for_rom, convert_autorun_file};
 
     let path = autorun_path_for_rom(&PathBuf::from(rom_path));
     if !path.exists() {
@@ -92,7 +83,9 @@ fn trim_autorun_checkpoints_for_rom(
     checkpoints_to_trim: usize,
     format: AutorunFormat,
 ) -> Result<String, String> {
-    use autorun::{autorun_path_for_rom, load_autorun_file, save_autorun_file, trim_recording};
+    use platform::autorun::{
+        autorun_path_for_rom, load_autorun_file, save_autorun_file, trim_recording,
+    };
     use std::path::PathBuf;
 
     let path = autorun_path_for_rom(&PathBuf::from(rom_path));
@@ -111,11 +104,11 @@ fn trim_autorun_checkpoints_for_rom(
 }
 
 fn recalculate_autorun_for_rom(rom_path: &str, format: AutorunFormat) -> Result<String, String> {
-    use autorun::{autorun_path_for_rom, load_autorun_file, save_autorun_file};
     use nes::autorun::headless_playback::recalculate_checkpoint_crcs_with_progress;
     use nes::cartridge::Cartridge;
     use nes::console::NesConfig;
     use nes::console::RamInitMode;
+    use platform::autorun::{autorun_path_for_rom, load_autorun_file, save_autorun_file};
     use std::io::{self, Write};
 
     let path = autorun_path_for_rom(&PathBuf::from(rom_path));
@@ -233,7 +226,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize global tracing state (only active in debug builds)
     let tracing_config = app_context.borrow().config().frontend.tracing;
-    debugging::init_tracing(tracing_config);
+    platform::debugging::init_tracing(tracing_config);
 
     #[cfg(feature = "native")]
     {
@@ -253,8 +246,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn run_native_frontend(
     app_context: Rc<RefCell<AppContext>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use audio::EmulatorAudio;
     use frontends::native::{NativeAudio, NativeEventLoop};
+    use platform::audio::EmulatorAudio;
 
     // Read autorun config up front
     let (
@@ -279,7 +272,7 @@ fn run_native_frontend(
 
     // Headless autorun is only supported in playback mode because
     // record/extend have no guaranteed termination condition.
-    let headless = autorun_headless && autorun_mode == autorun::AutorunMode::Playback;
+    let headless = autorun_headless && autorun_mode == platform::autorun::AutorunMode::Playback;
 
     // Create audio output (request 44.1 kHz) unless disabled or headless.
     let mut audio_sample_rate = None;
@@ -335,9 +328,9 @@ fn run_native_frontend(
         .config_mut()
         .apply_rom_timing_mode(rom_timing_mode);
 
-    let mut console = emulator::Console::new_nes(app_context.clone());
+    let mut console = platform::emulator::Console::new_nes(app_context.clone());
     {
-        let emulator::Console::Nes(nes) = &mut console;
+        let platform::emulator::Console::Nes(nes) = &mut console;
         nes.insert_cartridge(cart);
     }
 
@@ -352,7 +345,7 @@ fn run_native_frontend(
         NativeEventLoop::new(app_context.clone(), console, audio, tracing, headless);
 
     // Initialize autorun AFTER reset so checkpoint state restore is not overwritten.
-    if autorun_mode != autorun::AutorunMode::None {
+    if autorun_mode != platform::autorun::AutorunMode::None {
         event_loop.init_autorun(
             autorun_mode,
             &rom_path,
@@ -380,7 +373,7 @@ fn run_native_frontend(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::autorun::AUTORUN_VERSION;
+    use crate::platform::autorun::AUTORUN_VERSION;
     use tempfile::TempDir;
 
     #[test]

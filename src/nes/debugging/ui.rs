@@ -1,6 +1,6 @@
 #[cfg(feature = "native")]
 use super::DebuggerSnapshot;
-use crate::debugging::breakpoints::{Breakpoint, BreakpointKind, BreakpointList};
+use crate::platform::debugging::breakpoints::{Breakpoint, BreakpointKind, BreakpointList};
 
 const DEBUGGER_OUTER_MARGIN: f32 = 10.0;
 pub(crate) const DEBUGGER_UI_FONT_SCALE: f32 = 0.85;
@@ -832,7 +832,7 @@ mod tests {
 
     #[test]
     fn test_cpu_register_lines_render_expected_values() {
-        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+        let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
             Config::default(),
         ));
         nes.cpu_mut().set_pc(0xC000);
@@ -952,28 +952,28 @@ mod tests {
 
     #[test]
     fn test_format_breakpoint_label_pc() {
-        use crate::debugging::breakpoints::{Breakpoint, BreakpointKind};
+        use crate::platform::debugging::breakpoints::{Breakpoint, BreakpointKind};
         let bp = Breakpoint::new(BreakpointKind::Pc(0xC000));
         assert_eq!(format_breakpoint_label(&bp), "PC  $C000");
     }
 
     #[test]
     fn test_format_breakpoint_label_cycle() {
-        use crate::debugging::breakpoints::{Breakpoint, BreakpointKind};
+        use crate::platform::debugging::breakpoints::{Breakpoint, BreakpointKind};
         let bp = Breakpoint::new(BreakpointKind::Cycle(12345));
         assert_eq!(format_breakpoint_label(&bp), "CYC 12345");
     }
 
     #[test]
     fn test_format_breakpoint_label_frame() {
-        use crate::debugging::breakpoints::{Breakpoint, BreakpointKind};
+        use crate::platform::debugging::breakpoints::{Breakpoint, BreakpointKind};
         let bp = Breakpoint::new(BreakpointKind::Frame(42));
         assert_eq!(format_breakpoint_label(&bp), "FRM 42");
     }
 
     #[test]
     fn test_format_breakpoint_label_write_address() {
-        use crate::debugging::breakpoints::{Breakpoint, BreakpointKind};
+        use crate::platform::debugging::breakpoints::{Breakpoint, BreakpointKind};
         let bp = Breakpoint::new(BreakpointKind::WriteAddress(0x2006));
         assert_eq!(format_breakpoint_label(&bp), "WR  $2006");
     }

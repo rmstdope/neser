@@ -4,9 +4,9 @@
 //! keyboard handler, event loop, and rendering code share a single source of
 //! truth without borrowing individual fields piecemeal.
 
-use crate::autorun::AutorunMode;
-use crate::autorun::state::AutorunState;
 use crate::nes::console::{Nes, TimingMode};
+use crate::platform::autorun::AutorunMode;
+use crate::platform::autorun::state::AutorunState;
 use winit::keyboard::ModifiersState;
 
 /// State for the in-game cartridge-switch dialog.
@@ -462,8 +462,8 @@ fn format_mm_ss(seconds: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app_context::AppContext;
     use crate::nes::console::{Config, NesConfig};
+    use crate::platform::app_context::AppContext;
 
     fn make_nes() -> Nes {
         Nes::new(AppContext::new_with_config(Config::default()))
@@ -619,7 +619,7 @@ mod tests {
             true,
             false,
             None,
-            crate::autorun::AutorunFormat::Json,
+            crate::platform::autorun::AutorunFormat::Json,
         )
         .expect("create recording autorun state");
         state

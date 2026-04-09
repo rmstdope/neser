@@ -5,8 +5,8 @@
 //! System-specific configuration (e.g., NES hardware mode) lives in the
 //! respective system module.
 
-use crate::autorun::{AutorunFormat, AutorunMode};
-use crate::debugging::Tracing;
+use crate::platform::autorun::{AutorunFormat, AutorunMode};
+use crate::platform::debugging::Tracing;
 
 /// Generic frontend configuration (not system-specific).
 ///

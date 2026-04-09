@@ -130,7 +130,7 @@ pub fn autorun_path_for_rom(rom_path: &Path) -> PathBuf {
 /// Compute a CRC-32 checksum of arbitrary bytes (used for screen CRC comparisons).
 #[allow(dead_code)]
 pub fn crc32(data: &[u8]) -> u32 {
-    crate::crc32::crc32(&[data])
+    crate::platform::crc32::crc32(&[data])
 }
 
 /// Back up an existing autorun file by copying it to `<path>.bak`.

@@ -2,11 +2,11 @@
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use crate::app_context::AppContext;
-    use crate::autorun::load_autorun_file;
     use crate::nes::autorun::headless_playback::run_headless_playback;
     use crate::nes::cartridge::{Cartridge, TimingMode as CartridgeTimingMode};
     use crate::nes::console::{Config, HardwareModel, Nes, NesConfig, RamInitMode};
+    use crate::platform::app_context::AppContext;
+    use crate::platform::autorun::load_autorun_file;
 
     fn deterministic_config() -> Config {
         Config {

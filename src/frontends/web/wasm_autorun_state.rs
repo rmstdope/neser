@@ -1,5 +1,5 @@
-use crate::autorun::AutorunMode;
-use crate::autorun::{
+use crate::platform::autorun::AutorunMode;
+use crate::platform::autorun::{
     AUTORUN_VERSION, AutorunCheckpoint, AutorunFile, AutorunFrame, CHECKPOINT_INTERVAL_FRAMES,
 };
 

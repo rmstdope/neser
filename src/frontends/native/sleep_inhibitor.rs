@@ -72,7 +72,7 @@ impl SleepInhibitor {
             return;
         }
         if let Err(e) = self.backend.start() {
-            crate::debugging::log_info(format!(
+            crate::platform::debugging::log_info(format!(
                 "Failed to inhibit display sleep (will not retry): {e}"
             ));
             self.permanently_failed = true;
@@ -90,7 +90,9 @@ impl SleepInhibitor {
             return;
         }
         if let Err(e) = self.backend.stop() {
-            crate::debugging::log_info(format!("Failed to release display sleep inhibition: {e}"));
+            crate::platform::debugging::log_info(format!(
+                "Failed to release display sleep inhibition: {e}"
+            ));
             return;
         }
         self.active = false;
