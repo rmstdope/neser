@@ -4,7 +4,7 @@
 //! buttons, and Power Pad buttons, and dispatches system hotkeys such as
 //! Ctrl+Q (quit), Ctrl+R (reset), Space (pause), and so on.
 
-use crate::audio::NesAudio;
+use crate::audio::EmulatorAudio;
 use crate::input::{Button, PowerPadButton, SnesButton};
 use crate::native_frontend::app_state::NativeAppState;
 use crate::nes::console::Nes;
@@ -43,7 +43,7 @@ pub fn handle_key_pressed(
     nes: &mut Nes,
     key_code: KeyCode,
     app_state: &mut NativeAppState,
-    audio: Option<&dyn NesAudio>,
+    audio: Option<&dyn EmulatorAudio>,
 ) -> KeyOutcome {
     if app_state.cart_switch.open {
         return handle_cartridge_switch_key(key_code, app_state);
@@ -129,7 +129,7 @@ fn handle_unmodified_key(
     nes: &mut Nes,
     key_code: KeyCode,
     app_state: &mut NativeAppState,
-    audio: Option<&dyn NesAudio>,
+    audio: Option<&dyn EmulatorAudio>,
 ) -> KeyOutcome {
     match key_code {
         KeyCode::Escape => {
@@ -172,7 +172,7 @@ fn handle_unmodified_key(
     KeyOutcome::Continue
 }
 
-fn adjust_volume(audio: Option<&dyn NesAudio>, delta: f32) {
+fn adjust_volume(audio: Option<&dyn EmulatorAudio>, delta: f32) {
     if let Some(audio) = audio {
         audio.set_volume(audio.get_volume() + delta);
     }
@@ -524,7 +524,7 @@ mod tests {
         }
     }
 
-    impl NesAudio for TrackingMockAudio {
+    impl EmulatorAudio for TrackingMockAudio {
         fn queue_sample(&mut self, _sample: f32) {}
         fn resume(&self) {
             self.resume_called.store(true, Ordering::Relaxed);
@@ -556,7 +556,7 @@ mod tests {
         }
     }
 
-    impl NesAudio for MockAudio {
+    impl EmulatorAudio for MockAudio {
         fn queue_sample(&mut self, _sample: f32) {}
         fn resume(&self) {}
         fn pause(&self) {}
@@ -640,7 +640,7 @@ mod tests {
             &mut nes,
             KeyCode::Space,
             &mut state,
-            Some(&audio as &dyn NesAudio),
+            Some(&audio as &dyn EmulatorAudio),
         );
         assert!(
             pause_called.load(Ordering::Relaxed),
@@ -658,7 +658,7 @@ mod tests {
             &mut nes,
             KeyCode::Space,
             &mut state,
-            Some(&audio as &dyn NesAudio),
+            Some(&audio as &dyn EmulatorAudio),
         );
         assert!(
             resume_called.load(Ordering::Relaxed),
@@ -1160,7 +1160,7 @@ mod tests {
             &mut nes,
             KeyCode::F7,
             &mut state,
-            Some(&audio as &dyn NesAudio),
+            Some(&audio as &dyn EmulatorAudio),
         );
         assert!(
             drain_buffer_called.load(Ordering::Relaxed),

@@ -259,7 +259,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn run_native_frontend(
     app_context: Rc<RefCell<AppContext>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use audio::NesAudio;
+    use audio::EmulatorAudio;
     use native_frontend::{NativeAudio, NativeEventLoop};
 
     // Read autorun config up front

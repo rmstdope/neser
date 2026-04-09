@@ -4,7 +4,7 @@
 //! with rendering via `NativeGlWrapper` and audio via `NativeAudio`.
 
 use crate::app_context::SharedAppContext;
-use crate::audio::NesAudio;
+use crate::audio::EmulatorAudio;
 use crate::autorun::AutorunMode;
 use crate::autorun::state::AutorunState;
 use crate::debugging::Tracing;
@@ -666,8 +666,8 @@ impl ApplicationHandler for NativeEventLoop {
 
                 if event.state == ElementState::Pressed {
                     let fullscreen_before = self.state.fullscreen;
-                    let audio_ref: Option<&dyn NesAudio> =
-                        self.audio.as_ref().map(|a| a as &dyn NesAudio);
+                    let audio_ref: Option<&dyn EmulatorAudio> =
+                        self.audio.as_ref().map(|a| a as &dyn EmulatorAudio);
                     let Console::Nes(nes) = &mut self.console;
                     let outcome =
                         keyboard::handle_key_pressed(nes, key_code, &mut self.state, audio_ref);
