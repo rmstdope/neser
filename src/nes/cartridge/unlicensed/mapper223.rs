@@ -79,7 +79,7 @@ impl Mapper for Mapper223 {
         self.0.write_chr(ppu_addr, value)
     }
 
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+    fn initialize_ram(&mut self, mode: crate::nes::console::RamInitMode) {
         self.0.initialize_ram(mode)
     }
 
