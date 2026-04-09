@@ -1708,10 +1708,10 @@ mod tests {
             let frame = nes.ppu().borrow().frame_count();
 
             if !a_pressed && frame >= press_frame {
-                nes.set_button(1, crate::input::Button::A, true);
+                nes.set_button(1, crate::nes::input::Button::A, true);
                 a_pressed = true;
             } else if a_pressed && !a_released && frame > press_frame {
-                nes.set_button(1, crate::input::Button::A, false);
+                nes.set_button(1, crate::nes::input::Button::A, false);
                 a_released = true;
             }
 

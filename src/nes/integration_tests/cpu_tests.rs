@@ -2,9 +2,9 @@
 mod tests {
     use std::fs;
 
-    use crate::input::Button;
     use crate::nes::cartridge::Cartridge;
     use crate::nes::console::{Config, Nes, NesConfig, RamInitMode};
+    use crate::nes::input::Button;
     use crate::nes::integration_tests::rom_test_runner::tests::run_nes_for_frames;
     use crate::{setup_rom_console_crc_test, setup_rom_console_test, setup_rom_test};
 

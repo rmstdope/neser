@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
-    use crate::input::{Button, SnesButton};
     use crate::nes::console::Config;
+    use crate::nes::input::{Button, SnesButton};
     use crate::nes::integration_tests::romtest_harness::tests::{
         ControllerConfig, InputAction, RomTestResult, ScriptEntry, run_rom_with_script,
     };
@@ -1188,8 +1188,8 @@ mod tests {
     /// Returns a Famicom-mode config with two explicitly configured joypads so
     /// that allpads can detect them as Famicom hardwired controllers (FC 1P / FC 2P).
     fn famicom_two_joypads_config() -> crate::nes::console::Config {
-        use crate::input::ControllerType;
         use crate::nes::console::{Config, HardwareMode, NesConfig, RamInitMode};
+        use crate::nes::input::ControllerType;
         Config {
             nes: NesConfig {
                 hardware_mode: HardwareMode::Famicom,

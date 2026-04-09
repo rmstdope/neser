@@ -1,9 +1,9 @@
-use crate::input::ArkanoidController;
-use crate::input::Controller;
-use crate::input::Zapper;
-use crate::input::{Button, PowerPad};
 use crate::nes::bus::bus::{BusDevice, ControllerModes};
 use crate::nes::cartridge::VsHardwareType;
+use crate::nes::input::ArkanoidController;
+use crate::nes::input::Controller;
+use crate::nes::input::Zapper;
+use crate::nes::input::{Button, PowerPad};
 use std::cell::{Cell, RefCell};
 use std::ops::RangeInclusive;
 use std::rc::Rc;
@@ -408,7 +408,7 @@ impl BusDevice for ControllerDevice {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::input::{Button, ControllerInput, PowerPad};
+    use crate::nes::input::{Button, ControllerInput, PowerPad};
 
     fn read_24_bits(device: &mut ControllerDevice, addr: u16) -> u32 {
         let mut value = 0u32;
@@ -442,15 +442,15 @@ mod tests {
             0
         }
 
-        fn capture_state(&self) -> crate::input::ControllerState {
-            crate::input::ControllerState::Joypad(crate::input::JoypadState {
+        fn capture_state(&self) -> crate::nes::input::ControllerState {
+            crate::nes::input::ControllerState::Joypad(crate::nes::input::JoypadState {
                 strobe: false,
                 button_index: 0,
                 button_states: 0,
             })
         }
 
-        fn restore_state(&mut self, _state: &crate::input::ControllerState) {}
+        fn restore_state(&mut self, _state: &crate::nes::input::ControllerState) {}
 
         fn set_button(&mut self, _button: Button, _pressed: bool) -> bool {
             true
@@ -816,7 +816,8 @@ mod tests {
         );
     }
 
-    fn create_zapper_expansion_device() -> (ControllerDevice, Rc<RefCell<crate::input::Zapper>>) {
+    fn create_zapper_expansion_device() -> (ControllerDevice, Rc<RefCell<crate::nes::input::Zapper>>)
+    {
         let reads = Rc::new(RefCell::new(0));
         let dummy_reads = Rc::new(RefCell::new(0));
         let controller1: Rc<RefCell<Box<dyn Controller>>> = Rc::new(RefCell::new(Box::new(
@@ -832,7 +833,10 @@ mod tests {
         let app_context = Rc::new(RefCell::new(
             crate::app_context::AppContext::new_with_config(crate::nes::console::Config::default()),
         ));
-        let zapper = Rc::new(RefCell::new(crate::input::Zapper::new(ppu, app_context)));
+        let zapper = Rc::new(RefCell::new(crate::nes::input::Zapper::new(
+            ppu,
+            app_context,
+        )));
 
         let mut device = ControllerDevice::new(controller1, controller2);
         device.set_zapper_famicom_expansion(Some(zapper.clone()));
@@ -864,10 +868,10 @@ mod tests {
         let (mut device, power_pad) = create_power_pad_expansion_device();
         power_pad
             .borrow_mut()
-            .set_button(crate::input::PowerPadButton::One, true);
+            .set_button(crate::nes::input::PowerPadButton::One, true);
         power_pad
             .borrow_mut()
-            .set_button(crate::input::PowerPadButton::Four, true);
+            .set_button(crate::nes::input::PowerPadButton::Four, true);
 
         assert!(device.write(0x4016, 1, false));
         assert!(device.write(0x4016, 0, false));
@@ -1178,8 +1182,8 @@ mod tests {
     type CtrlRef = Rc<RefCell<Box<dyn Controller>>>;
 
     fn create_vs_joypad_device(hw_type: VsHardwareType) -> (ControllerDevice, CtrlRef, CtrlRef) {
-        let joypad1 = crate::input::NesJoypad::new();
-        let joypad2 = crate::input::NesJoypad::new();
+        let joypad1 = crate::nes::input::NesJoypad::new();
+        let joypad2 = crate::nes::input::NesJoypad::new();
         let ctrl1: Rc<RefCell<Box<dyn Controller>>> = Rc::new(RefCell::new(Box::new(joypad1)));
         let ctrl2: Rc<RefCell<Box<dyn Controller>>> = Rc::new(RefCell::new(Box::new(joypad2)));
         let mut device = ControllerDevice::new(Rc::clone(&ctrl1), Rc::clone(&ctrl2));

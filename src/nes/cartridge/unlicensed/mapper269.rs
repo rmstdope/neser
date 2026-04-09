@@ -162,6 +162,14 @@ impl Mapper for Mapper269 {
         self.mmc3.read_prg_at_bank(bank, offset)
     }
 
+    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        match addr {
+            0x6000..=0x7FFF => self.mmc3.read_prg_open_bus(addr, open_bus),
+            0x8000..=0xFFFF => self.read_prg(addr),
+            _ => open_bus,
+        }
+    }
+
     fn write_prg(&mut self, addr: u16, value: u8) {
         match addr {
             0x5000..=0x5FFF => {
@@ -218,7 +226,7 @@ impl Mapper for Mapper269 {
             let (mmc3_part, ex_part) = data.split_at(data.len() - 5);
             self.mmc3.restore_registers(mmc3_part);
             self.ex_regs.copy_from_slice(&ex_part[..4]);
-            self.ex_reg_idx = ex_part[4];
+            self.ex_reg_idx = ex_part[4] & 0x03;
         } else {
             self.mmc3.restore_registers(data);
             self.ex_regs = [0, 0, 0x0F, 0];
@@ -556,6 +564,26 @@ mod tests {
             mapper.read_chr(0x0000),
             Mapper269::unscramble_chr(0),
             "After reset, CHR banking must behave like pure MMC3"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // read_prg_open_bus: PRG-RAM at $6000–$7FFF
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn read_prg_open_bus_returns_prg_ram_at_6000() {
+        let mut mapper = make_mapper();
+        let open_bus: u8 = 0xAB;
+
+        // Write a known value to PRG-RAM via write_prg.
+        mapper.write_prg(0x6000, 0x55);
+
+        // read_prg_open_bus must return the written value, not open_bus.
+        assert_eq!(
+            mapper.read_prg_open_bus(0x6000, open_bus),
+            0x55,
+            "read_prg_open_bus($6000) must return PRG-RAM content, not open-bus"
         );
     }
 

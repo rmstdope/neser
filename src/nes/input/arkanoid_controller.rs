@@ -140,7 +140,7 @@ impl ArkanoidController {
     }
 }
 
-impl crate::input::Controller for ArkanoidController {
+impl crate::nes::input::Controller for ArkanoidController {
     fn write_strobe(&mut self, value: u8) {
         self.write_strobe(value)
     }
@@ -149,17 +149,17 @@ impl crate::input::Controller for ArkanoidController {
         self.read(is_dummy_read)
     }
 
-    fn capture_state(&self) -> crate::input::ControllerState {
-        crate::input::ControllerState::Paddle(self.capture_state())
+    fn capture_state(&self) -> crate::nes::input::ControllerState {
+        crate::nes::input::ControllerState::Paddle(self.capture_state())
     }
 
-    fn restore_state(&mut self, state: &crate::input::ControllerState) {
-        if let crate::input::ControllerState::Paddle(paddle_state) = state {
+    fn restore_state(&mut self, state: &crate::nes::input::ControllerState) {
+        if let crate::nes::input::ControllerState::Paddle(paddle_state) = state {
             self.restore_state(paddle_state);
         }
     }
 
-    fn set_button(&mut self, _button: crate::input::Button, _pressed: bool) -> bool {
+    fn set_button(&mut self, _button: crate::nes::input::Button, _pressed: bool) -> bool {
         false // Not supported for Paddle
     }
 
@@ -178,7 +178,7 @@ impl crate::input::Controller for ArkanoidController {
     }
 
     fn input_type(&self) -> ControllerInput {
-        crate::input::controller_input_type(crate::input::ControllerType::Arkanoid)
+        crate::nes::input::controller_input_type(crate::nes::input::ControllerType::Arkanoid)
     }
 }
 

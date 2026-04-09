@@ -11,8 +11,6 @@ mod autorun;
 pub mod config;
 mod debugging;
 mod emulator;
-mod frontend_toasts;
-mod input;
 #[cfg(feature = "native")]
 mod native_frontend;
 #[cfg(feature = "native")]
@@ -23,11 +21,11 @@ mod tui_frontend;
 use app_context::AppContext;
 use autorun::AutorunFormat;
 use debugging::log_info;
-use frontend_toasts::cartridge_load_toast_message;
 use nes::console::{
     CartridgeCatalogOptions, Config, Nes, ParseResult, default_catalog_csv_path,
     refresh_cartridge_catalog,
 };
+use nes::frontend_toasts::cartridge_load_toast_message;
 use std::cell::RefCell;
 use std::fs;
 use std::path::PathBuf;
@@ -115,10 +113,8 @@ fn trim_autorun_checkpoints_for_rom(
 }
 
 fn recalculate_autorun_for_rom(rom_path: &str, format: AutorunFormat) -> Result<String, String> {
-    use autorun::{
-        autorun_path_for_rom, headless_playback::recalculate_checkpoint_crcs_with_progress,
-        load_autorun_file, save_autorun_file,
-    };
+    use autorun::{autorun_path_for_rom, load_autorun_file, save_autorun_file};
+    use nes::autorun::headless_playback::recalculate_checkpoint_crcs_with_progress;
     use nes::cartridge::Cartridge;
     use nes::console::NesConfig;
     use nes::console::RamInitMode;
@@ -259,7 +255,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn run_native_frontend(
     app_context: Rc<RefCell<AppContext>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use audio::NesAudio;
+    use audio::EmulatorAudio;
     use native_frontend::{NativeAudio, NativeEventLoop};
 
     // Read autorun config up front

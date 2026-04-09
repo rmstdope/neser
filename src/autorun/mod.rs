@@ -8,7 +8,6 @@ pub use utils::{
     BINARY_MAGIC, autorun_path_for_rom, backup_autorun_file, convert_autorun_file, crc32,
     load_autorun_file, save_autorun_file, trim_recording,
 };
-pub mod headless_playback;
 #[cfg(feature = "native")]
 pub mod state;
 

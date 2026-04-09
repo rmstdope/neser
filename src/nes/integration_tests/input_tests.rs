@@ -4,7 +4,7 @@ mod tests {
     // Input
     /////////////////////////////////////
 
-    use crate::input::{Button, SnesButton};
+    use crate::nes::input::{Button, SnesButton};
     use crate::nes::integration_tests::romtest_harness::tests::{
         ControllerConfig, InputAction, RomTestResult, ScriptEntry, run_rom_with_script,
     };

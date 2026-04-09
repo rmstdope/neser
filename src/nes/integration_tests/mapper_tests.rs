@@ -2,9 +2,9 @@
 mod tests {
     use std::fs;
 
-    use crate::input::Button;
     use crate::nes::cartridge::Cartridge;
     use crate::nes::console::{Config, Nes, NesConfig, RamInitMode};
+    use crate::nes::input::Button;
     use crate::nes::integration_tests::rom_test_runner::tests::run_nes_for_frames;
     use crate::{
         setup_rom_console_test, setup_rom_crc_test, setup_rom_crc_test_with_input, setup_rom_test,
@@ -389,9 +389,9 @@ mod tests {
         run_nes_for_frames(&mut nes, 120);
 
         // Phase 2: Press Start to begin automated tests
-        nes.set_button(1, crate::input::Button::Start, true);
+        nes.set_button(1, crate::nes::input::Button::Start, true);
         run_nes_for_frames(&mut nes, 2);
-        nes.set_button(1, crate::input::Button::Start, false);
+        nes.set_button(1, crate::nes::input::Button::Start, false);
 
         // Phase 3: Run automated tests (~17s for 512K ROM = ~1020 frames)
         // Wait 1500 frames (~25s) for generous margin

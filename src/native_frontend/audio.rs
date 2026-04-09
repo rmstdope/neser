@@ -1,5 +1,5 @@
 use crate::audio::types::{AudioConsumer, AudioStats, process_sample, queue_sample_to_producer};
-use crate::audio::{AudioProducer, AudioResampler, NesAudio};
+use crate::audio::{AudioProducer, AudioResampler, EmulatorAudio};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BufferSize, FromSample, SampleFormat, SampleRate, SizedSample, StreamConfig};
 use ringbuf::HeapRb;
@@ -316,7 +316,7 @@ impl NativeAudio {
     }
 }
 
-impl NesAudio for NativeAudio {
+impl EmulatorAudio for NativeAudio {
     fn queue_sample(&mut self, sample: f32) {
         // Drop silently when paused: the cpal callback stops draining while paused,
         // so pushing would fill the ring buffer and spin-block the main thread.

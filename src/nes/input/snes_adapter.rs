@@ -101,33 +101,33 @@ impl SnesAdapter {
         self.strobe = new_strobe;
     }
 
-    fn button_bit_for_nes_button(button: crate::input::Button) -> Option<u8> {
+    fn button_bit_for_nes_button(button: crate::nes::input::Button) -> Option<u8> {
         match button {
-            crate::input::Button::B => Some(0),
-            crate::input::Button::A => Some(1),
-            crate::input::Button::Select => Some(2),
-            crate::input::Button::Start => Some(3),
-            crate::input::Button::Up => Some(4),
-            crate::input::Button::Down => Some(5),
-            crate::input::Button::Left => Some(6),
-            crate::input::Button::Right => Some(7),
+            crate::nes::input::Button::B => Some(0),
+            crate::nes::input::Button::A => Some(1),
+            crate::nes::input::Button::Select => Some(2),
+            crate::nes::input::Button::Start => Some(3),
+            crate::nes::input::Button::Up => Some(4),
+            crate::nes::input::Button::Down => Some(5),
+            crate::nes::input::Button::Left => Some(6),
+            crate::nes::input::Button::Right => Some(7),
         }
     }
 
-    fn button_bit_for_snes_button(button: crate::input::SnesButton) -> u8 {
+    fn button_bit_for_snes_button(button: crate::nes::input::SnesButton) -> u8 {
         match button {
-            crate::input::SnesButton::B => 0,
-            crate::input::SnesButton::Y => 1,
-            crate::input::SnesButton::Select => 2,
-            crate::input::SnesButton::Start => 3,
-            crate::input::SnesButton::Up => 4,
-            crate::input::SnesButton::Down => 5,
-            crate::input::SnesButton::Left => 6,
-            crate::input::SnesButton::Right => 7,
-            crate::input::SnesButton::A => 8,
-            crate::input::SnesButton::X => 9,
-            crate::input::SnesButton::L => 10,
-            crate::input::SnesButton::R => 11,
+            crate::nes::input::SnesButton::B => 0,
+            crate::nes::input::SnesButton::Y => 1,
+            crate::nes::input::SnesButton::Select => 2,
+            crate::nes::input::SnesButton::Start => 3,
+            crate::nes::input::SnesButton::Up => 4,
+            crate::nes::input::SnesButton::Down => 5,
+            crate::nes::input::SnesButton::Left => 6,
+            crate::nes::input::SnesButton::Right => 7,
+            crate::nes::input::SnesButton::A => 8,
+            crate::nes::input::SnesButton::X => 9,
+            crate::nes::input::SnesButton::L => 10,
+            crate::nes::input::SnesButton::R => 11,
         }
     }
 
@@ -211,7 +211,7 @@ impl SnesAdapter {
         if bit != 0 { 0x01 } else { 0x00 }
     }
 
-    pub fn set_button(&mut self, button: crate::input::Button, pressed: bool) {
+    pub fn set_button(&mut self, button: crate::nes::input::Button, pressed: bool) {
         if let Some(bit) = Self::button_bit_for_nes_button(button) {
             if pressed {
                 self.button_states |= 1u16 << bit;
@@ -221,7 +221,7 @@ impl SnesAdapter {
         }
     }
 
-    pub fn set_snes_button(&mut self, button: crate::input::SnesButton, pressed: bool) {
+    pub fn set_snes_button(&mut self, button: crate::nes::input::SnesButton, pressed: bool) {
         let bit = Self::button_bit_for_snes_button(button);
         if pressed {
             self.button_states |= 1u16 << bit;
@@ -263,7 +263,7 @@ impl SnesAdapter {
     }
 }
 
-impl crate::input::Controller for SnesAdapter {
+impl crate::nes::input::Controller for SnesAdapter {
     fn write_strobe(&mut self, value: u8) {
         self.write_strobe(value)
     }
@@ -272,17 +272,17 @@ impl crate::input::Controller for SnesAdapter {
         self.read(is_dummy_read)
     }
 
-    fn capture_state(&self) -> crate::input::ControllerState {
-        crate::input::ControllerState::SnesAdapter(self.capture_state())
+    fn capture_state(&self) -> crate::nes::input::ControllerState {
+        crate::nes::input::ControllerState::SnesAdapter(self.capture_state())
     }
 
-    fn restore_state(&mut self, state: &crate::input::ControllerState) {
-        if let crate::input::ControllerState::SnesAdapter(snes_state) = state {
+    fn restore_state(&mut self, state: &crate::nes::input::ControllerState) {
+        if let crate::nes::input::ControllerState::SnesAdapter(snes_state) = state {
             self.restore_state(snes_state);
         }
     }
 
-    fn set_button(&mut self, button: crate::input::Button, pressed: bool) -> bool {
+    fn set_button(&mut self, button: crate::nes::input::Button, pressed: bool) -> bool {
         if self.is_mouse_mode() {
             return false;
         }
@@ -290,7 +290,7 @@ impl crate::input::Controller for SnesAdapter {
         true
     }
 
-    fn set_snes_button(&mut self, button: crate::input::SnesButton, pressed: bool) -> bool {
+    fn set_snes_button(&mut self, button: crate::nes::input::SnesButton, pressed: bool) -> bool {
         if self.is_mouse_mode() {
             return false;
         }
@@ -377,8 +377,8 @@ mod tests {
     #[test]
     fn snes_adapter_maps_b_to_first_bit_and_right_to_eighth_bit() {
         let mut adapter = SnesAdapter::new();
-        adapter.set_button(crate::input::Button::B, true);
-        adapter.set_button(crate::input::Button::Right, true);
+        adapter.set_button(crate::nes::input::Button::B, true);
+        adapter.set_button(crate::nes::input::Button::Right, true);
 
         adapter.write_strobe(1);
         adapter.write_strobe(0);
@@ -396,10 +396,10 @@ mod tests {
     #[test]
     fn snes_adapter_supports_y_x_l_r_bits() {
         let mut adapter = SnesAdapter::new_controller();
-        adapter.set_snes_button(crate::input::SnesButton::Y, true);
-        adapter.set_snes_button(crate::input::SnesButton::X, true);
-        adapter.set_snes_button(crate::input::SnesButton::L, true);
-        adapter.set_snes_button(crate::input::SnesButton::R, true);
+        adapter.set_snes_button(crate::nes::input::SnesButton::Y, true);
+        adapter.set_snes_button(crate::nes::input::SnesButton::X, true);
+        adapter.set_snes_button(crate::nes::input::SnesButton::L, true);
+        adapter.set_snes_button(crate::nes::input::SnesButton::R, true);
 
         assert_eq!(adapter.button_states & (1 << 1), 1 << 1);
         assert_eq!(adapter.button_states & (1 << 9), 1 << 9);
@@ -447,7 +447,7 @@ mod tests {
     #[test]
     fn snes_adapter_returns_serial_data_on_d0() {
         let mut adapter = SnesAdapter::new();
-        adapter.set_snes_button(crate::input::SnesButton::B, true);
+        adapter.set_snes_button(crate::nes::input::SnesButton::B, true);
 
         adapter.write_strobe(1);
         adapter.write_strobe(0);

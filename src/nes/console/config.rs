@@ -10,8 +10,8 @@ use crate::autorun::AutorunFormat;
 use crate::autorun::AutorunMode;
 use crate::config::FrontendConfig;
 use crate::debugging::breakpoints::BreakpointKind;
-use crate::input::ControllerType;
 use crate::nes::console::TimingMode;
+use crate::nes::input::ControllerType;
 use bitflags::bitflags;
 use std::fmt::Write as _;
 use std::fs;
@@ -2089,8 +2089,8 @@ impl Config {
     /// current cartridge without permanently mutating them.
     pub fn hardware_summary_with(
         &self,
-        port1: crate::input::ControllerType,
-        port2: crate::input::ControllerType,
+        port1: crate::nes::input::ControllerType,
+        port2: crate::nes::input::ControllerType,
     ) -> String {
         let mut parts = vec![format!(
             "Hardware: {} ({}) | Port 1: {} | Port 2: {}",
@@ -2101,7 +2101,7 @@ impl Config {
         )];
 
         if self.nes.four_score_enabled {
-            let joypad_label = crate::input::ControllerType::Joypad.display_label();
+            let joypad_label = crate::nes::input::ControllerType::Joypad.display_label();
             parts.push(format!(
                 "Port 3: {} | Port 4: {} | Four Score: enabled",
                 joypad_label, joypad_label
@@ -5657,7 +5657,7 @@ filter=invalid-shader
         let config = Config {
             nes: NesConfig {
                 hardware_model: HardwareModel::NesPal,
-                controller_port2: crate::input::ControllerType::Zapper,
+                controller_port2: crate::nes::input::ControllerType::Zapper,
                 ..Default::default()
             },
             ..Config::default()
@@ -5677,7 +5677,7 @@ filter=invalid-shader
     fn test_hardware_summary_power_pad_on_port2() {
         let config = Config {
             nes: NesConfig {
-                controller_port2: crate::input::ControllerType::PowerPad,
+                controller_port2: crate::nes::input::ControllerType::PowerPad,
                 ..Default::default()
             },
             ..Config::default()
@@ -5751,8 +5751,8 @@ filter=invalid-shader
     fn test_hardware_summary_with_overrides_controller_types() {
         let config = Config::default(); // port1=Joypad, port2=Joypad
         let summary = config.hardware_summary_with(
-            crate::input::ControllerType::Joypad,
-            crate::input::ControllerType::PowerPad,
+            crate::nes::input::ControllerType::Joypad,
+            crate::nes::input::ControllerType::PowerPad,
         );
         assert!(
             summary.contains("Power Pad"),
@@ -5761,7 +5761,7 @@ filter=invalid-shader
         // The config itself should be unchanged.
         assert_eq!(
             config.nes.controller_port2,
-            crate::input::ControllerType::Joypad,
+            crate::nes::input::ControllerType::Joypad,
             "hardware_summary_with must not mutate config.nes.controller_port2"
         );
     }
