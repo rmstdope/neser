@@ -284,7 +284,7 @@ fn run_native_frontend(
 
     // Headless autorun is only supported in playback mode because
     // record/extend have no guaranteed termination condition.
-    let headless = autorun_headless && autorun_mode == nes::console::AutorunMode::Playback;
+    let headless = autorun_headless && autorun_mode == autorun::AutorunMode::Playback;
 
     // Create audio output (request 44.1 kHz) unless disabled or headless.
     let mut audio_sample_rate = None;
@@ -357,7 +357,7 @@ fn run_native_frontend(
         NativeEventLoop::new(app_context.clone(), console, audio, tracing, headless);
 
     // Initialize autorun AFTER reset so checkpoint state restore is not overwritten.
-    if autorun_mode != nes::console::AutorunMode::None {
+    if autorun_mode != autorun::AutorunMode::None {
         event_loop.init_autorun(
             autorun_mode,
             &rom_path,

@@ -46,16 +46,12 @@ impl Console {
     /// Load a ROM into the emulator.
     ///
     /// For NES, this parses the iNES/NES2.0 header and sets up the mapper.
-    /// The `app_context` is used for ROM database lookups (auto-detection of
-    /// controller types, timing modes, etc.).
-    pub fn load_rom(
-        &mut self,
-        bytes: &[u8],
-        name: &str,
-        app_context: SharedAppContext,
-    ) -> Result<(), String> {
+    /// Uses the console's own `app_context` for ROM database lookups
+    /// (auto-detection of controller types, timing modes, etc.).
+    pub fn load_rom(&mut self, bytes: &[u8], name: &str) -> Result<(), String> {
         match self {
             Console::Nes(nes) => {
+                let app_context = nes.app_context().clone();
                 let cart = Cartridge::load_from_file(bytes, name, app_context)
                     .map_err(|e| e.to_string())?;
                 nes.insert_cartridge(cart);
@@ -91,14 +87,14 @@ impl Console {
     /// Width of the emulated display in pixels.
     pub fn screen_width(&self) -> u32 {
         match self {
-            Console::Nes(_) => 256,
+            Console::Nes(_) => Nes::SCREEN_WIDTH,
         }
     }
 
     /// Height of the emulated display in pixels.
     pub fn screen_height(&self) -> u32 {
         match self {
-            Console::Nes(_) => 240,
+            Console::Nes(_) => Nes::SCREEN_HEIGHT,
         }
     }
 
@@ -157,6 +153,8 @@ impl Console {
             Console::Nes(nes) => {
                 if let Some(button) = nes_button_from_id(button_id) {
                     nes.set_button(port, button, pressed);
+                } else {
+                    debug_assert!(false, "invalid NES button_id: {button_id}");
                 }
             }
         }
@@ -226,7 +224,7 @@ impl Console {
     /// Set the audio output sample rate (Hz) for the emulator's APU.
     pub fn set_audio_sample_rate(&mut self, rate: f32) {
         match self {
-            Console::Nes(nes) => nes.apu().borrow_mut().set_sample_rate(rate),
+            Console::Nes(nes) => nes.set_audio_sample_rate(rate),
         }
     }
 }
@@ -286,9 +284,7 @@ mod tests {
         let app_context: SharedAppContext = AppContext::new_with_config(config).into_shared();
         let mut console = Console::new_nes(app_context.clone());
         let rom = create_minimal_rom();
-        console
-            .load_rom(&rom, "test.nes", app_context.clone())
-            .expect("load ROM");
+        console.load_rom(&rom, "test.nes").expect("load ROM");
         console.reset(false);
         (console, app_context)
     }
@@ -339,8 +335,6 @@ mod tests {
         // NES Button::A = 0
         console.set_button(1, 0, true);
         console.set_button(1, 0, false);
-        // Invalid button ID should not panic
-        console.set_button(1, 255, true);
     }
 
     #[test]
@@ -385,10 +379,8 @@ mod tests {
 
     #[test]
     fn test_load_rom_with_invalid_data_returns_error() {
-        let app_context: SharedAppContext =
-            AppContext::new_with_config(Config::default()).into_shared();
-        let mut console = Console::new_nes(app_context.clone());
-        let result = console.load_rom(b"not a valid ROM", "bad.nes", app_context);
+        let mut console = Console::new_nes(AppContext::new_with_config(Config::default()));
+        let result = console.load_rom(b"not a valid ROM", "bad.nes");
         assert!(result.is_err());
     }
 
@@ -408,11 +400,41 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
-    // GameBoy stub — proves the Console enum can hold multiple systems
+    // Trait-based extensibility proof — shows the Console interface
+    // can support multiple hardware targets via a common trait.
+    // If Console adds a method that should be generic, adding it to
+    // this trait will produce a compile error until GameBoyStub
+    // implements it, catching maintenance gaps at build time.
     // ---------------------------------------------------------------
 
-    /// Minimal stub that satisfies the Console interface to validate
-    /// that the enum dispatch pattern works for a second hardware target.
+    /// Common operations that every emulated system must support.
+    trait SystemOps {
+        fn run_tick(&mut self) -> u8;
+        fn is_ready_to_render(&self) -> bool;
+        fn screen_width(&self) -> u32;
+        fn screen_height(&self) -> u32;
+        fn screen_snapshot(&self) -> Vec<u8>;
+    }
+
+    impl SystemOps for Console {
+        fn run_tick(&mut self) -> u8 {
+            Console::run_tick(self)
+        }
+        fn is_ready_to_render(&self) -> bool {
+            Console::is_ready_to_render(self)
+        }
+        fn screen_width(&self) -> u32 {
+            Console::screen_width(self)
+        }
+        fn screen_height(&self) -> u32 {
+            Console::screen_height(self)
+        }
+        fn screen_snapshot(&self) -> Vec<u8> {
+            Console::screen_snapshot(self)
+        }
+    }
+
+    /// Minimal stub proving a second system can implement the same trait.
     struct GameBoyStub {
         frame_ready: bool,
         cycles_in_frame: u32,
@@ -431,7 +453,9 @@ mod tests {
                 screen: vec![0; (Self::WIDTH * Self::HEIGHT * 3) as usize],
             }
         }
+    }
 
+    impl SystemOps for GameBoyStub {
         fn run_tick(&mut self) -> u8 {
             let cycles = 4; // GB instructions are 4-cycle minimum
             self.cycles_in_frame += cycles as u32;
@@ -441,76 +465,46 @@ mod tests {
             }
             cycles
         }
-    }
-
-    /// Extended Console that includes the GameBoy stub variant.
-    enum MultiConsole {
-        Nes(Console),
-        GameBoy(GameBoyStub),
-    }
-
-    impl MultiConsole {
-        fn run_tick(&mut self) -> u8 {
-            match self {
-                MultiConsole::Nes(c) => c.run_tick(),
-                MultiConsole::GameBoy(gb) => gb.run_tick(),
-            }
-        }
-
         fn is_ready_to_render(&self) -> bool {
-            match self {
-                MultiConsole::Nes(c) => c.is_ready_to_render(),
-                MultiConsole::GameBoy(gb) => gb.frame_ready,
-            }
+            self.frame_ready
         }
-
         fn screen_width(&self) -> u32 {
-            match self {
-                MultiConsole::Nes(c) => c.screen_width(),
-                MultiConsole::GameBoy(_) => GameBoyStub::WIDTH,
-            }
+            Self::WIDTH
         }
-
         fn screen_height(&self) -> u32 {
-            match self {
-                MultiConsole::Nes(c) => c.screen_height(),
-                MultiConsole::GameBoy(_) => GameBoyStub::HEIGHT,
-            }
+            Self::HEIGHT
         }
-
         fn screen_snapshot(&self) -> Vec<u8> {
-            match self {
-                MultiConsole::Nes(c) => c.screen_snapshot(),
-                MultiConsole::GameBoy(gb) => gb.screen.clone(),
-            }
+            self.screen.clone()
         }
     }
 
-    #[test]
-    fn test_multi_console_gameboy_stub_runs_to_frame() {
-        let mut mc = MultiConsole::GameBoy(GameBoyStub::new());
-        assert_eq!(mc.screen_width(), 160);
-        assert_eq!(mc.screen_height(), 144);
-
+    fn run_system_to_frame(system: &mut dyn SystemOps) -> u64 {
         let mut total = 0u64;
-        while !mc.is_ready_to_render() && total < 200_000 {
-            total += mc.run_tick() as u64;
+        while !system.is_ready_to_render() && total < 200_000 {
+            total += system.run_tick() as u64;
         }
-        assert!(mc.is_ready_to_render());
-        assert_eq!(mc.screen_snapshot().len(), (160 * 144 * 3) as usize,);
+        total
     }
 
     #[test]
-    fn test_multi_console_nes_variant_still_works() {
-        let (console, _) = make_console_with_rom();
-        let mut mc = MultiConsole::Nes(console);
-        assert_eq!(mc.screen_width(), 256);
-        assert_eq!(mc.screen_height(), 240);
+    fn test_gameboy_stub_via_trait() {
+        let mut gb = GameBoyStub::new();
+        assert_eq!(gb.screen_width(), 160);
+        assert_eq!(gb.screen_height(), 144);
 
-        let mut total = 0u64;
-        while !mc.is_ready_to_render() && total < 100_000 {
-            total += mc.run_tick() as u64;
-        }
-        assert!(mc.is_ready_to_render());
+        run_system_to_frame(&mut gb);
+        assert!(gb.is_ready_to_render());
+        assert_eq!(gb.screen_snapshot().len(), (160 * 144 * 3) as usize);
+    }
+
+    #[test]
+    fn test_console_via_trait() {
+        let (mut console, _) = make_console_with_rom();
+        assert_eq!(console.screen_width(), 256);
+        assert_eq!(console.screen_height(), 240);
+
+        run_system_to_frame(&mut console);
+        assert!(console.is_ready_to_render());
     }
 }

@@ -122,6 +122,11 @@ pub struct Nes {
 }
 
 impl Nes {
+    /// NES screen width in pixels.
+    pub const SCREEN_WIDTH: u32 = 256;
+    /// NES screen height in pixels.
+    pub const SCREEN_HEIGHT: u32 = 240;
+
     pub fn new<C: IntoSharedAppContext>(app_context: C) -> Self {
         let app_context = app_context.into_shared();
         let config = app_context.borrow().config().clone();
@@ -387,6 +392,11 @@ impl Nes {
 
     pub fn apu(&self) -> &SharedApu {
         &self.apu
+    }
+
+    /// Set the audio output sample rate (Hz) for the APU's resampler.
+    pub fn set_audio_sample_rate(&mut self, rate: f32) {
+        self.apu.borrow_mut().set_sample_rate(rate);
     }
 
     pub fn bus(&self) -> &SharedBus {

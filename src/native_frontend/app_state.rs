@@ -4,8 +4,9 @@
 //! keyboard handler, event loop, and rendering code share a single source of
 //! truth without borrowing individual fields piecemeal.
 
+use crate::autorun::AutorunMode;
 use crate::autorun::state::AutorunState;
-use crate::nes::console::{AutorunMode, Nes, TimingMode};
+use crate::nes::console::{Nes, TimingMode};
 use winit::keyboard::ModifiersState;
 
 /// State for the in-game cartridge-switch dialog.

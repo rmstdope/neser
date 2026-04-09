@@ -5,6 +5,7 @@
 
 use crate::app_context::SharedAppContext;
 use crate::audio::NesAudio;
+use crate::autorun::AutorunMode;
 use crate::autorun::state::AutorunState;
 use crate::debugging::Tracing;
 use crate::debugging::control::DebuggerController;
@@ -19,7 +20,7 @@ use crate::native_frontend::gl_wrapper::NativeGlWrapper;
 use crate::native_frontend::keyboard::{self, KeyOutcome};
 use crate::native_frontend::mouse;
 use crate::native_frontend::sleep_inhibitor::SleepInhibitor;
-use crate::nes::console::{AutorunMode, Nes, TimingMode};
+use crate::nes::console::{Nes, TimingMode};
 
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, DeviceId, ElementState, WindowEvent};

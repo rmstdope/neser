@@ -54,6 +54,21 @@ impl std::fmt::Display for AutorunFormat {
     }
 }
 
+/// Autorun operating mode.
+///
+/// Defines the primary operating mode for the emulator's autorun feature,
+/// which enables recording and playback of controller input for deterministic
+/// testing and automation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutorunMode {
+    /// Normal interactive operation (no autorun).
+    None,
+    /// Record controller input to an autorun file.
+    Record,
+    /// Play back controller input from an existing autorun file.
+    Playback,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

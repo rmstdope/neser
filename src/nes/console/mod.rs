@@ -8,7 +8,6 @@ use crate::app_context::SharedAppContext;
 use crate::debugging::log_info;
 
 pub use crate::autorun::AutorunFormat;
-pub use crate::config::AutorunMode;
 pub use crate::nes::cartridge::TimingMode;
 pub use cartridge_catalog::{
     CartridgeCatalogOptions, default_catalog_csv_path, refresh_cartridge_catalog,

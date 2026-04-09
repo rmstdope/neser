@@ -7,7 +7,8 @@
 //! 3. Default values
 
 use crate::autorun::AutorunFormat;
-use crate::config::{AutorunMode, FrontendConfig};
+use crate::autorun::AutorunMode;
+use crate::config::FrontendConfig;
 use crate::debugging::breakpoints::BreakpointKind;
 use crate::input::ControllerType;
 use crate::nes::console::TimingMode;

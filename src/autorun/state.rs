@@ -1,9 +1,9 @@
+use crate::autorun::AutorunMode;
 use crate::autorun::{
     AUTORUN_VERSION, AutorunCheckpoint, AutorunFile, AutorunFormat, AutorunFrame,
     CHECKPOINT_INTERVAL_FRAMES, autorun_path_for_rom, backup_autorun_file, load_autorun_file,
     save_autorun_file,
 };
-use crate::nes::console::AutorunMode;
 use std::path::PathBuf;
 
 /// Resolves a checkpoint index (possibly negative) to a concrete `usize` index.
