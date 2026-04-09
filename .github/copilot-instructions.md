@@ -90,6 +90,21 @@ Where appropriate, use established crates to streamline development and leverage
 
 ## Testing strategies
 
+### Running tests by directory
+
+Use `scripts/test-dir.sh` to run only the tests for specific source directories:
+
+```bash
+./scripts/test-dir.sh src/nes/cartridge         # Run only cartridge tests (~4100 tests)
+./scripts/test-dir.sh src/gb src/platform        # Run gb + platform tests (~220 tests)
+./scripts/test-dir.sh src/nes --skip-integration # NES unit tests only, skip slow integration tests
+./scripts/test-dir.sh src/nes/cartridge --list   # List matching tests without running them
+```
+
+This is especially useful during development to get fast feedback on the area you're working on. The CI workflow uses the same approach to skip irrelevant tests based on changed files.
+
+Integration tests (`nes::integration_tests`, ~740 tests) account for 97% of test execution time. Use `--skip-integration` for fast iteration, then run the full suite before creating a PR.
+
 Testing of the emulator should be done using a mix of unit and integration tests. Unit tests should be used to verify the correctness of individual components and modules, ensuring that each part of the emulator functions as intended in isolation. Integration tests should be employed to validate the interactions between different components, ensuring that they work together seamlessly to provide the desired functionality of the emulator as a whole.
 
 ### Unit testing
