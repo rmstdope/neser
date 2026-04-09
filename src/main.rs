@@ -11,7 +11,7 @@ mod autorun;
 pub mod config;
 mod debugging;
 mod emulator;
-mod frontend_toasts;
+use nes::frontend_toasts;
 use nes::input;
 #[cfg(feature = "native")]
 mod native_frontend;
