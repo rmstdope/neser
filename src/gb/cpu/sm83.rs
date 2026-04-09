@@ -1,0 +1,1593 @@
+use crate::gb::bus::GbBus;
+
+// ---------------------------------------------------------------------------
+// Flag bit positions in register F (upper nibble only; bits 0–3 always 0)
+// ---------------------------------------------------------------------------
+const FLAG_Z: u8 = 1 << 7; // Zero
+const FLAG_N: u8 = 1 << 6; // Subtract
+const FLAG_H: u8 = 1 << 5; // Half-carry
+const FLAG_C: u8 = 1 << 4; // Carry
+
+/// SM83 register file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Registers {
+    pub a: u8,
+    pub f: u8, // bits 7-4: Z N H C; bits 3-0: always 0
+    pub b: u8,
+    pub c: u8,
+    pub d: u8,
+    pub e: u8,
+    pub h: u8,
+    pub l: u8,
+    pub sp: u16,
+    pub pc: u16,
+}
+
+impl Registers {
+    pub fn new() -> Self {
+        Self {
+            a: 0,
+            f: 0,
+            b: 0,
+            c: 0,
+            d: 0,
+            e: 0,
+            h: 0,
+            l: 0,
+            sp: 0,
+            pc: 0,
+        }
+    }
+
+    // --- 16-bit pair helpers ----------------------------------------------
+
+    pub fn af(&self) -> u16 {
+        u16::from_be_bytes([self.a, self.f & 0xF0])
+    }
+    pub fn bc(&self) -> u16 {
+        u16::from_be_bytes([self.b, self.c])
+    }
+    pub fn de(&self) -> u16 {
+        u16::from_be_bytes([self.d, self.e])
+    }
+    pub fn hl(&self) -> u16 {
+        u16::from_be_bytes([self.h, self.l])
+    }
+
+    pub fn set_af(&mut self, val: u16) {
+        let [hi, lo] = val.to_be_bytes();
+        self.a = hi;
+        self.f = lo & 0xF0;
+    }
+    pub fn set_bc(&mut self, val: u16) {
+        let [hi, lo] = val.to_be_bytes();
+        self.b = hi;
+        self.c = lo;
+    }
+    pub fn set_de(&mut self, val: u16) {
+        let [hi, lo] = val.to_be_bytes();
+        self.d = hi;
+        self.e = lo;
+    }
+    pub fn set_hl(&mut self, val: u16) {
+        let [hi, lo] = val.to_be_bytes();
+        self.h = hi;
+        self.l = lo;
+    }
+
+    // --- Flag helpers -----------------------------------------------------
+
+    pub fn z_flag(&self) -> bool {
+        self.f & FLAG_Z != 0
+    }
+    pub fn n_flag(&self) -> bool {
+        self.f & FLAG_N != 0
+    }
+    pub fn h_flag(&self) -> bool {
+        self.f & FLAG_H != 0
+    }
+    pub fn c_flag(&self) -> bool {
+        self.f & FLAG_C != 0
+    }
+
+    pub fn set_flags(&mut self, z: bool, n: bool, h: bool, c: bool) {
+        self.f = 0;
+        if z {
+            self.f |= FLAG_Z;
+        }
+        if n {
+            self.f |= FLAG_N;
+        }
+        if h {
+            self.f |= FLAG_H;
+        }
+        if c {
+            self.f |= FLAG_C;
+        }
+    }
+}
+
+impl Default for Registers {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// SM83 (LR35902) CPU core.
+///
+/// `B` must implement [`GbBus`] — use [`StubBus`] for unit tests or a full
+/// bus implementation for integration tests.
+pub struct Sm83<B: GbBus> {
+    pub regs: Registers,
+    pub ime: bool,
+    /// Set by HALT; cleared when an interrupt fires or IME is re-enabled.
+    pub halted: bool,
+    /// Set by EI; IME is enabled _after_ the instruction following EI.
+    ime_pending: bool,
+    pub bus: B,
+    cycles: u64,
+}
+
+impl<B: GbBus> Sm83<B> {
+    pub fn new(bus: B) -> Self {
+        Self {
+            regs: Registers::new(),
+            ime: false,
+            halted: false,
+            ime_pending: false,
+            bus,
+            cycles: 0,
+        }
+    }
+
+    /// Total M-cycles elapsed since construction.
+    pub fn cycles(&self) -> u64 {
+        self.cycles
+    }
+
+    /// Read a byte from the bus and advance the cycle counter by 1 M-cycle.
+    fn read(&mut self, addr: u16) -> u8 {
+        self.cycles += 1;
+        self.bus.read(addr)
+    }
+
+    /// Write a byte to the bus and advance the cycle counter by 1 M-cycle.
+    fn write(&mut self, addr: u16, val: u8) {
+        self.cycles += 1;
+        self.bus.write(addr, val);
+    }
+
+    /// Fetch the next byte at PC and increment PC.
+    fn fetch_byte(&mut self) -> u8 {
+        let val = self.read(self.regs.pc);
+        self.regs.pc = self.regs.pc.wrapping_add(1);
+        val
+    }
+
+    /// Fetch a 16-bit little-endian immediate at PC and advance PC by 2.
+    fn fetch_u16(&mut self) -> u16 {
+        let lo = self.fetch_byte() as u16;
+        let hi = self.fetch_byte() as u16;
+        (hi << 8) | lo
+    }
+
+    /// Push a 16-bit value onto the stack (SP decremented twice).
+    fn push_u16(&mut self, val: u16) {
+        let [hi, lo] = val.to_be_bytes();
+        self.regs.sp = self.regs.sp.wrapping_sub(1);
+        self.write(self.regs.sp, hi);
+        self.regs.sp = self.regs.sp.wrapping_sub(1);
+        self.write(self.regs.sp, lo);
+    }
+
+    /// Pop a 16-bit value from the stack (SP incremented twice).
+    fn pop_u16(&mut self) -> u16 {
+        let lo = self.read(self.regs.sp) as u16;
+        self.regs.sp = self.regs.sp.wrapping_add(1);
+        let hi = self.read(self.regs.sp) as u16;
+        self.regs.sp = self.regs.sp.wrapping_add(1);
+        (hi << 8) | lo
+    }
+
+    // --- Register file accessors by r-field (bits 2–0 in opcode) ----------
+
+    fn read_r8(&mut self, r: u8) -> u8 {
+        match r & 0x07 {
+            0 => self.regs.b,
+            1 => self.regs.c,
+            2 => self.regs.d,
+            3 => self.regs.e,
+            4 => self.regs.h,
+            5 => self.regs.l,
+            6 => {
+                let hl = self.regs.hl();
+                self.read(hl)
+            }
+            7 => self.regs.a,
+            _ => unreachable!(),
+        }
+    }
+
+    fn write_r8(&mut self, r: u8, val: u8) {
+        match r & 0x07 {
+            0 => self.regs.b = val,
+            1 => self.regs.c = val,
+            2 => self.regs.d = val,
+            3 => self.regs.e = val,
+            4 => self.regs.h = val,
+            5 => self.regs.l = val,
+            6 => {
+                let hl = self.regs.hl();
+                self.write(hl, val);
+            }
+            7 => self.regs.a = val,
+            _ => unreachable!(),
+        }
+    }
+
+    // --- ALU helpers -------------------------------------------------------
+
+    fn alu_add(&mut self, operand: u8, carry_in: u8) {
+        let a = self.regs.a;
+        let result16 = (a as u16)
+            .wrapping_add(operand as u16)
+            .wrapping_add(carry_in as u16);
+        let result = result16 as u8;
+        let h = (a & 0x0F) + (operand & 0x0F) + carry_in > 0x0F;
+        let c = result16 > 0xFF;
+        self.regs.set_flags(result == 0, false, h, c);
+        self.regs.a = result;
+    }
+
+    fn alu_sub(&mut self, operand: u8, carry_in: u8) {
+        let a = self.regs.a;
+        let result16 = (a as i16) - (operand as i16) - (carry_in as i16);
+        let result = result16 as u8;
+        let h = (a & 0x0F) < (operand & 0x0F) + carry_in;
+        let c = (a as u16) < (operand as u16) + (carry_in as u16);
+        self.regs.set_flags(result == 0, true, h, c);
+        self.regs.a = result;
+    }
+
+    fn alu_and(&mut self, operand: u8) {
+        self.regs.a &= operand;
+        let z = self.regs.a == 0;
+        self.regs.set_flags(z, false, true, false);
+    }
+
+    fn alu_or(&mut self, operand: u8) {
+        self.regs.a |= operand;
+        let z = self.regs.a == 0;
+        self.regs.set_flags(z, false, false, false);
+    }
+
+    fn alu_xor(&mut self, operand: u8) {
+        self.regs.a ^= operand;
+        let z = self.regs.a == 0;
+        self.regs.set_flags(z, false, false, false);
+    }
+
+    fn alu_cp(&mut self, operand: u8) {
+        let saved = self.regs.a;
+        self.alu_sub(operand, 0);
+        self.regs.a = saved;
+    }
+
+    fn alu_inc(&mut self, val: u8) -> u8 {
+        let result = val.wrapping_add(1);
+        let h = (val & 0x0F) == 0x0F;
+        // C flag is unchanged; preserve it
+        let c = self.regs.c_flag();
+        self.regs.set_flags(result == 0, false, h, c);
+        result
+    }
+
+    fn alu_dec(&mut self, val: u8) -> u8 {
+        let result = val.wrapping_sub(1);
+        let h = (val & 0x0F) == 0x00;
+        let c = self.regs.c_flag();
+        self.regs.set_flags(result == 0, true, h, c);
+        result
+    }
+
+    fn alu_add_hl(&mut self, val: u16) {
+        let hl = self.regs.hl();
+        let result = hl.wrapping_add(val);
+        let h = (hl & 0x0FFF) + (val & 0x0FFF) > 0x0FFF;
+        let c = (hl as u32) + (val as u32) > 0xFFFF;
+        let z = self.regs.z_flag(); // Z unchanged
+        self.regs.set_flags(z, false, h, c);
+        self.regs.set_hl(result);
+    }
+
+    /// Compute `SP + e` for ADD SP,e (0xE8) and LD HL,SP+e (0xF8).
+    /// Sets flags: Z=0 N=0 H C based on lower-byte arithmetic.
+    fn alu_sp_offset(&mut self, e: i8) -> u16 {
+        let sp = self.regs.sp;
+        let offset = e as u16;
+        let result = sp.wrapping_add(offset);
+        let h = (sp & 0x0F) + (offset & 0x0F) > 0x0F;
+        let c = (sp & 0xFF) + (offset & 0xFF) > 0xFF;
+        self.regs.set_flags(false, false, h, c);
+        result
+    }
+
+    // --- Accumulator rotate helpers (Z always cleared) -------------------
+
+    /// Rotate A left; carry = old bit 7; Z always cleared.
+    fn rlca(&mut self) {
+        let c = self.regs.a >> 7;
+        self.regs.a = (self.regs.a << 1) | c;
+        self.regs.set_flags(false, false, false, c != 0);
+    }
+
+    /// Rotate A right; carry = old bit 0; Z always cleared.
+    fn rrca(&mut self) {
+        let c = self.regs.a & 1;
+        self.regs.a = (self.regs.a >> 1) | (c << 7);
+        self.regs.set_flags(false, false, false, c != 0);
+    }
+
+    /// Rotate A left through carry; Z always cleared.
+    fn rla(&mut self) {
+        let old_c = self.regs.c_flag() as u8;
+        let new_c = self.regs.a >> 7;
+        self.regs.a = (self.regs.a << 1) | old_c;
+        self.regs.set_flags(false, false, false, new_c != 0);
+    }
+
+    /// Rotate A right through carry; Z always cleared.
+    fn rra(&mut self) {
+        let old_c = self.regs.c_flag() as u8;
+        let new_c = self.regs.a & 1;
+        self.regs.a = (self.regs.a >> 1) | (old_c << 7);
+        self.regs.set_flags(false, false, false, new_c != 0);
+    }
+
+    // --- CB rotate / shift helpers (Z reflects result) -------------------
+
+    fn rlc(&mut self, val: u8) -> u8 {
+        let c = val >> 7;
+        let result = (val << 1) | c;
+        self.regs.set_flags(result == 0, false, false, c != 0);
+        result
+    }
+
+    fn rrc(&mut self, val: u8) -> u8 {
+        let c = val & 1;
+        let result = (val >> 1) | (c << 7);
+        self.regs.set_flags(result == 0, false, false, c != 0);
+        result
+    }
+
+    fn rl(&mut self, val: u8) -> u8 {
+        let old_c = self.regs.c_flag() as u8;
+        let new_c = val >> 7;
+        let result = (val << 1) | old_c;
+        self.regs.set_flags(result == 0, false, false, new_c != 0);
+        result
+    }
+
+    fn rr(&mut self, val: u8) -> u8 {
+        let old_c = self.regs.c_flag() as u8;
+        let new_c = val & 1;
+        let result = (val >> 1) | (old_c << 7);
+        self.regs.set_flags(result == 0, false, false, new_c != 0);
+        result
+    }
+
+    fn sla(&mut self, val: u8) -> u8 {
+        let c = val >> 7;
+        let result = val << 1;
+        self.regs.set_flags(result == 0, false, false, c != 0);
+        result
+    }
+
+    fn sra(&mut self, val: u8) -> u8 {
+        let c = val & 1;
+        let result = ((val as i8) >> 1) as u8;
+        self.regs.set_flags(result == 0, false, false, c != 0);
+        result
+    }
+
+    fn swap(&mut self, val: u8) -> u8 {
+        let result = val.rotate_right(4);
+        self.regs.set_flags(result == 0, false, false, false);
+        result
+    }
+
+    fn srl(&mut self, val: u8) -> u8 {
+        let c = val & 1;
+        let result = val >> 1;
+        self.regs.set_flags(result == 0, false, false, c != 0);
+        result
+    }
+
+    // --- Interrupt dispatch -----------------------------------------------
+
+    /// Check for pending interrupts and service the highest-priority one.
+    ///
+    /// Returns `true` if this execute() slot was consumed (either a full
+    /// interrupt dispatch, or a halt-wakeup with IME=false).
+    fn service_interrupts(&mut self) -> bool {
+        let ie = self.bus.read(0xFFFF);
+        let if_ = self.bus.read(0xFF0F);
+        let pending = ie & if_ & 0x1F;
+        if pending == 0 {
+            return false;
+        }
+
+        // Wake from HALT regardless of IME.
+        if self.halted {
+            self.halted = false;
+            if !self.ime {
+                // Waking consumes one M-cycle; no instruction is executed.
+                self.cycles += 1;
+                return true;
+            }
+            // IME=true: fall through to full interrupt dispatch below.
+        }
+
+        if !self.ime {
+            return false;
+        }
+
+        self.ime = false;
+        self.ime_pending = false;
+
+        // Find the highest-priority (lowest-bit) pending interrupt.
+        let bit = pending.trailing_zeros() as u8;
+        // Clear the IF bit for this interrupt.
+        let new_if = if_ & !(1 << bit);
+        self.bus.write(0xFF0F, new_if);
+
+        // 2 NOP cycles (internal delay).
+        self.cycles += 2;
+
+        // Push PC.
+        let pc = self.regs.pc;
+        self.push_u16(pc);
+
+        // Jump to vector.
+        let vector: u16 = 0x0040 + (bit as u16) * 8;
+        self.regs.pc = vector;
+        self.cycles += 1; // 1 extra internal cycle for the jump
+
+        true
+    }
+
+    // --- Conditional helpers -----------------------------------------------
+
+    fn check_condition(&self, cond: u8) -> bool {
+        match cond & 0x03 {
+            0 => !self.regs.z_flag(), // NZ
+            1 => self.regs.z_flag(),  // Z
+            2 => !self.regs.c_flag(), // NC
+            3 => self.regs.c_flag(),  // C
+            _ => unreachable!(),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Fetch-decode-execute
+    // -----------------------------------------------------------------------
+
+    /// Execute one instruction (or service a pending interrupt) and return.
+    ///
+    /// If halted and no interrupt is pending, consumes 1 M-cycle doing nothing.
+    pub fn execute(&mut self) {
+        // Activate delayed IME.
+        if self.ime_pending {
+            self.ime = true;
+            self.ime_pending = false;
+        }
+
+        // Try to service an interrupt first.
+        if self.service_interrupts() {
+            return;
+        }
+
+        if self.halted {
+            self.cycles += 1; // stall
+            return;
+        }
+
+        let opcode = self.fetch_byte();
+        self.decode_execute(opcode);
+    }
+
+    fn decode_execute(&mut self, opcode: u8) {
+        match opcode {
+            // --- NOP ------------------------------------------------------
+            0x00 => {}
+
+            // --- LD r16, n16 ----------------------------------------------
+            0x01 => {
+                let v = self.fetch_u16();
+                self.regs.set_bc(v);
+            }
+            0x11 => {
+                let v = self.fetch_u16();
+                self.regs.set_de(v);
+            }
+            0x21 => {
+                let v = self.fetch_u16();
+                self.regs.set_hl(v);
+            }
+            0x31 => {
+                let v = self.fetch_u16();
+                self.regs.sp = v;
+            }
+
+            // --- LD (BC/DE), A -------------------------------------------
+            0x02 => {
+                let addr = self.regs.bc();
+                let a = self.regs.a;
+                self.write(addr, a);
+            }
+            0x12 => {
+                let addr = self.regs.de();
+                let a = self.regs.a;
+                self.write(addr, a);
+            }
+
+            // --- LD A, (BC/DE) -------------------------------------------
+            0x0A => {
+                let addr = self.regs.bc();
+                self.regs.a = self.read(addr);
+            }
+            0x1A => {
+                let addr = self.regs.de();
+                self.regs.a = self.read(addr);
+            }
+
+            // --- INC r16 --------------------------------------------------
+            0x03 => {
+                let v = self.regs.bc().wrapping_add(1);
+                self.regs.set_bc(v);
+                self.cycles += 1;
+            }
+            0x13 => {
+                let v = self.regs.de().wrapping_add(1);
+                self.regs.set_de(v);
+                self.cycles += 1;
+            }
+            0x23 => {
+                let v = self.regs.hl().wrapping_add(1);
+                self.regs.set_hl(v);
+                self.cycles += 1;
+            }
+            0x33 => {
+                self.regs.sp = self.regs.sp.wrapping_add(1);
+                self.cycles += 1;
+            }
+
+            // --- DEC r16 --------------------------------------------------
+            0x0B => {
+                let v = self.regs.bc().wrapping_sub(1);
+                self.regs.set_bc(v);
+                self.cycles += 1;
+            }
+            0x1B => {
+                let v = self.regs.de().wrapping_sub(1);
+                self.regs.set_de(v);
+                self.cycles += 1;
+            }
+            0x2B => {
+                let v = self.regs.hl().wrapping_sub(1);
+                self.regs.set_hl(v);
+                self.cycles += 1;
+            }
+            0x3B => {
+                self.regs.sp = self.regs.sp.wrapping_sub(1);
+                self.cycles += 1;
+            }
+
+            // --- INC r8 (B/C/D/E/H/L/(HL)/A) ---------------------------
+            0x04 | 0x0C | 0x14 | 0x1C | 0x24 | 0x2C | 0x34 | 0x3C => {
+                let r = (opcode >> 3) & 0x07;
+                let val = self.read_r8(r);
+                let result = self.alu_inc(val);
+                self.write_r8(r, result);
+            }
+
+            // --- DEC r8 (B/C/D/E/H/L/(HL)/A) ---------------------------
+            0x05 | 0x0D | 0x15 | 0x1D | 0x25 | 0x2D | 0x35 | 0x3D => {
+                let r = (opcode >> 3) & 0x07;
+                let val = self.read_r8(r);
+                let result = self.alu_dec(val);
+                self.write_r8(r, result);
+            }
+
+            // --- LD r8, n8 (B/C/D/E/H/L/(HL)/A) -------------------------
+            0x06 | 0x0E | 0x16 | 0x1E | 0x26 | 0x2E | 0x36 | 0x3E => {
+                let r = (opcode >> 3) & 0x07;
+                let n = self.fetch_byte();
+                self.write_r8(r, n);
+            }
+
+            // --- RLCA / RRCA / RLA / RRA ----------------------------------
+            0x07 => self.rlca(),
+            0x0F => self.rrca(),
+            0x17 => self.rla(),
+            0x1F => self.rra(),
+
+            // --- LD (n16), SP -------------------------------------------
+            0x08 => {
+                let addr = self.fetch_u16();
+                let [hi, lo] = self.regs.sp.to_le_bytes();
+                self.write(addr, lo);
+                self.write(addr.wrapping_add(1), hi);
+            }
+
+            // --- ADD HL, r16 --------------------------------------------
+            0x09 => {
+                let v = self.regs.bc();
+                self.alu_add_hl(v);
+                self.cycles += 1;
+            }
+            0x19 => {
+                let v = self.regs.de();
+                self.alu_add_hl(v);
+                self.cycles += 1;
+            }
+            0x29 => {
+                let v = self.regs.hl();
+                self.alu_add_hl(v);
+                self.cycles += 1;
+            }
+            0x39 => {
+                let v = self.regs.sp;
+                self.alu_add_hl(v);
+                self.cycles += 1;
+            }
+
+            // --- LD (HL+/-), A  and  LD A, (HL+/-) ----------------------
+            0x22 => {
+                let addr = self.regs.hl();
+                let a = self.regs.a;
+                self.write(addr, a);
+                self.regs.set_hl(addr.wrapping_add(1));
+            }
+            0x32 => {
+                let addr = self.regs.hl();
+                let a = self.regs.a;
+                self.write(addr, a);
+                self.regs.set_hl(addr.wrapping_sub(1));
+            }
+            0x2A => {
+                let addr = self.regs.hl();
+                self.regs.a = self.read(addr);
+                self.regs.set_hl(addr.wrapping_add(1));
+            }
+            0x3A => {
+                let addr = self.regs.hl();
+                self.regs.a = self.read(addr);
+                self.regs.set_hl(addr.wrapping_sub(1));
+            }
+
+            // --- DAA ----------------------------------------------------
+            0x27 => {
+                let mut a = self.regs.a;
+                let n = self.regs.n_flag();
+                let h = self.regs.h_flag();
+                let c = self.regs.c_flag();
+                let mut new_c = false;
+                if !n {
+                    if c || a > 0x99 {
+                        a = a.wrapping_add(0x60);
+                        new_c = true;
+                    }
+                    if h || (a & 0x0F) > 0x09 {
+                        a = a.wrapping_add(0x06);
+                    }
+                } else {
+                    if c {
+                        a = a.wrapping_sub(0x60);
+                        new_c = true;
+                    }
+                    if h {
+                        a = a.wrapping_sub(0x06);
+                    }
+                }
+                self.regs.a = a;
+                let z = a == 0;
+                self.regs.set_flags(z, n, false, new_c);
+            }
+
+            // --- CPL -------------------------------------------------------
+            0x2F => {
+                self.regs.a = !self.regs.a;
+                let z = self.regs.z_flag();
+                let c = self.regs.c_flag();
+                self.regs.set_flags(z, true, true, c);
+            }
+
+            // --- SCF / CCF ------------------------------------------------
+            0x37 => {
+                let z = self.regs.z_flag();
+                self.regs.set_flags(z, false, false, true);
+            }
+            0x3F => {
+                let z = self.regs.z_flag();
+                let c = !self.regs.c_flag();
+                self.regs.set_flags(z, false, false, c);
+            }
+
+            // --- HALT / STOP ---------------------------------------------
+            0x76 => {
+                self.halted = true;
+            }
+            0x10 => {
+                // STOP — consume the next byte (it should be 0x00)
+                self.fetch_byte();
+                // Minimal implementation: behave like HALT for tests
+                self.halted = true;
+            }
+
+            // --- LD r8, r8 block (0x40-0x7F, excluding 0x76 = HALT) ------
+            0x40..=0x7F => {
+                let dst = (opcode >> 3) & 0x07;
+                let src = opcode & 0x07;
+                let val = self.read_r8(src);
+                self.write_r8(dst, val);
+            }
+
+            // --- ALU A, r block (0x80–0xBF) --------------------------------
+            0x80..=0xBF => {
+                let op = (opcode >> 3) & 0x07;
+                let src = opcode & 0x07;
+                let val = self.read_r8(src);
+                self.alu_dispatch(op, val);
+            }
+
+            // --- RET NZ / RET Z / RET NC / RET C / RET / RETI -----------
+            0xC0 | 0xC8 | 0xD0 | 0xD8 => {
+                self.cycles += 1; // condition evaluation
+                let cond = (opcode >> 3) & 0x03;
+                if self.check_condition(cond) {
+                    let addr = self.pop_u16();
+                    self.regs.pc = addr;
+                    self.cycles += 1;
+                }
+            }
+            0xC9 => {
+                let addr = self.pop_u16();
+                self.regs.pc = addr;
+                self.cycles += 1;
+            }
+            0xD9 => {
+                // RETI
+                let addr = self.pop_u16();
+                self.regs.pc = addr;
+                self.ime = true;
+                self.cycles += 1;
+            }
+
+            // --- POP r16 ------------------------------------------------
+            0xC1 => {
+                let v = self.pop_u16();
+                self.regs.set_bc(v);
+            }
+            0xD1 => {
+                let v = self.pop_u16();
+                self.regs.set_de(v);
+            }
+            0xE1 => {
+                let v = self.pop_u16();
+                self.regs.set_hl(v);
+            }
+            0xF1 => {
+                let v = self.pop_u16();
+                self.regs.set_af(v);
+            }
+
+            // --- PUSH r16 -----------------------------------------------
+            0xC5 => {
+                let v = self.regs.bc();
+                self.push_u16(v);
+                self.cycles += 1;
+            }
+            0xD5 => {
+                let v = self.regs.de();
+                self.push_u16(v);
+                self.cycles += 1;
+            }
+            0xE5 => {
+                let v = self.regs.hl();
+                self.push_u16(v);
+                self.cycles += 1;
+            }
+            0xF5 => {
+                let v = self.regs.af();
+                self.push_u16(v);
+                self.cycles += 1;
+            }
+
+            // --- JP n16, JP HL, JP cc -----------------------------------
+            0xC3 => {
+                let addr = self.fetch_u16();
+                self.regs.pc = addr;
+                self.cycles += 1;
+            }
+            0xE9 => {
+                self.regs.pc = self.regs.hl();
+            }
+            0xC2 | 0xCA | 0xD2 | 0xDA => {
+                let addr = self.fetch_u16();
+                let cond = (opcode >> 3) & 0x03;
+                if self.check_condition(cond) {
+                    self.regs.pc = addr;
+                    self.cycles += 1;
+                }
+            }
+
+            // --- JR e8, JR cc, e8 ----------------------------------------
+            0x18 => {
+                let e = self.fetch_byte() as i8;
+                self.regs.pc = self.regs.pc.wrapping_add(e as u16);
+                self.cycles += 1;
+            }
+            0x20 | 0x28 | 0x30 | 0x38 => {
+                let e = self.fetch_byte() as i8;
+                let cond = (opcode >> 3) & 0x03;
+                if self.check_condition(cond) {
+                    self.regs.pc = self.regs.pc.wrapping_add(e as u16);
+                    self.cycles += 1;
+                }
+            }
+
+            // --- CALL n16, CALL cc ---------------------------------------
+            0xCD => {
+                let addr = self.fetch_u16();
+                self.cycles += 1;
+                let pc = self.regs.pc;
+                self.push_u16(pc);
+                self.regs.pc = addr;
+            }
+            0xC4 | 0xCC | 0xD4 | 0xDC => {
+                let addr = self.fetch_u16();
+                let cond = (opcode >> 3) & 0x03;
+                if self.check_condition(cond) {
+                    self.cycles += 1;
+                    let pc = self.regs.pc;
+                    self.push_u16(pc);
+                    self.regs.pc = addr;
+                }
+            }
+
+            // --- RST vectors ---------------------------------------------
+            0xC7 | 0xCF | 0xD7 | 0xDF | 0xE7 | 0xEF | 0xF7 | 0xFF => {
+                let vec = (opcode & 0x38) as u16;
+                self.cycles += 1;
+                let pc = self.regs.pc;
+                self.push_u16(pc);
+                self.regs.pc = vec;
+            }
+
+            // --- ALU A, n8 (ADD/ADC/SUB/SBC/AND/XOR/OR/CP immediate) ----
+            0xC6 | 0xCE | 0xD6 | 0xDE | 0xE6 | 0xEE | 0xF6 | 0xFE => {
+                let n = self.fetch_byte();
+                let op = (opcode >> 3) & 0x07;
+                self.alu_dispatch(op, n);
+            }
+
+            // --- LDH / LD wide ------------------------------------------
+            0xE0 => {
+                let n = self.fetch_byte();
+                let a = self.regs.a;
+                self.write(0xFF00 | (n as u16), a);
+            }
+            0xF0 => {
+                let n = self.fetch_byte();
+                self.regs.a = self.read(0xFF00 | (n as u16));
+            }
+            0xE2 => {
+                let c = self.regs.c;
+                let a = self.regs.a;
+                self.write(0xFF00 | (c as u16), a);
+            }
+            0xF2 => {
+                let c = self.regs.c;
+                self.regs.a = self.read(0xFF00 | (c as u16));
+            }
+            0xEA => {
+                let addr = self.fetch_u16();
+                let a = self.regs.a;
+                self.write(addr, a);
+            }
+            0xFA => {
+                let addr = self.fetch_u16();
+                self.regs.a = self.read(addr);
+            }
+
+            // --- SP offsets ----------------------------------------------
+            0xE8 => {
+                let e = self.fetch_byte() as i8;
+                let result = self.alu_sp_offset(e);
+                self.regs.sp = result;
+                self.cycles += 2;
+            }
+            0xF8 => {
+                let e = self.fetch_byte() as i8;
+                let result = self.alu_sp_offset(e);
+                self.regs.set_hl(result);
+                self.cycles += 1;
+            }
+            0xF9 => {
+                self.regs.sp = self.regs.hl();
+                self.cycles += 1;
+            }
+
+            // --- DI / EI -----------------------------------------------
+            0xF3 => {
+                self.ime = false;
+                self.ime_pending = false;
+            }
+            0xFB => {
+                self.ime_pending = true;
+            }
+
+            // --- PREFIX CB -----------------------------------------------
+            0xCB => {
+                let cb_opcode = self.fetch_byte();
+                self.execute_cb(cb_opcode);
+            }
+
+            // --- Illegal opcodes (lock up / treat as NOP) ----------------
+            0xD3 | 0xDB | 0xDD | 0xE3 | 0xE4 | 0xEB | 0xEC | 0xED | 0xF4 | 0xFC | 0xFD => {
+                // Real hardware locks up; we treat it as NOP for test purposes.
+            }
+        }
+    }
+
+    fn alu_dispatch(&mut self, op: u8, val: u8) {
+        match op {
+            0 => self.alu_add(val, 0),
+            1 => {
+                let c = self.regs.c_flag() as u8;
+                self.alu_add(val, c);
+            }
+            2 => self.alu_sub(val, 0),
+            3 => {
+                let c = self.regs.c_flag() as u8;
+                self.alu_sub(val, c);
+            }
+            4 => self.alu_and(val),
+            5 => self.alu_xor(val),
+            6 => self.alu_or(val),
+            7 => self.alu_cp(val),
+            _ => unreachable!(),
+        }
+    }
+
+    fn execute_cb(&mut self, cb: u8) {
+        let r = cb & 0x07;
+        let op = (cb >> 3) & 0x07;
+        let kind = cb >> 6;
+        let bit = op;
+
+        let val = self.read_r8(r);
+        let result = match kind {
+            0 => match op {
+                0 => self.rlc(val),
+                1 => self.rrc(val),
+                2 => self.rl(val),
+                3 => self.rr(val),
+                4 => self.sla(val),
+                5 => self.sra(val),
+                6 => self.swap(val),
+                7 => self.srl(val),
+                _ => unreachable!(),
+            },
+            1 => {
+                // BIT — does not write back
+                let z = val & (1 << bit) == 0;
+                let c = self.regs.c_flag();
+                self.regs.set_flags(z, false, true, c);
+                return;
+            }
+            2 => val & !(1 << bit), // RES
+            3 => val | (1 << bit),  // SET
+            _ => unreachable!(),
+        };
+        self.write_r8(r, result);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests — RED phase
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    /// Helper: build a CPU pre-loaded with a byte sequence at address 0x0000.
+    /// PC starts at 0x0000.
+    struct TestBus {
+        mem: [u8; 0x10000],
+    }
+
+    impl TestBus {
+        fn new(program: &[u8]) -> Self {
+            let mut mem = [0u8; 0x10000];
+            mem[..program.len()].copy_from_slice(program);
+            Self { mem }
+        }
+    }
+
+    impl GbBus for TestBus {
+        fn read(&mut self, addr: u16) -> u8 {
+            self.mem[addr as usize]
+        }
+        fn write(&mut self, addr: u16, val: u8) {
+            self.mem[addr as usize] = val;
+        }
+    }
+
+    fn cpu_with(program: &[u8]) -> Sm83<TestBus> {
+        Sm83::new(TestBus::new(program))
+    }
+
+    // -----------------------------------------------------------------------
+    // NOP
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_nop_advances_pc_by_1_and_takes_1_m_cycle() {
+        let mut cpu = cpu_with(&[0x00]);
+        cpu.execute();
+        assert_eq!(cpu.regs.pc, 1, "PC should advance by 1 after NOP");
+        assert_eq!(cpu.cycles(), 1, "NOP should take 1 M-cycle");
+    }
+
+    // -----------------------------------------------------------------------
+    // LD r8, n8 (immediate loads)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_ld_b_n8_loads_immediate_into_b() {
+        let mut cpu = cpu_with(&[0x06, 0x42]);
+        cpu.execute();
+        assert_eq!(cpu.regs.b, 0x42, "LD B,n8 should load 0x42 into B");
+        assert_eq!(cpu.regs.pc, 2);
+        assert_eq!(cpu.cycles(), 2);
+    }
+
+    #[test]
+    fn test_ld_c_n8_loads_immediate_into_c() {
+        let mut cpu = cpu_with(&[0x0E, 0x55]);
+        cpu.execute();
+        assert_eq!(cpu.regs.c, 0x55);
+    }
+
+    #[test]
+    fn test_ld_d_n8_loads_immediate_into_d() {
+        let mut cpu = cpu_with(&[0x16, 0x10]);
+        cpu.execute();
+        assert_eq!(cpu.regs.d, 0x10);
+    }
+
+    #[test]
+    fn test_ld_e_n8_loads_immediate_into_e() {
+        let mut cpu = cpu_with(&[0x1E, 0xAB]);
+        cpu.execute();
+        assert_eq!(cpu.regs.e, 0xAB);
+    }
+
+    #[test]
+    fn test_ld_h_n8_loads_immediate_into_h() {
+        let mut cpu = cpu_with(&[0x26, 0xCC]);
+        cpu.execute();
+        assert_eq!(cpu.regs.h, 0xCC);
+    }
+
+    #[test]
+    fn test_ld_l_n8_loads_immediate_into_l() {
+        let mut cpu = cpu_with(&[0x2E, 0x0F]);
+        cpu.execute();
+        assert_eq!(cpu.regs.l, 0x0F);
+    }
+
+    #[test]
+    fn test_ld_a_n8_loads_immediate_into_a() {
+        let mut cpu = cpu_with(&[0x3E, 0xFF]);
+        cpu.execute();
+        assert_eq!(cpu.regs.a, 0xFF);
+    }
+
+    // -----------------------------------------------------------------------
+    // LD r8, r8
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_ld_b_c_copies_c_into_b() {
+        // LD C,n8; LD B,C
+        let mut cpu = cpu_with(&[0x0E, 0x77, 0x41]);
+        cpu.execute(); // LD C, 0x77
+        cpu.execute(); // LD B, C
+        assert_eq!(cpu.regs.b, 0x77, "LD B,C should copy C into B");
+        assert_eq!(cpu.regs.c, 0x77, "C should be unchanged");
+    }
+
+    #[test]
+    fn test_ld_a_b_copies_b_into_a() {
+        let mut cpu = cpu_with(&[0x06, 0x11, 0x78]);
+        cpu.execute(); // LD B, 0x11
+        cpu.execute(); // LD A, B
+        assert_eq!(cpu.regs.a, 0x11);
+    }
+
+    // -----------------------------------------------------------------------
+    // LD r16, n16
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_ld_bc_n16_loads_immediate_into_bc() {
+        let mut cpu = cpu_with(&[0x01, 0x34, 0x12]); // LD BC, 0x1234 (little-endian)
+        cpu.execute();
+        assert_eq!(cpu.regs.bc(), 0x1234);
+        assert_eq!(cpu.cycles(), 3);
+    }
+
+    #[test]
+    fn test_ld_hl_n16_loads_immediate_into_hl() {
+        let mut cpu = cpu_with(&[0x21, 0xAD, 0xDE]); // LD HL, 0xDEAD
+        cpu.execute();
+        assert_eq!(cpu.regs.hl(), 0xDEAD);
+    }
+
+    // -----------------------------------------------------------------------
+    // ADD A, r — flags
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_add_a_b_result_and_no_flags_on_nonzero() {
+        // A=0x01, B=0x02 → A=0x03, Z=0, N=0, H=0, C=0
+        let mut cpu = cpu_with(&[0x3E, 0x01, 0x06, 0x02, 0x80]);
+        cpu.execute(); // LD A, 0x01
+        cpu.execute(); // LD B, 0x02
+        cpu.execute(); // ADD A, B
+        assert_eq!(cpu.regs.a, 0x03);
+        assert!(!cpu.regs.z_flag(), "Z should be clear");
+        assert!(!cpu.regs.n_flag(), "N should be clear");
+        assert!(!cpu.regs.h_flag(), "H should be clear");
+        assert!(!cpu.regs.c_flag(), "C should be clear");
+    }
+
+    #[test]
+    fn test_add_a_a_zero_sets_z_flag() {
+        // A=0, B=0 → A=0, Z=1
+        let mut cpu = cpu_with(&[0x87]); // ADD A, A  (A starts at 0)
+        cpu.execute();
+        assert_eq!(cpu.regs.a, 0);
+        assert!(cpu.regs.z_flag(), "Z should be set when result is 0");
+        assert!(!cpu.regs.n_flag());
+    }
+
+    #[test]
+    fn test_add_a_b_sets_half_carry_flag() {
+        // A=0x0F, B=0x01 → A=0x10, H=1
+        let mut cpu = cpu_with(&[0x3E, 0x0F, 0x06, 0x01, 0x80]);
+        cpu.execute();
+        cpu.execute();
+        cpu.execute();
+        assert_eq!(cpu.regs.a, 0x10);
+        assert!(
+            cpu.regs.h_flag(),
+            "H should be set (0x0F + 0x01 half-carry)"
+        );
+        assert!(!cpu.regs.c_flag());
+    }
+
+    #[test]
+    fn test_add_a_b_sets_carry_flag_on_overflow() {
+        // A=0xFF, B=0x01 → A=0x00, C=1, Z=1
+        let mut cpu = cpu_with(&[0x3E, 0xFF, 0x06, 0x01, 0x80]);
+        cpu.execute();
+        cpu.execute();
+        cpu.execute();
+        assert_eq!(cpu.regs.a, 0x00);
+        assert!(cpu.regs.c_flag(), "C should be set on byte overflow");
+        assert!(cpu.regs.z_flag(), "Z should be set when result is 0");
+    }
+
+    // -----------------------------------------------------------------------
+    // SUB A, r — N flag
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_sub_a_a_results_zero_n_and_z_set() {
+        // A=0x05; SUB A,A → A=0, Z=1, N=1
+        let mut cpu = cpu_with(&[0x3E, 0x05, 0x97]);
+        cpu.execute(); // LD A, 0x05
+        cpu.execute(); // SUB A, A
+        assert_eq!(cpu.regs.a, 0);
+        assert!(cpu.regs.z_flag(), "Z should be set");
+        assert!(cpu.regs.n_flag(), "N should be set after subtraction");
+        assert!(!cpu.regs.h_flag());
+        assert!(!cpu.regs.c_flag());
+    }
+
+    #[test]
+    fn test_sub_a_sets_carry_when_underflow() {
+        // A=0x00, B=0x01 → A=0xFF, C=1, N=1
+        let mut cpu = cpu_with(&[0x06, 0x01, 0x90]); // LD B,1; SUB A,B
+        cpu.execute();
+        cpu.execute();
+        assert_eq!(cpu.regs.a, 0xFF);
+        assert!(cpu.regs.c_flag());
+        assert!(cpu.regs.n_flag());
+    }
+
+    // -----------------------------------------------------------------------
+    // XOR A, A
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_xor_a_a_clears_a_and_sets_z() {
+        let mut cpu = cpu_with(&[0x3E, 0x55, 0xAF]); // LD A,0x55; XOR A,A
+        cpu.execute();
+        cpu.execute();
+        assert_eq!(cpu.regs.a, 0);
+        assert!(cpu.regs.z_flag(), "Z should be set after XOR A,A");
+        assert!(!cpu.regs.n_flag());
+        assert!(!cpu.regs.h_flag());
+        assert!(!cpu.regs.c_flag());
+    }
+
+    // -----------------------------------------------------------------------
+    // AND A, r — H flag always set
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_and_a_b_sets_h_flag() {
+        let mut cpu = cpu_with(&[0x3E, 0xFF, 0x06, 0x0F, 0xA0]); // LD A,0xFF; LD B,0x0F; AND A,B
+        cpu.execute();
+        cpu.execute();
+        cpu.execute();
+        assert_eq!(cpu.regs.a, 0x0F);
+        assert!(cpu.regs.h_flag(), "AND always sets H");
+        assert!(!cpu.regs.n_flag());
+        assert!(!cpu.regs.c_flag());
+    }
+
+    // -----------------------------------------------------------------------
+    // INC / DEC r8 — flag behavior
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_inc_b_sets_h_flag_on_nibble_overflow() {
+        // B=0x0F; INC B → B=0x10, H=1, Z=0, N=0
+        let mut cpu = cpu_with(&[0x06, 0x0F, 0x04]);
+        cpu.execute();
+        cpu.execute();
+        assert_eq!(cpu.regs.b, 0x10);
+        assert!(cpu.regs.h_flag());
+        assert!(!cpu.regs.z_flag());
+        assert!(!cpu.regs.n_flag());
+    }
+
+    #[test]
+    fn test_inc_b_sets_z_flag_on_wrap() {
+        // B=0xFF; INC B → B=0x00, Z=1
+        let mut cpu = cpu_with(&[0x06, 0xFF, 0x04]);
+        cpu.execute();
+        cpu.execute();
+        assert_eq!(cpu.regs.b, 0x00);
+        assert!(cpu.regs.z_flag());
+    }
+
+    #[test]
+    fn test_dec_b_sets_n_flag() {
+        let mut cpu = cpu_with(&[0x06, 0x02, 0x05]);
+        cpu.execute();
+        cpu.execute();
+        assert_eq!(cpu.regs.b, 0x01);
+        assert!(cpu.regs.n_flag(), "DEC always sets N");
+    }
+
+    #[test]
+    fn test_dec_b_sets_z_when_result_is_zero() {
+        let mut cpu = cpu_with(&[0x06, 0x01, 0x05]);
+        cpu.execute();
+        cpu.execute();
+        assert_eq!(cpu.regs.b, 0);
+        assert!(cpu.regs.z_flag());
+        assert!(cpu.regs.n_flag());
+    }
+
+    // -----------------------------------------------------------------------
+    // PUSH / POP round-trip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_push_bc_pop_de_transfers_value() {
+        // Set BC=0xBEEF, SP=0xFF00; PUSH BC; POP DE
+        // program: LD BC,n16; LD SP,n16; PUSH BC; POP DE
+        let mut cpu = cpu_with(&[
+            0x01, 0xEF, 0xBE, // LD BC, 0xBEEF
+            0x31, 0x00, 0xFF, // LD SP, 0xFF00
+            0xC5, // PUSH BC
+            0xD1, // POP DE
+        ]);
+        cpu.execute(); // LD BC
+        cpu.execute(); // LD SP
+        cpu.execute(); // PUSH BC
+        cpu.execute(); // POP DE
+        assert_eq!(
+            cpu.regs.de(),
+            0xBEEF,
+            "POP DE should restore pushed BC value"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // JR e8 — relative jump
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_jr_unconditional_takes_3_m_cycles_and_jumps() {
+        // JR +2: PC starts at 0, fetch opcode (1 M-cycle), fetch offset (1), jump (1) = 3
+        // After the jump: new PC = 0x0002 + 0x0002 = 0x0004
+        let mut cpu = cpu_with(&[0x18, 0x02]);
+        cpu.execute();
+        assert_eq!(cpu.regs.pc, 0x04, "JR +2 from PC=2 → PC=4");
+        assert_eq!(cpu.cycles(), 3);
+    }
+
+    #[test]
+    fn test_jr_nz_not_taken_no_extra_cycle() {
+        // Z=0 so NZ condition is true → branch taken
+        // A=0x01, then set Z via XOR then restore...
+        // Instead: start with Z=1 (set manually via XOR A,A), then JR NZ should NOT jump
+        let mut cpu = cpu_with(&[
+            0xAF, // XOR A,A → Z=1
+            0x20, 0x05, // JR NZ, +5 — not taken because Z=1
+            0x00, // NOP (executed next)
+        ]);
+        cpu.execute(); // XOR A,A
+        let pc_before = cpu.regs.pc;
+        cpu.execute(); // JR NZ, +5
+        // Not taken → PC = pc_before + 2 (opcode + offset)
+        assert_eq!(
+            cpu.regs.pc,
+            pc_before + 2,
+            "JR NZ not taken should advance PC by 2"
+        );
+        assert_eq!(
+            cpu.cycles(),
+            1 + 2, // XOR(1) + JR-not-taken(2)
+            "Not-taken JR NZ costs 2 M-cycles"
+        );
+    }
+
+    #[test]
+    fn test_jr_nz_taken_adds_extra_cycle() {
+        // Z=0 (default), JR NZ should jump
+        let mut cpu = cpu_with(&[0x20, 0x03]); // JR NZ, +3; → PC = 2 + 3 = 5
+        cpu.execute();
+        assert_eq!(cpu.regs.pc, 5);
+        assert_eq!(cpu.cycles(), 3, "Taken JR NZ costs 3 M-cycles");
+    }
+
+    // -----------------------------------------------------------------------
+    // CALL / RET
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_call_pushes_pc_and_jumps() {
+        // CALL 0x0100
+        // Program at 0x0000: CD 00 01
+        // SP starts at 0xFFFE
+        let mut program = [0u8; 0x200];
+        program[0] = 0xCD;
+        program[1] = 0x00;
+        program[2] = 0x01;
+        let mut cpu = Sm83::new(TestBus::new(&program));
+        cpu.regs.sp = 0xFFFE;
+        cpu.execute();
+        assert_eq!(cpu.regs.pc, 0x0100, "CALL should jump to target");
+        assert_eq!(
+            cpu.regs.sp, 0xFFFC,
+            "CALL should push return addr, decrementing SP by 2"
+        );
+    }
+
+    #[test]
+    fn test_ret_pops_and_jumps_back() {
+        // Manually push 0x0200 onto the stack then RET
+        let mut program = [0u8; 0x300];
+        program[0] = 0xC9; // RET at 0x0000
+        let mut cpu = Sm83::new(TestBus::new(&program));
+        cpu.regs.sp = 0xFFFE;
+        // Push 0x0200 manually
+        cpu.regs.sp = cpu.regs.sp.wrapping_sub(2);
+        cpu.bus.write(cpu.regs.sp, 0x00);
+        cpu.bus.write(cpu.regs.sp.wrapping_add(1), 0x02);
+        cpu.execute(); // RET
+        assert_eq!(
+            cpu.regs.pc, 0x0200,
+            "RET should load popped address into PC"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // CB-prefix — BIT, SET, RES
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_cb_bit_0_b_clears_z_when_bit_set() {
+        // B=0x01; CB BIT 0,B → Z=0 (bit 0 is set)
+        let mut cpu = cpu_with(&[0x06, 0x01, 0xCB, 0x40]); // LD B,1; BIT 0,B
+        cpu.execute();
+        cpu.execute();
+        assert!(
+            !cpu.regs.z_flag(),
+            "BIT 0,B: Z should be clear if bit is set"
+        );
+        assert!(cpu.regs.h_flag(), "BIT always sets H");
+        assert!(!cpu.regs.n_flag(), "BIT always clears N");
+    }
+
+    #[test]
+    fn test_cb_bit_0_b_sets_z_when_bit_clear() {
+        // B=0x02; CB BIT 0,B → Z=1 (bit 0 is clear)
+        let mut cpu = cpu_with(&[0x06, 0x02, 0xCB, 0x40]);
+        cpu.execute();
+        cpu.execute();
+        assert!(
+            cpu.regs.z_flag(),
+            "BIT 0,B: Z should be set if bit is clear"
+        );
+    }
+
+    #[test]
+    fn test_cb_set_0_b_sets_bit_0() {
+        let mut cpu = cpu_with(&[0x06, 0x00, 0xCB, 0xC0]); // LD B,0; SET 0,B
+        cpu.execute();
+        cpu.execute();
+        assert_eq!(cpu.regs.b, 0x01, "SET 0,B should set bit 0");
+    }
+
+    #[test]
+    fn test_cb_res_0_b_clears_bit_0() {
+        let mut cpu = cpu_with(&[0x06, 0xFF, 0xCB, 0x80]); // LD B,0xFF; RES 0,B
+        cpu.execute();
+        cpu.execute();
+        assert_eq!(cpu.regs.b, 0xFE, "RES 0,B should clear bit 0");
+    }
+
+    #[test]
+    fn test_cb_rl_b_rotates_through_carry() {
+        // B=0x80, C_flag=0 → RL B → B=0x00, C=1, Z=1
+        let mut cpu = cpu_with(&[0x06, 0x80, 0xCB, 0x10]); // LD B,0x80; RL B
+        cpu.execute();
+        cpu.execute();
+        assert_eq!(cpu.regs.b, 0x00);
+        assert!(cpu.regs.c_flag());
+        assert!(cpu.regs.z_flag());
+    }
+
+    // -----------------------------------------------------------------------
+    // HALT
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_halt_sets_halted_flag() {
+        let mut cpu = cpu_with(&[0x76]); // HALT
+        cpu.execute();
+        assert!(cpu.halted, "HALT should set the halted flag");
+    }
+
+    #[test]
+    fn test_halted_cpu_consumes_1_m_cycle_per_execute_without_advancing_pc() {
+        let mut cpu = cpu_with(&[0x76, 0x00]);
+        cpu.execute(); // HALT — PC=1
+        let pc = cpu.regs.pc;
+        let cycles_before = cpu.cycles();
+        cpu.execute(); // stall (halted)
+        assert_eq!(cpu.regs.pc, pc, "PC should not advance while halted");
+        assert_eq!(
+            cpu.cycles(),
+            cycles_before + 1,
+            "Each halted tick costs 1 M-cycle"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // CPL
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_cpl_complements_a_and_sets_n_h() {
+        let mut cpu = cpu_with(&[0x3E, 0b10110101, 0x2F]); // LD A,0xB5; CPL
+        cpu.execute();
+        cpu.execute();
+        assert_eq!(cpu.regs.a, !0b10110101u8);
+        assert!(cpu.regs.n_flag(), "CPL sets N");
+        assert!(cpu.regs.h_flag(), "CPL sets H");
+    }
+
+    // -----------------------------------------------------------------------
+    // SCF / CCF
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_scf_sets_carry_and_clears_n_h() {
+        let mut cpu = cpu_with(&[0x37]); // SCF
+        cpu.execute();
+        assert!(cpu.regs.c_flag());
+        assert!(!cpu.regs.n_flag());
+        assert!(!cpu.regs.h_flag());
+    }
+
+    #[test]
+    fn test_ccf_flips_carry() {
+        let mut cpu = cpu_with(&[0x37, 0x3F]); // SCF; CCF
+        cpu.execute();
+        cpu.execute();
+        assert!(
+            !cpu.regs.c_flag(),
+            "CCF should flip carry from set to clear"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Interrupt dispatch
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_interrupt_dispatch_jumps_to_vblank_vector_when_ime_set() {
+        // Sets up: IME=true, IE=0x01 (VBlank enabled), IF=0x01 (VBlank pending)
+        // CPU should service the interrupt on next execute():
+        //   - 2 internal cycles + push_pc (2 cycles) + jump (1 cycle) = 5 M-cycles
+        let mut program = [0u8; 0x10000];
+        program[0xFFFF] = 0x01; // IE: VBlank bit
+        program[0xFF0F] = 0x01; // IF: VBlank pending
+        let mut cpu = Sm83::new(TestBus::new(&program));
+        cpu.ime = true;
+        cpu.regs.pc = 0x1000;
+        cpu.regs.sp = 0xFFFE;
+        let cycles_before = cpu.cycles();
+        cpu.execute();
+        assert_eq!(cpu.regs.pc, 0x0040, "Should jump to VBlank vector 0x0040");
+        assert_eq!(
+            cpu.cycles() - cycles_before,
+            5,
+            "Interrupt dispatch takes 5 M-cycles"
+        );
+        assert!(!cpu.ime, "IME should be cleared after interrupt");
+    }
+
+    #[test]
+    fn test_interrupt_clears_if_bit_for_serviced_source() {
+        let mut program = [0u8; 0x10000];
+        program[0xFFFF] = 0x01; // IE: VBlank
+        program[0xFF0F] = 0x01; // IF: VBlank
+        let mut cpu = Sm83::new(TestBus::new(&program));
+        cpu.ime = true;
+        cpu.regs.sp = 0xFFFE;
+        cpu.execute();
+        let new_if = cpu.bus.mem[0xFF0F];
+        assert_eq!(
+            new_if & 0x01,
+            0,
+            "VBlank IF bit should be cleared after dispatch"
+        );
+    }
+
+    #[test]
+    fn test_interrupt_with_ime_false_only_wakes_from_halt() {
+        let mut program = [0u8; 0x10000];
+        program[0xFFFF] = 0x01;
+        program[0xFF0F] = 0x01;
+        let mut cpu = Sm83::new(TestBus::new(&program));
+        cpu.ime = false;
+        cpu.halted = true;
+        cpu.regs.pc = 0x1000;
+        cpu.execute();
+        assert!(!cpu.halted, "Pending interrupt should wake CPU from HALT");
+        assert_eq!(cpu.regs.pc, 0x1000, "PC should not change if IME=false");
+    }
+}
