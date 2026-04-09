@@ -410,18 +410,9 @@ mod tests {
 
     #[test]
     fn chr_outer_bank_from_ex_reg0_bit7_and_bit3() {
-        // exRegs[0] = 0x20 (bit 5 set): chr_outer = (0x20 << 3) & 0x0100 = 0x100 = 256
-        // But CHR_1K_BANKS = 256, so bank 256 wraps to 0.
-        // Let me use a value where the outer bank stays in range.
-        // exRegs[0] = 0x20: reg << 3 & 0x0100 = 0x100. Other terms: 0.
-        // outer = 0x100. With 256 banks, 0x100 % 256 = 0.
-        // Use more CHR banks or pick a different outer.
-
-        // Actually, let me test with exRegs[0] bit 7 = 1 AND bit 3 = 1:
-        // exRegs[0] = 0x88: reg << 4 & 0x0080 & reg → 0x880 & 0x80 = 0x80, & 0x88 = 0x80
-        // Plus bit 5=0, bit 4=0 → outer = 0x80
-        // inner mask (bit 7 set) = 0x7F
-        // R2 = 5: bank = 0x80 | (5 & 0x7F) = 0x85 = 133
+        // exRegs[0] = 0x88 selects CHR outer bank 0x80 and an inner mask of 0x7F.
+        // With MMC3 R2 = 5, the mapped 1 KiB CHR bank at $1000 is
+        // 0x80 | (5 & 0x7F) = 0x85 = 133.
         let mut mapper = make_mapper();
         write_ex_reg(&mut mapper, 0, 0x88);
         mapper.write_prg(0x8000, 0b0000_0010); // R2
