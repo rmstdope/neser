@@ -1,20 +1,19 @@
 pub mod breakpoints;
-// Depends on DebuggerUiAction from `ui` module (also feature-gated).
-// Tests run under `cargo test --lib` (default features include `native`).
-#[cfg(feature = "native")]
-pub mod control;
-mod disasm;
 mod logging;
-pub mod ppu_viewer;
-pub(crate) mod snapshot;
 mod tracing;
-mod types;
-
-#[cfg(feature = "native")]
-pub mod ui;
 
 pub use logging::log_info;
-#[allow(unused_imports)] // Used by frontend features
-pub use snapshot::{DebuggerViewState, snapshot};
 pub use tracing::*;
-pub use types::DebuggerSnapshot;
+
+// Re-export NES-specific debugging modules for backward compatibility.
+// These moved to crate::nes::debugging but consumers still import from here.
+#[cfg(feature = "native")]
+pub use crate::nes::debugging::control;
+pub use crate::nes::debugging::ppu_viewer;
+#[cfg(feature = "native")]
+pub use crate::nes::debugging::ui;
+
+#[allow(unused_imports)]
+pub use crate::nes::debugging::snapshot::{DebuggerViewState, snapshot};
+#[allow(unused_imports)]
+pub use crate::nes::debugging::types::DebuggerSnapshot;
