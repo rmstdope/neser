@@ -82,6 +82,7 @@ use super::irem::nina_tengen::NinaTengenMapper;
 use super::camerica::camerica::CamericaMapper;
 
 // Tengen mappers
+use super::tengen::mapper158::Mapper158;
 use super::tengen::tengen_rambo1::TengenRambo1Mapper;
 
 // Sachen mappers
@@ -921,6 +922,7 @@ mapper_registry! {
     62 => Mapper62::new,
     63 => Mapper63::new,
     64 => TengenRambo1Mapper::new,
+    158 => Mapper158::new,
     65 => IremH3001Mapper::new,
     66 => GxROMMapper::new,
     67 => Sunsoft3Mapper::new,

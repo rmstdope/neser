@@ -113,6 +113,11 @@ impl TengenRambo1Mapper {
     }
 
     /// Returns the 1KB CHR bank for a given 1KB slot (0-7 for PPU $0000-$1FFF).
+    /// Returns `(register_index, chr_a12_inv)` from the last $8000 write.
+    pub(crate) fn bank_select_state(&self) -> (u8, bool) {
+        (self.bank_select, self.chr_a12_inv)
+    }
+
     fn chr_1k_bank_for_slot(&self, slot: usize) -> usize {
         let k = self.k_bit;
         let c = self.chr_a12_inv;
