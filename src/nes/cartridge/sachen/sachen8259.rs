@@ -248,7 +248,7 @@ impl Mapper for Sachen8259 {
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        let mut snap = Vec::with_capacity(2 + CIRAM_SIZE);
+        let mut snap = Vec::with_capacity(9 + CIRAM_SIZE);
         snap.push(self.reg_select);
         snap.extend_from_slice(&self.regs);
         snap.extend_from_slice(&self.ciram);

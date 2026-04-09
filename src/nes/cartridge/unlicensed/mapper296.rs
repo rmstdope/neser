@@ -263,9 +263,9 @@ impl Mapper296 {
         let outer_1kb = self.chr_1kb_outer_offset();
         let chr_mode_8kb = (self.mmc1_control & Self::MMC1_CHR_MODE_BIT) == 0;
         let bank_1kb = if chr_mode_8kb {
-            // 8 KiB mode: chr0 selects 8 KiB (bit 0 ignored)
-            let base_8kb = (self.mmc1_chr0 & 0xFE) as usize;
-            outer_1kb | (base_8kb * 8 + (((addr as usize) & 0x1FFF) >> 10))
+            // 8 KiB mode: chr0 is a 4 KiB bank index with bit 0 ignored (aligned to even bank).
+            let base_4kb = (self.mmc1_chr0 & 0xFE) as usize;
+            outer_1kb | (base_4kb * 4 + (((addr as usize) & 0x1FFF) >> 10))
         } else {
             // 4 KiB mode: chr0 at $0000, chr1 at $1000
             let (bank_4kb, sub) = if (addr & 0x1000) == 0 {
@@ -886,6 +886,163 @@ mod tests {
         assert_eq!(m.unrom_bank, 0);
         assert_eq!(m.cnrom_bank, 0);
         assert_eq!(m.mmc1_control, 0x0C, "MMC1 control resets to 0x0C");
+    }
+
+    // ── CHR outer offset – A26, A27 ──────────────────────────────────────────
+
+    #[test]
+    fn test_chr_1kb_outer_offset_a26() {
+        let mut m = create_mapper();
+        m.write_prg(0x412C, 0x08); // CHR A26
+        assert_eq!(m.chr_1kb_outer_offset(), 1 << 16);
+    }
+
+    #[test]
+    fn test_chr_1kb_outer_offset_a27() {
+        let mut m = create_mapper();
+        m.write_prg(0x412E, 0x01); // A27
+        assert_eq!(m.chr_1kb_outer_offset(), 1 << 17);
+    }
+
+    // ── Mode 1: MMC1 CHR banking ─────────────────────────────────────────────
+
+    #[test]
+    fn test_mmc1_chr_8kb_mode_bank0_selects_8kb_block() {
+        // MMC1 default control bit4=0 → 8 KiB CHR mode.
+        // In 8 KiB mode chr0 is a 4 KiB bank index; bit 0 is ignored (aligned to even bank).
+        // chr0=2 → 4 KiB bank 2 (bit0 already 0) → 1 KiB banks 8..15.
+        // PPU $0000 → 1 KiB bank 8, filled with 8.
+        let mut m = create_mapper();
+        m.write_prg(0x411D, 0x01); // MMC1 mode
+        // Write chr0=2 to $A000 (5 bits: 0b00010)
+        for bit in [0u8, 1, 0, 0, 0] {
+            m.write_prg(0xA000, bit);
+        }
+        let val = m.read_chr(0x0000);
+        assert_eq!(val, 8, "MMC1 8KB CHR: chr0=2 → 1KB bank 8 → value 8");
+
+        // chr0=3 (bit 0 set) must map to the same 8 KiB block as chr0=2.
+        let mut m2 = create_mapper();
+        m2.write_prg(0x411D, 0x01);
+        for bit in [1u8, 1, 0, 0, 0] {
+            m2.write_prg(0xA000, bit);
+        }
+        assert_eq!(
+            m2.read_chr(0x0000),
+            8,
+            "MMC1 8KB CHR: chr0=3 (bit0 ignored) → same 1KB bank 8"
+        );
+    }
+
+    #[test]
+    fn test_mmc1_chr_4kb_mode_banks_at_0000_and_1000() {
+        // Set CHR mode to 4 KiB (bit 4 of control = 1).
+        // Write control = 0b10000 (bit4=1) to $8000.
+        let mut m = create_mapper();
+        m.write_prg(0x411D, 0x01); // MMC1 mode
+        // Set mmc1_control bit 4 via 5-bit write to $8000 → value 0b10000 = 16
+        for bit in [0u8, 0, 0, 0, 1] {
+            m.write_prg(0x8000, bit);
+        }
+        // chr0 = 2 (4KB bank at $0000)
+        for bit in [0u8, 1, 0, 0, 0] {
+            m.write_prg(0xA000, bit);
+        }
+        // chr1 = 3 (4KB bank at $1000)
+        for bit in [1u8, 1, 0, 0, 0] {
+            m.write_prg(0xC000, bit);
+        }
+        // $0000: 4KB bank 2 → 1KB banks 8..11; PPU $0000 → 1KB bank 8, filled with 8
+        assert_eq!(
+            m.read_chr(0x0000),
+            8,
+            "4KB CHR: bank 2 at $0000 → 1KB bank 8"
+        );
+        // $1000: 4KB bank 3 → 1KB banks 12..15; PPU $1000 → 1KB bank 12, filled with 12
+        assert_eq!(
+            m.read_chr(0x1000),
+            12,
+            "4KB CHR: bank 3 at $1000 → 1KB bank 12"
+        );
+    }
+
+    // ── Mode 1: MMC1 mirroring ───────────────────────────────────────────────
+
+    #[test]
+    fn test_mmc1_mirroring_single_screen_lower() {
+        let mut m = create_mapper();
+        m.write_prg(0x411D, 0x01);
+        // Control bits 1:0 = 0 → SingleScreenLower
+        for bit in [0u8, 0, 0, 0, 0] {
+            m.write_prg(0x8000, bit);
+        }
+        assert_eq!(m.mmc1_mirroring(), NametableLayout::SingleScreenLower);
+    }
+
+    #[test]
+    fn test_mmc1_mirroring_single_screen_upper() {
+        let mut m = create_mapper();
+        m.write_prg(0x411D, 0x01);
+        // Control bits 1:0 = 1 → SingleScreenUpper
+        for bit in [1u8, 0, 0, 0, 0] {
+            m.write_prg(0x8000, bit);
+        }
+        assert_eq!(m.mmc1_mirroring(), NametableLayout::SingleScreenUpper);
+    }
+
+    #[test]
+    fn test_mmc1_mirroring_vertical() {
+        let mut m = create_mapper();
+        m.write_prg(0x411D, 0x01);
+        // Control bits 1:0 = 2 → Vertical
+        for bit in [0u8, 1, 0, 0, 0] {
+            m.write_prg(0x8000, bit);
+        }
+        assert_eq!(m.mmc1_mirroring(), NametableLayout::Vertical);
+    }
+
+    #[test]
+    fn test_mmc1_mirroring_horizontal() {
+        let mut m = create_mapper();
+        m.write_prg(0x411D, 0x01);
+        // Control bits 1:0 = 3 → Horizontal
+        for bit in [1u8, 1, 0, 0, 0] {
+            m.write_prg(0x8000, bit);
+        }
+        assert_eq!(m.mmc1_mirroring(), NametableLayout::Horizontal);
+    }
+
+    // ── Mode 2: UNROM CHR passthrough ────────────────────────────────────────
+
+    #[test]
+    fn test_unrom_chr_reads_from_chr_rom_bank0() {
+        let mut m = create_mapper();
+        m.write_prg(0x411D, 0x02); // UNROM mode
+        // PPU $0000 → 1KB bank 0, filled with 0
+        let val = m.read_chr(0x0000);
+        assert_eq!(val, 0, "UNROM CHR: PPU $0000 → bank 0 → 0");
+        // PPU $1C00 → 1KB bank 7 (offset 0x1C00 >> 10 = 7), filled with 7
+        let val = m.read_chr(0x1C00);
+        assert_eq!(val, 7, "UNROM CHR: PPU $1C00 → 1KB bank 7 → 7");
+    }
+
+    // ── WRAM helpers ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_wram_size_is_zero() {
+        assert_eq!(create_mapper().wram_size(), 0);
+    }
+
+    #[test]
+    fn test_wram_snapshot_is_empty() {
+        assert!(create_mapper().wram_snapshot().is_empty());
+    }
+
+    #[test]
+    fn test_load_wram_snapshot_is_noop() {
+        let mut m = create_mapper();
+        m.load_wram_snapshot(&[0xAB; 1024]); // should not panic or change state
+        assert_eq!(m.wram_size(), 0);
     }
 
     // ── Capabilities ─────────────────────────────────────────────────────────

@@ -46,6 +46,7 @@ use super::namco::namcot_3446::Namcot3446Mapper;
 use super::bandai::bandai_fcg::BandaiFcgMapper;
 use super::bandai::mapper70::Mapper70;
 use super::bandai::mapper96::Mapper96;
+use super::bandai::mapper157::Mapper157;
 
 // Sunsoft mappers
 use super::sunsoft::sunsoft_2::Sunsoft2Mapper;
@@ -88,6 +89,7 @@ use super::sachen::mapper36::Mapper36;
 use super::sachen::mapper132::Mapper132;
 use super::sachen::mapper133::Mapper133;
 use super::sachen::mapper136::Mapper136;
+use super::sachen::mapper150::Mapper150;
 use super::sachen::mapper243::Mapper243;
 use super::sachen::sachen8259::Sachen8259;
 
@@ -153,9 +155,11 @@ use super::unlicensed::mapper124::Mapper124;
 use super::unlicensed::mapper125::Mapper125;
 use super::unlicensed::mapper126::Mapper126;
 use super::unlicensed::mapper128::Mapper128;
+use super::unlicensed::mapper134::Mapper134;
 use super::unlicensed::mapper165::Mapper165;
 use super::unlicensed::mapper199::Mapper199;
 use super::unlicensed::mapper200::Mapper200;
+use super::unlicensed::mapper201::Mapper201;
 use super::unlicensed::mapper202::Mapper202;
 use super::unlicensed::mapper204::Mapper204;
 use super::unlicensed::mapper205::Mapper205;
@@ -979,6 +983,8 @@ mapper_registry! {
     126 => Mapper126::new,
     128 => Mapper128::new,
     129 => Mapper58::new,
+    130 => Mapper331::new,
+    131 => Mapper205::new,
     132 => Mapper132::new,
     133 => Mapper133::new,
     135 => Sachen8259::new,
@@ -986,14 +992,18 @@ mapper_registry! {
     137 => Sachen8259::new,
     138 => Sachen8259::new,
     139 => Sachen8259::new,
+    134 => Mapper134::new,
     140 => JalecoJf11Mapper::new,
+    150 => Mapper150::new,
     151 => Mapper151::new,
     155 => MMC1Mapper::new,
+    157 => Mapper157::new,
     165 => Mapper165::new,
     180 => UxromInvertedMapper::new,
     185 => CnromSecurityMapper::new,
     199 => Mapper199::new,
     200 => Mapper200::new,
+    201 => Mapper201::new,
     202 => Mapper202::new,
     204 => Mapper204::new,
     205 => Mapper205::new,
@@ -1577,6 +1587,20 @@ mod tests {
     }
 
     // --- MapperCapabilities tests ---
+
+    #[test]
+    fn mapper_130_is_alias_for_mapper_331() {
+        // Mapper 130 is an alternative assignment for the behavior of iNES Mapper 331.
+        let m = make_mapper(130);
+        assert_eq!(m.mapper_number(), 331);
+    }
+
+    #[test]
+    fn mapper_131_is_alias_for_mapper_205() {
+        // Mapper 131 is an alternative assignment for the behavior of iNES Mapper 205.
+        let m = make_mapper(131);
+        assert_eq!(m.mapper_number(), 205);
+    }
 
     fn make_mapper(id: u16) -> Box<dyn Mapper> {
         let prg_size = 32 * 1024; // Use 32KB PRG-ROM for these tests (MMC5 and others)

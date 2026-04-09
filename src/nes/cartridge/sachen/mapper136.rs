@@ -57,9 +57,9 @@ impl Mapper136 {
         addr & 0xE100 == 0x4100
     }
 
-    /// True when `addr` reads back the register (bit 8 set, bits 1–0 == 00).
+    /// True when `addr` reads back the register (masked $4100, bits 1–0 == 00).
     fn is_register_read(addr: u16) -> bool {
-        addr & 0x0101 == 0x0100
+        addr & 0xE103 == 0x4100
     }
 
     /// The 6-bit value returned when the register is read.
