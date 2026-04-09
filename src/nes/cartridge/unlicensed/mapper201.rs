@@ -7,12 +7,12 @@
 //!
 //! ## Hardware behavior
 //!
-//! A write to any address in `$8000–$FFFF` latches address bits into the bank
-//! register (the data byte is ignored, address lines only):
+//! A write to any address in `$8000–$FFFF` latches the low 8 bits of the write
+//! address into bank register `R` (the data byte is ignored; address lines only):
 //!
 //! ```text
 //! A~[.... ....  RRRR RRRR]
-//!               +--------- PRG A17..A15, CHR A15..A13 (bank select, bits [7:0])
+//!               +--------- bank register R = addr & 0x00FF
 //! ```
 //!
 //! **PRG banking (32 KB pages):**
