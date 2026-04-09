@@ -2,8 +2,8 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::cartridge::{HardwareType, ParsedRom, RomDb};
-use crate::console::{
+use crate::nes::cartridge::{HardwareType, ParsedRom, RomDb};
+use crate::nes::console::{
     CartridgeCatalogOptions, default_catalog_csv_path, refresh_cartridge_catalog,
 };
 
@@ -171,7 +171,7 @@ fn hardware_label(hw: HardwareType) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::RomDb;
+    use crate::nes::cartridge::RomDb;
     use std::io::Write;
     use tempfile::NamedTempFile;
 
@@ -231,7 +231,7 @@ mod tests {
         let rom_bytes = minimal_nrom_rom();
         let prg = &rom_bytes[16..16 + 16 * 1024];
         let chr = &rom_bytes[16 + 16 * 1024..];
-        let crc = crate::cartridge::calculate_rom_crc32(prg, chr);
+        let crc = crate::nes::cartridge::calculate_rom_crc32(prg, chr);
         let csv = format!(
             "rom_id,name,country,crc,hardware,rom_class,mapper,submapper,nametable_layout,\
              prg_rom_size,prg_rom_crc,prg_nvram_size,prg_ram_size,chr_rom_size,chr_rom_crc,\

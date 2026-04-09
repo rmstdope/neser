@@ -4,8 +4,9 @@
 //! keyboard handler, event loop, and rendering code share a single source of
 //! truth without borrowing individual fields piecemeal.
 
+use crate::autorun::AutorunMode;
 use crate::autorun::state::AutorunState;
-use crate::console::{AutorunMode, Nes, TimingMode};
+use crate::nes::console::{Nes, TimingMode};
 use winit::keyboard::ModifiersState;
 
 /// State for the in-game cartridge-switch dialog.
@@ -233,6 +234,7 @@ impl NativeAppState {
                 .app_context()
                 .borrow()
                 .config()
+                .nes
                 .hardware_model
                 .timing_mode();
             return Some(autorun_overlay_text(autorun, tv_system));
@@ -461,7 +463,7 @@ fn format_mm_ss(seconds: usize) -> String {
 mod tests {
     use super::*;
     use crate::app_context::AppContext;
-    use crate::console::Config;
+    use crate::nes::console::{Config, NesConfig};
 
     fn make_nes() -> Nes {
         Nes::new(AppContext::new_with_config(Config::default()))
@@ -1025,7 +1027,10 @@ mod tests {
     #[test]
     fn test_help_overlay_shows_power_pad_section_when_port2_is_power_pad() {
         let config = Config {
-            controller_port2: crate::input::ControllerType::PowerPad,
+            nes: NesConfig {
+                controller_port2: crate::input::ControllerType::PowerPad,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let nes = Nes::new(AppContext::new_with_config(config));
@@ -1047,7 +1052,10 @@ mod tests {
     #[test]
     fn test_help_overlay_shows_power_pad_section_when_port1_is_power_pad() {
         let config = Config {
-            controller_port1: crate::input::ControllerType::PowerPad,
+            nes: NesConfig {
+                controller_port1: crate::input::ControllerType::PowerPad,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let nes = Nes::new(AppContext::new_with_config(config));

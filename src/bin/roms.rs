@@ -2,7 +2,7 @@
 // in `src/cartridge/ines.rs`. The local copies were removed to avoid
 // dead-code warnings.
 
-use neser::cartridge::{ConsoleType, ParsedRom, RomDb, RomParseError, TimingMode};
+use neser::nes::cartridge::{ConsoleType, ParsedRom, RomDb, RomParseError, TimingMode};
 
 const DEFAULT_LIST_ROOT: &str = "roms/games";
 
@@ -307,7 +307,7 @@ mod tests {
 
         let prg_rom = vec![0xAA; 16 * 1024];
         let chr_rom = vec![0xBB; 8 * 1024];
-        let expected_crc = neser::cartridge::calculate_rom_crc32(&prg_rom, &chr_rom);
+        let expected_crc = neser::nes::cartridge::calculate_rom_crc32(&prg_rom, &chr_rom);
 
         let mut rom_bytes = header.to_vec();
         rom_bytes.extend_from_slice(&prg_rom);
@@ -377,7 +377,7 @@ mod tests {
 
         let prg_rom = vec![0xAA; 16 * 1024];
         let chr_rom = vec![0xBB; 8 * 1024];
-        let expected_crc = neser::cartridge::calculate_rom_crc32(&prg_rom, &chr_rom);
+        let expected_crc = neser::nes::cartridge::calculate_rom_crc32(&prg_rom, &chr_rom);
 
         let mut rom_bytes = header.to_vec();
         rom_bytes.extend_from_slice(&prg_rom);

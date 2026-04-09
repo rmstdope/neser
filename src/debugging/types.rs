@@ -10,7 +10,7 @@ pub struct CpuRegsSnapshot {
     pub frame_count: u64,
     pub scanline: u16,
     pub pixel: u16,
-    pub interrupt: Option<crate::cpu::InterruptKind>,
+    pub interrupt: Option<crate::nes::cpu::InterruptKind>,
     pub nmi_vector: u16,
     pub reset_vector: u16,
     pub irq_vector: u16,

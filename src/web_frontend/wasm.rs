@@ -1,7 +1,5 @@
 use crate::app_context::{AppContext, SharedAppContext};
 use crate::autorun::crc32;
-use crate::cartridge::Cartridge;
-use crate::console::{Config, Nes, SaveState, log_hardware_selection};
 use crate::debugging::DebuggerViewState;
 use crate::debugging::ppu_viewer::{
     PpuViewerSnapshot, render_nametables_rgba, render_pattern_tables_rgba,
@@ -11,6 +9,8 @@ use crate::frontend_toasts::{
     gamepad_init_toast_message as shared_gamepad_init_toast_message, hardware_mode_toast_message,
 };
 use crate::input::{Button, ControllerType, SnesButton};
+use crate::nes::cartridge::Cartridge;
+use crate::nes::console::{Config, Nes, SaveState, log_hardware_selection};
 use crate::wasm_autorun::WasmAutorunState;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -70,8 +70,8 @@ impl WasmNes {
         let cfg = self.app_context.borrow();
         let config = cfg.config();
         (
-            config.horizontal_overscan as u32,
-            config.vertical_overscan as u32,
+            config.nes.horizontal_overscan as u32,
+            config.nes.vertical_overscan as u32,
         )
     }
 
@@ -142,16 +142,17 @@ impl WasmNes {
                 .app_context()
                 .borrow()
                 .config()
+                .nes
                 .hardware_model
                 .timing_mode(),
         ));
         {
             let config = self.nes.app_context().borrow().config().clone();
             self.pending_toasts.push(hardware_mode_toast_message(
-                config.hardware_mode,
-                config.hardware_model,
-                config.expansion_port,
-                config.four_score_enabled,
+                config.nes.hardware_mode,
+                config.nes.hardware_model,
+                config.nes.expansion_port,
+                config.nes.four_score_enabled,
             ));
         }
         web_sys::console::log_1(&JsValue::from_str("ROM loaded successfully"));
@@ -474,7 +475,12 @@ impl WasmNes {
 
     #[wasm_bindgen]
     pub fn is_four_score_enabled(&self) -> bool {
-        self.nes.app_context().borrow().config().four_score_enabled
+        self.nes
+            .app_context()
+            .borrow()
+            .config()
+            .nes
+            .four_score_enabled
     }
 
     /// Set the controller type for a port.
@@ -518,10 +524,10 @@ impl WasmNes {
         {
             let config = app_context.borrow().config().clone();
             self.pending_toasts.push(hardware_mode_toast_message(
-                config.hardware_mode,
-                config.hardware_model,
-                config.expansion_port,
-                config.four_score_enabled,
+                config.nes.hardware_mode,
+                config.nes.hardware_model,
+                config.nes.expansion_port,
+                config.nes.four_score_enabled,
             ));
         }
 
@@ -549,22 +555,26 @@ impl WasmNes {
     #[wasm_bindgen]
     pub fn get_hardware_mode(&self) -> String {
         let config = self.app_context.borrow().config().clone();
-        match config.hardware_mode {
-            crate::console::HardwareMode::Nes => config.hardware_model.as_str().to_string(),
-            crate::console::HardwareMode::Famicom => "famicom".to_string(),
+        match config.nes.hardware_mode {
+            crate::nes::console::HardwareMode::Nes => {
+                config.nes.hardware_model.as_str().to_string()
+            }
+            crate::nes::console::HardwareMode::Famicom => "famicom".to_string(),
         }
     }
 
     /// Get the current expansion port as a string.
     #[wasm_bindgen]
     pub fn get_expansion_port(&self) -> String {
-        match self.app_context.borrow().config().expansion_port {
-            crate::console::ExpansionPort::None => "none".to_string(),
-            crate::console::ExpansionPort::FamicomFourPlayers => "famicom-four-players".to_string(),
-            crate::console::ExpansionPort::ArkanoidFamicom => "arkanoid".to_string(),
-            crate::console::ExpansionPort::ZapperFamicom => "zapper".to_string(),
-            crate::console::ExpansionPort::PowerPadFamicom => "power-pad".to_string(),
-            crate::console::ExpansionPort::VsSystem => "vs-system".to_string(),
+        match self.app_context.borrow().config().nes.expansion_port {
+            crate::nes::console::ExpansionPort::None => "none".to_string(),
+            crate::nes::console::ExpansionPort::FamicomFourPlayers => {
+                "famicom-four-players".to_string()
+            }
+            crate::nes::console::ExpansionPort::ArkanoidFamicom => "arkanoid".to_string(),
+            crate::nes::console::ExpansionPort::ZapperFamicom => "zapper".to_string(),
+            crate::nes::console::ExpansionPort::PowerPadFamicom => "power-pad".to_string(),
+            crate::nes::console::ExpansionPort::VsSystem => "vs-system".to_string(),
         }
     }
 
@@ -641,6 +651,7 @@ impl WasmNes {
             .app_context()
             .borrow()
             .config()
+            .nes
             .hardware_model
             .timing_mode()
             .frame_rate_hz()
@@ -749,14 +760,14 @@ impl WasmNes {
     #[wasm_bindgen]
     pub fn debugger_run_to_nmi(&mut self) {
         self.debugger_paused = true;
-        run_to_interrupt_entry(&mut self.nes, 0xFFFA, crate::cpu::InterruptKind::Nmi);
+        run_to_interrupt_entry(&mut self.nes, 0xFFFA, crate::nes::cpu::InterruptKind::Nmi);
     }
 
     /// Run until the next IRQ handler entry and keep the debugger open.
     #[wasm_bindgen]
     pub fn debugger_run_to_irq(&mut self) {
         self.debugger_paused = true;
-        run_to_interrupt_entry(&mut self.nes, 0xFFFE, crate::cpu::InterruptKind::Irq);
+        run_to_interrupt_entry(&mut self.nes, 0xFFFE, crate::nes::cpu::InterruptKind::Irq);
     }
 
     /// Returns the current CPU program counter value (useful for testing step behaviour).
@@ -903,8 +914,8 @@ impl WasmNes {
 /// Returns the JSON representation of an `Option<InterruptKind>` value.
 ///
 /// Produces `null`, `"nmi"`, or `"irq"` — ready to embed verbatim in a JSON string.
-fn interrupt_to_json_str(interrupt: Option<crate::cpu::InterruptKind>) -> &'static str {
-    use crate::cpu::InterruptKind;
+fn interrupt_to_json_str(interrupt: Option<crate::nes::cpu::InterruptKind>) -> &'static str {
+    use crate::nes::cpu::InterruptKind;
     match interrupt {
         None => "null",
         Some(InterruptKind::Nmi) => "\"nmi\"",
@@ -1094,7 +1105,7 @@ fn read_vector_target(nes: &Nes, vector_addr: u16) -> u16 {
     u16::from_le_bytes([lo, hi])
 }
 
-fn run_to_interrupt_entry(nes: &mut Nes, vector_addr: u16, kind: crate::cpu::InterruptKind) {
+fn run_to_interrupt_entry(nes: &mut Nes, vector_addr: u16, kind: crate::nes::cpu::InterruptKind) {
     const MAX_STEPS: usize = 2_000_000;
 
     let target_pc = read_vector_target(nes, vector_addr);

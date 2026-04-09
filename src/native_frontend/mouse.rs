@@ -4,9 +4,9 @@
 //! (Zapper, Arkanoid paddle, SNES Mouse) and manages the cursor
 //! grab/release state machine.
 
-use crate::console::Nes;
 use crate::input::ControllerInput;
 use crate::input::mouse_mapping;
+use crate::nes::console::Nes;
 use crate::rendering::Crosshair;
 
 /// Mouse button abstraction (frontend-independent).
@@ -140,7 +140,7 @@ pub fn should_forward_grab_click(was_released_by_escape: bool) -> bool {
 mod tests {
     use super::*;
     use crate::app_context::AppContext;
-    use crate::console::Config;
+    use crate::nes::console::Config;
 
     fn make_nes() -> Nes {
         Nes::new(AppContext::new_with_config(Config::default()))
@@ -237,7 +237,7 @@ mod tests {
         let mut nes = make_nes_with_controller(1, crate::input::ControllerType::SnesMouse);
         apply_snes_mouse_relative_motion(&mut nes, 10, 5, 320, 240);
         let state = nes.bus().borrow().capture_state();
-        if let crate::bus::ControllerStateWrapper::SnesAdapter(snes) = state.port1_controller {
+        if let crate::nes::bus::ControllerStateWrapper::SnesAdapter(snes) = state.port1_controller {
             // Accumulator starts at 0, so after a (+10,+5) delta the positions
             // must both be non-zero.
             assert!(
@@ -269,7 +269,7 @@ mod tests {
 
         update_mouse_button(&mut nes, MouseButton::Left, true);
         let state = nes.bus().borrow().capture_state();
-        if let crate::bus::ControllerStateWrapper::Zapper(z) = state.port1_controller {
+        if let crate::nes::bus::ControllerStateWrapper::Zapper(z) = state.port1_controller {
             assert!(z.trigger, "Expected trigger set after left-button press");
         } else {
             panic!("Expected Zapper state on port 1");
@@ -277,7 +277,7 @@ mod tests {
 
         update_mouse_button(&mut nes, MouseButton::Left, false);
         let state = nes.bus().borrow().capture_state();
-        if let crate::bus::ControllerStateWrapper::Zapper(z) = state.port1_controller {
+        if let crate::nes::bus::ControllerStateWrapper::Zapper(z) = state.port1_controller {
             assert!(
                 !z.trigger,
                 "Expected trigger cleared after left-button release"
