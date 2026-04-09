@@ -77,7 +77,12 @@ Before merging or committing to main, the following checkpoint shall pass:
 
 - Run `cargo clippy --all-targets --all-features -- -D warnings` and fix all warnings
 - Run `cargo fmt` and fix any formatting issues
-- Run `cargo nextest run --all-features --lib` and fix all warnings and ensure all tests pass
+- Run `./scripts/test-dir.sh <changed-dirs>` to verify the affected modules pass quickly, e.g.:
+  ```bash
+  ./scripts/test-dir.sh src/nes/cartridge          # changed cartridge code
+  ./scripts/test-dir.sh src/nes --skip-integration # NES changes, fast iteration
+  ```
+- Run `cargo test --no-default-features --lib` to verify the full test suite passes before creating a PR
 - Run `wasm-pack test --headless --chrome --no-default-features --features wasm` and fix all warnings and ensure all tests pass
 - Run `source .venv/bin/activate && python -m unittest discover -s scripts/mappertool -s scripts/scraper -s scripts -t . -p "test_*.py"` and ensure all tests pass
 - Run `npm test` and ensure all tests pass (if any tests exist)
