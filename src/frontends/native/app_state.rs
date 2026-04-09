@@ -286,7 +286,7 @@ F6/F7: Save/Load state";
 
     let max_ports: usize = if four_score { 4 } else { 2 };
     let keyboard_ports =
-        crate::native_frontend::keyboard::keyboard_target_ports(gamepad_count, four_score);
+        crate::frontends::native::keyboard::keyboard_target_ports(gamepad_count, four_score);
 
     let controller_type_for = |port: usize| match port {
         1 => port1_type,
