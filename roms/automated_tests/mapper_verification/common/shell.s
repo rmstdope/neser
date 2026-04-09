@@ -296,7 +296,7 @@ got_val:      .res 1       ; Temp for fail handler
     pha
     inc irq_fired
     inc irq_count
-    .if MAPPER_NUM = 4 .or MAPPER_NUM = 12 .or MAPPER_NUM = 14 .or MAPPER_NUM = 64 .or MAPPER_NUM = 119 .or MAPPER_NUM = 37 .or MAPPER_NUM = 45 .or MAPPER_NUM = 47 .or MAPPER_NUM = 74
+    .if MAPPER_NUM = 4 .or MAPPER_NUM = 12 .or MAPPER_NUM = 14 .or MAPPER_NUM = 64 .or MAPPER_NUM = 158 .or MAPPER_NUM = 119 .or MAPPER_NUM = 37 .or MAPPER_NUM = 45 .or MAPPER_NUM = 47 .or MAPPER_NUM = 74
     ; MMC3/MMC3-clone/RAMBO-1: acknowledge + re-enable
     lda #0
     sta $E000               ; IRQ acknowledge (disable)

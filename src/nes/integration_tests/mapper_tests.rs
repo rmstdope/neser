@@ -2493,6 +2493,28 @@ mod tests {
     );
 
     // ================================================================
+    // Mapper 158 (Tengen 800037 — RAMBO-1 with CHR-bit7 CIRAM A10), Submapper 0
+    // Mirroring driven by CHR bank bit 7 instead of $A000 register.
+    // ================================================================
+
+    setup_rom_test!(
+        test_mv_m158_0_prg_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m158.0_prg_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m158_0_chr_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m158.0_chr_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m158_0_irq,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m158.0_irq.nes"
+    );
+    setup_rom_test!(
+        test_mv_m158_0_combined,
+        "roms/automated_tests/mapper_verification/bin/m158.0.nes"
+    );
+
+    // ================================================================
     // Mapper 207 (Taito X1-005 Alternate Mirroring), Submapper 0
     // Identical to Mapper 80 but with per-pair nametable select via
     // CHR register bit 7. Registers at $7EF0–$7EFF → console verification.
