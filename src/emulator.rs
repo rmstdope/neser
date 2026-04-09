@@ -6,7 +6,6 @@
 //! matching on the [`Console::Nes`] variant directly.
 
 use crate::app_context::{IntoSharedAppContext, SharedAppContext};
-use crate::nes::cartridge::Cartridge;
 use crate::nes::console::Nes;
 
 /// Identifies which emulated system a [`Console`] instance is running.
@@ -54,13 +53,7 @@ impl Console {
     /// destructure the Console variant and use `insert_cartridge` directly.
     pub fn load_rom(&mut self, bytes: &[u8], name: &str) -> Result<(), String> {
         match self {
-            Console::Nes(nes) => {
-                let app_context = nes.app_context().clone();
-                let cart = Cartridge::load_from_file(bytes, name, app_context)
-                    .map_err(|e| e.to_string())?;
-                nes.insert_cartridge(cart);
-                Ok(())
-            }
+            Console::Nes(nes) => nes.load_rom(bytes, name),
         }
     }
 
@@ -155,9 +148,7 @@ impl Console {
     pub fn set_button(&mut self, port: u8, button_id: u8, pressed: bool) {
         match self {
             Console::Nes(nes) => {
-                if let Some(button) = nes_button_from_id(button_id) {
-                    nes.set_button(port, button, pressed);
-                } else {
+                if !nes.set_button_by_id(port, button_id, pressed) {
                     #[cfg(debug_assertions)]
                     eprintln!("warning: invalid NES button_id: {button_id}");
                 }
@@ -184,21 +175,14 @@ impl Console {
     /// Serialize the complete emulator state to bytes.
     pub fn save_state_bytes(&self) -> Result<Vec<u8>, String> {
         match self {
-            Console::Nes(nes) => nes
-                .save_state()
-                .to_bytes()
-                .map_err(|e| format!("save state serialization failed: {e}")),
+            Console::Nes(nes) => nes.save_state_bytes(),
         }
     }
 
     /// Restore emulator state from previously serialized bytes.
     pub fn load_state_bytes(&mut self, data: &[u8]) -> Result<(), String> {
         match self {
-            Console::Nes(nes) => {
-                let state = crate::nes::console::SaveState::from_bytes(data)
-                    .map_err(|e| format!("save state deserialization failed: {e}"))?;
-                nes.load_state(&state).map_err(|e| e.to_string())
-            }
+            Console::Nes(nes) => nes.load_state_bytes(data),
         }
     }
 
@@ -231,21 +215,6 @@ impl Console {
         match self {
             Console::Nes(nes) => nes.set_audio_sample_rate(rate),
         }
-    }
-}
-
-fn nes_button_from_id(id: u8) -> Option<crate::nes::input::Button> {
-    use crate::nes::input::Button;
-    match id {
-        0 => Some(Button::A),
-        1 => Some(Button::B),
-        2 => Some(Button::Select),
-        3 => Some(Button::Start),
-        4 => Some(Button::Up),
-        5 => Some(Button::Down),
-        6 => Some(Button::Left),
-        7 => Some(Button::Right),
-        _ => None,
     }
 }
 

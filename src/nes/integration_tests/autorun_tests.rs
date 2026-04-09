@@ -45,7 +45,7 @@ mod tests {
 
     #[allow(dead_code)]
     fn verify_single_autorun(autorun_path: &Path) -> Result<(), String> {
-        let recording = load_autorun_file(autorun_path)
+        let recording = load_autorun_file(autorun_path, None)
             .map_err(|e| format!("{}: {e}", autorun_path.display()))?;
 
         if recording.checkpoints.is_empty() {

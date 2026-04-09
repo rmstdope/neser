@@ -126,7 +126,7 @@ impl AutorunState {
             }
 
             AutorunMode::Playback => {
-                let autorun = load_autorun_file(&autorun_path)?;
+                let autorun = load_autorun_file(&autorun_path, None)?;
                 let (frame_index, playback_checkpoint_idx, pending) = if let Some(cp_idx_raw) =
                     from_checkpoint
                 {
@@ -173,7 +173,7 @@ impl AutorunState {
         autorun_path: PathBuf,
         format: AutorunFormat,
     ) -> Result<(Self, Option<PendingRestore>), String> {
-        let existing = load_autorun_file(&autorun_path)?;
+        let existing = load_autorun_file(&autorun_path, None)?;
 
         let n = existing.checkpoints.len();
         let (frame_index, playback_checkpoint_idx, pending) = if n >= 2 {
@@ -314,7 +314,7 @@ impl AutorunState {
             screen_crc,
             state_bytes,
         });
-        save_autorun_file(&self.autorun_path, &self.autorun, self.format)
+        save_autorun_file(&self.autorun_path, &self.autorun, self.format, None)
     }
 
     /// Number of CRC mismatches detected during playback so far.
@@ -386,7 +386,8 @@ mod tests {
         let rom_file = NamedTempFile::new().expect("create temp file");
         let autorun_file = make_file_with_checkpoints(3, &[(2, 0xABCD)]);
         let autorun_path = autorun_path_for_rom(rom_file.path());
-        save_autorun_file(&autorun_path, &autorun_file, AutorunFormat::Json).expect("save file");
+        save_autorun_file(&autorun_path, &autorun_file, AutorunFormat::Json, None)
+            .expect("save file");
 
         let rom_path_str = rom_file.path().to_str().expect("rom path to string");
         let (state, _) = AutorunState::new(
@@ -456,7 +457,7 @@ mod tests {
         let rom_file = NamedTempFile::new().expect("create temp file");
         let file = make_file_with_checkpoints(300, &[(299, 0x1234)]);
         let autorun_path = autorun_path_for_rom(rom_file.path());
-        save_autorun_file(&autorun_path, &file, AutorunFormat::Json).expect("save");
+        save_autorun_file(&autorun_path, &file, AutorunFormat::Json, None).expect("save");
 
         let rom_path_str = rom_file.path().to_str().expect("rom path to string");
         let (mut state, _) = AutorunState::new(
@@ -485,7 +486,7 @@ mod tests {
         let rom_file = NamedTempFile::new().expect("create temp file");
         let file = make_file_with_checkpoints(300, &[(299, 0x1234)]);
         let autorun_path = autorun_path_for_rom(rom_file.path());
-        save_autorun_file(&autorun_path, &file, AutorunFormat::Json).expect("save");
+        save_autorun_file(&autorun_path, &file, AutorunFormat::Json, None).expect("save");
 
         let rom_path_str = rom_file.path().to_str().expect("rom path to string");
         let (mut state, _) = AutorunState::new(
@@ -512,7 +513,7 @@ mod tests {
         let rom_file = NamedTempFile::new().expect("create temp file");
         let existing_file = make_file_with_checkpoints(1, &[(0, 0xABCD)]);
         let autorun_path = autorun_path_for_rom(rom_file.path());
-        save_autorun_file(&autorun_path, &existing_file, AutorunFormat::Json)
+        save_autorun_file(&autorun_path, &existing_file, AutorunFormat::Json, None)
             .expect("save existing");
         assert!(autorun_path.exists());
 
@@ -565,7 +566,8 @@ mod tests {
             ],
         };
         let autorun_path = autorun_path_for_rom(rom_file.path());
-        save_autorun_file(&autorun_path, &autorun_file, AutorunFormat::Json).expect("save file");
+        save_autorun_file(&autorun_path, &autorun_file, AutorunFormat::Json, None)
+            .expect("save file");
 
         let rom_path_str = rom_file.path().to_str().expect("rom path to string");
         let (state, _) = AutorunState::new(
@@ -618,7 +620,7 @@ mod tests {
             ],
         };
         let autorun_path = autorun_path_for_rom(rom_file.path());
-        save_autorun_file(&autorun_path, &autorun_file, AutorunFormat::Json).expect("save");
+        save_autorun_file(&autorun_path, &autorun_file, AutorunFormat::Json, None).expect("save");
 
         let rom_path_str = rom_file.path().to_str().expect("rom path");
         let (state, pending) = AutorunState::new(
@@ -670,7 +672,7 @@ mod tests {
             ],
         };
         let autorun_path = autorun_path_for_rom(rom_file.path());
-        save_autorun_file(&autorun_path, &autorun_file, AutorunFormat::Json).expect("save");
+        save_autorun_file(&autorun_path, &autorun_file, AutorunFormat::Json, None).expect("save");
 
         let rom_path_str = rom_file.path().to_str().expect("rom path");
         let (state, pending) = AutorunState::new(
@@ -723,7 +725,8 @@ mod tests {
             }],
         };
         let autorun_path = autorun_path_for_rom(rom_file.path());
-        save_autorun_file(&autorun_path, &autorun_file, AutorunFormat::Json).expect("save file");
+        save_autorun_file(&autorun_path, &autorun_file, AutorunFormat::Json, None)
+            .expect("save file");
 
         let rom_path_str = rom_file.path().to_str().expect("rom path to string");
         let (state, _) = AutorunState::new(
@@ -775,7 +778,7 @@ mod tests {
         };
         let rom_file = NamedTempFile::new().expect("create temp file");
         let autorun_path = autorun_path_for_rom(rom_file.path());
-        save_autorun_file(&autorun_path, &autorun_file, AutorunFormat::Json).expect("save");
+        save_autorun_file(&autorun_path, &autorun_file, AutorunFormat::Json, None).expect("save");
         (rom_file, autorun_file)
     }
 
@@ -852,7 +855,7 @@ mod tests {
         };
         let rom_file = NamedTempFile::new().expect("create temp file");
         let autorun_path = autorun_path_for_rom(rom_file.path());
-        save_autorun_file(&autorun_path, &autorun_file, AutorunFormat::Json).expect("save");
+        save_autorun_file(&autorun_path, &autorun_file, AutorunFormat::Json, None).expect("save");
         (rom_file, autorun_file)
     }
 
@@ -864,7 +867,7 @@ mod tests {
         };
         let rom_file = NamedTempFile::new().expect("create temp file");
         let autorun_path = autorun_path_for_rom(rom_file.path());
-        save_autorun_file(&autorun_path, &autorun_file, AutorunFormat::Json).expect("save");
+        save_autorun_file(&autorun_path, &autorun_file, AutorunFormat::Json, None).expect("save");
         rom_file
     }
 
@@ -997,7 +1000,7 @@ mod tests {
             }],
         };
         let autorun_path = autorun_path_for_rom(rom_file.path());
-        save_autorun_file(&autorun_path, &autorun_file, AutorunFormat::Json).expect("save");
+        save_autorun_file(&autorun_path, &autorun_file, AutorunFormat::Json, None).expect("save");
 
         let rom_path_str = rom_file.path().to_str().expect("rom path");
         let (mut state, _) = AutorunState::new(
@@ -1029,7 +1032,7 @@ mod tests {
             checkpoints: vec![],
         };
         let autorun_path = autorun_path_for_rom(rom_file.path());
-        save_autorun_file(&autorun_path, &autorun_file, AutorunFormat::Json).expect("save");
+        save_autorun_file(&autorun_path, &autorun_file, AutorunFormat::Json, None).expect("save");
 
         let rom_path_str = rom_file.path().to_str().expect("rom path");
         let (mut state, _) = AutorunState::new(

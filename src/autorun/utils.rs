@@ -1,5 +1,6 @@
-use super::types::{AUTORUN_VERSION, AutorunCheckpoint, AutorunFile, AutorunFormat, AutorunFrame};
-use crate::nes::cartridge::calculate_rom_crc32;
+use super::types::{
+    AUTORUN_VERSION, AutorunCheckpoint, AutorunFile, AutorunFormat, AutorunFrame, StateConverter,
+};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -129,7 +130,7 @@ pub fn autorun_path_for_rom(rom_path: &Path) -> PathBuf {
 /// Compute a CRC-32 checksum of arbitrary bytes (used for screen CRC comparisons).
 #[allow(dead_code)]
 pub fn crc32(data: &[u8]) -> u32 {
-    calculate_rom_crc32(data, &[])
+    crate::crc32::crc32(&[data])
 }
 
 /// Back up an existing autorun file by copying it to `<path>.bak`.
@@ -171,6 +172,7 @@ pub fn save_autorun_file(
     path: &Path,
     file: &AutorunFile,
     format: AutorunFormat,
+    state_converter: Option<&dyn StateConverter>,
 ) -> Result<(), String> {
     if file.version != AUTORUN_VERSION {
         return Err(format!("Unsupported autorun version: {}", file.version));
@@ -178,7 +180,7 @@ pub fn save_autorun_file(
 
     match format {
         AutorunFormat::Json => save_autorun_file_json(path, file),
-        AutorunFormat::Binary => save_autorun_file_binary(path, file),
+        AutorunFormat::Binary => save_autorun_file_binary(path, file, state_converter),
     }
 }
 
@@ -194,17 +196,16 @@ fn save_autorun_file_json(path: &Path, file: &AutorunFile) -> Result<(), String>
     write_autorun_bytes(path, data)
 }
 
-fn encode_checkpoint_to_binary(cp: &AutorunCheckpoint) -> Result<AutorunCheckpointBinary, String> {
-    use crate::nes::console::SaveState;
-
+fn encode_checkpoint_to_binary(
+    cp: &AutorunCheckpoint,
+    converter: Option<&dyn StateConverter>,
+) -> Result<AutorunCheckpointBinary, String> {
     let state_bytes = if cp.state_bytes.is_empty() {
         Vec::new()
+    } else if let Some(conv) = converter {
+        conv.to_binary(&cp.state_bytes)?
     } else {
-        let state = SaveState::from_bytes(&cp.state_bytes)
-            .map_err(|e| format!("Failed to deserialize checkpoint state: {e}"))?;
-        state
-            .to_binary_bytes()
-            .map_err(|e| format!("Failed to serialize checkpoint state as binary: {e}"))?
+        cp.state_bytes.clone()
     };
 
     Ok(AutorunCheckpointBinary {
@@ -214,11 +215,15 @@ fn encode_checkpoint_to_binary(cp: &AutorunCheckpoint) -> Result<AutorunCheckpoi
     })
 }
 
-fn save_autorun_file_binary(path: &Path, file: &AutorunFile) -> Result<(), String> {
+fn save_autorun_file_binary(
+    path: &Path,
+    file: &AutorunFile,
+    state_converter: Option<&dyn StateConverter>,
+) -> Result<(), String> {
     let checkpoints = file
         .checkpoints
         .iter()
-        .map(encode_checkpoint_to_binary)
+        .map(|cp| encode_checkpoint_to_binary(cp, state_converter))
         .collect::<Result<Vec<_>, _>>()?;
 
     let body = AutorunFileBinaryBody {
@@ -245,28 +250,30 @@ fn write_autorun_bytes(path: &Path, data: Vec<u8>) -> Result<(), String> {
         .map_err(|e| format!("Failed to write autorun file {}: {e}", path.display()))
 }
 
-pub fn load_autorun_file(path: &Path) -> Result<AutorunFile, String> {
+pub fn load_autorun_file(
+    path: &Path,
+    state_converter: Option<&dyn StateConverter>,
+) -> Result<AutorunFile, String> {
     let data = std::fs::read(path)
         .map_err(|e| format!("Failed to read autorun file {}: {e}", path.display()))?;
 
     if data.starts_with(BINARY_MAGIC) {
-        return load_autorun_file_binary(&data);
+        return load_autorun_file_binary(&data, state_converter);
     }
 
     load_autorun_file_json(&data)
 }
 
-fn decode_checkpoint_from_binary(cp: AutorunCheckpointBinary) -> Result<AutorunCheckpoint, String> {
-    use crate::nes::console::SaveState;
-
+fn decode_checkpoint_from_binary(
+    cp: AutorunCheckpointBinary,
+    converter: Option<&dyn StateConverter>,
+) -> Result<AutorunCheckpoint, String> {
     let state_bytes = if cp.state_bytes.is_empty() {
         Vec::new()
+    } else if let Some(conv) = converter {
+        conv.binary_to_canonical(&cp.state_bytes)?
     } else {
-        let state = SaveState::from_binary_bytes(&cp.state_bytes)
-            .map_err(|e| format!("Failed to deserialize checkpoint state from binary: {e}"))?;
-        state
-            .to_bytes()
-            .map_err(|e| format!("Failed to serialize checkpoint state as JSON: {e}"))?
+        cp.state_bytes
     };
 
     Ok(AutorunCheckpoint {
@@ -276,7 +283,10 @@ fn decode_checkpoint_from_binary(cp: AutorunCheckpointBinary) -> Result<AutorunC
     })
 }
 
-fn load_autorun_file_binary(data: &[u8]) -> Result<AutorunFile, String> {
+fn load_autorun_file_binary(
+    data: &[u8],
+    state_converter: Option<&dyn StateConverter>,
+) -> Result<AutorunFile, String> {
     let payload = &data[BINARY_MAGIC.len()..];
     let body: AutorunFileBinaryBody = postcard::from_bytes(payload)
         .map_err(|e| format!("Failed to deserialize binary autorun file: {e}"))?;
@@ -285,7 +295,7 @@ fn load_autorun_file_binary(data: &[u8]) -> Result<AutorunFile, String> {
     let checkpoints = body
         .checkpoints
         .into_iter()
-        .map(decode_checkpoint_from_binary)
+        .map(|cp| decode_checkpoint_from_binary(cp, state_converter))
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(AutorunFile {
@@ -330,13 +340,17 @@ fn load_autorun_file_json(data: &[u8]) -> Result<AutorunFile, String> {
     }
 }
 
-pub fn convert_autorun_file(path: &Path, target_format: AutorunFormat) -> Result<(), String> {
+pub fn convert_autorun_file(
+    path: &Path,
+    target_format: AutorunFormat,
+    state_converter: Option<&dyn StateConverter>,
+) -> Result<(), String> {
     if !path.exists() {
         return Err(format!("Autorun file not found: {}", path.display()));
     }
 
-    let autorun_file = load_autorun_file(path)?;
-    save_autorun_file(path, &autorun_file, target_format)
+    let autorun_file = load_autorun_file(path, state_converter)?;
+    save_autorun_file(path, &autorun_file, target_format, state_converter)
 }
 
 #[cfg(test)]
@@ -424,8 +438,9 @@ mod tests {
             }],
         };
 
-        save_autorun_file(temp.path(), &file, AutorunFormat::Json).expect("save autorun file");
-        let loaded = load_autorun_file(temp.path()).expect("load autorun file");
+        save_autorun_file(temp.path(), &file, AutorunFormat::Json, None)
+            .expect("save autorun file");
+        let loaded = load_autorun_file(temp.path(), None).expect("load autorun file");
 
         assert_eq!(loaded, file);
     }
@@ -456,9 +471,9 @@ mod tests {
             }],
         };
 
-        save_autorun_file(temp.path(), &file, AutorunFormat::Binary)
+        save_autorun_file(temp.path(), &file, AutorunFormat::Binary, None)
             .expect("save binary autorun file");
-        let loaded = load_autorun_file(temp.path()).expect("load binary autorun file");
+        let loaded = load_autorun_file(temp.path(), None).expect("load binary autorun file");
 
         assert_eq!(loaded, file);
     }
@@ -468,7 +483,7 @@ mod tests {
         let temp = NamedTempFile::new().expect("create temp file");
         let file = sample_large_file();
 
-        save_autorun_file(temp.path(), &file, AutorunFormat::Binary).expect("save binary");
+        save_autorun_file(temp.path(), &file, AutorunFormat::Binary, None).expect("save binary");
 
         let raw = std::fs::read(temp.path()).expect("read binary file");
         assert!(
@@ -483,8 +498,8 @@ mod tests {
         let temp = NamedTempFile::new().expect("create temp file");
         let file = sample_large_file();
 
-        save_autorun_file(temp.path(), &file, AutorunFormat::Binary).expect("save binary");
-        let loaded = load_autorun_file(temp.path()).expect("auto-detect binary load");
+        save_autorun_file(temp.path(), &file, AutorunFormat::Binary, None).expect("save binary");
+        let loaded = load_autorun_file(temp.path(), None).expect("auto-detect binary load");
 
         assert_eq!(loaded.version, AUTORUN_VERSION);
         assert_eq!(loaded.frames.len(), file.frames.len());
@@ -495,8 +510,8 @@ mod tests {
         let temp = NamedTempFile::new().expect("create temp file");
         let file = sample_large_file();
 
-        save_autorun_file(temp.path(), &file, AutorunFormat::Json).expect("save json");
-        let loaded = load_autorun_file(temp.path()).expect("auto-detect json load");
+        save_autorun_file(temp.path(), &file, AutorunFormat::Json, None).expect("save json");
+        let loaded = load_autorun_file(temp.path(), None).expect("auto-detect json load");
 
         assert_eq!(loaded.version, AUTORUN_VERSION);
         assert_eq!(loaded.frames.len(), file.frames.len());
@@ -508,8 +523,9 @@ mod tests {
         let temp_json = NamedTempFile::new().expect("create temp file");
         let file = sample_large_file();
 
-        save_autorun_file(temp_bin.path(), &file, AutorunFormat::Binary).expect("save binary");
-        save_autorun_file(temp_json.path(), &file, AutorunFormat::Json).expect("save json");
+        save_autorun_file(temp_bin.path(), &file, AutorunFormat::Binary, None)
+            .expect("save binary");
+        save_autorun_file(temp_json.path(), &file, AutorunFormat::Json, None).expect("save json");
 
         let binary_size = std::fs::metadata(temp_bin.path())
             .expect("get binary size")
@@ -619,7 +635,8 @@ mod tests {
             checkpoints: vec![],
         };
 
-        save_autorun_file(temp.path(), &file, AutorunFormat::Json).expect("save autorun file");
+        save_autorun_file(temp.path(), &file, AutorunFormat::Json, None)
+            .expect("save autorun file");
         let raw = std::fs::read_to_string(temp.path()).expect("read saved file as text");
         let parsed: serde_json::Value = serde_json::from_str(&raw).expect("parse saved json");
 
@@ -653,7 +670,7 @@ mod tests {
         )
         .expect("write legacy v2 file");
 
-        let loaded = load_autorun_file(temp.path()).expect("load v2 file");
+        let loaded = load_autorun_file(temp.path(), None).expect("load v2 file");
 
         assert_eq!(loaded.version, 3);
         assert_eq!(loaded.frames.len(), 3);
@@ -693,7 +710,7 @@ mod tests {
         )
         .expect("write oversized v3 file");
 
-        let result = load_autorun_file(temp.path());
+        let result = load_autorun_file(temp.path(), None);
         assert!(
             result.is_err(),
             "loading a file exceeding MAX_DECODED_FRAMES should fail"
@@ -718,7 +735,7 @@ mod tests {
         )
         .expect("write");
 
-        let result = load_autorun_file(temp.path());
+        let result = load_autorun_file(temp.path(), None);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("repeat=0"));
     }
@@ -727,7 +744,7 @@ mod tests {
     fn test_convert_autorun_file_fails_when_source_file_missing() {
         let temp_dir = tempfile::TempDir::new().expect("create temp dir");
         let missing_path = temp_dir.path().join("missing.autorun");
-        let result = convert_autorun_file(&missing_path, AutorunFormat::Binary);
+        let result = convert_autorun_file(&missing_path, AutorunFormat::Binary, None);
         assert!(
             result.is_err(),
             "conversion should fail when file is missing"
@@ -752,7 +769,7 @@ mod tests {
         )
         .expect("write v2 autorun");
 
-        convert_autorun_file(temp.path(), AutorunFormat::Json).expect("convert file");
+        convert_autorun_file(temp.path(), AutorunFormat::Json, None).expect("convert file");
 
         let parsed: serde_json::Value =
             serde_json::from_slice(&std::fs::read(temp.path()).expect("read converted file"))
@@ -768,7 +785,7 @@ mod tests {
         let file = sample_large_file();
 
         // Start with a JSON file
-        save_autorun_file(temp.path(), &file, AutorunFormat::Json).expect("save json");
+        save_autorun_file(temp.path(), &file, AutorunFormat::Json, None).expect("save json");
         assert!(
             !std::fs::read(temp.path())
                 .unwrap()
@@ -777,7 +794,7 @@ mod tests {
         );
 
         // Convert to binary
-        convert_autorun_file(temp.path(), AutorunFormat::Binary).expect("convert to binary");
+        convert_autorun_file(temp.path(), AutorunFormat::Binary, None).expect("convert to binary");
 
         let raw = std::fs::read(temp.path()).expect("read converted file");
         assert!(
@@ -792,7 +809,7 @@ mod tests {
         let file = sample_large_file();
 
         // Start with a binary file
-        save_autorun_file(temp.path(), &file, AutorunFormat::Binary).expect("save binary");
+        save_autorun_file(temp.path(), &file, AutorunFormat::Binary, None).expect("save binary");
         assert!(
             std::fs::read(temp.path())
                 .unwrap()
@@ -801,7 +818,7 @@ mod tests {
         );
 
         // Convert to JSON
-        convert_autorun_file(temp.path(), AutorunFormat::Json).expect("convert to json");
+        convert_autorun_file(temp.path(), AutorunFormat::Json, None).expect("convert to json");
 
         let raw = std::fs::read(temp.path()).expect("read converted file");
         assert!(

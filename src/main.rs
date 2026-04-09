@@ -9,6 +9,7 @@ mod app_context;
 mod audio;
 mod autorun;
 pub mod config;
+mod crc32;
 mod debugging;
 mod emulator;
 mod frontends;
@@ -77,7 +78,7 @@ fn convert_autorun_for_rom(rom_path: &str, format: AutorunFormat) -> Result<Stri
         ));
     }
 
-    convert_autorun_file(&path, format)?;
+    convert_autorun_file(&path, format, None)?;
     Ok(format!(
         "Converted autorun file to {} format (version {}): {}",
         format,
@@ -95,10 +96,10 @@ fn trim_autorun_checkpoints_for_rom(
     use std::path::PathBuf;
 
     let path = autorun_path_for_rom(&PathBuf::from(rom_path));
-    let mut file = load_autorun_file(&path)?;
+    let mut file = load_autorun_file(&path, None)?;
     let checkpoints_before = file.checkpoints.len();
     trim_recording(&mut file, checkpoints_to_trim);
-    save_autorun_file(&path, &file, format)?;
+    save_autorun_file(&path, &file, format, None)?;
 
     Ok(format!(
         "Trimmed {} checkpoint(s): {} → {} checkpoints, {} frames remaining",
@@ -126,7 +127,7 @@ fn recalculate_autorun_for_rom(rom_path: &str, format: AutorunFormat) -> Result<
         ));
     }
 
-    let mut file = load_autorun_file(&path)?;
+    let mut file = load_autorun_file(&path, None)?;
     let rom_bytes =
         fs::read(rom_path).map_err(|e| format!("Failed to read ROM {}: {e}", rom_path))?;
 
@@ -156,7 +157,7 @@ fn recalculate_autorun_for_rom(rom_path: &str, format: AutorunFormat) -> Result<
     if progress_printed {
         println!("\n");
     }
-    save_autorun_file(&path, &file, format)?;
+    save_autorun_file(&path, &file, format, None)?;
 
     Ok(format!(
         "Recalculated {} checkpoint CRC(s) in {}",

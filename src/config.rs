@@ -99,3 +99,16 @@ impl Default for FrontendConfig {
         }
     }
 }
+
+/// Full emulator configuration (frontend + system-specific).
+///
+/// Composed of [`FrontendConfig`] (generic frontend settings) and
+/// [`NesConfig`](crate::nes::console::NesConfig) (NES hardware-specific settings).
+/// Parsing from CLI arguments and config files populates both sub-configs.
+#[derive(Debug, Clone, Default)]
+pub struct Config {
+    /// Generic frontend configuration.
+    pub frontend: FrontendConfig,
+    /// NES-specific hardware configuration.
+    pub nes: crate::nes::console::NesConfig,
+}

@@ -7,6 +7,7 @@ pub mod nes;
 pub mod app_context;
 pub mod autorun;
 pub mod config;
+pub mod crc32;
 pub mod debugging;
 pub mod emulator;
 #[cfg(feature = "wasm")]

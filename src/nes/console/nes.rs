@@ -1161,6 +1161,44 @@ impl Nes {
 
         Ok(())
     }
+
+    /// Load a ROM from raw bytes, creating and inserting the cartridge.
+    ///
+    /// This is a convenience method that combines [`Cartridge::load_from_file`]
+    /// and [`insert_cartridge`](Self::insert_cartridge).
+    pub fn load_rom(&mut self, bytes: &[u8], name: &str) -> Result<(), String> {
+        let app_context = self.app_context.clone();
+        let cart =
+            Cartridge::load_from_file(bytes, name, app_context).map_err(|e| e.to_string())?;
+        self.insert_cartridge(cart);
+        Ok(())
+    }
+
+    /// Serialize emulator state to bytes (JSON).
+    pub fn save_state_bytes(&self) -> Result<Vec<u8>, String> {
+        self.save_state()
+            .to_bytes()
+            .map_err(|e| format!("save state serialization failed: {e}"))
+    }
+
+    /// Restore emulator state from previously serialized bytes (JSON).
+    pub fn load_state_bytes(&mut self, data: &[u8]) -> Result<(), String> {
+        let state = SaveState::from_bytes(data)
+            .map_err(|e| format!("save state deserialization failed: {e}"))?;
+        self.load_state(&state).map_err(|e| e.to_string())
+    }
+
+    /// Set a button state using a numeric button ID.
+    ///
+    /// Returns `true` if the button ID was valid, `false` otherwise.
+    pub fn set_button_by_id(&mut self, port: u8, button_id: u8, pressed: bool) -> bool {
+        if let Some(button) = crate::nes::input::button_from_id(button_id) {
+            self.set_button(port, button, pressed);
+            true
+        } else {
+            false
+        }
+    }
 }
 
 fn format_compact_trace_instruction(

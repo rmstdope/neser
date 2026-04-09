@@ -7,13 +7,13 @@ pub mod save_state_io;
 use crate::app_context::SharedAppContext;
 use crate::debugging::log_info;
 
+pub use crate::config::Config;
 pub use crate::nes::cartridge::TimingMode;
 pub use cartridge_catalog::{
     CartridgeCatalogOptions, default_catalog_csv_path, refresh_cartridge_catalog,
 };
 #[allow(unused_imports)] // Used by frontend features
 pub use config::ApuChannels;
-pub use config::Config;
 pub use config::ExpansionPort;
 pub use config::HardwareMode;
 #[allow(unused_imports)] // Used by integration tests and lib consumers

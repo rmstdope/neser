@@ -8,7 +8,6 @@
 
 use crate::autorun::AutorunFormat;
 use crate::autorun::AutorunMode;
-use crate::config::FrontendConfig;
 use crate::debugging::breakpoints::BreakpointKind;
 use crate::nes::console::TimingMode;
 use crate::nes::input::ControllerType;
@@ -648,18 +647,7 @@ impl Default for NesConfig {
     }
 }
 
-/// Full emulator configuration (frontend + NES-specific).
-///
-/// Composed of [`FrontendConfig`] (generic frontend settings) and
-/// [`NesConfig`] (NES hardware-specific settings). Parsing from CLI
-/// arguments and config files populates both sub-configs.
-#[derive(Debug, Clone, Default)]
-pub struct Config {
-    /// Generic frontend configuration.
-    pub frontend: FrontendConfig,
-    /// NES-specific hardware configuration.
-    pub nes: NesConfig,
-}
+use crate::config::Config;
 
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]

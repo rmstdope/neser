@@ -1,7 +1,7 @@
 #[allow(unused_imports)] // Used by autorun features
 pub use types::{
     AUTORUN_VERSION, AutorunCheckpoint, AutorunFile, AutorunFormat, AutorunFrame, AutorunMode,
-    CHECKPOINT_INTERVAL_FRAMES,
+    CHECKPOINT_INTERVAL_FRAMES, StateConverter,
 };
 #[allow(unused_imports)]
 pub use utils::{

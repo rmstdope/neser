@@ -23,8 +23,20 @@ pub struct AutorunCheckpoint {
     pub frame_index: u32,
     /// CRC-32 of the screen buffer at this frame.
     pub screen_crc: u32,
-    /// Full serialized emulator state ([`crate::nes::console::SaveState`] as JSON bytes).
+    /// Full serialized emulator state as opaque bytes (format is system-specific).
     pub state_bytes: Vec<u8>,
+}
+
+/// Converts emulator save-state bytes between canonical (JSON) and compact (binary)
+/// representations. The autorun binary format uses this to store checkpoint state
+/// more efficiently than raw JSON bytes.
+///
+/// If no converter is provided, binary save/load passes state bytes through unchanged.
+pub trait StateConverter {
+    /// Convert canonical (JSON) state bytes to compact binary representation.
+    fn to_binary(&self, canonical_bytes: &[u8]) -> Result<Vec<u8>, String>;
+    /// Convert compact binary representation back to canonical (JSON) state bytes.
+    fn binary_to_canonical(&self, binary_bytes: &[u8]) -> Result<Vec<u8>, String>;
 }
 
 /// A complete autorun recording.
