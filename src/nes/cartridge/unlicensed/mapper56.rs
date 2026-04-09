@@ -26,11 +26,11 @@ use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 /// - $9000-$9FFF: IRQ latch nibble 1 [7:4]
 /// - $A000-$AFFF: IRQ latch nibble 2 [11:8]
 /// - $B000-$BFFF: IRQ latch nibble 3 [15:12]
-/// - $C000-$CFFF: IRQ control (bit0=A: enable-after-ack, bit1=E: enable-now)
+/// - $C000-$CFFF: IRQ control (bit1=E: enable-now; bit0 is ignored, unlike VRC3)
 /// - $D000-$DFFF: IRQ acknowledge
 /// - $E000-$EFFF: Bank register select (bits [2:0], values 1/2/3 for $8000/$A000/$C000)
 /// - $F000-$FFFF: Bank data and sub-registers (superimposed):
-///   - $F000-$F3FF (mask $FC03): PRG A17 bit for banks 0-3 (bit 3 of written value)
+///   - $F000-$F3FF (mask $FC03): PRG A17 bit for banks 0-3 (bit 4 of written value)
 ///   - $F800-$FBFF (mask $FC00): Mirroring (bit 0: 0=H, 1=V)
 ///   - $FC00-$FC07 (mask $FC07): CHR 1KB banks 0-7 (7-bit value)
 ///   - All $F000-$FFFF: Bank data [3:0] → update last-selected PRG bank register
@@ -46,7 +46,6 @@ pub struct Mapper56 {
     irq_latch: u16,
     irq_counter: u16,
     irq_enabled: bool,
-    irq_after_ack: bool, // "A" bit from $C000
     irq_pending: bool,
 }
 
@@ -74,7 +73,6 @@ impl Mapper56 {
             irq_latch: 0,
             irq_counter: 0,
             irq_enabled: false,
-            irq_after_ack: false,
             irq_pending: false,
         };
         mapper.update_banks();
@@ -139,18 +137,19 @@ impl Mapper for Mapper56 {
                 self.irq_latch = (self.irq_latch & 0x0FFF) | (((value as u16) & 0x0F) << 12);
             }
             0xC000..=0xCFFF => {
-                // IRQ control: bit0=A (enable after ack), bit1=E (enable now)
-                self.irq_after_ack = (value & 0x01) != 0;
+                // IRQ control: bit1=E (enable now); bit0 is ignored on KS202
+                // (unlike VRC3 where bit0 re-enables after acknowledge).
+                // Spec (KS202/Mesen): reload counter from latch immediately when E=1;
+                // always clear pending IRQ.
                 self.irq_enabled = (value & 0x02) != 0;
-                if !self.irq_enabled {
-                    self.irq_pending = false;
+                if self.irq_enabled {
+                    self.irq_counter = self.irq_latch;
                 }
+                self.irq_pending = false;
             }
             0xD000..=0xDFFF => {
-                // IRQ acknowledge: clear pending; reload counter; A→E
+                // IRQ acknowledge: only clear pending — do NOT reload counter.
                 self.irq_pending = false;
-                self.irq_counter = self.irq_latch;
-                self.irq_enabled = self.irq_after_ack;
             }
             0xE000..=0xEFFF => {
                 self.bank_select = value & 0x07;
@@ -165,10 +164,11 @@ impl Mapper for Mapper56 {
                 }
 
                 // Superimposed register: PRG A17 ($F000-$F3FF, mask $FC03)
+                // Spec: bit 4 ([...P ....] = 0x10) holds the A17 extension bit.
                 if (addr & 0xFC00) == 0xF000 {
                     let slot = (addr & 0x0003) as usize;
                     if slot < 4 {
-                        self.prg_a17[slot] = (value >> 3) & 0x01;
+                        self.prg_a17[slot] = (value >> 4) & 0x01;
                     }
                 }
 
@@ -194,13 +194,14 @@ impl Mapper for Mapper56 {
     }
 
     fn cpu_cycle(&mut self) {
-        if !self.irq_enabled || self.irq_counter == 0 {
+        if !self.irq_enabled {
             return;
         }
-        self.irq_counter -= 1;
-        if self.irq_counter == 0 {
+        // Spec (KS202/Mesen): counter counts UP; IRQ fires when it reaches 0xFFFF.
+        self.irq_counter = self.irq_counter.wrapping_add(1);
+        if self.irq_counter == 0xFFFF {
             self.irq_pending = true;
-            self.irq_enabled = false; // counter stops, like VRC3
+            self.irq_enabled = false;
         }
     }
 
@@ -209,9 +210,7 @@ impl Mapper for Mapper56 {
             NametableLayout::Vertical => 1u8,
             _ => 0u8,
         };
-        let irq_flags = (self.irq_enabled as u8)
-            | ((self.irq_pending as u8) << 1)
-            | ((self.irq_after_ack as u8) << 2);
+        let irq_flags = (self.irq_enabled as u8) | ((self.irq_pending as u8) << 1);
         let mut v = vec![
             self.prg_reg[0],
             self.prg_reg[1],
@@ -247,7 +246,6 @@ impl Mapper for Mapper56 {
         self.bank_select = data[8];
         self.irq_enabled = (data[9] & 1) != 0;
         self.irq_pending = (data[9] & 2) != 0;
-        self.irq_after_ack = (data[9] & 4) != 0;
         self.irq_latch = (data[10] as u16) | ((data[11] as u16) << 8);
         self.irq_counter = (data[12] as u16) | ((data[13] as u16) << 8);
         self.chr_regs.copy_from_slice(&data[14..22]);
@@ -263,7 +261,6 @@ impl Mapper for Mapper56 {
         self.irq_latch = 0;
         self.irq_counter = 0;
         self.irq_enabled = false;
-        self.irq_after_ack = false;
         self.irq_pending = false;
         self.update_banks();
     }
@@ -315,17 +312,26 @@ mod tests {
     #[test]
     fn prg_a17_set_by_superimposed_f000_write() {
         let mut mapper = make_mapper();
-        // PRG A17 register: addr $F000, bit 3 = A17 for bank 0
-        // Writing value = 0x08 (bit3=1) to $F000 sets prg_a17[0]=1
+        // PRG A17 register: addr $F000, bit 4 = A17 for bank 0
+        // Writing value = 0x10 (bit4=1) to $F000 sets prg_a17[0]=1
         mapper.write_prg(0xE000, 1);
-        mapper.write_prg(0xF000, 0x08); // prg_a17[0] = 1, prg_reg[0] = 8
+        mapper.write_prg(0xF000, 0x10); // prg_a17[0] = 1, prg_reg[0] = 0
         assert_eq!(mapper.prg_a17[0], 1, "PRG A17 bit must be 1");
-        // Effective bank for $8000 = (1<<4)|(8&0xF) = 16+8 = 24
-        assert_eq!(
-            mapper.read_prg(0x8000),
-            24 % PRG_BANKS as u8,
-            "PRG bank includes A17"
-        );
+        // bit 3 alone (0x08) must NOT set A17
+        mapper.write_prg(0xF000, 0x08); // prg_a17[0] = 0, prg_reg[0] = 8
+        assert_eq!(mapper.prg_a17[0], 0, "bit 3 alone must NOT set A17");
+    }
+
+    /// Spec: $F000 PRG A17 uses bit 4 ([...P ....]), not bit 3 ([....P...])
+    #[test]
+    fn prg_a17_extracted_from_bit4_not_bit3() {
+        let mut mapper = make_mapper();
+        // Value 0x10 has only bit 4 set → A17 must be 1
+        mapper.write_prg(0xF000, 0x10);
+        assert_eq!(mapper.prg_a17[0], 1, "value 0x10 (bit 4) must set A17=1");
+        // Value 0x08 has only bit 3 set → A17 must be 0
+        mapper.write_prg(0xF000, 0x08);
+        assert_eq!(mapper.prg_a17[0], 0, "value 0x08 (bit 3) must NOT set A17");
     }
 
     #[test]
@@ -396,32 +402,86 @@ mod tests {
     #[test]
     fn irq_fires_after_n_cycles() {
         let mut mapper = make_mapper();
-        mapper.write_prg(0x8000, 3); // latch = 3
-        mapper.write_prg(0x9000, 0);
-        mapper.write_prg(0xA000, 0);
-        mapper.write_prg(0xB000, 0);
-        // A=1, E=1: enable now AND keep enabled after acknowledge/reload
-        mapper.write_prg(0xC000, 0x03);
-        mapper.write_prg(0xD000, 0x00); // reload counter from latch (= 3)
+        // Set latch to 0xFFFC so IRQ fires after exactly 3 cpu_cycle calls.
+        // Counter counts UP and fires when it reaches 0xFFFF.
+        mapper.write_prg(0x8000, 0x0C); // bits[3:0] = C
+        mapper.write_prg(0x9000, 0x0F); // bits[7:4] = F
+        mapper.write_prg(0xA000, 0x0F); // bits[11:8] = F
+        mapper.write_prg(0xB000, 0x0F); // bits[15:12] = F → latch = 0xFFFC
+        mapper.write_prg(0xC000, 0x02); // E=1: enable and reload counter to 0xFFFC
         for _ in 0..2 {
             assert!(!mapper.irq_pending());
-            mapper.cpu_cycle();
+            mapper.cpu_cycle(); // 0xFFFC→0xFFFD, 0xFFFD→0xFFFE
         }
-        mapper.cpu_cycle(); // 3rd → counter=0 → IRQ
-        assert!(mapper.irq_pending(), "IRQ must fire after 3 cycles");
+        mapper.cpu_cycle(); // 0xFFFE→0xFFFF → IRQ fires
+        assert!(
+            mapper.irq_pending(),
+            "IRQ must fire when counter reaches 0xFFFF"
+        );
     }
 
     #[test]
     fn irq_acknowledge_clears_pending() {
         let mut mapper = make_mapper();
-        mapper.write_prg(0x8000, 1); // latch = 1
-        // A=1 (enable after ack), E=1 (enable now)
-        mapper.write_prg(0xC000, 0x03);
-        mapper.write_prg(0xD000, 0); // reload counter = 1; irq_enabled = A = true
-        mapper.cpu_cycle(); // counter → 0 → IRQ
+        // Set latch to 0xFFFE so IRQ fires after exactly 1 cpu_cycle call.
+        mapper.write_prg(0x8000, 0x0E); // bits[3:0] = E
+        mapper.write_prg(0x9000, 0x0F); // bits[7:4] = F
+        mapper.write_prg(0xA000, 0x0F); // bits[11:8] = F
+        mapper.write_prg(0xB000, 0x0F); // bits[15:12] = F → latch = 0xFFFE
+        mapper.write_prg(0xC000, 0x02); // E=1: enable and reload counter to 0xFFFE
+        mapper.cpu_cycle(); // 0xFFFE→0xFFFF → IRQ fires
         assert!(mapper.irq_pending());
         mapper.write_prg(0xD000, 0); // acknowledge
         assert!(!mapper.irq_pending());
+    }
+
+    /// Spec (Mesen/KS202): writing $C000 with E=1 immediately reloads counter from latch.
+    #[test]
+    fn irq_c000_reloads_counter_when_enabled() {
+        let mut mapper = make_mapper();
+        mapper.write_prg(0x8000, 5); // latch = 5
+        assert_eq!(mapper.irq_counter, 0, "counter starts at 0");
+        mapper.write_prg(0xC000, 0x02); // E=1: must reload counter from latch
+        assert_eq!(
+            mapper.irq_counter, 5,
+            "counter must be reloaded from latch on E=1"
+        );
+    }
+
+    /// KS202 (mapper 142 wiki): bit 0 of $C000 ("A") must NOT re-enable IRQ after
+    /// acknowledge, unlike VRC3. Disabling (E=0) then re-writing E=1 is fine, but
+    /// a plain $D000 acknowledge must leave the IRQ disabled.
+    #[test]
+    fn irq_bit0_of_c000_does_not_reenable_after_acknowledge() {
+        let mut mapper = make_mapper();
+        mapper.write_prg(0x8000, 0x0E); // latch = 0xFFFE
+        mapper.write_prg(0x9000, 0x0F);
+        mapper.write_prg(0xA000, 0x0F);
+        mapper.write_prg(0xB000, 0x0F);
+        // Write $C000 with bits A=1 and E=1
+        mapper.write_prg(0xC000, 0x03);
+        mapper.cpu_cycle(); // counter reaches 0xFFFF → IRQ fires, E cleared
+        assert!(mapper.irq_pending());
+        mapper.write_prg(0xD000, 0); // acknowledge
+        // IRQ must remain disabled; running more cycles must NOT fire again
+        for _ in 0..10 {
+            mapper.cpu_cycle();
+        }
+        assert!(
+            !mapper.irq_pending(),
+            "bit0 (A) of $C000 must not re-enable IRQ after acknowledge"
+        );
+    }
+
+    /// Spec: $D000 only acknowledges the IRQ; it must NOT reload the counter.
+    #[test]
+    fn irq_d000_does_not_reload_counter() {
+        let mut mapper = make_mapper();
+        mapper.write_prg(0x8000, 5); // latch = 5
+        mapper.write_prg(0xC000, 0x02); // E=1: counter = 5
+        mapper.cpu_cycle(); // counter = 6
+        mapper.write_prg(0xD000, 0); // acknowledge — must not reload counter
+        assert_eq!(mapper.irq_counter, 6, "$D000 write must not reload counter");
     }
 
     // -----------------------------------------------------------------------
