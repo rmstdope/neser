@@ -486,21 +486,11 @@ mod tests {
     #[test]
     fn lock_bit_does_not_block_ex_reg1_and_2() {
         let mut mapper = make_mapper();
-        write_ex_reg(&mut mapper, 3, 0x80); // lock
-
-        // exRegs[1] and [2] should still be writable
-        write_ex_reg(&mut mapper, 1, 0xFF);
-        write_ex_reg(&mut mapper, 2, 0x02);
-
-        // Verify exRegs[2] took effect via CHR linear mode
-        write_ex_reg(&mut mapper, 3, 0x90); // locked → won't write, but 0x80 already has lock+linear bit=1
-        // Actually exRegs[3] is locked so this write is blocked. Let me set linear mode before locking.
-        // Let me restructure: set linear mode first, then lock.
-        let mut mapper = make_mapper();
         write_ex_reg(&mut mapper, 3, 0x10); // CHR linear mode, no lock
         write_ex_reg(&mut mapper, 3, 0x90); // lock + linear mode
-        write_ex_reg(&mut mapper, 2, 0x03); // should succeed even when locked
-        // Linear base = (3 & 0x0F) << 3 = 24
+
+        write_ex_reg(&mut mapper, 1, 0xFF); // should still succeed even when locked
+        write_ex_reg(&mut mapper, 2, 0x03); // should still succeed even when locked
         assert_eq!(
             mapper.read_chr(0x0000),
             24,
