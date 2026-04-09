@@ -20,7 +20,7 @@ use crate::nes::cartridge::{Mapper, MapperCapabilities};
 /// - PRG-RAM: 8 KiB at $6000-$7FFF (standard MMC3)
 /// - Mirroring: Programmable via MMC3 ($A000)
 ///
-/// Outer register (CPU $4132, detected by addr & 0xE100 == 0x4100):
+/// Outer register (CPU $4020-$5FFF, any address in this window):
 /// - Bit 0: CHR A18 for PPU $0000-$0FFF (low CHR half)
 /// - Bit 4: CHR A18 for PPU $1000-$1FFF (high CHR half)
 /// - Read returns bit 0 only
@@ -45,14 +45,16 @@ impl Mapper12 {
         let chr_rom = ctx.chr_rom;
         let mirroring = ctx.mirroring;
         Self {
-            inner: MMC3Mapper::new_with_irq_mode(prg_rom, chr_rom, mirroring, false),
+            inner: MMC3Mapper::new_with_irq_mode(prg_rom, chr_rom, mirroring, true),
             chr_ext_lo: false,
             chr_ext_hi: false,
         }
     }
 
     fn is_outer_reg(addr: u16) -> bool {
-        addr & 0xE100 == 0x4100
+        // SL-5020B responds to any address in $4020-$5FFF (full open-bus range
+        // before the cartridge connector, matching Mesen's AddRegisterRange).
+        (0x4020..=0x5FFF).contains(&addr)
     }
 }
 
@@ -365,6 +367,44 @@ mod tests {
             mapper.read_chr(0x1000),
             0,
             "With bit4=0: high half must be in lower 256 KiB (marker 0)"
+        );
+    }
+
+    // --- Outer register: full $4020-$5FFF range (matches Mesen AddRegisterRange) ---
+
+    #[test]
+    fn outer_reg_is_written_at_4020() {
+        // Mesen registers the outer register for the full $4020-$5FFF range.
+        // The game may write to any address in that window, not just $4132.
+        // A write to $4020 (bit 8 = 0) must be captured by the outer register.
+        let mut mapper = make_mapper_ext();
+        mapper.write_prg(0x8000, 0b0000_0000); // R0
+        mapper.write_prg(0x8001, 4);
+
+        // Write bit0=1 at $4020 — outside the old `& 0xE100 == 0x4100` mask.
+        mapper.write_prg(0x4020, 0x01);
+
+        // final_bank = (1<<8)|4 = 260 → upper 256 KiB → marker 1
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            1,
+            "Outer register write at $4020 must extend CHR to upper 256 KiB"
+        );
+    }
+
+    #[test]
+    fn outer_reg_is_written_at_5fff() {
+        // Also verify the upper boundary of the register window.
+        let mut mapper = make_mapper_ext();
+        mapper.write_prg(0x8000, 0b0000_0000); // R0
+        mapper.write_prg(0x8001, 4);
+
+        mapper.write_prg(0x5FFF, 0x01);
+
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            1,
+            "Outer register write at $5FFF must extend CHR to upper 256 KiB"
         );
     }
 
