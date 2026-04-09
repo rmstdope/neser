@@ -73,7 +73,7 @@ impl Mapper128 {
             has_expansion_audio: false,
             max_prg_ram_kb: 0,
             prg_bank_size_kb: 16,
-            chr_bank_size_kb: 0,
+            chr_bank_size_kb: 8,
             ..Default::default()
         }
     }
@@ -167,8 +167,7 @@ impl Mapper for Mapper128 {
             (if self.locked { 0x80 } else { 0 })
                 | (self.outer_bank << 3)
                 | (if self.prg_mode { 0x04 } else { 0 })
-                | (if self.nrom_256 { 0x02 } else { 0 })
-                | (self.inner_bank & 0x01), // save bit 0 of inner_bank here
+                | (if self.nrom_256 { 0x02 } else { 0 }),
         );
         snap.push(self.inner_bank);
         snap
@@ -472,6 +471,31 @@ mod tests {
             mapper2.base().mirroring(),
             NametableLayout::Horizontal,
             "Snapshot must preserve mirroring"
+        );
+
+        // Verify lock bit is preserved: address-latch writes must remain blocked.
+        // Use the same inner bank (6) so only address latch differences matter.
+        let prg_8000_before = mapper2.read_prg(0x8000);
+        let prg_c000_before = mapper2.read_prg(0xC000);
+        let mirroring_before = mapper2.base().mirroring();
+
+        let different_addr = build_addr(false, 2, false, false, false);
+        latch_write(&mut mapper2, different_addr, 6);
+
+        assert_eq!(
+            mapper2.read_prg(0x8000),
+            prg_8000_before,
+            "Snapshot must preserve locked state for $8000 mapping"
+        );
+        assert_eq!(
+            mapper2.read_prg(0xC000),
+            prg_c000_before,
+            "Snapshot must preserve locked state for $C000 mapping"
+        );
+        assert_eq!(
+            mapper2.base().mirroring(),
+            mirroring_before,
+            "Snapshot must preserve locked state for mirroring"
         );
     }
 }
