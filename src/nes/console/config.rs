@@ -653,7 +653,7 @@ impl Default for NesConfig {
 /// Composed of [`FrontendConfig`] (generic frontend settings) and
 /// [`NesConfig`] (NES hardware-specific settings). Parsing from CLI
 /// arguments and config files populates both sub-configs.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Config {
     /// Generic frontend configuration.
     pub frontend: FrontendConfig,
@@ -670,15 +670,6 @@ bitflags! {
         const NOISE = 0b01000;
         const DMC = 0b10000;
         const ALL = 0b11111;
-    }
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            frontend: FrontendConfig::default(),
-            nes: NesConfig::default(),
-        }
     }
 }
 

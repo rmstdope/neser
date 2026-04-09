@@ -82,6 +82,8 @@ Before merging or committing to main, the following checkpoint shall pass:
 - Run `source .venv/bin/activate && python -m unittest discover -s scripts/mappertool -s scripts/scraper -s scripts -t . -p "test_*.py"` and ensure all tests pass
 - Run `npm test` and ensure all tests pass (if any tests exist)
 
+Note that it is ok to commit to a feature branch that does not pass all checkpoints, but it is NOT ok to merge to main if any checkpoint fails. Always ensure that all checkpoints pass before merging to main.
+
 ## Framework decisions
 
 Where appropriate, use established crates to streamline development and leverage existing solutions. However, ensure that the chosen crates align with the project's requirements and do not introduce unnecessary complexity. Regularly evaluate the suitability of crates as the project evolves. Take all crate decisions in a collaborative way with the navigator.

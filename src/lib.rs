@@ -1,6 +1,7 @@
 // Internal library for testing purposes only
 // This is not published or exposed externally
 
+pub mod gb;
 pub mod nes;
 
 pub mod app_context;
