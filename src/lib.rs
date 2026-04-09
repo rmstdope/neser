@@ -9,7 +9,7 @@ pub mod config;
 pub mod debugging;
 pub mod emulator;
 pub mod frontend_toasts;
-pub mod input;
+pub use nes::input;
 #[cfg(feature = "wasm")]
 #[path = "web_frontend/wasm.rs"]
 pub mod wasm;

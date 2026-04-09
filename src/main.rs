@@ -12,7 +12,7 @@ pub mod config;
 mod debugging;
 mod emulator;
 mod frontend_toasts;
-mod input;
+use nes::input;
 #[cfg(feature = "native")]
 mod native_frontend;
 #[cfg(feature = "native")]
