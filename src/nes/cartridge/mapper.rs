@@ -87,7 +87,9 @@ use super::tengen::tengen_rambo1::TengenRambo1Mapper;
 use super::sachen::mapper36::Mapper36;
 use super::sachen::mapper132::Mapper132;
 use super::sachen::mapper133::Mapper133;
+use super::sachen::mapper136::Mapper136;
 use super::sachen::mapper243::Mapper243;
+use super::sachen::sachen8259::Sachen8259;
 
 // Unlicensed/other mappers
 #[cfg(test)]
@@ -979,6 +981,11 @@ mapper_registry! {
     129 => Mapper58::new,
     132 => Mapper132::new,
     133 => Mapper133::new,
+    135 => Sachen8259::new,
+    136 => Mapper136::new,
+    137 => Sachen8259::new,
+    138 => Sachen8259::new,
+    139 => Sachen8259::new,
     140 => JalecoJf11Mapper::new,
     151 => Mapper151::new,
     155 => MMC1Mapper::new,
