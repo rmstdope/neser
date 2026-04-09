@@ -21,10 +21,11 @@ mod rendering;
 mod tui_frontend;
 
 use app_context::AppContext;
+use autorun::AutorunFormat;
 use debugging::log_info;
 use frontend_toasts::cartridge_load_toast_message;
 use nes::console::{
-    AutorunFormat, CartridgeCatalogOptions, Config, Nes, ParseResult, default_catalog_csv_path,
+    CartridgeCatalogOptions, Config, Nes, ParseResult, default_catalog_csv_path,
     refresh_cartridge_catalog,
 };
 use std::cell::RefCell;

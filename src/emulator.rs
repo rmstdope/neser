@@ -48,6 +48,10 @@ impl Console {
     /// For NES, this parses the iNES/NES2.0 header and sets up the mapper.
     /// Uses the console's own `app_context` for ROM database lookups
     /// (auto-detection of controller types, timing modes, etc.).
+    ///
+    /// Note: inserts the cartridge directly. For startup flows that need
+    /// to inspect the cartridge before insertion (timing mode, toasts),
+    /// destructure the Console variant and use `insert_cartridge` directly.
     pub fn load_rom(&mut self, bytes: &[u8], name: &str) -> Result<(), String> {
         match self {
             Console::Nes(nes) => {
@@ -154,7 +158,8 @@ impl Console {
                 if let Some(button) = nes_button_from_id(button_id) {
                     nes.set_button(port, button, pressed);
                 } else {
-                    debug_assert!(false, "invalid NES button_id: {button_id}");
+                    #[cfg(debug_assertions)]
+                    eprintln!("warning: invalid NES button_id: {button_id}");
                 }
             }
         }
@@ -402,9 +407,9 @@ mod tests {
     // ---------------------------------------------------------------
     // Trait-based extensibility proof — shows the Console interface
     // can support multiple hardware targets via a common trait.
-    // If Console adds a method that should be generic, adding it to
-    // this trait will produce a compile error until GameBoyStub
-    // implements it, catching maintenance gaps at build time.
+    // Covers the core subset of Console's public methods. When adding
+    // a new generic method to Console, also add it here so that
+    // GameBoyStub must implement it, catching gaps at compile time.
     // ---------------------------------------------------------------
 
     /// Common operations that every emulated system must support.
