@@ -96,12 +96,12 @@ impl Mapper269 {
         let b = b as u16;
         (((b & 0x01) << 6)
             | ((b & 0x02) << 3)
-            | ((b & 0x04) << 0)
+            | (b & 0x04)
             | ((b & 0x08) >> 3)
             | ((b & 0x10) >> 3)
             | ((b & 0x20) >> 2)
             | ((b & 0x40) >> 1)
-            | ((b & 0x80) << 0)) as u8
+            | (b & 0x80)) as u8
     }
 
     /// Returns `true` when the external registers are locked (ex_regs[3] bit 7).

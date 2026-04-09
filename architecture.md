@@ -204,6 +204,24 @@ All NES-specific hardware and supporting code lives under `src/nes/`.
 | `src/nes/input/power_pad.rs` | Power Pad (Family Trainer) mat controller. |
 | `src/nes/input/snes_adapter.rs` | SNES-to-NES controller adapter. |
 
+#### Game Boy Emulation (`src/gb/`)
+
+All Game Boy (DMG) hardware lives under `src/gb/`. The module is structured around the `GbBus` trait so the SM83 CPU remains bus-agnostic and unit-testable with stub buses.
+
+| Directory/File | Description |
+| ---------------- | ------------- |
+| `src/gb/mod.rs` | Module declarations for all GB sub-modules. |
+| `src/gb/console.rs` | `Gb<B: GbBus>` — thin console shell that owns the CPU. `step()` executes one instruction and ticks the bus by the elapsed M-cycles. |
+| `src/gb/bus/bus.rs` | `GbBus` trait — `read(&mut self, addr: u16) -> u8`, `write(&mut self, addr: u16, val: u8)`, and a default no-op `tick(&mut self, m_cycles: u8)`. `StubBus` implements the trait for unit tests. |
+| `src/gb/bus/dmg_bus.rs` | `DmgBus` — full DMG memory map. Routes all 16-bit addresses to cartridge ROM/RAM, VRAM, WRAM, echo RAM, OAM, HRAM, Timer registers ($FF04–$FF07), IF ($FF0F), IE ($FFFF), and I/O stubs. Owns the cartridge and the Timer. Overrides `tick()` to advance the Timer and propagate timer interrupts to IF. |
+| `src/gb/cpu/sm83.rs` | `Sm83<B: GbBus>` — SM83/LR35902 CPU core. Full instruction set (primary + CB-prefixed), HALT bug, interrupt dispatch at five vectors. Each M-cycle increments an internal counter used by the console for bus ticking. |
+| `src/gb/cpu/opcode.rs` | Opcode metadata tables (BASE[256] and CB[256]) for debugging and tracing. |
+| `src/gb/timer/timer.rs` | `Timer` — DIV/TIMA/TMA/TAC subsystem. `tick(m_cycles)` advances counters and sets `interrupt_pending` on TIMA overflow; caller (DmgBus) propagates this to IF. |
+| `src/gb/cartridge/cartridge.rs` | `GbCartridge` trait — `read(&self, addr: u16) -> u8` and `write(&mut self, addr: u16, val: u8)`. Addresses $0000–$7FFF map to ROM; $A000–$BFFF to cartridge RAM. |
+| `src/gb/cartridge/mbc0.rs` | ROM-only cartridge (MBC type 0x00). No banking; writes are silently ignored. |
+| `src/gb/cartridge/mbc1.rs` | MBC1 cartridge (types 0x01–0x03). ROM bank switching ($2000–$3FFF), secondary bank register ($4000–$5FFF), banking mode ($6000–$7FFF), RAM enable ($0000–$1FFF). Supports up to 2 MB ROM and 32 KB RAM. |
+| `src/gb/cartridge/mod.rs` | `load_cartridge(bytes: &[u8]) -> Result<Box<dyn GbCartridge>, RomError>` — parses a `.gb` ROM, validates the header checksum, and returns the appropriate MBC implementation. `RomError` variants: `TooShort`, `BadHeaderChecksum`, `UnsupportedMbc(u8)`. |
+
 #### Frontends
 
 | Directory/File | Description |

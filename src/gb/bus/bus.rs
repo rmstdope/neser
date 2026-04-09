@@ -5,6 +5,12 @@
 pub trait GbBus {
     fn read(&mut self, addr: u16) -> u8;
     fn write(&mut self, addr: u16, val: u8);
+
+    /// Advance system peripherals by `m_cycles` M-cycles.
+    ///
+    /// The default implementation is a no-op, used by `StubBus` and test buses.
+    /// `DmgBus` overrides this to tick the timer and propagate interrupts.
+    fn tick(&mut self, _m_cycles: u8) {}
 }
 
 /// Bus stub that returns 0xFF for every read and silently discards writes.
