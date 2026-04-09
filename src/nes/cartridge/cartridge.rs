@@ -1,17 +1,12 @@
-#[cfg(test)]
-use std::cell::RefCell;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-#[cfg(test)]
-use std::rc::Rc;
 use std::{error, fmt};
 
-use crate::app_context::IntoSharedAppContext;
 #[cfg(test)]
 use crate::nes::cartridge::NametableLayout;
 use crate::nes::cartridge::mapper::MapperContext;
-use crate::nes::cartridge::rom_db::{VsHardwareType, VsPpuType};
+use crate::nes::cartridge::rom_db::{RomDb, VsHardwareType, VsPpuType};
 use crate::nes::cartridge::{Mapper, TimingMode};
 
 #[derive(Debug)]
@@ -142,17 +137,14 @@ impl Cartridge {
     }
 
     /// Create a new cartridge from an iNES ROM byte stream and its source path.
-    pub fn load_from_file<P: AsRef<Path>, C: IntoSharedAppContext>(
+    pub fn load_from_file<P: AsRef<Path>>(
         data: &[u8],
         path: P,
-        app_context: C,
+        rom_db: Option<&RomDb>,
     ) -> Result<Self, CartridgeError> {
-        let app_context = app_context.into_shared();
         let rom_path = path.as_ref().to_path_buf();
-        let ctx = app_context.borrow();
-        let rom_db = ctx.rom_db();
-        let parsed = crate::nes::cartridge::ParsedRom::parse(data, Some(rom_db))
-            .map_err(Self::map_parse_error)?;
+        let parsed =
+            crate::nes::cartridge::ParsedRom::parse(data, rom_db).map_err(Self::map_parse_error)?;
 
         crate::debugging::log_info(format!(
             "Loaded rom with CRC32: {:08X}, mapper={}, submapper={}, PRG-ROM={}KB, CHR-ROM={}KB",
@@ -335,7 +327,6 @@ impl Cartridge {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app_context::AppContext;
     use std::path::{Path, PathBuf};
 
     const INES_HEADER_SIZE: usize = 16;
@@ -464,18 +455,13 @@ mod tests {
         path
     }
 
-    fn load_cartridge_from_disk<C: IntoSharedAppContext>(path: &Path, app_context: C) -> Cartridge {
+    fn load_cartridge_from_disk(path: &Path) -> Cartridge {
         let data = std::fs::read(path).expect("reading ROM from disk should succeed");
-        Cartridge::load_from_file(&data, path, app_context).expect("load_from_file should succeed")
+        Cartridge::load_from_file(&data, path, None).expect("load_from_file should succeed")
     }
 
     fn load_cartridge_from_bytes(data: &[u8]) -> Result<Cartridge, CartridgeError> {
-        let app_context = Rc::new(RefCell::new(AppContext::new()));
-        Cartridge::load_from_file(
-            data,
-            unique_temp_path("in_memory_test.nes"),
-            app_context.clone(),
-        )
+        Cartridge::load_from_file(data, unique_temp_path("in_memory_test.nes"), None)
     }
 
     #[test]
@@ -485,8 +471,7 @@ mod tests {
         let path = unique_temp_path("test_load_from_file.nes");
         std::fs::write(&path, &rom_data).expect("writing temp ROM should succeed");
 
-        let app_context = AppContext::new();
-        let cart = load_cartridge_from_disk(&path, &app_context);
+        let cart = load_cartridge_from_disk(&path);
         assert_eq!(cart.mapper().get_mirroring(), NametableLayout::Vertical);
 
         remove_file_if_exists(&path);
@@ -507,8 +492,7 @@ mod tests {
         std::fs::write(&sav_path, &sav).expect("writing temp SAV should succeed");
 
         // Act
-        let app_context = AppContext::new();
-        let cart = load_cartridge_from_disk(&rom_path, &app_context);
+        let cart = load_cartridge_from_disk(&rom_path);
 
         // Assert: PRG-RAM reads reflect loaded save.
         assert_eq!(cart.mapper().read_prg(0x6000), 0x42);
@@ -524,8 +508,7 @@ mod tests {
         let rom_path = unique_temp_path("save_ram_save_test.nes");
         std::fs::write(&rom_path, &rom_data).expect("writing temp ROM should succeed");
 
-        let app_context = AppContext::new();
-        let mut cart = load_cartridge_from_disk(&rom_path, &app_context);
+        let mut cart = load_cartridge_from_disk(&rom_path);
         cart.mapper_mut().write_prg(0x6000, 0xAB);
         cart.mapper_mut().write_prg(0x7FFF, 0xCD);
 
@@ -562,8 +545,7 @@ mod tests {
         let sav_path = rom_path.with_extension("sav");
         std::fs::write(&sav_path, &sav).unwrap();
 
-        let app_context = AppContext::new();
-        let mut cart = load_cartridge_from_disk(&rom_path, &app_context);
+        let mut cart = load_cartridge_from_disk(&rom_path);
 
         // Simulate what insert_cartridge does: initialize_ram with Zero mode
         cart.initialize_ram(crate::nes::console::RamInitMode::Zero);
@@ -894,8 +876,7 @@ mod tests {
         std::fs::write(&sav_path, &sav).expect("writing temp SAV should succeed");
 
         // Load the cartridge
-        let app_context = AppContext::new();
-        let mut cart = load_cartridge_from_disk(&rom_path, &app_context);
+        let mut cart = load_cartridge_from_disk(&rom_path);
 
         // Disable PRG-RAM via MMC3 control register
         cart.mapper_mut().write_prg(0xA001, 0b0000_0000); // bit 7 = 0 disables PRG-RAM
@@ -923,8 +904,7 @@ mod tests {
         let rom_path = unique_temp_path("mmc3_disabled_save_test.nes");
         std::fs::write(&rom_path, &rom_data).expect("writing temp ROM should succeed");
 
-        let app_context = AppContext::new();
-        let mut cart = load_cartridge_from_disk(&rom_path, &app_context);
+        let mut cart = load_cartridge_from_disk(&rom_path);
 
         // Write some data while PRG-RAM is enabled
         cart.mapper_mut().write_prg(0x6000, 0xAB);
@@ -957,8 +937,7 @@ mod tests {
         let rom_path = unique_temp_path("mmc3_write_protect_test.nes");
         std::fs::write(&rom_path, &rom_data).expect("writing temp ROM should succeed");
 
-        let app_context = AppContext::new();
-        let mut cart = load_cartridge_from_disk(&rom_path, &app_context);
+        let mut cart = load_cartridge_from_disk(&rom_path);
 
         // Write some data while PRG-RAM is writable
         cart.mapper_mut().write_prg(0x6000, 0xAB);
@@ -991,8 +970,7 @@ mod tests {
         let rom_path = unique_temp_path("mmc5_banked_wram_test.nes");
         std::fs::write(&rom_path, &rom_data).expect("writing temp ROM should succeed");
 
-        let app_context = AppContext::new();
-        let mut cart = load_cartridge_from_disk(&rom_path, &app_context);
+        let mut cart = load_cartridge_from_disk(&rom_path);
 
         // Write to bank 0 at $6000-$7FFF
         cart.mapper_mut().write_prg(0x5113, 0); // Select bank 0
@@ -1042,8 +1020,7 @@ mod tests {
         sav[0x3FFF] = 0xDD; // Bank 1 end
         std::fs::write(&sav_path, &sav).expect("writing temp SAV should succeed");
 
-        let app_context = AppContext::new();
-        let mut cart = load_cartridge_from_disk(&rom_path, &app_context);
+        let mut cart = load_cartridge_from_disk(&rom_path);
 
         // Verify bank 0 data
         cart.mapper_mut().write_prg(0x5113, 0); // Select bank 0

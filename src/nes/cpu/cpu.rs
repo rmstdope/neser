@@ -2912,12 +2912,9 @@ mod tests {
         rom.extend(vec![0u8; 2 * 16 * 1024]);
         rom.extend(vec![0u8; 8 * 1024]);
 
-        let cart = crate::nes::cartridge::Cartridge::load_from_file(
-            &rom,
-            "cpu-reset-test.nes",
-            crate::app_context::AppContext::new(),
-        )
-        .expect("cartridge should parse");
+        let cart =
+            crate::nes::cartridge::Cartridge::load_from_file(&rom, "cpu-reset-test.nes", None)
+                .expect("cartridge should parse");
         memory.borrow_mut().map_cartridge(cart);
 
         // Configure VRC6 saw: rate=8, period=0, enable.
@@ -3195,12 +3192,8 @@ mod tests {
         rom.extend_from_slice(&prg_rom);
         rom.extend_from_slice(&chr_rom);
 
-        let cartridge = Cartridge::load_from_file(
-            &rom,
-            "cpu-mmc3-test.nes",
-            crate::app_context::AppContext::new(),
-        )
-        .expect("MMC3 iNES ROM should parse");
+        let cartridge = Cartridge::load_from_file(&rom, "cpu-mmc3-test.nes", None)
+            .expect("MMC3 iNES ROM should parse");
         cpu.bus.borrow_mut().map_cartridge(cartridge);
 
         cpu.reset(true);

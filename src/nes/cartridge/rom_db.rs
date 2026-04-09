@@ -385,7 +385,7 @@ impl RomDb {
             .is_some_and(|rc| rc.contains("Japan"))
     }
 
-    pub(crate) fn from_csv_content(content: &str) -> Self {
+    pub fn from_csv_content(content: &str) -> Self {
         let mut entries = HashMap::new();
 
         for line in content.lines() {
@@ -398,6 +398,24 @@ impl RomDb {
 
         Self { entries }
     }
+}
+
+/// Load the ROM database using the appropriate platform strategy.
+///
+/// On native targets, reads the CSV file from disk.
+/// On wasm, the CSV is embedded at compile time.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn load_rom_db() -> RomDb {
+    RomDb::new().unwrap()
+}
+
+/// Load the ROM database using the appropriate platform strategy.
+///
+/// On native targets, reads the CSV file from disk.
+/// On wasm, the CSV is embedded at compile time.
+#[cfg(target_arch = "wasm32")]
+pub fn load_rom_db() -> RomDb {
+    RomDb::from_csv_content(include_str!("rom_db.csv"))
 }
 
 fn parse_optional_field(raw: &str) -> Option<String> {

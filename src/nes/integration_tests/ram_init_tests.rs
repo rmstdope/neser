@@ -20,8 +20,7 @@ fn create_test_rom() -> Vec<u8> {
 }
 
 fn load_test_cartridge(rom_data: &[u8], rom_name: &str) -> Cartridge {
-    Cartridge::load_from_file(rom_data, rom_name, crate::app_context::AppContext::new())
-        .expect("Failed to create cartridge")
+    Cartridge::load_from_file(rom_data, rom_name, None).expect("Failed to create cartridge")
 }
 
 #[test]

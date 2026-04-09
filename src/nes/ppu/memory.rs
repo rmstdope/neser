@@ -507,12 +507,9 @@ mod tests {
         // If PPU CHR reads don't call mapper.ppu_address_changed(addr), MMC3 IRQ can never fire
         // during real rendering.
 
-        let cartridge = Cartridge::load_from_file(
-            &create_mmc3_ines_rom(),
-            "ppu-memory-mmc3-test.nes",
-            crate::app_context::AppContext::new(),
-        )
-        .expect("MMC3 test ROM should load");
+        let cartridge =
+            Cartridge::load_from_file(&create_mmc3_ines_rom(), "ppu-memory-mmc3-test.nes", None)
+                .expect("MMC3 test ROM should load");
         let cartridge_rc = Rc::new(RefCell::new(cartridge));
         let cartridge_opt = Some(cartridge_rc.clone());
 

@@ -2,9 +2,9 @@ use crate::app_context::{IntoSharedAppContext, SharedAppContext};
 use crate::debugging::{Tracing, log_info};
 use crate::nes::apu::{Apu, ApuState, SharedApu};
 use crate::nes::bus::{Bus, BusState, MapperState, SharedBus};
-use crate::nes::cartridge::Cartridge;
 #[cfg(test)]
 use crate::nes::cartridge::TimingMode;
+use crate::nes::cartridge::{Cartridge, RomDb, load_rom_db};
 #[cfg(test)]
 use crate::nes::console::Config;
 #[cfg(test)]
@@ -108,6 +108,7 @@ pub struct CpuTraceLine {
 
 pub struct Nes {
     app_context: SharedAppContext,
+    rom_db: RomDb,
     ppu: SharedPpu,
     apu: SharedApu,
     bus: SharedBus,
@@ -154,6 +155,7 @@ impl Nes {
 
         Self {
             app_context,
+            rom_db: load_rom_db(),
             ppu,
             apu,
             bus: memory,
@@ -166,52 +168,31 @@ impl Nes {
         }
     }
 
+    /// The ROM database used for CRC-based metadata lookups.
+    pub fn rom_db(&self) -> &RomDb {
+        &self.rom_db
+    }
+
     /// Insert a cartridge and map it into memory.
     /// Auto-configures Arkanoid or Zapper controllers for known ROMs only when no controller
     /// ports were explicitly configured by the user.
     pub fn insert_cartridge(&mut self, mut cartridge: Cartridge) {
         let cartridge_crc32 = cartridge.crc32();
-        let zapper_port = self
-            .app_context
-            .borrow()
-            .rom_db()
-            .default_zapper_on_port(cartridge_crc32);
+        let zapper_port = self.rom_db.default_zapper_on_port(cartridge_crc32);
         let arkanoid_port = crate::nes::cartridge::default_arkanoid_on_port(cartridge_crc32);
-        let power_pad_port = self
-            .app_context
-            .borrow()
-            .rom_db()
-            .default_power_pad_on_port(cartridge_crc32);
+        let power_pad_port = self.rom_db.default_power_pad_on_port(cartridge_crc32);
         let has_famicom_four_players_expansion = self
-            .app_context
-            .borrow()
-            .rom_db()
+            .rom_db
             .has_famicom_four_players_expansion(cartridge_crc32);
-        let has_arkanoid_famicom_expansion = self
-            .app_context
-            .borrow()
-            .rom_db()
-            .has_arkanoid_famicom_expansion(cartridge_crc32);
-        let has_zapper_famicom_expansion = self
-            .app_context
-            .borrow()
-            .rom_db()
-            .has_zapper_famicom_expansion(cartridge_crc32);
-        let has_power_pad_famicom_expansion = self
-            .app_context
-            .borrow()
-            .rom_db()
-            .has_power_pad_famicom_expansion(cartridge_crc32);
-        let has_nes_four_score_expansion = self
-            .app_context
-            .borrow()
-            .rom_db()
-            .has_nes_four_score_expansion(cartridge_crc32);
-        let is_japan_region = self
-            .app_context
-            .borrow()
-            .rom_db()
-            .is_japan_region(cartridge_crc32);
+        let has_arkanoid_famicom_expansion =
+            self.rom_db.has_arkanoid_famicom_expansion(cartridge_crc32);
+        let has_zapper_famicom_expansion =
+            self.rom_db.has_zapper_famicom_expansion(cartridge_crc32);
+        let has_power_pad_famicom_expansion =
+            self.rom_db.has_power_pad_famicom_expansion(cartridge_crc32);
+        let has_nes_four_score_expansion =
+            self.rom_db.has_nes_four_score_expansion(cartridge_crc32);
+        let is_japan_region = self.rom_db.is_japan_region(cartridge_crc32);
 
         // Auto-detect Famicom hardware mode for Japan-region ROMs
         self.app_context
@@ -253,11 +234,7 @@ impl Nes {
             .apply_rom_db_vs_system_hint(is_vs_system);
 
         // Auto-detect VS System swapped controller wiring from ROM DB expansion type
-        let vs_controllers_swapped = self
-            .app_context
-            .borrow()
-            .rom_db()
-            .has_vs_swapped_controllers(cartridge_crc32);
+        let vs_controllers_swapped = self.rom_db.has_vs_swapped_controllers(cartridge_crc32);
         self.app_context
             .borrow_mut()
             .config_mut()
@@ -1167,9 +1144,8 @@ impl Nes {
     /// This is a convenience method that combines [`Cartridge::load_from_file`]
     /// and [`insert_cartridge`](Self::insert_cartridge).
     pub fn load_rom(&mut self, bytes: &[u8], name: &str) -> Result<(), String> {
-        let app_context = self.app_context.clone();
-        let cart =
-            Cartridge::load_from_file(bytes, name, app_context).map_err(|e| e.to_string())?;
+        let cart = Cartridge::load_from_file(bytes, name, Some(&self.rom_db))
+            .map_err(|e| e.to_string())?;
         self.insert_cartridge(cart);
         Ok(())
     }
@@ -1292,8 +1268,7 @@ mod tests {
     use super::*;
 
     fn load_test_cartridge(rom_data: &[u8]) -> Cartridge {
-        let app_context = crate::app_context::AppContext::new();
-        Cartridge::load_from_file(rom_data, "nes-test-rom.nes", &app_context)
+        Cartridge::load_from_file(rom_data, "nes-test-rom.nes", None)
             .expect("Failed to create cartridge")
     }
 

@@ -3750,12 +3750,8 @@ mod tests {
         // With 8KB PRG-RAM, bank selection must wrap so bank 1 aliases bank 0.
 
         let rom = make_mmc5_ines_rom_with_prg_ram_banks(1);
-        let mut cart = Cartridge::load_from_file(
-            &rom,
-            "mmc5-prg-ram-8k-test.nes",
-            crate::app_context::AppContext::new(),
-        )
-        .expect("ROM should parse");
+        let mut cart = Cartridge::load_from_file(&rom, "mmc5-prg-ram-8k-test.nes", None)
+            .expect("ROM should parse");
         let mapper = cart.mapper_mut();
 
         mapper.write_prg(0x5113, 0);
@@ -3774,12 +3770,8 @@ mod tests {
         // With 16KB PRG-RAM (2 x 8KB), bank 2 must wrap back to bank 0.
 
         let rom = make_mmc5_ines_rom_with_prg_ram_banks(2);
-        let mut cart = Cartridge::load_from_file(
-            &rom,
-            "mmc5-prg-ram-16k-test.nes",
-            crate::app_context::AppContext::new(),
-        )
-        .expect("ROM should parse");
+        let mut cart = Cartridge::load_from_file(&rom, "mmc5-prg-ram-16k-test.nes", None)
+            .expect("ROM should parse");
         let mapper = cart.mapper_mut();
 
         mapper.write_prg(0x5113, 0);

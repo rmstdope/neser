@@ -1312,9 +1312,8 @@ mod tests {
         let mut bus = Bus::new(ppu.clone(), apu, app_context.clone());
 
         let rom = create_mmc1_rom();
-        let cartridge =
-            Cartridge::load_from_file(&rom, "bus-mmc1-state-test.nes", app_context.clone())
-                .expect("Failed to create MMC1 ROM");
+        let cartridge = Cartridge::load_from_file(&rom, "bus-mmc1-state-test.nes", None)
+            .expect("Failed to create MMC1 ROM");
         bus.map_cartridge(cartridge);
 
         write_mmc1_control(&mut bus, 0x1E); // PRG mode 3, vertical mirroring
@@ -1618,12 +1617,9 @@ mod tests {
     fn test_unmapped_cartridge_space_returns_open_bus_with_mapper() {
         let mut memory = create_test_memory();
         let rom = create_mmc1_rom();
-        let cartridge = crate::nes::cartridge::Cartridge::load_from_file(
-            &rom,
-            "bus-open-bus-mmc1.nes",
-            Rc::new(RefCell::new(crate::app_context::AppContext::new())),
-        )
-        .expect("valid cartridge");
+        let cartridge =
+            crate::nes::cartridge::Cartridge::load_from_file(&rom, "bus-open-bus-mmc1.nes", None)
+                .expect("valid cartridge");
         memory.map_cartridge(cartridge);
 
         memory.write(0x0000, 0x5A, false);
@@ -1637,12 +1633,9 @@ mod tests {
     fn test_unmapped_cartridge_space_returns_open_bus_with_nrom() {
         let mut memory = create_test_memory();
         let rom = create_nrom_rom();
-        let cartridge = crate::nes::cartridge::Cartridge::load_from_file(
-            &rom,
-            "bus-open-bus-nrom.nes",
-            Rc::new(RefCell::new(crate::app_context::AppContext::new())),
-        )
-        .expect("valid cartridge");
+        let cartridge =
+            crate::nes::cartridge::Cartridge::load_from_file(&rom, "bus-open-bus-nrom.nes", None)
+                .expect("valid cartridge");
         memory.map_cartridge(cartridge);
 
         memory.write(0x0000, 0xA5, false);
@@ -1805,7 +1798,7 @@ mod tests {
         let cart = Cartridge::load_from_file(
             &create_mmc1_ines_rom_with_vertical_mirroring(),
             "bus-mmc1-mirroring-runtime.nes",
-            app_context.clone(),
+            None,
         )
         .expect("MMC1 test ROM should load");
         mem.map_cartridge(cart);
@@ -1848,7 +1841,7 @@ mod tests {
         let cart = Cartridge::load_from_file(
             &create_mmc1_ines_rom_with_vertical_mirroring(),
             "bus-mmc1-wram-disable.nes",
-            Rc::new(RefCell::new(crate::app_context::AppContext::new())),
+            None,
         )
         .expect("MMC1 test ROM should load");
         mem.map_cartridge(cart);
@@ -1868,7 +1861,7 @@ mod tests {
         let cart = Cartridge::load_from_file(
             &create_mmc1_ines_rom_with_vertical_mirroring(),
             "bus-mmc1-debug-wram-disable.nes",
-            Rc::new(RefCell::new(crate::app_context::AppContext::new())),
+            None,
         )
         .expect("MMC1 test ROM should load");
         mem.map_cartridge(cart);
@@ -2139,12 +2132,8 @@ mod tests {
 
         // Load a simple NROM cartridge with PRG-RAM
         let rom_data = create_nrom_rom_with_prg_ram();
-        let cartridge = Cartridge::load_from_file(
-            &rom_data,
-            "bus-prg-ram-rw.nes",
-            Rc::new(RefCell::new(crate::app_context::AppContext::new())),
-        )
-        .expect("Failed to create cartridge");
+        let cartridge = Cartridge::load_from_file(&rom_data, "bus-prg-ram-rw.nes", None)
+            .expect("Failed to create cartridge");
         memory.map_cartridge(cartridge);
 
         // Write to PRG-RAM
@@ -2176,12 +2165,8 @@ mod tests {
         let mut memory = create_test_memory();
 
         let rom_data = create_nrom_rom_with_prg_ram();
-        let cartridge = Cartridge::load_from_file(
-            &rom_data,
-            "bus-prg-ram-persistence.nes",
-            Rc::new(RefCell::new(crate::app_context::AppContext::new())),
-        )
-        .expect("Failed to create cartridge");
+        let cartridge = Cartridge::load_from_file(&rom_data, "bus-prg-ram-persistence.nes", None)
+            .expect("Failed to create cartridge");
         memory.map_cartridge(cartridge);
 
         memory.write(0x6100, 0xAB, false);
@@ -2198,12 +2183,8 @@ mod tests {
         let mut memory = create_test_memory();
 
         let rom_data = create_nrom_rom_with_prg_ram();
-        let cartridge = Cartridge::load_from_file(
-            &rom_data,
-            "bus-prg-ram-size.nes",
-            Rc::new(RefCell::new(crate::app_context::AppContext::new())),
-        )
-        .expect("Failed to create cartridge");
+        let cartridge = Cartridge::load_from_file(&rom_data, "bus-prg-ram-size.nes", None)
+            .expect("Failed to create cartridge");
         memory.map_cartridge(cartridge);
 
         // Write to first and last byte of 8KB range
@@ -2223,12 +2204,8 @@ mod tests {
         let mut memory = create_test_memory();
 
         let rom_data = create_nrom_rom_with_prg_ram();
-        let cartridge = Cartridge::load_from_file(
-            &rom_data,
-            "bus-prg-ram-zero-init.nes",
-            Rc::new(RefCell::new(crate::app_context::AppContext::new())),
-        )
-        .expect("Failed to create cartridge");
+        let cartridge = Cartridge::load_from_file(&rom_data, "bus-prg-ram-zero-init.nes", None)
+            .expect("Failed to create cartridge");
         memory.map_cartridge(cartridge);
 
         // Check various addresses are initialized to 0
@@ -2728,12 +2705,9 @@ mod tests {
         rom.extend(vec![0xBB; 8 * 1024]);
 
         // Create cartridge and map it
-        let cartridge = crate::nes::cartridge::Cartridge::load_from_file(
-            &rom,
-            "bus-trainer-load.nes",
-            Rc::new(RefCell::new(crate::app_context::AppContext::new())),
-        )
-        .unwrap();
+        let cartridge =
+            crate::nes::cartridge::Cartridge::load_from_file(&rom, "bus-trainer-load.nes", None)
+                .unwrap();
         memory.map_cartridge(cartridge);
 
         // Verify trainer data was loaded into RAM at $7000-$71FF
@@ -2772,12 +2746,9 @@ mod tests {
         rom.extend(vec![0xBB; 8 * 1024]);
 
         // Create cartridge and map it
-        let cartridge = crate::nes::cartridge::Cartridge::load_from_file(
-            &rom,
-            "bus-no-trainer.nes",
-            Rc::new(RefCell::new(crate::app_context::AppContext::new())),
-        )
-        .unwrap();
+        let cartridge =
+            crate::nes::cartridge::Cartridge::load_from_file(&rom, "bus-no-trainer.nes", None)
+                .unwrap();
         memory.map_cartridge(cartridge);
 
         // Verify RAM at $7000-$71FF remains zero (initial state)
@@ -2816,7 +2787,7 @@ mod tests {
         let cartridge = crate::nes::cartridge::Cartridge::load_from_file(
             &rom,
             "bus-m17-sub1-trainer.nes",
-            Rc::new(RefCell::new(crate::app_context::AppContext::new())),
+            None,
         )
         .unwrap();
         memory.map_cartridge(cartridge);

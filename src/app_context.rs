@@ -3,7 +3,6 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use crate::config::Config;
-use crate::nes::cartridge::{RomDb, RomDbEntry};
 
 pub const TOAST_LIFETIME_SECS: u64 = 4;
 pub const MAX_VISIBLE_TOASTS: usize = 3;
@@ -17,7 +16,6 @@ pub trait IntoSharedAppContext {
 #[derive(Debug, Clone)]
 pub struct AppContext {
     toast_manager: ToastManager,
-    rom_db: RomDb,
     config: Config,
 }
 
@@ -25,7 +23,6 @@ impl Default for AppContext {
     fn default() -> Self {
         Self {
             toast_manager: ToastManager::new(),
-            rom_db: load_rom_db(),
             config: Config::default(),
         }
     }
@@ -49,18 +46,6 @@ impl IntoSharedAppContext for SharedAppContext {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn load_rom_db() -> RomDb {
-    // RomDb loads the cvs database
-    RomDb::new().unwrap()
-}
-
-#[cfg(target_arch = "wasm32")]
-fn load_rom_db() -> RomDb {
-    // cvs database is not accessible in wasm, so we include it as a string and parse it at runtime
-    RomDb::from_csv_content(include_str!("nes/cartridge/rom_db.csv"))
-}
-
 impl AppContext {
     #[allow(dead_code)]
     pub fn new() -> Self {
@@ -78,10 +63,6 @@ impl AppContext {
         &self.config
     }
 
-    pub fn rom_db(&self) -> &RomDb {
-        &self.rom_db
-    }
-
     pub fn config_mut(&mut self) -> &mut Config {
         &mut self.config
     }
@@ -96,11 +77,6 @@ impl AppContext {
             .into_iter()
             .map(|toast| toast.text.clone())
             .collect()
-    }
-
-    #[allow(dead_code)]
-    pub fn get_db_entry_by_crc(&self, crc: u32) -> Option<RomDbEntry> {
-        self.rom_db.get_by_crc(crc).cloned()
     }
 }
 
@@ -212,15 +188,5 @@ mod tests {
 
         let visible = context.visible_toasts(Instant::now());
         assert_eq!(visible, vec!["Saved state".to_string()]);
-    }
-
-    #[test]
-    fn test_app_context_get_db_entry_by_crc() {
-        let context = AppContext::new();
-        let entry = context
-            .get_db_entry_by_crc(0x836C4FA7)
-            .expect("known CRC should exist in rom_db.csv");
-
-        assert_eq!(entry.crc, Some(0x836C4FA7));
     }
 }

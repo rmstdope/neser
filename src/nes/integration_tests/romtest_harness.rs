@@ -174,9 +174,8 @@ pub(crate) mod tests {
     ) -> RomTestResult {
         let rom_data =
             std::fs::read(rom_path).unwrap_or_else(|_| panic!("{rom_path} ROM should be readable"));
-        let cartridge =
-            Cartridge::load_from_file(&rom_data, rom_path, crate::app_context::AppContext::new())
-                .unwrap_or_else(|_| panic!("{rom_path} ROM should parse successfully"));
+        let cartridge = Cartridge::load_from_file(&rom_data, rom_path, None)
+            .unwrap_or_else(|_| panic!("{rom_path} ROM should parse successfully"));
 
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
             config.clone(),

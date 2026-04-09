@@ -150,11 +150,7 @@ pub(crate) mod tests {
                 }
             };
 
-            let cartridge = match Cartridge::load_from_file(
-                &rom_data,
-                &self.rom_path,
-                crate::app_context::AppContext::new(),
-            ) {
+            let cartridge = match Cartridge::load_from_file(&rom_data, &self.rom_path, None) {
                 Ok(cart) => cart,
                 Err(e) => {
                     eprintln!("Failed to parse ROM {}: {}", self.rom_path, e);
@@ -368,11 +364,7 @@ pub(crate) mod tests {
             }
         };
 
-        let cartridge = match Cartridge::load_from_file(
-            &rom_data,
-            rom_path,
-            crate::app_context::AppContext::new(),
-        ) {
+        let cartridge = match Cartridge::load_from_file(&rom_data, rom_path, None) {
             Ok(cart) => cart,
             Err(e) => {
                 eprintln!("Failed to parse ROM {}: {}", rom_path, e);
@@ -651,7 +643,7 @@ pub(crate) mod tests {
                 let cartridge = $crate::nes::cartridge::Cartridge::load_from_file(
                     &rom_data,
                     $rom_path,
-                    &$crate::app_context::AppContext::new(),
+                    None,
                 )
                 .expect("ROM should parse");
 
@@ -754,7 +746,7 @@ pub(crate) mod tests {
                 let cartridge = $crate::nes::cartridge::Cartridge::load_from_file(
                     &rom_data,
                     $rom_path,
-                    &$crate::app_context::AppContext::new(),
+                    None,
                 )
                 .expect("ROM should parse");
 

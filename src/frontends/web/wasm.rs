@@ -115,7 +115,7 @@ impl WasmNes {
             *app_context.borrow_mut().config_mut() = Config::default();
         }
         self.rom_loaded = false;
-        let cart = match Cartridge::load_from_file(rom, rom_name, app_context.clone()) {
+        let cart = match Cartridge::load_from_file(rom, rom_name, Some(self.nes.rom_db())) {
             Ok(cart) => cart,
             Err(err) => {
                 self.pending_toasts

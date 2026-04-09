@@ -119,9 +119,9 @@ mod tests {
         fs::copy("roms/automated_tests/nestest/nestest.nes", &rom_path)
             .expect("Failed to copy test ROM");
         let rom_bytes = fs::read(&rom_path).expect("Failed to read ROM");
-        let cart = Cartridge::load_from_file(&rom_bytes, &rom_path, AppContext::new())
-            .expect("Failed to load ROM");
         let mut nes = Nes::new(AppContext::new_with_config(Config::default()));
+        let cart = Cartridge::load_from_file(&rom_bytes, &rom_path, Some(nes.rom_db()))
+            .expect("Failed to load ROM");
         nes.insert_cartridge(cart);
         nes.reset(false);
         nes

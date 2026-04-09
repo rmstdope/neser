@@ -338,9 +338,8 @@ mod tests {
         let rom_path = unique_temp_rom_path("mapper132-fixture.nes");
         let rom_data = build_mapper132_fixture_rom();
 
-        let mut cartridge =
-            Cartridge::load_from_file(&rom_data, &rom_path, crate::app_context::AppContext::new())
-                .expect("mapper 132 fixture should load");
+        let mut cartridge = Cartridge::load_from_file(&rom_data, &rom_path, None)
+            .expect("mapper 132 fixture should load");
 
         assert_eq!(cartridge.mapper().mapper_number(), 132);
         assert_eq!(cartridge.mapper().read_prg(0x8000), 0);

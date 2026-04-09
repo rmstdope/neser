@@ -140,9 +140,9 @@ fn recalculate_autorun_for_rom(rom_path: &str, format: AutorunFormat) -> Result<
     };
     let app_context = AppContext::new_with_config(config);
 
-    let cart = Cartridge::load_from_file(&rom_bytes, rom_path, app_context.clone())
-        .map_err(|e| format!("Failed to load cartridge {}: {e}", rom_path))?;
     let mut nes = Nes::new(app_context);
+    let cart = Cartridge::load_from_file(&rom_bytes, rom_path, Some(nes.rom_db()))
+        .map_err(|e| format!("Failed to load cartridge {}: {e}", rom_path))?;
     nes.insert_cartridge(cart);
     nes.reset(false);
 
@@ -312,22 +312,22 @@ fn run_native_frontend(
         }
     };
 
-    let cart =
-        match nes::cartridge::Cartridge::load_from_file(&rom_bytes, &rom_path, app_context.clone())
-        {
-            Ok(cartridge) => {
-                app_context
-                    .borrow_mut()
-                    .add_toast(cartridge_load_toast_message(&rom_path, true));
-                cartridge
-            }
-            Err(err) => {
-                app_context
-                    .borrow_mut()
-                    .add_toast(cartridge_load_toast_message(&rom_path, false));
-                return Err(err.into());
-            }
-        };
+    let rom_db = nes::cartridge::load_rom_db();
+    let cart = match nes::cartridge::Cartridge::load_from_file(&rom_bytes, &rom_path, Some(&rom_db))
+    {
+        Ok(cartridge) => {
+            app_context
+                .borrow_mut()
+                .add_toast(cartridge_load_toast_message(&rom_path, true));
+            cartridge
+        }
+        Err(err) => {
+            app_context
+                .borrow_mut()
+                .add_toast(cartridge_load_toast_message(&rom_path, false));
+            return Err(err.into());
+        }
+    };
 
     let rom_timing_mode = cart.rom_timing_mode();
     app_context

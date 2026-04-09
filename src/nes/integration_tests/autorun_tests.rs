@@ -26,7 +26,7 @@ mod tests {
     fn make_nes_for_rom(rom_path: &Path) -> Result<Nes, String> {
         let rom_data = std::fs::read(rom_path)
             .map_err(|e| format!("Failed to read ROM {}: {e}", rom_path.display()))?;
-        let cartridge = Cartridge::load_from_file(&rom_data, rom_path, AppContext::new())
+        let cartridge = Cartridge::load_from_file(&rom_data, rom_path, None)
             .map_err(|e| format!("Failed to parse ROM {}: {e}", rom_path.display()))?;
 
         let mut config = deterministic_config();

@@ -96,7 +96,7 @@ mod tests {
                 let cartridge = Cartridge::load_from_file(
                     &rom_data,
                     $rom_path,
-                    &crate::app_context::AppContext::new(),
+                    None,
                 )
                 .expect(concat!("ROM should parse: ", $rom_path));
 
@@ -369,8 +369,7 @@ mod tests {
         let rom_path = "roms/automated_tests/test28-0.04/test28.nes";
         let rom_data = fs::read(rom_path).expect("ROM should load");
         let cartridge =
-            Cartridge::load_from_file(&rom_data, rom_path, crate::app_context::AppContext::new())
-                .expect("ROM should parse");
+            Cartridge::load_from_file(&rom_data, rom_path, None).expect("ROM should parse");
 
         let mut config = Config {
             nes: NesConfig {
@@ -548,9 +547,8 @@ mod tests {
     fn test_mapper95_in_memory_rom_crc_sequence() {
         let rom_path = "in-memory/mapper95-test.nes";
         let rom_data = build_mapper95_test_rom();
-        let cartridge =
-            Cartridge::load_from_file(&rom_data, rom_path, crate::app_context::AppContext::new())
-                .expect("in-memory mapper95 ROM should parse");
+        let cartridge = Cartridge::load_from_file(&rom_data, rom_path, None)
+            .expect("in-memory mapper95 ROM should parse");
 
         let config = Config {
             nes: NesConfig {
@@ -2538,9 +2536,8 @@ mod tests {
     fn load_gtrom_cc_test1() -> Nes {
         let rom_path = "roms/automated_tests/GTROM_CC_Test1/GTROM_CC_Test1.nes";
         let rom_data = fs::read(rom_path).expect("GTROM_CC_Test1 ROM should load");
-        let cartridge =
-            Cartridge::load_from_file(&rom_data, rom_path, crate::app_context::AppContext::new())
-                .expect("GTROM_CC_Test1 ROM should parse");
+        let cartridge = Cartridge::load_from_file(&rom_data, rom_path, None)
+            .expect("GTROM_CC_Test1 ROM should parse");
         let config = Config {
             nes: NesConfig {
                 ram_init_mode: RamInitMode::Zero,

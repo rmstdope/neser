@@ -214,9 +214,8 @@ mod tests {
 
     fn make_nes_with_cart(rom: &[u8]) -> Nes {
         let mut nes = make_nes();
-        let cart =
-            crate::nes::cartridge::Cartridge::load_from_file(rom, "test.nes", AppContext::new())
-                .expect("load cart");
+        let cart = crate::nes::cartridge::Cartridge::load_from_file(rom, "test.nes", None)
+            .expect("load cart");
         nes.insert_cartridge(cart);
         nes.reset(false);
         nes

@@ -352,11 +352,10 @@ impl NativeEventLoop {
             }
         };
 
-        let app_context = self.console.app_context().clone();
         let cartridge = match crate::nes::cartridge::Cartridge::load_from_file(
             &rom_bytes,
             rom_path,
-            app_context.clone(),
+            Some(self.nes().rom_db()),
         ) {
             Ok(c) => c,
             Err(err) => {
@@ -367,6 +366,7 @@ impl NativeEventLoop {
 
         let applied = {
             let rom_timing = cartridge.rom_timing_mode();
+            let app_context = self.console.app_context().clone();
             app_context
                 .borrow_mut()
                 .config_mut()
@@ -374,7 +374,7 @@ impl NativeEventLoop {
         };
 
         self.nes_mut().insert_cartridge(cartridge);
-        crate::nes::console::log_hardware_selection(&app_context, applied);
+        crate::nes::console::log_hardware_selection(self.console.app_context(), applied);
         self.console.reset(false);
     }
 

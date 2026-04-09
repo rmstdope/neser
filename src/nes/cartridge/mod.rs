@@ -66,6 +66,6 @@ pub use mapper_templates::{DualBank32Mapper, SimpleBankedPrgMapper, SimpleFixedP
 pub use rom_db::calculate_rom_crc32;
 pub(crate) use rom_db::default_arkanoid_on_port;
 #[allow(unused_imports)]
-pub use rom_db::{RomDb, RomDbEntry};
+pub use rom_db::{RomDb, RomDbEntry, load_rom_db};
 #[allow(unused_imports)]
 pub use rom_db::{VsHardwareType, VsPpuType};

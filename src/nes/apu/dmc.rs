@@ -1091,16 +1091,12 @@ mod sample_tests {
         prg[0x7FFF] = 0x80;
 
         let rom = make_ines_nrom_32k(&prg);
-        let cartridge = Cartridge::load_from_file(
-            &rom,
-            "apu-dmc-test-rom.nes",
-            Rc::new(RefCell::new(crate::app_context::AppContext::new())),
-        )
-        .expect("test ROM should parse");
-
         let mut nes = Nes::new(Rc::new(RefCell::new(
             crate::app_context::AppContext::new_with_config(Config::default()),
         )));
+        let cartridge = Cartridge::load_from_file(&rom, "apu-dmc-test-rom.nes", Some(nes.rom_db()))
+            .expect("test ROM should parse");
+
         nes.insert_cartridge(cartridge);
         nes.reset(false);
 
