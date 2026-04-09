@@ -87,6 +87,7 @@ The `src/bin/roms.rs` file is a library binary (accessed via `cargo run --bin ro
 | -------- | ------------- |
 | `scripts/build_web.sh` | Builds the WASM target with `cargo build --target wasm32-unknown-unknown --features wasm`, then runs `wasm-bindgen` to generate JS glue code into `web/pkg/`. |
 | `scripts/run_web.sh` | Starts a local HTTP server (`python3 -m http.server`) in the `web/` directory for testing the browser frontend. |
+| `scripts/test-dir.sh` | Runs Rust tests for specific source directories. Converts directory paths (e.g., `src/nes/cartridge`) to `cargo test` module filters. Supports `--skip-integration` and `--list` flags. Used by CI to conditionally run tests based on changed files. |
 
 ### Python Tools
 
