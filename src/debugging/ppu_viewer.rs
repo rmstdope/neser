@@ -1,4 +1,4 @@
-use crate::console::Nes;
+use crate::nes::console::Nes;
 
 const CHR_SIZE: usize = 8192;
 const NAMETABLE_SIZE: usize = 1024;
@@ -163,8 +163,8 @@ fn render_tile_into(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::{Cartridge, NametableLayout};
-    use crate::console::{Config, Nes};
+    use crate::nes::cartridge::{Cartridge, NametableLayout};
+    use crate::nes::console::{Config, Nes};
 
     #[test]
     fn test_render_pattern_tables_rgba_has_correct_dimensions() {

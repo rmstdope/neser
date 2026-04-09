@@ -1,17 +1,15 @@
 // Internal library for testing purposes only
 // This is not published or exposed externally
 
+pub mod nes;
+
 pub mod app_context;
-pub mod apu;
 pub mod autorun;
-pub mod bus;
-pub mod cartridge;
-pub mod console;
-pub mod cpu;
+pub mod config;
 pub mod debugging;
+pub mod emulator;
 pub mod frontend_toasts;
 pub mod input;
-pub mod ppu;
 #[cfg(feature = "wasm")]
 #[path = "web_frontend/wasm.rs"]
 pub mod wasm;
@@ -23,7 +21,6 @@ mod wasm_tests;
 
 #[cfg(feature = "native")]
 pub mod audio;
-pub mod integration_tests;
 #[cfg(feature = "native")]
 pub mod native_frontend;
 #[cfg(feature = "native")]

@@ -5,7 +5,7 @@
 //! integration tests or other non-SDL frontends (e.g. web).
 
 use super::types::AutorunFile;
-use crate::console::{Nes, SaveState};
+use crate::nes::console::{Nes, SaveState};
 
 /// Summary of a headless playback run.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -178,7 +178,7 @@ mod tests {
     use super::*;
     use crate::app_context::AppContext;
     use crate::autorun::{AUTORUN_VERSION, AutorunCheckpoint, AutorunFile, AutorunFrame};
-    use crate::console::{Config, Nes, RamInitMode};
+    use crate::nes::console::{Config, Nes, NesConfig, RamInitMode};
 
     /// Minimal NROM-128 ROM that just loops forever with no audio/PPU effects.
     fn minimal_nrom_rom() -> Vec<u8> {
@@ -203,7 +203,10 @@ mod tests {
 
     fn make_nes() -> Nes {
         let config = Config {
-            ram_init_mode: RamInitMode::Zero,
+            nes: NesConfig {
+                ram_init_mode: RamInitMode::Zero,
+                ..Default::default()
+            },
             ..Default::default()
         };
         Nes::new(AppContext::new_with_config(config))
@@ -211,8 +214,9 @@ mod tests {
 
     fn make_nes_with_cart(rom: &[u8]) -> Nes {
         let mut nes = make_nes();
-        let cart = crate::cartridge::Cartridge::load_from_file(rom, "test.nes", AppContext::new())
-            .expect("load cart");
+        let cart =
+            crate::nes::cartridge::Cartridge::load_from_file(rom, "test.nes", AppContext::new())
+                .expect("load cart");
         nes.insert_cartridge(cart);
         nes.reset(false);
         nes

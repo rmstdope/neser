@@ -1,7 +1,7 @@
+use crate::autorun::AutorunMode;
 use crate::autorun::{
     AUTORUN_VERSION, AutorunCheckpoint, AutorunFile, AutorunFrame, CHECKPOINT_INTERVAL_FRAMES,
 };
-use crate::console::AutorunMode;
 
 /// In-memory autorun state for the WASM frontend.
 ///

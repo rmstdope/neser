@@ -675,8 +675,8 @@ fn cpu_register_lines(snapshot: &DebuggerSnapshot) -> Vec<String> {
     let r = snapshot.cpu_regs;
     let interrupt = match r.interrupt {
         None => "-",
-        Some(crate::cpu::InterruptKind::Nmi) => "NMI",
-        Some(crate::cpu::InterruptKind::Irq) => "IRQ",
+        Some(crate::nes::cpu::InterruptKind::Nmi) => "NMI",
+        Some(crate::nes::cpu::InterruptKind::Irq) => "IRQ",
     };
 
     let lines = vec![
@@ -788,8 +788,8 @@ pub(crate) fn format_oam_entries(oam: &[u8]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::console::{Config, Nes};
     use crate::debugging::snapshot;
+    use crate::nes::console::{Config, Nes};
 
     fn assert_close(actual: f32, expected: f32) {
         let eps = 0.0001;

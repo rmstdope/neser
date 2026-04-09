@@ -23,7 +23,7 @@ pub struct AutorunCheckpoint {
     pub frame_index: u32,
     /// CRC-32 of the screen buffer at this frame.
     pub screen_crc: u32,
-    /// Full serialized emulator state ([`crate::console::SaveState`] as JSON bytes).
+    /// Full serialized emulator state ([`crate::nes::console::SaveState`] as JSON bytes).
     pub state_bytes: Vec<u8>,
 }
 
@@ -52,6 +52,21 @@ impl std::fmt::Display for AutorunFormat {
             Self::Json => write!(f, "json"),
         }
     }
+}
+
+/// Autorun operating mode.
+///
+/// Defines the primary operating mode for the emulator's autorun feature,
+/// which enables recording and playback of controller input for deterministic
+/// testing and automation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutorunMode {
+    /// Normal interactive operation (no autorun).
+    None,
+    /// Record controller input to an autorun file.
+    Record,
+    /// Play back controller input from an existing autorun file.
+    Playback,
 }
 
 #[cfg(test)]

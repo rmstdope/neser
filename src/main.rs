@@ -2,33 +2,32 @@
 // by the library or test code, producing dead_code warnings in the binary crate.
 #![allow(dead_code)]
 
+mod nes;
+
 mod app_context;
-mod apu;
 #[cfg(feature = "native")]
 mod audio;
 mod autorun;
-mod bus;
-mod cartridge;
-mod console;
-mod cpu;
+pub mod config;
 mod debugging;
+mod emulator;
 mod frontend_toasts;
 mod input;
 #[cfg(feature = "native")]
 mod native_frontend;
-mod ppu;
 #[cfg(feature = "native")]
 mod rendering;
 #[cfg(feature = "tui")]
 mod tui_frontend;
 
 use app_context::AppContext;
-use console::{
-    AutorunFormat, CartridgeCatalogOptions, Config, Nes, ParseResult, default_catalog_csv_path,
-    refresh_cartridge_catalog,
-};
+use autorun::AutorunFormat;
 use debugging::log_info;
 use frontend_toasts::cartridge_load_toast_message;
+use nes::console::{
+    CartridgeCatalogOptions, Config, Nes, ParseResult, default_catalog_csv_path,
+    refresh_cartridge_catalog,
+};
 use std::cell::RefCell;
 use std::fs;
 use std::path::PathBuf;
@@ -40,9 +39,9 @@ fn cartridge_catalog_startup_config(
     let config = app_context.borrow();
     let config = config.config();
     (
-        config.cartridge_search_paths.clone(),
-        config.scan_cartridges,
-        config.rebuild_cartridge_catalog,
+        config.frontend.cartridge_search_paths.clone(),
+        config.frontend.scan_cartridges,
+        config.frontend.rebuild_cartridge_catalog,
     )
 }
 
@@ -120,8 +119,9 @@ fn recalculate_autorun_for_rom(rom_path: &str, format: AutorunFormat) -> Result<
         autorun_path_for_rom, headless_playback::recalculate_checkpoint_crcs_with_progress,
         load_autorun_file, save_autorun_file,
     };
-    use cartridge::Cartridge;
-    use console::RamInitMode;
+    use nes::cartridge::Cartridge;
+    use nes::console::NesConfig;
+    use nes::console::RamInitMode;
     use std::io::{self, Write};
 
     let path = autorun_path_for_rom(&PathBuf::from(rom_path));
@@ -138,7 +138,10 @@ fn recalculate_autorun_for_rom(rom_path: &str, format: AutorunFormat) -> Result<
         fs::read(rom_path).map_err(|e| format!("Failed to read ROM {}: {e}", rom_path))?;
 
     let config = Config {
-        ram_init_mode: RamInitMode::Zero,
+        nes: NesConfig {
+            ram_init_mode: RamInitMode::Zero,
+            ..Default::default()
+        },
         ..Default::default()
     };
     let app_context = AppContext::new_with_config(config);
@@ -187,7 +190,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Must be checked before refresh_startup_cartridge_catalog so the catalog
     // is not scanned twice (run_tui does its own scan).
     #[cfg(feature = "tui")]
-    if app_context.borrow().config().tui_mode {
+    if app_context.borrow().config().frontend.tui_mode {
         let (search_paths, _, rebuild) = cartridge_catalog_startup_config(&app_context);
         return tui_frontend::run_tui(&search_paths, rebuild);
     }
@@ -195,9 +198,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     refresh_startup_cartridge_catalog(&app_context);
 
     // Handle --trim-checkpoints: modify recording file and exit immediately.
-    let trim_checkpoints = app_context.borrow().config().autorun_trim_checkpoints;
-    let trim_rom_path = app_context.borrow().config().rom_path.clone();
-    let trim_format = app_context.borrow().config().autorun_format;
+    let trim_checkpoints = app_context
+        .borrow()
+        .config()
+        .frontend
+        .autorun_trim_checkpoints;
+    let trim_rom_path = app_context.borrow().config().frontend.rom_path.clone();
+    let trim_format = app_context.borrow().config().frontend.autorun_format;
     if let (Some(checkpoints_to_trim), Some(rom_path)) =
         (trim_checkpoints, trim_rom_path.as_deref())
     {
@@ -207,9 +214,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Handle --convert-autorun: convert recording file format and exit immediately.
-    let convert_autorun_requested = app_context.borrow().config().autorun_convert;
-    let convert_rom_path = app_context.borrow().config().rom_path.clone();
-    let convert_format = app_context.borrow().config().autorun_format;
+    let convert_autorun_requested = app_context.borrow().config().frontend.autorun_convert;
+    let convert_rom_path = app_context.borrow().config().frontend.rom_path.clone();
+    let convert_format = app_context.borrow().config().frontend.autorun_format;
     if convert_autorun_requested {
         let rom_path =
             convert_rom_path.ok_or_else(|| "--convert-autorun requires a ROM path".to_string())?;
@@ -219,9 +226,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Handle --recalculate-autorun: replay and rewrite checkpoint CRCs, then exit.
-    let recalculate_autorun_requested = app_context.borrow().config().autorun_recalculate;
-    let recalculate_rom_path = app_context.borrow().config().rom_path.clone();
-    let recalculate_format = app_context.borrow().config().autorun_format;
+    let recalculate_autorun_requested = app_context.borrow().config().frontend.autorun_recalculate;
+    let recalculate_rom_path = app_context.borrow().config().frontend.rom_path.clone();
+    let recalculate_format = app_context.borrow().config().frontend.autorun_format;
     if recalculate_autorun_requested {
         let rom_path = recalculate_rom_path
             .ok_or_else(|| "--recalculate-autorun requires a ROM path".to_string())?;
@@ -231,7 +238,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Initialize global tracing state (only active in debug builds)
-    let tracing_config = app_context.borrow().config().tracing;
+    let tracing_config = app_context.borrow().config().frontend.tracing;
     debugging::init_tracing(tracing_config);
 
     #[cfg(feature = "native")]
@@ -267,22 +274,22 @@ fn run_native_frontend(
         let config = app_context.borrow();
         let config = config.config();
         (
-            config.autorun_mode,
-            config.autorun_headless,
-            config.autorun_overwrite,
-            config.autorun_extend,
-            config.autorun_from_checkpoint,
-            config.autorun_format,
+            config.frontend.autorun_mode,
+            config.frontend.autorun_headless,
+            config.frontend.autorun_overwrite,
+            config.frontend.autorun_extend,
+            config.frontend.autorun_from_checkpoint,
+            config.frontend.autorun_format,
         )
     };
 
     // Headless autorun is only supported in playback mode because
     // record/extend have no guaranteed termination condition.
-    let headless = autorun_headless && autorun_mode == console::AutorunMode::Playback;
+    let headless = autorun_headless && autorun_mode == autorun::AutorunMode::Playback;
 
     // Create audio output (request 44.1 kHz) unless disabled or headless.
     let mut audio_sample_rate = None;
-    let audio_enabled = app_context.borrow().config().audio_enabled;
+    let audio_enabled = app_context.borrow().config().frontend.audio_enabled;
     let audio = if !audio_enabled || headless {
         None
     } else {
@@ -296,6 +303,7 @@ fn run_native_frontend(
     let rom_path = app_context
         .borrow()
         .config()
+        .frontend
         .rom_path
         .clone()
         .unwrap_or_else(|| default_rom_path.to_string());
@@ -311,7 +319,8 @@ fn run_native_frontend(
     };
 
     let cart =
-        match cartridge::Cartridge::load_from_file(&rom_bytes, &rom_path, app_context.clone()) {
+        match nes::cartridge::Cartridge::load_from_file(&rom_bytes, &rom_path, app_context.clone())
+        {
             Ok(cartridge) => {
                 app_context
                     .borrow_mut()
@@ -332,21 +341,24 @@ fn run_native_frontend(
         .config_mut()
         .apply_rom_timing_mode(rom_timing_mode);
 
-    let mut nes_instance = Nes::new(app_context.clone());
-    nes_instance.insert_cartridge(cart);
-
-    if let Some(actual_rate) = audio_sample_rate {
-        nes_instance.apu().borrow_mut().set_sample_rate(actual_rate);
+    let mut console = emulator::Console::new_nes(app_context.clone());
+    {
+        let emulator::Console::Nes(nes) = &mut console;
+        nes.insert_cartridge(cart);
     }
 
-    nes_instance.reset(false);
+    if let Some(actual_rate) = audio_sample_rate {
+        console.set_audio_sample_rate(actual_rate);
+    }
 
-    let tracing = app_context.borrow().config().tracing;
+    console.reset(false);
+
+    let tracing = app_context.borrow().config().frontend.tracing;
     let mut event_loop =
-        NativeEventLoop::new(app_context.clone(), nes_instance, audio, tracing, headless);
+        NativeEventLoop::new(app_context.clone(), console, audio, tracing, headless);
 
     // Initialize autorun AFTER reset so checkpoint state restore is not overwritten.
-    if autorun_mode != console::AutorunMode::None {
+    if autorun_mode != autorun::AutorunMode::None {
         event_loop.init_autorun(
             autorun_mode,
             &rom_path,

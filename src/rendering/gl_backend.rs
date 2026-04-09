@@ -1,5 +1,4 @@
 use crate::app_context::SharedAppContext;
-use crate::console::Nes;
 use crate::debugging::DebuggerViewState;
 use crate::debugging::breakpoints::BreakpointList;
 use crate::debugging::log_info;
@@ -9,6 +8,7 @@ use crate::debugging::ppu_viewer::{
 use crate::debugging::ui::{
     self as debugger_ui, BreakpointAddUiState, HexdumpUiState, WatchlistUiState,
 };
+use crate::nes::console::Nes;
 use crate::rendering::input::{InputEvent, apply_input};
 use crate::rendering::shader_manager::ShaderManager;
 use std::ffi::c_void;
@@ -353,7 +353,10 @@ impl GlBackend {
         let (h_overscan, v_overscan) = {
             let ctx = app_context.borrow();
             let cfg = ctx.config();
-            (cfg.horizontal_overscan as u32, cfg.vertical_overscan as u32)
+            (
+                cfg.nes.horizontal_overscan as u32,
+                cfg.nes.vertical_overscan as u32,
+            )
         };
         let tex_w = 256 - 2 * h_overscan;
         let tex_h = 240 - 2 * v_overscan;

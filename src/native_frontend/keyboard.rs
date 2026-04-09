@@ -5,9 +5,9 @@
 //! Ctrl+Q (quit), Ctrl+R (reset), Space (pause), and so on.
 
 use crate::audio::NesAudio;
-use crate::console::Nes;
 use crate::input::{Button, PowerPadButton, SnesButton};
 use crate::native_frontend::app_state::NativeAppState;
+use crate::nes::console::Nes;
 use winit::keyboard::KeyCode;
 
 /// The result of processing a key-press event.
@@ -152,10 +152,10 @@ fn handle_unmodified_key(
         KeyCode::F4 => return KeyOutcome::CycleShader,
         KeyCode::F5 => return KeyOutcome::ToggleDebugger,
         KeyCode::F6 => {
-            crate::console::save_state_io::save_state_to_disk(nes);
+            crate::nes::console::save_state_io::save_state_to_disk(nes);
         }
         KeyCode::F7 => {
-            crate::console::save_state_io::load_state_from_disk(nes);
+            crate::nes::console::save_state_io::load_state_from_disk(nes);
             if let Some(audio) = audio {
                 audio.drain_buffer();
             }
@@ -432,7 +432,7 @@ fn key_code_to_filter_char(key_code: KeyCode, shift: bool) -> Option<char> {
 mod tests {
     use super::*;
     use crate::app_context::AppContext;
-    use crate::console::Config;
+    use crate::nes::console::{Config, NesConfig};
     use winit::keyboard::ModifiersState;
 
     // ── Test helpers ──────────────────────────────────────────────────────────
@@ -443,7 +443,10 @@ mod tests {
 
     fn make_nes_four_score() -> Nes {
         Nes::new(AppContext::new_with_config(Config {
-            four_score_enabled: true,
+            nes: NesConfig {
+                four_score_enabled: true,
+                ..Default::default()
+            },
             ..Config::default()
         }))
     }
@@ -457,10 +460,10 @@ mod tests {
         prg_rom[0x7FFB] = 0x80;
         prg_rom[0x7FFE] = 0x00;
         prg_rom[0x7FFF] = 0x80;
-        let cartridge = crate::cartridge::Cartridge::from_parts(
+        let cartridge = crate::nes::cartridge::Cartridge::from_parts(
             prg_rom,
             vec![],
-            crate::cartridge::NametableLayout::Horizontal,
+            crate::nes::cartridge::NametableLayout::Horizontal,
         );
         nes.insert_cartridge(cartridge);
         nes

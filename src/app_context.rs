@@ -2,8 +2,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use crate::cartridge::{RomDb, RomDbEntry};
-use crate::console::Config;
+use crate::nes::cartridge::{RomDb, RomDbEntry};
+use crate::nes::console::Config;
 
 pub const TOAST_LIFETIME_SECS: u64 = 4;
 pub const MAX_VISIBLE_TOASTS: usize = 3;
@@ -58,7 +58,7 @@ fn load_rom_db() -> RomDb {
 #[cfg(target_arch = "wasm32")]
 fn load_rom_db() -> RomDb {
     // cvs database is not accessible in wasm, so we include it as a string and parse it at runtime
-    RomDb::from_csv_content(include_str!("cartridge/rom_db.csv"))
+    RomDb::from_csv_content(include_str!("nes/cartridge/rom_db.csv"))
 }
 
 impl AppContext {
