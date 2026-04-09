@@ -21,22 +21,22 @@ impl Default for PowerPad {
 }
 
 impl PowerPad {
-    const D3_ORDER: [crate::input::PowerPadButton; 8] = [
-        crate::input::PowerPadButton::Two,
-        crate::input::PowerPadButton::One,
-        crate::input::PowerPadButton::Five,
-        crate::input::PowerPadButton::Nine,
-        crate::input::PowerPadButton::Six,
-        crate::input::PowerPadButton::Ten,
-        crate::input::PowerPadButton::Eleven,
-        crate::input::PowerPadButton::Seven,
+    const D3_ORDER: [crate::nes::input::PowerPadButton; 8] = [
+        crate::nes::input::PowerPadButton::Two,
+        crate::nes::input::PowerPadButton::One,
+        crate::nes::input::PowerPadButton::Five,
+        crate::nes::input::PowerPadButton::Nine,
+        crate::nes::input::PowerPadButton::Six,
+        crate::nes::input::PowerPadButton::Ten,
+        crate::nes::input::PowerPadButton::Eleven,
+        crate::nes::input::PowerPadButton::Seven,
     ];
 
-    const D4_ORDER: [Option<crate::input::PowerPadButton>; 8] = [
-        Some(crate::input::PowerPadButton::Four),
-        Some(crate::input::PowerPadButton::Three),
-        Some(crate::input::PowerPadButton::Twelve),
-        Some(crate::input::PowerPadButton::Eight),
+    const D4_ORDER: [Option<crate::nes::input::PowerPadButton>; 8] = [
+        Some(crate::nes::input::PowerPadButton::Four),
+        Some(crate::nes::input::PowerPadButton::Three),
+        Some(crate::nes::input::PowerPadButton::Twelve),
+        Some(crate::nes::input::PowerPadButton::Eight),
         None,
         None,
         None,
@@ -82,7 +82,7 @@ impl PowerPad {
         ((d3 as u8) << 3) | ((d4 as u8) << 4)
     }
 
-    pub fn set_button(&mut self, button: crate::input::PowerPadButton, pressed: bool) {
+    pub fn set_button(&mut self, button: crate::nes::input::PowerPadButton, pressed: bool) {
         let bit = button as u8;
         if pressed {
             self.button_states |= 1 << bit;
@@ -91,7 +91,7 @@ impl PowerPad {
         }
     }
 
-    fn button_is_pressed(&self, button: crate::input::PowerPadButton) -> bool {
+    fn button_is_pressed(&self, button: crate::nes::input::PowerPadButton) -> bool {
         (self.button_states & (1 << (button as u8))) != 0
     }
 
@@ -110,7 +110,7 @@ impl PowerPad {
     }
 }
 
-impl crate::input::Controller for PowerPad {
+impl crate::nes::input::Controller for PowerPad {
     fn write_strobe(&mut self, value: u8) {
         self.write_strobe(value);
     }
@@ -119,23 +119,23 @@ impl crate::input::Controller for PowerPad {
         self.read(is_dummy_read)
     }
 
-    fn capture_state(&self) -> crate::input::ControllerState {
-        crate::input::ControllerState::PowerPad(self.capture_state())
+    fn capture_state(&self) -> crate::nes::input::ControllerState {
+        crate::nes::input::ControllerState::PowerPad(self.capture_state())
     }
 
-    fn restore_state(&mut self, state: &crate::input::ControllerState) {
-        if let crate::input::ControllerState::PowerPad(power_pad_state) = state {
+    fn restore_state(&mut self, state: &crate::nes::input::ControllerState) {
+        if let crate::nes::input::ControllerState::PowerPad(power_pad_state) = state {
             self.restore_state(power_pad_state);
         }
     }
 
-    fn set_button(&mut self, _button: crate::input::Button, _pressed: bool) -> bool {
+    fn set_button(&mut self, _button: crate::nes::input::Button, _pressed: bool) -> bool {
         false
     }
 
     fn set_power_pad_button(
         &mut self,
-        button: crate::input::PowerPadButton,
+        button: crate::nes::input::PowerPadButton,
         pressed: bool,
     ) -> bool {
         self.set_button(button, pressed);
@@ -155,14 +155,14 @@ impl crate::input::Controller for PowerPad {
     }
 
     fn input_type(&self) -> ControllerInput {
-        crate::input::controller_input_type(crate::input::ControllerType::PowerPad)
+        crate::nes::input::controller_input_type(crate::nes::input::ControllerType::PowerPad)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::input::PowerPadButton;
+    use crate::nes::input::PowerPadButton;
 
     #[test]
     fn test_power_pad_shifts_buttons_in_protocol_order() {
@@ -211,9 +211,9 @@ mod tests {
     #[test]
     fn test_power_pad_does_not_support_standard_joypad_buttons() {
         let mut power_pad = PowerPad::new();
-        assert!(!crate::input::Controller::set_button(
+        assert!(!crate::nes::input::Controller::set_button(
             &mut power_pad,
-            crate::input::Button::A,
+            crate::nes::input::Button::A,
             true
         ));
     }

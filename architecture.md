@@ -196,13 +196,13 @@ All NES-specific hardware and supporting code lives under `src/nes/`.
 
 | Directory/File | Description |
 | ---------------- | ------------- |
-| `src/input/` | Input device implementations. |
-| `src/input/controller.rs` | `ControllerType` enum and input abstraction layer. |
-| `src/input/nes_joypad.rs` | Standard NES joypad with 8-button serial protocol. |
-| `src/input/arkanoid_controller.rs` | Arkanoid paddle controller with analog position and trigger. |
-| `src/input/zapper.rs` | NES Zapper light gun with light detection. |
-| `src/input/power_pad.rs` | Power Pad (Family Trainer) mat controller. |
-| `src/input/snes_adapter.rs` | SNES-to-NES controller adapter. |
+| `src/nes/input/` | NES input device implementations. |
+| `src/nes/input/controller.rs` | `ControllerType` enum and input abstraction layer. |
+| `src/nes/input/nes_joypad.rs` | Standard NES joypad with 8-button serial protocol. |
+| `src/nes/input/arkanoid_controller.rs` | Arkanoid paddle controller with analog position and trigger. |
+| `src/nes/input/zapper.rs` | NES Zapper light gun with light detection. |
+| `src/nes/input/power_pad.rs` | Power Pad (Family Trainer) mat controller. |
+| `src/nes/input/snes_adapter.rs` | SNES-to-NES controller adapter. |
 
 #### Frontends
 
@@ -233,15 +233,17 @@ All NES-specific hardware and supporting code lives under `src/nes/`.
 
 | Directory/File | Description |
 | ---------------- | ------------- |
-| `src/debugging/` | Debugging and diagnostic tools. |
-| `src/debugging/ui.rs` | ImGui-based debugger UI with CPU state, memory viewer, and disassembly. |
-| `src/debugging/disasm.rs` | 6502 disassembler for real-time instruction display. |
+| `src/debugging/` | Generic debugging and diagnostic tools. |
 | `src/debugging/breakpoints.rs` | Breakpoint system — supports address breakpoints and conditional breaks. |
-| `src/debugging/ppu_viewer.rs` | PPU nametable and pattern table viewer. |
 | `src/debugging/tracing.rs` | CPU/PPU/APU/Mapper trace output at configurable verbosity levels. |
 | `src/debugging/logging.rs` | Debug logging infrastructure. |
-| `src/debugging/snapshot.rs` | Debugging state snapshots. |
-| `src/debugging/types.rs` | Shared debugging types and constants. |
+| `src/nes/debugging/` | NES-specific debugging tools. |
+| `src/nes/debugging/ui.rs` | ImGui-based debugger UI with CPU state, memory viewer, and disassembly. |
+| `src/nes/debugging/disasm.rs` | 6502 disassembler for real-time instruction display. |
+| `src/nes/debugging/ppu_viewer.rs` | PPU nametable and pattern table viewer. |
+| `src/nes/debugging/snapshot.rs` | Debugging state snapshots. |
+| `src/nes/debugging/types.rs` | Shared NES debugging types and constants. |
+| `src/nes/debugging/control.rs` | Debugger controller for breakpoints, stepping, and pause/continue. |
 
 #### Autorun System
 
@@ -249,14 +251,14 @@ All NES-specific hardware and supporting code lives under `src/nes/`.
 | ---------------- | ------------- |
 | `src/autorun/` | Input recording and deterministic playback system. |
 | `src/autorun/types.rs` | `AutorunFile` format — stores per-frame joypad input with periodic CRC checkpoints for regression testing. Supports versioned format (currently v3 with run-length encoding). |
-| `src/autorun/headless_playback.rs` | Headless playback engine — replays input without rendering for automated verification. Compares CRC checksums at each checkpoint. |
+| `src/nes/autorun/headless_playback.rs` | NES headless playback engine — replays input without rendering for automated verification. Compares CRC checksums at each checkpoint. |
 | `src/autorun/utils.rs` | Utilities for loading, saving, converting, and trimming autorun files. |
 
 #### Other Core Files
 
 | File | Description |
 | ------ | ------------- |
-| `src/frontend_toasts.rs` | Toast message formatters for user-facing notifications (cartridge loaded, hardware mode, gamepad detection, timing mode). |
+| `src/nes/frontend_toasts.rs` | Toast message formatters for NES-specific user notifications (cartridge loaded, hardware mode, gamepad detection, timing mode). |
 
 #### Tests
 

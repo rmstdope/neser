@@ -1,7 +1,6 @@
 #[cfg(test)]
 pub(crate) mod tests {
     use crate::debugging::{Tracing, init_tracing};
-    use crate::input::Button;
     /// OAM test infrastructure for automated testing of test ROMs
     ///
     /// This module provides infrastructure to run OAM test ROMs (oam_read, oam_stress, oam3)
@@ -25,6 +24,7 @@ pub(crate) mod tests {
     ///
     use crate::nes::cartridge::Cartridge;
     use crate::nes::console::{Config, HardwareModel, Nes, NesConfig, RamInitMode};
+    use crate::nes::input::Button;
     use std::fs;
 
     /// Result of running an test ROM
@@ -774,7 +774,7 @@ pub(crate) mod tests {
                 nes.insert_cartridge(cartridge);
                 nes.reset(false);
 
-                let inputs: &[(u32, $crate::input::Button, bool)] = &$inputs;
+                let inputs: &[(u32, $crate::nes::input::Button, bool)] = &$inputs;
                 let checkpoints: &[(u32, u32)] = &$checkpoints;
 
                 // Validate non-decreasing frame order for both inputs and checkpoints

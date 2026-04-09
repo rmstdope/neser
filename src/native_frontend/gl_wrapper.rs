@@ -2,7 +2,7 @@
 use super::render_target::WinitRenderTarget;
 use crate::app_context::SharedAppContext;
 use crate::debugging::breakpoints::BreakpointList;
-use crate::debugging::ui::DebuggerUiAction;
+use crate::nes::debugging::ui::DebuggerUiAction;
 use crate::rendering::input::{InputEvent, MouseButton as RenderMouseButton};
 use crate::rendering::{Crosshair, GlBackend, ProcAddressLoader};
 

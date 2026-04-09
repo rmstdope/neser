@@ -4,9 +4,9 @@
 //! (Zapper, Arkanoid paddle, SNES Mouse) and manages the cursor
 //! grab/release state machine.
 
-use crate::input::ControllerInput;
-use crate::input::mouse_mapping;
 use crate::nes::console::Nes;
+use crate::nes::input::ControllerInput;
+use crate::nes::input::mouse_mapping;
 use crate::rendering::Crosshair;
 
 /// Mouse button abstraction (frontend-independent).
@@ -146,7 +146,10 @@ mod tests {
         Nes::new(AppContext::new_with_config(Config::default()))
     }
 
-    fn make_nes_with_controller(port: u8, controller_type: crate::input::ControllerType) -> Nes {
+    fn make_nes_with_controller(
+        port: u8,
+        controller_type: crate::nes::input::ControllerType,
+    ) -> Nes {
         let nes = make_nes();
         nes.bus()
             .borrow_mut()
@@ -164,43 +167,43 @@ mod tests {
 
     #[test]
     fn detects_zapper_as_mouse_controller() {
-        let nes = make_nes_with_controller(1, crate::input::ControllerType::Zapper);
+        let nes = make_nes_with_controller(1, crate::nes::input::ControllerType::Zapper);
         assert!(has_any_mouse_controller(&nes));
     }
 
     #[test]
     fn detects_arkanoid_as_mouse_controller() {
-        let nes = make_nes_with_controller(1, crate::input::ControllerType::Arkanoid);
+        let nes = make_nes_with_controller(1, crate::nes::input::ControllerType::Arkanoid);
         assert!(has_any_mouse_controller(&nes));
     }
 
     #[test]
     fn detects_snes_mouse_as_mouse_controller() {
-        let nes = make_nes_with_controller(1, crate::input::ControllerType::SnesMouse);
+        let nes = make_nes_with_controller(1, crate::nes::input::ControllerType::SnesMouse);
         assert!(has_any_mouse_controller(&nes));
     }
 
     #[test]
     fn joypad_is_not_a_mouse_controller() {
-        let nes = make_nes_with_controller(1, crate::input::ControllerType::Joypad);
+        let nes = make_nes_with_controller(1, crate::nes::input::ControllerType::Joypad);
         assert!(!has_any_mouse_controller(&nes));
     }
 
     #[test]
     fn has_zapper_detects_port1() {
-        let nes = make_nes_with_controller(1, crate::input::ControllerType::Zapper);
+        let nes = make_nes_with_controller(1, crate::nes::input::ControllerType::Zapper);
         assert!(has_zapper(&nes));
     }
 
     #[test]
     fn has_zapper_detects_port2() {
-        let nes = make_nes_with_controller(2, crate::input::ControllerType::Zapper);
+        let nes = make_nes_with_controller(2, crate::nes::input::ControllerType::Zapper);
         assert!(has_zapper(&nes));
     }
 
     #[test]
     fn has_zapper_false_for_arkanoid() {
-        let nes = make_nes_with_controller(1, crate::input::ControllerType::Arkanoid);
+        let nes = make_nes_with_controller(1, crate::nes::input::ControllerType::Arkanoid);
         assert!(!has_zapper(&nes));
     }
 
@@ -208,7 +211,7 @@ mod tests {
 
     #[test]
     fn zapper_motion_returns_nes_coordinates() {
-        let mut nes = make_nes_with_controller(2, crate::input::ControllerType::Zapper);
+        let mut nes = make_nes_with_controller(2, crate::nes::input::ControllerType::Zapper);
         let result = update_mouse_motion(&mut nes, 160, 120, 320, 240);
         assert!(result.is_some());
         let (x, y) = result.unwrap();
@@ -218,14 +221,14 @@ mod tests {
 
     #[test]
     fn arkanoid_motion_returns_none() {
-        let mut nes = make_nes_with_controller(1, crate::input::ControllerType::Arkanoid);
+        let mut nes = make_nes_with_controller(1, crate::nes::input::ControllerType::Arkanoid);
         let result = update_mouse_motion(&mut nes, 160, 120, 320, 240);
         assert!(result.is_none());
     }
 
     #[test]
     fn snes_mouse_motion_returns_nes_coordinates() {
-        let mut nes = make_nes_with_controller(1, crate::input::ControllerType::SnesMouse);
+        let mut nes = make_nes_with_controller(1, crate::nes::input::ControllerType::SnesMouse);
         let result = update_mouse_motion(&mut nes, 160, 120, 320, 240);
         assert!(result.is_some());
     }
@@ -234,7 +237,7 @@ mod tests {
 
     #[test]
     fn snes_mouse_relative_motion_applies_delta() {
-        let mut nes = make_nes_with_controller(1, crate::input::ControllerType::SnesMouse);
+        let mut nes = make_nes_with_controller(1, crate::nes::input::ControllerType::SnesMouse);
         apply_snes_mouse_relative_motion(&mut nes, 10, 5, 320, 240);
         let state = nes.bus().borrow().capture_state();
         if let crate::nes::bus::ControllerStateWrapper::SnesAdapter(snes) = state.port1_controller {
@@ -265,7 +268,7 @@ mod tests {
 
     #[test]
     fn button_routes_left_to_zapper_trigger() {
-        let mut nes = make_nes_with_controller(1, crate::input::ControllerType::Zapper);
+        let mut nes = make_nes_with_controller(1, crate::nes::input::ControllerType::Zapper);
 
         update_mouse_button(&mut nes, MouseButton::Left, true);
         let state = nes.bus().borrow().capture_state();
@@ -297,13 +300,13 @@ mod tests {
 
     #[test]
     fn crosshair_returns_none_when_no_position() {
-        let nes = make_nes_with_controller(2, crate::input::ControllerType::Zapper);
+        let nes = make_nes_with_controller(2, crate::nes::input::ControllerType::Zapper);
         assert!(zapper_crosshair(&nes, None).is_none());
     }
 
     #[test]
     fn crosshair_returns_position_with_zapper() {
-        let nes = make_nes_with_controller(2, crate::input::ControllerType::Zapper);
+        let nes = make_nes_with_controller(2, crate::nes::input::ControllerType::Zapper);
         let ch = zapper_crosshair(&nes, Some((100, 200)));
         assert!(ch.is_some());
         let ch = ch.unwrap();

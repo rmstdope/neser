@@ -5,9 +5,9 @@
 //! Ctrl+Q (quit), Ctrl+R (reset), Space (pause), and so on.
 
 use crate::audio::EmulatorAudio;
-use crate::input::{Button, PowerPadButton, SnesButton};
 use crate::native_frontend::app_state::NativeAppState;
 use crate::nes::console::Nes;
+use crate::nes::input::{Button, PowerPadButton, SnesButton};
 use winit::keyboard::KeyCode;
 
 /// The result of processing a key-press event.

@@ -150,7 +150,7 @@ impl Console {
 
     /// Set a button state on a controller port.
     ///
-    /// `button_id` is system-specific: for NES, it maps to [`crate::input::Button`]
+    /// `button_id` is system-specific: for NES, it maps to [`crate::nes::input::Button`]
     /// discriminant values (A=0, B=1, Select=2, Start=3, Up=4, Down=5, Left=6, Right=7).
     pub fn set_button(&mut self, port: u8, button_id: u8, pressed: bool) {
         match self {
@@ -234,8 +234,8 @@ impl Console {
     }
 }
 
-fn nes_button_from_id(id: u8) -> Option<crate::input::Button> {
-    use crate::input::Button;
+fn nes_button_from_id(id: u8) -> Option<crate::nes::input::Button> {
+    use crate::nes::input::Button;
     match id {
         0 => Some(Button::A),
         1 => Some(Button::B),

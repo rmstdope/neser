@@ -131,7 +131,7 @@ impl NesJoypad {
     }
 }
 
-impl crate::input::Controller for NesJoypad {
+impl crate::nes::input::Controller for NesJoypad {
     fn write_strobe(&mut self, value: u8) {
         self.write_strobe(value)
     }
@@ -140,17 +140,17 @@ impl crate::input::Controller for NesJoypad {
         self.read(is_dummy_read)
     }
 
-    fn capture_state(&self) -> crate::input::ControllerState {
-        crate::input::ControllerState::Joypad(self.capture_state())
+    fn capture_state(&self) -> crate::nes::input::ControllerState {
+        crate::nes::input::ControllerState::Joypad(self.capture_state())
     }
 
-    fn restore_state(&mut self, state: &crate::input::ControllerState) {
-        if let crate::input::ControllerState::Joypad(joypad_state) = state {
+    fn restore_state(&mut self, state: &crate::nes::input::ControllerState) {
+        if let crate::nes::input::ControllerState::Joypad(joypad_state) = state {
             self.restore_state(joypad_state);
         }
     }
 
-    fn set_button(&mut self, button: crate::input::Button, pressed: bool) -> bool {
+    fn set_button(&mut self, button: crate::nes::input::Button, pressed: bool) -> bool {
         self.set_button(button, pressed);
         true
     }
@@ -168,7 +168,7 @@ impl crate::input::Controller for NesJoypad {
     }
 
     fn input_type(&self) -> ControllerInput {
-        crate::input::controller_input_type(crate::input::ControllerType::Joypad)
+        crate::nes::input::controller_input_type(crate::nes::input::ControllerType::Joypad)
     }
 }
 

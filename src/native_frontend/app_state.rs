@@ -266,10 +266,10 @@ impl NativeAppState {
 fn help_overlay_text(
     gamepad_count: usize,
     four_score: bool,
-    port1_type: crate::input::ControllerType,
-    port2_type: crate::input::ControllerType,
+    port1_type: crate::nes::input::ControllerType,
+    port2_type: crate::nes::input::ControllerType,
 ) -> String {
-    use crate::input::ControllerType;
+    use crate::nes::input::ControllerType;
 
     let hotkeys = "Controls\n\
 H: Toggle help\n\
@@ -1028,7 +1028,7 @@ mod tests {
     fn test_help_overlay_shows_power_pad_section_when_port2_is_power_pad() {
         let config = Config {
             nes: NesConfig {
-                controller_port2: crate::input::ControllerType::PowerPad,
+                controller_port2: crate::nes::input::ControllerType::PowerPad,
                 ..Default::default()
             },
             ..Default::default()
@@ -1053,7 +1053,7 @@ mod tests {
     fn test_help_overlay_shows_power_pad_section_when_port1_is_power_pad() {
         let config = Config {
             nes: NesConfig {
-                controller_port1: crate::input::ControllerType::PowerPad,
+                controller_port1: crate::nes::input::ControllerType::PowerPad,
                 ..Default::default()
             },
             ..Default::default()

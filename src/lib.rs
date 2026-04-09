@@ -8,8 +8,6 @@ pub mod autorun;
 pub mod config;
 pub mod debugging;
 pub mod emulator;
-pub use nes::frontend_toasts;
-pub use nes::input;
 #[cfg(feature = "wasm")]
 #[path = "web_frontend/wasm.rs"]
 pub mod wasm;
