@@ -26,7 +26,7 @@ use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 /// - $9000-$9FFF: IRQ latch nibble 1 [7:4]
 /// - $A000-$AFFF: IRQ latch nibble 2 [11:8]
 /// - $B000-$BFFF: IRQ latch nibble 3 [15:12]
-/// - $C000-$CFFF: IRQ control (bit0=A: enable-after-ack, bit1=E: enable-now)
+/// - $C000-$CFFF: IRQ control (bit1=E: enable-now; bit0 is ignored, unlike VRC3)
 /// - $D000-$DFFF: IRQ acknowledge
 /// - $E000-$EFFF: Bank register select (bits [2:0], values 1/2/3 for $8000/$A000/$C000)
 /// - $F000-$FFFF: Bank data and sub-registers (superimposed):
@@ -46,7 +46,6 @@ pub struct Mapper56 {
     irq_latch: u16,
     irq_counter: u16,
     irq_enabled: bool,
-    irq_after_ack: bool, // "A" bit from $C000
     irq_pending: bool,
 }
 
@@ -74,7 +73,6 @@ impl Mapper56 {
             irq_latch: 0,
             irq_counter: 0,
             irq_enabled: false,
-            irq_after_ack: false,
             irq_pending: false,
         };
         mapper.update_banks();
@@ -139,10 +137,10 @@ impl Mapper for Mapper56 {
                 self.irq_latch = (self.irq_latch & 0x0FFF) | (((value as u16) & 0x0F) << 12);
             }
             0xC000..=0xCFFF => {
-                // IRQ control: bit0=A (enable after ack), bit1=E (enable now)
+                // IRQ control: bit1=E (enable now); bit0 is ignored on KS202
+                // (unlike VRC3 where bit0 re-enables after acknowledge).
                 // Spec (KS202/Mesen): reload counter from latch immediately when E=1;
                 // always clear pending IRQ.
-                self.irq_after_ack = (value & 0x01) != 0;
                 self.irq_enabled = (value & 0x02) != 0;
                 if self.irq_enabled {
                     self.irq_counter = self.irq_latch;
@@ -212,9 +210,7 @@ impl Mapper for Mapper56 {
             NametableLayout::Vertical => 1u8,
             _ => 0u8,
         };
-        let irq_flags = (self.irq_enabled as u8)
-            | ((self.irq_pending as u8) << 1)
-            | ((self.irq_after_ack as u8) << 2);
+        let irq_flags = (self.irq_enabled as u8) | ((self.irq_pending as u8) << 1);
         let mut v = vec![
             self.prg_reg[0],
             self.prg_reg[1],
@@ -250,7 +246,6 @@ impl Mapper for Mapper56 {
         self.bank_select = data[8];
         self.irq_enabled = (data[9] & 1) != 0;
         self.irq_pending = (data[9] & 2) != 0;
-        self.irq_after_ack = (data[9] & 4) != 0;
         self.irq_latch = (data[10] as u16) | ((data[11] as u16) << 8);
         self.irq_counter = (data[12] as u16) | ((data[13] as u16) << 8);
         self.chr_regs.copy_from_slice(&data[14..22]);
@@ -266,7 +261,6 @@ impl Mapper for Mapper56 {
         self.irq_latch = 0;
         self.irq_counter = 0;
         self.irq_enabled = false;
-        self.irq_after_ack = false;
         self.irq_pending = false;
         self.update_banks();
     }
@@ -451,6 +445,31 @@ mod tests {
         assert_eq!(
             mapper.irq_counter, 5,
             "counter must be reloaded from latch on E=1"
+        );
+    }
+
+    /// KS202 (mapper 142 wiki): bit 0 of $C000 ("A") must NOT re-enable IRQ after
+    /// acknowledge, unlike VRC3. Disabling (E=0) then re-writing E=1 is fine, but
+    /// a plain $D000 acknowledge must leave the IRQ disabled.
+    #[test]
+    fn irq_bit0_of_c000_does_not_reenable_after_acknowledge() {
+        let mut mapper = make_mapper();
+        mapper.write_prg(0x8000, 0x0E); // latch = 0xFFFE
+        mapper.write_prg(0x9000, 0x0F);
+        mapper.write_prg(0xA000, 0x0F);
+        mapper.write_prg(0xB000, 0x0F);
+        // Write $C000 with bits A=1 and E=1
+        mapper.write_prg(0xC000, 0x03);
+        mapper.cpu_cycle(); // counter reaches 0xFFFF → IRQ fires, E cleared
+        assert!(mapper.irq_pending());
+        mapper.write_prg(0xD000, 0); // acknowledge
+        // IRQ must remain disabled; running more cycles must NOT fire again
+        for _ in 0..10 {
+            mapper.cpu_cycle();
+        }
+        assert!(
+            !mapper.irq_pending(),
+            "bit0 (A) of $C000 must not re-enable IRQ after acknowledge"
         );
     }
 
