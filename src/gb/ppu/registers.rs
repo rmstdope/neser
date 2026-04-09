@@ -75,8 +75,9 @@ impl Registers {
     pub fn read(&self, addr: u16, ly: u8, stat: u8) -> Option<u8> {
         match addr {
             0xFF40 => Some(self.lcdc),
-            // Compose STAT: CPU-writable irq-enable bits OR'd with live mode/coincidence bits.
-            0xFF41 => Some((self.stat_irq_enables & 0x78) | (stat & 0x07)),
+            // Compose STAT: DMG reads return bit 7 set, with CPU-writable irq-enable
+            // bits in [6:3] and live coincidence/mode bits in [2:0].
+            0xFF41 => Some(0x80 | (self.stat_irq_enables & 0x78) | (stat & 0x07)),
             0xFF42 => Some(self.scy),
             0xFF43 => Some(self.scx),
             0xFF44 => Some(ly),
@@ -152,8 +153,8 @@ mod tests {
         // stat byte = (irq_enables & 0x78) | (0 << 2) | 2
         let stat_composed = 0b0000_0010u8; // mode 2, no coincidence, no irq enables
         let result = regs.read(0xFF41, 0, stat_composed);
-        // Then: lower 2 bits are the mode, bit 2 is coincidence
-        assert_eq!(result, Some(stat_composed));
+        // Then: bit 7 is always set on DMG, lower 2 bits are the mode, bit 2 is coincidence
+        assert_eq!(result, Some(0x80 | stat_composed));
     }
 
     #[test]

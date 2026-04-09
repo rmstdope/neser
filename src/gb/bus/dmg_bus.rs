@@ -213,71 +213,13 @@ mod tests {
     /// At that point the PPU enters Mode 1 and both OAM and VRAM are accessible.
     fn tick_to_vblank(bus: &mut DmgBus) {
         // VBlank starts at scanline 144 = 456*144 dots = 16416 M-cycles.
-        bus.tick(255); // tick in chunks to avoid overflow
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(255);
-        bus.tick(201); // 64*255 + 201 = 16320 + 201 = 16521 >= 16416 M-cycles
+        // Tick in chunks to avoid overflow in the bus tick path.
+        let mut remaining = 16_416u32;
+        while remaining > 0 {
+            let chunk = remaining.min(255) as u8;
+            bus.tick(chunk);
+            remaining -= u32::from(chunk);
+        }
     }
 
     #[test]

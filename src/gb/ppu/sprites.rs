@@ -23,7 +23,7 @@ pub fn scan_oam_line(scanline: u8, oam: &[u8; 0xA0], lcdc: u8) -> Vec<usize> {
     for i in 0..40usize {
         let oam_y = oam[i * 4];
         // OAM Y stores screen_y + 16; screen_y = oam_y.wrapping_sub(16).
-        // Off-screen sprites (oam_y == 0 or screen_y >= 160) are naturally
+        // Off-screen sprites (oam_y == 0 or screen_y > 143) are naturally
         // excluded because the wrapping converts them to screen_y > 143.
         let screen_y = oam_y.wrapping_sub(16);
         if scanline >= screen_y && scanline < screen_y.wrapping_add(height) {
@@ -243,9 +243,7 @@ mod tests {
         let mut vram = blank_vram();
         vram[0x0010] = 0xFF; // tile 1, opaque
         vram[0x0011] = 0x00;
-        let mut oam = oam_with_sprite_at(16, 8, 1, 0x10); // attr bit 4 = palette 1
-        let _ = oam;
-        let oam = oam_with_sprite_at(16, 8, 1, 0x10);
+        let oam = oam_with_sprite_at(16, 8, 1, 0x10); // attr bit 4 = palette 1
         let lcdc = 0x02u8;
         let indices = vec![0usize];
         let result = fetch_sprite_pixel(0, 0, &indices, &oam, &vram, lcdc).unwrap();

@@ -10,7 +10,7 @@
 /// * `wx`          — Window X (minus 7); window starts at screen column `wx - 7`
 /// * `wy`          — Window Y; window starts at scanline `wy`
 /// * `window_line` — Internal window line counter (incremented each rendered scanline
-///                   where the window was active)
+///   where the window was active)
 pub fn fetch_window_pixel(
     x: u32,
     scanline: u8,
