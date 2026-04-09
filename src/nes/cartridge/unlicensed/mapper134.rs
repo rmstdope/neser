@@ -45,7 +45,13 @@ impl Mapper134 {
 
     pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         Self {
-            mmc3: MMC3Mapper::new_with_irq_mode(ctx.prg_rom, ctx.chr_rom, ctx.mirroring, false),
+            mmc3: MMC3Mapper::new_with_irq_mode_and_prg_ram_banks(
+                ctx.prg_rom,
+                ctx.chr_rom,
+                ctx.mirroring,
+                false,
+                0,
+            ),
             outer: 0,
         }
     }
@@ -151,9 +157,14 @@ impl Mapper for Mapper134 {
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        if let Some((&outer, mmc3_data)) = data.split_last() {
-            self.outer = outer;
-            self.mmc3.restore_registers(mmc3_data);
+        if data.len() >= 17 {
+            if let Some((&outer, mmc3_data)) = data.split_last() {
+                self.outer = outer;
+                self.mmc3.restore_registers(mmc3_data);
+            }
+        } else {
+            self.outer = 0;
+            self.mmc3.restore_registers(data);
         }
     }
 
@@ -313,6 +324,11 @@ mod tests {
         mapper.write_prg(0x8001, 0);
         mapper.write_prg(0x6001, 0x02);
         let snap = mapper.registers_snapshot();
+        assert_eq!(
+            snap.len(),
+            17,
+            "snapshot must be 17 bytes (16 MMC3 + 1 outer)"
+        );
 
         let mut restored = make_mapper();
         restored.restore_registers(&snap);
@@ -320,6 +336,30 @@ mod tests {
             restored.read_prg(0x8000),
             32,
             "outer register must be restored"
+        );
+    }
+
+    #[test]
+    fn legacy_16_byte_snapshot_resets_outer_register() {
+        let mut mapper = make_mapper();
+        mapper.write_prg(0x8000, 0x86);
+        mapper.write_prg(0x8001, 3);
+        mapper.write_prg(0x6001, 0x02); // outer bit set → bank 35
+
+        // Build a legacy-size (16-byte) MMC3 snapshot
+        let legacy_snap: Vec<u8> = mapper.registers_snapshot()[..16].to_vec();
+
+        // Restore from a mapper that had outer=0x02 active
+        let mut target = make_mapper();
+        target.write_prg(0x8000, 0x86);
+        target.write_prg(0x8001, 0);
+        target.write_prg(0x6001, 0x02); // outer bit set
+        target.restore_registers(&legacy_snap);
+        // outer must be reset to 0 — bank 3 from MMC3 inner, no outer shift
+        assert_eq!(
+            target.read_prg(0x8000),
+            3,
+            "legacy restore must reset outer to 0"
         );
     }
 
