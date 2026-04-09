@@ -1,20 +1,20 @@
 /// SM83 timer subsystem.
 ///
 /// Registers:
-/// - `$FF03` / `$FF04` — DIV: increments every 256 T-cycles (64 M-cycles).
-///   Writing any value resets DIV to 0.
+/// - `$FF04` — DIV: the upper 8 bits of an internal 16-bit T-cycle counter.
+///   Increments every 256 T-cycles (64 M-cycles). Writing any value resets the
+///   full internal counter to 0. `$FF03` is unmapped (returns 0xFF on read;
+///   writes are ignored).
 /// - `$FF05` — TIMA: timer counter; incremented at rate set by TAC.
 ///   On overflow (wraps past 0xFF), it is reloaded with TMA and IF bit 2 is set.
 /// - `$FF06` — TMA: timer modulo (reload value on TIMA overflow).
 /// - `$FF07` — TAC: timer control.
 ///   - Bit 2: Timer enable (1 = enabled).
 ///   - Bits 1-0: Input clock select.
-///     - 00: CPU clock / 1024 (262144 Hz → 4096 Hz at 4 MHz)
-///     - 01: CPU clock / 16  (262144 Hz → 262144 Hz)
-///     - 10: CPU clock / 64  (262144 Hz → 65536 Hz)
-///     - 11: CPU clock / 256 (262144 Hz → 16384 Hz)
-///
-/// All T-cycle counts below are expressed in M-cycles (1 M = 4 T).
+///     - 00: every 1024 T-cycles  (4096 Hz at 4.194 MHz)
+///     - 01: every 16   T-cycles  (262144 Hz)
+///     - 10: every 64   T-cycles  (65536 Hz)
+///     - 11: every 256  T-cycles  (16384 Hz)
 pub struct Timer {
     /// Internal 16-bit counter; DIV is the upper 8 bits ($FF04 = div_counter >> 8).
     div_counter: u16,
@@ -28,9 +28,9 @@ pub struct Timer {
     pub interrupt_pending: bool,
 }
 
-/// M-cycle thresholds at which TIMA increments for each TAC clock select.
-/// TAC bits 1-0: 00→256 M, 01→4 M, 10→16 M, 11→64 M.
-const CLOCK_DIVS: [u16; 4] = [256, 4, 16, 64];
+/// T-cycle thresholds at which TIMA increments for each TAC clock select.
+/// TAC bits 1-0: 00→1024 T, 01→16 T, 10→64 T, 11→256 T.
+const CLOCK_DIVS_T: [u16; 4] = [1024, 16, 64, 256];
 
 impl Timer {
     pub fn new() -> Self {
@@ -46,39 +46,41 @@ impl Timer {
     /// Read a timer register by address.
     pub fn read(&self, addr: u16) -> u8 {
         match addr {
-            0xFF03 | 0xFF04 => (self.div_counter >> 8) as u8,
+            0xFF04 => (self.div_counter >> 8) as u8,
             0xFF05 => self.tima,
             0xFF06 => self.tma,
             0xFF07 => self.tac | 0xF8, // upper bits read as 1
-            _ => 0xFF,
+            _ => 0xFF,                 // 0xFF03 and all other addresses are unmapped
         }
     }
 
     /// Write a timer register by address.
     pub fn write(&mut self, addr: u16, val: u8) {
         match addr {
-            0xFF03 | 0xFF04 => self.div_counter = 0, // any write resets DIV
+            0xFF04 => self.div_counter = 0, // any write resets the full internal counter
             0xFF05 => self.tima = val,
             0xFF06 => self.tma = val,
             0xFF07 => self.tac = val & 0x07,
-            _ => {}
+            _ => {} // 0xFF03 and all other addresses are unmapped; writes ignored
         }
     }
 
     /// Advance the timer by `m_cycles` M-cycles.
     ///
+    /// Internally the timer runs at T-cycle granularity (4 T per M-cycle).
     /// Sets `interrupt_pending` when TIMA overflows (caller must propagate
     /// to IF register $FF0F bit 2).
     pub fn tick(&mut self, m_cycles: u8) {
         for _ in 0..m_cycles {
-            self.div_counter = self.div_counter.wrapping_add(1);
+            // The internal counter tracks T-cycles; advance by 4 per M-cycle.
+            self.div_counter = self.div_counter.wrapping_add(4);
 
             let enabled = self.tac & 0x04 != 0;
             if !enabled {
                 continue;
             }
 
-            let threshold = CLOCK_DIVS[(self.tac & 0x03) as usize];
+            let threshold = CLOCK_DIVS_T[(self.tac & 0x03) as usize];
             if self.div_counter.is_multiple_of(threshold) {
                 let (new_tima, overflow) = self.tima.overflowing_add(1);
                 if overflow {
@@ -114,24 +116,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_div_increments_every_256_m_cycles() {
+    fn test_div_increments_every_64_m_cycles() {
+        // DIV increments every 256 T-cycles = 64 M-cycles.
         let mut timer = Timer::new();
-        for _ in 0..255 {
+        for _ in 0..63 {
             timer.tick(1);
         }
         assert_eq!(
             timer.read(0xFF04),
             0,
-            "DIV should not increment before 256 M-cycles"
+            "DIV should not increment before 64 M-cycles"
         );
-        timer.tick(1); // 256th cycle
-        assert_eq!(timer.read(0xFF04), 1, "DIV should be 1 after 256 M-cycles");
+        timer.tick(1); // 64th M-cycle = 256 T-cycles
+        assert_eq!(timer.read(0xFF04), 1, "DIV should be 1 after 64 M-cycles");
+    }
+
+    #[test]
+    fn test_ff03_read_returns_open_bus() {
+        let timer = Timer::new();
+        assert_eq!(
+            timer.read(0xFF03),
+            0xFF,
+            "$FF03 is unmapped and should return 0xFF"
+        );
     }
 
     #[test]
     fn test_writing_div_resets_it_to_zero() {
         let mut timer = Timer::new();
-        for _ in 0..256 {
+        for _ in 0..64 {
             timer.tick(1);
         }
         assert_eq!(timer.read(0xFF04), 1);
@@ -154,23 +167,23 @@ mod tests {
 
     #[test]
     fn test_tima_increments_at_rate_set_by_tac_00() {
-        // TAC=0x04 (enabled, 00 = div 256 M-cycles)
+        // TAC=0x04 (enabled, clock 00 = every 1024 T-cycles = 256 M-cycles)
         let mut timer = Timer::new();
         timer.write(0xFF07, 0x04);
         for _ in 0..255 {
             timer.tick(1);
         }
         assert_eq!(timer.tima, 0, "TIMA should not increment before threshold");
-        timer.tick(1); // 256th cycle
+        timer.tick(1); // 256th M-cycle = 1024 T-cycles
         assert_eq!(
             timer.tima, 1,
-            "TIMA should be 1 after 256 M-cycles with TAC=0x04"
+            "TIMA should be 1 after 256 M-cycles (1024 T) with TAC=0x04"
         );
     }
 
     #[test]
     fn test_tima_increments_at_rate_set_by_tac_01() {
-        // TAC=0x05 (enabled, 01 = div 4 M-cycles)
+        // TAC=0x05 (enabled, clock 01 = every 16 T-cycles = 4 M-cycles)
         let mut timer = Timer::new();
         timer.write(0xFF07, 0x05);
         for _ in 0..3 {

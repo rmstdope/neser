@@ -118,15 +118,32 @@ static BASE: [Opcode; 256] = [
 ];
 
 // ---------------------------------------------------------------------------
-// CB-prefixed opcode table (256 entries)
-// All take 2 M-cycles, except (HL) variants which take 4.
+// CB-prefixed opcode table (256 entries).
+// Register variants: 2 M-cycles; (HL) variants: 4 M-cycles.
+// Exception: `BIT b,(HL)` is 3 M-cycles (read only, no write-back).
 // ---------------------------------------------------------------------------
 #[rustfmt::skip]
 static CB: [Opcode; 256] = {
     // helper to generate the 8 register variants for one CB operation
     // (register order: B, C, D, E, H, L, (HL), A)
+    const fn is_bit_op(mnemonic: &'static str) -> bool {
+        let bytes = mnemonic.as_bytes();
+        bytes.len() >= 4
+            && bytes[0] == b'B'
+            && bytes[1] == b'I'
+            && bytes[2] == b'T'
+            && bytes[3] == b' '
+    }
+
     const fn op(mnemonic: &'static str, is_hl: bool) -> Opcode {
-        Opcode::new(mnemonic, if is_hl { 4 } else { 2 })
+        let cycles = if !is_hl {
+            2
+        } else if is_bit_op(mnemonic) {
+            3 // BIT b,(HL): prefix + CB byte + read(HL) — no write-back
+        } else {
+            4 // SET/RES/rotate (HL): prefix + CB byte + read(HL) + write(HL)
+        };
+        Opcode::new(mnemonic, cycles)
     }
 
     // Rows: RLC, RRC, RL, RR, SLA, SRA, SWAP, SRL  (8 rows × 8 regs = 64)

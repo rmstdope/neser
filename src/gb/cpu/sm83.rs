@@ -122,6 +122,9 @@ pub struct Sm83<B: GbBus> {
     pub ime: bool,
     /// Set by HALT; cleared when an interrupt fires or IME is re-enabled.
     pub halted: bool,
+    /// Set when HALT executes with IME=false and a pending interrupt (HALT bug).
+    /// The next opcode fetch reads without advancing PC.
+    pub halt_bug: bool,
     /// Set by EI; IME is enabled _after_ the instruction following EI.
     ime_pending: bool,
     pub bus: B,
@@ -134,6 +137,7 @@ impl<B: GbBus> Sm83<B> {
             regs: Registers::new(),
             ime: false,
             halted: false,
+            halt_bug: false,
             ime_pending: false,
             bus,
             cycles: 0,
@@ -158,9 +162,18 @@ impl<B: GbBus> Sm83<B> {
     }
 
     /// Fetch the next byte at PC and increment PC.
+    ///
+    /// If the HALT bug flag is set, PC is not advanced (the byte is read
+    /// a second time from the same address on the following fetch).
     fn fetch_byte(&mut self) -> u8 {
         let val = self.read(self.regs.pc);
-        self.regs.pc = self.regs.pc.wrapping_add(1);
+        if self.halt_bug {
+            // HALT bug: omit the PC increment so the same byte is fetched again
+            // on the next call to fetch_byte().
+            self.halt_bug = false;
+        } else {
+            self.regs.pc = self.regs.pc.wrapping_add(1);
+        }
         val
     }
 
@@ -703,7 +716,7 @@ impl<B: GbBus> Sm83<B> {
                 self.regs.set_flags(z, true, true, c);
             }
 
-            // --- SCF / CCF ------------------------------------------------
+            // --- SCF / CCF -------------------------------------------------
             0x37 => {
                 let z = self.regs.z_flag();
                 self.regs.set_flags(z, false, false, true);
@@ -716,7 +729,16 @@ impl<B: GbBus> Sm83<B> {
 
             // --- HALT / STOP ---------------------------------------------
             0x76 => {
-                self.halted = true;
+                // HALT bug: when IME=false and there is a pending interrupt,
+                // the CPU does NOT enter HALT mode. Instead execution continues
+                // but the next opcode fetch reads PC without advancing it.
+                let ie = self.bus.read(0xFFFF);
+                let if_ = self.bus.read(0xFF0F);
+                if !self.ime && (ie & if_ & 0x1F) != 0 {
+                    self.halt_bug = true;
+                } else {
+                    self.halted = true;
+                }
             }
             0x10 => {
                 // STOP — consume the next byte (it should be 0x00)
@@ -1493,6 +1515,43 @@ mod tests {
             cycles_before + 1,
             "Each halted tick costs 1 M-cycle"
         );
+    }
+
+    #[test]
+    fn test_halt_bug_instruction_after_halt_executes_twice() {
+        // HALT bug: when HALT executes with IME=false and a pending interrupt,
+        // the CPU does NOT halt. The next opcode byte is fetched without
+        // advancing PC, so the instruction after HALT executes twice.
+        //
+        // Memory layout:
+        //   0x0000: 0x76  HALT
+        //   0x0001: 0x04  INC B
+        //   0xFFFF: 0x01  IE = VBlank enabled
+        //   0xFF0F: 0x01  IF = VBlank pending
+        let mut program = [0u8; 0x10000];
+        program[0x0000] = 0x76; // HALT
+        program[0x0001] = 0x04; // INC B
+        program[0xFFFF] = 0x01; // IE: VBlank
+        program[0xFF0F] = 0x01; // IF: VBlank pending
+        let mut cpu = Sm83::new(TestBus::new(&program));
+        cpu.ime = false;
+
+        cpu.execute(); // HALT — halt_bug fires; CPU does not halt
+        assert!(!cpu.halted, "CPU should not halt when halt bug fires");
+        assert!(cpu.halt_bug, "halt_bug flag should be set");
+
+        // First execute after HALT bug: reads 0x04 at PC=1, PC stays at 1
+        cpu.execute();
+        assert_eq!(cpu.regs.b, 1, "INC B executes first time");
+        assert_eq!(cpu.regs.pc, 1, "PC should not advance after bugged fetch");
+
+        // Second execute: reads 0x04 at PC=1 again (normally this time), PC → 2
+        cpu.execute();
+        assert_eq!(
+            cpu.regs.b, 2,
+            "INC B executes second time (HALT bug: same byte fetched again)"
+        );
+        assert_eq!(cpu.regs.pc, 2, "PC advances normally on second fetch");
     }
 
     // -----------------------------------------------------------------------
