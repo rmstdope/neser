@@ -1,31 +1,33 @@
 use crate::gb::bus::GbBus;
 use crate::gb::cartridge::GbCartridge;
+use crate::gb::ppu::Ppu;
 use crate::gb::timer::Timer;
 
 /// Full DMG memory bus.
 ///
 /// Implements the Game Boy (DMG) memory map, routing reads and writes to the
 /// correct hardware region. Owns the cartridge, static RAM buffers, the Timer
-/// subsystem, and the IF/IE interrupt registers.
+/// subsystem, the PPU, and the IF/IE interrupt registers.
 ///
 /// Memory map:
 /// - $0000–$7FFF: Cartridge ROM  (bank 0 fixed + switchable bank)
-/// - $8000–$9FFF: VRAM
+/// - $8000–$9FFF: VRAM            (routed through PPU; blocked during Mode 3)
 /// - $A000–$BFFF: Cartridge RAM  (external/MBC-controlled)
 /// - $C000–$DFFF: WRAM
 /// - $E000–$FDFF: Echo RAM       (mirrors WRAM)
-/// - $FE00–$FE9F: OAM
+/// - $FE00–$FE9F: OAM             (routed through PPU; blocked during Mode 2–3)
 /// - $FEA0–$FEFF: Forbidden      (reads return 0xFF; writes ignored)
 /// - $FF04–$FF07: Timer          (DIV/TIMA/TMA/TAC)
 /// - $FF0F:       IF register
+/// - $FF40–$FF4B: PPU I/O registers
+/// - $FF46:       OAM DMA (write-only trigger)
 /// - $FF80–$FFFE: HRAM
 /// - $FFFF:       IE register
 /// - Everything else in $FF00–$FF7F: I/O stubs (reads return 0xFF)
 pub struct DmgBus {
     cart: Box<dyn GbCartridge>,
-    vram: [u8; 0x2000],
+    pub ppu: Ppu,
     wram: [u8; 0x2000],
-    oam: [u8; 0xA0],
     hram: [u8; 0x7F],
     timer: Timer,
     /// IF register ($FF0F): interrupt flag.
@@ -38,9 +40,8 @@ impl DmgBus {
     pub fn new(cart: Box<dyn GbCartridge>) -> Self {
         Self {
             cart,
-            vram: [0u8; 0x2000],
+            ppu: Ppu::new(),
             wram: [0u8; 0x2000],
-            oam: [0u8; 0xA0],
             hram: [0u8; 0x7F],
             timer: Timer::new(),
             if_reg: 0,
@@ -48,13 +49,37 @@ impl DmgBus {
         }
     }
 
-    /// Advance system timers by `m_cycles` M-cycles, propagating any timer
-    /// interrupt to the IF register ($FF0F bit 2).
+    /// Advance system timers and PPU by `m_cycles` M-cycles.
+    ///
+    /// Propagates any timer interrupt to the IF register ($FF0F bit 2).
+    /// Propagates PPU VBlank (bit 0) and STAT (bit 1) interrupts.
     pub fn tick(&mut self, m_cycles: u8) {
         self.timer.tick(m_cycles);
         if self.timer.interrupt_pending {
             self.if_reg |= 0x04;
             self.timer.interrupt_pending = false;
+        }
+        self.ppu.tick_dots(u32::from(m_cycles) * 4);
+        self.if_reg |= self.ppu.take_pending_interrupts();
+    }
+
+    /// Bypass PPU access-blocking for OAM DMA transfers.
+    fn read_raw(&self, addr: u16) -> u8 {
+        match addr {
+            0x0000..=0x7FFF => self.cart.read(addr),
+            0x8000..=0x9FFF => self.ppu.vram[(addr - 0x8000) as usize],
+            0xA000..=0xBFFF => self.cart.read(addr),
+            0xC000..=0xDFFF => self.wram[(addr - 0xC000) as usize],
+            0xE000..=0xFDFF => self.wram[(addr - 0xE000) as usize],
+            _ => 0xFF,
+        }
+    }
+
+    /// Execute an OAM DMA transfer: copy 160 bytes from `(val << 8)` into OAM.
+    fn do_oam_dma(&mut self, val: u8) {
+        let src = u16::from(val) << 8;
+        for i in 0..0xA0u16 {
+            self.ppu.oam[i as usize] = self.read_raw(src + i);
         }
     }
 }
@@ -63,34 +88,37 @@ impl GbBus for DmgBus {
     fn read(&mut self, addr: u16) -> u8 {
         match addr {
             0x0000..=0x7FFF => self.cart.read(addr),
-            0x8000..=0x9FFF => self.vram[(addr - 0x8000) as usize],
+            0x8000..=0x9FFF => self.ppu.read_vram(addr),
             0xA000..=0xBFFF => self.cart.read(addr),
             0xC000..=0xDFFF => self.wram[(addr - 0xC000) as usize],
             0xE000..=0xFDFF => self.wram[(addr - 0xE000) as usize],
-            0xFE00..=0xFE9F => self.oam[(addr - 0xFE00) as usize],
+            0xFE00..=0xFE9F => self.ppu.read_oam(addr),
             0xFEA0..=0xFEFF => 0xFF,
             0xFF04..=0xFF07 => self.timer.read(addr),
             0xFF0F => self.if_reg | 0xE0,
+            0xFF40..=0xFF4B => self.ppu.read_register(addr),
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
             0xFFFF => self.ie_reg,
-            _ => 0xFF, // unmapped I/O stubs
+            _ => 0xFF,
         }
     }
 
     fn write(&mut self, addr: u16, val: u8) {
         match addr {
             0x0000..=0x7FFF => self.cart.write(addr, val),
-            0x8000..=0x9FFF => self.vram[(addr - 0x8000) as usize] = val,
+            0x8000..=0x9FFF => self.ppu.write_vram(addr, val),
             0xA000..=0xBFFF => self.cart.write(addr, val),
             0xC000..=0xDFFF => self.wram[(addr - 0xC000) as usize] = val,
             0xE000..=0xFDFF => self.wram[(addr - 0xE000) as usize] = val,
-            0xFE00..=0xFE9F => self.oam[(addr - 0xFE00) as usize] = val,
-            0xFEA0..=0xFEFF => {} // forbidden; writes ignored
+            0xFE00..=0xFE9F => self.ppu.write_oam(addr, val),
+            0xFEA0..=0xFEFF => {}
             0xFF04..=0xFF07 => self.timer.write(addr, val),
             0xFF0F => self.if_reg = val & 0x1F,
+            0xFF40..=0xFF45 | 0xFF47..=0xFF4B => self.ppu.write_register(addr, val),
+            0xFF46 => self.do_oam_dma(val),
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize] = val,
             0xFFFF => self.ie_reg = val,
-            _ => {} // unmapped I/O stubs; writes ignored
+            _ => {}
         }
     }
 
@@ -181,13 +209,84 @@ mod tests {
 
     // ── OAM ──────────────────────────────────────────────────────────────────
 
+    /// Tick the bus enough M-cycles to reach VBlank (scanline 144).
+    /// At that point the PPU enters Mode 1 and both OAM and VRAM are accessible.
+    fn tick_to_vblank(bus: &mut DmgBus) {
+        // VBlank starts at scanline 144 = 456*144 dots = 16416 M-cycles.
+        // Tick in chunks to avoid overflow in the bus tick path.
+        let mut remaining = 16_416u32;
+        while remaining > 0 {
+            let chunk = remaining.min(255) as u8;
+            bus.tick(chunk);
+            remaining -= u32::from(chunk);
+        }
+    }
+
     #[test]
     fn test_oam_read_write_round_trip() {
+        // OAM is blocked during Mode 2 (startup); tick to VBlank (Mode 1) first.
         let mut bus = make_bus();
+        tick_to_vblank(&mut bus);
         bus.write(0xFE00, 0x33);
         bus.write(0xFE9F, 0x44);
         assert_eq!(bus.read(0xFE00), 0x33);
         assert_eq!(bus.read(0xFE9F), 0x44);
+    }
+
+    // ── PPU registers ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_ppu_lcdc_register_accessible_via_bus() {
+        let mut bus = make_bus();
+        bus.write(0xFF40, 0x00);
+        assert_eq!(bus.read(0xFF40), 0x00);
+    }
+
+    #[test]
+    fn test_ppu_stat_register_reflects_mode() {
+        // At startup, PPU is in Mode 2 (OAM Scan); STAT bits 1:0 should be 0b10.
+        let bus = make_bus();
+        let stat = bus.ppu.read_register(0xFF41);
+        assert_eq!(
+            stat & 0x03,
+            0x02,
+            "initial STAT mode should be OAM Scan (2)"
+        );
+    }
+
+    // ── OAM DMA ───────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_oam_dma_copies_160_bytes_from_source() {
+        let mut bus = make_bus();
+        // Put known data in WRAM starting at $C000.
+        for i in 0..160u16 {
+            bus.write(0xC000 + i, i as u8);
+        }
+        // Trigger OAM DMA from $C000 (val = 0xC0).
+        bus.write(0xFF46, 0xC0);
+        // Tick to VBlank so OAM is readable.
+        tick_to_vblank(&mut bus);
+        for i in 0..160u16 {
+            assert_eq!(
+                bus.read(0xFE00 + i),
+                i as u8,
+                "OAM byte {i} should match DMA source"
+            );
+        }
+    }
+
+    // ── VBlank interrupt ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_vblank_interrupt_propagates_to_if_after_tick() {
+        let mut bus = make_bus();
+        tick_to_vblank(&mut bus);
+        assert_eq!(
+            bus.read(0xFF0F) & 0x01,
+            0x01,
+            "VBlank interrupt should be set in IF"
+        );
     }
 
     // ── Forbidden ─────────────────────────────────────────────────────────────
