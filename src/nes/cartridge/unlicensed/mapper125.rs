@@ -112,6 +112,11 @@ impl Mapper for Mapper125 {
         }
     }
 
+    fn initialize_ram(&mut self, mode: crate::nes::console::RamInitMode) {
+        self.base_mut().initialize_ram(mode);
+        crate::nes::console::initialize_ram(&mut self.wram, mode);
+    }
+
     fn reset(&mut self) {
         self.prg_reg = 0;
         self.apply_state();
@@ -137,6 +142,7 @@ mod tests {
     use crate::nes::cartridge::NametableLayout;
     use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
     use crate::nes::cartridge::test_helpers::banked_data;
+    use crate::nes::console::RamInitMode;
 
     const TEST_PRG_BANKS_8K: usize = 16; // 128 KB PRG-ROM (matches NES20DB entry)
 
@@ -369,5 +375,27 @@ mod tests {
     fn wram_size_is_8kb() {
         let mapper = make_mapper();
         assert_eq!(mapper.wram_size(), 8 * 1024, "WRAM must be 8 KB");
+    }
+
+    // ── initialize_ram ────────────────────────────────────────────────────────
+
+    #[test]
+    fn initialize_ram_zero_clears_wram() {
+        let mut mapper = make_mapper();
+        mapper.write_prg(0xC000, 0xFF);
+        mapper.write_prg(0xDFFF, 0xAB);
+
+        mapper.initialize_ram(RamInitMode::Zero);
+
+        assert_eq!(
+            mapper.read_prg(0xC000),
+            0x00,
+            "initialize_ram(Zero) must clear WRAM at $C000"
+        );
+        assert_eq!(
+            mapper.read_prg(0xDFFF),
+            0x00,
+            "initialize_ram(Zero) must clear WRAM at $DFFF"
+        );
     }
 }
