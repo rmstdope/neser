@@ -41,17 +41,14 @@ pub struct Mapper194 {
 
 impl Mapper194 {
     pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
-        let prg_rom = ctx.prg_rom;
-        let chr_rom = ctx.chr_rom;
-        let mirroring = ctx.mirroring;
         Self {
-            inner: MMC3Mapper::new_with_irq_mode(prg_rom, chr_rom, mirroring, false),
+            inner: MMC3Mapper::new(ctx),
             chr_ram: [0; CHR_RAM_SIZE],
         }
     }
 
     fn is_chr_ram_bank(bank: usize) -> bool {
-        bank >= CHR_RAM_FIRST_BANK && bank <= CHR_RAM_LAST_BANK
+        (CHR_RAM_FIRST_BANK..=CHR_RAM_LAST_BANK).contains(&bank)
     }
 
     fn chr_ram_index(bank: usize, offset: usize) -> usize {
@@ -138,10 +135,13 @@ impl Mapper for Mapper194 {
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        if data.len() >= CHR_RAM_SIZE {
+        let mmc3_snapshot_len = self.inner.registers_snapshot().len();
+        if data.len() >= mmc3_snapshot_len + CHR_RAM_SIZE {
             let (mmc3_data, chr_ram_data) = data.split_at(data.len() - CHR_RAM_SIZE);
             self.inner.restore_registers(mmc3_data);
             self.chr_ram.copy_from_slice(chr_ram_data);
+        } else {
+            self.inner.restore_registers(data);
         }
     }
 
