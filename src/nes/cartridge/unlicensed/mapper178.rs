@@ -62,8 +62,8 @@
 //! ```text
 //! 7654 3210
 //! ---------
-//! BBBB BBBB
-//! ++++-++++- B[7:0]: PRG-RAM A20..A13 (selects 8 KiB PRG-RAM bank at $6000)
+//! .... ..BB
+//!        ++- B[1:0]: PRG-RAM bank select (selects 8 KiB PRG-RAM bank at $6000)
 //! ```
 //!
 //! ## PRG Banking Details
@@ -118,10 +118,11 @@ impl Mapper178 {
         // Force CHR-RAM (chip-internal) and at least 1 PRG-RAM bank.
         let mut ctx = ctx;
         ctx.chr_rom = vec![];
-        if ctx.prg_ram_banks_8k == 0 {
-            ctx.prg_ram_banks_8k = 1;
-            ctx.prg_ram_size_specified = true;
-        }
+        ctx.chr_ram_size_bytes = Some(8 * 1024);
+        // Mapper 178 supports up to 32 KiB (4 banks) of PRG-RAM.
+        let banks = ctx.prg_ram_banks_8k.min(4);
+        ctx.prg_ram_banks_8k = if banks == 0 { 1 } else { banks };
+        ctx.prg_ram_size_specified = true;
 
         let mut base = BaseMapper::new(&ctx, capabilities);
         base.configure_prg_banking(PRG_BANK_SIZE);
@@ -514,5 +515,21 @@ mod tests {
         let mut mapper = make_mapper();
         mapper.write_prg(0x4800, 0);
         assert!(!mapper.irq_pending(), "Mapper 178 must not assert IRQ");
+    }
+
+    #[test]
+    fn prg_ram_present_even_when_header_omits_size() {
+        let mut mapper = Mapper178::new(
+            MapperContext::new_for_test(
+                MAPPER_NUMBER,
+                banked_data(PRG_BANK_SIZE, PRG_BANKS),
+                vec![],
+                NametableLayout::Vertical,
+            )
+            .with_prg_ram_banks(1)
+            .with_unspecified_prg_ram_size(),
+        );
+        mapper.write_prg(0x6000, 0xAB);
+        assert_eq!(mapper.read_prg(0x6000), 0xAB);
     }
 }

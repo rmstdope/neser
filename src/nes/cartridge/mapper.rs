@@ -1042,7 +1042,7 @@ mapper_registry! {
     173 => Mapper173::new,
     174 => Mapper174::new,
     177 => Mapper177::new,
-        178 => Mapper178::new,
+    178 => Mapper178::new,
     180 => UxromInvertedMapper::new,
     184 => Sunsoft1Mapper::new,
     185 => CnromSecurityMapper::new,
