@@ -14,7 +14,7 @@ use crate::nes::cartridge::{Mapper, MapperCapabilities};
 /// Specifications:
 /// - Main: <https://www.nesdev.org/wiki/INES_Mapper_154>
 /// - Related: <https://www.nesdev.org/wiki/INES_Mapper_088>
-/// - PRG-ROM: Up to 128 KB (switchable 8 KB banks at $8000/$A000, fixed last 16KB)
+/// - PRG-ROM: Switchable 8 KB banks at $8000/$A000, fixed last 16KB
 /// - CHR-ROM: 128 KB (CHR A12 wired to A16 splits access into two halves)
 /// - Mirroring: Mapper-controlled one-screen (bit 6 of any $8000-$FFFF write)
 ///
@@ -138,7 +138,7 @@ impl Mapper for Namcot3453Mapper {
                     self.regs[reg] = value;
                     self.update_banks();
                 }
-                _ => {}
+                _ => unreachable!(),
             }
         }
     }
@@ -152,12 +152,10 @@ impl Mapper for Namcot3453Mapper {
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        if data.len() >= 9 {
+        if data.len() >= 10 {
             self.bank_select = data[0];
             self.regs.copy_from_slice(&data[1..9]);
             self.update_banks();
-        }
-        if data.len() >= 10 {
             self.base
                 .set_mirroring(NametableLayout::from_snapshot_byte(data[9]));
         }
@@ -409,19 +407,19 @@ mod tests {
     // ---------- Snapshot/restore tests ----------
 
     #[test]
-    fn registers_snapshot_restore_roundtrip() {
+    fn registers_snapshot_restore_roundtrip_single_screen_lower() {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 128);
 
         let mut mapper = create_mapper154(prg_rom.clone(), chr_rom.clone())
             .expect("Mapper 154 should be implemented");
 
-        mapper.write_prg(0x8000, 0b0100_0110); // R6, M=1 → mirroring = SingleScreenUpper
-        mapper.write_prg(0x8001, 3);
-        mapper.write_prg(0x8000, 0b0000_0111); // R7, M=0 → mirroring = SingleScreenLower
-        mapper.write_prg(0x8001, 5);
+        mapper.write_prg(0x8000, 0b0100_0110); // select R6; M=1 → mirroring = SingleScreenUpper
+        mapper.write_prg(0x8001, 3); // value 3 has bit 6 = 0 → reverts mirroring to SingleScreenLower
+        mapper.write_prg(0x8000, 0b0000_0111); // select R7; M=0 → mirroring = SingleScreenLower
+        mapper.write_prg(0x8001, 5); // value 5 has bit 6 = 0 → mirroring stays SingleScreenLower
 
-        // After R7 write (M=0), mirroring is SingleScreenLower
+        // After all writes, mirroring is SingleScreenLower
         assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenLower);
 
         let snap = mapper.registers_snapshot();
@@ -435,7 +433,34 @@ mod tests {
         assert_eq!(
             restored.get_mirroring(),
             NametableLayout::SingleScreenLower,
-            "Mirroring should be restored"
+            "SingleScreenLower mirroring should be restored"
+        );
+    }
+
+    #[test]
+    fn registers_snapshot_restore_roundtrip_single_screen_upper() {
+        let prg_rom = banked_data(8 * 1024, 8);
+        let chr_rom = banked_data(1024, 128);
+
+        let mut mapper = create_mapper154(prg_rom.clone(), chr_rom.clone())
+            .expect("Mapper 154 should be implemented");
+
+        mapper.write_prg(0x8000, 0b0000_0110); // select R6; M=0 → mirroring = SingleScreenLower
+        mapper.write_prg(0x8001, 0b0100_0001); // value has bit 6 = 1 → mirroring = SingleScreenUpper
+
+        // After bank data write with M=1, mirroring is SingleScreenUpper
+        assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenUpper);
+
+        let snap = mapper.registers_snapshot();
+
+        let mut restored =
+            create_mapper154(prg_rom, chr_rom).expect("Mapper 154 should be implemented");
+        restored.restore_registers(&snap);
+
+        assert_eq!(
+            restored.get_mirroring(),
+            NametableLayout::SingleScreenUpper,
+            "SingleScreenUpper mirroring should be restored"
         );
     }
 
