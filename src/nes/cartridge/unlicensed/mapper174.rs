@@ -48,7 +48,6 @@
 //!
 //! No PRG-RAM, no IRQ, no expansion audio.  Power-on/reset state: all bits zero.
 
-use crate::nes::cartridge::NametableLayout;
 use crate::nes::cartridge::base_mapper::BaseMapper;
 use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
