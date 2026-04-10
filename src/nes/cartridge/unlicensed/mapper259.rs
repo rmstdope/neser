@@ -122,6 +122,13 @@ impl Mapper for Mapper259 {
         }
     }
 
+    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        match addr {
+            0x6000..=0x7FFF => self.mmc3.read_prg_open_bus(addr, open_bus),
+            0x8000..=0xFFFF => self.read_prg(addr),
+            _ => open_bus,
+        }
+    }
     fn write_prg(&mut self, addr: u16, value: u8) {
         match addr {
             0x6000..=0x7FFF => {
