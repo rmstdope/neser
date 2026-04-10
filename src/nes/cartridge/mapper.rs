@@ -169,6 +169,7 @@ use super::unlicensed::mapper126::Mapper126;
 use super::unlicensed::mapper128::Mapper128;
 use super::unlicensed::mapper134::Mapper134;
 use super::unlicensed::mapper156::Mapper156;
+use super::unlicensed::mapper162::Mapper162;
 use super::unlicensed::mapper165::Mapper165;
 use super::unlicensed::mapper167::Mapper167;
 use super::unlicensed::mapper174::Mapper174;
@@ -1037,6 +1038,7 @@ mapper_registry! {
     157 => Mapper157::new,
     159 => Mapper159::new,
     160 => JyCompanyMapper::new,
+    162 => Mapper162::new,
     165 => Mapper165::new,
     167 => Mapper167::new,
     173 => Mapper173::new,
