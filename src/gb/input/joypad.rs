@@ -54,9 +54,10 @@ impl Joypad {
 
     /// Update a button state. Returns `true` if a joypad interrupt should fire.
     ///
-    /// An interrupt fires when the effective lower nibble transitions from
-    /// all-ones (`0xF`) to any-zero, i.e. the first button in the active
-    /// group is pressed.
+    /// An interrupt fires on any **1→0 falling edge** of a selected output
+    /// line, i.e. whenever a button in the active group transitions from
+    /// released to pressed. Multiple simultaneous presses each generate a
+    /// separate falling edge.
     ///
     /// `id` uses the NES platform convention:
     /// A=0, B=1, Select=2, Start=3, Up=4, Down=5, Left=6, Right=7.
@@ -79,7 +80,7 @@ impl Joypad {
             *state &= !mask;
         }
         let new_nibble = self.effective_nibble();
-        let irq = self.prev_nibble == 0xF && new_nibble != 0xF;
+        let irq = (self.prev_nibble & !new_nibble) != 0;
         self.prev_nibble = new_nibble;
         irq
     }
@@ -103,13 +104,16 @@ impl Joypad {
 
     /// Set all button states from a NES-convention bitmask (bulk update).
     ///
-    /// Does not update the IRQ edge baseline (`prev_nibble`).
+    /// Updates the IRQ edge baseline (`prev_nibble`) to the new effective
+    /// nibble without firing an interrupt, so subsequent `set_button()` calls
+    /// compare against the current bulk-updated state.
     pub fn set_states(&mut self, state: u8) {
         self.p15_state = state & 0x0F;
         self.p14_state = ((state & 0x10) >> 2)  // Up   (bit4) → p14 bit2
             | ((state & 0x20) >> 2)              // Down (bit5) → p14 bit3
             | ((state & 0x40) >> 5)              // Left (bit6) → p14 bit1
             | ((state & 0x80) >> 7); // Right(bit7) → p14 bit0
+        self.prev_nibble = self.effective_nibble();
     }
 
     /// Compute the effective lower nibble for the currently selected group(s).
@@ -288,13 +292,31 @@ mod tests {
         assert!(!irq, "expected no IRQ when button's group not selected");
     }
 
-    /// Second button press in the same group does NOT re-fire the interrupt.
+    /// Re-pressing an already-held button does not fire a second IRQ (no new falling edge).
     #[test]
-    fn test_interrupt_no_fire_on_second_press() {
+    fn test_interrupt_no_fire_on_repeated_press_of_same_button() {
         let mut j = make_p15_selected();
-        j.set_button(0, true); // first press → IRQ (consume it)
-        let irq = j.set_button(1, true); // second press → no IRQ
-        assert!(!irq, "expected no IRQ on second button press");
+        j.set_button(0, true); // press A → IRQ fires
+        let irq = j.set_button(0, true); // press A again while held → no new falling edge
+        assert!(
+            !irq,
+            "expected no IRQ on repeated press of already-held button"
+        );
+    }
+
+    /// Each new button press creates a new falling edge and fires IRQ independently.
+    ///
+    /// Per Pan Docs: the joypad IRQ fires on every 1→0 transition of a selected
+    /// output line, not just the first press from the all-released state.
+    #[test]
+    fn test_interrupt_fires_for_each_new_button_press() {
+        let mut j = make_p15_selected();
+        j.set_button(0, true); // press A → IRQ fires
+        let irq = j.set_button(1, true); // press B while A held → new falling edge → IRQ
+        assert!(
+            irq,
+            "expected IRQ for B press while A held (new falling edge)"
+        );
     }
 
     /// After fully releasing all buttons in the group, the next press fires
@@ -308,21 +330,24 @@ mod tests {
         assert!(irq, "expected IRQ to re-fire after full release");
     }
 
-    /// Changing the select group does not spuriously fire an interrupt on the
-    /// next button press if a button was already pressed before the switch.
+    /// After a group switch and switch back, re-pressing an already-held button
+    /// does not fire a spurious IRQ (write() resets prev_nibble to current state).
     #[test]
     fn test_no_spurious_irq_after_group_switch_with_held_button() {
         let mut j = Joypad::new();
         // Press A while P15 is selected
         j.write(0x10);
-        j.set_button(0, true); // IRQ fires here, nibble → non-0xF
-        // Switch group away — A is still held but P15 is now deselected
-        j.write(0x20); // P14 selected only; effective nibble recomputed
-        // Switch back to P15 — A is still held
+        j.set_button(0, true); // IRQ fires; prev_nibble = 0xE
+        // Switch group away — A still held; prev_nibble reset to current P14 nibble (0xF)
+        j.write(0x20); // P14 selected
+        // Switch back to P15 — A still held; prev_nibble reset to 0xE
         j.write(0x10);
-        // No new button *press* occurred; no interrupt should fire
-        let irq = j.set_button(1, true); // press B while A held → nibble still non-0xF before press
-        assert!(!irq, "expected no IRQ since nibble was already non-0xF");
+        // Re-pressing A (already held): bit0 already low, no falling edge → no IRQ
+        let irq = j.set_button(0, true);
+        assert!(
+            !irq,
+            "re-pressing held button after group switch must not fire IRQ"
+        );
     }
 
     // ── get_states / set_states ────────────────────────────────────────────
@@ -363,5 +388,17 @@ mod tests {
         j.set_button(0, true);
         j.set_button(0, false);
         assert_eq!(j.get_states() & 0x01, 0x00);
+    }
+
+    /// set_states updates prev_nibble so that a subsequent set_button does not
+    /// fire a spurious IRQ for a button that was already set by set_states.
+    #[test]
+    fn test_set_states_updates_prev_nibble() {
+        let mut j = make_p15_selected();
+        // Bulk-set A as pressed via set_states
+        j.set_states(0x01); // A pressed (bit0)
+        // A is already "pressed"; pressing it again is not a new falling edge
+        let irq = j.set_button(0, true);
+        assert!(!irq, "expected no IRQ: A was already in the bulk-set state");
     }
 }

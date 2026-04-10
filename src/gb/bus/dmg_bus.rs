@@ -56,8 +56,8 @@ impl DmgBus {
     /// Reset all bus state to power-on defaults.
     ///
     /// Reinitialises the PPU, timer, and joypad; zeroes WRAM and HRAM;
-    /// clears IF and IE. The cartridge is NOT reset (ROM contents are
-    /// preserved; RAM is cleared by the cart's own reset if needed).
+    /// clears IF and IE. The cartridge is not touched by this reset, so
+    /// ROM, cartridge RAM, and any mapper state are preserved.
     pub fn reset(&mut self) {
         self.ppu = Ppu::new();
         self.timer = Timer::new();

@@ -4,10 +4,14 @@ use crate::gb::cpu::Sm83;
 
 pub mod gameboy;
 
-/// Game Boy (DMG) console stub.
+/// Game Boy (DMG) console wrapper.
 ///
-/// Wraps the SM83 CPU and a bus. This is a minimal integration shell;
-/// rendering, audio, and input are out of scope for the initial CPU sub-issue.
+/// Wraps the SM83 CPU and a bus, providing the core console integration
+/// needed to execute instructions and advance the attached hardware.
+///
+/// The generic `Gb<B>` interface exposes CPU stepping and cycle tracking.
+/// DMG-specific integrations on `Gb<DmgBus>` additionally provide reset
+/// behavior, screen/framebuffer access, and input handling through the bus.
 pub struct Gb<B: GbBus> {
     pub cpu: Sm83<B>,
 }

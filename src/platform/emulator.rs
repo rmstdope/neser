@@ -27,16 +27,15 @@ pub enum SystemType {
 ///     // NES-specific: debugger, PPU viewer, Zapper, etc.
 /// }
 /// ```
-#[allow(clippy::large_enum_variant)]
 pub enum Console {
-    Nes(Nes),
+    Nes(Box<Nes>),
     GameBoy(Box<GameBoy>),
 }
 
 impl Console {
     /// Create a new NES emulator instance.
     pub fn new_nes(app_context: impl IntoSharedAppContext) -> Self {
-        Console::Nes(Nes::new(app_context))
+        Console::Nes(Box::new(Nes::new(app_context)))
     }
 
     /// Create a new Game Boy (DMG) emulator instance.
@@ -166,6 +165,7 @@ impl Console {
     ///
     /// `button_id` is system-specific: for NES, it maps to [`crate::nes::input::Button`]
     /// discriminant values (A=0, B=1, Select=2, Start=3, Up=4, Down=5, Left=6, Right=7).
+    /// For Game Boy, only `port == 0` is meaningful; calls for other ports are ignored.
     pub fn set_button(&mut self, port: u8, button_id: u8, pressed: bool) {
         match self {
             Console::Nes(nes) => {
@@ -174,25 +174,42 @@ impl Console {
                     eprintln!("warning: invalid NES button_id: {button_id}");
                 }
             }
-            Console::GameBoy(gb) => gb.set_button(button_id, pressed),
+            Console::GameBoy(gb) => {
+                if port == 0 {
+                    gb.set_button(button_id, pressed);
+                }
+            }
         }
     }
 
     /// Set all button states from a bitmask (for autorun playback).
     ///
     /// Each bit corresponds to a button by its system-specific ID.
+    /// For Game Boy, only `port == 0` is applied; other ports are ignored.
     pub fn set_joypad_button_states(&mut self, port: u8, state: u8) {
         match self {
             Console::Nes(nes) => nes.set_joypad_button_states(port, state),
-            Console::GameBoy(gb) => gb.set_joypad_button_states(state),
+            Console::GameBoy(gb) => {
+                if port == 0 {
+                    gb.set_joypad_button_states(state);
+                }
+            }
         }
     }
 
     /// Get all button states as a bitmask (for autorun recording).
+    ///
+    /// For Game Boy, only `port == 0` returns button states; other ports return 0.
     pub fn get_joypad_button_states(&self, port: u8) -> u8 {
         match self {
             Console::Nes(nes) => nes.get_joypad_button_states(port),
-            Console::GameBoy(gb) => gb.get_joypad_button_states(),
+            Console::GameBoy(gb) => {
+                if port == 0 {
+                    gb.get_joypad_button_states()
+                } else {
+                    0
+                }
+            }
         }
     }
 

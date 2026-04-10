@@ -205,7 +205,7 @@ impl NativeEventLoop {
         let audio = self.audio.take();
         let audio_cell = std::cell::RefCell::new(audio);
         let Console::Nes(nes) = &mut self.console else {
-            return;
+            panic!("NES-only event loop: unexpected non-NES console in run_frame");
         };
         self.debugger_controller
             .run_frame(nes, &self.tracing, &mut |nes| {
@@ -577,7 +577,7 @@ impl ApplicationHandler for NativeEventLoop {
                     self.initialize_audio();
                     self.sync_audio_state();
                     let Console::Nes(nes) = &self.console else {
-                        return;
+                        panic!("NES-only event loop: unexpected non-NES console in resumed");
                     };
                     let watches = self.debugger_controller.load_debug_state_from_file(nes);
                     if let Some(ref mut gl) = self.gl_wrapper {
@@ -610,7 +610,7 @@ impl ApplicationHandler for NativeEventLoop {
                     .map(|gl| gl.watch_addresses())
                     .unwrap_or_default();
                 let Console::Nes(nes) = &self.console else {
-                    return;
+                    panic!("NES-only event loop: unexpected non-NES console in CloseRequested");
                 };
                 self.debugger_controller
                     .save_debug_state_to_file(nes, &watches);
@@ -681,7 +681,7 @@ impl ApplicationHandler for NativeEventLoop {
                     let audio_ref: Option<&dyn EmulatorAudio> =
                         self.audio.as_ref().map(|a| a as &dyn EmulatorAudio);
                     let Console::Nes(nes) = &mut self.console else {
-                        return;
+                        panic!("NES-only event loop: unexpected non-NES console in KeyInput");
                     };
                     let outcome =
                         keyboard::handle_key_pressed(nes, key_code, &mut self.state, audio_ref);
@@ -696,7 +696,7 @@ impl ApplicationHandler for NativeEventLoop {
                                 .map(|gl| gl.watch_addresses())
                                 .unwrap_or_default();
                             let Console::Nes(nes) = &self.console else {
-                                return;
+                                panic!("NES-only event loop: unexpected non-NES console in Quit");
                             };
                             self.debugger_controller
                                 .save_debug_state_to_file(nes, &watches);
@@ -717,21 +717,27 @@ impl ApplicationHandler for NativeEventLoop {
                         }
                         KeyOutcome::ToggleDebugger => {
                             let Console::Nes(nes) = &self.console else {
-                                return;
+                                panic!(
+                                    "NES-only event loop: unexpected non-NES console in ToggleDebugger"
+                                );
                             };
                             self.debugger_controller.toggle_debugger(nes);
                             self.sync_from_controller();
                         }
                         KeyOutcome::StepOver => {
                             let Console::Nes(nes) = &mut self.console else {
-                                return;
+                                panic!(
+                                    "NES-only event loop: unexpected non-NES console in StepOver"
+                                );
                             };
                             self.debugger_controller.step_over(nes);
                             self.sync_from_controller();
                         }
                         KeyOutcome::StepInto => {
                             let Console::Nes(nes) = &mut self.console else {
-                                return;
+                                panic!(
+                                    "NES-only event loop: unexpected non-NES console in StepInto"
+                                );
                             };
                             self.debugger_controller.step_into(nes);
                             self.sync_from_controller();
@@ -756,7 +762,9 @@ impl ApplicationHandler for NativeEventLoop {
                     }
                 } else {
                     let Console::Nes(nes) = &mut self.console else {
-                        return;
+                        panic!(
+                            "NES-only event loop: unexpected non-NES console in KeyInput released"
+                        );
                     };
                     keyboard::handle_key_released(
                         nes,
@@ -910,7 +918,7 @@ impl ApplicationHandler for NativeEventLoop {
                 let action = if let Some(ref mut gl) = self.gl_wrapper {
                     gl.update_breakpoints(self.debugger_controller.breakpoints());
                     let Console::Nes(nes) = &self.console else {
-                        return;
+                        panic!("NES-only event loop: unexpected non-NES console in render");
                     };
                     let overlay = self.state.overlay_text(nes, self.autorun_state.as_ref());
                     let crosshair = mouse::zapper_crosshair(nes, self.state.last_zapper_position);
@@ -926,7 +934,9 @@ impl ApplicationHandler for NativeEventLoop {
                 };
                 {
                     let Console::Nes(nes) = &mut self.console else {
-                        return;
+                        panic!(
+                            "NES-only event loop: unexpected non-NES console in apply_ui_action"
+                        );
                     };
                     self.debugger_controller.apply_ui_action(nes, action);
                 }
@@ -986,7 +996,7 @@ impl ApplicationHandler for NativeEventLoop {
         // Poll gamepad events before requesting redraw.
         if let Some(ref mut gp) = self.gamepad {
             let Console::Nes(nes) = &mut self.console else {
-                return;
+                panic!("NES-only event loop: unexpected non-NES console in about_to_wait");
             };
             let changes = gp.process_events(nes);
             self.state.gamepad_count = gp.connected_count();
