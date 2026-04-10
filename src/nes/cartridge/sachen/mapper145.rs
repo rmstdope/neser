@@ -38,8 +38,8 @@ impl Mapper145 {
         Self { base }
     }
 
-    fn is_register_address(addr: u16) -> bool {
-        (addr & 0x4100) == 0x4100
+    pub(crate) fn is_register_address(addr: u16) -> bool {
+        (0x4100..=0x7FFF).contains(&addr) && (addr & 0x4100) == 0x4100
     }
 }
 
@@ -65,6 +65,7 @@ impl Mapper for Mapper145 {
 
 #[cfg(test)]
 mod tests {
+    use super::Mapper145;
     use crate::nes::cartridge::NametableLayout;
     use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
     use crate::nes::cartridge::test_helpers::banked_data;
@@ -161,5 +162,15 @@ mod tests {
         assert_eq!(mapper.read_chr(0x0000), 1);
         mapper.reset();
         assert_eq!(mapper.read_chr(0x0000), 0, "CHR bank 0 after reset");
+    }
+
+    #[test]
+    fn register_decode_is_limited_to_documented_range() {
+        assert!(Mapper145::is_register_address(0x4100));
+        assert!(Mapper145::is_register_address(0x7F00));
+
+        assert!(!Mapper145::is_register_address(0x4000));
+        assert!(!Mapper145::is_register_address(0x8000));
+        assert!(!Mapper145::is_register_address(0xC100));
     }
 }

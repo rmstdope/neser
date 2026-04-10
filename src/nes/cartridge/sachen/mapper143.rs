@@ -104,7 +104,7 @@ mod tests {
 
     #[test]
     fn protection_read_at_4100_returns_addr_not_low_byte_or_0x40() {
-        let mut mapper = make_mapper143();
+        let mapper = make_mapper143();
         // addr=$4100, low byte=0x00, ~0x00=0xFF, 0xFF&0x3F=0x3F, |0x40=0x7F
         let val = mapper.read_prg_open_bus(0x4100, 0x00);
         assert_eq!(val, 0x7F, "read at $4100 should return 0x7F");
@@ -112,7 +112,7 @@ mod tests {
 
     #[test]
     fn protection_read_at_4101_returns_addr_not_low_byte_or_0x40() {
-        let mut mapper = make_mapper143();
+        let mapper = make_mapper143();
         // addr=$4101, low byte=0x01, ~0x01=0xFE, 0xFE&0x3F=0x3E, |0x40=0x7E
         let val = mapper.read_prg_open_bus(0x4101, 0x00);
         assert_eq!(val, 0x7E, "read at $4101 should return 0x7E");
@@ -120,7 +120,7 @@ mod tests {
 
     #[test]
     fn protection_read_at_5fff_returns_addr_not_low_byte_or_0x40() {
-        let mut mapper = make_mapper143();
+        let mapper = make_mapper143();
         // addr=$5FFF, low byte=0xFF, ~0xFF=0x00, 0x00&0x3F=0x00, |0x40=0x40
         let val = mapper.read_prg_open_bus(0x5FFF, 0x00);
         assert_eq!(val, 0x40, "read at $5FFF should return 0x40");
