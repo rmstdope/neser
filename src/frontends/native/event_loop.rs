@@ -204,19 +204,26 @@ impl NativeEventLoop {
 
         let audio = self.audio.take();
         let audio_cell = std::cell::RefCell::new(audio);
-        let Console::Nes(nes) = &mut self.console else {
-            panic!("NES-only event loop: unexpected non-NES console in run_frame");
-        };
-        self.debugger_controller
-            .run_frame(nes, &self.tracing, &mut |nes| {
-                if let Some(ref mut audio) = *audio_cell.borrow_mut() {
-                    while nes.sample_ready() {
-                        if let Some(sample) = nes.get_sample() {
-                            audio.queue_sample(sample);
+        match &mut self.console {
+            Console::Nes(nes) => {
+                self.debugger_controller
+                    .run_frame(nes, &self.tracing, &mut |nes| {
+                        if let Some(ref mut audio) = *audio_cell.borrow_mut() {
+                            while nes.sample_ready() {
+                                if let Some(sample) = nes.get_sample() {
+                                    audio.queue_sample(sample);
+                                }
+                            }
                         }
-                    }
+                    });
+            }
+            Console::GameBoy(gb) => {
+                // Run ticks until a full frame is ready.
+                while !gb.is_frame_ready() {
+                    gb.run_tick();
                 }
-            });
+            }
+        }
         self.audio = audio_cell.into_inner();
         self.sync_from_controller();
         self.console.clear_ready_to_render();
@@ -275,6 +282,10 @@ impl NativeEventLoop {
     /// Called once per frame to ensure grab/visibility stay in sync after
     /// cartridge switches, focus changes, or controller hot-swaps.
     fn sync_mouse_grab_state(&mut self) {
+        // Mouse grab is only relevant for NES (Zapper / SNES Mouse controllers).
+        let Console::Nes(_) = &self.console else {
+            return;
+        };
         let has_mouse = mouse::has_any_mouse_controller(self.nes());
         let should_grab = crate::nes::input::mouse_mapping::should_grab_mouse_input(
             has_mouse,
@@ -557,7 +568,9 @@ impl NativeEventLoop {
 
             let checkpoint_due = self.handle_autorun_after_input();
 
-            crate::nes::autorun::headless_playback::run_one_frame(self.nes_mut());
+            if let Console::Nes(nes) = &mut self.console {
+                crate::nes::autorun::headless_playback::run_one_frame(nes);
+            }
 
             self.handle_autorun_after_frame(checkpoint_due);
         }
@@ -576,12 +589,11 @@ impl ApplicationHandler for NativeEventLoop {
                 if !self.initialized {
                     self.initialize_audio();
                     self.sync_audio_state();
-                    let Console::Nes(nes) = &self.console else {
-                        panic!("NES-only event loop: unexpected non-NES console in resumed");
-                    };
-                    let watches = self.debugger_controller.load_debug_state_from_file(nes);
-                    if let Some(ref mut gl) = self.gl_wrapper {
-                        gl.set_watch_addresses(watches);
+                    if let Console::Nes(nes) = &self.console {
+                        let watches = self.debugger_controller.load_debug_state_from_file(nes);
+                        if let Some(ref mut gl) = self.gl_wrapper {
+                            gl.set_watch_addresses(watches);
+                        }
                     }
                     self.initialized = true;
                 }
@@ -604,16 +616,15 @@ impl ApplicationHandler for NativeEventLoop {
                 if let Err(e) = self.finish_recording() {
                     eprintln!("Failed to finish recording on window close: {e}");
                 }
-                let watches = self
-                    .gl_wrapper
-                    .as_ref()
-                    .map(|gl| gl.watch_addresses())
-                    .unwrap_or_default();
-                let Console::Nes(nes) = &self.console else {
-                    panic!("NES-only event loop: unexpected non-NES console in CloseRequested");
-                };
-                self.debugger_controller
-                    .save_debug_state_to_file(nes, &watches);
+                if let Console::Nes(nes) = &self.console {
+                    let watches = self
+                        .gl_wrapper
+                        .as_ref()
+                        .map(|gl| gl.watch_addresses())
+                        .unwrap_or_default();
+                    self.debugger_controller
+                        .save_debug_state_to_file(nes, &watches);
+                }
                 if let Err(e) = self.console.save_ram() {
                     eprintln!("Failed to save battery-backed RAM on exit: {e}");
                 }
@@ -680,26 +691,26 @@ impl ApplicationHandler for NativeEventLoop {
                     let fullscreen_before = self.state.fullscreen;
                     let audio_ref: Option<&dyn EmulatorAudio> =
                         self.audio.as_ref().map(|a| a as &dyn EmulatorAudio);
-                    let Console::Nes(nes) = &mut self.console else {
-                        panic!("NES-only event loop: unexpected non-NES console in KeyInput");
-                    };
-                    let outcome =
-                        keyboard::handle_key_pressed(nes, key_code, &mut self.state, audio_ref);
+                    let outcome = keyboard::handle_key_pressed(
+                        &mut self.console,
+                        key_code,
+                        &mut self.state,
+                        audio_ref,
+                    );
                     match outcome {
                         KeyOutcome::Quit => {
                             if let Err(e) = self.finish_recording() {
                                 eprintln!("Failed to finish recording on quit: {e}");
                             }
-                            let watches = self
-                                .gl_wrapper
-                                .as_ref()
-                                .map(|gl| gl.watch_addresses())
-                                .unwrap_or_default();
-                            let Console::Nes(nes) = &self.console else {
-                                panic!("NES-only event loop: unexpected non-NES console in Quit");
-                            };
-                            self.debugger_controller
-                                .save_debug_state_to_file(nes, &watches);
+                            if let Console::Nes(nes) = &self.console {
+                                let watches = self
+                                    .gl_wrapper
+                                    .as_ref()
+                                    .map(|gl| gl.watch_addresses())
+                                    .unwrap_or_default();
+                                self.debugger_controller
+                                    .save_debug_state_to_file(nes, &watches);
+                            }
                             if let Err(e) = self.console.save_ram() {
                                 eprintln!("Failed to save battery-backed RAM on quit: {e}");
                             }
@@ -761,13 +772,8 @@ impl ApplicationHandler for NativeEventLoop {
                         }
                     }
                 } else {
-                    let Console::Nes(nes) = &mut self.console else {
-                        panic!(
-                            "NES-only event loop: unexpected non-NES console in KeyInput released"
-                        );
-                    };
                     keyboard::handle_key_released(
-                        nes,
+                        &mut self.console,
                         key_code,
                         self.state.gamepad_count,
                         self.state.four_score_enabled,
@@ -799,6 +805,11 @@ impl ApplicationHandler for NativeEventLoop {
                 if let Some(ref mut gl) = self.gl_wrapper {
                     gl.handle_mouse_button(button, state);
                 }
+
+                // Mouse controller logic is NES-only.
+                let Console::Nes(_) = &self.console else {
+                    return;
+                };
 
                 let has_mouse = mouse::has_any_mouse_controller(self.nes());
 
@@ -917,13 +928,16 @@ impl ApplicationHandler for NativeEventLoop {
                 // Render and apply debugger UI actions
                 let action = if let Some(ref mut gl) = self.gl_wrapper {
                     gl.update_breakpoints(self.debugger_controller.breakpoints());
-                    let Console::Nes(nes) = &self.console else {
-                        panic!("NES-only event loop: unexpected non-NES console in render");
+                    let (overlay, crosshair) = if let Console::Nes(nes) = &self.console {
+                        (
+                            self.state.overlay_text(nes, self.autorun_state.as_ref()),
+                            mouse::zapper_crosshair(nes, self.state.last_zapper_position),
+                        )
+                    } else {
+                        (None, None)
                     };
-                    let overlay = self.state.overlay_text(nes, self.autorun_state.as_ref());
-                    let crosshair = mouse::zapper_crosshair(nes, self.state.last_zapper_position);
                     gl.render(
-                        nes,
+                        &self.console,
                         self.state.debugger_open,
                         overlay.as_deref(),
                         false,
@@ -932,12 +946,7 @@ impl ApplicationHandler for NativeEventLoop {
                 } else {
                     Default::default()
                 };
-                {
-                    let Console::Nes(nes) = &mut self.console else {
-                        panic!(
-                            "NES-only event loop: unexpected non-NES console in apply_ui_action"
-                        );
-                    };
+                if let Console::Nes(nes) = &mut self.console {
                     self.debugger_controller.apply_ui_action(nes, action);
                 }
                 self.sync_from_controller();
@@ -960,6 +969,11 @@ impl ApplicationHandler for NativeEventLoop {
             if !self.state.mouse_grabbed {
                 return;
             }
+
+            // Mouse motion routing is NES-only.
+            let Console::Nes(_) = &self.console else {
+                return;
+            };
 
             let (w, h) = self
                 .gl_wrapper
@@ -995,10 +1009,7 @@ impl ApplicationHandler for NativeEventLoop {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         // Poll gamepad events before requesting redraw.
         if let Some(ref mut gp) = self.gamepad {
-            let Console::Nes(nes) = &mut self.console else {
-                panic!("NES-only event loop: unexpected non-NES console in about_to_wait");
-            };
-            let changes = gp.process_events(nes);
+            let changes = gp.process_events(&mut self.console);
             self.state.gamepad_count = gp.connected_count();
 
             if self.gamepad_init_toast_shown {
