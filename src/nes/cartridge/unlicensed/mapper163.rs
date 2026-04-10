@@ -31,7 +31,7 @@
 //! | `$5000` | reg0 | `C... PPPP` |
 //! | `$5100` | reg1 | `.... .F.E` (latch; special protection) |
 //! | `$5101` | prev5101 | toggle latch (nonzero→zero transition toggles flag) |
-//! | `$5200` | reg2 | `.... ..PP` |
+//! | `$5200` | reg2 | `.... PPPP` |
 //! | `$5300` | reg3 | mode (ignored by PRG bank calc; stored only) |
 //!
 //! ## PRG Banking (Mesen formula)
@@ -94,10 +94,11 @@ impl Mapper163 {
         let mut ctx = ctx;
         // Force CHR-RAM (chip-internal).
         ctx.chr_rom = vec![];
+        // Mapper 163 always provides 8 KiB of PRG-RAM at $6000-$7FFF.
         if ctx.prg_ram_banks_8k == 0 {
             ctx.prg_ram_banks_8k = 1;
-            ctx.prg_ram_size_specified = true;
         }
+        ctx.prg_ram_size_specified = true;
 
         let mut base = BaseMapper::new(&ctx, capabilities);
         base.configure_prg_banking(PRG_BANK_SIZE);
@@ -150,8 +151,10 @@ impl Mapper for Mapper163 {
             self.prev5101 = value;
             return;
         }
-        if addr == 0x5100 && value == 6 {
-            // Protection bypass: force PRG to bank 3.
+        // Special protection bypass: value 6 written to any $51xx address
+        // (excluding $5101 already handled above) forces PRG to bank 3.
+        if addr & 0x7300 == 0x5100 && value == 6 {
+            self.reg1 = value;
             self.base.select_prg_page(0, 3);
             return;
         }
@@ -316,6 +319,28 @@ mod tests {
         assert_eq!(mapper.read_prg(0x8000), (3 % PRG_BANKS) as u8);
     }
 
+    #[test]
+    fn write_6_to_51xx_mirror_also_forces_bank3() {
+        let mut mapper = make_mapper();
+        mapper.write_prg(0x5000, 7);
+        // $5180 & 0x7300 = 0x5100 → same effect as $5100
+        mapper.write_prg(0x5180, 6);
+        assert_eq!(mapper.read_prg(0x8000), (3 % PRG_BANKS) as u8);
+    }
+
+    #[test]
+    fn write_6_to_5100_also_updates_reg1() {
+        let mut mapper = make_mapper();
+        mapper.write_prg(0x5100, 6);
+        // Protection read at $5100 must reflect reg1=6
+        let result = mapper.read_prg_open_bus(0x5100, 0x00);
+        assert_eq!(
+            result & 0x06,
+            0x06,
+            "reg1=6 should be reflected in protection read"
+        );
+    }
+
     // ── Toggle mechanism ($5101) ───────────────────────────────────────────────
 
     #[test]
@@ -393,6 +418,28 @@ mod tests {
         let mut mapper = make_mapper();
         mapper.write_prg(0x6000, 0x99);
         assert_eq!(mapper.read_prg(0x6000), 0x99);
+    }
+
+    #[test]
+    fn prg_ram_present_even_when_header_omits_size() {
+        // Verifies that PRG-RAM is always allocated even when the iNES header
+        // doesn't explicitly specify PRG-RAM size (prg_ram_size_specified=false).
+        let mut mapper = Mapper163::new(
+            MapperContext::new_for_test(
+                MAPPER_NUMBER,
+                banked_data(PRG_BANK_SIZE, PRG_BANKS),
+                vec![],
+                NametableLayout::Vertical,
+            )
+            .with_prg_ram_banks(1)
+            .with_unspecified_prg_ram_size(),
+        );
+        mapper.write_prg(0x6000, 0xAB);
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            0xAB,
+            "$6000 PRG-RAM must work regardless of header"
+        );
     }
 
     // ── CHR-RAM ────────────────────────────────────────────────────────────────
