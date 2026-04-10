@@ -12,9 +12,9 @@
 //! variant where banking is decoded differently:
 //!
 //! ```text
-//! A~[.... .... .CCC P...] (write to $8000–$FFFF, data ignored)
-//!                || +--- PRG A16..A15 → 32 KiB PRG bank
-//!                ++---- CHR A15..A13 → 8 KiB CHR bank
+//! A~[.... .... CCCP P...] (write to $8000–$FFFF, data ignored)
+//!              |||++---- PRG A2..A1 → 32 KiB PRG bank
+//!              +++------ CHR A5..A3 → 8 KiB CHR bank
 //! ```
 //!
 //! More precisely:
@@ -27,7 +27,6 @@
 //! No PRG-RAM, no IRQ, no expansion audio.
 //! Power-on/reset state: bank 0.
 
-use crate::nes::cartridge::NametableLayout;
 use crate::nes::cartridge::base_mapper::BaseMapper;
 use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
@@ -123,6 +122,7 @@ impl Mapper for Mapper213 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::nes::cartridge::NametableLayout;
     use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
     use crate::nes::cartridge::test_helpers::banked_data;
 
