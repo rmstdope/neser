@@ -174,6 +174,7 @@ use super::unlicensed::mapper163::Mapper163;
 use super::unlicensed::mapper165::Mapper165;
 use super::unlicensed::mapper167::Mapper167;
 use super::unlicensed::mapper174::Mapper174;
+use super::unlicensed::mapper175::Mapper175;
 use super::unlicensed::mapper177::Mapper177;
 use super::unlicensed::mapper178::Mapper178;
 use super::unlicensed::mapper188::Mapper188;
@@ -1050,6 +1051,7 @@ mapper_registry! {
     167 => Mapper167::new,
     173 => Mapper173::new,
     174 => Mapper174::new,
+    175 => Mapper175::new,
     177 => Mapper177::new,
     178 => Mapper178::new,
     180 => UxromInvertedMapper::new,
