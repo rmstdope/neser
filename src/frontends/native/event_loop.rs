@@ -897,16 +897,13 @@ impl ApplicationHandler for NativeEventLoop {
                 // elapsed since the last frame.
                 let using_manual_throttle =
                     should_use_manual_frame_throttle(self.vsync_enabled, self.state.window_focused);
-                let skip_emulation = if using_manual_throttle {
-                    let timing_mode = self
-                        .console
-                        .app_context()
-                        .borrow()
-                        .config()
-                        .nes
-                        .hardware_model
-                        .timing_mode();
-                    let target = target_frame_duration(timing_mode);
+                // The Game Boy has no audio output, so there is no ring-buffer
+                // back-pressure to limit the frame rate in vsync+focused mode.
+                // Apply the same elapsed-time guard as the manual throttle path.
+                let needs_frame_guard =
+                    using_manual_throttle || matches!(&self.console, Console::GameBoy(_));
+                let skip_emulation = if needs_frame_guard {
+                    let target = self.console.target_frame_duration();
                     // Allow a small tolerance (half a frame) to avoid skipping
                     // frames when the deadline fires slightly early.
                     self.last_frame_rendered.elapsed() < target / 2
@@ -1052,17 +1049,14 @@ impl ApplicationHandler for NativeEventLoop {
             } else if should_use_manual_frame_throttle(
                 self.vsync_enabled,
                 self.state.window_focused,
-            ) {
+            ) || matches!(&self.console, Console::GameBoy(_))
+            {
                 // Manual frame limiting: advance deadline by target interval.
-                let timing_mode = self
-                    .console
-                    .app_context()
-                    .borrow()
-                    .config()
-                    .nes
-                    .hardware_model
-                    .timing_mode();
-                let target = target_frame_duration(timing_mode);
+                // The GameBoy branch is included here because it has no audio
+                // back-pressure to naturally throttle the frame rate; without
+                // an explicit WaitUntil the event loop would Poll at the
+                // display's full refresh rate (e.g. 120 Hz on ProMotion Macs).
+                let target = self.console.target_frame_duration();
                 self.next_frame_deadline += target;
                 // Clamp to at least now to avoid spinning on past deadlines.
                 let now = Instant::now();
