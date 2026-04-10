@@ -147,6 +147,46 @@ fn gameboy_key_to_button_id(key_code: KeyCode) -> Option<u8> {
     }
 }
 
+/// Attempts to handle a key press that is identical for all console types.
+///
+/// Returns `Some(KeyOutcome::Continue)` for Escape and Space (which mutate
+/// `app_state` / `audio`), `Some(KeyOutcome::CycleShader)` for F4, and
+/// `None` for keys that need system-specific handling.
+fn handle_common_hotkey(
+    key_code: KeyCode,
+    app_state: &mut NativeAppState,
+    audio: Option<&dyn EmulatorAudio>,
+) -> Option<KeyOutcome> {
+    match key_code {
+        KeyCode::Escape => {
+            app_state.mouse_grabbed = false;
+            app_state.mouse_released_by_escape = true;
+            Some(KeyOutcome::Continue)
+        }
+        KeyCode::Space => {
+            app_state.paused = !app_state.paused;
+            if let Some(audio) = audio {
+                if app_state.paused {
+                    audio.pause();
+                } else {
+                    audio.resume();
+                }
+            }
+            Some(KeyOutcome::Continue)
+        }
+        KeyCode::F4 => Some(KeyOutcome::CycleShader),
+        KeyCode::F2 => {
+            adjust_volume(audio, 0.1);
+            Some(KeyOutcome::Continue)
+        }
+        KeyCode::F3 => {
+            adjust_volume(audio, -0.1);
+            Some(KeyOutcome::Continue)
+        }
+        _ => None,
+    }
+}
+
 /// Handles a key-press event for a [`Console::GameBoy`].
 ///
 /// Dispatches generic hotkeys (pause, fullscreen, Ctrl+Q, shader cycling) and
@@ -169,29 +209,12 @@ fn handle_gameboy_key_pressed(
         };
     }
 
-    match key_code {
-        KeyCode::Escape => {
-            app_state.mouse_grabbed = false;
-            app_state.mouse_released_by_escape = true;
-        }
-        KeyCode::Space => {
-            app_state.paused = !app_state.paused;
-            if let Some(audio) = audio {
-                if app_state.paused {
-                    audio.pause();
-                } else {
-                    audio.resume();
-                }
-            }
-        }
-        KeyCode::F4 => return KeyOutcome::CycleShader,
-        KeyCode::F2 => adjust_volume(audio, 0.1),
-        KeyCode::F3 => adjust_volume(audio, -0.1),
-        _ => {
-            if let Some(btn_id) = gameboy_key_to_button_id(key_code) {
-                console.set_button(0, btn_id, true);
-            }
-        }
+    if let Some(outcome) = handle_common_hotkey(key_code, app_state, audio) {
+        return outcome;
+    }
+
+    if let Some(btn_id) = gameboy_key_to_button_id(key_code) {
+        console.set_button(0, btn_id, true);
     }
 
     KeyOutcome::Continue
@@ -223,25 +246,12 @@ fn handle_unmodified_key(
     app_state: &mut NativeAppState,
     audio: Option<&dyn EmulatorAudio>,
 ) -> KeyOutcome {
+    if let Some(outcome) = handle_common_hotkey(key_code, app_state, audio) {
+        return outcome;
+    }
+
     match key_code {
-        KeyCode::Escape => {
-            app_state.mouse_grabbed = false;
-            app_state.mouse_released_by_escape = true;
-        }
-        KeyCode::Space => {
-            app_state.paused = !app_state.paused;
-            if let Some(audio) = audio {
-                if app_state.paused {
-                    audio.pause();
-                } else {
-                    audio.resume();
-                }
-            }
-        }
         KeyCode::KeyH => app_state.help_overlay_visible = !app_state.help_overlay_visible,
-        KeyCode::F2 => adjust_volume(audio, 0.1),
-        KeyCode::F3 => adjust_volume(audio, -0.1),
-        KeyCode::F4 => return KeyOutcome::CycleShader,
         KeyCode::F5 => return KeyOutcome::ToggleDebugger,
         KeyCode::F6 => {
             crate::nes::console::save_state_io::save_state_to_disk(nes);
