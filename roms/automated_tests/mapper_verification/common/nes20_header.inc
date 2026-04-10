@@ -17,6 +17,9 @@
 .ifndef HAS_BATTERY
     HAS_BATTERY = 0
 .endif
+.ifndef HAS_FOUR_SCREEN_VRAM
+    HAS_FOUR_SCREEN_VRAM = 0
+.endif
 .ifndef PRG_RAM_SHIFT
     PRG_RAM_SHIFT = 0
 .endif
@@ -45,7 +48,7 @@
     ;   bit 2: trainer (0=no)
     ;   bit 3: four-screen VRAM (0=no)
     ;   bits 4-7: mapper low nibble
-    .byte ((MAPPER_NUM & $0F) << 4) | (HAS_BATTERY << 1) | MIRRORING
+    .byte ((MAPPER_NUM & $0F) << 4) | (HAS_FOUR_SCREEN_VRAM << 3) | (HAS_BATTERY << 1) | MIRRORING
 
     ; Byte 7: Flags 7 — NES 2.0 identifier
     ;   bits 0-1: console type (0=NES)

@@ -1,28 +1,17 @@
 // Internal library for testing purposes only
 // This is not published or exposed externally
 
-pub mod app_context;
-pub mod apu;
-pub mod autorun;
-pub mod bus;
-pub mod cartridge;
-pub mod console;
-pub mod cpu;
-pub mod debugging;
-pub mod frontend_toasts;
-pub mod input;
-pub mod ppu;
+pub mod gb;
+pub mod nes;
+pub mod platform;
+
 #[cfg(feature = "wasm")]
-#[path = "web_frontend/wasm.rs"]
+#[path = "frontends/web/wasm.rs"]
 pub mod wasm;
-#[path = "web_frontend/wasm_autorun_state.rs"]
+#[path = "frontends/web/wasm_autorun_state.rs"]
 pub mod wasm_autorun;
 #[cfg(all(test, feature = "wasm", target_arch = "wasm32"))]
-#[path = "web_frontend/wasm_tests.rs"]
+#[path = "frontends/web/wasm_tests.rs"]
 mod wasm_tests;
 
-pub mod integration_tests;
-#[cfg(feature = "sdl")]
-pub mod rendering;
-#[cfg(feature = "sdl")]
-pub mod sdl_frontend;
+pub mod frontends;

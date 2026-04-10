@@ -5,6 +5,7 @@ on:
     branches: ["main"]
   pull_request:
     branches: ["main"]
+  workflow_call:
 
 env:
   CARGO_TERM_COLOR: always
@@ -19,6 +20,11 @@ jobs:
       web: ${{ steps.filter.outputs.web }}
       web_integration: ${{ steps.filter.outputs.web_integration }}
       python: ${{ steps.filter.outputs.python }}
+      rust: ${{ steps.filter.outputs.rust }}
+      nes: ${{ steps.filter.outputs.nes }}
+      gb: ${{ steps.filter.outputs.gb }}
+      platform: ${{ steps.filter.outputs.platform }}
+      root_rust: ${{ steps.filter.outputs.root_rust }}
 
     steps:
       - uses: actions/checkout@v6
@@ -45,11 +51,27 @@ jobs:
               - '.github/workflows/rust.yml'
             python:
               - 'scripts/**/*.py'
+            rust:
+              - 'src/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - '.github/workflows/ci.yml'
+            nes:
+              - 'src/nes/**'
+            gb:
+              - 'src/gb/**'
+            platform:
+              - 'src/platform/**'
+            root_rust:
+              - 'src/lib.rs'
+              - 'src/main.rs'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
 
   python-tests:
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.python == 'true'
+    if: needs.changes.outputs.python == 'true' || github.event_name == 'workflow_call'
 
     steps:
       - uses: actions/checkout@v6
@@ -64,15 +86,58 @@ jobs:
 
   rust-tests:
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'workflow_call'
 
     steps:
       - uses: actions/checkout@v6
+      - name: Install native frontend system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libdbus-1-dev
       - name: Cache Rust dependencies and build outputs
         uses: Swatinem/rust-cache@v2
-      - name: Install SDL2
-        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev libsdl2-ttf-dev
-      - name: Run tests
-        run: cargo test --lib --examples --all-features
+
+      - name: Build test filter from changed paths
+        id: test-filter
+        env:
+          CHANGED_NES: ${{ needs.changes.outputs.nes }}
+          CHANGED_GB: ${{ needs.changes.outputs.gb }}
+          CHANGED_PLATFORM: ${{ needs.changes.outputs.platform }}
+          CHANGED_ROOT: ${{ needs.changes.outputs.root_rust }}
+        run: |
+          # If platform or root files changed, run all tests (cross-cutting deps)
+          if [[ "$CHANGED_PLATFORM" == "true" || "$CHANGED_ROOT" == "true" ]]; then
+            echo "filter=" >> "$GITHUB_OUTPUT"
+            echo "run_integration=true" >> "$GITHUB_OUTPUT"
+            echo "Running all tests (platform or root change detected)"
+          else
+            FILTER=""
+            RUN_INTEGRATION=false
+            if [[ "$CHANGED_NES" == "true" ]]; then
+              FILTER="${FILTER} nes::"
+              RUN_INTEGRATION=true
+            fi
+            if [[ "$CHANGED_GB" == "true" ]]; then
+              FILTER="${FILTER} gb::"
+            fi
+            echo "filter=${FILTER}" >> "$GITHUB_OUTPUT"
+            echo "run_integration=${RUN_INTEGRATION}" >> "$GITHUB_OUTPUT"
+            echo "Test filter: '${FILTER}', integration: ${RUN_INTEGRATION}"
+          fi
+
+      - name: Run unit tests
+        run: |
+          FILTER="${{ steps.test-filter.outputs.filter }}"
+          if [[ -z "$FILTER" ]]; then
+            echo "Running all unit tests (no filter)"
+            cargo test --lib --examples --all-features -- --skip 'nes::integration_tests'
+          else
+            echo "Running filtered unit tests: $FILTER"
+            cargo test --lib --examples --all-features -- $FILTER --skip 'nes::integration_tests'
+          fi
+
+      - name: Run integration tests
+        if: steps.test-filter.outputs.run_integration == 'true'
+        run: cargo test --lib --all-features -- 'nes::integration_tests::'
 
   rust-lint-pr:
     runs-on: ubuntu-latest
@@ -80,10 +145,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+      - name: Install native frontend system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libdbus-1-dev
       - name: Cache Rust dependencies and build outputs
         uses: Swatinem/rust-cache@v2
-      - name: Install SDL2
-        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev libsdl2-ttf-dev
       - name: Run clippy (PR fast path)
         run: cargo clippy --all-features
       - name: Check formatting
@@ -91,14 +156,14 @@ jobs:
 
   rust-lint-main:
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event_name == 'workflow_call'
 
     steps:
       - uses: actions/checkout@v6
+      - name: Install native frontend system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libdbus-1-dev
       - name: Cache Rust dependencies and build outputs
         uses: Swatinem/rust-cache@v2
-      - name: Install SDL2
-        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev libsdl2-ttf-dev
       - name: Run clippy (main full coverage)
         run: cargo clippy --all-targets --all-features
       - name: Check formatting
@@ -116,12 +181,12 @@ jobs:
         with:
           version: "latest"
       - name: Test WASM frontend
-        run: wasm-pack test --headless --chrome -- --features wasm
+        run: wasm-pack test --headless --chrome -- --no-default-features --features wasm
 
   web:
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.web == 'true'
+    if: needs.changes.outputs.web == 'true' || github.event_name == 'workflow_call'
 
     steps:
       - uses: actions/checkout@v6
@@ -137,7 +202,7 @@ jobs:
   web-integration:
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.web_integration == 'true'
+    if: needs.changes.outputs.web_integration == 'true' || github.event_name == 'workflow_call'
 
     steps:
       - uses: actions/checkout@v6

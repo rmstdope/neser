@@ -37,11 +37,12 @@
 # -----------------------------------------------------------------------------
 # Hardware
 # -----------------------------------------------------------------------------
-# Set to "nes-ntsc", "nes-pal", or "famicom".
+# Set to "nes-ntsc", "nes-pal", "famicom", or "dendy".
 # NES-NTSC runs at ~60 FPS, NES-PAL at ~50 FPS.
 # nes-ntsc is the standard for North American and Japanese NES consoles.
 # nes-pal is used for European NES consoles.
 # famicom uses Famicom hardware mode and NTSC timing.
+# dendy emulates the Soviet-era Dendy clone (~50 FPS, 312 scanlines, ~1.77 MHz CPU).
 hardware=nes-ntsc
 
 # -----------------------------------------------------------------------------
@@ -65,11 +66,12 @@ dmc=true
 # Disabling may reduce input latency but can cause visual artifacts.
 vsync=true
 
-# Window scaling factor (1.0 to 5.0).
-# The NES outputs 256x240 pixels. This multiplies the window size.
-# Example: 4.0 = 1024x960 window
+# Window window height
+# The NES outputs 256x240 pixels. For best visual, set the height of the window to a
+# multiple of 240 - vertical_overscan * 2.
+# Example: For standard vertical overscan of 8 pixels, use 224, 448, 672, 896, etc.
 # Note: Only applies in windowed mode, ignored in fullscreen.
-window_height=960
+window_height=896
 
 # Run in fullscreen mode.
 fullscreen=false

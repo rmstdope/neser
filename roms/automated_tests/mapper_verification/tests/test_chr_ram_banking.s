@@ -9,9 +9,15 @@
 ;
 ; When bank 0 is selected at $1000, it is the SAME physical
 ; memory as $0000-$0FFF (page 0).
+;
+; Defs flag CHR_RAM_BANK_COUNT controls how many banks are tested.
+; Default is 4; set to 2 for mappers with only 2 CHR-RAM banks (e.g., GTROM).
 
 .include "test_macros.inc"
 .include "mapper_config.inc"
+
+; Default: 4 CHR-RAM banks. Mapper defs can `.define HAS_ONLY_2_CHR_RAM_BANKS 1`
+; to skip banks 2-3 tests (e.g., GTROM).
 
 .importzp ppumask_shadow
 
@@ -77,6 +83,7 @@ test_title_string:
     sta PPUDATA
     pass_test
 
+.ifndef HAS_ONLY_2_CHR_RAM_BANKS
     start_test 3, "Write B2"
     select_chr_bank 0, 2
     bit PPUSTATUS
@@ -87,7 +94,9 @@ test_title_string:
     lda #$CC
     sta PPUDATA
     pass_test
+.endif
 
+.ifndef HAS_ONLY_2_CHR_RAM_BANKS
     start_test 4, "Write B3"
     select_chr_bank 0, 3
     bit PPUSTATUS
@@ -98,6 +107,7 @@ test_title_string:
     lda #$DD
     sta PPUDATA
     pass_test
+.endif
 
     ; === Verify each bank preserved its written pattern ===
 
@@ -125,6 +135,7 @@ test_title_string:
     assert_a_eq $BB
     pass_test
 
+.ifndef HAS_ONLY_2_CHR_RAM_BANKS
     start_test 7, "Read B2"
     select_chr_bank 0, 2
     bit PPUSTATUS
@@ -136,7 +147,9 @@ test_title_string:
     lda PPUDATA
     assert_a_eq $CC
     pass_test
+.endif
 
+.ifndef HAS_ONLY_2_CHR_RAM_BANKS
     start_test 8, "Read B3"
     select_chr_bank 0, 3
     bit PPUSTATUS
@@ -148,6 +161,7 @@ test_title_string:
     lda PPUDATA
     assert_a_eq $DD
     pass_test
+.endif
 
     ; === Verify fixed bank at $0000 is unaffected by bank switching ===
     ; $0000-$0FFF is always page 0 (same physical memory as bank 0 at $1000).
