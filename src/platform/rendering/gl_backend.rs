@@ -520,7 +520,10 @@ impl GlBackend {
         }
     }
 
-    /// Renders the current NES frame and optional debugger overlay.
+    /// Renders the current frame and optional debugger overlay.
+    ///
+    /// Accepts a `&Console` so it works for both NES and Game Boy. The debugger
+    /// overlay is only drawn when `console` is a `Console::Nes` variant.
     pub fn render(
         &mut self,
         console: &Console,

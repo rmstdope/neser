@@ -276,12 +276,14 @@ impl GamepadManager {
                             }
                         }
                         EventType::Disconnected => {
-                            // Release all GB buttons on disconnect.
-                            console.set_joypad_button_states(0, 0);
                             if let Some(player_num) = self.player_map.get(&event.id).copied() {
                                 self.player_map.remove(&event.id);
                                 self.gamepad_states.remove(&event.id);
                                 self.reassign_players();
+                                if self.player_map.is_empty() {
+                                    // Release all GB buttons only when the last gamepad disconnects.
+                                    console.set_joypad_button_states(0, 0);
+                                }
                                 changes.push(GamepadChange::Disconnected(player_num));
                             }
                         }
