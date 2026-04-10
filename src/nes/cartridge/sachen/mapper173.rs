@@ -235,7 +235,7 @@ mod tests {
     }
 
     #[test]
-    fn power_on_chr_is_bank_0() {
+    fn power_on_chr_is_bank_2() {
         let mut mapper = make_mapper();
         // Invert=0 at power-on: chr = (0 & 1) | (!0 << 1) = 0 | 2 = 2
         // Since !invert is true (invert=0), CHR A14=1, so bank 2

@@ -103,10 +103,16 @@ impl Mapper153 {
                 });
             }
             0x0A => {
-                // IRQ control: acknowledge, copy latch → counter, set enable
+                // IRQ control: acknowledge, copy latch → counter, set enable.
+                // Match LZ93D50 behavior: enabling with a zero counter asserts
+                // IRQ immediately after reload.
+                let enabled = (value & 0x01) != 0;
                 self.irq.acknowledge();
                 self.irq.set_counter(self.irq_latch);
-                self.irq.set_enabled((value & 0x01) != 0);
+                self.irq.set_enabled(enabled);
+                if enabled && self.irq_latch == 0 {
+                    self.irq.set_pending(true);
+                }
             }
             0x0B => {
                 self.irq_latch = (self.irq_latch & 0xFF00) | (value as u16);
@@ -133,12 +139,20 @@ impl Mapper for Mapper153 {
         &mut self.base
     }
 
+    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        if (0x6000..=0x7FFF).contains(&addr) && !self.prg_ram_enabled {
+            return open_bus;
+        }
+        self.base
+            .read_prg_open_bus(addr, open_bus, |a| self.read_prg(a))
+    }
+
     fn read_prg(&self, addr: u16) -> u8 {
         if (0x6000..=0x7FFF).contains(&addr) {
             if self.prg_ram_enabled {
                 return self.base.try_read_prg_ram(addr).unwrap_or(0);
             }
-            return 0; // open bus when WRAM disabled
+            return 0; // WRAM disabled; open-bus-aware callers use read_prg_open_bus
         }
         self.base.read_prg_rom(addr)
     }
@@ -341,6 +355,18 @@ mod tests {
     }
 
     // --- IRQ ---
+
+    #[test]
+    fn irq_fires_immediately_when_enabled_with_zero_latch() {
+        let mut mapper = make_mapper();
+        mapper.write_prg(0x800B, 0); // latch = 0
+        mapper.write_prg(0x800C, 0);
+        mapper.write_prg(0x800A, 1); // enable with counter=0 → immediate IRQ
+        assert!(
+            mapper.irq_pending(),
+            "IRQ must assert immediately when enabled with zero counter"
+        );
+    }
 
     #[test]
     fn irq_fires_after_counter_counts_down_to_zero() {
