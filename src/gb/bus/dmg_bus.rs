@@ -43,7 +43,7 @@ pub struct DmgBus {
     /// When `true`, reads from $0000–$00FF are satisfied by `boot_rom`
     /// instead of the cartridge.  Writing any value to $FF50 sets this
     /// to `false` (mirrors real DMG hardware behaviour).
-    pub boot_rom_active: bool,
+    boot_rom_active: bool,
 }
 
 impl DmgBus {
@@ -83,6 +83,11 @@ impl DmgBus {
         self.if_reg = 0;
         self.ie_reg = 0;
         self.boot_rom_active = true;
+    }
+
+    /// Returns `true` while the boot ROM is still mapped at $0000–$00FF.
+    pub fn is_boot_rom_active(&self) -> bool {
+        self.boot_rom_active
     }
 
     /// Set a button state on the joypad and propagate any resulting interrupt.

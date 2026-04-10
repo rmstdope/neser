@@ -27,8 +27,9 @@
 /// - APU is stubbed: NR50/NR51/NR52 are written with the correct post-boot
 ///   values but no actual audio is generated.
 /// - The ® trademark symbol tile is omitted to keep the ROM within budget.
-/// - LCDC is left at its hardware-reset default ($91); no explicit write is
-///   needed.
+/// - LCD starts off at power-on (DmgBus initialises LCDC=0x00); the boot ROM
+///   explicitly writes LCDC=0x91 to $FF40 just before the scroll animation
+///   begins, matching the sequence real hardware follows.
 /// - `WaitFrame` clobbers HL (safe because HL is not preserved after the tile
 ///   map is built).
 ///

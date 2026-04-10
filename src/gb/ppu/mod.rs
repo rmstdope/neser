@@ -152,10 +152,10 @@ impl Ppu {
 
     /// Read from OAM address $FE00–$FE9F.
     ///
-    /// Returns 0xFF if the CPU is blocked (Mode 2 or 3).
+    /// Returns 0xFF if the CPU is blocked (Mode 2 or 3 while LCD on).
+    /// When LCD is disabled OAM is always accessible.
     pub fn read_oam(&self, addr: u16) -> u8 {
-        // LCD off: unrestricted access.
-        if self.registers.lcdc & 0x80 != 0
+        if self.registers.lcd_enabled()
             && matches!(
                 self.timing.mode(),
                 PpuMode::OamScan | PpuMode::PixelTransfer
@@ -168,10 +168,10 @@ impl Ppu {
 
     /// Write to OAM address $FE00–$FE9F.
     ///
-    /// Silently ignored if the CPU is blocked (Mode 2 or 3).
+    /// Silently ignored if the CPU is blocked (Mode 2 or 3 while LCD on).
+    /// When LCD is disabled OAM is always accessible.
     pub fn write_oam(&mut self, addr: u16, val: u8) {
-        // LCD off: unrestricted access.
-        if self.registers.lcdc & 0x80 != 0
+        if self.registers.lcd_enabled()
             && matches!(
                 self.timing.mode(),
                 PpuMode::OamScan | PpuMode::PixelTransfer
@@ -204,6 +204,8 @@ impl Ppu {
         self.registers.write(addr, val);
         if !was_enabled && self.registers.lcd_enabled() {
             self.timing = Timing::new();
+            self.window_line = 0;
+            self.prev_stat_irq_line = false;
         }
     }
 
@@ -522,10 +524,14 @@ mod tests {
 
     #[test]
     fn test_oam_write_succeeds_when_lcd_disabled() {
+        // Given: PPU in OAM Scan (Mode 2, startup); LCD turned off.
+        // Normally Mode 2 blocks OAM writes; LCD-off lifts that restriction.
         let mut ppu = Ppu::new();
         assert_eq!(ppu.timing.mode(), PpuMode::OamScan);
         ppu.write_register(0xFF40, 0x11); // LCD off
+        // When: write OAM
         ppu.write_oam(0xFE10, 0xBB);
+        // Then: write accepted
         assert_eq!(
             ppu.oam[0x10], 0xBB,
             "OAM write should succeed when LCD is off"
@@ -534,9 +540,12 @@ mod tests {
 
     #[test]
     fn test_oam_read_returns_actual_value_when_lcd_disabled() {
+        // Given: PPU in Mode 3 (PixelTransfer), LCD turned off.
         let mut ppu = ppu_in_mode3_then_lcd_off();
         ppu.oam[0x05] = 0xCC;
+        // When: read OAM
         let val = ppu.read_oam(0xFE05);
+        // Then: actual value returned (not 0xFF)
         assert_eq!(
             val, 0xCC,
             "OAM read should return actual value when LCD is off"

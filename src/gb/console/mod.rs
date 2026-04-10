@@ -52,11 +52,12 @@ impl Gb<DmgBus> {
             // the cartridge entry point, preserving WRAM and bus state.
             self.cpu.reset_registers();
         } else {
-            // Hard reset: zero CPU state and reinitialise all bus hardware.
-            // The boot ROM is reactivated so the next instruction fetch
-            // (PC=$0000) runs the boot sequence from scratch.
-            // We call reset_registers() to clear all CPU state fields
-            // (including private ime_pending), then override PC to $0000.
+            // Hard reset: reinitialise all bus hardware and restart execution
+            // from the boot ROM entry point.
+            // reset_registers() restores the normal post-boot register defaults
+            // and clears internal CPU state (including ime_pending). We then
+            // override PC to $0000 so the reactivated boot ROM runs again from
+            // the start, establishing correct power-on behaviour.
             self.cpu.reset_registers();
             self.cpu.regs.pc = 0x0000;
             self.cpu.bus.reset();
