@@ -1,6 +1,7 @@
-use crate::cartridge::NametableLayout;
-use crate::cartridge::hardware_type::HardwareType;
-use crate::cartridge::ines::ParsedRom;
+use crate::nes::cartridge::NametableLayout;
+use crate::nes::cartridge::hardware_type::HardwareType;
+use crate::nes::cartridge::ines::ParsedRom;
+use crate::nes::cartridge::rom_db::VsHardwareType;
 use std::io;
 
 // Nintendo mappers
@@ -11,6 +12,7 @@ use super::nintendo::cnrom_security::CnromSecurityMapper;
 use super::nintendo::cprom::CpromMapper;
 use super::nintendo::fds::FdsMapper;
 use super::nintendo::gxrom::GxROMMapper;
+use super::nintendo::mapper99::Mapper99;
 use super::nintendo::mapper100::Mapper100;
 use super::nintendo::mmc1::MMC1Mapper;
 use super::nintendo::mmc2::MMC2Mapper;
@@ -26,6 +28,7 @@ use super::nintendo::uxrom::UxROMMapper;
 use super::nintendo::uxrom_inverted::UxromInvertedMapper;
 
 // Konami mappers
+use super::konami::mapper151::Mapper151;
 use super::konami::vrc1::Vrc1Mapper;
 use super::konami::vrc2_vrc4::Vrc2Vrc4Mapper;
 use super::konami::vrc3::Vrc3Mapper;
@@ -43,6 +46,7 @@ use super::namco::namcot_3446::Namcot3446Mapper;
 use super::bandai::bandai_fcg::BandaiFcgMapper;
 use super::bandai::mapper70::Mapper70;
 use super::bandai::mapper96::Mapper96;
+use super::bandai::mapper157::Mapper157;
 
 // Sunsoft mappers
 use super::sunsoft::sunsoft_2::Sunsoft2Mapper;
@@ -55,6 +59,7 @@ use super::sunsoft::sunsoft_fme7::SunsoftFme7Mapper;
 use super::taito::taito_tc0190::TaitoTc0190Mapper;
 use super::taito::taito_tc0350::TaitoTc0350Mapper;
 use super::taito::taito_x1005::TaitoX1005Mapper;
+use super::taito::taito_x1005_207::TaitoX1005_207Mapper;
 use super::taito::taito_x1017::TaitoX1017Mapper;
 
 // Jaleco mappers
@@ -77,13 +82,17 @@ use super::irem::nina_tengen::NinaTengenMapper;
 use super::camerica::camerica::CamericaMapper;
 
 // Tengen mappers
+use super::tengen::mapper158::Mapper158;
 use super::tengen::tengen_rambo1::TengenRambo1Mapper;
 
 // Sachen mappers
 use super::sachen::mapper36::Mapper36;
 use super::sachen::mapper132::Mapper132;
 use super::sachen::mapper133::Mapper133;
+use super::sachen::mapper136::Mapper136;
+use super::sachen::mapper150::Mapper150;
 use super::sachen::mapper243::Mapper243;
+use super::sachen::sachen8259::Sachen8259;
 
 // Unlicensed/other mappers
 #[cfg(test)]
@@ -130,6 +139,7 @@ use super::unlicensed::mapper103::Mapper103;
 use super::unlicensed::mapper104::Mapper104;
 use super::unlicensed::mapper106::Mapper106;
 use super::unlicensed::mapper107::Mapper107;
+use super::unlicensed::mapper108::Mapper108;
 use super::unlicensed::mapper110::Mapper110;
 use super::unlicensed::mapper111::GtromMapper;
 use super::unlicensed::mapper112::Mapper112;
@@ -142,7 +152,20 @@ use super::unlicensed::mapper120::Mapper120;
 use super::unlicensed::mapper121::Mapper121;
 use super::unlicensed::mapper122::Mapper122;
 use super::unlicensed::mapper123::Mapper123;
+use super::unlicensed::mapper124::Mapper124;
+use super::unlicensed::mapper125::Mapper125;
+use super::unlicensed::mapper126::Mapper126;
+use super::unlicensed::mapper128::Mapper128;
+use super::unlicensed::mapper134::Mapper134;
+use super::unlicensed::mapper165::Mapper165;
+use super::unlicensed::mapper199::Mapper199;
+use super::unlicensed::mapper200::Mapper200;
+use super::unlicensed::mapper201::Mapper201;
+use super::unlicensed::mapper202::Mapper202;
+use super::unlicensed::mapper204::Mapper204;
 use super::unlicensed::mapper205::Mapper205;
+use super::unlicensed::mapper211::Mapper211;
+use super::unlicensed::mapper212::Mapper212;
 use super::unlicensed::mapper214::Mapper214;
 use super::unlicensed::mapper215::Mapper215;
 use super::unlicensed::mapper216::Mapper216;
@@ -150,6 +173,10 @@ use super::unlicensed::mapper217::Mapper217;
 use super::unlicensed::mapper218::Mapper218;
 use super::unlicensed::mapper219::Mapper219;
 use super::unlicensed::mapper222::Mapper222;
+use super::unlicensed::mapper223::Mapper223;
+use super::unlicensed::mapper224::Mapper224;
+use super::unlicensed::mapper225::Mapper225;
+use super::unlicensed::mapper226::Mapper226;
 use super::unlicensed::mapper227::Mapper227;
 use super::unlicensed::mapper228::Mapper228;
 use super::unlicensed::mapper229::Mapper229;
@@ -160,6 +187,8 @@ use super::unlicensed::mapper233::Mapper233;
 use super::unlicensed::mapper234::Mapper234;
 use super::unlicensed::mapper236::Mapper236;
 use super::unlicensed::mapper237::Mapper237;
+use super::unlicensed::mapper238::Mapper238;
+use super::unlicensed::mapper240::Mapper240;
 use super::unlicensed::mapper241::Mapper241;
 use super::unlicensed::mapper242::Mapper242;
 use super::unlicensed::mapper244::Mapper244;
@@ -172,19 +201,24 @@ use super::unlicensed::mapper253::Mapper253;
 use super::unlicensed::mapper254::Mapper254;
 use super::unlicensed::mapper255::Mapper255;
 use super::unlicensed::mapper257::Mapper257;
+use super::unlicensed::mapper259::Mapper259;
 use super::unlicensed::mapper260::Mapper260;
 use super::unlicensed::mapper262::Mapper262;
 use super::unlicensed::mapper263::Mapper263;
 use super::unlicensed::mapper264::Mapper264;
 use super::unlicensed::mapper267::Mapper267;
 use super::unlicensed::mapper268::Mapper268;
+use super::unlicensed::mapper269::Mapper269;
+use super::unlicensed::mapper270::Mapper270;
 use super::unlicensed::mapper271::Mapper271;
 use super::unlicensed::mapper274::Mapper274;
 use super::unlicensed::mapper281::Mapper281;
+use super::unlicensed::mapper283::Mapper283;
 use super::unlicensed::mapper285::Mapper285;
 use super::unlicensed::mapper286::Mapper286;
 use super::unlicensed::mapper287::Mapper287;
 use super::unlicensed::mapper288::Mapper288;
+use super::unlicensed::mapper289::Mapper289;
 use super::unlicensed::mapper291::Mapper291;
 use super::unlicensed::mapper292::Mapper292;
 use super::unlicensed::mapper293::Mapper293;
@@ -192,8 +226,10 @@ use super::unlicensed::mapper294::Mapper294;
 use super::unlicensed::mapper295::Mapper295;
 use super::unlicensed::mapper296::Mapper296;
 use super::unlicensed::mapper298::Mapper298;
+use super::unlicensed::mapper299::Mapper299;
 use super::unlicensed::mapper300::Mapper300;
 use super::unlicensed::mapper302::Mapper302;
+use super::unlicensed::mapper303::Mapper303;
 use super::unlicensed::mapper304::Mapper304;
 use super::unlicensed::mapper305::Mapper305;
 use super::unlicensed::mapper306::Mapper306;
@@ -206,6 +242,7 @@ use super::unlicensed::mapper314::Mapper314;
 use super::unlicensed::mapper315::Mapper315;
 use super::unlicensed::mapper319::Mapper319;
 use super::unlicensed::mapper320::Mapper320;
+use super::unlicensed::mapper322::Mapper322;
 use super::unlicensed::mapper323::Mapper323;
 use super::unlicensed::mapper324::Mapper324;
 use super::unlicensed::mapper325::Mapper325;
@@ -216,6 +253,7 @@ use super::unlicensed::mapper329::Mapper329;
 use super::unlicensed::mapper330::Mapper330;
 use super::unlicensed::mapper331::Mapper331;
 use super::unlicensed::mapper332::Mapper332;
+use super::unlicensed::mapper333::Mapper333;
 use super::unlicensed::mapper335::Mapper335;
 use super::unlicensed::mapper337::Mapper337;
 use super::unlicensed::mapper338::Mapper338;
@@ -262,6 +300,8 @@ pub struct MapperContext {
     pub chr_ram_size_bytes: Option<usize>,
     /// CRC32 of concatenated PRG/CHR; may be overridden for tests.
     pub crc32: u32,
+    /// VS System hardware type for game-specific protection quirks.
+    pub vs_hardware_type: Option<VsHardwareType>,
 }
 
 const PRG_RAM_BANK_SIZE: usize = 8 * 1024;
@@ -296,6 +336,7 @@ impl MapperContext {
                 (None, None) => None,
             },
             crc32: parsed.crc32,
+            vs_hardware_type: parsed.header.vs_hardware_type.map(VsHardwareType::from_raw),
         }
     }
 
@@ -337,6 +378,7 @@ impl MapperContext {
             battery_backed_prg_ram: false,
             chr_ram_size_bytes: None,
             crc32,
+            vs_hardware_type: None,
         }
     }
 
@@ -358,6 +400,13 @@ impl MapperContext {
     #[cfg(test)]
     pub fn with_unspecified_prg_ram_size(mut self) -> Self {
         self.prg_ram_size_specified = false;
+        self
+    }
+
+    /// Set VS System hardware type for copy protection testing.
+    #[cfg(test)]
+    pub fn with_vs_hardware_type(mut self, hw_type: VsHardwareType) -> Self {
+        self.vs_hardware_type = Some(hw_type);
         self
     }
 }
@@ -418,7 +467,7 @@ pub trait Mapper {
     /// The default trait methods for mirroring, WRAM, CHR-RAM, capabilities, etc.
     /// then delegate to the `BaseMapper`, eliminating boilerplate.
     ///
-    /// [`BaseMapper`]: crate::cartridge::base_mapper::BaseMapper
+    /// [`BaseMapper`]: crate::nes::cartridge::base_mapper::BaseMapper
     fn base(&self) -> &super::base_mapper::BaseMapper;
 
     /// Return a mutable reference to the embedded [`BaseMapper`].
@@ -537,6 +586,13 @@ pub trait Mapper {
     /// Default implementation is a no-op.
     fn on_oam_dma(&mut self) {}
 
+    /// Notify mapper of a CPU write to a controller port ($4016).
+    ///
+    /// Called by the bus after ControllerDevice has processed the write.
+    /// Mapper 99 (VS System) uses bit 2 of $4016 writes to select CHR/PRG banks.
+    /// Default implementation is a no-op.
+    fn on_controller_port_write(&mut self, _addr: u16, _value: u8) {}
+
     /// Notify mapper of a CPU read from an interrupt vector ($FFFA-$FFFF).
     ///
     /// The `_addr` argument indicates which vector was read:
@@ -594,12 +650,21 @@ pub trait Mapper {
     /// RAM contents. Soft resets should NOT call this method (RAM should be preserved).
     ///
     /// Default delegates to MMC3 when available, otherwise delegates to `BaseMapper`.
-    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+    fn initialize_ram(&mut self, mode: crate::nes::console::RamInitMode) {
         if let Some(mmc3) = self.mmc3_delegate_mut() {
             mmc3.initialize_ram(mode);
         } else {
             self.base_mut().initialize_ram(mode);
         }
+    }
+
+    /// Initialize only CHR-RAM, leaving PRG-RAM untouched.
+    ///
+    /// Called when inserting a battery-backed cartridge whose PRG-RAM was
+    /// already restored from disk and must not be overwritten.
+    /// Default delegates to `BaseMapper::initialize_chr_ram`.
+    fn initialize_chr_ram(&mut self, mode: crate::nes::console::RamInitMode) {
+        self.base_mut().initialize_chr_ram(mode);
     }
 
     /// Whether the mapper is currently asserting IRQ.
@@ -798,6 +863,7 @@ mapper_registry! {
     315 => Mapper315::new,
     319 => Mapper319::new,
     320 => Mapper320::new,
+    322 => Mapper322::new,
     323 => Mapper323::new,
     327 => Mapper327::new,
     328 => Mapper328::new,
@@ -805,6 +871,7 @@ mapper_registry! {
     330 => Mapper330::new,
     331 => Mapper331::new,
     332 => Mapper332::new,
+    333 => Mapper333::new,
     335 => Mapper335::new,
     337 => Mapper337::new,
     324 => Mapper324::new,
@@ -856,6 +923,7 @@ mapper_registry! {
     62 => Mapper62::new,
     63 => Mapper63::new,
     64 => TengenRambo1Mapper::new,
+    158 => Mapper158::new,
     65 => IremH3001Mapper::new,
     66 => GxROMMapper::new,
     67 => Sunsoft3Mapper::new,
@@ -889,6 +957,7 @@ mapper_registry! {
     95 => Namcot3425Mapper::new,
     96 => Mapper96::new,
     97 => IremTamS1Mapper::new,
+    99 => Mapper99::new,
     100 => Mapper100::new,
     101 => JalecoJf10Mapper::new,
     102 => NROMMapper::new,
@@ -897,6 +966,7 @@ mapper_registry! {
     105 => NesEventMapper::new,
     106 => Mapper106::new,
     107 => Mapper107::new,
+    108 => Mapper108::new,
     110 => Mapper110::new,
     111 => GtromMapper::new,
     112 => Mapper112::new,
@@ -911,15 +981,39 @@ mapper_registry! {
     121 => Mapper121::new,
     122 => Mapper122::new,
     123 => Mapper123::new,
+    124 => Mapper124::new,
+    125 => Mapper125::new,
+    126 => Mapper126::new,
+    128 => Mapper128::new,
     129 => Mapper58::new,
+    130 => Mapper331::new,
+    131 => Mapper205::new,
     132 => Mapper132::new,
     133 => Mapper133::new,
+    135 => Sachen8259::new,
+    136 => Mapper136::new,
+    137 => Sachen8259::new,
+    138 => Sachen8259::new,
+    139 => Sachen8259::new,
+    134 => Mapper134::new,
     140 => JalecoJf11Mapper::new,
+    150 => Mapper150::new,
+    151 => Mapper151::new,
     155 => MMC1Mapper::new,
+    157 => Mapper157::new,
+    165 => Mapper165::new,
     180 => UxromInvertedMapper::new,
     185 => CnromSecurityMapper::new,
+    199 => Mapper199::new,
+    200 => Mapper200::new,
+    201 => Mapper201::new,
+    202 => Mapper202::new,
+    204 => Mapper204::new,
     205 => Mapper205::new,
     206 => Namco118Mapper::new,
+    207 => TaitoX1005_207Mapper::new,
+    211 => Mapper211::new,
+    212 => Mapper212::new,
     214 => Mapper214::new,
     215 => Mapper215::new,
     216 => Mapper216::new,
@@ -928,6 +1022,10 @@ mapper_registry! {
     219 => Mapper219::new,
     // 220: FCEUX debug mapper — not real hardware, never implement.
     222 => Mapper222::new,
+    223 => Mapper223::new,
+    224 => Mapper224::new,
+    225 => Mapper225::new,
+    226 => Mapper226::new,
     227 => Mapper227::new,
     228 => Mapper228::new,
     229 => Mapper229::new,
@@ -938,6 +1036,8 @@ mapper_registry! {
     234 => Mapper234::new,
     236 => Mapper236::new,
     237 => Mapper237::new,
+    238 => Mapper238::new,
+    240 => Mapper240::new,
     241 => Mapper241::new,
     242 => Mapper242::new,
     243 => Mapper243::new,
@@ -951,15 +1051,19 @@ mapper_registry! {
     254 => Mapper254::new,
     255 => Mapper255::new,
     257 => Mapper257::new,
+    259 => Mapper259::new,
     260 => Mapper260::new,
     262 => Mapper262::new,
     263 => Mapper263::new,
     264 => Mapper264::new,
     267 => Mapper267::new,
     268 => Mapper268::new,
+    269 => Mapper269::new,
+    270 => Mapper270::new,
     271 => Mapper271::new,
     274 => Mapper274::new,
     281 => Mapper281::new,
+    283 => Mapper283::new,
     285 => Mapper285::new,
     292 => Mapper292::new,
     293 => Mapper293::new,
@@ -968,10 +1072,13 @@ mapper_registry! {
     295 => Mapper295::new,
     296 => Mapper296::new,
     298 => Mapper298::new,
+    299 => Mapper299::new,
     288 => Mapper288::new,
+    289 => Mapper289::new,
     287 => Mapper287::new,
     286 => Mapper286::new,
     302 => Mapper302::new,
+    303 => Mapper303::new,
     304 => Mapper304::new,
     305 => Mapper305::new,
     306 => Mapper306::new,
@@ -990,12 +1097,13 @@ const SUPPORTED_MAPPERS: &[u16] = &[
     26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
     50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73,
     74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96,
-    100, 101, 102, 103, 104, 106, 110, 114, 115, 117, 118, 120, 121, 122, 123, 129, 132, 133, 140,
-    155, 180, 185, 205, 206, 214, 216, 217, 218, 219, 222, 227, 228, 229, 230, 231, 232, 233, 234,
-    236, 237, 241, 242, 243, 244, 245, 246, 249, 250, 251, 253, 254, 255, 257, 260, 262, 263, 264,
-    267, 268, 271, 274, 281, 285, 286, 287, 288, 291, 292, 293, 294, 295, 296, 300, 302, 304, 305,
-    306, 307, 308, 310, 311, 313, 314, 315, 319, 320, 323, 324, 326, 327, 328, 329, 330, 331, 332,
-    335, 337, 338, 339, 340, 342, 343, 344, 345, 346, 347, 348, 349, 350,
+    100, 101, 102, 103, 104, 106, 108, 110, 114, 115, 117, 118, 120, 121, 122, 123, 124, 125, 126,
+    128, 129, 132, 133, 140, 155, 165, 180, 185, 205, 206, 207, 214, 216, 217, 218, 219, 222, 225,
+    226, 227, 228, 229, 230, 231, 232, 233, 234, 236, 237, 238, 241, 242, 243, 244, 245, 246, 249,
+    250, 251, 253, 254, 255, 257, 259, 260, 262, 263, 264, 267, 268, 269, 270, 271, 274, 281, 283,
+    285, 286, 287, 288, 289, 291, 292, 293, 294, 295, 296, 299, 300, 302, 303, 304, 305, 306, 307,
+    308, 310, 311, 313, 314, 315, 319, 320, 322, 323, 324, 326, 327, 328, 329, 330, 331, 332, 335,
+    337, 338, 339, 340, 342, 343, 344, 345, 346, 347, 348, 349, 350,
 ];
 
 /// List of supported iNES mapper IDs handled by the factory.
@@ -1018,7 +1126,7 @@ pub fn create_mapper(metadata: MapperContext) -> io::Result<Box<dyn Mapper>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::NametableLayout;
+    use crate::nes::cartridge::NametableLayout;
 
     #[test]
     fn test_supported_mappers_contains_common_ids() {
@@ -1283,6 +1391,23 @@ mod tests {
     }
 
     #[test]
+    fn create_mapper_accepts_mapper_124() {
+        let metadata = MapperContext::new_for_test(
+            124,
+            vec![0u8; 64 * 1024],
+            vec![0u8; 8 * 1024],
+            NametableLayout::Horizontal,
+        );
+        let result = create_mapper(metadata);
+        assert!(result.is_ok(), "Mapper 124 should be created");
+    }
+
+    #[test]
+    fn supported_mappers_includes_mapper_124() {
+        assert!(supported_mappers().contains(&124));
+    }
+
+    #[test]
     fn create_mapper_accepts_mapper_218() {
         let metadata = MapperContext::new_for_test(
             218,
@@ -1466,6 +1591,20 @@ mod tests {
     }
 
     // --- MapperCapabilities tests ---
+
+    #[test]
+    fn mapper_130_is_alias_for_mapper_331() {
+        // Mapper 130 is an alternative assignment for the behavior of iNES Mapper 331.
+        let m = make_mapper(130);
+        assert_eq!(m.mapper_number(), 331);
+    }
+
+    #[test]
+    fn mapper_131_is_alias_for_mapper_205() {
+        // Mapper 131 is an alternative assignment for the behavior of iNES Mapper 205.
+        let m = make_mapper(131);
+        assert_eq!(m.mapper_number(), 205);
+    }
 
     fn make_mapper(id: u16) -> Box<dyn Mapper> {
         let prg_size = 32 * 1024; // Use 32KB PRG-ROM for these tests (MMC5 and others)
@@ -1751,7 +1890,7 @@ mod tests {
 
     #[test]
     fn from_parsed_rom_allocates_prg_ram_from_nvram_when_volatile_absent() {
-        use crate::cartridge::ines::{ConsoleType, InesHeader, ParsedRom, TimingMode};
+        use crate::nes::cartridge::ines::{ConsoleType, InesHeader, ParsedRom, TimingMode};
 
         // Given: NES 2.0 ROM where only NVRAM (battery-backed) is present — no volatile PRG-RAM.
         // This is the S8K holy-mapperel pattern: header byte 10 = 0x70 → volatile=0, NVRAM=8KB.
@@ -1800,7 +1939,7 @@ mod tests {
 
     #[test]
     fn from_parsed_rom_uses_larger_of_volatile_and_nvram_when_both_present() {
-        use crate::cartridge::ines::{ConsoleType, InesHeader, ParsedRom, TimingMode};
+        use crate::nes::cartridge::ines::{ConsoleType, InesHeader, ParsedRom, TimingMode};
 
         // Given: a ROM with both volatile RAM (8KB) and NVRAM (16KB)
         let header = InesHeader {
@@ -1844,5 +1983,88 @@ mod tests {
             ctx.prg_ram_size_specified,
             "prg_ram_size_specified should be true when NVRAM is present"
         );
+    }
+
+    #[test]
+    fn from_parsed_rom_propagates_vs_hardware_type() {
+        use crate::nes::cartridge::ines::{ConsoleType, InesHeader, ParsedRom, TimingMode};
+        use crate::nes::cartridge::rom_db::VsHardwareType;
+
+        // Given: a VS System ROM with vs_hardware_type=1 (RbiBaseball) in the header
+        let header = InesHeader {
+            mapper: 99,
+            submapper: 0,
+            console_type: ConsoleType::VsSystem,
+            mirroring: NametableLayout::Horizontal,
+            has_trainer: false,
+            header_version: "2.0",
+            battery_backed_prg_ram: false,
+            prg_rom_size_bytes: 32 * 1024,
+            chr_rom_size_bytes: 8 * 1024,
+            prg_ram_size_bytes: None,
+            prg_nvram_size_bytes: None,
+            chr_ram_size_bytes: None,
+            chr_nvram_size_bytes: None,
+            timing_mode: TimingMode::Ntsc,
+            vs_ppu_type: Some(0),
+            vs_hardware_type: Some(1),
+            misc_roms: 0,
+            default_expansion_device: 0,
+        };
+        let parsed = ParsedRom {
+            header,
+            prg_rom: vec![0u8; 32 * 1024],
+            chr_rom: vec![0u8; 8 * 1024],
+            trainer: None,
+            crc32: 0,
+            payload_crc32: 0,
+        };
+
+        // When
+        let ctx = MapperContext::from_parsed_rom(&parsed);
+
+        // Then: vs_hardware_type should be propagated as a typed enum
+        assert_eq!(ctx.vs_hardware_type, Some(VsHardwareType::RbiBaseball));
+    }
+
+    #[test]
+    fn from_parsed_rom_non_vs_rom_has_no_vs_hardware_type() {
+        use crate::nes::cartridge::ines::{ConsoleType, InesHeader, ParsedRom, TimingMode};
+
+        // Given: a standard NES ROM (not VS System)
+        let header = InesHeader {
+            mapper: 0,
+            submapper: 0,
+            console_type: ConsoleType::NesFamicom,
+            mirroring: NametableLayout::Horizontal,
+            has_trainer: false,
+            header_version: "1.0",
+            battery_backed_prg_ram: false,
+            prg_rom_size_bytes: 32 * 1024,
+            chr_rom_size_bytes: 8 * 1024,
+            prg_ram_size_bytes: None,
+            prg_nvram_size_bytes: None,
+            chr_ram_size_bytes: None,
+            chr_nvram_size_bytes: None,
+            timing_mode: TimingMode::Ntsc,
+            vs_ppu_type: None,
+            vs_hardware_type: None,
+            misc_roms: 0,
+            default_expansion_device: 0,
+        };
+        let parsed = ParsedRom {
+            header,
+            prg_rom: vec![0u8; 32 * 1024],
+            chr_rom: vec![0u8; 8 * 1024],
+            trainer: None,
+            crc32: 0,
+            payload_crc32: 0,
+        };
+
+        // When
+        let ctx = MapperContext::from_parsed_rom(&parsed);
+
+        // Then
+        assert_eq!(ctx.vs_hardware_type, None);
     }
 }
