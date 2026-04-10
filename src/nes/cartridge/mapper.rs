@@ -50,6 +50,7 @@ use super::bandai::mapper96::Mapper96;
 use super::bandai::mapper152::Mapper152;
 use super::bandai::mapper153::Mapper153;
 use super::bandai::mapper157::Mapper157;
+use super::bandai::mapper159::Mapper159;
 
 // Sunsoft mappers
 use super::sunsoft::sunsoft_1::Sunsoft1Mapper;
@@ -1029,6 +1030,7 @@ mapper_registry! {
     155 => MMC1Mapper::new,
     156 => Mapper156::new,
     157 => Mapper157::new,
+    159 => Mapper159::new,
     160 => JyCompanyMapper::new,
     165 => Mapper165::new,
     173 => Mapper173::new,
