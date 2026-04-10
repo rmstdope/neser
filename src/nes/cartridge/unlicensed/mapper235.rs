@@ -65,11 +65,14 @@ const CHIP_OFFSETS: [[Option<u8>; 4]; 4] = [
 ];
 
 fn rom_mode(prg_rom_len: usize) -> usize {
-    match prg_rom_len / (16 * 1024) {
-        ..=63 => 0,     // ≤ 512 KB
-        64..=127 => 1,  // 1 MB
-        128..=255 => 2, // 2 MB
-        _ => 3,         // ≥ 4 MB
+    if prg_rom_len <= 512 * 1024 {
+        0 // ≤ 512 KB
+    } else if prg_rom_len <= 1024 * 1024 {
+        1 // ≤ 1 MB
+    } else if prg_rom_len <= 2 * 1024 * 1024 {
+        2 // ≤ 2 MB
+    } else {
+        3 // > 2 MB
     }
 }
 
@@ -79,6 +82,8 @@ pub struct Mapper235 {
     mode: usize,
     /// Last written register value captured from the write address.
     reg: u16,
+    /// True when the current B-bits select a chip not present in this ROM size.
+    chip_absent: bool,
 }
 
 impl Mapper235 {
@@ -94,7 +99,12 @@ impl Mapper235 {
         };
         let mut base = BaseMapper::new(&ctx, capabilities);
         base.configure_prg_banking(PRG_BANK_SIZE);
-        let mut mapper = Self { base, mode, reg: 0 };
+        let mut mapper = Self {
+            base,
+            mode,
+            reg: 0,
+            chip_absent: false,
+        };
         mapper.update_banks();
         mapper
     }
@@ -115,8 +125,10 @@ impl Mapper235 {
             self.base.set_mirroring_hv(m_bit);
         }
 
-        // Chip offset: if chip is absent, wrap via ROM mirroring (treat offset 0).
-        let chip_offset = CHIP_OFFSETS[self.mode][b_bits].unwrap_or(0x00) as i16;
+        // Chip offset: if chip is absent, set open-bus flag and use offset 0 as dummy.
+        let chip_entry = CHIP_OFFSETS[self.mode][b_bits];
+        self.chip_absent = chip_entry.is_none();
+        let chip_offset = chip_entry.unwrap_or(0x00) as i16;
 
         if r_mode {
             // 16K mode: both pages map to the same 16K bank = chip_offset*2 + 2*A + P
@@ -143,6 +155,14 @@ impl Mapper for Mapper235 {
 
     fn mapper_number(&self) -> u16 {
         MAPPER_NUMBER
+    }
+
+    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        if self.chip_absent && addr >= 0x8000 {
+            return open_bus;
+        }
+        self.base
+            .read_prg_open_bus(addr, open_bus, |a| self.read_prg(a))
     }
 
     fn write_prg(&mut self, addr: u16, _value: u8) {
@@ -187,7 +207,7 @@ mod tests {
     use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
     use crate::nes::cartridge::test_helpers::banked_data;
 
-    // 2 MB ROM = 128 × 16 KB pages → mode 1 (B=0 valid, B=2 valid at offset 32)
+    // 2 MB ROM = 128 × 16 KB pages → mode 2 (B=0 valid, B=2 valid at offset 32)
     const PRG_16K_BANKS: usize = 128;
 
     fn make_mapper() -> Mapper235 {
@@ -331,7 +351,7 @@ mod tests {
         );
     }
 
-    // ── ROM chip select (B bits, mode 1 = 2 MB) ───────────────────────────────
+    // ── ROM chip select (B bits, mode 2 = 2 MB) ───────────────────────────────
 
     #[test]
     fn b0_maps_to_first_mb() {
@@ -357,6 +377,37 @@ mod tests {
             mapper.read_prg(0xC000),
             75,
             "B=2 A=5: 16K bank upper must be 75"
+        );
+    }
+
+    #[test]
+    fn absent_chip_b1_returns_open_bus_for_2mb_rom() {
+        let mapper = make_mapper(); // 2 MB = mode 2; CHIP_OFFSETS[2][1] = None
+        // Write addr = 0x8100 → B=1 (bits 9:8 = 01b), A=0 → absent chip for mode 2
+        let mut mapper = mapper;
+        mapper.write_prg(0x8100, 0);
+        let open_bus: u8 = 0xAB;
+        assert_eq!(
+            mapper.read_prg_open_bus(0x8000, open_bus),
+            open_bus,
+            "B=1 in mode 2 selects absent chip; $8000 must return open bus"
+        );
+        assert_eq!(
+            mapper.read_prg_open_bus(0xC000, open_bus),
+            open_bus,
+            "B=1 in mode 2 selects absent chip; $C000 must return open bus"
+        );
+    }
+
+    #[test]
+    fn present_chip_b0_is_not_open_bus() {
+        let mut mapper = make_mapper();
+        mapper.write_prg(0x8000, 0); // B=0 → chip present in all modes
+        let open_bus: u8 = 0xAB;
+        assert_ne!(
+            mapper.read_prg_open_bus(0x8000, open_bus),
+            open_bus,
+            "B=0 selects present chip; must not return open bus"
         );
     }
 
