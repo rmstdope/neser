@@ -45,7 +45,6 @@ use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
 
 const MAPPER_NUMBER: u16 = 221;
 const PRG_BANK_SIZE: usize = 16 * 1024;
-const CHR_BANK_SIZE: usize = 8 * 1024;
 
 /// Mapper 221 – NTDEC N625092 multicart board.
 ///
@@ -61,16 +60,14 @@ pub struct Mapper221 {
 impl Mapper221 {
     pub fn new(ctx: MapperContext) -> Self {
         let capabilities = MapperCapabilities {
-            has_chr_banking: true,
+            has_chr_banking: false,
             has_dynamic_mirroring: true,
             max_prg_ram_kb: 0,
             prg_bank_size_kb: 16,
-            chr_bank_size_kb: 8,
             ..Default::default()
         };
         let mut base = BaseMapper::new(&ctx, capabilities);
         base.configure_prg_banking(PRG_BANK_SIZE);
-        base.configure_chr_banking(CHR_BANK_SIZE);
         let mut mapper = Self {
             base,
             mode: 0,
@@ -100,9 +97,6 @@ impl Mapper221 {
             self.base.select_prg_page(0, outer_bank | prg);
             self.base.select_prg_page(1, outer_bank | 0x07);
         }
-
-        // CHR: always bank 0 (CHR-RAM, no banking).
-        self.base.select_chr_page(0, 0);
 
         // Mirroring: A0 = 1 → Horizontal, else Vertical.
         self.base.set_mirroring_hv(self.mode & 0x01 != 0);
@@ -142,16 +136,25 @@ impl Mapper for Mapper221 {
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        // 3 bytes: mode lo, mode hi, prg_reg.
-        vec![
-            (self.mode & 0xFF) as u8,
-            (self.mode >> 8) as u8,
-            self.prg_reg,
-        ]
+        // banking snapshot first (base-managed PRG/CHR pages + mirroring),
+        // then mode lo, mode hi, prg_reg.
+        let mut snap = self.base.banking_snapshot();
+        snap.push((self.mode & 0xFF) as u8);
+        snap.push((self.mode >> 8) as u8);
+        snap.push(self.prg_reg);
+        snap
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        if data.len() >= 3 {
+        let banking_len = self.base.banking_snapshot().len();
+        if data.len() >= banking_len + 3 {
+            self.base.restore_banking(&data[..banking_len]);
+            let rest = &data[banking_len..];
+            self.mode = u16::from(rest[0]) | (u16::from(rest[1]) << 8);
+            self.prg_reg = rest[2] & 0x07;
+            self.update_banks();
+        } else if data.len() >= 3 {
+            // Legacy snapshot without banking prefix.
             self.mode = u16::from(data[0]) | (u16::from(data[1]) << 8);
             self.prg_reg = data[2] & 0x07;
             self.update_banks();
