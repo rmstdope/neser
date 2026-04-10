@@ -380,4 +380,33 @@ mod tests {
         assert_eq!(mapper.read_prg(0x8000), 2, "Should select PRG bank 2");
         assert_eq!(mapper.read_chr(0x0000), 7, "Should select CHR bank 7");
     }
+
+    // ── Mapper 144 (Color Dreams, same hardware as mapper 11) ────────────────
+
+    #[test]
+    fn mapper_144_is_registered_in_factory() {
+        let prg_rom = banked_data(32 * 1024, 4);
+        let chr_rom = banked_data(8 * 1024, 16);
+        let result = create_mapper(
+            MapperContext::new_for_test(144, prg_rom, chr_rom, NametableLayout::Horizontal)
+                .with_prg_ram_banks(0),
+        );
+        assert!(result.is_ok(), "Mapper 144 must be creatable via factory");
+    }
+
+    #[test]
+    fn mapper_144_prg_and_chr_banking_works_like_mapper_11() {
+        let prg_rom = banked_data(32 * 1024, 4);
+        let chr_rom = banked_data(8 * 1024, 16);
+        let mut mapper = create_mapper(
+            MapperContext::new_for_test(144, prg_rom, chr_rom, NametableLayout::Horizontal)
+                .with_prg_ram_banks(0)
+                .with_submapper(1), // submapper 1 = no bus conflicts
+        )
+        .expect("mapper 144 must be registered");
+        // bits 1:0 → PRG bank 3; bits 7:4 → CHR bank 5 → 0b0101_0011 = 0x53
+        mapper.write_prg(0x8000, 0x53);
+        assert_eq!(mapper.read_prg(0x8000), 3, "mapper 144 PRG bank 3");
+        assert_eq!(mapper.read_chr(0x0000), 5, "mapper 144 CHR bank 5");
+    }
 }

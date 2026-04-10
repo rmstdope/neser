@@ -184,14 +184,14 @@ impl NativeGlWrapper {
     /// Renders a frame and optional debugger overlay.
     pub fn render(
         &mut self,
-        nes: &crate::nes::console::Nes,
+        console: &crate::platform::emulator::Console,
         show_debugger: bool,
         overlay_text: Option<&str>,
         overlay_blink_red: bool,
         crosshair: Option<Crosshair>,
     ) -> DebuggerUiAction {
         self.gl_backend.render(
-            nes,
+            console,
             show_debugger,
             overlay_text,
             overlay_blink_red,

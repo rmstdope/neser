@@ -27,6 +27,8 @@ target
 
 # ROMs that should not be comitted
 roms/games
+roms/gb/games
+roms/nes/games
 
 .github/ISSUE_TEMPLATE
 *.log

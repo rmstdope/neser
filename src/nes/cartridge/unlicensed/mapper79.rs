@@ -201,4 +201,38 @@ mod tests {
         mapper.write_prg(0x4100, 0b0010_0011);
         assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
     }
+
+    // ── Mapper 146 (NINA-03/06, same hardware as mapper 79) ──────────────────
+
+    #[test]
+    fn mapper_146_is_registered_in_factory() {
+        let prg = banked_data(PRG_BANK_SIZE, PRG_BANKS);
+        let chr = banked_data(CHR_BANK_SIZE, CHR_BANKS);
+        let result = create_mapper(MapperContext::new_for_test(
+            146,
+            prg,
+            chr,
+            NametableLayout::Horizontal,
+        ));
+        assert!(result.is_ok(), "Mapper 146 must be creatable via factory");
+    }
+
+    #[test]
+    fn mapper_146_bit3_selects_32k_prg_bank() {
+        let prg = banked_data(PRG_BANK_SIZE, PRG_BANKS);
+        let chr = banked_data(CHR_BANK_SIZE, CHR_BANKS);
+        let mut mapper = create_mapper(MapperContext::new_for_test(
+            146,
+            prg,
+            chr,
+            NametableLayout::Horizontal,
+        ))
+        .expect("mapper 146 must be registered");
+        mapper.write_prg(0x4100, 0b0000_1000);
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            1,
+            "mapper 146 bit 3 selects 32KB PRG bank 1"
+        );
+    }
 }
