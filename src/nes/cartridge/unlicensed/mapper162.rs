@@ -106,10 +106,11 @@ impl Mapper162 {
         let mut ctx = ctx;
         // Force CHR-RAM; mapper always uses internal CHR-RAM.
         ctx.chr_rom = vec![];
+        // Mapper 162 always provides 8 KiB of PRG-RAM at $6000-$7FFF.
         if ctx.prg_ram_banks_8k == 0 {
             ctx.prg_ram_banks_8k = 1;
-            ctx.prg_ram_size_specified = true;
         }
+        ctx.prg_ram_size_specified = true;
 
         let mut base = BaseMapper::new(&ctx, capabilities);
         base.configure_prg_banking(PRG_BANK_SIZE);
@@ -354,6 +355,25 @@ mod tests {
         restored.restore_registers(&snap);
 
         assert_eq!(restored.read_prg(0x8000), mapper.read_prg(0x8000));
+    }
+
+    // ── PRG-RAM ───────────────────────────────────────────────────────────────
+
+    #[test]
+    fn prg_ram_present_even_when_header_omits_size() {
+        // PRG-RAM must be present even when the iNES header doesn't specify it.
+        let mut mapper = Mapper162::new(
+            MapperContext::new_for_test(
+                MAPPER_NUMBER,
+                banked_data(PRG_BANK_SIZE, PRG_BANKS),
+                vec![],
+                NametableLayout::Vertical,
+            )
+            .with_prg_ram_banks(1)
+            .with_unspecified_prg_ram_size(),
+        );
+        mapper.write_prg(0x6000, 0xAB);
+        assert_eq!(mapper.read_prg(0x6000), 0xAB);
     }
 
     // ── No IRQ ────────────────────────────────────────────────────────────────
