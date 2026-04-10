@@ -4,7 +4,7 @@
 
 ## Overview
 
-NESER is a cycle-accurate NES (Nintendo Entertainment System) emulator written in Rust. It supports three frontend targets: a desktop SDL2 window, a terminal-based TUI ROM launcher, and a WebAssembly-powered browser frontend. The emulator implements the core NES hardware — CPU, PPU, APU, and bus — as well as over 200 cartridge mappers, multiple input device types, debugging tools, save states, and an autorun recording/playback system.
+NESER is a cycle-accurate NES (Nintendo Entertainment System) emulator written in Rust, built on an architecture that supports multiple emulated hardware targets. It supports three frontend targets: a native desktop window (winit + OpenGL), a terminal-based TUI ROM launcher, and a WebAssembly-powered browser frontend. The emulator implements the core NES hardware — CPU, PPU, APU, and bus — as well as over 200 cartridge mappers, multiple input device types, debugging tools, save states, and an autorun recording/playback system.
 
 The codebase is roughly 183,000 lines of Rust, with additional JavaScript for the web frontend and Python tooling for ROM management.
 
@@ -14,15 +14,23 @@ The codebase is roughly 183,000 lines of Rust, with additional JavaScript for th
 ┌───────────────────────────────────────────────────────┐
 │                     Frontends                         │
 │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐   │
-│  │ SDL Frontend │ │ TUI Frontend │ │ WASM Frontend│   │
-│  │ (Desktop GUI)│ │ (Terminal)   │ │ (Browser)    │   │
+│  │Native Frontend│ │ TUI Frontend │ │ WASM Frontend│   │
+│  │(Desktop, GL) │ │ (Terminal)   │ │ (Browser)    │   │
 │  └──────┬───────┘ └──────┬───────┘ └──────┬───────┘   │
 │         │                │                │           │
 │         └────────────────┼────────────────┘           │
 │                          ▼                            │
 │  ┌─────────────────────────────────────────────────┐  │
-│  │              Console (Nes struct)               │  │
-│  │  Orchestrates CPU ↔ PPU ↔ APU ↔ Bus per cycle   │  │
+│  │  Console enum (src/emulator.rs)                 │  │
+│  │  Hardware-agnostic interface: run_tick, render,  │  │
+│  │  audio, input, save/load state, reset           │  │
+│  │  Variants: Console::Nes(Nes)                    │  │
+│  └──────────────────────┬─────────────────────────┘  │
+│                          │                            │
+│                          ▼                            │
+│  ┌─────────────────────────────────────────────────┐  │
+│  │           NES Emulator (src/nes/)               │  │
+│  │  Nes struct orchestrates CPU ↔ PPU ↔ APU ↔ Bus  │  │
 │  └──────────┬──────────────────────────┬───────────┘  │
 │             │                          │              │
 │    ┌────────▼────────┐       ┌─────────▼──────────┐   │
@@ -47,10 +55,20 @@ The codebase is roughly 183,000 lines of Rust, with additional JavaScript for th
 │  │  Supporting Systems                             │  │
 │  │  Input · Debugging · Autorun · Save States      │  │
 │  └─────────────────────────────────────────────────┘  │
+│                                                       │
+│  ┌─────────────────────────────────────────────────┐  │
+│  │  Shared Platform (src/)                         │  │
+│  │  AppContext · FrontendConfig · Audio · Rendering │  │
+│  └─────────────────────────────────────────────────┘  │
 └───────────────────────────────────────────────────────┘
 ```
 
-The emulator is designed around a **bus-centric architecture**: the `Bus` struct routes memory reads and writes between the CPU, PPU registers, APU registers, RAM, OAM DMA, controller ports, and the cartridge mapper. The `Nes` struct in `src/console/nes.rs` orchestrates the per-cycle stepping of all components.
+The emulator is designed around a **multi-layer architecture**:
+
+- **Console enum** (`src/emulator.rs`): Hardware-agnostic dispatch layer. Frontends program against `Console` for common operations (run, render, audio, input, save/load state, reset). System-specific features (NES debugging, PPU viewer, Zapper) are accessed by matching on the `Console::Nes` variant.
+- **NES emulator** (`src/nes/`): All NES-specific hardware lives under this namespace. The `Nes` struct in `src/nes/console/nes.rs` orchestrates the per-cycle stepping of CPU, PPU, APU, and Bus.
+- **Shared platform** (`src/`): `FrontendConfig` (src/config.rs), `AppContext` (src/app_context.rs), audio infrastructure, and rendering backends are shared across all emulated systems.
+- **Bus-centric hardware**: Within the NES, the `Bus` struct routes memory reads and writes between the CPU, PPU registers, APU registers, RAM, OAM DMA, controller ports, and the cartridge mapper.
 
 ## Binaries and Scripts
 
@@ -58,8 +76,8 @@ The emulator is designed around a **bus-centric architecture**: the `Bus` struct
 
 | Binary | Source | Feature | Description |
 | --------- | -------- | --------- | ------------- |
-| `neser` | `src/main.rs` | `sdl` (default) | Main emulator with SDL2 desktop window, audio, gamepad input, shader filters, debugger, and autorun support. |
-| `joysticks` | `src/bin/joysticks.rs` | `sdl` | Diagnostic utility that lists connected joysticks/gamepads, displays their GUID, and shows real-time axis/button state in an SDL window. |
+| `neser` | `src/main.rs` | `native` (default) | Main emulator with native desktop window (winit + OpenGL), audio, gamepad input, shader filters, debugger, and autorun support. |
+| `joysticks` | `src/bin/joysticks.rs` | `native` | Diagnostic utility that lists connected joysticks/gamepads, displays their GUID, and shows real-time axis/button state. |
 
 The `src/bin/roms.rs` file is a library binary (accessed via `cargo run --bin roms`) that provides ROM management commands: `list` (scan a directory for NES ROMs), `info` (parse and display iNES/NES2.0 header details), and `infoall` (batch info for all ROMs).
 
@@ -69,6 +87,7 @@ The `src/bin/roms.rs` file is a library binary (accessed via `cargo run --bin ro
 | -------- | ------------- |
 | `scripts/build_web.sh` | Builds the WASM target with `cargo build --target wasm32-unknown-unknown --features wasm`, then runs `wasm-bindgen` to generate JS glue code into `web/pkg/`. |
 | `scripts/run_web.sh` | Starts a local HTTP server (`python3 -m http.server`) in the `web/` directory for testing the browser frontend. |
+| `scripts/test-dir.sh` | Runs Rust tests for specific source directories. Converts directory paths (e.g., `src/nes/cartridge`) to `cargo test` module filters. Supports `--skip-integration` and `--list` flags. Used by CI to conditionally run tests based on changed files. |
 
 ### Python Tools
 
@@ -84,135 +103,166 @@ The `src/bin/roms.rs` file is a library binary (accessed via `cargo run --bin ro
 
 ### `src/` — Rust Source Code
 
-#### Core Emulation
+#### Platform Layer (Hardware-Agnostic)
+
+| File | Description |
+| ------ | ------------- |
+| `src/emulator.rs` | `Console` enum — hardware-agnostic wrapper around system-specific emulators. Provides common interface: `run_tick`, `is_ready_to_render`, `screen_snapshot`, `get_sample`, `set_button`, `save_state_bytes`/`load_state_bytes`, `reset`. System-specific features accessed via variant matching (`Console::Nes`). |
+| `src/config.rs` | `FrontendConfig` struct — generic frontend settings (audio, video, autorun, debugger, window) shared across all emulated systems. |
+| `src/app_context.rs` | `AppContext` — shared application state including configuration, ROM database, and toast notification manager. Wrapped in `Rc<RefCell<>>` for interior mutability. |
+
+#### NES Emulation (`src/nes/`)
+
+All NES-specific hardware and supporting code lives under `src/nes/`.
 
 | Directory/File | Description |
 | ---------------- | ------------- |
-| `src/console/` | Top-level emulator orchestration. |
-| `src/console/nes.rs` | The `Nes` struct — creates and owns CPU, PPU, APU, and Bus. Runs the master clock cycle loop. Handles save state capture/restore, cartridge insertion, and reset logic. |
-| `src/console/config.rs` | `Config` struct and CLI argument parser. Defines all command-line flags, config file loading (with priority: defaults → `~/.neser/neser.conf` → `./neser.conf` → `--config` → CLI args), and hardware/timing/input settings. |
-| `src/console/cartridge_catalog.rs` | Scans directories for NES ROMs and builds/caches a CSV catalog of discovered cartridges for the TUI launcher. |
-| `src/console/ram_init.rs` | RAM initialization modes: `Zero`, `Random`, and `SeededRandom` for deterministic test setups. |
-| `src/cpu/` | MOS 6502 CPU implementation. |
-| `src/cpu/cpu.rs` | The `Cpu` struct — register state, instruction fetch/decode/execute loop, interrupt handling (NMI, IRQ, BRK), and DMA integration. |
-| `src/cpu/opcode.rs` | Opcode definitions and the instruction lookup table covering all official and unofficial 6502 opcodes. |
-| `src/cpu/master_clock.rs` | Master clock divider that coordinates CPU, PPU, and APU cycle ratios for accurate NTSC/PAL timing. |
-| `src/cpu/dma.rs` | OAM DMA and DMC DMA transfer logic (test-only module). |
-| `src/ppu/` | Picture Processing Unit (2C02/2C07) implementation. |
-| `src/ppu/ppu.rs` | The `Ppu` struct — coordinates all PPU subsystems per scanline/cycle. Contains a nested `ppu/` subdirectory with `tick.rs` for single-cycle PPU execution logic. |
-| `src/ppu/background.rs` | Background tile fetching, shift registers, and fine-scroll handling. |
-| `src/ppu/sprites.rs` | Sprite evaluation, OAM secondary buffer, and sprite-0 hit detection. |
-| `src/ppu/rendering.rs` | Pixel compositing — merges background and sprite layers with priority logic. |
-| `src/ppu/memory.rs` | PPU memory map — nametable mirroring, palette RAM, pattern table access through the cartridge mapper. |
-| `src/ppu/registers.rs` | PPU register interface ($2000–$2007) including the internal v/t scroll latches and read buffer. |
-| `src/ppu/timing.rs` | Scanline and dot-accurate timing, VBlank/pre-render logic, even/odd frame handling. |
-| `src/ppu/screen_buffer.rs` | Double-buffered 256×240 framebuffer for completed frames. |
-| `src/ppu/color_effects.rs` | Emphasis bits and grayscale color effects. |
-| `src/ppu/status.rs` | PPU status register ($2002) with VBlank, sprite-0 hit, and overflow flags. |
-| `src/apu/` | Audio Processing Unit (2A03) implementation. |
-| `src/apu/apu.rs` | The `Apu` struct — mixer output, frame counter sequencing, sample generation. |
-| `src/apu/pulse.rs` | Two pulse wave channels with sweep and envelope. |
-| `src/apu/triangle.rs` | Triangle wave channel with linear counter. |
-| `src/apu/noise.rs` | Noise channel with LFSR and envelope. |
-| `src/apu/dmc.rs` | Delta Modulation Channel — sample playback with DMA fetches. |
-| `src/apu/envelope.rs` | Shared envelope generator used by pulse and noise channels. |
-| `src/apu/frame_counter.rs` | APU frame counter (4-step/5-step modes) driving length counter and envelope clocks. |
-| `src/apu/length_counter.rs` | Shared length counter used by pulse, triangle, and noise channels. |
-| `src/bus/` | System bus connecting all hardware components. |
-| `src/bus/bus.rs` | The `Bus` struct — main address decoding and routing for the CPU address space ($0000–$FFFF). Manages device dispatch for reads/writes. |
-| `src/bus/ram_device.rs` | 2KB CPU RAM ($0000–$07FF, mirrored to $1FFF). |
-| `src/bus/ppu_device.rs` | Routes PPU register access ($2000–$3FFF). |
-| `src/bus/apu_device.rs` | Routes APU register access ($4000–$4017). |
-| `src/bus/oam_dma_device.rs` | OAM DMA transfer initiation ($4014). |
-| `src/bus/controller_device.rs` | Controller port I/O ($4016–$4017), supporting standard joypads, Four Score, Zapper, Arkanoid paddle, and Famicom expansion devices. |
-| `src/bus/mapper_device.rs` | Routes cartridge address space ($4018–$FFFF) to the mapper. |
+| `src/nes/mod.rs` | Module declarations for all NES sub-modules. |
+| `src/nes/console/` | Top-level NES orchestration. |
+| `src/nes/console/nes.rs` | The `Nes` struct — creates and owns CPU, PPU, APU, and Bus. Runs the master clock cycle loop. Handles save state capture/restore, cartridge insertion, and reset logic. |
+| `src/nes/console/config.rs` | `Config` struct (composition of `FrontendConfig` + `NesConfig`), `NesConfig` struct (NES-specific hardware settings), and CLI argument parser. Defines all command-line flags, config file loading, and hardware/timing/input settings. |
+| `src/nes/console/cartridge_catalog.rs` | Scans directories for NES ROMs and builds/caches a CSV catalog of discovered cartridges for the TUI launcher. |
+| `src/nes/console/ram_init.rs` | RAM initialization modes: `Zero`, `Random`, and `SeededRandom` for deterministic test setups. |
+| `src/nes/cpu/` | MOS 6502 CPU implementation. |
+| `src/nes/cpu/cpu.rs` | The `Cpu` struct — register state, instruction fetch/decode/execute loop, interrupt handling (NMI, IRQ, BRK), and DMA integration. |
+| `src/nes/cpu/opcode.rs` | Opcode definitions and the instruction lookup table covering all official and unofficial 6502 opcodes. |
+| `src/nes/cpu/master_clock.rs` | Master clock divider that coordinates CPU, PPU, and APU cycle ratios for accurate NTSC/PAL timing. |
+| `src/nes/cpu/dma.rs` | OAM DMA and DMC DMA transfer logic (test-only module). |
+| `src/nes/ppu/` | Picture Processing Unit (2C02/2C07) implementation. |
+| `src/nes/ppu/ppu.rs` | The `Ppu` struct — coordinates all PPU subsystems per scanline/cycle. Contains a nested `ppu/` subdirectory with `tick.rs` for single-cycle PPU execution logic. |
+| `src/nes/ppu/background.rs` | Background tile fetching, shift registers, and fine-scroll handling. |
+| `src/nes/ppu/sprites.rs` | Sprite evaluation, OAM secondary buffer, and sprite-0 hit detection. |
+| `src/nes/ppu/rendering.rs` | Pixel compositing — merges background and sprite layers with priority logic. |
+| `src/nes/ppu/memory.rs` | PPU memory map — nametable mirroring, palette RAM, pattern table access through the cartridge mapper. |
+| `src/nes/ppu/registers.rs` | PPU register interface ($2000–$2007) including the internal v/t scroll latches and read buffer. |
+| `src/nes/ppu/timing.rs` | Scanline and dot-accurate timing, VBlank/pre-render logic, even/odd frame handling. |
+| `src/nes/ppu/screen_buffer.rs` | Double-buffered 256×240 framebuffer for completed frames. |
+| `src/nes/ppu/color_effects.rs` | Emphasis bits and grayscale color effects. |
+| `src/nes/ppu/status.rs` | PPU status register ($2002) with VBlank, sprite-0 hit, and overflow flags. |
+| `src/nes/apu/` | Audio Processing Unit (2A03) implementation. |
+| `src/nes/apu/apu.rs` | The `Apu` struct — mixer output, frame counter sequencing, sample generation. |
+| `src/nes/apu/pulse.rs` | Two pulse wave channels with sweep and envelope. |
+| `src/nes/apu/triangle.rs` | Triangle wave channel with linear counter. |
+| `src/nes/apu/noise.rs` | Noise channel with LFSR and envelope. |
+| `src/nes/apu/dmc.rs` | Delta Modulation Channel — sample playback with DMA fetches. |
+| `src/nes/apu/envelope.rs` | Shared envelope generator used by pulse and noise channels. |
+| `src/nes/apu/frame_counter.rs` | APU frame counter (4-step/5-step modes) driving length counter and envelope clocks. |
+| `src/nes/apu/length_counter.rs` | Shared length counter used by pulse, triangle, and noise channels. |
+| `src/nes/bus/` | System bus connecting all hardware components. |
+| `src/nes/bus/bus.rs` | The `Bus` struct — main address decoding and routing for the CPU address space ($0000–$FFFF). Manages device dispatch for reads/writes. |
+| `src/nes/bus/ram_device.rs` | 2KB CPU RAM ($0000–$07FF, mirrored to $1FFF). |
+| `src/nes/bus/ppu_device.rs` | Routes PPU register access ($2000–$3FFF). |
+| `src/nes/bus/apu_device.rs` | Routes APU register access ($4000–$4017). |
+| `src/nes/bus/oam_dma_device.rs` | OAM DMA transfer initiation ($4014). |
+| `src/nes/bus/controller_device.rs` | Controller port I/O ($4016–$4017), supporting standard joypads, Four Score, Zapper, Arkanoid paddle, and Famicom expansion devices. |
+| `src/nes/bus/mapper_device.rs` | Routes cartridge address space ($4018–$FFFF) to the mapper. |
 
 #### Cartridge and Mapper System
 
 | Directory/File | Description |
 | ---------------- | ------------- |
-| `src/cartridge/` | Cartridge loading, ROM parsing, and mapper implementations. |
-| `src/cartridge/cartridge.rs` | `Cartridge` struct — loads ROM files, parses iNES/NES2.0 headers, creates the appropriate mapper, and manages save files (.sav) and save states (.state). |
-| `src/cartridge/ines.rs` | iNES and NES 2.0 header parser — extracts mapper number, PRG/CHR ROM sizes, mirroring, battery backup, timing mode, and console type. |
-| `src/cartridge/mapper.rs` | `Mapper` trait definition and `mapper_registry!` macro that maps mapper numbers to concrete implementations. Contains the factory function `create_mapper()`. **207 mappers** are currently registered. |
-| `src/cartridge/base_mapper.rs` | `BaseMapper` — shared infrastructure for all mappers: PRG/CHR bank selection (signed index with modulo wrapping), PRG-RAM allocation, mirroring control, and save-state banking snapshots. |
-| `src/cartridge/common.rs` | Shared types: `ChrMemory` (CHR-ROM/RAM), `PrgRam`, `BankSwitch`, `BankedRom`, and `StateSnapshot` trait for mapper serialization. |
-| `src/cartridge/mapper_templates.rs` | Reusable mapper templates: `SimpleFixedPrgMapper`, `SimpleBankedPrgMapper`, `DualBank32Mapper` for common banking patterns. |
-| `src/cartridge/cpu_cycle_irq.rs` | CPU cycle-based IRQ counter shared by multiple mappers. |
-| `src/cartridge/hardware_type.rs` | Hardware type detection for NES vs Famicom variants. |
-| `src/cartridge/rom_db.rs` | ROM database lookup by CRC32 — identifies known ROMs for auto-detection of controller types, hardware quirks, and region hints. |
-| `src/cartridge/rom_db.csv` | CSV database of ~10,400 known ROMs with CRC32, name, country, hardware, mapper, submapper, mirroring, PRG/CHR sizes, battery flag, VS hardware/PPU types, and expansion type. |
-| `src/cartridge/test_helpers.rs` | Test utilities for mapper unit tests. |
+| `src/nes/cartridge/` | Cartridge loading, ROM parsing, and mapper implementations. |
+| `src/nes/cartridge/cartridge.rs` | `Cartridge` struct — loads ROM files, parses iNES/NES2.0 headers, creates the appropriate mapper, and manages save files (.sav) and save states (.state). |
+| `src/nes/cartridge/ines.rs` | iNES and NES 2.0 header parser — extracts mapper number, PRG/CHR ROM sizes, mirroring, battery backup, timing mode, and console type. |
+| `src/nes/cartridge/mapper.rs` | `Mapper` trait definition and `mapper_registry!` macro that maps mapper numbers to concrete implementations. Contains the factory function `create_mapper()`. **207 mappers** are currently registered. |
+| `src/nes/cartridge/base_mapper.rs` | `BaseMapper` — shared infrastructure for all mappers: PRG/CHR bank selection (signed index with modulo wrapping), PRG-RAM allocation, mirroring control, and save-state banking snapshots. |
+| `src/nes/cartridge/common.rs` | Shared types: `ChrMemory` (CHR-ROM/RAM), `PrgRam`, `BankSwitch`, `BankedRom`, and `StateSnapshot` trait for mapper serialization. |
+| `src/nes/cartridge/mapper_templates.rs` | Reusable mapper templates: `SimpleFixedPrgMapper`, `SimpleBankedPrgMapper`, `DualBank32Mapper` for common banking patterns. |
+| `src/nes/cartridge/cpu_cycle_irq.rs` | CPU cycle-based IRQ counter shared by multiple mappers. |
+| `src/nes/cartridge/hardware_type.rs` | Hardware type detection for NES vs Famicom variants. |
+| `src/nes/cartridge/rom_db.rs` | ROM database lookup by CRC32 — identifies known ROMs for auto-detection of controller types, hardware quirks, and region hints. |
+| `src/nes/cartridge/rom_db.csv` | CSV database of ~10,400 known ROMs with CRC32, name, country, hardware, mapper, submapper, mirroring, PRG/CHR sizes, battery flag, VS hardware/PPU types, and expansion type. |
+| `src/nes/cartridge/test_helpers.rs` | Test utilities for mapper unit tests. |
+
+| `src/nes/cartridge/` (cont.) | |
 
 ##### Mapper Implementations by Manufacturer
 
 | Directory | Mapper Count | Notable Mappers |
 |-----------|:------------:|-----------------|
-| `nintendo/` | 21 | NROM (0), MMC1 (1), UxROM (2), CNROM (3), MMC3 (4), MMC5 (5), AxROM (7), MMC2/MMC4 (9/10), FDS (20) |
-| `konami/` | 6 | VRC1 (75), VRC2/VRC4 (21–25), VRC3 (73), VRC6 (24/26), VRC7 (85) |
-| `namco/` | 5 | Namco 118 (206), Namco 163 (19), Namcot 3425/3443/3446 |
-| `sunsoft/` | 5 | Sunsoft-2 (93), Sunsoft-3 (67), Sunsoft-4 (68), FME-7 (69) |
-| `irem/` | 5 | G-101 (32), H-3001 (65), TAM-S1 (97), LROG017 (77), NINA/Tengen (34) |
-| `jaleco/` | 7 | JF-10 through JF-19, SS88006 (18), Mapper 87 |
-| `taito/` | 4 | TC0190 (33/48), TC0350 (206 variant), X1-005 (80), X1-017 (82) |
-| `bandai/` | 3 | Bandai FCG (16/153/159), Mapper 70, Mapper 96 |
-| `sachen/` | 4 | Sachen mappers (36, 132, 133, 243) |
-| `camerica/` | 1 | Camerica/Codemasters (71) |
-| `tengen/` | 1 | RAMBO-1 (64) |
-| `unlicensed/` | 136 | Multicarts, pirate mappers, bootleg boards (Color Dreams, Action 53, JY Company, and many numbered mappers) |
+| `src/nes/cartridge/nintendo/` | 22 | NROM (0), MMC1 (1), UxROM (2), CNROM (3), MMC3 (4), MMC5 (5), AxROM (7), MMC2/MMC4 (9/10), FDS (20), VS System (99) |
+| `src/nes/cartridge/konami/` | 7 | VRC1 (75), Mapper 151 (151), VRC2/VRC4 (21–25), VRC3 (73), VRC6 (24/26), VRC7 (85) |
+| `src/nes/cartridge/namco/` | 5 | Namco 118 (206), Namco 163 (19), Namcot 3425/3443/3446 |
+| `src/nes/cartridge/sunsoft/` | 5 | Sunsoft-2 (93), Sunsoft-3 (67), Sunsoft-4 (68), FME-7 (69) |
+| `src/nes/cartridge/irem/` | 5 | G-101 (32), H-3001 (65), TAM-S1 (97), LROG017 (77), NINA/Tengen (34) |
+| `src/nes/cartridge/jaleco/` | 7 | JF-10 through JF-19, SS88006 (18), Mapper 87 |
+| `src/nes/cartridge/taito/` | 4 | TC0190 (33/48), TC0350 (206 variant), X1-005 (80), X1-017 (82) |
+| `src/nes/cartridge/bandai/` | 3 | Bandai FCG (16/153/159), Mapper 70, Mapper 96 |
+| `src/nes/cartridge/sachen/` | 4 | Sachen mappers (36, 132, 133, 243) |
+| `src/nes/cartridge/camerica/` | 1 | Camerica/Codemasters (71) |
+| `src/nes/cartridge/tengen/` | 1 | RAMBO-1 (64) |
+| `src/nes/cartridge/unlicensed/` | 136 | Multicarts, pirate mappers, bootleg boards (Color Dreams, Action 53, JY Company, and many numbered mappers) |
 
 #### Input System
 
 | Directory/File | Description |
 | ---------------- | ------------- |
-| `src/input/` | Input device implementations. |
-| `src/input/controller.rs` | `ControllerType` enum and input abstraction layer. |
-| `src/input/nes_joypad.rs` | Standard NES joypad with 8-button serial protocol. |
-| `src/input/arkanoid_controller.rs` | Arkanoid paddle controller with analog position and trigger. |
-| `src/input/zapper.rs` | NES Zapper light gun with light detection. |
-| `src/input/power_pad.rs` | Power Pad (Family Trainer) mat controller. |
-| `src/input/snes_adapter.rs` | SNES-to-NES controller adapter. |
+| `src/nes/input/` | NES input device implementations. |
+| `src/nes/input/controller.rs` | `ControllerType` enum and input abstraction layer. |
+| `src/nes/input/nes_joypad.rs` | Standard NES joypad with 8-button serial protocol. |
+| `src/nes/input/arkanoid_controller.rs` | Arkanoid paddle controller with analog position and trigger. |
+| `src/nes/input/zapper.rs` | NES Zapper light gun with light detection. |
+| `src/nes/input/power_pad.rs` | Power Pad (Family Trainer) mat controller. |
+| `src/nes/input/snes_adapter.rs` | SNES-to-NES controller adapter. |
+
+#### Game Boy Emulation (`src/gb/`)
+
+All Game Boy (DMG) hardware lives under `src/gb/`. The module is structured around the `GbBus` trait so the SM83 CPU remains bus-agnostic and unit-testable with stub buses.
+
+| Directory/File | Description |
+| ---------------- | ------------- |
+| `src/gb/mod.rs` | Module declarations for all GB sub-modules. |
+| `src/gb/console.rs` | `Gb<B: GbBus>` — thin console shell that owns the CPU. `step()` executes one instruction and ticks the bus by the elapsed M-cycles. |
+| `src/gb/bus/bus.rs` | `GbBus` trait — `read(&mut self, addr: u16) -> u8`, `write(&mut self, addr: u16, val: u8)`, and a default no-op `tick(&mut self, m_cycles: u8)`. `StubBus` implements the trait for unit tests. |
+| `src/gb/bus/dmg_bus.rs` | `DmgBus` — full DMG memory map. Routes all 16-bit addresses to cartridge ROM/RAM, VRAM, WRAM, echo RAM, OAM, HRAM, Timer registers ($FF04–$FF07), IF ($FF0F), IE ($FFFF), and I/O stubs. Owns the cartridge and the Timer. Overrides `tick()` to advance the Timer and propagate timer interrupts to IF. |
+| `src/gb/cpu/sm83.rs` | `Sm83<B: GbBus>` — SM83/LR35902 CPU core. Full instruction set (primary + CB-prefixed), HALT bug, interrupt dispatch at five vectors. Each M-cycle increments an internal counter used by the console for bus ticking. |
+| `src/gb/cpu/opcode.rs` | Opcode metadata tables (BASE[256] and CB[256]) for debugging and tracing. |
+| `src/gb/timer/timer.rs` | `Timer` — DIV/TIMA/TMA/TAC subsystem. `tick(m_cycles)` advances counters and sets `interrupt_pending` on TIMA overflow; caller (DmgBus) propagates this to IF. |
+| `src/gb/cartridge/cartridge.rs` | `GbCartridge` trait — `read(&self, addr: u16) -> u8` and `write(&mut self, addr: u16, val: u8)`. Addresses $0000–$7FFF map to ROM; $A000–$BFFF to cartridge RAM. |
+| `src/gb/cartridge/mbc0.rs` | ROM-only cartridge (MBC type 0x00). No banking; writes are silently ignored. |
+| `src/gb/cartridge/mbc1.rs` | MBC1 cartridge (types 0x01–0x03). ROM bank switching ($2000–$3FFF), secondary bank register ($4000–$5FFF), banking mode ($6000–$7FFF), RAM enable ($0000–$1FFF). Supports up to 2 MB ROM and 32 KB RAM. |
+| `src/gb/cartridge/mod.rs` | `load_cartridge(bytes: &[u8]) -> Result<Box<dyn GbCartridge>, RomError>` — parses a `.gb` ROM, validates the header checksum, and returns the appropriate MBC implementation. `RomError` variants: `TooShort`, `BadHeaderChecksum`, `UnsupportedMbc(u8)`. |
 
 #### Frontends
 
 | Directory/File | Description |
 | ---------------- | ------------- |
-| `src/sdl_frontend/` | Desktop frontend using SDL2. |
-| `src/sdl_frontend/sdl_eventloop.rs` | Main event loop — handles input events, frame timing, VSync, autorun integration, pause/resume, and hot-reload of ROMs. |
-| `src/sdl_frontend/sdl_audio.rs` | SDL2 audio device setup and sample queuing. |
-| `src/sdl_frontend/sdl_audio_callback.rs` | Audio callback that pulls samples from a ring buffer fed by the APU. |
-| `src/sdl_frontend/sdl_audio_resampler.rs` | Audio resampling to match SDL's actual sample rate. |
-| `src/sdl_frontend/sdl_gl_wrapper.rs` | OpenGL context management for SDL2 windows. |
-| `src/sdl_frontend/sdl_render_target.rs` | Renders the NES framebuffer to the SDL2 window via OpenGL. |
-| `src/sdl_frontend/autorun_state.rs` | Autorun recording/playback state machine for the SDL frontend. |
-| `src/rendering/` | Shared rendering infrastructure (SDL feature). |
-| `src/rendering/gl_backend.rs` | OpenGL framebuffer and texture management. |
+| `src/frontends/native/` | Desktop frontend using winit + OpenGL. |
+| `src/frontends/native/event_loop.rs` | Main event loop — holds `Console` enum, handles input events, frame timing, VSync, autorun integration, pause/resume, and hot-reload of ROMs. NES-specific features (debugger, Zapper, SNES mouse) accessed by extracting the inner `Nes` via pattern match. |
+| `src/frontends/native/audio.rs` | Native audio device setup and sample queuing. |
+| `src/frontends/native/keyboard.rs` | Keyboard input handling — maps physical keys to NES buttons, debugger hotkeys, and system commands. |
+| `src/frontends/native/gamepad.rs` | Gamepad input using gilrs — maps controller axes/buttons to NES joypads. |
+| `src/frontends/native/mouse.rs` | Mouse input — Zapper light gun, SNES mouse, and Arkanoid paddle coordinate mapping. |
+| `src/frontends/native/gl_wrapper.rs` | OpenGL context management for native windows. |
+| `src/rendering/` | Shared rendering infrastructure (native feature). |
+| `src/rendering/gl_backend.rs` | OpenGL framebuffer, texture management, and imgui debugger UI. |
 | `src/rendering/shader_manager.rs` | Shader pipeline using librashader — loads `.slangp` presets (CRT, NTSC, xBRZ). |
-| `src/rendering/input.rs` | Input handling abstraction for the rendering layer. |
-| `src/tui_frontend/` | Terminal UI ROM launcher using `ratatui` + `crossterm`. |
-| `src/tui_frontend/app.rs` | TUI application state and event loop. |
-| `src/tui_frontend/rom_list.rs` | Scrollable ROM list widget. |
-| `src/tui_frontend/catalog.rs` | Integration with the cartridge catalog for ROM discovery. |
-| `src/tui_frontend/launcher.rs` | Launches the SDL emulator for a selected ROM. |
-| `src/tui_frontend/action_menu.rs` | Context menu for ROM actions. |
-| `src/web_frontend/` | WebAssembly frontend. |
-| `src/web_frontend/wasm.rs` | `wasm-bindgen` bindings — exposes `NesEmulator` to JavaScript with methods for frame stepping, input, audio sample retrieval, and save states. |
-| `src/web_frontend/wasm_autorun_state.rs` | Autorun state management for the WASM frontend. |
-| `src/web_frontend/wasm_tests.rs` | WASM-specific integration tests (run via `wasm-pack test`). |
+| `src/frontends/tui/` | Terminal UI ROM launcher using `ratatui` + `crossterm`. |
+| `src/frontends/tui/app.rs` | TUI application state and event loop. |
+| `src/frontends/tui/rom_list.rs` | Scrollable ROM list widget. |
+| `src/frontends/tui/catalog.rs` | Integration with the cartridge catalog for ROM discovery. |
+| `src/frontends/tui/launcher.rs` | Launches the SDL emulator for a selected ROM. |
+| `src/frontends/tui/action_menu.rs` | Context menu for ROM actions. |
+| `src/frontends/web/` | WebAssembly frontend. |
+| `src/frontends/web/wasm.rs` | `wasm-bindgen` bindings — exposes `NesEmulator` to JavaScript with methods for frame stepping, input, audio sample retrieval, and save states. |
+| `src/frontends/web/wasm_autorun_state.rs` | Autorun state management for the WASM frontend. |
+| `src/frontends/web/wasm_tests.rs` | WASM-specific integration tests (run via `wasm-pack test`). |
 
 #### Debugging
 
 | Directory/File | Description |
 | ---------------- | ------------- |
-| `src/debugging/` | Debugging and diagnostic tools. |
-| `src/debugging/ui.rs` | ImGui-based debugger UI with CPU state, memory viewer, and disassembly. |
-| `src/debugging/disasm.rs` | 6502 disassembler for real-time instruction display. |
+| `src/debugging/` | Generic debugging and diagnostic tools. |
 | `src/debugging/breakpoints.rs` | Breakpoint system — supports address breakpoints and conditional breaks. |
-| `src/debugging/ppu_viewer.rs` | PPU nametable and pattern table viewer. |
 | `src/debugging/tracing.rs` | CPU/PPU/APU/Mapper trace output at configurable verbosity levels. |
 | `src/debugging/logging.rs` | Debug logging infrastructure. |
-| `src/debugging/snapshot.rs` | Debugging state snapshots. |
-| `src/debugging/types.rs` | Shared debugging types and constants. |
+| `src/nes/debugging/` | NES-specific debugging tools. |
+| `src/nes/debugging/ui.rs` | ImGui-based debugger UI with CPU state, memory viewer, and disassembly. |
+| `src/nes/debugging/disasm.rs` | 6502 disassembler for real-time instruction display. |
+| `src/nes/debugging/ppu_viewer.rs` | PPU nametable and pattern table viewer. |
+| `src/nes/debugging/snapshot.rs` | Debugging state snapshots. |
+| `src/nes/debugging/types.rs` | Shared NES debugging types and constants. |
+| `src/nes/debugging/control.rs` | Debugger controller for breakpoints, stepping, and pause/continue. |
 
 #### Autorun System
 
@@ -220,33 +270,32 @@ The `src/bin/roms.rs` file is a library binary (accessed via `cargo run --bin ro
 | ---------------- | ------------- |
 | `src/autorun/` | Input recording and deterministic playback system. |
 | `src/autorun/types.rs` | `AutorunFile` format — stores per-frame joypad input with periodic CRC checkpoints for regression testing. Supports versioned format (currently v3 with run-length encoding). |
-| `src/autorun/headless_playback.rs` | Headless playback engine — replays input without rendering for automated verification. Compares CRC checksums at each checkpoint. |
+| `src/nes/autorun/headless_playback.rs` | NES headless playback engine — replays input without rendering for automated verification. Compares CRC checksums at each checkpoint. |
 | `src/autorun/utils.rs` | Utilities for loading, saving, converting, and trimming autorun files. |
 
 #### Other Core Files
 
 | File | Description |
 | ------ | ------------- |
-| `src/app_context.rs` | `AppContext` — shared application state including configuration, ROM database, and toast notification manager. Wrapped in `Rc<RefCell<>>` for interior mutability. |
-| `src/frontend_toasts.rs` | Toast message formatters for user-facing notifications (cartridge loaded, hardware mode, gamepad detection, timing mode). |
+| `src/nes/frontend_toasts.rs` | Toast message formatters for NES-specific user notifications (cartridge loaded, hardware mode, gamepad detection, timing mode). |
 
 #### Tests
 
 | Directory/File | Description |
 | ---------------- | ------------- |
-| `src/integration_tests/` | Integration test suites. |
-| `src/integration_tests/cpu_tests.rs` | CPU instruction and timing tests using Blargg test ROMs. |
-| `src/integration_tests/ppu_tests.rs` | PPU rendering, timing, and register tests using Blargg test ROMs. |
-| `src/integration_tests/apu_audio_tests.rs` | APU channel audio output verification. |
-| `src/integration_tests/apu_visual_tests.rs` | APU tests that produce visual output (Blargg test ROMs). |
-| `src/integration_tests/mapper_tests.rs` | Mapper-specific tests using holy-mapperel and other test ROMs. |
-| `src/integration_tests/autorun_tests.rs` | Autorun recording/playback round-trip tests. |
-| `src/integration_tests/input_tests.rs` | Controller input tests. |
-| `src/integration_tests/ram_init_tests.rs` | RAM initialization mode tests. |
-| `src/integration_tests/rom_test_runner.rs` | Generic test ROM harness — runs a ROM headlessly and checks for pass/fail output. |
-| `src/integration_tests/romtest_harness.rs` | Shared infrastructure for ROM-based test assertions. |
-| `src/integration_tests/manual_test_cartridges.rs` | Programmatically generated minimal test ROMs for specific hardware scenarios. |
-| `src/integration_tests/miscellaneous_tests.rs` | Miscellaneous integration tests. |
+| `src/nes/integration_tests/` | Integration test suites. |
+| `src/nes/integration_tests/cpu_tests.rs` | CPU instruction and timing tests using Blargg test ROMs. |
+| `src/nes/integration_tests/ppu_tests.rs` | PPU rendering, timing, and register tests using Blargg test ROMs. |
+| `src/nes/integration_tests/apu_audio_tests.rs` | APU channel audio output verification. |
+| `src/nes/integration_tests/apu_visual_tests.rs` | APU tests that produce visual output (Blargg test ROMs). |
+| `src/nes/integration_tests/mapper_tests.rs` | Mapper-specific tests using holy-mapperel and other test ROMs. |
+| `src/nes/integration_tests/autorun_tests.rs` | Autorun recording/playback round-trip tests. |
+| `src/nes/integration_tests/input_tests.rs` | Controller input tests. |
+| `src/nes/integration_tests/ram_init_tests.rs` | RAM initialization mode tests. |
+| `src/nes/integration_tests/rom_test_runner.rs` | Generic test ROM harness — runs a ROM headlessly and checks for pass/fail output. |
+| `src/nes/integration_tests/romtest_harness.rs` | Shared infrastructure for ROM-based test assertions. |
+| `src/nes/integration_tests/manual_test_cartridges.rs` | Programmatically generated minimal test ROMs for specific hardware scenarios. |
+| `src/nes/integration_tests/miscellaneous_tests.rs` | Miscellaneous integration tests. |
 | `build.rs` | Build script that scans `roms/games/mappers/` for `.autorun` files and generates per-ROM regression tests at compile time. |
 
 ### `web/` — Browser Frontend

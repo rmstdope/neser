@@ -14,6 +14,13 @@
 
 .importzp ppumask_shadow
 
+; Number of CHR banks at configured granularity (computed early for guards)
+.if CHR_BANK_SIZE > 0
+    CHR_NUM_BANKS = CHR_ROM_8K * (8 / CHR_BANK_SIZE)
+.else
+    CHR_NUM_BANKS = 0
+.endif
+
 .ifndef CHR_1K_LINEAR
     CHR_1K_LINEAR = 0
 .endif
@@ -115,6 +122,7 @@ chr_read_val: .res 1
         assert_a_eq 1
         pass_test
 
+    .ifndef SKIP_CHR_BANK_2_3_TESTS
         start_test 5, "CHR Bank 2"
         select_chr_bank 0, 2
         lda #$00
@@ -130,6 +138,30 @@ chr_read_val: .res 1
         jsr read_chr_byte
         assert_a_eq 3
         pass_test
+    .endif
+
+        ; === Mapper 99.1: PRG/CHR coupling via $4016 ===
+        ; $4016 bit 2 switches PRG slot 0 and CHR simultaneously.
+        ; Verify that select_prg_bank also switches the CHR bank.
+    .if MAPPER_NUM = 99 .and SUBMAPPER_NUM = 1
+        start_test 5, "PRG->CHR1"
+        jsr disable_rendering
+        select_prg_bank 0, 1    ; writes $04 to $4016 → CHR bank 1
+        lda #$00
+        ldx #$01
+        jsr read_chr_byte       ; PPU $0001: bank ID byte
+        assert_a_eq 1           ; Coupling: PRG sel also selects CHR bank 1
+        pass_test
+
+        start_test 6, "PRG->CHR0"
+        jsr disable_rendering
+        select_prg_bank 0, 0    ; writes $00 to $4016 → CHR bank 0
+        lda #$00
+        ldx #$01
+        jsr read_chr_byte       ; PPU $0001: bank ID byte
+        assert_a_eq 0           ; Coupling: PRG sel also selects CHR bank 0
+        pass_test
+    .endif
 
         ; Switch back to bank 0 for console (has ASCII font)
         select_chr_bank 0, 0
@@ -385,24 +417,19 @@ run_chr_banking = run_tests
 ; at offset 0 of each CHR bank
 ; ============================================================
 
-; Number of CHR banks at configured granularity
-.if CHR_BANK_SIZE > 0
-    CHR_NUM_BANKS = CHR_ROM_8K * (8 / CHR_BANK_SIZE)
-.else
-    CHR_NUM_BANKS = 0
-.endif
-
 .segment "CHR_SIG0"
     .byte $B6, 0, $FF, $6B
 
 .segment "CHR_SIG1"
     .byte $B6, 1, $FE, $6B
 
+.if CHR_NUM_BANKS > 2
 .segment "CHR_SIG2"
     .byte $B6, 2, $FD, $6B
 
 .segment "CHR_SIG3"
     .byte $B6, 3, $FC, $6B
+.endif
 
 .if CHR_NUM_BANKS > 4
 .segment "CHR_SIG4"

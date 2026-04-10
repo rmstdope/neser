@@ -315,11 +315,14 @@ test_title_string:
         assert_a_eq 1
         pass_test
 
+        ; Skip bank 2 test when slot 0 has only 2 switchable banks (e.g. mapper 99 40KB)
+        .ifndef PRG_8K_SLOT0_BANKS_2
         start_test 4, "R6 Bank 2"
         select_prg_bank 0, 2
         lda BANK_WINDOW + 1
         assert_a_eq 2
         pass_test
+        .endif
 
         ; Optional second 8KB slot test for mappers with two switchable windows.
         .ifndef SKIP_SECOND_PRG_8K_SLOT_TESTS
@@ -400,8 +403,8 @@ test_title_string:
         pass_test
         .endif
 
-        ; === VRC1 Third PRG Slot ($C000) ===
-        .if MAPPER_NUM = 75
+        ; === Third PRG Slot ($C000) — VRC1 and Mapper 207 ===
+        .if MAPPER_NUM = 75 .or MAPPER_NUM = 151 .or MAPPER_NUM = 207
         start_test 8, "Slot2 Bank 0"
         select_prg_bank 2, 0
         lda $C000

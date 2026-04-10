@@ -1530,9 +1530,9 @@ dependencies = [
 
 [[package]]
 name = "imgui"
-version = "0.11.0"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "122d677d0efcd64ca15f12907beaf46b26bbd2cdc855ee5b227f29cf50f75bb5"
+checksum = "8addafa5cecf0515812226e806913814e02ce38d10215778082af5174abe5669"
 dependencies = [
  "bitflags 1.3.2",
  "cfg-if",
@@ -1542,20 +1542,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "imgui-opengl-renderer"
-version = "0.12.1"
+name = "imgui-glow-renderer"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e007c11a8ef4a5c42fe77942eee4e4894dc883b521955c007fece54de6f8eaca"
+checksum = "1b191cbb795a471d9f9d46cc5f5d43a0afbf9ee43b3ef7b68083e98e4dbe30ad"
 dependencies = [
- "gl_generator",
+ "glow 0.14.2",
  "imgui",
+ "memoffset",
 ]
 
 [[package]]
 name = "imgui-sys"
-version = "0.11.0"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d785272a57cb8058a53a1e6f376f48e2ec4f40fbc6a9bb197dabf7b6b59c03bf"
+checksum = "ead193f9f4b60398e8b8f4ab1483e2321640d87aeebdaa3e5f44c55633ccd804"
 dependencies = [
  "cc",
  "cfg-if",
@@ -2178,6 +2179,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "memoffset"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
+dependencies = [
+ "autocfg",
+]
+
+[[package]]
 name = "metal"
 version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2323,7 +2333,7 @@ dependencies = [
 
 [[package]]
 name = "neser"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "bitflags 2.10.0",
  "console_error_panic_hook",
@@ -2338,7 +2348,7 @@ dependencies = [
  "glutin-winit",
  "hound",
  "imgui",
- "imgui-opengl-renderer",
+ "imgui-glow-renderer",
  "js-sys",
  "librashader",
  "nosleep",

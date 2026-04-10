@@ -77,16 +77,38 @@ Before merging or committing to main, the following checkpoint shall pass:
 
 - Run `cargo clippy --all-targets --all-features -- -D warnings` and fix all warnings
 - Run `cargo fmt` and fix any formatting issues
-- Run `cargo nextest run --all-features --lib` and fix all warnings and ensure all tests pass
+- Run `./scripts/test-dir.sh <changed-dirs>` to verify the affected modules pass quickly, e.g.:
+  ```bash
+  ./scripts/test-dir.sh src/nes/cartridge          # changed cartridge code
+  ./scripts/test-dir.sh src/nes --skip-integration # NES changes, fast iteration
+  ```
+- Run `cargo test --no-default-features --lib` to verify the full test suite passes before creating a PR
 - Run `wasm-pack test --headless --chrome --no-default-features --features wasm` and fix all warnings and ensure all tests pass
 - Run `source .venv/bin/activate && python -m unittest discover -s scripts/mappertool -s scripts/scraper -s scripts -t . -p "test_*.py"` and ensure all tests pass
 - Run `npm test` and ensure all tests pass (if any tests exist)
+
+Note that it is ok to commit to a feature branch that does not pass all checkpoints, but it is NOT ok to merge to main if any checkpoint fails. Always ensure that all checkpoints pass before merging to main.
 
 ## Framework decisions
 
 Where appropriate, use established crates to streamline development and leverage existing solutions. However, ensure that the chosen crates align with the project's requirements and do not introduce unnecessary complexity. Regularly evaluate the suitability of crates as the project evolves. Take all crate decisions in a collaborative way with the navigator.
 
 ## Testing strategies
+
+### Running tests by directory
+
+Use `scripts/test-dir.sh` to run only the tests for specific source directories:
+
+```bash
+./scripts/test-dir.sh src/nes/cartridge         # Run only cartridge tests (~4100 tests)
+./scripts/test-dir.sh src/gb src/platform        # Run gb + platform tests (~220 tests)
+./scripts/test-dir.sh src/nes --skip-integration # NES unit tests only, skip slow integration tests
+./scripts/test-dir.sh src/nes/cartridge --list   # List matching tests without running them
+```
+
+This is especially useful during development to get fast feedback on the area you're working on. The CI workflow uses the same approach to skip irrelevant tests based on changed files.
+
+Integration tests (`nes::integration_tests`, ~740 tests) account for 97% of test execution time. Use `--skip-integration` for fast iteration, then run the full suite before creating a PR.
 
 Testing of the emulator should be done using a mix of unit and integration tests. Unit tests should be used to verify the correctness of individual components and modules, ensuring that each part of the emulator functions as intended in isolation. Integration tests should be employed to validate the interactions between different components, ensuring that they work together seamlessly to provide the desired functionality of the emulator as a whole.
 
