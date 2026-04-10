@@ -1,5 +1,6 @@
 use crate::gb::bus::GbBus;
 use crate::gb::cartridge::GbCartridge;
+use crate::gb::input::joypad::Joypad;
 use crate::gb::ppu::Ppu;
 use crate::gb::timer::Timer;
 
@@ -23,13 +24,15 @@ use crate::gb::timer::Timer;
 /// - $FF46:       OAM DMA (write-only trigger)
 /// - $FF80–$FFFE: HRAM
 /// - $FFFF:       IE register
-/// - Everything else in $FF00–$FF7F: I/O stubs (reads return 0xFF)
+/// - $FF00:       Joypad (P1 register)
+/// - Everything else in $FF01–$FF7F: I/O stubs (reads return 0xFF)
 pub struct DmgBus {
     cart: Box<dyn GbCartridge>,
     pub ppu: Ppu,
     wram: [u8; 0x2000],
     hram: [u8; 0x7F],
     timer: Timer,
+    pub joypad: Joypad,
     /// IF register ($FF0F): interrupt flag.
     if_reg: u8,
     /// IE register ($FFFF): interrupt enable.
@@ -44,8 +47,20 @@ impl DmgBus {
             wram: [0u8; 0x2000],
             hram: [0u8; 0x7F],
             timer: Timer::new(),
+            joypad: Joypad::new(),
             if_reg: 0,
             ie_reg: 0,
+        }
+    }
+
+    /// Set a button state on the joypad and propagate any resulting interrupt.
+    ///
+    /// Sets IF bit 4 (joypad interrupt) when pressing a button in the
+    /// currently selected group causes the effective nibble to transition
+    /// from all-ones to any-zero.
+    pub fn set_joypad_button(&mut self, id: u8, pressed: bool) {
+        if self.joypad.set_button(id, pressed) {
+            self.if_reg |= 0x10;
         }
     }
 
@@ -94,6 +109,7 @@ impl GbBus for DmgBus {
             0xE000..=0xFDFF => self.wram[(addr - 0xE000) as usize],
             0xFE00..=0xFE9F => self.ppu.read_oam(addr),
             0xFEA0..=0xFEFF => 0xFF,
+            0xFF00 => self.joypad.read(),
             0xFF04..=0xFF07 => self.timer.read(addr),
             0xFF0F => self.if_reg | 0xE0,
             0xFF40..=0xFF4B => self.ppu.read_register(addr),
@@ -112,6 +128,7 @@ impl GbBus for DmgBus {
             0xE000..=0xFDFF => self.wram[(addr - 0xE000) as usize] = val,
             0xFE00..=0xFE9F => self.ppu.write_oam(addr, val),
             0xFEA0..=0xFEFF => {}
+            0xFF00 => self.joypad.write(val),
             0xFF04..=0xFF07 => self.timer.write(addr, val),
             0xFF0F => self.if_reg = val & 0x1F,
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B => self.ppu.write_register(addr, val),
@@ -323,10 +340,63 @@ mod tests {
     #[test]
     fn test_unmapped_io_reads_return_0xff() {
         let mut bus = make_bus();
-        // $FF00 (joypad stub), $FF01 (serial), $FF08 (unmapped)
-        assert_eq!(bus.read(0xFF00), 0xFF);
+        // $FF01 (serial), $FF08 (unmapped) — $FF00 is now the joypad register
         assert_eq!(bus.read(0xFF01), 0xFF);
         assert_eq!(bus.read(0xFF08), 0xFF);
+    }
+
+    // ── Joypad ($FF00) ────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_ff00_read_reflects_joypad_state_no_buttons_pressed() {
+        // Given: fresh bus (neither group selected = default after new)
+        let mut bus = make_bus();
+        // When: write 0x10 to $FF00 (select P15 / action group)
+        bus.write(0xFF00, 0x10);
+        // Then: read reflects select bits and all-released nibble = 0xDF
+        // 0xC0 | 0x10 | 0x0F = 0xDF
+        assert_eq!(bus.read(0xFF00), 0xDF);
+    }
+
+    #[test]
+    fn test_ff00_write_updates_select_and_read_reflects_it() {
+        // Given: select P14 (direction group)
+        let mut bus = make_bus();
+        bus.write(0xFF00, 0x20);
+        // Then: bits 5-4 of read = 0x20
+        assert_eq!(bus.read(0xFF00) & 0x30, 0x20);
+    }
+
+    #[test]
+    fn test_set_joypad_button_affects_ff00_read() {
+        // Given: P15 selected
+        let mut bus = make_bus();
+        bus.write(0xFF00, 0x10); // select P15 (action buttons)
+        // When: press A (id=0)
+        bus.set_joypad_button(0, true);
+        // Then: bit0 of lower nibble is 0 (active-low) → read = 0xDE
+        assert_eq!(bus.read(0xFF00), 0xDE);
+    }
+
+    #[test]
+    fn test_set_joypad_button_sets_if_bit4_on_first_press() {
+        // Given: P15 selected
+        let mut bus = make_bus();
+        bus.write(0xFF00, 0x10); // select P15
+        // When: press A (first button — nibble transitions 0xF → non-0xF)
+        bus.set_joypad_button(0, true);
+        // Then: IF bit 4 (joypad interrupt) is set
+        assert_eq!(bus.read(0xFF0F) & 0x10, 0x10, "IF bit 4 should be set");
+    }
+
+    #[test]
+    fn test_set_joypad_button_no_if_when_group_not_selected() {
+        // Given: neither group selected (default)
+        let mut bus = make_bus();
+        // When: press A — action group not selected, no IRQ
+        bus.set_joypad_button(0, true);
+        // Then: IF bit 4 not set
+        assert_eq!(bus.read(0xFF0F) & 0x10, 0x00, "IF bit 4 should NOT be set");
     }
 
     // ── IF register ──────────────────────────────────────────────────────────
