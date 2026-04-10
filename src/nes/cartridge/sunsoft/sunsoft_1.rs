@@ -44,9 +44,7 @@ impl Sunsoft1Mapper {
             ..Default::default()
         };
         let mut base = BaseMapper::new(&ctx, capabilities);
-        base.configure_prg_banking(32 * 1024);
         base.configure_chr_banking(4 * 1024);
-        base.select_prg_page(0, 0);
         let mut mapper = Self { base, reg: 0 };
         mapper.apply_register(0);
         mapper
@@ -250,15 +248,16 @@ mod tests {
 
     #[test]
     fn no_prg_ram_at_6000_7fff() {
-        // $6000-$7FFF is register space; reads should not expose writable SRAM
+        // $6000-$7FFF is register space (write-only); reads should return open bus
         let prg_rom = banked_data(32 * 1024, 1);
         let chr_rom = banked_data(4 * 1024, 8);
         let mapper = create_mapper184(prg_rom, chr_rom).unwrap();
-        // No PRG-RAM means reads at $6000-$7FFF return 0 (open bus default)
+        let open_bus = 0xA5;
+        // No PRG-RAM means reads at $6000-$7FFF should preserve the open-bus value.
         assert_eq!(
-            mapper.read_prg(0x6000),
-            0,
-            "No PRG-RAM should be present; $6000 read returns 0"
+            mapper.read_prg_open_bus(0x6000, open_bus),
+            open_bus,
+            "No PRG-RAM should be present; $6000 read should return the open-bus value"
         );
     }
 
