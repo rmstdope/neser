@@ -16,7 +16,7 @@
 //!
 //! ## Memory Map
 //!
-//! * `CPU $6000–$7FFF`: 8 KiB unbanked CHR-RAM (not PRG-RAM)
+//! * `CPU $6000–$7FFF`: unmapped / open bus (no PRG-RAM on this mapper)
 //! * `CPU $8000–$BFFF`: 16 KiB switchable or fixed PRG-ROM window
 //! * `CPU $C000–$FFFF`: 16 KiB switchable or fixed PRG-ROM window
 //! * `PPU $0000–$1FFF`: 8 KiB unbanked CHR-RAM
@@ -126,7 +126,7 @@ impl Mapper167 {
     fn update_banks(&mut self) {
         // Outer bank bit: PRG A19 = F XOR f (bit 4 of reg0 XOR bit 4 of reg1).
         let outer_bit = ((self.reg0 ^ self.reg1) & 0x10) as i16;
-        // Shift to become the A19 bit: outer_bit represents 32 decimal when set.
+        // Shift bit 4 (0x10/16) into bit 5 (0x20/32): ×2 for 16 KiB page granularity.
         let outer = outer_bit << 1; // bit 4 → bit 5 position (×2 for 16KB pages)
 
         // Inner bank: 5-bit value reg2 XOR reg3.
@@ -178,6 +178,9 @@ impl Mapper for Mapper167 {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
+        if self.base.try_write_prg_ram(addr, value) {
+            return;
+        }
         match addr & 0xE000 {
             0x8000 => self.reg0 = value & 0x11, // keep bits [4,0]
             0xA000 => self.reg1 = value & 0x1C, // keep bits [4,3,2]
@@ -194,10 +197,10 @@ impl Mapper for Mapper167 {
 
     fn restore_registers(&mut self, data: &[u8]) {
         if data.len() >= 4 {
-            self.reg0 = data[0];
-            self.reg1 = data[1];
-            self.reg2 = data[2];
-            self.reg3 = data[3];
+            self.reg0 = data[0] & 0x11;
+            self.reg1 = data[1] & 0x1C;
+            self.reg2 = data[2] & 0x1F;
+            self.reg3 = data[3] & 0x1F;
             self.update_banks();
         }
     }
@@ -375,7 +378,7 @@ mod tests {
     // ── Outer bank (PRG A19) via F and f XOR ─────────────────────────────────
 
     #[test]
-    fn outer_bank_bit_applies_when_f_xor_f_set() {
+    fn outer_bank_bit_applies_when_reg0_f_bit4_set_reg1_f_bit4_clear() {
         let mut mapper = make_mapper();
         // reg0 F=1 (bit 4 set): 0x10
         mapper.write_prg(0x8000, 0x10); // reg0: F=1
