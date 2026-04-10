@@ -53,6 +53,21 @@ impl DmgBus {
         }
     }
 
+    /// Reset all bus state to power-on defaults.
+    ///
+    /// Reinitialises the PPU, timer, and joypad; zeroes WRAM and HRAM;
+    /// clears IF and IE. The cartridge is NOT reset (ROM contents are
+    /// preserved; RAM is cleared by the cart's own reset if needed).
+    pub fn reset(&mut self) {
+        self.ppu = Ppu::new();
+        self.timer = Timer::new();
+        self.joypad = Joypad::new();
+        self.wram = [0u8; 0x2000];
+        self.hram = [0u8; 0x7F];
+        self.if_reg = 0;
+        self.ie_reg = 0;
+    }
+
     /// Set a button state on the joypad and propagate any resulting interrupt.
     ///
     /// Sets IF bit 4 (joypad interrupt) when pressing a button in the

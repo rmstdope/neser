@@ -149,6 +149,25 @@ impl<B: GbBus> Sm83<B> {
         self.cycles
     }
 
+    /// Reset the CPU registers to the post-boot-ROM (DMG) state.
+    ///
+    /// This matches the register values a DMG has after the boot ROM finishes
+    /// and jumps to the cartridge entry point at $0100.
+    /// Clears IME, halted, halt_bug, and ime_pending; the cycle counter is
+    /// intentionally NOT reset (it tracks wall-clock ticks, not game time).
+    pub fn reset_registers(&mut self) {
+        self.regs.set_af(0x01B0);
+        self.regs.set_bc(0x0013);
+        self.regs.set_de(0x00D8);
+        self.regs.set_hl(0x014D);
+        self.regs.sp = 0xFFFE;
+        self.regs.pc = 0x0100;
+        self.ime = false;
+        self.halted = false;
+        self.halt_bug = false;
+        self.ime_pending = false;
+    }
+
     /// Read a byte from the bus and advance the cycle counter by 1 M-cycle.
     fn read(&mut self, addr: u16) -> u8 {
         self.cycles += 1;

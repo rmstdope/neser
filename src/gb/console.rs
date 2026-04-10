@@ -31,6 +31,22 @@ impl<B: GbBus> Gb<B> {
     }
 }
 
+/// Reset support for Gb<DmgBus>.
+impl Gb<DmgBus> {
+    /// Reset the console.
+    ///
+    /// - `soft_reset = true`: resets only the CPU registers to the
+    ///   post-boot-ROM state (WRAM and other bus state are preserved).
+    /// - `soft_reset = false`: resets CPU registers **and** all bus
+    ///   state (WRAM zeroed, PPU/timer/joypad reinitialised).
+    pub fn reset(&mut self, soft_reset: bool) {
+        self.cpu.reset_registers();
+        if !soft_reset {
+            self.cpu.bus.reset();
+        }
+    }
+}
+
 /// DMG-specific screen and frame API.
 impl Gb<DmgBus> {
     /// Snapshot the current rendered screen as a 160×144 RGB byte vector.
@@ -52,6 +68,111 @@ impl Gb<DmgBus> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gb::cartridge::load_cartridge;
+
+    // ── DMG reset helpers ─────────────────────────────────────────────────
+
+    /// Build a minimal valid ROM-only cartridge for reset tests.
+    fn minimal_cart() -> Box<dyn crate::gb::cartridge::GbCartridge> {
+        let mut rom = vec![0u8; 0x8000];
+        rom[0x0147] = 0x00; // ROM only
+        rom[0x0148] = 0x00; // 32 KB
+        rom[0x0149] = 0x00; // no RAM
+        let chk = rom[0x0134..=0x014C]
+            .iter()
+            .fold(0u8, |acc, &b| acc.wrapping_sub(b).wrapping_sub(1));
+        rom[0x014D] = chk;
+        load_cartridge(&rom).expect("valid ROM")
+    }
+
+    fn make_dmg() -> Gb<DmgBus> {
+        Gb::new(DmgBus::new(minimal_cart()))
+    }
+
+    // ── reset: CPU registers ──────────────────────────────────────────────
+
+    #[test]
+    fn test_reset_registers_restores_pc_to_0100() {
+        // Given: a fresh DMG console
+        let mut gb = make_dmg();
+        // PC starts at 0 before any code runs
+        assert_eq!(gb.cpu.regs.pc, 0x0000);
+        // When: reset registers
+        gb.cpu.reset_registers();
+        // Then: PC = $0100 (post-boot-ROM entry)
+        assert_eq!(gb.cpu.regs.pc, 0x0100);
+    }
+
+    #[test]
+    fn test_reset_registers_sets_dmg_af() {
+        // Given/When: reset CPU registers
+        let mut gb = make_dmg();
+        gb.cpu.reset_registers();
+        // Then: AF = $01B0 (DMG post-boot value per Pan Docs)
+        assert_eq!(gb.cpu.regs.af(), 0x01B0);
+    }
+
+    #[test]
+    fn test_reset_registers_sets_dmg_bc_de_hl_sp() {
+        let mut gb = make_dmg();
+        gb.cpu.reset_registers();
+        assert_eq!(gb.cpu.regs.bc(), 0x0013);
+        assert_eq!(gb.cpu.regs.de(), 0x00D8);
+        assert_eq!(gb.cpu.regs.hl(), 0x014D);
+        assert_eq!(gb.cpu.regs.sp, 0xFFFE);
+    }
+
+    #[test]
+    fn test_reset_registers_clears_ime_and_halted() {
+        let mut gb = make_dmg();
+        gb.cpu.ime = true;
+        gb.cpu.halted = true;
+        gb.cpu.reset_registers();
+        assert!(!gb.cpu.ime);
+        assert!(!gb.cpu.halted);
+    }
+
+    // ── reset: soft vs hard ───────────────────────────────────────────────
+
+    #[test]
+    fn test_soft_reset_preserves_wram() {
+        // Given: write a known value to WRAM
+        let mut gb = make_dmg();
+        gb.cpu.bus.write(0xC100, 0xAB);
+        // When: soft reset
+        gb.reset(true);
+        // Then: WRAM is unchanged
+        assert_eq!(gb.cpu.bus.read(0xC100), 0xAB);
+    }
+
+    #[test]
+    fn test_hard_reset_clears_wram() {
+        // Given: write a known value to WRAM
+        let mut gb = make_dmg();
+        gb.cpu.bus.write(0xC100, 0xAB);
+        // When: hard reset
+        gb.reset(false);
+        // Then: WRAM is zeroed
+        assert_eq!(gb.cpu.bus.read(0xC100), 0x00);
+    }
+
+    #[test]
+    fn test_hard_reset_restores_pc_and_clears_wram() {
+        // Combined: PC is correct AND WRAM is zeroed after hard reset
+        let mut gb = make_dmg();
+        gb.cpu.bus.write(0xC000, 0xFF);
+        gb.reset(false);
+        assert_eq!(gb.cpu.regs.pc, 0x0100);
+        assert_eq!(gb.cpu.bus.read(0xC000), 0x00);
+    }
+
+    #[test]
+    fn test_soft_reset_restores_pc() {
+        // Soft reset must still reset CPU registers (including PC)
+        let mut gb = make_dmg();
+        gb.reset(true);
+        assert_eq!(gb.cpu.regs.pc, 0x0100);
+    }
 
     /// A bus that counts the total M-cycles passed to `tick()`.
     struct TrackingBus {
