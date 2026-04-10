@@ -2,6 +2,8 @@ use crate::gb::bus::DmgBus;
 use crate::gb::bus::GbBus;
 use crate::gb::cpu::Sm83;
 
+pub mod gameboy;
+
 /// Game Boy (DMG) console stub.
 ///
 /// Wraps the SM83 CPU and a bus. This is a minimal integration shell;
@@ -17,12 +19,13 @@ impl<B: GbBus> Gb<B> {
         }
     }
 
-    /// Step one CPU instruction.
-    pub fn step(&mut self) {
+    /// Step one CPU instruction. Returns the number of M-cycles consumed.
+    pub fn step(&mut self) -> u8 {
         let before = self.cpu.cycles();
         self.cpu.execute();
         let delta = (self.cpu.cycles() - before) as u8;
         self.cpu.bus.tick(delta);
+        delta
     }
 
     /// Total M-cycles elapsed.
@@ -62,6 +65,11 @@ impl Gb<DmgBus> {
     /// Clear the frame-ready flag.
     pub fn clear_frame_ready(&mut self) {
         self.cpu.bus.ppu.clear_frame_ready();
+    }
+
+    /// CRC32 of the current screen buffer.
+    pub fn screen_crc32(&self) -> u32 {
+        self.cpu.bus.ppu.screen_buffer().crc32()
     }
 }
 

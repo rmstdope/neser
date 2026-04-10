@@ -5,6 +5,7 @@
 mod nes;
 
 mod frontends;
+mod gb;
 mod platform;
 
 use nes::console::{
@@ -330,7 +331,9 @@ fn run_native_frontend(
 
     let mut console = platform::emulator::Console::new_nes(app_context.clone());
     {
-        let platform::emulator::Console::Nes(nes) = &mut console;
+        let platform::emulator::Console::Nes(nes) = &mut console else {
+            panic!("expected NES console")
+        };
         nes.insert_cartridge(cart);
     }
 

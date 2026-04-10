@@ -1,3 +1,4 @@
+#[allow(unused_imports)]
 pub use bus::{GbBus, StubBus};
 pub use dmg_bus::DmgBus;
 

@@ -143,13 +143,17 @@ impl NativeEventLoop {
 
     /// Extract the inner NES emulator for NES-specific operations.
     fn nes(&self) -> &Nes {
-        let Console::Nes(nes) = &self.console;
+        let Console::Nes(nes) = &self.console else {
+            panic!("expected NES console")
+        };
         nes
     }
 
     /// Extract the inner NES emulator mutably for NES-specific operations.
     fn nes_mut(&mut self) -> &mut Nes {
-        let Console::Nes(nes) = &mut self.console;
+        let Console::Nes(nes) = &mut self.console else {
+            panic!("expected NES console")
+        };
         nes
     }
 
@@ -200,7 +204,9 @@ impl NativeEventLoop {
 
         let audio = self.audio.take();
         let audio_cell = std::cell::RefCell::new(audio);
-        let Console::Nes(nes) = &mut self.console;
+        let Console::Nes(nes) = &mut self.console else {
+            return;
+        };
         self.debugger_controller
             .run_frame(nes, &self.tracing, &mut |nes| {
                 if let Some(ref mut audio) = *audio_cell.borrow_mut() {
@@ -570,7 +576,9 @@ impl ApplicationHandler for NativeEventLoop {
                 if !self.initialized {
                     self.initialize_audio();
                     self.sync_audio_state();
-                    let Console::Nes(nes) = &self.console;
+                    let Console::Nes(nes) = &self.console else {
+                        return;
+                    };
                     let watches = self.debugger_controller.load_debug_state_from_file(nes);
                     if let Some(ref mut gl) = self.gl_wrapper {
                         gl.set_watch_addresses(watches);
@@ -601,7 +609,9 @@ impl ApplicationHandler for NativeEventLoop {
                     .as_ref()
                     .map(|gl| gl.watch_addresses())
                     .unwrap_or_default();
-                let Console::Nes(nes) = &self.console;
+                let Console::Nes(nes) = &self.console else {
+                    return;
+                };
                 self.debugger_controller
                     .save_debug_state_to_file(nes, &watches);
                 if let Err(e) = self.console.save_ram() {
@@ -670,7 +680,9 @@ impl ApplicationHandler for NativeEventLoop {
                     let fullscreen_before = self.state.fullscreen;
                     let audio_ref: Option<&dyn EmulatorAudio> =
                         self.audio.as_ref().map(|a| a as &dyn EmulatorAudio);
-                    let Console::Nes(nes) = &mut self.console;
+                    let Console::Nes(nes) = &mut self.console else {
+                        return;
+                    };
                     let outcome =
                         keyboard::handle_key_pressed(nes, key_code, &mut self.state, audio_ref);
                     match outcome {
@@ -683,7 +695,9 @@ impl ApplicationHandler for NativeEventLoop {
                                 .as_ref()
                                 .map(|gl| gl.watch_addresses())
                                 .unwrap_or_default();
-                            let Console::Nes(nes) = &self.console;
+                            let Console::Nes(nes) = &self.console else {
+                                return;
+                            };
                             self.debugger_controller
                                 .save_debug_state_to_file(nes, &watches);
                             if let Err(e) = self.console.save_ram() {
@@ -702,17 +716,23 @@ impl ApplicationHandler for NativeEventLoop {
                             }
                         }
                         KeyOutcome::ToggleDebugger => {
-                            let Console::Nes(nes) = &self.console;
+                            let Console::Nes(nes) = &self.console else {
+                                return;
+                            };
                             self.debugger_controller.toggle_debugger(nes);
                             self.sync_from_controller();
                         }
                         KeyOutcome::StepOver => {
-                            let Console::Nes(nes) = &mut self.console;
+                            let Console::Nes(nes) = &mut self.console else {
+                                return;
+                            };
                             self.debugger_controller.step_over(nes);
                             self.sync_from_controller();
                         }
                         KeyOutcome::StepInto => {
-                            let Console::Nes(nes) = &mut self.console;
+                            let Console::Nes(nes) = &mut self.console else {
+                                return;
+                            };
                             self.debugger_controller.step_into(nes);
                             self.sync_from_controller();
                         }
@@ -735,7 +755,9 @@ impl ApplicationHandler for NativeEventLoop {
                         }
                     }
                 } else {
-                    let Console::Nes(nes) = &mut self.console;
+                    let Console::Nes(nes) = &mut self.console else {
+                        return;
+                    };
                     keyboard::handle_key_released(
                         nes,
                         key_code,
@@ -887,7 +909,9 @@ impl ApplicationHandler for NativeEventLoop {
                 // Render and apply debugger UI actions
                 let action = if let Some(ref mut gl) = self.gl_wrapper {
                     gl.update_breakpoints(self.debugger_controller.breakpoints());
-                    let Console::Nes(nes) = &self.console;
+                    let Console::Nes(nes) = &self.console else {
+                        return;
+                    };
                     let overlay = self.state.overlay_text(nes, self.autorun_state.as_ref());
                     let crosshair = mouse::zapper_crosshair(nes, self.state.last_zapper_position);
                     gl.render(
@@ -901,7 +925,9 @@ impl ApplicationHandler for NativeEventLoop {
                     Default::default()
                 };
                 {
-                    let Console::Nes(nes) = &mut self.console;
+                    let Console::Nes(nes) = &mut self.console else {
+                        return;
+                    };
                     self.debugger_controller.apply_ui_action(nes, action);
                 }
                 self.sync_from_controller();
@@ -959,7 +985,9 @@ impl ApplicationHandler for NativeEventLoop {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         // Poll gamepad events before requesting redraw.
         if let Some(ref mut gp) = self.gamepad {
-            let Console::Nes(nes) = &mut self.console;
+            let Console::Nes(nes) = &mut self.console else {
+                return;
+            };
             let changes = gp.process_events(nes);
             self.state.gamepad_count = gp.connected_count();
 

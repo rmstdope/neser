@@ -5,6 +5,7 @@
 //! NES-specific features (debugging, PPU viewer, etc.) are accessed by
 //! matching on the [`Console::Nes`] variant directly.
 
+use crate::gb::GameBoy;
 use crate::nes::console::Nes;
 use crate::platform::app_context::{IntoSharedAppContext, SharedAppContext};
 
@@ -12,6 +13,7 @@ use crate::platform::app_context::{IntoSharedAppContext, SharedAppContext};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SystemType {
     Nes,
+    GameBoy,
 }
 
 /// Hardware-agnostic wrapper around system-specific emulators.
@@ -25,8 +27,10 @@ pub enum SystemType {
 ///     // NES-specific: debugger, PPU viewer, Zapper, etc.
 /// }
 /// ```
+#[allow(clippy::large_enum_variant)]
 pub enum Console {
     Nes(Nes),
+    GameBoy(Box<GameBoy>),
 }
 
 impl Console {
@@ -35,10 +39,16 @@ impl Console {
         Console::Nes(Nes::new(app_context))
     }
 
+    /// Create a new Game Boy (DMG) emulator instance.
+    pub fn new_gameboy(app_context: impl IntoSharedAppContext) -> Self {
+        Console::GameBoy(Box::new(GameBoy::new(app_context)))
+    }
+
     /// Which system this console is emulating.
     pub fn system_type(&self) -> SystemType {
         match self {
             Console::Nes(_) => SystemType::Nes,
+            Console::GameBoy(_) => SystemType::GameBoy,
         }
     }
 
@@ -54,6 +64,7 @@ impl Console {
     pub fn load_rom(&mut self, bytes: &[u8], name: &str) -> Result<(), String> {
         match self {
             Console::Nes(nes) => nes.load_rom(bytes, name),
+            Console::GameBoy(gb) => gb.load_rom(bytes, name),
         }
     }
 
@@ -63,6 +74,7 @@ impl Console {
     pub fn run_tick(&mut self) -> u8 {
         match self {
             Console::Nes(nes) => nes.run_cpu_tick(),
+            Console::GameBoy(gb) => gb.run_tick(),
         }
     }
 
@@ -71,6 +83,7 @@ impl Console {
     pub fn is_ready_to_render(&self) -> bool {
         match self {
             Console::Nes(nes) => nes.is_ready_to_render(),
+            Console::GameBoy(gb) => gb.is_frame_ready(),
         }
     }
 
@@ -78,6 +91,7 @@ impl Console {
     pub fn clear_ready_to_render(&mut self) {
         match self {
             Console::Nes(nes) => nes.clear_ready_to_render(),
+            Console::GameBoy(gb) => gb.clear_frame_ready(),
         }
     }
 
@@ -85,6 +99,7 @@ impl Console {
     pub fn screen_width(&self) -> u32 {
         match self {
             Console::Nes(_) => Nes::SCREEN_WIDTH,
+            Console::GameBoy(_) => GameBoy::SCREEN_WIDTH,
         }
     }
 
@@ -92,6 +107,7 @@ impl Console {
     pub fn screen_height(&self) -> u32 {
         match self {
             Console::Nes(_) => Nes::SCREEN_HEIGHT,
+            Console::GameBoy(_) => GameBoy::SCREEN_HEIGHT,
         }
     }
 
@@ -102,6 +118,7 @@ impl Console {
     pub fn screen_snapshot(&self) -> Vec<u8> {
         match self {
             Console::Nes(nes) => nes.get_screen_buffer().snapshot(),
+            Console::GameBoy(gb) => gb.screen_snapshot(),
         }
     }
 
@@ -114,6 +131,7 @@ impl Console {
             Console::Nes(nes) => nes
                 .get_screen_buffer()
                 .cropped_snapshot(h_overscan, v_overscan),
+            Console::GameBoy(gb) => gb.cropped_screen_snapshot(),
         }
     }
 
@@ -121,6 +139,7 @@ impl Console {
     pub fn screen_crc32(&self) -> u32 {
         match self {
             Console::Nes(nes) => nes.get_screen_buffer().crc32(),
+            Console::GameBoy(gb) => gb.screen_crc32(),
         }
     }
 
@@ -128,6 +147,7 @@ impl Console {
     pub fn sample_ready(&self) -> bool {
         match self {
             Console::Nes(nes) => nes.sample_ready(),
+            Console::GameBoy(_) => false,
         }
     }
 
@@ -138,6 +158,7 @@ impl Console {
     pub fn get_sample(&mut self) -> Option<f32> {
         match self {
             Console::Nes(nes) => nes.get_sample(),
+            Console::GameBoy(_) => None,
         }
     }
 
@@ -153,6 +174,7 @@ impl Console {
                     eprintln!("warning: invalid NES button_id: {button_id}");
                 }
             }
+            Console::GameBoy(gb) => gb.set_button(button_id, pressed),
         }
     }
 
@@ -162,6 +184,7 @@ impl Console {
     pub fn set_joypad_button_states(&mut self, port: u8, state: u8) {
         match self {
             Console::Nes(nes) => nes.set_joypad_button_states(port, state),
+            Console::GameBoy(gb) => gb.set_joypad_button_states(state),
         }
     }
 
@@ -169,6 +192,7 @@ impl Console {
     pub fn get_joypad_button_states(&self, port: u8) -> u8 {
         match self {
             Console::Nes(nes) => nes.get_joypad_button_states(port),
+            Console::GameBoy(gb) => gb.get_joypad_button_states(),
         }
     }
 
@@ -176,6 +200,7 @@ impl Console {
     pub fn save_state_bytes(&self) -> Result<Vec<u8>, String> {
         match self {
             Console::Nes(nes) => nes.save_state_bytes(),
+            Console::GameBoy(gb) => gb.save_state_bytes(),
         }
     }
 
@@ -183,6 +208,7 @@ impl Console {
     pub fn load_state_bytes(&mut self, data: &[u8]) -> Result<(), String> {
         match self {
             Console::Nes(nes) => nes.load_state_bytes(data),
+            Console::GameBoy(gb) => gb.load_state_bytes(data),
         }
     }
 
@@ -193,6 +219,7 @@ impl Console {
     pub fn reset(&mut self, soft_reset: bool) {
         match self {
             Console::Nes(nes) => nes.reset(soft_reset),
+            Console::GameBoy(gb) => gb.reset(soft_reset),
         }
     }
 
@@ -200,6 +227,7 @@ impl Console {
     pub fn app_context(&self) -> &SharedAppContext {
         match self {
             Console::Nes(nes) => nes.app_context(),
+            Console::GameBoy(gb) => gb.app_context(),
         }
     }
 
@@ -207,6 +235,7 @@ impl Console {
     pub fn save_ram(&self) -> Result<(), String> {
         match self {
             Console::Nes(nes) => nes.save_ram().map_err(|e| e.to_string()),
+            Console::GameBoy(_) => Ok(()),
         }
     }
 
@@ -214,6 +243,7 @@ impl Console {
     pub fn set_audio_sample_rate(&mut self, rate: f32) {
         match self {
             Console::Nes(nes) => nes.set_audio_sample_rate(rate),
+            Console::GameBoy(_) => {}
         }
     }
 }
@@ -332,8 +362,11 @@ mod tests {
     #[test]
     fn test_nes_variant_is_accessible() {
         let mut console = make_console();
-        let Console::Nes(nes) = &mut console;
-        assert!(!nes.is_ready_to_render());
+        if let Console::Nes(nes) = &mut console {
+            assert!(!nes.is_ready_to_render());
+        } else {
+            panic!("expected Console::Nes");
+        }
     }
 
     #[test]
