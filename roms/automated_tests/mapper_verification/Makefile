@@ -309,6 +309,8 @@ SINGLES := \
 	$(SINGLES_DIR)/m158.0_prg_banking.nes \
 	$(SINGLES_DIR)/m158.0_chr_banking.nes \
 	$(SINGLES_DIR)/m158.0_irq.nes \
+	$(SINGLES_DIR)/m154.0_prg_banking.nes \
+	$(SINGLES_DIR)/m154.0_nametable.nes \
 	$(SINGLES_DIR)/m207.0_prg_banking.nes \
 	$(SINGLES_DIR)/m207.0_chr_banking.nes
 
@@ -400,6 +402,7 @@ COMBINED := \
 	$(BIN_DIR)/m111.0.nes \
 	$(BIN_DIR)/m119.0.nes \
 	$(BIN_DIR)/m151.0.nes \
+	$(BIN_DIR)/m154.0.nes \
 	$(BIN_DIR)/m158.0.nes \
 	$(BIN_DIR)/m207.0.nes
 
@@ -1031,6 +1034,13 @@ $(eval $(call ROM_RULE,$(SINGLES_DIR)/m158.0_prg_banking.nes,prg_banking,m158.0)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m158.0_chr_banking.nes,chr_banking,m158.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m158.0_irq.nes,irq,m158.0))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m158.0.nes,m158.0,prg_banking chr_banking irq))
+
+# Mapper 154 (NAMCOT-3453 — Devil Man)
+# Mapper 88 (Namcot 3443) + bit-6 one-screen mirroring on all $8000–$FFFF writes.
+# CHR banking test skipped: split lower/upper 64KB layout incompatible with standard test.
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m154.0_prg_banking.nes,prg_banking,m154.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m154.0_nametable.nes,nametable,m154.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m154.0.nes,m154.0,prg_banking nametable))
 
 # Mapper 207 (Taito X1-005 Alternate Mirroring) — 3 switchable 8KB PRG slots, mixed 2K+1K CHR
 # CONSOLE_VERIFICATION: registers at $7EF0–$7EFF prevent use of $6000 status protocol.

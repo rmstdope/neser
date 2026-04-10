@@ -188,6 +188,9 @@ got_val:      .res 1       ; Temp for fail handler
     .elseif MAPPER_NUM = 36
     ; TXC ASIC: map font CHR bank via $4200
     init_chr_font
+    .elseif MAPPER_NUM = 154
+    ; NAMCOT-3453: map font CHR banks 8+9 to PPU $0000-$07FF via R0=8
+    init_chr_font
     .endif
 
     jsr init_nes

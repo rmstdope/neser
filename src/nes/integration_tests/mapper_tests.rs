@@ -2534,6 +2534,25 @@ mod tests {
     );
 
     // ================================================================
+    // Mapper 154 (NAMCOT-3453 — Devil Man), Submapper 0
+    // Mapper 88 (Namcot 3443) + bit-6 one-screen mirroring on all
+    // $8000–$FFFF writes. M=0 → Single Screen A, M=1 → Single Screen B.
+    // ================================================================
+
+    setup_rom_test!(
+        test_mv_m154_0_prg_banking,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m154.0_prg_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m154_0_nametable,
+        "roms/automated_tests/mapper_verification/bin/rom_singles/m154.0_nametable.nes"
+    );
+    setup_rom_test!(
+        test_mv_m154_0_combined,
+        "roms/automated_tests/mapper_verification/bin/m154.0.nes"
+    );
+
+    // ================================================================
     // Mapper 111 (GTROM / Cheapocabra), Submapper 0
     // Uses console verification; $7000-$7FFF is register mirror,
     // $6000-$6FFF is unmapped (no PRG-RAM).

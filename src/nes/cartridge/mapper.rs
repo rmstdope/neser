@@ -41,6 +41,7 @@ use super::namco::namco163::Namco163Mapper;
 use super::namco::namcot_3425::Namcot3425Mapper;
 use super::namco::namcot_3443::Namcot3443Mapper;
 use super::namco::namcot_3446::Namcot3446Mapper;
+use super::namco::namcot_3453::Namcot3453Mapper;
 
 // Bandai mappers
 use super::bandai::bandai_fcg::BandaiFcgMapper;
@@ -1018,6 +1019,7 @@ mapper_registry! {
     151 => Mapper151::new,
     152 => Mapper152::new,
     153 => Mapper153::new,
+    154 => Namcot3453Mapper::new,
     155 => MMC1Mapper::new,
     157 => Mapper157::new,
     160 => JyCompanyMapper::new,
