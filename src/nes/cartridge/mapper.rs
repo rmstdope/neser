@@ -46,6 +46,8 @@ use super::namco::namcot_3446::Namcot3446Mapper;
 use super::bandai::bandai_fcg::BandaiFcgMapper;
 use super::bandai::mapper70::Mapper70;
 use super::bandai::mapper96::Mapper96;
+use super::bandai::mapper152::Mapper152;
+use super::bandai::mapper153::Mapper153;
 use super::bandai::mapper157::Mapper157;
 
 // Sunsoft mappers
@@ -93,8 +95,10 @@ use super::sachen::mapper136::Mapper136;
 use super::sachen::mapper143::Mapper143;
 use super::sachen::mapper145::Mapper145;
 use super::sachen::mapper147::Mapper147;
+use super::sachen::mapper148::Mapper148;
 use super::sachen::mapper149::Mapper149;
 use super::sachen::mapper150::Mapper150;
+use super::sachen::mapper173::Mapper173;
 use super::sachen::mapper243::Mapper243;
 use super::sachen::sachen8259::Sachen8259;
 
@@ -1008,12 +1012,17 @@ mapper_registry! {
     145 => Mapper145::new,
     146 => Mapper79::new,
     147 => Mapper147::new,
+    148 => Mapper148::new,
     149 => Mapper149::new,
     150 => Mapper150::new,
     151 => Mapper151::new,
+    152 => Mapper152::new,
+    153 => Mapper153::new,
     155 => MMC1Mapper::new,
     157 => Mapper157::new,
+    160 => JyCompanyMapper::new,
     165 => Mapper165::new,
+    173 => Mapper173::new,
     180 => UxromInvertedMapper::new,
     185 => CnromSecurityMapper::new,
     199 => Mapper199::new,
