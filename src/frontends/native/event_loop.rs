@@ -583,7 +583,11 @@ impl ApplicationHandler for NativeEventLoop {
             return;
         }
 
-        match NativeGlWrapper::new(event_loop, self.app_context.clone()) {
+        match NativeGlWrapper::new(
+            event_loop,
+            self.app_context.clone(),
+            self.console.system_type(),
+        ) {
             Ok(gl) => {
                 self.gl_wrapper = Some(gl);
                 if !self.initialized {
