@@ -421,10 +421,12 @@ impl MMC3Mapper {
 
     /// Returns true if the PRG-RAM window is currently enabled ($A001 bit 7).
     ///
-    /// Unlike `is_prg_ram_writable`, this only checks the enable flag, not the
-    /// write-protect flag or whether RAM is present. Used by MMC3 variant mappers
+    /// Unlike `is_prg_ram_writable`, this only checks the cached enable flag and
+    /// does not consider the write-protect flag. However, when no PRG-RAM is
+    /// present, the mapper forces this flag false, so this is not a generic proxy
+    /// for raw `$A001.7` state on no-WRAM boards. Used by MMC3 variant mappers
     /// (e.g., mapper 259 BMC-F15) that gate outer-bank register writes behind
-    /// the PRG-RAM enable bit.
+    /// the PRG-RAM enable bit on boards that actually provide PRG-RAM.
     pub fn is_prg_ram_enabled(&self) -> bool {
         self.prg_ram_enabled
     }
