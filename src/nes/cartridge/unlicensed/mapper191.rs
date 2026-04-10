@@ -139,10 +139,14 @@ impl Mapper for Mapper191 {
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        if data.len() >= CHR_RAM_SIZE {
-            let (mmc3_data, chr_ram_data) = data.split_at(data.len() - CHR_RAM_SIZE);
+        let mmc3_len = self.inner.registers_snapshot().len();
+        if data.len() >= mmc3_len + CHR_RAM_SIZE {
+            let (mmc3_data, rest) = data.split_at(mmc3_len);
+            let chr_ram_data = &rest[..CHR_RAM_SIZE];
             self.inner.restore_registers(mmc3_data);
             self.chr_ram.copy_from_slice(chr_ram_data);
+        } else {
+            self.inner.restore_registers(data);
         }
     }
 
@@ -333,6 +337,30 @@ mod tests {
             mapper2.read_chr(0x1000),
             0x55,
             "CHR-RAM must survive snapshot round-trip"
+        );
+    }
+
+    #[test]
+    fn truncated_snapshot_restores_mmc3_but_not_chr_ram() {
+        let mut mapper = make_mapper();
+        // Set a CHR register so page 0 → CHR-ROM bank 2
+        mapper.write_prg(0x8000, 0b0000_0000); // select CHR R0
+        mapper.write_prg(0x8001, 2); // bank 2
+
+        // Build a snapshot that only contains the MMC3 portion (no CHR-RAM bytes)
+        let full_snap = mapper.registers_snapshot();
+        let mmc3_only = &full_snap[..full_snap.len() - CHR_RAM_SIZE];
+
+        let mut mapper2 = make_mapper();
+        mapper2.restore_registers(mmc3_only);
+
+        // MMC3 state (bank selection) should be restored
+        mapper2.write_prg(0x8000, 0b0000_0000);
+        mapper2.write_prg(0x8001, 2);
+        assert_eq!(
+            mapper2.read_chr(0x0000),
+            mapper.read_chr(0x0000),
+            "MMC3 register state must be restored from truncated snapshot"
         );
     }
 
