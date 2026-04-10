@@ -1,3 +1,4 @@
+pub(crate) mod sunsoft_1;
 pub(crate) mod sunsoft_2;
 pub(crate) mod sunsoft_3;
 pub(crate) mod sunsoft_4;
