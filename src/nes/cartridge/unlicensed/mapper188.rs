@@ -21,7 +21,7 @@ const LAST_INTERNAL_BANK: i16 = INTERNAL_ROM_BANKS - 1;
 ///
 /// Specifications:
 /// - Main: <https://www.nesdev.org/wiki/INES_Mapper_188>
-/// - PRG-ROM: Up to 256 KiB internal + 256 KiB on expansion cartridge (32 × 16 KiB total)
+/// - PRG-ROM: Up to 128 KiB internal + 128 KiB on expansion cartridge (16 × 16 KiB total)
 /// - PRG-ROM page at $8000–$BFFF: switchable 16 KiB bank
 /// - PRG-ROM page at $C000–$FFFF: fixed to last bank of internal ROM (bank 7)
 /// - CHR: 8 KiB CHR-RAM, fixed at bank 0
@@ -140,12 +140,25 @@ impl Mapper for Mapper188 {
 
     fn write_prg(&mut self, addr: u16, value: u8) {
         if addr >= 0x8000 {
-            let effective = self.base.apply_bus_conflict(addr, value);
+            // Skip bus-conflict masking when $8000-$BFFF is open bus (no expansion ROM):
+            // there is no ROM driving the bus, so the write value passes through unchanged.
+            let effective = if addr < 0xC000 && self.is_8000_open_bus() {
+                value
+            } else {
+                self.base.apply_bus_conflict(addr, value)
+            };
             self.prg_bank = effective & 0x07;
             self.internal_selected = (effective & 0x10) != 0;
             self.mirroring_horizontal = (effective & 0x20) != 0;
             self.update_banks();
         }
+    }
+
+    fn reset(&mut self) {
+        self.prg_bank = 0;
+        self.internal_selected = true;
+        self.mirroring_horizontal = false;
+        self.update_banks();
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -405,6 +418,51 @@ mod tests {
             read_bank_id(&mapper, 0x8000),
             bank_before,
             "state must be unchanged after short restore"
+        );
+    }
+
+    // ── Reset ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn reset_restores_power_on_state() {
+        let mut mapper = make_internal_only_mapper();
+        mapper.write_prg(0x8000, 0x35); // horizontal, internal, bank 5
+        mapper.reset();
+        assert_eq!(read_bank_id(&mapper, 0x8000), 0, "bank must reset to 0");
+        assert_eq!(
+            read_bank_id(&mapper, 0xC000),
+            7,
+            "page 1 must stay at last internal bank"
+        );
+        assert_eq!(
+            mapper.get_mirroring(),
+            NametableLayout::Vertical,
+            "mirroring must reset to Vertical"
+        );
+    }
+
+    // ── Bus conflict bypass when open bus ──────────────────────────────────────
+
+    #[test]
+    fn no_bus_conflict_masking_when_8000_is_open_bus() {
+        let mut prg = make_prg_rom(8);
+        // Put 0x00 at bank 0 offset 0, which would mask all bits if conflicts applied
+        prg[0] = 0x00;
+        let ctx =
+            MapperContext::new_for_test(MAPPER_NUMBER, prg, vec![], NametableLayout::Vertical)
+                .with_prg_ram_banks(0);
+        let mut mapper = Mapper188::new(ctx);
+        // First select external ROM (no expansion ROM → open bus region)
+        // bank 0 byte is 0x00, but since we start internal, bus conflict = 0x00 & 0x00 = 0x00 → external
+        mapper.write_prg(0x8000, 0x00); // external selected, no expansion ROM
+        assert!(mapper.is_8000_open_bus(), "mapper must be in open-bus mode");
+        // Now write 0x10 (internal, bank 0); without bypass this would be 0x10 & ROM = 0, staying external
+        mapper.write_prg(0x8000, 0x10);
+        // With bypass, value 0x10 passes through, selecting internal ROM bank 0
+        assert_eq!(
+            read_bank_id(&mapper, 0x8000),
+            0,
+            "internal bank 0 must be accessible after write with bypass"
         );
     }
 }
