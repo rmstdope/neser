@@ -17,7 +17,7 @@ const CHR_BANK_SIZE: usize = 2 * 1024;
 ///
 /// Specifications:
 /// - Main: <https://www.nesdev.org/wiki/INES_Mapper_193>
-/// - PRG-ROM: Up to 512 KB; 8 KB switchable at $8000–$9FFF; $A000–$FFFF fixed to last three banks
+/// - PRG-ROM: Up to 128 KB; 8 KB switchable at $8000–$9FFF; $A000–$FFFF fixed to last three banks
 /// - CHR: 8 KB (4 × 2 KB pages); $0000–$0FFF from CHR reg 0 (4 KB), $1000–$17FF from CHR reg 1,
 ///   $1800–$1FFF from CHR reg 2
 /// - Mirroring: Software-controlled via bit 0 of register at $6004
@@ -63,7 +63,7 @@ impl Mapper193 {
             chr1: 0,
             chr2: 0,
             prg: 0,
-            mirroring: false,
+            mirroring: matches!(initial_mirroring, NametableLayout::Horizontal),
             initial_mirroring,
         };
         mapper.apply_state();
@@ -146,7 +146,7 @@ impl Mapper for Mapper193 {
             self.chr1,
             self.chr2,
             self.prg,
-            self.mirroring as u8,
+            self.base.mirroring().to_snapshot_byte(),
         ]
     }
 
@@ -156,7 +156,8 @@ impl Mapper for Mapper193 {
             self.chr1 = data[1];
             self.chr2 = data[2];
             self.prg = data[3];
-            self.mirroring = data[4] != 0;
+            let layout = NametableLayout::from_snapshot_byte(data[4]);
+            self.mirroring = matches!(layout, NametableLayout::Horizontal);
             self.apply_state();
         }
     }
@@ -166,11 +167,8 @@ impl Mapper for Mapper193 {
         self.chr1 = 0;
         self.chr2 = 0;
         self.prg = 0;
-        self.mirroring = false;
+        self.mirroring = matches!(self.initial_mirroring, NametableLayout::Horizontal);
         self.apply_state();
-        // Restore the header mirroring last; the $6004 register resets to 0 (Vertical)
-        // but power-on mirroring follows the cartridge header per emulation convention.
-        self.base.set_mirroring(self.initial_mirroring);
     }
 }
 
