@@ -334,6 +334,17 @@ impl GlBackend {
         (width.max(1), clamped_height)
     }
 
+    /// Computes windowed mode dimensions for a Game Boy console.
+    ///
+    /// The GB screen is 160×144 with square pixels (1:1 pixel aspect ratio).
+    /// The returned width preserves this aspect ratio for the given `height`.
+    pub(crate) fn gb_windowed_dimensions(height: u32) -> (u32, u32) {
+        let clamped_height = height.max(1);
+        let aspect = 160.0_f32 / 144.0;
+        let width = (clamped_height as f32 * aspect).round() as u32;
+        (width.max(1), clamped_height)
+    }
+
     /// Returns the largest size that fits inside the container while preserving aspect.
     fn letterbox_size(container_w: f32, container_h: f32, aspect: f32) -> (f32, f32) {
         if container_h == 0.0 {
@@ -829,6 +840,44 @@ mod tests_letterbox {
         let (w, h) = GlBackend::letterbox_size(800.0, 0.0, GlBackend::NTSC_ASPECT);
         assert_eq!(w, 800.0);
         assert_eq!(h, 0.0);
+    }
+}
+
+#[cfg(test)]
+mod tests_gb_windowed_dimensions {
+    use super::GlBackend;
+
+    /// GB screen is 160×144 with square pixels (1:1 pixel aspect ratio).
+    /// At height=144 the width should exactly match the GB pixel width (160).
+    #[test]
+    fn test_gb_windowed_dimensions_height_144() {
+        let (w, h) = GlBackend::gb_windowed_dimensions(144);
+        assert_eq!(h, 144);
+        assert_eq!(w, 160);
+    }
+
+    /// At 4× scale (height=576) the width should be 640 (= 160 × 4).
+    #[test]
+    fn test_gb_windowed_dimensions_height_576() {
+        let (w, h) = GlBackend::gb_windowed_dimensions(576);
+        assert_eq!(h, 576);
+        assert_eq!(w, 640);
+    }
+
+    /// width = round(720 × 160/144) = round(800.0) = 800.
+    #[test]
+    fn test_gb_windowed_dimensions_height_720() {
+        let (w, h) = GlBackend::gb_windowed_dimensions(720);
+        assert_eq!(h, 720);
+        assert_eq!(w, 800);
+    }
+
+    /// Height 0 should be clamped to 1 without panicking.
+    #[test]
+    fn test_gb_windowed_dimensions_zero_height_clamped() {
+        let (w, h) = GlBackend::gb_windowed_dimensions(0);
+        assert!(h >= 1);
+        assert!(w >= 1);
     }
 }
 

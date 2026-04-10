@@ -3,6 +3,7 @@ use super::render_target::WinitRenderTarget;
 use crate::nes::debugging::ui::DebuggerUiAction;
 use crate::platform::app_context::SharedAppContext;
 use crate::platform::debugging::breakpoints::BreakpointList;
+use crate::platform::emulator::SystemType;
 use crate::platform::rendering::input::{InputEvent, MouseButton as RenderMouseButton};
 use crate::platform::rendering::{Crosshair, GlBackend, ProcAddressLoader};
 
@@ -37,6 +38,7 @@ impl NativeGlWrapper {
     pub fn new(
         event_loop: &winit::event_loop::ActiveEventLoop,
         app_context: SharedAppContext,
+        system_type: SystemType,
     ) -> Result<Self, String> {
         let (
             fullscreen,
@@ -49,11 +51,16 @@ impl NativeGlWrapper {
         ) = {
             let ctx = app_context.borrow();
             let config = ctx.config();
-            let (window_width, window_height) = GlBackend::windowed_dimensions(
-                config.frontend.window_height,
-                config.nes.horizontal_overscan as u32,
-                config.nes.vertical_overscan as u32,
-            );
+            let (window_width, window_height) = match system_type {
+                SystemType::GameBoy => {
+                    GlBackend::gb_windowed_dimensions(config.frontend.window_height)
+                }
+                SystemType::Nes => GlBackend::windowed_dimensions(
+                    config.frontend.window_height,
+                    config.nes.horizontal_overscan as u32,
+                    config.nes.vertical_overscan as u32,
+                ),
+            };
             (
                 config.frontend.fullscreen,
                 config.frontend.vsync_enabled,
