@@ -516,4 +516,36 @@ mod tests {
         assert_eq!(mapper2.read_prg(0x6100), 0x22);
         assert_eq!(mapper2.read_prg(0x7FFF), 0x33);
     }
+
+    // ── Mapper 142 (Kaiser KS202, same hardware as mapper 56) ────────────────
+
+    #[test]
+    fn mapper_142_is_registered_in_factory() {
+        let result = create_mapper(MapperContext::new_for_test(
+            142,
+            banked_data(8 * 1024, PRG_BANKS),
+            banked_data(1024, CHR_BANKS),
+            NametableLayout::Vertical,
+        ));
+        assert!(result.is_ok(), "Mapper 142 must be creatable via factory");
+    }
+
+    #[test]
+    fn mapper_142_prg_bank_switching_works_like_mapper_56() {
+        let mut mapper = create_mapper(MapperContext::new_for_test(
+            142,
+            banked_data(8 * 1024, PRG_BANKS),
+            banked_data(1024, CHR_BANKS),
+            NametableLayout::Vertical,
+        ))
+        .expect("mapper 142 must be registered");
+        // Select bank register 1 ($A000 window), set bank 2
+        mapper.write_prg(0xE000, 0x02); // select bank register 1
+        mapper.write_prg(0xF000, 0x02); // set bank data = 2
+        assert_eq!(
+            mapper.read_prg(0xA000),
+            2,
+            "mapper 142 PRG bank 1 window set to bank 2"
+        );
+    }
 }

@@ -45,7 +45,7 @@ pub struct Sachen8259 {
 impl Sachen8259 {
     pub fn new(ctx: MapperContext) -> Self {
         let variant = match ctx.mapper {
-            135 => Variant::A,
+            135 | 141 => Variant::A,
             137 => Variant::D,
             138 => Variant::B,
             139 => Variant::C,
@@ -606,5 +606,50 @@ mod tests {
         assert_eq!(m.read_prg(0x8000), 2);
         assert_eq!(m.read_chr(0x0000), 3);
         assert_eq!(m.read_nametable(0x2000), Some(0x42));
+    }
+
+    // ── Mapper 141 (Sachen 8259 variant A, same chip as mapper 135) ───────────
+
+    #[test]
+    fn mapper_141_is_registered_in_factory() {
+        let result = create_mapper(MapperContext::new_for_test(
+            141,
+            banked_data(32 * 1024, PRG_BANKS_32K),
+            banked_data(2 * 1024, CHR_BANKS_2K),
+            NametableLayout::Horizontal,
+        ));
+        assert!(result.is_ok(), "Mapper 141 must be creatable via factory");
+    }
+
+    #[test]
+    fn mapper_141_prg_banking_via_r5() {
+        let mut m = create_mapper(MapperContext::new_for_test(
+            141,
+            banked_data(32 * 1024, PRG_BANKS_32K),
+            banked_data(2 * 1024, CHR_BANKS_2K),
+            NametableLayout::Horizontal,
+        ))
+        .expect("mapper 141 must be registered");
+        write_reg(m.as_mut(), 5, 2);
+        assert_eq!(m.read_prg(0x8000), 2, "mapper 141 R5 selects PRG bank");
+    }
+
+    #[test]
+    fn mapper_141_chr_uses_variant_a_shift_and_or() {
+        // Variant A: shift=1, OR=[1,0,1] – same as mapper 135
+        let mut m = create_mapper(MapperContext::new_for_test(
+            141,
+            banked_data(32 * 1024, PRG_BANKS_32K),
+            banked_data(2 * 1024, CHR_BANKS_2K),
+            NametableLayout::Horizontal,
+        ))
+        .expect("mapper 141 must be registered");
+        write_reg(m.as_mut(), 0, 1); // inner reg 0 = 1
+        // Slot 0: (chr_high | 1) << 1 | 0 = 2
+        assert_eq!(
+            m.read_chr(0x0000),
+            2,
+            "mapper 141 CHR slot 0 shifted left 1"
+        );
     }
 }
