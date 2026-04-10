@@ -176,6 +176,7 @@ use super::unlicensed::mapper167::Mapper167;
 use super::unlicensed::mapper174::Mapper174;
 use super::unlicensed::mapper177::Mapper177;
 use super::unlicensed::mapper178::Mapper178;
+use super::unlicensed::mapper188::Mapper188;
 use super::unlicensed::mapper190::Mapper190;
 use super::unlicensed::mapper191::Mapper191;
 use super::unlicensed::mapper192::Mapper192;
@@ -1054,6 +1055,7 @@ mapper_registry! {
     180 => UxromInvertedMapper::new,
     184 => Sunsoft1Mapper::new,
     185 => CnromSecurityMapper::new,
+    188 => Mapper188::new,
     190 => Mapper190::new,
     191 => Mapper191::new,
     192 => Mapper192::new,
