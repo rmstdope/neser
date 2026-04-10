@@ -27,9 +27,8 @@
 //! (4 × 8 KiB), so in practice only bits 3:2 (PRG) and 1:0 (CHR) matter.
 //!
 //! No PRG-RAM, no IRQ, no expansion audio.
-//! Power-on/reset state: bank 0, vertical mirroring (header default).
+//! Power-on/reset state: bank 0, with the header-defined fixed mirroring.
 
-use crate::nes::cartridge::NametableLayout;
 use crate::nes::cartridge::base_mapper::BaseMapper;
 use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
@@ -109,8 +108,8 @@ impl Mapper for Mapper203 {
 
     fn restore_registers(&mut self, data: &[u8]) {
         if data.len() >= 2 {
-            self.prg_bank = data[0];
-            self.chr_bank = data[1];
+            self.prg_bank = data[0] & 0x3F;
+            self.chr_bank = data[1] & 0x03;
             self.update_banks();
         }
     }
@@ -125,6 +124,7 @@ impl Mapper for Mapper203 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::nes::cartridge::NametableLayout;
     use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
     use crate::nes::cartridge::test_helpers::banked_data;
 
