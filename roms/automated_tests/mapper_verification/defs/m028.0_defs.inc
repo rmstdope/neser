@@ -21,7 +21,9 @@
 ;   - CHR-RAM only (8KB, no banking tested)
 ;   - Mirroring: 4-way (H/V/1A/1B) via supervisor register
 ;   - No IRQ, No PRG-RAM
-;   - Power-on maps the second 16KB bank at $C000, so test code lives there.
+;   - Power-on maps the last 16KB bank at $C000 (NESdev spec).
+;     A bootstrap in bank 7 runs init_action53 from RAM to switch $C000 to
+;     bank 1 where the main test code lives.
 
 .define MAPPER_NUM 28
 .define SUBMAPPER_NUM 0

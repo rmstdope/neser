@@ -266,14 +266,51 @@ SINGLES := \
 	$(SINGLES_DIR)/m067.0_chr_banking.nes \
 	$(SINGLES_DIR)/m067.0_nametable.nes \
 	$(SINGLES_DIR)/m067.0_irq.nes \
+	$(SINGLES_DIR)/m068.0_prg_banking.nes \
+	$(SINGLES_DIR)/m068.0_chr_banking.nes \
+	$(SINGLES_DIR)/m068.0_nametable.nes \
+	$(SINGLES_DIR)/m068.0_prg_ram.nes \
+	$(SINGLES_DIR)/m069.0_prg_banking.nes \
+	$(SINGLES_DIR)/m069.0_chr_banking.nes \
+	$(SINGLES_DIR)/m069.0_nametable.nes \
+	$(SINGLES_DIR)/m069.0_irq.nes \
+	$(SINGLES_DIR)/m069.0_prg_ram.nes \
+	$(SINGLES_DIR)/m070.0_prg_banking.nes \
+	$(SINGLES_DIR)/m070.0_chr_banking.nes \
 	$(SINGLES_DIR)/m071.0_prg_banking.nes \
+	$(SINGLES_DIR)/m072.0_prg_banking.nes \
+	$(SINGLES_DIR)/m072.0_chr_banking.nes \
+	$(SINGLES_DIR)/m073.0_prg_banking.nes \
+	$(SINGLES_DIR)/m073.0_irq.nes \
+	$(SINGLES_DIR)/m073.0_prg_ram.nes \
+	$(SINGLES_DIR)/m074.0_prg_banking.nes \
+	$(SINGLES_DIR)/m074.0_chr_banking.nes \
+	$(SINGLES_DIR)/m074.0_nametable.nes \
+	$(SINGLES_DIR)/m074.0_irq.nes \
+	$(SINGLES_DIR)/m074.0_prg_ram.nes \
+	$(SINGLES_DIR)/m074.0_write_protect.nes \
 	$(SINGLES_DIR)/m075.0_prg_banking.nes \
 	$(SINGLES_DIR)/m075.0_chr_banking.nes \
 	$(SINGLES_DIR)/m075.0_nametable.nes \
+	$(SINGLES_DIR)/m099.0_chr_banking.nes \
+	$(SINGLES_DIR)/m099.0_four_screen.nes \
+	$(SINGLES_DIR)/m099.1_prg_banking.nes \
+	$(SINGLES_DIR)/m099.1_chr_banking.nes \
+	$(SINGLES_DIR)/m099.1_four_screen.nes \
+	$(SINGLES_DIR)/m111.0_prg_banking.nes \
+	$(SINGLES_DIR)/m111.0_chr_ram_banking.nes \
 	$(SINGLES_DIR)/m119.0_prg_banking.nes \
 	$(SINGLES_DIR)/m119.0_chr_banking.nes \
 	$(SINGLES_DIR)/m119.0_nametable.nes \
-	$(SINGLES_DIR)/m119.0_irq.nes
+	$(SINGLES_DIR)/m119.0_irq.nes \
+	$(SINGLES_DIR)/m151.0_prg_banking.nes \
+	$(SINGLES_DIR)/m151.0_chr_banking.nes \
+	$(SINGLES_DIR)/m151.0_four_screen.nes \
+	$(SINGLES_DIR)/m158.0_prg_banking.nes \
+	$(SINGLES_DIR)/m158.0_chr_banking.nes \
+	$(SINGLES_DIR)/m158.0_irq.nes \
+	$(SINGLES_DIR)/m207.0_prg_banking.nes \
+	$(SINGLES_DIR)/m207.0_chr_banking.nes
 
 # ============================================================
 # Combined ROM target list (all tests per mapper/submapper)
@@ -350,9 +387,21 @@ COMBINED := \
 	$(BIN_DIR)/m065.0.nes \
 	$(BIN_DIR)/m066.0.nes \
 	$(BIN_DIR)/m067.0.nes \
+	$(BIN_DIR)/m068.0.nes \
+	$(BIN_DIR)/m069.0.nes \
+	$(BIN_DIR)/m070.0.nes \
 	$(BIN_DIR)/m071.0.nes \
+	$(BIN_DIR)/m072.0.nes \
+	$(BIN_DIR)/m073.0.nes \
+	$(BIN_DIR)/m074.0.nes \
 	$(BIN_DIR)/m075.0.nes \
-	$(BIN_DIR)/m119.0.nes
+	$(BIN_DIR)/m099.0.nes \
+	$(BIN_DIR)/m099.1.nes \
+	$(BIN_DIR)/m111.0.nes \
+	$(BIN_DIR)/m119.0.nes \
+	$(BIN_DIR)/m151.0.nes \
+	$(BIN_DIR)/m158.0.nes \
+	$(BIN_DIR)/m207.0.nes
 
 .PHONY: all clean check-tools singles combined
 
@@ -897,9 +946,49 @@ $(eval $(call ROM_RULE,$(SINGLES_DIR)/m067.0_nametable.nes,nametable,m067.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m067.0_irq.nes,irq,m067.0))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m067.0.nes,m067.0,prg_banking chr_banking nametable irq))
 
+# Mapper 68 (Sunsoft 4) — 16KB PRG, 4×2KB CHR, mirroring, PRG-RAM
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m068.0_prg_banking.nes,prg_banking,m068.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m068.0_chr_banking.nes,chr_banking,m068.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m068.0_nametable.nes,nametable,m068.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m068.0_prg_ram.nes,prg_ram,m068.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m068.0.nes,m068.0,prg_banking chr_banking nametable prg_ram))
+
+# Mapper 69 (Sunsoft FME-7) — 8KB PRG, 1KB CHR, mirroring, IRQ, PRG-RAM
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m069.0_prg_banking.nes,prg_banking,m069.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m069.0_chr_banking.nes,chr_banking,m069.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m069.0_nametable.nes,nametable,m069.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m069.0_irq.nes,irq,m069.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m069.0_prg_ram.nes,prg_ram,m069.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m069.0.nes,m069.0,prg_banking chr_banking nametable irq prg_ram))
+
+# Mapper 70 (Bandai) — 16KB PRG, 8KB CHR, no IRQ, no mirroring
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m070.0_prg_banking.nes,prg_banking,m070.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m070.0_chr_banking.nes,chr_banking,m070.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m070.0.nes,m070.0,prg_banking chr_banking))
+
 # Mapper 71 (Camerica) — UxROM clone, 16KB PRG, CHR-RAM
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m071.0_prg_banking.nes,prg_banking,m071.0))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m071.0.nes,m071.0,prg_banking))
+
+# Mapper 72 (Jaleco JF-17) — 16KB PRG, 8KB CHR, edge-detect banking, bus conflicts
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m072.0_prg_banking.nes,prg_banking,m072.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m072.0_chr_banking.nes,chr_banking,m072.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m072.0.nes,m072.0,prg_banking chr_banking))
+
+# Mapper 73 (VRC3) — 16KB PRG, CHR-RAM, CPU cycle IRQ, PRG-RAM
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m073.0_prg_banking.nes,prg_banking,m073.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m073.0_irq.nes,irq,m073.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m073.0_prg_ram.nes,prg_ram,m073.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m073.0.nes,m073.0,prg_banking irq prg_ram))
+
+# Mapper 74 (MMC3 variant with CHR-RAM at banks 8-9)
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m074.0_prg_banking.nes,prg_banking,m074.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m074.0_chr_banking.nes,chr_banking,m074.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m074.0_nametable.nes,nametable,m074.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m074.0_irq.nes,irq,m074.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m074.0_prg_ram.nes,prg_ram,m074.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m074.0_write_protect.nes,write_protect,m074.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m074.0.nes,m074.0,prg_banking chr_banking nametable irq prg_ram write_protect))
 
 # Mapper 75 (VRC1) — no IRQ
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m075.0_prg_banking.nes,prg_banking,m075.0))
@@ -907,9 +996,44 @@ $(eval $(call ROM_RULE,$(SINGLES_DIR)/m075.0_chr_banking.nes,chr_banking,m075.0)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m075.0_nametable.nes,nametable,m075.0))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m075.0.nes,m075.0,prg_banking chr_banking nametable))
 
+# Mapper 111 (GTROM / Cheapocabra) — 32KB PRG, 8KB CHR-RAM, 4-screen nametable
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m111.0_prg_banking.nes,prg_banking,m111.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m111.0_chr_ram_banking.nes,chr_ram_banking,m111.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m111.0.nes,m111.0,prg_banking chr_ram_banking))
+
 # Mapper 119 (TQROM) — MMC3-based with CHR-ROM/CHR-RAM mixing
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m119.0_prg_banking.nes,prg_banking,m119.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m119.0_chr_banking.nes,chr_banking,m119.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m119.0_nametable.nes,nametable,m119.0))
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m119.0_irq.nes,irq,m119.0))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m119.0.nes,m119.0,prg_banking chr_banking nametable irq))
+
+# Mapper 99 (VS System), Submapper 0 — standard 32KB PRG, CHR banking via $4016
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m099.0_chr_banking.nes,chr_banking,m099.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m099.0_four_screen.nes,four_screen,m099.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m099.0.nes,m099.0,chr_banking four_screen))
+
+# Mapper 99 (VS System), Submapper 1 — 40KB PRG variant (Vs. Gumshoe)
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m099.1_prg_banking.nes,prg_banking,m099.1))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m099.1_chr_banking.nes,chr_banking,m099.1))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m099.1_four_screen.nes,four_screen,m099.1))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m099.1.nes,m099.1,prg_banking chr_banking four_screen))
+
+# Mapper 151 (VRC1 on VS System) — four-screen mirroring, full 8-bit CHR regs
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m151.0_prg_banking.nes,prg_banking,m151.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m151.0_chr_banking.nes,chr_banking,m151.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m151.0_four_screen.nes,four_screen,m151.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m151.0.nes,m151.0,prg_banking chr_banking four_screen))
+
+# Mapper 158 (Tengen 800037 — RAMBO-1 with CHR-bit7 CIRAM A10 routing, Alien Syndrome)
+# No HAS_MIRRORING_CONTROL: mirroring is driven by CHR bank bit 7, not $A000 register.
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m158.0_prg_banking.nes,prg_banking,m158.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m158.0_chr_banking.nes,chr_banking,m158.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m158.0_irq.nes,irq,m158.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m158.0.nes,m158.0,prg_banking chr_banking irq))
+
+# Mapper 207 (Taito X1-005 Alternate Mirroring) — 3 switchable 8KB PRG slots, mixed 2K+1K CHR
+# CONSOLE_VERIFICATION: registers at $7EF0–$7EFF prevent use of $6000 status protocol.
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m207.0_prg_banking.nes,prg_banking,m207.0))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m207.0_chr_banking.nes,chr_banking,m207.0))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m207.0.nes,m207.0,prg_banking chr_banking))

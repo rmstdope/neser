@@ -51,6 +51,8 @@ Use this skill every time you create or update a ROM under `roms/automated_tests
    - Do not write mapper-specific assembly when a mapper-specific defs/config pair plus small generic hooks will do.
    - If a mapper-specific branch in shared code is truly necessary, keep it narrow and document why the generic path is insufficient.
 
+10. Update `architecture.md` if new test infrastructure, build wiring, or verification approaches change the documented directory structure or testing strategy.
+
 ## References
 
 - `references/repo-architecture.md`: repository layout, build flow, extension points, and file-level guidance for adding mappers or aspects.

@@ -68,6 +68,9 @@
 .ifdef HAS_TEST_MMC5_CHR
     .import run_mmc5_chr
 .endif
+.ifdef HAS_TEST_FOUR_SCREEN
+    .import run_four_screen
+.endif
 
 .segment "RODATA"
 test_title_string:
@@ -240,6 +243,15 @@ test_title_string:
     jsr console_flush
     jsr console_newline
     jsr run_mmc5_chr
+    jsr console_show
+.endif
+
+.ifdef HAS_TEST_FOUR_SCREEN
+    jsr console_print_inline
+    .byte "-- Four-Screen --", 0
+    jsr console_flush
+    jsr console_newline
+    jsr run_four_screen
     jsr console_show
 .endif
 

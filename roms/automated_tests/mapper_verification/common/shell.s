@@ -42,7 +42,7 @@ got_val:      .res 1       ; Temp for fail handler
 
     ; Enable PRG-RAM early so we can write the status byte at $6000.
     ; For MMC3: $A001 bit 7 = chip enable. Only for mappers where $A001 is the RAM protect register.
-    .if MAPPER_NUM = 4 .or MAPPER_NUM = 12 .or MAPPER_NUM = 14 .or MAPPER_NUM = 119 .or MAPPER_NUM = 37 .or MAPPER_NUM = 45 .or MAPPER_NUM = 47
+    .if MAPPER_NUM = 4 .or MAPPER_NUM = 12 .or MAPPER_NUM = 14 .or MAPPER_NUM = 74 .or MAPPER_NUM = 119 .or MAPPER_NUM = 37 .or MAPPER_NUM = 45 .or MAPPER_NUM = 47
     lda #$80
     sta $A001
     .endif
@@ -165,6 +165,23 @@ got_val:      .res 1       ; Temp for fail handler
     .elseif MAPPER_NUM = 67
     ; Sunsoft 3: map font CHR bank via $8800
     init_chr_font
+    .elseif MAPPER_NUM = 68
+    ; Sunsoft 4: enable PRG-RAM, map font CHR bank via $8000
+    init_prg_ram
+    init_chr_font
+    .elseif MAPPER_NUM = 69
+    ; Sunsoft FME-7: enable PRG-RAM at $6000, map font CHR banks via commands $00/$01
+    init_prg_ram
+    init_chr_font
+    .elseif MAPPER_NUM = 72
+    ; Jaleco JF-17: no init needed (font in CHR bank 0, mapped at power-on)
+    .elseif MAPPER_NUM = 73
+    ; VRC3: no special init needed (CHR-RAM, font not in CHR-ROM)
+    .elseif MAPPER_NUM = 74
+    ; MMC3 variant (CHR-RAM at banks 8-9): enable PRG-RAM, map font via R0=10
+    lda #$80
+    sta $A001
+    init_chr_font
     .elseif MAPPER_NUM = 75
     ; VRC1: map font CHR bank via $E000
     init_chr_font
@@ -279,7 +296,7 @@ got_val:      .res 1       ; Temp for fail handler
     pha
     inc irq_fired
     inc irq_count
-    .if MAPPER_NUM = 4 .or MAPPER_NUM = 12 .or MAPPER_NUM = 14 .or MAPPER_NUM = 64 .or MAPPER_NUM = 119 .or MAPPER_NUM = 37 .or MAPPER_NUM = 45 .or MAPPER_NUM = 47
+    .if MAPPER_NUM = 4 .or MAPPER_NUM = 12 .or MAPPER_NUM = 14 .or MAPPER_NUM = 64 .or MAPPER_NUM = 158 .or MAPPER_NUM = 119 .or MAPPER_NUM = 37 .or MAPPER_NUM = 45 .or MAPPER_NUM = 47 .or MAPPER_NUM = 74
     ; MMC3/MMC3-clone/RAMBO-1: acknowledge + re-enable
     lda #0
     sta $E000               ; IRQ acknowledge (disable)
@@ -361,6 +378,18 @@ got_val:      .res 1       ; Temp for fail handler
     sta $E002               ; Disable + acknowledge + reset counter
     lda #$02
     sta $E002               ; Re-enable IRQ (bit 1)
+    .elseif MAPPER_NUM = 69
+    ; FME-7: acknowledge IRQ by writing to command $0D, then re-enable
+    lda #$0D
+    sta $8000               ; Select IRQ control command
+    lda #$81
+    sta $A000               ; Counter enable + IRQ enable (also acknowledges)
+    .elseif MAPPER_NUM = 73
+    ; VRC3: acknowledge + reload + re-enable
+    lda #$00
+    sta $D000               ; Acknowledge IRQ
+    lda #$02
+    sta $C000               ; E=1: reload from latch + re-enable
     .endif
     pla
     rti
@@ -397,6 +426,37 @@ m15_switch:
     sta $8001               ; Switch to mode 1 (UNROM), bank 0, vertical
     jmp reset               ; Bank 7 now at $C000
 m15_switch_end:
+.endproc
+
+.segment "BOOT_VECS"
+    .word $0000             ; NMI (won't fire during bootstrap)
+    .word boot_reset        ; Reset → bootstrap
+    .word $0000             ; IRQ (won't fire during bootstrap)
+.endif
+
+; ============================================================
+; Mapper 28 power-on bootstrap
+; On power-on, the last bank (7) is at $C000 (NESdev spec).
+; This code runs from bank 7, copies init_action53 to RAM,
+; executes it to switch $C000 to bank 1, then jumps to reset.
+; ============================================================
+.if MAPPER_NUM = 28
+.segment "BOOT"
+.proc boot_reset
+    sei
+    ldx #0
+@copy:
+    lda m28_switch, x
+    sta $0300, x
+    inx
+    cpx #(m28_switch_end - m28_switch)
+    bne @copy
+    jmp $0300
+m28_switch:
+    init_action53                   ; Switches $C000 from bank 7 → bank 1
+    jmp reset                       ; Bank 1 now at $C000
+m28_switch_end:
+.assert (m28_switch_end - m28_switch) <= $100, error, "m28_switch stub exceeds 256 bytes ($0300-$03FF buffer)"
 .endproc
 
 .segment "BOOT_VECS"

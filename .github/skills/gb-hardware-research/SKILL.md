@@ -1,0 +1,69 @@
+---
+name: gb-hardware-research
+description: Research Game Boy/Game Boy Color hardware details from Pan Docs first, with curl and mirror fallbacks, and SameBoy implementation only when specs are incomplete.
+---
+
+# Game Boy Hardware Research
+
+## Introduction
+
+Use this skill whenever you need details about any part of Game Boy or Game Boy Color hardware. This includes CPU (SM83/LR35902), PPU, APU, DMA, serial port, joypad, cartridge bus behavior, memory maps, timing, electrical quirks, MBC (memory bank controllers), and model differences (DMG, MGB, CGB, SGB). Prefer source-backed answers, be thorough, and never guess when the documentation is missing or incomplete.
+
+## Instructions
+
+1. Define the target precisely before researching.
+
+- Identify the hardware area, the exact behavior in question, and any model or revision constraints.
+- Distinguish between questions about specification, observed behavior, emulator behavior, and MBC-specific wiring.
+
+2. Start with Pan Docs as the primary source.
+
+- Look for the most specific Pan Docs page first.
+- Read linked pages when the topic spans multiple components, such as CPU/PPU timing, joypad I/O, DMA interactions, or MBC-specific behavior.
+- Treat Pan Docs documentation as the primary authority for hardware specification details.
+
+3. Use this retrieval order when accessing Pan Docs content.
+
+- First, try standard web retrieval of the Pan Docs page at `https://gbdev.io/pandocs/`.
+- If the page cannot be retrieved with standard tools, try fetching it directly with `curl`.
+- If Pan Docs still cannot be retrieved, use the raw GitHub source at `https://github.com/gbdev/pandocs` and read the relevant markdown files from `src/`.
+
+4. If specification coverage is missing or incomplete, inspect SameBoy carefully.
+
+- Prefer `LIJI32/SameBoy` and focus on `Core/`.
+- Use SameBoy only after checking Pan Docs and its source.
+- Treat SameBoy as implementation evidence, not as equal authority with a written hardware specification.
+- If SameBoy appears to make a choice where the specification is unclear, say that explicitly instead of presenting it as confirmed hardware fact.
+
+5. When sources disagree or remain ambiguous, report that directly.
+
+- Name the conflicting sources.
+- State which source is more authoritative for the question at hand and why.
+- Do not merge conflicting claims into a guessed answer.
+
+6. Produce a detailed, source-backed answer.
+
+- Start with a high-level explanation of the hardware behavior.
+- Then cover precise details such as registers, bit meanings, address ranges, timing, ordering, side effects, open bus behavior, edge cases, and model differences.
+- Clearly label what is confirmed by specification, what is supported only by emulator implementation, and what is still unknown.
+- Cite the exact Pan Docs pages or SameBoy files you used.
+
+7. Never guess.
+
+- If no authoritative information is available, say so plainly.
+- If the available information is partial, answer only the supported part and identify the gaps.
+
+## References
+
+- `references/source-priority.md`: source order, retrieval tips, and SameBoy lookup starting points.
+
+## Examples
+
+- Researching joypad register (`$FF00`) behavior:
+  start with Pan Docs joypad and register pages, then follow links for timing, interrupt behavior, and model differences.
+
+- Researching an APU channel detail:
+  start with Pan Docs APU and sound controller pages, then inspect `Core/` in SameBoy only if the written specification leaves a behavior unclear.
+
+- Researching an MBC quirk:
+  start with the MBC page on Pan Docs, follow cartridge-specific links, then inspect `Core/` or related MBC files in SameBoy if the written documentation is incomplete.
