@@ -35,6 +35,7 @@ pub(crate) mod mapper177;
 pub(crate) mod mapper178;
 pub(crate) mod mapper190;
 pub(crate) mod mapper191;
+pub(crate) mod mapper192;
 pub(crate) mod mapper193;
 pub(crate) mod mapper199;
 pub(crate) mod mapper200;
