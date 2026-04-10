@@ -9,6 +9,7 @@ use crate::nes::debugging::ui::{
 use crate::platform::app_context::SharedAppContext;
 use crate::platform::debugging::breakpoints::BreakpointList;
 use crate::platform::debugging::log_info;
+use crate::platform::emulator::Console;
 use crate::platform::rendering::input::{InputEvent, apply_input};
 use crate::platform::rendering::shader_manager::ShaderManager;
 use std::ffi::c_void;
@@ -82,6 +83,10 @@ pub struct GlBackend {
     h_overscan: u32,
     /// Vertical overscan in pixels (removed from top and bottom).
     v_overscan: u32,
+    /// Current GL texture width (updated when console type changes).
+    tex_w: u32,
+    /// Current GL texture height (updated when console type changes).
+    tex_h: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -275,13 +280,13 @@ impl GlBackend {
     #[cfg(test)]
     const NTSC_ASPECT: f32 = 8.0 / 7.0 * 16.0 / 15.0;
 
-    /// Returns the aspect ratio used for rendering the NES output.
+    /// Returns the aspect ratio used for rendering the current frame.
     fn target_aspect(&self) -> f32 {
-        // NES pixel aspect ratio (8:7 NTSC) applied to the cropped pixel dimensions.
-        let w = self.cropped_width() as f32;
-        let h = self.cropped_height() as f32;
-        // pixel_ar = 8/7; display_ar = (w / h) * pixel_ar
-        (w / h) * (8.0 / 7.0)
+        let w = self.tex_w as f32;
+        let h = self.tex_h as f32;
+        // NES: 8:7 NTSC pixel AR.  GB: square pixels (1:1).
+        let is_nes = self.tex_w == self.cropped_width() && self.tex_h == self.cropped_height();
+        if is_nes { (w / h) * (8.0 / 7.0) } else { w / h }
     }
 
     fn cropped_width(&self) -> u32 {
@@ -474,6 +479,8 @@ impl GlBackend {
             shader_manager,
             h_overscan,
             v_overscan,
+            tex_w,
+            tex_h,
         })
     }
 
@@ -516,7 +523,7 @@ impl GlBackend {
     /// Renders the current NES frame and optional debugger overlay.
     pub fn render(
         &mut self,
-        nes: &Nes,
+        console: &Console,
         show_debugger: bool,
         overlay_text: Option<&str>,
         overlay_blink_red: bool,
@@ -555,18 +562,44 @@ impl GlBackend {
             io.display_framebuffer_scale = [scale_x, scale_y];
         }
 
-        // Update NES texture (keep the PPU borrow short-lived so we can snapshot later).
+        // Compute pixel dimensions from the console type.
+        let (frame_w, frame_h) = match console {
+            Console::Nes(_) => (self.cropped_width(), self.cropped_height()),
+            Console::GameBoy(_) => (console.screen_width(), console.screen_height()),
+        };
+
+        // Update texture (keep the borrow short-lived).
         {
-            let screen_buffer = nes.get_screen_buffer();
-            let cropped = screen_buffer.cropped_snapshot(self.h_overscan, self.v_overscan);
+            let cropped = console.cropped_screen_snapshot(self.h_overscan, self.v_overscan);
+            // Resize framebuffer if dimensions changed (e.g. NES → GB switch).
+            let required = (frame_w * frame_h * 3) as usize;
+            if self.framebuffer.len() != required {
+                self.framebuffer.resize(required, 0);
+            }
             self.framebuffer.copy_from_slice(&cropped);
         }
 
-        let tex_w = self.cropped_width() as i32;
-        let tex_h = self.cropped_height() as i32;
+        let tex_w = frame_w as i32;
+        let tex_h = frame_h as i32;
 
         unsafe {
             gl::BindTexture(gl::TEXTURE_2D, self.nes_texture);
+            // Reallocate texture storage if dimensions changed.
+            if self.tex_w != frame_w || self.tex_h != frame_h {
+                gl::TexImage2D(
+                    gl::TEXTURE_2D,
+                    0,
+                    gl::RGB8 as i32,
+                    tex_w,
+                    tex_h,
+                    0,
+                    gl::RGB,
+                    gl::UNSIGNED_BYTE,
+                    std::ptr::null(),
+                );
+                self.tex_w = frame_w;
+                self.tex_h = frame_h;
+            }
             gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
             gl::TexSubImage2D(
                 gl::TEXTURE_2D,
@@ -618,8 +651,8 @@ impl GlBackend {
         }
 
         let visible_toasts = self.app_context.borrow_mut().visible_toasts(now);
-        let cropped_w = self.cropped_width();
-        let cropped_h = self.cropped_height();
+        let cropped_w = self.tex_w;
+        let cropped_h = self.tex_h;
         // Start ImGui frame
         {
             let ui = self.imgui.frame();
@@ -675,7 +708,7 @@ impl GlBackend {
                 );
             }
 
-            if show_debugger {
+            if show_debugger && let Console::Nes(nes) = console {
                 let snapshot = self.debugger_view_state.snapshot(nes);
                 action = debugger_ui::render(
                     ui,

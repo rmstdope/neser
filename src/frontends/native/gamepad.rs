@@ -6,6 +6,7 @@
 
 use crate::nes::console::Nes;
 use crate::nes::input::{Button, ControllerInput, SnesButton};
+use crate::platform::emulator::Console;
 
 use gilrs::{Axis, EventType, GamepadId, Gilrs, GilrsBuilder};
 
@@ -214,38 +215,79 @@ impl GamepadManager {
         self.player_map.len()
     }
 
-    /// Polls all pending gilrs events, applies them to `nes`, and returns
+    /// Polls all pending gilrs events, applies them to `console`, and returns
     /// any hot-plug connect/disconnect events that occurred.
-    pub fn process_events(&mut self, nes: &mut Nes) -> Vec<GamepadChange> {
+    pub fn process_events(&mut self, console: &mut Console) -> Vec<GamepadChange> {
         let mut changes = Vec::new();
-        while let Some(event) = self.gilrs.next_event() {
-            match event.event {
-                EventType::ButtonPressed(button, _) => {
-                    self.handle_button(nes, event.id, button, true);
-                }
-                EventType::ButtonReleased(button, _) => {
-                    self.handle_button(nes, event.id, button, false);
-                }
-                // ButtonChanged is intentionally NOT handled here.
-                // gilrs generates ButtonPressed/ButtonReleased for digital
-                // state transitions (including from analog thresholds via the
-                // default filter). Handling ButtonChanged causes the button
-                // to be released immediately when val=0 arrives in the same
-                // event batch as ButtonPressed, before the NES frame runs.
-                EventType::AxisChanged(axis, value, _) => {
-                    self.handle_axis(nes, event.id, axis, value);
-                }
-                EventType::Connected => {
-                    if let Some(change) = self.handle_connected(event.id) {
-                        changes.push(change);
+        match console {
+            Console::Nes(nes) => {
+                while let Some(event) = self.gilrs.next_event() {
+                    match event.event {
+                        EventType::ButtonPressed(button, _) => {
+                            self.handle_button(nes, event.id, button, true);
+                        }
+                        EventType::ButtonReleased(button, _) => {
+                            self.handle_button(nes, event.id, button, false);
+                        }
+                        EventType::AxisChanged(axis, value, _) => {
+                            self.handle_axis(nes, event.id, axis, value);
+                        }
+                        EventType::Connected => {
+                            if let Some(change) = self.handle_connected(event.id) {
+                                changes.push(change);
+                            }
+                        }
+                        EventType::Disconnected => {
+                            if let Some(change) = self.handle_disconnected(nes, event.id) {
+                                changes.push(change);
+                            }
+                        }
+                        _ => {}
                     }
                 }
-                EventType::Disconnected => {
-                    if let Some(change) = self.handle_disconnected(nes, event.id) {
-                        changes.push(change);
+            }
+            Console::GameBoy(_) => {
+                while let Some(event) = self.gilrs.next_event() {
+                    match event.event {
+                        EventType::ButtonPressed(button, _) => {
+                            if let Some(nes_btn) = map_button_to_nes(button) {
+                                console.set_button(0, nes_btn as u8, true);
+                            }
+                        }
+                        EventType::ButtonReleased(button, _) => {
+                            if let Some(nes_btn) = map_button_to_nes(button) {
+                                console.set_button(0, nes_btn as u8, false);
+                            }
+                        }
+                        EventType::AxisChanged(axis, value, _) => {
+                            let state = self.gamepad_states.entry(event.id).or_default();
+                            let axis_changes = match axis {
+                                Axis::LeftStickX => state.axis.update_x(value),
+                                Axis::LeftStickY => state.axis.update_y(value),
+                                _ => vec![],
+                            };
+                            for (btn, pressed) in axis_changes {
+                                console.set_button(0, btn as u8, pressed);
+                            }
+                        }
+                        EventType::Connected => {
+                            if let Some(change) = self.handle_connected(event.id) {
+                                changes.push(change);
+                            }
+                        }
+                        EventType::Disconnected => {
+                            // Release all GB buttons on disconnect.
+                            console.set_joypad_button_states(0, 0);
+                            if let Some(player_num) = self.player_map.get(&event.id).copied() {
+                                self.player_map.remove(&event.id);
+                                self.gamepad_states.remove(&event.id);
+                                self.reassign_players();
+                                changes.push(GamepadChange::Disconnected(player_num));
+                            }
+                        }
+                        _ => {}
                     }
                 }
-                _ => {}
             }
         }
         changes

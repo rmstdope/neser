@@ -8,6 +8,7 @@ use crate::frontends::native::app_state::NativeAppState;
 use crate::nes::console::Nes;
 use crate::nes::input::{Button, PowerPadButton, SnesButton};
 use crate::platform::audio::EmulatorAudio;
+use crate::platform::emulator::Console;
 use winit::keyboard::KeyCode;
 
 /// The result of processing a key-press event.
@@ -35,25 +36,32 @@ pub enum KeyOutcome {
 
 /// Handles a key-press event.
 ///
-/// Updates `nes` and `app_state` as appropriate, and optionally adjusts
+/// Updates `console` and `app_state` as appropriate, and optionally adjusts
 /// audio volume via `audio`.  Returns a [`KeyOutcome`] so the caller can act
 /// on actions that require access to the GL wrapper (e.g. shader cycling,
 /// fullscreen toggle).
+///
+/// For [`Console::GameBoy`], only generic actions (pause, fullscreen toggle,
+/// directional/A/B/Start/Select keys) are dispatched; NES-specific features
+/// such as the debugger, save states, SNES buttons, and Power Pad are ignored.
 pub fn handle_key_pressed(
-    nes: &mut Nes,
+    console: &mut Console,
     key_code: KeyCode,
     app_state: &mut NativeAppState,
     audio: Option<&dyn EmulatorAudio>,
 ) -> KeyOutcome {
-    if app_state.cart_switch.open {
-        return handle_cartridge_switch_key(key_code, app_state);
+    match console {
+        Console::Nes(nes) => {
+            if app_state.cart_switch.open {
+                return handle_cartridge_switch_key(key_code, app_state);
+            }
+            if app_state.modifiers.control_key() {
+                return handle_ctrl_hotkey(nes, key_code, app_state);
+            }
+            handle_unmodified_key(nes, key_code, app_state, audio)
+        }
+        Console::GameBoy(_) => handle_gameboy_key_pressed(console, key_code, app_state, audio),
     }
-
-    if app_state.modifiers.control_key() {
-        return handle_ctrl_hotkey(nes, key_code, app_state);
-    }
-
-    handle_unmodified_key(nes, key_code, app_state, audio)
 }
 
 /// Handles a key-release event.
@@ -61,14 +69,26 @@ pub fn handle_key_pressed(
 /// Releases the NES / SNES / Power Pad button corresponding to the given key.
 /// `gamepad_count` and `four_score` determine which ports keyboard input is
 /// routed to.
+///
+/// For [`Console::GameBoy`], only generic directional/A/B/Start/Select
+/// releases are dispatched; NES-specific keys are ignored.
 pub fn handle_key_released(
-    nes: &mut Nes,
+    console: &mut Console,
     key_code: KeyCode,
     gamepad_count: usize,
     four_score: bool,
 ) {
-    let ports = keyboard_target_ports(gamepad_count, four_score);
-    handle_controller_key(nes, key_code, false, ports);
+    match console {
+        Console::Nes(nes) => {
+            let ports = keyboard_target_ports(gamepad_count, four_score);
+            handle_controller_key(nes, key_code, false, ports);
+        }
+        Console::GameBoy(_) => {
+            if let Some(btn_id) = gameboy_key_to_button_id(key_code) {
+                console.set_button(0, btn_id, false);
+            }
+        }
+    }
 }
 
 /// Returns the NES ports that keyboard input should be routed to, based on
@@ -104,6 +124,78 @@ pub fn keyboard_target_ports(gamepad_count: usize, four_score: bool) -> &'static
 }
 
 // ── Hotkey dispatch ───────────────────────────────────────────────────────────
+
+// ── Game Boy keyboard dispatch ────────────────────────────────────────────────
+
+/// Maps a key code to a Game Boy button ID (0=A,1=B,2=Select,3=Start,4=Up,5=Down,6=Left,7=Right).
+///
+/// Uses the same physical-position layout as the NES P1 keys so that
+/// players feel at home: WASD for D-pad, R=A, T=B, 4=Select, 5=Start.
+/// Arrow keys are also mapped to the D-pad for convenience.
+fn gameboy_key_to_button_id(key_code: KeyCode) -> Option<u8> {
+    use Button::{A, B, Down, Left, Right, Select, Start, Up};
+    match key_code {
+        KeyCode::KeyR => Some(A as u8),
+        KeyCode::KeyT => Some(B as u8),
+        KeyCode::Digit4 => Some(Select as u8),
+        KeyCode::Digit5 => Some(Start as u8),
+        KeyCode::KeyW | KeyCode::ArrowUp => Some(Up as u8),
+        KeyCode::KeyS | KeyCode::ArrowDown => Some(Down as u8),
+        KeyCode::KeyA | KeyCode::ArrowLeft => Some(Left as u8),
+        KeyCode::KeyD | KeyCode::ArrowRight => Some(Right as u8),
+        _ => None,
+    }
+}
+
+/// Handles a key-press event for a [`Console::GameBoy`].
+///
+/// Dispatches generic hotkeys (pause, fullscreen, Ctrl+Q, shader cycling) and
+/// maps standard button keys to Game Boy buttons on port 0.
+fn handle_gameboy_key_pressed(
+    console: &mut Console,
+    key_code: KeyCode,
+    app_state: &mut NativeAppState,
+    audio: Option<&dyn EmulatorAudio>,
+) -> KeyOutcome {
+    // Generic hotkeys that work for any system.
+    if app_state.modifiers.control_key() {
+        return match key_code {
+            KeyCode::KeyQ => KeyOutcome::Quit,
+            KeyCode::KeyF => {
+                app_state.fullscreen = !app_state.fullscreen;
+                KeyOutcome::Continue
+            }
+            _ => KeyOutcome::Continue,
+        };
+    }
+
+    match key_code {
+        KeyCode::Escape => {
+            app_state.mouse_grabbed = false;
+            app_state.mouse_released_by_escape = true;
+        }
+        KeyCode::Space => {
+            app_state.paused = !app_state.paused;
+            if let Some(audio) = audio {
+                if app_state.paused {
+                    audio.pause();
+                } else {
+                    audio.resume();
+                }
+            }
+        }
+        KeyCode::F4 => return KeyOutcome::CycleShader,
+        KeyCode::F2 => adjust_volume(audio, 0.1),
+        KeyCode::F3 => adjust_volume(audio, -0.1),
+        _ => {
+            if let Some(btn_id) = gameboy_key_to_button_id(key_code) {
+                console.set_button(0, btn_id, true);
+            }
+        }
+    }
+
+    KeyOutcome::Continue
+}
 
 fn handle_ctrl_hotkey(
     nes: &mut Nes,
@@ -433,6 +525,7 @@ mod tests {
     use super::*;
     use crate::nes::console::{Config, NesConfig};
     use crate::platform::app_context::AppContext;
+    use crate::platform::emulator::Console;
     use winit::keyboard::ModifiersState;
 
     // ── Test helpers ──────────────────────────────────────────────────────────
@@ -469,6 +562,18 @@ mod tests {
         nes
     }
 
+    fn make_nes_console() -> Console {
+        Console::Nes(Box::new(make_nes()))
+    }
+
+    fn make_nes_console_with_cart() -> Console {
+        Console::Nes(Box::new(make_nes_with_cartridge()))
+    }
+
+    fn make_nes_console_four_score() -> Console {
+        Console::Nes(Box::new(make_nes_four_score()))
+    }
+
     fn make_state() -> NativeAppState {
         NativeAppState::default()
     }
@@ -481,6 +586,7 @@ mod tests {
         state.modifiers = ModifiersState::CONTROL | ModifiersState::SHIFT;
     }
 
+    #[allow(dead_code)]
     fn buttons(nes: &Nes, port: u8) -> u8 {
         nes.get_joypad_button_states(port)
     }
@@ -580,32 +686,32 @@ mod tests {
 
     #[test]
     fn test_ctrl_q_returns_quit() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
         with_ctrl(&mut state);
         assert_eq!(
-            handle_key_pressed(&mut nes, KeyCode::KeyQ, &mut state, None),
+            handle_key_pressed(&mut console, KeyCode::KeyQ, &mut state, None),
             KeyOutcome::Quit
         );
     }
 
     #[test]
     fn test_escape_returns_continue_when_mouse_not_grabbed() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
         state.mouse_grabbed = false;
         assert_eq!(
-            handle_key_pressed(&mut nes, KeyCode::Escape, &mut state, None),
+            handle_key_pressed(&mut console, KeyCode::Escape, &mut state, None),
             KeyOutcome::Continue
         );
     }
 
     #[test]
     fn test_escape_releases_mouse_when_grabbed() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
         state.mouse_grabbed = true;
-        handle_key_pressed(&mut nes, KeyCode::Escape, &mut state, None);
+        handle_key_pressed(&mut console, KeyCode::Escape, &mut state, None);
         assert!(!state.mouse_grabbed, "Escape should release mouse grab");
         assert!(
             state.mouse_released_by_escape,
@@ -615,29 +721,29 @@ mod tests {
 
     #[test]
     fn test_space_toggles_pause_on() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
-        handle_key_pressed(&mut nes, KeyCode::Space, &mut state, None);
+        handle_key_pressed(&mut console, KeyCode::Space, &mut state, None);
         assert!(state.paused, "Space should pause when unpaused");
     }
 
     #[test]
     fn test_space_toggles_pause_off() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
         state.paused = true;
-        handle_key_pressed(&mut nes, KeyCode::Space, &mut state, None);
+        handle_key_pressed(&mut console, KeyCode::Space, &mut state, None);
         assert!(!state.paused, "Space should unpause when paused");
     }
 
     #[test]
     fn test_space_calls_audio_pause_when_pausing() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
         state.paused = false;
         let (audio, pause_called, _resume_called, _drain_buffer_called) = TrackingMockAudio::new();
         handle_key_pressed(
-            &mut nes,
+            &mut console,
             KeyCode::Space,
             &mut state,
             Some(&audio as &dyn EmulatorAudio),
@@ -650,12 +756,12 @@ mod tests {
 
     #[test]
     fn test_space_calls_audio_resume_when_resuming() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
         state.paused = true;
         let (audio, _pause_called, resume_called, _drain_buffer_called) = TrackingMockAudio::new();
         handle_key_pressed(
-            &mut nes,
+            &mut console,
             KeyCode::Space,
             &mut state,
             Some(&audio as &dyn EmulatorAudio),
@@ -668,65 +774,65 @@ mod tests {
 
     #[test]
     fn test_h_toggles_help_overlay_on() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
-        handle_key_pressed(&mut nes, KeyCode::KeyH, &mut state, None);
+        handle_key_pressed(&mut console, KeyCode::KeyH, &mut state, None);
         assert!(state.help_overlay_visible);
     }
 
     #[test]
     fn test_h_toggles_help_overlay_off() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
         state.help_overlay_visible = true;
-        handle_key_pressed(&mut nes, KeyCode::KeyH, &mut state, None);
+        handle_key_pressed(&mut console, KeyCode::KeyH, &mut state, None);
         assert!(!state.help_overlay_visible);
     }
 
     #[test]
     fn test_ctrl_f_toggles_fullscreen_on() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
         with_ctrl(&mut state);
-        handle_key_pressed(&mut nes, KeyCode::KeyF, &mut state, None);
+        handle_key_pressed(&mut console, KeyCode::KeyF, &mut state, None);
         assert!(state.fullscreen);
     }
 
     #[test]
     fn test_ctrl_f_toggles_fullscreen_off() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
         state.fullscreen = true;
         with_ctrl(&mut state);
-        handle_key_pressed(&mut nes, KeyCode::KeyF, &mut state, None);
+        handle_key_pressed(&mut console, KeyCode::KeyF, &mut state, None);
         assert!(!state.fullscreen);
     }
 
     #[test]
     fn test_alt_f_does_not_toggle_fullscreen() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
         state.modifiers = ModifiersState::ALT;
-        handle_key_pressed(&mut nes, KeyCode::KeyF, &mut state, None);
+        handle_key_pressed(&mut console, KeyCode::KeyF, &mut state, None);
         assert!(!state.fullscreen, "Alt+F should not toggle fullscreen");
     }
 
     #[test]
     fn test_f4_returns_cycle_shader() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
         assert_eq!(
-            handle_key_pressed(&mut nes, KeyCode::F4, &mut state, None),
+            handle_key_pressed(&mut console, KeyCode::F4, &mut state, None),
             KeyOutcome::CycleShader
         );
     }
 
     #[test]
     fn test_f2_increases_volume() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
         let audio = MockAudio::new_with_volume(0.5);
-        handle_key_pressed(&mut nes, KeyCode::F2, &mut state, Some(&audio));
+        handle_key_pressed(&mut console, KeyCode::F2, &mut state, Some(&audio));
         let vol = audio.get_volume();
         assert!(
             (vol - 0.6).abs() < 1e-5,
@@ -736,10 +842,10 @@ mod tests {
 
     #[test]
     fn test_f3_decreases_volume() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
         let audio = MockAudio::new_with_volume(0.5);
-        handle_key_pressed(&mut nes, KeyCode::F3, &mut state, Some(&audio));
+        handle_key_pressed(&mut console, KeyCode::F3, &mut state, Some(&audio));
         let vol = audio.get_volume();
         assert!(
             (vol - 0.4).abs() < 1e-5,
@@ -749,52 +855,52 @@ mod tests {
 
     #[test]
     fn test_f5_returns_toggle_debugger() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
         assert_eq!(
-            handle_key_pressed(&mut nes, KeyCode::F5, &mut state, None),
+            handle_key_pressed(&mut console, KeyCode::F5, &mut state, None),
             KeyOutcome::ToggleDebugger
         );
     }
 
     #[test]
     fn test_f10_returns_step_over() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
         assert_eq!(
-            handle_key_pressed(&mut nes, KeyCode::F10, &mut state, None),
+            handle_key_pressed(&mut console, KeyCode::F10, &mut state, None),
             KeyOutcome::StepOver
         );
     }
 
     #[test]
     fn test_f11_returns_step_into() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
         assert_eq!(
-            handle_key_pressed(&mut nes, KeyCode::F11, &mut state, None),
+            handle_key_pressed(&mut console, KeyCode::F11, &mut state, None),
             KeyOutcome::StepInto
         );
     }
 
     #[test]
     fn test_ctrl_r_soft_resets() {
-        let mut nes = make_nes_with_cartridge();
+        let mut console = make_nes_console_with_cart();
         let mut state = make_state();
         with_ctrl(&mut state);
         assert_eq!(
-            handle_key_pressed(&mut nes, KeyCode::KeyR, &mut state, None),
+            handle_key_pressed(&mut console, KeyCode::KeyR, &mut state, None),
             KeyOutcome::Continue
         );
     }
 
     #[test]
     fn test_ctrl_shift_r_hard_resets() {
-        let mut nes = make_nes_with_cartridge();
+        let mut console = make_nes_console_with_cart();
         let mut state = make_state();
         with_ctrl_shift(&mut state);
         assert_eq!(
-            handle_key_pressed(&mut nes, KeyCode::KeyR, &mut state, None),
+            handle_key_pressed(&mut console, KeyCode::KeyR, &mut state, None),
             KeyOutcome::Continue
         );
     }
@@ -803,59 +909,83 @@ mod tests {
 
     #[test]
     fn test_p1_w_sets_up() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
-        handle_key_pressed(&mut nes, KeyCode::KeyW, &mut state, None);
-        assert_ne!(buttons(&nes, 1) & BIT_UP, 0, "W should set Up on P1");
+        handle_key_pressed(&mut console, KeyCode::KeyW, &mut state, None);
+        assert_ne!(
+            console.get_joypad_button_states(1) & BIT_UP,
+            0,
+            "W should set Up on P1"
+        );
     }
 
     #[test]
     fn test_p1_a_sets_left() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
-        handle_key_pressed(&mut nes, KeyCode::KeyA, &mut state, None);
-        assert_ne!(buttons(&nes, 1) & BIT_LEFT, 0, "A should set Left on P1");
+        handle_key_pressed(&mut console, KeyCode::KeyA, &mut state, None);
+        assert_ne!(
+            console.get_joypad_button_states(1) & BIT_LEFT,
+            0,
+            "A should set Left on P1"
+        );
     }
 
     #[test]
     fn test_p1_s_sets_down() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
-        handle_key_pressed(&mut nes, KeyCode::KeyS, &mut state, None);
-        assert_ne!(buttons(&nes, 1) & BIT_DOWN, 0, "S should set Down on P1");
+        handle_key_pressed(&mut console, KeyCode::KeyS, &mut state, None);
+        assert_ne!(
+            console.get_joypad_button_states(1) & BIT_DOWN,
+            0,
+            "S should set Down on P1"
+        );
     }
 
     #[test]
     fn test_p1_d_sets_right() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
-        handle_key_pressed(&mut nes, KeyCode::KeyD, &mut state, None);
-        assert_ne!(buttons(&nes, 1) & BIT_RIGHT, 0, "D should set Right on P1");
+        handle_key_pressed(&mut console, KeyCode::KeyD, &mut state, None);
+        assert_ne!(
+            console.get_joypad_button_states(1) & BIT_RIGHT,
+            0,
+            "D should set Right on P1"
+        );
     }
 
     #[test]
     fn test_p1_r_sets_a() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
-        handle_key_pressed(&mut nes, KeyCode::KeyR, &mut state, None);
-        assert_ne!(buttons(&nes, 1) & BIT_A, 0, "R should set A on P1");
+        handle_key_pressed(&mut console, KeyCode::KeyR, &mut state, None);
+        assert_ne!(
+            console.get_joypad_button_states(1) & BIT_A,
+            0,
+            "R should set A on P1"
+        );
     }
 
     #[test]
     fn test_p1_t_sets_b() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
-        handle_key_pressed(&mut nes, KeyCode::KeyT, &mut state, None);
-        assert_ne!(buttons(&nes, 1) & BIT_B, 0, "T should set B on P1");
+        handle_key_pressed(&mut console, KeyCode::KeyT, &mut state, None);
+        assert_ne!(
+            console.get_joypad_button_states(1) & BIT_B,
+            0,
+            "T should set B on P1"
+        );
     }
 
     #[test]
     fn test_p1_num4_sets_select() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
-        handle_key_pressed(&mut nes, KeyCode::Digit4, &mut state, None);
+        handle_key_pressed(&mut console, KeyCode::Digit4, &mut state, None);
         assert_ne!(
-            buttons(&nes, 1) & BIT_SELECT,
+            console.get_joypad_button_states(1) & BIT_SELECT,
             0,
             "4 should set Select on P1"
         );
@@ -863,91 +993,131 @@ mod tests {
 
     #[test]
     fn test_p1_num5_sets_start() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
-        handle_key_pressed(&mut nes, KeyCode::Digit5, &mut state, None);
-        assert_ne!(buttons(&nes, 1) & BIT_START, 0, "5 should set Start on P1");
+        handle_key_pressed(&mut console, KeyCode::Digit5, &mut state, None);
+        assert_ne!(
+            console.get_joypad_button_states(1) & BIT_START,
+            0,
+            "5 should set Start on P1"
+        );
     }
 
     // ── Player 1 — key release clears button ──────────────────────────────────
 
     #[test]
     fn test_p1_w_released_clears_up() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
-        handle_key_pressed(&mut nes, KeyCode::KeyW, &mut state, None);
-        assert_ne!(buttons(&nes, 1) & BIT_UP, 0);
-        handle_key_released(&mut nes, KeyCode::KeyW, 0, false);
-        assert_eq!(buttons(&nes, 1) & BIT_UP, 0, "Releasing W should clear Up");
+        handle_key_pressed(&mut console, KeyCode::KeyW, &mut state, None);
+        assert_ne!(console.get_joypad_button_states(1) & BIT_UP, 0);
+        handle_key_released(&mut console, KeyCode::KeyW, 0, false);
+        assert_eq!(
+            console.get_joypad_button_states(1) & BIT_UP,
+            0,
+            "Releasing W should clear Up"
+        );
     }
 
     #[test]
     fn test_p1_r_released_clears_a() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
-        handle_key_pressed(&mut nes, KeyCode::KeyR, &mut state, None);
-        handle_key_released(&mut nes, KeyCode::KeyR, 0, false);
-        assert_eq!(buttons(&nes, 1) & BIT_A, 0, "Releasing R should clear A");
+        handle_key_pressed(&mut console, KeyCode::KeyR, &mut state, None);
+        handle_key_released(&mut console, KeyCode::KeyR, 0, false);
+        assert_eq!(
+            console.get_joypad_button_states(1) & BIT_A,
+            0,
+            "Releasing R should clear A"
+        );
     }
 
     // ── Player 2 standard button mapping ──────────────────────────────────────
 
     #[test]
     fn test_p2_i_sets_up() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
-        handle_key_pressed(&mut nes, KeyCode::KeyI, &mut state, None);
-        assert_ne!(buttons(&nes, 2) & BIT_UP, 0, "I should set Up on P2");
-        assert_eq!(buttons(&nes, 1) & BIT_UP, 0, "I should not affect P1");
+        handle_key_pressed(&mut console, KeyCode::KeyI, &mut state, None);
+        assert_ne!(
+            console.get_joypad_button_states(2) & BIT_UP,
+            0,
+            "I should set Up on P2"
+        );
+        assert_eq!(
+            console.get_joypad_button_states(1) & BIT_UP,
+            0,
+            "I should not affect P1"
+        );
     }
 
     #[test]
     fn test_p2_j_sets_left() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
-        handle_key_pressed(&mut nes, KeyCode::KeyJ, &mut state, None);
-        assert_ne!(buttons(&nes, 2) & BIT_LEFT, 0, "J should set Left on P2");
+        handle_key_pressed(&mut console, KeyCode::KeyJ, &mut state, None);
+        assert_ne!(
+            console.get_joypad_button_states(2) & BIT_LEFT,
+            0,
+            "J should set Left on P2"
+        );
     }
 
     #[test]
     fn test_p2_k_sets_down() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
-        handle_key_pressed(&mut nes, KeyCode::KeyK, &mut state, None);
-        assert_ne!(buttons(&nes, 2) & BIT_DOWN, 0, "K should set Down on P2");
+        handle_key_pressed(&mut console, KeyCode::KeyK, &mut state, None);
+        assert_ne!(
+            console.get_joypad_button_states(2) & BIT_DOWN,
+            0,
+            "K should set Down on P2"
+        );
     }
 
     #[test]
     fn test_p2_l_sets_right() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
-        handle_key_pressed(&mut nes, KeyCode::KeyL, &mut state, None);
-        assert_ne!(buttons(&nes, 2) & BIT_RIGHT, 0, "L should set Right on P2");
+        handle_key_pressed(&mut console, KeyCode::KeyL, &mut state, None);
+        assert_ne!(
+            console.get_joypad_button_states(2) & BIT_RIGHT,
+            0,
+            "L should set Right on P2"
+        );
     }
 
     #[test]
     fn test_p2_o_sets_a() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
-        handle_key_pressed(&mut nes, KeyCode::KeyO, &mut state, None);
-        assert_ne!(buttons(&nes, 2) & BIT_A, 0, "O should set A on P2");
+        handle_key_pressed(&mut console, KeyCode::KeyO, &mut state, None);
+        assert_ne!(
+            console.get_joypad_button_states(2) & BIT_A,
+            0,
+            "O should set A on P2"
+        );
     }
 
     #[test]
     fn test_p2_p_sets_b() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
-        handle_key_pressed(&mut nes, KeyCode::KeyP, &mut state, None);
-        assert_ne!(buttons(&nes, 2) & BIT_B, 0, "P should set B on P2");
+        handle_key_pressed(&mut console, KeyCode::KeyP, &mut state, None);
+        assert_ne!(
+            console.get_joypad_button_states(2) & BIT_B,
+            0,
+            "P should set B on P2"
+        );
     }
 
     #[test]
     fn test_p2_num9_sets_select() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
-        handle_key_pressed(&mut nes, KeyCode::Digit9, &mut state, None);
+        handle_key_pressed(&mut console, KeyCode::Digit9, &mut state, None);
         assert_ne!(
-            buttons(&nes, 2) & BIT_SELECT,
+            console.get_joypad_button_states(2) & BIT_SELECT,
             0,
             "9 should set Select on P2"
         );
@@ -955,22 +1125,30 @@ mod tests {
 
     #[test]
     fn test_p2_num0_sets_start() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
-        handle_key_pressed(&mut nes, KeyCode::Digit0, &mut state, None);
-        assert_ne!(buttons(&nes, 2) & BIT_START, 0, "0 should set Start on P2");
+        handle_key_pressed(&mut console, KeyCode::Digit0, &mut state, None);
+        assert_ne!(
+            console.get_joypad_button_states(2) & BIT_START,
+            0,
+            "0 should set Start on P2"
+        );
     }
 
     // ── P1 keys target port 1 only (not port 2) when no gamepad ─────────────
 
     #[test]
     fn test_w_targets_port1_only_when_no_gamepad() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state(); // gamepad_count = 0
-        handle_key_pressed(&mut nes, KeyCode::KeyW, &mut state, None);
-        assert_ne!(buttons(&nes, 1) & BIT_UP, 0, "W should set Up on P1");
+        handle_key_pressed(&mut console, KeyCode::KeyW, &mut state, None);
+        assert_ne!(
+            console.get_joypad_button_states(1) & BIT_UP,
+            0,
+            "W should set Up on P1"
+        );
         assert_eq!(
-            buttons(&nes, 2) & BIT_UP,
+            console.get_joypad_button_states(2) & BIT_UP,
             0,
             "W should NOT set Up on P2 (port 2 has dedicated IJKL keys)"
         );
@@ -978,12 +1156,16 @@ mod tests {
 
     #[test]
     fn test_s_targets_port1_only_when_no_gamepad() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
-        handle_key_pressed(&mut nes, KeyCode::KeyS, &mut state, None);
-        assert_ne!(buttons(&nes, 1) & BIT_DOWN, 0, "S should set Down on P1");
+        handle_key_pressed(&mut console, KeyCode::KeyS, &mut state, None);
+        assert_ne!(
+            console.get_joypad_button_states(1) & BIT_DOWN,
+            0,
+            "S should set Down on P1"
+        );
         assert_eq!(
-            buttons(&nes, 2) & BIT_DOWN,
+            console.get_joypad_button_states(2) & BIT_DOWN,
             0,
             "S should NOT set Down on P2"
         );
@@ -993,12 +1175,12 @@ mod tests {
 
     #[test]
     fn test_p2_i_released_clears_up() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
-        handle_key_pressed(&mut nes, KeyCode::KeyI, &mut state, None);
-        handle_key_released(&mut nes, KeyCode::KeyI, 0, false);
+        handle_key_pressed(&mut console, KeyCode::KeyI, &mut state, None);
+        handle_key_released(&mut console, KeyCode::KeyI, 0, false);
         assert_eq!(
-            buttons(&nes, 2) & BIT_UP,
+            console.get_joypad_button_states(2) & BIT_UP,
             0,
             "Releasing I should clear Up on P2"
         );
@@ -1015,95 +1197,95 @@ mod tests {
 
     #[test]
     fn test_cart_switch_typing_adds_to_filter() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_cart_switch_state(&["alpha.nes", "beta.nes"]);
-        handle_key_pressed(&mut nes, KeyCode::KeyA, &mut state, None);
+        handle_key_pressed(&mut console, KeyCode::KeyA, &mut state, None);
         assert_eq!(state.cart_switch.filter, "a");
-        handle_key_pressed(&mut nes, KeyCode::KeyB, &mut state, None);
+        handle_key_pressed(&mut console, KeyCode::KeyB, &mut state, None);
         assert_eq!(state.cart_switch.filter, "ab");
     }
 
     #[test]
     fn test_cart_switch_backspace_removes_char() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_cart_switch_state(&["a.nes"]);
         state.cart_switch.filter = "abc".to_string();
-        let outcome = handle_key_pressed(&mut nes, KeyCode::Backspace, &mut state, None);
+        let outcome = handle_key_pressed(&mut console, KeyCode::Backspace, &mut state, None);
         assert_eq!(state.cart_switch.filter, "ab");
         assert_eq!(outcome, KeyOutcome::Continue);
     }
 
     #[test]
     fn test_cart_switch_backspace_on_empty_filter() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_cart_switch_state(&["a.nes"]);
-        let outcome = handle_key_pressed(&mut nes, KeyCode::Backspace, &mut state, None);
+        let outcome = handle_key_pressed(&mut console, KeyCode::Backspace, &mut state, None);
         assert!(state.cart_switch.filter.is_empty());
         assert_eq!(outcome, KeyOutcome::Continue);
     }
 
     #[test]
     fn test_cart_switch_enter_returns_switch_cartridge() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_cart_switch_state(&["game.nes", "other.nes"]);
         state.cart_switch.selection = 0;
-        let outcome = handle_key_pressed(&mut nes, KeyCode::Enter, &mut state, None);
+        let outcome = handle_key_pressed(&mut console, KeyCode::Enter, &mut state, None);
         assert_eq!(outcome, KeyOutcome::SwitchCartridge("game.nes".to_string()));
         assert!(!state.cart_switch.open, "dialog should close after Enter");
     }
 
     #[test]
     fn test_cart_switch_enter_with_no_entries_returns_continue() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_cart_switch_state(&[]);
-        let outcome = handle_key_pressed(&mut nes, KeyCode::Enter, &mut state, None);
+        let outcome = handle_key_pressed(&mut console, KeyCode::Enter, &mut state, None);
         assert_eq!(outcome, KeyOutcome::Continue);
     }
 
     #[test]
     fn test_cart_switch_escape_closes_dialog() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_cart_switch_state(&["a.nes"]);
-        handle_key_pressed(&mut nes, KeyCode::Escape, &mut state, None);
+        handle_key_pressed(&mut console, KeyCode::Escape, &mut state, None);
         assert!(!state.cart_switch.open);
     }
 
     #[test]
     fn test_cart_switch_arrow_down_wraps() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_cart_switch_state(&["a.nes", "b.nes"]);
         state.cart_switch.selection = 1;
-        handle_key_pressed(&mut nes, KeyCode::ArrowDown, &mut state, None);
+        handle_key_pressed(&mut console, KeyCode::ArrowDown, &mut state, None);
         assert_eq!(state.cart_switch.selection, 0, "should wrap to first");
     }
 
     #[test]
     fn test_cart_switch_arrow_up_wraps() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_cart_switch_state(&["a.nes", "b.nes"]);
         state.cart_switch.selection = 0;
-        handle_key_pressed(&mut nes, KeyCode::ArrowUp, &mut state, None);
+        handle_key_pressed(&mut console, KeyCode::ArrowUp, &mut state, None);
         assert_eq!(state.cart_switch.selection, 1, "should wrap to last");
     }
 
     #[test]
     fn test_cart_switch_typing_filters_entries() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_cart_switch_state(&["alpha.nes", "beta.nes", "gamma.nes"]);
         // Type 'b' — only "beta.nes" matches (fuzzy on filename)
-        handle_key_pressed(&mut nes, KeyCode::KeyB, &mut state, None);
+        handle_key_pressed(&mut console, KeyCode::KeyB, &mut state, None);
         assert_eq!(state.cart_switch.visible_count(), 1);
         assert_eq!(state.cart_switch.selected_entry(), Some("beta.nes"));
     }
 
     #[test]
     fn test_cart_switch_keys_dont_trigger_controller() {
-        let mut nes = make_nes_with_cartridge();
+        let mut console = make_nes_console_with_cart();
         let mut state = make_cart_switch_state(&["a.nes"]);
         // Pressing W while cart switch is open should NOT set Up on P1
-        handle_key_pressed(&mut nes, KeyCode::KeyW, &mut state, None);
+        handle_key_pressed(&mut console, KeyCode::KeyW, &mut state, None);
         assert_eq!(
-            buttons(&nes, 1) & BIT_UP,
+            console.get_joypad_button_states(1) & BIT_UP,
             0,
             "W should not control NES when dialog is open"
         );
@@ -1113,9 +1295,9 @@ mod tests {
 
     #[test]
     fn test_cart_switch_escape_returns_close_outcome() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_cart_switch_state(&["a.nes"]);
-        let outcome = handle_key_pressed(&mut nes, KeyCode::Escape, &mut state, None);
+        let outcome = handle_key_pressed(&mut console, KeyCode::Escape, &mut state, None);
         assert_eq!(
             outcome,
             KeyOutcome::CloseCartridgeSwitch,
@@ -1127,10 +1309,10 @@ mod tests {
 
     #[test]
     fn test_cart_switch_shift_minus_types_underscore() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_cart_switch_state(&["a_b.nes"]);
         state.modifiers = ModifiersState::SHIFT;
-        handle_key_pressed(&mut nes, KeyCode::Minus, &mut state, None);
+        handle_key_pressed(&mut console, KeyCode::Minus, &mut state, None);
         assert_eq!(
             state.cart_switch.filter, "_",
             "Shift+Minus should type underscore"
@@ -1139,9 +1321,9 @@ mod tests {
 
     #[test]
     fn test_cart_switch_minus_without_shift_types_dash() {
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_cart_switch_state(&["a-b.nes"]);
-        handle_key_pressed(&mut nes, KeyCode::Minus, &mut state, None);
+        handle_key_pressed(&mut console, KeyCode::Minus, &mut state, None);
         assert_eq!(
             state.cart_switch.filter, "-",
             "Minus without Shift should type dash"
@@ -1153,11 +1335,11 @@ mod tests {
         // When F7 (load state) is pressed, any pre-restore samples still buffered
         // in the audio ring buffer must be discarded silently so they do not
         // bleed into the post-restore playback.
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = make_state();
         let (audio, _pause_called, _resume_called, drain_buffer_called) = TrackingMockAudio::new();
         handle_key_pressed(
-            &mut nes,
+            &mut console,
             KeyCode::F7,
             &mut state,
             Some(&audio as &dyn EmulatorAudio),
@@ -1173,21 +1355,21 @@ mod tests {
     #[test]
     fn test_wasd_routes_to_port2_only_when_one_gamepad() {
         // Given: one gamepad connected (port 1 owned by gamepad)
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = NativeAppState {
             gamepad_count: 1,
             ..NativeAppState::default()
         };
         // When: W (Up) is pressed
-        handle_key_pressed(&mut nes, KeyCode::KeyW, &mut state, None);
+        handle_key_pressed(&mut console, KeyCode::KeyW, &mut state, None);
         // Then: port 2 gets Up; port 1 does NOT (gamepad owns port 1)
         assert_ne!(
-            buttons(&nes, 2) & BIT_UP,
+            console.get_joypad_button_states(2) & BIT_UP,
             0,
             "W should set port 2 Up when one gamepad is connected"
         );
         assert_eq!(
-            buttons(&nes, 1) & BIT_UP,
+            console.get_joypad_button_states(1) & BIT_UP,
             0,
             "W should NOT set port 1 Up when one gamepad is connected"
         );
@@ -1196,21 +1378,21 @@ mod tests {
     #[test]
     fn test_wasd_disabled_when_two_gamepads() {
         // Given: two gamepads connected (both ports owned by gamepads)
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = NativeAppState {
             gamepad_count: 2,
             ..NativeAppState::default()
         };
         // When: W (Up) is pressed
-        handle_key_pressed(&mut nes, KeyCode::KeyW, &mut state, None);
+        handle_key_pressed(&mut console, KeyCode::KeyW, &mut state, None);
         // Then: neither port gets input
         assert_eq!(
-            buttons(&nes, 1) & BIT_UP,
+            console.get_joypad_button_states(1) & BIT_UP,
             0,
             "W should NOT set port 1 Up when two gamepads are connected"
         );
         assert_eq!(
-            buttons(&nes, 2) & BIT_UP,
+            console.get_joypad_button_states(2) & BIT_UP,
             0,
             "W should NOT set port 2 Up when two gamepads are connected"
         );
@@ -1219,16 +1401,16 @@ mod tests {
     #[test]
     fn test_ijkl_disabled_when_two_gamepads() {
         // Given: two gamepads connected
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = NativeAppState {
             gamepad_count: 2,
             ..NativeAppState::default()
         };
         // When: I (P2 Up) is pressed
-        handle_key_pressed(&mut nes, KeyCode::KeyI, &mut state, None);
+        handle_key_pressed(&mut console, KeyCode::KeyI, &mut state, None);
         // Then: port 2 gets no input
         assert_eq!(
-            buttons(&nes, 2) & BIT_UP,
+            console.get_joypad_button_states(2) & BIT_UP,
             0,
             "I (P2 Up) should be disabled when two gamepads are connected"
         );
@@ -1240,14 +1422,14 @@ mod tests {
         // on port 2 should use WASD (the P1 key set, which shifts to track
         // ports.first()).  The P2-specific IJKL keys should be disabled because
         // there is no dedicated keyboard "player 2" slot.
-        let mut nes = make_nes();
+        let mut console = make_nes_console();
         let mut state = NativeAppState {
             gamepad_count: 1,
             ..NativeAppState::default()
         };
-        handle_key_pressed(&mut nes, KeyCode::KeyI, &mut state, None);
+        handle_key_pressed(&mut console, KeyCode::KeyI, &mut state, None);
         assert_eq!(
-            buttons(&nes, 2) & BIT_UP,
+            console.get_joypad_button_states(2) & BIT_UP,
             0,
             "I (P2 Up) should be disabled when one gamepad is connected; use WASD instead"
         );
@@ -1323,25 +1505,25 @@ mod tests {
 
     #[test]
     fn test_wasd_routes_to_port3_with_four_score_and_2_gamepads() {
-        let mut nes = make_nes_four_score();
+        let mut console = make_nes_console_four_score();
         let mut state = NativeAppState {
             gamepad_count: 2,
             four_score_enabled: true,
             ..NativeAppState::default()
         };
-        handle_key_pressed(&mut nes, KeyCode::KeyW, &mut state, None);
+        handle_key_pressed(&mut console, KeyCode::KeyW, &mut state, None);
         assert_ne!(
-            buttons(&nes, 3) & BIT_UP,
+            console.get_joypad_button_states(3) & BIT_UP,
             0,
             "W should set Up on port 3 with four-score and 2 gamepads"
         );
         assert_eq!(
-            buttons(&nes, 1) & BIT_UP,
+            console.get_joypad_button_states(1) & BIT_UP,
             0,
             "W should NOT affect port 1 (owned by gamepad)"
         );
         assert_eq!(
-            buttons(&nes, 2) & BIT_UP,
+            console.get_joypad_button_states(2) & BIT_UP,
             0,
             "W should NOT affect port 2 (owned by gamepad)"
         );
@@ -1349,15 +1531,15 @@ mod tests {
 
     #[test]
     fn test_ijkl_routes_to_port4_with_four_score_and_2_gamepads() {
-        let mut nes = make_nes_four_score();
+        let mut console = make_nes_console_four_score();
         let mut state = NativeAppState {
             gamepad_count: 2,
             four_score_enabled: true,
             ..NativeAppState::default()
         };
-        handle_key_pressed(&mut nes, KeyCode::KeyI, &mut state, None);
+        handle_key_pressed(&mut console, KeyCode::KeyI, &mut state, None);
         assert_ne!(
-            buttons(&nes, 4) & BIT_UP,
+            console.get_joypad_button_states(4) & BIT_UP,
             0,
             "I should set Up on port 4 with four-score and 2 gamepads"
         );
@@ -1365,15 +1547,15 @@ mod tests {
 
     #[test]
     fn test_p2_start_routes_to_port4_with_four_score_and_2_gamepads() {
-        let mut nes = make_nes_four_score();
+        let mut console = make_nes_console_four_score();
         let mut state = NativeAppState {
             gamepad_count: 2,
             four_score_enabled: true,
             ..NativeAppState::default()
         };
-        handle_key_pressed(&mut nes, KeyCode::Digit0, &mut state, None);
+        handle_key_pressed(&mut console, KeyCode::Digit0, &mut state, None);
         assert_ne!(
-            buttons(&nes, 4) & BIT_START,
+            console.get_joypad_button_states(4) & BIT_START,
             0,
             "0 should set Start on port 4 with four-score and 2 gamepads"
         );
@@ -1381,19 +1563,100 @@ mod tests {
 
     #[test]
     fn test_key_release_works_on_port3_with_four_score() {
-        let mut nes = make_nes_four_score();
+        let mut console = make_nes_console_four_score();
         let mut state = NativeAppState {
             gamepad_count: 2,
             four_score_enabled: true,
             ..NativeAppState::default()
         };
-        handle_key_pressed(&mut nes, KeyCode::KeyW, &mut state, None);
-        assert_ne!(buttons(&nes, 3) & BIT_UP, 0);
-        handle_key_released(&mut nes, KeyCode::KeyW, 2, true);
+        handle_key_pressed(&mut console, KeyCode::KeyW, &mut state, None);
+        assert_ne!(console.get_joypad_button_states(3) & BIT_UP, 0);
+        handle_key_released(&mut console, KeyCode::KeyW, 2, true);
         assert_eq!(
-            buttons(&nes, 3) & BIT_UP,
+            console.get_joypad_button_states(3) & BIT_UP,
             0,
             "Releasing W should clear Up on port 3"
+        );
+    }
+
+    // ── Game Boy keyboard dispatch ────────────────────────────────────────────
+
+    /// Creates a minimal valid GB ROM for testing (ROM-only, 32 KB, correct checksum).
+    fn minimal_gb_rom() -> Vec<u8> {
+        let mut rom = vec![0u8; 0x8000];
+        rom[0x0147] = 0x00; // ROM only
+        rom[0x0148] = 0x00; // 32 KB
+        rom[0x0149] = 0x00; // no RAM
+        let chk = rom[0x0134..=0x014C]
+            .iter()
+            .fold(0u8, |acc, &b| acc.wrapping_sub(b).wrapping_sub(1));
+        rom[0x014D] = chk;
+        rom
+    }
+
+    fn make_gameboy_console() -> Console {
+        let mut console = Console::new_gameboy(AppContext::new_with_config(Config::default()));
+        console
+            .load_rom(&minimal_gb_rom(), "test.gb")
+            .expect("minimal GB ROM should load");
+        console
+    }
+
+    #[test]
+    fn gameboy_d_key_sets_right_button() {
+        // Given a Game Boy console and default state (no gamepads)
+        let mut console = make_gameboy_console();
+        let mut state = make_state();
+        // When the 'D' key (Right) is pressed
+        handle_key_pressed(&mut console, KeyCode::KeyD, &mut state, None);
+        // Then the Right button (bit 7) should be set on port 0
+        assert_ne!(
+            console.get_joypad_button_states(0) & BIT_RIGHT,
+            0,
+            "D key should set GB Right button"
+        );
+    }
+
+    #[test]
+    fn gameboy_w_key_sets_up_button() {
+        let mut console = make_gameboy_console();
+        let mut state = make_state();
+        handle_key_pressed(&mut console, KeyCode::KeyW, &mut state, None);
+        assert_ne!(
+            console.get_joypad_button_states(0) & BIT_UP,
+            0,
+            "W key should set GB Up button"
+        );
+    }
+
+    #[test]
+    fn gameboy_r_key_sets_a_button() {
+        let mut console = make_gameboy_console();
+        let mut state = make_state();
+        handle_key_pressed(&mut console, KeyCode::KeyR, &mut state, None);
+        assert_ne!(
+            console.get_joypad_button_states(0) & BIT_A,
+            0,
+            "R key should set GB A button"
+        );
+    }
+
+    #[test]
+    fn gameboy_d_key_released_clears_right_button() {
+        let mut console = make_gameboy_console();
+        let mut state = make_state();
+        handle_key_pressed(&mut console, KeyCode::KeyD, &mut state, None);
+        // Pressing D must set the button first; if not, the release test is meaningless.
+        assert_ne!(
+            console.get_joypad_button_states(0) & BIT_RIGHT,
+            0,
+            "D key must set GB Right button before testing release"
+        );
+        handle_key_released(&mut console, KeyCode::KeyD, 0, false);
+        assert_eq!(
+            console.get_joypad_button_states(0) & BIT_RIGHT,
+            0,
+            "Releasing D should clear GB Right button"
         );
     }
 }
