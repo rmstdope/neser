@@ -34,6 +34,12 @@ pub struct Mapper177 {
 
 impl Mapper177 {
     pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
+        // Mapper 177 always uses CHR-RAM and needs 8 KB PRG-RAM regardless of header.
+        let mut ctx = ctx;
+        ctx.chr_rom = vec![];
+        ctx.prg_ram_banks_8k = 1;
+        ctx.prg_ram_size_specified = true;
+
         let capabilities = MapperCapabilities {
             max_prg_ram_kb: 8,
             has_dynamic_mirroring: true,
@@ -43,7 +49,8 @@ impl Mapper177 {
         };
         let mut base = BaseMapper::new(&ctx, capabilities);
         base.configure_prg_banking(32 * 1024);
-        let mapper = Self { base, reg: 0 };
+        let mut mapper = Self { base, reg: 0 };
+        mapper.apply_register(0);
         mapper
     }
 
