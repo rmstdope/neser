@@ -68,7 +68,11 @@ pub struct Mapper190 {
 }
 
 impl Mapper190 {
-    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(mut ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
+        // Mapper 190 always has 8 KiB PRG-RAM at $6000–$7FFF regardless of
+        // what the ROM header specifies.
+        ctx.prg_ram_banks_8k = 1;
+        ctx.prg_ram_size_specified = true;
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
             has_dynamic_mirroring: false,
@@ -378,6 +382,33 @@ mod tests {
             mapper.read_chr(0x1800),
             0,
             "CHR slot 3 should be bank 0 after reset"
+        );
+    }
+
+    // ── PRG-RAM always present ─────────────────────────────────────────────────
+
+    #[test]
+    fn prg_ram_available_even_without_header_specification() {
+        let mut mapper = Mapper190::new(
+            MapperContext::new_for_test(
+                MAPPER_NUMBER,
+                banked_data(PRG_BANK_SIZE, PRG_BANKS),
+                banked_data(CHR_BANK_SIZE, CHR_BANKS),
+                NametableLayout::Horizontal,
+            )
+            .with_unspecified_prg_ram_size(),
+        );
+        // 8 KiB PRG-RAM must be available at $6000–$7FFF.
+        mapper.write_prg(0x6000, 0xAB);
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            0xAB,
+            "$6000 PRG-RAM must be writable even when header omits PRG-RAM size"
+        );
+        assert_eq!(
+            mapper.base().wram_size(),
+            8 * 1024,
+            "wram_size() must report 8 KiB"
         );
     }
 }
