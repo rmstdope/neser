@@ -49,7 +49,12 @@ pub struct Mapper159 {
 }
 
 impl Mapper159 {
-    pub fn new(ctx: MapperContext) -> Self {
+    pub fn new(mut ctx: MapperContext) -> Self {
+        // Mapper 159 has no PRG-RAM: $6000–$7FFF reads return open bus
+        // (X24C01 EEPROM is not emulated). Suppress any PRG-RAM the header
+        // may have specified so the base mapper does not allocate WRAM here.
+        ctx.prg_ram_banks_8k = 0;
+        ctx.prg_ram_size_specified = false;
         Self {
             inner: BandaiFcgMapper::new_with_variant(ctx, BandaiFcgVariant::Lz93d50),
         }
@@ -133,24 +138,30 @@ mod tests {
     const CHR_BANKS_1K: usize = 8; // 8 × 1 KiB = 8 KiB
 
     fn make_mapper() -> Mapper159 {
-        Mapper159::new(MapperContext::new_for_test(
-            MAPPER_NUMBER,
-            banked_data(16 * 1024, PRG_BANKS_16K),
-            banked_data(1024, CHR_BANKS_1K),
-            NametableLayout::Horizontal,
-        ))
+        Mapper159::new(
+            MapperContext::new_for_test(
+                MAPPER_NUMBER,
+                banked_data(16 * 1024, PRG_BANKS_16K),
+                banked_data(1024, CHR_BANKS_1K),
+                NametableLayout::Horizontal,
+            )
+            .with_unspecified_prg_ram_size(),
+        )
     }
 
     // ── Factory registration ──────────────────────────────────────────────────
 
     #[test]
     fn mapper_159_is_registered_in_factory() {
-        let result = create_mapper(MapperContext::new_for_test(
-            MAPPER_NUMBER,
-            banked_data(16 * 1024, PRG_BANKS_16K),
-            banked_data(1024, CHR_BANKS_1K),
-            NametableLayout::Horizontal,
-        ));
+        let result = create_mapper(
+            MapperContext::new_for_test(
+                MAPPER_NUMBER,
+                banked_data(16 * 1024, PRG_BANKS_16K),
+                banked_data(1024, CHR_BANKS_1K),
+                NametableLayout::Horizontal,
+            )
+            .with_unspecified_prg_ram_size(),
+        );
         assert!(result.is_ok(), "Mapper 159 must be creatable via factory");
     }
 
