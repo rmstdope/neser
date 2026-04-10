@@ -419,6 +419,16 @@ impl MMC3Mapper {
         !self.prg_ram.is_empty() && self.prg_ram_enabled && !self.prg_ram_write_protected
     }
 
+    /// Returns true if the PRG-RAM window is currently enabled ($A001 bit 7).
+    ///
+    /// Unlike `is_prg_ram_writable`, this only checks the enable flag, not the
+    /// write-protect flag or whether RAM is present. Used by MMC3 variant mappers
+    /// (e.g., mapper 259 BMC-F15) that gate outer-bank register writes behind
+    /// the PRG-RAM enable bit.
+    pub fn is_prg_ram_enabled(&self) -> bool {
+        self.prg_ram_enabled
+    }
+
     /// Returns the raw CHR bank register value at the given index (0–7).
     /// This is the raw register value without CHR-mode-dependent interpretation.
     /// Used by mappers that override CHR banking but still need MMC3 register values.
