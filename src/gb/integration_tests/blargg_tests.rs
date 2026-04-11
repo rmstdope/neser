@@ -1,4 +1,4 @@
-use crate::gb::bus::{DmgBus, GbBus};
+use crate::gb::bus::DmgBus;
 use crate::gb::cartridge::load_cartridge;
 use crate::gb::console::Gb;
 
