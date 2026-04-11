@@ -27,9 +27,7 @@ impl<B: GbBus> Gb<B> {
     pub fn step(&mut self) -> u8 {
         let before = self.cpu.cycles();
         self.cpu.execute();
-        let delta = (self.cpu.cycles() - before) as u8;
-        self.cpu.bus.tick(delta);
-        delta
+        (self.cpu.cycles() - before) as u8
     }
 
     /// Total M-cycles elapsed.
