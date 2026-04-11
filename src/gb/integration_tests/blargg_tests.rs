@@ -56,7 +56,6 @@ fn test_cpu_instrs_02_interrupts() {
 }
 
 #[test]
-#[ignore = "failing: ADD SP,r8/LD HL,SP+r8 incorrect H/C flags — tracked in #1979"]
 fn test_cpu_instrs_03_op_sp_hl() {
     let mut gb = load_gb_rom("roms/gb/automated_tests/cpu_instrs/individual/03-op sp,hl.gb");
     let output = run_blargg_rom(&mut gb);
