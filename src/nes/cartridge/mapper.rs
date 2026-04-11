@@ -173,6 +173,7 @@ use super::unlicensed::mapper162::Mapper162;
 use super::unlicensed::mapper163::Mapper163;
 use super::unlicensed::mapper165::Mapper165;
 use super::unlicensed::mapper167::Mapper167;
+use super::unlicensed::mapper171::Mapper171;
 use super::unlicensed::mapper174::Mapper174;
 use super::unlicensed::mapper177::Mapper177;
 use super::unlicensed::mapper178::Mapper178;
@@ -1048,6 +1049,7 @@ mapper_registry! {
     163 => Mapper163::new,
     165 => Mapper165::new,
     167 => Mapper167::new,
+    171 => Mapper171::new,
     173 => Mapper173::new,
     174 => Mapper174::new,
     177 => Mapper177::new,
