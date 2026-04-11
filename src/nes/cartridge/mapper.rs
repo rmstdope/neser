@@ -1048,17 +1048,27 @@ mapper_registry! {
     156 => Mapper156::new,
     157 => Mapper157::new,
     159 => Mapper159::new,
+    // 160: Alias of mapper 090 (J.Y. Company). NESdev notes mapper 090 fully covers mapper 160 behavior.
     160 => JyCompanyMapper::new,
+    // 161: Misassignment — 'Hanjuku Hero' was incorrectly assigned here before MMC1 behavior was understood. Alias of mapper 001 (MMC1).
+    161 => MMC1Mapper::new,
     162 => Mapper162::new,
     163 => Mapper163::new,
     165 => Mapper165::new,
     167 => Mapper167::new,
+    // 169: Yuxing board. 'Contra 168-in-1' was misassigned here; correct mapper is 015. Alias of mapper 015.
+    169 => Multicart15Mapper::new,
     171 => Mapper171::new,
     173 => Mapper173::new,
     174 => Mapper174::new,
     175 => Mapper175::new,
     177 => Mapper177::new,
     178 => Mapper178::new,
+    // 179: Nestopia misassignment — duplicates mapper 176. Alias of mapper 176 (not yet implemented; see issue #1108).
+    // 181: FCEUX patch-list heuristic entry only — no ROM actually uses this mapper number.
+    // 182: NESdev page for mapper 182 actually documents mapper 114 hardware. Alias of mapper 114.
+    182 => Mapper114::new,
+    // 186: Fukutake Study Box BIOS. Requires a headerless .BIN BIOS image, not an iNES ROM — not implementable here.
     180 => UxromInvertedMapper::new,
     184 => Sunsoft1Mapper::new,
     185 => CnromSecurityMapper::new,
@@ -1115,6 +1125,8 @@ mapper_registry! {
     244 => Mapper244::new,
     245 => Mapper245::new,
     246 => Mapper246::new,
+    // 248: Misassignment — NESdev notes mapper 115 handles these ROMs correctly. Alias of mapper 115.
+    248 => Mapper115::new,
     249 => Mapper249::new,
     250 => Mapper250::new,
     251 => Mapper251::new,
@@ -1122,6 +1134,7 @@ mapper_registry! {
     254 => Mapper254::new,
     255 => Mapper255::new,
     257 => Mapper257::new,
+    // 258: Tentatively reserved by FCEUX for UNIF MAPR 158B hardware — no proper iNES/NES 2.0 documentation.
     259 => Mapper259::new,
     260 => Mapper260::new,
     262 => Mapper262::new,
