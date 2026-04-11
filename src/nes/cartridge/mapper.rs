@@ -175,10 +175,13 @@ use super::unlicensed::mapper164::Mapper164;
 use super::unlicensed::mapper165::Mapper165;
 use super::unlicensed::mapper166::Mapper166;
 use super::unlicensed::mapper167::Mapper167;
+use super::unlicensed::mapper168::Mapper168;
 use super::unlicensed::mapper170::Mapper170;
 use super::unlicensed::mapper171::Mapper171;
+use super::unlicensed::mapper172::Mapper172;
 use super::unlicensed::mapper174::Mapper174;
 use super::unlicensed::mapper175::Mapper175;
+use super::unlicensed::mapper176::Mapper176;
 use super::unlicensed::mapper177::Mapper177;
 use super::unlicensed::mapper178::Mapper178;
 use super::unlicensed::mapper183::Mapper183;
@@ -193,6 +196,7 @@ use super::unlicensed::mapper194::Mapper194;
 use super::unlicensed::mapper195::Mapper195;
 use super::unlicensed::mapper196::Mapper196;
 use super::unlicensed::mapper197::Mapper197;
+use super::unlicensed::mapper198::Mapper198;
 use super::unlicensed::mapper199::Mapper199;
 use super::unlicensed::mapper200::Mapper200;
 use super::unlicensed::mapper201::Mapper201;
@@ -201,6 +205,7 @@ use super::unlicensed::mapper203::Mapper203;
 use super::unlicensed::mapper204::Mapper204;
 use super::unlicensed::mapper205::Mapper205;
 use super::unlicensed::mapper208::Mapper208;
+use super::unlicensed::mapper210::Mapper210;
 use super::unlicensed::mapper211::Mapper211;
 use super::unlicensed::mapper212::Mapper212;
 use super::unlicensed::mapper213::Mapper213;
@@ -1075,22 +1080,22 @@ mapper_registry! {
     165 => Mapper165::new,
     166 => Mapper166::new,
     167 => Mapper167::new,
+    168 => Mapper168::new,
     // 169: Yuxing board. 'Contra 168-in-1' was misassigned here; correct mapper is 015. Alias of mapper 015.
     169 => Multicart15Mapper::new,
     170 => Mapper170::new,
     171 => Mapper171::new,
+    172 => Mapper172::new,
     173 => Mapper173::new,
     174 => Mapper174::new,
     175 => Mapper175::new,
+    176 => Mapper176::new,
     177 => Mapper177::new,
     178 => Mapper178::new,
-    183 => Mapper183::new,
-    // 179: Nestopia misassignment — intentionally unimplemented. Duplicates mapper 176 behavior;
-    //       implement via mapper 176 once that is added (see issue #1108).
-    // 181: FCEUX patch-list heuristic entry only — no ROM actually uses this mapper number.
-    // 182: NESdev page for mapper 182 actually documents mapper 114 hardware. Alias of mapper 114.
-    182 => Mapper114::new,
+    179 => Mapper176::new,
     180 => UxromInvertedMapper::new,
+    182 => Mapper114::new,
+    183 => Mapper183::new,
     184 => Sunsoft1Mapper::new,
     185 => CnromSecurityMapper::new,
     // 186: Fukutake Study Box BIOS. Requires a headerless .BIN BIOS image, not an iNES ROM — not implementable here.
@@ -1105,6 +1110,7 @@ mapper_registry! {
     195 => Mapper195::new,
     196 => Mapper196::new,
     197 => Mapper197::new,
+    198 => Mapper198::new,
     199 => Mapper199::new,
     200 => Mapper200::new,
     201 => Mapper201::new,
@@ -1115,6 +1121,7 @@ mapper_registry! {
     206 => Namco118Mapper::new,
     207 => TaitoX1005_207Mapper::new,
     208 => Mapper208::new,
+    210 => Mapper210::new,
     211 => Mapper211::new,
     212 => Mapper212::new,
     213 => Mapper213::new,
