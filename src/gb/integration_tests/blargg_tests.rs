@@ -1,4 +1,4 @@
-use crate::gb::bus::DmgBus;
+use crate::gb::bus::{DmgBus, GbBus};
 use crate::gb::cartridge::load_cartridge;
 use crate::gb::console::Gb;
 
@@ -15,6 +15,12 @@ fn load_gb_rom(path: &str) -> Gb<DmgBus> {
 /// the slowest tests without running forever on a lockup.
 const BLARGG_CYCLE_LIMIT: u64 = 150_000_000;
 
+/// Return `true` if the serial output byte slice ends with `b"Passed\n"` or
+/// `b"Failed\n"` — without allocating a `String`.
+fn serial_is_done(output: &[u8]) -> bool {
+    output.ends_with(b"Passed\n") || output.ends_with(b"Failed\n")
+}
+
 /// Step `gb` until the serial output ends with "Passed\n" or "Failed\n",
 /// or until `BLARGG_CYCLE_LIMIT` M-cycles have elapsed.
 ///
@@ -22,12 +28,9 @@ const BLARGG_CYCLE_LIMIT: u64 = 150_000_000;
 fn run_blargg_rom(gb: &mut Gb<DmgBus>) -> String {
     let start = gb.cycles();
     loop {
-        let output = String::from_utf8_lossy(gb.cpu.bus.serial_output()).into_owned();
-        if output.ends_with("Passed\n") || output.ends_with("Failed\n") {
-            return output;
-        }
-        if gb.cycles().saturating_sub(start) >= BLARGG_CYCLE_LIMIT {
-            return output;
+        let output = gb.cpu.bus.serial_output();
+        if serial_is_done(output) || gb.cycles().saturating_sub(start) >= BLARGG_CYCLE_LIMIT {
+            return String::from_utf8_lossy(output).into_owned();
         }
         gb.step();
     }
@@ -94,10 +97,9 @@ fn read_cart_ram_output(gb: &mut Gb<DmgBus>) -> Option<String> {
 fn run_blargg_rom_cart_ram(gb: &mut Gb<DmgBus>) -> String {
     let start = gb.cycles();
     loop {
-        // Check serial output first.
-        let serial = String::from_utf8_lossy(gb.cpu.bus.serial_output()).into_owned();
-        if serial.ends_with("Passed\n") || serial.ends_with("Failed\n") {
-            return serial;
+        // Check serial output on the raw byte slice — no allocation.
+        if serial_is_done(gb.cpu.bus.serial_output()) {
+            return String::from_utf8_lossy(gb.cpu.bus.serial_output()).into_owned();
         }
         // Check cartridge RAM output.
         if let Some(text) = read_cart_ram_output(gb) {
@@ -108,7 +110,7 @@ fn run_blargg_rom_cart_ram(gb: &mut Gb<DmgBus>) -> String {
             if let Some(text) = read_cart_ram_output(gb) {
                 return text;
             }
-            return serial;
+            return String::from_utf8_lossy(gb.cpu.bus.serial_output()).into_owned();
         }
         gb.step();
     }
