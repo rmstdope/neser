@@ -255,6 +255,7 @@ impl Mapper for Mapper183 {
         snap.push(flags);
         snap.extend_from_slice(&self.prg_banks);
         snap.extend_from_slice(&self.chr_regs);
+        snap.push(self.base.mirroring().to_snapshot_byte());
         snap
     }
 
@@ -277,6 +278,10 @@ impl Mapper for Mapper183 {
         for slot in 0..8 {
             self.update_chr(slot);
         }
+        if let Some(&mir) = data.get(15) {
+            self.base
+                .set_mirroring(NametableLayout::from_snapshot_byte(mir));
+        }
     }
 
     fn reset(&mut self) {
@@ -289,6 +294,9 @@ impl Mapper for Mapper183 {
         self.irq_active = false;
         self.need_irq = false;
         self.update_prg();
+        for slot in 0..3 {
+            self.base.select_prg_page(slot, 0);
+        }
         for slot in 0..8 {
             self.update_chr(slot);
         }
@@ -473,5 +481,44 @@ mod tests {
         assert_eq!(restored.prg_reg, 0);
         assert_eq!(restored.chr_regs[0], 0x25);
         assert_eq!(restored.read_prg(0x8000), 3);
+    }
+
+    #[test]
+    fn snapshot_restores_mirroring() {
+        let mut mapper = make_mapper();
+        mapper.write_prg(0x9800, 0x01); // Horizontal
+        let snap = mapper.registers_snapshot();
+
+        let mut restored = make_mapper();
+        restored.restore_registers(&snap);
+        assert_eq!(
+            restored.base().mirroring(),
+            NametableLayout::Horizontal,
+            "mirroring must survive snapshot round-trip"
+        );
+    }
+
+    #[test]
+    fn reset_resets_prg_slots_to_bank_0() {
+        let mut mapper = make_mapper();
+        mapper.write_prg(0x8800, 5); // slot 0 = bank 5
+        mapper.write_prg(0xA800, 3); // slot 1 = bank 3
+        mapper.write_prg(0xA000, 2); // slot 2 = bank 2
+        mapper.reset();
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            0,
+            "slot 0 must be bank 0 after reset"
+        );
+        assert_eq!(
+            mapper.read_prg(0xA000),
+            0,
+            "slot 1 must be bank 0 after reset"
+        );
+        assert_eq!(
+            mapper.read_prg(0xC000),
+            0,
+            "slot 2 must be bank 0 after reset"
+        );
     }
 }

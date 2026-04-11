@@ -45,6 +45,8 @@ const CHR_BANK_SIZE: usize = 8 * 1024;
 /// See the module-level documentation for hardware details.
 pub struct Mapper336 {
     base: BaseMapper,
+    /// Last value written to any $8000–$FFFF address.
+    last_value: u8,
 }
 
 impl Mapper336 {
@@ -58,7 +60,10 @@ impl Mapper336 {
         base.configure_prg_banking(PRG_BANK_SIZE);
         base.configure_chr_banking(CHR_BANK_SIZE);
 
-        let mut mapper = Self { base };
+        let mut mapper = Self {
+            base,
+            last_value: 0,
+        };
         mapper.apply_banks(0);
         mapper
     }
@@ -94,11 +99,24 @@ impl Mapper for Mapper336 {
 
     fn write_prg(&mut self, addr: u16, value: u8) {
         if (0x8000..=0xFFFF).contains(&addr) {
+            self.last_value = value;
             self.apply_banks(value);
         }
     }
 
+    fn registers_snapshot(&self) -> Vec<u8> {
+        vec![self.last_value]
+    }
+
+    fn restore_registers(&mut self, data: &[u8]) {
+        if let Some(&v) = data.first() {
+            self.last_value = v;
+            self.apply_banks(v);
+        }
+    }
+
     fn reset(&mut self) {
+        self.last_value = 0;
         self.apply_banks(0);
     }
 }
@@ -212,6 +230,26 @@ mod tests {
             mapper.read_chr(0x0000),
             0,
             "CHR stays at bank 0 after PRG write"
+        );
+    }
+
+    #[test]
+    fn snapshot_restore_round_trips() {
+        let mut mapper = make_mapper();
+        mapper.write_prg(0x8000, 0x05); // inner=5, outer=0 → slot0=5
+        let snap = mapper.registers_snapshot();
+
+        let mut restored = make_mapper();
+        restored.restore_registers(&snap);
+        assert_eq!(
+            restored.read_prg(0x8000),
+            5,
+            "slot0 bank must survive snapshot round-trip"
+        );
+        assert_eq!(
+            restored.read_prg(0xC000),
+            7,
+            "slot1 bank must survive snapshot round-trip"
         );
     }
 }
