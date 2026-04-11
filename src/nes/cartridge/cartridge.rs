@@ -726,13 +726,14 @@ mod tests {
 
     #[test]
     fn test_unsupported_mapper() {
-        // Use mapper 179 (intentionally unimplemented) to test the unsupported-mapper error path.
-        let rom_data = create_test_rom_with_mapper(1, 1, 0xB3, false, 1);
+        // Use mapper 186 (Fukutake Study Box BIOS — not implementable, intentionally absent)
+        // to test the unsupported-mapper error path.
+        let rom_data = create_test_rom_with_mapper(1, 1, 0xBA, false, 1);
 
         let result = load_cartridge_from_bytes(&rom_data);
         assert!(matches!(
             result,
-            Err(CartridgeError::UnsupportedMapper(0xB3))
+            Err(CartridgeError::UnsupportedMapper(0xBA))
         ));
     }
 
