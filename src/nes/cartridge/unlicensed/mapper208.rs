@@ -186,7 +186,15 @@ impl Mapper for Mapper208 {
     }
 
     fn wram_size(&self) -> usize {
-        0
+        self.inner.wram_size()
+    }
+
+    fn wram_snapshot(&self) -> Vec<u8> {
+        self.inner.wram_snapshot()
+    }
+
+    fn load_wram_snapshot(&mut self, data: &[u8]) {
+        self.inner.load_wram_snapshot(data);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -196,23 +204,22 @@ impl Mapper for Mapper208 {
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        if data.len() < 6 {
-            return;
+        let expected_len = self.inner.registers_snapshot().len() + self.ex_regs.len();
+
+        if data.len() == expected_len {
+            let (mmc3_data, tail) = data.split_at(data.len() - self.ex_regs.len());
+            self.inner.restore_registers(mmc3_data);
+            self.ex_regs.copy_from_slice(tail);
+        } else {
+            // Legacy MMC3-only snapshot: restore MMC3 and reset extra regs.
+            self.inner.restore_registers(data);
+            self.ex_regs = [0; 6];
+            self.ex_regs[5] = 3; // PRG block initialised to 3 at power-on
         }
-        let (mmc3_data, tail) = data.split_at(data.len() - 6);
-        self.inner.restore_registers(mmc3_data);
-        self.ex_regs.copy_from_slice(&tail[..6]);
     }
 
     fn capabilities(&self) -> MapperCapabilities {
-        MapperCapabilities {
-            has_irq: true,
-            has_chr_banking: true,
-            has_dynamic_mirroring: true,
-            prg_bank_size_kb: 8,
-            chr_bank_size_kb: 1,
-            ..Default::default()
-        }
+        self.inner.capabilities()
     }
 }
 
@@ -269,9 +276,8 @@ mod tests {
     #[test]
     fn prg_block_write_4800_extracts_bits_0_and_4() {
         let mut mapper = make_mapper();
-        // value = 0b0000_1001 → bit0=1, bit3=1 → (1&1)=1, (1<<3>>3)=1 → exRegs[5]=1|2=3? wait
-        // set_prg_block: exRegs[5] = (value & 0x01) | ((value >> 3) & 0x02)
-        // value = 0x01: bit0=1, bit3=0 → exRegs[5] = 1|0 = 1
+        // set_prg_block: ex_regs[5] = (value & 0x01) | ((value >> 3) & 0x02)
+        // With value 0x01, only bit 0 is set, so ex_regs[5] becomes 1.
         mapper.write_prg(0x4800, 0x01);
         assert_eq!(
             mapper.ex_regs[5], 1,
