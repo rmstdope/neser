@@ -236,9 +236,12 @@ use super::unlicensed::mapper255::Mapper255;
 use super::unlicensed::mapper257::Mapper257;
 use super::unlicensed::mapper259::Mapper259;
 use super::unlicensed::mapper260::Mapper260;
+use super::unlicensed::mapper261::Mapper261;
 use super::unlicensed::mapper262::Mapper262;
 use super::unlicensed::mapper263::Mapper263;
 use super::unlicensed::mapper264::Mapper264;
+use super::unlicensed::mapper265::Mapper265;
+use super::unlicensed::mapper266::Mapper266;
 use super::unlicensed::mapper267::Mapper267;
 use super::unlicensed::mapper268::Mapper268;
 use super::unlicensed::mapper269::Mapper269;
@@ -252,6 +255,7 @@ use super::unlicensed::mapper286::Mapper286;
 use super::unlicensed::mapper287::Mapper287;
 use super::unlicensed::mapper288::Mapper288;
 use super::unlicensed::mapper289::Mapper289;
+use super::unlicensed::mapper290::Mapper290;
 use super::unlicensed::mapper291::Mapper291;
 use super::unlicensed::mapper292::Mapper292;
 use super::unlicensed::mapper293::Mapper293;
@@ -268,6 +272,7 @@ use super::unlicensed::mapper305::Mapper305;
 use super::unlicensed::mapper306::Mapper306;
 use super::unlicensed::mapper307::Mapper307;
 use super::unlicensed::mapper308::Mapper308;
+use super::unlicensed::mapper309::Mapper309;
 use super::unlicensed::mapper310::Mapper310;
 use super::unlicensed::mapper311::Mapper311;
 use super::unlicensed::mapper313::Mapper313;
@@ -1138,9 +1143,12 @@ mapper_registry! {
     // 258: Tentatively reserved by FCEUX for UNIF MAPR 158B hardware — no proper iNES/NES 2.0 documentation.
     259 => Mapper259::new,
     260 => Mapper260::new,
+    261 => Mapper261::new,
     262 => Mapper262::new,
     263 => Mapper263::new,
     264 => Mapper264::new,
+    265 => Mapper265::new,
+    266 => Mapper266::new,
     267 => Mapper267::new,
     268 => Mapper268::new,
     269 => Mapper269::new,
@@ -1160,6 +1168,7 @@ mapper_registry! {
     299 => Mapper299::new,
     288 => Mapper288::new,
     289 => Mapper289::new,
+    290 => Mapper290::new,
     287 => Mapper287::new,
     286 => Mapper286::new,
     302 => Mapper302::new,
@@ -1169,6 +1178,7 @@ mapper_registry! {
     306 => Mapper306::new,
     307 => Mapper307::new,
     308 => Mapper308::new,
+    309 => Mapper309::new,
     310 => Mapper310::new,
     311 => Mapper311::new,
     313 => Mapper313::new,
@@ -1186,10 +1196,10 @@ const SUPPORTED_MAPPERS: &[u16] = &[
     128, 129, 132, 133, 140, 141, 142, 143, 144, 145, 146, 147, 149, 154, 155, 156, 160, 161, 165,
     169, 173, 177, 180, 182, 184, 185, 193, 205, 206, 207, 214, 216, 217, 218, 219, 222, 225, 226,
     227, 228, 229, 230, 248, 231, 232, 233, 234, 236, 237, 238, 241, 242, 243, 244, 245, 246, 249,
-    250, 251, 253, 254, 255, 257, 259, 260, 262, 263, 264, 267, 268, 269, 270, 271, 274, 281, 283,
-    285, 286, 287, 288, 289, 291, 292, 293, 294, 295, 296, 299, 300, 302, 303, 304, 305, 306, 307,
-    308, 310, 311, 313, 314, 315, 319, 320, 322, 323, 324, 326, 327, 328, 329, 330, 331, 332, 335,
-    337, 338, 339, 340, 342, 343, 344, 345, 346, 347, 348, 349, 350,
+    250, 251, 253, 254, 255, 257, 259, 260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270, 271,
+    274, 281, 283, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 299, 300, 302, 303,
+    304, 305, 306, 307, 308, 309, 310, 311, 313, 314, 315, 319, 320, 322, 323, 324, 326, 327, 328,
+    329, 330, 331, 332, 335, 337, 338, 339, 340, 342, 343, 344, 345, 346, 347, 348, 349, 350,
 ];
 
 /// List of supported iNES mapper IDs handled by the factory.
