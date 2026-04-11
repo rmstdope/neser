@@ -96,7 +96,6 @@ fn test_cpu_instrs_06_ld_r_r() {
 }
 
 #[test]
-#[ignore = "failing: JR/JP/CALL/RET/RST all fail — tracked in #1980"]
 fn test_cpu_instrs_07_jr_jp_call_ret_rst() {
     let mut gb =
         load_gb_rom("roms/gb/automated_tests/cpu_instrs/individual/07-jr,jp,call,ret,rst.gb");
@@ -108,7 +107,6 @@ fn test_cpu_instrs_07_jr_jp_call_ret_rst() {
 }
 
 #[test]
-#[ignore = "failing: loops indefinitely (STOP/HALT issue) — tracked in #1981"]
 fn test_cpu_instrs_08_misc_instrs() {
     let mut gb = load_gb_rom("roms/gb/automated_tests/cpu_instrs/individual/08-misc instrs.gb");
     let output = run_blargg_rom(&mut gb);
@@ -151,7 +149,6 @@ fn test_cpu_instrs_11_op_a_hl() {
 // ── Other Blargg CPU ROMs ─────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "failing: instruction timing inaccuracies — tracked in #1983"]
 fn test_instr_timing() {
     let mut gb = load_gb_rom("roms/gb/automated_tests/instr_timing/instr_timing.gb");
     let output = run_blargg_rom(&mut gb);
