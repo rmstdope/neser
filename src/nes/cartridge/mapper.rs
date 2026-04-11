@@ -192,6 +192,7 @@ use super::unlicensed::mapper202::Mapper202;
 use super::unlicensed::mapper203::Mapper203;
 use super::unlicensed::mapper204::Mapper204;
 use super::unlicensed::mapper205::Mapper205;
+use super::unlicensed::mapper208::Mapper208;
 use super::unlicensed::mapper211::Mapper211;
 use super::unlicensed::mapper212::Mapper212;
 use super::unlicensed::mapper213::Mapper213;
@@ -1076,6 +1077,7 @@ mapper_registry! {
     205 => Mapper205::new,
     206 => Namco118Mapper::new,
     207 => TaitoX1005_207Mapper::new,
+    208 => Mapper208::new,
     211 => Mapper211::new,
     212 => Mapper212::new,
     213 => Mapper213::new,
