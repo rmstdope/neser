@@ -172,13 +172,17 @@ use super::unlicensed::mapper156::Mapper156;
 use super::unlicensed::mapper162::Mapper162;
 use super::unlicensed::mapper163::Mapper163;
 use super::unlicensed::mapper165::Mapper165;
+use super::unlicensed::mapper166::Mapper166;
 use super::unlicensed::mapper167::Mapper167;
+use super::unlicensed::mapper170::Mapper170;
 use super::unlicensed::mapper171::Mapper171;
 use super::unlicensed::mapper174::Mapper174;
 use super::unlicensed::mapper175::Mapper175;
 use super::unlicensed::mapper177::Mapper177;
 use super::unlicensed::mapper178::Mapper178;
+use super::unlicensed::mapper187::Mapper187;
 use super::unlicensed::mapper188::Mapper188;
+use super::unlicensed::mapper189::Mapper189;
 use super::unlicensed::mapper190::Mapper190;
 use super::unlicensed::mapper191::Mapper191;
 use super::unlicensed::mapper192::Mapper192;
@@ -230,6 +234,7 @@ use super::unlicensed::mapper246::Mapper246;
 use super::unlicensed::mapper249::Mapper249;
 use super::unlicensed::mapper250::Mapper250;
 use super::unlicensed::mapper251::Mapper251;
+use super::unlicensed::mapper252::Mapper252;
 use super::unlicensed::mapper253::Mapper253;
 use super::unlicensed::mapper254::Mapper254;
 use super::unlicensed::mapper255::Mapper255;
@@ -1060,9 +1065,11 @@ mapper_registry! {
     162 => Mapper162::new,
     163 => Mapper163::new,
     165 => Mapper165::new,
+    166 => Mapper166::new,
     167 => Mapper167::new,
     // 169: Yuxing board. 'Contra 168-in-1' was misassigned here; correct mapper is 015. Alias of mapper 015.
     169 => Multicart15Mapper::new,
+    170 => Mapper170::new,
     171 => Mapper171::new,
     173 => Mapper173::new,
     174 => Mapper174::new,
@@ -1078,7 +1085,9 @@ mapper_registry! {
     184 => Sunsoft1Mapper::new,
     185 => CnromSecurityMapper::new,
     // 186: Fukutake Study Box BIOS. Requires a headerless .BIN BIOS image, not an iNES ROM — not implementable here.
+    187 => Mapper187::new,
     188 => Mapper188::new,
+    189 => Mapper189::new,
     190 => Mapper190::new,
     191 => Mapper191::new,
     192 => Mapper192::new,
@@ -1136,6 +1145,7 @@ mapper_registry! {
     249 => Mapper249::new,
     250 => Mapper250::new,
     251 => Mapper251::new,
+    252 => Mapper252::new,
     253 => Mapper253::new,
     254 => Mapper254::new,
     255 => Mapper255::new,
