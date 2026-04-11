@@ -41,6 +41,7 @@
 //!
 //! Bank register resets to 0; both PRG slots and CHR become bank 0.
 
+use crate::nes::cartridge::NametableLayout;
 use crate::nes::cartridge::base_mapper::BaseMapper;
 use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
 
@@ -54,10 +55,18 @@ const CHR_BANK_SIZE: usize = 8 * 1024;
 pub struct Mapper175 {
     base: BaseMapper,
     reg: u8,
+    /// When true, the bootstrap mapping is active (slot 0 = bank 0, slot 1 =
+    /// last bank).  Cleared on the first bank register write.
+    bootstrap: bool,
+    /// Current mirroring bit (bit 2 of `$8000` write): 0 = V, 1 = H.
+    mirroring_h: bool,
+    /// Original mirroring from the ROM header, restored on reset.
+    initial_mirroring: NametableLayout,
 }
 
 impl Mapper175 {
     pub fn new(ctx: MapperContext) -> Self {
+        let initial_mirroring = ctx.mirroring;
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
             has_dynamic_mirroring: true,
@@ -73,7 +82,13 @@ impl Mapper175 {
         base.select_prg_page(0, 0);
         base.select_prg_page(1, -1);
         base.select_chr_page(0, 0);
-        Self { base, reg: 0 }
+        Self {
+            base,
+            reg: 0,
+            bootstrap: true,
+            mirroring_h: false,
+            initial_mirroring,
+        }
     }
 
     /// Apply the current bank register to both PRG slots and CHR.
@@ -82,6 +97,13 @@ impl Mapper175 {
         self.base.select_prg_page(0, bank);
         self.base.select_prg_page(1, bank);
         self.base.select_chr_page(0, bank);
+    }
+
+    /// Apply bootstrap mapping: slot 0 = bank 0, slot 1 = last bank, CHR = 0.
+    fn apply_bootstrap(&mut self) {
+        self.base.select_prg_page(0, 0);
+        self.base.select_prg_page(1, -1);
+        self.base.select_chr_page(0, 0);
     }
 }
 
@@ -99,10 +121,17 @@ impl Mapper for Mapper175 {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
+        if self.base.try_write_prg_ram(addr, value) {
+            return;
+        }
         match addr {
-            0x8000 => self.base.set_mirroring_hv((value >> 2) & 1 != 0),
+            0x8000 => {
+                self.mirroring_h = (value >> 2) & 1 != 0;
+                self.base.set_mirroring_hv(self.mirroring_h);
+            }
             0x8001..=0xFFFF => {
                 self.reg = value & 0x0F;
+                self.bootstrap = false;
                 self.activate_banks();
             }
             _ => {}
@@ -110,19 +139,36 @@ impl Mapper for Mapper175 {
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        vec![self.reg]
+        // byte 0: reg, byte 1: flags (bit 0 = bootstrap, bit 1 = mirroring_h)
+        let flags = (self.bootstrap as u8) | ((self.mirroring_h as u8) << 1);
+        vec![self.reg, flags]
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        if let Some(&reg) = data.first() {
+        if data.len() >= 2 {
+            self.reg = data[0] & 0x0F;
+            self.bootstrap = data[1] & 0x01 != 0;
+            self.mirroring_h = data[1] & 0x02 != 0;
+            self.base.set_mirroring_hv(self.mirroring_h);
+            if self.bootstrap {
+                self.apply_bootstrap();
+            } else {
+                self.activate_banks();
+            }
+        } else if let Some(&reg) = data.first() {
+            // Legacy 1-byte snapshot: assume banks activated, mirroring unknown.
             self.reg = reg & 0x0F;
+            self.bootstrap = false;
             self.activate_banks();
         }
     }
 
     fn reset(&mut self) {
         self.reg = 0;
-        self.activate_banks();
+        self.bootstrap = true;
+        self.mirroring_h = false;
+        self.base.set_mirroring(self.initial_mirroring);
+        self.apply_bootstrap();
     }
 }
 
@@ -282,21 +328,35 @@ mod tests {
     // ── Reset ─────────────────────────────────────────────────────────────────
 
     #[test]
-    fn reset_applies_bank_0_to_both_slots() {
+    fn reset_restores_bootstrap_mapping() {
         let mut mapper = make_mapper();
         mapper.write_prg(0xA000, 0x03);
         mapper.reset();
+        let last_bank = (PRG_BANKS - 1) as u8;
         assert_eq!(
             mapper.read_prg(0x8000),
             0,
-            "Slot 0 must be bank 0 after reset"
+            "Slot 0 must be bank 0 after reset (bootstrap)"
         );
         assert_eq!(
             mapper.read_prg(0xC000),
-            0,
-            "Slot 1 must be bank 0 after reset"
+            last_bank,
+            "Slot 1 must be last bank after reset (bootstrap)"
         );
         assert_eq!(mapper.read_chr(0x0000), 0, "CHR must be bank 0 after reset");
+    }
+
+    #[test]
+    fn reset_restores_initial_mirroring() {
+        let mut mapper = make_mapper();
+        mapper.write_prg(0x8000, 0x04); // set horizontal
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
+        mapper.reset();
+        assert_eq!(
+            mapper.get_mirroring(),
+            NametableLayout::Vertical,
+            "Mirroring must revert to header value on reset"
+        );
     }
 
     // ── Snapshot / restore ────────────────────────────────────────────────────
@@ -304,7 +364,8 @@ mod tests {
     #[test]
     fn registers_snapshot_round_trips() {
         let mut mapper = make_mapper();
-        mapper.write_prg(0xA000, 0x03);
+        mapper.write_prg(0x8000, 0x04); // H mirroring
+        mapper.write_prg(0xA000, 0x03); // bank 3, clears bootstrap
 
         let snap = mapper.registers_snapshot();
         let mut restored = make_mapper();
@@ -324,6 +385,26 @@ mod tests {
             restored.read_chr(0x0000),
             mapper.read_chr(0x0000),
             "Restored CHR must match"
+        );
+        assert_eq!(
+            restored.get_mirroring(),
+            NametableLayout::Horizontal,
+            "Restored mirroring must match"
+        );
+    }
+
+    #[test]
+    fn snapshot_preserves_bootstrap_state() {
+        let mapper = make_mapper(); // bootstrap = true
+        let snap = mapper.registers_snapshot();
+        let mut restored = make_mapper();
+        restored.write_prg(0xA000, 0x02); // clear bootstrap
+        restored.restore_registers(&snap);
+        let last_bank = (PRG_BANKS - 1) as u8;
+        assert_eq!(
+            restored.read_prg(0xC000),
+            last_bank,
+            "Bootstrap mapping must be restored: slot1 = last bank"
         );
     }
 
