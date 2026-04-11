@@ -96,11 +96,17 @@ impl Mapper for Mapper170 {
     }
 
     fn read_prg(&self, addr: u16) -> u8 {
-        // $6502 read: return reg | ((addr >> 8) & 0x7F)
+        // $7777 read: return reg | ((addr >> 8) & 0x7F)
         if addr == 0x7777 {
             return self.reg | ((addr >> 8) as u8 & 0x7F);
         }
-        self.base.read_prg_banked(addr)
+
+        if (0x8000..=0xFFFF).contains(&addr) {
+            return self.base.read_prg_banked(addr);
+        }
+
+        // Out-of-range reads are unmapped for this board; model as open bus.
+        0
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {

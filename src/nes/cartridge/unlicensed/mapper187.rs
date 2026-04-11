@@ -243,7 +243,8 @@ impl Mapper for Mapper187 {
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        if data.len() >= 2 {
+        if data.len() >= 18 {
+            // Full mapper-187 snapshot: 16 MMC3 bytes + 2 extra.
             let (mmc3_data, tail) = data.split_at(data.len() - 2);
             self.mmc3.restore_registers(mmc3_data);
             self.prg_reg = tail[0];
@@ -280,7 +281,7 @@ mod tests {
     use super::*;
     use crate::nes::cartridge::NametableLayout;
     use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
-    use crate::nes::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::test_helpers::{banked_data, banked_data_with_upper_marker};
 
     // 256KB PRG = 32 × 8KB pages (enough to exercise NROM override with bank 15)
     const PRG_BANKS: usize = 32;
@@ -384,36 +385,53 @@ mod tests {
         );
     }
 
+    /// Build a mapper whose CHR uses `banked_data_with_upper_marker` so that
+    /// banks 0–255 read back 0 and banks 256–511 read back 1. This makes
+    /// the CHR A18 effect directly visible in assertions.
+    fn make_mapper_upper_chr() -> Mapper187 {
+        Mapper187::new(MapperContext::new_for_test(
+            MAPPER_NUMBER,
+            banked_data(PRG_BANK_SIZE, PRG_BANKS),
+            banked_data_with_upper_marker(CHR_1K_BANK_SIZE, CHR_BANKS),
+            NametableLayout::Vertical,
+        ))
+    }
+
     #[test]
     fn chr_a18_mode0_inverts_ppu_a12_for_sprites() {
-        let mut mapper = make_mapper();
-        // Mode 0 (default): A18 = inverted PPU A12
-        // PPU $0000-$0FFF (A12=0): A18 = 1-0 = 1 → CHR page | 0x100
-        // PPU $1000-$1FFF (A12=1): A18 = 1-1 = 0 → CHR page as-is
-        // Set MMC3 CHR slot 0 to bank 0 via $8001
-        mapper.write_prg(0x8000, 0x00); // bank_select reg: select R0 (CHR even slot 0)
-        mapper.write_prg(0x8001, 0x00); // R0 = 0
+        // Mode 0 (default, chr_a18_mode=0): A18 = inverted PPU A12.
+        // PPU $0000 (A12=0) → A18=1 → bank | 0x100 (>= 256) → upper marker = 1
+        // PPU $1000 (A12=1) → A18=0 → bank as-is (<256) → upper marker = 0
+        let mut mapper = make_mapper_upper_chr();
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            1,
+            "mode0: PPU $0000 (A12=0) must use A18=1 (upper CHR half)"
+        );
+        assert_eq!(
+            mapper.read_chr(0x1000),
+            0,
+            "mode0: PPU $1000 (A12=1) must use A18=0 (lower CHR half)"
+        );
+    }
 
-        // In mode 0: reading PPU $0000 (A12=0) → bank = 0 | (1<<8) = 256
-        // banked_data fills bank 256 % 512 = 256 with value 0 (since 256 wraps to 0 mod 256)
-        // Actually, banked_data fills byte[0] of each bank with bank_index & 0xFF
-        // bank 256 fills with 0 (256 & 0xFF = 0), same as bank 0
-        // Let's test the mode difference more directly by checking which half is accessed
-        // Bank 0 at PPU$0000: without A18, reads bank 0 (byte 0)
-        // Bank 0 at PPU$0000 with A18=1: reads bank 256 (byte 0, same value since 256%256=0)
-        // Use different CHR banks to make the effect visible
-        mapper.write_prg(0x8001, 1); // R0 = 1 (CHR bank 1 at PPU $0000)
-        // Mode 0: A18=1 for $0000 → effective bank = 1 | 0x100 = 257 = 257%512=257
-        // 257 & 0xFF = 1, so bank 257 has fill value 1 → reads 1
-        // Mode 1 would give: A18=0 for $0000 → effective bank = 1 → reads 1 too
-        // (same value — so this test validates A18 bit interaction via different bank indices)
-        let val_a12_0 = mapper.read_chr(0x0000); // PPU A12=0
-        let val_a12_1 = mapper.read_chr(0x1000); // PPU A12=1
-        // With mode 0 and CHR bank 1:
-        // $0000 (A12=0): A18=1 → bank 257, fill=1
-        // $1000 (A12=1): A18=0 → bank 1 (from MMC3 default for slot 4-7), fill=?
-        // The key assertion: both should be accessible (no panic), and values depend on banks
-        let _ = (val_a12_0, val_a12_1); // just confirm no panic; full verification needs known ROM
+    #[test]
+    fn chr_a18_mode1_follows_ppu_a12() {
+        // Mode 1 (chr_a18_mode=1): A18 = PPU A12.
+        // PPU $0000 (A12=0) → A18=0 → lower half → upper marker = 0
+        // PPU $1000 (A12=1) → A18=1 → upper half → upper marker = 1
+        let mut mapper = make_mapper_upper_chr();
+        mapper.write_prg(0x8000, 0x80); // bit 7 = 1 → chr_a18_mode = 1
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            0,
+            "mode1: PPU $0000 (A12=0) must use A18=0 (lower CHR half)"
+        );
+        assert_eq!(
+            mapper.read_chr(0x1000),
+            1,
+            "mode1: PPU $1000 (A12=1) must use A18=1 (upper CHR half)"
+        );
     }
 
     #[test]
