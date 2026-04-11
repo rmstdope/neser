@@ -152,32 +152,44 @@ impl Ppu {
 
     /// Read from OAM address $FE00–$FE9F.
     ///
-    /// Returns 0xFF if the CPU is blocked (Mode 2 or 3 while LCD on).
-    /// When LCD is disabled OAM is always accessible.
-    pub fn read_oam(&self, addr: u16) -> u8 {
-        if self.registers.lcd_enabled()
-            && matches!(
-                self.timing.mode(),
-                PpuMode::OamScan | PpuMode::PixelTransfer
-            )
-        {
-            return 0xFF;
+    /// During Mode 2 (OAM Scan) while LCD is on: returns 0xFF and applies
+    /// the OAM read-corruption side effect to the PPU's currently scanned row.
+    /// During Mode 3 (Pixel Transfer) while LCD is on: returns 0xFF (no corruption).
+    /// When LCD is disabled OAM is always accessible without corruption.
+    pub fn read_oam(&mut self, addr: u16) -> u8 {
+        if self.registers.lcd_enabled() {
+            match self.timing.mode() {
+                PpuMode::OamScan => {
+                    if let Some(row) = self.current_oam_row() {
+                        self.apply_oam_read_corruption(row);
+                    }
+                    return 0xFF;
+                }
+                PpuMode::PixelTransfer => return 0xFF,
+                _ => {}
+            }
         }
         self.oam[(addr - 0xFE00) as usize]
     }
 
     /// Write to OAM address $FE00–$FE9F.
     ///
-    /// Silently ignored if the CPU is blocked (Mode 2 or 3 while LCD on).
-    /// When LCD is disabled OAM is always accessible.
+    /// During Mode 2 (OAM Scan) while LCD is on: applies the OAM write-corruption
+    /// formula to the PPU's currently scanned row; the actual written value is discarded.
+    /// During Mode 3 (Pixel Transfer) while LCD is on: write silently ignored.
+    /// When LCD is disabled OAM is always accessible without corruption.
     pub fn write_oam(&mut self, addr: u16, val: u8) {
-        if self.registers.lcd_enabled()
-            && matches!(
-                self.timing.mode(),
-                PpuMode::OamScan | PpuMode::PixelTransfer
-            )
-        {
-            return;
+        if self.registers.lcd_enabled() {
+            match self.timing.mode() {
+                PpuMode::OamScan => {
+                    if let Some(row) = self.current_oam_row() {
+                        self.apply_oam_write_corruption(row);
+                    }
+                    return;
+                }
+                PpuMode::PixelTransfer => return,
+                _ => {}
+            }
         }
         self.oam[(addr - 0xFE00) as usize] = val;
     }
@@ -232,6 +244,119 @@ impl Ppu {
 
     pub fn clear_frame_ready(&mut self) {
         self.timing.clear_frame_ready();
+    }
+
+    // ── OAM corruption bug helpers ────────────────────────────────────────────
+
+    /// Returns the OAM row currently being scanned by the PPU.
+    ///
+    /// Returns `Some(row)` during Mode 2 (OAM Scan) when LCD is enabled.
+    /// Returns `None` outside Mode 2 or when LCD is disabled.
+    /// Row 0 maps to dots 0–3, row 1 to dots 4–7, …, row 19 to dots 76–79.
+    pub fn current_oam_row(&self) -> Option<usize> {
+        if !self.registers.lcd_enabled() || self.timing.mode() != PpuMode::OamScan {
+            return None;
+        }
+        Some(self.timing.dot() as usize / 4)
+    }
+
+    /// Apply OAM write corruption to the given row.
+    ///
+    /// Row 0 is immune. Formula: `row[0] = ((a^c)&(b^c))^c` where
+    /// `a`=row[0], `b`=prev_row[0], `c`=prev_row[2]; words 1–3 copied from prev row.
+    pub fn apply_oam_write_corruption(&mut self, row: usize) {
+        if row == 0 {
+            return;
+        }
+        let prev = row - 1;
+        let a = self.oam_word(row, 0);
+        let b = self.oam_word(prev, 0);
+        let c = self.oam_word(prev, 2);
+        let prev_w1 = self.oam_word(prev, 1);
+        let prev_w2 = self.oam_word(prev, 2);
+        let prev_w3 = self.oam_word(prev, 3);
+        let new_word0 = ((a ^ c) & (b ^ c)) ^ c;
+        self.set_oam_word(row, 0, new_word0);
+        self.set_oam_word(row, 1, prev_w1);
+        self.set_oam_word(row, 2, prev_w2);
+        self.set_oam_word(row, 3, prev_w3);
+    }
+
+    /// Apply OAM read corruption to the given row.
+    ///
+    /// Row 0 is immune. Formula: `row[0] = b|(a&c)` where
+    /// `a`=row[0], `b`=prev_row[0], `c`=prev_row[2]; words 1–3 copied from prev row.
+    pub fn apply_oam_read_corruption(&mut self, row: usize) {
+        if row == 0 {
+            return;
+        }
+        let prev = row - 1;
+        let a = self.oam_word(row, 0);
+        let b = self.oam_word(prev, 0);
+        let c = self.oam_word(prev, 2);
+        let prev_w1 = self.oam_word(prev, 1);
+        let prev_w2 = self.oam_word(prev, 2);
+        let prev_w3 = self.oam_word(prev, 3);
+        let new_word0 = b | (a & c);
+        self.set_oam_word(row, 0, new_word0);
+        self.set_oam_word(row, 1, prev_w1);
+        self.set_oam_word(row, 2, prev_w2);
+        self.set_oam_word(row, 3, prev_w3);
+    }
+
+    /// Apply the OAM Read-During-IDU corruption pattern to the given row.
+    ///
+    /// For rows 4–18: applies the 4-operand complex formula to the preceding row,
+    /// copies it up and down two rows, then applies read corruption on the current row.
+    /// For rows 1–3 and row 19: skips the complex part; applies only read corruption.
+    /// Row 0 is immune.
+    pub fn apply_oam_read_idu_corruption(&mut self, row: usize) {
+        const LAST_ROW: usize = 19;
+        if row == 0 {
+            return;
+        }
+        // Complex part applies only when row is 4–18 (not first four, not last).
+        if row >= 4 && row < LAST_ROW {
+            let n = row;
+            let prev = n - 1;
+            let prev2 = n - 2;
+            let a = self.oam_word(prev2, 0);
+            let b = self.oam_word(prev, 0);
+            let c = self.oam_word(n, 0);
+            let d = self.oam_word(prev, 2);
+            let new_b = (b & (a | c | d)) | (a & c & d);
+            // Step 1: update word 0 of preceding row.
+            self.set_oam_word(prev, 0, new_b);
+            // Step 2: copy the (updated) preceding row to row n and row n-2.
+            let w0 = self.oam_word(prev, 0);
+            let w1 = self.oam_word(prev, 1);
+            let w2 = self.oam_word(prev, 2);
+            let w3 = self.oam_word(prev, 3);
+            self.set_oam_word(prev2, 0, w0);
+            self.set_oam_word(prev2, 1, w1);
+            self.set_oam_word(prev2, 2, w2);
+            self.set_oam_word(prev2, 3, w3);
+            self.set_oam_word(n, 0, w0);
+            self.set_oam_word(n, 1, w1);
+            self.set_oam_word(n, 2, w2);
+            self.set_oam_word(n, 3, w3);
+        }
+        // Always apply normal read corruption to the current row.
+        self.apply_oam_read_corruption(row);
+    }
+
+    // ── OAM word accessors (used by corruption helpers) ───────────────────────
+
+    fn oam_word(&self, row: usize, word: usize) -> u16 {
+        let base = row * 8 + word * 2;
+        u16::from_le_bytes([self.oam[base], self.oam[base + 1]])
+    }
+
+    fn set_oam_word(&mut self, row: usize, word: usize, val: u16) {
+        let base = row * 8 + word * 2;
+        let bytes = val.to_le_bytes();
+        self.oam[base] = bytes[0];
+        self.oam[base + 1] = bytes[1];
     }
 }
 
@@ -549,6 +674,361 @@ mod tests {
         assert_eq!(
             val, 0xCC,
             "OAM read should return actual value when LCD is off"
+        );
+    }
+
+    // ── OAM corruption: current_oam_row ───────────────────────────────────────
+
+    #[test]
+    fn test_current_oam_row_returns_row_0_at_initial_state() {
+        // Given: fresh Ppu in Mode 2 (OAM Scan), dot=0 → row 0/4 = 0
+        let ppu = Ppu::new();
+        assert_eq!(ppu.timing.mode(), PpuMode::OamScan);
+        assert_eq!(ppu.current_oam_row(), Some(0));
+    }
+
+    #[test]
+    fn test_current_oam_row_returns_row_1_after_4_dot_ticks() {
+        // Given: dot advances to 4 → row 4/4 = 1
+        let mut ppu = Ppu::new();
+        tick_dots(&mut ppu, 4);
+        assert_eq!(ppu.timing.dot(), 4);
+        assert_eq!(ppu.current_oam_row(), Some(1));
+    }
+
+    #[test]
+    fn test_current_oam_row_returns_row_19_at_dot_76() {
+        // Given: dot=76 → row 76/4 = 19 (last Mode 2 row)
+        let mut ppu = Ppu::new();
+        tick_dots(&mut ppu, 76);
+        assert_eq!(ppu.timing.dot(), 76);
+        assert_eq!(ppu.current_oam_row(), Some(19));
+    }
+
+    #[test]
+    fn test_current_oam_row_returns_none_during_mode_3() {
+        // Given: ticked to dot=80 → Mode 3 (Pixel Transfer)
+        let mut ppu = Ppu::new();
+        tick_dots(&mut ppu, 80);
+        assert_eq!(ppu.timing.mode(), PpuMode::PixelTransfer);
+        assert_eq!(ppu.current_oam_row(), None);
+    }
+
+    #[test]
+    fn test_current_oam_row_returns_none_when_lcd_disabled() {
+        // Given: LCD disabled; mode stays OamScan but LCD is off
+        let mut ppu = Ppu::new();
+        assert_eq!(ppu.timing.mode(), PpuMode::OamScan);
+        ppu.write_register(0xFF40, 0x00); // clear LCDC bit 7 → LCD off
+        assert_eq!(ppu.current_oam_row(), None);
+    }
+
+    // ── OAM corruption: helpers ───────────────────────────────────────────────
+
+    /// Write all four 16-bit words of an OAM row (little-endian).
+    fn set_row_words(oam: &mut [u8; 0xA0], row: usize, words: [u16; 4]) {
+        let base = row * 8;
+        for (i, &w) in words.iter().enumerate() {
+            oam[base + i * 2] = w as u8;
+            oam[base + i * 2 + 1] = (w >> 8) as u8;
+        }
+    }
+
+    /// Read all four 16-bit words of an OAM row (little-endian).
+    fn get_row_words(oam: &[u8; 0xA0], row: usize) -> [u16; 4] {
+        let base = row * 8;
+        [0, 1, 2, 3].map(|i| u16::from_le_bytes([oam[base + i * 2], oam[base + i * 2 + 1]]))
+    }
+
+    // ── apply_oam_write_corruption ────────────────────────────────────────────
+
+    #[test]
+    fn test_write_corruption_applies_formula_to_row() {
+        // Given: row 1 (preceding), row 2 (current) with known values.
+        // row 1: b=word0=0x0002, word1=0x0003, c=word2=0x0004, word3=0x0005
+        // row 2: a=word0=0x0001
+        // a^c = 0x0001^0x0004 = 0x0005
+        // b^c = 0x0002^0x0004 = 0x0006
+        // (a^c)&(b^c) = 0x0005 & 0x0006 = 0x0004
+        // result = 0x0004 ^ 0x0004 = 0x0000
+        let mut ppu = Ppu::new();
+        set_row_words(&mut ppu.oam, 1, [0x0002, 0x0003, 0x0004, 0x0005]);
+        set_row_words(&mut ppu.oam, 2, [0x0001, 0x00AA, 0x00BB, 0x00CC]);
+        ppu.apply_oam_write_corruption(2);
+        let row2 = get_row_words(&ppu.oam, 2);
+        // Then: word 0 = formula result; words 1–3 copied from preceding row 1
+        assert_eq!(row2[0], 0x0000, "write corruption: word0 formula mismatch");
+        assert_eq!(
+            row2[1], 0x0003,
+            "write corruption: word1 should come from preceding row"
+        );
+        assert_eq!(
+            row2[2], 0x0004,
+            "write corruption: word2 should come from preceding row"
+        );
+        assert_eq!(
+            row2[3], 0x0005,
+            "write corruption: word3 should come from preceding row"
+        );
+    }
+
+    #[test]
+    fn test_write_corruption_skips_row_0() {
+        // Row 0 (first two objects) must never be corrupted.
+        let mut ppu = Ppu::new();
+        set_row_words(&mut ppu.oam, 0, [0x1111, 0x2222, 0x3333, 0x4444]);
+        let snapshot = ppu.oam;
+        ppu.apply_oam_write_corruption(0);
+        assert_eq!(ppu.oam, snapshot, "row 0 is immune to write corruption");
+    }
+
+    #[test]
+    fn test_write_corruption_does_not_modify_preceding_row() {
+        // The preceding row is used as source but must not be mutated.
+        let mut ppu = Ppu::new();
+        set_row_words(&mut ppu.oam, 1, [0x00BB, 0x00CC, 0x00DD, 0x00EE]);
+        set_row_words(&mut ppu.oam, 2, [0x0001, 0x0002, 0x0003, 0x0004]);
+        ppu.apply_oam_write_corruption(2);
+        assert_eq!(
+            get_row_words(&ppu.oam, 1),
+            [0x00BB, 0x00CC, 0x00DD, 0x00EE],
+            "preceding row must not be modified by write corruption"
+        );
+    }
+
+    // ── apply_oam_read_corruption ─────────────────────────────────────────────
+
+    #[test]
+    fn test_read_corruption_applies_formula_to_row() {
+        // Given: row 2 (preceding), row 3 (current).
+        // row 2: b=word0=0x0010, word1=0x0020, c=word2=0x0030, word3=0x0040
+        // row 3: a=word0=0x00F0
+        // a & c = 0x00F0 & 0x0030 = 0x0030
+        // b | (a & c) = 0x0010 | 0x0030 = 0x0030
+        let mut ppu = Ppu::new();
+        set_row_words(&mut ppu.oam, 2, [0x0010, 0x0020, 0x0030, 0x0040]);
+        set_row_words(&mut ppu.oam, 3, [0x00F0, 0x00A0, 0x00B0, 0x00C0]);
+        ppu.apply_oam_read_corruption(3);
+        let row3 = get_row_words(&ppu.oam, 3);
+        assert_eq!(row3[0], 0x0030, "read corruption: word0 formula mismatch");
+        assert_eq!(
+            row3[1], 0x0020,
+            "read corruption: word1 should come from preceding row"
+        );
+        assert_eq!(
+            row3[2], 0x0030,
+            "read corruption: word2 should come from preceding row"
+        );
+        assert_eq!(
+            row3[3], 0x0040,
+            "read corruption: word3 should come from preceding row"
+        );
+    }
+
+    #[test]
+    fn test_read_corruption_skips_row_0() {
+        let mut ppu = Ppu::new();
+        set_row_words(&mut ppu.oam, 0, [0x1111, 0x2222, 0x3333, 0x4444]);
+        let snapshot = ppu.oam;
+        ppu.apply_oam_read_corruption(0);
+        assert_eq!(ppu.oam, snapshot, "row 0 is immune to read corruption");
+    }
+
+    // ── apply_oam_read_idu_corruption ─────────────────────────────────────────
+
+    #[test]
+    fn test_read_idu_corruption_complex_formula_for_rows_4_to_18() {
+        // Given: row 3 (n-2), row 4 (n-1), row 5 (n) with known values.
+        // a=row3[word0]=0x00A0, b=row4[word0]=0x0055,
+        // c=row5[word0]=0x000F, d=row4[word2]=0x00C0
+        // a|c|d = 0x00A0|0x000F|0x00C0 = 0x00EF
+        // b&0x00EF = 0x0055&0x00EF = 0x0045
+        // a&c&d = 0 → new_b = 0x0045
+        // After: row[3] = row[4] = row[5] = [0x0045, 0x0011, 0x00C0, 0x0022]
+        let mut ppu = Ppu::new();
+        set_row_words(&mut ppu.oam, 3, [0x00A0, 0x0001, 0x0002, 0x0003]);
+        set_row_words(&mut ppu.oam, 4, [0x0055, 0x0011, 0x00C0, 0x0022]);
+        set_row_words(&mut ppu.oam, 5, [0x000F, 0x0099, 0x0088, 0x0077]);
+        ppu.apply_oam_read_idu_corruption(5);
+        let expected = [0x0045u16, 0x0011, 0x00C0, 0x0022];
+        assert_eq!(
+            get_row_words(&ppu.oam, 3),
+            expected,
+            "row n-2 should equal corrupted row n-1"
+        );
+        assert_eq!(
+            get_row_words(&ppu.oam, 4),
+            expected,
+            "row n-1 word0 should be updated by complex formula"
+        );
+        assert_eq!(
+            get_row_words(&ppu.oam, 5),
+            expected,
+            "row n should be copied from n-1 then read-corrupted"
+        );
+    }
+
+    #[test]
+    fn test_read_idu_corruption_skips_complex_part_for_row_2() {
+        // Row 2 is in "first four rows" (0–3) → complex part skipped, read corruption only.
+        // row 1: b=0x0010, word1=0x0021, c(word2)=0x0030, word3=0x0041
+        // row 2: a=0x00F0
+        // read formula: b|(a&c) = 0x0010|(0x00F0&0x0030) = 0x0010|0x0030 = 0x0030
+        let mut ppu = Ppu::new();
+        set_row_words(&mut ppu.oam, 1, [0x0010, 0x0021, 0x0030, 0x0041]);
+        set_row_words(&mut ppu.oam, 2, [0x00F0, 0x00AA, 0x00BB, 0x00CC]);
+        ppu.apply_oam_read_idu_corruption(2);
+        // Row 1 must NOT be modified (complex part skipped)
+        assert_eq!(
+            get_row_words(&ppu.oam, 1),
+            [0x0010, 0x0021, 0x0030, 0x0041],
+            "row n-1 must not be modified for rows < 4"
+        );
+        // Row 2 gets read corruption only
+        let row2 = get_row_words(&ppu.oam, 2);
+        assert_eq!(
+            row2[0], 0x0030,
+            "row 2: word0 read corruption formula mismatch"
+        );
+        assert_eq!(row2[1], 0x0021, "row 2: word1 from preceding row");
+        assert_eq!(row2[2], 0x0030, "row 2: word2 from preceding row");
+        assert_eq!(row2[3], 0x0041, "row 2: word3 from preceding row");
+    }
+
+    #[test]
+    fn test_read_idu_corruption_skips_row_0() {
+        let mut ppu = Ppu::new();
+        set_row_words(&mut ppu.oam, 0, [0x0001, 0x0002, 0x0003, 0x0004]);
+        let snapshot = ppu.oam;
+        ppu.apply_oam_read_idu_corruption(0);
+        assert_eq!(ppu.oam, snapshot, "row 0 is immune to read+IDU corruption");
+    }
+
+    #[test]
+    fn test_read_idu_corruption_skips_complex_part_for_last_row() {
+        // Row 19 is the last row → complex part skipped, read corruption only.
+        // row 18: b=0x0008, word1=0x0009, c(word2)=0x000A, word3=0x000B
+        // row 19: a=0x0007
+        // read formula: b|(a&c) = 0x0008|(0x0007&0x000A) = 0x0008|0x0002 = 0x000A
+        let mut ppu = Ppu::new();
+        set_row_words(&mut ppu.oam, 18, [0x0008, 0x0009, 0x000A, 0x000B]);
+        set_row_words(&mut ppu.oam, 19, [0x0007, 0x00FF, 0x00FE, 0x00FD]);
+        ppu.apply_oam_read_idu_corruption(19);
+        // Row 18 must NOT be modified
+        assert_eq!(
+            get_row_words(&ppu.oam, 18),
+            [0x0008, 0x0009, 0x000A, 0x000B],
+            "row 18 must not be modified for last row"
+        );
+        let row19 = get_row_words(&ppu.oam, 19);
+        assert_eq!(row19[0], 0x000A, "last row: word0 read corruption mismatch");
+        assert_eq!(row19[1], 0x0009, "last row: word1 from preceding row");
+        assert_eq!(row19[2], 0x000A, "last row: word2 from preceding row");
+        assert_eq!(row19[3], 0x000B, "last row: word3 from preceding row");
+    }
+
+    // ── Phase B: write_oam / read_oam apply corruption during Mode 2 ──────────
+
+    #[test]
+    fn test_write_oam_applies_write_corruption_during_mode_2() {
+        // Given: OAM data set at row 1 (preceding) and row 2 (current scan row).
+        // row 1: b=0x0002, w1=0x0003, c=0x0004, w3=0x0005
+        // row 2: a=0x0001
+        // write formula: ((a^c)&(b^c))^c = ((0x0001^0x0004)&(0x0002^0x0004))^0x0004
+        //   = (0x0005 & 0x0006) ^ 0x0004 = 0x0004 ^ 0x0004 = 0x0000
+        // Expected row 2 after corruption: [0x0000, 0x0003, 0x0004, 0x0005]
+        let mut ppu = Ppu::new();
+        set_row_words(&mut ppu.oam, 1, [0x0002, 0x0003, 0x0004, 0x0005]);
+        set_row_words(&mut ppu.oam, 2, [0x0001, 0x00AA, 0x00BB, 0x00CC]);
+        // Advance to dot=8 → current_oam_row() = Some(2)
+        tick_dots(&mut ppu, 8);
+        assert_eq!(ppu.timing.mode(), PpuMode::OamScan);
+        assert_eq!(ppu.current_oam_row(), Some(2));
+        // When: CPU writes to any OAM address
+        ppu.write_oam(0xFE10, 0xFF);
+        // Then: write corruption formula applied to row 2 (not the written value)
+        let row2 = get_row_words(&ppu.oam, 2);
+        assert_eq!(
+            row2[0], 0x0000,
+            "write_oam in Mode 2 must apply write corruption to word0"
+        );
+        assert_eq!(
+            row2[1], 0x0003,
+            "write_oam in Mode 2: word1 should come from preceding row"
+        );
+        assert_eq!(
+            row2[2], 0x0004,
+            "write_oam in Mode 2: word2 should come from preceding row"
+        );
+        assert_eq!(
+            row2[3], 0x0005,
+            "write_oam in Mode 2: word3 should come from preceding row"
+        );
+    }
+
+    #[test]
+    fn test_write_oam_does_not_write_actual_value_during_mode_2() {
+        // The written value should never appear in OAM — only the corruption formula result.
+        let mut ppu = Ppu::new();
+        set_row_words(&mut ppu.oam, 1, [0x0002, 0x0003, 0x0004, 0x0005]);
+        set_row_words(&mut ppu.oam, 2, [0x0001, 0x00AA, 0x00BB, 0x00CC]);
+        tick_dots(&mut ppu, 8);
+        ppu.write_oam(0xFE10, 0xAB); // written value 0xAB must NOT appear in OAM
+        // If 0xAB appears anywhere in row 2, that is wrong
+        for i in 0..8 {
+            assert_ne!(
+                ppu.oam[2 * 8 + i],
+                0xAB,
+                "written value 0xAB should not appear in OAM after write during Mode 2"
+            );
+        }
+    }
+
+    #[test]
+    fn test_read_oam_applies_read_corruption_during_mode_2() {
+        // Given: same OAM setup as write test.
+        // read formula: b|(a&c) = 0x0002|(0x0001&0x0004) = 0x0002|0x0000 = 0x0002
+        // Expected row 2 after corruption: [0x0002, 0x0003, 0x0004, 0x0005]
+        let mut ppu = Ppu::new();
+        set_row_words(&mut ppu.oam, 1, [0x0002, 0x0003, 0x0004, 0x0005]);
+        set_row_words(&mut ppu.oam, 2, [0x0001, 0x00AA, 0x00BB, 0x00CC]);
+        tick_dots(&mut ppu, 8);
+        assert_eq!(ppu.timing.mode(), PpuMode::OamScan);
+        // When: CPU reads from any OAM address during Mode 2
+        let result = ppu.read_oam(0xFE10);
+        // Then: returns 0xFF (blocked) AND applies read corruption as side effect
+        assert_eq!(result, 0xFF, "read_oam in Mode 2 must return 0xFF");
+        let row2 = get_row_words(&ppu.oam, 2);
+        assert_eq!(
+            row2[0], 0x0002,
+            "read_oam in Mode 2 must apply read corruption to word0"
+        );
+        assert_eq!(
+            row2[1], 0x0003,
+            "read_oam in Mode 2: word1 from preceding row"
+        );
+        assert_eq!(
+            row2[2], 0x0004,
+            "read_oam in Mode 2: word2 from preceding row"
+        );
+        assert_eq!(
+            row2[3], 0x0005,
+            "read_oam in Mode 2: word3 from preceding row"
+        );
+    }
+
+    #[test]
+    fn test_write_oam_does_not_corrupt_during_mode_3() {
+        // Mode 3 (Pixel Transfer) blocks OAM writes but does NOT apply corruption.
+        let mut ppu = Ppu::new();
+        set_row_words(&mut ppu.oam, 2, [0xAAAAu16, 0xBBBB, 0xCCCC, 0xDDDD]);
+        tick_dots(&mut ppu, 80); // enter Mode 3
+        assert_eq!(ppu.timing.mode(), PpuMode::PixelTransfer);
+        let snapshot = ppu.oam;
+        ppu.write_oam(0xFE10, 0x42);
+        assert_eq!(
+            ppu.oam, snapshot,
+            "write_oam in Mode 3 must not corrupt OAM"
         );
     }
 }
