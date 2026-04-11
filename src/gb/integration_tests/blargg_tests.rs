@@ -1,4 +1,4 @@
-use crate::gb::bus::DmgBus;
+use crate::gb::bus::{DmgBus, GbBus};
 use crate::gb::cartridge::load_cartridge;
 use crate::gb::console::Gb;
 
@@ -15,6 +15,12 @@ fn load_gb_rom(path: &str) -> Gb<DmgBus> {
 /// the slowest tests without running forever on a lockup.
 const BLARGG_CYCLE_LIMIT: u64 = 150_000_000;
 
+/// Return `true` if the serial output byte slice ends with `b"Passed\n"` or
+/// `b"Failed\n"` — without allocating a `String`.
+fn serial_is_done(output: &[u8]) -> bool {
+    output.ends_with(b"Passed\n") || output.ends_with(b"Failed\n")
+}
+
 /// Step `gb` until the serial output ends with "Passed\n" or "Failed\n",
 /// or until `BLARGG_CYCLE_LIMIT` M-cycles have elapsed.
 ///
@@ -22,12 +28,89 @@ const BLARGG_CYCLE_LIMIT: u64 = 150_000_000;
 fn run_blargg_rom(gb: &mut Gb<DmgBus>) -> String {
     let start = gb.cycles();
     loop {
-        let output = String::from_utf8_lossy(gb.cpu.bus.serial_output()).into_owned();
-        if output.ends_with("Passed\n") || output.ends_with("Failed\n") {
-            return output;
+        let output = gb.cpu.bus.serial_output();
+        if serial_is_done(output) || gb.cycles().saturating_sub(start) >= BLARGG_CYCLE_LIMIT {
+            return String::from_utf8_lossy(output).into_owned();
+        }
+        gb.step();
+    }
+}
+
+/// Read a zero-terminated text string from `$A004` in cartridge RAM via the bus.
+///
+/// mem_timing-2 style ROMs write their output to cartridge RAM rather than the
+/// serial port.  The readme documents the layout:
+/// - `$A001`–`$A003`: signature `$DE $B0 $61` once the RAM is initialised
+/// - `$A000`: `$80` while running, final result code (0 = pass) when done
+/// - `$A004`+: zero-terminated text output string
+///
+/// **Timing note:** `init_text_out` writes the three signature bytes at
+/// `$A001`–`$A003` *before* writing `$80` to `$A000`.  In that brief window
+/// the signature already matches but `$A000` is still `0` (initial cart-RAM
+/// value) and `$A004` is still empty.  A genuine "passed" exit also has
+/// `$A000 == 0`, but by then the ROM has already printed at least `"\nPassed"`.
+/// We therefore reject `status == 0 AND text.is_empty()` as the init window.
+fn read_cart_ram_output(gb: &mut Gb<DmgBus>) -> Option<String> {
+    const SIGNATURE: [u8; 3] = [0xDE, 0xB0, 0x61];
+    let sig = [
+        gb.cpu.bus.read(0xA001),
+        gb.cpu.bus.read(0xA002),
+        gb.cpu.bus.read(0xA003),
+    ];
+    if sig != SIGNATURE {
+        return None;
+    }
+    let status = gb.cpu.bus.read(0xA000);
+    if status == 0x80 {
+        // Test still running.
+        return None;
+    }
+    let mut text = Vec::new();
+    let mut addr: u16 = 0xA004;
+    loop {
+        let b = gb.cpu.bus.read(addr);
+        if b == 0 {
+            break;
+        }
+        text.push(b);
+        addr = addr.wrapping_add(1);
+        if addr > 0xAFFF {
+            break;
+        }
+    }
+    // Guard against the init_text_out timing window where the three signature
+    // bytes have been written but $A000 hasn't been set to $80 yet (cart RAM
+    // is still all-zero from initialisation).  In that window status == 0 and
+    // text is empty.  A genuine pass also has status == 0 but will have
+    // non-empty text (at minimum "\nPassed" written before exit).
+    if status == 0 && text.is_empty() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&text).into_owned())
+}
+
+/// Step `gb` until the cartridge-RAM output (mem_timing-2 style) signals
+/// completion, or until `BLARGG_CYCLE_LIMIT` M-cycles have elapsed.
+///
+/// Also accepts serial output ending with "Passed\n" / "Failed\n" as a
+/// fallback so the function works for serial-based ROMs as well.
+fn run_blargg_rom_cart_ram(gb: &mut Gb<DmgBus>) -> String {
+    let start = gb.cycles();
+    loop {
+        // Check serial output on the raw byte slice — no allocation.
+        if serial_is_done(gb.cpu.bus.serial_output()) {
+            return String::from_utf8_lossy(gb.cpu.bus.serial_output()).into_owned();
+        }
+        // Check cartridge RAM output.
+        if let Some(text) = read_cart_ram_output(gb) {
+            return text;
         }
         if gb.cycles().saturating_sub(start) >= BLARGG_CYCLE_LIMIT {
-            return output;
+            // Return whatever we have collected so far.
+            if let Some(text) = read_cart_ram_output(gb) {
+                return text;
+            }
+            return String::from_utf8_lossy(gb.cpu.bus.serial_output()).into_owned();
         }
         gb.step();
     }
@@ -170,7 +253,6 @@ fn test_halt_bug() {
 }
 
 #[test]
-#[ignore = "failing: memory access timing inaccuracies — tracked in #1983"]
 fn test_mem_timing() {
     let mut gb = load_gb_rom("roms/gb/automated_tests/mem_timing/mem_timing.gb");
     let output = run_blargg_rom(&mut gb);
@@ -181,10 +263,9 @@ fn test_mem_timing() {
 }
 
 #[test]
-#[ignore = "failing: memory access timing inaccuracies — tracked in #1983"]
 fn test_mem_timing_2() {
     let mut gb = load_gb_rom("roms/gb/automated_tests/mem_timing-2/mem_timing.gb");
-    let output = run_blargg_rom(&mut gb);
+    let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
         "expected Passed, got: {output:?}"

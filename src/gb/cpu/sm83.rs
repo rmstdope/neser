@@ -168,15 +168,35 @@ impl<B: GbBus> Sm83<B> {
         self.ime_pending = false;
     }
 
+    /// Advance the cycle counter by 1 M-cycle and tick peripherals.
+    ///
+    /// Used for internal CPU cycles that do not correspond to a memory access
+    /// (e.g. the extra cycle consumed by taken conditional branches, PUSH, etc.).
+    fn internal_cycle(&mut self) {
+        self.cycles += 1;
+        self.bus.tick(1);
+    }
+
     /// Read a byte from the bus and advance the cycle counter by 1 M-cycle.
+    ///
+    /// Peripherals are ticked **before** the memory read, matching real SM83
+    /// hardware where the timer increments at T-cycle 0 of the M-cycle and
+    /// the memory bus is sampled at T-cycle 3.  This ensures that reads from
+    /// memory-mapped timer registers (e.g. TIMA) see the post-increment value
+    /// when the timer fires on the same M-cycle as the access.
     fn read(&mut self, addr: u16) -> u8 {
         self.cycles += 1;
+        self.bus.tick(1);
         self.bus.read(addr)
     }
 
     /// Write a byte to the bus and advance the cycle counter by 1 M-cycle.
+    ///
+    /// Peripherals are ticked **before** the memory write for the same reason
+    /// as [`read`]: the timer advances at T-cycle 0 before the write at T-cycle 3.
     fn write(&mut self, addr: u16, val: u8) {
         self.cycles += 1;
+        self.bus.tick(1);
         self.bus.write(addr, val);
     }
 
@@ -454,7 +474,7 @@ impl<B: GbBus> Sm83<B> {
             self.halted = false;
             if !self.ime {
                 // Waking consumes one M-cycle; no instruction is executed.
-                self.cycles += 1;
+                self.internal_cycle();
                 return true;
             }
             // IME=true: fall through to full interrupt dispatch below.
@@ -474,7 +494,8 @@ impl<B: GbBus> Sm83<B> {
         self.bus.write(0xFF0F, new_if);
 
         // 2 NOP cycles (internal delay).
-        self.cycles += 2;
+        self.internal_cycle();
+        self.internal_cycle();
 
         // Push PC.
         let pc = self.regs.pc;
@@ -483,7 +504,7 @@ impl<B: GbBus> Sm83<B> {
         // Jump to vector.
         let vector: u16 = 0x0040 + (bit as u16) * 8;
         self.regs.pc = vector;
-        self.cycles += 1; // 1 extra internal cycle for the jump
+        self.internal_cycle(); // 1 extra internal cycle for the jump
 
         true
     }
@@ -520,7 +541,7 @@ impl<B: GbBus> Sm83<B> {
         }
 
         if self.halted {
-            self.cycles += 1; // stall
+            self.internal_cycle(); // stall
             return;
         }
 
@@ -577,42 +598,42 @@ impl<B: GbBus> Sm83<B> {
             0x03 => {
                 let v = self.regs.bc().wrapping_add(1);
                 self.regs.set_bc(v);
-                self.cycles += 1;
+                self.internal_cycle();
             }
             0x13 => {
                 let v = self.regs.de().wrapping_add(1);
                 self.regs.set_de(v);
-                self.cycles += 1;
+                self.internal_cycle();
             }
             0x23 => {
                 let v = self.regs.hl().wrapping_add(1);
                 self.regs.set_hl(v);
-                self.cycles += 1;
+                self.internal_cycle();
             }
             0x33 => {
                 self.regs.sp = self.regs.sp.wrapping_add(1);
-                self.cycles += 1;
+                self.internal_cycle();
             }
 
             // --- DEC r16 --------------------------------------------------
             0x0B => {
                 let v = self.regs.bc().wrapping_sub(1);
                 self.regs.set_bc(v);
-                self.cycles += 1;
+                self.internal_cycle();
             }
             0x1B => {
                 let v = self.regs.de().wrapping_sub(1);
                 self.regs.set_de(v);
-                self.cycles += 1;
+                self.internal_cycle();
             }
             0x2B => {
                 let v = self.regs.hl().wrapping_sub(1);
                 self.regs.set_hl(v);
-                self.cycles += 1;
+                self.internal_cycle();
             }
             0x3B => {
                 self.regs.sp = self.regs.sp.wrapping_sub(1);
-                self.cycles += 1;
+                self.internal_cycle();
             }
 
             // --- INC r8 (B/C/D/E/H/L/(HL)/A) ---------------------------
@@ -656,22 +677,22 @@ impl<B: GbBus> Sm83<B> {
             0x09 => {
                 let v = self.regs.bc();
                 self.alu_add_hl(v);
-                self.cycles += 1;
+                self.internal_cycle();
             }
             0x19 => {
                 let v = self.regs.de();
                 self.alu_add_hl(v);
-                self.cycles += 1;
+                self.internal_cycle();
             }
             0x29 => {
                 let v = self.regs.hl();
                 self.alu_add_hl(v);
-                self.cycles += 1;
+                self.internal_cycle();
             }
             0x39 => {
                 let v = self.regs.sp;
                 self.alu_add_hl(v);
-                self.cycles += 1;
+                self.internal_cycle();
             }
 
             // --- LD (HL+/-), A  and  LD A, (HL+/-) ----------------------
@@ -784,25 +805,25 @@ impl<B: GbBus> Sm83<B> {
 
             // --- RET NZ / RET Z / RET NC / RET C / RET / RETI -----------
             0xC0 | 0xC8 | 0xD0 | 0xD8 => {
-                self.cycles += 1; // condition evaluation
+                self.internal_cycle(); // condition evaluation
                 let cond = (opcode >> 3) & 0x03;
                 if self.check_condition(cond) {
                     let addr = self.pop_u16();
                     self.regs.pc = addr;
-                    self.cycles += 1;
+                    self.internal_cycle();
                 }
             }
             0xC9 => {
                 let addr = self.pop_u16();
                 self.regs.pc = addr;
-                self.cycles += 1;
+                self.internal_cycle();
             }
             0xD9 => {
                 // RETI
                 let addr = self.pop_u16();
                 self.regs.pc = addr;
                 self.ime = true;
-                self.cycles += 1;
+                self.internal_cycle();
             }
 
             // --- POP r16 ------------------------------------------------
@@ -826,30 +847,30 @@ impl<B: GbBus> Sm83<B> {
             // --- PUSH r16 -----------------------------------------------
             0xC5 => {
                 let v = self.regs.bc();
+                self.internal_cycle();
                 self.push_u16(v);
-                self.cycles += 1;
             }
             0xD5 => {
                 let v = self.regs.de();
+                self.internal_cycle();
                 self.push_u16(v);
-                self.cycles += 1;
             }
             0xE5 => {
                 let v = self.regs.hl();
+                self.internal_cycle();
                 self.push_u16(v);
-                self.cycles += 1;
             }
             0xF5 => {
                 let v = self.regs.af();
+                self.internal_cycle();
                 self.push_u16(v);
-                self.cycles += 1;
             }
 
             // --- JP n16, JP HL, JP cc -----------------------------------
             0xC3 => {
                 let addr = self.fetch_u16();
                 self.regs.pc = addr;
-                self.cycles += 1;
+                self.internal_cycle();
             }
             0xE9 => {
                 self.regs.pc = self.regs.hl();
@@ -859,7 +880,7 @@ impl<B: GbBus> Sm83<B> {
                 let cond = (opcode >> 3) & 0x03;
                 if self.check_condition(cond) {
                     self.regs.pc = addr;
-                    self.cycles += 1;
+                    self.internal_cycle();
                 }
             }
 
@@ -867,21 +888,21 @@ impl<B: GbBus> Sm83<B> {
             0x18 => {
                 let e = self.fetch_byte() as i8;
                 self.regs.pc = self.regs.pc.wrapping_add(e as u16);
-                self.cycles += 1;
+                self.internal_cycle();
             }
             0x20 | 0x28 | 0x30 | 0x38 => {
                 let e = self.fetch_byte() as i8;
                 let cond = (opcode >> 3) & 0x03;
                 if self.check_condition(cond) {
                     self.regs.pc = self.regs.pc.wrapping_add(e as u16);
-                    self.cycles += 1;
+                    self.internal_cycle();
                 }
             }
 
             // --- CALL n16, CALL cc ---------------------------------------
             0xCD => {
                 let addr = self.fetch_u16();
-                self.cycles += 1;
+                self.internal_cycle();
                 let pc = self.regs.pc;
                 self.push_u16(pc);
                 self.regs.pc = addr;
@@ -890,7 +911,7 @@ impl<B: GbBus> Sm83<B> {
                 let addr = self.fetch_u16();
                 let cond = (opcode >> 3) & 0x03;
                 if self.check_condition(cond) {
-                    self.cycles += 1;
+                    self.internal_cycle();
                     let pc = self.regs.pc;
                     self.push_u16(pc);
                     self.regs.pc = addr;
@@ -900,7 +921,7 @@ impl<B: GbBus> Sm83<B> {
             // --- RST vectors ---------------------------------------------
             0xC7 | 0xCF | 0xD7 | 0xDF | 0xE7 | 0xEF | 0xF7 | 0xFF => {
                 let vec = (opcode & 0x38) as u16;
-                self.cycles += 1;
+                self.internal_cycle();
                 let pc = self.regs.pc;
                 self.push_u16(pc);
                 self.regs.pc = vec;
@@ -947,17 +968,18 @@ impl<B: GbBus> Sm83<B> {
                 let e = self.fetch_byte() as i8;
                 let result = self.alu_sp_offset(e);
                 self.regs.sp = result;
-                self.cycles += 2;
+                self.internal_cycle();
+                self.internal_cycle();
             }
             0xF8 => {
                 let e = self.fetch_byte() as i8;
                 let result = self.alu_sp_offset(e);
                 self.regs.set_hl(result);
-                self.cycles += 1;
+                self.internal_cycle();
             }
             0xF9 => {
                 self.regs.sp = self.regs.hl();
-                self.cycles += 1;
+                self.internal_cycle();
             }
 
             // --- DI / EI -----------------------------------------------
