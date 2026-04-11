@@ -185,6 +185,7 @@ use super::unlicensed::mapper192::Mapper192;
 use super::unlicensed::mapper193::Mapper193;
 use super::unlicensed::mapper194::Mapper194;
 use super::unlicensed::mapper196::Mapper196;
+use super::unlicensed::mapper197::Mapper197;
 use super::unlicensed::mapper199::Mapper199;
 use super::unlicensed::mapper200::Mapper200;
 use super::unlicensed::mapper201::Mapper201;
@@ -1067,6 +1068,7 @@ mapper_registry! {
     193 => Mapper193::new,
     194 => Mapper194::new,
     196 => Mapper196::new,
+    197 => Mapper197::new,
     199 => Mapper199::new,
     200 => Mapper200::new,
     201 => Mapper201::new,
