@@ -23,6 +23,9 @@
 //!    `block × 4` through `block × 4 + 3` fill `$8000–$FFFF`.  Once activated
 //!    this override persists until a power cycle.
 //!
+//! Reads at `$6000–$7FFF` always access standard MMC3 PRG-RAM (WRAM), even
+//! though writes to `$6000–$6FFF` are intercepted for the PRG override latch.
+//!
 //! CHR, IRQ, and mirroring behave as in standard MMC3 (mediated by the scrambled
 //! addresses).
 
@@ -46,6 +49,8 @@ pub struct Mapper196 {
     /// Block index for the 32 KiB PRG override (four consecutive 8 KiB banks at
     /// `prg_block * 4`).
     prg_block: u8,
+    /// Set by `initialize_ram` (hard reset), cleared by `reset`.
+    hard_reset_pending: bool,
 }
 
 impl Mapper196 {
@@ -54,6 +59,7 @@ impl Mapper196 {
             inner: MMC3Mapper::new_with_irq_mode(ctx.prg_rom, ctx.chr_rom, ctx.mirroring, false),
             prg_locked: false,
             prg_block: 0,
+            hard_reset_pending: false,
         }
     }
 
@@ -161,7 +167,29 @@ impl Mapper for Mapper196 {
     }
 
     fn wram_size(&self) -> usize {
-        0
+        self.inner.wram_size()
+    }
+
+    fn wram_snapshot(&self) -> Vec<u8> {
+        self.inner.wram_snapshot()
+    }
+
+    fn load_wram_snapshot(&mut self, data: &[u8]) {
+        self.inner.load_wram_snapshot(data);
+    }
+
+    fn initialize_ram(&mut self, mode: crate::nes::console::RamInitMode) {
+        self.inner.initialize_ram(mode);
+        self.hard_reset_pending = true;
+    }
+
+    fn reset(&mut self) {
+        self.inner.reset();
+        if self.hard_reset_pending {
+            self.prg_locked = false;
+            self.prg_block = 0;
+            self.hard_reset_pending = false;
+        }
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -182,14 +210,7 @@ impl Mapper for Mapper196 {
     }
 
     fn capabilities(&self) -> MapperCapabilities {
-        MapperCapabilities {
-            has_irq: true,
-            has_chr_banking: true,
-            has_dynamic_mirroring: true,
-            prg_bank_size_kb: 8,
-            chr_bank_size_kb: 1,
-            ..Default::default()
-        }
+        self.inner.capabilities()
     }
 }
 
