@@ -187,7 +187,7 @@ nt_read: .res 1
     ; ========================================
     ; Test Single-Screen A (if supported)
     ; ========================================
-    .if MAPPER_NUM = 1 .or MAPPER_NUM = 5 .or MAPPER_NUM = 6 .or MAPPER_NUM = 7 .or MAPPER_NUM = 8
+    .if MAPPER_NUM = 1 .or MAPPER_NUM = 5 .or MAPPER_NUM = 6 .or MAPPER_NUM = 7 .or MAPPER_NUM = 8 .or MAPPER_NUM = 154
         ; Set 1-Screen A, do PPU writes/reads, then restore before console output
         .if MAPPER_NUM = 1 .or MAPPER_NUM = 5 .or MAPPER_NUM = 6 .or MAPPER_NUM = 8
             set_mirroring 0     ; MMC1: 0 = single-screen A

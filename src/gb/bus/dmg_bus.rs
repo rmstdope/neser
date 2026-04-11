@@ -1,3 +1,4 @@
+use crate::gb::boot_rom::DMG_BOOT_ROM;
 use crate::gb::bus::GbBus;
 use crate::gb::cartridge::GbCartridge;
 use crate::gb::input::joypad::Joypad;
@@ -37,11 +38,23 @@ pub struct DmgBus {
     if_reg: u8,
     /// IE register ($FFFF): interrupt enable.
     ie_reg: u8,
+    /// Boot ROM contents (256 bytes).
+    boot_rom: [u8; 256],
+    /// When `true`, reads from $0000–$00FF are satisfied by `boot_rom`
+    /// instead of the cartridge.  Writing any value to $FF50 sets this
+    /// to `false` (mirrors real DMG hardware behaviour).
+    boot_rom_active: bool,
+    /// $FF01 Serial Data Register (SB).
+    sb: u8,
+    /// $FF02 Serial Control Register (SC).
+    sc: u8,
+    /// Bytes captured via serial transfer (written by ROM via SB/SC).
+    serial_buf: Vec<u8>,
 }
 
 impl DmgBus {
     pub fn new(cart: Box<dyn GbCartridge>) -> Self {
-        Self {
+        let mut bus = Self {
             cart,
             ppu: Ppu::new(),
             wram: [0u8; 0x2000],
@@ -50,7 +63,18 @@ impl DmgBus {
             joypad: Joypad::new(),
             if_reg: 0,
             ie_reg: 0,
-        }
+            boot_rom: DMG_BOOT_ROM,
+            boot_rom_active: true,
+            sb: 0xFF,
+            sc: 0x7E,
+            serial_buf: Vec::new(),
+        };
+        // Real DMG hardware powers on with LCDC=$00 (LCD disabled).
+        // The boot ROM tile-loading runs while the LCD is off so VRAM writes
+        // are never blocked by Mode 3; our boot ROM explicitly re-enables the
+        // LCD (LCDC=$91) just before starting the scroll animation.
+        bus.ppu.write_register(0xFF40, 0x00);
+        bus
     }
 
     /// Reset all bus state to power-on defaults.
@@ -60,12 +84,29 @@ impl DmgBus {
     /// ROM, cartridge RAM, and any mapper state are preserved.
     pub fn reset(&mut self) {
         self.ppu = Ppu::new();
+        self.ppu.write_register(0xFF40, 0x00); // power-on: LCD disabled
         self.timer = Timer::new();
         self.joypad = Joypad::new();
         self.wram = [0u8; 0x2000];
         self.hram = [0u8; 0x7F];
         self.if_reg = 0;
         self.ie_reg = 0;
+        self.boot_rom_active = true;
+        self.sb = 0xFF;
+        self.sc = 0x7E;
+        self.serial_buf.clear();
+    }
+
+    /// Returns `true` while the boot ROM is still mapped at $0000–$00FF.
+    pub fn is_boot_rom_active(&self) -> bool {
+        self.boot_rom_active
+    }
+
+    /// Returns bytes captured via serial transfer ($FF01/$FF02).
+    ///
+    /// Each byte pushed by the ROM via `SB`/`SC` appears here in order.
+    pub fn serial_output(&self) -> &[u8] {
+        &self.serial_buf
     }
 
     /// Set a button state on the joypad and propagate any resulting interrupt.
@@ -95,6 +136,9 @@ impl DmgBus {
 
     /// Bypass PPU access-blocking for OAM DMA transfers.
     fn read_raw(&self, addr: u16) -> u8 {
+        if self.boot_rom_active && addr <= 0x00FF {
+            return self.boot_rom[addr as usize];
+        }
         match addr {
             0x0000..=0x7FFF => self.cart.read(addr),
             0x8000..=0x9FFF => self.ppu.vram[(addr - 0x8000) as usize],
@@ -116,6 +160,9 @@ impl DmgBus {
 
 impl GbBus for DmgBus {
     fn read(&mut self, addr: u16) -> u8 {
+        if self.boot_rom_active && addr <= 0x00FF {
+            return self.boot_rom[addr as usize];
+        }
         match addr {
             0x0000..=0x7FFF => self.cart.read(addr),
             0x8000..=0x9FFF => self.ppu.read_vram(addr),
@@ -125,6 +172,8 @@ impl GbBus for DmgBus {
             0xFE00..=0xFE9F => self.ppu.read_oam(addr),
             0xFEA0..=0xFEFF => 0xFF,
             0xFF00 => self.joypad.read(),
+            0xFF01 => self.sb,
+            0xFF02 => self.sc,
             0xFF04..=0xFF07 => self.timer.read(addr),
             0xFF0F => self.if_reg | 0xE0,
             0xFF40..=0xFF4B => self.ppu.read_register(addr),
@@ -144,10 +193,21 @@ impl GbBus for DmgBus {
             0xFE00..=0xFE9F => self.ppu.write_oam(addr, val),
             0xFEA0..=0xFEFF => {}
             0xFF00 => self.joypad.write(val),
+            0xFF01 => self.sb = val,
+            0xFF02 => {
+                self.sc = val;
+                if val & 0x80 != 0 {
+                    // Internal clock transfer: capture SB, fire serial interrupt, clear transfer flag
+                    self.serial_buf.push(self.sb);
+                    self.if_reg |= 0x08;
+                    self.sc &= 0x7F;
+                }
+            }
             0xFF04..=0xFF07 => self.timer.write(addr, val),
             0xFF0F => self.if_reg = val & 0x1F,
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B => self.ppu.write_register(addr, val),
             0xFF46 => self.do_oam_dma(val),
+            0xFF50 => self.boot_rom_active = false,
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize] = val,
             0xFFFF => self.ie_reg = val,
             _ => {}
@@ -244,6 +304,10 @@ mod tests {
     /// Tick the bus enough M-cycles to reach VBlank (scanline 144).
     /// At that point the PPU enters Mode 1 and both OAM and VRAM are accessible.
     fn tick_to_vblank(bus: &mut DmgBus) {
+        // LCD is off at power-on; enable it so the PPU can advance to VBlank.
+        if bus.read(0xFF40) & 0x80 == 0 {
+            bus.write(0xFF40, 0x91);
+        }
         // VBlank starts at scanline 144 = 456*144 dots = 16416 M-cycles.
         // Tick in chunks to avoid overflow in the bus tick path.
         let mut remaining = 16_416u32;
@@ -276,13 +340,20 @@ mod tests {
 
     #[test]
     fn test_ppu_stat_register_reflects_mode() {
-        // At startup, PPU is in Mode 2 (OAM Scan); STAT bits 1:0 should be 0b10.
-        let bus = make_bus();
+        // At hardware power-on the LCD is disabled; STAT mode bits report 0.
+        let mut bus = make_bus();
+        assert_eq!(
+            bus.ppu.read_register(0xFF41) & 0x03,
+            0x00,
+            "STAT mode should be 0 while LCD is off"
+        );
+        // After enabling the LCD the PPU resets to OAM Scan (Mode 2).
+        bus.write(0xFF40, 0x91);
         let stat = bus.ppu.read_register(0xFF41);
         assert_eq!(
             stat & 0x03,
             0x02,
-            "initial STAT mode should be OAM Scan (2)"
+            "STAT mode should be OAM Scan (2) after LCD enable"
         );
     }
 
@@ -481,5 +552,51 @@ mod tests {
         bus.tick(4);
         // IF bit 2 (timer interrupt) should be set
         assert_eq!(bus.read(0xFF0F) & 0x04, 0x04);
+    }
+
+    // ── Serial port ($FF01 SB / $FF02 SC) ────────────────────────────────────
+
+    #[test]
+    fn test_serial_sb_write_read_roundtrip() {
+        // Given: fresh bus; When: write 0xAB to $FF01 (SB); Then: read back 0xAB
+        let mut bus = make_bus();
+        bus.write(0xFF01, 0xAB);
+        assert_eq!(bus.read(0xFF01), 0xAB);
+    }
+
+    #[test]
+    fn test_serial_sc_write_no_transfer_roundtrip() {
+        // Given: fresh bus; When: write 0x40 (bit 7 clear, no transfer) to $FF02 (SC);
+        // Then: read back 0x40
+        let mut bus = make_bus();
+        bus.write(0xFF02, 0x40);
+        assert_eq!(bus.read(0xFF02), 0x40);
+    }
+
+    #[test]
+    fn test_serial_transfer_captures_byte() {
+        // Given: SB = 0x41; When: write SC = 0x81 (bit 7 set → start transfer);
+        // Then: serial_output contains the SB byte 0x41
+        let mut bus = make_bus();
+        bus.write(0xFF01, 0x41);
+        bus.write(0xFF02, 0x81);
+        assert_eq!(bus.serial_output(), &[0x41]);
+    }
+
+    #[test]
+    fn test_serial_transfer_sets_if_bit3() {
+        // Given: trigger a serial transfer; Then: IF bit 3 (serial interrupt) is set
+        let mut bus = make_bus();
+        bus.write(0xFF01, 0x42);
+        bus.write(0xFF02, 0x81);
+        assert_eq!(bus.read(0xFF0F) & 0x08, 0x08);
+    }
+
+    #[test]
+    fn test_serial_transfer_clears_sc_bit7() {
+        // Given: write 0x81 to SC; Then: reading SC immediately after returns bit 7 = 0
+        let mut bus = make_bus();
+        bus.write(0xFF02, 0x81);
+        assert_eq!(bus.read(0xFF02) & 0x80, 0x00);
     }
 }
