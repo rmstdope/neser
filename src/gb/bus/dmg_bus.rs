@@ -44,6 +44,12 @@ pub struct DmgBus {
     /// instead of the cartridge.  Writing any value to $FF50 sets this
     /// to `false` (mirrors real DMG hardware behaviour).
     boot_rom_active: bool,
+    /// $FF01 Serial Data Register (SB).
+    sb: u8,
+    /// $FF02 Serial Control Register (SC).
+    sc: u8,
+    /// Bytes captured via serial transfer (written by ROM via SB/SC).
+    serial_buf: Vec<u8>,
 }
 
 impl DmgBus {
@@ -59,6 +65,9 @@ impl DmgBus {
             ie_reg: 0,
             boot_rom: DMG_BOOT_ROM,
             boot_rom_active: true,
+            sb: 0xFF,
+            sc: 0x7E,
+            serial_buf: Vec::new(),
         };
         // Real DMG hardware powers on with LCDC=$00 (LCD disabled).
         // The boot ROM tile-loading runs while the LCD is off so VRAM writes
@@ -83,11 +92,21 @@ impl DmgBus {
         self.if_reg = 0;
         self.ie_reg = 0;
         self.boot_rom_active = true;
+        self.sb = 0xFF;
+        self.sc = 0x7E;
+        self.serial_buf.clear();
     }
 
     /// Returns `true` while the boot ROM is still mapped at $0000–$00FF.
     pub fn is_boot_rom_active(&self) -> bool {
         self.boot_rom_active
+    }
+
+    /// Returns bytes captured via serial transfer ($FF01/$FF02).
+    ///
+    /// Each byte pushed by the ROM via `SB`/`SC` appears here in order.
+    pub fn serial_output(&self) -> &[u8] {
+        &self.serial_buf
     }
 
     /// Set a button state on the joypad and propagate any resulting interrupt.
@@ -153,6 +172,8 @@ impl GbBus for DmgBus {
             0xFE00..=0xFE9F => self.ppu.read_oam(addr),
             0xFEA0..=0xFEFF => 0xFF,
             0xFF00 => self.joypad.read(),
+            0xFF01 => self.sb,
+            0xFF02 => self.sc,
             0xFF04..=0xFF07 => self.timer.read(addr),
             0xFF0F => self.if_reg | 0xE0,
             0xFF40..=0xFF4B => self.ppu.read_register(addr),
@@ -172,6 +193,16 @@ impl GbBus for DmgBus {
             0xFE00..=0xFE9F => self.ppu.write_oam(addr, val),
             0xFEA0..=0xFEFF => {}
             0xFF00 => self.joypad.write(val),
+            0xFF01 => self.sb = val,
+            0xFF02 => {
+                self.sc = val;
+                if val & 0x80 != 0 {
+                    // Internal clock transfer: capture SB, fire serial interrupt, clear transfer flag
+                    self.serial_buf.push(self.sb);
+                    self.if_reg |= 0x08;
+                    self.sc &= 0x7F;
+                }
+            }
             0xFF04..=0xFF07 => self.timer.write(addr, val),
             0xFF0F => self.if_reg = val & 0x1F,
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B => self.ppu.write_register(addr, val),
@@ -521,5 +552,51 @@ mod tests {
         bus.tick(4);
         // IF bit 2 (timer interrupt) should be set
         assert_eq!(bus.read(0xFF0F) & 0x04, 0x04);
+    }
+
+    // ── Serial port ($FF01 SB / $FF02 SC) ────────────────────────────────────
+
+    #[test]
+    fn test_serial_sb_write_read_roundtrip() {
+        // Given: fresh bus; When: write 0xAB to $FF01 (SB); Then: read back 0xAB
+        let mut bus = make_bus();
+        bus.write(0xFF01, 0xAB);
+        assert_eq!(bus.read(0xFF01), 0xAB);
+    }
+
+    #[test]
+    fn test_serial_sc_write_no_transfer_roundtrip() {
+        // Given: fresh bus; When: write 0x40 (bit 7 clear, no transfer) to $FF02 (SC);
+        // Then: read back 0x40
+        let mut bus = make_bus();
+        bus.write(0xFF02, 0x40);
+        assert_eq!(bus.read(0xFF02), 0x40);
+    }
+
+    #[test]
+    fn test_serial_transfer_captures_byte() {
+        // Given: SB = 0x41; When: write SC = 0x81 (bit 7 set → start transfer);
+        // Then: serial_output contains the SB byte 0x41
+        let mut bus = make_bus();
+        bus.write(0xFF01, 0x41);
+        bus.write(0xFF02, 0x81);
+        assert_eq!(bus.serial_output(), &[0x41]);
+    }
+
+    #[test]
+    fn test_serial_transfer_sets_if_bit3() {
+        // Given: trigger a serial transfer; Then: IF bit 3 (serial interrupt) is set
+        let mut bus = make_bus();
+        bus.write(0xFF01, 0x42);
+        bus.write(0xFF02, 0x81);
+        assert_eq!(bus.read(0xFF0F) & 0x08, 0x08);
+    }
+
+    #[test]
+    fn test_serial_transfer_clears_sc_bit7() {
+        // Given: write 0x81 to SC; Then: reading SC immediately after returns bit 7 = 0
+        let mut bus = make_bus();
+        bus.write(0xFF02, 0x81);
+        assert_eq!(bus.read(0xFF02) & 0x80, 0x00);
     }
 }
