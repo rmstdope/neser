@@ -67,6 +67,9 @@ impl Mapper for Mapper171 {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
+        if self.base.try_write_prg_ram(addr, value) {
+            return;
+        }
         match addr & 0xF080 {
             0xF000 => {
                 self.chr_banks[0] = value;
