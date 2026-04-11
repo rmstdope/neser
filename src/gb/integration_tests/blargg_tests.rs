@@ -33,6 +33,48 @@ fn run_blargg_rom(gb: &mut Gb<DmgBus>) -> String {
     }
 }
 
+/// Decode the BG tile map 0 ($9800–$9BFF in VRAM) as printable ASCII.
+///
+/// Blargg tests that output to the LCD (e.g. halt_bug) write ASCII character
+/// codes directly as tile indices into the 32×32 tile map.  The visible area
+/// is 20×18 tiles so we read the first 18 rows of 20 tiles each.
+///
+/// Returns a `String` containing the decoded visible tile map content with
+/// newlines between rows, with trailing whitespace stripped from each row.
+fn vram_tilemap_text(gb: &Gb<DmgBus>) -> String {
+    let tile_map = &gb.cpu.bus.ppu.vram[0x1800..0x1C00];
+    let mut result = String::new();
+    for row in 0..18usize {
+        let start = row * 32;
+        let row_text: String = tile_map[start..start + 20]
+            .iter()
+            .map(|&b| {
+                if (0x20..0x7F).contains(&b) {
+                    b as char
+                } else {
+                    ' '
+                }
+            })
+            .collect::<String>();
+        let trimmed = row_text.trim_end();
+        if !trimmed.is_empty() {
+            result.push_str(trimmed);
+            result.push('\n');
+        }
+    }
+    result
+}
+
+/// Run the halt_bug ROM for enough cycles that it finishes testing, then
+/// return the decoded tile-map text output.
+fn run_blargg_rom_lcd(gb: &mut Gb<DmgBus>) -> String {
+    let start = gb.cycles();
+    while gb.cycles().saturating_sub(start) < BLARGG_CYCLE_LIMIT {
+        gb.step();
+    }
+    vram_tilemap_text(gb)
+}
+
 // ── cpu_instrs individual ROMs ────────────────────────────────────────────────
 
 #[test]
@@ -159,13 +201,12 @@ fn test_instr_timing() {
 }
 
 #[test]
-#[ignore = "failing: HALT bug not implemented — tracked in #1982"]
 fn test_halt_bug() {
     let mut gb = load_gb_rom("roms/gb/automated_tests/halt_bug/halt_bug.gb");
-    let output = run_blargg_rom(&mut gb);
+    let output = run_blargg_rom_lcd(&mut gb);
     assert!(
         output.contains("Passed"),
-        "expected Passed, got: {output:?}"
+        "expected Passed in LCD output, got: {output:?}"
     );
 }
 

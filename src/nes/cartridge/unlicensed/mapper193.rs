@@ -7,6 +7,7 @@ use crate::nes::cartridge::NametableLayout;
 use crate::nes::cartridge::base_mapper::BaseMapper;
 use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
+#[allow(dead_code)]
 const MAPPER_NUMBER: u16 = 193;
 const PRG_BANK_SIZE: usize = 8 * 1024;
 const CHR_BANK_SIZE: usize = 2 * 1024;

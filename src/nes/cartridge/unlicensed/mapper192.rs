@@ -48,7 +48,7 @@ impl Mapper192 {
     }
 
     fn is_chr_ram_bank(bank: usize) -> bool {
-        bank >= CHR_RAM_FIRST_BANK && bank <= CHR_RAM_LAST_BANK
+        (CHR_RAM_FIRST_BANK..=CHR_RAM_LAST_BANK).contains(&bank)
     }
 
     fn chr_ram_index(bank: usize, offset: usize) -> usize {

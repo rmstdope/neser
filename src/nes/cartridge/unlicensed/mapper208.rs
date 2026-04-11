@@ -158,7 +158,7 @@ impl Mapper for Mapper208 {
                 self.ex_regs[(addr & 0x03) as usize] = value ^ lut_val;
             }
             // Standard PRG-RAM ($6000–$6FFF not in register range, $7000–$7FFF)
-            0x6000..=0x6FFF | 0x7000..=0x7FFF => {
+            0x6000..=0x7FFF => {
                 self.inner.write_prg(addr, value);
             }
             // Standard MMC3 registers (CHR banking, IRQ, mirroring)

@@ -7,6 +7,7 @@ use crate::nes::cartridge::base_mapper::BaseMapper;
 use crate::nes::cartridge::common::ChrMemory;
 use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
 
+#[allow(dead_code)]
 const MAPPER_NUMBER: u16 = 188;
 const PRG_BANK_SIZE: usize = 16 * 1024;
 const CHR_RAM_SIZE: usize = 8 * 1024;

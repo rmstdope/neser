@@ -244,6 +244,7 @@ mod tests {
     /// 2. Write $4102 ← 0x04  → rotate_right(0x04)=0x01; staging=0x01, inverter=0x00
     /// 3. Write $4100 ← 0x00  → rotate_right(0x00)=0x00; latch: acc=0x01 (invert=false)
     /// 4. Write $8000 ← 0x00  → output=(0x01&0x0F)|(0x00&0xF0)=0x01
+    ///
     /// PRG=((0x01&0x20)>>4)|(0x01&0x01)=0|1=1; CHR=(0x01&0x1E)>>1=0
     #[test]
     fn prg_bank_switches_via_jv001_output() {
@@ -264,6 +265,7 @@ mod tests {
     /// 2. Write $4102 ← 0x10 → rotate_right(0x10)=0x04; staging=0x04, inverter=0x00
     /// 3. Write $4100 ← 0x00 → latch: acc=0x04
     /// 4. Write $8000 ← 0x00 → output=0x04
+    ///
     /// CHR=(0x04&0x1E)>>1=0x04>>1=2; PRG=0
     #[test]
     fn chr_bank_switches_via_jv001_output() {
