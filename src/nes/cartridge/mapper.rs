@@ -171,6 +171,7 @@ use super::unlicensed::mapper134::Mapper134;
 use super::unlicensed::mapper156::Mapper156;
 use super::unlicensed::mapper162::Mapper162;
 use super::unlicensed::mapper163::Mapper163;
+use super::unlicensed::mapper164::Mapper164;
 use super::unlicensed::mapper165::Mapper165;
 use super::unlicensed::mapper166::Mapper166;
 use super::unlicensed::mapper167::Mapper167;
@@ -180,6 +181,7 @@ use super::unlicensed::mapper174::Mapper174;
 use super::unlicensed::mapper175::Mapper175;
 use super::unlicensed::mapper177::Mapper177;
 use super::unlicensed::mapper178::Mapper178;
+use super::unlicensed::mapper183::Mapper183;
 use super::unlicensed::mapper187::Mapper187;
 use super::unlicensed::mapper188::Mapper188;
 use super::unlicensed::mapper189::Mapper189;
@@ -188,6 +190,7 @@ use super::unlicensed::mapper191::Mapper191;
 use super::unlicensed::mapper192::Mapper192;
 use super::unlicensed::mapper193::Mapper193;
 use super::unlicensed::mapper194::Mapper194;
+use super::unlicensed::mapper195::Mapper195;
 use super::unlicensed::mapper196::Mapper196;
 use super::unlicensed::mapper197::Mapper197;
 use super::unlicensed::mapper199::Mapper199;
@@ -270,6 +273,7 @@ use super::unlicensed::mapper296::Mapper296;
 use super::unlicensed::mapper298::Mapper298;
 use super::unlicensed::mapper299::Mapper299;
 use super::unlicensed::mapper300::Mapper300;
+use super::unlicensed::mapper301::Mapper301;
 use super::unlicensed::mapper302::Mapper302;
 use super::unlicensed::mapper303::Mapper303;
 use super::unlicensed::mapper304::Mapper304;
@@ -298,6 +302,7 @@ use super::unlicensed::mapper331::Mapper331;
 use super::unlicensed::mapper332::Mapper332;
 use super::unlicensed::mapper333::Mapper333;
 use super::unlicensed::mapper335::Mapper335;
+use super::unlicensed::mapper336::Mapper336;
 use super::unlicensed::mapper337::Mapper337;
 use super::unlicensed::mapper338::Mapper338;
 use super::unlicensed::mapper339::Mapper339;
@@ -903,6 +908,7 @@ mapper_registry! {
     30 => Unrom512Mapper::new,
     31 => Mapper31::new,
     300 => Mapper300::new,
+    301 => Mapper301::new,
     315 => Mapper315::new,
     319 => Mapper319::new,
     320 => Mapper320::new,
@@ -916,6 +922,7 @@ mapper_registry! {
     332 => Mapper332::new,
     333 => Mapper333::new,
     335 => Mapper335::new,
+    336 => Mapper336::new,
     337 => Mapper337::new,
     324 => Mapper324::new,
     325 => Mapper325::new,
@@ -1064,6 +1071,7 @@ mapper_registry! {
     161 => MMC1Mapper::new,
     162 => Mapper162::new,
     163 => Mapper163::new,
+    164 => Mapper164::new,
     165 => Mapper165::new,
     166 => Mapper166::new,
     167 => Mapper167::new,
@@ -1076,6 +1084,7 @@ mapper_registry! {
     175 => Mapper175::new,
     177 => Mapper177::new,
     178 => Mapper178::new,
+    183 => Mapper183::new,
     // 179: Nestopia misassignment — intentionally unimplemented. Duplicates mapper 176 behavior;
     //       implement via mapper 176 once that is added (see issue #1108).
     // 181: FCEUX patch-list heuristic entry only — no ROM actually uses this mapper number.
@@ -1093,6 +1102,7 @@ mapper_registry! {
     192 => Mapper192::new,
     193 => Mapper193::new,
     194 => Mapper194::new,
+    195 => Mapper195::new,
     196 => Mapper196::new,
     197 => Mapper197::new,
     199 => Mapper199::new,
