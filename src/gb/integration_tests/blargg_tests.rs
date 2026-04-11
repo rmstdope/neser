@@ -65,12 +65,28 @@ fn vram_tilemap_text(gb: &Gb<DmgBus>) -> String {
     result
 }
 
-/// Run the halt_bug ROM for enough cycles that it finishes testing, then
-/// return the decoded tile-map text output.
+/// Run the halt_bug ROM until the decoded tilemap contains "Passed" or
+/// "Failed", or until `BLARGG_CYCLE_LIMIT` M-cycles have elapsed.
+///
+/// Polls the tilemap every 50 000 M-cycles rather than always running to the
+/// full budget, keeping CI runtime predictable.
 fn run_blargg_rom_lcd(gb: &mut Gb<DmgBus>) -> String {
+    const POLL_INTERVAL: u64 = 50_000;
     let start = gb.cycles();
-    while gb.cycles().saturating_sub(start) < BLARGG_CYCLE_LIMIT {
-        gb.step();
+    loop {
+        let elapsed = gb.cycles().saturating_sub(start);
+        if elapsed >= BLARGG_CYCLE_LIMIT {
+            break;
+        }
+        // Step one poll interval.
+        let poll_end = start + elapsed + POLL_INTERVAL;
+        while gb.cycles() < poll_end {
+            gb.step();
+        }
+        let text = vram_tilemap_text(gb);
+        if text.contains("Passed") || text.contains("Failed") {
+            return text;
+        }
     }
     vram_tilemap_text(gb)
 }

@@ -157,7 +157,7 @@ impl Mapper for Mapper208 {
                 let lut_val = PROTECTION_LUT[self.ex_regs[4] as usize];
                 self.ex_regs[(addr & 0x03) as usize] = value ^ lut_val;
             }
-            // Standard PRG-RAM ($6000–$6FFF not in register range, $7000–$7FFF)
+            // Standard PRG-RAM passthrough ($6000–$67FF and $7000–$7FFF)
             0x6000..=0x7FFF => {
                 self.inner.write_prg(addr, value);
             }
