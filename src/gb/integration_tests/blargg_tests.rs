@@ -332,13 +332,13 @@ fn test_mem_timing_2() {
 // ── OAM bug single ROMs ───────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "failing: LCD timing inaccuracy — OAM bug not emulated, tracked in #1993"]
+#[ignore = "failing: LCD scanline timing inaccuracy — tracked in #1993"]
 fn test_oam_bug_1_lcd_sync() {
     let mut gb = load_gb_rom("roms/gb/automated_tests/oam_bug/rom_singles/1-lcd_sync.gb");
-    let output = run_blargg_rom_lcd(&mut gb);
+    let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
-        "expected Passed in LCD output, got: {output:?}"
+        "expected Passed, got: {output:?}"
     );
 }
 
@@ -346,20 +346,20 @@ fn test_oam_bug_1_lcd_sync() {
 #[ignore = "failing: OAM corruption not emulated — tracked in #1993"]
 fn test_oam_bug_2_causes() {
     let mut gb = load_gb_rom("roms/gb/automated_tests/oam_bug/rom_singles/2-causes.gb");
-    let output = run_blargg_rom_lcd(&mut gb);
+    let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
-        "expected Passed in LCD output, got: {output:?}"
+        "expected Passed, got: {output:?}"
     );
 }
 
 #[test]
 fn test_oam_bug_3_non_causes() {
     let mut gb = load_gb_rom("roms/gb/automated_tests/oam_bug/rom_singles/3-non_causes.gb");
-    let output = run_blargg_rom_lcd(&mut gb);
+    let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
-        "expected Passed in LCD output, got: {output:?}"
+        "expected Passed, got: {output:?}"
     );
 }
 
@@ -367,10 +367,10 @@ fn test_oam_bug_3_non_causes() {
 #[ignore = "failing: OAM corruption timing not emulated — tracked in #1993"]
 fn test_oam_bug_4_scanline_timing() {
     let mut gb = load_gb_rom("roms/gb/automated_tests/oam_bug/rom_singles/4-scanline_timing.gb");
-    let output = run_blargg_rom_lcd(&mut gb);
+    let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
-        "expected Passed in LCD output, got: {output:?}"
+        "expected Passed, got: {output:?}"
     );
 }
 
@@ -378,20 +378,20 @@ fn test_oam_bug_4_scanline_timing() {
 #[ignore = "failing: OAM corruption not emulated — tracked in #1993"]
 fn test_oam_bug_5_timing_bug() {
     let mut gb = load_gb_rom("roms/gb/automated_tests/oam_bug/rom_singles/5-timing_bug.gb");
-    let output = run_blargg_rom_lcd(&mut gb);
+    let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
-        "expected Passed in LCD output, got: {output:?}"
+        "expected Passed, got: {output:?}"
     );
 }
 
 #[test]
 fn test_oam_bug_6_timing_no_bug() {
     let mut gb = load_gb_rom("roms/gb/automated_tests/oam_bug/rom_singles/6-timing_no_bug.gb");
-    let output = run_blargg_rom_lcd(&mut gb);
+    let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
-        "expected Passed in LCD output, got: {output:?}"
+        "expected Passed, got: {output:?}"
     );
 }
 
@@ -399,10 +399,10 @@ fn test_oam_bug_6_timing_no_bug() {
 #[ignore = "failing: OAM corruption not emulated — tracked in #1993"]
 fn test_oam_bug_7_timing_effect() {
     let mut gb = load_gb_rom("roms/gb/automated_tests/oam_bug/rom_singles/7-timing_effect.gb");
-    let output = run_blargg_rom_lcd(&mut gb);
+    let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
-        "expected Passed in LCD output, got: {output:?}"
+        "expected Passed, got: {output:?}"
     );
 }
 
@@ -410,9 +410,9 @@ fn test_oam_bug_7_timing_effect() {
 #[ignore = "failing: OAM corruption not emulated — tracked in #1993"]
 fn test_oam_bug_8_instr_effect() {
     let mut gb = load_gb_rom("roms/gb/automated_tests/oam_bug/rom_singles/8-instr_effect.gb");
-    let output = run_blargg_rom_lcd(&mut gb);
+    let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
-        "expected Passed in LCD output, got: {output:?}"
+        "expected Passed, got: {output:?}"
     );
 }
