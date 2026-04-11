@@ -203,7 +203,14 @@ impl Mapper for Mapper168 {
         }
     }
 
-    fn initialize_chr_ram(&mut self, mode: crate::nes::console::RamInitMode) {
+    fn initialize_chr_ram(&mut self, _mode: crate::nes::console::RamInitMode) {
+        // Mapper 168 persists its 64 KiB CHR-RAM through wram_snapshot/load_wram_snapshot.
+        // Reinitializing it here would wipe battery-backed data after it has been restored.
+        // CHR-RAM is initialized for non-battery carts via initialize_ram() instead.
+    }
+
+    fn initialize_ram(&mut self, mode: crate::nes::console::RamInitMode) {
+        self.base_mut().initialize_ram(mode);
         crate::nes::console::initialize_ram(&mut self.chr_ram, mode);
     }
 
@@ -219,6 +226,24 @@ impl Mapper for Mapper168 {
         if data.len() == CHR_RAM_SIZE {
             self.chr_ram.copy_from_slice(data);
         }
+    }
+
+    /// Override so save-state CHR-RAM lives in the dedicated CHR-RAM snapshot slot,
+    /// keeping save-state format consistent with other CHR-RAM mappers.
+    fn chr_ram_snapshot(&self) -> Vec<u8> {
+        self.chr_ram.to_vec()
+    }
+
+    /// Restore CHR-RAM from a save-state.
+    fn restore_chr_ram(&mut self, data: &[u8]) {
+        if data.len() == CHR_RAM_SIZE {
+            self.chr_ram.copy_from_slice(data);
+        }
+    }
+
+    /// Override to empty — CHR-RAM is captured via chr_ram_snapshot(), not here.
+    fn prg_ram_snapshot(&self) -> Vec<u8> {
+        Vec::new()
     }
 
     fn reset(&mut self) {
@@ -429,5 +454,31 @@ mod tests {
         assert_eq!(m2.chr_bank, m.chr_bank);
         assert_eq!(m2.irq_frozen, m.irq_frozen);
         assert_eq!(m2.cycle_counter, m.cycle_counter);
+    }
+
+    #[test]
+    fn chr_ram_snapshot_restore_round_trips() {
+        let mut m = make_mapper();
+        m.write_chr(0x1234, 0xDE);
+        m.write_chr(0x0500, 0xAD);
+        let snap = m.chr_ram_snapshot();
+        let mut m2 = make_mapper();
+        m2.restore_chr_ram(&snap);
+        assert_eq!(m2.read_chr(0x1234), 0xDE);
+        assert_eq!(m2.read_chr(0x0500), 0xAD);
+    }
+
+    #[test]
+    fn initialize_chr_ram_is_noop_leaving_existing_data() {
+        let mut m = make_mapper();
+        m.write_chr(0x0100, 0xBE);
+        m.initialize_chr_ram(crate::nes::console::RamInitMode::Zero);
+        // initialize_chr_ram must be a no-op so that battery-backed CHR-RAM
+        // loaded from disk is not overwritten.
+        assert_eq!(
+            m.read_chr(0x0100),
+            0xBE,
+            "initialize_chr_ram must not clear existing chr_ram data"
+        );
     }
 }

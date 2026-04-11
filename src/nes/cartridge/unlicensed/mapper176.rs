@@ -85,13 +85,17 @@
 //!
 //! Mode 0 with 8 outer PRG bits (submappers 1 and 3):
 //! ```text
-//! actual_bank = mmc3_inner_page   (all 8 bits from MMC3 bank-select registers)
+//! Mode 0 with outer PRG bits above the 8-bit MMC3 selection (submappers 1 and 3):
+//! ```text
+//! actual_bank = outer_prg_bits | mmc3_inner_page
 //! ```
+//! Here `mmc3_inner_page` supplies the low 8 PRG bank bits, while `prg_base`
+//! (and `prg_base_msb` on submapper 3) contribute higher bank-select bits above
+//! the MMC3-selected portion.
 //! In Extended MMC3 Mode (`$5xx3` bit 1 = 1) for submapper 1, the PRG base
-//! register contributes additional bits above MMC3:
+//! register contributes bits above the single MMC3-controlled low bit:
 //! ```text
 //! actual_bank = ((prg_base & 0x7F) << 1) | (mmc3_inner_page & 0x01)
-//!             combined with full 8-bit MMC3 register
 //! ```
 //!
 //! ## CHR Banking

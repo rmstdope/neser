@@ -125,6 +125,9 @@ pub struct Mapper210 {
     prg_ram_enabled: bool,
     /// Initial mirroring from cartridge header (Namco 175 uses this; Namco 340 ignores it).
     initial_mirroring: NametableLayout,
+    /// Current Namco 340 mirroring bits ($E000[7:6]).
+    /// Stored so `registers_snapshot` can round-trip the mirroring state.
+    mirroring_bits: u8,
 }
 
 impl Mapper210 {
@@ -142,7 +145,14 @@ impl Mapper210 {
         let mut base = BaseMapper::new(&ctx, capabilities);
         base.configure_prg_banking(PRG_8K_BANK_SIZE);
         base.configure_chr_banking(CHR_1K_BANK_SIZE);
-        base.set_mirroring(mirroring);
+
+        // Namco 175: use header mirroring (hardwired solder pad).
+        // Namco 340: power-on state = $E000=0 → bits[7:6]=00 → SingleScreenLower.
+        if is_namco175 {
+            base.set_mirroring(mirroring);
+        } else {
+            base.set_mirroring(NametableLayout::SingleScreenLower);
+        }
 
         let prg_ram = if is_namco175 {
             PrgRam::new(PRG_RAM_SIZE)
@@ -158,6 +168,7 @@ impl Mapper210 {
             prg_ram,
             prg_ram_enabled: false,
             initial_mirroring: mirroring,
+            mirroring_bits: 0,
         };
         mapper.apply_banks();
         mapper
@@ -245,7 +256,8 @@ impl Mapper for Mapper210 {
                 self.prg_regs[0] = value & 0x3F;
                 if !self.is_namco175 {
                     // Namco 340: bits [7:6] = mirroring
-                    self.set_mirroring_namco340(value >> 6);
+                    self.mirroring_bits = value >> 6;
+                    self.set_mirroring_namco340(self.mirroring_bits);
                 }
                 self.base.select_prg_page(0, self.prg_regs[0] as i16);
             }
@@ -264,10 +276,11 @@ impl Mapper for Mapper210 {
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        let mut data = Vec::with_capacity(8 + 3 + 1);
+        let mut data = Vec::with_capacity(8 + 3 + 2);
         data.extend_from_slice(&self.chr_regs);
         data.extend_from_slice(&self.prg_regs);
         data.push(self.prg_ram_enabled as u8);
+        data.push(self.mirroring_bits);
         data
     }
 
@@ -276,16 +289,50 @@ impl Mapper for Mapper210 {
             self.chr_regs.copy_from_slice(&data[0..8]);
             self.prg_regs.copy_from_slice(&data[8..11]);
             self.prg_ram_enabled = data[11] != 0;
-            self.apply_banks();
         }
+        if data.len() >= 13 {
+            self.mirroring_bits = data[12];
+            if !self.is_namco175 {
+                self.set_mirroring_namco340(self.mirroring_bits);
+            }
+        }
+        self.apply_banks();
     }
 
     fn reset(&mut self) {
         self.chr_regs = [0; 8];
         self.prg_regs = [0; 3];
         self.prg_ram_enabled = false;
-        self.base.set_mirroring(self.initial_mirroring);
+        self.mirroring_bits = 0;
+        if self.is_namco175 {
+            self.base.set_mirroring(self.initial_mirroring);
+        } else {
+            // Namco 340 power-on: $E000=0 → bits[7:6]=00 → SingleScreenLower
+            self.base.set_mirroring(NametableLayout::SingleScreenLower);
+        }
         self.apply_banks();
+    }
+
+    fn wram_size(&self) -> usize {
+        if self.is_namco175 {
+            self.prg_ram.size()
+        } else {
+            0
+        }
+    }
+
+    fn wram_snapshot(&self) -> Vec<u8> {
+        if self.is_namco175 {
+            self.prg_ram.snapshot()
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn load_wram_snapshot(&mut self, data: &[u8]) {
+        if self.is_namco175 {
+            self.prg_ram.load_snapshot(data);
+        }
     }
 }
 
@@ -352,6 +399,30 @@ mod tests {
         let mut m = make_namco340();
         m.write_prg(0xF000, 7);
         assert_eq!(m.prg_regs[2], 7);
+    }
+
+    #[test]
+    fn namco340_power_on_mirroring_is_single_screen_lower() {
+        let m = make_namco340();
+        // Namco 340 defaults to $E000=0 (bits[7:6]=00 → SingleScreenLower).
+        assert_eq!(m.base.mirroring(), NametableLayout::SingleScreenLower);
+    }
+
+    #[test]
+    fn namco340_snapshot_preserves_mirroring_bits() {
+        let mut m = make_namco340();
+        m.write_prg(0xE000, 0b0100_0000); // Vertical mirroring
+        let snap = m.registers_snapshot();
+
+        let mut m2 = make_namco340();
+        m2.restore_registers(&snap);
+        assert_eq!(m2.base.mirroring(), NametableLayout::Vertical);
+    }
+
+    #[test]
+    fn namco175_wram_size_returns_prg_ram_size() {
+        let m = make_namco175();
+        assert_eq!(m.wram_size(), PRG_RAM_SIZE);
     }
 
     #[test]

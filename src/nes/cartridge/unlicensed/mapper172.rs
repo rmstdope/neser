@@ -122,6 +122,14 @@ impl Mapper172 {
     fn is_jv001_addr(addr: u16) -> bool {
         (addr & 0xE100) == 0x4100
     }
+
+    /// Reverse the low 6 bits of a byte (D5..D0 → D0..D5).
+    ///
+    /// The JV001 IC physically reverses data-bus bits when latching via $4102.
+    fn reverse_bits_6(val: u8) -> u8 {
+        // reverse_bits() reverses all 8 bits; the 6-bit result ends up in [7:2].
+        (val & 0x3F).reverse_bits() >> 2
+    }
 }
 
 impl Mapper for Mapper172 {
@@ -140,7 +148,7 @@ impl Mapper for Mapper172 {
     fn read_prg(&self, addr: u16) -> u8 {
         if Self::is_jv001_addr(addr) {
             // Return Register[5:0]; bits [5:4] inverted when Invert=1.
-            // Bits [7:6] are open bus (returned as 0 here).
+            // Bits [7:6] are open bus (0 when there is no prior open-bus value).
             let mut reg = self.register & 0x3F;
             if self.invert {
                 reg ^= 0x30; // invert bits [5:4]
@@ -153,6 +161,21 @@ impl Mapper for Mapper172 {
         }
 
         0
+    }
+
+    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        if Self::is_jv001_addr(addr) {
+            // Bits [7:6] are open bus; merge them from the bus capacitor value.
+            let mut reg = self.register & 0x3F;
+            if self.invert {
+                reg ^= 0x30;
+            }
+            return (open_bus & 0xC0) | reg;
+        }
+        if addr >= 0x8000 {
+            return self.base.read_prg_banked(addr);
+        }
+        open_bus
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
@@ -179,8 +202,9 @@ impl Mapper for Mapper172 {
                     self.invert = (value & 0x20) != 0;
                 }
                 2 => {
-                    // $4102: Input := bits [5:0] (value written)
-                    self.input = value & 0x3F;
+                    // $4102: Input := bit-reversed value[5:0]
+                    // The JV001 IC physically reverses data-bus bit order on this latch.
+                    self.input = Self::reverse_bits_6(value & 0x3F);
                 }
                 3 => {
                     // $4103: Mode := bit 5
@@ -287,8 +311,27 @@ mod tests {
     #[test]
     fn write_4102_sets_input_bits0_5() {
         let mut m = make_mapper();
+        // 0xFF & 0x3F = 0x3F which is a bit-palindrome; reversal leaves it unchanged.
         m.write_prg(0x4102, 0xFF);
         assert_eq!(m.input, 0x3F);
+    }
+
+    #[test]
+    fn write_4102_bit_reverses_6bit_input() {
+        let mut m = make_mapper();
+        // The JV001 IC physically reverses data-bus bits D0..D5 when latching.
+        // Writing 0x01 (bit 0 set) should place that bit at position 5 in the input reg.
+        m.write_prg(0x4102, 0x01);
+        assert_eq!(
+            m.input, 0x20,
+            "bit 0 of written value must map to bit 5 of input"
+        );
+        // Writing 0x20 (bit 5 set) should place that bit at position 0.
+        m.write_prg(0x4102, 0x20);
+        assert_eq!(
+            m.input, 0x01,
+            "bit 5 of written value must map to bit 0 of input"
+        );
     }
 
     #[test]
@@ -303,7 +346,8 @@ mod tests {
     #[test]
     fn write_4100_mode0_latches_input_to_register() {
         let mut m = make_mapper();
-        m.write_prg(0x4102, 0x15); // input = $15 = 0b010101
+        // Write 0x2A to $4102; after 6-bit reversal: input = 0x15 = 0b010101.
+        m.write_prg(0x4102, 0x2A);
         m.write_prg(0x4100, 0); // Mode=0: register := input
         assert_eq!(m.register, 0x15);
     }
@@ -312,7 +356,8 @@ mod tests {
     fn write_4100_mode0_inverts_lower_nibble_when_invert_set() {
         let mut m = make_mapper();
         m.write_prg(0x4101, 0x20); // invert = 1
-        m.write_prg(0x4102, 0x15); // input = 0b010101
+        // Write 0x2A → input = 0x15 = 0b010101 after bit-reversal.
+        m.write_prg(0x4102, 0x2A);
         m.write_prg(0x4100, 0); // register := input XOR 0x0F on lower nibble
         // lower nibble: 0x5 XOR 0xF = 0xA; upper nibble unchanged: 0x1
         assert_eq!(m.register, 0x1A);
@@ -321,7 +366,8 @@ mod tests {
     #[test]
     fn write_4100_mode1_increments_lower_nibble() {
         let mut m = make_mapper();
-        m.write_prg(0x4102, 0x15);
+        // Write 0x2A → input = 0x15 after bit-reversal.
+        m.write_prg(0x4102, 0x2A);
         m.write_prg(0x4100, 0); // latch input: register = 0x15
         m.write_prg(0x4103, 0x20); // mode = 1
         m.write_prg(0x4100, 0); // increment lower nibble: 0x15 + 1 = 0x16
@@ -331,20 +377,22 @@ mod tests {
     #[test]
     fn write_4100_mode1_lower_nibble_wraps() {
         let mut m = make_mapper();
-        m.write_prg(0x4102, 0x1F); // input = 0b011111
-        m.write_prg(0x4100, 0); // register = 0x1F
+        // Write 0x3C → input = 0x0F after bit-reversal (lower nibble = 0xF).
+        m.write_prg(0x4102, 0x3C);
+        m.write_prg(0x4100, 0); // register = 0x0F
         m.write_prg(0x4103, 0x20); // mode = 1
-        m.write_prg(0x4100, 0); // lower nibble wraps: 0xF + 1 = 0x0; upper nibble stays
+        m.write_prg(0x4100, 0); // lower nibble wraps: 0xF + 1 = 0x0; upper nibble stays 0
         assert_eq!(m.register & 0x0F, 0x00);
-        assert_eq!(m.register & 0x30, 0x10);
+        assert_eq!(m.register & 0x30, 0x00);
     }
 
     #[test]
     fn write_8000_latches_register_to_output_and_selects_chr_bank() {
         let mut m = make_mapper();
-        m.write_prg(0x4102, 0x03); // input = 3
-        m.write_prg(0x4100, 0); // register = 3
-        m.write_prg(0x8000, 0); // output = register = 3; chr bank = 3 & 3 = 3
+        // Write 0x30 to $4102; after 6-bit reversal: input = 0x03.
+        m.write_prg(0x4102, 0x30);
+        m.write_prg(0x4100, 0); // register = 0x03
+        m.write_prg(0x8000, 0); // output = register = 0x03; chr bank = 0x03 & 3 = 3
         assert_eq!(m.output, 3);
     }
 
@@ -367,7 +415,8 @@ mod tests {
     #[test]
     fn read_4100_returns_register_bits() {
         let mut m = make_mapper();
-        m.write_prg(0x4102, 0x15); // input = 0x15
+        // Write 0x2A → input = 0x15 after bit-reversal; latch to register.
+        m.write_prg(0x4102, 0x2A);
         m.write_prg(0x4100, 0); // register = 0x15
         let val = m.read_prg(0x4100);
         assert_eq!(val & 0x3F, 0x15);
@@ -376,12 +425,27 @@ mod tests {
     #[test]
     fn read_4100_inverts_bits4_5_when_invert_set() {
         let mut m = make_mapper();
-        m.write_prg(0x4102, 0x35); // input = 0x35 = 0b110101
+        // Write 0x2B → input = 0x35 = 0b110101 after bit-reversal; latch to register.
+        m.write_prg(0x4102, 0x2B);
         m.write_prg(0x4100, 0); // register = 0x35
         m.write_prg(0x4101, 0x20); // invert = 1
         let val = m.read_prg(0x4100);
         // bits [5:4] = 0b11 XOR 0b11 = 0b00; bits [3:0] = 0b0101 unchanged
         assert_eq!(val & 0x3F, 0x05);
+    }
+
+    #[test]
+    fn read_4100_open_bus_merges_high_bits() {
+        let mut m = make_mapper();
+        // Bits [7:6] at $4100 are open bus — they must come from the open_bus parameter.
+        let val = m.read_prg_open_bus(0x4100, 0xC0);
+        assert_eq!(val & 0xC0, 0xC0, "bits [7:6] must be taken from open_bus");
+        let val2 = m.read_prg_open_bus(0x4100, 0x00);
+        assert_eq!(
+            val2 & 0xC0,
+            0x00,
+            "bits [7:6] must be 0 when open_bus bits are 0"
+        );
     }
 
     #[test]
@@ -413,7 +477,7 @@ mod tests {
         let mut m = make_mapper();
         m.write_prg(0x4101, 0x20); // invert = 1
         m.write_prg(0x4103, 0x20); // mode = 1
-        m.write_prg(0x4102, 0x2A); // input = 0x2A
+        m.write_prg(0x4102, 0x2A); // after 6-bit reversal: input = 0x15
         m.write_prg(0x4100, 0); // mode=1: increment lower nibble of register (which is 0 → 1)
         m.write_prg(0x8000, 0); // output = register
 

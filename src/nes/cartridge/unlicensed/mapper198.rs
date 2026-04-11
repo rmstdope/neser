@@ -124,22 +124,59 @@ impl Mapper for Mapper198 {
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        self.inner.registers_snapshot()
+        // Include extra_wram so save-states round-trip the $5000-$5FFF window.
+        let mut snap = self.inner.registers_snapshot();
+        snap.extend_from_slice(&self.extra_wram);
+        snap
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        self.inner.restore_registers(data);
+        let inner_len = self.inner.registers_snapshot().len();
+        if data.len() >= inner_len {
+            self.inner.restore_registers(&data[..inner_len]);
+        }
+        if data.len() >= inner_len + EXTRA_WRAM_SIZE {
+            self.extra_wram
+                .copy_from_slice(&data[inner_len..inner_len + EXTRA_WRAM_SIZE]);
+        }
     }
 
     fn initialize_chr_ram(&mut self, mode: crate::nes::console::RamInitMode) {
+        // Called for battery-backed carts after PRG-RAM is loaded from disk.
+        // Initialize only the volatile CHR-RAM and extra WRAM; leave PRG-RAM intact.
         crate::nes::console::initialize_ram(&mut self.chr_ram, mode);
         crate::nes::console::initialize_ram(&mut self.extra_wram, mode);
     }
 
+    fn initialize_ram(&mut self, mode: crate::nes::console::RamInitMode) {
+        self.inner.initialize_ram(mode);
+        crate::nes::console::initialize_ram(&mut self.chr_ram, mode);
+        crate::nes::console::initialize_ram(&mut self.extra_wram, mode);
+    }
+
+    fn chr_ram_snapshot(&self) -> Vec<u8> {
+        self.chr_ram.to_vec()
+    }
+
+    fn restore_chr_ram(&mut self, data: &[u8]) {
+        if data.len() == CHR_RAM_SIZE {
+            self.chr_ram.copy_from_slice(data);
+        }
+    }
+
+    /// Delegate to inner MMC3 for battery-backed $6000-$7FFF PRG-RAM disk persistence.
     fn wram_size(&self) -> usize {
-        // Battery-backed CHR-RAM is not reported here; the inner MMC3 handles $6000 WRAM.
-        // This extra WRAM is not battery-backed, so we do not expose it via wram_snapshot.
-        0
+        self.inner.wram_size()
+    }
+
+    /// Delegate to inner MMC3 for battery-backed $6000-$7FFF PRG-RAM disk persistence.
+    fn wram_snapshot(&self) -> Vec<u8> {
+        self.inner.wram_snapshot()
+    }
+
+    /// Delegate to inner MMC3 for battery-backed $6000-$7FFF PRG-RAM disk persistence.
+    fn load_wram_snapshot(&mut self, data: &[u8]) {
+        self.inner.load_wram_snapshot(data);
     }
 
     fn reset(&mut self) {
@@ -267,5 +304,48 @@ mod tests {
         m2.restore_registers(&snap);
 
         assert_eq!(m2.inner.mapped_prg_bank(0x8000), 0x10);
+    }
+
+    #[test]
+    fn snapshot_restore_preserves_extra_wram() {
+        let mut m = make_mapper();
+        m.write_prg(0x5000, 0xAA);
+        m.write_prg(0x5FFF, 0x55);
+        let snap = m.registers_snapshot();
+
+        let mut m2 = make_mapper();
+        m2.restore_registers(&snap);
+
+        assert_eq!(
+            m2.read_prg(0x5000),
+            0xAA,
+            "extra_wram[0] must survive snapshot"
+        );
+        assert_eq!(
+            m2.read_prg(0x5FFF),
+            0x55,
+            "extra_wram[last] must survive snapshot"
+        );
+    }
+
+    #[test]
+    fn chr_ram_snapshot_restore_round_trips() {
+        let mut m = make_mapper();
+        m.write_chr(0x0100, 0xDE);
+        m.write_chr(0x1F00, 0xAD);
+        let snap = m.chr_ram_snapshot();
+
+        let mut m2 = make_mapper();
+        m2.restore_chr_ram(&snap);
+
+        assert_eq!(m2.read_chr(0x0100), 0xDE);
+        assert_eq!(m2.read_chr(0x1F00), 0xAD);
+    }
+
+    #[test]
+    fn wram_size_matches_inner_mmc3_prg_ram() {
+        let m = make_mapper();
+        // Inner MMC3 has 8 KB PRG-RAM at $6000-$7FFF; wram_size must reflect that.
+        assert_eq!(m.wram_size(), 8 * 1024);
     }
 }
