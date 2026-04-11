@@ -513,7 +513,7 @@ mod tests {
 
     #[test]
     fn test_stat_mode_bits_report_mode0_when_lcd_disabled() {
-        let mut ppu = ppu_in_mode3_then_lcd_off();
+        let ppu = ppu_in_mode3_then_lcd_off();
         let stat = ppu.read_register(0xFF41);
         assert_eq!(
             stat & 0x03,

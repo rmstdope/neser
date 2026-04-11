@@ -344,7 +344,7 @@ mod tests {
         mapper.write_prg(0x6000, 0xFF); // only 0x0F should be stored
         // 0x0F → mode=1, bank=15, banked_lower = 14, page = 14*2 = 28
         // With 16 banks, page 28 wraps to 28 % 16 = 12
-        assert_eq!(mapper.read_prg(0x8000), 12 as u8);
+        assert_eq!(mapper.read_prg(0x8000), 12_u8);
     }
 
     // -------------------------------------------------------------------------

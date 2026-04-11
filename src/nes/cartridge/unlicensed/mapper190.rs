@@ -130,7 +130,7 @@ impl Mapper for Mapper190 {
             // PRG bank select for banks 0–7 (A14=0).
             self.prg_bank = value & 0x07;
             self.base.select_prg_page(0, self.prg_bank as i16);
-        } else if addr >= 0xC000 && addr <= 0xDFFF {
+        } else if (0xC000..=0xDFFF).contains(&addr) {
             // PRG bank select for banks 8–15 (A14=1, adds bit 3).
             self.prg_bank = (value & 0x07) | 0x08;
             self.base.select_prg_page(0, self.prg_bank as i16);

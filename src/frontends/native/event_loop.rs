@@ -1081,6 +1081,7 @@ impl ApplicationHandler for NativeEventLoop {
 }
 
 /// Returns the target duration per frame for the given timing mode.
+#[allow(dead_code)]
 fn target_frame_duration(timing_mode: TimingMode) -> Duration {
     Duration::from_secs_f64(1.0 / timing_mode.frame_rate_hz())
 }
