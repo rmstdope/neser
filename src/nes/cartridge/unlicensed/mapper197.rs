@@ -56,7 +56,7 @@ pub struct Mapper197 {
 impl Mapper197 {
     pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         Self {
-            inner: MMC3Mapper::new_with_irq_mode(ctx.prg_rom, ctx.chr_rom, ctx.mirroring, false),
+            inner: MMC3Mapper::new(ctx),
         }
     }
 
@@ -146,7 +146,15 @@ impl Mapper for Mapper197 {
     }
 
     fn wram_size(&self) -> usize {
-        0
+        self.inner.wram_size()
+    }
+
+    fn wram_snapshot(&self) -> Vec<u8> {
+        self.inner.wram_snapshot()
+    }
+
+    fn load_wram_snapshot(&mut self, data: &[u8]) {
+        self.inner.load_wram_snapshot(data);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -158,14 +166,7 @@ impl Mapper for Mapper197 {
     }
 
     fn capabilities(&self) -> MapperCapabilities {
-        MapperCapabilities {
-            has_irq: true,
-            has_chr_banking: true,
-            has_dynamic_mirroring: true,
-            prg_bank_size_kb: 8,
-            chr_bank_size_kb: 1,
-            ..Default::default()
-        }
+        self.inner.capabilities()
     }
 }
 
@@ -309,12 +310,41 @@ mod tests {
         );
     }
 
-    // ── No IRQ by default ─────────────────────────────────────────────────────
+    // ── IRQ delegation (standard MMC3, unchanged) ────────────────────────────
+
+    fn clock_irq_a12_rising_edge(mapper: &mut Mapper197) {
+        mapper.ppu_address_changed(0x0000);
+        for _ in 0..3 {
+            mapper.cpu_cycle();
+        }
+        mapper.ppu_address_changed(0x1000);
+    }
 
     #[test]
     fn irq_not_pending_at_power_on() {
         let mapper = make_mapper();
         assert!(!mapper.irq_pending());
+    }
+
+    #[test]
+    fn mmc3_irq_is_clocked_through_mapper197() {
+        let mut mapper = make_mapper();
+
+        mapper.write_prg(0xC000, 1); // IRQ latch = 1
+        mapper.write_prg(0xC001, 0); // reload on next A12 rise
+        mapper.write_prg(0xE001, 0); // enable IRQs
+
+        clock_irq_a12_rising_edge(&mut mapper);
+        assert!(
+            !mapper.irq_pending(),
+            "first qualified A12 rise should only reload/decrement the IRQ counter"
+        );
+
+        clock_irq_a12_rising_edge(&mut mapper);
+        assert!(
+            mapper.irq_pending(),
+            "second qualified A12 rise should assert MMC3 IRQ through Mapper197"
+        );
     }
 
     // ── Snapshot round-trip ───────────────────────────────────────────────────
