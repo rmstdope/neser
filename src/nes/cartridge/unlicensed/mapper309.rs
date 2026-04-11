@@ -64,7 +64,15 @@ pub struct Mapper309 {
 }
 
 impl Mapper309 {
-    pub fn new(ctx: MapperContext) -> Self {
+    pub fn new(mut ctx: MapperContext) -> Self {
+        // This board always has 8 KiB PRG-RAM at $6000–$7FFF, regardless of
+        // what the ROM header specifies.
+        ctx.prg_ram_banks_8k = 1;
+        ctx.prg_ram_size_specified = true;
+        // This board is always CHR-RAM; clear any CHR-ROM from the header to
+        // ensure correct behaviour with mis-headered dumps.
+        ctx.chr_rom = vec![];
+
         let capabilities = MapperCapabilities {
             has_chr_banking: false,
             has_dynamic_mirroring: true,
@@ -173,30 +181,24 @@ mod tests {
     const PRG_BANKS: usize = 16;
 
     fn make_mapper() -> Mapper309 {
-        Mapper309::new(
-            MapperContext::new_for_test(
-                MAPPER_NUMBER,
-                banked_data(PRG_BANK_SIZE, PRG_BANKS),
-                vec![],
-                NametableLayout::Vertical,
-            )
-            .with_prg_ram_banks(1),
-        )
+        Mapper309::new(MapperContext::new_for_test(
+            MAPPER_NUMBER,
+            banked_data(PRG_BANK_SIZE, PRG_BANKS),
+            vec![],
+            NametableLayout::Vertical,
+        ))
     }
 
     // ── Factory registration ──────────────────────────────────────────────────
 
     #[test]
     fn mapper_309_is_registered_in_factory() {
-        let result = create_mapper(
-            MapperContext::new_for_test(
-                MAPPER_NUMBER,
-                banked_data(PRG_BANK_SIZE, PRG_BANKS),
-                vec![],
-                NametableLayout::Vertical,
-            )
-            .with_prg_ram_banks(1),
-        );
+        let result = create_mapper(MapperContext::new_for_test(
+            MAPPER_NUMBER,
+            banked_data(PRG_BANK_SIZE, PRG_BANKS),
+            vec![],
+            NametableLayout::Vertical,
+        ));
         assert!(
             result.is_ok(),
             "Mapper 309 must be registered in the factory"

@@ -58,6 +58,7 @@
 //! - Vertical mirroring
 //! - Not locked
 
+use crate::nes::cartridge::NametableLayout;
 use crate::nes::cartridge::base_mapper::BaseMapper;
 use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
 
@@ -76,6 +77,10 @@ pub struct Mapper265 {
     mode: bool,
     /// Inner 3-bit bank from the data latch.
     bank: u8,
+    /// Current nametable mirroring (controlled by address bit 1 when unlocked).
+    mirroring_h: bool,
+    /// Power-on mirroring from ROM header (restored on reset).
+    initial_mirroring: NametableLayout,
 }
 
 impl Mapper265 {
@@ -88,6 +93,7 @@ impl Mapper265 {
             max_prg_ram_kb: 0,
             ..Default::default()
         };
+        let initial_mirroring = ctx.mirroring;
         let mut base = BaseMapper::new(&ctx, capabilities);
         base.configure_prg_banking(PRG_BANK_SIZE);
         // CHR-RAM is unbanked; no configure_chr_banking needed.
@@ -98,6 +104,8 @@ impl Mapper265 {
             outer: 0,
             mode: false,
             bank: 0,
+            mirroring_h: initial_mirroring == NametableLayout::Horizontal,
+            initial_mirroring,
         };
         mapper.apply_banks();
         mapper
@@ -133,7 +141,8 @@ impl Mapper for Mapper265 {
             self.outer = (((addr & 0x60) >> 2) | ((addr & 0x100) >> 3)) as u8;
             self.mode = addr & 0x80 != 0;
             self.locked = addr & 0x2000 != 0;
-            self.base.set_mirroring_hv(addr & 0x02 != 0);
+            self.mirroring_h = addr & 0x02 != 0;
+            self.base.set_mirroring_hv(self.mirroring_h);
         }
         self.bank = value & 0x07;
         self.apply_banks();
@@ -144,11 +153,14 @@ impl Mapper for Mapper265 {
         self.outer = 0;
         self.mode = false;
         self.bank = 0;
+        self.mirroring_h = self.initial_mirroring == NametableLayout::Horizontal;
+        self.base.set_mirroring(self.initial_mirroring);
         self.apply_banks();
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        let flags = (self.locked as u8) | ((self.mode as u8) << 1);
+        let flags =
+            (self.locked as u8) | ((self.mode as u8) << 1) | ((self.mirroring_h as u8) << 2);
         vec![flags, self.outer, self.bank]
     }
 
@@ -158,8 +170,10 @@ impl Mapper for Mapper265 {
         }
         self.locked = data[0] & 0x01 != 0;
         self.mode = data[0] & 0x02 != 0;
+        self.mirroring_h = data[0] & 0x04 != 0;
         self.outer = data[1] & 0x38; // mask to valid range (0,8,…,56)
         self.bank = data[2] & 0x07;
+        self.base.set_mirroring_hv(self.mirroring_h);
         self.apply_banks();
     }
 }
@@ -275,9 +289,9 @@ mod tests {
     #[test]
     fn outer_bank_addr_bit_6_shifts_base_by_16() {
         let mut mapper = make_mapper();
-        // addr = $8040: bit 6 set (and mode bit also set) → outer = ((0x40 & 0x60) >> 2) = 16
-        // but bit 6 = mode bit too? Let me check: addr = $8040, bit 7 = 0 (mode=false), bit 6 = 1
-        // outer = ((0x8040 & 0x60) >> 2) | ((0x8040 & 0x100) >> 3) = (0x40 >> 2) | 0 = 16
+        // Bit 6 contributes to the outer bank: outer = ((addr & 0x60) >> 2) | ((addr & 0x100) >> 3)
+        // For addr = $8040: bit 6 is set, bit 7 is clear (mode=false).
+        // outer = (0x40 >> 2) | 0 = 16.
         mapper.write_prg(0x8040, 0x00);
         assert_eq!(mapper.read_prg(0x8000), 16, "outer=16, bank=0 → page 16");
     }
@@ -285,7 +299,8 @@ mod tests {
     #[test]
     fn outer_bank_addr_bit_8_shifts_base_by_32() {
         let mut mapper = make_mapper();
-        // addr = $8100: bit 8 set → outer = ((0 & 0x60) >> 2) | ((0x100 & 0x100) >> 3) = 32
+        // Bit 8 contributes to the outer bank: outer = ((addr & 0x60) >> 2) | ((addr & 0x100) >> 3)
+        // For addr = $8100: only bit 8 is set, so outer = (0x100 >> 3) = 32.
         mapper.write_prg(0x8100, 0x00);
         assert_eq!(mapper.read_prg(0x8000), 32, "outer=32, bank=0 → page 32");
     }
@@ -354,6 +369,11 @@ mod tests {
         assert!(!mapper.locked, "locked cleared");
         assert_eq!(mapper.read_prg(0x8000), 0, "lower → bank 0");
         assert_eq!(mapper.read_prg(0xC000), 7, "upper → bank 7 (UNROM default)");
+        assert_eq!(
+            mapper.get_mirroring(),
+            NametableLayout::Vertical,
+            "mirroring reset to Vertical"
+        );
     }
 
     // ── Snapshot / restore ────────────────────────────────────────────────────
@@ -361,7 +381,7 @@ mod tests {
     #[test]
     fn snapshot_restore_preserves_state() {
         let mut mapper = make_mapper();
-        mapper.write_prg(0x8020, 0x03); // outer=8, bank=3
+        mapper.write_prg(0x8022, 0x03); // outer=8, bank=3, mirroring=H (bit 1 set)
         let snap = mapper.registers_snapshot();
 
         let mut restored = make_mapper();
@@ -376,6 +396,11 @@ mod tests {
             restored.read_prg(0xC000),
             mapper.read_prg(0xC000),
             "upper match"
+        );
+        assert_eq!(
+            restored.get_mirroring(),
+            mapper.get_mirroring(),
+            "mirroring match"
         );
     }
 

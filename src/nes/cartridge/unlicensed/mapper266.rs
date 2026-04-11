@@ -62,13 +62,13 @@
 //! # IRQ
 //!
 //! CPU-cycle-driven counter (counts every M2 cycle):
-//! - **`$F000`**: Acknowledge + disable IRQ; reset low counter.
-//! - **`$F004`**: Enable IRQ counting.
-//! - **`$F008`**: Control (bit 1: enable; also acknowledges pending IRQ).
+//! - **`$F000`**: Acknowledge + disable IRQ; write IRQ counter low nibble.
+//! - **`$F004`**: Write IRQ counter high nibble.
+//! - **`$F008`**: Control (bit 1: enable/disable counting; also acknowledges pending IRQ).
 //!
-//! The IRQ counter is a 9-bit value split into low nibble (`$F000`) and
-//! high nibble (`$F004`) fields, each taking 4 bits. When enabled, the
-//! counter decrements on every CPU cycle; IRQ asserts when it reaches 0.
+//! The IRQ counter is loaded from low nibble (`$F000`) and high nibble
+//! (`$F004`) fields, each taking 4 bits. When enabled via `$F008` bit 1,
+//! the counter decrements on every CPU cycle; IRQ asserts when it reaches 0.
 
 use crate::nes::cartridge::NametableLayout;
 use crate::nes::cartridge::base_mapper::BaseMapper;
@@ -87,6 +87,8 @@ pub struct Mapper266 {
     prg_mode: u8,
     /// 8 × 1 KiB CHR bank registers.
     chr_regs: [u8; 8],
+    /// Nametable mirroring control: bits 1:0 from last write to $9000.
+    mirroring_bits: u8,
     /// IRQ: enable flag.
     irq_enabled: bool,
     /// IRQ counter (16-bit, decremented each CPU cycle while enabled).
@@ -115,6 +117,7 @@ impl Mapper266 {
             prg_reg: 0,
             prg_mode: 0,
             chr_regs: [0; 8],
+            mirroring_bits: 0,
             irq_enabled: false,
             irq_counter: 0,
             irq_asserted: false,
@@ -139,6 +142,8 @@ impl Mapper266 {
         for (slot, &bank) in self.chr_regs.iter().enumerate() {
             self.base.select_chr_page(slot, bank as i16);
         }
+
+        self.apply_mirroring(self.mirroring_bits);
     }
 
     fn apply_mirroring(&mut self, mirroring_bits: u8) {
@@ -170,7 +175,7 @@ impl Mapper for Mapper266 {
             // PRG register: bits 3:2 select 32 KiB outer block; bits 1:0 select mirroring
             0x9000 => {
                 self.prg_reg = value & 0x0C;
-                self.apply_mirroring(value);
+                self.mirroring_bits = value & 0x03;
                 self.apply_state();
             }
             // PRG mode variants (same register family with other bit patterns)
@@ -260,6 +265,7 @@ impl Mapper for Mapper266 {
         self.prg_reg = 0;
         self.prg_mode = 0;
         self.chr_regs = [0; 8];
+        self.mirroring_bits = 0;
         self.irq_enabled = false;
         self.irq_counter = 0;
         self.irq_asserted = false;
@@ -269,13 +275,20 @@ impl Mapper for Mapper266 {
     fn registers_snapshot(&self) -> Vec<u8> {
         let [irq_lo, irq_hi] = self.irq_counter.to_le_bytes();
         let flags = (self.irq_enabled as u8) | ((self.irq_asserted as u8) << 1);
-        let mut snap = vec![self.prg_reg, self.prg_mode, irq_lo, irq_hi, flags];
+        let mut snap = vec![
+            self.prg_reg,
+            self.prg_mode,
+            irq_lo,
+            irq_hi,
+            flags,
+            self.mirroring_bits,
+        ];
         snap.extend_from_slice(&self.chr_regs);
         snap
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        if data.len() < 13 {
+        if data.len() < 14 {
             return;
         }
         self.prg_reg = data[0] & 0x0C;
@@ -283,7 +296,8 @@ impl Mapper for Mapper266 {
         self.irq_counter = u16::from_le_bytes([data[2], data[3]]);
         self.irq_enabled = data[4] & 0x01 != 0;
         self.irq_asserted = data[4] & 0x02 != 0;
-        self.chr_regs.copy_from_slice(&data[5..13]);
+        self.mirroring_bits = data[5] & 0x03;
+        self.chr_regs.copy_from_slice(&data[6..14]);
         self.apply_state();
     }
 }
@@ -488,12 +502,18 @@ mod tests {
     #[test]
     fn reset_clears_all_state() {
         let mut mapper = make_mapper();
-        mapper.write_prg(0x9000, 0x08);
+        mapper.write_prg(0x9000, 0x08); // outer=8, H mirroring? No, bits 1:0=0 = Vertical
+        mapper.write_prg(0x9000, 0x09); // outer=8, bits 1:0=1 = Horizontal
         mapper.write_prg(0xF008, 0x02);
         mapper.reset();
         assert_eq!(mapper.read_prg(0x8000), 0, "PRG bank 0 after reset");
         assert!(!mapper.irq_pending(), "no IRQ after reset");
         assert!(!mapper.irq_enabled, "IRQ disabled after reset");
+        assert_eq!(
+            mapper.get_mirroring(),
+            NametableLayout::Vertical,
+            "mirroring reset to Vertical"
+        );
     }
 
     // ── Snapshot / restore ────────────────────────────────────────────────────
@@ -501,7 +521,7 @@ mod tests {
     #[test]
     fn snapshot_restore_preserves_state() {
         let mut mapper = make_mapper();
-        mapper.write_prg(0x9000, 0x04);
+        mapper.write_prg(0x9000, 0x05); // outer=4, mirroring=H (bits 1:0=1)
         mapper.write_prg(0xD000, 0x03);
         let snap = mapper.registers_snapshot();
 
@@ -510,13 +530,18 @@ mod tests {
 
         assert_eq!(restored.read_prg(0x8000), mapper.read_prg(0x8000));
         assert_eq!(restored.read_chr(0x0000), mapper.read_chr(0x0000));
+        assert_eq!(
+            restored.get_mirroring(),
+            mapper.get_mirroring(),
+            "mirroring restored"
+        );
     }
 
     #[test]
     fn restore_with_short_data_is_noop() {
         let mut mapper = make_mapper();
         mapper.write_prg(0x9000, 0x08);
-        mapper.restore_registers(&[0x00; 5]);
+        mapper.restore_registers(&[0x00; 6]); // needs 14 bytes
         assert_eq!(
             mapper.read_prg(0x8000),
             8,

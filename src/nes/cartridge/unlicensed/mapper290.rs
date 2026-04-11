@@ -7,7 +7,8 @@
 //! # Hardware overview
 //!
 //! Used by the Asder 20-in-1 multicart. All banking is controlled by a single
-//! address latch written to `$8000`.
+//! address latch: any write to `$8000–$FFFF` latches the write address (data is
+//! ignored), and all bank/mirroring configuration is encoded in that address.
 //!
 //! # Address latch (`$8000`, write — address bits only)
 //!
@@ -106,7 +107,7 @@ impl Mapper290 {
         // Mirroring: bit 10 (C)
         let horiz = addr & 0x0400 != 0;
         // CHR bank: bits 9:8 → CHR bits 4:3; bits 2:0 → CHR bits 2:0
-        let chr = (((addr >> 8) & 0x03) | ((addr & 0x07) << 2)) as i16;
+        let chr = ((((addr >> 8) & 0x03) << 3) | (addr & 0x07)) as i16;
 
         if size_16k {
             // 16 KiB mode: both windows map to same inner bank
@@ -138,7 +139,7 @@ impl Mapper for Mapper290 {
     }
 
     fn write_prg(&mut self, addr: u16, _value: u8) {
-        if addr == 0x8000 {
+        if addr >= 0x8000 {
             self.latch = addr;
             self.apply_latch();
         }
@@ -226,13 +227,8 @@ mod tests {
     #[test]
     fn nrom256_outer_bank_selects_prg_pair() {
         let mut mapper = make_mapper();
-        // bits 14:11 = 0001 → outer=1 → pages 2,3
-        // addr = 0x8000 | (1 << 11) = 0x8800
-        mapper.write_prg(0x8000, 0x00);
-        // Actually writes only accepted at 0x8000 - we need to test the latch
-        // Since write_prg only latches addr=0x8000, let's directly set via restore
-        let latch_val: u16 = 0x8000 | (1 << 11); // outer=1
-        mapper.restore_registers(&latch_val.to_le_bytes());
+        // bits 14:11 = 0001 → outer=1 → pages 2,3; addr = $8000 | (1<<11) = $8800
+        mapper.write_prg(0x8800, 0x00);
         assert_eq!(mapper.read_prg(0x8000), 2, "outer=1 → bank 2");
         assert_eq!(mapper.read_prg(0xC000), 3, "outer=1 → bank 3");
     }
@@ -240,8 +236,8 @@ mod tests {
     #[test]
     fn nrom256_outer_bank_3_maps_pages_6_7() {
         let mut mapper = make_mapper();
-        let latch_val: u16 = 0x8000 | (3 << 11); // outer=3
-        mapper.restore_registers(&latch_val.to_le_bytes());
+        // bits 14:11 = 0011 → outer=3; addr = $8000 | (3<<11) = $9800
+        mapper.write_prg(0x9800, 0x00);
         assert_eq!(mapper.read_prg(0x8000), 6, "outer=3 → bank 6");
         assert_eq!(mapper.read_prg(0xC000), 7, "outer=3 → bank 7");
     }
@@ -251,24 +247,19 @@ mod tests {
     #[test]
     fn nrom128_mode_mirrors_both_windows() {
         let mut mapper = make_mapper();
-        // S=1 (bit 8) → 16KiB mode, inner=0 → both at page 0
-        let latch_val: u16 = 0x8000 | 0x0100; // bit 8 = S
-        mapper.restore_registers(&latch_val.to_le_bytes());
-        assert_eq!(
-            mapper.read_prg(0x8000),
-            0,
-            "16KiB mode, inner=0 → both bank 0"
-        );
+        // S=1 (bit 8) → 16 KiB mode, inner=0 → both windows at page 0
+        mapper.write_prg(0x8100, 0x00);
+        assert_eq!(mapper.read_prg(0x8000), 0, "16 KiB mode, inner=0 → bank 0");
         assert_eq!(mapper.read_prg(0xC000), 0, "upper mirrors lower");
     }
 
     #[test]
     fn nrom128_inner_bit_selects_bank_within_pair() {
         let mut mapper = make_mapper();
-        // outer=1, S=1, inner=1 (bit 7)
-        let latch_val: u16 = 0x8000 | (1 << 11) | 0x0100 | 0x0080;
-        mapper.restore_registers(&latch_val.to_le_bytes());
+        // outer=1 (bit 11), S=1 (bit 8), inner=1 (bit 7)
+        // addr = $8000 | (1<<11) | 0x0100 | 0x0080 = $8980
         // outer=1 → base=2; inner=1 → page = 2 | 1 = 3
+        mapper.write_prg(0x8980, 0x00);
         assert_eq!(mapper.read_prg(0x8000), 3, "outer=1, inner=1 → bank 3");
         assert_eq!(mapper.read_prg(0xC000), 3, "both windows map to bank 3");
     }
@@ -278,37 +269,21 @@ mod tests {
     #[test]
     fn chr_bank_from_addr_bits_2_0() {
         let mut mapper = make_mapper();
-        let latch_val: u16 = 0x8000 | 0x0005; // bits 2:0 = 5
-        mapper.restore_registers(&latch_val.to_le_bytes());
-        // CHR = ((bits 9:8) << 2) | bits 2:0 ... but bits 9:8 come from 0x0000 here
-        // Actually: chr = ((addr >> 8) & 0x03) | ((addr & 0x07) << 2)
-        // addr = 0x8005: (addr >> 8) & 0x03 = 0x80 & 0x03 = 0; (0x05 & 0x07) << 2 = 20
-        // Wait, that's wrong. Let me recalculate:
-        // chr = ((addr >> 8) & 0x03) | ((addr & 0x07) << 2)
-        // = (0 & 0x03) | (5 << 2) = 0 | 20 = 20
-        // Hmm, that seems high. Let me re-read the spec...
-        // Actually the NESdev spec says:
-        //   bits 9:8 ("CC") contribute to CHR bank
-        //   bits 2:0 ("CCC") contribute to CHR bank
-        // The way they combine: CC are high bits, CCC are low bits
-        // So CHR = (CC << 3) | CCC = (bits 9:8) << 3 | bits 2:0
-        // Wait, I may have gotten this wrong in the implementation. Let me fix the test
-        // to match the actual implementation's formula.
-        // Implementation: chr = ((addr >> 8) & 0x03) | ((addr & 0x07) << 2)
-        // = 0 | (5 << 2) = 20
-        assert_eq!(mapper.read_chr(0x0000), 20, "CHR bank 20");
+        // CHR bank uses address bits 9:8 as the high bits (→ CHR bits 4:3) and
+        // bits 2:0 as the low bits. For addr = $8005: bits 9:8 = 0, bits 2:0 = 5,
+        // so CHR bank = (0 << 3) | 5 = 5.
+        mapper.write_prg(0x8005, 0x00);
+        assert_eq!(mapper.read_chr(0x0000), 5, "CHR bank 5");
     }
 
     #[test]
     fn chr_bank_from_addr_bits_9_8() {
         let mut mapper = make_mapper();
-        let latch_val: u16 = 0x8000 | (2 << 8); // bits 9:8 = 2 (but bit 8 = S too!)
-        // Wait: bit 8 is also the S (size) bit. So (2<<8) = 0x200 sets bit 9.
-        // addr = 0x8200: bits 9:8 = 0x02 (bit 9 set), bit 8 = 0 (S=0 = 32KB mode)
-        // chr = ((0x8200 >> 8) & 0x03) = (0x82 & 0x03) = 2; ((0x8200 & 0x07) << 2) = 0
-        // chr = 2 | 0 = 2
-        mapper.restore_registers(&latch_val.to_le_bytes());
-        assert_eq!(mapper.read_chr(0x0000), 2, "CHR bank from addr bits 9:8");
+        // CHR bank uses address bits 9:8 as the high bits and bits 2:0 as the low bits.
+        // For addr = $8200: bits 9:8 = 2 (bit 9 set, bit 8 clear), bits 2:0 = 0,
+        // so CHR bank = (2 << 3) | 0 = 16.
+        mapper.write_prg(0x8200, 0x00);
+        assert_eq!(mapper.read_chr(0x0000), 16, "CHR bank from addr bits 9:8");
     }
 
     // ── Mirroring ─────────────────────────────────────────────────────────────
@@ -316,18 +291,15 @@ mod tests {
     #[test]
     fn addr_bit_10_selects_horizontal_mirroring() {
         let mut mapper = make_mapper();
-        let latch_val: u16 = 0x8000 | 0x0400; // bit 10
-        mapper.restore_registers(&latch_val.to_le_bytes());
+        mapper.write_prg(0x8400, 0x00); // bit 10 set
         assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
     }
 
     #[test]
     fn addr_bit_10_clear_gives_vertical_mirroring() {
         let mut mapper = make_mapper();
-        // First set horizontal
-        mapper.restore_registers(&(0x8400u16).to_le_bytes());
-        // Then back to vertical
-        mapper.restore_registers(&(0x8000u16).to_le_bytes());
+        mapper.write_prg(0x8400, 0x00); // set Horizontal
+        mapper.write_prg(0x8000, 0x00); // clear bit 10 → back to Vertical
         assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
     }
 
@@ -336,7 +308,7 @@ mod tests {
     #[test]
     fn reset_restores_power_on_state() {
         let mut mapper = make_mapper();
-        mapper.restore_registers(&(0x8800u16).to_le_bytes());
+        mapper.write_prg(0x8800, 0x00); // outer=1 → banks 2,3
         mapper.reset();
         assert_eq!(mapper.read_prg(0x8000), 0, "PRG bank 0 after reset");
         assert_eq!(
@@ -351,8 +323,9 @@ mod tests {
     #[test]
     fn snapshot_restore_roundtrip() {
         let mut mapper = make_mapper();
-        let latch_val: u16 = 0x8000 | (2 << 11) | 0x0005;
-        mapper.restore_registers(&latch_val.to_le_bytes());
+        // outer=2 (bits 14:11 = 0010 → addr bit 12), CHR bits 2:0 = 5
+        // addr = $8000 | (2<<11) | 0x0005 = $9005
+        mapper.write_prg(0x9005, 0x00);
         let snap = mapper.registers_snapshot();
 
         let mut restored = make_mapper();
