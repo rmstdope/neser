@@ -1,24 +1,34 @@
-//! Mapper 090 – J.Y. Company ASIC (ROM-nametable/Extended-Mirroring inhibited)
+//! Mapper 090 / 209 – J.Y. Company ASIC
 //!
 //! Specifications:
-//! - Primary: <https://www.nesdev.org/wiki/INES_Mapper_090>
+//! - Primary: <https://www.nesdev.org/wiki/J.Y._Company_ASIC>
 //! - Fallback: <https://github.com/SourMesen/Mesen2/blob/master/Core/NES/Mappers/JyCompany/JyCompany.h>
 //!
-//! Mapper 90 is the J.Y. Company ASIC with ROM-nametable control and
-//! Extended Mirroring permanently inhibited by a PCB jumper. All other
-//! ASIC features (flexible PRG/CHR banking, four-way mirroring, prescaler
-//! IRQ, hardware multiplier) are fully implemented.
+//! The J.Y. Company ASIC is used for their later single-game cartridges and multicarts.
+//! It provides flexible PRG/CHR banking, four-way mirroring, a prescaler IRQ, and a
+//! hardware multiplier.
+//!
+//! **Mapper 209** is the standard implementation. ROM nametables and Extended Mirroring
+//! are controlled via the $D001 register.
+//!
+//! **Mapper 90** inhibits ROM nametables and Extended Mirroring via a PCB jumper; $D001
+//! bits 2–6 are permanently forced to zero regardless of what is written.
+//!
+//! Other related mappers:
+//! - Mapper 160: shares mapper-90 hardware (inhibited extended mirroring).
+//! - Mapper 211: shares mapper-209 behavior (standard).
 //!
 //! Known Limitations:
+//! - ROM nametable and Extended Mirroring features ($D001 bits 2–6, $B000–$B007) are
+//!   not yet implemented for mapper 209; those bits are accepted but currently ignored.
+//!   (Standard mirroring via bits 0–1 is always active.)
 //! - MMC4-like automatic CHR bankswitching ($D003 bit 7) is not implemented.
-//! - Reverse-bit PRG mode 3 is implemented.
 
 use crate::nes::cartridge::BaseMapper;
 use crate::nes::cartridge::NametableLayout;
 use crate::nes::cartridge::common::A12RisingEdgeDetector;
 use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 
-// IRQ clock source selection
 #[derive(Clone, Copy, PartialEq)]
 enum IrqSource {
     CpuClock = 0,
@@ -42,7 +52,7 @@ impl IrqSource {
     }
 }
 
-/// Mapper 090 – J.Y. Company ASIC
+/// Mapper 090 / 209 – J.Y. Company ASIC
 pub struct JyCompanyMapper {
     base: BaseMapper,
 
@@ -60,7 +70,13 @@ pub struct JyCompanyMapper {
     chr_mode: u8,
 
     // Mirroring
-    mirror_reg: u8, // $D001 bits 0-1
+    /// $D001 raw value. For mapper 90 only bits 0-1 are active; for mapper 209 all bits
+    /// are stored (extended mirroring, though not yet acted upon beyond bits 0-1).
+    mirror_reg: u8,
+
+    /// When `true` (mapper 90), $D001 bits 2-6 are permanently inhibited by PCB jumper.
+    /// When `false` (mapper 209/211), the full register value is stored.
+    inhibit_extended: bool,
 
     // IRQ
     irq_enabled: bool,
@@ -84,7 +100,21 @@ impl JyCompanyMapper {
     const PRG_BANK_SIZE: usize = 0x2000;
     const CHR_BANK_SIZE: usize = 0x0400;
 
+    /// Constructor for mapper 90 / 160 — extended mirroring inhibited by PCB jumper.
     pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
+        Self::new_with_flags(ctx, true)
+    }
+
+    /// Constructor for mapper 209 / 211 — standard J.Y. Company ASIC, extended mirroring
+    /// register bits are accepted (though currently only bits 0-1 are acted upon).
+    pub fn new_standard(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
+        Self::new_with_flags(ctx, false)
+    }
+
+    fn new_with_flags(
+        ctx: crate::nes::cartridge::mapper::MapperContext,
+        inhibit_extended: bool,
+    ) -> Self {
         let capabilities = MapperCapabilities {
             has_irq: true,
             has_chr_banking: true,
@@ -108,6 +138,7 @@ impl JyCompanyMapper {
             chr_high: [0; 8],
             chr_mode: 0,
             mirror_reg: 0,
+            inhibit_extended,
             irq_enabled: false,
             irq_pending: false,
             irq_source: IrqSource::CpuClock,
@@ -130,49 +161,44 @@ impl JyCompanyMapper {
         ((hi << 8) | lo) as i16
     }
 
+    /// Returns the PRG register at `index` as an 8 KiB page index.
+    ///
+    /// In mode 3 (inverted), the 7-bit value has its bits reversed before use.
+    fn prg_reg_as_page(&self, index: usize) -> i16 {
+        let r = (self.prg_regs[index] & 0x7F) as u16;
+        if (self.prg_mode & 0x03) == 3 {
+            let reversed = ((r & 0x01) << 6)
+                | ((r & 0x02) << 3)
+                | (r & 0x04)
+                | ((r & 0x08) >> 3)
+                | ((r & 0x10) >> 2)
+                | ((r & 0x20) >> 4)
+                | ((r & 0x40) >> 6);
+            reversed as i16
+        } else {
+            r as i16
+        }
+    }
+
     fn update_prg(&mut self) {
-        let inv = (self.prg_mode & 0x03) == 3;
-
-        // Returns the processed PRG reg as an 8KB page index.
-        // In mode 2/3 the reg IS the 8KB page index.
-        // In mode 1 the reg is a 16KB bank number → multiply by 2.
-        // In mode 0 the reg is an 8KB page base (hardware uses raw value).
-        let raw = |i: usize, regs: &[u8; 4]| -> i16 {
-            let r = regs[i] & 0x7F;
-            if inv {
-                let r = r as u16;
-                let reversed = ((r & 1) << 6)
-                    | ((r & 2) << 3)
-                    | (r & 4)
-                    | ((r & 8) >> 3)
-                    | ((r & 0x10) >> 2)
-                    | ((r & 0x20) >> 4)
-                    | ((r & 0x40) >> 6);
-                reversed as i16
-            } else {
-                r as i16
-            }
-        };
-
         match self.prg_mode & 0x03 {
             0 => {
                 // 32KB mode: $8003 selects 8KB-page base of the 32KB block.
                 // Low 2 bits are ignored by convention (programmer writes 4-aligned value).
                 let b = if self.last_bank_sw {
-                    raw(3, &self.prg_regs)
+                    self.prg_reg_as_page(3)
                 } else {
                     -4i16
                 };
-                self.base.select_prg_page(0, b);
-                self.base.select_prg_page(1, b + 1);
-                self.base.select_prg_page(2, b + 2);
-                self.base.select_prg_page(3, b + 3);
+                for i in 0..4 {
+                    self.base.select_prg_page(i, b + i as i16);
+                }
             }
             1 => {
                 // 16KB mode: $8001 holds a 16KB bank number → shift by 1 for 8KB pages.
-                let lo = raw(1, &self.prg_regs) << 1;
+                let lo = self.prg_reg_as_page(1) << 1;
                 let hi = if self.last_bank_sw {
-                    raw(3, &self.prg_regs) << 1
+                    self.prg_reg_as_page(3) << 1
                 } else {
                     -2i16
                 };
@@ -184,10 +210,11 @@ impl JyCompanyMapper {
             _ => {
                 // 8KB mode (modes 2 and 3): regs are direct 8KB page indices.
                 for i in 0..3 {
-                    self.base.select_prg_page(i, raw(i, &self.prg_regs));
+                    let page = self.prg_reg_as_page(i);
+                    self.base.select_prg_page(i, page);
                 }
                 let last = if self.last_bank_sw {
-                    raw(3, &self.prg_regs)
+                    self.prg_reg_as_page(3)
                 } else {
                     -1i16
                 };
@@ -232,6 +259,9 @@ impl JyCompanyMapper {
     }
 
     fn update_mirroring(&mut self) {
+        // Bits 0-1 control standard 2-way mirroring in all J.Y. Company variants.
+        // Bits 2-6 (extended per-nametable control) are currently only stored for
+        // mapper 209/211 but not yet acted upon (Known Limitation).
         let layout = match self.mirror_reg & 0x03 {
             0 => NametableLayout::Vertical,
             1 => NametableLayout::Horizontal,
@@ -359,11 +389,19 @@ impl Mapper for JyCompanyMapper {
                 self.prg_mode = value & 0x03;
                 self.last_bank_sw = (value & 0x04) != 0;
                 self.chr_mode = (value >> 3) & 0x03;
-                // bits 5 and 6 (ROM nametables) are inhibited by jumper on mapper 90
+                // bits 5 and 6 (ROM nametables) accepted but not yet acted upon for mapper 209
                 self.update_banks();
             }
             0xD001 => {
-                self.mirror_reg = value & 0x03;
+                // Mapper 90/160 (inhibit_extended=true): only bits 0-1 are active; the PCB
+                // jumper forces bits 2-6 to zero so they are masked here as well.
+                // Mapper 209/211 (inhibit_extended=false): store the full byte; extended
+                // mirroring bits are accepted though currently only bits 0-1 are acted upon.
+                self.mirror_reg = if self.inhibit_extended {
+                    value & 0x03
+                } else {
+                    value
+                };
                 self.update_mirroring();
             }
             _ => {}
@@ -943,5 +981,91 @@ mod tests {
         mapper.reset();
         assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
         assert_eq!(mapper.read_prg(0xE000), (PRG_8K_BANKS - 1) as u8);
+    }
+
+    // ── Mapper 90 extended-mirroring inhibit ─────────────────────────
+
+    #[test]
+    fn mapper_90_d001_upper_bits_are_masked() {
+        let mut mapper = make_mapper(); // mapper 90, inhibit_extended=true
+        // Write a value with bits 2-6 set; those bits should be masked to zero.
+        mapper.write_prg(0xD001, 0xFF);
+        assert_eq!(
+            mapper.mirror_reg & !0x03,
+            0,
+            "Mapper 90 must mask $D001 bits 2-6 to zero"
+        );
+    }
+
+    // ── Mapper 209 – registration and standard behaviour ─────────────
+
+    fn make_mapper_209() -> JyCompanyMapper {
+        let prg = banked_data(8 * 1024, PRG_8K_BANKS);
+        let chr = banked_data(1024, CHR_1K_BANKS);
+        JyCompanyMapper::new_standard(MapperContext::new_for_test(
+            209,
+            prg,
+            chr,
+            NametableLayout::Vertical,
+        ))
+    }
+
+    #[test]
+    fn mapper_209_is_registered() {
+        let result = create_mapper(MapperContext::new_for_test(
+            209,
+            banked_data(8 * 1024, PRG_8K_BANKS),
+            banked_data(1024, CHR_1K_BANKS),
+            NametableLayout::Vertical,
+        ));
+        assert!(
+            result.is_ok(),
+            "Mapper 209 must be registered in the factory"
+        );
+    }
+
+    #[test]
+    fn mapper_209_d001_stores_full_byte() {
+        let mut mapper = make_mapper_209(); // inhibit_extended=false
+        mapper.write_prg(0xD001, 0xFF);
+        assert_eq!(
+            mapper.mirror_reg, 0xFF,
+            "Mapper 209 must store all $D001 bits (extended mirroring not inhibited)"
+        );
+    }
+
+    #[test]
+    fn mapper_209_standard_mirroring_bits_still_work() {
+        let mut mapper = make_mapper_209();
+        mapper.write_prg(0xD001, 0x01); // bits 0-1 = 1 → horizontal
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
+        mapper.write_prg(0xD001, 0x02); // single-screen lower
+        assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreen);
+    }
+
+    #[test]
+    fn mapper_209_prg_banking_matches_mapper_90() {
+        let mut m90 = make_mapper();
+        let mut m209 = make_mapper_209();
+        // Both should share the same PRG banking logic
+        m90.write_prg(0xD000, 0x02); // 8KB mode
+        m90.write_prg(0x8000, 3);
+        m209.write_prg(0xD000, 0x02);
+        m209.write_prg(0x8000, 3);
+        assert_eq!(
+            m209.read_prg(0x8000),
+            m90.read_prg(0x8000),
+            "Mapper 209 PRG banking must match mapper 90"
+        );
+    }
+
+    #[test]
+    fn mapper_209_last_prg_bank_fixed_at_power_on() {
+        let mapper = make_mapper_209();
+        assert_eq!(
+            mapper.read_prg(0xE000),
+            (PRG_8K_BANKS - 1) as u8,
+            "Mapper 209 window 3 must be fixed to last bank at power-on"
+        );
     }
 }
