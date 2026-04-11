@@ -263,6 +263,36 @@ impl Console {
             Console::GameBoy(_) => {}
         }
     }
+
+    /// Target wall-clock duration between rendered frames for this system.
+    ///
+    /// Frontends use this to pace emulation correctly regardless of display
+    /// refresh rate.  The NES value is derived from the hardware timing mode
+    /// (NTSC ≈ 60.10 fps, PAL ≈ 50.01 fps).  The DMG Game Boy always runs at
+    /// 4,194,304 Hz / 70,224 cycles per frame ≈ 59.73 fps.
+    ///
+    /// Unlike the NES, the Game Boy currently has no audio output, so there is
+    /// no ring-buffer back-pressure to naturally throttle the frame rate when
+    /// vsync is enabled.  Frontends must use this value to gate emulation.
+    pub fn target_frame_duration(&self) -> std::time::Duration {
+        match self {
+            Console::GameBoy(_) => {
+                // DMG: 4,194,304 Hz clock / 70,224 cycles per frame ≈ 59.7275 fps
+                std::time::Duration::from_secs_f64(70_224.0 / 4_194_304.0)
+            }
+            Console::Nes(_) => {
+                let hz = self
+                    .app_context()
+                    .borrow()
+                    .config()
+                    .nes
+                    .hardware_model
+                    .timing_mode()
+                    .frame_rate_hz();
+                std::time::Duration::from_secs_f64(1.0 / hz)
+            }
+        }
+    }
 }
 
 #[cfg(test)]

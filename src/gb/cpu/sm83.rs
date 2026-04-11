@@ -647,7 +647,7 @@ impl<B: GbBus> Sm83<B> {
             // --- LD (n16), SP -------------------------------------------
             0x08 => {
                 let addr = self.fetch_u16();
-                let [hi, lo] = self.regs.sp.to_le_bytes();
+                let [lo, hi] = self.regs.sp.to_le_bytes();
                 self.write(addr, lo);
                 self.write(addr.wrapping_add(1), hi);
             }
@@ -1667,5 +1667,47 @@ mod tests {
         cpu.execute();
         assert!(!cpu.halted, "Pending interrupt should wake CPU from HALT");
         assert_eq!(cpu.regs.pc, 0x1000, "PC should not change if IME=false");
+    }
+
+    // -----------------------------------------------------------------------
+    // LD (n16), SP  (0x08)
+    // -----------------------------------------------------------------------
+
+    /// LD (n16),SP must store SP in little-endian order:
+    /// low byte at [addr], high byte at [addr+1].
+    ///
+    /// Per Pan Docs: https://gbdev.io/pandocs/CPU_Instruction_Set.html
+    #[test]
+    fn test_ld_nn_sp_stores_sp_little_endian() {
+        // Program: LD (0x8000), SP  →  0x08 0x00 0x80
+        let mut cpu = cpu_with(&[0x08, 0x00, 0x80]);
+        cpu.regs.sp = 0x1234;
+        cpu.execute();
+        assert_eq!(
+            cpu.bus.mem[0x8000], 0x34,
+            "low byte of SP should be stored at [addr]"
+        );
+        assert_eq!(
+            cpu.bus.mem[0x8001], 0x12,
+            "high byte of SP should be stored at [addr+1]"
+        );
+    }
+
+    /// LD (n16),SP with SP=0 stores 0x00 at both bytes.
+    #[test]
+    fn test_ld_nn_sp_stores_zero_sp() {
+        let mut cpu = cpu_with(&[0x08, 0x00, 0x80]);
+        cpu.regs.sp = 0x0000;
+        cpu.execute();
+        assert_eq!(cpu.bus.mem[0x8000], 0x00);
+        assert_eq!(cpu.bus.mem[0x8001], 0x00);
+    }
+
+    /// LD (n16),SP should take 5 M-cycles (fetch + fetch_u16 + write lo + write hi).
+    #[test]
+    fn test_ld_nn_sp_takes_5_m_cycles() {
+        let mut cpu = cpu_with(&[0x08, 0x00, 0x80]);
+        cpu.execute();
+        assert_eq!(cpu.cycles(), 5, "LD (n16),SP should take 5 M-cycles");
     }
 }

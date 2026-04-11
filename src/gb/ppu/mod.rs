@@ -47,7 +47,11 @@ impl Ppu {
     /// Advance the PPU by `n` dots (T-cycles).
     ///
     /// Call from `DmgBus::tick(m_cycles)` with `n = m_cycles * 4`.
+    /// No-op when the LCD is disabled (LCDC bit 7 = 0).
     pub fn tick_dots(&mut self, n: u32) {
+        if !self.registers.lcd_enabled() {
+            return;
+        }
         for _ in 0..n {
             self.tick_one_dot();
         }
@@ -91,6 +95,10 @@ impl Ppu {
     // ── STAT IRQ line ─────────────────────────────────────────────────────────
 
     fn compose_stat_byte(&self) -> u8 {
+        // When LCD is off, mode bits report 0 (H-Blank) and LYC=LY is 0.
+        if !self.registers.lcd_enabled() {
+            return self.registers.stat_irq_enables & 0x78;
+        }
         let mode_bits = self.timing.mode() as u8;
         let lyc_bit = if self.timing.ly() == self.registers.lyc {
             0x04
@@ -122,10 +130,10 @@ impl Ppu {
 
     /// Read from VRAM address $8000–$9FFF.
     ///
-    /// Returns 0xFF if the CPU is blocked (Mode 3 — Pixel Transfer).
+    /// Returns 0xFF if the CPU is blocked (Mode 3 — Pixel Transfer while LCD on).
+    /// When LCD is disabled VRAM is always accessible.
     pub fn read_vram(&self, addr: u16) -> u8 {
-        // LCD off: unrestricted access.
-        if self.registers.lcdc & 0x80 != 0 && self.timing.mode() == PpuMode::PixelTransfer {
+        if self.registers.lcd_enabled() && self.timing.mode() == PpuMode::PixelTransfer {
             return 0xFF;
         }
         self.vram[(addr - 0x8000) as usize]
@@ -133,10 +141,10 @@ impl Ppu {
 
     /// Write to VRAM address $8000–$9FFF.
     ///
-    /// Silently ignored if the CPU is blocked (Mode 3 — Pixel Transfer).
+    /// Silently ignored if the CPU is blocked (Mode 3 — Pixel Transfer while LCD on).
+    /// When LCD is disabled VRAM is always accessible.
     pub fn write_vram(&mut self, addr: u16, val: u8) {
-        // LCD off: unrestricted access.
-        if self.registers.lcdc & 0x80 != 0 && self.timing.mode() == PpuMode::PixelTransfer {
+        if self.registers.lcd_enabled() && self.timing.mode() == PpuMode::PixelTransfer {
             return;
         }
         self.vram[(addr - 0x8000) as usize] = val;
@@ -144,10 +152,10 @@ impl Ppu {
 
     /// Read from OAM address $FE00–$FE9F.
     ///
-    /// Returns 0xFF if the CPU is blocked (Mode 2 or 3).
+    /// Returns 0xFF if the CPU is blocked (Mode 2 or 3 while LCD on).
+    /// When LCD is disabled OAM is always accessible.
     pub fn read_oam(&self, addr: u16) -> u8 {
-        // LCD off: unrestricted access.
-        if self.registers.lcdc & 0x80 != 0
+        if self.registers.lcd_enabled()
             && matches!(
                 self.timing.mode(),
                 PpuMode::OamScan | PpuMode::PixelTransfer
@@ -160,10 +168,10 @@ impl Ppu {
 
     /// Write to OAM address $FE00–$FE9F.
     ///
-    /// Silently ignored if the CPU is blocked (Mode 2 or 3).
+    /// Silently ignored if the CPU is blocked (Mode 2 or 3 while LCD on).
+    /// When LCD is disabled OAM is always accessible.
     pub fn write_oam(&mut self, addr: u16, val: u8) {
-        // LCD off: unrestricted access.
-        if self.registers.lcdc & 0x80 != 0
+        if self.registers.lcd_enabled()
             && matches!(
                 self.timing.mode(),
                 PpuMode::OamScan | PpuMode::PixelTransfer
@@ -175,29 +183,30 @@ impl Ppu {
     }
 
     /// Read a PPU I/O register ($FF40–$FF4B).
+    ///
+    /// When LCD is disabled, LY always reads as 0 and STAT mode bits are 0.
     pub fn read_register(&self, addr: u16) -> u8 {
-        let lcd_off = self.registers.lcdc & 0x80 == 0;
-        // LY reads as 0 and mode bits read as 0 (HBlank) when LCD is off.
-        let stat = if lcd_off {
-            0x80
+        let stat = self.compose_stat_byte();
+        let ly = if self.registers.lcd_enabled() {
+            self.timing.ly()
         } else {
-            self.compose_stat_byte()
+            0
         };
-        let ly = if lcd_off { 0 } else { self.timing.ly() };
         self.registers.read(addr, ly, stat).unwrap_or(0xFF)
     }
 
     /// Write a PPU I/O register ($FF40–$FF4B).
+    ///
+    /// Detects LCD 0→1 enable transition (LCDC bit 7) and resets PPU timing
+    /// to scanline 0 / Mode 2, as the hardware does.
     pub fn write_register(&mut self, addr: u16, val: u8) {
-        // Reset PPU timing when LCD transitions from off → on.
-        if addr == 0xFF40 {
-            let was_off = self.registers.lcdc & 0x80 == 0;
-            let turning_on = val & 0x80 != 0;
-            if was_off && turning_on {
-                self.timing = Timing::new();
-            }
-        }
+        let was_enabled = self.registers.lcd_enabled();
         self.registers.write(addr, val);
+        if !was_enabled && self.registers.lcd_enabled() {
+            self.timing = Timing::new();
+            self.window_line = 0;
+            self.prev_stat_irq_line = false;
+        }
     }
 
     // ── Interrupt interface ───────────────────────────────────────────────────
@@ -426,82 +435,120 @@ mod tests {
         assert_eq!(ppu.read_register(0xFF44), 10);
     }
 
-    // ── LCD-off behaviour ─────────────────────────────────────────────────────
+    // ── LCD disabled (LCDC bit 7 = 0) ─────────────────────────────────────────
+    //
+    // Per Pan Docs: when LCDC bit 7 is cleared the LCD stops, LY is fixed at 0,
+    // the STAT mode bits report Mode 0, and VRAM/OAM become freely accessible.
 
-    /// When the LCD is off (LCDC bit 7 = 0) the PPU timing must freeze: no
-    /// VBlank interrupt fires even after a full frame's worth of dots.
-    #[test]
-    fn test_ppu_does_not_advance_when_lcd_is_off() {
+    /// Helper: advance PPU into Mode 3 then disable the LCD.
+    fn ppu_in_mode3_then_lcd_off() -> Ppu {
         let mut ppu = Ppu::new();
-        ppu.write_register(0xFF40, 0x11); // LCD off (bit 7 = 0)
-        tick_dots(&mut ppu, 456 * 154); // full frame worth of dots
-        assert_eq!(
-            ppu.take_pending_interrupts() & 0x01,
-            0,
-            "no VBlank interrupt when LCD is off"
-        );
-    }
-
-    /// LY ($FF44) must read as 0 while the LCD is off.
-    #[test]
-    fn test_ly_returns_0_when_lcd_is_off() {
-        let mut ppu = Ppu::new();
-        tick_dots(&mut ppu, 456 * 10); // advance to scanline 10
-        assert_eq!(ppu.read_register(0xFF44), 10);
-        ppu.write_register(0xFF40, 0x11); // LCD off
-        assert_eq!(
-            ppu.read_register(0xFF44),
-            0,
-            "LY must read 0 when LCD is off"
-        );
-    }
-
-    /// VRAM writes must succeed even when Mode 3 is active, as long as the LCD is off.
-    /// This is the core bug: games turn off the LCD to safely fill VRAM.
-    #[test]
-    fn test_vram_write_accepted_when_lcd_is_off() {
-        let mut ppu = Ppu::new();
-        tick_dots(&mut ppu, 80); // → PixelTransfer (Mode 3)
+        tick_dots(&mut ppu, 80); // dot 80 → Mode 3
         assert_eq!(ppu.timing.mode(), PpuMode::PixelTransfer);
-        // Turn LCD off while in Mode 3
-        ppu.write_register(0xFF40, 0x11); // LCDC bit 7 = 0
-        // Write to VRAM — should NOT be dropped
-        ppu.write_vram(0x8050, 0xAB);
-        // Verify the write was accepted
+        ppu.write_register(0xFF40, 0x11); // clear bit 7 (LCD off), keep rest
+        ppu
+    }
+
+    #[test]
+    fn test_vram_write_succeeds_when_lcd_disabled() {
+        let mut ppu = ppu_in_mode3_then_lcd_off();
+        ppu.write_vram(0x8000, 0x42);
         assert_eq!(
-            ppu.vram[0x0050], 0xAB,
-            "VRAM write must succeed when LCD is off"
+            ppu.vram[0], 0x42,
+            "VRAM write should succeed when LCD is off"
         );
     }
 
-    /// VRAM reads must return real data (not 0xFF) when the LCD is off.
     #[test]
-    fn test_vram_read_returns_real_value_when_lcd_is_off() {
-        let mut ppu = Ppu::new();
-        ppu.vram[0x0010] = 0xAB; // seed value directly
-        tick_dots(&mut ppu, 80); // → PixelTransfer
-        assert_eq!(ppu.timing.mode(), PpuMode::PixelTransfer);
-        ppu.write_register(0xFF40, 0x11); // LCD off
+    fn test_vram_read_returns_actual_value_when_lcd_disabled() {
+        let mut ppu = ppu_in_mode3_then_lcd_off();
+        ppu.vram[0x10] = 0xAB;
+        let val = ppu.read_vram(0x8010);
         assert_eq!(
-            ppu.read_vram(0x8010),
-            0xAB,
-            "VRAM read must return real value when LCD is off"
+            val, 0xAB,
+            "VRAM read should return actual value when LCD is off"
         );
     }
 
-    /// PPU timing must restart from dot 0 / scanline 0 when the LCD is re-enabled.
     #[test]
-    fn test_ppu_timing_resets_when_lcd_is_re_enabled() {
+    fn test_ppu_does_not_advance_when_lcd_disabled() {
+        let mut ppu = ppu_in_mode3_then_lcd_off();
+        let ly_before = ppu.read_register(0xFF44);
+        ppu.tick_dots(456 * 10);
+        let ly_after = ppu.read_register(0xFF44);
+        assert_eq!(
+            ly_before, ly_after,
+            "PPU should not advance when LCD is off"
+        );
+    }
+
+    #[test]
+    fn test_ly_reads_zero_when_lcd_disabled() {
         let mut ppu = Ppu::new();
-        tick_dots(&mut ppu, 456 * 50); // advance to scanline 50
+        tick_dots(&mut ppu, 456 * 50);
+        assert_eq!(ppu.timing.ly(), 50);
         ppu.write_register(0xFF40, 0x11); // LCD off
-        tick_dots(&mut ppu, 100); // should be a no-op
-        // Re-enable LCD
+        let ly = ppu.read_register(0xFF44);
+        assert_eq!(ly, 0, "LY must read as 0 when LCD is disabled");
+    }
+
+    #[test]
+    fn test_ppu_timing_resets_when_lcd_enabled_after_off() {
+        let mut ppu = Ppu::new();
+        tick_dots(&mut ppu, 456 * 50);
+        ppu.write_register(0xFF40, 0x11); // LCD off
+        ppu.tick_dots(456 * 20); // no-op
         ppu.write_register(0xFF40, 0x91); // LCD on
         assert_eq!(
-            ppu.read_register(0xFF44),
+            ppu.timing.ly(),
             0,
-            "LY must be 0 after LCD re-enable"
+            "LY should reset to 0 when LCD is re-enabled"
+        );
+        assert_eq!(
+            ppu.timing.mode(),
+            PpuMode::OamScan,
+            "PPU should start in OAM scan mode when re-enabled"
+        );
+    }
+
+    #[test]
+    fn test_stat_mode_bits_report_mode0_when_lcd_disabled() {
+        let mut ppu = ppu_in_mode3_then_lcd_off();
+        let stat = ppu.read_register(0xFF41);
+        assert_eq!(
+            stat & 0x03,
+            0,
+            "STAT mode bits must be 0 (Mode 0) when LCD is disabled"
+        );
+    }
+
+    #[test]
+    fn test_oam_write_succeeds_when_lcd_disabled() {
+        // Given: PPU in OAM Scan (Mode 2, startup); LCD turned off.
+        // Normally Mode 2 blocks OAM writes; LCD-off lifts that restriction.
+        let mut ppu = Ppu::new();
+        assert_eq!(ppu.timing.mode(), PpuMode::OamScan);
+        ppu.write_register(0xFF40, 0x11); // LCD off
+        // When: write OAM
+        ppu.write_oam(0xFE10, 0xBB);
+        // Then: write accepted
+        assert_eq!(
+            ppu.oam[0x10], 0xBB,
+            "OAM write should succeed when LCD is off"
+        );
+    }
+
+    #[test]
+    fn test_oam_read_returns_actual_value_when_lcd_disabled() {
+        // Given: PPU in Mode 3 (PixelTransfer), LCD turned off.
+        let mut ppu = ppu_in_mode3_then_lcd_off();
+        ppu.oam[0x05] = 0xCC;
+        // When: read OAM
+        let val = ppu.read_oam(0xFE05);
+        // Then: actual value returned (not 0xFF)
+        assert_eq!(
+            val, 0xCC,
+            "OAM read should return actual value when LCD is off"
         );
     }
 }

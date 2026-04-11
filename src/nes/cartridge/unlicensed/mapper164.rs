@@ -173,8 +173,8 @@ impl Mapper for Mapper164 {
         match addr {
             // PRG-RAM at $6000-$7FFF.
             0x6000..=0x7FFF => self.base.try_read_prg_ram(addr).unwrap_or(open_bus),
-            // $5500: EEPROM data input (inverted). Not implemented — return open bus.
-            a if a & 0xFF00 == 0x5500 => open_bus,
+            // $5500: EEPROM data input (inverted). Not implemented — return 0.
+            a if a & 0xFF00 == 0x5500 => 0,
             a if a < 0x8000 => open_bus,
             _ => self.base.read_prg_banked(addr),
         }
@@ -236,7 +236,6 @@ mod tests {
     use crate::nes::cartridge::test_helpers::banked_data;
 
     const PRG_BANK_SIZE: usize = PRG_BANK_SIZE_16K;
-    const CHR_RAM_SIZE: usize = 8 * 1024;
 
     /// Create a mapper with 32 PRG banks (512 KiB) and 8 KiB CHR-RAM.
     fn make_mapper_32banks() -> Mapper164 {

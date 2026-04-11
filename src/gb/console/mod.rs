@@ -47,8 +47,19 @@ impl Gb<DmgBus> {
     /// - `soft_reset = false`: resets CPU registers **and** all bus
     ///   state (WRAM zeroed, PPU/timer/joypad reinitialised).
     pub fn reset(&mut self, soft_reset: bool) {
-        self.cpu.reset_registers();
-        if !soft_reset {
+        if soft_reset {
+            // Soft reset: restore post-boot register state and continue from
+            // the cartridge entry point, preserving WRAM and bus state.
+            self.cpu.reset_registers();
+        } else {
+            // Hard reset: reinitialise all bus hardware and restart execution
+            // from the boot ROM entry point.
+            // reset_registers() restores the normal post-boot register defaults
+            // and clears internal CPU state (including ime_pending). We then
+            // override PC to $0000 so the reactivated boot ROM runs again from
+            // the start, establishing correct power-on behaviour.
+            self.cpu.reset_registers();
+            self.cpu.regs.pc = 0x0000;
             self.cpu.bus.reset();
         }
     }
@@ -170,11 +181,12 @@ mod tests {
 
     #[test]
     fn test_hard_reset_restores_pc_and_clears_wram() {
-        // Combined: PC is correct AND WRAM is zeroed after hard reset
+        // After a hard reset the CPU starts at $0000 so the boot ROM runs,
+        // matching real DMG power-on behaviour.  WRAM must still be zeroed.
         let mut gb = make_dmg();
         gb.cpu.bus.write(0xC000, 0xFF);
         gb.reset(false);
-        assert_eq!(gb.cpu.regs.pc, 0x0100);
+        assert_eq!(gb.cpu.regs.pc, 0x0000);
         assert_eq!(gb.cpu.bus.read(0xC000), 0x00);
     }
 

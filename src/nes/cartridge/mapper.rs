@@ -50,6 +50,7 @@ use super::bandai::mapper96::Mapper96;
 use super::bandai::mapper152::Mapper152;
 use super::bandai::mapper153::Mapper153;
 use super::bandai::mapper157::Mapper157;
+use super::bandai::mapper159::Mapper159;
 
 // Sunsoft mappers
 use super::sunsoft::sunsoft_1::Sunsoft1Mapper;
@@ -168,24 +169,42 @@ use super::unlicensed::mapper126::Mapper126;
 use super::unlicensed::mapper128::Mapper128;
 use super::unlicensed::mapper134::Mapper134;
 use super::unlicensed::mapper156::Mapper156;
+use super::unlicensed::mapper162::Mapper162;
+use super::unlicensed::mapper163::Mapper163;
 use super::unlicensed::mapper164::Mapper164;
 use super::unlicensed::mapper165::Mapper165;
+use super::unlicensed::mapper167::Mapper167;
+use super::unlicensed::mapper171::Mapper171;
+use super::unlicensed::mapper174::Mapper174;
+use super::unlicensed::mapper175::Mapper175;
 use super::unlicensed::mapper177::Mapper177;
+use super::unlicensed::mapper178::Mapper178;
+use super::unlicensed::mapper188::Mapper188;
+use super::unlicensed::mapper190::Mapper190;
+use super::unlicensed::mapper191::Mapper191;
+use super::unlicensed::mapper192::Mapper192;
 use super::unlicensed::mapper193::Mapper193;
+use super::unlicensed::mapper194::Mapper194;
+use super::unlicensed::mapper196::Mapper196;
+use super::unlicensed::mapper197::Mapper197;
 use super::unlicensed::mapper199::Mapper199;
 use super::unlicensed::mapper200::Mapper200;
 use super::unlicensed::mapper201::Mapper201;
 use super::unlicensed::mapper202::Mapper202;
+use super::unlicensed::mapper203::Mapper203;
 use super::unlicensed::mapper204::Mapper204;
 use super::unlicensed::mapper205::Mapper205;
+use super::unlicensed::mapper208::Mapper208;
 use super::unlicensed::mapper211::Mapper211;
 use super::unlicensed::mapper212::Mapper212;
+use super::unlicensed::mapper213::Mapper213;
 use super::unlicensed::mapper214::Mapper214;
 use super::unlicensed::mapper215::Mapper215;
 use super::unlicensed::mapper216::Mapper216;
 use super::unlicensed::mapper217::Mapper217;
 use super::unlicensed::mapper218::Mapper218;
 use super::unlicensed::mapper219::Mapper219;
+use super::unlicensed::mapper221::Mapper221;
 use super::unlicensed::mapper222::Mapper222;
 use super::unlicensed::mapper223::Mapper223;
 use super::unlicensed::mapper224::Mapper224;
@@ -199,6 +218,7 @@ use super::unlicensed::mapper231::Mapper231;
 use super::unlicensed::mapper232::Mapper232;
 use super::unlicensed::mapper233::Mapper233;
 use super::unlicensed::mapper234::Mapper234;
+use super::unlicensed::mapper235::Mapper235;
 use super::unlicensed::mapper236::Mapper236;
 use super::unlicensed::mapper237::Mapper237;
 use super::unlicensed::mapper238::Mapper238;
@@ -1028,25 +1048,54 @@ mapper_registry! {
     155 => MMC1Mapper::new,
     156 => Mapper156::new,
     157 => Mapper157::new,
+    159 => Mapper159::new,
+    // 160: Alias of mapper 090 (J.Y. Company). NESdev notes mapper 090 fully covers mapper 160 behavior.
     160 => JyCompanyMapper::new,
+    // 161: Misassignment — 'Hanjuku Hero' was incorrectly assigned here before MMC1 behavior was understood. Alias of mapper 001 (MMC1).
+    161 => MMC1Mapper::new,
+    162 => Mapper162::new,
+    163 => Mapper163::new,
     164 => Mapper164::new,
     165 => Mapper165::new,
+    167 => Mapper167::new,
+    // 169: Yuxing board. 'Contra 168-in-1' was misassigned here; correct mapper is 015. Alias of mapper 015.
+    169 => Multicart15Mapper::new,
+    171 => Mapper171::new,
     173 => Mapper173::new,
+    174 => Mapper174::new,
+    175 => Mapper175::new,
     177 => Mapper177::new,
+    178 => Mapper178::new,
+    // 179: Nestopia misassignment — intentionally unimplemented. Duplicates mapper 176 behavior;
+    //       implement via mapper 176 once that is added (see issue #1108).
+    // 181: FCEUX patch-list heuristic entry only — no ROM actually uses this mapper number.
+    // 182: NESdev page for mapper 182 actually documents mapper 114 hardware. Alias of mapper 114.
+    182 => Mapper114::new,
     180 => UxromInvertedMapper::new,
     184 => Sunsoft1Mapper::new,
     185 => CnromSecurityMapper::new,
+    // 186: Fukutake Study Box BIOS. Requires a headerless .BIN BIOS image, not an iNES ROM — not implementable here.
+    188 => Mapper188::new,
+    190 => Mapper190::new,
+    191 => Mapper191::new,
+    192 => Mapper192::new,
     193 => Mapper193::new,
+    194 => Mapper194::new,
+    196 => Mapper196::new,
+    197 => Mapper197::new,
     199 => Mapper199::new,
     200 => Mapper200::new,
     201 => Mapper201::new,
     202 => Mapper202::new,
+    203 => Mapper203::new,
     204 => Mapper204::new,
     205 => Mapper205::new,
     206 => Namco118Mapper::new,
     207 => TaitoX1005_207Mapper::new,
+    208 => Mapper208::new,
     211 => Mapper211::new,
     212 => Mapper212::new,
+    213 => Mapper213::new,
     214 => Mapper214::new,
     215 => Mapper215::new,
     216 => Mapper216::new,
@@ -1054,6 +1103,7 @@ mapper_registry! {
     218 => Mapper218::new,
     219 => Mapper219::new,
     // 220: FCEUX debug mapper — not real hardware, never implement.
+    221 => Mapper221::new,
     222 => Mapper222::new,
     223 => Mapper223::new,
     224 => Mapper224::new,
@@ -1067,6 +1117,7 @@ mapper_registry! {
     232 => Mapper232::new,
     233 => Mapper233::new,
     234 => Mapper234::new,
+    235 => Mapper235::new,
     236 => Mapper236::new,
     237 => Mapper237::new,
     238 => Mapper238::new,
@@ -1077,6 +1128,8 @@ mapper_registry! {
     244 => Mapper244::new,
     245 => Mapper245::new,
     246 => Mapper246::new,
+    // 248: Misassignment — NESdev notes mapper 115 handles these ROMs correctly. Alias of mapper 115.
+    248 => Mapper115::new,
     249 => Mapper249::new,
     250 => Mapper250::new,
     251 => Mapper251::new,
@@ -1084,6 +1137,7 @@ mapper_registry! {
     254 => Mapper254::new,
     255 => Mapper255::new,
     257 => Mapper257::new,
+    // 258: Tentatively reserved by FCEUX for UNIF MAPR 158B hardware — no proper iNES/NES 2.0 documentation.
     259 => Mapper259::new,
     260 => Mapper260::new,
     262 => Mapper262::new,
@@ -1131,13 +1185,13 @@ const SUPPORTED_MAPPERS: &[u16] = &[
     50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73,
     74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96,
     100, 101, 102, 103, 104, 106, 108, 110, 114, 115, 117, 118, 120, 121, 122, 123, 124, 125, 126,
-    128, 129, 132, 133, 140, 141, 142, 143, 144, 145, 146, 147, 149, 154, 155, 156, 165, 173, 177,
-    180, 184, 185, 193, 205, 206, 207, 214, 216, 217, 218, 219, 222, 225, 226, 227, 228, 229, 230,
-    231, 232, 233, 234, 236, 237, 238, 241, 242, 243, 244, 245, 246, 249, 250, 251, 253, 254, 255,
-    257, 259, 260, 262, 263, 264, 267, 268, 269, 270, 271, 274, 281, 283, 285, 286, 287, 288, 289,
-    291, 292, 293, 294, 295, 296, 299, 300, 302, 303, 304, 305, 306, 307, 308, 310, 311, 313, 314,
-    315, 319, 320, 322, 323, 324, 326, 327, 328, 329, 330, 331, 332, 335, 337, 338, 339, 340, 342,
-    343, 344, 345, 346, 347, 348, 349, 350,
+    128, 129, 132, 133, 140, 141, 142, 143, 144, 145, 146, 147, 149, 154, 155, 156, 160, 161, 165,
+    169, 173, 177, 180, 182, 184, 185, 193, 205, 206, 207, 214, 216, 217, 218, 219, 222, 225, 226,
+    227, 228, 229, 230, 248, 231, 232, 233, 234, 236, 237, 238, 241, 242, 243, 244, 245, 246, 249,
+    250, 251, 253, 254, 255, 257, 259, 260, 262, 263, 264, 267, 268, 269, 270, 271, 274, 281, 283,
+    285, 286, 287, 288, 289, 291, 292, 293, 294, 295, 296, 299, 300, 302, 303, 304, 305, 306, 307,
+    308, 310, 311, 313, 314, 315, 319, 320, 322, 323, 324, 326, 327, 328, 329, 330, 331, 332, 335,
+    337, 338, 339, 340, 342, 343, 344, 345, 346, 347, 348, 349, 350,
 ];
 
 /// List of supported iNES mapper IDs handled by the factory.
@@ -1638,6 +1692,41 @@ mod tests {
         // Mapper 131 is an alternative assignment for the behavior of iNES Mapper 205.
         let m = make_mapper(131);
         assert_eq!(m.mapper_number(), 205);
+    }
+
+    #[test]
+    fn create_mapper_accepts_mapper_160_as_mapper_90_alias() {
+        // Mapper 160 is an alias of mapper 090 (J.Y. Company). NESdev notes mapper 090 fully covers it.
+        let m = make_mapper(160);
+        assert_eq!(m.mapper_number(), 160);
+    }
+
+    #[test]
+    fn create_mapper_accepts_mapper_161_as_mmc1_alias() {
+        // Mapper 161 was misassigned to 'Hanjuku Hero' before MMC1 behavior was understood. Alias of mapper 001.
+        let m = make_mapper(161);
+        assert_eq!(m.mapper_number(), 161);
+    }
+
+    #[test]
+    fn create_mapper_accepts_mapper_169_as_mapper_15_alias() {
+        // Mapper 169 was misassigned to 'Contra 168-in-1'; the correct mapper is 015.
+        let m = make_mapper(169);
+        assert_eq!(m.mapper_number(), 169);
+    }
+
+    #[test]
+    fn create_mapper_accepts_mapper_182_as_mapper_114_alias() {
+        // Mapper 182 NESdev page actually documents mapper 114 hardware. Reports mapper 114.
+        let m = make_mapper(182);
+        assert_eq!(m.mapper_number(), 114);
+    }
+
+    #[test]
+    fn create_mapper_accepts_mapper_248_as_mapper_115_alias() {
+        // Mapper 248 was misassigned; NESdev notes mapper 115 handles these ROMs. Reports mapper 115.
+        let m = make_mapper(248);
+        assert_eq!(m.mapper_number(), 115);
     }
 
     fn make_mapper(id: u16) -> Box<dyn Mapper> {
