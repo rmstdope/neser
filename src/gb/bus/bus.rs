@@ -14,12 +14,8 @@ pub trait GbBus {
 
     /// Notify the bus that the CPU is about to fetch and execute a new instruction.
     ///
-    /// Called BEFORE the M1 bus tick so the bus can snapshot the PPU state at
-    /// the instruction boundary.  `DmgBus` uses this to capture the OAM-scan row
-    /// that was active when the instruction *started*, which is the row that
-    /// determines whether an IDU glitch triggers OAM corruption.
-    ///
-    /// The default implementation is a no-op.
+    /// Called BEFORE the M1 bus tick.  The default implementation is a no-op;
+    /// bus implementations may override it for per-instruction setup.
     fn begin_instruction(&mut self) {}
 
     /// Notify the bus that the CPU's Increment/Decrement Unit (IDU) performed a

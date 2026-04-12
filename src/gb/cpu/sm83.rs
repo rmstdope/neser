@@ -551,8 +551,6 @@ impl<B: GbBus> Sm83<B> {
             return;
         }
 
-        // Snapshot PPU state before the M1 fetch tick so notify_idu_glitch can
-        // use the correct pre-instruction OAM row for corruption checks.
         self.bus.begin_instruction();
         let opcode = self.fetch_byte();
         self.decode_execute(opcode);
