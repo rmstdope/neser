@@ -21,6 +21,11 @@
   overflow: hidden;
 }
 
+/* Ensure Tailwind hidden utility wins over display: flex above */
+.debugger-panel.hidden {
+  display: none;
+}
+
 .debugger-body {
   display: flex;
   flex-direction: row;
