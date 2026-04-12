@@ -55,6 +55,10 @@ impl Channel4 {
         self.active
     }
 
+    pub fn length_en(&self) -> bool {
+        self.length_en
+    }
+
     pub fn output(&self) -> f32 {
         if !self.active || !self.dac_on {
             return 0.0;
