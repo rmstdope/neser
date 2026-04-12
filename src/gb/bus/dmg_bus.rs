@@ -50,10 +50,6 @@ pub struct DmgBus {
     sc: u8,
     /// Bytes captured via serial transfer (written by ROM via SB/SC).
     serial_buf: Vec<u8>,
-    /// OAM scan row captured at the start of the currently-executing instruction
-    /// (before M1's bus tick).  Used by `notify_idu_glitch` to check whether the
-    /// IDU glitch triggers OAM corruption with the correct pre-instruction PPU state.
-    saved_oam_row: Option<usize>,
 }
 
 impl DmgBus {
@@ -72,7 +68,6 @@ impl DmgBus {
             sb: 0xFF,
             sc: 0x7E,
             serial_buf: Vec::new(),
-            saved_oam_row: None,
         };
         // Real DMG hardware powers on with LCDC=$00 (LCD disabled).
         // The boot ROM tile-loading runs while the LCD is off so VRAM writes
@@ -223,17 +218,10 @@ impl GbBus for DmgBus {
         DmgBus::tick(self, m_cycles);
     }
 
-    fn begin_instruction(&mut self) {
-        // Snapshot the OAM-scan row that is active at the very start of the
-        // instruction (before the M1 bus tick advances the PPU).  Used by
-        // notify_idu_glitch to determine the correct corruption row.
-        self.saved_oam_row = self.ppu.current_oam_row();
-    }
-
     fn notify_idu_glitch(&mut self, addr: u16) {
         if matches!(addr, 0xFE00..=0xFEFF)
-            && let Some(row) = self.saved_oam_row
-            && (1..=16).contains(&row)
+            && let Some(row) = self.ppu.current_oam_row()
+            && (1..=19).contains(&row)
         {
             self.ppu.apply_oam_write_corruption(row);
         }
@@ -709,6 +697,92 @@ mod tests {
         assert_eq!(
             bus.ppu.oam, snapshot,
             "IDU glitch outside Mode 2 must not corrupt OAM"
+        );
+    }
+
+    // ── IDU glitch: row 17–19 and frame-boundary coverage (Phase C+) ─────────
+
+    /// tick_to_vblank puts PPU at dot=4, scanline=144 (VBlank start + 1 M-cycle).
+    /// From there, ticking 1138 M-cycles (4552 T) reaches dot=452, scanline=153
+    /// — the last safe position before the frame wraps.
+    fn tick_to_late_vblank(bus: &mut DmgBus) {
+        tick_to_vblank(bus);
+        for _ in 0..1138u16 {
+            bus.tick(1);
+        }
+        // PPU is now at dot=452, scanline=153 (VBlank).
+    }
+
+    #[test]
+    fn test_notify_idu_glitch_applies_corruption_at_row_19() {
+        // Given: PPU at OamScan row 19 (dot=76); this row was excluded by the
+        // old (1..=16) range, so no corruption was triggered despite being within
+        // the hardware-correct 19-M-cycle window.
+        // When: notify_idu_glitch called with an OAM address.
+        // Then: OAM row 19 must be write-corrupted.
+        use crate::gb::bus::GbBus;
+        let mut bus = make_bus();
+        // row 18: b=0x0002, w1=0x0003, c=0x0004, w3=0x0005
+        // row 19: a=0x0001
+        // write formula: ((0x0001^0x0004)&(0x0002^0x0004))^0x0004 = 0x0000
+        set_row_words(&mut bus.ppu.oam, 18, [0x0002, 0x0003, 0x0004, 0x0005]);
+        set_row_words(&mut bus.ppu.oam, 19, [0x0001, 0x00AA, 0x00BB, 0x00CC]);
+        enable_lcd_and_tick_to_row(&mut bus, 19); // dot=76, OamScan, row 19
+        bus.begin_instruction(); // pre-instruction snapshot (row 19 — old impl excluded it)
+        bus.notify_idu_glitch(0xFE00);
+        let row19 = get_row_words(&bus.ppu.oam, 19);
+        assert_eq!(
+            row19,
+            [0x0000, 0x0003, 0x0004, 0x0005],
+            "notify_idu_glitch at OamScan row 19 must apply write corruption"
+        );
+    }
+
+    #[test]
+    fn test_notify_idu_glitch_at_frame_boundary_applies_corruption() {
+        // Given: begin_instruction fires in VBlank (saved_oam_row would be None),
+        // then the simulated fetch+execute ticks cross into OamScan of the new
+        // frame, landing at dot=4 (row 1).
+        // When: notify_idu_glitch is called after those ticks.
+        // Then: OAM row 1 must be write-corrupted.
+        use crate::gb::bus::GbBus;
+        let mut bus = make_bus();
+        tick_to_late_vblank(&mut bus); // dot=452, scanline=153
+        // Set OAM rows after ticking to avoid overwriting PPU-internal resets.
+        // row 0: prev row data
+        // row 1: a=0x0001  → should become 0x0000 after corruption
+        set_row_words(&mut bus.ppu.oam, 0, [0x0002, 0x0003, 0x0004, 0x0005]);
+        set_row_words(&mut bus.ppu.oam, 1, [0x0001, 0x00AA, 0x00BB, 0x00CC]);
+        bus.begin_instruction(); // in VBlank → saved_oam_row would be None
+        bus.tick(1); // simulate fetch M-cycle: dot=456→0, new frame, OamScan, row 0
+        bus.tick(1); // simulate execute M-cycle: dot=4, OamScan, row 1
+        bus.notify_idu_glitch(0xFE00);
+        let row1 = get_row_words(&bus.ppu.oam, 1);
+        assert_eq!(
+            row1,
+            [0x0000, 0x0003, 0x0004, 0x0005],
+            "notify_idu_glitch must corrupt OAM when execute tick crosses into OamScan at frame boundary"
+        );
+    }
+
+    #[test]
+    fn test_notify_idu_glitch_no_corruption_at_row_0() {
+        // Row 0 (dot=0) is immune — INC/DEC rp just before the frame wrap
+        // must not corrupt OAM even though the execute tick lands in OamScan.
+        use crate::gb::bus::GbBus;
+        let mut bus = make_bus();
+        // Tick to a late-VBlank position such that the simulated execute tick
+        // lands exactly at dot=0 (one M-cycle earlier than the frame-boundary test).
+        tick_to_late_vblank(&mut bus); // dot=452, scanline=153
+        set_row_words(&mut bus.ppu.oam, 0, [0x0002, 0x0003, 0x0004, 0x0005]);
+        set_row_words(&mut bus.ppu.oam, 1, [0x0001, 0x00AA, 0x00BB, 0x00CC]);
+        let snapshot = bus.ppu.oam;
+        // Only ONE tick: lands at dot=0 of new frame (row 0 — immune).
+        bus.tick(1); // dot=456→0, new frame, OamScan, row 0
+        bus.notify_idu_glitch(0xFE00);
+        assert_eq!(
+            bus.ppu.oam, snapshot,
+            "notify_idu_glitch at OamScan row 0 (dot=0) must not corrupt OAM"
         );
     }
 
