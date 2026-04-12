@@ -457,7 +457,10 @@ mod tests {
 
     /// Create a mapper 256 with `n` × 8 KB PRG banks and no separate CHR ROM
     /// (CHR comes from PRG ROM as per OneBus hardware).
-    fn create_mapper256(prg_rom: Vec<u8>, mirroring: NametableLayout) -> std::io::Result<Box<dyn Mapper>> {
+    fn create_mapper256(
+        prg_rom: Vec<u8>,
+        mirroring: NametableLayout,
+    ) -> std::io::Result<Box<dyn Mapper>> {
         create_mapper(MapperContext::new_for_test(256, prg_rom, vec![], mirroring))
     }
 
@@ -501,7 +504,11 @@ mod tests {
         let mapper = create_mapper256(prg, NametableLayout::Horizontal).unwrap();
         // $E000 is always fixed to the last bank in the current block.
         // With default registers (block=0, mask=0x3F), last-in-block = bank 7 (0x3F wraps).
-        assert_eq!(mapper.read_prg(0xE000), 7, "$E000 should always read the last bank");
+        assert_eq!(
+            mapper.read_prg(0xE000),
+            7,
+            "$E000 should always read the last bank"
+        );
     }
 
     #[test]
@@ -519,7 +526,7 @@ mod tests {
 
         // Enable PRG swap (bit 6 of $8000 write)
         mapper.write_prg(0x8000, 0x46); // bit 6 set, reg select = 6
-        mapper.write_prg(0x8001, 2);   // keep bank 2 in cpu410x[7]
+        mapper.write_prg(0x8001, 2); // keep bank 2 in cpu410x[7]
 
         // After swap: $C000 = bank 2, $8000 = second-to-last bank
         assert_eq!(mapper.read_prg(0xC000), 2, "After swap $C000 = bank 2");
@@ -536,11 +543,19 @@ mod tests {
 
         // Write cpu410x[0x7] = 4 directly via $4107
         mapper.write_prg(0x4107, 4);
-        assert_eq!(mapper.read_prg(0x8000), 4, "$8000 should map bank 4 after $4107 write");
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            4,
+            "$8000 should map bank 4 after $4107 write"
+        );
 
         // Write cpu410x[0x8] = 6 directly via $4108
         mapper.write_prg(0x4108, 6);
-        assert_eq!(mapper.read_prg(0xA000), 6, "$A000 should map bank 6 after $4108 write");
+        assert_eq!(
+            mapper.read_prg(0xA000),
+            6,
+            "$A000 should map bank 6 after $4108 write"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -562,7 +577,11 @@ mod tests {
         // PRG ROM is banked_data(8KB, 16), so bank 0 = byte 0..0x2000.
         // 1KB CHR bank 4 starts at 4*1024 = 4096 in PRG ROM → filled with 0 (bank 0 of 8KB).
         // bank 4 of 1KB means byte 4096 in the 8KB bank 0 region (all filled with 0).
-        assert_eq!(mapper.read_chr(0x0000), 0, "CHR slot 0 should read from PRG ROM bank 4");
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            0,
+            "CHR slot 0 should read from PRG ROM bank 4"
+        );
     }
 
     #[test]
@@ -586,11 +605,14 @@ mod tests {
 
         // Enable CHR swap (bit 7 of $8000)
         mapper.write_prg(0x8000, 0x80); // bit 7 set, reg select = 0
-        mapper.write_prg(0x8001, 0);    // keep ppu201x[6] = 0
+        mapper.write_prg(0x8001, 0); // keep ppu201x[6] = 0
 
         // With swap: $0000 → slot 4, $1000 → slot 0 (CHR inversion)
         let after = mapper.read_chr(0x0000);
-        assert_eq!(after, 0, "After CHR swap, $0000 reads swapped slot (still bank 4 = fill 0)");
+        assert_eq!(
+            after, 0,
+            "After CHR swap, $0000 reads swapped slot (still bank 4 = fill 0)"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -643,7 +665,10 @@ mod tests {
     fn test_irq_not_pending_initially() {
         let prg = banked_data(8 * 1024, 4);
         let mapper = create_mapper256(prg, NametableLayout::Horizontal).unwrap();
-        assert!(!mapper.irq_pending(), "IRQ should not be pending at power-on");
+        assert!(
+            !mapper.irq_pending(),
+            "IRQ should not be pending at power-on"
+        );
     }
 
     #[test]
@@ -652,16 +677,22 @@ mod tests {
         let mut mapper = create_mapper256(prg, NametableLayout::Horizontal).unwrap();
 
         // latch=2 (even; bit 0 is cleared by hardware, so writing 2 → latch=2)
-        mapper.write_prg(0xC000, 2);  // IRQ latch = 2 & 0xFE = 2
-        mapper.write_prg(0xC001, 0);  // reload (irq_reload = true)
-        mapper.write_prg(0xE001, 0);  // IRQ enable
+        mapper.write_prg(0xC000, 2); // IRQ latch = 2 & 0xFE = 2
+        mapper.write_prg(0xC001, 0); // reload (irq_reload = true)
+        mapper.write_prg(0xE001, 0); // IRQ enable
 
         // Scanline 0: reload → count=2; 2!=0 no fire
         mapper.ppu_scanline(0, true);
-        assert!(!mapper.irq_pending(), "IRQ should not fire after reload scanline");
+        assert!(
+            !mapper.irq_pending(),
+            "IRQ should not fire after reload scanline"
+        );
         // Scanline 1: 2→1; no fire
         mapper.ppu_scanline(1, true);
-        assert!(!mapper.irq_pending(), "IRQ should not fire before count reaches 0");
+        assert!(
+            !mapper.irq_pending(),
+            "IRQ should not fire before count reaches 0"
+        );
         // Scanline 2: 1→0 → FIRE
         mapper.ppu_scanline(2, true);
         assert!(mapper.irq_pending(), "IRQ should fire when count reaches 0");
@@ -673,13 +704,16 @@ mod tests {
         let mut mapper = create_mapper256(prg, NametableLayout::Horizontal).unwrap();
 
         // Latch=0: every scanline after reload reloads to 0, which triggers immediately.
-        mapper.write_prg(0xC000, 0);  // latch = 0
-        mapper.write_prg(0xC001, 0);  // reload
-        mapper.write_prg(0xE001, 0);  // enable
+        mapper.write_prg(0xC000, 0); // latch = 0
+        mapper.write_prg(0xC001, 0); // reload
+        mapper.write_prg(0xE001, 0); // enable
 
         // First scanline: reload → count=0 → FIRE immediately
         mapper.ppu_scanline(0, true);
-        assert!(mapper.irq_pending(), "IRQ with latch=0 should fire on first scanline");
+        assert!(
+            mapper.irq_pending(),
+            "IRQ with latch=0 should fire on first scanline"
+        );
     }
 
     #[test]
@@ -688,9 +722,9 @@ mod tests {
         let mut mapper = create_mapper256(prg, NametableLayout::Horizontal).unwrap();
 
         // Use latch=4 (bit 0 cleared → remains 4) so IRQ fires after 4 scanlines
-        mapper.write_prg(0xC000, 4);  // latch = 4 & 0xFE = 4
-        mapper.write_prg(0xC001, 0);  // reload
-        mapper.write_prg(0xE001, 0);  // enable
+        mapper.write_prg(0xC000, 4); // latch = 4 & 0xFE = 4
+        mapper.write_prg(0xC001, 0); // reload
+        mapper.write_prg(0xE001, 0); // enable
 
         // Run scanlines until IRQ fires: reload on 0, count 4→3→2→1→0 (fires on 4th decrement)
         mapper.ppu_scanline(0, true); // reload → count=4
@@ -698,11 +732,17 @@ mod tests {
         mapper.ppu_scanline(2, true); // 3→2
         mapper.ppu_scanline(3, true); // 2→1
         mapper.ppu_scanline(4, true); // 1→0 → FIRE
-        assert!(mapper.irq_pending(), "IRQ should fire after latch scanlines");
+        assert!(
+            mapper.irq_pending(),
+            "IRQ should fire after latch scanlines"
+        );
 
         // Disable clears pending
         mapper.write_prg(0xE000, 0);
-        assert!(!mapper.irq_pending(), "IRQ should clear when disabled via $E000");
+        assert!(
+            !mapper.irq_pending(),
+            "IRQ should clear when disabled via $E000"
+        );
     }
 
     #[test]
@@ -754,20 +794,31 @@ mod tests {
         let mut mapper = create_mapper256(prg.clone(), NametableLayout::Horizontal).unwrap();
 
         // Set some state
-        mapper.write_prg(0x8000, 6);   // reg select = 6
-        mapper.write_prg(0x8001, 5);   // PRG bank 0 = 5
-        mapper.write_prg(0xA000, 1);   // Vertical mirroring
-        mapper.write_prg(0xC000, 7);   // IRQ latch = 7 (bit 0 cleared → 6)
-        mapper.write_prg(0xE001, 0);   // IRQ enable
+        mapper.write_prg(0x8000, 6); // reg select = 6
+        mapper.write_prg(0x8001, 5); // PRG bank 0 = 5
+        mapper.write_prg(0xA000, 1); // Vertical mirroring
+        mapper.write_prg(0xC000, 7); // IRQ latch = 7 (bit 0 cleared → 6)
+        mapper.write_prg(0xE001, 0); // IRQ enable
 
         let snap = mapper.registers_snapshot();
 
         let mut restored = create_mapper256(prg, NametableLayout::Horizontal).unwrap();
         restored.restore_registers(&snap);
 
-        assert_eq!(restored.read_prg(0x8000), 5, "PRG bank 0 should restore to 5");
-        assert_eq!(restored.get_mirroring(), NametableLayout::Vertical, "Mirroring should restore");
-        assert!(restored.irq_pending() == mapper.irq_pending(), "IRQ pending should match");
+        assert_eq!(
+            restored.read_prg(0x8000),
+            5,
+            "PRG bank 0 should restore to 5"
+        );
+        assert_eq!(
+            restored.get_mirroring(),
+            NametableLayout::Vertical,
+            "Mirroring should restore"
+        );
+        assert!(
+            restored.irq_pending() == mapper.irq_pending(),
+            "IRQ pending should match"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -789,7 +840,11 @@ mod tests {
 
         // After reset: bank 0 should be 0, mirroring should be Horizontal
         assert_eq!(mapper.read_prg(0x8000), 0, "PRG bank 0 should reset to 0");
-        assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal, "Mirroring resets to H");
+        assert_eq!(
+            mapper.get_mirroring(),
+            NametableLayout::Horizontal,
+            "Mirroring resets to H"
+        );
         assert!(!mapper.irq_pending(), "IRQ pending clears on reset");
     }
 
@@ -806,7 +861,11 @@ mod tests {
         assert_eq!(mapper.read_prg(0x6000), 0xAB, "WRAM write/read should work");
 
         mapper.write_prg(0x7FFF, 0x55);
-        assert_eq!(mapper.read_prg(0x7FFF), 0x55, "WRAM end boundary should work");
+        assert_eq!(
+            mapper.read_prg(0x7FFF),
+            0x55,
+            "WRAM end boundary should work"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -826,6 +885,10 @@ mod tests {
         // Select inner bank 2 via cpu410x[7] = 2
         mapper.write_prg(0x4107, 2);
         // Expected PRG bank at $8000 = block | (inner & mask) = 0x40 | (2 & 0x3F) = 0x42 = 66
-        assert_eq!(mapper.read_prg(0x8000), 66, "Outer PRG bank select: block=0x40, inner=2 → bank 66");
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            66,
+            "Outer PRG bank select: block=0x40, inner=2 → bank 66"
+        );
     }
 }
