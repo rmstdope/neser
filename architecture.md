@@ -305,7 +305,7 @@ All Game Boy (DMG) hardware lives under `src/gb/`. The module is structured arou
 
 ### `web/` — Browser Frontend
 
-The web frontend is bundled with **Vite** (config at `vite.config.ts`, root: `web/`, build output: `dist/`). Styled with **Tailwind CSS v4** and **DaisyUI v5** (night theme with neon accent colors). Uses a DaisyUI drawer layout with a sidebar for ROM/emulation controls and a top bar for screen controls. JavaScript modules are organized into feature folders under `web/src/`.
+The web frontend is bundled with **Vite** (config at `vite.config.ts`, root: `web/`, build output: `dist/`). Styled with **Tailwind CSS v4** and **DaisyUI v5** (night theme with neon accent colors). Uses a DaisyUI drawer layout with a sidebar for ROM/emulation controls and a top bar for screen controls. TypeScript modules are organized into feature folders under `web/src/`.
 
 | Directory/File | Description |
 | -------------- | ------------- |
@@ -313,17 +313,17 @@ The web frontend is bundled with **Vite** (config at `vite.config.ts`, root: `we
 | `web/main.css` | Tailwind CSS entry point with DaisyUI plugin config, neon theme overrides, and custom component styles. |
 | `web/debugger.css` | Debugger panel styling (green-on-black terminal aesthetic). |
 | `web/src/app.ts` | Application bootstrapper — initializes the WASM module, sets up the render loop, and coordinates all subsystems. |
-| `web/src/audio/` | Audio resampling (`audio_resampler.js`), frame timing (`frame_limiter.js`, `frame_plan.js`). |
-| `web/src/input/` | Gamepad API (`gamepad.js`), keyboard/gamepad routing (`input_routing.js`), mouse input (`mouse_input.js`), pointer lock (`pointer_lock.js`). |
-| `web/src/display/` | Canvas sizing (`canvas_size.js`), zoom controls (`zoom_controls.js`), cursor visibility, crosshair overlay. |
-| `web/src/rom/` | ROM file listing (`rom_list.js`), selection UI (`rom_selection.js`), autorun context. |
-| `web/src/save-state/` | Save state persistence using IndexedDB (`save_state_storage.js`, `save_state_controller.js`, `save_state_context.js`). |
+| `web/src/audio/` | Audio resampling (`audio_resampler.ts`), frame timing (`frame_limiter.ts`, `frame_plan.ts`). |
+| `web/src/input/` | Gamepad API (`gamepad.ts`), keyboard/gamepad routing (`input_routing.ts`), mouse input (`mouse_input.ts`), pointer lock (`pointer_lock.ts`). |
+| `web/src/display/` | Canvas sizing (`canvas_size.ts`), zoom controls (`zoom_controls.ts`), cursor visibility, crosshair overlay. |
+| `web/src/rom/` | ROM file listing (`rom_list.ts`), selection UI (`rom_selection.ts`), autorun context. |
+| `web/src/save-state/` | Save state persistence using IndexedDB (`save_state_storage.ts`, `save_state_controller.ts`, `save_state_context.ts`). |
 | `web/src/debugger/` | Browser-based debugger panels — disassembly, OAM viewer, watch expressions, PPU viewer layout/scroll. |
 | `web/src/shortcuts/` | Keyboard shortcut actions and help overlay. |
-| `web/src/ui/` | Toast overlays (`toast_overlay.js`), gamepad init toast, sine scroller. |
+| `web/src/ui/` | Toast overlays (`toast_overlay.ts`), gamepad init toast, sine scroller. |
 | `web/integration/` | Playwright-based end-to-end integration tests for the web frontend. |
 
-Each JavaScript module has a corresponding `.test.mjs` unit test file (run with `vitest`).
+Each TypeScript module has a corresponding `.test.ts` unit test file (run with `vitest`).
 
 ### `shaders/` — Visual Filters
 
