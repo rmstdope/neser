@@ -29,6 +29,7 @@
 //! - AD12-based IRQ mode (IRQLatch bit 7 = 0) falls back to scanline IRQ counting.
 //! - PowerJoy Supermax Cart PRG-register swap (`inv_hack`) is not implemented.
 
+#[cfg(test)]
 use crate::nes::cartridge::NametableLayout;
 use crate::nes::cartridge::base_mapper::BaseMapper;
 use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};

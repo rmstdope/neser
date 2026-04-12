@@ -592,22 +592,6 @@ interface AutorunFileInput extends HTMLInputElement {
     _fileName: string | null;
 }
 
-interface BootstrapModal {
-    show(): void;
-    hide(): void;
-}
-
-declare global {
-    interface Window {
-        bootstrap: {
-            Modal: {
-                new(el: HTMLElement | null): BootstrapModal;
-                getInstance(el: HTMLElement | null): BootstrapModal | null;
-            };
-        };
-    }
-}
-
 let currentFilter = "ntsc"; // Start with NTSC filter as requested
 const filterKeys = Object.keys(filters);
 let shaderProgram: ShaderProgram | null = null;
@@ -873,6 +857,8 @@ const autorunCheckpointSelect = document.getElementById("autorun-checkpoint-sele
 const autorunExtendCheck = document.getElementById("autorun-extend-check") as HTMLInputElement | null;
 const autorunUseBtn = document.getElementById("autorun-use-btn") as HTMLButtonElement | null;
 const autorunCancelBtn = document.getElementById("autorun-cancel");
+const autorunModalCancelBtn = document.getElementById("autorun-modal-cancel");
+const autorunModalEl = document.getElementById("autorun-modal") as HTMLDialogElement | null;
 
 /** Update the small autorun status text and cancel button in the header. */
 function updateAutorunStatus() {
@@ -880,10 +866,10 @@ function updateAutorunStatus() {
     const config = autorunCtx.getActiveConfig();
     if (!config) {
         autorunStatusEl.textContent = "";
-        autorunCancelBtn?.classList.add("d-none");
+        autorunCancelBtn?.classList.add("hidden");
     } else if (config.mode === "record") {
         autorunStatusEl.textContent = "Will record autorun";
-        autorunCancelBtn?.classList.remove("d-none");
+        autorunCancelBtn?.classList.remove("hidden");
     } else {
         const info = autorunCtx.getLoadedFile();
         const cpText = config.checkpointIdx != null
@@ -894,7 +880,7 @@ function updateAutorunStatus() {
         const romHint = expectedRom ? ` · Load ${expectedRom}` : "";
         autorunStatusEl.textContent =
             `Autorun loaded (${info?.frameCount ?? "?"} frames, ${cpText}${extText})${romHint}`;
-        autorunCancelBtn?.classList.remove("d-none");
+        autorunCancelBtn?.classList.remove("hidden");
     }
 }
 
@@ -918,6 +904,13 @@ if (autorunCancelBtn) {
     });
 }
 
+// Close dialog on modal Cancel button click
+if (autorunModalCancelBtn) {
+    autorunModalCancelBtn.addEventListener("click", () => {
+        autorunModalEl?.close();
+    });
+}
+
 // Open modal on "Load autorun" button click
 if (autorunLoadBtn) {
     autorunLoadBtn.addEventListener("click", () => {
@@ -926,7 +919,7 @@ if (autorunLoadBtn) {
         if (autorunFileSummary) {
             autorunFileSummary.textContent = "Select an autorun file to inspect checkpoints and playback options.";
         }
-        if (autorunFileInfo) autorunFileInfo.classList.remove("d-none");
+        if (autorunFileInfo) autorunFileInfo.classList.remove("hidden");
         if (autorunUseBtn) autorunUseBtn.disabled = true;
         if (autorunExtendCheck) autorunExtendCheck.checked = false;
         if (autorunCheckpointSelect) {
@@ -935,8 +928,7 @@ if (autorunLoadBtn) {
                 autorunCheckpointSelect.remove(1);
             }
         }
-        const modal = new window.bootstrap.Modal(document.getElementById("autorun-modal"));
-        modal.show();
+        autorunModalEl?.showModal();
     });
 }
 
@@ -961,14 +953,14 @@ if (autorunFileInput) {
                 opt.textContent = `Checkpoint ${i + 1} (frame ${Math.round((i + 1) * info.frameCount / info.checkpointCount)})`;
                 autorunCheckpointSelect.appendChild(opt);
             }
-            autorunFileInfo.classList.remove("d-none");
+            autorunFileInfo.classList.remove("hidden");
             autorunUseBtn.disabled = false;
             // Store raw bytes and filename on the input element for the Use button
             autorunFileInput._bytes = bytes;
             autorunFileInput._fileName = file.name;
         } catch (err: unknown) {
             autorunFileSummary.textContent = `Error: ${err instanceof Error ? err.message : String(err)}`;
-            autorunFileInfo.classList.remove("d-none");
+            autorunFileInfo.classList.remove("hidden");
             autorunUseBtn.disabled = true;
             autorunFileInput._bytes = null;
             autorunFileInput._fileName = null;
@@ -991,9 +983,7 @@ if (autorunUseBtn) {
             autorunCtx.setExtend(autorunExtendCheck?.checked ?? false);
             updateAutorunStatus();
             // Close modal
-            const modalEl = document.getElementById("autorun-modal");
-            const modal = window.bootstrap.Modal.getInstance(modalEl);
-            modal?.hide();
+            autorunModalEl?.close();
         } catch (err) {
             console.error("Failed to configure autorun:", err);
         }
@@ -1762,14 +1752,14 @@ function debuggerWatchUpdateAddress(index: number, value: string) {
 
 function showDebuggerPanel() {
     if (!debuggerPanel) return;
-    debuggerPanel.classList.remove("d-none");
+    debuggerPanel.classList.remove("hidden");
     updateDebuggerPanel();
     setStatus("Debugger paused");
 }
 
 function hideDebuggerPanel() {
     if (debuggerPanel) {
-        debuggerPanel.classList.add("d-none");
+        debuggerPanel.classList.add("hidden");
     }
 }
 

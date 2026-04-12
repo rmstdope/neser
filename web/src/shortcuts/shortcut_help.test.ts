@@ -10,7 +10,7 @@ import {
 } from "./shortcut_help";
 
 function createMockHelpOverlay(initiallyHidden = true) {
-    const classes = new Set(initiallyHidden ? ["d-none"] : []);
+    const classes = new Set(initiallyHidden ? ["hidden"] : []);
     const attributes = new Map();
 
     return {
@@ -86,7 +86,7 @@ it("toggleShortcutHelpVisibility shows hidden overlay", () => {
     const visible = toggleShortcutHelpVisibility(overlay as any);
 
     expect(visible).toBe(true);
-    expect(overlay.classList.contains("d-none")).toBe(false);
+    expect(overlay.classList.contains("hidden")).toBe(false);
     expect(overlay.getAttribute("aria-hidden")).toBe("false");
 });
 
@@ -96,7 +96,7 @@ it("toggleShortcutHelpVisibility hides visible overlay", () => {
     const visible = toggleShortcutHelpVisibility(overlay as any);
 
     expect(visible).toBe(false);
-    expect(overlay.classList.contains("d-none")).toBe(true);
+    expect(overlay.classList.contains("hidden")).toBe(true);
     expect(overlay.getAttribute("aria-hidden")).toBe("true");
 });
 
