@@ -37,7 +37,7 @@ const FIBO_E: u8 = 13;
 const FIBO_H: u8 = 21;
 const FIBO_L: u8 = 34;
 
-/// M-cycle budget per test — Mooneye tests typically finish in under 2 frames.
+/// Generous per-test M-cycle timeout used as a safety budget to avoid hangs.
 const MOONEYE_CYCLE_LIMIT: u64 = 10_000_000;
 
 /// LD B,B opcode used as a Mooneye software breakpoint.
@@ -50,11 +50,15 @@ fn load_gb_rom(path: &str) -> Gb<DmgBus> {
     Gb::new(DmgBus::new(cart))
 }
 
-/// Step `gb` until the Mooneye breakpoint fires or the cycle limit is reached.
+/// Step `gb` until the Mooneye breakpoint fires or `cycle_limit` M-cycles elapse.
 ///
 /// Detects the `LD B,B` (0x40) breakpoint by peeking at the next opcode
-/// before each step. `DmgBus::read` has no side effects, so peeking is safe.
-pub fn detect_mooneye_result(gb: &mut Gb<DmgBus>) -> MooneyeResult {
+/// before each step. For these tests, peeking at the opcode at `PC` is safe
+/// because execution is in cartridge/boot ROM space in our bus implementation.
+pub(crate) fn detect_mooneye_result_with_limit(
+    gb: &mut Gb<DmgBus>,
+    cycle_limit: u64,
+) -> MooneyeResult {
     let start = gb.cycles();
     loop {
         let opcode = gb.cpu.bus.read(gb.cpu.regs.pc);
@@ -79,11 +83,16 @@ pub fn detect_mooneye_result(gb: &mut Gb<DmgBus>) -> MooneyeResult {
                 };
             }
         }
-        if gb.cycles().saturating_sub(start) >= MOONEYE_CYCLE_LIMIT {
+        if gb.cycles().saturating_sub(start) >= cycle_limit {
             return MooneyeResult::Timeout;
         }
         gb.step();
     }
+}
+
+/// Step `gb` until the Mooneye breakpoint fires or the default cycle limit is reached.
+pub fn detect_mooneye_result(gb: &mut Gb<DmgBus>) -> MooneyeResult {
+    detect_mooneye_result_with_limit(gb, MOONEYE_CYCLE_LIMIT)
 }
 
 /// Run a Mooneye test ROM to completion and return the result.
@@ -117,7 +126,6 @@ macro_rules! assert_mooneye_pass {
 mod helper_tests {
     use super::*;
     use crate::gb::bus::DmgBus;
-    use crate::gb::bus::GbBus;
     use crate::gb::cartridge::load_cartridge;
     use crate::gb::console::Gb;
 
@@ -133,7 +141,7 @@ mod helper_tests {
     ];
 
     /// Patch `rom` with a valid Nintendo logo and correct header checksum.
-    fn fix_rom_header(rom: &mut Vec<u8>) {
+    fn fix_rom_header(rom: &mut [u8]) {
         rom[0x0104..0x0134].copy_from_slice(&NINTENDO_LOGO);
         let checksum = rom[0x0134..=0x014C]
             .iter()
@@ -214,22 +222,13 @@ mod helper_tests {
 
     #[test]
     fn helper_returns_timeout_when_no_breakpoint() {
-        // Use a tiny cycle limit for the timeout rom to keep the test fast
         let bytes = make_timeout_rom();
         let cart = load_cartridge(&bytes).expect("valid test ROM");
         let mut gb = Gb::new(DmgBus::new(cart));
-        let start = gb.cycles();
-        const TINY_LIMIT: u64 = 1_000;
-        loop {
-            let opcode = gb.cpu.bus.read(gb.cpu.regs.pc);
-            if opcode == LD_B_B {
-                panic!("unexpected LD B,B in timeout ROM");
-            }
-            if gb.cycles().saturating_sub(start) >= TINY_LIMIT {
-                return; // Timeout as expected
-            }
-            gb.step();
-        }
+        assert_eq!(
+            detect_mooneye_result_with_limit(&mut gb, 1_000),
+            MooneyeResult::Timeout
+        );
     }
 }
 
@@ -470,7 +469,7 @@ fn test_mooneye_acceptance_oam_dma_reg_read() {
 }
 
 #[test]
-#[ignore = "Requires MBC5 which is not yet implemented"]
+#[ignore = "Requires MBC5 which is not yet implemented — tracked in #2025"]
 fn test_mooneye_acceptance_oam_dma_sources_gs() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/oam_dma/sources-GS.gb"));
 }
@@ -595,7 +594,7 @@ fn test_mooneye_acceptance_rst_timing() {
 }
 
 #[test]
-#[ignore = "Serial port not fully implemented — boot sclk align requires serial timing accuracy"]
+#[ignore = "Serial port not fully implemented — tracked in #2026"]
 fn test_mooneye_acceptance_serial_boot_sclk_align_dmgabcmgb() {
     assert_mooneye_pass!(&format!(
         "{BASE}/acceptance/serial/boot_sclk_align-dmgABCmgb.gb"
@@ -751,43 +750,43 @@ fn test_mooneye_emulator_only_mbc1_rom_8mb() {
 // ============================================================================
 
 #[test]
-#[ignore = "MBC2 not yet implemented — tracked in #1943"]
+#[ignore = "MBC2 not yet implemented — tracked in #2024"]
 fn test_mooneye_emulator_only_mbc2_bits_ramg() {
     assert_mooneye_pass!(&format!("{BASE}/emulator-only/mbc2/bits_ramg.gb"));
 }
 
 #[test]
-#[ignore = "MBC2 not yet implemented — tracked in #1943"]
+#[ignore = "MBC2 not yet implemented — tracked in #2024"]
 fn test_mooneye_emulator_only_mbc2_bits_romb() {
     assert_mooneye_pass!(&format!("{BASE}/emulator-only/mbc2/bits_romb.gb"));
 }
 
 #[test]
-#[ignore = "MBC2 not yet implemented — tracked in #1943"]
+#[ignore = "MBC2 not yet implemented — tracked in #2024"]
 fn test_mooneye_emulator_only_mbc2_bits_unused() {
     assert_mooneye_pass!(&format!("{BASE}/emulator-only/mbc2/bits_unused.gb"));
 }
 
 #[test]
-#[ignore = "MBC2 not yet implemented — tracked in #1943"]
+#[ignore = "MBC2 not yet implemented — tracked in #2024"]
 fn test_mooneye_emulator_only_mbc2_ram() {
     assert_mooneye_pass!(&format!("{BASE}/emulator-only/mbc2/ram.gb"));
 }
 
 #[test]
-#[ignore = "MBC2 not yet implemented — tracked in #1943"]
+#[ignore = "MBC2 not yet implemented — tracked in #2024"]
 fn test_mooneye_emulator_only_mbc2_rom_1mb() {
     assert_mooneye_pass!(&format!("{BASE}/emulator-only/mbc2/rom_1Mb.gb"));
 }
 
 #[test]
-#[ignore = "MBC2 not yet implemented — tracked in #1943"]
+#[ignore = "MBC2 not yet implemented — tracked in #2024"]
 fn test_mooneye_emulator_only_mbc2_rom_2mb() {
     assert_mooneye_pass!(&format!("{BASE}/emulator-only/mbc2/rom_2Mb.gb"));
 }
 
 #[test]
-#[ignore = "MBC2 not yet implemented — tracked in #1943"]
+#[ignore = "MBC2 not yet implemented — tracked in #2024"]
 fn test_mooneye_emulator_only_mbc2_rom_512kb() {
     assert_mooneye_pass!(&format!("{BASE}/emulator-only/mbc2/rom_512kb.gb"));
 }
@@ -797,49 +796,49 @@ fn test_mooneye_emulator_only_mbc2_rom_512kb() {
 // ============================================================================
 
 #[test]
-#[ignore = "MBC5 not yet implemented — tracked in #1943"]
+#[ignore = "MBC5 not yet implemented — tracked in #2025"]
 fn test_mooneye_emulator_only_mbc5_rom_16mb() {
     assert_mooneye_pass!(&format!("{BASE}/emulator-only/mbc5/rom_16Mb.gb"));
 }
 
 #[test]
-#[ignore = "MBC5 not yet implemented — tracked in #1943"]
+#[ignore = "MBC5 not yet implemented — tracked in #2025"]
 fn test_mooneye_emulator_only_mbc5_rom_1mb() {
     assert_mooneye_pass!(&format!("{BASE}/emulator-only/mbc5/rom_1Mb.gb"));
 }
 
 #[test]
-#[ignore = "MBC5 not yet implemented — tracked in #1943"]
+#[ignore = "MBC5 not yet implemented — tracked in #2025"]
 fn test_mooneye_emulator_only_mbc5_rom_2mb() {
     assert_mooneye_pass!(&format!("{BASE}/emulator-only/mbc5/rom_2Mb.gb"));
 }
 
 #[test]
-#[ignore = "MBC5 not yet implemented — tracked in #1943"]
+#[ignore = "MBC5 not yet implemented — tracked in #2025"]
 fn test_mooneye_emulator_only_mbc5_rom_32mb() {
     assert_mooneye_pass!(&format!("{BASE}/emulator-only/mbc5/rom_32Mb.gb"));
 }
 
 #[test]
-#[ignore = "MBC5 not yet implemented — tracked in #1943"]
+#[ignore = "MBC5 not yet implemented — tracked in #2025"]
 fn test_mooneye_emulator_only_mbc5_rom_4mb() {
     assert_mooneye_pass!(&format!("{BASE}/emulator-only/mbc5/rom_4Mb.gb"));
 }
 
 #[test]
-#[ignore = "MBC5 not yet implemented — tracked in #1943"]
+#[ignore = "MBC5 not yet implemented — tracked in #2025"]
 fn test_mooneye_emulator_only_mbc5_rom_512kb() {
     assert_mooneye_pass!(&format!("{BASE}/emulator-only/mbc5/rom_512kb.gb"));
 }
 
 #[test]
-#[ignore = "MBC5 not yet implemented — tracked in #1943"]
+#[ignore = "MBC5 not yet implemented — tracked in #2025"]
 fn test_mooneye_emulator_only_mbc5_rom_64mb() {
     assert_mooneye_pass!(&format!("{BASE}/emulator-only/mbc5/rom_64Mb.gb"));
 }
 
 #[test]
-#[ignore = "MBC5 not yet implemented — tracked in #1943"]
+#[ignore = "MBC5 not yet implemented — tracked in #2025"]
 fn test_mooneye_emulator_only_mbc5_rom_8mb() {
     assert_mooneye_pass!(&format!("{BASE}/emulator-only/mbc5/rom_8Mb.gb"));
 }
