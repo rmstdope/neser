@@ -140,18 +140,18 @@ impl Channel4 {
 
     pub fn read_nr42(&self) -> u8 {
         ((self.init_volume & 0x0F) << 4)
-            | (if self.env_add { 0x08 } else { 0x00 })
+            | (u8::from(self.env_add) << 3)
             | (self.env_period & 0x07)
     }
 
     pub fn read_nr43(&self) -> u8 {
         ((self.clock_shift & 0x0F) << 4)
-            | (if self.lfsr_7bit { 0x08 } else { 0x00 })
+            | (u8::from(self.lfsr_7bit) << 3)
             | (self.divisor_code & 0x07)
     }
 
     pub fn read_nr44(&self) -> u8 {
-        0xBF | (if self.length_en { 0x40 } else { 0x00 })
+        0xBF | (u8::from(self.length_en) << 6)
     }
 
     pub fn write_nr41(&mut self, val: u8) {
