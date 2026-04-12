@@ -27,8 +27,8 @@ pub trait GbBus {
     ///
     /// On DMG hardware the IDU asserts the address bus during its operation even
     /// when no explicit read/write is taking place.  If `addr` falls in the OAM
-    /// range ($FE00–$FEFF) while the PPU is in Mode 2, this bus-tickle triggers
-    /// an OAM write-corruption.
+    /// region ($FE00–$FEFF, which includes the unusable $FEA0–$FEFF range) while
+    /// the PPU is in Mode 2, this bus-tickle triggers an OAM write-corruption.
     ///
     /// The default implementation is a no-op (used by `StubBus` and test buses).
     fn notify_idu_glitch(&mut self, _addr: u16) {}
