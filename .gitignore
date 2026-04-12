@@ -51,6 +51,9 @@ rom_files.csv
 web/pkg/
 node_modules/
 
+# Vite build output
+dist/
+
 # Python
 __pycache__/
 *.pyc
