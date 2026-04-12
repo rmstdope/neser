@@ -745,7 +745,7 @@ mod tests {
             1,    // CHR ROM size (8KB units)
             0x00, // Flags 6 (mapper low nibble = 0)
             0x08, // Flags 7 (NES2.0 identifier)
-            0x01, // Flags 8 (mapper MSB nibble = 1 => mapper 0x100)
+            0x02, // Flags 8 (mapper MSB nibble = 2 => mapper 0x200 = 512, unsupported)
             0x00, // Flags 9
             0x00, // Flags 10
             0, 0, 0, 0, 0, // Reserved
@@ -757,7 +757,7 @@ mod tests {
         let result = load_cartridge_from_bytes(&rom_data);
         assert!(matches!(
             result,
-            Err(CartridgeError::UnsupportedMapper(0x100))
+            Err(CartridgeError::UnsupportedMapper(0x200))
         ));
     }
 
