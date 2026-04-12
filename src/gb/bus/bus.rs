@@ -30,13 +30,31 @@ pub trait GbBus {
     fn notify_idu_glitch(&mut self, _addr: u16) {}
 
     /// Notify the bus that the CPU performed a read from `addr` in the same
-    /// M-cycle as an IDU increment/decrement (e.g., `LD A, [HLI]`).
+    /// M-cycle as an IDU increment/decrement (e.g., `LD A, [HLI]`, `POP rr` M2).
     ///
     /// If `addr` falls in OAM and the PPU is in Mode 2, this triggers the more
     /// complex "Read During Increase/Decrease" OAM corruption pattern.
     ///
     /// The default implementation is a no-op.
     fn notify_idu_with_prior_read(&mut self, _addr: u16) {}
+
+    /// Notify the bus that the CPU performed a plain OAM read from `addr` in an
+    /// M-cycle where no IDU increment/decrement was active (e.g., `POP rr` M3).
+    ///
+    /// If `addr` falls in the OAM region ($FE00–$FEFF) and the PPU is in Mode 2,
+    /// this triggers a plain OAM read corruption without the IDU component.
+    ///
+    /// The default implementation is a no-op.
+    fn notify_oam_read(&mut self, _addr: u16) {}
+
+    /// Notify the bus that the CPU performed a plain write to `addr` in an M-cycle
+    /// where no IDU decrement was active (e.g., `PUSH rr` M4).
+    ///
+    /// If `addr` falls in the OAM region ($FE00–$FEFF, including unusable
+    /// $FEA0–$FEFF) and the PPU is in Mode 2, this triggers an OAM write corruption.
+    ///
+    /// The default implementation is a no-op.
+    fn notify_oam_write(&mut self, _addr: u16) {}
 }
 
 /// Bus stub that returns 0xFF for every read and silently discards writes.

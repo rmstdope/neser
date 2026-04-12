@@ -234,6 +234,22 @@ impl GbBus for DmgBus {
             self.ppu.apply_oam_read_idu_corruption(row);
         }
     }
+
+    fn notify_oam_read(&mut self, addr: u16) {
+        if matches!(addr, 0xFE00..=0xFEFF)
+            && let Some(row) = self.ppu.current_oam_row()
+        {
+            self.ppu.apply_oam_read_corruption(row);
+        }
+    }
+
+    fn notify_oam_write(&mut self, addr: u16) {
+        if matches!(addr, 0xFE00..=0xFEFF)
+            && let Some(row) = self.ppu.current_oam_row()
+        {
+            self.ppu.apply_oam_write_corruption(row);
+        }
+    }
 }
 
 #[cfg(test)]

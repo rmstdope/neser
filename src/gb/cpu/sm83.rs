@@ -228,22 +228,29 @@ impl<B: GbBus> Sm83<B> {
         let [hi, lo] = val.to_be_bytes();
         let sp0 = self.regs.sp;
         self.regs.sp = sp0.wrapping_sub(1);
-        self.bus.notify_idu_glitch(sp0);
-        self.write(self.regs.sp, hi);
+        self.bus.notify_idu_glitch(sp0); // M2: IDU-only DEC SP
+        self.write(self.regs.sp, hi); // M3: write hi to [SP]
         let sp1 = self.regs.sp;
         self.regs.sp = sp1.wrapping_sub(1);
-        self.bus.notify_idu_glitch(sp1);
-        self.write(self.regs.sp, lo);
+        self.bus.notify_idu_glitch(sp1); // M3: DEC SP ("Write During Decrease" = single write corruption)
+        self.write(self.regs.sp, lo); // M4: write lo to [SP]
+        self.bus.notify_oam_write(self.regs.sp); // M4: plain write, no IDU
     }
 
     /// Pop a 16-bit value from the stack (SP incremented twice).
+    ///
+    /// Per Pan Docs "OAM Corruption Bug": POP triggers only 3 corruption events:
+    ///   M2: read [SP] + IDU INC SP → notify_idu_with_prior_read (Read During IDU)
+    ///   M3: read [SP+1], no IDU    → notify_oam_read            (plain read corruption)
     fn pop_u16(&mut self) -> u16 {
         let lo = self.read(self.regs.sp) as u16;
         let sp0 = self.regs.sp;
         self.regs.sp = sp0.wrapping_add(1);
-        self.bus.notify_idu_glitch(sp0); // only the first INC SP triggers IDU glitch
+        self.bus.notify_idu_with_prior_read(sp0); // M2: read + IDU INC SP
         let hi = self.read(self.regs.sp) as u16;
-        self.regs.sp = self.regs.sp.wrapping_add(1); // second INC SP: no IDU glitch
+        let sp1 = self.regs.sp;
+        self.regs.sp = sp1.wrapping_add(1);
+        self.bus.notify_oam_read(sp1); // M3: read only, no IDU glitch
         (hi << 8) | lo
     }
 
@@ -729,11 +736,13 @@ impl<B: GbBus> Sm83<B> {
                 let addr = self.regs.hl();
                 self.regs.a = self.read(addr);
                 self.regs.set_hl(addr.wrapping_add(1));
+                self.bus.notify_idu_with_prior_read(addr); // read + IDU INC HL
             }
             0x3A => {
                 let addr = self.regs.hl();
                 self.regs.a = self.read(addr);
                 self.regs.set_hl(addr.wrapping_sub(1));
+                self.bus.notify_idu_with_prior_read(addr); // read + IDU DEC HL
             }
 
             // --- DAA ----------------------------------------------------
@@ -1874,17 +1883,17 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // IDU glitch notification — LD A, [HLI] / LD A, [HLD]
+    // IDU notification — LD A, [HLI] / LD A, [HLD]
     //
-    // Per spec: LD A, [HLI] triggers corruption TWICE if HL points to OAM:
-    // 1. From the explicit memory read (read_oam applies Read Corruption)
-    // 2. From the IDU inc/dec of HL (notify_idu_glitch applies Write Corruption)
-    // LD [HLI], A is covered by write_oam Write Corruption alone (Write+IDU = single Write per spec).
+    // Per spec (Pan Docs "OAM Corruption Bug"): LD A, [HLI] and LD A, [HLD]
+    // trigger the "Read During Increase/Decrease" pattern when HL points to OAM:
+    // M2 performs a read from [HL] and an IDU inc/dec in the same M-cycle,
+    // which calls notify_idu_with_prior_read (applies apply_oam_read_idu_corruption).
     // -----------------------------------------------------------------------
 
     struct IduReadSpyBus {
         mem: [u8; 0x10000],
-        idu_glitch_addr: Option<u16>,
+        idu_with_prior_read_addr: Option<u16>,
     }
 
     impl IduReadSpyBus {
@@ -1893,7 +1902,7 @@ mod tests {
             mem[..program.len()].copy_from_slice(program);
             Self {
                 mem,
-                idu_glitch_addr: None,
+                idu_with_prior_read_addr: None,
             }
         }
     }
@@ -1905,50 +1914,56 @@ mod tests {
         fn write(&mut self, addr: u16, val: u8) {
             self.mem[addr as usize] = val;
         }
-        fn notify_idu_glitch(&mut self, addr: u16) {
-            self.idu_glitch_addr = Some(addr);
+        fn notify_idu_with_prior_read(&mut self, addr: u16) {
+            self.idu_with_prior_read_addr = Some(addr);
         }
     }
 
     #[test]
-    fn test_ld_a_hli_notifies_idu_glitch_with_hl_address() {
-        // LD A, [HLI] (0x2A): when HL points to OAM, the IDU increment must
-        // call notify_idu_glitch with the pre-increment HL value.
+    fn test_ld_a_hli_notifies_idu_with_prior_read_at_hl() {
+        // LD A, [HLI] (0x2A): when HL points to OAM the read+IDU must trigger
+        // "Read During Increase/Decrease" via notify_idu_with_prior_read with the
+        // pre-increment HL value.
         let mut cpu = Sm83::new(IduReadSpyBus::new(&[0x2A]));
         cpu.regs.set_hl(0xFE10);
         cpu.execute();
         assert_eq!(
-            cpu.bus.idu_glitch_addr,
+            cpu.bus.idu_with_prior_read_addr,
             Some(0xFE10),
-            "LD A, [HLI] must notify_idu_glitch with HL before increment"
+            "LD A, [HLI] must call notify_idu_with_prior_read with HL before increment"
         );
         assert_eq!(cpu.regs.hl(), 0xFE11, "HL must be incremented");
     }
 
     #[test]
-    fn test_ld_a_hld_notifies_idu_glitch_with_hl_address() {
-        // LD A, [HLD] (0x3A): same, but decrement.
+    fn test_ld_a_hld_notifies_idu_with_prior_read_at_hl() {
+        // LD A, [HLD] (0x3A): same contract but with decrement.
         let mut cpu = Sm83::new(IduReadSpyBus::new(&[0x3A]));
         cpu.regs.set_hl(0xFE50);
         cpu.execute();
         assert_eq!(
-            cpu.bus.idu_glitch_addr,
+            cpu.bus.idu_with_prior_read_addr,
             Some(0xFE50),
-            "LD A, [HLD] must notify_idu_glitch with HL before decrement"
+            "LD A, [HLD] must call notify_idu_with_prior_read with HL before decrement"
         );
         assert_eq!(cpu.regs.hl(), 0xFE4F, "HL must be decremented");
     }
 
     // -----------------------------------------------------------------------
-    // IDU glitch notification — PUSH rr / POP rr
+    // IDU notification — PUSH rr / POP rr
     //
-    // PUSH: each DEC SP in push_u16 notifies the IDU glitch.
-    // POP: only the FIRST INC SP in pop_u16 notifies (per spec: 3 events, not 4).
+    // PUSH: each DEC SP fires notify_idu_glitch (write corruption per spec).
+    // POP: per Pan Docs POP triggers only 3 events (not 4):
+    //   M2: read [SP] + IDU INC SP → notify_idu_with_prior_read(sp0) (Read During IDU)
+    //   M3: read [SP+1], no IDU    → notify_oam_read(sp1)            (plain read corruption)
     // -----------------------------------------------------------------------
 
     struct GlitchListBus {
         mem: [u8; 0x10000],
         glitch_addrs: Vec<u16>,
+        idu_with_prior_read_addrs: Vec<u16>,
+        oam_read_addrs: Vec<u16>,
+        oam_write_addrs: Vec<u16>,
     }
 
     impl GlitchListBus {
@@ -1958,6 +1973,9 @@ mod tests {
             Self {
                 mem,
                 glitch_addrs: Vec::new(),
+                idu_with_prior_read_addrs: Vec::new(),
+                oam_read_addrs: Vec::new(),
+                oam_write_addrs: Vec::new(),
             }
         }
     }
@@ -1972,12 +1990,23 @@ mod tests {
         fn notify_idu_glitch(&mut self, addr: u16) {
             self.glitch_addrs.push(addr);
         }
+        fn notify_idu_with_prior_read(&mut self, addr: u16) {
+            self.idu_with_prior_read_addrs.push(addr);
+        }
+        fn notify_oam_read(&mut self, addr: u16) {
+            self.oam_read_addrs.push(addr);
+        }
+        fn notify_oam_write(&mut self, addr: u16) {
+            self.oam_write_addrs.push(addr);
+        }
     }
 
     #[test]
     fn test_push_bc_notifies_idu_glitch_for_both_dec_sp() {
-        // PUSH BC (0xC5): two DEC SP operations in push_u16 must each fire
-        // notify_idu_glitch with the SP value BEFORE decrement.
+        // PUSH BC (0xC5): per Pan Docs "OAM Corruption Bug":
+        //   M2: DEC SP only (IDU-only) → notify_idu_glitch with SP before decrement
+        //   M3: write hi + DEC SP ("Write During Decrease" = single write) → notify_idu_glitch
+        //   M4: write lo only (no IDU) → notify_oam_write with final SP address
         let mut cpu = Sm83::new(GlitchListBus::new(&[0xC5]));
         cpu.regs.set_bc(0x1234);
         cpu.regs.sp = 0xFE20;
@@ -1987,19 +2016,36 @@ mod tests {
             vec![0xFE20, 0xFE1F],
             "PUSH must call notify_idu_glitch for both DEC SP (with pre-decrement values)"
         );
+        assert_eq!(
+            cpu.bus.oam_write_addrs,
+            vec![0xFE1E],
+            "PUSH M4 must call notify_oam_write with the final SP address"
+        );
         assert_eq!(cpu.regs.sp, 0xFE1E, "SP should end up decremented by 2");
     }
 
     #[test]
-    fn test_pop_bc_notifies_idu_glitch_only_for_first_inc_sp() {
-        // POP BC (0xC1): per spec only the FIRST INC SP triggers the IDU glitch.
+    fn test_pop_bc_uses_read_idu_for_first_inc_sp_and_oam_read_for_second() {
+        // POP BC (0xC1): per Pan Docs POP triggers only 3 OAM-corruption events:
+        //   M2: read [SP=0xFE18] + IDU INC SP → notify_idu_with_prior_read(0xFE18)
+        //   M3: read [SP=0xFE19], no IDU       → notify_oam_read(0xFE19)
+        // notify_idu_glitch must NOT be called.
         let mut cpu = Sm83::new(GlitchListBus::new(&[0xC1]));
         cpu.regs.sp = 0xFE18;
         cpu.execute();
         assert_eq!(
-            cpu.bus.glitch_addrs,
+            cpu.bus.idu_with_prior_read_addrs,
             vec![0xFE18],
-            "POP must call notify_idu_glitch only for the first INC SP"
+            "POP M2: must call notify_idu_with_prior_read with pre-increment SP"
+        );
+        assert_eq!(
+            cpu.bus.oam_read_addrs,
+            vec![0xFE19],
+            "POP M3: must call notify_oam_read with the second SP address"
+        );
+        assert!(
+            cpu.bus.glitch_addrs.is_empty(),
+            "POP must NOT call notify_idu_glitch"
         );
         assert_eq!(cpu.regs.sp, 0xFE1A, "SP should end up incremented by 2");
     }
