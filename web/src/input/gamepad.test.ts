@@ -1,0 +1,91 @@
+import { expect, it } from "vitest";
+
+import { mapStandardGamepadState, selectPrimaryGamepad } from "./gamepad";
+
+function makeButtons(pressedIndexes: number[] = []) {
+  const buttons = Array.from({ length: 16 }, () => ({ pressed: false }));
+  for (const index of pressedIndexes) {
+    buttons[index] = { pressed: true };
+  }
+  return buttons;
+}
+
+it("maps standard gamepad buttons to NES inputs", () => {
+  const gamepad = {
+    buttons: makeButtons([0, 1, 8, 9, 12, 14]),
+    axes: [0, 0, 0, 0]
+  };
+
+  const state = mapStandardGamepadState(gamepad as unknown as Gamepad);
+
+  expect(state.a).toBe(true);
+  expect(state.b).toBe(true);
+  expect(state.select).toBe(true);
+  expect(state.start).toBe(true);
+  expect(state.up).toBe(true);
+  expect(state.left).toBe(true);
+  expect(state.down).toBe(false);
+  expect(state.right).toBe(false);
+});
+
+it("maps left stick axes to NES directions", () => {
+  const gamepad = {
+    buttons: makeButtons(),
+    axes: [-1, 1, 0, 0]
+  };
+
+  const state = mapStandardGamepadState(gamepad as unknown as Gamepad);
+
+  expect(state.left).toBe(true);
+  expect(state.down).toBe(true);
+  expect(state.right).toBe(false);
+  expect(state.up).toBe(false);
+});
+
+it("does not trigger directions at exact axis threshold", () => {
+  const gamepad = {
+    buttons: makeButtons(),
+    axes: [0.5, -0.5, 0, 0]
+  };
+
+  const state = mapStandardGamepadState(gamepad as unknown as Gamepad);
+
+  expect(state.right).toBe(false);
+  expect(state.left).toBe(false);
+  expect(state.up).toBe(false);
+  expect(state.down).toBe(false);
+});
+
+it("prefers pressed if both d-pad and axes active", () => {
+  const gamepad = {
+    buttons: makeButtons([12, 13, 14, 15]),
+    axes: [-1, -1, 0, 0]
+  };
+
+  const state = mapStandardGamepadState(gamepad as unknown as Gamepad);
+
+  expect(state.up).toBe(true);
+  expect(state.down).toBe(true);
+  expect(state.left).toBe(true);
+  expect(state.right).toBe(true);
+});
+
+it("selects first connected gamepad", () => {
+  const gamepads = [
+    null,
+    { connected: true, buttons: makeButtons(), axes: [0, 0, 0, 0] },
+    { connected: true, buttons: makeButtons(), axes: [0, 0, 0, 0] }
+  ];
+
+  const selected = selectPrimaryGamepad(gamepads as unknown as (Gamepad | null)[]);
+
+  expect(selected).toBe(gamepads[1]);
+});
+
+it("returns null when no gamepad connected", () => {
+  const gamepads = [null, { connected: false }, undefined];
+
+  const selected = selectPrimaryGamepad(gamepads as unknown as (Gamepad | null)[]);
+
+  expect(selected).toBe(null);
+});

@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"]
+  },
+  "include": [
+    "web/src/**/*.ts",
+    "web/types/**/*.d.ts",
+    "vite.config.ts",
+    "web/integration/**/*.ts",
+    "playwright.config.ts"
+  ]
+}
