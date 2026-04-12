@@ -893,23 +893,24 @@ mod tests {
     }
 
     #[test]
-    fn test_apu_registers_return_ff_when_powered_off() {
-        // When the APU is powered off, NR10–NR51 reads must return $FF.
+    fn test_apu_registers_return_cleared_values_when_powered_off() {
+        // When the APU is powered off, NR10–NR51 return their cleared values
+        // (writes are ignored; registers were cleared on power-off).
         let mut bus = make_bus();
         // APU starts powered off. Write a non-zero value to NR51 — should be ignored.
         bus.write(0xFF25, 0xAB);
-        // Read NR51: must return $FF because APU is off.
+        // Read NR51: must return 0x00 (cleared value) because APU is off.
         assert_eq!(
             bus.read(0xFF25),
-            0xFF,
-            "NR51 must read $FF when APU is powered off"
+            0x00,
+            "NR51 must read 0x00 (cleared) when APU is powered off"
         );
         // Same for NR50.
         bus.write(0xFF24, 0x77);
         assert_eq!(
             bus.read(0xFF24),
-            0xFF,
-            "NR50 must read $FF when APU is powered off"
+            0x00,
+            "NR50 must read 0x00 (cleared) when APU is powered off"
         );
     }
 
