@@ -305,13 +305,14 @@ All Game Boy (DMG) hardware lives under `src/gb/`. The module is structured arou
 
 ### `web/` — Browser Frontend
 
-The web frontend is bundled with **Vite** (config at `vite.config.js`, root: `web/`, build output: `dist/`). JavaScript modules are organized into feature folders under `web/src/`.
+The web frontend is bundled with **Vite** (config at `vite.config.ts`, root: `web/`, build output: `dist/`). Styled with **Tailwind CSS v4** and **DaisyUI v5** (night theme with neon accent colors). Uses a DaisyUI drawer layout with a sidebar for ROM/emulation controls and a top bar for screen controls. JavaScript modules are organized into feature folders under `web/src/`.
 
 | Directory/File | Description |
 | -------------- | ------------- |
-| `web/index.html` | Entry point — canvas element, ROM file picker, keyboard shortcuts overlay. Loads `./src/app.js` as the main module. |
-| `web/styles.css` | Application styling. |
-| `web/src/app.js` | Application bootstrapper — initializes the WASM module, sets up the render loop, and coordinates all subsystems. |
+| `web/index.html` | Entry point — DaisyUI drawer layout with sidebar, top bar, canvas area, footer, and autorun modal dialog. Loads `./src/app.ts` as the main module. |
+| `web/main.css` | Tailwind CSS entry point with DaisyUI plugin config, neon theme overrides, and custom component styles. |
+| `web/debugger.css` | Debugger panel styling (green-on-black terminal aesthetic). |
+| `web/src/app.ts` | Application bootstrapper — initializes the WASM module, sets up the render loop, and coordinates all subsystems. |
 | `web/src/audio/` | Audio resampling (`audio_resampler.js`), frame timing (`frame_limiter.js`, `frame_plan.js`). |
 | `web/src/input/` | Gamepad API (`gamepad.js`), keyboard/gamepad routing (`input_routing.js`), mouse input (`mouse_input.js`), pointer lock (`pointer_lock.js`). |
 | `web/src/display/` | Canvas sizing (`canvas_size.js`), zoom controls (`zoom_controls.js`), cursor visibility, crosshair overlay. |

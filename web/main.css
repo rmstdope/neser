@@ -18,6 +18,16 @@ body {
   font-family: "Inter", system-ui, -apple-system, sans-serif;
 }
 
+/* ── Neon glow effects ───────────────────────────────────── */
+
+.btn:hover:not(:disabled) {
+  box-shadow: 0 0 12px #00f0ff40;
+}
+
+.btn:active:not(:disabled) {
+  box-shadow: 0 0 18px #00f0ff60;
+}
+
 /* ── Screen / canvas ─────────────────────────────────────── */
 
 .screen-wrap {
@@ -29,6 +39,7 @@ body {
   background: #0a0b0f;
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 0 24px #00f0ff18;
 }
 
 .screen-wrap:fullscreen {
@@ -54,18 +65,19 @@ canvas {
   color: #9bc2ff;
 }
 
-#controls {
-  font-size: 0.9rem;
+#controls,
+#shortcut-reference {
   color: #c4c4c4;
   text-align: center;
   line-height: 1.4;
 }
 
+#controls {
+  font-size: 0.9rem;
+}
+
 #shortcut-reference {
   font-size: 0.85rem;
-  color: #c4c4c4;
-  text-align: center;
-  line-height: 1.4;
 }
 
 /* ── Overlays ────────────────────────────────────────────── */
