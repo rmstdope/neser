@@ -82,13 +82,12 @@ it("createToastOverlay showMany preserves order", () => {
     ]);
 
     expect(
-        container.children.map((node) => node.textContent),
-        [
-            "Gamepad found: using 1 gamepad",
-            "Cartridge loaded: mario.nes",
-            "Emulator timing: PAL"
-        ]
-    );
+        container.children.map((node) => node.textContent)
+    ).toEqual([
+        "Gamepad found: using 1 gamepad",
+        "Cartridge loaded: mario.nes",
+        "Emulator timing: PAL"
+    ]);
 });
 
 it("drainNesToasts forwards drained messages to overlay", () => {

@@ -3,7 +3,7 @@
 ## Prerequisites
 - Rust toolchain with `wasm32-unknown-unknown` target (`rustup target add wasm32-unknown-unknown`)
 - `wasm-bindgen-cli` (or `wasm-pack`) installed, or use `cargo install wasm-bindgen-cli`
-- Node.js 18+ with npm
+- Node.js 20+ with npm
 
 ## Build
 ```bash
