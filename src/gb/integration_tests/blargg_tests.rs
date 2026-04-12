@@ -372,7 +372,6 @@ fn test_oam_bug_4_scanline_timing() {
 }
 
 #[test]
-#[ignore = "failing: OAM corruption not emulated — tracked in #1993"]
 fn test_oam_bug_5_timing_bug() {
     let mut gb = load_gb_rom("roms/gb/automated_tests/oam_bug/rom_singles/5-timing_bug.gb");
     let output = run_blargg_rom_cart_ram(&mut gb);
@@ -404,7 +403,6 @@ fn test_oam_bug_7_timing_effect() {
 }
 
 #[test]
-#[ignore = "failing: OAM corruption not emulated — tracked in #1993"]
 fn test_oam_bug_8_instr_effect() {
     let mut gb = load_gb_rom("roms/gb/automated_tests/oam_bug/rom_singles/8-instr_effect.gb");
     let output = run_blargg_rom_cart_ram(&mut gb);
