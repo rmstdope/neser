@@ -108,17 +108,17 @@ impl Channel1 {
         }
     }
 
+    fn sweep_timer_reload(&self) -> u8 {
+        if self.sweep_period > 0 { self.sweep_period } else { 8 }
+    }
+
     /// Clock frequency sweep at 128 Hz (Frame Sequencer steps 2/6).
     pub fn clock_sweep(&mut self) {
         if self.sweep_timer > 0 {
             self.sweep_timer -= 1;
         }
         if self.sweep_timer == 0 {
-            self.sweep_timer = if self.sweep_period > 0 {
-                self.sweep_period
-            } else {
-                8
-            };
+            self.sweep_timer = self.sweep_timer_reload();
             if self.sweep_enabled && self.sweep_period > 0 {
                 let new_freq = self.compute_swept_frequency();
                 if new_freq <= 2047 && self.sweep_shift > 0 {
@@ -193,7 +193,7 @@ impl Channel1 {
     /// NR10 read: bits 6-0 meaningful, bit 7 reads as 1.
     pub fn read_nr10(&self) -> u8 {
         0x80 | ((self.sweep_period & 0x07) << 4)
-            | (if self.sweep_negate { 0x08 } else { 0x00 })
+            | (u8::from(self.sweep_negate) << 3)
             | (self.sweep_shift & 0x07)
     }
 
@@ -205,13 +205,13 @@ impl Channel1 {
     /// NR12 read: all bits readable.
     pub fn read_nr12(&self) -> u8 {
         ((self.init_volume & 0x0F) << 4)
-            | (if self.env_add { 0x08 } else { 0x00 })
+            | (u8::from(self.env_add) << 3)
             | (self.env_period & 0x07)
     }
 
     /// NR14 read: only length-enable bit is readable; others read as 1.
     pub fn read_nr14(&self) -> u8 {
-        0xBF | (if self.length_en { 0x40 } else { 0x00 })
+        0xBF | (u8::from(self.length_en) << 6)
     }
 
     // ── Register writes ───────────────────────────────────────────────────
@@ -269,11 +269,7 @@ impl Channel1 {
         self.volume = self.init_volume;
         self.env_timer = self.env_period;
         self.sweep_shadow = self.freq;
-        self.sweep_timer = if self.sweep_period > 0 {
-            self.sweep_period
-        } else {
-            8
-        };
+        self.sweep_timer = self.sweep_timer_reload();
         self.sweep_enabled = self.sweep_period > 0 || self.sweep_shift > 0;
         // Trigger-time overflow check required by hardware even when sweep is otherwise idle.
         if self.sweep_shift > 0 {

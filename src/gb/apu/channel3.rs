@@ -110,7 +110,7 @@ impl Channel3 {
     // ── Register reads ────────────────────────────────────────────────────
 
     pub fn read_nr30(&self) -> u8 {
-        0x7F | (if self.dac_on { 0x80 } else { 0x00 })
+        0x7F | (u8::from(self.dac_on) << 7)
     }
 
     pub fn read_nr32(&self) -> u8 {
@@ -118,7 +118,7 @@ impl Channel3 {
     }
 
     pub fn read_nr34(&self) -> u8 {
-        0xBF | (if self.length_en { 0x40 } else { 0x00 })
+        0xBF | (u8::from(self.length_en) << 6)
     }
 
     // ── Register writes ───────────────────────────────────────────────────
