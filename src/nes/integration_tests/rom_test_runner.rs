@@ -733,7 +733,7 @@ pub(crate) mod tests {
     /// ```ignore
     /// setup_rom_crc_test_with_input!(
     ///     test_my_rom,
-    ///     "roms/automated_tests/my_rom.nes",
+    ///     "roms/nes/automated_tests/my_rom.nes",
     ///     [
     ///         (10, Button::Start, true),
     ///         (12, Button::Start, false),

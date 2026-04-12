@@ -14,17 +14,17 @@ mod tests {
     // Verified output: PRG banks readable as hex digits, nametable mirroring pattern
     setup_rom_crc_test!(
         test_bntest_h,
-        "roms/automated_tests/bntest/bntest_h.nes",
+        "roms/nes/automated_tests/bntest/bntest_h.nes",
         [(300, 3291074823)]
     );
     setup_rom_crc_test!(
         test_bntest_v,
-        "roms/automated_tests/bntest/bntest_v.nes",
+        "roms/nes/automated_tests/bntest/bntest_v.nes",
         [(300, 4160665903)]
     );
     setup_rom_crc_test!(
         test_bntest_aorom,
-        "roms/automated_tests/bntest/bntest_aorom.nes",
+        "roms/nes/automated_tests/bntest/bntest_aorom.nes",
         [(300, 1193424937)]
     );
 
@@ -32,12 +32,12 @@ mod tests {
     // CRCs verified against expected screen output at frame 120.
     setup_rom_crc_test!(
         test_fme7acktest,
-        "roms/automated_tests/fme7acktest-r1/fme7acktest.nes",
+        "roms/nes/automated_tests/fme7acktest-r1/fme7acktest.nes",
         [(120, 4233388596)]
     );
     setup_rom_crc_test!(
         test_fme7ramtest,
-        "roms/automated_tests/fme7ramtest-r1/fme7ramtest.nes",
+        "roms/nes/automated_tests/fme7ramtest-r1/fme7ramtest.nes",
         [(120, 3645558466)]
     );
 
@@ -132,193 +132,193 @@ mod tests {
     // Mapper 0 (NROM)
     setup_holymapperel_test!(
         test_holymapperel_m0_p32k_c8k_v,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M0_P32K_C8K_V.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M0_P32K_C8K_V.nes"
     );
     setup_holymapperel_test!(
         test_holymapperel_m0_p32k_cr32k_v,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M0_P32K_CR32K_V.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M0_P32K_CR32K_V.nes"
     );
     setup_holymapperel_test!(
         test_holymapperel_m0_p32k_cr8k_v,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M0_P32K_CR8K_V.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M0_P32K_CR8K_V.nes"
     );
 
     // Mapper 1 (SxROM / MMC1)
     setup_holymapperel_test!(
         test_holymapperel_m1_p128k,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M1_P128K.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M1_P128K.nes"
     );
     setup_holymapperel_test!(
         test_holymapperel_m1_p128k_c128k,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M1_P128K_C128K.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M1_P128K_C128K.nes"
     );
     setup_holymapperel_test!(
         test_holymapperel_m1_p128k_c128k_s8k,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M1_P128K_C128K_S8K.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M1_P128K_C128K_S8K.nes"
     );
     setup_holymapperel_test!(
         test_holymapperel_m1_p128k_c128k_w8k,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M1_P128K_C128K_W8K.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M1_P128K_C128K_W8K.nes"
     );
     setup_holymapperel_test!(
         test_holymapperel_m1_p128k_c32k,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M1_P128K_C32K.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M1_P128K_C32K.nes"
     );
     setup_holymapperel_test!(
         test_holymapperel_m1_p128k_c32k_s8k,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M1_P128K_C32K_S8K.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M1_P128K_C32K_S8K.nes"
     );
     setup_holymapperel_test!(
         test_holymapperel_m1_p128k_c32k_w8k,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M1_P128K_C32K_W8K.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M1_P128K_C32K_W8K.nes"
     );
     setup_holymapperel_test!(
         test_holymapperel_m1_p128k_cr8k,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M1_P128K_CR8K.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M1_P128K_CR8K.nes"
     );
     setup_holymapperel_test!(
         test_holymapperel_m1_p512k_cr8k_s32k,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M1_P512K_CR8K_S32K.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M1_P512K_CR8K_S32K.nes"
     );
     setup_holymapperel_test!(
         test_holymapperel_m1_p512k_cr8k_s8k,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M1_P512K_CR8K_S8K.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M1_P512K_CR8K_S8K.nes"
     );
     setup_holymapperel_test!(
         test_holymapperel_m1_p512k_s32k,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M1_P512K_S32K.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M1_P512K_S32K.nes"
     );
     setup_holymapperel_test!(
         test_holymapperel_m1_p512k_s8k,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M1_P512K_S8K.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M1_P512K_S8K.nes"
     );
 
     // Mapper 2 (UxROM)
     setup_holymapperel_test!(
         test_holymapperel_m2_p128k_cr8k_v,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M2_P128K_CR8K_V.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M2_P128K_CR8K_V.nes"
     );
     setup_holymapperel_test!(
         test_holymapperel_m2_p128k_v,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M2_P128K_V.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M2_P128K_V.nes"
     );
 
     // Mapper 3 (CNROM)
     setup_holymapperel_test!(
         test_holymapperel_m3_p32k_c32k_h,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M3_P32K_C32K_H.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M3_P32K_C32K_H.nes"
     );
 
     // Mapper 4 (TxROM / MMC3)
     setup_holymapperel_test!(
         test_holymapperel_m4_p128k,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M4_P128K.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M4_P128K.nes"
     );
     setup_holymapperel_test!(
         test_holymapperel_m4_p128k_cr32k,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M4_P128K_CR32K.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M4_P128K_CR32K.nes"
     );
     setup_holymapperel_test!(
         test_holymapperel_m4_p128k_cr8k,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M4_P128K_CR8K.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M4_P128K_CR8K.nes"
     );
     setup_holymapperel_test!(
         test_holymapperel_m4_p256k_c256k,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M4_P256K_C256K.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M4_P256K_C256K.nes"
     );
 
     // Mapper 7 (AxROM)
     setup_holymapperel_test!(
         test_holymapperel_m7_p128k,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M7_P128K.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M7_P128K.nes"
     );
     setup_holymapperel_test!(
         test_holymapperel_m7_p128k_cr8k,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M7_P128K_CR8K.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M7_P128K_CR8K.nes"
     );
 
     // Mapper 9 (PxROM / MMC2)
     setup_holymapperel_test!(
         test_holymapperel_m9_p128k_c64k,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M9_P128K_C64K.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M9_P128K_C64K.nes"
     );
 
     // Mapper 10 (FxROM / MMC4)
     setup_holymapperel_test!(
         test_holymapperel_m10_p128k_c64k_s8k,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M10_P128K_C64K_S8K.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M10_P128K_C64K_S8K.nes"
     );
     setup_holymapperel_test!(
         test_holymapperel_m10_p128k_c64k_w8k,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M10_P128K_C64K_W8K.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M10_P128K_C64K_W8K.nes"
     );
 
     // Mapper 11 (Color Dreams)
     setup_holymapperel_test!(
         test_holymapperel_m11_p64k_c64k_v,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M11_P64K_C64K_V.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M11_P64K_C64K_V.nes"
     );
     setup_holymapperel_test!(
         test_holymapperel_m11_p64k_cr32k_v,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M11_P64K_CR32K_V.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M11_P64K_CR32K_V.nes"
     );
 
     // Mapper 28 (Action 53 / INL-ROM)
     setup_holymapperel_test!(
         test_holymapperel_m28_p512k,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M28_P512K.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M28_P512K.nes"
     );
     setup_holymapperel_test!(
         test_holymapperel_m28_p512k_cr32k,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M28_P512K_CR32K.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M28_P512K_CR32K.nes"
     );
 
     // Mapper 34 (BNROM)
     setup_holymapperel_test!(
         test_holymapperel_m34_p128k_cr8k_h,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M34_P128K_CR8K_H.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M34_P128K_CR8K_H.nes"
     );
     setup_holymapperel_test!(
         test_holymapperel_m34_p128k_h,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M34_P128K_H.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M34_P128K_H.nes"
     );
 
     // Mapper 66 (GxROM)
     setup_holymapperel_test!(
         test_holymapperel_m66_p64k_c16k_v,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M66_P64K_C16K_V.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M66_P64K_C16K_V.nes"
     );
 
     // Mapper 69 (FME-7 / Sunsoft)
     setup_holymapperel_test!(
         test_holymapperel_m69_p128k_c64k_s8k,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M69_P128K_C64K_S8K.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M69_P128K_C64K_S8K.nes"
     );
     setup_holymapperel_test!(
         test_holymapperel_m69_p128k_c64k_w8k,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M69_P128K_C64K_W8K.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M69_P128K_C64K_W8K.nes"
     );
 
     // Mapper 78, Submapper 3 (IF-12 / Holy Diver)
     setup_holymapperel_test!(
         test_holymapperel_m78_3_p128k_c64k,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M78.3_P128K_C64K.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M78.3_P128K_C64K.nes"
     );
 
     // Mapper 118 (TxSROM)
     setup_holymapperel_test!(
         test_holymapperel_m118_p128k_c64k,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M118_P128K_C64K.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M118_P128K_C64K.nes"
     );
 
     // Mapper 180 (UNROM variant / Crazy Climber)
     setup_holymapperel_test!(
         test_holymapperel_m180_p128k_cr8k_h,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M180_P128K_CR8K_H.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M180_P128K_CR8K_H.nes"
     );
     setup_holymapperel_test!(
         test_holymapperel_m180_p128k_h,
-        "roms/automated_tests/holy-mapperel-bin-0.02/testroms/M180_P128K_H.nes"
+        "roms/nes/automated_tests/holy-mapperel-bin-0.02/testroms/M180_P128K_H.nes"
     );
 
     // Homebrew Mappers
@@ -326,37 +326,37 @@ mod tests {
     // Mapper 31 (NSF / homebrew)
     setup_rom_console_test!(
         test_homebrew_31_test_16,
-        "roms/automated_tests/31_test_roms/31_test_16.nes",
+        "roms/nes/automated_tests/31_test_roms/31_test_16.nes",
         "PASS"
     );
     setup_rom_console_test!(
         test_homebrew_31_test_32,
-        "roms/automated_tests/31_test_roms/31_test_32.nes",
+        "roms/nes/automated_tests/31_test_roms/31_test_32.nes",
         "PASS"
     );
     setup_rom_console_test!(
         test_homebrew_31_test_64,
-        "roms/automated_tests/31_test_roms/31_test_64.nes",
+        "roms/nes/automated_tests/31_test_roms/31_test_64.nes",
         "PASS"
     );
     setup_rom_console_test!(
         test_homebrew_31_test_128,
-        "roms/automated_tests/31_test_roms/31_test_128.nes",
+        "roms/nes/automated_tests/31_test_roms/31_test_128.nes",
         "PASS"
     );
     setup_rom_console_test!(
         test_homebrew_31_test_256,
-        "roms/automated_tests/31_test_roms/31_test_256.nes",
+        "roms/nes/automated_tests/31_test_roms/31_test_256.nes",
         "PASS"
     );
     setup_rom_console_test!(
         test_homebrew_31_test_512,
-        "roms/automated_tests/31_test_roms/31_test_512.nes",
+        "roms/nes/automated_tests/31_test_roms/31_test_512.nes",
         "PASS"
     );
     setup_rom_console_test!(
         test_homebrew_31_test_1024,
-        "roms/automated_tests/31_test_roms/31_test_1024.nes",
+        "roms/nes/automated_tests/31_test_roms/31_test_1024.nes",
         "PASS"
     );
 
@@ -366,7 +366,7 @@ mod tests {
     // (same as Holy Mapperel), so we reuse the same tile decoder.
     #[test]
     fn test_homebrew_test28() {
-        let rom_path = "roms/automated_tests/test28-0.04/test28.nes";
+        let rom_path = "roms/nes/automated_tests/test28-0.04/test28.nes";
         let rom_data = fs::read(rom_path).expect("ROM should load");
         let cartridge =
             Cartridge::load_from_file(&rom_data, rom_path, None).expect("ROM should parse");
@@ -418,27 +418,27 @@ mod tests {
     // MMC3
     setup_rom_test!(
         test_mmc3_test_2_1_clocking,
-        "roms/automated_tests/mmc3_test_2/rom_singles/1-clocking.nes"
+        "roms/nes/automated_tests/mmc3_test_2/rom_singles/1-clocking.nes"
     );
     setup_rom_test!(
         test_mmc3_test_2_2_details,
-        "roms/automated_tests/mmc3_test_2/rom_singles/2-details.nes"
+        "roms/nes/automated_tests/mmc3_test_2/rom_singles/2-details.nes"
     );
     setup_rom_test!(
         test_mmc3_test_2_3_a12_clocking,
-        "roms/automated_tests/mmc3_test_2/rom_singles/3-A12_clocking.nes"
+        "roms/nes/automated_tests/mmc3_test_2/rom_singles/3-A12_clocking.nes"
     );
     setup_rom_test!(
         test_mmc3_test_2_4_scanline_timing,
-        "roms/automated_tests/mmc3_test_2/rom_singles/4-scanline_timing.nes"
+        "roms/nes/automated_tests/mmc3_test_2/rom_singles/4-scanline_timing.nes"
     );
     setup_rom_test!(
         test_mmc3_test_2_5_mmc3,
-        "roms/automated_tests/mmc3_test_2/rom_singles/5-MMC3.nes"
+        "roms/nes/automated_tests/mmc3_test_2/rom_singles/5-MMC3.nes"
     );
     setup_rom_test!(
         test_mmc3_test_2_6_mmc3_alt,
-        "roms/automated_tests/mmc3_test_2/rom_singles/6-MMC3_alt.nes"
+        "roms/nes/automated_tests/mmc3_test_2/rom_singles/6-MMC3_alt.nes"
     );
 
     // MMC3 big CHR-RAM test (mmc3bigchrram)
@@ -446,7 +446,7 @@ mod tests {
     // Instead we verify the final screen via frame CRC after pressing START to begin tests.
     setup_rom_crc_test_with_input!(
         test_mmc3bigchrram,
-        "roms/automated_tests/mmc3bigchrram-0.01/mmc3bigchrram.nes",
+        "roms/nes/automated_tests/mmc3bigchrram-0.01/mmc3bigchrram.nes",
         [(10, Button::Start, true), (12, Button::Start, false),],
         [(612, 0x18B2C3DA)]
     );
@@ -460,7 +460,7 @@ mod tests {
 
     setup_rom_crc_test!(
         test_mmc5_exram_crc_sequence,
-        "roms/automated_tests/exram/mmc5exram.nes",
+        "roms/nes/automated_tests/exram/mmc5exram.nes",
         [
             (60, 0x90428465u32),
             (120, 0x4E2BA407u32),
@@ -477,7 +477,7 @@ mod tests {
     // OBJ pattern table (A), BG pattern table (B), and EXRAM mode (Select).
     setup_rom_crc_test_with_input!(
         test_mmc5test_v2_chr_banking,
-        "roms/automated_tests/mmc5test_v2/mmc5test.nes",
+        "roms/nes/automated_tests/mmc5test_v2/mmc5test.nes",
         [
             // Bank order 0 → 1
             (62, Button::Right, true),
@@ -631,12 +631,12 @@ mod tests {
 
     setup_rom_console_test!(
         test_vrc6test24,
-        "roms/automated_tests/vrc6test/vrc6test24.nes",
+        "roms/nes/automated_tests/vrc6test/vrc6test24.nes",
         "ALL TESTS PASSED!"
     );
     setup_rom_console_test!(
         test_vrc6test26,
-        "roms/automated_tests/vrc6test/vrc6test26.nes",
+        "roms/nes/automated_tests/vrc6test/vrc6test26.nes",
         "ALL TESTS PASSED!"
     );
 
@@ -654,11 +654,11 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m000_0_prg_ram,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m000.0_prg_ram.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m000.0_prg_ram.nes"
     );
     setup_rom_test!(
         test_mv_m000_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m000.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m000.0.nes"
     );
 
     // ================================================================
@@ -667,23 +667,23 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m001_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m001.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m001.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m001_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m001.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m001.0_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m001_0_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m001.0_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m001.0_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m001_0_prg_ram,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m001.0_prg_ram.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m001.0_prg_ram.nes"
     );
     setup_rom_test!(
         test_mv_m001_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m001.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m001.0.nes"
     );
 
     // ================================================================
@@ -692,11 +692,11 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m001_5_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m001.5_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m001.5_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m001_5_combined,
-        "roms/automated_tests/mapper_verification/bin/m001.5.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m001.5.nes"
     );
 
     // ================================================================
@@ -705,15 +705,15 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m002_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m002.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m002.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m002_0_bus_conflicts,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m002.0_bus_conflicts.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m002.0_bus_conflicts.nes"
     );
     setup_rom_test!(
         test_mv_m002_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m002.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m002.0.nes"
     );
 
     // ================================================================
@@ -722,11 +722,11 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m002_2_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m002.2_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m002.2_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m002_2_combined,
-        "roms/automated_tests/mapper_verification/bin/m002.2.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m002.2.nes"
     );
 
     // ================================================================
@@ -735,15 +735,15 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m003_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m003.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m003.0_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m003_0_bus_conflicts,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m003.0_bus_conflicts.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m003.0_bus_conflicts.nes"
     );
     setup_rom_test!(
         test_mv_m003_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m003.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m003.0.nes"
     );
 
     // ================================================================
@@ -752,11 +752,11 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m003_1_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m003.1_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m003.1_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m003_1_combined,
-        "roms/automated_tests/mapper_verification/bin/m003.1.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m003.1.nes"
     );
 
     // ================================================================
@@ -765,31 +765,31 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m004_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m004.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m004.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m004_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m004.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m004.0_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m004_0_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m004.0_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m004.0_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m004_0_irq,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m004.0_irq.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m004.0_irq.nes"
     );
     setup_rom_test!(
         test_mv_m004_0_prg_ram,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m004.0_prg_ram.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m004.0_prg_ram.nes"
     );
     setup_rom_test!(
         test_mv_m004_0_write_protect,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m004.0_write_protect.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m004.0_write_protect.nes"
     );
     setup_rom_test!(
         test_mv_m004_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m004.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m004.0.nes"
     );
 
     // ================================================================
@@ -798,15 +798,15 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m004_1_irq,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m004.1_irq.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m004.1_irq.nes"
     );
     setup_rom_test!(
         test_mv_m004_1_write_protect,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m004.1_write_protect.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m004.1_write_protect.nes"
     );
     setup_rom_test!(
         test_mv_m004_1_combined,
-        "roms/automated_tests/mapper_verification/bin/m004.1.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m004.1.nes"
     );
 
     // ================================================================
@@ -815,59 +815,59 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m005_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m005.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m005.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m005_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m005.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m005.0_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m005_0_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m005.0_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m005.0_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m005_0_irq,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m005.0_irq.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m005.0_irq.nes"
     );
     setup_rom_test!(
         test_mv_m005_0_prg_ram,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m005.0_prg_ram.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m005.0_prg_ram.nes"
     );
     setup_rom_test!(
         test_mv_m005_0_write_protect,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m005.0_write_protect.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m005.0_write_protect.nes"
     );
     setup_rom_test!(
         test_mv_m005_0_multiplier,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m005.0_multiplier.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m005.0_multiplier.nes"
     );
     setup_rom_test!(
         test_mv_m005_0_exram,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m005.0_exram.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m005.0_exram.nes"
     );
     setup_rom_test!(
         test_mv_m005_0_mmc5_chr,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m005.0_mmc5_chr.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m005.0_mmc5_chr.nes"
     );
     setup_rom_test!(
         test_mv_m005_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m005.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m005.0.nes"
     );
 
     // MMC5 rendering-dependent verification (CRC-based)
     setup_rom_crc_test!(
         test_mv_m005_0_mmc5_ext_attr,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m005.0_mmc5_ext_attr.nes",
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m005.0_mmc5_ext_attr.nes",
         [(60, 38994255u32)]
     );
     setup_rom_crc_test!(
         test_mv_m005_0_mmc5_split,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m005.0_mmc5_split.nes",
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m005.0_mmc5_split.nes",
         [(60, 3442676414u32)]
     );
     setup_rom_crc_test!(
         test_mv_m005_0_mmc5_sprite_chr,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m005.0_mmc5_sprite_chr.nes",
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m005.0_mmc5_sprite_chr.nes",
         [(60, 2467964881u32)]
     );
 
@@ -877,31 +877,31 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m006_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m006.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m006.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m006_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m006.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m006.0_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m006_0_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m006.0_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m006.0_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m006_0_irq,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m006.0_irq.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m006.0_irq.nes"
     );
     setup_rom_test!(
         test_mv_m006_0_prg_ram,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m006.0_prg_ram.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m006.0_prg_ram.nes"
     );
     setup_rom_test!(
         test_mv_m006_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m006.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m006.0.nes"
     );
     setup_rom_test!(
         test_mv_m006_0_modes,
-        "roms/automated_tests/mapper_verification/bin/m006.0_modes.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m006.0_modes.nes"
     );
 
     // ================================================================
@@ -910,15 +910,15 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m007_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m007.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m007.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m007_0_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m007.0_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m007.0_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m007_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m007.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m007.0.nes"
     );
 
     // ================================================================
@@ -927,15 +927,15 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m007_1_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m007.1_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m007.1_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m007_1_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m007.1_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m007.1_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m007_1_combined,
-        "roms/automated_tests/mapper_verification/bin/m007.1.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m007.1.nes"
     );
 
     // ================================================================
@@ -944,27 +944,27 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m008_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m008.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m008.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m008_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m008.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m008.0_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m008_0_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m008.0_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m008.0_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m008_0_irq,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m008.0_irq.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m008.0_irq.nes"
     );
     setup_rom_test!(
         test_mv_m008_0_prg_ram,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m008.0_prg_ram.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m008.0_prg_ram.nes"
     );
     setup_rom_test!(
         test_mv_m008_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m008.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m008.0.nes"
     );
 
     // ================================================================
@@ -973,19 +973,19 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m009_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m009.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m009.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m009_0_chr_latch,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m009.0_chr_latch.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m009.0_chr_latch.nes"
     );
     setup_rom_test!(
         test_mv_m009_0_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m009.0_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m009.0_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m009_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m009.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m009.0.nes"
     );
 
     // ================================================================
@@ -994,23 +994,23 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m010_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m010.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m010.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m010_0_chr_latch,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m010.0_chr_latch.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m010.0_chr_latch.nes"
     );
     setup_rom_test!(
         test_mv_m010_0_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m010.0_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m010.0_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m010_0_prg_ram,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m010.0_prg_ram.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m010.0_prg_ram.nes"
     );
     setup_rom_test!(
         test_mv_m010_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m010.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m010.0.nes"
     );
 
     // ================================================================
@@ -1019,15 +1019,15 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m011_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m011.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m011.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m011_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m011.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m011.0_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m011_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m011.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m011.0.nes"
     );
 
     // ================================================================
@@ -1036,15 +1036,15 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m011_1_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m011.1_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m011.1_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m011_1_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m011.1_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m011.1_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m011_1_combined,
-        "roms/automated_tests/mapper_verification/bin/m011.1.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m011.1.nes"
     );
 
     // ================================================================
@@ -1053,31 +1053,31 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m012_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m012.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m012.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m012_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m012.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m012.0_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m012_0_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m012.0_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m012.0_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m012_0_irq,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m012.0_irq.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m012.0_irq.nes"
     );
     setup_rom_test!(
         test_mv_m012_0_prg_ram,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m012.0_prg_ram.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m012.0_prg_ram.nes"
     );
     setup_rom_test!(
         test_mv_m012_0_write_protect,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m012.0_write_protect.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m012.0_write_protect.nes"
     );
     setup_rom_test!(
         test_mv_m012_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m012.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m012.0.nes"
     );
 
     // ================================================================
@@ -1086,11 +1086,11 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m013_0_chr_ram_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m013.0_chr_ram_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m013.0_chr_ram_banking.nes"
     );
     setup_rom_test!(
         test_mv_m013_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m013.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m013.0.nes"
     );
 
     // ================================================================
@@ -1099,35 +1099,35 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m014_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m014.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m014.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m014_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m014.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m014.0_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m014_0_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m014.0_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m014.0_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m014_0_irq,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m014.0_irq.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m014.0_irq.nes"
     );
     setup_rom_test!(
         test_mv_m014_0_prg_ram,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m014.0_prg_ram.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m014.0_prg_ram.nes"
     );
     setup_rom_test!(
         test_mv_m014_0_write_protect,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m014.0_write_protect.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m014.0_write_protect.nes"
     );
     setup_rom_test!(
         test_mv_m014_0_vrc2,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m014.0_vrc2.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m014.0_vrc2.nes"
     );
     setup_rom_test!(
         test_mv_m014_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m014.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m014.0.nes"
     );
 
     // ================================================================
@@ -1136,31 +1136,31 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m015_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m015.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m015.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m015_0_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m015.0_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m015.0_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m015_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m015.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m015.0.nes"
     );
     setup_rom_test!(
         test_mv_m015_0_mode0,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m015.0_mode0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m015.0_mode0.nes"
     );
     setup_rom_test!(
         test_mv_m015_0_mode2,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m015.0_mode2.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m015.0_mode2.nes"
     );
     setup_rom_test!(
         test_mv_m015_0_mode3,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m015.0_mode3.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m015.0_mode3.nes"
     );
     setup_rom_test!(
         test_mv_m015_0_modes_combined,
-        "roms/automated_tests/mapper_verification/bin/m015.0_modes.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m015.0_modes.nes"
     );
 
     // ================================================================
@@ -1169,23 +1169,23 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m016_4_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m016.4_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m016.4_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m016_4_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m016.4_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m016.4_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m016_4_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m016.4_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m016.4_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m016_4_irq,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m016.4_irq.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m016.4_irq.nes"
     );
     setup_rom_test!(
         test_mv_m016_4_combined,
-        "roms/automated_tests/mapper_verification/bin/m016.4.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m016.4.nes"
     );
 
     // ================================================================
@@ -1195,23 +1195,23 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m016_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m016.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m016.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m016_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m016.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m016.0_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m016_0_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m016.0_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m016.0_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m016_0_irq,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m016.0_irq.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m016.0_irq.nes"
     );
     setup_rom_test!(
         test_mv_m016_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m016.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m016.0.nes"
     );
 
     // ================================================================
@@ -1220,23 +1220,23 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m016_5_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m016.5_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m016.5_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m016_5_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m016.5_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m016.5_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m016_5_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m016.5_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m016.5_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m016_5_irq,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m016.5_irq.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m016.5_irq.nes"
     );
     setup_rom_test!(
         test_mv_m016_5_combined,
-        "roms/automated_tests/mapper_verification/bin/m016.5.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m016.5.nes"
     );
 
     // ================================================================
@@ -1245,27 +1245,27 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m018_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m018.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m018.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m018_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m018.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m018.0_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m018_0_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m018.0_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m018.0_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m018_0_irq,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m018.0_irq.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m018.0_irq.nes"
     );
     setup_rom_test!(
         test_mv_m018_0_prg_ram,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m018.0_prg_ram.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m018.0_prg_ram.nes"
     );
     setup_rom_test!(
         test_mv_m018_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m018.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m018.0.nes"
     );
 
     // ================================================================
@@ -1274,35 +1274,35 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m019_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m019.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m019.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m019_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m019.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m019.0_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m019_0_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m019.0_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m019.0_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m019_0_nt_from_chr,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m019.0_nt_from_chr.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m019.0_nt_from_chr.nes"
     );
     setup_rom_test!(
         test_mv_m019_0_irq,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m019.0_irq.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m019.0_irq.nes"
     );
     setup_rom_test!(
         test_mv_m019_0_prg_ram,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m019.0_prg_ram.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m019.0_prg_ram.nes"
     );
     setup_rom_test!(
         test_mv_m019_0_write_protect,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m019.0_write_protect.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m019.0_write_protect.nes"
     );
     setup_rom_test!(
         test_mv_m019_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m019.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m019.0.nes"
     );
 
     // ================================================================
@@ -1311,23 +1311,23 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m019_2_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m019.2_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m019.2_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m019_2_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m019.2_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m019.2_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m019_2_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m019.2_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m019.2_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m019_2_irq,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m019.2_irq.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m019.2_irq.nes"
     );
     setup_rom_test!(
         test_mv_m019_2_combined,
-        "roms/automated_tests/mapper_verification/bin/m019.2.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m019.2.nes"
     );
 
     // ================================================================
@@ -1336,23 +1336,23 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m021_1_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m021.1_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m021.1_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m021_1_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m021.1_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m021.1_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m021_1_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m021.1_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m021.1_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m021_1_irq,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m021.1_irq.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m021.1_irq.nes"
     );
     setup_rom_test!(
         test_mv_m021_1_combined,
-        "roms/automated_tests/mapper_verification/bin/m021.1.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m021.1.nes"
     );
 
     // ================================================================
@@ -1361,23 +1361,23 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m021_2_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m021.2_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m021.2_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m021_2_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m021.2_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m021.2_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m021_2_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m021.2_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m021.2_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m021_2_irq,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m021.2_irq.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m021.2_irq.nes"
     );
     setup_rom_test!(
         test_mv_m021_2_combined,
-        "roms/automated_tests/mapper_verification/bin/m021.2.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m021.2.nes"
     );
 
     // ================================================================
@@ -1386,19 +1386,19 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m022_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m022.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m022.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m022_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m022.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m022.0_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m022_0_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m022.0_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m022.0_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m022_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m022.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m022.0.nes"
     );
 
     // ================================================================
@@ -1407,23 +1407,23 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m023_1_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m023.1_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m023.1_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m023_1_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m023.1_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m023.1_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m023_1_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m023.1_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m023.1_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m023_1_irq,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m023.1_irq.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m023.1_irq.nes"
     );
     setup_rom_test!(
         test_mv_m023_1_combined,
-        "roms/automated_tests/mapper_verification/bin/m023.1.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m023.1.nes"
     );
 
     // ================================================================
@@ -1432,23 +1432,23 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m023_2_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m023.2_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m023.2_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m023_2_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m023.2_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m023.2_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m023_2_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m023.2_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m023.2_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m023_2_irq,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m023.2_irq.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m023.2_irq.nes"
     );
     setup_rom_test!(
         test_mv_m023_2_combined,
-        "roms/automated_tests/mapper_verification/bin/m023.2.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m023.2.nes"
     );
 
     // ================================================================
@@ -1457,19 +1457,19 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m023_3_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m023.3_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m023.3_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m023_3_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m023.3_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m023.3_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m023_3_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m023.3_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m023.3_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m023_3_combined,
-        "roms/automated_tests/mapper_verification/bin/m023.3.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m023.3.nes"
     );
 
     // ================================================================
@@ -1478,23 +1478,23 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m024_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m024.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m024.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m024_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m024.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m024.0_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m024_0_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m024.0_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m024.0_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m024_0_irq,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m024.0_irq.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m024.0_irq.nes"
     );
     setup_rom_test!(
         test_mv_m024_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m024.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m024.0.nes"
     );
 
     // ================================================================
@@ -1503,23 +1503,23 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m025_1_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m025.1_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m025.1_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m025_1_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m025.1_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m025.1_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m025_1_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m025.1_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m025.1_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m025_1_irq,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m025.1_irq.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m025.1_irq.nes"
     );
     setup_rom_test!(
         test_mv_m025_1_combined,
-        "roms/automated_tests/mapper_verification/bin/m025.1.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m025.1.nes"
     );
 
     // ================================================================
@@ -1528,23 +1528,23 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m025_2_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m025.2_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m025.2_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m025_2_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m025.2_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m025.2_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m025_2_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m025.2_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m025.2_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m025_2_irq,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m025.2_irq.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m025.2_irq.nes"
     );
     setup_rom_test!(
         test_mv_m025_2_combined,
-        "roms/automated_tests/mapper_verification/bin/m025.2.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m025.2.nes"
     );
 
     // ================================================================
@@ -1553,19 +1553,19 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m025_3_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m025.3_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m025.3_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m025_3_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m025.3_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m025.3_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m025_3_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m025.3_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m025.3_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m025_3_combined,
-        "roms/automated_tests/mapper_verification/bin/m025.3.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m025.3.nes"
     );
 
     // ================================================================
@@ -1574,23 +1574,23 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m026_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m026.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m026.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m026_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m026.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m026.0_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m026_0_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m026.0_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m026.0_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m026_0_irq,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m026.0_irq.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m026.0_irq.nes"
     );
     setup_rom_test!(
         test_mv_m026_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m026.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m026.0.nes"
     );
 
     // ================================================================
@@ -1599,15 +1599,15 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m028_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m028.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m028.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m028_0_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m028.0_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m028.0_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m028_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m028.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m028.0.nes"
     );
 
     // ================================================================
@@ -1616,15 +1616,15 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m029_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m029.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m029.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m029_0_chr_ram_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m029.0_chr_ram_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m029.0_chr_ram_banking.nes"
     );
     setup_rom_test!(
         test_mv_m029_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m029.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m029.0.nes"
     );
 
     // ================================================================
@@ -1633,19 +1633,19 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m030_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m030.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m030.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m030_0_chr_ram_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m030.0_chr_ram_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m030.0_chr_ram_banking.nes"
     );
     setup_rom_test!(
         test_mv_m030_0_bus_conflicts,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m030.0_bus_conflicts.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m030.0_bus_conflicts.nes"
     );
     setup_rom_test!(
         test_mv_m030_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m030.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m030.0.nes"
     );
 
     // ================================================================
@@ -1654,15 +1654,15 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m030_1_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m030.1_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m030.1_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m030_1_chr_ram_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m030.1_chr_ram_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m030.1_chr_ram_banking.nes"
     );
     setup_rom_test!(
         test_mv_m030_1_combined,
-        "roms/automated_tests/mapper_verification/bin/m030.1.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m030.1.nes"
     );
 
     // ================================================================
@@ -1671,19 +1671,19 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m030_2_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m030.2_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m030.2_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m030_2_chr_ram_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m030.2_chr_ram_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m030.2_chr_ram_banking.nes"
     );
     setup_rom_test!(
         test_mv_m030_2_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m030.2_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m030.2_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m030_2_combined,
-        "roms/automated_tests/mapper_verification/bin/m030.2.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m030.2.nes"
     );
 
     // ================================================================
@@ -1692,11 +1692,11 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m031_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m031.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m031.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m031_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m031.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m031.0.nes"
     );
 
     // ================================================================
@@ -1705,27 +1705,27 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m032_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m032.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m032.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m032_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m032.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m032.0_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m032_0_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m032.0_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m032.0_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m032_0_prg_ram,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m032.0_prg_ram.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m032.0_prg_ram.nes"
     );
     setup_rom_test!(
         test_mv_m032_0_prg_mode,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m032.0_prg_mode.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m032.0_prg_mode.nes"
     );
     setup_rom_test!(
         test_mv_m032_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m032.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m032.0.nes"
     );
 
     // ================================================================
@@ -1734,23 +1734,23 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m032_1_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m032.1_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m032.1_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m032_1_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m032.1_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m032.1_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m032_1_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m032.1_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m032.1_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m032_1_prg_ram,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m032.1_prg_ram.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m032.1_prg_ram.nes"
     );
     setup_rom_test!(
         test_mv_m032_1_combined,
-        "roms/automated_tests/mapper_verification/bin/m032.1.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m032.1.nes"
     );
 
     // ================================================================
@@ -1759,23 +1759,23 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m033_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m033.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m033.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m033_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m033.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m033.0_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m033_0_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m033.0_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m033.0_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m033_0_prg_ram,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m033.0_prg_ram.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m033.0_prg_ram.nes"
     );
     setup_rom_test!(
         test_mv_m033_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m033.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m033.0.nes"
     );
 
     // ================================================================
@@ -1784,19 +1784,19 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m034_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m034.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m034.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m034_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m034.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m034.0_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m034_0_prg_ram,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m034.0_prg_ram.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m034.0_prg_ram.nes"
     );
     setup_rom_test!(
         test_mv_m034_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m034.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m034.0.nes"
     );
 
     // ================================================================
@@ -1805,19 +1805,19 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m034_1_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m034.1_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m034.1_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m034_1_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m034.1_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m034.1_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m034_1_prg_ram,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m034.1_prg_ram.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m034.1_prg_ram.nes"
     );
     setup_rom_test!(
         test_mv_m034_1_combined,
-        "roms/automated_tests/mapper_verification/bin/m034.1.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m034.1.nes"
     );
 
     // ================================================================
@@ -1826,11 +1826,11 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m034_2_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m034.2_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m034.2_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m034_2_combined,
-        "roms/automated_tests/mapper_verification/bin/m034.2.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m034.2.nes"
     );
 
     // ================================================================
@@ -1839,27 +1839,27 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m035_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m035.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m035.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m035_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m035.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m035.0_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m035_0_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m035.0_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m035.0_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m035_0_prg_ram,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m035.0_prg_ram.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m035.0_prg_ram.nes"
     );
     setup_rom_test!(
         test_mv_m035_0_multiplier,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m035.0_multiplier.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m035.0_multiplier.nes"
     );
     setup_rom_test!(
         test_mv_m035_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m035.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m035.0.nes"
     );
 
     // ================================================================
@@ -1869,15 +1869,15 @@ mod tests {
 
     setup_rom_console_test!(
         test_mv_m036_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m036.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m036.0_prg_banking.nes"
     );
     setup_rom_console_test!(
         test_mv_m036_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m036.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m036.0_chr_banking.nes"
     );
     setup_rom_console_test!(
         test_mv_m036_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m036.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m036.0.nes"
     );
 
     // ================================================================
@@ -1887,19 +1887,19 @@ mod tests {
 
     setup_rom_console_test!(
         test_mv_m037_0_block_select,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m037.0_block_select.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m037.0_block_select.nes"
     );
     setup_rom_console_test!(
         test_mv_m037_0_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m037.0_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m037.0_nametable.nes"
     );
     setup_rom_console_test!(
         test_mv_m037_0_irq,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m037.0_irq.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m037.0_irq.nes"
     );
     setup_rom_console_test!(
         test_mv_m037_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m037.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m037.0.nes"
     );
 
     // ================================================================
@@ -1908,19 +1908,19 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m038_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m038.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m038.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m038_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m038.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m038.0_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m038_0_prg_ram,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m038.0_prg_ram.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m038.0_prg_ram.nes"
     );
     setup_rom_test!(
         test_mv_m038_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m038.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m038.0.nes"
     );
 
     // ================================================================
@@ -1929,11 +1929,11 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m039_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m039.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m039.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m039_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m039.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m039.0.nes"
     );
 
     // ================================================================
@@ -1943,11 +1943,11 @@ mod tests {
 
     setup_rom_console_test!(
         test_mv_m040_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m040.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m040.0_prg_banking.nes"
     );
     setup_rom_console_test!(
         test_mv_m040_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m040.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m040.0.nes"
     );
 
     // ================================================================
@@ -1957,15 +1957,15 @@ mod tests {
 
     setup_rom_console_test!(
         test_mv_m041_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m041.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m041.0_prg_banking.nes"
     );
     setup_rom_console_test!(
         test_mv_m041_0_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m041.0_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m041.0_nametable.nes"
     );
     setup_rom_console_test!(
         test_mv_m041_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m041.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m041.0.nes"
     );
 
     // ================================================================
@@ -1975,23 +1975,23 @@ mod tests {
 
     setup_rom_console_test!(
         test_mv_m042_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m042.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m042.0_prg_banking.nes"
     );
     setup_rom_console_test!(
         test_mv_m042_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m042.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m042.0_chr_banking.nes"
     );
     setup_rom_console_test!(
         test_mv_m042_0_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m042.0_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m042.0_nametable.nes"
     );
     setup_rom_console_test!(
         test_mv_m042_0_irq,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m042.0_irq.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m042.0_irq.nes"
     );
     setup_rom_console_test!(
         test_mv_m042_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m042.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m042.0.nes"
     );
 
     // ================================================================
@@ -2001,11 +2001,11 @@ mod tests {
 
     setup_rom_console_test!(
         test_mv_m043_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m043.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m043.0_prg_banking.nes"
     );
     setup_rom_console_test!(
         test_mv_m043_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m043.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m043.0.nes"
     );
 
     // ================================================================
@@ -2014,35 +2014,35 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m044_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m044.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m044.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m044_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m044.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m044.0_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m044_0_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m044.0_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m044.0_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m044_0_irq,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m044.0_irq.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m044.0_irq.nes"
     );
     setup_rom_test!(
         test_mv_m044_0_block_select,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m044.0_block_select.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m044.0_block_select.nes"
     );
     setup_rom_test!(
         test_mv_m044_0_prg_ram,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m044.0_prg_ram.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m044.0_prg_ram.nes"
     );
     setup_rom_test!(
         test_mv_m044_0_write_protect,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m044.0_write_protect.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m044.0_write_protect.nes"
     );
     setup_rom_test!(
         test_mv_m044_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m044.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m044.0.nes"
     );
 
     // ================================================================
@@ -2052,19 +2052,19 @@ mod tests {
 
     setup_rom_console_test!(
         test_mv_m045_0_block_select,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m045.0_block_select.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m045.0_block_select.nes"
     );
     setup_rom_console_test!(
         test_mv_m045_0_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m045.0_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m045.0_nametable.nes"
     );
     setup_rom_console_test!(
         test_mv_m045_0_irq,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m045.0_irq.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m045.0_irq.nes"
     );
     setup_rom_console_test!(
         test_mv_m045_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m045.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m045.0.nes"
     );
 
     // ================================================================
@@ -2074,15 +2074,15 @@ mod tests {
 
     setup_rom_console_test!(
         test_mv_m046_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m046.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m046.0_prg_banking.nes"
     );
     setup_rom_console_test!(
         test_mv_m046_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m046.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m046.0_chr_banking.nes"
     );
     setup_rom_console_test!(
         test_mv_m046_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m046.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m046.0.nes"
     );
 
     // ================================================================
@@ -2092,19 +2092,19 @@ mod tests {
 
     setup_rom_console_test!(
         test_mv_m047_0_block_select,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m047.0_block_select.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m047.0_block_select.nes"
     );
     setup_rom_console_test!(
         test_mv_m047_0_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m047.0_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m047.0_nametable.nes"
     );
     setup_rom_console_test!(
         test_mv_m047_0_irq,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m047.0_irq.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m047.0_irq.nes"
     );
     setup_rom_console_test!(
         test_mv_m047_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m047.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m047.0.nes"
     );
 
     // ================================================================
@@ -2113,27 +2113,27 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m048_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m048.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m048.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m048_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m048.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m048.0_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m048_0_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m048.0_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m048.0_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m048_0_irq,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m048.0_irq.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m048.0_irq.nes"
     );
     setup_rom_test!(
         test_mv_m048_0_prg_ram,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m048.0_prg_ram.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m048.0_prg_ram.nes"
     );
     setup_rom_test!(
         test_mv_m048_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m048.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m048.0.nes"
     );
 
     // ================================================================
@@ -2142,23 +2142,23 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m064_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m064.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m064.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m064_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m064.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m064.0_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m064_0_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m064.0_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m064.0_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m064_0_irq,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m064.0_irq.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m064.0_irq.nes"
     );
     setup_rom_test!(
         test_mv_m064_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m064.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m064.0.nes"
     );
 
     // ================================================================
@@ -2167,23 +2167,23 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m065_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m065.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m065.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m065_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m065.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m065.0_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m065_0_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m065.0_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m065.0_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m065_0_irq,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m065.0_irq.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m065.0_irq.nes"
     );
     setup_rom_test!(
         test_mv_m065_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m065.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m065.0.nes"
     );
 
     // ================================================================
@@ -2192,15 +2192,15 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m066_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m066.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m066.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m066_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m066.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m066.0_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m066_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m066.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m066.0.nes"
     );
 
     // ================================================================
@@ -2209,23 +2209,23 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m067_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m067.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m067.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m067_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m067.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m067.0_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m067_0_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m067.0_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m067.0_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m067_0_irq,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m067.0_irq.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m067.0_irq.nes"
     );
     setup_rom_test!(
         test_mv_m067_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m067.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m067.0.nes"
     );
 
     // ================================================================
@@ -2234,23 +2234,23 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m068_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m068.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m068.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m068_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m068.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m068.0_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m068_0_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m068.0_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m068.0_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m068_0_prg_ram,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m068.0_prg_ram.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m068.0_prg_ram.nes"
     );
     setup_rom_test!(
         test_mv_m068_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m068.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m068.0.nes"
     );
 
     // ================================================================
@@ -2259,27 +2259,27 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m069_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m069.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m069.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m069_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m069.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m069.0_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m069_0_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m069.0_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m069.0_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m069_0_irq,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m069.0_irq.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m069.0_irq.nes"
     );
     setup_rom_test!(
         test_mv_m069_0_prg_ram,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m069.0_prg_ram.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m069.0_prg_ram.nes"
     );
     setup_rom_test!(
         test_mv_m069_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m069.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m069.0.nes"
     );
 
     // ================================================================
@@ -2288,15 +2288,15 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m070_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m070.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m070.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m070_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m070.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m070.0_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m070_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m070.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m070.0.nes"
     );
 
     // ================================================================
@@ -2305,11 +2305,11 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m071_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m071.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m071.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m071_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m071.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m071.0.nes"
     );
 
     // ================================================================
@@ -2318,15 +2318,15 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m072_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m072.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m072.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m072_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m072.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m072.0_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m072_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m072.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m072.0.nes"
     );
 
     // ================================================================
@@ -2335,19 +2335,19 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m073_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m073.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m073.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m073_0_irq,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m073.0_irq.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m073.0_irq.nes"
     );
     setup_rom_test!(
         test_mv_m073_0_prg_ram,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m073.0_prg_ram.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m073.0_prg_ram.nes"
     );
     setup_rom_test!(
         test_mv_m073_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m073.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m073.0.nes"
     );
 
     // ================================================================
@@ -2356,31 +2356,31 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m074_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m074.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m074.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m074_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m074.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m074.0_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m074_0_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m074.0_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m074.0_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m074_0_irq,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m074.0_irq.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m074.0_irq.nes"
     );
     setup_rom_test!(
         test_mv_m074_0_prg_ram,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m074.0_prg_ram.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m074.0_prg_ram.nes"
     );
     setup_rom_test!(
         test_mv_m074_0_write_protect,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m074.0_write_protect.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m074.0_write_protect.nes"
     );
     setup_rom_test!(
         test_mv_m074_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m074.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m074.0.nes"
     );
 
     // ================================================================
@@ -2389,19 +2389,19 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m075_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m075.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m075.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m075_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m075.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m075.0_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m075_0_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m075.0_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m075.0_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m075_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m075.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m075.0.nes"
     );
 
     // ================================================================
@@ -2411,15 +2411,15 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m099_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m099.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m099.0_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m099_0_four_screen,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m099.0_four_screen.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m099.0_four_screen.nes"
     );
     setup_rom_test!(
         test_mv_m099_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m099.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m099.0.nes"
     );
 
     // ================================================================
@@ -2429,19 +2429,19 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m099_1_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m099.1_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m099.1_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m099_1_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m099.1_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m099.1_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m099_1_four_screen,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m099.1_four_screen.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m099.1_four_screen.nes"
     );
     setup_rom_test!(
         test_mv_m099_1_combined,
-        "roms/automated_tests/mapper_verification/bin/m099.1.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m099.1.nes"
     );
 
     // ================================================================
@@ -2450,23 +2450,23 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m119_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m119.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m119.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m119_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m119.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m119.0_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m119_0_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m119.0_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m119.0_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m119_0_irq,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m119.0_irq.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m119.0_irq.nes"
     );
     setup_rom_test!(
         test_mv_m119_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m119.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m119.0.nes"
     );
 
     // ================================================================
@@ -2477,19 +2477,19 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m151_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m151.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m151.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m151_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m151.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m151.0_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m151_0_four_screen,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m151.0_four_screen.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m151.0_four_screen.nes"
     );
     setup_rom_test!(
         test_mv_m151_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m151.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m151.0.nes"
     );
 
     // ================================================================
@@ -2499,19 +2499,19 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m158_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m158.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m158.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m158_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m158.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m158.0_chr_banking.nes"
     );
     setup_rom_test!(
         test_mv_m158_0_irq,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m158.0_irq.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m158.0_irq.nes"
     );
     setup_rom_test!(
         test_mv_m158_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m158.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m158.0.nes"
     );
 
     // ================================================================
@@ -2522,15 +2522,15 @@ mod tests {
 
     setup_rom_console_test!(
         test_mv_m207_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m207.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m207.0_prg_banking.nes"
     );
     setup_rom_console_test!(
         test_mv_m207_0_chr_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m207.0_chr_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m207.0_chr_banking.nes"
     );
     setup_rom_console_test!(
         test_mv_m207_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m207.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m207.0.nes"
     );
 
     // ================================================================
@@ -2541,15 +2541,15 @@ mod tests {
 
     setup_rom_test!(
         test_mv_m154_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m154.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m154.0_prg_banking.nes"
     );
     setup_rom_test!(
         test_mv_m154_0_nametable,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m154.0_nametable.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m154.0_nametable.nes"
     );
     setup_rom_test!(
         test_mv_m154_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m154.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m154.0.nes"
     );
 
     // ================================================================
@@ -2560,15 +2560,15 @@ mod tests {
 
     setup_rom_console_test!(
         test_mv_m111_0_prg_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m111.0_prg_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m111.0_prg_banking.nes"
     );
     setup_rom_console_test!(
         test_mv_m111_0_chr_ram_banking,
-        "roms/automated_tests/mapper_verification/bin/rom_singles/m111.0_chr_ram_banking.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m111.0_chr_ram_banking.nes"
     );
     setup_rom_console_test!(
         test_mv_m111_0_combined,
-        "roms/automated_tests/mapper_verification/bin/m111.0.nes"
+        "roms/nes/automated_tests/mapper_verification/bin/m111.0.nes"
     );
 
     // ================================================================
@@ -2579,7 +2579,7 @@ mod tests {
     // ================================================================
 
     fn load_gtrom_cc_test1() -> Nes {
-        let rom_path = "roms/automated_tests/GTROM_CC_Test1/GTROM_CC_Test1.nes";
+        let rom_path = "roms/nes/automated_tests/GTROM_CC_Test1/GTROM_CC_Test1.nes";
         let rom_data = fs::read(rom_path).expect("GTROM_CC_Test1 ROM should load");
         let cartridge = Cartridge::load_from_file(&rom_data, rom_path, None)
             .expect("GTROM_CC_Test1 ROM should parse");

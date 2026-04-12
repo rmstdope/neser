@@ -116,7 +116,7 @@ mod tests {
 
     fn setup_nes_with_temp_rom(temp_dir: &TempDir) -> Nes {
         let rom_path = temp_dir.path().join("test.nes");
-        fs::copy("roms/automated_tests/nestest/nestest.nes", &rom_path)
+        fs::copy("roms/nes/automated_tests/nestest/nestest.nes", &rom_path)
             .expect("Failed to copy test ROM");
         let rom_bytes = fs::read(&rom_path).expect("Failed to read ROM");
         let mut nes = Nes::new(AppContext::new_with_config(Config::default()));

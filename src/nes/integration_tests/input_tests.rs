@@ -13,7 +13,7 @@ mod tests {
     // spadtest-nes-0.01 SNES controller test suite (#1608)
     /////////////////////////////////////
 
-    const SPADTEST_ROM_PATH: &str = "roms/automated_tests/spadtest-nes-0.01/spadtest-nes.nes";
+    const SPADTEST_ROM_PATH: &str = "roms/nes/automated_tests/spadtest-nes-0.01/spadtest-nes.nes";
 
     /// OAM tile used by spadtest to indicate a lit button.
     const LIGHTS_TILE: u8 = 0xEF;
@@ -134,7 +134,7 @@ mod tests {
     // ruder-0.03 Zapper test suite (#1607)
     /////////////////////////////////////
 
-    const RUDER_ROM_PATH: &str = "roms/automated_tests/ruder-0.03/ruder.nes";
+    const RUDER_ROM_PATH: &str = "roms/nes/automated_tests/ruder-0.03/ruder.nes";
 
     fn run_ruder(
         script: &[ScriptEntry],
@@ -374,7 +374,7 @@ mod tests {
     // PaddleTest3 Arkanoid paddle (#1606)
     /////////////////////////////////////
 
-    const PADDLETEST3_ROM_PATH: &str = "roms/automated_tests/PaddleTest3/PaddleTest.nes";
+    const PADDLETEST3_ROM_PATH: &str = "roms/nes/automated_tests/PaddleTest3/PaddleTest.nes";
 
     fn run_paddletest3(
         controller_config: &ControllerConfig,
@@ -510,7 +510,7 @@ mod tests {
     // vaus-test-0.02 Arkanoid Vaus controller test suite (#1609)
     /////////////////////////////////////
 
-    const VAUS_TEST_ROM_PATH: &str = "roms/automated_tests/vaus-test-0.02/vaus-test.nes";
+    const VAUS_TEST_ROM_PATH: &str = "roms/nes/automated_tests/vaus-test-0.02/vaus-test.nes";
 
     /// Indicator sprite tile IDs used by vaus-test when an Arkanoid controller
     /// is detected (`control_type >= 2`).

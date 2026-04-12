@@ -6,7 +6,7 @@ from py65.devices.mpu6502 import MPU
 
 
 ROM_PATH = Path(
-	"/Users/henrikku/repos/neser/roms/automated_tests/"
+	"/Users/henrikku/repos/neser/roms/nes/automated_tests/"
 	"fadeout_and_triangle_tests/fadeout_and_triangle_test.nes"
 )
 

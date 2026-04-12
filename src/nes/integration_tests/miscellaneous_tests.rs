@@ -7,7 +7,7 @@ mod tests {
     };
     use crate::setup_rom_console_test;
 
-    const ALLPADS_ROM_PATH: &str = "roms/automated_tests/allpads-r9/allpads218.nes";
+    const ALLPADS_ROM_PATH: &str = "roms/nes/automated_tests/allpads-r9/allpads218.nes";
 
     /// Run `allpads.nes` with the given controller configuration and frame script.
     fn run_allpads(
@@ -1438,23 +1438,23 @@ mod tests {
 
     setup_rom_console_test!(
         test_read_joy3_count_errors,
-        "roms/automated_tests/read_joy3/count_errors.nes",
+        "roms/nes/automated_tests/read_joy3/count_errors.nes",
         "CONFLICTS: 0/1000-"
     );
 
     setup_rom_console_test!(
         test_read_joy3_count_errors_fast,
-        "roms/automated_tests/read_joy3/count_errors_fast.nes",
+        "roms/nes/automated_tests/read_joy3/count_errors_fast.nes",
         "ERRORS: 0/1000"
     );
 
     setup_rom_console_test!(
         test_read_joy3_test_buttons,
-        "roms/automated_tests/read_joy3/test_buttons.nes"
+        "roms/nes/automated_tests/read_joy3/test_buttons.nes"
     );
 
     setup_rom_console_test!(
         test_read_joy3_thorough_test,
-        "roms/automated_tests/read_joy3/thorough_test.nes"
+        "roms/nes/automated_tests/read_joy3/thorough_test.nes"
     );
 }
