@@ -436,7 +436,7 @@ mod tests {
 
     #[test]
     fn read_4100_open_bus_merges_high_bits() {
-        let mut m = make_mapper();
+        let m = make_mapper();
         // Bits [7:6] at $4100 are open bus — they must come from the open_bus parameter.
         let val = m.read_prg_open_bus(0x4100, 0xC0);
         assert_eq!(val & 0xC0, 0xC0, "bits [7:6] must be taken from open_bus");

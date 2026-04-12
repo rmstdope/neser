@@ -85,8 +85,8 @@ The `src/bin/roms.rs` file is a library binary (accessed via `cargo run --bin ro
 
 | Script | Description |
 | -------- | ------------- |
-| `scripts/build_web.sh` | Builds the WASM target with `cargo build --target wasm32-unknown-unknown --features wasm`, then runs `wasm-bindgen` to generate JS glue code into `web/pkg/`. |
-| `scripts/run_web.sh` | Starts a local HTTP server (`python3 -m http.server`) in the `web/` directory for testing the browser frontend. |
+| `scripts/build_web.sh` | Builds the WASM target with `cargo build --target wasm32-unknown-unknown --features wasm`, runs `wasm-bindgen` to generate JS glue code into `web/pkg/`, then bundles the web frontend with `npx vite build` into `dist/`. |
+| `scripts/run_web.sh` | Symlinks `web/roms/` into `dist/` for ROM directory browsing, then starts a local HTTP server (`python3 -m http.server`) in `dist/` for testing the browser frontend. |
 | `scripts/test-dir.sh` | Runs Rust tests for specific source directories. Converts directory paths (e.g., `src/nes/cartridge`) to `cargo test` module filters. Supports `--skip-integration` and `--list` flags. Used by CI to conditionally run tests based on changed files. |
 
 ### Python Tools
@@ -300,25 +300,24 @@ All Game Boy (DMG) hardware lives under `src/gb/`. The module is structured arou
 
 ### `web/` — Browser Frontend
 
-The web frontend is a standalone HTML/JavaScript application that loads the WASM-compiled emulator core.
+The web frontend is bundled with **Vite** (config at `vite.config.js`, root: `web/`, build output: `dist/`). JavaScript modules are organized into feature folders under `web/src/`.
 
-| File | Description |
-| ------ | ------------- |
-| `web/index.html` | Main page — canvas element, ROM file picker, keyboard shortcuts overlay. |
-| `web/app.js` | Application bootstrapper — initializes the WASM module, sets up the render loop, and coordinates all subsystems. |
-| `web/audio_resampler.js` | Resamples APU output to the Web Audio API's sample rate. |
-| `web/gamepad.js` | Gamepad API integration for browser-based controller input. |
-| `web/input_routing.js` | Keyboard and gamepad input routing to the emulator. |
-| `web/frame_limiter.js` | Frame timing to maintain 60 FPS (NTSC) or 50 FPS (PAL). |
-| `web/frame_plan.js` | Frame scheduling and render planning. |
-| `web/rom_list.js` / `web/rom_selection.js` | ROM file management and selection UI. |
-| `web/save_state_*.js` | Save state persistence using IndexedDB. |
-| `web/debugger_*.js` | Browser-based debugger panels (disassembly, OAM viewer, watch expressions). |
-| `web/ppu_viewer_*.js` | PPU pattern/nametable viewer for the browser. |
+| Directory/File | Description |
+| -------------- | ------------- |
+| `web/index.html` | Entry point — canvas element, ROM file picker, keyboard shortcuts overlay. Loads `./src/app.js` as the main module. |
 | `web/styles.css` | Application styling. |
+| `web/src/app.js` | Application bootstrapper — initializes the WASM module, sets up the render loop, and coordinates all subsystems. |
+| `web/src/audio/` | Audio resampling (`audio_resampler.js`), frame timing (`frame_limiter.js`, `frame_plan.js`). |
+| `web/src/input/` | Gamepad API (`gamepad.js`), keyboard/gamepad routing (`input_routing.js`), mouse input (`mouse_input.js`), pointer lock (`pointer_lock.js`). |
+| `web/src/display/` | Canvas sizing (`canvas_size.js`), zoom controls (`zoom_controls.js`), cursor visibility, crosshair overlay. |
+| `web/src/rom/` | ROM file listing (`rom_list.js`), selection UI (`rom_selection.js`), autorun context. |
+| `web/src/save-state/` | Save state persistence using IndexedDB (`save_state_storage.js`, `save_state_controller.js`, `save_state_context.js`). |
+| `web/src/debugger/` | Browser-based debugger panels — disassembly, OAM viewer, watch expressions, PPU viewer layout/scroll. |
+| `web/src/shortcuts/` | Keyboard shortcut actions and help overlay. |
+| `web/src/ui/` | Toast overlays (`toast_overlay.js`), gamepad init toast, sine scroller. |
 | `web/integration/` | Playwright-based end-to-end integration tests for the web frontend. |
 
-Each JavaScript module has a corresponding `.test.mjs` unit test file (run with `node --test`).
+Each JavaScript module has a corresponding `.test.mjs` unit test file (run with `vitest`).
 
 ### `shaders/` — Visual Filters
 
@@ -382,7 +381,8 @@ Shader presets using the Slang shading language, loaded via librashader:
 | `Cargo.toml` | Rust project manifest. Defines three feature flags: `sdl` (default — desktop frontend), `wasm` (WebAssembly frontend), `tui` (terminal ROM launcher). The library crate type is both `rlib` (for tests) and `cdylib` (for WASM). Debug builds use `opt-level = 1` to keep audio smooth; dependencies use `opt-level = 3`. |
 | `build.rs` | Compile-time code generation — scans for `.autorun` files and generates Rust test functions for each. |
 | `playwright.config.mjs` | Playwright configuration for web integration tests. |
-| `package.json` | Node.js project for web frontend testing (unit tests via `node --test`, integration via Playwright). |
+| `vite.config.js` | Vite bundler configuration — root: `web/`, build output: `dist/`, dev/preview server on port 8000, Vitest test pattern. |
+| `package.json` | Node.js project for web frontend — Vite bundler, Vitest unit tests, and Playwright integration tests. |
 
 ## Key Design Decisions
 
@@ -400,6 +400,6 @@ Shader presets using the Slang shading language, loaded via librashader:
 2. **ROM-based integration tests** — Blargg, holy-mapperel, and other community test ROMs verified via headless execution.
 3. **Autorun regression tests** — Build-time generated tests that replay recorded input and verify CRC checkspoints.
 4. **WASM tests** — Browser-environment tests via `wasm-pack test --headless --chrome`.
-5. **JavaScript unit tests** — Web frontend JS modules tested with Node.js built-in test runner.
+5. **JavaScript unit tests** — Web frontend JS modules tested with Vitest (`npm test`).
 6. **Playwright integration tests** — End-to-end browser tests for the web frontend.
 7. **Python tests** — Unit tests for the ROM scraper and mappertool utilities.

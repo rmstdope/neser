@@ -3,31 +3,58 @@
 ## Prerequisites
 - Rust toolchain with `wasm32-unknown-unknown` target (`rustup target add wasm32-unknown-unknown`)
 - `wasm-bindgen-cli` (or `wasm-pack`) installed, or use `cargo install wasm-bindgen-cli`
-- Any static file server (e.g., `python -m http.server`)
+- Node.js 20+ with npm
 
 ## Build
 ```bash
-# Dev build
+# 1. Build WASM
 cargo build --release --target wasm32-unknown-unknown --no-default-features --features wasm
-wasm-bindgen target/wasm32-unknown-unknown/release/neser.wasm --out-dir web/pkg --target web
-
-# Production-lean build (smaller/faster output)
 wasm-bindgen target/wasm32-unknown-unknown/release/neser.wasm --out-dir web/pkg --target web --omit-default-module-path --no-typescript
 
-# Optional post-pass (requires Binaryen)
-# wasm-opt -O3 web/pkg/neser_bg.wasm -o web/pkg/neser_bg.wasm
+# 2. Bundle with Vite (outputs to dist/)
+npx vite build
+
+# Or use the convenience script which does both:
+bash scripts/build_web.sh
 ```
 
 ## Run locally
 ```bash
-cd web
-python -m http.server 8000
+# Development server with hot reload
+npm run dev
+
+# Or production preview (after build)
+bash scripts/run_web.sh
 # then open http://localhost:8000 in your browser
 ```
 
-## Notes
-- Generated artifacts under `web/pkg/` are ignored in git; regenerate locally via the steps above.
-- Keyboard input is supported for controller 1 using keys: W/A/S/D (directional), F (A button), G (B button), R (Select), T (Start).
+## Testing
+```bash
+# Unit tests (Vitest)
+npm test
+
+# Integration tests (Playwright)
+npm run test:integration:web
+```
+
+## Project structure
+```
+web/
+├── index.html              # Entry point
+├── styles.css              # Custom styles
+├── pkg/                    # Generated WASM artifacts (git-ignored)
+├── src/                    # Application modules
+│   ├── app.js              # Main entry point
+│   ├── audio/              # Audio resampling, frame timing
+│   ├── debugger/           # Debugger UI components
+│   ├── display/            # Canvas, zoom, cursor management
+│   ├── input/              # Gamepad, mouse, keyboard input
+│   ├── rom/                # ROM loading, autorun
+│   ├── save-state/         # Save/load state management
+│   ├── shortcuts/          # Keyboard shortcuts
+│   └── ui/                 # Toast overlays, sine scroller
+└── integration/            # Playwright e2e tests
+```
 - Optional gamepad input uses the Gamepad API (toggle in UI).
 - Audio is supported via Web Audio.
 - Rendering runs on the browser main thread; heavy frames or slow hosts can briefly block UI/event handling.
