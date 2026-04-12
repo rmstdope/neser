@@ -218,9 +218,16 @@ impl NativeEventLoop {
                     });
             }
             Console::GameBoy(gb) => {
-                // Run ticks until a full frame is ready.
+                // Run ticks until a full frame is ready, draining audio samples.
                 while !gb.is_frame_ready() {
                     gb.run_tick();
+                    if let Some(ref mut audio) = *audio_cell.borrow_mut() {
+                        while gb.sample_ready() {
+                            if let Some(sample) = gb.get_sample() {
+                                audio.queue_sample(sample);
+                            }
+                        }
+                    }
                 }
             }
         }

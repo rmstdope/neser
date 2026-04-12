@@ -894,19 +894,22 @@ mod tests {
 
     #[test]
     fn test_apu_registers_return_ff_when_powered_off() {
-        // NR50 reads $FF when APU is powered off (internal value is $00 but
-        // the register is inaccessible; Apu::read_register returns $FF for NR10-NR51
-        // when powered off).
+        // When the APU is powered off, NR10–NR51 reads must return $FF.
         let mut bus = make_bus();
-        // APU starts powered off; NR50 write ignored.
-        bus.write(0xFF24, 0x77);
-        // Read NR50 when off — Apu returns 0x00 for nr50 (it's just not writable).
-        // The key contract: NR51 writes are silently ignored when APU is off.
-        bus.write(0xFF25, 0xAB); // should be ignored
+        // APU starts powered off. Write a non-zero value to NR51 — should be ignored.
+        bus.write(0xFF25, 0xAB);
+        // Read NR51: must return $FF because APU is off.
         assert_eq!(
             bus.read(0xFF25),
-            0x00,
-            "NR51 must read 0 when APU is powered off"
+            0xFF,
+            "NR51 must read $FF when APU is powered off"
+        );
+        // Same for NR50.
+        bus.write(0xFF24, 0x77);
+        assert_eq!(
+            bus.read(0xFF24),
+            0xFF,
+            "NR50 must read $FF when APU is powered off"
         );
     }
 

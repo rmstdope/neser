@@ -210,8 +210,14 @@ impl Apu {
     /// Read an APU register.
     ///
     /// Returns $FF for unimplemented or write-only bits / unused registers.
-    /// When powered off, all NR10–NR51 reads return $FF.
+    /// When powered off, all NR10–NR51 reads return $FF (consistent with
+    /// DMG/SameBoy behavior: registers are inaccessible while APU is off).
+    /// NR52 and wave RAM are always readable.
     pub fn read_register(&self, addr: u16) -> u8 {
+        // NR10–NR51: return $FF when APU is powered off.
+        if !self.powered && (0xFF10..=0xFF25).contains(&addr) {
+            return 0xFF;
+        }
         match addr {
             // CH1
             0xFF10 => self.ch1.read_nr10(),
