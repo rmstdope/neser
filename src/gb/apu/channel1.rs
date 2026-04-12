@@ -30,8 +30,9 @@ pub struct Channel1 {
     sweep_timer: u8,    // sweep period countdown
     sweep_shadow: u16,  // shadow frequency register
     sweep_enabled: bool,
-    // Tracks whether a negate calculation has been done since last trigger
-    // (needed for the "disable-on-negate-recheck" quirk, omitted for simplicity)
+    /// Set when a negate-mode calculation is performed; cleared on trigger.
+    /// If NR10 clears the negate bit after this was set, the channel is disabled.
+    negate_used: bool,
 }
 
 impl Default for Channel1 {
@@ -63,11 +64,16 @@ impl Channel1 {
             sweep_timer: 0,
             sweep_shadow: 0,
             sweep_enabled: false,
+            negate_used: false,
         }
     }
 
     pub fn is_active(&self) -> bool {
         self.active
+    }
+
+    pub fn length_en(&self) -> bool {
+        self.length_en
     }
 
     /// Output sample in 0.0–1.0 range.
@@ -125,7 +131,12 @@ impl Channel1 {
             self.sweep_timer = self.sweep_timer_reload();
             if self.sweep_enabled && self.sweep_period > 0 {
                 let new_freq = self.compute_swept_frequency();
-                if new_freq <= 2047 && self.sweep_shift > 0 {
+                if self.sweep_negate {
+                    self.negate_used = true;
+                }
+                if new_freq > 2047 {
+                    self.active = false;
+                } else if self.sweep_shift > 0 {
                     self.sweep_shadow = new_freq;
                     self.freq = new_freq;
                     // Re-check overflow against the newly loaded frequency.
@@ -219,9 +230,15 @@ impl Channel1 {
     // ── Register writes ───────────────────────────────────────────────────
 
     pub fn write_nr10(&mut self, val: u8) {
+        let old_negate = self.sweep_negate;
         self.sweep_period = (val >> 4) & 0x07;
         self.sweep_negate = val & 0x08 != 0;
         self.sweep_shift = val & 0x07;
+        // Hardware quirk: if negate mode was used since last trigger and is now cleared,
+        // the channel is immediately disabled.
+        if old_negate && !self.sweep_negate && self.negate_used {
+            self.active = false;
+        }
     }
 
     pub fn write_nr11(&mut self, val: u8) {
@@ -273,6 +290,7 @@ impl Channel1 {
         self.sweep_shadow = self.freq;
         self.sweep_timer = self.sweep_timer_reload();
         self.sweep_enabled = self.sweep_period > 0 || self.sweep_shift > 0;
+        self.negate_used = false;
         // Trigger-time overflow check required by hardware even when sweep is otherwise idle.
         if self.sweep_shift > 0 {
             self.disable_if_sweep_overflows();
@@ -534,6 +552,57 @@ mod tests {
         assert_eq!(ch.read_nr14() & 0x40, 0x40);
         ch.write_nr14(0x00);
         assert_eq!(ch.read_nr14() & 0x40, 0x00);
+    }
+
+    // ── Sweep correctness (hardware quirks) ──────────────────────────────
+
+    #[test]
+    fn test_clock_sweep_disables_channel_on_overflow_when_shift_zero() {
+        // Given: sweep period=1, negate=false, shift=0 and freq=1400;
+        // When: clock_sweep fires;
+        // Then: new_freq = 1400+1400 = 2800 > 2047 → channel disabled even though shift=0.
+        let mut ch = Channel1::new();
+        ch.write_nr12(0xF0); // DAC on
+        // NR10: period=1 (0x10>>4 & 0x07 = 1), negate=0, shift=0
+        ch.write_nr10(0x10);
+        // freq = 1400 = 0x578 → lo=0x78, hi=0x05
+        ch.write_nr13(0x78);
+        ch.write_nr14(0x85); // trigger + freq_hi=5
+        assert!(ch.is_active(), "channel must be active after trigger");
+        // sweep fires: timer 1→0, reload=1, enabled=true, period=1
+        // new_freq = 1400 + (1400>>0) = 2800 > 2047 → must disable
+        ch.clock_sweep();
+        assert!(
+            !ch.is_active(),
+            "channel must be disabled when sweep overflows even with shift=0"
+        );
+    }
+
+    #[test]
+    fn test_disabling_negate_after_calculation_disables_channel() {
+        // Given: CH1 with sweep period=1, negate=true, shift=1, freq=100;
+        //   After trigger and one sweep clock, a negate calculation is done (negate_used=true);
+        // When: NR10 is written clearing negate;
+        // Then: channel is disabled (hardware "negate-used" quirk).
+        let mut ch = Channel1::new();
+        ch.write_nr12(0xF0); // DAC on
+        // NR10: period=1, negate=1, shift=1 → 0x19
+        ch.write_nr10(0x19);
+        ch.write_nr13(0x64); // freq = 100
+        ch.write_nr14(0x80); // trigger
+        assert!(ch.is_active(), "channel must be active after trigger");
+        // One sweep clock in negate mode → negate_used must be set
+        ch.clock_sweep();
+        assert!(
+            ch.is_active(),
+            "channel still active after negate calculation"
+        );
+        // Clear negate in NR10: period=1, negate=0, shift=1 → 0x11
+        ch.write_nr10(0x11);
+        assert!(
+            !ch.is_active(),
+            "channel must be disabled when negate is cleared after a negate calculation"
+        );
     }
 
     // ── Output level ──────────────────────────────────────────────────────

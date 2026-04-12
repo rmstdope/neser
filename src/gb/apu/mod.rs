@@ -209,15 +209,11 @@ impl Apu {
 
     /// Read an APU register.
     ///
-    /// Returns $FF for unimplemented or write-only bits / unused registers.
-    /// When powered off, all NR10–NR51 reads return $FF (consistent with
-    /// DMG/SameBoy behavior: registers are inaccessible while APU is off).
+    /// Returns $FF for write-only bits / unused registers.
+    /// When powered off, registers NR10–NR51 return their cleared values
+    /// (with unused bits set per the normal masking), consistent with DMG hardware.
     /// NR52 and wave RAM are always readable.
     pub fn read_register(&self, addr: u16) -> u8 {
-        // NR10–NR51: return $FF when APU is powered off.
-        if !self.powered && (0xFF10..=0xFF25).contains(&addr) {
-            return 0xFF;
-        }
         match addr {
             // CH1
             0xFF10 => self.ch1.read_nr10(),
@@ -499,6 +495,30 @@ mod tests {
             apu.tick(1);
         }
         assert_eq!(apu.fs_step, 0, "fs_step must wrap back to 0 after 8 steps");
+    }
+
+    // ── Register reads when powered off ──────────────────────────────────
+
+    #[test]
+    fn test_registers_return_cleared_values_when_powered_off() {
+        // Given: APU powered on then off;
+        // When: read NR10 (0xFF10) and NR12 (0xFF12);
+        // Then: they return the cleared register value (with unused bits set),
+        //   not 0xFF across the board.
+        let mut apu = powered_apu();
+        apu.write_register(0xFF26, 0x00); // power off
+        // ch1 cleared → read_nr10() = 0x80 (bit 7 always 1, all others 0)
+        assert_eq!(
+            apu.read_register(0xFF10),
+            0x80,
+            "NR10 must return cleared 0x80 when powered off (not 0xFF)"
+        );
+        // ch1 cleared → read_nr12() = 0x00 (all fields zero)
+        assert_eq!(
+            apu.read_register(0xFF12),
+            0x00,
+            "NR12 must return cleared 0x00 when powered off (not 0xFF)"
+        );
     }
 
     // ── NR52 channel-active status bits ───────────────────────────────────

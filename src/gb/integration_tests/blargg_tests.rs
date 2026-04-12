@@ -332,7 +332,6 @@ fn test_mem_timing_2() {
 // ── dmg_sound single ROMs ────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "failing: APU off-state register read behaviour (NR52 bit 7) — tracked in #2034"]
 fn test_dmg_sound_01_registers() {
     let mut gb = load_gb_rom("roms/gb/automated_tests/dmg_sound/rom_singles/01-registers.gb");
     let output = run_blargg_rom_cart_ram(&mut gb);
@@ -364,7 +363,6 @@ fn test_dmg_sound_03_trigger() {
 }
 
 #[test]
-#[ignore = "failing: CH1 sweep calculation on trigger when shift=0 — tracked in #2034"]
 fn test_dmg_sound_04_sweep() {
     let mut gb = load_gb_rom("roms/gb/automated_tests/dmg_sound/rom_singles/04-sweep.gb");
     let output = run_blargg_rom_cart_ram(&mut gb);
@@ -397,7 +395,6 @@ fn test_dmg_sound_06_overflow_on_trigger() {
 }
 
 #[test]
-#[ignore = "failing: length/sweep period synchronisation (no output, likely hangs) — tracked in #2034"]
 fn test_dmg_sound_07_len_sweep_period_sync() {
     let mut gb =
         load_gb_rom("roms/gb/automated_tests/dmg_sound/rom_singles/07-len sweep period sync.gb");
@@ -469,7 +466,6 @@ fn test_dmg_sound_12_wave_write_while_on() {
 // ── cgb_sound single ROMs ─────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "failing: APU off-state register read behaviour (NR52 bit 7) — tracked in #2034"]
 fn test_cgb_sound_01_registers() {
     let mut gb = load_gb_rom("roms/gb/automated_tests/cgb_sound/rom_singles/01-registers.gb");
     let output = run_blargg_rom_cart_ram(&mut gb);
@@ -501,7 +497,6 @@ fn test_cgb_sound_03_trigger() {
 }
 
 #[test]
-#[ignore = "failing: CH1 sweep calculation on trigger when shift=0 — tracked in #2034"]
 fn test_cgb_sound_04_sweep() {
     let mut gb = load_gb_rom("roms/gb/automated_tests/cgb_sound/rom_singles/04-sweep.gb");
     let output = run_blargg_rom_cart_ram(&mut gb);
@@ -534,7 +529,6 @@ fn test_cgb_sound_06_overflow_on_trigger() {
 }
 
 #[test]
-#[ignore = "failing: length/sweep period synchronisation (no output, likely hangs) — tracked in #2034"]
 fn test_cgb_sound_07_len_sweep_period_sync() {
     let mut gb =
         load_gb_rom("roms/gb/automated_tests/cgb_sound/rom_singles/07-len sweep period sync.gb");

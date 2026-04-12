@@ -54,6 +54,10 @@ impl Channel3 {
         self.active
     }
 
+    pub fn length_en(&self) -> bool {
+        self.length_en
+    }
+
     /// Output sample in 0.0–1.0 range.
     pub fn output(&self) -> f32 {
         if !self.active || !self.dac_on {
