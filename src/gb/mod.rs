@@ -1,3 +1,4 @@
+pub mod apu;
 pub mod boot_rom;
 pub mod bus;
 pub mod cartridge;

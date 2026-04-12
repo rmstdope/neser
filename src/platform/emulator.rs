@@ -146,7 +146,7 @@ impl Console {
     pub fn sample_ready(&self) -> bool {
         match self {
             Console::Nes(nes) => nes.sample_ready(),
-            Console::GameBoy(_) => false,
+            Console::GameBoy(gb) => gb.sample_ready(),
         }
     }
 
@@ -157,7 +157,7 @@ impl Console {
     pub fn get_sample(&mut self) -> Option<f32> {
         match self {
             Console::Nes(nes) => nes.get_sample(),
-            Console::GameBoy(_) => None,
+            Console::GameBoy(gb) => gb.get_sample(),
         }
     }
 
@@ -260,7 +260,7 @@ impl Console {
     pub fn set_audio_sample_rate(&mut self, rate: f32) {
         match self {
             Console::Nes(nes) => nes.set_audio_sample_rate(rate),
-            Console::GameBoy(_) => {}
+            Console::GameBoy(gb) => gb.set_audio_sample_rate(rate),
         }
     }
 
@@ -270,10 +270,6 @@ impl Console {
     /// refresh rate.  The NES value is derived from the hardware timing mode
     /// (NTSC ≈ 60.10 fps, PAL ≈ 50.01 fps).  The DMG Game Boy always runs at
     /// 4,194,304 Hz / 70,224 cycles per frame ≈ 59.73 fps.
-    ///
-    /// Unlike the NES, the Game Boy currently has no audio output, so there is
-    /// no ring-buffer back-pressure to naturally throttle the frame rate when
-    /// vsync is enabled.  Frontends must use this value to gate emulation.
     pub fn target_frame_duration(&self) -> std::time::Duration {
         match self {
             Console::GameBoy(_) => {
