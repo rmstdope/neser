@@ -84,13 +84,17 @@ pub struct Mapper256 {
 impl Mapper256 {
     const MAPPER_NUMBER: u16 = 256;
 
-    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(mut ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
+        // Force WRAM allocation regardless of header — OneBus hardware always has 8KB WRAM.
+        ctx.prg_ram_banks_8k = 1;
+        ctx.prg_ram_size_specified = true;
+
         let capabilities = MapperCapabilities {
-            has_chr_banking: false, // CHR is handled manually from PRG ROM
+            has_chr_banking: true, // CHR banking is implemented manually from PRG ROM-backed data
             has_dynamic_mirroring: true,
             max_prg_ram_kb: 8,
             prg_bank_size_kb: 8,
-            chr_bank_size_kb: 8,
+            chr_bank_size_kb: 1,
             ..Default::default()
         };
         let mut base = BaseMapper::new(&ctx, capabilities);
@@ -359,10 +363,10 @@ impl Mapper for Mapper256 {
         let offset = (addr & 0x3FF) as usize;
         let abs = bank * 1024 + offset;
         let prg = self.base.prg_rom();
-        if abs < prg.len() {
-            prg[abs]
-        } else {
+        if prg.is_empty() {
             0
+        } else {
+            prg[abs % prg.len()]
         }
     }
 
@@ -383,14 +387,15 @@ impl Mapper for Mapper256 {
         if !rendering_enabled {
             return;
         }
-        let count = self.irq_count;
-        if count == 0 || self.irq_reload {
+        if self.irq_reload {
             self.irq_count = self.irq_latch;
             self.irq_reload = false;
+        } else if self.irq_count == 0 {
+            self.irq_count = self.irq_latch;
         } else {
             self.irq_count -= 1;
         }
-        if count != 0 && self.irq_count == 0 && self.irq_enabled {
+        if self.irq_count == 0 && self.irq_enabled {
             self.irq_pending_flag = true;
         }
     }
@@ -646,18 +651,35 @@ mod tests {
         let prg = banked_data(8 * 1024, 4);
         let mut mapper = create_mapper256(prg, NametableLayout::Horizontal).unwrap();
 
-        // Set IRQ latch to 3 and enable IRQ via MMC3 interface
-        mapper.write_prg(0xC000, 3);  // IRQ latch = 3
-        mapper.write_prg(0xC001, 0);  // reload
+        // latch=2 (even; bit 0 is cleared by hardware, so writing 2 → latch=2)
+        mapper.write_prg(0xC000, 2);  // IRQ latch = 2 & 0xFE = 2
+        mapper.write_prg(0xC001, 0);  // reload (irq_reload = true)
         mapper.write_prg(0xE001, 0);  // IRQ enable
 
-        // Run 3 scanlines; IRQ should fire on the 3rd
+        // Scanline 0: reload → count=2; 2!=0 no fire
         mapper.ppu_scanline(0, true);
-        assert!(!mapper.irq_pending(), "IRQ should not fire after 1 scanline");
+        assert!(!mapper.irq_pending(), "IRQ should not fire after reload scanline");
+        // Scanline 1: 2→1; no fire
         mapper.ppu_scanline(1, true);
-        assert!(!mapper.irq_pending(), "IRQ should not fire after 2 scanlines");
+        assert!(!mapper.irq_pending(), "IRQ should not fire before count reaches 0");
+        // Scanline 2: 1→0 → FIRE
         mapper.ppu_scanline(2, true);
-        assert!(mapper.irq_pending(), "IRQ should fire after 3 scanlines");
+        assert!(mapper.irq_pending(), "IRQ should fire when count reaches 0");
+    }
+
+    #[test]
+    fn test_irq_fires_with_latch_zero() {
+        let prg = banked_data(8 * 1024, 4);
+        let mut mapper = create_mapper256(prg, NametableLayout::Horizontal).unwrap();
+
+        // Latch=0: every scanline after reload reloads to 0, which triggers immediately.
+        mapper.write_prg(0xC000, 0);  // latch = 0
+        mapper.write_prg(0xC001, 0);  // reload
+        mapper.write_prg(0xE001, 0);  // enable
+
+        // First scanline: reload → count=0 → FIRE immediately
+        mapper.ppu_scanline(0, true);
+        assert!(mapper.irq_pending(), "IRQ with latch=0 should fire on first scanline");
     }
 
     #[test]
