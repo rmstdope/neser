@@ -119,6 +119,23 @@ impl GameBoy {
         }
     }
 
+    /// Returns `true` when the APU has a sample ready to retrieve.
+    pub fn sample_ready(&self) -> bool {
+        self.gb.as_ref().is_some_and(|gb| gb.cpu.bus.sample_ready())
+    }
+
+    /// Retrieve the next APU audio sample, or `None` if not ready.
+    pub fn get_sample(&mut self) -> Option<f32> {
+        self.gb.as_mut().and_then(|gb| gb.cpu.bus.take_sample())
+    }
+
+    /// Set the APU output sample rate in Hz.
+    pub fn set_audio_sample_rate(&mut self, rate: f32) {
+        if let Some(gb) = &mut self.gb {
+            gb.cpu.bus.set_audio_sample_rate(rate);
+        }
+    }
+
     /// Access the shared application context.
     pub fn app_context(&self) -> &SharedAppContext {
         &self.app_context
@@ -249,5 +266,52 @@ mod tests {
     fn test_app_context_returns_reference() {
         let gb = make_gameboy();
         let _ = gb.app_context(); // should not panic
+    }
+
+    // ── APU sample output ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_sample_not_ready_before_rom_load() {
+        let gb = make_gameboy();
+        assert!(!gb.sample_ready());
+    }
+
+    #[test]
+    fn test_get_sample_returns_none_before_rom_load() {
+        let mut gb = make_gameboy();
+        assert!(gb.get_sample().is_none());
+    }
+
+    #[test]
+    fn test_sample_ready_after_ticks_with_rom() {
+        let mut gb = make_gameboy();
+        gb.load_rom(&minimal_rom(), "test.gb").unwrap();
+        // Run 30 ticks; APU should produce at least one sample.
+        for _ in 0..30 {
+            gb.run_tick();
+        }
+        assert!(
+            gb.sample_ready(),
+            "sample must be ready after running 30 ticks"
+        );
+    }
+
+    #[test]
+    fn test_get_sample_clears_ready_flag() {
+        let mut gb = make_gameboy();
+        gb.load_rom(&minimal_rom(), "test.gb").unwrap();
+        for _ in 0..30 {
+            gb.run_tick();
+        }
+        assert!(gb.sample_ready());
+        gb.get_sample();
+        assert!(!gb.sample_ready());
+    }
+
+    #[test]
+    fn test_set_audio_sample_rate_does_not_panic() {
+        let mut gb = make_gameboy();
+        gb.load_rom(&minimal_rom(), "test.gb").unwrap();
+        gb.set_audio_sample_rate(48_000.0);
     }
 }

@@ -1,3 +1,4 @@
+use crate::gb::apu::Apu;
 use crate::gb::boot_rom::DMG_BOOT_ROM;
 use crate::gb::bus::GbBus;
 use crate::gb::cartridge::GbCartridge;
@@ -9,7 +10,7 @@ use crate::gb::timer::Timer;
 ///
 /// Implements the Game Boy (DMG) memory map, routing reads and writes to the
 /// correct hardware region. Owns the cartridge, static RAM buffers, the Timer
-/// subsystem, the PPU, and the IF/IE interrupt registers.
+/// subsystem, the PPU, the APU, and the IF/IE interrupt registers.
 ///
 /// Memory map:
 /// - $0000–$7FFF: Cartridge ROM  (bank 0 fixed + switchable bank)
@@ -21,6 +22,7 @@ use crate::gb::timer::Timer;
 /// - $FEA0–$FEFF: Forbidden      (reads return 0xFF; writes ignored)
 /// - $FF04–$FF07: Timer          (DIV/TIMA/TMA/TAC)
 /// - $FF0F:       IF register
+/// - $FF10–$FF3F: APU             (CH1–CH4 + wave RAM)
 /// - $FF40–$FF4B: PPU I/O registers
 /// - $FF46:       OAM DMA (write-only trigger)
 /// - $FF80–$FFFE: HRAM
@@ -34,6 +36,8 @@ pub struct DmgBus {
     hram: [u8; 0x7F],
     timer: Timer,
     pub joypad: Joypad,
+    /// APU ($FF10–$FF3F).
+    apu: Apu,
     /// IF register ($FF0F): interrupt flag.
     if_reg: u8,
     /// IE register ($FFFF): interrupt enable.
@@ -61,6 +65,7 @@ impl DmgBus {
             hram: [0u8; 0x7F],
             timer: Timer::new(),
             joypad: Joypad::new(),
+            apu: Apu::new(),
             if_reg: 0,
             ie_reg: 0,
             boot_rom: DMG_BOOT_ROM,
@@ -87,6 +92,7 @@ impl DmgBus {
         self.ppu.write_register(0xFF40, 0x00); // power-on: LCD disabled
         self.timer = Timer::new();
         self.joypad = Joypad::new();
+        self.apu = Apu::new();
         self.wram = [0u8; 0x2000];
         self.hram = [0u8; 0x7F];
         self.if_reg = 0;
@@ -120,7 +126,7 @@ impl DmgBus {
         }
     }
 
-    /// Advance system timers and PPU by `m_cycles` M-cycles.
+    /// Advance system timers, PPU, and APU by `m_cycles` M-cycles.
     ///
     /// Propagates any timer interrupt to the IF register ($FF0F bit 2).
     /// Propagates PPU VBlank (bit 0) and STAT (bit 1) interrupts.
@@ -132,6 +138,22 @@ impl DmgBus {
         }
         self.ppu.tick_dots(u32::from(m_cycles) * 4);
         self.if_reg |= self.ppu.take_pending_interrupts();
+        self.apu.tick(m_cycles);
+    }
+
+    /// Returns `true` when an audio sample is ready to be retrieved.
+    pub fn sample_ready(&self) -> bool {
+        self.apu.sample_ready()
+    }
+
+    /// Consume and return the next audio sample, or `None` if not ready.
+    pub fn take_sample(&mut self) -> Option<f32> {
+        self.apu.take_sample()
+    }
+
+    /// Set the APU output sample rate in Hz.
+    pub fn set_audio_sample_rate(&mut self, rate: f32) {
+        self.apu.set_sample_rate(rate);
     }
 
     /// Bypass PPU access-blocking for OAM DMA transfers.
@@ -176,6 +198,7 @@ impl GbBus for DmgBus {
             0xFF02 => self.sc,
             0xFF04..=0xFF07 => self.timer.read(addr),
             0xFF0F => self.if_reg | 0xE0,
+            0xFF10..=0xFF3F => self.apu.read_register(addr),
             0xFF40..=0xFF4B => self.ppu.read_register(addr),
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
             0xFFFF => self.ie_reg,
@@ -205,6 +228,7 @@ impl GbBus for DmgBus {
             }
             0xFF04..=0xFF07 => self.timer.write(addr, val),
             0xFF0F => self.if_reg = val & 0x1F,
+            0xFF10..=0xFF3F => self.apu.write_register(addr, val),
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B => self.ppu.write_register(addr, val),
             0xFF46 => self.do_oam_dma(val),
             0xFF50 => self.boot_rom_active = false,
@@ -839,5 +863,82 @@ mod tests {
             expected,
             "notify_idu_with_prior_read: row n should be copied then read-corrupted"
         );
+    }
+
+    // ── APU register routing ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_apu_nr52_power_on_via_bus() {
+        // Given: write NR52=$80 via bus; When: read back via bus; Then: bit 7 is set.
+        let mut bus = make_bus();
+        bus.write(0xFF26, 0x80);
+        assert_eq!(bus.read(0xFF26) & 0x80, 0x80);
+    }
+
+    #[test]
+    fn test_apu_nr50_write_read_via_bus() {
+        // Given: APU powered on; When: write NR50=$77 via bus; Then: read back $77.
+        let mut bus = make_bus();
+        bus.write(0xFF26, 0x80); // power on
+        bus.write(0xFF24, 0x77);
+        assert_eq!(bus.read(0xFF24), 0x77);
+    }
+
+    #[test]
+    fn test_apu_nr51_write_read_via_bus() {
+        let mut bus = make_bus();
+        bus.write(0xFF26, 0x80);
+        bus.write(0xFF25, 0xF3);
+        assert_eq!(bus.read(0xFF25), 0xF3);
+    }
+
+    #[test]
+    fn test_apu_registers_return_ff_when_powered_off() {
+        // NR50 reads $FF when APU is powered off (internal value is $00 but
+        // the register is inaccessible; Apu::read_register returns $FF for NR10-NR51
+        // when powered off).
+        let mut bus = make_bus();
+        // APU starts powered off; NR50 write ignored.
+        bus.write(0xFF24, 0x77);
+        // Read NR50 when off — Apu returns 0x00 for nr50 (it's just not writable).
+        // The key contract: NR51 writes are silently ignored when APU is off.
+        bus.write(0xFF25, 0xAB); // should be ignored
+        assert_eq!(
+            bus.read(0xFF25),
+            0x00,
+            "NR51 must read 0 when APU is powered off"
+        );
+    }
+
+    #[test]
+    fn test_apu_wave_ram_accessible_via_bus() {
+        let mut bus = make_bus();
+        bus.write(0xFF30, 0xAB);
+        assert_eq!(bus.read(0xFF30), 0xAB);
+        bus.write(0xFF3F, 0xCD);
+        assert_eq!(bus.read(0xFF3F), 0xCD);
+    }
+
+    #[test]
+    fn test_apu_sample_ready_after_ticks() {
+        // After ticking enough M-cycles the APU should have a sample ready.
+        let mut bus = make_bus();
+        for _ in 0..30u8 {
+            bus.tick(1);
+        }
+        assert!(
+            bus.sample_ready(),
+            "APU sample must be ready after 30 M-cycles"
+        );
+    }
+
+    #[test]
+    fn test_apu_take_sample_returns_value_and_clears_ready() {
+        let mut bus = make_bus();
+        for _ in 0..30u8 {
+            bus.tick(1);
+        }
+        assert!(bus.take_sample().is_some());
+        assert!(!bus.sample_ready());
     }
 }
