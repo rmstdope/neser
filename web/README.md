@@ -24,7 +24,7 @@ bash scripts/build_web.sh
 npm run dev
 
 # Or production preview (after build)
-npm run preview
+bash scripts/run_web.sh
 # then open http://localhost:8000 in your browser
 ```
 
