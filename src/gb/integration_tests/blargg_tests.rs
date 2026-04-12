@@ -329,6 +329,279 @@ fn test_mem_timing_2() {
     );
 }
 
+// ── dmg_sound single ROMs ────────────────────────────────────────────────────
+
+#[test]
+#[ignore = "failing: APU off-state register read behaviour (NR52 bit 7) — tracked in #2034"]
+fn test_dmg_sound_01_registers() {
+    let mut gb = load_gb_rom("roms/gb/automated_tests/dmg_sound/rom_singles/01-registers.gb");
+    let output = run_blargg_rom_cart_ram(&mut gb);
+    assert!(
+        output.contains("Passed"),
+        "expected Passed, got: {output:?}"
+    );
+}
+
+#[test]
+fn test_dmg_sound_02_len_ctr() {
+    let mut gb = load_gb_rom("roms/gb/automated_tests/dmg_sound/rom_singles/02-len ctr.gb");
+    let output = run_blargg_rom_cart_ram(&mut gb);
+    assert!(
+        output.contains("Passed"),
+        "expected Passed, got: {output:?}"
+    );
+}
+
+#[test]
+#[ignore = "failing: length counter clocking on trigger in first half of period — tracked in #2034"]
+fn test_dmg_sound_03_trigger() {
+    let mut gb = load_gb_rom("roms/gb/automated_tests/dmg_sound/rom_singles/03-trigger.gb");
+    let output = run_blargg_rom_cart_ram(&mut gb);
+    assert!(
+        output.contains("Passed"),
+        "expected Passed, got: {output:?}"
+    );
+}
+
+#[test]
+#[ignore = "failing: CH1 sweep calculation on trigger when shift=0 — tracked in #2034"]
+fn test_dmg_sound_04_sweep() {
+    let mut gb = load_gb_rom("roms/gb/automated_tests/dmg_sound/rom_singles/04-sweep.gb");
+    let output = run_blargg_rom_cart_ram(&mut gb);
+    assert!(
+        output.contains("Passed"),
+        "expected Passed, got: {output:?}"
+    );
+}
+
+#[test]
+#[ignore = "failing: sweep negate-mode exit disables channel — tracked in #2034"]
+fn test_dmg_sound_05_sweep_details() {
+    let mut gb = load_gb_rom("roms/gb/automated_tests/dmg_sound/rom_singles/05-sweep details.gb");
+    let output = run_blargg_rom_cart_ram(&mut gb);
+    assert!(
+        output.contains("Passed"),
+        "expected Passed, got: {output:?}"
+    );
+}
+
+#[test]
+fn test_dmg_sound_06_overflow_on_trigger() {
+    let mut gb =
+        load_gb_rom("roms/gb/automated_tests/dmg_sound/rom_singles/06-overflow on trigger.gb");
+    let output = run_blargg_rom_cart_ram(&mut gb);
+    assert!(
+        output.contains("Passed"),
+        "expected Passed, got: {output:?}"
+    );
+}
+
+#[test]
+#[ignore = "failing: length/sweep period synchronisation (no output, likely hangs) — tracked in #2034"]
+fn test_dmg_sound_07_len_sweep_period_sync() {
+    let mut gb =
+        load_gb_rom("roms/gb/automated_tests/dmg_sound/rom_singles/07-len sweep period sync.gb");
+    let output = run_blargg_rom_cart_ram(&mut gb);
+    assert!(
+        output.contains("Passed"),
+        "expected Passed, got: {output:?}"
+    );
+}
+
+#[test]
+fn test_dmg_sound_08_len_ctr_during_power() {
+    let mut gb =
+        load_gb_rom("roms/gb/automated_tests/dmg_sound/rom_singles/08-len ctr during power.gb");
+    let output = run_blargg_rom_cart_ram(&mut gb);
+    assert!(
+        output.contains("Passed"),
+        "expected Passed, got: {output:?}"
+    );
+}
+
+#[test]
+#[ignore = "failing: wave channel read-while-on behaviour — tracked in #2034"]
+fn test_dmg_sound_09_wave_read_while_on() {
+    let mut gb =
+        load_gb_rom("roms/gb/automated_tests/dmg_sound/rom_singles/09-wave read while on.gb");
+    let output = run_blargg_rom_cart_ram(&mut gb);
+    assert!(
+        output.contains("Passed"),
+        "expected Passed, got: {output:?}"
+    );
+}
+
+#[test]
+#[ignore = "failing: wave channel trigger-while-on behaviour — tracked in #2034"]
+fn test_dmg_sound_10_wave_trigger_while_on() {
+    let mut gb =
+        load_gb_rom("roms/gb/automated_tests/dmg_sound/rom_singles/10-wave trigger while on.gb");
+    let output = run_blargg_rom_cart_ram(&mut gb);
+    assert!(
+        output.contains("Passed"),
+        "expected Passed, got: {output:?}"
+    );
+}
+
+#[test]
+fn test_dmg_sound_11_regs_after_power() {
+    let mut gb =
+        load_gb_rom("roms/gb/automated_tests/dmg_sound/rom_singles/11-regs after power.gb");
+    let output = run_blargg_rom_cart_ram(&mut gb);
+    assert!(
+        output.contains("Passed"),
+        "expected Passed, got: {output:?}"
+    );
+}
+
+#[test]
+#[ignore = "failing: wave channel write-while-on behaviour — tracked in #2034"]
+fn test_dmg_sound_12_wave_write_while_on() {
+    let mut gb =
+        load_gb_rom("roms/gb/automated_tests/dmg_sound/rom_singles/12-wave write while on.gb");
+    let output = run_blargg_rom_cart_ram(&mut gb);
+    assert!(
+        output.contains("Passed"),
+        "expected Passed, got: {output:?}"
+    );
+}
+
+// ── cgb_sound single ROMs ─────────────────────────────────────────────────────
+
+#[test]
+#[ignore = "failing: APU off-state register read behaviour (NR52 bit 7) — tracked in #2034"]
+fn test_cgb_sound_01_registers() {
+    let mut gb = load_gb_rom("roms/gb/automated_tests/cgb_sound/rom_singles/01-registers.gb");
+    let output = run_blargg_rom_cart_ram(&mut gb);
+    assert!(
+        output.contains("Passed"),
+        "expected Passed, got: {output:?}"
+    );
+}
+
+#[test]
+fn test_cgb_sound_02_len_ctr() {
+    let mut gb = load_gb_rom("roms/gb/automated_tests/cgb_sound/rom_singles/02-len ctr.gb");
+    let output = run_blargg_rom_cart_ram(&mut gb);
+    assert!(
+        output.contains("Passed"),
+        "expected Passed, got: {output:?}"
+    );
+}
+
+#[test]
+#[ignore = "failing: length counter clocking on trigger in first half of period — tracked in #2034"]
+fn test_cgb_sound_03_trigger() {
+    let mut gb = load_gb_rom("roms/gb/automated_tests/cgb_sound/rom_singles/03-trigger.gb");
+    let output = run_blargg_rom_cart_ram(&mut gb);
+    assert!(
+        output.contains("Passed"),
+        "expected Passed, got: {output:?}"
+    );
+}
+
+#[test]
+#[ignore = "failing: CH1 sweep calculation on trigger when shift=0 — tracked in #2034"]
+fn test_cgb_sound_04_sweep() {
+    let mut gb = load_gb_rom("roms/gb/automated_tests/cgb_sound/rom_singles/04-sweep.gb");
+    let output = run_blargg_rom_cart_ram(&mut gb);
+    assert!(
+        output.contains("Passed"),
+        "expected Passed, got: {output:?}"
+    );
+}
+
+#[test]
+#[ignore = "failing: sweep negate-mode exit disables channel — tracked in #2034"]
+fn test_cgb_sound_05_sweep_details() {
+    let mut gb = load_gb_rom("roms/gb/automated_tests/cgb_sound/rom_singles/05-sweep details.gb");
+    let output = run_blargg_rom_cart_ram(&mut gb);
+    assert!(
+        output.contains("Passed"),
+        "expected Passed, got: {output:?}"
+    );
+}
+
+#[test]
+fn test_cgb_sound_06_overflow_on_trigger() {
+    let mut gb =
+        load_gb_rom("roms/gb/automated_tests/cgb_sound/rom_singles/06-overflow on trigger.gb");
+    let output = run_blargg_rom_cart_ram(&mut gb);
+    assert!(
+        output.contains("Passed"),
+        "expected Passed, got: {output:?}"
+    );
+}
+
+#[test]
+#[ignore = "failing: length/sweep period synchronisation (no output, likely hangs) — tracked in #2034"]
+fn test_cgb_sound_07_len_sweep_period_sync() {
+    let mut gb =
+        load_gb_rom("roms/gb/automated_tests/cgb_sound/rom_singles/07-len sweep period sync.gb");
+    let output = run_blargg_rom_cart_ram(&mut gb);
+    assert!(
+        output.contains("Passed"),
+        "expected Passed, got: {output:?}"
+    );
+}
+
+#[test]
+#[ignore = "failing: length counter behaviour during APU power cycle (CGB variant) — tracked in #2034"]
+fn test_cgb_sound_08_len_ctr_during_power() {
+    let mut gb =
+        load_gb_rom("roms/gb/automated_tests/cgb_sound/rom_singles/08-len ctr during power.gb");
+    let output = run_blargg_rom_cart_ram(&mut gb);
+    assert!(
+        output.contains("Passed"),
+        "expected Passed, got: {output:?}"
+    );
+}
+
+#[test]
+#[ignore = "failing: wave channel read-while-on behaviour — tracked in #2034"]
+fn test_cgb_sound_09_wave_read_while_on() {
+    let mut gb =
+        load_gb_rom("roms/gb/automated_tests/cgb_sound/rom_singles/09-wave read while on.gb");
+    let output = run_blargg_rom_cart_ram(&mut gb);
+    assert!(
+        output.contains("Passed"),
+        "expected Passed, got: {output:?}"
+    );
+}
+
+#[test]
+fn test_cgb_sound_10_wave_trigger_while_on() {
+    let mut gb =
+        load_gb_rom("roms/gb/automated_tests/cgb_sound/rom_singles/10-wave trigger while on.gb");
+    let output = run_blargg_rom_cart_ram(&mut gb);
+    assert!(
+        output.contains("Passed"),
+        "expected Passed, got: {output:?}"
+    );
+}
+
+#[test]
+#[ignore = "failing: APU power-off should clear NR41 length counter (CGB variant) — tracked in #2034"]
+fn test_cgb_sound_11_regs_after_power() {
+    let mut gb =
+        load_gb_rom("roms/gb/automated_tests/cgb_sound/rom_singles/11-regs after power.gb");
+    let output = run_blargg_rom_cart_ram(&mut gb);
+    assert!(
+        output.contains("Passed"),
+        "expected Passed, got: {output:?}"
+    );
+}
+
+#[test]
+fn test_cgb_sound_12_wave() {
+    let mut gb = load_gb_rom("roms/gb/automated_tests/cgb_sound/rom_singles/12-wave.gb");
+    let output = run_blargg_rom_cart_ram(&mut gb);
+    assert!(
+        output.contains("Passed"),
+        "expected Passed, got: {output:?}"
+    );
+}
+
 // ── OAM bug single ROMs ───────────────────────────────────────────────────────
 
 #[test]
