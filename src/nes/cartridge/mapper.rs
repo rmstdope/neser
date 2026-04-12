@@ -264,6 +264,7 @@ use super::unlicensed::mapper274::Mapper274;
 use super::unlicensed::mapper281::Mapper281;
 use super::unlicensed::mapper282::Mapper282;
 use super::unlicensed::mapper283::Mapper283;
+use super::unlicensed::mapper284::Mapper284;
 use super::unlicensed::mapper285::Mapper285;
 use super::unlicensed::mapper286::Mapper286;
 use super::unlicensed::mapper287::Mapper287;
@@ -276,6 +277,7 @@ use super::unlicensed::mapper293::Mapper293;
 use super::unlicensed::mapper294::Mapper294;
 use super::unlicensed::mapper295::Mapper295;
 use super::unlicensed::mapper296::Mapper296;
+use super::unlicensed::mapper297::Mapper297;
 use super::unlicensed::mapper298::Mapper298;
 use super::unlicensed::mapper299::Mapper299;
 use super::unlicensed::mapper300::Mapper300;
@@ -295,6 +297,7 @@ use super::unlicensed::mapper314::Mapper314;
 use super::unlicensed::mapper315::Mapper315;
 use super::unlicensed::mapper319::Mapper319;
 use super::unlicensed::mapper320::Mapper320;
+use super::unlicensed::mapper321::Mapper321;
 use super::unlicensed::mapper322::Mapper322;
 use super::unlicensed::mapper323::Mapper323;
 use super::unlicensed::mapper324::Mapper324;
@@ -307,6 +310,7 @@ use super::unlicensed::mapper330::Mapper330;
 use super::unlicensed::mapper331::Mapper331;
 use super::unlicensed::mapper332::Mapper332;
 use super::unlicensed::mapper333::Mapper333;
+use super::unlicensed::mapper334::Mapper334;
 use super::unlicensed::mapper335::Mapper335;
 use super::unlicensed::mapper336::Mapper336;
 use super::unlicensed::mapper337::Mapper337;
@@ -918,6 +922,7 @@ mapper_registry! {
     315 => Mapper315::new,
     319 => Mapper319::new,
     320 => Mapper320::new,
+    321 => Mapper321::new,
     322 => Mapper322::new,
     323 => Mapper323::new,
     327 => Mapper327::new,
@@ -927,6 +932,7 @@ mapper_registry! {
     331 => Mapper331::new,
     332 => Mapper332::new,
     333 => Mapper333::new,
+    334 => Mapper334::new,
     335 => Mapper335::new,
     336 => Mapper336::new,
     337 => Mapper337::new,
@@ -1122,6 +1128,7 @@ mapper_registry! {
     206 => Namco118Mapper::new,
     207 => TaitoX1005_207Mapper::new,
     208 => Mapper208::new,
+    209 => JyCompanyMapper::new_standard,
     210 => Mapper210::new,
     211 => Mapper211::new,
     212 => Mapper212::new,
@@ -1185,6 +1192,7 @@ mapper_registry! {
     274 => Mapper274::new,
     281 => Mapper281::new,
     283 => Mapper283::new,
+    284 => Mapper284::new,
     282 => Mapper282::new,
     285 => Mapper285::new,
     292 => Mapper292::new,
@@ -1193,6 +1201,7 @@ mapper_registry! {
     294 => Mapper294::new,
     295 => Mapper295::new,
     296 => Mapper296::new,
+    297 => Mapper297::new,
     298 => Mapper298::new,
     299 => Mapper299::new,
     288 => Mapper288::new,
