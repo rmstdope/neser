@@ -147,7 +147,7 @@ mod tests {
     fn collect_apu_phase_reset_samples(channel: ApuPulseChannel) -> Vec<f32> {
         let total_cycles = NTSC_CPU_CYCLES_PER_FRAME * 5;
         collect_pulse_samples(
-            "roms/automated_tests/apu_phase_reset/apu_phase_reset.nes",
+            "roms/nes/automated_tests/apu_phase_reset/apu_phase_reset.nes",
             channel,
             total_cycles,
             false,
@@ -732,18 +732,21 @@ mod tests {
     }
 
     // apu_mixer
-    setup_rom_test!(test_apu_mixer_dmc, "roms/automated_tests/apu_mixer/dmc.nes");
+    setup_rom_test!(
+        test_apu_mixer_dmc,
+        "roms/nes/automated_tests/apu_mixer/dmc.nes"
+    );
     setup_rom_test!(
         test_apu_mixer_noise,
-        "roms/automated_tests/apu_mixer/noise.nes"
+        "roms/nes/automated_tests/apu_mixer/noise.nes"
     );
     setup_rom_test!(
         test_apu_mixer_square,
-        "roms/automated_tests/apu_mixer/square.nes"
+        "roms/nes/automated_tests/apu_mixer/square.nes"
     );
     setup_rom_test!(
         test_apu_mixer_triangle,
-        "roms/automated_tests/apu_mixer/triangle.nes"
+        "roms/nes/automated_tests/apu_mixer/triangle.nes"
     );
 
     // apu_phase_reset
@@ -810,25 +813,25 @@ mod tests {
     // dmc_tests
     setup_rom_address_test!(
         test_dmc_tests_buffer_retained,
-        "roms/automated_tests/dmc_tests/buffer_retained.nes",
+        "roms/nes/automated_tests/dmc_tests/buffer_retained.nes",
         0xE149,
         check_one_dmc_byte_processed
     );
     setup_rom_address_test!(
         test_dmc_tests_latency,
-        "roms/automated_tests/dmc_tests/latency.nes",
+        "roms/nes/automated_tests/dmc_tests/latency.nes",
         0xE162,
         check_four_by_two_dmc_bytes_processed
     );
     setup_rom_address_test!(
         test_dmc_tests_status_irq,
-        "roms/automated_tests/dmc_tests/status_irq.nes",
+        "roms/nes/automated_tests/dmc_tests/status_irq.nes",
         0xE154,
         check_one_irq_fired
     );
     setup_rom_address_test!(
         test_dmc_tests_status,
-        "roms/automated_tests/dmc_tests/status.nes",
+        "roms/nes/automated_tests/dmc_tests/status.nes",
         0xE14E,
         check_zero_irq_fired
     );
@@ -838,7 +841,7 @@ mod tests {
     fn test_fadeout_and_triangle() {
         init_tracing_from_env();
         let rom_path =
-            "roms/automated_tests/fadeout_and_triangle_tests/fadeout_and_triangle_test.nes";
+            "roms/nes/automated_tests/fadeout_and_triangle_tests/fadeout_and_triangle_test.nes";
 
         // Run for ~4 seconds to capture at least one full fade cycle (~3.25s).
         let total_cycles = NTSC_CPU_CYCLES_PER_FRAME * 240;
@@ -1009,7 +1012,7 @@ mod tests {
 
         // Collect pulse1 output only to isolate the square channel.
         let samples = collect_pulse_samples(
-            "roms/automated_tests/square_timer_div2/square_timer_div2.nes",
+            "roms/nes/automated_tests/square_timer_div2/square_timer_div2.nes",
             ApuPulseChannel::Pulse1,
             total_cycles,
             false,
@@ -1073,7 +1076,7 @@ mod tests {
 
         // WAV correlation: compare an aligned window to the golden reference.
         let wav_samples =
-            load_wav_samples_at_rate("roms/automated_tests/square_timer_div2/correct.wav");
+            load_wav_samples_at_rate("roms/nes/automated_tests/square_timer_div2/correct.wav");
 
         // Align both waveforms on the first rising edge before correlating.
         let wav_edge =
@@ -1102,14 +1105,14 @@ mod tests {
     fn test_apu_env() {
         // Load the reference WAV and match sample rate to the emulator output.
         let wav_samples =
-            load_wav_samples_at_rate("roms/automated_tests/test_apu_env/test_apu_env.wav");
+            load_wav_samples_at_rate("roms/nes/automated_tests/test_apu_env/test_apu_env.wav");
 
         // Capture slightly longer than the WAV to allow warmup and alignment slack.
         let total_cycles = capture_cycles_for_samples(wav_samples.len(), WARMUP_SAMPLES, 10_000);
 
         // Collect pulse1 output only to isolate the envelope behavior.
         let samples = collect_pulse_samples(
-            "roms/automated_tests/test_apu_env/test_apu_env.nes",
+            "roms/nes/automated_tests/test_apu_env/test_apu_env.nes",
             ApuPulseChannel::Pulse1,
             total_cycles,
             false,
@@ -1231,7 +1234,7 @@ mod tests {
 
         // Collect noise-only and pulse-only captures so we can verify ordering.
         let noise_samples = collect_forced_channel_samples(
-            "roms/automated_tests/test_apu_sweep/sweep_cutoff.nes",
+            "roms/nes/automated_tests/test_apu_sweep/sweep_cutoff.nes",
             total_cycles,
             false,
             false,
@@ -1240,7 +1243,7 @@ mod tests {
             false,
         );
         let pulse_samples = collect_pulse_samples(
-            "roms/automated_tests/test_apu_sweep/sweep_cutoff.nes",
+            "roms/nes/automated_tests/test_apu_sweep/sweep_cutoff.nes",
             ApuPulseChannel::Pulse1,
             total_cycles,
             false,
@@ -1354,7 +1357,7 @@ mod tests {
         let total_cycles = capture_cycles_for_samples(capture_samples, leading, trailing);
 
         let samples = collect_pulse_samples(
-            "roms/automated_tests/test_apu_sweep/sweep_sub.nes",
+            "roms/nes/automated_tests/test_apu_sweep/sweep_sub.nes",
             ApuPulseChannel::Pulse1,
             total_cycles,
             false,
@@ -1392,13 +1395,13 @@ mod tests {
     //     init_apu_tracing_from_env();
     //     // Golden reference for the expected DMC output (recorded from the test ROM).
     //     let wav_samples =
-    //         load_wav_samples_at_rate("roms/automated_tests/test_apu_timers/dmc_pitch.wav");
+    //         load_wav_samples_at_rate("roms/nes/automated_tests/test_apu_timers/dmc_pitch.wav");
     //     // Capture a little extra beyond the WAV length to allow for warmup and alignment.
     //     let total_cycles = capture_cycles_for_samples(wav_samples.len(), WARMUP_SAMPLES, 20_000);
 
     //     // Run the ROM and capture DMC-only output so other channels don't contaminate analysis.
     //     let samples = collect_dmc_samples(
-    //         "roms/automated_tests/test_apu_timers/dmc_pitch.nes",
+    //         "roms/nes/automated_tests/test_apu_timers/dmc_pitch.nes",
     //         total_cycles,
     //     );
     //     // Remove initial power-on transients for stable audio analysis.
@@ -1515,7 +1518,7 @@ mod tests {
     // #[test]
     // fn test_apu_timers_noise_pitch() {
     //     let samples = collect_forced_channel_samples(
-    //         "roms/automated_tests/test_apu_timers/noise_pitch.nes",
+    //         "roms/nes/automated_tests/test_apu_timers/noise_pitch.nes",
     //         10_000_000,
     //         false,
     //         false,
@@ -1546,7 +1549,7 @@ mod tests {
         // Strategy: two captures (triangle-only + noise-only) to locate the noise
         // marker via RMS, then verify silence before it and sustained activity after.
 
-        let rom_path = "roms/automated_tests/test_tri_lin_ctr/lin_ctr.nes";
+        let rom_path = "roms/nes/automated_tests/test_tri_lin_ctr/lin_ctr.nes";
 
         // ~8 seconds of capture to cover the full ROM execution with margin.
         let capture_samples = (SAMPLE_RATE_HZ as usize) * 8;
@@ -1856,7 +1859,7 @@ mod tests {
     fn test_volume_tests() {
         init_tracing_from_env();
 
-        let rom_path = "roms/automated_tests/volume_tests/volumes.nes";
+        let rom_path = "roms/nes/automated_tests/volume_tests/volumes.nes";
 
         // Press A after 5 frames to let the ROM initialize.
         let press_frame: u64 = 5;

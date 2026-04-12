@@ -125,28 +125,28 @@ mod tests {
     // blargg_ppu_tests_2005.09.15b
     setup_rom_console_test!(
         test_blargg_ppu_tests_2005_09_15b_palette_ram,
-        "roms/automated_tests/blargg_ppu_tests_2005.09.15b/palette_ram.nes",
+        "roms/nes/automated_tests/blargg_ppu_tests_2005.09.15b/palette_ram.nes",
         "$01"
     );
     setup_rom_console_test_with_ram_init!(
         test_blargg_ppu_tests_2005_09_15b_power_up_palette,
-        "roms/automated_tests/blargg_ppu_tests_2005.09.15b/power_up_palette.nes",
+        "roms/nes/automated_tests/blargg_ppu_tests_2005.09.15b/power_up_palette.nes",
         "$01",
         crate::nes::console::RamInitMode::Random
     );
     setup_rom_console_test!(
         test_blargg_ppu_tests_2005_09_15b_sprite_ram,
-        "roms/automated_tests/blargg_ppu_tests_2005.09.15b/sprite_ram.nes",
+        "roms/nes/automated_tests/blargg_ppu_tests_2005.09.15b/sprite_ram.nes",
         "$01"
     );
     setup_rom_console_test!(
         test_blargg_ppu_tests_2005_09_15b_vbl_clear_time,
-        "roms/automated_tests/blargg_ppu_tests_2005.09.15b/vbl_clear_time.nes",
+        "roms/nes/automated_tests/blargg_ppu_tests_2005.09.15b/vbl_clear_time.nes",
         "$01"
     );
     setup_rom_console_test!(
         test_blargg_ppu_tests_2005_09_15b_vram_access,
-        "roms/automated_tests/blargg_ppu_tests_2005.09.15b/vram_access.nes",
+        "roms/nes/automated_tests/blargg_ppu_tests_2005.09.15b/vram_access.nes",
         "$01"
     );
 
@@ -155,19 +155,19 @@ mod tests {
     // so we can just do CRC checks on the screen buffer for regression testing.
     setup_rom_crc_test!(
         test_full_palette,
-        "roms/automated_tests/full_palette/full_palette.nes",
+        "roms/nes/automated_tests/full_palette/full_palette.nes",
         [(20, 1088707371)]
     );
 
     setup_rom_crc_test!(
         test_full_palette_smooth,
-        "roms/automated_tests/full_palette/full_palette_smooth.nes",
+        "roms/nes/automated_tests/full_palette/full_palette_smooth.nes",
         [(20, 3951169934)]
     );
 
     setup_rom_crc_test!(
         test_flowing_palette,
-        "roms/automated_tests/full_palette/flowing_palette.nes",
+        "roms/nes/automated_tests/full_palette/flowing_palette.nes",
         [
             // Capture 5s intervals during 30s of flowing palette changes
             // to get a good variety of colors in the test coverage.
@@ -195,7 +195,7 @@ mod tests {
     #[test]
     fn test_read2004() {
         let mut nes = create_nes_from_rom(
-            "roms/automated_tests/misc_oam_tests/read2004.nes",
+            "roms/nes/automated_tests/misc_oam_tests/read2004.nes",
             crate::platform::app_context::AppContext::new_with_config(Config {
                 nes: NesConfig {
                     ram_init_mode: RamInitMode::Zero,
@@ -255,7 +255,7 @@ AA AA 01 01 10 10 01 01 00 00\n\
     fn run_oam_decay_crc_test(tv_system: TimingMode, expected_crc: u32, capture_name: &str) {
         let hardware_model = crate::nes::console::HardwareModel::from_timing_mode(tv_system);
         let mut nes = create_nes_from_rom(
-            "roms/automated_tests/misc_oam_tests/oam-decay-test.nes",
+            "roms/nes/automated_tests/misc_oam_tests/oam-decay-test.nes",
             crate::platform::app_context::AppContext::new_with_config(Config {
                 nes: NesConfig {
                     hardware_model,
@@ -311,14 +311,14 @@ AA AA 01 01 10 10 01 01 00 00\n\
 
     setup_rom_test!(
         test_oam_read_vbl_wait,
-        "roms/automated_tests/misc_oam_tests/oam_read_vbl_wait.nes"
+        "roms/nes/automated_tests/misc_oam_tests/oam_read_vbl_wait.nes"
     );
 
     // nmi_sync
     #[test]
     fn test_nmi_sync_demo_ntsc() {
         let mut nes = create_nes_from_rom(
-            "roms/automated_tests/nmi_sync/demo_ntsc.nes",
+            "roms/nes/automated_tests/nmi_sync/demo_ntsc.nes",
             crate::platform::app_context::AppContext::new_with_config(Config::default()),
             "demo_ntsc",
         );
@@ -354,7 +354,7 @@ AA AA 01 01 10 10 01 01 00 00\n\
     #[test]
     fn test_nmi_sync_demo_pal() {
         let mut nes = create_nes_from_rom(
-            "roms/automated_tests/nmi_sync/demo_pal.nes",
+            "roms/nes/automated_tests/nmi_sync/demo_pal.nes",
             crate::platform::app_context::AppContext::new_with_config(Config {
                 nes: NesConfig {
                     hardware_model: crate::nes::console::HardwareModel::NesPal,
@@ -390,16 +390,19 @@ AA AA 01 01 10 10 01 01 00 00\n\
     }
 
     // oam_read
-    setup_rom_test!(test_oam_read, "roms/automated_tests/oam_read/oam_read.nes");
+    setup_rom_test!(
+        test_oam_read,
+        "roms/nes/automated_tests/oam_read/oam_read.nes"
+    );
 
     // oam_stress
     setup_rom_test!(
         test_oam_stress,
-        "roms/automated_tests/oam_stress/oam_stress.nes"
+        "roms/nes/automated_tests/oam_stress/oam_stress.nes"
     );
 
     fn load_oamtest3_nes() -> Nes {
-        let rom_path = "roms/automated_tests/oamtest3/oam3.nes";
+        let rom_path = "roms/nes/automated_tests/oamtest3/oam3.nes";
         let rom_data = fs::read(rom_path).expect("oam3 ROM should load");
         let cartridge =
             Cartridge::load_from_file(&rom_data, rom_path, None).expect("oam3 ROM should parse");
@@ -715,138 +718,138 @@ AA AA 01 01 10 10 01 01 00 00\n\
     // ppu_open_bus
     setup_rom_test!(
         test_ppu_open_bus,
-        "roms/automated_tests/ppu_open_bus/ppu_open_bus.nes"
+        "roms/nes/automated_tests/ppu_open_bus/ppu_open_bus.nes"
     );
 
     // ppu_read_buffer
     setup_rom_test!(
         test_ppu_read_buffer,
-        "roms/automated_tests/ppu_read_buffer/test_ppu_read_buffer.nes"
+        "roms/nes/automated_tests/ppu_read_buffer/test_ppu_read_buffer.nes"
     );
 
     // ppu_sprite_hit
     setup_rom_test!(
         test_sprite_hit,
-        "roms/automated_tests/ppu_sprite_hit/ppu_sprite_hit.nes"
+        "roms/nes/automated_tests/ppu_sprite_hit/ppu_sprite_hit.nes"
     );
     setup_rom_test!(
         test_sprite_hit_01,
-        "roms/automated_tests/ppu_sprite_hit/rom_singles/01-basics.nes"
+        "roms/nes/automated_tests/ppu_sprite_hit/rom_singles/01-basics.nes"
     );
     setup_rom_test!(
         test_sprite_hit_02,
-        "roms/automated_tests/ppu_sprite_hit/rom_singles/02-alignment.nes"
+        "roms/nes/automated_tests/ppu_sprite_hit/rom_singles/02-alignment.nes"
     );
     setup_rom_test!(
         test_sprite_hit_03,
-        "roms/automated_tests/ppu_sprite_hit/rom_singles/03-corners.nes"
+        "roms/nes/automated_tests/ppu_sprite_hit/rom_singles/03-corners.nes"
     );
     setup_rom_test!(
         test_sprite_hit_04,
-        "roms/automated_tests/ppu_sprite_hit/rom_singles/04-flip.nes"
+        "roms/nes/automated_tests/ppu_sprite_hit/rom_singles/04-flip.nes"
     );
     setup_rom_test!(
         test_sprite_hit_05,
-        "roms/automated_tests/ppu_sprite_hit/rom_singles/05-left_clip.nes"
+        "roms/nes/automated_tests/ppu_sprite_hit/rom_singles/05-left_clip.nes"
     );
     setup_rom_test!(
         test_sprite_hit_06,
-        "roms/automated_tests/ppu_sprite_hit/rom_singles/06-right_edge.nes"
+        "roms/nes/automated_tests/ppu_sprite_hit/rom_singles/06-right_edge.nes"
     );
     setup_rom_test!(
         test_sprite_hit_07,
-        "roms/automated_tests/ppu_sprite_hit/rom_singles/07-screen_bottom.nes"
+        "roms/nes/automated_tests/ppu_sprite_hit/rom_singles/07-screen_bottom.nes"
     );
     setup_rom_test!(
         test_sprite_hit_08,
-        "roms/automated_tests/ppu_sprite_hit/rom_singles/08-double_height.nes"
+        "roms/nes/automated_tests/ppu_sprite_hit/rom_singles/08-double_height.nes"
     );
     setup_rom_test!(
         test_sprite_hit_09,
-        "roms/automated_tests/ppu_sprite_hit/rom_singles/09-timing.nes"
+        "roms/nes/automated_tests/ppu_sprite_hit/rom_singles/09-timing.nes"
     );
     setup_rom_test!(
         test_sprite_hit_10,
-        "roms/automated_tests/ppu_sprite_hit/rom_singles/10-timing_order.nes"
+        "roms/nes/automated_tests/ppu_sprite_hit/rom_singles/10-timing_order.nes"
     );
 
     // ppu_sprite_overflow
     setup_rom_test!(
         test_sprite_overflow,
-        "roms/automated_tests/ppu_sprite_overflow/ppu_sprite_overflow.nes"
+        "roms/nes/automated_tests/ppu_sprite_overflow/ppu_sprite_overflow.nes"
     );
     setup_rom_test!(
         test_sprite_overflow_01,
-        "roms/automated_tests/ppu_sprite_overflow/rom_singles/01-basics.nes"
+        "roms/nes/automated_tests/ppu_sprite_overflow/rom_singles/01-basics.nes"
     );
     setup_rom_test!(
         test_sprite_overflow_02,
-        "roms/automated_tests/ppu_sprite_overflow/rom_singles/02-details.nes"
+        "roms/nes/automated_tests/ppu_sprite_overflow/rom_singles/02-details.nes"
     );
     setup_rom_test!(
         test_sprite_overflow_03,
-        "roms/automated_tests/ppu_sprite_overflow/rom_singles/03-timing.nes"
+        "roms/nes/automated_tests/ppu_sprite_overflow/rom_singles/03-timing.nes"
     );
     setup_rom_test!(
         test_sprite_overflow_04,
-        "roms/automated_tests/ppu_sprite_overflow/rom_singles/04-obscure.nes"
+        "roms/nes/automated_tests/ppu_sprite_overflow/rom_singles/04-obscure.nes"
     );
     setup_rom_test!(
         test_sprite_overflow_05,
-        "roms/automated_tests/ppu_sprite_overflow/rom_singles/05-emulator.nes"
+        "roms/nes/automated_tests/ppu_sprite_overflow/rom_singles/05-emulator.nes"
     );
 
     // ppu_vbl_nmi
     setup_rom_test!(
         test_ppu_vbl_nmi,
-        "roms/automated_tests/ppu_vbl_nmi/ppu_vbl_nmi.nes"
+        "roms/nes/automated_tests/ppu_vbl_nmi/ppu_vbl_nmi.nes"
     );
     setup_rom_test!(
         test_ppu_vbl_nmi_01,
-        "roms/automated_tests/ppu_vbl_nmi/rom_singles/01-vbl_basics.nes"
+        "roms/nes/automated_tests/ppu_vbl_nmi/rom_singles/01-vbl_basics.nes"
     );
     setup_rom_test!(
         test_ppu_vbl_nmi_02,
-        "roms/automated_tests/ppu_vbl_nmi/rom_singles/02-vbl_set_time.nes"
+        "roms/nes/automated_tests/ppu_vbl_nmi/rom_singles/02-vbl_set_time.nes"
     );
     setup_rom_test!(
         test_ppu_vbl_nmi_03,
-        "roms/automated_tests/ppu_vbl_nmi/rom_singles/03-vbl_clear_time.nes"
+        "roms/nes/automated_tests/ppu_vbl_nmi/rom_singles/03-vbl_clear_time.nes"
     );
     setup_rom_test!(
         test_ppu_vbl_nmi_04,
-        "roms/automated_tests/ppu_vbl_nmi/rom_singles/04-nmi_control.nes"
+        "roms/nes/automated_tests/ppu_vbl_nmi/rom_singles/04-nmi_control.nes"
     );
     setup_rom_test!(
         test_ppu_vbl_nmi_05,
-        "roms/automated_tests/ppu_vbl_nmi/rom_singles/05-nmi_timing.nes"
+        "roms/nes/automated_tests/ppu_vbl_nmi/rom_singles/05-nmi_timing.nes"
     );
     setup_rom_test!(
         test_ppu_vbl_nmi_06,
-        "roms/automated_tests/ppu_vbl_nmi/rom_singles/06-suppression.nes"
+        "roms/nes/automated_tests/ppu_vbl_nmi/rom_singles/06-suppression.nes"
     );
     setup_rom_test!(
         test_ppu_vbl_nmi_07,
-        "roms/automated_tests/ppu_vbl_nmi/rom_singles/07-nmi_on_timing.nes"
+        "roms/nes/automated_tests/ppu_vbl_nmi/rom_singles/07-nmi_on_timing.nes"
     );
     setup_rom_test!(
         test_ppu_vbl_nmi_08,
-        "roms/automated_tests/ppu_vbl_nmi/rom_singles/08-nmi_off_timing.nes"
+        "roms/nes/automated_tests/ppu_vbl_nmi/rom_singles/08-nmi_off_timing.nes"
     );
     setup_rom_test!(
         test_ppu_vbl_nmi_09,
-        "roms/automated_tests/ppu_vbl_nmi/rom_singles/09-even_odd_frames.nes"
+        "roms/nes/automated_tests/ppu_vbl_nmi/rom_singles/09-even_odd_frames.nes"
     );
     setup_rom_test!(
         test_ppu_vbl_nmi_10,
-        "roms/automated_tests/ppu_vbl_nmi/rom_singles/10-even_odd_timing.nes"
+        "roms/nes/automated_tests/ppu_vbl_nmi/rom_singles/10-even_odd_timing.nes"
     );
 
     #[ignore] // Failing with current OAM implementation, needs investigation
     #[test]
     fn test_scanline_a1() {
         let mut nes = create_nes_from_rom(
-            "roms/automated_tests/scanline-a1/scanline.nes",
+            "roms/nes/automated_tests/scanline-a1/scanline.nes",
             crate::platform::app_context::AppContext::new_with_config(Config::default()),
             "scanline-a1",
         );
