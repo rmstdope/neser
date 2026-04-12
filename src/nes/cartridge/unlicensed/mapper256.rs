@@ -96,8 +96,7 @@ impl Mapper256 {
         let mut base = BaseMapper::new(&ctx, capabilities);
         // PRG: 4 × 8 KB slots at $8000–$FFFF
         base.configure_prg_banking(8 * 1024);
-        // Default WRAM enable at $6000
-        // Horizontal mirroring on power-on (cpu410x[6] bit 0 = 0 → H)
+        // set_mirroring_hv(true) = Horizontal (power-on state; cpu410x[6] = 0 → bit 0 = 0 → H)
         base.set_mirroring_hv(true);
 
         let mut mapper = Self {
@@ -794,16 +793,17 @@ mod tests {
 
     #[test]
     fn test_outer_prg_bank_via_410a() {
-        // 128KB = 16 × 8KB banks (banks 0–15); bank N filled with N
-        let prg = banked_data(8 * 1024, 64);
+        // 128KB = 128 × 1KB / 8KB-per-bank = actually 128 banks × 8KB = 1024KB
+        // Use 128 banks so bank 66 is unambiguously within range.
+        let prg = banked_data(8 * 1024, 128);
         let mut mapper = create_mapper256(prg, NametableLayout::Horizontal).unwrap();
 
-        // bankmode=0 → mask=0x3F; outer block via cpu410x[0xA]
-        // Set cpu410x[0xA] = 0x40 → block high bits = 0x40 (selects outer 64-bank group 1)
+        // bankmode=0 → mask=0x3F; set outer block via cpu410x[0xA] = 0x40.
+        // block = (cpu410x[0x0] & 0xF0) << 4 | (cpu410x[0xA] & ~mask) = 0 | (0x40 & ~0x3F) = 0x40
         mapper.write_prg(0x410A, 0x40);
-        // Now select cpu410x[7] = 2 (bank 2 within the outer block)
+        // Select inner bank 2 via cpu410x[7] = 2
         mapper.write_prg(0x4107, 2);
-        // Expected PRG bank at $8000 = block | (2 & mask) = 0x40 | 2 = 0x42 = 66
-        assert_eq!(mapper.read_prg(0x8000), 66 % 64, "Outer PRG bank select via $410A");
+        // Expected PRG bank at $8000 = block | (inner & mask) = 0x40 | (2 & 0x3F) = 0x42 = 66
+        assert_eq!(mapper.read_prg(0x8000), 66, "Outer PRG bank select: block=0x40, inner=2 → bank 66");
     }
 }
