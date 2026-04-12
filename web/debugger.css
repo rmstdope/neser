@@ -1,0 +1,311 @@
+/* ── Debugger panel ───────────────────────────────────────── */
+
+.debugger-panel {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 8px;
+  right: 8px;
+  display: flex;
+  flex-direction: column;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(10, 11, 15, 0.94);
+  border: 1px solid rgba(100, 200, 100, 0.35);
+  color: #90ee90;
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  z-index: 12;
+  pointer-events: auto;
+  overflow: hidden;
+}
+
+/* Ensure Tailwind hidden utility wins over display: flex above */
+.debugger-panel.hidden {
+  display: none;
+}
+
+.debugger-body {
+  display: flex;
+  flex-direction: row;
+  gap: 10px;
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  white-space: pre;
+  overflow: hidden;
+}
+
+.debugger-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 6px;
+  white-space: normal;
+  pointer-events: auto;
+}
+
+.debugger-controls-upper,
+.debugger-controls-lower {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.dbg-spacer {
+  flex: 1;
+}
+
+.dbg-btn {
+  background: rgba(40, 70, 40, 0.9);
+  border: 1px solid rgba(100, 200, 100, 0.5);
+  color: #90ee90;
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.72rem;
+  padding: 2px 7px;
+  border-radius: 4px;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.dbg-btn:hover {
+  background: rgba(60, 110, 60, 0.95);
+  border-color: #90ee90;
+}
+
+.debugger-disasm {
+  flex: 35;
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.debugger-disasm-title {
+  color: #c8ffc8;
+  border-bottom: 1px solid rgba(100, 200, 100, 0.25);
+  margin-bottom: 2px;
+}
+
+.debugger-regs {
+  flex: 65;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.debugger-regs-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.debugger-regs-title {
+  color: #c8ffc8;
+  border-bottom: 1px solid rgba(100, 200, 100, 0.25);
+  margin-bottom: 2px;
+}
+
+.debugger-regs-block {
+  display: block;
+  overflow: visible;
+}
+
+.debugger-hexdump-divider {
+  display: block;
+  border-top: 1px solid rgba(100, 200, 100, 0.25);
+  margin: 2px 0;
+}
+
+.debugger-hexdump-controls {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 2px;
+  align-items: center;
+}
+
+.dbg-hexdump-input {
+  width: 76px;
+  background: rgba(10, 11, 15, 0.96);
+  border: 1px solid rgba(100, 200, 100, 0.5);
+  color: #90ee90;
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.72rem;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+.debugger-hexdump-error {
+  color: #ff7d7d;
+  margin-bottom: 2px;
+}
+
+.debugger-hexdump-title {
+  color: #c8ffc8;
+  margin-bottom: 2px;
+}
+
+.debugger-hexdump-block {
+  display: block;
+  overflow: visible;
+  color: #6ab06a;
+}
+
+.debugger-oam-title {
+  color: #c8ffc8;
+  margin-bottom: 2px;
+}
+
+.debugger-oam-header {
+  display: block;
+  color: #90ee90;
+  margin-bottom: 1px;
+}
+
+.debugger-oam-block {
+  display: block;
+  overflow: visible;
+  color: #6ab06a;
+}
+
+.debugger-oam-row {
+  display: block;
+}
+
+.debugger-watch-title {
+  color: #c8ffc8;
+  margin-bottom: 2px;
+}
+
+.debugger-watch-controls {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 2px;
+  align-items: center;
+}
+
+.dbg-watch-input {
+  width: 76px;
+  background: rgba(10, 11, 15, 0.96);
+  border: 1px solid rgba(100, 200, 100, 0.5);
+  color: #90ee90;
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.72rem;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+.debugger-watch-block {
+  display: block;
+  overflow: visible;
+  color: #6ab06a;
+}
+
+.debugger-watch-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 2px;
+}
+
+.debugger-watch-value {
+  flex: 1;
+}
+
+.debugger-watch-error {
+  color: #ff7d7d;
+  margin-bottom: 2px;
+  display: block;
+}
+
+.debugger-ppu-title {
+  color: #c8ffc8;
+}
+
+.debugger-ppu-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  background: rgba(10, 11, 15, 0.96);
+  border: 1px solid rgba(100, 200, 100, 0.35);
+  border-radius: 6px;
+}
+
+.debugger-ppu-section {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  overflow: auto;
+  flex: 1;
+}
+
+.debugger-ppu-label {
+  color: #9fd89f;
+}
+
+.debugger-ppu-canvas {
+  width: 100%;
+  image-rendering: pixelated;
+  border: 1px solid rgba(100, 200, 100, 0.35);
+  border-radius: 3px;
+  background: rgba(6, 8, 10, 0.95);
+}
+
+.debugger-ppu-canvas-large {
+  max-height: none;
+}
+
+.disasm-divider {
+  border: none;
+  border-top: 1px solid rgba(100, 200, 100, 0.25);
+  margin: 3px 0;
+}
+
+.disasm-block {
+  display: block;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.disasm-line {
+  display: block;
+  color: #6ab06a;
+}
+
+.disasm-current {
+  display: block;
+  color: #f0f080;
+  font-weight: bold;
+  background: rgba(80, 80, 0, 0.35);
+}
+
+.debugger-trace-title {
+  color: #c8ffc8;
+  margin-bottom: 2px;
+}
+
+.debugger-trace-block {
+  display: block;
+  overflow-y: auto;
+  min-height: 0;
+  max-height: 32%;
+  color: #6ab06a;
+}
+
+.debugger-trace-row {
+  display: block;
+}

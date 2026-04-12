@@ -53,15 +53,15 @@ export function toggleShortcutHelpVisibility(helpOverlayElement: HTMLElement | n
         return false;
     }
 
-    const isHidden = helpOverlayElement.classList.contains("d-none");
+    const isHidden = helpOverlayElement.classList.contains("hidden");
 
     if (isHidden) {
-        helpOverlayElement.classList.remove("d-none");
+        helpOverlayElement.classList.remove("hidden");
         helpOverlayElement.setAttribute("aria-hidden", "false");
         return true;
     }
 
-    helpOverlayElement.classList.add("d-none");
+    helpOverlayElement.classList.add("hidden");
     helpOverlayElement.setAttribute("aria-hidden", "true");
     return false;
 }
