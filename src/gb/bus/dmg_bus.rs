@@ -231,25 +231,19 @@ impl GbBus for DmgBus {
     }
 
     fn notify_idu_glitch(&mut self, addr: u16) {
-        if matches!(addr, 0xFE00..=0xFEFF) {
-            // Use the row snapshotted at instruction start (pre-M1 tick).
-            // On hardware the IDU assertion fires during M2, but the
-            // corrupted row corresponds to the scan position when the
-            // instruction *began*. Tests show only rows 1–16 are affected
-            // by INC/DEC r16 via this path (rows 0 and 17–19 are immune).
-            if let Some(row) = self.saved_oam_row {
-                if row >= 1 && row <= 16 {
-                    self.ppu.apply_oam_write_corruption(row);
-                }
-            }
+        if matches!(addr, 0xFE00..=0xFEFF)
+            && let Some(row) = self.saved_oam_row
+            && (1..=16).contains(&row)
+        {
+            self.ppu.apply_oam_write_corruption(row);
         }
     }
 
     fn notify_idu_with_prior_read(&mut self, addr: u16) {
-        if matches!(addr, 0xFE00..=0xFEFF) {
-            if let Some(row) = self.ppu.current_oam_row() {
-                self.ppu.apply_oam_read_idu_corruption(row);
-            }
+        if matches!(addr, 0xFE00..=0xFEFF)
+            && let Some(row) = self.ppu.current_oam_row()
+        {
+            self.ppu.apply_oam_read_idu_corruption(row);
         }
     }
 }
@@ -382,13 +376,14 @@ mod tests {
             0x00,
             "STAT mode should be 0 while LCD is off"
         );
-        // After enabling the LCD the PPU resets to OAM Scan (Mode 2).
+        // After enabling the LCD the PPU resets to the first scanline after enable,
+        // which reports Mode 0 (HBlank) instead of Mode 2 (OAM Scan).
         bus.write(0xFF40, 0x91);
         let stat = bus.ppu.read_register(0xFF41);
         assert_eq!(
             stat & 0x03,
-            0x02,
-            "STAT mode should be OAM Scan (2) after LCD enable"
+            0x00,
+            "STAT mode should be HBlank (0) on first scanline after LCD enable"
         );
     }
 
@@ -651,7 +646,12 @@ mod tests {
     }
 
     fn enable_lcd_and_tick_to_row(bus: &mut DmgBus, row: usize) {
-        bus.write(0xFF40, 0x91); // enable LCD → timing resets to dot=0 / Mode 2
+        bus.write(0xFF40, 0x91); // enable LCD → timing resets
+        // Skip the first scanline after LCD enable (no Mode 2; 452 dots = 113 M-cycles)
+        for _ in 0..113 {
+            bus.tick(1);
+        }
+        // Now on scanline 1 with normal Mode 2; tick to the desired OAM row
         for _ in 0..row {
             bus.tick(1); // 1 M-cycle = 4 dots = 1 OAM row
         }

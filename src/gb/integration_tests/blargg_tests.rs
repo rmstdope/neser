@@ -332,7 +332,6 @@ fn test_mem_timing_2() {
 // ── OAM bug single ROMs ───────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "failing: LCD scanline timing inaccuracy — tracked in #1993"]
 fn test_oam_bug_1_lcd_sync() {
     let mut gb = load_gb_rom("roms/gb/automated_tests/oam_bug/rom_singles/1-lcd_sync.gb");
     let output = run_blargg_rom_cart_ram(&mut gb);
