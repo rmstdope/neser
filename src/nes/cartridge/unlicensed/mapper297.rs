@@ -34,8 +34,6 @@
 //!
 //! ## Known Limitations
 //!
-//! - MMC1 CHR offset (+16) assumes 4 KiB CHR banks; 8 KiB CHR mode offsets by
-//!   +8 instead.
 //! - No PRG-RAM.
 
 use crate::nes::cartridge::NametableLayout;
@@ -43,15 +41,10 @@ use crate::nes::cartridge::base_mapper::BaseMapper;
 use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities, MapperContext};
 use crate::nes::cartridge::mmc1::MMC1Mapper;
 
-// Indices into MMC1 `registers_snapshot()` output.
-const MMC1_SNAP_CONTROL: usize = 2;
-const MMC1_SNAP_CHR_BANK_0: usize = 3;
-const MMC1_SNAP_CHR_BANK_1: usize = 4;
-const MMC1_SNAP_PRG_BANK: usize = 5;
-
 /// PRG offset in MMC1 mode: all PRG banks start at bank 8 (A17=1 → upper 128 KiB).
 const MMC1_PRG_OFFSET: i16 = 8;
-/// CHR offset in MMC1 mode: 16 × 4 KiB = 64 KiB into CHR-ROM.
+/// CHR offset in MMC1 mode: 16 × 4 KiB pages = 64 KiB into CHR-ROM.
+/// In 8 KiB CHR mode the register value is doubled, yielding the same 64 KiB base.
 const MMC1_CHR_OFFSET: i16 = 16;
 
 /// Mapper 297 – Mapper70/MMC1 multicart hybrid.
@@ -115,14 +108,10 @@ impl Mapper297 {
     }
 
     fn apply_mmc1_banks(&mut self) {
-        let regs = self.mmc1.registers_snapshot();
-        if regs.len() <= MMC1_SNAP_PRG_BANK {
-            return;
-        }
-        let control = regs[MMC1_SNAP_CONTROL];
-        let chr0 = regs[MMC1_SNAP_CHR_BANK_0];
-        let chr1 = regs[MMC1_SNAP_CHR_BANK_1];
-        let prg = regs[MMC1_SNAP_PRG_BANK];
+        let control = self.mmc1.control();
+        let chr0 = self.mmc1.chr_bank_0();
+        let chr1 = self.mmc1.chr_bank_1();
+        let prg = self.mmc1.prg_bank();
 
         let prg_mode = (control >> 2) & 0x03;
         match prg_mode {

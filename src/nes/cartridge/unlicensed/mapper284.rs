@@ -202,6 +202,10 @@ impl Mapper for Mapper284 {
         if !self.ext_attr_enabled {
             return None;
         }
+        let addr = addr & 0x2FFF;
+        if !(0x2000..=0x2FFF).contains(&addr) {
+            return None;
+        }
         let offset = addr & 0x03FF;
         if offset < 0x03C0 {
             // Tile fetch – save offset for the next attribute lookup.

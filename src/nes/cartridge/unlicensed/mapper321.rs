@@ -206,9 +206,12 @@ impl Mapper for Mapper321 {
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        if let Some((&ex, mmc3_data)) = data.split_last() {
-            self.ex_reg = ex;
-            self.mmc3.restore_registers(mmc3_data);
+        if data.len() >= 17 {
+            self.ex_reg = data[data.len() - 1];
+            self.mmc3.restore_registers(&data[..data.len() - 1]);
+        } else {
+            self.mmc3.restore_registers(data);
+            self.ex_reg = 0;
         }
     }
 

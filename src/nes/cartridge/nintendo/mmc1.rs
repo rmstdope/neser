@@ -230,6 +230,26 @@ impl MMC1Mapper {
         mapper
     }
 
+    /// Returns the current value of the control register ($8000-$9FFF).
+    pub(crate) fn control(&self) -> u8 {
+        self.control
+    }
+
+    /// Returns the current CHR bank 0 register value ($A000-$BFFF).
+    pub(crate) fn chr_bank_0(&self) -> u8 {
+        self.chr_bank_0
+    }
+
+    /// Returns the current CHR bank 1 register value ($C000-$DFFF).
+    pub(crate) fn chr_bank_1(&self) -> u8 {
+        self.chr_bank_1
+    }
+
+    /// Returns the current PRG bank register value ($E000-$FFFF).
+    pub(crate) fn prg_bank(&self) -> u8 {
+        self.prg_bank
+    }
+
     fn reset_shift_register(&mut self) {
         self.shift_register = MMC1_SHIFT_REGISTER_POWER_ON; // Reset to power-on state: bit 4 set
         self.write_count = 0;

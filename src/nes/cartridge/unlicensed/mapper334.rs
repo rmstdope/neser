@@ -145,8 +145,8 @@ impl Mapper for Mapper334 {
 
     fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
         match addr {
-            // $6002 (masked $6003): bit 0 = jumper.
-            a @ 0x6000..=0x7FFF if (a & 0x6003) == 0x6002 => {
+            // $6002 (masked $6003): bit 0 = jumper, only when WRAM window is accessible.
+            a @ 0x6000..=0x7FFF if (a & 0x6003) == 0x6002 && self.mmc3.is_prg_ram_writable() => {
                 (open_bus & 0xFE) | (self.jumper as u8)
             }
             0x6000..=0x7FFF => self.mmc3.read_prg_open_bus(addr, open_bus),
@@ -158,10 +158,12 @@ impl Mapper for Mapper334 {
     fn write_prg(&mut self, addr: u16, value: u8) {
         match addr {
             a @ 0x6000..=0x7FFF => {
-                match a & 0x6003 {
-                    0x6000 => self.reg6000 = value,
-                    0x6001 => self.reg6001 = value,
-                    _ => {}
+                if self.mmc3.is_prg_ram_writable() {
+                    match a & 0x6003 {
+                        0x6000 => self.reg6000 = value,
+                        0x6001 => self.reg6001 = value,
+                        _ => {}
+                    }
                 }
                 // Pass through so MMC3 WRAM enable ($A001) still works.
                 self.mmc3.write_prg(addr, value);
@@ -211,11 +213,15 @@ impl Mapper for Mapper334 {
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
-        let n = data.len();
-        if n >= 2 {
+        if data.len() >= 18 {
+            let n = data.len();
             self.reg6000 = data[n - 2];
             self.reg6001 = data[n - 1];
             self.mmc3.restore_registers(&data[..n - 2]);
+        } else {
+            self.mmc3.restore_registers(data);
+            self.reg6000 = 0;
+            self.reg6001 = 0;
         }
     }
 
