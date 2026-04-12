@@ -388,7 +388,8 @@ mod tests {
         // Load the nestest ROM
         let rom_data =
             fs::read("roms/nes/automated_tests/nestest/nestest.nes").expect("Failed to load ROM");
-        let cartridge = load_test_cartridge(&rom_data, "roms/nes/automated_tests/nestest/nestest.nes");
+        let cartridge =
+            load_test_cartridge(&rom_data, "roms/nes/automated_tests/nestest/nestest.nes");
 
         // Create NES and insert cartridge
         let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(

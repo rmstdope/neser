@@ -10,7 +10,7 @@ const BUNDLED_ROM_NAME = "cpu.nes";
 const IDLE_STATUS_PATTERN = /Load a ROM to begin|Stopped\. You can restart or load a new ROM/;
 
 function readMockRomBytes() {
-    return readFileSync(path.join(process.cwd(), "roms", BUNDLED_ROM_NAME));
+    return readFileSync(path.join(process.cwd(), "roms", "nes", BUNDLED_ROM_NAME));
 }
 
 async function injectBundledRomOption(page) {

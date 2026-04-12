@@ -390,7 +390,10 @@ AA AA 01 01 10 10 01 01 00 00\n\
     }
 
     // oam_read
-    setup_rom_test!(test_oam_read, "roms/nes/automated_tests/oam_read/oam_read.nes");
+    setup_rom_test!(
+        test_oam_read,
+        "roms/nes/automated_tests/oam_read/oam_read.nes"
+    );
 
     // oam_stress
     setup_rom_test!(

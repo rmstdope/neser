@@ -732,7 +732,10 @@ mod tests {
     }
 
     // apu_mixer
-    setup_rom_test!(test_apu_mixer_dmc, "roms/nes/automated_tests/apu_mixer/dmc.nes");
+    setup_rom_test!(
+        test_apu_mixer_dmc,
+        "roms/nes/automated_tests/apu_mixer/dmc.nes"
+    );
     setup_rom_test!(
         test_apu_mixer_noise,
         "roms/nes/automated_tests/apu_mixer/noise.nes"
