@@ -228,7 +228,10 @@ impl GbBus for DmgBus {
     }
 
     fn notify_idu_with_prior_read(&mut self, addr: u16) {
-        if matches!(addr, 0xFE00..=0xFEFF)
+        // Handles only the forbidden zone ($FEA0–$FEFF): reads from real OAM
+        // ($FE00–$FE9F) already apply plain read corruption via Ppu::read_oam,
+        // so restricting to $FEA0–$FEFF avoids a double-corruption there.
+        if matches!(addr, 0xFEA0..=0xFEFF)
             && let Some(row) = self.ppu.current_oam_row()
         {
             self.ppu.apply_oam_read_idu_corruption(row);
@@ -236,7 +239,9 @@ impl GbBus for DmgBus {
     }
 
     fn notify_oam_read(&mut self, addr: u16) {
-        if matches!(addr, 0xFE00..=0xFEFF)
+        // Handles only the forbidden zone ($FEA0–$FEFF): reads from real OAM
+        // ($FE00–$FE9F) already apply plain read corruption via Ppu::read_oam.
+        if matches!(addr, 0xFEA0..=0xFEFF)
             && let Some(row) = self.ppu.current_oam_row()
         {
             self.ppu.apply_oam_read_corruption(row);
@@ -244,7 +249,9 @@ impl GbBus for DmgBus {
     }
 
     fn notify_oam_write(&mut self, addr: u16) {
-        if matches!(addr, 0xFE00..=0xFEFF)
+        // Handles only the forbidden zone ($FEA0–$FEFF): writes to real OAM
+        // ($FE00–$FE9F) already apply write corruption via Ppu::write_oam.
+        if matches!(addr, 0xFEA0..=0xFEFF)
             && let Some(row) = self.ppu.current_oam_row()
         {
             self.ppu.apply_oam_write_corruption(row);
@@ -807,13 +814,15 @@ mod tests {
         // Given: PPU at row 5 (dot 20); rows 3, 4, 5 have known values.
         // a=0x00A0 (row3), b=0x0055 (row4[0]), c=0x000F (row5[0]), d=0x00C0 (row4[2])
         // new_b = 0x0045; all three rows become [0x0045, 0x0011, 0x00C0, 0x0022]
+        // Address $FEA8 is in the forbidden zone ($FEA0–$FEFF): only the notify
+        // hook applies corruption (Ppu::read_oam is not called for this range).
         use crate::gb::bus::GbBus;
         let mut bus = make_bus();
         set_row_words(&mut bus.ppu.oam, 3, [0x00A0, 0x0001, 0x0002, 0x0003]);
         set_row_words(&mut bus.ppu.oam, 4, [0x0055, 0x0011, 0x00C0, 0x0022]);
         set_row_words(&mut bus.ppu.oam, 5, [0x000F, 0x0099, 0x0088, 0x0077]);
         enable_lcd_and_tick_to_row(&mut bus, 5);
-        bus.notify_idu_with_prior_read(0xFE28);
+        bus.notify_idu_with_prior_read(0xFEA8); // forbidden zone address
         let expected = [0x0045u16, 0x0011, 0x00C0, 0x0022];
         assert_eq!(
             get_row_words(&bus.ppu.oam, 3),

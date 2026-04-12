@@ -32,8 +32,10 @@ pub trait GbBus {
     /// Notify the bus that the CPU performed a read from `addr` in the same
     /// M-cycle as an IDU increment/decrement (e.g., `LD A, [HLI]`, `POP rr` M2).
     ///
-    /// If `addr` falls in OAM and the PPU is in Mode 2, this triggers the more
-    /// complex "Read During Increase/Decrease" OAM corruption pattern.
+    /// If `addr` falls in the forbidden zone ($FEA0–$FEFF) and the PPU is in
+    /// Mode 2, this triggers the "Read During Increase/Decrease" OAM corruption
+    /// pattern. Reads from real OAM ($FE00–$FE9F) are already handled by
+    /// `Ppu::read_oam`; restricting to $FEA0–$FEFF avoids double-corruption.
     ///
     /// The default implementation is a no-op.
     fn notify_idu_with_prior_read(&mut self, _addr: u16) {}
@@ -41,8 +43,9 @@ pub trait GbBus {
     /// Notify the bus that the CPU performed a plain OAM read from `addr` in an
     /// M-cycle where no IDU increment/decrement was active (e.g., `POP rr` M3).
     ///
-    /// If `addr` falls in the OAM region ($FE00–$FEFF) and the PPU is in Mode 2,
-    /// this triggers a plain OAM read corruption without the IDU component.
+    /// If `addr` falls in the forbidden zone ($FEA0–$FEFF) and the PPU is in
+    /// Mode 2, this triggers a plain OAM read corruption. Reads from real OAM
+    /// ($FE00–$FE9F) are already handled by `Ppu::read_oam`.
     ///
     /// The default implementation is a no-op.
     fn notify_oam_read(&mut self, _addr: u16) {}
@@ -50,8 +53,9 @@ pub trait GbBus {
     /// Notify the bus that the CPU performed a plain write to `addr` in an M-cycle
     /// where no IDU decrement was active (e.g., `PUSH rr` M4).
     ///
-    /// If `addr` falls in the OAM region ($FE00–$FEFF, including unusable
-    /// $FEA0–$FEFF) and the PPU is in Mode 2, this triggers an OAM write corruption.
+    /// If `addr` falls in the forbidden zone ($FEA0–$FEFF) and the PPU is in
+    /// Mode 2, this triggers an OAM write corruption. Writes to real OAM
+    /// ($FE00–$FE9F) are already handled by `Ppu::write_oam`.
     ///
     /// The default implementation is a no-op.
     fn notify_oam_write(&mut self, _addr: u16) {}
