@@ -139,9 +139,7 @@ impl Channel4 {
     }
 
     pub fn read_nr42(&self) -> u8 {
-        ((self.init_volume & 0x0F) << 4)
-            | (u8::from(self.env_add) << 3)
-            | (self.env_period & 0x07)
+        ((self.init_volume & 0x0F) << 4) | (u8::from(self.env_add) << 3) | (self.env_period & 0x07)
     }
 
     pub fn read_nr43(&self) -> u8 {

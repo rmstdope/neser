@@ -109,7 +109,11 @@ impl Channel1 {
     }
 
     fn sweep_timer_reload(&self) -> u8 {
-        if self.sweep_period > 0 { self.sweep_period } else { 8 }
+        if self.sweep_period > 0 {
+            self.sweep_period
+        } else {
+            8
+        }
     }
 
     /// Clock frequency sweep at 128 Hz (Frame Sequencer steps 2/6).
@@ -204,9 +208,7 @@ impl Channel1 {
 
     /// NR12 read: all bits readable.
     pub fn read_nr12(&self) -> u8 {
-        ((self.init_volume & 0x0F) << 4)
-            | (u8::from(self.env_add) << 3)
-            | (self.env_period & 0x07)
+        ((self.init_volume & 0x0F) << 4) | (u8::from(self.env_add) << 3) | (self.env_period & 0x07)
     }
 
     /// NR14 read: only length-enable bit is readable; others read as 1.
