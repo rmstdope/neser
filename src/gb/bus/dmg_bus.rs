@@ -50,6 +50,10 @@ pub struct DmgBus {
     sc: u8,
     /// Bytes captured via serial transfer (written by ROM via SB/SC).
     serial_buf: Vec<u8>,
+    /// OAM scan row captured at the start of the currently-executing instruction
+    /// (before M1's bus tick).  Used by `notify_idu_glitch` to check whether the
+    /// IDU glitch triggers OAM corruption with the correct pre-instruction PPU state.
+    saved_oam_row: Option<usize>,
 }
 
 impl DmgBus {
@@ -68,6 +72,7 @@ impl DmgBus {
             sb: 0xFF,
             sc: 0x7E,
             serial_buf: Vec::new(),
+            saved_oam_row: None,
         };
         // Real DMG hardware powers on with LCDC=$00 (LCD disabled).
         // The boot ROM tile-loading runs while the LCD is off so VRAM writes
@@ -217,6 +222,30 @@ impl GbBus for DmgBus {
     fn tick(&mut self, m_cycles: u8) {
         DmgBus::tick(self, m_cycles);
     }
+
+    fn begin_instruction(&mut self) {
+        // Snapshot the OAM-scan row that is active at the very start of the
+        // instruction (before the M1 bus tick advances the PPU).  Used by
+        // notify_idu_glitch to determine the correct corruption row.
+        self.saved_oam_row = self.ppu.current_oam_row();
+    }
+
+    fn notify_idu_glitch(&mut self, addr: u16) {
+        if matches!(addr, 0xFE00..=0xFEFF)
+            && let Some(row) = self.saved_oam_row
+            && (1..=16).contains(&row)
+        {
+            self.ppu.apply_oam_write_corruption(row);
+        }
+    }
+
+    fn notify_idu_with_prior_read(&mut self, addr: u16) {
+        if matches!(addr, 0xFE00..=0xFEFF)
+            && let Some(row) = self.ppu.current_oam_row()
+        {
+            self.ppu.apply_oam_read_idu_corruption(row);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -347,13 +376,14 @@ mod tests {
             0x00,
             "STAT mode should be 0 while LCD is off"
         );
-        // After enabling the LCD the PPU resets to OAM Scan (Mode 2).
+        // After enabling the LCD the PPU resets to the first scanline after enable,
+        // which reports Mode 0 (HBlank) instead of Mode 2 (OAM Scan).
         bus.write(0xFF40, 0x91);
         let stat = bus.ppu.read_register(0xFF41);
         assert_eq!(
             stat & 0x03,
-            0x02,
-            "STAT mode should be OAM Scan (2) after LCD enable"
+            0x00,
+            "STAT mode should be HBlank (0) on first scanline after LCD enable"
         );
     }
 
@@ -598,5 +628,117 @@ mod tests {
         let mut bus = make_bus();
         bus.write(0xFF02, 0x81);
         assert_eq!(bus.read(0xFF02) & 0x80, 0x00);
+    }
+
+    // ── IDU glitch notifications (Phase C) ───────────────────────────────────
+
+    fn set_row_words(oam: &mut [u8; 0xA0], row: usize, words: [u16; 4]) {
+        let base = row * 8;
+        for (i, &w) in words.iter().enumerate() {
+            oam[base + i * 2] = w as u8;
+            oam[base + i * 2 + 1] = (w >> 8) as u8;
+        }
+    }
+
+    fn get_row_words(oam: &[u8; 0xA0], row: usize) -> [u16; 4] {
+        let base = row * 8;
+        [0, 1, 2, 3].map(|i| u16::from_le_bytes([oam[base + i * 2], oam[base + i * 2 + 1]]))
+    }
+
+    fn enable_lcd_and_tick_to_row(bus: &mut DmgBus, row: usize) {
+        bus.write(0xFF40, 0x91); // enable LCD → timing resets
+        // Skip the first scanline after LCD enable (no Mode 2; 452 dots = 113 M-cycles)
+        for _ in 0..113 {
+            bus.tick(1);
+        }
+        // Now on scanline 1 with normal Mode 2; tick to the desired OAM row
+        for _ in 0..row {
+            bus.tick(1); // 1 M-cycle = 4 dots = 1 OAM row
+        }
+    }
+
+    #[test]
+    fn test_notify_idu_glitch_applies_write_corruption_in_mode_2() {
+        // Given: PPU at row 2 (dot 8); OAM rows 1 and 2 have known values.
+        // row 1: b=0x0002, w1=0x0003, c=0x0004, w3=0x0005
+        // row 2: a=0x0001
+        // write formula: ((0x0001^0x0004)&(0x0002^0x0004))^0x0004 = 0x0000
+        // Expected row 2 after: [0x0000, 0x0003, 0x0004, 0x0005]
+        use crate::gb::bus::GbBus;
+        let mut bus = make_bus();
+        set_row_words(&mut bus.ppu.oam, 1, [0x0002, 0x0003, 0x0004, 0x0005]);
+        set_row_words(&mut bus.ppu.oam, 2, [0x0001, 0x00AA, 0x00BB, 0x00CC]);
+        enable_lcd_and_tick_to_row(&mut bus, 2);
+        // Snapshot pre-instruction PPU state (as Sm83::execute() does).
+        bus.begin_instruction();
+        bus.notify_idu_glitch(0xFE10); // any addr in $FE00-$FEFF
+        let row2 = get_row_words(&bus.ppu.oam, 2);
+        assert_eq!(
+            row2,
+            [0x0000, 0x0003, 0x0004, 0x0005],
+            "notify_idu_glitch in Mode 2 must apply write corruption to current OAM row"
+        );
+    }
+
+    #[test]
+    fn test_notify_idu_glitch_ignored_outside_oam_range() {
+        // Given: PPU in Mode 2; addr outside $FE00-$FEFF → no corruption.
+        use crate::gb::bus::GbBus;
+        let mut bus = make_bus();
+        set_row_words(&mut bus.ppu.oam, 2, [0x0001, 0x00AA, 0x00BB, 0x00CC]);
+        enable_lcd_and_tick_to_row(&mut bus, 2);
+        let snapshot = bus.ppu.oam;
+        bus.notify_idu_glitch(0xC000); // non-OAM address
+        assert_eq!(
+            bus.ppu.oam, snapshot,
+            "IDU glitch outside OAM range must not corrupt OAM"
+        );
+    }
+
+    #[test]
+    fn test_notify_idu_glitch_ignored_outside_mode_2() {
+        // Given: PPU in H-Blank (Mode 0); IDU glitch in OAM range → no corruption.
+        use crate::gb::bus::GbBus;
+        let mut bus = make_bus();
+        set_row_words(&mut bus.ppu.oam, 2, [0x0001, 0x00AA, 0x00BB, 0x00CC]);
+        // Tick to H-Blank: 252 dots = 63 M-cycles into scanline 0
+        bus.write(0xFF40, 0x91);
+        bus.tick(63); // dot=252 → Mode 0 (H-Blank)
+        let snapshot = bus.ppu.oam;
+        bus.notify_idu_glitch(0xFE10);
+        assert_eq!(
+            bus.ppu.oam, snapshot,
+            "IDU glitch outside Mode 2 must not corrupt OAM"
+        );
+    }
+
+    #[test]
+    fn test_notify_idu_with_prior_read_applies_complex_corruption_in_mode_2() {
+        // Given: PPU at row 5 (dot 20); rows 3, 4, 5 have known values.
+        // a=0x00A0 (row3), b=0x0055 (row4[0]), c=0x000F (row5[0]), d=0x00C0 (row4[2])
+        // new_b = 0x0045; all three rows become [0x0045, 0x0011, 0x00C0, 0x0022]
+        use crate::gb::bus::GbBus;
+        let mut bus = make_bus();
+        set_row_words(&mut bus.ppu.oam, 3, [0x00A0, 0x0001, 0x0002, 0x0003]);
+        set_row_words(&mut bus.ppu.oam, 4, [0x0055, 0x0011, 0x00C0, 0x0022]);
+        set_row_words(&mut bus.ppu.oam, 5, [0x000F, 0x0099, 0x0088, 0x0077]);
+        enable_lcd_and_tick_to_row(&mut bus, 5);
+        bus.notify_idu_with_prior_read(0xFE28);
+        let expected = [0x0045u16, 0x0011, 0x00C0, 0x0022];
+        assert_eq!(
+            get_row_words(&bus.ppu.oam, 3),
+            expected,
+            "notify_idu_with_prior_read: row n-2 should equal corrupted row n-1"
+        );
+        assert_eq!(
+            get_row_words(&bus.ppu.oam, 4),
+            expected,
+            "notify_idu_with_prior_read: row n-1 word0 should use complex formula"
+        );
+        assert_eq!(
+            get_row_words(&bus.ppu.oam, 5),
+            expected,
+            "notify_idu_with_prior_read: row n should be copied then read-corrupted"
+        );
     }
 }

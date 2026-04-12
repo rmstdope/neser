@@ -112,7 +112,7 @@ impl Mapper for Mapper189 {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
-        if addr >= 0x4120 && addr <= 0x7FFF {
+        if (0x4120..=0x7FFF).contains(&addr) {
             self.prg_reg = value;
         } else {
             self.inner.write_prg(addr, value);

@@ -74,5 +74,6 @@ test-results/
 *.o
 *.debug
 *.map
+*.sym
 obj
 

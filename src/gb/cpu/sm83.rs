@@ -226,18 +226,24 @@ impl<B: GbBus> Sm83<B> {
     /// Push a 16-bit value onto the stack (SP decremented twice).
     fn push_u16(&mut self, val: u16) {
         let [hi, lo] = val.to_be_bytes();
-        self.regs.sp = self.regs.sp.wrapping_sub(1);
+        let sp0 = self.regs.sp;
+        self.regs.sp = sp0.wrapping_sub(1);
+        self.bus.notify_idu_glitch(sp0);
         self.write(self.regs.sp, hi);
-        self.regs.sp = self.regs.sp.wrapping_sub(1);
+        let sp1 = self.regs.sp;
+        self.regs.sp = sp1.wrapping_sub(1);
+        self.bus.notify_idu_glitch(sp1);
         self.write(self.regs.sp, lo);
     }
 
     /// Pop a 16-bit value from the stack (SP incremented twice).
     fn pop_u16(&mut self) -> u16 {
         let lo = self.read(self.regs.sp) as u16;
-        self.regs.sp = self.regs.sp.wrapping_add(1);
+        let sp0 = self.regs.sp;
+        self.regs.sp = sp0.wrapping_add(1);
+        self.bus.notify_idu_glitch(sp0); // only the first INC SP triggers IDU glitch
         let hi = self.read(self.regs.sp) as u16;
-        self.regs.sp = self.regs.sp.wrapping_add(1);
+        self.regs.sp = self.regs.sp.wrapping_add(1); // second INC SP: no IDU glitch
         (hi << 8) | lo
     }
 
@@ -545,6 +551,9 @@ impl<B: GbBus> Sm83<B> {
             return;
         }
 
+        // Snapshot PPU state before the M1 fetch tick so notify_idu_glitch can
+        // use the correct pre-instruction OAM row for corruption checks.
+        self.bus.begin_instruction();
         let opcode = self.fetch_byte();
         self.decode_execute(opcode);
     }
@@ -596,44 +605,54 @@ impl<B: GbBus> Sm83<B> {
 
             // --- INC r16 --------------------------------------------------
             0x03 => {
-                let v = self.regs.bc().wrapping_add(1);
-                self.regs.set_bc(v);
+                let old = self.regs.bc();
+                self.regs.set_bc(old.wrapping_add(1));
                 self.internal_cycle();
+                self.bus.notify_idu_glitch(old);
             }
             0x13 => {
-                let v = self.regs.de().wrapping_add(1);
-                self.regs.set_de(v);
+                let old = self.regs.de();
+                self.regs.set_de(old.wrapping_add(1));
                 self.internal_cycle();
+                self.bus.notify_idu_glitch(old);
             }
             0x23 => {
-                let v = self.regs.hl().wrapping_add(1);
-                self.regs.set_hl(v);
+                let old = self.regs.hl();
+                self.regs.set_hl(old.wrapping_add(1));
                 self.internal_cycle();
+                self.bus.notify_idu_glitch(old);
             }
             0x33 => {
-                self.regs.sp = self.regs.sp.wrapping_add(1);
+                let old = self.regs.sp;
+                self.regs.sp = old.wrapping_add(1);
                 self.internal_cycle();
+                self.bus.notify_idu_glitch(old);
             }
 
             // --- DEC r16 --------------------------------------------------
             0x0B => {
-                let v = self.regs.bc().wrapping_sub(1);
-                self.regs.set_bc(v);
+                let old = self.regs.bc();
+                self.regs.set_bc(old.wrapping_sub(1));
                 self.internal_cycle();
+                self.bus.notify_idu_glitch(old);
             }
             0x1B => {
-                let v = self.regs.de().wrapping_sub(1);
-                self.regs.set_de(v);
+                let old = self.regs.de();
+                self.regs.set_de(old.wrapping_sub(1));
                 self.internal_cycle();
+                self.bus.notify_idu_glitch(old);
             }
             0x2B => {
-                let v = self.regs.hl().wrapping_sub(1);
-                self.regs.set_hl(v);
+                let old = self.regs.hl();
+                self.regs.set_hl(old.wrapping_sub(1));
                 self.internal_cycle();
+                self.bus.notify_idu_glitch(old);
             }
             0x3B => {
-                self.regs.sp = self.regs.sp.wrapping_sub(1);
+                let old = self.regs.sp;
+                self.regs.sp = old.wrapping_sub(1);
                 self.internal_cycle();
+                self.bus.notify_idu_glitch(old);
             }
 
             // --- INC r8 (B/C/D/E/H/L/(HL)/A) ---------------------------
@@ -1731,5 +1750,259 @@ mod tests {
         let mut cpu = cpu_with(&[0x08, 0x00, 0x80]);
         cpu.execute();
         assert_eq!(cpu.cycles(), 5, "LD (n16),SP should take 5 M-cycles");
+    }
+
+    // -----------------------------------------------------------------------
+    // IDU glitch notification — INC/DEC r16
+    //
+    // On DMG hardware the Increment/Decrement Unit outputs the OLD register
+    // value on the address bus, which can corrupt OAM during Mode 2.
+    // The CPU must call bus.notify_idu_glitch(old_value) with the register
+    // value BEFORE the increment/decrement, and BEFORE the internal cycle.
+    // -----------------------------------------------------------------------
+
+    struct SpyBus {
+        mem: [u8; 0x10000],
+        idu_glitch_called: bool,
+        idu_glitch_addr: Option<u16>,
+    }
+
+    impl SpyBus {
+        fn new(program: &[u8]) -> Self {
+            let mut mem = [0u8; 0x10000];
+            mem[..program.len()].copy_from_slice(program);
+            Self {
+                mem,
+                idu_glitch_called: false,
+                idu_glitch_addr: None,
+            }
+        }
+    }
+
+    impl GbBus for SpyBus {
+        fn read(&mut self, addr: u16) -> u8 {
+            self.mem[addr as usize]
+        }
+        fn write(&mut self, addr: u16, val: u8) {
+            self.mem[addr as usize] = val;
+        }
+        fn notify_idu_glitch(&mut self, addr: u16) {
+            self.idu_glitch_called = true;
+            self.idu_glitch_addr = Some(addr);
+        }
+    }
+
+    fn cpu_with_spy(program: &[u8]) -> Sm83<SpyBus> {
+        Sm83::new(SpyBus::new(program))
+    }
+
+    #[test]
+    fn test_inc_bc_notifies_idu_glitch_with_old_value() {
+        // INC BC (0x03): notify_idu_glitch should be called with BC's value BEFORE increment.
+        let mut cpu = cpu_with_spy(&[0x03]);
+        cpu.regs.set_bc(0xFE10);
+        cpu.execute();
+        assert!(
+            cpu.bus.idu_glitch_called,
+            "INC BC must call notify_idu_glitch"
+        );
+        assert_eq!(
+            cpu.bus.idu_glitch_addr,
+            Some(0xFE10),
+            "INC BC must pass the pre-increment value to notify_idu_glitch"
+        );
+        assert_eq!(cpu.regs.bc(), 0xFE11, "BC must be incremented");
+    }
+
+    #[test]
+    fn test_inc_de_notifies_idu_glitch_with_old_value() {
+        let mut cpu = cpu_with_spy(&[0x13]);
+        cpu.regs.set_de(0xFE00);
+        cpu.execute();
+        assert_eq!(cpu.bus.idu_glitch_addr, Some(0xFE00));
+        assert_eq!(cpu.regs.de(), 0xFE01);
+    }
+
+    #[test]
+    fn test_inc_hl_notifies_idu_glitch_with_old_value() {
+        let mut cpu = cpu_with_spy(&[0x23]);
+        cpu.regs.set_hl(0xFE9F);
+        cpu.execute();
+        assert_eq!(cpu.bus.idu_glitch_addr, Some(0xFE9F));
+        assert_eq!(cpu.regs.hl(), 0xFEA0);
+    }
+
+    #[test]
+    fn test_inc_sp_notifies_idu_glitch_with_old_value() {
+        let mut cpu = cpu_with_spy(&[0x33]);
+        cpu.regs.sp = 0xFEFF;
+        cpu.execute();
+        assert_eq!(cpu.bus.idu_glitch_addr, Some(0xFEFF));
+        assert_eq!(cpu.regs.sp, 0xFF00);
+    }
+
+    #[test]
+    fn test_dec_bc_notifies_idu_glitch_with_old_value() {
+        let mut cpu = cpu_with_spy(&[0x0B]);
+        cpu.regs.set_bc(0xFE10);
+        cpu.execute();
+        assert_eq!(cpu.bus.idu_glitch_addr, Some(0xFE10));
+        assert_eq!(cpu.regs.bc(), 0xFE0F);
+    }
+
+    #[test]
+    fn test_dec_de_notifies_idu_glitch_with_old_value() {
+        let mut cpu = cpu_with_spy(&[0x1B]);
+        cpu.regs.set_de(0xFE50);
+        cpu.execute();
+        assert_eq!(cpu.bus.idu_glitch_addr, Some(0xFE50));
+    }
+
+    #[test]
+    fn test_dec_hl_notifies_idu_glitch_with_old_value() {
+        let mut cpu = cpu_with_spy(&[0x2B]);
+        cpu.regs.set_hl(0xFEAA);
+        cpu.execute();
+        assert_eq!(cpu.bus.idu_glitch_addr, Some(0xFEAA));
+    }
+
+    #[test]
+    fn test_dec_sp_notifies_idu_glitch_with_old_value() {
+        let mut cpu = cpu_with_spy(&[0x3B]);
+        cpu.regs.sp = 0xFE01;
+        cpu.execute();
+        assert_eq!(cpu.bus.idu_glitch_addr, Some(0xFE01));
+        assert_eq!(cpu.regs.sp, 0xFE00);
+    }
+
+    // -----------------------------------------------------------------------
+    // IDU glitch notification — LD A, [HLI] / LD A, [HLD]
+    //
+    // Per spec: LD A, [HLI] triggers corruption TWICE if HL points to OAM:
+    // 1. From the explicit memory read (read_oam applies Read Corruption)
+    // 2. From the IDU inc/dec of HL (notify_idu_glitch applies Write Corruption)
+    // LD [HLI], A is covered by write_oam Write Corruption alone (Write+IDU = single Write per spec).
+    // -----------------------------------------------------------------------
+
+    struct IduReadSpyBus {
+        mem: [u8; 0x10000],
+        idu_glitch_addr: Option<u16>,
+    }
+
+    impl IduReadSpyBus {
+        fn new(program: &[u8]) -> Self {
+            let mut mem = [0u8; 0x10000];
+            mem[..program.len()].copy_from_slice(program);
+            Self {
+                mem,
+                idu_glitch_addr: None,
+            }
+        }
+    }
+
+    impl GbBus for IduReadSpyBus {
+        fn read(&mut self, addr: u16) -> u8 {
+            self.mem[addr as usize]
+        }
+        fn write(&mut self, addr: u16, val: u8) {
+            self.mem[addr as usize] = val;
+        }
+        fn notify_idu_glitch(&mut self, addr: u16) {
+            self.idu_glitch_addr = Some(addr);
+        }
+    }
+
+    #[test]
+    fn test_ld_a_hli_notifies_idu_glitch_with_hl_address() {
+        // LD A, [HLI] (0x2A): when HL points to OAM, the IDU increment must
+        // call notify_idu_glitch with the pre-increment HL value.
+        let mut cpu = Sm83::new(IduReadSpyBus::new(&[0x2A]));
+        cpu.regs.set_hl(0xFE10);
+        cpu.execute();
+        assert_eq!(
+            cpu.bus.idu_glitch_addr,
+            Some(0xFE10),
+            "LD A, [HLI] must notify_idu_glitch with HL before increment"
+        );
+        assert_eq!(cpu.regs.hl(), 0xFE11, "HL must be incremented");
+    }
+
+    #[test]
+    fn test_ld_a_hld_notifies_idu_glitch_with_hl_address() {
+        // LD A, [HLD] (0x3A): same, but decrement.
+        let mut cpu = Sm83::new(IduReadSpyBus::new(&[0x3A]));
+        cpu.regs.set_hl(0xFE50);
+        cpu.execute();
+        assert_eq!(
+            cpu.bus.idu_glitch_addr,
+            Some(0xFE50),
+            "LD A, [HLD] must notify_idu_glitch with HL before decrement"
+        );
+        assert_eq!(cpu.regs.hl(), 0xFE4F, "HL must be decremented");
+    }
+
+    // -----------------------------------------------------------------------
+    // IDU glitch notification — PUSH rr / POP rr
+    //
+    // PUSH: each DEC SP in push_u16 notifies the IDU glitch.
+    // POP: only the FIRST INC SP in pop_u16 notifies (per spec: 3 events, not 4).
+    // -----------------------------------------------------------------------
+
+    struct GlitchListBus {
+        mem: [u8; 0x10000],
+        glitch_addrs: Vec<u16>,
+    }
+
+    impl GlitchListBus {
+        fn new(program: &[u8]) -> Self {
+            let mut mem = [0u8; 0x10000];
+            mem[..program.len()].copy_from_slice(program);
+            Self {
+                mem,
+                glitch_addrs: Vec::new(),
+            }
+        }
+    }
+
+    impl GbBus for GlitchListBus {
+        fn read(&mut self, addr: u16) -> u8 {
+            self.mem[addr as usize]
+        }
+        fn write(&mut self, addr: u16, val: u8) {
+            self.mem[addr as usize] = val;
+        }
+        fn notify_idu_glitch(&mut self, addr: u16) {
+            self.glitch_addrs.push(addr);
+        }
+    }
+
+    #[test]
+    fn test_push_bc_notifies_idu_glitch_for_both_dec_sp() {
+        // PUSH BC (0xC5): two DEC SP operations in push_u16 must each fire
+        // notify_idu_glitch with the SP value BEFORE decrement.
+        let mut cpu = Sm83::new(GlitchListBus::new(&[0xC5]));
+        cpu.regs.set_bc(0x1234);
+        cpu.regs.sp = 0xFE20;
+        cpu.execute();
+        assert_eq!(
+            cpu.bus.glitch_addrs,
+            vec![0xFE20, 0xFE1F],
+            "PUSH must call notify_idu_glitch for both DEC SP (with pre-decrement values)"
+        );
+        assert_eq!(cpu.regs.sp, 0xFE1E, "SP should end up decremented by 2");
+    }
+
+    #[test]
+    fn test_pop_bc_notifies_idu_glitch_only_for_first_inc_sp() {
+        // POP BC (0xC1): per spec only the FIRST INC SP triggers the IDU glitch.
+        let mut cpu = Sm83::new(GlitchListBus::new(&[0xC1]));
+        cpu.regs.sp = 0xFE18;
+        cpu.execute();
+        assert_eq!(
+            cpu.bus.glitch_addrs,
+            vec![0xFE18],
+            "POP must call notify_idu_glitch only for the first INC SP"
+        );
+        assert_eq!(cpu.regs.sp, 0xFE1A, "SP should end up incremented by 2");
     }
 }
