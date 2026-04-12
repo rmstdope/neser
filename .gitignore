@@ -50,6 +50,7 @@ rom_files.csv
 # wasm-bindgen output
 web/pkg/
 node_modules/
+dist/
 
 # Vite build output
 dist/
