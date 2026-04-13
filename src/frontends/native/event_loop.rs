@@ -10,7 +10,6 @@ use crate::frontends::native::gl_wrapper::NativeGlWrapper;
 use crate::frontends::native::keyboard::{self, KeyOutcome};
 use crate::frontends::native::mouse;
 use crate::frontends::native::sleep_inhibitor::SleepInhibitor;
-use crate::nes::console::{Nes, TimingMode};
 use crate::nes::debugging::control::DebuggerController;
 use crate::nes::frontend_toasts::{
     gamepad_connected_toast_message, gamepad_disconnected_toast_message, gamepad_init_toast_message,
@@ -139,22 +138,6 @@ impl NativeEventLoop {
             next_frame_deadline: Instant::now(),
             last_frame_rendered: Instant::now(),
         }
-    }
-
-    /// Extract the inner NES emulator for NES-specific operations.
-    fn nes(&self) -> &Nes {
-        let Console::Nes(nes) = &self.console else {
-            panic!("expected NES console")
-        };
-        nes
-    }
-
-    /// Extract the inner NES emulator mutably for NES-specific operations.
-    fn nes_mut(&mut self) -> &mut Nes {
-        let Console::Nes(nes) = &mut self.console else {
-            panic!("expected NES console")
-        };
-        nes
     }
 
     pub fn run(mut self) -> Result<(), String> {
@@ -290,10 +273,12 @@ impl NativeEventLoop {
     /// cartridge switches, focus changes, or controller hot-swaps.
     fn sync_mouse_grab_state(&mut self) {
         // Mouse grab is only relevant for NES (Zapper / SNES Mouse controllers).
-        let Console::Nes(_) = &self.console else {
-            return;
+        let has_mouse = {
+            let Console::Nes(nes) = &self.console else {
+                return;
+            };
+            mouse::has_any_mouse_controller(nes)
         };
-        let has_mouse = mouse::has_any_mouse_controller(self.nes());
         let should_grab = crate::nes::input::mouse_mapping::should_grab_mouse_input(
             has_mouse,
             self.state.window_focused,
@@ -315,8 +300,11 @@ impl NativeEventLoop {
                     let cx = w as f32 / 2.0;
                     let cy = h as f32 / 2.0;
                     self.state.virtual_cursor = (cx, cy);
+                    let Console::Nes(nes) = &mut self.console else {
+                        unreachable!()
+                    };
                     self.state.last_zapper_position =
-                        mouse::update_mouse_motion(self.nes_mut(), cx as i32, cy as i32, w, h);
+                        mouse::update_mouse_motion(nes, cx as i32, cy as i32, w, h);
                 } else {
                     let _ = gl.set_mouse_grab(false);
                     gl.window().set_cursor_visible(true);
@@ -368,6 +356,9 @@ impl NativeEventLoop {
 
     /// Loads a new cartridge from the given ROM path and resets the emulator.
     fn switch_to_cartridge(&mut self, rom_path: &str) {
+        let Console::Nes(_) = &self.console else {
+            return;
+        };
         let rom_bytes = match std::fs::read(rom_path) {
             Ok(bytes) => bytes,
             Err(err) => {
@@ -376,17 +367,22 @@ impl NativeEventLoop {
             }
         };
 
-        let cartridge = match crate::nes::cartridge::Cartridge::load_from_file(
-            &rom_bytes,
-            rom_path,
-            Some(self.nes().rom_db()),
-        ) {
-            Ok(c) => c,
-            Err(err) => {
-                crate::platform::debugging::log_info(format!(
-                    "Failed to load ROM cartridge: {err}"
-                ));
-                return;
+        let cartridge = {
+            let Console::Nes(nes) = &self.console else {
+                unreachable!()
+            };
+            match crate::nes::cartridge::Cartridge::load_from_file(
+                &rom_bytes,
+                rom_path,
+                Some(nes.rom_db()),
+            ) {
+                Ok(c) => c,
+                Err(err) => {
+                    crate::platform::debugging::log_info(format!(
+                        "Failed to load ROM cartridge: {err}"
+                    ));
+                    return;
+                }
             }
         };
 
@@ -399,7 +395,9 @@ impl NativeEventLoop {
                 .apply_rom_timing_mode(rom_timing)
         };
 
-        self.nes_mut().insert_cartridge(cartridge);
+        if let Console::Nes(nes) = &mut self.console {
+            nes.insert_cartridge(cartridge);
+        }
         crate::nes::console::log_hardware_selection(self.console.app_context(), applied);
         self.console.reset(false);
     }
@@ -424,9 +422,10 @@ impl NativeEventLoop {
                 let save_state =
                     crate::nes::console::SaveState::from_bytes(&restore.state_bytes)
                         .map_err(|e| format!("Failed to deserialize checkpoint state: {e}"))?;
-                self.nes_mut()
-                    .load_state(&save_state)
-                    .map_err(|e| format!("Failed to restore checkpoint state: {e}"))?;
+                if let Console::Nes(nes) = &mut self.console {
+                    nes.load_state(&save_state)
+                        .map_err(|e| format!("Failed to restore checkpoint state: {e}"))?;
+                }
             }
             self.autorun_state = Some(state);
         }
@@ -818,11 +817,12 @@ impl ApplicationHandler for NativeEventLoop {
                 }
 
                 // Mouse controller logic is NES-only.
-                let Console::Nes(_) = &self.console else {
-                    return;
+                let has_mouse = {
+                    let Console::Nes(nes) = &self.console else {
+                        return;
+                    };
+                    mouse::has_any_mouse_controller(nes)
                 };
-
-                let has_mouse = mouse::has_any_mouse_controller(self.nes());
 
                 // Left-click grabs immediately so the same click is also forwarded
                 // as a button press (unlike deferring to the next frame, which
@@ -851,13 +851,11 @@ impl ApplicationHandler for NativeEventLoop {
                             let cx = w as f32 / 2.0;
                             let cy = h as f32 / 2.0;
                             self.state.virtual_cursor = (cx, cy);
-                            self.state.last_zapper_position = mouse::update_mouse_motion(
-                                self.nes_mut(),
-                                cx as i32,
-                                cy as i32,
-                                w,
-                                h,
-                            );
+                            let Console::Nes(nes) = &mut self.console else {
+                                unreachable!()
+                            };
+                            self.state.last_zapper_position =
+                                mouse::update_mouse_motion(nes, cx as i32, cy as i32, w, h);
                         }
                         self.state.mouse_grabbed = true;
                         if !mouse::should_forward_grab_click(was_released_by_escape) {
@@ -875,11 +873,10 @@ impl ApplicationHandler for NativeEventLoop {
                         _ => None,
                     };
                     if let Some(btn) = btn {
-                        mouse::update_mouse_button(
-                            self.nes_mut(),
-                            btn,
-                            state == ElementState::Pressed,
-                        );
+                        let Console::Nes(nes) = &mut self.console else {
+                            unreachable!()
+                        };
+                        mouse::update_mouse_button(nes, btn, state == ElementState::Pressed);
                     }
                 }
             }
@@ -979,7 +976,7 @@ impl ApplicationHandler for NativeEventLoop {
             }
 
             // Mouse motion routing is NES-only.
-            let Console::Nes(_) = &self.console else {
+            let Console::Nes(nes) = &mut self.console else {
                 return;
             };
 
@@ -989,11 +986,11 @@ impl ApplicationHandler for NativeEventLoop {
                 .map(|gl| gl.window_size())
                 .unwrap_or((320, 240));
 
-            if self.nes().has_snes_mouse() && !mouse::has_zapper(self.nes()) {
+            if nes.has_snes_mouse() && !mouse::has_zapper(nes) {
                 // SNES Mouse: pass raw deltas directly.
                 // Zapper takes precedence — if a Zapper is also connected,
                 // fall through to the virtual-cursor path (matching SDL logic).
-                mouse::apply_snes_mouse_relative_motion(self.nes_mut(), dx as i32, dy as i32, w, h);
+                mouse::apply_snes_mouse_relative_motion(nes, dx as i32, dy as i32, w, h);
             } else {
                 // Zapper / Arkanoid: accumulate deltas into a virtual cursor
                 // position clamped to the window, then map to NES coordinates.
@@ -1009,7 +1006,7 @@ impl ApplicationHandler for NativeEventLoop {
                 self.state.virtual_cursor = (new_vx, new_vy);
 
                 self.state.last_zapper_position =
-                    mouse::update_mouse_motion(self.nes_mut(), new_vx as i32, new_vy as i32, w, h);
+                    mouse::update_mouse_motion(nes, new_vx as i32, new_vy as i32, w, h);
             }
         }
     }
@@ -1087,12 +1084,6 @@ impl ApplicationHandler for NativeEventLoop {
     }
 }
 
-/// Returns the target duration per frame for the given timing mode.
-#[allow(dead_code)]
-fn target_frame_duration(timing_mode: TimingMode) -> Duration {
-    Duration::from_secs_f64(1.0 / timing_mode.frame_rate_hz())
-}
-
 /// Returns true when the audio device should be paused (cpal callback outputs
 /// silence without counting underruns).
 ///
@@ -1142,28 +1133,6 @@ mod tests {
     fn manual_throttle_required_when_vsync_disabled() {
         assert!(should_use_manual_frame_throttle(false, true));
         assert!(should_use_manual_frame_throttle(false, false));
-    }
-
-    #[test]
-    fn test_target_frame_duration_ntsc() {
-        let duration = target_frame_duration(TimingMode::Ntsc);
-        // NTSC: ~60.098 FPS → ~16.64ms per frame
-        let ms = duration.as_secs_f64() * 1000.0;
-        assert!(
-            (16.0..=17.0).contains(&ms),
-            "NTSC frame duration should be ~16.6ms, got {ms:.2}ms"
-        );
-    }
-
-    #[test]
-    fn test_target_frame_duration_pal() {
-        let duration = target_frame_duration(TimingMode::Pal);
-        // PAL: ~50.007 FPS → ~20.0ms per frame
-        let ms = duration.as_secs_f64() * 1000.0;
-        assert!(
-            (19.5..=20.5).contains(&ms),
-            "PAL frame duration should be ~20.0ms, got {ms:.2}ms"
-        );
     }
 
     // ── audio_should_be_paused (#1858) ────────────────────────────────────────
