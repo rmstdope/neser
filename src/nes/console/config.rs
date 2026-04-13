@@ -1633,9 +1633,12 @@ impl Config {
     /// or `Err(String)` with an error message for invalid/unknown names.
     fn map_filter_name(name: &str) -> Result<String, String> {
         match name {
-            "crt" => Ok("shaders/crt-lottes.slangp".to_string()),
-            "ntsc" => Ok("shaders/ntsc-256px-composite.slangp".to_string()),
-            "smooth" => Ok("shaders/xbrz-freescale.slangp".to_string()),
+            "crt" => Ok("vendor/slang-shaders/crt/crt-lottes.slangp".to_string()),
+            "ntsc" => Ok("vendor/slang-shaders/ntsc/ntsc-256px-composite.slangp".to_string()),
+            "smooth" => Ok(
+                "vendor/slang-shaders/edge-smoothing/xbrz/xbrz-freescale-multipass.slangp"
+                    .to_string(),
+            ),
             "none" => Ok("shaders/stock.slangp".to_string()),
             _ => Err(format!(
                 "Invalid filter name: '{}'. Valid options are: crt, ntsc, smooth, none",

@@ -97,19 +97,19 @@ impl ShaderManager {
     }
 
     fn discover_presets() -> Vec<PathBuf> {
-        let mut presets = Vec::new();
+        // Known presets: stock lives in shaders/, the rest come from the
+        // vendor/slang-shaders submodule. Presets that don't exist on disk
+        // (e.g. submodule not initialised) are silently skipped.
+        let candidates = [
+            PathBuf::from("shaders/stock.slangp"),
+            PathBuf::from("vendor/slang-shaders/crt/crt-lottes.slangp"),
+            PathBuf::from(
+                "vendor/slang-shaders/edge-smoothing/xbrz/xbrz-freescale-multipass.slangp",
+            ),
+            PathBuf::from("vendor/slang-shaders/ntsc/ntsc-256px-composite.slangp"),
+        ];
 
-        // Look for shaders in the shaders directory
-        if let Ok(entries) = std::fs::read_dir("shaders") {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|s| s.to_str()) == Some("slangp") {
-                    presets.push(path);
-                }
-            }
-        }
-
-        // Sort presets for consistent ordering
+        let mut presets: Vec<PathBuf> = candidates.into_iter().filter(|p| p.exists()).collect();
         presets.sort();
         presets
     }
@@ -282,23 +282,25 @@ mod tests {
 
     #[test]
     fn test_cycle_starts_after_initially_loaded_preset() {
-        // Sorted alphabetical order matches discover_presets: crt(0) ntsc(1) stock(2) xbrz(3)
+        // Sorted alphabetical order matches discover_presets: stock(0) crt(1) xbrz(2) ntsc(3)
         let presets = vec![
-            PathBuf::from("shaders/crt-lottes.slangp"),
-            PathBuf::from("shaders/ntsc-256px-composite.slangp"),
             PathBuf::from("shaders/stock.slangp"),
-            PathBuf::from("shaders/xbrz-freescale.slangp"),
+            PathBuf::from("vendor/slang-shaders/crt/crt-lottes.slangp"),
+            PathBuf::from(
+                "vendor/slang-shaders/edge-smoothing/xbrz/xbrz-freescale-multipass.slangp",
+            ),
+            PathBuf::from("vendor/slang-shaders/ntsc/ntsc-256px-composite.slangp"),
         ];
         let mut mgr = ShaderManager::with_presets(presets);
 
-        // Simulate startup loading "stock" (index 2)
+        // Simulate startup loading "stock" (index 0)
         mgr.sync_current_index(Path::new("shaders/stock.slangp"));
 
-        // Next F4 press must advance to xbrz (index 3), not ntsc (index 1)
+        // Next F4 press must advance to crt (index 1)
         let next_index = (mgr.current_index + 1) % mgr.available_presets.len();
         assert_eq!(
             mgr.available_presets[next_index],
-            PathBuf::from("shaders/xbrz-freescale.slangp")
+            PathBuf::from("vendor/slang-shaders/crt/crt-lottes.slangp")
         );
     }
 
@@ -308,18 +310,20 @@ mod tests {
         // the current position is "stock" (the passthrough preset), so the first
         // F4 press goes to xbrz (the preset after stock in sorted order).
         let presets = vec![
-            PathBuf::from("shaders/crt-lottes.slangp"),           // 0
-            PathBuf::from("shaders/ntsc-256px-composite.slangp"), // 1
-            PathBuf::from("shaders/stock.slangp"),                // 2
-            PathBuf::from("shaders/xbrz-freescale.slangp"),       // 3
+            PathBuf::from("shaders/stock.slangp"), // 0
+            PathBuf::from("vendor/slang-shaders/crt/crt-lottes.slangp"), // 1
+            PathBuf::from(
+                "vendor/slang-shaders/edge-smoothing/xbrz/xbrz-freescale-multipass.slangp",
+            ), // 2
+            PathBuf::from("vendor/slang-shaders/ntsc/ntsc-256px-composite.slangp"), // 3
         ];
         let mgr = ShaderManager::with_presets(presets); // no load_preset called
 
         let next_index = (mgr.current_index + 1) % mgr.available_presets.len();
         assert_eq!(
             mgr.available_presets[next_index],
-            PathBuf::from("shaders/xbrz-freescale.slangp"),
-            "first F4 from 'no shader' state should land on xbrz, not index {}",
+            PathBuf::from("vendor/slang-shaders/crt/crt-lottes.slangp"),
+            "first F4 from 'no shader' state should land on crt, not index {}",
             next_index
         );
     }
