@@ -1,5 +1,4 @@
 use crate::platform::shaders::SHADER_PRESETS;
-use crate::platform::shaders::SHADER_PRESETS;
 use librashader::presets::ShaderPreset;
 use librashader::presets::context::VideoDriver;
 use librashader::runtime::gl::{FilterChain, FilterChainOptions, GLImage};

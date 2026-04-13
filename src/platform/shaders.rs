@@ -16,4 +16,9 @@ pub const SHADER_PRESETS: &[(&str, &str)] = &[
         "ntsc",
         "vendor/slang-shaders/ntsc/ntsc-256px-composite.slangp",
     ),
+    (
+        "pal",
+        "vendor/slang-shaders/pal/decoupled-guest-advanced-pal 3-RF.slangp",
+    ),
+    ("gameboy", "vendor/slang-shaders/handheld/gameboy.slangp"),
 ];
