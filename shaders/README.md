@@ -1,13 +1,27 @@
 # Shader Presets
 
-This directory contains curated shader presets from the libretro slang-shaders project.
+This directory contains curated shader presets that reference the [libretro/slang-shaders](https://github.com/libretro/slang-shaders) repository, which is included as a git submodule at `vendor/slang-shaders`.
+
+## Setup
+
+After cloning neser, initialise the submodule to enable the non-stock shaders:
+
+```bash
+git submodule update --init
+```
+
+Or clone with submodules from the start:
+
+```bash
+git clone --recurse-submodules https://github.com/rmstdope/neser
+```
 
 ## Available Presets
 
-- **stock.slangp**: Nearest neighbor (no filtering) - default
-- **xbrz-freescale.slangp**: xBRZ pixel art upscaler
-- **crt-lottes.slangp**: CRT simulation by Timothy Lottes (accurate scanlines, shadow mask, bloom)
-- **ntsc-256px-composite.slangp**: NTSC composite video simulation
+- **stock.slangp**: Nearest neighbor (no filtering) — no submodule required
+- **xbrz-freescale.slangp**: xBRZ pixel art upscaler (requires submodule)
+- **crt-lottes.slangp**: CRT simulation by Timothy Lottes — scanlines, shadow mask, bloom (requires submodule, public domain)
+- **ntsc-256px-composite.slangp**: NTSC composite video simulation (requires submodule)
 
 ## Usage
 
@@ -28,18 +42,9 @@ filter=crt
 
 You can also cycle through shaders at runtime with F6.
 
-## Implementation Status
+## Why a submodule?
 
-✅ **COMPLETE** - Shader infrastructure is fully functional:
-
-- Shader preset loading via librashader ✓
-- CLI flag and runtime cycling ✓
-- Shader application in rendering pipeline ✓
-- FilterChain::frame() properly integrated ✓
-- ImGui debugger renders correctly on top ✓
-
-The shader system is production-ready. All shaders render to the screen with hardware acceleration, and the ImGui debugger overlay continues to work correctly.
-
-## Source
-
-Shaders sourced from: <https://github.com/libretro/slang-shaders>
+The shader files carry per-file licenses (public domain, MIT, GPL-3.0).
+Rather than vendoring the source directly in this repository, a shallow
+submodule is used so that each shader is fetched from the authoritative
+upstream repository along with its original license text.
