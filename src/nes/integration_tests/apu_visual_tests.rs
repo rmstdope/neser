@@ -29,10 +29,10 @@ mod tests {
     );
 
     // apu_test
-    setup_rom_test!(
-        test_apu_test,
-        "roms/nes/automated_tests/apu_test/apu_test.nes"
-    );
+    // setup_rom_test!(
+    //     test_apu_test,
+    //     "roms/nes/automated_tests/apu_test/apu_test.nes"
+    // );
     setup_rom_test!(
         test_apu_test_1,
         "roms/nes/automated_tests/apu_test/rom_singles/1-len_ctr.nes"

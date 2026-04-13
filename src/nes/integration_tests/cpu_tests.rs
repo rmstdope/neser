@@ -63,10 +63,10 @@ mod tests {
     );
 
     // cpu_interrupts_v2
-    setup_rom_test!(
-        test_cpu_interrupts_v2_cpu_interrupts,
-        "roms/nes/automated_tests/cpu_interrupts_v2/cpu_interrupts.nes"
-    );
+    // setup_rom_test!(
+    //     test_cpu_interrupts_v2_cpu_interrupts,
+    //     "roms/nes/automated_tests/cpu_interrupts_v2/cpu_interrupts.nes"
+    // );
     setup_rom_test!(
         test_cpu_interrupts_v2_cli_latency,
         "roms/nes/automated_tests/cpu_interrupts_v2/rom_singles/1-cli_latency.nes"
@@ -197,10 +197,10 @@ mod tests {
     }
 
     // instr_misc
-    setup_rom_test!(
-        test_instr_misc,
-        "roms/nes/automated_tests/instr_misc/instr_misc.nes"
-    );
+    // setup_rom_test!(
+    //     test_instr_misc,
+    //     "roms/nes/automated_tests/instr_misc/instr_misc.nes"
+    // );
     setup_rom_test!(
         test_instr_misc_01,
         "roms/nes/automated_tests/instr_misc/rom_singles/01-abs_x_wrap.nes"
@@ -219,14 +219,14 @@ mod tests {
     );
 
     // test_instr_v3
-    setup_rom_test!(
-        test_instr_v3_all_instrs,
-        "roms/nes/automated_tests/instr_test-v3/all_instrs.nes"
-    );
-    setup_rom_test!(
-        test_instr_v3_official_only,
-        "roms/nes/automated_tests/instr_test-v3/official_only.nes"
-    );
+    // setup_rom_test!(
+    //     test_instr_v3_all_instrs,
+    //     "roms/nes/automated_tests/instr_test-v3/all_instrs.nes"
+    // );
+    // setup_rom_test!(
+    //     test_instr_v3_official_only,
+    //     "roms/nes/automated_tests/instr_test-v3/official_only.nes"
+    // );
     setup_rom_test!(
         test_instr_v3_01_implied,
         "roms/nes/automated_tests/instr_test-v3/rom_singles/01-implied.nes"
@@ -289,14 +289,14 @@ mod tests {
     );
 
     // test_instr_v5
-    setup_rom_test!(
-        test_instr_v5_all_instrs,
-        "roms/nes/automated_tests/instr_test-v5/all_instrs.nes"
-    );
-    setup_rom_test!(
-        test_instr_v5_official_only,
-        "roms/nes/automated_tests/instr_test-v5/official_only.nes"
-    );
+    // setup_rom_test!(
+    //     test_instr_v5_all_instrs,
+    //     "roms/nes/automated_tests/instr_test-v5/all_instrs.nes"
+    // );
+    // setup_rom_test!(
+    //     test_instr_v5_official_only,
+    //     "roms/nes/automated_tests/instr_test-v5/official_only.nes"
+    // );
     setup_rom_test!(
         test_instr_v5_01_basics,
         "roms/nes/automated_tests/instr_test-v5/rom_singles/01-basics.nes"
@@ -363,10 +363,10 @@ mod tests {
     );
 
     // instr_timing
-    setup_rom_test!(
-        test_instr_timing,
-        "roms/nes/automated_tests/instr_timing/instr_timing.nes"
-    );
+    // setup_rom_test!(
+    //     test_instr_timing,
+    //     "roms/nes/automated_tests/instr_timing/instr_timing.nes"
+    // );
     setup_rom_test!(
         test_instr_timing_01,
         "roms/nes/automated_tests/instr_timing/rom_singles/1-instr_timing.nes"
