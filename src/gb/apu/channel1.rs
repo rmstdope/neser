@@ -21,14 +21,14 @@ pub struct Channel1 {
 
     // Internal state
     active: bool,
-    dac_on: bool,       // NR12 bits 7-3 != 0
-    duty_pos: u8,       // 0-7
-    freq_timer: u16,    // countdown; reloads to (2048 - freq) * 4
-    length_counter: u8, // 0-64; silences when reaches 0
-    volume: u8,         // current volume 0-15
-    env_timer: u8,      // envelope period countdown
-    sweep_timer: u8,    // sweep period countdown
-    sweep_shadow: u16,  // shadow frequency register
+    dac_on: bool,                  // NR12 bits 7-3 != 0
+    duty_pos: u8,                  // 0-7
+    freq_timer: u16,               // countdown; reloads to (2048 - freq) * 4
+    pub(crate) length_counter: u8, // 0-64; silences when reaches 0
+    volume: u8,                    // current volume 0-15
+    env_timer: u8,                 // envelope period countdown
+    sweep_timer: u8,               // sweep period countdown
+    sweep_shadow: u16,             // shadow frequency register
     sweep_enabled: bool,
     /// Set when a negate-mode calculation is performed; cleared on trigger.
     /// If NR10 clears the negate bit after this was set, the channel is disabled.
@@ -261,11 +261,27 @@ impl Channel1 {
         self.freq = (self.freq & 0x0700) | u16::from(val);
     }
 
-    pub fn write_nr14(&mut self, val: u8) {
+    pub fn write_nr14(&mut self, val: u8, extra_clk: bool) {
+        let old_length_en = self.length_en;
         self.length_en = val & 0x40 != 0;
         self.freq = (self.freq & 0x00FF) | (u16::from(val & 0x07) << 8);
+
+        // Extra length clocking: when length_en transitions 0→1 while the FS
+        // next step does NOT clock length, the counter is immediately clocked.
+        if extra_clk && !old_length_en && self.length_en && self.length_counter > 0 {
+            self.length_counter -= 1;
+            if self.length_counter == 0 {
+                self.active = false;
+            }
+        }
+
         if val & 0x80 != 0 {
             self.trigger();
+            // If trigger reloaded counter to max AND length_en AND extra-clock
+            // window, decrement the freshly-loaded counter by 1.
+            if extra_clk && self.length_en && self.length_counter == 64 {
+                self.length_counter = 63;
+            }
         }
     }
 
@@ -293,6 +309,9 @@ impl Channel1 {
         self.negate_used = false;
         // Trigger-time overflow check required by hardware even when sweep is otherwise idle.
         if self.sweep_shift > 0 {
+            if self.sweep_negate {
+                self.negate_used = true;
+            }
             self.disable_if_sweep_overflows();
         }
     }
@@ -311,7 +330,7 @@ mod tests {
         // NR11: 50% duty, length = 0 (max)
         ch.write_nr11(0x80);
         // NR14: trigger, no length enable, freq high = 0
-        ch.write_nr14(0x80);
+        ch.write_nr14(0x80, false);
         ch
     }
 
@@ -329,7 +348,7 @@ mod tests {
         // Given: NR12 = 0x00 (DAC off); When: trigger; Then: channel stays inactive
         let mut ch = Channel1::new();
         ch.write_nr12(0x00); // no volume, no envelope → DAC off
-        ch.write_nr14(0x80); // trigger
+        ch.write_nr14(0x80, false); // trigger
         assert!(!ch.is_active());
     }
 
@@ -359,7 +378,7 @@ mod tests {
         let mut ch = Channel1::new();
         ch.write_nr12(0xF0); // DAC on
         ch.write_nr11(0xFF); // length = 63 → counter = 1
-        ch.write_nr14(0xC0); // trigger + length enable
+        ch.write_nr14(0xC0, false); // trigger + length enable
         assert!(ch.is_active());
         ch.clock_length();
         assert!(
@@ -375,7 +394,7 @@ mod tests {
         let mut ch = Channel1::new();
         ch.write_nr12(0xF0);
         ch.write_nr11(0xFF); // counter = 1
-        ch.write_nr14(0x80); // trigger, no length enable
+        ch.write_nr14(0x80, false); // trigger, no length enable
         ch.clock_length();
         assert!(
             ch.is_active(),
@@ -389,13 +408,64 @@ mod tests {
         let mut ch = Channel1::new();
         ch.write_nr12(0xF0);
         ch.write_nr11(0x3F); // length = 63 → counter = 1
-        ch.write_nr14(0x40); // length enable, NO trigger → counter = 1
+        ch.write_nr14(0x40, false); // length enable, NO trigger → counter = 1
         ch.clock_length(); // expires to 0, channel inactive
         assert!(!ch.is_active());
         // Trigger again – counter should reload to 64.
-        ch.write_nr14(0x80); // trigger (no length enable)
+        ch.write_nr14(0x80, false); // trigger (no length enable)
         assert!(ch.is_active());
         assert_eq!(ch.length_counter, 64);
+    }
+
+    // ── Extra length clocking on NRx4 write ──────────────────────────────
+
+    #[test]
+    fn test_enabling_length_in_first_half_clocks_length() {
+        // Blargg 03-trigger sub-test 3: enabling length_en when the FS next
+        // step does NOT clock length must extra-clock the length counter.
+        let mut ch = Channel1::new();
+        ch.write_nr12(0xF0); // DAC on
+        ch.write_nr11(0xBE); // length_load=62 → counter = 64-62 = 2
+        ch.write_nr14(0x80, false); // trigger, no length enable
+        assert_eq!(ch.length_counter, 2);
+        // Enable length with extra_clk=true (FS in first half).
+        ch.write_nr14(0x40, true); // length enable, no trigger, extra clock
+        assert_eq!(
+            ch.length_counter, 1,
+            "enabling length in first half must extra-clock (2 → 1)"
+        );
+    }
+
+    #[test]
+    fn test_enabling_length_in_second_half_does_not_clock() {
+        let mut ch = Channel1::new();
+        ch.write_nr12(0xF0);
+        ch.write_nr11(0xBE); // counter = 2
+        ch.write_nr14(0x80, false); // trigger, no length enable
+        // Enable length with extra_clk=false (FS in second half).
+        ch.write_nr14(0x40, false); // no extra clock
+        assert_eq!(
+            ch.length_counter, 2,
+            "enabling length in second half must NOT extra-clock"
+        );
+    }
+
+    #[test]
+    fn test_trigger_unfreezes_and_extra_clocks_when_enabled() {
+        // Blargg 03-trigger sub-test 8: trigger reloads length to max,
+        // and if length_en is set and FS extra-clocks, decrement by 1.
+        let mut ch = Channel1::new();
+        ch.write_nr12(0xF0);
+        ch.write_nr11(0x3F); // counter = 1
+        ch.write_nr14(0x40, true); // enable → extra clock → counter 1→0, channel disabled
+        assert!(!ch.is_active());
+        // Trigger + length enable with extra clock: counter was 0, reloads to 64,
+        // then extra-clock decrements to 63.
+        ch.write_nr14(0xC0, true); // trigger + length enable
+        assert_eq!(
+            ch.length_counter, 63,
+            "trigger reload + extra clock: 64 → 63"
+        );
     }
 
     // ── Volume envelope ───────────────────────────────────────────────────
@@ -405,7 +475,7 @@ mod tests {
         // NR12: vol=7, dir=subtract, period=1
         let mut ch = Channel1::new();
         ch.write_nr12(0x71); // vol=7, add=0, period=1
-        ch.write_nr14(0x80); // trigger
+        ch.write_nr14(0x80, false); // trigger
         assert_eq!(ch.volume, 7);
         ch.clock_envelope();
         assert_eq!(ch.volume, 6);
@@ -416,7 +486,7 @@ mod tests {
         // NR12: vol=7, dir=add, period=1
         let mut ch = Channel1::new();
         ch.write_nr12(0x79); // vol=7, add=1, period=1
-        ch.write_nr14(0x80);
+        ch.write_nr14(0x80, false);
         ch.clock_envelope();
         assert_eq!(ch.volume, 8);
     }
@@ -425,7 +495,7 @@ mod tests {
     fn test_envelope_does_not_go_below_zero() {
         let mut ch = Channel1::new();
         ch.write_nr12(0x01); // vol=0, add=0, period=1
-        ch.write_nr14(0x80);
+        ch.write_nr14(0x80, false);
         ch.clock_envelope();
         assert_eq!(ch.volume, 0);
     }
@@ -434,7 +504,7 @@ mod tests {
     fn test_envelope_does_not_exceed_15() {
         let mut ch = Channel1::new();
         ch.write_nr12(0xF9); // vol=15, add=1, period=1
-        ch.write_nr14(0x80);
+        ch.write_nr14(0x80, false);
         ch.clock_envelope();
         assert_eq!(ch.volume, 15);
     }
@@ -443,7 +513,7 @@ mod tests {
     fn test_envelope_frozen_when_period_zero() {
         let mut ch = Channel1::new();
         ch.write_nr12(0x70); // vol=7, period=0
-        ch.write_nr14(0x80);
+        ch.write_nr14(0x80, false);
         ch.clock_envelope();
         assert_eq!(ch.volume, 7, "envelope must not change when period = 0");
     }
@@ -457,12 +527,12 @@ mod tests {
         ch.write_nr12(0xF0);
         ch.write_nr10(0x11); // period=1, negate=0, shift=1
         ch.write_nr13(0x00);
-        ch.write_nr14(0x87); // trigger, freq_hi=7 → freq = 0x700 = 1792
+        ch.write_nr14(0x87, false); // trigger, freq_hi=7 → freq = 0x700 = 1792
         // After trigger, sweep_shadow = 1792; one clock → new_freq = 1792 + (1792>>1) = 1792+896 = 2688 > 2047 → disable
         // Let's use a lower frequency so it doesn't overflow.
         // Reset with freq = 100.
         ch.write_nr13(0x64); // low byte = 100
-        ch.write_nr14(0x80); // trigger (freq_hi=0) → freq = 100
+        ch.write_nr14(0x80, false); // trigger (freq_hi=0) → freq = 100
         let initial_shadow = ch.sweep_shadow;
         assert_eq!(initial_shadow, 100);
         ch.clock_sweep();
@@ -480,7 +550,7 @@ mod tests {
         ch.write_nr12(0xF0);
         ch.write_nr10(0x19); // period=1, negate=1, shift=1
         ch.write_nr13(0x64); // freq = 100
-        ch.write_nr14(0x80);
+        ch.write_nr14(0x80, false);
         ch.clock_sweep();
         // new_freq = 100 - (100 >> 1) = 50
         assert_eq!(ch.sweep_shadow, 50);
@@ -495,7 +565,7 @@ mod tests {
         ch.write_nr10(0x11); // period=1, negate=0, shift=1
         // freq 2000 = 0x7D0 → hi=7, lo=0xD0
         ch.write_nr13(0xD0);
-        ch.write_nr14(0x87); // trigger, hi=7
+        ch.write_nr14(0x87, false); // trigger, hi=7
         assert_eq!(ch.freq, 0x7D0);
         ch.clock_sweep();
         assert!(
@@ -511,7 +581,7 @@ mod tests {
         ch.write_nr12(0xF0);
         ch.write_nr10(0x00);
         ch.write_nr13(0x64); // freq = 100
-        ch.write_nr14(0x80);
+        ch.write_nr14(0x80, false);
         ch.clock_sweep();
         assert_eq!(ch.freq, 100, "freq must not change when sweep is disabled");
         assert!(ch.is_active());
@@ -548,9 +618,9 @@ mod tests {
     fn test_nr14_reads_length_en_bit() {
         let mut ch = Channel1::new();
         ch.write_nr12(0xF0);
-        ch.write_nr14(0x40); // length_en=1, no trigger
+        ch.write_nr14(0x40, false); // length_en=1, no trigger
         assert_eq!(ch.read_nr14() & 0x40, 0x40);
-        ch.write_nr14(0x00);
+        ch.write_nr14(0x00, false);
         assert_eq!(ch.read_nr14() & 0x40, 0x00);
     }
 
@@ -567,7 +637,7 @@ mod tests {
         ch.write_nr10(0x10);
         // freq = 1400 = 0x578 → lo=0x78, hi=0x05
         ch.write_nr13(0x78);
-        ch.write_nr14(0x85); // trigger + freq_hi=5
+        ch.write_nr14(0x85, false); // trigger + freq_hi=5
         assert!(ch.is_active(), "channel must be active after trigger");
         // sweep fires: timer 1→0, reload=1, enabled=true, period=1
         // new_freq = 1400 + (1400>>0) = 2800 > 2047 → must disable
@@ -589,7 +659,7 @@ mod tests {
         // NR10: period=1, negate=1, shift=1 → 0x19
         ch.write_nr10(0x19);
         ch.write_nr13(0x64); // freq = 100
-        ch.write_nr14(0x80); // trigger
+        ch.write_nr14(0x80, false); // trigger
         assert!(ch.is_active(), "channel must be active after trigger");
         // One sweep clock in negate mode → negate_used must be set
         ch.clock_sweep();
@@ -602,6 +672,28 @@ mod tests {
         assert!(
             !ch.is_active(),
             "channel must be disabled when negate is cleared after a negate calculation"
+        );
+    }
+
+    #[test]
+    fn test_trigger_overflow_check_sets_negate_used() {
+        // Blargg 05-sweep details, sub-test 4:
+        // NR10=$09 (period=0, negate=1, shift=1): trigger performs a negate-mode
+        // overflow check (shift>0). Even though sweep_period=0 prevents periodic
+        // clocking, the trigger-time calculation uses negate mode, so `negate_used`
+        // must be set. Clearing negate in NR10 afterwards must disable the channel.
+        let mut ch = Channel1::new();
+        ch.write_nr12(0x08); // vol=0, add=1, period=0 → DAC on (0x08 & 0xF8 = 0x08 ≠ 0)
+        ch.write_nr10(0x09); // period=0, negate=true, shift=1
+        ch.write_nr13(0x00); // freq low = 0
+        ch.write_nr14(0xC0, false); // trigger + length enable; freq_hi = 0
+        assert!(ch.is_active(), "channel must be active after trigger");
+        // No sweep clock needed — the trigger itself performed a negate calculation.
+        // Now clear negate: period=1, negate=false, shift=0 → $10
+        ch.write_nr10(0x10);
+        assert!(
+            !ch.is_active(),
+            "channel must be disabled: negate was used during trigger overflow check"
         );
     }
 
@@ -619,7 +711,7 @@ mod tests {
         let mut ch = Channel1::new();
         ch.write_nr12(0xF0); // vol=15, DAC on
         ch.write_nr11(0x80); // 50% duty
-        ch.write_nr14(0x80); // trigger
+        ch.write_nr14(0x80, false); // trigger
         ch.duty_pos = 0; // 50% duty: step 0 → high
         // DUTY_TABLE[2][0] = 1
         assert!(

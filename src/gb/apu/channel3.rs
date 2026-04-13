@@ -18,13 +18,18 @@ pub struct Channel3 {
     length_en: bool,  // NR34 bit 6
 
     active: bool,
-    wave_pos: u8,        // 0-31 (position into 32-sample wave table)
-    freq_timer: u16,     // countdown; reloads to (2048 - freq) * 2
-    length_counter: u16, // 0-256
+    wave_pos: u8,                   // 0-31 (position into 32-sample wave table)
+    freq_timer: u16,                // countdown in APU cycles (2 MHz); reload = freq ^ 0x7FF
+    pub(crate) length_counter: u16, // 0-256
     /// Wave RAM: 16 bytes = 32 × 4-bit samples.
     wave_ram: [u8; 16],
     /// Byte currently being shifted out (set on wave position advance).
-    current_sample: u8,
+    pub(crate) current_sample: u8,
+    /// True when running a CGB-compatible ROM (gates wave RAM access behavior).
+    is_cgb: bool,
+    /// Set during the M-cycle when CH3 reads a new sample from wave RAM.
+    /// On DMG, CPU can only access wave RAM during this window.
+    pub(crate) wave_just_read: bool,
 }
 
 impl Default for Channel3 {
@@ -35,6 +40,10 @@ impl Default for Channel3 {
 
 impl Channel3 {
     pub fn new() -> Self {
+        Self::new_with_mode(false)
+    }
+
+    pub fn new_with_mode(is_cgb: bool) -> Self {
         Self {
             dac_on: false,
             length_load: 0,
@@ -47,6 +56,8 @@ impl Channel3 {
             length_counter: 0,
             wave_ram: [0u8; 16],
             current_sample: 0,
+            is_cgb,
+            wave_just_read: false,
         }
     }
 
@@ -72,18 +83,27 @@ impl Channel3 {
         (self.current_sample >> shift) as f32 / 15.0
     }
 
-    /// Advance the wave frequency timer by one M-cycle (= 4 T-cycles).
-    /// CH3 freq timer counts in T-cycles: reload = (2048 - freq) * 2.
+    /// Advance the wave frequency timer by one M-cycle (= 2 APU cycles at 2 MHz).
+    /// Mirrors SameBoy's `while (cycles_left > sample_countdown)` loop exactly.
+    /// The countdown is in APU cycles; reload = `freq ^ 0x7FF` = `2047 - freq`.
     pub fn tick(&mut self) {
-        if self.freq_timer == 0 {
-            self.freq_timer = (2048 - self.freq) * 2;
+        self.wave_just_read = false;
+
+        if !self.active {
+            return;
         }
-        if self.freq_timer > 4 {
-            self.freq_timer -= 4;
-        } else {
-            self.freq_timer = (2048 - self.freq) * 2;
+
+        let mut cycles_left: u16 = 2; // 2 APU cycles per M-cycle (normal speed)
+        while cycles_left > self.freq_timer {
+            cycles_left -= self.freq_timer + 1;
+            self.freq_timer = self.freq ^ 0x7FF;
             self.wave_pos = (self.wave_pos + 1) & 31;
             self.current_sample = self.read_wave_nibble(self.wave_pos);
+            self.wave_just_read = true;
+        }
+        if cycles_left > 0 {
+            self.freq_timer -= cycles_left;
+            self.wave_just_read = false;
         }
     }
 
@@ -108,6 +128,7 @@ impl Channel3 {
         self.freq_timer = 0;
         self.length_counter = 0;
         self.current_sample = 0;
+        self.wave_just_read = false;
         // Note: wave_ram is NOT cleared on power-off per hardware spec.
     }
 
@@ -147,11 +168,23 @@ impl Channel3 {
         self.freq = (self.freq & 0x0700) | u16::from(val);
     }
 
-    pub fn write_nr34(&mut self, val: u8) {
+    pub fn write_nr34(&mut self, val: u8, extra_clk: bool) {
+        let old_length_en = self.length_en;
         self.length_en = val & 0x40 != 0;
         self.freq = (self.freq & 0x00FF) | (u16::from(val & 0x07) << 8);
+
+        if extra_clk && !old_length_en && self.length_en && self.length_counter > 0 {
+            self.length_counter -= 1;
+            if self.length_counter == 0 {
+                self.active = false;
+            }
+        }
+
         if val & 0x80 != 0 {
             self.trigger();
+            if extra_clk && self.length_en && self.length_counter == 256 {
+                self.length_counter = 255;
+            }
         }
     }
 
@@ -161,15 +194,50 @@ impl Channel3 {
     }
 
     fn trigger(&mut self) {
+        // DMG retrigger corruption: if CH3 is currently active on DMG
+        // and sample_countdown == 0 (about to read next sample)
+        if !self.is_cgb && self.active && self.freq_timer == 0 {
+            self.apply_dmg_retrigger_corruption();
+        }
+
+        self.wave_pos = 0;
+
         if self.dac_on {
             self.active = true;
         }
         if self.length_counter == 0 {
             self.length_counter = 256;
         }
-        self.freq_timer = (2048 - self.freq) * 2;
-        self.wave_pos = 0;
-        self.current_sample = self.read_wave_nibble(0);
+        // Pan Docs: "triggering does not immediately start playing wave RAM;
+        // the last sample ever read is output until the channel next reads a sample."
+
+        // Trigger countdown: (freq ^ 0x7FF) + 3 APU cycles = (2047 - freq) + 3
+        self.freq_timer = (self.freq ^ 0x7FF) + 3;
+    }
+
+    /// DMG-only: wave RAM corruption when retriggering CH3 while it just read a sample.
+    /// SameBoy: `offset = ((current_sample_index + 1) >> 1) & 0xF`.
+    /// If offset < 4: wave_ram[0] = wave_ram[offset].
+    /// If offset >= 4: wave_ram[0..4] = wave_ram[aligned..aligned+4] where aligned = offset & !3.
+    fn apply_dmg_retrigger_corruption(&mut self) {
+        let current_byte_index = ((self.wave_pos.wrapping_add(1)) / 2) & 0x0F;
+        if current_byte_index < 4 {
+            // Copy the single byte at current_byte_index to byte 0
+            self.wave_ram[0] = self.wave_ram[current_byte_index as usize];
+        } else {
+            // Copy the 4-byte aligned block to bytes 0-3
+            let aligned = (current_byte_index & !3) as usize;
+            let block = [
+                self.wave_ram[aligned],
+                self.wave_ram[aligned + 1],
+                self.wave_ram[aligned + 2],
+                self.wave_ram[aligned + 3],
+            ];
+            self.wave_ram[0] = block[0];
+            self.wave_ram[1] = block[1];
+            self.wave_ram[2] = block[2];
+            self.wave_ram[3] = block[3];
+        }
     }
 
     // ── Wave RAM ──────────────────────────────────────────────────────────
@@ -186,8 +254,14 @@ impl Channel3 {
 
     pub fn read_wave_ram(&self, addr: u16) -> u8 {
         if self.active {
-            // During playback, CPU reads return the byte at the current wave position.
-            self.wave_ram[(self.wave_pos / 2) as usize]
+            if self.is_cgb || self.wave_just_read {
+                // CGB: always return the byte at current wave position during playback.
+                // DMG: only accessible during the M-cycle when CH3 reads wave RAM.
+                self.wave_ram[(self.wave_pos / 2) as usize]
+            } else {
+                // DMG: outside the access window, reads return 0xFF.
+                0xFF
+            }
         } else {
             self.wave_ram[(addr - 0xFF30) as usize]
         }
@@ -195,8 +269,12 @@ impl Channel3 {
 
     pub fn write_wave_ram(&mut self, addr: u16, val: u8) {
         if self.active {
-            // During playback, writes go to the byte at the current wave position.
-            self.wave_ram[(self.wave_pos / 2) as usize] = val;
+            if self.is_cgb || self.wave_just_read {
+                // CGB: always write to current wave position during playback.
+                // DMG: only accessible during the M-cycle when CH3 reads wave RAM.
+                self.wave_ram[(self.wave_pos / 2) as usize] = val;
+            }
+            // DMG: outside the access window, writes are ignored.
         } else {
             self.wave_ram[(addr - 0xFF30) as usize] = val;
         }
@@ -213,7 +291,7 @@ mod tests {
         let mut ch = Channel3::new();
         ch.write_nr30(0x80); // DAC on
         ch.write_nr32(0x20); // output level = 1 (100%)
-        ch.write_nr34(0x80); // trigger
+        ch.write_nr34(0x80, false); // trigger
         ch
     }
 
@@ -229,7 +307,7 @@ mod tests {
     fn test_dac_off_prevents_activation() {
         let mut ch = Channel3::new();
         ch.write_nr30(0x00); // DAC off
-        ch.write_nr34(0x80); // trigger
+        ch.write_nr34(0x80, false); // trigger
         assert!(!ch.is_active());
     }
 
@@ -255,7 +333,7 @@ mod tests {
         let mut ch = Channel3::new();
         ch.write_nr30(0x80);
         ch.write_nr31(255); // counter = 1
-        ch.write_nr34(0xC0); // trigger + length enable
+        ch.write_nr34(0xC0, false); // trigger + length enable
         ch.clock_length();
         assert!(!ch.is_active());
     }
@@ -265,7 +343,7 @@ mod tests {
         let mut ch = Channel3::new();
         ch.write_nr30(0x80);
         ch.write_nr31(255);
-        ch.write_nr34(0x80); // trigger, no length enable
+        ch.write_nr34(0x80, false); // trigger, no length enable
         ch.clock_length();
         assert!(ch.is_active());
     }
@@ -277,7 +355,7 @@ mod tests {
         let mut ch = Channel3::new();
         ch.write_nr30(0x80);
         ch.write_nr32(0x00); // level = 0 → mute
-        ch.write_nr34(0x80);
+        ch.write_nr34(0x80, false);
         // Put a non-zero sample in wave RAM at position 0
         ch.wave_ram[0] = 0xFF;
         ch.trigger();
@@ -286,11 +364,14 @@ mod tests {
 
     #[test]
     fn test_output_100_percent() {
+        // Use freq=0 so period=(0^0x7FF)+3=2050 T-cycles on trigger.
+        // After trigger, tick many times to get first advance.
+        // Simpler: directly set current_sample and check output.
         let mut ch = Channel3::new();
         ch.write_nr30(0x80);
         ch.write_nr32(0x20); // level = 1 → 100%
-        ch.wave_ram[0] = 0xF0; // first nibble = 15
-        ch.write_nr34(0x80);
+        ch.active = true;
+        ch.current_sample = 15;
         assert!((ch.output() - 1.0).abs() < 0.001);
     }
 
@@ -298,9 +379,9 @@ mod tests {
     fn test_output_50_percent() {
         let mut ch = Channel3::new();
         ch.write_nr30(0x80);
-        ch.write_nr32(0x40); // level = 2 → 50%
-        ch.wave_ram[0] = 0xF0; // first nibble = 15; shifted right by 1 = 7
-        ch.write_nr34(0x80);
+        ch.write_nr32(0x40); // level = 2 → 50% (shift right 1)
+        ch.active = true;
+        ch.current_sample = 15; // 15 >> 1 = 7
         // 7 / 15 ≈ 0.4667
         assert!((ch.output() - 7.0 / 15.0).abs() < 0.001);
     }
@@ -309,9 +390,9 @@ mod tests {
     fn test_output_25_percent() {
         let mut ch = Channel3::new();
         ch.write_nr30(0x80);
-        ch.write_nr32(0x60); // level = 3 → 25%
-        ch.wave_ram[0] = 0xF0; // 15 >> 2 = 3
-        ch.write_nr34(0x80);
+        ch.write_nr32(0x60); // level = 3 → 25% (shift right 2)
+        ch.active = true;
+        ch.current_sample = 15; // 15 >> 2 = 3
         assert!((ch.output() - 3.0 / 15.0).abs() < 0.001);
     }
 
@@ -327,20 +408,32 @@ mod tests {
     }
 
     #[test]
-    fn test_wave_ram_read_returns_current_byte_during_playback() {
-        // During active playback, reads always return the byte at wave_pos/2.
-        let mut ch = Channel3::new();
+    fn test_wave_ram_read_returns_current_byte_during_playback_cgb() {
+        // On CGB, during active playback, reads always return the byte at wave_pos/2.
+        let mut ch = Channel3::new_with_mode(true); // CGB
         ch.write_nr30(0x80);
         ch.wave_ram[0] = 0x12; // wave_pos 0-1 → byte 0
         ch.wave_ram[1] = 0x34;
-        ch.write_nr34(0x80); // trigger → wave_pos = 0
+        ch.write_nr34(0x80, false); // trigger → wave_pos = 0
         assert!(ch.is_active());
-        // Read any address during playback → should return wave_ram[wave_pos/2] = wave_ram[0]
+        // CGB: read any address during playback → returns wave_ram[wave_pos/2] = wave_ram[0]
         assert_eq!(
             ch.read_wave_ram(0xFF3F),
             0x12,
-            "during playback, wave RAM read must return current byte"
+            "CGB: during playback, wave RAM read must return current byte"
         );
+    }
+
+    #[test]
+    fn test_wave_ram_read_returns_ff_outside_window_dmg() {
+        // On DMG, during active playback, reads return 0xFF unless wave_just_read.
+        let mut ch = Channel3::new_with_mode(false); // DMG
+        ch.write_nr30(0x80);
+        ch.wave_ram[0] = 0x12;
+        ch.active = true;
+        ch.freq_timer = 10; // not about to read
+        // wave_just_read is false → returns 0xFF
+        assert_eq!(ch.read_wave_ram(0xFF30), 0xFF);
     }
 
     // ── NR30/NR32/NR34 register reads ────────────────────────────────────
@@ -365,7 +458,129 @@ mod tests {
     fn test_nr34_reads_length_en() {
         let mut ch = Channel3::new();
         ch.write_nr30(0x80);
-        ch.write_nr34(0x40); // length en, no trigger
+        ch.write_nr34(0x40, false); // length en, no trigger
         assert_eq!(ch.read_nr34() & 0x40, 0x40);
+    }
+
+    // ── Trigger playback delay ────────────────────────────────────────────
+
+    #[test]
+    fn test_trigger_playback_delay_first_advance_at_tick_3_for_max_freq() {
+        // SameBoy: trigger countdown = (freq ^ 0x7FF) + 3 = (2046 ^ 0x7FF) + 3 = 4 APU cycles.
+        // tick() processes 2 APU cycles per M-cycle using `while (cycles_left > countdown)`.
+        // Tick 1: cl=2, cd=4. 2>4? No. cd=2.
+        // Tick 2: cl=2, cd=2. 2>2? No. cd=0.
+        // Tick 3: cl=2, cd=0. 2>0? Yes! Advance pos to 1. Reload=1. 1>1? No. cd=0.
+        // So first advance happens at tick 3 (the +3 delay in APU cycles).
+        let mut ch = Channel3::new();
+        ch.write_nr30(0x80);
+        ch.wave_ram = [
+            0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB,
+            0xCD, 0xEF,
+        ];
+        ch.write_nr33(0xFE); // freq low = 0xFE
+        ch.write_nr34(0x87, false); // trigger, freq high = 7 → freq = 0x07FE = 2046
+
+        assert_eq!(ch.wave_pos, 0, "wave_pos must be 0 after trigger");
+
+        ch.tick(); // M-cycle 1: cd 4→2, no advance
+        assert_eq!(ch.wave_pos, 0, "wave_pos must still be 0 at tick 1");
+
+        ch.tick(); // M-cycle 2: cd 2→0, no advance
+        assert_eq!(ch.wave_pos, 0, "wave_pos must still be 0 at tick 2");
+
+        ch.tick(); // M-cycle 3: 2>0, advance to pos 1
+        assert_eq!(ch.wave_pos, 1, "wave_pos must advance to 1 at tick 3");
+    }
+
+    #[test]
+    fn test_trigger_does_not_immediately_read_sample() {
+        // Pan Docs: "triggering does not immediately start playing wave RAM;
+        // the last sample ever read is output until next read."
+        let mut ch = Channel3::new();
+        ch.write_nr30(0x80);
+        ch.write_nr32(0x20); // 100% volume
+        ch.wave_ram[0] = 0xF0; // nibble 0 = 0xF, nibble 1 = 0x0
+        // current_sample should be 0 (default, as if APU was just powered on)
+        ch.write_nr34(0x80, false); // trigger
+        // Output should still use the OLD sample (0), not nibble at pos 0
+        assert_eq!(
+            ch.output(),
+            0.0,
+            "trigger must not immediately read new sample"
+        );
+    }
+
+    #[test]
+    fn test_first_sample_read_is_index_1() {
+        // Pan Docs: "the first sample read is the one at index 1"
+        // After trigger (wave_pos=0), the first timer expiry reads nibble at pos 1.
+        let mut ch = Channel3::new();
+        ch.write_nr30(0x80);
+        ch.write_nr32(0x20); // 100% volume
+        ch.wave_ram[0] = 0xA5; // nibble 0 = 0xA, nibble 1 = 0x5
+        ch.write_nr33(0xFE);
+        ch.write_nr34(0x87, false); // trigger, freq=2046
+
+        // With 2 APU cycles/tick: countdown=4. Tick 1: cd=2. Tick 2: cd=0. Tick 3: advance to pos 1.
+        ch.tick(); // cd 4→2
+        ch.tick(); // cd 2→0
+        ch.tick(); // advance to pos 1, current_sample = nibble 1 = 0x5
+        assert_eq!(ch.wave_pos, 1, "first advance should reach pos 1");
+        assert_eq!(
+            ch.current_sample, 0x5,
+            "first sample read must be nibble at index 1"
+        );
+    }
+
+    // ── DMG retrigger corruption ──────────────────────────────────────────
+
+    #[test]
+    fn test_dmg_retrigger_corrupts_wave_ram_high_position() {
+        // SameBoy: On DMG, retriggering CH3 while sample_countdown == 0
+        // causes wave RAM corruption. offset = ((wave_pos+1) >> 1) & 0xF.
+        // For offset >= 4: first 4 bytes get the 4-byte-aligned block.
+        let mut ch = Channel3::new_with_mode(false); // DMG mode
+        ch.write_nr30(0x80);
+        ch.wave_ram = [
+            0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD,
+            0xEE, 0xFF,
+        ];
+
+        // Set up channel as if it's playing and freq_timer just reached 0
+        ch.active = true;
+        ch.wave_pos = 9; // offset = ((9+1)>>1) & 0xF = 5. Aligned block = [4..8]
+        ch.freq_timer = 0;
+        ch.freq = 0;
+
+        // Retrigger while freq_timer == 0 → should corrupt
+        ch.write_nr34(0x80, false);
+
+        // offset=5, aligned=4 → copy wave_ram[4..8] to wave_ram[0..4]
+        assert_eq!(ch.wave_ram[0], 0x44, "byte 0 should be wave_ram[4]");
+        assert_eq!(ch.wave_ram[1], 0x55, "byte 1 should be wave_ram[5]");
+        assert_eq!(ch.wave_ram[2], 0x66, "byte 2 should be wave_ram[6]");
+        assert_eq!(ch.wave_ram[3], 0x77, "byte 3 should be wave_ram[7]");
+    }
+
+    #[test]
+    fn test_cgb_retrigger_does_not_corrupt_wave_ram() {
+        // On CGB, retriggering does NOT corrupt wave RAM.
+        let mut ch = Channel3::new_with_mode(true); // CGB mode
+        ch.write_nr30(0x80);
+        ch.wave_ram = [
+            0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD,
+            0xEE, 0xFF,
+        ];
+        ch.active = true;
+        ch.wave_pos = 9;
+        ch.freq_timer = 0;
+        ch.freq = 0;
+        // Retrigger — no corruption on CGB
+        ch.write_nr34(0x80, false);
+        assert_eq!(ch.wave_ram[0], 0x00);
+        assert_eq!(ch.wave_ram[1], 0x11);
+        assert_eq!(ch.wave_ram[2], 0x22);
+        assert_eq!(ch.wave_ram[3], 0x33);
     }
 }

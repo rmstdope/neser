@@ -352,7 +352,6 @@ fn test_dmg_sound_02_len_ctr() {
 }
 
 #[test]
-#[ignore = "failing: length counter clocking on trigger in first half of period — tracked in #2038"]
 fn test_dmg_sound_03_trigger() {
     let mut gb = load_gb_rom("roms/gb/automated_tests/dmg_sound/rom_singles/03-trigger.gb");
     let output = run_blargg_rom_cart_ram(&mut gb);
@@ -373,7 +372,6 @@ fn test_dmg_sound_04_sweep() {
 }
 
 #[test]
-#[ignore = "failing: sweep negate-mode exit disables channel — tracked in #2038"]
 fn test_dmg_sound_05_sweep_details() {
     let mut gb = load_gb_rom("roms/gb/automated_tests/dmg_sound/rom_singles/05-sweep details.gb");
     let output = run_blargg_rom_cart_ram(&mut gb);
@@ -417,7 +415,6 @@ fn test_dmg_sound_08_len_ctr_during_power() {
 }
 
 #[test]
-#[ignore = "failing: wave channel read-while-on behaviour — tracked in #2038"]
 fn test_dmg_sound_09_wave_read_while_on() {
     let mut gb =
         load_gb_rom("roms/gb/automated_tests/dmg_sound/rom_singles/09-wave read while on.gb");
@@ -429,7 +426,6 @@ fn test_dmg_sound_09_wave_read_while_on() {
 }
 
 #[test]
-#[ignore = "failing: wave channel trigger-while-on behaviour — tracked in #2038"]
 fn test_dmg_sound_10_wave_trigger_while_on() {
     let mut gb =
         load_gb_rom("roms/gb/automated_tests/dmg_sound/rom_singles/10-wave trigger while on.gb");
@@ -452,7 +448,6 @@ fn test_dmg_sound_11_regs_after_power() {
 }
 
 #[test]
-#[ignore = "failing: wave channel write-while-on behaviour — tracked in #2038"]
 fn test_dmg_sound_12_wave_write_while_on() {
     let mut gb =
         load_gb_rom("roms/gb/automated_tests/dmg_sound/rom_singles/12-wave write while on.gb");
@@ -486,7 +481,6 @@ fn test_cgb_sound_02_len_ctr() {
 }
 
 #[test]
-#[ignore = "failing: length counter clocking on trigger in first half of period — tracked in #2038"]
 fn test_cgb_sound_03_trigger() {
     let mut gb = load_gb_rom("roms/gb/automated_tests/cgb_sound/rom_singles/03-trigger.gb");
     let output = run_blargg_rom_cart_ram(&mut gb);
@@ -507,7 +501,6 @@ fn test_cgb_sound_04_sweep() {
 }
 
 #[test]
-#[ignore = "failing: sweep negate-mode exit disables channel — tracked in #2038"]
 fn test_cgb_sound_05_sweep_details() {
     let mut gb = load_gb_rom("roms/gb/automated_tests/cgb_sound/rom_singles/05-sweep details.gb");
     let output = run_blargg_rom_cart_ram(&mut gb);
@@ -540,7 +533,6 @@ fn test_cgb_sound_07_len_sweep_period_sync() {
 }
 
 #[test]
-#[ignore = "failing: length counter behaviour during APU power cycle (CGB variant) — tracked in #2038"]
 fn test_cgb_sound_08_len_ctr_during_power() {
     let mut gb =
         load_gb_rom("roms/gb/automated_tests/cgb_sound/rom_singles/08-len ctr during power.gb");
@@ -552,7 +544,6 @@ fn test_cgb_sound_08_len_ctr_during_power() {
 }
 
 #[test]
-#[ignore = "failing: wave channel read-while-on behaviour — tracked in #2038"]
 fn test_cgb_sound_09_wave_read_while_on() {
     let mut gb =
         load_gb_rom("roms/gb/automated_tests/cgb_sound/rom_singles/09-wave read while on.gb");
@@ -575,7 +566,6 @@ fn test_cgb_sound_10_wave_trigger_while_on() {
 }
 
 #[test]
-#[ignore = "failing: APU power-off should clear NR41 length counter (CGB variant) — tracked in #2038"]
 fn test_cgb_sound_11_regs_after_power() {
     let mut gb =
         load_gb_rom("roms/gb/automated_tests/cgb_sound/rom_singles/11-regs after power.gb");

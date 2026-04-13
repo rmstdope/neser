@@ -58,6 +58,7 @@ pub struct DmgBus {
 
 impl DmgBus {
     pub fn new(cart: Box<dyn GbCartridge>) -> Self {
+        let is_cgb = cart.is_cgb();
         let mut bus = Self {
             cart,
             ppu: Ppu::new(),
@@ -65,7 +66,7 @@ impl DmgBus {
             hram: [0u8; 0x7F],
             timer: Timer::new(),
             joypad: Joypad::new(),
-            apu: Apu::new(),
+            apu: Apu::new(is_cgb),
             if_reg: 0,
             ie_reg: 0,
             boot_rom: DMG_BOOT_ROM,
@@ -92,7 +93,7 @@ impl DmgBus {
         self.ppu.write_register(0xFF40, 0x00); // power-on: LCD disabled
         self.timer = Timer::new();
         self.joypad = Joypad::new();
-        self.apu = Apu::new();
+        self.apu = Apu::new(self.cart.is_cgb());
         self.wram = [0u8; 0x2000];
         self.hram = [0u8; 0x7F];
         self.if_reg = 0;
