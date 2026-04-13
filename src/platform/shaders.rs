@@ -1,0 +1,19 @@
+/// Single source of truth for all available shader presets.
+///
+/// Each entry is `(short_name, relative_path_to_slangp)`.
+/// - `short_name` is used in the CLI (`--filter crt`) and config file (`filter=crt`).
+/// - `path` is relative to the working directory when neser runs.
+///
+/// To add or remove a shader preset, edit this list only.
+pub const SHADER_PRESETS: &[(&str, &str)] = &[
+    ("none", "shaders/stock.slangp"),
+    ("crt", "vendor/slang-shaders/crt/crt-lottes.slangp"),
+    (
+        "smooth",
+        "vendor/slang-shaders/edge-smoothing/xbrz/xbrz-freescale-multipass.slangp",
+    ),
+    (
+        "ntsc",
+        "vendor/slang-shaders/ntsc/ntsc-256px-composite.slangp",
+    ),
+];

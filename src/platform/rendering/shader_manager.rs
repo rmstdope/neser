@@ -1,3 +1,5 @@
+use crate::platform::shaders::SHADER_PRESETS;
+use crate::platform::shaders::SHADER_PRESETS;
 use librashader::presets::ShaderPreset;
 use librashader::presets::context::VideoDriver;
 use librashader::runtime::gl::{FilterChain, FilterChainOptions, GLImage};
@@ -97,19 +99,14 @@ impl ShaderManager {
     }
 
     fn discover_presets() -> Vec<PathBuf> {
-        // Known presets: stock lives in shaders/, the rest come from the
-        // vendor/slang-shaders submodule. Presets that don't exist on disk
-        // (e.g. submodule not initialised) are silently skipped.
-        let candidates = [
-            PathBuf::from("shaders/stock.slangp"),
-            PathBuf::from("vendor/slang-shaders/crt/crt-lottes.slangp"),
-            PathBuf::from(
-                "vendor/slang-shaders/edge-smoothing/xbrz/xbrz-freescale-multipass.slangp",
-            ),
-            PathBuf::from("vendor/slang-shaders/ntsc/ntsc-256px-composite.slangp"),
-        ];
-
-        let mut presets: Vec<PathBuf> = candidates.into_iter().filter(|p| p.exists()).collect();
+        // Derived from the canonical SHADER_PRESETS list in platform::shaders.
+        // Presets that don't exist on disk (e.g. submodule not initialised)
+        // are silently skipped.
+        let mut presets: Vec<PathBuf> = SHADER_PRESETS
+            .iter()
+            .map(|(_, path)| PathBuf::from(path))
+            .filter(|p| p.exists())
+            .collect();
         presets.sort();
         presets
     }
