@@ -285,14 +285,45 @@ impl Console {
     /// Visible screen dimensions in pixels with overscan removed.
     ///
     /// For NES, `h_overscan` columns are removed from each side and `v_overscan`
-    /// rows from top and bottom.  For Game Boy, overscan parameters are ignored
-    /// and the native 160×144 resolution is always returned.
+    /// rows from top and bottom.
+    ///
+    /// # Panics
+    ///
+    /// Panics for NES if `h_overscan` exceeds half the screen width or
+    /// `v_overscan` exceeds half the screen height. This matches the stricter
+    /// precondition used by the NES cropped snapshot path instead of silently
+    /// clamping invalid values.
+    ///
+    /// For Game Boy, overscan parameters are ignored and the native 160×144
+    /// resolution is always returned.
     pub fn cropped_dims(&self, h_overscan: u32, v_overscan: u32) -> (u32, u32) {
         match self {
-            Console::Nes(_) => (
-                self.screen_width().saturating_sub(2 * h_overscan).max(1),
-                self.screen_height().saturating_sub(2 * v_overscan).max(1),
-            ),
+            Console::Nes(_) => {
+                let screen_width = self.screen_width();
+                let screen_height = self.screen_height();
+                let max_h_overscan = screen_width / 2;
+                let max_v_overscan = screen_height / 2;
+
+                assert!(
+                    h_overscan <= max_h_overscan,
+                    "horizontal overscan {} exceeds maximum {} for width {}",
+                    h_overscan,
+                    max_h_overscan,
+                    screen_width
+                );
+                assert!(
+                    v_overscan <= max_v_overscan,
+                    "vertical overscan {} exceeds maximum {} for height {}",
+                    v_overscan,
+                    max_v_overscan,
+                    screen_height
+                );
+
+                (
+                    screen_width - 2 * h_overscan,
+                    screen_height - 2 * v_overscan,
+                )
+            }
             Console::GameBoy(_) => (self.screen_width(), self.screen_height()),
         }
     }
@@ -795,5 +826,43 @@ mod tests_console_abstraction {
         let (w, h) = SystemType::GameBoy.windowed_dimensions(0, &app);
         assert!(w >= 1);
         assert_eq!(h, 1);
+    }
+
+    // --- Console::target_frame_duration() ---
+
+    #[test]
+    fn test_nes_ntsc_target_frame_duration() {
+        let console = make_nes_console_with_overscan(0, 0); // default = NTSC
+        let ms = console.target_frame_duration().as_secs_f64() * 1000.0;
+        // NTSC: ~60.098 FPS → ~16.64ms per frame
+        assert!(
+            (16.0..=17.0).contains(&ms),
+            "NTSC frame duration should be ~16.6ms, got {ms:.2}ms"
+        );
+    }
+
+    #[test]
+    fn test_nes_pal_target_frame_duration() {
+        use crate::nes::console::HardwareModel;
+        let mut config = Config::default();
+        config.nes.hardware_model = HardwareModel::NesPal;
+        let console = Console::new_nes(AppContext::new_with_config(config));
+        let ms = console.target_frame_duration().as_secs_f64() * 1000.0;
+        // PAL: ~50.007 FPS → ~20.0ms per frame
+        assert!(
+            (19.5..=20.5).contains(&ms),
+            "PAL frame duration should be ~20.0ms, got {ms:.2}ms"
+        );
+    }
+
+    #[test]
+    fn test_gb_target_frame_duration() {
+        let console = make_gb_console();
+        let ms = console.target_frame_duration().as_secs_f64() * 1000.0;
+        // DMG GB: 4,194,304 Hz / 70,224 cycles ≈ 59.73 FPS → ~16.74ms
+        assert!(
+            (16.5..=17.0).contains(&ms),
+            "GB frame duration should be ~16.74ms, got {ms:.2}ms"
+        );
     }
 }

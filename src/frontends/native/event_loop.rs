@@ -300,11 +300,10 @@ impl NativeEventLoop {
                     let cx = w as f32 / 2.0;
                     let cy = h as f32 / 2.0;
                     self.state.virtual_cursor = (cx, cy);
-                    let Console::Nes(nes) = &mut self.console else {
-                        unreachable!()
-                    };
-                    self.state.last_zapper_position =
-                        mouse::update_mouse_motion(nes, cx as i32, cy as i32, w, h);
+                    if let Console::Nes(nes) = &mut self.console {
+                        self.state.last_zapper_position =
+                            mouse::update_mouse_motion(nes, cx as i32, cy as i32, w, h);
+                    }
                 } else {
                     let _ = gl.set_mouse_grab(false);
                     gl.window().set_cursor_visible(true);
@@ -369,7 +368,7 @@ impl NativeEventLoop {
 
         let cartridge = {
             let Console::Nes(nes) = &self.console else {
-                unreachable!()
+                return;
             };
             match crate::nes::cartridge::Cartridge::load_from_file(
                 &rom_bytes,
@@ -851,11 +850,10 @@ impl ApplicationHandler for NativeEventLoop {
                             let cx = w as f32 / 2.0;
                             let cy = h as f32 / 2.0;
                             self.state.virtual_cursor = (cx, cy);
-                            let Console::Nes(nes) = &mut self.console else {
-                                unreachable!()
-                            };
-                            self.state.last_zapper_position =
-                                mouse::update_mouse_motion(nes, cx as i32, cy as i32, w, h);
+                            if let Console::Nes(nes) = &mut self.console {
+                                self.state.last_zapper_position =
+                                    mouse::update_mouse_motion(nes, cx as i32, cy as i32, w, h);
+                            }
                         }
                         self.state.mouse_grabbed = true;
                         if !mouse::should_forward_grab_click(was_released_by_escape) {
@@ -872,10 +870,8 @@ impl ApplicationHandler for NativeEventLoop {
                         winit::event::MouseButton::Right => Some(mouse::MouseButton::Right),
                         _ => None,
                     };
-                    if let Some(btn) = btn {
-                        let Console::Nes(nes) = &mut self.console else {
-                            unreachable!()
-                        };
+                    if let (Some(btn), Console::Nes(nes)) = (btn, &mut self.console as &mut Console)
+                    {
                         mouse::update_mouse_button(nes, btn, state == ElementState::Pressed);
                     }
                 }
