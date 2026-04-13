@@ -12,9 +12,13 @@ exclude = [
     ".githooks/",
     ".vscode/",
     "target/",
+	"dist/",
+	"node_modules/",
+	"pkg/",
+	"test-results/",
     "package.json",
     "package-lock.json",
-    "playwright.config.mjs",
+    "playwright.config.ts",
 ]
 
 [lib]
