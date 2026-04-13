@@ -5,7 +5,6 @@
 //! Ctrl+Q (quit), Ctrl+R (reset), Space (pause), and so on.
 
 use crate::frontends::native::app_state::NativeAppState;
-use crate::nes::console::Nes;
 use crate::nes::input::{Button, PowerPadButton, SnesButton};
 use crate::platform::audio::EmulatorAudio;
 use crate::platform::emulator::Console;
@@ -51,14 +50,14 @@ pub fn handle_key_pressed(
     audio: Option<&dyn EmulatorAudio>,
 ) -> KeyOutcome {
     match console {
-        Console::Nes(nes) => {
+        Console::Nes(_) => {
             if app_state.cart_switch.open {
                 return handle_cartridge_switch_key(key_code, app_state);
             }
             if app_state.modifiers.control_key() {
-                return handle_ctrl_hotkey(nes, key_code, app_state);
+                return handle_ctrl_hotkey(console, key_code, app_state);
             }
-            handle_unmodified_key(nes, key_code, app_state, audio)
+            handle_unmodified_key(console, key_code, app_state, audio)
         }
         Console::GameBoy(_) => handle_gameboy_key_pressed(console, key_code, app_state, audio),
     }
@@ -79,9 +78,9 @@ pub fn handle_key_released(
     four_score: bool,
 ) {
     match console {
-        Console::Nes(nes) => {
+        Console::Nes(_) => {
             let ports = keyboard_target_ports(gamepad_count, four_score);
-            handle_controller_key(nes, key_code, false, ports);
+            handle_controller_key(console, key_code, false, ports);
         }
         Console::GameBoy(_) => {
             if let Some(btn_id) = gameboy_key_to_button_id(key_code) {
@@ -221,14 +220,14 @@ fn handle_gameboy_key_pressed(
 }
 
 fn handle_ctrl_hotkey(
-    nes: &mut Nes,
+    console: &mut Console,
     key_code: KeyCode,
     app_state: &mut NativeAppState,
 ) -> KeyOutcome {
     match key_code {
         KeyCode::KeyQ => KeyOutcome::Quit,
         KeyCode::KeyR => {
-            nes.reset(!app_state.modifiers.shift_key());
+            console.reset(!app_state.modifiers.shift_key());
             KeyOutcome::Continue
         }
         KeyCode::KeyO => KeyOutcome::OpenCartridgeSwitch,
@@ -241,7 +240,7 @@ fn handle_ctrl_hotkey(
 }
 
 fn handle_unmodified_key(
-    nes: &mut Nes,
+    console: &mut Console,
     key_code: KeyCode,
     app_state: &mut NativeAppState,
     audio: Option<&dyn EmulatorAudio>,
@@ -254,10 +253,10 @@ fn handle_unmodified_key(
         KeyCode::KeyH => app_state.help_overlay_visible = !app_state.help_overlay_visible,
         KeyCode::F5 => return KeyOutcome::ToggleDebugger,
         KeyCode::F6 => {
-            crate::nes::console::save_state_io::save_state_to_disk(nes);
+            crate::nes::console::save_state_io::save_state_to_disk(console);
         }
         KeyCode::F7 => {
-            crate::nes::console::save_state_io::load_state_from_disk(nes);
+            crate::nes::console::save_state_io::load_state_from_disk(console);
             if let Some(audio) = audio {
                 audio.drain_buffer();
             }
@@ -267,7 +266,7 @@ fn handle_unmodified_key(
         _ => {
             let ports =
                 keyboard_target_ports(app_state.gamepad_count, app_state.four_score_enabled);
-            handle_controller_key(nes, key_code, true, ports);
+            handle_controller_key(console, key_code, true, ports);
         }
     }
 
@@ -288,7 +287,10 @@ fn adjust_volume(audio: Option<&dyn EmulatorAudio>, delta: f32) {
 /// determined by [`keyboard_target_ports`].  P1 keys (WASD etc.) are sent to the first
 /// port in `ports` (ports.first()); P2-specific keys (IJKL etc.) are sent to port 2
 /// only if 2 is in `ports`.
-fn handle_controller_key(nes: &mut Nes, key_code: KeyCode, pressed: bool, ports: &[u8]) {
+fn handle_controller_key(console: &mut Console, key_code: KeyCode, pressed: bool, ports: &[u8]) {
+    let Console::Nes(nes) = console else {
+        return;
+    };
     match key_code {
         // ── Player 1: 1/2/3 → Power Pad buttons ──────────────────────────
         KeyCode::Digit1 => pp_p1(nes, PowerPadButton::One, pressed, ports),
@@ -376,19 +378,25 @@ fn handle_controller_key(nes: &mut Nes, key_code: KeyCode, pressed: bool, ports:
 
 // ── Player-1 button helpers (route to the primary keyboard port) ───────────────────────────────────────
 
-fn pp_p1(nes: &mut Nes, pp: PowerPadButton, pressed: bool, ports: &[u8]) {
+fn pp_p1(nes: &mut crate::nes::console::Nes, pp: PowerPadButton, pressed: bool, ports: &[u8]) {
     if let Some(&port) = ports.first() {
         nes.set_power_pad_button(port, pp, pressed);
     }
 }
 
-fn snes_p1(nes: &mut Nes, snes: SnesButton, pressed: bool, ports: &[u8]) {
+fn snes_p1(nes: &mut crate::nes::console::Nes, snes: SnesButton, pressed: bool, ports: &[u8]) {
     if let Some(&port) = ports.first() {
         nes.set_snes_button(port, snes, pressed);
     }
 }
 
-fn btn_or_snes_p1(nes: &mut Nes, btn: Button, snes: SnesButton, pressed: bool, ports: &[u8]) {
+fn btn_or_snes_p1(
+    nes: &mut crate::nes::console::Nes,
+    btn: Button,
+    snes: SnesButton,
+    pressed: bool,
+    ports: &[u8],
+) {
     if let Some(&port) = ports.first()
         && !nes.set_snes_button(port, snes, pressed)
     {
@@ -396,7 +404,13 @@ fn btn_or_snes_p1(nes: &mut Nes, btn: Button, snes: SnesButton, pressed: bool, p
     }
 }
 
-fn pp_or_snes_p1(nes: &mut Nes, pp: PowerPadButton, snes: SnesButton, pressed: bool, ports: &[u8]) {
+fn pp_or_snes_p1(
+    nes: &mut crate::nes::console::Nes,
+    pp: PowerPadButton,
+    snes: SnesButton,
+    pressed: bool,
+    ports: &[u8],
+) {
     if let Some(&port) = ports.first()
         && !nes.set_power_pad_button(port, pp, pressed)
     {
@@ -405,7 +419,7 @@ fn pp_or_snes_p1(nes: &mut Nes, pp: PowerPadButton, snes: SnesButton, pressed: b
 }
 
 fn pp_or_btn_or_snes_p1(
-    nes: &mut Nes,
+    nes: &mut crate::nes::console::Nes,
     pp: PowerPadButton,
     btn: Button,
     snes: SnesButton,
@@ -422,19 +436,25 @@ fn pp_or_btn_or_snes_p1(
 
 // ── Player-2-only button helpers ─────────────────────────────────────────────
 
-fn btn_p2(nes: &mut Nes, btn: Button, pressed: bool, ports: &[u8]) {
+fn btn_p2(nes: &mut crate::nes::console::Nes, btn: Button, pressed: bool, ports: &[u8]) {
     if let Some(&port) = ports.get(1) {
         nes.set_button(port, btn, pressed);
     }
 }
 
-fn pp_p2(nes: &mut Nes, pp: PowerPadButton, pressed: bool, ports: &[u8]) {
+fn pp_p2(nes: &mut crate::nes::console::Nes, pp: PowerPadButton, pressed: bool, ports: &[u8]) {
     if let Some(&port) = ports.get(1) {
         nes.set_power_pad_button(port, pp, pressed);
     }
 }
 
-fn pp_or_btn_p2(nes: &mut Nes, pp: PowerPadButton, btn: Button, pressed: bool, ports: &[u8]) {
+fn pp_or_btn_p2(
+    nes: &mut crate::nes::console::Nes,
+    pp: PowerPadButton,
+    btn: Button,
+    pressed: bool,
+    ports: &[u8],
+) {
     if let Some(&port) = ports.get(1)
         && !nes.set_power_pad_button(port, pp, pressed)
     {
@@ -533,7 +553,7 @@ fn key_code_to_filter_char(key_code: KeyCode, shift: bool) -> Option<char> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::nes::console::{Config, NesConfig};
+    use crate::nes::console::{Config, Nes, NesConfig};
     use crate::platform::app_context::AppContext;
     use crate::platform::emulator::Console;
     use winit::keyboard::ModifiersState;

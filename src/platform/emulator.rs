@@ -10,6 +10,8 @@
 //! [`as_core()`](Console::as_core) / [`as_core_mut()`](Console::as_core_mut),
 //! keeping a single pair of match arms instead of one pair per method.
 
+use std::path::PathBuf;
+
 use crate::gb::GameBoy;
 use crate::nes::console::Nes;
 use crate::platform::app_context::{IntoSharedAppContext, SharedAppContext};
@@ -208,6 +210,15 @@ impl Console {
     /// Restore emulator state from previously serialized bytes.
     pub fn load_state_bytes(&mut self, data: &[u8]) -> Result<(), String> {
         self.as_core_mut().load_state_bytes(data)
+    }
+
+    /// Returns the file path where save-state data should be stored, or `None`
+    /// if no ROM is loaded or the system does not support disk save states.
+    pub fn state_path(&self) -> Option<PathBuf> {
+        match self {
+            Console::Nes(nes) => nes.state_path(),
+            Console::GameBoy(_) => None,
+        }
     }
 
     /// Reset the emulator.
