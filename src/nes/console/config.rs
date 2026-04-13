@@ -2823,9 +2823,14 @@ mod tests {
         ];
         let result = config_new(args);
         assert!(result.is_err());
+        let valid = crate::platform::shaders::SHADER_PRESETS
+            .iter()
+            .map(|(n, _)| *n)
+            .collect::<Vec<_>>()
+            .join(", ");
         assert_eq!(
             result.unwrap_err(),
-            "Invalid filter name: 'invalid-filter'. Valid options are: none, crt, smooth, ntsc"
+            format!("Invalid filter name: 'invalid-filter'. Valid options are: {valid}")
         );
     }
 
@@ -3332,9 +3337,14 @@ mod tests {
         let mut config = Config::default();
         let result = config.apply_config_value("filter", "invalid-filter");
         assert!(result.is_err());
+        let valid = crate::platform::shaders::SHADER_PRESETS
+            .iter()
+            .map(|(n, _)| *n)
+            .collect::<Vec<_>>()
+            .join(", ");
         assert_eq!(
             result.unwrap_err(),
-            "Invalid filter name: 'invalid-filter'. Valid options are: none, crt, smooth, ntsc"
+            format!("Invalid filter name: 'invalid-filter'. Valid options are: {valid}")
         );
     }
 
@@ -3900,9 +3910,14 @@ filter=invalid-shader
         ];
         let result = Config::new(&args);
         assert!(result.is_err());
+        let valid = crate::platform::shaders::SHADER_PRESETS
+            .iter()
+            .map(|(n, _)| *n)
+            .collect::<Vec<_>>()
+            .join(", ");
         assert_eq!(
             result.unwrap_err(),
-            "Invalid filter name: 'invalid-shader'. Valid options are: none, crt, smooth, ntsc"
+            format!("Invalid filter name: 'invalid-shader'. Valid options are: {valid}")
         );
     }
 
