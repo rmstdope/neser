@@ -28,6 +28,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          submodules: true
       - name: Detect changed paths
         id: filter
         uses: dorny/paths-filter@v3
@@ -75,6 +77,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          submodules: true
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
@@ -91,6 +95,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          submodules: true
       - name: Install native frontend system dependencies
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libdbus-1-dev
       - name: Cache Rust dependencies and build outputs
@@ -145,6 +151,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          submodules: true
       - name: Install native frontend system dependencies
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libdbus-1-dev
       - name: Cache Rust dependencies and build outputs
@@ -160,6 +168,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          submodules: true
       - name: Install native frontend system dependencies
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libdbus-1-dev
       - name: Cache Rust dependencies and build outputs
@@ -174,6 +184,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          submodules: true
       - name: Cache Rust dependencies and build outputs
         uses: Swatinem/rust-cache@v2
       - name: Setup wasm-pack
@@ -190,6 +202,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          submodules: true
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -206,6 +220,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          submodules: true
       - name: Cache Rust dependencies and build outputs
         uses: Swatinem/rust-cache@v2
       - name: Setup Node.js
