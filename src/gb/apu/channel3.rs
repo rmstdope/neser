@@ -27,8 +27,9 @@ pub struct Channel3 {
     pub(crate) current_sample: u8,
     /// True when running a CGB-compatible ROM (gates wave RAM access behavior).
     is_cgb: bool,
-    /// Set during the M-cycle when CH3 reads a new sample from wave RAM.
-    /// On DMG, CPU can only access wave RAM during this window.
+    /// True when the last wave position advance consumed all remaining APU cycles
+    /// in a tick — i.e. a sample read occurred on the very last APU cycle of that
+    /// M-cycle. On DMG, CPU can only access wave RAM during this window.
     pub(crate) wave_just_read: bool,
 }
 

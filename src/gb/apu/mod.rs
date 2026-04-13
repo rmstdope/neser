@@ -85,7 +85,7 @@ pub struct Apu {
     /// Pending output sample (`Some` when `sample_ready()` is true).
     pending_sample: Option<f32>,
 
-    /// `true` when running a CGB-compatible ROM (header byte 0x0143 ≥ 0x80).
+    /// `true` when running a CGB-compatible ROM (header byte 0x0143 is 0x80 or 0xC0).
     /// Gates CGB-specific APU differences (length counter behavior on power off/on).
     is_cgb: bool,
 }
@@ -300,9 +300,9 @@ impl Apu {
             return;
         }
 
-        // Extra length clocking: the FS next step would NOT clock length when
-        // the current fs_step is odd (1, 3, 5, 7). In that case, NRx4 writes
-        // that enable length_en or trigger with length_en get an extra clock.
+        // Extra length clocking: when the current FS step does NOT clock length
+        // (i.e. FS_TABLE[fs_step] has bit 0 clear — steps 1, 3, 5, 7), NRx4
+        // writes that enable length_en or trigger with length_en get an extra clock.
         let extra_clk = FS_TABLE[self.fs_step as usize] & 0x01 == 0;
 
         match addr {
