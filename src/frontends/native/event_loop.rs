@@ -272,13 +272,7 @@ impl NativeEventLoop {
     /// Called once per frame to ensure grab/visibility stay in sync after
     /// cartridge switches, focus changes, or controller hot-swaps.
     fn sync_mouse_grab_state(&mut self) {
-        // Mouse grab is only relevant for NES (Zapper / SNES Mouse controllers).
-        let has_mouse = {
-            let Console::Nes(nes) = &self.console else {
-                return;
-            };
-            mouse::has_any_mouse_controller(nes)
-        };
+        let has_mouse = mouse::has_any_mouse_controller(&self.console);
         let should_grab = crate::nes::input::mouse_mapping::should_grab_mouse_input(
             has_mouse,
             self.state.window_focused,
@@ -300,10 +294,8 @@ impl NativeEventLoop {
                     let cx = w as f32 / 2.0;
                     let cy = h as f32 / 2.0;
                     self.state.virtual_cursor = (cx, cy);
-                    if let Console::Nes(nes) = &mut self.console {
-                        self.state.last_zapper_position =
-                            mouse::update_mouse_motion(nes, cx as i32, cy as i32, w, h);
-                    }
+                    self.state.last_zapper_position =
+                        mouse::update_mouse_motion(&mut self.console, cx as i32, cy as i32, w, h);
                 } else {
                     let _ = gl.set_mouse_grab(false);
                     gl.window().set_cursor_visible(true);
@@ -368,7 +360,7 @@ impl NativeEventLoop {
 
         let cartridge = {
             let Console::Nes(nes) = &self.console else {
-                return;
+                unreachable!("console type checked above");
             };
             match crate::nes::cartridge::Cartridge::load_from_file(
                 &rom_bytes,
@@ -815,13 +807,7 @@ impl ApplicationHandler for NativeEventLoop {
                     gl.handle_mouse_button(button, state);
                 }
 
-                // Mouse controller logic is NES-only.
-                let has_mouse = {
-                    let Console::Nes(nes) = &self.console else {
-                        return;
-                    };
-                    mouse::has_any_mouse_controller(nes)
-                };
+                let has_mouse = mouse::has_any_mouse_controller(&self.console);
 
                 // Left-click grabs immediately so the same click is also forwarded
                 // as a button press (unlike deferring to the next frame, which
@@ -850,10 +836,13 @@ impl ApplicationHandler for NativeEventLoop {
                             let cx = w as f32 / 2.0;
                             let cy = h as f32 / 2.0;
                             self.state.virtual_cursor = (cx, cy);
-                            if let Console::Nes(nes) = &mut self.console {
-                                self.state.last_zapper_position =
-                                    mouse::update_mouse_motion(nes, cx as i32, cy as i32, w, h);
-                            }
+                            self.state.last_zapper_position = mouse::update_mouse_motion(
+                                &mut self.console,
+                                cx as i32,
+                                cy as i32,
+                                w,
+                                h,
+                            );
                         }
                         self.state.mouse_grabbed = true;
                         if !mouse::should_forward_grab_click(was_released_by_escape) {
@@ -870,9 +859,12 @@ impl ApplicationHandler for NativeEventLoop {
                         winit::event::MouseButton::Right => Some(mouse::MouseButton::Right),
                         _ => None,
                     };
-                    if let (Some(btn), Console::Nes(nes)) = (btn, &mut self.console as &mut Console)
-                    {
-                        mouse::update_mouse_button(nes, btn, state == ElementState::Pressed);
+                    if let Some(btn) = btn {
+                        mouse::update_mouse_button(
+                            &mut self.console,
+                            btn,
+                            state == ElementState::Pressed,
+                        );
                     }
                 }
             }
@@ -929,13 +921,12 @@ impl ApplicationHandler for NativeEventLoop {
                 // Render and apply debugger UI actions
                 let action = if let Some(ref mut gl) = self.gl_wrapper {
                     gl.update_breakpoints(self.debugger_controller.breakpoints());
-                    let (overlay, crosshair) = if let Console::Nes(nes) = &self.console {
-                        (
-                            self.state.overlay_text(nes, self.autorun_state.as_ref()),
-                            mouse::zapper_crosshair(nes, self.state.last_zapper_position),
-                        )
+                    let crosshair =
+                        mouse::zapper_crosshair(&self.console, self.state.last_zapper_position);
+                    let overlay = if let Console::Nes(nes) = &self.console {
+                        self.state.overlay_text(nes, self.autorun_state.as_ref())
                     } else {
-                        (None, None)
+                        None
                     };
                     gl.render(
                         &self.console,
@@ -971,22 +962,23 @@ impl ApplicationHandler for NativeEventLoop {
                 return;
             }
 
-            // Mouse motion routing is NES-only.
-            let Console::Nes(nes) = &mut self.console else {
-                return;
-            };
-
             let (w, h) = self
                 .gl_wrapper
                 .as_ref()
                 .map(|gl| gl.window_size())
                 .unwrap_or((320, 240));
 
-            if nes.has_snes_mouse() && !mouse::has_zapper(nes) {
+            if mouse::has_snes_mouse(&self.console) && !mouse::has_zapper(&self.console) {
                 // SNES Mouse: pass raw deltas directly.
                 // Zapper takes precedence — if a Zapper is also connected,
                 // fall through to the virtual-cursor path (matching SDL logic).
-                mouse::apply_snes_mouse_relative_motion(nes, dx as i32, dy as i32, w, h);
+                mouse::apply_snes_mouse_relative_motion(
+                    &mut self.console,
+                    dx as i32,
+                    dy as i32,
+                    w,
+                    h,
+                );
             } else {
                 // Zapper / Arkanoid: accumulate deltas into a virtual cursor
                 // position clamped to the window, then map to NES coordinates.
@@ -1001,8 +993,13 @@ impl ApplicationHandler for NativeEventLoop {
                 );
                 self.state.virtual_cursor = (new_vx, new_vy);
 
-                self.state.last_zapper_position =
-                    mouse::update_mouse_motion(nes, new_vx as i32, new_vy as i32, w, h);
+                self.state.last_zapper_position = mouse::update_mouse_motion(
+                    &mut self.console,
+                    new_vx as i32,
+                    new_vy as i32,
+                    w,
+                    h,
+                );
             }
         }
     }

@@ -231,14 +231,14 @@ fn draw_toasts(
     }
 }
 
-fn toggle_overlay_text_color(color: OverlayTextColor) -> OverlayTextColor {
-    match color {
-        OverlayTextColor::White => OverlayTextColor::Black,
-        OverlayTextColor::Black => OverlayTextColor::White,
-    }
-}
-
 impl OverlayTextColor {
+    fn toggle(self) -> Self {
+        match self {
+            OverlayTextColor::White => OverlayTextColor::Black,
+            OverlayTextColor::Black => OverlayTextColor::White,
+        }
+    }
+
     fn rgba(self) -> [f32; 4] {
         match self {
             OverlayTextColor::White => [1.0, 1.0, 1.0, 1.0],
@@ -448,7 +448,7 @@ impl GlBackend {
             down: true,
         } = event
         {
-            self.overlay_text_color = toggle_overlay_text_color(self.overlay_text_color);
+            self.overlay_text_color = self.overlay_text_color.toggle();
         }
 
         apply_input(self.imgui.io_mut(), event);
@@ -1144,14 +1144,8 @@ mod tests {
 
     #[test]
     fn test_overlay_text_color_toggle() {
-        assert_eq!(
-            toggle_overlay_text_color(OverlayTextColor::White),
-            OverlayTextColor::Black
-        );
-        assert_eq!(
-            toggle_overlay_text_color(OverlayTextColor::Black),
-            OverlayTextColor::White
-        );
+        assert_eq!(OverlayTextColor::White.toggle(), OverlayTextColor::Black);
+        assert_eq!(OverlayTextColor::Black.toggle(), OverlayTextColor::White);
     }
 
     #[test]
