@@ -120,7 +120,7 @@ pub fn zapper_crosshair(console: &Console, last_position: Option<(u8, u8)>) -> O
     let Console::Nes(nes) = console else {
         return None;
     };
-    if !has_zapper_nes(nes) && !nes.has_expansion_zapper() {
+    if !has_zapper_nes(nes) {
         None
     } else {
         last_position.map(|(x, y)| Crosshair {

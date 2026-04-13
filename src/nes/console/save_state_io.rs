@@ -36,6 +36,8 @@ pub fn save_state_to_disk(console: &mut Console) {
     }
 
     // Atomic write: write to temp file, then rename.
+    // On Windows, rename fails if the destination already exists, so we
+    // remove it first (best-effort) before the rename.
     let mut tmp_path = state_path.clone();
     tmp_path.set_extension(format!("state.tmp.{}", std::process::id()));
 
@@ -47,6 +49,9 @@ pub fn save_state_to_disk(console: &mut Console) {
             .add_toast("Failed to save state");
         return;
     }
+
+    #[cfg(windows)]
+    let _ = fs::remove_file(&state_path);
 
     if let Err(err) = fs::rename(&tmp_path, &state_path) {
         log_info(format!("Failed to finalize save-state: {err}"));
