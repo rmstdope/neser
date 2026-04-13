@@ -19,7 +19,7 @@ pub struct Channel4 {
     dac_on: bool,
     lfsr: u16,
     freq_timer: u32,
-    length_counter: u8,
+    pub(crate) length_counter: u8,
     volume: u8,
     env_timer: u8,
 }
@@ -177,10 +177,22 @@ impl Channel4 {
         self.divisor_code = val & 0x07;
     }
 
-    pub fn write_nr44(&mut self, val: u8) {
+    pub fn write_nr44(&mut self, val: u8, extra_clk: bool) {
+        let old_length_en = self.length_en;
         self.length_en = val & 0x40 != 0;
+
+        if extra_clk && !old_length_en && self.length_en && self.length_counter > 0 {
+            self.length_counter -= 1;
+            if self.length_counter == 0 {
+                self.active = false;
+            }
+        }
+
         if val & 0x80 != 0 {
             self.trigger();
+            if extra_clk && self.length_en && self.length_counter == 64 {
+                self.length_counter = 63;
+            }
         }
     }
 
@@ -210,7 +222,7 @@ mod tests {
     fn triggered_ch4() -> Channel4 {
         let mut ch = Channel4::new();
         ch.write_nr42(0xF1); // vol=15, sub, period=1, DAC on
-        ch.write_nr44(0x80); // trigger
+        ch.write_nr44(0x80, false); // trigger
         ch
     }
 
@@ -223,7 +235,7 @@ mod tests {
     fn test_dac_off_prevents_activation() {
         let mut ch = Channel4::new();
         ch.write_nr42(0x00);
-        ch.write_nr44(0x80);
+        ch.write_nr44(0x80, false);
         assert!(!ch.is_active());
     }
 
@@ -237,7 +249,7 @@ mod tests {
         let mut ch = Channel4::new();
         ch.write_nr42(0xF1);
         ch.write_nr41(0x3F); // counter = 1
-        ch.write_nr44(0xC0); // trigger + length enable
+        ch.write_nr44(0xC0, false); // trigger + length enable
         ch.clock_length();
         assert!(!ch.is_active());
     }
@@ -247,7 +259,7 @@ mod tests {
         let mut ch = Channel4::new();
         ch.write_nr42(0xF1);
         ch.write_nr41(0x3F);
-        ch.write_nr44(0x80);
+        ch.write_nr44(0x80, false);
         ch.clock_length();
         assert!(ch.is_active());
     }
@@ -256,7 +268,7 @@ mod tests {
     fn test_envelope_decrements_volume() {
         let mut ch = Channel4::new();
         ch.write_nr42(0x71); // vol=7, sub, period=1
-        ch.write_nr44(0x80);
+        ch.write_nr44(0x80, false);
         ch.clock_envelope();
         assert_eq!(ch.volume, 6);
     }
@@ -265,7 +277,7 @@ mod tests {
     fn test_envelope_increments_volume() {
         let mut ch = Channel4::new();
         ch.write_nr42(0x79); // vol=7, add, period=1
-        ch.write_nr44(0x80);
+        ch.write_nr44(0x80, false);
         ch.clock_envelope();
         assert_eq!(ch.volume, 8);
     }
@@ -276,7 +288,7 @@ mod tests {
         let mut ch = Channel4::new();
         ch.write_nr42(0xF0);
         ch.write_nr43(0x00); // 15-bit
-        ch.write_nr44(0x80); // trigger -> LFSR = 0x7FFF
+        ch.write_nr44(0x80, false); // trigger -> LFSR = 0x7FFF
         ch.clock_lfsr();
         assert_eq!(ch.lfsr, 0x3FFF);
     }
@@ -287,7 +299,7 @@ mod tests {
         let mut ch = Channel4::new();
         ch.write_nr42(0xF0);
         ch.write_nr43(0x08); // 7-bit
-        ch.write_nr44(0x80);
+        ch.write_nr44(0x80, false);
         ch.clock_lfsr();
         assert_eq!(ch.lfsr & (1 << 6), 0);
     }
@@ -297,12 +309,12 @@ mod tests {
         let mut ch15 = Channel4::new();
         ch15.write_nr42(0xF0);
         ch15.write_nr43(0x00);
-        ch15.write_nr44(0x80);
+        ch15.write_nr44(0x80, false);
 
         let mut ch7 = Channel4::new();
         ch7.write_nr42(0xF0);
         ch7.write_nr43(0x08);
-        ch7.write_nr44(0x80);
+        ch7.write_nr44(0x80, false);
 
         let bits15: Vec<u8> = (0..32)
             .map(|_| {
@@ -337,7 +349,7 @@ mod tests {
     fn test_nr44_reads_length_en() {
         let mut ch = Channel4::new();
         ch.write_nr42(0xF0);
-        ch.write_nr44(0x40);
+        ch.write_nr44(0x40, false);
         assert_eq!(ch.read_nr44() & 0x40, 0x40);
     }
 

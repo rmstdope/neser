@@ -15,7 +15,7 @@ pub struct Channel2 {
     dac_on: bool,
     duty_pos: u8,
     freq_timer: u16,
-    length_counter: u8,
+    pub(crate) length_counter: u8,
     volume: u8,
     env_timer: u8,
 }
@@ -158,11 +158,23 @@ impl Channel2 {
         self.freq = (self.freq & 0x0700) | u16::from(val);
     }
 
-    pub fn write_nr24(&mut self, val: u8) {
+    pub fn write_nr24(&mut self, val: u8, extra_clk: bool) {
+        let old_length_en = self.length_en;
         self.length_en = val & 0x40 != 0;
         self.freq = (self.freq & 0x00FF) | (u16::from(val & 0x07) << 8);
+
+        if extra_clk && !old_length_en && self.length_en && self.length_counter > 0 {
+            self.length_counter -= 1;
+            if self.length_counter == 0 {
+                self.active = false;
+            }
+        }
+
         if val & 0x80 != 0 {
             self.trigger();
+            if extra_clk && self.length_en && self.length_counter == 64 {
+                self.length_counter = 63;
+            }
         }
     }
 
@@ -194,7 +206,7 @@ mod tests {
         let mut ch = Channel2::new();
         ch.write_nr22(0xF0); // DAC on, vol=15
         ch.write_nr21(0x80); // 50% duty
-        ch.write_nr24(0x80); // trigger
+        ch.write_nr24(0x80, false); // trigger
         ch
     }
 
@@ -208,7 +220,7 @@ mod tests {
     fn test_dac_off_prevents_activation() {
         let mut ch = Channel2::new();
         ch.write_nr22(0x00);
-        ch.write_nr24(0x80);
+        ch.write_nr24(0x80, false);
         assert!(!ch.is_active());
     }
 
@@ -217,7 +229,7 @@ mod tests {
         let mut ch = Channel2::new();
         ch.write_nr22(0xF0);
         ch.write_nr21(0xFF); // counter = 1
-        ch.write_nr24(0xC0); // trigger + length enable
+        ch.write_nr24(0xC0, false); // trigger + length enable
         ch.clock_length();
         assert!(!ch.is_active());
     }
@@ -227,7 +239,7 @@ mod tests {
         let mut ch = Channel2::new();
         ch.write_nr22(0xF0);
         ch.write_nr21(0xFF);
-        ch.write_nr24(0x80);
+        ch.write_nr24(0x80, false);
         ch.clock_length();
         assert!(ch.is_active());
     }
@@ -236,7 +248,7 @@ mod tests {
     fn test_envelope_decrements_volume() {
         let mut ch = Channel2::new();
         ch.write_nr22(0x71); // vol=7, sub, period=1
-        ch.write_nr24(0x80);
+        ch.write_nr24(0x80, false);
         ch.clock_envelope();
         assert_eq!(ch.volume, 6);
     }
@@ -245,7 +257,7 @@ mod tests {
     fn test_envelope_increments_volume() {
         let mut ch = Channel2::new();
         ch.write_nr22(0x79); // vol=7, add, period=1
-        ch.write_nr24(0x80);
+        ch.write_nr24(0x80, false);
         ch.clock_envelope();
         assert_eq!(ch.volume, 8);
     }
@@ -268,7 +280,7 @@ mod tests {
     fn test_nr24_length_en_readable() {
         let mut ch = Channel2::new();
         ch.write_nr22(0xF0);
-        ch.write_nr24(0x40);
+        ch.write_nr24(0x40, false);
         assert_eq!(ch.read_nr24() & 0x40, 0x40);
     }
 

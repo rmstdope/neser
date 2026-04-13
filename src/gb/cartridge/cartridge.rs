@@ -15,4 +15,14 @@ pub trait GbCartridge {
     /// Writes to ROM ($0000–$7FFF) are interpreted as MBC register writes.
     /// Writes to cartridge RAM ($A000–$BFFF) store data when RAM is enabled.
     fn write(&mut self, addr: u16, val: u8);
+
+    /// Returns `true` when the ROM header indicates CGB compatibility.
+    ///
+    /// Checks byte 0x0143: values 0x80 (CGB+DMG) or 0xC0 (CGB-only)
+    /// indicate a CGB-compatible cartridge. This gates CGB-specific
+    /// hardware behavior (e.g., APU length counter rules).
+    fn is_cgb(&self) -> bool {
+        let flag = self.read(0x0143);
+        flag == 0x80 || flag == 0xC0
+    }
 }

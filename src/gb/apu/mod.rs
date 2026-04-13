@@ -84,15 +84,19 @@ pub struct Apu {
     cycles_per_sample: f32,
     /// Pending output sample (`Some` when `sample_ready()` is true).
     pending_sample: Option<f32>,
+
+    /// `true` when running a CGB-compatible ROM (header byte 0x0143 is 0x80 or 0xC0).
+    /// Gates CGB-specific APU differences (length counter behavior on power off/on).
+    is_cgb: bool,
 }
 
 impl Apu {
     /// Create a new APU in the power-off state.
-    pub fn new() -> Self {
+    pub fn new(is_cgb: bool) -> Self {
         Self {
             ch1: Channel1::new(),
             ch2: Channel2::new(),
-            ch3: Channel3::new(),
+            ch3: Channel3::new_with_mode(is_cgb),
             ch4: Channel4::new(),
             nr50: 0x00,
             nr51: 0x00,
@@ -102,6 +106,7 @@ impl Apu {
             sample_acc: 0.0,
             cycles_per_sample: DMG_MCYCLES_PER_SEC / 44_100.0,
             pending_sample: None,
+            is_cgb,
         }
     }
 
@@ -282,37 +287,45 @@ impl Apu {
 
         if !self.powered {
             // On DMG, length counters remain writable when APU is off.
-            match addr {
-                0xFF11 => self.ch1.write_nr11_length_only(val),
-                0xFF16 => self.ch2.write_nr21_length_only(val),
-                0xFF1B => self.ch3.write_nr31_length_only(val),
-                0xFF20 => self.ch4.write_nr41_length_only(val),
-                _ => {}
+            // On CGB, all writes (including length) are rejected when off.
+            if !self.is_cgb {
+                match addr {
+                    0xFF11 => self.ch1.write_nr11_length_only(val),
+                    0xFF16 => self.ch2.write_nr21_length_only(val),
+                    0xFF1B => self.ch3.write_nr31_length_only(val),
+                    0xFF20 => self.ch4.write_nr41_length_only(val),
+                    _ => {}
+                }
             }
             return;
         }
+
+        // Extra length clocking: when the current FS step does NOT clock length
+        // (i.e. FS_TABLE[fs_step] has bit 0 clear — steps 1, 3, 5, 7), NRx4
+        // writes that enable length_en or trigger with length_en get an extra clock.
+        let extra_clk = FS_TABLE[self.fs_step as usize] & 0x01 == 0;
 
         match addr {
             0xFF10 => self.ch1.write_nr10(val),
             0xFF11 => self.ch1.write_nr11(val),
             0xFF12 => self.ch1.write_nr12(val),
             0xFF13 => self.ch1.write_nr13(val),
-            0xFF14 => self.ch1.write_nr14(val),
+            0xFF14 => self.ch1.write_nr14(val, extra_clk),
             0xFF15 => {}
             0xFF16 => self.ch2.write_nr21(val),
             0xFF17 => self.ch2.write_nr22(val),
             0xFF18 => self.ch2.write_nr23(val),
-            0xFF19 => self.ch2.write_nr24(val),
+            0xFF19 => self.ch2.write_nr24(val, extra_clk),
             0xFF1A => self.ch3.write_nr30(val),
             0xFF1B => self.ch3.write_nr31(val),
             0xFF1C => self.ch3.write_nr32(val),
             0xFF1D => self.ch3.write_nr33(val),
-            0xFF1E => self.ch3.write_nr34(val),
+            0xFF1E => self.ch3.write_nr34(val, extra_clk),
             0xFF1F => {}
             0xFF20 => self.ch4.write_nr41(val),
             0xFF21 => self.ch4.write_nr42(val),
             0xFF22 => self.ch4.write_nr43(val),
-            0xFF23 => self.ch4.write_nr44(val),
+            0xFF23 => self.ch4.write_nr44(val, extra_clk),
             0xFF24 => self.nr50 = val,
             0xFF25 => self.nr51 = val,
             _ => {}
@@ -335,6 +348,13 @@ impl Apu {
             // Power on: reset frame sequencer.
             self.fs_step = 0;
             self.fs_timer = FS_MCYCLES_PER_STEP;
+            // On CGB, powering on resets all length counters to 0.
+            if self.is_cgb {
+                self.ch1.length_counter = 0;
+                self.ch2.length_counter = 0;
+                self.ch3.length_counter = 0;
+                self.ch4.length_counter = 0;
+            }
         }
     }
 
@@ -346,7 +366,7 @@ impl Apu {
 
 impl Default for Apu {
     fn default() -> Self {
-        Self::new()
+        Self::new(false)
     }
 }
 
@@ -357,7 +377,7 @@ mod tests {
     use super::*;
 
     fn powered_apu() -> Apu {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new(false);
         apu.write_register(0xFF26, 0x80); // power on
         apu
     }
@@ -374,14 +394,14 @@ mod tests {
     #[test]
     fn test_nr52_power_off_bit_readable() {
         // Given: APU powered off (default); When: read NR52; Then: bit 7 is clear
-        let apu = Apu::new();
+        let apu = Apu::new(false);
         assert_eq!(apu.read_register(0xFF26) & 0x80, 0x00);
     }
 
     #[test]
     fn test_nr52_unused_bits_read_as_1() {
         // Bits 6-4 of NR52 read as 1 (open bus on DMG).
-        let apu = Apu::new();
+        let apu = Apu::new(false);
         assert_eq!(apu.read_register(0xFF26) & 0x70, 0x70);
     }
 
@@ -411,7 +431,7 @@ mod tests {
     #[test]
     fn test_power_off_ignores_nr50_write() {
         // When powered off, writes to NR50 are ignored.
-        let mut apu = Apu::new(); // starts powered off
+        let mut apu = Apu::new(false); // starts powered off
         apu.write_register(0xFF24, 0x77);
         assert_eq!(apu.nr50, 0x00, "NR50 write must be ignored when APU is off");
     }
@@ -436,7 +456,7 @@ mod tests {
 
     #[test]
     fn test_sample_not_ready_initially() {
-        let apu = Apu::new();
+        let apu = Apu::new(false);
         assert!(!apu.sample_ready());
     }
 
@@ -444,7 +464,7 @@ mod tests {
     fn test_sample_ready_after_enough_ticks() {
         // At 44100 Hz sample rate and DMG 1 048 576 M-cycles/s,
         // one sample ≈ every 23.77 M-cycles.
-        let mut apu = Apu::new();
+        let mut apu = Apu::new(false);
         apu.set_sample_rate(44_100.0);
         // Tick 30 M-cycles — must have produced at least one sample.
         apu.tick(30);
@@ -453,7 +473,7 @@ mod tests {
 
     #[test]
     fn test_take_sample_clears_ready_flag() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new(false);
         apu.tick(30);
         apu.take_sample();
         // After consuming the sample the flag must be clear.
@@ -463,7 +483,7 @@ mod tests {
     #[test]
     fn test_sample_is_silent_when_powered_off() {
         // With APU off, all samples must be 0.0.
-        let mut apu = Apu::new();
+        let mut apu = Apu::new(false);
         apu.tick(30);
         let s = apu.take_sample().unwrap_or(0.0);
         assert_eq!(s, 0.0);
@@ -525,8 +545,110 @@ mod tests {
 
     #[test]
     fn test_nr52_ch1_active_bit_reflects_channel1_state() {
-        let apu = Apu::new();
+        let apu = Apu::new(false);
         // CH1 is inactive by default → bit 0 clear
         assert_eq!(apu.read_register(0xFF26) & 0x01, 0x00);
+    }
+
+    // ── CGB-specific power behavior ─────────────────────────────────────
+
+    fn powered_cgb_apu() -> Apu {
+        let mut apu = Apu::new(true);
+        apu.write_register(0xFF26, 0x80); // power on
+        apu
+    }
+
+    #[test]
+    fn test_cgb_power_off_rejects_nr41_length_write() {
+        // On CGB, length counter writes are rejected when APU is off.
+        // Given: CGB APU powered on, set CH4 length, then power off
+        let mut apu = powered_cgb_apu();
+        apu.write_register(0xFF20, 0x3F); // NR41: length_load = 63 → counter = 1
+        apu.write_register(0xFF26, 0x00); // power off → clears length_counter to 0
+        // When: write NR41 while powered off
+        apu.write_register(0xFF20, 0x3F); // on DMG this sets counter=1, on CGB it's rejected
+        // Then: length_counter must remain 0
+        assert_eq!(
+            apu.ch4.length_counter, 0,
+            "CGB must reject length writes when APU is off"
+        );
+    }
+
+    #[test]
+    fn test_cgb_power_off_rejects_nr11_length_write() {
+        // Given: CGB APU powered off
+        let mut apu = Apu::new(true);
+        // When: write NR11 while powered off
+        apu.write_register(0xFF11, 0x3F); // length_load = 63 → counter would be 1 on DMG
+        // Then: length_counter must remain 0
+        assert_eq!(
+            apu.ch1.length_counter, 0,
+            "CGB must reject CH1 length writes when APU is off"
+        );
+    }
+
+    #[test]
+    fn test_cgb_power_off_rejects_nr21_length_write() {
+        let mut apu = Apu::new(true);
+        apu.write_register(0xFF16, 0x3F);
+        assert_eq!(
+            apu.ch2.length_counter, 0,
+            "CGB must reject CH2 length writes when APU is off"
+        );
+    }
+
+    #[test]
+    fn test_cgb_power_off_rejects_nr31_length_write() {
+        let mut apu = Apu::new(true);
+        apu.write_register(0xFF1B, 0xFF); // length_load = 255 → counter would be 1 on DMG
+        assert_eq!(
+            apu.ch3.length_counter, 0,
+            "CGB must reject CH3 length writes when APU is off"
+        );
+    }
+
+    #[test]
+    fn test_dmg_power_off_allows_nr41_length_write() {
+        // On DMG, length counter writes are allowed when APU is off.
+        let mut apu = Apu::new(false);
+        apu.write_register(0xFF20, 0x3F); // NR41: length_load = 63 → counter = 1
+        assert_eq!(
+            apu.ch4.length_counter, 1,
+            "DMG must allow length writes when APU is off"
+        );
+    }
+
+    #[test]
+    fn test_cgb_power_on_resets_length_counters() {
+        // On CGB, powering on the APU resets all length counters to 0.
+        // Given: CGB APU on, set length counters, power off then on
+        let mut apu = powered_cgb_apu();
+        apu.write_register(0xFF11, 0x00); // CH1: length_load=0 → counter=64
+        apu.write_register(0xFF16, 0x00); // CH2: length_load=0 → counter=64
+        apu.write_register(0xFF1B, 0x00); // CH3: length_load=0 → counter=256
+        apu.write_register(0xFF20, 0x00); // CH4: length_load=0 → counter=64
+        // Verify they're set
+        assert_eq!(apu.ch1.length_counter, 64);
+        assert_eq!(apu.ch4.length_counter, 64);
+        // Power off → counters cleared
+        apu.write_register(0xFF26, 0x00);
+        // Power on → on CGB, counters must be reset to 0
+        apu.write_register(0xFF26, 0x80);
+        assert_eq!(
+            apu.ch1.length_counter, 0,
+            "CGB power-on must reset CH1 length"
+        );
+        assert_eq!(
+            apu.ch2.length_counter, 0,
+            "CGB power-on must reset CH2 length"
+        );
+        assert_eq!(
+            apu.ch3.length_counter, 0,
+            "CGB power-on must reset CH3 length"
+        );
+        assert_eq!(
+            apu.ch4.length_counter, 0,
+            "CGB power-on must reset CH4 length"
+        );
     }
 }
