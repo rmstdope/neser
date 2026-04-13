@@ -1,0 +1,4 @@
+[submodule "vendor/slang-shaders"]
+	path = vendor/slang-shaders
+	url = https://github.com/libretro/slang-shaders
+	shallow = true
