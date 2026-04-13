@@ -3,7 +3,6 @@
 
 import argparse
 import getpass
-import os
 import shutil
 import stat
 import subprocess
@@ -103,13 +102,16 @@ def rmtree_sftp(sftp: paramiko.SFTPClient, remote_path: str) -> None:
             sftp.remove(child)
 
 
-def clean_remote(sftp: paramiko.SFTPClient, remote_base: str) -> None:
+def clean_remote(sftp: paramiko.SFTPClient, remote_base: str, dry_run: bool = False) -> None:
     """Delete everything in remote_base except PRESERVE_DIRS."""
     print(f"Cleaning remote {remote_base}/ (preserving {PRESERVE_DIRS})...")
     for entry in sftp.listdir_attr(remote_base):
         if entry.filename in PRESERVE_DIRS:
             continue
         child = f"{remote_base}/{entry.filename}"
+        if dry_run:
+            print(f"[dry-run] Would delete {child}")
+            continue
         if stat.S_ISDIR(entry.st_mode):
             rmtree_sftp(sftp, child)
             sftp.rmdir(child)
@@ -132,17 +134,21 @@ def upload_dir(sftp: paramiko.SFTPClient, local_path: Path, remote_path: str) ->
             sftp.put(str(item), remote_item)
 
 
-def deploy(username: str, hostname: str, password: str) -> None:
+def deploy(username: str, hostname: str, password: str, dry_run: bool = False) -> None:
     print(f"Connecting to {username}@{hostname}...")
     ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    ssh.load_system_host_keys()
+    ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
     ssh.connect(hostname, username=username, password=password)
     try:
         sftp = ssh.open_sftp()
         try:
-            clean_remote(sftp, REMOTE_BASE)
-            print(f"Uploading dist/ -> {REMOTE_BASE}/")
-            upload_dir(sftp, DIST_DIR, REMOTE_BASE)
+            clean_remote(sftp, REMOTE_BASE, dry_run=dry_run)
+            if not dry_run:
+                print(f"Uploading dist/ -> {REMOTE_BASE}/")
+                upload_dir(sftp, DIST_DIR, REMOTE_BASE)
+            else:
+                print(f"[dry-run] Would upload dist/ -> {REMOTE_BASE}/")
         finally:
             sftp.close()
     finally:
@@ -156,6 +162,11 @@ def main() -> None:
     parser.add_argument("username", help="SSH username for the remote host")
     parser.add_argument("hostname", help="Hostname or IP of the remote server")
     parser.add_argument("tag", help="Git tag to checkout and deploy")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be deleted/uploaded without making any changes.",
+    )
     args = parser.parse_args()
 
     check_clean_worktree()
@@ -165,7 +176,7 @@ def main() -> None:
 
     try:
         build(args.tag)
-        deploy(args.username, args.hostname, password)
+        deploy(args.username, args.hostname, password, dry_run=args.dry_run)
         print("Deployment successful!")
     except Exception as e:
         print(f"ERROR: {e}", file=sys.stderr)

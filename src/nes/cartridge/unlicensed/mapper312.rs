@@ -48,7 +48,7 @@ const CHR_RAM_SIZE: usize = 8 * 1024;
 /// and fixed upper 16 KiB PRG bank, plus software-controlled H/V mirroring.
 pub struct Mapper312 {
     base: BaseMapper,
-    /// PRG bank register written at `$6000–$7FFF'.
+    /// PRG bank register written at `$6000–$7FFF`.
     prg_bank: u8,
     /// Current nametable mirroring (bit 0 of writes to `$8000–$FFFF`).
     mirroring: NametableLayout,
@@ -140,7 +140,7 @@ impl Mapper for Mapper312 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
+    use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
 
     const PRG_BANK_SIZE: usize = PRG_16K_BANK_SIZE;
 
@@ -292,7 +292,7 @@ mod tests {
     fn mirroring_defaults_to_vertical_on_power_on() {
         let mapper = make_mapper_direct(4);
         assert_eq!(
-            mapper.mirroring,
+            mapper.get_mirroring(),
             NametableLayout::Vertical,
             "Mirroring must be Vertical on power-on"
         );
@@ -303,7 +303,7 @@ mod tests {
         let mut mapper = make_mapper_direct(4);
         mapper.write_prg(0x8000, 0x01);
         assert_eq!(
-            mapper.mirroring,
+            mapper.get_mirroring(),
             NametableLayout::Horizontal,
             "bit 0 = 1 must select Horizontal mirroring"
         );
@@ -315,7 +315,7 @@ mod tests {
         mapper.write_prg(0x8000, 0x01); // set horizontal first
         mapper.write_prg(0x8000, 0x00);
         assert_eq!(
-            mapper.mirroring,
+            mapper.get_mirroring(),
             NametableLayout::Vertical,
             "bit 0 = 0 must select Vertical mirroring"
         );
@@ -326,7 +326,7 @@ mod tests {
         let mut mapper = make_mapper_direct(4);
         mapper.write_prg(0x8000, 0xFE); // bit 0 = 0 → vertical
         assert_eq!(
-            mapper.mirroring,
+            mapper.get_mirroring(),
             NametableLayout::Vertical,
             "Upper bits of $8000 write must be ignored for mirroring"
         );
@@ -337,7 +337,7 @@ mod tests {
         let mut mapper = make_mapper_direct(4);
         mapper.write_prg(0xFFFF, 0x01);
         assert_eq!(
-            mapper.mirroring,
+            mapper.get_mirroring(),
             NametableLayout::Horizontal,
             "Write to $FFFF must also control mirroring"
         );
@@ -363,7 +363,7 @@ mod tests {
         mapper.write_prg(0x8000, 0x01); // horizontal
         mapper.reset();
         assert_eq!(
-            mapper.mirroring,
+            mapper.get_mirroring(),
             NametableLayout::Vertical,
             "Mirroring must be Vertical after reset"
         );
@@ -437,7 +437,7 @@ mod tests {
         restored.restore_registers(&snap);
 
         assert_eq!(
-            restored.mirroring,
+            restored.get_mirroring(),
             NametableLayout::Horizontal,
             "Restored mirroring must match saved state"
         );
