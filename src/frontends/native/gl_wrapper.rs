@@ -40,37 +40,20 @@ impl NativeGlWrapper {
         app_context: SharedAppContext,
         system_type: SystemType,
     ) -> Result<Self, String> {
-        let (
-            fullscreen,
-            vsync_enabled,
-            shader_path,
-            debugger_alpha,
-            fullscreen_display,
-            window_width,
-            window_height,
-        ) = {
+        let (fullscreen, vsync_enabled, shader_path, debugger_alpha, fullscreen_display, height) = {
             let ctx = app_context.borrow();
             let config = ctx.config();
-            let (window_width, window_height) = match system_type {
-                SystemType::GameBoy => {
-                    GlBackend::gb_windowed_dimensions(config.frontend.window_height)
-                }
-                SystemType::Nes => GlBackend::windowed_dimensions(
-                    config.frontend.window_height,
-                    config.nes.horizontal_overscan as u32,
-                    config.nes.vertical_overscan as u32,
-                ),
-            };
             (
                 config.frontend.fullscreen,
                 config.frontend.vsync_enabled,
                 config.frontend.shader_path.clone(),
                 config.frontend.debugger_alpha,
                 config.frontend.fullscreen_display,
-                window_width,
-                window_height,
+                config.frontend.window_height,
             )
         };
+        // windowed_dimensions reads overscan from app_context; borrow must be released first.
+        let (window_width, window_height) = system_type.windowed_dimensions(height, &app_context);
 
         let monitors: Vec<_> = event_loop.available_monitors().collect();
         let target_display = select_target_display(fullscreen, fullscreen_display, monitors.len())?;

@@ -79,10 +79,6 @@ pub struct GlBackend {
     hexdump_ui_state: HexdumpUiState,
     watchlist_ui_state: WatchlistUiState,
     shader_manager: ShaderManager,
-    /// Horizontal overscan in pixels (removed from left and right).
-    h_overscan: u32,
-    /// Vertical overscan in pixels (removed from top and bottom).
-    v_overscan: u32,
     /// Current GL texture width (updated when console type changes).
     tex_w: u32,
     /// Current GL texture height (updated when console type changes).
@@ -275,26 +271,14 @@ fn toast_background_rgba() -> [f32; 4] {
 }
 
 impl GlBackend {
-    // NES pixel aspect (8:7) times NTSC display correction (16:15).
-    // Used in tests to pass a representative full-frame aspect ratio to letterbox_size.
-    #[cfg(test)]
-    const NTSC_ASPECT: f32 = 8.0 / 7.0 * 16.0 / 15.0;
-
     /// Returns the aspect ratio used for rendering the current frame.
-    fn target_aspect(&self) -> f32 {
+    fn target_aspect(&self, pixel_aspect: f32) -> f32 {
         let w = self.tex_w as f32;
         let h = self.tex_h as f32;
-        // NES: 8:7 NTSC pixel AR.  GB: square pixels (1:1).
-        let is_nes = self.tex_w == self.cropped_width() && self.tex_h == self.cropped_height();
-        if is_nes { (w / h) * (8.0 / 7.0) } else { w / h }
-    }
-
-    fn cropped_width(&self) -> u32 {
-        256 - 2 * self.h_overscan
-    }
-
-    fn cropped_height(&self) -> u32 {
-        240 - 2 * self.v_overscan
+        if h == 0.0 {
+            return 1.0;
+        }
+        (w / h) * pixel_aspect
     }
 
     /// Returns the logical window size in pixels reported by the render target.
@@ -320,31 +304,6 @@ impl GlBackend {
         self.render_target.notify_resize(w, h);
     }
 
-    /// Computes windowed mode dimensions preserving the target aspect ratio.
-    ///
-    /// Overscan is taken into account so that the window width exactly matches
-    /// the aspect ratio of the visible (cropped) pixel area, matching what the
-    /// renderer will display at runtime.
-    pub(crate) fn windowed_dimensions(height: u32, h_overscan: u32, v_overscan: u32) -> (u32, u32) {
-        let clamped_height = height.max(1);
-        let visible_w = 256u32.saturating_sub(2 * h_overscan).max(1) as f32;
-        let visible_h = 240u32.saturating_sub(2 * v_overscan).max(1) as f32;
-        let aspect = (visible_w / visible_h) * (8.0 / 7.0);
-        let width = (clamped_height as f32 * aspect).round() as u32;
-        (width.max(1), clamped_height)
-    }
-
-    /// Computes windowed mode dimensions for a Game Boy console.
-    ///
-    /// The GB screen is 160×144 with square pixels (1:1 pixel aspect ratio).
-    /// The returned width preserves this aspect ratio for the given `height`.
-    pub(crate) fn gb_windowed_dimensions(height: u32) -> (u32, u32) {
-        let clamped_height = height.max(1);
-        let aspect = 160.0_f32 / 144.0;
-        let width = (clamped_height as f32 * aspect).round() as u32;
-        (width.max(1), clamped_height)
-    }
-
     /// Returns the largest size that fits inside the container while preserving aspect.
     fn letterbox_size(container_w: f32, container_h: f32, aspect: f32) -> (f32, f32) {
         if container_h == 0.0 {
@@ -366,17 +325,6 @@ impl GlBackend {
         shader_path: Option<&str>,
         app_context: SharedAppContext,
     ) -> Result<Self, String> {
-        let (h_overscan, v_overscan) = {
-            let ctx = app_context.borrow();
-            let cfg = ctx.config();
-            (
-                cfg.nes.horizontal_overscan as u32,
-                cfg.nes.vertical_overscan as u32,
-            )
-        };
-        let tex_w = 256 - 2 * h_overscan;
-        let tex_h = 240 - 2 * v_overscan;
-
         unsafe {
             gl::Disable(gl::DEPTH_TEST);
             gl::Disable(gl::CULL_FACE);
@@ -425,13 +373,13 @@ impl GlBackend {
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
             gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
 
-            // Allocate texture storage with cropped (overscan-removed) dimensions.
+            // Allocate a 1×1 placeholder; the render loop resizes on first frame.
             gl::TexImage2D(
                 gl::TEXTURE_2D,
                 0,
                 gl::RGB8 as i32,
-                tex_w as i32,
-                tex_h as i32,
+                1,
+                1,
                 0,
                 gl::RGB,
                 gl::UNSIGNED_BYTE,
@@ -479,7 +427,7 @@ impl GlBackend {
             overlay_font,
             overlay_text_color: OverlayTextColor::White,
             app_context,
-            framebuffer: vec![0u8; (tex_w * tex_h * 3) as usize],
+            framebuffer: Vec::new(),
             last_frame: Instant::now(),
             debugger_view_state: DebuggerViewState::default(),
             debugger_alpha: 1.0,
@@ -488,10 +436,8 @@ impl GlBackend {
             hexdump_ui_state: HexdumpUiState::default(),
             watchlist_ui_state: WatchlistUiState::default(),
             shader_manager,
-            h_overscan,
-            v_overscan,
-            tex_w,
-            tex_h,
+            tex_w: 1,
+            tex_h: 1,
         })
     }
 
@@ -576,15 +522,13 @@ impl GlBackend {
             io.display_framebuffer_scale = [scale_x, scale_y];
         }
 
-        // Compute pixel dimensions from the console type.
-        let (frame_w, frame_h) = match console {
-            Console::Nes(_) => (self.cropped_width(), self.cropped_height()),
-            Console::GameBoy(_) => (console.screen_width(), console.screen_height()),
-        };
+        // Compute overscan and pixel dimensions from the console.
+        let (h_overscan, v_overscan) = console.overscan();
+        let (frame_w, frame_h) = console.cropped_dims(h_overscan, v_overscan);
 
         // Update texture (keep the borrow short-lived).
         {
-            let cropped = console.cropped_screen_snapshot(self.h_overscan, self.v_overscan);
+            let cropped = console.cropped_screen_snapshot(h_overscan, v_overscan);
             // Resize framebuffer if dimensions changed (e.g. NES → GB switch).
             let required = (frame_w * frame_h * 3) as usize;
             if self.framebuffer.len() != required {
@@ -634,7 +578,7 @@ impl GlBackend {
             gl::Clear(gl::COLOR_BUFFER_BIT);
         }
 
-        let target_aspect = self.target_aspect();
+        let target_aspect = self.target_aspect(console.pixel_aspect());
 
         // Apply shader post-processing if a shader is loaded
         // The shader will render the NES texture to the screen with filtering applied
@@ -704,8 +648,8 @@ impl GlBackend {
                     draw_h,
                     cropped_w,
                     cropped_h,
-                    h_overscan: self.h_overscan,
-                    v_overscan: self.v_overscan,
+                    h_overscan,
+                    v_overscan,
                 };
                 draw_crosshair(ui, crosshair, &draw_ctx);
             }
@@ -821,103 +765,28 @@ pub fn shader_toast_message(preset_name: Option<&str>) -> String {
 mod tests_letterbox {
     use super::GlBackend;
 
+    // NES pixel aspect (8:7) times NTSC display correction (16:15).
+    const NTSC_ASPECT: f32 = 8.0 / 7.0 * 16.0 / 15.0;
+
     #[test]
     fn test_letterbox_size_wide_container() {
-        let (w, h) = GlBackend::letterbox_size(1920.0, 1080.0, GlBackend::NTSC_ASPECT);
+        let (w, h) = GlBackend::letterbox_size(1920.0, 1080.0, NTSC_ASPECT);
         assert!((w - 1316.5714).abs() < 0.01);
         assert_eq!(h, 1080.0);
     }
 
     #[test]
     fn test_letterbox_size_matches_aspect() {
-        let (w, h) = GlBackend::letterbox_size(800.0, 600.0, GlBackend::NTSC_ASPECT);
+        let (w, h) = GlBackend::letterbox_size(800.0, 600.0, NTSC_ASPECT);
         assert!((w - 731.4286).abs() < 0.01);
         assert_eq!(h, 600.0);
     }
 
     #[test]
     fn test_letterbox_size_zero_height() {
-        let (w, h) = GlBackend::letterbox_size(800.0, 0.0, GlBackend::NTSC_ASPECT);
+        let (w, h) = GlBackend::letterbox_size(800.0, 0.0, NTSC_ASPECT);
         assert_eq!(w, 800.0);
         assert_eq!(h, 0.0);
-    }
-}
-
-#[cfg(test)]
-mod tests_gb_windowed_dimensions {
-    use super::GlBackend;
-
-    /// GB screen is 160×144 with square pixels (1:1 pixel aspect ratio).
-    /// At height=144 the width should exactly match the GB pixel width (160).
-    #[test]
-    fn test_gb_windowed_dimensions_height_144() {
-        let (w, h) = GlBackend::gb_windowed_dimensions(144);
-        assert_eq!(h, 144);
-        assert_eq!(w, 160);
-    }
-
-    /// At 4× scale (height=576) the width should be 640 (= 160 × 4).
-    #[test]
-    fn test_gb_windowed_dimensions_height_576() {
-        let (w, h) = GlBackend::gb_windowed_dimensions(576);
-        assert_eq!(h, 576);
-        assert_eq!(w, 640);
-    }
-
-    /// width = round(720 × 160/144) = round(800.0) = 800.
-    #[test]
-    fn test_gb_windowed_dimensions_height_720() {
-        let (w, h) = GlBackend::gb_windowed_dimensions(720);
-        assert_eq!(h, 720);
-        assert_eq!(w, 800);
-    }
-
-    /// Height 0 should be clamped to 1 without panicking.
-    #[test]
-    fn test_gb_windowed_dimensions_zero_height_clamped() {
-        let (w, h) = GlBackend::gb_windowed_dimensions(0);
-        assert!(h >= 1);
-        assert!(w >= 1);
-    }
-}
-
-#[cfg(test)]
-mod tests_windowed_dimensions {
-    use super::GlBackend;
-
-    #[test]
-    fn test_windowed_dimensions_from_height_240() {
-        let (w, h) = GlBackend::windowed_dimensions(240, 0, 0);
-        assert_eq!(h, 240);
-        assert_eq!(w, 293);
-    }
-
-    #[test]
-    fn test_windowed_dimensions_from_height_960() {
-        let (w, h) = GlBackend::windowed_dimensions(960, 0, 0);
-        assert_eq!(h, 960);
-        assert_eq!(w, 1170);
-    }
-
-    /// With 8px horizontal overscan the visible area is 240×240 pixels.
-    /// Correct aspect = (240/240) * (8/7) = 8/7, so width = round(240 * 8/7) = 274.
-    /// Without overscan awareness the function would return 293 (wrong).
-    #[test]
-    fn test_windowed_dimensions_h_overscan_narrows_window() {
-        let (w, h) = GlBackend::windowed_dimensions(240, 8, 0);
-        assert_eq!(h, 240);
-        assert_eq!(w, 274); // round(240 * (240/240) * (8/7))
-    }
-
-    /// With 8px vertical overscan the visible area is 256×224 pixels.
-    /// Correct aspect = (256/224) * (8/7) = (8/7)^2 ≈ 1.30612,
-    /// so width = round(240 * 1.30612) = 313.
-    /// Without overscan awareness the function would return 293 (wrong).
-    #[test]
-    fn test_windowed_dimensions_v_overscan_widens_window() {
-        let (w, h) = GlBackend::windowed_dimensions(240, 0, 8);
-        assert_eq!(h, 240);
-        assert_eq!(w, 313); // round(240 * (256/224) * (8/7))
     }
 }
 

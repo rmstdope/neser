@@ -264,6 +264,51 @@ impl Console {
         }
     }
 
+    /// Horizontal and vertical overscan in pixels for the current system.
+    ///
+    /// For NES, values are read from the emulator configuration.
+    /// For Game Boy, overscan is always `(0, 0)` — the GB has no overscan.
+    pub fn overscan(&self) -> (u32, u32) {
+        match self {
+            Console::Nes(nes) => {
+                let ctx = nes.app_context().borrow();
+                let cfg = ctx.config();
+                (
+                    cfg.nes.horizontal_overscan as u32,
+                    cfg.nes.vertical_overscan as u32,
+                )
+            }
+            Console::GameBoy(_) => (0, 0),
+        }
+    }
+
+    /// Visible screen dimensions in pixels with overscan removed.
+    ///
+    /// For NES, `h_overscan` columns are removed from each side and `v_overscan`
+    /// rows from top and bottom.  For Game Boy, overscan parameters are ignored
+    /// and the native 160×144 resolution is always returned.
+    pub fn cropped_dims(&self, h_overscan: u32, v_overscan: u32) -> (u32, u32) {
+        match self {
+            Console::Nes(_) => (
+                self.screen_width().saturating_sub(2 * h_overscan).max(1),
+                self.screen_height().saturating_sub(2 * v_overscan).max(1),
+            ),
+            Console::GameBoy(_) => (self.screen_width(), self.screen_height()),
+        }
+    }
+
+    /// Pixel aspect ratio correction factor for the current system.
+    ///
+    /// NES pixels are not square: the NTSC hardware maps 256 pixels across the
+    /// same horizontal extent as approximately 280 square pixels (8:7 ratio).
+    /// Game Boy pixels are square, so the correction factor is 1.0.
+    pub fn pixel_aspect(&self) -> f32 {
+        match self {
+            Console::Nes(_) => 8.0 / 7.0,
+            Console::GameBoy(_) => 1.0,
+        }
+    }
+
     /// Target wall-clock duration between rendered frames for this system.
     ///
     /// Frontends use this to pace emulation correctly regardless of display
@@ -286,6 +331,35 @@ impl Console {
                     .timing_mode()
                     .frame_rate_hz();
                 std::time::Duration::from_secs_f64(1.0 / hz)
+            }
+        }
+    }
+}
+
+impl SystemType {
+    /// Computes windowed-mode dimensions that preserve the system's correct aspect ratio.
+    ///
+    /// For NES, overscan is read from `app_context` and the NTSC 8:7 pixel aspect
+    /// ratio is applied.  For Game Boy, square pixels (1:1) are assumed and there
+    /// is no overscan.
+    pub fn windowed_dimensions(&self, height: u32, app_context: &SharedAppContext) -> (u32, u32) {
+        let clamped_height = height.max(1);
+        match self {
+            SystemType::Nes => {
+                let ctx = app_context.borrow();
+                let cfg = ctx.config();
+                let h_overscan = cfg.nes.horizontal_overscan as u32;
+                let v_overscan = cfg.nes.vertical_overscan as u32;
+                let visible_w = Nes::SCREEN_WIDTH.saturating_sub(2 * h_overscan).max(1) as f32;
+                let visible_h = Nes::SCREEN_HEIGHT.saturating_sub(2 * v_overscan).max(1) as f32;
+                let aspect = (visible_w / visible_h) * (8.0 / 7.0);
+                let width = (clamped_height as f32 * aspect).round() as u32;
+                (width.max(1), clamped_height)
+            }
+            SystemType::GameBoy => {
+                let aspect = GameBoy::SCREEN_WIDTH as f32 / GameBoy::SCREEN_HEIGHT as f32;
+                let width = (clamped_height as f32 * aspect).round() as u32;
+                (width.max(1), clamped_height)
             }
         }
     }
@@ -556,5 +630,170 @@ mod tests {
 
         run_system_to_frame(&mut console);
         assert!(console.is_ready_to_render());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests for Console::overscan(), Console::cropped_dims(), Console::pixel_aspect()
+// and SystemType::windowed_dimensions()
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod tests_console_abstraction {
+    use super::*;
+    use crate::nes::console::Config;
+    use crate::platform::app_context::AppContext;
+
+    fn make_nes_console_with_overscan(h: u8, v: u8) -> Console {
+        let mut config = Config::default();
+        config.nes.horizontal_overscan = h;
+        config.nes.vertical_overscan = v;
+        Console::new_nes(AppContext::new_with_config(config))
+    }
+
+    fn make_gb_console() -> Console {
+        Console::new_gameboy(AppContext::new_with_config(Config::default()))
+    }
+
+    fn make_app_context_with_overscan(h: u8, v: u8) -> SharedAppContext {
+        let mut config = Config::default();
+        config.nes.horizontal_overscan = h;
+        config.nes.vertical_overscan = v;
+        AppContext::new_with_config(config).into_shared()
+    }
+
+    // --- Console::overscan() ---
+
+    #[test]
+    fn test_nes_overscan_reflects_config() {
+        let console = make_nes_console_with_overscan(4, 8);
+        assert_eq!(console.overscan(), (4, 8));
+    }
+
+    #[test]
+    fn test_nes_overscan_zero() {
+        let console = make_nes_console_with_overscan(0, 0);
+        assert_eq!(console.overscan(), (0, 0));
+    }
+
+    #[test]
+    fn test_gb_overscan_always_zero() {
+        let console = make_gb_console();
+        assert_eq!(console.overscan(), (0, 0));
+    }
+
+    // --- Console::cropped_dims() ---
+
+    #[test]
+    fn test_nes_cropped_dims_no_overscan() {
+        let console = make_nes_console_with_overscan(0, 0);
+        assert_eq!(console.cropped_dims(0, 0), (256, 240));
+    }
+
+    #[test]
+    fn test_nes_cropped_dims_with_h_overscan() {
+        let console = make_nes_console_with_overscan(0, 0);
+        assert_eq!(console.cropped_dims(8, 0), (240, 240));
+    }
+
+    #[test]
+    fn test_nes_cropped_dims_with_v_overscan() {
+        let console = make_nes_console_with_overscan(0, 0);
+        assert_eq!(console.cropped_dims(0, 8), (256, 224));
+    }
+
+    #[test]
+    fn test_gb_cropped_dims_ignores_overscan() {
+        let console = make_gb_console();
+        assert_eq!(console.cropped_dims(8, 8), (160, 144));
+    }
+
+    // --- Console::pixel_aspect() ---
+
+    #[test]
+    fn test_nes_pixel_aspect_is_eight_sevenths() {
+        let console = make_nes_console_with_overscan(0, 0);
+        let ratio = console.pixel_aspect();
+        assert!((ratio - 8.0 / 7.0).abs() < f32::EPSILON, "got {ratio}");
+    }
+
+    #[test]
+    fn test_gb_pixel_aspect_is_one() {
+        let console = make_gb_console();
+        assert_eq!(console.pixel_aspect(), 1.0);
+    }
+
+    // --- SystemType::windowed_dimensions() ---
+    // These tests mirror the moved tests from gl_backend.rs.
+
+    #[test]
+    fn test_nes_windowed_dimensions_no_overscan_height_240() {
+        let app = make_app_context_with_overscan(0, 0);
+        let (w, h) = SystemType::Nes.windowed_dimensions(240, &app);
+        assert_eq!(h, 240);
+        // 256/240 * 8/7 ≈ 1.2195, width = round(240 * 1.2195) = 293
+        assert_eq!(w, 293);
+    }
+
+    #[test]
+    fn test_nes_windowed_dimensions_no_overscan_height_960() {
+        // 960 * (256/240) * (8/7) = 960 * 1.21904... → round = 1170
+        let app = make_app_context_with_overscan(0, 0);
+        let (w, h) = SystemType::Nes.windowed_dimensions(960, &app);
+        assert_eq!(h, 960);
+        assert_eq!(w, 1170);
+    }
+
+    #[test]
+    fn test_nes_windowed_dimensions_h_overscan_narrows_window() {
+        // With 8px horizontal overscan the visible area is 240×240 pixels.
+        // aspect = (240/240) * (8/7) = 8/7, width = round(240 * 8/7) = 274.
+        let app = make_app_context_with_overscan(8, 0);
+        let (w, h) = SystemType::Nes.windowed_dimensions(240, &app);
+        assert_eq!(h, 240);
+        assert_eq!(w, 274);
+    }
+
+    #[test]
+    fn test_nes_windowed_dimensions_v_overscan_widens_window() {
+        // With 8px vertical overscan the visible area is 256×224 pixels.
+        // aspect = (256/224) * (8/7) = (8/7)^2 ≈ 1.30612
+        // width = round(240 * 1.30612) = 313.
+        let app = make_app_context_with_overscan(0, 8);
+        let (w, h) = SystemType::Nes.windowed_dimensions(240, &app);
+        assert_eq!(h, 240);
+        assert_eq!(w, 313);
+    }
+
+    #[test]
+    fn test_gb_windowed_dimensions_height_144() {
+        let app = make_app_context_with_overscan(0, 0);
+        let (w, h) = SystemType::GameBoy.windowed_dimensions(144, &app);
+        assert_eq!(h, 144);
+        assert_eq!(w, 160);
+    }
+
+    #[test]
+    fn test_gb_windowed_dimensions_height_576() {
+        let app = make_app_context_with_overscan(0, 0);
+        let (w, h) = SystemType::GameBoy.windowed_dimensions(576, &app);
+        assert_eq!(h, 576);
+        assert_eq!(w, 640); // 160 × 4
+    }
+
+    #[test]
+    fn test_gb_windowed_dimensions_height_720() {
+        // width = round(720 × 160/144) = round(800.0) = 800.
+        let app = make_app_context_with_overscan(0, 0);
+        let (w, h) = SystemType::GameBoy.windowed_dimensions(720, &app);
+        assert_eq!(h, 720);
+        assert_eq!(w, 800);
+    }
+
+    #[test]
+    fn test_gb_windowed_dimensions_zero_height_clamped() {
+        let app = make_app_context_with_overscan(0, 0);
+        let (w, h) = SystemType::GameBoy.windowed_dimensions(0, &app);
+        assert!(w >= 1);
+        assert_eq!(h, 1);
     }
 }
