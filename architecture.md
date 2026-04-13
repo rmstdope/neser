@@ -21,11 +21,12 @@ The codebase is roughly 183,000 lines of Rust, with additional JavaScript for th
 │         └────────────────┼────────────────┘           │
 │                          ▼                            │
 │  ┌─────────────────────────────────────────────────┐  │
-│  │  Console enum (src/emulator.rs)                 │  │
-│  │  Hardware-agnostic interface: run_tick, render,  │  │
+│  │  Console enum + Emulator trait                  │  │
+│  │  (src/platform/emulator.rs)                      │  │
+│  │  Hardware-agnostic interface: run_tick, render, │  │
 │  │  audio, input, save/load state, reset           │  │
-│  │  Variants: Console::Nes(Nes)                    │  │
-│  └──────────────────────┬─────────────────────────┘  │
+│  │  Variants: Console::Nes(Nes), Console::GameBoy  │  │
+│  └──────────────────────┬─────────────────────────┘   │
 │                          │                            │
 │                          ▼                            │
 │  ┌─────────────────────────────────────────────────┐  │
@@ -58,16 +59,16 @@ The codebase is roughly 183,000 lines of Rust, with additional JavaScript for th
 │                                                       │
 │  ┌─────────────────────────────────────────────────┐  │
 │  │  Shared Platform (src/)                         │  │
-│  │  AppContext · FrontendConfig · Audio · Rendering │  │
+│  │  AppContext · FrontendConfig · Audio · Rendering│  │
 │  └─────────────────────────────────────────────────┘  │
 └───────────────────────────────────────────────────────┘
 ```
 
 The emulator is designed around a **multi-layer architecture**:
 
-- **Console enum** (`src/emulator.rs`): Hardware-agnostic dispatch layer. Frontends program against `Console` for common operations (run, render, audio, input, save/load state, reset). System-specific features (NES debugging, PPU viewer, Zapper) are accessed by matching on the `Console::Nes` variant.
+- **Emulator trait + Console enum** (`src/platform/emulator.rs`): The `Emulator` trait defines the common interface that every emulated system must implement (run, render, audio, input, save/load state, reset — 22 methods total). `Nes` and `GameBoy` implement the trait in their respective modules. The `Console` enum wraps both systems and delegates common methods through `as_core()`/`as_core_mut()` (which return `&dyn Emulator`), keeping a single pair of match arms instead of one per method. System-specific features (NES debugging, PPU viewer, Zapper) are still accessed by matching on `Console::Nes`.
 - **NES emulator** (`src/nes/`): All NES-specific hardware lives under this namespace. The `Nes` struct in `src/nes/console/nes.rs` orchestrates the per-cycle stepping of CPU, PPU, APU, and Bus.
-- **Shared platform** (`src/`): `FrontendConfig` (src/config.rs), `AppContext` (src/app_context.rs), audio infrastructure, and rendering backends are shared across all emulated systems.
+- **Shared platform** (`src/platform/`): `FrontendConfig` (src/platform/config.rs), `AppContext` (src/platform/app_context.rs), audio infrastructure, and rendering backends are shared across all emulated systems.
 - **Bus-centric hardware**: Within the NES, the `Bus` struct routes memory reads and writes between the CPU, PPU registers, APU registers, RAM, OAM DMA, controller ports, and the cartridge mapper.
 
 ## Binaries and Scripts
@@ -107,9 +108,9 @@ The `src/bin/roms.rs` file is a library binary (accessed via `cargo run --bin ro
 
 | File | Description |
 | ------ | ------------- |
-| `src/emulator.rs` | `Console` enum — hardware-agnostic wrapper around system-specific emulators. Provides common interface: `run_tick`, `is_ready_to_render`, `screen_snapshot`, `get_sample`, `set_button`, `save_state_bytes`/`load_state_bytes`, `reset`. System-specific features accessed via variant matching (`Console::Nes`). |
-| `src/config.rs` | `FrontendConfig` struct — generic frontend settings (audio, video, autorun, debugger, window) shared across all emulated systems. |
-| `src/app_context.rs` | `AppContext` — shared application state including configuration, ROM database, and toast notification manager. Wrapped in `Rc<RefCell<>>` for interior mutability. |
+| `src/platform/emulator.rs` | `Emulator` trait — defines the common interface (22 methods) for all emulated systems: `run_tick`, `is_ready_to_render`, `screen_snapshot`, `get_sample`, `set_button`, `save_state_bytes`/`load_state_bytes`, `reset`, etc. `Console` enum wraps `Box<Nes>` and `Box<GameBoy>`, delegating common methods through `as_core()`/`as_core_mut()`. System-specific features accessed via variant matching (`Console::Nes`). |
+| `src/platform/config.rs` | `FrontendConfig` struct — generic frontend settings (audio, video, autorun, debugger, window) shared across all emulated systems. |
+| `src/platform/app_context.rs` | `AppContext` — shared application state including configuration, ROM database, and toast notification manager. Wrapped in `Rc<RefCell<>>` for interior mutability. |
 
 #### NES Emulation (`src/nes/`)
 
@@ -119,7 +120,7 @@ All NES-specific hardware and supporting code lives under `src/nes/`.
 | ---------------- | ------------- |
 | `src/nes/mod.rs` | Module declarations for all NES sub-modules. |
 | `src/nes/console/` | Top-level NES orchestration. |
-| `src/nes/console/nes.rs` | The `Nes` struct — creates and owns CPU, PPU, APU, and Bus. Runs the master clock cycle loop. Handles save state capture/restore, cartridge insertion, and reset logic. |
+| `src/nes/console/nes.rs` | The `Nes` struct — creates and owns CPU, PPU, APU, and Bus. Runs the master clock cycle loop. Handles save state capture/restore, cartridge insertion, and reset logic. Implements the `Emulator` trait for system-agnostic dispatch. |
 | `src/nes/console/config.rs` | `Config` struct (composition of `FrontendConfig` + `NesConfig`), `NesConfig` struct (NES-specific hardware settings), and CLI argument parser. Defines all command-line flags, config file loading, and hardware/timing/input settings. |
 | `src/nes/console/cartridge_catalog.rs` | Scans directories for NES ROMs and builds/caches a CSV catalog of discovered cartridges for the TUI launcher. |
 | `src/nes/console/ram_init.rs` | RAM initialization modes: `Zero`, `Random`, and `SeededRandom` for deterministic test setups. |
@@ -212,7 +213,8 @@ All Game Boy (DMG) hardware lives under `src/gb/`. The module is structured arou
 | Directory/File | Description |
 | ---------------- | ------------- |
 | `src/gb/mod.rs` | Module declarations for all GB sub-modules. |
-| `src/gb/console.rs` | `Gb<B: GbBus>` — thin console shell that owns the CPU. `step()` executes one instruction and ticks the bus by the elapsed M-cycles. |
+| `src/gb/console/mod.rs` | `Gb<B: GbBus>` — thin console shell that owns the CPU. `step()` executes one instruction and ticks the bus by the elapsed M-cycles. DMG-specific impls for screen, frame-ready, and reset. |
+| `src/gb/console/gameboy.rs` | `GameBoy` — platform-facing wrapper that owns a `Gb<DmgBus>` (created lazily on `load_rom`). Implements the `Emulator` trait for system-agnostic dispatch. |
 | `src/gb/bus/bus.rs` | `GbBus` trait — `read(&mut self, addr: u16) -> u8`, `write(&mut self, addr: u16, val: u8)`, and a default no-op `tick(&mut self, m_cycles: u8)`. `StubBus` implements the trait for unit tests. |
 | `src/gb/bus/dmg_bus.rs` | `DmgBus` — full DMG memory map. Routes all 16-bit addresses to cartridge ROM/RAM, VRAM, WRAM, echo RAM, OAM, HRAM, Timer registers ($FF04–$FF07), APU registers ($FF10–$FF3F), IF ($FF0F), IE ($FFFF), and I/O stubs. Owns the cartridge, Timer, and APU. Overrides `tick()` to advance the Timer, APU, and propagate timer interrupts to IF. Exposes `sample_ready()`/`take_sample()`/`set_audio_sample_rate()` for the platform audio layer. |
 | `src/gb/apu/mod.rs` | `Apu` — DMG Audio Processing Unit. 8-step frame sequencer (512 Hz), NR50/NR51/NR52 power/volume/panning control, mixer (NR51 L/R routing, NR50 master volume), sample output pipeline (fractional M-cycle accumulator). |

@@ -8,6 +8,7 @@ use crate::gb::bus::DmgBus;
 use crate::gb::cartridge::load_cartridge;
 use crate::gb::console::Gb;
 use crate::platform::app_context::{IntoSharedAppContext, SharedAppContext};
+use crate::platform::emulator::{Emulator, SystemType};
 
 /// Platform-facing Game Boy (DMG) console wrapper.
 pub struct GameBoy {
@@ -139,6 +140,105 @@ impl GameBoy {
     /// Access the shared application context.
     pub fn app_context(&self) -> &SharedAppContext {
         &self.app_context
+    }
+}
+
+impl Emulator for GameBoy {
+    fn system_type(&self) -> SystemType {
+        SystemType::GameBoy
+    }
+
+    fn load_rom(&mut self, bytes: &[u8], name: &str) -> Result<(), String> {
+        GameBoy::load_rom(self, bytes, name)
+    }
+
+    fn run_tick(&mut self) -> u8 {
+        GameBoy::run_tick(self)
+    }
+
+    fn is_ready_to_render(&self) -> bool {
+        self.is_frame_ready()
+    }
+
+    fn clear_ready_to_render(&mut self) {
+        self.clear_frame_ready()
+    }
+
+    fn screen_width(&self) -> u32 {
+        GameBoy::SCREEN_WIDTH
+    }
+
+    fn screen_height(&self) -> u32 {
+        GameBoy::SCREEN_HEIGHT
+    }
+
+    fn screen_snapshot(&self) -> Vec<u8> {
+        GameBoy::screen_snapshot(self)
+    }
+
+    fn cropped_screen_snapshot(&self, _h_overscan: u32, _v_overscan: u32) -> Vec<u8> {
+        GameBoy::cropped_screen_snapshot(self)
+    }
+
+    fn screen_crc32(&self) -> u32 {
+        GameBoy::screen_crc32(self)
+    }
+
+    fn sample_ready(&self) -> bool {
+        GameBoy::sample_ready(self)
+    }
+
+    fn get_sample(&mut self) -> Option<f32> {
+        GameBoy::get_sample(self)
+    }
+
+    fn set_audio_sample_rate(&mut self, rate: f32) {
+        GameBoy::set_audio_sample_rate(self, rate)
+    }
+
+    fn set_button(&mut self, port: u8, button_id: u8, pressed: bool) {
+        if port == 0 {
+            GameBoy::set_button(self, button_id, pressed);
+        }
+    }
+
+    fn set_joypad_button_states(&mut self, port: u8, state: u8) {
+        if port == 0 {
+            GameBoy::set_joypad_button_states(self, state);
+        }
+    }
+
+    fn get_joypad_button_states(&self, port: u8) -> u8 {
+        if port == 0 {
+            GameBoy::get_joypad_button_states(self)
+        } else {
+            0
+        }
+    }
+
+    fn save_state_bytes(&self) -> Result<Vec<u8>, String> {
+        GameBoy::save_state_bytes(self)
+    }
+
+    fn load_state_bytes(&mut self, data: &[u8]) -> Result<(), String> {
+        GameBoy::load_state_bytes(self, data)
+    }
+
+    fn reset(&mut self, soft_reset: bool) {
+        GameBoy::reset(self, soft_reset)
+    }
+
+    fn save_ram(&self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn app_context(&self) -> &SharedAppContext {
+        GameBoy::app_context(self)
+    }
+
+    fn target_frame_duration(&self) -> std::time::Duration {
+        // DMG: 4,194,304 Hz clock / 70,224 cycles per frame ≈ 59.7275 fps
+        std::time::Duration::from_secs_f64(70_224.0 / 4_194_304.0)
     }
 }
 
