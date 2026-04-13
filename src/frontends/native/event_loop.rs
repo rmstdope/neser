@@ -368,7 +368,7 @@ impl NativeEventLoop {
 
         let cartridge = {
             let Console::Nes(nes) = &self.console else {
-                return;
+                unreachable!("console type checked above");
             };
             match crate::nes::cartridge::Cartridge::load_from_file(
                 &rom_bytes,
