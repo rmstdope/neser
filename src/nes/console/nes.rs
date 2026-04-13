@@ -13,6 +13,7 @@ use crate::nes::input::ControllerType;
 use crate::nes::ppu::{Ppu, PpuState, SharedPpu};
 use crate::platform::app_context::{IntoSharedAppContext, SharedAppContext};
 use crate::platform::debugging::{Tracing, log_info};
+use crate::platform::emulator::{Emulator, SystemType};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -1174,6 +1175,108 @@ impl Nes {
         } else {
             false
         }
+    }
+}
+
+impl Emulator for Nes {
+    fn system_type(&self) -> SystemType {
+        SystemType::Nes
+    }
+
+    fn load_rom(&mut self, bytes: &[u8], name: &str) -> Result<(), String> {
+        Nes::load_rom(self, bytes, name)
+    }
+
+    fn run_tick(&mut self) -> u8 {
+        self.run_cpu_tick()
+    }
+
+    fn is_ready_to_render(&self) -> bool {
+        Nes::is_ready_to_render(self)
+    }
+
+    fn clear_ready_to_render(&mut self) {
+        Nes::clear_ready_to_render(self)
+    }
+
+    fn screen_width(&self) -> u32 {
+        Nes::SCREEN_WIDTH
+    }
+
+    fn screen_height(&self) -> u32 {
+        Nes::SCREEN_HEIGHT
+    }
+
+    fn screen_snapshot(&self) -> Vec<u8> {
+        self.get_screen_buffer().snapshot()
+    }
+
+    fn cropped_screen_snapshot(&self, h_overscan: u32, v_overscan: u32) -> Vec<u8> {
+        self.get_screen_buffer()
+            .cropped_snapshot(h_overscan, v_overscan)
+    }
+
+    fn screen_crc32(&self) -> u32 {
+        self.get_screen_buffer().crc32()
+    }
+
+    fn sample_ready(&self) -> bool {
+        Nes::sample_ready(self)
+    }
+
+    fn get_sample(&mut self) -> Option<f32> {
+        Nes::get_sample(self)
+    }
+
+    fn set_audio_sample_rate(&mut self, rate: f32) {
+        Nes::set_audio_sample_rate(self, rate)
+    }
+
+    fn set_button(&mut self, port: u8, button_id: u8, pressed: bool) {
+        if !self.set_button_by_id(port, button_id, pressed) {
+            #[cfg(debug_assertions)]
+            eprintln!("warning: invalid NES button_id: {button_id}");
+        }
+    }
+
+    fn set_joypad_button_states(&mut self, port: u8, state: u8) {
+        Nes::set_joypad_button_states(self, port, state)
+    }
+
+    fn get_joypad_button_states(&self, port: u8) -> u8 {
+        Nes::get_joypad_button_states(self, port)
+    }
+
+    fn save_state_bytes(&self) -> Result<Vec<u8>, String> {
+        Nes::save_state_bytes(self)
+    }
+
+    fn load_state_bytes(&mut self, data: &[u8]) -> Result<(), String> {
+        Nes::load_state_bytes(self, data)
+    }
+
+    fn reset(&mut self, soft_reset: bool) {
+        Nes::reset(self, soft_reset)
+    }
+
+    fn save_ram(&self) -> Result<(), String> {
+        Nes::save_ram(self).map_err(|e| e.to_string())
+    }
+
+    fn app_context(&self) -> &SharedAppContext {
+        Nes::app_context(self)
+    }
+
+    fn target_frame_duration(&self) -> std::time::Duration {
+        let hz = self
+            .app_context()
+            .borrow()
+            .config()
+            .nes
+            .hardware_model
+            .timing_mode()
+            .frame_rate_hz();
+        std::time::Duration::from_secs_f64(1.0 / hz)
     }
 }
 

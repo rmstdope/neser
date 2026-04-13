@@ -11,6 +11,7 @@ use crate::nes::input::ControllerType;
 use crate::platform::autorun::AutorunFormat;
 use crate::platform::autorun::AutorunMode;
 use crate::platform::debugging::breakpoints::BreakpointKind;
+use crate::platform::shaders::SHADER_PRESETS;
 use bitflags::bitflags;
 use std::fmt::Write as _;
 use std::fs;
@@ -1627,21 +1628,20 @@ impl Config {
 
     /// Map simplified filter names to shader paths.
     ///
-    /// Supported values: crt, ntsc, smooth, none
-    ///
-    /// Returns `Ok(String)` with the full shader path for valid filter names,
-    /// or `Err(String)` with an error message for invalid/unknown names.
+    /// Valid names and paths are defined in [`crate::platform::shaders::SHADER_PRESETS`].
     fn map_filter_name(name: &str) -> Result<String, String> {
-        match name {
-            "crt" => Ok("shaders/crt-lottes.slangp".to_string()),
-            "ntsc" => Ok("shaders/ntsc-256px-composite.slangp".to_string()),
-            "smooth" => Ok("shaders/xbrz-freescale.slangp".to_string()),
-            "none" => Ok("shaders/stock.slangp".to_string()),
-            _ => Err(format!(
-                "Invalid filter name: '{}'. Valid options are: crt, ntsc, smooth, none",
-                name
-            )),
-        }
+        SHADER_PRESETS
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, path)| (*path).to_string())
+            .ok_or_else(|| {
+                let valid: Vec<&str> = SHADER_PRESETS.iter().map(|(n, _)| *n).collect();
+                format!(
+                    "Invalid filter name: '{}'. Valid options are: {}",
+                    name,
+                    valid.join(", ")
+                )
+            })
     }
 
     /// Apply a single config file key-value pair.
@@ -2823,9 +2823,14 @@ mod tests {
         ];
         let result = config_new(args);
         assert!(result.is_err());
+        let valid = crate::platform::shaders::SHADER_PRESETS
+            .iter()
+            .map(|(n, _)| *n)
+            .collect::<Vec<_>>()
+            .join(", ");
         assert_eq!(
             result.unwrap_err(),
-            "Invalid filter name: 'invalid-filter'. Valid options are: crt, ntsc, smooth, none"
+            format!("Invalid filter name: 'invalid-filter'. Valid options are: {valid}")
         );
     }
 
@@ -3332,9 +3337,14 @@ mod tests {
         let mut config = Config::default();
         let result = config.apply_config_value("filter", "invalid-filter");
         assert!(result.is_err());
+        let valid = crate::platform::shaders::SHADER_PRESETS
+            .iter()
+            .map(|(n, _)| *n)
+            .collect::<Vec<_>>()
+            .join(", ");
         assert_eq!(
             result.unwrap_err(),
-            "Invalid filter name: 'invalid-filter'. Valid options are: crt, ntsc, smooth, none"
+            format!("Invalid filter name: 'invalid-filter'. Valid options are: {valid}")
         );
     }
 
@@ -3351,7 +3361,7 @@ mod tests {
         config.apply_config_value("filter", "crt").unwrap();
         assert_eq!(
             config.frontend.shader_path,
-            Some("shaders/crt-lottes.slangp".to_string())
+            Some("vendor/slang-shaders/crt/crt-lottes.slangp".to_string())
         );
     }
 
@@ -3361,7 +3371,7 @@ mod tests {
         config.apply_config_value("filter", "ntsc").unwrap();
         assert_eq!(
             config.frontend.shader_path,
-            Some("shaders/ntsc-256px-composite.slangp".to_string())
+            Some("vendor/slang-shaders/ntsc/ntsc-256px-composite.slangp".to_string())
         );
     }
 
@@ -3371,7 +3381,10 @@ mod tests {
         config.apply_config_value("filter", "smooth").unwrap();
         assert_eq!(
             config.frontend.shader_path,
-            Some("shaders/xbrz-freescale.slangp".to_string())
+            Some(
+                "vendor/slang-shaders/edge-smoothing/xbrz/xbrz-freescale-multipass.slangp"
+                    .to_string()
+            )
         );
     }
 
@@ -3395,7 +3408,7 @@ mod tests {
         let config = parse_config(args);
         assert_eq!(
             config.frontend.shader_path,
-            Some("shaders/crt-lottes.slangp".to_string())
+            Some("vendor/slang-shaders/crt/crt-lottes.slangp".to_string())
         );
     }
 
@@ -3409,7 +3422,7 @@ mod tests {
         let config = parse_config(args);
         assert_eq!(
             config.frontend.shader_path,
-            Some("shaders/ntsc-256px-composite.slangp".to_string())
+            Some("vendor/slang-shaders/ntsc/ntsc-256px-composite.slangp".to_string())
         );
     }
 
@@ -3423,7 +3436,10 @@ mod tests {
         let config = parse_config(args);
         assert_eq!(
             config.frontend.shader_path,
-            Some("shaders/xbrz-freescale.slangp".to_string())
+            Some(
+                "vendor/slang-shaders/edge-smoothing/xbrz/xbrz-freescale-multipass.slangp"
+                    .to_string()
+            )
         );
     }
 
@@ -3763,7 +3779,7 @@ pulse1=false
         assert_eq!(config.frontend.fullscreen_display, Some(2));
         assert_eq!(
             config.frontend.shader_path,
-            Some("shaders/crt-lottes.slangp".to_string())
+            Some("vendor/slang-shaders/crt/crt-lottes.slangp".to_string())
         );
         assert!(!config.nes.apu_channels.contains(ApuChannels::PULSE1));
         // Other values should remain default
@@ -3894,9 +3910,14 @@ filter=invalid-shader
         ];
         let result = Config::new(&args);
         assert!(result.is_err());
+        let valid = crate::platform::shaders::SHADER_PRESETS
+            .iter()
+            .map(|(n, _)| *n)
+            .collect::<Vec<_>>()
+            .join(", ");
         assert_eq!(
             result.unwrap_err(),
-            "Invalid filter name: 'invalid-shader'. Valid options are: crt, ntsc, smooth, none"
+            format!("Invalid filter name: 'invalid-shader'. Valid options are: {valid}")
         );
     }
 
