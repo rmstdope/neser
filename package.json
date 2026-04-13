@@ -6,7 +6,7 @@
         "node": ">=20"
     },
     "scripts": {
-        "dev": "vite web",
+        "dev": "vite",
         "build": "vite build",
         "preview": "vite preview",
         "test": "vitest run",
