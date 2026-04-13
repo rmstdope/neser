@@ -420,7 +420,11 @@ mod tests {
     fn run_emulator_to_frame(emu: &mut dyn Emulator) -> u64 {
         let mut total = 0u64;
         while !emu.is_ready_to_render() && total < 200_000 {
-            total += emu.run_tick() as u64;
+            let ticks = emu.run_tick() as u64;
+            if ticks == 0 {
+                break;
+            }
+            total += ticks;
         }
         total
     }

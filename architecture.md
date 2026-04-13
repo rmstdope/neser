@@ -14,14 +14,15 @@ The codebase is roughly 183,000 lines of Rust, with additional JavaScript for th
 ┌───────────────────────────────────────────────────────┐
 │                     Frontends                         │
 │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐   │
-│  │Native Frntend│ │ TUI Frontend │ │ WASM Frontend│   │
+│  │Native Frontend│ │ TUI Frontend │ │ WASM Frontend│   │
 │  │(Desktop, GL) │ │ (Terminal)   │ │ (Browser)    │   │
 │  └──────┬───────┘ └──────┬───────┘ └──────┬───────┘   │
 │         │                │                │           │
 │         └────────────────┼────────────────┘           │
 │                          ▼                            │
 │  ┌─────────────────────────────────────────────────┐  │
-│  │  Console enum + Emulator trait (src/emulator.rs)│  │
+│  │  Console enum + Emulator trait                  │  │
+│  │  (src/platform/emulator.rs)                      │  │
 │  │  Hardware-agnostic interface: run_tick, render, │  │
 │  │  audio, input, save/load state, reset           │  │
 │  │  Variants: Console::Nes(Nes), Console::GameBoy  │  │
@@ -65,9 +66,9 @@ The codebase is roughly 183,000 lines of Rust, with additional JavaScript for th
 
 The emulator is designed around a **multi-layer architecture**:
 
-- **Emulator trait + Console enum** (`src/emulator.rs`): The `Emulator` trait defines the common interface that every emulated system must implement (run, render, audio, input, save/load state, reset — 22 methods total). `Nes` and `GameBoy` implement the trait in their respective modules. The `Console` enum wraps both systems and delegates common methods through `as_core()`/`as_core_mut()` (which return `&dyn Emulator`), keeping a single pair of match arms instead of one per method. System-specific features (NES debugging, PPU viewer, Zapper) are still accessed by matching on `Console::Nes`.
+- **Emulator trait + Console enum** (`src/platform/emulator.rs`): The `Emulator` trait defines the common interface that every emulated system must implement (run, render, audio, input, save/load state, reset — 22 methods total). `Nes` and `GameBoy` implement the trait in their respective modules. The `Console` enum wraps both systems and delegates common methods through `as_core()`/`as_core_mut()` (which return `&dyn Emulator`), keeping a single pair of match arms instead of one per method. System-specific features (NES debugging, PPU viewer, Zapper) are still accessed by matching on `Console::Nes`.
 - **NES emulator** (`src/nes/`): All NES-specific hardware lives under this namespace. The `Nes` struct in `src/nes/console/nes.rs` orchestrates the per-cycle stepping of CPU, PPU, APU, and Bus.
-- **Shared platform** (`src/`): `FrontendConfig` (src/config.rs), `AppContext` (src/app_context.rs), audio infrastructure, and rendering backends are shared across all emulated systems.
+- **Shared platform** (`src/platform/`): `FrontendConfig` (src/platform/config.rs), `AppContext` (src/platform/app_context.rs), audio infrastructure, and rendering backends are shared across all emulated systems.
 - **Bus-centric hardware**: Within the NES, the `Bus` struct routes memory reads and writes between the CPU, PPU registers, APU registers, RAM, OAM DMA, controller ports, and the cartridge mapper.
 
 ## Binaries and Scripts
@@ -107,9 +108,9 @@ The `src/bin/roms.rs` file is a library binary (accessed via `cargo run --bin ro
 
 | File | Description |
 | ------ | ------------- |
-| `src/emulator.rs` | `Emulator` trait — defines the common interface (22 methods) for all emulated systems: `run_tick`, `is_ready_to_render`, `screen_snapshot`, `get_sample`, `set_button`, `save_state_bytes`/`load_state_bytes`, `reset`, etc. `Console` enum wraps `Box<Nes>` and `Box<GameBoy>`, delegating common methods through `as_core()`/`as_core_mut()`. System-specific features accessed via variant matching (`Console::Nes`). |
-| `src/config.rs` | `FrontendConfig` struct — generic frontend settings (audio, video, autorun, debugger, window) shared across all emulated systems. |
-| `src/app_context.rs` | `AppContext` — shared application state including configuration, ROM database, and toast notification manager. Wrapped in `Rc<RefCell<>>` for interior mutability. |
+| `src/platform/emulator.rs` | `Emulator` trait — defines the common interface (22 methods) for all emulated systems: `run_tick`, `is_ready_to_render`, `screen_snapshot`, `get_sample`, `set_button`, `save_state_bytes`/`load_state_bytes`, `reset`, etc. `Console` enum wraps `Box<Nes>` and `Box<GameBoy>`, delegating common methods through `as_core()`/`as_core_mut()`. System-specific features accessed via variant matching (`Console::Nes`). |
+| `src/platform/config.rs` | `FrontendConfig` struct — generic frontend settings (audio, video, autorun, debugger, window) shared across all emulated systems. |
+| `src/platform/app_context.rs` | `AppContext` — shared application state including configuration, ROM database, and toast notification manager. Wrapped in `Rc<RefCell<>>` for interior mutability. |
 
 #### NES Emulation (`src/nes/`)
 
