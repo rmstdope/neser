@@ -16,6 +16,7 @@ exclude = [
 	"node_modules/",
 	"pkg/",
 	"test-results/",
+	"vendor/",
     "package.json",
     "package-lock.json",
     "playwright.config.ts",
