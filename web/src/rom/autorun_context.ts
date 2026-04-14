@@ -1,7 +1,11 @@
-const SUPPORTED_AUTORUN_VERSION = 2;
+const SUPPORTED_AUTORUN_VERSIONS = [2, 3];
+const MAX_LOGICAL_FRAMES = 10_000_000;
 
 /**
  * Parse an autorun file's bytes and return metadata about the recording.
+ *
+ * Accepts both v2 (per-frame entries) and v3 (RLE-encoded frames with `repeat` field).
+ * For v3, the logical frame count is the sum of all `repeat` values.
  *
  * @param {Uint8Array} bytes - Raw bytes of a JSON-serialized AutorunFile.
  * @returns {{ version: number, frameCount: number, checkpointCount: number }}
@@ -15,14 +19,34 @@ export function parseAutorunFile(bytes: Uint8Array) {
     } catch (e: unknown) {
         throw new Error(`Failed to parse autorun file: ${e instanceof Error ? e.message : String(e)}`);
     }
-    if (obj.version !== SUPPORTED_AUTORUN_VERSION) {
+    if (!SUPPORTED_AUTORUN_VERSIONS.includes(obj.version as number)) {
         throw new Error(
-            `Unsupported autorun version: ${obj.version} (expected ${SUPPORTED_AUTORUN_VERSION})`
+            `Unsupported autorun version: ${obj.version} (expected one of ${SUPPORTED_AUTORUN_VERSIONS.join(", ")})`
         );
     }
+    const version = obj.version as number;
+    let frameCount = 0;
+    if (Array.isArray(obj.frames)) {
+        if (version === 3) {
+            // v3 uses RLE: each entry has a `repeat` count
+            for (const f of obj.frames) {
+                const repeat = Number((f as { repeat?: unknown }).repeat ?? 1);
+                if (!Number.isFinite(repeat) || repeat < 1 || repeat !== Math.floor(repeat)) {
+                    throw new Error(`Invalid repeat value in v3 autorun frame: ${JSON.stringify(f)}`);
+                }
+                frameCount += repeat;
+                if (frameCount > MAX_LOGICAL_FRAMES) {
+                    throw new Error(`Autorun file exceeds maximum of ${MAX_LOGICAL_FRAMES} logical frames`);
+                }
+            }
+        } else {
+            // v2: one entry per frame
+            frameCount = obj.frames.length;
+        }
+    }
     return {
-        version: obj.version,
-        frameCount: Array.isArray(obj.frames) ? obj.frames.length : 0,
+        version,
+        frameCount,
         checkpointCount: Array.isArray(obj.checkpoints) ? obj.checkpoints.length : 0
     };
 }

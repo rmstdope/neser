@@ -859,6 +859,65 @@ const autorunUseBtn = document.getElementById("autorun-use-btn") as HTMLButtonEl
 const autorunCancelBtn = document.getElementById("autorun-cancel");
 const autorunModalCancelBtn = document.getElementById("autorun-modal-cancel");
 const autorunModalEl = document.getElementById("autorun-modal") as HTMLDialogElement | null;
+const recOverlay = document.getElementById("rec-overlay");
+
+/**
+ * Update autorun-related UI controls based on current state.
+ *
+ * - Gates "Create autorun" checkbox: disabled when running or paused.
+ * - Updates Start/Stop button labels based on recording mode.
+ * - Refreshes autorun status display.
+ */
+function updateAutorunControls() {
+    // Gate "Create autorun" checkbox: only checkable when stopped
+    if (autorunCreateCheckbox) {
+        autorunCreateCheckbox.disabled = running || paused;
+    }
+
+    // Update Start/Stop button labels
+    const isRecording = autorunCtx.isCreateRecording();
+    if (startBtn) {
+        startBtn.textContent = isRecording ? "Start Recording" : "Start";
+    }
+    const stopBtnEl = document.getElementById("stop");
+    if (stopBtnEl) {
+        stopBtnEl.textContent = isRecording ? "Stop Recording" : "Stop";
+    }
+
+    updateAutorunStatus();
+}
+
+/** Update the recording overlay (REC : MM:SS) on the canvas. */
+function updateRecOverlay() {
+    if (!recOverlay) return;
+    if (!nes || !nes.autorun_is_recording() || !running) {
+        recOverlay.classList.add("hidden");
+        recOverlay.setAttribute("aria-hidden", "true");
+        return;
+    }
+    const frames = nes.autorun_recording_frame_count();
+    const fps = nes.frame_rate_hz();
+    if (!(fps > 0 && Number.isFinite(fps))) {
+        recOverlay.classList.add("hidden");
+        recOverlay.setAttribute("aria-hidden", "true");
+        return;
+    }
+    const totalSec = Math.floor(frames / fps);
+    const mm = String(Math.floor(totalSec / 60)).padStart(2, "0");
+    const ss = String(totalSec % 60).padStart(2, "0");
+    const timeStr = `REC ${mm}:${ss}`;
+    // Only update DOM when the displayed text changes
+    if (recOverlay.dataset.recTime !== timeStr) {
+        recOverlay.dataset.recTime = timeStr;
+        recOverlay.textContent = "";
+        const dot = document.createElement("span");
+        dot.className = "rec-dot";
+        recOverlay.appendChild(dot);
+        recOverlay.appendChild(document.createTextNode(timeStr));
+    }
+    recOverlay.classList.remove("hidden");
+    recOverlay.setAttribute("aria-hidden", "false");
+}
 
 /** Update the small autorun status text and cancel button in the header. */
 function updateAutorunStatus() {
@@ -869,7 +928,7 @@ function updateAutorunStatus() {
         autorunCancelBtn?.classList.add("hidden");
     } else if (config.mode === "record") {
         autorunStatusEl.textContent = "Will record autorun";
-        autorunCancelBtn?.classList.remove("hidden");
+        autorunCancelBtn?.classList.add("hidden");
     } else {
         const info = autorunCtx.getLoadedFile();
         const cpText = config.checkpointIdx != null
@@ -891,7 +950,7 @@ if (autorunCreateCheckbox) {
             // Clear loaded file when switching to create-recording mode
             autorunCtx.clearLoadedFile();
         }
-        updateAutorunStatus();
+        updateAutorunControls();
     });
 }
 
@@ -900,7 +959,7 @@ if (autorunCancelBtn) {
         autorunCtx.clearLoadedFile();
         autorunCtx.setCreateRecording(false);
         if (autorunCreateCheckbox) autorunCreateCheckbox.checked = false;
-        updateAutorunStatus();
+        updateAutorunControls();
     });
 }
 
@@ -1285,6 +1344,7 @@ async function start() {
     paused = false;
     // Keep start button disabled while running; it is re-enabled in stop().
     setStatus("Running...");
+    updateAutorunControls();
     requestAnimationFrame(step);
 }
 
@@ -1303,6 +1363,7 @@ function pauseResume() {
     } else {
         setStatus("Paused");
     }
+    updateAutorunControls();
 }
 
 let debuggerHexdumpError = "";
@@ -1883,6 +1944,10 @@ function stop() {
         nes.clear_autorun();
     }
 
+    // Auto-uncheck "Create autorun" after recording stops
+    autorunCtx.setCreateRecording(false);
+    if (autorunCreateCheckbox) autorunCreateCheckbox.checked = false;
+
     running = false;
     paused = false;
     startBtn!.disabled = false;
@@ -1896,6 +1961,8 @@ function stop() {
     windowFocused = true;
     pointerReleasedByEscape = false;
     setStatus("Stopped. You can restart or load a new ROM");
+    updateRecOverlay();
+    updateAutorunControls();
 }
 
 /**
@@ -2146,6 +2213,8 @@ function step(timestamp: number) {
         if (audioSamples.length > 0) {
             playAudioSamples(audioSamples);
         }
+
+        updateRecOverlay();
 
         fpsFrames += 1;
         if (fpsLastTime === 0) {
@@ -2708,14 +2777,27 @@ async function toggleScreenFullscreen() {
 
 function resetAction() {
     if (!nes) return;
+    cancelActiveRecording();
     nes.reset(true);
     setStatus("Soft reset", false);
 }
 
 function hardResetAction() {
     if (!nes) return;
+    cancelActiveRecording();
     nes.reset(false);
     setStatus("Hard reset", false);
+}
+
+/** Cancel an active autorun recording (if any), updating UI and showing a toast. */
+function cancelActiveRecording() {
+    if (!nes || !nes.autorun_is_recording()) return;
+    nes.clear_autorun();
+    autorunCtx.setCreateRecording(false);
+    if (autorunCreateCheckbox) autorunCreateCheckbox.checked = false;
+    updateRecOverlay();
+    updateAutorunControls();
+    toastOverlay.show("Recording cancelled");
 }
 
 async function saveStateAction() {

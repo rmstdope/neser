@@ -42,6 +42,38 @@ body {
   box-shadow: 0 0 24px #00f0ff18;
 }
 
+/* ── Recording overlay ───────────────────────────────────── */
+
+.rec-overlay {
+  position: absolute;
+  top: 24px;
+  right: 24px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: 6px;
+  font-family: monospace;
+  font-size: 0.85rem;
+  color: #fff;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.rec-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #e11d48;
+  animation: rec-blink 1s step-end infinite;
+}
+
+@keyframes rec-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
 .screen-wrap:fullscreen {
   padding: 0;
 }

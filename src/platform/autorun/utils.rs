@@ -5,33 +5,33 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct AutorunRleFrame {
-    player1: u8,
-    player2: u8,
-    repeat: u32,
+pub(crate) struct AutorunRleFrame {
+    pub(crate) player1: u8,
+    pub(crate) player2: u8,
+    pub(crate) repeat: u32,
 }
 
 /// Serialization-only view of a v3 autorun file.  Borrows `checkpoints` to avoid cloning
 /// potentially large `state_bytes` blobs that live inside each checkpoint.
 #[derive(Debug, Serialize)]
-struct AutorunFileV3Ser<'a> {
-    version: u32,
-    frames: Vec<AutorunRleFrame>,
-    checkpoints: &'a [AutorunCheckpoint],
+pub(crate) struct AutorunFileV3Ser<'a> {
+    pub(crate) version: u32,
+    pub(crate) frames: Vec<AutorunRleFrame>,
+    pub(crate) checkpoints: &'a [AutorunCheckpoint],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-struct AutorunFileV3OnDisk {
-    version: u32,
-    frames: Vec<AutorunRleFrame>,
-    checkpoints: Vec<AutorunCheckpoint>,
+pub(crate) struct AutorunFileV3OnDisk {
+    pub(crate) version: u32,
+    pub(crate) frames: Vec<AutorunRleFrame>,
+    pub(crate) checkpoints: Vec<AutorunCheckpoint>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-struct AutorunFileV2 {
-    version: u32,
-    frames: Vec<AutorunFrame>,
-    checkpoints: Vec<AutorunCheckpoint>,
+pub(crate) struct AutorunFileV2 {
+    pub(crate) version: u32,
+    pub(crate) frames: Vec<AutorunFrame>,
+    pub(crate) checkpoints: Vec<AutorunCheckpoint>,
 }
 
 /// Body of a binary autorun file (postcard-encoded, after the magic header).
@@ -65,7 +65,7 @@ fn build_input_frame(rle_frame: &AutorunRleFrame) -> AutorunFrame {
     }
 }
 
-fn encode_rle_frames(frames: &[AutorunFrame]) -> Vec<AutorunRleFrame> {
+pub(crate) fn encode_rle_frames(frames: &[AutorunFrame]) -> Vec<AutorunRleFrame> {
     if frames.is_empty() {
         return Vec::new();
     }
@@ -96,7 +96,9 @@ fn encode_rle_frames(frames: &[AutorunFrame]) -> Vec<AutorunRleFrame> {
 /// This prevents a crafted file with enormous `repeat` values from causing OOM.
 const MAX_DECODED_FRAMES: usize = 10_000_000;
 
-fn decode_rle_frames(rle_frames: &[AutorunRleFrame]) -> Result<Vec<AutorunFrame>, String> {
+pub(crate) fn decode_rle_frames(
+    rle_frames: &[AutorunRleFrame],
+) -> Result<Vec<AutorunFrame>, String> {
     // First pass: validate every entry and accumulate the total so we can pre-allocate
     // exactly the right capacity without risking OOM from a malicious `repeat` value.
     let mut total_frames: usize = 0;

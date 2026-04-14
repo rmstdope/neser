@@ -1,6 +1,8 @@
 use crate::platform::autorun::AutorunMode;
 use crate::platform::autorun::{
-    AUTORUN_VERSION, AutorunCheckpoint, AutorunFile, AutorunFrame, CHECKPOINT_INTERVAL_FRAMES,
+    AUTORUN_VERSION, AutorunCheckpoint, AutorunFile, AutorunFileV2, AutorunFileV3OnDisk,
+    AutorunFileV3Ser, AutorunFrame, CHECKPOINT_INTERVAL_FRAMES, decode_rle_frames,
+    encode_rle_frames,
 };
 
 /// In-memory autorun state for the WASM frontend.
@@ -167,13 +169,20 @@ impl WasmAutorunState {
     }
 
     /// Append a final checkpoint and return the recording as serialized JSON bytes.
+    ///
+    /// The output uses v3 RLE-encoded frames, matching the native save format.
     pub fn finalize_recording(&mut self, screen_crc: u32, state_bytes: Vec<u8>) -> Vec<u8> {
         self.autorun.checkpoints.push(AutorunCheckpoint {
             frame_index: self.frame_index.saturating_sub(1) as u32,
             screen_crc,
             state_bytes,
         });
-        serde_json::to_vec_pretty(&self.autorun).unwrap_or_default()
+        let v3 = AutorunFileV3Ser {
+            version: AUTORUN_VERSION,
+            frames: encode_rle_frames(&self.autorun.frames),
+            checkpoints: &self.autorun.checkpoints,
+        };
+        serde_json::to_vec_pretty(&v3).unwrap_or_default()
     }
 
     /// Check whether the just-completed frame has a playback checkpoint, verify CRC.
@@ -242,12 +251,35 @@ impl WasmAutorunState {
 }
 
 fn parse_autorun_bytes(bytes: &[u8]) -> Result<AutorunFile, String> {
-    let file: AutorunFile =
+    let json_value: serde_json::Value =
         serde_json::from_slice(bytes).map_err(|e| format!("Failed to parse autorun file: {e}"))?;
-    if file.version != AUTORUN_VERSION {
-        return Err(format!("Unsupported autorun version: {}", file.version));
+
+    let version = json_value["version"]
+        .as_u64()
+        .and_then(|v| u32::try_from(v).ok())
+        .ok_or_else(|| "Missing or invalid version field in autorun file".to_string())?;
+
+    match version {
+        2 => {
+            let v2: AutorunFileV2 = serde_json::from_value(json_value)
+                .map_err(|e| format!("Failed to deserialize autorun v2 file: {e}"))?;
+            Ok(AutorunFile {
+                version: AUTORUN_VERSION,
+                frames: v2.frames,
+                checkpoints: v2.checkpoints,
+            })
+        }
+        3 => {
+            let v3: AutorunFileV3OnDisk = serde_json::from_value(json_value)
+                .map_err(|e| format!("Failed to deserialize autorun v3 file: {e}"))?;
+            Ok(AutorunFile {
+                version: AUTORUN_VERSION,
+                frames: decode_rle_frames(&v3.frames)?,
+                checkpoints: v3.checkpoints,
+            })
+        }
+        _ => Err(format!("Unsupported autorun version: {version}")),
     }
-    Ok(file)
 }
 
 #[cfg(test)]
@@ -269,17 +301,29 @@ mod tests {
                 }
             })
             .collect();
-        let file = AutorunFile {
+        let frames: Vec<AutorunFrame> = (0..num_frames)
+            .map(|i| AutorunFrame {
+                player1: (i % 256) as u8,
+                player2: 0,
+            })
+            .collect();
+        let v3 = AutorunFileV3Ser {
             version: AUTORUN_VERSION,
-            frames: (0..num_frames)
-                .map(|i| AutorunFrame {
-                    player1: (i % 256) as u8,
-                    player2: 0,
-                })
-                .collect(),
-            checkpoints,
+            frames: encode_rle_frames(&frames),
+            checkpoints: &checkpoints,
         };
-        serde_json::to_vec(&file).expect("serialize")
+        serde_json::to_vec(&v3).expect("serialize")
+    }
+
+    /// Serialize an in-memory AutorunFile to v3 RLE JSON bytes (for tests that
+    /// construct an AutorunFile manually).
+    fn autorun_to_v3_bytes(file: &AutorunFile) -> Vec<u8> {
+        let v3 = AutorunFileV3Ser {
+            version: AUTORUN_VERSION,
+            frames: encode_rle_frames(&file.frames),
+            checkpoints: &file.checkpoints,
+        };
+        serde_json::to_vec(&v3).expect("serialize")
     }
 
     // ── new_recording ────────────────────────────────────────────────────────
@@ -408,7 +452,7 @@ mod tests {
                 state_bytes: vec![],
             }],
         };
-        let bytes = serde_json::to_vec(&file).unwrap();
+        let bytes = autorun_to_v3_bytes(&file);
         let (mut state, _) = WasmAutorunState::new_playback(&bytes, None, false).unwrap();
         state.begin_frame();
         let frame = state.next_playback_frame();
@@ -463,7 +507,7 @@ mod tests {
                 state_bytes: vec![],
             }],
         };
-        let bytes = serde_json::to_vec(&file).unwrap();
+        let bytes = autorun_to_v3_bytes(&file);
         let (mut state, _) = WasmAutorunState::new_playback(&bytes, None, false).unwrap();
         state.begin_frame();
         state.next_playback_frame();
@@ -486,7 +530,7 @@ mod tests {
                 state_bytes: vec![],
             }],
         };
-        let bytes = serde_json::to_vec(&file).unwrap();
+        let bytes = autorun_to_v3_bytes(&file);
         let (mut state, _) = WasmAutorunState::new_playback(&bytes, None, false).unwrap();
         state.begin_frame();
         state.next_playback_frame();
@@ -541,5 +585,76 @@ mod tests {
         state.begin_frame();
         state.next_playback_frame();
         assert!(!state.is_playback_finished());
+    }
+
+    // ── version compatibility ────────────────────────────────────────────────
+
+    #[test]
+    fn parse_autorun_bytes_accepts_v2_non_rle_format() {
+        // A v2 autorun file has per-frame entries without RLE compression.
+        // parse_autorun_bytes should accept v2 and normalize to v3 in memory.
+        let v2_json = serde_json::json!({
+            "version": 2,
+            "frames": [
+                {"player1": 4, "player2": 0},
+                {"player1": 4, "player2": 0},
+                {"player1": 7, "player2": 1}
+            ],
+            "checkpoints": []
+        });
+        let bytes = serde_json::to_vec(&v2_json).unwrap();
+        let file = parse_autorun_bytes(&bytes).expect("should accept v2 format");
+        assert_eq!(file.version, AUTORUN_VERSION);
+        assert_eq!(file.frames.len(), 3);
+        assert_eq!(file.frames[0].player1, 4);
+        assert_eq!(file.frames[2].player1, 7);
+        assert_eq!(file.frames[2].player2, 1);
+    }
+
+    #[test]
+    fn parse_autorun_bytes_accepts_v3_rle_format() {
+        // A v3 autorun file on disk uses RLE-encoded frames (with `repeat` field).
+        // parse_autorun_bytes should decode RLE and expand to per-frame entries.
+        let v3_json = serde_json::json!({
+            "version": 3,
+            "frames": [
+                {"player1": 0, "player2": 0, "repeat": 3},
+                {"player1": 1, "player2": 0, "repeat": 1}
+            ],
+            "checkpoints": []
+        });
+        let bytes = serde_json::to_vec(&v3_json).unwrap();
+        let file = parse_autorun_bytes(&bytes).expect("should accept v3 RLE format");
+        assert_eq!(file.version, AUTORUN_VERSION);
+        assert_eq!(file.frames.len(), 4);
+        assert_eq!(file.frames[0].player1, 0);
+        assert_eq!(file.frames[3].player1, 1);
+    }
+
+    #[test]
+    fn finalize_recording_produces_v3_rle_json() {
+        // finalize_recording should produce v3 JSON with RLE-encoded frames,
+        // matching the native save format.
+        let mut state = WasmAutorunState::new_recording();
+        // Record 3 identical frames + 1 different frame
+        state.record_frame(0, 0);
+        state.record_frame(0, 0);
+        state.record_frame(0, 0);
+        state.record_frame(1, 0);
+
+        let bytes = state.finalize_recording(0xDEAD, b"end".to_vec());
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+
+        // The frames array should use RLE encoding (2 entries, not 4)
+        let frames = json["frames"].as_array().unwrap();
+        assert_eq!(
+            frames.len(),
+            2,
+            "should have 2 RLE entries, not 4 per-frame entries"
+        );
+        assert_eq!(frames[0]["repeat"], 3);
+        assert_eq!(frames[0]["player1"], 0);
+        assert_eq!(frames[1]["repeat"], 1);
+        assert_eq!(frames[1]["player1"], 1);
     }
 }
