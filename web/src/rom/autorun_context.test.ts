@@ -244,3 +244,45 @@ it("createAutorunContext setLoadedFile accepts v3 RLE file", () => {
     expect(loaded!.checkpointCount).toBe(2);
     expect(loaded!.frameCount).toBe(600);
 });
+
+// ── parseAutorunFile – v3 repeat validation ──────────────────────────────────
+
+it("parseAutorunFile throws for v3 frame with non-numeric repeat", () => {
+    const file = {
+        version: 3,
+        frames: [{ player1: 0, player2: 0, repeat: "abc" }],
+        checkpoints: []
+    };
+    const bytes = new TextEncoder().encode(JSON.stringify(file));
+    expect(() => parseAutorunFile(bytes)).toThrow(/Invalid repeat/i);
+});
+
+it("parseAutorunFile throws for v3 frame with negative repeat", () => {
+    const file = {
+        version: 3,
+        frames: [{ player1: 0, player2: 0, repeat: -1 }],
+        checkpoints: []
+    };
+    const bytes = new TextEncoder().encode(JSON.stringify(file));
+    expect(() => parseAutorunFile(bytes)).toThrow(/Invalid repeat/i);
+});
+
+it("parseAutorunFile throws for v3 frame with non-integer repeat", () => {
+    const file = {
+        version: 3,
+        frames: [{ player1: 0, player2: 0, repeat: 1.5 }],
+        checkpoints: []
+    };
+    const bytes = new TextEncoder().encode(JSON.stringify(file));
+    expect(() => parseAutorunFile(bytes)).toThrow(/Invalid repeat/i);
+});
+
+it("parseAutorunFile throws when v3 total frames exceed maximum", () => {
+    const file = {
+        version: 3,
+        frames: [{ player1: 0, player2: 0, repeat: 10_000_001 }],
+        checkpoints: []
+    };
+    const bytes = new TextEncoder().encode(JSON.stringify(file));
+    expect(() => parseAutorunFile(bytes)).toThrow(/exceeds maximum/i);
+});

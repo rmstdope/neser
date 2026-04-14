@@ -1,4 +1,5 @@
 const SUPPORTED_AUTORUN_VERSIONS = [2, 3];
+const MAX_LOGICAL_FRAMES = 10_000_000;
 
 /**
  * Parse an autorun file's bytes and return metadata about the recording.
@@ -29,7 +30,14 @@ export function parseAutorunFile(bytes: Uint8Array) {
         if (version === 3) {
             // v3 uses RLE: each entry has a `repeat` count
             for (const f of obj.frames) {
-                frameCount += (f as { repeat?: number }).repeat ?? 1;
+                const repeat = Number((f as { repeat?: unknown }).repeat ?? 1);
+                if (!Number.isFinite(repeat) || repeat < 1 || repeat !== Math.floor(repeat)) {
+                    throw new Error(`Invalid repeat value in v3 autorun frame: ${JSON.stringify(f)}`);
+                }
+                frameCount += repeat;
+                if (frameCount > MAX_LOGICAL_FRAMES) {
+                    throw new Error(`Autorun file exceeds maximum of ${MAX_LOGICAL_FRAMES} logical frames`);
+                }
             }
         } else {
             // v2: one entry per frame

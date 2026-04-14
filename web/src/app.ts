@@ -866,7 +866,7 @@ const recOverlay = document.getElementById("rec-overlay");
  *
  * - Gates "Create autorun" checkbox: disabled when running or paused.
  * - Updates Start/Stop button labels based on recording mode.
- * - Gates "Load autorun" button: available whenever a ROM is loaded.
+ * - Refreshes autorun status display.
  */
 function updateAutorunControls() {
     // Gate "Create autorun" checkbox: only checkable when stopped
@@ -897,10 +897,24 @@ function updateRecOverlay() {
     }
     const frames = nes.autorun_recording_frame_count();
     const fps = nes.frame_rate_hz();
+    if (!(fps > 0 && Number.isFinite(fps))) {
+        recOverlay.classList.add("hidden");
+        recOverlay.setAttribute("aria-hidden", "true");
+        return;
+    }
     const totalSec = Math.floor(frames / fps);
     const mm = String(Math.floor(totalSec / 60)).padStart(2, "0");
     const ss = String(totalSec % 60).padStart(2, "0");
-    recOverlay.innerHTML = `<span class="rec-dot"></span>REC ${mm}:${ss}`;
+    const timeStr = `REC ${mm}:${ss}`;
+    // Only update DOM when the displayed text changes
+    if (recOverlay.dataset.recTime !== timeStr) {
+        recOverlay.dataset.recTime = timeStr;
+        recOverlay.textContent = "";
+        const dot = document.createElement("span");
+        dot.className = "rec-dot";
+        recOverlay.appendChild(dot);
+        recOverlay.appendChild(document.createTextNode(timeStr));
+    }
     recOverlay.classList.remove("hidden");
     recOverlay.setAttribute("aria-hidden", "false");
 }
