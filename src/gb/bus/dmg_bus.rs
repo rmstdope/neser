@@ -297,7 +297,16 @@ impl GbBus for DmgBus {
                 }
                 // External clock (bit 0 clear): store SC but never start a transfer.
             }
-            0xFF04..=0xFF07 => self.timer.write(addr, val),
+            0xFF04..=0xFF07 => {
+                self.timer.write(addr, val);
+                // Immediately fire any write-triggered TIMA overflow (mirrors SameBoy's
+                // flush_pending_cycles after a timer-register write), so the interrupt is
+                // visible to service_interrupts() at the start of the next instruction.
+                if self.timer.fire_write_overflow_if_pending() {
+                    self.if_reg |= 0x04;
+                    self.timer.take_interrupt();
+                }
+            }
             0xFF0F => self.if_reg = val & 0x1F,
             0xFF10..=0xFF3F => self.apu.write_register(addr, val),
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B => self.ppu.write_register(addr, val),

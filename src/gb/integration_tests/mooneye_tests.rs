@@ -605,13 +605,11 @@ fn test_mooneye_acceptance_timer_div_write() {
 }
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_timer_rapid_toggle() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/timer/rapid_toggle.gb"));
 }
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_timer_tim00_div_trigger() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/timer/tim00_div_trigger.gb"));
 }
@@ -622,7 +620,6 @@ fn test_mooneye_acceptance_timer_tim00() {
 }
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_timer_tim01_div_trigger() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/timer/tim01_div_trigger.gb"));
 }
@@ -633,7 +630,6 @@ fn test_mooneye_acceptance_timer_tim01() {
 }
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_timer_tim10_div_trigger() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/timer/tim10_div_trigger.gb"));
 }
@@ -644,7 +640,6 @@ fn test_mooneye_acceptance_timer_tim10() {
 }
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_timer_tim11_div_trigger() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/timer/tim11_div_trigger.gb"));
 }
@@ -655,19 +650,16 @@ fn test_mooneye_acceptance_timer_tim11() {
 }
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_timer_tima_reload() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/timer/tima_reload.gb"));
 }
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_timer_tima_write_reloading() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/timer/tima_write_reloading.gb"));
 }
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_timer_tma_write_reloading() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/timer/tma_write_reloading.gb"));
 }
