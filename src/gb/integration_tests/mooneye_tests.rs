@@ -745,47 +745,40 @@ fn test_mooneye_emulator_only_mbc1_rom_8mb() {
 }
 
 // ============================================================================
-// emulator-only/ tests — MBC2 (not implemented — pre-ignored)
+// emulator-only/ tests — MBC2
 // ============================================================================
 
 #[test]
-#[ignore = "MBC2 not yet implemented — tracked in #2024"]
 fn test_mooneye_emulator_only_mbc2_bits_ramg() {
     assert_mooneye_pass!(&format!("{BASE}/emulator-only/mbc2/bits_ramg.gb"));
 }
 
 #[test]
-#[ignore = "MBC2 not yet implemented — tracked in #2024"]
 fn test_mooneye_emulator_only_mbc2_bits_romb() {
     assert_mooneye_pass!(&format!("{BASE}/emulator-only/mbc2/bits_romb.gb"));
 }
 
 #[test]
-#[ignore = "MBC2 not yet implemented — tracked in #2024"]
 fn test_mooneye_emulator_only_mbc2_bits_unused() {
     assert_mooneye_pass!(&format!("{BASE}/emulator-only/mbc2/bits_unused.gb"));
 }
 
 #[test]
-#[ignore = "MBC2 not yet implemented — tracked in #2024"]
 fn test_mooneye_emulator_only_mbc2_ram() {
     assert_mooneye_pass!(&format!("{BASE}/emulator-only/mbc2/ram.gb"));
 }
 
 #[test]
-#[ignore = "MBC2 not yet implemented — tracked in #2024"]
 fn test_mooneye_emulator_only_mbc2_rom_1mb() {
     assert_mooneye_pass!(&format!("{BASE}/emulator-only/mbc2/rom_1Mb.gb"));
 }
 
 #[test]
-#[ignore = "MBC2 not yet implemented — tracked in #2024"]
 fn test_mooneye_emulator_only_mbc2_rom_2mb() {
     assert_mooneye_pass!(&format!("{BASE}/emulator-only/mbc2/rom_2Mb.gb"));
 }
 
 #[test]
-#[ignore = "MBC2 not yet implemented — tracked in #2024"]
 fn test_mooneye_emulator_only_mbc2_rom_512kb() {
     assert_mooneye_pass!(&format!("{BASE}/emulator-only/mbc2/rom_512kb.gb"));
 }
