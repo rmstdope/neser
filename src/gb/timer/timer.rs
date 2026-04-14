@@ -113,8 +113,7 @@ impl Timer {
                 // Writing DIV resets the full system counter to 0.
                 // If the currently selected mux bit was HIGH (and timer is enabled),
                 // the reset forces a falling edge → TIMA increments.
-                let bit = MUX_BIT[(self.tac & 0x03) as usize];
-                if self.tac & 0x04 != 0 && self.div_counter & bit != 0 {
+                if self.mux_and_high() {
                     self.do_tima_increment();
                 }
                 self.div_counter = 0;
@@ -122,9 +121,7 @@ impl Timer {
             0xFF05 => {
                 // Writing TIMA during cycle A (overflow pending but not yet loaded)
                 // cancels the reload: the written value stays, no interrupt fires.
-                if self.tima_overflow_pending {
-                    self.tima_overflow_pending = false;
-                }
+                self.tima_overflow_pending = false;
                 // Writes during cycle B (tima_load_active) are ignored: TMA already won.
                 if !self.tima_load_active {
                     self.tima = val;
@@ -138,16 +135,10 @@ impl Timer {
                 }
             }
             0xFF07 => {
-                // Capture the AND(selected_bit, enable) before the write.
-                let old_bit = MUX_BIT[(self.tac & 0x03) as usize];
-                let old_mux_and = self.tac & 0x04 != 0 && self.div_counter & old_bit != 0;
-
+                // If the AND gate output falls from HIGH to LOW, TIMA increments once.
+                let was_high = self.mux_and_high();
                 self.tac = val & 0x07;
-
-                // If the AND gate output fell from HIGH to LOW, TIMA increments once.
-                let new_bit = MUX_BIT[(self.tac & 0x03) as usize];
-                let new_mux_and = self.tac & 0x04 != 0 && self.div_counter & new_bit != 0;
-                if old_mux_and && !new_mux_and {
+                if was_high && !self.mux_and_high() {
                     self.do_tima_increment();
                 }
             }
@@ -188,6 +179,13 @@ impl Timer {
         }
     }
 
+    /// Returns true when the AND-gate output (TAC.enable AND selected mux bit) is HIGH.
+    ///
+    /// A falling edge on this signal (HIGH → LOW) triggers a TIMA increment.
+    fn mux_and_high(&self) -> bool {
+        self.tac & 0x04 != 0 && self.div_counter & MUX_BIT[(self.tac & 0x03) as usize] != 0
+    }
+
     /// Increment TIMA by one, handling overflow into the 1-M-cycle reload delay.
     fn do_tima_increment(&mut self) {
         let (new_val, overflow) = self.tima.overflowing_add(1);
@@ -215,7 +213,6 @@ impl Timer {
     /// next instruction.
     pub(crate) fn fire_write_overflow_if_pending(&mut self) -> bool {
         if self.tima_overflow_pending {
-            self.tima_load_active = false;
             self.tima = self.tma;
             self.tima_overflow_pending = false;
             self.tima_load_active = true;
