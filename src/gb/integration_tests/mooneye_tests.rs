@@ -594,7 +594,6 @@ fn test_mooneye_acceptance_rst_timing() {
 }
 
 #[test]
-#[ignore = "Serial port not fully implemented — tracked in #2026"]
 fn test_mooneye_acceptance_serial_boot_sclk_align_dmgabcmgb() {
     assert_mooneye_pass!(&format!(
         "{BASE}/acceptance/serial/boot_sclk_align-dmgABCmgb.gb"
