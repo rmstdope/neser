@@ -47,7 +47,7 @@ export async function waitForIdleState(page: Page) {
 /** Load a NES ROM via the file input, setting romFromFile = true. */
 export async function loadRomFromFileInput(page: Page) {
     const romBytes = readMockRomBytes();
-    await page.locator("#rom-input").setInputFiles({
+    await page.locator("#rom").setInputFiles({
         name: BUNDLED_ROM_NAME,
         mimeType: "application/octet-stream",
         buffer: romBytes
