@@ -211,6 +211,12 @@ impl DmgBus {
     }
 
     /// Bypass PPU access-blocking for OAM DMA transfers.
+    ///
+    /// On DMG hardware, the DMA controller uses the external bus. For addresses
+    /// in `$E000–$FFFF`, the external bus mirrors WRAM (`$C000–$DFFF`) by
+    /// clearing address bit 13 (equivalent to `addr & !0x2000`). This means
+    /// DMA from `$FE00` reads WRAM at `$DE00`, and DMA from `$FF00` reads
+    /// WRAM at `$DF00`, rather than reading OAM or I/O registers.
     fn read_raw(&self, addr: u16) -> u8 {
         if self.boot_rom_active && addr <= 0x00FF {
             return self.boot_rom[addr as usize];
@@ -220,8 +226,9 @@ impl DmgBus {
             0x8000..=0x9FFF => self.ppu.vram[(addr - 0x8000) as usize],
             0xA000..=0xBFFF => self.cart.read(addr),
             0xC000..=0xDFFF => self.wram[(addr - 0xC000) as usize],
-            0xE000..=0xFDFF => self.wram[(addr - 0xE000) as usize],
-            _ => 0xFF,
+            // $E000–$FFFF: the DMA controller uses the external bus, which
+            // mirrors WRAM here (same as echo RAM, clearing bit 13).
+            0xE000..=0xFFFF => self.wram[(addr - 0xE000) as usize],
         }
     }
 

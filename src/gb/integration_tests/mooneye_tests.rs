@@ -469,7 +469,6 @@ fn test_mooneye_acceptance_oam_dma_reg_read() {
 }
 
 #[test]
-#[ignore = "Requires MBC5 which is not yet implemented — tracked in #2025"]
 fn test_mooneye_acceptance_oam_dma_sources_gs() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/oam_dma/sources-GS.gb"));
 }
@@ -784,53 +783,45 @@ fn test_mooneye_emulator_only_mbc2_rom_512kb() {
 }
 
 // ============================================================================
-// emulator-only/ tests — MBC5 (not implemented — pre-ignored)
+// emulator-only/ tests — MBC5
 // ============================================================================
 
 #[test]
-#[ignore = "MBC5 not yet implemented — tracked in #2025"]
 fn test_mooneye_emulator_only_mbc5_rom_16mb() {
     assert_mooneye_pass!(&format!("{BASE}/emulator-only/mbc5/rom_16Mb.gb"));
 }
 
 #[test]
-#[ignore = "MBC5 not yet implemented — tracked in #2025"]
 fn test_mooneye_emulator_only_mbc5_rom_1mb() {
     assert_mooneye_pass!(&format!("{BASE}/emulator-only/mbc5/rom_1Mb.gb"));
 }
 
 #[test]
-#[ignore = "MBC5 not yet implemented — tracked in #2025"]
 fn test_mooneye_emulator_only_mbc5_rom_2mb() {
     assert_mooneye_pass!(&format!("{BASE}/emulator-only/mbc5/rom_2Mb.gb"));
 }
 
 #[test]
-#[ignore = "MBC5 not yet implemented — tracked in #2025"]
 fn test_mooneye_emulator_only_mbc5_rom_32mb() {
     assert_mooneye_pass!(&format!("{BASE}/emulator-only/mbc5/rom_32Mb.gb"));
 }
 
 #[test]
-#[ignore = "MBC5 not yet implemented — tracked in #2025"]
 fn test_mooneye_emulator_only_mbc5_rom_4mb() {
     assert_mooneye_pass!(&format!("{BASE}/emulator-only/mbc5/rom_4Mb.gb"));
 }
 
 #[test]
-#[ignore = "MBC5 not yet implemented — tracked in #2025"]
 fn test_mooneye_emulator_only_mbc5_rom_512kb() {
     assert_mooneye_pass!(&format!("{BASE}/emulator-only/mbc5/rom_512kb.gb"));
 }
 
 #[test]
-#[ignore = "MBC5 not yet implemented — tracked in #2025"]
 fn test_mooneye_emulator_only_mbc5_rom_64mb() {
     assert_mooneye_pass!(&format!("{BASE}/emulator-only/mbc5/rom_64Mb.gb"));
 }
 
 #[test]
-#[ignore = "MBC5 not yet implemented — tracked in #2025"]
 fn test_mooneye_emulator_only_mbc5_rom_8mb() {
     assert_mooneye_pass!(&format!("{BASE}/emulator-only/mbc5/rom_8Mb.gb"));
 }
