@@ -54,6 +54,24 @@ pub struct DmgBus {
     sc: u8,
     /// Bytes captured via serial transfer (written by ROM via SB/SC).
     serial_buf: Vec<u8>,
+    /// Bits remaining in the current internal-clock serial transfer.
+    /// 0 means no transfer is in progress; 1–8 means a transfer is active.
+    /// Each time the serial master clock (see below) transitions to false,
+    /// one bit is shifted; when this reaches 0 the transfer completes.
+    serial_bits_remaining: u8,
+    /// Persistent serial master clock toggle (mirrors SameBoy `serial_master_clock`).
+    ///
+    /// Toggles on every falling edge of bit 7 of the internal DIV counter
+    /// (i.e., every 256 T-cycles = 64 M-cycles).  A serial bit is shifted
+    /// only when this flag transitions to `false`, giving an effective clock
+    /// period of 512 T-cycles = 128 M-cycles = 8192 Hz.
+    ///
+    /// The flag is NOT reset when a transfer starts; it persists continuously
+    /// from power-on.  On SC write (start/restart transfer), if the flag is
+    /// currently `true` it is immediately forced to `false` — the same
+    /// "edge injection" SameBoy performs — ensuring the first serial bit is
+    /// timed at the correct phase relative to the div counter.
+    serial_master_clock: bool,
 }
 
 impl DmgBus {
@@ -64,7 +82,11 @@ impl DmgBus {
             ppu: Ppu::new(),
             wram: [0u8; 0x2000],
             hram: [0u8; 0x7F],
-            timer: Timer::new(),
+            // Real DMG-B hardware has a sub-byte div_counter phase of 204 T-cycles
+            // at power-on. Setting this initial value ensures our custom boot ROM
+            // exits at the correct clock phase (div_counter = 28364) so that
+            // serial clock edges align with acceptance-test expectations.
+            timer: Timer::with_div_counter(204),
             joypad: Joypad::new(),
             apu: Apu::new(is_cgb),
             if_reg: 0,
@@ -74,6 +96,8 @@ impl DmgBus {
             sb: 0xFF,
             sc: 0x7E,
             serial_buf: Vec::new(),
+            serial_bits_remaining: 0,
+            serial_master_clock: false,
         };
         // Real DMG hardware powers on with LCDC=$00 (LCD disabled).
         // The boot ROM tile-loading runs while the LCD is off so VRAM writes
@@ -91,7 +115,7 @@ impl DmgBus {
     pub fn reset(&mut self) {
         self.ppu = Ppu::new();
         self.ppu.write_register(0xFF40, 0x00); // power-on: LCD disabled
-        self.timer = Timer::new();
+        self.timer = Timer::with_div_counter(204);
         self.joypad = Joypad::new();
         self.apu = Apu::new(self.cart.is_cgb());
         self.wram = [0u8; 0x2000];
@@ -102,6 +126,8 @@ impl DmgBus {
         self.sb = 0xFF;
         self.sc = 0x7E;
         self.serial_buf.clear();
+        self.serial_bits_remaining = 0;
+        self.serial_master_clock = false;
     }
 
     /// Returns `true` while the boot ROM is still mapped at $0000–$00FF.
@@ -131,11 +157,38 @@ impl DmgBus {
     ///
     /// Propagates any timer interrupt to the IF register ($FF0F bit 2).
     /// Propagates PPU VBlank (bit 0) and STAT (bit 1) interrupts.
+    /// Drives the serial transfer: on each falling edge of bit 7 of the
+    /// internal DIV counter (64 M-cycles = 256 T-cycles), `serial_master_clock`
+    /// is toggled.  When it transitions to `false` and an internal-clock
+    /// transfer is active (SC = $81), one bit is shifted.  After 8 such
+    /// transitions the transfer completes, SB is overwritten with 0xFF,
+    /// SC bit 7 is cleared, and IF bit 3 (serial interrupt) is raised.
     pub fn tick(&mut self, m_cycles: u8) {
-        self.timer.tick(m_cycles);
-        if self.timer.interrupt_pending {
-            self.if_reg |= 0x04;
-            self.timer.interrupt_pending = false;
+        for _ in 0..m_cycles {
+            let pre_counter = self.timer.raw_counter();
+            let pre_bit7 = pre_counter & 0x080;
+            self.timer.tick(1);
+            if self.timer.interrupt_pending {
+                self.if_reg |= 0x04;
+                self.timer.interrupt_pending = false;
+            }
+            // Falling edge of bit 7 of the DIV counter (runs continuously).
+            let post_bit7 = self.timer.raw_counter() & 0x080;
+            if pre_bit7 != 0 && post_bit7 == 0 {
+                self.serial_master_clock ^= true;
+                if !self.serial_master_clock
+                    && self.serial_bits_remaining > 0
+                    && self.sc & 0x81 == 0x81
+                {
+                    self.serial_bits_remaining -= 1;
+                    if self.serial_bits_remaining == 0 {
+                        self.serial_buf.push(self.sb);
+                        self.sb = 0xFF;
+                        self.if_reg |= 0x08;
+                        self.sc &= 0x7F;
+                    }
+                }
+            }
         }
         self.ppu.tick_dots(u32::from(m_cycles) * 4);
         self.if_reg |= self.ppu.take_pending_interrupts();
@@ -219,20 +272,32 @@ impl GbBus for DmgBus {
             0xFF00 => self.joypad.write(val),
             0xFF01 => self.sb = val,
             0xFF02 => {
-                self.sc = val;
-                if val & 0x80 != 0 {
-                    // Internal clock transfer: capture SB, fire serial interrupt, clear transfer flag
-                    self.serial_buf.push(self.sb);
-                    self.if_reg |= 0x08;
-                    self.sc &= 0x7F;
+                // Clock-alignment step (mirrors SameBoy): when *starting* an
+                // internal-clock transfer and serial_master_clock is currently
+                // true, immediately force it to false before latching SC.
+                // This ensures the first serial bit is always timed at the
+                // correct phase — exactly what real hardware does when a
+                // transfer begins mid-period.  Restricting to internal-clock
+                // starts avoids unintentionally shifting the clock phase on
+                // writes that merely inspect or clear SC.
+                if val & 0x81 == 0x81 && self.serial_master_clock {
+                    self.serial_master_clock = false;
                 }
+                self.sc = val;
+                if val & 0x80 != 0 && val & 0x01 != 0 {
+                    // Internal clock (bit 0 set): start / restart 8-bit transfer.
+                    self.serial_bits_remaining = 8;
+                }
+                // External clock (bit 0 clear): store SC but never start a transfer.
             }
             0xFF04..=0xFF07 => self.timer.write(addr, val),
             0xFF0F => self.if_reg = val & 0x1F,
             0xFF10..=0xFF3F => self.apu.write_register(addr, val),
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B => self.ppu.write_register(addr, val),
             0xFF46 => self.do_oam_dma(val),
-            0xFF50 => self.boot_rom_active = false,
+            0xFF50 => {
+                self.boot_rom_active = false;
+            }
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize] = val,
             0xFFFF => self.ie_reg = val,
             _ => {}
@@ -641,29 +706,178 @@ mod tests {
 
     #[test]
     fn test_serial_transfer_captures_byte() {
-        // Given: SB = 0x41; When: write SC = 0x81 (bit 7 set → start transfer);
-        // Then: serial_output contains the SB byte 0x41
+        // Given: SB = 0x41; When: write SC = 0x81 (start internal-clock transfer) and tick
+        // 1024 M-cycles; Then: serial_output contains 0x41
         let mut bus = make_bus();
         bus.write(0xFF01, 0x41);
         bus.write(0xFF02, 0x81);
+        for _ in 0..1024 {
+            bus.tick(1);
+        }
         assert_eq!(bus.serial_output(), &[0x41]);
     }
 
     #[test]
     fn test_serial_transfer_sets_if_bit3() {
-        // Given: trigger a serial transfer; Then: IF bit 3 (serial interrupt) is set
+        // Given: trigger a serial transfer; When: 1024 M-cycles pass; Then: IF bit 3 is set
         let mut bus = make_bus();
         bus.write(0xFF01, 0x42);
         bus.write(0xFF02, 0x81);
+        for _ in 0..1024 {
+            bus.tick(1);
+        }
         assert_eq!(bus.read(0xFF0F) & 0x08, 0x08);
     }
 
     #[test]
     fn test_serial_transfer_clears_sc_bit7() {
-        // Given: write 0x81 to SC; Then: reading SC immediately after returns bit 7 = 0
+        // Given: write 0x81 to SC; When: 1024 M-cycles pass; Then: SC bit 7 = 0
         let mut bus = make_bus();
         bus.write(0xFF02, 0x81);
+        for _ in 0..1024 {
+            bus.tick(1);
+        }
         assert_eq!(bus.read(0xFF02) & 0x80, 0x00);
+    }
+
+    #[test]
+    fn test_serial_transfer_not_immediate() {
+        // Given: SB = 0x42, SC = 0x81 (transfer started);
+        // When: fewer than 77 M-cycles have elapsed (before the first serial
+        //   count, which happens at M-cycle 77 with initial div_counter = 204
+        //   and serial_master_clock = false);
+        // Then: SC bit 7 still set, IF bit 3 still clear, serial_output empty
+        let mut bus = make_bus();
+        bus.write(0xFF01, 0x42);
+        bus.write(0xFF02, 0x81);
+        for _ in 0..76 {
+            bus.tick(1);
+        }
+        assert_eq!(
+            bus.read(0xFF02) & 0x80,
+            0x80,
+            "SC bit 7 should still be set"
+        );
+        assert_eq!(
+            bus.read(0xFF0F) & 0x08,
+            0x00,
+            "IF bit 3 should still be clear"
+        );
+        assert!(
+            bus.serial_output().is_empty(),
+            "serial_output should be empty"
+        );
+    }
+
+    #[test]
+    fn test_serial_transfer_completes_within_1024_m_cycles() {
+        // Given: transfer started at M-cycle 0;
+        // When: 1024 M-cycles have elapsed (the maximum transfer duration);
+        // Then: transfer has completed (IF bit 3 set, SC bit 7 clear).
+        // Note: with initial div_counter = 204 and SMC = false, the 8th bit
+        // is counted at M-cycle 973; this test confirms completion within the
+        // maximum window without asserting the exact cycle.
+        let mut bus = make_bus();
+        bus.write(0xFF01, 0x99);
+        bus.write(0xFF02, 0x81);
+        for _ in 0..1024 {
+            bus.tick(1);
+        }
+        assert_eq!(
+            bus.read(0xFF0F) & 0x08,
+            0x08,
+            "IF bit 3 should be set within 1024 M-cycles"
+        );
+        assert_eq!(
+            bus.read(0xFF02) & 0x80,
+            0x00,
+            "SC bit 7 should be cleared within 1024 M-cycles"
+        );
+    }
+
+    #[test]
+    fn test_serial_transfer_sets_sb_to_ff() {
+        // Given: SB = 0x42; When: transfer completes (1024 M-cycles);
+        // Then: SB is 0xFF (simulates receiving 0xFF from absent remote)
+        let mut bus = make_bus();
+        bus.write(0xFF01, 0x42);
+        bus.write(0xFF02, 0x81);
+        for _ in 0..1024 {
+            bus.tick(1);
+        }
+        assert_eq!(
+            bus.read(0xFF01),
+            0xFF,
+            "SB should be 0xFF after transfer completes"
+        );
+    }
+
+    #[test]
+    fn test_serial_external_clock_never_fires() {
+        // Given: SC = 0x80 (bit 7 set, bit 0 clear = external clock);
+        // When: 2048 M-cycles pass;
+        // Then: IF bit 3 never set and SC bit 7 remains set
+        let mut bus = make_bus();
+        bus.write(0xFF01, 0x55);
+        bus.write(0xFF02, 0x80);
+        for _ in 0..2048 {
+            bus.tick(1);
+        }
+        assert_eq!(
+            bus.read(0xFF0F) & 0x08,
+            0x00,
+            "IF bit 3 should never fire for external clock"
+        );
+        assert_eq!(
+            bus.read(0xFF02) & 0x80,
+            0x80,
+            "SC bit 7 should remain set for external clock"
+        );
+    }
+
+    #[test]
+    fn test_serial_transfer_restart() {
+        // Initial div_counter = 204; bit-7 falls at absolute M-cycles 13, 77, 141, 205, …
+        // With serial_master_clock (SMC) starting false, counts (SMC→false) at 77, 205, …, 973.
+        // Write SC=0x81 at M-cycle 0 (first transfer, byte 0x11).
+        // Restart with byte 0x22 at M-cycle 64 — before the first count at M-cycle 77.
+        //   At restart: SMC=true (one bit-7 fall at M-cycle 13) → force-aligned to false.
+        //   After restart: next bit-7 falls at 77 (SMC→true, no count), 141 (SMC→false,
+        //   COUNT), …, 1037 (8th count).  Interrupt fires at M-cycle 1037:
+        //   - no interrupt at M-cycle 1036 (972 M-cycles after restart)
+        //   - interrupt fires at M-cycle 1037 (973 M-cycles after restart)
+        let mut bus = make_bus();
+        bus.write(0xFF01, 0x11);
+        bus.write(0xFF02, 0x81); // first transfer
+        for _ in 0..64 {
+            bus.tick(1);
+        }
+        // Confirm no interrupt fired yet (first count not until M-cycle 77)
+        assert_eq!(bus.read(0xFF0F) & 0x08, 0x00, "no interrupt before restart");
+        // Restart
+        bus.write(0xFF01, 0x22);
+        bus.write(0xFF02, 0x81);
+        // Tick 972 more M-cycles (total 1036 from start) — one tick short of completion
+        for _ in 0..972 {
+            bus.tick(1);
+        }
+        assert_eq!(
+            bus.read(0xFF0F) & 0x08,
+            0x00,
+            "no interrupt 972 M-cycles after restart"
+        );
+        // One more tick reaches M-cycle 1037 — 8th counted bit fires interrupt
+        bus.tick(1);
+        assert_eq!(
+            bus.read(0xFF0F) & 0x08,
+            0x08,
+            "interrupt fires at 8th bit after restart"
+        );
+        assert_eq!(
+            bus.serial_output(),
+            &[0x22],
+            "only the restarted byte captured"
+        );
     }
 
     // ── IDU glitch notifications (Phase C) ───────────────────────────────────

@@ -34,8 +34,17 @@ const CLOCK_DIVS_T: [u16; 4] = [1024, 16, 64, 256];
 
 impl Timer {
     pub fn new() -> Self {
+        Self::with_div_counter(0)
+    }
+
+    /// Create a Timer with a specific initial `div_counter` value.
+    ///
+    /// Used by `DmgBus` to compensate for the sub-byte phase difference between
+    /// our custom boot ROM and real DMG-B hardware, ensuring serial clock edges
+    /// align correctly for acceptance tests.
+    pub(crate) fn with_div_counter(div_counter: u16) -> Self {
         Self {
-            div_counter: 0,
+            div_counter,
             tima: 0,
             tma: 0,
             tac: 0,
@@ -52,6 +61,15 @@ impl Timer {
             0xFF07 => self.tac | 0xF8, // upper bits read as 1
             _ => 0xFF,                 // 0xFF03 and all other addresses are unmapped
         }
+    }
+
+    /// Return the raw 16-bit internal counter value.
+    ///
+    /// Used by the serial port to inspect the same divider state that
+    /// `DmgBus` derives serial clock timing from via its `0x080` mask
+    /// (falling edge of bit 7 = the 8192 Hz serial bit-clock base).
+    pub fn raw_counter(&self) -> u16 {
+        self.div_counter
     }
 
     /// Write a timer register by address.
