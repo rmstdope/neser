@@ -45,6 +45,7 @@ import {
     shouldForwardArkanoidMouseInput,
     shouldKeepPointerLocked,
 } from "./input/pointer_lock";
+import { computeButtonStates } from "./ui/emulation_controls";
 
 const statusEl = document.getElementById("status");
 const startBtn = document.getElementById("start") as HTMLButtonElement;
@@ -865,7 +866,6 @@ const recOverlay = document.getElementById("rec-overlay");
  * Update autorun-related UI controls based on current state.
  *
  * - Gates "Create autorun" checkbox: disabled when running or paused.
- * - Updates Start/Stop button labels based on recording mode.
  * - Refreshes autorun status display.
  */
 function updateAutorunControls() {
@@ -874,17 +874,35 @@ function updateAutorunControls() {
         autorunCreateCheckbox.disabled = running || paused;
     }
 
-    // Update Start/Stop button labels
-    const isRecording = autorunCtx.isCreateRecording();
-    if (startBtn) {
-        startBtn.textContent = isRecording ? "Start Recording" : "Start";
-    }
-    const stopBtnEl = document.getElementById("stop");
-    if (stopBtnEl) {
-        stopBtnEl.textContent = isRecording ? "Stop Recording" : "Stop";
-    }
-
     updateAutorunStatus();
+}
+
+/**
+ * Centralized emulation button state update.
+ * Computes enabled/disabled and label for Start, Pause, Reset, Stop
+ * based on current emulation state, and applies the result to the DOM.
+ */
+function updateEmulationButtons() {
+    const states = computeButtonStates({
+        romLoaded: romBytes !== null,
+        running,
+        paused,
+        isRecording: autorunCtx.isCreateRecording(),
+    });
+    startBtn.disabled = !states.startEnabled;
+    startBtn.textContent = states.startLabel;
+    // pauseBtn, stopBtn, resetBtn are module-level and non-null (checked at init)
+    if (pauseBtn) {
+        pauseBtn.disabled = !states.pauseEnabled;
+        pauseBtn.textContent = states.pauseLabel;
+    }
+    if (stopBtn) {
+        stopBtn.disabled = !states.stopEnabled;
+        stopBtn.textContent = states.stopLabel;
+    }
+    if (resetBtn) {
+        resetBtn.disabled = !states.resetEnabled;
+    }
 }
 
 /** Update the recording overlay (REC : MM:SS) on the canvas. */
@@ -951,6 +969,7 @@ if (autorunCreateCheckbox) {
             autorunCtx.clearLoadedFile();
         }
         updateAutorunControls();
+        updateEmulationButtons();
     });
 }
 
@@ -960,6 +979,7 @@ if (autorunCancelBtn) {
         autorunCtx.setCreateRecording(false);
         if (autorunCreateCheckbox) autorunCreateCheckbox.checked = false;
         updateAutorunControls();
+        updateEmulationButtons();
     });
 }
 
@@ -1115,6 +1135,7 @@ async function applyRomBytes(bytes: Uint8Array, name: string) {
     setStatus(`Loaded ROM: ${name} (${romBytes.length} bytes)`);
     stopIdleScroller();
     await refreshSaveStateController();
+    updateEmulationButtons();
 }
 
 async function refreshSaveStateController() {
@@ -1272,7 +1293,7 @@ async function start() {
     startBtn!.disabled = true;
     if (!romBytes) {
         setStatus("Please choose a ROM first", true);
-        startBtn!.disabled = false;
+        updateEmulationButtons();
         return;
     }
     stopIdleScroller();
@@ -1331,7 +1352,7 @@ async function start() {
     } catch (err: unknown) {
         drainNesToasts(nes, toastOverlay);
         setStatus(`Failed to load ROM: ${err}`, true);
-        startBtn!.disabled = false;
+        updateEmulationButtons();
         // Only reset nes if wasm/webgl initialization failed
         // Don't reset on simple ROM load errors so we can retry
         if (err instanceof Error && err.message.includes("WebGL")) {
@@ -1342,9 +1363,9 @@ async function start() {
     }
     running = true;
     paused = false;
-    // Keep start button disabled while running; it is re-enabled in stop().
     setStatus("Running...");
     updateAutorunControls();
+    updateEmulationButtons();
     requestAnimationFrame(step);
 }
 
@@ -1364,6 +1385,7 @@ function pauseResume() {
         setStatus("Paused");
     }
     updateAutorunControls();
+    updateEmulationButtons();
 }
 
 let debuggerHexdumpError = "";
@@ -1950,7 +1972,6 @@ function stop() {
 
     running = false;
     paused = false;
-    startBtn!.disabled = false;
     clearCanvas();
     lastFrameTime = 0;
     frameLimiter.reset();
@@ -1963,6 +1984,7 @@ function stop() {
     setStatus("Stopped. You can restart or load a new ROM");
     updateRecOverlay();
     updateAutorunControls();
+    updateEmulationButtons();
 }
 
 /**
@@ -2229,7 +2251,7 @@ function step(timestamp: number) {
         }
     } catch (err) {
         running = false;
-        startBtn.disabled = false;
+        updateEmulationButtons();
         romInput.disabled = false;
         setStatus(`Emulation error: ${err}`, true);
         if (console && typeof console.error === "function") {
@@ -2283,9 +2305,9 @@ muteBtn!.addEventListener("click", async () => {
     }
 });
 updateMuteButton();
-const pauseBtn = document.getElementById("pause");
-const stopBtn = document.getElementById("stop");
-const resetBtn = document.getElementById("reset");
+const pauseBtn = document.getElementById("pause") as HTMLButtonElement | null;
+const stopBtn = document.getElementById("stop") as HTMLButtonElement | null;
+const resetBtn = document.getElementById("reset") as HTMLButtonElement | null;
 if (!pauseBtn || !stopBtn || !resetBtn) {
     throw new Error("Pause/Stop/Reset buttons not found in DOM");
 }
@@ -2312,6 +2334,8 @@ async function populateRomSelect() {
 }
 
 populateRomSelect();
+// Set initial button states (all disabled until a ROM is loaded)
+updateEmulationButtons();
 
 // Keyboard input mappings for both controllers
 // Controller 1: W=Up, S=Down, A=Left, D=Right, R=Y, T=X, F=B, G=A, Q=L, E=R, 4=Select, 5=Start
@@ -2797,6 +2821,7 @@ function cancelActiveRecording() {
     if (autorunCreateCheckbox) autorunCreateCheckbox.checked = false;
     updateRecOverlay();
     updateAutorunControls();
+    updateEmulationButtons();
     toastOverlay.show("Recording cancelled");
 }
 
