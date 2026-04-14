@@ -38,7 +38,7 @@ export function createSineScroller({
             element.height = height;
             return element;
         })();
-    const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
     if (!ctx) {
         throw new Error("2D canvas context unavailable for sine scroller");
     }

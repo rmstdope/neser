@@ -964,7 +964,12 @@ function updateAutorunStatus() {
             ...(config.extend ? ["▸ Extending"] : []),
             ...(expectedRom ? [`▸ Load ${expectedRom}`] : []),
         ];
-        autorunStatusEl.innerHTML = items.map(t => `<li>${t}</li>`).join("");
+        autorunStatusEl.textContent = "";
+        for (const t of items) {
+            const li = document.createElement("li");
+            li.textContent = t;
+            autorunStatusEl.appendChild(li);
+        }
         autorunCancelBtn?.classList.remove("hidden");
     }
 }
@@ -2266,6 +2271,7 @@ function step(timestamp: number) {
         }
     } catch (err) {
         running = false;
+        paused = false;
         updateEmulationButtons();
         romInput.disabled = false;
         setStatus(`Emulation error: ${err}`, true);

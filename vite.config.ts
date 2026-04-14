@@ -1,22 +1,48 @@
 /// <reference types="vitest/config" />
 import { defineConfig, type Plugin } from "vite";
 import tailwindcss from "@tailwindcss/vite";
-import { readdirSync, statSync, writeFileSync, existsSync } from "fs";
-import { join, relative } from "path";
+import { readdirSync, realpathSync, statSync, writeFileSync, existsSync } from "fs";
+import { dirname, join, relative } from "path";
+import { fileURLToPath } from "url";
 
-/** Recursively find all .nes files under a directory, following symlinks. */
-function findNesFiles(dir: string, base: string): string[] {
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+/** Recursively find all .nes files under a directory, following symlinks safely. */
+function findNesFiles(
+  dir: string,
+  base: string,
+  visited: Set<string> = new Set(),
+  baseReal?: string,
+): string[] {
   const results: string[] = [];
   if (!existsSync(dir)) return results;
+
+  let resolvedBase = baseReal;
+  try { resolvedBase ??= realpathSync(base); } catch { return results; }
+
+  const isWithinBase = (targetReal: string) => {
+    const rel = relative(resolvedBase!, targetReal);
+    return rel === "" || (!rel.startsWith("..") && !rel.startsWith("/"));
+  };
+
+  let resolvedDir: string;
+  try { resolvedDir = realpathSync(dir); } catch { return results; }
+
+  if (!isWithinBase(resolvedDir) || visited.has(resolvedDir)) return results;
+  visited.add(resolvedDir);
+
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const fullPath = join(dir, entry.name);
-    // Follow symlinks: use statSync (follows links) instead of entry.isDirectory
     let stat;
     try { stat = statSync(fullPath); } catch { continue; }
     if (stat.isDirectory()) {
-      results.push(...findNesFiles(fullPath, base));
+      results.push(...findNesFiles(fullPath, base, visited, resolvedBase));
     } else if (entry.name.toLowerCase().endsWith(".nes")) {
-      results.push(relative(base, fullPath));
+      let resolvedFile: string;
+      try { resolvedFile = realpathSync(fullPath); } catch { continue; }
+      if (isWithinBase(resolvedFile)) {
+        results.push(relative(base, fullPath));
+      }
     }
   }
   return results;
