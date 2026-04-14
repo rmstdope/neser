@@ -595,7 +595,9 @@ impl Ppu {
             // Outside rendering, it takes effect immediately.
             let scanline = self.timing.scanline();
             let prerender = tick::prerender_scanline(self.timing.tv_system());
-            let is_rendering_scanline = scanline < 240 || scanline == prerender;
+            let is_rendering_scanline = scanline
+                < crate::nes::ppu::timing::LAST_VISIBLE_SCANLINE_PLUS_ONE
+                || scanline == prerender;
 
             if is_rendering_scanline && self.registers.is_rendering_enabled() {
                 // Undo the immediate v=t; the tick loop will apply it after the delay.

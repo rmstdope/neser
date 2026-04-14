@@ -646,17 +646,9 @@ fn tick_delayed_updates(ppu: &mut Ppu) {
             let new_v = ppu.pending_vram_addr;
             ppu.registers.set_v(new_v);
 
-            // Notify mapper of address change (needed for MMC3 A12 detection)
+            // Notify mapper of the delayed address change exactly once
+            // (this also handles MMC3 A12 tracking).
             ppu.prime_a12_and_notify_mapper(old_v, new_v);
-
-            // When rendering is disabled, also update the bus address for mapper hooks
-            let scanline = ppu.timing.scanline();
-            let is_rendering_enabled = ppu.registers.is_rendering_enabled();
-            if scanline >= LAST_VISIBLE_SCANLINE_PLUS_ONE || !is_rendering_enabled {
-                ppu.with_mapper_mut(|mapper| {
-                    mapper.ppu_address_changed(new_v & 0x3FFF);
-                });
-            }
 
             trace_ppu!(3; "delayed v=t applied v={:04X} y={} x={}",
                 new_v,

@@ -934,9 +934,12 @@ AA AA 01 01 10 10 01 01 00 00\n\
             }
         }
 
-        // Diagnostic: print failures before asserting
-        if !all_failures.is_empty() {
-            // Print summary by frame
+        // Target: at most 20 unwanted pixels across all 10 checked frames.
+        // The remaining 20 failures are $2001 BG-enable timing edge cases at
+        // x=200-201 on frames 3 and 7 only (period-4 pattern).  Even Mesen
+        // has a few NTSC failures in this test area.  See issue #2054.
+        if all_failures.len() > 20 {
+            // Print per-frame breakdown only when the assertion is about to fail
             for f in 0..10 {
                 let frame_fails: Vec<_> = all_failures
                     .iter()
@@ -949,18 +952,11 @@ AA AA 01 01 10 10 01 01 00 00\n\
                     }
                 }
             }
-            eprintln!("{} total failures across 10 frames", all_failures.len());
+            panic!(
+                "expected at most 20 scanline test failures, but got {} failures:\n{}",
+                all_failures.len(),
+                all_failures.join("\n")
+            );
         }
-
-        // Target: at most 20 unwanted pixels across all 10 checked frames.
-        // The remaining 20 failures are $2001 BG-enable timing edge cases at
-        // x=200-201 on frames 3 and 7 only (period-4 pattern).  Even Mesen
-        // has a few NTSC failures in this test area.  See issue #2054.
-        assert!(
-            all_failures.len() <= 20,
-            "expected at most 20 scanline test failures, but got {} failures:\n{}",
-            all_failures.len(),
-            all_failures.join("\n")
-        );
     }
 }
