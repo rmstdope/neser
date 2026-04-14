@@ -934,28 +934,33 @@ AA AA 01 01 10 10 01 01 00 00\n\
             }
         }
 
-        // An average of 42.8 failures per frame across 10 frames is the
-        // best we can do for now with the current OAM implementation
+        // Diagnostic: print failures before asserting
+        if !all_failures.is_empty() {
+            // Print summary by frame
+            for f in 0..10 {
+                let frame_fails: Vec<_> = all_failures
+                    .iter()
+                    .filter(|s| s.starts_with(&format!("frame_offset={},", f)))
+                    .collect();
+                if !frame_fails.is_empty() {
+                    eprintln!("Frame {}: {} failures", f, frame_fails.len());
+                    for fail in &frame_fails[..frame_fails.len().min(40)] {
+                        eprintln!("  {}", fail);
+                    }
+                }
+            }
+            eprintln!("{} total failures across 10 frames", all_failures.len());
+        }
+
+        // Target: at most 20 unwanted pixels across all 10 checked frames.
+        // The remaining 20 failures are $2001 BG-enable timing edge cases at
+        // x=200-201 on frames 3 and 7 only (period-4 pattern).  Even Mesen
+        // has a few NTSC failures in this test area.  See issue #2054.
         assert!(
-            all_failures.len() <= 428,
-            "expected no more than 428 scanline test failures, but got:\n{}",
+            all_failures.len() <= 20,
+            "expected at most 20 scanline test failures, but got {} failures:\n{}",
+            all_failures.len(),
             all_failures.join("\n")
         );
-        // if !all_failures.is_empty() {
-        //     // Print summary by frame
-        //     for f in 0..10 {
-        //         let frame_fails: Vec<_> = all_failures
-        //             .iter()
-        //             .filter(|s| s.starts_with(&format!("frame_offset={},", f)))
-        //             .collect();
-        //         if !frame_fails.is_empty() {
-        //             eprintln!("Frame {}: {} failures", f, frame_fails.len());
-        //             for fail in &frame_fails[..frame_fails.len().min(20)] {
-        //                 eprintln!("  {}", fail);
-        //             }
-        //         }
-        //     }
-        //     panic!("{} total failures across 10 frames", all_failures.len());
-        // }
     }
 }

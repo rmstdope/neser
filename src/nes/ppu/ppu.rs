@@ -151,6 +151,11 @@ pub struct Ppu {
     vs_ppu_type: Option<VsPpuType>,
     /// VS System palette override (set from vs_ppu_type).
     vs_palette: Option<&'static [(u8, u8, u8); 64]>,
+    /// Delayed v=t update countdown (3 PPU cycles after second $2006 write).
+    /// Based on Visual NES findings, documented in Mesen2 NesPpu.cpp.
+    update_vram_addr_delay: u8,
+    /// The pending VRAM address value when a delayed v=t update is active.
+    pending_vram_addr: u16,
 }
 
 impl Ppu {
@@ -288,6 +293,8 @@ impl Ppu {
             famicom_emphasis: false,
             vs_ppu_type: None,
             vs_palette: None,
+            update_vram_addr_delay: 0,
+            pending_vram_addr: 0,
         }
     }
 
@@ -295,6 +302,22 @@ impl Ppu {
     #[cfg(test)]
     pub fn new_for_testing(tv_system: TimingMode) -> Self {
         Self::new(tv_system, crate::nes::console::RamInitMode::Zero)
+    }
+
+    /// Flush any pending delayed VRAM address update.
+    ///
+    /// In real hardware, consecutive CPU writes are separated by at least 3 PPU
+    /// cycles (one CPU cycle), so a $2006 delay always completes before the
+    /// next register access. Unit tests that call write methods directly without
+    /// ticking the PPU need to call this to mimic that elapsed time.
+    #[cfg(test)]
+    pub fn flush_pending_vram_addr(&mut self) {
+        if self.update_vram_addr_delay > 0 {
+            let old_v = self.registers.v();
+            self.registers.set_v(self.pending_vram_addr);
+            self.prime_a12_and_notify_mapper(old_v, self.pending_vram_addr);
+            self.update_vram_addr_delay = 0;
+        }
     }
 
     #[cfg(test)]
@@ -555,7 +578,7 @@ impl Ppu {
             self.registers.v(),
         );
         let old_v = self.registers.v();
-        self.registers.write_address(value, is_dummy_write);
+        let was_second_write = self.registers.write_address(value, is_dummy_write);
         trace_ppu!(3; "ppuaddr write value={:02X} w_after={} t_after={:04X} v_after={:04X}",
             value,
             self.registers.w(),
@@ -564,10 +587,26 @@ impl Ppu {
         );
         self.registers.set_io_bus(value); // Update I/O bus
 
-        // Notify mapper if v register changed (happens on second write to $2006)
-        // This is needed for MMC3 A12 detection when manually toggling address
-        let new_v = self.registers.v();
-        self.prime_a12_and_notify_mapper(old_v, new_v);
+        if was_second_write {
+            let new_addr = self.registers.v(); // v was set to t by write_address
+
+            // During rendering scanlines the v=t update is delayed by 3 PPU
+            // cycles (based on Visual NES findings, ref Mesen2 NesPpu.cpp).
+            // Outside rendering, it takes effect immediately.
+            let scanline = self.timing.scanline();
+            let prerender = tick::prerender_scanline(self.timing.tv_system());
+            let is_rendering_scanline = scanline < 240 || scanline == prerender;
+
+            if is_rendering_scanline && self.registers.is_rendering_enabled() {
+                // Undo the immediate v=t; the tick loop will apply it after the delay.
+                self.registers.set_v(old_v);
+                self.update_vram_addr_delay = 3;
+                self.pending_vram_addr = new_addr;
+            } else {
+                // Immediate update outside rendering; notify mapper of address change.
+                self.prime_a12_and_notify_mapper(old_v, new_addr);
+            }
+        }
     }
 
     /// Read from data register ($2007)
@@ -1915,6 +1954,7 @@ mod tests {
 
         ppu.write_address(0x20, false);
         ppu.write_address(0x00, false);
+        ppu.flush_pending_vram_addr(); // In hardware, ≥3 PPU cycles elapse before next write
         ppu.write_data(0x12);
 
         assert_eq!(ppu.v_register(), 0x3001);

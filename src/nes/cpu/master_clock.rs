@@ -14,6 +14,20 @@ pub struct MasterClock {
 }
 
 impl MasterClock {
+    // Shift between read and write bus-access timing within a CPU cycle.
+    //
+    // In the real NES, the PPU and CPU share a master clock.  The data-bus
+    // access (read or write) occurs at a specific master-clock position
+    // inside each CPU cycle.  Writes are placed later than reads.
+    //
+    // For NTSC (cpu_div=12, ppu_div=4, start=6):
+    //   Write: before = start + shift = 6+2 = 8  → 8/4 = 2 PPU ticks before
+    //          after  = end   - shift = 6-2 = 4  → 4/4 = 1 PPU tick  after
+    //   Read:  before = start - shift = 6-2 = 4  → 4/4 = 1 PPU tick  before
+    //          after  = end   + shift = 6+2 = 8  → 8/4 = 2 PPU ticks after
+    //
+    // This matches Mesen2's PPU-driven model where 2 PPU dots execute
+    // before the CPU write takes effect on each CPU write cycle.
     const READ_WRITE_SHIFT: u64 = 1;
     pub fn new(tv_system: TimingMode) -> Self {
         // Dividers from Mesen2 NesCpu.cpp SetMasterClockDivider():

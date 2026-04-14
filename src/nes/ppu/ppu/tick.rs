@@ -86,6 +86,7 @@ pub(super) fn tick(ppu: &mut Ppu) {
     tick_background(ppu);
     tick_sprites(ppu);
     tick_pixel_output(ppu);
+    tick_delayed_updates(ppu);
 }
 
 /// Phase 1: Advance timing, detect frame boundaries, and notify mappers.
@@ -247,8 +248,11 @@ fn tick_background(ppu: &mut Ppu) {
                 let v = ppu.registers.v();
                 match fetch_step {
                     0 => {
-                        // Fetch nametable byte (cycle 2 of tile)
-                        ppu.background.fetch_nametable(v, |addr| {
+                        // Fetch nametable byte (cycle 2 of tile).
+                        // The pattern-table base and fine-Y are latched here
+                        // so that a mid-tile $2000 write does not affect this
+                        // tile's pattern fetch (matching real HW / Mesen).
+                        ppu.background.fetch_nametable(v, bg_pattern_table, |addr| {
                             ppu.memory.read_nametable_mapped(addr, cartridge)
                         });
                     }
@@ -260,19 +264,17 @@ fn tick_background(ppu: &mut Ppu) {
                     }
                     2 => {
                         // Fetch pattern table low byte (cycle 6 of tile)
-                        ppu.background
-                            .fetch_pattern_lo(bg_pattern_table, v, |addr| {
-                                Ppu::notify_chr_fetch_kind(cartridge, false);
-                                ppu.memory.read_chr(addr, cartridge)
-                            });
+                        ppu.background.fetch_pattern_lo(|addr| {
+                            Ppu::notify_chr_fetch_kind(cartridge, false);
+                            ppu.memory.read_chr(addr, cartridge)
+                        });
                     }
                     3 => {
                         // Fetch pattern table high byte (cycle 8 of tile)
-                        ppu.background
-                            .fetch_pattern_hi(bg_pattern_table, v, |addr| {
-                                Ppu::notify_chr_fetch_kind(cartridge, false);
-                                ppu.memory.read_chr(addr, cartridge)
-                            });
+                        ppu.background.fetch_pattern_hi(|addr| {
+                            Ppu::notify_chr_fetch_kind(cartridge, false);
+                            ppu.memory.read_chr(addr, cartridge)
+                        });
                     }
                     _ => {}
                 }
@@ -306,8 +308,10 @@ fn tick_background(ppu: &mut Ppu) {
             // Two dummy nametable fetches at pixels 337 and 339
             // (The NES PPU does these but they're not used)
             let v = ppu.registers.v();
-            ppu.background
-                .fetch_nametable(v, |addr| ppu.memory.read_nametable_mapped(addr, cartridge));
+            let bg_pt = ppu.registers.bg_pattern_table_addr();
+            ppu.background.fetch_nametable(v, bg_pt, |addr| {
+                ppu.memory.read_nametable_mapped(addr, cartridge)
+            });
         }
 
         // Handle scroll register updates during visible pixels
@@ -625,6 +629,40 @@ fn tick_pixel_output(ppu: &mut Ppu) {
             ppu.rendering
                 .screen_buffer_mut()
                 .set_pixel(screen_x, screen_y, final_r, final_g, final_b);
+        }
+    }
+}
+
+/// Phase 6: Process delayed register updates (runs at end of each PPU cycle).
+///
+/// The second write to $2006 does NOT update v immediately on real hardware.
+/// Instead, t is copied to v after a 3 PPU cycle delay (based on Visual NES
+/// findings, ref Mesen2 NesPpu.cpp `_updateVramAddrDelay`).
+fn tick_delayed_updates(ppu: &mut Ppu) {
+    if ppu.update_vram_addr_delay > 0 {
+        ppu.update_vram_addr_delay -= 1;
+        if ppu.update_vram_addr_delay == 0 {
+            let old_v = ppu.registers.v();
+            let new_v = ppu.pending_vram_addr;
+            ppu.registers.set_v(new_v);
+
+            // Notify mapper of address change (needed for MMC3 A12 detection)
+            ppu.prime_a12_and_notify_mapper(old_v, new_v);
+
+            // When rendering is disabled, also update the bus address for mapper hooks
+            let scanline = ppu.timing.scanline();
+            let is_rendering_enabled = ppu.registers.is_rendering_enabled();
+            if scanline >= LAST_VISIBLE_SCANLINE_PLUS_ONE || !is_rendering_enabled {
+                ppu.with_mapper_mut(|mapper| {
+                    mapper.ppu_address_changed(new_v & 0x3FFF);
+                });
+            }
+
+            trace_ppu!(3; "delayed v=t applied v={:04X} y={} x={}",
+                new_v,
+                ppu.timing.scanline(),
+                ppu.timing.pixel(),
+            );
         }
     }
 }

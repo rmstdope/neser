@@ -16,6 +16,10 @@ pub struct Background {
     pattern_lo_latch: u8,
     /// Pattern table high byte latch
     pattern_hi_latch: u8,
+    /// Latched tile address computed at nametable-byte fetch time.
+    /// This captures the pattern table base + tile index + fine Y so that
+    /// mid-tile $2000 writes do not affect the current tile's pattern fetch.
+    tile_addr: u16,
 }
 
 impl Default for Background {
@@ -36,6 +40,7 @@ impl Background {
             attribute_latch: 0,
             pattern_lo_latch: 0,
             pattern_hi_latch: 0,
+            tile_addr: 0,
         }
     }
 
@@ -49,6 +54,7 @@ impl Background {
         self.attribute_latch = 0;
         self.pattern_lo_latch = 0;
         self.pattern_hi_latch = 0;
+        self.tile_addr = 0;
     }
 
     // Debug: Get shift register state
@@ -56,13 +62,23 @@ impl Background {
     //     (self.bg_pattern_shift_lo, self.bg_pattern_shift_hi)
     // }
 
-    /// Fetch nametable byte from memory
-    pub fn fetch_nametable<F>(&mut self, v: u16, read_nametable: F)
+    /// Fetch nametable byte from memory and latch the full tile address.
+    ///
+    /// The tile address is computed here (combining the nametable byte with
+    /// the current pattern-table base and fine-Y from `v`) so that a
+    /// mid-tile write to $2000 does not change the pattern table for the
+    /// tile currently being fetched — matching real hardware and Mesen.
+    pub fn fetch_nametable<F>(&mut self, v: u16, pattern_table_base: u16, read_nametable: F)
     where
         F: Fn(u16) -> u8,
     {
         let addr = 0x2000 | (v & 0x0FFF);
         self.nametable_latch = read_nametable(addr);
+
+        // Latch tile address: pattern_table | (tile_index << 4) | fine_y
+        let tile_index = self.nametable_latch as u16;
+        let fine_y = (v >> 12) & 0x07;
+        self.tile_addr = pattern_table_base | (tile_index << 4) | fine_y;
     }
 
     /// Fetch attribute byte from memory
@@ -74,26 +90,20 @@ impl Background {
         self.attribute_latch = read_nametable(addr);
     }
 
-    /// Fetch pattern table low byte from CHR ROM
-    pub fn fetch_pattern_lo<F>(&mut self, pattern_table_base: u16, v: u16, read_chr: F)
+    /// Fetch pattern table low byte from CHR ROM using the latched tile address.
+    pub fn fetch_pattern_lo<F>(&mut self, read_chr: F)
     where
         F: Fn(u16) -> u8,
     {
-        let tile_index = self.nametable_latch as u16;
-        let fine_y = (v >> 12) & 0x07;
-        let addr = pattern_table_base | (tile_index << 4) | fine_y;
-        self.pattern_lo_latch = read_chr(addr);
+        self.pattern_lo_latch = read_chr(self.tile_addr);
     }
 
-    /// Fetch pattern table high byte from CHR ROM
-    pub fn fetch_pattern_hi<F>(&mut self, pattern_table_base: u16, v: u16, read_chr: F)
+    /// Fetch pattern table high byte from CHR ROM using the latched tile address.
+    pub fn fetch_pattern_hi<F>(&mut self, read_chr: F)
     where
         F: Fn(u16) -> u8,
     {
-        let tile_index = self.nametable_latch as u16;
-        let fine_y = (v >> 12) & 0x07;
-        let addr = pattern_table_base | (tile_index << 4) | fine_y | 0x08;
-        self.pattern_hi_latch = read_chr(addr);
+        self.pattern_hi_latch = read_chr(self.tile_addr | 0x08);
     }
 
     /// Load shift registers from latches
@@ -256,8 +266,11 @@ mod tests {
     #[test]
     fn test_fetch_nametable() {
         let mut bg = Background::new();
-        bg.fetch_nametable(0x2000, |_| 0x42);
+        // v=0x2000: fine_y = (0x2000 >> 12) & 7 = 2
+        bg.fetch_nametable(0x2000, 0x0000, |_| 0x42);
         assert_eq!(bg.nametable_latch, 0x42);
+        // tile_addr = pattern_table(0) | (0x42 << 4) | fine_y(2) = 0x0422
+        assert_eq!(bg.tile_addr, 0x0422);
     }
 
     #[test]
