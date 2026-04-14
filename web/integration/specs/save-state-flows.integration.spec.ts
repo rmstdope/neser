@@ -75,7 +75,7 @@ test.describe("Phase 2 save-state flows", () => {
 
         // First save
         await saveButton.click();
-        await expect(page.locator(TOAST_SELECTOR).filter({ hasText: "State saved" })).toBeVisible({
+        await expect(page.locator(TOAST_SELECTOR).filter({ hasText: "State saved" }).first()).toBeVisible({
             timeout: 5000
         });
 
@@ -84,13 +84,13 @@ test.describe("Phase 2 save-state flows", () => {
 
         // Second save (should overwrite)
         await saveButton.click();
-        await expect(page.locator(TOAST_SELECTOR).filter({ hasText: "State saved" })).toBeVisible({
+        await expect(page.locator(TOAST_SELECTOR).filter({ hasText: "State saved" }).first()).toBeVisible({
             timeout: 5000
         });
 
         // Load should still work
         await loadButton.click();
-        await expect(page.locator(TOAST_SELECTOR).filter({ hasText: "State loaded" })).toBeVisible({
+        await expect(page.locator(TOAST_SELECTOR).filter({ hasText: "State loaded" }).first()).toBeVisible({
             timeout: 5000
         });
     });
