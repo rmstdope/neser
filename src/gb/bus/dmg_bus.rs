@@ -304,7 +304,7 @@ impl GbBus for DmgBus {
                 // visible to service_interrupts() at the start of the next instruction.
                 if self.timer.fire_write_overflow_if_pending() {
                     self.if_reg |= 0x04;
-                    self.timer.interrupt_pending = false;
+                    self.timer.take_interrupt();
                 }
             }
             0xFF0F => self.if_reg = val & 0x1F,

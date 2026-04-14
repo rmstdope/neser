@@ -173,13 +173,15 @@ impl Timer {
                 self.tima_load_active = true;
             }
 
+            let enabled = self.tac & 0x04 != 0;
+            let bit = MUX_BIT[(self.tac & 0x03) as usize];
+
             // Advance the system counter one T-cycle at a time, detecting falling
             // edges on the multiplexer bit.
             for _ in 0..4 {
                 let old = self.div_counter;
                 self.div_counter = self.div_counter.wrapping_add(1);
-                let bit = MUX_BIT[(self.tac & 0x03) as usize];
-                if self.tac & 0x04 != 0 && old & bit != 0 && self.div_counter & bit == 0 {
+                if enabled && old & bit != 0 && self.div_counter & bit == 0 {
                     self.do_tima_increment();
                 }
             }
@@ -197,17 +199,20 @@ impl Timer {
         }
     }
 
-    /// Fire any TIMA reload that was triggered by a TAC or DIV write (not a normal tick
-    /// overflow), and return `true` if the timer interrupt should be set in IF.
+    /// Fire any pending TIMA reload and return `true` if the timer interrupt should
+    /// be set in IF.
     ///
-    /// Real hardware (SameBoy model): after a TAC/DIV write that causes a TIMA falling-edge
-    /// increment and overflow, `advance_tima_state_machine` fires within the same instruction
-    /// slot via `flush_pending_cycles`.  This sets IF **before** the next instruction's
-    /// interrupt check, so the interrupt fires before the instruction following the write.
+    /// This must be called by the bus immediately after every timer-register write.
+    /// Any `tima_overflow_pending` at that point is necessarily write-triggered (a
+    /// normal tick overflow would have already been propagated via `tick()` before
+    /// the write executes).  Calling this after the write compensates for the fact
+    /// that our M-cycle model runs the bus tick *before* the register write, so no
+    /// post-write T-cycles naturally fire the reload.
     ///
-    /// In our M-cycle model the M3 tick for the write already ran before `bus.write()` was
-    /// called, leaving no post-write T-cycles to naturally fire the reload.  Calling this
-    /// method immediately after every timer register write compensates for that gap.
+    /// This mirrors SameBoy's `flush_pending_cycles` / `advance_tima_state_machine`
+    /// called at instruction end: the overflow fires within the same instruction slot,
+    /// making the interrupt visible to `service_interrupts()` at the start of the
+    /// next instruction.
     pub(crate) fn fire_write_overflow_if_pending(&mut self) -> bool {
         if self.tima_overflow_pending {
             self.tima_load_active = false;
