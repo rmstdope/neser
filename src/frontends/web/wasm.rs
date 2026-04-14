@@ -393,6 +393,18 @@ impl WasmNes {
             .unwrap_or(false)
     }
 
+    /// Returns the current recording frame index (0 when not recording).
+    ///
+    /// Used by the web frontend to display a "REC : MM:SS" overlay.
+    #[wasm_bindgen]
+    pub fn autorun_recording_frame_count(&self) -> u32 {
+        self.autorun_state
+            .as_ref()
+            .filter(|s| s.is_recording())
+            .map(|s| s.current_frame_index() as u32)
+            .unwrap_or(0)
+    }
+
     /// Returns the display width in pixels after overscan removal.
     #[wasm_bindgen]
     pub fn screen_width(&self) -> u32 {
