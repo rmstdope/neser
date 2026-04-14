@@ -73,11 +73,11 @@ if (!gl) {
 // NES display dimensions after overscan removal (updated after NES instance is created).
 let width = 256 - 2 * 8; // default: horizontal_overscan=8 → 240
 let height = 240 - 2 * 8; // default: vertical_overscan=8  → 224
-const SCROLLER_TEXT = "Updates: Feb 24: Added recording/autorunner support and debugger support for web. Feb 19: Added scraping of ROM database for better comapatibility. Feb 14: Full PAL support! Keyboard shortcuts with 'H'. ** Feb 7: Added support for NES Zapper controller. ** Feb 5: Added support for Arkanoid controller!  **";
+const SCROLLER_TEXT = "Updates April 14, 2026: All known mappers implemented. Web UI revamped.  **";
 const SCROLLER_SPEED = 2.0;
 const SCROLLER_AMPLITUDE = 20;
-const SCROLLER_FREQUENCY = 0.05;
-const SCROLLER_FONT_SIZE_PX = 20;
+const SCROLLER_FREQUENCY = 0.0587;
+const SCROLLER_FONT_SIZE_PX = 15;
 const SCROLLER_FONT_FAMILY = "'VT323', monospace";
 
 const toastContainer = createToastContainer(screenWrap);
@@ -845,11 +845,12 @@ let saveStateController: { save(): Promise<boolean>; load(): Promise<boolean> } 
 let saveStateAvailable = false;
 let running = false;
 let paused = false;
+let romFromFile = false; // true only when ROM was loaded from the file input
 
 // ── Autorun context + DOM elements ───────────────────────────────────────────
 const autorunCtx = createAutorunContext();
 const autorunCreateCheckbox = document.getElementById("autorun-create") as HTMLInputElement | null;
-const autorunLoadBtn = document.getElementById("autorun-load");
+const autorunLoadBtn = document.getElementById("autorun-load") as HTMLButtonElement | null;
 const autorunStatusEl = document.getElementById("autorun-status");
 const autorunFileInput = document.getElementById("autorun-file-input") as AutorunFileInput | null;
 const autorunFileInfo = document.getElementById("autorun-file-info");
@@ -869,9 +870,9 @@ const recOverlay = document.getElementById("rec-overlay");
  * - Refreshes autorun status display.
  */
 function updateAutorunControls() {
-    // Gate "Create autorun" checkbox: only checkable when stopped
+    // Gate "Create autorun" checkbox: only checkable when stopped and ROM came from file input
     if (autorunCreateCheckbox) {
-        autorunCreateCheckbox.disabled = running || paused;
+        autorunCreateCheckbox.disabled = running || paused || !romFromFile;
     }
 
     updateAutorunStatus();
@@ -902,6 +903,10 @@ function updateEmulationButtons() {
     }
     if (resetBtn) {
         resetBtn.disabled = !states.resetEnabled;
+    }
+    // Load autorun button: available when a ROM is loaded from file and emulation is stopped
+    if (autorunLoadBtn) {
+        autorunLoadBtn.disabled = romBytes === null || !romFromFile || running;
     }
 }
 
@@ -945,18 +950,21 @@ function updateAutorunStatus() {
         autorunStatusEl.textContent = "";
         autorunCancelBtn?.classList.add("hidden");
     } else if (config.mode === "record") {
-        autorunStatusEl.textContent = "Will record autorun";
+        autorunStatusEl.textContent = "";
         autorunCancelBtn?.classList.add("hidden");
     } else {
         const info = autorunCtx.getLoadedFile();
         const cpText = config.checkpointIdx != null
-            ? `from checkpoint ${config.checkpointIdx + 1}`
-            : "from beginning";
-        const extText = config.extend ? ", extending" : "";
+            ? `From checkpoint ${config.checkpointIdx + 1}`
+            : "From beginning";
         const expectedRom = autorunCtx.getExpectedRomName();
-        const romHint = expectedRom ? ` · Load ${expectedRom}` : "";
-        autorunStatusEl.textContent =
-            `Autorun loaded (${info?.frameCount ?? "?"} frames, ${cpText}${extText})${romHint}`;
+        const items = [
+            `▸ ${info?.frameCount ?? "?"} frames`,
+            `▸ ${cpText}`,
+            ...(config.extend ? ["▸ Extending"] : []),
+            ...(expectedRom ? [`▸ Load ${expectedRom}`] : []),
+        ];
+        autorunStatusEl.innerHTML = items.map(t => `<li>${t}</li>`).join("");
         autorunCancelBtn?.classList.remove("hidden");
     }
 }
@@ -1098,7 +1106,6 @@ const AUDIO_TARGET_LATENCY = 0.1; // seconds
 const AUDIO_MAX_ADJUST = 0.005; // +/- 0.5% playback rate
 const AUDIO_LATENCY_GAIN = 0.1; // scale factor for latency correction
 let audioMuted = false;
-let gamepadEnabled = true;
 let lastGamepadState1 = {
     a: false,
     b: false,
@@ -1182,6 +1189,9 @@ async function refreshSaveStateController() {
 romInput!.addEventListener("change", async (e) => {
     const file = (e.target as HTMLInputElement).files?.[0];
     if (!file) return;
+    // Clear bundled ROM selection when a file is chosen
+    if (romSelect) romSelect.value = "";
+    romFromFile = true;
     requestPointerLockFromUserGesture();
     const expectedRom = autorunCtx.getExpectedRomName();
     if (expectedRom && file.name.toLowerCase() !== expectedRom.toLowerCase()) {
@@ -1202,6 +1212,9 @@ if (romSelect) {
     romSelect.addEventListener("change", async (e) => {
         const value = (e.target as HTMLSelectElement).value;
         if (!value) return;
+        // Clear file input when a bundled ROM is selected
+        romInput.value = "";
+        romFromFile = false;
         requestPointerLockFromUserGesture();
         try {
             const response = await fetch(value);
@@ -1366,6 +1379,7 @@ async function start() {
     setStatus("Running...");
     updateAutorunControls();
     updateEmulationButtons();
+    updateSaveStateButtons();
     requestAnimationFrame(step);
 }
 
@@ -1985,6 +1999,7 @@ function stop() {
     updateRecOverlay();
     updateAutorunControls();
     updateEmulationButtons();
+    updateSaveStateButtons();
 }
 
 /**
@@ -2192,7 +2207,7 @@ function step(timestamp: number) {
         shouldRender: frameLimiter.shouldRender(timestamp)
     });
     try {
-        if (gamepadEnabled && nes) {
+        if (nes) {
             pollGamepad();
         }
 
@@ -2267,19 +2282,6 @@ startBtn.addEventListener("click", () => {
     requestPointerLockFromUserGesture();
     void start();
 });
-const gamepadToggleBtn = document.getElementById("gamepad-toggle") as HTMLButtonElement | null;
-function updateGamepadButton() {
-    gamepadToggleBtn!.textContent = gamepadEnabled ? "Gamepad : On" : "Gamepad : Off";
-    gamepadToggleBtn!.setAttribute("aria-pressed", gamepadEnabled ? "true" : "false");
-}
-gamepadToggleBtn!.addEventListener("click", () => {
-    gamepadEnabled = !gamepadEnabled;
-    updateGamepadButton();
-    if (!gamepadEnabled) {
-        resetGamepadState();
-    }
-});
-updateGamepadButton();
 const muteBtn = document.getElementById("mute") as HTMLButtonElement | null;
 function updateMuteButton() {
     muteBtn!.textContent = audioMuted ? "Audio: Off" : "Audio: On";
@@ -2376,9 +2378,7 @@ function updateConnectedGamepads() {
 }
 
 function showPageLoadGamepadInitToast() {
-    if (gamepadEnabled) {
-        toastOverlay.show("Press a button on any connected gamepad");
-    }
+    toastOverlay.show("Press a button on any connected gamepad");
 }
 
 // Initialize connectedGamepads to detect any gamepads already connected on page load
@@ -2840,7 +2840,7 @@ async function loadStateAction() {
 }
 
 function updateSaveStateButtons() {
-    const enabled = Boolean(saveStateController);
+    const enabled = Boolean(saveStateController) && running;
     if (saveStateBtn) saveStateBtn.disabled = !enabled;
     if (loadStateBtn) loadStateBtn.disabled = !enabled || !saveStateAvailable;
 }
@@ -2962,13 +2962,13 @@ function onGamepadConnectionChanged() {
     updateConnectedGamepads();
     updateShortcutHelpOverlayText();
     ensureWasmInitialized()
-        .then(() => toastOverlay.show(gamepad_init_toast_message(gamepadEnabled, connectedGamepads.length)))
+        .then(() => toastOverlay.show(gamepad_init_toast_message(true, connectedGamepads.length)))
         .catch(() => {});
 }
 
 window.addEventListener("gamepadconnected", () => {
     onGamepadConnectionChanged();
-    if (gamepadEnabled && running && !paused) {
+    if (running && !paused) {
         pollGamepad();
     }
 });

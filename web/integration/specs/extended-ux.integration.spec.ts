@@ -93,9 +93,8 @@ test.describe("Phase 3 extended UX", () => {
         await page.locator(AUTORUN_CHECKPOINT_SELECTOR).selectOption("1");
         await page.locator(AUTORUN_USE_BUTTON_SELECTOR).click();
 
-        await expect(page.locator(AUTORUN_STATUS_SELECTOR)).toContainText("Autorun loaded");
-        await expect(page.locator(AUTORUN_STATUS_SELECTOR)).toContainText("from checkpoint 2");
-        await expect(page.locator(AUTORUN_STATUS_SELECTOR)).toContainText("extending");
+        await expect(page.locator(AUTORUN_STATUS_SELECTOR)).toContainText("From checkpoint 2");
+        await expect(page.locator(AUTORUN_STATUS_SELECTOR)).toContainText("Extending");
         await expect(page.locator(AUTORUN_CANCEL_SELECTOR)).toBeVisible();
 
         await page.locator(AUTORUN_CANCEL_SELECTOR).click();

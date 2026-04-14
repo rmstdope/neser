@@ -25,7 +25,6 @@
             <button id="screen-plus" class="btn btn-outline btn-sm">Zoom +</button>
             <button id="fullscreen" class="btn btn-outline btn-sm">Fullscreen</button>
             <button id="filter-toggle" class="btn btn-outline btn-sm">Filter</button>
-            <button id="gamepad-toggle" class="btn btn-outline btn-sm" aria-pressed="true">Gamepad On</button>
             <button id="mute" class="btn btn-outline btn-sm" aria-pressed="false">Mute</button>
             <button id="save-state" class="btn btn-warning btn-outline btn-sm" disabled>Save State</button>
             <button id="load-state" class="btn btn-warning btn-outline btn-sm" disabled>Load State</button>
@@ -87,6 +86,17 @@
             </select>
           </div>
 
+          <!-- Autorun controls -->
+          <div class="flex flex-col gap-2">
+            <label class="label cursor-pointer justify-start gap-2 p-0">
+              <input type="checkbox" id="autorun-create" class="checkbox checkbox-sm" disabled />
+              <span class="label-text text-xs">Create autorun</span>
+            </label>
+            <button id="autorun-load" class="btn btn-info btn-outline btn-sm w-full" disabled>Load autorun</button>
+            <ul id="autorun-status" class="text-xs text-info list-none space-y-0.5"></ul>
+            <button id="autorun-cancel" class="btn btn-error btn-outline btn-sm w-full hidden" aria-label="Cancel autorun">✕ Cancel Autorun</button>
+          </div>
+
           <!-- Emulation controls -->
           <div class="flex flex-col gap-2">
             <button id="start" class="btn btn-success btn-sm w-full">Start</button>
@@ -95,17 +105,6 @@
               <button id="reset" class="btn btn-warning btn-outline btn-sm flex-1" aria-label="Reset emulation">Reset</button>
             </div>
             <button id="stop" class="btn btn-error btn-outline btn-sm w-full" aria-label="Stop emulation">Stop</button>
-          </div>
-
-          <!-- Autorun controls -->
-          <div class="flex flex-col gap-2">
-            <label class="label cursor-pointer justify-start gap-2 p-0">
-              <input type="checkbox" id="autorun-create" class="checkbox checkbox-sm" />
-              <span class="label-text text-xs">Create autorun</span>
-            </label>
-            <button id="autorun-load" class="btn btn-info btn-outline btn-sm w-full">Load autorun</button>
-            <span id="autorun-status" class="text-xs text-info"></span>
-            <button id="autorun-cancel" class="btn btn-error btn-outline btn-sm w-full hidden" aria-label="Cancel autorun">✕ Cancel</button>
           </div>
 
           <!-- Spacer to push content up -->
