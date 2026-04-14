@@ -6,7 +6,8 @@
 ///   full internal counter to 0. `$FF03` is unmapped (returns 0xFF on read;
 ///   writes are ignored).
 /// - `$FF05` — TIMA: timer counter; incremented at rate set by TAC.
-///   On overflow (wraps past 0xFF), it is reloaded with TMA and IF bit 2 is set.
+///   On overflow, TIMA stays $00 for one M-cycle (cycle A), then is reloaded
+///   with TMA and IF bit 2 is set (cycle B).
 /// - `$FF06` — TMA: timer modulo (reload value on TIMA overflow).
 /// - `$FF07` — TAC: timer control.
 ///   - Bit 2: Timer enable (1 = enabled).
@@ -15,6 +16,21 @@
 ///     - 01: every 16   T-cycles  (262144 Hz)
 ///     - 10: every 64   T-cycles  (65536 Hz)
 ///     - 11: every 256  T-cycles  (16384 Hz)
+///
+/// ## Obscure behaviours (Pan Docs — Timer Obscure Behaviour)
+///
+/// The TIMA increment is triggered by the **falling edge** of a specific bit of
+/// the system counter, ANDed with TAC.enable on DMG hardware.  This has three
+/// important side-effects:
+///
+/// 1. **DIV write**: resetting the counter to 0 forces a falling edge if the
+///    selected bit was HIGH → TIMA increments (if timer is enabled).
+/// 2. **TAC write**: if the AND(selected_bit, enable) was HIGH and the write
+///    makes it LOW (e.g., disabling the timer, or switching clock to a currently-
+///    LOW bit) → TIMA increments once.
+/// 3. **TIMA overflow delay**: when TIMA overflows, it stays $00 for one M-cycle
+///    before TMA is loaded and the interrupt fires.  Writing to TIMA during that
+///    M-cycle cancels the reload.
 pub struct Timer {
     /// Internal 16-bit counter; DIV is the upper 8 bits ($FF04 = div_counter >> 8).
     div_counter: u16,
@@ -26,11 +42,24 @@ pub struct Timer {
     pub tac: u8,
     /// Pending IF bit-2 set after TIMA overflow.
     pub interrupt_pending: bool,
+    /// True during the M-cycle after TIMA overflows (cycle A).
+    /// A CPU write to TIMA while this is true cancels the pending TMA reload.
+    tima_overflow_pending: bool,
+    /// True during the M-cycle when TMA is loaded into TIMA (cycle B).
+    /// CPU writes to TIMA during this cycle are ignored; writes to TMA also
+    /// update TIMA.
+    tima_load_active: bool,
 }
 
-/// T-cycle thresholds at which TIMA increments for each TAC clock select.
-/// TAC bits 1-0: 00→1024 T, 01→16 T, 10→64 T, 11→256 T.
-const CLOCK_DIVS_T: [u16; 4] = [1024, 16, 64, 256];
+/// Bit of the 16-bit system counter that the TIMA multiplexer selects for each
+/// TAC clock-select value.  TIMA increments on the falling edge of this bit
+/// (ANDed with TAC.enable).
+///
+/// TAC bits 1-0:  00 → bit 9 (1024 T-cycle period)
+///                01 → bit 3 (  16 T-cycle period)
+///                10 → bit 5 (  64 T-cycle period)
+///                11 → bit 7 ( 256 T-cycle period)
+const MUX_BIT: [u16; 4] = [1 << 9, 1 << 3, 1 << 5, 1 << 7];
 
 impl Timer {
     pub fn new() -> Self {
@@ -49,6 +78,8 @@ impl Timer {
             tma: 0,
             tac: 0,
             interrupt_pending: false,
+            tima_overflow_pending: false,
+            tima_load_active: false,
         }
     }
 
@@ -73,42 +104,120 @@ impl Timer {
     }
 
     /// Write a timer register by address.
+    ///
+    /// Handles the obscure falling-edge side-effects for DIV and TAC writes,
+    /// and the TIMA-write/TMA-write interactions during the overflow delay.
     pub fn write(&mut self, addr: u16, val: u8) {
         match addr {
-            0xFF04 => self.div_counter = 0, // any write resets the full internal counter
-            0xFF05 => self.tima = val,
-            0xFF06 => self.tma = val,
-            0xFF07 => self.tac = val & 0x07,
+            0xFF04 => {
+                // Writing DIV resets the full system counter to 0.
+                // If the currently selected mux bit was HIGH (and timer is enabled),
+                // the reset forces a falling edge → TIMA increments.
+                let bit = MUX_BIT[(self.tac & 0x03) as usize];
+                if self.tac & 0x04 != 0 && self.div_counter & bit != 0 {
+                    self.do_tima_increment();
+                }
+                self.div_counter = 0;
+            }
+            0xFF05 => {
+                // Writing TIMA during cycle A (overflow pending but not yet loaded)
+                // cancels the reload: the written value stays, no interrupt fires.
+                if self.tima_overflow_pending {
+                    self.tima_overflow_pending = false;
+                }
+                // Writes during cycle B (tima_load_active) are ignored: TMA already won.
+                if !self.tima_load_active {
+                    self.tima = val;
+                }
+            }
+            0xFF06 => {
+                self.tma = val;
+                // If TMA is written during cycle B, TIMA also takes the new value.
+                if self.tima_load_active {
+                    self.tima = val;
+                }
+            }
+            0xFF07 => {
+                // Capture the AND(selected_bit, enable) before the write.
+                let old_bit = MUX_BIT[(self.tac & 0x03) as usize];
+                let old_mux_and = self.tac & 0x04 != 0 && self.div_counter & old_bit != 0;
+
+                self.tac = val & 0x07;
+
+                // If the AND gate output fell from HIGH to LOW, TIMA increments once.
+                let new_bit = MUX_BIT[(self.tac & 0x03) as usize];
+                let new_mux_and = self.tac & 0x04 != 0 && self.div_counter & new_bit != 0;
+                if old_mux_and && !new_mux_and {
+                    self.do_tima_increment();
+                }
+            }
             _ => {} // 0xFF03 and all other addresses are unmapped; writes ignored
         }
     }
 
     /// Advance the timer by `m_cycles` M-cycles.
     ///
-    /// Internally the timer runs at T-cycle granularity (4 T per M-cycle).
-    /// Sets `interrupt_pending` when TIMA overflows (caller must propagate
-    /// to IF register $FF0F bit 2).
+    /// Internally the timer steps one T-cycle at a time for correct falling-edge
+    /// detection.  Sets `interrupt_pending` when TIMA overflows (caller must
+    /// propagate to IF register $FF0F bit 2).
     pub fn tick(&mut self, m_cycles: u8) {
         for _ in 0..m_cycles {
-            // The internal counter tracks T-cycles; advance by 4 per M-cycle.
-            self.div_counter = self.div_counter.wrapping_add(4);
+            // Clear the load-active flag from the previous M-cycle.
+            self.tima_load_active = false;
 
-            let enabled = self.tac & 0x04 != 0;
-            if !enabled {
-                continue;
+            // Cycle B: fire the pending TMA→TIMA reload and set the interrupt.
+            if self.tima_overflow_pending {
+                self.tima = self.tma;
+                self.interrupt_pending = true;
+                self.tima_overflow_pending = false;
+                self.tima_load_active = true;
             }
 
-            let threshold = CLOCK_DIVS_T[(self.tac & 0x03) as usize];
-            if self.div_counter.is_multiple_of(threshold) {
-                let (new_tima, overflow) = self.tima.overflowing_add(1);
-                if overflow {
-                    self.tima = self.tma;
-                    self.interrupt_pending = true;
-                } else {
-                    self.tima = new_tima;
+            // Advance the system counter one T-cycle at a time, detecting falling
+            // edges on the multiplexer bit.
+            for _ in 0..4 {
+                let old = self.div_counter;
+                self.div_counter = self.div_counter.wrapping_add(1);
+                let bit = MUX_BIT[(self.tac & 0x03) as usize];
+                if self.tac & 0x04 != 0 && old & bit != 0 && self.div_counter & bit == 0 {
+                    self.do_tima_increment();
                 }
             }
         }
+    }
+
+    /// Increment TIMA by one, handling overflow into the 1-M-cycle reload delay.
+    fn do_tima_increment(&mut self) {
+        let (new_val, overflow) = self.tima.overflowing_add(1);
+        if overflow {
+            self.tima = 0x00;
+            self.tima_overflow_pending = true;
+        } else {
+            self.tima = new_val;
+        }
+    }
+
+    /// Fire any TIMA reload that was triggered by a TAC or DIV write (not a normal tick
+    /// overflow), and return `true` if the timer interrupt should be set in IF.
+    ///
+    /// Real hardware (SameBoy model): after a TAC/DIV write that causes a TIMA falling-edge
+    /// increment and overflow, `advance_tima_state_machine` fires within the same instruction
+    /// slot via `flush_pending_cycles`.  This sets IF **before** the next instruction's
+    /// interrupt check, so the interrupt fires before the instruction following the write.
+    ///
+    /// In our M-cycle model the M3 tick for the write already ran before `bus.write()` was
+    /// called, leaving no post-write T-cycles to naturally fire the reload.  Calling this
+    /// method immediately after every timer register write compensates for that gap.
+    pub(crate) fn fire_write_overflow_if_pending(&mut self) -> bool {
+        if self.tima_overflow_pending {
+            self.tima_load_active = false;
+            self.tima = self.tma;
+            self.tima_overflow_pending = false;
+            self.tima_load_active = true;
+            self.interrupt_pending = true;
+            return true;
+        }
+        false
     }
 
     /// Take the pending interrupt flag (clears it).
@@ -214,16 +323,29 @@ mod tests {
 
     #[test]
     fn test_tima_overflow_reloads_tma_and_sets_interrupt() {
-        // TAC=0x05 (div 4), TMA=0x10
+        // TAC=0x05 (clock 01: every 16 T-cycles = 4 M-cycles), TMA=0x10.
+        // The increment fires at the end of M-cycle 4.  The TMA reload and
+        // interrupt fire at the START of M-cycle 5 (1 M-cycle obscure delay).
         let mut timer = Timer::new();
         timer.write(0xFF07, 0x05);
         timer.write(0xFF06, 0x10); // TMA = 0x10
         timer.tima = 0xFF; // one more increment causes overflow
-        timer.tick(4); // trigger one increment
-        assert_eq!(timer.tima, 0x10, "TIMA should reload from TMA on overflow");
+
+        timer.tick(4); // increment fires; TIMA goes to 0x00, overflow pending
+        assert_eq!(
+            timer.tima, 0x00,
+            "TIMA should be 0x00 immediately after overflow"
+        );
+        assert!(
+            !timer.interrupt_pending,
+            "interrupt fires on the next M-cycle"
+        );
+
+        timer.tick(1); // cycle B: TMA reload fires
+        assert_eq!(timer.tima, 0x10, "TIMA should reload from TMA on cycle B");
         assert!(
             timer.interrupt_pending,
-            "Interrupt should be pending after TIMA overflow"
+            "Interrupt should be pending after TIMA reload"
         );
     }
 
