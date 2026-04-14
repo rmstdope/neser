@@ -3,11 +3,13 @@ mod cartridge;
 mod mbc0;
 mod mbc1;
 mod mbc2;
+mod mbc5;
 
 pub use cartridge::GbCartridge;
 use mbc0::Mbc0;
 use mbc1::Mbc1;
 use mbc2::Mbc2;
+use mbc5::Mbc5;
 
 /// Errors returned by [`load_cartridge`].
 #[derive(Debug, PartialEq)]
@@ -47,7 +49,7 @@ fn ram_size_from_byte(byte: u8) -> usize {
 /// Validations performed:
 /// 1. Length must be at least 32 KB (0x8000) — returns [`RomError::TooShort`].
 /// 2. Header checksum at 0x014D must be correct — returns [`RomError::BadHeaderChecksum`].
-/// 3. MBC type at 0x0147 must be supported (0x00–0x03, 0x05–0x06) — returns [`RomError::UnsupportedMbc`].
+/// 3. MBC type at 0x0147 must be supported (0x00–0x03, 0x05–0x06, 0x19–0x1E) — returns [`RomError::UnsupportedMbc`].
 pub fn load_cartridge(bytes: &[u8]) -> Result<Box<dyn GbCartridge>, RomError> {
     if bytes.len() < 0x8000 {
         return Err(RomError::TooShort);
@@ -71,6 +73,10 @@ pub fn load_cartridge(bytes: &[u8]) -> Result<Box<dyn GbCartridge>, RomError> {
             Ok(Box::new(Mbc1::new(bytes.to_vec(), vec![0u8; ram_size])))
         }
         0x05..=0x06 => Ok(Box::new(Mbc2::new(bytes.to_vec()))),
+        0x19..=0x1E => {
+            let ram_size = ram_size_from_byte(bytes[0x0149]);
+            Ok(Box::new(Mbc5::new(bytes.to_vec(), vec![0u8; ram_size])))
+        }
         n => Err(RomError::UnsupportedMbc(n)),
     }
 }
@@ -134,6 +140,34 @@ mod tests {
     fn test_load_returns_ok_for_mbc2_battery_rom() {
         // Given: a valid MBC2+BATTERY cartridge (type 0x06)
         let rom = make_valid_rom(0x06, 0x00);
+        assert!(load_cartridge(&rom).is_ok());
+    }
+
+    #[test]
+    fn test_load_returns_ok_for_mbc5_rom() {
+        // Given: a valid MBC5 cartridge (type 0x19 = MBC5)
+        let rom = make_valid_rom(0x19, 0x01);
+        assert!(load_cartridge(&rom).is_ok());
+    }
+
+    #[test]
+    fn test_load_returns_ok_for_mbc5_ram_battery_rom() {
+        // Given: a valid MBC5+RAM+BATTERY cartridge (type 0x1B)
+        let rom = make_valid_rom(0x1B, 0x01);
+        assert!(load_cartridge(&rom).is_ok());
+    }
+
+    #[test]
+    fn test_load_returns_ok_for_mbc5_rumble_rom() {
+        // Given: a valid MBC5+RUMBLE cartridge (type 0x1C)
+        let rom = make_valid_rom(0x1C, 0x01);
+        assert!(load_cartridge(&rom).is_ok());
+    }
+
+    #[test]
+    fn test_load_returns_ok_for_mbc5_rumble_ram_battery_rom() {
+        // Given: a valid MBC5+RUMBLE+RAM+BATTERY cartridge (type 0x1E)
+        let rom = make_valid_rom(0x1E, 0x01);
         assert!(load_cartridge(&rom).is_ok());
     }
 

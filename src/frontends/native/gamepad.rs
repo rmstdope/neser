@@ -311,29 +311,29 @@ impl GamepadManager {
     ) -> Option<GamepadChange> {
         if let Some(player_num) = self.player_map.get(&id).copied() {
             // Release all held buttons for this gamepad's port before removing.
-            if let Console::Nes(nes) = console {
-                if let Some(port) = Self::assigned_port(nes, &self.player_map, player_num) {
-                    use Button::{A, B, Down, Left, Right, Select, Start, Up};
-                    for button in [A, B, Select, Start, Up, Down, Left, Right] {
-                        nes.set_button(port, button, false);
-                    }
-                    use SnesButton as S;
-                    for snes_btn in [
-                        S::A,
-                        S::B,
-                        S::X,
-                        S::Y,
-                        S::L,
-                        S::R,
-                        S::Start,
-                        S::Select,
-                        S::Up,
-                        S::Down,
-                        S::Left,
-                        S::Right,
-                    ] {
-                        nes.set_snes_button(port, snes_btn, false);
-                    }
+            if let Console::Nes(nes) = console
+                && let Some(port) = Self::assigned_port(nes, &self.player_map, player_num)
+            {
+                use Button::{A, B, Down, Left, Right, Select, Start, Up};
+                for button in [A, B, Select, Start, Up, Down, Left, Right] {
+                    nes.set_button(port, button, false);
+                }
+                use SnesButton as S;
+                for snes_btn in [
+                    S::A,
+                    S::B,
+                    S::X,
+                    S::Y,
+                    S::L,
+                    S::R,
+                    S::Start,
+                    S::Select,
+                    S::Up,
+                    S::Down,
+                    S::Left,
+                    S::Right,
+                ] {
+                    nes.set_snes_button(port, snes_btn, false);
                 }
             }
 
@@ -433,10 +433,8 @@ impl GamepadManager {
             if let Some(nes_btn) = map_button_to_nes(button) {
                 nes.set_button(port, nes_btn, pressed);
             }
-        } else {
-            if let Some(nes_btn) = map_button_to_nes(button) {
-                console.set_button(0, nes_btn as u8, pressed);
-            }
+        } else if let Some(nes_btn) = map_button_to_nes(button) {
+            console.set_button(0, nes_btn as u8, pressed);
         }
     }
 
