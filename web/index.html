@@ -25,10 +25,7 @@
             <button id="screen-plus" class="btn btn-outline btn-sm">Zoom +</button>
             <button id="fullscreen" class="btn btn-outline btn-sm">Fullscreen</button>
             <button id="filter-toggle" class="btn btn-outline btn-sm">Filter</button>
-            <button id="gamepad-toggle" class="btn btn-outline btn-sm" aria-pressed="true">Gamepad On</button>
             <button id="mute" class="btn btn-outline btn-sm" aria-pressed="false">Mute</button>
-            <button id="save-state" class="btn btn-warning btn-outline btn-sm" disabled>Save State</button>
-            <button id="load-state" class="btn btn-warning btn-outline btn-sm" disabled>Load State</button>
           </div>
         </header>
 
@@ -41,28 +38,12 @@
             <div id="debugger-panel" class="debugger-panel hidden" aria-label="Debugger panel"></div>
           </div>
           <div class="mt-3 flex items-center gap-2">
-            <span class="badge badge-neutral">Status</span>
-            <span id="status" class="status">Load a ROM to begin</span>
+            <span id="status" class="status"></span>
+            <span class="badge badge-neutral">Press 'h' for help</span>
           </div>
         </main>
 
-        <!-- Footer -->
-        <footer class="px-4 py-3 bg-base-200 border-t border-base-300 text-center text-sm text-base-content/60">
-          <div id="controls">
-            <kbd class="kbd kbd-sm">W</kbd><kbd class="kbd kbd-sm">A</kbd><kbd class="kbd kbd-sm">S</kbd><kbd class="kbd kbd-sm">D</kbd> D-Pad
-            &nbsp;|&nbsp;
-            <kbd class="kbd kbd-sm">F</kbd> A
-            &nbsp;|&nbsp;
-            <kbd class="kbd kbd-sm">G</kbd> B
-            &nbsp;|&nbsp;
-            <kbd class="kbd kbd-sm">R</kbd> Select
-            &nbsp;|&nbsp;
-            <kbd class="kbd kbd-sm">T</kbd> Start
-            &nbsp;|&nbsp;
-            <kbd class="kbd kbd-sm">H</kbd> Help
-          </div>
-          <div id="shortcut-reference" class="mt-1"></div>
-        </footer>
+        <!-- Footer removed -->
       </div>
 
       <!-- Sidebar -->
@@ -87,6 +68,17 @@
             </select>
           </div>
 
+          <!-- Autorun controls -->
+          <div class="flex flex-col gap-2">
+            <label class="label cursor-pointer justify-start gap-2 p-0">
+              <input type="checkbox" id="autorun-create" class="checkbox checkbox-sm" disabled />
+              <span class="label-text text-xs">Create autorun</span>
+            </label>
+            <button id="autorun-load" class="btn btn-info btn-outline btn-sm w-full" disabled>Load autorun</button>
+            <ul id="autorun-status" class="text-xs text-info list-none space-y-0.5"></ul>
+            <button id="autorun-cancel" class="btn btn-error btn-outline btn-sm w-full hidden" aria-label="Cancel autorun">✕ Cancel Autorun</button>
+          </div>
+
           <!-- Emulation controls -->
           <div class="flex flex-col gap-2">
             <button id="start" class="btn btn-success btn-sm w-full">Start</button>
@@ -95,17 +87,10 @@
               <button id="reset" class="btn btn-warning btn-outline btn-sm flex-1" aria-label="Reset emulation">Reset</button>
             </div>
             <button id="stop" class="btn btn-error btn-outline btn-sm w-full" aria-label="Stop emulation">Stop</button>
-          </div>
-
-          <!-- Autorun controls -->
-          <div class="flex flex-col gap-2">
-            <label class="label cursor-pointer justify-start gap-2 p-0">
-              <input type="checkbox" id="autorun-create" class="checkbox checkbox-sm" />
-              <span class="label-text text-xs">Create autorun</span>
-            </label>
-            <button id="autorun-load" class="btn btn-info btn-outline btn-sm w-full">Load autorun</button>
-            <span id="autorun-status" class="text-xs text-info"></span>
-            <button id="autorun-cancel" class="btn btn-error btn-outline btn-sm w-full hidden" aria-label="Cancel autorun">✕ Cancel</button>
+            <div class="flex gap-2">
+              <button id="save-state" class="btn btn-warning btn-outline btn-sm flex-1" disabled>Save State</button>
+              <button id="load-state" class="btn btn-warning btn-outline btn-sm flex-1" disabled>Load State</button>
+            </div>
           </div>
 
           <!-- Spacer to push content up -->

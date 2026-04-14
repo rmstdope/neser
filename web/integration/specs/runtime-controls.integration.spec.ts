@@ -5,7 +5,6 @@ import {
     waitForRunningState
 } from "../helpers/lifecycle.helpers";
 
-const GAMEPAD_TOGGLE_SELECTOR = "#gamepad-toggle";
 const MUTE_BUTTON_SELECTOR = "#mute";
 const FILTER_TOGGLE_SELECTOR = "#filter-toggle";
 const SCREEN_PLUS_SELECTOR = "#screen-plus";
@@ -56,30 +55,6 @@ test.describe("Phase 2 runtime controls", () => {
         // Verify no errors occurred during input
         expect(consoleErrors).toHaveLength(0);
         expect(pageErrors).toHaveLength(0);
-    });
-
-    test("Given gamepad toggle exists, when toggled, then state and aria-pressed update correctly", async ({ page }) => {
-        await openApp(page);
-
-        const gamepadToggle = page.locator(GAMEPAD_TOGGLE_SELECTOR);
-
-        // Wait for element to be visible, enabled and stable
-        await expect(gamepadToggle).toBeVisible({ timeout: 20000 });
-        await expect(gamepadToggle).toBeEnabled({ timeout: 20000 });
-
-        // Initial state should be "on" (default)
-        await expect(gamepadToggle).toHaveAttribute("aria-pressed", "true");
-        await expect(gamepadToggle).toContainText(/Gamepad.*On/i);
-
-        // Click to toggle off
-        await gamepadToggle.click({ timeout: 60000 });
-        await expect(gamepadToggle).toHaveAttribute("aria-pressed", "false");
-        await expect(gamepadToggle).toContainText(/Gamepad.*Off/i);
-
-        // Click to toggle back on
-        await gamepadToggle.click({ timeout: 60000 });
-        await expect(gamepadToggle).toHaveAttribute("aria-pressed", "true");
-        await expect(gamepadToggle).toContainText(/Gamepad.*On/i);
     });
 
     test("Given mute button exists, when toggled, then state and aria-pressed update correctly", async ({ page }) => {

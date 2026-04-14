@@ -7,7 +7,6 @@ const STATUS_SELECTOR = "#status";
 const ROM_SELECT_ID = "rom-select";
 const ROM_SELECT_SELECTOR = `#${ROM_SELECT_ID}`;
 const BUNDLED_ROM_NAME = "cpu.nes";
-const IDLE_STATUS_PATTERN = /Load a ROM to begin|Stopped\. You can restart or load a new ROM/;
 
 function readMockRomBytes() {
     return readFileSync(path.join(process.cwd(), "roms", "nes", BUNDLED_ROM_NAME));
@@ -34,21 +33,24 @@ async function injectBundledRomOption(page: Page) {
 
 export async function openApp(page: Page) {
     await page.goto("/");
-    await expect(page.locator(STATUS_SELECTOR)).toBeVisible();
-    await expect(page.locator("#shortcut-reference")).toContainText("Shortcuts:", {
-        timeout: EXPECT_TIMEOUT_MS
-    });
+    await expect(page.locator("#start")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
 }
 
 export async function waitForRunningState(page: Page) {
-    await expect(page.locator(STATUS_SELECTOR)).toContainText("Running...", {
-        timeout: EXPECT_TIMEOUT_MS
-    });
+    await expect(page.locator("#stop")).toBeEnabled({ timeout: EXPECT_TIMEOUT_MS });
 }
 
 export async function waitForIdleState(page: Page) {
-    await expect(page.locator(STATUS_SELECTOR)).toHaveText(IDLE_STATUS_PATTERN, {
-        timeout: EXPECT_TIMEOUT_MS
+    await expect(page.locator("#stop")).toBeDisabled({ timeout: EXPECT_TIMEOUT_MS });
+}
+
+/** Load a NES ROM via the file input, setting romFromFile = true. */
+export async function loadRomFromFileInput(page: Page) {
+    const romBytes = readMockRomBytes();
+    await page.locator("#rom").setInputFiles({
+        name: BUNDLED_ROM_NAME,
+        mimeType: "application/octet-stream",
+        buffer: romBytes
     });
 }
 

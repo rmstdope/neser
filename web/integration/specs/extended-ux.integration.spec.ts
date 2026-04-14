@@ -3,7 +3,8 @@ import { collectBrowserErrors } from "../helpers/browser-errors.helpers";
 import {
     openApp,
     startFromBundledRom,
-    waitForRunningState
+    waitForRunningState,
+    loadRomFromFileInput
 } from "../helpers/lifecycle.helpers";
 
 const AUTORUN_MODAL_SELECTOR = "#autorun-modal";
@@ -16,10 +17,8 @@ const AUTORUN_EXTEND_SELECTOR = "#autorun-extend-check";
 const AUTORUN_USE_BUTTON_SELECTOR = "#autorun-use-btn";
 const AUTORUN_STATUS_SELECTOR = "#autorun-status";
 const AUTORUN_CANCEL_SELECTOR = "#autorun-cancel";
-const SHORTCUT_REFERENCE_SELECTOR = "#shortcut-reference";
 const SHORTCUT_HELP_OVERLAY_SELECTOR = "#shortcut-help-overlay";
 const DEBUGGER_PANEL_SELECTOR = "#debugger-panel";
-const STATUS_SELECTOR = "#status";
 
 function createValidAutorunBuffer() {
     const payload = {
@@ -40,6 +39,10 @@ function createValidAutorunBuffer() {
 }
 
 async function openAutorunModal(page: Page) {
+    await loadRomFromFileInput(page);
+    // Loading a ROM auto-starts emulation; stop it so Load Autorun becomes enabled
+    await page.locator("#stop").click();
+    await expect(page.locator("#stop")).toBeDisabled();
     await page.locator(AUTORUN_LOAD_BUTTON_SELECTOR).click();
     await expect(page.locator(AUTORUN_MODAL_SELECTOR)).toBeVisible();
 }
@@ -93,9 +96,8 @@ test.describe("Phase 3 extended UX", () => {
         await page.locator(AUTORUN_CHECKPOINT_SELECTOR).selectOption("1");
         await page.locator(AUTORUN_USE_BUTTON_SELECTOR).click();
 
-        await expect(page.locator(AUTORUN_STATUS_SELECTOR)).toContainText("Autorun loaded");
-        await expect(page.locator(AUTORUN_STATUS_SELECTOR)).toContainText("from checkpoint 2");
-        await expect(page.locator(AUTORUN_STATUS_SELECTOR)).toContainText("extending");
+        await expect(page.locator(AUTORUN_STATUS_SELECTOR)).toContainText("From checkpoint 2");
+        await expect(page.locator(AUTORUN_STATUS_SELECTOR)).toContainText("Extending");
         await expect(page.locator(AUTORUN_CANCEL_SELECTOR)).toBeVisible();
 
         await page.locator(AUTORUN_CANCEL_SELECTOR).click();
@@ -104,7 +106,7 @@ test.describe("Phase 3 extended UX", () => {
         await expect(page.locator(AUTORUN_CANCEL_SELECTOR)).toBeHidden();
     });
 
-    test("Given app is opened, when shortcut help key is pressed, then overlay visibility state toggles", async ({ page }) => {
+    test("Given app shell is rendered, when shortcut help key is pressed, then overlay shows shortcuts", async ({ page }) => {
         await openApp(page);
 
         const shortcutHelpOverlay = page.locator(SHORTCUT_HELP_OVERLAY_SELECTOR);
@@ -125,21 +127,12 @@ test.describe("Phase 3 extended UX", () => {
         await expect(shortcutHelpOverlay).toBeHidden();
     });
 
-    test("Given app shell is rendered, when shortcut reference is displayed, then expected baseline content is visible", async ({ page }) => {
-        await openApp(page);
-
-        await expect(page.locator(SHORTCUT_REFERENCE_SELECTOR)).toContainText("Space = Pause/Resume");
-        await expect(page.locator(SHORTCUT_REFERENCE_SELECTOR)).toContainText("F5 = Debugger Toggle");
-        await expect(page.locator(SHORTCUT_REFERENCE_SELECTOR)).toContainText("H = Toggle Help");
-    });
-
     test("Given emulator is running, when debugger is toggled with shortcut, then panel visibility changes without browser errors", async ({ page }) => {
         const { consoleErrors, pageErrors } = collectBrowserErrors(page);
 
         await startFromBundledRom(page);
 
         const debuggerPanel = page.locator(DEBUGGER_PANEL_SELECTOR);
-        const statusLabel = page.locator(STATUS_SELECTOR);
 
         await expect(debuggerPanel).toBeHidden();
 
@@ -147,7 +140,6 @@ test.describe("Phase 3 extended UX", () => {
 
         await expect(debuggerPanel).toBeVisible();
         await expect(debuggerPanel.locator("#dbg-continue")).toBeVisible();
-        await expect(statusLabel).toContainText("Debugger paused");
 
         await page.keyboard.press("F5");
 

@@ -8,7 +8,6 @@ import {
 
 const ESSENTIAL_CONTROL_SELECTORS = ["#screen", "#start", "#pause", "#stop", "#reset", "#status"];
 const START_BUTTON_SELECTOR = "#start";
-const STATUS_SELECTOR = "#status";
 const PAUSE_BUTTON_SELECTOR = "#pause";
 const STOP_BUTTON_SELECTOR = "#stop";
 const RESET_BUTTON_SELECTOR = "#reset";
@@ -37,7 +36,7 @@ test.describe("Phase 1 critical path lifecycle", () => {
         await startFromBundledRom(page);
 
         await page.locator(PAUSE_BUTTON_SELECTOR).click();
-        await expect(page.locator(STATUS_SELECTOR)).toHaveText(/Paused/);
+        await expect(page.locator(PAUSE_BUTTON_SELECTOR)).toHaveText("Resume");
 
         await page.locator(PAUSE_BUTTON_SELECTOR).click();
         await waitForRunningState(page);
@@ -57,7 +56,6 @@ test.describe("Phase 1 critical path lifecycle", () => {
 
         await page.locator(RESET_BUTTON_SELECTOR).click();
 
-        await expect(page.locator(STATUS_SELECTOR)).toContainText("Soft reset");
         await expect(page.locator(START_BUTTON_SELECTOR)).toBeDisabled();
     });
 

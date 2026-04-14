@@ -47,6 +47,9 @@ mappertool_settings.json
 rom_files.csv
 *.sav
 
+# Generated ROM manifest for web dev server
+web/roms/roms.json
+
 # wasm-bindgen output
 web/pkg/
 node_modules/
