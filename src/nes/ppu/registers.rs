@@ -173,8 +173,9 @@ impl Registers {
         }
     }
 
-    /// Write to address register ($2006)
-    pub fn write_address(&mut self, value: u8, is_dummy_write: bool) {
+    /// Write to address register ($2006).
+    /// Returns `true` when this was the second write (v was updated from t).
+    pub fn write_address(&mut self, value: u8, is_dummy_write: bool) -> bool {
         // Dummy writes from RMW instructions DO toggle w and modify registers
         // They just write the unmodified value (which was already there)
         // So the behavior is the same as a normal write - no special handling needed
@@ -188,6 +189,7 @@ impl Registers {
             // w:                  <- 1
             self.t = (self.t & 0x80FF) | (((value & 0x3F) as u16) << 8);
             self.w = true;
+            false
         } else {
             // Second write: low byte
             // t: ....... ABCDEFGH <- d: ABCDEFGH
@@ -196,6 +198,7 @@ impl Registers {
             self.t = (self.t & 0xFF00) | (value as u16);
             self.v = self.t;
             self.w = false;
+            true
         }
     }
 
@@ -293,6 +296,13 @@ impl Registers {
     /// Get write toggle
     pub fn w(&self) -> bool {
         self.w
+    }
+
+    /// Set the VRAM address directly (used by delayed v=t update).
+    /// The PPU v register is 15-bit internally (fine Y in bits 12-14),
+    /// so mask off bit 15 as a safety invariant.
+    pub fn set_v(&mut self, v: u16) {
+        self.v = v & 0x7FFF;
     }
 
     /// Clear write toggle (used when reading status)

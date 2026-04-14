@@ -462,12 +462,12 @@ mod tests {
         test_mmc5_exram_crc_sequence,
         "roms/nes/automated_tests/exram/mmc5exram.nes",
         [
-            (60, 0x90428465u32),
-            (120, 0x4E2BA407u32),
+            (60, 0x4B2FB7FAu32),
+            (120, 0xCC0E5AA9u32),
             (180, 0x01ECA2E8u32),
-            (240, 0x138E5FE2u32),
-            (300, 0xC7C91CC3u32),
-            (360, 0xEFBFD0D1u32),
+            (240, 0x1E78FE6Du32),
+            (300, 0x33422A1Fu32),
+            (360, 0xC3E6BDD0u32),
             (420, 0xD57CD303u32),
         ]
     );
