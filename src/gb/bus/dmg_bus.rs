@@ -272,12 +272,15 @@ impl GbBus for DmgBus {
             0xFF00 => self.joypad.write(val),
             0xFF01 => self.sb = val,
             0xFF02 => {
-                // Clock-alignment step (mirrors SameBoy): if serial_master_clock is
-                // currently true, immediately force it to false before latching the
-                // new SC value.  This ensures the first serial bit is always timed
-                // at the correct phase relative to the div counter — exactly what
-                // real hardware does when a transfer begins mid-period.
-                if self.serial_master_clock {
+                // Clock-alignment step (mirrors SameBoy): when *starting* an
+                // internal-clock transfer and serial_master_clock is currently
+                // true, immediately force it to false before latching SC.
+                // This ensures the first serial bit is always timed at the
+                // correct phase — exactly what real hardware does when a
+                // transfer begins mid-period.  Restricting to internal-clock
+                // starts avoids unintentionally shifting the clock phase on
+                // writes that merely inspect or clear SC.
+                if val & 0x81 == 0x81 && self.serial_master_clock {
                     self.serial_master_clock = false;
                 }
                 self.sc = val;
@@ -767,10 +770,13 @@ mod tests {
     }
 
     #[test]
-    fn test_serial_transfer_completes_at_1024() {
+    fn test_serial_transfer_completes_within_1024_m_cycles() {
         // Given: transfer started at M-cycle 0;
-        // When: exactly 1024 M-cycles have elapsed;
-        // Then: transfer has completed (IF bit 3 set, SC bit 7 clear)
+        // When: 1024 M-cycles have elapsed (the maximum transfer duration);
+        // Then: transfer has completed (IF bit 3 set, SC bit 7 clear).
+        // Note: with initial div_counter = 204 and SMC = false, the 8th bit
+        // is counted at M-cycle 973; this test confirms completion within the
+        // maximum window without asserting the exact cycle.
         let mut bus = make_bus();
         bus.write(0xFF01, 0x99);
         bus.write(0xFF02, 0x81);
@@ -780,12 +786,12 @@ mod tests {
         assert_eq!(
             bus.read(0xFF0F) & 0x08,
             0x08,
-            "IF bit 3 should be set after 1024 M-cycles"
+            "IF bit 3 should be set within 1024 M-cycles"
         );
         assert_eq!(
             bus.read(0xFF02) & 0x80,
             0x00,
-            "SC bit 7 should be cleared after 1024 M-cycles"
+            "SC bit 7 should be cleared within 1024 M-cycles"
         );
     }
 

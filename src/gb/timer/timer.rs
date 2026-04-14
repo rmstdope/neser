@@ -65,8 +65,9 @@ impl Timer {
 
     /// Return the raw 16-bit internal counter value.
     ///
-    /// Used by the serial port to detect falling edges of bit 8 (the 8192 Hz
-    /// serial bit-clock is derived from this bit of the counter).
+    /// Used by the serial port to inspect the same divider state that
+    /// `DmgBus` derives serial clock timing from via its `0x080` mask
+    /// (falling edge of bit 7 = the 8192 Hz serial bit-clock base).
     pub fn raw_counter(&self) -> u16 {
         self.div_counter
     }
