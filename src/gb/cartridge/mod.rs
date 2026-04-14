@@ -47,7 +47,7 @@ fn ram_size_from_byte(byte: u8) -> usize {
 /// Validations performed:
 /// 1. Length must be at least 32 KB (0x8000) — returns [`RomError::TooShort`].
 /// 2. Header checksum at 0x014D must be correct — returns [`RomError::BadHeaderChecksum`].
-/// 3. MBC type at 0x0147 must be supported (0x00–0x03) — returns [`RomError::UnsupportedMbc`].
+/// 3. MBC type at 0x0147 must be supported (0x00–0x03, 0x05–0x06) — returns [`RomError::UnsupportedMbc`].
 pub fn load_cartridge(bytes: &[u8]) -> Result<Box<dyn GbCartridge>, RomError> {
     if bytes.len() < 0x8000 {
         return Err(RomError::TooShort);
