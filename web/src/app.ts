@@ -74,8 +74,8 @@ if (!gl) {
 let width = 256 - 2 * 8; // default: horizontal_overscan=8 → 240
 let height = 240 - 2 * 8; // default: vertical_overscan=8  → 224
 const SCROLLER_TEXT = "Updates April 14, 2026: All known mappers implemented. Web UI revamped.  **";
-const SCROLLER_SPEED = 2.0;
-const SCROLLER_AMPLITUDE = 20;
+const SCROLLER_SPEED = 1.6;
+const SCROLLER_AMPLITUDE = 17;
 const SCROLLER_FREQUENCY = 0.0587;
 const SCROLLER_FONT_SIZE_PX = 15;
 const SCROLLER_FONT_FAMILY = "'VT323', monospace";
@@ -1133,8 +1133,8 @@ let lastGamepadState2 = {
 };
 
 function setStatus(msg: string, isError = false) {
-    statusEl!.textContent = msg;
-    statusEl!.style.color = isError ? "#f88" : "#8fe28f";
+    statusEl!.textContent = isError ? msg : "";
+    statusEl!.style.color = isError ? "#f88" : "";
 }
 
 async function applyRomBytes(bytes: Uint8Array, name: string) {

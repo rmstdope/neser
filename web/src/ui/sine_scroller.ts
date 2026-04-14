@@ -38,10 +38,11 @@ export function createSineScroller({
             element.height = height;
             return element;
         })();
-    const ctx = canvas.getContext("2d", { willReadFrequently: true });
-    if (!ctx) {
+    const ctxOrNull = canvas.getContext("2d", { willReadFrequently: true }) as CanvasRenderingContext2D | null;
+    if (!ctxOrNull) {
         throw new Error("2D canvas context unavailable for sine scroller");
     }
+    const ctx: CanvasRenderingContext2D = ctxOrNull;
     ctx.textAlign = "left";
     ctx.textBaseline = "middle";
     const fontString = buildFontString(fontSizePx, fontFamily);

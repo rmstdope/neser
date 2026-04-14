@@ -9,7 +9,5 @@ test.describe("web app shell", () => {
         for (const selector of ESSENTIAL_CONTROL_SELECTORS) {
             await expect(page.locator(selector)).toBeVisible();
         }
-
-        await expect(page.locator("#status")).toContainText("Load a ROM to begin");
     });
 });
