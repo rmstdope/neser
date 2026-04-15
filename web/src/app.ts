@@ -1768,7 +1768,8 @@ romInput!.addEventListener("change", async (e) => {
 
 if (romSelect) {
     romSelect.addEventListener("change", async (e) => {
-        const value = (e.target as HTMLSelectElement).value;
+        const sel = e.target as HTMLSelectElement;
+        const value = sel.value;
         if (!value) return;
         // Clear file input when a bundled ROM is selected
         romInput.value = "";
@@ -1780,7 +1781,10 @@ if (romSelect) {
                 throw new Error(`HTTP ${response.status}`);
             }
             const bytes = new Uint8Array(await response.arrayBuffer());
-            const name = value.split("/").pop() || value;
+            // Prefer the option's display text (e.g. "cpu.nes") over URL parsing,
+            // since data-URL values don't contain a meaningful filename.
+            const selectedOption = sel.options[sel.selectedIndex];
+            const name = selectedOption?.textContent?.trim() || value.split("/").pop() || value;
             await handleRomSelection({
                 bytes,
                 name,
