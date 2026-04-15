@@ -951,6 +951,17 @@ function updateEmulatorKindUI() {
     if (saveStateSection) {
         saveStateSection.style.display = isNes ? "" : "none";
     }
+    // Filters are NES-only for now: force "None" (stock) for GB and disable the button
+    if (!isNes) {
+        if (currentFilter !== "stock") {
+            currentFilter = "stock";
+            initWebGL();
+        }
+        filterToggleBtn.disabled = true;
+    } else {
+        filterToggleBtn.disabled = false;
+    }
+    updateFilterToggleButtonLabel();
 }
 
 /** Update the recording overlay (REC : MM:SS) on the canvas. */
