@@ -8,27 +8,29 @@ NESER is a cycle-accurate NES (Nintendo Entertainment System) emulator written i
 
 The codebase is roughly 183,000 lines of Rust, with additional JavaScript for the web frontend and Python tooling for ROM management.
 
+As of version 0.3.0, NESER has been refactored to introduce a hardware-agnostic `Emulator` trait and a `Console` enum that wraps both the NES and GameBoy implementations. This allows the native frontend and GL backend to dispatch common operations through the trait instead of matching on specific console variants or using NES-specific types directly. The architecture is designed to be extensible for future emulated systems while maintaining a clean separation between hardware-specific logic and shared platform/frontend code.
+
 ## High-Level Architecture
 
 ```none
 ┌───────────────────────────────────────────────────────┐
 │                     Frontends                         │
-│  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐   │
-│  │Native Frontend│ │ TUI Frontend │ │ WASM Frontend│   │
-│  │(Desktop, GL) │ │ (Terminal)   │ │ (Browser)    │   │
-│  └──────┬───────┘ └──────┬───────┘ └──────┬───────┘   │
+│  ┌─────────────-─┐ ┌──────────────┐ ┌──────────────┐  │
+│  │Native Frontend│ │ TUI Frontend │ │ WASM Frontend│  │
+│  │(Desktop, GL)  │ │ (Terminal)   │ │ (Browser)    │  │
+│  └──────┬──────-─┘ └──────┬───────┘ └──────┬───────┘  │
 │         │                │                │           │
 │         └────────────────┼────────────────┘           │
 │                          ▼                            │
 │  ┌─────────────────────────────────────────────────┐  │
 │  │  Console enum + Emulator trait                  │  │
-│  │  (src/platform/emulator.rs)                      │  │
+│  │  (src/platform/emulator.rs)                     │  │
 │  │  Hardware-agnostic interface: run_tick, render, │  │
 │  │  audio, input, save/load state, reset           │  │
 │  │  Variants: Console::Nes(Nes), Console::GameBoy  │  │
-│  └──────────────────────┬─────────────────────────┘   │
-│                          │                            │
-│                          ▼                            │
+│  └──────────────────────┬─────────────────────────-┘  │
+│                         │                             │
+│                         ▼                             │
 │  ┌─────────────────────────────────────────────────┐  │
 │  │           NES Emulator (src/nes/)               │  │
 │  │  Nes struct orchestrates CPU ↔ PPU ↔ APU ↔ Bus  │  │
