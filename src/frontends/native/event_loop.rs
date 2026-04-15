@@ -11,15 +11,15 @@ use crate::frontends::native::keyboard::{self, KeyOutcome};
 use crate::frontends::native::mouse;
 use crate::frontends::native::sleep_inhibitor::SleepInhibitor;
 use crate::nes::debugging::control::DebuggerController;
-use crate::nes::frontend_toasts::{
-    gamepad_connected_toast_message, gamepad_disconnected_toast_message, gamepad_init_toast_message,
-};
 use crate::platform::app_context::SharedAppContext;
 use crate::platform::audio::EmulatorAudio;
 use crate::platform::autorun::AutorunMode;
 use crate::platform::autorun::state::AutorunState;
 use crate::platform::debugging::Tracing;
 use crate::platform::emulator::Console;
+use crate::platform::frontend_toasts::{
+    gamepad_connected_toast_message, gamepad_disconnected_toast_message, gamepad_init_toast_message,
+};
 
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, DeviceId, ElementState, WindowEvent};

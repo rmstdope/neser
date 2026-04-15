@@ -12,10 +12,10 @@ use nes::console::{
     CartridgeCatalogOptions, Config, Nes, ParseResult, default_catalog_csv_path,
     refresh_cartridge_catalog,
 };
-use nes::frontend_toasts::cartridge_load_toast_message;
 use platform::app_context::AppContext;
 use platform::autorun::AutorunFormat;
 use platform::debugging::log_info;
+use platform::frontend_toasts::cartridge_load_toast_message;
 use std::cell::RefCell;
 use std::fs;
 use std::path::PathBuf;
