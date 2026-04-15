@@ -2,7 +2,7 @@ import { expect, Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-const EXPECT_TIMEOUT_MS = 20_000;
+const EXPECT_TIMEOUT_MS = 10_000;
 const STATUS_SELECTOR = "#status";
 const ROM_SELECT_ID = "rom-select";
 const ROM_SELECT_SELECTOR = `#${ROM_SELECT_ID}`;
