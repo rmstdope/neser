@@ -662,7 +662,6 @@ fn test_mooneye_emulator_only_mbc1_bits_ramg() {
 }
 
 #[test]
-#[ignore = "failing: MBC1 multicart mode not implemented — tracked in #2018"]
 fn test_mooneye_emulator_only_mbc1_multicart_rom_8mb() {
     assert_mooneye_pass!(&format!("{BASE}/emulator-only/mbc1/multicart_rom_8Mb.gb"));
 }
@@ -673,7 +672,6 @@ fn test_mooneye_emulator_only_mbc1_ram_256kb() {
 }
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_emulator_only_mbc1_ram_64kb() {
     assert_mooneye_pass!(&format!("{BASE}/emulator-only/mbc1/ram_64kb.gb"));
 }
