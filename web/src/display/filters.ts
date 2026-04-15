@@ -54,7 +54,8 @@ export function cycleFilterKey(
 /**
  * Determine the filter to use when switching consoles.
  * If the current filter is not available for the target console,
- * falls back to "stock".
+ * falls back to the console-appropriate default ("gameboy" for GB,
+ * "ntsc" for NES) via {@link defaultFilterForConsole}.
  */
 export function filterOnConsoleSwitch(
     currentFilter: string,

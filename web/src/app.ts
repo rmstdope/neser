@@ -588,12 +588,17 @@ const ntscPass2FragmentShaderSource = `
 // Ported from vendor/slang-shaders/handheld/gameboy.slangp (GPLv3)
 // Original: Copyright (C) 2013 Harlequin, 2024-2025 Matt Akins
 
-// Precision header shared by all GB fragment shaders
+// Precision header shared by all GB shaders.
+// Fragment shaders probe for highp support; vertex shaders always use highp.
 const GB_PREC = `
-    #ifdef GL_FRAGMENT_PRECISION_HIGH
-        precision highp float;
+    #ifdef GL_FRAGMENT_SHADER
+        #ifdef GL_FRAGMENT_PRECISION_HIGH
+            precision highp float;
+        #else
+            precision mediump float;
+        #endif
     #else
-        precision mediump float;
+        precision highp float;
     #endif
 `;
 
@@ -2705,6 +2710,11 @@ function renderGbPass(frame: Uint8Array): boolean {
     if (!gbPass0Program || !gbPass1Program || !gbPass2Program || !gbPass3Program || !gbPass4Program) {
         console.error("GB programs not initialized");
         return false;
+    }
+    // Assets (palette + background PNGs) load asynchronously; fall back to
+    // a stock render until they are available so we don't show wrong colors.
+    if (!gbAssetsLoaded || !gbPaletteTex || !gbBackgroundTex) {
+        return renderSinglePass(frame) ?? false;
     }
     const cw = canvas.width;
     const ch = canvas.height;
