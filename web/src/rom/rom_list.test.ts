@@ -123,3 +123,87 @@ it("fetchRomList avoids duplicating base paths", async () => {
     const paths = entries.map((entry: any) => entry.path);
     expect(paths).toEqual(["automated_tests/instr_test-v5/nestest.nes"]);
 });
+
+// ── Game Boy (.gb) support ──────────────────────────────────────────────────
+
+it("parseDirectoryListing includes .gb files alongside .nes", () => {
+    const html = `
+        <html><body>
+            <a href="../">../</a>
+            <a href="tetris.gb">tetris.gb</a>
+            <a href="game.nes">game.nes</a>
+            <a href="notes.txt">notes.txt</a>
+        </body></html>
+    `;
+    const { roms } = parseDirectoryListing(html);
+    expect(roms).toContain("tetris.gb");
+    expect(roms).toContain("game.nes");
+});
+
+it("parseDirectoryListing excludes .gbc files", () => {
+    const html = `
+        <html><body>
+            <a href="game.gbc">game.gbc</a>
+            <a href="game.gb">game.gb</a>
+        </body></html>
+    `;
+    const { roms } = parseDirectoryListing(html);
+    expect(roms).not.toContain("game.gbc");
+    expect(roms).toContain("game.gb");
+});
+
+it("fetchRomList includes .gb entries from directory listing", async () => {
+    const base = "https://example.com/roms/";
+    const responses = new Map([
+        [base, `
+            <a href="../">../</a>
+            <a href="gb/">gb/</a>
+            <a href="root.nes">root.nes</a>
+        `],
+        [`${base}gb/`, `
+            <a href="../">../</a>
+            <a href="tetris.gb">tetris.gb</a>
+        `]
+    ]);
+
+    const fetchFn = async (url: any) => {
+        const key = url.toString();
+        if (!responses.has(key)) {
+            return { ok: false, status: 404, text: async () => "" };
+        }
+        return { ok: true, text: async () => responses.get(key) };
+    };
+
+    const entries = await fetchRomList(base, fetchFn as any, 4);
+    const paths = entries.map((entry: any) => entry.path);
+    expect(paths).toContain("gb/tetris.gb");
+    expect(paths).toContain("root.nes");
+});
+
+it("fetchRomList manifest fallback includes .gb entries", async () => {
+    const base = "https://example.com/roms/";
+    const responses = new Map([
+        [base, ""],
+        [`${base}roms.json`, JSON.stringify({
+            roms: ["tetris.gb", "game.nes", "color.gbc"]
+        })]
+    ]);
+
+    const fetchFn = async (url: any) => {
+        const key = url.toString();
+        if (!responses.has(key)) {
+            return { ok: false, status: 404, text: async () => "" };
+        }
+        return {
+            ok: true,
+            text: async () => responses.get(key),
+            json: async () => JSON.parse(responses.get(key)!)
+        };
+    };
+
+    const entries = await fetchRomList(base, fetchFn as any, 4);
+    const paths = entries.map((entry: any) => entry.path);
+    expect(paths).toContain("tetris.gb");
+    expect(paths).toContain("game.nes");
+    expect(paths).not.toContain("color.gbc");
+});

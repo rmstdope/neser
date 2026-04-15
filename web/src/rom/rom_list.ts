@@ -8,7 +8,7 @@ export function parseDirectoryListing(html: string) {
         if (!href || href === "../") continue;
         if (href.endsWith("/")) {
             dirs.push(href);
-        } else if (href.toLowerCase().endsWith(".nes")) {
+        } else if (href.toLowerCase().endsWith(".nes") || href.toLowerCase().endsWith(".gb")) {
             roms.push(href);
         }
     }
@@ -94,7 +94,7 @@ export async function fetchRomList(baseUrl: string, fetchFn: typeof fetch = fetc
     const manifest = await manifestResponse.json();
     const roms = Array.isArray(manifest?.roms) ? manifest.roms : [];
     return roms
-        .filter((rom: string) => typeof rom === "string" && rom.toLowerCase().endsWith(".nes"))
+        .filter((rom: string) => typeof rom === "string" && (rom.toLowerCase().endsWith(".nes") || rom.toLowerCase().endsWith(".gb")))
         .map((rom: string) => ({
             path: rom.replace(/^\//, ""),
             url: new URL(rom.replace(/^\//, ""), baseRoot).toString()
