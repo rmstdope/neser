@@ -68,7 +68,7 @@ The emulator is designed around a **multi-layer architecture**:
 
 - **Emulator trait + Console enum** (`src/platform/emulator.rs`): The `Emulator` trait defines the common interface that every emulated system must implement (run, render, audio, input, save/load state, reset — 22 methods total). `Nes` and `GameBoy` implement the trait in their respective modules. The `Console` enum wraps both systems and delegates common methods through `as_core()`/`as_core_mut()` (which return `&dyn Emulator`), keeping a single pair of match arms instead of one per method. System-specific features (NES debugging, PPU viewer, Zapper) are still accessed by matching on `Console::Nes`.
 - **NES emulator** (`src/nes/`): All NES-specific hardware lives under this namespace. The `Nes` struct in `src/nes/console/nes.rs` orchestrates the per-cycle stepping of CPU, PPU, APU, and Bus.
-- **Shared platform** (`src/platform/`): `FrontendConfig` (src/platform/config.rs), `AppContext` (src/platform/app_context.rs), audio infrastructure, and rendering backends are shared across all emulated systems.
+- **Shared platform** (`src/platform/`): `FrontendConfig` (src/platform/config.rs), `AppContext` (src/platform/app_context.rs), audio infrastructure, and system-agnostic toast formatters are shared across all emulated systems.
 - **Bus-centric hardware**: Within the NES, the `Bus` struct routes memory reads and writes between the CPU, PPU registers, APU registers, RAM, OAM DMA, controller ports, and the cartridge mapper.
 
 ## Binaries and Scripts
@@ -241,9 +241,8 @@ All Game Boy (DMG) hardware lives under `src/gb/`. The module is structured arou
 | `src/frontends/native/gamepad.rs` | Gamepad input using gilrs — maps controller axes/buttons to NES joypads. |
 | `src/frontends/native/mouse.rs` | Mouse input — Zapper light gun, SNES mouse, and Arkanoid paddle coordinate mapping. |
 | `src/frontends/native/gl_wrapper.rs` | OpenGL context management for native windows. |
-| `src/rendering/` | Shared rendering infrastructure (native feature). |
-| `src/rendering/gl_backend.rs` | OpenGL framebuffer, texture management, and imgui debugger UI. |
-| `src/rendering/shader_manager.rs` | Shader pipeline using librashader — loads `.slangp` presets (CRT, NTSC, xBRZ). |
+| `src/frontends/native/gl_backend.rs` | OpenGL framebuffer, texture management, and imgui debugger UI. |
+| `src/frontends/native/shader_manager.rs` | Shader pipeline using librashader — loads `.slangp` presets (CRT, NTSC, xBRZ). |
 | `src/frontends/tui/` | Terminal UI ROM launcher using `ratatui` + `crossterm`. |
 | `src/frontends/tui/app.rs` | TUI application state and event loop. |
 | `src/frontends/tui/rom_list.rs` | Scrollable ROM list widget. |
@@ -284,7 +283,8 @@ All Game Boy (DMG) hardware lives under `src/gb/`. The module is structured arou
 
 | File | Description |
 | ------ | ------------- |
-| `src/nes/frontend_toasts.rs` | Toast message formatters for NES-specific user notifications (cartridge loaded, hardware mode, gamepad detection, timing mode). |
+| `src/platform/frontend_toasts.rs` | System-agnostic toast message formatters (gamepad connection/disconnection, cartridge load, gamepad initialization). |
+| `src/nes/frontend_toasts.rs` | NES-specific toast message formatters (emulator timing mode, hardware mode/model selection). |
 
 #### Tests
 

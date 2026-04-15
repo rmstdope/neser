@@ -569,7 +569,6 @@ impl Nes {
     /// Get the next audio sample if one is ready
     ///
     /// Returns `Some(sample)` if a sample is available, `None` otherwise.
-    /// The sample is in the range 0.0 to 1.0.
     /// After calling this, `sample_ready()` will return false until the next sample is generated.
     pub fn get_sample(&mut self) -> Option<f32> {
         self.apu.borrow_mut().get_sample()

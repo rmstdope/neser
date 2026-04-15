@@ -42,15 +42,17 @@ pub fn queue_sample_to_producer(
     }
 }
 
-/// NES APU maximum output level used for normalization.
-pub const NES_APU_MAX: f32 = 1.177;
+/// Maximum combined output level of the NES APU mixer (all five channels at peak
+/// output plus mixer headroom for expansion audio from mappers such as VRC6,
+/// Sunsoft 5B, etc.).
+const NES_APU_MAX: f32 = 1.177;
 
-/// Processes a raw NES APU sample into a normalized, volume-scaled output sample.
+/// Applies volume scaling and NES APU normalisation to a raw audio sample.
 ///
-/// Maps NES 0.0–1.177 to device 0.0–1.0, applies volume, and clamps to [-1.0, 1.0].
+/// Divides by [`NES_APU_MAX`] so the APU's `[0.0, ~1.177]` range maps
+/// to `[0.0, 1.0]`, then applies volume and clamps to `[-1.0, 1.0]`.
 pub fn process_sample(raw_sample: f32, volume: f32) -> f32 {
-    let normalized = raw_sample / NES_APU_MAX;
-    (normalized * volume).clamp(-1.0, 1.0)
+    ((raw_sample / NES_APU_MAX) * volume).clamp(-1.0, 1.0)
 }
 
 #[cfg(test)]

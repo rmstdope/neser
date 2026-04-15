@@ -7,10 +7,13 @@ mod app_state;
 mod audio;
 mod event_loop;
 pub(crate) mod gamepad;
+pub(crate) mod gl_backend;
 mod gl_wrapper;
+pub(crate) mod input;
 pub mod keyboard;
 mod mouse;
 mod render_target;
+mod shader_manager;
 mod sleep_inhibitor;
 
 pub use audio::NativeAudio;

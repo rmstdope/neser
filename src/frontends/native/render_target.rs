@@ -1,5 +1,5 @@
 #![allow(dead_code)] // Public API for future use in native frontend
-use crate::platform::rendering::RenderTarget;
+use crate::frontends::native::gl_backend::RenderTarget;
 
 use glutin::context::PossiblyCurrentContext;
 use glutin::prelude::*;
@@ -10,7 +10,7 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 
 /// Winit/glutin-backed render target implementing the backend-agnostic
-/// [`RenderTarget`] trait used by [`GlBackend`](crate::platform::rendering::GlBackend).
+/// [`RenderTarget`] trait used by [`GlBackend`](crate::frontends::native::gl_backend::GlBackend).
 pub struct WinitRenderTarget {
     window: Arc<Window>,
     surface: Surface<WindowSurface>,

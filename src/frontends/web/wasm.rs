@@ -4,13 +4,13 @@ use crate::nes::debugging::DebuggerViewState;
 use crate::nes::debugging::ppu_viewer::{
     PpuViewerSnapshot, render_nametables_rgba, render_pattern_tables_rgba,
 };
-use crate::nes::frontend_toasts::{
-    cartridge_load_toast_message, emulator_timing_toast_message,
-    gamepad_init_toast_message as shared_gamepad_init_toast_message, hardware_mode_toast_message,
-};
+use crate::nes::frontend_toasts::{emulator_timing_toast_message, hardware_mode_toast_message};
 use crate::nes::input::{Button, ControllerType, SnesButton};
 use crate::platform::app_context::{AppContext, SharedAppContext};
 use crate::platform::autorun::crc32;
+use crate::platform::frontend_toasts::{
+    cartridge_load_toast_message, gamepad_init_toast_message as shared_gamepad_init_toast_message,
+};
 use crate::wasm_autorun::WasmAutorunState;
 use std::cell::RefCell;
 use std::rc::Rc;

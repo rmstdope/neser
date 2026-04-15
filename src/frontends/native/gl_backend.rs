@@ -1,3 +1,5 @@
+use crate::frontends::native::input::{InputEvent, apply_input};
+use crate::frontends::native::shader_manager::ShaderManager;
 use crate::nes::console::Nes;
 use crate::nes::debugging::DebuggerViewState;
 use crate::nes::debugging::ppu_viewer::{
@@ -10,8 +12,6 @@ use crate::platform::app_context::SharedAppContext;
 use crate::platform::debugging::breakpoints::BreakpointList;
 use crate::platform::debugging::log_info;
 use crate::platform::emulator::Console;
-use crate::platform::rendering::input::{InputEvent, apply_input};
-use crate::platform::rendering::shader_manager::ShaderManager;
 use std::ffi::c_void;
 use std::rc::Rc;
 use std::time::Instant;
@@ -55,7 +55,7 @@ pub trait RenderTarget {
 /// Loader for GL procedure addresses used by OpenGL and related backends.
 pub type ProcAddressLoader = Rc<dyn Fn(&str) -> *const c_void>;
 
-/// OpenGL renderer that draws the NES frame and optional debugger UI.
+/// OpenGL renderer that draws the frame and optional debugger UI.
 pub struct GlBackend {
     render_target: Box<dyn RenderTarget>,
     glow_context: std::sync::Arc<glow::Context>,
