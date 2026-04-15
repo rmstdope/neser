@@ -1230,6 +1230,7 @@ async function start() {
     }
     running = true;
     paused = false;
+    if (isTouchDevice()) document.body.classList.add("touch-running");
     setStatus("Running...");
     updateAutorunControls();
     updateEmulationButtons();
@@ -1840,6 +1841,7 @@ function stop() {
 
     running = false;
     paused = false;
+    document.body.classList.remove("touch-running");
     clearCanvas();
     lastFrameTime = 0;
     frameLimiter.reset();

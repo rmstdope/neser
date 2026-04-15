@@ -171,37 +171,15 @@ canvas {
 
 .touch-hide {}
 
-/* Show touch controls on touch devices */
-@media (hover: none) and (pointer: coarse) {
-  .touch-dpad-area,
-  .touch-action-area {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .touch-meta-area {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 24px;
-    margin-top: 12px;
-  }
-
-  .touch-hide {
-    display: none;
-  }
-}
-
-/* JS-based fallback class for touch detection */
-body.touch-device .touch-dpad-area,
-body.touch-device .touch-action-area {
+/* Show touch controls only when emulator is running on a touch device */
+body.touch-running .touch-dpad-area,
+body.touch-running .touch-action-area {
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-body.touch-device .touch-meta-area {
+body.touch-running .touch-meta-area {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -209,7 +187,7 @@ body.touch-device .touch-meta-area {
   margin-top: 12px;
 }
 
-body.touch-device .touch-hide {
+body.touch-running .touch-hide {
   display: none;
 }
 
@@ -362,24 +340,8 @@ body.touch-device .touch-hide {
   display: none;
 }
 
-@media (orientation: portrait) and (hover: none) and (pointer: coarse) {
-  .rotate-prompt {
-    display: flex;
-    position: fixed;
-    inset: 0;
-    z-index: 9999;
-    background: rgba(0, 0, 0, 0.92);
-    align-items: center;
-    justify-content: center;
-  }
-}
-
-body.touch-device .rotate-prompt {
-  display: none;
-}
-
 @media (orientation: portrait) {
-  body.touch-device .rotate-prompt {
+  body.touch-running .rotate-prompt {
     display: flex;
     position: fixed;
     inset: 0;
@@ -409,14 +371,8 @@ body.touch-device .rotate-prompt {
   50% { transform: rotate(90deg); }
 }
 
-/* ── Touch device sidebar override ─────────────────── */
+/* ── Touch device header override (only while running) ── */
 
-@media (hover: none) and (pointer: coarse) {
-  header {
-    display: none !important;
-  }
-}
-
-body.touch-device header {
+body.touch-running header {
   display: none !important;
 }
