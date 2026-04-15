@@ -63,42 +63,44 @@ test.describe("Phase 2 runtime controls", () => {
         const muteButton = page.locator(MUTE_BUTTON_SELECTOR);
 
         // Wait for element to be visible, enabled and stable
-        await expect(muteButton).toBeVisible({ timeout: 20000 });
-        await expect(muteButton).toBeEnabled({ timeout: 20000 });
+        await expect(muteButton).toBeVisible({ timeout: 10000 });
+        await expect(muteButton).toBeEnabled({ timeout: 10000 });
 
         // Initial state should be unmuted (default)
         await expect(muteButton).toHaveAttribute("aria-pressed", "false");
         await expect(muteButton).toContainText(/Audio.*On/i);
 
         // Click to mute
-        await muteButton.click({ timeout: 60000 });
+        await muteButton.click({ timeout: 5000 });
         await expect(muteButton).toHaveAttribute("aria-pressed", "true");
         await expect(muteButton).toContainText(/Audio.*Off/i);
 
         // Click to unmute
-        await muteButton.click({ timeout: 60000 });
+        await muteButton.click({ timeout: 5000 });
         await expect(muteButton).toHaveAttribute("aria-pressed", "false");
         await expect(muteButton).toContainText(/Audio.*On/i);
     });
 
     test("Given filter toggle exists, when toggled repeatedly, then filter cycles without crashes", async ({ page }) => {
-        await openApp(page);
+        // Start emulation first so we test filter toggling during active rendering
+        // (avoids double page navigation which can exceed the 30s test timeout on CI)
+        await startFromBundledRom(page);
 
         const filterToggle = page.locator(FILTER_TOGGLE_SELECTOR);
 
         // Wait for element to be visible, enabled and stable
-        await expect(filterToggle).toBeVisible({ timeout: 20000 });
-        await expect(filterToggle).toBeEnabled({ timeout: 20000 });
+        await expect(filterToggle).toBeVisible({ timeout: 10000 });
+        await expect(filterToggle).toBeEnabled({ timeout: 10000 });
 
         // Get initial filter text
         const initialText = await filterToggle.textContent();
         expect(initialText).toContain("Filter:");
 
-        // Click multiple times to cycle through filters
+        // Click multiple times to cycle through filters while emulator is running
         const clickCount = 5;
 
         for (let i = 0; i < clickCount; i++) {
-            await filterToggle.click({ timeout: 60000 });
+            await filterToggle.click({ timeout: 5000 });
 
             // Wait for text to update
             await page.waitForTimeout(50);
@@ -110,19 +112,7 @@ test.describe("Phase 2 runtime controls", () => {
             // The important thing is no crash occurs
         }
 
-        // Start emulation to test filter toggle doesn't crash rendering loop
-        await startFromBundledRom(page);
-
-        // Toggle filter while running
-        await filterToggle.click({ timeout: 60000 });
-
-        // Verify emulator still running
-        await waitForRunningState(page);
-
-        // Toggle again
-        await filterToggle.click({ timeout: 60000 });
-
-        // Verify emulator still running
+        // Verify emulator still running after filter cycling
         await waitForRunningState(page);
     });
 
@@ -134,11 +124,11 @@ test.describe("Phase 2 runtime controls", () => {
         const screen = page.locator(SCREEN_SELECTOR);
 
         // Wait for elements to be visible, enabled and stable
-        await expect(screenPlus).toBeVisible({ timeout: 20000 });
-        await expect(screenPlus).toBeEnabled({ timeout: 20000 });
-        await expect(screenMinus).toBeVisible({ timeout: 20000 });
-        await expect(screenMinus).toBeEnabled({ timeout: 20000 });
-        await expect(screen).toBeVisible({ timeout: 20000 });
+        await expect(screenPlus).toBeVisible({ timeout: 10000 });
+        await expect(screenPlus).toBeEnabled({ timeout: 10000 });
+        await expect(screenMinus).toBeVisible({ timeout: 10000 });
+        await expect(screenMinus).toBeEnabled({ timeout: 10000 });
+        await expect(screen).toBeVisible({ timeout: 10000 });
 
         // Get initial canvas height
         const initialBox = await screen.boundingBox();
@@ -146,7 +136,7 @@ test.describe("Phase 2 runtime controls", () => {
         const initialHeight = initialBox!.height;
 
         // Click zoom in
-        await screenPlus.click({ timeout: 60000 });
+        await screenPlus.click({ timeout: 5000 });
         await page.waitForTimeout(100);
 
         const zoomedInBox = await screen.boundingBox();
@@ -157,7 +147,7 @@ test.describe("Phase 2 runtime controls", () => {
         expect(zoomedInHeight).toBeGreaterThanOrEqual(initialHeight);
 
         // Click zoom out
-        await screenMinus.click({ timeout: 60000 });
+        await screenMinus.click({ timeout: 5000 });
         await page.waitForTimeout(100);
 
         const zoomedOutBox = await screen.boundingBox();
