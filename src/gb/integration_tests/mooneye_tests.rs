@@ -239,7 +239,6 @@ mod helper_tests {
 const BASE: &str = "roms/gb/automated_tests/mts-20240926-1737-443f6e1";
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_add_sp_e_timing() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/add_sp_e_timing.gb"));
 }
@@ -332,25 +331,21 @@ fn test_mooneye_acceptance_boot_regs_sgb2() {
 }
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_call_cc_timing() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/call_cc_timing.gb"));
 }
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_call_cc_timing2() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/call_cc_timing2.gb"));
 }
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_call_timing() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/call_timing.gb"));
 }
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_call_timing2() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/call_timing2.gb"));
 }
@@ -418,19 +413,16 @@ fn test_mooneye_acceptance_intr_timing() {
 }
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_jp_cc_timing() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/jp_cc_timing.gb"));
 }
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_jp_timing() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/jp_timing.gb"));
 }
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_ld_hl_sp_e_timing() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/ld_hl_sp_e_timing.gb"));
 }
@@ -547,7 +539,6 @@ fn test_mooneye_acceptance_ppu_vblank_stat_intr_gs() {
 }
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_push_timing() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/push_timing.gb"));
 }
@@ -558,31 +549,26 @@ fn test_mooneye_acceptance_rapid_di_ei() {
 }
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_ret_cc_timing() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/ret_cc_timing.gb"));
 }
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_ret_timing() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/ret_timing.gb"));
 }
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_reti_intr_timing() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/reti_intr_timing.gb"));
 }
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_reti_timing() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/reti_timing.gb"));
 }
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_rst_timing() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/rst_timing.gb"));
 }

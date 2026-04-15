@@ -48,6 +48,13 @@ pub struct DmgBus {
     /// instead of the cartridge.  Writing any value to $FF50 sets this
     /// to `false` (mirrors real DMG hardware behaviour).
     boot_rom_active: bool,
+    /// Whether an OAM DMA transfer is currently in progress.
+    dma_active: bool,
+    /// High byte of the OAM DMA source address (written to $FF46).
+    dma_source: u8,
+    /// Current DMA position: 0 = warm-up, 1–160 = copying bytes 0–159,
+    /// 161 = teardown (sets `dma_active = false`).  Total: 162 M-cycles.
+    dma_position: u8,
     /// $FF01 Serial Data Register (SB).
     sb: u8,
     /// $FF02 Serial Control Register (SC).
@@ -98,6 +105,9 @@ impl DmgBus {
             serial_buf: Vec::new(),
             serial_bits_remaining: 0,
             serial_master_clock: false,
+            dma_active: false,
+            dma_source: 0,
+            dma_position: 0,
         };
         // Real DMG hardware powers on with LCDC=$00 (LCD disabled).
         // The boot ROM tile-loading runs while the LCD is off so VRAM writes
@@ -128,6 +138,9 @@ impl DmgBus {
         self.serial_buf.clear();
         self.serial_bits_remaining = 0;
         self.serial_master_clock = false;
+        self.dma_active = false;
+        self.dma_source = 0;
+        self.dma_position = 0;
     }
 
     /// Returns `true` while the boot ROM is still mapped at $0000–$00FF.
@@ -189,6 +202,33 @@ impl DmgBus {
                     }
                 }
             }
+
+            // OAM DMA: advance one M-cycle.
+            //
+            // Sequence: 1 warm-up tick (no copy) + 160 copy ticks (bytes 0–159)
+            // + 1 teardown tick = 162 blocking M-cycles total.  The CPU's tick()
+            // is called before each memory access (in SM83::read/write), so any
+            // CPU access in the same M-cycle as the teardown tick (position 161)
+            // sees dma_active=false and reaches OAM normally.
+            if self.dma_active {
+                match self.dma_position {
+                    0 => {
+                        // warm-up: bus is captured but no byte copied yet
+                        self.dma_position = 1;
+                    }
+                    1..=160 => {
+                        let byte_idx = (self.dma_position - 1) as u16;
+                        let src = (self.dma_source as u16) << 8 | byte_idx;
+                        self.ppu.oam[byte_idx as usize] = self.read_raw(src);
+                        self.dma_position += 1;
+                    }
+                    161 => {
+                        // teardown: transfer complete
+                        self.dma_active = false;
+                    }
+                    _ => unreachable!(),
+                }
+            }
         }
         self.ppu.tick_dots(u32::from(m_cycles) * 4);
         self.if_reg |= self.ppu.take_pending_interrupts();
@@ -232,12 +272,16 @@ impl DmgBus {
         }
     }
 
-    /// Execute an OAM DMA transfer: copy 160 bytes from `(val << 8)` into OAM.
+    /// Begin a cycle-accurate OAM DMA transfer from `(val << 8)`.
+    ///
+    /// Sets the DMA state so that `tick()` copies one byte per M-cycle,
+    /// blocking OAM access for 162 M-cycles total (1 warm-up + 160 copy + 1
+    /// teardown).  The CPU's `tick()`-before-access sequencing guarantees the
+    /// first DMA tick falls in the M-cycle immediately after this write.
     fn do_oam_dma(&mut self, val: u8) {
-        let src = u16::from(val) << 8;
-        for i in 0..0xA0u16 {
-            self.ppu.oam[i as usize] = self.read_raw(src + i);
-        }
+        self.dma_active = true;
+        self.dma_source = val;
+        self.dma_position = 0;
     }
 }
 
@@ -252,7 +296,12 @@ impl GbBus for DmgBus {
             0xA000..=0xBFFF => self.cart.read(addr),
             0xC000..=0xDFFF => self.wram[(addr - 0xC000) as usize],
             0xE000..=0xFDFF => self.wram[(addr - 0xE000) as usize],
-            0xFE00..=0xFE9F => self.ppu.read_oam(addr),
+            0xFE00..=0xFE9F => {
+                if self.dma_active {
+                    return 0xFF;
+                }
+                self.ppu.read_oam(addr)
+            }
             0xFEA0..=0xFEFF => 0xFF,
             0xFF00 => self.joypad.read(),
             0xFF01 => self.sb,
@@ -274,7 +323,11 @@ impl GbBus for DmgBus {
             0xA000..=0xBFFF => self.cart.write(addr, val),
             0xC000..=0xDFFF => self.wram[(addr - 0xC000) as usize] = val,
             0xE000..=0xFDFF => self.wram[(addr - 0xE000) as usize] = val,
-            0xFE00..=0xFE9F => self.ppu.write_oam(addr, val),
+            0xFE00..=0xFE9F => {
+                if !self.dma_active {
+                    self.ppu.write_oam(addr, val);
+                }
+            }
             0xFEA0..=0xFEFF => {}
             0xFF00 => self.joypad.write(val),
             0xFF01 => self.sb = val,
