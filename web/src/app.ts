@@ -18,6 +18,7 @@ import { computePlaybackRate } from "./audio/audio_resampler";
 import { planFrame } from "./audio/frame_plan";
 import { createSineScroller } from "./ui/sine_scroller";
 import { getKeyboardControllerTarget } from "./input/input_routing";
+import { initTouchControls, isTouchDevice } from "./input/touch_controls";
 import { dispatchWebShortcutAction } from "./shortcuts/shortcut_actions";
 import {
     buildFullHelpOverlayText,
@@ -2507,6 +2508,30 @@ function handleKeyUp(event: KeyboardEvent) {
 
 document.addEventListener('keydown', handleKeyDown);
 document.addEventListener('keyup', handleKeyUp);
+
+// ── Touch controls ──────────────────────────────────────────────────────────
+if (isTouchDevice()) {
+    document.body.classList.add("touch-device");
+}
+
+const touchControlsContainer = document.getElementById("touch-controls");
+const touchMetaArea = document.querySelector(".touch-meta-area");
+
+function handleTouchButton(button: number, pressed: boolean) {
+    if (!emulator) return;
+    if (nes) {
+        applyJoypadButtonIfAllowed(nes, 1, button, pressed);
+    } else {
+        emulator.inst.set_button(1, button, pressed);
+    }
+}
+
+if (touchControlsContainer) {
+    initTouchControls(touchControlsContainer, handleTouchButton);
+}
+if (touchMetaArea) {
+    initTouchControls(touchMetaArea, handleTouchButton);
+}
 
 function handleMouseMotion(event: MouseEvent) {
     if (!nes) return;
