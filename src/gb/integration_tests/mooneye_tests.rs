@@ -492,19 +492,16 @@ fn test_mooneye_acceptance_ppu_intr_2_mode0_timing_sprites() {
 }
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_ppu_intr_2_mode0_timing() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/ppu/intr_2_mode0_timing.gb"));
 }
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_ppu_intr_2_mode3_timing() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/ppu/intr_2_mode3_timing.gb"));
 }
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_ppu_intr_2_oam_ok_timing() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/ppu/intr_2_oam_ok_timing.gb"));
 }
@@ -527,7 +524,6 @@ fn test_mooneye_acceptance_ppu_stat_irq_blocking() {
 }
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_ppu_stat_lyc_onoff() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/ppu/stat_lyc_onoff.gb"));
 }

@@ -15,8 +15,8 @@ pub enum PpuMode {
 ///
 /// Fixed-width scanline model (MVP):
 /// - Mode 2 (OAM Scan):     dots 0–79    (80 dots)
-/// - Mode 3 (Pixel Xfer):   dots 80–251  (172 dots)
-/// - Mode 0 (H-Blank):      dots 252–455 (204 dots)
+/// - Mode 3 (Pixel Xfer):   dots 80–(251+extra)  (172+extra dots)
+/// - Mode 0 (H-Blank):      dots (252+extra)–455 (204-extra dots)
 /// - Mode 1 (V-Blank):      scanlines 144–153 (4560 dots total)
 pub struct Timing {
     dot: u16,
@@ -30,6 +30,16 @@ pub struct Timing {
     /// Mode 0 (HBlank) for the first 80 dots, then the PPU transitions
     /// directly to Mode 3 (Pixel Transfer).
     first_scanline_after_enable: bool,
+    /// Mirrors SameBoy's `mode_for_interrupt` (-1 = suppress all mode IRQs,
+    /// 0–3 = mode whose STAT IRQ source is currently active).
+    ///
+    /// This differs from the STAT mode bits:
+    /// - Mode 2 source becomes active 4 T-cycles before mode bits show Mode 2.
+    /// - Mode 0 source and mode bits become active together.
+    mode_for_irq: i8,
+    /// Extra dots added to Mode 3 (OBJ/SCX/window penalties).
+    /// Mode 0 starts at dot `OAM_SCAN_DOTS + PIXEL_TRANSFER_DOTS + mode3_extra_dots`.
+    mode3_extra_dots: u16,
 }
 
 /// Events returned by a single dot tick.
@@ -51,6 +61,8 @@ impl Timing {
     const VBLANK_START_LINE: u8 = 144;
     const OAM_SCAN_DOTS: u16 = 80;
     const PIXEL_TRANSFER_DOTS: u16 = 172;
+    /// Dot at which the Mode 2 STAT IRQ source fires (4 dots before mode bits change to Mode 2).
+    const MODE2_IRQ_DOT: u16 = 452;
 
     pub fn new() -> Self {
         Self {
@@ -65,6 +77,8 @@ impl Timing {
             mode: PpuMode::HBlank,
             frame_ready: false,
             first_scanline_after_enable: true,
+            mode_for_irq: -1,
+            mode3_extra_dots: 0,
         }
     }
 
@@ -82,8 +96,12 @@ impl Timing {
                 self.scanline = 0;
                 self.frame_ready = true;
                 events.new_frame = true;
+                // Reset mode3_extra_dots at the start of each new frame.
+                self.mode3_extra_dots = 0;
             }
         }
+
+        let mode3_end = Self::OAM_SCAN_DOTS + Self::PIXEL_TRANSFER_DOTS + self.mode3_extra_dots;
 
         // Determine mode from current dot/scanline position.
         let new_mode = if self.scanline >= Self::VBLANK_START_LINE {
@@ -96,7 +114,7 @@ impl Timing {
             PpuMode::HBlank
         } else if self.dot < Self::OAM_SCAN_DOTS {
             PpuMode::OamScan
-        } else if self.dot < Self::OAM_SCAN_DOTS + Self::PIXEL_TRANSFER_DOTS {
+        } else if self.dot < mode3_end {
             PpuMode::PixelTransfer
         } else {
             PpuMode::HBlank
@@ -111,11 +129,48 @@ impl Timing {
             events.mode_changed = true;
             if new_mode == PpuMode::HBlank {
                 events.render_scanline = true;
+                // mode_for_irq was already set to 0 four dots earlier (at mode0_irq_dot).
+                // Set it again here for any scanline where mode0_irq_dot may have been skipped
+                // (e.g. VBlank scanlines don't reach mode0_irq_dot on visible scanlines).
+                self.mode_for_irq = 0;
+                // Extra dots were consumed for this scanline; reset for the next.
+                self.mode3_extra_dots = 0;
             }
             if new_mode == PpuMode::VBlank {
                 events.vblank_start = true;
+                self.mode_for_irq = 1;
+            }
+            if new_mode == PpuMode::OamScan {
+                // Mode bits just changed to Mode 2. mode_for_irq was already set to 2
+                // four dots earlier (at dot 452). Keep it at 2.
+                // (mode_for_irq was set to 2 at dot 452 of the previous scanline)
+            }
+            if new_mode == PpuMode::PixelTransfer {
+                // Mode 3 has no STAT IRQ source; set to -1 to suppress mode IRQs.
+                // (The Mode 2 source has already fired at dot 452 / dot 0.)
+                self.mode_for_irq = -1;
             }
             self.mode = new_mode;
+        }
+
+        // Mode 2 STAT IRQ source activates 4 dots before mode bits change to Mode 2.
+        // Dot 452 of any scanline whose next scanline starts with Mode 2:
+        //   - Scanlines 0–142 (next = 1–143, all visible with Mode 2)
+        //   - Scanline 153 (next = 0, visible with Mode 2)
+        // Scanlines 143 (next = 144, VBlank) and 144–152 (VBlank) are excluded.
+        if self.dot == Self::MODE2_IRQ_DOT {
+            let next_scanline_has_mode2 = self.scanline < Self::VBLANK_START_LINE - 1
+                || self.scanline == Self::TOTAL_SCANLINES - 1;
+            if next_scanline_has_mode2 {
+                self.mode_for_irq = 2;
+            }
+        }
+
+        // Mode 0 STAT IRQ source activates 4 dots before mode bits change to HBlank,
+        // symmetric with Mode 2. Only on visible scanlines (0–143).
+        let mode0_irq_dot = mode3_end - 4;
+        if self.dot == mode0_irq_dot && self.scanline < Self::VBLANK_START_LINE {
+            self.mode_for_irq = 0;
         }
 
         events
@@ -148,6 +203,24 @@ impl Timing {
 
     pub fn clear_frame_ready(&mut self) {
         self.frame_ready = false;
+    }
+
+    /// Returns the mode whose STAT IRQ source is currently active.
+    ///
+    /// -1 = all mode IRQ sources suppressed (first scanline after LCD enable).
+    /// 0–3 = the mode whose source is active.
+    ///
+    /// This mirrors SameBoy's `mode_for_interrupt`. Mode 2 source activates
+    /// 4 T-cycles before the STAT mode bits change to Mode 2.
+    pub fn mode_for_irq(&self) -> i8 {
+        self.mode_for_irq
+    }
+
+    /// Set the number of extra dots to add to Mode 3 (OBJ/SCX/window penalties).
+    ///
+    /// Call at the Mode 2→Mode 3 transition (dot 80 of each visible scanline).
+    pub fn set_mode3_extra_dots(&mut self, extra: u16) {
+        self.mode3_extra_dots = extra;
     }
 }
 
@@ -319,5 +392,166 @@ mod tests {
         // The coincidence is checked in the PPU; timing exposes ly() for that
         // This test just ensures ly() returns the correct scanline
         assert_eq!(timing.ly(), 5);
+    }
+
+    // ── mode_for_irq timing ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_mode_for_irq_is_suppressed_initially() {
+        // Given: fresh Timing (first scanline after LCD enable)
+        let timing = Timing::new();
+        // Then: mode_for_irq = -1 (all mode STAT IRQs suppressed on first scanline)
+        assert_eq!(timing.mode_for_irq(), -1);
+    }
+
+    #[test]
+    fn test_mode_for_irq_becomes_2_at_dot_452_of_scanline_0() {
+        // The Mode 2 STAT interrupt source must activate at dot 452 of scanline 0,
+        // which is 4 dots before the STAT mode bits change to Mode 2 on scanline 1.
+        //
+        // Scanline 0 starts at dot 4, so 452 - 4 = 448 additional dots to reach dot 452.
+        let mut timing = Timing::new(); // dot=4, scanline=0
+        tick_n(&mut timing, 448, 0xFF); // advance to dot 452
+        assert_eq!(timing.dot(), 452);
+        assert_eq!(timing.scanline, 0);
+        assert_eq!(
+            timing.mode_for_irq(),
+            2,
+            "mode_for_irq must be 2 at dot 452 (4 dots before Mode 2 mode bits on scanline 1)"
+        );
+    }
+
+    #[test]
+    fn test_mode_for_irq_not_2_at_dot_451_of_scanline_0() {
+        // One dot before dot 452: mode_for_irq should NOT yet be 2.
+        let mut timing = Timing::new(); // dot=4
+        tick_n(&mut timing, 447, 0xFF); // advance to dot 451
+        assert_eq!(timing.dot(), 451);
+        assert_ne!(
+            timing.mode_for_irq(),
+            2,
+            "mode_for_irq must not be 2 before dot 452"
+        );
+    }
+
+    #[test]
+    fn test_mode_for_irq_becomes_0_when_mode_0_starts() {
+        // mode_for_irq must equal 0 when the STAT mode bits change to HBlank.
+        // On scanline 1, HBlank starts at dot 252.
+        // Note: mode_for_irq is first set to 0 at dot 248 (4 dots early), so
+        // at dot 252 it is already 0 (set a second time redundantly).
+        // First scanline is 452 dots (starting at dot 4). Scanline 1 starts at dot 0.
+        // Tick 452 (scanline 0 end) + 252 (HBlank start on scanline 1) = 704 dots.
+        let mut timing = Timing::new();
+        tick_n(&mut timing, 452 + 252, 0xFF);
+        assert_eq!(timing.scanline, 1);
+        assert_eq!(timing.dot(), 252);
+        assert_eq!(timing.mode(), PpuMode::HBlank);
+        assert_eq!(
+            timing.mode_for_irq(),
+            0,
+            "mode_for_irq must be 0 when mode bits show HBlank"
+        );
+    }
+
+    #[test]
+    fn test_mode_for_irq_becomes_0_at_dot_248_before_hblank() {
+        // The Mode 0 STAT interrupt source must activate at dot 248 of scanline 1,
+        // which is 4 dots before the STAT mode bits change to HBlank at dot 252.
+        // This is symmetric with Mode 2 firing at dot 452 (4 dots before Mode 2 bits).
+        // First scanline: 452 dots. Scanline 1 starts at dot 0.
+        // Tick 452 (scanline 0 end) + 248 = 700 dots.
+        let mut timing = Timing::new();
+        tick_n(&mut timing, 452 + 248, 0xFF);
+        assert_eq!(timing.scanline, 1);
+        assert_eq!(timing.dot(), 248);
+        assert_eq!(
+            timing.mode(),
+            PpuMode::PixelTransfer,
+            "Mode bits must still show PixelTransfer at dot 248 (HBlank starts at 252)"
+        );
+        assert_eq!(
+            timing.mode_for_irq(),
+            0,
+            "mode_for_irq must be 0 at dot 248 (4 dots before Mode 0 mode bits)"
+        );
+    }
+
+    #[test]
+    fn test_mode_for_irq_becomes_0_at_dot_247_not_early() {
+        // One dot before the early Mode 0 fire: mode_for_irq should NOT yet be 0.
+        // At dot 247 of scanline 1, mode_for_irq is still -1 (PixelTransfer suppressed).
+        let mut timing = Timing::new();
+        tick_n(&mut timing, 452 + 247, 0xFF);
+        assert_eq!(timing.scanline, 1);
+        assert_eq!(timing.dot(), 247);
+        assert_ne!(
+            timing.mode_for_irq(),
+            0,
+            "mode_for_irq must not be 0 before dot 248"
+        );
+    }
+
+    #[test]
+    fn test_mode_for_irq_is_not_2_at_end_of_scanline_143() {
+        // Scanline 143 transitions to VBlank, not Mode 2.
+        // mode_for_irq must NOT fire Mode 2 at dot 452 of scanline 143.
+        //
+        // First scanline: 452 dots. Scanlines 1-143: 456 * 143 = 65208 dots.
+        // Total to end of scanline 143: 452 + 65208 = 65660 dots.
+        // Dot 452 of scanline 143 = 452 + 65208 - 456 + 452 = ...
+        // Scanline 143 starts at dot 0 after tick 452 + 456 * 142 dots.
+        // dot 452 of scanline 143 = tick(452 + 456 * 142 + 452).
+        let mut timing = Timing::new();
+        tick_n(&mut timing, 452 + 456 * 142 + 452, 0xFF);
+        assert_eq!(timing.scanline, 143);
+        assert_eq!(timing.dot(), 452);
+        assert_ne!(
+            timing.mode_for_irq(),
+            2,
+            "mode_for_irq must not be 2 at dot 452 of scanline 143 (next is VBlank)"
+        );
+    }
+
+    #[test]
+    fn test_mode_for_irq_becomes_2_at_dot_452_of_scanline_153() {
+        // Scanline 153 transitions to scanline 0 (visible), so mode_for_irq
+        // must be 2 at dot 452 of scanline 153.
+        //
+        // First scanline: 452 dots. Scanlines 1-153: 456 * 153 = 69768 dots.
+        // dot 452 of scanline 153 = tick(452 + 456 * 153 - 456 + 452).
+        // = tick(452 + 456*152 + 452)
+        let mut timing = Timing::new();
+        tick_n(&mut timing, 452 + 456 * 152 + 452, 0xFF);
+        assert_eq!(timing.scanline, 153);
+        assert_eq!(timing.dot(), 452);
+        assert_eq!(
+            timing.mode_for_irq(),
+            2,
+            "mode_for_irq must be 2 at dot 452 of scanline 153 (next is scanline 0 with Mode 2)"
+        );
+    }
+
+    #[test]
+    fn test_mode3_extra_dots_shifts_hblank_start() {
+        // When mode3_extra_dots = 10, HBlank should start at dot 262 (not 252).
+        let mut timing = Timing::new();
+        tick_n(&mut timing, 452, 0xFF); // complete first scanline
+        assert_eq!(timing.scanline, 1);
+        timing.set_mode3_extra_dots(10);
+        tick_n(&mut timing, 252, 0xFF); // would normally be HBlank, but +10 extra dots
+        assert_eq!(timing.dot(), 252);
+        assert_eq!(
+            timing.mode(),
+            PpuMode::PixelTransfer,
+            "With mode3_extra_dots=10, mode 3 should still be active at dot 252"
+        );
+        tick_n(&mut timing, 10, 0xFF); // advance past extra dots
+        assert_eq!(timing.dot(), 262);
+        assert_eq!(
+            timing.mode(),
+            PpuMode::HBlank,
+            "With mode3_extra_dots=10, HBlank should start at dot 262"
+        );
     }
 }

@@ -26,6 +26,12 @@ pub struct Ppu {
     window_line: u8,
     /// Previous STAT IRQ line state for edge detection.
     prev_stat_irq_line: bool,
+    /// Frozen LYC=LY coincidence bit (STAT bit 2).
+    ///
+    /// Real hardware retains this bit when the LCD is turned off.
+    /// Changing LYC while the LCD is off has no effect on this bit.
+    /// When the LCD is re-enabled, the bit is updated immediately (LY=0).
+    lyc_eq_ly_frozen: bool,
 }
 
 impl Ppu {
@@ -39,6 +45,7 @@ impl Ppu {
             pending_interrupts: 0,
             window_line: 0,
             prev_stat_irq_line: false,
+            lyc_eq_ly_frozen: false,
         }
     }
 
@@ -64,6 +71,9 @@ impl Ppu {
         }
         let lyc = self.registers.lyc;
         let events = self.timing.tick_dot(lyc);
+
+        // Keep lyc_eq_ly_frozen in sync with the live comparison.
+        self.lyc_eq_ly_frozen = self.timing.ly() == lyc;
 
         // Render the current visible scanline when Mode 3→Mode 0 transition fires.
         if events.render_scanline {
@@ -95,35 +105,38 @@ impl Ppu {
     // ── STAT IRQ line ─────────────────────────────────────────────────────────
 
     fn compose_stat_byte(&self) -> u8 {
-        // When LCD is off, mode bits report 0 (H-Blank) and LYC=LY is 0.
-        if !self.registers.lcd_enabled() {
-            return self.registers.stat_irq_enables & 0x78;
-        }
-        let mode_bits = self.timing.mode() as u8;
-        let lyc_bit = if self.timing.ly() == self.registers.lyc {
-            0x04
+        let mode_bits = if self.registers.lcd_enabled() {
+            self.timing.mode() as u8
         } else {
-            0x00
+            // When LCD is off, mode bits report 0 (H-Blank).
+            0
         };
+        // LYC=LY bit: live when LCD is on, frozen when LCD is off.
+        let lyc_bit = if self.lyc_eq_ly_frozen { 0x04 } else { 0x00 };
         (self.registers.stat_irq_enables & 0x78) | lyc_bit | mode_bits
     }
 
     /// Evaluate the STAT IRQ source line and fire a STAT interrupt on 0→1 edge.
+    ///
+    /// Uses `timing.mode_for_irq()` for Mode 2 only (fires 4 dots early).
+    /// Mode 0 and Mode 1 remain level-based (raw mode bits) since they are
+    /// active throughout the entire HBlank / VBlank period.
+    /// Mode IRQs are suppressed when `mode_for_irq == -1` (first scanline after LCD enable).
     fn update_stat_irq(&mut self) {
         let mode = self.timing.mode();
+        let mode_for_irq = self.timing.mode_for_irq();
         let ly = self.timing.ly();
         let lyc = self.registers.lyc;
         let en = self.registers.stat_irq_enables;
 
-        // During the first scanline after LCD enable, use
-        // mode_for_interrupt = -1, which suppresses all mode-based STAT
-        // interrupts. Only the LYC=LY source can fire.
-        let suppress_mode_irqs = self.timing.is_first_scanline_after_enable();
+        // mode_for_irq < 0 signals that mode-based IRQs are suppressed
+        // (first scanline after LCD enable, or during Mode 3).
+        let suppress_mode_irqs = mode_for_irq < 0;
 
         let irq_line = (en & 0x40 != 0 && ly == lyc)
-            || (!suppress_mode_irqs && en & 0x20 != 0 && mode == PpuMode::OamScan)
+            || (mode_for_irq == 2 && en & 0x20 != 0)
             || (!suppress_mode_irqs && en & 0x10 != 0 && mode == PpuMode::VBlank)
-            || (!suppress_mode_irqs && en & 0x08 != 0 && mode == PpuMode::HBlank);
+            || (mode_for_irq == 0 && en & 0x08 != 0);
 
         if irq_line && !self.prev_stat_irq_line {
             self.pending_interrupts |= 0x02;
@@ -216,14 +229,32 @@ impl Ppu {
     ///
     /// Detects LCD 0→1 enable transition (LCDC bit 7) and resets PPU timing
     /// to scanline 0 / Mode 2, as the hardware does.
+    /// On LCD 1→0, retains `lyc_eq_ly_frozen` so STAT bit 2 reflects the last
+    /// live LYC=LY comparison result.
     pub fn write_register(&mut self, addr: u16, val: u8) {
         let was_enabled = self.registers.lcd_enabled();
         self.registers.write(addr, val);
-        if !was_enabled && self.registers.lcd_enabled() {
+        let now_enabled = self.registers.lcd_enabled();
+        if !was_enabled && now_enabled {
+            // LCD 0→1: reset timing, immediately compute LYC=LY for LY=0.
             self.timing = Timing::new();
             self.window_line = 0;
-            self.prev_stat_irq_line = false;
+            // Initialise prev_stat_irq_line to the LYC source state that was active
+            // while the LCD was off (based on the frozen LYC=LY bit).
+            // This prevents a spurious STAT interrupt when LCD re-enables while
+            // the LYC=LY condition was already true (no rising edge = no interrupt).
+            let lyc_irq_was_active =
+                self.lyc_eq_ly_frozen && (self.registers.stat_irq_enables & 0x40 != 0);
+            self.prev_stat_irq_line = lyc_irq_was_active;
+            self.lyc_eq_ly_frozen = self.registers.lyc == 0;
+            // Evaluate the STAT IRQ line synchronously at the point of LCD re-enable.
+            // On real hardware, the LYC=LY comparison fires immediately when the LCD
+            // is turned on (SameBoy: GB_STAT_update at lcd-enable time). This means
+            // IF is updated before the NEXT instruction's service_interrupts() call.
+            self.update_stat_irq();
         }
+        // LCD 1→0: lyc_eq_ly_frozen is intentionally NOT cleared here —
+        // hardware retains the last LYC=LY state when the LCD is powered off.
     }
 
     // ── Interrupt interface ───────────────────────────────────────────────────
@@ -1058,6 +1089,160 @@ mod tests {
         assert_eq!(
             ppu.oam, snapshot,
             "write_oam in Mode 3 must not corrupt OAM"
+        );
+    }
+
+    // ── LYC=LY bit retention when LCD disabled (stat_lyc_onoff) ──────────────
+
+    #[test]
+    fn test_lyc_eq_ly_bit_retained_in_stat_when_lcd_disabled() {
+        // Given: PPU running in VBlank with LYC=144 (LY=LYC true)
+        let mut ppu = Ppu::new();
+        ppu.write_register(0xFF45, 144); // LYC = 144
+        // Advance to scanline 144 (VBlank) so LY=LYC=144
+        tick_dots(&mut ppu, FIRST_SCANLINE_DOTS + 456 * 143);
+        assert_eq!(ppu.timing.ly(), 144);
+        // Verify bit 2 is set before LCD disable
+        let stat_before = ppu.read_register(0xFF41);
+        assert_eq!(
+            stat_before & 0x04,
+            0x04,
+            "LYC=LY bit must be set before LCD disable"
+        );
+        // When: turn off LCD (LCDC bit 7 = 0)
+        ppu.write_register(0xFF40, 0x11); // LCD off
+        // Then: STAT bit 2 (LYC=LY) must be retained (not cleared)
+        let stat_after = ppu.read_register(0xFF41);
+        assert_eq!(
+            stat_after & 0x04,
+            0x04,
+            "LYC=LY bit must be retained in STAT when LCD is disabled"
+        );
+    }
+
+    #[test]
+    fn test_lyc_eq_ly_bit_not_updated_when_lcd_off_and_lyc_changed() {
+        // Given: PPU with LYC=144, in VBlank, LCD turned off (LYC=LY bit retained)
+        let mut ppu = Ppu::new();
+        ppu.write_register(0xFF45, 144); // LYC = 144
+        tick_dots(&mut ppu, FIRST_SCANLINE_DOTS + 456 * 143);
+        ppu.write_register(0xFF40, 0x11); // LCD off with LYC=LY bit set
+        let stat_before_lyc_change = ppu.read_register(0xFF41);
+        assert_eq!(stat_before_lyc_change & 0x04, 0x04);
+        // When: change LYC to a different value while LCD is off
+        ppu.write_register(0xFF45, 1); // LYC = 1 (no longer matches LY=144)
+        // Then: LYC=LY bit must NOT change (comparison clock is stopped)
+        let stat_after = ppu.read_register(0xFF41);
+        assert_eq!(
+            stat_after & 0x04,
+            0x04,
+            "LYC=LY bit must not change when LCD is off (comparison clock stopped)"
+        );
+    }
+
+    #[test]
+    fn test_lyc_eq_ly_bit_updated_on_lcd_re_enable() {
+        // Given: LCD off with LYC=LY bit set (LYC=144, LY was 144)
+        let mut ppu = Ppu::new();
+        ppu.write_register(0xFF45, 144);
+        tick_dots(&mut ppu, FIRST_SCANLINE_DOTS + 456 * 143);
+        ppu.write_register(0xFF40, 0x11); // LCD off
+        assert_eq!(ppu.read_register(0xFF41) & 0x04, 0x04);
+        // When: re-enable LCD — LY resets to 0, which ≠ LYC=144
+        ppu.write_register(0xFF40, 0x91); // LCD on (LCDC reset value)
+        // Then: LYC=LY bit must be 0 (LY=0 ≠ LYC=144)
+        let stat = ppu.read_register(0xFF41);
+        assert_eq!(
+            stat & 0x04,
+            0x00,
+            "LYC=LY bit must be cleared on LCD re-enable when LY=0 != LYC"
+        );
+    }
+
+    // ── Mode 2 STAT IRQ fires 4 dots before mode bits (intr_2_mode*) ─────────
+
+    #[test]
+    fn test_stat_mode2_irq_fires_at_dot_452_not_dot_0() {
+        // The Mode 2 STAT IRQ must fire at dot 452 of a scanline
+        // (4 T-cycles before mode bits change to Mode 2 on the next scanline).
+        //
+        // Strategy:
+        // 1. Advance to start of scanline 1 (dot 0, Mode 2).
+        // 2. Enable Mode 2 STAT IRQ; drain pending interrupts.
+        // 3. Advance 451 more dots to dot 451 — no STAT IRQ expected yet.
+        // 4. Tick 1 more dot to dot 452 — STAT IRQ must fire.
+        let mut ppu = Ppu::new();
+        // Enable Mode 2 STAT interrupt (bit 5 of STAT)
+        ppu.write_register(0xFF41, 0x20);
+        // Advance to dot 0, scanline 1 (first normal Mode 2 scanline)
+        advance_to_mode_2(&mut ppu);
+        // Drain any interrupts that fired on entry to Mode 2
+        let _ = ppu.take_pending_interrupts();
+        // Advance to dot 451 (HBlank, still on scanline 1)
+        tick_dots(&mut ppu, 451);
+        assert_eq!(ppu.timing.dot(), 451);
+        assert_eq!(
+            ppu.take_pending_interrupts() & 0x02,
+            0x00,
+            "STAT IRQ must not fire before dot 452"
+        );
+        // Tick one more dot → dot 452
+        tick_dots(&mut ppu, 1);
+        assert_eq!(ppu.timing.dot(), 452);
+        assert_eq!(
+            ppu.take_pending_interrupts() & 0x02,
+            0x02,
+            "STAT Mode 2 IRQ must fire at dot 452 (4 dots before Mode 2 mode bits)"
+        );
+    }
+
+    #[test]
+    fn test_stat_no_spurious_irq_on_lcd_reenable_when_lyc_eq_ly_stays_true() {
+        // Round 2 scenario from stat_lyc_onoff: LYC=LY was true when LCD turned off,
+        // LYC is changed to 0 while off, LCD is re-enabled with LY=0 = new LYC.
+        // The comparison flag stays set (no change), so no interrupt should fire.
+        let mut ppu = Ppu::new();
+        ppu.write_register(0xFF41, 0x40); // enable LYC=LY STAT IRQ
+        ppu.write_register(0xFF45, 144); // LYC = 144
+        // Advance to scanline 144 (LY=LYC=144)
+        tick_dots(&mut ppu, FIRST_SCANLINE_DOTS + 456 * 143);
+        ppu.write_register(0xFF40, 0x11); // LCD off (lyc_eq_ly_frozen = true)
+        let _ = ppu.take_pending_interrupts(); // drain any prior interrupts
+        // Change LYC to 0 while LCD is off (frozen bit stays true)
+        ppu.write_register(0xFF45, 0);
+        // Re-enable LCD: LY=0, LYC=0, LYC=LY still true (flag stays set)
+        ppu.write_register(0xFF40, 0x91);
+        // Tick a few dots to let update_stat_irq run
+        tick_dots(&mut ppu, 8);
+        // No STAT interrupt should fire (no rising edge — LYC=LY was already true)
+        let flags = ppu.take_pending_interrupts();
+        assert_eq!(
+            flags & 0x02,
+            0x00,
+            "No STAT interrupt when LYC=LY condition remains true across LCD off/on"
+        );
+    }
+
+    #[test]
+    fn test_stat_irq_fires_on_lcd_reenable_when_lyc_eq_ly_becomes_true() {
+        // Round 4 scenario from stat_lyc_onoff: LYC=LY was FALSE when LCD turned off,
+        // LCD is re-enabled and LY=0 = LYC=0 → interrupt SHOULD fire immediately
+        // (synchronously at LCDC write time, before the next instruction).
+        let mut ppu = Ppu::new();
+        ppu.write_register(0xFF41, 0x40); // enable LYC=LY STAT IRQ
+        ppu.write_register(0xFF45, 0); // LYC = 0
+        // Advance to VBlank (LY=144 ≠ LYC=0, so lyc_eq_ly_frozen = false)
+        tick_dots(&mut ppu, FIRST_SCANLINE_DOTS + 456 * 143);
+        ppu.write_register(0xFF40, 0x11); // LCD off (lyc_eq_ly_frozen = false)
+        let _ = ppu.take_pending_interrupts();
+        // Re-enable LCD: LY=0, LYC=0 → LYC=LY becomes true (rising edge fires immediately)
+        ppu.write_register(0xFF40, 0x91);
+        // Interrupt must be pending BEFORE any further ticks (synchronous fire)
+        let flags = ppu.take_pending_interrupts();
+        assert_eq!(
+            flags & 0x02,
+            0x02,
+            "STAT interrupt must fire immediately when LYC=LY becomes true on LCD re-enable"
         );
     }
 }
