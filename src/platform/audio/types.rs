@@ -42,15 +42,12 @@ pub fn queue_sample_to_producer(
     }
 }
 
-/// NES APU maximum output level used for normalization.
-pub const NES_APU_MAX: f32 = 1.177;
-
-/// Processes a raw NES APU sample into a normalized, volume-scaled output sample.
+/// Applies volume scaling to a normalised audio sample and clamps to `[-1.0, 1.0]`.
 ///
-/// Maps NES 0.0–1.177 to device 0.0–1.0, applies volume, and clamps to [-1.0, 1.0].
+/// `raw_sample` is expected to already be in `[-1.0, 1.0]` — systems are
+/// responsible for normalising their output before handing samples to the platform.
 pub fn process_sample(raw_sample: f32, volume: f32) -> f32 {
-    let normalized = raw_sample / NES_APU_MAX;
-    (normalized * volume).clamp(-1.0, 1.0)
+    (raw_sample * volume).clamp(-1.0, 1.0)
 }
 
 #[cfg(test)]
@@ -141,13 +138,13 @@ mod tests {
         let result = process_sample(0.0, 0.75);
         assert!((result - 0.0).abs() < 0.0001);
 
-        let result = process_sample(NES_APU_MAX, 1.0);
+        let result = process_sample(1.0, 1.0);
         assert!((result - 1.0).abs() < 0.0001);
 
-        let result = process_sample(NES_APU_MAX, 0.5);
+        let result = process_sample(1.0, 0.5);
         assert!((result - 0.5).abs() < 0.01);
 
-        let result = process_sample(NES_APU_MAX * 2.0, 1.0);
+        let result = process_sample(2.0, 1.0);
         assert_eq!(result, 1.0, "should clamp to 1.0");
     }
 }

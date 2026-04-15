@@ -8,5 +8,3 @@ pub mod shaders;
 
 #[cfg(feature = "native")]
 pub mod audio;
-#[cfg(feature = "native")]
-pub mod rendering;

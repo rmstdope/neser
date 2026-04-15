@@ -721,7 +721,7 @@ impl ApplicationHandler for NativeEventLoop {
                             if let Some(ref mut gl) = self.gl_wrapper {
                                 let preset_name = gl.cycle_shader();
                                 let toast =
-                                    crate::platform::rendering::gl_backend::shader_toast_message(
+                                    crate::frontends::native::gl_backend::shader_toast_message(
                                         preset_name.as_deref(),
                                     );
                                 self.console.app_context().borrow_mut().add_toast(toast);

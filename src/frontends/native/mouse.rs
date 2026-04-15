@@ -4,10 +4,10 @@
 //! (Zapper, Arkanoid paddle, SNES Mouse) and manages the cursor
 //! grab/release state machine.
 
+use crate::frontends::native::gl_backend::Crosshair;
 use crate::nes::input::ControllerInput;
 use crate::nes::input::mouse_mapping;
 use crate::platform::emulator::Console;
-use crate::platform::rendering::Crosshair;
 
 /// Mouse button abstraction (frontend-independent).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
