@@ -13,7 +13,7 @@ const NINTENDO_LOGO: [u8; 48] = [
 /// - ROM is exactly 1 MiB (64 × 16 KiB banks).
 /// - Bank $10 contains a valid Nintendo logo at the standard header offset ($0104).
 fn is_multicart_rom(rom: &[u8]) -> bool {
-    if rom.len() / 0x4000 != 64 {
+    if rom.len() != 64 * 0x4000 {
         return false;
     }
     let logo_offset = 0x10 * 0x4000 + 0x104;
