@@ -101,15 +101,15 @@ describe("filterOnConsoleSwitch", () => {
         );
     });
 
-    it("falls back to stock when switching from NES ntsc to GB", () => {
+    it("falls back to gameboy when switching from NES ntsc to GB", () => {
         expect(filterOnConsoleSwitch("ntsc", allKeys, filters, "gb")).toBe(
-            "stock",
+            "gameboy",
         );
     });
 
-    it("falls back to stock when switching from NES crt to GB", () => {
+    it("falls back to gameboy when switching from NES crt to GB", () => {
         expect(filterOnConsoleSwitch("crt", allKeys, filters, "gb")).toBe(
-            "stock",
+            "gameboy",
         );
     });
 
@@ -119,9 +119,9 @@ describe("filterOnConsoleSwitch", () => {
         );
     });
 
-    it("falls back to stock when switching from GB gameboy to NES", () => {
+    it("falls back to ntsc when switching from GB gameboy to NES", () => {
         expect(filterOnConsoleSwitch("gameboy", allKeys, filters, "nes")).toBe(
-            "stock",
+            "ntsc",
         );
     });
 

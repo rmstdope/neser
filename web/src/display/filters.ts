@@ -64,5 +64,10 @@ export function filterOnConsoleSwitch(
 ): string {
     const keys = filterKeysForConsole(allFilterKeys, filters, targetConsole);
     if (keys.includes(currentFilter)) return currentFilter;
-    return "stock";
+    return defaultFilterForConsole(targetConsole);
+}
+
+/** Return the preferred default filter key for a given console. */
+export function defaultFilterForConsole(console: ConsoleKind): string {
+    return console === "gb" ? "gameboy" : "ntsc";
 }
