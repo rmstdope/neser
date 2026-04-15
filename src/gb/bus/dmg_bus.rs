@@ -24,7 +24,7 @@ use crate::gb::timer::Timer;
 /// - $FF0F:       IF register
 /// - $FF10–$FF3F: APU             (CH1–CH4 + wave RAM)
 /// - $FF40–$FF4B: PPU I/O registers
-/// - $FF46:       OAM DMA (write-only trigger)
+/// - $FF46:       OAM DMA source address (read: last-written value; write: starts transfer)
 /// - $FF80–$FFFE: HRAM
 /// - $FFFF:       IE register
 /// - $FF00:       Joypad (P1 register)
@@ -55,6 +55,13 @@ pub struct DmgBus {
     /// Current DMA position: 0 = warm-up, 1–160 = copying bytes 0–159,
     /// 161 = teardown (sets `dma_active = false`).  Total: 162 M-cycles.
     dma_position: u8,
+    /// Whether OAM access is currently blocked by an active DMA transfer.
+    ///
+    /// Separate from `dma_active` because OAM is still accessible during the
+    /// warm-up M-cycle (position 0).  Blocking begins at the first copy tick
+    /// (position 1 → 2) and is preserved when a DMA is restarted while one is
+    /// already running.
+    dma_oam_blocked: bool,
     /// $FF01 Serial Data Register (SB).
     sb: u8,
     /// $FF02 Serial Control Register (SC).
@@ -108,6 +115,7 @@ impl DmgBus {
             dma_active: false,
             dma_source: 0,
             dma_position: 0,
+            dma_oam_blocked: false,
         };
         // Real DMG hardware powers on with LCDC=$00 (LCD disabled).
         // The boot ROM tile-loading runs while the LCD is off so VRAM writes
@@ -141,6 +149,7 @@ impl DmgBus {
         self.dma_active = false;
         self.dma_source = 0;
         self.dma_position = 0;
+        self.dma_oam_blocked = false;
     }
 
     /// Returns `true` while the boot ROM is still mapped at $0000–$00FF.
@@ -206,26 +215,33 @@ impl DmgBus {
             // OAM DMA: advance one M-cycle.
             //
             // Sequence: 1 warm-up tick (no copy) + 160 copy ticks (bytes 0–159)
-            // + 1 teardown tick = 162 DMA M-cycles total, with OAM blocking for
-            // the first 161 M-cycles only.  The CPU's tick() is called before each
-            // memory access (in SM83::read/write), so any CPU access in the same
-            // M-cycle as the teardown tick (position 161) sees dma_active=false
-            // and reaches OAM normally.
+            // + 1 teardown tick = 162 DMA M-cycles total.
+            //
+            // OAM blocking (dma_oam_blocked) starts at the first COPY tick, not
+            // the warm-up.  tick() runs before each CPU memory access, so:
+            //   M=0: CPU writes $FF46 → dma_oam_blocked=false (fresh) or true (restart)
+            //   M=1: tick(warm-up) runs → dma_oam_blocked unchanged; CPU read/write
+            //        to OAM is accessible for a fresh DMA (blocked for a restart)
+            //   M=2: tick(copy) runs → dma_oam_blocked=true; OAM blocked
             if self.dma_active {
                 match self.dma_position {
                     0 => {
-                        // warm-up: bus is captured but no byte copied yet
+                        // warm-up: bus is captured but no byte copied yet;
+                        // dma_oam_blocked is unchanged (false for fresh, true for restart)
                         self.dma_position = 1;
                     }
                     1..=160 => {
+                        // First copy tick starts OAM blocking.
+                        self.dma_oam_blocked = true;
                         let byte_idx = (self.dma_position - 1) as u16;
                         let src = (self.dma_source as u16) << 8 | byte_idx;
                         self.ppu.oam[byte_idx as usize] = self.read_raw(src);
                         self.dma_position += 1;
                     }
                     161 => {
-                        // teardown: transfer complete
+                        // teardown: transfer complete, unblock OAM
                         self.dma_active = false;
+                        self.dma_oam_blocked = false;
                     }
                     _ => unreachable!(),
                 }
@@ -277,12 +293,20 @@ impl DmgBus {
     ///
     /// Sets the DMA state so that `tick()` copies one byte per M-cycle.
     /// Total duration: 162 M-cycles (1 warm-up + 160 copy + 1 teardown).
-    /// OAM is blocked for the first 161 M-cycles; the teardown tick clears
-    /// `dma_active` so a CPU access in that same M-cycle reaches OAM normally.
+    ///
+    /// OAM blocking (`dma_oam_blocked`) is preserved when restarting an
+    /// in-progress DMA — the running transfer was already blocking OAM, so
+    /// the warm-up of the new transfer does not restore access.  For a fresh
+    /// start, blocking begins after the warm-up M-cycle.
     fn do_oam_dma(&mut self, val: u8) {
+        // Preserve blocking state on restart: the previous DMA was already
+        // blocking OAM, and the warm-up of the new DMA must not grant a
+        // 1-cycle OAM access window.
+        let preserve_blocking = self.dma_active && self.dma_oam_blocked;
         self.dma_active = true;
         self.dma_source = val;
         self.dma_position = 0;
+        self.dma_oam_blocked = preserve_blocking;
     }
 }
 
@@ -298,7 +322,7 @@ impl GbBus for DmgBus {
             0xC000..=0xDFFF => self.wram[(addr - 0xC000) as usize],
             0xE000..=0xFDFF => self.wram[(addr - 0xE000) as usize],
             0xFE00..=0xFE9F => {
-                if self.dma_active {
+                if self.dma_oam_blocked {
                     return 0xFF;
                 }
                 self.ppu.read_oam(addr)
@@ -310,7 +334,8 @@ impl GbBus for DmgBus {
             0xFF04..=0xFF07 => self.timer.read(addr),
             0xFF0F => self.if_reg | 0xE0,
             0xFF10..=0xFF3F => self.apu.read_register(addr),
-            0xFF40..=0xFF4B => self.ppu.read_register(addr),
+            0xFF40..=0xFF45 | 0xFF47..=0xFF4B => self.ppu.read_register(addr),
+            0xFF46 => self.dma_source,
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
             0xFFFF => self.ie_reg,
             _ => 0xFF,
@@ -325,7 +350,7 @@ impl GbBus for DmgBus {
             0xC000..=0xDFFF => self.wram[(addr - 0xC000) as usize] = val,
             0xE000..=0xFDFF => self.wram[(addr - 0xE000) as usize] = val,
             0xFE00..=0xFE9F => {
-                if !self.dma_active {
+                if !self.dma_oam_blocked {
                     self.ppu.write_oam(addr, val);
                 }
             }
@@ -1252,27 +1277,49 @@ mod tests {
 
     #[test]
     fn test_oam_dma_read_returns_ff_while_active() {
-        // Given: DMA triggered; When: read OAM before DMA finishes;
-        // Then: $FF is returned for every OAM address.
+        // Hardware timing: after writing $FF46, there is 1 warm-up M-cycle where
+        // OAM is still accessible (position 0 → 1 on tick).  OAM blocking begins
+        // on the first copy tick (position 1 → 2).
+        //
+        // Use a sentinel value (0xAB, not 0xFF) written directly to OAM before
+        // starting DMA so we can unambiguously detect accessibility vs blocking.
         let mut bus = make_bus();
+        bus.ppu.oam[0] = 0xAB; // sentinel at $FE00
+        bus.ppu.oam[0x9F] = 0xCD; // sentinel at $FE9F
         start_dma_from_wram(&mut bus);
-        // No ticks yet — DMA is active at position 0.
+
+        // Position 0 (no ticks): warm-up, OAM still accessible — reads sentinel.
+        assert_eq!(
+            bus.read(0xFE00),
+            0xAB,
+            "OAM must return sentinel during DMA warm-up (position 0)"
+        );
+
+        // After 1 tick (warm-up completes, position = 1): still accessible.
+        bus.tick(1);
+        assert_eq!(
+            bus.read(0xFE00),
+            0xAB,
+            "OAM must return sentinel after warm-up tick (position 1)"
+        );
+
+        // After 2nd tick (first copy tick, position = 2): OAM now blocked.
+        bus.tick(1);
         assert_eq!(
             bus.read(0xFE00),
             0xFF,
-            "OAM read must return $FF during DMA"
+            "OAM read must return $FF once copy phase begins"
         );
         assert_eq!(
             bus.read(0xFE9F),
             0xFF,
-            "OAM read at last byte must return $FF during DMA"
+            "OAM read at last byte must return $FF during copy phase"
         );
     }
 
     #[test]
     fn test_oam_dma_write_is_ignored_while_active() {
-        // Given: DMA triggered; When: CPU writes to OAM during DMA;
-        // Then: the write is discarded — OAM retains DMA data.
+        // Writes to OAM are blocked only during the copy phase (after warm-up).
         let mut bus = make_bus();
         start_dma_from_wram(&mut bus);
         bus.tick(162); // complete DMA
@@ -1283,13 +1330,14 @@ mod tests {
             "sanity: write succeeds when DMA is inactive"
         );
 
-        // Now restart DMA and attempt a CPU write during transfer.
+        // Restart DMA and wait for blocking to begin (2 ticks), then attempt a write.
         start_dma_from_wram(&mut bus);
-        bus.write(0xFE00, 0xFF); // should be ignored
-        bus.tick(162); // complete DMA
+        bus.tick(2); // position = 2: copy phase, OAM now blocked
+        bus.write(0xFE00, 0xFF); // must be ignored
+        bus.tick(160); // complete remaining 160 ticks
         assert_eq!(
             bus.ppu.oam[0], bus.wram[0],
-            "CPU write during DMA must be ignored; OAM must contain DMA data"
+            "CPU write during DMA copy phase must be ignored; OAM must contain DMA data"
         );
     }
 
@@ -1325,5 +1373,45 @@ mod tests {
                 "OAM[{i}] must equal source byte after DMA"
             );
         }
+    }
+
+    #[test]
+    fn test_oam_dma_ff46_read_returns_source() {
+        // $FF46 read always returns the last-written DMA source byte,
+        // regardless of whether a transfer is in progress.
+        let mut bus = make_bus();
+        bus.write(0xFF46, 0x9F);
+        bus.tick(162); // complete transfer
+        assert_eq!(
+            bus.read(0xFF46),
+            0x9F,
+            "$FF46 must return last-written value after DMA"
+        );
+
+        bus.write(0xFF46, 0xC0);
+        assert_eq!(
+            bus.read(0xFF46),
+            0xC0,
+            "$FF46 must return latest value mid-transfer"
+        );
+    }
+
+    #[test]
+    fn test_oam_dma_restart_preserves_blocking() {
+        // When DMA is restarted while already running, OAM must remain blocked
+        // during the warm-up of the new transfer (no 1-cycle grace window).
+        let mut bus = make_bus();
+        start_dma_from_wram(&mut bus);
+        bus.tick(2); // enter copy phase — OAM is now blocked
+
+        // Restart DMA
+        bus.write(0xFF46, 0xC0);
+        // After warm-up tick of the restarted DMA, OAM must still be blocked
+        bus.tick(1);
+        assert_eq!(
+            bus.read(0xFE00),
+            0xFF,
+            "OAM must remain blocked during warm-up of a restarted DMA"
+        );
     }
 }

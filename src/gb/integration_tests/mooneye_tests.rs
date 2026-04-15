@@ -428,19 +428,16 @@ fn test_mooneye_acceptance_ld_hl_sp_e_timing() {
 }
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_oam_dma_restart() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/oam_dma_restart.gb"));
 }
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_oam_dma_start() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/oam_dma_start.gb"));
 }
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_oam_dma_timing() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/oam_dma_timing.gb"));
 }
@@ -451,7 +448,6 @@ fn test_mooneye_acceptance_oam_dma_basic() {
 }
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_oam_dma_reg_read() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/oam_dma/reg_read.gb"));
 }
