@@ -206,10 +206,11 @@ impl DmgBus {
             // OAM DMA: advance one M-cycle.
             //
             // Sequence: 1 warm-up tick (no copy) + 160 copy ticks (bytes 0–159)
-            // + 1 teardown tick = 162 blocking M-cycles total.  The CPU's tick()
-            // is called before each memory access (in SM83::read/write), so any
-            // CPU access in the same M-cycle as the teardown tick (position 161)
-            // sees dma_active=false and reaches OAM normally.
+            // + 1 teardown tick = 162 DMA M-cycles total, with OAM blocking for
+            // the first 161 M-cycles only.  The CPU's tick() is called before each
+            // memory access (in SM83::read/write), so any CPU access in the same
+            // M-cycle as the teardown tick (position 161) sees dma_active=false
+            // and reaches OAM normally.
             if self.dma_active {
                 match self.dma_position {
                     0 => {
@@ -274,10 +275,10 @@ impl DmgBus {
 
     /// Begin a cycle-accurate OAM DMA transfer from `(val << 8)`.
     ///
-    /// Sets the DMA state so that `tick()` copies one byte per M-cycle,
-    /// blocking OAM access for 162 M-cycles total (1 warm-up + 160 copy + 1
-    /// teardown).  The CPU's `tick()`-before-access sequencing guarantees the
-    /// first DMA tick falls in the M-cycle immediately after this write.
+    /// Sets the DMA state so that `tick()` copies one byte per M-cycle.
+    /// Total duration: 162 M-cycles (1 warm-up + 160 copy + 1 teardown).
+    /// OAM is blocked for the first 161 M-cycles; the teardown tick clears
+    /// `dma_active` so a CPU access in that same M-cycle reaches OAM normally.
     fn do_oam_dma(&mut self, val: u8) {
         self.dma_active = true;
         self.dma_source = val;
@@ -1228,5 +1229,94 @@ mod tests {
         }
         assert!(bus.take_sample().is_some());
         assert!(!bus.sample_ready());
+    }
+
+    // ── OAM DMA ──────────────────────────────────────────────────────────────
+
+    /// Trigger DMA from WRAM ($C0xx) to avoid PPU VRAM-access restrictions.
+    fn start_dma_from_wram(bus: &mut DmgBus) {
+        // Fill WRAM $C000–$C09F with a known pattern.
+        for i in 0..0xA0u16 {
+            bus.wram[i as usize] = (i as u8).wrapping_add(1);
+        }
+        // Write $C0 to $FF46 to start DMA from $C000.
+        bus.write(0xFF46, 0xC0);
+    }
+
+    #[test]
+    fn test_oam_dma_read_returns_ff_while_active() {
+        // Given: DMA triggered; When: read OAM before DMA finishes;
+        // Then: $FF is returned for every OAM address.
+        let mut bus = make_bus();
+        start_dma_from_wram(&mut bus);
+        // No ticks yet — DMA is active at position 0.
+        assert_eq!(
+            bus.read(0xFE00),
+            0xFF,
+            "OAM read must return $FF during DMA"
+        );
+        assert_eq!(
+            bus.read(0xFE9F),
+            0xFF,
+            "OAM read at last byte must return $FF during DMA"
+        );
+    }
+
+    #[test]
+    fn test_oam_dma_write_is_ignored_while_active() {
+        // Given: DMA triggered; When: CPU writes to OAM during DMA;
+        // Then: the write is discarded — OAM retains DMA data.
+        let mut bus = make_bus();
+        start_dma_from_wram(&mut bus);
+        bus.tick(162); // complete DMA
+        // Write a sentinel value directly to OAM via bus — no DMA active.
+        bus.write(0xFE00, 0xAB);
+        assert_eq!(
+            bus.ppu.oam[0], 0xAB,
+            "sanity: write succeeds when DMA is inactive"
+        );
+
+        // Now restart DMA and attempt a CPU write during transfer.
+        start_dma_from_wram(&mut bus);
+        bus.write(0xFE00, 0xFF); // should be ignored
+        bus.tick(162); // complete DMA
+        assert_eq!(
+            bus.ppu.oam[0], bus.wram[0],
+            "CPU write during DMA must be ignored; OAM must contain DMA data"
+        );
+    }
+
+    #[test]
+    fn test_oam_dma_completes_after_162_ticks() {
+        // Given: DMA triggered; When: ticked 161 times; Then: DMA still active.
+        // When: ticked 1 more time (total 162); Then: DMA inactive, OAM accessible.
+        let mut bus = make_bus();
+        start_dma_from_wram(&mut bus);
+        bus.tick(161);
+        assert!(bus.dma_active, "DMA must still be active after 161 ticks");
+        bus.tick(1); // 162nd tick — teardown
+        assert!(!bus.dma_active, "DMA must be inactive after 162 ticks");
+        // OAM is now accessible and contains the transferred data.
+        assert_ne!(
+            bus.read(0xFE00),
+            0xFF,
+            "OAM must be accessible (not blocked) after DMA completes"
+        );
+    }
+
+    #[test]
+    fn test_oam_dma_copies_bytes_to_oam() {
+        // Given: WRAM $C000–$C09F filled with a known pattern and DMA triggered;
+        // When: DMA completes (162 ticks); Then: OAM contains those bytes exactly.
+        let mut bus = make_bus();
+        start_dma_from_wram(&mut bus);
+        bus.tick(162);
+        for i in 0..0xA0usize {
+            assert_eq!(
+                bus.ppu.oam[i],
+                (i as u8).wrapping_add(1),
+                "OAM[{i}] must equal source byte after DMA"
+            );
+        }
     }
 }
