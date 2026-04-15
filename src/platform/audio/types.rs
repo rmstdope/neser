@@ -143,13 +143,13 @@ mod tests {
         let result = process_sample(0.0, 0.75);
         assert!((result - 0.0).abs() < 0.0001);
 
-        let result = process_sample(1.0, 1.0);
+        let result = process_sample(NES_APU_MAX, 1.0);
         assert!((result - 1.0).abs() < 0.0001);
 
-        let result = process_sample(1.0, 0.5);
+        let result = process_sample(NES_APU_MAX, 0.5);
         assert!((result - 0.5).abs() < 0.01);
 
-        let result = process_sample(2.0, 1.0);
+        let result = process_sample(NES_APU_MAX * 2.0, 1.0);
         assert_eq!(result, 1.0, "should clamp to 1.0");
     }
 }

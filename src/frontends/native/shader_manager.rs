@@ -304,7 +304,7 @@ mod tests {
     fn test_initial_cycle_without_loaded_shader_starts_after_stock() {
         // When no shader is configured at startup, cycling should behave as if
         // the current position is "stock" (the passthrough preset), so the first
-        // F4 press goes to xbrz (the preset after stock in sorted order).
+        // F4 press goes to crt (the preset after stock in sorted order).
         let presets = vec![
             PathBuf::from("shaders/stock.slangp"), // 0
             PathBuf::from("vendor/slang-shaders/crt/crt-lottes.slangp"), // 1
