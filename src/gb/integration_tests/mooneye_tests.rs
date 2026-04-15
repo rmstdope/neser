@@ -367,13 +367,11 @@ fn test_mooneye_acceptance_div_timing() {
 }
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_ei_sequence() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/ei_sequence.gb"));
 }
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_ei_timing() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/ei_timing.gb"));
 }
@@ -384,7 +382,6 @@ fn test_mooneye_acceptance_halt_ime0_ei() {
 }
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_halt_ime0_nointr_timing() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/halt_ime0_nointr_timing.gb"));
 }
@@ -411,7 +408,6 @@ fn test_mooneye_acceptance_instr_daa() {
 }
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_interrupts_ie_push() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/interrupts/ie_push.gb"));
 }
@@ -557,7 +553,6 @@ fn test_mooneye_acceptance_push_timing() {
 }
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_rapid_di_ei() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/rapid_di_ei.gb"));
 }
