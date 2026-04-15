@@ -25,12 +25,6 @@ use std::rc::Rc;
 /// Increment this when making breaking changes to the state format.
 pub const SAVESTATE_VERSION: u32 = 8;
 
-/// Maximum combined output level of the NES APU mixer (pulse + TND channels plus
-/// headroom for expansion audio from mappers such as VRC6, Sunsoft 5B, etc.).
-/// Raw APU samples are divided by this value in [`Nes::get_sample`] so that the
-/// platform always receives normalised samples in `[0.0, 1.0]`.
-const APU_OUTPUT_MAX: f32 = 1.177;
-
 /// Complete emulator state snapshot.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SaveState {
@@ -575,15 +569,9 @@ impl Nes {
     /// Get the next audio sample if one is ready
     ///
     /// Returns `Some(sample)` if a sample is available, `None` otherwise.
-    /// The sample is normalised to `[0.0, 1.0]` by dividing the raw APU output by
-    /// [`APU_OUTPUT_MAX`] before returning, so the platform layer does not need
-    /// any NES-specific knowledge to render audio.
     /// After calling this, `sample_ready()` will return false until the next sample is generated.
     pub fn get_sample(&mut self) -> Option<f32> {
-        self.apu
-            .borrow_mut()
-            .get_sample()
-            .map(|s| (s / APU_OUTPUT_MAX).clamp(0.0, 1.0))
+        self.apu.borrow_mut().get_sample()
     }
 
     /// Set button state for a controller

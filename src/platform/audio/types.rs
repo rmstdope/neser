@@ -42,12 +42,17 @@ pub fn queue_sample_to_producer(
     }
 }
 
-/// Applies volume scaling to a normalised audio sample and clamps to `[-1.0, 1.0]`.
+/// Maximum combined output level of the NES APU mixer (all five channels at peak
+/// output plus mixer headroom for expansion audio from mappers such as VRC6,
+/// Sunsoft 5B, etc.).
+const NES_APU_MAX: f32 = 1.177;
+
+/// Applies volume scaling and NES APU normalisation to a raw audio sample.
 ///
-/// `raw_sample` is expected to already be in `[-1.0, 1.0]` — systems are
-/// responsible for normalising their output before handing samples to the platform.
+/// Divides by [`NES_APU_MAX`] so the APU's `[0.0, ~1.177]` range maps
+/// to `[0.0, 1.0]`, then applies volume and clamps to `[-1.0, 1.0]`.
 pub fn process_sample(raw_sample: f32, volume: f32) -> f32 {
-    (raw_sample * volume).clamp(-1.0, 1.0)
+    ((raw_sample / NES_APU_MAX) * volume).clamp(-1.0, 1.0)
 }
 
 #[cfg(test)]
