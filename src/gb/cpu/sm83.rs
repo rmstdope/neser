@@ -472,8 +472,13 @@ impl<B: GbBus> Sm83<B> {
 
     /// Check for pending interrupts and service the highest-priority one.
     ///
-    /// Returns `true` if this execute() slot was consumed (either a full
-    /// interrupt dispatch, or a halt-wakeup with IME=false).
+    /// Returns `true` when a full interrupt dispatch was performed (the
+    /// execute() slot is consumed and the caller must return immediately).
+    /// Returns `false` in all other cases, including:
+    /// - no pending interrupt,
+    /// - IME=false with CPU not halted (interrupt ignored),
+    /// - IME=false HALT wake-up (halted is cleared; execute() proceeds
+    ///   directly to the next instruction fetch with no extra cycle).
     fn service_interrupts(&mut self) -> bool {
         let ie = self.bus.read(0xFFFF);
         let if_ = self.bus.read(0xFF0F);
@@ -486,9 +491,11 @@ impl<B: GbBus> Sm83<B> {
         if self.halted {
             self.halted = false;
             if !self.ime {
-                // Waking consumes one M-cycle; no instruction is executed.
-                self.internal_cycle();
-                return true;
+                // IME=0 wake-up: clear halted and return false so execute()
+                // immediately proceeds to the next instruction fetch.  This
+                // gives HALT-with-IME=0 exactly the same M-cycle cost as a
+                // series of NOPs (no extra wake-up cycle).
+                return false;
             }
             // IME=true: fall through to full interrupt dispatch below.
         }
@@ -500,24 +507,49 @@ impl<B: GbBus> Sm83<B> {
         self.ime = false;
         self.ime_pending = false;
 
-        // Find the highest-priority (lowest-bit) pending interrupt.
-        let bit = pending.trailing_zeros() as u8;
-        // Clear the IF bit for this interrupt.
-        let new_if = if_ & !(1 << bit);
-        self.bus.write(0xFF0F, new_if);
-
         // 2 NOP cycles (internal delay).
         self.internal_cycle();
         self.internal_cycle();
 
-        // Push PC.
-        let pc = self.regs.pc;
-        self.push_u16(pc);
+        // Push PC high byte onto the stack (M3).
+        // Uses the same SP-decrement / OAM-notification pattern as push_u16.
+        let [pc_hi, pc_lo] = self.regs.pc.to_be_bytes();
+        let sp0 = self.regs.sp;
+        self.regs.sp = sp0.wrapping_sub(1);
+        self.bus.notify_idu_glitch(sp0);
+        self.write(self.regs.sp, pc_hi);
 
-        // Jump to vector.
-        let vector: u16 = 0x0040 + (bit as u16) * 8;
-        self.regs.pc = vector;
-        self.internal_cycle(); // 1 extra internal cycle for the jump
+        // Re-read IE after the high-byte push: if SP landed on $FFFF (the IE
+        // register), the push just overwrote IE.  Recompute the live interrupt
+        // queue with the new IE against the *original* IF (not yet cleared).
+        let mut interrupt_queue = self.bus.read(0xFFFF) & if_ & 0x1F;
+
+        // Push PC low byte onto the stack (M4).
+        let sp1 = self.regs.sp;
+        self.regs.sp = sp1.wrapping_sub(1);
+        self.bus.notify_idu_glitch(sp1);
+        self.write(self.regs.sp, pc_lo);
+        self.bus.notify_oam_write(self.regs.sp);
+
+        // AND with current IF: handles the lo-byte-to-$FF0F (IF register) edge
+        // case naturally — if the lo push overwrote IF, we see the new value.
+        interrupt_queue &= self.bus.read(0xFF0F) & 0x1F;
+
+        // 1 final internal cycle for the vector jump (M5).
+        self.internal_cycle();
+
+        if interrupt_queue == 0 {
+            // Dispatch cancelled: the IE overwrite (via hi-byte push to $FFFF)
+            // cleared all pending interrupts.  Jump to $0000; IF is NOT cleared.
+            self.regs.pc = 0x0000;
+        } else {
+            let bit = interrupt_queue.trailing_zeros() as u8;
+            // Clear the IF bit for the dispatched interrupt (may differ from the
+            // originally-selected bit if IE was modified during the push).
+            let new_if = self.bus.read(0xFF0F) & !(1 << bit);
+            self.bus.write(0xFF0F, new_if);
+            self.regs.pc = 0x0040 + (bit as u16) * 8;
+        }
 
         true
     }
@@ -542,25 +574,32 @@ impl<B: GbBus> Sm83<B> {
     ///
     /// If halted and no interrupt is pending, consumes 1 M-cycle doing nothing.
     pub fn execute(&mut self) {
-        // Activate delayed IME.
-        if self.ime_pending {
-            self.ime = true;
-            self.ime_pending = false;
-        }
+        // Snapshot IME-pending state *before* this instruction runs.
+        // IME becomes active at the *end* of the instruction following EI —
+        // not at the start — so interrupts can only fire from the third
+        // instruction onwards (EI, following-instr, *here*).
+        let pending = self.ime_pending;
 
-        // Try to service an interrupt first.
+        // Try to service a pending interrupt first.
         if self.service_interrupts() {
             return;
         }
 
         if self.halted {
             self.internal_cycle(); // stall
-            return;
+        } else {
+            self.bus.begin_instruction();
+            let opcode = self.fetch_byte();
+            self.decode_execute(opcode);
         }
 
-        self.bus.begin_instruction();
-        let opcode = self.fetch_byte();
-        self.decode_execute(opcode);
+        // Activate delayed IME after the instruction/stall that follows EI.
+        // If DI was executed during this instruction, self.ime_pending is now
+        // false, so the activation is naturally cancelled (EI→DI semantics).
+        if pending && self.ime_pending {
+            self.ime = true;
+            self.ime_pending = false;
+        }
     }
 
     fn decode_execute(&mut self, opcode: u8) {
@@ -1714,7 +1753,13 @@ mod tests {
         cpu.regs.pc = 0x1000;
         cpu.execute();
         assert!(!cpu.halted, "Pending interrupt should wake CPU from HALT");
-        assert_eq!(cpu.regs.pc, 0x1000, "PC should not change if IME=false");
+        // With IME=false the CPU wakes from HALT and immediately executes the
+        // next instruction (NOP at $1000) — no interrupt dispatch, so PC
+        // advances normally rather than jumping to an ISR vector.
+        assert_eq!(
+            cpu.regs.pc, 0x1001,
+            "PC should advance (next instr), not jump to ISR vector"
+        );
     }
 
     // -----------------------------------------------------------------------
