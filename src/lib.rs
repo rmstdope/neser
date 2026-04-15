@@ -10,6 +10,9 @@ pub mod platform;
 pub mod wasm;
 #[path = "frontends/web/wasm_autorun_state.rs"]
 pub mod wasm_autorun;
+#[cfg(feature = "wasm")]
+#[path = "frontends/web/wasm_gb.rs"]
+pub mod wasm_gb;
 #[cfg(all(test, feature = "wasm", target_arch = "wasm32"))]
 #[path = "frontends/web/wasm_tests.rs"]
 mod wasm_tests;

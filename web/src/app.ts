@@ -1,4 +1,4 @@
-import init, { WasmNes, gamepad_init_toast_message } from "../pkg/neser";
+import init, { WasmNes, WasmGb, gamepad_init_toast_message } from "../pkg/neser";
 import { mapStandardGamepadState, selectGamepads } from "./input/gamepad";
 import {
     createRomSaveKey,
@@ -838,6 +838,11 @@ function cycleFilter() {
     return true;
 }
 
+type ActiveEmulator = { kind: "nes"; inst: WasmNes } | { kind: "gb"; inst: WasmGb };
+
+/** Master emulator state — set to NES or GB depending on the loaded ROM. */
+let emulator: ActiveEmulator | null = null;
+/** Convenience alias for NES-specific code paths. Non-null only when emulator.kind === "nes". */
 let nes: WasmNes | null = null;
 let romBytes: Uint8Array | null = null;
 let romMetadata: { name: string; size: number; bytes: Uint8Array } | null = null;
@@ -908,6 +913,55 @@ function updateEmulationButtons() {
     if (autorunLoadBtn) {
         autorunLoadBtn.disabled = romBytes === null || !romFromFile || running;
     }
+}
+
+/** Create a fresh NES or GB emulator instance and update kind-dependent UI. */
+function createEmulatorInstance(ext: string): void {
+    // Free the previous WASM instance to avoid leaking its linear memory.
+    emulator?.inst.free();
+    if (ext === "gb") {
+        const gb = new WasmGb();
+        emulator = { kind: "gb", inst: gb };
+        nes = null;
+    } else {
+        nes = new WasmNes();
+        emulator = { kind: "nes", inst: nes };
+    }
+    updateNesDisplayDimensions();
+    updateEmulatorKindUI();
+}
+
+/**
+ * Show or hide NES-only UI elements depending on which emulator is active.
+ * Called whenever the emulator kind changes (NES ↔ GB).
+ */
+function updateEmulatorKindUI() {
+    const isNes = emulator?.kind === "nes";
+    // Debugger panel is NES-only
+    if (debuggerPanel) {
+        debuggerPanel.style.display = isNes ? "" : "none";
+    }
+    // Autorun controls are NES-only
+    const autorunSection = document.getElementById("autorun-section");
+    if (autorunSection) {
+        autorunSection.style.display = isNes ? "" : "none";
+    }
+    // Save-state buttons are NES-only
+    const saveStateSection = document.getElementById("save-state-section");
+    if (saveStateSection) {
+        saveStateSection.style.display = isNes ? "" : "none";
+    }
+    // Filters are NES-only for now: force "None" (stock) for GB and disable the button
+    if (!isNes) {
+        if (currentFilter !== "stock") {
+            currentFilter = "stock";
+            initWebGL();
+        }
+        filterToggleBtn.disabled = true;
+    } else {
+        filterToggleBtn.disabled = false;
+    }
+    updateFilterToggleButtonLabel();
 }
 
 /** Update the recording overlay (REC : MM:SS) on the canvas. */
@@ -1083,15 +1137,15 @@ if (autorunUseBtn) {
 }
 
 /**
- * Update NES display dimensions from the WASM instance and reallocate the GL texture.
- * Must be called after `nes` is created so overscan is reflected.
+ * Update display dimensions from the active emulator instance and reallocate the GL texture.
+ * Must be called after `emulator` is created so the correct resolution is reflected.
  */
 function updateNesDisplayDimensions() {
-    if (!nes) return;
-    width = nes.screen_width();
-    height = nes.screen_height();
+    if (!emulator) return;
+    width = emulator.inst.screen_width();
+    height = emulator.inst.screen_height();
     NES_ASPECT_RATIO = width / height;
-    // Reallocate the NES texture with the correct (cropped) dimensions.
+    // Reallocate the texture with the correct dimensions.
     if (nesTexture) {
         gl.bindTexture(gl.TEXTURE_2D, nesTexture);
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
@@ -1151,6 +1205,7 @@ async function applyRomBytes(bytes: Uint8Array, name: string) {
 }
 
 async function refreshSaveStateController() {
+    // Save states are NES-only (GB save states are not supported in MVP).
     if (!nes || !romMetadata) {
         saveStateController = null;
         saveStateAvailable = false;
@@ -1268,11 +1323,17 @@ function playAudioSamples(samples: Float32Array) {
     const channelData = buffer.getChannelData(0);
 
     // Normalize and copy samples to the buffer
-    // NES APU outputs 0.0 to ~1.177, normalize to 0.0 to 1.0 for Web Audio
-    for (let i = 0; i < samples.length; i++) {
-        // Map NES 0.0-1.177 to Web Audio 0.0-1.0 (0.0 represents silence)
-        const normalized = samples[i] / NES_APU_MAX;
-        channelData[i] = Math.min(1.0, Math.max(0.0, normalized));
+    if (emulator?.kind === "gb") {
+        // GB APU outputs in [0.0, 1.0] — copy directly with a safety clamp
+        for (let i = 0; i < samples.length; i++) {
+            channelData[i] = Math.min(1.0, Math.max(0.0, samples[i]));
+        }
+    } else {
+        // NES APU outputs 0.0 to ~1.177, normalize to 0.0 to 1.0 for Web Audio
+        for (let i = 0; i < samples.length; i++) {
+            const normalized = samples[i] / NES_APU_MAX;
+            channelData[i] = Math.min(1.0, Math.max(0.0, normalized));
+        }
     }
 
     // Create a buffer source and schedule it
@@ -1314,66 +1375,84 @@ async function start() {
         updateEmulationButtons();
         return;
     }
+    const romName = romMetadata?.name ?? "selected-rom.nes";
+    const ext = romName.toLowerCase().split(".").pop() ?? "";
+
+    // Reject unsupported file types before any async work.
+    if (ext !== "nes" && ext !== "gb") {
+        toastOverlay.show(`Unsupported file type .${ext} — only .nes and .gb are supported`);
+        setStatus(`Unsupported file type .${ext}`, true);
+        updateEmulationButtons();
+        return;
+    }
+
     stopIdleScroller();
     setStatus("Initializing emulator...");
     try {
-        if (!nes) {
+        if (!emulator) {
             await ensureWasmInitialized();
 
-            // Initialize WebGL shaders before creating NES instance
+            // Initialize WebGL shaders before creating the emulator instance
             if (!initWebGL()) {
                 throw new Error("Failed to initialize WebGL");
             }
 
-            nes = new WasmNes();
-            updateNesDisplayDimensions();
-        }
-        const romName = romMetadata?.name || "selected-rom.nes";
-
-        // ── Autorun setup: configure before loading ROM ─────────────────────
-        const autorunConfig = autorunCtx.getActiveConfig();
-        if (autorunConfig?.mode === "record") {
-            nes.start_autorun_recording();
-        } else {
-            nes.clear_autorun();
+            createEmulatorInstance(ext);
+        } else if (emulator.kind !== ext) {
+            // Switching emulator kind (NES ↔ GB).
+            createEmulatorInstance(ext);
         }
 
-        nes.load_rom(romBytes, romName);
-        drainNesToasts(nes, toastOverlay);
-
-        // ── Autorun setup: playback / extend – after ROM is loaded ───────────
-        if (autorunConfig?.mode === "playback") {
-            try {
-                const pendingRestore = nes.load_autorun_playback(
-                    autorunConfig.bytes!,
-                    autorunConfig.checkpointIdx ?? -1,
-                    autorunConfig.extend ?? false
-                );
-                if (pendingRestore && pendingRestore.length > 0) {
-                    nes.load_state_bytes(pendingRestore);
-                }
-            } catch (autorunErr) {
-                console.error("Failed to load autorun for playback:", autorunErr);
-                toastOverlay.show(`Autorun load failed: ${autorunErr}`);
+        // ── NES-only: Autorun setup (configure before loading ROM) ──────────
+        if (nes) {
+            const autorunConfig = autorunCtx.getActiveConfig();
+            if (autorunConfig?.mode === "record") {
+                nes.start_autorun_recording();
+            } else {
                 nes.clear_autorun();
             }
         }
 
-        frameLimiter.setTargetFps(nes.frame_rate_hz());
+        emulator!.inst.load_rom(romBytes, romName);
+        drainNesToasts(emulator?.inst ?? null, toastOverlay);
+
+        // ── NES-only: Autorun setup (playback/extend – after ROM is loaded) ──
+        if (nes) {
+            const autorunConfig = autorunCtx.getActiveConfig();
+            if (autorunConfig?.mode === "playback") {
+                try {
+                    const pendingRestore = nes.load_autorun_playback(
+                        autorunConfig.bytes!,
+                        autorunConfig.checkpointIdx ?? -1,
+                        autorunConfig.extend ?? false
+                    );
+                    if (pendingRestore && pendingRestore.length > 0) {
+                        nes.load_state_bytes(pendingRestore);
+                    }
+                } catch (autorunErr) {
+                    console.error("Failed to load autorun for playback:", autorunErr);
+                    toastOverlay.show(`Autorun load failed: ${autorunErr}`);
+                    nes.clear_autorun();
+                }
+            }
+        }
+
+        frameLimiter.setTargetFps(emulator!.inst.frame_rate_hz());
         // Initialize audio context on user interaction (browser requirement)
         initAudioContext();
-        nes.set_audio_muted(audioMuted);
+        emulator!.inst.set_audio_muted(audioMuted);
         await refreshSaveStateController();
-        
+
         // Update pointer visibility and Zapper overlay after ROM is loaded
         updateMouseCursorState();
     } catch (err: unknown) {
-        drainNesToasts(nes, toastOverlay);
+        drainNesToasts(emulator?.inst ?? null, toastOverlay);
         setStatus(`Failed to load ROM: ${err}`, true);
         updateEmulationButtons();
-        // Only reset nes if wasm/webgl initialization failed
+        // Only reset emulator if wasm/webgl initialization failed
         // Don't reset on simple ROM load errors so we can retry
         if (err instanceof Error && err.message.includes("WebGL")) {
+            emulator = null;
             nes = null;
             webglInitialized = false;
         }
@@ -1396,7 +1475,7 @@ function resumeFrameLoop() {
 }
 
 function pauseResume() {
-    if (!nes || !running) return;
+    if (!emulator || !running) return;
     paused = !paused;
     if (!paused) {
         resumeFrameLoop();
@@ -1975,7 +2054,7 @@ function debuggerHexdumpGoToAddress() {
 }
 
 function stop() {
-    // ── Autorun teardown: download recording if active ────────────────────
+    // ── NES-only: Autorun teardown ────────────────────────────────────────
     if (nes && nes.autorun_is_recording()) {
         const recordingBytes = nes.stop_autorun();
         if (recordingBytes && recordingBytes.length > 0) {
@@ -2212,7 +2291,7 @@ function step(timestamp: number) {
         shouldRender: frameLimiter.shouldRender(timestamp)
     });
     try {
-        if (nes) {
+        if (emulator) {
             pollGamepad();
         }
 
@@ -2221,10 +2300,10 @@ function step(timestamp: number) {
             return;
         }
 
-        const frame = nes!.render_frame_rgba(); // RGBA8888
+        const frame = emulator!.inst.render_frame_rgba(); // RGBA8888
 
-        // Stop when pure autorun playback has consumed all recorded frames
-        if (nes!.autorun_playback_finished()) {
+        // Stop when pure NES autorun playback has consumed all recorded frames
+        if (nes?.autorun_playback_finished()) {
             stop();
             setStatus("Autorun playback complete.");
             return;
@@ -2251,7 +2330,7 @@ function step(timestamp: number) {
         frameCount = (frameCount + 1) % 3600;
 
         // Get and play audio samples
-        const audioSamples = nes!.get_audio_samples();
+        const audioSamples = emulator!.inst.get_audio_samples();
         if (audioSamples.length > 0) {
             playAudioSamples(audioSamples);
         }
@@ -2296,8 +2375,8 @@ function updateMuteButton() {
 muteBtn!.addEventListener("click", async () => {
     audioMuted = !audioMuted;
     updateMuteButton();
-    if (nes) {
-        nes.set_audio_muted(audioMuted);
+    if (emulator) {
+        emulator.inst.set_audio_muted(audioMuted);
     }
     if (audioContext) {
         try {
@@ -2439,15 +2518,21 @@ function applyKeyboardMapping(event: KeyboardEvent, mapping: { button?: number; 
     }
     event.preventDefault();
 
-    if (mapping.snesButton !== undefined) {
-        const handledAsSnes = nes!.set_snes_button(controller, mapping.snesButton, pressed);
+    // NES-specific: try SNES button mapping first.
+    if (nes && mapping.snesButton !== undefined) {
+        const handledAsSnes = nes.set_snes_button(controller, mapping.snesButton, pressed);
         if (handledAsSnes) {
             return;
         }
     }
 
     if (mapping.button !== undefined) {
-        applyJoypadButtonIfAllowed(nes!, controller, mapping.button, pressed);
+        if (nes) {
+            applyJoypadButtonIfAllowed(nes, controller, mapping.button, pressed);
+        } else if (emulator) {
+            // GB: direct button routing (no mouse/zapper suppression needed).
+            emulator.inst.set_button(controller, mapping.button, pressed);
+        }
     }
 }
 
@@ -2473,7 +2558,7 @@ async function handleKeyDown(event: KeyboardEvent) {
         return;
     }
 
-    if (!nes && event.code !== "KeyH") {
+    if (!emulator && event.code !== "KeyH") {
         return;
     }
 
@@ -2482,11 +2567,12 @@ async function handleKeyDown(event: KeyboardEvent) {
         return;
     }
 
-    if (!nes) {
+    if (!emulator) {
         return;
     }
 
-    if (nes.is_debugger_open()) {
+    // NES-only: block keyboard input while debugger is open.
+    if (nes?.is_debugger_open()) {
         return;
     }
 
@@ -2505,11 +2591,12 @@ function handleKeyUp(event: KeyboardEvent) {
         return;
     }
 
-    if (!nes) {
+    if (!emulator) {
         return;
     }
 
-    if (nes.is_debugger_open()) {
+    // NES-only: block keyboard input while debugger is open.
+    if (nes?.is_debugger_open()) {
         return;
     }
 
@@ -2603,7 +2690,15 @@ function setCrosshairVisible(visible: boolean) {
 }
 
 function updateMouseCursorState() {
-    if (!nes) return;
+    if (!nes) {
+        // No NES active (GB or no emulator): ensure any NES-specific cursor state is cleared.
+        setCrosshairVisible(false);
+        if (document.pointerLockElement === canvas) {
+            document.exitPointerLock?.();
+        }
+        document.body.style.cursor = "";
+        return;
+    }
 
     const zapperActive = isZapperActive(nes);
     const pointerLocked = document.pointerLockElement === canvas;
@@ -2806,16 +2901,16 @@ async function toggleScreenFullscreen() {
 }
 
 function resetAction() {
-    if (!nes) return;
+    if (!emulator) return;
     cancelActiveRecording();
-    nes.reset(true);
+    emulator.inst.reset(true);
     setStatus("Soft reset", false);
 }
 
 function hardResetAction() {
-    if (!nes) return;
+    if (!emulator) return;
     cancelActiveRecording();
-    nes.reset(false);
+    emulator.inst.reset(false);
     setStatus("Hard reset", false);
 }
 
@@ -2920,31 +3015,22 @@ interface GamepadButtonState {
 }
 
 function applyGamepadState(state: GamepadButtonState, controller: number, lastState: GamepadButtonState) {
-    if (!nes) return;
-    if (state.a !== lastState.a) {
-        applyJoypadButtonIfAllowed(nes, controller, 0, state.a);
-    }
-    if (state.b !== lastState.b) {
-        applyJoypadButtonIfAllowed(nes, controller, 1, state.b);
-    }
-    if (state.select !== lastState.select) {
-        applyJoypadButtonIfAllowed(nes, controller, 2, state.select);
-    }
-    if (state.start !== lastState.start) {
-        applyJoypadButtonIfAllowed(nes, controller, 3, state.start);
-    }
-    if (state.up !== lastState.up) {
-        applyJoypadButtonIfAllowed(nes, controller, 4, state.up);
-    }
-    if (state.down !== lastState.down) {
-        applyJoypadButtonIfAllowed(nes, controller, 5, state.down);
-    }
-    if (state.left !== lastState.left) {
-        applyJoypadButtonIfAllowed(nes, controller, 6, state.left);
-    }
-    if (state.right !== lastState.right) {
-        applyJoypadButtonIfAllowed(nes, controller, 7, state.right);
-    }
+    if (!emulator) return;
+    const applyButton = (button: number, pressed: boolean) => {
+        if (nes) {
+            applyJoypadButtonIfAllowed(nes, controller, button, pressed);
+        } else {
+            emulator!.inst.set_button(controller, button, pressed);
+        }
+    };
+    if (state.a !== lastState.a) applyButton(0, state.a);
+    if (state.b !== lastState.b) applyButton(1, state.b);
+    if (state.select !== lastState.select) applyButton(2, state.select);
+    if (state.start !== lastState.start) applyButton(3, state.start);
+    if (state.up !== lastState.up) applyButton(4, state.up);
+    if (state.down !== lastState.down) applyButton(5, state.down);
+    if (state.left !== lastState.left) applyButton(6, state.left);
+    if (state.right !== lastState.right) applyButton(7, state.right);
 }
 
 function resetGamepadState() {

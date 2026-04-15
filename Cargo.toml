@@ -2,7 +2,7 @@
 name = "neser"
 version = "0.3.1"
 edition = "2024"
-description = "NESER - NES Emulator in Rust. Desktop (SDL) and WebAssembly frontends."
+description = "NESER - Nintendo Emulation Systems Engine (Rust). Desktop and WebAssembly frontends."
 license = "MIT"
 repository = "https://github.com/rmstdope/neser"
 exclude = [

@@ -4,6 +4,7 @@ use crate::nes::bus::ControllerStateWrapper;
 use crate::nes::console::SaveState;
 use crate::nes::input::ArkanoidState;
 use crate::wasm::{WasmNes, gamepad_init_toast_message};
+use crate::wasm_gb::WasmGb;
 use wasm_bindgen_test::*;
 
 wasm_bindgen_test_configure!(run_in_browser);
@@ -837,5 +838,91 @@ fn debugger_snapshot_json_reset_vector_matches_rom_header() {
     assert!(
         json.contains("\"reset_vector\":32768"),
         "expected reset_vector:32768 ($8000) in snapshot JSON: {json}"
+    );
+}
+
+// ── WasmGb tests ─────────────────────────────────────────────────────────────
+
+/// Minimal valid DMG ROM: 32 KB ROM-only cartridge with correct header checksum.
+fn minimal_gb_rom() -> Vec<u8> {
+    let mut rom = vec![0u8; 0x8000];
+    rom[0x0147] = 0x00; // ROM only
+    rom[0x0148] = 0x00; // 32 KB
+    rom[0x0149] = 0x00; // no RAM
+    // Header checksum: sum of bytes $0134–$014C, each negated-and-decremented.
+    let chk = rom[0x0134..=0x014C]
+        .iter()
+        .fold(0u8, |acc, &b| acc.wrapping_sub(b).wrapping_sub(1));
+    rom[0x014D] = chk;
+    rom
+}
+
+#[wasm_bindgen_test]
+fn wasm_gb_constructs() {
+    let _gb = WasmGb::new();
+}
+
+#[wasm_bindgen_test]
+fn wasm_gb_screen_width_is_160() {
+    let gb = WasmGb::new();
+    assert_eq!(gb.screen_width(), 160);
+}
+
+#[wasm_bindgen_test]
+fn wasm_gb_screen_height_is_144() {
+    let gb = WasmGb::new();
+    assert_eq!(gb.screen_height(), 144);
+}
+
+#[wasm_bindgen_test]
+fn wasm_gb_frame_rate_hz_is_dmg_rate() {
+    let gb = WasmGb::new();
+    let hz = gb.frame_rate_hz();
+    // DMG: 4,194,304 / 70,224 ≈ 59.7275
+    assert!(
+        (hz - 59.7275).abs() < 0.001,
+        "expected ~59.7275 Hz but got {hz}"
+    );
+}
+
+#[wasm_bindgen_test]
+fn wasm_gb_no_rom_renders_opaque_black_frame() {
+    let mut gb = WasmGb::new();
+    let frame = gb.render_frame_rgba();
+    // Without a ROM, expect a fully opaque black frame (160 × 144 pixels × 4 bytes).
+    let expected_len = 160 * 144 * 4;
+    assert_eq!(
+        frame.len(),
+        expected_len,
+        "no-ROM frame should be {expected_len} bytes"
+    );
+    // Every alpha byte must be 0xFF (opaque).
+    for (i, &byte) in frame.iter().enumerate() {
+        if (i + 1) % 4 == 0 {
+            assert_eq!(byte, 0xFF, "alpha byte at index {i} should be 0xFF");
+        }
+    }
+    // Every RGB byte must be 0 (black).
+    for (i, &byte) in frame.iter().enumerate() {
+        if (i + 1) % 4 != 0 {
+            assert_eq!(byte, 0x00, "color byte at index {i} should be 0x00");
+        }
+    }
+}
+
+#[wasm_bindgen_test]
+fn wasm_gb_load_rom_returns_success_toast() {
+    let mut gb = WasmGb::new();
+    let rom = minimal_gb_rom();
+    gb.load_rom(&rom, "test.gb")
+        .expect("valid GB ROM should load successfully");
+    let toasts: Vec<String> = gb
+        .drain_toasts()
+        .into_iter()
+        .filter_map(|v| v.as_string())
+        .collect();
+    assert!(
+        toasts.iter().any(|t| t.contains("test.gb")),
+        "expected a toast mentioning 'test.gb', got: {toasts:?}"
     );
 }
