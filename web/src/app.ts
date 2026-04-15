@@ -917,6 +917,8 @@ function updateEmulationButtons() {
 
 /** Create a fresh NES or GB emulator instance and update kind-dependent UI. */
 function createEmulatorInstance(ext: string): void {
+    // Free the previous WASM instance to avoid leaking its linear memory.
+    emulator?.inst.free();
     if (ext === "gb") {
         const gb = new WasmGb();
         emulator = { kind: "gb", inst: gb };
@@ -1310,11 +1312,17 @@ function playAudioSamples(samples: Float32Array) {
     const channelData = buffer.getChannelData(0);
 
     // Normalize and copy samples to the buffer
-    // NES APU outputs 0.0 to ~1.177, normalize to 0.0 to 1.0 for Web Audio
-    for (let i = 0; i < samples.length; i++) {
-        // Map NES 0.0-1.177 to Web Audio 0.0-1.0 (0.0 represents silence)
-        const normalized = samples[i] / NES_APU_MAX;
-        channelData[i] = Math.min(1.0, Math.max(0.0, normalized));
+    if (emulator?.kind === "gb") {
+        // GB APU outputs in [0.0, 1.0] — copy directly with a safety clamp
+        for (let i = 0; i < samples.length; i++) {
+            channelData[i] = Math.min(1.0, Math.max(0.0, samples[i]));
+        }
+    } else {
+        // NES APU outputs 0.0 to ~1.177, normalize to 0.0 to 1.0 for Web Audio
+        for (let i = 0; i < samples.length; i++) {
+            const normalized = samples[i] / NES_APU_MAX;
+            channelData[i] = Math.min(1.0, Math.max(0.0, normalized));
+        }
     }
 
     // Create a buffer source and schedule it
@@ -1456,7 +1464,7 @@ function resumeFrameLoop() {
 }
 
 function pauseResume() {
-    if (!nes || !running) return;
+    if (!emulator || !running) return;
     paused = !paused;
     if (!paused) {
         resumeFrameLoop();
@@ -2671,7 +2679,15 @@ function setCrosshairVisible(visible: boolean) {
 }
 
 function updateMouseCursorState() {
-    if (!nes) return;
+    if (!nes) {
+        // No NES active (GB or no emulator): ensure any NES-specific cursor state is cleared.
+        setCrosshairVisible(false);
+        if (document.pointerLockElement === canvas) {
+            document.exitPointerLock?.();
+        }
+        document.body.style.cursor = "";
+        return;
+    }
 
     const zapperActive = isZapperActive(nes);
     const pointerLocked = document.pointerLockElement === canvas;
