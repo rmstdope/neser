@@ -28,27 +28,35 @@ Use this skill whenever you need details about any part of Game Boy or Game Boy 
 - If the page cannot be retrieved with standard tools, try fetching it directly with `curl`.
 - If Pan Docs still cannot be retrieved, use the raw GitHub source at `https://github.com/gbdev/pandocs` and read the relevant markdown files from `src/`.
 
-4. If specification coverage is missing or incomplete, inspect SameBoy carefully.
+4. When fixing a failing Mooneye acceptance test, read the test source first.
+
+- Mooneye test source files contain precise cycle-accurate comments that Pan Docs often omits (e.g., exact M-cycle timing of register side-effects, edge cases for restarts).
+- Fetch the source with `curl https://raw.githubusercontent.com/Gekkio/mooneye-test-suite/main/<path>.s`
+- The path mirrors the ROM path: `acceptance/oam_dma_start.gb` → `acceptance/oam_dma_start.s`
+- Inline comments like `; M=1: OAM still accessible` are authoritative — they document verified hardware observations.
+- Use the test source to confirm what exact assertion the ROM makes before diagnosing the emulator.
+
+5. If specification coverage is missing or incomplete, inspect SameBoy carefully.
 
 - Prefer `LIJI32/SameBoy` and focus on `Core/`.
 - Use SameBoy only after checking Pan Docs and its source.
 - Treat SameBoy as implementation evidence, not as equal authority with a written hardware specification.
 - If SameBoy appears to make a choice where the specification is unclear, say that explicitly instead of presenting it as confirmed hardware fact.
 
-5. When sources disagree or remain ambiguous, report that directly.
+6. When sources disagree or remain ambiguous, report that directly.
 
 - Name the conflicting sources.
 - State which source is more authoritative for the question at hand and why.
 - Do not merge conflicting claims into a guessed answer.
 
-6. Produce a detailed, source-backed answer.
+7. Produce a detailed, source-backed answer.
 
 - Start with a high-level explanation of the hardware behavior.
 - Then cover precise details such as registers, bit meanings, address ranges, timing, ordering, side effects, open bus behavior, edge cases, and model differences.
 - Clearly label what is confirmed by specification, what is supported only by emulator implementation, and what is still unknown.
 - Cite the exact Pan Docs pages or SameBoy files you used.
 
-7. Never guess.
+8. Never guess.
 
 - If no authoritative information is available, say so plainly.
 - If the available information is partial, answer only the supported part and identify the gaps.
@@ -67,3 +75,6 @@ Use this skill whenever you need details about any part of Game Boy or Game Boy 
 
 - Researching an MBC quirk:
   start with the MBC page on Pan Docs, follow cartridge-specific links, then inspect `Core/` or related MBC files in SameBoy if the written documentation is incomplete.
+
+- Diagnosing a failing Mooneye acceptance test (`oam_dma_start`):
+  fetch the test source with `curl https://raw.githubusercontent.com/Gekkio/mooneye-test-suite/main/acceptance/oam_dma_start.s`, read the inline timing comments to understand the exact expected behavior, then cross-check Pan Docs for the register specification.
