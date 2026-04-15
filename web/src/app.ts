@@ -46,6 +46,7 @@ import {
     shouldKeepPointerLocked,
 } from "./input/pointer_lock";
 import { computeButtonStates } from "./ui/emulation_controls";
+import { cycleFilterKey, filterOnConsoleSwitch, type FilterDef } from "./display/filters";
 
 const statusEl = document.getElementById("status");
 const startBtn = document.getElementById("start") as HTMLButtonElement;
@@ -372,6 +373,10 @@ const filters: Record<string, FilterDef> = {
                 gl_FragColor = vec4(ToSrgb(outColor.rgb), 1.0);
             }
         `
+    },
+    gameboy: {
+        name: "Game Boy",
+        type: "gb"
     }
 };
 
@@ -579,14 +584,360 @@ const ntscPass2FragmentShaderSource = `
     }
 `;
 
+// ── GB Dot-Matrix Shader (5-pass) ───────────────────────────────────────
+// Ported from vendor/slang-shaders/handheld/gameboy.slangp (GPLv3)
+// Original: Copyright (C) 2013 Harlequin, 2024-2025 Matt Akins
+
+// Precision header shared by all GB shaders.
+// Fragment shaders probe for highp support; vertex shaders always use highp.
+const GB_PREC = `
+    #ifdef GL_FRAGMENT_SHADER
+        #ifdef GL_FRAGMENT_PRECISION_HIGH
+            precision highp float;
+        #else
+            precision mediump float;
+        #endif
+    #else
+        precision highp float;
+    #endif
+`;
+
+// Pass 0 vertex — fullscreen mode dot-matrix geometry pre-calculations
+const gbPass0VertexSource = `
+    ${GB_PREC}
+    attribute vec2 a_position;
+    attribute vec2 a_texCoord;
+    uniform vec2 u_outputSize;
+    uniform vec2 u_sourceSize;
+    varying vec2 v_texCoord;
+    varying vec2 v_txCoord;
+    varying vec2 v_txToPx;
+    varying vec2 v_dotSizeInPx;
+
+    const float PIXEL_SIZE = 0.80;
+
+    void main() {
+        gl_Position = vec4(a_position, 0.0, 1.0);
+        v_texCoord = a_texCoord;
+        v_txCoord = a_texCoord * u_sourceSize;
+        v_txToPx = u_outputSize / u_sourceSize;
+        v_dotSizeInPx = v_txToPx * PIXEL_SIZE;
+    }
+`;
+
+// Pass 0 fragment — dot-matrix generation + response time + palette
+const gbPass0FragmentSource = `
+    ${GB_PREC}
+    varying vec2 v_texCoord;
+    varying vec2 v_txCoord;
+    varying vec2 v_txToPx;
+    varying vec2 v_dotSizeInPx;
+    uniform sampler2D u_texture;
+    uniform sampler2D u_prevFrame;
+    uniform sampler2D u_colorPalette;
+    uniform vec2 u_sourceSize;
+    uniform vec2 u_outputSize;
+
+    // Hardcoded defaults from gb-params.inc + gameboy.slangp
+    const float PIXEL_SIZE = 0.80;
+    const float PIXEL_SOFTNESS = 1.0;
+    const float PIXEL_SHAPE = 1.0;
+    const float SHARPENING_AMOUNT = 1.0;
+    const float RESPONSE_TIME = 0.33;
+    const float GREY_BALANCE = 3.0;
+    const float BASELINE_ALPHA = 0.10;
+    const float COLOR_TOGGLE = 0.0;
+    const float PALETTE = 0.0;
+    // Pre-computed grey balance compensation (sigmoid mode, default params)
+    const float AA_COMPENSATION = 1.6;
+
+    float intersect_line(float px_s, float px_e, float dot_s, float dot_e) {
+        return max(min(px_e, dot_e) - max(px_s, dot_s), 0.0);
+    }
+
+    float intersect_rect(vec4 px, vec4 rect) {
+        vec2 bl = max(px.xy, rect.xy);
+        vec2 tr = min(px.zw, rect.zw);
+        vec2 c = max(tr - bl, vec2(0.0));
+        return c.x * c.y;
+    }
+
+    void main() {
+        vec3 fg_source = texture2D(u_texture, v_texCoord).rgb;
+
+        // Response time: current + 1 previous frame
+        vec3 curr = abs(vec3(1.0) - texture2D(u_texture, v_texCoord).rgb);
+        vec3 prev = abs(vec3(1.0) - texture2D(u_prevFrame, v_texCoord).rgb);
+
+        // Geometric dot intersection (fullscreen mode)
+        vec2 tx_i = floor(v_txCoord);
+        vec2 tx_f = v_txCoord - tx_i;
+        vec2 pc = (tx_f - 0.5) * v_txToPx;
+        vec4 pr = vec4(pc - v_txToPx * 0.5, pc + v_txToPx * 0.5);
+        vec4 dr = vec4(-v_dotSizeInPx * 0.5, v_dotSizeInPx * 0.5);
+
+        // Rectangular coverage with sigmoid sharpening
+        float xc = intersect_line(pr.x, pr.z, dr.x, dr.z) / v_txToPx.x;
+        float yc = intersect_line(pr.y, pr.w, dr.y, dr.w) / v_txToPx.y;
+        float ss = 10.0 / max(PIXEL_SOFTNESS, 0.001);
+        float xs = 1.0 / (1.0 + exp(-ss * (xc - 0.5)));
+        float ys = 1.0 / (1.0 + exp(-ss * (yc - 0.5)));
+        float rect_cov = mix(xc * yc, xs * ys, SHARPENING_AMOUNT);
+
+        // Circular coverage with sigmoid
+        float cl = intersect_rect(pr, dr) / (v_txToPx.x * v_txToPx.y);
+        float cs = 1.0 / (1.0 + exp(-ss * (cl - 0.5)));
+        float circ_cov = mix(cl, cs, SHARPENING_AMOUNT);
+
+        float is_on_dot = mix(circ_cov, rect_cov, PIXEL_SHAPE);
+
+        // Response time blending
+        vec3 input_rgb = curr;
+        input_rgb += (prev - input_rgb) * RESPONSE_TIME;
+
+        // Brightness (simple mode)
+        float brightness = input_rgb.r + input_rgb.g + input_rgb.b;
+        float grey_adj = GREY_BALANCE / AA_COMPENSATION;
+        float alpha = brightness / grey_adj + BASELINE_ALPHA;
+
+        // Foreground color
+        vec3 fg_color = texture2D(u_colorPalette, vec2(0.75, 0.5)).rgb;
+        vec4 out_color;
+        if (COLOR_TOGGLE < 0.5)
+            out_color = vec4(fg_color, alpha);
+        else
+            out_color = vec4(fg_source, alpha);
+
+        out_color.a *= is_on_dot;
+        gl_FragColor = out_color;
+    }
+`;
+
+// Pass 1 vertex — pre-compute neighbor texel offsets
+const gbPass1VertexSource = `
+    ${GB_PREC}
+    attribute vec2 a_position;
+    attribute vec2 a_texCoord;
+    uniform vec2 u_sourceSize;
+    uniform vec2 u_outputSize;
+    varying vec2 v_texCoord;
+    varying vec2 v_blurUp;
+    varying vec2 v_blurDown;
+    varying vec2 v_blurRight;
+    varying vec2 v_blurLeft;
+    varying vec2 v_lowerBound;
+    varying vec2 v_upperBound;
+
+    void main() {
+        gl_Position = vec4(a_position, 0.0, 1.0);
+        v_texCoord = a_texCoord * 1.0001;
+        vec2 texel = vec2(1.0) / u_sourceSize;
+        v_blurDown  = v_texCoord + vec2(0.0, texel.y);
+        v_blurUp    = v_texCoord + vec2(0.0, -texel.y);
+        v_blurRight = v_texCoord + vec2(texel.x, 0.0);
+        v_blurLeft  = v_texCoord + vec2(-texel.x, 0.0);
+        v_lowerBound = vec2(0.0);
+        v_upperBound = texel * (u_outputSize - vec2(2.0));
+    }
+`;
+
+// Pass 1 fragment — alpha blending between adjacent pixels
+const gbPass1FragmentSource = `
+    ${GB_PREC}
+    varying vec2 v_texCoord;
+    varying vec2 v_blurUp;
+    varying vec2 v_blurDown;
+    varying vec2 v_blurRight;
+    varying vec2 v_blurLeft;
+    varying vec2 v_lowerBound;
+    varying vec2 v_upperBound;
+    uniform sampler2D u_texture;
+
+    const float BLENDING_MODE = 0.0;
+    const float ADJACENT_BLEND = 0.1755;
+
+    float blend_mod(float c) {
+        float b = (c == 0.0) ? 1.0 : 0.0;
+        return clamp(b + BLENDING_MODE, 0.0, 1.0);
+    }
+
+    void main() {
+        vec4 col = texture2D(u_texture, v_texCoord);
+        vec4 a1 = texture2D(u_texture, clamp(v_blurUp, v_lowerBound, v_upperBound));
+        vec4 a2 = texture2D(u_texture, clamp(v_blurDown, v_lowerBound, v_upperBound));
+        vec4 a3 = texture2D(u_texture, clamp(v_blurRight, v_lowerBound, v_upperBound));
+        vec4 a4 = texture2D(u_texture, clamp(v_blurLeft, v_lowerBound, v_upperBound));
+        col.a -= (
+            (col.a - a1.a) + (col.a - a2.a) +
+            (col.a - a3.a) + (col.a - a4.a)
+        ) * ADJACENT_BLEND * blend_mod(col.a);
+        gl_FragColor = col;
+    }
+`;
+
+// Pass 2 vertex — horizontal blur setup
+const gbBlurVertexSource = `
+    ${GB_PREC}
+    attribute vec2 a_position;
+    attribute vec2 a_texCoord;
+    uniform vec2 u_sourceSize;
+    uniform vec2 u_outputSize;
+    varying vec2 v_texCoord;
+    varying vec2 v_texel;
+    varying vec2 v_lowerBound;
+    varying vec2 v_upperBound;
+
+    void main() {
+        gl_Position = vec4(a_position, 0.0, 1.0);
+        v_texCoord = a_texCoord * 1.0001;
+        v_texel = vec2(1.0) / u_sourceSize;
+        v_lowerBound = vec2(0.0);
+        v_upperBound = v_texel * (u_outputSize - vec2(1.0));
+    }
+`;
+
+// Pass 2 fragment — horizontal 5-tap Gaussian blur on alpha (sigma=4.0)
+const gbPass2FragmentSource = `
+    ${GB_PREC}
+    varying vec2 v_texCoord;
+    varying vec2 v_texel;
+    varying vec2 v_lowerBound;
+    varying vec2 v_upperBound;
+    uniform sampler2D u_texture;
+
+    void main() {
+        float w0 = 0.13465834;
+        float w1 = 0.13051534;
+        float w2 = 0.11883558;
+        float w3 = 0.10164547;
+        float w4 = 0.08167444;
+        vec4 col = texture2D(u_texture, clamp(v_texCoord, v_lowerBound, v_upperBound)) * w0;
+        col.a += texture2D(u_texture, clamp(v_texCoord + vec2( 1.0 * v_texel.x, 0.0), v_lowerBound, v_upperBound)).a * w1;
+        col.a += texture2D(u_texture, clamp(v_texCoord + vec2(-1.0 * v_texel.x, 0.0), v_lowerBound, v_upperBound)).a * w1;
+        col.a += texture2D(u_texture, clamp(v_texCoord + vec2( 2.0 * v_texel.x, 0.0), v_lowerBound, v_upperBound)).a * w2;
+        col.a += texture2D(u_texture, clamp(v_texCoord + vec2(-2.0 * v_texel.x, 0.0), v_lowerBound, v_upperBound)).a * w2;
+        col.a += texture2D(u_texture, clamp(v_texCoord + vec2( 3.0 * v_texel.x, 0.0), v_lowerBound, v_upperBound)).a * w3;
+        col.a += texture2D(u_texture, clamp(v_texCoord + vec2(-3.0 * v_texel.x, 0.0), v_lowerBound, v_upperBound)).a * w3;
+        col.a += texture2D(u_texture, clamp(v_texCoord + vec2( 4.0 * v_texel.x, 0.0), v_lowerBound, v_upperBound)).a * w4;
+        col.a += texture2D(u_texture, clamp(v_texCoord + vec2(-4.0 * v_texel.x, 0.0), v_lowerBound, v_upperBound)).a * w4;
+        gl_FragColor = col;
+    }
+`;
+
+// Pass 3 fragment — vertical 5-tap Gaussian blur on alpha (sigma=4.0)
+const gbPass3FragmentSource = `
+    ${GB_PREC}
+    varying vec2 v_texCoord;
+    varying vec2 v_texel;
+    varying vec2 v_lowerBound;
+    varying vec2 v_upperBound;
+    uniform sampler2D u_texture;
+
+    void main() {
+        float w0 = 0.13465834;
+        float w1 = 0.13051534;
+        float w2 = 0.11883558;
+        float w3 = 0.10164547;
+        float w4 = 0.08167444;
+        vec4 col = texture2D(u_texture, clamp(v_texCoord, v_lowerBound, v_upperBound)) * w0;
+        col.a += texture2D(u_texture, clamp(v_texCoord + vec2(0.0,  1.0 * v_texel.y), v_lowerBound, v_upperBound)).a * w1;
+        col.a += texture2D(u_texture, clamp(v_texCoord + vec2(0.0, -1.0 * v_texel.y), v_lowerBound, v_upperBound)).a * w1;
+        col.a += texture2D(u_texture, clamp(v_texCoord + vec2(0.0,  2.0 * v_texel.y), v_lowerBound, v_upperBound)).a * w2;
+        col.a += texture2D(u_texture, clamp(v_texCoord + vec2(0.0, -2.0 * v_texel.y), v_lowerBound, v_upperBound)).a * w2;
+        col.a += texture2D(u_texture, clamp(v_texCoord + vec2(0.0,  3.0 * v_texel.y), v_lowerBound, v_upperBound)).a * w3;
+        col.a += texture2D(u_texture, clamp(v_texCoord + vec2(0.0, -3.0 * v_texel.y), v_lowerBound, v_upperBound)).a * w3;
+        col.a += texture2D(u_texture, clamp(v_texCoord + vec2(0.0,  4.0 * v_texel.y), v_lowerBound, v_upperBound)).a * w4;
+        col.a += texture2D(u_texture, clamp(v_texCoord + vec2(0.0, -4.0 * v_texel.y), v_lowerBound, v_upperBound)).a * w4;
+        gl_FragColor = col;
+    }
+`;
+
+// Pass 4 vertex — resolution scale for shadow compensation
+const gbPass4VertexSource = `
+    ${GB_PREC}
+    attribute vec2 a_position;
+    attribute vec2 a_texCoord;
+    uniform vec2 u_outputSize;
+    uniform vec2 u_sourceSize;
+    varying vec2 v_texCoord;
+    varying vec2 v_texel;
+    varying float v_shadowScaleFactor;
+
+    void main() {
+        gl_Position = vec4(a_position, 0.0, 1.0);
+        v_texCoord = a_texCoord * 1.0001;
+        v_texel = vec2(1.0) / u_sourceSize;
+        float sx = u_outputSize.x / 640.0;
+        float sy = u_outputSize.y / 480.0;
+        v_shadowScaleFactor = sqrt(sx * sy);
+    }
+`;
+
+// Pass 4 fragment — final compositing: foreground + background + shadows
+const gbPass4FragmentSource = `
+    ${GB_PREC}
+    varying vec2 v_texCoord;
+    varying vec2 v_texel;
+    varying float v_shadowScaleFactor;
+    uniform sampler2D u_texture;       // blurred pass3 output (shadows)
+    uniform sampler2D u_gbPass1;       // pass1 output (foreground)
+    uniform sampler2D u_background;    // paper background
+    uniform sampler2D u_colorPalette;  // palette LUT
+    uniform vec2 u_sourceSize;
+    uniform vec2 u_gbPass1Size;
+
+    const float CONTRAST = 0.95;
+    const float SCREEN_LIGHT = 1.0;
+    const float PIXEL_OPACITY = 1.0;
+    const float BG_SMOOTHING = 0.75;
+    const float SHADOW_OPACITY = 0.55;
+    const float SHADOW_OFFSET_X = 1.0;
+    const float SHADOW_OFFSET_Y = 1.0;
+    const float SHADOW_ENABLE = 1.0;
+    const float SCREEN_OFFSET_X = 0.0;
+    const float SCREEN_OFFSET_Y = 0.0;
+    const float PALETTE = 0.0;
+
+    vec4 get_bg_color() {
+        if (PALETTE < 0.5) return texture2D(u_colorPalette, vec2(0.25, 0.5));
+        if (PALETTE < 1.5) return vec4(0.651, 0.675, 0.518, 1.0);
+        if (PALETTE < 2.5) return vec4(0.737, 0.737, 0.737, 1.0);
+        if (PALETTE < 3.5) return vec4(1.0, 1.0, 1.0, 1.0);
+        if (PALETTE < 4.5) return vec4(0.627, 0.667, 0.024, 1.0);
+        if (PALETTE < 5.5) return vec4(0.027, 0.729, 0.369, 1.0);
+        return vec4(0.027, 0.729, 0.608, 1.0);
+    }
+
+    void main() {
+        vec2 tex = floor(u_gbPass1Size * v_texCoord);
+        tex = (tex + 0.5) / u_gbPass1Size;
+        vec4 bg_c = get_bg_color();
+        float sha = CONTRAST * SHADOW_OPACITY * SHADOW_ENABLE;
+        vec2 s_off = vec2(SHADOW_OFFSET_X * v_texel.x * v_shadowScaleFactor,
+                          SHADOW_OFFSET_Y * v_texel.y * v_shadowScaleFactor);
+        vec2 sc_off = vec2((SCREEN_OFFSET_X - 1.0) * v_texel.x,
+                           (SCREEN_OFFSET_Y - 1.0) * v_texel.y);
+        vec4 fg = texture2D(u_gbPass1, tex - sc_off);
+        vec4 bg = texture2D(u_background, v_texCoord);
+        vec4 sh = texture2D(u_texture, v_texCoord - (s_off + sc_off));
+        fg *= bg_c;
+        float bg_test = (fg.a > 0.0) ? 1.0 : 0.0;
+        bg -= (bg - 0.5) * BG_SMOOTHING * bg_test;
+        bg.rgb = clamp(vec3(
+            bg_c.r + mix(-1.0, 1.0, bg.r),
+            bg_c.g + mix(-1.0, 1.0, bg.g),
+            bg_c.b + mix(-1.0, 1.0, bg.b)
+        ), 0.0, 1.0);
+        vec4 out_c = sh * sh.a * sha + bg * (1.0 - sh.a * sha);
+        out_c = fg * fg.a * CONTRAST +
+                out_c * (SCREEN_LIGHT - fg.a * CONTRAST * PIXEL_OPACITY);
+        gl_FragColor = out_c;
+    }
+`;
+
 type ShaderProgram = WebGLProgram & Record<string, unknown>;
 
-interface FilterDef {
-    name: string;
-    type: string;
-    fragmentShader?: string;
-    params?: Record<string, number>;
-}
+// Use the imported FilterDef type from filters.ts (re-exported for local use)
 
 interface AutorunFileInput extends HTMLInputElement {
     _bytes: Uint8Array | null;
@@ -608,6 +959,21 @@ const ntscChromaSum = 0.538021759;
 let nesTexture: WebGLTexture | null = null;
 let positionBuffer: WebGLBuffer | null = null;
 let texCoordBuffer: WebGLBuffer | null = null;
+// ── GB filter resources ─────────────────────────────────────────────────
+let gbPass0Program: ShaderProgram | null = null;
+let gbPass1Program: ShaderProgram | null = null;
+let gbPass2Program: ShaderProgram | null = null;
+let gbPass3Program: ShaderProgram | null = null;
+let gbPass4Program: ShaderProgram | null = null;
+let gbFbo: (WebGLFramebuffer | null)[] = [null, null, null, null];
+let gbTex: (WebGLTexture | null)[] = [null, null, null, null];
+let gbFboWidth = 0;
+let gbFboHeight = 0;
+let gbPrevFrameTex: WebGLTexture | null = null;
+let gbPaletteTex: WebGLTexture | null = null;
+let gbBackgroundTex: WebGLTexture | null = null;
+let gbPrevFrameData: Uint8Array | null = null;
+let gbAssetsLoaded = false;
 let frameCount = 0; // For NTSC phase animation
 const frameLimiter = createFrameLimiter(60);
 const idleFrameLimiter = createFrameLimiter(60);
@@ -650,6 +1016,26 @@ function resetWebGLResources() {
     ntscPass1Texture = null;
     ntscPass1Framebuffer = null;
     ntscPass1TextureType = null;
+    // GB resources
+    for (const p of [gbPass0Program, gbPass1Program, gbPass2Program, gbPass3Program, gbPass4Program]) {
+        if (p) gl.deleteProgram(p);
+    }
+    for (let i = 0; i < 4; i++) {
+        if (gbTex[i]) gl.deleteTexture(gbTex[i]);
+        if (gbFbo[i]) gl.deleteFramebuffer(gbFbo[i]);
+    }
+    if (gbPrevFrameTex) gl.deleteTexture(gbPrevFrameTex);
+    // Keep gbPaletteTex and gbBackgroundTex alive (asset textures reusable)
+    gbPass0Program = null;
+    gbPass1Program = null;
+    gbPass2Program = null;
+    gbPass3Program = null;
+    gbPass4Program = null;
+    gbFbo = [null, null, null, null];
+    gbTex = [null, null, null, null];
+    gbFboWidth = 0;
+    gbFboHeight = 0;
+    gbPrevFrameTex = null;
 }
 
 function cacheProgramLocations(program: ShaderProgram) {
@@ -675,6 +1061,12 @@ function cacheProgramLocations(program: ShaderProgram) {
     program._uShapeLocation = gl.getUniformLocation(program, "u_shape");
     program._aPositionLocation = gl.getAttribLocation(program, "a_position");
     program._aTexCoordLocation = gl.getAttribLocation(program, "a_texCoord");
+    // GB-specific uniforms
+    program._uPrevFrameLocation = gl.getUniformLocation(program, "u_prevFrame");
+    program._uColorPaletteLocation = gl.getUniformLocation(program, "u_colorPalette");
+    program._uBackgroundLocation = gl.getUniformLocation(program, "u_background");
+    program._uGbPass1Location = gl.getUniformLocation(program, "u_gbPass1");
+    program._uGbPass1SizeLocation = gl.getUniformLocation(program, "u_gbPass1Size");
 }
 
 function createProgram(vertexSource: string, fragmentSource: string) {
@@ -752,6 +1144,112 @@ function createNtscPass1Target() {
     return true;
 }
 
+// ── GB filter setup & asset loading ─────────────────────────────────────
+
+function createGbFbo(w: number, h: number, linear: boolean): { tex: WebGLTexture; fbo: WebGLFramebuffer } | null {
+    const tex = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    const filt = linear ? gl.LINEAR : gl.NEAREST;
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filt);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filt);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+
+    const fbo = gl.createFramebuffer()!;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+        console.error("GB framebuffer incomplete");
+        gl.deleteTexture(tex);
+        gl.deleteFramebuffer(fbo);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        return null;
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return { tex, fbo };
+}
+
+function ensureGbFbos(w: number, h: number) {
+    if (gbFboWidth === w && gbFboHeight === h && gbFbo[0]) return true;
+    // Recreate all 4 intermediate FBOs at new size
+    for (let i = 0; i < 4; i++) {
+        if (gbTex[i]) gl.deleteTexture(gbTex[i]);
+        if (gbFbo[i]) gl.deleteFramebuffer(gbFbo[i]);
+    }
+    for (let i = 0; i < 4; i++) {
+        const pair = createGbFbo(w, h, false);
+        if (!pair) return false;
+        gbTex[i] = pair.tex;
+        gbFbo[i] = pair.fbo;
+    }
+    gbFboWidth = w;
+    gbFboHeight = h;
+    return true;
+}
+
+function loadImageTexture(url: string, linear: boolean): Promise<WebGLTexture | null> {
+    return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+            const tex = gl.createTexture()!;
+            gl.bindTexture(gl.TEXTURE_2D, tex);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            const filt = linear ? gl.LINEAR : gl.NEAREST;
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filt);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filt);
+            resolve(tex);
+        };
+        img.onerror = () => {
+            console.error("Failed to load GB texture:", url);
+            resolve(null);
+        };
+        img.src = url;
+    });
+}
+
+async function loadGbAssets() {
+    if (gbAssetsLoaded && gbPaletteTex && gbBackgroundTex) return true;
+    const paletteUrl = new URL("./assets/gb-palette.png", import.meta.url).href;
+    const bgUrl = new URL("./assets/gb-background.png", import.meta.url).href;
+    const [palette, bg] = await Promise.all([
+        loadImageTexture(paletteUrl, false),
+        loadImageTexture(bgUrl, true),
+    ]);
+    if (!palette || !bg) return false;
+    gbPaletteTex = palette;
+    gbBackgroundTex = bg;
+    gbAssetsLoaded = true;
+    return true;
+}
+
+function setupGbPrograms() {
+    gbPass0Program = createProgram(gbPass0VertexSource, gbPass0FragmentSource);
+    gbPass1Program = createProgram(gbPass1VertexSource, gbPass1FragmentSource);
+    gbPass2Program = createProgram(gbBlurVertexSource, gbPass2FragmentSource);
+    gbPass3Program = createProgram(gbBlurVertexSource, gbPass3FragmentSource);
+    gbPass4Program = createProgram(gbPass4VertexSource, gbPass4FragmentSource);
+    if (!gbPass0Program || !gbPass1Program || !gbPass2Program || !gbPass3Program || !gbPass4Program) {
+        return false;
+    }
+    // Create previous-frame texture at source (GB) resolution
+    gbPrevFrameTex = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, gbPrevFrameTex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+
+    // FBOs created lazily in renderGbPass (to match canvas size)
+    shaderProgram = null;
+    // Start async asset loading (palette + background PNGs)
+    loadGbAssets();
+    return true;
+}
+
 function setupFilterPrograms(filterName: string) {
     const filter = (filters as Record<string, FilterDef>)[filterName];
     if (!filter) {
@@ -770,6 +1268,10 @@ function setupFilterPrograms(filterName: string) {
         }
         shaderProgram = null;
         return true;
+    }
+
+    if (filter.type === "gb") {
+        return setupGbPrograms();
     }
 
     shaderProgram = createProgram(vertexShaderSource, filter.fragmentShader!);
@@ -824,10 +1326,8 @@ function initWebGL() {
 }
 
 function cycleFilter() {
-    const currentIndex = filterKeys.indexOf(currentFilter);
-    const nextIndex = (currentIndex + 1) % filterKeys.length;
-    const nextFilter = filterKeys[nextIndex];
-    currentFilter = nextFilter;
+    const consoleKind = emulator?.kind ?? "nes";
+    currentFilter = cycleFilterKey(currentFilter, filterKeys, filters, consoleKind);
 
     // Recreate buffers and textures but keep running state
     if (!initWebGL()) {
@@ -951,16 +1451,14 @@ function updateEmulatorKindUI() {
     if (saveStateSection) {
         saveStateSection.style.display = isNes ? "" : "none";
     }
-    // Filters are NES-only for now: force "None" (stock) for GB and disable the button
-    if (!isNes) {
-        if (currentFilter !== "stock") {
-            currentFilter = "stock";
-            initWebGL();
-        }
-        filterToggleBtn.disabled = true;
-    } else {
-        filterToggleBtn.disabled = false;
+    // Switch to a console-appropriate filter if the current one isn't valid
+    const kind = emulator?.kind ?? "nes";
+    const newFilter = filterOnConsoleSwitch(currentFilter, filterKeys, filters, kind);
+    if (newFilter !== currentFilter) {
+        currentFilter = newFilter;
+        initWebGL();
     }
+    filterToggleBtn.disabled = false;
     updateFilterToggleButtonLabel();
 }
 
@@ -1270,7 +1768,8 @@ romInput!.addEventListener("change", async (e) => {
 
 if (romSelect) {
     romSelect.addEventListener("change", async (e) => {
-        const value = (e.target as HTMLSelectElement).value;
+        const sel = e.target as HTMLSelectElement;
+        const value = sel.value;
         if (!value) return;
         // Clear file input when a bundled ROM is selected
         romInput.value = "";
@@ -1282,7 +1781,10 @@ if (romSelect) {
                 throw new Error(`HTTP ${response.status}`);
             }
             const bytes = new Uint8Array(await response.arrayBuffer());
-            const name = value.split("/").pop() || value;
+            // Prefer the option's display text (e.g. "cpu.nes") over URL parsing,
+            // since data-URL values don't contain a meaningful filename.
+            const selectedOption = sel.options[sel.selectedIndex];
+            const name = selectedOption?.textContent?.trim() || value.split("/").pop() || value;
             await handleRomSelection({
                 bytes,
                 name,
@@ -2154,6 +2656,8 @@ function stepIdleScroller(timestamp: number) {
     let rendered = false;
     if (filter?.type === "ntsc") {
         rendered = renderNtscPass(frame);
+    } else if (filter?.type === "gb") {
+        rendered = renderGbPass(frame);
     } else {
         rendered = renderSinglePass(frame);
     }
@@ -2179,6 +2683,128 @@ function bindQuadAttributes(program: ShaderProgram) {
         gl.enableVertexAttribArray(program._aTexCoordLocation as number);
         gl.vertexAttribPointer(program._aTexCoordLocation as number, 2, gl.FLOAT, false, 0, 0);
     }
+}
+
+// ── GB 5-pass rendering pipeline ────────────────────────────────────────
+
+/** Render a single-texture GB pass: bind input → run program → write to target FBO. */
+function renderGbSimplePass(
+    program: ShaderProgram,
+    inputTex: WebGLTexture | null,
+    targetFbo: WebGLFramebuffer | null,
+    w: number, h: number,
+    srcW: number, srcH: number,
+) {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, targetFbo);
+    gl.viewport(0, 0, w, h);
+    gl.useProgram(program);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, inputTex);
+    if (program._uTextureLocation != null)
+        gl.uniform1i(program._uTextureLocation as WebGLUniformLocation, 0);
+    if (program._uOutputSizeLocation)
+        gl.uniform2f(program._uOutputSizeLocation as WebGLUniformLocation, w, h);
+    if (program._uSourceSizeLocation)
+        gl.uniform2f(program._uSourceSizeLocation as WebGLUniformLocation, srcW, srcH);
+    bindQuadAttributes(program);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+}
+
+function renderGbPass(frame: Uint8Array): boolean {
+    if (!gbPass0Program || !gbPass1Program || !gbPass2Program || !gbPass3Program || !gbPass4Program) {
+        console.error("GB programs not initialized");
+        return false;
+    }
+    // Assets (palette + background PNGs) load asynchronously; fall back to
+    // a stock render until they are available so we don't show wrong colors.
+    if (!gbAssetsLoaded || !gbPaletteTex || !gbBackgroundTex) {
+        return renderSinglePass(frame) ?? false;
+    }
+    const cw = canvas.width;
+    const ch = canvas.height;
+    if (!ensureGbFbos(cw, ch)) return false;
+
+    // Initialize previous frame data if needed
+    if (!gbPrevFrameData || gbPrevFrameData.length !== frame.length) {
+        gbPrevFrameData = new Uint8Array(frame.length);
+    }
+
+    // Upload current frame to nesTexture
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, nesTexture);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, frame);
+
+    // Upload previous frame to gbPrevFrameTex
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, gbPrevFrameTex);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, gbPrevFrameData);
+
+    // ── Pass 0: Dot-matrix + response time → FBO0 ──────────────────────
+    gl.bindFramebuffer(gl.FRAMEBUFFER, gbFbo[0]);
+    gl.viewport(0, 0, cw, ch);
+    gl.useProgram(gbPass0Program);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, nesTexture);
+    if (gbPass0Program._uTextureLocation != null)
+        gl.uniform1i(gbPass0Program._uTextureLocation as WebGLUniformLocation, 0);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, gbPrevFrameTex);
+    if (gbPass0Program._uPrevFrameLocation != null)
+        gl.uniform1i(gbPass0Program._uPrevFrameLocation as WebGLUniformLocation, 1);
+    if (gbPaletteTex) {
+        gl.activeTexture(gl.TEXTURE2);
+        gl.bindTexture(gl.TEXTURE_2D, gbPaletteTex);
+        if (gbPass0Program._uColorPaletteLocation != null)
+            gl.uniform1i(gbPass0Program._uColorPaletteLocation as WebGLUniformLocation, 2);
+    }
+    if (gbPass0Program._uOutputSizeLocation)
+        gl.uniform2f(gbPass0Program._uOutputSizeLocation as WebGLUniformLocation, cw, ch);
+    if (gbPass0Program._uSourceSizeLocation)
+        gl.uniform2f(gbPass0Program._uSourceSizeLocation as WebGLUniformLocation, width, height);
+    bindQuadAttributes(gbPass0Program);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+    // ── Passes 1–3: alpha-blend → H-blur → V-blur (canvas→canvas) ─────
+    renderGbSimplePass(gbPass1Program, gbTex[0], gbFbo[1], cw, ch, cw, ch);
+    renderGbSimplePass(gbPass2Program, gbTex[1], gbFbo[2], cw, ch, cw, ch);
+    renderGbSimplePass(gbPass3Program, gbTex[2], gbFbo[3], cw, ch, cw, ch);
+
+    // ── Pass 4: Final compositing → screen ─────────────────────────────
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, cw, ch);
+    gl.useProgram(gbPass4Program);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, gbTex[3]);
+    if (gbPass4Program._uTextureLocation != null)
+        gl.uniform1i(gbPass4Program._uTextureLocation as WebGLUniformLocation, 0);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, gbTex[1]);
+    if (gbPass4Program._uGbPass1Location != null)
+        gl.uniform1i(gbPass4Program._uGbPass1Location as WebGLUniformLocation, 1);
+    if (gbBackgroundTex) {
+        gl.activeTexture(gl.TEXTURE2);
+        gl.bindTexture(gl.TEXTURE_2D, gbBackgroundTex);
+        if (gbPass4Program._uBackgroundLocation != null)
+            gl.uniform1i(gbPass4Program._uBackgroundLocation as WebGLUniformLocation, 2);
+    }
+    if (gbPaletteTex) {
+        gl.activeTexture(gl.TEXTURE3);
+        gl.bindTexture(gl.TEXTURE_2D, gbPaletteTex);
+        if (gbPass4Program._uColorPaletteLocation != null)
+            gl.uniform1i(gbPass4Program._uColorPaletteLocation as WebGLUniformLocation, 3);
+    }
+    if (gbPass4Program._uOutputSizeLocation)
+        gl.uniform2f(gbPass4Program._uOutputSizeLocation as WebGLUniformLocation, cw, ch);
+    if (gbPass4Program._uSourceSizeLocation)
+        gl.uniform2f(gbPass4Program._uSourceSizeLocation as WebGLUniformLocation, cw, ch);
+    if (gbPass4Program._uGbPass1SizeLocation)
+        gl.uniform2f(gbPass4Program._uGbPass1SizeLocation as WebGLUniformLocation, cw, ch);
+    bindQuadAttributes(gbPass4Program);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+    // Save current frame for next iteration's response time
+    gbPrevFrameData!.set(frame);
+    return true;
 }
 
 function renderSinglePass(frame: Uint8Array) {
@@ -2314,6 +2940,8 @@ function step(timestamp: number) {
         if (shouldRender) {
             if (filter?.type === "ntsc") {
                 rendered = renderNtscPass(frame);
+            } else if (filter?.type === "gb") {
+                rendered = renderGbPass(frame);
             } else {
                 rendered = renderSinglePass(frame);
             }
