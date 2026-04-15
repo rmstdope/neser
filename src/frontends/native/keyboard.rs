@@ -1476,7 +1476,7 @@ mod tests {
             gamepad_count: 1,
             ..Default::default()
         };
-        let nes = make_nes();
+        let nes = make_nes_console();
         let text = state
             .overlay_text(&nes, None)
             .expect("help overlay must be present");

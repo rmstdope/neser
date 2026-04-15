@@ -4,9 +4,9 @@
 //! keyboard handler, event loop, and rendering code share a single source of
 //! truth without borrowing individual fields piecemeal.
 
-use crate::nes::console::{Nes, TimingMode};
 use crate::platform::autorun::AutorunMode;
 use crate::platform::autorun::state::AutorunState;
+use crate::platform::emulator::Console;
 use winit::keyboard::ModifiersState;
 
 /// State for the in-game cartridge-switch dialog.
@@ -225,30 +225,35 @@ impl NativeAppState {
     /// 1. Cartridge-switch dialog (always shown when open, even with no entries).
     /// 2. Autorun status (playback/recording progress).
     /// 3. Help overlay.
-    pub fn overlay_text(&self, nes: &Nes, autorun_state: Option<&AutorunState>) -> Option<String> {
+    pub fn overlay_text(
+        &self,
+        console: &Console,
+        autorun_state: Option<&AutorunState>,
+    ) -> Option<String> {
         if self.cart_switch.open {
             return Some(cart_switch_overlay_text(&self.cart_switch));
         }
         if let Some(autorun) = autorun_state {
-            let tv_system = nes
-                .app_context()
-                .borrow()
-                .config()
-                .nes
-                .hardware_model
-                .timing_mode();
-            return Some(autorun_overlay_text(autorun, tv_system));
+            let frame_duration = console.as_core().target_frame_duration();
+            let fps = (1.0 / frame_duration.as_secs_f64()).round().max(1.0) as usize;
+            return Some(autorun_overlay_text(autorun, fps));
         }
         if self.help_overlay_visible {
-            // Use the effective controller types for the current cartridge.
-            // These reflect auto-detected overrides without permanently mutating config.
-            let controller_port1 = nes.active_controller_port_type(1);
-            let controller_port2 = nes.active_controller_port_type(2);
+            let (port1_is_power_pad, port2_is_power_pad) = match console {
+                Console::Nes(nes) => {
+                    use crate::nes::input::ControllerType;
+                    (
+                        nes.active_controller_port_type(1) == ControllerType::PowerPad,
+                        nes.active_controller_port_type(2) == ControllerType::PowerPad,
+                    )
+                }
+                Console::GameBoy(_) => (false, false),
+            };
             return Some(help_overlay_text(
                 self.gamepad_count,
                 self.four_score_enabled,
-                controller_port1,
-                controller_port2,
+                port1_is_power_pad,
+                port2_is_power_pad,
             ));
         }
         None
@@ -266,11 +271,9 @@ impl NativeAppState {
 fn help_overlay_text(
     gamepad_count: usize,
     four_score: bool,
-    port1_type: crate::nes::input::ControllerType,
-    port2_type: crate::nes::input::ControllerType,
+    port1_is_power_pad: bool,
+    port2_is_power_pad: bool,
 ) -> String {
-    use crate::nes::input::ControllerType;
-
     let hotkeys = "Controls\n\
 H: Toggle help\n\
 Ctrl+Q: Quit\n\
@@ -288,10 +291,10 @@ F6/F7: Save/Load state";
     let keyboard_ports =
         crate::frontends::native::keyboard::keyboard_target_ports(gamepad_count, four_score);
 
-    let controller_type_for = |port: usize| match port {
-        1 => port1_type,
-        2 => port2_type,
-        _ => ControllerType::Joypad,
+    let is_power_pad_for = |port: usize| match port {
+        1 => port1_is_power_pad,
+        2 => port2_is_power_pad,
+        _ => false,
     };
 
     let mut controllers = String::new();
@@ -301,7 +304,7 @@ F6/F7: Save/Load state";
         if port <= gamepad_count {
             controllers.push_str(&format!("\n\nPort {port}: Gamepad"));
         } else if let Some(slot) = keyboard_ports.iter().position(|&p| p == port_u8) {
-            if controller_type_for(port) == ControllerType::PowerPad {
+            if is_power_pad_for(port) {
                 controllers.push_str(&power_pad_keyboard_section(port, slot));
             } else {
                 controllers.push_str(&joypad_keyboard_section(port, slot));
@@ -415,37 +418,33 @@ fn cart_switch_overlay_text(cart_switch: &CartridgeSwitchState) -> String {
 }
 
 /// Generate autorun overlay text showing playback/recording progress.
-fn autorun_overlay_text(autorun_state: &AutorunState, tv_system: TimingMode) -> String {
+fn autorun_overlay_text(autorun_state: &AutorunState, fps: usize) -> String {
     match autorun_state.mode() {
         // Both pure playback and extend-playback (record mode replaying existing frames)
         // display the same progress indicator.
         AutorunMode::Playback => {
             let current = autorun_state.current_frame_index();
             let total = autorun_state.total_frames();
-            let (elapsed, total_str) = format_time_pair(current, total, tv_system);
+            let (elapsed, total_str) = format_time_pair(current, total, fps);
             format!("Playback\n{elapsed} / {total_str}")
         }
         AutorunMode::Record if autorun_state.is_extending_playback() => {
             let current = autorun_state.current_frame_index();
             let total = autorun_state.total_frames();
-            let (elapsed, total_str) = format_time_pair(current, total, tv_system);
+            let (elapsed, total_str) = format_time_pair(current, total, fps);
             format!("Playback\n{elapsed} / {total_str}")
         }
         AutorunMode::Record => {
             let current = autorun_state.total_frames();
-            let (elapsed, _) = format_time_pair(current, current, tv_system);
+            let (elapsed, _) = format_time_pair(current, current, fps);
             format!("Recording\n{elapsed} / {elapsed}")
         }
         AutorunMode::None => String::new(),
     }
 }
 
-fn format_time_pair(
-    current_frames: usize,
-    total_frames: usize,
-    tv_system: TimingMode,
-) -> (String, String) {
-    let fps = tv_system.frame_rate_hz().round().max(1.0) as usize;
+fn format_time_pair(current_frames: usize, total_frames: usize, fps: usize) -> (String, String) {
+    let fps = fps.max(1);
     let current_secs = current_frames / fps;
     let total_secs = total_frames / fps;
     (format_mm_ss(current_secs), format_mm_ss(total_secs))
@@ -462,11 +461,13 @@ fn format_mm_ss(seconds: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::nes::console::{Config, NesConfig};
+    use crate::nes::console::{Config, Nes, NesConfig};
     use crate::platform::app_context::AppContext;
 
-    fn make_nes() -> Nes {
-        Nes::new(AppContext::new_with_config(Config::default()))
+    fn make_console() -> Console {
+        Console::Nes(Box::new(Nes::new(AppContext::new_with_config(
+            Config::default(),
+        ))))
     }
 
     // ── overlay_text: help overlay ────────────────────────────────────────────
@@ -474,7 +475,7 @@ mod tests {
     #[test]
     fn test_overlay_text_returns_none_when_nothing_visible() {
         let state = NativeAppState::default();
-        assert!(state.overlay_text(&make_nes(), None).is_none());
+        assert!(state.overlay_text(&make_console(), None).is_none());
     }
 
     #[test]
@@ -483,7 +484,7 @@ mod tests {
             help_overlay_visible: true,
             ..NativeAppState::default()
         };
-        let text = state.overlay_text(&make_nes(), None);
+        let text = state.overlay_text(&make_console(), None);
         assert!(
             text.is_some(),
             "overlay_text should be Some when help is visible"
@@ -500,7 +501,7 @@ mod tests {
             help_overlay_visible: true,
             ..NativeAppState::default()
         };
-        let text = state.overlay_text(&make_nes(), None).unwrap();
+        let text = state.overlay_text(&make_console(), None).unwrap();
         assert!(
             text.contains("W/A/S/D"),
             "help overlay should list W/A/S/D keys"
@@ -513,7 +514,7 @@ mod tests {
             help_overlay_visible: true,
             ..NativeAppState::default()
         };
-        let text = state.overlay_text(&make_nes(), None).unwrap();
+        let text = state.overlay_text(&make_console(), None).unwrap();
         assert!(
             text.contains("Ctrl+Q"),
             "help overlay should mention Ctrl+Q"
@@ -533,7 +534,7 @@ mod tests {
             ..NativeAppState::default()
         };
         // When: help overlay is generated
-        let text = state.overlay_text(&make_nes(), None).unwrap();
+        let text = state.overlay_text(&make_console(), None).unwrap();
         // Then: WASD is labelled as Port 1 only — not "Port 1 + Port 2"
         assert!(
             !text.contains("Port 1 + Port 2"),
@@ -550,7 +551,7 @@ mod tests {
             ..NativeAppState::default()
         };
         // When: help overlay is generated
-        let text = state.overlay_text(&make_nes(), None).unwrap();
+        let text = state.overlay_text(&make_console(), None).unwrap();
         // Then: port 1 is labelled as gamepad-controlled
         let lower = text.to_lowercase();
         assert!(
@@ -568,7 +569,7 @@ mod tests {
             ..NativeAppState::default()
         };
         // When: help overlay is generated
-        let text = state.overlay_text(&make_nes(), None).unwrap();
+        let text = state.overlay_text(&make_console(), None).unwrap();
         // Then: the overlay does NOT list keyboard controller keys
         // (both ports are owned by gamepads)
         assert!(
@@ -583,7 +584,7 @@ mod tests {
     fn test_overlay_text_returns_cart_switch_when_open() {
         let mut state = NativeAppState::default();
         state.cart_switch.open = true;
-        let text = state.overlay_text(&make_nes(), None);
+        let text = state.overlay_text(&make_console(), None);
         assert!(
             text.is_some(),
             "overlay_text should be Some when cart-switch is open"
@@ -599,7 +600,7 @@ mod tests {
         let mut state = NativeAppState::default();
         state.cart_switch.open = true;
         state.help_overlay_visible = true;
-        let text = state.overlay_text(&make_nes(), None).unwrap();
+        let text = state.overlay_text(&make_console(), None).unwrap();
         // Cart-switch takes priority; help text should NOT appear
         assert!(
             !text.contains("W/A/S/D"),
@@ -629,7 +630,7 @@ mod tests {
     fn test_overlay_text_shows_autorun_when_active() {
         let state = NativeAppState::default();
         let autorun = make_recording_autorun_state();
-        let text = state.overlay_text(&make_nes(), Some(&autorun));
+        let text = state.overlay_text(&make_console(), Some(&autorun));
         assert!(text.is_some(), "overlay_text should be Some for autorun");
         assert!(
             text.unwrap().contains("Recording"),
@@ -644,7 +645,7 @@ mod tests {
             ..NativeAppState::default()
         };
         let autorun = make_recording_autorun_state();
-        let text = state.overlay_text(&make_nes(), Some(&autorun)).unwrap();
+        let text = state.overlay_text(&make_console(), Some(&autorun)).unwrap();
         assert!(
             text.contains("Recording"),
             "autorun overlay should take priority over help"
@@ -660,7 +661,7 @@ mod tests {
         let mut state = NativeAppState::default();
         state.cart_switch.open = true;
         let autorun = make_recording_autorun_state();
-        let text = state.overlay_text(&make_nes(), Some(&autorun)).unwrap();
+        let text = state.overlay_text(&make_console(), Some(&autorun)).unwrap();
         assert!(
             text.contains("Switch cartridge"),
             "cart-switch should take priority over autorun"
@@ -928,7 +929,7 @@ mod tests {
             four_score_enabled: true,
             ..NativeAppState::default()
         };
-        let text = state.overlay_text(&make_nes(), None).unwrap();
+        let text = state.overlay_text(&make_console(), None).unwrap();
         assert!(
             text.contains("Port 3"),
             "four-score with 2 gamepads should mention Port 3, got:\n{text}"
@@ -951,7 +952,7 @@ mod tests {
             four_score_enabled: true,
             ..NativeAppState::default()
         };
-        let text = state.overlay_text(&make_nes(), None).unwrap();
+        let text = state.overlay_text(&make_console(), None).unwrap();
         assert!(
             text.contains("Port 1: Gamepad"),
             "port 1 should be gamepad, got:\n{text}"
@@ -974,7 +975,7 @@ mod tests {
             four_score_enabled: true,
             ..NativeAppState::default()
         };
-        let text = state.overlay_text(&make_nes(), None).unwrap();
+        let text = state.overlay_text(&make_console(), None).unwrap();
         assert!(
             text.contains("Port 4"),
             "four-score with 3 gamepads should mention Port 4, got:\n{text}"
@@ -997,7 +998,7 @@ mod tests {
             four_score_enabled: true,
             ..NativeAppState::default()
         };
-        let text = state.overlay_text(&make_nes(), None).unwrap();
+        let text = state.overlay_text(&make_console(), None).unwrap();
         assert!(
             text.contains("Port 4: Gamepad"),
             "all 4 ports should be gamepads, got:\n{text}"
@@ -1033,12 +1034,12 @@ mod tests {
             },
             ..Default::default()
         };
-        let nes = Nes::new(AppContext::new_with_config(config));
+        let console = Console::Nes(Box::new(Nes::new(AppContext::new_with_config(config))));
         let state = NativeAppState {
             help_overlay_visible: true,
             ..NativeAppState::default()
         };
-        let text = state.overlay_text(&nes, None).unwrap();
+        let text = state.overlay_text(&console, None).unwrap();
         assert!(
             text.contains("Power Pad"),
             "Help overlay should show Power Pad section when port 2 is Power Pad, got:\n{text}"
@@ -1058,12 +1059,12 @@ mod tests {
             },
             ..Default::default()
         };
-        let nes = Nes::new(AppContext::new_with_config(config));
+        let console = Console::Nes(Box::new(Nes::new(AppContext::new_with_config(config))));
         let state = NativeAppState {
             help_overlay_visible: true,
             ..NativeAppState::default()
         };
-        let text = state.overlay_text(&nes, None).unwrap();
+        let text = state.overlay_text(&console, None).unwrap();
         assert!(
             text.contains("Power Pad"),
             "Help overlay should show Power Pad section when port 1 is Power Pad, got:\n{text}"
@@ -1080,7 +1081,7 @@ mod tests {
             help_overlay_visible: true,
             ..NativeAppState::default()
         };
-        let text = state.overlay_text(&make_nes(), None).unwrap();
+        let text = state.overlay_text(&make_console(), None).unwrap();
         assert!(
             !text.contains("Power Pad"),
             "Help overlay should not show Power Pad section for default joypads, got:\n{text}"

@@ -923,11 +923,9 @@ impl ApplicationHandler for NativeEventLoop {
                     gl.update_breakpoints(self.debugger_controller.breakpoints());
                     let crosshair =
                         mouse::zapper_crosshair(&self.console, self.state.last_zapper_position);
-                    let overlay = if let Console::Nes(nes) = &self.console {
-                        self.state.overlay_text(nes, self.autorun_state.as_ref())
-                    } else {
-                        None
-                    };
+                    let overlay = self
+                        .state
+                        .overlay_text(&self.console, self.autorun_state.as_ref());
                     gl.render(
                         &self.console,
                         self.state.debugger_open,
