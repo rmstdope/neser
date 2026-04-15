@@ -47,6 +47,22 @@ import {
 } from "./input/pointer_lock";
 import { computeButtonStates } from "./ui/emulation_controls";
 import { cycleFilterKey, filterOnConsoleSwitch, type FilterDef } from "./display/filters";
+import commonVertGlsl from "./shaders/common.vert.glsl?raw";
+import stockFragGlsl from "./shaders/stock.frag.glsl?raw";
+import crtFragGlsl from "./shaders/crt.frag.glsl?raw";
+import ntscPass1VertGlsl from "./shaders/ntsc-pass1.vert.glsl?raw";
+import ntscPass1FragGlsl from "./shaders/ntsc-pass1.frag.glsl?raw";
+import ntscPass2VertGlsl from "./shaders/ntsc-pass2.vert.glsl?raw";
+import ntscPass2FragGlsl from "./shaders/ntsc-pass2.frag.glsl?raw";
+import gbPass0VertGlsl from "./shaders/gb-pass0.vert.glsl?raw";
+import gbPass0FragGlsl from "./shaders/gb-pass0.frag.glsl?raw";
+import gbPass1VertGlsl from "./shaders/gb-pass1.vert.glsl?raw";
+import gbPass1FragGlsl from "./shaders/gb-pass1.frag.glsl?raw";
+import gbBlurVertGlsl from "./shaders/gb-blur.vert.glsl?raw";
+import gbPass2FragGlsl from "./shaders/gb-pass2.frag.glsl?raw";
+import gbPass3FragGlsl from "./shaders/gb-pass3.frag.glsl?raw";
+import gbPass4VertGlsl from "./shaders/gb-pass4.vert.glsl?raw";
+import gbPass4FragGlsl from "./shaders/gb-pass4.frag.glsl?raw";
 
 const statusEl = document.getElementById("status");
 const startBtn = document.getElementById("start") as HTMLButtonElement;
@@ -109,19 +125,7 @@ const filters: Record<string, FilterDef> = {
     stock: {
         name: "None",
         type: "single",
-        fragmentShader: `
-            #ifdef GL_FRAGMENT_PRECISION_HIGH
-                precision highp float;
-            #else
-                precision mediump float;
-            #endif
-            varying vec2 v_texCoord;
-            uniform sampler2D u_texture;
-
-            void main() {
-                gl_FragColor = texture2D(u_texture, v_texCoord);
-            }
-        `
+        fragmentShader: stockFragGlsl
     },
     ntsc: {
         name: "NTSC",
@@ -145,444 +149,13 @@ const filters: Record<string, FilterDef> = {
             bloomAmount: 0.15,
             shape: 2.0
         },
-        fragmentShader: `
-            #ifdef GL_FRAGMENT_PRECISION_HIGH
-                precision highp float;
-            #else
-                precision mediump float;
-            #endif
-            varying vec2 v_texCoord;
-            uniform sampler2D u_texture;
-            uniform vec2 u_sourceSize;
-            uniform vec2 u_outputSize;
-            uniform float u_hardScan;
-            uniform float u_hardPix;
-            uniform float u_warpX;
-            uniform float u_warpY;
-            uniform float u_maskDark;
-            uniform float u_maskLight;
-            uniform float u_scaleInLinearGamma;
-            uniform float u_shadowMask;
-            uniform float u_brightBoost;
-            uniform float u_hardBloomScan;
-            uniform float u_hardBloomPix;
-            uniform float u_bloomAmount;
-            uniform float u_shape;
-
-            #define DO_BLOOM 1
-
-            float ToLinear1(float c) {
-                if (u_scaleInLinearGamma == 0.0) {
-                    return c;
-                }
-                return (c <= 0.04045) ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4);
-            }
-
-            vec3 ToLinear(vec3 c) {
-                if (u_scaleInLinearGamma == 0.0) {
-                    return c;
-                }
-                return vec3(ToLinear1(c.r), ToLinear1(c.g), ToLinear1(c.b));
-            }
-
-            float ToSrgb1(float c) {
-                if (u_scaleInLinearGamma == 0.0) {
-                    return c;
-                }
-                return (c < 0.0031308) ? c * 12.92 : 1.055 * pow(c, 0.41666) - 0.055;
-            }
-
-            vec3 ToSrgb(vec3 c) {
-                if (u_scaleInLinearGamma == 0.0) {
-                    return c;
-                }
-                return vec3(ToSrgb1(c.r), ToSrgb1(c.g), ToSrgb1(c.b));
-            }
-
-            vec3 Fetch(vec2 pos, vec2 off) {
-                pos = (floor(pos * u_sourceSize + off) + vec2(0.5, 0.5)) / u_sourceSize;
-                return ToLinear(u_brightBoost * texture2D(u_texture, pos.xy).rgb);
-            }
-
-            vec2 Dist(vec2 pos) {
-                pos = pos * u_sourceSize;
-                return -((pos - floor(pos)) - vec2(0.5));
-            }
-
-            float Gaus(float pos, float scale) {
-                return exp2(scale * pow(abs(pos), u_shape));
-            }
-
-            vec3 Horz3(vec2 pos, float off) {
-                vec3 b = Fetch(pos, vec2(-1.0, off));
-                vec3 c = Fetch(pos, vec2(0.0, off));
-                vec3 d = Fetch(pos, vec2(1.0, off));
-                float dst = Dist(pos).x;
-
-                float scale = u_hardPix;
-                float wb = Gaus(dst - 1.0, scale);
-                float wc = Gaus(dst + 0.0, scale);
-                float wd = Gaus(dst + 1.0, scale);
-
-                return (b * wb + c * wc + d * wd) / (wb + wc + wd);
-            }
-
-            vec3 Horz5(vec2 pos, float off) {
-                vec3 a = Fetch(pos, vec2(-2.0, off));
-                vec3 b = Fetch(pos, vec2(-1.0, off));
-                vec3 c = Fetch(pos, vec2(0.0, off));
-                vec3 d = Fetch(pos, vec2(1.0, off));
-                vec3 e = Fetch(pos, vec2(2.0, off));
-
-                float dst = Dist(pos).x;
-                float scale = u_hardPix;
-                float wa = Gaus(dst - 2.0, scale);
-                float wb = Gaus(dst - 1.0, scale);
-                float wc = Gaus(dst + 0.0, scale);
-                float wd = Gaus(dst + 1.0, scale);
-                float we = Gaus(dst + 2.0, scale);
-
-                return (a * wa + b * wb + c * wc + d * wd + e * we) / (wa + wb + wc + wd + we);
-            }
-
-            vec3 Horz7(vec2 pos, float off) {
-                vec3 a = Fetch(pos, vec2(-3.0, off));
-                vec3 b = Fetch(pos, vec2(-2.0, off));
-                vec3 c = Fetch(pos, vec2(-1.0, off));
-                vec3 d = Fetch(pos, vec2(0.0, off));
-                vec3 e = Fetch(pos, vec2(1.0, off));
-                vec3 f = Fetch(pos, vec2(2.0, off));
-                vec3 g = Fetch(pos, vec2(3.0, off));
-
-                float dst = Dist(pos).x;
-                float scale = u_hardBloomPix;
-                float wa = Gaus(dst - 3.0, scale);
-                float wb = Gaus(dst - 2.0, scale);
-                float wc = Gaus(dst - 1.0, scale);
-                float wd = Gaus(dst + 0.0, scale);
-                float we = Gaus(dst + 1.0, scale);
-                float wf = Gaus(dst + 2.0, scale);
-                float wg = Gaus(dst + 3.0, scale);
-
-                return (a * wa + b * wb + c * wc + d * wd + e * we + f * wf + g * wg) /
-                    (wa + wb + wc + wd + we + wf + wg);
-            }
-
-            float Scan(vec2 pos, float off) {
-                float dst = Dist(pos).y;
-                return Gaus(dst + off, u_hardScan);
-            }
-
-            float BloomScan(vec2 pos, float off) {
-                float dst = Dist(pos).y;
-                return Gaus(dst + off, u_hardBloomScan);
-            }
-
-            vec3 Tri(vec2 pos) {
-                vec3 a = Horz3(pos, -1.0);
-                vec3 b = Horz5(pos, 0.0);
-                vec3 c = Horz3(pos, 1.0);
-
-                float wa = Scan(pos, -1.0);
-                float wb = Scan(pos, 0.0);
-                float wc = Scan(pos, 1.0);
-
-                return a * wa + b * wb + c * wc;
-            }
-
-            vec3 Bloom(vec2 pos) {
-                vec3 a = Horz5(pos, -2.0);
-                vec3 b = Horz7(pos, -1.0);
-                vec3 c = Horz7(pos, 0.0);
-                vec3 d = Horz7(pos, 1.0);
-                vec3 e = Horz5(pos, 2.0);
-
-                float wa = BloomScan(pos, -2.0);
-                float wb = BloomScan(pos, -1.0);
-                float wc = BloomScan(pos, 0.0);
-                float wd = BloomScan(pos, 1.0);
-                float we = BloomScan(pos, 2.0);
-
-                return a * wa + b * wb + c * wc + d * wd + e * we;
-            }
-
-            vec2 Warp(vec2 pos) {
-                pos = pos * 2.0 - 1.0;
-                pos *= vec2(1.0 + (pos.y * pos.y) * u_warpX, 1.0 + (pos.x * pos.x) * u_warpY);
-                return pos * 0.5 + 0.5;
-            }
-
-            vec3 Mask(vec2 pos) {
-                vec3 mask = vec3(u_maskDark);
-
-                if (u_shadowMask == 1.0) {
-                    float line = u_maskLight;
-                    float odd = 0.0;
-
-                    if (fract(pos.x * 0.166666666) < 0.5) odd = 1.0;
-                    if (fract((pos.y + odd) * 0.5) < 0.5) line = u_maskDark;
-
-                    pos.x = fract(pos.x * 0.333333333);
-
-                    if (pos.x < 0.333) mask.r = u_maskLight;
-                    else if (pos.x < 0.666) mask.g = u_maskLight;
-                    else mask.b = u_maskLight;
-                    mask *= line;
-                } else if (u_shadowMask == 2.0) {
-                    pos.x = fract(pos.x * 0.333333333);
-
-                    if (pos.x < 0.333) mask.r = u_maskLight;
-                    else if (pos.x < 0.666) mask.g = u_maskLight;
-                    else mask.b = u_maskLight;
-                } else if (u_shadowMask == 3.0) {
-                    pos.x += pos.y * 3.0;
-                    pos.x = fract(pos.x * 0.166666666);
-
-                    if (pos.x < 0.333) mask.r = u_maskLight;
-                    else if (pos.x < 0.666) mask.g = u_maskLight;
-                    else mask.b = u_maskLight;
-                } else if (u_shadowMask == 4.0) {
-                    pos = floor(pos * vec2(1.0, 0.5));
-                    pos.x += pos.y * 3.0;
-                    pos.x = fract(pos.x * 0.166666666);
-
-                    if (pos.x < 0.333) mask.r = u_maskLight;
-                    else if (pos.x < 0.666) mask.g = u_maskLight;
-                    else mask.b = u_maskLight;
-                }
-
-                return mask;
-            }
-
-            void main() {
-                vec2 pos = Warp(v_texCoord);
-                if (pos.x < 0.0 || pos.x > 1.0 || pos.y < 0.0 || pos.y > 1.0) {
-                    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
-                    return;
-                }
-                vec3 outColor = Tri(pos);
-
-            #ifdef DO_BLOOM
-                outColor.rgb += Bloom(pos) * u_bloomAmount;
-            #endif
-
-                if (u_shadowMask > 0.0) {
-                    outColor.rgb *= Mask(v_texCoord * u_outputSize * 1.000001);
-                }
-
-                gl_FragColor = vec4(ToSrgb(outColor.rgb), 1.0);
-            }
-        `
+        fragmentShader: crtFragGlsl
     },
     gameboy: {
         name: "Game Boy",
         type: "gb"
     }
 };
-
-const vertexShaderSource = `
-    attribute vec2 a_position;
-    attribute vec2 a_texCoord;
-    varying vec2 v_texCoord;
-    varying vec2 v_pixelCoord;
-    uniform vec2 u_textureSize;
-
-    void main() {
-        gl_Position = vec4(a_position, 0.0, 1.0);
-        v_texCoord = a_texCoord;
-        v_pixelCoord = a_texCoord * u_textureSize;
-    }
-`;
-
-const ntscPass1VertexShaderSource = `
-    attribute vec2 a_position;
-    attribute vec2 a_texCoord;
-    varying vec2 v_texCoord;
-    varying vec2 v_pixNo;
-    uniform vec2 u_outputSize;
-
-    void main() {
-        gl_Position = vec4(a_position, 0.0, 1.0);
-        v_texCoord = a_texCoord;
-        v_pixNo = a_texCoord * u_outputSize;
-    }
-`;
-
-const ntscPass1FragmentShaderSource = `
-    #ifdef GL_FRAGMENT_PRECISION_HIGH
-      precision highp float;
-    #else
-      precision mediump float;
-    #endif
-    varying vec2 v_texCoord;
-    varying vec2 v_pixNo;
-    uniform sampler2D u_texture;
-    uniform float u_frameCount;
-    uniform float u_chromaEncode;
-
-    #define PI 3.14159265
-    #define CHROMA_MOD_FREQ (PI / 3.0)
-    #define SATURATION 1.0
-    #define BRIGHTNESS 1.0
-    #define ARTIFACTING 1.0
-    #define FRINGING 1.0
-
-    const mat3 mix_mat = mat3(
-      BRIGHTNESS, FRINGING, FRINGING,
-      ARTIFACTING, 2.0 * SATURATION, 0.0,
-      ARTIFACTING, 0.0, 2.0 * SATURATION
-    );
-
-    const mat3 yiq_mat = mat3(
-      0.2989, 0.5870, 0.1140,
-      0.5959, -0.2744, -0.3216,
-      0.2115, -0.5229, 0.3114
-    );
-
-    vec3 rgb2yiq(vec3 col) {
-        return col * yiq_mat;
-    }
-
-    void main() {
-        vec3 col = texture2D(u_texture, v_texCoord).rgb;
-        vec3 yiq = rgb2yiq(col);
-
-        float chroma_phase = 0.6667 * PI * (mod(v_pixNo.y, 3.0) + u_frameCount);
-        float mod_phase = chroma_phase + v_pixNo.x * CHROMA_MOD_FREQ;
-        float i_mod = cos(mod_phase);
-        float q_mod = sin(mod_phase);
-
-        yiq.yz *= vec2(i_mod, q_mod); // Modulate.
-        yiq *= mix_mat; // Cross-talk.
-        yiq.yz *= vec2(i_mod, q_mod); // Demodulate.
-
-        // Optional encoding for UNORM render targets: pack I/Q into 0..1
-        yiq.yz = mix(yiq.yz, yiq.yz * 0.5 + 0.5, u_chromaEncode);
-
-        gl_FragColor = vec4(yiq, 1.0);
-    }
-`;
-
-const ntscPass2VertexShaderSource = `
-    attribute vec2 a_position;
-    attribute vec2 a_texCoord;
-    varying vec2 v_texCoord;
-    uniform vec2 u_sourceSize;
-
-    void main() {
-        gl_Position = vec4(a_position, 0.0, 1.0);
-        vec2 flipped = vec2(a_texCoord.x, 1.0 - a_texCoord.y);
-        v_texCoord = flipped - vec2(0.5 / u_sourceSize.x, 0.0);
-    }
-`;
-
-const ntscPass2FragmentShaderSource = `
-    #ifdef GL_FRAGMENT_PRECISION_HIGH
-        precision highp float;
-    #else
-        precision mediump float;
-    #endif
-    varying vec2 v_texCoord;
-    uniform sampler2D u_texture;
-    uniform vec2 u_sourceSize;
-    uniform float u_chromaEncode;
-    uniform float u_chromaSum;
-
-    #define TAPS 24
-    #define NTSC_CRT_GAMMA 2.5
-    #define NTSC_MONITOR_GAMMA 2.0
-
-    float lumaTap(int i) {
-        if (i == 0) return -0.000012020;
-        if (i == 1) return -0.000022146;
-        if (i == 2) return -0.000013155;
-        if (i == 3) return -0.000012020;
-        if (i == 4) return -0.000049979;
-        if (i == 5) return -0.000113940;
-        if (i == 6) return -0.000122150;
-        if (i == 7) return -0.000005612;
-        if (i == 8) return 0.000170516;
-        if (i == 9) return 0.000237199;
-        if (i == 10) return 0.000169640;
-        if (i == 11) return 0.000285688;
-        if (i == 12) return 0.000984574;
-        if (i == 13) return 0.002018683;
-        if (i == 14) return 0.002002275;
-        if (i == 15) return -0.000909882;
-        if (i == 16) return -0.007049081;
-        if (i == 17) return -0.013222860;
-        if (i == 18) return -0.012606931;
-        if (i == 19) return 0.002460860;
-        if (i == 20) return 0.035868225;
-        if (i == 21) return 0.084016453;
-        if (i == 22) return 0.135563500;
-        if (i == 23) return 0.175261268;
-        return 0.190176552;
-    }
-
-    float chromaTap(int i) {
-        if (i == 0) return -0.000118847;
-        if (i == 1) return -0.000271306;
-        if (i == 2) return -0.000502642;
-        if (i == 3) return -0.000930833;
-        if (i == 4) return -0.001451013;
-        if (i == 5) return -0.002064744;
-        if (i == 6) return -0.002700432;
-        if (i == 7) return -0.003241276;
-        if (i == 8) return -0.003524948;
-        if (i == 9) return -0.003350284;
-        if (i == 10) return -0.002491729;
-        if (i == 11) return -0.000721149;
-        if (i == 12) return 0.002164659;
-        if (i == 13) return 0.006313635;
-        if (i == 14) return 0.011789103;
-        if (i == 15) return 0.018545660;
-        if (i == 16) return 0.026414396;
-        if (i == 17) return 0.035100710;
-        if (i == 18) return 0.044196567;
-        if (i == 19) return 0.053207202;
-        if (i == 20) return 0.061590275;
-        if (i == 21) return 0.068803602;
-        if (i == 22) return 0.074356193;
-        if (i == 23) return 0.077856564;
-        return 0.079052396;
-    }
-
-    const mat3 yiq2rgb_mat = mat3(
-        1.0, 0.956, 0.6210,
-        1.0, -0.2720, -0.6474,
-        1.0, -1.1060, 1.7046
-    );
-
-    vec3 yiq2rgb(vec3 yiq) {
-        return yiq * yiq2rgb_mat;
-    }
-
-    vec3 fetch_offset(float offset, float one_x) {
-        return texture2D(u_texture, v_texCoord + vec2(offset * one_x, 0.0)).xyz;
-    }
-
-    void main() {
-        float one_x = 1.0 / u_sourceSize.x;
-        vec3 signal = vec3(0.0);
-        for (int i = 0; i < TAPS; i++) {
-            float offset = float(i);
-            vec3 sums = fetch_offset(offset - float(TAPS), one_x) +
-                fetch_offset(float(TAPS) - offset, one_x);
-            float luma = lumaTap(i);
-            float chroma = chromaTap(i);
-            signal += sums * vec3(luma, chroma, chroma);
-        }
-        signal += texture2D(u_texture, v_texCoord).xyz *
-            vec3(lumaTap(TAPS), chromaTap(TAPS), chromaTap(TAPS));
-
-        // Optional decoding for UNORM render targets
-        signal.yz = mix(signal.yz, signal.yz * 2.0 - vec2(u_chromaSum), u_chromaEncode);
-
-        vec3 rgb = yiq2rgb(signal);
-        gl_FragColor = vec4(pow(rgb, vec3(NTSC_CRT_GAMMA / NTSC_MONITOR_GAMMA)), 1.0);
-    }
-`;
 
 // ── GB Dot-Matrix Shader (5-pass) ───────────────────────────────────────
 // Ported from vendor/slang-shaders/handheld/gameboy.slangp (GPLv3)
@@ -603,337 +176,31 @@ const GB_PREC = `
 `;
 
 // Pass 0 vertex — fullscreen mode dot-matrix geometry pre-calculations
-const gbPass0VertexSource = `
-    ${GB_PREC}
-    attribute vec2 a_position;
-    attribute vec2 a_texCoord;
-    uniform vec2 u_outputSize;
-    uniform vec2 u_sourceSize;
-    varying vec2 v_texCoord;
-    varying vec2 v_txCoord;
-    varying vec2 v_txToPx;
-    varying vec2 v_dotSizeInPx;
-
-    const float PIXEL_SIZE = 0.80;
-
-    void main() {
-        gl_Position = vec4(a_position, 0.0, 1.0);
-        v_texCoord = a_texCoord;
-        v_txCoord = a_texCoord * u_sourceSize;
-        v_txToPx = u_outputSize / u_sourceSize;
-        v_dotSizeInPx = v_txToPx * PIXEL_SIZE;
-    }
-`;
+const gbPass0VertexSource = GB_PREC + gbPass0VertGlsl;
 
 // Pass 0 fragment — dot-matrix generation + response time + palette
-const gbPass0FragmentSource = `
-    ${GB_PREC}
-    varying vec2 v_texCoord;
-    varying vec2 v_txCoord;
-    varying vec2 v_txToPx;
-    varying vec2 v_dotSizeInPx;
-    uniform sampler2D u_texture;
-    uniform sampler2D u_prevFrame;
-    uniform sampler2D u_colorPalette;
-    uniform vec2 u_sourceSize;
-    uniform vec2 u_outputSize;
-
-    // Hardcoded defaults from gb-params.inc + gameboy.slangp
-    const float PIXEL_SIZE = 0.80;
-    const float PIXEL_SOFTNESS = 1.0;
-    const float PIXEL_SHAPE = 1.0;
-    const float SHARPENING_AMOUNT = 1.0;
-    const float RESPONSE_TIME = 0.33;
-    const float GREY_BALANCE = 3.0;
-    const float BASELINE_ALPHA = 0.10;
-    const float COLOR_TOGGLE = 0.0;
-    const float PALETTE = 0.0;
-    // Pre-computed grey balance compensation (sigmoid mode, default params)
-    const float AA_COMPENSATION = 1.6;
-
-    float intersect_line(float px_s, float px_e, float dot_s, float dot_e) {
-        return max(min(px_e, dot_e) - max(px_s, dot_s), 0.0);
-    }
-
-    float intersect_rect(vec4 px, vec4 rect) {
-        vec2 bl = max(px.xy, rect.xy);
-        vec2 tr = min(px.zw, rect.zw);
-        vec2 c = max(tr - bl, vec2(0.0));
-        return c.x * c.y;
-    }
-
-    void main() {
-        vec3 fg_source = texture2D(u_texture, v_texCoord).rgb;
-
-        // Response time: current + 1 previous frame
-        vec3 curr = abs(vec3(1.0) - texture2D(u_texture, v_texCoord).rgb);
-        vec3 prev = abs(vec3(1.0) - texture2D(u_prevFrame, v_texCoord).rgb);
-
-        // Geometric dot intersection (fullscreen mode)
-        vec2 tx_i = floor(v_txCoord);
-        vec2 tx_f = v_txCoord - tx_i;
-        vec2 pc = (tx_f - 0.5) * v_txToPx;
-        vec4 pr = vec4(pc - v_txToPx * 0.5, pc + v_txToPx * 0.5);
-        vec4 dr = vec4(-v_dotSizeInPx * 0.5, v_dotSizeInPx * 0.5);
-
-        // Rectangular coverage with sigmoid sharpening
-        float xc = intersect_line(pr.x, pr.z, dr.x, dr.z) / v_txToPx.x;
-        float yc = intersect_line(pr.y, pr.w, dr.y, dr.w) / v_txToPx.y;
-        float ss = 10.0 / max(PIXEL_SOFTNESS, 0.001);
-        float xs = 1.0 / (1.0 + exp(-ss * (xc - 0.5)));
-        float ys = 1.0 / (1.0 + exp(-ss * (yc - 0.5)));
-        float rect_cov = mix(xc * yc, xs * ys, SHARPENING_AMOUNT);
-
-        // Circular coverage with sigmoid
-        float cl = intersect_rect(pr, dr) / (v_txToPx.x * v_txToPx.y);
-        float cs = 1.0 / (1.0 + exp(-ss * (cl - 0.5)));
-        float circ_cov = mix(cl, cs, SHARPENING_AMOUNT);
-
-        float is_on_dot = mix(circ_cov, rect_cov, PIXEL_SHAPE);
-
-        // Response time blending
-        vec3 input_rgb = curr;
-        input_rgb += (prev - input_rgb) * RESPONSE_TIME;
-
-        // Brightness (simple mode)
-        float brightness = input_rgb.r + input_rgb.g + input_rgb.b;
-        float grey_adj = GREY_BALANCE / AA_COMPENSATION;
-        float alpha = brightness / grey_adj + BASELINE_ALPHA;
-
-        // Foreground color
-        vec3 fg_color = texture2D(u_colorPalette, vec2(0.75, 0.5)).rgb;
-        vec4 out_color;
-        if (COLOR_TOGGLE < 0.5)
-            out_color = vec4(fg_color, alpha);
-        else
-            out_color = vec4(fg_source, alpha);
-
-        out_color.a *= is_on_dot;
-        gl_FragColor = out_color;
-    }
-`;
+const gbPass0FragmentSource = GB_PREC + gbPass0FragGlsl;
 
 // Pass 1 vertex — pre-compute neighbor texel offsets
-const gbPass1VertexSource = `
-    ${GB_PREC}
-    attribute vec2 a_position;
-    attribute vec2 a_texCoord;
-    uniform vec2 u_sourceSize;
-    uniform vec2 u_outputSize;
-    varying vec2 v_texCoord;
-    varying vec2 v_blurUp;
-    varying vec2 v_blurDown;
-    varying vec2 v_blurRight;
-    varying vec2 v_blurLeft;
-    varying vec2 v_lowerBound;
-    varying vec2 v_upperBound;
-
-    void main() {
-        gl_Position = vec4(a_position, 0.0, 1.0);
-        v_texCoord = a_texCoord * 1.0001;
-        vec2 texel = vec2(1.0) / u_sourceSize;
-        v_blurDown  = v_texCoord + vec2(0.0, texel.y);
-        v_blurUp    = v_texCoord + vec2(0.0, -texel.y);
-        v_blurRight = v_texCoord + vec2(texel.x, 0.0);
-        v_blurLeft  = v_texCoord + vec2(-texel.x, 0.0);
-        v_lowerBound = vec2(0.0);
-        v_upperBound = texel * (u_outputSize - vec2(2.0));
-    }
-`;
+const gbPass1VertexSource = GB_PREC + gbPass1VertGlsl;
 
 // Pass 1 fragment — alpha blending between adjacent pixels
-const gbPass1FragmentSource = `
-    ${GB_PREC}
-    varying vec2 v_texCoord;
-    varying vec2 v_blurUp;
-    varying vec2 v_blurDown;
-    varying vec2 v_blurRight;
-    varying vec2 v_blurLeft;
-    varying vec2 v_lowerBound;
-    varying vec2 v_upperBound;
-    uniform sampler2D u_texture;
-
-    const float BLENDING_MODE = 0.0;
-    const float ADJACENT_BLEND = 0.1755;
-
-    float blend_mod(float c) {
-        float b = (c == 0.0) ? 1.0 : 0.0;
-        return clamp(b + BLENDING_MODE, 0.0, 1.0);
-    }
-
-    void main() {
-        vec4 col = texture2D(u_texture, v_texCoord);
-        vec4 a1 = texture2D(u_texture, clamp(v_blurUp, v_lowerBound, v_upperBound));
-        vec4 a2 = texture2D(u_texture, clamp(v_blurDown, v_lowerBound, v_upperBound));
-        vec4 a3 = texture2D(u_texture, clamp(v_blurRight, v_lowerBound, v_upperBound));
-        vec4 a4 = texture2D(u_texture, clamp(v_blurLeft, v_lowerBound, v_upperBound));
-        col.a -= (
-            (col.a - a1.a) + (col.a - a2.a) +
-            (col.a - a3.a) + (col.a - a4.a)
-        ) * ADJACENT_BLEND * blend_mod(col.a);
-        gl_FragColor = col;
-    }
-`;
+const gbPass1FragmentSource = GB_PREC + gbPass1FragGlsl;
 
 // Pass 2 vertex — horizontal blur setup
-const gbBlurVertexSource = `
-    ${GB_PREC}
-    attribute vec2 a_position;
-    attribute vec2 a_texCoord;
-    uniform vec2 u_sourceSize;
-    uniform vec2 u_outputSize;
-    varying vec2 v_texCoord;
-    varying vec2 v_texel;
-    varying vec2 v_lowerBound;
-    varying vec2 v_upperBound;
-
-    void main() {
-        gl_Position = vec4(a_position, 0.0, 1.0);
-        v_texCoord = a_texCoord * 1.0001;
-        v_texel = vec2(1.0) / u_sourceSize;
-        v_lowerBound = vec2(0.0);
-        v_upperBound = v_texel * (u_outputSize - vec2(1.0));
-    }
-`;
+const gbBlurVertexSource = GB_PREC + gbBlurVertGlsl;
 
 // Pass 2 fragment — horizontal 5-tap Gaussian blur on alpha (sigma=4.0)
-const gbPass2FragmentSource = `
-    ${GB_PREC}
-    varying vec2 v_texCoord;
-    varying vec2 v_texel;
-    varying vec2 v_lowerBound;
-    varying vec2 v_upperBound;
-    uniform sampler2D u_texture;
-
-    void main() {
-        float w0 = 0.13465834;
-        float w1 = 0.13051534;
-        float w2 = 0.11883558;
-        float w3 = 0.10164547;
-        float w4 = 0.08167444;
-        vec4 col = texture2D(u_texture, clamp(v_texCoord, v_lowerBound, v_upperBound)) * w0;
-        col.a += texture2D(u_texture, clamp(v_texCoord + vec2( 1.0 * v_texel.x, 0.0), v_lowerBound, v_upperBound)).a * w1;
-        col.a += texture2D(u_texture, clamp(v_texCoord + vec2(-1.0 * v_texel.x, 0.0), v_lowerBound, v_upperBound)).a * w1;
-        col.a += texture2D(u_texture, clamp(v_texCoord + vec2( 2.0 * v_texel.x, 0.0), v_lowerBound, v_upperBound)).a * w2;
-        col.a += texture2D(u_texture, clamp(v_texCoord + vec2(-2.0 * v_texel.x, 0.0), v_lowerBound, v_upperBound)).a * w2;
-        col.a += texture2D(u_texture, clamp(v_texCoord + vec2( 3.0 * v_texel.x, 0.0), v_lowerBound, v_upperBound)).a * w3;
-        col.a += texture2D(u_texture, clamp(v_texCoord + vec2(-3.0 * v_texel.x, 0.0), v_lowerBound, v_upperBound)).a * w3;
-        col.a += texture2D(u_texture, clamp(v_texCoord + vec2( 4.0 * v_texel.x, 0.0), v_lowerBound, v_upperBound)).a * w4;
-        col.a += texture2D(u_texture, clamp(v_texCoord + vec2(-4.0 * v_texel.x, 0.0), v_lowerBound, v_upperBound)).a * w4;
-        gl_FragColor = col;
-    }
-`;
+const gbPass2FragmentSource = GB_PREC + gbPass2FragGlsl;
 
 // Pass 3 fragment — vertical 5-tap Gaussian blur on alpha (sigma=4.0)
-const gbPass3FragmentSource = `
-    ${GB_PREC}
-    varying vec2 v_texCoord;
-    varying vec2 v_texel;
-    varying vec2 v_lowerBound;
-    varying vec2 v_upperBound;
-    uniform sampler2D u_texture;
-
-    void main() {
-        float w0 = 0.13465834;
-        float w1 = 0.13051534;
-        float w2 = 0.11883558;
-        float w3 = 0.10164547;
-        float w4 = 0.08167444;
-        vec4 col = texture2D(u_texture, clamp(v_texCoord, v_lowerBound, v_upperBound)) * w0;
-        col.a += texture2D(u_texture, clamp(v_texCoord + vec2(0.0,  1.0 * v_texel.y), v_lowerBound, v_upperBound)).a * w1;
-        col.a += texture2D(u_texture, clamp(v_texCoord + vec2(0.0, -1.0 * v_texel.y), v_lowerBound, v_upperBound)).a * w1;
-        col.a += texture2D(u_texture, clamp(v_texCoord + vec2(0.0,  2.0 * v_texel.y), v_lowerBound, v_upperBound)).a * w2;
-        col.a += texture2D(u_texture, clamp(v_texCoord + vec2(0.0, -2.0 * v_texel.y), v_lowerBound, v_upperBound)).a * w2;
-        col.a += texture2D(u_texture, clamp(v_texCoord + vec2(0.0,  3.0 * v_texel.y), v_lowerBound, v_upperBound)).a * w3;
-        col.a += texture2D(u_texture, clamp(v_texCoord + vec2(0.0, -3.0 * v_texel.y), v_lowerBound, v_upperBound)).a * w3;
-        col.a += texture2D(u_texture, clamp(v_texCoord + vec2(0.0,  4.0 * v_texel.y), v_lowerBound, v_upperBound)).a * w4;
-        col.a += texture2D(u_texture, clamp(v_texCoord + vec2(0.0, -4.0 * v_texel.y), v_lowerBound, v_upperBound)).a * w4;
-        gl_FragColor = col;
-    }
-`;
+const gbPass3FragmentSource = GB_PREC + gbPass3FragGlsl;
 
 // Pass 4 vertex — resolution scale for shadow compensation
-const gbPass4VertexSource = `
-    ${GB_PREC}
-    attribute vec2 a_position;
-    attribute vec2 a_texCoord;
-    uniform vec2 u_outputSize;
-    uniform vec2 u_sourceSize;
-    varying vec2 v_texCoord;
-    varying vec2 v_texel;
-    varying float v_shadowScaleFactor;
-
-    void main() {
-        gl_Position = vec4(a_position, 0.0, 1.0);
-        v_texCoord = a_texCoord * 1.0001;
-        v_texel = vec2(1.0) / u_sourceSize;
-        float sx = u_outputSize.x / 640.0;
-        float sy = u_outputSize.y / 480.0;
-        v_shadowScaleFactor = sqrt(sx * sy);
-    }
-`;
+const gbPass4VertexSource = GB_PREC + gbPass4VertGlsl;
 
 // Pass 4 fragment — final compositing: foreground + background + shadows
-const gbPass4FragmentSource = `
-    ${GB_PREC}
-    varying vec2 v_texCoord;
-    varying vec2 v_texel;
-    varying float v_shadowScaleFactor;
-    uniform sampler2D u_texture;       // blurred pass3 output (shadows)
-    uniform sampler2D u_gbPass1;       // pass1 output (foreground)
-    uniform sampler2D u_background;    // paper background
-    uniform sampler2D u_colorPalette;  // palette LUT
-    uniform vec2 u_sourceSize;
-    uniform vec2 u_gbPass1Size;
-
-    const float CONTRAST = 0.95;
-    const float SCREEN_LIGHT = 1.0;
-    const float PIXEL_OPACITY = 1.0;
-    const float BG_SMOOTHING = 0.75;
-    const float SHADOW_OPACITY = 0.55;
-    const float SHADOW_OFFSET_X = 1.0;
-    const float SHADOW_OFFSET_Y = 1.0;
-    const float SHADOW_ENABLE = 1.0;
-    const float SCREEN_OFFSET_X = 0.0;
-    const float SCREEN_OFFSET_Y = 0.0;
-    const float PALETTE = 0.0;
-
-    vec4 get_bg_color() {
-        if (PALETTE < 0.5) return texture2D(u_colorPalette, vec2(0.25, 0.5));
-        if (PALETTE < 1.5) return vec4(0.651, 0.675, 0.518, 1.0);
-        if (PALETTE < 2.5) return vec4(0.737, 0.737, 0.737, 1.0);
-        if (PALETTE < 3.5) return vec4(1.0, 1.0, 1.0, 1.0);
-        if (PALETTE < 4.5) return vec4(0.627, 0.667, 0.024, 1.0);
-        if (PALETTE < 5.5) return vec4(0.027, 0.729, 0.369, 1.0);
-        return vec4(0.027, 0.729, 0.608, 1.0);
-    }
-
-    void main() {
-        vec2 tex = floor(u_gbPass1Size * v_texCoord);
-        tex = (tex + 0.5) / u_gbPass1Size;
-        vec4 bg_c = get_bg_color();
-        float sha = CONTRAST * SHADOW_OPACITY * SHADOW_ENABLE;
-        vec2 s_off = vec2(SHADOW_OFFSET_X * v_texel.x * v_shadowScaleFactor,
-                          SHADOW_OFFSET_Y * v_texel.y * v_shadowScaleFactor);
-        vec2 sc_off = vec2((SCREEN_OFFSET_X - 1.0) * v_texel.x,
-                           (SCREEN_OFFSET_Y - 1.0) * v_texel.y);
-        vec4 fg = texture2D(u_gbPass1, tex - sc_off);
-        vec4 bg = texture2D(u_background, v_texCoord);
-        vec4 sh = texture2D(u_texture, v_texCoord - (s_off + sc_off));
-        fg *= bg_c;
-        float bg_test = (fg.a > 0.0) ? 1.0 : 0.0;
-        bg -= (bg - 0.5) * BG_SMOOTHING * bg_test;
-        bg.rgb = clamp(vec3(
-            bg_c.r + mix(-1.0, 1.0, bg.r),
-            bg_c.g + mix(-1.0, 1.0, bg.g),
-            bg_c.b + mix(-1.0, 1.0, bg.b)
-        ), 0.0, 1.0);
-        vec4 out_c = sh * sh.a * sha + bg * (1.0 - sh.a * sha);
-        out_c = fg * fg.a * CONTRAST +
-                out_c * (SCREEN_LIGHT - fg.a * CONTRAST * PIXEL_OPACITY);
-        gl_FragColor = out_c;
-    }
-`;
+const gbPass4FragmentSource = GB_PREC + gbPass4FragGlsl;
 
 type ShaderProgram = WebGLProgram & Record<string, unknown>;
 
@@ -1258,8 +525,8 @@ function setupFilterPrograms(filterName: string) {
     }
 
     if (filter.type === "ntsc") {
-        ntscPass1Program = createProgram(ntscPass1VertexShaderSource, ntscPass1FragmentShaderSource);
-        ntscPass2Program = createProgram(ntscPass2VertexShaderSource, ntscPass2FragmentShaderSource);
+        ntscPass1Program = createProgram(ntscPass1VertGlsl, ntscPass1FragGlsl);
+        ntscPass2Program = createProgram(ntscPass2VertGlsl, ntscPass2FragGlsl);
         if (!ntscPass1Program || !ntscPass2Program) {
             return false;
         }
@@ -1274,7 +541,7 @@ function setupFilterPrograms(filterName: string) {
         return setupGbPrograms();
     }
 
-    shaderProgram = createProgram(vertexShaderSource, filter.fragmentShader!);
+    shaderProgram = createProgram(commonVertGlsl, filter.fragmentShader!);
     return Boolean(shaderProgram);
 }
 
