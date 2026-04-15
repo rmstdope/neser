@@ -78,10 +78,13 @@ def resolve_tag(tag: str) -> str:
     raise RuntimeError(f"Tag '{tag}' not found (also tried '{prefixed}')")
 
 
-def build(tag: str) -> None:
-    resolved = resolve_tag(tag)
-    print(f"Checking out tag: {resolved}")
-    run(["git", "checkout", resolved])
+def build(tag: str | None = None) -> None:
+    if tag is not None:
+        resolved = resolve_tag(tag)
+        print(f"Checking out tag: {resolved}")
+        run(["git", "checkout", resolved])
+    else:
+        print(f"Building current branch: {git_current_ref()}")
 
     print("Building web app...")
     run(["bash", "scripts/build_web.sh"])
@@ -161,7 +164,7 @@ def main() -> None:
     )
     parser.add_argument("username", help="SSH username for the remote host")
     parser.add_argument("hostname", help="Hostname or IP of the remote server")
-    parser.add_argument("tag", help="Git tag to checkout and deploy")
+    parser.add_argument("tag", nargs="?", default=None, help="Git tag to checkout and deploy (omit to deploy current branch)")
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -171,7 +174,7 @@ def main() -> None:
 
     check_clean_worktree()
 
-    original_ref = git_current_ref()
+    original_ref = git_current_ref() if args.tag else None
     password = getpass.getpass(f"Password for {args.username}@{args.hostname}: ")
 
     try:
@@ -182,8 +185,9 @@ def main() -> None:
         print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(1)
     finally:
-        print(f"Restoring branch: {original_ref}")
-        subprocess.run(["git", "checkout", original_ref], cwd=REPO_ROOT)
+        if original_ref is not None:
+            print(f"Restoring branch: {original_ref}")
+            subprocess.run(["git", "checkout", original_ref], cwd=REPO_ROOT)
 
 
 if __name__ == "__main__":
