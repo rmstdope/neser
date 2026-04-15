@@ -1,8 +1,34 @@
 use super::cartridge::GbCartridge;
 
+/// Nintendo logo bitmap stored at offset $0104 in every valid GB ROM header (48 bytes).
+const NINTENDO_LOGO: [u8; 48] = [
+    0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00, 0x0D,
+    0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD, 0xD9, 0x99,
+    0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E,
+];
+
+/// Return true if `rom` is an MBC1M multi-game compilation cart.
+///
+/// Detection criteria (from Pan Docs):
+/// - ROM is exactly 1 MiB (64 × 16 KiB banks).
+/// - Bank $10 contains a valid Nintendo logo at the standard header offset ($0104).
+fn is_multicart_rom(rom: &[u8]) -> bool {
+    if rom.len() / 0x4000 != 64 {
+        return false;
+    }
+    let logo_offset = 0x10 * 0x4000 + 0x104;
+    rom.get(logo_offset..logo_offset + NINTENDO_LOGO.len())
+        .is_some_and(|slice| slice == NINTENDO_LOGO)
+}
+
 /// MBC1 cartridge (types 0x01 = MBC1, 0x02 = MBC1+RAM, 0x03 = MBC1+RAM+BATTERY).
 ///
 /// Supports up to 2 MB ROM (128 banks × 16 KB) and 32 KB RAM (4 banks × 8 KB).
+///
+/// MBC1M variant: 1 MiB multi-game compilation carts detected at construction by
+/// a Nintendo logo in bank $10. In MBC1M mode the secondary register applies to
+/// bits 4-5 of the ROM bank number (not 5-6), effectively giving each sub-game
+/// its own 256 KiB region.
 ///
 /// Registers (write-only, mapped to ROM area):
 /// - $0000–$1FFF: RAM enable (write 0x0A to enable; any other value disables)
@@ -20,11 +46,15 @@ pub struct Mbc1 {
     mode: bool,
     /// Whether cartridge RAM is enabled.
     ram_enabled: bool,
+    /// True when the ROM is an MBC1M multi-game compilation cart.
+    multicart: bool,
 }
 
 impl Mbc1 {
     pub fn new(rom: Vec<u8>, ram: Vec<u8>) -> Self {
+        let multicart = is_multicart_rom(&rom);
         Self {
+            multicart,
             rom,
             ram,
             rom_bank: 0,
@@ -47,30 +77,45 @@ impl Mbc1 {
     }
 
     /// Full bank index for the $4000–$7FFF window.
+    ///
+    /// MBC1M: secondary register applies to bits 4-5; top bit of rom_bank ignored.
+    /// Standard MBC1: secondary register applies to bits 5-6.
     fn bank1_index(&self) -> usize {
-        let upper = (self.secondary_bank as usize & 0x03) << 5;
-        (upper | self.effective_rom_bank()) & (self.rom_bank_count() - 1)
+        if self.multicart {
+            let upper = (self.secondary_bank as usize & 0x03) << 4;
+            (upper | (self.effective_rom_bank() & 0x0F)) & (self.rom_bank_count() - 1)
+        } else {
+            let upper = (self.secondary_bank as usize & 0x03) << 5;
+            (upper | self.effective_rom_bank()) & (self.rom_bank_count() - 1)
+        }
     }
 
     /// Bank index for the $0000–$3FFF window.
     ///
     /// In mode 0: always bank 0.
-    /// In mode 1: (secondary_bank << 5), masked to rom_bank_count.
+    /// In mode 1 (standard): `secondary_bank << 5`, masked to rom_bank_count.
+    /// In mode 1 (MBC1M): `secondary_bank << 4`, masked to rom_bank_count.
     fn bank0_index(&self) -> usize {
         if self.mode {
-            ((self.secondary_bank as usize & 0x03) << 5) & (self.rom_bank_count() - 1)
+            let shift = if self.multicart { 4 } else { 5 };
+            ((self.secondary_bank as usize & 0x03) << shift) & (self.rom_bank_count() - 1)
         } else {
             0
         }
     }
 
+    /// Number of 8 KiB RAM banks present in this cartridge.
+    fn ram_bank_count(&self) -> usize {
+        (self.ram.len() / 0x2000).max(1)
+    }
+
     /// RAM bank index.
     ///
     /// In mode 0: always bank 0.
-    /// In mode 1: secondary_bank.
+    /// In mode 1: secondary_bank masked to the actual number of RAM banks.
     fn ram_bank_index(&self) -> usize {
         if self.mode {
-            (self.secondary_bank & 0x03) as usize
+            (self.secondary_bank & 0x03) as usize & (self.ram_bank_count() - 1)
         } else {
             0
         }
@@ -259,5 +304,94 @@ mod tests {
         // And: switching back to bank 0 returns 0xAA
         cart.write(0x4000, 0x00);
         assert_eq!(cart.read(0xA000), 0xAA);
+    }
+
+    // ── MBC1M multicart detection tests ─────────────────────────────────────
+
+    /// Build a 1 MiB (64-bank) MBC1M ROM with a valid Nintendo logo in bank $10.
+    /// Bank K is filled with `K as u8` so reads at offset 0 within any bank
+    /// return the bank index as a byte.
+    fn make_mbc1m_rom() -> Vec<u8> {
+        let mut rom = make_mbc1_rom(64);
+        let logo_offset = 0x10 * 0x4000 + 0x104;
+        rom[logo_offset..logo_offset + NINTENDO_LOGO.len()].copy_from_slice(&NINTENDO_LOGO);
+        rom
+    }
+
+    #[test]
+    fn test_is_multicart_rom_returns_true_for_1mb_with_logo_in_bank10() {
+        // Given: 1 MiB ROM with valid Nintendo logo at bank $10 offset $104
+        let rom = make_mbc1m_rom();
+        // Then: detected as MBC1M multicart
+        assert!(is_multicart_rom(&rom));
+    }
+
+    #[test]
+    fn test_is_multicart_rom_returns_false_for_non_1mb_rom() {
+        // Given: 2 MiB (128-bank) ROM that happens to have the logo in bank $10
+        let mut rom = make_mbc1_rom(128);
+        let logo_offset = 0x10 * 0x4000 + 0x104;
+        rom[logo_offset..logo_offset + NINTENDO_LOGO.len()].copy_from_slice(&NINTENDO_LOGO);
+        // Then: not detected as multicart (wrong size)
+        assert!(!is_multicart_rom(&rom));
+    }
+
+    #[test]
+    fn test_is_multicart_rom_returns_false_for_1mb_without_logo() {
+        // Given: 1 MiB ROM with no logo at bank $10
+        let rom = make_mbc1_rom(64);
+        // Then: not detected as multicart (logo absent)
+        assert!(!is_multicart_rom(&rom));
+    }
+
+    // ── MBC1M banking formula tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_mbc1m_bank1_maps_secondary_to_bits_4_5() {
+        // Given: MBC1M cart; secondary=1, rom_bank=1
+        // Then: bank1_index = (1 << 4) | 1 = 17 → fill byte = 17u8
+        // (Standard MBC1 would give (1 << 5) | 1 = 33 → fill = 33u8)
+        let mut cart = Mbc1::new(make_mbc1m_rom(), make_mbc1_ram(0));
+        cart.write(0x4000, 0x01); // secondary = 1
+        cart.write(0x2000, 0x01); // rom_bank = 1
+        assert_eq!(cart.read(0x4000), 17u8);
+    }
+
+    #[test]
+    fn test_mbc1m_bank1_ignores_top_bit_of_rom_bank_register() {
+        // Given: MBC1M cart; secondary=0, rom_bank_reg=0x11 (17; top bit set)
+        // Then: effective bank uses only lower 4 bits → (0 << 4) | 1 = 1 → fill = 1u8
+        // (Standard MBC1 would give (0 << 5) | 17 = 17 → fill = 17u8)
+        let mut cart = Mbc1::new(make_mbc1m_rom(), make_mbc1_ram(0));
+        cart.write(0x4000, 0x00); // secondary = 0
+        cart.write(0x2000, 0x11); // rom_bank_reg = 0x11 = 17
+        assert_eq!(cart.read(0x4000), 1u8);
+    }
+
+    #[test]
+    fn test_mbc1m_bank0_in_mode1_uses_secondary_shifted_4() {
+        // Given: MBC1M cart; mode=1, secondary=1
+        // Then: bank0_index = (1 << 4) = 16 → fill byte = 16u8
+        // (Standard MBC1 would give (1 << 5) = 32 → fill = 32u8)
+        let mut cart = Mbc1::new(make_mbc1m_rom(), make_mbc1_ram(0));
+        cart.write(0x6000, 0x01); // mode = 1
+        cart.write(0x4000, 0x01); // secondary = 1
+        assert_eq!(cart.read(0x0000), 16u8);
+    }
+
+    // ── RAM bank masking test ────────────────────────────────────────────────
+
+    #[test]
+    fn test_mbc1_ram_bank_masked_to_actual_count_with_1_bank() {
+        // Given: 1 RAM bank (8 KB, 64 Kbit); mode 1; data written to bank 0
+        // When: secondary register is set to 2 (out of range for 1-bank cart)
+        // Then: reads return the same data (secondary masked to bank 0)
+        let mut cart = Mbc1::new(make_mbc1_rom(4), make_mbc1_ram(1));
+        cart.write(0x0000, 0x0A); // enable RAM
+        cart.write(0x6000, 0x01); // mode 1
+        cart.write(0x4000, 0x00); // secondary = 0 → RAM bank 0
+        cart.write(0xA000, 0x42); // write sentinel to bank 0
+        cart.write(0x4000, 0x02); // secondary = 2 → should still map to bank 0
+        assert_eq!(cart.read(0xA000), 0x42);
     }
 }
