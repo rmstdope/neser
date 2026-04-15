@@ -153,3 +153,270 @@ canvas {
   font-size: 0.9rem;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
 }
+
+/* ── Touch controls (hidden by default, shown on touch devices) ── */
+
+.touch-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.touch-dpad-area,
+.touch-action-area,
+.touch-meta-area {
+  display: none;
+}
+
+.touch-hide {}
+
+/* Show touch controls on touch devices */
+@media (hover: none) and (pointer: coarse) {
+  .touch-dpad-area,
+  .touch-action-area {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .touch-meta-area {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 24px;
+    margin-top: 12px;
+  }
+
+  .touch-hide {
+    display: none;
+  }
+}
+
+/* JS-based fallback class for touch detection */
+body.touch-device .touch-dpad-area,
+body.touch-device .touch-action-area {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+body.touch-device .touch-meta-area {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  margin-top: 12px;
+}
+
+body.touch-device .touch-hide {
+  display: none;
+}
+
+/* ── D-pad styling ─────────────────────────────────── */
+
+.touch-dpad {
+  position: relative;
+  width: 130px;
+  height: 130px;
+}
+
+.touch-dpad-btn {
+  position: absolute;
+  background: #3a3a3a;
+  border: 2px solid #555;
+  touch-action: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+}
+
+.touch-dpad-btn.pressed {
+  background: #2a2a2a;
+  border-color: #444;
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.5);
+}
+
+.touch-dpad-up {
+  top: 0;
+  left: 40px;
+  width: 50px;
+  height: 45px;
+  border-radius: 6px 6px 0 0;
+}
+
+.touch-dpad-down {
+  bottom: 0;
+  left: 40px;
+  width: 50px;
+  height: 45px;
+  border-radius: 0 0 6px 6px;
+}
+
+.touch-dpad-left {
+  top: 40px;
+  left: 0;
+  width: 45px;
+  height: 50px;
+  border-radius: 6px 0 0 6px;
+}
+
+.touch-dpad-right {
+  top: 40px;
+  right: 0;
+  width: 45px;
+  height: 50px;
+  border-radius: 0 6px 6px 0;
+}
+
+.touch-dpad-center {
+  position: absolute;
+  top: 40px;
+  left: 40px;
+  width: 50px;
+  height: 50px;
+  background: #3a3a3a;
+  border: 2px solid #555;
+  border-radius: 0;
+  pointer-events: none;
+}
+
+/* ── Action buttons (A/B) ──────────────────────────── */
+
+.touch-action-buttons {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.touch-btn {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: "Courier New", monospace;
+  font-size: 1.2rem;
+  font-weight: bold;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  touch-action: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+}
+
+.touch-btn-a,
+.touch-btn-b {
+  background: #cc0000;
+  border: 3px solid #990000;
+  box-shadow: 0 3px 6px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+}
+
+.touch-btn-a.pressed,
+.touch-btn-b.pressed {
+  background: #990000;
+  border-color: #770000;
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.6);
+  transform: scale(0.95);
+}
+
+/* B is slightly lower than A on a real NES controller */
+.touch-btn-b {
+  margin-top: 20px;
+}
+
+/* ── Start / Select meta buttons ───────────────────── */
+
+.touch-meta-btn {
+  width: 72px;
+  height: 28px;
+  border-radius: 14px;
+  background: #4a4a4a;
+  border: 2px solid #666;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: "Courier New", monospace;
+  font-size: 0.55rem;
+  font-weight: bold;
+  color: #ccc;
+  letter-spacing: 0.05em;
+  transform: rotate(-15deg);
+  touch-action: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+}
+
+.touch-meta-btn.pressed {
+  background: #333;
+  border-color: #555;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+/* ── Portrait rotation prompt ──────────────────── */
+
+.rotate-prompt {
+  display: none;
+}
+
+@media (orientation: portrait) and (hover: none) and (pointer: coarse) {
+  .rotate-prompt {
+    display: flex;
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    background: rgba(0, 0, 0, 0.92);
+    align-items: center;
+    justify-content: center;
+  }
+}
+
+body.touch-device .rotate-prompt {
+  display: none;
+}
+
+@media (orientation: portrait) {
+  body.touch-device .rotate-prompt {
+    display: flex;
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    background: rgba(0, 0, 0, 0.92);
+    align-items: center;
+    justify-content: center;
+  }
+}
+
+.rotate-prompt-content {
+  text-align: center;
+  color: #e6e6e6;
+  font-size: 1.2rem;
+}
+
+.rotate-icon {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 16px;
+  color: #00f0ff;
+  animation: rotate-hint 2s ease-in-out infinite;
+}
+
+@keyframes rotate-hint {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(90deg); }
+}
+
+/* ── Touch device sidebar override ─────────────────── */
+
+@media (hover: none) and (pointer: coarse) {
+  header {
+    display: none !important;
+  }
+}
+
+body.touch-device header {
+  display: none !important;
+}
