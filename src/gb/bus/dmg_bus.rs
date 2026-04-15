@@ -231,7 +231,7 @@ impl DmgBus {
                         self.dma_position = 1;
                     }
                     1..=160 => {
-                        // First copy tick starts OAM blocking.
+                        // Block OAM for the entire copy phase.
                         self.dma_oam_blocked = true;
                         let byte_idx = (self.dma_position - 1) as u16;
                         let src = (self.dma_source as u16) << 8 | byte_idx;
@@ -299,9 +299,6 @@ impl DmgBus {
     /// the warm-up of the new transfer does not restore access.  For a fresh
     /// start, blocking begins after the warm-up M-cycle.
     fn do_oam_dma(&mut self, val: u8) {
-        // Preserve blocking state on restart: the previous DMA was already
-        // blocking OAM, and the warm-up of the new DMA must not grant a
-        // 1-cycle OAM access window.
         let preserve_blocking = self.dma_active && self.dma_oam_blocked;
         self.dma_active = true;
         self.dma_source = val;
