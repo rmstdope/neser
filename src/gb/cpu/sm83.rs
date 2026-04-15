@@ -472,8 +472,13 @@ impl<B: GbBus> Sm83<B> {
 
     /// Check for pending interrupts and service the highest-priority one.
     ///
-    /// Returns `true` if this execute() slot was consumed (either a full
-    /// interrupt dispatch, or a halt-wakeup with IME=false).
+    /// Returns `true` when a full interrupt dispatch was performed (the
+    /// execute() slot is consumed and the caller must return immediately).
+    /// Returns `false` in all other cases, including:
+    /// - no pending interrupt,
+    /// - IME=false with CPU not halted (interrupt ignored),
+    /// - IME=false HALT wake-up (halted is cleared; execute() proceeds
+    ///   directly to the next instruction fetch with no extra cycle).
     fn service_interrupts(&mut self) -> bool {
         let ie = self.bus.read(0xFFFF);
         let if_ = self.bus.read(0xFF0F);
