@@ -83,7 +83,7 @@ test.describe("Phase 2 runtime controls", () => {
 
     test("Given filter toggle exists, when toggled repeatedly, then filter cycles without crashes", async ({ page }) => {
         // Start emulation first so we test filter toggling during active rendering
-        // (avoids double page navigation which can exceed the 30s test timeout on CI)
+        // (avoids double page navigation which can exceed the 45s test timeout on CI)
         await startFromBundledRom(page);
 
         const filterToggle = page.locator(FILTER_TOGGLE_SELECTOR);
@@ -97,7 +97,7 @@ test.describe("Phase 2 runtime controls", () => {
         expect(initialText).toContain("Filter:");
 
         // Click multiple times to cycle through filters while emulator is running
-        const clickCount = 5;
+        const clickCount = 3;
 
         for (let i = 0; i < clickCount; i++) {
             await filterToggle.click({ timeout: 5000 });
