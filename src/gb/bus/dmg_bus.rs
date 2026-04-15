@@ -24,7 +24,7 @@ use crate::gb::timer::Timer;
 /// - $FF0F:       IF register
 /// - $FF10–$FF3F: APU             (CH1–CH4 + wave RAM)
 /// - $FF40–$FF4B: PPU I/O registers
-/// - $FF46:       OAM DMA (write-only trigger)
+/// - $FF46:       OAM DMA source address (read: last-written value; write: starts transfer)
 /// - $FF80–$FFFE: HRAM
 /// - $FFFF:       IE register
 /// - $FF00:       Joypad (P1 register)
@@ -1280,22 +1280,27 @@ mod tests {
         // Hardware timing: after writing $FF46, there is 1 warm-up M-cycle where
         // OAM is still accessible (position 0 → 1 on tick).  OAM blocking begins
         // on the first copy tick (position 1 → 2).
+        //
+        // Use a sentinel value (0xAB, not 0xFF) written directly to OAM before
+        // starting DMA so we can unambiguously detect accessibility vs blocking.
         let mut bus = make_bus();
+        bus.ppu.oam[0] = 0xAB; // sentinel at $FE00
+        bus.ppu.oam[0x9F] = 0xCD; // sentinel at $FE9F
         start_dma_from_wram(&mut bus);
 
-        // Position 0 (no ticks): warm-up, OAM still accessible.
-        assert_ne!(
+        // Position 0 (no ticks): warm-up, OAM still accessible — reads sentinel.
+        assert_eq!(
             bus.read(0xFE00),
-            0xFF,
-            "OAM must be accessible during DMA warm-up (position 0)"
+            0xAB,
+            "OAM must return sentinel during DMA warm-up (position 0)"
         );
 
         // After 1 tick (warm-up completes, position = 1): still accessible.
         bus.tick(1);
-        assert_ne!(
+        assert_eq!(
             bus.read(0xFE00),
-            0xFF,
-            "OAM must be accessible after warm-up tick (position 1)"
+            0xAB,
+            "OAM must return sentinel after warm-up tick (position 1)"
         );
 
         // After 2nd tick (first copy tick, position = 2): OAM now blocked.
