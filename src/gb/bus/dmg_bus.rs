@@ -111,11 +111,11 @@ impl DmgBus {
             timer: Timer::with_div_counter(204),
             joypad: Joypad::new(),
             apu: Apu::new(is_cgb),
-            if_reg: 0,
+            if_reg: 1, // VBlank flag set at power-on (real DMG hardware)
             ie_reg: 0,
             boot_rom,
             boot_rom_active: true,
-            sb: 0xFF,
+            sb: 0x00,
             sc: 0x7E,
             serial_buf: Vec::new(),
             serial_bits_remaining: 0,
@@ -147,14 +147,14 @@ impl DmgBus {
         self.apu = Apu::new(self.cart.is_cgb());
         self.wram = [0u8; 0x2000];
         self.hram = [0u8; 0x7F];
-        self.if_reg = 0;
+        self.if_reg = 1; // VBlank flag set at power-on (real DMG hardware)
         self.ie_reg = 0;
         self.boot_rom = match self.model {
             DmgModel::DmgAbc => DMG_BOOT_ROM,
             DmgModel::Dmg0 => DMG0_BOOT_ROM,
         };
         self.boot_rom_active = true;
-        self.sb = 0xFF;
+        self.sb = 0x00;
         self.sc = 0x7E;
         self.serial_buf.clear();
         self.serial_bits_remaining = 0;
@@ -203,7 +203,18 @@ impl DmgBus {
     /// transfer is active (SC = $81), one bit is shifted.  After 8 such
     /// transitions the transfer completes, SB is overwritten with 0xFF,
     /// SC bit 7 is cleared, and IF bit 3 (serial interrupt) is raised.
+    ///
+    /// PPU interrupt propagation is **deferred by one tick**: interrupts
+    /// accumulated during the *previous* `tick()` call are propagated to IF
+    /// at the start of the current call, before the PPU advances.  This
+    /// models the real hardware behavior where the STAT interrupt line
+    /// update from one M-cycle is sampled by the interrupt controller on
+    /// the following M-cycle boundary.  Timer and serial IF updates remain
+    /// immediate (set during the same tick they occur in).
     pub fn tick(&mut self, m_cycles: u8) {
+        // Propagate PPU interrupts accumulated during the previous tick.
+        self.if_reg |= self.ppu.take_pending_interrupts();
+
         for _ in 0..m_cycles {
             let pre_counter = self.timer.raw_counter();
             let pre_bit7 = pre_counter & 0x080;
@@ -266,7 +277,8 @@ impl DmgBus {
             }
         }
         self.ppu.tick_dots(u32::from(m_cycles) * 4);
-        self.if_reg |= self.ppu.take_pending_interrupts();
+        // PPU interrupts are now buffered in ppu.pending_interrupts and
+        // will be propagated to IF at the start of the NEXT tick() call.
         self.apu.tick(m_cycles);
     }
 
@@ -674,9 +686,9 @@ mod tests {
     #[test]
     fn test_unmapped_io_reads_return_0xff() {
         let mut bus = make_bus();
-        // $FF01 (serial), $FF08 (unmapped) — $FF00 is now the joypad register
-        assert_eq!(bus.read(0xFF01), 0xFF);
+        // $FF08 (unmapped) — $FF01 (SB) now starts at $00, so use only unmapped ranges
         assert_eq!(bus.read(0xFF08), 0xFF);
+        assert_eq!(bus.read(0xFF4E), 0xFF);
     }
 
     // ── Joypad ($FF00) ────────────────────────────────────────────────────────
@@ -725,8 +737,10 @@ mod tests {
 
     #[test]
     fn test_set_joypad_button_no_if_when_group_not_selected() {
-        // Given: neither group selected (default)
+        // Given: neither group selected (must be set explicitly; power-on default
+        // is both groups selected, matching real DMG hardware $CF)
         let mut bus = make_bus();
+        bus.write(0xFF00, 0x30); // deselect both groups
         // When: press A — action group not selected, no IRQ
         bus.set_joypad_button(0, true);
         // Then: IF bit 4 not set

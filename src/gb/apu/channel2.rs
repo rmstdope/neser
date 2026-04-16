@@ -29,7 +29,7 @@ impl Default for Channel2 {
 impl Channel2 {
     pub fn new() -> Self {
         Self {
-            duty: 2,
+            duty: 0,
             length_load: 0,
             init_volume: 0,
             env_add: false,
