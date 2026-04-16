@@ -110,7 +110,7 @@ impl Ppu {
         self.update_stat_irq();
     }
 
-    // ── STAT IRQ line ─────────────────────────────────────────────────────────
+    // ── OBJ penalty ───────────────────────────────────────────────────────────
 
     /// Apply OBJ penalty to Mode 3 at the Mode 2→3 transition.
     ///
