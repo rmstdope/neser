@@ -209,7 +209,7 @@ fn render_frame_rgba_returns_expected_size() {
     let rom = minimal_nrom();
     nes.load_rom(&rom, "test.nes")
         .expect("valid rom should load");
-    let frame = nes.render_frame_rgba();
+    let frame = nes.render_frame_rgba().to_vec();
     // Render with default 8 pixels overscan removal
     assert_eq!(frame.len(), 256 * (240 - 16) * 4);
     // Alpha should be opaque for all pixels.
@@ -227,7 +227,7 @@ fn render_frame_without_rom_succeeds() {
 #[wasm_bindgen_test]
 fn render_frame_rgba_without_rom_succeeds() {
     let mut nes = WasmNes::new();
-    let frame = nes.render_frame_rgba();
+    let frame = nes.render_frame_rgba().to_vec();
     // Render with default 8 pixels overscan removal
     assert_eq!(frame.len(), 256 * (240 - 16) * 4);
     assert!(frame.iter().skip(3).step_by(4).all(|a| *a == 0xFF));

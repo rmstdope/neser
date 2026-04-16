@@ -1,10 +1,11 @@
 /**
  * @vitest-environment jsdom
  */
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach, Mock } from "vitest";
 
 import {
     isTouchDevice,
+    isHandheldDevice,
     resolveButtonFromElement,
     TouchInputManager,
     NES_BUTTON,
@@ -99,6 +100,73 @@ describe("isTouchDevice", () => {
 });
 
 // ---------------------------------------------------------------------------
+// isHandheldDevice
+// ---------------------------------------------------------------------------
+
+/** Helper: install a mock window.matchMedia that matches `(pointer: coarse)`. */
+function mockMatchMedia(matchesPointerCoarse: boolean) {
+    vi.stubGlobal(
+        "matchMedia",
+        vi.fn((query: string) => ({
+            matches: query === "(pointer: coarse)" ? matchesPointerCoarse : false,
+            media: query,
+            onchange: null,
+            addListener: vi.fn(),
+            removeListener: vi.fn(),
+            addEventListener: vi.fn(),
+            removeEventListener: vi.fn(),
+            dispatchEvent: vi.fn(),
+        })),
+    );
+}
+
+describe("isHandheldDevice", () => {
+    beforeEach(() => {
+        // Default to a large desktop viewport
+        vi.stubGlobal("innerWidth", 1920);
+        vi.stubGlobal("innerHeight", 1080);
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    it("returns true when pointer:coarse and small portrait viewport", () => {
+        mockMatchMedia(true);
+        vi.stubGlobal("innerWidth", 390);
+        vi.stubGlobal("innerHeight", 844);
+        expect(isHandheldDevice()).toBe(true);
+    });
+
+    it("returns true in landscape orientation where min dimension is still small", () => {
+        mockMatchMedia(true);
+        vi.stubGlobal("innerWidth", 844);
+        vi.stubGlobal("innerHeight", 390);
+        expect(isHandheldDevice()).toBe(true);
+    });
+
+    it("returns false when pointer:coarse but viewport is too large", () => {
+        mockMatchMedia(true);
+        // innerWidth/innerHeight set to 1920x1080 by beforeEach
+        expect(isHandheldDevice()).toBe(false);
+    });
+
+    it("returns false when not pointer:coarse even with small viewport", () => {
+        mockMatchMedia(false);
+        vi.stubGlobal("innerWidth", 390);
+        vi.stubGlobal("innerHeight", 844);
+        expect(isHandheldDevice()).toBe(false);
+    });
+
+    it("returns false when matchMedia is not available", () => {
+        vi.stubGlobal("matchMedia", undefined);
+        vi.stubGlobal("innerWidth", 390);
+        vi.stubGlobal("innerHeight", 844);
+        expect(isHandheldDevice()).toBe(false);
+    });
+});
+
+// ---------------------------------------------------------------------------
 // resolveButtonFromElement
 // ---------------------------------------------------------------------------
 
@@ -140,7 +208,7 @@ describe("resolveButtonFromElement", () => {
 // ---------------------------------------------------------------------------
 
 describe("TouchInputManager", () => {
-    let callback: ReturnType<typeof vi.fn>;
+    let callback: Mock<(button: number, pressed: boolean) => void>;
     let manager: TouchInputManager;
     let container: HTMLElement;
     let btnA: Element;

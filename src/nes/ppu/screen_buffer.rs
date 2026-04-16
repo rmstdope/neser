@@ -132,6 +132,34 @@ impl ScreenBuffer {
         out
     }
 
+    /// Writes the cropped frame directly into `out` as RGBA8888, bypassing an intermediate RGB Vec.
+    ///
+    /// `h_overscan` pixels are removed from the left and right edges.
+    /// `v_overscan` pixels are removed from the top and bottom edges.
+    /// `out` is resized to `(256 - 2*h_overscan) × (240 - 2*v_overscan) × 4` bytes.
+    /// Alpha is always set to `0xFF`.
+    pub fn write_cropped_rgba_into(&self, h_overscan: u32, v_overscan: u32, out: &mut Vec<u8>) {
+        let src_w = Self::WIDTH;
+        let dst_w = src_w - 2 * h_overscan;
+        let dst_h = Self::HEIGHT - 2 * v_overscan;
+        let required = (dst_w * dst_h) as usize * 4;
+        if out.len() != required {
+            out.resize(required, 0xFF);
+        }
+        let mut out_idx = 0usize;
+        for row in v_overscan..v_overscan + dst_h {
+            let src_row_start = (row * src_w + h_overscan) as usize * Self::BYTES_PER_PIXEL;
+            for col_offset in 0..dst_w as usize {
+                let src = src_row_start + col_offset * Self::BYTES_PER_PIXEL;
+                out[out_idx] = self.buffer[src];
+                out[out_idx + 1] = self.buffer[src + 1];
+                out[out_idx + 2] = self.buffer[src + 2];
+                out[out_idx + 3] = 0xFF;
+                out_idx += 4;
+            }
+        }
+    }
+
     pub fn crc32(&self) -> u32 {
         crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC).checksum(&self.buffer)
     }
@@ -417,5 +445,66 @@ mod tests {
         let buf = ScreenBuffer::new();
         let cropped = buf.cropped_snapshot(0, 16);
         assert_eq!(cropped.len(), 256 * (240 - 32) * 3); // 256 * 208 * 3
+    }
+
+    // ── write_cropped_rgba_into ───────────────────────────────────────────────
+
+    #[test]
+    fn test_write_cropped_rgba_into_correct_output_size() {
+        let buf = ScreenBuffer::new();
+        let mut out = Vec::new();
+        buf.write_cropped_rgba_into(8, 8, &mut out);
+        let expected_w = (256u32 - 2 * 8) as usize;
+        let expected_h = (240u32 - 2 * 8) as usize;
+        assert_eq!(out.len(), expected_w * expected_h * 4);
+    }
+
+    #[test]
+    fn test_write_cropped_rgba_into_first_pixel_has_correct_rgba() {
+        let mut buf = ScreenBuffer::new();
+        buf.set_pixel(8, 8, 1, 2, 3); // first pixel inside 8-pixel overscan boundary
+        let mut out = Vec::new();
+        buf.write_cropped_rgba_into(8, 8, &mut out);
+        assert_eq!(&out[0..4], &[1u8, 2, 3, 0xFF]);
+    }
+
+    #[test]
+    fn test_write_cropped_rgba_into_alpha_is_always_opaque() {
+        let buf = ScreenBuffer::new();
+        let mut out = Vec::new();
+        buf.write_cropped_rgba_into(8, 8, &mut out);
+        for (i, &byte) in out.iter().enumerate() {
+            if i % 4 == 3 {
+                assert_eq!(byte, 0xFF, "alpha at index {i} should be 0xFF");
+            }
+        }
+    }
+
+    #[test]
+    fn test_write_cropped_rgba_into_excludes_left_overscan() {
+        let mut buf = ScreenBuffer::new();
+        buf.set_pixel(0, 8, 99, 0, 0); // inside left overscan (h=8)
+        let mut out = Vec::new();
+        buf.write_cropped_rgba_into(8, 8, &mut out);
+        let expected_w = (256 - 2 * 8) as usize;
+        // First row of output should contain no pixel with r=99
+        for x in 0..expected_w {
+            assert_ne!(out[x * 4], 99, "overscan pixel should not appear at x={x}");
+        }
+    }
+
+    #[test]
+    fn test_write_cropped_rgba_into_last_visible_pixel_correct() {
+        let mut buf = ScreenBuffer::new();
+        let h: u32 = 8;
+        let v: u32 = 8;
+        // Last visible pixel: (255-h, 239-v) = (247, 231)
+        buf.set_pixel(247, 231, 7, 8, 9);
+        let mut out = Vec::new();
+        buf.write_cropped_rgba_into(h, v, &mut out);
+        let expected_w = (256 - 2 * h) as usize;
+        let expected_h = (240 - 2 * v) as usize;
+        let last_offset = (expected_h - 1) * expected_w * 4 + (expected_w - 1) * 4;
+        assert_eq!(&out[last_offset..last_offset + 4], &[7u8, 8, 9, 0xFF]);
     }
 }

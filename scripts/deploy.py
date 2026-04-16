@@ -172,7 +172,8 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    check_clean_worktree()
+    if args.tag:
+        check_clean_worktree()
 
     original_ref = git_current_ref() if args.tag else None
     password = getpass.getpass(f"Password for {args.username}@{args.hostname}: ")

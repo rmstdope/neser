@@ -54,6 +54,10 @@
 
             <!-- Action buttons (right of canvas) -->
             <div class="touch-action-area">
+              <div class="touch-meta-buttons">
+                <div class="touch-meta-btn" data-button="select" aria-label="Select button">SELECT</div>
+                <div class="touch-meta-btn" data-button="start" aria-label="Start button">START</div>
+              </div>
               <div class="touch-action-buttons">
                 <div class="touch-btn touch-btn-b" data-button="b" aria-label="B button">B</div>
                 <div class="touch-btn touch-btn-a" data-button="a" aria-label="A button">A</div>
@@ -61,14 +65,9 @@
             </div>
           </div>
 
-          <!-- Start / Select (below canvas) -->
-          <div class="touch-meta-area" aria-hidden="true">
-            <div class="touch-meta-btn" data-button="select" aria-label="Select button">SELECT</div>
-            <div class="touch-meta-btn" data-button="start" aria-label="Start button">START</div>
-          </div>
-
           <div class="mt-3 flex items-center gap-2">
             <span id="status" class="status"></span>
+            <span id="fps-counter" class="badge badge-neutral" style="display:none"></span>
             <span class="badge badge-neutral touch-hide">Press 'h' for help</span>
           </div>
         </main>
@@ -92,7 +91,7 @@
           <!-- ROM controls -->
           <div class="flex flex-col gap-2">
             <label for="rom" class="label text-xs">ROM file</label>
-            <input type="file" id="rom" accept=".nes,.gb" class="file-input file-input-bordered file-input-sm w-full" />
+            <input type="file" id="rom" accept=".nes,.gb,application/octet-stream" class="file-input file-input-bordered file-input-sm w-full" />
             <select id="rom-select" class="select select-bordered select-sm w-full" aria-label="Select ROM from server">
               <option value="">Select bundled ROM…</option>
             </select>
@@ -159,17 +158,6 @@
       </div>
       <form method="dialog" class="modal-backdrop"><button>close</button></form>
     </dialog>
-
-    <!-- Portrait rotation prompt (touch devices only) -->
-    <div id="rotate-prompt" class="rotate-prompt" aria-hidden="true">
-      <div class="rotate-prompt-content">
-        <svg class="rotate-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="4" y="2" width="16" height="20" rx="2" ry="2" />
-          <path d="M12 18h.01" />
-        </svg>
-        <p>Rotate your device to landscape</p>
-      </div>
-    </div>
 
     <script type="module" src="./src/app.ts"></script>
   </body>

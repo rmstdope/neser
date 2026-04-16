@@ -34,6 +34,20 @@ export function isTouchDevice(): boolean {
 }
 
 /**
+ * Detect whether the current device is a small-screen handheld (phone).
+ * Uses `(pointer: coarse)` combined with a max-dimension check so that
+ * both portrait and landscape orientations are correctly detected, and
+ * large tablets / desktop touch screens are excluded.
+ */
+export function isHandheldDevice(): boolean {
+    if (typeof window.matchMedia !== "function") return false;
+    return (
+        window.matchMedia("(pointer: coarse)").matches &&
+        Math.min(window.innerWidth, window.innerHeight) <= 768
+    );
+}
+
+/**
  * Resolve which NES button a DOM element represents, based on its
  * `data-button` attribute.  Returns `undefined` if the element is not
  * a touch-control button.

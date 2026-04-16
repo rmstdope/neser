@@ -499,6 +499,7 @@ mod tests {
         let cartridge = Cartridge::from_parts(prg_rom, vec![], NametableLayout::Horizontal);
         nes.insert_cartridge(cartridge);
         nes.cpu_mut().set_pc(0x8000);
+        nes.set_cpu_trace_enabled(true);
 
         nes.run_cpu_tick();
         nes.run_cpu_tick();

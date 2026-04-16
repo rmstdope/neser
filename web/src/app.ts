@@ -18,7 +18,7 @@ import { computePlaybackRate } from "./audio/audio_resampler";
 import { planFrame } from "./audio/frame_plan";
 import { createSineScroller } from "./ui/sine_scroller";
 import { getKeyboardControllerTarget } from "./input/input_routing";
-import { initTouchControls, isTouchDevice } from "./input/touch_controls";
+import { initTouchControls, isTouchDevice, isHandheldDevice } from "./input/touch_controls";
 import { dispatchWebShortcutAction } from "./shortcuts/shortcut_actions";
 import {
     buildFullHelpOverlayText,
@@ -27,7 +27,7 @@ import {
     toggleShortcutHelpVisibility
 } from "./shortcuts/shortcut_help";
 import { createCrosshair } from "./display/crosshair";
-import { computeFullscreenCanvasSize, computeWindowedCanvasSize } from "./display/canvas_size";
+import { computeFullscreenCanvasSize, computeWindowedCanvasSize, computeHandheldCanvasSize } from "./display/canvas_size";
 import {
     findNextVisibleZoomHeight,
 } from "./display/zoom_controls";
@@ -66,6 +66,11 @@ import gbPass4VertGlsl from "./shaders/gb-pass4.vert.glsl?raw";
 import gbPass4FragGlsl from "./shaders/gb-pass4.frag.glsl?raw";
 
 const statusEl = document.getElementById("status");
+const fpsCounterEl = document.getElementById("fps-counter");
+
+// Screen Wake Lock and AudioWorklet CPU keepalive were tried but did not
+// improve idle-state FPS on Android (S21 FE). The idle/touch FPS gap is caused
+// by the kernel input-boost policy, which cannot be replicated from userspace.
 const startBtn = document.getElementById("start") as HTMLButtonElement;
 const romInput = document.getElementById("rom") as HTMLInputElement;
 const romSelect = document.getElementById("rom-select") as HTMLSelectElement | null;
@@ -921,6 +926,8 @@ let lastFrameTime = 0;
 const fpsLogIntervalMs = 1000;
 let fpsLastTime = 0;
 let fpsFrames = 0;
+let fpsWasmTimeAccMs = 0;
+let fpsRenderTimeAccMs = 0;
 
 // Web Audio API setup
 let audioContext: AudioContext | null = null;
@@ -1074,7 +1081,7 @@ function clearCanvas() {
     gl.clear(gl.COLOR_BUFFER_BIT);
 }
 
-function initAudioContext() {
+async function initAudioContext(): Promise<void> {
     if (!audioContext) {
         // Create AudioContext on first user interaction (required by browsers)
         audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({
@@ -1209,7 +1216,7 @@ async function start() {
 
         frameLimiter.setTargetFps(emulator!.inst.frame_rate_hz());
         // Initialize audio context on user interaction (browser requirement)
-        initAudioContext();
+        await initAudioContext();
         emulator!.inst.set_audio_muted(audioMuted);
         await refreshSaveStateController();
 
@@ -1231,6 +1238,9 @@ async function start() {
     running = true;
     paused = false;
     if (isTouchDevice()) document.body.classList.add("touch-running");
+    if (isHandheldDevice()) updateHandheldCanvasSize();
+    const sidebarToggle = document.getElementById("sidebar-toggle") as HTMLInputElement | null;
+    if (sidebarToggle) sidebarToggle.checked = false;
     setStatus("Running...");
     updateAutorunControls();
     updateEmulationButtons();
@@ -1844,6 +1854,7 @@ function stop() {
     document.body.classList.remove("touch-running");
     clearCanvas();
     lastFrameTime = 0;
+    if (fpsCounterEl) (fpsCounterEl as HTMLElement).style.display = "none";
     frameLimiter.reset();
     if (document.pointerLockElement === canvas) {
         document.exitPointerLock?.();
@@ -2196,7 +2207,9 @@ function step(timestamp: number) {
             return;
         }
 
+        const wasmT0 = performance.now();
         const frame = emulator!.inst.render_frame_rgba(); // RGBA8888
+        const wasmElapsedMs = performance.now() - wasmT0;
 
         // Stop when pure NES autorun playback has consumed all recorded frames
         if (nes?.autorun_playback_finished()) {
@@ -2207,6 +2220,7 @@ function step(timestamp: number) {
 
         const filter = filters[currentFilter];
         let rendered = true;
+        const renderT0 = performance.now();
         if (shouldRender) {
             if (filter?.type === "ntsc") {
                 rendered = renderNtscPass(frame);
@@ -2216,6 +2230,7 @@ function step(timestamp: number) {
                 rendered = renderSinglePass(frame);
             }
         }
+        const renderElapsedMs = performance.now() - renderT0;
 
         if (!rendered) {
             running = false;
@@ -2236,15 +2251,26 @@ function step(timestamp: number) {
         updateRecOverlay();
 
         fpsFrames += 1;
+        fpsWasmTimeAccMs += wasmElapsedMs;
+        fpsRenderTimeAccMs += renderElapsedMs;
         if (fpsLastTime === 0) {
             fpsLastTime = timestamp;
         }
         const fpsElapsed = timestamp - fpsLastTime;
         if (fpsElapsed >= fpsLogIntervalMs) {
             const fps = (fpsFrames * 1000) / fpsElapsed;
-            console.log(`FPS: ${fps.toFixed(1)}`);
+            const avgWasm = fpsWasmTimeAccMs / fpsFrames;
+            const avgRender = fpsRenderTimeAccMs / fpsFrames;
+            const msg = `${fps.toFixed(1)} fps | emu ${avgWasm.toFixed(1)}ms | gl ${avgRender.toFixed(1)}ms`;
+            console.log(msg);
+            if (fpsCounterEl) {
+                fpsCounterEl.textContent = msg;
+                (fpsCounterEl as HTMLElement).style.display = "";
+            }
             fpsFrames = 0;
             fpsLastTime = timestamp;
+            fpsWasmTimeAccMs = 0;
+            fpsRenderTimeAccMs = 0;
         }
     } catch (err) {
         running = false;
@@ -2515,9 +2541,11 @@ document.addEventListener('keyup', handleKeyUp);
 if (isTouchDevice()) {
     document.body.classList.add("touch-device");
 }
+if (isHandheldDevice()) {
+    document.body.classList.add("handheld");
+}
 
 const touchControlsContainer = document.getElementById("touch-controls");
-const touchMetaArea = document.querySelector(".touch-meta-area");
 
 function handleTouchButton(button: number, pressed: boolean) {
     if (!emulator) return;
@@ -2530,9 +2558,6 @@ function handleTouchButton(button: number, pressed: boolean) {
 
 if (touchControlsContainer) {
     initTouchControls(touchControlsContainer, handleTouchButton);
-}
-if (touchMetaArea) {
-    initTouchControls(touchMetaArea, handleTouchButton);
 }
 
 function handleMouseMotion(event: MouseEvent) {
@@ -2732,6 +2757,22 @@ function updateCanvasSizeForFullscreenViewport() {
     updateShortcutHelpScale();
 }
 
+function updateHandheldOrientation() {
+    const isPortrait = window.matchMedia("(orientation: portrait)").matches;
+    document.body.classList.toggle("handheld-portrait", isPortrait);
+}
+
+function updateHandheldCanvasSize() {
+    const dpr = window.devicePixelRatio || 1;
+    const isPortrait = window.matchMedia("(orientation: portrait)").matches;
+    const size = computeHandheldCanvasSize(isPortrait, window.innerWidth, window.innerHeight, NES_ASPECT_RATIO, dpr);
+    applyCanvasSize(size);
+    if (crosshair) {
+        crosshair.updateCanvasSize();
+    }
+    updateShortcutHelpScale();
+}
+
 function updateShortcutHelpScale() {
     if (!shortcutHelpOverlay) {
         return;
@@ -2761,8 +2802,17 @@ function probeNextVisibleZoomHeight(direction: "in" | "out") {
     return nextHeight;
 }
 
+/** Returns the element currently used as the fullscreen root (may be screenWrap or documentElement on handheld). */
+function fullscreenRoot(): HTMLElement {
+    return isHandheldDevice() ? document.documentElement : screenWrap;
+}
+
+function isInFullscreen(): boolean {
+    return document.fullscreenElement === fullscreenRoot();
+}
+
 function updateZoomButtonState() {
-    const inScreenFullscreen = document.fullscreenElement === screenWrap;
+    const inScreenFullscreen = isInFullscreen();
     if (inScreenFullscreen) {
         screenMinusBtn.disabled = true;
         screenPlusBtn.disabled = true;
@@ -2780,7 +2830,7 @@ function updateZoomButtonState() {
 }
 
 function applyZoom(direction: "in" | "out") {
-    if (document.fullscreenElement === screenWrap) {
+    if (isInFullscreen()) {
         updateZoomButtonState();
         return;
     }
@@ -2800,14 +2850,13 @@ function applyZoom(direction: "in" | "out") {
 
 // Update fullscreen button text based on state
 function updateFullscreenButton() {
-    const inScreenFullscreen = document.fullscreenElement === screenWrap;
-    fullscreenBtn.textContent = inScreenFullscreen ? "Exit Fullscreen" : "Fullscreen";
+    fullscreenBtn.textContent = isInFullscreen() ? "Exit Fullscreen" : "Fullscreen";
 }
 
 async function toggleScreenFullscreen() {
-    if (document.fullscreenElement !== screenWrap) {
+    if (!isInFullscreen()) {
         try {
-            await screenWrap.requestFullscreen();
+            await fullscreenRoot().requestFullscreen();
         } catch (err) {
             console.error("Failed to enter fullscreen:", err);
             setStatus("Failed to enter fullscreen mode", true);
@@ -2869,7 +2918,12 @@ function updateSaveStateButtons() {
 }
 
 // Set initial canvas size and button text
-updateCanvasSize(INITIAL_HEIGHT);
+if (isHandheldDevice()) {
+    updateHandheldOrientation();
+    updateHandheldCanvasSize();
+} else {
+    updateCanvasSize(INITIAL_HEIGHT);
+}
 updateFullscreenButton();
 updateZoomButtonState();
 updateFilterToggleButtonLabel();
@@ -2995,22 +3049,41 @@ window.addEventListener("gamepaddisconnected", () => {
 // Handle canvas resizing when entering/exiting fullscreen
 document.addEventListener("fullscreenchange", () => {
     updateFullscreenButton();
-    if (document.fullscreenElement === screenWrap) {
-        updateCanvasSizeForFullscreenViewport();
+    if (isInFullscreen()) {
+        if (!isHandheldDevice()) {
+            updateCanvasSizeForFullscreenViewport();
+        }
+        // Handheld fullscreen keeps the normal handheld layout; no canvas resize needed here.
     } else {
-        // Exited fullscreen - restore previous size
-        updateCanvasSize(currentHeight);
+        if (isHandheldDevice()) {
+            updateHandheldCanvasSize();
+        } else {
+            // Exited fullscreen - restore previous size
+            updateCanvasSize(currentHeight);
+        }
     }
     updateZoomButtonState();
 });
 
 // Re-fit canvas when viewport resizes while in fullscreen (e.g. orientation change)
 window.addEventListener("resize", () => {
-    if (document.fullscreenElement === screenWrap) {
+    if (isInFullscreen() && !isHandheldDevice()) {
         updateCanvasSizeForFullscreenViewport();
         updateZoomButtonState();
         return;
     }
 
+    if (isHandheldDevice()) {
+        updateHandheldOrientation();
+        updateHandheldCanvasSize();
+    }
+
     updateZoomButtonState();
+});
+
+window.addEventListener("orientationchange", () => {
+    if (isHandheldDevice()) {
+        updateHandheldOrientation();
+        updateHandheldCanvasSize();
+    }
 });

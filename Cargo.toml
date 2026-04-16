@@ -113,6 +113,16 @@ opt-level = 1
 [profile.release]
 incremental = false
 
+# Dedicated profile for the WASM web build.
+# LTO + codegen-units=1 enable cross-crate inlining, which is critical for
+# the tight run_cpu_tick() loop and gives ~30-50% speedup over the plain
+# release profile on WASM targets.
+[profile.wasm-release]
+inherits = "release"
+opt-level = 3
+lto = true
+codegen-units = 1
+
 [profile.dev.package."*"]
 opt-level = 3
 incremental = true

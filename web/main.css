@@ -164,8 +164,7 @@ canvas {
 }
 
 .touch-dpad-area,
-.touch-action-area,
-.touch-meta-area {
+.touch-action-area {
   display: none;
 }
 
@@ -179,12 +178,9 @@ body.touch-running .touch-action-area {
   justify-content: center;
 }
 
-body.touch-running .touch-meta-area {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 24px;
-  margin-top: 12px;
+body.touch-running .touch-action-area {
+  flex-direction: column;
+  gap: 8px;
 }
 
 body.touch-running .touch-hide {
@@ -267,6 +263,12 @@ body.touch-running .touch-hide {
   align-items: center;
 }
 
+.touch-meta-buttons {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
 .touch-btn {
   width: 64px;
   height: 64px;
@@ -334,45 +336,126 @@ body.touch-running .touch-hide {
   box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5);
 }
 
-/* ── Portrait rotation prompt ──────────────────── */
+/* ── Touch device header override (only while running, non-handheld) ── */
 
-.rotate-prompt {
-  display: none;
+body.touch-running:not(.handheld) header {
+  display: none !important;
 }
 
-@media (orientation: portrait) {
-  body.touch-running .rotate-prompt {
-    display: flex;
-    position: fixed;
-    inset: 0;
-    z-index: 9999;
-    background: rgba(0, 0, 0, 0.92);
-    align-items: center;
-    justify-content: center;
+/* ── Handheld: always hide zoom buttons ── */
+
+/* Primary: JS class (works in both portrait and landscape) */
+body.handheld #screen-minus,
+body.handheld #screen-plus {
+  display: none !important;
+}
+
+/* CSS fallback for portrait mode (hides buttons before JS class is applied) */
+@media (pointer: coarse) and (max-width: 768px) {
+  #screen-minus,
+  #screen-plus {
+    display: none !important;
   }
 }
 
-.rotate-prompt-content {
-  text-align: center;
-  color: #e6e6e6;
-  font-size: 1.2rem;
+/* ── Handheld: constrain layout height and strip padding when running ── */
+
+body.handheld.touch-running .drawer-content {
+  height: 100dvh !important;
+  min-height: 0 !important;
+  overflow: hidden;
 }
 
-.rotate-icon {
-  width: 64px;
-  height: 64px;
-  margin: 0 auto 16px;
-  color: #00f0ff;
-  animation: rotate-hint 2s ease-in-out infinite;
+body.handheld.touch-running main {
+  min-height: 0;
+  padding: 0 !important;
+  overflow: hidden;
 }
 
-@keyframes rotate-hint {
-  0%, 100% { transform: rotate(0deg); }
-  50% { transform: rotate(90deg); }
+/* ── Handheld portrait layout (Game Boy-style) ── */
+
+body.handheld.handheld-portrait.touch-running main {
+  justify-content: flex-start;
 }
 
-/* ── Touch device header override (only while running) ── */
+body.handheld.handheld-portrait.touch-running .touch-controls {
+  display: grid;
+  grid-template-columns: 2fr 1fr 2fr;
+  grid-template-rows: auto auto;
+  grid-template-areas:
+    "screen screen screen"
+    "dpad   meta   actions";
+  width: 100%;
+  gap: 8px;
+  align-items: center;
+  justify-items: center;
+  padding: 0;
+}
 
-body.touch-running header {
-  display: none !important;
+body.handheld.handheld-portrait.touch-running .screen-wrap {
+  grid-area: screen;
+  width: 100%;
+  padding: 0;
+  border-radius: 0;
+  border: none;
+  box-shadow: none;
+}
+
+body.handheld.handheld-portrait.touch-running .screen-wrap canvas {
+  width: 100% !important;
+  height: auto !important;
+  border-radius: 0;
+}
+
+body.handheld.handheld-portrait.touch-running .touch-dpad-area {
+  grid-area: dpad;
+  justify-content: center;
+}
+
+/* Dissolve touch-action-area box so meta and action-buttons join the grid directly */
+body.handheld.handheld-portrait.touch-running .touch-action-area {
+  display: contents;
+}
+
+body.handheld.handheld-portrait.touch-running .touch-meta-buttons {
+  grid-area: meta;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+body.handheld.handheld-portrait.touch-running .touch-action-buttons {
+  grid-area: actions;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+/* In handheld portrait, B should be at the same height as A (no offset) */
+body.handheld.handheld-portrait.touch-running .touch-btn-b {
+  margin-top: 0;
+}
+
+/* ── Handheld landscape: fill available height ── */
+
+body.handheld:not(.handheld-portrait).touch-running .touch-controls {
+  height: 100%;
+  align-items: stretch;
+}
+
+body.handheld:not(.handheld-portrait).touch-running .screen-wrap {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+body.handheld:not(.handheld-portrait).touch-running .screen-wrap canvas {
+  height: 100% !important;
+  width: auto !important;
 }

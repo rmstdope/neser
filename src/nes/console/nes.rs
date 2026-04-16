@@ -117,6 +117,9 @@ pub struct Nes {
     fractional_ppu_cycles: f64,
     ready_to_render: bool,
     recent_cpu_trace: VecDeque<CpuTraceLine>,
+    /// When false, CPU trace capture is skipped for performance.
+    /// Enable only when the debugger is open.
+    cpu_trace_enabled: bool,
     /// Effective controller types for the current cartridge.
     /// May differ from config when auto-detection overrides user defaults.
     active_controller_port1: ControllerType,
@@ -164,6 +167,7 @@ impl Nes {
             fractional_ppu_cycles: 0.0,
             ready_to_render: false,
             recent_cpu_trace: VecDeque::with_capacity(MAX_CPU_TRACE_LINES),
+            cpu_trace_enabled: false,
             active_controller_port1: config.nes.controller_port1,
             active_controller_port2: config.nes.controller_port2,
         }
@@ -458,8 +462,10 @@ impl Nes {
 
         let cycles_before = self.cpu.get_total_cycles();
 
-        let trace_line = self.capture_current_cpu_trace_line();
-        self.push_cpu_trace_line(trace_line);
+        if self.cpu_trace_enabled {
+            let trace_line = self.capture_current_cpu_trace_line();
+            self.push_cpu_trace_line(trace_line);
+        }
 
         // Execute exactly one CPU instruction.
         self.cpu.execute();
@@ -482,6 +488,15 @@ impl Nes {
         // }
 
         self.run_cpu_tick()
+    }
+
+    /// Enable or disable per-instruction CPU trace capture.
+    /// Disable during normal emulation to avoid ~30k allocations/frame.
+    pub fn set_cpu_trace_enabled(&mut self, enabled: bool) {
+        self.cpu_trace_enabled = enabled;
+        if !enabled {
+            self.recent_cpu_trace.clear();
+        }
     }
 
     pub fn recent_cpu_trace(&self, limit: usize) -> Vec<CpuTraceLine> {
@@ -2775,6 +2790,7 @@ mod tests {
         );
         nes.insert_cartridge(cartridge);
         nes.cpu.set_pc(0x8000);
+        nes.set_cpu_trace_enabled(true);
 
         let executed = MAX_CPU_TRACE_LINES + 20;
         for _ in 0..executed {

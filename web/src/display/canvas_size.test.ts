@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { computeFullscreenCanvasSize, computeWindowedCanvasSize } from "./canvas_size";
+import { computeFullscreenCanvasSize, computeWindowedCanvasSize, computeHandheldCanvasSize } from "./canvas_size";
 
 // NES native resolution (256x240) aspect ratio
 const NES_AR = 256 / 240;
@@ -81,5 +81,54 @@ it("computeWindowedCanvasSize - height is clamped to valid NES display range", (
 
     const large = computeWindowedCanvasSize(9999, NES_AR, 1);
     expect(large.pixelHeight).toBe(1440); // max
+});
+
+// ---------------------------------------------------------------------------
+// computeHandheldCanvasSize
+// ---------------------------------------------------------------------------
+
+it("computeHandheldCanvasSize - portrait: cssWidth equals viewport width", () => {
+    const result = computeHandheldCanvasSize(true, 390, 844, NES_AR, 1);
+    expect(result.cssWidth).toBe("390px");
+});
+
+it("computeHandheldCanvasSize - portrait: cssHeight is auto for proportional scaling", () => {
+    const result = computeHandheldCanvasSize(true, 390, 844, NES_AR, 1);
+    expect(result.cssHeight).toBe("auto");
+});
+
+it("computeHandheldCanvasSize - portrait: pixel width equals viewport width at DPR 1", () => {
+    const result = computeHandheldCanvasSize(true, 390, 844, NES_AR, 1);
+    expect(result.pixelWidth).toBe(390);
+});
+
+it("computeHandheldCanvasSize - portrait: pixel height derived from aspect ratio at DPR 1", () => {
+    const result = computeHandheldCanvasSize(true, 390, 844, NES_AR, 1);
+    expect(result.pixelHeight).toBe(Math.round(390 / NES_AR));
+});
+
+it("computeHandheldCanvasSize - portrait: DPR scales pixel dimensions", () => {
+    const dpr = 3;
+    const result = computeHandheldCanvasSize(true, 390, 844, NES_AR, dpr);
+    expect(result.pixelWidth).toBe(390 * dpr);
+    expect(result.pixelHeight).toBe(Math.round(390 / NES_AR) * dpr);
+});
+
+it("computeHandheldCanvasSize - landscape: cssHeight equals viewport height", () => {
+    const result = computeHandheldCanvasSize(false, 844, 390, NES_AR, 1);
+    expect(result.cssHeight).toBe("390px");
+});
+
+it("computeHandheldCanvasSize - landscape: cssWidth is derived from height and aspect ratio", () => {
+    const result = computeHandheldCanvasSize(false, 844, 390, NES_AR, 1);
+    expect(result.cssWidth).toBe(`${Math.round(390 * NES_AR)}px`);
+});
+
+it("computeHandheldCanvasSize - landscape: pixel dimensions are DPR-scaled", () => {
+    const dpr = 2;
+    const result = computeHandheldCanvasSize(false, 844, 390, NES_AR, dpr);
+    const expectedCssWidth = Math.round(390 * NES_AR);
+    expect(result.pixelWidth).toBe(expectedCssWidth * dpr);
+    expect(result.pixelHeight).toBe(390 * dpr);
 });
 

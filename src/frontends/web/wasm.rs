@@ -34,6 +34,8 @@ pub struct WasmNes {
     controller1_buttons: u8,
     /// Bitmask of currently pressed buttons on controller 2 (for autorun recording).
     controller2_buttons: u8,
+    /// Pre-allocated RGBA frame buffer; reused every frame to avoid per-frame heap allocation.
+    frame_rgba_buffer: Vec<u8>,
 }
 
 impl Default for WasmNes {
@@ -58,14 +60,6 @@ impl WasmNes {
         self.nes.clear_ready_to_render();
     }
 
-    fn opaque_black_rgba_frame(pixel_count: usize) -> Vec<u8> {
-        let mut rgba = vec![0u8; pixel_count * 4];
-        for alpha in rgba.iter_mut().skip(3).step_by(4) {
-            *alpha = 0xFF;
-        }
-        rgba
-    }
-
     fn overscan(&self) -> (u32, u32) {
         let cfg = self.app_context.borrow();
         let config = cfg.config();
@@ -73,20 +67,6 @@ impl WasmNes {
             config.nes.horizontal_overscan as u32,
             config.nes.vertical_overscan as u32,
         )
-    }
-
-    fn rgb_to_rgba(rgb: &[u8]) -> Vec<u8> {
-        let pixel_count = rgb.len() / 3;
-        let mut rgba = vec![0u8; pixel_count * 4];
-        for i in 0..pixel_count {
-            let rgb_idx = i * 3;
-            let rgba_idx = i * 4;
-            rgba[rgba_idx] = rgb[rgb_idx];
-            rgba[rgba_idx + 1] = rgb[rgb_idx + 1];
-            rgba[rgba_idx + 2] = rgb[rgb_idx + 2];
-            rgba[rgba_idx + 3] = 0xFF;
-        }
-        rgba
     }
 
     #[wasm_bindgen(constructor)]
@@ -104,6 +84,7 @@ impl WasmNes {
             autorun_state: None,
             controller1_buttons: 0,
             controller2_buttons: 0,
+            frame_rgba_buffer: Vec::new(),
         }
     }
 
@@ -199,13 +180,37 @@ impl WasmNes {
     ///
     /// When the debugger is open (`is_debugger_open()` returns true), the emulator
     /// is paused and the last rendered frame is returned without advancing.
+    ///
+    /// # Safety
+    ///
+    /// The returned `Uint8Array` is a zero-copy view into `self.frame_rgba_buffer` in WASM
+    /// linear memory.  The caller **must not** invoke any WASM function (which could trigger a
+    /// heap growth) between receiving this value and reading from it.  In the browser render
+    /// loop the view is consumed synchronously by `texSubImage2D` before the next WASM call,
+    /// so this invariant is satisfied.
     #[wasm_bindgen]
-    pub fn render_frame_rgba(&mut self) -> Vec<u8> {
-        let pixel_count = self.screen_width() as usize * self.screen_height() as usize;
-        if !self.rom_loaded {
-            return Self::opaque_black_rgba_frame(pixel_count);
-        }
+    pub fn render_frame_rgba(&mut self) -> js_sys::Uint8Array {
         let (h, v) = self.overscan();
+        let dst_w = (256u32 - 2 * h) as usize;
+        let dst_h = (240u32 - 2 * v) as usize;
+        let required = dst_w * dst_h * 4;
+
+        if self.frame_rgba_buffer.len() != required {
+            // Resize and pre-fill alpha; happens only on first call or overscan config change.
+            self.frame_rgba_buffer.resize(required, 0xFF);
+            for chunk in self.frame_rgba_buffer.chunks_exact_mut(4) {
+                chunk[3] = 0xFF;
+            }
+        }
+
+        if !self.rom_loaded {
+            self.frame_rgba_buffer.fill(0);
+            for chunk in self.frame_rgba_buffer.chunks_exact_mut(4) {
+                chunk[3] = 0xFF;
+            }
+            // SAFETY: see doc comment above.
+            return unsafe { js_sys::Uint8Array::view(&self.frame_rgba_buffer) };
+        }
 
         // ── Autorun pre-frame: extract pre-recorded input (borrow dropped before injection) ──
         if let Some(ref mut state) = self.autorun_state {
@@ -226,41 +231,65 @@ impl WasmNes {
         }
 
         self.run_until_frame_ready();
-        let rgb = self.nes.get_screen_buffer().cropped_snapshot(h, v);
 
-        // ── Autorun post-frame: record or verify ─────────────────────────────────────────────
-        let screen_crc = if self.autorun_state.is_some() {
-            crc32(&rgb)
-        } else {
-            0
-        };
+        if self.autorun_state.is_some() {
+            // Autorun path: compute CRC from RGB for compatibility with existing recordings.
+            let rgb = self.nes.get_screen_buffer().cropped_snapshot(h, v);
+            let screen_crc = crc32(&rgb);
 
-        // Phase 1: record the frame or check the CRC; capture whether a checkpoint is needed.
-        let needs_checkpoint = if let Some(ref mut state) = self.autorun_state {
-            if state.is_recording() && !state.is_extending_playback() {
-                let p1 = self.controller1_buttons;
-                let p2 = self.controller2_buttons;
-                // record_frame only borrows state here (not self.nes)
-                // We shadow p1/p2 to avoid re-borrowing self after borrow of autorun_state.
-                state.record_frame(p1, p2)
+            // ── Autorun post-frame: record or verify ─────────────────────────────────────────
+            // Phase 1: record the frame or check the CRC; capture whether a checkpoint is needed.
+            let needs_checkpoint = if let Some(ref mut state) = self.autorun_state {
+                if state.is_recording() && !state.is_extending_playback() {
+                    let p1 = self.controller1_buttons;
+                    let p2 = self.controller2_buttons;
+                    state.record_frame(p1, p2)
+                } else {
+                    state.check_playback_checkpoint(screen_crc);
+                    false
+                }
             } else {
-                state.check_playback_checkpoint(screen_crc);
                 false
-            }
-        } else {
-            false
-        };
+            };
 
-        // Phase 2: if a checkpoint is needed, gather NES state and store it.
-        // The borrow of autorun_state from Phase 1 is fully released here.
-        if needs_checkpoint {
-            let state_bytes = self.nes.save_state().to_bytes().unwrap_or_default();
-            if let Some(ref mut state) = self.autorun_state {
-                state.record_checkpoint(screen_crc, state_bytes);
+            // Phase 2: if a checkpoint is needed, gather NES state and store it.
+            if needs_checkpoint {
+                let state_bytes = self.nes.save_state().to_bytes().unwrap_or_default();
+                if let Some(ref mut state) = self.autorun_state {
+                    state.record_checkpoint(screen_crc, state_bytes);
+                }
             }
+
+            // Fill pre-alloc buffer from the already-computed RGB snapshot.
+            Self::fill_rgba_buffer_from_rgb(&rgb, &mut self.frame_rgba_buffer);
+        } else {
+            // Fast path: write crop + RGB→RGBA directly into the pre-alloc buffer.
+            // No intermediate Vec is allocated.
+            self.nes
+                .get_screen_buffer()
+                .write_cropped_rgba_into(h, v, &mut self.frame_rgba_buffer);
         }
 
-        Self::rgb_to_rgba(&rgb)
+        // SAFETY: see doc comment on this function.
+        unsafe { js_sys::Uint8Array::view(&self.frame_rgba_buffer) }
+    }
+
+    /// Fill `out` with RGBA8888 data derived from a packed RGB888 slice.
+    /// `out` is resized to `rgb.len() / 3 * 4` bytes.  Alpha is always `0xFF`.
+    fn fill_rgba_buffer_from_rgb(rgb: &[u8], out: &mut Vec<u8>) {
+        let pixel_count = rgb.len() / 3;
+        let required = pixel_count * 4;
+        if out.len() != required {
+            out.resize(required, 0xFF);
+        }
+        for i in 0..pixel_count {
+            let src = i * 3;
+            let dst = i * 4;
+            out[dst] = rgb[src];
+            out[dst + 1] = rgb[src + 1];
+            out[dst + 2] = rgb[src + 2];
+            out[dst + 3] = 0xFF;
+        }
     }
 
     /// Inject controller buttons directly into the NES without affecting tracking bitmasks.
@@ -731,12 +760,14 @@ impl WasmNes {
     /// Open the debugger: pause the emulator.
     #[wasm_bindgen]
     pub fn debugger_open(&mut self) {
+        self.nes.set_cpu_trace_enabled(true);
         self.debugger_paused = true;
     }
 
     /// Continue execution: close the debugger and resume the emulator.
     #[wasm_bindgen]
     pub fn debugger_continue(&mut self) {
+        self.nes.set_cpu_trace_enabled(false);
         self.debugger_paused = false;
     }
 
