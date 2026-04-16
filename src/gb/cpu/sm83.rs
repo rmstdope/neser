@@ -168,6 +168,23 @@ impl<B: GbBus> Sm83<B> {
         self.ime_pending = false;
     }
 
+    /// Reset the CPU registers to the post-boot-ROM (DMG-0) state.
+    ///
+    /// DMG-0 (first production run) exits its boot ROM with different register
+    /// values from later DMG revisions.
+    pub fn reset_registers_dmg0(&mut self) {
+        self.regs.set_af(0x0100); // A=$01, F=$00
+        self.regs.set_bc(0xFF13); // B=$FF, C=$13
+        self.regs.set_de(0x00C1); // D=$00, E=$C1
+        self.regs.set_hl(0x8403); // H=$84, L=$03
+        self.regs.sp = 0xFFFE;
+        self.regs.pc = 0x0100;
+        self.ime = false;
+        self.halted = false;
+        self.halt_bug = false;
+        self.ime_pending = false;
+    }
+
     /// Advance the cycle counter by 1 M-cycle and tick peripherals.
     ///
     /// Used for internal CPU cycles that do not correspond to a memory access
@@ -209,6 +226,23 @@ impl<B: GbBus> Sm83<B> {
         if self.halt_bug {
             // HALT bug: omit the PC increment so the same byte is fetched again
             // on the next call to fetch_byte().
+            self.halt_bug = false;
+        } else {
+            self.regs.pc = self.regs.pc.wrapping_add(1);
+        }
+        val
+    }
+
+    /// Fetch the opcode byte at PC without ticking peripherals.
+    ///
+    /// Used by [`execute()`] after the pre-tick has already advanced
+    /// timer/serial for the M1 cycle.  Subsequent bytes in multi-byte
+    /// instructions still use [`fetch_byte()`] which ticks normally.
+    ///
+    /// Honors the HALT bug flag identically to [`fetch_byte()`].
+    fn fetch_byte_no_tick(&mut self) -> u8 {
+        let val = self.bus.read(self.regs.pc);
+        if self.halt_bug {
             self.halt_bug = false;
         } else {
             self.regs.pc = self.regs.pc.wrapping_add(1);
@@ -507,8 +541,8 @@ impl<B: GbBus> Sm83<B> {
         self.ime = false;
         self.ime_pending = false;
 
-        // 2 NOP cycles (internal delay).
-        self.internal_cycle();
+        // 1 NOP cycle — M2 of the 5-cycle dispatch.
+        // M1 was consumed by execute()'s pre-tick.
         self.internal_cycle();
 
         // Push PC high byte onto the stack (M3).
@@ -573,6 +607,19 @@ impl<B: GbBus> Sm83<B> {
     /// Execute one instruction (or service a pending interrupt) and return.
     ///
     /// If halted and no interrupt is pending, consumes 1 M-cycle doing nothing.
+    ///
+    /// ## M1 cycle ordering
+    ///
+    /// On real SM83 hardware the DIV counter increments at T0 of the M1
+    /// cycle and the interrupt controller samples IE & IF at T1–T2 of the
+    /// *same* cycle.  To match this, we tick peripherals **before** checking
+    /// interrupts so that timer/serial side-effects (e.g. serial-transfer
+    /// completion setting IF.3) are visible to the interrupt check.
+    ///
+    /// The opcode read then uses [`fetch_byte_no_tick()`] since the M1 tick
+    /// has already been consumed by the pre-tick.  Subsequent bytes in
+    /// multi-byte instructions continue to use the regular [`fetch_byte()`]
+    /// which ticks normally.
     pub fn execute(&mut self) {
         // Snapshot IME-pending state *before* this instruction runs.
         // IME becomes active at the *end* of the instruction following EI —
@@ -580,16 +627,26 @@ impl<B: GbBus> Sm83<B> {
         // instruction onwards (EI, following-instr, *here*).
         let pending = self.ime_pending;
 
-        // Try to service a pending interrupt first.
+        // Per-instruction bus/PPU setup (must precede the M1 tick).
+        self.bus.begin_instruction();
+
+        // T0 of M1: advance timer/serial before the interrupt check.
+        self.cycles += 1;
+        self.bus.tick(1);
+
+        // T1–T2 of M1: check & potentially dispatch interrupts.
+        // service_interrupts() consumes 4 more M-cycles internally when
+        // dispatching (NOP + push_hi + push_lo + vector), giving the correct
+        // total of 5 M-cycles for an interrupt dispatch.
         if self.service_interrupts() {
             return;
         }
 
         if self.halted {
-            self.internal_cycle(); // stall
+            // The pre-tick above IS the halt stall cycle.  (1M total)
         } else {
-            self.bus.begin_instruction();
-            let opcode = self.fetch_byte();
+            // T3 of M1: read opcode (no additional tick).
+            let opcode = self.fetch_byte_no_tick();
             self.decode_execute(opcode);
         }
 

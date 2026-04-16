@@ -1,6 +1,7 @@
 use crate::gb::bus::DmgBus;
 use crate::gb::cartridge::load_cartridge;
 use crate::gb::console::Gb;
+use crate::gb::model::DmgModel;
 
 /// The expected Nintendo logo bitmap (48 bytes) at cartridge header $0104–$0133.
 ///
@@ -66,7 +67,7 @@ fn run_until_cartridge_entry(gb: &mut Gb<DmgBus>) -> bool {
 fn test_dmg_boot_sets_correct_register_state() {
     let rom = build_test_rom(&NINTENDO_LOGO);
     let cart = load_cartridge(&rom).expect("valid ROM");
-    let mut gb = Gb::new(DmgBus::new(cart));
+    let mut gb = Gb::new(DmgBus::new(cart, DmgModel::DmgAbc));
 
     let reached = run_until_cartridge_entry(&mut gb);
 
@@ -96,7 +97,7 @@ fn test_dmg_boot_halts_on_corrupted_logo() {
     let bad_logo = [0u8; 48]; // all-zero logo — definitely wrong
     let rom = build_test_rom(&bad_logo);
     let cart = load_cartridge(&rom).expect("valid ROM");
-    let mut gb = Gb::new(DmgBus::new(cart));
+    let mut gb = Gb::new(DmgBus::new(cart, DmgModel::DmgAbc));
 
     let reached = run_until_cartridge_entry(&mut gb);
 

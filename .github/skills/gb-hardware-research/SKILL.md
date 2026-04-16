@@ -36,27 +36,34 @@ Use this skill whenever you need details about any part of Game Boy or Game Boy 
 - Inline comments like `; M=1: OAM still accessible` are authoritative — they document verified hardware observations.
 - Use the test source to confirm what exact assertion the ROM makes before diagnosing the emulator.
 
-5. If specification coverage is missing or incomplete, inspect SameBoy carefully.
+5. When researching PPU Mode 3 timing penalties, apply M-cycle quantization.
+
+- Pan Docs specifies Mode 3 penalties (OBJ penalty, SCX fine-scroll, window) in T-cycle (dot) precision.
+- **Critical gap in Pan Docs**: the CPU observes Mode 3 end only at M-cycle boundaries (every 4 dots). The raw dot penalty from Pan Docs cannot be used directly as `mode3_extra_dots` — it must be quantized: `mode3_extra_dots = floor(raw_penalty_dots / 4) * 4`.
+- This gap is not stated in Pan Docs but is required for cycle-accurate Mooneye tests (e.g., `intr_2_mode0_timing_sprites`) to pass. Without quantization, STAT mode reads by the CPU will be off by one M-cycle.
+- When SameBoy confirms a penalty formula but your integration test still fails, check whether you need to apply this quantization before hooking the penalty into the timing engine.
+
+6. If specification coverage is missing or incomplete, inspect SameBoy carefully.
 
 - Prefer `LIJI32/SameBoy` and focus on `Core/`.
 - Use SameBoy only after checking Pan Docs and its source.
 - Treat SameBoy as implementation evidence, not as equal authority with a written hardware specification.
 - If SameBoy appears to make a choice where the specification is unclear, say that explicitly instead of presenting it as confirmed hardware fact.
 
-6. When sources disagree or remain ambiguous, report that directly.
+7. When sources disagree or remain ambiguous, report that directly.
 
 - Name the conflicting sources.
 - State which source is more authoritative for the question at hand and why.
 - Do not merge conflicting claims into a guessed answer.
 
-7. Produce a detailed, source-backed answer.
+8. Produce a detailed, source-backed answer.
 
 - Start with a high-level explanation of the hardware behavior.
 - Then cover precise details such as registers, bit meanings, address ranges, timing, ordering, side effects, open bus behavior, edge cases, and model differences.
 - Clearly label what is confirmed by specification, what is supported only by emulator implementation, and what is still unknown.
 - Cite the exact Pan Docs pages or SameBoy files you used.
 
-8. Never guess.
+9. Never guess.
 
 - If no authoritative information is available, say so plainly.
 - If the available information is partial, answer only the supported part and identify the gaps.
