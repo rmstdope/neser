@@ -345,7 +345,7 @@ impl GbBus for DmgBus {
             0xFEA0..=0xFEFF => 0xFF,
             0xFF00 => self.joypad.read(),
             0xFF01 => self.sb,
-            0xFF02 => self.sc,
+            0xFF02 => self.sc | 0x7E, // bits 6-1 unused on DMG, always read as 1
             0xFF04..=0xFF07 => self.timer.read(addr),
             0xFF0F => self.if_reg | 0xE0,
             0xFF10..=0xFF3F => self.apu.read_register(addr),
@@ -815,10 +815,19 @@ mod tests {
     #[test]
     fn test_serial_sc_write_no_transfer_roundtrip() {
         // Given: fresh bus; When: write 0x40 (bit 7 clear, no transfer) to $FF02 (SC);
-        // Then: read back 0x40
+        // Then: read back 0x7E — bits 6-1 are unused on DMG and always return 1
         let mut bus = make_bus();
         bus.write(0xFF02, 0x40);
-        assert_eq!(bus.read(0xFF02), 0x40);
+        assert_eq!(bus.read(0xFF02), 0x7E);
+    }
+
+    #[test]
+    fn test_sc_unused_bits_always_one() {
+        // DMG hardware: SC bits 6-1 are unused and must always read as 1.
+        // Given: write 0x00 to SC; When: read SC; Then: bits 6-1 are still 1.
+        let mut bus = make_bus();
+        bus.write(0xFF02, 0x00);
+        assert_eq!(bus.read(0xFF02) & 0x7E, 0x7E);
     }
 
     #[test]
