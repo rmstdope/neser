@@ -56,7 +56,20 @@ pub fn fetch_sprite_pixel(
     lcdc: u8,
 ) -> Option<SpritePixel> {
     let height: u8 = if lcdc & 0x04 != 0 { 16 } else { 8 };
-    for &i in sprite_indices {
+
+    // DMG drawing priority: lower OAM X wins; equal X breaks ties by lower OAM index.
+    // https://gbdev.io/pandocs/OAM.html#drawing-priority
+    // `scan_oam_line` caps sprites at 10, so a fixed stack buffer avoids heap allocation
+    // in this hot path (called once per screen pixel, 160×144 times per frame).
+    let mut sorted = [0usize; 10];
+    let mut count = 0usize;
+    for &i in sprite_indices.iter().take(10) {
+        sorted[count] = i;
+        count += 1;
+    }
+    sorted[..count].sort_by_key(|&i| (oam[i * 4 + 1], i));
+
+    for &i in &sorted[..count] {
         let oam_y = oam[i * 4];
         let oam_x = oam[i * 4 + 1];
         let tile_num = oam[i * 4 + 2];
@@ -313,6 +326,90 @@ mod tests {
         assert_eq!(px.colour_index, 1);
         assert_eq!(px.palette, 0);
         assert!(!px.bg_priority);
+    }
+
+    /// Build an OAM with two overlapping sprites on scanline 0:
+    /// - OAM index 0: OAM_X=28 (screen_x=20), tile 1 → colour index 2 at x=20
+    /// - OAM index 1: OAM_X=24 (screen_x=16), tile 2 → colour index 1 at x=20
+    ///
+    /// DMG rule: lower OAM_X wins regardless of OAM index.
+    /// So sprite 1 (OAM_X=24) must win over sprite 0 (OAM_X=28).
+    /// Reference: https://gbdev.io/pandocs/OAM.html#drawing-priority
+    fn overlapping_oam_and_vram() -> ([u8; 0xA0], [u8; 0x2000]) {
+        let mut oam = blank_oam();
+        // Sprite 0: OAM index 0, OAM_Y=16 (screen_y=0), OAM_X=28 (screen_x=20), tile=1
+        oam[0] = 16;
+        oam[1] = 28;
+        oam[2] = 1;
+        oam[3] = 0;
+        // Sprite 1: OAM index 1, OAM_Y=16 (screen_y=0), OAM_X=24 (screen_x=16), tile=2
+        oam[4] = 16;
+        oam[5] = 24;
+        oam[6] = 2;
+        oam[7] = 0;
+
+        let mut vram = blank_vram();
+        // Tile 1 row 0: colour index 2 (high=1, low=0) at all pixels.
+        // colour_index = ((high >> bit) & 1) << 1 | ((low >> bit) & 1)
+        // For index 2: high byte = 0xFF, low byte = 0x00
+        vram[0x0010] = 0x00; // tile 1 low
+        vram[0x0011] = 0xFF; // tile 1 high → colour 2 everywhere
+        // Tile 2 row 0: colour index 1 (high=0, low=1) at all pixels.
+        vram[0x0020] = 0xFF; // tile 2 low → colour 1 everywhere
+        vram[0x0021] = 0x00; // tile 2 high
+
+        (oam, vram)
+    }
+
+    /// DMG OBJ priority: lower X-coordinate wins, even if it has a higher OAM index.
+    ///
+    /// At x=20: sprite 0 (OAM index 0, screen_x=20) and sprite 1 (OAM index 1, screen_x=16)
+    /// both cover this column. Sprite 1 has the lower OAM_X (24 < 28) so it must win.
+    #[test]
+    fn test_lower_oam_x_wins_over_lower_oam_index() {
+        let (oam, vram) = overlapping_oam_and_vram();
+        let lcdc = 0x02u8;
+        let indices = vec![0usize, 1usize];
+        // When: fetch sprite pixel at x=20 (both sprites overlap here)
+        let result = fetch_sprite_pixel(20, 0, &indices, &oam, &vram, lcdc);
+        // Then: sprite 1 (OAM_X=24, lower X) wins → colour index 1
+        assert!(result.is_some());
+        assert_eq!(
+            result.unwrap().colour_index,
+            1,
+            "sprite with lower OAM_X should win, not lower OAM index"
+        );
+    }
+
+    /// OAM index tiebreaker: when two sprites share the same X-coordinate,
+    /// the one with the lower OAM index wins (matches current + correct behaviour).
+    #[test]
+    fn test_equal_oam_x_lower_oam_index_wins() {
+        let mut oam = blank_oam();
+        // Sprite 0 (OAM index 0) and sprite 1 (OAM index 1): same OAM_X=8 (screen_x=0)
+        // Tile 1 → colour 2; tile 2 → colour 1
+        oam[0] = 16;
+        oam[1] = 8;
+        oam[2] = 1;
+        oam[3] = 0;
+        oam[4] = 16;
+        oam[5] = 8;
+        oam[6] = 2;
+        oam[7] = 0;
+        let mut vram = blank_vram();
+        vram[0x0010] = 0x00;
+        vram[0x0011] = 0xFF; // tile 1 → colour 2
+        vram[0x0020] = 0xFF;
+        vram[0x0021] = 0x00; // tile 2 → colour 1
+        let lcdc = 0x02u8;
+        let indices = vec![0usize, 1usize];
+        let result = fetch_sprite_pixel(0, 0, &indices, &oam, &vram, lcdc);
+        assert!(result.is_some());
+        assert_eq!(
+            result.unwrap().colour_index,
+            2,
+            "on equal OAM_X, lower OAM index (sprite 0, colour 2) should win"
+        );
     }
 
     #[test]
