@@ -140,6 +140,10 @@ const MAX_TILE_WAIT: u16 = 5;
 ///
 /// Returns total penalty in dots (T-cycles).
 pub fn calculate_obj_penalty(sprite_indices: &[usize], oam: &[u8; 0xA0], scx: u8) -> u16 {
+    debug_assert!(
+        sprite_indices.len() <= 10,
+        "OAM scan is capped at 10 sprites per scanline"
+    );
     if sprite_indices.is_empty() {
         return 0;
     }
@@ -167,8 +171,10 @@ pub fn calculate_obj_penalty(sprite_indices: &[usize], oam: &[u8; 0xA0], scx: u8
 
         if !seen_tiles[..seen_count].contains(&tile_id) {
             total_penalty += tile_wait_penalty(oam_x, bg_x);
-            seen_tiles[seen_count] = tile_id;
-            seen_count += 1;
+            if seen_count < seen_tiles.len() {
+                seen_tiles[seen_count] = tile_id;
+                seen_count += 1;
+            }
         }
         total_penalty += OBJ_FETCH_DOTS;
     }
