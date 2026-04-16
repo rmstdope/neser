@@ -29,14 +29,14 @@ fn save_screen_png(gb: &Gb<DmgBus>, path: &str) {
     use crate::gb::ppu::screen_buffer::ScreenBuffer;
     use png::{BitDepth, ColorType, Encoder};
     use std::fs::File;
-    use std::io::BufWriter;
+    use std::io::{BufWriter, Write};
 
     let buf = gb.cpu.bus.ppu.screen_buffer();
     let w = ScreenBuffer::WIDTH;
     let h = ScreenBuffer::HEIGHT;
     let file = File::create(path).expect("should create PNG file");
-    let writer = BufWriter::new(file);
-    let mut enc = Encoder::new(writer, w, h);
+    let mut bw = BufWriter::new(file);
+    let mut enc = Encoder::new(&mut bw, w, h);
     enc.set_color(ColorType::Rgb);
     enc.set_depth(BitDepth::Eight);
     let mut png_writer = enc.write_header().expect("write PNG header");
@@ -49,6 +49,8 @@ fn save_screen_png(gb: &Gb<DmgBus>, path: &str) {
         })
         .collect();
     png_writer.write_image_data(&raw).expect("write PNG data");
+    drop(png_writer);
+    bw.flush().expect("flush PNG writer");
 }
 
 /// Validate that `dmg-acid2.gb` renders a frame matching the expected CRC.

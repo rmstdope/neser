@@ -59,10 +59,17 @@ pub fn fetch_sprite_pixel(
 
     // DMG drawing priority: lower OAM X wins; equal X breaks ties by lower OAM index.
     // https://gbdev.io/pandocs/OAM.html#drawing-priority
-    let mut sorted: Vec<usize> = sprite_indices.to_vec();
-    sorted.sort_by_key(|&i| (oam[i * 4 + 1], i));
+    // `scan_oam_line` caps sprites at 10, so a fixed stack buffer avoids heap allocation
+    // in this hot path (called once per screen pixel, 160×144 times per frame).
+    let mut sorted = [0usize; 10];
+    let mut count = 0usize;
+    for &i in sprite_indices.iter().take(10) {
+        sorted[count] = i;
+        count += 1;
+    }
+    sorted[..count].sort_by_key(|&i| (oam[i * 4 + 1], i));
 
-    for &i in &sorted {
+    for &i in &sorted[..count] {
         let oam_y = oam[i * 4];
         let oam_x = oam[i * 4 + 1];
         let tile_num = oam[i * 4 + 2];
