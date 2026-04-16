@@ -108,6 +108,14 @@ pub struct Cpu {
     current_tick_info: Option<(u8, u8)>,
     /// The most recent non-dummy write address during the current instruction, if any.
     last_cpu_write_addr: Option<u16>,
+    /// Cached from the inserted cartridge's mapper capabilities.
+    /// True when the mapper provides expansion audio channels (e.g. VRC6, MMC5, Namco 163).
+    /// Used to skip the expensive nested RefCell borrow chain when no expansion audio is present.
+    mapper_has_expansion_audio: bool,
+    /// Cached from the inserted cartridge's mapper capabilities.
+    /// True when the mapper can generate IRQ interrupts.
+    /// Used to skip the mapper IRQ poll when the mapper cannot generate IRQs.
+    mapper_has_irq: bool,
 }
 
 // Status register flags
@@ -232,6 +240,8 @@ impl Cpu {
             interrupt_stack: Vec::with_capacity(2),
             current_tick_info: None,
             last_cpu_write_addr: None,
+            mapper_has_expansion_audio: false,
+            mapper_has_irq: false,
         }
     }
 
@@ -277,6 +287,32 @@ impl Cpu {
     #[cfg(test)]
     pub fn set_total_cycles(&mut self, cycles: u64) {
         self.total_cycles = cycles;
+    }
+
+    /// Update `mapper_has_expansion_audio` and `mapper_has_irq` from the currently
+    /// inserted cartridge's mapper capabilities.
+    ///
+    /// Must be called whenever a new cartridge is inserted. These flags gate
+    /// expensive per-cycle nested `RefCell` borrow chains so they are only paid
+    /// when the mapper actually requires them.
+    pub fn update_mapper_capability_flags(&mut self) {
+        if let Some(caps) = self.bus.borrow().cartridge_mapper_capabilities() {
+            self.mapper_has_expansion_audio = caps.has_expansion_audio;
+            self.mapper_has_irq = caps.has_irq;
+        } else {
+            self.mapper_has_expansion_audio = false;
+            self.mapper_has_irq = false;
+        }
+    }
+
+    #[cfg(test)]
+    pub fn test_mapper_has_expansion_audio(&self) -> bool {
+        self.mapper_has_expansion_audio
+    }
+
+    #[cfg(test)]
+    pub fn test_mapper_has_irq(&self) -> bool {
+        self.mapper_has_irq
     }
 
     #[cfg(test)]
@@ -395,7 +431,11 @@ impl Cpu {
         // Level-triggered IRQ line: sample hardware lines each CPU cycle.
         // Unit tests may force an asserted IRQ via `forced_irq_pending`.
         let irq_asserted_from_apu = self.apu.borrow().poll_irq();
-        let irq_asserted_from_mapper = self.bus.borrow().mapper_irq_pending();
+        let irq_asserted_from_mapper = if self.mapper_has_irq {
+            self.bus.borrow().mapper_irq_pending()
+        } else {
+            false
+        };
         self.irq_pending =
             irq_asserted_from_apu || irq_asserted_from_mapper || self.forced_irq_pending;
 
@@ -515,7 +555,11 @@ impl Cpu {
         let ppu_cycles = self.master_clock.ppu_cycles_since_last();
         self.ppu.borrow_mut().run_ppu_cycles(ppu_cycles);
 
-        let expansion = self.bus.borrow().mapper_expansion_audio_sample();
+        let expansion = if self.mapper_has_expansion_audio {
+            self.bus.borrow().mapper_expansion_audio_sample()
+        } else {
+            0.0
+        };
         self.apu.borrow_mut().clock_with_expansion(expansion);
 
         // Synthetic cycles (DMA stalls) still advance mapper IRQ counters and expansion audio.
@@ -545,7 +589,11 @@ impl Cpu {
         self.ppu.borrow_mut().run_ppu_cycles(ppu_cycles);
 
         for _ in 0..cpu_cycles {
-            let expansion = self.bus.borrow().mapper_expansion_audio_sample();
+            let expansion = if self.mapper_has_expansion_audio {
+                self.bus.borrow().mapper_expansion_audio_sample()
+            } else {
+                0.0
+            };
             self.apu.borrow_mut().clock_with_expansion(expansion);
 
             // Synthetic cycles still advance mapper IRQ counters and expansion audio.
@@ -560,7 +608,11 @@ impl Cpu {
         self.prev_run_irq = self.run_irq;
 
         let irq_asserted_from_apu = self.apu.borrow().poll_irq();
-        let irq_asserted_from_mapper = self.bus.borrow().mapper_irq_pending();
+        let irq_asserted_from_mapper = if self.mapper_has_irq {
+            self.bus.borrow().mapper_irq_pending()
+        } else {
+            false
+        };
         self.irq_pending =
             irq_asserted_from_apu || irq_asserted_from_mapper || self.forced_irq_pending;
 
@@ -676,7 +728,11 @@ impl Cpu {
         self.total_cycles += 1;
         let ppu_cycles = self.master_clock.ppu_cycles_since_last();
         self.ppu.borrow_mut().run_ppu_cycles(ppu_cycles);
-        let expansion = self.bus.borrow().mapper_expansion_audio_sample();
+        let expansion = if self.mapper_has_expansion_audio {
+            self.bus.borrow().mapper_expansion_audio_sample()
+        } else {
+            0.0
+        };
         self.apu.borrow_mut().clock_with_expansion(expansion);
     }
 
@@ -3197,6 +3253,7 @@ mod tests {
         let cartridge = Cartridge::load_from_file(&rom, "cpu-mmc3-test.nes", None)
             .expect("MMC3 iNES ROM should parse");
         cpu.bus.borrow_mut().map_cartridge(cartridge);
+        cpu.update_mapper_capability_flags();
 
         cpu.reset(true);
         cpu.p &= !FLAG_INTERRUPT; // allow IRQs
@@ -16687,5 +16744,109 @@ mod tests {
 
         cpu.execute(); // LDA — read only, should clear last_cpu_write_addr
         assert_eq!(cpu.last_cpu_write_addr(), None);
+    }
+
+    // --- Mapper capability flag caching tests (issue #2108 hot-path optimization) ---
+
+    fn make_ines_rom_for_mapper(mapper_id: u8) -> Vec<u8> {
+        // Build a minimal valid iNES 1.0 header for the given mapper.
+        // 2 × 16 KiB PRG banks, 1 × 8 KiB CHR bank.
+        let flags6 = (mapper_id & 0x0F) << 4;
+        let flags7 = mapper_id & 0xF0;
+        let mut rom = vec![
+            b'N', b'E', b'S', 0x1A, 2, 1, flags6, flags7, 0, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        rom.extend(vec![0u8; 2 * 16 * 1024]); // 2 PRG banks
+        rom.extend(vec![0u8; 8 * 1024]); // 1 CHR bank
+        rom
+    }
+
+    #[test]
+    fn mapper_capability_flags_expansion_audio_false_for_nrom() {
+        // NROM (mapper 0) has no expansion audio — flag must be false after insert.
+        let (ppu, apu, memory) = create_test_memory();
+        let mut cpu = Cpu::new(
+            TimingMode::Ntsc,
+            Rc::clone(&memory),
+            Rc::clone(&ppu),
+            Rc::clone(&apu),
+        );
+
+        let prg_rom = vec![0u8; 0x4000];
+        let chr_rom = vec![0u8; 0x2000];
+        let cart = Cartridge::from_parts(prg_rom, chr_rom, NametableLayout::Horizontal);
+        memory.borrow_mut().map_cartridge(cart);
+        cpu.update_mapper_capability_flags();
+
+        assert!(
+            !cpu.test_mapper_has_expansion_audio(),
+            "NROM must not report expansion audio"
+        );
+    }
+
+    #[test]
+    fn mapper_capability_flags_expansion_audio_true_for_vrc6() {
+        // VRC6 (mapper 24) has expansion audio — flag must be true after insert.
+        let (ppu, apu, memory) = create_test_memory();
+        let mut cpu = Cpu::new(
+            TimingMode::Ntsc,
+            Rc::clone(&memory),
+            Rc::clone(&ppu),
+            Rc::clone(&apu),
+        );
+
+        let rom_data = make_ines_rom_for_mapper(24);
+        let cart =
+            Cartridge::load_from_file(&rom_data, "vrc6-test.nes", None).expect("Load VRC6 cart");
+        memory.borrow_mut().map_cartridge(cart);
+        cpu.update_mapper_capability_flags();
+
+        assert!(
+            cpu.test_mapper_has_expansion_audio(),
+            "VRC6 must report expansion audio"
+        );
+    }
+
+    #[test]
+    fn mapper_capability_flags_irq_false_for_nrom() {
+        // NROM (mapper 0) has no IRQ — flag must be false after insert.
+        let (ppu, apu, memory) = create_test_memory();
+        let mut cpu = Cpu::new(
+            TimingMode::Ntsc,
+            Rc::clone(&memory),
+            Rc::clone(&ppu),
+            Rc::clone(&apu),
+        );
+
+        let prg_rom = vec![0u8; 0x4000];
+        let chr_rom = vec![0u8; 0x2000];
+        let cart = Cartridge::from_parts(prg_rom, chr_rom, NametableLayout::Horizontal);
+        memory.borrow_mut().map_cartridge(cart);
+        cpu.update_mapper_capability_flags();
+
+        assert!(
+            !cpu.test_mapper_has_irq(),
+            "NROM must not report IRQ capability"
+        );
+    }
+
+    #[test]
+    fn mapper_capability_flags_irq_true_for_mmc3() {
+        // MMC3 (mapper 4) has IRQ — flag must be true after insert.
+        let (ppu, apu, memory) = create_test_memory();
+        let mut cpu = Cpu::new(
+            TimingMode::Ntsc,
+            Rc::clone(&memory),
+            Rc::clone(&ppu),
+            Rc::clone(&apu),
+        );
+
+        let rom_data = make_ines_rom_for_mapper(4);
+        let cart =
+            Cartridge::load_from_file(&rom_data, "mmc3-test.nes", None).expect("Load MMC3 cart");
+        memory.borrow_mut().map_cartridge(cart);
+        cpu.update_mapper_capability_flags();
+
+        assert!(cpu.test_mapper_has_irq(), "MMC3 must report IRQ capability");
     }
 }

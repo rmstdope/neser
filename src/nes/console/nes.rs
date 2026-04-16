@@ -254,11 +254,17 @@ impl Nes {
         let ram_init_mode = self.app_context.borrow().config().nes.ram_init_mode;
         cartridge.initialize_ram(ram_init_mode);
 
-        let mut bus = self.bus.borrow_mut();
-        bus.map_cartridge(cartridge);
+        {
+            let mut bus = self.bus.borrow_mut();
+            bus.map_cartridge(cartridge);
+            // Sync controller modes so the bus reflects any config changes from ROM DB
+            // auto-detection.
+            bus.sync_controller_modes_from_config();
+        } // bus borrow released here
 
-        // Sync controller modes so the bus reflects any config changes from ROM DB auto-detection
-        bus.sync_controller_modes_from_config();
+        // Update cached mapper capability flags so the CPU hot path can skip
+        // unnecessary per-cycle RefCell borrows for non-IRQ / non-expansion-audio mappers.
+        self.cpu.update_mapper_capability_flags();
 
         // Get controller config and explicit flags from stored config
         let app_context = self.app_context.borrow();
@@ -272,6 +278,7 @@ impl Nes {
         // If any controller port is explicitly configured, disable ROM DB auto-detection
         // for all ports and apply configured values directly.
         if port1_explicit || port2_explicit {
+            let mut bus = self.bus.borrow_mut();
             bus.set_controller_type(1, port1_type);
             bus.set_controller_type(2, port2_type);
             self.log_hardware_summary();
@@ -306,6 +313,7 @@ impl Nes {
                 "Auto-detected {} on port {} for this cartridge. Override with --controller-port{}=<type> if needed.",
                 auto_label, auto_port, auto_port
             ));
+            let mut bus = self.bus.borrow_mut();
             bus.set_controller_type(auto_port, auto_type);
 
             // Track effective controller types as per-cartridge runtime state.
@@ -324,6 +332,7 @@ impl Nes {
             bus.set_controller_type(other_port, other_port_type);
         } else {
             // No special controller detected, just apply user config
+            let mut bus = self.bus.borrow_mut();
             bus.set_controller_type(1, port1_type);
             bus.set_controller_type(2, port2_type);
             self.active_controller_port1 = port1_type;
