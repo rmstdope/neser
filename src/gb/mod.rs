@@ -5,10 +5,12 @@ pub mod cartridge;
 pub mod console;
 pub mod cpu;
 pub mod input;
+pub mod model;
 pub mod ppu;
 pub mod timer;
 
 pub use console::gameboy::GameBoy;
+pub use model::DmgModel;
 
 #[cfg(test)]
 pub mod integration_tests;

@@ -1,8 +1,9 @@
 use crate::gb::apu::Apu;
-use crate::gb::boot_rom::DMG_BOOT_ROM;
+use crate::gb::boot_rom::{DMG_BOOT_ROM, DMG0_BOOT_ROM};
 use crate::gb::bus::GbBus;
 use crate::gb::cartridge::GbCartridge;
 use crate::gb::input::joypad::Joypad;
+use crate::gb::model::DmgModel;
 use crate::gb::ppu::Ppu;
 use crate::gb::timer::Timer;
 
@@ -86,26 +87,33 @@ pub struct DmgBus {
     /// "edge injection" SameBoy performs — ensuring the first serial bit is
     /// timed at the correct phase relative to the div counter.
     serial_master_clock: bool,
+    /// Hardware model variant (DMG-ABC or DMG-0).
+    /// Determines which boot ROM is loaded and which CPU post-boot register
+    /// values are used on reset.
+    model: DmgModel,
 }
 
 impl DmgBus {
-    pub fn new(cart: Box<dyn GbCartridge>) -> Self {
+    pub fn new(cart: Box<dyn GbCartridge>, model: DmgModel) -> Self {
         let is_cgb = cart.is_cgb();
+        let boot_rom = match model {
+            DmgModel::DmgAbc => DMG_BOOT_ROM,
+            DmgModel::Dmg0 => DMG0_BOOT_ROM,
+        };
         let mut bus = Self {
             cart,
             ppu: Ppu::new(),
             wram: [0u8; 0x2000],
             hram: [0u8; 0x7F],
             // Real DMG-B hardware has a sub-byte div_counter phase of 204 T-cycles
-            // at power-on. Setting this initial value ensures our custom boot ROM
-            // exits at the correct clock phase (div_counter = 28364) so that
-            // serial clock edges align with acceptance-test expectations.
+            // at power-on. Setting this initial value ensures the serial clock edges
+            // align with acceptance-test expectations (serial/boot_sclk_align-dmgABCmgb).
             timer: Timer::with_div_counter(204),
             joypad: Joypad::new(),
             apu: Apu::new(is_cgb),
             if_reg: 0,
             ie_reg: 0,
-            boot_rom: DMG_BOOT_ROM,
+            boot_rom,
             boot_rom_active: true,
             sb: 0xFF,
             sc: 0x7E,
@@ -116,6 +124,7 @@ impl DmgBus {
             dma_source: 0,
             dma_position: 0,
             dma_oam_blocked: false,
+            model,
         };
         // Real DMG hardware powers on with LCDC=$00 (LCD disabled).
         // The boot ROM tile-loading runs while the LCD is off so VRAM writes
@@ -140,6 +149,10 @@ impl DmgBus {
         self.hram = [0u8; 0x7F];
         self.if_reg = 0;
         self.ie_reg = 0;
+        self.boot_rom = match self.model {
+            DmgModel::DmgAbc => DMG_BOOT_ROM,
+            DmgModel::Dmg0 => DMG0_BOOT_ROM,
+        };
         self.boot_rom_active = true;
         self.sb = 0xFF;
         self.sc = 0x7E;
@@ -155,6 +168,11 @@ impl DmgBus {
     /// Returns `true` while the boot ROM is still mapped at $0000–$00FF.
     pub fn is_boot_rom_active(&self) -> bool {
         self.boot_rom_active
+    }
+
+    /// Returns the hardware model variant this bus was constructed for.
+    pub fn model(&self) -> DmgModel {
+        self.model
     }
 
     /// Returns bytes captured via serial transfer ($FF01/$FF02).
@@ -470,7 +488,7 @@ mod tests {
     }
 
     fn make_bus() -> DmgBus {
-        DmgBus::new(rom_only_cart())
+        DmgBus::new(rom_only_cart(), DmgModel::DmgAbc)
     }
 
     // ── VRAM ─────────────────────────────────────────────────────────────────

@@ -118,7 +118,7 @@ pub const DMG_BOOT_ROM: [u8; 256] = [
     0x3E, 0xAA, 0xE0, 0x47, // LD A,$AA; LDH [$FF47] (BGP dark)
     // .noPaletteChange:
     0x0D, // DEC C
-    0x20, 0xE7, // JR NZ, .animLoop
+    0x20, 0xE7, // JR NZ, .animLoop (-25, → $004F)
     // ── $006A: Final palette + wait ──────────────────────────────────────────
     // BGP=$FC (%11_11_11_00) = all-dark.  Wait ~60 frames (~1 second).
     0x3E, 0xFC, 0xE0, 0x47, // LD A,$FC; LDH [$FF47] (BGP)
@@ -231,5 +231,116 @@ pub const DMG_BOOT_ROM: [u8; 256] = [
     // The CPU's next fetch ($0100) goes to cartridge ROM.
     // This instruction must live at exactly $00FE (hardware constraint).
     // ─────────────────────────────────────────────────────────────────────────
+    0xE0, 0x50, // LDH [$FF50], A  (unmap boot ROM → execute $0100)
+];
+
+/// Open-source DMG-0 (first production run) boot ROM replacement.
+///
+/// DMG-0 had a simpler boot ROM than later DMG revisions: no logo scroll
+/// animation, no header verification. This replacement reproduces the exact
+/// post-boot hardware state measured from real DMG-0 hardware.
+///
+/// ## Post-boot state produced
+///
+/// | Register | Value |    | I/O       | Value |
+/// |----------|-------|----|-----------|-------|
+/// | A        | $01   |    | DIV       | $18   |
+/// | F        | $00   |    | LY        | $01   |
+/// | B        | $FF   |    | STAT      | $83   |
+/// | C        | $13   |    | BGP       | $FC   |
+/// | D        | $00   |    | LCDC      | $91   |
+/// | E        | $C1   |    |           |       |
+/// | H        | $84   |    |           |       |
+/// | L        | $03   |    |           |       |
+/// | SP       | $FFFE |    |           |       |
+///
+/// ## Timing
+///
+/// Total M-cycles: **1496**.  With `div_counter` initial value 204:
+///   `204 + 1496 × 4 = 6188`  →  DIV = $18 at boot exit.
+///
+/// The `boot_div-dmg0` test first reads DIV 53 M-cycles after `$0100`:
+///   `6188 + 53 × 4 = 6400 = $1900`  →  read returns $19 ✓, phase = 0 (just after increment).
+///
+/// LCD is enabled (`LCDC=$91`) at M-cycle 1342, so the PPU runs for
+/// 154 M-cycles = 616 T-cycles before the boot exits.
+/// Line 1 mode 3 spans T-cycles 536–707 from LCD enable;
+/// 616 is inside that window, giving `LY=$01 STAT=$83` at cartridge entry.
+///
+/// ## ROM layout
+///
+/// | Address | Content                              | M-cycles |
+/// |---------|--------------------------------------|----------|
+/// | $0000   | LD SP / APU init / BGP               | 26       |
+/// | $0015   | Pre-LCD delay loop (HL counter = 187)| 1311     |
+/// | $001D   | Enable LCD (LCDC = $91)              | 5        |
+/// | $0021   | Post-LCD delay (B counter = 33)      | 133      |
+/// | $0026   | 2 × NOP (fine-tune timing)           | 2        |
+/// | $0028   | Set post-boot CPU registers          | 12       |
+/// | $0034   | JP $00FE                             | 4        |
+/// | $00FE   | LDH [$FF50], A (unmap boot ROM)      | 3        |
+/// |         | **Total**                            | **1496** |
+pub const DMG0_BOOT_ROM: [u8; 256] = [
+    // ── $0000: LD SP, $FFFE ──────────────────────────────────────────────────
+    0x31, 0xFE, 0xFF,
+    // ── $0003: APU init ──────────────────────────────────────────────────────
+    0x3E, 0x80, 0xE0, 0x26, // NR52 = $80  (enable APU, all channels off)
+    0x3E, 0xF3, 0xE0, 0x12, // NR12 = $F3  (channel 1 envelope: initial vol 15, increase)
+    0xE0, 0x25, // NR51 = $F3  (reuse A; all channels routed to both outputs)
+    0x3E, 0x77, 0xE0, 0x24, // NR50 = $77  (master volume: both outputs at 7)
+    // ── $0011: BGP = $FC ─────────────────────────────────────────────────────
+    0x3E, 0xFC, 0xE0, 0x47,
+    // ── $0015: Pre-LCD delay loop (187 iterations × 7 M-cycles + overhead) ──
+    // LD HL, 187  ($00BB)
+    0x21, 0xBB, 0x00,
+    // Loop: DEC HL; LD A,H; OR L; JR NZ → $0018  (7 M taken / 6 M last)
+    0x2B, 0x7C, 0xB5, 0x20, 0xFB,
+    // ── $001D: Enable LCD ────────────────────────────────────────────────────
+    // LD A, $91  (LCDC: LCD on, BG on, BG tile data $8000, BG map $9800)
+    0x3E, 0x91, // LDH ($FF40), A  — write LCDC; PPU begins at M-cycle 1342
+    0xE0, 0x40,
+    // ── $0021: Post-LCD delay loop (33 iterations × 4 M-cycles + overhead) ──
+    // LD B, 33  ($21)
+    0x06, 0x21, // Loop: DEC B; JR NZ → $0023  (4 M taken / 3 M last)
+    0x05, 0x20, 0xFD,
+    // ── $0026: Fine-tune NOPs (2 × 1 M-cycle) ────────────────────────────────
+    0x00, 0x00,
+    // ── $0028: Set post-boot CPU registers ───────────────────────────────────
+    0x01, 0x13, 0xFF, // LD BC, $FF13  →  B=$FF, C=$13
+    0x11, 0xC1, 0x00, // LD DE, $00C1  →  D=$00, E=$C1
+    0x21, 0x03, 0x84, // LD HL, $8403  →  H=$84, L=$03
+    0x3E, 0x01, // LD A, $01
+    0xB7, // OR A          →  F=$00 (Z=0, N=0, H=0, C=0)
+    // ── $0034: Jump to boot exit at $00FE ─────────────────────────────────────
+    0xC3, 0xFE, 0x00, // JP $00FE
+    // ── $0037–$00FD: Unused (fill with $00) ──────────────────────────────────
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // $0037–$003E
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // $003F–$0046
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // $0047–$004E
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // $004F–$0056
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // $0057–$005E
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // $005F–$0066
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // $0067–$006E
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // $006F–$0076
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // $0077–$007E
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // $007F–$0086
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // $0087–$008E
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // $008F–$0096
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // $0097–$009E
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // $009F–$00A6
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // $00A7–$00AE
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // $00AF–$00B6
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // $00B7–$00BE
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // $00BF–$00C6
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // $00C7–$00CE
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // $00CF–$00D6
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // $00D7–$00DE
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // $00DF–$00E6
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // $00E7–$00EE
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // $00EF–$00F6
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // $00F7–$00FD
+    // ── $00FE: BootGame ──────────────────────────────────────────────────────
+    // Placed at $00FE so that PC = $0100 after the instruction executes,
+    // which is the standard cartridge entry point.
     0xE0, 0x50, // LDH [$FF50], A  (unmap boot ROM → execute $0100)
 ];

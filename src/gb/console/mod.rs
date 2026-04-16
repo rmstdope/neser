@@ -1,6 +1,7 @@
 use crate::gb::bus::DmgBus;
 use crate::gb::bus::GbBus;
 use crate::gb::cpu::Sm83;
+use crate::gb::model::DmgModel;
 
 pub mod gameboy;
 
@@ -48,15 +49,17 @@ impl Gb<DmgBus> {
         if soft_reset {
             // Soft reset: restore post-boot register state and continue from
             // the cartridge entry point, preserving WRAM and bus state.
-            self.cpu.reset_registers();
+            match self.cpu.bus.model() {
+                DmgModel::DmgAbc => self.cpu.reset_registers(),
+                DmgModel::Dmg0 => self.cpu.reset_registers_dmg0(),
+            }
         } else {
             // Hard reset: reinitialise all bus hardware and restart execution
             // from the boot ROM entry point.
-            // reset_registers() restores the normal post-boot register defaults
-            // and clears internal CPU state (including ime_pending). We then
-            // override PC to $0000 so the reactivated boot ROM runs again from
-            // the start, establishing correct power-on behaviour.
-            self.cpu.reset_registers();
+            match self.cpu.bus.model() {
+                DmgModel::DmgAbc => self.cpu.reset_registers(),
+                DmgModel::Dmg0 => self.cpu.reset_registers_dmg0(),
+            }
             self.cpu.regs.pc = 0x0000;
             self.cpu.bus.reset();
         }
@@ -107,7 +110,7 @@ mod tests {
     }
 
     fn make_dmg() -> Gb<DmgBus> {
-        Gb::new(DmgBus::new(minimal_cart()))
+        Gb::new(DmgBus::new(minimal_cart(), DmgModel::DmgAbc))
     }
 
     // ── reset: CPU registers ──────────────────────────────────────────────

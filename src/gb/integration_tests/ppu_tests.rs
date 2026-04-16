@@ -1,11 +1,12 @@
 use crate::gb::bus::DmgBus;
 use crate::gb::cartridge::load_cartridge;
 use crate::gb::console::Gb;
+use crate::gb::model::DmgModel;
 
 fn load_gb_rom(path: &str) -> Gb<DmgBus> {
     let rom = std::fs::read(path).expect("ROM file should be present");
     let cart = load_cartridge(&rom).expect("valid GB ROM");
-    Gb::new(DmgBus::new(cart))
+    Gb::new(DmgBus::new(cart, DmgModel::DmgAbc))
 }
 
 fn run_one_gb_frame(gb: &mut Gb<DmgBus>) {
