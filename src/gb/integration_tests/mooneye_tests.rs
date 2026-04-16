@@ -501,7 +501,6 @@ fn test_mooneye_acceptance_ppu_intr_2_0_timing() {
 }
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_ppu_intr_2_mode0_timing_sprites() {
     assert_mooneye_pass!(&format!(
         "{BASE}/acceptance/ppu/intr_2_mode0_timing_sprites.gb"
