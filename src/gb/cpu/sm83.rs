@@ -243,6 +243,8 @@ impl<B: GbBus> Sm83<B> {
     fn fetch_byte_no_tick(&mut self) -> u8 {
         let val = self.bus.read(self.regs.pc);
         if self.halt_bug {
+            // HALT bug: omit the PC increment so the same byte is fetched again
+            // on the next call to fetch_byte().
             self.halt_bug = false;
         } else {
             self.regs.pc = self.regs.pc.wrapping_add(1);
