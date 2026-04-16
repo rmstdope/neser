@@ -4,6 +4,7 @@
 //! [`SharedAppContext`], providing the same interface that the NES side
 //! exposes so that frontends can drive both systems through `Console`.
 
+use crate::gb::DmgModel;
 use crate::gb::bus::DmgBus;
 use crate::gb::cartridge::load_cartridge;
 use crate::gb::console::Gb;
@@ -33,7 +34,7 @@ impl GameBoy {
     /// Load a `.gb` ROM image. Replaces any previously loaded ROM.
     pub fn load_rom(&mut self, bytes: &[u8], _name: &str) -> Result<(), String> {
         let cart = load_cartridge(bytes).map_err(|e| format!("{e:?}"))?;
-        self.gb = Some(Gb::new(DmgBus::new(cart)));
+        self.gb = Some(Gb::new(DmgBus::new(cart, DmgModel::DmgAbc)));
         Ok(())
     }
 

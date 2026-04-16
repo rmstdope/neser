@@ -10,6 +10,7 @@
 use crate::gb::bus::{DmgBus, GbBus};
 use crate::gb::cartridge::load_cartridge;
 use crate::gb::console::Gb;
+use crate::gb::model::DmgModel;
 
 /// Outcome of running a Mooneye test ROM to completion.
 #[derive(Debug, PartialEq)]
@@ -43,11 +44,18 @@ const MOONEYE_CYCLE_LIMIT: u64 = 10_000_000;
 /// LD B,B opcode used as a Mooneye software breakpoint.
 const LD_B_B: u8 = 0x40;
 
-/// Load a GB ROM from `path` and return a ready-to-step `Gb<DmgBus>`.
+/// Load a GB ROM from `path` and return a ready-to-step `Gb<DmgBus>` (DMG-ABC model).
 fn load_gb_rom(path: &str) -> Gb<DmgBus> {
     let rom = std::fs::read(path).expect("Mooneye ROM file should be present");
     let cart = load_cartridge(&rom).expect("valid GB ROM");
-    Gb::new(DmgBus::new(cart))
+    Gb::new(DmgBus::new(cart, DmgModel::DmgAbc))
+}
+
+/// Load a GB ROM from `path` and return a ready-to-step `Gb<DmgBus>` (DMG-0 model).
+fn load_gb_rom_dmg0(path: &str) -> Gb<DmgBus> {
+    let rom = std::fs::read(path).expect("Mooneye ROM file should be present");
+    let cart = load_cartridge(&rom).expect("valid GB ROM");
+    Gb::new(DmgBus::new(cart, DmgModel::Dmg0))
 }
 
 /// Step `gb` until the Mooneye breakpoint fires or `cycle_limit` M-cycles elapse.
@@ -101,6 +109,12 @@ pub fn run_mooneye_rom(path: &str) -> MooneyeResult {
     detect_mooneye_result(&mut gb)
 }
 
+/// Run a Mooneye test ROM using the DMG-0 hardware model.
+pub fn run_mooneye_rom_dmg0(path: &str) -> MooneyeResult {
+    let mut gb = load_gb_rom_dmg0(path);
+    detect_mooneye_result(&mut gb)
+}
+
 // ============================================================================
 // Helper macro to produce a single-line pass assertion.
 // ============================================================================
@@ -112,6 +126,19 @@ macro_rules! assert_mooneye_pass {
             result,
             MooneyeResult::Pass,
             "Mooneye test failed: {:?} — ROM: {}",
+            result,
+            $path
+        );
+    };
+}
+
+macro_rules! assert_mooneye_pass_dmg0 {
+    ($path:expr) => {
+        let result = run_mooneye_rom_dmg0($path);
+        assert_eq!(
+            result,
+            MooneyeResult::Pass,
+            "Mooneye DMG-0 test failed: {:?} — ROM: {}",
             result,
             $path
         );
@@ -205,14 +232,14 @@ mod helper_tests {
     #[test]
     fn helper_detects_pass_when_fibonacci_registers_set() {
         let cart = load_cartridge(&make_pass_rom()).expect("valid test ROM");
-        let mut gb = Gb::new(DmgBus::new(cart));
+        let mut gb = Gb::new(DmgBus::new(cart, DmgModel::DmgAbc));
         assert_eq!(detect_mooneye_result(&mut gb), MooneyeResult::Pass);
     }
 
     #[test]
     fn helper_detects_fail_when_registers_wrong() {
         let cart = load_cartridge(&make_fail_rom()).expect("valid test ROM");
-        let mut gb = Gb::new(DmgBus::new(cart));
+        let mut gb = Gb::new(DmgBus::new(cart, DmgModel::DmgAbc));
         let result = detect_mooneye_result(&mut gb);
         assert!(
             matches!(result, MooneyeResult::Fail { b: 0xFF, .. }),
@@ -224,7 +251,7 @@ mod helper_tests {
     fn helper_returns_timeout_when_no_breakpoint() {
         let bytes = make_timeout_rom();
         let cart = load_cartridge(&bytes).expect("valid test ROM");
-        let mut gb = Gb::new(DmgBus::new(cart));
+        let mut gb = Gb::new(DmgBus::new(cart, DmgModel::DmgAbc));
         assert_eq!(
             detect_mooneye_result_with_limit(&mut gb, 1_000),
             MooneyeResult::Timeout
@@ -260,13 +287,12 @@ fn test_mooneye_acceptance_bits_unused_hwio_gs() {
 }
 
 #[test]
-#[ignore = "failing: boot ROM accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_boot_div_dmg0() {
-    assert_mooneye_pass!(&format!("{BASE}/acceptance/boot_div-dmg0.gb"));
+    assert_mooneye_pass_dmg0!(&format!("{BASE}/acceptance/boot_div-dmg0.gb"));
 }
 
 #[test]
-#[ignore = "failing: boot ROM accuracy gap — tracked in #2018"]
+#[ignore = "failing: boot ROM accuracy gap — tracked in #2072"]
 fn test_mooneye_acceptance_boot_div_dmgabcmgb() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/boot_div-dmgABCmgb.gb"));
 }
@@ -284,13 +310,13 @@ fn test_mooneye_acceptance_boot_div2_s() {
 }
 
 #[test]
-#[ignore = "failing: boot ROM accuracy gap — tracked in #2018"]
+#[ignore = "failing: boot ROM accuracy gap — tracked in #2072"]
 fn test_mooneye_acceptance_boot_hwio_dmg0() {
-    assert_mooneye_pass!(&format!("{BASE}/acceptance/boot_hwio-dmg0.gb"));
+    assert_mooneye_pass_dmg0!(&format!("{BASE}/acceptance/boot_hwio-dmg0.gb"));
 }
 
 #[test]
-#[ignore = "failing: boot ROM accuracy gap — tracked in #2018"]
+#[ignore = "failing: boot ROM accuracy gap — tracked in #2072"]
 fn test_mooneye_acceptance_boot_hwio_dmgabcmgb() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/boot_hwio-dmgABCmgb.gb"));
 }
@@ -302,9 +328,8 @@ fn test_mooneye_acceptance_boot_hwio_s() {
 }
 
 #[test]
-#[ignore = "failing: boot ROM accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_boot_regs_dmg0() {
-    assert_mooneye_pass!(&format!("{BASE}/acceptance/boot_regs-dmg0.gb"));
+    assert_mooneye_pass_dmg0!(&format!("{BASE}/acceptance/boot_regs-dmg0.gb"));
 }
 
 #[test]
