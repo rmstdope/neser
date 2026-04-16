@@ -291,7 +291,6 @@ fn test_mooneye_acceptance_boot_div_dmg0() {
 }
 
 #[test]
-#[ignore = "failing: boot ROM accuracy gap — tracked in #2072"]
 fn test_mooneye_acceptance_boot_div_dmgabcmgb() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/boot_div-dmgABCmgb.gb"));
 }
@@ -309,13 +308,11 @@ fn test_mooneye_acceptance_boot_div2_s() {
 }
 
 #[test]
-#[ignore = "failing: boot ROM accuracy gap — tracked in #2072"]
 fn test_mooneye_acceptance_boot_hwio_dmg0() {
     assert_mooneye_pass_dmg0!(&format!("{BASE}/acceptance/boot_hwio-dmg0.gb"));
 }
 
 #[test]
-#[ignore = "failing: boot ROM accuracy gap — tracked in #2072"]
 fn test_mooneye_acceptance_boot_hwio_dmgabcmgb() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/boot_hwio-dmgABCmgb.gb"));
 }

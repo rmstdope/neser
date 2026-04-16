@@ -27,7 +27,7 @@ pub struct Joypad {
 impl Joypad {
     pub fn new() -> Self {
         Self {
-            select_bits: 0x30, // neither group selected by default
+            select_bits: 0x00, // both groups selected (P14+P15 active low)
             p14_state: 0,
             p15_state: 0,
             prev_nibble: 0xF,
@@ -170,6 +170,14 @@ mod tests {
 
     // ── read/write ─────────────────────────────────────────────────────────
 
+    /// After construction, both groups selected (P14+P15 active low),
+    /// no buttons pressed → reads $CF (hardware power-on default).
+    #[test]
+    fn test_default_read_after_new() {
+        let j = Joypad::new();
+        assert_eq!(j.read(), 0xCF, "expected 0xCF, got {:#04x}", j.read());
+    }
+
     /// After construction and selecting both groups, no buttons pressed →
     /// lower nibble must be 0xF (all output lines high = released).
     #[test]
@@ -245,12 +253,13 @@ mod tests {
 
     // ── neither / both groups ──────────────────────────────────────────────
 
-    /// Neither group selected (default after new): pressing a button does not
+    /// Neither group selected: pressing a button does not
     /// change the lower nibble (all output lines float high).
     #[test]
     fn test_neither_group_selected_lower_nibble_stays_f() {
-        // Given: neither group selected (select_bits=0x30 after new)
+        // Given: neither group selected (write 0x30 to select neither)
         let mut j = Joypad::new();
+        j.write(0x30);
         // When: press A
         j.set_button(0, true);
         // Then: lower nibble is still 0xF
