@@ -281,7 +281,6 @@ fn test_mooneye_acceptance_bits_reg_f() {
 }
 
 #[test]
-#[ignore = "failing: emulation accuracy gap — tracked in #2018"]
 fn test_mooneye_acceptance_bits_unused_hwio_gs() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/bits/unused_hwio-GS.gb"));
 }
