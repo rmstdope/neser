@@ -10,6 +10,9 @@ use registers::Registers;
 use screen_buffer::ScreenBuffer;
 use timing::{PpuMode, Timing};
 
+/// Dots per CPU M-cycle — the granularity at which Mode 3 length is observable.
+const DOTS_PER_M_CYCLE: u16 = 4;
+
 /// DMG PPU.
 ///
 /// Owns VRAM ($8000–$9FFF) and OAM ($FE00–$FE9F) buffers, all I/O registers,
@@ -75,6 +78,11 @@ impl Ppu {
         // Keep lyc_eq_ly_frozen in sync with the live comparison.
         self.lyc_eq_ly_frozen = self.timing.ly() == lyc;
 
+        // At Mode 2→Mode 3 transition, extend Mode 3 with OBJ penalty.
+        if events.mode_changed && self.timing.mode() == PpuMode::PixelTransfer {
+            self.apply_obj_penalty();
+        }
+
         // Render the current visible scanline when Mode 3→Mode 0 transition fires.
         if events.render_scanline {
             let scanline = self.timing.ly();
@@ -100,6 +108,26 @@ impl Ppu {
 
         // STAT interrupt — edge-triggered on the STAT IRQ source line.
         self.update_stat_irq();
+    }
+
+    // ── STAT IRQ line ─────────────────────────────────────────────────────────
+
+    /// Apply OBJ penalty to Mode 3 at the Mode 2→3 transition.
+    ///
+    /// DMG only applies OBJ penalty when sprites are enabled (LCDC bit 1).
+    /// The penalty is computed at dot precision then quantized to M-cycle
+    /// boundaries, since Mode 3's end is only observable by the CPU every 4 dots.
+    fn apply_obj_penalty(&mut self) {
+        let sprites_enabled = self.registers.lcdc & 0x02 != 0;
+        if !sprites_enabled {
+            return;
+        }
+        let scanline = self.timing.ly();
+        let sprite_indices = sprites::scan_oam_line(scanline, &self.oam, self.registers.lcdc);
+        let penalty_dots =
+            sprites::calculate_obj_penalty(&sprite_indices, &self.oam, self.registers.scx);
+        let extra_dots = (penalty_dots / DOTS_PER_M_CYCLE) * DOTS_PER_M_CYCLE;
+        self.timing.set_mode3_extra_dots(extra_dots);
     }
 
     // ── STAT IRQ line ─────────────────────────────────────────────────────────

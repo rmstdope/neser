@@ -116,6 +116,78 @@ pub fn fetch_sprite_pixel(
     None
 }
 
+/// Flat dot cost per visible sprite (OBJ tile fetch).
+const OBJ_FETCH_DOTS: u16 = 6;
+
+/// BG tile width in pixels.
+const BG_TILE_WIDTH: i16 = 8;
+
+/// Sprites with OAM X ≥ 168 are fully off-screen right and incur no penalty.
+const OAM_X_OFFSCREEN: u8 = 168;
+
+/// Maximum tile-wait penalty when a sprite is the first on its BG tile.
+/// Per Pan Docs: tile_wait = max(MAX_TILE_WAIT − pos_in_tile, 0).
+const MAX_TILE_WAIT: u16 = 5;
+
+/// Calculate Mode 3 OBJ penalty dots for the sprites on the current scanline.
+///
+/// Implements the Pan Docs "OBJ penalty algorithm":
+/// - Sprites are processed left-to-right by OAM X (ties broken by OAM index)
+/// - Each visible sprite incurs a flat 6-dot penalty (OBJ tile fetch)
+/// - Additional 0–5 dot tile-wait penalty depends on BG tile alignment
+/// - OAM X == 0 exception: always max tile-wait regardless of SCX
+/// - OAM X >= 168: off-screen right, no penalty
+///
+/// Returns total penalty in dots (T-cycles).
+pub fn calculate_obj_penalty(sprite_indices: &[usize], oam: &[u8; 0xA0], scx: u8) -> u16 {
+    if sprite_indices.is_empty() {
+        return 0;
+    }
+
+    // Process sprites left-to-right (ascending OAM X, then OAM index).
+    let mut sorted: Vec<(usize, u8)> = sprite_indices
+        .iter()
+        .map(|&i| (i, oam[i * 4 + 1]))
+        .collect();
+    sorted.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
+
+    let mut total_penalty: u16 = 0;
+    // First sprite on a given BG tile pays the tile-wait; subsequent sprites share it.
+    let mut seen_tiles: [i16; 10] = [i16::MIN; 10];
+    let mut seen_count: usize = 0;
+
+    for &(_, oam_x) in &sorted {
+        if oam_x >= OAM_X_OFFSCREEN {
+            continue;
+        }
+
+        let screen_x = oam_x as i16 - 8; // OAM X = screen_x + 8
+        let bg_x = screen_x + scx as i16;
+        let tile_id = bg_x.div_euclid(BG_TILE_WIDTH);
+
+        if !seen_tiles[..seen_count].contains(&tile_id) {
+            total_penalty += tile_wait_penalty(oam_x, bg_x);
+            seen_tiles[seen_count] = tile_id;
+            seen_count += 1;
+        }
+        total_penalty += OBJ_FETCH_DOTS;
+    }
+
+    total_penalty
+}
+
+/// Tile-wait penalty for a sprite that is the first on its BG tile.
+///
+/// OAM X == 0 always gets the maximum penalty (Pan Docs exception);
+/// otherwise penalty decreases as the sprite moves rightward within the tile.
+fn tile_wait_penalty(oam_x: u8, bg_x: i16) -> u16 {
+    if oam_x == 0 {
+        return MAX_TILE_WAIT;
+    }
+    let pos_in_tile = bg_x.rem_euclid(BG_TILE_WIDTH) as u16;
+    MAX_TILE_WAIT.saturating_sub(pos_in_tile)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -248,5 +320,134 @@ mod tests {
         let indices = vec![0usize];
         let result = fetch_sprite_pixel(0, 0, &indices, &oam, &vram, lcdc).unwrap();
         assert_eq!(result.palette, 1);
+    }
+
+    // ── OBJ penalty tests ─────────────────────────────────────────────────
+
+    /// Helper: place up to 10 sprites in OAM at the given (oam_y, oam_x) positions.
+    /// Returns (oam, sprite_indices).
+    fn oam_with_sprites(positions: &[(u8, u8)]) -> ([u8; 0xA0], Vec<usize>) {
+        let mut oam = blank_oam();
+        let mut indices = Vec::new();
+        for (i, &(y, x)) in positions.iter().enumerate() {
+            oam[i * 4] = y;
+            oam[i * 4 + 1] = x;
+            oam[i * 4 + 2] = 0x30 + i as u8; // distinct tile
+            oam[i * 4 + 3] = 0;
+            indices.push(i);
+        }
+        (oam, indices)
+    }
+
+    /// Helper: create sprites all on the same scanline (Y=$52 = screen Y 66)
+    /// with the given OAM X positions.
+    fn penalty_sprites(x_positions: &[u8]) -> ([u8; 0xA0], Vec<usize>) {
+        let positions: Vec<(u8, u8)> = x_positions.iter().map(|&x| (0x52, x)).collect();
+        oam_with_sprites(&positions)
+    }
+
+    #[test]
+    fn test_obj_penalty_no_sprites_returns_zero() {
+        let oam = blank_oam();
+        assert_eq!(calculate_obj_penalty(&[], &oam, 0), 0);
+    }
+
+    #[test]
+    fn test_obj_penalty_single_sprite_at_x0_is_11_dots() {
+        // OAM X=0: exception, always 11 dots (5 tile-wait + 6 flat)
+        let (oam, indices) = penalty_sprites(&[0]);
+        assert_eq!(calculate_obj_penalty(&indices, &oam, 0), 11);
+    }
+
+    #[test]
+    fn test_obj_penalty_single_sprite_at_x8_is_11_dots() {
+        // OAM X=8 → screen_x=0, bg_x=0, pos_in_tile=0, right=7, wait=5, total=5+6=11
+        let (oam, indices) = penalty_sprites(&[8]);
+        assert_eq!(calculate_obj_penalty(&indices, &oam, 0), 11);
+    }
+
+    #[test]
+    fn test_obj_penalty_single_sprite_at_x5_is_6_dots() {
+        // OAM X=5 → screen_x=-3, bg_x=-3, pos_in_tile=5, right=2, wait=0, total=6
+        let (oam, indices) = penalty_sprites(&[5]);
+        assert_eq!(calculate_obj_penalty(&indices, &oam, 0), 6);
+    }
+
+    #[test]
+    fn test_obj_penalty_single_sprite_at_x4_is_7_dots() {
+        // OAM X=4 → screen_x=-4, bg_x=-4, pos_in_tile=4, right=3, wait=1, total=7
+        let (oam, indices) = penalty_sprites(&[4]);
+        assert_eq!(calculate_obj_penalty(&indices, &oam, 0), 7);
+    }
+
+    #[test]
+    fn test_obj_penalty_single_sprite_at_x167_is_6_dots() {
+        // OAM X=167 → screen_x=159, bg_x=159, pos_in_tile=7, right=0, wait=0, total=6
+        let (oam, indices) = penalty_sprites(&[167]);
+        assert_eq!(calculate_obj_penalty(&indices, &oam, 0), 6);
+    }
+
+    #[test]
+    fn test_obj_penalty_sprite_at_x168_is_offscreen_no_penalty() {
+        // OAM X ≥ 168: off-screen right, no penalty
+        let (oam, indices) = penalty_sprites(&[168]);
+        assert_eq!(calculate_obj_penalty(&indices, &oam, 0), 0);
+    }
+
+    #[test]
+    fn test_obj_penalty_two_sprites_at_x0_share_tile() {
+        // Two sprites at X=0: first gets 11, second shares tile → only flat 6
+        // Total: 11 + 6 = 17
+        let (oam, indices) = penalty_sprites(&[0, 0]);
+        assert_eq!(calculate_obj_penalty(&indices, &oam, 0), 17);
+    }
+
+    #[test]
+    fn test_obj_penalty_ten_sprites_at_x0() {
+        // 10 sprites at X=0: 11 + 9×6 = 65
+        let (oam, indices) = penalty_sprites(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(calculate_obj_penalty(&indices, &oam, 0), 65);
+    }
+
+    #[test]
+    fn test_obj_penalty_ten_sprites_spread_across_tiles() {
+        // 10 sprites 8 apart at X=0,8,16,...,72: each on a different tile
+        // X=0: 11, X=8..72: each 11 (new tile, pos=0, wait=5, +6 flat)
+        // Total: 11 × 10 = 110
+        let (oam, indices) = penalty_sprites(&[0, 8, 16, 24, 32, 40, 48, 56, 64, 72]);
+        assert_eq!(calculate_obj_penalty(&indices, &oam, 0), 110);
+    }
+
+    #[test]
+    fn test_obj_penalty_reverse_oam_order_same_result() {
+        // Sprites at X=72,64,...,0 in OAM: sorted by X internally → same result
+        let (oam, indices) = penalty_sprites(&[72, 64, 56, 48, 40, 32, 24, 16, 8, 0]);
+        assert_eq!(calculate_obj_penalty(&indices, &oam, 0), 110);
+    }
+
+    #[test]
+    fn test_obj_penalty_two_groups_different_tiles() {
+        // 5 at X=0, 5 at X=160: two separate tile groups
+        // Group X=0: 11 + 4×6 = 35
+        // Group X=160: screen_x=152, pos=0, wait=5 → 11 + 4×6 = 35
+        // Total: 70
+        let (oam, indices) = penalty_sprites(&[0, 0, 0, 0, 0, 160, 160, 160, 160, 160]);
+        assert_eq!(calculate_obj_penalty(&indices, &oam, 0), 70);
+    }
+
+    #[test]
+    fn test_obj_penalty_scx_shifts_tile_boundaries() {
+        // With SCX=4, sprite at OAM X=8 (screen_x=0):
+        // bg_x = 0 + 4 = 4, pos_in_tile = 4, right = 3, wait = 1, total = 7
+        let (oam, indices) = penalty_sprites(&[8]);
+        assert_eq!(calculate_obj_penalty(&indices, &oam, 4), 7);
+    }
+
+    #[test]
+    fn test_obj_penalty_x0_exception_ignores_scx() {
+        // OAM X=0 always 11 dots regardless of SCX
+        let (oam, indices) = penalty_sprites(&[0]);
+        assert_eq!(calculate_obj_penalty(&indices, &oam, 3), 11);
+        assert_eq!(calculate_obj_penalty(&indices, &oam, 7), 11);
     }
 }
