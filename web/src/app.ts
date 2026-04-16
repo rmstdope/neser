@@ -929,6 +929,16 @@ let fpsFrames = 0;
 let fpsWasmTimeAccMs = 0;
 let fpsRenderTimeAccMs = 0;
 
+// CPU governor keepalive for Android devices.
+// navigator.vibrate(1) triggers an interaction hint that prevents the
+// scheduler from migrating the emulation thread to slow efficiency cores.
+const vibrateKeepAliveIntervalMs = 4000;
+let lastVibrateTime = 0;
+const vibrateKeepAliveEnabled =
+    typeof navigator !== "undefined" &&
+    typeof navigator.vibrate === "function" &&
+    /android/i.test(navigator.userAgent);
+
 // Web Audio API setup
 let audioContext: AudioContext | null = null;
 let nextAudioTime = 0;
@@ -2194,6 +2204,14 @@ function renderNtscPass(frame: Uint8Array) {
 function step(timestamp: number) {
     if (!running || paused) return;
     lastFrameTime = timestamp;
+
+    // Periodically pulse vibrate on Android to hint the CPU governor
+    // that the thread is interactive, preventing migration to slow cores.
+    if (vibrateKeepAliveEnabled && timestamp - lastVibrateTime >= vibrateKeepAliveIntervalMs) {
+        lastVibrateTime = timestamp;
+        navigator.vibrate(1);
+    }
+
     const { shouldStep, shouldRender } = planFrame({
         shouldRender: frameLimiter.shouldRender(timestamp)
     });
