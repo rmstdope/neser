@@ -53,20 +53,16 @@ fn save_screen_png(gb: &Gb<DmgBus>, path: &str) {
 
 /// Validate that `dmg-acid2.gb` renders a frame matching the expected CRC.
 ///
-/// This test is ignored until the DMG object X-coordinate priority bug is fixed
-/// and a visually correct CRC baseline is locked in.
-/// Tracking bug: https://github.com/rmstdope/neser/issues/2105 (OBJ X-priority)
+/// Baseline CRC `0x52D18222` was visually confirmed against the published
+/// dmg-acid2 DMG reference image (smiley face, correct OBJ priority, no moles visible).
 #[test]
-#[ignore = "rendering not yet pixel-perfect — mole left of nose visible due to OBJ X-priority bug"]
 fn test_dmg_acid2_frame_matches_reference_crc() {
     let mut gb = load_gb_rom("roms/gb/automated_tests/dmg-acid2/dmg-acid2.gb");
 
     // Run 200 frames to allow the ROM to finish booting and render its test output.
     let crc = run_frames_and_crc(&mut gb, 200);
 
-    // Replace 0x00000000 with the visually verified CRC once the OBJ X-priority
-    // bug is fixed and the baseline is confirmed against the reference image.
-    const EXPECTED_CRC: u32 = 0x0000_0000;
+    const EXPECTED_CRC: u32 = 0x52D1_8222;
     assert_eq!(
         crc, EXPECTED_CRC,
         "dmg-acid2 frame CRC mismatch: got {crc:#010X}, expected {EXPECTED_CRC:#010X}"
