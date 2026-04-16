@@ -90,7 +90,7 @@ pub struct DmgBus {
     /// Hardware model variant (DMG-ABC or DMG-0).
     /// Determines which boot ROM is loaded and which CPU post-boot register
     /// values are used on reset.
-    pub model: DmgModel,
+    model: DmgModel,
 }
 
 impl DmgBus {
@@ -106,9 +106,8 @@ impl DmgBus {
             wram: [0u8; 0x2000],
             hram: [0u8; 0x7F],
             // Real DMG-B hardware has a sub-byte div_counter phase of 204 T-cycles
-            // at power-on. Setting this initial value ensures our custom boot ROM
-            // exits at the correct clock phase (div_counter = 28364) so that
-            // serial clock edges align with acceptance-test expectations.
+            // at power-on. Setting this initial value ensures the serial clock edges
+            // align with acceptance-test expectations (serial/boot_sclk_align-dmgABCmgb).
             timer: Timer::with_div_counter(204),
             joypad: Joypad::new(),
             apu: Apu::new(is_cgb),
@@ -169,6 +168,11 @@ impl DmgBus {
     /// Returns `true` while the boot ROM is still mapped at $0000–$00FF.
     pub fn is_boot_rom_active(&self) -> bool {
         self.boot_rom_active
+    }
+
+    /// Returns the hardware model variant this bus was constructed for.
+    pub fn model(&self) -> DmgModel {
+        self.model
     }
 
     /// Returns bytes captured via serial transfer ($FF01/$FF02).

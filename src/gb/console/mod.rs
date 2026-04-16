@@ -49,14 +49,14 @@ impl Gb<DmgBus> {
         if soft_reset {
             // Soft reset: restore post-boot register state and continue from
             // the cartridge entry point, preserving WRAM and bus state.
-            match self.cpu.bus.model {
+            match self.cpu.bus.model() {
                 DmgModel::DmgAbc => self.cpu.reset_registers(),
                 DmgModel::Dmg0 => self.cpu.reset_registers_dmg0(),
             }
         } else {
             // Hard reset: reinitialise all bus hardware and restart execution
             // from the boot ROM entry point.
-            match self.cpu.bus.model {
+            match self.cpu.bus.model() {
                 DmgModel::DmgAbc => self.cpu.reset_registers(),
                 DmgModel::Dmg0 => self.cpu.reset_registers_dmg0(),
             }

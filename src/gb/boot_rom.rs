@@ -284,11 +284,10 @@ pub const DMG0_BOOT_ROM: [u8; 256] = [
     // ── $0000: LD SP, $FFFE ──────────────────────────────────────────────────
     0x31, 0xFE, 0xFF,
     // ── $0003: APU init ──────────────────────────────────────────────────────
-    // NR52 = $80  (enable APU, all channels off)
-    0x3E, 0x80, 0xE0, 0x26, // NR12 = $F3  (channel 1 envelope: initial vol 15, increase)
-    0x3E, 0xF3, 0xE0, 0x12, // NR51 = $F3  (reuse A; all channels routed to both outputs)
-    0xE0, 0x25, // NR50 = $77  (master volume: both outputs at 7)
-    0x3E, 0x77, 0xE0, 0x24,
+    0x3E, 0x80, 0xE0, 0x26, // NR52 = $80  (enable APU, all channels off)
+    0x3E, 0xF3, 0xE0, 0x12, // NR12 = $F3  (channel 1 envelope: initial vol 15, increase)
+    0xE0, 0x25, // NR51 = $F3  (reuse A; all channels routed to both outputs)
+    0x3E, 0x77, 0xE0, 0x24, // NR50 = $77  (master volume: both outputs at 7)
     // ── $0011: BGP = $FC ─────────────────────────────────────────────────────
     0x3E, 0xFC, 0xE0, 0x47,
     // ── $0015: Pre-LCD delay loop (187 iterations × 7 M-cycles + overhead) ──
