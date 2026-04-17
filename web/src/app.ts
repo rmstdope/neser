@@ -15,6 +15,7 @@ import { handleRomSelection } from "./rom/rom_selection";
 import { createAutorunContext, parseAutorunFile } from "./rom/autorun_context";
 import { createFrameLimiter } from "./audio/frame_limiter";
 import { computePlaybackRate } from "./audio/audio_resampler";
+import { normalizeGbSample, normalizeNesSample } from "./audio/audio_normalizer";
 import { planFrame } from "./audio/frame_plan";
 import { createSineScroller } from "./ui/sine_scroller";
 import { getKeyboardControllerTarget } from "./input/input_routing";
@@ -1137,15 +1138,14 @@ function playAudioSamples(samples: Float32Array) {
 
     // Normalize and copy samples to the buffer
     if (emulator?.kind === "gb") {
-        // GB APU outputs in [0.0, 1.0] — copy directly with a safety clamp
+        // GB APU outputs bipolar samples in [-1.0, 1.0] — clamp with a safety guard
         for (let i = 0; i < samples.length; i++) {
-            channelData[i] = Math.min(1.0, Math.max(0.0, samples[i]));
+            channelData[i] = normalizeGbSample(samples[i]);
         }
     } else {
-        // NES APU outputs 0.0 to ~1.177, normalize to 0.0 to 1.0 for Web Audio
+        // NES APU outputs 0.0 to ~1.177; normalize to the unipolar 0.0 to 1.0 range used by this output path
         for (let i = 0; i < samples.length; i++) {
-            const normalized = samples[i] / NES_APU_MAX;
-            channelData[i] = Math.min(1.0, Math.max(0.0, normalized));
+            channelData[i] = normalizeNesSample(samples[i], NES_APU_MAX);
         }
     }
 
