@@ -1037,11 +1037,12 @@ mod tests {
 
     fn enable_lcd_and_tick_to_row(bus: &mut DmgBus, row: usize) {
         bus.write(0xFF40, 0x91); // enable LCD → timing resets
-        // Skip the first scanline after LCD enable (no Mode 2; 452 dots = 113 M-cycles)
-        for _ in 0..113 {
+        // Skip scan 0 (452 dots = 113 M-cycles) plus the 4T Mode 0 gap at the start
+        // of scan 1 (1 M-cycle) → lands at dot=4 of scan 1, which is OamScan row 0.
+        for _ in 0..114 {
             bus.tick(1);
         }
-        // Now on scanline 1 with normal Mode 2; tick to the desired OAM row
+        // Now at dot=4 of scan 1 (OamScan row 0); tick to the desired row.
         for _ in 0..row {
             bus.tick(1); // 1 M-cycle = 4 dots = 1 OAM row
         }
@@ -1049,7 +1050,8 @@ mod tests {
 
     #[test]
     fn test_notify_idu_glitch_applies_write_corruption_in_mode_2() {
-        // Given: PPU at row 2 (dot 8); OAM rows 1 and 2 have known values.
+        // Given: PPU at row 2 (dot 12 of scan 1, where OamScan starts at dot=4);
+        // OAM rows 1 and 2 have known values.
         // row 1: b=0x0002, w1=0x0003, c=0x0004, w3=0x0005
         // row 2: a=0x0001
         // write formula: ((0x0001^0x0004)&(0x0002^0x0004))^0x0004 = 0x0000
@@ -1116,27 +1118,24 @@ mod tests {
     }
 
     #[test]
-    fn test_notify_idu_glitch_applies_corruption_at_row_19() {
-        // Given: PPU at OamScan row 19 (dot=76); this row was excluded by the
-        // old (1..=16) range, so no corruption was triggered despite being within
-        // the hardware-correct 19-M-cycle window.
-        // When: notify_idu_glitch called with an OAM address.
-        // Then: OAM row 19 must be write-corrupted.
+    fn test_notify_idu_glitch_applies_corruption_at_row_18() {
+        // Given: PPU at OamScan row 18 (dot=76 of scan 1; last valid row — OamScan [4,80)).
+        // Row 18 = dot 76: (76-4)/4 = 18.
+        // row 17: b=0x0002, w1=0x0003, c=0x0004, w3=0x0005
+        // row 18: a=0x0001
+        // write formula: ((0x0001^0x0004)&(0x0002^0x0004))^0x0004 = 0x0000
         use crate::gb::bus::GbBus;
         let mut bus = make_bus();
-        // row 18: b=0x0002, w1=0x0003, c=0x0004, w3=0x0005
-        // row 19: a=0x0001
-        // write formula: ((0x0001^0x0004)&(0x0002^0x0004))^0x0004 = 0x0000
-        set_row_words(&mut bus.ppu.oam, 18, [0x0002, 0x0003, 0x0004, 0x0005]);
-        set_row_words(&mut bus.ppu.oam, 19, [0x0001, 0x00AA, 0x00BB, 0x00CC]);
-        enable_lcd_and_tick_to_row(&mut bus, 19); // dot=76, OamScan, row 19
-        bus.begin_instruction(); // pre-instruction snapshot (row 19 — old impl excluded it)
+        set_row_words(&mut bus.ppu.oam, 17, [0x0002, 0x0003, 0x0004, 0x0005]);
+        set_row_words(&mut bus.ppu.oam, 18, [0x0001, 0x00AA, 0x00BB, 0x00CC]);
+        enable_lcd_and_tick_to_row(&mut bus, 18); // dot=76, OamScan, row 18 (last on scan 1)
+        bus.begin_instruction(); // pre-instruction snapshot (row 18)
         bus.notify_idu_glitch(0xFE00);
-        let row19 = get_row_words(&bus.ppu.oam, 19);
+        let row18 = get_row_words(&bus.ppu.oam, 18);
         assert_eq!(
-            row19,
+            row18,
             [0x0000, 0x0003, 0x0004, 0x0005],
-            "notify_idu_glitch at OamScan row 19 must apply write corruption"
+            "notify_idu_glitch at OamScan row 18 must apply write corruption"
         );
     }
 
