@@ -83,16 +83,6 @@ impl GbConfig {
 
     /// Look up a CLI flag value (handles both `--flag value` and `--flag=value`).
     fn parse_string_arg(args: &[String], flag: &str) -> Option<String> {
-        for i in 0..args.len() {
-            if args[i] == flag && i + 1 < args.len() {
-                return Some(args[i + 1].clone());
-            }
-            if let Some((flag_part, value_part)) = args[i].split_once('=')
-                && flag_part == flag
-            {
-                return Some(value_part.to_string());
-            }
-        }
-        None
+        crate::platform::config::parse_cli_string_arg(args, flag)
     }
 }

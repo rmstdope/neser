@@ -161,3 +161,23 @@ pub struct Config {
     /// Game Boy-specific hardware configuration.
     pub gb: crate::gb::console::config::GbConfig,
 }
+
+/// Look up the value for a CLI flag in an argument list.
+///
+/// Handles both `--flag value` and `--flag=value` forms. Returns `None` if
+/// the flag is not present.
+pub(crate) fn parse_cli_string_arg(args: &[String], flag: &str) -> Option<String> {
+    for i in 0..args.len() {
+        // Handle `--flag value`
+        if args[i] == flag && i + 1 < args.len() {
+            return Some(args[i + 1].clone());
+        }
+        // Handle `--flag=value`
+        if let Some((flag_part, value_part)) = args[i].split_once('=')
+            && flag_part == flag
+        {
+            return Some(value_part.to_string());
+        }
+    }
+    None
+}

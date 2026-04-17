@@ -1519,20 +1519,7 @@ impl Config {
     ///
     /// Supports both `--flag value` and `--flag=value` forms.
     fn parse_string_arg(args: &[String], flag: &str) -> Option<String> {
-        for i in 0..args.len() {
-            // Handle `--flag value`
-            if args[i] == flag && i + 1 < args.len() {
-                return Some(args[i + 1].clone());
-            }
-
-            // Handle `--flag=value`
-            if let Some((flag_part, value_part)) = args[i].split_once('=')
-                && flag_part == flag
-            {
-                return Some(value_part.to_string());
-            }
-        }
-        None
+        crate::platform::config::parse_cli_string_arg(args, flag)
     }
 
     /// Default config file name.
