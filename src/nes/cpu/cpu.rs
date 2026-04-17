@@ -3470,7 +3470,7 @@ mod tests {
         )));
         let apu = Rc::new(RefCell::new(crate::nes::apu::Apu::new()));
         let config = crate::nes::console::Config {
-            nes: crate::nes::console::NesConfig {
+            frontend: crate::platform::config::FrontendConfig {
                 ram_init_mode: crate::nes::console::RamInitMode::Zero,
                 ..Default::default()
             },
@@ -3493,7 +3493,7 @@ mod tests {
         )));
         let apu = Rc::new(RefCell::new(crate::nes::apu::Apu::new()));
         let config = crate::nes::console::Config {
-            nes: crate::nes::console::NesConfig {
+            frontend: crate::platform::config::FrontendConfig {
                 ram_init_mode: crate::nes::console::RamInitMode::Zero,
                 ..Default::default()
             },

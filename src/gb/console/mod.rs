@@ -4,6 +4,7 @@ use crate::gb::bus::GbBus;
 use crate::gb::cpu::Sm83;
 use crate::gb::model::DmgModel;
 
+pub mod config;
 pub mod gameboy;
 
 /// Game Boy (DMG) console wrapper.

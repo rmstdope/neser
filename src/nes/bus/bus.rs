@@ -140,7 +140,7 @@ impl Bus {
 
         // Initialize CPU RAM based on config
         let mut cpu_ram = vec![0; 0x10000];
-        let ram_init_mode = app_context.borrow().config().nes.ram_init_mode;
+        let ram_init_mode = app_context.borrow().config().frontend.ram_init_mode;
         crate::nes::console::initialize_ram(&mut cpu_ram[0..0x800], ram_init_mode);
 
         let expansion_arkanoid = Rc::new(RefCell::new(ArkanoidController::new()));
@@ -1144,7 +1144,7 @@ impl Bus {
 mod tests {
     use super::*;
     use crate::nes::cartridge::NametableLayout;
-    use crate::nes::console::{NesConfig, TimingMode};
+    use crate::nes::console::TimingMode;
     use std::rc::Rc;
 
     struct TestBusDevice {
@@ -1406,7 +1406,7 @@ mod tests {
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
         let apu = Rc::new(RefCell::new(crate::nes::apu::Apu::new()));
         let config = crate::nes::console::Config {
-            nes: NesConfig {
+            frontend: crate::platform::config::FrontendConfig {
                 ram_init_mode: crate::nes::console::RamInitMode::Zero,
                 ..Default::default()
             },
@@ -1421,14 +1421,14 @@ mod tests {
     fn create_test_memory_with_four_score_enabled() -> Bus {
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
         let apu = Rc::new(RefCell::new(crate::nes::apu::Apu::new()));
-        let config = crate::nes::console::Config {
-            nes: NesConfig {
+        let mut config = crate::nes::console::Config {
+            frontend: crate::platform::config::FrontendConfig {
                 ram_init_mode: crate::nes::console::RamInitMode::Zero,
-                four_score_enabled: true,
                 ..Default::default()
             },
             ..Default::default()
         };
+        config.nes.four_score_enabled = true;
         let app_context = Rc::new(RefCell::new(
             crate::platform::app_context::AppContext::new_with_config(config),
         ));
@@ -1749,14 +1749,15 @@ mod tests {
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
         let apu = Rc::new(RefCell::new(crate::nes::apu::Apu::new()));
         let config = crate::nes::console::Config {
-            nes: NesConfig {
+            frontend: crate::platform::config::FrontendConfig {
                 ram_init_mode: crate::nes::console::RamInitMode::Zero,
-                hardware_mode: HardwareMode::Famicom,
-                expansion_port: ExpansionPort::ArkanoidFamicom,
                 ..Default::default()
             },
             ..Default::default()
         };
+        let mut config = config;
+        config.nes.hardware_mode = HardwareMode::Famicom;
+        config.nes.expansion_port = ExpansionPort::ArkanoidFamicom;
         let app_context = Rc::new(RefCell::new(
             crate::platform::app_context::AppContext::new_with_config(config),
         ));
@@ -2819,14 +2820,14 @@ mod tests {
     fn create_test_memory_with_vs_system() -> Bus {
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
         let apu = Rc::new(RefCell::new(crate::nes::apu::Apu::new()));
-        let config = crate::nes::console::Config {
-            nes: NesConfig {
+        let mut config = crate::nes::console::Config {
+            frontend: crate::platform::config::FrontendConfig {
                 ram_init_mode: crate::nes::console::RamInitMode::Zero,
-                expansion_port: ExpansionPort::VsSystem,
                 ..Default::default()
             },
             ..Default::default()
         };
+        config.nes.expansion_port = ExpansionPort::VsSystem;
         let app_context = Rc::new(RefCell::new(
             crate::platform::app_context::AppContext::new_with_config(config),
         ));
@@ -2836,15 +2837,15 @@ mod tests {
     fn create_test_memory_with_vs_system_swapped() -> Bus {
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
         let apu = Rc::new(RefCell::new(crate::nes::apu::Apu::new()));
-        let config = crate::nes::console::Config {
-            nes: NesConfig {
+        let mut config = crate::nes::console::Config {
+            frontend: crate::platform::config::FrontendConfig {
                 ram_init_mode: crate::nes::console::RamInitMode::Zero,
-                expansion_port: ExpansionPort::VsSystem,
-                vs_controllers_swapped: true,
                 ..Default::default()
             },
             ..Default::default()
         };
+        config.nes.expansion_port = ExpansionPort::VsSystem;
+        config.nes.vs_controllers_swapped = true;
         let app_context = Rc::new(RefCell::new(
             crate::platform::app_context::AppContext::new_with_config(config),
         ));

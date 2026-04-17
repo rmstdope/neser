@@ -22,11 +22,15 @@
 # Boolean values: true/false, yes/no, 1/0 (case-insensitive)
 #
 # Command-line arguments use the same keys with -- prefix and hyphens:
-#   hardware=nes-pal  →  --hardware nes-pal
-#   audio=false       →  --audio false  OR  --audio=0  OR  --no-audio  OR  --disable-audio
-#   audio=true        →  --audio  OR  --audio true  OR  --audio=1
-#   pulse1=true       →  --pulse1  OR  --pulse1 true  OR  --pulse1=1
-#   pulse2=false      →  --pulse2 false  OR  --pulse2=0  OR  --no-pulse2  OR  --disable-pulse2
+#   nes-hardware=nes-pal  →  --nes-hardware nes-pal
+#   audio=false           →  --audio false  OR  --audio=0  OR  --no-audio  OR  --disable-audio
+#   audio=true            →  --audio  OR  --audio true  OR  --audio=1
+#   nes-pulse1=true       →  --nes-pulse1  OR  --nes-pulse1 true  OR  --nes-pulse1=1
+#   nes-pulse2=false      →  --nes-pulse2 false  OR  --nes-pulse2=0  OR  --nes-no-pulse2  OR  --nes-disable-pulse2
+#
+# NES-specific settings are prefixed with nes- (e.g., nes-hardware, nes-pulse1).
+# Game Boy-specific settings are prefixed with gb- (e.g., gb-hardware).
+# Generic platform settings have no prefix (e.g., audio, ram_init_mode).
 #
 # CLI boolean flags:
 #   - No value (--flag) defaults to true
@@ -43,7 +47,7 @@
 # nes-pal is used for European NES consoles.
 # famicom uses Famicom hardware mode and NTSC timing.
 # dendy emulates the Soviet-era Dendy clone (~50 FPS, 312 scanlines, ~1.77 MHz CPU).
-hardware=nes-ntsc
+nes-hardware=nes-ntsc
 
 # -----------------------------------------------------------------------------
 # Audio Settings
@@ -53,11 +57,11 @@ audio=true
 
 # Individual APU channel toggles.
 # Useful for isolating specific sounds or debugging audio issues.
-pulse1=true
-pulse2=true
-triangle=true
-noise=true
-dmc=true
+nes-pulse1=true
+nes-pulse2=true
+nes-triangle=true
+nes-noise=true
+nes-dmc=true
 
 # -----------------------------------------------------------------------------
 # Video Settings
@@ -103,7 +107,7 @@ gamepads=true
 #   - 2 physical gamepads connected: gamepads -> players 1-2, keyboard -> players 3-4
 #   - 1 physical gamepad connected: gamepad -> player 1, keyboard -> players 2-3
 #   - 0 physical gamepads connected: keyboard -> players 1-2
-enable_4_score=false
+nes-enable_4_score=false
 
 # Controller Type Configuration (Per-Port)
 # Each of the two controller ports can be configured independently.
@@ -111,10 +115,10 @@ enable_4_score=false
 # Default: joypad for both ports
 #
 # Port 1 (Player 1):
-#controller_port1=joypad
+#nes-nes-controller_port1=joypad
 #
 # Port 2 (Player 2):
-#controller_port2=joypad
+#nes-nes-controller_port2=joypad
 #
 # Auto-detection behavior:
 # If a specific port hasn't been explicitly configured, NESER will
@@ -136,20 +140,20 @@ enable_4_score=false
 # Configuration examples:
 #
 # Example 1: Mouse-based paddle on port 1 (for PaddleTest3-style games)
-#   controller_port1=arkanoid
-#   controller_port2=joypad
+#   nes-controller_port1=arkanoid
+#   nes-controller_port2=joypad
 #
 # Example 2: Mouse-based paddle on port 2 (for Arkanoid)
-#   controller_port1=joypad
-#   controller_port2=arkanoid
+#   nes-controller_port1=joypad
+#   nes-controller_port2=arkanoid
 #
 # Example 3: Paddles on both ports (both controlled by same mouse)
-#   controller_port1=arkanoid
-#   controller_port2=arkanoid
+#   nes-controller_port1=arkanoid
+#   nes-controller_port2=arkanoid
 #
 # Example 4: Force joypad mode even for Arkanoid ROM
-#   controller_port1=joypad
-#   controller_port2=joypad
+#   nes-controller_port1=joypad
+#   nes-controller_port2=joypad
 
 # Zapper Light Detection Size
 # Controls the size of the square area sampled around the Zapper cursor
@@ -162,7 +166,7 @@ enable_4_score=false
 # Larger values make it easier to hit targets but increase CPU usage.
 # Values above 10 may cause noticeable performance impact.
 # Valid range: 0-255
-zapper_detection_size=0
+nes-zapper_detection_size=0
 
 # -----------------------------------------------------------------------------
 # Debugging
@@ -220,7 +224,7 @@ ram_init_mode=zero
 #
 # Valid values: true, false
 #
-oam_dram_decay=false
+nes-oam_dram_decay=false
 
 # -----------------------------------------------------------------------------
 # Overscan Removal
@@ -234,5 +238,13 @@ oam_dram_decay=false
 # vertical_overscan: pixels removed from each of top and bottom edges.
 #   Valid range: 0..=16. Default: 8.
 #
-horizontal_overscan=8
-vertical_overscan=8
+nes-horizontal_overscan=8
+nes-vertical_overscan=8
+
+# -----------------------------------------------------------------------------
+# Game Boy Settings
+# -----------------------------------------------------------------------------
+# Emulated Game Boy hardware model.
+# Valid values: dmg (original Game Boy), cgb (Game Boy Color)
+# Default: dmg
+#gb-hardware=dmg
