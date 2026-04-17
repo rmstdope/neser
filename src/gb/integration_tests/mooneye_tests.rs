@@ -808,3 +808,55 @@ fn test_mooneye_emulator_only_mbc5_rom_64mb() {
 fn test_mooneye_emulator_only_mbc5_rom_8mb() {
     assert_mooneye_pass!(&format!("{BASE}/emulator-only/mbc5/rom_8Mb.gb"));
 }
+
+// ============================================================================
+// misc/ tests
+// ============================================================================
+
+#[test]
+#[ignore = "CGB-only test — CGB hardware model not yet emulated"]
+fn test_mooneye_misc_bits_unused_hwio_c() {
+    assert_mooneye_pass!(&format!("{BASE}/misc/bits/unused_hwio-C.gb"));
+}
+
+#[test]
+#[ignore = "DMG-A-only test — DMG-A not emulated as a distinct model (grouped in DmgAbc)"]
+fn test_mooneye_misc_boot_div_a() {
+    assert_mooneye_pass!(&format!("{BASE}/misc/boot_div-A.gb"));
+}
+
+#[test]
+#[ignore = "CGB-0-only test — CGB hardware model not yet emulated"]
+fn test_mooneye_misc_boot_div_cgb0() {
+    assert_mooneye_pass!(&format!("{BASE}/misc/boot_div-cgb0.gb"));
+}
+
+#[test]
+#[ignore = "CGB-only test — CGB hardware model not yet emulated"]
+fn test_mooneye_misc_boot_div_cgbabcde() {
+    assert_mooneye_pass!(&format!("{BASE}/misc/boot_div-cgbABCDE.gb"));
+}
+
+#[test]
+#[ignore = "CGB-only test — CGB hardware model not yet emulated"]
+fn test_mooneye_misc_boot_hwio_c() {
+    assert_mooneye_pass!(&format!("{BASE}/misc/boot_hwio-C.gb"));
+}
+
+#[test]
+#[ignore = "DMG-A-only test — DMG-A not emulated as a distinct model (grouped in DmgAbc)"]
+fn test_mooneye_misc_boot_regs_a() {
+    assert_mooneye_pass!(&format!("{BASE}/misc/boot_regs-A.gb"));
+}
+
+#[test]
+#[ignore = "CGB-only test — CGB hardware model not yet emulated"]
+fn test_mooneye_misc_boot_regs_cgb() {
+    assert_mooneye_pass!(&format!("{BASE}/misc/boot_regs-cgb.gb"));
+}
+
+#[test]
+#[ignore = "CGB-only test — CGB hardware model not yet emulated"]
+fn test_mooneye_misc_ppu_vblank_stat_intr_c() {
+    assert_mooneye_pass!(&format!("{BASE}/misc/ppu/vblank_stat_intr-C.gb"));
+}
