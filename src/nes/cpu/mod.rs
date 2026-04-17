@@ -3,7 +3,7 @@ mod cpu;
 #[cfg(test)]
 mod dma;
 mod master_clock;
-mod opcode;
+pub mod opcode;
 
 pub use cpu::Cpu;
 pub use cpu::CpuState;
