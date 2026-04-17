@@ -22,6 +22,30 @@ function makeButtonElement(button: string): Element {
     return el;
 }
 
+/** Create a touch zone element with a fixed client rect for geometry tests. */
+function makeTouchZoneElement(
+    zone: string,
+    rect: { left: number; top: number; width: number; height: number },
+): Element {
+    const el = document.createElement("div");
+    el.setAttribute("data-touch-zone", zone);
+    Object.defineProperty(el, "getBoundingClientRect", {
+        configurable: true,
+        value: () => ({
+            x: rect.left,
+            y: rect.top,
+            left: rect.left,
+            top: rect.top,
+            width: rect.width,
+            height: rect.height,
+            right: rect.left + rect.width,
+            bottom: rect.top + rect.height,
+            toJSON: () => rect,
+        }),
+    });
+    return el;
+}
+
 /** Build a container that houses several button elements and can resolve
  *  elementFromPoint queries. */
 function makeContainer(buttons: Record<string, Element>) {
@@ -215,6 +239,7 @@ describe("TouchInputManager", () => {
     let btnB: Element;
     let btnUp: Element;
     let btnRight: Element;
+    let joystickZone: Element;
 
     beforeEach(() => {
         callback = vi.fn();
@@ -224,11 +249,18 @@ describe("TouchInputManager", () => {
         btnB = makeButtonElement("b");
         btnUp = makeButtonElement("up");
         btnRight = makeButtonElement("right");
+        joystickZone = makeTouchZoneElement("joystick", {
+            left: 0,
+            top: 0,
+            width: 128,
+            height: 128,
+        });
         container = makeContainer({
             a: btnA,
             b: btnB,
             up: btnUp,
             right: btnRight,
+            joystick: joystickZone,
         }) as HTMLElement;
     });
 
@@ -273,12 +305,12 @@ describe("TouchInputManager", () => {
         expect(manager.activeCount).toBe(0);
     });
 
-    it("tracks the active button for each touch identifier", () => {
+    it("tracks the active buttons for each touch identifier", () => {
         manager.handleTouchStart(fakeTouch(0, btnA));
         manager.handleTouchStart(fakeTouch(1, btnB));
 
-        expect(manager.getButtonForTouch(0)).toBe(NES_BUTTON.A);
-        expect(manager.getButtonForTouch(1)).toBe(NES_BUTTON.B);
+        expect(manager.getButtonsForTouch(0)).toEqual([NES_BUTTON.A]);
+        expect(manager.getButtonsForTouch(1)).toEqual([NES_BUTTON.B]);
         expect(manager.activeCount).toBe(2);
     });
 
@@ -305,7 +337,25 @@ describe("TouchInputManager", () => {
         expect(callback).toHaveBeenCalledTimes(1);
         expect(callback).toHaveBeenCalledWith(NES_BUTTON.RIGHT, false);
         expect(manager.activeCount).toBe(1);
-        expect(manager.getButtonForTouch(1)).toBe(NES_BUTTON.A);
+        expect(manager.getButtonsForTouch(1)).toEqual([NES_BUTTON.A]);
+    });
+
+    it("does not release a button while another touch still holds the same button", () => {
+        manager.handleTouchStart(fakeTouch(0, btnRight));
+        callback.mockClear();
+
+        manager.handleTouchStart(fakeTouch(1, btnRight));
+
+        expect(callback).not.toHaveBeenCalled();
+
+        manager.handleTouchEnd(fakeTouch(0, btnRight));
+
+        expect(callback).not.toHaveBeenCalled();
+
+        manager.handleTouchEnd(fakeTouch(1, btnRight));
+
+        expect(callback).toHaveBeenCalledTimes(1);
+        expect(callback).toHaveBeenCalledWith(NES_BUTTON.RIGHT, false);
     });
 
     // -----------------------------------------------------------------------
@@ -321,7 +371,7 @@ describe("TouchInputManager", () => {
 
         expect(callback).toHaveBeenCalledWith(NES_BUTTON.UP, false);
         expect(callback).toHaveBeenCalledWith(NES_BUTTON.RIGHT, true);
-        expect(manager.getButtonForTouch(0)).toBe(NES_BUTTON.RIGHT);
+        expect(manager.getButtonsForTouch(0)).toEqual([NES_BUTTON.RIGHT]);
     });
 
     it("does not fire callback when finger stays on the same button during move", () => {
@@ -343,6 +393,118 @@ describe("TouchInputManager", () => {
 
         expect(callback).toHaveBeenCalledWith(NES_BUTTON.A, false);
         expect(manager.activeCount).toBe(0);
+    });
+
+    // -----------------------------------------------------------------------
+    // Geometry-driven touch zones — joystick
+    // -----------------------------------------------------------------------
+
+    it.each([
+        ["up", 64, 14, [NES_BUTTON.UP]],
+        ["up-right", 110, 18, [NES_BUTTON.UP, NES_BUTTON.RIGHT]],
+        ["right", 118, 64, [NES_BUTTON.RIGHT]],
+        ["down-right", 110, 110, [NES_BUTTON.DOWN, NES_BUTTON.RIGHT]],
+        ["down", 64, 118, [NES_BUTTON.DOWN]],
+        ["down-left", 18, 110, [NES_BUTTON.DOWN, NES_BUTTON.LEFT]],
+        ["left", 10, 64, [NES_BUTTON.LEFT]],
+        ["up-left", 18, 18, [NES_BUTTON.UP, NES_BUTTON.LEFT]],
+    ])(
+        "Given a captured joystick touch, When the thumb moves to the %s sector, Then the matching directions are pressed",
+        (_label, clientX, clientY, expectedButtons) => {
+            manager.handleTouchStart(fakeTouch(0, joystickZone, 64, 64));
+            callback.mockClear();
+
+            manager.handleTouchMove(fakeTouch(0, joystickZone, clientX, clientY));
+
+            expect(manager.activeCount).toBe(1);
+            expect(manager.getButtonsForTouch(0)).toEqual(expectedButtons);
+            expect(callback).toHaveBeenCalledTimes(expectedButtons.length);
+            expect(callback.mock.calls).toEqual(
+                expect.arrayContaining(expectedButtons.map((button) => [button, true])),
+            );
+        },
+    );
+
+    it("does not release a direction while another joystick touch still holds it", () => {
+        manager.handleTouchStart(fakeTouch(0, joystickZone, 118, 64));
+        callback.mockClear();
+
+        manager.handleTouchStart(fakeTouch(1, joystickZone, 118, 64));
+
+        expect(callback).not.toHaveBeenCalled();
+
+        manager.handleTouchEnd(fakeTouch(0, joystickZone, 118, 64));
+
+        expect(callback).not.toHaveBeenCalled();
+        expect(manager.getButtonsForTouch(1)).toEqual([NES_BUTTON.RIGHT]);
+
+        manager.handleTouchEnd(fakeTouch(1, joystickZone, 118, 64));
+
+        expect(callback).toHaveBeenCalledTimes(1);
+        expect(callback).toHaveBeenCalledWith(NES_BUTTON.RIGHT, false);
+    });
+
+    it("Given a captured joystick touch, When the thumb returns to the deadzone, Then the active directions are released", () => {
+        manager.handleTouchStart(fakeTouch(0, joystickZone, 64, 64));
+        manager.handleTouchMove(fakeTouch(0, joystickZone, 118, 64));
+        callback.mockClear();
+
+        manager.handleTouchMove(fakeTouch(0, joystickZone, 64, 64));
+
+        expect(manager.activeCount).toBe(1);
+        expect(callback).toHaveBeenCalledTimes(1);
+        expect(callback).toHaveBeenCalledWith(NES_BUTTON.RIGHT, false);
+    });
+
+    it("Given a captured joystick touch, When the thumb moves beyond the circle, Then the direction stays active until release", () => {
+        manager.handleTouchStart(fakeTouch(0, joystickZone, 64, 64));
+        manager.handleTouchMove(fakeTouch(0, joystickZone, 18, 110));
+        callback.mockClear();
+
+        manager.handleTouchMove(fakeTouch(0, joystickZone, -48, 192));
+
+        expect(manager.activeCount).toBe(1);
+        expect(callback).not.toHaveBeenCalled();
+
+        manager.handleTouchEnd(fakeTouch(0, joystickZone, -48, 192));
+
+        expect(callback.mock.calls).toEqual(
+            expect.arrayContaining([
+                [NES_BUTTON.DOWN, false],
+                [NES_BUTTON.LEFT, false],
+            ]),
+        );
+    });
+
+    // -----------------------------------------------------------------------
+    // Visual feedback
+    // -----------------------------------------------------------------------
+
+    it("Given a button touch, When it starts and ends, Then the pressed class follows the button state", () => {
+        manager.handleTouchStart(fakeTouch(0, btnA));
+        expect(btnA.classList.contains("pressed")).toBe(true);
+
+        manager.handleTouchEnd(fakeTouch(0, btnA));
+        expect(btnA.classList.contains("pressed")).toBe(false);
+    });
+
+    it("Given a joystick touch, When it moves away from center and ends, Then the joystick pressed state and knob offset are updated", () => {
+        const knob = document.createElement("div");
+        knob.className = "touch-joystick-knob";
+        joystickZone.appendChild(knob);
+
+        manager.handleTouchStart(fakeTouch(0, joystickZone, 64, 64));
+        manager.handleTouchMove(fakeTouch(0, joystickZone, 118, 64));
+
+        expect(joystickZone.classList.contains("pressed")).toBe(true);
+        expect(joystickZone.style.getPropertyValue("--touch-stick-x")).not.toBe("");
+        expect(joystickZone.style.getPropertyValue("--touch-stick-y")).not.toBe("");
+
+        manager.handleTouchEnd(fakeTouch(0, joystickZone, 118, 64));
+
+        expect(joystickZone.classList.contains("pressed")).toBe(false);
+        expect(joystickZone.style.getPropertyValue("--touch-stick-x")).toBe("0px");
+        expect(joystickZone.style.getPropertyValue("--touch-stick-y")).toBe("0px");
     });
 
     // -----------------------------------------------------------------------
