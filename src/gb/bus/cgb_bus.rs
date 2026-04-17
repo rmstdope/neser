@@ -156,6 +156,38 @@ impl CgbBus {
     pub fn clear_frame_ready(&mut self) {
         self.ppu.clear_frame_ready();
     }
+
+    /// Returns `true` when the APU has a sample ready to retrieve.
+    pub fn sample_ready(&self) -> bool {
+        self.apu.sample_ready()
+    }
+
+    /// Consume and return the next audio sample, or `None` if not ready.
+    pub fn take_sample(&mut self) -> Option<f32> {
+        self.apu.take_sample()
+    }
+
+    /// Set the APU output sample rate in Hz.
+    pub fn set_audio_sample_rate(&mut self, rate: f32) {
+        self.apu.set_sample_rate(rate);
+    }
+
+    /// Reset bus state (PPU, timer, joypad, APU, RAM, DMA).
+    pub fn reset(&mut self) {
+        self.ppu = Ppu::new_cgb();
+        self.ppu.write_register(0xFF40, 0x00);
+        self.timer = Timer::new();
+        self.joypad = Joypad::new();
+        self.apu = Apu::new(self.cart.is_cgb());
+        self.wram = [0u8; 0x2000];
+        self.hram = [0u8; 0x7F];
+        self.if_reg = 0;
+        self.ie_reg = 0;
+        self.dma_active = false;
+        self.dma_source = 0;
+        self.dma_position = 0;
+        self.dma_oam_blocked = false;
+    }
 }
 
 impl GbBus for CgbBus {

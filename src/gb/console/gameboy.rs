@@ -1,19 +1,108 @@
 //! Platform-facing Game Boy wrapper for the `Console` enum.
 //!
-//! `GameBoy` owns a [`Gb<DmgBus>`] (created lazily on [`load_rom`]) and a
+//! `GameBoy` owns a [`GbConsole`] (created lazily on [`load_rom`]) and a
 //! [`SharedAppContext`], providing the same interface that the NES side
 //! exposes so that frontends can drive both systems through `Console`.
+//!
+//! On load, the ROM's CGB flag byte (0x0143) determines whether a DMG or CGB
+//! bus is created; `.gbc` (CGB-only, 0xC0) and `.gb` CGB-compat (0x80) ROMs
+//! both get a [`CgbBus`], all others get a [`DmgBus`].
 
 use crate::gb::DmgModel;
-use crate::gb::bus::DmgBus;
+use crate::gb::bus::{CgbBus, DmgBus};
 use crate::gb::cartridge::load_cartridge;
 use crate::gb::console::Gb;
 use crate::platform::app_context::{IntoSharedAppContext, SharedAppContext};
 use crate::platform::emulator::{Emulator, SystemType};
 
-/// Platform-facing Game Boy (DMG) console wrapper.
+/// Wraps either a DMG or CGB console, dispatching all platform operations.
+enum GbConsole {
+    Dmg(Box<Gb<DmgBus>>),
+    Cgb(Box<Gb<CgbBus>>),
+}
+
+impl GbConsole {
+    fn step(&mut self) -> u8 {
+        match self {
+            Self::Dmg(gb) => gb.step(),
+            Self::Cgb(gb) => gb.step(),
+        }
+    }
+
+    fn is_frame_ready(&self) -> bool {
+        match self {
+            Self::Dmg(gb) => gb.is_frame_ready(),
+            Self::Cgb(gb) => gb.is_frame_ready(),
+        }
+    }
+
+    fn clear_frame_ready(&mut self) {
+        match self {
+            Self::Dmg(gb) => gb.clear_frame_ready(),
+            Self::Cgb(gb) => gb.clear_frame_ready(),
+        }
+    }
+
+    fn screen_snapshot(&self) -> Vec<u8> {
+        match self {
+            Self::Dmg(gb) => gb.screen_snapshot(),
+            Self::Cgb(gb) => gb.screen_snapshot(),
+        }
+    }
+
+    fn screen_crc32(&self) -> u32 {
+        match self {
+            Self::Dmg(gb) => gb.screen_crc32(),
+            Self::Cgb(gb) => gb.screen_crc32(),
+        }
+    }
+
+    fn reset(&mut self, soft_reset: bool) {
+        match self {
+            Self::Dmg(gb) => gb.reset(soft_reset),
+            Self::Cgb(gb) => gb.reset(soft_reset),
+        }
+    }
+
+    fn set_joypad_button(&mut self, id: u8, pressed: bool) {
+        match self {
+            Self::Dmg(gb) => gb.cpu.bus.set_joypad_button(id, pressed),
+            Self::Cgb(gb) => gb.cpu.bus.set_joypad_button(id, pressed),
+        }
+    }
+
+    fn get_joypad_button_states(&self) -> u8 {
+        match self {
+            Self::Dmg(gb) => gb.cpu.bus.joypad.get_states(),
+            Self::Cgb(gb) => gb.cpu.bus.joypad.get_states(),
+        }
+    }
+
+    fn sample_ready(&self) -> bool {
+        match self {
+            Self::Dmg(gb) => gb.cpu.bus.sample_ready(),
+            Self::Cgb(gb) => gb.cpu.bus.sample_ready(),
+        }
+    }
+
+    fn take_sample(&mut self) -> Option<f32> {
+        match self {
+            Self::Dmg(gb) => gb.cpu.bus.take_sample(),
+            Self::Cgb(gb) => gb.cpu.bus.take_sample(),
+        }
+    }
+
+    fn set_audio_sample_rate(&mut self, rate: f32) {
+        match self {
+            Self::Dmg(gb) => gb.cpu.bus.set_audio_sample_rate(rate),
+            Self::Cgb(gb) => gb.cpu.bus.set_audio_sample_rate(rate),
+        }
+    }
+}
+
+/// Platform-facing Game Boy (DMG/CGB) console wrapper.
 pub struct GameBoy {
-    gb: Option<Gb<DmgBus>>,
+    gb: Option<GbConsole>,
     app_context: SharedAppContext,
 }
 
@@ -31,10 +120,20 @@ impl GameBoy {
         }
     }
 
-    /// Load a `.gb` ROM image. Replaces any previously loaded ROM.
+    /// Load a `.gb` or `.gbc` ROM image. Replaces any previously loaded ROM.
+    ///
+    /// Automatically selects DMG or CGB bus based on the ROM's CGB flag
+    /// byte at 0x0143: 0x80 (CGB+DMG) and 0xC0 (CGB-only) use [`CgbBus`];
+    /// all other values use [`DmgBus`].
     pub fn load_rom(&mut self, bytes: &[u8], _name: &str) -> Result<(), String> {
         let cart = load_cartridge(bytes).map_err(|e| format!("{e:?}"))?;
-        self.gb = Some(Gb::new(DmgBus::new(cart, DmgModel::DmgAbc)));
+        self.gb = Some(if cart.is_cgb() {
+            let mut gb = Gb::new(CgbBus::new(cart));
+            gb.cpu.reset_registers_cgb();
+            GbConsole::Cgb(Box::new(gb))
+        } else {
+            GbConsole::Dmg(Box::new(Gb::new(DmgBus::new(cart, DmgModel::DmgAbc))))
+        });
         Ok(())
     }
 
@@ -82,7 +181,7 @@ impl GameBoy {
     /// Left=6, Right=7.
     pub fn set_button(&mut self, id: u8, pressed: bool) {
         if let Some(gb) = &mut self.gb {
-            gb.cpu.bus.set_joypad_button(id, pressed);
+            gb.set_joypad_button(id, pressed);
         }
     }
 
@@ -98,7 +197,7 @@ impl GameBoy {
     pub fn get_joypad_button_states(&self) -> u8 {
         self.gb
             .as_ref()
-            .map_or(0, |gb| gb.cpu.bus.joypad.get_states())
+            .map_or(0, |gb| gb.get_joypad_button_states())
     }
 
     /// Serialize emulator state (not supported for MVP — returns `Err`).
@@ -123,18 +222,18 @@ impl GameBoy {
 
     /// Returns `true` when the APU has a sample ready to retrieve.
     pub fn sample_ready(&self) -> bool {
-        self.gb.as_ref().is_some_and(|gb| gb.cpu.bus.sample_ready())
+        self.gb.as_ref().is_some_and(|gb| gb.sample_ready())
     }
 
     /// Retrieve the next APU audio sample, or `None` if not ready.
     pub fn get_sample(&mut self) -> Option<f32> {
-        self.gb.as_mut().and_then(|gb| gb.cpu.bus.take_sample())
+        self.gb.as_mut().and_then(|gb| gb.take_sample())
     }
 
     /// Set the APU output sample rate in Hz.
     pub fn set_audio_sample_rate(&mut self, rate: f32) {
         if let Some(gb) = &mut self.gb {
-            gb.cpu.bus.set_audio_sample_rate(rate);
+            gb.set_audio_sample_rate(rate);
         }
     }
 
@@ -267,6 +366,19 @@ mod tests {
         rom
     }
 
+    fn minimal_cgb_rom() -> Vec<u8> {
+        let mut rom = vec![0u8; 0x8000];
+        rom[0x0143] = 0xC0; // CGB-only flag
+        rom[0x0147] = 0x00; // ROM only
+        rom[0x0148] = 0x00; // 32 KB
+        rom[0x0149] = 0x00; // no RAM
+        let chk = rom[0x0134..=0x014C]
+            .iter()
+            .fold(0u8, |acc, &b| acc.wrapping_sub(b).wrapping_sub(1));
+        rom[0x014D] = chk;
+        rom
+    }
+
     // ── safety before ROM load ──────────────────────────────────────────────
 
     #[test]
@@ -318,6 +430,36 @@ mod tests {
     fn test_load_valid_rom_succeeds() {
         let mut gb = make_gameboy();
         assert!(gb.load_rom(&minimal_rom(), "test.gb").is_ok());
+    }
+
+    #[test]
+    fn test_load_cgb_rom_succeeds() {
+        let mut gb = make_gameboy();
+        assert!(gb.load_rom(&minimal_cgb_rom(), "test.gbc").is_ok());
+    }
+
+    #[test]
+    fn test_cgb_rom_run_tick_returns_nonzero_cycles() {
+        let mut gb = make_gameboy();
+        gb.load_rom(&minimal_cgb_rom(), "test.gbc").unwrap();
+        let cycles = gb.run_tick();
+        assert!(cycles > 0, "expected non-zero cycles, got {cycles}");
+    }
+
+    #[test]
+    fn test_cgb_rom_joypad_roundtrip() {
+        let mut gb = make_gameboy();
+        gb.load_rom(&minimal_cgb_rom(), "test.gbc").unwrap();
+        let mask: u8 = 0b0000_0001; // A pressed
+        gb.set_joypad_button_states(mask);
+        assert_eq!(gb.get_joypad_button_states(), mask);
+    }
+
+    #[test]
+    fn test_cgb_rom_audio_sample_rate_does_not_panic() {
+        let mut gb = make_gameboy();
+        gb.load_rom(&minimal_cgb_rom(), "test.gbc").unwrap();
+        gb.set_audio_sample_rate(48_000.0);
     }
 
     #[test]

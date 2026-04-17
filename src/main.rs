@@ -412,7 +412,7 @@ fn detect_system_type(path: &str) -> platform::emulator::SystemType {
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("");
-    if ext.eq_ignore_ascii_case("gb") {
+    if ext.eq_ignore_ascii_case("gb") || ext.eq_ignore_ascii_case("gbc") {
         platform::emulator::SystemType::GameBoy
     } else {
         platform::emulator::SystemType::Nes
@@ -429,6 +429,16 @@ mod tests {
     #[test]
     fn detect_system_type_gb_extension_returns_gameboy() {
         assert_eq!(detect_system_type("tetris.gb"), SystemType::GameBoy);
+    }
+
+    #[test]
+    fn detect_system_type_gbc_extension_returns_gameboy() {
+        assert_eq!(detect_system_type("game.gbc"), SystemType::GameBoy);
+    }
+
+    #[test]
+    fn detect_system_type_uppercase_gbc_returns_gameboy() {
+        assert_eq!(detect_system_type("GAME.GBC"), SystemType::GameBoy);
     }
 
     #[test]

@@ -92,6 +92,19 @@ impl Gb<DmgBus> {
 
 /// CGB screen and frame API.
 impl Gb<CgbBus> {
+    /// Reset the console.
+    ///
+    /// - `soft_reset = true`: resets only the CPU registers to the CGB
+    ///   post-boot-ROM state (bus state preserved).
+    /// - `soft_reset = false`: resets CPU registers **and** all bus state.
+    pub fn reset(&mut self, soft_reset: bool) {
+        self.cpu.reset_registers_cgb();
+        if !soft_reset {
+            self.cpu.regs.pc = 0x0100;
+            self.cpu.bus.reset();
+        }
+    }
+
     /// Snapshot the current rendered screen as a 160×144 RGB byte vector.
     pub fn screen_snapshot(&self) -> Vec<u8> {
         self.cpu.bus.ppu.screen_buffer().snapshot()
