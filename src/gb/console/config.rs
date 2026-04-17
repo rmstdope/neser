@@ -55,7 +55,9 @@ impl Default for GbConfig {
 impl GbConfig {
     /// Parse GB-specific CLI arguments and apply them to this config.
     pub(crate) fn apply_args(&mut self, args: &[String]) -> Result<(), String> {
-        if let Some(gb_hardware) = crate::platform::config::parse_cli_string_arg(args, "--gb-hardware") {
+        if let Some(gb_hardware) =
+            crate::platform::config::parse_cli_string_arg(args, "--gb-hardware")
+        {
             self.hardware = GbHardware::parse(&gb_hardware).ok_or_else(|| {
                 format!(
                     "Invalid --gb-hardware value: '{}'. Valid options are: dmg, cgb",
