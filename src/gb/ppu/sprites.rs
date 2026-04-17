@@ -3,8 +3,12 @@
 pub struct SpritePixel {
     /// Colour index (1–3; 0 is transparent and will never appear here).
     pub colour_index: u8,
-    /// Palette selection: 0 = OBP0, 1 = OBP1.
+    /// DMG palette selection: 0 = OBP0, 1 = OBP1.
+    /// In CGB mode this is unused; use `cgb_palette` instead.
     pub palette: u8,
+    /// CGB OBJ palette number (0–7, from OAM attribute bits 0–2).
+    /// Always 0 in DMG mode.
+    pub cgb_palette: u8,
     /// Priority: if true the sprite is drawn behind BG colours 1–3.
     pub bg_priority: bool,
 }
@@ -123,6 +127,109 @@ pub fn fetch_sprite_pixel(
         return Some(SpritePixel {
             colour_index,
             palette,
+            cgb_palette: 0,
+            bg_priority,
+        });
+    }
+    None
+}
+
+/// Fetch the highest-priority visible sprite pixel in CGB mode at screen position `x`.
+///
+/// When `dmg_priority_mode` is `false` (CGB default), priority is determined by OAM
+/// order (earlier entry wins). When `true`, X-coordinate priority is used as in DMG.
+///
+/// CGB OAM attributes (byte 3):
+/// - Bits 0–2: OBJ palette number (0–7)
+/// - Bit 3: Tile VRAM bank (0=bank0, 1=bank1)
+/// - Bit 5: H-flip
+/// - Bit 6: V-flip
+/// - Bit 7: OBJ-to-BG priority
+#[allow(clippy::too_many_arguments)]
+pub fn fetch_sprite_pixel_cgb(
+    x: u32,
+    scanline: u8,
+    sprite_indices: &[usize],
+    oam: &[u8; 0xA0],
+    vram: &[u8; 0x2000],
+    vram_bank1: &[u8; 0x2000],
+    lcdc: u8,
+    dmg_priority_mode: bool,
+) -> Option<SpritePixel> {
+    let height: u8 = if lcdc & 0x04 != 0 { 16 } else { 8 };
+
+    // In CGB mode (dmg_priority_mode=false) sprites are prioritized by OAM order
+    // (scan_oam_line already returns them in OAM index order).
+    // In DMG compatibility mode (dmg_priority_mode=true) sort by X-coord.
+    let mut sorted = [0usize; 10];
+    let mut count = 0usize;
+    for &i in sprite_indices.iter().take(10) {
+        sorted[count] = i;
+        count += 1;
+    }
+    if dmg_priority_mode {
+        sorted[..count].sort_by_key(|&i| (oam[i * 4 + 1], i));
+    }
+
+    for &i in &sorted[..count] {
+        let oam_y = oam[i * 4];
+        let oam_x = oam[i * 4 + 1];
+        let tile_num = oam[i * 4 + 2];
+        let attrs = oam[i * 4 + 3];
+
+        let screen_y = oam_y.wrapping_sub(16);
+        let screen_x = oam_x.wrapping_sub(8);
+
+        if x < screen_x as u32 || x >= screen_x as u32 + 8 {
+            continue;
+        }
+
+        let y_flip = attrs & 0x40 != 0;
+        let x_flip = attrs & 0x20 != 0;
+        let cgb_palette = attrs & 0x07;
+        let tile_vram_bank = (attrs >> 3) & 0x01;
+        let bg_priority = attrs & 0x80 != 0;
+
+        let mut row = (scanline - screen_y) as usize;
+        if y_flip {
+            row = (height as usize - 1) - row;
+        }
+
+        let mut pixel_x = (x as u8).wrapping_sub(screen_x);
+        if x_flip {
+            pixel_x = 7 - pixel_x;
+        }
+
+        let tile_index = if height == 16 {
+            if row < 8 {
+                (tile_num & 0xFE) as usize
+            } else {
+                row -= 8;
+                (tile_num | 0x01) as usize
+            }
+        } else {
+            tile_num as usize
+        };
+
+        let tile_vram = if tile_vram_bank != 0 {
+            vram_bank1
+        } else {
+            vram
+        };
+        let tile_addr = tile_index * 16;
+        let low = tile_vram[tile_addr + row * 2];
+        let high = tile_vram[tile_addr + row * 2 + 1];
+        let bit = 7 - pixel_x;
+        let colour_index = ((high >> bit) & 1) << 1 | ((low >> bit) & 1);
+
+        if colour_index == 0 {
+            continue;
+        }
+
+        return Some(SpritePixel {
+            colour_index,
+            palette: 0,
+            cgb_palette,
             bg_priority,
         });
     }
@@ -552,5 +659,107 @@ mod tests {
         let (oam, indices) = penalty_sprites(&[0]);
         assert_eq!(calculate_obj_penalty(&indices, &oam, 3), 11);
         assert_eq!(calculate_obj_penalty(&indices, &oam, 7), 11);
+    }
+
+    // ── CGB sprite pixel tests ────────────────────────────────────────────────
+
+    #[test]
+    fn test_cgb_sprite_palette_bits_extracted_from_attrs() {
+        // Sprite at (screen_x=0, screen_y=0): oam_x=8, oam_y=16
+        // attrs = 0x05 → CGB palette 5 (bits 0-2)
+        let mut oam = blank_oam();
+        oam[0] = 16; // oam_y
+        oam[1] = 8; // oam_x
+        oam[2] = 0; // tile 0
+        oam[3] = 0x05; // palette 5
+        let mut vram = blank_vram();
+        vram[0x0000] = 0xFF; // tile 0, row 0: colour 1 (all pixels non-transparent)
+        let bank1 = blank_vram();
+        let lcdc = 0x02u8; // sprites enabled (bit 1)
+        let indices = [0usize];
+        let result = fetch_sprite_pixel_cgb(0, 0, &indices, &oam, &vram, &bank1, lcdc, false);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().cgb_palette, 5);
+    }
+
+    #[test]
+    fn test_cgb_sprite_tile_data_read_from_vram_bank1_when_attr_bit3_set() {
+        // attrs bit 3 = VRAM bank 1. Tile 0 in bank 0 all zeros; tile 0 in bank 1 has data.
+        let mut oam = blank_oam();
+        oam[0] = 16;
+        oam[1] = 8;
+        oam[2] = 0;
+        oam[3] = 0x08; // VRAM bank bit (bit 3)
+        let vram = blank_vram(); // bank 0: all zero (transparent)
+        let mut bank1 = blank_vram();
+        bank1[0x0000] = 0xFF; // tile 0, row 0 in bank 1: colour 1
+        let lcdc = 0x02u8;
+        let indices = [0usize];
+        // Without bank1 flag this would return None (transparent); must return Some
+        let result = fetch_sprite_pixel_cgb(0, 0, &indices, &oam, &vram, &bank1, lcdc, false);
+        assert!(result.is_some(), "tile data should come from VRAM bank 1");
+        assert_eq!(result.unwrap().colour_index, 1);
+    }
+
+    #[test]
+    fn test_cgb_sprite_oam_order_priority_when_dmg_mode_false() {
+        // Two sprites overlapping at x=1.
+        // Sprite 0: oam_x=9 (screen_x=1), tile 0, colour 1
+        // Sprite 1: oam_x=8 (screen_x=0, covers x=0..7), tile 1, colour 3
+        // In CGB (OAM order) mode: sprite 0 wins (lower OAM index).
+        let mut oam = blank_oam();
+        // Sprite 0 at screen_x=1
+        oam[0] = 16;
+        oam[1] = 9;
+        oam[2] = 0;
+        oam[3] = 0x01; // palette 1
+        // Sprite 1 at screen_x=0
+        oam[4] = 16;
+        oam[5] = 8;
+        oam[6] = 1;
+        oam[7] = 0x02; // palette 2
+        let mut vram = blank_vram();
+        vram[0x0000] = 0xFF; // tile 0 row 0: colour 1
+        vram[0x0010] = 0xFF;
+        vram[0x0011] = 0xFF; // tile 1 row 0: colour 3
+        let bank1 = blank_vram();
+        let lcdc = 0x02u8;
+        let indices = [0usize, 1usize];
+        let result = fetch_sprite_pixel_cgb(1, 0, &indices, &oam, &vram, &bank1, lcdc, false);
+        assert!(result.is_some());
+        assert_eq!(
+            result.unwrap().cgb_palette,
+            1,
+            "OAM-order: sprite 0 (palette 1) should win"
+        );
+    }
+
+    #[test]
+    fn test_cgb_sprite_dmg_xcoord_priority_when_dmg_mode_true() {
+        // Same two sprites; in DMG-compat (dmg_priority_mode=true) X-coord wins.
+        // Sprite 1 has lower oam_x=8 < oam_x=9, so it should win.
+        let mut oam = blank_oam();
+        oam[0] = 16;
+        oam[1] = 9;
+        oam[2] = 0;
+        oam[3] = 0x01; // palette 1
+        oam[4] = 16;
+        oam[5] = 8;
+        oam[6] = 1;
+        oam[7] = 0x02; // palette 2
+        let mut vram = blank_vram();
+        vram[0x0000] = 0xFF;
+        vram[0x0010] = 0xFF;
+        vram[0x0011] = 0xFF;
+        let bank1 = blank_vram();
+        let lcdc = 0x02u8;
+        let indices = [0usize, 1usize];
+        let result = fetch_sprite_pixel_cgb(1, 0, &indices, &oam, &vram, &bank1, lcdc, true);
+        assert!(result.is_some());
+        assert_eq!(
+            result.unwrap().cgb_palette,
+            2,
+            "X-coord priority: sprite 1 (palette 2, lower X) should win"
+        );
     }
 }

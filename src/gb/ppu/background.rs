@@ -36,6 +36,98 @@ pub fn fetch_bg_pixel(x: u32, scanline: u8, vram: &[u8; 0x2000], lcdc: u8, scx: 
     ((high >> bit) & 1) << 1 | ((low >> bit) & 1)
 }
 
+/// CGB background pixel with full tile attribute information.
+#[derive(Debug, Clone, Copy)]
+pub struct BgPixelCgb {
+    /// Colour index (0–3) from the tile data.
+    pub colour_index: u8,
+    /// BG palette number (0–7) from VRAM bank 1 tile attribute bits 0–2.
+    pub palette_num: u8,
+    /// Whether the tile data comes from VRAM bank 1 (attribute bit 3).
+    pub vram_bank: u8,
+    /// Background-to-OAM priority flag (attribute bit 7).
+    /// When true and the BG colour index is non-zero, the BG pixel is drawn
+    /// on top of OBJ pixels (in master-priority mode).
+    pub bg_priority: bool,
+}
+
+/// Fetch a CGB background pixel and its tile attributes for a given screen pixel.
+///
+/// Tile data is fetched from VRAM bank 0 or bank 1 according to the attribute's
+/// VRAM bank bit.  Tile attributes are always read from VRAM bank 1 at the same
+/// tile map address as the tile index in bank 0.
+///
+/// # Arguments
+/// * `x`           — Screen X coordinate (0–159)
+/// * `scanline`    — Current scanline (LY, 0–143)
+/// * `vram`        — VRAM bank 0 ($8000–$9FFF)
+/// * `vram_bank1`  — VRAM bank 1
+/// * `lcdc`        — Current LCDC register value
+/// * `scx`         — Horizontal scroll (SCX)
+/// * `scy`         — Vertical scroll (SCY)
+pub fn fetch_bg_pixel_cgb(
+    x: u32,
+    scanline: u8,
+    vram: &[u8; 0x2000],
+    vram_bank1: &[u8; 0x2000],
+    lcdc: u8,
+    scx: u8,
+    scy: u8,
+) -> BgPixelCgb {
+    let bg_x = scx.wrapping_add(x as u8);
+    let bg_y = scy.wrapping_add(scanline);
+
+    let map_base: usize = if lcdc & 0x08 != 0 { 0x1C00 } else { 0x1800 };
+    let tile_col = (bg_x / 8) as usize;
+    let tile_row = (bg_y / 8) as usize;
+    let map_offset = map_base + tile_row * 32 + tile_col;
+
+    let tile_index_raw = vram[map_offset];
+    // Tile attributes live at the same map offset in VRAM bank 1.
+    let attrs = vram_bank1[map_offset];
+
+    let palette_num = attrs & 0x07;
+    let tile_vram_bank = (attrs >> 3) & 0x01;
+    let x_flip = attrs & 0x20 != 0;
+    let y_flip = attrs & 0x40 != 0;
+    let bg_priority = attrs & 0x80 != 0;
+
+    let tile_data_start: usize = if lcdc & 0x10 != 0 {
+        (tile_index_raw as usize) * 16
+    } else {
+        (0x1000i32 + (tile_index_raw as i8 as i32) * 16) as usize
+    };
+
+    let mut row_in_tile = (bg_y % 8) as usize;
+    if y_flip {
+        row_in_tile = 7 - row_in_tile;
+    }
+
+    let pixel_in_tile = bg_x % 8;
+    let bit = if x_flip {
+        pixel_in_tile
+    } else {
+        7 - pixel_in_tile
+    };
+
+    let tile_vram = if tile_vram_bank != 0 {
+        vram_bank1
+    } else {
+        vram
+    };
+    let addr = tile_data_start + row_in_tile * 2;
+    let low = tile_vram[addr];
+    let high = tile_vram[addr + 1];
+    let colour_index = ((high >> bit) & 1) << 1 | ((low >> bit) & 1);
+
+    BgPixelCgb {
+        colour_index,
+        palette_num,
+        vram_bank: tile_vram_bank,
+        bg_priority,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -108,5 +200,82 @@ mod tests {
         let idx = fetch_bg_pixel(0, 0, &vram, lcdc, 0, 8);
         // Then: colour index 2
         assert_eq!(idx, 2);
+    }
+
+    // ── CGB background pixel tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_cgb_bg_palette_num_extracted_from_attrs() {
+        // Given: tile attrs at map slot (0,0) in VRAM bank 1 with palette_num=5 (bits 0-2 = 0b101)
+        let vram = blank_vram();
+        let mut bank1 = blank_vram();
+        bank1[0x1800] = 0x05; // palette bits 0-2 = 5
+        // When: fetch at (0, 0)
+        let px = fetch_bg_pixel_cgb(0, 0, &vram, &bank1, 0x91, 0, 0);
+        // Then: palette_num == 5
+        assert_eq!(px.palette_num, 5);
+    }
+
+    #[test]
+    fn test_cgb_bg_priority_flag_extracted_from_attrs() {
+        // Given: tile attrs with bit 7 set (bg_priority)
+        let vram = blank_vram();
+        let mut bank1 = blank_vram();
+        bank1[0x1800] = 0x80; // bg_priority bit set
+        let px = fetch_bg_pixel_cgb(0, 0, &vram, &bank1, 0x91, 0, 0);
+        assert!(px.bg_priority);
+        // Without bit 7: false
+        bank1[0x1800] = 0x00;
+        let px2 = fetch_bg_pixel_cgb(0, 0, &vram, &bank1, 0x91, 0, 0);
+        assert!(!px2.bg_priority);
+    }
+
+    #[test]
+    fn test_cgb_bg_tile_data_read_from_vram_bank1_when_attr_bit3_set() {
+        // Given: tile index 0 in map bank 0; attrs with VRAM bank bit (bit 3) set
+        // Tile 0 in bank 0: all zeros
+        // Tile 0 in bank 1: row 0 low=0xFF → colour 1 for all pixels
+        let vram = blank_vram();
+        let mut bank1 = blank_vram();
+        bank1[0x1800] = 0x08; // VRAM bank bit set, palette 0
+        bank1[0x0000] = 0xFF; // tile 0 row 0 low byte in bank 1
+        bank1[0x0001] = 0x00; // tile 0 row 0 high byte in bank 1
+        let px = fetch_bg_pixel_cgb(0, 0, &vram, &bank1, 0x91, 0, 0);
+        // Pixel 0 (leftmost): bit = 7, colour = (0>>7)&1 << 1 | (0xFF>>7)&1 = 1
+        assert_eq!(px.colour_index, 1);
+        assert_eq!(px.vram_bank, 1);
+    }
+
+    #[test]
+    fn test_cgb_bg_x_flip_reverses_pixel_order() {
+        // Tile 0 row 0: low=0x01 → only bit 0 (rightmost pixel, pixel_in_tile=7) has colour 1.
+        // Without x_flip: pixel at x=7 (rightmost) has colour 1; x=0 has colour 0.
+        // With x_flip: pixel at x=0 (leftmost) has colour 1.
+        let mut vram = blank_vram();
+        let mut bank1 = blank_vram();
+        vram[0x0000] = 0x01; // only bit 0 set → colour 1 at rightmost pixel
+        // No flip (attrs=0): x=0 should see bit 7 → colour 0
+        let px_no_flip = fetch_bg_pixel_cgb(0, 0, &vram, &bank1, 0x91, 0, 0);
+        assert_eq!(px_no_flip.colour_index, 0);
+        // x_flip set (attrs bit 5): x=0 should see bit 0 → colour 1
+        bank1[0x1800] = 0x20; // x_flip bit
+        let px_x_flip = fetch_bg_pixel_cgb(0, 0, &vram, &bank1, 0x91, 0, 0);
+        assert_eq!(px_x_flip.colour_index, 1);
+    }
+
+    #[test]
+    fn test_cgb_bg_y_flip_reverses_row_order() {
+        // Tile 0: row 7 (bottom) has colour 1; row 0 (top) has colour 0.
+        let mut vram = blank_vram();
+        let mut bank1 = blank_vram();
+        vram[0x000E] = 0xFF; // tile 0 row 7 low byte (row_offset = 7*2 = 14)
+        vram[0x000F] = 0x00;
+        // No y_flip: scanline=0 → row 0 → colour 0
+        let px_no = fetch_bg_pixel_cgb(0, 0, &vram, &bank1, 0x91, 0, 0);
+        assert_eq!(px_no.colour_index, 0);
+        // y_flip set (attrs bit 6): scanline=0 → row_in_tile = 7-0 = 7 → colour 1
+        bank1[0x1800] = 0x40; // y_flip bit
+        let px_yf = fetch_bg_pixel_cgb(0, 0, &vram, &bank1, 0x91, 0, 0);
+        assert_eq!(px_yf.colour_index, 1);
     }
 }

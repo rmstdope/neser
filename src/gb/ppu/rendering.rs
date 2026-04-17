@@ -103,6 +103,148 @@ pub fn render_scanline(
     }
 }
 
+/// Convert a 5-bit CGB palette component to 8-bit.
+///
+/// Uses the formula specified by the cgb-acid2 test: `(c5 << 3) | (c5 >> 2)`.
+#[inline]
+fn cgb_5bit_to_8bit(c5: u8) -> u8 {
+    (c5 << 3) | (c5 >> 2)
+}
+
+/// Look up an RGB color from CGB palette RAM.
+///
+/// `palette_ram` — 64-byte palette RAM (8 palettes × 4 colors × 2 bytes, 5-5-5 LE).
+/// `palette_num` — Palette index (0–7).
+/// `colour_index` — Color slot within the palette (0–3; 0 is transparent for OBJ).
+///
+/// Returns `(r8, g8, b8)` with 8-bit components.
+fn cgb_palette_lookup(palette_ram: &[u8; 64], palette_num: u8, colour_index: u8) -> (u8, u8, u8) {
+    let base = (palette_num as usize) * 8 + (colour_index as usize) * 2;
+    let lo = palette_ram[base];
+    let hi = palette_ram[base + 1];
+    let color = u16::from_le_bytes([lo, hi]);
+    let r5 = (color & 0x1F) as u8;
+    let g5 = ((color >> 5) & 0x1F) as u8;
+    let b5 = ((color >> 10) & 0x1F) as u8;
+    (
+        cgb_5bit_to_8bit(r5),
+        cgb_5bit_to_8bit(g5),
+        cgb_5bit_to_8bit(b5),
+    )
+}
+
+/// Render one full CGB scanline (0–143) into `screen_buffer`.
+///
+/// Implements CGB compositing rules:
+/// - `LCDC bit 0` is the **master priority** flag (not BG enable as in DMG).
+///   - 0: OBJ pixels always win over BG/Window pixels.
+///   - 1: Normal priority — BG tile priority bit and/or OBJ priority bit can
+///     cause BG to appear on top when the BG colour index is non-zero.
+/// - OBJ priority is determined by OAM order when `opri_dmg_mode` is false
+///   (CGB default), or by X-coordinate when true.
+#[allow(clippy::too_many_arguments)]
+pub fn render_scanline_cgb(
+    scanline: u8,
+    vram: &[u8; 0x2000],
+    vram_bank1: &[u8; 0x2000],
+    oam: &[u8; 0xA0],
+    registers: &Registers,
+    bg_palette_ram: &[u8; 64],
+    obj_palette_ram: &[u8; 64],
+    window_line: &mut u8,
+    opri_dmg_mode: bool,
+    screen_buffer: &mut ScreenBuffer,
+) {
+    let lcdc = registers.lcdc;
+    let obj_enabled = lcdc & 0x02 != 0;
+    let win_enabled = lcdc & 0x20 != 0;
+    // In CGB mode, LCDC bit 0 is master priority (not BG enable).
+    let master_priority = lcdc & 0x01 != 0;
+
+    let sprite_indices = if obj_enabled {
+        sprites::scan_oam_line(scanline, oam, lcdc)
+    } else {
+        Vec::new()
+    };
+
+    let mut window_active = false;
+
+    for x in 0..ScreenBuffer::WIDTH {
+        // Fetch BG pixel (always rendered in CGB mode regardless of LCDC bit 0).
+        let bg_px = background::fetch_bg_pixel_cgb(
+            x,
+            scanline,
+            vram,
+            vram_bank1,
+            lcdc,
+            registers.scx,
+            registers.scy,
+        );
+
+        // Window may override BG.
+        let bw_px = if win_enabled {
+            match window::fetch_window_pixel_cgb(
+                x,
+                scanline,
+                vram,
+                vram_bank1,
+                lcdc,
+                registers.wx,
+                registers.wy,
+                *window_line,
+            ) {
+                Some(win_px) => {
+                    window_active = true;
+                    win_px
+                }
+                None => bg_px,
+            }
+        } else {
+            bg_px
+        };
+
+        // Fetch OBJ pixel.
+        let sprite_px = if obj_enabled {
+            sprites::fetch_sprite_pixel_cgb(
+                x,
+                scanline,
+                &sprite_indices,
+                oam,
+                vram,
+                vram_bank1,
+                lcdc,
+                opri_dmg_mode,
+            )
+        } else {
+            None
+        };
+
+        // CGB compositing:
+        // - If no OBJ pixel → render BG/Window.
+        // - If BG colour index == 0 → OBJ wins.
+        // - If master priority == 0 → OBJ always wins.
+        // - If master priority == 1 and (BG tile priority or OBJ priority) and BG colour != 0 → BG wins.
+        // - Otherwise OBJ wins.
+        let (r, g, b) = if let Some(sp) = sprite_px {
+            let bg_wins =
+                bw_px.colour_index != 0 && master_priority && (bw_px.bg_priority || sp.bg_priority);
+            if bg_wins {
+                cgb_palette_lookup(bg_palette_ram, bw_px.palette_num, bw_px.colour_index)
+            } else {
+                cgb_palette_lookup(obj_palette_ram, sp.cgb_palette, sp.colour_index)
+            }
+        } else {
+            cgb_palette_lookup(bg_palette_ram, bw_px.palette_num, bw_px.colour_index)
+        };
+
+        screen_buffer.set_pixel(x, scanline as u32, r, g, b);
+    }
+
+    if window_active {
+        *window_line = window_line.wrapping_add(1);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -210,5 +352,134 @@ mod tests {
                 "pixel ({x},0) should be white when BG disabled"
             );
         }
+    }
+
+    // ── CGB rendering helper tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_cgb_5bit_to_8bit_known_values() {
+        assert_eq!(cgb_5bit_to_8bit(0), 0);
+        assert_eq!(cgb_5bit_to_8bit(31), 255); // (31<<3)|(31>>2) = 248|7 = 255
+        assert_eq!(cgb_5bit_to_8bit(1), 8); // (1<<3)|(1>>2) = 8|0 = 8
+        assert_eq!(cgb_5bit_to_8bit(16), 132); // (16<<3)|(16>>2) = 128|4 = 132
+    }
+
+    #[test]
+    fn test_cgb_palette_lookup_decodes_5_5_5_le() {
+        // palette 0, colour 1: R=31, G=0, B=0 → lo=0x1F, hi=0x00
+        let mut palette_ram = [0u8; 64];
+        palette_ram[2] = 0x1F; // colour 1 lo byte: R=31 (bits 0-4)
+        palette_ram[3] = 0x00; // colour 1 hi byte
+        let (r, g, b) = cgb_palette_lookup(&palette_ram, 0, 1);
+        assert_eq!(r, 255, "R should be max");
+        assert_eq!(g, 0, "G should be 0");
+        assert_eq!(b, 0, "B should be 0");
+    }
+
+    fn blank_vram_bank1() -> [u8; 0x2000] {
+        [0u8; 0x2000]
+    }
+
+    fn blank_palette_ram() -> [u8; 64] {
+        [0u8; 64]
+    }
+
+    /// Build palette_ram with colour `slot` in palette 0 = max white (0x7FFF in 5-5-5 LE).
+    fn palette_ram_with_white_at(slot: usize) -> [u8; 64] {
+        let mut p = blank_palette_ram();
+        p[slot * 2] = 0xFF;
+        p[slot * 2 + 1] = 0x7F;
+        p
+    }
+
+    #[test]
+    fn test_cgb_master_priority_off_obj_always_wins() {
+        // LCDC bit 0 = 0 → master_priority = false → OBJ always wins over BG.
+        // Sprite at (screen_x=0, screen_y=0); bg tile at (0,0).
+        // BG palette colour 1 = white; OBJ palette colour 1 = black.
+        // Even with bg_priority flag on the BG tile, OBJ should win.
+        let mut vram = blank_vram();
+        let mut oam = blank_oam();
+        // Sprite at screen (0,0): oam_y=16, oam_x=8, tile 0, attrs=0x80 (bg_priority set)
+        oam[0] = 16;
+        oam[1] = 8;
+        oam[2] = 0;
+        oam[3] = 0x80;
+        // BG tile 0 row 0: colour 1 (bank 0 attr in bank1[0x1800] has bg_priority bit set)
+        vram[0x0000] = 0xFF; // tile 0 row 0 low: colour 1 for all pixels
+        let mut bank1_with_bgprio = blank_vram_bank1();
+        bank1_with_bgprio[0x1800] = 0x80; // BG tile attr: bg_priority
+        // Sprite tile 0 row 0: black via obj_palette_ram (all zeros)
+        // vram tile 0 is reused (colour 1); OBJ also colour 1 → both non-transparent
+
+        let mut regs = default_registers();
+        regs.lcdc = 0x92u8; // 1001_0010: LCD on, tile_data $8000 (bit4), sprites on (bit1), master_priority=0 (bit0=0)
+
+        let bg_palette = palette_ram_with_white_at(1); // palette 0, colour 1 = white
+        let obj_palette = blank_palette_ram(); // palette 0, colour 1 = black (all zeros)
+
+        let mut sb = ScreenBuffer::new();
+        let mut wl = 0u8;
+        render_scanline_cgb(
+            0,
+            &vram,
+            &bank1_with_bgprio,
+            &oam,
+            &regs,
+            &bg_palette,
+            &obj_palette,
+            &mut wl,
+            false,
+            &mut sb,
+        );
+        // master_priority=false → OBJ always wins → black
+        assert_eq!(
+            sb.get_pixel(0, 0),
+            (0, 0, 0),
+            "OBJ (black) must win when master_priority=false"
+        );
+    }
+
+    #[test]
+    fn test_cgb_bg_priority_beats_obj_when_master_priority_set() {
+        // LCDC bit 0 = 1 → master_priority = true.
+        // BG tile has bg_priority=true and colour_index != 0 → BG wins.
+        // BG palette colour 1 = white; OBJ palette colour 1 = black.
+        let mut vram = blank_vram();
+        let mut oam = blank_oam();
+        oam[0] = 16;
+        oam[1] = 8;
+        oam[2] = 0;
+        oam[3] = 0x00; // sprite at (0,0), no priority flag
+        vram[0x0000] = 0xFF; // tile 0 row 0 low: colour 1
+        let mut bank1 = blank_vram_bank1();
+        bank1[0x1800] = 0x80; // BG tile attr: bg_priority bit set
+
+        let mut regs = default_registers();
+        // 1001_0011: LCD on, tile data $8000 (bit4), sprites on (bit1), master_priority=1 (bit0)
+        regs.lcdc = 0x93u8;
+
+        let bg_palette = palette_ram_with_white_at(1); // colour 1 = white
+        let obj_palette = blank_palette_ram(); // colour 1 = black
+
+        let mut sb = ScreenBuffer::new();
+        let mut wl = 0u8;
+        render_scanline_cgb(
+            0,
+            &vram,
+            &bank1,
+            &oam,
+            &regs,
+            &bg_palette,
+            &obj_palette,
+            &mut wl,
+            false,
+            &mut sb,
+        );
+        assert_eq!(
+            sb.get_pixel(0, 0),
+            (255, 255, 255),
+            "BG (white) must win with master_priority=true and bg_priority"
+        );
     }
 }
