@@ -500,15 +500,32 @@ async function loadGbAssets() {
 }
 
 function setupGbPrograms() {
-    shaderProgram = createProgram(commonVertGlsl, stockFragGlsl);
-    gbPass0Program = createProgram(gbPass0VertexSource, gbPass0FragmentSource);
-    gbPass1Program = createProgram(gbPass1VertexSource, gbPass1FragmentSource);
-    gbPass2Program = createProgram(gbBlurVertexSource, gbPass2FragmentSource);
-    gbPass3Program = createProgram(gbBlurVertexSource, gbPass3FragmentSource);
-    gbPass4Program = createProgram(gbPass4VertexSource, gbPass4FragmentSource);
-    if (!shaderProgram || !gbPass0Program || !gbPass1Program || !gbPass2Program || !gbPass3Program || !gbPass4Program) {
+    const stockProgram = createProgram(commonVertGlsl, stockFragGlsl);
+    const pass0Program = createProgram(gbPass0VertexSource, gbPass0FragmentSource);
+    const pass1Program = createProgram(gbPass1VertexSource, gbPass1FragmentSource);
+    const pass2Program = createProgram(gbBlurVertexSource, gbPass2FragmentSource);
+    const pass3Program = createProgram(gbBlurVertexSource, gbPass3FragmentSource);
+    const pass4Program = createProgram(gbPass4VertexSource, gbPass4FragmentSource);
+    if (!stockProgram || !pass0Program || !pass1Program || !pass2Program || !pass3Program || !pass4Program) {
+        for (const program of [stockProgram, pass0Program, pass1Program, pass2Program, pass3Program, pass4Program]) {
+            if (program) {
+                gl.deleteProgram(program);
+            }
+        }
+        shaderProgram = null;
+        gbPass0Program = null;
+        gbPass1Program = null;
+        gbPass2Program = null;
+        gbPass3Program = null;
+        gbPass4Program = null;
         return false;
     }
+    shaderProgram = stockProgram;
+    gbPass0Program = pass0Program;
+    gbPass1Program = pass1Program;
+    gbPass2Program = pass2Program;
+    gbPass3Program = pass3Program;
+    gbPass4Program = pass4Program;
     // Create previous-frame texture at source (GB) resolution
     gbPrevFrameTex = gl.createTexture()!;
     gl.bindTexture(gl.TEXTURE_2D, gbPrevFrameTex);
