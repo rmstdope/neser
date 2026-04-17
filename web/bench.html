@@ -13,11 +13,14 @@ function log(msg) { out.textContent += "\n" + msg; }
 async function run() {
     await init("./pkg/neser_bg.wasm");
 
-    // Fetch ROM
-    const romName = new URLSearchParams(location.search).get("rom") || "smb3.nes";
+    // Fetch ROM (require explicit ?rom= parameter, sanitize input)
+    const SAFE_ROM_BASENAME = /^[A-Za-z0-9._-]+$/;
+    const romName = new URLSearchParams(location.search).get("rom");
+    if (!romName) throw new Error("Missing ?rom=<file>. Provide a ROM filename in web/roms/.");
+    if (!SAFE_ROM_BASENAME.test(romName)) throw new Error("Invalid ROM name. Only letters, numbers, dot, underscore, or dash allowed.");
     const frames = parseInt(new URLSearchParams(location.search).get("frames") || "600", 10);
     log(`Fetching ROM: ${romName}`);
-    const resp = await fetch(`roms/${romName}`);
+    const resp = await fetch(`roms/${encodeURIComponent(romName)}`);
     if (!resp.ok) throw new Error(`Failed to fetch ROM: ${resp.status}`);
     const romData = new Uint8Array(await resp.arrayBuffer());
 

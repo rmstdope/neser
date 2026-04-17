@@ -103,6 +103,7 @@ required-features = ["frontend"]
 [[bin]]
 name = "frame_bench"
 path = "benches/frame_bench.rs"
+required-features = ["native"]
 
 [dev-dependencies]
 hound = "3.5"
