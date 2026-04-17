@@ -3,7 +3,7 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use crate::nes::autorun::headless_playback::run_headless_playback;
-    use crate::nes::cartridge::{Cartridge, TimingMode as CartridgeTimingMode};
+    use crate::nes::cartridge::{Cartridge, TimingMode as CartridgeTimingMode, load_rom_db};
     use crate::nes::console::{Config, HardwareModel, Nes, RamInitMode};
     use crate::platform::app_context::AppContext;
     use crate::platform::autorun::load_autorun_file;
@@ -27,7 +27,8 @@ mod tests {
     fn make_nes_for_rom(rom_path: &Path) -> Result<Nes, String> {
         let rom_data = std::fs::read(rom_path)
             .map_err(|e| format!("Failed to read ROM {}: {e}", rom_path.display()))?;
-        let cartridge = Cartridge::load_from_file(&rom_data, rom_path, None)
+        let rom_db = load_rom_db();
+        let cartridge = Cartridge::load_from_file(&rom_data, rom_path, Some(&rom_db))
             .map_err(|e| format!("Failed to parse ROM {}: {e}", rom_path.display()))?;
 
         let mut config = deterministic_config();
