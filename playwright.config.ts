@@ -19,6 +19,6 @@ export default defineConfig({
         command: WEB_APP_SERVER_COMMAND,
         url: WEB_APP_URL,
         reuseExistingServer: true,
-        timeout: 60_000
+        timeout: 120_000
     }
 });
