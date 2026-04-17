@@ -3,14 +3,15 @@ mod tests {
     use std::fs;
 
     use crate::nes::cartridge::Cartridge;
-    use crate::nes::console::{Config, Nes, NesConfig, RamInitMode};
+    use crate::nes::console::{Config, Nes, RamInitMode};
     use crate::nes::input::Button;
     use crate::nes::integration_tests::rom_test_runner::tests::run_nes_for_frames;
+    use crate::platform::config::FrontendConfig;
     use crate::{setup_rom_console_crc_test, setup_rom_console_test, setup_rom_test};
 
     fn deterministic_config() -> Config {
         Config {
-            nes: NesConfig {
+            frontend: FrontendConfig {
                 ram_init_mode: RamInitMode::Zero,
                 ..Default::default()
             },

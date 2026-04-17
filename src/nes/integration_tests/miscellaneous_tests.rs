@@ -286,18 +286,19 @@ mod tests {
     /// are open bus (not grounded), so allpads detects HVC-001.
     #[test]
     fn allpads_probe_identifies_famicom_model() {
-        use crate::nes::console::{Config, HardwareMode, NesConfig, RamInitMode};
-        let config = Config {
-            nes: NesConfig {
-                hardware_mode: HardwareMode::Famicom,
-                hardware_mode_explicit: true,
+        use crate::nes::console::{Config, HardwareMode, RamInitMode};
+        use crate::platform::config::FrontendConfig;
+        let mut config = Config {
+            frontend: FrontendConfig {
                 ram_init_mode: RamInitMode::Zero,
-                controller_port1_explicit: true,
-                controller_port2_explicit: true,
                 ..Default::default()
             },
             ..Default::default()
         };
+        config.nes.hardware_mode = HardwareMode::Famicom;
+        config.nes.hardware_mode_explicit = true;
+        config.nes.controller_port1_explicit = true;
+        config.nes.controller_port2_explicit = true;
         let result = run_allpads_with_config(&config, &[], 120, 0);
         let cap = &result.captures[0];
         assert!(
@@ -1188,21 +1189,23 @@ mod tests {
     /// Returns a Famicom-mode config with two explicitly configured joypads so
     /// that allpads can detect them as Famicom hardwired controllers (FC 1P / FC 2P).
     fn famicom_two_joypads_config() -> crate::nes::console::Config {
-        use crate::nes::console::{Config, HardwareMode, NesConfig, RamInitMode};
+        use crate::nes::console::{Config, HardwareMode, RamInitMode};
         use crate::nes::input::ControllerType;
-        Config {
-            nes: NesConfig {
-                hardware_mode: HardwareMode::Famicom,
-                hardware_mode_explicit: true,
+        use crate::platform::config::FrontendConfig;
+        let mut config = Config {
+            frontend: FrontendConfig {
                 ram_init_mode: RamInitMode::Zero,
-                controller_port1: ControllerType::Joypad,
-                controller_port2: ControllerType::Joypad,
-                controller_port1_explicit: true,
-                controller_port2_explicit: true,
                 ..Default::default()
             },
             ..Default::default()
-        }
+        };
+        config.nes.hardware_mode = HardwareMode::Famicom;
+        config.nes.hardware_mode_explicit = true;
+        config.nes.controller_port1 = ControllerType::Joypad;
+        config.nes.controller_port2 = ControllerType::Joypad;
+        config.nes.controller_port1_explicit = true;
+        config.nes.controller_port2_explicit = true;
+        config
     }
 
     /// Issue #1574: allpads probe should identify both Famicom hardwired controllers

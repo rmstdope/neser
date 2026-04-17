@@ -8,6 +8,7 @@ mod tests {
     use crate::nes::console::{Config, Nes, NesConfig, RamInitMode, TimingMode};
     use crate::nes::input::Button;
     use crate::nes::integration_tests::rom_test_runner::tests::run_nes_for_frames;
+    use crate::platform::config::FrontendConfig;
     use crate::{
         setup_rom_console_test, setup_rom_console_test_with_ram_init, setup_rom_crc_test,
         setup_rom_test,
@@ -197,7 +198,7 @@ mod tests {
         let mut nes = create_nes_from_rom(
             "roms/nes/automated_tests/misc_oam_tests/read2004.nes",
             crate::platform::app_context::AppContext::new_with_config(Config {
-                nes: NesConfig {
+                frontend: FrontendConfig {
                     ram_init_mode: RamInitMode::Zero,
                     ..Default::default()
                 },
@@ -256,14 +257,17 @@ AA AA 01 01 10 10 01 01 00 00\n\
         let hardware_model = crate::nes::console::HardwareModel::from_timing_mode(tv_system);
         let mut nes = create_nes_from_rom(
             "roms/nes/automated_tests/misc_oam_tests/oam-decay-test.nes",
-            crate::platform::app_context::AppContext::new_with_config(Config {
-                nes: NesConfig {
-                    hardware_model,
-                    oam_dram_decay_enabled: true,
-                    ram_init_mode: RamInitMode::Zero,
+            crate::platform::app_context::AppContext::new_with_config({
+                let mut config = Config {
+                    frontend: FrontendConfig {
+                        ram_init_mode: RamInitMode::Zero,
+                        ..Default::default()
+                    },
                     ..Default::default()
-                },
-                ..Default::default()
+                };
+                config.nes.hardware_model = hardware_model;
+                config.nes.oam_dram_decay_enabled = true;
+                config
             }),
             "oam-decay-test",
         );
@@ -408,7 +412,7 @@ AA AA 01 01 10 10 01 01 00 00\n\
             Cartridge::load_from_file(&rom_data, rom_path, None).expect("oam3 ROM should parse");
 
         let config = Config {
-            nes: NesConfig {
+            frontend: FrontendConfig {
                 ram_init_mode: RamInitMode::SeededRandom(0x5760_0000_0000_0001),
                 ..Default::default()
             },

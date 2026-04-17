@@ -26,7 +26,7 @@ fn load_test_cartridge(rom_data: &[u8], rom_name: &str) -> Cartridge {
 #[test]
 fn test_cpu_ram_initialization_zero_mode() {
     let mut config = Config::with_defaults();
-    config.nes.ram_init_mode = RamInitMode::Zero;
+    config.frontend.ram_init_mode = RamInitMode::Zero;
     let nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
         config,
     ));
@@ -45,13 +45,13 @@ fn test_cpu_ram_initialization_zero_mode() {
 #[test]
 fn test_cpu_ram_initialization_seeded_random_mode_deterministic() {
     let mut config1 = Config::with_defaults();
-    config1.nes.ram_init_mode = RamInitMode::SeededRandom(42);
+    config1.frontend.ram_init_mode = RamInitMode::SeededRandom(42);
     let nes1 = Nes::new(crate::platform::app_context::AppContext::new_with_config(
         config1,
     ));
 
     let mut config2 = Config::with_defaults();
-    config2.nes.ram_init_mode = RamInitMode::SeededRandom(42);
+    config2.frontend.ram_init_mode = RamInitMode::SeededRandom(42);
     let nes2 = Nes::new(crate::platform::app_context::AppContext::new_with_config(
         config2,
     ));
@@ -77,13 +77,13 @@ fn test_cpu_ram_initialization_seeded_random_mode_deterministic() {
 #[test]
 fn test_cpu_ram_initialization_different_seeds_produce_different_values() {
     let mut config1 = Config::with_defaults();
-    config1.nes.ram_init_mode = RamInitMode::SeededRandom(42);
+    config1.frontend.ram_init_mode = RamInitMode::SeededRandom(42);
     let nes1 = Nes::new(crate::platform::app_context::AppContext::new_with_config(
         config1,
     ));
 
     let mut config2 = Config::with_defaults();
-    config2.nes.ram_init_mode = RamInitMode::SeededRandom(43);
+    config2.frontend.ram_init_mode = RamInitMode::SeededRandom(43);
     let nes2 = Nes::new(crate::platform::app_context::AppContext::new_with_config(
         config2,
     ));
@@ -114,7 +114,7 @@ fn test_cpu_ram_initialization_different_seeds_produce_different_values() {
 #[test]
 fn test_ppu_ram_initialization_zero_mode() {
     let mut config = Config::with_defaults();
-    config.nes.ram_init_mode = RamInitMode::Zero;
+    config.frontend.ram_init_mode = RamInitMode::Zero;
     let nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
         config,
     ));
@@ -133,13 +133,13 @@ fn test_ppu_ram_initialization_zero_mode() {
 #[test]
 fn test_ppu_ram_initialization_seeded_random_deterministic() {
     let mut config1 = Config::with_defaults();
-    config1.nes.ram_init_mode = RamInitMode::SeededRandom(42);
+    config1.frontend.ram_init_mode = RamInitMode::SeededRandom(42);
     let nes1 = Nes::new(crate::platform::app_context::AppContext::new_with_config(
         config1,
     ));
 
     let mut config2 = Config::with_defaults();
-    config2.nes.ram_init_mode = RamInitMode::SeededRandom(42);
+    config2.frontend.ram_init_mode = RamInitMode::SeededRandom(42);
     let nes2 = Nes::new(crate::platform::app_context::AppContext::new_with_config(
         config2,
     ));
@@ -158,7 +158,7 @@ fn test_ppu_ram_initialization_seeded_random_deterministic() {
 #[test]
 fn test_cartridge_ram_initialization_zero_mode() {
     let mut config = Config::with_defaults();
-    config.nes.ram_init_mode = RamInitMode::Zero;
+    config.frontend.ram_init_mode = RamInitMode::Zero;
     let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
         config,
     ));
@@ -182,7 +182,7 @@ fn test_cartridge_ram_initialization_zero_mode() {
 #[test]
 fn test_cartridge_ram_initialization_seeded_random_deterministic() {
     let mut config1 = Config::with_defaults();
-    config1.nes.ram_init_mode = RamInitMode::SeededRandom(42);
+    config1.frontend.ram_init_mode = RamInitMode::SeededRandom(42);
     let mut nes1 = Nes::new(crate::platform::app_context::AppContext::new_with_config(
         config1,
     ));
@@ -192,7 +192,7 @@ fn test_cartridge_ram_initialization_seeded_random_deterministic() {
     nes1.insert_cartridge(cartridge1);
 
     let mut config2 = Config::with_defaults();
-    config2.nes.ram_init_mode = RamInitMode::SeededRandom(42);
+    config2.frontend.ram_init_mode = RamInitMode::SeededRandom(42);
     let mut nes2 = Nes::new(crate::platform::app_context::AppContext::new_with_config(
         config2,
     ));
@@ -218,7 +218,7 @@ fn test_cartridge_ram_initialization_seeded_random_deterministic() {
 #[test]
 fn test_hard_reset_reinitializes_ram() {
     let mut config = Config::with_defaults();
-    config.nes.ram_init_mode = RamInitMode::Zero;
+    config.frontend.ram_init_mode = RamInitMode::Zero;
     let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
         config,
     ));
@@ -250,7 +250,7 @@ fn test_hard_reset_reinitializes_ram() {
 #[test]
 fn test_soft_reset_preserves_ram() {
     let mut config = Config::with_defaults();
-    config.nes.ram_init_mode = RamInitMode::Zero;
+    config.frontend.ram_init_mode = RamInitMode::Zero;
     let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
         config,
     ));
@@ -282,7 +282,7 @@ fn test_soft_reset_preserves_ram() {
 #[test]
 fn test_ppu_hard_reset_reinitializes_ram() {
     let mut config = Config::with_defaults();
-    config.nes.ram_init_mode = RamInitMode::Zero;
+    config.frontend.ram_init_mode = RamInitMode::Zero;
     let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
         config,
     ));
@@ -314,7 +314,7 @@ fn test_ppu_hard_reset_reinitializes_ram() {
 #[test]
 fn test_ppu_soft_reset_preserves_ram() {
     let mut config = Config::with_defaults();
-    config.nes.ram_init_mode = RamInitMode::Zero;
+    config.frontend.ram_init_mode = RamInitMode::Zero;
     let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
         config,
     ));
@@ -347,7 +347,7 @@ fn test_ppu_palette_ram_init_zero_mode() {
     // Verify that PPU palette RAM ($3F00-$3F1F) is initialized according to
     // the configured RAM init mode, using the PPU register interface.
     let mut config = Config::with_defaults();
-    config.nes.ram_init_mode = RamInitMode::Zero;
+    config.frontend.ram_init_mode = RamInitMode::Zero;
     let nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
         config,
     ));
@@ -379,7 +379,7 @@ fn test_ppu_palette_ram_init_zero_mode() {
 #[test]
 fn test_oam_ram_initialization_zero_mode() {
     let mut config = Config::with_defaults();
-    config.nes.ram_init_mode = RamInitMode::Zero;
+    config.frontend.ram_init_mode = RamInitMode::Zero;
     let nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
         config,
     ));
@@ -404,13 +404,13 @@ fn test_oam_ram_initialization_zero_mode() {
 #[test]
 fn test_oam_ram_initialization_seeded_random_deterministic() {
     let mut config1 = Config::with_defaults();
-    config1.nes.ram_init_mode = RamInitMode::SeededRandom(42);
+    config1.frontend.ram_init_mode = RamInitMode::SeededRandom(42);
     let nes1 = Nes::new(crate::platform::app_context::AppContext::new_with_config(
         config1,
     ));
 
     let mut config2 = Config::with_defaults();
-    config2.nes.ram_init_mode = RamInitMode::SeededRandom(42);
+    config2.frontend.ram_init_mode = RamInitMode::SeededRandom(42);
     let nes2 = Nes::new(crate::platform::app_context::AppContext::new_with_config(
         config2,
     ));
@@ -440,7 +440,7 @@ fn test_oam_ram_initialization_seeded_random_deterministic() {
 #[test]
 fn test_oam_hard_reset_reinitializes() {
     let mut config = Config::with_defaults();
-    config.nes.ram_init_mode = RamInitMode::Zero;
+    config.frontend.ram_init_mode = RamInitMode::Zero;
     let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
         config,
     ));
@@ -482,7 +482,7 @@ fn test_oam_hard_reset_reinitializes() {
 #[test]
 fn test_oam_soft_reset_preserves() {
     let mut config = Config::with_defaults();
-    config.nes.ram_init_mode = RamInitMode::Zero;
+    config.frontend.ram_init_mode = RamInitMode::Zero;
     let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
         config,
     ));

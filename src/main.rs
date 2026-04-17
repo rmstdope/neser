@@ -107,9 +107,9 @@ fn trim_autorun_checkpoints_for_rom(
 fn recalculate_autorun_for_rom(rom_path: &str, format: AutorunFormat) -> Result<String, String> {
     use nes::autorun::headless_playback::recalculate_checkpoint_crcs_with_progress;
     use nes::cartridge::Cartridge;
-    use nes::console::NesConfig;
     use nes::console::RamInitMode;
     use platform::autorun::{autorun_path_for_rom, load_autorun_file, save_autorun_file};
+    use platform::config::FrontendConfig;
     use std::io::{self, Write};
 
     let path = autorun_path_for_rom(&PathBuf::from(rom_path));
@@ -126,7 +126,7 @@ fn recalculate_autorun_for_rom(rom_path: &str, format: AutorunFormat) -> Result<
         fs::read(rom_path).map_err(|e| format!("Failed to read ROM {}: {e}", rom_path))?;
 
     let config = Config {
-        nes: NesConfig {
+        frontend: FrontendConfig {
             ram_init_mode: RamInitMode::Zero,
             ..Default::default()
         },

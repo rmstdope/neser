@@ -7,6 +7,43 @@
 
 use crate::platform::autorun::{AutorunFormat, AutorunMode};
 use crate::platform::debugging::Tracing;
+use crate::platform::debugging::breakpoints::BreakpointKind;
+
+/// CLI flag definition for help text and validation.
+///
+/// Used by both NES and GB config modules to declare their supported flags.
+pub(crate) struct CliFlag {
+    pub flag: &'static str,
+    pub help: Option<&'static str>,
+    pub has_value: bool,
+}
+
+/// RAM initialization mode for power-on/hard reset.
+///
+/// Controls how all emulated RAM (CPU, PRG, CHR, PPU nametable, and palette) is
+/// initialized when the emulator powers on or performs a hard reset. This affects
+/// hardware-accuracy and determinism for testing.
+///
+/// Soft resets preserve RAM contents and do not re-initialize.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RamInitMode {
+    /// Initialize all RAM to 0x00.
+    ///
+    /// Provides a clean, predictable startup state. Useful for debugging and
+    /// testing, though not hardware-accurate (real NES hardware has random RAM on power-on).
+    Zero,
+    /// Initialize all RAM to pseudo-random values.
+    ///
+    /// Hardware-accurate: real NES consoles have unpredictable RAM contents on power-on.
+    /// Each run will have different initial RAM values.
+    Random,
+    /// Initialize all RAM to pseudo-random values using a fixed seed.
+    ///
+    /// Combines hardware-accuracy with determinism: RAM appears random but is
+    /// identical across runs with the same seed. Useful for reproducible testing
+    /// of RAM-sensitive code paths.
+    SeededRandom(u64),
+}
 
 /// Generic frontend configuration (not system-specific).
 ///
@@ -66,6 +103,10 @@ pub struct FrontendConfig {
     /// Whether to launch the TUI ROM browser instead of the emulator.
     #[cfg_attr(not(feature = "tui"), allow(dead_code))]
     pub tui_mode: bool,
+    /// RAM initialization mode for power-on/hard reset (generic across emulators).
+    pub ram_init_mode: RamInitMode,
+    /// Breakpoints to set on startup (from --breakpoint CLI flag).
+    pub breakpoints: Vec<BreakpointKind>,
 }
 
 impl Default for FrontendConfig {
@@ -96,19 +137,47 @@ impl Default for FrontendConfig {
             scan_cartridges: true,
             rebuild_cartridge_catalog: false,
             tui_mode: false,
+            #[cfg(target_arch = "wasm32")]
+            ram_init_mode: RamInitMode::Zero,
+            #[cfg(not(target_arch = "wasm32"))]
+            ram_init_mode: RamInitMode::Random,
+            breakpoints: Vec::new(),
         }
     }
 }
 
 /// Full emulator configuration (frontend + system-specific).
 ///
-/// Composed of [`FrontendConfig`] (generic frontend settings) and
-/// [`NesConfig`](crate::nes::console::NesConfig) (NES hardware-specific settings).
-/// Parsing from CLI arguments and config files populates both sub-configs.
+/// Composed of [`FrontendConfig`] (generic frontend settings),
+/// [`NesConfig`](crate::nes::console::NesConfig) (NES hardware-specific settings),
+/// and [`GbConfig`](crate::gb::console::config::GbConfig) (Game Boy-specific settings).
+/// Parsing from CLI arguments and config files populates all sub-configs.
 #[derive(Debug, Clone, Default)]
 pub struct Config {
     /// Generic frontend configuration.
     pub frontend: FrontendConfig,
     /// NES-specific hardware configuration.
     pub nes: crate::nes::console::NesConfig,
+    /// Game Boy-specific hardware configuration.
+    pub gb: crate::gb::console::config::GbConfig,
+}
+
+/// Look up the value for a CLI flag in an argument list.
+///
+/// Handles both `--flag value` and `--flag=value` forms. Returns `None` if
+/// the flag is not present.
+pub(crate) fn parse_cli_string_arg(args: &[String], flag: &str) -> Option<String> {
+    for i in 0..args.len() {
+        // Handle `--flag value`
+        if args[i] == flag && i + 1 < args.len() {
+            return Some(args[i + 1].clone());
+        }
+        // Handle `--flag=value`
+        if let Some((flag_part, value_part)) = args[i].split_once('=')
+            && flag_part == flag
+        {
+            return Some(value_part.to_string());
+        }
+    }
+    None
 }

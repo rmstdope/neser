@@ -3,9 +3,10 @@ mod tests {
     use std::fs;
 
     use crate::nes::cartridge::Cartridge;
-    use crate::nes::console::{Config, Nes, NesConfig, RamInitMode};
+    use crate::nes::console::{Config, Nes, RamInitMode};
     use crate::nes::input::Button;
     use crate::nes::integration_tests::rom_test_runner::tests::run_nes_for_frames;
+    use crate::platform::config::FrontendConfig;
     use crate::{
         setup_rom_console_test, setup_rom_crc_test, setup_rom_crc_test_with_input, setup_rom_test,
     };
@@ -101,7 +102,7 @@ mod tests {
                 .expect(concat!("ROM should parse: ", $rom_path));
 
                 let mut config = Config {
-                    nes: NesConfig {
+                    frontend: FrontendConfig {
                         ram_init_mode: RamInitMode::Zero,
                         ..Default::default()
                     },
@@ -372,7 +373,7 @@ mod tests {
             Cartridge::load_from_file(&rom_data, rom_path, None).expect("ROM should parse");
 
         let mut config = Config {
-            nes: NesConfig {
+            frontend: FrontendConfig {
                 ram_init_mode: RamInitMode::Zero,
                 ..Default::default()
             },
@@ -553,7 +554,7 @@ mod tests {
             .expect("in-memory mapper95 ROM should parse");
 
         let config = Config {
-            nes: NesConfig {
+            frontend: FrontendConfig {
                 ram_init_mode: RamInitMode::Zero,
                 ..Default::default()
             },
@@ -2584,7 +2585,7 @@ mod tests {
         let cartridge = Cartridge::load_from_file(&rom_data, rom_path, None)
             .expect("GTROM_CC_Test1 ROM should parse");
         let config = Config {
-            nes: NesConfig {
+            frontend: FrontendConfig {
                 ram_init_mode: RamInitMode::Zero,
                 ..Default::default()
             },

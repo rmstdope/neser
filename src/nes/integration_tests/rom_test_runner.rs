@@ -22,8 +22,9 @@ pub(crate) mod tests {
     ///   function is called to determine pass/fail.
     ///
     use crate::nes::cartridge::Cartridge;
-    use crate::nes::console::{Config, HardwareModel, Nes, NesConfig, RamInitMode};
+    use crate::nes::console::{Config, HardwareModel, Nes, RamInitMode};
     use crate::nes::input::Button;
+    use crate::platform::config::FrontendConfig;
     use crate::platform::debugging::{Tracing, init_tracing};
     use std::fs;
 
@@ -51,7 +52,7 @@ pub(crate) mod tests {
 
     fn test_default_config() -> Config {
         Config {
-            nes: NesConfig {
+            frontend: FrontendConfig {
                 ram_init_mode: RamInitMode::Zero,
                 ..Default::default()
             },
@@ -171,7 +172,7 @@ pub(crate) mod tests {
 
             // Use RAM init mode override if provided
             if let Some(ram_init_mode) = self.ram_init_mode_override {
-                config.nes.ram_init_mode = ram_init_mode;
+                config.frontend.ram_init_mode = ram_init_mode;
             }
 
             let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
@@ -652,7 +653,7 @@ pub(crate) mod tests {
                 .expect("ROM should parse");
 
                 let mut config = $crate::nes::console::Config {
-                    nes: $crate::nes::console::NesConfig {
+                    frontend: $crate::platform::config::FrontendConfig {
                         ram_init_mode: $crate::nes::console::RamInitMode::Zero,
                         ..Default::default()
                     },
@@ -755,7 +756,7 @@ pub(crate) mod tests {
                 .expect("ROM should parse");
 
                 let mut config = $crate::nes::console::Config {
-                    nes: $crate::nes::console::NesConfig {
+                    frontend: $crate::platform::config::FrontendConfig {
                         ram_init_mode: $crate::nes::console::RamInitMode::Zero,
                         ..Default::default()
                     },

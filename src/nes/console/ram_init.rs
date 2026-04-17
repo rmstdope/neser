@@ -3,7 +3,7 @@
 //! This module provides helper functions to initialize RAM with different patterns
 //! based on the configured RAM initialization mode.
 
-use super::RamInitMode;
+use crate::platform::config::RamInitMode;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 

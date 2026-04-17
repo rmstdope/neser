@@ -137,7 +137,7 @@ impl Nes {
         let app_context = app_context.into_shared();
         let config = app_context.borrow().config().clone();
         let tv_system = config.nes.hardware_model.timing_mode();
-        let ram_init_mode = config.nes.ram_init_mode;
+        let ram_init_mode = config.frontend.ram_init_mode;
         let oam_dram_decay_enabled = config.nes.oam_dram_decay_enabled;
         let ppu = Rc::new(RefCell::new(Ppu::new(tv_system, ram_init_mode)));
         ppu.borrow_mut()
@@ -252,7 +252,7 @@ impl Nes {
         self.ppu.borrow_mut().set_famicom_emphasis(is_famicom);
 
         // Initialize cartridge RAM (PRG-RAM and CHR-RAM) based on config
-        let ram_init_mode = self.app_context.borrow().config().nes.ram_init_mode;
+        let ram_init_mode = self.app_context.borrow().config().frontend.ram_init_mode;
         cartridge.initialize_ram(ram_init_mode);
 
         {
@@ -409,7 +409,7 @@ impl Nes {
     pub fn reset(&mut self, soft_reset: bool) {
         // Get CPU cycle count before reset for coordinated APU timing
         let cpu_cycle = self.cpu.get_total_cycles();
-        let ram_init_mode = self.app_context.borrow().config().nes.ram_init_mode;
+        let ram_init_mode = self.app_context.borrow().config().frontend.ram_init_mode;
 
         // Reset components - each handles its own RAM initialization on hard reset
         self.ppu.borrow_mut().reset(soft_reset, ram_init_mode);

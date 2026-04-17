@@ -78,8 +78,10 @@ impl NativeEventLoop {
     ) -> Self {
         let (gamepads_enabled, four_score, fullscreen, vsync_enabled, debugger_controller) = {
             let config = app_context.borrow().config().clone();
-            let dc =
-                DebuggerController::new(&config.nes.breakpoints, config.frontend.debugger_enabled);
+            let dc = DebuggerController::new(
+                &config.frontend.breakpoints,
+                config.frontend.debugger_enabled,
+            );
             (
                 config.frontend.gamepads_enabled,
                 config.nes.four_score_enabled,

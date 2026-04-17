@@ -4,13 +4,14 @@ mod tests {
 
     use crate::nes::autorun::headless_playback::run_headless_playback;
     use crate::nes::cartridge::{Cartridge, TimingMode as CartridgeTimingMode};
-    use crate::nes::console::{Config, HardwareModel, Nes, NesConfig, RamInitMode};
+    use crate::nes::console::{Config, HardwareModel, Nes, RamInitMode};
     use crate::platform::app_context::AppContext;
     use crate::platform::autorun::load_autorun_file;
+    use crate::platform::config::FrontendConfig;
 
     fn deterministic_config() -> Config {
         Config {
-            nes: NesConfig {
+            frontend: FrontendConfig {
                 ram_init_mode: RamInitMode::Zero,
                 ..Default::default()
             },
