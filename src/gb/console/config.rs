@@ -26,12 +26,10 @@ pub enum GbHardware {
 impl GbHardware {
     /// Parse a hardware variant from a string value.
     pub fn parse(value: &str) -> Option<Self> {
-        if value.eq_ignore_ascii_case("dmg") {
-            Some(Self::Dmg)
-        } else if value.eq_ignore_ascii_case("cgb") {
-            Some(Self::Cgb)
-        } else {
-            None
+        match value.to_ascii_lowercase().as_str() {
+            "dmg" => Some(Self::Dmg),
+            "cgb" => Some(Self::Cgb),
+            _ => None,
         }
     }
 }
@@ -57,7 +55,7 @@ impl Default for GbConfig {
 impl GbConfig {
     /// Parse GB-specific CLI arguments and apply them to this config.
     pub(crate) fn apply_args(&mut self, args: &[String]) -> Result<(), String> {
-        if let Some(gb_hardware) = Self::parse_string_arg(args, "--gb-hardware") {
+        if let Some(gb_hardware) = crate::platform::config::parse_cli_string_arg(args, "--gb-hardware") {
             self.hardware = GbHardware::parse(&gb_hardware).ok_or_else(|| {
                 format!(
                     "Invalid --gb-hardware value: '{}'. Valid options are: dmg, cgb",
@@ -79,10 +77,5 @@ impl GbConfig {
         })?;
         self.hardware_explicit = true;
         Ok(())
-    }
-
-    /// Look up a CLI flag value (handles both `--flag value` and `--flag=value`).
-    fn parse_string_arg(args: &[String], flag: &str) -> Option<String> {
-        crate::platform::config::parse_cli_string_arg(args, flag)
     }
 }
