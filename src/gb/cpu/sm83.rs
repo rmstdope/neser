@@ -185,6 +185,23 @@ impl<B: GbBus> Sm83<B> {
         self.ime_pending = false;
     }
 
+    /// Reset the CPU registers to the post-boot-ROM CGB state.
+    ///
+    /// A CGB exits its boot ROM with A=$11 (hardware identifier), which allows
+    /// cartridges to detect CGB hardware at runtime.
+    pub fn reset_registers_cgb(&mut self) {
+        self.regs.set_af(0x1180); // A=$11, F=$80
+        self.regs.set_bc(0x0000);
+        self.regs.set_de(0xFF56);
+        self.regs.set_hl(0x000D);
+        self.regs.sp = 0xFFFE;
+        self.regs.pc = 0x0100;
+        self.ime = false;
+        self.halted = false;
+        self.halt_bug = false;
+        self.ime_pending = false;
+    }
+
     /// Advance the cycle counter by 1 M-cycle and tick peripherals.
     ///
     /// Used for internal CPU cycles that do not correspond to a memory access

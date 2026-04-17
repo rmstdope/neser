@@ -103,6 +103,148 @@ pub fn render_scanline(
     }
 }
 
+/// Convert a 5-bit CGB palette component to 8-bit.
+///
+/// Uses the formula specified by the cgb-acid2 test: `(c5 << 3) | (c5 >> 2)`.
+#[inline]
+fn cgb_5bit_to_8bit(c5: u8) -> u8 {
+    (c5 << 3) | (c5 >> 2)
+}
+
+/// Look up an RGB color from CGB palette RAM.
+///
+/// `palette_ram` — 64-byte palette RAM (8 palettes × 4 colors × 2 bytes, 5-5-5 LE).
+/// `palette_num` — Palette index (0–7).
+/// `colour_index` — Color slot within the palette (0–3; 0 is transparent for OBJ).
+///
+/// Returns `(r8, g8, b8)` with 8-bit components.
+fn cgb_palette_lookup(palette_ram: &[u8; 64], palette_num: u8, colour_index: u8) -> (u8, u8, u8) {
+    let base = (palette_num as usize) * 8 + (colour_index as usize) * 2;
+    let lo = palette_ram[base];
+    let hi = palette_ram[base + 1];
+    let color = u16::from_le_bytes([lo, hi]);
+    let r5 = (color & 0x1F) as u8;
+    let g5 = ((color >> 5) & 0x1F) as u8;
+    let b5 = ((color >> 10) & 0x1F) as u8;
+    (
+        cgb_5bit_to_8bit(r5),
+        cgb_5bit_to_8bit(g5),
+        cgb_5bit_to_8bit(b5),
+    )
+}
+
+/// Render one full CGB scanline (0–143) into `screen_buffer`.
+///
+/// Implements CGB compositing rules:
+/// - `LCDC bit 0` is the **master priority** flag (not BG enable as in DMG).
+///   - 0: OBJ pixels always win over BG/Window pixels.
+///   - 1: Normal priority — BG tile priority bit and/or OBJ priority bit can
+///     cause BG to appear on top when the BG colour index is non-zero.
+/// - OBJ priority is determined by OAM order when `opri_dmg_mode` is false
+///   (CGB default), or by X-coordinate when true.
+#[allow(clippy::too_many_arguments)]
+pub fn render_scanline_cgb(
+    scanline: u8,
+    vram: &[u8; 0x2000],
+    vram_bank1: &[u8; 0x2000],
+    oam: &[u8; 0xA0],
+    registers: &Registers,
+    bg_palette_ram: &[u8; 64],
+    obj_palette_ram: &[u8; 64],
+    window_line: &mut u8,
+    opri_dmg_mode: bool,
+    screen_buffer: &mut ScreenBuffer,
+) {
+    let lcdc = registers.lcdc;
+    let obj_enabled = lcdc & 0x02 != 0;
+    let win_enabled = lcdc & 0x20 != 0;
+    // In CGB mode, LCDC bit 0 is master priority (not BG enable).
+    let master_priority = lcdc & 0x01 != 0;
+
+    let sprite_indices = if obj_enabled {
+        sprites::scan_oam_line(scanline, oam, lcdc)
+    } else {
+        Vec::new()
+    };
+
+    let mut window_active = false;
+
+    for x in 0..ScreenBuffer::WIDTH {
+        // Fetch BG pixel (always rendered in CGB mode regardless of LCDC bit 0).
+        let bg_px = background::fetch_bg_pixel_cgb(
+            x,
+            scanline,
+            vram,
+            vram_bank1,
+            lcdc,
+            registers.scx,
+            registers.scy,
+        );
+
+        // Window may override BG.
+        let bw_px = if win_enabled {
+            match window::fetch_window_pixel_cgb(
+                x,
+                scanline,
+                vram,
+                vram_bank1,
+                lcdc,
+                registers.wx,
+                registers.wy,
+                *window_line,
+            ) {
+                Some(win_px) => {
+                    window_active = true;
+                    win_px
+                }
+                None => bg_px,
+            }
+        } else {
+            bg_px
+        };
+
+        // Fetch OBJ pixel.
+        let sprite_px = if obj_enabled {
+            sprites::fetch_sprite_pixel_cgb(
+                x,
+                scanline,
+                &sprite_indices,
+                oam,
+                vram,
+                vram_bank1,
+                lcdc,
+                opri_dmg_mode,
+            )
+        } else {
+            None
+        };
+
+        // CGB compositing:
+        // - If no OBJ pixel → render BG/Window.
+        // - If BG colour index == 0 → OBJ wins.
+        // - If master priority == 0 → OBJ always wins.
+        // - If master priority == 1 and (BG tile priority or OBJ priority) and BG colour != 0 → BG wins.
+        // - Otherwise OBJ wins.
+        let (r, g, b) = if let Some(sp) = sprite_px {
+            let bg_wins =
+                bw_px.colour_index != 0 && master_priority && (bw_px.bg_priority || sp.bg_priority);
+            if bg_wins {
+                cgb_palette_lookup(bg_palette_ram, bw_px.palette_num, bw_px.colour_index)
+            } else {
+                cgb_palette_lookup(obj_palette_ram, sp.cgb_palette, sp.colour_index)
+            }
+        } else {
+            cgb_palette_lookup(bg_palette_ram, bw_px.palette_num, bw_px.colour_index)
+        };
+
+        screen_buffer.set_pixel(x, scanline as u32, r, g, b);
+    }
+
+    if window_active {
+        *window_line = window_line.wrapping_add(1);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

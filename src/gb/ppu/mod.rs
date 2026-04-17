@@ -13,10 +13,14 @@ use timing::{PpuMode, Timing};
 /// Dots per CPU M-cycle — the granularity at which Mode 3 length is observable.
 const DOTS_PER_M_CYCLE: u16 = 4;
 
-/// DMG PPU.
+/// DMG/CGB PPU.
 ///
 /// Owns VRAM ($8000–$9FFF) and OAM ($FE00–$FE9F) buffers, all I/O registers,
 /// timing state, and the rendered screen buffer.
+///
+/// In CGB mode (`cgb_mode = true`) the PPU additionally owns VRAM bank 1,
+/// CGB color palette RAM, and handles the CGB-specific registers
+/// (`$FF4F` VBK, `$FF68/$FF69` BCPS/BCPD, `$FF6A/$FF6B` OCPS/OCPD, `$FF6C` OPRI).
 pub struct Ppu {
     pub vram: [u8; 0x2000],
     pub oam: [u8; 0xA0],
@@ -35,6 +39,25 @@ pub struct Ppu {
     /// Changing LYC while the LCD is off has no effect on this bit.
     /// When the LCD is re-enabled, the bit is updated immediately (LY=0).
     lyc_eq_ly_frozen: bool,
+
+    // ── CGB-only fields ───────────────────────────────────────────────────────
+    /// `true` when running in CGB mode; enables bank-1 VRAM and color palettes.
+    pub cgb_mode: bool,
+    /// CGB VRAM bank 1 ($8000–$9FFF when VBK=$01). Holds BG tile attributes and
+    /// additional tile data for sprites.
+    pub vram_bank1: [u8; 0x2000],
+    /// `$FF4F` VBK — VRAM bank select (bit 0: 0=bank0, 1=bank1; upper bits read as 1).
+    pub vbk: u8,
+    /// CGB BG color palette RAM — 8 palettes × 4 colors × 2 bytes (5-5-5 little-endian).
+    pub bg_palette_ram: [u8; 64],
+    /// CGB OBJ color palette RAM — 8 palettes × 4 colors × 2 bytes (5-5-5 little-endian).
+    pub obj_palette_ram: [u8; 64],
+    /// `$FF68` BCPS — BG Color Palette Specification (index + auto-increment flag).
+    pub bcps: u8,
+    /// `$FF6A` OCPS — OBJ Color Palette Specification (index + auto-increment flag).
+    pub ocps: u8,
+    /// `$FF6C` OPRI bit 0 — Object priority mode: `false`=OAM order (CGB), `true`=X-coord (DMG).
+    pub opri: bool,
 }
 
 impl Ppu {
@@ -49,6 +72,22 @@ impl Ppu {
             window_line: 0,
             prev_stat_irq_line: false,
             lyc_eq_ly_frozen: false,
+            cgb_mode: false,
+            vram_bank1: [0u8; 0x2000],
+            vbk: 0,
+            bg_palette_ram: [0u8; 64],
+            obj_palette_ram: [0u8; 64],
+            bcps: 0,
+            ocps: 0,
+            opri: false,
+        }
+    }
+
+    /// Create a new PPU initialised for CGB (Game Boy Color) mode.
+    pub fn new_cgb() -> Self {
+        Self {
+            cgb_mode: true,
+            ..Self::new()
         }
     }
 
@@ -86,14 +125,29 @@ impl Ppu {
         // Render the current visible scanline when Mode 3→Mode 0 transition fires.
         if events.render_scanline {
             let scanline = self.timing.ly();
-            rendering::render_scanline(
-                scanline,
-                &self.vram,
-                &self.oam,
-                &self.registers,
-                &mut self.window_line,
-                &mut self.screen_buffer,
-            );
+            if self.cgb_mode {
+                rendering::render_scanline_cgb(
+                    scanline,
+                    &self.vram,
+                    &self.vram_bank1,
+                    &self.oam,
+                    &self.registers,
+                    &self.bg_palette_ram,
+                    &self.obj_palette_ram,
+                    &mut self.window_line,
+                    self.opri,
+                    &mut self.screen_buffer,
+                );
+            } else {
+                rendering::render_scanline(
+                    scanline,
+                    &self.vram,
+                    &self.oam,
+                    &self.registers,
+                    &mut self.window_line,
+                    &mut self.screen_buffer,
+                );
+            }
         }
 
         // V-Blank interrupt (IF bit 0).
@@ -178,22 +232,34 @@ impl Ppu {
     ///
     /// Returns 0xFF if the CPU is blocked (Mode 3 — Pixel Transfer while LCD on).
     /// When LCD is disabled VRAM is always accessible.
+    /// In CGB mode, routes to bank 0 or bank 1 based on the VBK register.
     pub fn read_vram(&self, addr: u16) -> u8 {
         if self.registers.lcd_enabled() && self.timing.mode() == PpuMode::PixelTransfer {
             return 0xFF;
         }
-        self.vram[(addr - 0x8000) as usize]
+        let offset = (addr - 0x8000) as usize;
+        if self.cgb_mode && self.vbk & 0x01 != 0 {
+            self.vram_bank1[offset]
+        } else {
+            self.vram[offset]
+        }
     }
 
     /// Write to VRAM address $8000–$9FFF.
     ///
     /// Silently ignored if the CPU is blocked (Mode 3 — Pixel Transfer while LCD on).
     /// When LCD is disabled VRAM is always accessible.
+    /// In CGB mode, routes to bank 0 or bank 1 based on the VBK register.
     pub fn write_vram(&mut self, addr: u16, val: u8) {
         if self.registers.lcd_enabled() && self.timing.mode() == PpuMode::PixelTransfer {
             return;
         }
-        self.vram[(addr - 0x8000) as usize] = val;
+        let offset = (addr - 0x8000) as usize;
+        if self.cgb_mode && self.vbk & 0x01 != 0 {
+            self.vram_bank1[offset] = val;
+        } else {
+            self.vram[offset] = val;
+        }
     }
 
     /// Read from OAM address $FE00–$FE9F.
@@ -283,6 +349,68 @@ impl Ppu {
         }
         // LCD 1→0: lyc_eq_ly_frozen is intentionally NOT cleared here —
         // hardware retains the last LYC=LY state when the LCD is powered off.
+    }
+
+    // ── CGB color palette & bank registers ───────────────────────────────────
+
+    /// Read a CGB-specific PPU register.
+    ///
+    /// Handles `$FF4F` (VBK), `$FF68` (BCPS), `$FF69` (BCPD), `$FF6A` (OCPS),
+    /// `$FF6B` (OCPD), `$FF6C` (OPRI).  Returns `None` if the address is not
+    /// a CGB register.
+    pub fn read_cgb_register(&self, addr: u16) -> Option<u8> {
+        match addr {
+            // VBK: bit 0 = selected bank; upper bits always read as 1.
+            0xFF4F => Some(0xFE | (self.vbk & 0x01)),
+            0xFF68 => Some(self.bcps),
+            0xFF69 => Some(self.bg_palette_ram[(self.bcps & 0x3F) as usize]),
+            0xFF6A => Some(self.ocps),
+            0xFF6B => Some(self.obj_palette_ram[(self.ocps & 0x3F) as usize]),
+            0xFF6C => Some(0xFE | self.opri as u8),
+            _ => None,
+        }
+    }
+
+    /// Write a CGB-specific PPU register.
+    ///
+    /// Returns `true` if the address was handled.
+    pub fn write_cgb_register(&mut self, addr: u16, val: u8) -> bool {
+        match addr {
+            0xFF4F => {
+                self.vbk = val & 0x01;
+                true
+            }
+            0xFF68 => {
+                self.bcps = val;
+                true
+            }
+            0xFF69 => {
+                let index = (self.bcps & 0x3F) as usize;
+                self.bg_palette_ram[index] = val;
+                // Auto-increment address after write if bit 7 is set.
+                if self.bcps & 0x80 != 0 {
+                    self.bcps = 0x80 | ((self.bcps + 1) & 0x3F);
+                }
+                true
+            }
+            0xFF6A => {
+                self.ocps = val;
+                true
+            }
+            0xFF6B => {
+                let index = (self.ocps & 0x3F) as usize;
+                self.obj_palette_ram[index] = val;
+                if self.ocps & 0x80 != 0 {
+                    self.ocps = 0x80 | ((self.ocps + 1) & 0x3F);
+                }
+                true
+            }
+            0xFF6C => {
+                self.opri = val & 0x01 != 0;
+                true
+            }
+            _ => false,
+        }
     }
 
     // ── Interrupt interface ───────────────────────────────────────────────────

@@ -3,8 +3,12 @@
 pub struct SpritePixel {
     /// Colour index (1–3; 0 is transparent and will never appear here).
     pub colour_index: u8,
-    /// Palette selection: 0 = OBP0, 1 = OBP1.
+    /// DMG palette selection: 0 = OBP0, 1 = OBP1.
+    /// In CGB mode this is unused; use `cgb_palette` instead.
     pub palette: u8,
+    /// CGB OBJ palette number (0–7, from OAM attribute bits 0–2).
+    /// Always 0 in DMG mode.
+    pub cgb_palette: u8,
     /// Priority: if true the sprite is drawn behind BG colours 1–3.
     pub bg_priority: bool,
 }
@@ -123,6 +127,109 @@ pub fn fetch_sprite_pixel(
         return Some(SpritePixel {
             colour_index,
             palette,
+            cgb_palette: 0,
+            bg_priority,
+        });
+    }
+    None
+}
+
+/// Fetch the highest-priority visible sprite pixel in CGB mode at screen position `x`.
+///
+/// When `dmg_priority_mode` is `false` (CGB default), priority is determined by OAM
+/// order (earlier entry wins). When `true`, X-coordinate priority is used as in DMG.
+///
+/// CGB OAM attributes (byte 3):
+/// - Bits 0–2: OBJ palette number (0–7)
+/// - Bit 3: Tile VRAM bank (0=bank0, 1=bank1)
+/// - Bit 5: H-flip
+/// - Bit 6: V-flip
+/// - Bit 7: OBJ-to-BG priority
+#[allow(clippy::too_many_arguments)]
+pub fn fetch_sprite_pixel_cgb(
+    x: u32,
+    scanline: u8,
+    sprite_indices: &[usize],
+    oam: &[u8; 0xA0],
+    vram: &[u8; 0x2000],
+    vram_bank1: &[u8; 0x2000],
+    lcdc: u8,
+    dmg_priority_mode: bool,
+) -> Option<SpritePixel> {
+    let height: u8 = if lcdc & 0x04 != 0 { 16 } else { 8 };
+
+    // In CGB mode (dmg_priority_mode=false) sprites are prioritized by OAM order
+    // (scan_oam_line already returns them in OAM index order).
+    // In DMG compatibility mode (dmg_priority_mode=true) sort by X-coord.
+    let mut sorted = [0usize; 10];
+    let mut count = 0usize;
+    for &i in sprite_indices.iter().take(10) {
+        sorted[count] = i;
+        count += 1;
+    }
+    if dmg_priority_mode {
+        sorted[..count].sort_by_key(|&i| (oam[i * 4 + 1], i));
+    }
+
+    for &i in &sorted[..count] {
+        let oam_y = oam[i * 4];
+        let oam_x = oam[i * 4 + 1];
+        let tile_num = oam[i * 4 + 2];
+        let attrs = oam[i * 4 + 3];
+
+        let screen_y = oam_y.wrapping_sub(16);
+        let screen_x = oam_x.wrapping_sub(8);
+
+        if x < screen_x as u32 || x >= screen_x as u32 + 8 {
+            continue;
+        }
+
+        let y_flip = attrs & 0x40 != 0;
+        let x_flip = attrs & 0x20 != 0;
+        let cgb_palette = attrs & 0x07;
+        let tile_vram_bank = (attrs >> 3) & 0x01;
+        let bg_priority = attrs & 0x80 != 0;
+
+        let mut row = (scanline - screen_y) as usize;
+        if y_flip {
+            row = (height as usize - 1) - row;
+        }
+
+        let mut pixel_x = (x as u8).wrapping_sub(screen_x);
+        if x_flip {
+            pixel_x = 7 - pixel_x;
+        }
+
+        let tile_index = if height == 16 {
+            if row < 8 {
+                (tile_num & 0xFE) as usize
+            } else {
+                row -= 8;
+                (tile_num | 0x01) as usize
+            }
+        } else {
+            tile_num as usize
+        };
+
+        let tile_vram = if tile_vram_bank != 0 {
+            vram_bank1
+        } else {
+            vram
+        };
+        let tile_addr = tile_index * 16;
+        let low = tile_vram[tile_addr + row * 2];
+        let high = tile_vram[tile_addr + row * 2 + 1];
+        let bit = 7 - pixel_x;
+        let colour_index = ((high >> bit) & 1) << 1 | ((low >> bit) & 1);
+
+        if colour_index == 0 {
+            continue;
+        }
+
+        return Some(SpritePixel {
+            colour_index,
+            palette: 0,
+            cgb_palette,
             bg_priority,
         });
     }

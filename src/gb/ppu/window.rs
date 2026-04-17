@@ -1,3 +1,5 @@
+use crate::gb::ppu::background::BgPixelCgb;
+
 /// Fetch the DMG window layer colour index (0–3) for a given screen pixel.
 ///
 /// Returns `None` if the window does not cover pixel `(x, scanline)`.
@@ -60,6 +62,87 @@ pub fn fetch_window_pixel(
     let low = vram[addr];
     let high = vram[addr + 1];
     Some(((high >> bit) & 1) << 1 | ((low >> bit) & 1))
+}
+
+/// Fetch the CGB window pixel at `(x, scanline)` with full tile attribute info.
+///
+/// Returns `None` if the window does not cover the pixel.
+/// The window uses the same tile map indexing as the background, with tile
+/// attributes fetched from VRAM bank 1 at the same map address.
+#[allow(clippy::too_many_arguments)]
+pub fn fetch_window_pixel_cgb(
+    x: u32,
+    scanline: u8,
+    vram: &[u8; 0x2000],
+    vram_bank1: &[u8; 0x2000],
+    lcdc: u8,
+    wx: u8,
+    wy: u8,
+    window_line: u8,
+) -> Option<BgPixelCgb> {
+    if lcdc & 0x20 == 0 {
+        return None;
+    }
+    if scanline < wy {
+        return None;
+    }
+    let win_x_start = wx.saturating_sub(7);
+    if x < win_x_start as u32 {
+        return None;
+    }
+
+    let win_x = (x as u8).wrapping_sub(win_x_start);
+    let win_y = window_line;
+
+    // Window tile map: LCDC bit 6 (0 = $9800, 1 = $9C00).
+    let map_base: usize = if lcdc & 0x40 != 0 { 0x1C00 } else { 0x1800 };
+    let tile_col = (win_x / 8) as usize;
+    let tile_row = (win_y / 8) as usize;
+    let map_offset = map_base + tile_row * 32 + tile_col;
+
+    let tile_index_raw = vram[map_offset];
+    let attrs = vram_bank1[map_offset];
+
+    let palette_num = attrs & 0x07;
+    let tile_vram_bank = (attrs >> 3) & 0x01;
+    let x_flip = attrs & 0x20 != 0;
+    let y_flip = attrs & 0x40 != 0;
+    let bg_priority = attrs & 0x80 != 0;
+
+    let tile_data_start: usize = if lcdc & 0x10 != 0 {
+        (tile_index_raw as usize) * 16
+    } else {
+        (0x1000i32 + (tile_index_raw as i8 as i32) * 16) as usize
+    };
+
+    let mut row_in_tile = (win_y % 8) as usize;
+    if y_flip {
+        row_in_tile = 7 - row_in_tile;
+    }
+
+    let pixel_in_tile = win_x % 8;
+    let bit = if x_flip {
+        pixel_in_tile
+    } else {
+        7 - pixel_in_tile
+    };
+
+    let tile_vram = if tile_vram_bank != 0 {
+        vram_bank1
+    } else {
+        vram
+    };
+    let addr = tile_data_start + row_in_tile * 2;
+    let low = tile_vram[addr];
+    let high = tile_vram[addr + 1];
+    let colour_index = ((high >> bit) & 1) << 1 | ((low >> bit) & 1);
+
+    Some(BgPixelCgb {
+        colour_index,
+        palette_num,
+        vram_bank: tile_vram_bank,
+        bg_priority,
+    })
 }
 
 #[cfg(test)]
