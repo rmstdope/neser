@@ -1143,7 +1143,7 @@ function playAudioSamples(samples: Float32Array) {
             channelData[i] = normalizeGbSample(samples[i]);
         }
     } else {
-        // NES APU outputs 0.0 to ~1.177, normalize to 0.0 to 1.0 for Web Audio
+        // NES APU outputs 0.0 to ~1.177; normalize to the unipolar 0.0 to 1.0 range used by this output path
         for (let i = 0; i < samples.length; i++) {
             channelData[i] = normalizeNesSample(samples[i], NES_APU_MAX);
         }
