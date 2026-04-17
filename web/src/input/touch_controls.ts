@@ -106,6 +106,20 @@ function emitPressedButtons(callback: ButtonChangeCallback, currentButtons: numb
     }
 }
 
+function collectPressedButtons(states: Iterable<ActiveTouchState>): number[] {
+    const buttons: number[] = [];
+
+    for (const state of states) {
+        for (const button of state.buttons) {
+            if (!buttons.includes(button)) {
+                buttons.push(button);
+            }
+        }
+    }
+
+    return buttons;
+}
+
 function findTouchBindingElement(element: Element | null): Element | null {
     return element?.closest("[data-button], [data-touch-zone]") ?? null;
 }
@@ -225,6 +239,12 @@ export class TouchInputManager {
         this.callback = callback;
     }
 
+    private emitGlobalButtonChanges(previousButtons: number[]) {
+        const nextButtons = collectPressedButtons(this.activeTouches.values());
+        emitReleasedButtons(this.callback, previousButtons, nextButtons);
+        emitPressedButtons(this.callback, previousButtons, nextButtons);
+    }
+
     private refreshVisualState(changedRoots: Array<Element | null>) {
         const roots = new Set<Element>();
         for (const root of changedRoots) {
@@ -265,12 +285,14 @@ export class TouchInputManager {
         const resolved = resolveTouchState(touch);
         if (!resolved.captured) return;
 
+        const previousButtons = collectPressedButtons(this.activeTouches.values());
+
         this.activeTouches.set(touch.identifier, {
             buttons: resolved.buttons,
             visualRoot: resolved.visualRoot,
             stickOffset: resolved.stickOffset,
         });
-        emitPressedButtons(this.callback, [], resolved.buttons);
+        this.emitGlobalButtonChanges(previousButtons);
         this.refreshVisualState([resolved.visualRoot]);
     }
 
@@ -278,6 +300,8 @@ export class TouchInputManager {
     handleTouchMove(touch: Touch): void {
         const currentState = this.activeTouches.get(touch.identifier);
         const resolved = resolveTouchState(touch);
+
+        const previousButtons = collectPressedButtons(this.activeTouches.values());
 
         if (currentState === undefined) {
             if (!resolved.captured) return;
@@ -287,14 +311,14 @@ export class TouchInputManager {
                 visualRoot: resolved.visualRoot,
                 stickOffset: resolved.stickOffset,
             });
-            emitPressedButtons(this.callback, [], resolved.buttons);
+            this.emitGlobalButtonChanges(previousButtons);
             this.refreshVisualState([resolved.visualRoot]);
             return;
         }
 
         if (!resolved.captured) {
             this.activeTouches.delete(touch.identifier);
-            emitReleasedButtons(this.callback, currentState.buttons, []);
+            this.emitGlobalButtonChanges(previousButtons);
             this.refreshVisualState([currentState.visualRoot]);
             return;
         }
@@ -305,16 +329,16 @@ export class TouchInputManager {
 
         if (!buttonsChanged && !visualRootChanged && !stickOffsetChanged) return;
 
-        if (buttonsChanged) {
-            emitReleasedButtons(this.callback, currentState.buttons, resolved.buttons);
-            emitPressedButtons(this.callback, currentState.buttons, resolved.buttons);
-        }
-
         this.activeTouches.set(touch.identifier, {
             buttons: resolved.buttons,
             visualRoot: resolved.visualRoot,
             stickOffset: resolved.stickOffset,
         });
+
+        if (buttonsChanged) {
+            this.emitGlobalButtonChanges(previousButtons);
+        }
+
         this.refreshVisualState([currentState.visualRoot, resolved.visualRoot]);
     }
 
@@ -323,8 +347,10 @@ export class TouchInputManager {
         const state = this.activeTouches.get(touch.identifier);
         if (state === undefined) return;
 
+        const previousButtons = collectPressedButtons(this.activeTouches.values());
+
         this.activeTouches.delete(touch.identifier);
-        emitReleasedButtons(this.callback, state.buttons, []);
+        this.emitGlobalButtonChanges(previousButtons);
         this.refreshVisualState([state.visualRoot]);
     }
 
@@ -333,9 +359,9 @@ export class TouchInputManager {
         this.handleTouchEnd(touch);
     }
 
-    /** Get the currently pressed button for a touch identifier, if any. */
-    getButtonForTouch(identifier: number): number | undefined {
-        return this.activeTouches.get(identifier)?.buttons[0];
+    /** Get the currently pressed buttons for a touch identifier, if any. */
+    getButtonsForTouch(identifier: number): number[] {
+        return [...(this.activeTouches.get(identifier)?.buttons ?? [])];
     }
 
     /** Get count of active touches. */

@@ -305,12 +305,12 @@ describe("TouchInputManager", () => {
         expect(manager.activeCount).toBe(0);
     });
 
-    it("tracks the active button for each touch identifier", () => {
+    it("tracks the active buttons for each touch identifier", () => {
         manager.handleTouchStart(fakeTouch(0, btnA));
         manager.handleTouchStart(fakeTouch(1, btnB));
 
-        expect(manager.getButtonForTouch(0)).toBe(NES_BUTTON.A);
-        expect(manager.getButtonForTouch(1)).toBe(NES_BUTTON.B);
+        expect(manager.getButtonsForTouch(0)).toEqual([NES_BUTTON.A]);
+        expect(manager.getButtonsForTouch(1)).toEqual([NES_BUTTON.B]);
         expect(manager.activeCount).toBe(2);
     });
 
@@ -337,7 +337,25 @@ describe("TouchInputManager", () => {
         expect(callback).toHaveBeenCalledTimes(1);
         expect(callback).toHaveBeenCalledWith(NES_BUTTON.RIGHT, false);
         expect(manager.activeCount).toBe(1);
-        expect(manager.getButtonForTouch(1)).toBe(NES_BUTTON.A);
+        expect(manager.getButtonsForTouch(1)).toEqual([NES_BUTTON.A]);
+    });
+
+    it("does not release a button while another touch still holds the same button", () => {
+        manager.handleTouchStart(fakeTouch(0, btnRight));
+        callback.mockClear();
+
+        manager.handleTouchStart(fakeTouch(1, btnRight));
+
+        expect(callback).not.toHaveBeenCalled();
+
+        manager.handleTouchEnd(fakeTouch(0, btnRight));
+
+        expect(callback).not.toHaveBeenCalled();
+
+        manager.handleTouchEnd(fakeTouch(1, btnRight));
+
+        expect(callback).toHaveBeenCalledTimes(1);
+        expect(callback).toHaveBeenCalledWith(NES_BUTTON.RIGHT, false);
     });
 
     // -----------------------------------------------------------------------
@@ -353,7 +371,7 @@ describe("TouchInputManager", () => {
 
         expect(callback).toHaveBeenCalledWith(NES_BUTTON.UP, false);
         expect(callback).toHaveBeenCalledWith(NES_BUTTON.RIGHT, true);
-        expect(manager.getButtonForTouch(0)).toBe(NES_BUTTON.RIGHT);
+        expect(manager.getButtonsForTouch(0)).toEqual([NES_BUTTON.RIGHT]);
     });
 
     it("does not fire callback when finger stays on the same button during move", () => {
@@ -399,12 +417,32 @@ describe("TouchInputManager", () => {
             manager.handleTouchMove(fakeTouch(0, joystickZone, clientX, clientY));
 
             expect(manager.activeCount).toBe(1);
+            expect(manager.getButtonsForTouch(0)).toEqual(expectedButtons);
             expect(callback).toHaveBeenCalledTimes(expectedButtons.length);
             expect(callback.mock.calls).toEqual(
                 expect.arrayContaining(expectedButtons.map((button) => [button, true])),
             );
         },
     );
+
+    it("does not release a direction while another joystick touch still holds it", () => {
+        manager.handleTouchStart(fakeTouch(0, joystickZone, 118, 64));
+        callback.mockClear();
+
+        manager.handleTouchStart(fakeTouch(1, joystickZone, 118, 64));
+
+        expect(callback).not.toHaveBeenCalled();
+
+        manager.handleTouchEnd(fakeTouch(0, joystickZone, 118, 64));
+
+        expect(callback).not.toHaveBeenCalled();
+        expect(manager.getButtonsForTouch(1)).toEqual([NES_BUTTON.RIGHT]);
+
+        manager.handleTouchEnd(fakeTouch(1, joystickZone, 118, 64));
+
+        expect(callback).toHaveBeenCalledTimes(1);
+        expect(callback).toHaveBeenCalledWith(NES_BUTTON.RIGHT, false);
+    });
 
     it("Given a captured joystick touch, When the thumb returns to the deadzone, Then the active directions are released", () => {
         manager.handleTouchStart(fakeTouch(0, joystickZone, 64, 64));
