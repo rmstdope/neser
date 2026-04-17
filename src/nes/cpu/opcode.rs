@@ -1,19 +1,241 @@
+/// 6502 instruction mnemonic (official + undocumented).
+/// Undocumented opcodes are prefixed with `U` instead of `*`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+#[allow(clippy::upper_case_acronyms)]
+pub enum Mnemonic {
+    ADC,
+    AND,
+    ASL,
+    BCC,
+    BCS,
+    BEQ,
+    BIT,
+    BMI,
+    BNE,
+    BPL,
+    BRK,
+    BVC,
+    BVS,
+    CLC,
+    CLD,
+    CLI,
+    CLV,
+    CMP,
+    CPX,
+    CPY,
+    DEC,
+    DEX,
+    DEY,
+    EOR,
+    HLT,
+    INC,
+    INX,
+    INY,
+    JMP,
+    JSR,
+    KIL,
+    LDA,
+    LDX,
+    LDY,
+    LSR,
+    NOP,
+    ORA,
+    PHA,
+    PHP,
+    PLA,
+    PLP,
+    ROL,
+    ROR,
+    RTI,
+    RTS,
+    SBC,
+    SEC,
+    SED,
+    SEI,
+    STA,
+    STX,
+    STY,
+    TAX,
+    TAY,
+    TSX,
+    TXA,
+    TXS,
+    TYA,
+    // Undocumented (prefix U = unofficial, was "*" in string form)
+    UAAC,
+    UARR,
+    UASR,
+    UATX,
+    UAXA,
+    UAXS,
+    UDCP,
+    UISB,
+    ULAR,
+    ULAX,
+    UNOP,
+    URLA,
+    URRA,
+    USAX,
+    USBC,
+    USLO,
+    USRE,
+    USXA,
+    USYA,
+    UXAA,
+    UXAS,
+}
+
+impl std::fmt::Display for Mnemonic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::ADC => "ADC",
+            Self::AND => "AND",
+            Self::ASL => "ASL",
+            Self::BCC => "BCC",
+            Self::BCS => "BCS",
+            Self::BEQ => "BEQ",
+            Self::BIT => "BIT",
+            Self::BMI => "BMI",
+            Self::BNE => "BNE",
+            Self::BPL => "BPL",
+            Self::BRK => "BRK",
+            Self::BVC => "BVC",
+            Self::BVS => "BVS",
+            Self::CLC => "CLC",
+            Self::CLD => "CLD",
+            Self::CLI => "CLI",
+            Self::CLV => "CLV",
+            Self::CMP => "CMP",
+            Self::CPX => "CPX",
+            Self::CPY => "CPY",
+            Self::DEC => "DEC",
+            Self::DEX => "DEX",
+            Self::DEY => "DEY",
+            Self::EOR => "EOR",
+            Self::HLT => "HLT",
+            Self::INC => "INC",
+            Self::INX => "INX",
+            Self::INY => "INY",
+            Self::JMP => "JMP",
+            Self::JSR => "JSR",
+            Self::KIL => "KIL",
+            Self::LDA => "LDA",
+            Self::LDX => "LDX",
+            Self::LDY => "LDY",
+            Self::LSR => "LSR",
+            Self::NOP => "NOP",
+            Self::ORA => "ORA",
+            Self::PHA => "PHA",
+            Self::PHP => "PHP",
+            Self::PLA => "PLA",
+            Self::PLP => "PLP",
+            Self::ROL => "ROL",
+            Self::ROR => "ROR",
+            Self::RTI => "RTI",
+            Self::RTS => "RTS",
+            Self::SBC => "SBC",
+            Self::SEC => "SEC",
+            Self::SED => "SED",
+            Self::SEI => "SEI",
+            Self::STA => "STA",
+            Self::STX => "STX",
+            Self::STY => "STY",
+            Self::TAX => "TAX",
+            Self::TAY => "TAY",
+            Self::TSX => "TSX",
+            Self::TXA => "TXA",
+            Self::TXS => "TXS",
+            Self::TYA => "TYA",
+            Self::UAAC => "*AAC",
+            Self::UARR => "*ARR",
+            Self::UASR => "*ASR",
+            Self::UATX => "*ATX",
+            Self::UAXA => "*AXA",
+            Self::UAXS => "*AXS",
+            Self::UDCP => "*DCP",
+            Self::UISB => "*ISB",
+            Self::ULAR => "*LAR",
+            Self::ULAX => "*LAX",
+            Self::UNOP => "*NOP",
+            Self::URLA => "*RLA",
+            Self::URRA => "*RRA",
+            Self::USAX => "*SAX",
+            Self::USBC => "*SBC",
+            Self::USLO => "*SLO",
+            Self::USRE => "*SRE",
+            Self::USXA => "*SXA",
+            Self::USYA => "*SYA",
+            Self::UXAA => "*XAA",
+            Self::UXAS => "*XAS",
+        };
+        f.write_str(s)
+    }
+}
+
+/// 6502 addressing mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+#[allow(clippy::upper_case_acronyms)]
+pub enum AddrMode {
+    IMP,
+    ACC,
+    IMM,
+    ZP,
+    ZPX,
+    ZPY,
+    ABS,
+    ABSX,
+    ABSXW,
+    ABSY,
+    ABSYW,
+    IND,
+    INDX,
+    INDY,
+    INDYW,
+    REL,
+}
+
+impl std::fmt::Display for AddrMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::IMP => "IMP",
+            Self::ACC => "ACC",
+            Self::IMM => "IMM",
+            Self::ZP => "ZP",
+            Self::ZPX => "ZPX",
+            Self::ZPY => "ZPY",
+            Self::ABS => "ABS",
+            Self::ABSX => "ABSX",
+            Self::ABSXW => "ABSXW",
+            Self::ABSY => "ABSY",
+            Self::ABSYW => "ABSYW",
+            Self::IND => "IND",
+            Self::INDX => "INDX",
+            Self::INDY => "INDY",
+            Self::INDYW => "INDYW",
+            Self::REL => "REL",
+        };
+        f.write_str(s)
+    }
+}
+
 /// Represents a 6502 instruction opcode with its mnemonic and addressing mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OpCode {
     /// The opcode byte value
     pub code: u8,
-    /// The instruction mnemonic (e.g., "ADC", "LDA")
-    pub mnemonic: &'static str,
-    /// The addressing mode (e.g., "IMM", "ABS", "ZP")
-    pub mode: &'static str,
+    /// The instruction mnemonic (e.g., ADC, LDA)
+    pub mnemonic: Mnemonic,
+    /// The addressing mode (e.g., IMM, ABS, ZP)
+    pub mode: AddrMode,
     /// The base number of cycles this instruction takes
     pub cycles: u8,
 }
 
 impl OpCode {
     /// Create a new OpCode
-    pub const fn new(code: u8, mnemonic: &'static str, mode: &'static str, cycles: u8) -> Self {
+    pub const fn new(code: u8, mnemonic: Mnemonic, mode: AddrMode, cycles: u8) -> Self {
         Self {
             code,
             mnemonic,
@@ -31,10 +253,21 @@ impl OpCode {
     /// Get the number of bytes for this instruction based on its addressing mode
     pub fn bytes(&self) -> u8 {
         match self.mode {
-            "IMP" | "ACC" => 1,
-            "IMM" | "ZP" | "ZPX" | "ZPY" | "INDX" | "INDY" | "INDYW" | "REL" => 2,
-            "ABS" | "ABSX" | "ABSXW" | "ABSY" | "ABSYW" | "IND" => 3,
-            _ => panic!("Unknown addressing mode"),
+            AddrMode::IMP | AddrMode::ACC => 1,
+            AddrMode::IMM
+            | AddrMode::ZP
+            | AddrMode::ZPX
+            | AddrMode::ZPY
+            | AddrMode::INDX
+            | AddrMode::INDY
+            | AddrMode::INDYW
+            | AddrMode::REL => 2,
+            AddrMode::ABS
+            | AddrMode::ABSX
+            | AddrMode::ABSXW
+            | AddrMode::ABSY
+            | AddrMode::ABSYW
+            | AddrMode::IND => 3,
         }
     }
 }
@@ -299,262 +532,262 @@ pub const ISB_ABSXW: u8 = 0xFF;
 
 // Complete NES 6502 opcode table
 pub static OPCODE_TABLE: &[OpCode; 256] = &[
-    OpCode::new(BRK, "BRK", "IMP", 7),
-    OpCode::new(ORA_INDX, "ORA", "INDX", 6),
-    OpCode::new(KIL, "KIL", "IMP", 2),
-    OpCode::new(SLO_INDX, "*SLO", "INDX", 8),
-    OpCode::new(DOP_ZP, "*NOP", "ZP", 3),
-    OpCode::new(ORA_ZP, "ORA", "ZP", 3),
-    OpCode::new(ASL_ZP, "ASL", "ZP", 5),
-    OpCode::new(SLO_ZP, "*SLO", "ZP", 5),
-    OpCode::new(PHP, "PHP", "IMP", 3),
-    OpCode::new(ORA_IMM, "ORA", "IMM", 2),
-    OpCode::new(ASL_A, "ASL", "ACC", 2),
-    OpCode::new(AAC_IMM, "*AAC", "IMM", 2),
-    OpCode::new(TOP_ABS, "*NOP", "ABS", 4),
-    OpCode::new(ORA_ABS, "ORA", "ABS", 4),
-    OpCode::new(ASL_ABS, "ASL", "ABS", 6),
-    OpCode::new(SLO_ABS, "*SLO", "ABS", 6),
-    OpCode::new(BPL, "BPL", "REL", 2),
-    OpCode::new(ORA_INDY, "ORA", "INDY", 5),
-    OpCode::new(KIL2, "KIL", "IMP", 2),
-    OpCode::new(SLO_INDYW, "*SLO", "INDYW", 8),
-    OpCode::new(DOP_ZPX, "*NOP", "ZPX", 4),
-    OpCode::new(ORA_ZPX, "ORA", "ZPX", 4),
-    OpCode::new(ASL_ZPX, "ASL", "ZPX", 6),
-    OpCode::new(SLO_ZPX, "*SLO", "ZPX", 6),
-    OpCode::new(CLC, "CLC", "IMP", 2),
-    OpCode::new(ORA_ABSY, "ORA", "ABSY", 4),
-    OpCode::new(NOP_IMP, "*NOP", "IMP", 2),
-    OpCode::new(SLO_ABSYW, "*SLO", "ABSYW", 7),
-    OpCode::new(TOP_ABSX, "*NOP", "ABSX", 4),
-    OpCode::new(ORA_ABSX, "ORA", "ABSX", 4),
-    OpCode::new(ASL_ABSXW, "ASL", "ABSXW", 7),
-    OpCode::new(SLO_ABSXW, "*SLO", "ABSXW", 7),
-    OpCode::new(JSR, "JSR", "ABS", 6),
-    OpCode::new(AND_INDX, "AND", "INDX", 6),
-    OpCode::new(KIL3, "KIL", "IMP", 2),
-    OpCode::new(RLA_INDX, "*RLA", "INDX", 8),
-    OpCode::new(BIT_ZP, "BIT", "ZP", 3),
-    OpCode::new(AND_ZP, "AND", "ZP", 3),
-    OpCode::new(ROL_ZP, "ROL", "ZP", 5),
-    OpCode::new(RLA_ZP, "*RLA", "ZP", 5),
-    OpCode::new(PLP, "PLP", "IMP", 4),
-    OpCode::new(AND_IMM, "AND", "IMM", 2),
-    OpCode::new(ROL_ACC, "ROL", "ACC", 2),
-    OpCode::new(AAC_IMM2, "*AAC", "IMM", 2),
-    OpCode::new(BIT_ABS, "BIT", "ABS", 4),
-    OpCode::new(AND_ABS, "AND", "ABS", 4),
-    OpCode::new(ROL_ABS, "ROL", "ABS", 6),
-    OpCode::new(RLA_ABS, "*RLA", "ABS", 6),
-    OpCode::new(BMI, "BMI", "REL", 2),
-    OpCode::new(AND_INDY, "AND", "INDY", 5),
-    OpCode::new(KIL4, "KIL", "IMP", 2),
-    OpCode::new(RLA_INDYW, "*RLA", "INDYW", 8),
-    OpCode::new(DOP_ZPX2, "*NOP", "ZPX", 4),
-    OpCode::new(AND_ZPX, "AND", "ZPX", 4),
-    OpCode::new(ROL_ZPX, "ROL", "ZPX", 6),
-    OpCode::new(RLA_ZPX, "*RLA", "ZPX", 6),
-    OpCode::new(SEC, "SEC", "IMP", 2),
-    OpCode::new(AND_ABSY, "AND", "ABSY", 4),
-    OpCode::new(NOP_IMP2, "*NOP", "IMP", 2),
-    OpCode::new(RLA_ABSYW, "*RLA", "ABSYW", 7),
-    OpCode::new(TOP_ABSX2, "*NOP", "ABSX", 4),
-    OpCode::new(AND_ABSX, "AND", "ABSX", 4),
-    OpCode::new(ROL_ABSXW, "ROL", "ABSXW", 7),
-    OpCode::new(RLA_ABSXW, "*RLA", "ABSXW", 7),
-    OpCode::new(RTI, "RTI", "IMP", 6),
-    OpCode::new(EOR_INDX, "EOR", "INDX", 6),
-    OpCode::new(KIL5, "KIL", "IMP", 2),
-    OpCode::new(SRE_INDX, "*SRE", "INDX", 8),
-    OpCode::new(DOP_ZP2, "*NOP", "ZP", 3),
-    OpCode::new(EOR_ZP, "EOR", "ZP", 3),
-    OpCode::new(LSR_ZP, "LSR", "ZP", 5),
-    OpCode::new(SRE_ZP, "*SRE", "ZP", 5),
-    OpCode::new(PHA, "PHA", "IMP", 3),
-    OpCode::new(EOR_IMM, "EOR", "IMM", 2),
-    OpCode::new(LSR_ACC, "LSR", "ACC", 2),
-    OpCode::new(ASR_IMM, "*ASR", "IMM", 2),
-    OpCode::new(JMP_ABS, "JMP", "ABS", 3),
-    OpCode::new(EOR_ABS, "EOR", "ABS", 4),
-    OpCode::new(LSR_ABS, "LSR", "ABS", 6),
-    OpCode::new(SRE_ABS, "*SRE", "ABS", 6),
-    OpCode::new(BVC, "BVC", "REL", 2),
-    OpCode::new(EOR_INDY, "EOR", "INDY", 5),
-    OpCode::new(KIL6, "KIL", "IMP", 2),
-    OpCode::new(SRE_INDYW, "*SRE", "INDYW", 8),
-    OpCode::new(DOP_ZPX3, "*NOP", "ZPX", 4),
-    OpCode::new(EOR_ZPX, "EOR", "ZPX", 4),
-    OpCode::new(LSR_ZPX, "LSR", "ZPX", 6),
-    OpCode::new(SRE_ZPX, "*SRE", "ZPX", 6),
-    OpCode::new(CLI, "CLI", "IMP", 2),
-    OpCode::new(EOR_ABSY, "EOR", "ABSY", 4),
-    OpCode::new(NOP_IMP3, "*NOP", "IMP", 2),
-    OpCode::new(SRE_ABSYW, "*SRE", "ABSYW", 7),
-    OpCode::new(TOP_ABSX3, "*NOP", "ABSX", 4),
-    OpCode::new(EOR_ABSX, "EOR", "ABSX", 4),
-    OpCode::new(LSR_ABSXW, "LSR", "ABSXW", 7),
-    OpCode::new(SRE_ABSXW, "*SRE", "ABSXW", 7),
-    OpCode::new(RTS, "RTS", "IMP", 6),
-    OpCode::new(ADC_INDX, "ADC", "INDX", 6),
-    OpCode::new(KIL7, "KIL", "IMP", 2),
-    OpCode::new(RRA_INDX, "*RRA", "INDX", 8),
-    OpCode::new(DOP_ZP3, "*NOP", "ZP", 3),
-    OpCode::new(ADC_ZP, "ADC", "ZP", 3),
-    OpCode::new(ROR_ZP, "ROR", "ZP", 5),
-    OpCode::new(RRA_ZP, "*RRA", "ZP", 5),
-    OpCode::new(PLA, "PLA", "IMP", 4),
-    OpCode::new(ADC_IMM, "ADC", "IMM", 2),
-    OpCode::new(ROR_ACC, "ROR", "ACC", 2),
-    OpCode::new(ARR_IMM, "*ARR", "IMM", 2),
-    OpCode::new(JMP_IND, "JMP", "IND", 5),
-    OpCode::new(ADC_ABS, "ADC", "ABS", 4),
-    OpCode::new(ROR_ABS, "ROR", "ABS", 6),
-    OpCode::new(RRA_ABS, "*RRA", "ABS", 6),
-    OpCode::new(BVS, "BVS", "REL", 2),
-    OpCode::new(ADC_INDY, "ADC", "INDY", 5),
-    OpCode::new(KIL8, "KIL", "IMP", 2),
-    OpCode::new(RRA_INDYW, "*RRA", "INDYW", 8),
-    OpCode::new(DOP_ZPX4, "*NOP", "ZPX", 4),
-    OpCode::new(ADC_ZPX, "ADC", "ZPX", 4),
-    OpCode::new(ROR_ZPX, "ROR", "ZPX", 6),
-    OpCode::new(RRA_ZPX, "*RRA", "ZPX", 6),
-    OpCode::new(SEI, "SEI", "IMP", 2),
-    OpCode::new(ADC_ABSY, "ADC", "ABSY", 4),
-    OpCode::new(NOP_IMP4, "*NOP", "IMP", 2),
-    OpCode::new(RRA_ABSYW, "*RRA", "ABSYW", 7),
-    OpCode::new(TOP_ABSX4, "*NOP", "ABSX", 4),
-    OpCode::new(ADC_ABSX, "ADC", "ABSX", 4),
-    OpCode::new(ROR_ABSXW, "ROR", "ABSXW", 7),
-    OpCode::new(RRA_ABSXW, "*RRA", "ABSXW", 7),
-    OpCode::new(DOP_IMM, "*NOP", "IMM", 2),
-    OpCode::new(STA_INDX, "STA", "INDX", 6),
-    OpCode::new(DOP_IMM2, "*NOP", "IMM", 2),
-    OpCode::new(SAX_INDX, "*SAX", "INDX", 6),
-    OpCode::new(STY_ZP, "STY", "ZP", 3),
-    OpCode::new(STA_ZP, "STA", "ZP", 3),
-    OpCode::new(STX_ZP, "STX", "ZP", 3),
-    OpCode::new(SAX_ZP, "*SAX", "ZP", 3),
-    OpCode::new(DEY, "DEY", "IMP", 2),
-    OpCode::new(DOP_IMM3, "*NOP", "IMM", 2),
-    OpCode::new(TXA, "TXA", "IMP", 2),
-    OpCode::new(XAA_IMM, "*XAA", "IMM", 2),
-    OpCode::new(STY_ABS, "STY", "ABS", 4),
-    OpCode::new(STA_ABS, "STA", "ABS", 4),
-    OpCode::new(STX_ABS, "STX", "ABS", 4),
-    OpCode::new(SAX_ABS, "*SAX", "ABS", 4),
-    OpCode::new(BCC, "BCC", "REL", 2),
-    OpCode::new(STA_INDYW, "STA", "INDYW", 6),
-    OpCode::new(KIL9, "KIL", "IMP", 2),
-    OpCode::new(AXA_INDY, "*AXA", "INDYW", 6),
-    OpCode::new(STY_ZPX, "STY", "ZPX", 4),
-    OpCode::new(STA_ZPX, "STA", "ZPX", 4),
-    OpCode::new(STX_ZPY, "STX", "ZPY", 4),
-    OpCode::new(SAX_ZPY, "*SAX", "ZPY", 4),
-    OpCode::new(TYA, "TYA", "IMP", 2),
-    OpCode::new(STA_ABSYW, "STA", "ABSYW", 5),
-    OpCode::new(TXS, "TXS", "IMP", 2),
-    OpCode::new(XAS_ABSY, "*XAS", "ABSYW", 5),
-    OpCode::new(SYA_ABSX, "*SYA", "ABSXW", 5),
-    OpCode::new(STA_ABSXW, "STA", "ABSXW", 5),
-    OpCode::new(SXA_ABSY, "*SXA", "ABSYW", 5),
-    OpCode::new(AXA_ABSY, "*AXA", "ABSYW", 5),
-    OpCode::new(LDY_IMM, "LDY", "IMM", 2),
-    OpCode::new(LDA_INDX, "LDA", "INDX", 6),
-    OpCode::new(LDX_IMM, "LDX", "IMM", 2),
-    OpCode::new(LAX_INDX, "*LAX", "INDX", 6),
-    OpCode::new(LDY_ZP, "LDY", "ZP", 3),
-    OpCode::new(LDA_ZP, "LDA", "ZP", 3),
-    OpCode::new(LDX_ZP, "LDX", "ZP", 3),
-    OpCode::new(LAX_ZP, "*LAX", "ZP", 3),
-    OpCode::new(TAY, "TAY", "IMP", 2),
-    OpCode::new(LDA_IMM, "LDA", "IMM", 2),
-    OpCode::new(TAX, "TAX", "IMP", 2),
-    OpCode::new(ATX_IMM, "*ATX", "IMM", 2),
-    OpCode::new(LDY_ABS, "LDY", "ABS", 4),
-    OpCode::new(LDA_ABS, "LDA", "ABS", 4),
-    OpCode::new(LDX_ABS, "LDX", "ABS", 4),
-    OpCode::new(LAX_ABS, "*LAX", "ABS", 4),
-    OpCode::new(BCS, "BCS", "REL", 2),
-    OpCode::new(LDA_INDY, "LDA", "INDY", 5),
-    OpCode::new(KIL10, "KIL", "IMP", 2),
-    OpCode::new(LAX_INDY, "*LAX", "INDY", 5),
-    OpCode::new(LDY_ZPX, "LDY", "ZPX", 4),
-    OpCode::new(LDA_ZPX, "LDA", "ZPX", 4),
-    OpCode::new(LDX_ZPY, "LDX", "ZPY", 4),
-    OpCode::new(LAX_ZPY, "*LAX", "ZPY", 4),
-    OpCode::new(CLV, "CLV", "IMP", 2),
-    OpCode::new(LDA_ABSY, "LDA", "ABSY", 4),
-    OpCode::new(TSX, "TSX", "IMP", 2),
-    OpCode::new(LAR_ABSY, "*LAR", "ABSY", 4),
-    OpCode::new(LDY_ABSX, "LDY", "ABSX", 4),
-    OpCode::new(LDA_ABSX, "LDA", "ABSX", 4),
-    OpCode::new(LDX_ABSY, "LDX", "ABSY", 4),
-    OpCode::new(LAX_ABSY, "*LAX", "ABSY", 4),
-    OpCode::new(CPY_IMM, "CPY", "IMM", 2),
-    OpCode::new(CMP_INDX, "CMP", "INDX", 6),
-    OpCode::new(DOP_IMM4, "*NOP", "IMM", 2),
-    OpCode::new(DCP_INDX, "*DCP", "INDX", 8),
-    OpCode::new(CPY_ZP, "CPY", "ZP", 3),
-    OpCode::new(CMP_ZP, "CMP", "ZP", 3),
-    OpCode::new(DEC_ZP, "DEC", "ZP", 5),
-    OpCode::new(DCP_ZP, "*DCP", "ZP", 5),
-    OpCode::new(INY, "INY", "IMP", 2),
-    OpCode::new(CMP_IMM, "CMP", "IMM", 2),
-    OpCode::new(DEX, "DEX", "IMP", 2),
-    OpCode::new(AXS_IMM, "*AXS", "IMM", 2),
-    OpCode::new(CPY_ABS, "CPY", "ABS", 4),
-    OpCode::new(CMP_ABS, "CMP", "ABS", 4),
-    OpCode::new(DEC_ABS, "DEC", "ABS", 6),
-    OpCode::new(DCP_ABS, "*DCP", "ABS", 6),
-    OpCode::new(BNE, "BNE", "REL", 2),
-    OpCode::new(CMP_INDY, "CMP", "INDY", 5),
-    OpCode::new(KIL11, "KIL", "IMP", 2),
-    OpCode::new(DCP_INDYW, "*DCP", "INDYW", 8),
-    OpCode::new(DOP_ZPX5, "*NOP", "ZPX", 4),
-    OpCode::new(CMP_ZPX, "CMP", "ZPX", 4),
-    OpCode::new(DEC_ZPX, "DEC", "ZPX", 6),
-    OpCode::new(DCP_ZPX, "*DCP", "ZPX", 6),
-    OpCode::new(CLD, "CLD", "IMP", 2),
-    OpCode::new(CMP_ABSY, "CMP", "ABSY", 4),
-    OpCode::new(NOP_IMP5, "*NOP", "IMP", 2),
-    OpCode::new(DCP_ABSYW, "*DCP", "ABSYW", 7),
-    OpCode::new(TOP_ABSX5, "*NOP", "ABSX", 4),
-    OpCode::new(CMP_ABSX, "CMP", "ABSX", 4),
-    OpCode::new(DEC_ABSXW, "DEC", "ABSXW", 7),
-    OpCode::new(DCP_ABSXW, "*DCP", "ABSXW", 7),
-    OpCode::new(CPX_IMM, "CPX", "IMM", 2),
-    OpCode::new(SBC_INDX, "SBC", "INDX", 6),
-    OpCode::new(DOP_IMM5, "*NOP", "IMM", 2),
-    OpCode::new(ISB_INDX, "*ISB", "INDX", 8),
-    OpCode::new(CPX_ZP, "CPX", "ZP", 3),
-    OpCode::new(SBC_ZP, "SBC", "ZP", 3),
-    OpCode::new(INC_ZP, "INC", "ZP", 5),
-    OpCode::new(ISB_ZP, "*ISB", "ZP", 5),
-    OpCode::new(INX, "INX", "IMP", 2),
-    OpCode::new(SBC_IMM, "SBC", "IMM", 2),
-    OpCode::new(NOP, "NOP", "IMP", 2),
-    OpCode::new(SBC_IMM2, "*SBC", "IMM", 2),
-    OpCode::new(CPX_ABS, "CPX", "ABS", 4),
-    OpCode::new(SBC_ABS, "SBC", "ABS", 4),
-    OpCode::new(INC_ABS, "INC", "ABS", 6),
-    OpCode::new(ISB_ABS, "*ISB", "ABS", 6),
-    OpCode::new(BEQ, "BEQ", "REL", 2),
-    OpCode::new(SBC_INDY, "SBC", "INDY", 5),
-    OpCode::new(KIL12, "KIL", "IMP", 2),
-    OpCode::new(ISB_INDYW, "*ISB", "INDYW", 8),
-    OpCode::new(DOP_ZPX6, "*NOP", "ZPX", 4),
-    OpCode::new(SBC_ZPX, "SBC", "ZPX", 4),
-    OpCode::new(INC_ZPX, "INC", "ZPX", 6),
-    OpCode::new(ISB_ZPX, "*ISB", "ZPX", 6),
-    OpCode::new(SED, "SED", "IMP", 2),
-    OpCode::new(SBC_ABSY, "SBC", "ABSY", 4),
-    OpCode::new(NOP_IMP6, "*NOP", "IMP", 2),
-    OpCode::new(ISB_ABSYW, "*ISB", "ABSYW", 7),
-    OpCode::new(TOP_ABSX6, "*NOP", "ABSX", 4),
-    OpCode::new(SBC_ABSX, "SBC", "ABSX", 4),
-    OpCode::new(INC_ABSXW, "INC", "ABSXW", 7),
-    OpCode::new(ISB_ABSXW, "*ISB", "ABSXW", 7),
+    OpCode::new(BRK, Mnemonic::BRK, AddrMode::IMP, 7),
+    OpCode::new(ORA_INDX, Mnemonic::ORA, AddrMode::INDX, 6),
+    OpCode::new(KIL, Mnemonic::KIL, AddrMode::IMP, 2),
+    OpCode::new(SLO_INDX, Mnemonic::USLO, AddrMode::INDX, 8),
+    OpCode::new(DOP_ZP, Mnemonic::UNOP, AddrMode::ZP, 3),
+    OpCode::new(ORA_ZP, Mnemonic::ORA, AddrMode::ZP, 3),
+    OpCode::new(ASL_ZP, Mnemonic::ASL, AddrMode::ZP, 5),
+    OpCode::new(SLO_ZP, Mnemonic::USLO, AddrMode::ZP, 5),
+    OpCode::new(PHP, Mnemonic::PHP, AddrMode::IMP, 3),
+    OpCode::new(ORA_IMM, Mnemonic::ORA, AddrMode::IMM, 2),
+    OpCode::new(ASL_A, Mnemonic::ASL, AddrMode::ACC, 2),
+    OpCode::new(AAC_IMM, Mnemonic::UAAC, AddrMode::IMM, 2),
+    OpCode::new(TOP_ABS, Mnemonic::UNOP, AddrMode::ABS, 4),
+    OpCode::new(ORA_ABS, Mnemonic::ORA, AddrMode::ABS, 4),
+    OpCode::new(ASL_ABS, Mnemonic::ASL, AddrMode::ABS, 6),
+    OpCode::new(SLO_ABS, Mnemonic::USLO, AddrMode::ABS, 6),
+    OpCode::new(BPL, Mnemonic::BPL, AddrMode::REL, 2),
+    OpCode::new(ORA_INDY, Mnemonic::ORA, AddrMode::INDY, 5),
+    OpCode::new(KIL2, Mnemonic::KIL, AddrMode::IMP, 2),
+    OpCode::new(SLO_INDYW, Mnemonic::USLO, AddrMode::INDYW, 8),
+    OpCode::new(DOP_ZPX, Mnemonic::UNOP, AddrMode::ZPX, 4),
+    OpCode::new(ORA_ZPX, Mnemonic::ORA, AddrMode::ZPX, 4),
+    OpCode::new(ASL_ZPX, Mnemonic::ASL, AddrMode::ZPX, 6),
+    OpCode::new(SLO_ZPX, Mnemonic::USLO, AddrMode::ZPX, 6),
+    OpCode::new(CLC, Mnemonic::CLC, AddrMode::IMP, 2),
+    OpCode::new(ORA_ABSY, Mnemonic::ORA, AddrMode::ABSY, 4),
+    OpCode::new(NOP_IMP, Mnemonic::UNOP, AddrMode::IMP, 2),
+    OpCode::new(SLO_ABSYW, Mnemonic::USLO, AddrMode::ABSYW, 7),
+    OpCode::new(TOP_ABSX, Mnemonic::UNOP, AddrMode::ABSX, 4),
+    OpCode::new(ORA_ABSX, Mnemonic::ORA, AddrMode::ABSX, 4),
+    OpCode::new(ASL_ABSXW, Mnemonic::ASL, AddrMode::ABSXW, 7),
+    OpCode::new(SLO_ABSXW, Mnemonic::USLO, AddrMode::ABSXW, 7),
+    OpCode::new(JSR, Mnemonic::JSR, AddrMode::ABS, 6),
+    OpCode::new(AND_INDX, Mnemonic::AND, AddrMode::INDX, 6),
+    OpCode::new(KIL3, Mnemonic::KIL, AddrMode::IMP, 2),
+    OpCode::new(RLA_INDX, Mnemonic::URLA, AddrMode::INDX, 8),
+    OpCode::new(BIT_ZP, Mnemonic::BIT, AddrMode::ZP, 3),
+    OpCode::new(AND_ZP, Mnemonic::AND, AddrMode::ZP, 3),
+    OpCode::new(ROL_ZP, Mnemonic::ROL, AddrMode::ZP, 5),
+    OpCode::new(RLA_ZP, Mnemonic::URLA, AddrMode::ZP, 5),
+    OpCode::new(PLP, Mnemonic::PLP, AddrMode::IMP, 4),
+    OpCode::new(AND_IMM, Mnemonic::AND, AddrMode::IMM, 2),
+    OpCode::new(ROL_ACC, Mnemonic::ROL, AddrMode::ACC, 2),
+    OpCode::new(AAC_IMM2, Mnemonic::UAAC, AddrMode::IMM, 2),
+    OpCode::new(BIT_ABS, Mnemonic::BIT, AddrMode::ABS, 4),
+    OpCode::new(AND_ABS, Mnemonic::AND, AddrMode::ABS, 4),
+    OpCode::new(ROL_ABS, Mnemonic::ROL, AddrMode::ABS, 6),
+    OpCode::new(RLA_ABS, Mnemonic::URLA, AddrMode::ABS, 6),
+    OpCode::new(BMI, Mnemonic::BMI, AddrMode::REL, 2),
+    OpCode::new(AND_INDY, Mnemonic::AND, AddrMode::INDY, 5),
+    OpCode::new(KIL4, Mnemonic::KIL, AddrMode::IMP, 2),
+    OpCode::new(RLA_INDYW, Mnemonic::URLA, AddrMode::INDYW, 8),
+    OpCode::new(DOP_ZPX2, Mnemonic::UNOP, AddrMode::ZPX, 4),
+    OpCode::new(AND_ZPX, Mnemonic::AND, AddrMode::ZPX, 4),
+    OpCode::new(ROL_ZPX, Mnemonic::ROL, AddrMode::ZPX, 6),
+    OpCode::new(RLA_ZPX, Mnemonic::URLA, AddrMode::ZPX, 6),
+    OpCode::new(SEC, Mnemonic::SEC, AddrMode::IMP, 2),
+    OpCode::new(AND_ABSY, Mnemonic::AND, AddrMode::ABSY, 4),
+    OpCode::new(NOP_IMP2, Mnemonic::UNOP, AddrMode::IMP, 2),
+    OpCode::new(RLA_ABSYW, Mnemonic::URLA, AddrMode::ABSYW, 7),
+    OpCode::new(TOP_ABSX2, Mnemonic::UNOP, AddrMode::ABSX, 4),
+    OpCode::new(AND_ABSX, Mnemonic::AND, AddrMode::ABSX, 4),
+    OpCode::new(ROL_ABSXW, Mnemonic::ROL, AddrMode::ABSXW, 7),
+    OpCode::new(RLA_ABSXW, Mnemonic::URLA, AddrMode::ABSXW, 7),
+    OpCode::new(RTI, Mnemonic::RTI, AddrMode::IMP, 6),
+    OpCode::new(EOR_INDX, Mnemonic::EOR, AddrMode::INDX, 6),
+    OpCode::new(KIL5, Mnemonic::KIL, AddrMode::IMP, 2),
+    OpCode::new(SRE_INDX, Mnemonic::USRE, AddrMode::INDX, 8),
+    OpCode::new(DOP_ZP2, Mnemonic::UNOP, AddrMode::ZP, 3),
+    OpCode::new(EOR_ZP, Mnemonic::EOR, AddrMode::ZP, 3),
+    OpCode::new(LSR_ZP, Mnemonic::LSR, AddrMode::ZP, 5),
+    OpCode::new(SRE_ZP, Mnemonic::USRE, AddrMode::ZP, 5),
+    OpCode::new(PHA, Mnemonic::PHA, AddrMode::IMP, 3),
+    OpCode::new(EOR_IMM, Mnemonic::EOR, AddrMode::IMM, 2),
+    OpCode::new(LSR_ACC, Mnemonic::LSR, AddrMode::ACC, 2),
+    OpCode::new(ASR_IMM, Mnemonic::UASR, AddrMode::IMM, 2),
+    OpCode::new(JMP_ABS, Mnemonic::JMP, AddrMode::ABS, 3),
+    OpCode::new(EOR_ABS, Mnemonic::EOR, AddrMode::ABS, 4),
+    OpCode::new(LSR_ABS, Mnemonic::LSR, AddrMode::ABS, 6),
+    OpCode::new(SRE_ABS, Mnemonic::USRE, AddrMode::ABS, 6),
+    OpCode::new(BVC, Mnemonic::BVC, AddrMode::REL, 2),
+    OpCode::new(EOR_INDY, Mnemonic::EOR, AddrMode::INDY, 5),
+    OpCode::new(KIL6, Mnemonic::KIL, AddrMode::IMP, 2),
+    OpCode::new(SRE_INDYW, Mnemonic::USRE, AddrMode::INDYW, 8),
+    OpCode::new(DOP_ZPX3, Mnemonic::UNOP, AddrMode::ZPX, 4),
+    OpCode::new(EOR_ZPX, Mnemonic::EOR, AddrMode::ZPX, 4),
+    OpCode::new(LSR_ZPX, Mnemonic::LSR, AddrMode::ZPX, 6),
+    OpCode::new(SRE_ZPX, Mnemonic::USRE, AddrMode::ZPX, 6),
+    OpCode::new(CLI, Mnemonic::CLI, AddrMode::IMP, 2),
+    OpCode::new(EOR_ABSY, Mnemonic::EOR, AddrMode::ABSY, 4),
+    OpCode::new(NOP_IMP3, Mnemonic::UNOP, AddrMode::IMP, 2),
+    OpCode::new(SRE_ABSYW, Mnemonic::USRE, AddrMode::ABSYW, 7),
+    OpCode::new(TOP_ABSX3, Mnemonic::UNOP, AddrMode::ABSX, 4),
+    OpCode::new(EOR_ABSX, Mnemonic::EOR, AddrMode::ABSX, 4),
+    OpCode::new(LSR_ABSXW, Mnemonic::LSR, AddrMode::ABSXW, 7),
+    OpCode::new(SRE_ABSXW, Mnemonic::USRE, AddrMode::ABSXW, 7),
+    OpCode::new(RTS, Mnemonic::RTS, AddrMode::IMP, 6),
+    OpCode::new(ADC_INDX, Mnemonic::ADC, AddrMode::INDX, 6),
+    OpCode::new(KIL7, Mnemonic::KIL, AddrMode::IMP, 2),
+    OpCode::new(RRA_INDX, Mnemonic::URRA, AddrMode::INDX, 8),
+    OpCode::new(DOP_ZP3, Mnemonic::UNOP, AddrMode::ZP, 3),
+    OpCode::new(ADC_ZP, Mnemonic::ADC, AddrMode::ZP, 3),
+    OpCode::new(ROR_ZP, Mnemonic::ROR, AddrMode::ZP, 5),
+    OpCode::new(RRA_ZP, Mnemonic::URRA, AddrMode::ZP, 5),
+    OpCode::new(PLA, Mnemonic::PLA, AddrMode::IMP, 4),
+    OpCode::new(ADC_IMM, Mnemonic::ADC, AddrMode::IMM, 2),
+    OpCode::new(ROR_ACC, Mnemonic::ROR, AddrMode::ACC, 2),
+    OpCode::new(ARR_IMM, Mnemonic::UARR, AddrMode::IMM, 2),
+    OpCode::new(JMP_IND, Mnemonic::JMP, AddrMode::IND, 5),
+    OpCode::new(ADC_ABS, Mnemonic::ADC, AddrMode::ABS, 4),
+    OpCode::new(ROR_ABS, Mnemonic::ROR, AddrMode::ABS, 6),
+    OpCode::new(RRA_ABS, Mnemonic::URRA, AddrMode::ABS, 6),
+    OpCode::new(BVS, Mnemonic::BVS, AddrMode::REL, 2),
+    OpCode::new(ADC_INDY, Mnemonic::ADC, AddrMode::INDY, 5),
+    OpCode::new(KIL8, Mnemonic::KIL, AddrMode::IMP, 2),
+    OpCode::new(RRA_INDYW, Mnemonic::URRA, AddrMode::INDYW, 8),
+    OpCode::new(DOP_ZPX4, Mnemonic::UNOP, AddrMode::ZPX, 4),
+    OpCode::new(ADC_ZPX, Mnemonic::ADC, AddrMode::ZPX, 4),
+    OpCode::new(ROR_ZPX, Mnemonic::ROR, AddrMode::ZPX, 6),
+    OpCode::new(RRA_ZPX, Mnemonic::URRA, AddrMode::ZPX, 6),
+    OpCode::new(SEI, Mnemonic::SEI, AddrMode::IMP, 2),
+    OpCode::new(ADC_ABSY, Mnemonic::ADC, AddrMode::ABSY, 4),
+    OpCode::new(NOP_IMP4, Mnemonic::UNOP, AddrMode::IMP, 2),
+    OpCode::new(RRA_ABSYW, Mnemonic::URRA, AddrMode::ABSYW, 7),
+    OpCode::new(TOP_ABSX4, Mnemonic::UNOP, AddrMode::ABSX, 4),
+    OpCode::new(ADC_ABSX, Mnemonic::ADC, AddrMode::ABSX, 4),
+    OpCode::new(ROR_ABSXW, Mnemonic::ROR, AddrMode::ABSXW, 7),
+    OpCode::new(RRA_ABSXW, Mnemonic::URRA, AddrMode::ABSXW, 7),
+    OpCode::new(DOP_IMM, Mnemonic::UNOP, AddrMode::IMM, 2),
+    OpCode::new(STA_INDX, Mnemonic::STA, AddrMode::INDX, 6),
+    OpCode::new(DOP_IMM2, Mnemonic::UNOP, AddrMode::IMM, 2),
+    OpCode::new(SAX_INDX, Mnemonic::USAX, AddrMode::INDX, 6),
+    OpCode::new(STY_ZP, Mnemonic::STY, AddrMode::ZP, 3),
+    OpCode::new(STA_ZP, Mnemonic::STA, AddrMode::ZP, 3),
+    OpCode::new(STX_ZP, Mnemonic::STX, AddrMode::ZP, 3),
+    OpCode::new(SAX_ZP, Mnemonic::USAX, AddrMode::ZP, 3),
+    OpCode::new(DEY, Mnemonic::DEY, AddrMode::IMP, 2),
+    OpCode::new(DOP_IMM3, Mnemonic::UNOP, AddrMode::IMM, 2),
+    OpCode::new(TXA, Mnemonic::TXA, AddrMode::IMP, 2),
+    OpCode::new(XAA_IMM, Mnemonic::UXAA, AddrMode::IMM, 2),
+    OpCode::new(STY_ABS, Mnemonic::STY, AddrMode::ABS, 4),
+    OpCode::new(STA_ABS, Mnemonic::STA, AddrMode::ABS, 4),
+    OpCode::new(STX_ABS, Mnemonic::STX, AddrMode::ABS, 4),
+    OpCode::new(SAX_ABS, Mnemonic::USAX, AddrMode::ABS, 4),
+    OpCode::new(BCC, Mnemonic::BCC, AddrMode::REL, 2),
+    OpCode::new(STA_INDYW, Mnemonic::STA, AddrMode::INDYW, 6),
+    OpCode::new(KIL9, Mnemonic::KIL, AddrMode::IMP, 2),
+    OpCode::new(AXA_INDY, Mnemonic::UAXA, AddrMode::INDYW, 6),
+    OpCode::new(STY_ZPX, Mnemonic::STY, AddrMode::ZPX, 4),
+    OpCode::new(STA_ZPX, Mnemonic::STA, AddrMode::ZPX, 4),
+    OpCode::new(STX_ZPY, Mnemonic::STX, AddrMode::ZPY, 4),
+    OpCode::new(SAX_ZPY, Mnemonic::USAX, AddrMode::ZPY, 4),
+    OpCode::new(TYA, Mnemonic::TYA, AddrMode::IMP, 2),
+    OpCode::new(STA_ABSYW, Mnemonic::STA, AddrMode::ABSYW, 5),
+    OpCode::new(TXS, Mnemonic::TXS, AddrMode::IMP, 2),
+    OpCode::new(XAS_ABSY, Mnemonic::UXAS, AddrMode::ABSYW, 5),
+    OpCode::new(SYA_ABSX, Mnemonic::USYA, AddrMode::ABSXW, 5),
+    OpCode::new(STA_ABSXW, Mnemonic::STA, AddrMode::ABSXW, 5),
+    OpCode::new(SXA_ABSY, Mnemonic::USXA, AddrMode::ABSYW, 5),
+    OpCode::new(AXA_ABSY, Mnemonic::UAXA, AddrMode::ABSYW, 5),
+    OpCode::new(LDY_IMM, Mnemonic::LDY, AddrMode::IMM, 2),
+    OpCode::new(LDA_INDX, Mnemonic::LDA, AddrMode::INDX, 6),
+    OpCode::new(LDX_IMM, Mnemonic::LDX, AddrMode::IMM, 2),
+    OpCode::new(LAX_INDX, Mnemonic::ULAX, AddrMode::INDX, 6),
+    OpCode::new(LDY_ZP, Mnemonic::LDY, AddrMode::ZP, 3),
+    OpCode::new(LDA_ZP, Mnemonic::LDA, AddrMode::ZP, 3),
+    OpCode::new(LDX_ZP, Mnemonic::LDX, AddrMode::ZP, 3),
+    OpCode::new(LAX_ZP, Mnemonic::ULAX, AddrMode::ZP, 3),
+    OpCode::new(TAY, Mnemonic::TAY, AddrMode::IMP, 2),
+    OpCode::new(LDA_IMM, Mnemonic::LDA, AddrMode::IMM, 2),
+    OpCode::new(TAX, Mnemonic::TAX, AddrMode::IMP, 2),
+    OpCode::new(ATX_IMM, Mnemonic::UATX, AddrMode::IMM, 2),
+    OpCode::new(LDY_ABS, Mnemonic::LDY, AddrMode::ABS, 4),
+    OpCode::new(LDA_ABS, Mnemonic::LDA, AddrMode::ABS, 4),
+    OpCode::new(LDX_ABS, Mnemonic::LDX, AddrMode::ABS, 4),
+    OpCode::new(LAX_ABS, Mnemonic::ULAX, AddrMode::ABS, 4),
+    OpCode::new(BCS, Mnemonic::BCS, AddrMode::REL, 2),
+    OpCode::new(LDA_INDY, Mnemonic::LDA, AddrMode::INDY, 5),
+    OpCode::new(KIL10, Mnemonic::KIL, AddrMode::IMP, 2),
+    OpCode::new(LAX_INDY, Mnemonic::ULAX, AddrMode::INDY, 5),
+    OpCode::new(LDY_ZPX, Mnemonic::LDY, AddrMode::ZPX, 4),
+    OpCode::new(LDA_ZPX, Mnemonic::LDA, AddrMode::ZPX, 4),
+    OpCode::new(LDX_ZPY, Mnemonic::LDX, AddrMode::ZPY, 4),
+    OpCode::new(LAX_ZPY, Mnemonic::ULAX, AddrMode::ZPY, 4),
+    OpCode::new(CLV, Mnemonic::CLV, AddrMode::IMP, 2),
+    OpCode::new(LDA_ABSY, Mnemonic::LDA, AddrMode::ABSY, 4),
+    OpCode::new(TSX, Mnemonic::TSX, AddrMode::IMP, 2),
+    OpCode::new(LAR_ABSY, Mnemonic::ULAR, AddrMode::ABSY, 4),
+    OpCode::new(LDY_ABSX, Mnemonic::LDY, AddrMode::ABSX, 4),
+    OpCode::new(LDA_ABSX, Mnemonic::LDA, AddrMode::ABSX, 4),
+    OpCode::new(LDX_ABSY, Mnemonic::LDX, AddrMode::ABSY, 4),
+    OpCode::new(LAX_ABSY, Mnemonic::ULAX, AddrMode::ABSY, 4),
+    OpCode::new(CPY_IMM, Mnemonic::CPY, AddrMode::IMM, 2),
+    OpCode::new(CMP_INDX, Mnemonic::CMP, AddrMode::INDX, 6),
+    OpCode::new(DOP_IMM4, Mnemonic::UNOP, AddrMode::IMM, 2),
+    OpCode::new(DCP_INDX, Mnemonic::UDCP, AddrMode::INDX, 8),
+    OpCode::new(CPY_ZP, Mnemonic::CPY, AddrMode::ZP, 3),
+    OpCode::new(CMP_ZP, Mnemonic::CMP, AddrMode::ZP, 3),
+    OpCode::new(DEC_ZP, Mnemonic::DEC, AddrMode::ZP, 5),
+    OpCode::new(DCP_ZP, Mnemonic::UDCP, AddrMode::ZP, 5),
+    OpCode::new(INY, Mnemonic::INY, AddrMode::IMP, 2),
+    OpCode::new(CMP_IMM, Mnemonic::CMP, AddrMode::IMM, 2),
+    OpCode::new(DEX, Mnemonic::DEX, AddrMode::IMP, 2),
+    OpCode::new(AXS_IMM, Mnemonic::UAXS, AddrMode::IMM, 2),
+    OpCode::new(CPY_ABS, Mnemonic::CPY, AddrMode::ABS, 4),
+    OpCode::new(CMP_ABS, Mnemonic::CMP, AddrMode::ABS, 4),
+    OpCode::new(DEC_ABS, Mnemonic::DEC, AddrMode::ABS, 6),
+    OpCode::new(DCP_ABS, Mnemonic::UDCP, AddrMode::ABS, 6),
+    OpCode::new(BNE, Mnemonic::BNE, AddrMode::REL, 2),
+    OpCode::new(CMP_INDY, Mnemonic::CMP, AddrMode::INDY, 5),
+    OpCode::new(KIL11, Mnemonic::KIL, AddrMode::IMP, 2),
+    OpCode::new(DCP_INDYW, Mnemonic::UDCP, AddrMode::INDYW, 8),
+    OpCode::new(DOP_ZPX5, Mnemonic::UNOP, AddrMode::ZPX, 4),
+    OpCode::new(CMP_ZPX, Mnemonic::CMP, AddrMode::ZPX, 4),
+    OpCode::new(DEC_ZPX, Mnemonic::DEC, AddrMode::ZPX, 6),
+    OpCode::new(DCP_ZPX, Mnemonic::UDCP, AddrMode::ZPX, 6),
+    OpCode::new(CLD, Mnemonic::CLD, AddrMode::IMP, 2),
+    OpCode::new(CMP_ABSY, Mnemonic::CMP, AddrMode::ABSY, 4),
+    OpCode::new(NOP_IMP5, Mnemonic::UNOP, AddrMode::IMP, 2),
+    OpCode::new(DCP_ABSYW, Mnemonic::UDCP, AddrMode::ABSYW, 7),
+    OpCode::new(TOP_ABSX5, Mnemonic::UNOP, AddrMode::ABSX, 4),
+    OpCode::new(CMP_ABSX, Mnemonic::CMP, AddrMode::ABSX, 4),
+    OpCode::new(DEC_ABSXW, Mnemonic::DEC, AddrMode::ABSXW, 7),
+    OpCode::new(DCP_ABSXW, Mnemonic::UDCP, AddrMode::ABSXW, 7),
+    OpCode::new(CPX_IMM, Mnemonic::CPX, AddrMode::IMM, 2),
+    OpCode::new(SBC_INDX, Mnemonic::SBC, AddrMode::INDX, 6),
+    OpCode::new(DOP_IMM5, Mnemonic::UNOP, AddrMode::IMM, 2),
+    OpCode::new(ISB_INDX, Mnemonic::UISB, AddrMode::INDX, 8),
+    OpCode::new(CPX_ZP, Mnemonic::CPX, AddrMode::ZP, 3),
+    OpCode::new(SBC_ZP, Mnemonic::SBC, AddrMode::ZP, 3),
+    OpCode::new(INC_ZP, Mnemonic::INC, AddrMode::ZP, 5),
+    OpCode::new(ISB_ZP, Mnemonic::UISB, AddrMode::ZP, 5),
+    OpCode::new(INX, Mnemonic::INX, AddrMode::IMP, 2),
+    OpCode::new(SBC_IMM, Mnemonic::SBC, AddrMode::IMM, 2),
+    OpCode::new(NOP, Mnemonic::NOP, AddrMode::IMP, 2),
+    OpCode::new(SBC_IMM2, Mnemonic::USBC, AddrMode::IMM, 2),
+    OpCode::new(CPX_ABS, Mnemonic::CPX, AddrMode::ABS, 4),
+    OpCode::new(SBC_ABS, Mnemonic::SBC, AddrMode::ABS, 4),
+    OpCode::new(INC_ABS, Mnemonic::INC, AddrMode::ABS, 6),
+    OpCode::new(ISB_ABS, Mnemonic::UISB, AddrMode::ABS, 6),
+    OpCode::new(BEQ, Mnemonic::BEQ, AddrMode::REL, 2),
+    OpCode::new(SBC_INDY, Mnemonic::SBC, AddrMode::INDY, 5),
+    OpCode::new(KIL12, Mnemonic::KIL, AddrMode::IMP, 2),
+    OpCode::new(ISB_INDYW, Mnemonic::UISB, AddrMode::INDYW, 8),
+    OpCode::new(DOP_ZPX6, Mnemonic::UNOP, AddrMode::ZPX, 4),
+    OpCode::new(SBC_ZPX, Mnemonic::SBC, AddrMode::ZPX, 4),
+    OpCode::new(INC_ZPX, Mnemonic::INC, AddrMode::ZPX, 6),
+    OpCode::new(ISB_ZPX, Mnemonic::UISB, AddrMode::ZPX, 6),
+    OpCode::new(SED, Mnemonic::SED, AddrMode::IMP, 2),
+    OpCode::new(SBC_ABSY, Mnemonic::SBC, AddrMode::ABSY, 4),
+    OpCode::new(NOP_IMP6, Mnemonic::UNOP, AddrMode::IMP, 2),
+    OpCode::new(ISB_ABSYW, Mnemonic::UISB, AddrMode::ABSYW, 7),
+    OpCode::new(TOP_ABSX6, Mnemonic::UNOP, AddrMode::ABSX, 4),
+    OpCode::new(SBC_ABSX, Mnemonic::SBC, AddrMode::ABSX, 4),
+    OpCode::new(INC_ABSXW, Mnemonic::INC, AddrMode::ABSXW, 7),
+    OpCode::new(ISB_ABSXW, Mnemonic::UISB, AddrMode::ABSXW, 7),
 ];
 
 /// Lookup an opcode by its byte value
@@ -568,35 +801,35 @@ mod tests {
 
     #[test]
     fn test_opcode_creation() {
-        let opcode = OpCode::new(0x69, "ADC", "IMM", 2);
+        let opcode = OpCode::new(0x69, Mnemonic::ADC, AddrMode::IMM, 2);
         assert_eq!(opcode.code, 0x69);
-        assert_eq!(opcode.mnemonic, "ADC");
-        assert_eq!(opcode.mode, "IMM");
+        assert_eq!(opcode.mnemonic, Mnemonic::ADC);
+        assert_eq!(opcode.mode, AddrMode::IMM);
     }
 
     #[test]
     fn test_opcode_name() {
-        let opcode = OpCode::new(0x69, "ADC", "IMM", 2);
+        let opcode = OpCode::new(0x69, Mnemonic::ADC, AddrMode::IMM, 2);
         assert_eq!(opcode.name(), "ADC_IMM");
     }
 
     #[test]
     fn test_opcode_name_different_instruction() {
-        let opcode = OpCode::new(0xA9, "LDA", "IMM", 2);
+        let opcode = OpCode::new(0xA9, Mnemonic::LDA, AddrMode::IMM, 2);
         assert_eq!(opcode.name(), "LDA_IMM");
     }
 
     #[test]
     fn test_opcode_equality() {
-        let opcode1 = OpCode::new(0x69, "ADC", "IMM", 2);
-        let opcode2 = OpCode::new(0x69, "ADC", "IMM", 2);
+        let opcode1 = OpCode::new(0x69, Mnemonic::ADC, AddrMode::IMM, 2);
+        let opcode2 = OpCode::new(0x69, Mnemonic::ADC, AddrMode::IMM, 2);
         assert_eq!(opcode1, opcode2);
     }
 
     #[test]
     fn test_opcode_inequality() {
-        let opcode1 = OpCode::new(0x69, "ADC", "IMM", 2);
-        let opcode2 = OpCode::new(0x6D, "ADC", "ABS", 4);
+        let opcode1 = OpCode::new(0x69, Mnemonic::ADC, AddrMode::IMM, 2);
+        let opcode2 = OpCode::new(0x6D, Mnemonic::ADC, AddrMode::ABS, 4);
         assert_ne!(opcode1, opcode2);
     }
 
@@ -609,21 +842,21 @@ mod tests {
     fn test_lookup_existing_opcode() {
         let opcode = lookup(0x69);
         assert_eq!(opcode.code, 0x69);
-        assert_eq!(opcode.mnemonic, "ADC");
-        assert_eq!(opcode.mode, "IMM");
+        assert_eq!(opcode.mnemonic, Mnemonic::ADC);
+        assert_eq!(opcode.mode, AddrMode::IMM);
     }
 
     #[test]
     fn test_lookup_brk() {
         let opcode = lookup(0x00);
-        assert_eq!(opcode.mnemonic, "BRK");
+        assert_eq!(opcode.mnemonic, Mnemonic::BRK);
     }
 
     #[test]
     fn test_lookup_lda_immediate() {
         let opcode = lookup(0xA9);
-        assert_eq!(opcode.mnemonic, "LDA");
-        assert_eq!(opcode.mode, "IMM");
+        assert_eq!(opcode.mnemonic, Mnemonic::LDA);
+        assert_eq!(opcode.mode, AddrMode::IMM);
     }
 
     #[test]
@@ -649,79 +882,79 @@ mod tests {
 
     #[test]
     fn test_bytes_imp_mode() {
-        let opcode = OpCode::new(BRK, "BRK", "IMP", 7);
+        let opcode = OpCode::new(BRK, Mnemonic::BRK, AddrMode::IMP, 7);
         assert_eq!(opcode.bytes(), 1);
     }
 
     #[test]
     fn test_bytes_acc_mode() {
-        let opcode = OpCode::new(ASL_A, "ASL", "ACC", 2);
+        let opcode = OpCode::new(ASL_A, Mnemonic::ASL, AddrMode::ACC, 2);
         assert_eq!(opcode.bytes(), 1);
     }
 
     #[test]
     fn test_bytes_imm_mode() {
-        let opcode = OpCode::new(LDA_IMM, "LDA", "IMM", 2);
+        let opcode = OpCode::new(LDA_IMM, Mnemonic::LDA, AddrMode::IMM, 2);
         assert_eq!(opcode.bytes(), 2);
     }
 
     #[test]
     fn test_bytes_zp_mode() {
-        let opcode = OpCode::new(LDA_ZP, "LDA", "ZP", 3);
+        let opcode = OpCode::new(LDA_ZP, Mnemonic::LDA, AddrMode::ZP, 3);
         assert_eq!(opcode.bytes(), 2);
     }
 
     #[test]
     fn test_bytes_zpx_mode() {
-        let opcode = OpCode::new(LDA_ZPX, "LDA", "ZPX", 4);
+        let opcode = OpCode::new(LDA_ZPX, Mnemonic::LDA, AddrMode::ZPX, 4);
         assert_eq!(opcode.bytes(), 2);
     }
 
     #[test]
     fn test_bytes_zpy_mode() {
-        let opcode = OpCode::new(LDX_ZPY, "LDX", "ZPY", 4);
+        let opcode = OpCode::new(LDX_ZPY, Mnemonic::LDX, AddrMode::ZPY, 4);
         assert_eq!(opcode.bytes(), 2);
     }
 
     #[test]
     fn test_bytes_indx_mode() {
-        let opcode = OpCode::new(LDA_INDX, "LDA", "INDX", 6);
+        let opcode = OpCode::new(LDA_INDX, Mnemonic::LDA, AddrMode::INDX, 6);
         assert_eq!(opcode.bytes(), 2);
     }
 
     #[test]
     fn test_bytes_indy_mode() {
-        let opcode = OpCode::new(LDA_INDY, "LDA", "INDY", 5);
+        let opcode = OpCode::new(LDA_INDY, Mnemonic::LDA, AddrMode::INDY, 5);
         assert_eq!(opcode.bytes(), 2);
     }
 
     #[test]
     fn test_bytes_rel_mode() {
-        let opcode = OpCode::new(BPL, "BPL", "REL", 2);
+        let opcode = OpCode::new(BPL, Mnemonic::BPL, AddrMode::REL, 2);
         assert_eq!(opcode.bytes(), 2);
     }
 
     #[test]
     fn test_bytes_abs_mode() {
-        let opcode = OpCode::new(LDA_ABS, "LDA", "ABS", 4);
+        let opcode = OpCode::new(LDA_ABS, Mnemonic::LDA, AddrMode::ABS, 4);
         assert_eq!(opcode.bytes(), 3);
     }
 
     #[test]
     fn test_bytes_absx_mode() {
-        let opcode = OpCode::new(LDA_ABSX, "LDA", "ABSX", 4);
+        let opcode = OpCode::new(LDA_ABSX, Mnemonic::LDA, AddrMode::ABSX, 4);
         assert_eq!(opcode.bytes(), 3);
     }
 
     #[test]
     fn test_bytes_absy_mode() {
-        let opcode = OpCode::new(LDA_ABSY, "LDA", "ABSY", 4);
+        let opcode = OpCode::new(LDA_ABSY, Mnemonic::LDA, AddrMode::ABSY, 4);
         assert_eq!(opcode.bytes(), 3);
     }
 
     #[test]
     fn test_bytes_ind_mode() {
-        let opcode = OpCode::new(JMP_IND, "JMP", "IND", 5);
+        let opcode = OpCode::new(JMP_IND, Mnemonic::JMP, AddrMode::IND, 5);
         assert_eq!(opcode.bytes(), 3);
     }
 }

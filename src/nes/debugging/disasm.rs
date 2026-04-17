@@ -1,4 +1,5 @@
 use crate::nes::cpu;
+use crate::nes::cpu::opcode::AddrMode;
 
 use super::types::{CpuDisasmLineSnapshot, CpuDisasmWindowState};
 
@@ -134,41 +135,42 @@ fn disassemble_one<F: Fn(u16) -> u8>(read: &F, addr: u16, pc: u16) -> CpuDisasmL
 
 fn format_instruction(meta: &cpu::OpCode, addr: u16, bytes: &[u8]) -> String {
     let operand = match meta.mode {
-        "IMP" => String::new(),
-        "ACC" => "A".to_string(),
-        "IMM" => format!("#${:02X}", bytes.get(1).copied().unwrap_or(0)),
-        "ZP" => format!("${:02X}", bytes.get(1).copied().unwrap_or(0)),
-        "ZPX" => format!("${:02X},X", bytes.get(1).copied().unwrap_or(0)),
-        "ZPY" => format!("${:02X},Y", bytes.get(1).copied().unwrap_or(0)),
-        "INDX" => format!("(${:02X},X)", bytes.get(1).copied().unwrap_or(0)),
-        "INDY" | "INDYW" => format!("(${:02X}),Y", bytes.get(1).copied().unwrap_or(0)),
-        "REL" => {
+        AddrMode::IMP => String::new(),
+        AddrMode::ACC => "A".to_string(),
+        AddrMode::IMM => format!("#${:02X}", bytes.get(1).copied().unwrap_or(0)),
+        AddrMode::ZP => format!("${:02X}", bytes.get(1).copied().unwrap_or(0)),
+        AddrMode::ZPX => format!("${:02X},X", bytes.get(1).copied().unwrap_or(0)),
+        AddrMode::ZPY => format!("${:02X},Y", bytes.get(1).copied().unwrap_or(0)),
+        AddrMode::INDX => format!("(${:02X},X)", bytes.get(1).copied().unwrap_or(0)),
+        AddrMode::INDY | AddrMode::INDYW => {
+            format!("(${:02X}),Y", bytes.get(1).copied().unwrap_or(0))
+        }
+        AddrMode::REL => {
             let off = bytes.get(1).copied().unwrap_or(0) as i8;
             let next = addr.wrapping_add(2);
             let target = next.wrapping_add(off as i16 as u16);
             format!("${:04X}", target)
         }
-        "ABS" => {
+        AddrMode::ABS => {
             let lo = bytes.get(1).copied().unwrap_or(0);
             let hi = bytes.get(2).copied().unwrap_or(0);
             format!("${:04X}", u16::from_le_bytes([lo, hi]))
         }
-        "ABSX" | "ABSXW" => {
+        AddrMode::ABSX | AddrMode::ABSXW => {
             let lo = bytes.get(1).copied().unwrap_or(0);
             let hi = bytes.get(2).copied().unwrap_or(0);
             format!("${:04X},X", u16::from_le_bytes([lo, hi]))
         }
-        "ABSY" | "ABSYW" => {
+        AddrMode::ABSY | AddrMode::ABSYW => {
             let lo = bytes.get(1).copied().unwrap_or(0);
             let hi = bytes.get(2).copied().unwrap_or(0);
             format!("${:04X},Y", u16::from_le_bytes([lo, hi]))
         }
-        "IND" => {
+        AddrMode::IND => {
             let lo = bytes.get(1).copied().unwrap_or(0);
             let hi = bytes.get(2).copied().unwrap_or(0);
             format!("(${:04X})", u16::from_le_bytes([lo, hi]))
         }
-        _ => String::new(),
     };
 
     if operand.is_empty() {

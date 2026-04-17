@@ -1,5 +1,5 @@
 use super::master_clock::MasterClock;
-use super::opcode::*;
+use super::opcode::{AddrMode, Mnemonic, OpCode};
 use crate::nes::apu::Apu;
 use crate::nes::bus::Bus;
 use crate::nes::console::TimingMode;
@@ -108,6 +108,14 @@ pub struct Cpu {
     current_tick_info: Option<(u8, u8)>,
     /// The most recent non-dummy write address during the current instruction, if any.
     last_cpu_write_addr: Option<u16>,
+    /// Cached from the inserted cartridge's mapper capabilities.
+    /// True when the mapper provides expansion audio channels (e.g. VRC6, MMC5, Namco 163).
+    /// Used to skip the expensive nested RefCell borrow chain when no expansion audio is present.
+    mapper_has_expansion_audio: bool,
+    /// Cached from the inserted cartridge's mapper capabilities.
+    /// True when the mapper can generate IRQ interrupts.
+    /// Used to skip the mapper IRQ poll when the mapper cannot generate IRQs.
+    mapper_has_irq: bool,
 }
 
 // Status register flags
@@ -232,6 +240,8 @@ impl Cpu {
             interrupt_stack: Vec::with_capacity(2),
             current_tick_info: None,
             last_cpu_write_addr: None,
+            mapper_has_expansion_audio: false,
+            mapper_has_irq: false,
         }
     }
 
@@ -277,6 +287,32 @@ impl Cpu {
     #[cfg(test)]
     pub fn set_total_cycles(&mut self, cycles: u64) {
         self.total_cycles = cycles;
+    }
+
+    /// Update `mapper_has_expansion_audio` and `mapper_has_irq` from the currently
+    /// inserted cartridge's mapper capabilities.
+    ///
+    /// Must be called whenever a new cartridge is inserted. These flags gate
+    /// expensive per-cycle nested `RefCell` borrow chains so they are only paid
+    /// when the mapper actually requires them.
+    pub fn update_mapper_capability_flags(&mut self) {
+        if let Some(caps) = self.bus.borrow().cartridge_mapper_capabilities() {
+            self.mapper_has_expansion_audio = caps.has_expansion_audio;
+            self.mapper_has_irq = caps.has_irq;
+        } else {
+            self.mapper_has_expansion_audio = false;
+            self.mapper_has_irq = false;
+        }
+    }
+
+    #[cfg(test)]
+    pub fn test_mapper_has_expansion_audio(&self) -> bool {
+        self.mapper_has_expansion_audio
+    }
+
+    #[cfg(test)]
+    pub fn test_mapper_has_irq(&self) -> bool {
+        self.mapper_has_irq
     }
 
     #[cfg(test)]
@@ -395,7 +431,11 @@ impl Cpu {
         // Level-triggered IRQ line: sample hardware lines each CPU cycle.
         // Unit tests may force an asserted IRQ via `forced_irq_pending`.
         let irq_asserted_from_apu = self.apu.borrow().poll_irq();
-        let irq_asserted_from_mapper = self.bus.borrow().mapper_irq_pending();
+        let irq_asserted_from_mapper = if self.mapper_has_irq {
+            self.bus.borrow().mapper_irq_pending()
+        } else {
+            false
+        };
         self.irq_pending =
             irq_asserted_from_apu || irq_asserted_from_mapper || self.forced_irq_pending;
 
@@ -515,7 +555,11 @@ impl Cpu {
         let ppu_cycles = self.master_clock.ppu_cycles_since_last();
         self.ppu.borrow_mut().run_ppu_cycles(ppu_cycles);
 
-        let expansion = self.bus.borrow().mapper_expansion_audio_sample();
+        let expansion = if self.mapper_has_expansion_audio {
+            self.bus.borrow().mapper_expansion_audio_sample()
+        } else {
+            0.0
+        };
         self.apu.borrow_mut().clock_with_expansion(expansion);
 
         // Synthetic cycles (DMA stalls) still advance mapper IRQ counters and expansion audio.
@@ -545,7 +589,11 @@ impl Cpu {
         self.ppu.borrow_mut().run_ppu_cycles(ppu_cycles);
 
         for _ in 0..cpu_cycles {
-            let expansion = self.bus.borrow().mapper_expansion_audio_sample();
+            let expansion = if self.mapper_has_expansion_audio {
+                self.bus.borrow().mapper_expansion_audio_sample()
+            } else {
+                0.0
+            };
             self.apu.borrow_mut().clock_with_expansion(expansion);
 
             // Synthetic cycles still advance mapper IRQ counters and expansion audio.
@@ -560,7 +608,11 @@ impl Cpu {
         self.prev_run_irq = self.run_irq;
 
         let irq_asserted_from_apu = self.apu.borrow().poll_irq();
-        let irq_asserted_from_mapper = self.bus.borrow().mapper_irq_pending();
+        let irq_asserted_from_mapper = if self.mapper_has_irq {
+            self.bus.borrow().mapper_irq_pending()
+        } else {
+            false
+        };
         self.irq_pending =
             irq_asserted_from_apu || irq_asserted_from_mapper || self.forced_irq_pending;
 
@@ -676,7 +728,11 @@ impl Cpu {
         self.total_cycles += 1;
         let ppu_cycles = self.master_clock.ppu_cycles_since_last();
         self.ppu.borrow_mut().run_ppu_cycles(ppu_cycles);
-        let expansion = self.bus.borrow().mapper_expansion_audio_sample();
+        let expansion = if self.mapper_has_expansion_audio {
+            self.bus.borrow().mapper_expansion_audio_sample()
+        } else {
+            0.0
+        };
         self.apu.borrow_mut().clock_with_expansion(expansion);
     }
 
@@ -1530,11 +1586,17 @@ impl Cpu {
 
     fn get_operand_value(&mut self, op: &OpCode, operand: u16) -> u8 {
         match op.mode {
-            "IMM" => operand as u8,
-            "ZP" | "ZPX" | "ZPY" | "ABS" | "ABSX" | "ABSY" | "IND" | "INDX" | "INDY" => {
-                self.read(operand)
-            }
-            "IMP" | "ACC" | "REL" => operand as u8,
+            AddrMode::IMM => operand as u8,
+            AddrMode::ZP
+            | AddrMode::ZPX
+            | AddrMode::ZPY
+            | AddrMode::ABS
+            | AddrMode::ABSX
+            | AddrMode::ABSY
+            | AddrMode::IND
+            | AddrMode::INDX
+            | AddrMode::INDY => self.read(operand),
+            AddrMode::IMP | AddrMode::ACC | AddrMode::REL => operand as u8,
             _ => panic!("Unhandled addressing mode: {}", op.mode),
         }
     }
@@ -1647,40 +1709,39 @@ impl Cpu {
                 _ => format!("{:02X} {:02X} {:02X}", opcode_byte, byte1, byte2),
             };
             let asm = match op.mode {
-                "IMP" => op.mnemonic.to_string(),
-                "ACC" => format!("{} A", op.mnemonic),
-                "IMM" => format!("{} #${:02X}", op.mnemonic, byte1),
-                "ZP" => format!("{} ${:02X}", op.mnemonic, byte1),
-                "ZPX" => format!("{} ${:02X},X", op.mnemonic, byte1),
-                "ZPY" => format!("{} ${:02X},Y", op.mnemonic, byte1),
-                "ABS" => format!(
+                AddrMode::IMP => op.mnemonic.to_string(),
+                AddrMode::ACC => format!("{} A", op.mnemonic),
+                AddrMode::IMM => format!("{} #${:02X}", op.mnemonic, byte1),
+                AddrMode::ZP => format!("{} ${:02X}", op.mnemonic, byte1),
+                AddrMode::ZPX => format!("{} ${:02X},X", op.mnemonic, byte1),
+                AddrMode::ZPY => format!("{} ${:02X},Y", op.mnemonic, byte1),
+                AddrMode::ABS => format!(
                     "{} ${:04X}",
                     op.mnemonic,
                     u16::from_le_bytes([byte1, byte2])
                 ),
-                "ABSX" | "ABSXW" => format!(
+                AddrMode::ABSX | AddrMode::ABSXW => format!(
                     "{} ${:04X},X",
                     op.mnemonic,
                     u16::from_le_bytes([byte1, byte2])
                 ),
-                "ABSY" | "ABSYW" => format!(
+                AddrMode::ABSY | AddrMode::ABSYW => format!(
                     "{} ${:04X},Y",
                     op.mnemonic,
                     u16::from_le_bytes([byte1, byte2])
                 ),
-                "IND" => format!(
+                AddrMode::IND => format!(
                     "{} (${:04X})",
                     op.mnemonic,
                     u16::from_le_bytes([byte1, byte2])
                 ),
-                "INDX" => format!("{} (${:02X},X)", op.mnemonic, byte1),
-                "INDY" | "INDYW" => format!("{} (${:02X}),Y", op.mnemonic, byte1),
-                "REL" => {
+                AddrMode::INDX => format!("{} (${:02X},X)", op.mnemonic, byte1),
+                AddrMode::INDY | AddrMode::INDYW => format!("{} (${:02X}),Y", op.mnemonic, byte1),
+                AddrMode::REL => {
                     let offset = byte1 as i8;
                     let target = pc.wrapping_add(2).wrapping_add(offset as u16);
                     format!("{} ${:04X}", op.mnemonic, target)
                 }
-                _ => op.mnemonic.to_string(),
             };
             // Set up tick tracking for this instruction
             self.current_tick_info = Some((1, op.cycles));
@@ -1706,7 +1767,7 @@ impl Cpu {
         let operand = self.get_operand(*op);
 
         match op.mnemonic {
-            "BRK" => {
+            Mnemonic::BRK => {
                 // BRK pushes (PC + 1), which corresponds to BRK+2 overall.
                 // At this point, PC points to the padding byte, so add 1.
                 self.push_word(self.pc.wrapping_add(1));
@@ -1727,25 +1788,25 @@ impl Cpu {
                 // Ensure we don't start an NMI immediately after BRK.
                 self.prev_need_nmi = false;
             }
-            "ORA" => {
+            Mnemonic::ORA => {
                 let value = self.get_operand_value(op, operand);
                 self.ora(value);
             }
-            "HLT" | "KIL" => {
+            Mnemonic::HLT | Mnemonic::KIL => {
                 self.halted = true;
                 // Halt on instruction, not after
                 self.pc -= 1;
             }
-            "*SLO" => {
+            Mnemonic::USLO => {
                 self.slo(operand);
             }
-            "NOP" | "*NOP" => {
+            Mnemonic::NOP | Mnemonic::UNOP => {
                 // Consume one cycle
                 self.get_operand_value(op, operand);
             }
-            "ASL" => {
+            Mnemonic::ASL => {
                 match op.mode {
-                    "ACC" => {
+                    AddrMode::ACC => {
                         self.a = self.asl(self.a);
                     }
                     _ => {
@@ -1756,12 +1817,12 @@ impl Cpu {
                     }
                 }
             }
-            "PHP" => {
+            Mnemonic::PHP => {
                 // Push processor status with BREAK and UNUSED flags set
                 let flags = self.p | FLAG_BREAK | FLAG_UNUSED;
                 self.push_byte(flags);
             }
-            "*AAC" => {
+            Mnemonic::UAAC => {
                 // Undocumented: AND with accumulator, then copy bit 7 to carry
                 let value = self.get_operand_value(op, operand);
                 self.a &= value;
@@ -1770,7 +1831,7 @@ impl Cpu {
                 let carry = if self.a & 0x80 != 0 { FLAG_CARRY } else { 0 };
                 self.p = (self.p & !FLAG_CARRY) | carry;
             }
-            "BPL" => {
+            Mnemonic::BPL => {
                 // Branch if negative flag is clear
                 let offset = operand as i8;
                 if self.p & FLAG_NEGATIVE == 0 {
@@ -1790,10 +1851,10 @@ impl Cpu {
                     }
                 }
             }
-            "CLC" => {
+            Mnemonic::CLC => {
                 self.p &= !FLAG_CARRY;
             }
-            "JSR" => {
+            Mnemonic::JSR => {
                 // JSR takes 6 cycles:
                 // 1. Fetch opcode
                 // 2. Fetch low byte of address
@@ -1813,20 +1874,20 @@ impl Cpu {
                 // Set PC to target address
                 self.pc = operand;
             }
-            "AND" => {
+            Mnemonic::AND => {
                 let value = self.get_operand_value(op, operand);
                 self.and(value);
             }
-            "*RLA" => {
+            Mnemonic::URLA => {
                 self.rla(operand);
             }
-            "BIT" => {
+            Mnemonic::BIT => {
                 let value = self.read(operand);
                 self.bit(value);
             }
-            "ROL" => {
+            Mnemonic::ROL => {
                 match op.mode {
-                    "ACC" => {
+                    AddrMode::ACC => {
                         self.a = self.rol(self.a);
                     }
                     _ => {
@@ -1837,7 +1898,7 @@ impl Cpu {
                     }
                 }
             }
-            "PLP" => {
+            Mnemonic::PLP => {
                 // Dummy read from current SP (cycle 2)
                 self.dummy_read(0x0100 | (self.sp as u16));
                 // Pop status from stack
@@ -1852,7 +1913,7 @@ impl Cpu {
                     new_delayed_i_flag = Some(old_i_flag);
                 }
             }
-            "BMI" => {
+            Mnemonic::BMI => {
                 // Branch if negative flag is set
                 let offset = operand as i8;
                 if self.p & FLAG_NEGATIVE != 0 {
@@ -1868,10 +1929,10 @@ impl Cpu {
                     }
                 }
             }
-            "SEC" => {
+            Mnemonic::SEC => {
                 self.p |= FLAG_CARRY;
             }
-            "RTI" => {
+            Mnemonic::RTI => {
                 // RTI (Return from Interrupt) - 6 cycles
                 // Cycle 1: Fetch opcode (already done)
                 // Cycle 2: Dummy read from current PC
@@ -1892,16 +1953,16 @@ impl Cpu {
                 // Leaving interrupt handler.
                 let _ = self.interrupt_stack.pop();
             }
-            "EOR" => {
+            Mnemonic::EOR => {
                 let value = self.get_operand_value(op, operand);
                 self.eor(value);
             }
-            "*SRE" => {
+            Mnemonic::USRE => {
                 self.sre(operand);
             }
-            "LSR" => {
+            Mnemonic::LSR => {
                 match op.mode {
-                    "ACC" => {
+                    AddrMode::ACC => {
                         self.a = self.lsr(self.a);
                     }
                     _ => {
@@ -1912,21 +1973,21 @@ impl Cpu {
                     }
                 }
             }
-            "PHA" => {
+            Mnemonic::PHA => {
                 // Push accumulator to stack
                 self.push_byte(self.a);
             }
-            "*ASR" => {
+            Mnemonic::UASR => {
                 // ASR/ALR (undocumented): AND with immediate, then LSR
                 let value = self.get_operand_value(op, operand);
                 self.a &= value;
                 self.a = self.lsr(self.a);
             }
-            "JMP" => {
+            Mnemonic::JMP => {
                 // Jump to address (operand is already the target address)
                 self.pc = operand;
             }
-            "BVC" => {
+            Mnemonic::BVC => {
                 // Branch on overflow clear
                 let offset = operand as i8;
                 if (self.p & FLAG_OVERFLOW) == 0 {
@@ -1942,13 +2003,13 @@ impl Cpu {
                     }
                 }
             }
-            "CLI" => {
+            Mnemonic::CLI => {
                 // Save old I before clearing. IRQ polling uses the OLD value for the next instruction.
                 let old_i_flag = (self.p & FLAG_INTERRUPT) != 0;
                 self.p &= !FLAG_INTERRUPT;
                 new_delayed_i_flag = Some(old_i_flag);
             }
-            "RTS" => {
+            Mnemonic::RTS => {
                 // Return from subroutine - 6 cycles:
                 // Cycle 1: Fetch opcode (already done)
                 // Cycle 2: Dummy read from current S
@@ -1963,16 +2024,16 @@ impl Cpu {
                 // Cycle 6: Dummy read at incremented PC
                 self.dummy_read(self.pc);
             }
-            "ADC" => {
+            Mnemonic::ADC => {
                 let value = self.get_operand_value(op, operand);
                 self.adc(value);
             }
-            "*RRA" => {
+            Mnemonic::URRA => {
                 self.rra(operand);
             }
-            "ROR" => {
+            Mnemonic::ROR => {
                 match op.mode {
-                    "ACC" => {
+                    AddrMode::ACC => {
                         self.a = self.ror(self.a);
                     }
                     _ => {
@@ -1983,7 +2044,7 @@ impl Cpu {
                     }
                 }
             }
-            "PLA" => {
+            Mnemonic::PLA => {
                 // Pull accumulator from stack - 4 cycles:
                 // Cycle 1: Fetch opcode (already done)
                 // Cycle 2: Dummy read at current PC
@@ -1994,11 +2055,11 @@ impl Cpu {
                 self.a = self.pop_byte();
                 self.update_zero_and_negative_flags(self.a);
             }
-            "*ARR" => {
+            Mnemonic::UARR => {
                 let value = self.get_operand_value(op, operand);
                 self.exec_arr_illegal(value);
             }
-            "BVS" => {
+            Mnemonic::BVS => {
                 // Branch on overflow set
                 let offset = operand as i8;
                 if (self.p & FLAG_OVERFLOW) != 0 {
@@ -2014,43 +2075,43 @@ impl Cpu {
                     }
                 }
             }
-            "SEI" => {
+            Mnemonic::SEI => {
                 // Save old I before setting. IRQ polling uses the OLD value for the next instruction.
                 let old_i_flag = (self.p & FLAG_INTERRUPT) != 0;
                 self.p |= FLAG_INTERRUPT;
                 new_delayed_i_flag = Some(old_i_flag);
             }
-            "STA" => {
+            Mnemonic::STA => {
                 self.write(operand, self.a, false);
             }
-            "*SAX" => {
+            Mnemonic::USAX => {
                 // SAX: Store A AND X (undocumented)
                 let value = self.a & self.x;
                 self.write(operand, value, false);
             }
-            "STY" => {
+            Mnemonic::STY => {
                 self.write(operand, self.y, false);
             }
-            "STX" => {
+            Mnemonic::STX => {
                 // Store X Register
                 self.write(operand, self.x, false);
             }
-            "DEY" => {
+            Mnemonic::DEY => {
                 // Decrement Y Register - already implemented as helper method
                 self.dey();
             }
-            "TXA" => {
+            Mnemonic::TXA => {
                 // Transfer X to Accumulator - already implemented as helper method
                 self.txa();
             }
-            "ANE" | "*XAA" => {
+            Mnemonic::UXAA => {
                 // *XAA (undocumented) - Transfer X to A, then AND with immediate
                 self.a = self.x;
                 let value = self.get_operand_value(op, operand);
                 self.a &= value;
                 self.update_zero_and_negative_flags(self.a);
             }
-            "BCC" => {
+            Mnemonic::BCC => {
                 // Branch on Carry Clear
                 let offset = operand as i8;
                 if self.p & FLAG_CARRY == 0 {
@@ -2066,67 +2127,60 @@ impl Cpu {
                     }
                 }
             }
-            "SHAZ" | "*XAS" => {
+            Mnemonic::UXAS => {
                 // *XAS / TAS (undocumented) - SP = A & X, then store SP & (high byte of address + 1)
                 self.sp = self.a & self.x;
                 let high_byte = (operand >> 8) as u8;
                 let value = self.sp & high_byte.wrapping_add(1);
                 self.write(operand, value, false);
             }
-            "TYA" => {
+            Mnemonic::TYA => {
                 // Transfer Y to Accumulator - already implemented as helper method
                 self.tya();
             }
-            "TXS" => {
+            Mnemonic::TXS => {
                 // Transfer X to Stack Pointer - does not affect flags
                 self.sp = self.x;
             }
-            "TAS" => {
-                // TAS is an alias for *XAS
-                self.sp = self.a & self.x;
-                let high_byte = (operand >> 8) as u8;
-                let value = self.sp & high_byte.wrapping_add(1);
-                self.write(operand, value, false);
-            }
-            "SHY" | "*SYA" => {
+            Mnemonic::USYA => {
                 self.exec_sya_illegal(operand);
             }
-            "SHX" | "*SXA" => {
+            Mnemonic::USXA => {
                 self.exec_sxa_illegal(operand);
             }
-            "SHAA" | "*AXA" => {
+            Mnemonic::UAXA => {
                 // *AXA (undocumented) - Store A AND X AND (high byte of address + 1)
                 let high_byte = (operand >> 8) as u8;
                 let value = self.a & self.x & high_byte.wrapping_add(1);
                 self.write(operand, value, false);
             }
-            "LDY" => {
+            Mnemonic::LDY => {
                 let value = self.get_operand_value(op, operand);
                 self.ldy(value);
             }
-            "LDA" => {
+            Mnemonic::LDA => {
                 let value = self.get_operand_value(op, operand);
                 self.lda(value);
             }
-            "LDX" => {
+            Mnemonic::LDX => {
                 let value = self.get_operand_value(op, operand);
                 self.ldx(value);
             }
-            "*LAX" => {
+            Mnemonic::ULAX => {
                 // LAX (undocumented): Load A and X with the same value
                 let value = self.get_operand_value(op, operand);
                 self.lda(value);
                 self.ldx(value);
             }
-            "TAY" => {
+            Mnemonic::TAY => {
                 // Transfer Accumulator to Y - already implemented as helper method
                 self.tay();
             }
-            "TAX" => {
+            Mnemonic::TAX => {
                 // Transfer Accumulator to X - already implemented as helper method
                 self.tax();
             }
-            "*ATX" => {
+            Mnemonic::UATX => {
                 // *ATX (undocumented): Load A and X with immediate value
                 // Also known as *LAX immediate or *OAL
                 let value = self.get_operand_value(op, operand);
@@ -2134,7 +2188,7 @@ impl Cpu {
                 self.x = value;
                 self.update_zero_and_negative_flags(self.a);
             }
-            "BCS" => {
+            Mnemonic::BCS => {
                 // Branch on Carry Set
                 let offset = operand as i8;
                 if self.p & FLAG_CARRY != 0 {
@@ -2150,45 +2204,45 @@ impl Cpu {
                     }
                 }
             }
-            "CLV" => {
+            Mnemonic::CLV => {
                 // Clear overflow flag
                 self.p &= !FLAG_OVERFLOW;
             }
-            "TSX" => {
+            Mnemonic::TSX => {
                 // Transfer Stack pointer to X
                 self.x = self.sp;
                 self.update_zero_and_negative_flags(self.x);
             }
-            "*LAR" => {
+            Mnemonic::ULAR => {
                 // Undocumented: AND memory with stack pointer, store in A, X, and SP
                 let value = self.get_operand_value(op, operand);
                 self.lar(value);
             }
-            "CPY" => {
+            Mnemonic::CPY => {
                 let value = self.get_operand_value(op, operand);
                 self.cpy(value);
             }
-            "CMP" => {
+            Mnemonic::CMP => {
                 let value = self.get_operand_value(op, operand);
                 self.cmp(value);
             }
-            "*DCP" => {
+            Mnemonic::UDCP => {
                 // Undocumented: Decrement memory then compare with A
                 self.dcp(operand);
             }
-            "INY" => {
+            Mnemonic::INY => {
                 self.iny();
             }
-            "DEX" => {
+            Mnemonic::DEX => {
                 // Decrement X Register
                 self.dex();
             }
-            "*AXS" => {
+            Mnemonic::UAXS => {
                 // *AXS (undocumented): (A & X) - immediate -> X
                 let value = self.get_operand_value(op, operand);
                 self.axs(value);
             }
-            "BNE" => {
+            Mnemonic::BNE => {
                 // Branch if Not Equal (zero flag clear)
                 let offset = operand as i8;
                 if self.p & FLAG_ZERO == 0 {
@@ -2204,29 +2258,29 @@ impl Cpu {
                     }
                 }
             }
-            "CLD" => {
+            Mnemonic::CLD => {
                 // Clear Decimal flag
                 self.p &= !FLAG_DECIMAL;
             }
-            "CPX" => {
+            Mnemonic::CPX => {
                 // Compare X with memory
                 let value = self.get_operand_value(op, operand);
                 self.cpx(value);
             }
-            "SBC" | "*SBC" => {
+            Mnemonic::SBC | Mnemonic::USBC => {
                 // Subtract with Carry
                 let value = self.get_operand_value(op, operand);
                 self.sbc(value);
             }
-            "*ISB" => {
+            Mnemonic::UISB => {
                 // *ISB (undocumented): Increment memory then SBC
                 self.isb(operand);
             }
-            "INX" => {
+            Mnemonic::INX => {
                 // Increment X Register
                 self.inx();
             }
-            "BEQ" => {
+            Mnemonic::BEQ => {
                 // Branch if Equal (zero flag set)
                 let offset = operand as i8;
                 if self.p & FLAG_ZERO != 0 {
@@ -2242,11 +2296,11 @@ impl Cpu {
                     }
                 }
             }
-            "SED" => {
+            Mnemonic::SED => {
                 // Set Decimal flag
                 self.p |= FLAG_DECIMAL;
             }
-            "INC" => {
+            Mnemonic::INC => {
                 // Increment memory
                 let value = self.read(operand);
                 //   (cycle accurate)
@@ -2255,7 +2309,7 @@ impl Cpu {
                 let result = self.inc(value);
                 self.write(operand, result, false);
             }
-            "DEC" => {
+            Mnemonic::DEC => {
                 // Decrement memory
                 let value = self.read(operand);
                 //   (cycle accurate)
@@ -2264,7 +2318,6 @@ impl Cpu {
                 let result = self.dec(value);
                 self.write(operand, result, false);
             }
-            _ => {}
         }
 
         // Clear tick tracking after instruction
@@ -2308,34 +2361,34 @@ impl Cpu {
     pub fn get_operand(&mut self, op: OpCode) -> u16 {
         match op.mode {
             // Implied and Accumulator - perform dummy read
-            "IMP" | "ACC" => {
+            AddrMode::IMP | AddrMode::ACC => {
                 self.dummy_read(self.pc);
                 0
             }
 
             // Immediate, Zero Page and Relative - return the immediate byte
-            "IMM" | "REL" | "ZP" => self.read_byte_from_pc() as u16,
+            AddrMode::IMM | AddrMode::REL | AddrMode::ZP => self.read_byte_from_pc() as u16,
 
             // Zero Page,X - read base, dummy read at base, return base+X
-            "ZPX" => {
+            AddrMode::ZPX => {
                 let base = self.read_byte_from_pc();
                 self.dummy_read(base as u16);
                 base.wrapping_add(self.x) as u16
             }
 
             // Zero Page,Y - read base, dummy read at base, return base+Y
-            "ZPY" => {
+            AddrMode::ZPY => {
                 let base = self.read_byte_from_pc();
                 self.dummy_read(base as u16);
                 base.wrapping_add(self.y) as u16
             }
 
             // Absolute - return 16-bit address
-            "ABS" => self.read_word_from_pc(),
+            AddrMode::ABS => self.read_word_from_pc(),
 
             // Absolute,X - return address + X
             // Note: Page crossing dummy read i
-            "ABSX" => {
+            AddrMode::ABSX => {
                 let base = self.read_word_from_pc();
                 let addr = base.wrapping_add(self.x as u16);
                 // Always do dummy read at base + X with wrong high byte if page crossed
@@ -2347,7 +2400,7 @@ impl Cpu {
             }
 
             // Absolute,X (Write/RMW) - return address + X, always do dummy read
-            "ABSXW" => {
+            AddrMode::ABSXW => {
                 let base = self.read_word_from_pc();
                 let addr = base.wrapping_add(self.x as u16);
                 // Always do dummy read at base+X with wrong high byte (no carry into high byte)
@@ -2359,7 +2412,7 @@ impl Cpu {
 
             // Absolute,Y - return address + Y
             // Note: Page crossing dummy read is handled by instruction for reads
-            "ABSY" => {
+            AddrMode::ABSY => {
                 let base = self.read_word_from_pc();
                 let addr = base.wrapping_add(self.y as u16);
                 // Always do dummy read at base + T with wrong high byte if page crossed
@@ -2371,7 +2424,7 @@ impl Cpu {
             }
 
             // Absolute,Y (Write/RMW) - return address + Y, always do dummy read
-            "ABSYW" => {
+            AddrMode::ABSYW => {
                 let base = self.read_word_from_pc();
                 let addr = base.wrapping_add(self.y as u16);
                 // Always do dummy read at base + Y with wrong high byte if page crossed
@@ -2382,14 +2435,14 @@ impl Cpu {
             }
 
             // Indirect - JMP ($addr) with 6502 page boundary bug
-            "IND" => {
+            AddrMode::IND => {
                 let ptr = self.read_word_from_pc();
                 self.read_word_indirect(ptr)
             }
 
             // Indexed Indirect - (ZP,X)
             // Always does dummy read at base address during indexing
-            "INDX" => {
+            AddrMode::INDX => {
                 let base = self.read_byte_from_pc();
                 self.dummy_read(base as u16);
                 let ptr = base.wrapping_add(self.x);
@@ -2398,7 +2451,7 @@ impl Cpu {
 
             // Indirect Indexed - (ZP),Y (Read-only)
             // Note: Page crossing means dummy read
-            "INDY" => {
+            AddrMode::INDY => {
                 let ptr = self.read_byte_from_pc();
                 let base = self.read_word_from_zp(ptr);
                 let addr = base.wrapping_add(self.y as u16);
@@ -2412,7 +2465,7 @@ impl Cpu {
 
             // Indirect Indexed - (ZP),Y (Write/RMW)
             // Always do dummy read at base + Y with wrong high byte if page crossed
-            "INDYW" => {
+            AddrMode::INDYW => {
                 let ptr = self.read_byte_from_pc();
                 let base = self.read_word_from_zp(ptr);
                 let addr = base.wrapping_add(self.y as u16);
@@ -2425,9 +2478,6 @@ impl Cpu {
                 self.dummy_read(dummy_addr);
                 addr
             }
-
-            // Unknown or special case addressing mode
-            _ => 0,
         }
     }
 }
@@ -2437,6 +2487,7 @@ mod tests {
     use super::*;
     use crate::nes::cartridge::{Cartridge, NametableLayout};
     use crate::nes::cpu::opcode;
+    use crate::nes::cpu::opcode::*;
     use std::cell::RefCell;
     use std::rc::Rc;
 
@@ -3197,6 +3248,7 @@ mod tests {
         let cartridge = Cartridge::load_from_file(&rom, "cpu-mmc3-test.nes", None)
             .expect("MMC3 iNES ROM should parse");
         cpu.bus.borrow_mut().map_cartridge(cartridge);
+        cpu.update_mapper_capability_flags();
 
         cpu.reset(true);
         cpu.p &= !FLAG_INTERRUPT; // allow IRQs
@@ -16687,5 +16739,109 @@ mod tests {
 
         cpu.execute(); // LDA — read only, should clear last_cpu_write_addr
         assert_eq!(cpu.last_cpu_write_addr(), None);
+    }
+
+    // --- Mapper capability flag caching tests (issue #2108 hot-path optimization) ---
+
+    fn make_ines_rom_for_mapper(mapper_id: u8) -> Vec<u8> {
+        // Build a minimal valid iNES 1.0 header for the given mapper.
+        // 2 × 16 KiB PRG banks, 1 × 8 KiB CHR bank.
+        let flags6 = (mapper_id & 0x0F) << 4;
+        let flags7 = mapper_id & 0xF0;
+        let mut rom = vec![
+            b'N', b'E', b'S', 0x1A, 2, 1, flags6, flags7, 0, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        rom.extend(vec![0u8; 2 * 16 * 1024]); // 2 PRG banks
+        rom.extend(vec![0u8; 8 * 1024]); // 1 CHR bank
+        rom
+    }
+
+    #[test]
+    fn mapper_capability_flags_expansion_audio_false_for_nrom() {
+        // NROM (mapper 0) has no expansion audio — flag must be false after insert.
+        let (ppu, apu, memory) = create_test_memory();
+        let mut cpu = Cpu::new(
+            TimingMode::Ntsc,
+            Rc::clone(&memory),
+            Rc::clone(&ppu),
+            Rc::clone(&apu),
+        );
+
+        let prg_rom = vec![0u8; 0x4000];
+        let chr_rom = vec![0u8; 0x2000];
+        let cart = Cartridge::from_parts(prg_rom, chr_rom, NametableLayout::Horizontal);
+        memory.borrow_mut().map_cartridge(cart);
+        cpu.update_mapper_capability_flags();
+
+        assert!(
+            !cpu.test_mapper_has_expansion_audio(),
+            "NROM must not report expansion audio"
+        );
+    }
+
+    #[test]
+    fn mapper_capability_flags_expansion_audio_true_for_vrc6() {
+        // VRC6 (mapper 24) has expansion audio — flag must be true after insert.
+        let (ppu, apu, memory) = create_test_memory();
+        let mut cpu = Cpu::new(
+            TimingMode::Ntsc,
+            Rc::clone(&memory),
+            Rc::clone(&ppu),
+            Rc::clone(&apu),
+        );
+
+        let rom_data = make_ines_rom_for_mapper(24);
+        let cart =
+            Cartridge::load_from_file(&rom_data, "vrc6-test.nes", None).expect("Load VRC6 cart");
+        memory.borrow_mut().map_cartridge(cart);
+        cpu.update_mapper_capability_flags();
+
+        assert!(
+            cpu.test_mapper_has_expansion_audio(),
+            "VRC6 must report expansion audio"
+        );
+    }
+
+    #[test]
+    fn mapper_capability_flags_irq_false_for_nrom() {
+        // NROM (mapper 0) has no IRQ — flag must be false after insert.
+        let (ppu, apu, memory) = create_test_memory();
+        let mut cpu = Cpu::new(
+            TimingMode::Ntsc,
+            Rc::clone(&memory),
+            Rc::clone(&ppu),
+            Rc::clone(&apu),
+        );
+
+        let prg_rom = vec![0u8; 0x4000];
+        let chr_rom = vec![0u8; 0x2000];
+        let cart = Cartridge::from_parts(prg_rom, chr_rom, NametableLayout::Horizontal);
+        memory.borrow_mut().map_cartridge(cart);
+        cpu.update_mapper_capability_flags();
+
+        assert!(
+            !cpu.test_mapper_has_irq(),
+            "NROM must not report IRQ capability"
+        );
+    }
+
+    #[test]
+    fn mapper_capability_flags_irq_true_for_mmc3() {
+        // MMC3 (mapper 4) has IRQ — flag must be true after insert.
+        let (ppu, apu, memory) = create_test_memory();
+        let mut cpu = Cpu::new(
+            TimingMode::Ntsc,
+            Rc::clone(&memory),
+            Rc::clone(&ppu),
+            Rc::clone(&apu),
+        );
+
+        let rom_data = make_ines_rom_for_mapper(4);
+        let cart =
+            Cartridge::load_from_file(&rom_data, "mmc3-test.nes", None).expect("Load MMC3 cart");
+        memory.borrow_mut().map_cartridge(cart);
+        cpu.update_mapper_capability_flags();
+
+        assert!(cpu.test_mapper_has_irq(), "MMC3 must report IRQ capability");
     }
 }

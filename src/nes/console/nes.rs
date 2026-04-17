@@ -8,6 +8,7 @@ use crate::nes::console::Config;
 #[cfg(test)]
 use crate::nes::console::NesConfig;
 use crate::nes::cpu::lookup;
+use crate::nes::cpu::opcode::{AddrMode, Mnemonic};
 use crate::nes::cpu::{Cpu, CpuState};
 use crate::nes::input::ControllerType;
 use crate::nes::ppu::{Ppu, PpuState, SharedPpu};
@@ -254,11 +255,17 @@ impl Nes {
         let ram_init_mode = self.app_context.borrow().config().nes.ram_init_mode;
         cartridge.initialize_ram(ram_init_mode);
 
-        let mut bus = self.bus.borrow_mut();
-        bus.map_cartridge(cartridge);
+        {
+            let mut bus = self.bus.borrow_mut();
+            bus.map_cartridge(cartridge);
+            // Sync controller modes so the bus reflects any config changes from ROM DB
+            // auto-detection.
+            bus.sync_controller_modes_from_config();
+        } // bus borrow released here
 
-        // Sync controller modes so the bus reflects any config changes from ROM DB auto-detection
-        bus.sync_controller_modes_from_config();
+        // Update cached mapper capability flags so the CPU hot path can skip
+        // unnecessary per-cycle RefCell borrows for non-IRQ / non-expansion-audio mappers.
+        self.cpu.update_mapper_capability_flags();
 
         // Get controller config and explicit flags from stored config
         let app_context = self.app_context.borrow();
@@ -272,6 +279,7 @@ impl Nes {
         // If any controller port is explicitly configured, disable ROM DB auto-detection
         // for all ports and apply configured values directly.
         if port1_explicit || port2_explicit {
+            let mut bus = self.bus.borrow_mut();
             bus.set_controller_type(1, port1_type);
             bus.set_controller_type(2, port2_type);
             self.log_hardware_summary();
@@ -306,6 +314,7 @@ impl Nes {
                 "Auto-detected {} on port {} for this cartridge. Override with --controller-port{}=<type> if needed.",
                 auto_label, auto_port, auto_port
             ));
+            let mut bus = self.bus.borrow_mut();
             bus.set_controller_type(auto_port, auto_type);
 
             // Track effective controller types as per-cartridge runtime state.
@@ -324,6 +333,7 @@ impl Nes {
             bus.set_controller_type(other_port, other_port_type);
         } else {
             // No special controller detected, just apply user config
+            let mut bus = self.bus.borrow_mut();
             bus.set_controller_type(1, port1_type);
             bus.set_controller_type(2, port2_type);
             self.active_controller_port1 = port1_type;
@@ -776,10 +786,10 @@ impl Nes {
 
         // Build the assembly instruction string
         let asm = match instruction.mode {
-            "IMP" => instruction.mnemonic.to_string(),
-            "ACC" => format!("{} A", instruction.mnemonic),
-            "IMM" => format!("{} #${:02X}", instruction.mnemonic, byte1),
-            "ZP" => {
+            AddrMode::IMP => instruction.mnemonic.to_string(),
+            AddrMode::ACC => format!("{} A", instruction.mnemonic),
+            AddrMode::IMM => format!("{} #${:02X}", instruction.mnemonic, byte1),
+            AddrMode::ZP => {
                 let addr = byte1 as u16;
                 if nestest {
                     let mut value = memory.read(addr, false);
@@ -791,7 +801,7 @@ impl Nes {
                     format!("{} ${:02X}", instruction.mnemonic, byte1)
                 }
             }
-            "ZPX" => {
+            AddrMode::ZPX => {
                 let addr = byte1.wrapping_add(cpu_state.x) as u16;
                 if nestest {
                     let mut value = memory.read(addr, false);
@@ -806,7 +816,7 @@ impl Nes {
                     format!("{} ${:02X},X", instruction.mnemonic, byte1)
                 }
             }
-            "ZPY" => {
+            AddrMode::ZPY => {
                 let addr = byte1.wrapping_add(cpu_state.y) as u16;
                 if nestest {
                     let mut value = memory.read(addr, false);
@@ -821,10 +831,10 @@ impl Nes {
                     format!("{} ${:02X},Y", instruction.mnemonic, byte1)
                 }
             }
-            "ABS" => {
+            AddrMode::ABS => {
                 let addr = u16::from_le_bytes([byte1, byte2]);
                 // JMP and JSR don't show memory value for ABS addressing
-                if instruction.mnemonic == "JMP" || instruction.mnemonic == "JSR" {
+                if instruction.mnemonic == Mnemonic::JMP || instruction.mnemonic == Mnemonic::JSR {
                     format!("{} ${:04X}", instruction.mnemonic, addr)
                 } else if nestest {
                     let mut value = memory.read(addr, false);
@@ -836,7 +846,7 @@ impl Nes {
                     format!("{} ${:04X}", instruction.mnemonic, addr)
                 }
             }
-            "ABSX" => {
+            AddrMode::ABSX => {
                 let addr = u16::from_le_bytes([byte1, byte2]);
                 if nestest {
                     let effective_addr = addr.wrapping_add(cpu_state.x as u16);
@@ -849,7 +859,7 @@ impl Nes {
                     format!("{} ${:04X},X", instruction.mnemonic, addr)
                 }
             }
-            "ABSY" => {
+            AddrMode::ABSY => {
                 let addr = u16::from_le_bytes([byte1, byte2]);
                 if nestest {
                     let effective_addr = addr.wrapping_add(cpu_state.y as u16);
@@ -862,7 +872,7 @@ impl Nes {
                     format!("{} ${:04X},Y", instruction.mnemonic, addr)
                 }
             }
-            "INDX" => {
+            AddrMode::INDX => {
                 if nestest {
                     let zp_addr = byte1.wrapping_add(cpu_state.x);
                     let addr_lo = memory.read(zp_addr as u16, false);
@@ -877,7 +887,7 @@ impl Nes {
                     format!("{} (${:02X},X)", instruction.mnemonic, byte1)
                 }
             }
-            "INDY" => {
+            AddrMode::INDY => {
                 if nestest {
                     let addr_lo = memory.read(byte1 as u16, false);
                     let addr_hi = memory.read(byte1.wrapping_add(1) as u16, false);
@@ -892,7 +902,7 @@ impl Nes {
                     format!("{} (${:02X}),Y", instruction.mnemonic, byte1)
                 }
             }
-            "IND" => {
+            AddrMode::IND => {
                 if nestest {
                     let ptr_addr = u16::from_le_bytes([byte1, byte2]);
                     let addr_lo = memory.read(ptr_addr, false);
@@ -914,12 +924,12 @@ impl Nes {
                     format!("{} (${:04X})", instruction.mnemonic, ptr_addr)
                 }
             }
-            "REL" => {
+            AddrMode::REL => {
                 let offset = byte1 as i8;
                 let target = pc.wrapping_add(2).wrapping_add(offset as u16);
                 format!("{} ${:04X}", instruction.mnemonic, target)
             }
-            "ABSXW" => {
+            AddrMode::ABSXW => {
                 // Same as ABSX but for write/RMW instructions
                 let addr = u16::from_le_bytes([byte1, byte2]);
                 if nestest {
@@ -933,7 +943,7 @@ impl Nes {
                     format!("{} ${:04X},X", instruction.mnemonic, addr)
                 }
             }
-            "ABSYW" => {
+            AddrMode::ABSYW => {
                 // Same as ABSY but for write/RMW instructions
                 let addr = u16::from_le_bytes([byte1, byte2]);
                 if nestest {
@@ -947,7 +957,7 @@ impl Nes {
                     format!("{} ${:04X},Y", instruction.mnemonic, addr)
                 }
             }
-            "INDYW" => {
+            AddrMode::INDYW => {
                 // Same as INDY but for write/RMW instructions
                 if nestest {
                     let addr_lo = memory.read(byte1 as u16, false);
@@ -963,7 +973,6 @@ impl Nes {
                     format!("{} (${:02X}),Y", instruction.mnemonic, byte1)
                 }
             }
-            _ => panic!("Unknown addressing mode"),
         };
 
         if nestest {
@@ -979,7 +988,8 @@ impl Nes {
                 pixel -= 1;
             }
             // Adjust spacing for 4-character mnemonics (starts one character earlier)
-            let (pad_before, width) = if instruction.mnemonic.len() == 4 {
+            let mnem_str = instruction.mnemonic.to_string();
+            let (pad_before, width) = if mnem_str.len() == 4 {
                 (" ", 32)
             } else {
                 ("  ", 31)
@@ -1300,41 +1310,42 @@ fn format_compact_trace_instruction(
     bytes: &[u8],
 ) -> String {
     let operand = match meta.mode {
-        "IMP" => String::new(),
-        "ACC" => "A".to_string(),
-        "IMM" => format!("#${:02X}", bytes.get(1).copied().unwrap_or(0)),
-        "ZP" => format!("${:02X}", bytes.get(1).copied().unwrap_or(0)),
-        "ZPX" => format!("${:02X},X", bytes.get(1).copied().unwrap_or(0)),
-        "ZPY" => format!("${:02X},Y", bytes.get(1).copied().unwrap_or(0)),
-        "INDX" => format!("(${:02X},X)", bytes.get(1).copied().unwrap_or(0)),
-        "INDY" | "INDYW" => format!("(${:02X}),Y", bytes.get(1).copied().unwrap_or(0)),
-        "REL" => {
+        AddrMode::IMP => String::new(),
+        AddrMode::ACC => "A".to_string(),
+        AddrMode::IMM => format!("#${:02X}", bytes.get(1).copied().unwrap_or(0)),
+        AddrMode::ZP => format!("${:02X}", bytes.get(1).copied().unwrap_or(0)),
+        AddrMode::ZPX => format!("${:02X},X", bytes.get(1).copied().unwrap_or(0)),
+        AddrMode::ZPY => format!("${:02X},Y", bytes.get(1).copied().unwrap_or(0)),
+        AddrMode::INDX => format!("(${:02X},X)", bytes.get(1).copied().unwrap_or(0)),
+        AddrMode::INDY | AddrMode::INDYW => {
+            format!("(${:02X}),Y", bytes.get(1).copied().unwrap_or(0))
+        }
+        AddrMode::REL => {
             let off = bytes.get(1).copied().unwrap_or(0) as i8;
             let next = addr.wrapping_add(2);
             let target = next.wrapping_add(off as i16 as u16);
             format!("${:04X}", target)
         }
-        "ABS" => {
+        AddrMode::ABS => {
             let lo = bytes.get(1).copied().unwrap_or(0);
             let hi = bytes.get(2).copied().unwrap_or(0);
             format!("${:04X}", u16::from_le_bytes([lo, hi]))
         }
-        "ABSX" | "ABSXW" => {
+        AddrMode::ABSX | AddrMode::ABSXW => {
             let lo = bytes.get(1).copied().unwrap_or(0);
             let hi = bytes.get(2).copied().unwrap_or(0);
             format!("${:04X},X", u16::from_le_bytes([lo, hi]))
         }
-        "ABSY" | "ABSYW" => {
+        AddrMode::ABSY | AddrMode::ABSYW => {
             let lo = bytes.get(1).copied().unwrap_or(0);
             let hi = bytes.get(2).copied().unwrap_or(0);
             format!("${:04X},Y", u16::from_le_bytes([lo, hi]))
         }
-        "IND" => {
+        AddrMode::IND => {
             let lo = bytes.get(1).copied().unwrap_or(0);
             let hi = bytes.get(2).copied().unwrap_or(0);
             format!("(${:04X})", u16::from_le_bytes([lo, hi]))
         }
-        _ => String::new(),
     };
 
     if operand.is_empty() {

@@ -491,6 +491,16 @@ impl Bus {
             .unwrap_or(false)
     }
 
+    /// Return the active mapper's capabilities, or `None` if no cartridge is inserted.
+    pub fn cartridge_mapper_capabilities(
+        &self,
+    ) -> Option<crate::nes::cartridge::MapperCapabilities> {
+        self.cartridge
+            .borrow()
+            .as_ref()
+            .map(|cart| cart.borrow().mapper().capabilities())
+    }
+
     /// Sample the mapper-provided expansion-audio output.
     pub fn mapper_expansion_audio_sample(&self) -> f32 {
         self.cartridge
