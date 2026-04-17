@@ -18,6 +18,9 @@ export function normalizeGbSample(sample: number): number {
  * conservative cap of 1.177 is typically used.
  */
 export function normalizeNesSample(sample: number, nesApuMax: number): number {
+    if (!Number.isFinite(nesApuMax) || nesApuMax <= 0.0) {
+        return 0.0;
+    }
     const normalized = sample / nesApuMax;
     return Math.min(1.0, Math.max(0.0, normalized));
 }
