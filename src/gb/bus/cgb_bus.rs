@@ -119,7 +119,14 @@ impl CgbBus {
     fn read_raw(&self, addr: u16) -> u8 {
         match addr {
             0x0000..=0x7FFF => self.cart.read(addr),
-            0x8000..=0x9FFF => self.ppu.vram[(addr - 0x8000) as usize],
+            0x8000..=0x9FFF => {
+                let vram_addr = (addr - 0x8000) as usize;
+                if self.ppu.vbk & 0x01 != 0 {
+                    self.ppu.vram_bank1[vram_addr]
+                } else {
+                    self.ppu.vram[vram_addr]
+                }
+            }
             0xA000..=0xBFFF => self.cart.read(addr),
             0xC000..=0xDFFF => self.wram[(addr - 0xC000) as usize],
             0xE000..=0xFFFF => self.wram[(addr - 0xE000) as usize],

@@ -660,4 +660,106 @@ mod tests {
         assert_eq!(calculate_obj_penalty(&indices, &oam, 3), 11);
         assert_eq!(calculate_obj_penalty(&indices, &oam, 7), 11);
     }
+
+    // ── CGB sprite pixel tests ────────────────────────────────────────────────
+
+    #[test]
+    fn test_cgb_sprite_palette_bits_extracted_from_attrs() {
+        // Sprite at (screen_x=0, screen_y=0): oam_x=8, oam_y=16
+        // attrs = 0x05 → CGB palette 5 (bits 0-2)
+        let mut oam = blank_oam();
+        oam[0] = 16; // oam_y
+        oam[1] = 8; // oam_x
+        oam[2] = 0; // tile 0
+        oam[3] = 0x05; // palette 5
+        let mut vram = blank_vram();
+        vram[0x0000] = 0xFF; // tile 0, row 0: colour 1 (all pixels non-transparent)
+        let bank1 = blank_vram();
+        let lcdc = 0x02u8; // sprites enabled (bit 1)
+        let indices = [0usize];
+        let result = fetch_sprite_pixel_cgb(0, 0, &indices, &oam, &vram, &bank1, lcdc, false);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().cgb_palette, 5);
+    }
+
+    #[test]
+    fn test_cgb_sprite_tile_data_read_from_vram_bank1_when_attr_bit3_set() {
+        // attrs bit 3 = VRAM bank 1. Tile 0 in bank 0 all zeros; tile 0 in bank 1 has data.
+        let mut oam = blank_oam();
+        oam[0] = 16;
+        oam[1] = 8;
+        oam[2] = 0;
+        oam[3] = 0x08; // VRAM bank bit (bit 3)
+        let vram = blank_vram(); // bank 0: all zero (transparent)
+        let mut bank1 = blank_vram();
+        bank1[0x0000] = 0xFF; // tile 0, row 0 in bank 1: colour 1
+        let lcdc = 0x02u8;
+        let indices = [0usize];
+        // Without bank1 flag this would return None (transparent); must return Some
+        let result = fetch_sprite_pixel_cgb(0, 0, &indices, &oam, &vram, &bank1, lcdc, false);
+        assert!(result.is_some(), "tile data should come from VRAM bank 1");
+        assert_eq!(result.unwrap().colour_index, 1);
+    }
+
+    #[test]
+    fn test_cgb_sprite_oam_order_priority_when_dmg_mode_false() {
+        // Two sprites overlapping at x=1.
+        // Sprite 0: oam_x=9 (screen_x=1), tile 0, colour 1
+        // Sprite 1: oam_x=8 (screen_x=0, covers x=0..7), tile 1, colour 3
+        // In CGB (OAM order) mode: sprite 0 wins (lower OAM index).
+        let mut oam = blank_oam();
+        // Sprite 0 at screen_x=1
+        oam[0] = 16;
+        oam[1] = 9;
+        oam[2] = 0;
+        oam[3] = 0x01; // palette 1
+        // Sprite 1 at screen_x=0
+        oam[4] = 16;
+        oam[5] = 8;
+        oam[6] = 1;
+        oam[7] = 0x02; // palette 2
+        let mut vram = blank_vram();
+        vram[0x0000] = 0xFF; // tile 0 row 0: colour 1
+        vram[0x0010] = 0xFF;
+        vram[0x0011] = 0xFF; // tile 1 row 0: colour 3
+        let bank1 = blank_vram();
+        let lcdc = 0x02u8;
+        let indices = [0usize, 1usize];
+        let result = fetch_sprite_pixel_cgb(1, 0, &indices, &oam, &vram, &bank1, lcdc, false);
+        assert!(result.is_some());
+        assert_eq!(
+            result.unwrap().cgb_palette,
+            1,
+            "OAM-order: sprite 0 (palette 1) should win"
+        );
+    }
+
+    #[test]
+    fn test_cgb_sprite_dmg_xcoord_priority_when_dmg_mode_true() {
+        // Same two sprites; in DMG-compat (dmg_priority_mode=true) X-coord wins.
+        // Sprite 1 has lower oam_x=8 < oam_x=9, so it should win.
+        let mut oam = blank_oam();
+        oam[0] = 16;
+        oam[1] = 9;
+        oam[2] = 0;
+        oam[3] = 0x01; // palette 1
+        oam[4] = 16;
+        oam[5] = 8;
+        oam[6] = 1;
+        oam[7] = 0x02; // palette 2
+        let mut vram = blank_vram();
+        vram[0x0000] = 0xFF;
+        vram[0x0010] = 0xFF;
+        vram[0x0011] = 0xFF;
+        let bank1 = blank_vram();
+        let lcdc = 0x02u8;
+        let indices = [0usize, 1usize];
+        let result = fetch_sprite_pixel_cgb(1, 0, &indices, &oam, &vram, &bank1, lcdc, true);
+        assert!(result.is_some());
+        assert_eq!(
+            result.unwrap().cgb_palette,
+            2,
+            "X-coord priority: sprite 1 (palette 2, lower X) should win"
+        );
+    }
 }

@@ -86,12 +86,13 @@ pub fn fetch_window_pixel_cgb(
     if scanline < wy {
         return None;
     }
-    let win_x_start = wx.saturating_sub(7);
-    if x < win_x_start as u32 {
+    let win_x_start = i16::from(wx) - 7;
+    let visible_win_x_start = win_x_start.max(0) as u32;
+    if x < visible_win_x_start {
         return None;
     }
 
-    let win_x = (x as u8).wrapping_sub(win_x_start);
+    let win_x = ((x as i16) - win_x_start) as u8;
     let win_y = window_line;
 
     // Window tile map: LCDC bit 6 (0 = $9800, 1 = $9C00).
@@ -212,5 +213,73 @@ mod tests {
         let result = fetch_window_pixel(0, 0, &vram, lcdc, 7, 0, 0);
         // Then: colour index 3
         assert_eq!(result, Some(3));
+    }
+
+    // ── CGB window pixel tests ────────────────────────────────────────────────
+
+    #[test]
+    fn test_cgb_window_palette_num_extracted_from_bank1_attrs() {
+        // Given: window tile map entry (0,0) in bank 1 has palette_num=3 (bits 0-2)
+        let vram = blank_vram();
+        let mut bank1 = blank_vram();
+        bank1[0x1800] = 0x03; // palette 3
+        // LCDC: window enabled (bit5), tile data $8000 (bit4)
+        let lcdc = 0x30u8;
+        let result = fetch_window_pixel_cgb(0, 0, &vram, &bank1, lcdc, 7, 0, 0);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().palette_num, 3);
+    }
+
+    #[test]
+    fn test_cgb_window_bg_priority_extracted_from_bank1_attrs() {
+        // Given: attrs with bit 7 set
+        let vram = blank_vram();
+        let mut bank1 = blank_vram();
+        bank1[0x1800] = 0x80; // bg_priority bit
+        let lcdc = 0x30u8;
+        let result = fetch_window_pixel_cgb(0, 0, &vram, &bank1, lcdc, 7, 0, 0);
+        assert!(result.unwrap().bg_priority);
+    }
+
+    #[test]
+    fn test_cgb_window_wx_less_than_7_shifts_tilemap_correctly() {
+        // WX=0 places the window 7 pixels off-screen to the left.
+        // Screen x=0 should correspond to tile-map pixel 7 (tile col 0, pixel_in_tile=7).
+        // Tile 0 row 0: low=0x01 → only bit 0 has colour 1 (tile pixel 7, rightmost).
+        // With signed WX math: win_x = 0 - (0-7) = 7 → pixel_in_tile=7 → bit=0 → colour=1.
+        let mut vram = blank_vram();
+        let bank1 = blank_vram();
+        vram[0x1800] = 0; // tile index 0
+        vram[0x0000] = 0x01; // low byte: only bit 0 set
+        vram[0x0001] = 0x00; // high byte
+        let lcdc = 0x30u8; // window on (bit5), tile data $8000 (bit4)
+        let result = fetch_window_pixel_cgb(0, 0, &vram, &bank1, lcdc, 0, 0, 0);
+        assert!(
+            result.is_some(),
+            "window should be visible at x=0 when WX=0"
+        );
+        assert_eq!(
+            result.unwrap().colour_index,
+            1,
+            "screen x=0 with WX=0 must map to tile pixel 7 (colour 1)"
+        );
+    }
+
+    #[test]
+    fn test_cgb_window_tile_data_read_from_vram_bank1_when_attr_bit3_set() {
+        // Given: tile index 0 in map; attrs with VRAM bank bit (bit 3) set
+        // Tile 0 in bank 0: all zeros; tile 0 in bank 1 row 0: low=0xFF → colour 1
+        let vram = blank_vram();
+        let mut bank1 = blank_vram();
+        bank1[0x1800] = 0x08; // VRAM bank bit
+        bank1[0x0000] = 0xFF; // tile 0 row 0 in bank 1
+        bank1[0x0001] = 0x00;
+        let lcdc = 0x30u8;
+        let result = fetch_window_pixel_cgb(0, 0, &vram, &bank1, lcdc, 7, 0, 0);
+        assert!(result.is_some());
+        let px = result.unwrap();
+        assert_eq!(px.vram_bank, 1);
+        // Leftmost pixel: bit=7 of low byte 0xFF → (0xFF>>7)&1 = 1 → colour=1
+        assert_eq!(px.colour_index, 1);
     }
 }
