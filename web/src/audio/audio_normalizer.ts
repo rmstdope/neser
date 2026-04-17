@@ -11,10 +11,15 @@ export function normalizeGbSample(sample: number): number {
 
 /**
  * Normalize a NES APU sample from its native unipolar range [0, nesApuMax]
- * to [0.0, 1.0] for Web Audio.
+ * to [0.0, 1.0].
+ *
+ * This helper intentionally preserves the NES mixer output as unipolar audio
+ * as a project-specific choice. Web Audio PCM samples are typically bipolar
+ * in [-1.0, 1.0], so keeping the signal in [0.0, 1.0] introduces a DC offset
+ * unless a later stage recenters it.
  *
  * The NES APU pulse+TND mixer outputs up to ~0.966; expansion audio from
- * mappers such as VRC6, MMC5, or Namco 163 can push this higher.  A
+ * mappers such as VRC6, MMC5, or Namco 163 can push this higher. A
  * conservative cap of 1.177 is typically used.
  */
 export function normalizeNesSample(sample: number, nesApuMax: number): number {
