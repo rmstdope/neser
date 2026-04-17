@@ -10,6 +10,8 @@ use crate::nes::console::TimingMode;
 use crate::nes::input::ControllerType;
 use crate::platform::autorun::AutorunFormat;
 use crate::platform::autorun::AutorunMode;
+use crate::platform::config::CliFlag;
+use crate::platform::config::RamInitMode;
 use crate::platform::debugging::breakpoints::BreakpointKind;
 use crate::platform::shaders::SHADER_PRESETS;
 use bitflags::bitflags;
@@ -17,14 +19,7 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
-/// CLI flag definition for help text and validation.
-struct CliFlag {
-    flag: &'static str,
-    help: Option<&'static str>,
-    has_value: bool,
-}
-
-/// All supported CLI flags.
+/// All supported NES and platform CLI flags.
 const CLI_FLAGS: &[CliFlag] = &[
     CliFlag {
         flag: "--help",
@@ -366,11 +361,6 @@ const CLI_FLAGS: &[CliFlag] = &[
         has_value: true,
     },
     CliFlag {
-        flag: "--gb-hardware",
-        help: Some("Game Boy hardware variant: dmg or cgb (default: dmg)"),
-        has_value: true,
-    },
-    CliFlag {
         flag: "--cartridge-search-paths",
         help: Some("Comma-separated search paths to scan recursively for .nes files on startup"),
         has_value: true,
@@ -420,6 +410,16 @@ const OPTIONAL_BOOL_FLAGS: &[&str] = &[
     "--autorun-format",
 ];
 
+/// Returns an iterator over all supported CLI flags (NES/platform + GB-specific).
+///
+/// GB flags are defined in the GB config module and chained here so that
+/// validation, help text, and ROM-path parsing remain complete.
+fn all_cli_flags() -> impl Iterator<Item = &'static CliFlag> {
+    CLI_FLAGS
+        .iter()
+        .chain(crate::gb::console::config::GB_CLI_FLAGS.iter())
+}
+
 /// Result of parsing command-line arguments.
 #[derive(Debug)]
 pub enum ParseResult {
@@ -427,33 +427,6 @@ pub enum ParseResult {
     Help,
     /// Successfully parsed configuration.
     Config(Box<Config>),
-}
-
-/// RAM initialization mode for power-on/hard reset.
-///
-/// Controls how all emulated RAM (CPU, PRG, CHR, PPU nametable, and palette) is
-/// initialized when the emulator powers on or performs a hard reset. This affects
-/// hardware-accuracy and determinism for testing.
-///
-/// Soft resets preserve RAM contents and do not re-initialize.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RamInitMode {
-    /// Initialize all RAM to 0x00.
-    ///
-    /// Provides a clean, predictable startup state. Useful for debugging and
-    /// testing, though not hardware-accurate (real NES hardware has random RAM on power-on).
-    Zero,
-    /// Initialize all RAM to pseudo-random values.
-    ///
-    /// Hardware-accurate: real NES consoles have unpredictable RAM contents on power-on.
-    /// Each run will have different initial RAM values.
-    Random,
-    /// Initialize all RAM to pseudo-random values using a fixed seed.
-    ///
-    /// Combines hardware-accuracy with determinism: RAM appears random but is
-    /// identical across runs with the same seed. Useful for reproducible testing
-    /// of RAM-sensitive code paths.
-    SeededRandom(u64),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -708,7 +681,7 @@ impl Config {
         let (hardware_mode, hardware_model) =
             Self::parse_hardware_value(value).ok_or_else(|| {
                 format!(
-                    "Invalid hardware value: '{}'. Valid options are: nes-ntsc, nes-pal, famicom, dendy",
+                    "Invalid nes-hardware value: '{}'. Valid options are: nes-ntsc, nes-pal, famicom, dendy",
                     value
                 )
             })?;
@@ -721,7 +694,7 @@ impl Config {
 
     pub(crate) fn apply_expansion_port_value(&mut self, value: &str) -> Result<(), String> {
         self.nes.expansion_port = ExpansionPort::parse(value)
-            .ok_or_else(|| format!("Invalid expansion_port value: '{}'", value))?;
+            .ok_or_else(|| format!("Invalid nes-expansion_port value: '{}'", value))?;
         self.nes.expansion_port_explicit = true;
         Ok(())
     }
@@ -821,7 +794,7 @@ impl Config {
 
         for section in HELP_SECTIONS {
             let mut wrote_section = false;
-            for flag in CLI_FLAGS {
+            for flag in all_cli_flags() {
                 if flag.help.is_none() || Self::help_section_for_flag(flag.flag) != section {
                     continue;
                 }
@@ -1313,17 +1286,8 @@ impl Config {
                 parse_breakpoint_list(&value).map_err(|e| format!("--breakpoint: {e}"))?;
         }
 
-        // GB hardware
-        if let Some(gb_hardware) = Self::parse_string_arg(args, "--gb-hardware") {
-            self.gb.hardware = crate::gb::console::config::GbHardware::parse(&gb_hardware)
-                .ok_or_else(|| {
-                    format!(
-                        "Invalid --gb-hardware value: '{}'. Valid options are: dmg, cgb",
-                        gb_hardware
-                    )
-                })?;
-            self.gb.hardware_explicit = true;
-        }
+        // GB hardware (parsed by GB config module)
+        self.gb.apply_args(args)?;
 
         Ok(())
     }
@@ -1339,7 +1303,7 @@ impl Config {
             let arg = &args[i];
 
             // Check for exact flag match
-            if let Some(flag) = CLI_FLAGS.iter().find(|f| f.flag == arg) {
+            if let Some(flag) = all_cli_flags().find(|f| f.flag == arg) {
                 if flag.has_value {
                     if i + 1 >= args.len() {
                         return Err(format!("Missing value for {arg}\nTry --help for usage."));
@@ -1364,7 +1328,7 @@ impl Config {
 
             // Check for --flag=value syntax (e.g., --trace-cpu=2)
             if let Some((flag_part, _)) = arg.split_once('=')
-                && CLI_FLAGS.iter().any(|f| f.flag == flag_part)
+                && all_cli_flags().any(|f| f.flag == flag_part)
             {
                 i += 1;
                 continue;
@@ -1435,7 +1399,7 @@ impl Config {
         while i < args.len() {
             let arg = &args[i];
 
-            if let Some(flag) = CLI_FLAGS.iter().find(|f| f.flag == arg) {
+            if let Some(flag) = all_cli_flags().find(|f| f.flag == arg) {
                 if flag.has_value {
                     i += 2;
                 }
@@ -1453,7 +1417,7 @@ impl Config {
             }
 
             if let Some((flag_part, _)) = arg.split_once('=')
-                && CLI_FLAGS.iter().any(|f| f.flag == flag_part)
+                && all_cli_flags().any(|f| f.flag == flag_part)
             {
                 i += 1;
                 continue;
@@ -1893,14 +1857,7 @@ impl Config {
                 }
             }
             "gb-hardware" => {
-                self.gb.hardware = crate::gb::console::config::GbHardware::parse(value)
-                    .ok_or_else(|| {
-                        format!(
-                            "Invalid gb-hardware value: '{}'. Valid options are: dmg, cgb",
-                            value
-                        )
-                    })?;
-                self.gb.hardware_explicit = true;
+                self.gb.apply_config_value(value)?;
             }
             "cartridge_search_paths" | "scan_cartridges" | "rebuild_cartridge_catalog" => {
                 self.apply_cartridge_catalog_config_value(key, value);

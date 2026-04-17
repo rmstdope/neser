@@ -26,7 +26,7 @@
 #   audio=false           →  --audio false  OR  --audio=0  OR  --no-audio  OR  --disable-audio
 #   audio=true            →  --audio  OR  --audio true  OR  --audio=1
 #   nes-pulse1=true       →  --nes-pulse1  OR  --nes-pulse1 true  OR  --nes-pulse1=1
-#   nes-pulse2=false      →  --nes-pulse2 false  OR  --nes-pulse2=0  OR  --nes-no-pulse2  OR  --nes-disable-pulse2
+#   nes-pulse2=false      →  --nes-pulse2 false  OR  --nes-pulse2=0  OR  --no-nes-pulse2  OR  --disable-nes-pulse2
 #
 # NES-specific settings are prefixed with nes- (e.g., nes-hardware, nes-pulse1).
 # Game Boy-specific settings are prefixed with gb- (e.g., gb-hardware).
@@ -115,10 +115,10 @@ nes-enable_4_score=false
 # Default: joypad for both ports
 #
 # Port 1 (Player 1):
-#nes-nes-controller_port1=joypad
+#nes-controller_port1=joypad
 #
 # Port 2 (Player 2):
-#nes-nes-controller_port2=joypad
+#nes-controller_port2=joypad
 #
 # Auto-detection behavior:
 # If a specific port hasn't been explicitly configured, NESER will
