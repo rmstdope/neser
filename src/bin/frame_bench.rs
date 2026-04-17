@@ -28,12 +28,10 @@ fn main() {
     nes.insert_cartridge(cart);
     nes.reset(false);
 
-    // Warm up: run 60 frames
     for _ in 0..60 {
         run_one_frame(&mut nes);
     }
 
-    // Benchmark
     let start = Instant::now();
     for _ in 0..num_frames {
         run_one_frame(&mut nes);
@@ -50,7 +48,6 @@ fn main() {
     println!("Per frame: {per_frame_ms:.3}ms");
     println!("FPS: {fps:.1}");
 
-    // Run multiple iterations for stable comparison
     println!("\nStability check (5 runs of {num_frames} frames):");
     for i in 0..5 {
         let start = Instant::now();

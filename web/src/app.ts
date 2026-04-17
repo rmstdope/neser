@@ -48,6 +48,7 @@ import {
 } from "./input/pointer_lock";
 import { computeButtonStates } from "./ui/emulation_controls";
 import { cycleFilterKey, filterOnConsoleSwitch, type FilterDef } from "./display/filters";
+import { selectRenderPipeline } from "./display/render_pipeline";
 import commonVertGlsl from "./shaders/common.vert.glsl?raw";
 import stockFragGlsl from "./shaders/stock.frag.glsl?raw";
 import crtFragGlsl from "./shaders/crt.frag.glsl?raw";
@@ -499,12 +500,13 @@ async function loadGbAssets() {
 }
 
 function setupGbPrograms() {
+    shaderProgram = createProgram(commonVertGlsl, stockFragGlsl);
     gbPass0Program = createProgram(gbPass0VertexSource, gbPass0FragmentSource);
     gbPass1Program = createProgram(gbPass1VertexSource, gbPass1FragmentSource);
     gbPass2Program = createProgram(gbBlurVertexSource, gbPass2FragmentSource);
     gbPass3Program = createProgram(gbBlurVertexSource, gbPass3FragmentSource);
     gbPass4Program = createProgram(gbPass4VertexSource, gbPass4FragmentSource);
-    if (!gbPass0Program || !gbPass1Program || !gbPass2Program || !gbPass3Program || !gbPass4Program) {
+    if (!shaderProgram || !gbPass0Program || !gbPass1Program || !gbPass2Program || !gbPass3Program || !gbPass4Program) {
         return false;
     }
     // Create previous-frame texture at source (GB) resolution
@@ -517,10 +519,27 @@ function setupGbPrograms() {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
 
     // FBOs created lazily in renderGbPass (to match canvas size)
-    shaderProgram = null;
     // Start async asset loading (palette + background PNGs)
     loadGbAssets();
     return true;
+}
+
+function renderFrameWithCurrentPipeline(frame: Uint8Array): boolean {
+    const pipeline = selectRenderPipeline({
+        filterType: filters[currentFilter]?.type,
+        gbAssetsLoaded,
+        hasSinglePassShader: shaderProgram !== null,
+    });
+
+    if (pipeline === "ntsc") {
+        return renderNtscPass(frame);
+    }
+
+    if (pipeline === "gb") {
+        return renderGbPass(frame);
+    }
+
+    return renderSinglePass(frame);
 }
 
 function setupFilterPrograms(filterName: string) {
@@ -1933,15 +1952,7 @@ function stepIdleScroller(timestamp: number) {
     }
 
     const frame = idleScroller!.renderFrame(timestamp);
-    const filter = filters[currentFilter];
-    let rendered = false;
-    if (filter?.type === "ntsc") {
-        rendered = renderNtscPass(frame);
-    } else if (filter?.type === "gb") {
-        rendered = renderGbPass(frame);
-    } else {
-        rendered = renderSinglePass(frame);
-    }
+    const rendered = renderFrameWithCurrentPipeline(frame);
 
     if (!rendered) {
         idleScrollerActive = false;
@@ -2218,17 +2229,10 @@ function step(timestamp: number) {
             return;
         }
 
-        const filter = filters[currentFilter];
         let rendered = true;
         const renderT0 = performance.now();
         if (shouldRender) {
-            if (filter?.type === "ntsc") {
-                rendered = renderNtscPass(frame);
-            } else if (filter?.type === "gb") {
-                rendered = renderGbPass(frame);
-            } else {
-                rendered = renderSinglePass(frame);
-            }
+            rendered = renderFrameWithCurrentPipeline(frame);
         }
         const renderElapsedMs = performance.now() - renderT0;
 
