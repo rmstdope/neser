@@ -482,13 +482,11 @@ fn test_mooneye_acceptance_pop_timing() {
 }
 
 #[test]
-#[ignore = "GS (Game Boy + SGB) specific test — run result may differ on DMG"]
 fn test_mooneye_acceptance_ppu_hblank_ly_scx_timing_gs() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/ppu/hblank_ly_scx_timing-GS.gb"));
 }
 
 #[test]
-#[ignore = "GS (Game Boy + SGB) specific test — run result may differ on DMG"]
 fn test_mooneye_acceptance_ppu_intr_1_2_timing_gs() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/ppu/intr_1_2_timing-GS.gb"));
 }
@@ -526,7 +524,6 @@ fn test_mooneye_acceptance_ppu_lcdon_timing_gs() {
 }
 
 #[test]
-#[ignore = "GS (Game Boy + SGB) specific test — run result may differ on DMG"]
 fn test_mooneye_acceptance_ppu_lcdon_write_timing_gs() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/ppu/lcdon_write_timing-GS.gb"));
 }
@@ -542,7 +539,6 @@ fn test_mooneye_acceptance_ppu_stat_lyc_onoff() {
 }
 
 #[test]
-#[ignore = "GS (Game Boy + SGB) specific test — run result may differ on DMG"]
 fn test_mooneye_acceptance_ppu_vblank_stat_intr_gs() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/ppu/vblank_stat_intr-GS.gb"));
 }

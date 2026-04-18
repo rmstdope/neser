@@ -176,6 +176,16 @@ impl Ppu {
             self.pending_interrupts |= 0x01;
         }
 
+        // On DMG, the Mode 2 STAT source fires simultaneously with VBlank at line 144.
+        // Fire Mode 2 STAT directly (edge-triggered) without changing mode_for_irq,
+        // which would cause spurious fires during VBlank if Mode2IE stays enabled.
+        if events.vblank_start
+            && (self.registers.stat_irq_enables & 0x20 != 0)
+            && !self.prev_stat_irq_line
+        {
+            self.pending_interrupts |= 0x02;
+        }
+
         // Reset window-line counter at the start of a new frame.
         if events.new_frame {
             self.window_line = 0;
@@ -187,21 +197,23 @@ impl Ppu {
 
     // ── OBJ penalty ───────────────────────────────────────────────────────────
 
-    /// Apply OBJ penalty to Mode 3 at the Mode 2→3 transition.
+    /// Apply OBJ and SCX fine-scroll penalties to Mode 3 at the Mode 2→3 transition.
     ///
-    /// DMG only applies OBJ penalty when sprites are enabled (LCDC bit 1).
-    /// The penalty is computed at dot precision then quantized to M-cycle
-    /// boundaries, since Mode 3's end is only observable by the CPU every 4 dots.
+    /// SCX penalty: raw SCX mod 8 dots (unquantized), applied on all visible scanlines.
+    /// OBJ penalty: dot-accurate, then floor-quantised to M-cycle boundaries (÷4×4).
+    ///   DMG only applies the OBJ penalty when sprites are enabled (LCDC bit 1).
+    /// Combined: `extra_dots = scx_raw + floor(obj / 4) * 4`.
     fn apply_obj_penalty(&mut self) {
+        let scx_penalty = (self.registers.scx & 0x07) as u16;
         let sprites_enabled = self.registers.lcdc & 0x02 != 0;
-        if !sprites_enabled {
-            return;
-        }
-        let scanline = self.timing.ly();
-        let sprite_indices = sprites::scan_oam_line(scanline, &self.oam, self.registers.lcdc);
-        let penalty_dots =
-            sprites::calculate_obj_penalty(&sprite_indices, &self.oam, self.registers.scx);
-        let extra_dots = (penalty_dots / DOTS_PER_M_CYCLE) * DOTS_PER_M_CYCLE;
+        let obj_penalty = if sprites_enabled {
+            let scanline = self.timing.ly();
+            let sprite_indices = sprites::scan_oam_line(scanline, &self.oam, self.registers.lcdc);
+            sprites::calculate_obj_penalty(&sprite_indices, &self.oam, self.registers.scx)
+        } else {
+            0
+        };
+        let extra_dots = scx_penalty + (obj_penalty / DOTS_PER_M_CYCLE) * DOTS_PER_M_CYCLE;
         self.timing.set_mode3_extra_dots(extra_dots);
     }
 
@@ -272,7 +284,7 @@ impl Ppu {
     /// When LCD is disabled VRAM is always accessible.
     /// In CGB mode, routes to bank 0 or bank 1 based on the VBK register.
     pub fn write_vram(&mut self, addr: u16, val: u8) {
-        if self.registers.lcd_enabled() && self.timing.is_vram_blocked() {
+        if self.registers.lcd_enabled() && self.timing.is_vram_write_blocked() {
             return;
         }
         let offset = (addr - 0x8000) as usize;
@@ -307,11 +319,11 @@ impl Ppu {
     ///
     /// During Mode 2 (OAM Scan) while LCD is on: applies the OAM write-corruption
     /// formula to the PPU's currently scanned row; the actual written value is discarded.
-    /// During any other blocked period (Mode 3, or scan 1 4T extension) while LCD is on:
+    /// During any other write-blocked period (Mode 3, or scan 1/2 write-gate closed) while LCD on:
     /// write silently ignored.
     /// When LCD is disabled OAM is always accessible without corruption.
     pub fn write_oam(&mut self, addr: u16, val: u8) {
-        if self.registers.lcd_enabled() && self.timing.is_oam_blocked() {
+        if self.registers.lcd_enabled() && self.timing.is_oam_write_blocked() {
             if self.timing.mode() == PpuMode::OamScan {
                 let row = self.current_oam_row();
                 if let Some(r) = row {
@@ -716,10 +728,10 @@ mod tests {
         ppu.write_register(0xFF45, 5); // LYC = 5
         ppu.write_register(0xFF41, 0x40); // STAT bit 6 = LYC=LY IRQ enable
         // First scanline is 452 dots; scanlines 1-4 are 456 each
-        tick_dots(&mut ppu, FIRST_SCANLINE_DOTS + 456 * 3 + 456 - 1); // tick to dot 455 of scanline 4
+        tick_dots(&mut ppu, FIRST_SCANLINE_DOTS + 456 * 3 + 451); // tick to dot 451 of scanline 4
         // Drain any earlier flags
         let _ = ppu.take_pending_interrupts();
-        // When: advance to scanline 5 (LY becomes 5 = LYC)
+        // When: advance to dot 452 (early LY fires — LY becomes 5 = LYC on regular scans)
         ppu.tick_dots(1);
         // Then: STAT interrupt pending (bit 1 of IF)
         let flags = ppu.take_pending_interrupts();
