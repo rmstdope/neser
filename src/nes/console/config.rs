@@ -1846,6 +1846,20 @@ impl Config {
             "gb-dmg-variant" => {
                 self.gb.apply_config_value(value)?;
             }
+            "gb-hardware" => match value.to_lowercase().as_str() {
+                "dmg" => {
+                    self.gb.apply_config_value("dmg-b")?;
+                }
+                "cgb" => {
+                    return Err("Config key 'gb-hardware=cgb' is no longer supported; \
+                         CGB mode is now auto-detected from the loaded ROM, and \
+                         'gb-dmg-variant' only applies to DMG variants."
+                        .to_string());
+                }
+                _ => {
+                    self.gb.apply_config_value(value)?;
+                }
+            },
             "cartridge_search_paths" | "scan_cartridges" | "rebuild_cartridge_catalog" => {
                 self.apply_cartridge_catalog_config_value(key, value);
             }
@@ -6080,6 +6094,27 @@ filter=invalid-shader
     }
 
     #[test]
+    fn test_config_file_legacy_gb_hardware_dmg_maps_to_dmg_b() {
+        let mut config = Config::with_defaults();
+        config.apply_config_value("gb-hardware", "dmg").unwrap();
+        assert_eq!(config.gb.dmg_variant, crate::gb::model::DmgModel::DmgB);
+    }
+
+    #[test]
+    fn test_config_file_legacy_gb_hardware_cgb_returns_error() {
+        let mut config = Config::with_defaults();
+        let result = config.apply_config_value("gb-hardware", "cgb");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_config_file_legacy_gb_hardware_passes_through_dmg_variants() {
+        let mut config = Config::with_defaults();
+        config.apply_config_value("gb-hardware", "dmg-a").unwrap();
+        assert_eq!(config.gb.dmg_variant, crate::gb::model::DmgModel::DmgA);
+    }
+
+    #[test]
     fn test_gb_dmg_variant_invalid_value_returns_error() {
         let args = vec![
             "neser".to_string(),
@@ -6087,10 +6122,7 @@ filter=invalid-shader
             "invalid".to_string(),
         ];
         let result = Config::new(&args);
-        assert!(
-            result.is_err() || matches!(result, Ok(ParseResult::Config(c)) if false),
-            "Invalid variant should produce an error"
-        );
+        assert!(result.is_err(), "Invalid variant should produce an error");
     }
 
     #[test]
@@ -6118,6 +6150,17 @@ filter=invalid-shader
             .apply_config_value("nes-vs_dip_switches", "0xFF")
             .unwrap();
         assert_eq!(config.nes.vs_dip_switches, 0xFF);
+    }
+
+    #[test]
+    fn test_old_gb_hardware_arg_is_rejected() {
+        let args = vec![
+            "neser".to_string(),
+            "--gb-hardware".to_string(),
+            "dmg".to_string(),
+        ];
+        let result = config_new(args);
+        assert!(result.is_err());
     }
 
     #[test]
