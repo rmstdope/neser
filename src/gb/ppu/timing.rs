@@ -173,17 +173,7 @@ impl Timing {
             // Scan 1 and scan 2+: Mode3 starts at dot 80.
             Self::OAM_SCAN_DOTS // 80
         };
-        let mode3_end = if self.first_scanline_after_enable || self.second_scanline_after_enable {
-            // Scan 0 and scan 1: Mode3 ends at dot 256+extra.
-            // Scan 1 has 4 extra Mode3 dots (OamScan starts 4T late, offsetting mode3_end).
-            Self::OAM_SCAN_START
-                + Self::OAM_SCAN_DOTS
-                + Self::PIXEL_TRANSFER_DOTS
-                + self.mode3_extra_dots // 256+extra
-        } else {
-            // Scan 2+: Mode3 ends at dot 252+extra.
-            Self::OAM_SCAN_DOTS + Self::PIXEL_TRANSFER_DOTS + self.mode3_extra_dots // 252+extra
-        };
+        let mode3_end = self.mode3_end();
 
         // Determine physical mode from current dot/scanline position.
         let new_mode = if self.scanline >= Self::VBLANK_START_LINE {
@@ -321,23 +311,8 @@ impl Timing {
         if self.scanline >= Self::VBLANK_START_LINE {
             return false;
         }
-        let (vram_start, vram_end) = if self.first_scanline_after_enable {
-            let mode3_end = Self::OAM_SCAN_START
-                + Self::OAM_SCAN_DOTS
-                + Self::PIXEL_TRANSFER_DOTS
-                + self.mode3_extra_dots;
-            (84u16, mode3_end)
-        } else if self.second_scanline_after_enable {
-            let mode3_end = Self::OAM_SCAN_START
-                + Self::OAM_SCAN_DOTS
-                + Self::PIXEL_TRANSFER_DOTS
-                + self.mode3_extra_dots;
-            (80, mode3_end)
-        } else {
-            let mode3_end = Self::OAM_SCAN_DOTS + Self::PIXEL_TRANSFER_DOTS + self.mode3_extra_dots;
-            (80, mode3_end)
-        };
-        self.dot >= vram_start && self.dot < vram_end
+        let vram_start = if self.first_scanline_after_enable { 84u16 } else { 80 };
+        self.dot >= vram_start && self.dot < self.mode3_end()
     }
 
     /// Returns whether VRAM is blocked for CPU **write** access at the current dot.
@@ -350,23 +325,7 @@ impl Timing {
         if self.scanline >= Self::VBLANK_START_LINE {
             return false;
         }
-        let (vram_start, vram_end) = if self.first_scanline_after_enable {
-            let mode3_end = Self::OAM_SCAN_START
-                + Self::OAM_SCAN_DOTS
-                + Self::PIXEL_TRANSFER_DOTS
-                + self.mode3_extra_dots;
-            (84u16, mode3_end)
-        } else if self.second_scanline_after_enable {
-            let mode3_end = Self::OAM_SCAN_START
-                + Self::OAM_SCAN_DOTS
-                + Self::PIXEL_TRANSFER_DOTS
-                + self.mode3_extra_dots;
-            (84, mode3_end)
-        } else {
-            let mode3_end = Self::OAM_SCAN_DOTS + Self::PIXEL_TRANSFER_DOTS + self.mode3_extra_dots;
-            (84, mode3_end)
-        };
-        self.dot >= vram_start && self.dot < vram_end
+        self.dot >= 84 && self.dot < self.mode3_end()
     }
 
     /// Returns whether OAM is blocked for CPU **read** access at the current dot.
@@ -383,20 +342,9 @@ impl Timing {
             return false;
         }
         if self.first_scanline_after_enable {
-            let mode3_end = Self::OAM_SCAN_START
-                + Self::OAM_SCAN_DOTS
-                + Self::PIXEL_TRANSFER_DOTS
-                + self.mode3_extra_dots;
-            self.dot >= 84 && self.dot < mode3_end
-        } else if self.second_scanline_after_enable {
-            let mode3_end = Self::OAM_SCAN_START
-                + Self::OAM_SCAN_DOTS
-                + Self::PIXEL_TRANSFER_DOTS
-                + self.mode3_extra_dots;
-            self.dot < mode3_end
+            self.dot >= 84 && self.dot < self.mode3_end()
         } else {
-            let mode3_end = Self::OAM_SCAN_DOTS + Self::PIXEL_TRANSFER_DOTS + self.mode3_extra_dots;
-            self.dot < mode3_end
+            self.dot < self.mode3_end()
         }
     }
 
@@ -414,20 +362,10 @@ impl Timing {
         if self.scanline >= Self::VBLANK_START_LINE {
             return false;
         }
+        let mode3_end = self.mode3_end();
         if self.first_scanline_after_enable {
-            let mode3_end = Self::OAM_SCAN_START
-                + Self::OAM_SCAN_DOTS
-                + Self::PIXEL_TRANSFER_DOTS
-                + self.mode3_extra_dots;
             self.dot >= 84 && self.dot < mode3_end
-        } else if self.second_scanline_after_enable {
-            let mode3_end = Self::OAM_SCAN_START
-                + Self::OAM_SCAN_DOTS
-                + Self::PIXEL_TRANSFER_DOTS
-                + self.mode3_extra_dots;
-            (self.dot >= 4 && self.dot < 80) || (self.dot >= 84 && self.dot < mode3_end)
         } else {
-            let mode3_end = Self::OAM_SCAN_DOTS + Self::PIXEL_TRANSFER_DOTS + self.mode3_extra_dots;
             (self.dot >= 4 && self.dot < 80) || (self.dot >= 84 && self.dot < mode3_end)
         }
     }
@@ -480,6 +418,18 @@ impl Timing {
     /// LCD enable), dot 80 for scan 1 and scan 2+.
     pub fn set_mode3_extra_dots(&mut self, extra: u16) {
         self.mode3_extra_dots = extra;
+    }
+
+    /// Dot at which Mode 3 (Pixel Transfer) ends for the current scan type.
+    ///
+    /// Scan 0 and scan 1: dot 256 + extra (OAM_SCAN_START + OAM_SCAN_DOTS + PIXEL_TRANSFER_DOTS).
+    /// Scan 2+: dot 252 + extra (OAM_SCAN_DOTS + PIXEL_TRANSFER_DOTS).
+    fn mode3_end(&self) -> u16 {
+        if self.first_scanline_after_enable || self.second_scanline_after_enable {
+            Self::OAM_SCAN_START + Self::OAM_SCAN_DOTS + Self::PIXEL_TRANSFER_DOTS + self.mode3_extra_dots
+        } else {
+            Self::OAM_SCAN_DOTS + Self::PIXEL_TRANSFER_DOTS + self.mode3_extra_dots
+        }
     }
 }
 
