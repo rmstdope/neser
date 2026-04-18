@@ -1,4 +1,4 @@
-use crate::gb::bus::DmgBus;
+use crate::gb::bus::{DmgBus, GbBus};
 use crate::gb::cartridge::load_cartridge;
 use crate::gb::console::Gb;
 use crate::gb::model::DmgModel;
@@ -105,4 +105,221 @@ fn test_dmg_boot_halts_on_corrupted_logo() {
         !reached,
         "Boot ROM must lock up on a corrupted logo; it must not hand off to $0100"
     );
+}
+
+// ============================================================================
+// IO register post-boot verification (Pan Docs reference values)
+// ============================================================================
+
+/// Helper: boot a fresh DMG with the given model and return it at PC=$0100.
+fn boot_to_cartridge_entry(model: DmgModel) -> Gb<DmgBus> {
+    let rom = build_test_rom(&NINTENDO_LOGO);
+    let cart = load_cartridge(&rom).expect("valid ROM");
+    let mut gb = Gb::new(DmgBus::new(cart, model));
+    let reached = run_until_cartridge_entry(&mut gb);
+    assert!(reached, "Boot ROM must reach $0100 for model {:?}", model);
+    gb
+}
+
+/// Helper: read an IO register by address.
+fn read_io(gb: &mut Gb<DmgBus>, addr: u16) -> u8 {
+    gb.cpu.bus.read(addr)
+}
+
+/// Verify all documented post-boot IO register values for DMG production hardware
+/// (DMG-A/B/C) against the Pan Docs reference table.
+///
+/// Reference: <https://gbdev.io/pandocs/Power_Up_Sequence.html#hardware-registers>
+#[test]
+fn test_dmg_production_boot_io_registers() {
+    let mut gb = boot_to_cartridge_entry(DmgModel::DmgB);
+
+    // Serial
+    assert_eq!(read_io(&mut gb, 0xFF01), 0x00, "SB ($FF01)");
+    assert_eq!(read_io(&mut gb, 0xFF02), 0x7E, "SC ($FF02)");
+
+    // Timer
+    assert_eq!(read_io(&mut gb, 0xFF04), 0xAB, "DIV ($FF04)");
+    assert_eq!(read_io(&mut gb, 0xFF05), 0x00, "TIMA ($FF05)");
+    assert_eq!(read_io(&mut gb, 0xFF06), 0x00, "TMA ($FF06)");
+    assert_eq!(read_io(&mut gb, 0xFF07), 0xF8, "TAC ($FF07)");
+
+    // Interrupt flag
+    assert_eq!(read_io(&mut gb, 0xFF0F), 0xE1, "IF ($FF0F)");
+
+    // APU registers
+    assert_eq!(read_io(&mut gb, 0xFF10), 0x80, "NR10 ($FF10)");
+    assert_eq!(read_io(&mut gb, 0xFF11), 0xBF, "NR11 ($FF11)");
+    assert_eq!(read_io(&mut gb, 0xFF12), 0xF3, "NR12 ($FF12)");
+    assert_eq!(read_io(&mut gb, 0xFF13), 0xFF, "NR13 ($FF13)");
+    assert_eq!(read_io(&mut gb, 0xFF14), 0xBF, "NR14 ($FF14)");
+    assert_eq!(read_io(&mut gb, 0xFF16), 0x3F, "NR21 ($FF16)");
+    assert_eq!(read_io(&mut gb, 0xFF17), 0x00, "NR22 ($FF17)");
+    assert_eq!(read_io(&mut gb, 0xFF18), 0xFF, "NR23 ($FF18)");
+    assert_eq!(read_io(&mut gb, 0xFF19), 0xBF, "NR24 ($FF19)");
+    assert_eq!(read_io(&mut gb, 0xFF1A), 0x7F, "NR30 ($FF1A)");
+    assert_eq!(read_io(&mut gb, 0xFF1B), 0xFF, "NR31 ($FF1B)");
+    assert_eq!(read_io(&mut gb, 0xFF1C), 0x9F, "NR32 ($FF1C)");
+    assert_eq!(read_io(&mut gb, 0xFF1D), 0xFF, "NR33 ($FF1D)");
+    assert_eq!(read_io(&mut gb, 0xFF1E), 0xBF, "NR34 ($FF1E)");
+    assert_eq!(read_io(&mut gb, 0xFF20), 0xFF, "NR41 ($FF20)");
+    assert_eq!(read_io(&mut gb, 0xFF21), 0x00, "NR42 ($FF21)");
+    assert_eq!(read_io(&mut gb, 0xFF22), 0x00, "NR43 ($FF22)");
+    assert_eq!(read_io(&mut gb, 0xFF23), 0xBF, "NR44 ($FF23)");
+    assert_eq!(read_io(&mut gb, 0xFF24), 0x77, "NR50 ($FF24)");
+    assert_eq!(read_io(&mut gb, 0xFF25), 0xF3, "NR51 ($FF25)");
+    assert_eq!(read_io(&mut gb, 0xFF26), 0xF1, "NR52 ($FF26)");
+
+    // PPU registers
+    assert_eq!(read_io(&mut gb, 0xFF40), 0x91, "LCDC ($FF40)");
+    // STAT ($FF41) and LY ($FF44) are timing-sensitive (change every few dots);
+    // the Mooneye boot_hwio-dmgABCmgb test already verifies them with correct
+    // cycle alignment so we skip them in this direct-read audit.
+    assert_eq!(read_io(&mut gb, 0xFF42), 0x00, "SCY ($FF42)");
+    assert_eq!(read_io(&mut gb, 0xFF43), 0x00, "SCX ($FF43)");
+    assert_eq!(read_io(&mut gb, 0xFF45), 0x00, "LYC ($FF45)");
+    assert_eq!(read_io(&mut gb, 0xFF46), 0xFF, "DMA ($FF46)");
+    assert_eq!(read_io(&mut gb, 0xFF47), 0xFC, "BGP ($FF47)");
+    // OBP0 ($FF48) and OBP1 ($FF49) are uninitialized per Pan Docs — not verified.
+    assert_eq!(read_io(&mut gb, 0xFF4A), 0x00, "WY ($FF4A)");
+    assert_eq!(read_io(&mut gb, 0xFF4B), 0x00, "WX ($FF4B)");
+
+    // Interrupt enable
+    assert_eq!(read_io(&mut gb, 0xFFFF), 0x00, "IE ($FFFF)");
+}
+
+/// Verify all documented post-boot IO register values for DMG-0 hardware
+/// against the Pan Docs reference table.
+///
+/// Key differences from DMG production: DIV=$18, STAT=$81, LY=$91 (shorter boot ROM).
+///
+/// Reference: <https://gbdev.io/pandocs/Power_Up_Sequence.html#hardware-registers>
+#[test]
+fn test_dmg0_boot_io_registers() {
+    let mut gb = boot_to_cartridge_entry(DmgModel::Dmg0);
+
+    // Serial
+    assert_eq!(read_io(&mut gb, 0xFF01), 0x00, "SB ($FF01)");
+    assert_eq!(read_io(&mut gb, 0xFF02), 0x7E, "SC ($FF02)");
+
+    // Timer
+    assert_eq!(read_io(&mut gb, 0xFF04), 0x18, "DIV ($FF04)");
+    assert_eq!(read_io(&mut gb, 0xFF05), 0x00, "TIMA ($FF05)");
+    assert_eq!(read_io(&mut gb, 0xFF06), 0x00, "TMA ($FF06)");
+    assert_eq!(read_io(&mut gb, 0xFF07), 0xF8, "TAC ($FF07)");
+
+    // Interrupt flag
+    assert_eq!(read_io(&mut gb, 0xFF0F), 0xE1, "IF ($FF0F)");
+
+    // APU registers (identical to production)
+    assert_eq!(read_io(&mut gb, 0xFF10), 0x80, "NR10 ($FF10)");
+    assert_eq!(read_io(&mut gb, 0xFF11), 0xBF, "NR11 ($FF11)");
+    assert_eq!(read_io(&mut gb, 0xFF12), 0xF3, "NR12 ($FF12)");
+    assert_eq!(read_io(&mut gb, 0xFF13), 0xFF, "NR13 ($FF13)");
+    assert_eq!(read_io(&mut gb, 0xFF14), 0xBF, "NR14 ($FF14)");
+    assert_eq!(read_io(&mut gb, 0xFF16), 0x3F, "NR21 ($FF16)");
+    assert_eq!(read_io(&mut gb, 0xFF17), 0x00, "NR22 ($FF17)");
+    assert_eq!(read_io(&mut gb, 0xFF18), 0xFF, "NR23 ($FF18)");
+    assert_eq!(read_io(&mut gb, 0xFF19), 0xBF, "NR24 ($FF19)");
+    assert_eq!(read_io(&mut gb, 0xFF1A), 0x7F, "NR30 ($FF1A)");
+    assert_eq!(read_io(&mut gb, 0xFF1B), 0xFF, "NR31 ($FF1B)");
+    assert_eq!(read_io(&mut gb, 0xFF1C), 0x9F, "NR32 ($FF1C)");
+    assert_eq!(read_io(&mut gb, 0xFF1D), 0xFF, "NR33 ($FF1D)");
+    assert_eq!(read_io(&mut gb, 0xFF1E), 0xBF, "NR34 ($FF1E)");
+    assert_eq!(read_io(&mut gb, 0xFF20), 0xFF, "NR41 ($FF20)");
+    assert_eq!(read_io(&mut gb, 0xFF21), 0x00, "NR42 ($FF21)");
+    assert_eq!(read_io(&mut gb, 0xFF22), 0x00, "NR43 ($FF22)");
+    assert_eq!(read_io(&mut gb, 0xFF23), 0xBF, "NR44 ($FF23)");
+    assert_eq!(read_io(&mut gb, 0xFF24), 0x77, "NR50 ($FF24)");
+    assert_eq!(read_io(&mut gb, 0xFF25), 0xF3, "NR51 ($FF25)");
+    assert_eq!(read_io(&mut gb, 0xFF26), 0xF1, "NR52 ($FF26)");
+
+    // PPU registers — DMG-0 has different timing values (shorter boot ROM)
+    assert_eq!(read_io(&mut gb, 0xFF40), 0x91, "LCDC ($FF40)");
+    // STAT ($FF41) and LY ($FF44) are timing-sensitive; verified by Mooneye
+    // boot_hwio-dmg0 test instead.
+    assert_eq!(read_io(&mut gb, 0xFF42), 0x00, "SCY ($FF42)");
+    assert_eq!(read_io(&mut gb, 0xFF43), 0x00, "SCX ($FF43)");
+    assert_eq!(read_io(&mut gb, 0xFF45), 0x00, "LYC ($FF45)");
+    assert_eq!(read_io(&mut gb, 0xFF46), 0xFF, "DMA ($FF46)");
+    assert_eq!(read_io(&mut gb, 0xFF47), 0xFC, "BGP ($FF47)");
+    // OBP0 ($FF48) and OBP1 ($FF49) are uninitialized per Pan Docs — not verified.
+    assert_eq!(read_io(&mut gb, 0xFF4A), 0x00, "WY ($FF4A)");
+    assert_eq!(read_io(&mut gb, 0xFF4B), 0x00, "WX ($FF4B)");
+
+    // Interrupt enable
+    assert_eq!(read_io(&mut gb, 0xFFFF), 0x00, "IE ($FFFF)");
+}
+
+// ============================================================================
+// DMG-A/B/C identical post-boot state verification
+// ============================================================================
+
+/// DMG-A, DMG-B, and DMG-C must produce byte-identical post-boot state.
+///
+/// They share the same boot ROM (Production variant) and should produce
+/// identical CPU register values, IO register values, and timing at $0100.
+#[test]
+fn test_dmg_a_b_c_produce_identical_post_boot_state() {
+    let mut gb_a = boot_to_cartridge_entry(DmgModel::DmgA);
+    let mut gb_b = boot_to_cartridge_entry(DmgModel::DmgB);
+    let mut gb_c = boot_to_cartridge_entry(DmgModel::DmgC);
+
+    // CPU registers
+    assert_eq!(gb_a.cpu.regs.af(), gb_b.cpu.regs.af(), "AF: DMG-A vs DMG-B");
+    assert_eq!(gb_b.cpu.regs.af(), gb_c.cpu.regs.af(), "AF: DMG-B vs DMG-C");
+    assert_eq!(gb_a.cpu.regs.bc(), gb_b.cpu.regs.bc(), "BC: DMG-A vs DMG-B");
+    assert_eq!(gb_b.cpu.regs.bc(), gb_c.cpu.regs.bc(), "BC: DMG-B vs DMG-C");
+    assert_eq!(gb_a.cpu.regs.de(), gb_b.cpu.regs.de(), "DE: DMG-A vs DMG-B");
+    assert_eq!(gb_b.cpu.regs.de(), gb_c.cpu.regs.de(), "DE: DMG-B vs DMG-C");
+    assert_eq!(gb_a.cpu.regs.hl(), gb_b.cpu.regs.hl(), "HL: DMG-A vs DMG-B");
+    assert_eq!(gb_b.cpu.regs.hl(), gb_c.cpu.regs.hl(), "HL: DMG-B vs DMG-C");
+    assert_eq!(gb_a.cpu.regs.sp, gb_b.cpu.regs.sp, "SP: DMG-A vs DMG-B");
+    assert_eq!(gb_b.cpu.regs.sp, gb_c.cpu.regs.sp, "SP: DMG-B vs DMG-C");
+
+    // Elapsed cycles
+    assert_eq!(gb_a.cycles(), gb_b.cycles(), "Cycles: DMG-A vs DMG-B");
+    assert_eq!(gb_b.cycles(), gb_c.cycles(), "Cycles: DMG-B vs DMG-C");
+
+    // IO registers — compare a comprehensive set
+    let io_addrs: &[u16] = &[
+        0xFF01, 0xFF02, 0xFF04, 0xFF05, 0xFF06, 0xFF07, 0xFF0F, 0xFF10, 0xFF11, 0xFF12, 0xFF13,
+        0xFF14, 0xFF16, 0xFF17, 0xFF18, 0xFF19, 0xFF1A, 0xFF1B, 0xFF1C, 0xFF1D, 0xFF1E, 0xFF20,
+        0xFF21, 0xFF22, 0xFF23, 0xFF24, 0xFF25, 0xFF26, 0xFF40, 0xFF41, 0xFF42, 0xFF43, 0xFF44,
+        0xFF45, 0xFF46, 0xFF47, 0xFF4A, 0xFF4B, 0xFFFF,
+    ];
+    for &addr in io_addrs {
+        let a = read_io(&mut gb_a, addr);
+        let b = read_io(&mut gb_b, addr);
+        let c = read_io(&mut gb_c, addr);
+        assert_eq!(
+            a, b,
+            "IO ${:04X}: DMG-A (${:02X}) vs DMG-B (${:02X})",
+            addr, a, b
+        );
+        assert_eq!(
+            b, c,
+            "IO ${:04X}: DMG-B (${:02X}) vs DMG-C (${:02X})",
+            addr, b, c
+        );
+    }
+}
+
+/// DMG-0 boot ROM also sets correct CPU register state.
+///
+/// Per Pan Docs: A=$01, F=$00, B=$FF, C=$13, D=$00, E=$C1, H=$84, L=$03
+#[test]
+fn test_dmg0_boot_sets_correct_register_state() {
+    let gb = boot_to_cartridge_entry(DmgModel::Dmg0);
+
+    assert_eq!(gb.cpu.regs.a, 0x01, "A register after DMG-0 boot");
+    assert_eq!(gb.cpu.regs.f, 0x00, "F register after DMG-0 boot");
+    assert_eq!(gb.cpu.regs.b, 0xFF, "B register after DMG-0 boot");
+    assert_eq!(gb.cpu.regs.c, 0x13, "C register after DMG-0 boot");
+    assert_eq!(gb.cpu.regs.d, 0x00, "D register after DMG-0 boot");
+    assert_eq!(gb.cpu.regs.e, 0xC1, "E register after DMG-0 boot");
+    assert_eq!(gb.cpu.regs.h, 0x84, "H register after DMG-0 boot");
+    assert_eq!(gb.cpu.regs.l, 0x03, "L register after DMG-0 boot");
+    assert_eq!(gb.cpu.regs.sp, 0xFFFE, "SP after DMG-0 boot");
+    assert_eq!(gb.cpu.regs.pc, 0x0100, "PC after DMG-0 boot");
 }

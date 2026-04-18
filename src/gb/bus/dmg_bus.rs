@@ -121,7 +121,7 @@ impl DmgBus {
             serial_bits_remaining: 0,
             serial_master_clock: false,
             dma_active: false,
-            dma_source: 0,
+            dma_source: 0xFF,
             dma_position: 0,
             dma_oam_blocked: false,
             model,
@@ -160,7 +160,7 @@ impl DmgBus {
         self.serial_bits_remaining = 0;
         self.serial_master_clock = false;
         self.dma_active = false;
-        self.dma_source = 0;
+        self.dma_source = 0xFF;
         self.dma_position = 0;
         self.dma_oam_blocked = false;
     }

@@ -115,6 +115,32 @@ pub fn run_mooneye_rom_dmg0(path: &str) -> MooneyeResult {
     detect_mooneye_result(&mut gb)
 }
 
+/// Load a GB ROM from `path` and return a ready-to-step `Gb<DmgBus>` (DMG-A model).
+fn load_gb_rom_dmg_a(path: &str) -> Gb<DmgBus> {
+    let rom = std::fs::read(path).expect("Mooneye ROM file should be present");
+    let cart = load_cartridge(&rom).expect("valid GB ROM");
+    Gb::new(DmgBus::new(cart, DmgModel::DmgA))
+}
+
+/// Run a Mooneye test ROM using the DMG-A hardware model.
+fn run_mooneye_rom_dmg_a(path: &str) -> MooneyeResult {
+    let mut gb = load_gb_rom_dmg_a(path);
+    detect_mooneye_result(&mut gb)
+}
+
+/// Load a GB ROM from `path` and return a ready-to-step `Gb<DmgBus>` (DMG-C model).
+fn load_gb_rom_dmg_c(path: &str) -> Gb<DmgBus> {
+    let rom = std::fs::read(path).expect("Mooneye ROM file should be present");
+    let cart = load_cartridge(&rom).expect("valid GB ROM");
+    Gb::new(DmgBus::new(cart, DmgModel::DmgC))
+}
+
+/// Run a Mooneye test ROM using the DMG-C hardware model.
+fn run_mooneye_rom_dmg_c(path: &str) -> MooneyeResult {
+    let mut gb = load_gb_rom_dmg_c(path);
+    detect_mooneye_result(&mut gb)
+}
+
 // ============================================================================
 // Helper macro to produce a single-line pass assertion.
 // ============================================================================
@@ -139,6 +165,32 @@ macro_rules! assert_mooneye_pass_dmg0 {
             result,
             MooneyeResult::Pass,
             "Mooneye DMG-0 test failed: {:?} — ROM: {}",
+            result,
+            $path
+        );
+    };
+}
+
+macro_rules! assert_mooneye_pass_dmg_a {
+    ($path:expr) => {
+        let result = run_mooneye_rom_dmg_a($path);
+        assert_eq!(
+            result,
+            MooneyeResult::Pass,
+            "Mooneye DMG-A test failed: {:?} — ROM: {}",
+            result,
+            $path
+        );
+    };
+}
+
+macro_rules! assert_mooneye_pass_dmg_c {
+    ($path:expr) => {
+        let result = run_mooneye_rom_dmg_c($path);
+        assert_eq!(
+            result,
+            MooneyeResult::Pass,
+            "Mooneye DMG-C test failed: {:?} — ROM: {}",
             result,
             $path
         );
@@ -813,9 +865,9 @@ fn test_mooneye_misc_bits_unused_hwio_c() {
 }
 
 #[test]
-#[ignore = "DMG-A-only test — DMG-A not emulated as a distinct model (grouped in DmgAbc)"]
+#[ignore = "AGB/AGS-only test — Game Boy Advance hardware not emulated"]
 fn test_mooneye_misc_boot_div_a() {
-    assert_mooneye_pass!(&format!("{BASE}/misc/boot_div-A.gb"));
+    assert_mooneye_pass_dmg_a!(&format!("{BASE}/misc/boot_div-A.gb"));
 }
 
 #[test]
@@ -837,9 +889,9 @@ fn test_mooneye_misc_boot_hwio_c() {
 }
 
 #[test]
-#[ignore = "DMG-A-only test — DMG-A not emulated as a distinct model (grouped in DmgAbc)"]
+#[ignore = "AGB/AGS-only test — Game Boy Advance hardware not emulated"]
 fn test_mooneye_misc_boot_regs_a() {
-    assert_mooneye_pass!(&format!("{BASE}/misc/boot_regs-A.gb"));
+    assert_mooneye_pass_dmg_a!(&format!("{BASE}/misc/boot_regs-A.gb"));
 }
 
 #[test]
@@ -852,4 +904,39 @@ fn test_mooneye_misc_boot_regs_cgb() {
 #[ignore = "CGB-only test — CGB hardware model not yet emulated"]
 fn test_mooneye_misc_ppu_vblank_stat_intr_c() {
     assert_mooneye_pass!(&format!("{BASE}/misc/ppu/vblank_stat_intr-C.gb"));
+}
+
+// ============================================================================
+// Per-variant boot tests — verify DMG-A and DMG-C pass the same boot tests
+// that DMG-B already passes.
+// ============================================================================
+
+#[test]
+fn test_mooneye_acceptance_boot_regs_dmgabc_with_dmg_a() {
+    assert_mooneye_pass_dmg_a!(&format!("{BASE}/acceptance/boot_regs-dmgABC.gb"));
+}
+
+#[test]
+fn test_mooneye_acceptance_boot_regs_dmgabc_with_dmg_c() {
+    assert_mooneye_pass_dmg_c!(&format!("{BASE}/acceptance/boot_regs-dmgABC.gb"));
+}
+
+#[test]
+fn test_mooneye_acceptance_boot_div_dmgabcmgb_with_dmg_a() {
+    assert_mooneye_pass_dmg_a!(&format!("{BASE}/acceptance/boot_div-dmgABCmgb.gb"));
+}
+
+#[test]
+fn test_mooneye_acceptance_boot_div_dmgabcmgb_with_dmg_c() {
+    assert_mooneye_pass_dmg_c!(&format!("{BASE}/acceptance/boot_div-dmgABCmgb.gb"));
+}
+
+#[test]
+fn test_mooneye_acceptance_boot_hwio_dmgabcmgb_with_dmg_a() {
+    assert_mooneye_pass_dmg_a!(&format!("{BASE}/acceptance/boot_hwio-dmgABCmgb.gb"));
+}
+
+#[test]
+fn test_mooneye_acceptance_boot_hwio_dmgabcmgb_with_dmg_c() {
+    assert_mooneye_pass_dmg_c!(&format!("{BASE}/acceptance/boot_hwio-dmgABCmgb.gb"));
 }

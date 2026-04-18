@@ -58,7 +58,7 @@ impl GbConsole {
 
     fn reset(&mut self, soft_reset: bool) {
         match self {
-            Self::Dmg(gb) => gb.reset(soft_reset),
+            Self::Dmg(gb) => gb.reset(),
             Self::Cgb(gb) => gb.reset(soft_reset),
         }
     }

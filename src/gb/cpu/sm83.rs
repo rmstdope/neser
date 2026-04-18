@@ -149,36 +149,13 @@ impl<B: GbBus> Sm83<B> {
         self.cycles
     }
 
-    /// Reset the CPU registers to the post-boot-ROM (DMG) state.
+    /// Reset the CPU to power-on state.
     ///
-    /// This matches the register values a DMG has after the boot ROM finishes
-    /// and jumps to the cartridge entry point at $0100.
-    /// Clears IME, halted, halt_bug, and ime_pending; the cycle counter is
-    /// intentionally NOT reset (it tracks wall-clock ticks, not game time).
-    pub fn reset_registers(&mut self) {
-        self.regs.set_af(0x01B0);
-        self.regs.set_bc(0x0013);
-        self.regs.set_de(0x00D8);
-        self.regs.set_hl(0x014D);
-        self.regs.sp = 0xFFFE;
-        self.regs.pc = 0x0100;
-        self.ime = false;
-        self.halted = false;
-        self.halt_bug = false;
-        self.ime_pending = false;
-    }
-
-    /// Reset the CPU registers to the post-boot-ROM (DMG-0) state.
-    ///
-    /// DMG-0 (first production run) exits its boot ROM with different register
-    /// values from later DMG revisions.
-    pub fn reset_registers_dmg0(&mut self) {
-        self.regs.set_af(0x0100); // A=$01, F=$00
-        self.regs.set_bc(0xFF13); // B=$FF, C=$13
-        self.regs.set_de(0x00C1); // D=$00, E=$C1
-        self.regs.set_hl(0x8403); // H=$84, L=$03
-        self.regs.sp = 0xFFFE;
-        self.regs.pc = 0x0100;
+    /// All registers zeroed, IME/halted/halt_bug/ime_pending cleared.
+    /// PC starts at $0000 (boot ROM entry point).
+    /// The cycle counter is intentionally NOT reset.
+    pub fn reset_to_power_on(&mut self) {
+        self.regs = Registers::new();
         self.ime = false;
         self.halted = false;
         self.halt_bug = false;
