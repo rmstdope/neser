@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 use crate::gb::bus::GbBus;
 
 // ---------------------------------------------------------------------------
@@ -9,7 +11,7 @@ const FLAG_H: u8 = 1 << 5; // Half-carry
 const FLAG_C: u8 = 1 << 4; // Carry
 
 /// SM83 register file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Registers {
     pub a: u8,
     pub f: u8, // bits 7-4: Z N H C; bits 3-0: always 0

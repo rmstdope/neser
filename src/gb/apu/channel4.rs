@@ -4,8 +4,11 @@
 //! 7-bit mode: feedback is also written to bit 6, shortening the period.
 
 /// Divisor lookup for noise clock (NR43 bits 2-0).
+use serde::{Deserialize, Serialize};
+
 const DIVISORS: [u32; 8] = [8, 16, 32, 48, 64, 80, 96, 112];
 
+#[derive(Serialize, Deserialize)]
 pub struct Channel4 {
     init_volume: u8,
     env_add: bool,

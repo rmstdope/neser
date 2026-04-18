@@ -22,6 +22,8 @@ pub mod channel2;
 pub mod channel3;
 pub mod channel4;
 
+use serde::{Deserialize, Serialize};
+
 use channel1::Channel1;
 use channel2::Channel2;
 use channel3::Channel3;
@@ -60,6 +62,7 @@ const DUTY_TABLE: [[u8; 8]; 4] = [
 ];
 
 /// Game Boy DMG APU.
+#[derive(Serialize, Deserialize)]
 pub struct Apu {
     ch1: Channel1,
     ch2: Channel2,

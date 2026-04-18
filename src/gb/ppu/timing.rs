@@ -1,5 +1,7 @@
+use serde::{Deserialize, Serialize};
+
 /// DMG PPU operating modes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PpuMode {
     /// Mode 0 — H-Blank: CPU/DMA has access to VRAM and OAM.
     HBlank = 0,
@@ -40,6 +42,7 @@ pub enum PpuMode {
 ///   VRAM write blocked:[84, 252+extra).
 ///
 /// VBlank: scanlines 144–153 (all Mode 1; 4560 dots total).
+#[derive(Serialize, Deserialize)]
 pub struct Timing {
     dot: u16,
     scanline: u8,
@@ -311,7 +314,11 @@ impl Timing {
         if self.scanline >= Self::VBLANK_START_LINE {
             return false;
         }
-        let vram_start = if self.first_scanline_after_enable { 84u16 } else { 80 };
+        let vram_start = if self.first_scanline_after_enable {
+            84u16
+        } else {
+            80
+        };
         self.dot >= vram_start && self.dot < self.mode3_end()
     }
 
@@ -355,7 +362,7 @@ impl Timing {
     ///   - Physical OAM scan write-lock starts at dot=4, ends at dot=80.
     ///   - Mode3 write-lock starts 4T after STAT Mode3 (dot=84, not dot=80).
     ///   - Gaps [0,4) and [80,84) are accessible for writes on DMG.
-    /// Scan 2+: blocked during [4, 80) ∪ [84, 252+extra).
+    ///     Scan 2+: blocked during [4, 80) ∪ [84, 252+extra).
     ///   - OAM write-lock starts at dot=4 (STAT shows Mode2 from dot=0, but write
     ///     gate lags 4T).  Mode3 write-lock starts at dot=84, not dot=80.
     pub fn is_oam_write_blocked(&self) -> bool {
@@ -426,7 +433,10 @@ impl Timing {
     /// Scan 2+: dot 252 + extra (OAM_SCAN_DOTS + PIXEL_TRANSFER_DOTS).
     fn mode3_end(&self) -> u16 {
         if self.first_scanline_after_enable || self.second_scanline_after_enable {
-            Self::OAM_SCAN_START + Self::OAM_SCAN_DOTS + Self::PIXEL_TRANSFER_DOTS + self.mode3_extra_dots
+            Self::OAM_SCAN_START
+                + Self::OAM_SCAN_DOTS
+                + Self::PIXEL_TRANSFER_DOTS
+                + self.mode3_extra_dots
         } else {
             Self::OAM_SCAN_DOTS + Self::PIXEL_TRANSFER_DOTS + self.mode3_extra_dots
         }

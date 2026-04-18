@@ -2,6 +2,9 @@
 //!
 //! Identical to Channel1 in structure except there is no sweep unit (NR10).
 
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize)]
 pub struct Channel2 {
     duty: u8,
     length_load: u8,

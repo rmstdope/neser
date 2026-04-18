@@ -10,7 +10,10 @@
 //! Button IDs follow the NES convention used throughout the platform API:
 //! A=0, B=1, Select=2, Start=3, Up=4, Down=5, Left=6, Right=7.
 
+use serde::{Deserialize, Serialize};
+
 /// Game Boy joypad ($FF00 / P1 register).
+#[derive(Serialize, Deserialize)]
 pub struct Joypad {
     /// Bits 4-5 written by the game (`val & 0x30`); bit=0 means group is selected.
     select_bits: u8,

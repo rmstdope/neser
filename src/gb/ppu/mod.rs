@@ -6,6 +6,9 @@ pub mod sprites;
 pub mod timing;
 pub mod window;
 
+use serde::{Deserialize, Serialize};
+use serde_with::serde_as;
+
 use registers::Registers;
 use screen_buffer::ScreenBuffer;
 use timing::{PpuMode, Timing};
@@ -21,8 +24,12 @@ const DOTS_PER_M_CYCLE: u16 = 4;
 /// In CGB mode (`cgb_mode = true`) the PPU additionally owns VRAM bank 1,
 /// CGB color palette RAM, and handles the CGB-specific registers
 /// (`$FF4F` VBK, `$FF68/$FF69` BCPS/BCPD, `$FF6A/$FF6B` OCPS/OCPD, `$FF6C` OPRI).
+#[serde_as]
+#[derive(Serialize, Deserialize)]
 pub struct Ppu {
+    #[serde_as(as = "[_; 0x2000]")]
     pub vram: [u8; 0x2000],
+    #[serde_as(as = "[_; 0xA0]")]
     pub oam: [u8; 0xA0],
     timing: Timing,
     registers: Registers,
@@ -45,12 +52,15 @@ pub struct Ppu {
     pub cgb_mode: bool,
     /// CGB VRAM bank 1 ($8000–$9FFF when VBK=$01). Holds BG tile attributes and
     /// additional tile data for sprites.
+    #[serde_as(as = "[_; 0x2000]")]
     pub vram_bank1: [u8; 0x2000],
     /// `$FF4F` VBK — VRAM bank select (bit 0: 0=bank0, 1=bank1; upper bits read as 1).
     pub vbk: u8,
     /// CGB BG color palette RAM — 8 palettes × 4 colors × 2 bytes (5-5-5 little-endian).
+    #[serde_as(as = "[_; 64]")]
     pub bg_palette_ram: [u8; 64],
     /// CGB OBJ color palette RAM — 8 palettes × 4 colors × 2 bytes (5-5-5 little-endian).
+    #[serde_as(as = "[_; 64]")]
     pub obj_palette_ram: [u8; 64],
     /// `$FF68` BCPS — BG Color Palette Specification (index + auto-increment flag).
     pub bcps: u8,

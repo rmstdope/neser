@@ -1,5 +1,8 @@
 //! CH1 – Pulse channel with frequency sweep (NR10–NR14).
 
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize)]
 pub struct Channel1 {
     // NR10 fields
     sweep_period: u8, // bits 6-4 (0-7)
