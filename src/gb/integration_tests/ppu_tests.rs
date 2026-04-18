@@ -7,7 +7,7 @@ use crate::gb::model::DmgModel;
 fn load_gb_rom(path: &str) -> Gb<DmgBus> {
     let rom = std::fs::read(path).expect("ROM file should be present");
     let cart = load_cartridge(&rom).expect("valid GB ROM");
-    Gb::new(DmgBus::new(cart, DmgModel::DmgAbc))
+    Gb::new(DmgBus::new(cart, DmgModel::DmgB))
 }
 
 fn load_cgb_rom(path: &str) -> Gb<CgbBus> {

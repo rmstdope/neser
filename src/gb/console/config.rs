@@ -1,53 +1,34 @@
 //! Configuration for the Game Boy emulator.
 //!
 //! [`GbConfig`] holds Game Boy-specific configuration options such as the
-//! emulated hardware variant (DMG or CGB).
+//! emulated DMG hardware variant.
 
+use crate::gb::model::DmgModel;
 use crate::platform::config::CliFlag;
 
 /// GB-specific CLI flags, defined here so that the GB module owns its flag
 /// declarations and parsing logic. These are chained into the global flag list
 /// by the platform config parser for validation and help-text generation.
 pub(crate) const GB_CLI_FLAGS: &[CliFlag] = &[CliFlag {
-    flag: "--gb-hardware",
-    help: Some("Game Boy hardware variant: dmg or cgb (default: dmg)"),
+    flag: "--gb-dmg-variant",
+    help: Some("DMG hardware variant: dmg-0, dmg-a, dmg-b, dmg-c (default: dmg-b)"),
     has_value: true,
 }];
 
-/// Game Boy hardware variant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GbHardware {
-    /// Original Game Boy (DMG).
-    Dmg,
-    /// Game Boy Color (CGB).
-    Cgb,
-}
-
-impl GbHardware {
-    /// Parse a hardware variant from a string value.
-    pub fn parse(value: &str) -> Option<Self> {
-        match value.to_ascii_lowercase().as_str() {
-            "dmg" => Some(Self::Dmg),
-            "cgb" => Some(Self::Cgb),
-            _ => None,
-        }
-    }
-}
+/// Valid values for the `gb-dmg-variant` option (used in error messages).
+const VALID_DMG_VARIANTS: &str = "dmg-0, dmg-a, dmg-b, dmg-c";
 
 /// Game Boy-specific hardware configuration.
 #[derive(Debug, Clone)]
 pub struct GbConfig {
-    /// Emulated hardware variant.
-    pub hardware: GbHardware,
-    /// Whether hardware was explicitly configured (vs. auto-detected from ROM).
-    pub hardware_explicit: bool,
+    /// Emulated DMG hardware variant.
+    pub dmg_variant: DmgModel,
 }
 
 impl Default for GbConfig {
     fn default() -> Self {
         Self {
-            hardware: GbHardware::Dmg,
-            hardware_explicit: false,
+            dmg_variant: DmgModel::DmgB,
         }
     }
 }
@@ -55,29 +36,25 @@ impl Default for GbConfig {
 impl GbConfig {
     /// Parse GB-specific CLI arguments and apply them to this config.
     pub(crate) fn apply_args(&mut self, args: &[String]) -> Result<(), String> {
-        if let Some(gb_hardware) =
-            crate::platform::config::parse_cli_string_arg(args, "--gb-hardware")
+        if let Some(variant) =
+            crate::platform::config::parse_cli_string_arg(args, "--gb-dmg-variant")
         {
-            self.hardware = GbHardware::parse(&gb_hardware).ok_or_else(|| {
+            self.dmg_variant = DmgModel::parse(&variant).ok_or_else(|| {
                 format!(
-                    "Invalid --gb-hardware value: '{}'. Valid options are: dmg, cgb",
-                    gb_hardware
+                    "Invalid --gb-dmg-variant value: '{variant}'. Valid options are: {VALID_DMG_VARIANTS}",
                 )
             })?;
-            self.hardware_explicit = true;
         }
         Ok(())
     }
 
-    /// Apply a `gb-hardware` config file value to this config.
+    /// Apply a `gb-dmg-variant` config file value to this config.
     pub(crate) fn apply_config_value(&mut self, value: &str) -> Result<(), String> {
-        self.hardware = GbHardware::parse(value).ok_or_else(|| {
+        self.dmg_variant = DmgModel::parse(value).ok_or_else(|| {
             format!(
-                "Invalid gb-hardware value: '{}'. Valid options are: dmg, cgb",
-                value
+                "Invalid gb-dmg-variant value: '{value}'. Valid options are: {VALID_DMG_VARIANTS}",
             )
         })?;
-        self.hardware_explicit = true;
         Ok(())
     }
 }

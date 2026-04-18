@@ -44,11 +44,11 @@ const MOONEYE_CYCLE_LIMIT: u64 = 10_000_000;
 /// LD B,B opcode used as a Mooneye software breakpoint.
 const LD_B_B: u8 = 0x40;
 
-/// Load a GB ROM from `path` and return a ready-to-step `Gb<DmgBus>` (DMG-ABC model).
+/// Load a GB ROM from `path` and return a ready-to-step `Gb<DmgBus>` (DMG-B model).
 fn load_gb_rom(path: &str) -> Gb<DmgBus> {
     let rom = std::fs::read(path).expect("Mooneye ROM file should be present");
     let cart = load_cartridge(&rom).expect("valid GB ROM");
-    Gb::new(DmgBus::new(cart, DmgModel::DmgAbc))
+    Gb::new(DmgBus::new(cart, DmgModel::DmgB))
 }
 
 /// Load a GB ROM from `path` and return a ready-to-step `Gb<DmgBus>` (DMG-0 model).
@@ -232,14 +232,14 @@ mod helper_tests {
     #[test]
     fn helper_detects_pass_when_fibonacci_registers_set() {
         let cart = load_cartridge(&make_pass_rom()).expect("valid test ROM");
-        let mut gb = Gb::new(DmgBus::new(cart, DmgModel::DmgAbc));
+        let mut gb = Gb::new(DmgBus::new(cart, DmgModel::DmgB));
         assert_eq!(detect_mooneye_result(&mut gb), MooneyeResult::Pass);
     }
 
     #[test]
     fn helper_detects_fail_when_registers_wrong() {
         let cart = load_cartridge(&make_fail_rom()).expect("valid test ROM");
-        let mut gb = Gb::new(DmgBus::new(cart, DmgModel::DmgAbc));
+        let mut gb = Gb::new(DmgBus::new(cart, DmgModel::DmgB));
         let result = detect_mooneye_result(&mut gb);
         assert!(
             matches!(result, MooneyeResult::Fail { b: 0xFF, .. }),
@@ -251,7 +251,7 @@ mod helper_tests {
     fn helper_returns_timeout_when_no_breakpoint() {
         let bytes = make_timeout_rom();
         let cart = load_cartridge(&bytes).expect("valid test ROM");
-        let mut gb = Gb::new(DmgBus::new(cart, DmgModel::DmgAbc));
+        let mut gb = Gb::new(DmgBus::new(cart, DmgModel::DmgB));
         assert_eq!(
             detect_mooneye_result_with_limit(&mut gb, 1_000),
             MooneyeResult::Timeout

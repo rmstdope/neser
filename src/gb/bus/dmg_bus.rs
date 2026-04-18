@@ -3,7 +3,7 @@ use crate::gb::boot_rom::{DMG_BOOT_ROM, DMG0_BOOT_ROM};
 use crate::gb::bus::GbBus;
 use crate::gb::cartridge::GbCartridge;
 use crate::gb::input::joypad::Joypad;
-use crate::gb::model::DmgModel;
+use crate::gb::model::{DmgBootVariant, DmgModel};
 use crate::gb::ppu::Ppu;
 use crate::gb::timer::Timer;
 
@@ -96,9 +96,9 @@ pub struct DmgBus {
 impl DmgBus {
     pub fn new(cart: Box<dyn GbCartridge>, model: DmgModel) -> Self {
         let is_cgb = cart.is_cgb();
-        let boot_rom = match model {
-            DmgModel::DmgAbc => DMG_BOOT_ROM,
-            DmgModel::Dmg0 => DMG0_BOOT_ROM,
+        let boot_rom = match model.boot_variant() {
+            DmgBootVariant::Production => DMG_BOOT_ROM,
+            DmgBootVariant::Dmg0 => DMG0_BOOT_ROM,
         };
         let mut bus = Self {
             cart,
@@ -149,9 +149,9 @@ impl DmgBus {
         self.hram = [0u8; 0x7F];
         self.if_reg = 1; // VBlank flag set at power-on (real DMG hardware)
         self.ie_reg = 0;
-        self.boot_rom = match self.model {
-            DmgModel::DmgAbc => DMG_BOOT_ROM,
-            DmgModel::Dmg0 => DMG0_BOOT_ROM,
+        self.boot_rom = match self.model.boot_variant() {
+            DmgBootVariant::Production => DMG_BOOT_ROM,
+            DmgBootVariant::Dmg0 => DMG0_BOOT_ROM,
         };
         self.boot_rom_active = true;
         self.sb = 0x00;
@@ -500,7 +500,7 @@ mod tests {
     }
 
     fn make_bus() -> DmgBus {
-        DmgBus::new(rom_only_cart(), DmgModel::DmgAbc)
+        DmgBus::new(rom_only_cart(), DmgModel::DmgB)
     }
 
     // ── VRAM ─────────────────────────────────────────────────────────────────
