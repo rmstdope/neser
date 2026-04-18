@@ -867,7 +867,7 @@ fn test_mooneye_misc_bits_unused_hwio_c() {
 #[test]
 #[ignore = "AGB/AGS-only test — Game Boy Advance hardware not emulated"]
 fn test_mooneye_misc_boot_div_a() {
-    assert_mooneye_pass_dmg_a!(&format!("{BASE}/misc/boot_div-A.gb"));
+    assert_mooneye_pass!(&format!("{BASE}/misc/boot_div-A.gb"));
 }
 
 #[test]
@@ -891,7 +891,7 @@ fn test_mooneye_misc_boot_hwio_c() {
 #[test]
 #[ignore = "AGB/AGS-only test — Game Boy Advance hardware not emulated"]
 fn test_mooneye_misc_boot_regs_a() {
-    assert_mooneye_pass_dmg_a!(&format!("{BASE}/misc/boot_regs-A.gb"));
+    assert_mooneye_pass!(&format!("{BASE}/misc/boot_regs-A.gb"));
 }
 
 #[test]
