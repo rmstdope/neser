@@ -24,7 +24,8 @@ pub enum PpuMode {
 ///
 /// Scan 1 (second_scanline_after_enable, LY=1, 456 dots):
 ///   Physical mode: HBlank [0,4), OamScan [4,80), PixelTransfer [80,256+extra), HBlank
-///   STAT mode bits: Mode0 is immediate; Mode2/3 lag 4T via stat_mode snapshot.
+///   STAT mode bits: Mode2 (OAM Scan) is immediate; Mode3 lags 4T via stat_mode snapshot;
+///                   Mode0 is immediate.
 ///   OAM read blocked:  [0, 256+extra)         — conservative latch from Mode3 end.
 ///   OAM write blocked: [4,80) ∪ [84,256+extra) — write gate has 4T delayed lock/unlock.
 ///   VRAM read blocked: [80, 256+extra).
@@ -311,7 +312,7 @@ impl Timing {
 
     /// Returns whether VRAM is blocked for CPU **read** access at the current dot.
     ///
-    /// Scan 0: blocked during [84, 256) — no OamScan, Mode3 is [84,256).
+    /// Scan 0: blocked during [84, 256+extra) — no OamScan, Mode3 is [84, 256+extra).
     /// Scan 1: blocked during [80, 256+extra) — physical Mode3 starts at dot=80.
     /// Scan 2+: blocked during [80, 252+extra) — physical Mode3 [80,252+extra).
     ///
@@ -321,7 +322,11 @@ impl Timing {
             return false;
         }
         let (vram_start, vram_end) = if self.first_scanline_after_enable {
-            (84u16, 256)
+            let mode3_end = Self::OAM_SCAN_START
+                + Self::OAM_SCAN_DOTS
+                + Self::PIXEL_TRANSFER_DOTS
+                + self.mode3_extra_dots;
+            (84u16, mode3_end)
         } else if self.second_scanline_after_enable {
             let mode3_end = Self::OAM_SCAN_START
                 + Self::OAM_SCAN_DOTS
@@ -337,7 +342,7 @@ impl Timing {
 
     /// Returns whether VRAM is blocked for CPU **write** access at the current dot.
     ///
-    /// Identical to `is_vram_blocked` for scan 0.
+    /// Identical to `is_vram_blocked` for scan 0: blocked during [84, 256+extra).
     /// Scan 1 and scan 2+: the write gate lags the read gate by 4T — Mode3 physically
     /// locks writes 4 dots later than it locks reads.  This matches the lcdon_write_timing-GS
     /// test on DMG: at dot=80 VRAM reads return $FF but writes succeed, at dot=84 writes fail.
@@ -346,7 +351,11 @@ impl Timing {
             return false;
         }
         let (vram_start, vram_end) = if self.first_scanline_after_enable {
-            (84u16, 256)
+            let mode3_end = Self::OAM_SCAN_START
+                + Self::OAM_SCAN_DOTS
+                + Self::PIXEL_TRANSFER_DOTS
+                + self.mode3_extra_dots;
+            (84u16, mode3_end)
         } else if self.second_scanline_after_enable {
             let mode3_end = Self::OAM_SCAN_START
                 + Self::OAM_SCAN_DOTS
@@ -362,7 +371,7 @@ impl Timing {
 
     /// Returns whether OAM is blocked for CPU **read** access at the current dot.
     ///
-    /// Scan 0: blocked during [84, 256) — no OamScan; only Mode3 blocks OAM.
+    /// Scan 0: blocked during [84, 256+extra) — no OamScan; only Mode3 blocks OAM.
     /// Scan 1: blocked during [0, 256+extra) — OAM is blocked from dot=0 even
     ///   though STAT shows Mode0 until dot=4. The brief HBlank [0,4) is "fake":
     ///   the OAM read bus remains blocked throughout [0, mode3_end).
@@ -374,7 +383,11 @@ impl Timing {
             return false;
         }
         if self.first_scanline_after_enable {
-            self.dot >= 84 && self.dot < 256
+            let mode3_end = Self::OAM_SCAN_START
+                + Self::OAM_SCAN_DOTS
+                + Self::PIXEL_TRANSFER_DOTS
+                + self.mode3_extra_dots;
+            self.dot >= 84 && self.dot < mode3_end
         } else if self.second_scanline_after_enable {
             let mode3_end = Self::OAM_SCAN_START
                 + Self::OAM_SCAN_DOTS
@@ -389,7 +402,7 @@ impl Timing {
 
     /// Returns whether OAM is blocked for CPU **write** access at the current dot.
     ///
-    /// Scan 0: blocked during [84, 256) — no OamScan; only Mode3 blocks OAM writes.
+    /// Scan 0: blocked during [84, 256+extra) — no OamScan; only Mode3 blocks OAM writes.
     /// Scan 1: blocked during [4, 80) ∪ [84, 256+extra).
     ///   - Physical OAM scan write-lock starts at dot=4, ends at dot=80.
     ///   - Mode3 write-lock starts 4T after STAT Mode3 (dot=84, not dot=80).
@@ -402,7 +415,11 @@ impl Timing {
             return false;
         }
         if self.first_scanline_after_enable {
-            self.dot >= 84 && self.dot < 256
+            let mode3_end = Self::OAM_SCAN_START
+                + Self::OAM_SCAN_DOTS
+                + Self::PIXEL_TRANSFER_DOTS
+                + self.mode3_extra_dots;
+            self.dot >= 84 && self.dot < mode3_end
         } else if self.second_scanline_after_enable {
             let mode3_end = Self::OAM_SCAN_START
                 + Self::OAM_SCAN_DOTS
@@ -459,7 +476,8 @@ impl Timing {
 
     /// Set the number of extra dots to add to Mode 3 (OBJ/SCX/window penalties).
     ///
-    /// Call at the Mode 2->Mode 3 transition (dot 84 of each visible scanline).
+    /// Call at the Mode 2→Mode 3 transition: dot 84 for scan 0 (first scanline after
+    /// LCD enable), dot 80 for scan 1 and scan 2+.
     pub fn set_mode3_extra_dots(&mut self, extra: u16) {
         self.mode3_extra_dots = extra;
     }

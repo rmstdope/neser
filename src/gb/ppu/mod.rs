@@ -114,8 +114,11 @@ impl Ppu {
                 self.tick_one_dot();
             }
         }
-        for _ in 0..remainder {
-            self.tick_one_dot();
+        if remainder > 0 {
+            self.timing.save_stat_mode();
+            for _ in 0..remainder {
+                self.tick_one_dot();
+            }
         }
     }
 
