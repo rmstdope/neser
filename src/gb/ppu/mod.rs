@@ -135,8 +135,9 @@ impl Ppu {
         // (i.e., lyc_eq_ly becomes true) is delayed until dot=4 (OAM Scan start).
         // Clearing lyc_eq_ly when LY diverges from LYC is still immediate at dot=0.
         let new_lyc_eq = self.timing.ly() == lyc;
+        // Clearing lyc_eq_ly is always immediate; only the match-fire is delayed until dot=4 on scan 1.
         let lyc_fire_allowed =
-            !self.timing.is_second_scanline_after_enable() || self.timing.dot() >= 4 || !new_lyc_eq; // clearing is always immediate; only firing is delayed
+            !self.timing.is_second_scanline_after_enable() || self.timing.dot() >= 4 || !new_lyc_eq;
         if lyc_fire_allowed {
             self.lyc_eq_ly_frozen = new_lyc_eq;
         }
