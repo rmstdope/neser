@@ -2,6 +2,8 @@ use crate::gb::bus::CgbBus;
 use crate::gb::bus::DmgBus;
 use crate::gb::bus::GbBus;
 use crate::gb::cpu::Sm83;
+use crate::gb::model::DmgBootVariant;
+#[cfg(test)]
 use crate::gb::model::DmgModel;
 
 pub mod config;
@@ -48,20 +50,15 @@ impl Gb<DmgBus> {
     /// - `soft_reset = false`: resets CPU registers **and** all bus
     ///   state (WRAM zeroed, PPU/timer/joypad reinitialised).
     pub fn reset(&mut self, soft_reset: bool) {
-        if soft_reset {
-            // Soft reset: restore post-boot register state and continue from
-            // the cartridge entry point, preserving WRAM and bus state.
-            match self.cpu.bus.model() {
-                DmgModel::DmgAbc => self.cpu.reset_registers(),
-                DmgModel::Dmg0 => self.cpu.reset_registers_dmg0(),
-            }
-        } else {
+        // Restore post-boot register state for the configured hardware variant.
+        match self.cpu.bus.model().boot_variant() {
+            DmgBootVariant::Production => self.cpu.reset_registers(),
+            DmgBootVariant::Dmg0 => self.cpu.reset_registers_dmg0(),
+        }
+
+        if !soft_reset {
             // Hard reset: reinitialise all bus hardware and restart execution
             // from the boot ROM entry point.
-            match self.cpu.bus.model() {
-                DmgModel::DmgAbc => self.cpu.reset_registers(),
-                DmgModel::Dmg0 => self.cpu.reset_registers_dmg0(),
-            }
             self.cpu.regs.pc = 0x0000;
             self.cpu.bus.reset();
         }
@@ -148,7 +145,7 @@ mod tests {
     }
 
     fn make_dmg() -> Gb<DmgBus> {
-        Gb::new(DmgBus::new(minimal_cart(), DmgModel::DmgAbc))
+        Gb::new(DmgBus::new(minimal_cart(), DmgModel::DmgB))
     }
 
     // ── reset: CPU registers ──────────────────────────────────────────────

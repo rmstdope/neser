@@ -8,7 +8,6 @@
 //! bus is created; `.gbc` (CGB-only, 0xC0) and `.gb` CGB-compat (0x80) ROMs
 //! both get a [`CgbBus`], all others get a [`DmgBus`].
 
-use crate::gb::DmgModel;
 use crate::gb::bus::{CgbBus, DmgBus};
 use crate::gb::cartridge::load_cartridge;
 use crate::gb::console::Gb;
@@ -124,7 +123,7 @@ impl GameBoy {
     ///
     /// Automatically selects DMG or CGB bus based on the ROM's CGB flag
     /// byte at 0x0143: 0x80 (CGB+DMG) and 0xC0 (CGB-only) use [`CgbBus`];
-    /// all other values use [`DmgBus`].
+    /// all other values use [`DmgBus`] with the DMG variant from configuration.
     pub fn load_rom(&mut self, bytes: &[u8], _name: &str) -> Result<(), String> {
         let cart = load_cartridge(bytes).map_err(|e| format!("{e:?}"))?;
         self.gb = Some(if cart.is_cgb() {
@@ -132,7 +131,8 @@ impl GameBoy {
             gb.cpu.reset_registers_cgb();
             GbConsole::Cgb(Box::new(gb))
         } else {
-            GbConsole::Dmg(Box::new(Gb::new(DmgBus::new(cart, DmgModel::DmgAbc))))
+            let dmg_variant = self.app_context.borrow().config().gb.dmg_variant;
+            GbConsole::Dmg(Box::new(Gb::new(DmgBus::new(cart, dmg_variant))))
         });
         Ok(())
     }
