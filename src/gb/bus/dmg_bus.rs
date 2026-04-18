@@ -335,6 +335,94 @@ impl DmgBus {
         self.dma_position = 0;
         self.dma_oam_blocked = preserve_blocking;
     }
+
+    // ── Save-state capture / restore ───────────────────────────────────────
+
+    /// Capture the full bus state for serialization.
+    pub fn capture_bus_state(
+        &self,
+    ) -> crate::gb::console::save_state::BusState {
+        use crate::gb::console::save_state::{BusState, GbBusType};
+        BusState {
+            bus_type: GbBusType::Dmg,
+            ppu: self.ppu.clone(),
+            wram: self.wram,
+            hram: self.hram,
+            timer: self.timer.clone(),
+            joypad: self.joypad.clone(),
+            apu: self.apu.clone(),
+            if_reg: self.if_reg,
+            ie_reg: self.ie_reg,
+            dma_active: self.dma_active,
+            dma_source: self.dma_source,
+            dma_position: self.dma_position,
+            dma_oam_blocked: self.dma_oam_blocked,
+            boot_rom_active: Some(self.boot_rom_active),
+            sb: Some(self.sb),
+            sc: Some(self.sc),
+            serial_buf: Some(self.serial_buf.clone()),
+            serial_bits_remaining: Some(self.serial_bits_remaining),
+            serial_master_clock: Some(self.serial_master_clock),
+            model: Some(self.model),
+        }
+    }
+
+    /// Restore bus state from a deserialized snapshot.
+    pub fn restore_bus_state(
+        &mut self,
+        state: &crate::gb::console::save_state::BusState,
+    ) {
+        self.ppu = state.ppu.clone();
+        self.wram = state.wram;
+        self.hram = state.hram;
+        self.timer = state.timer.clone();
+        self.joypad = state.joypad.clone();
+        self.apu = state.apu.clone();
+        self.if_reg = state.if_reg;
+        self.ie_reg = state.ie_reg;
+        self.dma_active = state.dma_active;
+        self.dma_source = state.dma_source;
+        self.dma_position = state.dma_position;
+        self.dma_oam_blocked = state.dma_oam_blocked;
+        if let Some(active) = state.boot_rom_active {
+            self.boot_rom_active = active;
+        }
+        if let Some(sb) = state.sb {
+            self.sb = sb;
+        }
+        if let Some(sc) = state.sc {
+            self.sc = sc;
+        }
+        if let Some(ref buf) = state.serial_buf {
+            self.serial_buf = buf.clone();
+        }
+        if let Some(bits) = state.serial_bits_remaining {
+            self.serial_bits_remaining = bits;
+        }
+        if let Some(clock) = state.serial_master_clock {
+            self.serial_master_clock = clock;
+        }
+    }
+
+    /// Snapshot cartridge RAM.
+    pub fn cart_ram_snapshot(&self) -> Vec<u8> {
+        self.cart.ram_snapshot()
+    }
+
+    /// Restore cartridge RAM from snapshot.
+    pub fn restore_cart_ram(&mut self, data: &[u8]) {
+        self.cart.restore_ram(data);
+    }
+
+    /// Snapshot MBC register state.
+    pub fn mbc_state_snapshot(&self) -> Vec<u8> {
+        self.cart.mbc_state_snapshot()
+    }
+
+    /// Restore MBC register state from snapshot.
+    pub fn restore_mbc_state(&mut self, data: &[u8]) {
+        self.cart.restore_mbc_state(data);
+    }
 }
 
 impl GbBus for DmgBus {

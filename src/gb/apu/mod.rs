@@ -62,7 +62,7 @@ const DUTY_TABLE: [[u8; 8]; 4] = [
 ];
 
 /// Game Boy DMG APU.
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Apu {
     ch1: Channel1,
     ch2: Channel2,

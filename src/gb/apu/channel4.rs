@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 const DIVISORS: [u32; 8] = [8, 16, 32, 48, 64, 80, 96, 112];
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Channel4 {
     init_volume: u8,
     env_add: bool,

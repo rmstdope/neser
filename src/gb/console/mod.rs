@@ -7,6 +7,7 @@ use crate::gb::model::DmgModel;
 
 pub mod config;
 pub mod gameboy;
+pub mod save_state;
 
 /// Game Boy (DMG) console wrapper.
 ///

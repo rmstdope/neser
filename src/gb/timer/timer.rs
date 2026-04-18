@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 /// 3. **TIMA overflow delay**: when TIMA overflows, it stays $00 for one M-cycle
 ///    before TMA is loaded and the interrupt fires.  Writing to TIMA during that
 ///    M-cycle cancels the reload.
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Timer {
     /// Internal 16-bit counter; DIV is the upper 8 bits ($FF04 = div_counter >> 8).
     div_counter: u16,

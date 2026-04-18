@@ -42,7 +42,7 @@ pub enum PpuMode {
 ///   VRAM write blocked:[84, 252+extra).
 ///
 /// VBlank: scanlines 144–153 (all Mode 1; 4560 dots total).
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Timing {
     dot: u16,
     scanline: u8,

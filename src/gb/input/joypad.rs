@@ -13,7 +13,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Game Boy joypad ($FF00 / P1 register).
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Joypad {
     /// Bits 4-5 written by the game (`val & 0x30`); bit=0 means group is selected.
     select_bits: u8,

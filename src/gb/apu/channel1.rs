@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Channel1 {
     // NR10 fields
     sweep_period: u8, // bits 6-4 (0-7)

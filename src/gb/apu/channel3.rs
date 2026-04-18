@@ -12,7 +12,7 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Channel3 {
     dac_on: bool,     // NR30 bit 7
     length_load: u16, // NR31 (0-255); length_counter = 256 - load

@@ -93,6 +93,26 @@ impl GbCartridge for Mbc2 {
             _ => {}
         }
     }
+
+    fn ram_snapshot(&self) -> Vec<u8> {
+        self.ram.to_vec()
+    }
+
+    fn restore_ram(&mut self, data: &[u8]) {
+        let len = data.len().min(self.ram.len());
+        self.ram[..len].copy_from_slice(&data[..len]);
+    }
+
+    fn mbc_state_snapshot(&self) -> Vec<u8> {
+        vec![self.rom_bank, self.ram_enabled as u8]
+    }
+
+    fn restore_mbc_state(&mut self, data: &[u8]) {
+        if data.len() >= 2 {
+            self.rom_bank = data[0];
+            self.ram_enabled = data[1] != 0;
+        }
+    }
 }
 
 #[cfg(test)]

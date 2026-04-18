@@ -25,7 +25,7 @@ const DOTS_PER_M_CYCLE: u16 = 4;
 /// CGB color palette RAM, and handles the CGB-specific registers
 /// (`$FF4F` VBK, `$FF68/$FF69` BCPS/BCPD, `$FF6A/$FF6B` OCPS/OCPD, `$FF6C` OPRI).
 #[serde_as]
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ppu {
     #[serde_as(as = "[_; 0x2000]")]
     pub vram: [u8; 0x2000],

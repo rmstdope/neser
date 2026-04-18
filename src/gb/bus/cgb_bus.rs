@@ -195,6 +195,76 @@ impl CgbBus {
         self.dma_position = 0;
         self.dma_oam_blocked = false;
     }
+
+    // ── Save-state capture / restore ───────────────────────────────────────
+
+    /// Capture the full bus state for serialization.
+    pub fn capture_bus_state(
+        &self,
+    ) -> crate::gb::console::save_state::BusState {
+        use crate::gb::console::save_state::{BusState, GbBusType};
+        BusState {
+            bus_type: GbBusType::Cgb,
+            ppu: self.ppu.clone(),
+            wram: self.wram,
+            hram: self.hram,
+            timer: self.timer.clone(),
+            joypad: self.joypad.clone(),
+            apu: self.apu.clone(),
+            if_reg: self.if_reg,
+            ie_reg: self.ie_reg,
+            dma_active: self.dma_active,
+            dma_source: self.dma_source,
+            dma_position: self.dma_position,
+            dma_oam_blocked: self.dma_oam_blocked,
+            boot_rom_active: None,
+            sb: None,
+            sc: None,
+            serial_buf: None,
+            serial_bits_remaining: None,
+            serial_master_clock: None,
+            model: None,
+        }
+    }
+
+    /// Restore bus state from a deserialized snapshot.
+    pub fn restore_bus_state(
+        &mut self,
+        state: &crate::gb::console::save_state::BusState,
+    ) {
+        self.ppu = state.ppu.clone();
+        self.wram = state.wram;
+        self.hram = state.hram;
+        self.timer = state.timer.clone();
+        self.joypad = state.joypad.clone();
+        self.apu = state.apu.clone();
+        self.if_reg = state.if_reg;
+        self.ie_reg = state.ie_reg;
+        self.dma_active = state.dma_active;
+        self.dma_source = state.dma_source;
+        self.dma_position = state.dma_position;
+        self.dma_oam_blocked = state.dma_oam_blocked;
+    }
+
+    /// Snapshot cartridge RAM.
+    pub fn cart_ram_snapshot(&self) -> Vec<u8> {
+        self.cart.ram_snapshot()
+    }
+
+    /// Restore cartridge RAM from snapshot.
+    pub fn restore_cart_ram(&mut self, data: &[u8]) {
+        self.cart.restore_ram(data);
+    }
+
+    /// Snapshot MBC register state.
+    pub fn mbc_state_snapshot(&self) -> Vec<u8> {
+        self.cart.mbc_state_snapshot()
+    }
+
+    /// Restore MBC register state from snapshot.
+    pub fn restore_mbc_state(&mut self, data: &[u8]) {
+        self.cart.restore_mbc_state(data);
+    }
 }
 
 impl GbBus for CgbBus {
