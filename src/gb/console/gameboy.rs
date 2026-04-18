@@ -10,8 +10,8 @@
 
 use crate::gb::bus::{CgbBus, DmgBus};
 use crate::gb::cartridge::load_cartridge;
-use crate::gb::console::save_state::{GB_SAVESTATE_VERSION, GbSaveState};
 use crate::gb::console::Gb;
+use crate::gb::console::save_state::{GB_SAVESTATE_VERSION, GbSaveState};
 use crate::platform::app_context::{IntoSharedAppContext, SharedAppContext};
 use crate::platform::emulator::{Emulator, SystemType};
 use std::path::PathBuf;
@@ -299,9 +299,7 @@ impl GameBoy {
     /// Returns the save-state file path (`{rom_path}.state`), or `None`
     /// if no ROM is loaded.
     pub fn state_path(&self) -> Option<PathBuf> {
-        self.rom_path
-            .as_ref()
-            .map(|p| p.with_extension("state"))
+        self.rom_path.as_ref().map(|p| p.with_extension("state"))
     }
 }
 

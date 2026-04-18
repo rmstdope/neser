@@ -199,9 +199,7 @@ impl CgbBus {
     // ── Save-state capture / restore ───────────────────────────────────────
 
     /// Capture the full bus state for serialization.
-    pub fn capture_bus_state(
-        &self,
-    ) -> crate::gb::console::save_state::BusState {
+    pub fn capture_bus_state(&self) -> crate::gb::console::save_state::BusState {
         use crate::gb::console::save_state::{BusState, GbBusType};
         BusState {
             bus_type: GbBusType::Cgb,
@@ -228,10 +226,7 @@ impl CgbBus {
     }
 
     /// Restore bus state from a deserialized snapshot.
-    pub fn restore_bus_state(
-        &mut self,
-        state: &crate::gb::console::save_state::BusState,
-    ) {
+    pub fn restore_bus_state(&mut self, state: &crate::gb::console::save_state::BusState) {
         self.ppu = state.ppu.clone();
         self.wram = state.wram;
         self.hram = state.hram;
