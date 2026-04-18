@@ -97,12 +97,28 @@ impl Ppu {
     ///
     /// Call from `DmgBus::tick(m_cycles)` with `n = m_cycles * 4`.
     /// No-op when the LCD is disabled (LCDC bit 7 = 0).
+    ///
+    /// Processes dots in groups of 4 (one M-cycle). The STAT mode bits on
+    /// normal scans lag the actual mode by 4 T-cycles (one M-cycle); this is
+    /// implemented by snapshotting the mode before each group of 4 ticks via
+    /// `timing.save_stat_mode()`.
     pub fn tick_dots(&mut self, n: u32) {
         if !self.registers.lcd_enabled() {
             return;
         }
-        for _ in 0..n {
-            self.tick_one_dot();
+        let groups = n / 4;
+        let remainder = n % 4;
+        for _ in 0..groups {
+            self.timing.save_stat_mode();
+            for _ in 0..4 {
+                self.tick_one_dot();
+            }
+        }
+        if remainder > 0 {
+            self.timing.save_stat_mode();
+            for _ in 0..remainder {
+                self.tick_one_dot();
+            }
         }
     }
 
@@ -115,7 +131,15 @@ impl Ppu {
         let events = self.timing.tick_dot(lyc);
 
         // Keep lyc_eq_ly_frozen in sync with the live comparison.
-        self.lyc_eq_ly_frozen = self.timing.ly() == lyc;
+        // On scan 1, the LY value changes at dot=0 but the LYC=LY "match fires"
+        // (i.e., lyc_eq_ly becomes true) is delayed until dot=4 (OAM Scan start).
+        // Clearing lyc_eq_ly when LY diverges from LYC is still immediate at dot=0.
+        let new_lyc_eq = self.timing.ly() == lyc;
+        let lyc_fire_allowed =
+            !self.timing.is_second_scanline_after_enable() || self.timing.dot() >= 4 || !new_lyc_eq; // clearing is always immediate; only firing is delayed
+        if lyc_fire_allowed {
+            self.lyc_eq_ly_frozen = new_lyc_eq;
+        }
 
         // At Mode 2→Mode 3 transition, extend Mode 3 with OBJ penalty.
         if events.mode_changed && self.timing.mode() == PpuMode::PixelTransfer {
@@ -155,6 +179,16 @@ impl Ppu {
             self.pending_interrupts |= 0x01;
         }
 
+        // On DMG, the Mode 2 STAT source fires simultaneously with VBlank at line 144.
+        // Fire Mode 2 STAT directly (edge-triggered) without changing mode_for_irq,
+        // which would cause spurious fires during VBlank if Mode2IE stays enabled.
+        if events.vblank_start
+            && (self.registers.stat_irq_enables & 0x20 != 0)
+            && !self.prev_stat_irq_line
+        {
+            self.pending_interrupts |= 0x02;
+        }
+
         // Reset window-line counter at the start of a new frame.
         if events.new_frame {
             self.window_line = 0;
@@ -166,21 +200,23 @@ impl Ppu {
 
     // ── OBJ penalty ───────────────────────────────────────────────────────────
 
-    /// Apply OBJ penalty to Mode 3 at the Mode 2→3 transition.
+    /// Apply OBJ and SCX fine-scroll penalties to Mode 3 at the Mode 2→3 transition.
     ///
-    /// DMG only applies OBJ penalty when sprites are enabled (LCDC bit 1).
-    /// The penalty is computed at dot precision then quantized to M-cycle
-    /// boundaries, since Mode 3's end is only observable by the CPU every 4 dots.
+    /// SCX penalty: raw SCX mod 8 dots (unquantized), applied on all visible scanlines.
+    /// OBJ penalty: dot-accurate, then floor-quantised to M-cycle boundaries (÷4×4).
+    ///   DMG only applies the OBJ penalty when sprites are enabled (LCDC bit 1).
+    /// Combined: `extra_dots = scx_raw + floor(obj / 4) * 4`.
     fn apply_obj_penalty(&mut self) {
+        let scx_penalty = (self.registers.scx & 0x07) as u16;
         let sprites_enabled = self.registers.lcdc & 0x02 != 0;
-        if !sprites_enabled {
-            return;
-        }
-        let scanline = self.timing.ly();
-        let sprite_indices = sprites::scan_oam_line(scanline, &self.oam, self.registers.lcdc);
-        let penalty_dots =
-            sprites::calculate_obj_penalty(&sprite_indices, &self.oam, self.registers.scx);
-        let extra_dots = (penalty_dots / DOTS_PER_M_CYCLE) * DOTS_PER_M_CYCLE;
+        let obj_penalty = if sprites_enabled {
+            let scanline = self.timing.ly();
+            let sprite_indices = sprites::scan_oam_line(scanline, &self.oam, self.registers.lcdc);
+            sprites::calculate_obj_penalty(&sprite_indices, &self.oam, self.registers.scx)
+        } else {
+            0
+        };
+        let extra_dots = scx_penalty + (obj_penalty / DOTS_PER_M_CYCLE) * DOTS_PER_M_CYCLE;
         self.timing.set_mode3_extra_dots(extra_dots);
     }
 
@@ -188,7 +224,7 @@ impl Ppu {
 
     fn compose_stat_byte(&self) -> u8 {
         let mode_bits = if self.registers.lcd_enabled() {
-            self.timing.mode() as u8
+            self.timing.mode_for_stat() as u8
         } else {
             // When LCD is off, mode bits report 0 (H-Blank).
             0
@@ -207,15 +243,15 @@ impl Ppu {
     fn update_stat_irq(&mut self) {
         let mode = self.timing.mode();
         let mode_for_irq = self.timing.mode_for_irq();
-        let ly = self.timing.ly();
-        let lyc = self.registers.lyc;
         let en = self.registers.stat_irq_enables;
 
         // mode_for_irq < 0 signals that mode-based IRQs are suppressed
         // (first scanline after LCD enable, or during Mode 3).
         let suppress_mode_irqs = mode_for_irq < 0;
 
-        let irq_line = (en & 0x40 != 0 && ly == lyc)
+        // Use the same delayed lyc_eq_ly_frozen latch that drives STAT bit 2,
+        // ensuring the IRQ and the readable bit are always consistent.
+        let irq_line = (en & 0x40 != 0 && self.lyc_eq_ly_frozen)
             || (mode_for_irq == 2 && en & 0x20 != 0)
             || (!suppress_mode_irqs && en & 0x10 != 0 && mode == PpuMode::VBlank)
             || (mode_for_irq == 0 && en & 0x08 != 0);
@@ -234,7 +270,7 @@ impl Ppu {
     /// When LCD is disabled VRAM is always accessible.
     /// In CGB mode, routes to bank 0 or bank 1 based on the VBK register.
     pub fn read_vram(&self, addr: u16) -> u8 {
-        if self.registers.lcd_enabled() && self.timing.mode() == PpuMode::PixelTransfer {
+        if self.registers.lcd_enabled() && self.timing.is_vram_blocked() {
             return 0xFF;
         }
         let offset = (addr - 0x8000) as usize;
@@ -251,7 +287,7 @@ impl Ppu {
     /// When LCD is disabled VRAM is always accessible.
     /// In CGB mode, routes to bank 0 or bank 1 based on the VBK register.
     pub fn write_vram(&mut self, addr: u16, val: u8) {
-        if self.registers.lcd_enabled() && self.timing.mode() == PpuMode::PixelTransfer {
+        if self.registers.lcd_enabled() && self.timing.is_vram_write_blocked() {
             return;
         }
         let offset = (addr - 0x8000) as usize;
@@ -266,20 +302,18 @@ impl Ppu {
     ///
     /// During Mode 2 (OAM Scan) while LCD is on: returns 0xFF and applies
     /// the OAM read-corruption side effect to the PPU's currently scanned row.
-    /// During Mode 3 (Pixel Transfer) while LCD is on: returns 0xFF (no corruption).
+    /// During any other blocked period (Mode 3, or scan 1 4T extension) while LCD is on:
+    /// returns 0xFF (no corruption).
     /// When LCD is disabled OAM is always accessible without corruption.
     pub fn read_oam(&mut self, addr: u16) -> u8 {
-        if self.registers.lcd_enabled() {
-            match self.timing.mode() {
-                PpuMode::OamScan => {
-                    if let Some(row) = self.current_oam_row() {
-                        self.apply_oam_read_corruption(row);
-                    }
-                    return 0xFF;
+        if self.registers.lcd_enabled() && self.timing.is_oam_blocked() {
+            if self.timing.mode() == PpuMode::OamScan {
+                let row = self.current_oam_row();
+                if let Some(r) = row {
+                    self.apply_oam_read_corruption(r);
                 }
-                PpuMode::PixelTransfer => return 0xFF,
-                _ => {}
             }
+            return 0xFF;
         }
         self.oam[(addr - 0xFE00) as usize]
     }
@@ -288,20 +322,18 @@ impl Ppu {
     ///
     /// During Mode 2 (OAM Scan) while LCD is on: applies the OAM write-corruption
     /// formula to the PPU's currently scanned row; the actual written value is discarded.
-    /// During Mode 3 (Pixel Transfer) while LCD is on: write silently ignored.
+    /// During any other write-blocked period (Mode 3, or scan 1/2 write-gate closed) while LCD on:
+    /// write silently ignored.
     /// When LCD is disabled OAM is always accessible without corruption.
     pub fn write_oam(&mut self, addr: u16, val: u8) {
-        if self.registers.lcd_enabled() {
-            match self.timing.mode() {
-                PpuMode::OamScan => {
-                    if let Some(row) = self.current_oam_row() {
-                        self.apply_oam_write_corruption(row);
-                    }
-                    return;
+        if self.registers.lcd_enabled() && self.timing.is_oam_write_blocked() {
+            if self.timing.mode() == PpuMode::OamScan {
+                let row = self.current_oam_row();
+                if let Some(r) = row {
+                    self.apply_oam_write_corruption(r);
                 }
-                PpuMode::PixelTransfer => return,
-                _ => {}
             }
+            return;
         }
         self.oam[(addr - 0xFE00) as usize] = val;
     }
@@ -444,12 +476,21 @@ impl Ppu {
     ///
     /// Returns `Some(row)` during Mode 2 (OAM Scan) when LCD is enabled.
     /// Returns `None` outside Mode 2 or when LCD is disabled.
-    /// Row 0 maps to dots 0–3, row 1 to dots 4–7, …, row 19 to dots 76–79.
+    ///
+    /// Scan 1 (second_scanline_after_enable): OamScan starts at dot=4.
+    ///   Row 0 = dots 4–7, row 1 = dots 8–11, …, row 19 = dots 80–83.
+    /// Scan 2+ (regular): OamScan starts at dot=0.
+    ///   Row 0 = dots 0–3, row 1 = dots 4–7, …, row 19 = dots 76–79.
     pub fn current_oam_row(&self) -> Option<usize> {
         if !self.registers.lcd_enabled() || self.timing.mode() != PpuMode::OamScan {
             return None;
         }
-        Some(self.timing.dot() as usize / 4)
+        let oam_scan_offset = if self.timing.is_second_scanline_after_enable() {
+            4 // scan 1: OamScan starts at dot=4
+        } else {
+            0 // scan 2+: OamScan starts at dot=0
+        };
+        Some((self.timing.dot() as usize).saturating_sub(oam_scan_offset) / 4)
     }
 
     /// Apply OAM write corruption to the given row.
@@ -570,10 +611,10 @@ mod tests {
     const FIRST_SCANLINE_DOTS: u32 = 452;
 
     /// Advance PPU past the first scanline (which has no Mode 2) to the start
-    /// of Mode 2 on scanline 1. The first scanline after LCD enable is special:
-    /// it starts at dot 4 in Mode 0 with no OAM Scan period.
+    /// of Mode 2 on scanline 1. The first scanline after LCD enable is 452 dots.
+    /// Mode 2 on scan 1 starts at dot 4 (after brief Mode 0 at dots 0-3).
     fn advance_to_mode_2(ppu: &mut Ppu) {
-        tick_dots(ppu, FIRST_SCANLINE_DOTS);
+        tick_dots(ppu, FIRST_SCANLINE_DOTS + 4); // dot=4 on scan1 = Mode 2 start
         assert_eq!(ppu.timing.mode(), PpuMode::OamScan);
         assert_eq!(ppu.timing.ly(), 1);
     }
@@ -582,10 +623,10 @@ mod tests {
 
     #[test]
     fn test_vram_readable_during_hblank() {
-        // Given: a Ppu ticked to Mode 0 (H-Blank, dot 252 on scanline 0)
+        // Given: a Ppu ticked to Mode 0 (H-Blank, dot 256 on scanline 0)
         let mut ppu = Ppu::new();
         ppu.write_vram(0x8010, 0xAB);
-        tick_dots(&mut ppu, 252); // dot 252 → Mode 0
+        tick_dots(&mut ppu, 252); // 252 ticks from dot=4 → dot=256 = Mode 0 start
         assert_eq!(ppu.timing.mode(), PpuMode::HBlank);
         // When: read VRAM during H-Blank
         // Then: real value returned
@@ -594,10 +635,10 @@ mod tests {
 
     #[test]
     fn test_vram_blocked_during_pixel_transfer_returns_0xff() {
-        // Given: a Ppu ticked into Mode 3 (dot 80, scanline 0)
+        // Given: a Ppu ticked into Mode 3 (dot 84, scanline 0)
         let mut ppu = Ppu::new();
         ppu.vram[0x0010] = 0xAB; // bypass write_vram to seed value
-        tick_dots(&mut ppu, 80); // dot 80 → Mode 3
+        tick_dots(&mut ppu, 80); // 80 ticks from dot=4 → dot=84 = Mode 3 start
         assert_eq!(ppu.timing.mode(), PpuMode::PixelTransfer);
         // When: CPU attempts to read VRAM
         assert_eq!(ppu.read_vram(0x8010), 0xFF); // blocked
@@ -607,12 +648,12 @@ mod tests {
     fn test_vram_write_blocked_during_pixel_transfer() {
         // Given: a Ppu ticked to Mode 3
         let mut ppu = Ppu::new();
-        tick_dots(&mut ppu, 80);
+        tick_dots(&mut ppu, 80); // dot=84 = Mode 3
         assert_eq!(ppu.timing.mode(), PpuMode::PixelTransfer);
         // When: CPU writes VRAM
         ppu.write_vram(0x8000, 0x42);
         // Then: write is ignored; VRAM unchanged
-        tick_dots(&mut ppu, 172); // exit Mode 3
+        tick_dots(&mut ppu, 172); // exit Mode 3 (dot=256 = Mode 0)
         assert_eq!(ppu.read_vram(0x8000), 0x00);
     }
 
@@ -630,10 +671,10 @@ mod tests {
 
     #[test]
     fn test_oam_readable_during_hblank() {
-        // Given: a Ppu at H-Blank (dot 252)
+        // Given: a Ppu at H-Blank (dot 256)
         let mut ppu = Ppu::new();
         ppu.oam[0] = 0x77;
-        tick_dots(&mut ppu, 252);
+        tick_dots(&mut ppu, 252); // 252 ticks from dot=4 → dot=256 = Mode 0 start
         assert_eq!(ppu.timing.mode(), PpuMode::HBlank);
         // When: CPU reads OAM
         assert_eq!(ppu.read_oam(0xFE00), 0x77);
@@ -641,13 +682,13 @@ mod tests {
 
     #[test]
     fn test_oam_write_blocked_during_oam_scan() {
-        // Given: Ppu in Mode 2 on a normal scanline
+        // Given: Ppu in Mode 2 on scan 1 (second_scanline_after_enable)
         let mut ppu = Ppu::new();
         advance_to_mode_2(&mut ppu);
         // When: write OAM
         ppu.write_oam(0xFE00, 0xAA);
-        // Then: ignored
-        tick_dots(&mut ppu, 252); // advance to H-Blank where reads are unblocked
+        // Then: ignored; tick past scan-1's Mode0 start (dot=256 = physical Mode3 end).
+        tick_dots(&mut ppu, 252); // advance from dot=4 to dot=256 → OAM unblocked on scan 1
         assert_eq!(ppu.read_oam(0xFE00), 0x00);
     }
 
@@ -690,10 +731,10 @@ mod tests {
         ppu.write_register(0xFF45, 5); // LYC = 5
         ppu.write_register(0xFF41, 0x40); // STAT bit 6 = LYC=LY IRQ enable
         // First scanline is 452 dots; scanlines 1-4 are 456 each
-        tick_dots(&mut ppu, FIRST_SCANLINE_DOTS + 456 * 3 + 456 - 1); // tick to dot 455 of scanline 4
+        tick_dots(&mut ppu, FIRST_SCANLINE_DOTS + 456 * 3 + 451); // tick to dot 451 of scanline 4
         // Drain any earlier flags
         let _ = ppu.take_pending_interrupts();
-        // When: advance to scanline 5 (LY becomes 5 = LYC)
+        // When: advance to dot 452 (early LY fires — LY becomes 5 = LYC on regular scans)
         ppu.tick_dots(1);
         // Then: STAT interrupt pending (bit 1 of IF)
         let flags = ppu.take_pending_interrupts();
@@ -777,7 +818,7 @@ mod tests {
     /// Helper: advance PPU into Mode 3 then disable the LCD.
     fn ppu_in_mode3_then_lcd_off() -> Ppu {
         let mut ppu = Ppu::new();
-        tick_dots(&mut ppu, 80); // dot 80 → Mode 3
+        tick_dots(&mut ppu, 80); // 80 ticks from dot=4 → dot=84 = Mode 3 start
         assert_eq!(ppu.timing.mode(), PpuMode::PixelTransfer);
         ppu.write_register(0xFF40, 0x11); // clear bit 7 (LCD off), keep rest
         ppu
@@ -899,22 +940,28 @@ mod tests {
 
     #[test]
     fn test_current_oam_row_returns_row_1_after_4_dot_ticks() {
-        // Given: Ppu in Mode 2, dot advances by 4 → row 4/4 = 1
+        // Given: Ppu in Mode 2 at dot=4, tick 4 more → dot=8 → row (8-4)/4 = 1
         let mut ppu = Ppu::new();
         advance_to_mode_2(&mut ppu);
         tick_dots(&mut ppu, 4);
-        assert_eq!(ppu.timing.dot(), 4);
+        assert_eq!(ppu.timing.dot(), 8);
         assert_eq!(ppu.current_oam_row(), Some(1));
     }
 
     #[test]
-    fn test_current_oam_row_returns_row_19_at_dot_76() {
-        // Given: Ppu in Mode 2, dot=76 → row 76/4 = 19 (last Mode 2 row)
+    fn test_current_oam_row_returns_row_18_at_dot_76() {
+        // On scan 1, OamScan runs [4,80): 19 rows (0-18). Row 18 is the last.
+        // dot=76 → row (76-4)/4 = 18. At dot=80: Mode3 starts, row=None.
         let mut ppu = Ppu::new();
         advance_to_mode_2(&mut ppu);
-        tick_dots(&mut ppu, 76);
+        tick_dots(&mut ppu, 72);
         assert_eq!(ppu.timing.dot(), 76);
-        assert_eq!(ppu.current_oam_row(), Some(19));
+        assert_eq!(ppu.current_oam_row(), Some(18));
+        // Also verify dot=80 is Mode3 (None)
+        tick_dots(&mut ppu, 4);
+        assert_eq!(ppu.timing.dot(), 80);
+        assert_eq!(ppu.timing.mode(), PpuMode::PixelTransfer);
+        assert_eq!(ppu.current_oam_row(), None);
     }
 
     #[test]
@@ -1155,7 +1202,7 @@ mod tests {
         set_row_words(&mut ppu.oam, 2, [0x0001, 0x00AA, 0x00BB, 0x00CC]);
         // Advance to Mode 2 on a normal scanline, then tick to row 2
         advance_to_mode_2(&mut ppu);
-        tick_dots(&mut ppu, 8); // dot 0 + 8 = dot 8 → current_oam_row() = Some(2)
+        tick_dots(&mut ppu, 8); // dot 4 + 8 = dot 12 → current_oam_row() = Some(2): (12-4)/4=2
         assert_eq!(ppu.timing.mode(), PpuMode::OamScan);
         assert_eq!(ppu.current_oam_row(), Some(2));
         // When: CPU writes to any OAM address
@@ -1238,7 +1285,7 @@ mod tests {
         // Mode 3 (Pixel Transfer) blocks OAM writes but does NOT apply corruption.
         let mut ppu = Ppu::new();
         set_row_words(&mut ppu.oam, 2, [0xAAAAu16, 0xBBBB, 0xCCCC, 0xDDDD]);
-        tick_dots(&mut ppu, 80); // enter Mode 3
+        tick_dots(&mut ppu, 80); // 80 ticks from dot=4 → dot=84 = Mode 3 start
         assert_eq!(ppu.timing.mode(), PpuMode::PixelTransfer);
         let snapshot = ppu.oam;
         ppu.write_oam(0xFE10, 0x42);
@@ -1323,19 +1370,19 @@ mod tests {
         // (4 T-cycles before mode bits change to Mode 2 on the next scanline).
         //
         // Strategy:
-        // 1. Advance to start of scanline 1 (dot 0, Mode 2).
+        // 1. Advance to start of Mode 2 on scanline 1 (dot 4).
         // 2. Enable Mode 2 STAT IRQ; drain pending interrupts.
-        // 3. Advance 451 more dots to dot 451 — no STAT IRQ expected yet.
+        // 3. Advance 447 more dots to dot 451 — no STAT IRQ expected yet.
         // 4. Tick 1 more dot to dot 452 — STAT IRQ must fire.
         let mut ppu = Ppu::new();
         // Enable Mode 2 STAT interrupt (bit 5 of STAT)
         ppu.write_register(0xFF41, 0x20);
-        // Advance to dot 0, scanline 1 (first normal Mode 2 scanline)
+        // Advance to dot 4, scanline 1 (first normal Mode 2 scanline)
         advance_to_mode_2(&mut ppu);
         // Drain any interrupts that fired on entry to Mode 2
         let _ = ppu.take_pending_interrupts();
         // Advance to dot 451 (HBlank, still on scanline 1)
-        tick_dots(&mut ppu, 451);
+        tick_dots(&mut ppu, 447);
         assert_eq!(ppu.timing.dot(), 451);
         assert_eq!(
             ppu.take_pending_interrupts() & 0x02,

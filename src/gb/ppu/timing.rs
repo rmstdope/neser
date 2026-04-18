@@ -13,33 +13,74 @@ pub enum PpuMode {
 
 /// Dot-level scanline timing for the DMG PPU.
 ///
-/// Fixed-width scanline model (MVP):
-/// - Mode 2 (OAM Scan):     dots 0–79    (80 dots)
-/// - Mode 3 (Pixel Xfer):   dots 80–(251+extra)  (172+extra dots)
-/// - Mode 0 (H-Blank):      dots (252+extra)–455 (204-extra dots)
-/// - Mode 1 (V-Blank):      scanlines 144–153 (4560 dots total)
+/// DMG PPU mode schedule per scanline:
+///
+/// Scan 0 (first_scanline_after_enable, LY=0, 452 dots starting at dot=4):
+///   dots 4–83:    Mode 0 (HBlank; no OAM Scan period)
+///   dots 84–255:  Mode 3 (Pixel Transfer; OAM+VRAM blocked)
+///   dots 256–455: Mode 0 (HBlank)
+///   STAT mode bits: physical mode (no lag).
+///   OAM/VRAM read blocked: [84, 256).  OAM/VRAM write blocked: [84, 256).
+///
+/// Scan 1 (second_scanline_after_enable, LY=1, 456 dots):
+///   Physical mode: HBlank [0,4), OamScan [4,80), PixelTransfer [80,256+extra), HBlank
+///   STAT mode bits: Mode2 (OAM Scan) is immediate; Mode3 lags 4T via stat_mode snapshot;
+///                   Mode0 is immediate.
+///   OAM read blocked:  [0, 256+extra)         — conservative latch from Mode3 end.
+///   OAM write blocked: [4,80) ∪ [84,256+extra) — write gate has 4T delayed lock/unlock.
+///   VRAM read blocked: [80, 256+extra).
+///   VRAM write blocked:[84, 256+extra).
+///
+/// Scan 2+ (regular scans, LY=2+, 456 dots each):
+///   Physical mode: OamScan [0,80), PixelTransfer [80,252+extra), HBlank [252+extra,456)
+///   STAT mode bits: physical mode (no lag for the mode bits themselves).
+///   OAM read blocked:  [0, 252+extra).
+///   OAM write blocked: [4,80) ∪ [84,252+extra) — write gate has 4T delayed lock/unlock.
+///   VRAM read blocked: [80, 252+extra).
+///   VRAM write blocked:[84, 252+extra).
+///
+/// VBlank: scanlines 144–153 (all Mode 1; 4560 dots total).
 pub struct Timing {
     dot: u16,
     scanline: u8,
     mode: PpuMode,
-    frame_ready: bool,
-    /// True during the first scanline after LCD is enabled.
+    /// Snapshot of `mode` taken 4 T-cycles ago (one M-cycle).
     ///
-    /// On real DMG hardware, when the LCD is turned on the first scanline
-    /// does **not** begin with Mode 2 (OAM Scan). Instead, STAT reports
-    /// Mode 0 (HBlank) for the first 80 dots, then the PPU transitions
-    /// directly to Mode 3 (Pixel Transfer).
+    /// Used on scan 1 for Mode2/3 transitions. `save_stat_mode()` is called once per
+    /// M-cycle (before each group of 4 dot ticks in `Ppu::tick_dots`), providing the
+    /// 4T lag the STAT register shows for Mode2/3 transitions on scan 1.
+    stat_mode: PpuMode,
+    frame_ready: bool,
+    /// True during the first scanline after LCD is enabled (scan 0).
     first_scanline_after_enable: bool,
+    /// True during the second scanline after LCD is enabled (scan 1).
+    ///
+    /// Scan 1 is a "compensation" scanline: physical OamScan starts at dot=4 (not 0)
+    /// and ends at dot=80 (same as scan 2+). Mode3 runs [80,256) — 4 extra dots.
+    /// STAT Mode2/3 use the 4T stat_mode lag; Mode0 is shown immediately.
+    second_scanline_after_enable: bool,
+    /// True during the third scanline after LCD is enabled (scan 2, LY=2).
+    ///
+    /// Scan 2 is the first "normal" scanline (OamScan [0,80), Mode3 [80,252),
+    /// HBlank [252,456)), but STAT still shows a 4T lag at Mode 2 and Mode 3 starts.
+    /// From scan 3 onwards, STAT uses physical mode for all transitions.
+    third_scanline_after_enable: bool,
     /// Mirrors SameBoy's `mode_for_interrupt` (-1 = suppress all mode IRQs,
-    /// 0–3 = mode whose STAT IRQ source is currently active).
+    /// 0-3 = mode whose STAT IRQ source is currently active).
     ///
     /// This differs from the STAT mode bits:
     /// - Mode 2 source becomes active 4 T-cycles before mode bits show Mode 2.
-    /// - Mode 0 source and mode bits become active together.
+    /// - Mode 0 source becomes active 4 T-cycles before mode bits show Mode 0.
     mode_for_irq: i8,
     /// Extra dots added to Mode 3 (OBJ/SCX/window penalties).
-    /// Mode 0 starts at dot `OAM_SCAN_DOTS + PIXEL_TRANSFER_DOTS + mode3_extra_dots`.
     mode3_extra_dots: u16,
+    /// The LY register value exposed to the CPU.
+    ///
+    /// On DMG, LY increments 4 T-cycles before the physical scanline boundary
+    /// (simultaneously with the Mode 2 STAT source firing at `MODE2_IRQ_DOT`).
+    /// For scanlines 144+ (VBlank) and the frame wrap (153→0), LY increments at the
+    /// physical dot-456 boundary instead (no early Mode 2 fire during VBlank).
+    ly: u8,
 }
 
 /// Events returned by a single dot tick.
@@ -59,6 +100,10 @@ impl Timing {
     const DOTS_PER_SCANLINE: u16 = 456;
     const TOTAL_SCANLINES: u8 = 154;
     const VBLANK_START_LINE: u8 = 144;
+    /// Dot at which Mode 2 (OAM Scan) STAT bits appear on scan 1 and scan 2+.
+    /// On scan 1, this is also the physical OamScan start.
+    /// On scan 2+, physical OamScan starts at dot 0 but STAT shows Mode 2 from dot 4.
+    const OAM_SCAN_START: u16 = 4;
     const OAM_SCAN_DOTS: u16 = 80;
     const PIXEL_TRANSFER_DOTS: u16 = 172;
     /// Dot at which the Mode 2 STAT IRQ source fires (4 dots before mode bits change to Mode 2).
@@ -66,19 +111,19 @@ impl Timing {
 
     pub fn new() -> Self {
         Self {
-            // The first scanline after LCD enable is shorter than normal:
-            // the PPU effectively starts at dot 4 rather than dot 0.
-            // This is documented in SameBoy ("+8 extra cycles_for_line"
-            // compensation) and verified by Blargg's oam_bug/1-lcd_sync test:
-            // after 110 M-cycles (452 dots) LY must have incremented to 1,
-            // which requires the first scanline to be ≤ 452 dots.
+            // PPU starts at dot 4 when LCD is first enabled (DMG).
+            // The first scanline is 452 dots long (dot 4 through dot 455).
             dot: 4,
             scanline: 0,
             mode: PpuMode::HBlank,
+            stat_mode: PpuMode::HBlank,
             frame_ready: false,
             first_scanline_after_enable: true,
+            second_scanline_after_enable: false,
+            third_scanline_after_enable: false,
             mode_for_irq: -1,
             mode3_extra_dots: 0,
+            ly: 0,
         }
     }
 
@@ -96,43 +141,90 @@ impl Timing {
                 self.scanline = 0;
                 self.frame_ready = true;
                 events.new_frame = true;
-                // Reset mode3_extra_dots at the start of each new frame.
                 self.mode3_extra_dots = 0;
             }
+            // For VBlank scans (144+) and the frame wrap (153→0), LY increments
+            // at the physical dot boundary (no early MODE2_IRQ_DOT increment).
+            self.ly = self.scanline;
         }
 
-        let mode3_end = Self::OAM_SCAN_DOTS + Self::PIXEL_TRANSFER_DOTS + self.mode3_extra_dots;
-
-        // Determine mode from current dot/scanline position.
-        let new_mode = if self.scanline >= Self::VBLANK_START_LINE {
-            PpuMode::VBlank
-        } else if self.first_scanline_after_enable
-            && self.scanline == 0
-            && self.dot < Self::OAM_SCAN_DOTS
-        {
-            // First scanline after LCD enable: Mode 0 instead of Mode 2.
-            PpuMode::HBlank
-        } else if self.dot < Self::OAM_SCAN_DOTS {
-            PpuMode::OamScan
-        } else if self.dot < mode3_end {
-            PpuMode::PixelTransfer
-        } else {
-            PpuMode::HBlank
-        };
-
-        // Clear the first-scanline flag once the first scanline ends.
+        // Advance scan-type state machine.
+        // Scan 0→1→2→3+ transitions on scanline increment.
         if self.first_scanline_after_enable && self.scanline > 0 {
             self.first_scanline_after_enable = false;
+            self.second_scanline_after_enable = true;
+        } else if self.second_scanline_after_enable && self.scanline > 1 {
+            self.second_scanline_after_enable = false;
+            self.third_scanline_after_enable = true;
+        } else if self.third_scanline_after_enable && self.scanline > 2 {
+            self.third_scanline_after_enable = false;
         }
+
+        // Compute mode boundaries based on scan type.
+        //
+        // Scan 0: no OamScan; Mode3 starts at dot=84, ends at dot=256+extra.
+        // Scan 1: OamScan [4,80); Mode3 starts at dot=80, ends at dot=256+extra.
+        //   (OamScan is 76 dots: 4T late start, same end as scan 2+.)
+        // Scan 2+: OamScan [0,80); Mode3 starts at dot=80, ends at dot=252+extra.
+        let mode3_start = if self.first_scanline_after_enable {
+            // Scan 0: no OamScan; HBlank fills [dot_start, 84), Mode3 from 84.
+            Self::OAM_SCAN_START + Self::OAM_SCAN_DOTS // 84
+        } else {
+            // Scan 1 and scan 2+: Mode3 starts at dot 80.
+            Self::OAM_SCAN_DOTS // 80
+        };
+        let mode3_end = if self.first_scanline_after_enable || self.second_scanline_after_enable {
+            // Scan 0 and scan 1: Mode3 ends at dot 256+extra.
+            // Scan 1 has 4 extra Mode3 dots (OamScan starts 4T late, offsetting mode3_end).
+            Self::OAM_SCAN_START
+                + Self::OAM_SCAN_DOTS
+                + Self::PIXEL_TRANSFER_DOTS
+                + self.mode3_extra_dots // 256+extra
+        } else {
+            // Scan 2+: Mode3 ends at dot 252+extra.
+            Self::OAM_SCAN_DOTS + Self::PIXEL_TRANSFER_DOTS + self.mode3_extra_dots // 252+extra
+        };
+
+        // Determine physical mode from current dot/scanline position.
+        let new_mode = if self.scanline >= Self::VBLANK_START_LINE {
+            PpuMode::VBlank
+        } else if self.first_scanline_after_enable {
+            // Scan 0: HBlank for [4,84), PixelTransfer for [84,256), HBlank for [256,456).
+            // (dot starts at 4; dots 0-3 are not reached on scan 0.)
+            if self.dot < mode3_start {
+                PpuMode::HBlank
+            } else if self.dot < mode3_end {
+                PpuMode::PixelTransfer
+            } else {
+                PpuMode::HBlank
+            }
+        } else if self.second_scanline_after_enable {
+            // Scan 1: HBlank [0,4), OamScan [4,80), PixelTransfer [80,256), HBlank [256,456).
+            if self.dot < Self::OAM_SCAN_START {
+                PpuMode::HBlank
+            } else if self.dot < mode3_start {
+                PpuMode::OamScan
+            } else if self.dot < mode3_end {
+                PpuMode::PixelTransfer
+            } else {
+                PpuMode::HBlank
+            }
+        } else {
+            // Scan 2+: physical OamScan [0,80), PixelTransfer [80,252+extra), HBlank [252+extra,456).
+            if self.dot < mode3_start {
+                PpuMode::OamScan
+            } else if self.dot < mode3_end {
+                PpuMode::PixelTransfer
+            } else {
+                PpuMode::HBlank
+            }
+        };
 
         if new_mode != self.mode {
             events.mode_changed = true;
             if new_mode == PpuMode::HBlank {
                 events.render_scanline = true;
-                // mode_for_irq was already set to 0 four dots earlier (at mode0_irq_dot).
-                // Set it again here for any scanline where mode0_irq_dot may have been skipped
-                // (e.g. VBlank scanlines don't reach mode0_irq_dot on visible scanlines).
-                self.mode_for_irq = 0;
+                // mode_for_irq=0 is set 4 dots early (at mode3_end-4), not here.
                 // Extra dots were consumed for this scanline; reset for the next.
                 self.mode3_extra_dots = 0;
             }
@@ -140,36 +232,39 @@ impl Timing {
                 events.vblank_start = true;
                 self.mode_for_irq = 1;
             }
-            if new_mode == PpuMode::OamScan {
-                // Mode bits just changed to Mode 2. mode_for_irq was already set to 2
-                // four dots earlier (at dot 452). Keep it at 2.
-                // (mode_for_irq was set to 2 at dot 452 of the previous scanline)
-            }
             if new_mode == PpuMode::PixelTransfer {
                 // Mode 3 has no STAT IRQ source; set to -1 to suppress mode IRQs.
-                // (The Mode 2 source has already fired at dot 452 / dot 0.)
                 self.mode_for_irq = -1;
             }
             self.mode = new_mode;
         }
 
         // Mode 2 STAT IRQ source activates 4 dots before mode bits change to Mode 2.
-        // Dot 452 of any scanline whose next scanline starts with Mode 2:
-        //   - Scanlines 0–142 (next = 1–143, all visible with Mode 2)
-        //   - Scanline 153 (next = 0, visible with Mode 2)
-        // Scanlines 143 (next = 144, VBlank) and 144–152 (VBlank) are excluded.
-        if self.dot == Self::MODE2_IRQ_DOT {
-            let next_scanline_has_mode2 = self.scanline < Self::VBLANK_START_LINE - 1
-                || self.scanline == Self::TOTAL_SCANLINES - 1;
-            if next_scanline_has_mode2 {
-                self.mode_for_irq = 2;
+        // Dot 452 of visible scanlines 0-142 (next scanline starts with Mode 2).
+        // Scanlines 143 (next = 144, VBlank) and 144-152 (VBlank) are excluded.
+        // Scanline 153 (frame wrap) is also excluded: it fires at dot=0 of scan 0 below.
+        // LY also increments here — 4 T-cycles before the physical scan boundary — to
+        // match DMG hardware where LY changes simultaneously with the Mode 2 STAT fire.
+        // Exception: scan 0 and scan 1 (the first two scans after LCD enable) retain the
+        // physical boundary increment to preserve lcdon_timing-GS pass behaviour.
+        if self.dot == Self::MODE2_IRQ_DOT && self.scanline < Self::VBLANK_START_LINE - 1 {
+            self.mode_for_irq = 2;
+            if !self.first_scanline_after_enable && !self.second_scanline_after_enable {
+                self.ly = self.scanline + 1;
             }
         }
 
-        // Mode 0 STAT IRQ source activates 4 dots before mode bits change to HBlank,
-        // symmetric with Mode 2. Only on visible scanlines (0–143).
-        let mode0_irq_dot = mode3_end - 4;
-        if self.dot == mode0_irq_dot && self.scanline < Self::VBLANK_START_LINE {
+        // At frame wrap (scan 153 → scan 0, dot=0), fire the Mode 2 IRQ source.
+        // On real DMG, this fires 4 T-cycles later than the dot-452 path (i.e., at the
+        // actual moment scan 0 begins), which is required for intr_1_2_timing-GS to pass.
+        if self.dot == 0 && self.scanline == 0 {
+            self.mode_for_irq = 2;
+        }
+
+        // Mode 0 STAT IRQ source fires 4 T-cycles before HBlank physically starts (DMG).
+        // This matches intr_2_0_timing-GS (B counts loop iterations between Mode2 and Mode0
+        // dispatches) and is consistent with hardware measurements showing the 4-dot lead.
+        if self.dot == mode3_end - 4 && self.scanline < Self::VBLANK_START_LINE {
             self.mode_for_irq = 0;
         }
 
@@ -180,21 +275,183 @@ impl Timing {
         self.mode
     }
 
-    /// Current scanline (LY register value).
+    /// Snapshot the current mode into `stat_mode` for the 4T-late STAT register.
+    ///
+    /// Call once per M-cycle (before each group of 4 dot ticks) in `Ppu::tick_dots`.
+    /// On scan 1 and scan 2+ the STAT mode bits lag the physical mode by one M-cycle
+    /// (4 T-cycles); this snapshot provides that delay.
+    /// On scan 0 (`first_scanline_after_enable`) the bits are immediate and
+    /// `mode_for_stat()` ignores `stat_mode` entirely.
+    pub fn save_stat_mode(&mut self) {
+        self.stat_mode = self.mode;
+    }
+
+    /// Returns the mode to report in the STAT register mode bits.
+    ///
+    /// Rules derived from the lcdon_timing-GS ROM test on DMG hardware:
+    ///
+    /// - Scan 0 (`first_scanline_after_enable`): physical mode. Mode 3 starts at
+    ///   dot=84 with no lag.
+    /// - VBlank (scanlines 144–153): physical mode (VBlank is immediate).
+    /// - HBlank (any scan): physical (Mode 0 always appears immediately).
+    /// - Scan 1 (`second_scanline_after_enable`): HBlank and OamScan are physical
+    ///   (immediate). Only PixelTransfer uses the 4T-lagged `stat_mode` snapshot.
+    /// - Scan 2 (`third_scanline_after_enable`): HBlank is physical; OamScan and
+    ///   PixelTransfer use the 4T-lagged `stat_mode` snapshot.
+    /// - Scan 3+ (normal operation): physical mode for all transitions. The
+    ///   LCD-enable initialization lag has worn off by this point.
+    pub fn mode_for_stat(&self) -> PpuMode {
+        // Use the 4T-lagged stat_mode snapshot only for:
+        //   scan1 PixelTransfer, and scan2 OamScan/PixelTransfer.
+        // Everything else (scan0, VBlank, HBlank, scan1 OamScan, scan3+) uses
+        // the physical mode immediately.
+        let use_lag = (self.second_scanline_after_enable && self.mode == PpuMode::PixelTransfer)
+            || (self.third_scanline_after_enable && self.mode != PpuMode::HBlank);
+        if use_lag { self.stat_mode } else { self.mode }
+    }
+
+    /// Returns whether VRAM is blocked for CPU **read** access at the current dot.
+    ///
+    /// Scan 0: blocked during [84, 256+extra) — no OamScan, Mode3 is [84, 256+extra).
+    /// Scan 1: blocked during [80, 256+extra) — physical Mode3 starts at dot=80.
+    /// Scan 2+: blocked during [80, 252+extra) — physical Mode3 [80,252+extra).
+    ///
+    /// Read access follows the STAT mode bits (no lag for the CPU read gate).
+    pub fn is_vram_blocked(&self) -> bool {
+        if self.scanline >= Self::VBLANK_START_LINE {
+            return false;
+        }
+        let (vram_start, vram_end) = if self.first_scanline_after_enable {
+            let mode3_end = Self::OAM_SCAN_START
+                + Self::OAM_SCAN_DOTS
+                + Self::PIXEL_TRANSFER_DOTS
+                + self.mode3_extra_dots;
+            (84u16, mode3_end)
+        } else if self.second_scanline_after_enable {
+            let mode3_end = Self::OAM_SCAN_START
+                + Self::OAM_SCAN_DOTS
+                + Self::PIXEL_TRANSFER_DOTS
+                + self.mode3_extra_dots;
+            (80, mode3_end)
+        } else {
+            let mode3_end = Self::OAM_SCAN_DOTS + Self::PIXEL_TRANSFER_DOTS + self.mode3_extra_dots;
+            (80, mode3_end)
+        };
+        self.dot >= vram_start && self.dot < vram_end
+    }
+
+    /// Returns whether VRAM is blocked for CPU **write** access at the current dot.
+    ///
+    /// Identical to `is_vram_blocked` for scan 0: blocked during [84, 256+extra).
+    /// Scan 1 and scan 2+: the write gate lags the read gate by 4T — Mode3 physically
+    /// locks writes 4 dots later than it locks reads.  This matches the lcdon_write_timing-GS
+    /// test on DMG: at dot=80 VRAM reads return $FF but writes succeed, at dot=84 writes fail.
+    pub fn is_vram_write_blocked(&self) -> bool {
+        if self.scanline >= Self::VBLANK_START_LINE {
+            return false;
+        }
+        let (vram_start, vram_end) = if self.first_scanline_after_enable {
+            let mode3_end = Self::OAM_SCAN_START
+                + Self::OAM_SCAN_DOTS
+                + Self::PIXEL_TRANSFER_DOTS
+                + self.mode3_extra_dots;
+            (84u16, mode3_end)
+        } else if self.second_scanline_after_enable {
+            let mode3_end = Self::OAM_SCAN_START
+                + Self::OAM_SCAN_DOTS
+                + Self::PIXEL_TRANSFER_DOTS
+                + self.mode3_extra_dots;
+            (84, mode3_end)
+        } else {
+            let mode3_end = Self::OAM_SCAN_DOTS + Self::PIXEL_TRANSFER_DOTS + self.mode3_extra_dots;
+            (84, mode3_end)
+        };
+        self.dot >= vram_start && self.dot < vram_end
+    }
+
+    /// Returns whether OAM is blocked for CPU **read** access at the current dot.
+    ///
+    /// Scan 0: blocked during [84, 256+extra) — no OamScan; only Mode3 blocks OAM.
+    /// Scan 1: blocked during [0, 256+extra) — OAM is blocked from dot=0 even
+    ///   though STAT shows Mode0 until dot=4. The brief HBlank [0,4) is "fake":
+    ///   the OAM read bus remains blocked throughout [0, mode3_end).
+    /// Scan 2+: blocked during [0, 252+extra) — physical OamScan from dot=0.
+    ///
+    /// Read access follows the STAT mode (or conservative latch) — no lag.
+    pub fn is_oam_blocked(&self) -> bool {
+        if self.scanline >= Self::VBLANK_START_LINE {
+            return false;
+        }
+        if self.first_scanline_after_enable {
+            let mode3_end = Self::OAM_SCAN_START
+                + Self::OAM_SCAN_DOTS
+                + Self::PIXEL_TRANSFER_DOTS
+                + self.mode3_extra_dots;
+            self.dot >= 84 && self.dot < mode3_end
+        } else if self.second_scanline_after_enable {
+            let mode3_end = Self::OAM_SCAN_START
+                + Self::OAM_SCAN_DOTS
+                + Self::PIXEL_TRANSFER_DOTS
+                + self.mode3_extra_dots;
+            self.dot < mode3_end
+        } else {
+            let mode3_end = Self::OAM_SCAN_DOTS + Self::PIXEL_TRANSFER_DOTS + self.mode3_extra_dots;
+            self.dot < mode3_end
+        }
+    }
+
+    /// Returns whether OAM is blocked for CPU **write** access at the current dot.
+    ///
+    /// Scan 0: blocked during [84, 256+extra) — no OamScan; only Mode3 blocks OAM writes.
+    /// Scan 1: blocked during [4, 80) ∪ [84, 256+extra).
+    ///   - Physical OAM scan write-lock starts at dot=4, ends at dot=80.
+    ///   - Mode3 write-lock starts 4T after STAT Mode3 (dot=84, not dot=80).
+    ///   - Gaps [0,4) and [80,84) are accessible for writes on DMG.
+    /// Scan 2+: blocked during [4, 80) ∪ [84, 252+extra).
+    ///   - OAM write-lock starts at dot=4 (STAT shows Mode2 from dot=0, but write
+    ///     gate lags 4T).  Mode3 write-lock starts at dot=84, not dot=80.
+    pub fn is_oam_write_blocked(&self) -> bool {
+        if self.scanline >= Self::VBLANK_START_LINE {
+            return false;
+        }
+        if self.first_scanline_after_enable {
+            let mode3_end = Self::OAM_SCAN_START
+                + Self::OAM_SCAN_DOTS
+                + Self::PIXEL_TRANSFER_DOTS
+                + self.mode3_extra_dots;
+            self.dot >= 84 && self.dot < mode3_end
+        } else if self.second_scanline_after_enable {
+            let mode3_end = Self::OAM_SCAN_START
+                + Self::OAM_SCAN_DOTS
+                + Self::PIXEL_TRANSFER_DOTS
+                + self.mode3_extra_dots;
+            (self.dot >= 4 && self.dot < 80) || (self.dot >= 84 && self.dot < mode3_end)
+        } else {
+            let mode3_end = Self::OAM_SCAN_DOTS + Self::PIXEL_TRANSFER_DOTS + self.mode3_extra_dots;
+            (self.dot >= 4 && self.dot < 80) || (self.dot >= 84 && self.dot < mode3_end)
+        }
+    }
+
+    /// Current LY register value.
+    ///
+    /// On DMG, LY increments 4 T-cycles early (at `MODE2_IRQ_DOT`) for
+    /// scanlines 0–142, simultaneously with the Mode 2 STAT source firing.
     pub fn ly(&self) -> u8 {
-        self.scanline
+        self.ly
     }
 
     pub fn dot(&self) -> u16 {
         self.dot
     }
 
-    /// Whether the PPU is on the first scanline after LCD enable.
-    ///
-    /// During this scanline, Mode 0 is reported instead of Mode 2,
-    /// and STAT mode interrupts are suppressed.
+    /// Whether the PPU is on the first scanline after LCD enable (scan 0).
     pub fn is_first_scanline_after_enable(&self) -> bool {
         self.first_scanline_after_enable
+    }
+
+    /// Whether the PPU is on the second scanline after LCD enable (scan 1).
+    pub fn is_second_scanline_after_enable(&self) -> bool {
+        self.second_scanline_after_enable
     }
 
     pub fn is_frame_ready(&self) -> bool {
@@ -208,17 +465,19 @@ impl Timing {
     /// Returns the mode whose STAT IRQ source is currently active.
     ///
     /// -1 = all mode IRQ sources suppressed (first scanline after LCD enable).
-    /// 0–3 = the mode whose source is active.
+    /// 0-3 = the mode whose source is active.
     ///
     /// This mirrors SameBoy's `mode_for_interrupt`. Mode 2 source activates
-    /// 4 T-cycles before the STAT mode bits change to Mode 2.
+    /// 4 T-cycles before the STAT mode bits change to Mode 2. Mode 0 source
+    /// also activates 4 T-cycles before HBlank begins (dot 252 with no penalty).
     pub fn mode_for_irq(&self) -> i8 {
         self.mode_for_irq
     }
 
     /// Set the number of extra dots to add to Mode 3 (OBJ/SCX/window penalties).
     ///
-    /// Call at the Mode 2→Mode 3 transition (dot 80 of each visible scanline).
+    /// Call at the Mode 2→Mode 3 transition: dot 84 for scan 0 (first scanline after
+    /// LCD enable), dot 80 for scan 1 and scan 2+.
     pub fn set_mode3_extra_dots(&mut self, extra: u16) {
         self.mode3_extra_dots = extra;
     }
@@ -242,6 +501,19 @@ mod tests {
         last
     }
 
+    /// Tick `m_cycles` M-cycles (4 dots each), calling `save_stat_mode` before
+    /// each group of 4 dots — exactly as `Ppu::tick_dots` does in production.
+    fn tick_m(timing: &mut Timing, m_cycles: u32, lyc: u8) -> DotEvents {
+        let mut last = DotEvents::default();
+        for _ in 0..m_cycles {
+            timing.save_stat_mode();
+            for _ in 0..4 {
+                last = timing.tick_dot(lyc);
+            }
+        }
+        last
+    }
+
     #[test]
     fn test_initial_mode_is_hblank_after_lcd_enable() {
         // Given: a freshly created Timing (simulates LCD just enabled)
@@ -250,7 +522,7 @@ mod tests {
         // does not have a Mode 2 OAM Scan period)
         assert_eq!(timing.mode(), PpuMode::HBlank);
         assert!(timing.is_first_scanline_after_enable());
-        // And the PPU starts at dot 4 (first scanline is shorter)
+        // And the PPU starts at dot 4 (first scanline is 452 dots: 4–455)
         assert_eq!(timing.dot(), 4);
     }
 
@@ -261,55 +533,72 @@ mod tests {
     }
 
     #[test]
-    fn test_first_scanline_stays_hblank_for_80_dots_then_pixel_transfer() {
+    fn test_first_scanline_stays_hblank_for_84_dots_then_pixel_transfer() {
         // Given: fresh timing (first scanline after LCD enable, starting at dot 4)
         let mut timing = Timing::new();
-        // When: tick 75 dots (to dot 79) — still in HBlank (not Mode 2 on first scanline)
-        tick_n(&mut timing, 75, 0xFF);
-        assert_eq!(timing.dot(), 79);
+        // When: tick 79 dots (to dot 83) — still in HBlank (no OamScan on first scanline)
+        tick_n(&mut timing, 79, 0xFF);
+        assert_eq!(timing.dot(), 83);
         assert_eq!(timing.mode(), PpuMode::HBlank);
-        // When: tick 1 more dot (dot 80)
+        // When: tick 1 more dot (dot 84)
         timing.tick_dot(0xFF);
-        // Then: mode is Pixel Transfer (Mode 3)
+        // Then: mode is Pixel Transfer (Mode 3 starts at dot 84)
         assert_eq!(timing.mode(), PpuMode::PixelTransfer);
     }
 
     #[test]
     fn test_second_scanline_has_normal_oam_scan() {
-        // Given: timing advanced past the first scanline (452 dots = 456 - 4 initial offset)
+        // Given: timing advanced past the first scanline (452 dots from dot 4 = wrap + 4 more)
         let mut timing = Timing::new();
-        tick_n(&mut timing, 452, 0xFF); // complete first scanline
-        // Then: second scanline starts with normal Mode 2 (OAM Scan)
+        // 452 ticks from dot=4 wrap to dot=0 on scan1 (brief Mode 0 at dots 0-3).
+        // 4 more ticks reach dot=4 where Mode 2 (OAM Scan) begins.
+        tick_n(&mut timing, 456, 0xFF);
+        // Then: scan1, dot=4, Mode 2 (OAM Scan)
         assert_eq!(timing.ly(), 1);
+        assert_eq!(timing.dot(), 4);
         assert_eq!(timing.mode(), PpuMode::OamScan);
         assert!(!timing.is_first_scanline_after_enable());
     }
 
     #[test]
-    fn test_pixel_transfer_runs_for_172_dots_then_transitions_to_hblank() {
-        // Given: timing at start of Mode 3 (dot 80, reached by ticking 76 dots from dot 4)
+    fn test_second_scanline_brief_hblank_at_dot_0() {
+        // On normal scans, dots 0-3 are a brief Mode 0 carryover before Mode 2.
         let mut timing = Timing::new();
-        tick_n(&mut timing, 76, 0xFF); // enter Mode 3 (dot 4 + 76 = dot 80)
+        tick_n(&mut timing, 452, 0xFF); // dot=0 on scan1
+        assert_eq!(timing.ly(), 1);
+        assert_eq!(timing.dot(), 0);
+        assert_eq!(
+            timing.mode(),
+            PpuMode::HBlank,
+            "dots 0-3 on normal scans are Mode 0"
+        );
+    }
+
+    #[test]
+    fn test_pixel_transfer_runs_for_172_dots_then_transitions_to_hblank() {
+        // Given: timing at start of Mode 3 (dot 84, reached by ticking 80 dots from dot 4)
+        let mut timing = Timing::new();
+        tick_n(&mut timing, 80, 0xFF); // enter Mode 3 (dot 4 + 80 = dot 84)
         assert_eq!(timing.mode(), PpuMode::PixelTransfer);
-        // When: tick 171 more dots (still in Mode 3)
+        // When: tick 171 more dots (still in Mode 3, dot 255)
         tick_n(&mut timing, 171, 0xFF);
         assert_eq!(timing.mode(), PpuMode::PixelTransfer);
-        // When: tick 1 more dot (dot 252)
+        // When: tick 1 more dot (dot 256)
         timing.tick_dot(0xFF);
-        // Then: mode is H-Blank
+        // Then: mode is H-Blank (Mode 0 starts at dot 256)
         assert_eq!(timing.mode(), PpuMode::HBlank);
     }
 
     #[test]
     fn test_hblank_ends_at_dot_456_and_ly_increments() {
-        // Given: timing at start of H-Blank (dot 252, first scanline)
+        // Given: timing at start of H-Blank (dot 256, first scanline)
         let mut timing = Timing::new();
-        tick_n(&mut timing, 248, 0xFF); // dot 4 + 248 = 252
+        tick_n(&mut timing, 252, 0xFF); // dot 4 + 252 = 256 (Mode 0 starts at dot 256)
         assert_eq!(timing.mode(), PpuMode::HBlank);
         let ly_before = timing.ly();
-        // When: tick remaining dots to complete the scanline (456 - 252 = 204)
+        // When: tick remaining dots to complete the scanline (200) plus 4 to reach Mode 2
         tick_n(&mut timing, 204, 0xFF);
-        // Then: LY incremented and we are in Mode 2 of next scanline
+        // Then: LY incremented and we are in Mode 2 of next scanline (dot 4 of scan1)
         assert_eq!(timing.ly(), ly_before + 1);
         assert_eq!(timing.mode(), PpuMode::OamScan);
         // And the first-scanline flag is cleared
@@ -370,11 +659,11 @@ mod tests {
 
     #[test]
     fn test_render_scanline_event_fires_on_hblank_entry() {
-        // Given: timing at dot 251 (last dot of Mode 3 on scanline 0)
+        // Given: timing at dot 255 (last dot of Mode 3 on scanline 0)
         let mut timing = Timing::new();
-        tick_n(&mut timing, 247, 0xFF); // dot 4 + 247 = 251
+        tick_n(&mut timing, 251, 0xFF); // dot 4 + 251 = 255
         assert_eq!(timing.mode(), PpuMode::PixelTransfer);
-        // When: tick one more dot
+        // When: tick one more dot (dot 256 = Mode 0 start)
         let events = timing.tick_dot(0xFF);
         // Then: render_scanline fires
         assert!(events.render_scanline);
@@ -437,15 +726,15 @@ mod tests {
     #[test]
     fn test_mode_for_irq_becomes_0_when_mode_0_starts() {
         // mode_for_irq must equal 0 when the STAT mode bits change to HBlank.
-        // On scanline 1, HBlank starts at dot 252.
-        // Note: mode_for_irq is first set to 0 at dot 248 (4 dots early), so
-        // at dot 252 it is already 0 (set a second time redundantly).
+        // On scanline 1, HBlank starts at dot 256 (Mode 3 ends at dot 256).
+        // Note: mode_for_irq is first set to 0 at dot 252 (4 dots early), so
+        // at dot 256 it is already 0 (set a second time redundantly).
         // First scanline is 452 dots (starting at dot 4). Scanline 1 starts at dot 0.
-        // Tick 452 (scanline 0 end) + 252 (HBlank start on scanline 1) = 704 dots.
+        // Tick 452 (scanline 0 end) + 256 (HBlank start on scanline 1) = 708 dots.
         let mut timing = Timing::new();
-        tick_n(&mut timing, 452 + 252, 0xFF);
+        tick_n(&mut timing, 452 + 256, 0xFF);
         assert_eq!(timing.scanline, 1);
-        assert_eq!(timing.dot(), 252);
+        assert_eq!(timing.dot(), 256);
         assert_eq!(timing.mode(), PpuMode::HBlank);
         assert_eq!(
             timing.mode_for_irq(),
@@ -455,40 +744,40 @@ mod tests {
     }
 
     #[test]
-    fn test_mode_for_irq_becomes_0_at_dot_248_before_hblank() {
-        // The Mode 0 STAT interrupt source must activate at dot 248 of scanline 1,
-        // which is 4 dots before the STAT mode bits change to HBlank at dot 252.
+    fn test_mode_for_irq_becomes_0_at_dot_252_before_hblank() {
+        // The Mode 0 STAT interrupt source must activate at dot 252 of scanline 1,
+        // which is 4 dots before the STAT mode bits change to HBlank at dot 256.
         // This is symmetric with Mode 2 firing at dot 452 (4 dots before Mode 2 bits).
         // First scanline: 452 dots. Scanline 1 starts at dot 0.
-        // Tick 452 (scanline 0 end) + 248 = 700 dots.
+        // Tick 452 (scanline 0 end) + 252 = 704 dots.
         let mut timing = Timing::new();
-        tick_n(&mut timing, 452 + 248, 0xFF);
+        tick_n(&mut timing, 452 + 252, 0xFF);
         assert_eq!(timing.scanline, 1);
-        assert_eq!(timing.dot(), 248);
+        assert_eq!(timing.dot(), 252);
         assert_eq!(
             timing.mode(),
             PpuMode::PixelTransfer,
-            "Mode bits must still show PixelTransfer at dot 248 (HBlank starts at 252)"
+            "Mode bits must still show PixelTransfer at dot 252 (HBlank starts at 256)"
         );
         assert_eq!(
             timing.mode_for_irq(),
             0,
-            "mode_for_irq must be 0 at dot 248 (4 dots before Mode 0 mode bits)"
+            "mode_for_irq must be 0 at dot 252 (4 dots before Mode 0 mode bits)"
         );
     }
 
     #[test]
-    fn test_mode_for_irq_becomes_0_at_dot_247_not_early() {
+    fn test_mode_for_irq_becomes_0_at_dot_251_not_early() {
         // One dot before the early Mode 0 fire: mode_for_irq should NOT yet be 0.
-        // At dot 247 of scanline 1, mode_for_irq is still -1 (PixelTransfer suppressed).
+        // At dot 251 of scanline 1, mode_for_irq is still -1 (PixelTransfer suppressed).
         let mut timing = Timing::new();
-        tick_n(&mut timing, 452 + 247, 0xFF);
+        tick_n(&mut timing, 452 + 251, 0xFF);
         assert_eq!(timing.scanline, 1);
-        assert_eq!(timing.dot(), 247);
+        assert_eq!(timing.dot(), 251);
         assert_ne!(
             timing.mode_for_irq(),
             0,
-            "mode_for_irq must not be 0 before dot 248"
+            "mode_for_irq must not be 0 before dot 252"
         );
     }
 
@@ -514,44 +803,171 @@ mod tests {
     }
 
     #[test]
-    fn test_mode_for_irq_becomes_2_at_dot_452_of_scanline_153() {
-        // Scanline 153 transitions to scanline 0 (visible), so mode_for_irq
-        // must be 2 at dot 452 of scanline 153.
+    fn test_mode_for_irq_is_1_at_dot_452_of_scanline_153() {
+        // Scanline 153 is VBlank; the Mode 2 STAT source does NOT fire at dot 452 here.
+        // (It fires at dot=0 of scanline 0 on the frame wrap instead — see test below.)
+        // mode_for_irq remains 1 (VBlank) throughout scanline 153.
         //
         // First scanline: 452 dots. Scanlines 1-153: 456 * 153 = 69768 dots.
-        // dot 452 of scanline 153 = tick(452 + 456 * 153 - 456 + 452).
-        // = tick(452 + 456*152 + 452)
+        // dot 452 of scanline 153 = tick(452 + 456*152 + 452)
         let mut timing = Timing::new();
         tick_n(&mut timing, 452 + 456 * 152 + 452, 0xFF);
         assert_eq!(timing.scanline, 153);
         assert_eq!(timing.dot(), 452);
         assert_eq!(
             timing.mode_for_irq(),
+            1,
+            "mode_for_irq must be 1 (VBlank) at dot 452 of scanline 153"
+        );
+    }
+
+    #[test]
+    fn test_mode_for_irq_becomes_2_at_frame_wrap_dot_0_scanline_0() {
+        // At the frame wrap (dot=0 of scanline 0 in frame 2+), the Mode 2 STAT source fires.
+        // Full first frame: 452 + 456 * 153 = 70220 dots.
+        let mut timing = Timing::new();
+        tick_n(&mut timing, 452 + 456 * 153, 0xFF);
+        assert_eq!(timing.scanline, 0);
+        assert_eq!(timing.dot(), 0);
+        assert_eq!(
+            timing.mode_for_irq(),
             2,
-            "mode_for_irq must be 2 at dot 452 of scanline 153 (next is scanline 0 with Mode 2)"
+            "mode_for_irq must be 2 at dot=0 of scanline 0 (frame wrap)"
         );
     }
 
     #[test]
     fn test_mode3_extra_dots_shifts_hblank_start() {
-        // When mode3_extra_dots = 10, HBlank should start at dot 262 (not 252).
+        // When mode3_extra_dots = 10, HBlank should start at dot 266 (not 256).
+        // Base mode3_end for scan 1 = OAM_SCAN_DOTS(80) + PIXEL_TRANSFER_DOTS(172) + OAM_SCAN_START(4) = 256.
+        // With extra=10: mode3_end = 256 + 10 = 266.
         let mut timing = Timing::new();
-        tick_n(&mut timing, 452, 0xFF); // complete first scanline
+        tick_n(&mut timing, 452, 0xFF); // complete first scanline (now at dot=0 scan1)
         assert_eq!(timing.scanline, 1);
         timing.set_mode3_extra_dots(10);
-        tick_n(&mut timing, 252, 0xFF); // would normally be HBlank, but +10 extra dots
-        assert_eq!(timing.dot(), 252);
+        tick_n(&mut timing, 256, 0xFF); // would normally be HBlank at dot 256, but +10 extra
+        assert_eq!(timing.dot(), 256);
         assert_eq!(
             timing.mode(),
             PpuMode::PixelTransfer,
-            "With mode3_extra_dots=10, mode 3 should still be active at dot 252"
+            "With mode3_extra_dots=10, mode 3 should still be active at dot 256"
         );
         tick_n(&mut timing, 10, 0xFF); // advance past extra dots
-        assert_eq!(timing.dot(), 262);
+        assert_eq!(timing.dot(), 266);
         assert_eq!(
             timing.mode(),
             PpuMode::HBlank,
-            "With mode3_extra_dots=10, HBlank should start at dot 262"
+            "With mode3_extra_dots=10, HBlank should start at dot 266"
         );
+    }
+
+    // ── Third scanline (scan 2) and scan 3+ behavior ─────────────────────────
+
+    #[test]
+    fn test_third_scanline_flag_set_and_cleared() {
+        let mut timing = Timing::new();
+        assert!(timing.first_scanline_after_enable);
+        // Complete scan0 (452 dots from dot=4)
+        tick_n(&mut timing, 452, 0xFF);
+        assert!(!timing.first_scanline_after_enable);
+        assert!(timing.second_scanline_after_enable);
+        // Complete scan1 (456 dots)
+        tick_n(&mut timing, 456, 0xFF);
+        assert!(!timing.second_scanline_after_enable);
+        assert!(
+            timing.third_scanline_after_enable,
+            "scan2 should have third flag set"
+        );
+        assert_eq!(timing.ly(), 2);
+        // Complete scan2 (456 dots)
+        tick_n(&mut timing, 456, 0xFF);
+        assert!(
+            !timing.third_scanline_after_enable,
+            "scan3 should clear third flag"
+        );
+        assert_eq!(timing.ly(), 3);
+    }
+
+    #[test]
+    fn test_mode_for_stat_scan2_oam_shows_hblank_for_4t() {
+        // On scan2, OamScan start [0,4) shows HBlank in STAT (stat_mode lag).
+        // Use tick_m so that save_stat_mode is called every M-cycle (as in Ppu::tick_dots).
+        let mut timing = Timing::new();
+        // Complete scan0 (113 M-cycles = 452 dots) and scan1 (114 M-cycles = 456 dots).
+        tick_m(&mut timing, 113 + 114, 0xFF); // at scan2 dot=0
+        assert_eq!(timing.ly(), 2);
+        assert_eq!(timing.dot(), 0);
+        assert!(timing.third_scanline_after_enable);
+        // Physical mode = OamScan; stat_mode was HBlank (from end of scan1).
+        assert_eq!(timing.mode(), PpuMode::OamScan);
+        assert_eq!(
+            timing.mode_for_stat(),
+            PpuMode::HBlank,
+            "scan2 dot=0: STAT shows HBlank for 4T"
+        );
+        // After 1 M-cycle (4 dots): stat_mode updates to OamScan.
+        tick_m(&mut timing, 1, 0xFF);
+        assert_eq!(timing.dot(), 4);
+        assert_eq!(
+            timing.mode_for_stat(),
+            PpuMode::OamScan,
+            "scan2 dot=4: STAT now shows OamScan"
+        );
+    }
+
+    #[test]
+    fn test_mode_for_stat_scan2_pixel_transfer_shows_oam_for_4t() {
+        // On scan2, PixelTransfer start shows OamScan in STAT (stat_mode lag).
+        let mut timing = Timing::new();
+        // scan0 (113M) + scan1 (114M) + 20M to reach scan2 dot=80.
+        tick_m(&mut timing, 113 + 114 + 20, 0xFF); // at scan2 dot=80
+        assert_eq!(timing.ly(), 2);
+        assert_eq!(timing.dot(), 80);
+        assert_eq!(timing.mode(), PpuMode::PixelTransfer);
+        assert_eq!(
+            timing.mode_for_stat(),
+            PpuMode::OamScan,
+            "scan2 dot=80: STAT still shows OamScan for 4T"
+        );
+        tick_m(&mut timing, 1, 0xFF);
+        assert_eq!(timing.dot(), 84);
+        assert_eq!(
+            timing.mode_for_stat(),
+            PpuMode::PixelTransfer,
+            "scan2 dot=84: STAT shows PixelTransfer"
+        );
+    }
+
+    #[test]
+    fn test_mode_for_stat_scan3_uses_physical_mode() {
+        // On scan3+, STAT uses physical mode immediately (no lag).
+        let mut timing = Timing::new();
+        // scan0 (113M) + scan1 (114M) + scan2 (114M) = reach scan3 dot=0.
+        tick_m(&mut timing, 113 + 114 + 114, 0xFF);
+        assert_eq!(timing.ly(), 3);
+        assert!(!timing.third_scanline_after_enable);
+        // save_stat_mode was called before the M-cycle that spans scan3 dot=0.
+        // At scan3 dot=0: physical mode = OamScan; mode_for_stat = physical (no lag).
+        assert_eq!(timing.mode(), PpuMode::OamScan);
+        assert_eq!(
+            timing.mode_for_stat(),
+            PpuMode::OamScan,
+            "scan3+ OamScan: physical mode in STAT"
+        );
+    }
+
+    #[test]
+    fn test_is_oam_blocked_scan1_dot0_is_blocked() {
+        // On scan1, OAM is blocked from dot=0 (brief HBlank [0,4) still blocks).
+        let mut timing = Timing::new();
+        tick_n(&mut timing, 452, 0xFF); // reach scan1 dot=0
+        assert_eq!(timing.ly(), 1);
+        assert_eq!(timing.dot(), 0);
+        assert_eq!(
+            timing.mode(),
+            PpuMode::HBlank,
+            "scan1 dot=0 physical mode is HBlank"
+        );
+        assert!(timing.is_oam_blocked(), "scan1 dot=0: OAM must be blocked");
     }
 }
