@@ -130,6 +130,39 @@ impl GbSaveState {
     }
 }
 
+// ── Convenience save / load for Gb<DmgBus> ─────────────────────────────────
+
+use super::Gb;
+use crate::gb::bus::DmgBus;
+
+impl Gb<DmgBus> {
+    /// Capture a full save-state snapshot.
+    pub fn save_state(&self) -> GbSaveState {
+        GbSaveState {
+            version: GB_SAVESTATE_VERSION,
+            cpu: self.cpu.capture_state(),
+            bus: self.cpu.bus.capture_bus_state(),
+            cart_ram: self.cpu.bus.cart_ram_snapshot(),
+            mbc_state: self.cpu.bus.mbc_state_snapshot(),
+        }
+    }
+
+    /// Restore state from a save-state snapshot.
+    pub fn load_state(&mut self, state: &GbSaveState) -> Result<(), String> {
+        if state.version != GB_SAVESTATE_VERSION {
+            return Err(format!(
+                "Save state version mismatch: expected {GB_SAVESTATE_VERSION}, got {}",
+                state.version
+            ));
+        }
+        self.cpu.restore_state(&state.cpu);
+        self.cpu.bus.restore_bus_state(&state.bus)?;
+        self.cpu.bus.restore_cart_ram(&state.cart_ram);
+        self.cpu.bus.restore_mbc_state(&state.mbc_state);
+        Ok(())
+    }
+}
+
 // ── Capture / Restore helpers for SM83 CPU ─────────────────────────────────
 
 impl<B: crate::gb::bus::GbBus> Sm83<B> {
