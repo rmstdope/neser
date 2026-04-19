@@ -196,7 +196,7 @@ pub struct Channel3Snapshot {
     pub wave_pos: u8,
     pub freq_timer: u16,
     pub length_counter: u16,
-    pub wave_ram: Vec<u8>,
+    pub wave_ram: [u8; 16],
     pub current_sample: u8,
     pub is_cgb: bool,
     pub wave_just_read: bool,
@@ -238,7 +238,8 @@ pub struct BusSnapshot {
     pub sc: u8,
     pub serial_bits_remaining: u8,
     pub serial_master_clock: bool,
-    pub model: u8,
+    pub serial_buf: Vec<u8>,
+    pub model: String,
 }
 
 // ── Snapshot/Restore implementations ────────────────────────────────────────
@@ -476,7 +477,7 @@ impl Channel3 {
             wave_pos: self.wave_pos_raw(),
             freq_timer: self.freq_timer_raw(),
             length_counter: self.length_counter,
-            wave_ram: self.wave_ram_raw().to_vec(),
+            wave_ram: *self.wave_ram_raw(),
             current_sample: self.current_sample,
             is_cgb: self.is_cgb_raw(),
             wave_just_read: self.wave_just_read,

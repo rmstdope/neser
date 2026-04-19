@@ -321,9 +321,7 @@ impl Channel3 {
         self.wave_pos = snap.wave_pos;
         self.freq_timer = snap.freq_timer;
         self.length_counter = snap.length_counter;
-        if snap.wave_ram.len() == self.wave_ram.len() {
-            self.wave_ram.copy_from_slice(&snap.wave_ram);
-        }
+        self.wave_ram = snap.wave_ram;
         self.current_sample = snap.current_sample;
         self.is_cgb = snap.is_cgb;
         self.wave_just_read = snap.wave_just_read;

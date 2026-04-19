@@ -56,6 +56,16 @@ impl DmgModel {
         }
     }
 
+    /// Returns the canonical string identifier for this model.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::DmgA => "dmg-a",
+            Self::DmgB => "dmg-b",
+            Self::DmgC => "dmg-c",
+            Self::Dmg0 => "dmg-0",
+        }
+    }
+
     /// Parse a DMG model variant from a string value.
     ///
     /// Accepts `dmg-0`, `dmg-a`, `dmg-b`, `dmg-c` (case-insensitive).

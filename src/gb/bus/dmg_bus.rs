@@ -377,7 +377,8 @@ impl DmgBus {
             sc: self.sc,
             serial_bits_remaining: self.serial_bits_remaining,
             serial_master_clock: self.serial_master_clock,
-            model: self.model as u8,
+            serial_buf: self.serial_buf.clone(),
+            model: self.model.as_str().to_owned(),
         }
     }
 
@@ -385,6 +386,16 @@ impl DmgBus {
         &mut self,
         snap: &crate::gb::console::save_state::BusSnapshot,
     ) -> Result<(), String> {
+        // Validate DMG model matches
+        let snap_model = DmgModel::parse(&snap.model)
+            .ok_or_else(|| format!("Unknown DMG model in save state: {:?}", snap.model))?;
+        if snap_model != self.model {
+            return Err(format!(
+                "DMG model mismatch: save state has {}, current bus has {}",
+                snap.model,
+                self.model.as_str()
+            ));
+        }
         if snap.wram.len() != self.wram.len() {
             return Err(format!(
                 "WRAM size mismatch: expected {}, got {}",
@@ -412,6 +423,7 @@ impl DmgBus {
         self.sc = snap.sc;
         self.serial_bits_remaining = snap.serial_bits_remaining;
         self.serial_master_clock = snap.serial_master_clock;
+        self.serial_buf = snap.serial_buf.clone();
         Ok(())
     }
 
