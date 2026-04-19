@@ -62,13 +62,13 @@
 /// | $004C     | Pre-LCD delay (N=1223)      | 8 B   |
 /// | $0054     | LCD enable (LCDC=$91)       | 4 B   |
 /// | $0058     | Post-LCD delay (N=2366)     | 11 B  |
-/// | $0063     | Logo verify                 | 17 B  |
+/// | $0063     | Logo verify (self-compare)  | 17 B  |
 /// | $0074     | Checksum verify             | 17 B  |
 /// | $0085     | Register setup              | 14 B  |
 /// | $0093     | JP $00FE                    | 3 B   |
 /// | $0096     | `DoubleBitsAndWriteRow`     | 21 B  |
 /// | $00AB     | `Lockup`                    | 2 B   |
-/// | $00AD     | Nintendo logo reference     | 48 B  |
+/// | $00AD     | Unused padding (48 bytes)   | —     |
 /// | $00DD     | Padding                     | 33 B  |
 /// | $00FE     | `BootGame` (LDH [$FF50])    | 2 B   |
 pub const DMG_BOOT_ROM: [u8; 256] = [
@@ -140,9 +140,14 @@ pub const DMG_BOOT_ROM: [u8; 256] = [
     0x00, 0x00, 0x00, // 3 × NOP (fine-tune)
     // .postLoop ($005E):
     0x2B, 0x7C, 0xB5, 0x20, 0xFB, // DEC HL; LD A,H; OR L; JR NZ
-    // ── $0063: Verify Nintendo logo ──────────────────────────────────────────
+    // ── $0063: Skip logo verify — compare cart bytes to themselves ───────────
+    // Point both DE and HL at the cart header logo region ($0104–$0133).
+    // Each iteration reads the same byte from the same address via both
+    // pointers, so the comparison always succeeds and the JR NZ, Lockup branch
+    // is never taken — any cartridge logo is accepted.
+    // Timing is identical to a real logo verify (48 × 14M + setup = 679M).
     0x11, 0x04, 0x01, // LD DE, $0104
-    0x21, 0xAD, 0x00, // LD HL, $00AD  (logo reference)
+    0x21, 0x04, 0x01, // LD HL, $0104  (self-compare — no reference logo needed)
     0x0E, 0x30, // LD C, 48
     // .verifyLoop ($006B):
     0x1A, 0x13, // LD A,[DE]; INC DE
@@ -195,10 +200,12 @@ pub const DMG_BOOT_ROM: [u8; 256] = [
     // ── $00AB: Lockup ────────────────────────────────────────────────────────
     0x18, 0xFE, // JR $-2  (jump to self forever)
     // ════════════════════════════════════════════════════════════════════════
-    // ── $00AD: Nintendo logo reference data (48 bytes) ───────────────────────
-    0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00, 0x0D,
-    0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD, 0xD9, 0x99,
-    0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E,
+    // ── $00AD: Reserved / unused (48 bytes, formerly Nintendo logo reference) ─
+    // The logo-verify loop above compares the cart header to itself, so this
+    // region is never read.  Kept as zero padding to preserve the ROM layout.
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     // ── $00DD–$00FD: Padding ─────────────────────────────────────────────────
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,

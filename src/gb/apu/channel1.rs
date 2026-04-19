@@ -33,6 +33,9 @@ pub struct Channel1 {
     /// Set when a negate-mode calculation is performed; cleared on trigger.
     /// If NR10 clears the negate bit after this was set, the channel is disabled.
     negate_used: bool,
+    /// Gate flag: duty step clock is disabled until the first trigger after
+    /// APU power-on (Pan Docs "Obscure Behavior").
+    triggered_once: bool,
 }
 
 impl Default for Channel1 {
@@ -65,6 +68,7 @@ impl Channel1 {
             sweep_shadow: 0,
             sweep_enabled: false,
             negate_used: false,
+            triggered_once: false,
         }
     }
 
@@ -99,7 +103,9 @@ impl Channel1 {
             self.freq_timer -= 4;
         } else {
             self.freq_timer = (2048 - self.freq) * 4;
-            self.duty_pos = (self.duty_pos + 1) & 7;
+            if self.triggered_once {
+                self.duty_pos = (self.duty_pos + 1) & 7;
+            }
         }
     }
 
@@ -201,6 +207,7 @@ impl Channel1 {
         self.sweep_timer = 0;
         self.sweep_shadow = 0;
         self.sweep_enabled = false;
+        self.triggered_once = false;
     }
 
     // ── Register reads ────────────────────────────────────────────────────
@@ -294,6 +301,7 @@ impl Channel1 {
     // ── Trigger ───────────────────────────────────────────────────────────
 
     fn trigger(&mut self) {
+        self.triggered_once = true;
         if self.dac_on {
             self.active = true;
         }
@@ -717,6 +725,36 @@ mod tests {
         assert!(
             ch.output() > 0.0,
             "output must be positive at duty-high step"
+        );
+    }
+
+    #[test]
+    fn test_duty_phase_is_not_clocked_before_first_trigger() {
+        // Pan Docs: just after APU power-on, pulse duty clocking is disabled
+        // until first trigger. Verify CH1 duty phase does not advance before
+        // first trigger, then advances normally afterwards.
+        let mut ch = Channel1::new();
+
+        for _ in 0..4096 {
+            ch.tick();
+        }
+        assert_eq!(
+            ch.duty_pos, 0,
+            "duty phase should remain at reset position before first trigger"
+        );
+
+        ch.write_nr12(0xF0); // DAC on
+        ch.write_nr11(0x80); // 50% duty
+        ch.write_nr14(0x80, false); // trigger
+
+        let start = ch.duty_pos;
+        for _ in 0..4096 {
+            ch.tick();
+        }
+
+        assert_ne!(
+            ch.duty_pos, start,
+            "duty phase should advance after the channel has been triggered"
         );
     }
 }
