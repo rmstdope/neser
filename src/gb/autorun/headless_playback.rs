@@ -25,6 +25,28 @@ impl HeadlessPlaybackResult {
     }
 }
 
+/// Restore emulator state from checkpoint `cp_idx` and return `(start_frame, first_checkpoint_idx)`.
+///
+/// Returns `(0, 0)` when `start_checkpoint` is `None`.
+fn apply_start_checkpoint(
+    gb: &mut Gb<DmgBus>,
+    file: &AutorunFile,
+    start_checkpoint: Option<usize>,
+) -> Result<(usize, usize), String> {
+    let Some(cp_idx) = start_checkpoint else {
+        return Ok((0, 0));
+    };
+    let cp = file
+        .checkpoints
+        .get(cp_idx)
+        .ok_or_else(|| format!("Checkpoint index {cp_idx} out of range"))?;
+    let state = GbSaveState::from_bytes(&cp.state_bytes)
+        .map_err(|e| format!("Failed to deserialize checkpoint {cp_idx} state: {e}"))?;
+    gb.load_state(&state)
+        .map_err(|e| format!("Failed to load checkpoint {cp_idx} state: {e}"))?;
+    Ok((cp.frame_index as usize + 1, cp_idx + 1))
+}
+
 /// Run a full headless playback of `file` on `gb`.
 ///
 /// If `start_checkpoint` is `Some(n)`, the emulator state is restored from
@@ -41,19 +63,7 @@ pub fn run_headless_playback(
     file: &AutorunFile,
     start_checkpoint: Option<usize>,
 ) -> Result<HeadlessPlaybackResult, String> {
-    let (start_frame, first_checkpoint_idx) = if let Some(cp_idx) = start_checkpoint {
-        let cp = file
-            .checkpoints
-            .get(cp_idx)
-            .ok_or_else(|| format!("Checkpoint index {cp_idx} out of range"))?;
-        let state = GbSaveState::from_bytes(&cp.state_bytes)
-            .map_err(|e| format!("Failed to deserialize checkpoint {cp_idx} state: {e}"))?;
-        gb.load_state(&state)
-            .map_err(|e| format!("Failed to load checkpoint {cp_idx} state: {e}"))?;
-        (cp.frame_index as usize + 1, cp_idx + 1)
-    } else {
-        (0, 0)
-    };
+    let (start_frame, first_checkpoint_idx) = apply_start_checkpoint(gb, file, start_checkpoint)?;
 
     let mut frame_idx = start_frame;
     let mut cp_idx = first_checkpoint_idx;
@@ -111,19 +121,7 @@ pub fn recalculate_checkpoint_crcs_with_progress<F>(
 where
     F: FnMut(usize, usize),
 {
-    let (start_frame, first_checkpoint_idx) = if let Some(cp_idx) = start_checkpoint {
-        let cp = file
-            .checkpoints
-            .get(cp_idx)
-            .ok_or_else(|| format!("Checkpoint index {cp_idx} out of range"))?;
-        let state = GbSaveState::from_bytes(&cp.state_bytes)
-            .map_err(|e| format!("Failed to deserialize checkpoint {cp_idx} state: {e}"))?;
-        gb.load_state(&state)
-            .map_err(|e| format!("Failed to load checkpoint {cp_idx} state: {e}"))?;
-        (cp.frame_index as usize + 1, cp_idx + 1)
-    } else {
-        (0, 0)
-    };
+    let (start_frame, first_checkpoint_idx) = apply_start_checkpoint(gb, file, start_checkpoint)?;
 
     let mut frame_idx = start_frame;
     let mut cp_idx = first_checkpoint_idx;
@@ -157,7 +155,6 @@ where
 pub fn run_one_frame(gb: &mut Gb<DmgBus>) {
     while !gb.is_frame_ready() {
         gb.step();
-        // Drain audio samples to avoid unbounded accumulation
         while gb.cpu.bus.sample_ready() {
             gb.cpu.bus.take_sample();
         }
