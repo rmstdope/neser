@@ -94,29 +94,24 @@ impl GbCartridge for Mbc2 {
         }
     }
 
-    fn save_state(&self) -> Vec<u8> {
-        // Format: [rom_bank, ram_enabled, ...ram]
-        let mut data = vec![self.rom_bank, self.ram_enabled as u8];
-        data.extend_from_slice(&self.ram);
-        data
+    fn ram_snapshot(&self) -> Vec<u8> {
+        self.ram.to_vec()
     }
 
-    fn load_state(&mut self, data: &[u8]) -> Result<(), String> {
-        if data.len() < 2 {
-            return Err("MBC2 state too short".into());
+    fn restore_ram(&mut self, data: &[u8]) {
+        let len = data.len().min(self.ram.len());
+        self.ram[..len].copy_from_slice(&data[..len]);
+    }
+
+    fn mbc_state_snapshot(&self) -> Vec<u8> {
+        vec![self.rom_bank, self.ram_enabled as u8]
+    }
+
+    fn restore_mbc_state(&mut self, data: &[u8]) {
+        if data.len() >= 2 {
+            self.rom_bank = data[0];
+            self.ram_enabled = data[1] != 0;
         }
-        self.rom_bank = data[0];
-        self.ram_enabled = data[1] != 0;
-        let ram_data = &data[2..];
-        if ram_data.len() != self.ram.len() {
-            return Err(format!(
-                "MBC2 RAM size mismatch: expected {}, got {}",
-                self.ram.len(),
-                ram_data.len()
-            ));
-        }
-        self.ram.copy_from_slice(ram_data);
-        Ok(())
     }
 }
 

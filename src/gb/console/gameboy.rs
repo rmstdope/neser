@@ -11,8 +11,10 @@
 use crate::gb::bus::{CgbBus, DmgBus};
 use crate::gb::cartridge::load_cartridge;
 use crate::gb::console::Gb;
+use crate::gb::console::save_state::{GB_SAVESTATE_VERSION, GbSaveState};
 use crate::platform::app_context::{IntoSharedAppContext, SharedAppContext};
 use crate::platform::emulator::{Emulator, SystemType};
+use std::path::PathBuf;
 
 /// Wraps either a DMG or CGB console, dispatching all platform operations.
 enum GbConsole {
@@ -97,12 +99,56 @@ impl GbConsole {
             Self::Cgb(gb) => gb.cpu.bus.set_audio_sample_rate(rate),
         }
     }
+
+    fn save_state_bytes(&self) -> Result<Vec<u8>, String> {
+        let state = match self {
+            Self::Dmg(gb) => GbSaveState {
+                version: GB_SAVESTATE_VERSION,
+                cpu: gb.cpu.capture_state(),
+                bus: gb.cpu.bus.capture_bus_state(),
+                cart_ram: gb.cpu.bus.cart_ram_snapshot(),
+                mbc_state: gb.cpu.bus.mbc_state_snapshot(),
+            },
+            Self::Cgb(gb) => GbSaveState {
+                version: GB_SAVESTATE_VERSION,
+                cpu: gb.cpu.capture_state(),
+                bus: gb.cpu.bus.capture_bus_state(),
+                cart_ram: gb.cpu.bus.cart_ram_snapshot(),
+                mbc_state: gb.cpu.bus.mbc_state_snapshot(),
+            },
+        };
+        state
+            .to_bytes()
+            .map_err(|e| format!("save state serialization failed: {e}"))
+    }
+
+    fn load_state_bytes(&mut self, data: &[u8]) -> Result<(), String> {
+        let state = GbSaveState::from_bytes(data)
+            .map_err(|e| format!("save state deserialization failed: {e}"))?;
+        match self {
+            Self::Dmg(gb) => {
+                gb.cpu.restore_state(&state.cpu);
+                gb.cpu.bus.restore_bus_state(&state.bus)?;
+                gb.cpu.bus.restore_cart_ram(&state.cart_ram);
+                gb.cpu.bus.restore_mbc_state(&state.mbc_state);
+            }
+            Self::Cgb(gb) => {
+                gb.cpu.restore_state(&state.cpu);
+                gb.cpu.bus.restore_bus_state(&state.bus)?;
+                gb.cpu.bus.restore_cart_ram(&state.cart_ram);
+                gb.cpu.bus.restore_mbc_state(&state.mbc_state);
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Platform-facing Game Boy (DMG/CGB) console wrapper.
 pub struct GameBoy {
     gb: Option<GbConsole>,
     app_context: SharedAppContext,
+    /// Path of the currently loaded ROM; used for deriving the save-state path.
+    rom_path: Option<PathBuf>,
 }
 
 impl GameBoy {
@@ -116,6 +162,7 @@ impl GameBoy {
         Self {
             gb: None,
             app_context: app_context.into_shared(),
+            rom_path: None,
         }
     }
 
@@ -124,7 +171,7 @@ impl GameBoy {
     /// Automatically selects DMG or CGB bus based on the ROM's CGB flag
     /// byte at 0x0143: 0x80 (CGB+DMG) and 0xC0 (CGB-only) use [`CgbBus`];
     /// all other values use [`DmgBus`] with the DMG variant from configuration.
-    pub fn load_rom(&mut self, bytes: &[u8], _name: &str) -> Result<(), String> {
+    pub fn load_rom(&mut self, bytes: &[u8], name: &str) -> Result<(), String> {
         let cart = load_cartridge(bytes).map_err(|e| format!("{e:?}"))?;
         self.gb = Some(if cart.is_cgb() {
             let mut gb = Gb::new(CgbBus::new(cart));
@@ -134,6 +181,7 @@ impl GameBoy {
             let dmg_variant = self.app_context.borrow().config().gb.dmg_variant;
             GbConsole::Dmg(Box::new(Gb::new(DmgBus::new(cart, dmg_variant))))
         });
+        self.rom_path = Some(PathBuf::from(name));
         Ok(())
     }
 
@@ -200,31 +248,18 @@ impl GameBoy {
             .map_or(0, |gb| gb.get_joypad_button_states())
     }
 
-    /// Serialize emulator state to bytes.
-    ///
-    /// Currently only supported for DMG; returns `Err` for CGB.
+    /// Serialize emulator state to bytes (JSON).
     pub fn save_state_bytes(&self) -> Result<Vec<u8>, String> {
-        match self.gb.as_ref() {
-            Some(GbConsole::Dmg(gb)) => {
-                let state = gb.save_state();
-                state.to_bytes().map_err(|e| e.to_string())
-            }
-            Some(GbConsole::Cgb(_)) => Err("CGB save states are not yet supported".into()),
+        match &self.gb {
+            Some(gb) => gb.save_state_bytes(),
             None => Err("No ROM loaded".into()),
         }
     }
 
-    /// Restore emulator state from bytes.
-    ///
-    /// Currently only supported for DMG; returns `Err` for CGB.
+    /// Restore emulator state from previously serialized bytes (JSON).
     pub fn load_state_bytes(&mut self, data: &[u8]) -> Result<(), String> {
-        match self.gb.as_mut() {
-            Some(GbConsole::Dmg(gb)) => {
-                let state =
-                    super::save_state::GbSaveState::from_bytes(data).map_err(|e| e.to_string())?;
-                gb.load_state(&state)
-            }
-            Some(GbConsole::Cgb(_)) => Err("CGB save states are not yet supported".into()),
+        match &mut self.gb {
+            Some(gb) => gb.load_state_bytes(data),
             None => Err("No ROM loaded".into()),
         }
     }
@@ -259,6 +294,12 @@ impl GameBoy {
     /// Access the shared application context.
     pub fn app_context(&self) -> &SharedAppContext {
         &self.app_context
+    }
+
+    /// Returns the save-state file path (`{rom_path}.state`), or `None`
+    /// if no ROM is loaded.
+    pub fn state_path(&self) -> Option<PathBuf> {
+        self.rom_path.as_ref().map(|p| p.with_extension("state"))
     }
 }
 
@@ -575,5 +616,136 @@ mod tests {
         let mut gb = make_gameboy();
         gb.load_rom(&minimal_rom(), "test.gb").unwrap();
         gb.set_audio_sample_rate(48_000.0);
+    }
+
+    // ── save / load state ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_dmg_save_state_returns_ok_after_rom_load() {
+        let mut gb = make_gameboy();
+        gb.load_rom(&minimal_rom(), "test.gb").unwrap();
+        for _ in 0..10 {
+            gb.run_tick();
+        }
+        assert!(gb.save_state_bytes().is_ok());
+    }
+
+    #[test]
+    fn test_cgb_save_state_returns_ok_after_rom_load() {
+        let mut gb = make_gameboy();
+        gb.load_rom(&minimal_cgb_rom(), "test.gbc").unwrap();
+        for _ in 0..10 {
+            gb.run_tick();
+        }
+        assert!(gb.save_state_bytes().is_ok());
+    }
+
+    #[test]
+    fn test_dmg_save_load_roundtrip() {
+        let mut gb = make_gameboy();
+        gb.load_rom(&minimal_rom(), "test.gb").unwrap();
+        for _ in 0..10 {
+            gb.run_tick();
+        }
+        let snap1 = gb.screen_crc32();
+        let state = gb.save_state_bytes().unwrap();
+
+        // Run more ticks to change state
+        for _ in 0..50 {
+            gb.run_tick();
+        }
+
+        // Restore and verify
+        gb.load_state_bytes(&state).unwrap();
+        assert_eq!(gb.screen_crc32(), snap1);
+    }
+
+    #[test]
+    fn test_cgb_save_load_roundtrip() {
+        let mut gb = make_gameboy();
+        gb.load_rom(&minimal_cgb_rom(), "test.gbc").unwrap();
+        for _ in 0..10 {
+            gb.run_tick();
+        }
+        let snap1 = gb.screen_crc32();
+        let state = gb.save_state_bytes().unwrap();
+
+        for _ in 0..50 {
+            gb.run_tick();
+        }
+
+        gb.load_state_bytes(&state).unwrap();
+        assert_eq!(gb.screen_crc32(), snap1);
+    }
+
+    #[test]
+    fn test_load_invalid_state_returns_err() {
+        let mut gb = make_gameboy();
+        gb.load_rom(&minimal_rom(), "test.gb").unwrap();
+        let result = gb.load_state_bytes(b"invalid json");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_load_incompatible_version_returns_err() {
+        let mut gb = make_gameboy();
+        gb.load_rom(&minimal_rom(), "test.gb").unwrap();
+        for _ in 0..5 {
+            gb.run_tick();
+        }
+        let mut state = gb.save_state_bytes().unwrap();
+        // Corrupt the version field in the JSON
+        let json_str = String::from_utf8(state).unwrap();
+        let corrupted = json_str.replacen("\"version\":1", "\"version\":9999", 1);
+        state = corrupted.into_bytes();
+        let result = gb.load_state_bytes(&state);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("incompatible"));
+    }
+
+    #[test]
+    fn test_state_path_with_rom_loaded() {
+        let mut gb = make_gameboy();
+        gb.load_rom(&minimal_rom(), "roms/test.gb").unwrap();
+        let path = gb.state_path().expect("state_path should be Some");
+        assert_eq!(path.to_str().unwrap(), "roms/test.state");
+    }
+
+    #[test]
+    fn test_state_path_without_rom_loaded() {
+        let gb = make_gameboy();
+        assert!(gb.state_path().is_none());
+    }
+
+    #[test]
+    fn test_load_dmg_state_into_cgb_returns_err() {
+        let mut dmg_gb = make_gameboy();
+        dmg_gb.load_rom(&minimal_rom(), "test.gb").unwrap();
+        for _ in 0..10 {
+            dmg_gb.run_tick();
+        }
+        let dmg_state = dmg_gb.save_state_bytes().unwrap();
+
+        let mut cgb_gb = make_gameboy();
+        cgb_gb.load_rom(&minimal_cgb_rom(), "test.gbc").unwrap();
+        let result = cgb_gb.load_state_bytes(&dmg_state);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("bus type mismatch"));
+    }
+
+    #[test]
+    fn test_load_cgb_state_into_dmg_returns_err() {
+        let mut cgb_gb = make_gameboy();
+        cgb_gb.load_rom(&minimal_cgb_rom(), "test.gbc").unwrap();
+        for _ in 0..10 {
+            cgb_gb.run_tick();
+        }
+        let cgb_state = cgb_gb.save_state_bytes().unwrap();
+
+        let mut dmg_gb = make_gameboy();
+        dmg_gb.load_rom(&minimal_rom(), "test.gb").unwrap();
+        let result = dmg_gb.load_state_bytes(&cgb_state);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("bus type mismatch"));
     }
 }

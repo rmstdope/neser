@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 /// SM83 timer subsystem.
 ///
 /// Registers:
@@ -31,6 +33,7 @@
 /// 3. **TIMA overflow delay**: when TIMA overflows, it stays $00 for one M-cycle
 ///    before TMA is loaded and the interrupt fires.  Writing to TIMA during that
 ///    M-cycle cancels the reload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Timer {
     /// Internal 16-bit counter; DIV is the upper 8 bits ($FF04 = div_counter >> 8).
     div_counter: u16,
@@ -233,32 +236,6 @@ impl Timer {
 impl Default for Timer {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-// ── Save-state accessors ────────────────────────────────────────────────────
-
-impl Timer {
-    pub(crate) fn div_counter_raw(&self) -> u16 {
-        self.div_counter
-    }
-    pub(crate) fn tima_overflow_pending_raw(&self) -> bool {
-        self.tima_overflow_pending
-    }
-    pub(crate) fn tima_load_active_raw(&self) -> bool {
-        self.tima_load_active
-    }
-    pub(crate) fn restore_from_snapshot(
-        &mut self,
-        snap: &crate::gb::console::save_state::TimerSnapshot,
-    ) {
-        self.div_counter = snap.div_counter;
-        self.tima = snap.tima;
-        self.tma = snap.tma;
-        self.tac = snap.tac;
-        self.interrupt_pending = snap.interrupt_pending;
-        self.tima_overflow_pending = snap.tima_overflow_pending;
-        self.tima_load_active = snap.tima_load_active;
     }
 }
 

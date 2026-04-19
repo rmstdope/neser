@@ -4,8 +4,11 @@
 //! 7-bit mode: feedback is also written to bit 6, shortening the period.
 
 /// Divisor lookup for noise clock (NR43 bits 2-0).
+use serde::{Deserialize, Serialize};
+
 const DIVISORS: [u32; 8] = [8, 16, 32, 48, 64, 80, 96, 112];
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Channel4 {
     init_volume: u8,
     env_add: bool,
@@ -212,66 +215,6 @@ impl Channel4 {
         self.volume = self.init_volume;
         self.env_timer = self.env_period;
         self.lfsr = 0x7FFF;
-    }
-
-    // ── Save-state accessors ──────────────────────────────────────────────────
-
-    pub(crate) fn init_volume_raw(&self) -> u8 {
-        self.init_volume
-    }
-    pub(crate) fn env_add_raw(&self) -> bool {
-        self.env_add
-    }
-    pub(crate) fn env_period_raw(&self) -> u8 {
-        self.env_period
-    }
-    pub(crate) fn clock_shift_raw(&self) -> u8 {
-        self.clock_shift
-    }
-    pub(crate) fn lfsr_7bit_raw(&self) -> bool {
-        self.lfsr_7bit
-    }
-    pub(crate) fn divisor_code_raw(&self) -> u8 {
-        self.divisor_code
-    }
-    pub(crate) fn length_load_raw(&self) -> u8 {
-        self.length_load
-    }
-    pub(crate) fn dac_on_raw(&self) -> bool {
-        self.dac_on
-    }
-    pub(crate) fn lfsr_raw(&self) -> u16 {
-        self.lfsr
-    }
-    pub(crate) fn freq_timer_raw(&self) -> u32 {
-        self.freq_timer
-    }
-    pub(crate) fn volume_raw(&self) -> u8 {
-        self.volume
-    }
-    pub(crate) fn env_timer_raw(&self) -> u8 {
-        self.env_timer
-    }
-
-    pub(crate) fn restore_from_snapshot(
-        &mut self,
-        snap: &crate::gb::console::save_state::Channel4Snapshot,
-    ) {
-        self.init_volume = snap.init_volume;
-        self.env_add = snap.env_add;
-        self.env_period = snap.env_period;
-        self.clock_shift = snap.clock_shift;
-        self.lfsr_7bit = snap.lfsr_7bit;
-        self.divisor_code = snap.divisor_code;
-        self.length_load = snap.length_load;
-        self.length_en = snap.length_en;
-        self.active = snap.active;
-        self.dac_on = snap.dac_on;
-        self.lfsr = snap.lfsr;
-        self.freq_timer = snap.freq_timer;
-        self.length_counter = snap.length_counter;
-        self.volume = snap.volume;
-        self.env_timer = snap.env_timer;
     }
 }
 

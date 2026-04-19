@@ -26,13 +26,31 @@ pub trait GbCartridge {
         flag == 0x80 || flag == 0xC0
     }
 
-    /// Capture cartridge state (mapper registers + RAM) as opaque bytes.
-    fn save_state(&self) -> Vec<u8> {
-        vec![]
+    /// Snapshot all cartridge RAM (battery-backed SRAM) as a byte vector.
+    ///
+    /// Returns an empty vector for cartridges without RAM (e.g., MBC0).
+    fn ram_snapshot(&self) -> Vec<u8> {
+        Vec::new()
     }
 
-    /// Restore cartridge state from previously saved bytes.
-    fn load_state(&mut self, _data: &[u8]) -> Result<(), String> {
-        Ok(())
+    /// Restore cartridge RAM from a previously saved snapshot.
+    ///
+    /// Truncates or ignores extra bytes silently. Does nothing for
+    /// cartridges without RAM.
+    fn restore_ram(&mut self, _data: &[u8]) {}
+
+    /// Snapshot the MBC-internal register state as opaque bytes.
+    ///
+    /// Used by save states to capture bank-select registers, mode flags,
+    /// and other MBC-specific state that isn't part of the address space.
+    /// Returns an empty vector for cartridges without MBC registers.
+    fn mbc_state_snapshot(&self) -> Vec<u8> {
+        Vec::new()
     }
+
+    /// Restore MBC-internal register state from a previously saved snapshot.
+    ///
+    /// Does nothing for cartridges without MBC registers or if data is
+    /// malformed/empty.
+    fn restore_mbc_state(&mut self, _data: &[u8]) {}
 }

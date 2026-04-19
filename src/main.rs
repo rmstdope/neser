@@ -351,7 +351,7 @@ fn run_native_frontend(
         }
         platform::emulator::SystemType::GameBoy => {
             let mut console = platform::emulator::Console::new_gameboy(app_context.clone());
-            if let Err(err) = console.load_rom(&rom_bytes, &rom_name) {
+            if let Err(err) = console.load_rom(&rom_bytes, &rom_path) {
                 app_context
                     .borrow_mut()
                     .add_toast(cartridge_load_toast_message(&rom_path, false));

@@ -187,38 +187,33 @@ impl GbCartridge for Mbc1 {
         }
     }
 
-    fn save_state(&self) -> Vec<u8> {
-        // Format: [rom_bank, secondary_bank, mode, ram_enabled, multicart, ...ram]
-        let mut data = vec![
+    fn ram_snapshot(&self) -> Vec<u8> {
+        self.ram.clone()
+    }
+
+    fn restore_ram(&mut self, data: &[u8]) {
+        let len = data.len().min(self.ram.len());
+        self.ram[..len].copy_from_slice(&data[..len]);
+    }
+
+    fn mbc_state_snapshot(&self) -> Vec<u8> {
+        vec![
             self.rom_bank,
             self.secondary_bank,
             self.mode as u8,
             self.ram_enabled as u8,
             self.multicart as u8,
-        ];
-        data.extend_from_slice(&self.ram);
-        data
+        ]
     }
 
-    fn load_state(&mut self, data: &[u8]) -> Result<(), String> {
-        if data.len() < 5 {
-            return Err("MBC1 state too short".into());
+    fn restore_mbc_state(&mut self, data: &[u8]) {
+        if data.len() >= 5 {
+            self.rom_bank = data[0];
+            self.secondary_bank = data[1];
+            self.mode = data[2] != 0;
+            self.ram_enabled = data[3] != 0;
+            self.multicart = data[4] != 0;
         }
-        self.rom_bank = data[0];
-        self.secondary_bank = data[1];
-        self.mode = data[2] != 0;
-        self.ram_enabled = data[3] != 0;
-        self.multicart = data[4] != 0;
-        let ram_data = &data[5..];
-        if ram_data.len() != self.ram.len() {
-            return Err(format!(
-                "MBC1 RAM size mismatch: expected {}, got {}",
-                self.ram.len(),
-                ram_data.len()
-            ));
-        }
-        self.ram.copy_from_slice(ram_data);
-        Ok(())
     }
 }
 

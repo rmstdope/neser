@@ -131,37 +131,32 @@ impl GbCartridge for Mbc5 {
         }
     }
 
-    fn save_state(&self) -> Vec<u8> {
-        // Format: [rom_bank_lo, rom_bank_hi, ram_bank, ram_enabled, has_rumble, ...ram]
-        let mut data = vec![
-            self.rom_bank as u8,
+    fn ram_snapshot(&self) -> Vec<u8> {
+        self.ram.clone()
+    }
+
+    fn restore_ram(&mut self, data: &[u8]) {
+        let len = data.len().min(self.ram.len());
+        self.ram[..len].copy_from_slice(&data[..len]);
+    }
+
+    fn mbc_state_snapshot(&self) -> Vec<u8> {
+        vec![
+            (self.rom_bank & 0xFF) as u8,
             (self.rom_bank >> 8) as u8,
             self.ram_bank,
             self.ram_enabled as u8,
             self.has_rumble as u8,
-        ];
-        data.extend_from_slice(&self.ram);
-        data
+        ]
     }
 
-    fn load_state(&mut self, data: &[u8]) -> Result<(), String> {
-        if data.len() < 5 {
-            return Err("MBC5 state too short".into());
+    fn restore_mbc_state(&mut self, data: &[u8]) {
+        if data.len() >= 5 {
+            self.rom_bank = data[0] as u16 | ((data[1] as u16) << 8);
+            self.ram_bank = data[2];
+            self.ram_enabled = data[3] != 0;
+            self.has_rumble = data[4] != 0;
         }
-        self.rom_bank = data[0] as u16 | ((data[1] as u16) << 8);
-        self.ram_bank = data[2];
-        self.ram_enabled = data[3] != 0;
-        self.has_rumble = data[4] != 0;
-        let ram_data = &data[5..];
-        if ram_data.len() != self.ram.len() {
-            return Err(format!(
-                "MBC5 RAM size mismatch: expected {}, got {}",
-                self.ram.len(),
-                ram_data.len()
-            ));
-        }
-        self.ram.copy_from_slice(ram_data);
-        Ok(())
     }
 }
 

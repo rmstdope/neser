@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 use crate::gb::bus::GbBus;
 
 // ---------------------------------------------------------------------------
@@ -9,7 +11,7 @@ const FLAG_H: u8 = 1 << 5; // Half-carry
 const FLAG_C: u8 = 1 << 4; // Carry
 
 /// SM83 register file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Registers {
     pub a: u8,
     pub f: u8, // bits 7-4: Z N H C; bits 3-0: always 0
@@ -149,20 +151,19 @@ impl<B: GbBus> Sm83<B> {
         self.cycles
     }
 
-    /// Whether the IME-pending flag is set (EI was executed, IME will be enabled
-    /// after the next instruction).
-    pub(crate) fn ime_pending(&self) -> bool {
+    /// Set the M-cycle counter (used by save-state restore).
+    pub fn set_cycles(&mut self, cycles: u64) {
+        self.cycles = cycles;
+    }
+
+    /// Returns `true` if IME will be enabled after the next instruction (EI pending).
+    pub fn ime_pending(&self) -> bool {
         self.ime_pending
     }
 
     /// Set the IME-pending flag (used by save-state restore).
-    pub(crate) fn set_ime_pending(&mut self, pending: bool) {
+    pub fn set_ime_pending(&mut self, pending: bool) {
         self.ime_pending = pending;
-    }
-
-    /// Set the cycle counter (used by save-state restore).
-    pub(crate) fn set_cycles(&mut self, cycles: u64) {
-        self.cycles = cycles;
     }
 
     /// Reset the CPU to power-on state.

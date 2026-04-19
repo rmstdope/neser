@@ -6,6 +6,9 @@ pub mod sprites;
 pub mod timing;
 pub mod window;
 
+use serde::{Deserialize, Serialize};
+use serde_with::serde_as;
+
 use registers::Registers;
 use screen_buffer::ScreenBuffer;
 use timing::{PpuMode, Timing};
@@ -21,8 +24,12 @@ const DOTS_PER_M_CYCLE: u16 = 4;
 /// In CGB mode (`cgb_mode = true`) the PPU additionally owns VRAM bank 1,
 /// CGB color palette RAM, and handles the CGB-specific registers
 /// (`$FF4F` VBK, `$FF68/$FF69` BCPS/BCPD, `$FF6A/$FF6B` OCPS/OCPD, `$FF6C` OPRI).
+#[serde_as]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ppu {
+    #[serde_as(as = "[_; 0x2000]")]
     pub vram: [u8; 0x2000],
+    #[serde_as(as = "[_; 0xA0]")]
     pub oam: [u8; 0xA0],
     timing: Timing,
     registers: Registers,
@@ -45,12 +52,15 @@ pub struct Ppu {
     pub cgb_mode: bool,
     /// CGB VRAM bank 1 ($8000–$9FFF when VBK=$01). Holds BG tile attributes and
     /// additional tile data for sprites.
+    #[serde_as(as = "[_; 0x2000]")]
     pub vram_bank1: [u8; 0x2000],
     /// `$FF4F` VBK — VRAM bank select (bit 0: 0=bank0, 1=bank1; upper bits read as 1).
     pub vbk: u8,
     /// CGB BG color palette RAM — 8 palettes × 4 colors × 2 bytes (5-5-5 little-endian).
+    #[serde_as(as = "[_; 64]")]
     pub bg_palette_ram: [u8; 64],
     /// CGB OBJ color palette RAM — 8 palettes × 4 colors × 2 bytes (5-5-5 little-endian).
+    #[serde_as(as = "[_; 64]")]
     pub obj_palette_ram: [u8; 64],
     /// `$FF68` BCPS — BG Color Palette Specification (index + auto-increment flag).
     pub bcps: u8,
@@ -591,115 +601,6 @@ impl Ppu {
         let bytes = val.to_le_bytes();
         self.oam[base] = bytes[0];
         self.oam[base + 1] = bytes[1];
-    }
-
-    // ── Save-state accessors ──────────────────────────────────────────────────
-
-    pub(crate) fn registers_snapshot(&self) -> [u8; 10] {
-        [
-            self.registers.lcdc,
-            self.registers.stat_irq_enables,
-            self.registers.scy,
-            self.registers.scx,
-            self.registers.lyc,
-            self.registers.bgp,
-            self.registers.obp0,
-            self.registers.obp1,
-            self.registers.wy,
-            self.registers.wx,
-        ]
-    }
-
-    pub(crate) fn restore_registers(&mut self, regs: &[u8; 10]) {
-        self.registers.lcdc = regs[0];
-        self.registers.stat_irq_enables = regs[1];
-        self.registers.scy = regs[2];
-        self.registers.scx = regs[3];
-        self.registers.lyc = regs[4];
-        self.registers.bgp = regs[5];
-        self.registers.obp0 = regs[6];
-        self.registers.obp1 = regs[7];
-        self.registers.wy = regs[8];
-        self.registers.wx = regs[9];
-    }
-
-    pub(crate) fn restore_screen_buffer(&mut self, data: &[u8]) -> Result<(), String> {
-        self.screen_buffer.restore_from_bytes(data)
-    }
-
-    pub(crate) fn timing_dot(&self) -> u16 {
-        self.timing.dot()
-    }
-    pub(crate) fn timing_scanline(&self) -> u8 {
-        self.timing.scanline()
-    }
-    pub(crate) fn timing_mode(&self) -> u8 {
-        self.timing.mode() as u8
-    }
-    pub(crate) fn timing_stat_mode(&self) -> u8 {
-        self.timing.stat_mode_raw()
-    }
-    pub(crate) fn timing_first_scanline(&self) -> bool {
-        self.timing.is_first_scanline_after_enable()
-    }
-    pub(crate) fn timing_second_scanline(&self) -> bool {
-        self.timing.is_second_scanline_after_enable()
-    }
-    pub(crate) fn timing_third_scanline(&self) -> bool {
-        self.timing.is_third_scanline_after_enable()
-    }
-    pub(crate) fn timing_mode_for_irq(&self) -> i8 {
-        self.timing.mode_for_irq_raw()
-    }
-    pub(crate) fn timing_mode3_extra_dots(&self) -> u16 {
-        self.timing.mode3_extra_dots_raw()
-    }
-    pub(crate) fn timing_ly(&self) -> u8 {
-        self.timing.ly()
-    }
-    pub(crate) fn pending_interrupts_raw(&self) -> u8 {
-        self.pending_interrupts
-    }
-    pub(crate) fn set_pending_interrupts(&mut self, val: u8) {
-        self.pending_interrupts = val;
-    }
-    pub(crate) fn window_line_raw(&self) -> u8 {
-        self.window_line
-    }
-    pub(crate) fn set_window_line(&mut self, val: u8) {
-        self.window_line = val;
-    }
-    pub(crate) fn prev_stat_irq_line_raw(&self) -> bool {
-        self.prev_stat_irq_line
-    }
-    pub(crate) fn set_prev_stat_irq_line(&mut self, val: bool) {
-        self.prev_stat_irq_line = val;
-    }
-    pub(crate) fn lyc_eq_ly_frozen_raw(&self) -> bool {
-        self.lyc_eq_ly_frozen
-    }
-    pub(crate) fn set_lyc_eq_ly_frozen(&mut self, val: bool) {
-        self.lyc_eq_ly_frozen = val;
-    }
-
-    pub(crate) fn restore_timing(
-        &mut self,
-        snap: &crate::gb::console::save_state::PpuSnapshot,
-    ) -> Result<(), String> {
-        self.timing
-            .restore(&crate::gb::console::save_state::TimingRestoreArgs {
-                dot: snap.dot,
-                scanline: snap.scanline,
-                mode: snap.mode,
-                stat_mode: snap.stat_mode,
-                frame_ready: snap.frame_ready,
-                first_scanline: snap.first_scanline_after_enable,
-                second_scanline: snap.second_scanline_after_enable,
-                third_scanline: snap.third_scanline_after_enable,
-                mode_for_irq: snap.mode_for_irq,
-                mode3_extra_dots: snap.mode3_extra_dots,
-                ly: snap.ly,
-            })
     }
 }
 

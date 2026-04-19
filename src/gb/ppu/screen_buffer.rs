@@ -1,3 +1,6 @@
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScreenBuffer {
     buffer: Vec<u8>,
 }
@@ -46,18 +49,6 @@ impl ScreenBuffer {
 
     pub fn crc32(&self) -> u32 {
         crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC).checksum(&self.buffer)
-    }
-
-    pub(crate) fn restore_from_bytes(&mut self, data: &[u8]) -> Result<(), String> {
-        if data.len() != self.buffer.len() {
-            return Err(format!(
-                "Screen buffer size mismatch: expected {}, got {}",
-                self.buffer.len(),
-                data.len()
-            ));
-        }
-        self.buffer.copy_from_slice(data);
-        Ok(())
     }
 }
 

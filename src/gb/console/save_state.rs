@@ -1,53 +1,38 @@
-//! GB save-state serialization.
+//! Game Boy save-state serialization.
 //!
-//! Provides [`GbSaveState`], a fully serde-able snapshot of the DMG emulator.
-//! Mirrors the NES approach: each component contributes a small serde-friendly
-//! struct, and [`Gb<DmgBus>`](super::Gb) provides `save_state()` / `load_state()`
-//! methods to capture and restore the full state.
+//! Defines a versioned [`GbSaveState`] struct that captures the full emulator
+//! state for both DMG and CGB models.  Serialised as JSON (matching the NES
+//! save-state format) via `to_bytes()` / `from_bytes()`.
+//!
+//! Bus capture/restore methods live in `dmg_bus.rs` and `cgb_bus.rs` (where
+//! private fields are accessible).  CPU capture/restore lives here since
+//! `Sm83` fields are `pub`.
 
 use serde::{Deserialize, Serialize};
+use serde_with::serde_as;
 
-const GB_SAVESTATE_VERSION: u32 = 1;
+use crate::gb::apu::Apu;
+use crate::gb::cpu::{Registers, Sm83};
+use crate::gb::input::joypad::Joypad;
+use crate::gb::model::DmgModel;
+use crate::gb::ppu::Ppu;
+use crate::gb::timer::Timer;
 
-/// Complete DMG emulator state snapshot.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct GbSaveState {
-    pub version: u32,
-    pub cpu: CpuSnapshot,
-    pub ppu: PpuSnapshot,
-    pub timer: TimerSnapshot,
-    pub joypad: JoypadSnapshot,
-    pub apu: ApuSnapshot,
-    pub bus: BusSnapshot,
-    pub cartridge: Vec<u8>,
+/// Current save-state format version for Game Boy.
+/// Increment this when making breaking changes to the state format.
+pub const GB_SAVESTATE_VERSION: u32 = 1;
+
+/// Identifies which bus variant was active when the state was saved.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GbBusType {
+    Dmg,
+    Cgb,
 }
 
-impl GbSaveState {
-    /// Serialize the save state to JSON-encoded UTF-8 bytes.
-    pub fn to_bytes(&self) -> Result<Vec<u8>, serde_json::Error> {
-        serde_json::to_vec(self)
-    }
-
-    /// Deserialize a save state from JSON-encoded UTF-8 bytes.
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, serde_json::Error> {
-        serde_json::from_slice(bytes)
-    }
-}
-
-// ── CPU snapshot ────────────────────────────────────────────────────────────
-
+/// SM83 CPU state snapshot.
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct CpuSnapshot {
-    pub a: u8,
-    pub f: u8,
-    pub b: u8,
-    pub c: u8,
-    pub d: u8,
-    pub e: u8,
-    pub h: u8,
-    pub l: u8,
-    pub sp: u16,
-    pub pc: u16,
+pub struct Sm83State {
+    pub regs: Registers,
     pub ime: bool,
     pub halted: bool,
     pub halt_bug: bool,
@@ -55,218 +40,110 @@ pub struct CpuSnapshot {
     pub cycles: u64,
 }
 
-// ── PPU snapshot ────────────────────────────────────────────────────────────
-
+/// DMG/CGB bus state snapshot (excluding the cartridge itself).
+#[serde_as]
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct PpuSnapshot {
-    pub vram: Vec<u8>,
-    pub oam: Vec<u8>,
-    pub screen_buffer: Vec<u8>,
-    /// Registers: lcdc, stat_irq_enables, scy, scx, lyc, bgp, obp0, obp1, wy, wx
-    pub registers: [u8; 10],
-    /// Timing state
-    pub dot: u16,
-    pub scanline: u8,
-    pub mode: u8,
-    pub stat_mode: u8,
-    pub frame_ready: bool,
-    pub first_scanline_after_enable: bool,
-    pub second_scanline_after_enable: bool,
-    pub third_scanline_after_enable: bool,
-    pub mode_for_irq: i8,
-    pub mode3_extra_dots: u16,
-    pub ly: u8,
-    /// Other PPU fields
-    pub pending_interrupts: u8,
-    pub window_line: u8,
-    pub prev_stat_irq_line: bool,
-    pub lyc_eq_ly_frozen: bool,
-}
-
-// ── Timer snapshot ──────────────────────────────────────────────────────────
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct TimerSnapshot {
-    pub div_counter: u16,
-    pub tima: u8,
-    pub tma: u8,
-    pub tac: u8,
-    pub interrupt_pending: bool,
-    pub tima_overflow_pending: bool,
-    pub tima_load_active: bool,
-}
-
-// ── Timing restore args (avoids too-many-arguments clippy warning) ─────────
-
-/// Grouped arguments for [`Timing::restore`] to satisfy clippy's
-/// `too_many_arguments` lint.
-pub struct TimingRestoreArgs {
-    pub dot: u16,
-    pub scanline: u8,
-    pub mode: u8,
-    pub stat_mode: u8,
-    pub frame_ready: bool,
-    pub first_scanline: bool,
-    pub second_scanline: bool,
-    pub third_scanline: bool,
-    pub mode_for_irq: i8,
-    pub mode3_extra_dots: u16,
-    pub ly: u8,
-}
-
-// ── Joypad snapshot ─────────────────────────────────────────────────────────
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct JoypadSnapshot {
-    pub select_bits: u8,
-    pub p14_state: u8,
-    pub p15_state: u8,
-    pub prev_nibble: u8,
-}
-
-// ── APU snapshot ────────────────────────────────────────────────────────────
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ApuSnapshot {
-    pub ch1: Channel1Snapshot,
-    pub ch2: Channel2Snapshot,
-    pub ch3: Channel3Snapshot,
-    pub ch4: Channel4Snapshot,
-    pub nr50: u8,
-    pub nr51: u8,
-    pub powered: bool,
-    pub fs_timer: u16,
-    pub fs_step: u8,
-    pub sample_acc: f32,
-    pub cycles_per_sample: f32,
-    pub is_cgb: bool,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct Channel1Snapshot {
-    pub sweep_period: u8,
-    pub sweep_negate: bool,
-    pub sweep_shift: u8,
-    pub duty: u8,
-    pub length_load: u8,
-    pub init_volume: u8,
-    pub env_add: bool,
-    pub env_period: u8,
-    pub freq: u16,
-    pub length_en: bool,
-    pub active: bool,
-    pub dac_on: bool,
-    pub duty_pos: u8,
-    pub freq_timer: u16,
-    pub length_counter: u8,
-    pub volume: u8,
-    pub env_timer: u8,
-    pub sweep_timer: u8,
-    pub sweep_shadow: u16,
-    pub sweep_enabled: bool,
-    pub negate_used: bool,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct Channel2Snapshot {
-    pub duty: u8,
-    pub length_load: u8,
-    pub init_volume: u8,
-    pub env_add: bool,
-    pub env_period: u8,
-    pub freq: u16,
-    pub length_en: bool,
-    pub active: bool,
-    pub dac_on: bool,
-    pub duty_pos: u8,
-    pub freq_timer: u16,
-    pub length_counter: u8,
-    pub volume: u8,
-    pub env_timer: u8,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct Channel3Snapshot {
-    pub dac_on: bool,
-    pub length_load: u16,
-    pub output_level: u8,
-    pub freq: u16,
-    pub length_en: bool,
-    pub active: bool,
-    pub wave_pos: u8,
-    pub freq_timer: u16,
-    pub length_counter: u16,
-    pub wave_ram: [u8; 16],
-    pub current_sample: u8,
-    pub is_cgb: bool,
-    pub wave_just_read: bool,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct Channel4Snapshot {
-    pub init_volume: u8,
-    pub env_add: bool,
-    pub env_period: u8,
-    pub clock_shift: u8,
-    pub lfsr_7bit: bool,
-    pub divisor_code: u8,
-    pub length_load: u8,
-    pub length_en: bool,
-    pub active: bool,
-    pub dac_on: bool,
-    pub lfsr: u16,
-    pub freq_timer: u32,
-    pub length_counter: u8,
-    pub volume: u8,
-    pub env_timer: u8,
-}
-
-// ── Bus snapshot ────────────────────────────────────────────────────────────
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct BusSnapshot {
-    pub wram: Vec<u8>,
-    pub hram: Vec<u8>,
+pub struct BusState {
+    pub bus_type: GbBusType,
+    pub ppu: Ppu,
+    #[serde_as(as = "[_; 0x2000]")]
+    pub wram: [u8; 0x2000],
+    #[serde_as(as = "[_; 0x7F]")]
+    pub hram: [u8; 0x7F],
+    pub timer: Timer,
+    pub joypad: Joypad,
+    pub apu: Apu,
     pub if_reg: u8,
     pub ie_reg: u8,
-    pub boot_rom_active: bool,
     pub dma_active: bool,
     pub dma_source: u8,
     pub dma_position: u8,
     pub dma_oam_blocked: bool,
-    pub sb: u8,
-    pub sc: u8,
-    pub serial_bits_remaining: u8,
-    pub serial_master_clock: bool,
-    pub serial_buf: Vec<u8>,
-    pub model: String,
+    // DMG-only fields (None for CGB)
+    pub boot_rom_active: Option<bool>,
+    pub sb: Option<u8>,
+    pub sc: Option<u8>,
+    pub serial_buf: Option<Vec<u8>>,
+    pub serial_bits_remaining: Option<u8>,
+    pub serial_master_clock: Option<bool>,
+    pub model: Option<DmgModel>,
 }
 
-// ── Snapshot/Restore implementations ────────────────────────────────────────
+/// Complete Game Boy emulator state snapshot.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GbSaveState {
+    /// Version of the save-state format.
+    pub version: u32,
+    /// CPU state.
+    pub cpu: Sm83State,
+    /// Bus state (PPU, APU, timer, joypad, RAM, etc.).
+    pub bus: BusState,
+    /// Cartridge RAM snapshot (battery-backed SRAM).
+    pub cart_ram: Vec<u8>,
+    /// MBC register state (opaque bytes).
+    pub mbc_state: Vec<u8>,
+}
 
-use crate::gb::apu::channel1::Channel1;
-use crate::gb::apu::channel2::Channel2;
-use crate::gb::apu::channel3::Channel3;
-use crate::gb::apu::channel4::Channel4;
-use crate::gb::bus::DmgBus;
-use crate::gb::cpu::Sm83;
-use crate::gb::input::joypad::Joypad;
-use crate::gb::ppu::Ppu;
+/// Errors that can occur when loading a GB save-state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GbSaveStateError {
+    /// The save-state format version is incompatible.
+    IncompatibleVersion { expected: u32, found: u32 },
+    /// Deserialization failed.
+    DeserializationFailed(String),
+    /// Serialization failed.
+    SerializationFailed(String),
+}
+
+impl std::fmt::Display for GbSaveStateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::IncompatibleVersion { expected, found } => write!(
+                f,
+                "incompatible save-state version (expected {expected}, found {found})"
+            ),
+            Self::DeserializationFailed(msg) => write!(f, "deserialization failed: {msg}"),
+            Self::SerializationFailed(msg) => write!(f, "serialization failed: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for GbSaveStateError {}
+
+impl GbSaveState {
+    /// Serialize the save state to JSON-encoded UTF-8 bytes.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, GbSaveStateError> {
+        serde_json::to_vec(self).map_err(|e| GbSaveStateError::SerializationFailed(e.to_string()))
+    }
+
+    /// Deserialize a save state from JSON-encoded UTF-8 bytes.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, GbSaveStateError> {
+        let state: Self = serde_json::from_slice(bytes)
+            .map_err(|e| GbSaveStateError::DeserializationFailed(e.to_string()))?;
+        if state.version != GB_SAVESTATE_VERSION {
+            return Err(GbSaveStateError::IncompatibleVersion {
+                expected: GB_SAVESTATE_VERSION,
+                found: state.version,
+            });
+        }
+        Ok(state)
+    }
+}
+
+// ── Convenience save / load for Gb<DmgBus> ─────────────────────────────────
 
 use super::Gb;
+use crate::gb::bus::DmgBus;
 
 impl Gb<DmgBus> {
     /// Capture a full save-state snapshot.
     pub fn save_state(&self) -> GbSaveState {
         GbSaveState {
             version: GB_SAVESTATE_VERSION,
-            cpu: self.cpu.snapshot(),
-            ppu: self.cpu.bus.ppu.snapshot(),
-            timer: self.cpu.bus.timer_snapshot(),
-            joypad: self.cpu.bus.joypad.snapshot(),
-            apu: self.cpu.bus.apu_snapshot(),
-            bus: self.cpu.bus.bus_snapshot(),
-            cartridge: self.cpu.bus.cart_save_state(),
+            cpu: self.cpu.capture_state(),
+            bus: self.cpu.bus.capture_bus_state(),
+            cart_ram: self.cpu.bus.cart_ram_snapshot(),
+            mbc_state: self.cpu.bus.mbc_state_snapshot(),
         }
     }
 
@@ -278,32 +155,21 @@ impl Gb<DmgBus> {
                 state.version
             ));
         }
-        self.cpu.restore(&state.cpu);
-        self.cpu.bus.ppu.restore(&state.ppu)?;
-        self.cpu.bus.restore_timer(&state.timer);
-        self.cpu.bus.joypad.restore(&state.joypad);
-        self.cpu.bus.restore_apu(&state.apu);
-        self.cpu.bus.restore_bus(&state.bus)?;
-        self.cpu.bus.cart_load_state(&state.cartridge)?;
+        self.cpu.restore_state(&state.cpu);
+        self.cpu.bus.restore_bus_state(&state.bus)?;
+        self.cpu.bus.restore_cart_ram(&state.cart_ram);
+        self.cpu.bus.restore_mbc_state(&state.mbc_state);
         Ok(())
     }
 }
 
-// ── CPU snapshot/restore ────────────────────────────────────────────────────
+// ── Capture / Restore helpers for SM83 CPU ─────────────────────────────────
 
 impl<B: crate::gb::bus::GbBus> Sm83<B> {
-    pub(crate) fn snapshot(&self) -> CpuSnapshot {
-        CpuSnapshot {
-            a: self.regs.a,
-            f: self.regs.f,
-            b: self.regs.b,
-            c: self.regs.c,
-            d: self.regs.d,
-            e: self.regs.e,
-            h: self.regs.h,
-            l: self.regs.l,
-            sp: self.regs.sp,
-            pc: self.regs.pc,
+    /// Capture the CPU state for serialization.
+    pub fn capture_state(&self) -> Sm83State {
+        Sm83State {
+            regs: self.regs,
             ime: self.ime,
             halted: self.halted,
             halt_bug: self.halt_bug,
@@ -312,205 +178,249 @@ impl<B: crate::gb::bus::GbBus> Sm83<B> {
         }
     }
 
-    pub(crate) fn restore(&mut self, snap: &CpuSnapshot) {
-        self.regs.a = snap.a;
-        self.regs.f = snap.f;
-        self.regs.b = snap.b;
-        self.regs.c = snap.c;
-        self.regs.d = snap.d;
-        self.regs.e = snap.e;
-        self.regs.h = snap.h;
-        self.regs.l = snap.l;
-        self.regs.sp = snap.sp;
-        self.regs.pc = snap.pc;
-        self.ime = snap.ime;
-        self.halted = snap.halted;
-        self.halt_bug = snap.halt_bug;
-        self.set_ime_pending(snap.ime_pending);
-        self.set_cycles(snap.cycles);
+    /// Restore CPU state from a deserialized snapshot.
+    pub fn restore_state(&mut self, state: &Sm83State) {
+        self.regs = state.regs;
+        self.ime = state.ime;
+        self.halted = state.halted;
+        self.halt_bug = state.halt_bug;
+        self.set_ime_pending(state.ime_pending);
+        self.set_cycles(state.cycles);
     }
 }
 
-// ── PPU snapshot/restore ────────────────────────────────────────────────────
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gb::bus::{CgbBus, DmgBus, GbBus};
+    use crate::gb::cartridge::load_cartridge;
+    use crate::gb::console::Gb;
+    use crate::gb::model::DmgModel;
 
-impl Ppu {
-    pub(crate) fn snapshot(&self) -> PpuSnapshot {
-        PpuSnapshot {
-            vram: self.vram.to_vec(),
-            oam: self.oam.to_vec(),
-            screen_buffer: self.screen_buffer().snapshot(),
-            registers: self.registers_snapshot(),
-            dot: self.timing_dot(),
-            scanline: self.timing_scanline(),
-            mode: self.timing_mode(),
-            stat_mode: self.timing_stat_mode(),
-            frame_ready: self.is_frame_ready(),
-            first_scanline_after_enable: self.timing_first_scanline(),
-            second_scanline_after_enable: self.timing_second_scanline(),
-            third_scanline_after_enable: self.timing_third_scanline(),
-            mode_for_irq: self.timing_mode_for_irq(),
-            mode3_extra_dots: self.timing_mode3_extra_dots(),
-            ly: self.timing_ly(),
-            pending_interrupts: self.pending_interrupts_raw(),
-            window_line: self.window_line_raw(),
-            prev_stat_irq_line: self.prev_stat_irq_line_raw(),
-            lyc_eq_ly_frozen: self.lyc_eq_ly_frozen_raw(),
+    fn minimal_rom() -> Vec<u8> {
+        let mut rom = vec![0u8; 0x8000];
+        rom[0x0147] = 0x00; // ROM only
+        rom[0x0148] = 0x00; // 32 KB
+        rom[0x0149] = 0x00; // no RAM
+        let chk = rom[0x0134..=0x014C]
+            .iter()
+            .fold(0u8, |acc, &b| acc.wrapping_sub(b).wrapping_sub(1));
+        rom[0x014D] = chk;
+        rom
+    }
+
+    fn minimal_cgb_rom() -> Vec<u8> {
+        let mut rom = vec![0u8; 0x8000];
+        rom[0x0143] = 0xC0; // CGB-only flag
+        rom[0x0147] = 0x00; // ROM only
+        rom[0x0148] = 0x00; // 32 KB
+        rom[0x0149] = 0x00; // no RAM
+        let chk = rom[0x0134..=0x014C]
+            .iter()
+            .fold(0u8, |acc, &b| acc.wrapping_sub(b).wrapping_sub(1));
+        rom[0x014D] = chk;
+        rom
+    }
+
+    fn make_dmg() -> Gb<DmgBus> {
+        let cart = load_cartridge(&minimal_rom()).expect("valid ROM");
+        Gb::new(DmgBus::new(cart, DmgModel::DmgB))
+    }
+
+    fn make_cgb() -> Gb<CgbBus> {
+        let cart = load_cartridge(&minimal_cgb_rom()).expect("valid ROM");
+        let mut gb = Gb::new(CgbBus::new(cart));
+        gb.cpu.reset_registers_cgb();
+        gb
+    }
+
+    // ── Version checks ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_gb_savestate_version_is_1() {
+        assert_eq!(GB_SAVESTATE_VERSION, 1);
+    }
+
+    // ── DMG round-trip ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_dmg_save_state_roundtrip() {
+        let mut gb = make_dmg();
+        for _ in 0..10 {
+            gb.step();
+        }
+
+        let cpu_state = gb.cpu.capture_state();
+        let bus_state = gb.cpu.bus.capture_bus_state();
+        let cart_ram = gb.cpu.bus.cart_ram_snapshot();
+        let mbc_state = gb.cpu.bus.mbc_state_snapshot();
+
+        let save = GbSaveState {
+            version: GB_SAVESTATE_VERSION,
+            cpu: cpu_state,
+            bus: bus_state,
+            cart_ram,
+            mbc_state,
+        };
+
+        let bytes = save.to_bytes().expect("serialization should succeed");
+        let loaded = GbSaveState::from_bytes(&bytes).expect("deserialization should succeed");
+
+        assert_eq!(loaded.version, GB_SAVESTATE_VERSION);
+        assert_eq!(loaded.cpu.regs, gb.cpu.regs);
+        assert_eq!(loaded.bus.bus_type, GbBusType::Dmg);
+    }
+
+    // ── CGB round-trip ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_cgb_save_state_roundtrip() {
+        let mut gb = make_cgb();
+        for _ in 0..10 {
+            gb.step();
+        }
+
+        let cpu_state = gb.cpu.capture_state();
+        let bus_state = gb.cpu.bus.capture_bus_state();
+        let cart_ram = gb.cpu.bus.cart_ram_snapshot();
+        let mbc_state = gb.cpu.bus.mbc_state_snapshot();
+
+        let save = GbSaveState {
+            version: GB_SAVESTATE_VERSION,
+            cpu: cpu_state,
+            bus: bus_state,
+            cart_ram,
+            mbc_state,
+        };
+
+        let bytes = save.to_bytes().expect("serialization should succeed");
+        let loaded = GbSaveState::from_bytes(&bytes).expect("deserialization should succeed");
+
+        assert_eq!(loaded.version, GB_SAVESTATE_VERSION);
+        assert_eq!(loaded.cpu.regs, gb.cpu.regs);
+        assert_eq!(loaded.bus.bus_type, GbBusType::Cgb);
+    }
+
+    // ── Version mismatch ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_incompatible_version_error() {
+        let mut gb = make_dmg();
+        gb.step();
+
+        let mut save = GbSaveState {
+            version: GB_SAVESTATE_VERSION,
+            cpu: gb.cpu.capture_state(),
+            bus: gb.cpu.bus.capture_bus_state(),
+            cart_ram: gb.cpu.bus.cart_ram_snapshot(),
+            mbc_state: gb.cpu.bus.mbc_state_snapshot(),
+        };
+        save.version = 9999;
+
+        let bytes = serde_json::to_vec(&save).unwrap();
+        let result = GbSaveState::from_bytes(&bytes);
+        assert!(result.is_err());
+        match result {
+            Err(GbSaveStateError::IncompatibleVersion { expected, found }) => {
+                assert_eq!(expected, GB_SAVESTATE_VERSION);
+                assert_eq!(found, 9999);
+            }
+            _ => panic!("Expected IncompatibleVersion error"),
         }
     }
 
-    pub(crate) fn restore(&mut self, snap: &PpuSnapshot) -> Result<(), String> {
-        if snap.vram.len() != self.vram.len() {
-            return Err(format!(
-                "VRAM size mismatch: expected {}, got {}",
-                self.vram.len(),
-                snap.vram.len()
-            ));
+    // ── Invalid data ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_invalid_json_returns_deserialization_error() {
+        let result = GbSaveState::from_bytes(b"not valid json");
+        assert!(matches!(
+            result,
+            Err(GbSaveStateError::DeserializationFailed(_))
+        ));
+    }
+
+    // ── Restore round-trip ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_dmg_capture_restore_preserves_cpu_registers() {
+        let mut gb = make_dmg();
+        for _ in 0..10 {
+            gb.step();
         }
-        self.vram.copy_from_slice(&snap.vram);
-        if snap.oam.len() != self.oam.len() {
-            return Err(format!(
-                "OAM size mismatch: expected {}, got {}",
-                self.oam.len(),
-                snap.oam.len()
-            ));
+        let original_regs = gb.cpu.regs;
+        let state = gb.cpu.capture_state();
+
+        // Change registers
+        gb.cpu.regs.a = 0xFF;
+        gb.cpu.regs.pc = 0x1234;
+
+        // Restore
+        gb.cpu.restore_state(&state);
+        assert_eq!(gb.cpu.regs, original_regs);
+    }
+
+    #[test]
+    fn test_dmg_capture_restore_preserves_bus_state() {
+        let mut gb = make_dmg();
+        for _ in 0..10 {
+            gb.step();
         }
-        self.oam.copy_from_slice(&snap.oam);
-        self.restore_screen_buffer(&snap.screen_buffer)?;
-        self.restore_registers(&snap.registers);
-        self.restore_timing(snap)?;
-        self.set_pending_interrupts(snap.pending_interrupts);
-        self.set_window_line(snap.window_line);
-        self.set_prev_stat_irq_line(snap.prev_stat_irq_line);
-        self.set_lyc_eq_ly_frozen(snap.lyc_eq_ly_frozen);
-        Ok(())
+        let bus_state = gb.cpu.bus.capture_bus_state();
+
+        // Modify WRAM
+        gb.cpu.bus.write(0xC100, 0xAB);
+        assert_eq!(gb.cpu.bus.read(0xC100), 0xAB);
+
+        // Restore
+        gb.cpu
+            .bus
+            .restore_bus_state(&bus_state)
+            .expect("restore should succeed");
+        assert_eq!(gb.cpu.bus.read(0xC100), 0x00);
     }
-}
 
-// ── Joypad snapshot/restore ─────────────────────────────────────────────────
-
-impl Joypad {
-    pub(crate) fn snapshot(&self) -> JoypadSnapshot {
-        JoypadSnapshot {
-            select_bits: self.select_bits_raw(),
-            p14_state: self.p14_state_raw(),
-            p15_state: self.p15_state_raw(),
-            prev_nibble: self.prev_nibble_raw(),
+    #[test]
+    fn test_cgb_capture_restore_preserves_cpu_registers() {
+        let mut gb = make_cgb();
+        for _ in 0..10 {
+            gb.step();
         }
+        let original_regs = gb.cpu.regs;
+        let state = gb.cpu.capture_state();
+
+        gb.cpu.regs.a = 0xFF;
+        gb.cpu.restore_state(&state);
+        assert_eq!(gb.cpu.regs, original_regs);
     }
 
-    pub(crate) fn restore(&mut self, snap: &JoypadSnapshot) {
-        self.set_select_bits(snap.select_bits);
-        self.set_p14_state(snap.p14_state);
-        self.set_p15_state(snap.p15_state);
-        self.set_prev_nibble(snap.prev_nibble);
-    }
-}
+    // ── Bus-type mismatch ──────────────────────────────────────────────────
 
-// ── APU channel snapshot/restore ────────────────────────────────────────────
-
-impl Channel1 {
-    pub(crate) fn snapshot(&self) -> Channel1Snapshot {
-        Channel1Snapshot {
-            sweep_period: self.sweep_period_raw(),
-            sweep_negate: self.sweep_negate_raw(),
-            sweep_shift: self.sweep_shift_raw(),
-            duty: self.duty_raw(),
-            length_load: self.length_load_raw(),
-            init_volume: self.init_volume_raw(),
-            env_add: self.env_add_raw(),
-            env_period: self.env_period_raw(),
-            freq: self.freq_raw(),
-            length_en: self.length_en(),
-            active: self.is_active(),
-            dac_on: self.dac_on_raw(),
-            duty_pos: self.duty_pos_raw(),
-            freq_timer: self.freq_timer_raw(),
-            length_counter: self.length_counter,
-            volume: self.volume_raw(),
-            env_timer: self.env_timer_raw(),
-            sweep_timer: self.sweep_timer_raw(),
-            sweep_shadow: self.sweep_shadow_raw(),
-            sweep_enabled: self.sweep_enabled_raw(),
-            negate_used: self.negate_used_raw(),
+    #[test]
+    fn test_dmg_restore_rejects_cgb_bus_state() {
+        let mut dmg = make_dmg();
+        let mut cgb = make_cgb();
+        for _ in 0..5 {
+            dmg.step();
+            cgb.step();
         }
+        let cgb_state = cgb.cpu.bus.capture_bus_state();
+        let result = dmg.cpu.bus.restore_bus_state(&cgb_state);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("bus type mismatch"));
     }
 
-    pub(crate) fn restore(&mut self, snap: &Channel1Snapshot) {
-        self.restore_from_snapshot(snap);
-    }
-}
-
-impl Channel2 {
-    pub(crate) fn snapshot(&self) -> Channel2Snapshot {
-        Channel2Snapshot {
-            duty: self.duty_raw(),
-            length_load: self.length_load_raw(),
-            init_volume: self.init_volume_raw(),
-            env_add: self.env_add_raw(),
-            env_period: self.env_period_raw(),
-            freq: self.freq_raw(),
-            length_en: self.length_en(),
-            active: self.is_active(),
-            dac_on: self.dac_on_raw(),
-            duty_pos: self.duty_pos_raw(),
-            freq_timer: self.freq_timer_raw(),
-            length_counter: self.length_counter,
-            volume: self.volume_raw(),
-            env_timer: self.env_timer_raw(),
+    #[test]
+    fn test_cgb_restore_rejects_dmg_bus_state() {
+        let mut dmg = make_dmg();
+        let mut cgb = make_cgb();
+        for _ in 0..5 {
+            dmg.step();
+            cgb.step();
         }
-    }
-
-    pub(crate) fn restore(&mut self, snap: &Channel2Snapshot) {
-        self.restore_from_snapshot(snap);
-    }
-}
-
-impl Channel3 {
-    pub(crate) fn snapshot(&self) -> Channel3Snapshot {
-        Channel3Snapshot {
-            dac_on: self.dac_on_raw(),
-            length_load: self.length_load_raw(),
-            output_level: self.output_level_raw(),
-            freq: self.freq_raw(),
-            length_en: self.length_en(),
-            active: self.is_active(),
-            wave_pos: self.wave_pos_raw(),
-            freq_timer: self.freq_timer_raw(),
-            length_counter: self.length_counter,
-            wave_ram: *self.wave_ram_raw(),
-            current_sample: self.current_sample,
-            is_cgb: self.is_cgb_raw(),
-            wave_just_read: self.wave_just_read,
-        }
-    }
-
-    pub(crate) fn restore(&mut self, snap: &Channel3Snapshot) {
-        self.restore_from_snapshot(snap);
-    }
-}
-
-impl Channel4 {
-    pub(crate) fn snapshot(&self) -> Channel4Snapshot {
-        Channel4Snapshot {
-            init_volume: self.init_volume_raw(),
-            env_add: self.env_add_raw(),
-            env_period: self.env_period_raw(),
-            clock_shift: self.clock_shift_raw(),
-            lfsr_7bit: self.lfsr_7bit_raw(),
-            divisor_code: self.divisor_code_raw(),
-            length_load: self.length_load_raw(),
-            length_en: self.length_en(),
-            active: self.is_active(),
-            dac_on: self.dac_on_raw(),
-            lfsr: self.lfsr_raw(),
-            freq_timer: self.freq_timer_raw(),
-            length_counter: self.length_counter,
-            volume: self.volume_raw(),
-            env_timer: self.env_timer_raw(),
-        }
-    }
-
-    pub(crate) fn restore(&mut self, snap: &Channel4Snapshot) {
-        self.restore_from_snapshot(snap);
+        let dmg_state = dmg.cpu.bus.capture_bus_state();
+        let result = cgb.cpu.bus.restore_bus_state(&dmg_state);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("bus type mismatch"));
     }
 }

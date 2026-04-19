@@ -336,103 +336,107 @@ impl DmgBus {
         self.dma_oam_blocked = preserve_blocking;
     }
 
-    // ── Save-state accessors ──────────────────────────────────────────────────
+    // ── Save-state capture / restore ───────────────────────────────────────
 
-    pub(crate) fn timer_snapshot(&self) -> crate::gb::console::save_state::TimerSnapshot {
-        crate::gb::console::save_state::TimerSnapshot {
-            div_counter: self.timer.div_counter_raw(),
-            tima: self.timer.tima,
-            tma: self.timer.tma,
-            tac: self.timer.tac,
-            interrupt_pending: self.timer.interrupt_pending,
-            tima_overflow_pending: self.timer.tima_overflow_pending_raw(),
-            tima_load_active: self.timer.tima_load_active_raw(),
-        }
-    }
-
-    pub(crate) fn restore_timer(&mut self, snap: &crate::gb::console::save_state::TimerSnapshot) {
-        self.timer.restore_from_snapshot(snap);
-    }
-
-    pub(crate) fn apu_snapshot(&self) -> crate::gb::console::save_state::ApuSnapshot {
-        self.apu.snapshot()
-    }
-
-    pub(crate) fn restore_apu(&mut self, snap: &crate::gb::console::save_state::ApuSnapshot) {
-        self.apu.restore(snap);
-    }
-
-    pub(crate) fn bus_snapshot(&self) -> crate::gb::console::save_state::BusSnapshot {
-        crate::gb::console::save_state::BusSnapshot {
-            wram: self.wram.to_vec(),
-            hram: self.hram.to_vec(),
+    /// Capture the full bus state for serialization.
+    pub fn capture_bus_state(&self) -> crate::gb::console::save_state::BusState {
+        use crate::gb::console::save_state::{BusState, GbBusType};
+        BusState {
+            bus_type: GbBusType::Dmg,
+            ppu: self.ppu.clone(),
+            wram: self.wram,
+            hram: self.hram,
+            timer: self.timer.clone(),
+            joypad: self.joypad.clone(),
+            apu: self.apu.clone(),
             if_reg: self.if_reg,
             ie_reg: self.ie_reg,
-            boot_rom_active: self.boot_rom_active,
             dma_active: self.dma_active,
             dma_source: self.dma_source,
             dma_position: self.dma_position,
             dma_oam_blocked: self.dma_oam_blocked,
-            sb: self.sb,
-            sc: self.sc,
-            serial_bits_remaining: self.serial_bits_remaining,
-            serial_master_clock: self.serial_master_clock,
-            serial_buf: self.serial_buf.clone(),
-            model: self.model.as_str().to_owned(),
+            boot_rom_active: Some(self.boot_rom_active),
+            sb: Some(self.sb),
+            sc: Some(self.sc),
+            serial_buf: Some(self.serial_buf.clone()),
+            serial_bits_remaining: Some(self.serial_bits_remaining),
+            serial_master_clock: Some(self.serial_master_clock),
+            model: Some(self.model),
         }
     }
 
-    pub(crate) fn restore_bus(
+    /// Restore bus state from a deserialized snapshot.
+    ///
+    /// Returns an error if the save state was captured from a CGB bus.
+    pub fn restore_bus_state(
         &mut self,
-        snap: &crate::gb::console::save_state::BusSnapshot,
+        state: &crate::gb::console::save_state::BusState,
     ) -> Result<(), String> {
-        // Validate DMG model matches
-        let snap_model = DmgModel::parse(&snap.model)
-            .ok_or_else(|| format!("Unknown DMG model in save state: {:?}", snap.model))?;
-        if snap_model != self.model {
+        use crate::gb::console::save_state::GbBusType;
+        if state.bus_type != GbBusType::Dmg {
             return Err(format!(
-                "DMG model mismatch: save state has {}, current bus has {}",
-                snap.model,
-                self.model.as_str()
+                "bus type mismatch: expected DMG, found {:?}",
+                state.bus_type
             ));
         }
-        if snap.wram.len() != self.wram.len() {
-            return Err(format!(
-                "WRAM size mismatch: expected {}, got {}",
-                self.wram.len(),
-                snap.wram.len()
-            ));
+        self.ppu = state.ppu.clone();
+        self.wram = state.wram;
+        self.hram = state.hram;
+        self.timer = state.timer.clone();
+        self.joypad = state.joypad.clone();
+        self.apu = state.apu.clone();
+        self.if_reg = state.if_reg;
+        self.ie_reg = state.ie_reg;
+        self.dma_active = state.dma_active;
+        self.dma_source = state.dma_source;
+        self.dma_position = state.dma_position;
+        self.dma_oam_blocked = state.dma_oam_blocked;
+        if let Some(active) = state.boot_rom_active {
+            self.boot_rom_active = active;
         }
-        self.wram.copy_from_slice(&snap.wram);
-        if snap.hram.len() != self.hram.len() {
-            return Err(format!(
-                "HRAM size mismatch: expected {}, got {}",
-                self.hram.len(),
-                snap.hram.len()
-            ));
+        if let Some(sb) = state.sb {
+            self.sb = sb;
         }
-        self.hram.copy_from_slice(&snap.hram);
-        self.if_reg = snap.if_reg;
-        self.ie_reg = snap.ie_reg;
-        self.boot_rom_active = snap.boot_rom_active;
-        self.dma_active = snap.dma_active;
-        self.dma_source = snap.dma_source;
-        self.dma_position = snap.dma_position;
-        self.dma_oam_blocked = snap.dma_oam_blocked;
-        self.sb = snap.sb;
-        self.sc = snap.sc;
-        self.serial_bits_remaining = snap.serial_bits_remaining;
-        self.serial_master_clock = snap.serial_master_clock;
-        self.serial_buf = snap.serial_buf.clone();
+        if let Some(sc) = state.sc {
+            self.sc = sc;
+        }
+        if let Some(ref buf) = state.serial_buf {
+            self.serial_buf = buf.clone();
+        }
+        if let Some(bits) = state.serial_bits_remaining {
+            self.serial_bits_remaining = bits;
+        }
+        if let Some(clock) = state.serial_master_clock {
+            self.serial_master_clock = clock;
+        }
+        if let Some(model) = state.model {
+            self.model = model;
+            self.boot_rom = match model.boot_variant() {
+                DmgBootVariant::Production => DMG_BOOT_ROM,
+                DmgBootVariant::Dmg0 => DMG0_BOOT_ROM,
+            };
+        }
         Ok(())
     }
 
-    pub(crate) fn cart_save_state(&self) -> Vec<u8> {
-        self.cart.save_state()
+    /// Snapshot cartridge RAM.
+    pub fn cart_ram_snapshot(&self) -> Vec<u8> {
+        self.cart.ram_snapshot()
     }
 
-    pub(crate) fn cart_load_state(&mut self, data: &[u8]) -> Result<(), String> {
-        self.cart.load_state(data)
+    /// Restore cartridge RAM from snapshot.
+    pub fn restore_cart_ram(&mut self, data: &[u8]) {
+        self.cart.restore_ram(data);
+    }
+
+    /// Snapshot MBC register state.
+    pub fn mbc_state_snapshot(&self) -> Vec<u8> {
+        self.cart.mbc_state_snapshot()
+    }
+
+    /// Restore MBC register state from snapshot.
+    pub fn restore_mbc_state(&mut self, data: &[u8]) {
+        self.cart.restore_mbc_state(data);
     }
 }
 

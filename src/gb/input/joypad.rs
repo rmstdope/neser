@@ -10,7 +10,10 @@
 //! Button IDs follow the NES convention used throughout the platform API:
 //! A=0, B=1, Select=2, Start=3, Up=4, Down=5, Left=6, Right=7.
 
+use serde::{Deserialize, Serialize};
+
 /// Game Boy joypad ($FF00 / P1 register).
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Joypad {
     /// Bits 4-5 written by the game (`val & 0x30`); bit=0 means group is selected.
     select_bits: u8,
@@ -138,35 +141,6 @@ impl Joypad {
 impl Default for Joypad {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-// ── Save-state accessors ────────────────────────────────────────────────────
-
-impl Joypad {
-    pub(crate) fn select_bits_raw(&self) -> u8 {
-        self.select_bits
-    }
-    pub(crate) fn p14_state_raw(&self) -> u8 {
-        self.p14_state
-    }
-    pub(crate) fn p15_state_raw(&self) -> u8 {
-        self.p15_state
-    }
-    pub(crate) fn prev_nibble_raw(&self) -> u8 {
-        self.prev_nibble
-    }
-    pub(crate) fn set_select_bits(&mut self, val: u8) {
-        self.select_bits = val;
-    }
-    pub(crate) fn set_p14_state(&mut self, val: u8) {
-        self.p14_state = val;
-    }
-    pub(crate) fn set_p15_state(&mut self, val: u8) {
-        self.p15_state = val;
-    }
-    pub(crate) fn set_prev_nibble(&mut self, val: u8) {
-        self.prev_nibble = val;
     }
 }
 

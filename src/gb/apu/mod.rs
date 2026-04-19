@@ -22,6 +22,8 @@ pub mod channel2;
 pub mod channel3;
 pub mod channel4;
 
+use serde::{Deserialize, Serialize};
+
 use channel1::Channel1;
 use channel2::Channel2;
 use channel3::Channel3;
@@ -60,6 +62,7 @@ const DUTY_TABLE: [[u8; 8]; 4] = [
 ];
 
 /// Game Boy DMG APU.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Apu {
     ch1: Channel1,
     ch2: Channel2,
@@ -361,40 +364,6 @@ impl Apu {
     /// Expose ch3 wave RAM read for DmgBus (used during CH3 playback quirk).
     pub fn read_wave_ram(&self, addr: u16) -> u8 {
         self.ch3.read_wave_ram(addr)
-    }
-
-    // ── Save-state accessors ──────────────────────────────────────────────────
-
-    pub(crate) fn snapshot(&self) -> crate::gb::console::save_state::ApuSnapshot {
-        crate::gb::console::save_state::ApuSnapshot {
-            ch1: self.ch1.snapshot(),
-            ch2: self.ch2.snapshot(),
-            ch3: self.ch3.snapshot(),
-            ch4: self.ch4.snapshot(),
-            nr50: self.nr50,
-            nr51: self.nr51,
-            powered: self.powered,
-            fs_timer: self.fs_timer,
-            fs_step: self.fs_step,
-            sample_acc: self.sample_acc,
-            cycles_per_sample: self.cycles_per_sample,
-            is_cgb: self.is_cgb,
-        }
-    }
-
-    pub(crate) fn restore(&mut self, snap: &crate::gb::console::save_state::ApuSnapshot) {
-        self.ch1.restore(&snap.ch1);
-        self.ch2.restore(&snap.ch2);
-        self.ch3.restore(&snap.ch3);
-        self.ch4.restore(&snap.ch4);
-        self.nr50 = snap.nr50;
-        self.nr51 = snap.nr51;
-        self.powered = snap.powered;
-        self.fs_timer = snap.fs_timer;
-        self.fs_step = snap.fs_step;
-        self.sample_acc = snap.sample_acc;
-        self.cycles_per_sample = snap.cycles_per_sample;
-        self.is_cgb = snap.is_cgb;
     }
 }
 
