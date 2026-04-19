@@ -340,7 +340,10 @@ mod tests {
         assert_eq!(gb.cpu.bus.read(0xC100), 0xAB);
 
         // Restore
-        gb.cpu.bus.restore_bus_state(&bus_state);
+        gb.cpu
+            .bus
+            .restore_bus_state(&bus_state)
+            .expect("restore should succeed");
         assert_eq!(gb.cpu.bus.read(0xC100), 0x00);
     }
 
@@ -356,5 +359,35 @@ mod tests {
         gb.cpu.regs.a = 0xFF;
         gb.cpu.restore_state(&state);
         assert_eq!(gb.cpu.regs, original_regs);
+    }
+
+    // ── Bus-type mismatch ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_dmg_restore_rejects_cgb_bus_state() {
+        let mut dmg = make_dmg();
+        let mut cgb = make_cgb();
+        for _ in 0..5 {
+            dmg.step();
+            cgb.step();
+        }
+        let cgb_state = cgb.cpu.bus.capture_bus_state();
+        let result = dmg.cpu.bus.restore_bus_state(&cgb_state);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("bus type mismatch"));
+    }
+
+    #[test]
+    fn test_cgb_restore_rejects_dmg_bus_state() {
+        let mut dmg = make_dmg();
+        let mut cgb = make_cgb();
+        for _ in 0..5 {
+            dmg.step();
+            cgb.step();
+        }
+        let dmg_state = dmg.cpu.bus.capture_bus_state();
+        let result = cgb.cpu.bus.restore_bus_state(&dmg_state);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("bus type mismatch"));
     }
 }

@@ -226,7 +226,19 @@ impl CgbBus {
     }
 
     /// Restore bus state from a deserialized snapshot.
-    pub fn restore_bus_state(&mut self, state: &crate::gb::console::save_state::BusState) {
+    ///
+    /// Returns an error if the save state was captured from a DMG bus.
+    pub fn restore_bus_state(
+        &mut self,
+        state: &crate::gb::console::save_state::BusState,
+    ) -> Result<(), String> {
+        use crate::gb::console::save_state::GbBusType;
+        if state.bus_type != GbBusType::Cgb {
+            return Err(format!(
+                "bus type mismatch: expected CGB, found {:?}",
+                state.bus_type
+            ));
+        }
         self.ppu = state.ppu.clone();
         self.wram = state.wram;
         self.hram = state.hram;
@@ -239,6 +251,7 @@ impl CgbBus {
         self.dma_source = state.dma_source;
         self.dma_position = state.dma_position;
         self.dma_oam_blocked = state.dma_oam_blocked;
+        Ok(())
     }
 
     /// Snapshot cartridge RAM.

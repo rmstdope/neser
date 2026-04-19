@@ -128,13 +128,13 @@ impl GbConsole {
         match self {
             Self::Dmg(gb) => {
                 gb.cpu.restore_state(&state.cpu);
-                gb.cpu.bus.restore_bus_state(&state.bus);
+                gb.cpu.bus.restore_bus_state(&state.bus)?;
                 gb.cpu.bus.restore_cart_ram(&state.cart_ram);
                 gb.cpu.bus.restore_mbc_state(&state.mbc_state);
             }
             Self::Cgb(gb) => {
                 gb.cpu.restore_state(&state.cpu);
-                gb.cpu.bus.restore_bus_state(&state.bus);
+                gb.cpu.bus.restore_bus_state(&state.bus)?;
                 gb.cpu.bus.restore_cart_ram(&state.cart_ram);
                 gb.cpu.bus.restore_mbc_state(&state.mbc_state);
             }
@@ -715,5 +715,37 @@ mod tests {
     fn test_state_path_without_rom_loaded() {
         let gb = make_gameboy();
         assert!(gb.state_path().is_none());
+    }
+
+    #[test]
+    fn test_load_dmg_state_into_cgb_returns_err() {
+        let mut dmg_gb = make_gameboy();
+        dmg_gb.load_rom(&minimal_rom(), "test.gb").unwrap();
+        for _ in 0..10 {
+            dmg_gb.run_tick();
+        }
+        let dmg_state = dmg_gb.save_state_bytes().unwrap();
+
+        let mut cgb_gb = make_gameboy();
+        cgb_gb.load_rom(&minimal_cgb_rom(), "test.gbc").unwrap();
+        let result = cgb_gb.load_state_bytes(&dmg_state);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("bus type mismatch"));
+    }
+
+    #[test]
+    fn test_load_cgb_state_into_dmg_returns_err() {
+        let mut cgb_gb = make_gameboy();
+        cgb_gb.load_rom(&minimal_cgb_rom(), "test.gbc").unwrap();
+        for _ in 0..10 {
+            cgb_gb.run_tick();
+        }
+        let cgb_state = cgb_gb.save_state_bytes().unwrap();
+
+        let mut dmg_gb = make_gameboy();
+        dmg_gb.load_rom(&minimal_rom(), "test.gb").unwrap();
+        let result = dmg_gb.load_state_bytes(&cgb_state);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("bus type mismatch"));
     }
 }

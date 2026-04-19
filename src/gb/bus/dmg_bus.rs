@@ -366,7 +366,19 @@ impl DmgBus {
     }
 
     /// Restore bus state from a deserialized snapshot.
-    pub fn restore_bus_state(&mut self, state: &crate::gb::console::save_state::BusState) {
+    ///
+    /// Returns an error if the save state was captured from a CGB bus.
+    pub fn restore_bus_state(
+        &mut self,
+        state: &crate::gb::console::save_state::BusState,
+    ) -> Result<(), String> {
+        use crate::gb::console::save_state::GbBusType;
+        if state.bus_type != GbBusType::Dmg {
+            return Err(format!(
+                "bus type mismatch: expected DMG, found {:?}",
+                state.bus_type
+            ));
+        }
         self.ppu = state.ppu.clone();
         self.wram = state.wram;
         self.hram = state.hram;
@@ -397,6 +409,14 @@ impl DmgBus {
         if let Some(clock) = state.serial_master_clock {
             self.serial_master_clock = clock;
         }
+        if let Some(model) = state.model {
+            self.model = model;
+            self.boot_rom = match model.boot_variant() {
+                DmgBootVariant::Production => DMG_BOOT_ROM,
+                DmgBootVariant::Dmg0 => DMG0_BOOT_ROM,
+            };
+        }
+        Ok(())
     }
 
     /// Snapshot cartridge RAM.
