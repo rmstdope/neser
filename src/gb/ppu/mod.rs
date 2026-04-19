@@ -623,8 +623,8 @@ impl Ppu {
         self.registers.wx = regs[9];
     }
 
-    pub(crate) fn restore_screen_buffer(&mut self, data: &[u8]) {
-        self.screen_buffer.restore_from_bytes(data);
+    pub(crate) fn restore_screen_buffer(&mut self, data: &[u8]) -> Result<(), String> {
+        self.screen_buffer.restore_from_bytes(data)
     }
 
     pub(crate) fn timing_dot(&self) -> u16 {
@@ -682,7 +682,10 @@ impl Ppu {
         self.lyc_eq_ly_frozen = val;
     }
 
-    pub(crate) fn restore_timing(&mut self, snap: &crate::gb::console::save_state::PpuSnapshot) {
+    pub(crate) fn restore_timing(
+        &mut self,
+        snap: &crate::gb::console::save_state::PpuSnapshot,
+    ) -> Result<(), String> {
         self.timing
             .restore(&crate::gb::console::save_state::TimingRestoreArgs {
                 dot: snap.dot,
@@ -696,7 +699,7 @@ impl Ppu {
                 mode_for_irq: snap.mode_for_irq,
                 mode3_extra_dots: snap.mode3_extra_dots,
                 ly: snap.ly,
-            });
+            })
     }
 }
 

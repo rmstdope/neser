@@ -381,13 +381,26 @@ impl DmgBus {
         }
     }
 
-    pub(crate) fn restore_bus(&mut self, snap: &crate::gb::console::save_state::BusSnapshot) {
-        if snap.wram.len() == self.wram.len() {
-            self.wram.copy_from_slice(&snap.wram);
+    pub(crate) fn restore_bus(
+        &mut self,
+        snap: &crate::gb::console::save_state::BusSnapshot,
+    ) -> Result<(), String> {
+        if snap.wram.len() != self.wram.len() {
+            return Err(format!(
+                "WRAM size mismatch: expected {}, got {}",
+                self.wram.len(),
+                snap.wram.len()
+            ));
         }
-        if snap.hram.len() == self.hram.len() {
-            self.hram.copy_from_slice(&snap.hram);
+        self.wram.copy_from_slice(&snap.wram);
+        if snap.hram.len() != self.hram.len() {
+            return Err(format!(
+                "HRAM size mismatch: expected {}, got {}",
+                self.hram.len(),
+                snap.hram.len()
+            ));
         }
+        self.hram.copy_from_slice(&snap.hram);
         self.if_reg = snap.if_reg;
         self.ie_reg = snap.ie_reg;
         self.boot_rom_active = snap.boot_rom_active;
@@ -399,6 +412,7 @@ impl DmgBus {
         self.sc = snap.sc;
         self.serial_bits_remaining = snap.serial_bits_remaining;
         self.serial_master_clock = snap.serial_master_clock;
+        Ok(())
     }
 
     pub(crate) fn cart_save_state(&self) -> Vec<u8> {

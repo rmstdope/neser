@@ -153,9 +153,14 @@ impl GbCartridge for Mbc5 {
         self.ram_enabled = data[3] != 0;
         self.has_rumble = data[4] != 0;
         let ram_data = &data[5..];
-        if ram_data.len() == self.ram.len() {
-            self.ram.copy_from_slice(ram_data);
+        if ram_data.len() != self.ram.len() {
+            return Err(format!(
+                "MBC5 RAM size mismatch: expected {}, got {}",
+                self.ram.len(),
+                ram_data.len()
+            ));
         }
+        self.ram.copy_from_slice(ram_data);
         Ok(())
     }
 }

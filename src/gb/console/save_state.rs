@@ -278,11 +278,11 @@ impl Gb<DmgBus> {
             ));
         }
         self.cpu.restore(&state.cpu);
-        self.cpu.bus.ppu.restore(&state.ppu);
+        self.cpu.bus.ppu.restore(&state.ppu)?;
         self.cpu.bus.restore_timer(&state.timer);
         self.cpu.bus.joypad.restore(&state.joypad);
         self.cpu.bus.restore_apu(&state.apu);
-        self.cpu.bus.restore_bus(&state.bus);
+        self.cpu.bus.restore_bus(&state.bus)?;
         self.cpu.bus.cart_load_state(&state.cartridge)?;
         Ok(())
     }
@@ -357,20 +357,31 @@ impl Ppu {
         }
     }
 
-    pub(crate) fn restore(&mut self, snap: &PpuSnapshot) {
-        if snap.vram.len() == self.vram.len() {
-            self.vram.copy_from_slice(&snap.vram);
+    pub(crate) fn restore(&mut self, snap: &PpuSnapshot) -> Result<(), String> {
+        if snap.vram.len() != self.vram.len() {
+            return Err(format!(
+                "VRAM size mismatch: expected {}, got {}",
+                self.vram.len(),
+                snap.vram.len()
+            ));
         }
-        if snap.oam.len() == self.oam.len() {
-            self.oam.copy_from_slice(&snap.oam);
+        self.vram.copy_from_slice(&snap.vram);
+        if snap.oam.len() != self.oam.len() {
+            return Err(format!(
+                "OAM size mismatch: expected {}, got {}",
+                self.oam.len(),
+                snap.oam.len()
+            ));
         }
-        self.restore_screen_buffer(&snap.screen_buffer);
+        self.oam.copy_from_slice(&snap.oam);
+        self.restore_screen_buffer(&snap.screen_buffer)?;
         self.restore_registers(&snap.registers);
-        self.restore_timing(snap);
+        self.restore_timing(snap)?;
         self.set_pending_interrupts(snap.pending_interrupts);
         self.set_window_line(snap.window_line);
         self.set_prev_stat_irq_line(snap.prev_stat_irq_line);
         self.set_lyc_eq_ly_frozen(snap.lyc_eq_ly_frozen);
+        Ok(())
     }
 }
 

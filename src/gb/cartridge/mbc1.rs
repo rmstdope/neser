@@ -210,9 +210,14 @@ impl GbCartridge for Mbc1 {
         self.ram_enabled = data[3] != 0;
         self.multicart = data[4] != 0;
         let ram_data = &data[5..];
-        if ram_data.len() == self.ram.len() {
-            self.ram.copy_from_slice(ram_data);
+        if ram_data.len() != self.ram.len() {
+            return Err(format!(
+                "MBC1 RAM size mismatch: expected {}, got {}",
+                self.ram.len(),
+                ram_data.len()
+            ));
         }
+        self.ram.copy_from_slice(ram_data);
         Ok(())
     }
 }

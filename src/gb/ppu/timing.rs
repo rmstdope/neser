@@ -446,21 +446,28 @@ impl Timing {
         self.mode3_extra_dots
     }
 
-    pub(crate) fn restore(&mut self, snap: &crate::gb::console::save_state::TimingRestoreArgs) {
+    pub(crate) fn restore(
+        &mut self,
+        snap: &crate::gb::console::save_state::TimingRestoreArgs,
+    ) -> Result<(), String> {
+        let mode = match snap.mode {
+            0 => PpuMode::HBlank,
+            1 => PpuMode::VBlank,
+            2 => PpuMode::OamScan,
+            3 => PpuMode::PixelTransfer,
+            _ => return Err(format!("Invalid PPU mode: {}", snap.mode)),
+        };
+        let stat_mode = match snap.stat_mode {
+            0 => PpuMode::HBlank,
+            1 => PpuMode::VBlank,
+            2 => PpuMode::OamScan,
+            3 => PpuMode::PixelTransfer,
+            _ => return Err(format!("Invalid STAT mode: {}", snap.stat_mode)),
+        };
         self.dot = snap.dot;
         self.scanline = snap.scanline;
-        self.mode = match snap.mode {
-            0 => PpuMode::HBlank,
-            1 => PpuMode::VBlank,
-            2 => PpuMode::OamScan,
-            _ => PpuMode::PixelTransfer,
-        };
-        self.stat_mode = match snap.stat_mode {
-            0 => PpuMode::HBlank,
-            1 => PpuMode::VBlank,
-            2 => PpuMode::OamScan,
-            _ => PpuMode::PixelTransfer,
-        };
+        self.mode = mode;
+        self.stat_mode = stat_mode;
         self.frame_ready = snap.frame_ready;
         self.first_scanline_after_enable = snap.first_scanline;
         self.second_scanline_after_enable = snap.second_scanline;
@@ -468,6 +475,7 @@ impl Timing {
         self.mode_for_irq = snap.mode_for_irq;
         self.mode3_extra_dots = snap.mode3_extra_dots;
         self.ly = snap.ly;
+        Ok(())
     }
 
     /// Dot at which Mode 3 (Pixel Transfer) ends for the current scan type.
