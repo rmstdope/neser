@@ -1,117 +1,52 @@
 /// Open-source DMG boot ROM replacement.
 ///
-/// A hand-authored 256-byte SM83 machine code program that runs on the
-/// emulated CPU from reset ($0000) and implements the Game Boy DMG startup
-/// sequence:
-///
-/// 1. Initialise stack and clear VRAM.
-/// 2. Configure APU registers (NR50/NR51/NR52), trigger the boot sound
-///    (NR13/NR14), and set the initial BG palette (BGP=$FC).
-/// 3. Read the Nintendo logo bitmap from the cartridge header ($0104–$0133),
-///    expand each nibble to a double-wide 8×8 tile, and write the tiles to
-///    VRAM starting at tile $01 ($8010).
-/// 4. Configure the BG tile map so the logo appears in rows 8–9 of the screen.
-/// 5. Execute a pre-LCD delay loop to set up the PPU start time.
-/// 6. Enable the LCD (LCDC=$91).
-/// 7. Execute a post-LCD delay loop to place the PPU at the correct phase
-///    (LY=$0A, STAT=$80) when the `boot_hwio` test reads those registers,
-///    while keeping the total boot ≡ 10943 (mod 16384) for correct DIV phase.
-/// 8. Re-read the cartridge logo and compare it byte-by-byte against the
-///    embedded 48-byte reference copy; hang if they differ (matching real DMG
-///    hardware behaviour that prevents non-licensed cartridges from booting).
-/// 9. Compute the header checksum over bytes $0134–$014C and compare it with
-///    the value stored at $014D; hang on mismatch.
-/// 10. Set the documented DMG post-boot CPU register state:
-///     A=$01, F=$B0, B=$00, C=$13, D=$00, E=$D8, H=$01, L=$4D, SP=$FFFE.
-/// 11. Write $FF50 (BOOT register) to unmap the boot ROM; the CPU immediately
-///     continues executing at $0100 in cartridge ROM.
-///
-/// ## Design notes
-///
-/// - The boot sound is triggered by writing NR13=$83 and NR14=$87, making
-///   CH1 active so NR52 reads $F1 at cartridge entry.
-/// - The ® trademark symbol tile is omitted to keep the ROM within budget.
-/// - The scroll animation present in the original DMG boot ROM is omitted.
-///   Instead, the palette is set directly to BGP=$FC and cycle-accurate delay
-///   loops are used to achieve the exact DIV and PPU phases.
-/// - Two delay loops (pre-LCD and post-LCD) are used to independently control
-///   the DIV phase and the PPU line/mode at cartridge entry. The pre-LCD
-///   delay sets when the PPU starts; the post-LCD delay fine-tunes the PPU
-///   position so STAT reads mode 0 (HBlank, line 9) and LY reads $0A.
-///
-/// ## Timing
-///
-/// Total M-cycles: **92863** (≡ 10943 mod 16384).
-/// With `div_counter` initial value 204:
-///   `(204 + 92863 × 4) mod 65536 = 43976` → DIV = $AB at boot exit.
-///   First DIV read at 14M after $0100: `43976 + 56 = 44032 = $AC00` → $AC ✓.
-///
-/// LCD enabled at M-cycle 75354 (= 66787 + 8563 + 4, after LD A,$91).
-/// PPU T at STAT read = (16567 + 941 + 1139) × 4 = 74588 → frame 2 line 9
-/// T=264 (HBlank, mode 0). PPU T at LY read = 74792 → frame 2 line 10 T=12.
-///
 /// ## ROM layout
 ///
-/// | Address   | Content                     | Size  |
-/// |-----------|-----------------------------|-------|
-/// | $0000     | SP init + VRAM clear        | 12 B  |
-/// | $000C     | APU init + boot sound       | 22 B  |
-/// | $0022     | BGP = $FC                   | 4 B   |
-/// | $0026     | Logo tile load              | 20 B  |
-/// | $003A     | Tile map setup              | 18 B  |
-/// | $004C     | Pre-LCD delay (N=1223)      | 8 B   |
-/// | $0054     | LCD enable (LCDC=$91)       | 4 B   |
-/// | $0058     | Post-LCD delay (N=2366)     | 11 B  |
-/// | $0063     | Logo verify (self-compare)  | 17 B  |
-/// | $0074     | Checksum verify             | 17 B  |
-/// | $0085     | Register setup              | 14 B  |
-/// | $0093     | JP $00FE                    | 3 B   |
-/// | $0096     | `DoubleBitsAndWriteRow`     | 21 B  |
-/// | $00AB     | `Lockup`                    | 2 B   |
-/// | $00AD     | Unused padding (48 bytes)   | —     |
-/// | $00DD     | Padding                     | 33 B  |
-/// | $00FE     | `BootGame` (LDH [$FF50])    | 2 B   |
+/// | Address   | Content                        | Size  |
+/// |-----------|--------------------------------|-------|
+/// | $0000     | SP init + VRAM clear           | 12 B  |
+/// | $000C     | APU init + boot sound          | 22 B  |
+/// | $0022     | BGP = $FC                      | 4 B   |
+/// | $0026     | Logo tile load (CALL $00A7)    | 20 B  |
+/// | $003A     | Tile map setup                 | 18 B  |
+/// | $004C     | Pre-LCD delay (N=2046, 2 NOP)  | 10 B  |
+/// | $0056     | LCD enable (LCDC=$91)          | 4 B   |
+/// | $005A     | SCY = $60                      | 4 B   |
+/// | $005E     | Scroll animation (48 frames)   | 23 B  |
+/// | $0075     | Hold (3 frames)                | 18 B  |
+/// | $0087     | IF = $E1                       | 4 B   |
+/// | $008B     | Fine-tune delay (N=2517, 3 NOP)| 11 B  |
+/// | $0096     | Register setup                 | 14 B  |
+/// | $00A4     | JP $00FE                       | 3 B   |
+/// | $00A7     | `DoubleBitsAndWriteRow`        | 21 B  |
+/// | $00BC     | Padding                        | 66 B  |
+/// | $00FE     | `BootGame` (LDH [$FF50])       | 2 B   |
 pub const DMG_BOOT_ROM: [u8; 256] = [
     // ── $0000: LD SP, $FFFE ──────────────────────────────────────────────────
     0x31, 0xFE, 0xFF,
     // ── $0003: Clear VRAM ($8000–$9FFF) ─────────────────────────────────────
-    // LD HL, $8000; XOR A
-    // .loop: LD [HL+],A; BIT 5,H; JR Z,.loop
-    // Exit when H=$A0 (bit 5 of H set → HL has left VRAM range)
     0x21, 0x00, 0x80, 0xAF, 0x22, 0xCB, 0x6C, 0x28, 0xFB,
     // ── $000C: Init APU ──────────────────────────────────────────────────────
-    // NR52=$80 (audio power on), NR12=$F3 (envelope),
-    // NR51=$F3 (routing), NR50=$77 (volume 7 both channels)
     0x3E, 0x80, 0xE0, 0x26, // LD A,$80; LDH [$FF26]  NR52
     0x3E, 0xF3, 0xE0, 0x12, // LD A,$F3; LDH [$FF12]  NR12
-    0xE0, 0x25, // LDH [$FF25]             NR51 (same A=$F3)
+    0xE0, 0x25, // LDH [$FF25]             NR51
     0x3E, 0x77, 0xE0, 0x24, // LD A,$77; LDH [$FF24]  NR50
     // ── $001A: Trigger boot sound ────────────────────────────────────────────
-    // Write NR13 and NR14 to start CH1 — gives the "ba-ding!" boot chime.
-    // After trigger, NR52 reads $F1 (CH1 active).
-    0x3E, 0x83, 0xE0, 0x13, // LD A,$83; LDH [$FF13]  NR13 (freq low)
+    0x3E, 0x83, 0xE0, 0x13, // LD A,$83; LDH [$FF13]  NR13
     0x3E, 0x87, 0xE0, 0x14, // LD A,$87; LDH [$FF14]  NR14 (trigger!)
     // ── $0022: Init BG palette ───────────────────────────────────────────────
-    // BGP = $FC (%11_11_11_00) — final palette set directly (no animation)
-    0x3E, 0xFC, 0xE0, 0x47,
-    // ── $0026: Load Nintendo logo tiles from cart → VRAM ─────────────────────
-    // Source: cartridge $0104–$0133 (48 bytes).
-    // Destination: VRAM $8010 (tile slot 1).
-    // Each source byte → two 8-pixel rows via DoubleBitsAndWriteRow.
-    // Loop exits when E == LOW($0134) = $34 (i.e. DE has advanced to $0134).
+    0x3E, 0xFC, 0xE0, 0x47, // LD A,$FC; LDH [$FF47]  BGP
+    // ── $0026: Load logo tiles from cartridge header → VRAM ──────────────────
     0x11, 0x04, 0x01, // LD DE, $0104
     0x21, 0x10, 0x80, // LD HL, $8010
     // .logoLoop ($002C):
     0x1A, 0x47, // LD A,[DE]; LD B,A
-    0xCD, 0x96, 0x00, // CALL DoubleBitsAndWriteRow  ($0096)
-    0xCD, 0x96, 0x00, // CALL DoubleBitsAndWriteRow  ($0096)
+    0xCD, 0xA7, 0x00, // CALL DoubleBitsAndWriteRow ($00A7)
+    0xCD, 0xA7, 0x00, // CALL DoubleBitsAndWriteRow ($00A7)
     0x13, // INC DE
     0x7B, 0xEE, 0x34, // LD A,E; XOR $34
     0x20, 0xF2, // JR NZ, .logoLoop
     // ── $003A: Build BG tile map ─────────────────────────────────────────────
-    // Logo tiles $01–$18 (24 tiles, 2 rows × 12 columns) placed at
-    // SCRN0 row 8 cols 4–15 and row 9 cols 4–15.
-    // Fill backwards: A starts at $19=25, DEC before write, stop at A=0.
     0x3E, 0x19, // LD A, $19
     0x21, 0x2F, 0x99, // LD HL, $992F
     0x0E, 0x0C, // LD C, 12
@@ -121,98 +56,83 @@ pub const DMG_BOOT_ROM: [u8; 256] = [
     0x32, // LD [HL-], A
     0x0D, // DEC C
     0x20, 0xF9, // JR NZ, .tmapLoop
-    0x2E, 0x0F, // LD L, $0F  (→ $990F = top-row right edge)
+    0x2E, 0x0F, // LD L, $0F
     0x18, 0xF5, // JR .tmapLoop
     // .tmapDone ($004C):
     // ── $004C: Pre-LCD delay ─────────────────────────────────────────────────
-    // 7 × 1223 + 2 = 8563 M-cycles. Controls when the PPU starts relative to
-    // the total boot cycle count, so that STAT/LY read the correct values.
-    0x21, 0xC7, 0x04, // LD HL, 1223  ($04C7)
-    // .preLoop ($004F):
+    // 3 + 2 + 7×2046 + 2 = 14 329 M-cycles.
+    0x21, 0xFE, 0x07, // LD HL, $07FE  (2046)
+    0x00, 0x00, // 2 × NOP
+    // .preLoop ($0051):
     0x2B, 0x7C, 0xB5, 0x20, 0xFB, // DEC HL; LD A,H; OR L; JR NZ
-    // ── $0054: Enable LCD ────────────────────────────────────────────────────
-    0x3E, 0x91, 0xE0, 0x40, // LD A,$91; LDH [$FF40]  (LCDC on)
-    // ── $0058: Post-LCD delay ────────────────────────────────────────────────
-    // 7 × 2366 + 2 + 3 = 16567 M-cycles. Fine-tunes the PPU position so that
-    // STAT reads HBlank (mode 0) on line 9 and LY reads $0A at the exact
-    // points the boot_hwio test samples those registers.
-    0x21, 0x3E, 0x09, // LD HL, 2366  ($093E)
-    0x00, 0x00, 0x00, // 3 × NOP (fine-tune)
-    // .postLoop ($005E):
+    // ── $0056: Enable LCD ────────────────────────────────────────────────────
+    0x3E, 0x91, 0xE0, 0x40, // LD A,$91; LDH [$FF40]
+    // ── $005A: SCY = $60 ─────────────────────────────────────────────────────
+    0x3E, 0x60, 0xE0, 0x42, // LD A,$60; LDH [$FF42]
+    // ── $005E: Scroll animation — 48 frames, SCY -= 2 each ──────────────────
+    0x06, 0x30, // LD B, 48
+    // .scrollFrame ($0060):
+    0x21, 0xC9, 0x09, // LD HL, $09C9  (2505)
+    // .scrollInner ($0063):
     0x2B, 0x7C, 0xB5, 0x20, 0xFB, // DEC HL; LD A,H; OR L; JR NZ
-    // ── $0063: Skip logo verify — compare cart bytes to themselves ───────────
-    // Point both DE and HL at the cart header logo region ($0104–$0133).
-    // Each iteration reads the same byte from the same address via both
-    // pointers, so the comparison always succeeds and the JR NZ, Lockup branch
-    // is never taken — any cartridge logo is accepted.
-    // Timing is identical to a real logo verify (48 × 14M + setup = 679M).
-    0x11, 0x04, 0x01, // LD DE, $0104
-    0x21, 0x04, 0x01, // LD HL, $0104  (self-compare — no reference logo needed)
-    0x0E, 0x30, // LD C, 48
-    // .verifyLoop ($006B):
-    0x1A, 0x13, // LD A,[DE]; INC DE
-    0xBE, 0x23, // CP [HL]; INC HL
-    0x20, 0x3A, // JR NZ, Lockup ($00AB)
-    0x0D, // DEC C
-    0x20, 0xF7, // JR NZ, .verifyLoop
-    // ── $0074: Verify header checksum ────────────────────────────────────────
-    0x21, 0x34, 0x01, // LD HL, $0134
-    0x0E, 0x19, // LD C, 25
-    0xAF, // XOR A  (A=0)
-    // .csumLoop ($007A):
-    0x96, 0x3D, // SUB [HL]; DEC A
-    0x23, 0x0D, // INC HL; DEC C
-    0x20, 0xFA, // JR NZ, .csumLoop
-    0x47, // LD B, A  (save computed checksum)
-    0x7E, // LD A, [HL]  ($014D = stored header checksum)
-    0xB8, // CP B
-    0x20, 0x26, // JR NZ, Lockup ($00AB)
-    // ── $0085: Set post-boot register state ──────────────────────────────────
+    0x00, 0x00, 0x00, 0x00, // 4 × NOP
+    0xF0, 0x42, // LDH A, [$FF42]
+    0x3D, // DEC A
+    0x3D, // DEC A
+    0xE0, 0x42, // LDH [$FF42], A
+    0x05, // DEC B
+    0x20, 0xEB, // JR NZ, .scrollFrame  (→ $0060, offset = -21)
+    // ── $0075: Hold — 3 frames at SCY = $00 ─────────────────────────────────
+    0x06, 0x03, // LD B, 3
+    // .holdFrame ($0077):
+    0x21, 0xCA, 0x09, // LD HL, $09CA  (2506)
+    // .holdInner ($007A):
+    0x2B, 0x7C, 0xB5, 0x20, 0xFB, // DEC HL; LD A,H; OR L; JR NZ
+    0x00, 0x00, 0x00, 0x00, 0x00, // 5 × NOP
+    0x05, // DEC B
+    0x20, 0xF0, // JR NZ, .holdFrame  (→ $0077, offset = -16)
+    // ── $0087: IF = $E1 ──────────────────────────────────────────────────────
+    0x3E, 0xE1, 0xE0, 0x0F, // LD A,$E1; LDH [$FF0F]
+    // ── $008B: Fine-tune delay ───────────────────────────────────────────────
+    // 3 + 3 + 7×2517 + 2 = 17 627 M-cycles.
+    0x21, 0xD5, 0x09, // LD HL, $09D5  (2517)
+    0x00, 0x00, 0x00, // 3 × NOP
+    // .fineLoop ($0091):
+    0x2B, 0x7C, 0xB5, 0x20, 0xFB, // DEC HL; LD A,H; OR L; JR NZ
+    // ── $0096: Set post-boot register state ──────────────────────────────────
     0x21, 0xB0, 0x01, // LD HL, $01B0
     0xE5, 0xF1, // PUSH HL; POP AF  → AF=$01B0
     0x21, 0x4D, 0x01, // LD HL, $014D
     0x01, 0x13, 0x00, // LD BC, $0013
     0x11, 0xD8, 0x00, // LD DE, $00D8
-    // ── $0093: JP BootGame ($00FE) ───────────────────────────────────────────
-    0xC3, 0xFE, 0x00, // JP $00FE  (BootGame — must stay at $00FE!)
+    // ── $00A4: JP BootGame ($00FE) ───────────────────────────────────────────
+    0xC3, 0xFE, 0x00,
     // ════════════════════════════════════════════════════════════════════════
-    // ── $0096: DoubleBitsAndWriteRow ─────────────────────────────────────────
-    // Expand the top 4 bits of B into an 8-pixel tile row (each bit → 2 pixels).
-    // Writes the result byte twice to VRAM at [HL] for 2× vertical scaling.
-    // On entry: B contains the source byte (upper nibble processed first).
-    // On exit:  HL advanced by 4; B shifted left 4 positions.
-    // ─────────────────────────────────────────────────────────────────────────
-    0x3E, 0x04, // LD A, 4  (4 bits to expand)
-    0x0E, 0x00, // LD C, 0  (output accumulator)
-    // .dblLoop:
-    0xCB, 0x20, // SLA B        (next bit of B → carry)
-    0xF5, // PUSH AF       (save carry)
-    0xCB, 0x11, // RL C          (carry → C lsb)
-    0xF1, // POP AF        (restore carry)
-    0xCB, 0x11, // RL C          (carry → C lsb again = doubled bit)
+    // ── $00A7: DoubleBitsAndWriteRow ─────────────────────────────────────────
+    0x3E, 0x04, // LD A, 4
+    0x0E, 0x00, // LD C, 0
+    // .dblLoop ($00AB):
+    0xCB, 0x20, // SLA B
+    0xF5, // PUSH AF
+    0xCB, 0x11, // RL C
+    0xF1, // POP AF
+    0xCB, 0x11, // RL C
     0x3D, // DEC A
     0x20, 0xF5, // JR NZ, .dblLoop
-    0x79, // LD A, C       (8-pixel row result)
-    0x22, 0x23, // LD [HL+],A; INC HL  (row 1 low-plane, skip high)
-    0x22, 0x23, // LD [HL+],A; INC HL  (row 2 low-plane, skip high)
+    0x79, // LD A, C
+    0x22, 0x23, // LD [HL+],A; INC HL
+    0x22, 0x23, // LD [HL+],A; INC HL
     0xC9, // RET
     // ════════════════════════════════════════════════════════════════════════
-    // ── $00AB: Lockup ────────────────────────────────────────────────────────
-    0x18, 0xFE, // JR $-2  (jump to self forever)
-    // ════════════════════════════════════════════════════════════════════════
-    // ── $00AD: Reserved / unused (48 bytes, formerly Nintendo logo reference) ─
-    // The logo-verify loop above compares the cart header to itself, so this
-    // region is never read.  Kept as zero padding to preserve the ROM layout.
+    // ── $00BC–$00FD: Padding ─────────────────────────────────────────────────
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    // ── $00DD–$00FD: Padding ─────────────────────────────────────────────────
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00,
+    0x00, 0x00,
     // ════════════════════════════════════════════════════════════════════════
     // ── $00FE: BootGame ──────────────────────────────────────────────────────
-    0xE0, 0x50, // LDH [$FF50], A  (unmap boot ROM → execute $0100)
+    0xE0, 0x50, // LDH [$FF50], A
 ];
 
 /// Open-source DMG-0 (first production run) boot ROM replacement.
