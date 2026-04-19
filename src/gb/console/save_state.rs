@@ -1,0 +1,393 @@
+//! Game Boy save-state serialization.
+//!
+//! Defines a versioned [`GbSaveState`] struct that captures the full emulator
+//! state for both DMG and CGB models.  Serialised as JSON (matching the NES
+//! save-state format) via `to_bytes()` / `from_bytes()`.
+//!
+//! Bus capture/restore methods live in `dmg_bus.rs` and `cgb_bus.rs` (where
+//! private fields are accessible).  CPU capture/restore lives here since
+//! `Sm83` fields are `pub`.
+
+use serde::{Deserialize, Serialize};
+use serde_with::serde_as;
+
+use crate::gb::apu::Apu;
+use crate::gb::cpu::{Registers, Sm83};
+use crate::gb::input::joypad::Joypad;
+use crate::gb::model::DmgModel;
+use crate::gb::ppu::Ppu;
+use crate::gb::timer::Timer;
+
+/// Current save-state format version for Game Boy.
+/// Increment this when making breaking changes to the state format.
+pub const GB_SAVESTATE_VERSION: u32 = 1;
+
+/// Identifies which bus variant was active when the state was saved.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GbBusType {
+    Dmg,
+    Cgb,
+}
+
+/// SM83 CPU state snapshot.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Sm83State {
+    pub regs: Registers,
+    pub ime: bool,
+    pub halted: bool,
+    pub halt_bug: bool,
+    pub ime_pending: bool,
+    pub cycles: u64,
+}
+
+/// DMG/CGB bus state snapshot (excluding the cartridge itself).
+#[serde_as]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct BusState {
+    pub bus_type: GbBusType,
+    pub ppu: Ppu,
+    #[serde_as(as = "[_; 0x2000]")]
+    pub wram: [u8; 0x2000],
+    #[serde_as(as = "[_; 0x7F]")]
+    pub hram: [u8; 0x7F],
+    pub timer: Timer,
+    pub joypad: Joypad,
+    pub apu: Apu,
+    pub if_reg: u8,
+    pub ie_reg: u8,
+    pub dma_active: bool,
+    pub dma_source: u8,
+    pub dma_position: u8,
+    pub dma_oam_blocked: bool,
+    // DMG-only fields (None for CGB)
+    pub boot_rom_active: Option<bool>,
+    pub sb: Option<u8>,
+    pub sc: Option<u8>,
+    pub serial_buf: Option<Vec<u8>>,
+    pub serial_bits_remaining: Option<u8>,
+    pub serial_master_clock: Option<bool>,
+    pub model: Option<DmgModel>,
+}
+
+/// Complete Game Boy emulator state snapshot.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GbSaveState {
+    /// Version of the save-state format.
+    pub version: u32,
+    /// CPU state.
+    pub cpu: Sm83State,
+    /// Bus state (PPU, APU, timer, joypad, RAM, etc.).
+    pub bus: BusState,
+    /// Cartridge RAM snapshot (battery-backed SRAM).
+    pub cart_ram: Vec<u8>,
+    /// MBC register state (opaque bytes).
+    pub mbc_state: Vec<u8>,
+}
+
+/// Errors that can occur when loading a GB save-state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GbSaveStateError {
+    /// The save-state format version is incompatible.
+    IncompatibleVersion { expected: u32, found: u32 },
+    /// Deserialization failed.
+    DeserializationFailed(String),
+    /// Serialization failed.
+    SerializationFailed(String),
+}
+
+impl std::fmt::Display for GbSaveStateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::IncompatibleVersion { expected, found } => write!(
+                f,
+                "incompatible save-state version (expected {expected}, found {found})"
+            ),
+            Self::DeserializationFailed(msg) => write!(f, "deserialization failed: {msg}"),
+            Self::SerializationFailed(msg) => write!(f, "serialization failed: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for GbSaveStateError {}
+
+impl GbSaveState {
+    /// Serialize the save state to JSON-encoded UTF-8 bytes.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, GbSaveStateError> {
+        serde_json::to_vec(self).map_err(|e| GbSaveStateError::SerializationFailed(e.to_string()))
+    }
+
+    /// Deserialize a save state from JSON-encoded UTF-8 bytes.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, GbSaveStateError> {
+        let state: Self = serde_json::from_slice(bytes)
+            .map_err(|e| GbSaveStateError::DeserializationFailed(e.to_string()))?;
+        if state.version != GB_SAVESTATE_VERSION {
+            return Err(GbSaveStateError::IncompatibleVersion {
+                expected: GB_SAVESTATE_VERSION,
+                found: state.version,
+            });
+        }
+        Ok(state)
+    }
+}
+
+// ── Capture / Restore helpers for SM83 CPU ─────────────────────────────────
+
+impl<B: crate::gb::bus::GbBus> Sm83<B> {
+    /// Capture the CPU state for serialization.
+    pub fn capture_state(&self) -> Sm83State {
+        Sm83State {
+            regs: self.regs,
+            ime: self.ime,
+            halted: self.halted,
+            halt_bug: self.halt_bug,
+            ime_pending: self.ime_pending(),
+            cycles: self.cycles(),
+        }
+    }
+
+    /// Restore CPU state from a deserialized snapshot.
+    pub fn restore_state(&mut self, state: &Sm83State) {
+        self.regs = state.regs;
+        self.ime = state.ime;
+        self.halted = state.halted;
+        self.halt_bug = state.halt_bug;
+        self.set_ime_pending(state.ime_pending);
+        self.set_cycles(state.cycles);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gb::bus::{CgbBus, DmgBus, GbBus};
+    use crate::gb::cartridge::load_cartridge;
+    use crate::gb::console::Gb;
+    use crate::gb::model::DmgModel;
+
+    fn minimal_rom() -> Vec<u8> {
+        let mut rom = vec![0u8; 0x8000];
+        rom[0x0147] = 0x00; // ROM only
+        rom[0x0148] = 0x00; // 32 KB
+        rom[0x0149] = 0x00; // no RAM
+        let chk = rom[0x0134..=0x014C]
+            .iter()
+            .fold(0u8, |acc, &b| acc.wrapping_sub(b).wrapping_sub(1));
+        rom[0x014D] = chk;
+        rom
+    }
+
+    fn minimal_cgb_rom() -> Vec<u8> {
+        let mut rom = vec![0u8; 0x8000];
+        rom[0x0143] = 0xC0; // CGB-only flag
+        rom[0x0147] = 0x00; // ROM only
+        rom[0x0148] = 0x00; // 32 KB
+        rom[0x0149] = 0x00; // no RAM
+        let chk = rom[0x0134..=0x014C]
+            .iter()
+            .fold(0u8, |acc, &b| acc.wrapping_sub(b).wrapping_sub(1));
+        rom[0x014D] = chk;
+        rom
+    }
+
+    fn make_dmg() -> Gb<DmgBus> {
+        let cart = load_cartridge(&minimal_rom()).expect("valid ROM");
+        Gb::new(DmgBus::new(cart, DmgModel::DmgB))
+    }
+
+    fn make_cgb() -> Gb<CgbBus> {
+        let cart = load_cartridge(&minimal_cgb_rom()).expect("valid ROM");
+        let mut gb = Gb::new(CgbBus::new(cart));
+        gb.cpu.reset_registers_cgb();
+        gb
+    }
+
+    // ── Version checks ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_gb_savestate_version_is_1() {
+        assert_eq!(GB_SAVESTATE_VERSION, 1);
+    }
+
+    // ── DMG round-trip ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_dmg_save_state_roundtrip() {
+        let mut gb = make_dmg();
+        for _ in 0..10 {
+            gb.step();
+        }
+
+        let cpu_state = gb.cpu.capture_state();
+        let bus_state = gb.cpu.bus.capture_bus_state();
+        let cart_ram = gb.cpu.bus.cart_ram_snapshot();
+        let mbc_state = gb.cpu.bus.mbc_state_snapshot();
+
+        let save = GbSaveState {
+            version: GB_SAVESTATE_VERSION,
+            cpu: cpu_state,
+            bus: bus_state,
+            cart_ram,
+            mbc_state,
+        };
+
+        let bytes = save.to_bytes().expect("serialization should succeed");
+        let loaded = GbSaveState::from_bytes(&bytes).expect("deserialization should succeed");
+
+        assert_eq!(loaded.version, GB_SAVESTATE_VERSION);
+        assert_eq!(loaded.cpu.regs, gb.cpu.regs);
+        assert_eq!(loaded.bus.bus_type, GbBusType::Dmg);
+    }
+
+    // ── CGB round-trip ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_cgb_save_state_roundtrip() {
+        let mut gb = make_cgb();
+        for _ in 0..10 {
+            gb.step();
+        }
+
+        let cpu_state = gb.cpu.capture_state();
+        let bus_state = gb.cpu.bus.capture_bus_state();
+        let cart_ram = gb.cpu.bus.cart_ram_snapshot();
+        let mbc_state = gb.cpu.bus.mbc_state_snapshot();
+
+        let save = GbSaveState {
+            version: GB_SAVESTATE_VERSION,
+            cpu: cpu_state,
+            bus: bus_state,
+            cart_ram,
+            mbc_state,
+        };
+
+        let bytes = save.to_bytes().expect("serialization should succeed");
+        let loaded = GbSaveState::from_bytes(&bytes).expect("deserialization should succeed");
+
+        assert_eq!(loaded.version, GB_SAVESTATE_VERSION);
+        assert_eq!(loaded.cpu.regs, gb.cpu.regs);
+        assert_eq!(loaded.bus.bus_type, GbBusType::Cgb);
+    }
+
+    // ── Version mismatch ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_incompatible_version_error() {
+        let mut gb = make_dmg();
+        gb.step();
+
+        let mut save = GbSaveState {
+            version: GB_SAVESTATE_VERSION,
+            cpu: gb.cpu.capture_state(),
+            bus: gb.cpu.bus.capture_bus_state(),
+            cart_ram: gb.cpu.bus.cart_ram_snapshot(),
+            mbc_state: gb.cpu.bus.mbc_state_snapshot(),
+        };
+        save.version = 9999;
+
+        let bytes = serde_json::to_vec(&save).unwrap();
+        let result = GbSaveState::from_bytes(&bytes);
+        assert!(result.is_err());
+        match result {
+            Err(GbSaveStateError::IncompatibleVersion { expected, found }) => {
+                assert_eq!(expected, GB_SAVESTATE_VERSION);
+                assert_eq!(found, 9999);
+            }
+            _ => panic!("Expected IncompatibleVersion error"),
+        }
+    }
+
+    // ── Invalid data ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_invalid_json_returns_deserialization_error() {
+        let result = GbSaveState::from_bytes(b"not valid json");
+        assert!(matches!(
+            result,
+            Err(GbSaveStateError::DeserializationFailed(_))
+        ));
+    }
+
+    // ── Restore round-trip ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_dmg_capture_restore_preserves_cpu_registers() {
+        let mut gb = make_dmg();
+        for _ in 0..10 {
+            gb.step();
+        }
+        let original_regs = gb.cpu.regs;
+        let state = gb.cpu.capture_state();
+
+        // Change registers
+        gb.cpu.regs.a = 0xFF;
+        gb.cpu.regs.pc = 0x1234;
+
+        // Restore
+        gb.cpu.restore_state(&state);
+        assert_eq!(gb.cpu.regs, original_regs);
+    }
+
+    #[test]
+    fn test_dmg_capture_restore_preserves_bus_state() {
+        let mut gb = make_dmg();
+        for _ in 0..10 {
+            gb.step();
+        }
+        let bus_state = gb.cpu.bus.capture_bus_state();
+
+        // Modify WRAM
+        gb.cpu.bus.write(0xC100, 0xAB);
+        assert_eq!(gb.cpu.bus.read(0xC100), 0xAB);
+
+        // Restore
+        gb.cpu
+            .bus
+            .restore_bus_state(&bus_state)
+            .expect("restore should succeed");
+        assert_eq!(gb.cpu.bus.read(0xC100), 0x00);
+    }
+
+    #[test]
+    fn test_cgb_capture_restore_preserves_cpu_registers() {
+        let mut gb = make_cgb();
+        for _ in 0..10 {
+            gb.step();
+        }
+        let original_regs = gb.cpu.regs;
+        let state = gb.cpu.capture_state();
+
+        gb.cpu.regs.a = 0xFF;
+        gb.cpu.restore_state(&state);
+        assert_eq!(gb.cpu.regs, original_regs);
+    }
+
+    // ── Bus-type mismatch ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_dmg_restore_rejects_cgb_bus_state() {
+        let mut dmg = make_dmg();
+        let mut cgb = make_cgb();
+        for _ in 0..5 {
+            dmg.step();
+            cgb.step();
+        }
+        let cgb_state = cgb.cpu.bus.capture_bus_state();
+        let result = dmg.cpu.bus.restore_bus_state(&cgb_state);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("bus type mismatch"));
+    }
+
+    #[test]
+    fn test_cgb_restore_rejects_dmg_bus_state() {
+        let mut dmg = make_dmg();
+        let mut cgb = make_cgb();
+        for _ in 0..5 {
+            dmg.step();
+            cgb.step();
+        }
+        let dmg_state = dmg.cpu.bus.capture_bus_state();
+        let result = cgb.cpu.bus.restore_bus_state(&dmg_state);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("bus type mismatch"));
+    }
+}

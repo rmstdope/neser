@@ -217,7 +217,7 @@ impl Console {
     pub fn state_path(&self) -> Option<PathBuf> {
         match self {
             Console::Nes(nes) => nes.state_path(),
-            Console::GameBoy(_) => None,
+            Console::GameBoy(gb) => gb.state_path(),
         }
     }
 
