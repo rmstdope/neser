@@ -236,6 +236,32 @@ impl Default for Timer {
     }
 }
 
+// ── Save-state accessors ────────────────────────────────────────────────────
+
+impl Timer {
+    pub(crate) fn div_counter_raw(&self) -> u16 {
+        self.div_counter
+    }
+    pub(crate) fn tima_overflow_pending_raw(&self) -> bool {
+        self.tima_overflow_pending
+    }
+    pub(crate) fn tima_load_active_raw(&self) -> bool {
+        self.tima_load_active
+    }
+    pub(crate) fn restore_from_snapshot(
+        &mut self,
+        snap: &crate::gb::console::save_state::TimerSnapshot,
+    ) {
+        self.div_counter = snap.div_counter;
+        self.tima = snap.tima;
+        self.tma = snap.tma;
+        self.tac = snap.tac;
+        self.interrupt_pending = snap.interrupt_pending;
+        self.tima_overflow_pending = snap.tima_overflow_pending;
+        self.tima_load_active = snap.tima_load_active;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------

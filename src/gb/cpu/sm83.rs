@@ -149,6 +149,22 @@ impl<B: GbBus> Sm83<B> {
         self.cycles
     }
 
+    /// Whether the IME-pending flag is set (EI was executed, IME will be enabled
+    /// after the next instruction).
+    pub(crate) fn ime_pending(&self) -> bool {
+        self.ime_pending
+    }
+
+    /// Set the IME-pending flag (used by save-state restore).
+    pub(crate) fn set_ime_pending(&mut self, pending: bool) {
+        self.ime_pending = pending;
+    }
+
+    /// Set the cycle counter (used by save-state restore).
+    pub(crate) fn set_cycles(&mut self, cycles: u64) {
+        self.cycles = cycles;
+    }
+
     /// Reset the CPU to power-on state.
     ///
     /// All registers zeroed, IME/halted/halt_bug/ime_pending cleared.

@@ -25,4 +25,14 @@ pub trait GbCartridge {
         let flag = self.read(0x0143);
         flag == 0x80 || flag == 0xC0
     }
+
+    /// Capture cartridge state (mapper registers + RAM) as opaque bytes.
+    fn save_state(&self) -> Vec<u8> {
+        vec![]
+    }
+
+    /// Restore cartridge state from previously saved bytes.
+    fn load_state(&mut self, _data: &[u8]) -> Result<(), String> {
+        Ok(())
+    }
 }

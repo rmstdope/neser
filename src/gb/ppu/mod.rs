@@ -592,6 +592,112 @@ impl Ppu {
         self.oam[base] = bytes[0];
         self.oam[base + 1] = bytes[1];
     }
+
+    // ── Save-state accessors ──────────────────────────────────────────────────
+
+    pub(crate) fn registers_snapshot(&self) -> [u8; 10] {
+        [
+            self.registers.lcdc,
+            self.registers.stat_irq_enables,
+            self.registers.scy,
+            self.registers.scx,
+            self.registers.lyc,
+            self.registers.bgp,
+            self.registers.obp0,
+            self.registers.obp1,
+            self.registers.wy,
+            self.registers.wx,
+        ]
+    }
+
+    pub(crate) fn restore_registers(&mut self, regs: &[u8; 10]) {
+        self.registers.lcdc = regs[0];
+        self.registers.stat_irq_enables = regs[1];
+        self.registers.scy = regs[2];
+        self.registers.scx = regs[3];
+        self.registers.lyc = regs[4];
+        self.registers.bgp = regs[5];
+        self.registers.obp0 = regs[6];
+        self.registers.obp1 = regs[7];
+        self.registers.wy = regs[8];
+        self.registers.wx = regs[9];
+    }
+
+    pub(crate) fn restore_screen_buffer(&mut self, data: &[u8]) {
+        self.screen_buffer.restore_from_bytes(data);
+    }
+
+    pub(crate) fn timing_dot(&self) -> u16 {
+        self.timing.dot()
+    }
+    pub(crate) fn timing_scanline(&self) -> u8 {
+        self.timing.scanline()
+    }
+    pub(crate) fn timing_mode(&self) -> u8 {
+        self.timing.mode() as u8
+    }
+    pub(crate) fn timing_stat_mode(&self) -> u8 {
+        self.timing.stat_mode_raw()
+    }
+    pub(crate) fn timing_first_scanline(&self) -> bool {
+        self.timing.is_first_scanline_after_enable()
+    }
+    pub(crate) fn timing_second_scanline(&self) -> bool {
+        self.timing.is_second_scanline_after_enable()
+    }
+    pub(crate) fn timing_third_scanline(&self) -> bool {
+        self.timing.is_third_scanline_after_enable()
+    }
+    pub(crate) fn timing_mode_for_irq(&self) -> i8 {
+        self.timing.mode_for_irq_raw()
+    }
+    pub(crate) fn timing_mode3_extra_dots(&self) -> u16 {
+        self.timing.mode3_extra_dots_raw()
+    }
+    pub(crate) fn timing_ly(&self) -> u8 {
+        self.timing.ly()
+    }
+    pub(crate) fn pending_interrupts_raw(&self) -> u8 {
+        self.pending_interrupts
+    }
+    pub(crate) fn set_pending_interrupts(&mut self, val: u8) {
+        self.pending_interrupts = val;
+    }
+    pub(crate) fn window_line_raw(&self) -> u8 {
+        self.window_line
+    }
+    pub(crate) fn set_window_line(&mut self, val: u8) {
+        self.window_line = val;
+    }
+    pub(crate) fn prev_stat_irq_line_raw(&self) -> bool {
+        self.prev_stat_irq_line
+    }
+    pub(crate) fn set_prev_stat_irq_line(&mut self, val: bool) {
+        self.prev_stat_irq_line = val;
+    }
+    pub(crate) fn lyc_eq_ly_frozen_raw(&self) -> bool {
+        self.lyc_eq_ly_frozen
+    }
+    pub(crate) fn set_lyc_eq_ly_frozen(&mut self, val: bool) {
+        self.lyc_eq_ly_frozen = val;
+    }
+
+    pub(crate) fn restore_timing(&mut self, snap: &crate::gb::console::save_state::PpuSnapshot) {
+        self.timing
+            .restore(&crate::gb::console::save_state::TimingRestoreArgs {
+                dot: snap.dot,
+                scanline: snap.scanline,
+                mode: snap.mode,
+                stat_mode: snap.stat_mode,
+                frame_ready: snap.frame_ready,
+                first_scanline: snap.first_scanline_after_enable,
+                second_scanline: snap.second_scanline_after_enable,
+                third_scanline: snap.third_scanline_after_enable,
+                mode_for_irq: snap.mode_for_irq,
+                mode3_extra_dots: snap.mode3_extra_dots,
+                ly: snap.ly,
+            });
+    }
 }
 
 impl Default for Ppu {

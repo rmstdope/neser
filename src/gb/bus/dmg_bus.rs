@@ -335,6 +335,79 @@ impl DmgBus {
         self.dma_position = 0;
         self.dma_oam_blocked = preserve_blocking;
     }
+
+    // ── Save-state accessors ──────────────────────────────────────────────────
+
+    pub(crate) fn timer_snapshot(&self) -> crate::gb::console::save_state::TimerSnapshot {
+        crate::gb::console::save_state::TimerSnapshot {
+            div_counter: self.timer.div_counter_raw(),
+            tima: self.timer.tima,
+            tma: self.timer.tma,
+            tac: self.timer.tac,
+            interrupt_pending: self.timer.interrupt_pending,
+            tima_overflow_pending: self.timer.tima_overflow_pending_raw(),
+            tima_load_active: self.timer.tima_load_active_raw(),
+        }
+    }
+
+    pub(crate) fn restore_timer(&mut self, snap: &crate::gb::console::save_state::TimerSnapshot) {
+        self.timer.restore_from_snapshot(snap);
+    }
+
+    pub(crate) fn apu_snapshot(&self) -> crate::gb::console::save_state::ApuSnapshot {
+        self.apu.snapshot()
+    }
+
+    pub(crate) fn restore_apu(&mut self, snap: &crate::gb::console::save_state::ApuSnapshot) {
+        self.apu.restore(snap);
+    }
+
+    pub(crate) fn bus_snapshot(&self) -> crate::gb::console::save_state::BusSnapshot {
+        crate::gb::console::save_state::BusSnapshot {
+            wram: self.wram.to_vec(),
+            hram: self.hram.to_vec(),
+            if_reg: self.if_reg,
+            ie_reg: self.ie_reg,
+            boot_rom_active: self.boot_rom_active,
+            dma_active: self.dma_active,
+            dma_source: self.dma_source,
+            dma_position: self.dma_position,
+            dma_oam_blocked: self.dma_oam_blocked,
+            sb: self.sb,
+            sc: self.sc,
+            serial_bits_remaining: self.serial_bits_remaining,
+            serial_master_clock: self.serial_master_clock,
+            model: self.model as u8,
+        }
+    }
+
+    pub(crate) fn restore_bus(&mut self, snap: &crate::gb::console::save_state::BusSnapshot) {
+        if snap.wram.len() == self.wram.len() {
+            self.wram.copy_from_slice(&snap.wram);
+        }
+        if snap.hram.len() == self.hram.len() {
+            self.hram.copy_from_slice(&snap.hram);
+        }
+        self.if_reg = snap.if_reg;
+        self.ie_reg = snap.ie_reg;
+        self.boot_rom_active = snap.boot_rom_active;
+        self.dma_active = snap.dma_active;
+        self.dma_source = snap.dma_source;
+        self.dma_position = snap.dma_position;
+        self.dma_oam_blocked = snap.dma_oam_blocked;
+        self.sb = snap.sb;
+        self.sc = snap.sc;
+        self.serial_bits_remaining = snap.serial_bits_remaining;
+        self.serial_master_clock = snap.serial_master_clock;
+    }
+
+    pub(crate) fn cart_save_state(&self) -> Vec<u8> {
+        self.cart.save_state()
+    }
+
+    pub(crate) fn cart_load_state(&mut self, data: &[u8]) -> Result<(), String> {
+        self.cart.load_state(data)
+    }
 }
 
 impl GbBus for DmgBus {

@@ -141,6 +141,35 @@ impl Default for Joypad {
     }
 }
 
+// ── Save-state accessors ────────────────────────────────────────────────────
+
+impl Joypad {
+    pub(crate) fn select_bits_raw(&self) -> u8 {
+        self.select_bits
+    }
+    pub(crate) fn p14_state_raw(&self) -> u8 {
+        self.p14_state
+    }
+    pub(crate) fn p15_state_raw(&self) -> u8 {
+        self.p15_state
+    }
+    pub(crate) fn prev_nibble_raw(&self) -> u8 {
+        self.prev_nibble
+    }
+    pub(crate) fn set_select_bits(&mut self, val: u8) {
+        self.select_bits = val;
+    }
+    pub(crate) fn set_p14_state(&mut self, val: u8) {
+        self.p14_state = val;
+    }
+    pub(crate) fn set_p15_state(&mut self, val: u8) {
+        self.p15_state = val;
+    }
+    pub(crate) fn set_prev_nibble(&mut self, val: u8) {
+        self.prev_nibble = val;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -194,6 +194,62 @@ impl Channel2 {
         self.volume = self.init_volume;
         self.env_timer = self.env_period;
     }
+
+    // ── Save-state accessors ──────────────────────────────────────────────────
+
+    pub(crate) fn duty_raw(&self) -> u8 {
+        self.duty
+    }
+    pub(crate) fn length_load_raw(&self) -> u8 {
+        self.length_load
+    }
+    pub(crate) fn init_volume_raw(&self) -> u8 {
+        self.init_volume
+    }
+    pub(crate) fn env_add_raw(&self) -> bool {
+        self.env_add
+    }
+    pub(crate) fn env_period_raw(&self) -> u8 {
+        self.env_period
+    }
+    pub(crate) fn freq_raw(&self) -> u16 {
+        self.freq
+    }
+    pub(crate) fn dac_on_raw(&self) -> bool {
+        self.dac_on
+    }
+    pub(crate) fn duty_pos_raw(&self) -> u8 {
+        self.duty_pos
+    }
+    pub(crate) fn freq_timer_raw(&self) -> u16 {
+        self.freq_timer
+    }
+    pub(crate) fn volume_raw(&self) -> u8 {
+        self.volume
+    }
+    pub(crate) fn env_timer_raw(&self) -> u8 {
+        self.env_timer
+    }
+
+    pub(crate) fn restore_from_snapshot(
+        &mut self,
+        snap: &crate::gb::console::save_state::Channel2Snapshot,
+    ) {
+        self.duty = snap.duty;
+        self.length_load = snap.length_load;
+        self.init_volume = snap.init_volume;
+        self.env_add = snap.env_add;
+        self.env_period = snap.env_period;
+        self.freq = snap.freq;
+        self.length_en = snap.length_en;
+        self.active = snap.active;
+        self.dac_on = snap.dac_on;
+        self.duty_pos = snap.duty_pos;
+        self.freq_timer = snap.freq_timer;
+        self.length_counter = snap.length_counter;
+        self.volume = snap.volume;
+        self.env_timer = snap.env_timer;
+    }
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────────

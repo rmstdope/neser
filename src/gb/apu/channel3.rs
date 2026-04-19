@@ -280,6 +280,54 @@ impl Channel3 {
             self.wave_ram[(addr - 0xFF30) as usize] = val;
         }
     }
+
+    // ── Save-state accessors ──────────────────────────────────────────────────
+
+    pub(crate) fn dac_on_raw(&self) -> bool {
+        self.dac_on
+    }
+    pub(crate) fn length_load_raw(&self) -> u16 {
+        self.length_load
+    }
+    pub(crate) fn output_level_raw(&self) -> u8 {
+        self.output_level
+    }
+    pub(crate) fn freq_raw(&self) -> u16 {
+        self.freq
+    }
+    pub(crate) fn wave_pos_raw(&self) -> u8 {
+        self.wave_pos
+    }
+    pub(crate) fn freq_timer_raw(&self) -> u16 {
+        self.freq_timer
+    }
+    pub(crate) fn is_cgb_raw(&self) -> bool {
+        self.is_cgb
+    }
+    pub(crate) fn wave_ram_raw(&self) -> &[u8; 16] {
+        &self.wave_ram
+    }
+
+    pub(crate) fn restore_from_snapshot(
+        &mut self,
+        snap: &crate::gb::console::save_state::Channel3Snapshot,
+    ) {
+        self.dac_on = snap.dac_on;
+        self.length_load = snap.length_load;
+        self.output_level = snap.output_level;
+        self.freq = snap.freq;
+        self.length_en = snap.length_en;
+        self.active = snap.active;
+        self.wave_pos = snap.wave_pos;
+        self.freq_timer = snap.freq_timer;
+        self.length_counter = snap.length_counter;
+        if snap.wave_ram.len() == self.wave_ram.len() {
+            self.wave_ram.copy_from_slice(&snap.wave_ram);
+        }
+        self.current_sample = snap.current_sample;
+        self.is_cgb = snap.is_cgb;
+        self.wave_just_read = snap.wave_just_read;
+    }
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────────

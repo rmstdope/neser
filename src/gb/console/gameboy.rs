@@ -200,14 +200,33 @@ impl GameBoy {
             .map_or(0, |gb| gb.get_joypad_button_states())
     }
 
-    /// Serialize emulator state (not supported for MVP — returns `Err`).
+    /// Serialize emulator state to bytes.
+    ///
+    /// Currently only supported for DMG; returns `Err` for CGB.
     pub fn save_state_bytes(&self) -> Result<Vec<u8>, String> {
-        Err("Game Boy save states are not supported in MVP".into())
+        match self.gb.as_ref() {
+            Some(GbConsole::Dmg(gb)) => {
+                let state = gb.save_state();
+                state.to_bytes().map_err(|e| e.to_string())
+            }
+            Some(GbConsole::Cgb(_)) => Err("CGB save states are not yet supported".into()),
+            None => Err("No ROM loaded".into()),
+        }
     }
 
-    /// Restore emulator state (not supported for MVP — returns `Err`).
-    pub fn load_state_bytes(&mut self, _data: &[u8]) -> Result<(), String> {
-        Err("Game Boy save states are not supported in MVP".into())
+    /// Restore emulator state from bytes.
+    ///
+    /// Currently only supported for DMG; returns `Err` for CGB.
+    pub fn load_state_bytes(&mut self, data: &[u8]) -> Result<(), String> {
+        match self.gb.as_mut() {
+            Some(GbConsole::Dmg(gb)) => {
+                let state =
+                    super::save_state::GbSaveState::from_bytes(data).map_err(|e| e.to_string())?;
+                gb.load_state(&state)
+            }
+            Some(GbConsole::Cgb(_)) => Err("CGB save states are not yet supported".into()),
+            None => Err("No ROM loaded".into()),
+        }
     }
 
     /// Reset the console.

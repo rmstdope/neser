@@ -93,6 +93,26 @@ impl GbCartridge for Mbc2 {
             _ => {}
         }
     }
+
+    fn save_state(&self) -> Vec<u8> {
+        // Format: [rom_bank, ram_enabled, ...ram]
+        let mut data = vec![self.rom_bank, self.ram_enabled as u8];
+        data.extend_from_slice(&self.ram);
+        data
+    }
+
+    fn load_state(&mut self, data: &[u8]) -> Result<(), String> {
+        if data.len() < 2 {
+            return Err("MBC2 state too short".into());
+        }
+        self.rom_bank = data[0];
+        self.ram_enabled = data[1] != 0;
+        let ram_data = &data[2..];
+        if ram_data.len() == self.ram.len() {
+            self.ram.copy_from_slice(ram_data);
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]

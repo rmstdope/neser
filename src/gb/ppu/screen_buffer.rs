@@ -47,6 +47,12 @@ impl ScreenBuffer {
     pub fn crc32(&self) -> u32 {
         crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC).checksum(&self.buffer)
     }
+
+    pub(crate) fn restore_from_bytes(&mut self, data: &[u8]) {
+        if data.len() == self.buffer.len() {
+            self.buffer.copy_from_slice(data);
+        }
+    }
 }
 
 #[cfg(test)]

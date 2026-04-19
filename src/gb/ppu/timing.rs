@@ -311,7 +311,11 @@ impl Timing {
         if self.scanline >= Self::VBLANK_START_LINE {
             return false;
         }
-        let vram_start = if self.first_scanline_after_enable { 84u16 } else { 80 };
+        let vram_start = if self.first_scanline_after_enable {
+            84u16
+        } else {
+            80
+        };
         self.dot >= vram_start && self.dot < self.mode3_end()
     }
 
@@ -350,12 +354,12 @@ impl Timing {
 
     /// Returns whether OAM is blocked for CPU **write** access at the current dot.
     ///
-    /// Scan 0: blocked during [84, 256+extra) — no OamScan; only Mode3 blocks OAM writes.
-    /// Scan 1: blocked during [4, 80) ∪ [84, 256+extra).
+    /// - Scan 0: blocked during [84, 256+extra) — no OamScan; only Mode3 blocks OAM writes.
+    /// - Scan 1: blocked during [4, 80) ∪ [84, 256+extra).
     ///   - Physical OAM scan write-lock starts at dot=4, ends at dot=80.
     ///   - Mode3 write-lock starts 4T after STAT Mode3 (dot=84, not dot=80).
     ///   - Gaps [0,4) and [80,84) are accessible for writes on DMG.
-    /// Scan 2+: blocked during [4, 80) ∪ [84, 252+extra).
+    /// - Scan 2+: blocked during [4, 80) ∪ [84, 252+extra).
     ///   - OAM write-lock starts at dot=4 (STAT shows Mode2 from dot=0, but write
     ///     gate lags 4T).  Mode3 write-lock starts at dot=84, not dot=80.
     pub fn is_oam_write_blocked(&self) -> bool {
@@ -420,13 +424,62 @@ impl Timing {
         self.mode3_extra_dots = extra;
     }
 
+    // ── Save-state accessors ──────────────────────────────────────────────────
+
+    pub(crate) fn scanline(&self) -> u8 {
+        self.scanline
+    }
+
+    pub(crate) fn stat_mode_raw(&self) -> u8 {
+        self.stat_mode as u8
+    }
+
+    pub(crate) fn is_third_scanline_after_enable(&self) -> bool {
+        self.third_scanline_after_enable
+    }
+
+    pub(crate) fn mode_for_irq_raw(&self) -> i8 {
+        self.mode_for_irq
+    }
+
+    pub(crate) fn mode3_extra_dots_raw(&self) -> u16 {
+        self.mode3_extra_dots
+    }
+
+    pub(crate) fn restore(&mut self, snap: &crate::gb::console::save_state::TimingRestoreArgs) {
+        self.dot = snap.dot;
+        self.scanline = snap.scanline;
+        self.mode = match snap.mode {
+            0 => PpuMode::HBlank,
+            1 => PpuMode::VBlank,
+            2 => PpuMode::OamScan,
+            _ => PpuMode::PixelTransfer,
+        };
+        self.stat_mode = match snap.stat_mode {
+            0 => PpuMode::HBlank,
+            1 => PpuMode::VBlank,
+            2 => PpuMode::OamScan,
+            _ => PpuMode::PixelTransfer,
+        };
+        self.frame_ready = snap.frame_ready;
+        self.first_scanline_after_enable = snap.first_scanline;
+        self.second_scanline_after_enable = snap.second_scanline;
+        self.third_scanline_after_enable = snap.third_scanline;
+        self.mode_for_irq = snap.mode_for_irq;
+        self.mode3_extra_dots = snap.mode3_extra_dots;
+        self.ly = snap.ly;
+    }
+
     /// Dot at which Mode 3 (Pixel Transfer) ends for the current scan type.
     ///
     /// Scan 0 and scan 1: dot 256 + extra (OAM_SCAN_START + OAM_SCAN_DOTS + PIXEL_TRANSFER_DOTS).
     /// Scan 2+: dot 252 + extra (OAM_SCAN_DOTS + PIXEL_TRANSFER_DOTS).
     fn mode3_end(&self) -> u16 {
         if self.first_scanline_after_enable || self.second_scanline_after_enable {
-            Self::OAM_SCAN_START + Self::OAM_SCAN_DOTS + Self::PIXEL_TRANSFER_DOTS + self.mode3_extra_dots
+            Self::OAM_SCAN_START
+                + Self::OAM_SCAN_DOTS
+                + Self::PIXEL_TRANSFER_DOTS
+                + self.mode3_extra_dots
         } else {
             Self::OAM_SCAN_DOTS + Self::PIXEL_TRANSFER_DOTS + self.mode3_extra_dots
         }
