@@ -186,6 +186,35 @@ impl GbCartridge for Mbc1 {
             _ => {}
         }
     }
+
+    fn ram_snapshot(&self) -> Vec<u8> {
+        self.ram.clone()
+    }
+
+    fn restore_ram(&mut self, data: &[u8]) {
+        let len = data.len().min(self.ram.len());
+        self.ram[..len].copy_from_slice(&data[..len]);
+    }
+
+    fn mbc_state_snapshot(&self) -> Vec<u8> {
+        vec![
+            self.rom_bank,
+            self.secondary_bank,
+            self.mode as u8,
+            self.ram_enabled as u8,
+            self.multicart as u8,
+        ]
+    }
+
+    fn restore_mbc_state(&mut self, data: &[u8]) {
+        if data.len() >= 5 {
+            self.rom_bank = data[0];
+            self.secondary_bank = data[1];
+            self.mode = data[2] != 0;
+            self.ram_enabled = data[3] != 0;
+            self.multicart = data[4] != 0;
+        }
+    }
 }
 
 #[cfg(test)]

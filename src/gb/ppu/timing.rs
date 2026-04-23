@@ -1,5 +1,7 @@
+use serde::{Deserialize, Serialize};
+
 /// DMG PPU operating modes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PpuMode {
     /// Mode 0 — H-Blank: CPU/DMA has access to VRAM and OAM.
     HBlank = 0,
@@ -40,6 +42,7 @@ pub enum PpuMode {
 ///   VRAM write blocked:[84, 252+extra).
 ///
 /// VBlank: scanlines 144–153 (all Mode 1; 4560 dots total).
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Timing {
     dot: u16,
     scanline: u8,

@@ -170,4 +170,18 @@ impl WasmGb {
     pub fn reset(&mut self, soft_reset: bool) {
         self.gb.reset(soft_reset);
     }
+
+    /// Serialize the current emulator state to bytes.
+    #[wasm_bindgen]
+    pub fn save_state_bytes(&self) -> Vec<u8> {
+        self.gb.save_state_bytes().unwrap_or_default()
+    }
+
+    /// Restore emulator state from previously serialized bytes.
+    #[wasm_bindgen]
+    pub fn load_state_bytes(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
+        self.gb
+            .load_state_bytes(bytes)
+            .map_err(|e| JsValue::from_str(&e))
+    }
 }

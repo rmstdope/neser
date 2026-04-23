@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 /// Game Boy hardware model variant.
 ///
 /// Distinguishes between the first-generation DMG-0 and the
@@ -6,7 +8,7 @@
 /// post-boot CPU register values, and the DIV counter phase at boot
 /// exit. DMG-A, DMG-B, and DMG-C share identical software-visible
 /// behaviour.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum DmgModel {
     /// Production DMG-A hardware.
     ///

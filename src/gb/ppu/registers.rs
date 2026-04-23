@@ -1,7 +1,10 @@
+use serde::{Deserialize, Serialize};
+
 /// DMG PPU I/O registers (writable fields only).
 ///
 /// The read-only mode and coincidence bits of STAT are composed dynamically
 /// by `Ppu::read_register`; this struct stores only the CPU-writable portions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Registers {
     /// $FF40 — LCD Control
     pub lcdc: u8,
