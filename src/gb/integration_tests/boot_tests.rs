@@ -13,13 +13,15 @@ const BOOT_CYCLE_LIMIT: u64 = 8_000_000;
 /// Build a minimal 32 KiB ROM for boot tests.
 ///
 /// Places a `JR $-2` infinite loop at $0100 so the running test can detect
-/// when the boot ROM hands off to the cartridge. The logo area at $0104–$0133
-/// is left as zeros — the boot ROM loads whatever is there without verification.
+/// when the boot ROM hands off to the cartridge. The caller supplies the logo
+/// bytes to place at $0104–$0133; the boot ROM loads whatever is there without
+/// verification.
 /// The header checksum at $014D is recomputed from $0134–$014C.
-fn build_test_rom() -> Vec<u8> {
+fn build_test_rom(logo: [u8; 48]) -> Vec<u8> {
     let mut rom = vec![0u8; 0x8000];
     rom[0x0100] = 0x18; // JR opcode
     rom[0x0101] = 0xFE; // offset -2 → jumps back to $0100
+    rom[0x0104..0x0134].copy_from_slice(&logo);
     // Cartridge type / ROM+RAM size
     rom[0x0147] = 0x00; // ROM only
     rom[0x0148] = 0x00; // 32 KiB
@@ -54,7 +56,7 @@ fn run_until_cartridge_entry(gb: &mut Gb<DmgBus>) -> bool {
 /// Per Pan Docs: <https://gbdev.io/pandocs/Power_Up_Sequence.html#cpu-registers>
 #[test]
 fn test_dmg_boot_sets_correct_register_state() {
-    let rom = build_test_rom();
+    let rom = build_test_rom([0u8; 48]);
     let cart = load_cartridge(&rom).expect("valid ROM");
     let mut gb = Gb::new(DmgBus::new(cart, DmgModel::DmgB));
 
@@ -77,10 +79,12 @@ fn test_dmg_boot_sets_correct_register_state() {
 }
 
 /// The boot ROM must accept any cartridge logo — no logo verification is performed.
-/// This test uses an all-zero logo to confirm the boot ROM completes normally.
+/// This test uses a generated non-trivial logo pattern to confirm the boot ROM
+/// completes normally without relying on a specific payload.
 #[test]
 fn test_dmg_boot_accepts_any_cartridge_logo() {
-    let rom = build_test_rom(); // zero logo at $0104–$0133
+    let custom_logo = std::array::from_fn(|index| ((index as u8) << 1) ^ 0x5A);
+    let rom = build_test_rom(custom_logo);
     let cart = load_cartridge(&rom).expect("valid ROM");
     let mut gb = Gb::new(DmgBus::new(cart, DmgModel::DmgB));
 
@@ -98,7 +102,7 @@ fn test_dmg_boot_accepts_any_cartridge_logo() {
 
 /// Helper: boot a fresh DMG with the given model and return it at PC=$0100.
 fn boot_to_cartridge_entry(model: DmgModel) -> Gb<DmgBus> {
-    let rom = build_test_rom();
+    let rom = build_test_rom([0u8; 48]);
     let cart = load_cartridge(&rom).expect("valid ROM");
     let mut gb = Gb::new(DmgBus::new(cart, model));
     let reached = run_until_cartridge_entry(&mut gb);

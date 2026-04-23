@@ -22,7 +22,7 @@
 /// | $001C     | BGP = $FC                                  | 4 B   |
 /// | $0020     | Logo tile load (CALL $00A7)                | 20 B  |
 /// | $0034     | Tile map setup                             | 18 B  |
-/// | $0046     | Pre-LCD delay (N=2046, 2 NOP)              | 10 B  |
+/// | $0046     | Pre-LCD delay (N=2148, 2 NOP)              | 10 B  |
 /// | $0050     | LCD enable (LCDC=$91)                      | 4 B   |
 /// | $0054     | SCY = $64 (100)                            | 4 B   |
 /// | $0058     | Scroll loop setup (D=100, B=1, H=0)        | 4 B   |
@@ -294,6 +294,20 @@ pub const DMG0_BOOT_ROM: [u8; 256] = [
 mod tests {
     use super::DMG_BOOT_ROM;
 
+    const CANONICAL_NINTENDO_LOGO_CRC32: u32 = 0x4619_5417;
+
+    fn crc32(bytes: &[u8]) -> u32 {
+        let mut crc = 0xFFFF_FFFFu32;
+        for &byte in bytes {
+            crc ^= u32::from(byte);
+            for _ in 0..8 {
+                let mask = (crc & 1).wrapping_neg() & 0xEDB8_8320;
+                crc = (crc >> 1) ^ mask;
+            }
+        }
+        !crc
+    }
+
     #[test]
     fn dmg_boot_rom_sets_nr11_duty_cycle() {
         // Real hardware sets NR11=$80 (50% duty) for correct boot sound
@@ -387,6 +401,16 @@ mod tests {
         assert!(
             scroll_section.windows(2).any(|w| w == [0xF0, 0x44]),
             "scroll loop must poll LY via LDH A,[$FF44] for VBlank sync"
+        );
+    }
+
+    #[test]
+    fn dmg_boot_rom_does_not_embed_canonical_nintendo_logo_bytes() {
+        assert!(
+            !DMG_BOOT_ROM
+                .windows(48)
+                .any(|window| crc32(window) == CANONICAL_NINTENDO_LOGO_CRC32),
+            "DMG boot ROM must not embed the canonical 48-byte Nintendo logo"
         );
     }
 }
