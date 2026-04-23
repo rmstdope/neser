@@ -115,8 +115,9 @@ fn save_cgb_screen_png(gb: &Gb<CgbBus>, path: &str) {
 fn test_dmg_acid2_frame_matches_reference_crc() {
     let mut gb = load_gb_rom("roms/gb/automated_tests/dmg-acid2/dmg-acid2.gb");
 
-    // Run 200 frames to allow the ROM to finish booting and render its test output.
-    let crc = run_frames_and_crc(&mut gb, 200);
+    // Run 500 frames to allow the scroll-animation boot ROM (~293 frames)
+    // plus the ROM's test rendering to complete.
+    let crc = run_frames_and_crc(&mut gb, 500);
 
     const EXPECTED_CRC: u32 = 0x52D1_8222;
     assert_eq!(
@@ -145,13 +146,13 @@ fn test_cgb_acid2_frame_matches_reference_crc() {
     );
 }
 
-/// Screenshot helper: saves `dmg-acid2.gb` frame 200 to `dmg-acid2-screenshot.png`.
+/// Screenshot helper: saves `dmg-acid2.gb` frame 500 to `dmg-acid2-screenshot.png`.
 /// Run with `cargo test -- --ignored` for visual baseline inspection.
 #[test]
 #[ignore = "screenshot helper — run manually for visual baseline inspection"]
 fn save_dmg_acid2_screenshot() {
     let mut gb = load_gb_rom("roms/gb/automated_tests/dmg-acid2/dmg-acid2.gb");
-    for _ in 0..200 {
+    for _ in 0..500 {
         run_one_gb_frame(&mut gb);
     }
     save_screen_png(&gb, "dmg-acid2-screenshot.png");
