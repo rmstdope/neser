@@ -1,112 +1,133 @@
 /// Open-source DMG boot ROM replacement.
 ///
+/// Mimics the visual and audio behavior of a real DMG boot sequence:
+/// scrolling the Nintendo logo down from off-screen, playing the two-note
+/// "ba-ding!" sound near the end of the scroll, then holding the logo
+/// on screen before handing off to the cartridge.
+///
+/// Key behavioral properties matching real hardware:
+///   - SCY starts at 100 ($64), scrolls 1 pixel per 2-VBlank iteration
+///   - Sound triggers near end of scroll: NR13=$83 at iter 98, NR13=$C1 at iter 100
+///   - 32-iteration hold phase (~64 frames) after scroll completes
+///   - NR11=$80 (50% duty cycle) for authentic sound character
+///   - VBlank detection via LY polling (LDH A,[$FF44]; CP 144)
+///   - Logo is accepted without verification (custom ROM design choice)
+///
 /// ## ROM layout
 ///
-/// | Address   | Content                        | Size  |
-/// |-----------|--------------------------------|-------|
-/// | $0000     | SP init + VRAM clear           | 12 B  |
-/// | $000C     | APU init + boot sound          | 22 B  |
-/// | $0022     | BGP = $FC                      | 4 B   |
-/// | $0026     | Logo tile load (CALL $00A7)    | 20 B  |
-/// | $003A     | Tile map setup                 | 18 B  |
-/// | $004C     | Pre-LCD delay (N=2046, 2 NOP)  | 10 B  |
-/// | $0056     | LCD enable (LCDC=$91)          | 4 B   |
-/// | $005A     | SCY = $60                      | 4 B   |
-/// | $005E     | Scroll animation (48 frames)   | 23 B  |
-/// | $0075     | Hold (3 frames)                | 18 B  |
-/// | $0087     | IF = $E1                       | 4 B   |
-/// | $008B     | Fine-tune delay (N=2517, 3 NOP)| 11 B  |
-/// | $0096     | Register setup                 | 14 B  |
-/// | $00A4     | JP $00FE                       | 3 B   |
-/// | $00A7     | `DoubleBitsAndWriteRow`        | 21 B  |
-/// | $00BC     | Padding                        | 66 B  |
-/// | $00FE     | `BootGame` (LDH [$FF50])       | 2 B   |
+/// | Address   | Content                                    | Size  |
+/// |-----------|--------------------------------------------|-------|
+/// | $0000     | SP init + VRAM clear                       | 12 B  |
+/// | $000C     | APU init (no trigger) + NR11 duty          | 16 B  |
+/// | $001C     | BGP = $FC                                  | 4 B   |
+/// | $0020     | Logo tile load (CALL $00A7)                | 20 B  |
+/// | $0034     | Tile map setup                             | 18 B  |
+/// | $0046     | Pre-LCD delay (N=2046, 2 NOP)              | 10 B  |
+/// | $0050     | LCD enable (LCDC=$91)                      | 4 B   |
+/// | $0054     | SCY = $64 (100)                            | 4 B   |
+/// | $0058     | Scroll loop setup (D=100, B=1, H=0)        | 4 B   |
+/// | $005C     | Scroll loop (LY poll + sound + SCY update) | 56 B  |
+/// | $0094     | Padding                                    | 19 B  |
+/// | $00A7     | `DoubleBitsAndWriteRow`                    | 21 B  |
+/// | $00BC     | Post-loop: IF=$E1, DIV fine-tune, regs     | 34 B  |
+/// | $00DE     | Padding                                    | 32 B  |
+/// | $00FE     | `BootGame` (LDH [$FF50])                   | 2 B   |
 pub const DMG_BOOT_ROM: [u8; 256] = [
     // ── $0000: LD SP, $FFFE ──────────────────────────────────────────────────
     0x31, 0xFE, 0xFF,
     // ── $0003: Clear VRAM ($8000–$9FFF) ─────────────────────────────────────
     0x21, 0x00, 0x80, 0xAF, 0x22, 0xCB, 0x6C, 0x28, 0xFB,
-    // ── $000C: Init APU ──────────────────────────────────────────────────────
-    0x3E, 0x80, 0xE0, 0x26, // LD A,$80; LDH [$FF26]  NR52
-    0x3E, 0xF3, 0xE0, 0x12, // LD A,$F3; LDH [$FF12]  NR12
-    0xE0, 0x25, // LDH [$FF25]             NR51
-    0x3E, 0x77, 0xE0, 0x24, // LD A,$77; LDH [$FF24]  NR50
-    // ── $001A: Trigger boot sound ────────────────────────────────────────────
-    0x3E, 0x83, 0xE0, 0x13, // LD A,$83; LDH [$FF13]  NR13
-    0x3E, 0x87, 0xE0, 0x14, // LD A,$87; LDH [$FF14]  NR14 (trigger!)
-    // ── $0022: Init BG palette ───────────────────────────────────────────────
+    // ── $000C: APU init — envelope/panning/volume only, NO trigger ───────────
+    0x3E, 0x80, 0xE0, 0x26, // LD A,$80; LDH [$FF26]  NR52 (APU on)
+    0xE0, 0x11, // LDH [$FF11]             NR11=$80 (50% duty)
+    0x3E, 0xF3, 0xE0, 0x12, // LD A,$F3; LDH [$FF12]  NR12 (envelope)
+    0xE0, 0x25, // LDH [$FF25]             NR51=$F3 (panning)
+    0x3E, 0x77, 0xE0, 0x24, // LD A,$77; LDH [$FF24]  NR50 (volume)
+    // ── $001C: Init BG palette ───────────────────────────────────────────────
     0x3E, 0xFC, 0xE0, 0x47, // LD A,$FC; LDH [$FF47]  BGP
-    // ── $0026: Load logo tiles from cartridge header → VRAM ──────────────────
+    // ── $0020: Load logo tiles from cartridge header → VRAM ──────────────────
     0x11, 0x04, 0x01, // LD DE, $0104
     0x21, 0x10, 0x80, // LD HL, $8010
-    // .logoLoop ($002C):
+    // .logoLoop ($0026):
     0x1A, 0x47, // LD A,[DE]; LD B,A
     0xCD, 0xA7, 0x00, // CALL DoubleBitsAndWriteRow ($00A7)
     0xCD, 0xA7, 0x00, // CALL DoubleBitsAndWriteRow ($00A7)
     0x13, // INC DE
     0x7B, 0xEE, 0x34, // LD A,E; XOR $34
-    0x20, 0xF2, // JR NZ, .logoLoop
-    // ── $003A: Build BG tile map ─────────────────────────────────────────────
+    0x20, 0xF2, // JR NZ, .logoLoop (→ $0026)
+    // ── $0034: Build BG tile map ─────────────────────────────────────────────
     0x3E, 0x19, // LD A, $19
     0x21, 0x2F, 0x99, // LD HL, $992F
     0x0E, 0x0C, // LD C, 12
-    // .tmapLoop ($0041):
+    // .tmapLoop ($003B):
     0x3D, // DEC A
-    0x28, 0x08, // JR Z, .tmapDone (+8 → $004C)
+    0x28, 0x08, // JR Z, .tmapDone (+8 → $0046)
     0x32, // LD [HL-], A
     0x0D, // DEC C
-    0x20, 0xF9, // JR NZ, .tmapLoop
+    0x20, 0xF9, // JR NZ, .tmapLoop (→ $003B)
     0x2E, 0x0F, // LD L, $0F
-    0x18, 0xF5, // JR .tmapLoop
-    // .tmapDone ($004C):
-    // ── $004C: Pre-LCD delay ─────────────────────────────────────────────────
-    // 3 + 2 + 7×2046 + 2 = 14 329 M-cycles.
-    0x21, 0xFE, 0x07, // LD HL, $07FE  (2046)
+    0x18, 0xF5, // JR .tmapLoop (→ $003B)
+    // .tmapDone ($0046):
+    // ── $0046: Pre-LCD delay (tuned for DIV=$AB alignment) ───────────────────
+    0x21, 0x64, 0x08, // LD HL, $0864  (2148)
     0x00, 0x00, // 2 × NOP
-    // .preLoop ($0051):
+    // .preLoop ($004B):
     0x2B, 0x7C, 0xB5, 0x20, 0xFB, // DEC HL; LD A,H; OR L; JR NZ
-    // ── $0056: Enable LCD ────────────────────────────────────────────────────
+    // ── $0050: Enable LCD ────────────────────────────────────────────────────
     0x3E, 0x91, 0xE0, 0x40, // LD A,$91; LDH [$FF40]
-    // ── $005A: SCY = $60 ─────────────────────────────────────────────────────
-    0x3E, 0x60, 0xE0, 0x42, // LD A,$60; LDH [$FF42]
-    // ── $005E: Scroll animation — 48 frames, SCY -= 2 each ──────────────────
-    0x06, 0x30, // LD B, 48
-    // .scrollFrame ($0060):
-    0x21, 0xC9, 0x09, // LD HL, $09C9  (2505)
-    // .scrollInner ($0063):
-    0x2B, 0x7C, 0xB5, 0x20, 0xFB, // DEC HL; LD A,H; OR L; JR NZ
-    0x00, 0x00, 0x00, 0x00, // 4 × NOP
-    0xF0, 0x42, // LDH A, [$FF42]
-    0x3D, // DEC A
-    0x3D, // DEC A
-    0xE0, 0x42, // LDH [$FF42], A
-    0x05, // DEC B
-    0x20, 0xEB, // JR NZ, .scrollFrame  (→ $0060, offset = -21)
-    // ── $0075: Hold — 3 frames at SCY = $00 ─────────────────────────────────
-    0x06, 0x03, // LD B, 3
-    // .holdFrame ($0077):
-    0x21, 0xCA, 0x09, // LD HL, $09CA  (2506)
-    // .holdInner ($007A):
-    0x2B, 0x7C, 0xB5, 0x20, 0xFB, // DEC HL; LD A,H; OR L; JR NZ
-    0x00, 0x00, 0x00, 0x00, 0x00, // 5 × NOP
-    0x05, // DEC B
-    0x20, 0xF0, // JR NZ, .holdFrame  (→ $0077, offset = -16)
-    // ── $0087: IF = $E1 ──────────────────────────────────────────────────────
-    0x3E, 0xE1, 0xE0, 0x0F, // LD A,$E1; LDH [$FF0F]
-    // ── $008B: Fine-tune delay ───────────────────────────────────────────────
-    // 3 + 3 + 7×2517 + 2 = 17 627 M-cycles.
-    0x21, 0xD5, 0x09, // LD HL, $09D5  (2517)
-    0x00, 0x00, 0x00, // 3 × NOP
-    // .fineLoop ($0091):
-    0x2B, 0x7C, 0xB5, 0x20, 0xFB, // DEC HL; LD A,H; OR L; JR NZ
-    // ── $0096: Set post-boot register state ──────────────────────────────────
-    0x21, 0xB0, 0x01, // LD HL, $01B0
-    0xE5, 0xF1, // PUSH HL; POP AF  → AF=$01B0
-    0x21, 0x4D, 0x01, // LD HL, $014D
-    0x01, 0x13, 0x00, // LD BC, $0013
-    0x11, 0xD8, 0x00, // LD DE, $00D8
-    // ── $00A4: JP BootGame ($00FE) ───────────────────────────────────────────
-    0xC3, 0xFE, 0x00,
+    // ── $0054: SCY = $64 (100 pixels) ────────────────────────────────────────
+    0x3E, 0x64, 0xE0, 0x42, // LD A,$64; LDH [$FF42]
+    // ── $0058: Scroll loop register setup ────────────────────────────────────
+    0x57, // LD D, A       D = 100 (iteration counter)
+    0x04, // INC B         B = 1 (scroll active flag)
+    0x26, 0x00, // LD H, 0      H = 0 (frame counter for sound)
+    // ═══════════════════════════════════════════════════════════════════════
+    // ── $005C: Main scroll/hold loop (LY-polling, VBlank-synced) ─────────
+    // ═══════════════════════════════════════════════════════════════════════
+    // .loop ($005C):
+    0x1E, 0x02, // LD E, 2      E = 2 VBlanks per iteration
+    // .waitNotVblank ($005E):  — wait until LY < 144
+    0xF0, 0x44, // LDH A, [$FF44]
+    0xFE, 0x90, // CP 144
+    0x30, 0xFA, // JR NC, .waitNotVblank (→ $005E)
+    // .waitVblank ($0064):  — wait until LY ≥ 144
+    0xF0, 0x44, // LDH A, [$FF44]
+    0xFE, 0x90, // CP 144
+    0x38, 0xFA, // JR C, .waitVblank (→ $0064)
+    // VBlank entered:
+    0x1D, // DEC E
+    0x20, 0xF1, // JR NZ, .waitNotVblank (→ $005E)
+    // ── $006D: Sound trigger check ───────────────────────────────────────────
+    0x24, // INC H         frame counter++
+    0x7C, // LD A, H
+    0x0E, 0x13, // LD C, $13     C = LOW(rNR13)
+    0x1E, 0x83, // LD E, $83     first note frequency
+    0xFE, 0x62, // CP $62        iteration 98?
+    0x28, 0x06, // JR Z, .playSound (→ $007D)
+    0x1E, 0xC1, // LD E, $C1     second note frequency
+    0xFE, 0x64, // CP $64        iteration 100?
+    0x20, 0x08, // JR NZ, .noSound (→ $0085)
+    // .playSound ($007D):
+    0x7B, // LD A, E
+    0xE2, // LD ($FF00+C), A  → NR13
+    0x0C, // INC C            → C = $14
+    0x3E, 0x87, // LD A, $87
+    0xE2, // LD ($FF00+C), A  → NR14 (trigger + freq high=$07)
+    0x18, 0x00, // JR .noSound (→ $0085)
+    // .noSound ($0085):
+    0xF0, 0x42, // LDH A, [$FF42]   read SCY
+    0x90, // SUB B             SCY -= B (1 if scroll, 0 if hold)
+    0xE0, 0x42, // LDH [$FF42], A   write SCY
+    // ── $008A: Loop control ──────────────────────────────────────────────────
+    0x15, // DEC D
+    0x20, 0xCF, // JR NZ, .loop (→ $005C)
+    0x05, // DEC B        B: 1→0 (enter hold) or 0→$FF (exit)
+    0x20, 0x2C, // JR NZ, .done (→ $00BC)
+    0x16, 0x20, // LD D, 32     hold phase: 32 iterations
+    0x18, 0xC8, // JR .loop (→ $005C)
+    // ── $0094–$00A6: Padding ─────────────────────────────────────────────────
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00,
     // ════════════════════════════════════════════════════════════════════════
     // ── $00A7: DoubleBitsAndWriteRow ─────────────────────────────────────────
     0x3E, 0x04, // LD A, 4
@@ -118,21 +139,34 @@ pub const DMG_BOOT_ROM: [u8; 256] = [
     0xF1, // POP AF
     0xCB, 0x11, // RL C
     0x3D, // DEC A
-    0x20, 0xF5, // JR NZ, .dblLoop
+    0x20, 0xF5, // JR NZ, .dblLoop (→ $00AB)
     0x79, // LD A, C
     0x22, 0x23, // LD [HL+],A; INC HL
     0x22, 0x23, // LD [HL+],A; INC HL
     0xC9, // RET
     // ════════════════════════════════════════════════════════════════════════
-    // ── $00BC–$00FD: Padding ─────────────────────────────────────────────────
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    // ── $00BC: .done — post-loop continuation ────────────────────────────────
+    0x3E, 0xE1, 0xE0, 0x0F, // LD A,$E1; LDH [$FF0F]   IF = $E1
+    // ── $00C0: Fine-tune delay (calibrated for DIV=$AB + LY=$0A at exit) ────
+    0x21, 0xB4, 0xEB, // LD HL, $EBB4 (N=60340)
+    0x00, 0x00, 0x00, // 3 × NOP
+    // .fineLoop ($00C6):
+    0x2B, 0x7C, 0xB5, 0x20, 0xFB, // DEC HL; LD A,H; OR L; JR NZ
+    // ── $00CB: Set post-boot register state ──────────────────────────────────
+    0x21, 0xB0, 0x01, // LD HL, $01B0
+    0xE5, 0xF1, // PUSH HL; POP AF  → AF=$01B0
+    0x21, 0x4D, 0x01, // LD HL, $014D
+    0x01, 0x13, 0x00, // LD BC, $0013
+    0x11, 0xD8, 0x00, // LD DE, $00D8
+    // ── $00D9: JP BootGame ($00FE) ───────────────────────────────────────────
+    0xC3, 0xFE, 0x00,
+    // ── $00DC–$00FD: Padding ─────────────────────────────────────────────────
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00,
     // ════════════════════════════════════════════════════════════════════════
     // ── $00FE: BootGame ──────────────────────────────────────────────────────
-    0xE0, 0x50, // LDH [$FF50], A
+    0xE0, 0x50, // LDH [$FF50], A  (unmap boot ROM → execute $0100)
 ];
 
 /// Open-source DMG-0 (first production run) boot ROM replacement.
@@ -255,3 +289,104 @@ pub const DMG0_BOOT_ROM: [u8; 256] = [
     // which is the standard cartridge entry point.
     0xE0, 0x50, // LDH [$FF50], A  (unmap boot ROM → execute $0100)
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::DMG_BOOT_ROM;
+
+    #[test]
+    fn dmg_boot_rom_sets_nr11_duty_cycle() {
+        // Real hardware sets NR11=$80 (50% duty) for correct boot sound
+        // character. The boot ROM must write $80 to $FF11 before the sound
+        // is triggered. Look for LDH [$FF11],A right after writing NR52=$80
+        // (which leaves A=$80), so we expect E0 11 at $0010.
+        assert_eq!(DMG_BOOT_ROM[0x10], 0xE0, "NR11 write: LDH opcode expected");
+        assert_eq!(
+            DMG_BOOT_ROM[0x11], 0x11,
+            "NR11 write: address byte $11 expected"
+        );
+    }
+
+    #[test]
+    fn dmg_boot_rom_does_not_trigger_sound_at_boot_start() {
+        // Real hardware triggers the "ba-ding!" near the END of the scroll,
+        // not at boot start. The APU init section ($000C–$001D) must set up
+        // envelope/panning/volume but NOT write NR13/NR14 trigger.
+        // Scan $000C–$001D for NR14 trigger byte ($87):
+        let apu_init = &DMG_BOOT_ROM[0x0C..=0x1D];
+        assert!(
+            !apu_init.windows(2).any(|w| w == [0xE0, 0x14]),
+            "NR14 trigger (LDH [$FF14]) must not appear in APU init section"
+        );
+        assert!(
+            !apu_init.windows(2).any(|w| w == [0xE0, 0x13]),
+            "NR13 freq (LDH [$FF13]) must not appear in APU init section"
+        );
+    }
+
+    #[test]
+    fn dmg_boot_rom_scroll_starts_at_100() {
+        // Real hardware scrolls 100 pixels (SCY starts at $64).
+        // Find LD A,$64; LDH [$FF42] pattern (3E 64 E0 42) somewhere
+        // after the LCD enable section.
+        let rom = &DMG_BOOT_ROM[0x50..0xA7];
+        assert!(
+            rom.windows(4).any(|w| w == [0x3E, 0x64, 0xE0, 0x42]),
+            "SCY must be initialized to $64 (100) for real-hardware scroll distance"
+        );
+    }
+
+    #[test]
+    fn dmg_boot_rom_has_two_note_bading_sound() {
+        // Real hardware plays two notes: NR13=$83 at scroll iter 98 and
+        // NR13=$C1 at scroll iter 100. The ROM must contain both frequency
+        // values as immediates within the scroll section ($005A–$00FD).
+        let scroll_section = &DMG_BOOT_ROM[0x5A..0xFE];
+
+        // First note frequency: $83
+        assert!(
+            scroll_section.contains(&0x83),
+            "first 'ba' note frequency $83 must be in scroll section"
+        );
+        // Second note frequency: $C1
+        assert!(
+            scroll_section.contains(&0xC1),
+            "second 'ding' note frequency $C1 must be in scroll section"
+        );
+        // Both iteration thresholds: $62 and $64
+        assert!(
+            scroll_section.contains(&0x62),
+            "first sound trigger threshold $62 (iter 98) must be in scroll section"
+        );
+        assert!(
+            scroll_section.contains(&0x64),
+            "second sound trigger threshold $64 (iter 100) must be in scroll section"
+        );
+    }
+
+    #[test]
+    fn dmg_boot_rom_hold_phase_uses_32_iterations() {
+        // Real hardware holds the logo for 32 iterations (× 2 VBlanks each
+        // = ~64 frames ≈ 1 second) before handing off to the cartridge.
+        // The hold counter value $20 (32) must appear as an immediate load
+        // in the scroll section.
+        let scroll_section = &DMG_BOOT_ROM[0x5A..0xFE];
+        // Look for LD D,$20 pattern (16 20)
+        assert!(
+            scroll_section.windows(2).any(|w| w == [0x16, 0x20]),
+            "hold phase must load D with $20 (32 iterations)"
+        );
+    }
+
+    #[test]
+    fn dmg_boot_rom_uses_ly_polling_for_vblank() {
+        // Real hardware uses LDH A,[$FF44] (F0 44) to poll LY for VBlank
+        // detection instead of fixed delay loops. The scroll section must
+        // contain this pattern.
+        let scroll_section = &DMG_BOOT_ROM[0x5A..0xFE];
+        assert!(
+            scroll_section.windows(2).any(|w| w == [0xF0, 0x44]),
+            "scroll loop must poll LY via LDH A,[$FF44] for VBlank sync"
+        );
+    }
+}

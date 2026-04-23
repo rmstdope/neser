@@ -5,9 +5,10 @@ use crate::gb::model::DmgModel;
 
 /// Maximum M-cycles to allow for the boot sequence.
 ///
-/// The full DMG boot sequence takes ~1.5 M M-cycles (~80 frames × 17 556 cycles/frame).
-/// 2.5 M gives ample headroom without running forever on a lock-up scenario.
-const BOOT_CYCLE_LIMIT: u64 = 2_500_000;
+/// The DMG boot sequence uses LY-polling VBlank sync: ~132 iterations × 2
+/// VBlanks × 17 556 M-cycles/frame ≈ 4.6 M M-cycles.  8 M gives ample
+/// headroom without running forever on a lock-up scenario.
+const BOOT_CYCLE_LIMIT: u64 = 8_000_000;
 
 /// Build a minimal 32 KiB ROM for boot tests.
 ///
