@@ -306,7 +306,7 @@ fn run_native_frontend(
         }
     };
 
-    let rom_name = std::path::Path::new(&rom_path)
+    let _rom_name = std::path::Path::new(&rom_path)
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or(&rom_path)
