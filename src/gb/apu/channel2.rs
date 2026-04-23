@@ -21,6 +21,9 @@ pub struct Channel2 {
     pub(crate) length_counter: u8,
     volume: u8,
     env_timer: u8,
+    /// Gate flag: duty step clock is disabled until the first trigger after
+    /// APU power-on (Pan Docs "Obscure Behavior").
+    triggered_once: bool,
 }
 
 impl Default for Channel2 {
@@ -46,6 +49,7 @@ impl Channel2 {
             length_counter: 0,
             volume: 0,
             env_timer: 0,
+            triggered_once: false,
         }
     }
 
@@ -77,7 +81,9 @@ impl Channel2 {
             self.freq_timer -= 4;
         } else {
             self.freq_timer = (2048 - self.freq) * 4;
-            self.duty_pos = (self.duty_pos + 1) & 7;
+            if self.triggered_once {
+                self.duty_pos = (self.duty_pos + 1) & 7;
+            }
         }
     }
 
@@ -123,6 +129,7 @@ impl Channel2 {
         self.length_counter = 0;
         self.volume = 0;
         self.env_timer = 0;
+        self.triggered_once = false;
     }
 
     // ── Register reads ────────────────────────────────────────────────────
@@ -187,6 +194,7 @@ impl Channel2 {
     }
 
     fn trigger(&mut self) {
+        self.triggered_once = true;
         if self.dac_on {
             self.active = true;
         }
@@ -291,5 +299,32 @@ mod tests {
     fn test_output_zero_when_inactive() {
         let ch = Channel2::new();
         assert_eq!(ch.output(), 0.0);
+    }
+
+    #[test]
+    fn test_duty_phase_is_not_clocked_before_first_trigger() {
+        // Pan Docs: "duty cycle clocking is disabled until the first trigger"
+        // applies to both CH1 and CH2.
+        let mut ch = Channel2::new();
+        for _ in 0..4096 {
+            ch.tick();
+        }
+        assert_eq!(
+            ch.duty_pos, 0,
+            "duty phase should remain at reset position before first trigger"
+        );
+
+        ch.write_nr22(0xF0); // DAC on
+        ch.write_nr21(0x80); // 50% duty
+        ch.write_nr24(0x80, false); // trigger
+
+        let start = ch.duty_pos;
+        for _ in 0..4096 {
+            ch.tick();
+        }
+        assert_ne!(
+            ch.duty_pos, start,
+            "duty phase should advance after the channel has been triggered"
+        );
     }
 }

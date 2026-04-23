@@ -39,7 +39,7 @@ const FIBO_H: u8 = 21;
 const FIBO_L: u8 = 34;
 
 /// Generous per-test M-cycle timeout used as a safety budget to avoid hangs.
-const MOONEYE_CYCLE_LIMIT: u64 = 10_000_000;
+const MOONEYE_CYCLE_LIMIT: u64 = 15_000_000;
 
 /// LD B,B opcode used as a Mooneye software breakpoint.
 const LD_B_B: u8 = 0x40;
