@@ -96,19 +96,21 @@ pub struct DmgBus {
 impl DmgBus {
     pub fn new(cart: Box<dyn GbCartridge>, model: DmgModel) -> Self {
         let is_cgb = cart.is_cgb();
-        let boot_rom = match model.boot_variant() {
-            DmgBootVariant::Production => DMG_BOOT_ROM,
-            DmgBootVariant::Dmg0 => DMG0_BOOT_ROM,
+        // The boot ROM and initial div_counter depend on the hardware variant.
+        // Production (DMG-A/B/C) scroll-animation ROM: div_counter = 5036.
+        // DMG-0 simpler ROM: div_counter = 204 (same as real hardware).
+        let (boot_rom, div_counter) = match model.boot_variant() {
+            DmgBootVariant::Production => (DMG_BOOT_ROM, 5036),
+            DmgBootVariant::Dmg0 => (DMG0_BOOT_ROM, 204),
         };
         let mut bus = Self {
             cart,
             ppu: Ppu::new(),
             wram: [0u8; 0x2000],
             hram: [0u8; 0x7F],
-            // Real DMG-B hardware has a sub-byte div_counter phase of 204 T-cycles
-            // at power-on. Setting this initial value ensures the serial clock edges
-            // align with acceptance-test expectations (serial/boot_sclk_align-dmgABCmgb).
-            timer: Timer::with_div_counter(204),
+            // The initial div_counter compensates for the difference between
+            // our custom boot ROM's cycle count and real DMG hardware timing.
+            timer: Timer::with_div_counter(div_counter),
             joypad: Joypad::new(),
             apu: Apu::new(is_cgb),
             if_reg: 1, // VBlank flag set at power-on (real DMG hardware)
@@ -141,9 +143,13 @@ impl DmgBus {
     /// ROM, cartridge RAM, and any mapper state are preserved.
     pub fn reset(&mut self) {
         let apu_rate = self.apu.sample_rate();
+        let (boot_rom, div_counter) = match self.model.boot_variant() {
+            DmgBootVariant::Production => (DMG_BOOT_ROM, 5036),
+            DmgBootVariant::Dmg0 => (DMG0_BOOT_ROM, 204),
+        };
         self.ppu = Ppu::new();
         self.ppu.write_register(0xFF40, 0x00); // power-on: LCD disabled
-        self.timer = Timer::with_div_counter(204);
+        self.timer = Timer::with_div_counter(div_counter);
         self.joypad = Joypad::new();
         self.apu = Apu::new(self.cart.is_cgb());
         self.apu.set_sample_rate(apu_rate);
@@ -151,10 +157,7 @@ impl DmgBus {
         self.hram = [0u8; 0x7F];
         self.if_reg = 1; // VBlank flag set at power-on (real DMG hardware)
         self.ie_reg = 0;
-        self.boot_rom = match self.model.boot_variant() {
-            DmgBootVariant::Production => DMG_BOOT_ROM,
-            DmgBootVariant::Dmg0 => DMG0_BOOT_ROM,
-        };
+        self.boot_rom = boot_rom;
         self.boot_rom_active = true;
         self.sb = 0x00;
         self.sc = 0x7E;
@@ -883,9 +886,9 @@ mod tests {
 
     #[test]
     fn test_timer_div_register_readable_via_bus() {
-        // Given: fresh bus with DIV = 0; When: read $FF04; Then: returns 0
+        // Given: fresh DmgB bus (div_counter=5036 → DIV=19); When: read $FF04; Then: returns 19
         let mut bus = make_bus();
-        assert_eq!(bus.read(0xFF04), 0x00);
+        assert_eq!(bus.read(0xFF04), 19);
     }
 
     #[test]
@@ -1082,36 +1085,36 @@ mod tests {
 
     #[test]
     fn test_serial_transfer_restart() {
-        // Initial div_counter = 204; bit-7 falls at absolute M-cycles 13, 77, 141, 205, …
-        // With serial_master_clock (SMC) starting false, counts (SMC→false) at 77, 205, …, 973.
+        // Initial div_counter = 5036 (DmgB); bit-7 falls at M-cycles 21, 85, 149, 213, …
+        // With serial_master_clock (SMC) starting false, counts (SMC→false) at 85, 213, …, 981.
         // Write SC=0x81 at M-cycle 0 (first transfer, byte 0x11).
-        // Restart with byte 0x22 at M-cycle 64 — before the first count at M-cycle 77.
-        //   At restart: SMC=true (one bit-7 fall at M-cycle 13) → force-aligned to false.
-        //   After restart: next bit-7 falls at 77 (SMC→true, no count), 141 (SMC→false,
-        //   COUNT), …, 1037 (8th count).  Interrupt fires at M-cycle 1037:
-        //   - no interrupt at M-cycle 1036 (972 M-cycles after restart)
-        //   - interrupt fires at M-cycle 1037 (973 M-cycles after restart)
+        // Restart with byte 0x22 at M-cycle 64 — before the first count at M-cycle 85.
+        //   At restart: SMC=true (one bit-7 fall at M-cycle 21) → force-aligned to false.
+        //   After restart: next bit-7 falls at 85 (SMC→true, no count), 149 (SMC→false,
+        //   COUNT), …, 1045 (8th count).  Interrupt fires at M-cycle 1045:
+        //   - no interrupt at M-cycle 1044 (980 M-cycles after restart)
+        //   - interrupt fires at M-cycle 1045 (981 M-cycles after restart)
         let mut bus = make_bus();
         bus.write(0xFF01, 0x11);
         bus.write(0xFF02, 0x81); // first transfer
         for _ in 0..64 {
             bus.tick(1);
         }
-        // Confirm no interrupt fired yet (first count not until M-cycle 77)
+        // Confirm no interrupt fired yet (first count not until M-cycle 85)
         assert_eq!(bus.read(0xFF0F) & 0x08, 0x00, "no interrupt before restart");
         // Restart
         bus.write(0xFF01, 0x22);
         bus.write(0xFF02, 0x81);
-        // Tick 972 more M-cycles (total 1036 from start) — one tick short of completion
-        for _ in 0..972 {
+        // Tick 980 more M-cycles (total 1044 from start) — one tick short of completion
+        for _ in 0..980 {
             bus.tick(1);
         }
         assert_eq!(
             bus.read(0xFF0F) & 0x08,
             0x00,
-            "no interrupt 972 M-cycles after restart"
+            "no interrupt 980 M-cycles after restart"
         );
-        // One more tick reaches M-cycle 1037 — 8th counted bit fires interrupt
+        // One more tick reaches M-cycle 1045 — 8th counted bit fires interrupt
         bus.tick(1);
         assert_eq!(
             bus.read(0xFF0F) & 0x08,

@@ -362,7 +362,8 @@ impl Timing {
     ///   - Physical OAM scan write-lock starts at dot=4, ends at dot=80.
     ///   - Mode3 write-lock starts 4T after STAT Mode3 (dot=84, not dot=80).
     ///   - Gaps [0,4) and [80,84) are accessible for writes on DMG.
-    ///     Scan 2+: blocked during [4, 80) ∪ [84, 252+extra).
+    ///
+    /// Scan 2+: blocked during [4, 80) ∪ [84, 252+extra).
     ///   - OAM write-lock starts at dot=4 (STAT shows Mode2 from dot=0, but write
     ///     gate lags 4T).  Mode3 write-lock starts at dot=84, not dot=80.
     pub fn is_oam_write_blocked(&self) -> bool {
