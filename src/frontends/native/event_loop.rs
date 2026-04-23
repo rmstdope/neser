@@ -893,10 +893,14 @@ impl ApplicationHandler for NativeEventLoop {
                     should_use_manual_frame_throttle(self.vsync_enabled, self.state.window_focused);
                 // The Game Boy has no audio output, so there is no ring-buffer
                 // back-pressure to limit the frame rate in vsync+focused mode.
-                // Apply the same elapsed-time guard as the manual throttle path.
-                let needs_frame_guard =
-                    using_manual_throttle || matches!(&self.console, Console::GameBoy(_));
-                let skip_emulation = if needs_frame_guard {
+                // Likewise, when the NES runs with audio disabled (--no-audio),
+                // there is no ring-buffer back-pressure either.
+                // Apply the same elapsed-time guard in both cases.
+                let is_game_boy = matches!(&self.console, Console::GameBoy(_));
+                let audio_disabled = self.audio.is_none();
+                let frame_guard =
+                    needs_frame_guard(using_manual_throttle, is_game_boy, audio_disabled);
+                let skip_emulation = if frame_guard {
                     let target = self.console.target_frame_duration();
                     // Allow a small tolerance (half a frame) to avoid skipping
                     // frames when the deadline fires slightly early.
@@ -1100,6 +1104,27 @@ pub fn should_use_manual_frame_throttle(vsync_enabled: bool, window_focused: boo
     !vsync_enabled || !window_focused
 }
 
+/// Returns true when an elapsed-time frame guard is needed to prevent the
+/// emulator from running faster than the target hardware frame rate.
+///
+/// The frame guard is required whenever there is no other mechanism providing
+/// back-pressure:
+/// - Manual throttle mode (vsync off or window unfocused): WaitUntil provides
+///   the deadline but RedrawRequested can arrive early; the guard prevents
+///   double-stepping.
+/// - Game Boy: the GB has no audio output so there is no ring-buffer
+///   back-pressure to pace the event loop in vsync+focused mode.
+/// - Audio disabled (`--no-audio`): when the user runs with audio disabled,
+///   the NES ring-buffer back-pressure is absent and the emulator would
+///   otherwise run uncapped.
+pub fn needs_frame_guard(
+    using_manual_throttle: bool,
+    is_game_boy: bool,
+    audio_disabled: bool,
+) -> bool {
+    using_manual_throttle || is_game_boy || audio_disabled
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1126,6 +1151,45 @@ mod tests {
     fn manual_throttle_required_when_vsync_disabled() {
         assert!(should_use_manual_frame_throttle(false, true));
         assert!(should_use_manual_frame_throttle(false, false));
+    }
+
+    // ── needs_frame_guard (issue #2142) ───────────────────────────────────────
+
+    #[test]
+    fn frame_guard_required_when_manual_throttle_active() {
+        assert!(
+            needs_frame_guard(true, false, false),
+            "manual throttle active must require frame guard"
+        );
+    }
+
+    #[test]
+    fn frame_guard_required_for_game_boy() {
+        assert!(
+            needs_frame_guard(false, true, false),
+            "Game Boy has no audio back-pressure, must require frame guard"
+        );
+    }
+
+    #[test]
+    fn frame_guard_required_for_nes_when_audio_disabled() {
+        // Regression: when NES is launched with --no-audio, there is no
+        // ring-buffer back-pressure, so the emulator would run uncapped
+        // without a frame guard.
+        assert!(
+            needs_frame_guard(false, false, true),
+            "NES with audio disabled must require frame guard (issue #2142)"
+        );
+    }
+
+    #[test]
+    fn frame_guard_not_required_for_nes_with_audio_enabled_and_vsync_focused() {
+        // Normal NES use: vsync focused + audio enabled → ring-buffer provides
+        // back-pressure; no additional frame guard needed.
+        assert!(
+            !needs_frame_guard(false, false, false),
+            "NES with audio enabled and vsync+focused must not require frame guard"
+        );
     }
 
     // ── audio_should_be_paused (#1858) ────────────────────────────────────────
