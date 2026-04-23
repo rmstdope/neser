@@ -188,8 +188,8 @@ fn handle_common_hotkey(
 
 /// Handles a key-press event for a [`Console::GameBoy`].
 ///
-/// Dispatches generic hotkeys (pause, fullscreen, Ctrl+Q, Ctrl+R, shader cycling) and
-/// maps standard button keys to Game Boy buttons on port 0.
+/// Dispatches generic hotkeys (pause, fullscreen, Ctrl+Q, Ctrl+R, shader cycling,
+/// save/load state) and maps standard button keys to Game Boy buttons on port 0.
 fn handle_gameboy_key_pressed(
     console: &mut Console,
     key_code: KeyCode,
@@ -221,8 +221,21 @@ fn handle_gameboy_key_pressed(
         return KeyOutcome::Continue;
     }
 
-    if let Some(btn_id) = gameboy_key_to_button_id(key_code) {
-        console.set_button(0, btn_id, true);
+    match key_code {
+        KeyCode::F6 => {
+            crate::nes::console::save_state_io::save_state_to_disk(console);
+        }
+        KeyCode::F7 => {
+            crate::nes::console::save_state_io::load_state_from_disk(console);
+            if let Some(audio) = audio {
+                audio.drain_buffer();
+            }
+        }
+        _ => {
+            if let Some(btn_id) = gameboy_key_to_button_id(key_code) {
+                console.set_button(0, btn_id, true);
+            }
+        }
     }
 
     KeyOutcome::Continue
@@ -1677,6 +1690,28 @@ mod tests {
             console.get_joypad_button_states(0) & BIT_A,
             0,
             "R key should set GB A button"
+        );
+    }
+
+    #[test]
+    fn gameboy_f6_save_state_returns_continue() {
+        let mut console = make_gameboy_console();
+        let mut state = make_state();
+        assert_eq!(
+            handle_key_pressed(&mut console, KeyCode::F6, &mut state, None),
+            KeyOutcome::Continue,
+            "F6 should return Continue in GB mode"
+        );
+    }
+
+    #[test]
+    fn gameboy_f7_load_state_returns_continue() {
+        let mut console = make_gameboy_console();
+        let mut state = make_state();
+        assert_eq!(
+            handle_key_pressed(&mut console, KeyCode::F7, &mut state, None),
+            KeyOutcome::Continue,
+            "F7 should return Continue in GB mode"
         );
     }
 
