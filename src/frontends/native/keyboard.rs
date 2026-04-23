@@ -212,6 +212,11 @@ fn handle_gameboy_key_pressed(
         return outcome;
     }
 
+    if key_code == KeyCode::KeyH {
+        app_state.help_overlay_visible = !app_state.help_overlay_visible;
+        return KeyOutcome::Continue;
+    }
+
     if let Some(btn_id) = gameboy_key_to_button_id(key_code) {
         console.set_button(0, btn_id, true);
     }
@@ -1668,6 +1673,29 @@ mod tests {
             console.get_joypad_button_states(0) & BIT_A,
             0,
             "R key should set GB A button"
+        );
+    }
+
+    #[test]
+    fn gameboy_h_key_toggles_help_overlay_on() {
+        let mut console = make_gameboy_console();
+        let mut state = make_state();
+        handle_key_pressed(&mut console, KeyCode::KeyH, &mut state, None);
+        assert!(
+            state.help_overlay_visible,
+            "H key should toggle help overlay on in GB mode"
+        );
+    }
+
+    #[test]
+    fn gameboy_h_key_toggles_help_overlay_off() {
+        let mut console = make_gameboy_console();
+        let mut state = make_state();
+        state.help_overlay_visible = true;
+        handle_key_pressed(&mut console, KeyCode::KeyH, &mut state, None);
+        assert!(
+            !state.help_overlay_visible,
+            "H key should toggle help overlay off in GB mode"
         );
     }
 
