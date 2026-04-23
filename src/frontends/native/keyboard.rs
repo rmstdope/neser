@@ -216,12 +216,8 @@ fn handle_gameboy_key_pressed(
         return outcome;
     }
 
-    if key_code == KeyCode::KeyH {
-        app_state.help_overlay_visible = !app_state.help_overlay_visible;
-        return KeyOutcome::Continue;
-    }
-
     match key_code {
+        KeyCode::KeyH => app_state.help_overlay_visible = !app_state.help_overlay_visible,
         KeyCode::F6 => {
             crate::nes::console::save_state_io::save_state_to_disk(console);
         }
