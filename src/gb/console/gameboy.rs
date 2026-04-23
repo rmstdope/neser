@@ -357,19 +357,19 @@ impl Emulator for GameBoy {
     }
 
     fn set_button(&mut self, port: u8, button_id: u8, pressed: bool) {
-        if port == 0 {
+        if port == 0 || port == 1 {
             GameBoy::set_button(self, button_id, pressed);
         }
     }
 
     fn set_joypad_button_states(&mut self, port: u8, state: u8) {
-        if port == 0 {
+        if port == 0 || port == 1 {
             GameBoy::set_joypad_button_states(self, state);
         }
     }
 
     fn get_joypad_button_states(&self, port: u8) -> u8 {
-        if port == 0 {
+        if port == 0 || port == 1 {
             GameBoy::get_joypad_button_states(self)
         } else {
             0
@@ -747,5 +747,90 @@ mod tests {
         let result = dmg_gb.load_state_bytes(&cgb_state);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("bus type mismatch"));
+    }
+
+    // ── Emulator trait port-1 tests (autorun recording/playback) ──────────
+    // These tests verify that the Emulator trait's port-1 interface works for
+    // the Game Boy. The autorun system uses port 1 for player 1, so the GB
+    // must expose its single joypad on both port 0 (keyboard) and port 1
+    // (autorun convention).
+
+    #[test]
+    fn test_emulator_trait_port1_reads_buttons_set_via_port0() {
+        // Simulates: keyboard sets buttons via port 0; autorun recording reads
+        // them via port 1.  Before the fix, port 1 always returned 0.
+        use crate::platform::emulator::Emulator;
+        let mut gb = make_gameboy();
+        gb.load_rom(&minimal_rom(), "test.gb").unwrap();
+        let emu: &mut dyn Emulator = &mut gb;
+
+        let state: u8 = 0b0000_1001; // A + Start pressed
+        // Keyboard handler sets buttons via port 0
+        emu.set_joypad_button_states(0, state);
+        // Autorun recording reads via port 1
+        assert_eq!(
+            emu.get_joypad_button_states(1),
+            state,
+            "port 1 must reflect buttons set via port 0 (keyboard)"
+        );
+    }
+
+    #[test]
+    fn test_emulator_trait_port1_set_joypad_states_applied_to_gb() {
+        // Simulates: autorun playback writes buttons via port 1; verify that
+        // the GB joypad state is actually updated.  Before the fix, port 1
+        // was silently ignored and the joypad stayed at 0.
+        use crate::platform::emulator::Emulator;
+        let mut gb = make_gameboy();
+        gb.load_rom(&minimal_rom(), "test.gb").unwrap();
+        let emu: &mut dyn Emulator = &mut gb;
+
+        let state: u8 = 0b0100_0010; // B + Left pressed
+        // Autorun playback writes via port 1
+        emu.set_joypad_button_states(1, state);
+        // Verify via port 0 (keyboard read) and port 1 (autorun read)
+        assert_eq!(
+            emu.get_joypad_button_states(0),
+            state,
+            "port 0 must reflect buttons set via port 1 (autorun playback)"
+        );
+        assert_eq!(
+            emu.get_joypad_button_states(1),
+            state,
+            "port 1 must reflect buttons set via port 1 (autorun playback)"
+        );
+    }
+
+    #[test]
+    fn test_emulator_trait_port2_returns_zero_for_gb() {
+        // GB has no second controller; port 2 must always return 0.
+        use crate::platform::emulator::Emulator;
+        let mut gb = make_gameboy();
+        gb.load_rom(&minimal_rom(), "test.gb").unwrap();
+        let emu: &mut dyn Emulator = &mut gb;
+
+        emu.set_joypad_button_states(2, 0xFF);
+        assert_eq!(
+            emu.get_joypad_button_states(2),
+            0,
+            "port 2 must return 0 for GB (no second controller)"
+        );
+    }
+
+    #[test]
+    fn test_emulator_trait_port1_set_button_applied_to_gb() {
+        // Verify individual button via port 1 is also applied correctly.
+        use crate::platform::emulator::Emulator;
+        let mut gb = make_gameboy();
+        gb.load_rom(&minimal_rom(), "test.gb").unwrap();
+        let emu: &mut dyn Emulator = &mut gb;
+
+        // Press A (button id 0) via port 1
+        emu.set_button(1, 0, true);
+        assert_ne!(
+            emu.get_joypad_button_states(1),
+            0,
+            "setting a button via port 1 must update the GB joypad"
+        );
     }
 }
