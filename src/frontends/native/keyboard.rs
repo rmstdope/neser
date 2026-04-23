@@ -188,7 +188,7 @@ fn handle_common_hotkey(
 
 /// Handles a key-press event for a [`Console::GameBoy`].
 ///
-/// Dispatches generic hotkeys (pause, fullscreen, Ctrl+Q, shader cycling) and
+/// Dispatches generic hotkeys (pause, fullscreen, Ctrl+Q, Ctrl+R, shader cycling) and
 /// maps standard button keys to Game Boy buttons on port 0.
 fn handle_gameboy_key_pressed(
     console: &mut Console,
@@ -200,6 +200,10 @@ fn handle_gameboy_key_pressed(
     if app_state.modifiers.control_key() {
         return match key_code {
             KeyCode::KeyQ => KeyOutcome::Quit,
+            KeyCode::KeyR => {
+                console.reset(!app_state.modifiers.shift_key());
+                KeyOutcome::Continue
+            }
             KeyCode::KeyF => {
                 app_state.fullscreen = !app_state.fullscreen;
                 KeyOutcome::Continue
@@ -1673,6 +1677,30 @@ mod tests {
             console.get_joypad_button_states(0) & BIT_A,
             0,
             "R key should set GB A button"
+        );
+    }
+
+    #[test]
+    fn gameboy_ctrl_r_soft_resets() {
+        let mut console = make_gameboy_console();
+        let mut state = make_state();
+        with_ctrl(&mut state);
+        assert_eq!(
+            handle_key_pressed(&mut console, KeyCode::KeyR, &mut state, None),
+            KeyOutcome::Continue,
+            "Ctrl+R should return Continue in GB mode"
+        );
+    }
+
+    #[test]
+    fn gameboy_ctrl_shift_r_hard_resets() {
+        let mut console = make_gameboy_console();
+        let mut state = make_state();
+        with_ctrl_shift(&mut state);
+        assert_eq!(
+            handle_key_pressed(&mut console, KeyCode::KeyR, &mut state, None),
+            KeyOutcome::Continue,
+            "Ctrl+Shift+R should return Continue in GB mode"
         );
     }
 
