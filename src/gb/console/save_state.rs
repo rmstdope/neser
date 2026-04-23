@@ -149,12 +149,6 @@ impl Gb<DmgBus> {
 
     /// Restore state from a save-state snapshot.
     pub fn load_state(&mut self, state: &GbSaveState) -> Result<(), String> {
-        if state.version != GB_SAVESTATE_VERSION {
-            return Err(format!(
-                "Save state version mismatch: expected {GB_SAVESTATE_VERSION}, got {}",
-                state.version
-            ));
-        }
         self.cpu.restore_state(&state.cpu);
         self.cpu.bus.restore_bus_state(&state.bus)?;
         self.cpu.bus.restore_cart_ram(&state.cart_ram);
@@ -250,19 +244,7 @@ mod tests {
             gb.step();
         }
 
-        let cpu_state = gb.cpu.capture_state();
-        let bus_state = gb.cpu.bus.capture_bus_state();
-        let cart_ram = gb.cpu.bus.cart_ram_snapshot();
-        let mbc_state = gb.cpu.bus.mbc_state_snapshot();
-
-        let save = GbSaveState {
-            version: GB_SAVESTATE_VERSION,
-            cpu: cpu_state,
-            bus: bus_state,
-            cart_ram,
-            mbc_state,
-        };
-
+        let save = gb.save_state();
         let bytes = save.to_bytes().expect("serialization should succeed");
         let loaded = GbSaveState::from_bytes(&bytes).expect("deserialization should succeed");
 
@@ -282,15 +264,13 @@ mod tests {
 
         let cpu_state = gb.cpu.capture_state();
         let bus_state = gb.cpu.bus.capture_bus_state();
-        let cart_ram = gb.cpu.bus.cart_ram_snapshot();
-        let mbc_state = gb.cpu.bus.mbc_state_snapshot();
 
         let save = GbSaveState {
             version: GB_SAVESTATE_VERSION,
             cpu: cpu_state,
             bus: bus_state,
-            cart_ram,
-            mbc_state,
+            cart_ram: gb.cpu.bus.cart_ram_snapshot(),
+            mbc_state: gb.cpu.bus.mbc_state_snapshot(),
         };
 
         let bytes = save.to_bytes().expect("serialization should succeed");
@@ -308,13 +288,7 @@ mod tests {
         let mut gb = make_dmg();
         gb.step();
 
-        let mut save = GbSaveState {
-            version: GB_SAVESTATE_VERSION,
-            cpu: gb.cpu.capture_state(),
-            bus: gb.cpu.bus.capture_bus_state(),
-            cart_ram: gb.cpu.bus.cart_ram_snapshot(),
-            mbc_state: gb.cpu.bus.mbc_state_snapshot(),
-        };
+        let mut save = gb.save_state();
         save.version = 9999;
 
         let bytes = serde_json::to_vec(&save).unwrap();
