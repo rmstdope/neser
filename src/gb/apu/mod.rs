@@ -98,6 +98,11 @@ pub struct Apu {
     /// High-pass filter state: previous filter output.
     #[serde(default)]
     hp_prev_out: f32,
+    /// High-pass filter coefficient (α = f_s / (f_s + 2π·f_c)), derived from
+    /// the output sample rate and a fixed ~7 Hz cutoff.  Updated whenever
+    /// `set_sample_rate()` is called.  Not serialized — recomputed on load.
+    #[serde(skip, default = "Apu::default_hp_rc")]
+    hp_rc: f32,
 }
 
 impl Apu {
@@ -119,12 +124,31 @@ impl Apu {
             is_cgb,
             hp_prev_in: 0.0,
             hp_prev_out: 0.0,
+            hp_rc: Self::compute_hp_rc(44_100.0),
         }
+    }
+
+    /// Compute the high-pass filter coefficient for a given output sample rate.
+    ///
+    /// Uses a target cutoff of ~7 Hz (well below audible range) to remove DC
+    /// bias while leaving all audible content intact.
+    /// Formula: α = f_s / (f_s + 2π·f_c)
+    fn compute_hp_rc(sample_rate: f32) -> f32 {
+        use std::f32::consts::PI;
+        const HP_CUTOFF_HZ: f32 = 7.0;
+        sample_rate / (sample_rate + 2.0 * PI * HP_CUTOFF_HZ)
+    }
+
+    /// Default HP filter coefficient (44.1 kHz baseline), used by serde when
+    /// deserializing old save states that predate this field.
+    fn default_hp_rc() -> f32 {
+        Self::compute_hp_rc(44_100.0)
     }
 
     /// Set the output sample rate in Hz (default: 44 100).
     pub fn set_sample_rate(&mut self, rate: f32) {
         self.cycles_per_sample = DMG_MCYCLES_PER_SEC / rate;
+        self.hp_rc = Self::compute_hp_rc(rate);
     }
 
     /// Returns `true` when an audio sample is ready to be collected.
@@ -192,9 +216,9 @@ impl Apu {
     ///
     /// Applies a first-order high-pass filter (simulating the DMG output
     /// capacitor / AC coupling) to remove DC bias and centre the signal
-    /// around 0.  The filter coefficient `RC = 0.999` gives a cutoff of
-    /// roughly 7 Hz at 44.1 kHz, removing DC while leaving all audible
-    /// content unaffected.
+    /// around 0.  The filter coefficient α = f_s / (f_s + 2π·f_c) gives a
+    /// cutoff of roughly 7 Hz at any configured sample rate, removing DC
+    /// while leaving all audible content unaffected.
     fn mix(&mut self) -> f32 {
         if !self.powered {
             return 0.0;
@@ -217,10 +241,10 @@ impl Apu {
 
         let raw = (left_mix * left_volume + right_mix * right_volume) / 2.0;
 
-        // High-pass filter: out[n] = RC × (out[n-1] + in[n] − in[n-1]).
-        // Removes DC (low-frequency bias) and produces bipolar output in [-1, 1].
-        const RC: f32 = 0.999;
-        let hp_out = RC * (self.hp_prev_out + raw - self.hp_prev_in);
+        // High-pass filter: out[n] = α × (out[n-1] + in[n] − in[n-1]).
+        // α = f_s / (f_s + 2π·f_c), with f_c ≈ 7 Hz, updated by set_sample_rate().
+        // Removes DC bias and produces bipolar output centred around 0.
+        let hp_out = self.hp_rc * (self.hp_prev_out + raw - self.hp_prev_in);
         self.hp_prev_in = raw;
         self.hp_prev_out = hp_out;
 

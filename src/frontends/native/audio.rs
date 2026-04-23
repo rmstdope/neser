@@ -255,6 +255,10 @@ impl NativeAudio {
                         let sample: T = match raw {
                             Some(s) => {
                                 stats.received_samples.fetch_add(1, Ordering::Relaxed);
+                                // Ring buffer holds bipolar PCM in [-1.0, 1.0].
+                                // System-specific normalization (e.g. NES ÷ 1.177) is
+                                // applied by the caller before queue_sample(), so only
+                                // volume scaling is needed here.
                                 T::from_sample((s * vol).clamp(-1.0, 1.0))
                             }
                             None => {
