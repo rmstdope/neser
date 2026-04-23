@@ -1,6 +1,4 @@
-use crate::platform::audio::types::{
-    AudioConsumer, AudioStats, process_sample, queue_sample_to_producer,
-};
+use crate::platform::audio::types::{AudioConsumer, AudioStats, queue_sample_to_producer};
 use crate::platform::audio::{AudioProducer, AudioResampler, EmulatorAudio};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BufferSize, FromSample, SampleFormat, SampleRate, SizedSample, StreamConfig};
@@ -257,7 +255,7 @@ impl NativeAudio {
                         let sample: T = match raw {
                             Some(s) => {
                                 stats.received_samples.fetch_add(1, Ordering::Relaxed);
-                                T::from_sample(process_sample(s, vol))
+                                T::from_sample((s * vol).clamp(-1.0, 1.0))
                             }
                             None => {
                                 stats.underrun_samples.fetch_add(1, Ordering::Relaxed);

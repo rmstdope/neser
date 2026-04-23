@@ -51,8 +51,19 @@ const NES_APU_MAX: f32 = 1.177;
 ///
 /// Divides by [`NES_APU_MAX`] so the APU's `[0.0, ~1.177]` range maps
 /// to `[0.0, 1.0]`, then applies volume and clamps to `[-1.0, 1.0]`.
+#[cfg(test)]
 pub fn process_sample(raw_sample: f32, volume: f32) -> f32 {
     ((raw_sample / NES_APU_MAX) * volume).clamp(-1.0, 1.0)
+}
+
+/// Normalises a raw NES APU sample to `[0.0, 1.0]`.
+///
+/// Divides the raw NES mixer output by [`NES_APU_MAX`] so the native
+/// `[0.0, ~1.177]` range (including expansion-audio headroom) maps to
+/// `[0.0, 1.0]`.  Volume scaling is applied separately by the audio
+/// callback so that volume changes take effect without a ring-buffer lag.
+pub fn normalize_nes_sample(raw_sample: f32) -> f32 {
+    (raw_sample / NES_APU_MAX).clamp(0.0, 1.0)
 }
 
 #[cfg(test)]
@@ -151,5 +162,39 @@ mod tests {
 
         let result = process_sample(NES_APU_MAX * 2.0, 1.0);
         assert_eq!(result, 1.0, "should clamp to 1.0");
+    }
+
+    // ── normalize_nes_sample ──────────────────────────────────────────────
+
+    #[test]
+    fn test_normalize_nes_sample_maps_max_to_one() {
+        // NES_APU_MAX should normalise to exactly 1.0.
+        let result = normalize_nes_sample(NES_APU_MAX);
+        assert!(
+            (result - 1.0).abs() < 0.0001,
+            "normalize_nes_sample(NES_APU_MAX) must return ≈ 1.0, got {result}"
+        );
+    }
+
+    #[test]
+    fn test_normalize_nes_sample_maps_zero_to_zero() {
+        let result = normalize_nes_sample(0.0);
+        assert_eq!(result, 0.0);
+    }
+
+    #[test]
+    fn test_normalize_nes_sample_clamps_above_max() {
+        // Values above NES_APU_MAX must clamp to 1.0.
+        let result = normalize_nes_sample(NES_APU_MAX * 2.0);
+        assert_eq!(result, 1.0, "must clamp at 1.0");
+    }
+
+    #[test]
+    fn test_normalize_nes_sample_maps_mid_range() {
+        let result = normalize_nes_sample(NES_APU_MAX / 2.0);
+        assert!(
+            (result - 0.5).abs() < 0.001,
+            "half of NES_APU_MAX must map to ≈ 0.5, got {result}"
+        );
     }
 }

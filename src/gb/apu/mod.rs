@@ -91,6 +91,13 @@ pub struct Apu {
     /// `true` when running a CGB-compatible ROM (header byte 0x0143 is 0x80 or 0xC0).
     /// Gates CGB-specific APU differences (length counter behavior on power off/on).
     is_cgb: bool,
+
+    /// High-pass filter state: previous mix input (before filter).
+    #[serde(default)]
+    hp_prev_in: f32,
+    /// High-pass filter state: previous filter output.
+    #[serde(default)]
+    hp_prev_out: f32,
 }
 
 impl Apu {
@@ -110,6 +117,8 @@ impl Apu {
             cycles_per_sample: DMG_MCYCLES_PER_SEC / 44_100.0,
             pending_sample: None,
             is_cgb,
+            hp_prev_in: 0.0,
+            hp_prev_out: 0.0,
         }
     }
 
@@ -179,8 +188,14 @@ impl Apu {
         }
     }
 
-    /// Mix all four channels through NR50/NR51 into a mono f32 in [-1.0, 1.0].
-    fn mix(&self) -> f32 {
+    /// Mix all four channels through NR50/NR51 into a mono f32 in `[-1.0, 1.0]`.
+    ///
+    /// Applies a first-order high-pass filter (simulating the DMG output
+    /// capacitor / AC coupling) to remove DC bias and centre the signal
+    /// around 0.  The filter coefficient `RC = 0.999` gives a cutoff of
+    /// roughly 7 Hz at 44.1 kHz, removing DC while leaving all audible
+    /// content unaffected.
+    fn mix(&mut self) -> f32 {
         if !self.powered {
             return 0.0;
         }
@@ -200,7 +215,16 @@ impl Apu {
         let left_volume = ((self.nr50 >> 4) & 0x07) as f32 / 7.0;
         let right_volume = (self.nr50 & 0x07) as f32 / 7.0;
 
-        (left_mix * left_volume + right_mix * right_volume) / 2.0
+        let raw = (left_mix * left_volume + right_mix * right_volume) / 2.0;
+
+        // High-pass filter: out[n] = RC × (out[n-1] + in[n] − in[n-1]).
+        // Removes DC (low-frequency bias) and produces bipolar output in [-1, 1].
+        const RC: f32 = 0.999;
+        let hp_out = RC * (self.hp_prev_out + raw - self.hp_prev_in);
+        self.hp_prev_in = raw;
+        self.hp_prev_out = hp_out;
+
+        hp_out.clamp(-1.0, 1.0)
     }
 
     /// Sum channel samples gated by a 4-bit enable mask (bit i enables samples[i]).
@@ -340,13 +364,15 @@ impl Apu {
         self.powered = val & 0x80 != 0;
 
         if was_powered && !self.powered {
-            // Power off: clear all NR10–NR51 registers.
+            // Power off: clear all NR10–NR51 registers and HP filter state.
             self.ch1.power_off();
             self.ch2.power_off();
             self.ch3.power_off();
             self.ch4.power_off();
             self.nr50 = 0x00;
             self.nr51 = 0x00;
+            self.hp_prev_in = 0.0;
+            self.hp_prev_out = 0.0;
         } else if !was_powered && self.powered {
             // Power on: reset frame sequencer.
             self.fs_step = 0;
@@ -652,6 +678,113 @@ mod tests {
         assert_eq!(
             apu.ch4.length_counter, 0,
             "CGB power-on must reset CH4 length"
+        );
+    }
+
+    // ── High-pass (AC coupling) filter / bipolar output ───────────────────
+
+    #[test]
+    fn test_mix_hp_filter_produces_negative_transient_when_input_drops() {
+        // Given: APU powered on; HP filter state primed as if channels were
+        // running at high output and then suddenly silenced.
+        // Expected: HP filter output is negative (compensates for prior DC).
+        // This test FAILS before the HP filter is implemented because mix()
+        // returns 0.0 for silent channels regardless of previous state.
+        let mut apu = powered_apu();
+        // Manually prime the filter state: previous input was 1.0,
+        // previous output was 0.5 (as if all channels ran at full volume).
+        apu.hp_prev_in = 1.0;
+        apu.hp_prev_out = 0.5;
+
+        // Current channels produce 0.0 (no channels active → unipolar = 0.0).
+        // HP filter: out = 0.999 * (0.5 + 0.0 - 1.0) = 0.999 * -0.5 ≈ -0.4995
+        let sample = apu.mix();
+
+        assert!(
+            sample < 0.0,
+            "HP filter must produce a negative transient when input drops from high to zero, got {sample}"
+        );
+    }
+
+    #[test]
+    fn test_mix_hp_filter_output_stays_in_bipolar_range() {
+        // Given: all four channels at maximum volume, all panning bits set.
+        // When: ticking 60 000 M-cycles (≈ 2 524 samples at 44 100 Hz).
+        // Then: every sample must be in [-1.0, 1.0].
+        let mut apu = powered_apu();
+
+        // CH1: max volume, 50% duty, trigger.
+        apu.write_register(0xFF11, 0x80); // NR11: duty=10 (50%)
+        apu.write_register(0xFF12, 0xF0); // NR12: vol=15, DAC on
+        apu.write_register(0xFF14, 0x80); // NR14: trigger
+
+        // CH2: max volume, 50% duty, trigger.
+        apu.write_register(0xFF16, 0x80); // NR21: duty=10
+        apu.write_register(0xFF17, 0xF0); // NR22: vol=15, DAC on
+        apu.write_register(0xFF19, 0x80); // NR24: trigger
+
+        // CH3: DAC on, 100% output level, trigger.
+        apu.write_register(0xFF1A, 0x80); // NR30: DAC on
+        apu.write_register(0xFF1C, 0x20); // NR32: output=100%
+        apu.write_register(0xFF1E, 0x80); // NR34: trigger
+
+        // CH4: max volume, trigger.
+        apu.write_register(0xFF21, 0xF0); // NR42: vol=15, DAC on
+        apu.write_register(0xFF23, 0x80); // NR44: trigger
+
+        // NR51=0xFF: all channels to both terminals. NR50=0x77: max master vol.
+        apu.write_register(0xFF25, 0xFF);
+        apu.write_register(0xFF24, 0x77);
+
+        let mut violations = 0u32;
+        for _ in 0..60_000 {
+            apu.tick(1);
+            if let Some(s) = apu.take_sample()
+                && !(-1.0..=1.0).contains(&s)
+            {
+                violations += 1;
+            }
+        }
+
+        assert_eq!(
+            violations, 0,
+            "mix() must never exceed [-1.0, 1.0]; found {violations} violation(s)"
+        );
+    }
+
+    #[test]
+    fn test_mix_active_channel_produces_negative_samples_after_filter_converges() {
+        // Given: CH1 oscillating at 50% duty, max volume.
+        // When: running long enough for the HP filter to converge.
+        // Then: at least one sample must be negative (DC removed, signal centred at 0).
+        //
+        // Without the HP filter mix() never returns negative values ([0, 1] only),
+        // so this test is RED before the implementation.
+        let mut apu = powered_apu();
+        apu.write_register(0xFF11, 0x80); // NR11: duty=10 (50%)
+        apu.write_register(0xFF12, 0xF0); // NR12: vol=15, DAC on
+        apu.write_register(0xFF13, 0x80); // NR13: freq low (moderate frequency)
+        apu.write_register(0xFF14, 0x84); // NR14: trigger, freq high bits
+        apu.write_register(0xFF25, 0x01); // NR51: CH1 to right terminal only
+        apu.write_register(0xFF24, 0x07); // NR50: right master vol = max
+
+        let mut found_negative = false;
+        // 3 000 samples ≈ 71 340 M-cycles; the HP filter (RC≈0.999) converges
+        // in ~1 000–2 000 samples, so the LOW phase of the duty cycle must
+        // produce negative output well within this window.
+        for _ in 0..71_340 {
+            apu.tick(1);
+            if let Some(s) = apu.take_sample()
+                && s < 0.0
+            {
+                found_negative = true;
+                break;
+            }
+        }
+
+        assert!(
+            found_negative,
+            "HP filter must produce negative samples once DC is removed from an oscillating channel"
         );
     }
 }
