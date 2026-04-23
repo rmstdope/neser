@@ -151,6 +151,11 @@ impl Apu {
         self.hp_rc = Self::compute_hp_rc(rate);
     }
 
+    /// Returns the current output sample rate in Hz.
+    pub fn sample_rate(&self) -> f32 {
+        DMG_MCYCLES_PER_SEC / self.cycles_per_sample
+    }
+
     /// Returns `true` when an audio sample is ready to be collected.
     pub fn sample_ready(&self) -> bool {
         self.pending_sample.is_some()

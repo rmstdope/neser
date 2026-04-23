@@ -181,11 +181,13 @@ impl CgbBus {
 
     /// Reset bus state (PPU, timer, joypad, APU, RAM, DMA).
     pub fn reset(&mut self) {
+        let apu_rate = self.apu.sample_rate();
         self.ppu = Ppu::new_cgb();
         self.ppu.write_register(0xFF40, 0x00);
         self.timer = Timer::new();
         self.joypad = Joypad::new();
         self.apu = Apu::new(self.cart.is_cgb());
+        self.apu.set_sample_rate(apu_rate);
         self.wram = [0u8; 0x2000];
         self.hram = [0u8; 0x7F];
         self.if_reg = 0;
