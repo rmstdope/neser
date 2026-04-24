@@ -351,6 +351,7 @@ impl GlBackend {
         proc_address: ProcAddressLoader,
         shader_path: Option<&str>,
         app_context: SharedAppContext,
+        allowed_shaders: &[&str],
     ) -> Result<Self, String> {
         unsafe {
             gl::Disable(gl::DEPTH_TEST);
@@ -427,7 +428,7 @@ impl GlBackend {
             )
         };
 
-        let mut shader_manager = ShaderManager::new();
+        let mut shader_manager = ShaderManager::new(allowed_shaders);
 
         // Load shader preset if specified
         if let Some(path) = shader_path

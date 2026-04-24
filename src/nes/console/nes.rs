@@ -1207,6 +1207,10 @@ impl Emulator for Nes {
         SystemType::Nes
     }
 
+    fn allowed_shaders(&self) -> &'static [&'static str] {
+        &["none", "crt", "smooth", "ntsc", "pal"]
+    }
+
     fn load_rom(&mut self, bytes: &[u8], name: &str) -> Result<(), String> {
         Nes::load_rom(self, bytes, name)
     }
@@ -3009,6 +3013,33 @@ mod tests {
         assert!(
             nes.save_ram().is_ok(),
             "save_ram with no cartridge must return Ok"
+        );
+    }
+
+    #[test]
+    fn test_nes_allowed_shaders_includes_expected_presets() {
+        use crate::platform::emulator::Emulator;
+        let nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        let shaders = nes.allowed_shaders();
+        assert!(
+            shaders.contains(&"none"),
+            "NES must allow the 'none' (stock) shader"
+        );
+        assert!(shaders.contains(&"crt"), "NES must allow the 'crt' shader");
+        assert!(
+            shaders.contains(&"smooth"),
+            "NES must allow the 'smooth' shader"
+        );
+        assert!(
+            shaders.contains(&"ntsc"),
+            "NES must allow the 'ntsc' shader"
+        );
+        assert!(shaders.contains(&"pal"), "NES must allow the 'pal' shader");
+        assert!(
+            !shaders.contains(&"gameboy"),
+            "NES must NOT allow the 'gameboy' shader"
         );
     }
 }

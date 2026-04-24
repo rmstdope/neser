@@ -589,6 +589,7 @@ impl ApplicationHandler for NativeEventLoop {
             event_loop,
             self.app_context.clone(),
             self.console.system_type(),
+            self.console.allowed_shaders(),
         ) {
             Ok(gl) => {
                 self.gl_wrapper = Some(gl);
@@ -918,7 +919,7 @@ impl ApplicationHandler for NativeEventLoop {
                     // Record timestamp for FPS counter (only real emulation frames).
                     self.frame_timestamps.push_back(self.last_frame_rendered);
                     let window = std::time::Duration::from_secs(1);
-                    while self.frame_timestamps.front().map_or(false, |t| {
+                    while self.frame_timestamps.front().is_some_and(|t| {
                         self.last_frame_rendered.saturating_duration_since(*t) > window
                     }) {
                         self.frame_timestamps.pop_front();

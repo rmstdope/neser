@@ -25,19 +25,20 @@ git clone --recurse-submodules https://github.com/rmstdope/neser
 
 ## Usage
 
-Use the `--filter` flag with a simplified name:
+Use the `--nes-filter` flag for NES or `--gb-filter` for Game Boy:
 
 ```bash
-neser rom.nes --filter crt     # CRT simulation
-neser rom.nes --filter ntsc    # NTSC composite
-neser rom.nes --filter smooth  # Smooth upscaling
-neser rom.nes --filter none    # No filter
+neser rom.nes --nes-filter crt     # CRT simulation
+neser rom.nes --nes-filter ntsc    # NTSC composite
+neser rom.nes --nes-filter smooth  # Smooth upscaling
+neser rom.nes --nes-filter none    # No filter
+neser rom.gb  --gb-filter gameboy  # DMG dot-matrix LCD
 ```
 
 Or set in config file:
 
 ```text
-filter=crt
+nes-filter=crt
 ```
 
 You can also cycle through shaders at runtime with F6.

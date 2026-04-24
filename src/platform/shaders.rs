@@ -1,7 +1,7 @@
 /// Single source of truth for all available shader presets.
 ///
 /// Each entry is `(short_name, relative_path_to_slangp)`.
-/// - `short_name` is used in the CLI (`--filter crt`) and config file (`filter=crt`).
+/// - `short_name` is used in the CLI (`--nes-filter crt`, `--gb-filter gameboy`) and config file (`nes-filter=crt`, `gb-filter=gameboy`).
 /// - `path` is relative to the working directory when neser runs.
 ///
 /// To add or remove a shader preset, edit this list only.

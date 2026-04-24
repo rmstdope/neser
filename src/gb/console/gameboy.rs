@@ -308,6 +308,10 @@ impl Emulator for GameBoy {
         SystemType::GameBoy
     }
 
+    fn allowed_shaders(&self) -> &'static [&'static str] {
+        &["none", "gameboy"]
+    }
+
     fn load_rom(&mut self, bytes: &[u8], name: &str) -> Result<(), String> {
         GameBoy::load_rom(self, bytes, name)
     }
@@ -831,6 +835,37 @@ mod tests {
             emu.get_joypad_button_states(1),
             0,
             "setting a button via port 1 must update the GB joypad"
+        );
+    }
+
+    #[test]
+    fn test_gb_allowed_shaders_includes_expected_presets() {
+        use crate::platform::emulator::Emulator;
+        let gb = make_gameboy();
+        let shaders = gb.allowed_shaders();
+        assert!(
+            shaders.contains(&"none"),
+            "GB must allow the 'none' (stock) shader"
+        );
+        assert!(
+            shaders.contains(&"gameboy"),
+            "GB must allow the 'gameboy' shader"
+        );
+        assert!(
+            !shaders.contains(&"crt"),
+            "GB must NOT allow the 'crt' shader"
+        );
+        assert!(
+            !shaders.contains(&"ntsc"),
+            "GB must NOT allow the 'ntsc' shader"
+        );
+        assert!(
+            !shaders.contains(&"pal"),
+            "GB must NOT allow the 'pal' shader"
+        );
+        assert!(
+            !shaders.contains(&"smooth"),
+            "GB must NOT allow the 'smooth' shader"
         );
     }
 }

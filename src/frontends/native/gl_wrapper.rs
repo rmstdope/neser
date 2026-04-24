@@ -39,6 +39,7 @@ impl NativeGlWrapper {
         event_loop: &winit::event_loop::ActiveEventLoop,
         app_context: SharedAppContext,
         system_type: SystemType,
+        allowed_shaders: &'static [&'static str],
     ) -> Result<Self, String> {
         let (fullscreen, vsync_enabled, shader_path, debugger_alpha, fullscreen_display, height) = {
             let ctx = app_context.borrow();
@@ -157,6 +158,7 @@ impl NativeGlWrapper {
             proc_address,
             shader_path.as_deref(),
             app_context,
+            allowed_shaders,
         )?;
         gl_backend.set_debugger_alpha(debugger_alpha);
 

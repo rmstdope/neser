@@ -17,8 +17,8 @@ pub struct ShaderManager {
 }
 
 impl ShaderManager {
-    pub fn new() -> Self {
-        let available_presets = Self::discover_presets();
+    pub fn new(allowed_names: &[&str]) -> Self {
+        let available_presets = Self::discover_presets_filtered(allowed_names);
         let current_index = Self::initial_current_index(&available_presets);
 
         ShaderManager {
@@ -97,17 +97,29 @@ impl ShaderManager {
         Ok(self.output_texture.expect("output texture must be set"))
     }
 
-    fn discover_presets() -> Vec<PathBuf> {
-        // Derived from the canonical SHADER_PRESETS list in platform::shaders.
-        // Presets that don't exist on disk (e.g. submodule not initialised)
-        // are silently skipped.
-        let mut presets: Vec<PathBuf> = SHADER_PRESETS
-            .iter()
-            .map(|(_, path)| PathBuf::from(path))
+    fn discover_presets_filtered(allowed_names: &[&str]) -> Vec<PathBuf> {
+        // Like discover_presets but restricted to names allowed for the active emulator.
+        let mut presets: Vec<PathBuf> = Self::presets_for_names(allowed_names, SHADER_PRESETS)
+            .into_iter()
             .filter(|p| p.exists())
             .collect();
         presets.sort();
         presets
+    }
+
+    /// Returns the paths from `all_presets` whose short names appear in `allowed_names`.
+    ///
+    /// This is the pure, disk-free subset of `discover_presets` used to restrict
+    /// the cycling list to the shaders relevant to the active emulator.
+    pub(crate) fn presets_for_names(
+        allowed_names: &[&str],
+        all_presets: &[(&str, &str)],
+    ) -> Vec<PathBuf> {
+        all_presets
+            .iter()
+            .filter(|(name, _)| allowed_names.contains(name))
+            .map(|(_, path)| PathBuf::from(path))
+            .collect()
     }
 
     pub fn load_preset(
@@ -321,6 +333,51 @@ mod tests {
             PathBuf::from("vendor/slang-shaders/crt/crt-lottes.slangp"),
             "first F4 from 'no shader' state should land on crt, not index {}",
             next_index
+        );
+    }
+
+    #[test]
+    fn test_presets_for_names_returns_only_allowed_presets() {
+        let all: &[(&str, &str)] = &[
+            ("none", "shaders/stock.slangp"),
+            ("crt", "vendor/slang-shaders/crt/crt-lottes.slangp"),
+            (
+                "smooth",
+                "vendor/slang-shaders/edge-smoothing/xbrz/xbrz-freescale-multipass.slangp",
+            ),
+            (
+                "ntsc",
+                "vendor/slang-shaders/ntsc/ntsc-256px-composite.slangp",
+            ),
+            (
+                "pal",
+                "vendor/slang-shaders/pal/decoupled-guest-advanced-pal 3-RF.slangp",
+            ),
+            ("gameboy", "vendor/slang-shaders/handheld/gameboy.slangp"),
+        ];
+
+        let gb_allowed = &["none", "gameboy"];
+        let gb_presets = ShaderManager::presets_for_names(gb_allowed, all);
+        assert_eq!(gb_presets.len(), 2, "GB should have exactly 2 presets");
+        assert!(gb_presets.contains(&PathBuf::from("shaders/stock.slangp")));
+        assert!(gb_presets.contains(&PathBuf::from(
+            "vendor/slang-shaders/handheld/gameboy.slangp"
+        )));
+        assert!(
+            !gb_presets
+                .iter()
+                .any(|p| p.to_str().unwrap_or("").contains("crt")),
+            "GB must not include crt"
+        );
+
+        let nes_allowed = &["none", "crt", "smooth", "ntsc", "pal"];
+        let nes_presets = ShaderManager::presets_for_names(nes_allowed, all);
+        assert_eq!(nes_presets.len(), 5, "NES should have exactly 5 presets");
+        assert!(
+            !nes_presets
+                .iter()
+                .any(|p| p.to_str().unwrap_or("").contains("gameboy")),
+            "NES must not include gameboy"
         );
     }
 }

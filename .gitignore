@@ -84,3 +84,4 @@ test-results/
 *.sym
 obj
 
+test.state
