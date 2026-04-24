@@ -12,7 +12,7 @@ use crate::frontends::native::mouse;
 use crate::frontends::native::sleep_inhibitor::SleepInhibitor;
 use crate::nes::debugging::control::DebuggerController;
 use crate::platform::app_context::SharedAppContext;
-use crate::platform::audio::EmulatorAudio;
+use crate::platform::audio::{EmulatorAudio, normalize_nes_sample};
 use crate::platform::autorun::AutorunMode;
 use crate::platform::autorun::state::AutorunState;
 use crate::platform::debugging::Tracing;
@@ -199,7 +199,7 @@ impl NativeEventLoop {
                         if let Some(ref mut audio) = *audio_cell.borrow_mut() {
                             while nes.sample_ready() {
                                 if let Some(sample) = nes.get_sample() {
-                                    audio.queue_sample(sample);
+                                    audio.queue_sample(normalize_nes_sample(sample));
                                 }
                             }
                         }

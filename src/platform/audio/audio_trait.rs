@@ -9,8 +9,14 @@ pub trait EmulatorAudio {
     /// Sends a sample to the audio callback for playback.
     /// If the buffer is full, this will block until the audio callback consumes samples.
     ///
+    /// The shared audio pipeline uses **bipolar PCM** in `[-1.0, 1.0]`.
+    /// Callers must convert any unsigned/biased source range before calling
+    /// this method.  For NES samples (`[0.0, ~1.177]`), use
+    /// `normalize_nes_sample()` first.  GB samples are already bipolar after
+    /// the APU high-pass filter.
+    ///
     /// # Arguments
-    /// * `sample` - Audio sample in range 0.0 to 1.0
+    /// * `sample` - Bipolar PCM audio sample in the range `-1.0` to `1.0`
     fn queue_sample(&mut self, sample: f32);
 
     /// Start audio playback.

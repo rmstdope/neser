@@ -96,13 +96,12 @@ pub struct DmgBus {
 impl DmgBus {
     pub fn new(cart: Box<dyn GbCartridge>, model: DmgModel) -> Self {
         let is_cgb = cart.is_cgb();
-        let boot_rom = match model.boot_variant() {
-            DmgBootVariant::Production => DMG_BOOT_ROM,
-            DmgBootVariant::Dmg0 => DMG0_BOOT_ROM,
-        };
-        let div_counter = match model.boot_variant() {
-            DmgBootVariant::Production => 5036,
-            DmgBootVariant::Dmg0 => 204,
+        // The boot ROM and initial div_counter depend on the hardware variant.
+        // Production (DMG-A/B/C) scroll-animation ROM: div_counter = 5036.
+        // DMG-0 simpler ROM: div_counter = 204 (same as real hardware).
+        let (boot_rom, div_counter) = match model.boot_variant() {
+            DmgBootVariant::Production => (DMG_BOOT_ROM, 5036),
+            DmgBootVariant::Dmg0 => (DMG0_BOOT_ROM, 204),
         };
         let mut bus = Self {
             cart,
@@ -111,8 +110,6 @@ impl DmgBus {
             hram: [0u8; 0x7F],
             // The initial div_counter compensates for the difference between
             // our custom boot ROM's cycle count and real DMG hardware timing.
-            // Production (DMG-A/B/C) scroll-animation ROM: 5036.
-            // DMG-0 simpler ROM: 204 (same as real hardware).
             timer: Timer::with_div_counter(div_counter),
             joypad: Joypad::new(),
             apu: Apu::new(is_cgb),
@@ -145,23 +142,22 @@ impl DmgBus {
     /// clears IF and IE. The cartridge is not touched by this reset, so
     /// ROM, cartridge RAM, and any mapper state are preserved.
     pub fn reset(&mut self) {
+        let apu_rate = self.apu.sample_rate();
+        let (boot_rom, div_counter) = match self.model.boot_variant() {
+            DmgBootVariant::Production => (DMG_BOOT_ROM, 5036),
+            DmgBootVariant::Dmg0 => (DMG0_BOOT_ROM, 204),
+        };
         self.ppu = Ppu::new();
         self.ppu.write_register(0xFF40, 0x00); // power-on: LCD disabled
-        let div_counter = match self.model.boot_variant() {
-            DmgBootVariant::Production => 5036,
-            DmgBootVariant::Dmg0 => 204,
-        };
         self.timer = Timer::with_div_counter(div_counter);
         self.joypad = Joypad::new();
         self.apu = Apu::new(self.cart.is_cgb());
+        self.apu.set_sample_rate(apu_rate);
         self.wram = [0u8; 0x2000];
         self.hram = [0u8; 0x7F];
         self.if_reg = 1; // VBlank flag set at power-on (real DMG hardware)
         self.ie_reg = 0;
-        self.boot_rom = match self.model.boot_variant() {
-            DmgBootVariant::Production => DMG_BOOT_ROM,
-            DmgBootVariant::Dmg0 => DMG0_BOOT_ROM,
-        };
+        self.boot_rom = boot_rom;
         self.boot_rom_active = true;
         self.sb = 0x00;
         self.sc = 0x7E;
@@ -1410,6 +1406,27 @@ mod tests {
         }
         assert!(bus.take_sample().is_some());
         assert!(!bus.sample_ready());
+    }
+
+    #[test]
+    fn test_apu_sample_rate_preserved_across_reset() {
+        // Given: sample rate set to 48 000 Hz (not the default 44 100 Hz).
+        // When: bus.reset() is called.
+        // Then: the APU still generates samples at 48 000 Hz.
+        //
+        // At 48 000 Hz: cycles_per_sample ≈ 21.8 M-cycles → sample ready after 22 ticks.
+        // At 44 100 Hz (default): cycles_per_sample ≈ 23.8 M-cycles → NOT ready after 22 ticks.
+        let mut bus = make_bus();
+        bus.set_audio_sample_rate(48_000.0);
+        bus.reset();
+        for _ in 0..22u8 {
+            bus.tick(1);
+        }
+        assert!(
+            bus.sample_ready(),
+            "sample rate must be preserved as 48 000 Hz after reset; \
+             if it reverted to 44 100 Hz, the first sample arrives after ~24 M-cycles, not 22"
+        );
     }
 
     // ── OAM DMA ──────────────────────────────────────────────────────────────
