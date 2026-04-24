@@ -31,6 +31,8 @@ pub enum KeyOutcome {
     OpenCartridgeSwitch,
     /// The user closed the cartridge-switch dialog (Escape).
     CloseCartridgeSwitch,
+    /// Toggle the FPS counter overlay (F1).
+    ToggleFps,
 }
 
 /// Handles a key-press event.
@@ -173,6 +175,7 @@ fn handle_common_hotkey(
             }
             Some(KeyOutcome::Continue)
         }
+        KeyCode::F1 => Some(KeyOutcome::ToggleFps),
         KeyCode::F4 => Some(KeyOutcome::CycleShader),
         KeyCode::F2 => {
             adjust_volume(audio, 0.1);

@@ -179,6 +179,7 @@ impl NativeGlWrapper {
         overlay_text: Option<&str>,
         overlay_blink_red: bool,
         crosshair: Option<Crosshair>,
+        fps: Option<usize>,
     ) -> DebuggerUiAction {
         self.gl_backend.render(
             console,
@@ -186,6 +187,7 @@ impl NativeGlWrapper {
             overlay_text,
             overlay_blink_red,
             crosshair,
+            fps,
         )
     }
 

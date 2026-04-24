@@ -198,6 +198,33 @@ fn project_crosshair_to_cropped_indices(
     (ix, iy)
 }
 
+fn draw_fps_counter(
+    ui: &imgui::Ui,
+    font: imgui::FontId,
+    fps: usize,
+    x0: f32,
+    y0: f32,
+    draw_w: f32,
+) {
+    let draw_list = ui.get_background_draw_list();
+    let _font = ui.push_font(font);
+    let text = format!("{fps} FPS");
+    let text_size = ui.calc_text_size(&text);
+    let padding = [6.0, 4.0];
+    let margin = 8.0;
+    let rect_w = text_size[0] + padding[0] * 2.0;
+    let rect_h = text_size[1] + padding[1] * 2.0;
+    let rect_min = [x0 + draw_w - rect_w - margin, y0 + margin];
+    let rect_max = [rect_min[0] + rect_w, rect_min[1] + rect_h];
+    let text_pos = [rect_min[0] + padding[0], rect_min[1] + padding[1]];
+    draw_list
+        .add_rect(rect_min, rect_max, [0.0, 0.0, 0.0, 0.6])
+        .filled(true)
+        .rounding(3.0)
+        .build();
+    draw_list.add_text(text_pos, [1.0, 1.0, 0.0, 1.0], &text);
+}
+
 fn draw_toasts(
     ui: &imgui::Ui,
     font: imgui::FontId,
@@ -488,6 +515,7 @@ impl GlBackend {
         overlay_text: Option<&str>,
         overlay_blink_red: bool,
         crosshair: Option<Crosshair>,
+        fps: Option<usize>,
     ) -> debugger_ui::DebuggerUiAction {
         let mut action = debugger_ui::DebuggerUiAction::default();
 
@@ -652,6 +680,10 @@ impl GlBackend {
                     v_overscan,
                 };
                 draw_crosshair(ui, crosshair, &draw_ctx);
+            }
+
+            if let Some(fps_value) = fps {
+                draw_fps_counter(ui, self.overlay_font, fps_value, x0, y0, draw_w);
             }
 
             if !visible_toasts.is_empty() {

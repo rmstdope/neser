@@ -66,6 +66,8 @@ pub struct NativeEventLoop {
     /// OS-triggered redraws arriving faster than our WaitUntil deadline
     /// (e.g. macOS ProMotion delivering RedrawRequested at 120 Hz).
     last_frame_rendered: Instant,
+    /// Ring buffer of recent frame timestamps for FPS calculation.
+    frame_timestamps: std::collections::VecDeque<Instant>,
 }
 
 impl NativeEventLoop {
@@ -139,6 +141,7 @@ impl NativeEventLoop {
             vsync_enabled,
             next_frame_deadline: Instant::now(),
             last_frame_rendered: Instant::now(),
+            frame_timestamps: std::collections::VecDeque::new(),
         }
     }
 
@@ -773,6 +776,9 @@ impl ApplicationHandler for NativeEventLoop {
                                 let _ = gl.set_fullscreen(self.state.fullscreen);
                             }
                         }
+                        KeyOutcome::ToggleFps => {
+                            self.state.show_fps = !self.state.show_fps;
+                        }
                     }
                 } else {
                     keyboard::handle_key_released(
@@ -909,6 +915,14 @@ impl ApplicationHandler for NativeEventLoop {
                     // Run one frame of emulation
                     self.run_frame();
                     self.last_frame_rendered = Instant::now();
+                    // Record timestamp for FPS counter (only real emulation frames).
+                    self.frame_timestamps.push_back(self.last_frame_rendered);
+                    let window = std::time::Duration::from_secs(1);
+                    while self.frame_timestamps.front().map_or(false, |t| {
+                        self.last_frame_rendered.saturating_duration_since(*t) > window
+                    }) {
+                        self.frame_timestamps.pop_front();
+                    }
                 }
 
                 // If autorun signalled exit during this frame, exit now.
@@ -928,12 +942,16 @@ impl ApplicationHandler for NativeEventLoop {
                     let overlay = self
                         .state
                         .overlay_text(&self.console, self.autorun_state.as_ref());
+
+                    let fps = self.frame_timestamps.len();
+
                     gl.render(
                         &self.console,
                         self.state.debugger_open,
                         overlay.as_deref(),
                         false,
                         crosshair,
+                        if self.state.show_fps { Some(fps) } else { None },
                     )
                 } else {
                     Default::default()

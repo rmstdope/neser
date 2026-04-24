@@ -179,6 +179,9 @@ pub struct NativeAppState {
     /// Whether the debugger overlay is open.
     pub debugger_open: bool,
 
+    /// Whether the FPS counter is visible.
+    pub show_fps: bool,
+
     /// Whether the help overlay is currently visible.
     pub help_overlay_visible: bool,
 
