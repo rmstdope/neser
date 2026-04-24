@@ -32,6 +32,9 @@ use channel4::Channel4;
 /// DMG clock rate in M-cycles per second (4 194 304 Hz / 4).
 const DMG_MCYCLES_PER_SEC: f32 = 1_048_576.0;
 
+/// Cutoff frequency for the GB APU AC-coupling high-pass filter (~7 Hz removes DC bias).
+const HP_CUTOFF_HZ: f32 = 7.0;
+
 /// M-cycles between Frame Sequencer steps (512 Hz → 1 step per 2 048 M-cycles).
 const FS_MCYCLES_PER_STEP: u16 = 2048;
 
@@ -134,9 +137,7 @@ impl Apu {
     /// bias while leaving all audible content intact.
     /// Formula: α = f_s / (f_s + 2π·f_c)
     fn compute_hp_rc(sample_rate: f32) -> f32 {
-        use std::f32::consts::PI;
-        const HP_CUTOFF_HZ: f32 = 7.0;
-        sample_rate / (sample_rate + 2.0 * PI * HP_CUTOFF_HZ)
+        sample_rate / (sample_rate + 2.0 * std::f32::consts::PI * HP_CUTOFF_HZ)
     }
 
     /// Default HP filter coefficient (44.1 kHz baseline), used by serde when

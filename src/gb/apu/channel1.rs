@@ -98,14 +98,14 @@ impl Channel1 {
 
     /// Advance the frequency timer by one M-cycle (= 4 T-cycles).
     pub fn tick(&mut self) {
+        let period = (2048 - self.freq) * 4;
         if self.freq_timer == 0 {
-            // Reload: (2048 - freq) * 4 T-cycles; we count in T-cycles here
-            self.freq_timer = (2048 - self.freq) * 4;
+            self.freq_timer = period;
         }
         if self.freq_timer > 4 {
             self.freq_timer -= 4;
         } else {
-            self.freq_timer = (2048 - self.freq) * 4;
+            self.freq_timer = period;
             if self.triggered_once {
                 self.duty_pos = (self.duty_pos + 1) & 7;
             }

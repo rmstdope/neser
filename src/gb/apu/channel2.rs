@@ -74,13 +74,14 @@ impl Channel2 {
     }
 
     pub fn tick(&mut self) {
+        let period = (2048 - self.freq) * 4;
         if self.freq_timer == 0 {
-            self.freq_timer = (2048 - self.freq) * 4;
+            self.freq_timer = period;
         }
         if self.freq_timer > 4 {
             self.freq_timer -= 4;
         } else {
-            self.freq_timer = (2048 - self.freq) * 4;
+            self.freq_timer = period;
             if self.triggered_once {
                 self.duty_pos = (self.duty_pos + 1) & 7;
             }
