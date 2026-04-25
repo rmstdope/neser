@@ -309,7 +309,7 @@ impl Emulator for GameBoy {
     }
 
     fn allowed_shaders(&self) -> &'static [&'static str] {
-        &["none", "gameboy"]
+        &["none", "dmg"]
     }
 
     fn load_rom(&mut self, bytes: &[u8], name: &str) -> Result<(), String> {
@@ -847,10 +847,7 @@ mod tests {
             shaders.contains(&"none"),
             "GB must allow the 'none' (stock) shader"
         );
-        assert!(
-            shaders.contains(&"gameboy"),
-            "GB must allow the 'gameboy' shader"
-        );
+        assert!(shaders.contains(&"dmg"), "GB must allow the 'dmg' shader");
         assert!(
             !shaders.contains(&"crt"),
             "GB must NOT allow the 'crt' shader"

@@ -1041,10 +1041,8 @@ impl Config {
 
         // GB shader path
         if let Some(filter_name) = Self::parse_named_arg(args, "--gb-filter") {
-            self.frontend.shader_path = Some(Self::map_filter_name_for(
-                &filter_name,
-                &["none", "gameboy"],
-            )?);
+            self.frontend.shader_path =
+                Some(Self::map_filter_name_for(&filter_name, &["none", "dmg"])?);
         }
 
         if let Some(path) = Self::parse_rom_arg(args)? {
@@ -1565,8 +1563,8 @@ impl Config {
     /// # Shader/filter
     /// # NES valid values: crt, ntsc, smooth, pal, none
     /// nes-filter=crt
-    /// # GB valid values: gameboy, none
-    /// gb-filter=gameboy
+    /// # GB valid values: dmg, none
+    /// gb-filter=dmg
     ///
     /// # APU channel toggles
     /// pulse1=true
@@ -1679,7 +1677,7 @@ impl Config {
             "gb-filter" => {
                 if !value.is_empty() {
                     self.frontend.shader_path =
-                        Some(Self::map_filter_name_for(value, &["none", "gameboy"])?);
+                        Some(Self::map_filter_name_for(value, &["none", "dmg"])?);
                 }
             }
             "debugger" => {
@@ -6217,17 +6215,17 @@ nes-filter=invalid-shader
     }
 
     #[test]
-    fn test_config_cmdline_nes_filter_rejects_gameboy_shader() {
+    fn test_config_cmdline_nes_filter_rejects_dmg_shader() {
         let args = vec![
             "neser".to_string(),
             "--nes-filter".to_string(),
-            "gameboy".to_string(),
+            "dmg".to_string(),
         ];
         let result = config_new(args);
         assert!(result.is_err());
         let msg = result.unwrap_err();
         assert!(
-            msg.contains("gameboy"),
+            msg.contains("dmg"),
             "Error should mention the invalid value: {msg}"
         );
     }
@@ -6252,11 +6250,11 @@ nes-filter=invalid-shader
     // --gb-filter CLI flag tests
 
     #[test]
-    fn test_config_cmdline_gb_filter_gameboy_sets_shader_path() {
+    fn test_config_cmdline_gb_filter_dmg_sets_shader_path() {
         let args = vec![
             "neser".to_string(),
             "--gb-filter".to_string(),
-            "gameboy".to_string(),
+            "dmg".to_string(),
         ];
         let config = parse_config(args);
         assert_eq!(
@@ -6308,13 +6306,13 @@ nes-filter=invalid-shader
     }
 
     #[test]
-    fn test_config_file_nes_filter_rejects_gameboy_shader() {
+    fn test_config_file_nes_filter_rejects_dmg_shader() {
         let mut config = Config::default();
-        let result = config.apply_config_value("nes-filter", "gameboy");
+        let result = config.apply_config_value("nes-filter", "dmg");
         assert!(result.is_err());
         let msg = result.unwrap_err();
         assert!(
-            msg.contains("gameboy"),
+            msg.contains("dmg"),
             "Error should mention the invalid value: {msg}"
         );
     }
@@ -6329,9 +6327,9 @@ nes-filter=invalid-shader
     // gb-filter= config file key tests
 
     #[test]
-    fn test_config_file_gb_filter_gameboy_sets_shader_path() {
+    fn test_config_file_gb_filter_dmg_sets_shader_path() {
         let mut config = Config::default();
-        config.apply_config_value("gb-filter", "gameboy").unwrap();
+        config.apply_config_value("gb-filter", "dmg").unwrap();
         assert_eq!(
             config.frontend.shader_path,
             Some("vendor/slang-shaders/handheld/gameboy.slangp".to_string())

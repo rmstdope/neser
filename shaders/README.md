@@ -32,7 +32,7 @@ neser rom.nes --nes-filter crt     # CRT simulation
 neser rom.nes --nes-filter ntsc    # NTSC composite
 neser rom.nes --nes-filter smooth  # Smooth upscaling
 neser rom.nes --nes-filter none    # No filter
-neser rom.gb  --gb-filter gameboy  # DMG dot-matrix LCD
+neser rom.gb  --gb-filter dmg  # DMG dot-matrix LCD
 ```
 
 Or set in config file:

@@ -12,7 +12,7 @@ use crate::platform::config::CliFlag;
 pub(crate) const GB_CLI_FLAGS: &[CliFlag] = &[
     CliFlag {
         flag: "--gb-filter",
-        help: Some("Game Boy shader filter: gameboy or none"),
+        help: Some("Game Boy shader filter: dmg or none"),
         has_value: true,
     },
     CliFlag {

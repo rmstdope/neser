@@ -97,10 +97,10 @@ display=0
 
 # Shader/filter preset (Game Boy).
 # Valid values:
-#   - gameboy : DMG dot-matrix green-tint LCD simulation
+#   - dmg    : DMG dot-matrix green-tint LCD simulation
 #   - none    : No filter, raw pixels
 # Leave empty or comment out for no shader.
-#gb-filter=gameboy
+#gb-filter=dmg
 
 # -----------------------------------------------------------------------------
 # Input Settings

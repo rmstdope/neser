@@ -285,7 +285,7 @@ Space: Pause\n\
 Ctrl+F: Toggle fullscreen\n\
 Ctrl+O: Switch cartridge\n\
 F2/F3: Volume up/down\n\
-F4: Cycle shader\n\
+F4: Cycle visual filter\n\
 F5: Debugger (open/continue)\n\
 F10/F11: Step over/into\n\
 F6/F7: Save/Load state";

@@ -3038,8 +3038,8 @@ mod tests {
         );
         assert!(shaders.contains(&"pal"), "NES must allow the 'pal' shader");
         assert!(
-            !shaders.contains(&"gameboy"),
-            "NES must NOT allow the 'gameboy' shader"
+            !shaders.contains(&"dmg"),
+            "NES must NOT allow the 'dmg' shader"
         );
     }
 }

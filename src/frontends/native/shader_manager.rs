@@ -353,10 +353,10 @@ mod tests {
                 "pal",
                 "vendor/slang-shaders/pal/decoupled-guest-advanced-pal 3-RF.slangp",
             ),
-            ("gameboy", "vendor/slang-shaders/handheld/gameboy.slangp"),
+            ("dmg", "vendor/slang-shaders/handheld/gameboy.slangp"),
         ];
 
-        let gb_allowed = &["none", "gameboy"];
+        let gb_allowed = &["none", "dmg"];
         let gb_presets = ShaderManager::presets_for_names(gb_allowed, all);
         assert_eq!(gb_presets.len(), 2, "GB should have exactly 2 presets");
         assert!(gb_presets.contains(&PathBuf::from("shaders/stock.slangp")));
@@ -377,7 +377,7 @@ mod tests {
             !nes_presets
                 .iter()
                 .any(|p| p.to_str().unwrap_or("").contains("gameboy")),
-            "NES must not include gameboy"
+            "NES must not include dmg"
         );
     }
 }
