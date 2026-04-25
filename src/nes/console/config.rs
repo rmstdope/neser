@@ -8,15 +8,9 @@
 
 use crate::nes::console::TimingMode;
 use crate::nes::input::ControllerType;
-use crate::platform::autorun::AutorunFormat;
-use crate::platform::autorun::AutorunMode;
 use crate::platform::config::CliFlag;
 use crate::platform::config::ParseResult;
-use crate::platform::config::RamInitMode;
-use crate::platform::config::{
-    OPTIONAL_BOOL_FLAGS, has_negation_flag, parse_bool, parse_bool_arg, parse_breakpoint_list,
-    parse_f32_arg, parse_hex_u8, parse_i64_arg, parse_search_paths, parse_u32_arg,
-};
+use crate::platform::config::{OPTIONAL_BOOL_FLAGS, parse_bool, parse_hex_u8};
 use crate::platform::shaders::SHADER_PRESETS;
 use bitflags::bitflags;
 use std::fmt::Write as _;
@@ -1544,44 +1538,6 @@ impl Config {
         parts.join(" | ")
     }
 
-    fn apply_cartridge_catalog_args(&mut self, args: &[String]) -> Result<(), String> {
-        if let Some(paths) = Self::parse_string_arg(args, "--cartridge-search-paths") {
-            self.frontend.cartridge_search_paths = parse_search_paths(&paths);
-        }
-
-        if let Some(scan) = parse_bool_arg(args, "--scan-cartridges")? {
-            self.frontend.scan_cartridges = scan;
-        }
-        if has_negation_flag(args, &["--no-scan-cartridges"]) {
-            self.frontend.scan_cartridges = false;
-        }
-
-        if args.iter().any(|arg| arg == "--rebuild-cartridge-catalog") {
-            self.frontend.rebuild_cartridge_catalog = true;
-        }
-
-        Ok(())
-    }
-
-    fn apply_cartridge_catalog_config_value(&mut self, key: &str, value: &str) {
-        match key {
-            "cartridge_search_paths" => {
-                self.frontend.cartridge_search_paths = parse_search_paths(value);
-            }
-            "scan_cartridges" => {
-                if let Ok(scan) = parse_bool(value) {
-                    self.frontend.scan_cartridges = scan;
-                }
-            }
-            "rebuild_cartridge_catalog" => {
-                if let Ok(rebuild) = parse_bool(value) {
-                    self.frontend.rebuild_cartridge_catalog = rebuild;
-                }
-            }
-            _ => {}
-        }
-    }
-
     fn validate_controller_ports(&self) -> Result<(), String> {
         if self.nes.hardware_mode == HardwareMode::Famicom
             && (self.nes.controller_port1_explicit || self.nes.controller_port2_explicit)
@@ -1623,6 +1579,8 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::platform::autorun::{AutorunFormat, AutorunMode};
+    use crate::platform::config::RamInitMode;
 
     fn config_new(mut args: Vec<String>) -> Result<ParseResult, String> {
         use std::io::Write;
