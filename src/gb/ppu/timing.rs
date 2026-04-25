@@ -84,6 +84,11 @@ pub struct Timing {
     /// For scanlines 144+ (VBlank) and the frame wrap (153→0), LY increments at the
     /// physical dot-456 boundary instead (no early Mode 2 fire during VBlank).
     ly: u8,
+    /// Total number of completed frames since emulation started.
+    ///
+    /// Increments when LY wraps from 153 to 0 (frame boundary).
+    /// Used for CPU tracing and debugging to correlate events with frame numbers.
+    frame_count: u64,
 }
 
 /// Events returned by a single dot tick.
@@ -127,6 +132,7 @@ impl Timing {
             mode_for_irq: -1,
             mode3_extra_dots: 0,
             ly: 0,
+            frame_count: 0,
         }
     }
 
@@ -145,6 +151,7 @@ impl Timing {
                 self.frame_ready = true;
                 events.new_frame = true;
                 self.mode3_extra_dots = 0;
+                self.frame_count += 1;
             }
             // For VBlank scans (144+) and the frame wrap (153→0), LY increments
             // at the physical dot boundary (no early MODE2_IRQ_DOT increment).
@@ -406,6 +413,14 @@ impl Timing {
 
     pub fn clear_frame_ready(&mut self) {
         self.frame_ready = false;
+    }
+
+    /// Returns the total number of completed frames since emulation started.
+    ///
+    /// This counter increments when LY wraps from 153 to 0 (frame boundary).
+    /// Used for CPU tracing and debugging to correlate events with frame numbers.
+    pub fn frame_count(&self) -> u64 {
+        self.frame_count
     }
 
     /// Returns the mode whose STAT IRQ source is currently active.
@@ -930,5 +945,45 @@ mod tests {
             "scan1 dot=0 physical mode is HBlank"
         );
         assert!(timing.is_oam_blocked(), "scan1 dot=0: OAM must be blocked");
+    }
+
+    #[test]
+    fn test_frame_count_starts_at_zero() {
+        // Given: a freshly created Timing
+        let timing = Timing::new();
+        // Then: frame count should start at 0
+        assert_eq!(timing.frame_count(), 0, "frame_count should start at 0");
+    }
+
+    #[test]
+    fn test_frame_count_increments_on_frame_completion() {
+        // Given: a freshly created Timing (frame_count = 0)
+        let mut timing = Timing::new();
+        assert_eq!(timing.frame_count(), 0);
+
+        // When: complete one full frame (70224 dots total)
+        // Frame structure: scan 0 (452 dots) + scans 1-153 (153 × 456 dots)
+        // = 452 + 69768 = 70220 dots... but scan 0 starts at dot 4, so we tick 70224 - 4 = 70220 dots
+        let frame_dots = 452 + (153 * 456);
+        tick_n(&mut timing, frame_dots, 0xFF);
+
+        // Then: frame_count increments to 1 when LY wraps from 153 to 0
+        assert_eq!(timing.ly(), 0, "LY should wrap to 0 after completing frame");
+        assert_eq!(
+            timing.frame_count(),
+            1,
+            "frame_count should increment to 1 after completing one frame"
+        );
+
+        // When: complete another frame
+        tick_n(&mut timing, 154 * 456, 0xFF); // Normal frame is 154 scanlines × 456 dots
+
+        // Then: frame_count increments to 2
+        assert_eq!(timing.ly(), 0, "LY should wrap to 0 again");
+        assert_eq!(
+            timing.frame_count(),
+            2,
+            "frame_count should increment to 2 after completing two frames"
+        );
     }
 }
