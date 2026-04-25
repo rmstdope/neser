@@ -22,7 +22,6 @@ safe-outputs:
     title-prefix: "[bug-of-the-day] "
     labels: [bug, automation]
     reviewers: [copilot]
-    expires: 1d
 
 network:
   allowed:
