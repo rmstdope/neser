@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 
 use crate::gb::bus::GbBus;
-use crate::gb::debugging::disasm;
 use crate::trace_cpu;
 
 // ---------------------------------------------------------------------------
@@ -203,12 +202,7 @@ impl<B: GbBus> Sm83<B> {
     /// Used for internal CPU cycles that do not correspond to a memory access
     /// (e.g. the extra cycle consumed by taken conditional branches, PUSH, etc.).
     fn internal_cycle(&mut self) {
-        {
-            use crate::platform::debugging::cpu_trace_level;
-            if cpu_trace_level() >= 2 {
-                trace_cpu!(2; "      internal");
-            }
-        }
+        trace_cpu!(2; "      internal");
         self.cycles += 1;
         self.bus.tick(1);
     }
@@ -224,12 +218,7 @@ impl<B: GbBus> Sm83<B> {
         self.cycles += 1;
         self.bus.tick(1);
         let val = self.bus.read(addr);
-        {
-            use crate::platform::debugging::cpu_trace_level;
-            if cpu_trace_level() >= 2 {
-                trace_cpu!(2; "      read  ${:04X} = ${:02X}", addr, val);
-            }
-        }
+        trace_cpu!(2; "      read  ${:04X} = ${:02X}", addr, val);
         val
     }
 
@@ -241,12 +230,7 @@ impl<B: GbBus> Sm83<B> {
         self.cycles += 1;
         self.bus.tick(1);
         self.bus.write(addr, val);
-        {
-            use crate::platform::debugging::cpu_trace_level;
-            if cpu_trace_level() >= 2 {
-                trace_cpu!(2; "      write ${:04X} = ${:02X}", addr, val);
-            }
-        }
+        trace_cpu!(2; "      write ${:04X} = ${:02X}", addr, val);
     }
 
     /// Fetch the next byte at PC and increment PC.
@@ -610,12 +594,7 @@ impl<B: GbBus> Sm83<B> {
             // Dispatch cancelled: the IE overwrite (via hi-byte push to $FFFF)
             // cleared all pending interrupts.  Jump to $0000; IF is NOT cleared.
             self.regs.pc = 0x0000;
-            {
-                use crate::platform::debugging::cpu_trace_level;
-                if cpu_trace_level() >= 1 {
-                    trace_cpu!(1; "INT cancelled -> PC=$0000");
-                }
-            }
+            trace_cpu!(1; "INT cancelled -> PC=$0000");
         } else {
             let bit = interrupt_queue.trailing_zeros() as u8;
             // Clear the IF bit for the dispatched interrupt (may differ from the
@@ -623,20 +602,15 @@ impl<B: GbBus> Sm83<B> {
             let new_if = self.bus.read(0xFF0F) & !(1 << bit);
             self.bus.write(0xFF0F, new_if);
             self.regs.pc = 0x0040 + (bit as u16) * 8;
-            {
-                use crate::platform::debugging::cpu_trace_level;
-                if cpu_trace_level() >= 1 {
-                    let interrupt_name = match bit {
-                        0 => "VBlank",
-                        1 => "LCD STAT",
-                        2 => "Timer",
-                        3 => "Serial",
-                        4 => "Joypad",
-                        _ => "Unknown",
-                    };
-                    trace_cpu!(1; "INT {} -> PC=${:04X}", interrupt_name, self.regs.pc);
-                }
-            }
+            let interrupt_name = match bit {
+                0 => "VBlank",
+                1 => "LCD STAT",
+                2 => "Timer",
+                3 => "Serial",
+                4 => "Joypad",
+                _ => "Unknown",
+            };
+            trace_cpu!(1; "INT {} -> PC=${:04X}", interrupt_name, self.regs.pc);
         }
 
         true
@@ -704,46 +678,27 @@ impl<B: GbBus> Sm83<B> {
             let opcode = self.fetch_byte_no_tick();
 
             // Level 1 CPU tracing: emit instruction execution trace
-            {
-                use crate::platform::debugging::cpu_trace_level;
-                if cpu_trace_level() >= 1 {
-                    // Collect instruction bytes for disassembly
-                    let mut bytes = vec![opcode];
+            // NOTE: We only trace the opcode byte to avoid speculative bus reads
+            // that could have side effects (e.g., OAM corruption during Mode 2).
+            // Operands are not resolved to keep the trace simple and side-effect-free.
+            use crate::platform::debugging::cpu_trace_level;
+            if cpu_trace_level() >= 1 {
+                let hex = format!("{:02X}", opcode);
+                let asm = if opcode == 0xCB {
+                    // For CB prefix, we can't safely read the operand without side effects,
+                    // so just show the prefix mnemonic
+                    "CB prefix".to_string()
+                } else {
+                    // For regular instructions, show the mnemonic template (e.g., "LD A,n8")
+                    crate::gb::cpu::opcode::lookup(opcode).mnemonic.to_string()
+                };
 
-                    // Determine how many operand bytes to collect based on opcode
-                    // This is a simplified approach - we peek at memory without advancing PC
-                    let operand_bytes = if opcode == 0xCB {
-                        // CB prefix: next byte is the actual opcode
-                        bytes.push(self.bus.read(self.regs.pc));
-                        0 // No additional operands needed (already collected the CB operand)
-                    } else {
-                        // Use opcode metadata to determine instruction length
-                        let meta = crate::gb::cpu::opcode::lookup(opcode);
-                        // Instructions with n16 have 2 operand bytes, n8/e8 have 1
-                        if meta.mnemonic.contains("n16") {
-                            2
-                        } else if meta.mnemonic.contains("n8") || meta.mnemonic.contains("e8") {
-                            1
-                        } else {
-                            0
-                        }
-                    };
-
-                    // Collect operand bytes by peeking ahead in memory
-                    for i in 0..operand_bytes {
-                        bytes.push(self.bus.read(self.regs.pc.wrapping_add(i)));
-                    }
-
-                    let asm = disasm::format_instruction(opcode, pc, &bytes);
-                    let hex = disasm::format_disasm_bytes(&bytes);
-
-                    trace_cpu!(1;
-                        "exec PC={:04X} {:<8} {:<14} AF={:04X} BC={:04X} DE={:04X} HL={:04X} SP={:04X} cyc={:<3}",
-                        pc, hex, asm,
-                        self.regs.af(), self.regs.bc(), self.regs.de(), self.regs.hl(), self.regs.sp,
-                        self.cycles
-                    );
-                }
+                trace_cpu!(1;
+                    "exec PC={:04X} {:<8} {:<14} AF={:04X} BC={:04X} DE={:04X} HL={:04X} SP={:04X} cyc={:<3}",
+                    pc, hex.as_str(), asm.as_str(),
+                    self.regs.af(), self.regs.bc(), self.regs.de(), self.regs.hl(), self.regs.sp,
+                    self.cycles
+                );
             }
 
             self.decode_execute(opcode);
