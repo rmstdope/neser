@@ -403,6 +403,130 @@ impl Default for NesConfig {
     }
 }
 
+impl NesConfig {
+    /// Apply command-line arguments to NES configuration.
+    ///
+    /// Parses NES-specific CLI flags (hardware, controllers, expansion,  4-score, APU channels, zapper, OAM, overscan).
+    pub(crate) fn apply_args(&mut self, args: &[String]) -> Result<(), String> {
+        use crate::platform::config::{has_negation_flag, parse_bool_arg, parse_u32_arg};
+
+        // OAM DRAM decay: --nes-oam-dram-decay true/false
+        if let Some(oam_dram_decay) = parse_bool_arg(args, "--nes-oam-dram-decay")? {
+            self.oam_dram_decay_enabled = oam_dram_decay;
+        }
+
+        // Four Score: --nes-enable-4-score true/false, --no-nes-4-score, --disable-nes-4-score
+        if let Some(four_score) = parse_bool_arg(args, "--nes-enable-4-score")? {
+            self.four_score_enabled = four_score;
+            self.four_score_enabled_explicit = true;
+        }
+        if has_negation_flag(args, &["--no-nes-4-score", "--disable-nes-4-score"]) {
+            self.four_score_enabled = false;
+            self.four_score_enabled_explicit = true;
+        }
+
+        // APU channel enable/disable flags (support both value-based and prefix negation)
+        // Pulse1: --nes-pulse1 true/false, --no-nes-pulse1, --disable-nes-pulse1
+        if let Some(pulse1) = parse_bool_arg(args, "--nes-pulse1")? {
+            if pulse1 {
+                self.apu_channels.insert(ApuChannels::PULSE1);
+            } else {
+                self.apu_channels.remove(ApuChannels::PULSE1);
+            }
+        }
+        if has_negation_flag(args, &["--no-nes-pulse1", "--disable-nes-pulse1"]) {
+            self.apu_channels.remove(ApuChannels::PULSE1);
+        }
+
+        // Pulse2: --nes-pulse2 true/false, --no-nes-pulse2, --disable-nes-pulse2
+        if let Some(pulse2) = parse_bool_arg(args, "--nes-pulse2")? {
+            if pulse2 {
+                self.apu_channels.insert(ApuChannels::PULSE2);
+            } else {
+                self.apu_channels.remove(ApuChannels::PULSE2);
+            }
+        }
+        if has_negation_flag(args, &["--no-nes-pulse2", "--disable-nes-pulse2"]) {
+            self.apu_channels.remove(ApuChannels::PULSE2);
+        }
+
+        // Triangle: --nes-triangle true/false, --no-nes-triangle, --disable-nes-triangle
+        if let Some(triangle) = parse_bool_arg(args, "--nes-triangle")? {
+            if triangle {
+                self.apu_channels.insert(ApuChannels::TRIANGLE);
+            } else {
+                self.apu_channels.remove(ApuChannels::TRIANGLE);
+            }
+        }
+        if has_negation_flag(args, &["--no-nes-triangle", "--disable-nes-triangle"]) {
+            self.apu_channels.remove(ApuChannels::TRIANGLE);
+        }
+
+        // Noise: --nes-noise true/false, --no-nes-noise, --disable-nes-noise
+        if let Some(noise) = parse_bool_arg(args, "--nes-noise")? {
+            if noise {
+                self.apu_channels.insert(ApuChannels::NOISE);
+            } else {
+                self.apu_channels.remove(ApuChannels::NOISE);
+            }
+        }
+        if has_negation_flag(args, &["--no-nes-noise", "--disable-nes-noise"]) {
+            self.apu_channels.remove(ApuChannels::NOISE);
+        }
+
+        // DMC: --nes-dmc true/false, --no-nes-dmc, --disable-nes-dmc
+        if let Some(dmc) = parse_bool_arg(args, "--nes-dmc")? {
+            if dmc {
+                self.apu_channels.insert(ApuChannels::DMC);
+            } else {
+                self.apu_channels.remove(ApuChannels::DMC);
+            }
+        }
+        if has_negation_flag(args, &["--no-nes-dmc", "--disable-nes-dmc"]) {
+            self.apu_channels.remove(ApuChannels::DMC);
+        }
+
+        // Zapper detection size
+        if let Some(size) = parse_u32_arg(args, "--nes-zapper-detection-size")? {
+            let size_u8 = u8::try_from(size).map_err(|_| {
+                format!(
+                    "Invalid --nes-zapper-detection-size value: {} (must be between 0 and 255)",
+                    size
+                )
+            })?;
+            self.zapper_detection_size = size_u8;
+
+            if size_u8 > 10 {
+                eprintln!(
+                    "Warning: --nes-zapper-detection-size={} may cause performance issues. \
+                     Large values sample (2*size + 1)^2 = {} pixels per controller read. \
+                     Consider values <= 10 for better performance.",
+                    size_u8,
+                    (2 * size_u8 as u32 + 1).pow(2)
+                );
+            }
+        }
+
+        // Overscan
+        if let Some(v) = parse_u32_arg(args, "--nes-horizontal-overscan")? {
+            self.horizontal_overscan = (v as u8).min(8);
+        }
+        if let Some(v) = parse_u32_arg(args, "--nes-vertical-overscan")? {
+            self.vertical_overscan = (v as u8).min(16);
+        }
+
+        Ok(())
+    }
+
+    /// Apply a single config file key-value pair to NES configuration.
+    ///
+    /// Handles NES-specific config keys (nes_hardware, nes_controller_port1, etc.).
+    pub(crate) fn apply_config_value(&mut self, _key: &str, _value: &str) -> Result<(), String> {
+        // TODO: Move NES config parsing here
+        Ok(())
+    }
+}
+
 use crate::platform::config::Config;
 
 bitflags! {
@@ -746,6 +870,11 @@ impl Config {
     /// Apply command-line arguments to the config.
     /// Arguments override any values set by defaults or config file.
     fn apply_args(&mut self, args: &[String]) -> Result<(), String> {
+        // Delegate to sub-config apply_args() methods
+        self.frontend.apply_args(args)?;
+        self.nes.apply_args(args)?;
+
+        // Parse hardware mode (TODO: move to NesConfig in task 8)
         if let Some((hardware_mode, hardware_model)) = Self::parse_hardware_arg(args)? {
             self.nes.hardware_mode = hardware_mode;
             self.nes.hardware_mode_explicit = true;
@@ -753,163 +882,13 @@ impl Config {
             self.nes.hardware_model_explicit = true;
         }
 
+        // Parse expansion port (TODO: move to NesConfig in task 8)
         if let Some(expansion_port) = Self::parse_expansion_port_arg(args)? {
             self.nes.expansion_port = expansion_port;
             self.nes.expansion_port_explicit = true;
         }
 
-        // OAM DRAM decay: --nes-oam-dram-decay true/false
-        if let Some(oam_dram_decay) = parse_bool_arg(args, "--nes-oam-dram-decay")? {
-            self.nes.oam_dram_decay_enabled = oam_dram_decay;
-        }
-
-        // Boolean flags (support both value-based and prefix negation)
-        // Audio: --audio true/false, --no-audio, --disable-audio
-        if let Some(audio) = parse_bool_arg(args, "--audio")? {
-            self.frontend.audio_enabled = audio;
-        }
-        if has_negation_flag(args, &["--no-audio", "--disable-audio"]) {
-            self.frontend.audio_enabled = false;
-        }
-
-        // VSync: --vsync true/false, --no-vsync, --disable-vsync
-        if let Some(vsync) = parse_bool_arg(args, "--vsync")? {
-            self.frontend.vsync_enabled = vsync;
-        }
-        if has_negation_flag(args, &["--no-vsync", "--disable-vsync"]) {
-            self.frontend.vsync_enabled = false;
-        }
-
-        // Gamepads: --gamepads true/false
-        if let Some(gamepads) = parse_bool_arg(args, "--gamepads")? {
-            self.frontend.gamepads_enabled = gamepads;
-        }
-
-        // Four Score: --nes-enable-4-score true/false, --no-nes-4-score, --disable-nes-4-score
-        if let Some(four_score) = parse_bool_arg(args, "--nes-enable-4-score")? {
-            self.nes.four_score_enabled = four_score;
-            self.nes.four_score_enabled_explicit = true;
-        }
-        if has_negation_flag(args, &["--no-nes-4-score", "--disable-nes-4-score"]) {
-            self.nes.four_score_enabled = false;
-            self.nes.four_score_enabled_explicit = true;
-        }
-
-        // Debugger: --debugger true/false
-        if let Some(debugger) = parse_bool_arg(args, "--debugger")? {
-            self.frontend.debugger_enabled = debugger;
-        }
-
-        // Load state: --load-state true/false
-        if let Some(load_state) = parse_bool_arg(args, "--load-state")? {
-            self.frontend.load_state = load_state;
-        }
-
-        // Fullscreen (value-based)
-        if let Some(fullscreen) = parse_bool_arg(args, "--fullscreen")? {
-            self.frontend.fullscreen = fullscreen;
-        }
-
-        // Display argument (only applies if fullscreen is set)
-        if self.frontend.fullscreen
-            && let Some(display) = Self::parse_display_arg(args)?
-        {
-            self.frontend.fullscreen_display = Some(display);
-        }
-
-        // NES shader path
-        if let Some(filter_name) = Self::parse_named_arg(args, "--nes-filter") {
-            self.frontend.shader_path = Some(Self::map_filter_name_for(
-                &filter_name,
-                &["none", "crt", "smooth", "ntsc", "pal"],
-            )?);
-        }
-
-        // GB shader path
-        if let Some(filter_name) = Self::parse_named_arg(args, "--gb-filter") {
-            self.frontend.shader_path =
-                Some(Self::map_filter_name_for(&filter_name, &["none", "dmg"])?);
-        }
-
-        if let Some(path) = Self::parse_rom_arg(args)? {
-            self.frontend.rom_path = Some(path);
-        }
-
-        // Tracing (merge with existing config file values)
-        self.frontend.tracing.apply_args(args);
-
-        // APU channel enable/disable flags (support both value-based and prefix negation)
-        // Pulse1: --nes-pulse1 true/false, --no-nes-pulse1, --disable-nes-pulse1
-        if let Some(pulse1) = parse_bool_arg(args, "--nes-pulse1")? {
-            if pulse1 {
-                self.nes.apu_channels.insert(ApuChannels::PULSE1);
-            } else {
-                self.nes.apu_channels.remove(ApuChannels::PULSE1);
-            }
-        }
-        if has_negation_flag(args, &["--no-nes-pulse1", "--disable-nes-pulse1"]) {
-            self.nes.apu_channels.remove(ApuChannels::PULSE1);
-        }
-
-        // Pulse2: --nes-pulse2 true/false, --no-nes-pulse2, --disable-nes-pulse2
-        if let Some(pulse2) = parse_bool_arg(args, "--nes-pulse2")? {
-            if pulse2 {
-                self.nes.apu_channels.insert(ApuChannels::PULSE2);
-            } else {
-                self.nes.apu_channels.remove(ApuChannels::PULSE2);
-            }
-        }
-        if has_negation_flag(args, &["--no-nes-pulse2", "--disable-nes-pulse2"]) {
-            self.nes.apu_channels.remove(ApuChannels::PULSE2);
-        }
-
-        // Triangle: --nes-triangle true/false, --no-nes-triangle, --disable-nes-triangle
-        if let Some(triangle) = parse_bool_arg(args, "--nes-triangle")? {
-            if triangle {
-                self.nes.apu_channels.insert(ApuChannels::TRIANGLE);
-            } else {
-                self.nes.apu_channels.remove(ApuChannels::TRIANGLE);
-            }
-        }
-        if has_negation_flag(args, &["--no-nes-triangle", "--disable-nes-triangle"]) {
-            self.nes.apu_channels.remove(ApuChannels::TRIANGLE);
-        }
-
-        // Noise: --nes-noise true/false, --no-nes-noise, --disable-nes-noise
-        if let Some(noise) = parse_bool_arg(args, "--nes-noise")? {
-            if noise {
-                self.nes.apu_channels.insert(ApuChannels::NOISE);
-            } else {
-                self.nes.apu_channels.remove(ApuChannels::NOISE);
-            }
-        }
-        if has_negation_flag(args, &["--no-nes-noise", "--disable-nes-noise"]) {
-            self.nes.apu_channels.remove(ApuChannels::NOISE);
-        }
-
-        // DMC: --nes-dmc true/false, --no-nes-dmc, --disable-nes-dmc
-        if let Some(dmc) = parse_bool_arg(args, "--nes-dmc")? {
-            if dmc {
-                self.nes.apu_channels.insert(ApuChannels::DMC);
-            } else {
-                self.nes.apu_channels.remove(ApuChannels::DMC);
-            }
-        }
-        if has_negation_flag(args, &["--no-nes-dmc", "--disable-nes-dmc"]) {
-            self.nes.apu_channels.remove(ApuChannels::DMC);
-        }
-
-        // Window height
-        if let Some(height) = parse_u32_arg(args, "--window-height")? {
-            self.frontend.window_height = height;
-        }
-
-        // Debugger alpha
-        if let Some(alpha) = parse_f32_arg(args, "--debugger-alpha")? {
-            self.frontend.debugger_alpha = alpha.clamp(0.1, 1.0);
-        }
-
-        // Controller ports
+        // Controller ports (TODO: move to NesConfig in task 8)
         if let Some(controller_port1) = Self::parse_string_arg(args, "--nes-controller-port1") {
             self.nes.controller_port1 =
                 Self::parse_controller_arg("--nes-controller-port1", &controller_port1)?;
@@ -921,164 +900,32 @@ impl Config {
             self.nes.controller_port2_explicit = true;
         }
 
-        // Zapper detection size
-        if let Some(size) = parse_u32_arg(args, "--nes-zapper-detection-size")? {
-            let size_u8 = u8::try_from(size).map_err(|_| {
-                format!(
-                    "Invalid --nes-zapper-detection-size value: {} (must be between 0 and 255)",
-                    size
-                )
-            })?;
-            self.nes.zapper_detection_size = size_u8;
-
-            if size_u8 > 10 {
-                eprintln!(
-                    "Warning: --nes-zapper-detection-size={} may cause performance issues. \
-                     Large values sample (2*size + 1)^2 = {} pixels per controller read. \
-                     Consider values <= 10 for better performance.",
-                    size_u8,
-                    (2 * size_u8 as u32 + 1).pow(2)
-                );
-            }
-        }
-
-        // RAM initialization mode
-        let cli_ram_init_mode = Self::parse_string_arg(args, "--ram-init-mode");
-        if let Some(value) = cli_ram_init_mode.as_ref() {
-            self.apply_config_value("ram_init_mode", value)?;
-        }
-
-        // Overscan
-        if let Some(v) = parse_u32_arg(args, "--nes-horizontal-overscan")? {
-            self.nes.horizontal_overscan = (v as u8).min(8);
-        }
-        if let Some(v) = parse_u32_arg(args, "--nes-vertical-overscan")? {
-            self.nes.vertical_overscan = (v as u8).min(16);
-        }
-
-        self.apply_cartridge_catalog_args(args)?;
-
-        // TUI mode
-        #[cfg(feature = "tui")]
-        if args.iter().any(|arg| arg == "--tui") {
-            self.frontend.tui_mode = true;
-        }
-
-        #[cfg(not(feature = "tui"))]
-        if args.iter().any(|arg| arg == "--tui") {
-            return Err("--tui requires the `tui` feature (build with --features tui)".to_string());
-        }
-
-        // Autorun mode flags
-        let has_create_recording = args.iter().any(|arg| arg == "--create-recording");
-        let has_extend_recording = args.iter().any(|arg| arg == "--extend-recording");
-        let has_playback = args.iter().any(|arg| arg == "--playback");
-        let has_playback_headless = args.iter().any(|arg| arg == "--playback-headless");
-
-        if has_create_recording && has_extend_recording {
-            return Err(
-                "Cannot specify both --create-recording and --extend-recording".to_string(),
-            );
-        }
-        if (has_create_recording || has_extend_recording) && (has_playback || has_playback_headless)
+        // Display argument (only applies if fullscreen is set)
+        // TODO: Move to FrontendConfig in task 8
+        if self.frontend.fullscreen
+            && let Some(display) = Self::parse_display_arg(args)?
         {
-            return Err("Cannot specify both a recording flag and a playback flag".to_string());
+            self.frontend.fullscreen_display = Some(display);
         }
 
-        if has_create_recording {
-            self.frontend.autorun_mode = AutorunMode::Record;
-            self.frontend.autorun_overwrite = true;
-        } else if has_extend_recording {
-            self.frontend.autorun_mode = AutorunMode::Record;
-            self.frontend.autorun_extend = true;
-        } else if has_playback || has_playback_headless {
-            self.frontend.autorun_mode = AutorunMode::Playback;
-            self.frontend.autorun_headless = has_playback_headless;
+        // Shader paths (NES and GB filter names)
+        // TODO: Move to FrontendConfig in task 8
+        if let Some(filter_name) = Self::parse_named_arg(args, "--nes-filter") {
+            self.frontend.shader_path = Some(Self::map_filter_name_for(
+                &filter_name,
+                &["none", "crt", "smooth", "ntsc", "pal"],
+            )?);
         }
 
-        if let Some(v) = parse_i64_arg(args, "--playback-from-checkpoint")? {
-            self.frontend.autorun_from_checkpoint = Some(v);
-            // Implies playback mode if no explicit mode was set
-            if self.frontend.autorun_mode == AutorunMode::None {
-                self.frontend.autorun_mode = AutorunMode::Playback;
-            }
+        if let Some(filter_name) = Self::parse_named_arg(args, "--gb-filter") {
+            self.frontend.shader_path =
+                Some(Self::map_filter_name_for(&filter_name, &["none", "dmg"])?);
         }
 
-        if let Some(v) = parse_i64_arg(args, "--playback-headless-from-checkpoint")? {
-            self.frontend.autorun_from_checkpoint = Some(v);
-            self.frontend.autorun_mode = AutorunMode::Playback;
-            self.frontend.autorun_headless = true;
-        }
-
-        if let Some(v) = parse_u32_arg(args, "--trim-checkpoints")? {
-            self.frontend.autorun_trim_checkpoints = Some(v as usize);
-        }
-
-        if let Some(convert_autorun_requested) = parse_bool_arg(args, "--convert-autorun")? {
-            self.frontend.autorun_convert = convert_autorun_requested;
-        }
-
-        if let Some(recalculate_autorun_requested) = parse_bool_arg(args, "--recalculate-autorun")?
-        {
-            self.frontend.autorun_recalculate = recalculate_autorun_requested;
-        }
-
-        if let Some(format_str) = Self::parse_string_arg(args, "--autorun-format") {
-            self.frontend.autorun_format = match format_str.as_str() {
-                "binary" => AutorunFormat::Binary,
-                "json" => AutorunFormat::Json,
-                other => {
-                    return Err(format!(
-                        "Unknown autorun format '{other}': expected 'binary' or 'json'"
-                    ));
-                }
-            };
-        }
-
-        if self.frontend.autorun_trim_checkpoints.is_some() && self.frontend.autorun_convert {
-            return Err("Cannot specify both --trim-checkpoints and --convert-autorun".to_string());
-        }
-
-        if self.frontend.autorun_trim_checkpoints.is_some() && self.frontend.autorun_recalculate {
-            return Err(
-                "Cannot specify both --trim-checkpoints and --recalculate-autorun".to_string(),
-            );
-        }
-
-        if self.frontend.autorun_convert && self.frontend.autorun_recalculate {
-            return Err(
-                "Cannot specify both --convert-autorun and --recalculate-autorun".to_string(),
-            );
-        }
-
-        if self.frontend.autorun_recalculate && self.frontend.autorun_mode != AutorunMode::None {
-            return Err(
-                "Cannot combine --recalculate-autorun with recording/playback flags".to_string(),
-            );
-        }
-
-        if self.frontend.autorun_recalculate && self.frontend.autorun_from_checkpoint.is_some() {
-            return Err(
-                "Cannot combine --recalculate-autorun with checkpoint playback flags".to_string(),
-            );
-        }
-
-        // Autorun recording/playback must be deterministic.
-        // Force zero-initialized RAM when autorun is active, and reject an explicit
-        // non-zero CLI --ram-init-mode for these modes.
-        if self.frontend.autorun_mode != AutorunMode::None || self.frontend.autorun_recalculate {
-            if let Some(value) = cli_ram_init_mode.as_ref()
-                && !value.eq_ignore_ascii_case("zero")
-            {
-                return Err("Autorun recording/playback requires --ram-init-mode zero".to_string());
-            }
-            self.frontend.ram_init_mode = RamInitMode::Zero;
-        }
-
-        // Breakpoints from --breakpoint flag (comma-separated list)
-        if let Some(value) = Self::parse_string_arg(args, "--breakpoint") {
-            self.frontend.breakpoints =
-                parse_breakpoint_list(&value).map_err(|e| format!("--breakpoint: {e}"))?;
+        // ROM path from positional argument
+        // TODO: Move to FrontendConfig in task 8
+        if let Some(path) = Self::parse_rom_arg(args)? {
+            self.frontend.rom_path = Some(path);
         }
 
         // GB hardware (parsed by GB config module)

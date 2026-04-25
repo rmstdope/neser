@@ -162,6 +162,257 @@ pub struct Config {
     pub gb: crate::gb::console::config::GbConfig,
 }
 
+impl FrontendConfig {
+    /// Apply command-line arguments to frontend configuration.
+    ///
+    /// Parses platform-level CLI flags (audio, vsync, fullscreen, display, window,
+    /// debugger, gamepads, load-state, ram-init, breakpoints, TUI, cartridge discovery,
+    /// autorun, tracing).
+    ///
+    /// Note: ROM path and shader path parsing remain in Config::apply_args() for now
+    /// (they require complex flag validation logic).
+    pub(crate) fn apply_args(&mut self, args: &[String]) -> Result<(), String> {
+        // Boolean flags (support both value-based and prefix negation)
+        // Audio: --audio true/false, --no-audio, --disable-audio
+        if let Some(audio) = parse_bool_arg(args, "--audio")? {
+            self.audio_enabled = audio;
+        }
+        if has_negation_flag(args, &["--no-audio", "--disable-audio"]) {
+            self.audio_enabled = false;
+        }
+
+        // VSync: --vsync true/false, --no-vsync, --disable-vsync
+        if let Some(vsync) = parse_bool_arg(args, "--vsync")? {
+            self.vsync_enabled = vsync;
+        }
+        if has_negation_flag(args, &["--no-vsync", "--disable-vsync"]) {
+            self.vsync_enabled = false;
+        }
+
+        // Gamepads: --gamepads true/false
+        if let Some(gamepads) = parse_bool_arg(args, "--gamepads")? {
+            self.gamepads_enabled = gamepads;
+        }
+
+        // Debugger: --debugger true/false
+        if let Some(debugger) = parse_bool_arg(args, "--debugger")? {
+            self.debugger_enabled = debugger;
+        }
+
+        // Load state: --load-state true/false
+        if let Some(load_state) = parse_bool_arg(args, "--load-state")? {
+            self.load_state = load_state;
+        }
+
+        // Fullscreen (value-based)
+        if let Some(fullscreen) = parse_bool_arg(args, "--fullscreen")? {
+            self.fullscreen = fullscreen;
+        }
+
+        // Tracing (merge with existing config file values)
+        self.tracing.apply_args(args);
+
+        // Window height
+        if let Some(height) = parse_u32_arg(args, "--window-height")? {
+            self.window_height = height;
+        }
+
+        // Debugger alpha
+        if let Some(alpha) = parse_f32_arg(args, "--debugger-alpha")? {
+            self.debugger_alpha = alpha.clamp(0.1, 1.0);
+        }
+
+        // RAM initialization mode
+        let cli_ram_init_mode = parse_cli_string_arg(args, "--ram-init-mode");
+        if let Some(value) = cli_ram_init_mode.as_ref() {
+            self.apply_config_value("ram_init_mode", value)?;
+        }
+
+        // Cartridge catalog arguments
+        self.apply_cartridge_catalog_args(args)?;
+
+        // TUI mode
+        #[cfg(feature = "tui")]
+        if args.iter().any(|arg| arg == "--tui") {
+            self.tui_mode = true;
+        }
+
+        #[cfg(not(feature = "tui"))]
+        if args.iter().any(|arg| arg == "--tui") {
+            return Err("--tui requires the `tui` feature (build with --features tui)".to_string());
+        }
+
+        // Autorun mode flags
+        let has_create_recording = args.iter().any(|arg| arg == "--create-recording");
+        let has_extend_recording = args.iter().any(|arg| arg == "--extend-recording");
+        let has_playback = args.iter().any(|arg| arg == "--playback");
+        let has_playback_headless = args.iter().any(|arg| arg == "--playback-headless");
+
+        if has_create_recording && has_extend_recording {
+            return Err(
+                "Cannot specify both --create-recording and --extend-recording".to_string(),
+            );
+        }
+        if (has_create_recording || has_extend_recording) && (has_playback || has_playback_headless)
+        {
+            return Err("Cannot specify both a recording flag and a playback flag".to_string());
+        }
+
+        if has_create_recording {
+            self.autorun_mode = AutorunMode::Record;
+            self.autorun_overwrite = true;
+        } else if has_extend_recording {
+            self.autorun_mode = AutorunMode::Record;
+            self.autorun_extend = true;
+        } else if has_playback || has_playback_headless {
+            self.autorun_mode = AutorunMode::Playback;
+            self.autorun_headless = has_playback_headless;
+        }
+
+        if let Some(v) = parse_i64_arg(args, "--playback-from-checkpoint")? {
+            self.autorun_from_checkpoint = Some(v);
+            // Implies playback mode if no explicit mode was set
+            if self.autorun_mode == AutorunMode::None {
+                self.autorun_mode = AutorunMode::Playback;
+            }
+        }
+
+        if let Some(v) = parse_i64_arg(args, "--playback-headless-from-checkpoint")? {
+            self.autorun_from_checkpoint = Some(v);
+            self.autorun_mode = AutorunMode::Playback;
+            self.autorun_headless = true;
+        }
+
+        if let Some(v) = parse_u32_arg(args, "--trim-checkpoints")? {
+            self.autorun_trim_checkpoints = Some(v as usize);
+        }
+
+        if let Some(convert_autorun_requested) = parse_bool_arg(args, "--convert-autorun")? {
+            self.autorun_convert = convert_autorun_requested;
+        }
+
+        if let Some(recalculate_autorun_requested) = parse_bool_arg(args, "--recalculate-autorun")?
+        {
+            self.autorun_recalculate = recalculate_autorun_requested;
+        }
+
+        if let Some(format_str) = parse_cli_string_arg(args, "--autorun-format") {
+            self.autorun_format = match format_str.as_str() {
+                "binary" => AutorunFormat::Binary,
+                "json" => AutorunFormat::Json,
+                other => {
+                    return Err(format!(
+                        "Unknown autorun format '{other}': expected 'binary' or 'json'"
+                    ));
+                }
+            };
+        }
+
+        // Autorun validation
+        if self.autorun_trim_checkpoints.is_some() && self.autorun_convert {
+            return Err("Cannot specify both --trim-checkpoints and --convert-autorun".to_string());
+        }
+
+        if self.autorun_trim_checkpoints.is_some() && self.autorun_recalculate {
+            return Err(
+                "Cannot specify both --trim-checkpoints and --recalculate-autorun".to_string(),
+            );
+        }
+
+        if self.autorun_convert && self.autorun_recalculate {
+            return Err(
+                "Cannot specify both --convert-autorun and --recalculate-autorun".to_string(),
+            );
+        }
+
+        if self.autorun_recalculate && self.autorun_mode != AutorunMode::None {
+            return Err(
+                "Cannot combine --recalculate-autorun with recording/playback flags".to_string(),
+            );
+        }
+
+        if self.autorun_recalculate && self.autorun_from_checkpoint.is_some() {
+            return Err(
+                "Cannot combine --recalculate-autorun with checkpoint playback flags".to_string(),
+            );
+        }
+
+        // Autorun recording/playback must be deterministic.
+        // Force zero-initialized RAM when autorun is active, and reject an explicit
+        // non-zero CLI --ram-init-mode for these modes.
+        if self.autorun_mode != AutorunMode::None || self.autorun_recalculate {
+            if let Some(value) = cli_ram_init_mode.as_ref()
+                && !value.eq_ignore_ascii_case("zero")
+            {
+                return Err("Autorun recording/playback requires --ram-init-mode zero".to_string());
+            }
+            self.ram_init_mode = RamInitMode::Zero;
+        }
+
+        // Breakpoints from --breakpoint flag (comma-separated list)
+        if let Some(value) = parse_cli_string_arg(args, "--breakpoint") {
+            self.breakpoints =
+                parse_breakpoint_list(&value).map_err(|e| format!("--breakpoint: {e}"))?;
+        }
+
+        Ok(())
+    }
+
+    /// Apply a single config file key-value pair to frontend configuration.
+    ///
+    /// Handles platform-level config keys (audio_enabled, vsync_enabled, fullscreen,
+    /// display, window_height, etc.).
+    pub(crate) fn apply_config_value(&mut self, key: &str, value: &str) -> Result<(), String> {
+        match key {
+            "ram_init_mode" => {
+                self.ram_init_mode = match value.to_lowercase().as_str() {
+                    "zero" | "0" => RamInitMode::Zero,
+                    "random" => RamInitMode::Random,
+                    _ => {
+                        // Accept both "seeded-random:N" and "seeded_random:N" for compatibility
+                        if let Some(seed_str) = value
+                            .strip_prefix("seeded-random:")
+                            .or_else(|| value.strip_prefix("seeded_random:"))
+                            .or_else(|| value.strip_prefix("seeded:"))
+                        {
+                            let seed: u64 = seed_str
+                                .parse()
+                                .map_err(|_| format!("Invalid seed value: {seed_str}"))?;
+                            RamInitMode::SeededRandom(seed)
+                        } else {
+                            return Err(format!(
+                                "Invalid ram_init_mode: {value} (expected 'zero', 'random', or 'seeded-random:N')"
+                            ));
+                        }
+                    }
+                };
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Parse and apply cartridge catalog arguments.
+    fn apply_cartridge_catalog_args(&mut self, args: &[String]) -> Result<(), String> {
+        if let Some(paths) = parse_cli_string_arg(args, "--cartridge-search-paths") {
+            self.cartridge_search_paths = parse_search_paths(&paths);
+        }
+
+        if let Some(scan) = parse_bool_arg(args, "--scan-cartridges")? {
+            self.scan_cartridges = scan;
+        }
+        if has_negation_flag(args, &["--no-scan-cartridges"]) {
+            self.scan_cartridges = false;
+        }
+
+        if args.iter().any(|arg| arg == "--rebuild-cartridge-catalog") {
+            self.rebuild_cartridge_catalog = true;
+        }
+
+        Ok(())
+    }
+}
+
 /// Result of parsing command-line arguments.
 #[derive(Debug)]
 pub enum ParseResult {
