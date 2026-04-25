@@ -4,14 +4,15 @@
 //! [`SharedAppContext`], providing the same interface that the NES side
 //! exposes so that frontends can drive both systems through `Console`.
 //!
-//! On load, the ROM's CGB flag byte (0x0143) determines whether a DMG or CGB
-//! bus is created; `.gbc` (CGB-only, 0xC0) and `.gb` CGB-compat (0x80) ROMs
-//! both get a [`CgbBus`], all others get a [`DmgBus`].
+//! On load, the bus type is determined by combining the `--gb-hardware` config
+//! option with the ROM's CGB flag byte (0x0143): CGB-only (0xC0) and CGB-compat
+//! (0x80) ROMs default to [`CgbBus`]; all others default to [`DmgBus`].
 
 use crate::gb::bus::{CgbBus, DmgBus};
 use crate::gb::cartridge::load_cartridge;
 use crate::gb::console::Gb;
 use crate::gb::console::save_state::{GB_SAVESTATE_VERSION, GbSaveState};
+use crate::gb::model::GbHardware;
 use crate::platform::app_context::{IntoSharedAppContext, SharedAppContext};
 use crate::platform::emulator::{Emulator, SystemType};
 use std::path::PathBuf;
@@ -174,8 +175,6 @@ impl GameBoy {
     /// - `Dmg`: Forces [`DmgBus`] for DMG/dual ROMs, errors on CGB-only
     /// - `Cgb`/`Gba`: Forces [`CgbBus`] for all ROMs
     pub fn load_rom(&mut self, bytes: &[u8], name: &str) -> Result<(), String> {
-        use crate::gb::model::GbHardware;
-
         let cart = load_cartridge(bytes).map_err(|e| format!("{e:?}"))?;
         let is_cgb_rom = cart.is_cgb();
         let hardware = self.app_context.borrow().config().gb.hardware;
@@ -438,6 +437,7 @@ impl Emulator for GameBoy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gb::model::GbHardware;
     use crate::platform::app_context::AppContext;
     use crate::platform::config::Config;
 
@@ -485,7 +485,7 @@ mod tests {
         rom
     }
 
-    fn make_gameboy_with_hardware(hardware: crate::gb::model::GbHardware) -> GameBoy {
+    fn make_gameboy_with_hardware(hardware: GbHardware) -> GameBoy {
         let mut config = Config::default();
         config.gb.hardware = Some(hardware);
         let app_context = AppContext::new_with_config(config).into_shared();
@@ -940,21 +940,21 @@ mod tests {
 
     #[test]
     fn test_dmg_rom_with_dmg_hardware_uses_dmg_bus() {
-        let mut gb = make_gameboy_with_hardware(crate::gb::model::GbHardware::Dmg);
+        let mut gb = make_gameboy_with_hardware(GbHardware::Dmg);
         gb.load_rom(&minimal_rom(), "test.gb").unwrap();
         assert!(matches!(gb.gb, Some(GbConsole::Dmg(_))));
     }
 
     #[test]
     fn test_dual_rom_with_dmg_hardware_uses_dmg_bus() {
-        let mut gb = make_gameboy_with_hardware(crate::gb::model::GbHardware::Dmg);
+        let mut gb = make_gameboy_with_hardware(GbHardware::Dmg);
         gb.load_rom(&minimal_dual_rom(), "test.gb").unwrap();
         assert!(matches!(gb.gb, Some(GbConsole::Dmg(_))));
     }
 
     #[test]
     fn test_cgb_only_rom_with_dmg_hardware_returns_error() {
-        let mut gb = make_gameboy_with_hardware(crate::gb::model::GbHardware::Dmg);
+        let mut gb = make_gameboy_with_hardware(GbHardware::Dmg);
         let result = gb.load_rom(&minimal_cgb_rom(), "test.gbc");
         assert!(result.is_err());
         let err_msg = result.unwrap_err();
@@ -964,42 +964,42 @@ mod tests {
 
     #[test]
     fn test_dmg_rom_with_cgb_hardware_uses_cgb_bus() {
-        let mut gb = make_gameboy_with_hardware(crate::gb::model::GbHardware::Cgb);
+        let mut gb = make_gameboy_with_hardware(GbHardware::Cgb);
         gb.load_rom(&minimal_rom(), "test.gb").unwrap();
         assert!(matches!(gb.gb, Some(GbConsole::Cgb(_))));
     }
 
     #[test]
     fn test_dual_rom_with_cgb_hardware_uses_cgb_bus() {
-        let mut gb = make_gameboy_with_hardware(crate::gb::model::GbHardware::Cgb);
+        let mut gb = make_gameboy_with_hardware(GbHardware::Cgb);
         gb.load_rom(&minimal_dual_rom(), "test.gb").unwrap();
         assert!(matches!(gb.gb, Some(GbConsole::Cgb(_))));
     }
 
     #[test]
     fn test_cgb_only_rom_with_cgb_hardware_uses_cgb_bus() {
-        let mut gb = make_gameboy_with_hardware(crate::gb::model::GbHardware::Cgb);
+        let mut gb = make_gameboy_with_hardware(GbHardware::Cgb);
         gb.load_rom(&minimal_cgb_rom(), "test.gbc").unwrap();
         assert!(matches!(gb.gb, Some(GbConsole::Cgb(_))));
     }
 
     #[test]
     fn test_dmg_rom_with_gba_hardware_uses_cgb_bus() {
-        let mut gb = make_gameboy_with_hardware(crate::gb::model::GbHardware::Gba);
+        let mut gb = make_gameboy_with_hardware(GbHardware::Gba);
         gb.load_rom(&minimal_rom(), "test.gb").unwrap();
         assert!(matches!(gb.gb, Some(GbConsole::Cgb(_))));
     }
 
     #[test]
     fn test_dual_rom_with_gba_hardware_uses_cgb_bus() {
-        let mut gb = make_gameboy_with_hardware(crate::gb::model::GbHardware::Gba);
+        let mut gb = make_gameboy_with_hardware(GbHardware::Gba);
         gb.load_rom(&minimal_dual_rom(), "test.gb").unwrap();
         assert!(matches!(gb.gb, Some(GbConsole::Cgb(_))));
     }
 
     #[test]
     fn test_cgb_only_rom_with_gba_hardware_uses_cgb_bus() {
-        let mut gb = make_gameboy_with_hardware(crate::gb::model::GbHardware::Gba);
+        let mut gb = make_gameboy_with_hardware(GbHardware::Gba);
         gb.load_rom(&minimal_cgb_rom(), "test.gbc").unwrap();
         assert!(matches!(gb.gb, Some(GbConsole::Cgb(_))));
     }
