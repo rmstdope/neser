@@ -987,4 +987,26 @@ fn test_mooneye_madness_mgb_oam_dma_halt_sprites() {
         "expected IE=0 (ROM never enables any interrupts)"
     );
     assert!(!gb.cpu.ime, "expected IME=0 at HALT");
+    assert!(
+        !gb.cpu.ime_pending(),
+        "expected no pending IME enable while halted"
+    );
+
+    // Step a further budget of M-cycles and verify the CPU remains
+    // halted at $FF97. This catches regressions where a spurious wake
+    // path (e.g., incorrect HALT exit on an unrelated condition) would
+    // resume execution even though no interrupt is pending.
+    for _ in 0..100_000u64 {
+        gb.step();
+        assert!(
+            gb.cpu.halted,
+            "CPU spuriously woke from HALT (PC=${:04x})",
+            gb.cpu.regs.pc
+        );
+        assert_eq!(
+            gb.cpu.regs.pc, 0xFF97,
+            "PC drifted while halted: ${:04x}",
+            gb.cpu.regs.pc
+        );
+    }
 }
