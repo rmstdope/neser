@@ -940,3 +940,51 @@ fn test_mooneye_acceptance_boot_hwio_dmgabcmgb_with_dmg_a() {
 fn test_mooneye_acceptance_boot_hwio_dmgabcmgb_with_dmg_c() {
     assert_mooneye_pass_dmg_c!(&format!("{BASE}/acceptance/boot_hwio-dmgABCmgb.gb"));
 }
+
+/// `madness/mgb_oam_dma_halt_sprites.gb` is intentionally designed to hang
+/// in HALT forever: it sets up a sprite frame, kicks off an OAM DMA from
+/// `$2000`, and then executes `HALT` from HRAM with IME=0 and IE=0. With
+/// no interrupts enabled, the CPU never wakes — on real hardware, the
+/// "result" of the test is the visual output produced by the PPU as it
+/// continues to draw while OAM is frozen mid-DMA. The ROM contains no
+/// `LD B,B` pass marker, so the standard Mooneye pass detection cannot
+/// be applied.
+///
+/// Our automated check verifies that after running long enough for the
+/// HALT to be reached, the CPU is halted at the `NOP` immediately
+/// following the HALT instruction in HRAM (`$FF97`), with no interrupts
+/// enabled. This confirms the emulator correctly executes the HRAM test
+/// payload up to and including HALT and then stays halted, matching the
+/// behaviour the ROM is designed to expose.
+#[test]
+fn test_mooneye_madness_mgb_oam_dma_halt_sprites() {
+    let path = format!("{BASE}/madness/mgb_oam_dma_halt_sprites.gb");
+    let mut gb = load_gb_rom(&path);
+    // Step until the CPU has entered HALT (or a generous safety budget
+    // expires). The HRAM payload runs `wait_vblank` loops before HALT;
+    // reaching HALT takes around 10M M-cycles in this ROM.
+    let start = gb.cycles();
+    let limit: u64 = MOONEYE_CYCLE_LIMIT;
+    while !gb.cpu.halted && gb.cycles().saturating_sub(start) < limit {
+        gb.step();
+    }
+    assert!(
+        gb.cpu.halted,
+        "expected CPU to enter HALT in HRAM payload (PC=${:04x})",
+        gb.cpu.regs.pc
+    );
+    // After HALT executes, PC points at the NOP at $FF97 (HALT itself is at $FF96).
+    assert_eq!(
+        gb.cpu.regs.pc, 0xFF97,
+        "CPU halted at unexpected PC: ${:04x}",
+        gb.cpu.regs.pc
+    );
+    // IE=0 and IME=0 — no interrupt can wake the CPU, exactly as the
+    // ROM intends. This confirms the test reached the designed hang.
+    assert_eq!(
+        gb.cpu.bus.read(0xFFFF),
+        0x00,
+        "expected IE=0 (ROM never enables any interrupts)"
+    );
+    assert!(!gb.cpu.ime, "expected IME=0 at HALT");
+}

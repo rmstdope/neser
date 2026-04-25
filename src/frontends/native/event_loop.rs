@@ -1136,11 +1136,7 @@ pub fn should_use_manual_frame_throttle(vsync_enabled: bool, window_focused: boo
 /// - Audio disabled (`--no-audio`): when the user runs with audio disabled,
 ///   the NES ring-buffer back-pressure is absent and the emulator would
 ///   otherwise run uncapped.
-fn needs_frame_guard(
-    using_manual_throttle: bool,
-    is_game_boy: bool,
-    audio_disabled: bool,
-) -> bool {
+fn needs_frame_guard(using_manual_throttle: bool, is_game_boy: bool, audio_disabled: bool) -> bool {
     using_manual_throttle || is_game_boy || audio_disabled
 }
 
