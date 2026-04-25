@@ -1066,22 +1066,11 @@ impl Config {
                 self.nes.controller_port2_explicit = true;
             }
             "gb-dmg-variant" => {
-                self.gb.apply_config_value(value)?;
+                self.gb.apply_config_value("gb-dmg-variant", value)?;
             }
-            "gb-hardware" => match value.to_lowercase().as_str() {
-                "dmg" => {
-                    self.gb.apply_config_value("dmg-b")?;
-                }
-                "cgb" => {
-                    return Err("Config key 'gb-hardware=cgb' is no longer supported; \
-                         CGB mode is now auto-detected from the loaded ROM, and \
-                         'gb-dmg-variant' only applies to DMG variants."
-                        .to_string());
-                }
-                _ => {
-                    self.gb.apply_config_value(value)?;
-                }
-            },
+            "gb-hardware" => {
+                self.gb.apply_config_value("gb-hardware", value)?;
+            }
             _ => {} // Unknown keys are silently ignored (may have been handled by sub-configs)
         }
         Ok(())
@@ -4886,24 +4875,25 @@ nes-filter=invalid-shader
     }
 
     #[test]
-    fn test_config_file_legacy_gb_hardware_dmg_maps_to_dmg_b() {
+    fn test_config_file_gb_hardware_dmg_sets_hardware() {
         let mut config = Config::with_defaults();
         config.apply_config_value("gb-hardware", "dmg").unwrap();
-        assert_eq!(config.gb.dmg_variant, crate::gb::model::DmgModel::DmgB);
+        assert_eq!(config.gb.hardware, Some(crate::gb::model::GbHardware::Dmg));
     }
 
     #[test]
-    fn test_config_file_legacy_gb_hardware_cgb_returns_error() {
+    fn test_config_file_gb_hardware_cgb_sets_hardware() {
         let mut config = Config::with_defaults();
-        let result = config.apply_config_value("gb-hardware", "cgb");
+        config.apply_config_value("gb-hardware", "cgb").unwrap();
+        assert_eq!(config.gb.hardware, Some(crate::gb::model::GbHardware::Cgb));
+    }
+
+    #[test]
+    fn test_config_file_gb_hardware_invalid_value_returns_error() {
+        let mut config = Config::with_defaults();
+        let result = config.apply_config_value("gb-hardware", "dmg-a");
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_config_file_legacy_gb_hardware_passes_through_dmg_variants() {
-        let mut config = Config::with_defaults();
-        config.apply_config_value("gb-hardware", "dmg-a").unwrap();
-        assert_eq!(config.gb.dmg_variant, crate::gb::model::DmgModel::DmgA);
+        assert!(result.unwrap_err().contains("Invalid gb-hardware value"));
     }
 
     #[test]
@@ -4945,14 +4935,20 @@ nes-filter=invalid-shader
     }
 
     #[test]
-    fn test_old_gb_hardware_arg_is_rejected() {
+    fn test_gb_hardware_arg_is_valid() {
         let args = vec![
             "neser".to_string(),
             "--gb-hardware".to_string(),
             "dmg".to_string(),
         ];
         let result = config_new(args);
-        assert!(result.is_err());
+        assert!(result.is_ok());
+        match result.unwrap() {
+            ParseResult::Config(config) => {
+                assert_eq!(config.gb.hardware, Some(crate::gb::model::GbHardware::Dmg));
+            }
+            ParseResult::Help => panic!("Expected Config, got Help"),
+        }
     }
 
     #[test]

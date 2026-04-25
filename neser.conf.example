@@ -29,7 +29,7 @@
 #   nes-pulse2=false      →  --nes-pulse2 false  OR  --nes-pulse2=0  OR  --no-nes-pulse2  OR  --disable-nes-pulse2
 #
 # NES-specific settings are prefixed with nes- (e.g., nes-hardware, nes-pulse1).
-# Game Boy-specific settings are prefixed with gb- (e.g., gb-dmg-variant).
+# Game Boy-specific settings are prefixed with gb- (e.g., gb-hardware, gb-dmg-variant).
 # Generic platform settings have no prefix (e.g., audio, ram_init_mode).
 #
 # CLI boolean flags:
@@ -252,10 +252,22 @@ nes-vertical_overscan=8
 # -----------------------------------------------------------------------------
 # Game Boy Settings
 # -----------------------------------------------------------------------------
+# Game Boy hardware target selection.
+# Valid values: dmg, cgb, gba
+# Determines which hardware to emulate:
+#   - dmg: Original Game Boy (forces DMG mode even for dual-compatible ROMs)
+#   - cgb: Game Boy Color (enables CGB features for compatible ROMs)
+#   - gba: Game Boy Advance in GBC mode (currently same as cgb)
+# Default: auto-detect from ROM (DMG-only → dmg, dual-compatible/CGB-only → cgb)
+# Note: CGB-only ROMs cannot run with gb-hardware=dmg (will return an error).
+#gb-hardware=cgb
+
 # DMG hardware variant to emulate.
 # Valid values: dmg-0, dmg-a, dmg-b, dmg-c
 # DMG-A, DMG-B, DMG-C share identical software-visible behavior (same boot ROM
 # and post-boot register state). DMG-0 is the first-generation variant with a
 # different boot ROM and different post-boot register values.
 # Default: dmg-b (most common hardware revision)
+# Note: This only applies when using gb-hardware=dmg or when a DMG-only ROM
+# is auto-detected. It has no effect on CGB mode.
 #gb-dmg-variant=dmg-b

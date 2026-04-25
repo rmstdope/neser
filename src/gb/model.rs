@@ -1,5 +1,37 @@
 use serde::{Deserialize, Serialize};
 
+/// Game Boy hardware target selection.
+///
+/// Determines which Game Boy hardware variant to emulate: original DMG,
+/// Game Boy Color (CGB), or Game Boy Advance in GBC mode (GBA).
+///
+/// This enum is used in configuration to explicitly select the hardware
+/// mode, or can be `None` to enable smart default behavior (auto-detect
+/// based on ROM compatibility flags).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GbHardware {
+    /// Original Game Boy (DMG) hardware.
+    Dmg,
+    /// Game Boy Color (CGB) hardware.
+    Cgb,
+    /// Game Boy Advance in GBC compatibility mode.
+    Gba,
+}
+
+impl GbHardware {
+    /// Parse a GB hardware target from a string value.
+    ///
+    /// Accepts `dmg`, `cgb`, `gba` (case-insensitive).
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "dmg" => Some(Self::Dmg),
+            "cgb" => Some(Self::Cgb),
+            "gba" => Some(Self::Gba),
+            _ => None,
+        }
+    }
+}
+
 /// Game Boy hardware model variant.
 ///
 /// Distinguishes between the first-generation DMG-0 and the
@@ -62,7 +94,7 @@ impl DmgModel {
     ///
     /// Accepts `dmg-0`, `dmg-a`, `dmg-b`, `dmg-c` (case-insensitive).
     pub fn parse(value: &str) -> Option<Self> {
-        match value.to_ascii_lowercase().as_str() {
+        match value.trim().to_ascii_lowercase().as_str() {
             "dmg-0" => Some(Self::Dmg0),
             "dmg-a" => Some(Self::DmgA),
             "dmg-b" => Some(Self::DmgB),
@@ -132,5 +164,48 @@ mod tests {
         assert_eq!(DmgModel::parse("dmg"), None);
         assert_eq!(DmgModel::parse("invalid"), None);
         assert_eq!(DmgModel::parse(""), None);
+    }
+
+    // GbHardware tests
+    #[test]
+    fn test_gb_hardware_parse_dmg() {
+        assert_eq!(GbHardware::parse("dmg"), Some(GbHardware::Dmg));
+    }
+
+    #[test]
+    fn test_gb_hardware_parse_cgb() {
+        assert_eq!(GbHardware::parse("cgb"), Some(GbHardware::Cgb));
+    }
+
+    #[test]
+    fn test_gb_hardware_parse_gba() {
+        assert_eq!(GbHardware::parse("gba"), Some(GbHardware::Gba));
+    }
+
+    #[test]
+    fn test_gb_hardware_parse_case_insensitive() {
+        assert_eq!(GbHardware::parse("DMG"), Some(GbHardware::Dmg));
+        assert_eq!(GbHardware::parse("Cgb"), Some(GbHardware::Cgb));
+        assert_eq!(GbHardware::parse("GBA"), Some(GbHardware::Gba));
+    }
+
+    #[test]
+    fn test_gb_hardware_parse_invalid_returns_none() {
+        assert_eq!(GbHardware::parse("invalid"), None);
+        assert_eq!(GbHardware::parse(""), None);
+        assert_eq!(GbHardware::parse("gameboy"), None);
+    }
+
+    #[test]
+    fn test_gb_hardware_parse_handles_whitespace() {
+        assert_eq!(GbHardware::parse(" cgb "), Some(GbHardware::Cgb));
+        assert_eq!(GbHardware::parse("\tdmg\n"), Some(GbHardware::Dmg));
+        assert_eq!(GbHardware::parse("  gba  "), Some(GbHardware::Gba));
+    }
+
+    #[test]
+    fn test_dmg_model_parse_handles_whitespace() {
+        assert_eq!(DmgModel::parse(" dmg-b "), Some(DmgModel::DmgB));
+        assert_eq!(DmgModel::parse("\tdmg-0\n"), Some(DmgModel::Dmg0));
     }
 }
