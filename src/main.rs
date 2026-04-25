@@ -166,7 +166,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let parsed_config = match Config::new(&args)? {
         ParseResult::Help => {
-            crate::platform::config::print_help();
+            Config::print_help();
             return Ok(());
         }
         ParseResult::Config(c) => *c,

@@ -985,7 +985,7 @@ pub(crate) fn parse_search_paths(value: &str) -> Vec<String> {
 pub(crate) fn all_cli_flags() -> impl Iterator<Item = &'static CliFlag> {
     PLATFORM_CLI_FLAGS
         .iter()
-        .chain(crate::nes::console::config::CLI_FLAGS.iter())
+        .chain(crate::nes::console::CLI_FLAGS.iter())
         .chain(crate::gb::console::config::GB_CLI_FLAGS.iter())
 }
 
@@ -1172,7 +1172,7 @@ pub(crate) fn help_text() -> String {
 }
 
 /// Print help text to stdout.
-pub fn print_help() {
+pub(crate) fn print_help() {
     print!("{}", help_text());
 }
 

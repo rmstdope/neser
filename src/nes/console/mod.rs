@@ -1,5 +1,5 @@
 mod cartridge_catalog;
-pub(crate) mod config;
+mod config;
 mod nes;
 mod ram_init;
 pub mod save_state_io;
@@ -16,6 +16,7 @@ pub use cartridge_catalog::{
 };
 #[allow(unused_imports)] // Used by frontend features
 pub use config::ApuChannels;
+pub(crate) use config::CLI_FLAGS;
 pub use config::ExpansionPort;
 pub use config::HardwareMode;
 #[allow(unused_imports)] // Used by integration tests and lib consumers

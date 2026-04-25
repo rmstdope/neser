@@ -16,7 +16,7 @@ use bitflags::bitflags;
 use std::fs;
 use std::path::Path;
 
-/// All supported NES and platform CLI flags.
+/// All supported NES-specific CLI flags.
 pub(crate) const CLI_FLAGS: &[CliFlag] = &[
     CliFlag {
         flag: "--trace-nestest",
@@ -197,10 +197,6 @@ pub(crate) const CLI_FLAGS: &[CliFlag] = &[
     },
 ];
 
-/// Returns an iterator over all supported CLI flags (NES/platform + GB-specific).
-///
-/// GB flags are defined in the GB config module and chained here so that
-/// validation, help text, and ROM-path parsing remain complete.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HardwareModel {
     NesNtsc,
@@ -769,6 +765,11 @@ impl Config {
         config.validate_controller_ports()?;
 
         Ok(ParseResult::Config(Box::new(config)))
+    }
+
+    /// Print help text to stdout.
+    pub fn print_help() {
+        crate::platform::config::print_help();
     }
 
     /// Apply command-line arguments to the config.
