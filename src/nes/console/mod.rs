@@ -1,5 +1,5 @@
 mod cartridge_catalog;
-mod config;
+pub(crate) mod config;
 mod nes;
 mod ram_init;
 pub mod save_state_io;

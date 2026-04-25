@@ -980,3 +980,255 @@ pub(crate) fn parse_search_paths(value: &str) -> Vec<String> {
         .map(ToString::to_string)
         .collect()
 }
+
+/// Get an iterator over all CLI flags (platform, NES, and GB).
+pub(crate) fn all_cli_flags() -> impl Iterator<Item = &'static CliFlag> {
+    PLATFORM_CLI_FLAGS
+        .iter()
+        .chain(crate::nes::console::config::CLI_FLAGS.iter())
+        .chain(crate::gb::console::config::GB_CLI_FLAGS.iter())
+}
+
+/// Categorize a flag into its help section.
+fn help_section_for_flag(flag: &str) -> &'static str {
+    if flag.starts_with("--trace")
+        || matches!(flag, "--debugger" | "--debugger-alpha" | "--breakpoint")
+    {
+        "Trace and Debugging"
+    } else if matches!(
+        flag,
+        "--nes-controller-port1"
+            | "--nes-controller-port2"
+            | "--nes-expansion-port"
+            | "--nes-zapper-detection-size"
+            | "--gamepads"
+            | "--nes-enable-4-score"
+            | "--no-nes-4-score"
+            | "--disable-nes-4-score"
+    ) {
+        "Input"
+    } else if matches!(
+        flag,
+        "--audio"
+            | "--no-audio"
+            | "--disable-audio"
+            | "--nes-pulse1"
+            | "--no-nes-pulse1"
+            | "--disable-nes-pulse1"
+            | "--nes-pulse2"
+            | "--no-nes-pulse2"
+            | "--disable-nes-pulse2"
+            | "--nes-triangle"
+            | "--no-nes-triangle"
+            | "--disable-nes-triangle"
+            | "--nes-noise"
+            | "--no-nes-noise"
+            | "--disable-nes-noise"
+            | "--nes-dmc"
+            | "--no-nes-dmc"
+            | "--disable-nes-dmc"
+    ) {
+        "Sound"
+    } else if matches!(
+        flag,
+        "--fullscreen"
+            | "--display"
+            | "--nes-filter"
+            | "--gb-filter"
+            | "--window-height"
+            | "--vsync"
+            | "--no-vsync"
+            | "--disable-vsync"
+            | "--nes-horizontal-overscan"
+            | "--nes-vertical-overscan"
+    ) {
+        "Video and Display"
+    } else if matches!(
+        flag,
+        "--create-recording"
+            | "--extend-recording"
+            | "--playback"
+            | "--playback-headless"
+            | "--playback-from-checkpoint"
+            | "--playback-headless-from-checkpoint"
+            | "--trim-checkpoints"
+            | "--convert-autorun"
+            | "--recalculate-autorun"
+    ) {
+        "Autorun"
+    } else if matches!(
+        flag,
+        "--cartridge-search-paths"
+            | "--scan-cartridges"
+            | "--no-scan-cartridges"
+            | "--rebuild-cartridge-catalog"
+    ) {
+        "Cartridge Catalog"
+    } else {
+        "General"
+    }
+}
+
+/// Generate the help text for all CLI flags.
+pub(crate) fn help_text() -> String {
+    use std::fmt::Write as _;
+
+    const HELP_SECTIONS: [&str; 7] = [
+        "General",
+        "Input",
+        "Trace and Debugging",
+        "Sound",
+        "Video and Display",
+        "Autorun",
+        "Cartridge Catalog",
+    ];
+
+    let mut help = String::new();
+    writeln!(&mut help, "NES Emulator").unwrap();
+    writeln!(&mut help, "\nUsage: neser [OPTIONS] [ROM]").unwrap();
+
+    for section in HELP_SECTIONS {
+        let mut wrote_section = false;
+        for flag in all_cli_flags() {
+            if flag.help.is_none() || help_section_for_flag(flag.flag) != section {
+                continue;
+            }
+
+            if !wrote_section {
+                writeln!(&mut help, "\n{section}:").unwrap();
+                wrote_section = true;
+            }
+
+            if let Some(flag_help) = flag.help {
+                writeln!(&mut help, "  {:<19} {}", flag.flag, flag_help).unwrap();
+            }
+        }
+    }
+
+    writeln!(&mut help, "\nExamples:").unwrap();
+    writeln!(
+        &mut help,
+        "  neser game.nes                               # Load and run a ROM"
+    )
+    .unwrap();
+    writeln!(
+        &mut help,
+        "  neser --nes-hardware nes-pal game.nes        # Use NES PAL hardware"
+    )
+    .unwrap();
+    writeln!(
+        &mut help,
+        "  neser --debugger game.nes                    # Enable debugger (no value = true)"
+    )
+    .unwrap();
+    writeln!(
+        &mut help,
+        "  neser --breakpoint frame=120 game.nes           # Break on frame 120"
+    )
+    .unwrap();
+    writeln!(
+        &mut help,
+        "  neser --audio game.nes                       # Enable audio (no value = true)"
+    )
+    .unwrap();
+    writeln!(
+        &mut help,
+        "  neser --audio=1 game.nes                     # Enable audio (equals syntax)"
+    )
+    .unwrap();
+    writeln!(
+        &mut help,
+        "  neser --audio false game.nes                 # Disable audio (value-based)"
+    )
+    .unwrap();
+    writeln!(
+        &mut help,
+        "  neser --audio=0 game.nes                     # Disable audio (equals syntax)"
+    )
+    .unwrap();
+    writeln!(
+        &mut help,
+        "  neser --no-audio game.nes                    # Disable audio (prefix negation)"
+    )
+    .unwrap();
+    writeln!(
+        &mut help,
+        "  neser --disable-nes-pulse1 --disable-nes-pulse2 game.nes # Disable specific channels"
+    )
+    .unwrap();
+    writeln!(&mut help).unwrap();
+    writeln!(
+        &mut help,
+        "Note: Boolean flags can be used without value (defaults to true), with value (true/false/yes/no/1/0),"
+    )
+    .unwrap();
+    writeln!(
+        &mut help,
+        "      or with prefix negation (--no-*, --disable-*). All forms: --audio, --audio=1, --audio true are equivalent."
+    )
+    .unwrap();
+
+    help
+}
+
+/// Print help text to stdout.
+pub fn print_help() {
+    print!("{}", help_text());
+}
+
+/// Validate command-line arguments.
+pub(crate) fn validate_args(args: &[String]) -> Result<(), String> {
+    let mut i = 1; // Skip program name
+    let mut seen_positional = false;
+    while i < args.len() {
+        let arg = &args[i];
+
+        // Check for exact flag match
+        if let Some(flag) = all_cli_flags().find(|f| f.flag == arg) {
+            if flag.has_value {
+                if i + 1 >= args.len() {
+                    return Err(format!("Missing value for {arg}\nTry --help for usage."));
+                }
+                i += 1; // Skip the value
+            }
+            // For optional boolean flags, check if next arg is a boolean value
+            else if OPTIONAL_BOOL_FLAGS.contains(&arg.as_str()) {
+                // Peek at next argument to see if it's a boolean value
+                if i + 1 < args.len() {
+                    let next_arg = &args[i + 1];
+                    // If next arg is a valid boolean value, skip it
+                    if parse_bool(next_arg).is_ok() {
+                        i += 1; // Skip the boolean value
+                    }
+                    // Otherwise leave it for processing as another flag or positional
+                }
+            }
+            i += 1;
+            continue;
+        }
+
+        // Check for --flag=value syntax (e.g., --trace-cpu=2)
+        if let Some((flag_part, _)) = arg.split_once('=')
+            && all_cli_flags().any(|f| f.flag == flag_part)
+        {
+            i += 1;
+            continue;
+        }
+
+        if arg.starts_with('-') {
+            return Err(format!("Unknown argument: {arg}\nTry --help for usage."));
+        }
+
+        if seen_positional {
+            return Err(format!(
+                "Unexpected positional argument: {arg}\nTry --help for usage."
+            ));
+        }
+
+        seen_positional = true;
+        i += 1;
+        continue;
+    }
+
+    Ok(())
+}
