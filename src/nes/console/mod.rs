@@ -9,6 +9,7 @@ use crate::platform::debugging::log_info;
 
 pub use crate::nes::cartridge::TimingMode;
 pub use crate::platform::config::Config;
+pub use crate::platform::config::ParseResult;
 pub use crate::platform::config::RamInitMode;
 pub use cartridge_catalog::{
     CartridgeCatalogOptions, default_catalog_csv_path, refresh_cartridge_catalog,
@@ -20,7 +21,6 @@ pub use config::HardwareMode;
 #[allow(unused_imports)] // Used by integration tests and lib consumers
 pub use config::HardwareModel;
 pub use config::NesConfig;
-pub use config::ParseResult;
 pub use nes::Nes;
 pub use nes::SaveState;
 pub use ram_init::initialize_ram;

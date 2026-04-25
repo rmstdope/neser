@@ -11,8 +11,12 @@ use crate::nes::input::ControllerType;
 use crate::platform::autorun::AutorunFormat;
 use crate::platform::autorun::AutorunMode;
 use crate::platform::config::CliFlag;
+use crate::platform::config::ParseResult;
 use crate::platform::config::RamInitMode;
-use crate::platform::debugging::breakpoints::BreakpointKind;
+use crate::platform::config::{
+    OPTIONAL_BOOL_FLAGS, has_negation_flag, parse_bool, parse_bool_arg, parse_breakpoint_list,
+    parse_f32_arg, parse_hex_u8, parse_i64_arg, parse_search_paths, parse_u32_arg,
+};
 use crate::platform::shaders::SHADER_PRESETS;
 use bitflags::bitflags;
 use std::fmt::Write as _;
@@ -22,28 +26,8 @@ use std::path::Path;
 /// All supported NES and platform CLI flags.
 const CLI_FLAGS: &[CliFlag] = &[
     CliFlag {
-        flag: "--help",
-        help: None,
-        has_value: false,
-    },
-    CliFlag {
-        flag: "-h",
-        help: None,
-        has_value: false,
-    },
-    CliFlag {
-        flag: "--trace",
-        help: Some("Enable CPU trace output"),
-        has_value: false,
-    },
-    CliFlag {
         flag: "--trace-nestest",
         help: Some("Enable CPU trace output (nestest.log format)"),
-        has_value: false,
-    },
-    CliFlag {
-        flag: "--trace-cpu",
-        help: Some("Enable CPU trace output"),
         has_value: false,
     },
     CliFlag {
@@ -62,35 +46,8 @@ const CLI_FLAGS: &[CliFlag] = &[
         has_value: false,
     },
     CliFlag {
-        flag: "--fullscreen",
-        help: Some(
-            "Run emulator in fullscreen mode (optionally: true/false, default when flag present: true)",
-        ),
-        has_value: false,
-    },
-    CliFlag {
-        flag: "--display",
-        help: Some("Select display index for fullscreen (e.g., --display 1)"),
-        has_value: true,
-    },
-    CliFlag {
         flag: "--nes-filter",
         help: Some("NES shader filter: crt, ntsc, smooth, pal, or none"),
-        has_value: true,
-    },
-    CliFlag {
-        flag: "--config",
-        help: Some("Specify config file path (default: ./neser.conf or ~/.neser/neser.conf)"),
-        has_value: true,
-    },
-    CliFlag {
-        flag: "--window-height",
-        help: Some("Window height in pixels (windowed mode only, e.g., --window-height 896)"),
-        has_value: true,
-    },
-    CliFlag {
-        flag: "--debugger-alpha",
-        help: Some("Debugger window opacity: 0.1 (transparent) to 1.0 (opaque, default: 0.7)"),
         has_value: true,
     },
     CliFlag {
@@ -126,48 +83,9 @@ const CLI_FLAGS: &[CliFlag] = &[
         ),
         has_value: true,
     },
-    // Aligned flags matching config file keys with same value ranges
-    // Support both value-based (--audio true) and prefix negation (--no-audio, --disable-audio)
     CliFlag {
         flag: "--nes-oam-dram-decay",
         help: Some("Enable OAM DRAM decay emulation (true/false, default: false)"),
-        has_value: false,
-    },
-    CliFlag {
-        flag: "--audio",
-        help: Some("Enable audio output (optionally: true/false, default when flag present: true)"),
-        has_value: false,
-    },
-    CliFlag {
-        flag: "--no-audio",
-        help: Some("Disable audio output (equivalent to --audio false)"),
-        has_value: false,
-    },
-    CliFlag {
-        flag: "--disable-audio",
-        help: Some("Disable audio output (equivalent to --audio false)"),
-        has_value: false,
-    },
-    CliFlag {
-        flag: "--vsync",
-        help: Some("Enable VSync (optionally: true/false, default when flag present: true)"),
-        has_value: false,
-    },
-    CliFlag {
-        flag: "--no-vsync",
-        help: Some("Disable VSync (equivalent to --vsync false)"),
-        has_value: false,
-    },
-    CliFlag {
-        flag: "--disable-vsync",
-        help: Some("Disable VSync (equivalent to --vsync false)"),
-        has_value: false,
-    },
-    CliFlag {
-        flag: "--gamepads",
-        help: Some(
-            "Enable gamepad/joystick support (optionally: true/false, default when flag present: true)",
-        ),
         has_value: false,
     },
     CliFlag {
@@ -271,82 +189,6 @@ const CLI_FLAGS: &[CliFlag] = &[
         has_value: false,
     },
     CliFlag {
-        flag: "--debugger",
-        help: Some(
-            "Open debugger windows (CPU/PPU/APU) on startup (optionally: true/false, default when flag present: true)",
-        ),
-        has_value: false,
-    },
-    CliFlag {
-        flag: "--load-state",
-        help: Some("Load save-state on startup"),
-        has_value: false,
-    },
-    CliFlag {
-        flag: "--create-recording",
-        help: Some("Record controller input to <ROM>.autorun file (replaces existing)"),
-        has_value: false,
-    },
-    CliFlag {
-        flag: "--extend-recording",
-        help: Some("Extend an existing autorun recording with new input"),
-        has_value: false,
-    },
-    CliFlag {
-        flag: "--playback",
-        help: Some("Play back controller input from <ROM>.autorun file"),
-        has_value: false,
-    },
-    CliFlag {
-        flag: "--playback-headless",
-        help: Some("Play back controller input from <ROM>.autorun file without display"),
-        has_value: false,
-    },
-    CliFlag {
-        flag: "--playback-from-checkpoint",
-        help: Some("Start playback from checkpoint N (0-based index, negative counts from end)"),
-        has_value: true,
-    },
-    CliFlag {
-        flag: "--playback-headless-from-checkpoint",
-        help: Some("Headless playback from checkpoint N (no display; negative counts from end)"),
-        has_value: true,
-    },
-    CliFlag {
-        flag: "--trim-checkpoints",
-        help: Some("Remove last N checkpoints (and their frames) from <ROM>.autorun file and exit"),
-        has_value: true,
-    },
-    CliFlag {
-        flag: "--convert-autorun",
-        help: Some("Convert <ROM>.autorun file from older versions to the current format and exit"),
-        has_value: false,
-    },
-    CliFlag {
-        flag: "--recalculate-autorun",
-        help: Some(
-            "Run headless playback, recalculate checkpoint CRCs in <ROM>.autorun file, save, and exit",
-        ),
-        has_value: false,
-    },
-    CliFlag {
-        flag: "--autorun-format",
-        help: Some("Serialization format for autorun files: binary (default) or json"),
-        has_value: true,
-    },
-    CliFlag {
-        flag: "--ram-init-mode",
-        help: Some("RAM initialization mode: zero, random, or seeded-random:SEED (default: zero)"),
-        has_value: true,
-    },
-    CliFlag {
-        flag: "--breakpoint",
-        help: Some(
-            "Add breakpoints on startup: pc=ADDR, cycle=N, frame=N, write=ADDR (comma-separated)",
-        ),
-        has_value: true,
-    },
-    CliFlag {
         flag: "--nes-horizontal-overscan",
         help: Some(
             "Horizontal overscan removal in pixels (0..=8, default: 0; removed from left and right)",
@@ -360,54 +202,6 @@ const CLI_FLAGS: &[CliFlag] = &[
         ),
         has_value: true,
     },
-    CliFlag {
-        flag: "--cartridge-search-paths",
-        help: Some("Comma-separated search paths to scan recursively for .nes files on startup"),
-        has_value: true,
-    },
-    CliFlag {
-        flag: "--scan-cartridges",
-        help: Some(
-            "Enable cartridge scanning on startup (optionally: true/false, default when flag present: true)",
-        ),
-        has_value: false,
-    },
-    CliFlag {
-        flag: "--no-scan-cartridges",
-        help: Some("Disable cartridge scanning on startup (equivalent to --scan-cartridges false)"),
-        has_value: false,
-    },
-    CliFlag {
-        flag: "--rebuild-cartridge-catalog",
-        help: Some("Rebuild cartridge catalog from scratch on startup"),
-        has_value: false,
-    },
-    CliFlag {
-        flag: "--tui",
-        help: Some("Launch the interactive TUI ROM browser (requires tui feature)"),
-        has_value: false,
-    },
-];
-
-/// Boolean flags that accept optional values (shared by validate_args and parse_rom_arg).
-const OPTIONAL_BOOL_FLAGS: &[&str] = &[
-    "--nes-oam-dram-decay",
-    "--audio",
-    "--vsync",
-    "--gamepads",
-    "--nes-enable-4-score",
-    "--nes-pulse1",
-    "--nes-pulse2",
-    "--nes-triangle",
-    "--nes-noise",
-    "--nes-dmc",
-    "--debugger",
-    "--load-state",
-    "--fullscreen",
-    "--scan-cartridges",
-    "--convert-autorun",
-    "--recalculate-autorun",
-    "--autorun-format",
 ];
 
 /// Returns an iterator over all supported CLI flags (NES/platform + GB-specific).
@@ -415,18 +209,10 @@ const OPTIONAL_BOOL_FLAGS: &[&str] = &[
 /// GB flags are defined in the GB config module and chained here so that
 /// validation, help text, and ROM-path parsing remain complete.
 fn all_cli_flags() -> impl Iterator<Item = &'static CliFlag> {
-    CLI_FLAGS
+    crate::platform::config::PLATFORM_CLI_FLAGS
         .iter()
+        .chain(CLI_FLAGS.iter())
         .chain(crate::gb::console::config::GB_CLI_FLAGS.iter())
-}
-
-/// Result of parsing command-line arguments.
-#[derive(Debug)]
-pub enum ParseResult {
-    /// User requested help - print and exit.
-    Help,
-    /// Successfully parsed configuration.
-    Config(Box<Config>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -973,54 +759,54 @@ impl Config {
         }
 
         // OAM DRAM decay: --nes-oam-dram-decay true/false
-        if let Some(oam_dram_decay) = Self::parse_bool_arg(args, "--nes-oam-dram-decay")? {
+        if let Some(oam_dram_decay) = parse_bool_arg(args, "--nes-oam-dram-decay")? {
             self.nes.oam_dram_decay_enabled = oam_dram_decay;
         }
 
         // Boolean flags (support both value-based and prefix negation)
         // Audio: --audio true/false, --no-audio, --disable-audio
-        if let Some(audio) = Self::parse_bool_arg(args, "--audio")? {
+        if let Some(audio) = parse_bool_arg(args, "--audio")? {
             self.frontend.audio_enabled = audio;
         }
-        if Self::has_negation_flag(args, &["--no-audio", "--disable-audio"]) {
+        if has_negation_flag(args, &["--no-audio", "--disable-audio"]) {
             self.frontend.audio_enabled = false;
         }
 
         // VSync: --vsync true/false, --no-vsync, --disable-vsync
-        if let Some(vsync) = Self::parse_bool_arg(args, "--vsync")? {
+        if let Some(vsync) = parse_bool_arg(args, "--vsync")? {
             self.frontend.vsync_enabled = vsync;
         }
-        if Self::has_negation_flag(args, &["--no-vsync", "--disable-vsync"]) {
+        if has_negation_flag(args, &["--no-vsync", "--disable-vsync"]) {
             self.frontend.vsync_enabled = false;
         }
 
         // Gamepads: --gamepads true/false
-        if let Some(gamepads) = Self::parse_bool_arg(args, "--gamepads")? {
+        if let Some(gamepads) = parse_bool_arg(args, "--gamepads")? {
             self.frontend.gamepads_enabled = gamepads;
         }
 
         // Four Score: --nes-enable-4-score true/false, --no-nes-4-score, --disable-nes-4-score
-        if let Some(four_score) = Self::parse_bool_arg(args, "--nes-enable-4-score")? {
+        if let Some(four_score) = parse_bool_arg(args, "--nes-enable-4-score")? {
             self.nes.four_score_enabled = four_score;
             self.nes.four_score_enabled_explicit = true;
         }
-        if Self::has_negation_flag(args, &["--no-nes-4-score", "--disable-nes-4-score"]) {
+        if has_negation_flag(args, &["--no-nes-4-score", "--disable-nes-4-score"]) {
             self.nes.four_score_enabled = false;
             self.nes.four_score_enabled_explicit = true;
         }
 
         // Debugger: --debugger true/false
-        if let Some(debugger) = Self::parse_bool_arg(args, "--debugger")? {
+        if let Some(debugger) = parse_bool_arg(args, "--debugger")? {
             self.frontend.debugger_enabled = debugger;
         }
 
         // Load state: --load-state true/false
-        if let Some(load_state) = Self::parse_bool_arg(args, "--load-state")? {
+        if let Some(load_state) = parse_bool_arg(args, "--load-state")? {
             self.frontend.load_state = load_state;
         }
 
         // Fullscreen (value-based)
-        if let Some(fullscreen) = Self::parse_bool_arg(args, "--fullscreen")? {
+        if let Some(fullscreen) = parse_bool_arg(args, "--fullscreen")? {
             self.frontend.fullscreen = fullscreen;
         }
 
@@ -1054,72 +840,72 @@ impl Config {
 
         // APU channel enable/disable flags (support both value-based and prefix negation)
         // Pulse1: --nes-pulse1 true/false, --no-nes-pulse1, --disable-nes-pulse1
-        if let Some(pulse1) = Self::parse_bool_arg(args, "--nes-pulse1")? {
+        if let Some(pulse1) = parse_bool_arg(args, "--nes-pulse1")? {
             if pulse1 {
                 self.nes.apu_channels.insert(ApuChannels::PULSE1);
             } else {
                 self.nes.apu_channels.remove(ApuChannels::PULSE1);
             }
         }
-        if Self::has_negation_flag(args, &["--no-nes-pulse1", "--disable-nes-pulse1"]) {
+        if has_negation_flag(args, &["--no-nes-pulse1", "--disable-nes-pulse1"]) {
             self.nes.apu_channels.remove(ApuChannels::PULSE1);
         }
 
         // Pulse2: --nes-pulse2 true/false, --no-nes-pulse2, --disable-nes-pulse2
-        if let Some(pulse2) = Self::parse_bool_arg(args, "--nes-pulse2")? {
+        if let Some(pulse2) = parse_bool_arg(args, "--nes-pulse2")? {
             if pulse2 {
                 self.nes.apu_channels.insert(ApuChannels::PULSE2);
             } else {
                 self.nes.apu_channels.remove(ApuChannels::PULSE2);
             }
         }
-        if Self::has_negation_flag(args, &["--no-nes-pulse2", "--disable-nes-pulse2"]) {
+        if has_negation_flag(args, &["--no-nes-pulse2", "--disable-nes-pulse2"]) {
             self.nes.apu_channels.remove(ApuChannels::PULSE2);
         }
 
         // Triangle: --nes-triangle true/false, --no-nes-triangle, --disable-nes-triangle
-        if let Some(triangle) = Self::parse_bool_arg(args, "--nes-triangle")? {
+        if let Some(triangle) = parse_bool_arg(args, "--nes-triangle")? {
             if triangle {
                 self.nes.apu_channels.insert(ApuChannels::TRIANGLE);
             } else {
                 self.nes.apu_channels.remove(ApuChannels::TRIANGLE);
             }
         }
-        if Self::has_negation_flag(args, &["--no-nes-triangle", "--disable-nes-triangle"]) {
+        if has_negation_flag(args, &["--no-nes-triangle", "--disable-nes-triangle"]) {
             self.nes.apu_channels.remove(ApuChannels::TRIANGLE);
         }
 
         // Noise: --nes-noise true/false, --no-nes-noise, --disable-nes-noise
-        if let Some(noise) = Self::parse_bool_arg(args, "--nes-noise")? {
+        if let Some(noise) = parse_bool_arg(args, "--nes-noise")? {
             if noise {
                 self.nes.apu_channels.insert(ApuChannels::NOISE);
             } else {
                 self.nes.apu_channels.remove(ApuChannels::NOISE);
             }
         }
-        if Self::has_negation_flag(args, &["--no-nes-noise", "--disable-nes-noise"]) {
+        if has_negation_flag(args, &["--no-nes-noise", "--disable-nes-noise"]) {
             self.nes.apu_channels.remove(ApuChannels::NOISE);
         }
 
         // DMC: --nes-dmc true/false, --no-nes-dmc, --disable-nes-dmc
-        if let Some(dmc) = Self::parse_bool_arg(args, "--nes-dmc")? {
+        if let Some(dmc) = parse_bool_arg(args, "--nes-dmc")? {
             if dmc {
                 self.nes.apu_channels.insert(ApuChannels::DMC);
             } else {
                 self.nes.apu_channels.remove(ApuChannels::DMC);
             }
         }
-        if Self::has_negation_flag(args, &["--no-nes-dmc", "--disable-nes-dmc"]) {
+        if has_negation_flag(args, &["--no-nes-dmc", "--disable-nes-dmc"]) {
             self.nes.apu_channels.remove(ApuChannels::DMC);
         }
 
         // Window height
-        if let Some(height) = Self::parse_u32_arg(args, "--window-height")? {
+        if let Some(height) = parse_u32_arg(args, "--window-height")? {
             self.frontend.window_height = height;
         }
 
         // Debugger alpha
-        if let Some(alpha) = Self::parse_f32_arg(args, "--debugger-alpha")? {
+        if let Some(alpha) = parse_f32_arg(args, "--debugger-alpha")? {
             self.frontend.debugger_alpha = alpha.clamp(0.1, 1.0);
         }
 
@@ -1136,7 +922,7 @@ impl Config {
         }
 
         // Zapper detection size
-        if let Some(size) = Self::parse_u32_arg(args, "--nes-zapper-detection-size")? {
+        if let Some(size) = parse_u32_arg(args, "--nes-zapper-detection-size")? {
             let size_u8 = u8::try_from(size).map_err(|_| {
                 format!(
                     "Invalid --nes-zapper-detection-size value: {} (must be between 0 and 255)",
@@ -1163,10 +949,10 @@ impl Config {
         }
 
         // Overscan
-        if let Some(v) = Self::parse_u32_arg(args, "--nes-horizontal-overscan")? {
+        if let Some(v) = parse_u32_arg(args, "--nes-horizontal-overscan")? {
             self.nes.horizontal_overscan = (v as u8).min(8);
         }
-        if let Some(v) = Self::parse_u32_arg(args, "--nes-vertical-overscan")? {
+        if let Some(v) = parse_u32_arg(args, "--nes-vertical-overscan")? {
             self.nes.vertical_overscan = (v as u8).min(16);
         }
 
@@ -1210,7 +996,7 @@ impl Config {
             self.frontend.autorun_headless = has_playback_headless;
         }
 
-        if let Some(v) = Self::parse_i64_arg(args, "--playback-from-checkpoint")? {
+        if let Some(v) = parse_i64_arg(args, "--playback-from-checkpoint")? {
             self.frontend.autorun_from_checkpoint = Some(v);
             // Implies playback mode if no explicit mode was set
             if self.frontend.autorun_mode == AutorunMode::None {
@@ -1218,22 +1004,21 @@ impl Config {
             }
         }
 
-        if let Some(v) = Self::parse_i64_arg(args, "--playback-headless-from-checkpoint")? {
+        if let Some(v) = parse_i64_arg(args, "--playback-headless-from-checkpoint")? {
             self.frontend.autorun_from_checkpoint = Some(v);
             self.frontend.autorun_mode = AutorunMode::Playback;
             self.frontend.autorun_headless = true;
         }
 
-        if let Some(v) = Self::parse_u32_arg(args, "--trim-checkpoints")? {
+        if let Some(v) = parse_u32_arg(args, "--trim-checkpoints")? {
             self.frontend.autorun_trim_checkpoints = Some(v as usize);
         }
 
-        if let Some(convert_autorun_requested) = Self::parse_bool_arg(args, "--convert-autorun")? {
+        if let Some(convert_autorun_requested) = parse_bool_arg(args, "--convert-autorun")? {
             self.frontend.autorun_convert = convert_autorun_requested;
         }
 
-        if let Some(recalculate_autorun_requested) =
-            Self::parse_bool_arg(args, "--recalculate-autorun")?
+        if let Some(recalculate_autorun_requested) = parse_bool_arg(args, "--recalculate-autorun")?
         {
             self.frontend.autorun_recalculate = recalculate_autorun_requested;
         }
@@ -1326,7 +1111,7 @@ impl Config {
                     if i + 1 < args.len() {
                         let next_arg = &args[i + 1];
                         // If next arg is a valid boolean value, skip it
-                        if Self::parse_bool(next_arg).is_ok() {
+                        if parse_bool(next_arg).is_ok() {
                             i += 1; // Skip the boolean value
                         }
                         // Otherwise leave it for processing as another flag or positional
@@ -1417,7 +1202,7 @@ impl Config {
                 else if OPTIONAL_BOOL_FLAGS.contains(&arg.as_str()) {
                     i += 1;
                     // Peek at next argument to see if it's a boolean value
-                    if i < args.len() && Self::parse_bool(&args[i]).is_ok() {
+                    if i < args.len() && parse_bool(&args[i]).is_ok() {
                         i += 1; // Skip the boolean value
                     }
                 } else {
@@ -1449,80 +1234,6 @@ impl Config {
         }
 
         Ok(rom_path)
-    }
-
-    /// Parse a u32 argument from command-line args.
-    fn parse_u32_arg(args: &[String], flag: &str) -> Result<Option<u32>, String> {
-        for i in 0..args.len() {
-            // Handle `--flag value`
-            if args[i] == flag && i + 1 < args.len() {
-                let value = &args[i + 1];
-                let parsed: u32 = value
-                    .parse()
-                    .map_err(|_| format!("Invalid {} value: {}", flag, value))?;
-                return Ok(Some(parsed));
-            }
-            // Handle `--flag=value`
-            if let Some((flag_part, value_part)) = args[i].split_once('=')
-                && flag_part == flag
-            {
-                let parsed: u32 = value_part
-                    .parse()
-                    .map_err(|_| format!("Invalid {} value: {}", flag, value_part))?;
-                return Ok(Some(parsed));
-            }
-        }
-        Ok(None)
-    }
-
-    /// Parse an i64 argument from command-line args (supports negative values).
-    ///
-    /// Supports both `--flag value` and `--flag=value` forms.
-    fn parse_i64_arg(args: &[String], flag: &str) -> Result<Option<i64>, String> {
-        for i in 0..args.len() {
-            // Handle `--flag value` (value may start with '-' for negatives)
-            if args[i] == flag && i + 1 < args.len() {
-                let value = &args[i + 1];
-                let parsed: i64 = value
-                    .parse()
-                    .map_err(|_| format!("Invalid {} value: {}", flag, value))?;
-                return Ok(Some(parsed));
-            }
-            // Handle `--flag=value`
-            if let Some((flag_part, value_part)) = args[i].split_once('=')
-                && flag_part == flag
-            {
-                let parsed: i64 = value_part
-                    .parse()
-                    .map_err(|_| format!("Invalid {} value: {}", flag, value_part))?;
-                return Ok(Some(parsed));
-            }
-        }
-        Ok(None)
-    }
-
-    /// Parse an f32 argument from command-line args.
-    fn parse_f32_arg(args: &[String], flag: &str) -> Result<Option<f32>, String> {
-        for i in 0..args.len() {
-            // Handle `--flag value`
-            if args[i] == flag && i + 1 < args.len() {
-                let value = &args[i + 1];
-                let parsed: f32 = value
-                    .parse()
-                    .map_err(|_| format!("Invalid {} value: {}", flag, value))?;
-                return Ok(Some(parsed));
-            }
-            // Handle `--flag=value`
-            if let Some((flag_part, value_part)) = args[i].split_once('=')
-                && flag_part == flag
-            {
-                let parsed: f32 = value_part
-                    .parse()
-                    .map_err(|_| format!("Invalid {} value: {}", flag, value_part))?;
-                return Ok(Some(parsed));
-            }
-        }
-        Ok(None)
     }
 
     /// Parse a string argument from command-line args.
@@ -1621,7 +1332,7 @@ impl Config {
             "nes-hardware" => self.apply_hardware_value(value)?,
             "nes-expansion_port" => self.apply_expansion_port_value(value)?,
             "nes-vs_dip_switches" => {
-                self.nes.vs_dip_switches = Self::parse_hex_u8(value).map_err(|_| {
+                self.nes.vs_dip_switches = parse_hex_u8(value).map_err(|_| {
                     format!(
                         "Invalid nes-vs_dip_switches value: '{}'. Expected hex (0x00-0xFF) or decimal (0-255)",
                         value
@@ -1629,33 +1340,33 @@ impl Config {
                 })?;
             }
             "nes-vs_controllers_swapped" => {
-                if let Ok(b) = Self::parse_bool(value) {
+                if let Ok(b) = parse_bool(value) {
                     self.nes.vs_controllers_swapped = b;
                 }
             }
             "audio" => {
-                if let Ok(b) = Self::parse_bool(value) {
+                if let Ok(b) = parse_bool(value) {
                     self.frontend.audio_enabled = b;
                 }
             }
             "vsync" => {
-                if let Ok(b) = Self::parse_bool(value) {
+                if let Ok(b) = parse_bool(value) {
                     self.frontend.vsync_enabled = b;
                 }
             }
             "gamepads" => {
-                if let Ok(b) = Self::parse_bool(value) {
+                if let Ok(b) = parse_bool(value) {
                     self.frontend.gamepads_enabled = b;
                 }
             }
             "nes-enable_4_score" => {
-                if let Ok(b) = Self::parse_bool(value) {
+                if let Ok(b) = parse_bool(value) {
                     self.nes.four_score_enabled = b;
                     self.nes.four_score_enabled_explicit = true;
                 }
             }
             "fullscreen" => {
-                if let Ok(b) = Self::parse_bool(value) {
+                if let Ok(b) = parse_bool(value) {
                     self.frontend.fullscreen = b;
                 }
             }
@@ -1681,17 +1392,17 @@ impl Config {
                 }
             }
             "debugger" => {
-                if let Ok(b) = Self::parse_bool(value) {
+                if let Ok(b) = parse_bool(value) {
                     self.frontend.debugger_enabled = b;
                 }
             }
             "load_state" => {
-                if let Ok(b) = Self::parse_bool(value) {
+                if let Ok(b) = parse_bool(value) {
                     self.frontend.load_state = b;
                 }
             }
             "nes-pulse1" => {
-                if let Ok(b) = Self::parse_bool(value) {
+                if let Ok(b) = parse_bool(value) {
                     if b {
                         self.nes.apu_channels.insert(ApuChannels::PULSE1);
                     } else {
@@ -1700,7 +1411,7 @@ impl Config {
                 }
             }
             "nes-pulse2" => {
-                if let Ok(b) = Self::parse_bool(value) {
+                if let Ok(b) = parse_bool(value) {
                     if b {
                         self.nes.apu_channels.insert(ApuChannels::PULSE2);
                     } else {
@@ -1709,7 +1420,7 @@ impl Config {
                 }
             }
             "nes-triangle" => {
-                if let Ok(b) = Self::parse_bool(value) {
+                if let Ok(b) = parse_bool(value) {
                     if b {
                         self.nes.apu_channels.insert(ApuChannels::TRIANGLE);
                     } else {
@@ -1718,7 +1429,7 @@ impl Config {
                 }
             }
             "nes-noise" => {
-                if let Ok(b) = Self::parse_bool(value) {
+                if let Ok(b) = parse_bool(value) {
                     if b {
                         self.nes.apu_channels.insert(ApuChannels::NOISE);
                     } else {
@@ -1727,7 +1438,7 @@ impl Config {
                 }
             }
             "nes-dmc" => {
-                if let Ok(b) = Self::parse_bool(value) {
+                if let Ok(b) = parse_bool(value) {
                     if b {
                         self.nes.apu_channels.insert(ApuChannels::DMC);
                     } else {
@@ -1810,7 +1521,7 @@ impl Config {
                 }
             }
             "trace-nestest" => {
-                if let Ok(b) = Self::parse_bool(value) {
+                if let Ok(b) = parse_bool(value) {
                     self.frontend.tracing.nestest = b;
                     if b {
                         self.frontend.tracing.enabled = true;
@@ -1844,7 +1555,7 @@ impl Config {
                 }
             },
             "nes-oam_dram_decay" | "nes-oam_dram_decay_enabled" => {
-                if let Ok(b) = Self::parse_bool(value) {
+                if let Ok(b) = parse_bool(value) {
                     self.nes.oam_dram_decay_enabled = b;
                 } else {
                     eprintln!(
@@ -2095,47 +1806,15 @@ impl Config {
         parts.join(" | ")
     }
 
-    /// Parse a boolean value from config file.
-    /// Accepts: true, false, yes, no, 1, 0 (case-insensitive)
-    fn parse_bool(value: &str) -> Result<bool, ()> {
-        match value.to_lowercase().as_str() {
-            "true" | "yes" | "1" => Ok(true),
-            "false" | "no" | "0" => Ok(false),
-            _ => Err(()),
-        }
-    }
-
-    /// Parse a u8 from hex (0x..) or decimal string.
-    fn parse_hex_u8(value: &str) -> Result<u8, ()> {
-        let trimmed = value.trim();
-        if let Some(hex) = trimmed
-            .strip_prefix("0x")
-            .or_else(|| trimmed.strip_prefix("0X"))
-        {
-            u8::from_str_radix(hex, 16).map_err(|_| ())
-        } else {
-            trimmed.parse::<u8>().map_err(|_| ())
-        }
-    }
-
-    fn parse_search_paths(value: &str) -> Vec<String> {
-        value
-            .split(',')
-            .map(str::trim)
-            .filter(|path| !path.is_empty())
-            .map(ToString::to_string)
-            .collect()
-    }
-
     fn apply_cartridge_catalog_args(&mut self, args: &[String]) -> Result<(), String> {
         if let Some(paths) = Self::parse_string_arg(args, "--cartridge-search-paths") {
-            self.frontend.cartridge_search_paths = Self::parse_search_paths(&paths);
+            self.frontend.cartridge_search_paths = parse_search_paths(&paths);
         }
 
-        if let Some(scan) = Self::parse_bool_arg(args, "--scan-cartridges")? {
+        if let Some(scan) = parse_bool_arg(args, "--scan-cartridges")? {
             self.frontend.scan_cartridges = scan;
         }
-        if Self::has_negation_flag(args, &["--no-scan-cartridges"]) {
+        if has_negation_flag(args, &["--no-scan-cartridges"]) {
             self.frontend.scan_cartridges = false;
         }
 
@@ -2149,71 +1828,20 @@ impl Config {
     fn apply_cartridge_catalog_config_value(&mut self, key: &str, value: &str) {
         match key {
             "cartridge_search_paths" => {
-                self.frontend.cartridge_search_paths = Self::parse_search_paths(value);
+                self.frontend.cartridge_search_paths = parse_search_paths(value);
             }
             "scan_cartridges" => {
-                if let Ok(scan) = Self::parse_bool(value) {
+                if let Ok(scan) = parse_bool(value) {
                     self.frontend.scan_cartridges = scan;
                 }
             }
             "rebuild_cartridge_catalog" => {
-                if let Ok(rebuild) = Self::parse_bool(value) {
+                if let Ok(rebuild) = parse_bool(value) {
                     self.frontend.rebuild_cartridge_catalog = rebuild;
                 }
             }
             _ => {}
         }
-    }
-
-    /// Parse a boolean argument from command-line args.
-    /// Supports three forms:
-    /// - `--flag` (no value) → defaults to true
-    /// - `--flag value` (space-separated) → parse value
-    /// - `--flag=value` (equals syntax) → parse value
-    ///   Returns Ok(None) if flag not present, Ok(Some(bool)) if valid, Err(msg) if invalid.
-    fn parse_bool_arg(args: &[String], flag: &str) -> Result<Option<bool>, String> {
-        for i in 0..args.len() {
-            // Check for --flag=value syntax
-            if let Some((flag_part, value_part)) = args[i].split_once('=') {
-                if flag_part == flag {
-                    match Self::parse_bool(value_part) {
-                        Ok(b) => return Ok(Some(b)),
-                        Err(_) => {
-                            return Err(format!(
-                                "Invalid value for {flag}: '{}'. Expected: true, false, yes, no, 1, or 0",
-                                value_part
-                            ));
-                        }
-                    }
-                }
-            }
-            // Check for --flag (with or without value)
-            else if args[i] == flag {
-                // Check if next argument is a value or another flag/positional
-                if i + 1 < args.len() {
-                    let next_arg = &args[i + 1];
-                    // If next arg looks like another flag, treat current flag as valueless (default to true)
-                    if next_arg.starts_with('-') {
-                        return Ok(Some(true));
-                    }
-                    // Try to parse as boolean value
-                    match Self::parse_bool(next_arg) {
-                        Ok(b) => return Ok(Some(b)),
-                        // If it doesn't parse as boolean, treat flag as valueless (default to true)
-                        Err(_) => return Ok(Some(true)),
-                    }
-                } else {
-                    // Flag is last argument, default to true
-                    return Ok(Some(true));
-                }
-            }
-        }
-        Ok(None)
-    }
-
-    /// Check if any of the negation flags are present in the arguments.
-    fn has_negation_flag(args: &[String], flags: &[&str]) -> bool {
-        args.iter().any(|a| flags.contains(&a.as_str()))
     }
 
     fn validate_controller_ports(&self) -> Result<(), String> {
@@ -2252,52 +1880,6 @@ impl Config {
 
         Ok(())
     }
-}
-
-/// Parse a comma-separated breakpoint specification string into a list of `BreakpointKind`.
-///
-/// Each entry is in the format `type=value`:
-/// - `pc=ADDR` — PC breakpoint (hex address, e.g. `C000` or `0xC000`)
-/// - `cycle=N` — Cycle breakpoint (decimal number)
-/// - `frame=N` — Frame breakpoint (decimal number)
-/// - `write=ADDR` — Write-address breakpoint (hex address)
-///
-/// Returns an error string if any entry is unrecognised or malformed.
-fn parse_breakpoint_list(spec: &str) -> Result<Vec<BreakpointKind>, String> {
-    spec.split(',')
-        .map(|entry| {
-            let entry = entry.trim();
-            let (kind, value) = entry
-                .split_once('=')
-                .ok_or_else(|| format!("invalid breakpoint '{entry}': expected format type=value (e.g. pc=C000, cycle=100, frame=60, write=2006)"))?;
-            match kind.trim() {
-                "pc" => parse_hex_addr(value)
-                    .map(BreakpointKind::Pc)
-                    .ok_or_else(|| format!("invalid breakpoint address '{value}': expected a hex address (e.g. C000)")),
-                "cycle" => value
-                    .trim()
-                    .parse::<u64>()
-                    .map(BreakpointKind::Cycle)
-                    .map_err(|_| format!("invalid breakpoint cycle '{value}': expected a decimal number")),
-                "frame" => value
-                    .trim()
-                    .parse::<u64>()
-                    .map(BreakpointKind::Frame)
-                    .map_err(|_| format!("invalid breakpoint frame '{value}': expected a decimal number")),
-                "write" => parse_hex_addr(value)
-                    .map(BreakpointKind::WriteAddress)
-                    .ok_or_else(|| format!("invalid breakpoint address '{value}': expected a hex address (e.g. 2006)")),
-                other => Err(format!(
-                    "invalid breakpoint type '{other}': expected pc, cycle, frame, or write"
-                )),
-            }
-        })
-        .collect()
-}
-
-fn parse_hex_addr(s: &str) -> Option<u16> {
-    let s = s.trim().trim_start_matches("0x").trim_start_matches("0X");
-    u16::from_str_radix(s, 16).ok()
 }
 
 #[cfg(test)]
@@ -6059,6 +5641,8 @@ nes-filter=invalid-shader
 
     #[test]
     fn test_breakpoint_cli_sets_frontend_config() {
+        use crate::platform::debugging::breakpoints::BreakpointKind;
+
         let args = vec![
             "neser".to_string(),
             "--breakpoint".to_string(),
