@@ -503,10 +503,10 @@ impl NesConfig {
 
         // Overscan
         if let Some(v) = parse_u32_arg(args, "--nes-horizontal-overscan")? {
-            self.horizontal_overscan = (v as u8).min(8);
+            self.horizontal_overscan = v.min(8) as u8;
         }
         if let Some(v) = parse_u32_arg(args, "--nes-vertical-overscan")? {
-            self.vertical_overscan = (v as u8).min(16);
+            self.vertical_overscan = v.min(16) as u8;
         }
 
         Ok(())

@@ -360,8 +360,8 @@ impl FrontendConfig {
 
     /// Apply a single config file key-value pair to frontend configuration.
     ///
-    /// Handles platform-level config keys (audio_enabled, vsync_enabled, fullscreen,
-    /// display, window_height, etc.).
+    /// Handles platform-level config keys (audio, vsync, fullscreen, display,
+    /// window_height, debugger_alpha, tracing keys, ram_init_mode, etc.).
     pub(crate) fn apply_config_value(&mut self, key: &str, value: &str) -> Result<(), String> {
         match key {
             "audio" => {
@@ -451,29 +451,34 @@ impl FrontendConfig {
                     }
                 }
             }
-            "ram_init_mode" => {
-                self.ram_init_mode = match value.to_lowercase().as_str() {
-                    "zero" | "0" => RamInitMode::Zero,
-                    "random" => RamInitMode::Random,
-                    _ => {
-                        // Accept both "seeded-random:N" and "seeded_random:N" for compatibility
-                        if let Some(seed_str) = value
-                            .strip_prefix("seeded-random:")
-                            .or_else(|| value.strip_prefix("seeded_random:"))
-                            .or_else(|| value.strip_prefix("seeded:"))
-                        {
-                            let seed: u64 = seed_str
-                                .parse()
-                                .map_err(|_| format!("Invalid seed value: {seed_str}"))?;
-                            RamInitMode::SeededRandom(seed)
+            "ram_init_mode" => match value.to_lowercase().as_str() {
+                "zero" | "0" => self.ram_init_mode = RamInitMode::Zero,
+                "random" => self.ram_init_mode = RamInitMode::Random,
+                _ => {
+                    // Accept both "seeded-random:N" and "seeded_random:N" for compatibility
+                    if let Some(seed_str) = value
+                        .strip_prefix("seeded-random:")
+                        .or_else(|| value.strip_prefix("seeded_random:"))
+                        .or_else(|| value.strip_prefix("seeded:"))
+                    {
+                        if let Ok(seed) = seed_str.parse::<u64>() {
+                            self.ram_init_mode = RamInitMode::SeededRandom(seed);
                         } else {
-                            return Err(format!(
-                                "Invalid ram_init_mode: {value} (expected 'zero', 'random', or 'seeded-random:N')"
-                            ));
+                            eprintln!(
+                                "Warning: invalid seed '{}' for 'ram_init_mode'; \
+                                 keeping current mode. Use format 'seeded-random:12345'.",
+                                seed_str
+                            );
                         }
+                    } else {
+                        eprintln!(
+                            "Warning: invalid value '{}' for 'ram_init_mode'; \
+                             keeping current mode. Valid values: zero, random, seeded-random:SEED",
+                            value
+                        );
                     }
-                };
-            }
+                }
+            },
             "cartridge_search_paths" => {
                 self.cartridge_search_paths = parse_search_paths(value);
             }
