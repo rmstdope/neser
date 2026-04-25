@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::gb::bus::GbBus;
+use crate::gb::debugging::disasm;
+use crate::trace_cpu;
 
 // ---------------------------------------------------------------------------
 // Flag bit positions in register F (upper nibble only; bits 0–3 always 0)
@@ -659,7 +661,53 @@ impl<B: GbBus> Sm83<B> {
             // The pre-tick above IS the halt stall cycle.  (1M total)
         } else {
             // T3 of M1: read opcode (no additional tick).
+            let pc = self.regs.pc; // Capture PC before fetch for tracing
             let opcode = self.fetch_byte_no_tick();
+
+            // Level 1 CPU tracing: emit instruction execution trace
+            #[cfg(debug_assertions)]
+            {
+                use crate::platform::debugging::cpu_trace_level;
+                if cpu_trace_level() >= 1 {
+                    // Collect instruction bytes for disassembly
+                    let mut bytes = vec![opcode];
+
+                    // Determine how many operand bytes to collect based on opcode
+                    // This is a simplified approach - we peek at memory without advancing PC
+                    let operand_bytes = if opcode == 0xCB {
+                        // CB prefix: next byte is the actual opcode
+                        bytes.push(self.bus.read(self.regs.pc));
+                        0 // No additional operands needed (already collected the CB operand)
+                    } else {
+                        // Use opcode metadata to determine instruction length
+                        let meta = crate::gb::cpu::opcode::lookup(opcode);
+                        // Instructions with n16 have 2 operand bytes, n8/e8 have 1
+                        if meta.mnemonic.contains("n16") {
+                            2
+                        } else if meta.mnemonic.contains("n8") || meta.mnemonic.contains("e8") {
+                            1
+                        } else {
+                            0
+                        }
+                    };
+
+                    // Collect operand bytes by peeking ahead in memory
+                    for i in 0..operand_bytes {
+                        bytes.push(self.bus.read(self.regs.pc.wrapping_add(i)));
+                    }
+
+                    let asm = disasm::format_instruction(opcode, pc, &bytes);
+                    let hex = disasm::format_disasm_bytes(&bytes);
+
+                    trace_cpu!(1;
+                        "exec PC={:04X} {:<8} {:<14} AF={:04X} BC={:04X} DE={:04X} HL={:04X} SP={:04X} cyc={:<3}",
+                        pc, hex, asm,
+                        self.regs.af(), self.regs.bc(), self.regs.de(), self.regs.hl(), self.regs.sp,
+                        self.cycles
+                    );
+                }
+            }
+
             self.decode_execute(opcode);
         }
 

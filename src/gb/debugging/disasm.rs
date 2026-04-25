@@ -53,31 +53,29 @@ fn resolve_operands(mnemonic: &str, pc: u16, bytes: &[u8], is_cb: bool) -> Strin
     let operand_start = if is_cb { 2 } else { 1 };
 
     // Replace n8 (8-bit immediate) with actual value
-    if result.contains("n8") {
-        if let Some(&byte) = bytes.get(operand_start) {
-            result = result.replace("n8", &format!("${:02X}", byte));
-        }
+    if result.contains("n8")
+        && let Some(&byte) = bytes.get(operand_start)
+    {
+        result = result.replace("n8", &format!("${:02X}", byte));
     }
 
     // Replace n16 (16-bit immediate, little-endian) with actual value
-    if result.contains("n16") {
-        if bytes.len() >= operand_start + 2 {
-            let lo = bytes[operand_start];
-            let hi = bytes[operand_start + 1];
-            let addr = u16::from_le_bytes([lo, hi]);
-            result = result.replace("n16", &format!("${:04X}", addr));
-        }
+    if result.contains("n16") && bytes.len() >= operand_start + 2 {
+        let lo = bytes[operand_start];
+        let hi = bytes[operand_start + 1];
+        let addr = u16::from_le_bytes([lo, hi]);
+        result = result.replace("n16", &format!("${:04X}", addr));
     }
 
     // Replace e8 (signed 8-bit offset) with calculated target address
-    if result.contains("e8") {
-        if let Some(&offset_byte) = bytes.get(operand_start) {
-            let offset = offset_byte as i8;
-            // Target = PC + instruction_length + offset
-            // For e8 instructions, length is always 2 bytes
-            let target = pc.wrapping_add(2).wrapping_add(offset as i16 as u16);
-            result = result.replace("e8", &format!("${:04X}", target));
-        }
+    if result.contains("e8")
+        && let Some(&offset_byte) = bytes.get(operand_start)
+    {
+        let offset = offset_byte as i8;
+        // Target = PC + instruction_length + offset
+        // For e8 instructions, length is always 2 bytes
+        let target = pc.wrapping_add(2).wrapping_add(offset as i16 as u16);
+        result = result.replace("e8", &format!("${:04X}", target));
     }
 
     result
