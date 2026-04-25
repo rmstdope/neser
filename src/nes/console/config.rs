@@ -74,8 +74,8 @@ const CLI_FLAGS: &[CliFlag] = &[
         has_value: true,
     },
     CliFlag {
-        flag: "--filter",
-        help: Some("Specify shader filter: crt, ntsc, smooth, or none"),
+        flag: "--nes-filter",
+        help: Some("NES shader filter: crt, ntsc, smooth, pal, or none"),
         has_value: true,
     },
     CliFlag {
@@ -742,7 +742,8 @@ impl Config {
             flag,
             "--fullscreen"
                 | "--display"
-                | "--filter"
+                | "--nes-filter"
+                | "--gb-filter"
                 | "--window-height"
                 | "--vsync"
                 | "--no-vsync"
@@ -1030,9 +1031,18 @@ impl Config {
             self.frontend.fullscreen_display = Some(display);
         }
 
-        // Shader path
-        if let Some(filter_name) = Self::parse_shader_arg(args) {
-            self.frontend.shader_path = Some(Self::map_filter_name(&filter_name)?);
+        // NES shader path
+        if let Some(filter_name) = Self::parse_named_arg(args, "--nes-filter") {
+            self.frontend.shader_path = Some(Self::map_filter_name_for(
+                &filter_name,
+                &["none", "crt", "smooth", "ntsc", "pal"],
+            )?);
+        }
+
+        // GB shader path
+        if let Some(filter_name) = Self::parse_named_arg(args, "--gb-filter") {
+            self.frontend.shader_path =
+                Some(Self::map_filter_name_for(&filter_name, &["none", "dmg"])?);
         }
 
         if let Some(path) = Self::parse_rom_arg(args)? {
@@ -1372,10 +1382,10 @@ impl Config {
         Ok(None)
     }
 
-    /// Parse the --filter argument from command-line args.
-    fn parse_shader_arg(args: &[String]) -> Option<String> {
+    /// Parse a named flag argument (e.g., `--nes-filter`) from command-line args.
+    fn parse_named_arg(args: &[String], flag: &str) -> Option<String> {
         for i in 0..args.len() {
-            if args[i] == "--filter" && i + 1 < args.len() {
+            if args[i] == flag && i + 1 < args.len() {
                 return Some(args[i + 1].clone());
             }
         }
@@ -1551,8 +1561,10 @@ impl Config {
     /// window_height=896
     ///
     /// # Shader/filter
-    /// # Valid values: crt, ntsc, smooth, none
-    /// filter=crt
+    /// # NES valid values: crt, ntsc, smooth, pal, none
+    /// nes-filter=crt
+    /// # GB valid values: dmg, none
+    /// gb-filter=dmg
     ///
     /// # APU channel toggles
     /// pulse1=true
@@ -1585,22 +1597,22 @@ impl Config {
         Ok(())
     }
 
-    /// Map simplified filter names to shader paths.
+    /// Map a filter name to a shader path, validating against an allowed list.
     ///
-    /// Valid names and paths are defined in [`crate::platform::shaders::SHADER_PRESETS`].
-    fn map_filter_name(name: &str) -> Result<String, String> {
+    /// `allowed` must be a subset of names defined in [`crate::platform::shaders::SHADER_PRESETS`].
+    fn map_filter_name_for(name: &str, allowed: &[&str]) -> Result<String, String> {
+        if !allowed.contains(&name) {
+            return Err(format!(
+                "Invalid filter name: '{}'. Valid options are: {}",
+                name,
+                allowed.join(", ")
+            ));
+        }
         SHADER_PRESETS
             .iter()
             .find(|(n, _)| *n == name)
             .map(|(_, path)| (*path).to_string())
-            .ok_or_else(|| {
-                let valid: Vec<&str> = SHADER_PRESETS.iter().map(|(n, _)| *n).collect();
-                format!(
-                    "Invalid filter name: '{}'. Valid options are: {}",
-                    name,
-                    valid.join(", ")
-                )
-            })
+            .ok_or_else(|| format!("Filter '{}' has no shader path defined", name))
     }
 
     /// Apply a single config file key-value pair.
@@ -1654,9 +1666,18 @@ impl Config {
                     self.frontend.fullscreen_display = Some(d);
                 }
             }
-            "filter" => {
+            "nes-filter" => {
                 if !value.is_empty() {
-                    self.frontend.shader_path = Some(Self::map_filter_name(value)?);
+                    self.frontend.shader_path = Some(Self::map_filter_name_for(
+                        value,
+                        &["none", "crt", "smooth", "ntsc", "pal"],
+                    )?);
+                }
+            }
+            "gb-filter" => {
+                if !value.is_empty() {
+                    self.frontend.shader_path =
+                        Some(Self::map_filter_name_for(value, &["none", "dmg"])?);
                 }
             }
             "debugger" => {
@@ -2797,19 +2818,14 @@ mod tests {
     fn test_config_cmdline_filter_invalid_errors() {
         let args = vec![
             "neser".to_string(),
-            "--filter".to_string(),
+            "--nes-filter".to_string(),
             "invalid-filter".to_string(),
         ];
         let result = config_new(args);
         assert!(result.is_err());
-        let valid = crate::platform::shaders::SHADER_PRESETS
-            .iter()
-            .map(|(n, _)| *n)
-            .collect::<Vec<_>>()
-            .join(", ");
         assert_eq!(
             result.unwrap_err(),
-            format!("Invalid filter name: 'invalid-filter'. Valid options are: {valid}")
+            "Invalid filter name: 'invalid-filter'. Valid options are: none, crt, smooth, ntsc, pal"
         );
     }
 
@@ -3329,30 +3345,25 @@ mod tests {
     #[test]
     fn test_config_file_filter_invalid_errors() {
         let mut config = Config::default();
-        let result = config.apply_config_value("filter", "invalid-filter");
+        let result = config.apply_config_value("nes-filter", "invalid-filter");
         assert!(result.is_err());
-        let valid = crate::platform::shaders::SHADER_PRESETS
-            .iter()
-            .map(|(n, _)| *n)
-            .collect::<Vec<_>>()
-            .join(", ");
         assert_eq!(
             result.unwrap_err(),
-            format!("Invalid filter name: 'invalid-filter'. Valid options are: {valid}")
+            "Invalid filter name: 'invalid-filter'. Valid options are: none, crt, smooth, ntsc, pal"
         );
     }
 
     #[test]
     fn test_config_file_filter_empty_ignored() {
         let mut config = Config::default();
-        config.apply_config_value("filter", "").unwrap();
+        config.apply_config_value("nes-filter", "").unwrap();
         assert_eq!(config.frontend.shader_path, None);
     }
 
     #[test]
     fn test_config_file_filter_crt() {
         let mut config = Config::default();
-        config.apply_config_value("filter", "crt").unwrap();
+        config.apply_config_value("nes-filter", "crt").unwrap();
         assert_eq!(
             config.frontend.shader_path,
             Some("vendor/slang-shaders/crt/crt-lottes.slangp".to_string())
@@ -3362,7 +3373,7 @@ mod tests {
     #[test]
     fn test_config_file_filter_ntsc() {
         let mut config = Config::default();
-        config.apply_config_value("filter", "ntsc").unwrap();
+        config.apply_config_value("nes-filter", "ntsc").unwrap();
         assert_eq!(
             config.frontend.shader_path,
             Some("vendor/slang-shaders/ntsc/ntsc-256px-composite.slangp".to_string())
@@ -3372,7 +3383,7 @@ mod tests {
     #[test]
     fn test_config_file_filter_smooth() {
         let mut config = Config::default();
-        config.apply_config_value("filter", "smooth").unwrap();
+        config.apply_config_value("nes-filter", "smooth").unwrap();
         assert_eq!(
             config.frontend.shader_path,
             Some(
@@ -3385,7 +3396,7 @@ mod tests {
     #[test]
     fn test_config_file_filter_none() {
         let mut config = Config::default();
-        config.apply_config_value("filter", "none").unwrap();
+        config.apply_config_value("nes-filter", "none").unwrap();
         assert_eq!(
             config.frontend.shader_path,
             Some("shaders/stock.slangp".to_string())
@@ -3396,7 +3407,7 @@ mod tests {
     fn test_config_cmdline_filter_crt() {
         let args = vec![
             "neser".to_string(),
-            "--filter".to_string(),
+            "--nes-filter".to_string(),
             "crt".to_string(),
         ];
         let config = parse_config(args);
@@ -3410,7 +3421,7 @@ mod tests {
     fn test_config_cmdline_filter_ntsc() {
         let args = vec![
             "neser".to_string(),
-            "--filter".to_string(),
+            "--nes-filter".to_string(),
             "ntsc".to_string(),
         ];
         let config = parse_config(args);
@@ -3424,7 +3435,7 @@ mod tests {
     fn test_config_cmdline_filter_smooth() {
         let args = vec![
             "neser".to_string(),
-            "--filter".to_string(),
+            "--nes-filter".to_string(),
             "smooth".to_string(),
         ];
         let config = parse_config(args);
@@ -3441,7 +3452,7 @@ mod tests {
     fn test_config_cmdline_filter_none() {
         let args = vec![
             "neser".to_string(),
-            "--filter".to_string(),
+            "--nes-filter".to_string(),
             "none".to_string(),
         ];
         let config = parse_config(args);
@@ -3762,7 +3773,7 @@ nes-hardware=nes-pal
 audio=false
 fullscreen=true
 display=2
-filter=crt
+nes-filter=crt
 nes-pulse1=false
 "#;
 
@@ -3898,7 +3909,7 @@ nes-controller_port2=arkanoid
 
         let content = r#"
     hardware=nes-pal
-filter=invalid-shader
+nes-filter=invalid-shader
 "#;
         let mut file = NamedTempFile::new().unwrap();
         file.write_all(content.as_bytes()).unwrap();
@@ -3910,14 +3921,9 @@ filter=invalid-shader
         ];
         let result = Config::new(&args);
         assert!(result.is_err());
-        let valid = crate::platform::shaders::SHADER_PRESETS
-            .iter()
-            .map(|(n, _)| *n)
-            .collect::<Vec<_>>()
-            .join(", ");
         assert_eq!(
             result.unwrap_err(),
-            format!("Invalid filter name: 'invalid-shader'. Valid options are: {valid}")
+            "Invalid filter name: 'invalid-shader'. Valid options are: none, crt, smooth, ntsc, pal"
         );
     }
 
@@ -6190,5 +6196,162 @@ filter=invalid-shader
         ];
         let result = config_new(args);
         assert!(result.is_err());
+    }
+
+    // --nes-filter CLI flag tests
+
+    #[test]
+    fn test_config_cmdline_nes_filter_crt_sets_shader_path() {
+        let args = vec![
+            "neser".to_string(),
+            "--nes-filter".to_string(),
+            "crt".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(
+            config.frontend.shader_path,
+            Some("vendor/slang-shaders/crt/crt-lottes.slangp".to_string())
+        );
+    }
+
+    #[test]
+    fn test_config_cmdline_nes_filter_rejects_dmg_shader() {
+        let args = vec![
+            "neser".to_string(),
+            "--nes-filter".to_string(),
+            "dmg".to_string(),
+        ];
+        let result = config_new(args);
+        assert!(result.is_err());
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("dmg"),
+            "Error should mention the invalid value: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_config_cmdline_nes_filter_accepts_smooth() {
+        let args = vec![
+            "neser".to_string(),
+            "--nes-filter".to_string(),
+            "smooth".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(
+            config.frontend.shader_path,
+            Some(
+                "vendor/slang-shaders/edge-smoothing/xbrz/xbrz-freescale-multipass.slangp"
+                    .to_string()
+            )
+        );
+    }
+
+    // --gb-filter CLI flag tests
+
+    #[test]
+    fn test_config_cmdline_gb_filter_dmg_sets_shader_path() {
+        let args = vec![
+            "neser".to_string(),
+            "--gb-filter".to_string(),
+            "dmg".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(
+            config.frontend.shader_path,
+            Some("vendor/slang-shaders/handheld/gameboy.slangp".to_string())
+        );
+    }
+
+    #[test]
+    fn test_config_cmdline_gb_filter_rejects_crt_shader() {
+        let args = vec![
+            "neser".to_string(),
+            "--gb-filter".to_string(),
+            "crt".to_string(),
+        ];
+        let result = config_new(args);
+        assert!(result.is_err());
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("crt"),
+            "Error should mention the invalid value: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_config_cmdline_gb_filter_none_sets_stock_shader() {
+        let args = vec![
+            "neser".to_string(),
+            "--gb-filter".to_string(),
+            "none".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(
+            config.frontend.shader_path,
+            Some("shaders/stock.slangp".to_string())
+        );
+    }
+
+    // nes-filter= config file key tests
+
+    #[test]
+    fn test_config_file_nes_filter_ntsc_sets_shader_path() {
+        let mut config = Config::default();
+        config.apply_config_value("nes-filter", "ntsc").unwrap();
+        assert_eq!(
+            config.frontend.shader_path,
+            Some("vendor/slang-shaders/ntsc/ntsc-256px-composite.slangp".to_string())
+        );
+    }
+
+    #[test]
+    fn test_config_file_nes_filter_rejects_dmg_shader() {
+        let mut config = Config::default();
+        let result = config.apply_config_value("nes-filter", "dmg");
+        assert!(result.is_err());
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("dmg"),
+            "Error should mention the invalid value: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_config_file_nes_filter_empty_ignored() {
+        let mut config = Config::default();
+        config.apply_config_value("nes-filter", "").unwrap();
+        assert_eq!(config.frontend.shader_path, None);
+    }
+
+    // gb-filter= config file key tests
+
+    #[test]
+    fn test_config_file_gb_filter_dmg_sets_shader_path() {
+        let mut config = Config::default();
+        config.apply_config_value("gb-filter", "dmg").unwrap();
+        assert_eq!(
+            config.frontend.shader_path,
+            Some("vendor/slang-shaders/handheld/gameboy.slangp".to_string())
+        );
+    }
+
+    #[test]
+    fn test_config_file_gb_filter_rejects_crt_shader() {
+        let mut config = Config::default();
+        let result = config.apply_config_value("gb-filter", "crt");
+        assert!(result.is_err());
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("crt"),
+            "Error should mention the invalid value: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_config_file_gb_filter_empty_ignored() {
+        let mut config = Config::default();
+        config.apply_config_value("gb-filter", "").unwrap();
+        assert_eq!(config.frontend.shader_path, None);
     }
 }

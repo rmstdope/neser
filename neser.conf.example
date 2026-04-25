@@ -84,15 +84,23 @@ fullscreen=false
 # Only used when fullscreen=true.
 display=0
 
-# Shader/filter preset.
+# Shader/filter preset (NES).
 # Applies visual effects like CRT simulation or pixel scaling.
 # Valid values:
 #   - crt    : CRT simulation with scanlines, shadow mask, bloom
 #   - ntsc   : NTSC composite video simulation
 #   - smooth : Smooth pixel upscaling (xBRZ)
+#   - pal    : PAL composite video simulation
 #   - none   : No filter, raw pixels
 # Leave empty or comment out for no shader.
-#filter=crt
+#nes-filter=crt
+
+# Shader/filter preset (Game Boy).
+# Valid values:
+#   - dmg    : DMG dot-matrix green-tint LCD simulation
+#   - none    : No filter, raw pixels
+# Leave empty or comment out for no shader.
+#gb-filter=dmg
 
 # -----------------------------------------------------------------------------
 # Input Settings

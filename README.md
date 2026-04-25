@@ -110,7 +110,8 @@ Options:
   --load-state <path>   Load a save state on startup
   --fullscreen          Run emulator in fullscreen mode
   --display <N>         Select display index for fullscreen (default: 0)
-  --filter <name>       Specify shader filter (crt|ntsc|smooth|none)
+  --nes-filter <name>   Specify NES shader filter (crt|ntsc|smooth|pal|none)
+  --gb-filter <name>    Specify Game Boy shader filter (dmg|none)
   --config <path>       Specify config file path (overrides default locations)
   --window-height <N>   Window height in pixels, windowed mode only (e.g., 720)
 ```
@@ -358,7 +359,7 @@ NESER supports shader filters for visual effects:
 Example:
 
 ```bash
-neser --filter crt
+neser --nes-filter crt
 ```
 
 Or in config file:

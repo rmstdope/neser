@@ -24,6 +24,11 @@ use crate::platform::app_context::{IntoSharedAppContext, SharedAppContext};
 /// [`Console`] variant.
 pub trait Emulator {
     fn system_type(&self) -> SystemType;
+    /// Short names of shader presets permitted for this emulator.
+    ///
+    /// Names correspond to the first element of each entry in
+    /// [`crate::platform::shaders::SHADER_PRESETS`].
+    fn allowed_shaders(&self) -> &'static [&'static str];
     fn load_rom(&mut self, bytes: &[u8], name: &str) -> Result<(), String>;
     fn run_tick(&mut self) -> u8;
     fn is_ready_to_render(&self) -> bool;
@@ -100,6 +105,11 @@ impl Console {
     /// Which system this console is emulating.
     pub fn system_type(&self) -> SystemType {
         self.as_core().system_type()
+    }
+
+    /// Short names of shader presets permitted for this console's emulator.
+    pub fn allowed_shaders(&self) -> &'static [&'static str] {
+        self.as_core().allowed_shaders()
     }
 
     /// Load a ROM into the emulator.

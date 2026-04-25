@@ -351,6 +351,7 @@ impl GlBackend {
         proc_address: ProcAddressLoader,
         shader_path: Option<&str>,
         app_context: SharedAppContext,
+        allowed_shaders: &[&str],
     ) -> Result<Self, String> {
         unsafe {
             gl::Disable(gl::DEPTH_TEST);
@@ -427,7 +428,7 @@ impl GlBackend {
             )
         };
 
-        let mut shader_manager = ShaderManager::new();
+        let mut shader_manager = ShaderManager::new(allowed_shaders);
 
         // Load shader preset if specified
         if let Some(path) = shader_path
@@ -767,29 +768,35 @@ impl GlBackend {
 
     /// Cycles through available shader presets, if any.
     ///
-    /// Returns the name of the newly active preset on success, or `None` when
-    /// no shader is active (e.g. cycling landed on "no shader" / no presets).
+    /// Returns the short preset name (e.g. `"crt"`, `"dmg"`) of the newly
+    /// active preset, or `None` when cycling has landed on stock (no shader).
     pub fn cycle_shader(&mut self) -> Option<String> {
         if let Err(e) = self.shader_manager.cycle_shader(self.glow_context.clone()) {
             log_info(format!("Error cycling shader: {}", e));
         }
-        let name = self.shader_manager.current_preset_name().map(str::to_owned);
+        let path = self.shader_manager.current_preset_name();
+        let short_name = path.and_then(|p| {
+            crate::platform::shaders::SHADER_PRESETS
+                .iter()
+                .find(|(_, preset_path)| *preset_path == p)
+                .map(|(name, _)| (*name).to_owned())
+        });
         log_info(format!(
-            "Switched to shader: {}",
-            name.as_deref().unwrap_or("off")
+            "Switched to filter: {}",
+            short_name.as_deref().unwrap_or("off")
         ));
-        name
+        short_name
     }
 }
 
-/// Returns the toast message to display when the shader preset changes.
+/// Returns the toast message to display when the visual filter changes.
 ///
-/// * `Some(name)` → `"Shader: <name>"`
-/// * `None`       → `"Shader: off"`
+/// * `Some(name)` → `"Visual Filter: <NAME>"` (short preset name, uppercased)
+/// * `None`       → `"Visual Filter: off"`
 pub fn shader_toast_message(preset_name: Option<&str>) -> String {
     match preset_name {
-        Some(name) => format!("Shader: {name}"),
-        None => "Shader: off".to_owned(),
+        Some(name) => format!("Visual Filter: {}", name.to_uppercase()),
+        None => "Visual Filter: off".to_owned(),
     }
 }
 
@@ -1206,16 +1213,16 @@ mod tests {
 
     #[test]
     fn test_shader_toast_message_with_name_shows_shader_name() {
-        // When cycle_shader returns Some(name), the toast should name the shader.
+        // cycle_shader returns the short preset name; the toast uppercases it.
         assert_eq!(
-            super::shader_toast_message(Some("ntsc-256px-composite")),
-            "Shader: ntsc-256px-composite"
+            super::shader_toast_message(Some("ntsc")),
+            "Visual Filter: NTSC"
         );
     }
 
     #[test]
     fn test_shader_toast_message_with_none_shows_no_shader() {
         // When no shader is active (cycled to "no shader"), the toast says so.
-        assert_eq!(super::shader_toast_message(None), "Shader: off");
+        assert_eq!(super::shader_toast_message(None), "Visual Filter: off");
     }
 }

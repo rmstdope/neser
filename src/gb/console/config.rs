@@ -9,11 +9,18 @@ use crate::platform::config::CliFlag;
 /// GB-specific CLI flags, defined here so that the GB module owns its flag
 /// declarations and parsing logic. These are chained into the global flag list
 /// by the platform config parser for validation and help-text generation.
-pub(crate) const GB_CLI_FLAGS: &[CliFlag] = &[CliFlag {
-    flag: "--gb-dmg-variant",
-    help: Some("DMG hardware variant: dmg-0, dmg-a, dmg-b, dmg-c (default: dmg-b)"),
-    has_value: true,
-}];
+pub(crate) const GB_CLI_FLAGS: &[CliFlag] = &[
+    CliFlag {
+        flag: "--gb-filter",
+        help: Some("Game Boy shader filter: dmg or none"),
+        has_value: true,
+    },
+    CliFlag {
+        flag: "--gb-dmg-variant",
+        help: Some("DMG hardware variant: dmg-0, dmg-a, dmg-b, dmg-c (default: dmg-b)"),
+        has_value: true,
+    },
+];
 
 /// Valid values for the `gb-dmg-variant` option (used in error messages).
 const VALID_DMG_VARIANTS: &str = "dmg-0, dmg-a, dmg-b, dmg-c";
