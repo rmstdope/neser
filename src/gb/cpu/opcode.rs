@@ -16,13 +16,11 @@ impl Opcode {
 }
 
 /// Look up base-opcode metadata by opcode byte.
-#[allow(dead_code)]
 pub fn lookup(byte: u8) -> &'static Opcode {
     &BASE[byte as usize]
 }
 
 /// Look up CB-prefixed opcode metadata by the byte following 0xCB.
-#[allow(dead_code)]
 pub fn lookup_cb(byte: u8) -> &'static Opcode {
     &CB[byte as usize]
 }

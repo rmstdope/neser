@@ -4,10 +4,10 @@
 //! emulator components (CPU, PPU, APU, mapper). The tracing system is
 //! designed to:
 //!
-//! - Only be active in debug builds (zero overhead in release)
 //! - Be configurable per-component via command-line flags
 //! - Output to stdout for easy debugging
 //! - Keep nestest format unchanged for compatibility
+//! - Have minimal overhead when disabled (just an integer check)
 //!
 //! # Usage
 //!
@@ -29,23 +29,24 @@
 //! trace_mapper!("bank switch to {}", bank);
 //! ```
 //!
-//! In release builds, these macros expand to nothing.
+//! When tracing is disabled (default), these expand to simple checks that
+//! are easily optimized away by the compiler.
 
-/// Global tracing state for debug builds.
+/// Global tracing state.
 ///
 /// In tests we use thread-local storage to avoid cross-test interference.
-/// In non-test debug builds, this is a single shared global.
-#[cfg(all(debug_assertions, not(test)))]
+/// In production builds, this is a single shared global.
+#[cfg(not(test))]
 pub static TRACING: std::sync::OnceLock<std::sync::RwLock<Tracing>> = std::sync::OnceLock::new();
 
-#[cfg(all(debug_assertions, test))]
+#[cfg(test)]
 thread_local! {
     static TRACING: std::cell::RefCell<Tracing> = std::cell::RefCell::new(Tracing::default());
     static MAPPER_TRACE_OUTPUT: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Initialize the global tracing state. Call this once at startup.
-#[cfg(all(debug_assertions, not(test)))]
+#[cfg(not(test))]
 pub fn init_tracing(tracing: Tracing) {
     if let Some(lock) = TRACING.get() {
         let mut guard = lock.write().unwrap_or_else(|e| e.into_inner());
@@ -62,39 +63,35 @@ pub fn init_tracing(tracing: Tracing) {
     }
 }
 
-#[cfg(all(debug_assertions, test))]
+#[cfg(test)]
 pub fn init_tracing(tracing: Tracing) {
     TRACING.with(|cell| {
         *cell.borrow_mut() = tracing;
     });
 }
 
-#[cfg(all(debug_assertions, test))]
+#[cfg(test)]
 pub fn clear_mapper_traces() {
     MAPPER_TRACE_OUTPUT.with(|cell| cell.borrow_mut().clear());
 }
 
-#[cfg(all(debug_assertions, test))]
+#[cfg(test)]
 pub fn take_mapper_traces() -> Vec<String> {
     MAPPER_TRACE_OUTPUT.with(|cell| cell.borrow_mut().drain(..).collect())
 }
 
-#[cfg(all(debug_assertions, test))]
+#[cfg(test)]
 pub fn emit_mapper_trace(line: String) {
     MAPPER_TRACE_OUTPUT.with(|cell| cell.borrow_mut().push(line));
 }
 
-#[cfg(all(debug_assertions, not(test)))]
+#[cfg(not(test))]
 pub fn emit_mapper_trace(line: String) {
     println!("{}", line);
 }
 
-/// Initialize the global tracing state. No-op in release builds.
-#[cfg(not(debug_assertions))]
-pub fn init_tracing(_tracing: Tracing) {}
-
 /// Get the CPU tracing level. Returns 0 if tracing is not initialized.
-#[cfg(all(debug_assertions, not(test)))]
+#[cfg(not(test))]
 pub fn cpu_trace_level() -> u8 {
     TRACING
         .get()
@@ -102,35 +99,23 @@ pub fn cpu_trace_level() -> u8 {
         .unwrap_or(0)
 }
 
-#[cfg(all(debug_assertions, test))]
+#[cfg(test)]
 pub fn cpu_trace_level() -> u8 {
     TRACING.with(|cell| cell.borrow().cpu)
 }
 
-/// Get the CPU tracing level. Always returns 0 in release builds.
-#[cfg(not(debug_assertions))]
-pub fn cpu_trace_level() -> u8 {
-    0
-}
-
 /// Check if CPU tracing is enabled. Returns false if tracing is not initialized.
-#[cfg(all(debug_assertions, not(test)))]
+#[cfg(not(test))]
 pub fn is_cpu_tracing_enabled() -> bool {
     cpu_trace_level() > 0
 }
 
-#[cfg(all(debug_assertions, test))]
+#[cfg(test)]
 pub fn is_cpu_tracing_enabled() -> bool {
     cpu_trace_level() > 0
 }
 
-/// Check if CPU tracing is enabled. Always returns false in release builds.
-#[cfg(not(debug_assertions))]
-pub fn is_cpu_tracing_enabled() -> bool {
-    false
-}
-
-/// Trace CPU operations. Only active in debug builds when CPU tracing is enabled.
+/// Trace CPU operations. Only active when CPU tracing is enabled.
 ///
 /// # Example
 /// ```rust
@@ -141,7 +126,6 @@ pub fn is_cpu_tracing_enabled() -> bool {
 /// trace_cpu!(2; "detailed info");           // only prints at level 2+
 /// ```
 #[macro_export]
-#[cfg(debug_assertions)]
 macro_rules! trace_cpu {
     ($level:literal; $($arg:tt)*) => {
         if $crate::platform::debugging::cpu_trace_level() >= $level {
@@ -155,16 +139,8 @@ macro_rules! trace_cpu {
     };
 }
 
-/// Trace CPU operations. No-op in release builds.
-#[macro_export]
-#[cfg(not(debug_assertions))]
-macro_rules! trace_cpu {
-    ($level:literal; $($arg:tt)*) => {};
-    ($($arg:tt)*) => {};
-}
-
 /// Get the PPU tracing level.
-#[cfg(all(debug_assertions, not(test)))]
+#[cfg(not(test))]
 pub fn ppu_trace_level() -> u8 {
     TRACING
         .get()
@@ -172,17 +148,12 @@ pub fn ppu_trace_level() -> u8 {
         .unwrap_or(0)
 }
 
-#[cfg(all(debug_assertions, test))]
+#[cfg(test)]
 pub fn ppu_trace_level() -> u8 {
     TRACING.with(|cell| cell.borrow().ppu)
 }
 
-#[cfg(not(debug_assertions))]
-pub fn ppu_trace_level() -> u8 {
-    0
-}
-
-/// Trace PPU operations. Only active in debug builds when PPU tracing is enabled.
+/// Trace PPU operations. Only active when PPU tracing is enabled.
 ///
 /// # Example
 /// ```rust
@@ -193,7 +164,6 @@ pub fn ppu_trace_level() -> u8 {
 /// trace_ppu!(2; "detailed info");                       // only prints at level 2+
 /// ```
 #[macro_export]
-#[cfg(debug_assertions)]
 macro_rules! trace_ppu {
     ($level:literal; $($arg:tt)*) => {
         if $crate::platform::debugging::ppu_trace_level() >= $level {
@@ -207,16 +177,8 @@ macro_rules! trace_ppu {
     };
 }
 
-/// Trace PPU operations. No-op in release builds.
-#[macro_export]
-#[cfg(not(debug_assertions))]
-macro_rules! trace_ppu {
-    ($level:literal; $($arg:tt)*) => {};
-    ($($arg:tt)*) => {};
-}
-
 /// Get the APU tracing level.
-#[cfg(all(debug_assertions, not(test)))]
+#[cfg(not(test))]
 pub fn apu_trace_level() -> u8 {
     TRACING
         .get()
@@ -224,17 +186,12 @@ pub fn apu_trace_level() -> u8 {
         .unwrap_or(0)
 }
 
-#[cfg(all(debug_assertions, test))]
+#[cfg(test)]
 pub fn apu_trace_level() -> u8 {
     TRACING.with(|cell| cell.borrow().apu)
 }
 
-#[cfg(not(debug_assertions))]
-pub fn apu_trace_level() -> u8 {
-    0
-}
-
-/// Trace APU operations. Only active in debug builds when APU tracing is enabled.
+/// Trace APU operations. Only active when APU tracing is enabled.
 ///
 /// # Example
 /// ```rust
@@ -245,7 +202,6 @@ pub fn apu_trace_level() -> u8 {
 /// trace_apu!(2; "detailed info");                      // only prints at level 2+
 /// ```
 #[macro_export]
-#[cfg(debug_assertions)]
 macro_rules! trace_apu {
     ($level:literal; $($arg:tt)*) => {
         if $crate::platform::debugging::apu_trace_level() >= $level {
@@ -259,16 +215,8 @@ macro_rules! trace_apu {
     };
 }
 
-/// Trace APU operations. No-op in release builds.
-#[macro_export]
-#[cfg(not(debug_assertions))]
-macro_rules! trace_apu {
-    ($level:literal; $($arg:tt)*) => {};
-    ($($arg:tt)*) => {};
-}
-
 /// Get the mapper tracing level.
-#[cfg(all(debug_assertions, not(test)))]
+#[cfg(not(test))]
 pub fn mapper_trace_level() -> u8 {
     TRACING
         .get()
@@ -276,17 +224,12 @@ pub fn mapper_trace_level() -> u8 {
         .unwrap_or(0)
 }
 
-#[cfg(all(debug_assertions, test))]
+#[cfg(test)]
 pub fn mapper_trace_level() -> u8 {
     TRACING.with(|cell| cell.borrow().mapper)
 }
 
-#[cfg(not(debug_assertions))]
-pub fn mapper_trace_level() -> u8 {
-    0
-}
-
-/// Trace mapper operations. Only active in debug builds when mapper tracing is enabled.
+/// Trace mapper operations. Only active when mapper tracing is enabled.
 ///
 /// # Example
 /// ```rust
@@ -297,7 +240,6 @@ pub fn mapper_trace_level() -> u8 {
 /// trace_mapper!(2; "detailed info");                                 // only prints at level 2+
 /// ```
 #[macro_export]
-#[cfg(debug_assertions)]
 macro_rules! trace_mapper {
     ($level:literal; $($arg:tt)*) => {
         if $crate::platform::debugging::mapper_trace_level() >= $level {
@@ -309,14 +251,6 @@ macro_rules! trace_mapper {
             $crate::platform::debugging::emit_mapper_trace(format!("[MAP] {}", format!($($arg)*)));
         }
     };
-}
-
-/// Trace mapper operations. No-op in release builds.
-#[macro_export]
-#[cfg(not(debug_assertions))]
-macro_rules! trace_mapper {
-    ($level:literal; $($arg:tt)*) => {};
-    ($($arg:tt)*) => {};
 }
 
 /// Tracing configuration with per-subsystem trace levels.

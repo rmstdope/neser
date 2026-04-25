@@ -5,6 +5,7 @@ pub mod bus;
 pub mod cartridge;
 pub mod console;
 pub mod cpu;
+pub mod debugging;
 pub mod input;
 pub mod model;
 pub mod ppu;

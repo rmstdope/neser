@@ -481,6 +481,29 @@ impl Ppu {
         self.timing.clear_frame_ready();
     }
 
+    // ── Timing accessors (for CPU tracing) ───────────────────────────────────
+
+    /// Returns the total number of completed frames since emulation started.
+    ///
+    /// Used by CPU tracing to correlate events with frame numbers.
+    pub fn frame_count(&self) -> u64 {
+        self.timing.frame_count()
+    }
+
+    /// Returns the current LY register value (scanline number 0-153).
+    ///
+    /// Used by CPU tracing to correlate events with PPU scanline position.
+    pub fn ly(&self) -> u8 {
+        self.timing.ly()
+    }
+
+    /// Returns the current dot position within the scanline (0-455).
+    ///
+    /// Used by CPU tracing to correlate events with PPU dot timing.
+    pub fn dot(&self) -> u16 {
+        self.timing.dot()
+    }
+
     // ── OAM corruption bug helpers ────────────────────────────────────────────
 
     /// Returns the OAM row currently being scanned by the PPU.
@@ -1458,5 +1481,47 @@ mod tests {
             0x02,
             "STAT interrupt must fire immediately when LYC=LY becomes true on LCD re-enable"
         );
+    }
+
+    // ── LCD timing accessors (for CPU tracing) ──────────────────────────────────
+
+    #[test]
+    fn test_frame_count_accessor_returns_timing_frame_count() {
+        // Given: a fresh Ppu (frame_count = 0)
+        let mut ppu = Ppu::new();
+        assert_eq!(ppu.frame_count(), 0);
+
+        // When: advance one full frame
+        let frame_dots = FIRST_SCANLINE_DOTS + (153 * 456);
+        tick_dots(&mut ppu, frame_dots);
+
+        // Then: frame_count accessor returns 1
+        assert_eq!(ppu.frame_count(), 1);
+    }
+
+    #[test]
+    fn test_ly_accessor_returns_current_scanline() {
+        // Given: a fresh Ppu (LY = 0)
+        let ppu = Ppu::new();
+        assert_eq!(ppu.ly(), 0);
+
+        // When: advance to scanline 5
+        let mut ppu = Ppu::new();
+        tick_dots(&mut ppu, FIRST_SCANLINE_DOTS + 456 * 4);
+        // Then: ly() returns 5
+        assert_eq!(ppu.ly(), 5);
+    }
+
+    #[test]
+    fn test_dot_accessor_returns_current_dot() {
+        // Given: a fresh Ppu (dot = 4)
+        let ppu = Ppu::new();
+        assert_eq!(ppu.dot(), 4);
+
+        // When: advance 10 dots
+        let mut ppu = Ppu::new();
+        tick_dots(&mut ppu, 10);
+        // Then: dot() returns 14
+        assert_eq!(ppu.dot(), 14);
     }
 }

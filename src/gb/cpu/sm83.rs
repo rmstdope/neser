@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::gb::bus::GbBus;
+use crate::trace_cpu;
 
 // ---------------------------------------------------------------------------
 // Flag bit positions in register F (upper nibble only; bits 0–3 always 0)
@@ -201,6 +202,7 @@ impl<B: GbBus> Sm83<B> {
     /// Used for internal CPU cycles that do not correspond to a memory access
     /// (e.g. the extra cycle consumed by taken conditional branches, PUSH, etc.).
     fn internal_cycle(&mut self) {
+        trace_cpu!(2; "      internal");
         self.cycles += 1;
         self.bus.tick(1);
     }
@@ -215,7 +217,9 @@ impl<B: GbBus> Sm83<B> {
     fn read(&mut self, addr: u16) -> u8 {
         self.cycles += 1;
         self.bus.tick(1);
-        self.bus.read(addr)
+        let val = self.bus.read(addr);
+        trace_cpu!(2; "      read  ${:04X} = ${:02X}", addr, val);
+        val
     }
 
     /// Write a byte to the bus and advance the cycle counter by 1 M-cycle.
@@ -226,6 +230,7 @@ impl<B: GbBus> Sm83<B> {
         self.cycles += 1;
         self.bus.tick(1);
         self.bus.write(addr, val);
+        trace_cpu!(2; "      write ${:04X} = ${:02X}", addr, val);
     }
 
     /// Fetch the next byte at PC and increment PC.
@@ -589,6 +594,7 @@ impl<B: GbBus> Sm83<B> {
             // Dispatch cancelled: the IE overwrite (via hi-byte push to $FFFF)
             // cleared all pending interrupts.  Jump to $0000; IF is NOT cleared.
             self.regs.pc = 0x0000;
+            trace_cpu!(1; "INT cancelled -> PC=$0000");
         } else {
             let bit = interrupt_queue.trailing_zeros() as u8;
             // Clear the IF bit for the dispatched interrupt (may differ from the
@@ -596,6 +602,15 @@ impl<B: GbBus> Sm83<B> {
             let new_if = self.bus.read(0xFF0F) & !(1 << bit);
             self.bus.write(0xFF0F, new_if);
             self.regs.pc = 0x0040 + (bit as u16) * 8;
+            let interrupt_name = match bit {
+                0 => "VBlank",
+                1 => "LCD STAT",
+                2 => "Timer",
+                3 => "Serial",
+                4 => "Joypad",
+                _ => "Unknown",
+            };
+            trace_cpu!(1; "INT {} -> PC=${:04X}", interrupt_name, self.regs.pc);
         }
 
         true
@@ -659,7 +674,33 @@ impl<B: GbBus> Sm83<B> {
             // The pre-tick above IS the halt stall cycle.  (1M total)
         } else {
             // T3 of M1: read opcode (no additional tick).
+            let pc = self.regs.pc; // Capture PC before fetch for tracing
             let opcode = self.fetch_byte_no_tick();
+
+            // Level 1 CPU tracing: emit instruction execution trace
+            // NOTE: We only trace the opcode byte to avoid speculative bus reads
+            // that could have side effects (e.g., OAM corruption during Mode 2).
+            // Operands are not resolved to keep the trace simple and side-effect-free.
+            use crate::platform::debugging::cpu_trace_level;
+            if cpu_trace_level() >= 1 {
+                let hex = format!("{:02X}", opcode);
+                let asm = if opcode == 0xCB {
+                    // For CB prefix, we can't safely read the operand without side effects,
+                    // so just show the prefix mnemonic
+                    "CB prefix".to_string()
+                } else {
+                    // For regular instructions, show the mnemonic template (e.g., "LD A,n8")
+                    crate::gb::cpu::opcode::lookup(opcode).mnemonic.to_string()
+                };
+
+                trace_cpu!(1;
+                    "exec PC={:04X} {:<8} {:<14} AF={:04X} BC={:04X} DE={:04X} HL={:04X} SP={:04X} cyc={:<3}",
+                    pc, hex.as_str(), asm.as_str(),
+                    self.regs.af(), self.regs.bc(), self.regs.de(), self.regs.hl(), self.regs.sp,
+                    self.cycles
+                );
+            }
+
             self.decode_execute(opcode);
         }
 
