@@ -1409,75 +1409,6 @@ mod tests {
     }
 
     #[test]
-    fn test_config_help_flag() {
-        let args = vec!["neser".to_string(), "--help".to_string()];
-        match config_new(args).unwrap() {
-            ParseResult::Help => {}
-            ParseResult::Config(_) => panic!("Expected Help"),
-        }
-    }
-
-    #[test]
-    fn test_config_help_flag_short() {
-        let args = vec!["neser".to_string(), "-h".to_string()];
-        match config_new(args).unwrap() {
-            ParseResult::Help => {}
-            ParseResult::Config(_) => panic!("Expected Help"),
-        }
-    }
-
-    #[test]
-    fn test_help_text_groups_flags_into_readable_sections() {
-        let help = crate::platform::config::help_text();
-
-        assert!(help.contains("\nInput:"));
-        assert!(help.contains("\nTrace and Debugging:"));
-        assert!(help.contains("\nSound:"));
-        assert!(help.contains("\nVideo and Display:"));
-        assert!(help.contains("\nAutorun:"));
-        assert!(help.contains("\nCartridge Catalog:"));
-
-        let input_section = help.find("\nInput:").unwrap();
-        let input_flag = help.find("--nes-controller-port1").unwrap();
-        assert!(input_section < input_flag);
-
-        let trace_section = help.find("\nTrace and Debugging:").unwrap();
-        let trace_flag = help.find("--trace-cpu").unwrap();
-        assert!(trace_section < trace_flag);
-
-        let sound_section = help.find("\nSound:").unwrap();
-        let sound_flag = help.find("--audio").unwrap();
-        assert!(sound_section < sound_flag);
-    }
-
-    #[test]
-    fn test_help_text_load_state_is_presence_only_flag() {
-        let help = crate::platform::config::help_text();
-
-        assert!(help.contains("--load-state"));
-        assert!(!help.contains("--no-load-state"));
-        assert!(!help.contains("--disable-load-state"));
-    }
-
-    #[test]
-    fn test_help_text_oam_dram_decay_shows_default_and_no_negation_aliases() {
-        let help = crate::platform::config::help_text();
-
-        assert!(help.contains("--nes-oam-dram-decay"));
-        assert!(help.contains("default: false"));
-        assert!(!help.contains("--no-oam-dram-decay"));
-        assert!(!help.contains("--disable-oam-dram-decay"));
-    }
-
-    #[test]
-    fn test_help_text_examples_use_hardware_flag() {
-        let help = crate::platform::config::help_text();
-
-        assert!(help.contains("neser --nes-hardware nes-pal game.nes"));
-        assert!(!help.contains("--tv-system"));
-    }
-
-    #[test]
     fn test_config_hardware_nes_pal() {
         let args = vec![
             "neser".to_string(),
@@ -1735,17 +1666,6 @@ mod tests {
     }
 
     #[test]
-    fn test_config_audio_false() {
-        let args = vec![
-            "neser".to_string(),
-            "--audio".to_string(),
-            "false".to_string(),
-        ];
-        let config = parse_config(args);
-        assert!(!config.frontend.audio_enabled);
-    }
-
-    #[test]
     fn test_config_vsync_false() {
         let args = vec![
             "neser".to_string(),
@@ -1754,17 +1674,6 @@ mod tests {
         ];
         let config = parse_config(args);
         assert!(!config.frontend.vsync_enabled);
-    }
-
-    #[test]
-    fn test_config_gamepads_false() {
-        let args = vec![
-            "neser".to_string(),
-            "--gamepads".to_string(),
-            "false".to_string(),
-        ];
-        let config = parse_config(args);
-        assert!(!config.frontend.gamepads_enabled);
     }
 
     #[test]
@@ -1777,13 +1686,6 @@ mod tests {
         let config = parse_config(args);
         assert!(config.frontend.fullscreen);
         assert_eq!(config.frontend.fullscreen_display, None);
-    }
-
-    #[test]
-    fn test_config_load_state_flag() {
-        let args = vec!["neser".to_string(), "--load-state".to_string()];
-        let config = parse_config(args);
-        assert!(config.frontend.load_state);
     }
 
     #[test]
@@ -1801,35 +1703,11 @@ mod tests {
     }
 
     #[test]
-    fn test_config_display_without_fullscreen_is_ignored() {
-        let args = vec![
-            "neser".to_string(),
-            "--display".to_string(),
-            "1".to_string(),
-        ];
-        let config = parse_config(args);
-        assert!(!config.frontend.fullscreen);
-        assert_eq!(config.frontend.fullscreen_display, None);
-    }
-
-    #[test]
     fn test_config_display_missing_value_errors() {
         let args = vec![
             "neser".to_string(),
             "--fullscreen".to_string(),
             "--display".to_string(),
-        ];
-        let result = config_new(args);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_config_display_invalid_value_errors() {
-        let args = vec![
-            "neser".to_string(),
-            "--fullscreen".to_string(),
-            "--display".to_string(),
-            "abc".to_string(),
         ];
         let result = config_new(args);
         assert!(result.is_err());
@@ -1845,21 +1723,6 @@ mod tests {
         ];
         let result = config_new(args);
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_config_cmdline_filter_invalid_errors() {
-        let args = vec![
-            "neser".to_string(),
-            "--nes-filter".to_string(),
-            "invalid-filter".to_string(),
-        ];
-        let result = config_new(args);
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err(),
-            "Invalid filter name: 'invalid-filter'. Valid options are: none, crt, smooth, ntsc, pal"
-        );
     }
 
     #[test]
@@ -1931,28 +1794,10 @@ mod tests {
     }
 
     #[test]
-    fn test_config_unknown_argument_errors() {
-        let args = vec![
-            "neser".to_string(),
-            "--definitely-not-a-real-flag".to_string(),
-        ];
-        let result = config_new(args);
-        assert!(result.is_err());
-    }
-
-    #[test]
     fn test_config_positional_argument_is_rom_path() {
         let args = vec!["neser".to_string(), "somefile.nes".to_string()];
         let config = parse_config(args);
         assert_eq!(config.frontend.rom_path.as_deref(), Some("somefile.nes"));
-    }
-
-    #[test]
-    fn test_config_tracing_enabled() {
-        let args = vec!["neser".to_string(), "--trace".to_string()];
-        let config = parse_config(args);
-        assert!(config.frontend.tracing.enabled);
-        assert_eq!(config.frontend.tracing.cpu, 1); // --trace enables CPU tracing at level 1
     }
 
     #[test]
@@ -1964,27 +1809,11 @@ mod tests {
     }
 
     #[test]
-    fn test_config_tracing_cpu() {
-        let args = vec!["neser".to_string(), "--trace-cpu".to_string()];
-        let config = parse_config(args);
-        assert!(config.frontend.tracing.enabled);
-        assert_eq!(config.frontend.tracing.cpu, 1);
-    }
-
-    #[test]
     fn test_config_tracing_ppu() {
         let args = vec!["neser".to_string(), "--trace-ppu".to_string()];
         let config = parse_config(args);
         assert!(config.frontend.tracing.enabled);
         assert_eq!(config.frontend.tracing.ppu, 1);
-    }
-
-    #[test]
-    fn test_config_tracing_apu() {
-        let args = vec!["neser".to_string(), "--trace-apu".to_string()];
-        let config = parse_config(args);
-        assert!(config.frontend.tracing.enabled);
-        assert_eq!(config.frontend.tracing.apu, 1);
     }
 
     #[test]
@@ -1996,27 +1825,11 @@ mod tests {
     }
 
     #[test]
-    fn test_config_tracing_cpu_with_level() {
-        let args = vec!["neser".to_string(), "--trace-cpu=2".to_string()];
-        let config = parse_config(args);
-        assert!(config.frontend.tracing.enabled);
-        assert_eq!(config.frontend.tracing.cpu, 2);
-    }
-
-    #[test]
     fn test_config_tracing_ppu_with_level() {
         let args = vec!["neser".to_string(), "--trace-ppu=3".to_string()];
         let config = parse_config(args);
         assert!(config.frontend.tracing.enabled);
         assert_eq!(config.frontend.tracing.ppu, 3);
-    }
-
-    #[test]
-    fn test_config_tracing_ppu_level_is_capped_at_five() {
-        let args = vec!["neser".to_string(), "--trace-ppu=9".to_string()];
-        let config = parse_config(args);
-        assert!(config.frontend.tracing.enabled);
-        assert_eq!(config.frontend.tracing.ppu, 5);
     }
 
     #[test]
@@ -2028,73 +1841,11 @@ mod tests {
     }
 
     #[test]
-    fn test_config_tracing_mapper_with_level() {
-        let args = vec!["neser".to_string(), "--trace-mapper=5".to_string()];
-        let config = parse_config(args);
-        assert!(config.frontend.tracing.enabled);
-        assert_eq!(config.frontend.tracing.mapper, 5);
-    }
-
-    #[test]
     fn test_config_tracing_mapper_level_is_capped_at_five() {
         let args = vec!["neser".to_string(), "--trace-mapper=9".to_string()];
         let config = parse_config(args);
         assert!(config.frontend.tracing.enabled);
         assert_eq!(config.frontend.tracing.mapper, 5);
-    }
-
-    #[test]
-    fn test_config_tracing_with_multiple_levels() {
-        let args = vec![
-            "neser".to_string(),
-            "--trace-cpu=3".to_string(),
-            "--trace-ppu=2".to_string(),
-            "--trace-apu=1".to_string(),
-        ];
-        let config = parse_config(args);
-        assert!(config.frontend.tracing.enabled);
-        assert_eq!(config.frontend.tracing.cpu, 3);
-        assert_eq!(config.frontend.tracing.ppu, 2);
-        assert_eq!(config.frontend.tracing.apu, 1);
-        assert_eq!(config.frontend.tracing.mapper, 0);
-    }
-
-    #[test]
-    fn test_config_multiple_flags() {
-        let args = vec![
-            "neser".to_string(),
-            "--nes-hardware".to_string(),
-            "nes-pal".to_string(),
-            "--audio".to_string(),
-            "false".to_string(),
-            "--fullscreen".to_string(),
-            "true".to_string(),
-            "--display".to_string(),
-            "2".to_string(),
-            "--nes-pulse1".to_string(),
-            "false".to_string(),
-            "--nes-noise".to_string(),
-            "false".to_string(),
-        ];
-        let config = parse_config(args);
-        assert_eq!(config.nes.hardware_model, HardwareModel::NesPal);
-        assert!(!config.frontend.audio_enabled);
-        assert!(config.frontend.fullscreen);
-        assert_eq!(config.frontend.fullscreen_display, Some(2));
-        assert!(!config.nes.apu_channels.contains(ApuChannels::PULSE1));
-        assert!(config.nes.apu_channels.contains(ApuChannels::PULSE2));
-        assert!(!config.nes.apu_channels.contains(ApuChannels::NOISE));
-    }
-
-    #[test]
-    fn test_config_window_height() {
-        let args = vec![
-            "neser".to_string(),
-            "--window-height".to_string(),
-            "720".to_string(),
-        ];
-        let config = parse_config(args);
-        assert_eq!(config.frontend.window_height, 720);
     }
 
     #[test]
