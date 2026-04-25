@@ -216,28 +216,8 @@ pub(crate) const PLATFORM_CLI_FLAGS: &[CliFlag] = &[
         has_value: false,
     },
     CliFlag {
-        flag: "--trace-nestest",
-        help: Some("Enable CPU trace output (nestest.log format)"),
-        has_value: false,
-    },
-    CliFlag {
         flag: "--trace-cpu",
         help: Some("Enable CPU trace output"),
-        has_value: false,
-    },
-    CliFlag {
-        flag: "--trace-ppu",
-        help: Some("Enable PPU trace output"),
-        has_value: false,
-    },
-    CliFlag {
-        flag: "--trace-apu",
-        help: Some("Enable APU trace output"),
-        has_value: false,
-    },
-    CliFlag {
-        flag: "--trace-mapper",
-        help: Some("Enable mapper trace output"),
         has_value: false,
     },
     CliFlag {
@@ -250,11 +230,6 @@ pub(crate) const PLATFORM_CLI_FLAGS: &[CliFlag] = &[
     CliFlag {
         flag: "--display",
         help: Some("Select display index for fullscreen (e.g., --display 1)"),
-        has_value: true,
-    },
-    CliFlag {
-        flag: "--nes-filter",
-        help: Some("NES shader filter: crt, ntsc, smooth, pal, or none"),
         has_value: true,
     },
     CliFlag {

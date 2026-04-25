@@ -26,6 +26,31 @@ use std::path::Path;
 /// All supported NES and platform CLI flags.
 const CLI_FLAGS: &[CliFlag] = &[
     CliFlag {
+        flag: "--trace-nestest",
+        help: Some("Enable CPU trace output (nestest.log format)"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--trace-ppu",
+        help: Some("Enable PPU trace output"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--trace-apu",
+        help: Some("Enable APU trace output"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--trace-mapper",
+        help: Some("Enable mapper trace output"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--nes-filter",
+        help: Some("NES shader filter: crt, ntsc, smooth, pal, or none"),
+        has_value: true,
+    },
+    CliFlag {
         flag: "--nes-controller-port1",
         help: Some(
             "Controller type for port 1: joypad, snes-controller, snes-mouse, zapper, arkanoid, power-pad",
