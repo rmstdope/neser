@@ -203,6 +203,13 @@ impl<B: GbBus> Sm83<B> {
     /// Used for internal CPU cycles that do not correspond to a memory access
     /// (e.g. the extra cycle consumed by taken conditional branches, PUSH, etc.).
     fn internal_cycle(&mut self) {
+        #[cfg(debug_assertions)]
+        {
+            use crate::platform::debugging::cpu_trace_level;
+            if cpu_trace_level() >= 2 {
+                trace_cpu!(2; "      internal");
+            }
+        }
         self.cycles += 1;
         self.bus.tick(1);
     }
@@ -217,7 +224,15 @@ impl<B: GbBus> Sm83<B> {
     fn read(&mut self, addr: u16) -> u8 {
         self.cycles += 1;
         self.bus.tick(1);
-        self.bus.read(addr)
+        let val = self.bus.read(addr);
+        #[cfg(debug_assertions)]
+        {
+            use crate::platform::debugging::cpu_trace_level;
+            if cpu_trace_level() >= 2 {
+                trace_cpu!(2; "      read  ${:04X} = ${:02X}", addr, val);
+            }
+        }
+        val
     }
 
     /// Write a byte to the bus and advance the cycle counter by 1 M-cycle.
@@ -228,6 +243,13 @@ impl<B: GbBus> Sm83<B> {
         self.cycles += 1;
         self.bus.tick(1);
         self.bus.write(addr, val);
+        #[cfg(debug_assertions)]
+        {
+            use crate::platform::debugging::cpu_trace_level;
+            if cpu_trace_level() >= 2 {
+                trace_cpu!(2; "      write ${:04X} = ${:02X}", addr, val);
+            }
+        }
     }
 
     /// Fetch the next byte at PC and increment PC.
@@ -591,6 +613,13 @@ impl<B: GbBus> Sm83<B> {
             // Dispatch cancelled: the IE overwrite (via hi-byte push to $FFFF)
             // cleared all pending interrupts.  Jump to $0000; IF is NOT cleared.
             self.regs.pc = 0x0000;
+            #[cfg(debug_assertions)]
+            {
+                use crate::platform::debugging::cpu_trace_level;
+                if cpu_trace_level() >= 1 {
+                    trace_cpu!(1; "INT cancelled -> PC=$0000");
+                }
+            }
         } else {
             let bit = interrupt_queue.trailing_zeros() as u8;
             // Clear the IF bit for the dispatched interrupt (may differ from the
@@ -598,6 +627,21 @@ impl<B: GbBus> Sm83<B> {
             let new_if = self.bus.read(0xFF0F) & !(1 << bit);
             self.bus.write(0xFF0F, new_if);
             self.regs.pc = 0x0040 + (bit as u16) * 8;
+            #[cfg(debug_assertions)]
+            {
+                use crate::platform::debugging::cpu_trace_level;
+                if cpu_trace_level() >= 1 {
+                    let interrupt_name = match bit {
+                        0 => "VBlank",
+                        1 => "LCD STAT",
+                        2 => "Timer",
+                        3 => "Serial",
+                        4 => "Joypad",
+                        _ => "Unknown",
+                    };
+                    trace_cpu!(1; "INT {} -> PC=${:04X}", interrupt_name, self.regs.pc);
+                }
+            }
         }
 
         true
