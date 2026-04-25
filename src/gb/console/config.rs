@@ -97,7 +97,7 @@ impl GbConfig {
                 })?);
             }
             _ => {
-                return Err(format!("Unknown GB config key: {}", key));
+                return Err(format!("Unknown GB config key: {key}"));
             }
         }
         Ok(())
