@@ -364,6 +364,93 @@ impl FrontendConfig {
     /// display, window_height, etc.).
     pub(crate) fn apply_config_value(&mut self, key: &str, value: &str) -> Result<(), String> {
         match key {
+            "audio" => {
+                if let Ok(b) = parse_bool(value) {
+                    self.audio_enabled = b;
+                }
+            }
+            "vsync" => {
+                if let Ok(b) = parse_bool(value) {
+                    self.vsync_enabled = b;
+                }
+            }
+            "gamepads" => {
+                if let Ok(b) = parse_bool(value) {
+                    self.gamepads_enabled = b;
+                }
+            }
+            "fullscreen" => {
+                if let Ok(b) = parse_bool(value) {
+                    self.fullscreen = b;
+                }
+            }
+            "display" => {
+                if let Ok(d) = value.parse::<i32>()
+                    && d >= 0
+                {
+                    self.fullscreen_display = Some(d);
+                }
+            }
+            "debugger" => {
+                if let Ok(b) = parse_bool(value) {
+                    self.debugger_enabled = b;
+                }
+            }
+            "load_state" => {
+                if let Ok(b) = parse_bool(value) {
+                    self.load_state = b;
+                }
+            }
+            "window_height" => {
+                if let Ok(s) = value.parse::<u32>() {
+                    self.window_height = s;
+                }
+            }
+            "debugger_alpha" => {
+                if let Ok(v) = value.parse::<f32>() {
+                    self.debugger_alpha = v.clamp(0.1, 1.0);
+                }
+            }
+            "trace-cpu" => {
+                if let Ok(level) = value.parse::<u8>() {
+                    self.tracing.cpu = level;
+                    if level > 0 {
+                        self.tracing.enabled = true;
+                    }
+                }
+            }
+            "trace-ppu" => {
+                if let Ok(level) = value.parse::<u8>() {
+                    self.tracing.ppu = Tracing::clamp_ppu_level(level);
+                    if level > 0 {
+                        self.tracing.enabled = true;
+                    }
+                }
+            }
+            "trace-apu" => {
+                if let Ok(level) = value.parse::<u8>() {
+                    self.tracing.apu = level;
+                    if level > 0 {
+                        self.tracing.enabled = true;
+                    }
+                }
+            }
+            "trace-mapper" => {
+                if let Ok(level) = value.parse::<u8>() {
+                    self.tracing.mapper = Tracing::clamp_mapper_level(level);
+                    if level > 0 {
+                        self.tracing.enabled = true;
+                    }
+                }
+            }
+            "trace-nestest" => {
+                if let Ok(b) = parse_bool(value) {
+                    self.tracing.nestest = b;
+                    if b {
+                        self.tracing.enabled = true;
+                    }
+                }
+            }
             "ram_init_mode" => {
                 self.ram_init_mode = match value.to_lowercase().as_str() {
                     "zero" | "0" => RamInitMode::Zero,
@@ -386,6 +473,19 @@ impl FrontendConfig {
                         }
                     }
                 };
+            }
+            "cartridge_search_paths" => {
+                self.cartridge_search_paths = parse_search_paths(value);
+            }
+            "scan_cartridges" => {
+                if let Ok(scan) = parse_bool(value) {
+                    self.scan_cartridges = scan;
+                }
+            }
+            "rebuild_cartridge_catalog" => {
+                if let Ok(rebuild) = parse_bool(value) {
+                    self.rebuild_cartridge_catalog = rebuild;
+                }
             }
             _ => {}
         }

@@ -521,8 +521,104 @@ impl NesConfig {
     /// Apply a single config file key-value pair to NES configuration.
     ///
     /// Handles NES-specific config keys (nes_hardware, nes_controller_port1, etc.).
-    pub(crate) fn apply_config_value(&mut self, _key: &str, _value: &str) -> Result<(), String> {
-        // TODO: Move NES config parsing here
+    pub(crate) fn apply_config_value(&mut self, key: &str, value: &str) -> Result<(), String> {
+        use crate::platform::config::parse_bool;
+
+        match key {
+            "nes-enable_4_score" => {
+                if let Ok(b) = parse_bool(value) {
+                    self.four_score_enabled = b;
+                    self.four_score_enabled_explicit = true;
+                }
+            }
+            "nes-pulse1" => {
+                if let Ok(b) = parse_bool(value) {
+                    if b {
+                        self.apu_channels.insert(ApuChannels::PULSE1);
+                    } else {
+                        self.apu_channels.remove(ApuChannels::PULSE1);
+                    }
+                }
+            }
+            "nes-pulse2" => {
+                if let Ok(b) = parse_bool(value) {
+                    if b {
+                        self.apu_channels.insert(ApuChannels::PULSE2);
+                    } else {
+                        self.apu_channels.remove(ApuChannels::PULSE2);
+                    }
+                }
+            }
+            "nes-triangle" => {
+                if let Ok(b) = parse_bool(value) {
+                    if b {
+                        self.apu_channels.insert(ApuChannels::TRIANGLE);
+                    } else {
+                        self.apu_channels.remove(ApuChannels::TRIANGLE);
+                    }
+                }
+            }
+            "nes-noise" => {
+                if let Ok(b) = parse_bool(value) {
+                    if b {
+                        self.apu_channels.insert(ApuChannels::NOISE);
+                    } else {
+                        self.apu_channels.remove(ApuChannels::NOISE);
+                    }
+                }
+            }
+            "nes-dmc" => {
+                if let Ok(b) = parse_bool(value) {
+                    if b {
+                        self.apu_channels.insert(ApuChannels::DMC);
+                    } else {
+                        self.apu_channels.remove(ApuChannels::DMC);
+                    }
+                }
+            }
+            "nes-zapper_detection_size" => {
+                if let Ok(size) = value.parse::<u8>() {
+                    self.zapper_detection_size = size;
+                    if size > 10 {
+                        eprintln!(
+                            "Warning: nes-zapper_detection_size={} may cause performance issues. \
+                             Large values sample (2*size + 1)² = {} pixels per controller read. \
+                             Consider using values ≤ 10 for better performance.",
+                            size,
+                            (2 * size as u32 + 1).pow(2)
+                        );
+                    }
+                } else {
+                    eprintln!(
+                        "Warning: invalid value '{}' for 'nes-zapper_detection_size' in configuration; \
+                         ignoring. Must be a number between 0 and 255.",
+                        value
+                    );
+                }
+            }
+            "nes-oam_dram_decay" | "nes-oam_dram_decay_enabled" => {
+                if let Ok(b) = parse_bool(value) {
+                    self.oam_dram_decay_enabled = b;
+                } else {
+                    eprintln!(
+                        "Warning: invalid value '{}' for 'nes-oam_dram_decay'; keeping current value. \
+                         Valid values: true/false/yes/no/1/0",
+                        value
+                    );
+                }
+            }
+            "nes-horizontal_overscan" => {
+                if let Ok(v) = value.parse::<u8>() {
+                    self.horizontal_overscan = v.min(8);
+                }
+            }
+            "nes-vertical_overscan" => {
+                if let Ok(v) = value.parse::<u8>() {
+                    self.vertical_overscan = v.min(16);
+                }
+            }
+            _ => {}
+        }
         Ok(())
     }
 }
@@ -1175,6 +1271,11 @@ impl Config {
 
     /// Apply a single config file key-value pair.
     fn apply_config_value(&mut self, key: &str, value: &str) -> Result<(), String> {
+        // Delegate to sub-configs first
+        self.frontend.apply_config_value(key, value)?;
+        self.nes.apply_config_value(key, value)?;
+
+        // Handle keys that need Config-level coordination or haven't been moved yet
         match key {
             "nes-hardware" => self.apply_hardware_value(value)?,
             "nes-expansion_port" => self.apply_expansion_port_value(value)?,
@@ -1191,39 +1292,6 @@ impl Config {
                     self.nes.vs_controllers_swapped = b;
                 }
             }
-            "audio" => {
-                if let Ok(b) = parse_bool(value) {
-                    self.frontend.audio_enabled = b;
-                }
-            }
-            "vsync" => {
-                if let Ok(b) = parse_bool(value) {
-                    self.frontend.vsync_enabled = b;
-                }
-            }
-            "gamepads" => {
-                if let Ok(b) = parse_bool(value) {
-                    self.frontend.gamepads_enabled = b;
-                }
-            }
-            "nes-enable_4_score" => {
-                if let Ok(b) = parse_bool(value) {
-                    self.nes.four_score_enabled = b;
-                    self.nes.four_score_enabled_explicit = true;
-                }
-            }
-            "fullscreen" => {
-                if let Ok(b) = parse_bool(value) {
-                    self.frontend.fullscreen = b;
-                }
-            }
-            "display" => {
-                if let Ok(d) = value.parse::<i32>()
-                    && d >= 0
-                {
-                    self.frontend.fullscreen_display = Some(d);
-                }
-            }
             "nes-filter" => {
                 if !value.is_empty() {
                     self.frontend.shader_path = Some(Self::map_filter_name_for(
@@ -1238,71 +1306,6 @@ impl Config {
                         Some(Self::map_filter_name_for(value, &["none", "dmg"])?);
                 }
             }
-            "debugger" => {
-                if let Ok(b) = parse_bool(value) {
-                    self.frontend.debugger_enabled = b;
-                }
-            }
-            "load_state" => {
-                if let Ok(b) = parse_bool(value) {
-                    self.frontend.load_state = b;
-                }
-            }
-            "nes-pulse1" => {
-                if let Ok(b) = parse_bool(value) {
-                    if b {
-                        self.nes.apu_channels.insert(ApuChannels::PULSE1);
-                    } else {
-                        self.nes.apu_channels.remove(ApuChannels::PULSE1);
-                    }
-                }
-            }
-            "nes-pulse2" => {
-                if let Ok(b) = parse_bool(value) {
-                    if b {
-                        self.nes.apu_channels.insert(ApuChannels::PULSE2);
-                    } else {
-                        self.nes.apu_channels.remove(ApuChannels::PULSE2);
-                    }
-                }
-            }
-            "nes-triangle" => {
-                if let Ok(b) = parse_bool(value) {
-                    if b {
-                        self.nes.apu_channels.insert(ApuChannels::TRIANGLE);
-                    } else {
-                        self.nes.apu_channels.remove(ApuChannels::TRIANGLE);
-                    }
-                }
-            }
-            "nes-noise" => {
-                if let Ok(b) = parse_bool(value) {
-                    if b {
-                        self.nes.apu_channels.insert(ApuChannels::NOISE);
-                    } else {
-                        self.nes.apu_channels.remove(ApuChannels::NOISE);
-                    }
-                }
-            }
-            "nes-dmc" => {
-                if let Ok(b) = parse_bool(value) {
-                    if b {
-                        self.nes.apu_channels.insert(ApuChannels::DMC);
-                    } else {
-                        self.nes.apu_channels.remove(ApuChannels::DMC);
-                    }
-                }
-            }
-            "window_height" => {
-                if let Ok(s) = value.parse::<u32>() {
-                    self.frontend.window_height = s;
-                }
-            }
-            "debugger_alpha" => {
-                if let Ok(v) = value.parse::<f32>() {
-                    self.frontend.debugger_alpha = v.clamp(0.1, 1.0);
-                }
-            }
             "nes-controller_port1" => {
                 self.nes.controller_port1 =
                     Self::parse_controller_arg("nes-controller_port1", value)?;
@@ -1312,115 +1315,6 @@ impl Config {
                 self.nes.controller_port2 =
                     Self::parse_controller_arg("nes-controller_port2", value)?;
                 self.nes.controller_port2_explicit = true;
-            }
-            "nes-zapper_detection_size" => {
-                if let Ok(size) = value.parse::<u8>() {
-                    self.nes.zapper_detection_size = size;
-                    if size > 10 {
-                        eprintln!(
-                            "Warning: nes-zapper_detection_size={} may cause performance issues. \
-                             Large values sample (2*size + 1)² = {} pixels per controller read. \
-                             Consider using values ≤ 10 for better performance.",
-                            size,
-                            (2 * size as u32 + 1).pow(2)
-                        );
-                    }
-                } else {
-                    eprintln!(
-                        "Warning: invalid value '{}' for 'nes-zapper_detection_size' in configuration; \
-                         ignoring. Must be a number between 0 and 255.",
-                        value
-                    );
-                }
-            }
-            "trace-cpu" => {
-                if let Ok(level) = value.parse::<u8>() {
-                    self.frontend.tracing.cpu = level;
-                    if level > 0 {
-                        self.frontend.tracing.enabled = true;
-                    }
-                }
-            }
-            "trace-ppu" => {
-                if let Ok(level) = value.parse::<u8>() {
-                    self.frontend.tracing.ppu =
-                        crate::platform::debugging::Tracing::clamp_ppu_level(level);
-                    if level > 0 {
-                        self.frontend.tracing.enabled = true;
-                    }
-                }
-            }
-            "trace-apu" => {
-                if let Ok(level) = value.parse::<u8>() {
-                    self.frontend.tracing.apu = level;
-                    if level > 0 {
-                        self.frontend.tracing.enabled = true;
-                    }
-                }
-            }
-            "trace-mapper" => {
-                if let Ok(level) = value.parse::<u8>() {
-                    self.frontend.tracing.mapper =
-                        crate::platform::debugging::Tracing::clamp_mapper_level(level);
-                    if level > 0 {
-                        self.frontend.tracing.enabled = true;
-                    }
-                }
-            }
-            "trace-nestest" => {
-                if let Ok(b) = parse_bool(value) {
-                    self.frontend.tracing.nestest = b;
-                    if b {
-                        self.frontend.tracing.enabled = true;
-                    }
-                }
-            }
-            "ram_init_mode" => match value.to_lowercase().as_str() {
-                "zero" => self.frontend.ram_init_mode = RamInitMode::Zero,
-                "random" => self.frontend.ram_init_mode = RamInitMode::Random,
-                _ => {
-                    if let Some(seed_str) = value
-                        .strip_prefix("seeded-random:")
-                        .or_else(|| value.strip_prefix("seeded_random:"))
-                    {
-                        if let Ok(seed) = seed_str.parse::<u64>() {
-                            self.frontend.ram_init_mode = RamInitMode::SeededRandom(seed);
-                        } else {
-                            eprintln!(
-                                "Warning: invalid seed '{}' for 'ram_init_mode'; \
-                                     keeping current mode. Use format 'seeded-random:12345'.",
-                                seed_str
-                            );
-                        }
-                    } else {
-                        eprintln!(
-                            "Warning: invalid value '{}' for 'ram_init_mode'; \
-                                 keeping current mode. Valid values: zero, random, seeded-random:SEED",
-                            value
-                        );
-                    }
-                }
-            },
-            "nes-oam_dram_decay" | "nes-oam_dram_decay_enabled" => {
-                if let Ok(b) = parse_bool(value) {
-                    self.nes.oam_dram_decay_enabled = b;
-                } else {
-                    eprintln!(
-                        "Warning: invalid value '{}' for 'nes-oam_dram_decay'; keeping current value. \
-                         Valid values: true/false/yes/no/1/0",
-                        value
-                    );
-                }
-            }
-            "nes-horizontal_overscan" => {
-                if let Ok(v) = value.parse::<u8>() {
-                    self.nes.horizontal_overscan = v.min(8);
-                }
-            }
-            "nes-vertical_overscan" => {
-                if let Ok(v) = value.parse::<u8>() {
-                    self.nes.vertical_overscan = v.min(16);
-                }
             }
             "gb-dmg-variant" => {
                 self.gb.apply_config_value(value)?;
@@ -1439,10 +1333,7 @@ impl Config {
                     self.gb.apply_config_value(value)?;
                 }
             },
-            "cartridge_search_paths" | "scan_cartridges" | "rebuild_cartridge_catalog" => {
-                self.apply_cartridge_catalog_config_value(key, value);
-            }
-            _ => {} // Unknown keys are silently ignored
+            _ => {} // Unknown keys are silently ignored (may have been handled by sub-configs)
         }
         Ok(())
     }
