@@ -191,11 +191,14 @@ pub(crate) fn parse_cli_string_arg(args: &[String], flag: &str) -> Option<String
 // CLI Flag Definitions
 // ============================================================================
 
-/// Platform-level CLI flags supported by all emulated systems.
+/// Shared CLI flags used by the platform configuration layer.
 ///
-/// These flags control frontend behavior (audio, display, debugging, autorun, etc.)
-/// and are not specific to any particular console. System-specific flags are
-/// defined in their respective config modules (e.g., --nes-hardware in NesConfig).
+/// This list primarily covers frontend behavior such as audio, display,
+/// debugging, and autorun. It may also include shared validation entries for
+/// flags that are only meaningful for specific systems (for example,
+/// NES-focused debugging or filtering flags). System-specific configuration
+/// options are still defined in their respective config modules
+/// (e.g., `--nes-hardware` in `NesConfig`).
 pub(crate) const PLATFORM_CLI_FLAGS: &[CliFlag] = &[
     CliFlag {
         flag: "--help",
@@ -433,7 +436,6 @@ pub(crate) const OPTIONAL_BOOL_FLAGS: &[&str] = &[
     "--scan-cartridges",
     "--convert-autorun",
     "--recalculate-autorun",
-    "--autorun-format",
 ];
 
 /// Parse a boolean argument from command-line args.
