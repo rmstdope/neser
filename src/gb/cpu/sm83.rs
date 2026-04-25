@@ -203,7 +203,6 @@ impl<B: GbBus> Sm83<B> {
     /// Used for internal CPU cycles that do not correspond to a memory access
     /// (e.g. the extra cycle consumed by taken conditional branches, PUSH, etc.).
     fn internal_cycle(&mut self) {
-        #[cfg(debug_assertions)]
         {
             use crate::platform::debugging::cpu_trace_level;
             if cpu_trace_level() >= 2 {
@@ -225,7 +224,6 @@ impl<B: GbBus> Sm83<B> {
         self.cycles += 1;
         self.bus.tick(1);
         let val = self.bus.read(addr);
-        #[cfg(debug_assertions)]
         {
             use crate::platform::debugging::cpu_trace_level;
             if cpu_trace_level() >= 2 {
@@ -243,7 +241,6 @@ impl<B: GbBus> Sm83<B> {
         self.cycles += 1;
         self.bus.tick(1);
         self.bus.write(addr, val);
-        #[cfg(debug_assertions)]
         {
             use crate::platform::debugging::cpu_trace_level;
             if cpu_trace_level() >= 2 {
@@ -613,7 +610,6 @@ impl<B: GbBus> Sm83<B> {
             // Dispatch cancelled: the IE overwrite (via hi-byte push to $FFFF)
             // cleared all pending interrupts.  Jump to $0000; IF is NOT cleared.
             self.regs.pc = 0x0000;
-            #[cfg(debug_assertions)]
             {
                 use crate::platform::debugging::cpu_trace_level;
                 if cpu_trace_level() >= 1 {
@@ -627,7 +623,6 @@ impl<B: GbBus> Sm83<B> {
             let new_if = self.bus.read(0xFF0F) & !(1 << bit);
             self.bus.write(0xFF0F, new_if);
             self.regs.pc = 0x0040 + (bit as u16) * 8;
-            #[cfg(debug_assertions)]
             {
                 use crate::platform::debugging::cpu_trace_level;
                 if cpu_trace_level() >= 1 {
@@ -709,7 +704,6 @@ impl<B: GbBus> Sm83<B> {
             let opcode = self.fetch_byte_no_tick();
 
             // Level 1 CPU tracing: emit instruction execution trace
-            #[cfg(debug_assertions)]
             {
                 use crate::platform::debugging::cpu_trace_level;
                 if cpu_trace_level() >= 1 {
