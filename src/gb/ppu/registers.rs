@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::trace_ppu;
+
 /// DMG PPU I/O registers (writable fields only).
 ///
 /// The read-only mode and coincidence bits of STAT are composed dynamically
@@ -52,18 +54,54 @@ impl Registers {
     /// Returns `true` if the address was handled.
     pub fn write(&mut self, addr: u16, val: u8) -> bool {
         match addr {
-            0xFF40 => self.lcdc = val,
+            0xFF40 => {
+                let before = self.lcdc;
+                self.lcdc = val;
+                trace_ppu!(3; "lcdc write before={:02X} after={:02X}", before, val);
+            }
             // Only bits 3–6 are CPU-writable; bits 0–2 are read-only mode/coincidence bits.
             0xFF41 => self.stat_irq_enables = val & 0x78,
-            0xFF42 => self.scy = val,
-            0xFF43 => self.scx = val,
+            0xFF42 => {
+                let before = self.scy;
+                self.scy = val;
+                trace_ppu!(3; "scy write before={:02X} after={:02X}", before, val);
+            }
+            0xFF43 => {
+                let before = self.scx;
+                self.scx = val;
+                trace_ppu!(3; "scx write before={:02X} after={:02X}", before, val);
+            }
             0xFF44 => {} // LY is read-only; writes are silently ignored
-            0xFF45 => self.lyc = val,
-            0xFF47 => self.bgp = val,
-            0xFF48 => self.obp0 = val,
-            0xFF49 => self.obp1 = val,
-            0xFF4A => self.wy = val,
-            0xFF4B => self.wx = val,
+            0xFF45 => {
+                let before = self.lyc;
+                self.lyc = val;
+                trace_ppu!(3; "lyc write before={:02X} after={:02X}", before, val);
+            }
+            0xFF47 => {
+                let before = self.bgp;
+                self.bgp = val;
+                trace_ppu!(3; "bgp write before={:02X} after={:02X}", before, val);
+            }
+            0xFF48 => {
+                let before = self.obp0;
+                self.obp0 = val;
+                trace_ppu!(3; "obp0 write before={:02X} after={:02X}", before, val);
+            }
+            0xFF49 => {
+                let before = self.obp1;
+                self.obp1 = val;
+                trace_ppu!(3; "obp1 write before={:02X} after={:02X}", before, val);
+            }
+            0xFF4A => {
+                let before = self.wy;
+                self.wy = val;
+                trace_ppu!(3; "wy write before={:02X} after={:02X}", before, val);
+            }
+            0xFF4B => {
+                let before = self.wx;
+                self.wx = val;
+                trace_ppu!(3; "wx write before={:02X} after={:02X}", before, val);
+            }
             _ => return false,
         }
         true
