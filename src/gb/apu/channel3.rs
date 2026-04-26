@@ -10,6 +10,7 @@
 //! | 10 | 1      | 50 %             |
 //! | 11 | 2      | 25 %             |
 
+use crate::trace_apu;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,8 +102,11 @@ impl Channel3 {
         while cycles_left > self.freq_timer {
             cycles_left -= self.freq_timer + 1;
             self.freq_timer = self.freq ^ 0x7FF;
+            let old_pos = self.wave_pos;
             self.wave_pos = (self.wave_pos + 1) & 31;
             self.current_sample = self.read_wave_nibble(self.wave_pos);
+            trace_apu!(5; "GB APU CH3 tick wave_pos {} -> {} sample=0x{:X} freq=0x{:03X}", 
+                old_pos, self.wave_pos, self.current_sample, self.freq);
             self.wave_just_read = true;
         }
         if cycles_left > 0 {
@@ -116,6 +120,7 @@ impl Channel3 {
             return;
         }
         self.length_counter -= 1;
+        trace_apu!(3; "GB APU CH3 length_counter={} active={}", self.length_counter, self.length_counter > 0);
         if self.length_counter == 0 {
             self.active = false;
         }
@@ -153,6 +158,7 @@ impl Channel3 {
     // ── Register writes ───────────────────────────────────────────────────
 
     pub fn write_nr30(&mut self, val: u8) {
+        trace_apu!(2; "GB APU CH3 write NR30=0x{:02X} dac_on={}", val, (val & 0x80) != 0);
         self.dac_on = val & 0x80 != 0;
         if !self.dac_on {
             self.active = false;
@@ -160,19 +166,24 @@ impl Channel3 {
     }
 
     pub fn write_nr31(&mut self, val: u8) {
+        trace_apu!(2; "GB APU CH3 write NR31=0x{:02X} length={}", val, val);
         self.length_load = u16::from(val);
         self.length_counter = 256 - self.length_load;
     }
 
     pub fn write_nr32(&mut self, val: u8) {
+        trace_apu!(2; "GB APU CH3 write NR32=0x{:02X} output_level={}", val, (val >> 5) & 0x03);
         self.output_level = (val >> 5) & 0x03;
     }
 
     pub fn write_nr33(&mut self, val: u8) {
         self.freq = (self.freq & 0x0700) | u16::from(val);
+        trace_apu!(2; "GB APU CH3 write NR33=0x{:02X} freq=0x{:03X}", val, self.freq);
     }
 
     pub fn write_nr34(&mut self, val: u8, extra_clk: bool) {
+        trace_apu!(2; "GB APU CH3 write NR34=0x{:02X} trigger={} length_en={} freq_high={}", 
+            val, (val & 0x80) != 0, (val & 0x40) != 0, val & 0x07);
         let old_length_en = self.length_en;
         self.length_en = val & 0x40 != 0;
         self.freq = (self.freq & 0x00FF) | (u16::from(val & 0x07) << 8);
@@ -198,6 +209,7 @@ impl Channel3 {
     }
 
     fn trigger(&mut self) {
+        trace_apu!(1; "GB APU CH3 trigger freq=0x{:03X} output_level={}", self.freq, self.output_level);
         // DMG retrigger corruption: if CH3 is currently active on DMG
         // and sample_countdown == 0 (about to read next sample)
         if !self.is_cgb && self.active && self.freq_timer == 0 {
@@ -272,6 +284,7 @@ impl Channel3 {
     }
 
     pub fn write_wave_ram(&mut self, addr: u16, val: u8) {
+        trace_apu!(2; "GB APU CH3 write wave_ram[0x{:04X}]=0x{:02X}", addr, val);
         if self.active {
             if self.is_cgb || self.wave_just_read {
                 // CGB: always write to current wave position during playback.

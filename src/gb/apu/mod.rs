@@ -22,6 +22,7 @@ pub mod channel2;
 pub mod channel3;
 pub mod channel4;
 
+use crate::trace_apu;
 use serde::{Deserialize, Serialize};
 
 use channel1::Channel1;
@@ -183,17 +184,25 @@ impl Apu {
         self.fs_timer -= 1;
         if self.fs_timer == 0 {
             self.fs_timer = FS_MCYCLES_PER_STEP;
+            trace_apu!(3; "GB APU FS step={} length={} sweep={} envelope={}",
+                self.fs_step,
+                (FS_TABLE[self.fs_step as usize] & 0x01) != 0,
+                (FS_TABLE[self.fs_step as usize] & 0x02) != 0,
+                (FS_TABLE[self.fs_step as usize] & 0x04) != 0);
             let flags = FS_TABLE[self.fs_step as usize];
             if flags & 0x01 != 0 {
+                trace_apu!(4; "GB APU clock length counters");
                 self.ch1.clock_length();
                 self.ch2.clock_length();
                 self.ch3.clock_length();
                 self.ch4.clock_length();
             }
             if flags & 0x02 != 0 {
+                trace_apu!(4; "GB APU clock CH1 sweep");
                 self.ch1.clock_sweep();
             }
             if flags & 0x04 != 0 {
+                trace_apu!(4; "GB APU clock envelopes");
                 self.ch1.clock_envelope();
                 self.ch2.clock_envelope();
                 self.ch4.clock_envelope();
@@ -254,7 +263,12 @@ impl Apu {
         self.hp_prev_in = raw;
         self.hp_prev_out = hp_out;
 
-        hp_out.clamp(-1.0, 1.0)
+        let final_out = hp_out.clamp(-1.0, 1.0);
+        trace_apu!(5; "GB APU mix ch1={:.3} ch2={:.3} ch3={:.3} ch4={:.3} left={:.3} right={:.3} raw={:.3} hp={:.3} out={:.3}",
+            samples[0], samples[1], samples[2], samples[3],
+            left_mix * left_volume, right_mix * right_volume,
+            raw, hp_out, final_out);
+        final_out
     }
 
     /// Sum channel samples gated by a 4-bit enable mask (bit i enables samples[i]).
@@ -383,8 +397,14 @@ impl Apu {
             0xFF21 => self.ch4.write_nr42(val),
             0xFF22 => self.ch4.write_nr43(val),
             0xFF23 => self.ch4.write_nr44(val, extra_clk),
-            0xFF24 => self.nr50 = val,
-            0xFF25 => self.nr51 = val,
+            0xFF24 => {
+                trace_apu!(2; "GB APU write NR50=0x{:02X} left_vol={} right_vol={}", val, (val >> 4) & 0x07, val & 0x07);
+                self.nr50 = val;
+            }
+            0xFF25 => {
+                trace_apu!(2; "GB APU write NR51=0x{:02X} left_en=0x{:X} right_en=0x{:X}", val, val >> 4, val & 0x0F);
+                self.nr51 = val;
+            }
             _ => {}
         }
     }
@@ -394,6 +414,7 @@ impl Apu {
         self.powered = val & 0x80 != 0;
 
         if was_powered && !self.powered {
+            trace_apu!(1; "GB APU power off");
             // Power off: clear all NR10–NR51 registers and HP filter state.
             self.ch1.power_off();
             self.ch2.power_off();
@@ -404,6 +425,7 @@ impl Apu {
             self.hp_prev_in = 0.0;
             self.hp_prev_out = 0.0;
         } else if !was_powered && self.powered {
+            trace_apu!(1; "GB APU power on");
             // Power on: reset frame sequencer.
             self.fs_step = 0;
             self.fs_timer = FS_MCYCLES_PER_STEP;
