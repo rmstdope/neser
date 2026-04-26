@@ -3,10 +3,10 @@
 //! LFSR clock: `f = 524_288 / divisor / 2^(shift+1)` Hz.
 //! 7-bit mode: feedback is also written to bit 6, shortening the period.
 
-/// Divisor lookup for noise clock (NR43 bits 2-0).
 use crate::trace_apu;
 use serde::{Deserialize, Serialize};
 
+/// Divisor lookup for noise clock (NR43 bits 2-0).
 const DIVISORS: [u32; 8] = [8, 16, 32, 48, 64, 80, 96, 112];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
