@@ -13,6 +13,22 @@ impl Opcode {
     const fn new(mnemonic: &'static str, cycles: u8) -> Self {
         Self { mnemonic, cycles }
     }
+
+    /// Get the number of bytes for this instruction based on its mnemonic.
+    ///
+    /// GB opcodes encode operand size in the mnemonic:
+    /// - "n16" or "a16": 3 bytes (opcode + 2-byte operand)
+    /// - "n8" or "e8": 2 bytes (opcode + 1-byte operand)
+    /// - Otherwise: 1 byte (opcode only)
+    pub fn bytes(&self) -> u8 {
+        if self.mnemonic.contains("n16") || self.mnemonic.contains("a16") {
+            3
+        } else if self.mnemonic.contains("n8") || self.mnemonic.contains("e8") {
+            2
+        } else {
+            1
+        }
+    }
 }
 
 /// Look up base-opcode metadata by opcode byte.

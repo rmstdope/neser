@@ -1,8 +1,61 @@
-//! Breakpoint engine for the NES debugger.
+//! Breakpoint engine for the NES and GB debuggers.
 //!
-//! Supports four condition types: PC match, CPU cycle count, CPU frame count, and CPU write-address.
+//! Supports multiple condition types: PC match, CPU cycle count, CPU frame count,
+//! CPU write-address, and GB-specific interrupt breakpoints.
 
 use std::fmt;
+
+/// Game Boy interrupt types for interrupt breakpoints.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GbInterruptKind {
+    /// VBlank interrupt (bit 0 of IF/IE)
+    VBlank,
+    /// STAT (LCD) interrupt (bit 1 of IF/IE)
+    Stat,
+    /// Timer interrupt (bit 2 of IF/IE)
+    Timer,
+    /// Serial interrupt (bit 3 of IF/IE)
+    Serial,
+    /// Joypad interrupt (bit 4 of IF/IE)
+    Joypad,
+}
+
+impl fmt::Display for GbInterruptKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            GbInterruptKind::VBlank => write!(f, "VBlank"),
+            GbInterruptKind::Stat => write!(f, "STAT"),
+            GbInterruptKind::Timer => write!(f, "Timer"),
+            GbInterruptKind::Serial => write!(f, "Serial"),
+            GbInterruptKind::Joypad => write!(f, "Joypad"),
+        }
+    }
+}
+
+impl GbInterruptKind {
+    /// Get the interrupt bit mask for this interrupt type.
+    pub fn bit_mask(self) -> u8 {
+        match self {
+            GbInterruptKind::VBlank => 0x01,
+            GbInterruptKind::Stat => 0x02,
+            GbInterruptKind::Timer => 0x04,
+            GbInterruptKind::Serial => 0x08,
+            GbInterruptKind::Joypad => 0x10,
+        }
+    }
+
+    /// Parse interrupt kind from string.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "vblank" => Some(GbInterruptKind::VBlank),
+            "stat" => Some(GbInterruptKind::Stat),
+            "timer" => Some(GbInterruptKind::Timer),
+            "serial" => Some(GbInterruptKind::Serial),
+            "joypad" => Some(GbInterruptKind::Joypad),
+            _ => None,
+        }
+    }
+}
 
 /// The condition that triggers a breakpoint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -15,6 +68,8 @@ pub enum BreakpointKind {
     Frame(u64),
     /// Break when the CPU writes to the given address (non-dummy write).
     WriteAddress(u16),
+    /// Break when a specific GB interrupt is about to fire (GB only).
+    GbInterrupt(GbInterruptKind),
 }
 
 impl fmt::Display for BreakpointKind {
@@ -24,6 +79,7 @@ impl fmt::Display for BreakpointKind {
             BreakpointKind::Cycle(n) => write!(f, "CYC={}", n),
             BreakpointKind::Frame(n) => write!(f, "FRM={}", n),
             BreakpointKind::WriteAddress(addr) => write!(f, "WR={:04X}", addr),
+            BreakpointKind::GbInterrupt(kind) => write!(f, "INT={}", kind),
         }
     }
 }
@@ -55,6 +111,16 @@ impl Breakpoint {
             }
             BreakpointKind::Frame(target) => ctx.prev_frame < target && ctx.frame >= target,
             BreakpointKind::WriteAddress(addr) => ctx.write_addr == Some(addr),
+            BreakpointKind::GbInterrupt(kind) => {
+                // Check if GB interrupt is about to fire
+                if let (Some(ie), Some(if_reg), Some(ime)) = (ctx.gb_ie, ctx.gb_if, ctx.gb_ime) {
+                    let mask = kind.bit_mask();
+                    // Interrupt is pending and enabled
+                    ime && (ie & if_reg & mask) != 0
+                } else {
+                    false
+                }
+            }
         }
     }
 
@@ -66,6 +132,16 @@ impl Breakpoint {
             BreakpointKind::Cycle(n) => format!("cycle {} {}", n, state),
             BreakpointKind::Frame(n) => format!("frame {} {}", n, state),
             BreakpointKind::WriteAddress(addr) => format!("write {:#06X} {}", addr, state),
+            BreakpointKind::GbInterrupt(kind) => {
+                let name = match kind {
+                    GbInterruptKind::VBlank => "vblank",
+                    GbInterruptKind::Stat => "stat",
+                    GbInterruptKind::Timer => "timer",
+                    GbInterruptKind::Serial => "serial",
+                    GbInterruptKind::Joypad => "joypad",
+                };
+                format!("gbinterrupt {} {}", name, state)
+            }
         }
     }
 
@@ -97,6 +173,10 @@ impl Breakpoint {
                 let addr = parse_u16(parts[1])?;
                 BreakpointKind::WriteAddress(addr)
             }
+            "gbinterrupt" => {
+                let int_kind = GbInterruptKind::parse(parts[1])?;
+                BreakpointKind::GbInterrupt(int_kind)
+            }
             _ => return None,
         };
         Some(Self { kind, enabled })
@@ -127,6 +207,12 @@ pub struct EvalContext {
     pub frame: u64,
     /// Address written during this instruction (non-dummy write), if any.
     pub write_addr: Option<u16>,
+    /// GB interrupt enable register (IE at $FFFF) - for GB interrupt breakpoints.
+    pub gb_ie: Option<u8>,
+    /// GB interrupt flag register (IF at $FF0F) - for GB interrupt breakpoints.
+    pub gb_if: Option<u8>,
+    /// GB IME (Interrupt Master Enable) flag - for GB interrupt breakpoints.
+    pub gb_ime: Option<bool>,
 }
 
 /// An ordered list of persistent breakpoints.
@@ -303,6 +389,9 @@ mod tests {
             prev_cpu_cycles: 0,
             cpu_cycles: 0,
             write_addr: None,
+            gb_ie: None,
+            gb_if: None,
+            gb_ime: None,
             prev_frame: 0,
             frame: 0,
         };
@@ -317,6 +406,9 @@ mod tests {
             prev_cpu_cycles: 0,
             cpu_cycles: 0,
             write_addr: None,
+            gb_ie: None,
+            gb_if: None,
+            gb_ime: None,
             prev_frame: 0,
             frame: 0,
         };
@@ -332,6 +424,9 @@ mod tests {
             prev_cpu_cycles: 0,
             cpu_cycles: 0,
             write_addr: None,
+            gb_ie: None,
+            gb_if: None,
+            gb_ime: None,
             prev_frame: 0,
             frame: 0,
         };
@@ -348,6 +443,9 @@ mod tests {
             prev_cpu_cycles: 998,
             cpu_cycles: 1002,
             write_addr: None,
+            gb_ie: None,
+            gb_if: None,
+            gb_ime: None,
             prev_frame: 0,
             frame: 0,
         };
@@ -362,6 +460,9 @@ mod tests {
             prev_cpu_cycles: 999,
             cpu_cycles: 1000,
             write_addr: None,
+            gb_ie: None,
+            gb_if: None,
+            gb_ime: None,
             prev_frame: 0,
             frame: 0,
         };
@@ -376,6 +477,9 @@ mod tests {
             prev_cpu_cycles: 0,
             cpu_cycles: 999,
             write_addr: None,
+            gb_ie: None,
+            gb_if: None,
+            gb_ime: None,
             prev_frame: 0,
             frame: 0,
         };
@@ -391,6 +495,9 @@ mod tests {
             prev_cpu_cycles: 1001,
             cpu_cycles: 1003,
             write_addr: None,
+            gb_ie: None,
+            gb_if: None,
+            gb_ime: None,
             prev_frame: 0,
             frame: 0,
         };
@@ -406,6 +513,9 @@ mod tests {
             prev_cpu_cycles: 999,
             cpu_cycles: 1002,
             write_addr: None,
+            gb_ie: None,
+            gb_if: None,
+            gb_ime: None,
             prev_frame: 0,
             frame: 0,
         };
@@ -422,6 +532,9 @@ mod tests {
             prev_cpu_cycles: 0,
             cpu_cycles: 0,
             write_addr: None,
+            gb_ie: None,
+            gb_if: None,
+            gb_ime: None,
             prev_frame: 4,
             frame: 5,
         };
@@ -436,6 +549,9 @@ mod tests {
             prev_cpu_cycles: 0,
             cpu_cycles: 0,
             write_addr: None,
+            gb_ie: None,
+            gb_if: None,
+            gb_ime: None,
             prev_frame: 4,
             frame: 4,
         };
@@ -452,6 +568,9 @@ mod tests {
             prev_cpu_cycles: 0,
             cpu_cycles: 0,
             write_addr: Some(0x2006),
+            gb_ie: None,
+            gb_if: None,
+            gb_ime: None,
             prev_frame: 0,
             frame: 0,
         };
@@ -466,6 +585,9 @@ mod tests {
             prev_cpu_cycles: 0,
             cpu_cycles: 0,
             write_addr: None,
+            gb_ie: None,
+            gb_if: None,
+            gb_ime: None,
             prev_frame: 0,
             frame: 0,
         };
@@ -480,6 +602,9 @@ mod tests {
             prev_cpu_cycles: 0,
             cpu_cycles: 0,
             write_addr: Some(0x2007),
+            gb_ie: None,
+            gb_if: None,
+            gb_ime: None,
             prev_frame: 0,
             frame: 0,
         };
@@ -495,6 +620,9 @@ mod tests {
             prev_cpu_cycles: 0,
             cpu_cycles: 0,
             write_addr: Some(0x2006),
+            gb_ie: None,
+            gb_if: None,
+            gb_ime: None,
             prev_frame: 0,
             frame: 0,
         };
@@ -595,6 +723,9 @@ mod tests {
             prev_cpu_cycles: 0,
             cpu_cycles: 0,
             write_addr: None,
+            gb_ie: None,
+            gb_if: None,
+            gb_ime: None,
             prev_frame: 0,
             frame: 0,
         };
@@ -610,6 +741,9 @@ mod tests {
             prev_cpu_cycles: 498,
             cpu_cycles: 501,
             write_addr: None,
+            gb_ie: None,
+            gb_if: None,
+            gb_ime: None,
             prev_frame: 0,
             frame: 0,
         };
@@ -625,6 +759,9 @@ mod tests {
             prev_cpu_cycles: 0,
             cpu_cycles: 0,
             write_addr: Some(0x2006),
+            gb_ie: None,
+            gb_if: None,
+            gb_ime: None,
             prev_frame: 0,
             frame: 0,
         };
@@ -640,6 +777,9 @@ mod tests {
             prev_cpu_cycles: 0,
             cpu_cycles: 0,
             write_addr: None,
+            gb_ie: None,
+            gb_if: None,
+            gb_ime: None,
             prev_frame: 0,
             frame: 0,
         };
@@ -656,6 +796,9 @@ mod tests {
             prev_cpu_cycles: 0,
             cpu_cycles: 0,
             write_addr: None,
+            gb_ie: None,
+            gb_if: None,
+            gb_ime: None,
             prev_frame: 0,
             frame: 0,
         };
@@ -670,6 +813,9 @@ mod tests {
             prev_cpu_cycles: 498,
             cpu_cycles: 501,
             write_addr: Some(0x2006),
+            gb_ie: None,
+            gb_if: None,
+            gb_ime: None,
             prev_frame: 0,
             frame: 0,
         };

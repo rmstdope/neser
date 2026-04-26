@@ -132,6 +132,8 @@ pub struct Sm83<B: GbBus> {
     ime_pending: bool,
     pub bus: B,
     cycles: u64,
+    /// Last memory address written by the CPU (for write-address breakpoints).
+    last_write_addr: Option<u16>,
 }
 
 impl<B: GbBus> Sm83<B> {
@@ -144,6 +146,7 @@ impl<B: GbBus> Sm83<B> {
             ime_pending: false,
             bus,
             cycles: 0,
+            last_write_addr: None,
         }
     }
 
@@ -167,6 +170,17 @@ impl<B: GbBus> Sm83<B> {
         self.ime_pending = pending;
     }
 
+    /// Get the last memory address written by the CPU.
+    /// Returns `None` if no write has occurred since reset or last clear.
+    pub fn last_cpu_write_addr(&self) -> Option<u16> {
+        self.last_write_addr
+    }
+
+    /// Clear the last write address (for debugger use).
+    pub fn clear_last_write_addr(&mut self) {
+        self.last_write_addr = None;
+    }
+
     /// Reset the CPU to power-on state.
     ///
     /// All registers zeroed, IME/halted/halt_bug/ime_pending cleared.
@@ -177,6 +191,7 @@ impl<B: GbBus> Sm83<B> {
         self.ime = false;
         self.halted = false;
         self.halt_bug = false;
+        self.last_write_addr = None;
         self.ime_pending = false;
     }
 
@@ -227,6 +242,7 @@ impl<B: GbBus> Sm83<B> {
     /// Peripherals are ticked **before** the memory write for the same reason
     /// as [`read`]: the timer advances at T-cycle 0 before the write at T-cycle 3.
     fn write(&mut self, addr: u16, val: u8) {
+        self.last_write_addr = Some(addr);
         self.cycles += 1;
         self.bus.tick(1);
         self.bus.write(addr, val);
@@ -649,6 +665,11 @@ impl<B: GbBus> Sm83<B> {
     /// multi-byte instructions continue to use the regular [`fetch_byte()`]
     /// which ticks normally.
     pub fn execute(&mut self) {
+        // Clear last_write_addr at instruction boundary to prevent spurious
+        // write-address breakpoint triggers on later instructions that don't
+        // perform writes (matches NES CPU behavior).
+        self.last_write_addr = None;
+
         // Snapshot IME-pending state *before* this instruction runs.
         // IME becomes active at the *end* of the instruction following EI —
         // not at the start — so interrupts can only fire from the third

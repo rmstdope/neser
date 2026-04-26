@@ -760,6 +760,7 @@ pub(crate) fn format_breakpoint_label(bp: &Breakpoint) -> String {
         BreakpointKind::Cycle(n) => format!("CYC {}", n),
         BreakpointKind::Frame(n) => format!("FRM {}", n),
         BreakpointKind::WriteAddress(addr) => format!("WR  ${:04X}", addr),
+        BreakpointKind::GbInterrupt(kind) => format!("GB  {:?}", kind),
     }
 }
 

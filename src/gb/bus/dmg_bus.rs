@@ -584,6 +584,49 @@ impl GbBus for DmgBus {
             self.ppu.apply_oam_write_corruption(row);
         }
     }
+
+    fn ppu(&self) -> &Ppu {
+        &self.ppu
+    }
+
+    fn ppu_mut(&mut self) -> &mut Ppu {
+        &mut self.ppu
+    }
+
+    fn read_for_debugger(&self, addr: u16) -> u8 {
+        // Debugger reads mirror normal read() address decoding (including register
+        // readback behavior like `if_reg | 0xE0` and `sc | 0x7E`) but avoid side
+        // effects such as OAM corruption or serial transfer state changes.
+        // Boot ROM check is skipped — debugger should see actual cartridge ROM.
+        match addr {
+            0x0000..=0x7FFF => self.cart.read(addr),
+            0x8000..=0x9FFF => self.ppu.read_vram(addr),
+            0xA000..=0xBFFF => self.cart.read(addr),
+            0xC000..=0xDFFF => self.wram[(addr - 0xC000) as usize],
+            0xE000..=0xFDFF => self.wram[(addr - 0xE000) as usize],
+            0xFE00..=0xFE9F => {
+                if self.dma_oam_blocked {
+                    return 0xFF;
+                }
+                // Direct OAM read to avoid OAM corruption side effects that
+                // read_oam() triggers during Mode 2 (debugger reads must be
+                // side-effect-free).
+                self.ppu.oam[(addr - 0xFE00) as usize]
+            }
+            0xFEA0..=0xFEFF => 0xFF,
+            0xFF00 => self.joypad.read(),
+            0xFF01 => self.sb,
+            0xFF02 => self.sc | 0x7E,
+            0xFF04..=0xFF07 => self.timer.read(addr),
+            0xFF0F => self.if_reg | 0xE0,
+            0xFF10..=0xFF3F => self.apu.read_register(addr),
+            0xFF40..=0xFF45 | 0xFF47..=0xFF4B => self.ppu.read_register(addr),
+            0xFF46 => self.dma_source,
+            0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
+            0xFFFF => self.ie_reg,
+            _ => 0xFF,
+        }
+    }
 }
 
 #[cfg(test)]
