@@ -1,5 +1,6 @@
 //! CH1 – Pulse channel with frequency sweep (NR10–NR14).
 
+use crate::trace_apu;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -107,7 +108,9 @@ impl Channel1 {
         } else {
             self.freq_timer = period;
             if self.triggered_once {
+                let old_pos = self.duty_pos;
                 self.duty_pos = (self.duty_pos + 1) & 7;
+                trace_apu!(5; "GB APU CH1 tick duty_pos {} -> {} period=0x{:03X}", old_pos, self.duty_pos, self.freq);
             }
         }
     }
@@ -118,6 +121,7 @@ impl Channel1 {
             return;
         }
         self.length_counter -= 1;
+        trace_apu!(3; "GB APU CH1 length_counter={} active={}", self.length_counter, self.length_counter > 0);
         if self.length_counter == 0 {
             self.active = false;
         }
@@ -144,8 +148,10 @@ impl Channel1 {
                     self.negate_used = true;
                 }
                 if new_freq > 2047 {
+                    trace_apu!(3; "GB APU CH1 sweep overflow freq=0x{:03X} -> muted", new_freq);
                     self.active = false;
                 } else if self.sweep_shift > 0 {
+                    trace_apu!(3; "GB APU CH1 sweep update shadow=0x{:03X} -> new=0x{:03X}", self.sweep_shadow, new_freq);
                     self.sweep_shadow = new_freq;
                     self.freq = new_freq;
                     // Re-check overflow against the newly loaded frequency.
@@ -180,10 +186,14 @@ impl Channel1 {
         }
         if self.env_timer == 0 {
             self.env_timer = self.env_period;
+            let old_volume = self.volume;
             if self.env_add && self.volume < 15 {
                 self.volume += 1;
             } else if !self.env_add && self.volume > 0 {
                 self.volume -= 1;
+            }
+            if old_volume != self.volume {
+                trace_apu!(3; "GB APU CH1 envelope volume {} -> {}", old_volume, self.volume);
             }
         }
     }
@@ -240,6 +250,8 @@ impl Channel1 {
     // ── Register writes ───────────────────────────────────────────────────
 
     pub fn write_nr10(&mut self, val: u8) {
+        trace_apu!(2; "GB APU CH1 write NR10=0x{:02X} period={} negate={} shift={}", 
+            val, (val >> 4) & 0x07, (val & 0x08) != 0, val & 0x07);
         let old_negate = self.sweep_negate;
         self.sweep_period = (val >> 4) & 0x07;
         self.sweep_negate = val & 0x08 != 0;
@@ -252,12 +264,15 @@ impl Channel1 {
     }
 
     pub fn write_nr11(&mut self, val: u8) {
+        trace_apu!(2; "GB APU CH1 write NR11=0x{:02X} duty={} length={}", val, (val >> 6) & 0x03, val & 0x3F);
         self.duty = (val >> 6) & 0x03;
         self.length_load = val & 0x3F;
         self.length_counter = 64 - self.length_load;
     }
 
     pub fn write_nr12(&mut self, val: u8) {
+        trace_apu!(2; "GB APU CH1 write NR12=0x{:02X} volume={} env_add={} env_period={}", 
+            val, (val >> 4) & 0x0F, (val & 0x08) != 0, val & 0x07);
         self.init_volume = (val >> 4) & 0x0F;
         self.env_add = val & 0x08 != 0;
         self.env_period = val & 0x07;
@@ -269,9 +284,12 @@ impl Channel1 {
 
     pub fn write_nr13(&mut self, val: u8) {
         self.freq = (self.freq & 0x0700) | u16::from(val);
+        trace_apu!(2; "GB APU CH1 write NR13=0x{:02X} freq=0x{:03X}", val, self.freq);
     }
 
     pub fn write_nr14(&mut self, val: u8, extra_clk: bool) {
+        trace_apu!(2; "GB APU CH1 write NR14=0x{:02X} trigger={} length_en={} freq_high={}", 
+            val, (val & 0x80) != 0, (val & 0x40) != 0, val & 0x07);
         let old_length_en = self.length_en;
         self.length_en = val & 0x40 != 0;
         self.freq = (self.freq & 0x00FF) | (u16::from(val & 0x07) << 8);
@@ -304,6 +322,8 @@ impl Channel1 {
     // ── Trigger ───────────────────────────────────────────────────────────
 
     fn trigger(&mut self) {
+        trace_apu!(1; "GB APU CH1 trigger freq=0x{:03X} volume={} sweep_period={} sweep_shift={}", 
+            self.freq, self.init_volume, self.sweep_period, self.sweep_shift);
         self.triggered_once = true;
         if self.dac_on {
             self.active = true;

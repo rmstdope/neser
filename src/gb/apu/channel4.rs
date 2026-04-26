@@ -4,6 +4,7 @@
 //! 7-bit mode: feedback is also written to bit 6, shortening the period.
 
 /// Divisor lookup for noise clock (NR43 bits 2-0).
+use crate::trace_apu;
 use serde::{Deserialize, Serialize};
 
 const DIVISORS: [u32; 8] = [8, 16, 32, 48, 64, 80, 96, 112];
@@ -86,6 +87,7 @@ impl Channel4 {
             self.freq_timer -= 4;
         } else {
             self.freq_timer = self.freq_timer_period();
+            trace_apu!(5; "GB APU CH4 tick timer expired, clocking LFSR");
             self.clock_lfsr();
         }
     }
@@ -99,6 +101,8 @@ impl Channel4 {
             self.lfsr &= !(1 << 6);
             self.lfsr |= xor << 6;
         }
+        trace_apu!(5; "GB APU CH4 LFSR shift mode={} lfsr=0x{:04X}", 
+            if self.lfsr_7bit { "7-bit" } else { "15-bit" }, self.lfsr);
     }
 
     pub fn clock_length(&mut self) {
@@ -106,6 +110,7 @@ impl Channel4 {
             return;
         }
         self.length_counter -= 1;
+        trace_apu!(3; "GB APU CH4 length_counter={} active={}", self.length_counter, self.length_counter > 0);
         if self.length_counter == 0 {
             self.active = false;
         }
@@ -120,10 +125,14 @@ impl Channel4 {
         }
         if self.env_timer == 0 {
             self.env_timer = self.env_period;
+            let old_volume = self.volume;
             if self.env_add && self.volume < 15 {
                 self.volume += 1;
             } else if !self.env_add && self.volume > 0 {
                 self.volume -= 1;
+            }
+            if old_volume != self.volume {
+                trace_apu!(3; "GB APU CH4 envelope volume {} -> {}", old_volume, self.volume);
             }
         }
     }
@@ -160,11 +169,14 @@ impl Channel4 {
     }
 
     pub fn write_nr41(&mut self, val: u8) {
+        trace_apu!(2; "GB APU CH4 write NR41=0x{:02X} length={}", val, val & 0x3F);
         self.length_load = val & 0x3F;
         self.length_counter = 64 - self.length_load;
     }
 
     pub fn write_nr42(&mut self, val: u8) {
+        trace_apu!(2; "GB APU CH4 write NR42=0x{:02X} volume={} env_add={} env_period={}", 
+            val, (val >> 4) & 0x0F, (val & 0x08) != 0, val & 0x07);
         self.init_volume = (val >> 4) & 0x0F;
         self.env_add = val & 0x08 != 0;
         self.env_period = val & 0x07;
@@ -175,12 +187,16 @@ impl Channel4 {
     }
 
     pub fn write_nr43(&mut self, val: u8) {
+        trace_apu!(2; "GB APU CH4 write NR43=0x{:02X} shift={} mode={} divisor={}", 
+            val, (val >> 4) & 0x0F, if (val & 0x08) != 0 { "7-bit" } else { "15-bit" }, val & 0x07);
         self.clock_shift = (val >> 4) & 0x0F;
         self.lfsr_7bit = val & 0x08 != 0;
         self.divisor_code = val & 0x07;
     }
 
     pub fn write_nr44(&mut self, val: u8, extra_clk: bool) {
+        trace_apu!(2; "GB APU CH4 write NR44=0x{:02X} trigger={} length_en={}", 
+            val, (val & 0x80) != 0, (val & 0x40) != 0);
         let old_length_en = self.length_en;
         self.length_en = val & 0x40 != 0;
 
@@ -205,6 +221,9 @@ impl Channel4 {
     }
 
     fn trigger(&mut self) {
+        trace_apu!(1; "GB APU CH4 trigger volume={} shift={} mode={} divisor={}",
+            self.init_volume, self.clock_shift,
+            if self.lfsr_7bit { "7-bit" } else { "15-bit" }, self.divisor_code);
         if self.dac_on {
             self.active = true;
         }

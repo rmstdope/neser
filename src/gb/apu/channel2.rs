@@ -2,6 +2,7 @@
 //!
 //! Identical to Channel1 in structure except there is no sweep unit (NR10).
 
+use crate::trace_apu;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -83,7 +84,9 @@ impl Channel2 {
         } else {
             self.freq_timer = period;
             if self.triggered_once {
+                let old_pos = self.duty_pos;
                 self.duty_pos = (self.duty_pos + 1) & 7;
+                trace_apu!(5; "GB APU CH2 tick duty_pos {} -> {} period=0x{:03X}", old_pos, self.duty_pos, self.freq);
             }
         }
     }
@@ -93,6 +96,7 @@ impl Channel2 {
             return;
         }
         self.length_counter -= 1;
+        trace_apu!(3; "GB APU CH2 length_counter={} active={}", self.length_counter, self.length_counter > 0);
         if self.length_counter == 0 {
             self.active = false;
         }
@@ -107,10 +111,14 @@ impl Channel2 {
         }
         if self.env_timer == 0 {
             self.env_timer = self.env_period;
+            let old_volume = self.volume;
             if self.env_add && self.volume < 15 {
                 self.volume += 1;
             } else if !self.env_add && self.volume > 0 {
                 self.volume -= 1;
+            }
+            if old_volume != self.volume {
+                trace_apu!(3; "GB APU CH2 envelope volume {} -> {}", old_volume, self.volume);
             }
         }
     }
@@ -150,12 +158,15 @@ impl Channel2 {
     // ── Register writes ───────────────────────────────────────────────────
 
     pub fn write_nr21(&mut self, val: u8) {
+        trace_apu!(2; "GB APU CH2 write NR21=0x{:02X} duty={} length={}", val, (val >> 6) & 0x03, val & 0x3F);
         self.duty = (val >> 6) & 0x03;
         self.length_load = val & 0x3F;
         self.length_counter = 64 - self.length_load;
     }
 
     pub fn write_nr22(&mut self, val: u8) {
+        trace_apu!(2; "GB APU CH2 write NR22=0x{:02X} volume={} env_add={} env_period={}", 
+            val, (val >> 4) & 0x0F, (val & 0x08) != 0, val & 0x07);
         self.init_volume = (val >> 4) & 0x0F;
         self.env_add = val & 0x08 != 0;
         self.env_period = val & 0x07;
@@ -167,9 +178,12 @@ impl Channel2 {
 
     pub fn write_nr23(&mut self, val: u8) {
         self.freq = (self.freq & 0x0700) | u16::from(val);
+        trace_apu!(2; "GB APU CH2 write NR23=0x{:02X} freq=0x{:03X}", val, self.freq);
     }
 
     pub fn write_nr24(&mut self, val: u8, extra_clk: bool) {
+        trace_apu!(2; "GB APU CH2 write NR24=0x{:02X} trigger={} length_en={} freq_high={}", 
+            val, (val & 0x80) != 0, (val & 0x40) != 0, val & 0x07);
         let old_length_en = self.length_en;
         self.length_en = val & 0x40 != 0;
         self.freq = (self.freq & 0x00FF) | (u16::from(val & 0x07) << 8);
@@ -195,6 +209,7 @@ impl Channel2 {
     }
 
     fn trigger(&mut self) {
+        trace_apu!(1; "GB APU CH2 trigger freq=0x{:03X} volume={}", self.freq, self.init_volume);
         self.triggered_once = true;
         if self.dac_on {
             self.active = true;
