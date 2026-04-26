@@ -329,6 +329,9 @@ impl DebuggerController {
             prev_frame,
             frame: current_frame,
             write_addr: nes.cpu_ref().last_cpu_write_addr(),
+            gb_ie: None,
+            gb_if: None,
+            gb_ime: None,
         };
         self.last_post_instruction_cycles = current_cycles;
         self.last_post_instruction_frame = current_frame;

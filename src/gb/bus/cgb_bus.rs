@@ -351,4 +351,16 @@ impl GbBus for CgbBus {
     fn tick(&mut self, m_cycles: u8) {
         CgbBus::tick(self, m_cycles);
     }
+
+    fn ppu(&self) -> &Ppu {
+        &self.ppu
+    }
+
+    fn ppu_mut(&mut self) -> &mut Ppu {
+        &mut self.ppu
+    }
+
+    fn read_for_debugger(&self, addr: u16) -> u8 {
+        self.read_raw(addr)
+    }
 }

@@ -584,6 +584,18 @@ impl GbBus for DmgBus {
             self.ppu.apply_oam_write_corruption(row);
         }
     }
+
+    fn ppu(&self) -> &Ppu {
+        &self.ppu
+    }
+
+    fn ppu_mut(&mut self) -> &mut Ppu {
+        &mut self.ppu
+    }
+
+    fn read_for_debugger(&self, addr: u16) -> u8 {
+        self.read_raw(addr)
+    }
 }
 
 #[cfg(test)]

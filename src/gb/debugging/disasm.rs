@@ -1,7 +1,50 @@
-/// SM83 (Game Boy CPU) disassembler for CPU tracing.
+/// SM83 (Game Boy CPU) disassembler for CPU tracing and debugger window display.
 ///
 /// Formats SM83 instructions with resolved operand values similar to NES CPU tracing format.
+/// Also provides window generation for displaying disassembly around the current PC.
 use crate::gb::cpu::opcode;
+
+/// Single disassembled instruction line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GbCpuDisasmLineSnapshot {
+    pub addr: u16,
+    pub bytes: Vec<u8>,
+    pub text: String,
+    pub is_current: bool,
+}
+
+/// Disassembly window viewport state.
+///
+/// Tracks the start address of the disassembly window to maintain scroll position
+/// when PC moves within the visible window.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct GbCpuDisasmWindowState {
+    pub(super) start: Option<u16>,
+}
+
+/// Configuration for disassembly window display.
+///
+/// Defines how many lines to show before and after the current PC.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DisasmWindowConfig {
+    pub before: usize,
+    pub after: usize,
+    pub top_margin: usize,
+    pub bottom_margin: usize,
+}
+
+impl Default for DisasmWindowConfig {
+    fn default() -> Self {
+        // Total window height is before + 1 + after.
+        // 10 + 1 + 9 = 20 lines (matches NES debugger).
+        Self {
+            before: 10,
+            after: 9,
+            top_margin: 3,
+            bottom_margin: 3,
+        }
+    }
+}
 
 /// Format a single SM83 instruction with resolved operands.
 ///
@@ -79,6 +122,155 @@ fn resolve_operands(mnemonic: &str, pc: u16, bytes: &[u8], is_cb: bool) -> Strin
     }
 
     result
+}
+
+/// Generate a disassembly window centered on the current PC.
+///
+/// Attempts to show `config.before` lines before PC and `config.after` lines after.
+/// Returns a vector of disassembly lines with one marked as `is_current`.
+pub fn disassemble_window<F: Fn(u16) -> u8>(
+    read: F,
+    pc: u16,
+    config: DisasmWindowConfig,
+) -> Vec<GbCpuDisasmLineSnapshot> {
+    let mut start = pc;
+    for _ in 0..config.before {
+        let Some(prev) = prev_instruction_start(&read, start) else {
+            break;
+        };
+        // Stop if we wrapped around (prev > start indicates wrapping past 0)
+        if prev > start {
+            break;
+        }
+        start = prev;
+    }
+
+    let target_lines = config.before + 1 + config.after;
+    disassemble_from_start(&read, start, pc, target_lines)
+}
+
+/// Generate a disassembly window with viewport state tracking.
+///
+/// Maintains the window start address when PC moves within the visible window.
+/// Re-centers when PC jumps outside the window or approaches the bottom.
+pub fn disassemble_window_with_state<F: Fn(u16) -> u8>(
+    read: F,
+    pc: u16,
+    state: &mut GbCpuDisasmWindowState,
+    config: DisasmWindowConfig,
+) -> Vec<GbCpuDisasmLineSnapshot> {
+    let target_lines = config.before + 1 + config.after;
+
+    let mut lines = if let Some(start) = state.start {
+        disassemble_from_start(&read, start, pc, target_lines)
+    } else {
+        disassemble_window(&read, pc, config)
+    };
+
+    let current_index = lines.iter().position(|l| l.is_current);
+
+    if let Some(idx) = current_index {
+        let last_two_start = lines.len().saturating_sub(2);
+        if idx >= last_two_start {
+            // PC is in last 2 lines - re-center
+            lines = disassemble_window(&read, pc, config);
+            state.start = lines.first().map(|l| l.addr);
+            return lines;
+        }
+
+        // Keep the existing start when the current line is safely within the window.
+        state.start = lines.first().map(|l| l.addr);
+        return lines;
+    }
+
+    // PC not found (e.g., jumped). Re-center using the original logic.
+    lines = disassemble_window(&read, pc, config);
+    state.start = lines.first().map(|l| l.addr);
+    lines
+}
+
+/// Disassemble instructions starting from a specific address.
+fn disassemble_from_start<F: Fn(u16) -> u8>(
+    read: &F,
+    start: u16,
+    pc: u16,
+    target_lines: usize,
+) -> Vec<GbCpuDisasmLineSnapshot> {
+    let mut lines = Vec::with_capacity(target_lines);
+
+    let mut addr = start;
+    for _ in 0..target_lines {
+        let line = disassemble_one(read, addr, pc);
+        let step = (line.bytes.len() as u16).max(1);
+        addr = addr.wrapping_add(step);
+        lines.push(line);
+
+        if addr == 0 {
+            break;
+        }
+    }
+
+    lines
+}
+
+/// Find the start address of the instruction preceding the given PC.
+///
+/// Uses a 3-2-1 byte lookback strategy for SM83's variable-length instructions.
+/// SM83 instructions can be 1, 2, or 3 bytes (CB-prefixed are always 2 bytes).
+fn prev_instruction_start<F: Fn(u16) -> u8>(read: &F, pc: u16) -> Option<u16> {
+    // Try 3, 2, 1 byte lookback
+    for len in (1u16..=3u16).rev() {
+        let start = pc.wrapping_sub(len);
+        let op = read(start);
+
+        // Check if it's a CB-prefixed instruction
+        if op == 0xCB && len >= 2 {
+            // CB-prefixed instructions are always 2 bytes
+            if len == 2 {
+                return Some(start);
+            }
+        } else {
+            // Regular instruction - check length
+            let meta = opcode::lookup(op);
+            if meta.bytes() as u16 == len {
+                return Some(start);
+            }
+        }
+    }
+
+    None
+}
+
+/// Disassemble a single instruction at the given address.
+fn disassemble_one<F: Fn(u16) -> u8>(read: &F, addr: u16, pc: u16) -> GbCpuDisasmLineSnapshot {
+    let op = read(addr);
+
+    // Determine instruction length
+    let (len, actual_op) = if op == 0xCB {
+        // CB-prefixed instruction (always 2 bytes)
+        let cb_op = read(addr.wrapping_add(1));
+        (2, cb_op)
+    } else {
+        // Regular instruction
+        let meta = opcode::lookup(op);
+        (meta.bytes() as usize, op)
+    };
+
+    // Read instruction bytes
+    let mut bytes = Vec::with_capacity(len);
+    for i in 0..len {
+        bytes.push(read(addr.wrapping_add(i as u16)));
+    }
+
+    // Format instruction text
+    let text = format_instruction(actual_op, addr, &bytes);
+
+    GbCpuDisasmLineSnapshot {
+        addr,
+        bytes,
+        text,
+        is_current: addr == pc,
+    }
 }
 
 #[cfg(test)]

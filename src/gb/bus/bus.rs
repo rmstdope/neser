@@ -1,3 +1,5 @@
+use crate::gb::ppu::Ppu;
+
 /// Minimal bus interface for the SM83 CPU.
 ///
 /// Implementors provide `read` and `write` over the 16-bit address space.
@@ -59,6 +61,30 @@ pub trait GbBus {
     ///
     /// The default implementation is a no-op.
     fn notify_oam_write(&mut self, _addr: u16) {}
+
+    /// Access the PPU for debugger purposes (timing, frame count, scanline).
+    ///
+    /// Returns a reference to the PPU. The default implementation panics;
+    /// only real bus implementations (DmgBus, CgbBus) should be used with the debugger.
+    fn ppu(&self) -> &Ppu {
+        panic!("ppu() not available on this bus implementation")
+    }
+
+    /// Access the PPU mutably for debugger purposes (clearing frame-ready flag).
+    ///
+    /// Returns a mutable reference to the PPU. The default implementation panics;
+    /// only real bus implementations (DmgBus, CgbBus) should be used with the debugger.
+    fn ppu_mut(&mut self) -> &mut Ppu {
+        panic!("ppu_mut() not available on this bus implementation")
+    }
+
+    /// Read memory for debugger purposes without side effects.
+    ///
+    /// Unlike `read()`, this does not trigger OAM corruption or other hardware quirks.
+    /// The default implementation panics; only real bus implementations should be used with the debugger.
+    fn read_for_debugger(&self, _addr: u16) -> u8 {
+        panic!("read_for_debugger() not available on this bus implementation")
+    }
 }
 
 /// Bus stub that returns 0xFF for every read and silently discards writes.
