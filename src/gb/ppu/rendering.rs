@@ -1,3 +1,5 @@
+use crate::trace_ppu;
+
 use super::background;
 use super::registers::Registers;
 use super::screen_buffer::ScreenBuffer;
@@ -97,6 +99,12 @@ pub fn render_scanline(
 
         screen_buffer.set_pixel(x, scanline as u32, grey, grey, grey);
     }
+
+    // Level 4: Per-scanline rendering summary
+    // For simplicity, we trace sprite count and window active flag.
+    // Tile count would require tracking unique tiles, which adds complexity.
+    trace_ppu!(4; "render y={} sprites={} window={}",
+        scanline, sprite_indices.len(), window_active);
 
     if window_active {
         *window_line = window_line.wrapping_add(1);
@@ -239,6 +247,10 @@ pub fn render_scanline_cgb(
 
         screen_buffer.set_pixel(x, scanline as u32, r, g, b);
     }
+
+    // Level 4: Per-scanline rendering summary
+    trace_ppu!(4; "render y={} sprites={} window={}",
+        scanline, sprite_indices.len(), window_active);
 
     if window_active {
         *window_line = window_line.wrapping_add(1);

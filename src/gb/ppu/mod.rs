@@ -4,11 +4,15 @@ pub mod rendering;
 pub mod screen_buffer;
 pub mod sprites;
 pub mod timing;
+#[cfg(test)]
+mod trace_tests;
 pub mod window;
 
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
+use crate::platform::debugging::ppu_trace_level;
+use crate::trace_ppu;
 use registers::Registers;
 use screen_buffer::ScreenBuffer;
 use timing::{PpuMode, Timing};
@@ -137,6 +141,7 @@ impl Ppu {
         if self.registers.lcdc & 0x80 == 0 {
             return;
         }
+
         let lyc = self.registers.lyc;
         let events = self.timing.tick_dot(lyc);
 
@@ -149,8 +154,28 @@ impl Ppu {
         let lyc_fire_allowed =
             !self.timing.is_second_scanline_after_enable() || self.timing.dot() >= 4 || !new_lyc_eq;
         if lyc_fire_allowed {
+            // Level 2: LYC=LY state changes
+            if new_lyc_eq && !self.lyc_eq_ly_frozen {
+                trace_ppu!(2; "lyc=ly set y={} dot={} lyc={:02X}", self.timing.ly(), self.timing.dot(), lyc);
+            } else if !new_lyc_eq && self.lyc_eq_ly_frozen {
+                trace_ppu!(2; "lyc=ly clear y={} dot={} lyc={:02X}", self.timing.ly(), self.timing.dot(), lyc);
+            }
             self.lyc_eq_ly_frozen = new_lyc_eq;
         }
+
+        // Level 5: Per-dot state dump (after lyc_eq_ly_frozen update for accurate STAT byte)
+        trace_ppu!(5;
+            "tick y={} dot={} mode={} lcdc={:02X} stat={:02X} ly={} lyc={:02X} scx={:02X} scy={:02X}",
+            self.timing.ly(),
+            self.timing.dot(),
+            self.timing.mode() as u8,
+            self.registers.lcdc,
+            self.compose_stat_byte(),
+            self.timing.ly(),
+            self.registers.lyc,
+            self.registers.scx,
+            self.registers.scy,
+        );
 
         // At Mode 2→Mode 3 transition, extend Mode 3 with OBJ penalty.
         if events.mode_changed && self.timing.mode() == PpuMode::PixelTransfer {
@@ -202,7 +227,12 @@ impl Ppu {
 
         // Reset window-line counter at the start of a new frame.
         if events.new_frame {
+            trace_ppu!(3; "window_line reset y={} dot={} wl={}", self.timing.ly(), self.timing.dot(), self.window_line);
             self.window_line = 0;
+            // Level 1: Frame CRC (conditional on level >= 1)
+            if ppu_trace_level() >= 1 {
+                trace_ppu!(1; "frame crc={:08X}", self.screen_buffer.crc32());
+            }
         }
 
         // STAT interrupt — edge-triggered on the STAT IRQ source line.
@@ -220,12 +250,16 @@ impl Ppu {
     fn apply_obj_penalty(&mut self) {
         let scx_penalty = (self.registers.scx & 0x07) as u16;
         let sprites_enabled = self.registers.lcdc & 0x02 != 0;
-        let obj_penalty = if sprites_enabled {
+        let (obj_penalty, _sprite_count) = if sprites_enabled {
             let scanline = self.timing.ly();
             let sprite_indices = sprites::scan_oam_line(scanline, &self.oam, self.registers.lcdc);
-            sprites::calculate_obj_penalty(&sprite_indices, &self.oam, self.registers.scx)
+            let count = sprite_indices.len();
+            let penalty =
+                sprites::calculate_obj_penalty(&sprite_indices, &self.oam, self.registers.scx);
+            trace_ppu!(2; "scanline sprites y={} count={}", scanline, count);
+            (penalty, count)
         } else {
-            0
+            (0, 0)
         };
         let extra_dots = scx_penalty + (obj_penalty / DOTS_PER_M_CYCLE) * DOTS_PER_M_CYCLE;
         self.timing.set_mode3_extra_dots(extra_dots);
@@ -269,6 +303,7 @@ impl Ppu {
 
         if irq_line && !self.prev_stat_irq_line {
             self.pending_interrupts |= 0x02;
+            trace_ppu!(2; "stat irq y={} dot={} stat={:02X}", self.timing.ly(), self.timing.dot(), self.compose_stat_byte());
         }
         self.prev_stat_irq_line = irq_line;
     }
@@ -374,6 +409,7 @@ impl Ppu {
         let now_enabled = self.registers.lcd_enabled();
         if !was_enabled && now_enabled {
             // LCD 0→1: reset timing, immediately compute LYC=LY for LY=0.
+            trace_ppu!(1; "lcdc enable y={} dot={} lcdc={:02X}", self.timing.ly(), self.timing.dot(), val);
             self.timing = Timing::new();
             self.window_line = 0;
             // Initialise prev_stat_irq_line to the LYC source state that was active
@@ -389,6 +425,8 @@ impl Ppu {
             // is turned on (SameBoy: GB_STAT_update at lcd-enable time). This means
             // IF is updated before the NEXT instruction's service_interrupts() call.
             self.update_stat_irq();
+        } else if was_enabled && !now_enabled {
+            trace_ppu!(1; "lcdc disable y={} dot={} lcdc={:02X}", self.timing.ly(), self.timing.dot(), val);
         }
         // LCD 1→0: lyc_eq_ly_frozen is intentionally NOT cleared here —
         // hardware retains the last LYC=LY state when the LCD is powered off.
@@ -418,33 +456,46 @@ impl Ppu {
     ///
     /// Returns `true` if the address was handled.
     pub fn write_cgb_register(&mut self, addr: u16, val: u8) -> bool {
+        if !self.cgb_mode {
+            return false;
+        }
         match addr {
             0xFF4F => {
                 self.vbk = val & 0x01;
                 true
             }
             0xFF68 => {
+                let before = self.bcps;
                 self.bcps = val;
+                trace_ppu!(3; "bcps write before={:02X} after={:02X}", before, val);
                 true
             }
             0xFF69 => {
                 let index = (self.bcps & 0x3F) as usize;
+                let addr = self.bcps & 0x3F;
                 self.bg_palette_ram[index] = val;
+                trace_ppu!(3; "bcpd write addr={:02X} data={:02X}", addr, val);
                 // Auto-increment address after write if bit 7 is set.
                 if self.bcps & 0x80 != 0 {
                     self.bcps = 0x80 | ((self.bcps + 1) & 0x3F);
+                    trace_ppu!(3; "bcps auto-increment addr={:02X}", self.bcps & 0x3F);
                 }
                 true
             }
             0xFF6A => {
+                let before = self.ocps;
                 self.ocps = val;
+                trace_ppu!(3; "ocps write before={:02X} after={:02X}", before, val);
                 true
             }
             0xFF6B => {
                 let index = (self.ocps & 0x3F) as usize;
+                let addr = self.ocps & 0x3F;
                 self.obj_palette_ram[index] = val;
+                trace_ppu!(3; "ocpd write addr={:02X} data={:02X}", addr, val);
                 if self.ocps & 0x80 != 0 {
                     self.ocps = 0x80 | ((self.ocps + 1) & 0x3F);
+                    trace_ppu!(3; "ocps auto-increment addr={:02X}", self.ocps & 0x3F);
                 }
                 true
             }

@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::trace_ppu;
+
 /// DMG PPU operating modes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PpuMode {
@@ -147,6 +149,8 @@ impl Timing {
             self.dot = 0;
             self.scanline += 1;
             if self.scanline >= Self::TOTAL_SCANLINES {
+                trace_ppu!(1; "frame wrap y={} dot={} frame={}",
+                    self.scanline, self.dot, self.frame_count + 1);
                 self.scanline = 0;
                 self.frame_ready = true;
                 events.new_frame = true;
@@ -227,14 +231,24 @@ impl Timing {
                 // mode_for_irq=0 is set 4 dots early (at mode3_end-4), not here.
                 // Extra dots were consumed for this scanline; reset for the next.
                 self.mode3_extra_dots = 0;
+                trace_ppu!(1; "mode0 enter y={} dot={}", self.ly, self.dot);
             }
             if new_mode == PpuMode::VBlank {
                 events.vblank_start = true;
                 self.mode_for_irq = 1;
+                trace_ppu!(1; "vblank enter y={} dot={}", self.ly, self.dot);
             }
             if new_mode == PpuMode::PixelTransfer {
                 // Mode 3 has no STAT IRQ source; set to -1 to suppress mode IRQs.
                 self.mode_for_irq = -1;
+                trace_ppu!(1; "mode3 enter y={} dot={}", self.ly, self.dot);
+            }
+            if new_mode == PpuMode::OamScan {
+                trace_ppu!(1; "mode2 enter y={} dot={}", self.ly, self.dot);
+            }
+            // Detect vblank exit: transition from VBlank to non-VBlank mode
+            if self.mode == PpuMode::VBlank && new_mode != PpuMode::VBlank {
+                trace_ppu!(1; "vblank exit y={} dot={}", self.ly, self.dot);
             }
             self.mode = new_mode;
         }
