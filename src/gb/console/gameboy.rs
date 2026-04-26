@@ -329,6 +329,104 @@ impl GameBoy {
     pub fn state_path(&self) -> Option<PathBuf> {
         self.rom_path.as_ref().map(|p| p.with_extension("state"))
     }
+
+    // ── Debugger support ───────────────────────────────────────────────
+
+    #[cfg(feature = "native")]
+    /// Create a GB debugger snapshot from the current state.
+    pub fn create_debugger_snapshot(
+        &self,
+        view_state: &mut crate::gb::debugging::GbDebuggerViewState,
+    ) -> crate::gb::debugging::GbDebuggerSnapshot {
+        self.gb.as_ref().map_or_else(
+            || {
+                // Return a default snapshot when no ROM is loaded
+                crate::gb::debugging::GbDebuggerSnapshot {
+                    cpu_regs: crate::gb::debugging::GbCpuRegsSnapshot {
+                        a: 0,
+                        f: 0,
+                        b: 0,
+                        c: 0,
+                        d: 0,
+                        e: 0,
+                        h: 0,
+                        l: 0,
+                        af: 0,
+                        bc: 0,
+                        de: 0,
+                        hl: 0,
+                        sp: 0,
+                        pc: 0,
+                        z_flag: false,
+                        n_flag: false,
+                        h_flag: false,
+                        c_flag: false,
+                        cycles: 0,
+                        frame_count: 0,
+                        scanline: 0,
+                        dot: 0,
+                        ppu_mode: 0,
+                        ime: false,
+                        halted: false,
+                        halt_bug: false,
+                        ie: 0,
+                        if_reg: 0,
+                    },
+                    wram_hexdump_base: 0xC000,
+                    wram_hexdump_bytes: vec![0; 256],
+                    vram_hexdump_base: 0x8000,
+                    vram_hexdump_bytes: vec![0; 256],
+                    cpu_disasm: vec![],
+                    cpu: String::new(),
+                    watch_values: vec![],
+                    recent_trace: vec![],
+                }
+            },
+            |gb_console| match gb_console {
+                GbConsole::Dmg(gb) => view_state.snapshot(gb.as_ref()),
+                GbConsole::Cgb(gb) => view_state.snapshot(gb.as_ref()),
+            },
+        )
+    }
+
+    #[cfg(feature = "native")]
+    /// Create a GB PPU viewer snapshot from the current state.
+    pub fn create_ppu_viewer_snapshot(
+        &self,
+    ) -> crate::gb::debugging::ppu_viewer::GbPpuViewerSnapshot {
+        use crate::gb::debugging::ppu_viewer::GbPpuViewerSnapshot;
+        self.gb.as_ref().map_or_else(
+            || {
+                // Return a default snapshot when no ROM is loaded
+                GbPpuViewerSnapshot {
+                    vram: [0; 0x2000],
+                    vram_bank1: [0; 0x2000],
+                    oam: [0; 0xA0],
+                    bg_palette_ram: [0; 64],
+                    obj_palette_ram: [0; 64],
+                    lcdc: 0,
+                    scx: 0,
+                    scy: 0,
+                    bgp: 0,
+                    obp0: 0,
+                    obp1: 0,
+                    cgb_mode: false,
+                }
+            },
+            |gb_console| match gb_console {
+                GbConsole::Dmg(gb) => GbPpuViewerSnapshot::from_gb(gb.as_ref()),
+                GbConsole::Cgb(gb) => GbPpuViewerSnapshot::from_gb(gb.as_ref()),
+            },
+        )
+    }
+
+    #[cfg(feature = "native")]
+    /// Check if the emulator is running in CGB mode.
+    pub fn is_cgb_mode(&self) -> bool {
+        self.gb
+            .as_ref()
+            .is_some_and(|gb_console| matches!(gb_console, GbConsole::Cgb(_)))
+    }
 }
 
 impl Emulator for GameBoy {

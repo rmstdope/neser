@@ -15,6 +15,8 @@ pub mod ppu_viewer;
 pub mod snapshot;
 #[cfg(feature = "native")]
 pub mod types;
+#[cfg(feature = "native")]
+pub mod ui;
 
 #[cfg(feature = "native")]
 pub use control::GbDebuggerController;
@@ -36,3 +38,14 @@ pub use ppu_viewer::{
     GbPpuViewerSnapshot, format_oam_entries, format_palette_info, render_bg_maps_rgba,
     render_tiles_rgba,
 };
+
+// Export UI types (native-only)
+#[cfg(feature = "native")]
+pub use ui::{
+    BreakpointAddUiState, GbDebuggerUiAction, HexdumpUiState, WatchAddressUpdate, WatchlistUiState,
+};
+
+#[cfg(feature = "native")]
+pub mod debugger_ui {
+    pub use super::ui::*;
+}
