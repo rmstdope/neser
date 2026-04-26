@@ -676,6 +676,47 @@ impl Ppu {
         self.oam[base] = bytes[0];
         self.oam[base + 1] = bytes[1];
     }
+
+    // ── Debugger Accessors ─────────────────────────────────────────────────
+
+    /// Capture VRAM bank 0 for debugger rendering (no side effects).
+    pub fn vram_snapshot_for_debugger(&self) -> [u8; 0x2000] {
+        self.vram
+    }
+
+    /// Capture VRAM bank 1 for debugger rendering (CGB only).
+    pub fn vram_bank1_snapshot_for_debugger(&self) -> [u8; 0x2000] {
+        self.vram_bank1
+    }
+
+    /// Capture OAM for debugger sprite viewer (no side effects).
+    pub fn oam_snapshot_for_debugger(&self) -> [u8; 0xA0] {
+        self.oam
+    }
+
+    /// Capture CGB BG palette RAM for debugger (no side effects).
+    pub fn bg_palette_ram_snapshot_for_debugger(&self) -> [u8; 64] {
+        self.bg_palette_ram
+    }
+
+    /// Capture CGB OBJ palette RAM for debugger (no side effects).
+    pub fn obj_palette_ram_snapshot_for_debugger(&self) -> [u8; 64] {
+        self.obj_palette_ram
+    }
+
+    /// Get current register values for debugger.
+    ///
+    /// Returns: (lcdc, scx, scy, bgp, obp0, obp1)
+    pub fn registers_snapshot_for_debugger(&self) -> (u8, u8, u8, u8, u8, u8) {
+        (
+            self.registers.lcdc,
+            self.registers.scx,
+            self.registers.scy,
+            self.registers.bgp,
+            self.registers.obp0,
+            self.registers.obp1,
+        )
+    }
 }
 
 impl Default for Ppu {
