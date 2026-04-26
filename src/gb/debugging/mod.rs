@@ -10,6 +10,8 @@ pub mod disasm;
 #[cfg(feature = "native")]
 pub mod control;
 #[cfg(feature = "native")]
+pub mod ppu_viewer;
+#[cfg(feature = "native")]
 pub mod snapshot;
 #[cfg(feature = "native")]
 pub mod types;
@@ -26,4 +28,11 @@ pub use disasm::{GbCpuDisasmLineSnapshot, GbCpuDisasmWindowState};
 #[cfg(feature = "native")]
 pub use types::{
     GbCpuRegsSnapshot, GbCpuTraceLineSnapshot, GbDebuggerSnapshot, GbMemoryWatchEntrySnapshot,
+};
+
+// Export PPU viewer types (native-only)
+#[cfg(feature = "native")]
+pub use ppu_viewer::{
+    GbPpuViewerSnapshot, format_oam_entries, format_palette_info, render_bg_maps_rgba,
+    render_tiles_rgba,
 };
