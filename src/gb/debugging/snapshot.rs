@@ -103,7 +103,15 @@ impl GbDebuggerViewState {
     pub fn update_watch_address(&mut self, index: usize, address: u16) {
         if index < self.watch_addresses.len() {
             self.watch_addresses[index] = address;
-            self.watch_addresses.dedup();
+            // Enforce uniqueness by removing any other occurrences of `address`.
+            // Vec::dedup() only removes consecutive duplicates, so we use retain()
+            // to remove non-consecutive duplicates (e.g. [A,B,C] update 0→C => [C,B]).
+            let mut current_index = 0usize;
+            self.watch_addresses.retain(|&entry| {
+                let keep = current_index == index || entry != address;
+                current_index += 1;
+                keep
+            });
         }
     }
 

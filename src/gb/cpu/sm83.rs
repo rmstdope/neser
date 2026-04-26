@@ -665,6 +665,11 @@ impl<B: GbBus> Sm83<B> {
     /// multi-byte instructions continue to use the regular [`fetch_byte()`]
     /// which ticks normally.
     pub fn execute(&mut self) {
+        // Clear last_write_addr at instruction boundary to prevent spurious
+        // write-address breakpoint triggers on later instructions that don't
+        // perform writes (matches NES CPU behavior).
+        self.last_write_addr = None;
+
         // Snapshot IME-pending state *before* this instruction runs.
         // IME becomes active at the *end* of the instruction following EI —
         // not at the start — so interrupts can only fire from the third

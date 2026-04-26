@@ -199,22 +199,17 @@ impl GbDebuggerController {
     }
 
     /// Run until next scanline.
-    pub fn run_to_next_scanline<B: GbBus>(&mut self, gb: &mut Gb<B>) {
-        if !self.paused {
-            return;
-        }
-
-        let current_scanline = gb.cpu.bus.ppu().ly();
-        let _target_scanline = if current_scanline == 153 {
-            0
-        } else {
-            current_scanline + 1
-        };
-
-        // We'll need to poll scanline each instruction
-        // For now, use a frame breakpoint as approximation
-        // TODO: Add scanline-specific breakpoint type
-        self.run_to_next_frame(gb);
+    /// Run to next scanline (not yet implemented).
+    ///
+    /// Scanline stepping is not yet implemented for the Game Boy debugger.
+    /// This method intentionally leaves the debugger paused rather than
+    /// approximating with a frame breakpoint, which would be misleading.
+    /// True scanline stepping support requires scanline polling with a
+    /// max-steps guard or a dedicated breakpoint type.
+    pub fn run_to_next_scanline<B: GbBus>(&mut self, _gb: &mut Gb<B>) {
+        // Intentionally left as a no-op until true scanline stepping support
+        // is implemented. Approximating with run_to_next_frame() would confuse
+        // debugger users expecting single-scanline behavior.
     }
 
     /// Run until specific interrupt is about to fire.
@@ -396,9 +391,18 @@ impl GbDebuggerController {
         self.last_post_instruction_cycles = cycles;
         self.last_post_instruction_frame = frame;
 
-        self.breakpoints
+        let hit = self
+            .breakpoints
             .iter()
-            .any(|bp| bp.enabled && bp.is_hit(&ctx))
+            .any(|bp| bp.enabled && bp.is_hit(&ctx));
+
+        // Clear last_write_addr after evaluating post-instruction breakpoints
+        // to enforce strict "this instruction only" semantics for write-address
+        // breakpoints. Even though the CPU clears at instruction boundary,
+        // this extra clear ensures the debugger doesn't hold stale write info.
+        gb.cpu.clear_last_write_addr();
+
+        hit
     }
 
     // ── Temporary breakpoint management ────────────────────────────────
