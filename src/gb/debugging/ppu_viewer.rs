@@ -305,10 +305,19 @@ pub fn format_palette_info(
                 let hi = bg_palette_ram[offset + 1];
                 let rgb555 = (hi as u16) << 8 | lo as u16;
 
-                // Convert 5-bit to 8-bit (scale by 8: 0-31 → 0-248)
-                let r = ((rgb555 & 0x001F) * 8) as u8;
-                let g = (((rgb555 & 0x03E0) >> 5) * 8) as u8;
-                let b = (((rgb555 & 0x7C00) >> 10) * 8) as u8;
+                // Convert 5-bit to 8-bit (0-31 → 0-255): val * 8 + val / 4
+                let r = {
+                    let val = (rgb555 & 0x001F) as u8;
+                    val * 8 + val / 4
+                };
+                let g = {
+                    let val = ((rgb555 & 0x03E0) >> 5) as u8;
+                    val * 8 + val / 4
+                };
+                let b = {
+                    let val = ((rgb555 & 0x7C00) >> 10) as u8;
+                    val * 8 + val / 4
+                };
 
                 colors.push(format!("({},{},{})", r, g, b));
             }
@@ -324,10 +333,19 @@ pub fn format_palette_info(
                 let hi = obj_palette_ram[offset + 1];
                 let rgb555 = (hi as u16) << 8 | lo as u16;
 
-                // Convert 5-bit to 8-bit (scale by 8: 0-31 → 0-248)
-                let r = ((rgb555 & 0x001F) * 8) as u8;
-                let g = (((rgb555 & 0x03E0) >> 5) * 8) as u8;
-                let b = (((rgb555 & 0x7C00) >> 10) * 8) as u8;
+                // Convert 5-bit to 8-bit (0-31 → 0-255): val * 8 + val / 4
+                let r = {
+                    let val = (rgb555 & 0x001F) as u8;
+                    val * 8 + val / 4
+                };
+                let g = {
+                    let val = ((rgb555 & 0x03E0) >> 5) as u8;
+                    val * 8 + val / 4
+                };
+                let b = {
+                    let val = ((rgb555 & 0x7C00) >> 10) as u8;
+                    val * 8 + val / 4
+                };
 
                 colors.push(format!("({},{},{})", r, g, b));
             }
@@ -540,9 +558,9 @@ mod tests {
 
         assert!(!info.is_empty(), "Should return palette info");
         let text = info.join("\n");
-        // Should contain RGB values (248,248,248 for 31,31,31 scaled to 8-bit)
+        // Should contain RGB values (255,255,255 for 31,31,31 with improved conversion)
         assert!(
-            text.contains("248") || text.contains("RGB"),
+            text.contains("255") || text.contains("RGB"),
             "Should contain RGB values"
         );
     }
