@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
 use crate::gb::apu::Apu;
+use crate::gb::bus::hdma::HdmaState;
 use crate::gb::cpu::{Registers, Sm83};
 use crate::gb::input::joypad::Joypad;
 use crate::gb::model::DmgModel;
@@ -20,7 +21,7 @@ use crate::gb::timer::Timer;
 
 /// Current save-state format version for Game Boy.
 /// Increment this when making breaking changes to the state format.
-pub const GB_SAVESTATE_VERSION: u32 = 1;
+pub const GB_SAVESTATE_VERSION: u32 = 2;
 
 /// Identifies which bus variant was active when the state was saved.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,6 +60,8 @@ pub struct BusState {
     pub dma_source: u8,
     pub dma_position: u8,
     pub dma_oam_blocked: bool,
+    // CGB HDMA state (None for DMG)
+    pub hdma: Option<HdmaState>,
     // DMG-only fields (None for CGB)
     pub boot_rom_active: Option<bool>,
     pub sb: Option<u8>,
@@ -231,8 +234,8 @@ mod tests {
     // ── Version checks ─────────────────────────────────────────────────────
 
     #[test]
-    fn test_gb_savestate_version_is_1() {
-        assert_eq!(GB_SAVESTATE_VERSION, 1);
+    fn test_gb_savestate_version_is_2() {
+        assert_eq!(GB_SAVESTATE_VERSION, 2);
     }
 
     // ── DMG round-trip ─────────────────────────────────────────────────────

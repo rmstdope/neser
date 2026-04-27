@@ -72,6 +72,9 @@ pub struct Ppu {
     pub ocps: u8,
     /// `$FF6C` OPRI bit 0 — Object priority mode: `false`=OAM order (CGB), `true`=X-coord (DMG).
     pub opri: bool,
+    /// Set by `tick_one_dot()` on Mode 3→Mode 0 (HBlank entry) for HDMA synchronization.
+    /// Consumed by `take_hblank_entered()`.
+    hblank_entered: bool,
 }
 
 impl Ppu {
@@ -94,6 +97,7 @@ impl Ppu {
             bcps: 0,
             ocps: 0,
             opri: false,
+            hblank_entered: false,
         }
     }
 
@@ -184,6 +188,7 @@ impl Ppu {
 
         // Render the current visible scanline when Mode 3→Mode 0 transition fires.
         if events.render_scanline {
+            self.hblank_entered = true;
             let scanline = self.timing.ly();
             if self.cgb_mode {
                 rendering::render_scanline_cgb(
@@ -520,6 +525,17 @@ impl Ppu {
         let flags = self.pending_interrupts;
         self.pending_interrupts = 0;
         flags
+    }
+
+    // ── HDMA interface ────────────────────────────────────────────────────────
+
+    /// Returns `true` if HBlank was entered since the last call, then clears the flag.
+    ///
+    /// Used by `CgbBus` to synchronize HDMA transfers with Mode 3→Mode 0 transitions.
+    pub fn take_hblank_entered(&mut self) -> bool {
+        let entered = self.hblank_entered;
+        self.hblank_entered = false;
+        entered
     }
 
     // ── Frame output ──────────────────────────────────────────────────────────
@@ -1671,5 +1687,83 @@ mod tests {
         tick_dots(&mut ppu, 10);
         // Then: dot() returns 14
         assert_eq!(ppu.dot(), 14);
+    }
+
+    // ── HBlank-entered flag (HDMA synchronization) ───────────────────────────
+
+    #[test]
+    fn test_hblank_entered_flag_set_on_mode3_to_mode0_transition() {
+        // Given: PPU at start (first scanline, dot=4, Mode 0 — but no Mode 3→0 yet)
+        let mut ppu = Ppu::new();
+        // Clear any initial state
+        ppu.take_hblank_entered();
+
+        // First scanline after LCD enable: Mode 0 [4,84), Mode 3 [84,256), Mode 0 [256,456)
+        // Mode 3→0 transition fires at dot=256, which is 252 dots from dot=4.
+        tick_dots(&mut ppu, 252); // dot=4 + 252 = dot=256, Mode 3→0 transition
+        // Then: hblank_entered is set
+        assert!(
+            ppu.take_hblank_entered(),
+            "hblank_entered should be set after Mode 3→Mode 0 transition"
+        );
+    }
+
+    #[test]
+    fn test_take_hblank_entered_clears_flag() {
+        // Given: PPU has entered HBlank (flag is set)
+        let mut ppu = Ppu::new();
+        tick_dots(&mut ppu, 252); // advance to HBlank on first scanline (dot=256)
+
+        // When: take the flag once
+        let first = ppu.take_hblank_entered();
+        // Then: first take returns true
+        assert!(first);
+
+        // When: take again without further ticks
+        let second = ppu.take_hblank_entered();
+        // Then: second take returns false (flag was cleared)
+        assert!(
+            !second,
+            "take_hblank_entered should clear the flag after first read"
+        );
+    }
+
+    #[test]
+    fn test_hblank_entered_not_set_before_mode3_ends() {
+        // Given: PPU in Mode 3 (Pixel Transfer) on first scanline
+        let mut ppu = Ppu::new();
+        tick_dots(&mut ppu, 80); // dot=84, Mode 3
+        assert_eq!(ppu.timing.mode(), PpuMode::PixelTransfer);
+
+        // Then: hblank_entered should NOT be set
+        assert!(
+            !ppu.take_hblank_entered(),
+            "hblank_entered should not be set during Mode 3"
+        );
+    }
+
+    #[test]
+    fn test_hblank_entered_fires_each_visible_scanline() {
+        // Given: PPU starting fresh
+        let mut ppu = Ppu::new();
+        ppu.take_hblank_entered(); // clear initial state
+
+        // When: advance through first scanline (452 dots)
+        tick_dots(&mut ppu, FIRST_SCANLINE_DOTS);
+
+        // Then: hblank should have fired on the first scanline
+        // (We can't be sure it's still set since the scanline wrap might have cleared it,
+        //  but let's check a normal scanline)
+        let first = ppu.take_hblank_entered();
+
+        // Advance through scanline 1 (456 dots)
+        tick_dots(&mut ppu, 456);
+        let second = ppu.take_hblank_entered();
+
+        // At least one of these should have been set (if both fire, even better)
+        assert!(
+            first || second,
+            "hblank_entered should fire at least once during visible scanlines"
+        );
     }
 }

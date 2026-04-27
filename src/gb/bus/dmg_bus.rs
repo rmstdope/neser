@@ -360,6 +360,7 @@ impl DmgBus {
             dma_source: self.dma_source,
             dma_position: self.dma_position,
             dma_oam_blocked: self.dma_oam_blocked,
+            hdma: None,
             boot_rom_active: Some(self.boot_rom_active),
             sb: Some(self.sb),
             sc: Some(self.sc),
