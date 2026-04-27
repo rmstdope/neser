@@ -934,9 +934,10 @@ mod tests {
         // Then: within two full frames of ticking, frame_ready must become true.
         // (One frame = 70,224 dots is the worst case after LCD re-enable resets timing.)
         let two_frames = (FIRST_SCANLINE_DOTS + 456 * 153) * 2;
+        let chunk: u32 = 456; // tick one scanline at a time for efficiency
         let mut became_ready = false;
-        for _ in 0..two_frames {
-            ppu.tick_dots(1);
+        for _ in (0..two_frames).step_by(chunk as usize) {
+            ppu.tick_dots(chunk);
             if ppu.is_frame_ready() {
                 became_ready = true;
                 break;

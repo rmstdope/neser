@@ -425,10 +425,10 @@ impl GameBoy {
                 }
             }
             Err(e) => {
-                eprintln!(
+                crate::platform::debugging::log_info(format!(
                     "Warning: failed to read save file {}: {e}",
                     sav_path.display()
-                );
+                ));
             }
         }
     }
@@ -1549,11 +1549,9 @@ mod tests {
     #[test]
     fn test_save_ram_writes_sav_file_for_battery_cart() {
         // Given: a GameBoy with MBC5+RAM+BATTERY ROM loaded from a temp dir
-        let dir = std::env::temp_dir().join("neser_test_save_ram");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let rom_path = dir.join("test_battery.gb");
-        let sav_path = dir.join("test_battery.sav");
+        let dir = tempfile::tempdir().unwrap();
+        let rom_path = dir.path().join("test_battery.gb");
+        let sav_path = dir.path().join("test_battery.sav");
         std::fs::write(&rom_path, mbc5_battery_rom()).unwrap();
 
         let mut gb = make_gameboy();
@@ -1569,19 +1567,14 @@ mod tests {
         // Then: succeeds and .sav file exists
         assert!(result.is_ok(), "save_ram should succeed");
         assert!(sav_path.exists(), ".sav file should be created");
-
-        // Cleanup
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn test_load_rom_restores_sav_file_for_battery_cart() {
         // Given: a .sav file with known data exists alongside the ROM
-        let dir = std::env::temp_dir().join("neser_test_load_sav");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let rom_path = dir.join("test_battery.gb");
-        let sav_path = dir.join("test_battery.sav");
+        let dir = tempfile::tempdir().unwrap();
+        let rom_path = dir.path().join("test_battery.gb");
+        let sav_path = dir.path().join("test_battery.sav");
 
         // Write a ROM and a .sav file with recognizable pattern
         std::fs::write(&rom_path, mbc5_battery_rom()).unwrap();
@@ -1607,8 +1600,5 @@ mod tests {
             ram_snapshot[42], 0xCC,
             "save data byte 42 should be restored"
         );
-
-        // Cleanup
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }
