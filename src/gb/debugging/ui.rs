@@ -218,52 +218,46 @@ fn render_cpu_window(
 
 #[cfg(feature = "native")]
 fn render_cpu_controls(ui: &imgui::Ui, action: &mut GbDebuggerUiAction) {
-    if ui.small_button("Step") {
-        action.step_into = true;
-    }
-    ui.same_line();
-    if ui.small_button("Next") {
+    if ui.button("Step over") {
         action.step_over = true;
     }
     ui.same_line();
-    if ui.small_button("Continue") {
-        action.continue_run = true;
+    if ui.button("Step into") {
+        action.step_into = true;
     }
     ui.same_line();
-    ui.text("│");
-    ui.same_line();
-    if ui.small_button("Frame") {
+    if ui.button("Continue") {
+        action.continue_run = true;
+    }
+
+    if ui.button("Run to next frame") {
         action.run_to_next_frame = true;
     }
     ui.same_line();
-    ui.text_disabled("Scanline (unimpl)");
+    ui.text_disabled("Run to next scanline");
     ui.same_line();
-    ui.text("│");
-    ui.same_line();
-    if ui.small_button("VBlank") {
+    if ui.button("Run to VBlank") {
         action.run_to_vblank = true;
     }
     ui.same_line();
-    if ui.small_button("STAT") {
+    if ui.button("Run to STAT") {
         action.run_to_stat = true;
     }
     ui.same_line();
-    if ui.small_button("Timer") {
+    if ui.button("Run to Timer") {
         action.run_to_timer = true;
     }
     ui.same_line();
-    ui.text("│");
-    ui.same_line();
-    if ui.small_button("PPU") {
+    if ui.button("PPU Viewer") {
         action.toggle_ppu_viewer = true;
     }
     ui.same_line();
-    if ui.small_button("+α") {
-        action.increase_opacity = true;
+    if ui.button("α-") {
+        action.decrease_opacity = true;
     }
     ui.same_line();
-    if ui.small_button("−α") {
-        action.decrease_opacity = true;
+    if ui.button("α+") {
+        action.increase_opacity = true;
     }
 }
 
@@ -406,6 +400,9 @@ fn render_cpu_code_panel(ui: &imgui::Ui, snapshot: &GbDebuggerSnapshot, size: [f
             .build(|| {
                 for line in &snapshot.cpu_disasm {
                     let is_current = line.is_current;
+                    let bytes = format_disasm_bytes(&line.bytes);
+                    let text = format!("{:04X}: {:<8} {}", line.addr, bytes, line.text);
+
                     if is_current {
                         let draw_list = ui.get_window_draw_list();
                         let pos = ui.cursor_screen_pos();
@@ -419,7 +416,7 @@ fn render_cpu_code_panel(ui: &imgui::Ui, snapshot: &GbDebuggerSnapshot, size: [f
                             .filled(true)
                             .build();
                     }
-                    ui.text(&line.text);
+                    ui.text(text);
                 }
             });
 
@@ -432,10 +429,21 @@ fn render_cpu_code_panel(ui: &imgui::Ui, snapshot: &GbDebuggerSnapshot, size: [f
             .size([size[0], trace_height])
             .build(|| {
                 for line in &snapshot.recent_trace {
-                    ui.text(&line.text);
+                    let bytes = format_disasm_bytes(&line.bytes);
+                    let text = format!("{:04X}: {:<8} {}", line.addr, bytes, line.text);
+                    ui.text(text);
                 }
             });
     });
+}
+
+fn format_disasm_bytes(bytes: &[u8]) -> String {
+    match bytes.len() {
+        0 => String::new(),
+        1 => format!("{:02X}", bytes[0]),
+        2 => format!("{:02X} {:02X}", bytes[0], bytes[1]),
+        _ => format!("{:02X} {:02X} {:02X}", bytes[0], bytes[1], bytes[2]),
+    }
 }
 
 #[cfg(feature = "native")]
