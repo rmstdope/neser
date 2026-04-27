@@ -424,6 +424,11 @@ impl DmgBus {
         Ok(())
     }
 
+    /// Returns `true` when the cartridge has battery-backed RAM.
+    pub fn has_battery(&self) -> bool {
+        self.cart.has_battery()
+    }
+
     /// Snapshot cartridge RAM.
     pub fn cart_ram_snapshot(&self) -> Vec<u8> {
         self.cart.ram_snapshot()

@@ -410,7 +410,11 @@ impl Ppu {
         if !was_enabled && now_enabled {
             // LCD 0→1: reset timing, immediately compute LYC=LY for LY=0.
             trace_ppu!(1; "lcdc enable y={} dot={} lcdc={:02X}", self.timing.ly(), self.timing.dot(), val);
+            let pending_frame = self.timing.is_frame_ready();
             self.timing = Timing::new();
+            if pending_frame {
+                self.timing.set_frame_ready();
+            }
             self.window_line = 0;
             // Initialise prev_stat_irq_line to the LYC source state that was active
             // while the LCD was off (based on the frozen LYC=LY bit).
@@ -910,6 +914,58 @@ mod tests {
         assert!(ppu.is_frame_ready());
         ppu.clear_frame_ready();
         assert!(!ppu.is_frame_ready());
+    }
+
+    // ── LCD disable/re-enable frame_ready ─────────────────────────────────────
+
+    #[test]
+    fn test_lcd_disable_reenable_produces_frame_ready_within_two_frames() {
+        // Given: PPU mid-frame (at scanline 50), frame_ready cleared
+        let mut ppu = Ppu::new();
+        tick_dots(&mut ppu, FIRST_SCANLINE_DOTS + 456 * 49);
+        assert_eq!(ppu.timing.ly(), 50);
+        assert!(!ppu.is_frame_ready());
+
+        // When: game disables LCD, does some work, then re-enables LCD
+        ppu.write_register(0xFF40, 0x11); // LCD off (bit 7 = 0)
+        ppu.tick_dots(456 * 10); // simulate some time passing (no-op while LCD off)
+        ppu.write_register(0xFF40, 0x91); // LCD on (bit 7 = 1)
+
+        // Then: within two full frames of ticking, frame_ready must become true.
+        // (One frame = 70,224 dots is the worst case after LCD re-enable resets timing.)
+        let two_frames = (FIRST_SCANLINE_DOTS + 456 * 153) * 2;
+        let chunk: u32 = 456; // tick one scanline at a time for efficiency
+        let mut became_ready = false;
+        for _ in (0..two_frames).step_by(chunk as usize) {
+            ppu.tick_dots(chunk);
+            if ppu.is_frame_ready() {
+                became_ready = true;
+                break;
+            }
+        }
+        assert!(
+            became_ready,
+            "frame_ready must eventually become true after LCD disable/re-enable"
+        );
+    }
+
+    #[test]
+    fn test_lcd_disable_reenable_when_frame_ready_pending() {
+        // Given: PPU has completed a full frame, frame_ready is true
+        let mut ppu = Ppu::new();
+        let total = FIRST_SCANLINE_DOTS + 456 * 153;
+        tick_dots(&mut ppu, total);
+        assert!(ppu.is_frame_ready());
+
+        // When: game disables and re-enables LCD without clearing frame_ready
+        ppu.write_register(0xFF40, 0x11); // LCD off
+        ppu.write_register(0xFF40, 0x91); // LCD on
+
+        // Then: frame_ready should still be true (pending frame signal preserved)
+        assert!(
+            ppu.is_frame_ready(),
+            "LCD re-enable must not discard a pending frame_ready signal"
+        );
     }
 
     // ── Register interface ────────────────────────────────────────────────────

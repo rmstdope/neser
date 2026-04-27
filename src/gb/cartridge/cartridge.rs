@@ -53,4 +53,11 @@ pub trait GbCartridge {
     /// Does nothing for cartridges without MBC registers or if data is
     /// malformed/empty.
     fn restore_mbc_state(&mut self, _data: &[u8]) {}
+
+    /// Returns `true` when the cartridge has battery-backed RAM.
+    ///
+    /// Used to decide whether to load/save `.sav` files.
+    fn has_battery(&self) -> bool {
+        false
+    }
 }

@@ -16,15 +16,18 @@ pub struct Mbc2 {
     rom_bank: u8,
     /// Whether cartridge RAM is enabled.
     ram_enabled: bool,
+    /// True when the cartridge has battery-backed RAM.
+    battery: bool,
 }
 
 impl Mbc2 {
-    pub fn new(rom: Vec<u8>) -> Self {
+    pub fn new(rom: Vec<u8>, battery: bool) -> Self {
         Self {
             rom,
             ram: [0u8; 512],
             rom_bank: 0,
             ram_enabled: false,
+            battery,
         }
     }
 
@@ -94,6 +97,10 @@ impl GbCartridge for Mbc2 {
         }
     }
 
+    fn has_battery(&self) -> bool {
+        self.battery
+    }
+
     fn ram_snapshot(&self) -> Vec<u8> {
         self.ram.to_vec()
     }
@@ -138,7 +145,7 @@ mod tests {
     #[test]
     fn test_mbc2_initial_rom_bank0_readable() {
         // Bank 0 is always at $0000–$3FFF; fill byte = 0
-        let cart = Mbc2::new(make_rom(4));
+        let cart = Mbc2::new(make_rom(4), false);
         assert_eq!(cart.read(0x0000), 0x00);
         assert_eq!(cart.read(0x3FFF), 0x00);
     }
@@ -146,7 +153,7 @@ mod tests {
     #[test]
     fn test_mbc2_initial_high_region_maps_bank1() {
         // rom_bank = 0 → promotes to 1; fill byte = 1
-        let cart = Mbc2::new(make_rom(4));
+        let cart = Mbc2::new(make_rom(4), false);
         assert_eq!(cart.read(0x4000), 0x01);
         assert_eq!(cart.read(0x7FFF), 0x01);
     }
@@ -154,7 +161,7 @@ mod tests {
     #[test]
     fn test_mbc2_rom_bank_switch_selects_bank() {
         // Write 0x02 to addr with bit 8 set (e.g. $0100) → bank 2
-        let mut cart = Mbc2::new(make_rom(4));
+        let mut cart = Mbc2::new(make_rom(4), false);
         cart.write(0x0100, 0x02);
         assert_eq!(cart.read(0x4000), 0x02);
     }
@@ -162,7 +169,7 @@ mod tests {
     #[test]
     fn test_mbc2_writing_zero_bank_reg_promotes_to_bank1() {
         // Explicitly write 0 to bank reg → still maps to bank 1
-        let mut cart = Mbc2::new(make_rom(4));
+        let mut cart = Mbc2::new(make_rom(4), false);
         cart.write(0x0100, 0x00);
         assert_eq!(cart.read(0x4000), 0x01);
     }
@@ -170,7 +177,7 @@ mod tests {
     #[test]
     fn test_mbc2_bank_reg_masked_to_4_bits() {
         // Writing 0x1F → lower 4 bits = 0xF = 15
-        let mut cart = Mbc2::new(make_rom(16));
+        let mut cart = Mbc2::new(make_rom(16), false);
         cart.write(0x0100, 0x1F);
         assert_eq!(cart.read(0x4000), 0x0F);
     }
@@ -179,7 +186,7 @@ mod tests {
     fn test_mbc2_bank_wraps_to_available_banks() {
         // 4-bank ROM; requesting bank 5 → 5 & 3 = 1 (effective_rom_bank &
         // (bank_count - 1) masking); fill byte = 1
-        let mut cart = Mbc2::new(make_rom(4));
+        let mut cart = Mbc2::new(make_rom(4), false);
         cart.write(0x0100, 0x05); // lower 4 bits = 5; 5 & (4-1) = 1
         assert_eq!(cart.read(0x4000), 0x01);
     }
@@ -190,14 +197,14 @@ mod tests {
 
     #[test]
     fn test_mbc2_ram_disabled_by_default_returns_0xff() {
-        let cart = Mbc2::new(make_rom(2));
+        let cart = Mbc2::new(make_rom(2), false);
         assert_eq!(cart.read(0xA000), 0xFF);
     }
 
     #[test]
     fn test_mbc2_ram_enable_any_lower_nibble_0xa() {
         // 0x2A has lower nibble 0xA → enables; addr has bit 8 clear (0x0000)
-        let mut cart = Mbc2::new(make_rom(2));
+        let mut cart = Mbc2::new(make_rom(2), false);
         cart.write(0x0000, 0x2A);
         cart.write(0xA000, 0x05);
         assert_eq!(cart.read(0xA000), 0x05 | 0xF0);
@@ -206,7 +213,7 @@ mod tests {
     #[test]
     fn test_mbc2_ram_disable_non_0xa_lower_nibble() {
         // Enable first, then write 0x00 (lower nibble 0) → disabled
-        let mut cart = Mbc2::new(make_rom(2));
+        let mut cart = Mbc2::new(make_rom(2), false);
         cart.write(0x0000, 0x0A); // enable
         cart.write(0xA000, 0x07);
         cart.write(0x0000, 0x00); // disable
@@ -215,7 +222,7 @@ mod tests {
 
     #[test]
     fn test_mbc2_ram_write_and_read_when_enabled() {
-        let mut cart = Mbc2::new(make_rom(2));
+        let mut cart = Mbc2::new(make_rom(2), false);
         cart.write(0x0000, 0x0A);
         cart.write(0xA000, 0x03);
         assert_eq!(cart.read(0xA000), 0x03 | 0xF0);
@@ -224,7 +231,7 @@ mod tests {
     #[test]
     fn test_mbc2_ram_read_returns_upper_nibble_0xf() {
         // Stored value 0x05; read must return 0xF5
-        let mut cart = Mbc2::new(make_rom(2));
+        let mut cart = Mbc2::new(make_rom(2), false);
         cart.write(0x0000, 0x0A);
         cart.write(0xA001, 0x05);
         assert_eq!(cart.read(0xA001), 0xF5);
@@ -233,7 +240,7 @@ mod tests {
     #[test]
     fn test_mbc2_ram_mirrors_a200_to_bfff() {
         // Write to $A000; read back at $A200 (512 bytes later, same slot)
-        let mut cart = Mbc2::new(make_rom(2));
+        let mut cart = Mbc2::new(make_rom(2), false);
         cart.write(0x0000, 0x0A);
         cart.write(0xA000, 0x09);
         assert_eq!(cart.read(0xA200), 0x09 | 0xF0);
@@ -242,7 +249,7 @@ mod tests {
     #[test]
     fn test_mbc2_writes_to_bit8_clear_addr_do_not_change_bank() {
         // Bit 8 clear → RAM gate write; should NOT change current ROM bank
-        let mut cart = Mbc2::new(make_rom(4));
+        let mut cart = Mbc2::new(make_rom(4), false);
         cart.write(0x0100, 0x03); // select bank 3 first
         cart.write(0x0000, 0x0A); // RAM enable (bit 8 clear) — must not reset bank
         assert_eq!(cart.read(0x4000), 0x03);
@@ -251,7 +258,7 @@ mod tests {
     #[test]
     fn test_mbc2_writes_to_bit8_set_addr_do_not_enable_ram() {
         // Bit 8 set → ROM bank select; should NOT change RAM enabled state
-        let mut cart = Mbc2::new(make_rom(4));
+        let mut cart = Mbc2::new(make_rom(4), false);
         // RAM disabled by default; write bank select with 0x0A value but bit 8 set
         cart.write(0x0100, 0x0A);
         // RAM should still be disabled
