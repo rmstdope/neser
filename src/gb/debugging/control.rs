@@ -9,22 +9,7 @@ use crate::gb::console::{CpuTraceLine, Gb};
 use crate::platform::debugging::breakpoints::{
     BreakpointKind, BreakpointList, EvalContext, GbInterruptKind,
 };
-
-/// One-shot breakpoint used for stepping and run-to operations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct TemporaryBreakpoint {
-    pc: u16,
-    /// Whether a user-defined PC breakpoint already existed at this address.
-    already_present: bool,
-    /// Whether the pre-existing breakpoint was enabled before we took over.
-    was_enabled_before: bool,
-    /// If set, the breakpoint only fires when this interrupt is about to fire.
-    required_interrupt: Option<GbInterruptKind>,
-    /// Tracks whether we have exited the required interrupt at least once.
-    has_exited_required_interrupt: bool,
-    /// When true, other breakpoints are suppressed while this temp is active.
-    ignore_other_breakpoints: bool,
-}
+use crate::platform::debugging::controller::DebuggerControllerCore;
 
 // Opcodes for CALL and RST instructions (for step-over)
 const CALL_OPCODE: u8 = 0xCD; // CALL n16
@@ -43,54 +28,39 @@ const RST_38_OPCODE: u8 = 0xFF;
 
 /// Central debugger state for Game Boy.
 pub struct GbDebuggerController {
-    paused: bool,
-    debugger_open: bool,
+    /// Shared core debugger state (paused, breakpoints, temporary breakpoint, etc.)
+    core: DebuggerControllerCore<GbInterruptKind>,
     view_state: GbDebuggerViewState,
-    breakpoints: BreakpointList,
-    temporary_breakpoint: Option<TemporaryBreakpoint>,
     /// Tracks breakpoints added by run_to operations that should be removed after hitting
     run_to_breakpoint: Option<BreakpointKind>,
-    breakpoint_ignore_once_at_pc: Option<u16>,
-    last_post_instruction_cycles: u64,
-    last_post_instruction_frame: u64,
 }
 
 impl GbDebuggerController {
     /// Create a new controller with optional pre-loaded breakpoints.
     pub fn new(config_breakpoints: &[BreakpointKind], debugger_enabled: bool) -> Self {
-        let mut breakpoints = BreakpointList::new();
-        for &kind in config_breakpoints {
-            breakpoints.add(kind);
-        }
         Self {
-            paused: debugger_enabled,
-            debugger_open: debugger_enabled,
+            core: DebuggerControllerCore::new(config_breakpoints, debugger_enabled),
             view_state: GbDebuggerViewState::default(),
-            breakpoints,
-            temporary_breakpoint: None,
             run_to_breakpoint: None,
-            breakpoint_ignore_once_at_pc: None,
-            last_post_instruction_cycles: 0,
-            last_post_instruction_frame: 0,
         }
     }
 
     // ── State getters ──────────────────────────────────────────────────
 
     pub fn is_paused(&self) -> bool {
-        self.paused
+        self.core.is_paused()
     }
 
     pub fn is_debugger_open(&self) -> bool {
-        self.debugger_open
+        self.core.is_debugger_open()
     }
 
     pub fn breakpoints(&self) -> &BreakpointList {
-        &self.breakpoints
+        self.core.breakpoints()
     }
 
     pub fn breakpoints_mut(&mut self) -> &mut BreakpointList {
-        &mut self.breakpoints
+        self.core.breakpoints_mut()
     }
 
     pub fn view_state_mut(&mut self) -> &mut GbDebuggerViewState {
@@ -105,33 +75,34 @@ impl GbDebuggerController {
         self.clear_temporary_breakpoint();
         // Remove run_to breakpoint if it was hit
         if let Some(kind) = self.run_to_breakpoint.take() {
-            self.breakpoints.remove_first_matching(&kind);
+            self.core.breakpoints_mut().remove_first_matching(&kind);
         }
         gb.set_cpu_trace_enabled(true);
-        self.paused = true;
-        self.debugger_open = true;
+        self.core.paused = true;
+        self.core.debugger_open = true;
     }
 
     /// Close the debugger and resume emulation.
     pub fn continue_from_debugger<B: GbBus>(&mut self, gb: &mut Gb<B>) {
         if self
-            .breakpoints
+            .core
+            .breakpoints()
             .has_enabled_pc_breakpoint_at(gb.cpu.regs.pc)
         {
-            self.breakpoint_ignore_once_at_pc = Some(gb.cpu.regs.pc);
+            self.core.breakpoint_ignore_once_at_pc = Some(gb.cpu.regs.pc);
         }
 
-        self.last_post_instruction_cycles = gb.cpu.cycles();
-        self.last_post_instruction_frame = gb.cpu.bus.ppu().frame_count();
+        self.core.last_post_instruction_cycles = gb.cpu.cycles();
+        self.core.last_post_instruction_frame = gb.cpu.bus.ppu().frame_count();
 
         gb.set_cpu_trace_enabled(false);
-        self.paused = false;
-        self.debugger_open = false;
+        self.core.paused = false;
+        self.core.debugger_open = false;
     }
 
     /// Toggle the debugger: open+pause if closed, continue if open.
     pub fn toggle_debugger<B: GbBus>(&mut self, gb: &mut Gb<B>) {
-        if self.debugger_open {
+        if self.core.debugger_open {
             self.continue_from_debugger(gb);
         } else {
             self.enter_debugger(gb);
@@ -142,16 +113,16 @@ impl GbDebuggerController {
 
     /// Execute one instruction and re-enter the debugger.
     pub fn step_into<B: GbBus>(&mut self, gb: &mut Gb<B>) {
-        if self.paused {
-            self.paused = false;
+        if self.core.paused {
+            self.core.paused = false;
             self.run_one_instruction(gb);
-            self.paused = true;
+            self.core.paused = true;
         }
     }
 
     /// Step over CALL/RST instructions (break at return address).
     pub fn step_over<B: GbBus>(&mut self, gb: &mut Gb<B>) {
-        if !self.paused {
+        if !self.core.paused {
             return;
         }
 
@@ -190,8 +161,8 @@ impl GbDebuggerController {
             };
 
             self.set_temporary_breakpoint(return_addr);
-            self.paused = false;
-            self.debugger_open = false;
+            self.core.paused = false;
+            self.core.debugger_open = false;
         } else {
             // Not a call - just step into
             self.step_into(gb);
@@ -200,13 +171,13 @@ impl GbDebuggerController {
 
     /// Run until next frame boundary.
     pub fn run_to_next_frame<B: GbBus>(&mut self, gb: &mut Gb<B>) {
-        if !self.paused {
+        if !self.core.paused {
             return;
         }
 
         let target_frame = gb.cpu.bus.ppu().frame_count() + 1;
         let kind = BreakpointKind::Frame(target_frame);
-        self.breakpoints.add(kind);
+        self.core.breakpoints_mut().add(kind);
         self.run_to_breakpoint = Some(kind);
     }
 
@@ -226,12 +197,12 @@ impl GbDebuggerController {
 
     /// Run until specific interrupt is about to fire.
     pub fn run_to_interrupt<B: GbBus>(&mut self, _gb: &mut Gb<B>, kind: GbInterruptKind) {
-        if !self.paused {
+        if !self.core.paused {
             return;
         }
 
         let bp_kind = BreakpointKind::GbInterrupt(kind);
-        self.breakpoints.add(bp_kind);
+        self.core.breakpoints_mut().add(bp_kind);
         self.run_to_breakpoint = Some(bp_kind);
     }
 
@@ -243,7 +214,7 @@ impl GbDebuggerController {
         gb: &mut Gb<B>,
         action: super::ui::GbDebuggerUiAction,
     ) {
-        if !self.debugger_open {
+        if !self.core.debugger_open {
             return;
         }
 
@@ -289,16 +260,16 @@ impl GbDebuggerController {
         }
 
         if let Some(kind) = action.add_breakpoint {
-            self.breakpoints.add(kind);
+            self.core.breakpoints_mut().add(kind);
         }
         if let Some(index) = action.remove_breakpoint {
-            self.breakpoints.remove(index);
+            self.core.breakpoints_mut().remove(index);
         }
         if let Some(index) = action.enable_breakpoint {
-            self.breakpoints.enable(index);
+            self.core.breakpoints_mut().enable(index);
         }
         if let Some(index) = action.disable_breakpoint {
-            self.breakpoints.disable(index);
+            self.core.breakpoints_mut().disable(index);
         }
     }
 
@@ -311,7 +282,7 @@ impl GbDebuggerController {
     where
         F: FnMut(&mut Gb<B>),
     {
-        if self.paused {
+        if self.core.paused {
             return;
         }
 
@@ -381,8 +352,8 @@ impl GbDebuggerController {
         let pc = gb.cpu.regs.pc;
 
         // Skip if we're ignoring this PC once
-        if self.breakpoint_ignore_once_at_pc == Some(pc) {
-            self.breakpoint_ignore_once_at_pc = None;
+        if self.core.breakpoint_ignore_once_at_pc == Some(pc) {
+            self.core.breakpoint_ignore_once_at_pc = None;
             return false;
         }
 
@@ -404,7 +375,7 @@ impl GbDebuggerController {
         };
 
         // Check temporary breakpoint first
-        if let Some(ref mut tb) = self.temporary_breakpoint {
+        if let Some(ref mut tb) = self.core.temporary_breakpoint {
             // Check if we've exited the required interrupt
             if let Some(required) = tb.required_interrupt {
                 let pending = (ie & if_reg & required.bit_mask()) != 0;
@@ -436,7 +407,8 @@ impl GbDebuggerController {
         }
 
         // Check regular breakpoints
-        self.breakpoints
+        self.core
+            .breakpoints()
             .iter()
             .any(|bp| bp.enabled && bp.is_hit(&ctx))
     }
@@ -447,19 +419,19 @@ impl GbDebuggerController {
         let write_addr = gb.cpu.last_cpu_write_addr();
 
         // Skip temporary breakpoint interference
-        if let Some(ref tb) = self.temporary_breakpoint
+        if let Some(ref tb) = self.core.temporary_breakpoint
             && tb.ignore_other_breakpoints
         {
-            self.last_post_instruction_cycles = cycles;
-            self.last_post_instruction_frame = frame;
+            self.core.last_post_instruction_cycles = cycles;
+            self.core.last_post_instruction_frame = frame;
             return false;
         }
 
         let ctx = EvalContext {
             pc: gb.cpu.regs.pc,
-            prev_cpu_cycles: self.last_post_instruction_cycles,
+            prev_cpu_cycles: self.core.last_post_instruction_cycles,
             cpu_cycles: cycles,
-            prev_frame: self.last_post_instruction_frame,
+            prev_frame: self.core.last_post_instruction_frame,
             frame,
             write_addr,
             gb_ie: None,
@@ -467,11 +439,12 @@ impl GbDebuggerController {
             gb_ime: None,
         };
 
-        self.last_post_instruction_cycles = cycles;
-        self.last_post_instruction_frame = frame;
+        self.core.last_post_instruction_cycles = cycles;
+        self.core.last_post_instruction_frame = frame;
 
         let hit = self
-            .breakpoints
+            .core
+            .breakpoints()
             .iter()
             .any(|bp| bp.enabled && bp.is_hit(&ctx));
 
@@ -487,11 +460,13 @@ impl GbDebuggerController {
     // ── Temporary breakpoint management ────────────────────────────────
 
     fn clear_temporary_breakpoint(&mut self) {
-        if let Some(tb) = self.temporary_breakpoint.take() {
+        if let Some(tb) = self.core.temporary_breakpoint.take() {
             if tb.already_present {
                 // Restore original enabled state
                 if !tb.was_enabled_before {
-                    self.breakpoints.set_pc_breakpoint_enabled(tb.pc, false);
+                    self.core
+                        .breakpoints_mut()
+                        .set_pc_breakpoint_enabled(tb.pc, false);
                 }
             } else {
                 self.remove_pc_breakpoint(tb.pc);
@@ -500,11 +475,13 @@ impl GbDebuggerController {
     }
 
     fn set_temporary_breakpoint(&mut self, pc: u16) {
+        use crate::platform::debugging::controller::TemporaryBreakpoint;
         self.clear_temporary_breakpoint();
 
-        let already_present = self.breakpoints.has_pc_breakpoint_at(pc);
+        let already_present = self.core.breakpoints().has_pc_breakpoint_at(pc);
         let was_enabled_before = if already_present {
-            self.breakpoints
+            self.core
+                .breakpoints_mut()
                 .force_enable_pc_breakpoint_at(pc)
                 .unwrap_or(false)
         } else {
@@ -512,27 +489,25 @@ impl GbDebuggerController {
             true
         };
 
-        self.temporary_breakpoint = Some(TemporaryBreakpoint {
+        self.core.temporary_breakpoint = Some(TemporaryBreakpoint::new(
             pc,
             already_present,
             was_enabled_before,
-            required_interrupt: None,
-            has_exited_required_interrupt: true,
-            ignore_other_breakpoints: false,
-        });
+        ));
     }
 
     fn add_pc_breakpoint(&mut self, addr: u16) {
-        self.breakpoints.add(BreakpointKind::Pc(addr));
+        self.core.breakpoints_mut().add(BreakpointKind::Pc(addr));
     }
 
     fn remove_pc_breakpoint(&mut self, addr: u16) {
         if let Some(idx) = self
-            .breakpoints
+            .core
+            .breakpoints()
             .iter()
             .position(|b| b.kind == BreakpointKind::Pc(addr))
         {
-            self.breakpoints.remove(idx);
+            self.core.breakpoints_mut().remove(idx);
         }
     }
 }
@@ -715,7 +690,7 @@ mod tests {
         ctrl.continue_from_debugger(&mut gb);
 
         // Should set ignore flag so we don't immediately re-trigger
-        assert!(ctrl.breakpoint_ignore_once_at_pc.is_some());
+        assert!(ctrl.core.breakpoint_ignore_once_at_pc.is_some());
     }
 
     #[test]
@@ -748,8 +723,8 @@ mod tests {
         ctrl.step_over(&mut gb);
 
         // Should have set temporary breakpoint at return address (PC + 3)
-        assert!(ctrl.temporary_breakpoint.is_some());
-        let temp_bp = ctrl.temporary_breakpoint.as_ref().unwrap();
+        assert!(ctrl.core.temporary_breakpoint.is_some());
+        let temp_bp = ctrl.core.temporary_breakpoint.as_ref().unwrap();
         assert_eq!(temp_bp.pc, 0x0003);
         // Should unpause and close debugger UI to run until breakpoint
         assert!(!ctrl.is_paused());
@@ -784,8 +759,8 @@ mod tests {
         ctrl.step_over(&mut gb);
 
         // Should have set temporary breakpoint at return address (PC + 1)
-        assert!(ctrl.temporary_breakpoint.is_some());
-        let temp_bp = ctrl.temporary_breakpoint.as_ref().unwrap();
+        assert!(ctrl.core.temporary_breakpoint.is_some());
+        let temp_bp = ctrl.core.temporary_breakpoint.as_ref().unwrap();
         assert_eq!(temp_bp.pc, 0x0001);
         // Should unpause and close debugger UI to run until breakpoint
         assert!(!ctrl.is_paused());

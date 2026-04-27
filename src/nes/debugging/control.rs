@@ -10,61 +10,28 @@ use crate::nes::console::Nes;
 use crate::nes::cpu::InterruptKind;
 use crate::platform::debugging::Tracing;
 use crate::platform::debugging::breakpoints::{BreakpointKind, BreakpointList, EvalContext};
-
-/// One-shot breakpoint used for stepping and run-to-interrupt operations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct TemporaryBreakpoint {
-    pc: u16,
-    /// Whether a user-defined PC breakpoint already existed at this address
-    /// before we added the temporary one (so we don't remove it on cleanup).
-    already_present: bool,
-    /// Whether the pre-existing breakpoint was enabled before we took over.
-    /// On cleanup we restore this state so the user's disabled breakpoint
-    /// stays disabled.
-    was_enabled_before: bool,
-    /// If set, the breakpoint only fires when the CPU is inside this interrupt.
-    required_interrupt: Option<InterruptKind>,
-    /// Tracks whether we have left the required interrupt at least once.
-    has_exited_required_interrupt: bool,
-    /// When true, other breakpoints are suppressed while this temp is active
-    /// (used by run-to-NMI/IRQ to avoid stopping at unrelated breakpoints).
-    ignore_other_breakpoints: bool,
-}
+use crate::platform::debugging::controller::DebuggerControllerCore;
 
 const JSR_OPCODE: u8 = 0x20;
 
 /// Central debugger state shared between frontends.
 pub struct DebuggerController {
-    paused: bool,
-    debugger_open: bool,
+    /// Core debugger state (breakpoints, pause/resume, temporary breakpoints).
+    core: DebuggerControllerCore<InterruptKind>,
     #[allow(dead_code)] // Used once GlBackend is refactored to accept external view_state
     view_state: DebuggerViewState,
-    breakpoints: BreakpointList,
-    temporary_breakpoint: Option<TemporaryBreakpoint>,
+    /// NES-specific: arm a temporary breakpoint after the next instruction completes.
     arm_temporary_breakpoint_after_next_instruction: bool,
-    breakpoint_ignore_once_at_pc: Option<u16>,
-    last_post_instruction_cycles: u64,
-    last_post_instruction_frame: u64,
 }
 
 impl DebuggerController {
     /// Create a new controller, optionally pre-loaded with config breakpoints
     /// and optionally entering the debugger immediately.
     pub fn new(config_breakpoints: &[BreakpointKind], debugger_enabled: bool) -> Self {
-        let mut breakpoints = BreakpointList::new();
-        for &kind in config_breakpoints {
-            breakpoints.add(kind);
-        }
         Self {
-            paused: debugger_enabled,
-            debugger_open: debugger_enabled,
+            core: DebuggerControllerCore::new(config_breakpoints, debugger_enabled),
             view_state: DebuggerViewState::default(),
-            breakpoints,
-            temporary_breakpoint: None,
             arm_temporary_breakpoint_after_next_instruction: false,
-            breakpoint_ignore_once_at_pc: None,
-            last_post_instruction_cycles: 0,
-            last_post_instruction_frame: 0,
         }
     }
 
@@ -72,19 +39,19 @@ impl DebuggerController {
 
     #[allow(dead_code)] // Used by native frontend and tests
     pub fn is_paused(&self) -> bool {
-        self.paused
+        self.core.is_paused()
     }
 
     pub fn is_debugger_open(&self) -> bool {
-        self.debugger_open
+        self.core.is_debugger_open()
     }
 
     pub fn breakpoints(&self) -> &BreakpointList {
-        &self.breakpoints
+        self.core.breakpoints()
     }
 
     pub fn breakpoints_mut(&mut self) -> &mut BreakpointList {
-        &mut self.breakpoints
+        self.core.breakpoints_mut()
     }
 
     #[allow(dead_code)] // Used once GlBackend is refactored to accept external view_state
@@ -96,88 +63,35 @@ impl DebuggerController {
 
     /// Open the debugger and pause emulation.
     pub fn enter_debugger(&mut self) {
-        self.paused = true;
-        self.debugger_open = true;
+        self.core.enter_debugger();
     }
 
     /// Close the debugger and resume emulation.
     pub fn continue_from_debugger(&mut self, nes: &Nes) {
-        if self
-            .breakpoints
-            .has_enabled_pc_breakpoint_at(nes.cpu_ref().pc())
-        {
-            self.breakpoint_ignore_once_at_pc = Some(nes.cpu_ref().pc());
-        }
-
-        self.last_post_instruction_cycles = nes.cpu_ref().get_total_cycles();
-        self.last_post_instruction_frame = nes.ppu().borrow().frame_count();
-
-        self.paused = false;
-        self.debugger_open = false;
+        self.core.continue_from_debugger(
+            nes.cpu_ref().pc(),
+            nes.cpu_ref().get_total_cycles(),
+            nes.ppu().borrow().frame_count(),
+        );
     }
 
     /// Toggle the debugger: open+pause if closed, continue if open.
     pub fn toggle_debugger(&mut self, nes: &Nes) {
-        if self.debugger_open {
+        if self.core.is_debugger_open() {
             self.continue_from_debugger(nes);
         } else {
             self.enter_debugger();
         }
     }
 
-    // ── Breakpoint management ──────────────────────────────────────────
-
-    fn add_pc_breakpoint(&mut self, addr: u16) {
-        self.breakpoints.add(BreakpointKind::Pc(addr));
-    }
-
-    fn remove_pc_breakpoint(&mut self, addr: u16) {
-        if let Some(idx) = self
-            .breakpoints
-            .iter()
-            .position(|b| b.kind == BreakpointKind::Pc(addr))
-        {
-            self.breakpoints.remove(idx);
-        }
-    }
-
     // ── Temporary breakpoints ──────────────────────────────────────────
 
     fn clear_temporary_breakpoint(&mut self) {
-        if let Some(tb) = self.temporary_breakpoint.take() {
-            if tb.already_present {
-                // Restore original enabled state if we force-enabled a disabled breakpoint.
-                if !tb.was_enabled_before {
-                    self.breakpoints.set_pc_breakpoint_enabled(tb.pc, false);
-                }
-            } else {
-                self.remove_pc_breakpoint(tb.pc);
-            }
-        }
+        self.core.clear_temporary_breakpoint();
     }
 
     fn set_temporary_breakpoint(&mut self, pc: u16) {
-        self.clear_temporary_breakpoint();
-
-        let already_present = self.breakpoints.has_pc_breakpoint_at(pc);
-        let was_enabled_before = if already_present {
-            // Force-enable a disabled breakpoint so check_breakpoint_hit sees it.
-            self.breakpoints
-                .force_enable_pc_breakpoint_at(pc)
-                .unwrap_or(false)
-        } else {
-            self.add_pc_breakpoint(pc);
-            true
-        };
-
-        self.temporary_breakpoint = Some(TemporaryBreakpoint {
-            pc,
-            already_present,
-            was_enabled_before,
-            required_interrupt: None,
-            has_exited_required_interrupt: true,
-            ignore_other_breakpoints: false,
-        });
+        self.core.set_temporary_breakpoint(pc);
     }
 
     fn set_temporary_breakpoint_for_interrupt(
@@ -186,28 +100,12 @@ impl DebuggerController {
         pc: u16,
         required_interrupt: InterruptKind,
     ) {
-        self.clear_temporary_breakpoint();
-
-        let already_present = self.breakpoints.has_pc_breakpoint_at(pc);
-        let was_enabled_before = if already_present {
-            self.breakpoints
-                .force_enable_pc_breakpoint_at(pc)
-                .unwrap_or(false)
-        } else {
-            self.add_pc_breakpoint(pc);
-            true
-        };
-
         let currently_in_interrupt = nes.cpu_ref().current_interrupt() == Some(required_interrupt);
-        let has_exited_required_interrupt = !currently_in_interrupt;
-        self.temporary_breakpoint = Some(TemporaryBreakpoint {
+        self.core.set_temporary_breakpoint_for_interrupt(
             pc,
-            already_present,
-            was_enabled_before,
-            required_interrupt: Some(required_interrupt),
-            has_exited_required_interrupt,
-            ignore_other_breakpoints: true,
-        });
+            required_interrupt,
+            currently_in_interrupt,
+        );
     }
 
     fn arm_temporary_breakpoint_after_next_instruction(&mut self) {
@@ -227,23 +125,19 @@ impl DebuggerController {
     /// Check PC-based breakpoints before an instruction executes.
     /// Returns `true` if a breakpoint was hit and the debugger was entered.
     fn check_breakpoint_hit(&mut self, pc: u16, current_interrupt: Option<InterruptKind>) -> bool {
-        self.update_interrupt_exit_tracking(current_interrupt);
+        self.core.update_interrupt_exit_tracking(current_interrupt);
 
         // Allow executing the instruction we just continued from.
-        if self.breakpoint_ignore_once_at_pc == Some(pc) {
-            self.breakpoint_ignore_once_at_pc = None;
+        if self.core.should_ignore_pc_breakpoint(pc) {
             return false;
         }
 
-        if !self.breakpoints.has_enabled_pc_breakpoint_at(pc) {
+        if !self.core.breakpoints().has_enabled_pc_breakpoint_at(pc) {
             return false;
         }
 
         // While a run-to temp breakpoint is active, suppress other breakpoints.
-        if let Some(tb) = self.temporary_breakpoint
-            && tb.ignore_other_breakpoints
-            && pc != tb.pc
-        {
+        if self.core.should_suppress_other_breakpoints(pc) {
             return false;
         }
 
@@ -255,17 +149,6 @@ impl DebuggerController {
         true
     }
 
-    /// Track whether we've exited the required interrupt for run-to-interrupt breakpoints.
-    fn update_interrupt_exit_tracking(&mut self, current_interrupt: Option<InterruptKind>) {
-        if let Some(tb) = self.temporary_breakpoint.as_mut()
-            && let Some(required_interrupt) = tb.required_interrupt
-            && !tb.has_exited_required_interrupt
-            && current_interrupt != Some(required_interrupt)
-        {
-            tb.has_exited_required_interrupt = true;
-        }
-    }
-
     /// Resolve temporary breakpoint state when a PC breakpoint is hit.
     /// Returns `true` if the breakpoint should fire, `false` to suppress it.
     fn resolve_temporary_breakpoint_at_hit(
@@ -273,54 +156,42 @@ impl DebuggerController {
         pc: u16,
         current_interrupt: Option<InterruptKind>,
     ) -> bool {
-        let Some(tb) = self.temporary_breakpoint else {
-            return true;
-        };
-
-        if tb.pc == pc {
-            // Temp breakpoint is at this exact address.
-            if let Some(required_interrupt) = tb.required_interrupt {
-                // Run-to-interrupt: only fire when we've re-entered the target interrupt.
-                if current_interrupt == Some(required_interrupt) && tb.has_exited_required_interrupt
-                {
-                    self.cleanup_temporary_breakpoint(tb);
-                    return true;
+        match self
+            .core
+            .check_temporary_breakpoint_hit(pc, current_interrupt)
+        {
+            Some(true) => {
+                // Temporary breakpoint should fire - clean it up
+                self.core.cleanup_triggered_temporary_breakpoint();
+                true
+            }
+            Some(false) => {
+                // Temporary breakpoint at this PC but conditions not met
+                false
+            }
+            None => {
+                // No temporary breakpoint at this PC
+                // Check if we should cancel a pending step (hit different breakpoint)
+                if self.core.temporary_breakpoint.is_some() {
+                    let tb = self.core.temporary_breakpoint.as_ref().unwrap();
+                    if !tb.ignore_other_breakpoints {
+                        // Hit a different breakpoint while a step is pending — cancel the step.
+                        self.clear_temporary_breakpoint();
+                    }
                 }
-                return false;
+                true
             }
-            // Plain one-shot breakpoint (stepping).
-            self.cleanup_temporary_breakpoint(tb);
-            true
-        } else if !tb.ignore_other_breakpoints {
-            // Hit a different breakpoint while a step is pending — cancel the step.
-            self.clear_temporary_breakpoint();
-            true
-        } else {
-            true
-        }
-    }
-
-    /// Remove the temporary breakpoint and clean up the underlying PC breakpoint if
-    /// it was added by the controller (not a pre-existing user breakpoint).
-    fn cleanup_temporary_breakpoint(&mut self, tb: TemporaryBreakpoint) {
-        self.temporary_breakpoint = None;
-        if tb.already_present {
-            if !tb.was_enabled_before {
-                self.breakpoints.set_pc_breakpoint_enabled(tb.pc, false);
-            }
-        } else {
-            self.remove_pc_breakpoint(tb.pc);
         }
     }
 
     /// Check cycle, frame, and write-address breakpoints after instruction execution.
     fn check_post_instruction_breakpoints(&mut self, nes: &Nes) {
-        if self.paused {
+        if self.core.is_paused() {
             return;
         }
-        let prev_cycles = self.last_post_instruction_cycles;
+        let prev_cycles = self.core.last_post_instruction_cycles;
         let current_cycles = nes.cpu_ref().get_total_cycles();
-        let prev_frame = self.last_post_instruction_frame;
+        let prev_frame = self.core.last_post_instruction_frame;
         let current_frame = nes.ppu().borrow().frame_count();
         let ctx = EvalContext {
             pc: nes.cpu_ref().pc(),
@@ -333,12 +204,12 @@ impl DebuggerController {
             gb_if: None,
             gb_ime: None,
         };
-        self.last_post_instruction_cycles = current_cycles;
-        self.last_post_instruction_frame = current_frame;
-        let hit = self
-            .breakpoints
-            .iter()
-            .any(|bp| bp.enabled && !matches!(bp.kind, BreakpointKind::Pc(_)) && bp.is_hit(&ctx));
+        self.core
+            .update_post_instruction_state(current_cycles, current_frame);
+        let hit =
+            self.core.breakpoints().iter().any(|bp| {
+                bp.enabled && !matches!(bp.kind, BreakpointKind::Pc(_)) && bp.is_hit(&ctx)
+            });
         if hit {
             self.enter_debugger();
         }
@@ -427,7 +298,7 @@ impl DebuggerController {
     /// which still owns `DebuggerViewState`. Once GlBackend is refactored
     /// (Sub-issues B/C), those actions will move here.
     pub fn apply_ui_action(&mut self, nes: &mut Nes, action: DebuggerUiAction) {
-        if !self.debugger_open {
+        if !self.core.is_debugger_open() {
             return;
         }
 
@@ -469,16 +340,16 @@ impl DebuggerController {
         }
 
         if let Some(kind) = action.add_breakpoint {
-            self.breakpoints.add(kind);
+            self.core.breakpoints_mut().add(kind);
         }
         if let Some(index) = action.remove_breakpoint {
-            self.breakpoints.remove(index);
+            self.core.breakpoints_mut().remove(index);
         }
         if let Some(index) = action.enable_breakpoint {
-            self.breakpoints.enable(index);
+            self.core.breakpoints_mut().enable(index);
         }
         if let Some(index) = action.disable_breakpoint {
-            self.breakpoints.disable(index);
+            self.core.breakpoints_mut().disable(index);
         }
     }
 
@@ -494,7 +365,7 @@ impl DebuggerController {
         tracing: &Tracing,
         audio_drain: &mut dyn FnMut(&mut Nes),
     ) {
-        if self.paused {
+        if self.core.is_paused() {
             return;
         }
 
@@ -507,7 +378,7 @@ impl DebuggerController {
             self.maybe_arm_temporary_breakpoint_after_instruction(nes);
             self.check_post_instruction_breakpoints(nes);
 
-            if self.paused {
+            if self.core.is_paused() {
                 break;
             }
 
@@ -517,7 +388,7 @@ impl DebuggerController {
 
     /// Run a single CPU instruction with breakpoint evaluation (for headless testing).
     pub fn tick_once(&mut self, nes: &mut Nes) {
-        if self.paused {
+        if self.core.is_paused() {
             return;
         }
 
@@ -540,7 +411,7 @@ impl DebuggerController {
         let Ok(text) = std::fs::read_to_string(&path) else {
             return;
         };
-        self.breakpoints = BreakpointList::load_from_str(&text);
+        self.core.breakpoints = BreakpointList::load_from_str(&text);
     }
 
     /// Save breakpoints to a `.debug` file next to the ROM.
@@ -558,7 +429,7 @@ impl DebuggerController {
         let Ok(text) = std::fs::read_to_string(&path) else {
             return vec![];
         };
-        self.breakpoints = BreakpointList::load_from_str(&text);
+        self.core.breakpoints = BreakpointList::load_from_str(&text);
         crate::platform::debugging::breakpoints::parse_watch_addresses(&text)
     }
 
@@ -569,7 +440,7 @@ impl DebuggerController {
         let Some(path) = nes.debug_path() else {
             return;
         };
-        let bp_str = self.breakpoints.save_to_string();
+        let bp_str = self.core.breakpoints().save_to_string();
         let watch_str =
             crate::platform::debugging::breakpoints::serialize_watch_addresses(watch_addresses);
         if bp_str.is_empty() && watch_str.is_empty() {
@@ -713,10 +584,10 @@ mod tests {
         let mut ctrl = default_controller();
         let nes = nes_with_nop_loop();
         let pc = nes.cpu_ref().pc();
-        ctrl.breakpoints.add(BreakpointKind::Pc(pc));
+        ctrl.core.breakpoints_mut().add(BreakpointKind::Pc(pc));
         ctrl.enter_debugger();
         ctrl.continue_from_debugger(&nes);
-        assert_eq!(ctrl.breakpoint_ignore_once_at_pc, Some(pc));
+        assert_eq!(ctrl.core.breakpoint_ignore_once_at_pc, Some(pc));
     }
 
     #[test]
@@ -743,7 +614,7 @@ mod tests {
     #[test]
     fn test_pc_breakpoint_hit_enters_debugger() {
         let mut ctrl = default_controller();
-        ctrl.breakpoints.add(BreakpointKind::Pc(0x8000));
+        ctrl.core.breakpoints_mut().add(BreakpointKind::Pc(0x8000));
         let hit = ctrl.check_breakpoint_hit(0x8000, None);
         assert!(hit);
         assert!(ctrl.is_paused());
@@ -753,7 +624,7 @@ mod tests {
     #[test]
     fn test_pc_breakpoint_miss_does_not_enter_debugger() {
         let mut ctrl = default_controller();
-        ctrl.breakpoints.add(BreakpointKind::Pc(0x8000));
+        ctrl.core.breakpoints_mut().add(BreakpointKind::Pc(0x8000));
         let hit = ctrl.check_breakpoint_hit(0x9000, None);
         assert!(!hit);
         assert!(!ctrl.is_paused());
@@ -762,13 +633,13 @@ mod tests {
     #[test]
     fn test_ignore_once_skips_breakpoint_then_clears() {
         let mut ctrl = default_controller();
-        ctrl.breakpoints.add(BreakpointKind::Pc(0x8000));
-        ctrl.breakpoint_ignore_once_at_pc = Some(0x8000);
+        ctrl.core.breakpoints_mut().add(BreakpointKind::Pc(0x8000));
+        ctrl.core.breakpoint_ignore_once_at_pc = Some(0x8000);
 
         let hit1 = ctrl.check_breakpoint_hit(0x8000, None);
         assert!(!hit1, "first check should be ignored");
         assert!(
-            ctrl.breakpoint_ignore_once_at_pc.is_none(),
+            ctrl.core.breakpoint_ignore_once_at_pc.is_none(),
             "flag should be cleared"
         );
 
@@ -785,7 +656,9 @@ mod tests {
 
         let cycles_before = nes.cpu_ref().get_total_cycles();
         let target = cycles_before + 100;
-        ctrl.breakpoints.add(BreakpointKind::Cycle(target));
+        ctrl.core
+            .breakpoints_mut()
+            .add(BreakpointKind::Cycle(target));
 
         let tracing = Tracing::default();
         ctrl.run_frame(&mut nes, &tracing, &mut |_| {});
@@ -804,7 +677,9 @@ mod tests {
         let mut nes = nes_with_nop_loop();
 
         let target_frame = nes.ppu().borrow().frame_count() + 1;
-        ctrl.breakpoints.add(BreakpointKind::Frame(target_frame));
+        ctrl.core
+            .breakpoints_mut()
+            .add(BreakpointKind::Frame(target_frame));
 
         for _ in 0..2_000_000 {
             ctrl.tick_once(&mut nes);
@@ -886,9 +761,9 @@ mod tests {
         nes.cpu_mut().set_x(0);
 
         // Add a *disabled* breakpoint at the return address ($8003).
-        ctrl.breakpoints.add(BreakpointKind::Pc(0x8003));
-        ctrl.breakpoints.disable(0);
-        assert!(!ctrl.breakpoints.has_enabled_pc_breakpoint_at(0x8003));
+        ctrl.core.breakpoints_mut().add(BreakpointKind::Pc(0x8003));
+        ctrl.core.breakpoints_mut().disable(0);
+        assert!(!ctrl.core.breakpoints().has_enabled_pc_breakpoint_at(0x8003));
 
         ctrl.enter_debugger();
         ctrl.step_over(&mut nes);
@@ -917,8 +792,8 @@ mod tests {
         let mut nes = nes_with_jsr_program();
 
         // Add a *disabled* breakpoint at the return address ($8003).
-        ctrl.breakpoints.add(BreakpointKind::Pc(0x8003));
-        ctrl.breakpoints.disable(0);
+        ctrl.core.breakpoints_mut().add(BreakpointKind::Pc(0x8003));
+        ctrl.core.breakpoints_mut().disable(0);
 
         ctrl.enter_debugger();
         ctrl.step_over(&mut nes);
@@ -933,11 +808,11 @@ mod tests {
 
         // After cleanup, the user's breakpoint should be restored to disabled.
         assert!(
-            ctrl.breakpoints.has_pc_breakpoint_at(0x8003),
+            ctrl.core.breakpoints().has_pc_breakpoint_at(0x8003),
             "user breakpoint should still exist"
         );
         assert!(
-            !ctrl.breakpoints.has_enabled_pc_breakpoint_at(0x8003),
+            !ctrl.core.breakpoints().has_enabled_pc_breakpoint_at(0x8003),
             "user breakpoint should be restored to disabled"
         );
     }
@@ -948,7 +823,7 @@ mod tests {
         let mut nes = nes_with_jsr_program();
 
         // Add an *enabled* breakpoint at the return address ($8003).
-        ctrl.breakpoints.add(BreakpointKind::Pc(0x8003));
+        ctrl.core.breakpoints_mut().add(BreakpointKind::Pc(0x8003));
 
         ctrl.enter_debugger();
         ctrl.step_over(&mut nes);
@@ -961,7 +836,7 @@ mod tests {
         }
 
         // After cleanup, the user's breakpoint should remain enabled.
-        assert!(ctrl.breakpoints.has_enabled_pc_breakpoint_at(0x8003));
+        assert!(ctrl.core.breakpoints().has_enabled_pc_breakpoint_at(0x8003));
     }
 
     // ── UI action tests ────────────────────────────────────────────────
@@ -1156,7 +1031,7 @@ mod tests {
         let pc = nes.cpu_ref().pc();
 
         // Set a breakpoint and enter debugger at the breakpoint PC.
-        ctrl.breakpoints.add(BreakpointKind::Pc(pc));
+        ctrl.core.breakpoints_mut().add(BreakpointKind::Pc(pc));
         ctrl.enter_debugger();
 
         // Continue should set ignore_once.
@@ -1195,7 +1070,9 @@ mod tests {
         let cycles_now = nes.cpu_ref().get_total_cycles();
         // Set a cycle breakpoint far in the future.
         let target = cycles_now + 100_000;
-        ctrl.breakpoints.add(BreakpointKind::Cycle(target));
+        ctrl.core
+            .breakpoints_mut()
+            .add(BreakpointKind::Cycle(target));
 
         // Enter debugger (simulating a step or other action that advances cycles).
         ctrl.enter_debugger();
@@ -1253,7 +1130,7 @@ mod tests {
 
         let nes = nes_with_rom_path(&rom_path);
         let mut ctrl = default_controller();
-        ctrl.breakpoints.add(BreakpointKind::Pc(0x8000));
+        ctrl.core.breakpoints_mut().add(BreakpointKind::Pc(0x8000));
 
         ctrl.save_debug_state_to_file(&nes, &[0x0300, 0x00FF]);
 
@@ -1295,7 +1172,7 @@ mod tests {
             "loaded watches must match the debug file"
         );
         assert!(
-            ctrl.breakpoints.has_enabled_pc_breakpoint_at(0x8000),
+            ctrl.core.breakpoints().has_enabled_pc_breakpoint_at(0x8000),
             "breakpoints must also be loaded"
         );
     }
