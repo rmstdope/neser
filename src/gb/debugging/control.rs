@@ -306,7 +306,7 @@ impl GbDebuggerController {
         while !gb.is_frame_ready() {
             // Check pre-instruction breakpoints (PC, interrupt)
             if self.check_breakpoint_hit_pre_instruction(gb) {
-                self.paused = true;
+                self.enter_debugger();
                 return;
             }
 
@@ -315,7 +315,7 @@ impl GbDebuggerController {
 
             // Check post-instruction breakpoints (cycle, frame, write)
             if self.check_post_instruction_breakpoints(gb) {
-                self.paused = true;
+                self.enter_debugger();
                 return;
             }
 
@@ -710,6 +710,10 @@ mod tests {
 
         assert_eq!(gb.cpu.regs.pc, 0x0001);
         assert!(ctrl.is_paused());
+        assert!(
+            ctrl.is_debugger_open(),
+            "Debugger should open when breakpoint is hit"
+        );
     }
 
     #[test]
