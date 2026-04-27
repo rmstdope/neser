@@ -250,6 +250,13 @@ impl BreakpointList {
         }
     }
 
+    /// Remove the first breakpoint that matches the given kind. No-op if not found.
+    pub fn remove_first_matching(&mut self, kind: &BreakpointKind) {
+        if let Some(index) = self.items.iter().position(|b| &b.kind == kind) {
+            self.items.remove(index);
+        }
+    }
+
     /// Enable the breakpoint at the given index. No-op if out of bounds.
     pub fn enable(&mut self, index: usize) {
         self.set_enabled(index, true);

@@ -1,5 +1,7 @@
 use crate::frontends::native::input::{InputEvent, apply_input};
 use crate::frontends::native::shader_manager::ShaderManager;
+use crate::gb::debugging::GbDebuggerViewState;
+use crate::gb::debugging::debugger_ui as gb_debugger_ui;
 use crate::nes::console::Nes;
 use crate::nes::debugging::DebuggerViewState;
 use crate::nes::debugging::ppu_viewer::{
@@ -23,6 +25,17 @@ const PPU_VIEWER_TILES_TEXTURE_HEIGHT: i32 = 128;
 
 const PPU_VIEWER_WINDOW_INITIAL_WIDTH: f32 = 560.0;
 const PPU_VIEWER_WINDOW_INITIAL_HEIGHT: f32 = 854.0;
+
+// GB PPU viewer texture dimensions
+const GB_PPU_VIEWER_TILES_TEXTURE_WIDTH_DMG: i32 = 256;
+const GB_PPU_VIEWER_TILES_TEXTURE_HEIGHT_DMG: i32 = 128;
+const GB_PPU_VIEWER_TILES_TEXTURE_WIDTH_CGB: i32 = 512;
+const GB_PPU_VIEWER_TILES_TEXTURE_HEIGHT_CGB: i32 = 128;
+const GB_PPU_VIEWER_BG_MAPS_TEXTURE_WIDTH: i32 = 512;
+const GB_PPU_VIEWER_BG_MAPS_TEXTURE_HEIGHT: i32 = 256;
+
+const GB_PPU_VIEWER_WINDOW_INITIAL_WIDTH: f32 = 560.0;
+const GB_PPU_VIEWER_WINDOW_INITIAL_HEIGHT: f32 = 600.0;
 
 /// Backend-agnostic surface for presenting rendered frames.
 ///
@@ -72,12 +85,26 @@ pub struct GlBackend {
     app_context: SharedAppContext,
     framebuffer: Vec<u8>,
     last_frame: Instant,
+    // NES debugger state
     debugger_view_state: DebuggerViewState,
     debugger_alpha: f32,
     breakpoints: BreakpointList,
     bp_add_state: BreakpointAddUiState,
     hexdump_ui_state: HexdumpUiState,
     watchlist_ui_state: WatchlistUiState,
+    // GB debugger state
+    gb_debugger_view_state: GbDebuggerViewState,
+    gb_debugger_alpha: f32,
+    gb_breakpoints: BreakpointList,
+    gb_bp_add_state: gb_debugger_ui::BreakpointAddUiState,
+    gb_hexdump_ui_state: gb_debugger_ui::HexdumpUiState,
+    gb_watchlist_ui_state: gb_debugger_ui::WatchlistUiState,
+    last_gb_action: gb_debugger_ui::GbDebuggerUiAction,
+    // GB PPU viewer textures
+    gb_ppu_viewer_tiles_texture: gl::types::GLuint,
+    gb_ppu_viewer_tiles_texture_id: imgui::TextureId,
+    gb_ppu_viewer_bg_maps_texture: gl::types::GLuint,
+    gb_ppu_viewer_bg_maps_texture_id: imgui::TextureId,
     shader_manager: ShaderManager,
     /// Current GL texture width (updated when console type changes).
     tex_w: u32,
@@ -428,6 +455,20 @@ impl GlBackend {
             )
         };
 
+        // GB PPU viewer textures
+        let (gb_ppu_viewer_tiles_texture, gb_ppu_viewer_tiles_texture_id) = unsafe {
+            create_rgba_texture(
+                GB_PPU_VIEWER_TILES_TEXTURE_WIDTH_CGB,
+                GB_PPU_VIEWER_TILES_TEXTURE_HEIGHT_CGB,
+            )
+        };
+        let (gb_ppu_viewer_bg_maps_texture, gb_ppu_viewer_bg_maps_texture_id) = unsafe {
+            create_rgba_texture(
+                GB_PPU_VIEWER_BG_MAPS_TEXTURE_WIDTH,
+                GB_PPU_VIEWER_BG_MAPS_TEXTURE_HEIGHT,
+            )
+        };
+
         let mut shader_manager = ShaderManager::new(allowed_shaders);
 
         // Load shader preset if specified
@@ -457,12 +498,26 @@ impl GlBackend {
             app_context,
             framebuffer: Vec::new(),
             last_frame: Instant::now(),
+            // NES debugger state
             debugger_view_state: DebuggerViewState::default(),
             debugger_alpha: 1.0,
             breakpoints: BreakpointList::default(),
             bp_add_state: BreakpointAddUiState::default(),
             hexdump_ui_state: HexdumpUiState::default(),
             watchlist_ui_state: WatchlistUiState::default(),
+            // GB debugger state
+            gb_debugger_view_state: GbDebuggerViewState::default(),
+            gb_debugger_alpha: 1.0,
+            gb_breakpoints: BreakpointList::default(),
+            gb_bp_add_state: gb_debugger_ui::BreakpointAddUiState::default(),
+            gb_hexdump_ui_state: gb_debugger_ui::HexdumpUiState::default(),
+            gb_watchlist_ui_state: gb_debugger_ui::WatchlistUiState::default(),
+            last_gb_action: gb_debugger_ui::GbDebuggerUiAction::default(),
+            // GB PPU viewer textures
+            gb_ppu_viewer_tiles_texture,
+            gb_ppu_viewer_tiles_texture_id,
+            gb_ppu_viewer_bg_maps_texture,
+            gb_ppu_viewer_bg_maps_texture_id,
             shader_manager,
             tex_w: 1,
             tex_h: 1,
@@ -490,6 +545,24 @@ impl GlBackend {
     /// Updates the breakpoint list used by the debugger UI.
     pub fn update_breakpoints(&mut self, breakpoints: &BreakpointList) {
         self.breakpoints = breakpoints.clone();
+    }
+
+    // GB debugger methods
+
+    /// Sets the GB debugger window background opacity (clamped to 0.1–1.0).
+    #[allow(dead_code)] // Used by debugger controller, not yet wired up
+    pub fn set_gb_debugger_alpha(&mut self, alpha: f32) {
+        self.gb_debugger_alpha = alpha.clamp(0.1, 1.0);
+    }
+
+    /// Updates the GB breakpoint list used by the GB debugger UI.
+    pub fn update_gb_breakpoints(&mut self, breakpoints: &BreakpointList) {
+        self.gb_breakpoints = breakpoints.clone();
+    }
+
+    /// Takes the last GB debugger UI action, replacing it with default.
+    pub fn take_gb_debugger_action(&mut self) -> gb_debugger_ui::GbDebuggerUiAction {
+        std::mem::take(&mut self.last_gb_action)
     }
 
     /// Returns a copy of the watch addresses currently tracked in the debugger.
@@ -747,6 +820,66 @@ impl GlBackend {
                         self.ppu_viewer_nt_texture_id,
                         self.ppu_viewer_tiles_texture_id,
                         scroll,
+                    );
+                }
+            } else if show_debugger && let Console::GameBoy(gb) = console {
+                let snapshot = gb.create_debugger_snapshot(&mut self.gb_debugger_view_state);
+                let gb_action = gb_debugger_ui::render(
+                    ui,
+                    &snapshot,
+                    self.gb_debugger_alpha,
+                    &self.gb_breakpoints,
+                    &mut self.gb_bp_add_state,
+                    &mut self.gb_hexdump_ui_state,
+                    &mut self.gb_watchlist_ui_state,
+                );
+                if gb_action.toggle_ppu_viewer {
+                    self.gb_debugger_view_state.toggle_ppu_viewer();
+                }
+                if let Some(base) = gb_action.set_wram_hexdump_base {
+                    self.gb_debugger_view_state.set_wram_hexdump_base(base);
+                }
+                if let Some(delta) = gb_action.nudge_wram_hexdump_base_by_bytes {
+                    self.gb_debugger_view_state
+                        .nudge_wram_hexdump_base_by_bytes_from(snapshot.wram_hexdump_base, delta);
+                }
+                if let Some(base) = gb_action.set_vram_hexdump_base {
+                    self.gb_debugger_view_state.set_vram_hexdump_base(base);
+                }
+                if let Some(delta) = gb_action.nudge_vram_hexdump_base_by_bytes {
+                    self.gb_debugger_view_state
+                        .nudge_vram_hexdump_base_by_bytes_from(snapshot.vram_hexdump_base, delta);
+                }
+                if let Some(address) = gb_action.add_watch_address {
+                    self.gb_debugger_view_state.add_watch_address(address);
+                }
+                if let Some(index) = gb_action.remove_watch_address {
+                    self.gb_debugger_view_state.remove_watch_address(index);
+                }
+                if let Some(update) = gb_action.update_watch_address {
+                    self.gb_debugger_view_state
+                        .update_watch_address(update.index, update.address);
+                }
+                if gb_action.increase_opacity {
+                    self.gb_debugger_alpha = (self.gb_debugger_alpha + 0.1).min(1.0);
+                }
+                if gb_action.decrease_opacity {
+                    self.gb_debugger_alpha = (self.gb_debugger_alpha - 0.1).max(0.1);
+                }
+                // Store action for processing by controller
+                self.last_gb_action = gb_action;
+                if self.gb_debugger_view_state.is_ppu_viewer_visible() {
+                    let ppu_snap = gb.create_ppu_viewer_snapshot();
+                    update_gb_ppu_viewer_textures_from_snapshot(
+                        &ppu_snap,
+                        self.gb_ppu_viewer_tiles_texture,
+                        self.gb_ppu_viewer_bg_maps_texture,
+                    );
+                    draw_gb_ppu_viewer_window(
+                        ui,
+                        self.gb_ppu_viewer_tiles_texture_id,
+                        self.gb_ppu_viewer_bg_maps_texture_id,
+                        &ppu_snap,
                     );
                 }
             }
@@ -1107,6 +1240,140 @@ fn update_ppu_viewer_textures(
     ppu_snap.scroll
 }
 
+/// Update GB PPU viewer textures with a snapshot.
+fn update_gb_ppu_viewer_textures_from_snapshot(
+    ppu_snap: &crate::gb::debugging::ppu_viewer::GbPpuViewerSnapshot,
+    tiles_texture: gl::types::GLuint,
+    bg_maps_texture: gl::types::GLuint,
+) {
+    use crate::gb::debugging::ppu_viewer::{render_bg_maps_rgba, render_tiles_rgba};
+    let tiles_pixels = render_tiles_rgba(
+        &ppu_snap.vram,
+        &ppu_snap.vram_bank1,
+        ppu_snap.bgp,
+        &ppu_snap.bg_palette_ram,
+        ppu_snap.cgb_mode,
+    );
+    let bg_maps_pixels = render_bg_maps_rgba(
+        &ppu_snap.vram,
+        &ppu_snap.vram_bank1,
+        ppu_snap.lcdc,
+        ppu_snap.bgp,
+        &ppu_snap.bg_palette_ram,
+        ppu_snap.cgb_mode,
+    );
+
+    // Pad DMG tiles to full CGB texture size to avoid stale data
+    let tiles_upload_width = GB_PPU_VIEWER_TILES_TEXTURE_WIDTH_CGB;
+    let tiles_upload_height = GB_PPU_VIEWER_TILES_TEXTURE_HEIGHT_CGB;
+    let tiles_upload_pixels = if ppu_snap.cgb_mode {
+        tiles_pixels
+    } else {
+        let src_width = GB_PPU_VIEWER_TILES_TEXTURE_WIDTH_DMG as usize;
+        let src_height = GB_PPU_VIEWER_TILES_TEXTURE_HEIGHT_DMG as usize;
+        let dst_width = GB_PPU_VIEWER_TILES_TEXTURE_WIDTH_CGB as usize;
+        let dst_height = GB_PPU_VIEWER_TILES_TEXTURE_HEIGHT_CGB as usize;
+        let mut padded_pixels = vec![0u8; dst_width * dst_height * 4];
+
+        for row in 0..src_height {
+            let src_start = row * src_width * 4;
+            let src_end = src_start + src_width * 4;
+            let dst_start = row * dst_width * 4;
+            let dst_end = dst_start + src_width * 4;
+            padded_pixels[dst_start..dst_end].copy_from_slice(&tiles_pixels[src_start..src_end]);
+        }
+
+        padded_pixels
+    };
+
+    unsafe {
+        upload_rgba_texture(
+            tiles_texture,
+            tiles_upload_width,
+            tiles_upload_height,
+            &tiles_upload_pixels,
+        );
+        upload_rgba_texture(
+            bg_maps_texture,
+            GB_PPU_VIEWER_BG_MAPS_TEXTURE_WIDTH,
+            GB_PPU_VIEWER_BG_MAPS_TEXTURE_HEIGHT,
+            &bg_maps_pixels,
+        );
+    }
+}
+
+/// Render the GB PPU viewer ImGui window showing tiles, BG maps, OAM, and palettes.
+fn draw_gb_ppu_viewer_window(
+    ui: &imgui::Ui,
+    tiles_texture_id: imgui::TextureId,
+    bg_maps_texture_id: imgui::TextureId,
+    ppu_snap: &crate::gb::debugging::ppu_viewer::GbPpuViewerSnapshot,
+) {
+    use crate::gb::debugging::ppu_viewer::{format_oam_entries, format_palette_info};
+
+    let is_cgb = ppu_snap.cgb_mode;
+    // Aspect ratios for GB PPU viewer textures
+    let tiles_aspect = if is_cgb {
+        GB_PPU_VIEWER_TILES_TEXTURE_HEIGHT_CGB as f32 / GB_PPU_VIEWER_TILES_TEXTURE_WIDTH_CGB as f32
+    } else {
+        GB_PPU_VIEWER_TILES_TEXTURE_HEIGHT_DMG as f32 / GB_PPU_VIEWER_TILES_TEXTURE_WIDTH_DMG as f32
+    };
+    const BG_MAPS_ASPECT: f32 =
+        GB_PPU_VIEWER_BG_MAPS_TEXTURE_HEIGHT as f32 / GB_PPU_VIEWER_BG_MAPS_TEXTURE_WIDTH as f32;
+
+    ui.window("GB PPU Viewer")
+        .size(
+            [
+                GB_PPU_VIEWER_WINDOW_INITIAL_WIDTH,
+                GB_PPU_VIEWER_WINDOW_INITIAL_HEIGHT,
+            ],
+            imgui::Condition::FirstUseEver,
+        )
+        .build(|| {
+            let mode_label = if is_cgb { "CGB" } else { "DMG" };
+            ui.text(format!("Tiles ({})", mode_label));
+            ui.separator();
+            let avail_w = ui.content_region_avail()[0];
+            let tiles_uv1 = if is_cgb { [1.0, 1.0] } else { [0.5, 1.0] };
+            imgui::Image::new(tiles_texture_id, [avail_w, avail_w * tiles_aspect])
+                .uv0([0.0, 0.0])
+                .uv1(tiles_uv1)
+                .build(ui);
+
+            ui.dummy([0.0, 6.0]);
+            ui.text("BG Maps (0x9800 | 0x9C00)");
+            ui.separator();
+            let avail_w = ui.content_region_avail()[0];
+            imgui::Image::new(bg_maps_texture_id, [avail_w, avail_w * BG_MAPS_ASPECT]).build(ui);
+
+            ui.dummy([0.0, 6.0]);
+            ui.text("OAM Sprites");
+            ui.separator();
+            let oam_lines = format_oam_entries(&ppu_snap.oam, is_cgb);
+            for line in oam_lines.iter().take(10) {
+                ui.text(line);
+            }
+            if oam_lines.len() > 10 {
+                ui.text(format!("... {} more sprites", oam_lines.len() - 10));
+            }
+
+            ui.dummy([0.0, 6.0]);
+            ui.text("Palettes");
+            ui.separator();
+            let palette_lines = format_palette_info(
+                ppu_snap.bgp,
+                ppu_snap.obp0,
+                ppu_snap.obp1,
+                &ppu_snap.bg_palette_ram,
+                &ppu_snap.obj_palette_ram,
+                is_cgb,
+            );
+            for line in palette_lines {
+                ui.text(line);
+            }
+        });
+}
+
 impl Drop for GlBackend {
     fn drop(&mut self) {
         // Best-effort: make current and clean up GL resources.
@@ -1116,6 +1383,8 @@ impl Drop for GlBackend {
                 gl::DeleteTextures(1, &self.nes_texture);
                 gl::DeleteTextures(1, &self.ppu_viewer_nt_texture);
                 gl::DeleteTextures(1, &self.ppu_viewer_tiles_texture);
+                gl::DeleteTextures(1, &self.gb_ppu_viewer_tiles_texture);
+                gl::DeleteTextures(1, &self.gb_ppu_viewer_bg_maps_texture);
             }
         }
     }

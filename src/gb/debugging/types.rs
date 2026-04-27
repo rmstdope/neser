@@ -8,7 +8,7 @@ use super::disasm::GbCpuDisasmLineSnapshot;
 /// CPU register snapshot for SM83.
 ///
 /// Captures all CPU registers, flags, timing information, and interrupt state at a point in time.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct GbCpuRegsSnapshot {
     // 8-bit registers
     pub a: u8,
@@ -99,4 +99,20 @@ pub struct GbDebuggerSnapshot {
 
     /// Recent executed instructions (ring buffer tail, typically last 32)
     pub recent_trace: Vec<GbCpuTraceLineSnapshot>,
+}
+
+impl Default for GbDebuggerSnapshot {
+    fn default() -> Self {
+        Self {
+            cpu_regs: GbCpuRegsSnapshot::default(),
+            wram_hexdump_base: 0xC000,
+            wram_hexdump_bytes: vec![0; 256],
+            vram_hexdump_base: 0x8000,
+            vram_hexdump_bytes: vec![0; 256],
+            cpu_disasm: Vec::new(),
+            cpu: String::new(),
+            watch_values: Vec::new(),
+            recent_trace: Vec::new(),
+        }
+    }
 }
