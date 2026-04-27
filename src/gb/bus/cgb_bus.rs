@@ -385,7 +385,10 @@ impl GbBus for CgbBus {
             0xFF4F | 0xFF68..=0xFF6C => self.ppu.read_cgb_register(addr).unwrap_or(0xFF),
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
             0xFFFF => self.ie_reg,
-            _ => 0xFF,
+            _ => {
+                println!("CGB bus: unhandled read at ${:04X}", addr);
+                0xFF
+            }
         }
     }
 
@@ -434,7 +437,9 @@ impl GbBus for CgbBus {
             0xFF50 => {} // No boot ROM to unmap on CGB bus
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize] = val,
             0xFFFF => self.ie_reg = val,
-            _ => {}
+            _ => {
+                println!("CGB bus: unhandled write at ${:04X} = ${:02X}", addr, val);
+            }
         }
     }
 
@@ -485,7 +490,10 @@ impl GbBus for CgbBus {
             0xFF4F | 0xFF68..=0xFF6C => self.ppu.read_cgb_register(addr).unwrap_or(0xFF),
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
             0xFFFF => self.ie_reg,
-            _ => 0xFF,
+            _ => {
+                println!("CGB bus: unhandled debugger read at ${:04X}", addr);
+                0xFF
+            }
         }
     }
 }
