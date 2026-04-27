@@ -98,6 +98,8 @@ impl GbDebuggerController {
 
     /// Open the debugger and pause emulation.
     pub fn enter_debugger<B: GbBus>(&mut self, gb: &mut Gb<B>) {
+        // Clear any leftover temporary breakpoints from previous run-to operations
+        self.clear_temporary_breakpoint();
         gb.set_cpu_trace_enabled(true);
         self.paused = true;
         self.debugger_open = true;
@@ -214,13 +216,12 @@ impl GbDebuggerController {
     }
 
     /// Run until specific interrupt is about to fire.
-    pub fn run_to_interrupt<B: GbBus>(&mut self, gb: &mut Gb<B>, kind: GbInterruptKind) {
+    pub fn run_to_interrupt<B: GbBus>(&mut self, _gb: &mut Gb<B>, kind: GbInterruptKind) {
         if !self.paused {
             return;
         }
 
         self.breakpoints.add(BreakpointKind::GbInterrupt(kind));
-        self.set_temporary_breakpoint_for_interrupt(gb.cpu.regs.pc, kind);
     }
 
     /// Apply UI actions from the debugger interface.
@@ -507,33 +508,6 @@ impl GbDebuggerController {
             required_interrupt: None,
             has_exited_required_interrupt: true,
             ignore_other_breakpoints: false,
-        });
-    }
-
-    fn set_temporary_breakpoint_for_interrupt(
-        &mut self,
-        pc: u16,
-        required_interrupt: GbInterruptKind,
-    ) {
-        self.clear_temporary_breakpoint();
-
-        let already_present = self.breakpoints.has_pc_breakpoint_at(pc);
-        let was_enabled_before = if already_present {
-            self.breakpoints
-                .force_enable_pc_breakpoint_at(pc)
-                .unwrap_or(false)
-        } else {
-            self.add_pc_breakpoint(pc);
-            true
-        };
-
-        self.temporary_breakpoint = Some(TemporaryBreakpoint {
-            pc,
-            already_present,
-            was_enabled_before,
-            required_interrupt: Some(required_interrupt),
-            has_exited_required_interrupt: false,
-            ignore_other_breakpoints: true,
         });
     }
 
@@ -866,10 +840,16 @@ mod tests {
 
         ctrl.apply_ui_action(&mut gb, action);
 
-        // Should have set temporary breakpoint for VBlank interrupt
-        assert!(ctrl.temporary_breakpoint.is_some());
-        let temp_bp = ctrl.temporary_breakpoint.as_ref().unwrap();
-        assert_eq!(temp_bp.required_interrupt, Some(GbInterruptKind::VBlank));
+        // Should have added a GbInterrupt breakpoint (not a temporary PC breakpoint)
+        assert!(
+            ctrl.breakpoints().iter().any(|bp| matches!(
+                bp.kind,
+                BreakpointKind::GbInterrupt(GbInterruptKind::VBlank)
+            )),
+            "should have added VBlank interrupt breakpoint"
+        );
+        assert!(!ctrl.is_paused(), "should be running");
+        assert!(!ctrl.is_debugger_open(), "debugger should be closed");
     }
 
     #[test]
