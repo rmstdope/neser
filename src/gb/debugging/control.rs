@@ -728,6 +728,217 @@ mod tests {
         assert!(ctrl.breakpoint_ignore_once_at_pc.is_some());
     }
 
+    #[test]
+    fn test_step_over_on_call_sets_temporary_breakpoint() {
+        let mut ctrl = default_controller();
+
+        // Create ROM with CALL instruction
+        let mut rom = vec![0u8; 0x8000];
+        rom[0x0000] = 0xCD; // CALL n16
+        rom[0x0001] = 0x10; // target low
+        rom[0x0002] = 0xC0; // target high -> CALL $C010
+        rom[0x0010] = 0xC9; // RET at target
+        // Cartridge header
+        rom[0x0147] = 0x00;
+        rom[0x0148] = 0x00;
+        rom[0x0149] = 0x00;
+        let chk = rom[0x0134..=0x014C]
+            .iter()
+            .fold(0u8, |acc, &b| acc.wrapping_sub(b).wrapping_sub(1));
+        rom[0x014D] = chk;
+
+        let cart = load_cartridge(&rom).expect("valid ROM");
+        let bus = DmgBus::new(cart, DmgModel::DmgB);
+        let mut gb = Gb::new(bus);
+
+        gb.cpu.bus.write(0xFF50, 0x01); // Disable boot ROM
+        gb.cpu.regs.pc = 0x0000;
+
+        ctrl.enter_debugger();
+        ctrl.step_over(&mut gb);
+
+        // Should have set temporary breakpoint at return address (PC + 3)
+        assert!(ctrl.temporary_breakpoint.is_some());
+        let temp_bp = ctrl.temporary_breakpoint.as_ref().unwrap();
+        assert_eq!(temp_bp.pc, 0x0003);
+    }
+
+    #[test]
+    fn test_step_over_on_rst_sets_temporary_breakpoint() {
+        let mut ctrl = default_controller();
+
+        // Create ROM with RST instruction
+        let mut rom = vec![0u8; 0x8000];
+        rom[0x0000] = 0xC7; // RST $00
+        rom[0x0001] = 0x00; // next instruction
+        // Cartridge header
+        rom[0x0147] = 0x00;
+        rom[0x0148] = 0x00;
+        rom[0x0149] = 0x00;
+        let chk = rom[0x0134..=0x014C]
+            .iter()
+            .fold(0u8, |acc, &b| acc.wrapping_sub(b).wrapping_sub(1));
+        rom[0x014D] = chk;
+
+        let cart = load_cartridge(&rom).expect("valid ROM");
+        let bus = DmgBus::new(cart, DmgModel::DmgB);
+        let mut gb = Gb::new(bus);
+
+        gb.cpu.bus.write(0xFF50, 0x01);
+        gb.cpu.regs.pc = 0x0000;
+
+        ctrl.enter_debugger();
+        ctrl.step_over(&mut gb);
+
+        // Should have set temporary breakpoint at return address (PC + 1)
+        assert!(ctrl.temporary_breakpoint.is_some());
+        let temp_bp = ctrl.temporary_breakpoint.as_ref().unwrap();
+        assert_eq!(temp_bp.pc, 0x0001);
+    }
+
+    // ── UI Action tests ────────────────────────────────────────────────
+
+    #[test]
+    fn test_apply_ui_action_run_to_next_scanline() {
+        let mut ctrl = default_controller();
+        let mut gb = gb_with_nop_loop();
+
+        ctrl.enter_debugger();
+
+        let action = crate::gb::debugging::ui::GbDebuggerUiAction {
+            run_to_next_scanline: true,
+            ..Default::default()
+        };
+
+        ctrl.apply_ui_action(&mut gb, action);
+
+        // Currently run_to_next_scanline is a no-op, so should stay paused
+        assert!(ctrl.is_paused());
+    }
+
+    #[test]
+    fn test_apply_ui_action_run_to_next_frame() {
+        let mut ctrl = default_controller();
+        let mut gb = gb_with_nop_loop();
+
+        ctrl.enter_debugger();
+
+        let action = crate::gb::debugging::ui::GbDebuggerUiAction {
+            run_to_next_frame: true,
+            ..Default::default()
+        };
+
+        ctrl.apply_ui_action(&mut gb, action);
+
+        // Should have set temporary breakpoint for next frame
+        // Note: The temporary breakpoint is stored as PC-based, not frame-based
+        // We just check that a temporary breakpoint was set
+        assert!(ctrl.temporary_breakpoint.is_some());
+        assert!(!ctrl.is_paused()); // Should be running
+    }
+
+    #[test]
+    fn test_apply_ui_action_run_to_vblank() {
+        let mut ctrl = default_controller();
+        let mut gb = gb_with_nop_loop();
+
+        ctrl.enter_debugger();
+
+        let action = crate::gb::debugging::ui::GbDebuggerUiAction {
+            run_to_vblank: true,
+            ..Default::default()
+        };
+
+        ctrl.apply_ui_action(&mut gb, action);
+
+        // Should have set temporary breakpoint for VBlank interrupt
+        assert!(ctrl.temporary_breakpoint.is_some());
+        let temp_bp = ctrl.temporary_breakpoint.as_ref().unwrap();
+        assert_eq!(temp_bp.required_interrupt, Some(GbInterruptKind::VBlank));
+    }
+
+    #[test]
+    fn test_apply_ui_action_add_breakpoint() {
+        let mut ctrl = default_controller();
+        let mut gb = gb_with_nop_loop();
+
+        ctrl.enter_debugger(); // Open debugger
+
+        let action = crate::gb::debugging::ui::GbDebuggerUiAction {
+            add_breakpoint: Some(BreakpointKind::Pc(0xC000)),
+            ..Default::default()
+        };
+
+        ctrl.apply_ui_action(&mut gb, action);
+
+        // Should have added breakpoint
+        assert_eq!(ctrl.breakpoints().len(), 1);
+        assert!(
+            ctrl.breakpoints()
+                .iter()
+                .any(|b| b.kind == BreakpointKind::Pc(0xC000))
+        );
+    }
+
+    #[test]
+    fn test_apply_ui_action_remove_breakpoint() {
+        let mut ctrl = default_controller();
+        let mut gb = gb_with_nop_loop();
+
+        ctrl.enter_debugger(); // Open debugger
+
+        // Add a breakpoint first
+        ctrl.breakpoints_mut().add(BreakpointKind::Pc(0xC000));
+        ctrl.breakpoints_mut().add(BreakpointKind::Cycle(1000));
+
+        let action = crate::gb::debugging::ui::GbDebuggerUiAction {
+            remove_breakpoint: Some(0),
+            ..Default::default()
+        };
+
+        ctrl.apply_ui_action(&mut gb, action);
+
+        // Should have removed first breakpoint
+        assert_eq!(ctrl.breakpoints().len(), 1);
+        assert!(
+            ctrl.breakpoints()
+                .iter()
+                .any(|b| b.kind == BreakpointKind::Cycle(1000))
+        );
+    }
+
+    #[test]
+    fn test_apply_ui_action_enable_disable_breakpoint() {
+        let mut ctrl = default_controller();
+        let mut gb = gb_with_nop_loop();
+
+        ctrl.enter_debugger(); // Open debugger
+
+        // Add a breakpoint
+        ctrl.breakpoints_mut().add(BreakpointKind::Pc(0xC000));
+        assert!(ctrl.breakpoints().iter().next().unwrap().enabled);
+
+        // Disable it
+        let action = crate::gb::debugging::ui::GbDebuggerUiAction {
+            disable_breakpoint: Some(0),
+            ..Default::default()
+        };
+        ctrl.apply_ui_action(&mut gb, action);
+
+        // Should have disabled breakpoint
+        assert!(!ctrl.breakpoints().iter().next().unwrap().enabled);
+
+        // Enable it again
+        let action = crate::gb::debugging::ui::GbDebuggerUiAction {
+            enable_breakpoint: Some(0),
+            ..Default::default()
+        };
+        ctrl.apply_ui_action(&mut gb, action);
+
+        // Should be enabled again
+        assert!(ctrl.breakpoints().iter().next().unwrap().enabled);
+    }
+
     // ── View state tests ───────────────────────────────────────────────
 
     #[test]
