@@ -197,7 +197,6 @@ impl GbDebuggerController {
 
         let target_frame = gb.cpu.bus.ppu().frame_count() + 1;
         self.breakpoints.add(BreakpointKind::Frame(target_frame));
-        self.set_temporary_breakpoint(gb.cpu.regs.pc);
     }
 
     /// Run until next scanline.
@@ -842,11 +841,15 @@ mod tests {
 
         ctrl.apply_ui_action(&mut gb, action);
 
-        // Should have set temporary breakpoint for next frame
-        // Note: The temporary breakpoint is stored as PC-based, not frame-based
-        // We just check that a temporary breakpoint was set
-        assert!(ctrl.temporary_breakpoint.is_some());
-        assert!(!ctrl.is_paused()); // Should be running
+        // Should have added a Frame breakpoint (not a temporary PC breakpoint)
+        assert!(
+            ctrl.breakpoints()
+                .iter()
+                .any(|bp| matches!(bp.kind, BreakpointKind::Frame(_))),
+            "should have added Frame breakpoint"
+        );
+        assert!(!ctrl.is_paused(), "should be running");
+        assert!(!ctrl.is_debugger_open(), "debugger should be closed");
     }
 
     #[test]
