@@ -1019,7 +1019,11 @@ mod tests {
         let mut state = gb.save_state_bytes().unwrap();
         // Corrupt the version field in the JSON
         let json_str = String::from_utf8(state).unwrap();
-        let corrupted = json_str.replacen("\"version\":1", "\"version\":9999", 1);
+        let corrupted = json_str.replacen(
+            &format!("\"version\":{}", GB_SAVESTATE_VERSION),
+            "\"version\":9999",
+            1,
+        );
         state = corrupted.into_bytes();
         let result = gb.load_state_bytes(&state);
         assert!(result.is_err());
