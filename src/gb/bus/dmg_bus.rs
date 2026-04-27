@@ -346,10 +346,12 @@ impl DmgBus {
     /// Capture the full bus state for serialization.
     pub fn capture_bus_state(&self) -> crate::gb::console::save_state::BusState {
         use crate::gb::console::save_state::{BusState, GbBusType};
+        let mut wram_padded = [0u8; 0x8000];
+        wram_padded[..0x2000].copy_from_slice(&self.wram);
         BusState {
             bus_type: GbBusType::Dmg,
             ppu: self.ppu.clone(),
-            wram: self.wram,
+            wram: wram_padded,
             hram: self.hram,
             timer: self.timer.clone(),
             joypad: self.joypad.clone(),
@@ -361,6 +363,7 @@ impl DmgBus {
             dma_position: self.dma_position,
             dma_oam_blocked: self.dma_oam_blocked,
             hdma: None,
+            svbk: None,
             boot_rom_active: Some(self.boot_rom_active),
             sb: Some(self.sb),
             sc: Some(self.sc),
@@ -386,7 +389,7 @@ impl DmgBus {
             ));
         }
         self.ppu = state.ppu.clone();
-        self.wram = state.wram;
+        self.wram.copy_from_slice(&state.wram[..0x2000]);
         self.hram = state.hram;
         self.timer = state.timer.clone();
         self.joypad = state.joypad.clone();

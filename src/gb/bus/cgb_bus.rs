@@ -17,8 +17,9 @@ use crate::gb::timer::Timer;
 /// - CGB-mode PPU (`Ppu::new_cgb()`): VRAM bank 1, color palette RAM.
 /// - `$FF4F`, `$FF68`–`$FF6B`, `$FF6C` route to CGB PPU helpers.
 /// - `$FF6C` OPRI: object priority mode register.
-/// - Double-speed, WRAM banking are **not** implemented (not required for
-///   cgb-acid2).
+/// - WRAM banking (`$FF70` / SVBK): 8 × 4 KB banks; bank 0 at `$C000–$CFFF`,
+///   switchable banks 1–7 at `$D000–$DFFF`.
+/// - Double-speed mode is **not** implemented.
 ///
 /// HDMA ($FF51–$FF55) supports both GDMA (immediate bulk transfer) and
 /// HDMA (HBlank DMA: 16 bytes per HBlank, synchronized with PPU Mode 3→0).
@@ -27,7 +28,8 @@ use crate::gb::timer::Timer;
 /// - `$0000–$7FFF`: Cartridge ROM
 /// - `$8000–$9FFF`: VRAM (bank-switched in CGB mode via `$FF4F`)
 /// - `$A000–$BFFF`: Cartridge RAM
-/// - `$C000–$DFFF`: WRAM (single bank)
+/// - `$C000–$CFFF`: WRAM bank 0 (fixed)
+/// - `$D000–$DFFF`: WRAM banks 1–7 (switchable via `$FF70`)
 /// - `$E000–$FDFF`: Echo RAM
 /// - `$FE00–$FE9F`: OAM
 /// - `$FF40–$FF4B`: PPU registers (same as DMG)
@@ -39,7 +41,7 @@ use crate::gb::timer::Timer;
 pub struct CgbBus {
     cart: Box<dyn GbCartridge>,
     pub ppu: Ppu,
-    wram: [u8; 0x2000],
+    wram: [[u8; 0x1000]; 8],
     hram: [u8; 0x7F],
     timer: Timer,
     pub joypad: Joypad,
@@ -56,6 +58,8 @@ pub struct CgbBus {
     dma_oam_blocked: bool,
     /// CGB VRAM DMA (HDMA/GDMA) state for registers $FF51–$FF55.
     hdma: HdmaState,
+    /// SVBK register ($FF70): selects the active WRAM bank for $D000–$DFFF.
+    svbk: u8,
 }
 
 impl CgbBus {
@@ -69,7 +73,7 @@ impl CgbBus {
         let mut bus = Self {
             cart,
             ppu: Ppu::new_cgb(),
-            wram: [0u8; 0x2000],
+            wram: [[0u8; 0x1000]; 8],
             hram: [0u8; 0x7F],
             timer: Timer::new(),
             joypad: Joypad::new(),
@@ -81,10 +85,19 @@ impl CgbBus {
             dma_position: 0,
             dma_oam_blocked: false,
             hdma: HdmaState::new(),
+            svbk: 0,
         };
         // Start with LCD disabled; the cartridge code will enable it.
         bus.ppu.write_register(0xFF40, 0x00);
         bus
+    }
+
+    /// Returns the effective WRAM bank index for `$D000–$DFFF`.
+    ///
+    /// Writing 0 to SVBK selects bank 1, not bank 0.
+    fn effective_wram_bank(&self) -> usize {
+        let bank = (self.svbk & 0x07) as usize;
+        if bank == 0 { 1 } else { bank }
     }
 
     /// Advance system timers, PPU, and APU by `m_cycles` M-cycles.
@@ -198,8 +211,12 @@ impl CgbBus {
                 }
             }
             0xA000..=0xBFFF => self.cart.read(addr),
-            0xC000..=0xDFFF => self.wram[(addr - 0xC000) as usize],
-            0xE000..=0xFFFF => self.wram[(addr - 0xE000) as usize],
+            0xC000..=0xCFFF => self.wram[0][(addr - 0xC000) as usize],
+            0xD000..=0xDFFF => self.wram[self.effective_wram_bank()][(addr - 0xD000) as usize],
+            0xE000..=0xEFFF => self.wram[0][(addr - 0xE000) as usize],
+            // OAM DMA uses the external bus where the full $F000–$FFFF range
+            // mirrors the current WRAM bank (unlike normal reads which stop at $FDFF).
+            0xF000..=0xFFFF => self.wram[self.effective_wram_bank()][(addr - 0xF000) as usize],
         }
     }
 
@@ -258,7 +275,7 @@ impl CgbBus {
         self.joypad = Joypad::new();
         self.apu = Apu::new(self.cart.is_cgb());
         self.apu.set_sample_rate(apu_rate);
-        self.wram = [0u8; 0x2000];
+        self.wram = [[0u8; 0x1000]; 8];
         self.hram = [0u8; 0x7F];
         self.if_reg = 0;
         self.ie_reg = 0;
@@ -267,6 +284,7 @@ impl CgbBus {
         self.dma_position = 0;
         self.dma_oam_blocked = false;
         self.hdma = HdmaState::new();
+        self.svbk = 0;
     }
 
     // ── Save-state capture / restore ───────────────────────────────────────
@@ -274,10 +292,15 @@ impl CgbBus {
     /// Capture the full bus state for serialization.
     pub fn capture_bus_state(&self) -> crate::gb::console::save_state::BusState {
         use crate::gb::console::save_state::{BusState, GbBusType};
+        let mut wram_flat = [0u8; 0x8000];
+        for (bank, bank_data) in self.wram.iter().enumerate() {
+            let offset = bank * 0x1000;
+            wram_flat[offset..offset + 0x1000].copy_from_slice(bank_data);
+        }
         BusState {
             bus_type: GbBusType::Cgb,
             ppu: self.ppu.clone(),
-            wram: self.wram,
+            wram: wram_flat,
             hram: self.hram,
             timer: self.timer.clone(),
             joypad: self.joypad.clone(),
@@ -289,6 +312,7 @@ impl CgbBus {
             dma_position: self.dma_position,
             dma_oam_blocked: self.dma_oam_blocked,
             hdma: Some(self.hdma.clone()),
+            svbk: Some(self.svbk),
             boot_rom_active: None,
             sb: None,
             sc: None,
@@ -314,7 +338,10 @@ impl CgbBus {
             ));
         }
         self.ppu = state.ppu.clone();
-        self.wram = state.wram;
+        for (bank, bank_data) in self.wram.iter_mut().enumerate() {
+            let offset = bank * 0x1000;
+            bank_data.copy_from_slice(&state.wram[offset..offset + 0x1000]);
+        }
         self.hram = state.hram;
         self.timer = state.timer.clone();
         self.joypad = state.joypad.clone();
@@ -326,6 +353,7 @@ impl CgbBus {
         self.dma_position = state.dma_position;
         self.dma_oam_blocked = state.dma_oam_blocked;
         self.hdma = state.hdma.clone().unwrap_or_default();
+        self.svbk = state.svbk.unwrap_or(0);
         Ok(())
     }
 
@@ -361,8 +389,10 @@ impl GbBus for CgbBus {
             0x0000..=0x7FFF => self.cart.read(addr),
             0x8000..=0x9FFF => self.ppu.read_vram(addr),
             0xA000..=0xBFFF => self.cart.read(addr),
-            0xC000..=0xDFFF => self.wram[(addr - 0xC000) as usize],
-            0xE000..=0xFDFF => self.wram[(addr - 0xE000) as usize],
+            0xC000..=0xCFFF => self.wram[0][(addr - 0xC000) as usize],
+            0xD000..=0xDFFF => self.wram[self.effective_wram_bank()][(addr - 0xD000) as usize],
+            0xE000..=0xEFFF => self.wram[0][(addr - 0xE000) as usize],
+            0xF000..=0xFDFF => self.wram[self.effective_wram_bank()][(addr - 0xF000) as usize],
             0xFE00..=0xFE9F => {
                 if self.dma_oam_blocked {
                     return 0xFF;
@@ -383,6 +413,7 @@ impl GbBus for CgbBus {
             0xFF55 => self.hdma.read_control(),
             // CGB-specific registers
             0xFF4F | 0xFF68..=0xFF6C => self.ppu.read_cgb_register(addr).unwrap_or(0xFF),
+            0xFF70 => self.svbk | 0xF8,
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
             0xFFFF => self.ie_reg,
             _ => {
@@ -397,8 +428,14 @@ impl GbBus for CgbBus {
             0x0000..=0x7FFF => self.cart.write(addr, val),
             0x8000..=0x9FFF => self.ppu.write_vram(addr, val),
             0xA000..=0xBFFF => self.cart.write(addr, val),
-            0xC000..=0xDFFF => self.wram[(addr - 0xC000) as usize] = val,
-            0xE000..=0xFDFF => self.wram[(addr - 0xE000) as usize] = val,
+            0xC000..=0xCFFF => self.wram[0][(addr - 0xC000) as usize] = val,
+            0xD000..=0xDFFF => {
+                self.wram[self.effective_wram_bank()][(addr - 0xD000) as usize] = val
+            }
+            0xE000..=0xEFFF => self.wram[0][(addr - 0xE000) as usize] = val,
+            0xF000..=0xFDFF => {
+                self.wram[self.effective_wram_bank()][(addr - 0xF000) as usize] = val
+            }
             0xFE00..=0xFE9F => {
                 if !self.dma_oam_blocked {
                     self.ppu.write_oam(addr, val);
@@ -435,6 +472,7 @@ impl GbBus for CgbBus {
                 self.ppu.write_cgb_register(addr, val);
             }
             0xFF50 => {} // No boot ROM to unmap on CGB bus
+            0xFF70 => self.svbk = val & 0x07,
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize] = val,
             0xFFFF => self.ie_reg = val,
             _ => {
@@ -463,8 +501,10 @@ impl GbBus for CgbBus {
             0x0000..=0x7FFF => self.cart.read(addr),
             0x8000..=0x9FFF => self.ppu.read_vram(addr),
             0xA000..=0xBFFF => self.cart.read(addr),
-            0xC000..=0xDFFF => self.wram[(addr - 0xC000) as usize],
-            0xE000..=0xFDFF => self.wram[(addr - 0xE000) as usize],
+            0xC000..=0xCFFF => self.wram[0][(addr - 0xC000) as usize],
+            0xD000..=0xDFFF => self.wram[self.effective_wram_bank()][(addr - 0xD000) as usize],
+            0xE000..=0xEFFF => self.wram[0][(addr - 0xE000) as usize],
+            0xF000..=0xFDFF => self.wram[self.effective_wram_bank()][(addr - 0xF000) as usize],
             0xFE00..=0xFE9F => {
                 if self.dma_oam_blocked {
                     return 0xFF;
@@ -488,6 +528,7 @@ impl GbBus for CgbBus {
             0xFF55 => self.hdma.read_control(),
             // CGB-specific registers
             0xFF4F | 0xFF68..=0xFF6C => self.ppu.read_cgb_register(addr).unwrap_or(0xFF),
+            0xFF70 => self.svbk | 0xF8,
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
             0xFFFF => self.ie_reg,
             _ => {
@@ -752,5 +793,161 @@ mod tests {
         bus.write(0xFF55, 0x83); // HDMA, 4 blocks
         // Then: debugger read matches normal read
         assert_eq!(bus.read_for_debugger(0xFF55), bus.read(0xFF55));
+    }
+
+    // ── SVBK / WRAM banking ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_svbk_default_value_after_init() {
+        // Given: freshly created CGB bus
+        let mut bus = make_bus();
+        // Then: $FF70 reads $F8 (upper 5 bits set, lower 3 = 0)
+        assert_eq!(bus.read(0xFF70), 0xF8);
+    }
+
+    #[test]
+    fn test_svbk_register_read_write() {
+        // Given: CGB bus
+        let mut bus = make_bus();
+        // When: write $03 to SVBK
+        bus.write(0xFF70, 0x03);
+        // Then: read returns $FB ($03 | $F8)
+        assert_eq!(bus.read(0xFF70), 0xFB);
+    }
+
+    #[test]
+    fn test_svbk_write_zero_selects_bank_1() {
+        // Given: CGB bus with SVBK set to 3
+        let mut bus = make_bus();
+        bus.write(0xFF70, 0x03);
+        // When: write 0 to SVBK
+        bus.write(0xFF70, 0x00);
+        // Then: read returns $F8 (raw value 0, upper bits set)
+        assert_eq!(bus.read(0xFF70), 0xF8);
+        // And: writing distinct data to $D000 with SVBK=0 and SVBK=1 accesses
+        //      the same bank (both map to bank 1).
+        bus.write(0xFF70, 0x00);
+        bus.write(0xD000, 0xAA);
+        bus.write(0xFF70, 0x01);
+        assert_eq!(bus.read(0xD000), 0xAA);
+    }
+
+    #[test]
+    fn test_svbk_only_lower_3_bits_used() {
+        // Given: CGB bus
+        let mut bus = make_bus();
+        // When: write $F8 (upper bits set, lower 3 clear → effective raw = 0)
+        bus.write(0xFF70, 0xF8);
+        // Then: read returns $F8 (raw 0x00 | 0xF8)
+        assert_eq!(bus.read(0xFF70), 0xF8);
+        // And: write $FF (all bits set → effective raw = 7)
+        bus.write(0xFF70, 0xFF);
+        // Then: read returns $FF ($07 | $F8)
+        assert_eq!(bus.read(0xFF70), 0xFF);
+    }
+
+    #[test]
+    fn test_wram_c000_cfff_always_bank_0() {
+        // Given: CGB bus with data written to $C000 in default bank config
+        let mut bus = make_bus();
+        bus.write(0xC000, 0x42);
+        bus.write(0xCFFF, 0x99);
+        // When: switch to various banks
+        for bank in 1..=7u8 {
+            bus.write(0xFF70, bank);
+            // Then: $C000-$CFFF always reads the same data (bank 0)
+            assert_eq!(
+                bus.read(0xC000),
+                0x42,
+                "C000 should be bank 0 regardless of SVBK={}",
+                bank
+            );
+            assert_eq!(
+                bus.read(0xCFFF),
+                0x99,
+                "CFFF should be bank 0 regardless of SVBK={}",
+                bank
+            );
+        }
+    }
+
+    #[test]
+    fn test_wram_d000_dfff_uses_selected_bank() {
+        // Given: CGB bus
+        let mut bus = make_bus();
+        // When: select bank 2, write $42 to $D000
+        bus.write(0xFF70, 0x02);
+        bus.write(0xD000, 0x42);
+        // And: select bank 3, write $99 to $D000
+        bus.write(0xFF70, 0x03);
+        bus.write(0xD000, 0x99);
+        // Then: switching back to bank 2, $D000 reads $42
+        bus.write(0xFF70, 0x02);
+        assert_eq!(bus.read(0xD000), 0x42);
+        // And: switching to bank 3, $D000 reads $99
+        bus.write(0xFF70, 0x03);
+        assert_eq!(bus.read(0xD000), 0x99);
+    }
+
+    #[test]
+    fn test_wram_bank_data_isolation() {
+        // Given: CGB bus with distinct data in each switchable bank
+        let mut bus = make_bus();
+        for bank in 1..=7u8 {
+            bus.write(0xFF70, bank);
+            bus.write(0xD000, bank * 10);
+            bus.write(0xDFFF, bank * 10 + 1);
+        }
+        // Then: reading each bank returns the correct values
+        for bank in 1..=7u8 {
+            bus.write(0xFF70, bank);
+            assert_eq!(bus.read(0xD000), bank * 10, "bank {} D000 mismatch", bank);
+            assert_eq!(
+                bus.read(0xDFFF),
+                bank * 10 + 1,
+                "bank {} DFFF mismatch",
+                bank
+            );
+        }
+    }
+
+    #[test]
+    fn test_echo_ram_mirrors_wram_banking() {
+        // Given: CGB bus with different data in banks 2 and 3 at $D000
+        let mut bus = make_bus();
+        bus.write(0xFF70, 0x02);
+        bus.write(0xD000, 0xBE);
+        bus.write(0xFF70, 0x03);
+        bus.write(0xD000, 0xEF);
+        // When: switch back to bank 2
+        bus.write(0xFF70, 0x02);
+        // Then: echo RAM at $F000 mirrors the selected bank (bank 2)
+        assert_eq!(bus.read(0xF000), 0xBE);
+        // And: switching to bank 3, echo RAM reflects bank 3
+        bus.write(0xFF70, 0x03);
+        assert_eq!(bus.read(0xF000), 0xEF);
+    }
+
+    #[test]
+    fn test_echo_ram_c000_mirror_always_bank_0() {
+        // Given: CGB bus with data at $C000
+        let mut bus = make_bus();
+        bus.write(0xC000, 0x55);
+        // When: switch to bank 5
+        bus.write(0xFF70, 0x05);
+        // Then: echo RAM at $E000 reads bank 0 data
+        assert_eq!(bus.read(0xE000), 0x55);
+    }
+
+    #[test]
+    fn test_svbk_reset_restores_default() {
+        // Given: CGB bus with SVBK set to 5
+        let mut bus = make_bus();
+        bus.write(0xFF70, 0x05);
+        assert_eq!(bus.read(0xFF70), 0xFD); // verify write took effect
+        // When: reset
+        bus.reset();
+        // Then: SVBK is back to 0
+        assert_eq!(bus.read(0xFF70), 0xF8);
     }
 }
