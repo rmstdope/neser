@@ -597,7 +597,10 @@ impl GbBus for DmgBus {
         // Debugger reads mirror normal read() address decoding (including register
         // readback behavior like `if_reg | 0xE0` and `sc | 0x7E`) but avoid side
         // effects such as OAM corruption or serial transfer state changes.
-        // Boot ROM check is skipped — debugger should see actual cartridge ROM.
+        // Boot ROM is checked — debugger should see what CPU will actually execute.
+        if self.boot_rom_active && addr <= 0x00FF {
+            return self.boot_rom[addr as usize];
+        }
         match addr {
             0x0000..=0x7FFF => self.cart.read(addr),
             0x8000..=0x9FFF => self.ppu.read_vram(addr),
