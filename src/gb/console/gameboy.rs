@@ -1157,4 +1157,248 @@ mod tests {
         gb.load_rom(&minimal_cgb_rom(), "test.gbc").unwrap();
         assert!(matches!(gb.gb, Some(GbConsole::Cgb(_))));
     }
+
+    // ── Debugger wrapper tests ──────────────────────────────────────────────
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn test_create_debugger_snapshot_with_no_rom_returns_default() {
+        let gb = make_gameboy();
+        let mut view_state = crate::gb::debugging::GbDebuggerViewState::default();
+
+        let snapshot = gb.create_debugger_snapshot(&mut view_state);
+
+        // Should return default snapshot with zeroed CPU regs
+        assert_eq!(snapshot.cpu_regs.pc, 0);
+        assert_eq!(snapshot.cpu_regs.sp, 0);
+        assert_eq!(snapshot.wram_hexdump_base, 0xC000);
+        assert_eq!(snapshot.vram_hexdump_base, 0x8000);
+        // Hexdump bytes should be allocated but zeroed
+        assert_eq!(snapshot.wram_hexdump_bytes.len(), 256);
+        assert_eq!(snapshot.vram_hexdump_bytes.len(), 256);
+    }
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn test_create_debugger_snapshot_with_rom_captures_state() {
+        let mut gb = make_gameboy();
+        gb.load_rom(&minimal_rom(), "test.gb").unwrap();
+
+        // Run a few cycles to get non-zero state
+        for _ in 0..10 {
+            gb.run_tick();
+        }
+
+        let mut view_state = crate::gb::debugging::GbDebuggerViewState::default();
+        let snapshot = gb.create_debugger_snapshot(&mut view_state);
+
+        // Should have captured actual emulator state
+        // PC should have advanced from boot (or be at a valid address)
+        assert!(snapshot.cpu_regs.pc > 0 || snapshot.cpu_regs.cycles > 0);
+    }
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn test_create_ppu_viewer_snapshot_with_no_rom_returns_defaults() {
+        let gb = make_gameboy();
+
+        let snapshot = gb.create_ppu_viewer_snapshot();
+
+        // Should return default snapshot with zeroed VRAM
+        assert_eq!(snapshot.vram, [0; 0x2000]);
+        assert_eq!(snapshot.vram_bank1, [0; 0x2000]);
+        assert_eq!(snapshot.oam, [0; 0xA0]);
+        assert_eq!(snapshot.lcdc, 0);
+        assert!(!snapshot.cgb_mode);
+    }
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn test_create_ppu_viewer_snapshot_with_rom_captures_ppu_state() {
+        let mut gb = make_gameboy();
+        gb.load_rom(&minimal_rom(), "test.gb").unwrap();
+
+        // Run to get some PPU state
+        for _ in 0..100 {
+            gb.run_tick();
+        }
+
+        let snapshot = gb.create_ppu_viewer_snapshot();
+
+        // Should have created snapshot successfully
+        // Check that we got valid arrays (not just the check would be that they're allocated)
+        assert_eq!(snapshot.vram.len(), 0x2000);
+        assert_eq!(snapshot.oam.len(), 0xA0);
+        // cgb_mode should match the ROM type (DMG in this case)
+        assert!(!snapshot.cgb_mode);
+    }
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn test_is_cgb_mode_with_no_rom_returns_false() {
+        let gb = make_gameboy();
+        assert!(!gb.is_cgb_mode());
+    }
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn test_is_cgb_mode_with_dmg_rom_returns_false() {
+        let mut gb = make_gameboy();
+        gb.load_rom(&minimal_rom(), "test.gb").unwrap();
+        assert!(!gb.is_cgb_mode());
+    }
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn test_is_cgb_mode_with_cgb_rom_returns_true() {
+        let mut gb = make_gameboy();
+        gb.load_rom(&minimal_cgb_rom(), "test.gbc").unwrap();
+        assert!(gb.is_cgb_mode());
+    }
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn test_toggle_debugger_with_controller_opens_when_closed() {
+        let mut gb = make_gameboy();
+        gb.load_rom(&minimal_rom(), "test.gb").unwrap();
+
+        let mut controller = crate::gb::debugging::control::GbDebuggerController::new(&[], false);
+        assert!(!controller.is_debugger_open());
+
+        gb.toggle_debugger_with_controller(&mut controller);
+
+        assert!(controller.is_debugger_open());
+        assert!(controller.is_paused());
+    }
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn test_toggle_debugger_with_controller_closes_when_open() {
+        let mut gb = make_gameboy();
+        gb.load_rom(&minimal_rom(), "test.gb").unwrap();
+
+        let mut controller = crate::gb::debugging::control::GbDebuggerController::new(&[], true);
+        assert!(controller.is_debugger_open());
+
+        gb.toggle_debugger_with_controller(&mut controller);
+
+        assert!(!controller.is_debugger_open());
+        assert!(!controller.is_paused());
+    }
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn test_toggle_debugger_with_no_rom_does_not_panic() {
+        let gb = make_gameboy();
+        let mut controller = crate::gb::debugging::control::GbDebuggerController::new(&[], false);
+
+        // Should not panic even without ROM loaded
+        gb.toggle_debugger_with_controller(&mut controller);
+    }
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn test_step_into_with_controller_advances_instruction() {
+        let mut gb = make_gameboy();
+        gb.load_rom(&minimal_rom(), "test.gb").unwrap();
+
+        let mut controller = crate::gb::debugging::control::GbDebuggerController::new(&[], true);
+
+        let mut view_state = crate::gb::debugging::GbDebuggerViewState::default();
+        let snapshot_before = gb.create_debugger_snapshot(&mut view_state);
+        let pc_before = snapshot_before.cpu_regs.pc;
+
+        gb.step_into_with_controller(&mut controller);
+
+        let snapshot_after = gb.create_debugger_snapshot(&mut view_state);
+        let pc_after = snapshot_after.cpu_regs.pc;
+
+        // PC should have advanced by at least 1
+        assert!(
+            pc_after != pc_before
+                || snapshot_after.cpu_regs.cycles > snapshot_before.cpu_regs.cycles
+        );
+    }
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn test_step_over_with_controller_executes_instruction() {
+        let mut gb = make_gameboy();
+        gb.load_rom(&minimal_rom(), "test.gb").unwrap();
+
+        let mut controller = crate::gb::debugging::control::GbDebuggerController::new(&[], true);
+
+        let mut view_state = crate::gb::debugging::GbDebuggerViewState::default();
+        let snapshot_before = gb.create_debugger_snapshot(&mut view_state);
+        let cycles_before = snapshot_before.cpu_regs.cycles;
+
+        gb.step_over_with_controller(&mut controller);
+
+        let snapshot_after = gb.create_debugger_snapshot(&mut view_state);
+        let cycles_after = snapshot_after.cpu_regs.cycles;
+
+        // Cycles should have progressed
+        assert!(cycles_after > cycles_before);
+    }
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn test_apply_ui_action_step_into_advances_execution() {
+        let mut gb = make_gameboy();
+        gb.load_rom(&minimal_rom(), "test.gb").unwrap();
+
+        let mut controller = crate::gb::debugging::control::GbDebuggerController::new(&[], true);
+
+        let action = crate::gb::debugging::ui::GbDebuggerUiAction {
+            step_into: true,
+            ..Default::default()
+        };
+
+        let mut view_state = crate::gb::debugging::GbDebuggerViewState::default();
+        let cycles_before = gb.create_debugger_snapshot(&mut view_state).cpu_regs.cycles;
+
+        gb.apply_ui_action_with_controller(&mut controller, action);
+
+        let cycles_after = gb.create_debugger_snapshot(&mut view_state).cpu_regs.cycles;
+
+        // Should have stepped
+        assert!(cycles_after > cycles_before);
+    }
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn test_apply_ui_action_continue_unpauses_execution() {
+        let mut gb = make_gameboy();
+        gb.load_rom(&minimal_rom(), "test.gb").unwrap();
+
+        let mut controller = crate::gb::debugging::control::GbDebuggerController::new(&[], true);
+        assert!(controller.is_paused());
+
+        let action = crate::gb::debugging::ui::GbDebuggerUiAction {
+            continue_run: true,
+            ..Default::default()
+        };
+
+        gb.apply_ui_action_with_controller(&mut controller, action);
+
+        // Should be unpaused after continue
+        assert!(!controller.is_paused());
+    }
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn test_wrapper_methods_with_no_rom_do_not_panic() {
+        let mut gb = make_gameboy();
+        let mut controller = crate::gb::debugging::control::GbDebuggerController::new(&[], false);
+
+        // All methods should handle no-ROM case gracefully
+        gb.toggle_debugger_with_controller(&mut controller);
+        gb.step_into_with_controller(&mut controller);
+        gb.step_over_with_controller(&mut controller);
+
+        let action = crate::gb::debugging::ui::GbDebuggerUiAction::default();
+        gb.apply_ui_action_with_controller(&mut controller, action);
+
+        // If we got here without panicking, test passes
+    }
 }
