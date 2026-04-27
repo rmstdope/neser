@@ -429,6 +429,14 @@ impl Timing {
         self.frame_ready = false;
     }
 
+    /// Force the frame-ready flag to `true`.
+    ///
+    /// Used to preserve a pending frame signal across LCD disable→enable
+    /// transitions that reset the timing state.
+    pub fn set_frame_ready(&mut self) {
+        self.frame_ready = true;
+    }
+
     /// Returns the total number of completed frames since emulation started.
     ///
     /// This counter increments when LY wraps from 153 to 0 (frame boundary).

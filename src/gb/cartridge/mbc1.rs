@@ -48,10 +48,12 @@ pub struct Mbc1 {
     ram_enabled: bool,
     /// True when the ROM is an MBC1M multi-game compilation cart.
     multicart: bool,
+    /// True when the cartridge has battery-backed RAM.
+    battery: bool,
 }
 
 impl Mbc1 {
-    pub fn new(rom: Vec<u8>, ram: Vec<u8>) -> Self {
+    pub fn new(rom: Vec<u8>, ram: Vec<u8>, battery: bool) -> Self {
         let multicart = is_multicart_rom(&rom);
         Self {
             multicart,
@@ -61,6 +63,7 @@ impl Mbc1 {
             secondary_bank: 0,
             mode: false,
             ram_enabled: false,
+            battery,
         }
     }
 
@@ -187,6 +190,10 @@ impl GbCartridge for Mbc1 {
         }
     }
 
+    fn has_battery(&self) -> bool {
+        self.battery
+    }
+
     fn ram_snapshot(&self) -> Vec<u8> {
         self.ram.clone()
     }
@@ -239,7 +246,7 @@ mod tests {
     #[test]
     fn test_mbc1_reads_bank0_data_from_low_region_initially() {
         // Given: 4-bank ROM (banks 0–3 filled with 0x00–0x03)
-        let cart = Mbc1::new(make_mbc1_rom(4), make_mbc1_ram(0));
+        let cart = Mbc1::new(make_mbc1_rom(4), make_mbc1_ram(0), false);
         // When: reading from the $0000–$3FFF window (bank 0)
         // Then: returns bank 0 fill byte 0x00
         assert_eq!(cart.read(0x0000), 0x00);
@@ -249,7 +256,7 @@ mod tests {
     #[test]
     fn test_mbc1_reads_bank1_data_from_high_region_initially() {
         // Given: 4-bank ROM; initial bank register = 0 → effective = 1
-        let cart = Mbc1::new(make_mbc1_rom(4), make_mbc1_ram(0));
+        let cart = Mbc1::new(make_mbc1_rom(4), make_mbc1_ram(0), false);
         // When: reading from the $4000–$7FFF window
         // Then: returns bank 1 fill byte 0x01
         assert_eq!(cart.read(0x4000), 0x01);
@@ -259,7 +266,7 @@ mod tests {
     #[test]
     fn test_mbc1_rom_bank_switch_selects_correct_bank() {
         // Given: 4-bank ROM; select bank 2 by writing to $2000
-        let mut cart = Mbc1::new(make_mbc1_rom(4), make_mbc1_ram(0));
+        let mut cart = Mbc1::new(make_mbc1_rom(4), make_mbc1_ram(0), false);
         // When: writing 0x02 to $2000 and reading from high region
         cart.write(0x2000, 0x02);
         // Then: $4000 returns bank 2 fill byte 0x02
@@ -269,7 +276,7 @@ mod tests {
     #[test]
     fn test_mbc1_writing_zero_to_bank_reg_selects_bank_1() {
         // Given: 4-bank ROM; write 0x00 to $2000 (hardware corrects to bank 1)
-        let mut cart = Mbc1::new(make_mbc1_rom(4), make_mbc1_ram(0));
+        let mut cart = Mbc1::new(make_mbc1_rom(4), make_mbc1_ram(0), false);
         // When: writing 0x00
         cart.write(0x2000, 0x00);
         // Then: bank 1 (fill byte 0x01) appears at $4000
@@ -280,7 +287,7 @@ mod tests {
     fn test_mbc1_secondary_bank_shifts_to_upper_rom_bits_in_mode0() {
         // Given: 64-bank ROM (1 MB); secondary_bank = 1; rom_bank_reg = 0 → 1
         // Then: effective bank = (1 << 5) | 1 = 33; bank 33 fill = 33u8
-        let mut cart = Mbc1::new(make_mbc1_rom(64), make_mbc1_ram(0));
+        let mut cart = Mbc1::new(make_mbc1_rom(64), make_mbc1_ram(0), false);
         cart.write(0x4000, 0x01); // secondary_bank = 1
         cart.write(0x2000, 0x00); // rom_bank_reg = 0 → corrected to 1
         assert_eq!(cart.read(0x4000), 33u8);
@@ -290,7 +297,7 @@ mod tests {
     fn test_mbc1_mode1_bank0_region_uses_secondary_bank_offset() {
         // Given: 64-bank ROM; mode 1; secondary_bank = 1
         // Then: $0000–$3FFF shows bank (1 << 5) = 32; fill byte = 32u8
-        let mut cart = Mbc1::new(make_mbc1_rom(64), make_mbc1_ram(0));
+        let mut cart = Mbc1::new(make_mbc1_rom(64), make_mbc1_ram(0), false);
         cart.write(0x6000, 0x01); // mode = 1
         cart.write(0x4000, 0x01); // secondary_bank = 1
         assert_eq!(cart.read(0x0000), 32u8);
@@ -299,7 +306,7 @@ mod tests {
     #[test]
     fn test_mbc1_ram_read_returns_0xff_when_disabled() {
         // Given: cart with 1 RAM bank, RAM disabled (default)
-        let cart = Mbc1::new(make_mbc1_rom(4), make_mbc1_ram(1));
+        let cart = Mbc1::new(make_mbc1_rom(4), make_mbc1_ram(1), false);
         // Then: reads from $A000 return 0xFF
         assert_eq!(cart.read(0xA000), 0xFF);
     }
@@ -307,7 +314,7 @@ mod tests {
     #[test]
     fn test_mbc1_ram_read_write_when_enabled() {
         // Given: cart with 1 RAM bank; enable RAM
-        let mut cart = Mbc1::new(make_mbc1_rom(4), make_mbc1_ram(1));
+        let mut cart = Mbc1::new(make_mbc1_rom(4), make_mbc1_ram(1), false);
         cart.write(0x0000, 0x0A); // Enable RAM
         // When: writing 0x42 to $A000
         cart.write(0xA000, 0x42);
@@ -318,7 +325,7 @@ mod tests {
     #[test]
     fn test_mbc1_ram_bank_switching_in_mode1() {
         // Given: 4 RAM banks, mode 1; write distinct data to banks 0 and 1
-        let mut cart = Mbc1::new(make_mbc1_rom(4), make_mbc1_ram(4));
+        let mut cart = Mbc1::new(make_mbc1_rom(4), make_mbc1_ram(4), false);
         cart.write(0x0000, 0x0A); // Enable RAM
         cart.write(0x6000, 0x01); // Mode 1
 
@@ -380,7 +387,7 @@ mod tests {
         // Given: MBC1M cart; secondary=1, rom_bank=1
         // Then: bank1_index = (1 << 4) | 1 = 17 → fill byte = 17u8
         // (Standard MBC1 would give (1 << 5) | 1 = 33 → fill = 33u8)
-        let mut cart = Mbc1::new(make_mbc1m_rom(), make_mbc1_ram(0));
+        let mut cart = Mbc1::new(make_mbc1m_rom(), make_mbc1_ram(0), false);
         cart.write(0x4000, 0x01); // secondary = 1
         cart.write(0x2000, 0x01); // rom_bank = 1
         assert_eq!(cart.read(0x4000), 17u8);
@@ -391,7 +398,7 @@ mod tests {
         // Given: MBC1M cart; secondary=0, rom_bank_reg=0x11 (17; top bit set)
         // Then: effective bank uses only lower 4 bits → (0 << 4) | 1 = 1 → fill = 1u8
         // (Standard MBC1 would give (0 << 5) | 17 = 17 → fill = 17u8)
-        let mut cart = Mbc1::new(make_mbc1m_rom(), make_mbc1_ram(0));
+        let mut cart = Mbc1::new(make_mbc1m_rom(), make_mbc1_ram(0), false);
         cart.write(0x4000, 0x00); // secondary = 0
         cart.write(0x2000, 0x11); // rom_bank_reg = 0x11 = 17
         assert_eq!(cart.read(0x4000), 1u8);
@@ -402,7 +409,7 @@ mod tests {
         // Given: MBC1M cart; mode=1, secondary=1
         // Then: bank0_index = (1 << 4) = 16 → fill byte = 16u8
         // (Standard MBC1 would give (1 << 5) = 32 → fill = 32u8)
-        let mut cart = Mbc1::new(make_mbc1m_rom(), make_mbc1_ram(0));
+        let mut cart = Mbc1::new(make_mbc1m_rom(), make_mbc1_ram(0), false);
         cart.write(0x6000, 0x01); // mode = 1
         cart.write(0x4000, 0x01); // secondary = 1
         assert_eq!(cart.read(0x0000), 16u8);
@@ -415,7 +422,7 @@ mod tests {
         // Given: 1 RAM bank (8 KB, 64 Kbit); mode 1; data written to bank 0
         // When: secondary register is set to 2 (out of range for 1-bank cart)
         // Then: reads return the same data (secondary masked to bank 0)
-        let mut cart = Mbc1::new(make_mbc1_rom(4), make_mbc1_ram(1));
+        let mut cart = Mbc1::new(make_mbc1_rom(4), make_mbc1_ram(1), false);
         cart.write(0x0000, 0x0A); // enable RAM
         cart.write(0x6000, 0x01); // mode 1
         cart.write(0x4000, 0x00); // secondary = 0 → RAM bank 0

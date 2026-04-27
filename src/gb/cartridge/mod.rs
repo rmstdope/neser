@@ -70,16 +70,26 @@ pub fn load_cartridge(bytes: &[u8]) -> Result<Box<dyn GbCartridge>, RomError> {
         0x00 => Ok(Box::new(Mbc0::new(bytes.to_vec()))),
         0x01..=0x03 => {
             let ram_size = ram_size_from_byte(bytes[0x0149]);
-            Ok(Box::new(Mbc1::new(bytes.to_vec(), vec![0u8; ram_size])))
+            let has_battery = mbc_type == 0x03;
+            Ok(Box::new(Mbc1::new(
+                bytes.to_vec(),
+                vec![0u8; ram_size],
+                has_battery,
+            )))
         }
-        0x05..=0x06 => Ok(Box::new(Mbc2::new(bytes.to_vec()))),
+        0x05..=0x06 => {
+            let has_battery = mbc_type == 0x06;
+            Ok(Box::new(Mbc2::new(bytes.to_vec(), has_battery)))
+        }
         0x19..=0x1E => {
             let ram_size = ram_size_from_byte(bytes[0x0149]);
             let has_rumble = mbc_type >= 0x1C;
+            let has_battery = matches!(mbc_type, 0x1B | 0x1E);
             Ok(Box::new(Mbc5::new(
                 bytes.to_vec(),
                 vec![0u8; ram_size],
                 has_rumble,
+                has_battery,
             )))
         }
         n => Err(RomError::UnsupportedMbc(n)),

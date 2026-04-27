@@ -101,6 +101,27 @@ impl GbConsole {
         }
     }
 
+    fn has_battery(&self) -> bool {
+        match self {
+            Self::Dmg(gb) => gb.cpu.bus.has_battery(),
+            Self::Cgb(gb) => gb.cpu.bus.has_battery(),
+        }
+    }
+
+    fn cart_ram_snapshot(&self) -> Vec<u8> {
+        match self {
+            Self::Dmg(gb) => gb.cpu.bus.cart_ram_snapshot(),
+            Self::Cgb(gb) => gb.cpu.bus.cart_ram_snapshot(),
+        }
+    }
+
+    fn restore_cart_ram(&mut self, data: &[u8]) {
+        match self {
+            Self::Dmg(gb) => gb.cpu.bus.restore_cart_ram(data),
+            Self::Cgb(gb) => gb.cpu.bus.restore_cart_ram(data),
+        }
+    }
+
     fn save_state_bytes(&self) -> Result<Vec<u8>, String> {
         let state = match self {
             Self::Dmg(gb) => GbSaveState {
@@ -210,6 +231,10 @@ impl GameBoy {
             GbConsole::Dmg(Box::new(Gb::new(DmgBus::new(cart, dmg_variant))))
         });
         self.rom_path = Some(PathBuf::from(name));
+
+        // Load battery-backed save RAM from disk if a .sav file exists.
+        self.load_save_ram_from_disk();
+
         Ok(())
     }
 
@@ -328,6 +353,84 @@ impl GameBoy {
     /// if no ROM is loaded.
     pub fn state_path(&self) -> Option<PathBuf> {
         self.rom_path.as_ref().map(|p| p.with_extension("state"))
+    }
+
+    /// Returns `true` when the loaded cartridge has battery-backed RAM.
+    pub fn has_battery(&self) -> bool {
+        self.gb.as_ref().is_some_and(|gb| gb.has_battery())
+    }
+
+    /// Snapshot cartridge RAM contents (battery-backed SRAM).
+    pub fn cart_ram_snapshot(&self) -> Vec<u8> {
+        self.gb
+            .as_ref()
+            .map_or_else(Vec::new, |gb| gb.cart_ram_snapshot())
+    }
+
+    /// Returns the `.sav` path derived from the ROM path, or `None`.
+    fn sav_path(&self) -> Option<PathBuf> {
+        self.rom_path.as_ref().map(|p| p.with_extension("sav"))
+    }
+
+    /// Save battery-backed cartridge RAM to a `.sav` file.
+    ///
+    /// Uses a temp file + rename for atomic writes to prevent corruption.
+    pub fn save_ram_to_disk(&self) -> Result<(), String> {
+        if !self.has_battery() {
+            return Ok(());
+        }
+        let Some(sav_path) = self.sav_path() else {
+            return Ok(());
+        };
+        let data = self.cart_ram_snapshot();
+        if data.is_empty() {
+            return Ok(());
+        }
+
+        // Atomic write: temp file → rename
+        let mut temp_path = sav_path.clone();
+        temp_path.set_extension(format!("sav.tmp.{}", std::process::id()));
+
+        if let Some(parent) = sav_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("failed to create dir {}: {e}", parent.display()))?;
+        }
+
+        std::fs::write(&temp_path, &data)
+            .map_err(|e| format!("failed to write {}: {e}", temp_path.display()))?;
+
+        if sav_path.exists() {
+            let _ = std::fs::remove_file(&sav_path);
+        }
+
+        std::fs::rename(&temp_path, &sav_path)
+            .map_err(|e| format!("failed to rename to {}: {e}", sav_path.display()))
+    }
+
+    /// Load battery-backed cartridge RAM from a `.sav` file if one exists.
+    fn load_save_ram_from_disk(&mut self) {
+        if !self.has_battery() {
+            return;
+        }
+        let Some(sav_path) = self.sav_path() else {
+            return;
+        };
+        if !sav_path.exists() {
+            return;
+        }
+        match std::fs::read(&sav_path) {
+            Ok(data) => {
+                if let Some(gb) = &mut self.gb {
+                    gb.restore_cart_ram(&data);
+                }
+            }
+            Err(e) => {
+                eprintln!(
+                    "Warning: failed to read save file {}: {e}",
+                    sav_path.display()
+                );
+            }
+        }
     }
 
     // ── Debugger support ───────────────────────────────────────────────
@@ -575,7 +678,7 @@ impl Emulator for GameBoy {
     }
 
     fn save_ram(&self) -> Result<(), String> {
-        Ok(())
+        self.save_ram_to_disk()
     }
 
     fn app_context(&self) -> &SharedAppContext {
@@ -644,6 +747,19 @@ mod tests {
         config.gb.hardware = Some(hardware);
         let app_context = AppContext::new_with_config(config).into_shared();
         GameBoy::new(app_context)
+    }
+
+    /// Build a ROM with MBC5+RAM+BATTERY (type 0x1B), 8 KB RAM.
+    fn mbc5_battery_rom() -> Vec<u8> {
+        let mut rom = vec![0u8; 0x8000];
+        rom[0x0147] = 0x1B; // MBC5+RAM+BATTERY
+        rom[0x0148] = 0x00; // 32 KB ROM
+        rom[0x0149] = 0x02; // 8 KB RAM
+        let chk = rom[0x0134..=0x014C]
+            .iter()
+            .fold(0u8, |acc, &b| acc.wrapping_sub(b).wrapping_sub(1));
+        rom[0x014D] = chk;
+        rom
     }
 
     // ── safety before ROM load ──────────────────────────────────────────────
@@ -1400,5 +1516,99 @@ mod tests {
         gb.apply_ui_action_with_controller(&mut controller, action);
 
         // If we got here without panicking, test passes
+    }
+
+    // ── Save RAM persistence ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_has_battery_returns_true_for_mbc5_battery_cart() {
+        // Given: a GameBoy loaded with an MBC5+RAM+BATTERY ROM
+        let mut gb = make_gameboy();
+        gb.load_rom(&mbc5_battery_rom(), "test.gb").unwrap();
+
+        // Then: has_battery reports true
+        assert!(
+            gb.has_battery(),
+            "MBC5+RAM+BATTERY cart should report has_battery=true"
+        );
+    }
+
+    #[test]
+    fn test_has_battery_returns_false_for_rom_only_cart() {
+        // Given: a GameBoy loaded with a ROM-only cartridge (no battery)
+        let mut gb = make_gameboy();
+        gb.load_rom(&minimal_rom(), "test.gb").unwrap();
+
+        // Then: has_battery reports false
+        assert!(
+            !gb.has_battery(),
+            "ROM-only cart should report has_battery=false"
+        );
+    }
+
+    #[test]
+    fn test_save_ram_writes_sav_file_for_battery_cart() {
+        // Given: a GameBoy with MBC5+RAM+BATTERY ROM loaded from a temp dir
+        let dir = std::env::temp_dir().join("neser_test_save_ram");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let rom_path = dir.join("test_battery.gb");
+        let sav_path = dir.join("test_battery.sav");
+        std::fs::write(&rom_path, mbc5_battery_rom()).unwrap();
+
+        let mut gb = make_gameboy();
+        gb.load_rom(
+            &std::fs::read(&rom_path).unwrap(),
+            rom_path.to_str().unwrap(),
+        )
+        .unwrap();
+
+        // When: save_ram is called
+        let result = gb.save_ram();
+
+        // Then: succeeds and .sav file exists
+        assert!(result.is_ok(), "save_ram should succeed");
+        assert!(sav_path.exists(), ".sav file should be created");
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_load_rom_restores_sav_file_for_battery_cart() {
+        // Given: a .sav file with known data exists alongside the ROM
+        let dir = std::env::temp_dir().join("neser_test_load_sav");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let rom_path = dir.join("test_battery.gb");
+        let sav_path = dir.join("test_battery.sav");
+
+        // Write a ROM and a .sav file with recognizable pattern
+        std::fs::write(&rom_path, mbc5_battery_rom()).unwrap();
+        let mut save_data = vec![0u8; 8 * 1024]; // 8 KB matching the cart RAM size
+        save_data[0] = 0xAA;
+        save_data[1] = 0xBB;
+        save_data[42] = 0xCC;
+        std::fs::write(&sav_path, &save_data).unwrap();
+
+        // When: load_rom is called with the ROM path
+        let mut gb = make_gameboy();
+        gb.load_rom(
+            &std::fs::read(&rom_path).unwrap(),
+            rom_path.to_str().unwrap(),
+        )
+        .unwrap();
+
+        // Then: cart RAM should contain the saved data
+        let ram_snapshot = gb.cart_ram_snapshot();
+        assert_eq!(ram_snapshot[0], 0xAA, "save data byte 0 should be restored");
+        assert_eq!(ram_snapshot[1], 0xBB, "save data byte 1 should be restored");
+        assert_eq!(
+            ram_snapshot[42], 0xCC,
+            "save data byte 42 should be restored"
+        );
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
