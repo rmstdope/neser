@@ -711,6 +711,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn layout_model_applies_margins() {
+        let (title, pos, size) = layout_model([800.0, 600.0]);
+        assert_eq!(title, "GB CPU/PPU Data");
+        assert_eq!(pos, [10.0, 10.0]); // DEBUGGER_OUTER_MARGIN
+        assert_eq!(size, [780.0, 580.0]); // display - 2*margin
+    }
+
+    #[test]
+    fn layout_model_handles_small_display() {
+        let (title, pos, size) = layout_model([10.0, 10.0]);
+        assert_eq!(title, "GB CPU/PPU Data");
+        assert_eq!(pos, [10.0, 10.0]);
+        assert_eq!(size, [0.0, 0.0]); // clamped to 0
+    }
+
+    #[test]
     fn parse_address_accepts_decimal_and_hex() {
         assert_eq!(parse_address("4660"), Some(4660));
         assert_eq!(parse_address("0x1234"), Some(0x1234));
