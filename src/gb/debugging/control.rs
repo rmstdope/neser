@@ -312,8 +312,16 @@ impl GbDebuggerController {
         F: FnMut(&mut Gb<B>),
     {
         if self.paused {
+            crate::platform::debugging::log_info(format!(
+                "GB controller.run_frame paused! frame={} debugger_open={}",
+                gb.cpu.bus.ppu().frame_count(),
+                self.debugger_open
+            ));
             return;
         }
+
+        let frame_start = gb.cpu.bus.ppu().frame_count();
+        let mut instruction_count = 0;
 
         while !gb.is_frame_ready() {
             // Check pre-instruction breakpoints (PC, interrupt)
@@ -324,6 +332,7 @@ impl GbDebuggerController {
 
             // Execute one instruction
             self.run_one_instruction(gb);
+            instruction_count += 1;
 
             // Check post-instruction breakpoints (cycle, frame, write)
             if self.check_post_instruction_breakpoints(gb) {
@@ -333,6 +342,14 @@ impl GbDebuggerController {
 
             // Drain audio
             audio_drain(gb);
+        }
+
+        if instruction_count == 0 {
+            crate::platform::debugging::log_info(format!(
+                "GB run_frame executed 0 instructions! frame_start={} is_frame_ready={}",
+                frame_start,
+                gb.is_frame_ready()
+            ));
         }
     }
 

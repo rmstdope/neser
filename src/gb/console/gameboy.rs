@@ -402,6 +402,7 @@ impl GameBoy {
         if let Some(gb_console) = self.gb.as_mut() {
             match gb_console {
                 GbConsole::Dmg(gb) => {
+                    let frame_ready_before = gb.is_frame_ready();
                     controller.run_frame(gb.as_mut(), &mut |gb| {
                         if let Some(ref mut audio) = *audio_cell.borrow_mut() {
                             while gb.cpu.bus.sample_ready() {
@@ -411,8 +412,18 @@ impl GameBoy {
                             }
                         }
                     });
+                    let frame_ready_after = gb.is_frame_ready();
+
+                    if !frame_ready_before && !frame_ready_after {
+                        crate::platform::debugging::log_info(format!(
+                            "GB run_frame did not complete a frame! paused={} debugger_open={}",
+                            controller.is_paused(),
+                            controller.is_debugger_open()
+                        ));
+                    }
                 }
                 GbConsole::Cgb(gb) => {
+                    let frame_ready_before = gb.is_frame_ready();
                     controller.run_frame(gb.as_mut(), &mut |gb| {
                         if let Some(ref mut audio) = *audio_cell.borrow_mut() {
                             while gb.cpu.bus.sample_ready() {
@@ -422,6 +433,15 @@ impl GameBoy {
                             }
                         }
                     });
+                    let frame_ready_after = gb.is_frame_ready();
+
+                    if !frame_ready_before && !frame_ready_after {
+                        crate::platform::debugging::log_info(format!(
+                            "GB run_frame did not complete a frame! paused={} debugger_open={}",
+                            controller.is_paused(),
+                            controller.is_debugger_open()
+                        ));
+                    }
                 }
             }
         }
