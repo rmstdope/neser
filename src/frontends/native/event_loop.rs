@@ -10,6 +10,7 @@ use crate::frontends::native::gl_wrapper::NativeGlWrapper;
 use crate::frontends::native::keyboard::{self, KeyOutcome};
 use crate::frontends::native::mouse;
 use crate::frontends::native::sleep_inhibitor::SleepInhibitor;
+use crate::gb::debugging::control::GbDebuggerController;
 use crate::nes::debugging::control::DebuggerController;
 use crate::platform::app_context::SharedAppContext;
 use crate::platform::audio::{EmulatorAudio, normalize_nes_sample};
@@ -37,6 +38,7 @@ pub struct NativeEventLoop {
     tracing: Tracing,
     state: NativeAppState,
     debugger_controller: DebuggerController,
+    gb_debugger_controller: GbDebuggerController,
     /// Whether the user had manually paused before the debugger opened,
     /// so we can restore pause state when the debugger closes.
     paused_before_debugger: bool,
@@ -78,9 +80,20 @@ impl NativeEventLoop {
         tracing: Tracing,
         headless: bool,
     ) -> Self {
-        let (gamepads_enabled, four_score, fullscreen, vsync_enabled, debugger_controller) = {
+        let (
+            gamepads_enabled,
+            four_score,
+            fullscreen,
+            vsync_enabled,
+            debugger_controller,
+            gb_debugger_controller,
+        ) = {
             let config = app_context.borrow().config().clone();
             let dc = DebuggerController::new(
+                &config.frontend.breakpoints,
+                config.frontend.debugger_enabled,
+            );
+            let gb_dc = GbDebuggerController::new(
                 &config.frontend.breakpoints,
                 config.frontend.debugger_enabled,
             );
@@ -90,6 +103,7 @@ impl NativeEventLoop {
                 config.frontend.fullscreen,
                 config.frontend.vsync_enabled,
                 dc,
+                gb_dc,
             )
         };
 
@@ -125,6 +139,7 @@ impl NativeEventLoop {
                 ..NativeAppState::default()
             },
             debugger_controller,
+            gb_debugger_controller,
             paused_before_debugger: false,
             paused_before_cart_switch: false,
             gamepad,
@@ -169,7 +184,11 @@ impl NativeEventLoop {
     }
 
     fn run_frame(&mut self) {
-        if self.state.paused && !self.debugger_controller.is_paused() {
+        let debugger_paused = match &self.console {
+            Console::Nes(_) => self.debugger_controller.is_paused(),
+            Console::GameBoy(_) => self.gb_debugger_controller.is_paused(),
+        };
+        if self.state.paused && !debugger_paused {
             // Manually paused (not debugger) — skip frame
             return;
         }
@@ -206,17 +225,7 @@ impl NativeEventLoop {
                     });
             }
             Console::GameBoy(gb) => {
-                // Run ticks until a full frame is ready, draining audio samples.
-                while !gb.is_frame_ready() {
-                    gb.run_tick();
-                    if let Some(ref mut audio) = *audio_cell.borrow_mut() {
-                        while gb.sample_ready() {
-                            if let Some(sample) = gb.get_sample() {
-                                audio.queue_sample(sample);
-                            }
-                        }
-                    }
-                }
+                gb.run_frame_with_debugger(&mut self.gb_debugger_controller, &audio_cell);
             }
         }
         self.audio = audio_cell.into_inner();
@@ -257,7 +266,12 @@ impl NativeEventLoop {
 
     /// Sync frontend state from the debugger controller.
     fn sync_from_controller(&mut self) {
-        if self.debugger_controller.is_debugger_open() {
+        let debugger_open = match &self.console {
+            Console::Nes(_) => self.debugger_controller.is_debugger_open(),
+            Console::GameBoy(_) => self.gb_debugger_controller.is_debugger_open(),
+        };
+
+        if debugger_open {
             if !self.state.debugger_open {
                 // Debugger just opened — remember manual pause state.
                 self.paused_before_debugger = self.state.paused;
@@ -734,30 +748,38 @@ impl ApplicationHandler for NativeEventLoop {
                             }
                         }
                         KeyOutcome::ToggleDebugger => {
-                            let Console::Nes(nes) = &self.console else {
-                                panic!(
-                                    "NES-only event loop: unexpected non-NES console in ToggleDebugger"
-                                );
-                            };
-                            self.debugger_controller.toggle_debugger(nes);
+                            match &self.console {
+                                Console::Nes(nes) => {
+                                    self.debugger_controller.toggle_debugger(nes);
+                                }
+                                Console::GameBoy(gb) => {
+                                    gb.toggle_debugger_with_controller(
+                                        &mut self.gb_debugger_controller,
+                                    );
+                                }
+                            }
                             self.sync_from_controller();
                         }
                         KeyOutcome::StepOver => {
-                            let Console::Nes(nes) = &mut self.console else {
-                                panic!(
-                                    "NES-only event loop: unexpected non-NES console in StepOver"
-                                );
-                            };
-                            self.debugger_controller.step_over(nes);
+                            match &mut self.console {
+                                Console::Nes(nes) => {
+                                    self.debugger_controller.step_over(nes);
+                                }
+                                Console::GameBoy(gb) => {
+                                    gb.step_over_with_controller(&mut self.gb_debugger_controller);
+                                }
+                            }
                             self.sync_from_controller();
                         }
                         KeyOutcome::StepInto => {
-                            let Console::Nes(nes) = &mut self.console else {
-                                panic!(
-                                    "NES-only event loop: unexpected non-NES console in StepInto"
-                                );
-                            };
-                            self.debugger_controller.step_into(nes);
+                            match &mut self.console {
+                                Console::Nes(nes) => {
+                                    self.debugger_controller.step_into(nes);
+                                }
+                                Console::GameBoy(gb) => {
+                                    gb.step_into_with_controller(&mut self.gb_debugger_controller);
+                                }
+                            }
                             self.sync_from_controller();
                         }
                         KeyOutcome::SwitchCartridge(path) => {
@@ -941,7 +963,14 @@ impl ApplicationHandler for NativeEventLoop {
 
                 // Render and apply debugger UI actions
                 let action = if let Some(ref mut gl) = self.gl_wrapper {
-                    gl.update_breakpoints(self.debugger_controller.breakpoints());
+                    match &self.console {
+                        Console::Nes(_) => {
+                            gl.update_breakpoints(self.debugger_controller.breakpoints());
+                        }
+                        Console::GameBoy(_) => {
+                            gl.update_gb_breakpoints(self.gb_debugger_controller.breakpoints());
+                        }
+                    }
                     let crosshair =
                         mouse::zapper_crosshair(&self.console, self.state.last_zapper_position);
                     let overlay = self
@@ -961,8 +990,19 @@ impl ApplicationHandler for NativeEventLoop {
                 } else {
                     Default::default()
                 };
-                if let Console::Nes(nes) = &mut self.console {
-                    self.debugger_controller.apply_ui_action(nes, action);
+                match &mut self.console {
+                    Console::Nes(nes) => {
+                        self.debugger_controller.apply_ui_action(nes, action);
+                    }
+                    Console::GameBoy(gb) => {
+                        if let Some(ref mut gl) = self.gl_wrapper {
+                            let gb_action = gl.take_gb_debugger_action();
+                            gb.apply_ui_action_with_controller(
+                                &mut self.gb_debugger_controller,
+                                gb_action,
+                            );
+                        }
+                    }
                 }
                 self.sync_from_controller();
             }

@@ -223,6 +223,73 @@ impl GbDebuggerController {
         self.paused = false;
     }
 
+    /// Apply UI actions from the debugger interface.
+    ///
+    /// Handles step over, step into, continue, run-to commands, and breakpoint management.
+    pub fn apply_ui_action<B: GbBus>(
+        &mut self,
+        gb: &mut Gb<B>,
+        action: super::ui::GbDebuggerUiAction,
+    ) {
+        if !self.debugger_open {
+            return;
+        }
+
+        let mut should_continue = action.continue_run;
+
+        if action.step_over {
+            self.step_over(gb);
+            should_continue = false; // step_over unpauses internally
+        }
+
+        if action.step_into {
+            self.step_into(gb);
+            should_continue = false; // step_into unpauses internally
+        }
+
+        if action.run_to_next_frame {
+            self.run_to_next_frame(gb);
+            should_continue = false; // run_to methods unpause internally
+        }
+
+        if action.run_to_next_scanline {
+            self.run_to_next_scanline(gb);
+            // Note: currently a no-op, leaves debugger paused
+        }
+
+        if action.run_to_vblank {
+            self.run_to_interrupt(gb, GbInterruptKind::VBlank);
+            should_continue = false;
+        }
+
+        if action.run_to_stat {
+            self.run_to_interrupt(gb, GbInterruptKind::Stat);
+            should_continue = false;
+        }
+
+        if action.run_to_timer {
+            self.run_to_interrupt(gb, GbInterruptKind::Timer);
+            should_continue = false;
+        }
+
+        if should_continue {
+            self.paused = false;
+        }
+
+        if let Some(kind) = action.add_breakpoint {
+            self.breakpoints.add(kind);
+        }
+        if let Some(index) = action.remove_breakpoint {
+            self.breakpoints.remove(index);
+        }
+        if let Some(index) = action.enable_breakpoint {
+            self.breakpoints.enable(index);
+        }
+        if let Some(index) = action.disable_breakpoint {
+            self.breakpoints.disable(index);
+        }
+    }
+
     // ── Main execution loop ────────────────────────────────────────────
 
     /// Run the emulator until frame ready or debugger pause.

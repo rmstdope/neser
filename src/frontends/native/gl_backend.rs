@@ -99,6 +99,7 @@ pub struct GlBackend {
     gb_bp_add_state: gb_debugger_ui::BreakpointAddUiState,
     gb_hexdump_ui_state: gb_debugger_ui::HexdumpUiState,
     gb_watchlist_ui_state: gb_debugger_ui::WatchlistUiState,
+    last_gb_action: gb_debugger_ui::GbDebuggerUiAction,
     // GB PPU viewer textures
     gb_ppu_viewer_tiles_texture: gl::types::GLuint,
     gb_ppu_viewer_tiles_texture_id: imgui::TextureId,
@@ -511,6 +512,7 @@ impl GlBackend {
             gb_bp_add_state: gb_debugger_ui::BreakpointAddUiState::default(),
             gb_hexdump_ui_state: gb_debugger_ui::HexdumpUiState::default(),
             gb_watchlist_ui_state: gb_debugger_ui::WatchlistUiState::default(),
+            last_gb_action: gb_debugger_ui::GbDebuggerUiAction::default(),
             // GB PPU viewer textures
             gb_ppu_viewer_tiles_texture,
             gb_ppu_viewer_tiles_texture_id,
@@ -554,9 +556,13 @@ impl GlBackend {
     }
 
     /// Updates the GB breakpoint list used by the GB debugger UI.
-    #[allow(dead_code)] // Used by debugger controller, not yet wired up
     pub fn update_gb_breakpoints(&mut self, breakpoints: &BreakpointList) {
         self.gb_breakpoints = breakpoints.clone();
+    }
+
+    /// Takes the last GB debugger UI action, replacing it with default.
+    pub fn take_gb_debugger_action(&mut self) -> gb_debugger_ui::GbDebuggerUiAction {
+        std::mem::take(&mut self.last_gb_action)
     }
 
     /// Returns a copy of the watch addresses currently tracked in the debugger.
@@ -860,6 +866,8 @@ impl GlBackend {
                 if gb_action.decrease_opacity {
                     self.gb_debugger_alpha = (self.gb_debugger_alpha - 0.1).max(0.1);
                 }
+                // Store action for processing by controller
+                self.last_gb_action = gb_action;
                 if self.gb_debugger_view_state.is_ppu_viewer_visible() {
                     let ppu_snap = gb.create_ppu_viewer_snapshot();
                     update_gb_ppu_viewer_textures_from_snapshot(
@@ -871,7 +879,7 @@ impl GlBackend {
                         ui,
                         self.gb_ppu_viewer_tiles_texture_id,
                         self.gb_ppu_viewer_bg_maps_texture_id,
-                        gb.is_cgb_mode(),
+                        &ppu_snap,
                     );
                 }
             }
@@ -1255,20 +1263,36 @@ fn update_gb_ppu_viewer_textures_from_snapshot(
         ppu_snap.cgb_mode,
     );
 
-    let (tiles_width, tiles_height) = if ppu_snap.cgb_mode {
-        (
-            GB_PPU_VIEWER_TILES_TEXTURE_WIDTH_CGB,
-            GB_PPU_VIEWER_TILES_TEXTURE_HEIGHT_CGB,
-        )
+    // Pad DMG tiles to full CGB texture size to avoid stale data
+    let tiles_upload_width = GB_PPU_VIEWER_TILES_TEXTURE_WIDTH_CGB;
+    let tiles_upload_height = GB_PPU_VIEWER_TILES_TEXTURE_HEIGHT_CGB;
+    let tiles_upload_pixels = if ppu_snap.cgb_mode {
+        tiles_pixels
     } else {
-        (
-            GB_PPU_VIEWER_TILES_TEXTURE_WIDTH_DMG,
-            GB_PPU_VIEWER_TILES_TEXTURE_HEIGHT_DMG,
-        )
+        let src_width = GB_PPU_VIEWER_TILES_TEXTURE_WIDTH_DMG as usize;
+        let src_height = GB_PPU_VIEWER_TILES_TEXTURE_HEIGHT_DMG as usize;
+        let dst_width = GB_PPU_VIEWER_TILES_TEXTURE_WIDTH_CGB as usize;
+        let dst_height = GB_PPU_VIEWER_TILES_TEXTURE_HEIGHT_CGB as usize;
+        let mut padded_pixels = vec![0u8; dst_width * dst_height * 4];
+
+        for row in 0..src_height {
+            let src_start = row * src_width * 4;
+            let src_end = src_start + src_width * 4;
+            let dst_start = row * dst_width * 4;
+            let dst_end = dst_start + src_width * 4;
+            padded_pixels[dst_start..dst_end].copy_from_slice(&tiles_pixels[src_start..src_end]);
+        }
+
+        padded_pixels
     };
 
     unsafe {
-        upload_rgba_texture(tiles_texture, tiles_width, tiles_height, &tiles_pixels);
+        upload_rgba_texture(
+            tiles_texture,
+            tiles_upload_width,
+            tiles_upload_height,
+            &tiles_upload_pixels,
+        );
         upload_rgba_texture(
             bg_maps_texture,
             GB_PPU_VIEWER_BG_MAPS_TEXTURE_WIDTH,
@@ -1278,13 +1302,16 @@ fn update_gb_ppu_viewer_textures_from_snapshot(
     }
 }
 
-/// Render the GB PPU viewer ImGui window showing tiles and BG maps.
+/// Render the GB PPU viewer ImGui window showing tiles, BG maps, OAM, and palettes.
 fn draw_gb_ppu_viewer_window(
     ui: &imgui::Ui,
     tiles_texture_id: imgui::TextureId,
     bg_maps_texture_id: imgui::TextureId,
-    is_cgb: bool,
+    ppu_snap: &crate::gb::debugging::ppu_viewer::GbPpuViewerSnapshot,
 ) {
+    use crate::gb::debugging::ppu_viewer::{format_oam_entries, format_palette_info};
+
+    let is_cgb = ppu_snap.cgb_mode;
     // Aspect ratios for GB PPU viewer textures
     let tiles_aspect = if is_cgb {
         GB_PPU_VIEWER_TILES_TEXTURE_HEIGHT_CGB as f32 / GB_PPU_VIEWER_TILES_TEXTURE_WIDTH_CGB as f32
@@ -1307,13 +1334,43 @@ fn draw_gb_ppu_viewer_window(
             ui.text(format!("Tiles ({})", mode_label));
             ui.separator();
             let avail_w = ui.content_region_avail()[0];
-            imgui::Image::new(tiles_texture_id, [avail_w, avail_w * tiles_aspect]).build(ui);
+            let tiles_uv1 = if is_cgb { [1.0, 1.0] } else { [0.5, 1.0] };
+            imgui::Image::new(tiles_texture_id, [avail_w, avail_w * tiles_aspect])
+                .uv0([0.0, 0.0])
+                .uv1(tiles_uv1)
+                .build(ui);
 
             ui.dummy([0.0, 6.0]);
             ui.text("BG Maps (0x9800 | 0x9C00)");
             ui.separator();
             let avail_w = ui.content_region_avail()[0];
             imgui::Image::new(bg_maps_texture_id, [avail_w, avail_w * BG_MAPS_ASPECT]).build(ui);
+
+            ui.dummy([0.0, 6.0]);
+            ui.text("OAM Sprites");
+            ui.separator();
+            let oam_lines = format_oam_entries(&ppu_snap.oam, is_cgb);
+            for line in oam_lines.iter().take(10) {
+                ui.text(line);
+            }
+            if oam_lines.len() > 10 {
+                ui.text(format!("... {} more sprites", oam_lines.len() - 10));
+            }
+
+            ui.dummy([0.0, 6.0]);
+            ui.text("Palettes");
+            ui.separator();
+            let palette_lines = format_palette_info(
+                ppu_snap.bgp,
+                ppu_snap.obp0,
+                ppu_snap.obp1,
+                &ppu_snap.bg_palette_ram,
+                &ppu_snap.obj_palette_ram,
+                is_cgb,
+            );
+            for line in palette_lines {
+                ui.text(line);
+            }
         });
 }
 

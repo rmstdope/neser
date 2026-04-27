@@ -203,6 +203,16 @@ impl NativeGlWrapper {
         self.gl_backend.update_breakpoints(breakpoints);
     }
 
+    /// Updates the GB breakpoint list used by the GB debugger UI.
+    pub fn update_gb_breakpoints(&mut self, breakpoints: &BreakpointList) {
+        self.gl_backend.update_gb_breakpoints(breakpoints);
+    }
+
+    /// Takes the last GB debugger UI action, replacing it with default.
+    pub fn take_gb_debugger_action(&mut self) -> crate::gb::debugging::ui::GbDebuggerUiAction {
+        self.gl_backend.take_gb_debugger_action()
+    }
+
     /// Returns the current watch addresses from the debugger.
     pub fn watch_addresses(&self) -> Vec<u16> {
         self.gl_backend.watch_addresses()

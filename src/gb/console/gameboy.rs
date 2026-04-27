@@ -341,46 +341,8 @@ impl GameBoy {
         self.gb.as_ref().map_or_else(
             || {
                 // Return a default snapshot when no ROM is loaded
-                crate::gb::debugging::GbDebuggerSnapshot {
-                    cpu_regs: crate::gb::debugging::GbCpuRegsSnapshot {
-                        a: 0,
-                        f: 0,
-                        b: 0,
-                        c: 0,
-                        d: 0,
-                        e: 0,
-                        h: 0,
-                        l: 0,
-                        af: 0,
-                        bc: 0,
-                        de: 0,
-                        hl: 0,
-                        sp: 0,
-                        pc: 0,
-                        z_flag: false,
-                        n_flag: false,
-                        h_flag: false,
-                        c_flag: false,
-                        cycles: 0,
-                        frame_count: 0,
-                        scanline: 0,
-                        dot: 0,
-                        ppu_mode: 0,
-                        ime: false,
-                        halted: false,
-                        halt_bug: false,
-                        ie: 0,
-                        if_reg: 0,
-                    },
-                    wram_hexdump_base: 0xC000,
-                    wram_hexdump_bytes: vec![0; 256],
-                    vram_hexdump_base: 0x8000,
-                    vram_hexdump_bytes: vec![0; 256],
-                    cpu_disasm: vec![],
-                    cpu: String::new(),
-                    watch_values: vec![],
-                    recent_trace: vec![],
-                }
+                // Use Default to avoid per-frame Vec allocations
+                crate::gb::debugging::GbDebuggerSnapshot::default()
             },
             |gb_console| match gb_console {
                 GbConsole::Dmg(gb) => view_state.snapshot(gb.as_ref()),
@@ -426,6 +388,100 @@ impl GameBoy {
         self.gb
             .as_ref()
             .is_some_and(|gb_console| matches!(gb_console, GbConsole::Cgb(_)))
+    }
+
+    #[cfg(feature = "native")]
+    /// Run one frame with the debugger controller.
+    pub fn run_frame_with_debugger(
+        &mut self,
+        controller: &mut crate::gb::debugging::control::GbDebuggerController,
+        audio_cell: &std::cell::RefCell<Option<crate::frontends::native::NativeAudio>>,
+    ) {
+        use crate::platform::audio::EmulatorAudio;
+
+        if let Some(gb_console) = self.gb.as_mut() {
+            match gb_console {
+                GbConsole::Dmg(gb) => {
+                    controller.run_frame(gb.as_mut(), &mut |gb| {
+                        if let Some(ref mut audio) = *audio_cell.borrow_mut() {
+                            while gb.cpu.bus.sample_ready() {
+                                if let Some(sample) = gb.cpu.bus.take_sample() {
+                                    audio.queue_sample(sample);
+                                }
+                            }
+                        }
+                    });
+                }
+                GbConsole::Cgb(gb) => {
+                    controller.run_frame(gb.as_mut(), &mut |gb| {
+                        if let Some(ref mut audio) = *audio_cell.borrow_mut() {
+                            while gb.cpu.bus.sample_ready() {
+                                if let Some(sample) = gb.cpu.bus.take_sample() {
+                                    audio.queue_sample(sample);
+                                }
+                            }
+                        }
+                    });
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "native")]
+    /// Toggle the debugger open/closed.
+    pub fn toggle_debugger_with_controller(
+        &self,
+        controller: &mut crate::gb::debugging::control::GbDebuggerController,
+    ) {
+        if let Some(gb_console) = self.gb.as_ref() {
+            match gb_console {
+                GbConsole::Dmg(gb) => controller.toggle_debugger(gb.as_ref()),
+                GbConsole::Cgb(gb) => controller.toggle_debugger(gb.as_ref()),
+            }
+        }
+    }
+
+    #[cfg(feature = "native")]
+    /// Step over the current instruction.
+    pub fn step_over_with_controller(
+        &mut self,
+        controller: &mut crate::gb::debugging::control::GbDebuggerController,
+    ) {
+        if let Some(gb_console) = self.gb.as_mut() {
+            match gb_console {
+                GbConsole::Dmg(gb) => controller.step_over(gb.as_mut()),
+                GbConsole::Cgb(gb) => controller.step_over(gb.as_mut()),
+            }
+        }
+    }
+
+    #[cfg(feature = "native")]
+    /// Step into the current instruction.
+    pub fn step_into_with_controller(
+        &mut self,
+        controller: &mut crate::gb::debugging::control::GbDebuggerController,
+    ) {
+        if let Some(gb_console) = self.gb.as_mut() {
+            match gb_console {
+                GbConsole::Dmg(gb) => controller.step_into(gb.as_mut()),
+                GbConsole::Cgb(gb) => controller.step_into(gb.as_mut()),
+            }
+        }
+    }
+
+    #[cfg(feature = "native")]
+    /// Apply UI action from the debugger.
+    pub fn apply_ui_action_with_controller(
+        &mut self,
+        controller: &mut crate::gb::debugging::control::GbDebuggerController,
+        action: crate::gb::debugging::ui::GbDebuggerUiAction,
+    ) {
+        if let Some(gb_console) = self.gb.as_mut() {
+            match gb_console {
+                GbConsole::Dmg(gb) => controller.apply_ui_action(gb.as_mut(), action),
+                GbConsole::Cgb(gb) => controller.apply_ui_action(gb.as_mut(), action),
+            }
+        }
     }
 }
 

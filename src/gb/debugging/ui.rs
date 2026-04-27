@@ -5,7 +5,7 @@
 
 #[cfg(feature = "native")]
 use super::GbDebuggerSnapshot;
-use crate::platform::debugging::breakpoints::{Breakpoint, BreakpointKind, BreakpointList};
+use crate::platform::debugging::breakpoints::{BreakpointKind, BreakpointList};
 
 const DEBUGGER_OUTER_MARGIN: f32 = 10.0;
 pub(crate) const DEBUGGER_UI_FONT_SCALE: f32 = 0.85;
@@ -236,9 +236,7 @@ fn render_cpu_controls(ui: &imgui::Ui, action: &mut GbDebuggerUiAction) {
         action.run_to_next_frame = true;
     }
     ui.same_line();
-    if ui.small_button("Scanline") {
-        action.run_to_next_scanline = true;
-    }
+    ui.text_disabled("Scanline (unimpl)");
     ui.same_line();
     ui.text("│");
     ui.same_line();
@@ -356,11 +354,14 @@ fn parse_breakpoint_kind(kind_idx: usize, value_str: &str) -> Option<BreakpointK
     let value_str = value_str.trim();
     match kind_idx {
         0 => {
-            // PC
+            // PC - parse as hex by default (addresses are displayed in hex)
             let value = if value_str.starts_with("0x") || value_str.starts_with("0X") {
                 u16::from_str_radix(&value_str[2..], 16).ok()?
             } else {
-                value_str.parse::<u16>().ok()?
+                // Accept plain hex like "C000" or decimal like "49152"
+                u16::from_str_radix(value_str, 16)
+                    .or_else(|_| value_str.parse::<u16>())
+                    .ok()?
             };
             Some(BreakpointKind::Pc(value))
         }
@@ -369,11 +370,14 @@ fn parse_breakpoint_kind(kind_idx: usize, value_str: &str) -> Option<BreakpointK
             Some(BreakpointKind::Cycle(value_str.parse().ok()?))
         }
         2 => {
-            // Write
+            // Write - parse as hex by default (addresses are displayed in hex)
             let value = if value_str.starts_with("0x") || value_str.starts_with("0X") {
                 u16::from_str_radix(&value_str[2..], 16).ok()?
             } else {
-                value_str.parse::<u16>().ok()?
+                // Accept plain hex like "C000" or decimal like "60000"
+                u16::from_str_radix(value_str, 16)
+                    .or_else(|_| value_str.parse::<u16>())
+                    .ok()?
             };
             Some(BreakpointKind::WriteAddress(value))
         }
@@ -512,7 +516,6 @@ fn render_memory_watch(
     }
 
     // Display existing watch entries
-    let mut entries_to_remove = Vec::new();
     for (index, entry) in snapshot.watch_values.iter().enumerate() {
         if watch_state.row_inputs[index].is_empty() {
             watch_state.row_inputs[index] = format!("{:04X}", entry.address);
@@ -543,17 +546,13 @@ fn render_memory_watch(
         ui.text(format!("= {:02X}", entry.value));
         ui.same_line();
         if ui.small_button(format!("X##watch_rm_{}", index)) {
-            entries_to_remove.push(index);
+            action.remove_watch_address = Some(index);
         }
 
         if let Some(ref err) = watch_state.row_errors[index] {
             ui.same_line();
             ui.text_colored([1.0, 0.0, 0.0, 1.0], err);
         }
-    }
-
-    for index in entries_to_remove.iter().rev() {
-        action.remove_watch_address = Some(*index);
     }
 
     // Add new watch entry
@@ -606,49 +605,45 @@ fn render_hexdump_panel(
     action: &mut GbDebuggerUiAction,
     size: [f32; 2],
 ) {
-    if !ui.collapsing_header("WRAM Hexdump##wram_header", imgui::TreeNodeFlags::empty()) {
-        return;
+    if ui.collapsing_header("WRAM Hexdump##wram_header", imgui::TreeNodeFlags::empty()) {
+        render_hexdump_controls(
+            ui,
+            "WRAM",
+            snapshot.wram_hexdump_base,
+            &mut hexdump_state.wram_address_input,
+            &mut hexdump_state.wram_error,
+            |addr| action.set_wram_hexdump_base = Some(addr),
+            |delta| action.nudge_wram_hexdump_base_by_bytes = Some(delta),
+        );
+
+        render_hexdump_bytes(
+            ui,
+            snapshot.wram_hexdump_base,
+            &snapshot.wram_hexdump_bytes,
+            size[0],
+        );
+
+        ui.dummy([0.0, 8.0]);
     }
 
-    render_hexdump_controls(
-        ui,
-        "WRAM",
-        snapshot.wram_hexdump_base,
-        &mut hexdump_state.wram_address_input,
-        &mut hexdump_state.wram_error,
-        |addr| action.set_wram_hexdump_base = Some(addr),
-        |delta| action.nudge_wram_hexdump_base_by_bytes = Some(delta),
-    );
+    if ui.collapsing_header("VRAM Hexdump##vram_header", imgui::TreeNodeFlags::empty()) {
+        render_hexdump_controls(
+            ui,
+            "VRAM",
+            snapshot.vram_hexdump_base,
+            &mut hexdump_state.vram_address_input,
+            &mut hexdump_state.vram_error,
+            |addr| action.set_vram_hexdump_base = Some(addr),
+            |delta| action.nudge_vram_hexdump_base_by_bytes = Some(delta),
+        );
 
-    render_hexdump_bytes(
-        ui,
-        snapshot.wram_hexdump_base,
-        &snapshot.wram_hexdump_bytes,
-        size[0],
-    );
-
-    ui.dummy([0.0, 8.0]);
-
-    if !ui.collapsing_header("VRAM Hexdump##vram_header", imgui::TreeNodeFlags::empty()) {
-        return;
+        render_hexdump_bytes(
+            ui,
+            snapshot.vram_hexdump_base,
+            &snapshot.vram_hexdump_bytes,
+            size[0],
+        );
     }
-
-    render_hexdump_controls(
-        ui,
-        "VRAM",
-        snapshot.vram_hexdump_base,
-        &mut hexdump_state.vram_address_input,
-        &mut hexdump_state.vram_error,
-        |addr| action.set_vram_hexdump_base = Some(addr),
-        |delta| action.nudge_vram_hexdump_base_by_bytes = Some(delta),
-    );
-
-    render_hexdump_bytes(
-        ui,
-        snapshot.vram_hexdump_base,
-        &snapshot.vram_hexdump_bytes,
-        size[0],
-    );
 }
 
 #[cfg(feature = "native")]
@@ -708,5 +703,116 @@ fn render_hexdump_bytes(ui: &imgui::Ui, base: u16, bytes: &[u8], _width: f32) {
             .collect::<Vec<_>>()
             .join(" ");
         ui.text(format!("{:04X}: {}", addr, hex_str));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_address_accepts_decimal_and_hex() {
+        assert_eq!(parse_address("4660"), Some(4660));
+        assert_eq!(parse_address("0x1234"), Some(0x1234));
+        assert_eq!(parse_address("0X00ff"), Some(0x00ff));
+        assert_eq!(parse_address("  0x00a0  "), Some(0x00a0));
+    }
+
+    #[test]
+    fn parse_address_rejects_invalid_input() {
+        assert_eq!(parse_address(""), None);
+        assert_eq!(parse_address("xyz"), None);
+        assert_eq!(parse_address("0x"), None);
+        assert_eq!(parse_address("70000"), None);
+        assert_eq!(parse_address("0x10000"), None);
+    }
+
+    #[test]
+    fn parse_breakpoint_kind_pc_accepts_hex_and_decimal() {
+        assert_eq!(
+            parse_breakpoint_kind(0, "0x1234"),
+            Some(BreakpointKind::Pc(0x1234))
+        );
+        // Without 0x prefix, parse as hex by default (per review comment)
+        assert_eq!(
+            parse_breakpoint_kind(0, "1234"),
+            Some(BreakpointKind::Pc(0x1234))
+        );
+        assert_eq!(
+            parse_breakpoint_kind(0, "  0x00FF  "),
+            Some(BreakpointKind::Pc(0x00FF))
+        );
+        // Pure hex like "C000" works without 0x prefix
+        assert_eq!(
+            parse_breakpoint_kind(0, "C000"),
+            Some(BreakpointKind::Pc(0xC000))
+        );
+        // Decimal values that don't look like hex still work as fallback
+        assert_eq!(
+            parse_breakpoint_kind(0, "60000"),
+            Some(BreakpointKind::Pc(60000))
+        );
+    }
+
+    #[test]
+    fn parse_breakpoint_kind_cycle() {
+        assert_eq!(
+            parse_breakpoint_kind(1, "12345"),
+            Some(BreakpointKind::Cycle(12345))
+        );
+        assert_eq!(
+            parse_breakpoint_kind(1, "  999  "),
+            Some(BreakpointKind::Cycle(999))
+        );
+    }
+
+    #[test]
+    fn parse_breakpoint_kind_write() {
+        assert_eq!(
+            parse_breakpoint_kind(2, "0xC000"),
+            Some(BreakpointKind::WriteAddress(0xC000))
+        );
+        // Without 0x prefix, parse as hex by default (per review comment)
+        assert_eq!(
+            parse_breakpoint_kind(2, "C000"),
+            Some(BreakpointKind::WriteAddress(0xC000))
+        );
+        // Decimal values that don't look like hex still work as fallback
+        assert_eq!(
+            parse_breakpoint_kind(2, "60000"),
+            Some(BreakpointKind::WriteAddress(60000))
+        );
+    }
+
+    #[test]
+    fn parse_breakpoint_kind_frame() {
+        assert_eq!(
+            parse_breakpoint_kind(3, "100"),
+            Some(BreakpointKind::Frame(100))
+        );
+    }
+
+    #[test]
+    fn parse_breakpoint_kind_rejects_invalid_input() {
+        assert_eq!(parse_breakpoint_kind(0, ""), None);
+        assert_eq!(parse_breakpoint_kind(0, "invalid"), None);
+        assert_eq!(parse_breakpoint_kind(1, "not_a_number"), None);
+        assert_eq!(parse_breakpoint_kind(4, "100"), None); // Invalid kind index
+    }
+
+    #[test]
+    fn debugger_ui_action_default_has_no_pending_actions() {
+        let action = GbDebuggerUiAction::default();
+
+        assert!(!action.step_over);
+        assert!(!action.step_into);
+        assert!(!action.continue_run);
+        assert_eq!(action.add_watch_address, None);
+        assert_eq!(action.set_wram_hexdump_base, None);
+        assert_eq!(action.nudge_wram_hexdump_base_by_bytes, None);
+        assert_eq!(action.set_vram_hexdump_base, None);
+        assert_eq!(action.nudge_vram_hexdump_base_by_bytes, None);
+        assert_eq!(action.add_breakpoint, None);
+        assert_eq!(action.remove_breakpoint, None);
     }
 }

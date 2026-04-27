@@ -42,9 +42,9 @@ pub enum KeyOutcome {
 /// on actions that require access to the GL wrapper (e.g. shader cycling,
 /// fullscreen toggle).
 ///
-/// For [`Console::GameBoy`], only generic actions (pause, fullscreen toggle,
-/// directional/A/B/Start/Select keys) are dispatched; NES-specific features
-/// such as the debugger, save states, SNES buttons, and Power Pad are ignored.
+/// For [`Console::GameBoy`], NES-specific features such as SNES buttons and
+/// Power Pad are ignored, but generic features including the debugger work for
+/// both systems.
 pub fn handle_key_pressed(
     console: &mut Console,
     key_code: KeyCode,
@@ -192,7 +192,8 @@ fn handle_common_hotkey(
 /// Handles a key-press event for a [`Console::GameBoy`].
 ///
 /// Dispatches generic hotkeys (pause, fullscreen, Ctrl+Q, Ctrl+R, shader cycling,
-/// save/load state) and maps standard button keys to Game Boy buttons on port 0.
+/// debugger controls, save/load state) and maps standard button keys to Game Boy
+/// buttons on port 0.
 fn handle_gameboy_key_pressed(
     console: &mut Console,
     key_code: KeyCode,
@@ -221,6 +222,7 @@ fn handle_gameboy_key_pressed(
 
     match key_code {
         KeyCode::KeyH => app_state.help_overlay_visible = !app_state.help_overlay_visible,
+        KeyCode::F5 => return KeyOutcome::ToggleDebugger,
         KeyCode::F6 => {
             crate::nes::console::save_state_io::save_state_to_disk(console);
         }
@@ -230,6 +232,8 @@ fn handle_gameboy_key_pressed(
                 audio.drain_buffer();
             }
         }
+        KeyCode::F10 => return KeyOutcome::StepOver,
+        KeyCode::F11 => return KeyOutcome::StepInto,
         _ => {
             if let Some(btn_id) = gameboy_key_to_button_id(key_code) {
                 console.set_button(0, btn_id, true);
