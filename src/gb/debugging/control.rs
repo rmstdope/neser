@@ -180,6 +180,7 @@ impl GbDebuggerController {
 
             self.set_temporary_breakpoint(return_addr);
             self.paused = false;
+            self.debugger_open = false;
         } else {
             // Not a call - just step into
             self.step_into(gb);
@@ -765,6 +766,9 @@ mod tests {
         assert!(ctrl.temporary_breakpoint.is_some());
         let temp_bp = ctrl.temporary_breakpoint.as_ref().unwrap();
         assert_eq!(temp_bp.pc, 0x0003);
+        // Should unpause and close debugger UI to run until breakpoint
+        assert!(!ctrl.is_paused());
+        assert!(!ctrl.is_debugger_open());
     }
 
     #[test]
@@ -798,6 +802,9 @@ mod tests {
         assert!(ctrl.temporary_breakpoint.is_some());
         let temp_bp = ctrl.temporary_breakpoint.as_ref().unwrap();
         assert_eq!(temp_bp.pc, 0x0001);
+        // Should unpause and close debugger UI to run until breakpoint
+        assert!(!ctrl.is_paused());
+        assert!(!ctrl.is_debugger_open());
     }
 
     // ── UI Action tests ────────────────────────────────────────────────
