@@ -479,7 +479,10 @@ impl GbBus for DmgBus {
             0xFF46 => self.dma_source,
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
             0xFFFF => self.ie_reg,
-            _ => 0xFF,
+            _ => {
+                println!("[DMG] Unmapped read: ${:04X}", addr);
+                0xFF
+            }
         }
     }
 
@@ -543,7 +546,9 @@ impl GbBus for DmgBus {
             }
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize] = val,
             0xFFFF => self.ie_reg = val,
-            _ => {}
+            _ => {
+                println!("[DMG] Unmapped write: ${:04X} = ${:02X}", addr, val);
+            }
         }
     }
 
