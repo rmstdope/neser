@@ -198,8 +198,6 @@ impl GbDebuggerController {
         let target_frame = gb.cpu.bus.ppu().frame_count() + 1;
         self.breakpoints.add(BreakpointKind::Frame(target_frame));
         self.set_temporary_breakpoint(gb.cpu.regs.pc);
-        self.paused = false;
-        self.debugger_open = false;
     }
 
     /// Run until next scanline.
@@ -224,8 +222,6 @@ impl GbDebuggerController {
 
         self.breakpoints.add(BreakpointKind::GbInterrupt(kind));
         self.set_temporary_breakpoint_for_interrupt(gb.cpu.regs.pc, kind);
-        self.paused = false;
-        self.debugger_open = false;
     }
 
     /// Apply UI actions from the debugger interface.
@@ -254,7 +250,7 @@ impl GbDebuggerController {
 
         if action.run_to_next_frame {
             self.run_to_next_frame(gb);
-            should_continue = false; // run_to methods unpause internally
+            should_continue = true; // will call continue_from_debugger
         }
 
         if action.run_to_next_scanline {
@@ -264,21 +260,21 @@ impl GbDebuggerController {
 
         if action.run_to_vblank {
             self.run_to_interrupt(gb, GbInterruptKind::VBlank);
-            should_continue = false;
+            should_continue = true; // will call continue_from_debugger
         }
 
         if action.run_to_stat {
             self.run_to_interrupt(gb, GbInterruptKind::Stat);
-            should_continue = false;
+            should_continue = true; // will call continue_from_debugger
         }
 
         if action.run_to_timer {
             self.run_to_interrupt(gb, GbInterruptKind::Timer);
-            should_continue = false;
+            should_continue = true; // will call continue_from_debugger
         }
 
         if should_continue {
-            self.paused = false;
+            self.continue_from_debugger(gb);
         }
 
         if let Some(kind) = action.add_breakpoint {
