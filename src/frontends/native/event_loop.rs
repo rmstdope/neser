@@ -748,7 +748,7 @@ impl ApplicationHandler for NativeEventLoop {
                             }
                         }
                         KeyOutcome::ToggleDebugger => {
-                            match &self.console {
+                            match &mut self.console {
                                 Console::Nes(nes) => {
                                     self.debugger_controller.toggle_debugger(nes);
                                 }

@@ -430,13 +430,13 @@ impl GameBoy {
     #[cfg(feature = "native")]
     /// Toggle the debugger open/closed.
     pub fn toggle_debugger_with_controller(
-        &self,
+        &mut self,
         controller: &mut crate::gb::debugging::control::GbDebuggerController,
     ) {
-        if let Some(gb_console) = self.gb.as_ref() {
+        if let Some(gb_console) = self.gb.as_mut() {
             match gb_console {
-                GbConsole::Dmg(gb) => controller.toggle_debugger(gb.as_ref()),
-                GbConsole::Cgb(gb) => controller.toggle_debugger(gb.as_ref()),
+                GbConsole::Dmg(gb) => controller.toggle_debugger(gb.as_mut()),
+                GbConsole::Cgb(gb) => controller.toggle_debugger(gb.as_mut()),
             }
         }
     }
@@ -1289,7 +1289,7 @@ mod tests {
     #[cfg(feature = "native")]
     #[test]
     fn test_toggle_debugger_with_no_rom_does_not_panic() {
-        let gb = make_gameboy();
+        let mut gb = make_gameboy();
         let mut controller = crate::gb::debugging::control::GbDebuggerController::new(&[], false);
 
         // Should not panic even without ROM loaded

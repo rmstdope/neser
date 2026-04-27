@@ -97,13 +97,14 @@ impl GbDebuggerController {
     // ── Debugger open/close ────────────────────────────────────────────
 
     /// Open the debugger and pause emulation.
-    pub fn enter_debugger(&mut self) {
+    pub fn enter_debugger<B: GbBus>(&mut self, gb: &mut Gb<B>) {
+        gb.set_cpu_trace_enabled(true);
         self.paused = true;
         self.debugger_open = true;
     }
 
     /// Close the debugger and resume emulation.
-    pub fn continue_from_debugger<B: GbBus>(&mut self, gb: &Gb<B>) {
+    pub fn continue_from_debugger<B: GbBus>(&mut self, gb: &mut Gb<B>) {
         if self
             .breakpoints
             .has_enabled_pc_breakpoint_at(gb.cpu.regs.pc)
@@ -114,16 +115,17 @@ impl GbDebuggerController {
         self.last_post_instruction_cycles = gb.cpu.cycles();
         self.last_post_instruction_frame = gb.cpu.bus.ppu().frame_count();
 
+        gb.set_cpu_trace_enabled(false);
         self.paused = false;
         self.debugger_open = false;
     }
 
     /// Toggle the debugger: open+pause if closed, continue if open.
-    pub fn toggle_debugger<B: GbBus>(&mut self, gb: &Gb<B>) {
+    pub fn toggle_debugger<B: GbBus>(&mut self, gb: &mut Gb<B>) {
         if self.debugger_open {
             self.continue_from_debugger(gb);
         } else {
-            self.enter_debugger();
+            self.enter_debugger(gb);
         }
     }
 
@@ -197,6 +199,7 @@ impl GbDebuggerController {
         self.breakpoints.add(BreakpointKind::Frame(target_frame));
         self.set_temporary_breakpoint(gb.cpu.regs.pc);
         self.paused = false;
+        self.debugger_open = false;
     }
 
     /// Run until next scanline.
@@ -222,6 +225,7 @@ impl GbDebuggerController {
         self.breakpoints.add(BreakpointKind::GbInterrupt(kind));
         self.set_temporary_breakpoint_for_interrupt(gb.cpu.regs.pc, kind);
         self.paused = false;
+        self.debugger_open = false;
     }
 
     /// Apply UI actions from the debugger interface.
@@ -307,7 +311,7 @@ impl GbDebuggerController {
         while !gb.is_frame_ready() {
             // Check pre-instruction breakpoints (PC, interrupt)
             if self.check_breakpoint_hit_pre_instruction(gb) {
-                self.enter_debugger();
+                self.enter_debugger(gb);
                 return;
             }
 
@@ -316,7 +320,7 @@ impl GbDebuggerController {
 
             // Check post-instruction breakpoints (cycle, frame, write)
             if self.check_post_instruction_breakpoints(gb) {
-                self.enter_debugger();
+                self.enter_debugger(gb);
                 return;
             }
 
@@ -623,7 +627,8 @@ mod tests {
     #[test]
     fn test_enter_debugger_sets_paused_and_open() {
         let mut ctrl = default_controller();
-        ctrl.enter_debugger();
+        let mut gb = gb_with_nop_loop();
+        ctrl.enter_debugger(&mut gb);
         assert!(ctrl.is_paused());
         assert!(ctrl.is_debugger_open());
     }
@@ -631,10 +636,10 @@ mod tests {
     #[test]
     fn test_continue_from_debugger_clears_paused_and_open() {
         let mut ctrl = default_controller();
-        let gb = gb_with_nop_loop();
+        let mut gb = gb_with_nop_loop();
 
-        ctrl.enter_debugger();
-        ctrl.continue_from_debugger(&gb);
+        ctrl.enter_debugger(&mut gb);
+        ctrl.continue_from_debugger(&mut gb);
 
         assert!(!ctrl.is_paused());
         assert!(!ctrl.is_debugger_open());
@@ -643,9 +648,9 @@ mod tests {
     #[test]
     fn test_toggle_debugger_opens_when_closed() {
         let mut ctrl = default_controller();
-        let gb = gb_with_nop_loop();
+        let mut gb = gb_with_nop_loop();
 
-        ctrl.toggle_debugger(&gb);
+        ctrl.toggle_debugger(&mut gb);
         assert!(ctrl.is_paused());
         assert!(ctrl.is_debugger_open());
     }
@@ -653,10 +658,10 @@ mod tests {
     #[test]
     fn test_toggle_debugger_closes_when_open() {
         let mut ctrl = default_controller();
-        let gb = gb_with_nop_loop();
+        let mut gb = gb_with_nop_loop();
 
-        ctrl.enter_debugger();
-        ctrl.toggle_debugger(&gb);
+        ctrl.enter_debugger(&mut gb);
+        ctrl.toggle_debugger(&mut gb);
 
         assert!(!ctrl.is_paused());
         assert!(!ctrl.is_debugger_open());
@@ -669,7 +674,7 @@ mod tests {
         let mut ctrl = default_controller();
         let mut gb = gb_with_nop_loop();
 
-        ctrl.enter_debugger();
+        ctrl.enter_debugger(&mut gb);
         let initial_pc = gb.cpu.regs.pc;
 
         ctrl.step_into(&mut gb);
@@ -684,7 +689,7 @@ mod tests {
         let mut ctrl = default_controller();
         let mut gb = gb_with_nop_loop();
 
-        ctrl.enter_debugger();
+        ctrl.enter_debugger(&mut gb);
         let initial_pc = gb.cpu.regs.pc;
 
         ctrl.step_over(&mut gb);
@@ -726,8 +731,8 @@ mod tests {
         gb.cpu.regs.pc = 0x0001;
         ctrl.breakpoints_mut().add(BreakpointKind::Pc(0x0001));
 
-        ctrl.enter_debugger();
-        ctrl.continue_from_debugger(&gb);
+        ctrl.enter_debugger(&mut gb);
+        ctrl.continue_from_debugger(&mut gb);
 
         // Should set ignore flag so we don't immediately re-trigger
         assert!(ctrl.breakpoint_ignore_once_at_pc.is_some());
@@ -759,7 +764,7 @@ mod tests {
         gb.cpu.bus.write(0xFF50, 0x01); // Disable boot ROM
         gb.cpu.regs.pc = 0x0000;
 
-        ctrl.enter_debugger();
+        ctrl.enter_debugger(&mut gb);
         ctrl.step_over(&mut gb);
 
         // Should have set temporary breakpoint at return address (PC + 3)
@@ -795,7 +800,7 @@ mod tests {
         gb.cpu.bus.write(0xFF50, 0x01);
         gb.cpu.regs.pc = 0x0000;
 
-        ctrl.enter_debugger();
+        ctrl.enter_debugger(&mut gb);
         ctrl.step_over(&mut gb);
 
         // Should have set temporary breakpoint at return address (PC + 1)
@@ -814,7 +819,7 @@ mod tests {
         let mut ctrl = default_controller();
         let mut gb = gb_with_nop_loop();
 
-        ctrl.enter_debugger();
+        ctrl.enter_debugger(&mut gb);
 
         let action = crate::gb::debugging::ui::GbDebuggerUiAction {
             run_to_next_scanline: true,
@@ -832,7 +837,7 @@ mod tests {
         let mut ctrl = default_controller();
         let mut gb = gb_with_nop_loop();
 
-        ctrl.enter_debugger();
+        ctrl.enter_debugger(&mut gb);
 
         let action = crate::gb::debugging::ui::GbDebuggerUiAction {
             run_to_next_frame: true,
@@ -853,7 +858,7 @@ mod tests {
         let mut ctrl = default_controller();
         let mut gb = gb_with_nop_loop();
 
-        ctrl.enter_debugger();
+        ctrl.enter_debugger(&mut gb);
 
         let action = crate::gb::debugging::ui::GbDebuggerUiAction {
             run_to_vblank: true,
@@ -873,7 +878,7 @@ mod tests {
         let mut ctrl = default_controller();
         let mut gb = gb_with_nop_loop();
 
-        ctrl.enter_debugger(); // Open debugger
+        ctrl.enter_debugger(&mut gb); // Open debugger
 
         let action = crate::gb::debugging::ui::GbDebuggerUiAction {
             add_breakpoint: Some(BreakpointKind::Pc(0xC000)),
@@ -896,7 +901,7 @@ mod tests {
         let mut ctrl = default_controller();
         let mut gb = gb_with_nop_loop();
 
-        ctrl.enter_debugger(); // Open debugger
+        ctrl.enter_debugger(&mut gb); // Open debugger
 
         // Add a breakpoint first
         ctrl.breakpoints_mut().add(BreakpointKind::Pc(0xC000));
@@ -923,7 +928,7 @@ mod tests {
         let mut ctrl = default_controller();
         let mut gb = gb_with_nop_loop();
 
-        ctrl.enter_debugger(); // Open debugger
+        ctrl.enter_debugger(&mut gb); // Open debugger
 
         // Add a breakpoint
         ctrl.breakpoints_mut().add(BreakpointKind::Pc(0xC000));
@@ -956,7 +961,7 @@ mod tests {
     fn test_step_into_advances_pc_by_one_instruction() {
         let mut gb = gb_with_nop_loop();
         let mut ctrl = default_controller();
-        ctrl.enter_debugger();
+        ctrl.enter_debugger(&mut gb);
 
         // Set PC to 0x0000 (NOP instruction, 1 byte)
         gb.cpu.regs.pc = 0x0000;
@@ -977,7 +982,7 @@ mod tests {
     fn test_step_over_non_call_advances_pc_by_one_instruction() {
         let mut gb = gb_with_nop_loop();
         let mut ctrl = default_controller();
-        ctrl.enter_debugger();
+        ctrl.enter_debugger(&mut gb);
 
         // Set PC to 0x0000 (NOP instruction, 1 byte)
         gb.cpu.regs.pc = 0x0000;
