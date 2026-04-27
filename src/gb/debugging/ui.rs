@@ -385,56 +385,63 @@ fn parse_breakpoint_kind(kind_idx: usize, value_str: &str) -> Option<BreakpointK
 
 #[cfg(feature = "native")]
 fn render_cpu_code_panel(ui: &imgui::Ui, snapshot: &GbDebuggerSnapshot, size: [f32; 2]) {
-    ui.group(|| {
-        ui.text("Disassembly");
-        ui.separator();
+    ui.child_window("cpu_code")
+        .size(size)
+        .border(true)
+        .build(|| {
+            apply_debugger_ui_font_scale(ui);
+            ui.text("Disassembly");
+            ui.separator();
 
-        let line_height = ui.text_line_height_with_spacing();
-        let desired_height = code_panel_disasm_height_for_line_height(line_height);
-        let disasm_height = desired_height
-            .min(size[1] - ui.cursor_pos()[1] - 100.0)
-            .max(100.0);
+            let line_height = ui.text_line_height_with_spacing();
+            let desired_height = code_panel_disasm_height_for_line_height(line_height);
+            let disasm_height = desired_height.min(ui.content_region_avail()[1].max(0.0));
 
-        ui.child_window("disasm_window")
-            .size([size[0], disasm_height])
-            .build(|| {
-                for line in &snapshot.cpu_disasm {
-                    let is_current = line.is_current;
-                    let bytes = format_disasm_bytes(&line.bytes);
-                    let text = format!("{:04X}: {:<8} {}", line.addr, bytes, line.text);
+            ui.child_window("disasm_window")
+                .size([0.0, disasm_height])
+                .border(false)
+                .build(|| {
+                    apply_debugger_ui_font_scale(ui);
+                    for line in &snapshot.cpu_disasm {
+                        let is_current = line.is_current;
+                        let bytes = format_disasm_bytes(&line.bytes);
+                        let text = format!("{:04X}: {:<8} {}", line.addr, bytes, line.text);
 
-                    if is_current {
-                        let draw_list = ui.get_window_draw_list();
-                        let pos = ui.cursor_screen_pos();
-                        let size = [size[0], line_height];
-                        draw_list
-                            .add_rect(
-                                pos,
-                                [pos[0] + size[0], pos[1] + size[1]],
-                                [0.0, 1.0, 0.0, 0.3],
-                            )
-                            .filled(true)
-                            .build();
+                        if is_current {
+                            let cursor = ui.cursor_screen_pos();
+                            let draw_w = ui.content_region_avail()[0];
+                            let draw_h = ui.text_line_height();
+
+                            ui.get_window_draw_list()
+                                .add_rect(
+                                    cursor,
+                                    [cursor[0] + draw_w, cursor[1] + draw_h],
+                                    [0.0, 1.0, 0.0, 0.3],
+                                )
+                                .filled(true)
+                                .build();
+                        }
+                        ui.text(text);
                     }
-                    ui.text(text);
-                }
-            });
+                });
 
-        ui.dummy([0.0, 8.0]);
-        ui.text("CPU Trace");
-        ui.separator();
+            ui.separator();
+            ui.text("CPU Trace");
+            ui.separator();
 
-        let trace_height = (size[1] - ui.cursor_pos()[1]).max(50.0);
-        ui.child_window("trace_window")
-            .size([size[0], trace_height])
-            .build(|| {
-                for line in &snapshot.recent_trace {
-                    let bytes = format_disasm_bytes(&line.bytes);
-                    let text = format!("{:04X}: {:<8} {}", line.addr, bytes, line.text);
-                    ui.text(text);
-                }
-            });
-    });
+            let trace_height = ui.content_region_avail()[1].max(0.0);
+            ui.child_window("trace_window")
+                .size([0.0, trace_height])
+                .border(false)
+                .build(|| {
+                    apply_debugger_ui_font_scale(ui);
+                    for line in &snapshot.recent_trace {
+                        let bytes = format_disasm_bytes(&line.bytes);
+                        let text = format!("{:04X}: {:<8} {}", line.addr, bytes, line.text);
+                        ui.text(text);
+                    }
+                });
+        });
 }
 
 fn format_disasm_bytes(bytes: &[u8]) -> String {
