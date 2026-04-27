@@ -96,7 +96,8 @@ impl MemoryRegion {
     pub fn normalize_base(&self, base: u16) -> u16 {
         let aligned = base & 0xFFF0;
         // Ensure base + 0xFF stays within region
-        let max_base = self.max_addr.saturating_sub(0xFF);
+        // Guard against regions smaller than 0x100 bytes
+        let max_base = self.max_addr.saturating_sub(0xFF).max(self.min_addr);
         aligned.clamp(self.min_addr, max_base)
     }
 
@@ -126,23 +127,6 @@ pub trait MemoryRegions: Default + Clone + PartialEq + Eq + core::fmt::Debug {
             .first()
             .expect("at least one region required")
     }
-}
-
-/// Marker trait for disassembly line snapshots.
-///
-/// Implemented by platform-specific disassembly line types.
-pub trait DisasmLine: Clone + PartialEq + Eq + core::fmt::Debug {
-    /// Get the address of this instruction.
-    fn addr(&self) -> u16;
-
-    /// Get the raw instruction bytes.
-    fn bytes(&self) -> &[u8];
-
-    /// Get the formatted instruction text.
-    fn text(&self) -> &str;
-
-    /// Check if this is the current instruction (at PC).
-    fn is_current(&self) -> bool;
 }
 
 #[cfg(test)]

@@ -460,7 +460,6 @@ impl GbDebuggerController {
     // ── Temporary breakpoint management ────────────────────────────────
 
     fn clear_temporary_breakpoint(&mut self) {
-        use crate::platform::debugging::controller::TemporaryBreakpoint;
         if let Some(tb) = self.core.temporary_breakpoint.take() {
             if tb.already_present {
                 // Restore original enabled state

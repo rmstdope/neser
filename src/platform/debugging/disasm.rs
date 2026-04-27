@@ -207,12 +207,13 @@ where
     lines
 }
 
-/// Format instruction bytes as a hex string with proper padding (8 characters).
+/// Format instruction bytes as a hex string with proper padding (9 characters).
 ///
 /// Examples:
-/// - 1 byte:  "3E       "
-/// - 2 bytes: "3E 50    "
-/// - 3 bytes: "C3 00 01 "
+/// - 0 bytes: "        " (8 spaces)
+/// - 1 byte:  "3E       " (9 chars)
+/// - 2 bytes: "3E 50    " (9 chars)
+/// - 3 bytes: "C3 00 01 " (9 chars)
 pub fn format_disasm_bytes(bytes: &[u8]) -> String {
     match bytes.len() {
         0 => String::from("        "),
