@@ -220,11 +220,6 @@ fn handle_gameboy_key_pressed(
         return outcome;
     }
 
-    // Skip debugger shortcuts (F10/F11) when debugger is open, as ImGui handles them through UI buttons
-    if app_state.debugger_open && matches!(key_code, KeyCode::F10 | KeyCode::F11) {
-        return KeyOutcome::Continue;
-    }
-
     match key_code {
         KeyCode::KeyH => app_state.help_overlay_visible = !app_state.help_overlay_visible,
         KeyCode::F5 => return KeyOutcome::ToggleDebugger,
@@ -277,11 +272,6 @@ fn handle_unmodified_key(
 ) -> KeyOutcome {
     if let Some(outcome) = handle_common_hotkey(key_code, app_state, audio) {
         return outcome;
-    }
-
-    // Skip debugger shortcuts (F10/F11) when debugger is open, as ImGui handles them through UI buttons
-    if app_state.debugger_open && matches!(key_code, KeyCode::F10 | KeyCode::F11) {
-        return KeyOutcome::Continue;
     }
 
     match key_code {

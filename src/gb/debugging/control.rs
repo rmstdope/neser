@@ -939,6 +939,50 @@ mod tests {
         assert!(ctrl.breakpoints().iter().next().unwrap().enabled);
     }
 
+    // ── PC advancement tests ───────────────────────────────────────────
+
+    #[test]
+    fn test_step_into_advances_pc_by_one_instruction() {
+        let mut gb = gb_with_nop_loop();
+        let mut ctrl = default_controller();
+        ctrl.enter_debugger();
+
+        // Set PC to 0x0000 (NOP instruction, 1 byte)
+        gb.cpu.regs.pc = 0x0000;
+        let pc_before = gb.cpu.regs.pc;
+
+        // Step one instruction
+        ctrl.step_into(&mut gb);
+
+        // Should advance by exactly 1 byte (NOP is 1 byte)
+        assert_eq!(
+            gb.cpu.regs.pc,
+            pc_before + 1,
+            "step_into should execute exactly one NOP instruction"
+        );
+    }
+
+    #[test]
+    fn test_step_over_non_call_advances_pc_by_one_instruction() {
+        let mut gb = gb_with_nop_loop();
+        let mut ctrl = default_controller();
+        ctrl.enter_debugger();
+
+        // Set PC to 0x0000 (NOP instruction, 1 byte)
+        gb.cpu.regs.pc = 0x0000;
+        let pc_before = gb.cpu.regs.pc;
+
+        // Step over (NOP is not a CALL, so should behave like step_into)
+        ctrl.step_over(&mut gb);
+
+        // Should advance by exactly 1 byte
+        assert_eq!(
+            gb.cpu.regs.pc,
+            pc_before + 1,
+            "step_over on NOP should execute exactly one instruction"
+        );
+    }
+
     // ── View state tests ───────────────────────────────────────────────
 
     #[test]
