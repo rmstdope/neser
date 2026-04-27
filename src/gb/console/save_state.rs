@@ -21,7 +21,7 @@ use crate::gb::timer::Timer;
 
 /// Current save-state format version for Game Boy.
 /// Increment this when making breaking changes to the state format.
-pub const GB_SAVESTATE_VERSION: u32 = 2;
+pub const GB_SAVESTATE_VERSION: u32 = 3;
 
 /// Identifies which bus variant was active when the state was saved.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,8 +47,8 @@ pub struct Sm83State {
 pub struct BusState {
     pub bus_type: GbBusType,
     pub ppu: Ppu,
-    #[serde_as(as = "[_; 0x2000]")]
-    pub wram: [u8; 0x2000],
+    #[serde_as(as = "[_; 0x8000]")]
+    pub wram: [u8; 0x8000],
     #[serde_as(as = "[_; 0x7F]")]
     pub hram: [u8; 0x7F],
     pub timer: Timer,
@@ -62,6 +62,8 @@ pub struct BusState {
     pub dma_oam_blocked: bool,
     // CGB HDMA state (None for DMG)
     pub hdma: Option<HdmaState>,
+    // CGB WRAM bank register (None for DMG)
+    pub svbk: Option<u8>,
     // DMG-only fields (None for CGB)
     pub boot_rom_active: Option<bool>,
     pub sb: Option<u8>,
@@ -234,8 +236,8 @@ mod tests {
     // ── Version checks ─────────────────────────────────────────────────────
 
     #[test]
-    fn test_gb_savestate_version_is_2() {
-        assert_eq!(GB_SAVESTATE_VERSION, 2);
+    fn test_gb_savestate_version_is_3() {
+        assert_eq!(GB_SAVESTATE_VERSION, 3);
     }
 
     // ── DMG round-trip ─────────────────────────────────────────────────────
