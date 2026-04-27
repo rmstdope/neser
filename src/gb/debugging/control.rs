@@ -48,6 +48,8 @@ pub struct GbDebuggerController {
     view_state: GbDebuggerViewState,
     breakpoints: BreakpointList,
     temporary_breakpoint: Option<TemporaryBreakpoint>,
+    /// Tracks breakpoints added by run_to operations that should be removed after hitting
+    run_to_breakpoint: Option<BreakpointKind>,
     breakpoint_ignore_once_at_pc: Option<u16>,
     last_post_instruction_cycles: u64,
     last_post_instruction_frame: u64,
@@ -66,6 +68,7 @@ impl GbDebuggerController {
             view_state: GbDebuggerViewState::default(),
             breakpoints,
             temporary_breakpoint: None,
+            run_to_breakpoint: None,
             breakpoint_ignore_once_at_pc: None,
             last_post_instruction_cycles: 0,
             last_post_instruction_frame: 0,
@@ -100,6 +103,10 @@ impl GbDebuggerController {
     pub fn enter_debugger<B: GbBus>(&mut self, gb: &mut Gb<B>) {
         // Clear any leftover temporary breakpoints from previous run-to operations
         self.clear_temporary_breakpoint();
+        // Remove run_to breakpoint if it was hit
+        if let Some(kind) = self.run_to_breakpoint.take() {
+            self.breakpoints.remove_first_matching(&kind);
+        }
         gb.set_cpu_trace_enabled(true);
         self.paused = true;
         self.debugger_open = true;
@@ -198,7 +205,9 @@ impl GbDebuggerController {
         }
 
         let target_frame = gb.cpu.bus.ppu().frame_count() + 1;
-        self.breakpoints.add(BreakpointKind::Frame(target_frame));
+        let kind = BreakpointKind::Frame(target_frame);
+        self.breakpoints.add(kind);
+        self.run_to_breakpoint = Some(kind);
     }
 
     /// Run until next scanline.
@@ -221,7 +230,9 @@ impl GbDebuggerController {
             return;
         }
 
-        self.breakpoints.add(BreakpointKind::GbInterrupt(kind));
+        let bp_kind = BreakpointKind::GbInterrupt(kind);
+        self.breakpoints.add(bp_kind);
+        self.run_to_breakpoint = Some(bp_kind);
     }
 
     /// Apply UI actions from the debugger interface.
