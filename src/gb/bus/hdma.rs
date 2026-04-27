@@ -30,6 +30,12 @@ pub struct HdmaState {
     hblank_mode: bool,
 }
 
+impl Default for HdmaState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HdmaState {
     /// Create a new HDMA state with all registers cleared and no active transfer.
     pub fn new() -> Self {
@@ -317,7 +323,7 @@ mod tests {
         hdma.write_dest_low(0x00);
         hdma.write_control(0x00); // GDMA, 1 block
         // When: transfer the single block
-        let mut dummy_mem = [0u8; 0x10000];
+        let dummy_mem = [0u8; 0x10000];
         let complete =
             hdma.transfer_block(&mut |addr| dummy_mem[addr as usize], &mut |_addr, _val| {});
         // Then: transfer complete, read returns $FF

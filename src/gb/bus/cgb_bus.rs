@@ -325,7 +325,7 @@ impl CgbBus {
         self.dma_source = state.dma_source;
         self.dma_position = state.dma_position;
         self.dma_oam_blocked = state.dma_oam_blocked;
-        self.hdma = state.hdma.clone().unwrap_or_else(HdmaState::new);
+        self.hdma = state.hdma.clone().unwrap_or_default();
         Ok(())
     }
 
