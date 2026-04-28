@@ -1,3 +1,4 @@
+use super::huc1::Huc1;
 /// Game Boy cartridge interface.
 ///
 /// Each cartridge type (MBC0, MBC1, …) implements this trait.
@@ -8,6 +9,7 @@ use super::mbc1::Mbc1;
 use super::mbc2::Mbc2;
 use super::mbc3::Mbc3;
 use super::mbc5::Mbc5;
+use super::mbc7::Mbc7;
 
 pub trait GbCartridge {
     /// Read a byte from the cartridge address space.
@@ -112,7 +114,7 @@ fn ram_size_from_byte(byte: u8) -> usize {
 /// Validations performed:
 /// 1. Length must be at least 32 KB (0x8000) — returns [`RomError::TooShort`].
 /// 2. Header checksum at 0x014D must be correct — returns [`RomError::BadHeaderChecksum`].
-/// 3. MBC type at 0x0147 must be supported (0x00–0x03, 0x05–0x06, 0x19–0x1E) — returns [`RomError::UnsupportedMbc`].
+/// 3. MBC type at 0x0147 must be supported (0x00–0x03, 0x05–0x06, 0x19–0x1E, 0x22, 0xFF) — returns [`RomError::UnsupportedMbc`].
 pub fn load_cartridge(bytes: &[u8]) -> Result<Box<dyn GbCartridge>, RomError> {
     if bytes.len() < 0x8000 {
         return Err(RomError::TooShort);
@@ -165,6 +167,11 @@ pub fn load_cartridge(bytes: &[u8]) -> Result<Box<dyn GbCartridge>, RomError> {
                 has_rumble,
                 has_battery,
             )))
+        }
+        0x22 => Ok(Box::new(Mbc7::new(bytes.to_vec()))),
+        0xFF => {
+            let ram_size = ram_size_from_byte(bytes[0x0149]);
+            Ok(Box::new(Huc1::new(bytes.to_vec(), vec![0u8; ram_size])))
         }
         n => Err(RomError::UnsupportedMbc(n)),
     }
@@ -279,11 +286,23 @@ mod tests {
     }
 
     #[test]
+    fn test_load_returns_ok_for_mbc7_rom() {
+        let rom = make_valid_rom(0x22, 0x01);
+        assert!(load_cartridge(&rom).is_ok());
+    }
+
+    #[test]
+    fn test_load_returns_ok_for_huc1_rom() {
+        let rom = make_valid_rom(0xFF, 0x01);
+        assert!(load_cartridge(&rom).is_ok());
+    }
+
+    #[test]
     fn test_load_returns_error_for_unsupported_mbc_type() {
-        let rom = make_valid_rom(0xFF, 0x00);
+        let rom = make_valid_rom(0x07, 0x00); // Use 0x07 which is not supported
         assert!(matches!(
             load_cartridge(&rom),
-            Err(RomError::UnsupportedMbc(0xFF))
+            Err(RomError::UnsupportedMbc(0x07))
         ));
     }
 }
