@@ -2,7 +2,7 @@ use crate::gb::bus::CgbBus;
 use crate::gb::bus::DmgBus;
 use crate::gb::cartridge::load_cartridge;
 use crate::gb::console::Gb;
-use crate::gb::model::DmgModel;
+use crate::gb::model::{CgbModel, DmgModel};
 
 fn load_gb_rom(path: &str) -> Gb<DmgBus> {
     let rom = std::fs::read(path).expect("ROM file should be present");
@@ -13,7 +13,7 @@ fn load_gb_rom(path: &str) -> Gb<DmgBus> {
 fn load_cgb_rom(path: &str) -> Gb<CgbBus> {
     let rom = std::fs::read(path).expect("ROM file should be present");
     let cart = load_cartridge(&rom).expect("valid GB ROM");
-    let mut gb = Gb::new(CgbBus::new(cart));
+    let mut gb = Gb::new(CgbBus::new(cart, CgbModel::default()));
     // Set CGB post-boot-ROM CPU register state (A=$11 = CGB hardware identifier).
     gb.cpu.reset_registers_cgb();
     gb

@@ -12,9 +12,9 @@ pub mod ppu;
 pub mod timer;
 
 pub use console::gameboy::GameBoy;
-// Re-export DmgModel so downstream library consumers can use `neser::gb::DmgModel`.
+// Re-export DmgModel and CgbModel so downstream library consumers can use `neser::gb::DmgModel` and `neser::gb::CgbModel`.
 #[allow(unused_imports)]
-pub use model::DmgModel;
+pub use model::{CgbModel, DmgModel};
 
 #[cfg(test)]
 pub mod integration_tests;

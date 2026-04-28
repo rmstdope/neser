@@ -223,7 +223,8 @@ impl GameBoy {
         };
 
         self.gb = Some(if use_cgb_bus {
-            let mut gb = Gb::new(CgbBus::new(cart));
+            let cgb_variant = self.app_context.borrow().config().gb.cgb_variant;
+            let mut gb = Gb::new(CgbBus::new(cart, cgb_variant));
             gb.cpu.reset_registers_cgb();
             GbConsole::Cgb(Box::new(gb))
         } else {
