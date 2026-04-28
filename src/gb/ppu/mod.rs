@@ -286,29 +286,46 @@ impl Ppu {
 
     /// Evaluate the STAT IRQ source line and fire a STAT interrupt on 0→1 edge.
     ///
-    /// Uses `timing.mode_for_irq()` for Mode 2 only (fires 4 dots early).
-    /// Mode 0 and Mode 1 remain level-based (raw mode bits) since they are
-    /// active throughout the entire HBlank / VBlank period.
+    /// Delegates to `eval_stat_irq_line` using the current `stat_irq_enables` register.
     /// Mode IRQs are suppressed when `mode_for_irq == -1` (first scanline after LCD enable).
     fn update_stat_irq(&mut self) {
-        let mode = self.timing.mode();
-        let mode_for_irq = self.timing.mode_for_irq();
-        let en = self.registers.stat_irq_enables;
-
-        // mode_for_irq < 0 signals that mode-based IRQs are suppressed
-        // (first scanline after LCD enable, or during Mode 3).
-        let suppress_mode_irqs = mode_for_irq < 0;
-
-        // Use the same delayed lyc_eq_ly_frozen latch that drives STAT bit 2,
-        // ensuring the IRQ and the readable bit are always consistent.
-        let irq_line = (en & 0x40 != 0 && self.lyc_eq_ly_frozen)
-            || (mode_for_irq == 2 && en & 0x20 != 0)
-            || (!suppress_mode_irqs && en & 0x10 != 0 && mode == PpuMode::VBlank)
-            || (mode_for_irq == 0 && en & 0x08 != 0);
-
+        let irq_line = self.eval_stat_irq_line(self.registers.stat_irq_enables);
         if irq_line && !self.prev_stat_irq_line {
             self.pending_interrupts |= 0x02;
             trace_ppu!(2; "stat irq y={} dot={} stat={:02X}", self.timing.ly(), self.timing.dot(), self.compose_stat_byte());
+        }
+        self.prev_stat_irq_line = irq_line;
+    }
+
+    /// Evaluate the STAT IRQ source line for a given set of enable bits.
+    ///
+    /// `en` is treated as the STAT register value: bits [6:3] select which sources
+    /// can fire. Passing `0xFF` evaluates all sources as enabled (used by the DMG
+    /// spurious interrupt quirk). Uses `mode_for_irq` for all mode-based sources:
+    /// Mode 2 fires 4 dots early, Mode 0 becomes active according to the IRQ timing
+    /// view of HBlank (which can begin before the raw mode bit changes), and
+    /// Mode 3 returns -1 (suppressed), matching hardware behaviour.
+    fn eval_stat_irq_line(&self, en: u8) -> bool {
+        let mode_for_irq = self.timing.mode_for_irq();
+        let suppress_mode_irqs = mode_for_irq < 0;
+        let mode = self.timing.mode();
+        (en & 0x40 != 0 && self.lyc_eq_ly_frozen)
+            || (mode_for_irq == 2 && en & 0x20 != 0)
+            || (!suppress_mode_irqs && en & 0x10 != 0 && mode == PpuMode::VBlank)
+            || (mode_for_irq == 0 && en & 0x08 != 0)
+    }
+
+    /// DMG-only STAT write spurious interrupt quirk (Pan Docs: "Spurious STAT interrupts").
+    ///
+    /// On monochrome hardware, writing any value to $FF41 briefly acts as if $FF
+    /// was written for one M-cycle. This means all four IRQ sources are momentarily
+    /// enabled. If any source condition is currently true, the STAT interrupt fires.
+    /// Uses edge detection via `prev_stat_irq_line` to avoid double-firing.
+    fn handle_stat_write_spurious_irq(&mut self) {
+        let irq_line = self.eval_stat_irq_line(0xFF);
+        if irq_line && !self.prev_stat_irq_line {
+            self.pending_interrupts |= 0x02;
+            trace_ppu!(2; "stat spurious irq y={} dot={} stat={:02X}", self.timing.ly(), self.timing.dot(), self.compose_stat_byte());
         }
         self.prev_stat_irq_line = irq_line;
     }
@@ -428,6 +445,11 @@ impl Ppu {
     /// On LCD 1→0, retains `lyc_eq_ly_frozen` so STAT bit 2 reflects the last
     /// live LYC=LY comparison result.
     pub fn write_register(&mut self, addr: u16, val: u8) {
+        // DMG-only: writing to STAT ($FF41) can trigger a spurious STAT interrupt.
+        // Evaluate before applying the write so we use the current PPU state.
+        if addr == 0xFF41 && !self.cgb_mode && self.registers.lcd_enabled() {
+            self.handle_stat_write_spurious_irq();
+        }
         let was_enabled = self.registers.lcd_enabled();
         self.registers.write(addr, val);
         let now_enabled = self.registers.lcd_enabled();
@@ -1783,6 +1805,182 @@ mod tests {
         assert!(
             first || second,
             "hblank_entered should fire at least once during visible scanlines"
+        );
+    }
+
+    // ── DMG STAT spurious interrupt quirk (issue #2198) ───────────────────────
+    //
+    // Pan Docs: "A hardware quirk in the monochrome Game Boy makes the LCD
+    // interrupt sometimes trigger when writing to STAT (including writing $00)
+    // during OAM scan, HBlank, VBlank, or LY=LYC. It behaves as if $FF were
+    // written for one M-cycle, and then the written value were written the
+    // next M-cycle."
+    //
+    // Trigger conditions: write to $FF41 on DMG while in mode 0 (HBlank),
+    // mode 1 (VBlank), mode 2 (OAM scan), or while LY=LYC is active.
+    // CGB (even in DMG compatibility mode) does NOT have this quirk.
+
+    /// Helper: advance a fresh DMG PPU to HBlank (Mode 0) on scanline 1.
+    /// Drains any interrupts accumulated during setup.
+    fn ppu_at_hblank() -> Ppu {
+        let mut ppu = Ppu::new();
+        // Scan 1 layout: HBlank [0,4) → OamScan [4,80) → Mode3 [80,256) → HBlank [256,456)
+        // Advance past first scanline (452 dots) + 256 more → dot 256 of scan 1 = HBlank start.
+        tick_dots(&mut ppu, FIRST_SCANLINE_DOTS + 256);
+        assert_eq!(ppu.timing.mode(), PpuMode::HBlank, "must be in HBlank");
+        let _ = ppu.take_pending_interrupts(); // drain setup interrupts
+        ppu
+    }
+
+    #[test]
+    fn test_stat_write_spurious_irq_during_hblank() {
+        // Given: DMG PPU in Mode 0 (HBlank), no IRQ sources enabled in STAT
+        let mut ppu = ppu_at_hblank();
+        // When: write $00 to STAT (Pan Docs explicitly mentions writing $00 triggers it)
+        ppu.write_register(0xFF41, 0x00);
+        // Then: STAT interrupt fires (bit 1 of IF)
+        let flags = ppu.take_pending_interrupts();
+        assert_eq!(
+            flags & 0x02,
+            0x02,
+            "STAT write during HBlank must trigger spurious STAT interrupt on DMG"
+        );
+    }
+
+    #[test]
+    fn test_stat_write_spurious_irq_during_vblank() {
+        // Given: DMG PPU in VBlank (scanline 144)
+        let mut ppu = Ppu::new();
+        // First scanline = 452 dots, then 143 more at 456 each → scanline 144 = VBlank
+        tick_dots(&mut ppu, FIRST_SCANLINE_DOTS + 456 * 143 + 1);
+        assert_eq!(ppu.timing.mode(), PpuMode::VBlank, "must be in VBlank");
+        let _ = ppu.take_pending_interrupts();
+        // When: write $00 to STAT
+        ppu.write_register(0xFF41, 0x00);
+        // Then: STAT interrupt fires
+        let flags = ppu.take_pending_interrupts();
+        assert_eq!(
+            flags & 0x02,
+            0x02,
+            "STAT write during VBlank must trigger spurious STAT interrupt on DMG"
+        );
+    }
+
+    #[test]
+    fn test_stat_write_spurious_irq_during_oam_scan() {
+        // Given: DMG PPU in Mode 2 (OAM Scan) on scanline 1
+        let mut ppu = Ppu::new();
+        advance_to_mode_2(&mut ppu); // dot=4 on scan 1 = Mode 2 start
+        let _ = ppu.take_pending_interrupts();
+        // When: write $00 to STAT
+        ppu.write_register(0xFF41, 0x00);
+        // Then: STAT interrupt fires
+        let flags = ppu.take_pending_interrupts();
+        assert_eq!(
+            flags & 0x02,
+            0x02,
+            "STAT write during OAM Scan must trigger spurious STAT interrupt on DMG"
+        );
+    }
+
+    #[test]
+    fn test_stat_write_spurious_irq_when_lyc_eq_ly() {
+        // Given: LYC=5, PPU advanced to scanline 5 where LY=LYC is active,
+        // but in Mode 3 (PixelTransfer) so no mode condition is true.
+        // The LY=LYC condition alone should trigger the spurious interrupt.
+        let mut ppu = Ppu::new();
+        ppu.write_register(0xFF45, 5); // LYC = 5
+        // Scan 2+: OamScan [0,80) → Mode3 [80,252+) → HBlank.
+        // After FIRST_SCANLINE_DOTS + 456*4 we're at dot 0 of scan 5 (LY=5).
+        // +81 → dot 81 = safely inside Mode 3 on scan 5.
+        tick_dots(&mut ppu, FIRST_SCANLINE_DOTS + 456 * 4 + 81);
+        assert_eq!(ppu.timing.ly(), 5, "must be on scanline 5 (LY=LYC)");
+        assert_eq!(
+            ppu.timing.mode(),
+            PpuMode::PixelTransfer,
+            "must be in Mode 3"
+        );
+        assert!(ppu.lyc_eq_ly_frozen, "LYC=LY must be active");
+        let _ = ppu.take_pending_interrupts();
+        // When: write $00 to STAT (no IRQ enables set)
+        ppu.write_register(0xFF41, 0x00);
+        // Then: STAT interrupt fires due to LY=LYC condition
+        let flags = ppu.take_pending_interrupts();
+        assert_eq!(
+            flags & 0x02,
+            0x02,
+            "STAT write when LY=LYC must trigger spurious STAT interrupt on DMG"
+        );
+    }
+
+    #[test]
+    fn test_stat_write_no_spurious_irq_during_pixel_transfer_no_lyc() {
+        // Given: DMG PPU in Mode 3 (PixelTransfer) on scanline 1, LYC != LY
+        let mut ppu = Ppu::new();
+        ppu.write_register(0xFF45, 99); // LYC = 99, will never match during test
+        // Scan 1: HBlank [0,4) → OamScan [4,80) → Mode3 [80,252) → HBlank [252,456)
+        // Advance to dot 81 of scan 1 = safely inside Mode 3.
+        tick_dots(&mut ppu, FIRST_SCANLINE_DOTS + 81);
+        assert_eq!(
+            ppu.timing.mode(),
+            PpuMode::PixelTransfer,
+            "must be in Mode 3"
+        );
+        assert!(!ppu.lyc_eq_ly_frozen, "LYC must not equal LY");
+        let _ = ppu.take_pending_interrupts();
+        // When: write $00 to STAT
+        ppu.write_register(0xFF41, 0x00);
+        // Then: NO STAT interrupt (Mode 3 is not a trigger condition, and LY != LYC)
+        let flags = ppu.take_pending_interrupts();
+        assert_eq!(
+            flags & 0x02,
+            0x00,
+            "STAT write during Mode 3 (PixelTransfer) with no LY=LYC must NOT trigger spurious IRQ"
+        );
+    }
+
+    #[test]
+    fn test_stat_write_no_spurious_irq_in_cgb_mode() {
+        // Given: CGB PPU in HBlank — the quirk only exists on DMG
+        let mut ppu = Ppu::new_cgb();
+        // Advance to HBlank on scanline 1 (same dot count as ppu_at_hblank)
+        tick_dots(&mut ppu, FIRST_SCANLINE_DOTS + 256);
+        assert_eq!(ppu.timing.mode(), PpuMode::HBlank, "must be in HBlank");
+        let _ = ppu.take_pending_interrupts();
+        // When: write $00 to STAT
+        ppu.write_register(0xFF41, 0x00);
+        // Then: NO spurious STAT interrupt on CGB
+        let flags = ppu.take_pending_interrupts();
+        assert_eq!(
+            flags & 0x02,
+            0x00,
+            "STAT write on CGB must NOT trigger the DMG spurious interrupt quirk"
+        );
+    }
+
+    #[test]
+    fn test_stat_write_spurious_irq_no_double_fire_if_irq_line_already_high() {
+        // Given: DMG PPU in HBlank with Mode 0 IRQ source already enabled,
+        // so the STAT IRQ line is already high (prev_stat_irq_line = true).
+        // The spurious quirk should not generate an additional interrupt since
+        // the IRQ line was already high (no new rising edge).
+        let mut ppu = Ppu::new();
+        // Enable Mode 0 (HBlank) IRQ so the line goes high when we enter HBlank
+        ppu.write_register(0xFF41, 0x08); // bit 3 = Mode 0 IRQ enable
+        // Advance to HBlank on scanline 1
+        tick_dots(&mut ppu, FIRST_SCANLINE_DOTS + 256);
+        assert_eq!(ppu.timing.mode(), PpuMode::HBlank);
+        // The STAT IRQ line should already be high now (Mode 0 IRQ fired);
+        // drain any accumulated interrupt flags.
+        let _ = ppu.take_pending_interrupts();
+        // When: write to STAT again (spurious check should NOT re-fire since line already high)
+        ppu.write_register(0xFF41, 0x08);
+        // Then: no additional STAT interrupt
+        let flags = ppu.take_pending_interrupts();
+        assert_eq!(
+            flags & 0x02,
+            0x00,
+            "STAT write when IRQ line already high must not double-fire the STAT interrupt"
         );
     }
 }
