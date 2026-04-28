@@ -475,7 +475,12 @@ impl GbBus for DmgBus {
                 }
                 self.ppu.read_oam(addr)
             }
-            0xFEA0..=0xFEFF => 0xFF,
+            0xFEA0..=0xFEFF => {
+                if self.dma_oam_blocked {
+                    return 0xFF;
+                }
+                self.ppu.read_forbidden_zone()
+            }
             0xFF00 => self.joypad.read(),
             0xFF01 => self.sb,
             0xFF02 => self.sc | 0x7E, // bits 6-1 unused on DMG, always read as 1
@@ -824,13 +829,124 @@ mod tests {
         );
     }
 
-    // ── Forbidden ─────────────────────────────────────────────────────────────
+    // ── Forbidden ($FEA0–$FEFF) ──────────────────────────────────────────────
+    //
+    // Per Pan Docs: "This area returns $FF when OAM is blocked, and otherwise
+    // the behavior depends on the hardware revision."
+    // On DMG: reads during OAM block trigger OAM corruption. Reads otherwise
+    // return $00.
 
     #[test]
-    fn test_forbidden_region_reads_return_0xff() {
+    fn test_forbidden_region_reads_return_0x00_when_oam_not_blocked() {
+        // Given: PPU in VBlank (OAM not blocked, DMA not active)
+        // When: read from $FEA0 and $FEFF
+        // Then: both return $00
         let mut bus = make_bus();
-        assert_eq!(bus.read(0xFEA0), 0xFF);
-        assert_eq!(bus.read(0xFEFF), 0xFF);
+        tick_to_vblank(&mut bus);
+        assert_eq!(
+            bus.read(0xFEA0),
+            0x00,
+            "FEA0 should return 0x00 when OAM accessible"
+        );
+        assert_eq!(
+            bus.read(0xFEFF),
+            0x00,
+            "FEFF should return 0x00 when OAM accessible"
+        );
+    }
+
+    #[test]
+    fn test_forbidden_region_reads_return_0xff_when_ppu_oam_blocked_mode2() {
+        // Given: PPU in Mode 2 (OAM Scan) — OAM is blocked
+        // When: read from $FEA0
+        // Then: returns $FF
+        use crate::gb::bus::GbBus;
+        let mut bus = make_bus();
+        enable_lcd_and_tick_to_row(&mut bus, 2);
+        assert_eq!(
+            bus.read(0xFEA0),
+            0xFF,
+            "FEA0 should return 0xFF when OAM blocked by Mode 2"
+        );
+    }
+
+    #[test]
+    fn test_forbidden_region_reads_return_0xff_when_ppu_oam_blocked_mode3() {
+        // Given: PPU in Mode 3 (Pixel Transfer) — OAM is blocked
+        // When: read from $FEA0
+        // Then: returns $FF
+        let mut bus = make_bus();
+        // Enable LCD; scan 0 has Mode 3 starting at dot 84.
+        // Tick 22 M-cycles (22*4=88 dots) to reach dot 88, which is in Mode 3.
+        bus.write(0xFF40, 0x91);
+        for _ in 0..22 {
+            bus.tick(1);
+        }
+        assert_eq!(
+            bus.read(0xFEA0),
+            0xFF,
+            "FEA0 should return 0xFF when OAM blocked by Mode 3"
+        );
+    }
+
+    #[test]
+    fn test_forbidden_region_reads_return_0xff_when_dma_oam_blocked() {
+        // Given: DMA OAM blocking is active
+        // When: read from $FEA0
+        // Then: returns $FF
+        let mut bus = make_bus();
+        tick_to_vblank(&mut bus);
+        bus.dma_oam_blocked = true;
+        assert_eq!(
+            bus.read(0xFEA0),
+            0xFF,
+            "FEA0 should return 0xFF when OAM blocked by DMA"
+        );
+    }
+
+    #[test]
+    fn test_forbidden_region_read_triggers_corruption_during_mode2() {
+        // Given: PPU in Mode 2 (OAM Scan) at row 2; OAM rows 1 and 2 have known values
+        // When: read from $FEA0 (forbidden region)
+        // Then: OAM row 2 is read-corrupted
+        //
+        // Read corruption formula: row[0] = b | (a & c)
+        // where a=row2[0], b=row1[0], c=row1[2]
+        // row 1: b=0x0002, c=0x0004
+        // row 2: a=0x0001
+        // result: 0x0002 | (0x0001 & 0x0004) = 0x0002 | 0x0000 = 0x0002
+        // Words 1–3 copied from previous row: [0x0003, 0x0004, 0x0005]
+        use crate::gb::bus::GbBus;
+        let mut bus = make_bus();
+        set_row_words(&mut bus.ppu.oam, 1, [0x0002, 0x0003, 0x0004, 0x0005]);
+        set_row_words(&mut bus.ppu.oam, 2, [0x0001, 0x00AA, 0x00BB, 0x00CC]);
+        enable_lcd_and_tick_to_row(&mut bus, 2);
+        bus.read(0xFEA0); // read from forbidden region
+        let row2 = get_row_words(&bus.ppu.oam, 2);
+        assert_eq!(
+            row2,
+            [0x0002, 0x0003, 0x0004, 0x0005],
+            "Forbidden region read in Mode 2 must apply read corruption to current OAM row"
+        );
+    }
+
+    #[test]
+    fn test_forbidden_region_read_no_corruption_during_mode3() {
+        // Given: PPU in Mode 3 (Pixel Transfer); OAM has known values
+        // When: read from $FEA0 (forbidden region)
+        // Then: OAM data is NOT corrupted (corruption only happens in Mode 2)
+        let mut bus = make_bus();
+        // Enable LCD; tick to Mode 3 on scan 0 (dot 88).
+        bus.write(0xFF40, 0x91);
+        for _ in 0..22 {
+            bus.tick(1);
+        }
+        let snapshot = bus.ppu.oam;
+        bus.read(0xFEA0);
+        assert_eq!(
+            bus.ppu.oam, snapshot,
+            "Forbidden region read in Mode 3 must not corrupt OAM"
+        );
     }
 
     // ── HRAM ─────────────────────────────────────────────────────────────────
