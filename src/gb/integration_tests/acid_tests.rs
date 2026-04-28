@@ -146,6 +146,24 @@ fn test_cgb_acid2_frame_matches_reference_crc() {
     );
 }
 
+/// Validate that `cgb-acid-hell.gbc` renders a frame matching the expected CRC.
+///
+/// Baseline CRC `0x1D55EC40` was captured from frame 200 and paired with the
+/// saved `cgb-acid-hell-screenshot.png` output for manual reference inspection.
+#[test]
+fn test_cgb_acid_hell_frame_matches_reference_crc() {
+    let mut gb = load_cgb_rom("roms/gb/automated_tests/cgb-acid2/cgb-acid-hell.gbc");
+
+    // Run 200 frames to allow the ROM to render its test output.
+    let crc = run_cgb_frames_and_crc(&mut gb, 200);
+
+    const EXPECTED_CRC: u32 = 0x1D55_EC40;
+    assert_eq!(
+        crc, EXPECTED_CRC,
+        "cgb-acid-hell frame CRC mismatch: got {crc:#010X}, expected {EXPECTED_CRC:#010X}"
+    );
+}
+
 /// Screenshot helper: saves `dmg-acid2.gb` frame 500 to `dmg-acid2-screenshot.png`.
 /// Run with `cargo test -- --ignored` for visual baseline inspection.
 #[test]
@@ -171,5 +189,19 @@ fn save_cgb_acid2_screenshot() {
     }
     save_cgb_screen_png(&gb, "cgb-acid2-screenshot.png");
     println!("Screenshot saved to cgb-acid2-screenshot.png");
+    println!("CRC: {:#010X}", gb.cpu.bus.ppu.screen_buffer().crc32());
+}
+
+/// Screenshot helper: saves `cgb-acid-hell.gbc` frame 200 to `cgb-acid-hell-screenshot.png`.
+/// Run with `cargo test -- --ignored` to capture the visual baseline and CRC.
+#[test]
+#[ignore = "screenshot helper — run manually for visual baseline inspection"]
+fn save_cgb_acid_hell_screenshot() {
+    let mut gb = load_cgb_rom("roms/gb/automated_tests/cgb-acid2/cgb-acid-hell.gbc");
+    for _ in 0..200 {
+        run_one_cgb_frame(&mut gb);
+    }
+    save_cgb_screen_png(&gb, "cgb-acid-hell-screenshot.png");
+    println!("Screenshot saved to cgb-acid-hell-screenshot.png");
     println!("CRC: {:#010X}", gb.cpu.bus.ppu.screen_buffer().crc32());
 }
