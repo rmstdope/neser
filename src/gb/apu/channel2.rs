@@ -66,7 +66,7 @@ impl Channel2 {
         if !self.active || !self.dac_on {
             return 0.0;
         }
-        let bit = super::DUTY_TABLE[self.duty as usize][self.duty_pos as usize];
+        let bit = super::apu::DUTY_TABLE[self.duty as usize][self.duty_pos as usize];
         if bit == 1 {
             self.volume as f32 / 15.0
         } else {
