@@ -179,7 +179,7 @@ fn run_blargg_rom_lcd(gb: &mut Gb<DmgBus>) -> String {
 
 #[test]
 fn test_cpu_instrs_01_special() {
-    let mut gb = load_gb_rom("roms/gb/automated_tests/cpu_instrs/individual/01-special.gb");
+    let mut gb = load_gb_rom("roms/gb/automated_tests/blargg/cpu_instrs/individual/01-special.gb");
     let output = run_blargg_rom(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -189,7 +189,8 @@ fn test_cpu_instrs_01_special() {
 
 #[test]
 fn test_cpu_instrs_02_interrupts() {
-    let mut gb = load_gb_rom("roms/gb/automated_tests/cpu_instrs/individual/02-interrupts.gb");
+    let mut gb =
+        load_gb_rom("roms/gb/automated_tests/blargg/cpu_instrs/individual/02-interrupts.gb");
     let output = run_blargg_rom(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -199,7 +200,7 @@ fn test_cpu_instrs_02_interrupts() {
 
 #[test]
 fn test_cpu_instrs_03_op_sp_hl() {
-    let mut gb = load_gb_rom("roms/gb/automated_tests/cpu_instrs/individual/03-op sp,hl.gb");
+    let mut gb = load_gb_rom("roms/gb/automated_tests/blargg/cpu_instrs/individual/03-op sp,hl.gb");
     let output = run_blargg_rom(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -209,7 +210,7 @@ fn test_cpu_instrs_03_op_sp_hl() {
 
 #[test]
 fn test_cpu_instrs_04_op_r_imm() {
-    let mut gb = load_gb_rom("roms/gb/automated_tests/cpu_instrs/individual/04-op r,imm.gb");
+    let mut gb = load_gb_rom("roms/gb/automated_tests/blargg/cpu_instrs/individual/04-op r,imm.gb");
     let output = run_blargg_rom(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -219,7 +220,7 @@ fn test_cpu_instrs_04_op_r_imm() {
 
 #[test]
 fn test_cpu_instrs_05_op_rp() {
-    let mut gb = load_gb_rom("roms/gb/automated_tests/cpu_instrs/individual/05-op rp.gb");
+    let mut gb = load_gb_rom("roms/gb/automated_tests/blargg/cpu_instrs/individual/05-op rp.gb");
     let output = run_blargg_rom(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -229,7 +230,7 @@ fn test_cpu_instrs_05_op_rp() {
 
 #[test]
 fn test_cpu_instrs_06_ld_r_r() {
-    let mut gb = load_gb_rom("roms/gb/automated_tests/cpu_instrs/individual/06-ld r,r.gb");
+    let mut gb = load_gb_rom("roms/gb/automated_tests/blargg/cpu_instrs/individual/06-ld r,r.gb");
     let output = run_blargg_rom(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -239,8 +240,9 @@ fn test_cpu_instrs_06_ld_r_r() {
 
 #[test]
 fn test_cpu_instrs_07_jr_jp_call_ret_rst() {
-    let mut gb =
-        load_gb_rom("roms/gb/automated_tests/cpu_instrs/individual/07-jr,jp,call,ret,rst.gb");
+    let mut gb = load_gb_rom(
+        "roms/gb/automated_tests/blargg/cpu_instrs/individual/07-jr,jp,call,ret,rst.gb",
+    );
     let output = run_blargg_rom(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -250,7 +252,8 @@ fn test_cpu_instrs_07_jr_jp_call_ret_rst() {
 
 #[test]
 fn test_cpu_instrs_08_misc_instrs() {
-    let mut gb = load_gb_rom("roms/gb/automated_tests/cpu_instrs/individual/08-misc instrs.gb");
+    let mut gb =
+        load_gb_rom("roms/gb/automated_tests/blargg/cpu_instrs/individual/08-misc instrs.gb");
     let output = run_blargg_rom(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -260,7 +263,7 @@ fn test_cpu_instrs_08_misc_instrs() {
 
 #[test]
 fn test_cpu_instrs_09_op_r_r() {
-    let mut gb = load_gb_rom("roms/gb/automated_tests/cpu_instrs/individual/09-op r,r.gb");
+    let mut gb = load_gb_rom("roms/gb/automated_tests/blargg/cpu_instrs/individual/09-op r,r.gb");
     let output = run_blargg_rom(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -270,7 +273,7 @@ fn test_cpu_instrs_09_op_r_r() {
 
 #[test]
 fn test_cpu_instrs_10_bit_ops() {
-    let mut gb = load_gb_rom("roms/gb/automated_tests/cpu_instrs/individual/10-bit ops.gb");
+    let mut gb = load_gb_rom("roms/gb/automated_tests/blargg/cpu_instrs/individual/10-bit ops.gb");
     let output = run_blargg_rom(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -280,7 +283,8 @@ fn test_cpu_instrs_10_bit_ops() {
 
 #[test]
 fn test_cpu_instrs_11_op_a_hl() {
-    let mut gb = load_gb_rom("roms/gb/automated_tests/cpu_instrs/individual/11-op a,(hl).gb");
+    let mut gb =
+        load_gb_rom("roms/gb/automated_tests/blargg/cpu_instrs/individual/11-op a,(hl).gb");
     let output = run_blargg_rom(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -292,7 +296,7 @@ fn test_cpu_instrs_11_op_a_hl() {
 
 #[test]
 fn test_instr_timing() {
-    let mut gb = load_gb_rom("roms/gb/automated_tests/instr_timing/instr_timing.gb");
+    let mut gb = load_gb_rom("roms/gb/automated_tests/blargg/instr_timing/instr_timing.gb");
     let output = run_blargg_rom(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -302,7 +306,7 @@ fn test_instr_timing() {
 
 #[test]
 fn test_halt_bug() {
-    let mut gb = load_gb_rom("roms/gb/automated_tests/halt_bug/halt_bug.gb");
+    let mut gb = load_gb_rom("roms/gb/automated_tests/blargg/halt_bug/halt_bug.gb");
     let output = run_blargg_rom_lcd(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -312,7 +316,7 @@ fn test_halt_bug() {
 
 #[test]
 fn test_mem_timing() {
-    let mut gb = load_gb_rom("roms/gb/automated_tests/mem_timing/mem_timing.gb");
+    let mut gb = load_gb_rom("roms/gb/automated_tests/blargg/mem_timing/mem_timing.gb");
     let output = run_blargg_rom(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -322,7 +326,7 @@ fn test_mem_timing() {
 
 #[test]
 fn test_mem_timing_2() {
-    let mut gb = load_gb_rom("roms/gb/automated_tests/mem_timing-2/mem_timing.gb");
+    let mut gb = load_gb_rom("roms/gb/automated_tests/blargg/mem_timing-2/mem_timing.gb");
     let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -334,7 +338,8 @@ fn test_mem_timing_2() {
 
 #[test]
 fn test_dmg_sound_01_registers() {
-    let mut gb = load_gb_rom("roms/gb/automated_tests/dmg_sound/rom_singles/01-registers.gb");
+    let mut gb =
+        load_gb_rom("roms/gb/automated_tests/blargg/dmg_sound/rom_singles/01-registers.gb");
     let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -344,7 +349,7 @@ fn test_dmg_sound_01_registers() {
 
 #[test]
 fn test_dmg_sound_02_len_ctr() {
-    let mut gb = load_gb_rom("roms/gb/automated_tests/dmg_sound/rom_singles/02-len ctr.gb");
+    let mut gb = load_gb_rom("roms/gb/automated_tests/blargg/dmg_sound/rom_singles/02-len ctr.gb");
     let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -354,7 +359,7 @@ fn test_dmg_sound_02_len_ctr() {
 
 #[test]
 fn test_dmg_sound_03_trigger() {
-    let mut gb = load_gb_rom("roms/gb/automated_tests/dmg_sound/rom_singles/03-trigger.gb");
+    let mut gb = load_gb_rom("roms/gb/automated_tests/blargg/dmg_sound/rom_singles/03-trigger.gb");
     let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -364,7 +369,7 @@ fn test_dmg_sound_03_trigger() {
 
 #[test]
 fn test_dmg_sound_04_sweep() {
-    let mut gb = load_gb_rom("roms/gb/automated_tests/dmg_sound/rom_singles/04-sweep.gb");
+    let mut gb = load_gb_rom("roms/gb/automated_tests/blargg/dmg_sound/rom_singles/04-sweep.gb");
     let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -374,7 +379,8 @@ fn test_dmg_sound_04_sweep() {
 
 #[test]
 fn test_dmg_sound_05_sweep_details() {
-    let mut gb = load_gb_rom("roms/gb/automated_tests/dmg_sound/rom_singles/05-sweep details.gb");
+    let mut gb =
+        load_gb_rom("roms/gb/automated_tests/blargg/dmg_sound/rom_singles/05-sweep details.gb");
     let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -384,8 +390,9 @@ fn test_dmg_sound_05_sweep_details() {
 
 #[test]
 fn test_dmg_sound_06_overflow_on_trigger() {
-    let mut gb =
-        load_gb_rom("roms/gb/automated_tests/dmg_sound/rom_singles/06-overflow on trigger.gb");
+    let mut gb = load_gb_rom(
+        "roms/gb/automated_tests/blargg/dmg_sound/rom_singles/06-overflow on trigger.gb",
+    );
     let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -395,8 +402,9 @@ fn test_dmg_sound_06_overflow_on_trigger() {
 
 #[test]
 fn test_dmg_sound_07_len_sweep_period_sync() {
-    let mut gb =
-        load_gb_rom("roms/gb/automated_tests/dmg_sound/rom_singles/07-len sweep period sync.gb");
+    let mut gb = load_gb_rom(
+        "roms/gb/automated_tests/blargg/dmg_sound/rom_singles/07-len sweep period sync.gb",
+    );
     let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -406,8 +414,9 @@ fn test_dmg_sound_07_len_sweep_period_sync() {
 
 #[test]
 fn test_dmg_sound_08_len_ctr_during_power() {
-    let mut gb =
-        load_gb_rom("roms/gb/automated_tests/dmg_sound/rom_singles/08-len ctr during power.gb");
+    let mut gb = load_gb_rom(
+        "roms/gb/automated_tests/blargg/dmg_sound/rom_singles/08-len ctr during power.gb",
+    );
     let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -417,8 +426,9 @@ fn test_dmg_sound_08_len_ctr_during_power() {
 
 #[test]
 fn test_dmg_sound_09_wave_read_while_on() {
-    let mut gb =
-        load_gb_rom("roms/gb/automated_tests/dmg_sound/rom_singles/09-wave read while on.gb");
+    let mut gb = load_gb_rom(
+        "roms/gb/automated_tests/blargg/dmg_sound/rom_singles/09-wave read while on.gb",
+    );
     let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -428,8 +438,9 @@ fn test_dmg_sound_09_wave_read_while_on() {
 
 #[test]
 fn test_dmg_sound_10_wave_trigger_while_on() {
-    let mut gb =
-        load_gb_rom("roms/gb/automated_tests/dmg_sound/rom_singles/10-wave trigger while on.gb");
+    let mut gb = load_gb_rom(
+        "roms/gb/automated_tests/blargg/dmg_sound/rom_singles/10-wave trigger while on.gb",
+    );
     let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -440,7 +451,7 @@ fn test_dmg_sound_10_wave_trigger_while_on() {
 #[test]
 fn test_dmg_sound_11_regs_after_power() {
     let mut gb =
-        load_gb_rom("roms/gb/automated_tests/dmg_sound/rom_singles/11-regs after power.gb");
+        load_gb_rom("roms/gb/automated_tests/blargg/dmg_sound/rom_singles/11-regs after power.gb");
     let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -450,8 +461,9 @@ fn test_dmg_sound_11_regs_after_power() {
 
 #[test]
 fn test_dmg_sound_12_wave_write_while_on() {
-    let mut gb =
-        load_gb_rom("roms/gb/automated_tests/dmg_sound/rom_singles/12-wave write while on.gb");
+    let mut gb = load_gb_rom(
+        "roms/gb/automated_tests/blargg/dmg_sound/rom_singles/12-wave write while on.gb",
+    );
     let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -463,7 +475,8 @@ fn test_dmg_sound_12_wave_write_while_on() {
 
 #[test]
 fn test_cgb_sound_01_registers() {
-    let mut gb = load_gb_rom("roms/gb/automated_tests/cgb_sound/rom_singles/01-registers.gb");
+    let mut gb =
+        load_gb_rom("roms/gb/automated_tests/blargg/cgb_sound/rom_singles/01-registers.gb");
     let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -473,7 +486,7 @@ fn test_cgb_sound_01_registers() {
 
 #[test]
 fn test_cgb_sound_02_len_ctr() {
-    let mut gb = load_gb_rom("roms/gb/automated_tests/cgb_sound/rom_singles/02-len ctr.gb");
+    let mut gb = load_gb_rom("roms/gb/automated_tests/blargg/cgb_sound/rom_singles/02-len ctr.gb");
     let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -483,7 +496,7 @@ fn test_cgb_sound_02_len_ctr() {
 
 #[test]
 fn test_cgb_sound_03_trigger() {
-    let mut gb = load_gb_rom("roms/gb/automated_tests/cgb_sound/rom_singles/03-trigger.gb");
+    let mut gb = load_gb_rom("roms/gb/automated_tests/blargg/cgb_sound/rom_singles/03-trigger.gb");
     let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -493,7 +506,7 @@ fn test_cgb_sound_03_trigger() {
 
 #[test]
 fn test_cgb_sound_04_sweep() {
-    let mut gb = load_gb_rom("roms/gb/automated_tests/cgb_sound/rom_singles/04-sweep.gb");
+    let mut gb = load_gb_rom("roms/gb/automated_tests/blargg/cgb_sound/rom_singles/04-sweep.gb");
     let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -503,7 +516,8 @@ fn test_cgb_sound_04_sweep() {
 
 #[test]
 fn test_cgb_sound_05_sweep_details() {
-    let mut gb = load_gb_rom("roms/gb/automated_tests/cgb_sound/rom_singles/05-sweep details.gb");
+    let mut gb =
+        load_gb_rom("roms/gb/automated_tests/blargg/cgb_sound/rom_singles/05-sweep details.gb");
     let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -513,8 +527,9 @@ fn test_cgb_sound_05_sweep_details() {
 
 #[test]
 fn test_cgb_sound_06_overflow_on_trigger() {
-    let mut gb =
-        load_gb_rom("roms/gb/automated_tests/cgb_sound/rom_singles/06-overflow on trigger.gb");
+    let mut gb = load_gb_rom(
+        "roms/gb/automated_tests/blargg/cgb_sound/rom_singles/06-overflow on trigger.gb",
+    );
     let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -524,8 +539,9 @@ fn test_cgb_sound_06_overflow_on_trigger() {
 
 #[test]
 fn test_cgb_sound_07_len_sweep_period_sync() {
-    let mut gb =
-        load_gb_rom("roms/gb/automated_tests/cgb_sound/rom_singles/07-len sweep period sync.gb");
+    let mut gb = load_gb_rom(
+        "roms/gb/automated_tests/blargg/cgb_sound/rom_singles/07-len sweep period sync.gb",
+    );
     let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -535,8 +551,9 @@ fn test_cgb_sound_07_len_sweep_period_sync() {
 
 #[test]
 fn test_cgb_sound_08_len_ctr_during_power() {
-    let mut gb =
-        load_gb_rom("roms/gb/automated_tests/cgb_sound/rom_singles/08-len ctr during power.gb");
+    let mut gb = load_gb_rom(
+        "roms/gb/automated_tests/blargg/cgb_sound/rom_singles/08-len ctr during power.gb",
+    );
     let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -546,8 +563,9 @@ fn test_cgb_sound_08_len_ctr_during_power() {
 
 #[test]
 fn test_cgb_sound_09_wave_read_while_on() {
-    let mut gb =
-        load_gb_rom("roms/gb/automated_tests/cgb_sound/rom_singles/09-wave read while on.gb");
+    let mut gb = load_gb_rom(
+        "roms/gb/automated_tests/blargg/cgb_sound/rom_singles/09-wave read while on.gb",
+    );
     let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -557,8 +575,9 @@ fn test_cgb_sound_09_wave_read_while_on() {
 
 #[test]
 fn test_cgb_sound_10_wave_trigger_while_on() {
-    let mut gb =
-        load_gb_rom("roms/gb/automated_tests/cgb_sound/rom_singles/10-wave trigger while on.gb");
+    let mut gb = load_gb_rom(
+        "roms/gb/automated_tests/blargg/cgb_sound/rom_singles/10-wave trigger while on.gb",
+    );
     let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -569,7 +588,7 @@ fn test_cgb_sound_10_wave_trigger_while_on() {
 #[test]
 fn test_cgb_sound_11_regs_after_power() {
     let mut gb =
-        load_gb_rom("roms/gb/automated_tests/cgb_sound/rom_singles/11-regs after power.gb");
+        load_gb_rom("roms/gb/automated_tests/blargg/cgb_sound/rom_singles/11-regs after power.gb");
     let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -579,7 +598,7 @@ fn test_cgb_sound_11_regs_after_power() {
 
 #[test]
 fn test_cgb_sound_12_wave() {
-    let mut gb = load_gb_rom("roms/gb/automated_tests/cgb_sound/rom_singles/12-wave.gb");
+    let mut gb = load_gb_rom("roms/gb/automated_tests/blargg/cgb_sound/rom_singles/12-wave.gb");
     let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -591,7 +610,7 @@ fn test_cgb_sound_12_wave() {
 
 #[test]
 fn test_oam_bug_1_lcd_sync() {
-    let mut gb = load_gb_rom("roms/gb/automated_tests/oam_bug/rom_singles/1-lcd_sync.gb");
+    let mut gb = load_gb_rom("roms/gb/automated_tests/blargg/oam_bug/rom_singles/1-lcd_sync.gb");
     let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -601,7 +620,7 @@ fn test_oam_bug_1_lcd_sync() {
 
 #[test]
 fn test_oam_bug_2_causes() {
-    let mut gb = load_gb_rom("roms/gb/automated_tests/oam_bug/rom_singles/2-causes.gb");
+    let mut gb = load_gb_rom("roms/gb/automated_tests/blargg/oam_bug/rom_singles/2-causes.gb");
     let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -611,7 +630,7 @@ fn test_oam_bug_2_causes() {
 
 #[test]
 fn test_oam_bug_3_non_causes() {
-    let mut gb = load_gb_rom("roms/gb/automated_tests/oam_bug/rom_singles/3-non_causes.gb");
+    let mut gb = load_gb_rom("roms/gb/automated_tests/blargg/oam_bug/rom_singles/3-non_causes.gb");
     let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -621,7 +640,8 @@ fn test_oam_bug_3_non_causes() {
 
 #[test]
 fn test_oam_bug_4_scanline_timing() {
-    let mut gb = load_gb_rom("roms/gb/automated_tests/oam_bug/rom_singles/4-scanline_timing.gb");
+    let mut gb =
+        load_gb_rom("roms/gb/automated_tests/blargg/oam_bug/rom_singles/4-scanline_timing.gb");
     let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -631,7 +651,7 @@ fn test_oam_bug_4_scanline_timing() {
 
 #[test]
 fn test_oam_bug_5_timing_bug() {
-    let mut gb = load_gb_rom("roms/gb/automated_tests/oam_bug/rom_singles/5-timing_bug.gb");
+    let mut gb = load_gb_rom("roms/gb/automated_tests/blargg/oam_bug/rom_singles/5-timing_bug.gb");
     let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -641,7 +661,8 @@ fn test_oam_bug_5_timing_bug() {
 
 #[test]
 fn test_oam_bug_6_timing_no_bug() {
-    let mut gb = load_gb_rom("roms/gb/automated_tests/oam_bug/rom_singles/6-timing_no_bug.gb");
+    let mut gb =
+        load_gb_rom("roms/gb/automated_tests/blargg/oam_bug/rom_singles/6-timing_no_bug.gb");
     let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -652,7 +673,8 @@ fn test_oam_bug_6_timing_no_bug() {
 #[test]
 #[ignore = "failing: OAM corruption not emulated — tracked in #1993"]
 fn test_oam_bug_7_timing_effect() {
-    let mut gb = load_gb_rom("roms/gb/automated_tests/oam_bug/rom_singles/7-timing_effect.gb");
+    let mut gb =
+        load_gb_rom("roms/gb/automated_tests/blargg/oam_bug/rom_singles/7-timing_effect.gb");
     let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
@@ -662,7 +684,8 @@ fn test_oam_bug_7_timing_effect() {
 
 #[test]
 fn test_oam_bug_8_instr_effect() {
-    let mut gb = load_gb_rom("roms/gb/automated_tests/oam_bug/rom_singles/8-instr_effect.gb");
+    let mut gb =
+        load_gb_rom("roms/gb/automated_tests/blargg/oam_bug/rom_singles/8-instr_effect.gb");
     let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),

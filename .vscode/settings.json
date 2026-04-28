@@ -1,8 +1,5 @@
 {
   "cSpell.enabled": false,
-  "rust-analyzer.cargo.features": [
-    "sdl"
-  ],
   "python.testing.pytestArgs": [
     "scripts/scraper",
     "scripts/mappertool",
