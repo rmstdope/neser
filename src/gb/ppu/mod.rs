@@ -349,6 +349,25 @@ impl Ppu {
         }
     }
 
+    /// Read from the forbidden zone $FEA0–$FEFF (DMG behavior).
+    ///
+    /// During Mode 2 (OAM Scan) while LCD is on: returns 0xFF and applies
+    /// the OAM read-corruption side effect.
+    /// During any other blocked period (Mode 3) while LCD is on: returns 0xFF
+    /// (no corruption).
+    /// When OAM is accessible: returns 0x00.
+    pub fn read_forbidden_zone(&mut self) -> u8 {
+        if self.registers.lcd_enabled() && self.timing.is_oam_blocked() {
+            if self.timing.mode() == PpuMode::OamScan
+                && let Some(row) = self.current_oam_row()
+            {
+                self.apply_oam_read_corruption(row);
+            }
+            return 0xFF;
+        }
+        0x00
+    }
+
     /// Read from OAM address $FE00–$FE9F.
     ///
     /// During Mode 2 (OAM Scan) while LCD is on: returns 0xFF and applies
