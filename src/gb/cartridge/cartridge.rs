@@ -60,4 +60,10 @@ pub trait GbCartridge {
     fn has_battery(&self) -> bool {
         false
     }
+
+    /// Tick the cartridge by the given number of M-cycles.
+    ///
+    /// Used by cartridges with real-time clocks (RTC) like MBC3 to track
+    /// elapsed time. Does nothing by default for most cartridge types.
+    fn tick(&mut self, _cycles: u32) {}
 }

@@ -3,12 +3,14 @@ mod cartridge;
 mod mbc0;
 mod mbc1;
 mod mbc2;
+mod mbc3;
 mod mbc5;
 
 pub use cartridge::GbCartridge;
 use mbc0::Mbc0;
 use mbc1::Mbc1;
 use mbc2::Mbc2;
+use mbc3::Mbc3;
 use mbc5::Mbc5;
 
 /// Errors returned by [`load_cartridge`].
@@ -80,6 +82,17 @@ pub fn load_cartridge(bytes: &[u8]) -> Result<Box<dyn GbCartridge>, RomError> {
         0x05..=0x06 => {
             let has_battery = mbc_type == 0x06;
             Ok(Box::new(Mbc2::new(bytes.to_vec(), has_battery)))
+        }
+        0x0F..=0x13 => {
+            let ram_size = ram_size_from_byte(bytes[0x0149]);
+            let has_rtc = matches!(mbc_type, 0x0F | 0x10);
+            let has_battery = matches!(mbc_type, 0x0F | 0x10 | 0x13);
+            Ok(Box::new(Mbc3::new(
+                bytes.to_vec(),
+                ram_size,
+                has_rtc,
+                has_battery,
+            )))
         }
         0x19..=0x1E => {
             let ram_size = ram_size_from_byte(bytes[0x0149]);
@@ -183,6 +196,41 @@ mod tests {
     fn test_load_returns_ok_for_mbc5_rumble_ram_battery_rom() {
         // Given: a valid MBC5+RUMBLE+RAM+BATTERY cartridge (type 0x1E)
         let rom = make_valid_rom(0x1E, 0x01);
+        assert!(load_cartridge(&rom).is_ok());
+    }
+
+    #[test]
+    fn test_load_returns_ok_for_mbc3_timer_battery_rom() {
+        // Given: a valid MBC3+TIMER+BATTERY cartridge (type 0x0F)
+        let rom = make_valid_rom(0x0F, 0x01);
+        assert!(load_cartridge(&rom).is_ok());
+    }
+
+    #[test]
+    fn test_load_returns_ok_for_mbc3_timer_ram_battery_rom() {
+        // Given: a valid MBC3+TIMER+RAM+BATTERY cartridge (type 0x10)
+        let rom = make_valid_rom(0x10, 0x01);
+        assert!(load_cartridge(&rom).is_ok());
+    }
+
+    #[test]
+    fn test_load_returns_ok_for_mbc3_rom() {
+        // Given: a valid MBC3 cartridge (type 0x11)
+        let rom = make_valid_rom(0x11, 0x01);
+        assert!(load_cartridge(&rom).is_ok());
+    }
+
+    #[test]
+    fn test_load_returns_ok_for_mbc3_ram_rom() {
+        // Given: a valid MBC3+RAM cartridge (type 0x12)
+        let rom = make_valid_rom(0x12, 0x01);
+        assert!(load_cartridge(&rom).is_ok());
+    }
+
+    #[test]
+    fn test_load_returns_ok_for_mbc3_ram_battery_rom() {
+        // Given: a valid MBC3+RAM+BATTERY cartridge (type 0x13)
+        let rom = make_valid_rom(0x13, 0x01);
         assert!(load_cartridge(&rom).is_ok());
     }
 

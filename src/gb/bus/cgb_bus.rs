@@ -199,6 +199,8 @@ impl CgbBus {
         } else {
             self.apu.tick(m_cycles);
         }
+        // Tick the cartridge (for MBC3 RTC)
+        self.cart.tick(u32::from(m_cycles));
 
         // HDMA: transfer one 16-byte block per HBlank (Mode 3→0).
         if self.hdma.is_active() && self.hdma.is_hblank_mode() && self.ppu.take_hblank_entered() {
@@ -281,6 +283,8 @@ impl CgbBus {
                 remaining -= u32::from(chunk);
             }
         }
+        // Tick the cartridge (for MBC3 RTC)
+        self.cart.tick(m_cycles);
     }
 
     /// Raw read bypassing PPU access blocking (used by OAM DMA).
