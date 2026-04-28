@@ -62,6 +62,15 @@ pub trait GbBus {
     /// The default implementation is a no-op.
     fn notify_oam_write(&mut self, _addr: u16) {}
 
+    /// Attempt a CGB double-speed switch.
+    ///
+    /// Returns `true` if the speed switch was performed (KEY1 bit 0 was armed).
+    /// Returns `false` if no switch occurred (not armed, or bus does not support it).
+    /// The default implementation always returns `false` (DMG / test buses).
+    fn try_speed_switch(&mut self) -> bool {
+        false
+    }
+
     /// Access the PPU for debugger purposes (timing, frame count, scanline).
     ///
     /// Returns a reference to the PPU. The default implementation panics;

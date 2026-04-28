@@ -980,8 +980,11 @@ impl<B: GbBus> Sm83<B> {
             0x10 => {
                 // STOP — consume the next byte (it should be 0x00)
                 self.fetch_byte();
-                // Minimal implementation: behave like HALT for tests
-                self.halted = true;
+                // If the bus supports CGB speed switching and KEY1 is armed,
+                // perform the speed switch instead of halting.
+                if !self.bus.try_speed_switch() {
+                    self.halted = true;
+                }
             }
 
             // --- LD r8, r8 block (0x40-0x7F, excluding 0x76 = HALT) ------
@@ -2225,5 +2228,79 @@ mod tests {
             "POP must NOT call notify_idu_glitch"
         );
         assert_eq!(cpu.regs.sp, 0xFE1A, "SP should end up incremented by 2");
+    }
+
+    // -----------------------------------------------------------------------
+    // STOP instruction (0x10) — speed switch interaction
+    // -----------------------------------------------------------------------
+
+    /// Test bus that can simulate a successful speed switch.
+    struct SpeedSwitchBus {
+        mem: [u8; 0x10000],
+        switch_armed: bool,
+        speed_switched: bool,
+    }
+
+    impl SpeedSwitchBus {
+        fn new(program: &[u8], armed: bool) -> Self {
+            let mut mem = [0u8; 0x10000];
+            mem[..program.len()].copy_from_slice(program);
+            Self {
+                mem,
+                switch_armed: armed,
+                speed_switched: false,
+            }
+        }
+    }
+
+    impl GbBus for SpeedSwitchBus {
+        fn read(&mut self, addr: u16) -> u8 {
+            self.mem[addr as usize]
+        }
+        fn write(&mut self, addr: u16, val: u8) {
+            self.mem[addr as usize] = val;
+        }
+        fn try_speed_switch(&mut self) -> bool {
+            if self.switch_armed {
+                self.switch_armed = false;
+                self.speed_switched = true;
+                true
+            } else {
+                false
+            }
+        }
+    }
+
+    #[test]
+    fn test_stop_with_speed_switch_armed_does_not_halt() {
+        // Given: STOP instruction with speed switch armed
+        // 0x10, 0x00 = STOP
+        let mut cpu = Sm83::new(SpeedSwitchBus::new(&[0x10, 0x00], true));
+        // When: execute STOP
+        cpu.execute();
+        // Then: CPU is NOT halted (speed switch consumed the STOP)
+        assert!(!cpu.halted, "CPU should not be halted after speed switch");
+        // And: speed switch was triggered
+        assert!(
+            cpu.bus.speed_switched,
+            "Speed switch should have been triggered"
+        );
+        // And: PC advanced past STOP + operand byte
+        assert_eq!(cpu.regs.pc, 2, "PC should advance past STOP instruction");
+    }
+
+    #[test]
+    fn test_stop_without_speed_switch_armed_halts_cpu() {
+        // Given: STOP instruction without speed switch armed
+        let mut cpu = Sm83::new(SpeedSwitchBus::new(&[0x10, 0x00], false));
+        // When: execute STOP
+        cpu.execute();
+        // Then: CPU is halted (no speed switch)
+        assert!(cpu.halted, "CPU should be halted when no speed switch");
+        // And: speed switch was NOT triggered
+        assert!(
+            !cpu.bus.speed_switched,
+            "Speed switch should not have been triggered"
+        );
     }
 }

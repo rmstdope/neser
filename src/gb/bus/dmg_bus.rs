@@ -364,6 +364,8 @@ impl DmgBus {
             dma_oam_blocked: self.dma_oam_blocked,
             hdma: None,
             svbk: None,
+            key1: None,
+            apu_tick_accumulator: None,
             boot_rom_active: Some(self.boot_rom_active),
             sb: Some(self.sb),
             sc: Some(self.sc),

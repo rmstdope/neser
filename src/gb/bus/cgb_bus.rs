@@ -60,6 +60,11 @@ pub struct CgbBus {
     hdma: HdmaState,
     /// SVBK register ($FF70): selects the active WRAM bank for $D000–$DFFF.
     svbk: u8,
+    /// KEY1 register ($FF4D): CGB speed switch.
+    /// Bit 7 = current speed (0=normal, 1=double), bit 0 = switch armed.
+    key1: u8,
+    /// Accumulator for half-rate APU ticking in double-speed mode.
+    apu_tick_accumulator: u8,
 }
 
 impl CgbBus {
@@ -86,10 +91,52 @@ impl CgbBus {
             dma_oam_blocked: false,
             hdma: HdmaState::new(),
             svbk: 0,
+            key1: 0,
+            apu_tick_accumulator: 0,
         };
         // Start with LCD disabled; the cartridge code will enable it.
         bus.ppu.write_register(0xFF40, 0x00);
         bus
+    }
+
+    /// Returns `true` when the CGB is operating in double-speed mode.
+    pub fn is_double_speed(&self) -> bool {
+        self.key1 & 0x80 != 0
+    }
+
+    /// Attempt a CGB double-speed switch.
+    ///
+    /// If KEY1 bit 0 is armed, this method:
+    /// 1. Ticks the PPU for 2050 M-cycles (at the pre-switch dot rate),
+    ///    without ticking the timer or APU (DIV is frozen during the switch).
+    /// 2. Resets the DIV counter to 0.
+    /// 3. Toggles the speed (KEY1 bit 7) and clears the arm bit (bit 0).
+    ///
+    /// Returns `true` if the switch was performed, `false` if not armed.
+    pub fn try_speed_switch(&mut self) -> bool {
+        if self.key1 & 0x01 == 0 {
+            return false;
+        }
+
+        // Determine dots-per-M-cycle using the PRE-switch speed.
+        let dots_per_mcycle: u32 = if self.is_double_speed() { 2 } else { 4 };
+
+        // Tick PPU for 2050 M-cycles. Timer and APU are frozen.
+        let total_dots = 2050 * dots_per_mcycle;
+        self.ppu.tick_dots(total_dots);
+        self.if_reg |= self.ppu.take_pending_interrupts();
+
+        // Reset DIV counter (writing any value to $FF04 resets it).
+        self.timer.write(0xFF04, 0);
+
+        // Toggle speed and clear arm bit.
+        self.key1 ^= 0x80;
+        self.key1 &= !0x01;
+
+        // Reset APU accumulator when switching speeds.
+        self.apu_tick_accumulator = 0;
+
+        true
     }
 
     /// Returns the effective WRAM bank index for `$D000–$DFFF`.
@@ -101,6 +148,10 @@ impl CgbBus {
     }
 
     /// Advance system timers, PPU, and APU by `m_cycles` M-cycles.
+    ///
+    /// In double-speed mode, PPU receives half the dots per M-cycle (2 instead
+    /// of 4) and APU ticks at half rate, since each CPU M-cycle takes half the
+    /// real time.  Timer and OAM DMA are M-cycle driven and naturally run at 2x.
     pub fn tick(&mut self, m_cycles: u8) {
         self.if_reg |= self.ppu.take_pending_interrupts();
 
@@ -131,8 +182,23 @@ impl CgbBus {
                 }
             }
         }
-        self.ppu.tick_dots(u32::from(m_cycles) * 4);
-        self.apu.tick(m_cycles);
+
+        let double = self.is_double_speed();
+        let dots_per_mcycle: u32 = if double { 2 } else { 4 };
+        self.ppu.tick_dots(u32::from(m_cycles) * dots_per_mcycle);
+
+        if double {
+            // APU runs at normal speed; in double-speed mode each CPU M-cycle
+            // is half the real time, so tick APU at half rate via accumulator.
+            self.apu_tick_accumulator += m_cycles;
+            let apu_ticks = self.apu_tick_accumulator / 2;
+            self.apu_tick_accumulator %= 2;
+            if apu_ticks > 0 {
+                self.apu.tick(apu_ticks);
+            }
+        } else {
+            self.apu.tick(m_cycles);
+        }
 
         // HDMA: transfer one 16-byte block per HBlank (Mode 3→0).
         if self.hdma.is_active() && self.hdma.is_hblank_mode() && self.ppu.take_hblank_entered() {
@@ -179,6 +245,9 @@ impl CgbBus {
     }
 
     /// Tick PPU, timer, and APU forward (used during HDMA/GDMA transfers).
+    ///
+    /// In double-speed mode, PPU receives fewer dots and APU ticks at half rate,
+    /// matching the scaling applied in [`tick()`].
     fn tick_subsystems_for_hdma(&mut self, m_cycles: u32) {
         for _ in 0..m_cycles {
             self.timer.tick(1);
@@ -187,14 +256,30 @@ impl CgbBus {
                 self.timer.interrupt_pending = false;
             }
         }
-        self.ppu.tick_dots(m_cycles * 4);
+        let dots_per_mcycle: u32 = if self.is_double_speed() { 2 } else { 4 };
+        self.ppu.tick_dots(m_cycles * dots_per_mcycle);
         self.if_reg |= self.ppu.take_pending_interrupts();
-        // APU tick takes u8, so tick in chunks for large GDMA transfers.
-        let mut remaining = m_cycles;
-        while remaining > 0 {
-            let chunk = remaining.min(255) as u8;
-            self.apu.tick(chunk);
-            remaining -= u32::from(chunk);
+        // APU: in double-speed mode, tick at half rate via accumulator.
+        if self.is_double_speed() {
+            // m_cycles is u32 but accumulator is u8; process in chunks.
+            let mut remaining = m_cycles;
+            while remaining > 0 {
+                let chunk = remaining.min(255) as u8;
+                self.apu_tick_accumulator += chunk;
+                let apu_ticks = self.apu_tick_accumulator / 2;
+                self.apu_tick_accumulator %= 2;
+                if apu_ticks > 0 {
+                    self.apu.tick(apu_ticks);
+                }
+                remaining -= u32::from(chunk);
+            }
+        } else {
+            let mut remaining = m_cycles;
+            while remaining > 0 {
+                let chunk = remaining.min(255) as u8;
+                self.apu.tick(chunk);
+                remaining -= u32::from(chunk);
+            }
         }
     }
 
@@ -285,6 +370,8 @@ impl CgbBus {
         self.dma_oam_blocked = false;
         self.hdma = HdmaState::new();
         self.svbk = 0;
+        self.key1 = 0;
+        self.apu_tick_accumulator = 0;
     }
 
     // ── Save-state capture / restore ───────────────────────────────────────
@@ -313,6 +400,8 @@ impl CgbBus {
             dma_oam_blocked: self.dma_oam_blocked,
             hdma: Some(self.hdma.clone()),
             svbk: Some(self.svbk),
+            key1: Some(self.key1),
+            apu_tick_accumulator: Some(self.apu_tick_accumulator),
             boot_rom_active: None,
             sb: None,
             sc: None,
@@ -354,6 +443,8 @@ impl CgbBus {
         self.dma_oam_blocked = state.dma_oam_blocked;
         self.hdma = state.hdma.clone().unwrap_or_default();
         self.svbk = state.svbk.unwrap_or(0);
+        self.key1 = state.key1.unwrap_or(0);
+        self.apu_tick_accumulator = state.apu_tick_accumulator.unwrap_or(0);
         Ok(())
     }
 
@@ -408,6 +499,8 @@ impl GbBus for CgbBus {
             0xFF10..=0xFF3F => self.apu.read_register(addr),
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B => self.ppu.read_register(addr),
             0xFF46 => self.dma_source,
+            // CGB KEY1 — speed switch register
+            0xFF4D => (self.key1 & 0x80) | 0x7E | (self.key1 & 0x01),
             // CGB HDMA registers
             0xFF51..=0xFF54 => 0xFF, // HDMA1-4 are write-only
             0xFF55 => self.hdma.read_control(),
@@ -458,6 +551,8 @@ impl GbBus for CgbBus {
                 self.if_reg |= self.ppu.take_pending_interrupts();
             }
             0xFF46 => self.do_oam_dma(val),
+            // CGB KEY1 — only bit 0 (arm) is writable; bit 7 (current speed) is read-only
+            0xFF4D => self.key1 = (self.key1 & 0x80) | (val & 0x01),
             // CGB HDMA registers
             0xFF51 => self.hdma.write_source_high(val),
             0xFF52 => self.hdma.write_source_low(val),
@@ -483,6 +578,10 @@ impl GbBus for CgbBus {
 
     fn tick(&mut self, m_cycles: u8) {
         CgbBus::tick(self, m_cycles);
+    }
+
+    fn try_speed_switch(&mut self) -> bool {
+        CgbBus::try_speed_switch(self)
     }
 
     fn ppu(&self) -> &Ppu {
@@ -523,6 +622,8 @@ impl GbBus for CgbBus {
             0xFF10..=0xFF3F => self.apu.read_register(addr),
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B => self.ppu.read_register(addr),
             0xFF46 => self.dma_source,
+            // CGB KEY1 — speed switch register (debugger)
+            0xFF4D => (self.key1 & 0x80) | 0x7E | (self.key1 & 0x01),
             // CGB HDMA registers
             0xFF51..=0xFF54 => 0xFF, // HDMA1-4 are write-only
             0xFF55 => self.hdma.read_control(),
@@ -949,5 +1050,250 @@ mod tests {
         bus.reset();
         // Then: SVBK is back to 0
         assert_eq!(bus.read(0xFF70), 0xF8);
+    }
+
+    // ── KEY1 register ($FF4D) — CGB double-speed mode ───────────────────────
+
+    #[test]
+    fn test_key1_initial_value_is_normal_speed_not_armed() {
+        // Given: freshly created CGB bus
+        let mut bus = make_bus();
+        // Then: KEY1 reads $7E (normal speed, not armed, bits 6-1 set)
+        assert_eq!(bus.read(0xFF4D), 0x7E);
+    }
+
+    #[test]
+    fn test_key1_write_arms_speed_switch() {
+        // Given: CGB bus
+        let mut bus = make_bus();
+        // When: write $01 to KEY1 (arm speed switch)
+        bus.write(0xFF4D, 0x01);
+        // Then: KEY1 reads $7F (normal speed, armed)
+        assert_eq!(bus.read(0xFF4D), 0x7F);
+    }
+
+    #[test]
+    fn test_key1_write_disarms_speed_switch() {
+        // Given: CGB bus with KEY1 armed
+        let mut bus = make_bus();
+        bus.write(0xFF4D, 0x01);
+        assert_eq!(bus.read(0xFF4D), 0x7F);
+        // When: write $00 to KEY1 (disarm)
+        bus.write(0xFF4D, 0x00);
+        // Then: KEY1 reads $7E (not armed)
+        assert_eq!(bus.read(0xFF4D), 0x7E);
+    }
+
+    #[test]
+    fn test_key1_bit7_is_read_only() {
+        // Given: CGB bus in normal speed
+        let mut bus = make_bus();
+        // When: write $FF to KEY1 (attempt to set bit 7)
+        bus.write(0xFF4D, 0xFF);
+        // Then: bit 7 remains 0 (normal speed), only bit 0 set
+        assert_eq!(bus.read(0xFF4D), 0x7F);
+    }
+
+    #[test]
+    fn test_key1_speed_switch_toggles_to_double_speed() {
+        // Given: CGB bus with KEY1 armed
+        let mut bus = make_bus();
+        bus.write(0xFF4D, 0x01);
+        // When: speed switch is triggered
+        let switched = bus.try_speed_switch();
+        // Then: switch happened
+        assert!(switched);
+        // And: KEY1 reads $FE (double speed, not armed)
+        assert_eq!(bus.read(0xFF4D), 0xFE);
+        // And: is_double_speed() returns true
+        assert!(bus.is_double_speed());
+    }
+
+    #[test]
+    fn test_key1_speed_switch_toggles_back_to_normal() {
+        // Given: CGB bus in double speed mode (after one switch)
+        let mut bus = make_bus();
+        bus.write(0xFF4D, 0x01);
+        bus.try_speed_switch();
+        assert!(bus.is_double_speed());
+        // When: arm and switch again
+        bus.write(0xFF4D, 0x01);
+        let switched = bus.try_speed_switch();
+        // Then: switched back to normal
+        assert!(switched);
+        assert_eq!(bus.read(0xFF4D), 0x7E);
+        assert!(!bus.is_double_speed());
+    }
+
+    #[test]
+    fn test_key1_speed_switch_not_armed_returns_false() {
+        // Given: CGB bus without KEY1 armed
+        let mut bus = make_bus();
+        // When: attempt speed switch
+        let switched = bus.try_speed_switch();
+        // Then: no switch
+        assert!(!switched);
+        assert!(!bus.is_double_speed());
+        assert_eq!(bus.read(0xFF4D), 0x7E);
+    }
+
+    #[test]
+    fn test_key1_speed_switch_clears_arm_bit() {
+        // Given: CGB bus with KEY1 armed
+        let mut bus = make_bus();
+        bus.write(0xFF4D, 0x01);
+        // When: speed switch
+        bus.try_speed_switch();
+        // Then: bit 0 is cleared
+        assert_eq!(bus.read(0xFF4D) & 0x01, 0x00);
+    }
+
+    #[test]
+    fn test_key1_speed_switch_resets_div() {
+        // Given: CGB bus with timer ticked some amount
+        let mut bus = make_bus();
+        for _ in 0..100 {
+            bus.tick(1);
+        }
+        // Verify timer has advanced
+        assert_ne!(bus.read(0xFF04), 0x00, "DIV should have advanced");
+        // When: arm KEY1 and switch speed
+        bus.write(0xFF4D, 0x01);
+        bus.try_speed_switch();
+        // Then: DIV is reset to 0
+        assert_eq!(bus.read(0xFF04), 0x00);
+    }
+
+    /// Helper: compute total dot position from LY and dot.
+    fn total_ppu_dots(bus: &CgbBus) -> u32 {
+        u32::from(bus.ppu.ly()) * 456 + u32::from(bus.ppu.dot())
+    }
+
+    #[test]
+    fn test_double_speed_ppu_gets_half_dots_per_mcycle() {
+        // Given: CGB bus in normal speed, LCD enabled.
+        // Warm up past the LCD-enable transient so subsequent ticks
+        // advance by exactly m_cycles × dots_per_mcycle.
+        let mut bus = make_bus();
+        enable_lcd(&mut bus);
+        bus.tick(10); // warm-up
+
+        // Measure normal-speed PPU advance for 5 M-cycles.
+        let pre = total_ppu_dots(&bus);
+        bus.tick(5);
+        let normal_advance = total_ppu_dots(&bus) - pre;
+        assert!(normal_advance > 0, "PPU should advance in normal speed");
+
+        // Switch to double speed.
+        bus.write(0xFF4D, 0x01);
+        bus.try_speed_switch();
+        assert!(bus.is_double_speed());
+
+        // Measure double-speed PPU advance for 5 M-cycles.
+        let pre2 = total_ppu_dots(&bus);
+        bus.tick(5);
+        let post2 = total_ppu_dots(&bus);
+        // Handle potential frame wrapping (154 scanlines × 456 dots = 70224).
+        let double_advance = if post2 >= pre2 {
+            post2 - pre2
+        } else {
+            post2 + 70224 - pre2
+        };
+        assert!(double_advance > 0, "PPU should advance in double speed");
+
+        // In double speed, PPU gets 2 dots/M-cycle instead of 4.
+        assert_eq!(
+            normal_advance,
+            double_advance * 2,
+            "normal advance ({}) should be 2× double advance ({})",
+            normal_advance,
+            double_advance
+        );
+    }
+
+    #[test]
+    fn test_double_speed_apu_ticks_at_half_rate() {
+        // Given: CGB bus in double speed mode
+        let mut bus = make_bus();
+        bus.write(0xFF4D, 0x01);
+        bus.try_speed_switch();
+        assert!(bus.is_double_speed());
+        // When: tick 4 M-cycles in double speed
+        bus.tick(4);
+        // Then: APU accumulator should reflect half-rate ticking
+        // 4 double-speed M-cycles → 2 normal M-cycles worth of APU ticks
+        // Accumulator should be 0 (4 mod 2 = 0, all accumulated ticks dispatched)
+        assert_eq!(bus.apu_tick_accumulator, 0);
+    }
+
+    #[test]
+    fn test_double_speed_apu_odd_mcycles_leaves_accumulator() {
+        // Given: CGB bus in double speed mode
+        let mut bus = make_bus();
+        bus.write(0xFF4D, 0x01);
+        bus.try_speed_switch();
+        // When: tick 3 M-cycles (odd number)
+        bus.tick(3);
+        // Then: accumulator has 1 leftover (3 mod 2 = 1)
+        assert_eq!(bus.apu_tick_accumulator, 1);
+    }
+
+    #[test]
+    fn test_normal_speed_apu_accumulator_stays_zero() {
+        // Given: CGB bus in normal speed
+        let mut bus = make_bus();
+        assert!(!bus.is_double_speed());
+        // When: tick some M-cycles
+        bus.tick(5);
+        // Then: accumulator remains 0 (no half-rate logic in normal speed)
+        assert_eq!(bus.apu_tick_accumulator, 0);
+    }
+
+    #[test]
+    fn test_speed_switch_round_trip_restores_normal_tick_rates() {
+        // Given: CGB bus switched to double, then back to normal
+        let mut bus = make_bus();
+        enable_lcd(&mut bus);
+        bus.write(0xFF4D, 0x01);
+        bus.try_speed_switch();
+        assert!(
+            bus.is_double_speed(),
+            "should be in double speed after first switch"
+        );
+        bus.write(0xFF4D, 0x01);
+        bus.try_speed_switch();
+        assert!(
+            !bus.is_double_speed(),
+            "should be back to normal after second switch"
+        );
+        // When: tick 5 M-cycles
+        let pre_dot = bus.ppu.dot();
+        let pre_ly = bus.ppu.ly();
+        bus.tick(5);
+        let total_post = u32::from(bus.ppu.ly()) * 456 + u32::from(bus.ppu.dot());
+        let total_pre = u32::from(pre_ly) * 456 + u32::from(pre_dot);
+        let dots = if total_post >= total_pre {
+            total_post - total_pre
+        } else {
+            total_post + 70224 - total_pre
+        };
+        // Then: PPU gets 4 dots/M-cycle (normal rate restored)
+        assert_eq!(dots, 20, "normal speed restored: 5 M-cycles × 4 dots = 20");
+        // And: APU accumulator is 0
+        assert_eq!(bus.apu_tick_accumulator, 0);
+    }
+
+    #[test]
+    fn test_key1_reset_clears_speed_state() {
+        // Given: CGB bus in double speed with KEY1 armed
+        let mut bus = make_bus();
+        bus.write(0xFF4D, 0x01);
+        bus.try_speed_switch();
+        assert!(bus.is_double_speed());
+        // When: reset
+        bus.reset();
+        // Then: back to normal speed, not armed
+        assert_eq!(bus.read(0xFF4D), 0x7E);
+        assert!(!bus.is_double_speed());
     }
 }
