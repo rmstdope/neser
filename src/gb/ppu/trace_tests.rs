@@ -25,7 +25,7 @@ mod tests {
         ppu.tick_dots(100);
 
         // Then: PPU state progresses normally (traces don't break functionality)
-        assert!(ppu.timing.dot() >= 4); // started at dot=4, advanced at least 100 dots
+        assert!(ppu.dot() >= 4); // started at dot=4, advanced at least 100 dots
     }
 
     #[test]
@@ -42,7 +42,7 @@ mod tests {
         ppu.tick_dots(100);
 
         // Then: PPU state progresses normally
-        assert!(ppu.timing.dot() >= 4);
+        assert!(ppu.dot() >= 4);
     }
 
     #[test]
@@ -60,7 +60,7 @@ mod tests {
         ppu.tick_dots(452 + 153 * 456);
 
         // Then: frame completes successfully (trace of frame wrap with CRC should be emitted)
-        assert_eq!(ppu.timing.ly(), 0);
+        assert_eq!(ppu.ly(), 0);
         assert!(ppu.is_frame_ready());
     }
 }

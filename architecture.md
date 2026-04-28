@@ -215,22 +215,26 @@ All Game Boy (DMG) hardware lives under `src/gb/`. The module is structured arou
 | Directory/File | Description |
 | ---------------- | ------------- |
 | `src/gb/mod.rs` | Module declarations for all GB sub-modules. |
-| `src/gb/console/mod.rs` | `Gb<B: GbBus>` — thin console shell that owns the CPU. `step()` executes one instruction and ticks the bus by the elapsed M-cycles. DMG-specific impls for screen, frame-ready, and reset. |
+| `src/gb/console/mod.rs` | Module declarations and re-exports for the GB console layer. Re-exports `Gb` and `CpuTraceLine` so call sites can keep using `crate::gb::console::Gb`. |
+| `src/gb/console/gb.rs` | `Gb<B: GbBus>` — thin console shell that owns the CPU. `step()` executes one instruction and ticks the bus by the elapsed M-cycles. DMG-specific impls for screen, frame-ready, and reset. |
 | `src/gb/console/gameboy.rs` | `GameBoy` — platform-facing wrapper that owns a `Gb<DmgBus>` (created lazily on `load_rom`). Implements the `Emulator` trait for system-agnostic dispatch. |
 | `src/gb/bus/bus.rs` | `GbBus` trait — `read(&mut self, addr: u16) -> u8`, `write(&mut self, addr: u16, val: u8)`, and a default no-op `tick(&mut self, m_cycles: u8)`. `StubBus` implements the trait for unit tests. |
 | `src/gb/bus/dmg_bus.rs` | `DmgBus` — full DMG memory map. Routes all 16-bit addresses to cartridge ROM/RAM, VRAM, WRAM, echo RAM, OAM, HRAM, Timer registers ($FF04–$FF07), APU registers ($FF10–$FF3F), IF ($FF0F), IE ($FFFF), and I/O stubs. Owns the cartridge, Timer, and APU. Overrides `tick()` to advance the Timer, APU, and propagate timer interrupts to IF. Exposes `sample_ready()`/`take_sample()`/`set_audio_sample_rate()` for the platform audio layer. |
-| `src/gb/apu/mod.rs` | `Apu` — DMG Audio Processing Unit. 8-step frame sequencer (512 Hz), NR50/NR51/NR52 power/volume/panning control, mixer (NR51 L/R routing, NR50 master volume), sample output pipeline (fractional M-cycle accumulator). |
+| `src/gb/apu/mod.rs` | Module declarations and re-exports for the GB APU. Re-exports `Apu` from the sibling implementation file. |
+| `src/gb/apu/apu.rs` | `Apu` — DMG Audio Processing Unit. 8-step frame sequencer (512 Hz), NR50/NR51/NR52 power/volume/panning control, mixer (NR51 L/R routing, NR50 master volume), sample output pipeline (fractional M-cycle accumulator). |
 | `src/gb/apu/channel1.rs` | `Channel1` — Pulse channel with frequency sweep. Duty cycle (4 patterns), length counter, volume envelope, frequency sweep (period, direction, shift). |
 | `src/gb/apu/channel2.rs` | `Channel2` — Pulse channel without sweep. Duty cycle, length counter, volume envelope. |
 | `src/gb/apu/channel3.rs` | `Channel3` — Wave output channel. 32-nibble wave RAM ($FF30–$FF3F), 4 output levels (mute/100%/50%/25%), length counter, wave position advancing at half the pulse-channel rate. |
 | `src/gb/apu/channel4.rs` | `Channel4` — Noise channel. 15-bit or 7-bit LFSR, 8 clock divisor codes × 8 shift values = 64 noise frequencies, length counter, volume envelope. |
 | `src/gb/cpu/sm83.rs` | `Sm83<B: GbBus>` — SM83/LR35902 CPU core. Full instruction set (primary + CB-prefixed), HALT bug, interrupt dispatch at five vectors. Each M-cycle increments an internal counter used by the console for bus ticking. |
 | `src/gb/cpu/opcode.rs` | Opcode metadata tables (BASE[256] and CB[256]) for debugging and tracing. |
+| `src/gb/ppu/mod.rs` | Module declarations and re-exports for the GB PPU. Re-exports `Ppu` so the public path remains `crate::gb::ppu::Ppu`. |
+| `src/gb/ppu/ppu.rs` | `Ppu` — DMG/CGB LCD controller. Owns VRAM/OAM, LCD/STAT timing state, screen buffer, CGB palette RAM/bank state, STAT/VBlank interrupt generation, and OAM corruption helpers. |
 | `src/gb/timer/timer.rs` | `Timer` — DIV/TIMA/TMA/TAC subsystem. `tick(m_cycles)` advances counters and sets `interrupt_pending` on TIMA overflow; caller (DmgBus) propagates this to IF. |
-| `src/gb/cartridge/cartridge.rs` | `GbCartridge` trait — `read(&self, addr: u16) -> u8` and `write(&mut self, addr: u16, val: u8)`. Addresses $0000–$7FFF map to ROM; $A000–$BFFF to cartridge RAM. |
+| `src/gb/cartridge/cartridge.rs` | `GbCartridge` trait plus ROM loader surface. `load_cartridge(bytes: &[u8]) -> Result<Box<dyn GbCartridge>, RomError>` validates the header checksum and returns the appropriate MBC implementation. |
 | `src/gb/cartridge/mbc0.rs` | ROM-only cartridge (MBC type 0x00). No banking; writes are silently ignored. |
 | `src/gb/cartridge/mbc1.rs` | MBC1 cartridge (types 0x01–0x03). ROM bank switching ($2000–$3FFF), secondary bank register ($4000–$5FFF), banking mode ($6000–$7FFF), RAM enable ($0000–$1FFF). Supports up to 2 MB ROM and 32 KB RAM. |
-| `src/gb/cartridge/mod.rs` | `load_cartridge(bytes: &[u8]) -> Result<Box<dyn GbCartridge>, RomError>` — parses a `.gb` ROM, validates the header checksum, and returns the appropriate MBC implementation. `RomError` variants: `TooShort`, `BadHeaderChecksum`, `UnsupportedMbc(u8)`. |
+| `src/gb/cartridge/mod.rs` | Module declarations and re-exports for GB cartridge support. Re-exports `GbCartridge`, `RomError`, and `load_cartridge`. |
 
 #### Frontends
 
