@@ -67,16 +67,19 @@ pub struct CgbBus {
     /// Accumulator for half-rate APU ticking in double-speed mode.
     apu_tick_accumulator: u8,
     /// Hardware model variant (CGB-0 through CGB-E).
-    /// Determines post-boot CPU register values and DIV counter initial state.
+    /// Stored for variant-specific future use (e.g., DIV counter initial state,
+    /// post-boot register values). Currently not used to initialize hardware state.
     model: CgbModel,
 }
 
 impl CgbBus {
     /// Create a new CGB bus, starting at `$0100` (post-boot-ROM entry).
     ///
-    /// The PPU is initialised in CGB mode with the LCD disabled.  Callers are
-    /// expected to call `Sm83::reset_registers_cgb_variant()` on the CPU to set
-    /// the CGB post-boot-ROM state for the specific hardware model variant.
+    /// The PPU is initialised in CGB mode with the LCD disabled. The `model`
+    /// is stored for potential future use in variant-specific hardware
+    /// initialization (e.g., post-boot CPU register state, DIV initial value).
+    /// Callers should call `Sm83::reset_registers_cgb()` on the CPU to set
+    /// the CGB post-boot register state.
     pub fn new(cart: Box<dyn GbCartridge>, model: CgbModel) -> Self {
         let is_cgb = cart.is_cgb();
         let mut bus = Self {

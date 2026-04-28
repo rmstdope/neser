@@ -142,6 +142,7 @@ mod tests {
     fn test_gb_config_default_values() {
         let config = GbConfig::default();
         assert_eq!(config.dmg_variant, DmgModel::DmgB);
+        assert_eq!(config.cgb_variant, CgbModel::CgbE);
         assert_eq!(config.hardware, None);
     }
 
@@ -240,5 +241,105 @@ mod tests {
         config.apply_args(&args).unwrap();
         assert_eq!(config.hardware, Some(GbHardware::Dmg));
         assert_eq!(config.dmg_variant, DmgModel::Dmg0);
+    }
+
+    #[test]
+    fn test_cli_parse_cgb_variant_cgb0() {
+        let mut config = GbConfig::default();
+        let args = vec![
+            "neser".to_string(),
+            "--gb-cgb-variant".to_string(),
+            "cgb-0".to_string(),
+        ];
+        config.apply_args(&args).unwrap();
+        assert_eq!(config.cgb_variant, CgbModel::Cgb0);
+    }
+
+    #[test]
+    fn test_cli_parse_cgb_variant_cgbe() {
+        let mut config = GbConfig::default();
+        let args = vec![
+            "neser".to_string(),
+            "--gb-cgb-variant".to_string(),
+            "cgb-e".to_string(),
+        ];
+        config.apply_args(&args).unwrap();
+        assert_eq!(config.cgb_variant, CgbModel::CgbE);
+    }
+
+    #[test]
+    fn test_cli_parse_cgb_variant_cgba() {
+        let mut config = GbConfig::default();
+        let args = vec![
+            "neser".to_string(),
+            "--gb-cgb-variant".to_string(),
+            "cgb-a".to_string(),
+        ];
+        config.apply_args(&args).unwrap();
+        assert_eq!(config.cgb_variant, CgbModel::CgbA);
+    }
+
+    #[test]
+    fn test_cli_parse_cgb_variant_case_insensitive() {
+        let mut config = GbConfig::default();
+        let args = vec![
+            "neser".to_string(),
+            "--gb-cgb-variant".to_string(),
+            "CGB-B".to_string(),
+        ];
+        config.apply_args(&args).unwrap();
+        assert_eq!(config.cgb_variant, CgbModel::CgbB);
+    }
+
+    #[test]
+    fn test_cli_parse_cgb_variant_invalid() {
+        let mut config = GbConfig::default();
+        let args = vec![
+            "neser".to_string(),
+            "--gb-cgb-variant".to_string(),
+            "invalid".to_string(),
+        ];
+        let result = config.apply_args(&args);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err();
+        assert!(err_msg.contains("Invalid --gb-cgb-variant value"));
+        assert!(err_msg.contains("cgb-0"));
+    }
+
+    #[test]
+    fn test_config_file_parse_cgb_variant_cgb0() {
+        let mut config = GbConfig::default();
+        config
+            .apply_config_value("gb-cgb-variant", "cgb-0")
+            .unwrap();
+        assert_eq!(config.cgb_variant, CgbModel::Cgb0);
+    }
+
+    #[test]
+    fn test_config_file_parse_cgb_variant_cgbe() {
+        let mut config = GbConfig::default();
+        config
+            .apply_config_value("gb-cgb-variant", "cgb-e")
+            .unwrap();
+        assert_eq!(config.cgb_variant, CgbModel::CgbE);
+    }
+
+    #[test]
+    fn test_config_file_parse_cgb_variant_case_insensitive() {
+        let mut config = GbConfig::default();
+        config
+            .apply_config_value("gb-cgb-variant", "CGB-C")
+            .unwrap();
+        assert_eq!(config.cgb_variant, CgbModel::CgbC);
+    }
+
+    #[test]
+    fn test_config_file_parse_cgb_variant_invalid() {
+        let mut config = GbConfig::default();
+        let result = config.apply_config_value("gb-cgb-variant", "cgb-z");
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err();
+        assert!(err_msg.contains("Invalid gb-cgb-variant value"));
+        assert!(err_msg.contains("cgb-0"));
     }
 }
