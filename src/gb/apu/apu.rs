@@ -331,6 +331,24 @@ impl Apu {
         nr52
     }
 
+    /// Read PCM12 ($FF76, CGB only): digital outputs 1 & 2 [read-only].
+    ///
+    /// Low nibble = CH1 digital output (0-15), high nibble = CH2 (0-15).
+    pub fn read_pcm12(&self) -> u8 {
+        let ch1 = self.ch1.digital_output();
+        let ch2 = self.ch2.digital_output();
+        ch1 | (ch2 << 4)
+    }
+
+    /// Read PCM34 ($FF77, CGB only): digital outputs 3 & 4 [read-only].
+    ///
+    /// Low nibble = CH3 digital output (0-15), high nibble = CH4 (0-15).
+    pub fn read_pcm34(&self) -> u8 {
+        let ch3 = self.ch3.digital_output();
+        let ch4 = self.ch4.digital_output();
+        ch3 | (ch4 << 4)
+    }
+
     // ── Register write ─────────────────────────────────────────────────────
 
     /// Write an APU register.

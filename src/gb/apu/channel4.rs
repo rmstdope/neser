@@ -75,6 +75,19 @@ impl Channel4 {
         }
     }
 
+    /// Digital output (0-15) before DAC conversion (for PCM34 register).
+    pub fn digital_output(&self) -> u8 {
+        if !self.active || !self.dac_on {
+            return 0;
+        }
+        // LFSR bit 0 low = channel output high.
+        if self.lfsr & 0x01 == 0 {
+            self.volume
+        } else {
+            0
+        }
+    }
+
     fn freq_timer_period(&self) -> u32 {
         DIVISORS[self.divisor_code as usize] << self.clock_shift
     }

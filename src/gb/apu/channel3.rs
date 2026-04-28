@@ -88,6 +88,20 @@ impl Channel3 {
         (self.current_sample >> shift) as f32 / 15.0
     }
 
+    /// Digital output (0-15) before DAC conversion (for PCM34 register).
+    pub fn digital_output(&self) -> u8 {
+        if !self.active || !self.dac_on {
+            return 0;
+        }
+        let shift = match self.output_level {
+            1 => 0,
+            2 => 1,
+            3 => 2,
+            _ => return 0, // output_level 0 = mute
+        };
+        self.current_sample >> shift
+    }
+
     /// Advance the wave frequency timer by one M-cycle (= 2 APU cycles at 2 MHz).
     /// Mirrors SameBoy's `while (cycles_left > sample_countdown)` loop exactly.
     /// The countdown is in APU cycles; reload = `freq ^ 0x7FF` = `2047 - freq`.
