@@ -19,6 +19,7 @@ use timing::{PpuMode, Timing};
 
 /// Dots per CPU M-cycle — the granularity at which Mode 3 length is observable.
 const DOTS_PER_M_CYCLE: u16 = 4;
+const WINDOW_SETUP_DOTS: u16 = 6;
 
 /// DMG/CGB PPU.
 ///
@@ -246,17 +247,19 @@ impl Ppu {
 
     // ── OBJ penalty ───────────────────────────────────────────────────────────
 
-    /// Apply OBJ and SCX fine-scroll penalties to Mode 3 at the Mode 2→3 transition.
+    /// Apply SCX, window, and OBJ penalties to Mode 3 at the Mode 2→3 transition.
     ///
     /// SCX penalty: raw SCX mod 8 dots (unquantized), applied on all visible scanlines.
+    /// Window penalty: fixed 6 dots when the current scanline actually begins drawing window pixels.
     /// OBJ penalty: dot-accurate, then floor-quantised to M-cycle boundaries (÷4×4).
     ///   DMG only applies the OBJ penalty when sprites are enabled (LCDC bit 1).
-    /// Combined: `extra_dots = scx_raw + floor(obj / 4) * 4`.
+    /// Combined: `extra_dots = scx_raw + window + floor(obj / 4) * 4`.
     fn apply_obj_penalty(&mut self) {
+        let scanline = self.timing.ly();
         let scx_penalty = (self.registers.scx & 0x07) as u16;
+        let window_penalty = self.window_penalty(scanline);
         let sprites_enabled = self.registers.lcdc & 0x02 != 0;
         let (obj_penalty, _sprite_count) = if sprites_enabled {
-            let scanline = self.timing.ly();
             let sprite_indices = sprites::scan_oam_line(scanline, &self.oam, self.registers.lcdc);
             let count = sprite_indices.len();
             let penalty =
@@ -266,8 +269,22 @@ impl Ppu {
         } else {
             (0, 0)
         };
-        let extra_dots = scx_penalty + (obj_penalty / DOTS_PER_M_CYCLE) * DOTS_PER_M_CYCLE;
+        let extra_dots =
+            scx_penalty + window_penalty + (obj_penalty / DOTS_PER_M_CYCLE) * DOTS_PER_M_CYCLE;
         self.timing.set_mode3_extra_dots(extra_dots);
+    }
+
+    fn window_penalty(&self, scanline: u8) -> u16 {
+        if !self.registers.window_enabled() || scanline < self.registers.wy {
+            return 0;
+        }
+
+        let window_start = self.registers.wx.saturating_sub(7);
+        if window_start >= ScreenBuffer::WIDTH as u8 {
+            return 0;
+        }
+
+        WINDOW_SETUP_DOTS
     }
 
     // ── STAT IRQ line ─────────────────────────────────────────────────────────
@@ -1805,6 +1822,84 @@ mod tests {
         assert!(
             first || second,
             "hblank_entered should fire at least once during visible scanlines"
+        );
+    }
+
+    #[test]
+    fn test_window_penalty_delays_hblank_start_when_window_visible() {
+        // Given: scanline 1 with a visible window starting at the left edge.
+        let mut ppu = Ppu::new();
+        ppu.write_register(0xFF40, 0xB1); // LCD on, BG on, window on, sprites off.
+        ppu.write_register(0xFF4A, 1); // WY = current scanline.
+        ppu.write_register(0xFF4B, 7); // WX = 7 => window starts at x = 0.
+        advance_to_mode_2(&mut ppu);
+
+        // When: advance through the real Mode 2->3 transition and up to the
+        // no-penalty HBlank start boundary.
+        tick_dots(&mut ppu, 252); // dot 4 -> dot 256, the no-penalty HBlank start.
+
+        // Then: the 6-dot window setup penalty keeps Mode 3 active past dot 256.
+        assert_eq!(
+            ppu.timing.mode(),
+            PpuMode::PixelTransfer,
+            "a visible window must delay HBlank start by 6 dots"
+        );
+
+        tick_dots(&mut ppu, 6);
+        assert_eq!(
+            ppu.timing.mode(),
+            PpuMode::HBlank,
+            "HBlank should begin after the 6-dot window penalty elapses"
+        );
+    }
+
+    #[test]
+    fn test_window_penalty_stacks_with_scx_penalty() {
+        // Given: scanline 1 with both SCX fine scroll and a visible window.
+        let mut ppu = Ppu::new();
+        ppu.write_register(0xFF40, 0xB1); // LCD on, BG on, window on, sprites off.
+        ppu.write_register(0xFF43, 0x03); // SCX fine scroll = 3 dots.
+        ppu.write_register(0xFF4A, 1); // WY = current scanline.
+        ppu.write_register(0xFF4B, 7); // WX = 7 => window starts at x = 0.
+        advance_to_mode_2(&mut ppu);
+
+        // When: advance through the real Mode 2->3 transition and up to the
+        // base+SCX-only HBlank boundary.
+        tick_dots(&mut ppu, 255); // dot 4 -> dot 259 = base + SCX only.
+
+        // Then: Mode 3 must still be active because window penalty stacks with SCX.
+        assert_eq!(
+            ppu.timing.mode(),
+            PpuMode::PixelTransfer,
+            "window penalty must stack on top of SCX penalty instead of being ignored"
+        );
+
+        tick_dots(&mut ppu, 6); // dot 259 -> dot 265 = base + SCX + window.
+        assert_eq!(
+            ppu.timing.mode(),
+            PpuMode::HBlank,
+            "HBlank should begin once both SCX and window penalties have elapsed"
+        );
+    }
+
+    #[test]
+    fn test_window_penalty_not_applied_when_window_starts_offscreen_right() {
+        // Given: scanline 1 with the window enabled but starting beyond the visible screen.
+        let mut ppu = Ppu::new();
+        ppu.write_register(0xFF40, 0xB1); // LCD on, BG on, window on, sprites off.
+        ppu.write_register(0xFF4A, 1); // WY = current scanline.
+        ppu.write_register(0xFF4B, 167); // WX = 167 => window start x = 160, fully off-screen.
+        advance_to_mode_2(&mut ppu);
+
+        // When: advance through the real Mode 2->3 transition and up to the
+        // no-penalty HBlank start boundary.
+        tick_dots(&mut ppu, 252); // dot 4 -> dot 256, the no-penalty HBlank start.
+
+        // Then: no window penalty is applied because no window pixels are visible.
+        assert_eq!(
+            ppu.timing.mode(),
+            PpuMode::HBlank,
+            "an off-screen window must not delay HBlank start"
         );
     }
 
