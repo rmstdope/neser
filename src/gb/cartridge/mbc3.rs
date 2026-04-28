@@ -299,10 +299,6 @@ impl GbCartridge for Mbc3 {
     }
 
     fn ram_snapshot(&self) -> Vec<u8> {
-        if !self.has_battery {
-            return Vec::new();
-        }
-
         let mut data = self.ram.clone();
 
         if self.has_rtc {
@@ -331,10 +327,6 @@ impl GbCartridge for Mbc3 {
     }
 
     fn restore_ram(&mut self, data: &[u8]) {
-        if !self.has_battery {
-            return;
-        }
-
         let ram_size = self.ram.len();
         let rtc_size = if self.has_rtc { 18 } else { 0 };
 
@@ -377,12 +369,15 @@ impl GbCartridge for Mbc3 {
     }
 
     fn mbc_state_snapshot(&self) -> Vec<u8> {
-        vec![
+        let mut state = vec![
             self.rom_bank,
             self.ram_bank,
             self.ram_enabled as u8,
             self.latch_armed as u8,
-        ]
+        ];
+        // Include cycle_counter for smooth RTC across save-states
+        state.extend_from_slice(&self.cycle_counter.to_le_bytes());
+        state
     }
 
     fn restore_mbc_state(&mut self, data: &[u8]) {
@@ -392,6 +387,9 @@ impl GbCartridge for Mbc3 {
             self.ram_enabled = data[2] != 0;
             self.latch_armed = data[3] != 0;
         }
+        if data.len() >= 8 {
+            self.cycle_counter = u32::from_le_bytes(data[4..8].try_into().unwrap_or([0; 4]));
+        }
     }
 
     fn tick(&mut self, cycles: u32) {
@@ -400,10 +398,11 @@ impl GbCartridge for Mbc3 {
         }
 
         self.cycle_counter += cycles;
-        const CYCLES_PER_SECOND: u32 = 4_194_304;
+        // M-cycles per second (CPU runs at 1,048,576 M-cycles/sec)
+        const M_CYCLES_PER_SECOND: u32 = 1_048_576;
 
-        while self.cycle_counter >= CYCLES_PER_SECOND {
-            self.cycle_counter -= CYCLES_PER_SECOND;
+        while self.cycle_counter >= M_CYCLES_PER_SECOND {
+            self.cycle_counter -= M_CYCLES_PER_SECOND;
             self.increment_rtc_second();
         }
     }
@@ -686,7 +685,7 @@ mod tests {
     // RTC Tick Tests
     // ========================================================================
 
-    const CYCLES_PER_SECOND: u32 = 4_194_304;
+    const M_CYCLES_PER_SECOND: u32 = 1_048_576;
 
     #[test]
     fn test_rtc_tick_increments_seconds() {
@@ -697,7 +696,7 @@ mod tests {
         mbc3.write(0x4000, 0x08); // Select seconds
 
         // Tick one second
-        mbc3.tick(CYCLES_PER_SECOND);
+        mbc3.tick(M_CYCLES_PER_SECOND);
 
         // Latch and read
         mbc3.write(0x6000, 0x00);
@@ -718,7 +717,7 @@ mod tests {
         mbc3.write(0xA000, 59);
 
         // Tick one second
-        mbc3.tick(CYCLES_PER_SECOND);
+        mbc3.tick(M_CYCLES_PER_SECOND);
 
         // Latch
         mbc3.write(0x6000, 0x00);
@@ -745,7 +744,7 @@ mod tests {
         mbc3.write(0xA000, 0x40);
 
         // Tick multiple seconds
-        mbc3.tick(CYCLES_PER_SECOND * 5);
+        mbc3.tick(M_CYCLES_PER_SECOND * 5);
 
         // Latch and verify seconds stayed at 0
         mbc3.write(0x6000, 0x00);
@@ -774,7 +773,7 @@ mod tests {
         mbc3.write(0xA000, 0x01); // day high bit 0 set = day 511
 
         // Tick one second to overflow
-        mbc3.tick(CYCLES_PER_SECOND);
+        mbc3.tick(M_CYCLES_PER_SECOND);
 
         // Latch
         mbc3.write(0x6000, 0x00);
