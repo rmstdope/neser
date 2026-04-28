@@ -104,6 +104,92 @@ impl DmgModel {
     }
 }
 
+/// Game Boy Color (CGB) hardware model variant.
+///
+/// Distinguishes between different CGB production revisions (CGB-0 through CGB-E).
+/// Each revision may differ in boot ROM content, post-boot CPU register values,
+/// DIV counter initial value, and other hardware quirks. CGB-0 is the first
+/// revision (rare), while CGB-A through CGB-E are production variants with
+/// CGB-E being the latest and most common.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum CgbModel {
+    /// CGB-0 hardware (first revision, rare).
+    ///
+    /// Post-boot CPU registers: A=$11 F=$80 B=$00 C=$00 D=$00 E=$00 H=$00 L=$00 SP=$FFFE.
+    /// DIV=$04 at cartridge entry.
+    Cgb0,
+
+    /// CGB-A hardware (early production).
+    ///
+    /// Post-boot CPU registers: A=$11 F=$80 B=$00 C=$00 D=$FF E=$56 H=$00 L=$0D SP=$FFFE.
+    /// DIV=$04 at cartridge entry (same as CGB-B through E).
+    CgbA,
+
+    /// CGB-B hardware (production variant).
+    ///
+    /// Post-boot CPU registers: A=$11 F=$80 B=$00 C=$00 D=$FF E=$56 H=$00 L=$0D SP=$FFFE.
+    /// DIV=$04 at cartridge entry (same as CGB-A, C, D, E).
+    CgbB,
+
+    /// CGB-C hardware (production variant).
+    ///
+    /// Post-boot CPU registers: A=$11 F=$80 B=$00 C=$00 D=$FF E=$56 H=$00 L=$0D SP=$FFFE.
+    /// DIV=$04 at cartridge entry (same as CGB-A, B, D, E).
+    CgbC,
+
+    /// CGB-D hardware (production variant).
+    ///
+    /// Post-boot CPU registers: A=$11 F=$80 B=$00 C=$00 D=$FF E=$56 H=$00 L=$0D SP=$FFFE.
+    /// DIV=$04 at cartridge entry (same as CGB-A, B, C, E).
+    CgbD,
+
+    /// CGB-E hardware (latest production, most common).
+    ///
+    /// Post-boot CPU registers: A=$11 F=$80 B=$00 C=$00 D=$FF E=$56 H=$00 L=$0D SP=$FFFE.
+    /// DIV=$04 at cartridge entry (same as CGB-A, B, C, D).
+    #[default]
+    CgbE,
+}
+
+/// Boot ROM behavior group for CGB revisions.
+///
+/// CGB-0 uses a distinct boot ROM from production variants (CGB-A through E),
+/// which share a common boot ROM.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CgbBootVariant {
+    /// CGB-0 boot ROM (first revision).
+    Cgb0,
+    /// Production CGB boot ROM (used by CGB-A, CGB-B, CGB-C, CGB-D, CGB-E).
+    Production,
+}
+
+impl CgbModel {
+    /// Returns the boot ROM variant for this hardware model.
+    pub fn boot_variant(self) -> CgbBootVariant {
+        match self {
+            Self::Cgb0 => CgbBootVariant::Cgb0,
+            Self::CgbA | Self::CgbB | Self::CgbC | Self::CgbD | Self::CgbE => {
+                CgbBootVariant::Production
+            }
+        }
+    }
+
+    /// Parse a CGB model variant from a string value.
+    ///
+    /// Accepts `cgb-0`, `cgb-a`, `cgb-b`, `cgb-c`, `cgb-d`, `cgb-e` (case-insensitive).
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "cgb-0" => Some(Self::Cgb0),
+            "cgb-a" => Some(Self::CgbA),
+            "cgb-b" => Some(Self::CgbB),
+            "cgb-c" => Some(Self::CgbC),
+            "cgb-d" => Some(Self::CgbD),
+            "cgb-e" => Some(Self::CgbE),
+            _ => None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -207,5 +293,92 @@ mod tests {
     fn test_dmg_model_parse_handles_whitespace() {
         assert_eq!(DmgModel::parse(" dmg-b "), Some(DmgModel::DmgB));
         assert_eq!(DmgModel::parse("\tdmg-0\n"), Some(DmgModel::Dmg0));
+    }
+
+    // CgbModel tests
+    #[test]
+    fn test_cgb_boot_variant_cgb0_is_cgb0() {
+        assert_eq!(CgbModel::Cgb0.boot_variant(), CgbBootVariant::Cgb0);
+    }
+
+    #[test]
+    fn test_cgb_boot_variant_cgb_a_is_production() {
+        assert_eq!(CgbModel::CgbA.boot_variant(), CgbBootVariant::Production);
+    }
+
+    #[test]
+    fn test_cgb_boot_variant_cgb_b_is_production() {
+        assert_eq!(CgbModel::CgbB.boot_variant(), CgbBootVariant::Production);
+    }
+
+    #[test]
+    fn test_cgb_boot_variant_cgb_c_is_production() {
+        assert_eq!(CgbModel::CgbC.boot_variant(), CgbBootVariant::Production);
+    }
+
+    #[test]
+    fn test_cgb_boot_variant_cgb_d_is_production() {
+        assert_eq!(CgbModel::CgbD.boot_variant(), CgbBootVariant::Production);
+    }
+
+    #[test]
+    fn test_cgb_boot_variant_cgb_e_is_production() {
+        assert_eq!(CgbModel::CgbE.boot_variant(), CgbBootVariant::Production);
+    }
+
+    #[test]
+    fn test_default_cgb_is_cgb_e() {
+        assert_eq!(CgbModel::default(), CgbModel::CgbE);
+    }
+
+    #[test]
+    fn test_cgb_parse_cgb_0() {
+        assert_eq!(CgbModel::parse("cgb-0"), Some(CgbModel::Cgb0));
+    }
+
+    #[test]
+    fn test_cgb_parse_cgb_a() {
+        assert_eq!(CgbModel::parse("cgb-a"), Some(CgbModel::CgbA));
+    }
+
+    #[test]
+    fn test_cgb_parse_cgb_b() {
+        assert_eq!(CgbModel::parse("cgb-b"), Some(CgbModel::CgbB));
+    }
+
+    #[test]
+    fn test_cgb_parse_cgb_c() {
+        assert_eq!(CgbModel::parse("cgb-c"), Some(CgbModel::CgbC));
+    }
+
+    #[test]
+    fn test_cgb_parse_cgb_d() {
+        assert_eq!(CgbModel::parse("cgb-d"), Some(CgbModel::CgbD));
+    }
+
+    #[test]
+    fn test_cgb_parse_cgb_e() {
+        assert_eq!(CgbModel::parse("cgb-e"), Some(CgbModel::CgbE));
+    }
+
+    #[test]
+    fn test_cgb_parse_case_insensitive() {
+        assert_eq!(CgbModel::parse("CGB-0"), Some(CgbModel::Cgb0));
+        assert_eq!(CgbModel::parse("Cgb-A"), Some(CgbModel::CgbA));
+        assert_eq!(CgbModel::parse("CGB-E"), Some(CgbModel::CgbE));
+    }
+
+    #[test]
+    fn test_cgb_parse_handles_whitespace() {
+        assert_eq!(CgbModel::parse(" cgb-b "), Some(CgbModel::CgbB));
+        assert_eq!(CgbModel::parse("\tcgb-0\n"), Some(CgbModel::Cgb0));
+    }
+
+    #[test]
+    fn test_cgb_parse_invalid_returns_none() {
+        assert_eq!(CgbModel::parse("cgb"), None);
+        assert_eq!(CgbModel::parse("cgb-f"), None);
+        assert_eq!(CgbModel::parse("invalid"), None);
+        assert_eq!(CgbModel::parse(""), None);
     }
 }

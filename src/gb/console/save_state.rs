@@ -198,7 +198,7 @@ mod tests {
     use crate::gb::bus::{CgbBus, DmgBus, GbBus};
     use crate::gb::cartridge::load_cartridge;
     use crate::gb::console::Gb;
-    use crate::gb::model::DmgModel;
+    use crate::gb::model::{CgbModel, DmgModel};
 
     fn minimal_rom() -> Vec<u8> {
         let mut rom = vec![0u8; 0x8000];
@@ -232,7 +232,7 @@ mod tests {
 
     fn make_cgb() -> Gb<CgbBus> {
         let cart = load_cartridge(&minimal_cgb_rom()).expect("valid ROM");
-        let mut gb = Gb::new(CgbBus::new(cart));
+        let mut gb = Gb::new(CgbBus::new(cart, CgbModel::default()));
         gb.cpu.reset_registers_cgb();
         gb
     }

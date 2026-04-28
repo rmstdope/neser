@@ -3,6 +3,7 @@ use crate::gb::bus::GbBus;
 use crate::gb::bus::hdma::{HdmaAction, HdmaState};
 use crate::gb::cartridge::GbCartridge;
 use crate::gb::input::joypad::Joypad;
+use crate::gb::model::CgbModel;
 use crate::gb::ppu::Ppu;
 use crate::gb::timer::Timer;
 
@@ -65,15 +66,21 @@ pub struct CgbBus {
     key1: u8,
     /// Accumulator for half-rate APU ticking in double-speed mode.
     apu_tick_accumulator: u8,
+    /// Hardware model variant (CGB-0 through CGB-E).
+    /// Stored for variant-specific future use (e.g., DIV counter initial state,
+    /// post-boot register values). Currently not used to initialize hardware state.
+    model: CgbModel,
 }
 
 impl CgbBus {
     /// Create a new CGB bus, starting at `$0100` (post-boot-ROM entry).
     ///
-    /// The PPU is initialised in CGB mode with the LCD disabled.  Callers are
-    /// expected to call `Sm83::reset_registers_cgb()` on the CPU to set A=$11
-    /// and all other registers to the CGB post-boot-ROM state.
-    pub fn new(cart: Box<dyn GbCartridge>) -> Self {
+    /// The PPU is initialised in CGB mode with the LCD disabled. The `model`
+    /// is stored for potential future use in variant-specific hardware
+    /// initialization (e.g., post-boot CPU register state, DIV initial value).
+    /// Callers should call `Sm83::reset_registers_cgb()` on the CPU to set
+    /// the CGB post-boot register state.
+    pub fn new(cart: Box<dyn GbCartridge>, model: CgbModel) -> Self {
         let is_cgb = cart.is_cgb();
         let mut bus = Self {
             cart,
@@ -93,10 +100,16 @@ impl CgbBus {
             svbk: 0,
             key1: 0,
             apu_tick_accumulator: 0,
+            model,
         };
         // Start with LCD disabled; the cartridge code will enable it.
         bus.ppu.write_register(0xFF40, 0x00);
         bus
+    }
+
+    /// Returns the CGB hardware model variant for this bus.
+    pub fn model(&self) -> CgbModel {
+        self.model
     }
 
     /// Returns `true` when the CGB is operating in double-speed mode.
@@ -683,7 +696,7 @@ mod tests {
     }
 
     fn make_bus() -> CgbBus {
-        CgbBus::new(cgb_rom_only_cart())
+        CgbBus::new(cgb_rom_only_cart(), CgbModel::default())
     }
 
     /// Enable LCD (needed for PPU to tick and reach HBlank).
@@ -781,7 +794,7 @@ mod tests {
         // Given: ROM data at $0100-$010F
         let data: Vec<(u16, u8)> = (0..16).map(|i| (0x0100 + i as u16, 0xA0 + i)).collect();
         let cart = cgb_rom_with_data(&data);
-        let mut bus = CgbBus::new(cart);
+        let mut bus = CgbBus::new(cart, CgbModel::default());
         // Configure HDMA: source=$0100, dest=$8000, 1 block
         bus.write(0xFF51, 0x01); // Source high
         bus.write(0xFF52, 0x00); // Source low

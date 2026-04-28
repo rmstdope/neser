@@ -271,3 +271,13 @@ nes-vertical_overscan=8
 # Note: This only applies when using gb-hardware=dmg or when a DMG-only ROM
 # is auto-detected. It has no effect on CGB mode.
 #gb-dmg-variant=dmg-b
+
+# CGB (Game Boy Color) hardware variant to emulate.
+# Valid values: cgb-0, cgb-a, cgb-b, cgb-c, cgb-d, cgb-e
+# CGB-0 is the first-generation variant (rare), with different boot ROM and
+# post-boot register state compared to production variants.
+# CGB-A through CGB-E are production variants, with CGB-E being the latest.
+# Default: cgb-e (latest/most common production variant)
+# Note: This only applies when using gb-hardware=cgb or when a CGB ROM is
+# auto-detected. It has no effect on DMG mode.
+#gb-cgb-variant=cgb-e
