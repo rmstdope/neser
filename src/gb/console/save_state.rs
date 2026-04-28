@@ -64,6 +64,10 @@ pub struct BusState {
     pub hdma: Option<HdmaState>,
     // CGB WRAM bank register (None for DMG)
     pub svbk: Option<u8>,
+    // CGB KEY1 register (None for DMG)
+    pub key1: Option<u8>,
+    // CGB APU tick accumulator for double-speed mode (None for DMG)
+    pub apu_tick_accumulator: Option<u8>,
     // DMG-only fields (None for CGB)
     pub boot_rom_active: Option<bool>,
     pub sb: Option<u8>,
