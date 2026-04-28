@@ -9,7 +9,7 @@
 //!
 //! SameSuite project: https://github.com/LIJI32/SameSuite
 
-use super::mooneye_tests::{detect_mooneye_result, MooneyeResult};
+use super::mooneye_tests::{MooneyeResult, detect_mooneye_result};
 use crate::gb::bus::DmgBus;
 use crate::gb::cartridge::load_cartridge;
 use crate::gb::console::Gb;
