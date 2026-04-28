@@ -285,6 +285,8 @@ impl DmgBus {
         // PPU interrupts are now buffered in ppu.pending_interrupts and
         // will be propagated to IF at the start of the NEXT tick() call.
         self.apu.tick(m_cycles);
+        // Tick the cartridge (for MBC3 RTC)
+        self.cart.tick(u32::from(m_cycles));
     }
 
     /// Returns `true` when an audio sample is ready to be retrieved.
