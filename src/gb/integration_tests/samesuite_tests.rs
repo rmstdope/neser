@@ -101,13 +101,11 @@ fn detect_mooneye_result_cgb(gb: &mut Gb<CgbBus>) -> MooneyeResult {
 // SameSuite DMA tests
 // ============================================================================
 
-const DMA_BASE: &str = "roms/gb/automated_tests/SameSuite/dma";
-
 /// Test `gdma_addr_mask.gb`: validates GDMA address masking behavior.
 /// ROM requires CGB hardware.
 #[test]
 fn test_samesuite_gdma_addr_mask() {
-    let mut gb = load_cgb_rom(&format!("{DMA_BASE}/gdma_addr_mask.gb"));
+    let mut gb = load_cgb_rom("roms/gb/automated_tests/SameSuite/dma/gdma_addr_mask.gb");
     let result = detect_mooneye_result_cgb(&mut gb);
     assert_eq!(
         result,
@@ -121,7 +119,7 @@ fn test_samesuite_gdma_addr_mask() {
 /// ROM requires CGB hardware.
 #[test]
 fn test_samesuite_gbc_dma_cont() {
-    let mut gb = load_cgb_rom(&format!("{DMA_BASE}/gbc_dma_cont.gb"));
+    let mut gb = load_cgb_rom("roms/gb/automated_tests/SameSuite/dma/gbc_dma_cont.gb");
     let result = detect_mooneye_result_cgb(&mut gb);
     assert_eq!(
         result,
@@ -135,7 +133,7 @@ fn test_samesuite_gbc_dma_cont() {
 /// ROM requires CGB hardware.
 #[test]
 fn test_samesuite_hdma_lcd_off() {
-    let mut gb = load_cgb_rom(&format!("{DMA_BASE}/hdma_lcd_off.gb"));
+    let mut gb = load_cgb_rom("roms/gb/automated_tests/SameSuite/dma/hdma_lcd_off.gb");
     let result = detect_mooneye_result_cgb(&mut gb);
     assert_eq!(
         result,
@@ -149,7 +147,7 @@ fn test_samesuite_hdma_lcd_off() {
 /// ROM requires CGB hardware.
 #[test]
 fn test_samesuite_hdma_mode0() {
-    let mut gb = load_cgb_rom(&format!("{DMA_BASE}/hdma_mode0.gb"));
+    let mut gb = load_cgb_rom("roms/gb/automated_tests/SameSuite/dma/hdma_mode0.gb");
     let result = detect_mooneye_result_cgb(&mut gb);
     assert_eq!(
         result,
