@@ -286,9 +286,7 @@ impl Ppu {
 
     /// Evaluate the STAT IRQ source line and fire a STAT interrupt on 0→1 edge.
     ///
-    /// Uses `timing.mode_for_irq()` for Mode 2 only (fires 4 dots early).
-    /// Mode 0 and Mode 1 remain level-based (raw mode bits) since they are
-    /// active throughout the entire HBlank / VBlank period.
+    /// Delegates to `eval_stat_irq_line` using the current `stat_irq_enables` register.
     /// Mode IRQs are suppressed when `mode_for_irq == -1` (first scanline after LCD enable).
     fn update_stat_irq(&mut self) {
         let irq_line = self.eval_stat_irq_line(self.registers.stat_irq_enables);
@@ -303,8 +301,10 @@ impl Ppu {
     ///
     /// `en` is treated as the STAT register value: bits [6:3] select which sources
     /// can fire. Passing `0xFF` evaluates all sources as enabled (used by the DMG
-    /// spurious interrupt quirk). Uses `mode_for_irq` so Mode 2 fires 4 dots early
-    /// and Mode 3 returns -1 (suppressed), matching hardware behaviour.
+    /// spurious interrupt quirk). Uses `mode_for_irq` for all mode-based sources:
+    /// Mode 2 fires 4 dots early, Mode 0 becomes active according to the IRQ timing
+    /// view of HBlank (which can begin before the raw mode bit changes), and
+    /// Mode 3 returns -1 (suppressed), matching hardware behaviour.
     fn eval_stat_irq_line(&self, en: u8) -> bool {
         let mode_for_irq = self.timing.mode_for_irq();
         let suppress_mode_irqs = mode_for_irq < 0;
