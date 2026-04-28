@@ -1551,6 +1551,228 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_read_oam_does_not_corrupt_during_mode_3() {
+        // Mode 3 blocks OAM reads and does NOT apply corruption.
+        let mut ppu = Ppu::new();
+        set_row_words(&mut ppu.oam, 2, [0xAAAAu16, 0xBBBB, 0xCCCC, 0xDDDD]);
+        tick_dots(&mut ppu, 80); // 80 ticks from dot=4 → dot=84 = Mode 3 start
+        assert_eq!(ppu.timing.mode(), PpuMode::PixelTransfer);
+        let snapshot = ppu.oam;
+        ppu.read_oam(0xFE10);
+        assert_eq!(ppu.oam, snapshot, "read_oam in Mode 3 must not corrupt OAM");
+    }
+
+    #[test]
+    fn test_write_corruption_all_rows_1_to_19() {
+        // Verify write corruption applies to all rows 1-19 (not just a few).
+        for row in 1..=19 {
+            let mut ppu = Ppu::new();
+            // Set up: preceding row with known values
+            set_row_words(&mut ppu.oam, row - 1, [0x00AA, 0x00BB, 0x00CC, 0x00DD]);
+            // Set current row to be corrupted with values that will definitely corrupt
+            set_row_words(&mut ppu.oam, row, [0x0055, 0x00FF, 0x0011, 0x0022]);
+
+            ppu.apply_oam_write_corruption(row);
+
+            let corrupted_row = get_row_words(&ppu.oam, row);
+            // Words 1-3 should always come from preceding row
+            assert_eq!(
+                corrupted_row[1], 0x00BB,
+                "row {}: word1 must come from preceding row",
+                row
+            );
+            assert_eq!(
+                corrupted_row[2], 0x00CC,
+                "row {}: word2 must come from preceding row",
+                row
+            );
+            assert_eq!(
+                corrupted_row[3], 0x00DD,
+                "row {}: word3 must come from preceding row",
+                row
+            );
+            // Word 0 should be formula result: ((0x0055 ^ 0x00CC) & (0x00AA ^ 0x00CC)) ^ 0x00CC
+            let a = 0x0055u16;
+            let b = 0x00AAu16;
+            let c = 0x00CCu16;
+            let expected = ((a ^ c) & (b ^ c)) ^ c;
+            assert_eq!(
+                corrupted_row[0], expected,
+                "row {}: word0 formula mismatch",
+                row
+            );
+        }
+    }
+
+    #[test]
+    fn test_read_corruption_all_rows_1_to_19() {
+        // Verify read corruption applies to all rows 1-19 (not just a few).
+        for row in 1..=19 {
+            let mut ppu = Ppu::new();
+            // Set up: preceding row with known values
+            set_row_words(&mut ppu.oam, row - 1, [0x00AA, 0x00BB, 0x00CC, 0x00DD]);
+            // Set current row to be corrupted
+            set_row_words(&mut ppu.oam, row, [0x0055, 0x00FF, 0x0011, 0x0022]);
+
+            ppu.apply_oam_read_corruption(row);
+
+            let corrupted_row = get_row_words(&ppu.oam, row);
+            // Words 1-3 should always come from preceding row
+            assert_eq!(
+                corrupted_row[1], 0x00BB,
+                "row {}: word1 must come from preceding row",
+                row
+            );
+            assert_eq!(
+                corrupted_row[2], 0x00CC,
+                "row {}: word2 must come from preceding row",
+                row
+            );
+            assert_eq!(
+                corrupted_row[3], 0x00DD,
+                "row {}: word3 must come from preceding row",
+                row
+            );
+            // Word 0 should be formula result: b | (a & c)
+            let a = 0x0055u16;
+            let b = 0x00AAu16;
+            let c = 0x00CCu16;
+            let expected = b | (a & c);
+            assert_eq!(
+                corrupted_row[0], expected,
+                "row {}: word0 formula mismatch",
+                row
+            );
+        }
+    }
+
+    #[test]
+    fn test_write_corruption_formula_bitwise_patterns() {
+        // Test various bitwise patterns to verify formula ((a^c)&(b^c))^c
+        let test_cases = vec![
+            // (a, b, c, expected_result)
+            (0xFFFF, 0x0000, 0x0000, 0x0000), // ((0xFFFF^0)&(0^0))^0 = (0xFFFF&0)^0 = 0
+            (0x0000, 0xFFFF, 0xFFFF, 0xFFFF), // ((0^0xFFFF)&(0xFFFF^0xFFFF))^0xFFFF = (0xFFFF&0)^0xFFFF = 0xFFFF
+            (0xAAAA, 0x5555, 0xAAAA, 0xAAAA), // ((0xAAAA^0xAAAA)&(0x5555^0xAAAA))^0xAAAA = (0&0xFFFF)^0xAAAA = 0xAAAA
+            (0x5555, 0xAAAA, 0x5555, 0x5555),
+            (0xFF00, 0x00FF, 0xFF00, 0xFF00),
+            (0x00FF, 0xFF00, 0x00FF, 0x00FF),
+        ];
+
+        for (a, b, c, expected) in test_cases {
+            let mut ppu = Ppu::new();
+            set_row_words(&mut ppu.oam, 1, [b, 0x1111, c, 0x2222]);
+            set_row_words(&mut ppu.oam, 2, [a, 0x3333, 0x4444, 0x5555]);
+
+            ppu.apply_oam_write_corruption(2);
+
+            let result = get_row_words(&ppu.oam, 2)[0];
+            assert_eq!(
+                result, expected,
+                "write corruption formula: a={:04X}, b={:04X}, c={:04X}, got {:04X}, expected {:04X}",
+                a, b, c, result, expected
+            );
+        }
+    }
+
+    #[test]
+    fn test_read_corruption_formula_bitwise_patterns() {
+        // Test various bitwise patterns to verify formula b|(a&c)
+        let test_cases = vec![
+            // (a, b, c, expected_result)
+            (0xFFFF, 0x0000, 0x0000, 0x0000), // 0|(0xFFFF&0) = 0
+            (0x0000, 0xFFFF, 0xFFFF, 0xFFFF), // 0xFFFF|(0&0xFFFF) = 0xFFFF
+            (0xAAAA, 0x5555, 0xAAAA, 0xFFFF), // 0x5555|(0xAAAA&0xAAAA) = 0x5555|0xAAAA = 0xFFFF
+            (0x5555, 0xAAAA, 0x5555, 0xFFFF), // 0xAAAA|(0x5555&0x5555) = 0xAAAA|0x5555 = 0xFFFF
+            (0xFF00, 0x00FF, 0xF0F0, 0xF0FF), // 0x00FF|(0xFF00&0xF0F0) = 0x00FF|0xF000 = 0xF0FF
+            (0x00FF, 0xFF00, 0x0F0F, 0xFF0F), // 0xFF00|(0x00FF&0x0F0F) = 0xFF00|0x000F = 0xFF0F
+        ];
+
+        for (a, b, c, expected) in test_cases {
+            let mut ppu = Ppu::new();
+            set_row_words(&mut ppu.oam, 1, [b, 0x1111, c, 0x2222]);
+            set_row_words(&mut ppu.oam, 2, [a, 0x3333, 0x4444, 0x5555]);
+
+            ppu.apply_oam_read_corruption(2);
+
+            let result = get_row_words(&ppu.oam, 2)[0];
+            assert_eq!(
+                result, expected,
+                "read corruption formula: a={:04X}, b={:04X}, c={:04X}, got {:04X}, expected {:04X}",
+                a, b, c, result, expected
+            );
+        }
+    }
+
+    #[test]
+    fn test_read_oam_does_not_corrupt_outside_mode_2() {
+        // Verify that read_oam outside Mode 2 doesn't apply corruption.
+        // Mode 1 (VBlank) - should not corrupt
+        let mut ppu = Ppu::new();
+        set_row_words(&mut ppu.oam, 2, [0xAAAAu16, 0xBBBB, 0xCCCC, 0xDDDD]);
+
+        // Advance to VBlank (Mode 1)
+        tick_dots(&mut ppu, FIRST_SCANLINE_DOTS + 456 * 143 + 20); // deep into VBlank
+        assert_eq!(ppu.timing.mode(), PpuMode::VBlank);
+
+        let snapshot = ppu.oam;
+        let _ = ppu.read_oam(0xFE10);
+
+        assert_eq!(ppu.oam, snapshot, "read_oam in VBlank must not corrupt OAM");
+    }
+
+    #[test]
+    fn test_write_oam_does_not_corrupt_outside_mode_2() {
+        // Verify that write_oam outside Mode 2 doesn't apply corruption.
+        // Writes ARE allowed outside Mode 2 on real hardware, just without corruption.
+        let mut ppu = Ppu::new();
+        set_row_words(&mut ppu.oam, 2, [0xAAAAu16, 0xBBBB, 0xCCCC, 0xDDDD]);
+
+        // Advance to VBlank where OAM is definitely accessible
+        tick_dots(&mut ppu, FIRST_SCANLINE_DOTS + 456 * 143 + 20); // deep into VBlank
+        assert_eq!(ppu.timing.mode(), PpuMode::VBlank);
+
+        // Write to OAM in VBlank - should write normally without corruption formula
+        ppu.write_oam(0xFE10, 0x42);
+
+        // Verify the write was applied (normal behavior, no corruption formula)
+        let val = ppu.read_oam(0xFE10);
+        assert_eq!(
+            val, 0x42,
+            "write_oam in VBlank must apply normal write (accessible outside Mode 2)"
+        );
+    }
+
+    #[test]
+    fn test_read_idu_corruption_complex_formula_rows_4_to_18_verify_all_rows() {
+        // Verify complex formula applies to all rows 4-18, not just one case.
+        for row in 4..=18 {
+            let mut ppu = Ppu::new();
+            // Set up three consecutive rows with predictable values
+            set_row_words(&mut ppu.oam, row - 2, [0x00A0, 0x0001, 0x0002, 0x0003]);
+            set_row_words(&mut ppu.oam, row - 1, [0x0055, 0x0011, 0x00C0, 0x0022]);
+            set_row_words(&mut ppu.oam, row, [0x000F, 0x0099, 0x0088, 0x0077]);
+
+            ppu.apply_oam_read_idu_corruption(row);
+
+            // After corruption, all three rows should have the same values (from complex formula)
+            let expected = get_row_words(&ppu.oam, row - 1);
+            assert_eq!(
+                get_row_words(&ppu.oam, row - 2),
+                expected,
+                "row {}: n-2 should equal corrupted n-1 after read-IDU corruption",
+                row
+            );
+            assert_eq!(
+                get_row_words(&ppu.oam, row),
+                expected,
+                "row {}: n should equal corrupted n-1 after read-IDU corruption",
+                row
+            );
+        }
+    }
+
     // ── LYC=LY bit retention when LCD disabled (stat_lyc_onoff) ──────────────
 
     #[test]
