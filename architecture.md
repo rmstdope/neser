@@ -238,11 +238,11 @@ All Game Boy (DMG) hardware lives under `src/gb/`. The module is structured arou
 
 #### Game Boy Advance Emulation (`src/gba/`)
 
-All Game Boy Advance hardware lives under `src/gba/`. The module is currently a stub for everything except the ARM7TDMI CPU core; subsequent phases will add the bus, I/O, PPU, APU, DMA and cartridge layers.
+All Game Boy Advance hardware lives under `src/gba/`. The module currently provides the ARM7TDMI CPU core and the system memory bus / I/O register foundation; subsequent phases will add the PPU, APU, DMA and cartridge layers.
 
 | Directory/File | Description |
 | ---------------- | ------------- |
-| `src/gba/mod.rs` | Game Boy Advance module root. Re-exports `Gba` (platform-facing wrapper) and the `cpu` sub-module. |
+| `src/gba/mod.rs` | Game Boy Advance module root. Re-exports `Gba` (platform-facing wrapper), the `cpu` sub-module, and `GbaBus`. |
 | `src/gba/console/gba.rs` | `Gba` — platform-facing GBA wrapper implementing the `Emulator` trait. Currently a stub; will own the ARM7TDMI core, bus, PPU, etc. as subsequent phases land. |
 | `src/gba/cpu/mod.rs` | Module root for the ARM7TDMI core. Re-exports `Arm7tdmi`, `Bus`, `RamBus`, `Registers`, `CpuMode`, etc. |
 | `src/gba/cpu/registers.rs` | `Registers` — ARM7TDMI register file with R0–R15, CPSR, and per-mode banked SPSR/SP/LR (and FIQ-banked R8–R12). Includes `CpuMode` (USR/FIQ/IRQ/SVC/ABT/UND/SYS) and `condition_met` for the 16 ARM condition codes. |
@@ -250,6 +250,11 @@ All Game Boy Advance hardware lives under `src/gba/`. The module is currently a 
 | `src/gba/cpu/arm.rs` | ARM 32-bit instruction decoder/executor. Covers data processing, branch (B/BL), branch-and-exchange (BX), single-data transfer (LDR/STR/LDRB/STRB) and SWI; honours conditional execution. |
 | `src/gba/cpu/thumb.rs` | Thumb 16-bit instruction decoder/executor. Covers move-shifted register, add/subtract, MOV/CMP/ADD/SUB immediate, hi-register operations, BX, PC-relative load, PUSH/POP and conditional/unconditional branches. |
 | `src/gba/cpu/arm7tdmi.rs` | `Arm7tdmi` — fetch/decode/execute pipeline, S/N cycle accounting, exception vectors, and IRQ/FIQ/SWI dispatch (banked register handling, CPSR→SPSR save, vector jump). |
+| `src/gba/bus/mod.rs` | `GbaBus` — system memory bus implementing the CPU `Bus` trait with full GBA address-space routing (BIOS, EWRAM, IWRAM, I/O, PRAM, VRAM, OAM, cart ROM/SRAM), open-bus modelling, BIOS lock, VRAM mirroring, and N/S wait-state cycle stubs. |
+| `src/gba/bus/memory.rs` | Backing-store sizes (BIOS/EWRAM/IWRAM/PRAM/VRAM/OAM/SRAM) and helpers for little-endian halfword/word access with mirrored offsets. |
+| `src/gba/bus/io.rs` | `IoRegisters` — dispatch table for the `0x0400_0000`–`0x0400_03FF` I/O window. Routes interrupt-controller and timer registers to live state and provides a backing store for the remaining ~300 registers so unimplemented PPU/APU/DMA registers don't panic. |
+| `src/gba/bus/interrupt.rs` | `InterruptController` — `IE`/`IF`/`IME` registers with write-1-to-clear `IF` semantics and an `irq_line()` predicate consumed by the CPU. |
+| `src/gba/bus/timer.rs` | `Timers` / `Timer` — 4-channel 16-bit timer bank with prescalers (1/64/256/1024), cascade mode, reload latching, enable rising-edge load and overflow IRQ generation. |
 
 #### Frontends
 
