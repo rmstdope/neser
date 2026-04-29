@@ -966,15 +966,25 @@ impl<B: GbBus> Sm83<B> {
 
             // --- HALT / STOP ---------------------------------------------
             0x76 => {
-                // HALT bug: when IME=false and there is a pending interrupt,
-                // the CPU does NOT enter HALT mode. Instead execution continues
-                // but the next opcode fetch reads PC without advancing it.
+                // HALT bug: when IME=false (and not about to become true via EI delay)
+                // and there is a pending interrupt, the CPU does NOT enter HALT mode.
+                // Instead execution continues but the next opcode fetch reads PC without advancing it.
+                // If EI was just executed (ime_pending=true), IME will become true after
+                // HALT executes, so the HALT bug does NOT trigger.
                 let ie = self.bus.read(0xFFFF);
                 let if_ = self.bus.read(0xFF0F);
-                if !self.ime && (ie & if_ & 0x1F) != 0 {
+                if !self.ime && !self.ime_pending && (ie & if_ & 0x1F) != 0 {
                     self.halt_bug = true;
                 } else {
                     self.halted = true;
+                    // Special case: when HALT is executed with ime_pending=true and
+                    // a buffered interrupt, the PC should point back to the HALT instruction
+                    // so that when the interrupt fires, it pushes the HALT address as the
+                    // return address. This allows multiple buffered interrupts to all return
+                    // to HALT, re-executing it until all interrupts are serviced.
+                    if self.ime_pending && (ie & if_ & 0x1F) != 0 {
+                        self.regs.pc = self.regs.pc.wrapping_sub(1);
+                    }
                 }
             }
             0x10 => {
