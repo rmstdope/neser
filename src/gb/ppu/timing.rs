@@ -399,6 +399,39 @@ impl Timing {
         }
     }
 
+    /// Returns whether CGB palette RAM is blocked for CPU **read** access.
+    ///
+    /// Per Pan Docs: "data in palette memory cannot be read or written during
+    /// the time when the PPU is reading from it, that is, Mode 3."
+    ///
+    /// Follows the same timing as `is_vram_blocked`:
+    /// - Scan 0: blocked during [84, mode3_end)
+    /// - Scan 1+: blocked during [80, mode3_end)
+    pub fn is_palette_blocked(&self) -> bool {
+        if self.scanline >= Self::VBLANK_START_LINE {
+            return false;
+        }
+        let start = if self.first_scanline_after_enable {
+            84u16
+        } else {
+            80
+        };
+        self.dot >= start && self.dot < self.mode3_end()
+    }
+
+    /// Returns whether CGB palette RAM is blocked for CPU **write** access.
+    ///
+    /// Per Pan Docs: writes to BCPD/OCPD are blocked during Mode 3, but the
+    /// auto-increment of BCPS/OCPS still happens.
+    ///
+    /// Follows VRAM write timing with 4T lag: blocked from dot 84 (not 80).
+    pub fn is_palette_write_blocked(&self) -> bool {
+        if self.scanline >= Self::VBLANK_START_LINE {
+            return false;
+        }
+        self.dot >= 84 && self.dot < self.mode3_end()
+    }
+
     /// Current LY register value.
     ///
     /// On DMG, LY increments 4 T-cycles early (at `MODE2_IRQ_DOT`) for
