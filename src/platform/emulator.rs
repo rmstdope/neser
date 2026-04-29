@@ -13,6 +13,7 @@
 use std::path::PathBuf;
 
 use crate::gb::GameBoy;
+use crate::gba::Gba;
 use crate::nes::console::Nes;
 use crate::platform::app_context::{IntoSharedAppContext, SharedAppContext};
 
@@ -57,6 +58,7 @@ pub trait Emulator {
 pub enum SystemType {
     Nes,
     GameBoy,
+    Gba,
 }
 
 /// Hardware-agnostic wrapper around system-specific emulators.
@@ -73,6 +75,7 @@ pub enum SystemType {
 pub enum Console {
     Nes(Box<Nes>),
     GameBoy(Box<GameBoy>),
+    GameBoyAdvance(Box<Gba>),
 }
 
 impl Console {
@@ -86,11 +89,17 @@ impl Console {
         Console::GameBoy(Box::new(GameBoy::new(app_context)))
     }
 
+    /// Create a new Game Boy Advance emulator instance.
+    pub fn new_gba(app_context: impl IntoSharedAppContext) -> Self {
+        Console::GameBoyAdvance(Box::new(Gba::new(app_context)))
+    }
+
     /// Access the common emulator interface (immutable).
     pub fn as_core(&self) -> &dyn Emulator {
         match self {
             Console::Nes(nes) => nes.as_ref(),
             Console::GameBoy(gb) => gb.as_ref(),
+            Console::GameBoyAdvance(gba) => gba.as_ref(),
         }
     }
 
@@ -99,6 +108,7 @@ impl Console {
         match self {
             Console::Nes(nes) => nes.as_mut(),
             Console::GameBoy(gb) => gb.as_mut(),
+            Console::GameBoyAdvance(gba) => gba.as_mut(),
         }
     }
 
@@ -228,6 +238,7 @@ impl Console {
         match self {
             Console::Nes(nes) => nes.state_path(),
             Console::GameBoy(gb) => gb.state_path(),
+            Console::GameBoyAdvance(_) => None, // GBA save states not yet implemented
         }
     }
 
@@ -268,7 +279,7 @@ impl Console {
                     cfg.nes.vertical_overscan as u32,
                 )
             }
-            Console::GameBoy(_) => (0, 0),
+            Console::GameBoy(_) | Console::GameBoyAdvance(_) => (0, 0),
         }
     }
 
@@ -314,7 +325,9 @@ impl Console {
                     screen_height - 2 * v_overscan,
                 )
             }
-            Console::GameBoy(_) => (self.screen_width(), self.screen_height()),
+            Console::GameBoy(_) | Console::GameBoyAdvance(_) => {
+                (self.screen_width(), self.screen_height())
+            }
         }
     }
 
@@ -322,11 +335,11 @@ impl Console {
     ///
     /// NES pixels are not square: the NTSC hardware maps 256 pixels across the
     /// same horizontal extent as approximately 280 square pixels (8:7 ratio).
-    /// Game Boy pixels are square, so the correction factor is 1.0.
+    /// Game Boy and GBA pixels are square, so the correction factor is 1.0.
     pub fn pixel_aspect(&self) -> f32 {
         match self {
             Console::Nes(_) => 8.0 / 7.0,
-            Console::GameBoy(_) => 1.0,
+            Console::GameBoy(_) | Console::GameBoyAdvance(_) => 1.0,
         }
     }
 
@@ -345,8 +358,8 @@ impl SystemType {
     /// Computes windowed-mode dimensions that preserve the system's correct aspect ratio.
     ///
     /// For NES, overscan is read from `app_context` and the NTSC 8:7 pixel aspect
-    /// ratio is applied.  For Game Boy, square pixels (1:1) are assumed and there
-    /// is no overscan.
+    /// ratio is applied.  For Game Boy and GBA, square pixels (1:1) are assumed
+    /// and there is no overscan.
     pub fn windowed_dimensions(&self, height: u32, app_context: &SharedAppContext) -> (u32, u32) {
         let clamped_height = height.max(1);
         match self {
@@ -363,6 +376,12 @@ impl SystemType {
             }
             SystemType::GameBoy => {
                 let aspect = GameBoy::SCREEN_WIDTH as f32 / GameBoy::SCREEN_HEIGHT as f32;
+                let width = (clamped_height as f32 * aspect).round() as u32;
+                (width.max(1), clamped_height)
+            }
+            SystemType::Gba => {
+                // GBA: 240×160 with square pixels (1:1)
+                let aspect = Gba::SCREEN_WIDTH as f32 / Gba::SCREEN_HEIGHT as f32;
                 let width = (clamped_height as f32 * aspect).round() as u32;
                 (width.max(1), clamped_height)
             }
@@ -667,6 +686,80 @@ mod tests {
         emu.set_joypad_button_states(1, 0b1010_0101);
         assert_eq!(emu.get_joypad_button_states(1), 0b1010_0101);
     }
+
+    // ---------------------------------------------------------------
+    // GBA tests — verifies Console::new_gba() and Gba implements Emulator
+    // ---------------------------------------------------------------
+
+    fn make_gba() -> Gba {
+        Gba::new(make_shared_context())
+    }
+
+    #[test]
+    fn test_console_new_gba_returns_game_boy_advance_variant() {
+        let console = Console::new_gba(make_shared_context());
+        assert!(matches!(console, Console::GameBoyAdvance(_)));
+    }
+
+    #[test]
+    fn test_gba_system_type() {
+        let console = Console::new_gba(make_shared_context());
+        assert_eq!(console.system_type(), SystemType::Gba);
+    }
+
+    #[test]
+    fn test_gba_implements_emulator_trait() {
+        let gba = make_gba();
+
+        let emu: &dyn Emulator = &gba;
+        assert_eq!(emu.system_type(), SystemType::Gba);
+        assert_eq!(emu.screen_width(), 240);
+        assert_eq!(emu.screen_height(), 160);
+        assert!(!emu.is_ready_to_render());
+    }
+
+    #[test]
+    fn test_console_as_core_delegates_to_gba() {
+        let console = Console::new_gba(make_shared_context());
+
+        let emu = console.as_core();
+        assert_eq!(emu.system_type(), SystemType::Gba);
+        assert_eq!(emu.screen_width(), 240);
+        assert_eq!(emu.screen_height(), 160);
+    }
+
+    #[test]
+    fn test_gba_trait_screen_snapshot_has_correct_size() {
+        let gba = make_gba();
+        let emu: &dyn Emulator = &gba;
+        // 240 × 160 × 3 (RGB888)
+        assert_eq!(emu.screen_snapshot().len(), 240 * 160 * 3);
+    }
+
+    #[test]
+    fn test_gba_trait_target_frame_duration() {
+        let gba = make_gba();
+        let emu: &dyn Emulator = &gba;
+        let dur = emu.target_frame_duration();
+        // GBA ≈ 59.73 fps → ~16.7 ms
+        assert!(dur.as_millis() > 15 && dur.as_millis() < 20);
+    }
+
+    #[test]
+    fn test_gba_trait_save_ram_returns_ok() {
+        let gba = make_gba();
+        let emu: &dyn Emulator = &gba;
+        assert!(emu.save_ram().is_ok());
+    }
+
+    #[test]
+    fn test_gba_allowed_shaders_is_not_empty() {
+        let gba = make_gba();
+        let shaders = gba.allowed_shaders();
+        assert!(!shaders.is_empty());
+        assert!(shaders.contains(&"none"));
+        assert!(shaders.contains(&"gba-lcd"));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -688,6 +781,10 @@ mod tests_console_abstraction {
 
     fn make_gb_console() -> Console {
         Console::new_gameboy(AppContext::new_with_config(Config::default()))
+    }
+
+    fn make_gba_console() -> Console {
+        Console::new_gba(AppContext::new_with_config(Config::default()))
     }
 
     fn make_app_context_with_overscan(h: u8, v: u8) -> SharedAppContext {
@@ -717,6 +814,12 @@ mod tests_console_abstraction {
         assert_eq!(console.overscan(), (0, 0));
     }
 
+    #[test]
+    fn test_gba_overscan_always_zero() {
+        let console = make_gba_console();
+        assert_eq!(console.overscan(), (0, 0));
+    }
+
     // --- Console::cropped_dims() ---
 
     #[test]
@@ -743,6 +846,12 @@ mod tests_console_abstraction {
         assert_eq!(console.cropped_dims(8, 8), (160, 144));
     }
 
+    #[test]
+    fn test_gba_cropped_dims_ignores_overscan() {
+        let console = make_gba_console();
+        assert_eq!(console.cropped_dims(8, 8), (240, 160));
+    }
+
     // --- Console::pixel_aspect() ---
 
     #[test]
@@ -755,6 +864,12 @@ mod tests_console_abstraction {
     #[test]
     fn test_gb_pixel_aspect_is_one() {
         let console = make_gb_console();
+        assert_eq!(console.pixel_aspect(), 1.0);
+    }
+
+    #[test]
+    fn test_gba_pixel_aspect_is_one() {
+        let console = make_gba_console();
         assert_eq!(console.pixel_aspect(), 1.0);
     }
 
@@ -831,6 +946,23 @@ mod tests_console_abstraction {
         let (w, h) = SystemType::GameBoy.windowed_dimensions(0, &app);
         assert!(w >= 1);
         assert_eq!(h, 1);
+    }
+
+    #[test]
+    fn test_gba_windowed_dimensions_height_160() {
+        let app = make_app_context_with_overscan(0, 0);
+        let (w, h) = SystemType::Gba.windowed_dimensions(160, &app);
+        assert_eq!(h, 160);
+        assert_eq!(w, 240); // native GBA resolution
+    }
+
+    #[test]
+    fn test_gba_windowed_dimensions_height_640() {
+        // 4× scale: 640 × (240/160) = 960
+        let app = make_app_context_with_overscan(0, 0);
+        let (w, h) = SystemType::Gba.windowed_dimensions(640, &app);
+        assert_eq!(h, 640);
+        assert_eq!(w, 960);
     }
 
     // --- Console::target_frame_duration() ---

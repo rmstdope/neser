@@ -6,6 +6,7 @@ mod nes;
 
 mod frontends;
 mod gb;
+mod gba;
 mod platform;
 
 use nes::console::{
@@ -361,6 +362,13 @@ fn run_native_frontend(
                 .borrow_mut()
                 .add_toast(cartridge_load_toast_message(&rom_path, true));
             console
+        }
+        platform::emulator::SystemType::Gba => {
+            // GBA ROM loading not yet implemented
+            app_context
+                .borrow_mut()
+                .add_toast(cartridge_load_toast_message(&rom_path, false));
+            return Err("GBA emulation not yet implemented".into());
         }
     };
     let mut console = console;

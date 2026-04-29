@@ -187,6 +187,7 @@ impl NativeEventLoop {
         let debugger_paused = match &self.console {
             Console::Nes(_) => self.debugger_controller.is_paused(),
             Console::GameBoy(_) => self.gb_debugger_controller.is_paused(),
+            Console::GameBoyAdvance(_) => false, // GBA debugger not yet implemented
         };
         if self.state.paused && !debugger_paused {
             // Manually paused (not debugger) — skip frame
@@ -226,6 +227,9 @@ impl NativeEventLoop {
             }
             Console::GameBoy(gb) => {
                 gb.run_frame_with_debugger(&mut self.gb_debugger_controller, &audio_cell);
+            }
+            Console::GameBoyAdvance(_) => {
+                // GBA frame execution not yet implemented
             }
         }
         self.audio = audio_cell.into_inner();
@@ -269,6 +273,7 @@ impl NativeEventLoop {
         let debugger_open = match &self.console {
             Console::Nes(_) => self.debugger_controller.is_debugger_open(),
             Console::GameBoy(_) => self.gb_debugger_controller.is_debugger_open(),
+            Console::GameBoyAdvance(_) => false, // GBA debugger not yet implemented
         };
 
         if debugger_open {
@@ -757,6 +762,9 @@ impl ApplicationHandler for NativeEventLoop {
                                         &mut self.gb_debugger_controller,
                                     );
                                 }
+                                Console::GameBoyAdvance(_) => {
+                                    // GBA debugger not yet implemented
+                                }
                             }
                             self.sync_from_controller();
                         }
@@ -768,6 +776,9 @@ impl ApplicationHandler for NativeEventLoop {
                                 Console::GameBoy(gb) => {
                                     gb.step_over_with_controller(&mut self.gb_debugger_controller);
                                 }
+                                Console::GameBoyAdvance(_) => {
+                                    // GBA debugger not yet implemented
+                                }
                             }
                             self.sync_from_controller();
                         }
@@ -778,6 +789,9 @@ impl ApplicationHandler for NativeEventLoop {
                                 }
                                 Console::GameBoy(gb) => {
                                     gb.step_into_with_controller(&mut self.gb_debugger_controller);
+                                }
+                                Console::GameBoyAdvance(_) => {
+                                    // GBA debugger not yet implemented
                                 }
                             }
                             self.sync_from_controller();
@@ -970,6 +984,9 @@ impl ApplicationHandler for NativeEventLoop {
                         Console::GameBoy(_) => {
                             gl.update_gb_breakpoints(self.gb_debugger_controller.breakpoints());
                         }
+                        Console::GameBoyAdvance(_) => {
+                            // GBA debugger breakpoints not yet implemented
+                        }
                     }
                     let crosshair =
                         mouse::zapper_crosshair(&self.console, self.state.last_zapper_position);
@@ -1002,6 +1019,9 @@ impl ApplicationHandler for NativeEventLoop {
                                 gb_action,
                             );
                         }
+                    }
+                    Console::GameBoyAdvance(_) => {
+                        // GBA debugger UI not yet implemented
                     }
                 }
                 self.sync_from_controller();

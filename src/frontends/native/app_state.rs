@@ -250,7 +250,7 @@ impl NativeAppState {
                         nes.active_controller_port_type(2) == ControllerType::PowerPad,
                     )
                 }
-                Console::GameBoy(_) => (false, false),
+                Console::GameBoy(_) | Console::GameBoyAdvance(_) => (false, false),
             };
             return Some(help_overlay_text(
                 self.gamepad_count,
