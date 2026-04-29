@@ -235,6 +235,14 @@ All Game Boy (DMG) hardware lives under `src/gb/`. The module is structured arou
 | `src/gb/cartridge/mbc0.rs` | ROM-only cartridge (MBC type 0x00). No banking; writes are silently ignored. |
 | `src/gb/cartridge/mbc1.rs` | MBC1 cartridge (types 0x01–0x03). ROM bank switching ($2000–$3FFF), secondary bank register ($4000–$5FFF), banking mode ($6000–$7FFF), RAM enable ($0000–$1FFF). Supports up to 2 MB ROM and 32 KB RAM. |
 | `src/gb/cartridge/mod.rs` | Module declarations and re-exports for GB cartridge support. Re-exports `GbCartridge`, `RomError`, and `load_cartridge`. |
+| `src/gba/mod.rs` | Game Boy Advance module root. Re-exports `Gba` (platform-facing wrapper) and the `cpu` sub-module. |
+| `src/gba/console/gba.rs` | `Gba` — platform-facing GBA wrapper implementing the `Emulator` trait. Currently a stub; will own the ARM7TDMI core, bus, PPU, etc. as subsequent phases land. |
+| `src/gba/cpu/mod.rs` | Module root for the ARM7TDMI core. Re-exports `Arm7tdmi`, `Bus`, `RamBus`, `Registers`, `CpuMode`, etc. |
+| `src/gba/cpu/registers.rs` | `Registers` — ARM7TDMI register file with R0–R15, CPSR, and per-mode banked SPSR/SP/LR (and FIQ-banked R8–R12). Includes `CpuMode` (USR/FIQ/IRQ/SVC/ABT/UND/SYS) and `condition_met` for the 16 ARM condition codes. |
+| `src/gba/cpu/bus.rs` | `Bus` trait used by the CPU for byte/halfword/word reads and writes, plus a flat little-endian `RamBus` implementation used by tests and boot stubs. |
+| `src/gba/cpu/arm.rs` | ARM 32-bit instruction decoder/executor. Covers data processing, branch (B/BL), branch-and-exchange (BX), single-data transfer (LDR/STR/LDRB/STRB) and SWI; honours conditional execution. |
+| `src/gba/cpu/thumb.rs` | Thumb 16-bit instruction decoder/executor. Covers move-shifted register, add/subtract, MOV/CMP/ADD/SUB immediate, hi-register operations, BX, PC-relative load, PUSH/POP and conditional/unconditional branches. |
+| `src/gba/cpu/arm7tdmi.rs` | `Arm7tdmi` — fetch/decode/execute pipeline, S/N cycle accounting, exception vectors, and IRQ/FIQ/SWI dispatch (banked register handling, CPSR→SPSR save, vector jump). |
 
 #### Frontends
 
