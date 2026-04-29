@@ -10,6 +10,13 @@ use crate::gb::model::DmgModel;
 /// headroom without running forever on a lock-up scenario.
 const BOOT_CYCLE_LIMIT: u64 = 8_000_000;
 
+/// Compute the header checksum for $0134–$014C.
+fn compute_header_checksum(rom: &[u8]) -> u8 {
+    rom[0x0134..=0x014C]
+        .iter()
+        .fold(0u8, |acc, &b| acc.wrapping_sub(b).wrapping_sub(1))
+}
+
 /// Build a minimal 32 KiB ROM for boot tests.
 ///
 /// Places a `JR $-2` infinite loop at $0100 so the running test can detect
@@ -18,19 +25,24 @@ const BOOT_CYCLE_LIMIT: u64 = 8_000_000;
 /// verification.
 /// The header checksum at $014D is recomputed from $0134–$014C.
 fn build_test_rom(logo: [u8; 48]) -> Vec<u8> {
+    let mut rom = build_base_test_rom();
+    rom[0x0104..0x0134].copy_from_slice(&logo);
+    rom[0x014D] = compute_header_checksum(&rom);
+    rom
+}
+
+/// Build a base 32 KiB test ROM with common setup.
+///
+/// Places a `JR $-2` infinite loop at $0100 and sets cartridge type/size fields.
+/// The header checksum is NOT set; callers must set it after customizing the ROM.
+fn build_base_test_rom() -> Vec<u8> {
     let mut rom = vec![0u8; 0x8000];
     rom[0x0100] = 0x18; // JR opcode
     rom[0x0101] = 0xFE; // offset -2 → jumps back to $0100
-    rom[0x0104..0x0134].copy_from_slice(&logo);
     // Cartridge type / ROM+RAM size
     rom[0x0147] = 0x00; // ROM only
     rom[0x0148] = 0x00; // 32 KiB
     rom[0x0149] = 0x00; // no RAM
-    // Header checksum over $0134–$014C (all zero in this ROM)
-    let chk = rom[0x0134..=0x014C]
-        .iter()
-        .fold(0u8, |acc, &b| acc.wrapping_sub(b).wrapping_sub(1));
-    rom[0x014D] = chk;
     rom
 }
 
@@ -325,20 +337,10 @@ use crate::gb::model::CgbModel;
 /// Places a `JR $-2` infinite loop at $0100 and sets the CGB compatibility
 /// flag at $0143 to indicate CGB-native mode.
 fn build_cgb_test_rom() -> Vec<u8> {
-    let mut rom = vec![0u8; 0x8000];
-    rom[0x0100] = 0x18; // JR opcode
-    rom[0x0101] = 0xFE; // offset -2 → jumps back to $0100
+    let mut rom = build_base_test_rom();
     // CGB compatibility flag: $80 = CGB-compatible, $C0 = CGB-only
     rom[0x0143] = 0x80;
-    // Cartridge type / ROM+RAM size
-    rom[0x0147] = 0x00; // ROM only
-    rom[0x0148] = 0x00; // 32 KiB
-    rom[0x0149] = 0x00; // no RAM
-    // Header checksum over $0134–$014C
-    let chk = rom[0x0134..=0x014C]
-        .iter()
-        .fold(0u8, |acc, &b| acc.wrapping_sub(b).wrapping_sub(1));
-    rom[0x014D] = chk;
+    rom[0x014D] = compute_header_checksum(&rom);
     rom
 }
 
@@ -367,8 +369,8 @@ fn boot_cgb_to_cartridge_entry(model: CgbModel) -> Gb<CgbBus> {
     gb
 }
 
-/// Helper: read an IO register from CGB bus.
-fn read_cgb_io(gb: &mut Gb<CgbBus>, addr: u16) -> u8 {
+/// Helper: read a value from the CGB bus.
+fn read_cgb_bus(gb: &mut Gb<CgbBus>, addr: u16) -> u8 {
     gb.cpu.bus.read(addr)
 }
 
@@ -400,17 +402,17 @@ fn test_cgb_boot_sets_correct_io_registers() {
     let mut gb = boot_cgb_to_cartridge_entry(CgbModel::CgbE);
 
     // APU registers
-    assert_eq!(read_cgb_io(&mut gb, 0xFF24), 0x77, "NR50 ($FF24)");
-    assert_eq!(read_cgb_io(&mut gb, 0xFF25), 0xF3, "NR51 ($FF25)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF24), 0x77, "NR50 ($FF24)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF25), 0xF3, "NR51 ($FF25)");
     assert_eq!(
-        read_cgb_io(&mut gb, 0xFF26),
+        read_cgb_bus(&mut gb, 0xFF26),
         0xF1,
         "NR52 ($FF26) - APU on, CH1 active"
     );
 
     // PPU registers
-    assert_eq!(read_cgb_io(&mut gb, 0xFF40), 0x91, "LCDC ($FF40)");
-    assert_eq!(read_cgb_io(&mut gb, 0xFF47), 0xFC, "BGP ($FF47)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF40), 0x91, "LCDC ($FF40)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF47), 0xFC, "BGP ($FF47)");
 }
 
 /// The boot ROM must unmap itself after writing to $FF50.
@@ -427,19 +429,19 @@ fn test_cgb_boot_rom_unmaps_after_completion() {
 
     // Read from $0000 should return cartridge data (all zeros in our test ROM)
     assert_eq!(
-        read_cgb_io(&mut gb, 0x0000),
+        read_cgb_bus(&mut gb, 0x0000),
         0x00,
         "Read from $0000 should return cartridge data after boot"
     );
 
     // Read from $0100-$0101 should return our JR -2 loop
     assert_eq!(
-        read_cgb_io(&mut gb, 0x0100),
+        read_cgb_bus(&mut gb, 0x0100),
         0x18,
         "Read from $0100 should return JR opcode"
     );
     assert_eq!(
-        read_cgb_io(&mut gb, 0x0101),
+        read_cgb_bus(&mut gb, 0x0101),
         0xFE,
         "Read from $0101 should return -2 offset"
     );
@@ -464,8 +466,8 @@ fn test_cgb_a_through_e_produce_identical_post_boot_state() {
     // Key IO registers
     let io_addrs: &[u16] = &[0xFF24, 0xFF25, 0xFF26, 0xFF40, 0xFF47];
     for &addr in io_addrs {
-        let a = read_cgb_io(&mut gb_a, addr);
-        let e = read_cgb_io(&mut gb_e, addr);
+        let a = read_cgb_bus(&mut gb_a, addr);
+        let e = read_cgb_bus(&mut gb_e, addr);
         assert_eq!(
             a, e,
             "IO ${:04X}: CGB-A (${:02X}) vs CGB-E (${:02X})",

@@ -292,8 +292,10 @@ pub const DMG0_BOOT_ROM: [u8; 256] = [
 
 /// Minimal CGB boot ROM (Production variant: CGB-A through CGB-E).
 ///
-/// Sets up the post-boot hardware state for CGB-native mode without animation
-/// or sound, then hands off to the cartridge at $0100.
+/// Sets up the post-boot hardware state for CGB-native mode without a boot
+/// animation or intentional startup jingle. To match required post-boot APU
+/// state, it may still perform minimal audio register initialization before
+/// handing off to the cartridge at $0100.
 ///
 /// ## Post-boot CPU state (Mooneye-verified)
 ///
