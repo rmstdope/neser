@@ -79,6 +79,11 @@ pub struct Apu {
     /// Clocked by DIV-APU falling edges via `clock_div_apu()`.
     fs_step: u8,
 
+    /// Low-frequency divider flag. Toggled each M-cycle to track 2 MHz alignment.
+    /// Used to calculate the startup delay for pulse channels on trigger.
+    #[serde(default)]
+    lf_div: bool,
+
     /// When `true`, the next DIV-APU falling edge is skipped.
     /// Set when the APU is powered on while the DIV-APU bit is already HIGH.
     /// Per SameSuite div_write_trigger_10: "Starting the APU while bit 4 of
@@ -122,6 +127,7 @@ impl Apu {
             nr51: 0x00,
             powered: false,
             fs_step: 0,
+            lf_div: true, // SameBoy initializes to 1
             skip_next_div_apu_event: false,
             sample_acc: 0.0,
             cycles_per_sample: DMG_MCYCLES_PER_SEC / 44_100.0,
@@ -235,6 +241,9 @@ impl Apu {
     /// Clocks channel frequency timers and generates samples.
     /// Frame Sequencer is NOT clocked here — see `clock_div_apu()`.
     fn tick_one(&mut self) {
+        // Toggle the low-frequency divider (tracks 2 MHz alignment).
+        self.lf_div = !self.lf_div;
+
         // ── Channel frequency timers ───────────────────────────────────────
         self.ch1.tick();
         self.ch2.tick();
@@ -441,12 +450,12 @@ impl Apu {
             0xFF11 => self.ch1.write_nr11(val),
             0xFF12 => self.ch1.write_nr12(val),
             0xFF13 => self.ch1.write_nr13(val),
-            0xFF14 => self.ch1.write_nr14(val, extra_clk),
+            0xFF14 => self.ch1.write_nr14(val, extra_clk, self.lf_div),
             0xFF15 => {}
             0xFF16 => self.ch2.write_nr21(val),
             0xFF17 => self.ch2.write_nr22(val),
             0xFF18 => self.ch2.write_nr23(val),
-            0xFF19 => self.ch2.write_nr24(val, extra_clk),
+            0xFF19 => self.ch2.write_nr24(val, extra_clk, self.lf_div),
             0xFF1A => self.ch3.write_nr30(val),
             0xFF1B => self.ch3.write_nr31(val),
             0xFF1C => self.ch3.write_nr32(val),
@@ -932,5 +941,42 @@ mod tests {
             0,
             "CH1 digital output should be 0 after channel stops"
         );
+    }
+
+    #[test]
+    fn test_channel_1_delay_high_freq() {
+        // Test mimics SameSuite channel_1_delay test:
+        // freq = $7FF, duty = 75% ($C0), volume = 8 ($80)
+        // Expected: after 2 M-cycles, output should be 0
+        //           after 3 M-cycles, output should be 8
+        let mut apu = powered_cgb_apu();
+
+        // Power off and on APU to reset
+        apu.write_register(0xFF26, 0x00); // APU off
+        apu.write_register(0xFF26, 0xFF); // APU on
+
+        // Set up channel 1 like the test ROM
+        apu.write_register(0xFF13, 0xFF); // NR13: freq low = $FF
+        apu.write_register(0xFF11, 0xC0); // NR11: duty = 75%
+        apu.write_register(0xFF12, 0x80); // NR12: volume = 8, no envelope
+        apu.write_register(0xFF14, 0x87); // NR14: trigger + freq high = 7 → freq = $7FF
+
+        // At this point, trigger happened. duty_pos should be 0.
+        // 75% duty = [0,1,1,1,1,1,1,0], so output at pos 0 = 0.
+
+        // After 2 M-cycles (0 NOPs in SameSuite), should be at position 0 (output = 0)
+        apu.tick(2);
+        let pcm12_at_2 = apu.read_pcm12() & 0x0F;
+        assert_eq!(
+            pcm12_at_2, 0x00,
+            "Output should be 0 at 2 M-cycles (0 NOPs)"
+        );
+
+        // After 1 more M-cycle (1 NOP in SameSuite), should be at position 1 (output = 8)
+        apu.tick(1);
+        let pcm12_at_3 = apu.read_pcm12() & 0x0F;
+        assert_eq!(pcm12_at_3, 0x08, "Output should be 8 at 3 M-cycles (1 NOP)");
+
+        assert!(apu.ch1.is_active(), "CH1 should be active after trigger");
     }
 }
