@@ -453,11 +453,10 @@ impl Channel1 {
         if self.length_counter == 0 {
             self.length_counter = 64;
         }
-        // Startup delay: The exact delay before first duty_pos advance needs
-        // to be tuned to match hardware. Based on SameSuite tests, the delay
-        // should be about 1-2 M-cycles for fresh triggers.
-        // Fresh trigger: period + 4-8 T-cycles delay
-        // Retrigger: period + 0-4 T-cycles delay (2 2MHz ticks earlier)
+        // Startup delay (in T-cycles) before first duty_pos advance.
+        // Values tuned empirically against SameSuite channel_1/2_delay tests.
+        // Fresh trigger: 6-8 T-cycles depending on lf_div
+        // Retrigger: 2-4 T-cycles depending on lf_div (2 2MHz ticks earlier)
         let delay_t = if was_active {
             if lf_div { 2u16 } else { 4u16 }
         } else if lf_div {
