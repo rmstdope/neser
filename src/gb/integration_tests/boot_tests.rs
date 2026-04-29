@@ -358,12 +358,17 @@ fn run_cgb_until_cartridge_entry(gb: &mut Gb<CgbBus>) -> bool {
     }
 }
 
-/// Helper: boot a fresh CGB with the given model and return it at PC=$0100.
-fn boot_cgb_to_cartridge_entry(model: CgbModel) -> Gb<CgbBus> {
+/// Helper: create a fresh CGB with the given model, ready to boot (PC at boot ROM start).
+fn make_cgb_for_boot_test(model: CgbModel) -> Gb<CgbBus> {
     let rom = build_cgb_test_rom();
     let cart = load_cartridge(&rom).expect("valid ROM");
     // skip_boot_rom=false to actually run the boot ROM
-    let mut gb = Gb::new(CgbBus::new(cart, model, false));
+    Gb::new(CgbBus::new(cart, model, false))
+}
+
+/// Helper: boot a fresh CGB with the given model and return it at PC=$0100.
+fn boot_cgb_to_cartridge_entry(model: CgbModel) -> Gb<CgbBus> {
+    let mut gb = make_cgb_for_boot_test(model);
     let reached = run_cgb_until_cartridge_entry(&mut gb);
     assert!(reached, "Boot ROM must reach $0100 for model {:?}", model);
     gb
@@ -501,4 +506,97 @@ fn test_cgb_boot_accepts_any_cartridge() {
         reached,
         "Boot ROM must accept any cartridge and reach $0100"
     );
+}
+
+// ============================================================================
+// CGB-0 specific tests
+// ============================================================================
+
+/// CGB-0 boot ROM produces the same CPU register state as Production CGB.
+///
+/// Reference: SameBoy's CGB boot ROM uses identical register values for both
+/// CGB-0 and Production CGB. Mooneye does not have a boot_regs-cgb0 test.
+#[test]
+fn test_cgb0_boot_sets_same_register_state_as_production() {
+    let gb = boot_cgb_to_cartridge_entry(CgbModel::Cgb0);
+
+    // Same values as Production CGB (Mooneye-verified)
+    assert_eq!(gb.cpu.regs.a, 0x11, "A register after CGB-0 boot");
+    assert_eq!(gb.cpu.regs.f, 0x80, "F register after CGB-0 boot (Z=1)");
+    assert_eq!(gb.cpu.regs.b, 0x00, "B register after CGB-0 boot");
+    assert_eq!(gb.cpu.regs.c, 0x00, "C register after CGB-0 boot");
+    assert_eq!(gb.cpu.regs.d, 0x00, "D register after CGB-0 boot");
+    assert_eq!(gb.cpu.regs.e, 0x08, "E register after CGB-0 boot");
+    assert_eq!(gb.cpu.regs.h, 0x00, "H register after CGB-0 boot");
+    assert_eq!(gb.cpu.regs.l, 0x7C, "L register after CGB-0 boot");
+    assert_eq!(gb.cpu.regs.sp, 0xFFFE, "SP after CGB-0 boot");
+    assert_eq!(gb.cpu.regs.pc, 0x0100, "PC after CGB-0 boot");
+}
+
+/// CGB-0 does NOT initialize wave RAM.
+///
+/// The behavioral requirement is that the boot ROM leaves wave RAM unchanged,
+/// not that it forces any particular power-on pattern.
+/// Reference: Pan Docs and SameBoy's implementation both confirm this.
+#[test]
+fn test_cgb0_boot_does_not_init_wave_ram() {
+    let mut gb = make_cgb_for_boot_test(CgbModel::Cgb0);
+
+    // Snapshot wave RAM before boot
+    let wave_ram_before: Vec<u8> = (0xFF30..=0xFF3F)
+        .map(|addr| read_cgb_bus(&mut gb, addr))
+        .collect();
+
+    let reached = run_cgb_until_cartridge_entry(&mut gb);
+    assert!(reached, "Boot ROM must reach $0100");
+
+    // Wave RAM ($FF30-$FF3F) should be unchanged for CGB-0
+    for (addr, expected) in (0xFF30..=0xFF3F).zip(wave_ram_before.iter().copied()) {
+        let val = read_cgb_bus(&mut gb, addr);
+        assert_eq!(
+            val, expected,
+            "CGB-0 boot should preserve wave RAM at ${:04X} (before ${:02X}, after ${:02X})",
+            addr, expected, val
+        );
+    }
+}
+
+/// Production CGB initializes wave RAM to an alternating 0x00/0xFF pattern.
+///
+/// Reference: SameBoy's CGB boot ROM implementation.
+#[test]
+fn test_cgb_production_boot_inits_wave_ram() {
+    let mut gb = boot_cgb_to_cartridge_entry(CgbModel::CgbE);
+
+    // Wave RAM ($FF30-$FF3F) should alternate 0x00/0xFF for Production CGB
+    for (i, addr) in (0xFF30..=0xFF3F).enumerate() {
+        let expected = if i % 2 == 0 { 0x00 } else { 0xFF };
+        let val = read_cgb_bus(&mut gb, addr);
+        assert_eq!(
+            val, expected,
+            "Production CGB wave RAM at ${:04X} should be ${:02X} (got ${:02X})",
+            addr, expected, val
+        );
+    }
+}
+
+/// CGB-0 and Production CGB produce identical IO register state.
+///
+/// The only difference is wave RAM initialization.
+#[test]
+fn test_cgb0_and_production_have_same_io_state() {
+    let mut gb_0 = boot_cgb_to_cartridge_entry(CgbModel::Cgb0);
+    let mut gb_e = boot_cgb_to_cartridge_entry(CgbModel::CgbE);
+
+    // Check APU and PPU registers (should be identical)
+    let io_addrs: &[u16] = &[0xFF24, 0xFF25, 0xFF26, 0xFF40, 0xFF47];
+    for &addr in io_addrs {
+        let val_0 = read_cgb_bus(&mut gb_0, addr);
+        let val_e = read_cgb_bus(&mut gb_e, addr);
+        assert_eq!(
+            val_0, val_e,
+            "IO ${:04X}: CGB-0 (${:02X}) vs CGB-E (${:02X})",
+            addr, val_0, val_e
+        );
+    }
 }

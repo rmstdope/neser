@@ -297,6 +297,10 @@ pub const DMG0_BOOT_ROM: [u8; 256] = [
 /// state, it may still perform minimal audio register initialization before
 /// handing off to the cartridge at $0100.
 ///
+/// **Production CGB vs CGB-0 difference**: This boot ROM initializes wave RAM
+/// ($FF30-$FF3F) to an alternating 0x00/0xFF pattern. CGB-0 does NOT initialize
+/// wave RAM (see `CGB0_BOOT_ROM`).
+///
 /// ## Post-boot CPU state (Mooneye-verified)
 ///
 /// | Register | Value |
@@ -388,6 +392,161 @@ pub const CGB_BOOT_ROM: [u8; 2048] = {
     rom[0x1C] = 0xFC;
     rom[0x1D] = 0xE0; // LDH [$47], A  ; BGP = $FC
     rom[0x1E] = 0x47;
+
+    // ── $001F: Wave RAM initialization (Production CGB only) ───────────────
+    // Initialize $FF30-$FF3F to alternating 0x00/0xFF pattern.
+    // SameBoy's CGB boot ROM does: ld a, 0; loop: ldi [hl], a; cpl; dec c; jr nz, loop
+    // We do the same with HL=$FF30, C=16
+    rom[0x1F] = 0x21; // LD HL, $FF30
+    rom[0x20] = 0x30;
+    rom[0x21] = 0xFF;
+    rom[0x22] = 0x0E; // LD C, $10 (16 bytes)
+    rom[0x23] = 0x10;
+    rom[0x24] = 0xAF; // XOR A (A = 0)
+    // Loop: write A to [HL++], complement A, decrement C, loop if not zero
+    rom[0x25] = 0x22; // LDI [HL], A  (write A to [HL], HL++)
+    rom[0x26] = 0x2F; // CPL         (A = ~A, toggles 0x00 <-> 0xFF)
+    rom[0x27] = 0x0D; // DEC C
+    rom[0x28] = 0x20; // JR NZ, -5   (back to LDI)
+    rom[0x29] = 0xFB; // -5 in two's complement
+
+    // ── $002A: Set CPU registers ───────────────────────────────────────────
+    // Set AF = $1180 (A=$11, F=$80) using HL trick:
+    // PUSH HL pushes H first, then L. POP AF pops to F first, then A.
+    // So for A=$11, F=$80: set H=$11, L=$80, PUSH HL, POP AF.
+    rom[0x2A] = 0x26; // LD H, $11
+    rom[0x2B] = 0x11;
+    rom[0x2C] = 0x2E; // LD L, $80
+    rom[0x2D] = 0x80;
+    rom[0x2E] = 0xE5; // PUSH HL
+    rom[0x2F] = 0xF1; // POP AF  ; Now A=$11, F=$80
+
+    // Set B, C, D, E
+    rom[0x30] = 0x06; // LD B, $00
+    rom[0x31] = 0x00;
+    rom[0x32] = 0x0E; // LD C, $00
+    rom[0x33] = 0x00;
+    rom[0x34] = 0x16; // LD D, $00
+    rom[0x35] = 0x00;
+    rom[0x36] = 0x1E; // LD E, $08
+    rom[0x37] = 0x08;
+
+    // Set H, L to final values
+    rom[0x38] = 0x26; // LD H, $00
+    rom[0x39] = 0x00;
+    rom[0x3A] = 0x2E; // LD L, $7C
+    rom[0x3B] = 0x7C;
+
+    // ── $003C: Jump to boot exit ───────────────────────────────────────────
+    rom[0x3C] = 0xC3; // JP $00FE
+    rom[0x3D] = 0xFE;
+    rom[0x3E] = 0x00;
+
+    // ── $003F-$00FD: Padding (zeros) ───────────────────────────────────────
+    // (already zero-initialized)
+
+    // ── $00FE: Boot exit ───────────────────────────────────────────────────
+    // Write to $FF50 to unmap boot ROM. A=$11 from earlier.
+    // After this instruction completes, PC=$0100 = cartridge entry point.
+    rom[0xFE] = 0xE0; // LDH [$50], A
+    rom[0xFF] = 0x50;
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // $0200-$08FF: Second mapped region (1792 bytes) - unused in minimal ROM
+    // ═══════════════════════════════════════════════════════════════════════
+    // (already zero-initialized)
+
+    rom
+};
+
+/// Minimal CGB boot ROM for CGB-0 (first hardware revision).
+///
+/// CGB-0 is a rare early CGB revision with a slightly different boot ROM.
+/// The key difference: CGB-0 does NOT initialize wave RAM ($FF30-$FF3F),
+/// leaving it unchanged in its power-on state rather than guaranteeing any
+/// specific initial value. This matches Pan Docs and SameBoy's handling.
+///
+/// All other aspects are identical to the Production CGB boot ROM:
+/// - Same post-boot CPU register values (A=$11, F=$80, B=$00, C=$00, D=$00, E=$08, H=$00, L=$7C)
+/// - Same IO register values (NR52=$F1, NR50=$77, NR51=$F3, LCDC=$91, BGP=$FC)
+/// - Same APU initialization (channel 1 triggered)
+///
+/// ## Post-boot CPU state (same as Production CGB)
+///
+/// | Register | Value |
+/// |----------|-------|
+/// | A        | $11   |
+/// | F        | $80 (Z=1, N=0, H=0, C=0) |
+/// | B        | $00   |
+/// | C        | $00   |
+/// | D        | $00   |
+/// | E        | $08   |
+/// | H        | $00   |
+/// | L        | $7C   |
+/// | SP       | $FFFE |
+/// | PC       | $0100 |
+///
+/// Reference: SameBoy's CGB boot ROM uses identical register values for both
+/// CGB-0 and Production CGB. The only difference is wave RAM initialization.
+pub const CGB0_BOOT_ROM: [u8; 2048] = {
+    let mut rom = [0u8; 2048];
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // $0000-$00FF: First mapped region (256 bytes)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // ── $0000: Initialize stack pointer ────────────────────────────────────
+    rom[0x00] = 0x31; // LD SP, $FFFE
+    rom[0x01] = 0xFE;
+    rom[0x02] = 0xFF;
+
+    // ── $0003: APU initialization ──────────────────────────────────────────
+    // Turn on APU
+    rom[0x03] = 0x3E; // LD A, $80
+    rom[0x04] = 0x80;
+    rom[0x05] = 0xE0; // LDH [$26], A  ; NR52 = $80 (APU on)
+    rom[0x06] = 0x26;
+
+    // Set channel 1 duty (50%) - writes $80, reads back as $BF due to mask
+    rom[0x07] = 0xE0; // LDH [$11], A  ; NR11 = $80 (reuse A=$80)
+    rom[0x08] = 0x11;
+
+    // Set channel 1 envelope
+    rom[0x09] = 0x3E; // LD A, $F3
+    rom[0x0A] = 0xF3;
+    rom[0x0B] = 0xE0; // LDH [$12], A  ; NR12 = $F3
+    rom[0x0C] = 0x12;
+
+    // Set sound panning (reuse A=$F3)
+    rom[0x0D] = 0xE0; // LDH [$25], A  ; NR51 = $F3
+    rom[0x0E] = 0x25;
+
+    // Set master volume
+    rom[0x0F] = 0x3E; // LD A, $77
+    rom[0x10] = 0x77;
+    rom[0x11] = 0xE0; // LDH [$24], A  ; NR50 = $77
+    rom[0x12] = 0x24;
+
+    // Trigger channel 1 (makes NR52 read as $F1)
+    rom[0x13] = 0x3E; // LD A, $87
+    rom[0x14] = 0x87;
+    rom[0x15] = 0xE0; // LDH [$14], A  ; NR14 = $87 (trigger, length=0, period=7)
+    rom[0x16] = 0x14;
+
+    // ── $0017: PPU initialization ──────────────────────────────────────────
+    rom[0x17] = 0x3E; // LD A, $91
+    rom[0x18] = 0x91;
+    rom[0x19] = 0xE0; // LDH [$40], A  ; LCDC = $91
+    rom[0x1A] = 0x40;
+
+    rom[0x1B] = 0x3E; // LD A, $FC
+    rom[0x1C] = 0xFC;
+    rom[0x1D] = 0xE0; // LDH [$47], A  ; BGP = $FC
+    rom[0x1E] = 0x47;
+
+    // ── $001F: NO wave RAM initialization (CGB-0 specific) ─────────────────
+    // Unlike Production CGB, CGB-0 does NOT initialize wave RAM.
+    // Wave RAM ($FF30-$FF3F) remains at power-on state (all zeros).
 
     // ── $001F: Set CPU registers ───────────────────────────────────────────
     // Set AF = $1180 (A=$11, F=$80) using HL trick:
