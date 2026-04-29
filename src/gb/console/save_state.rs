@@ -237,7 +237,7 @@ mod tests {
 
     fn make_cgb() -> Gb<CgbBus> {
         let cart = load_cartridge(&minimal_cgb_rom()).expect("valid ROM");
-        let mut gb = Gb::new(CgbBus::new(cart, CgbModel::default()));
+        let mut gb = Gb::new(CgbBus::new(cart, CgbModel::default(), true));
         gb.cpu.reset_registers_cgb();
         gb
     }

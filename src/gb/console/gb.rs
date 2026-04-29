@@ -139,8 +139,13 @@ impl Gb<CgbBus> {
     pub fn reset(&mut self, soft_reset: bool) {
         self.cpu.reset_registers_cgb();
         if !soft_reset {
-            self.cpu.regs.pc = 0x0100;
             self.cpu.bus.reset();
+            // Start at boot ROM entry point if active, else post-boot ROM entry.
+            self.cpu.regs.pc = if self.cpu.bus.is_boot_rom_active() {
+                0x0000
+            } else {
+                0x0100
+            };
         }
     }
 

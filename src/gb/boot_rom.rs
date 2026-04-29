@@ -290,6 +290,30 @@ pub const DMG0_BOOT_ROM: [u8; 256] = [
     0xE0, 0x50, // LDH [$FF50], A  (unmap boot ROM → execute $0100)
 ];
 
+/// Placeholder CGB boot ROM for infrastructure testing.
+///
+/// This is a minimal boot ROM that immediately jumps to the cartridge entry
+/// point at $0100. It is used during infrastructure development and will be
+/// replaced by a full IPR-free CGB boot ROM implementation.
+///
+/// The CGB boot ROM is 2048 bytes, split into two regions:
+/// - $0000-$00FF: Early initialization (256 bytes)
+/// - $0100-$01FF: Cartridge header (not part of boot ROM, reads from cartridge)
+/// - $0200-$08FF: Main boot ROM code (1792 bytes)
+///
+/// This placeholder contains a simple `JP $0100` at offset 0, followed by
+/// padding. The cartridge header gap ($0100-$01FF) is filled with placeholder
+/// bytes that are never read (the bus routes those addresses to the cartridge).
+pub const CGB_PLACEHOLDER_BOOT_ROM: [u8; 2048] = {
+    let mut rom = [0u8; 2048];
+    // $0000: JP $0100
+    rom[0] = 0xC3; // JP opcode
+    rom[1] = 0x00; // low byte of $0100
+    rom[2] = 0x01; // high byte of $0100
+    // Rest is padding (zeros)
+    rom
+};
+
 #[cfg(test)]
 mod tests {
     use super::DMG_BOOT_ROM;

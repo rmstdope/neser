@@ -67,7 +67,7 @@ pub fn load_cgb_rom(path: &str) -> Gb<CgbBus> {
 pub fn load_cgb_rom_with_model(path: &str, model: CgbModel) -> Gb<CgbBus> {
     let rom = std::fs::read(path).expect("ROM file should be present");
     let cart = load_cartridge(&rom).expect("valid GB ROM");
-    let mut gb = Gb::new(CgbBus::new(cart, model));
+    let mut gb = Gb::new(CgbBus::new(cart, model, true));
     // Set CGB post-boot-ROM CPU register state for the specific model variant.
     gb.cpu.reset_registers_cgb_for_model(model);
     gb
