@@ -43,7 +43,6 @@ macro_rules! assert_samesuite_pass {
 const BASE: &str = "roms/gb/automated_tests/SameSuite/ppu";
 
 #[test]
-#[ignore = "CGB PPU BGPI/BGPD blocking behavior not yet implemented — see issue #XXXX"]
 fn test_samesuite_ppu_blocking_bgpi_increase() {
     assert_samesuite_pass!(&format!("{BASE}/blocking_bgpi_increase.gb"));
 }

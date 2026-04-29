@@ -501,10 +501,26 @@ impl Ppu {
         match addr {
             // VBK: bit 0 = selected bank; upper bits always read as 1.
             0xFF4F => Some(0xFE | (self.vbk & 0x01)),
-            0xFF68 => Some(self.bcps),
-            0xFF69 => Some(self.bg_palette_ram[(self.bcps & 0x3F) as usize]),
-            0xFF6A => Some(self.ocps),
-            0xFF6B => Some(self.obj_palette_ram[(self.ocps & 0x3F) as usize]),
+            // BCPS: bit 6 always reads as 1 (unused bit pulled high).
+            0xFF68 => Some(self.bcps | 0x40),
+            0xFF69 => {
+                // BCPD: blocked during Mode 3 when LCD is on (returns 0xFF).
+                if self.registers.lcd_enabled() && self.timing.is_palette_blocked() {
+                    Some(0xFF)
+                } else {
+                    Some(self.bg_palette_ram[(self.bcps & 0x3F) as usize])
+                }
+            }
+            // OCPS: bit 6 always reads as 1 (unused bit pulled high).
+            0xFF6A => Some(self.ocps | 0x40),
+            0xFF6B => {
+                // OCPD: blocked during Mode 3 when LCD is on (returns 0xFF).
+                if self.registers.lcd_enabled() && self.timing.is_palette_blocked() {
+                    Some(0xFF)
+                } else {
+                    Some(self.obj_palette_ram[(self.ocps & 0x3F) as usize])
+                }
+            }
             0xFF6C => Some(0xFE | self.opri as u8),
             _ => None,
         }
@@ -529,11 +545,18 @@ impl Ppu {
                 true
             }
             0xFF69 => {
+                // BCPD: write blocked during Mode 3 when LCD is on, but auto-increment still happens.
                 let index = (self.bcps & 0x3F) as usize;
                 let addr = self.bcps & 0x3F;
-                self.bg_palette_ram[index] = val;
-                trace_ppu!(3; "bcpd write addr={:02X} data={:02X}", addr, val);
-                // Auto-increment address after write if bit 7 is set.
+                let blocked =
+                    self.registers.lcd_enabled() && self.timing.is_palette_write_blocked();
+                if !blocked {
+                    self.bg_palette_ram[index] = val;
+                    trace_ppu!(3; "bcpd write addr={:02X} data={:02X}", addr, val);
+                } else {
+                    trace_ppu!(3; "bcpd write blocked addr={:02X} data={:02X}", addr, val);
+                }
+                // Auto-increment address after write if bit 7 is set (even when blocked).
                 if self.bcps & 0x80 != 0 {
                     self.bcps = 0x80 | ((self.bcps + 1) & 0x3F);
                     trace_ppu!(3; "bcps auto-increment addr={:02X}", self.bcps & 0x3F);
@@ -547,10 +570,18 @@ impl Ppu {
                 true
             }
             0xFF6B => {
+                // OCPD: write blocked during Mode 3 when LCD is on, but auto-increment still happens.
                 let index = (self.ocps & 0x3F) as usize;
                 let addr = self.ocps & 0x3F;
-                self.obj_palette_ram[index] = val;
-                trace_ppu!(3; "ocpd write addr={:02X} data={:02X}", addr, val);
+                let blocked =
+                    self.registers.lcd_enabled() && self.timing.is_palette_write_blocked();
+                if !blocked {
+                    self.obj_palette_ram[index] = val;
+                    trace_ppu!(3; "ocpd write addr={:02X} data={:02X}", addr, val);
+                } else {
+                    trace_ppu!(3; "ocpd write blocked addr={:02X} data={:02X}", addr, val);
+                }
+                // Auto-increment (even when blocked).
                 if self.ocps & 0x80 != 0 {
                     self.ocps = 0x80 | ((self.ocps + 1) & 0x3F);
                     trace_ppu!(3; "ocps auto-increment addr={:02X}", self.ocps & 0x3F);
@@ -2305,6 +2336,322 @@ mod tests {
             flags & 0x02,
             0x00,
             "STAT write when IRQ line already high must not double-fire the STAT interrupt"
+        );
+    }
+
+    // ── CGB palette blocking (Mode 3) ─────────────────────────────────────────
+    //
+    // Per Pan Docs §Palettes:
+    // - BCPD/OCPD ($FF69/$FF6B) cannot be read or written during Mode 3
+    // - Auto-increment still happens even when write is blocked
+    // - BCPS/OCPS ($FF68/$FF6A) can be accessed anytime
+
+    /// Helper: advance CGB PPU to Mode 0 (HBlank) on scanline 0.
+    fn cgb_ppu_at_hblank() -> Ppu {
+        let mut ppu = Ppu::new_cgb();
+        // Mode 0 starts at dot 256 on scanline 0
+        tick_dots(&mut ppu, 252); // 252 ticks from dot=4 → dot=256 = Mode 0
+        assert_eq!(ppu.timing.mode(), PpuMode::HBlank, "must be in HBlank");
+        ppu
+    }
+
+    /// Helper: advance CGB PPU to Mode 1 (VBlank).
+    fn cgb_ppu_at_vblank() -> Ppu {
+        let mut ppu = Ppu::new_cgb();
+        // First scanline is 452 dots; scanlines 1-143 are 456 each
+        // VBlank starts at scanline 144
+        tick_dots(&mut ppu, FIRST_SCANLINE_DOTS + 456 * 143);
+        assert_eq!(ppu.timing.mode(), PpuMode::VBlank, "must be in VBlank");
+        ppu
+    }
+
+    /// Helper: advance CGB PPU to Mode 2 (OAM Scan) on scanline 1.
+    fn cgb_ppu_at_oam_scan() -> Ppu {
+        let mut ppu = Ppu::new_cgb();
+        // First scanline is 452 dots; Mode 2 on scan 1 starts at dot 4
+        tick_dots(&mut ppu, FIRST_SCANLINE_DOTS + 4);
+        assert_eq!(ppu.timing.mode(), PpuMode::OamScan, "must be in OamScan");
+        ppu
+    }
+
+    // ── BGPD ($FF69) read blocking ────────────────────────────────────────────
+
+    #[test]
+    fn test_cgb_bgpd_read_blocked_during_mode3() {
+        // Given: CGB PPU in Mode 3 with palette data written
+        let mut ppu = Ppu::new_cgb();
+        ppu.write_cgb_register(0xFF68, 0x00); // BCPS = index 0, no auto-increment
+        ppu.write_cgb_register(0xFF69, 0xAB); // write palette data
+        tick_dots(&mut ppu, 80); // advance to Mode 3
+        assert_eq!(ppu.timing.mode(), PpuMode::PixelTransfer);
+        // When: read BGPD during Mode 3
+        let val = ppu.read_cgb_register(0xFF69);
+        // Then: blocked read returns 0xFF
+        assert_eq!(
+            val,
+            Some(0xFF),
+            "BGPD read during Mode 3 should return 0xFF"
+        );
+    }
+
+    #[test]
+    fn test_cgb_bgpd_read_allowed_during_hblank() {
+        // Given: CGB PPU in HBlank with palette data
+        let mut ppu = cgb_ppu_at_hblank();
+        ppu.write_cgb_register(0xFF68, 0x00); // BCPS = index 0
+        ppu.write_cgb_register(0xFF69, 0xCD); // write palette data
+        ppu.write_cgb_register(0xFF68, 0x00); // reset index for read
+        // When: read BGPD during HBlank
+        let val = ppu.read_cgb_register(0xFF69);
+        // Then: actual value returned
+        assert_eq!(val, Some(0xCD), "BGPD read during HBlank should succeed");
+    }
+
+    #[test]
+    fn test_cgb_bgpd_read_allowed_during_vblank() {
+        // Given: CGB PPU in VBlank with palette data
+        let mut ppu = cgb_ppu_at_vblank();
+        ppu.write_cgb_register(0xFF68, 0x05); // BCPS = index 5
+        ppu.write_cgb_register(0xFF69, 0x77);
+        ppu.write_cgb_register(0xFF68, 0x05); // reset index
+        // When: read BGPD during VBlank
+        let val = ppu.read_cgb_register(0xFF69);
+        // Then: actual value returned
+        assert_eq!(val, Some(0x77), "BGPD read during VBlank should succeed");
+    }
+
+    #[test]
+    fn test_cgb_bgpd_read_allowed_during_oam_scan() {
+        // Given: CGB PPU in OAM Scan with palette data
+        let mut ppu = cgb_ppu_at_oam_scan();
+        ppu.write_cgb_register(0xFF68, 0x10); // BCPS = index 16
+        ppu.write_cgb_register(0xFF69, 0x33);
+        ppu.write_cgb_register(0xFF68, 0x10); // reset index
+        // When: read BGPD during OAM Scan
+        let val = ppu.read_cgb_register(0xFF69);
+        // Then: actual value returned
+        assert_eq!(val, Some(0x33), "BGPD read during OAM Scan should succeed");
+    }
+
+    // ── BGPD ($FF69) write blocking ───────────────────────────────────────────
+
+    #[test]
+    fn test_cgb_bgpd_write_blocked_during_mode3() {
+        // Given: CGB PPU with initial palette value
+        let mut ppu = Ppu::new_cgb();
+        ppu.write_cgb_register(0xFF68, 0x00); // BCPS = index 0, no auto-increment
+        ppu.write_cgb_register(0xFF69, 0x11); // initial value
+        tick_dots(&mut ppu, 80); // advance to Mode 3
+        assert_eq!(ppu.timing.mode(), PpuMode::PixelTransfer);
+        // When: attempt write during Mode 3
+        ppu.write_cgb_register(0xFF68, 0x00); // reset index
+        ppu.write_cgb_register(0xFF69, 0x99); // attempt overwrite
+        // Then: palette RAM unchanged (verify after exiting Mode 3)
+        tick_dots(&mut ppu, 172); // exit Mode 3, enter HBlank
+        assert_eq!(ppu.timing.mode(), PpuMode::HBlank);
+        ppu.write_cgb_register(0xFF68, 0x00); // reset index
+        let val = ppu.read_cgb_register(0xFF69);
+        assert_eq!(
+            val,
+            Some(0x11),
+            "BGPD write during Mode 3 should be blocked"
+        );
+    }
+
+    #[test]
+    fn test_cgb_bgpd_write_allowed_during_hblank() {
+        // Given: CGB PPU in HBlank
+        let mut ppu = cgb_ppu_at_hblank();
+        ppu.write_cgb_register(0xFF68, 0x00);
+        // When: write during HBlank
+        ppu.write_cgb_register(0xFF69, 0xEE);
+        // Then: write succeeds
+        ppu.write_cgb_register(0xFF68, 0x00);
+        let val = ppu.read_cgb_register(0xFF69);
+        assert_eq!(val, Some(0xEE), "BGPD write during HBlank should succeed");
+    }
+
+    #[test]
+    fn test_cgb_bgpd_write_allowed_during_vblank() {
+        // Given: CGB PPU in VBlank
+        let mut ppu = cgb_ppu_at_vblank();
+        ppu.write_cgb_register(0xFF68, 0x3F); // max index
+        // When: write during VBlank
+        ppu.write_cgb_register(0xFF69, 0xDD);
+        // Then: write succeeds
+        ppu.write_cgb_register(0xFF68, 0x3F);
+        let val = ppu.read_cgb_register(0xFF69);
+        assert_eq!(val, Some(0xDD), "BGPD write during VBlank should succeed");
+    }
+
+    #[test]
+    fn test_cgb_bgpd_write_allowed_during_oam_scan() {
+        // Given: CGB PPU in OAM Scan
+        let mut ppu = cgb_ppu_at_oam_scan();
+        ppu.write_cgb_register(0xFF68, 0x20);
+        // When: write during OAM Scan
+        ppu.write_cgb_register(0xFF69, 0xBB);
+        // Then: write succeeds
+        ppu.write_cgb_register(0xFF68, 0x20);
+        let val = ppu.read_cgb_register(0xFF69);
+        assert_eq!(val, Some(0xBB), "BGPD write during OAM Scan should succeed");
+    }
+
+    #[test]
+    fn test_cgb_bgpd_auto_increment_happens_even_when_write_blocked_in_mode3() {
+        // Given: CGB PPU with BCPS auto-increment enabled
+        let mut ppu = Ppu::new_cgb();
+        ppu.write_cgb_register(0xFF68, 0x84); // BCPS = index 4, auto-increment ON
+        tick_dots(&mut ppu, 80); // advance to Mode 3
+        assert_eq!(ppu.timing.mode(), PpuMode::PixelTransfer);
+        // When: write to BGPD during Mode 3
+        ppu.write_cgb_register(0xFF69, 0xAA);
+        // Then: BCPS index incremented (bit 7 preserved, index = 5, bit 6 reads as 1)
+        let bcps = ppu.read_cgb_register(0xFF68);
+        assert_eq!(
+            bcps,
+            Some(0xC5),
+            "BCPS auto-increment must happen even when write is blocked"
+        );
+    }
+
+    // ── OCPD ($FF6B) read blocking ────────────────────────────────────────────
+
+    #[test]
+    fn test_cgb_ocpd_read_blocked_during_mode3() {
+        // Given: CGB PPU in Mode 3 with OBJ palette data
+        let mut ppu = Ppu::new_cgb();
+        ppu.write_cgb_register(0xFF6A, 0x00); // OCPS = index 0
+        ppu.write_cgb_register(0xFF6B, 0x56); // write palette data
+        tick_dots(&mut ppu, 80); // advance to Mode 3
+        assert_eq!(ppu.timing.mode(), PpuMode::PixelTransfer);
+        // When: read OCPD during Mode 3
+        let val = ppu.read_cgb_register(0xFF6B);
+        // Then: blocked read returns 0xFF
+        assert_eq!(
+            val,
+            Some(0xFF),
+            "OCPD read during Mode 3 should return 0xFF"
+        );
+    }
+
+    #[test]
+    fn test_cgb_ocpd_read_allowed_during_hblank() {
+        // Given: CGB PPU in HBlank with OBJ palette data
+        let mut ppu = cgb_ppu_at_hblank();
+        ppu.write_cgb_register(0xFF6A, 0x08);
+        ppu.write_cgb_register(0xFF6B, 0x44);
+        ppu.write_cgb_register(0xFF6A, 0x08);
+        // When: read OCPD during HBlank
+        let val = ppu.read_cgb_register(0xFF6B);
+        // Then: actual value returned
+        assert_eq!(val, Some(0x44), "OCPD read during HBlank should succeed");
+    }
+
+    #[test]
+    fn test_cgb_ocpd_read_allowed_during_vblank() {
+        // Given: CGB PPU in VBlank with OBJ palette data
+        let mut ppu = cgb_ppu_at_vblank();
+        ppu.write_cgb_register(0xFF6A, 0x20);
+        ppu.write_cgb_register(0xFF6B, 0x88);
+        ppu.write_cgb_register(0xFF6A, 0x20);
+        // When: read OCPD during VBlank
+        let val = ppu.read_cgb_register(0xFF6B);
+        // Then: actual value returned
+        assert_eq!(val, Some(0x88), "OCPD read during VBlank should succeed");
+    }
+
+    #[test]
+    fn test_cgb_ocpd_read_allowed_during_oam_scan() {
+        // Given: CGB PPU in OAM Scan with OBJ palette data
+        let mut ppu = cgb_ppu_at_oam_scan();
+        ppu.write_cgb_register(0xFF6A, 0x3C);
+        ppu.write_cgb_register(0xFF6B, 0x22);
+        ppu.write_cgb_register(0xFF6A, 0x3C);
+        // When: read OCPD during OAM Scan
+        let val = ppu.read_cgb_register(0xFF6B);
+        // Then: actual value returned
+        assert_eq!(val, Some(0x22), "OCPD read during OAM Scan should succeed");
+    }
+
+    // ── OCPD ($FF6B) write blocking ───────────────────────────────────────────
+
+    #[test]
+    fn test_cgb_ocpd_write_blocked_during_mode3() {
+        // Given: CGB PPU with initial OBJ palette value
+        let mut ppu = Ppu::new_cgb();
+        ppu.write_cgb_register(0xFF6A, 0x00);
+        ppu.write_cgb_register(0xFF6B, 0x66); // initial value
+        tick_dots(&mut ppu, 80); // advance to Mode 3
+        assert_eq!(ppu.timing.mode(), PpuMode::PixelTransfer);
+        // When: attempt write during Mode 3
+        ppu.write_cgb_register(0xFF6A, 0x00);
+        ppu.write_cgb_register(0xFF6B, 0xFF); // attempt overwrite
+        // Then: palette RAM unchanged
+        tick_dots(&mut ppu, 172); // exit Mode 3
+        ppu.write_cgb_register(0xFF6A, 0x00);
+        let val = ppu.read_cgb_register(0xFF6B);
+        assert_eq!(
+            val,
+            Some(0x66),
+            "OCPD write during Mode 3 should be blocked"
+        );
+    }
+
+    #[test]
+    fn test_cgb_ocpd_write_allowed_during_hblank() {
+        // Given: CGB PPU in HBlank
+        let mut ppu = cgb_ppu_at_hblank();
+        ppu.write_cgb_register(0xFF6A, 0x10);
+        // When: write during HBlank
+        ppu.write_cgb_register(0xFF6B, 0x77);
+        // Then: write succeeds
+        ppu.write_cgb_register(0xFF6A, 0x10);
+        let val = ppu.read_cgb_register(0xFF6B);
+        assert_eq!(val, Some(0x77), "OCPD write during HBlank should succeed");
+    }
+
+    #[test]
+    fn test_cgb_ocpd_write_allowed_during_vblank() {
+        // Given: CGB PPU in VBlank
+        let mut ppu = cgb_ppu_at_vblank();
+        ppu.write_cgb_register(0xFF6A, 0x2A);
+        // When: write during VBlank
+        ppu.write_cgb_register(0xFF6B, 0x55);
+        // Then: write succeeds
+        ppu.write_cgb_register(0xFF6A, 0x2A);
+        let val = ppu.read_cgb_register(0xFF6B);
+        assert_eq!(val, Some(0x55), "OCPD write during VBlank should succeed");
+    }
+
+    #[test]
+    fn test_cgb_ocpd_write_allowed_during_oam_scan() {
+        // Given: CGB PPU in OAM Scan
+        let mut ppu = cgb_ppu_at_oam_scan();
+        ppu.write_cgb_register(0xFF6A, 0x38);
+        // When: write during OAM Scan
+        ppu.write_cgb_register(0xFF6B, 0xCC);
+        // Then: write succeeds
+        ppu.write_cgb_register(0xFF6A, 0x38);
+        let val = ppu.read_cgb_register(0xFF6B);
+        assert_eq!(val, Some(0xCC), "OCPD write during OAM Scan should succeed");
+    }
+
+    #[test]
+    fn test_cgb_ocpd_auto_increment_happens_even_when_write_blocked_in_mode3() {
+        // Given: CGB PPU with OCPS auto-increment enabled
+        let mut ppu = Ppu::new_cgb();
+        ppu.write_cgb_register(0xFF6A, 0x84); // OCPS = index 4, auto-increment ON
+        tick_dots(&mut ppu, 80); // advance to Mode 3
+        assert_eq!(ppu.timing.mode(), PpuMode::PixelTransfer);
+        // When: write to OCPD during Mode 3
+        ppu.write_cgb_register(0xFF6B, 0xBB);
+        // Then: OCPS index incremented (bit 6 reads as 1)
+        let ocps = ppu.read_cgb_register(0xFF6A);
+        assert_eq!(
+            ocps,
+            Some(0xC5),
+            "OCPS auto-increment must happen even when write is blocked"
         );
     }
 }
