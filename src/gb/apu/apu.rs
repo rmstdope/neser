@@ -752,4 +752,66 @@ mod tests {
             "HP filter must produce negative samples once DC is removed from an oscillating channel"
         );
     }
+
+    #[test]
+    fn test_pcm12_returns_zero_when_channels_off() {
+        let apu = powered_cgb_apu();
+        // CH1 and CH2 inactive → PCM12 should be $00
+        assert_eq!(apu.read_pcm12(), 0x00);
+    }
+
+    #[test]
+    fn test_pcm34_returns_zero_when_channels_off() {
+        let apu = powered_cgb_apu();
+        // CH3 and CH4 inactive → PCM34 should be $00
+        assert_eq!(apu.read_pcm34(), 0x00);
+    }
+
+    #[test]
+    fn test_pcm12_nibble_packing() {
+        let mut apu = powered_cgb_apu();
+        // Trigger CH1 with volume 7 and 50% duty (high state)
+        apu.write_register(0xFF12, 0x70); // vol=7, no envelope
+        apu.write_register(0xFF11, 0x80); // 50% duty
+        apu.write_register(0xFF13, 0x00);
+        apu.write_register(0xFF14, 0x87); // trigger + length disable
+        // Trigger CH2 with volume 5
+        apu.write_register(0xFF17, 0x50); // vol=5, no envelope
+        apu.write_register(0xFF16, 0x80); // 50% duty
+        apu.write_register(0xFF18, 0x00);
+        apu.write_register(0xFF19, 0x87); // trigger + length disable
+
+        // Tick a bit to ensure channels are active and output non-zero
+        apu.tick(10);
+
+        let pcm12 = apu.read_pcm12();
+        // Low nibble = CH1, high nibble = CH2
+        // Exact values depend on duty position, but both should be non-zero
+        // when active and DAC on with volume > 0
+        let ch1_out = pcm12 & 0x0F;
+        let ch2_out = (pcm12 >> 4) & 0x0F;
+
+        // At least one of them should output (depends on duty cycle position)
+        assert!(
+            ch1_out > 0 || ch2_out > 0,
+            "At least one pulse channel should output non-zero in PCM12"
+        );
+    }
+
+    #[test]
+    fn test_pcm_returns_zero_when_apu_powered_off() {
+        let mut apu = powered_cgb_apu();
+        // Trigger some channels
+        apu.write_register(0xFF12, 0xF0);
+        apu.write_register(0xFF14, 0x80);
+        apu.write_register(0xFF17, 0xF0);
+        apu.write_register(0xFF19, 0x80);
+
+        // Power off APU
+        apu.write_register(0xFF26, 0x00);
+
+        // PCM registers should return 0 when powered off
+        assert_eq!(apu.read_pcm12(), 0x00);
+        assert_eq!(apu.read_pcm34(), 0x00);
+    }
 }

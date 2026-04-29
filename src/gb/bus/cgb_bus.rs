@@ -587,6 +587,8 @@ impl GbBus for CgbBus {
                 self.ppu.write_cgb_register(addr, val);
             }
             0xFF50 => {} // No boot ROM to unmap on CGB bus
+            // CGB PCM registers (read-only; ignore writes)
+            0xFF76 | 0xFF77 => {}
             0xFF70 => self.svbk = val & 0x07,
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize] = val,
             0xFFFF => self.ie_reg = val,

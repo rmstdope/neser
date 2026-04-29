@@ -82,13 +82,14 @@ fn run_samesuite_apu_rom(path: &str, hardware: SameSuiteHardware) -> MooneyeResu
 
 macro_rules! assert_samesuite_pass {
     ($path:expr, $hardware:expr) => {
-        let result = run_samesuite_apu_rom($path, $hardware);
+        let path = $path;
+        let result = run_samesuite_apu_rom(path, $hardware);
         assert_eq!(
             result,
             MooneyeResult::Pass,
             "SameSuite APU test failed: {:?} — ROM: {}",
             result,
-            $path
+            path
         );
     };
 }
