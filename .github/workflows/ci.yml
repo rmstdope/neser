@@ -23,6 +23,7 @@ jobs:
       rust: ${{ steps.filter.outputs.rust }}
       nes: ${{ steps.filter.outputs.nes }}
       gb: ${{ steps.filter.outputs.gb }}
+      gba: ${{ steps.filter.outputs.gba }}
       platform: ${{ steps.filter.outputs.platform }}
       root_rust: ${{ steps.filter.outputs.root_rust }}
 
@@ -62,6 +63,8 @@ jobs:
               - 'src/nes/**'
             gb:
               - 'src/gb/**'
+            gba:
+              - 'src/gba/**'
             platform:
               - 'src/platform/**'
             root_rust:
@@ -107,6 +110,7 @@ jobs:
         env:
           CHANGED_NES: ${{ needs.changes.outputs.nes }}
           CHANGED_GB: ${{ needs.changes.outputs.gb }}
+          CHANGED_GBA: ${{ needs.changes.outputs.gba }}
           CHANGED_PLATFORM: ${{ needs.changes.outputs.platform }}
           CHANGED_ROOT: ${{ needs.changes.outputs.root_rust }}
         run: |
@@ -124,6 +128,9 @@ jobs:
             fi
             if [[ "$CHANGED_GB" == "true" ]]; then
               FILTER="${FILTER} gb::"
+            fi
+            if [[ "$CHANGED_GBA" == "true" ]]; then
+              FILTER="${FILTER} gba::"
             fi
             echo "filter=${FILTER}" >> "$GITHUB_OUTPUT"
             echo "run_integration=${RUN_INTEGRATION}" >> "$GITHUB_OUTPUT"
