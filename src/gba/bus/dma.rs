@@ -450,10 +450,6 @@ impl DmaController {
 
         self.channels[idx].active = true;
 
-        // For Increment+Reload destination, snapshot dst at burst start
-        // so we can reload it at the next trigger.
-        let burst_dst_start = self.channels[idx].cur_dst;
-
         while count > 0 {
             // Higher-priority preemption: bail out and let the caller
             // re-enter so that the higher channel runs first.
@@ -475,7 +471,6 @@ impl DmaController {
                         special,
                         irq,
                         repeat,
-                        burst_dst_start,
                         bus,
                     );
                 }
@@ -498,7 +493,7 @@ impl DmaController {
             count -= 1;
         }
 
-        self.finish_burst(idx, special, irq, repeat, burst_dst_start, bus);
+        self.finish_burst(idx, special, irq, repeat, bus);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -512,7 +507,6 @@ impl DmaController {
         special: bool,
         irq: bool,
         repeat: bool,
-        burst_dst_start: u32,
         bus: &mut B,
     ) {
         self.channels[idx].active = true;
@@ -541,7 +535,7 @@ impl DmaController {
             self.cpu_stall += 2;
             count -= 1;
         }
-        self.finish_burst(idx, special, irq, repeat, burst_dst_start, bus);
+        self.finish_burst(idx, special, irq, repeat, bus);
     }
 
     fn finish_burst<B: DmaBus>(
@@ -550,7 +544,6 @@ impl DmaController {
         special: bool,
         irq: bool,
         repeat: bool,
-        _burst_dst_start: u32,
         bus: &mut B,
     ) {
         if irq {
