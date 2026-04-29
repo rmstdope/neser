@@ -4,5 +4,6 @@ pub mod boot_tests;
 pub mod helpers;
 pub mod mooneye_tests;
 pub mod samesuite_apu_tests;
+pub mod samesuite_dma_tests;
 pub mod samesuite_interrupt_tests;
 pub mod samesuite_ppu_tests;
