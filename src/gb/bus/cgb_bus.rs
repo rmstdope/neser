@@ -1,5 +1,5 @@
 use crate::gb::apu::Apu;
-use crate::gb::boot_rom::CGB_BOOT_ROM;
+use crate::gb::boot_rom::{CGB_BOOT_ROM, CGB0_BOOT_ROM};
 use crate::gb::bus::GbBus;
 use crate::gb::bus::hdma::{HdmaAction, HdmaState};
 use crate::gb::cartridge::GbCartridge;
@@ -162,7 +162,16 @@ impl CgbBus {
             ff73: 0x00,
             ff74: 0xFF, // Value on reset per Mooneye test and Pan Docs
             ff75: 0x00,
-            boot_rom: CGB_BOOT_ROM,
+            // Select boot ROM based on model: CGB-0 uses CGB0_BOOT_ROM (no wave RAM init),
+            // all other CGB models use CGB_BOOT_ROM (with wave RAM init).
+            boot_rom: match model {
+                CgbModel::Cgb0 => CGB0_BOOT_ROM,
+                CgbModel::CgbA
+                | CgbModel::CgbB
+                | CgbModel::CgbC
+                | CgbModel::CgbD
+                | CgbModel::CgbE => CGB_BOOT_ROM,
+            },
             boot_rom_active: !skip_boot_rom,
             skip_boot_rom,
         };

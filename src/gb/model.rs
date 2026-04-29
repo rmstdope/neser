@@ -115,37 +115,47 @@ impl DmgModel {
 pub enum CgbModel {
     /// CGB-0 hardware (first revision, rare).
     ///
-    /// Post-boot CPU registers: A=$11 F=$80 B=$00 C=$00 D=$00 E=$00 H=$00 L=$00 SP=$FFFE.
+    /// Post-boot CPU registers (same as Production CGB):
+    /// A=$11 F=$80 B=$00 C=$00 D=$00 E=$08 H=$00 L=$7C SP=$FFFE.
     /// DIV=$04 at cartridge entry.
+    ///
+    /// **Key difference from Production CGB**: CGB-0 does NOT initialize wave RAM
+    /// ($FF30-$FF3F), leaving it at all zeros. Production CGB initializes wave RAM
+    /// to an alternating 0x00/0xFF pattern.
     Cgb0,
 
     /// CGB-A hardware (early production).
     ///
-    /// Post-boot CPU registers: A=$11 F=$80 B=$00 C=$00 D=$FF E=$56 H=$00 L=$0D SP=$FFFE.
+    /// Post-boot CPU registers (Mooneye-verified):
+    /// A=$11 F=$80 B=$00 C=$00 D=$00 E=$08 H=$00 L=$7C SP=$FFFE.
     /// DIV=$04 at cartridge entry (same as CGB-B through E).
     CgbA,
 
     /// CGB-B hardware (production variant).
     ///
-    /// Post-boot CPU registers: A=$11 F=$80 B=$00 C=$00 D=$FF E=$56 H=$00 L=$0D SP=$FFFE.
+    /// Post-boot CPU registers (Mooneye-verified):
+    /// A=$11 F=$80 B=$00 C=$00 D=$00 E=$08 H=$00 L=$7C SP=$FFFE.
     /// DIV=$04 at cartridge entry (same as CGB-A, C, D, E).
     CgbB,
 
     /// CGB-C hardware (production variant).
     ///
-    /// Post-boot CPU registers: A=$11 F=$80 B=$00 C=$00 D=$FF E=$56 H=$00 L=$0D SP=$FFFE.
+    /// Post-boot CPU registers (Mooneye-verified):
+    /// A=$11 F=$80 B=$00 C=$00 D=$00 E=$08 H=$00 L=$7C SP=$FFFE.
     /// DIV=$04 at cartridge entry (same as CGB-A, B, D, E).
     CgbC,
 
     /// CGB-D hardware (production variant).
     ///
-    /// Post-boot CPU registers: A=$11 F=$80 B=$00 C=$00 D=$FF E=$56 H=$00 L=$0D SP=$FFFE.
+    /// Post-boot CPU registers (Mooneye-verified):
+    /// A=$11 F=$80 B=$00 C=$00 D=$00 E=$08 H=$00 L=$7C SP=$FFFE.
     /// DIV=$04 at cartridge entry (same as CGB-A, B, C, E).
     CgbD,
 
     /// CGB-E hardware (latest production, most common).
     ///
-    /// Post-boot CPU registers: A=$11 F=$80 B=$00 C=$00 D=$FF E=$56 H=$00 L=$0D SP=$FFFE.
+    /// Post-boot CPU registers (Mooneye-verified):
+    /// A=$11 F=$80 B=$00 C=$00 D=$00 E=$08 H=$00 L=$7C SP=$FFFE.
     /// DIV=$04 at cartridge entry (same as CGB-A, B, C, D).
     #[default]
     CgbE,
