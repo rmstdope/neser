@@ -1,18 +1,8 @@
-use crate::gb::bus::{CgbBus, DmgBus, GbBus};
-use crate::gb::cartridge::load_cartridge;
-use crate::gb::console::Gb;
-use crate::gb::integration_tests::mooneye_tests::MooneyeResult;
+use super::helpers::{MooneyeResult, run_and_detect_cgb, run_and_detect_dmg};
 use crate::gb::model::{CgbModel, DmgModel};
 
 const BASE: &str = "roms/gb/automated_tests/SameSuite/apu";
 const SAME_SUITE_CYCLE_LIMIT: u64 = 15_000_000;
-const LD_B_B: u8 = 0x40;
-const FIBO_B: u8 = 3;
-const FIBO_C: u8 = 5;
-const FIBO_D: u8 = 8;
-const FIBO_E: u8 = 13;
-const FIBO_H: u8 = 21;
-const FIBO_L: u8 = 34;
 
 #[derive(Clone, Copy)]
 enum SameSuiteHardware {
@@ -20,63 +10,10 @@ enum SameSuiteHardware {
     Cgb(CgbModel),
 }
 
-fn load_dmg_rom(path: &str) -> Gb<DmgBus> {
-    let rom = std::fs::read(path).expect("SameSuite ROM file should be present");
-    let cart = load_cartridge(&rom).expect("valid GB ROM");
-    Gb::new(DmgBus::new(cart, DmgModel::DmgB))
-}
-
-fn load_cgb_rom(path: &str, model: CgbModel) -> Gb<CgbBus> {
-    let rom = std::fs::read(path).expect("SameSuite ROM file should be present");
-    let cart = load_cartridge(&rom).expect("valid GB ROM");
-    let mut gb = Gb::new(CgbBus::new(cart, model));
-    gb.cpu.reset_registers_cgb();
-    gb
-}
-
-fn detect_samesuite_result_with_limit<B: GbBus>(gb: &mut Gb<B>, cycle_limit: u64) -> MooneyeResult {
-    let start = gb.cycles();
-    loop {
-        let opcode = gb.cpu.bus.read(gb.cpu.regs.pc);
-        if opcode == LD_B_B {
-            let r = &gb.cpu.regs;
-            if r.b == FIBO_B
-                && r.c == FIBO_C
-                && r.d == FIBO_D
-                && r.e == FIBO_E
-                && r.h == FIBO_H
-                && r.l == FIBO_L
-            {
-                return MooneyeResult::Pass;
-            }
-            return MooneyeResult::Fail {
-                b: r.b,
-                c: r.c,
-                d: r.d,
-                e: r.e,
-                h: r.h,
-                l: r.l,
-            };
-        }
-
-        if gb.cycles().saturating_sub(start) >= cycle_limit {
-            return MooneyeResult::Timeout;
-        }
-
-        gb.step();
-    }
-}
-
 fn run_samesuite_apu_rom(path: &str, hardware: SameSuiteHardware) -> MooneyeResult {
     match hardware {
-        SameSuiteHardware::DmgB => {
-            let mut gb = load_dmg_rom(path);
-            detect_samesuite_result_with_limit(&mut gb, SAME_SUITE_CYCLE_LIMIT)
-        }
-        SameSuiteHardware::Cgb(model) => {
-            let mut gb = load_cgb_rom(path, model);
-            detect_samesuite_result_with_limit(&mut gb, SAME_SUITE_CYCLE_LIMIT)
-        }
+        SameSuiteHardware::DmgB => run_and_detect_dmg(path, DmgModel::DmgB, SAME_SUITE_CYCLE_LIMIT),
+        SameSuiteHardware::Cgb(model) => run_and_detect_cgb(path, model, SAME_SUITE_CYCLE_LIMIT),
     }
 }
 

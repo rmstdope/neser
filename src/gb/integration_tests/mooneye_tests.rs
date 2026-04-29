@@ -7,132 +7,19 @@
 //! ROMs are located at:
 //! `roms/gb/automated_tests/mts-20240926-1737-443f6e1/`
 
-use super::helpers::load_gb_rom;
+use super::helpers::{
+    MooneyeResult, detect_mooneye_result_with_limit, load_gb_rom, run_and_detect_dmg,
+};
 use crate::gb::bus::{DmgBus, GbBus};
-use crate::gb::cartridge::load_cartridge;
 use crate::gb::console::Gb;
 use crate::gb::model::DmgModel;
-
-/// Outcome of running a Mooneye test ROM to completion.
-#[derive(Debug, PartialEq)]
-pub enum MooneyeResult {
-    /// B=3, C=5, D=8, E=13, H=21, L=34 at the `LD B,B` breakpoint.
-    Pass,
-    /// The `LD B,B` breakpoint was hit but registers did not match the Fibonacci pattern.
-    Fail {
-        b: u8,
-        c: u8,
-        d: u8,
-        e: u8,
-        h: u8,
-        l: u8,
-    },
-    /// The ROM did not hit the breakpoint within the M-cycle budget.
-    Timeout,
-}
-
-/// Mooneye pass: Fibonacci register values at `LD B,B` breakpoint.
-const FIBO_B: u8 = 3;
-const FIBO_C: u8 = 5;
-const FIBO_D: u8 = 8;
-const FIBO_E: u8 = 13;
-const FIBO_H: u8 = 21;
-const FIBO_L: u8 = 34;
 
 /// Generous per-test M-cycle timeout used as a safety budget to avoid hangs.
 const MOONEYE_CYCLE_LIMIT: u64 = 15_000_000;
 
-/// LD B,B opcode used as a Mooneye software breakpoint.
-const LD_B_B: u8 = 0x40;
-
-/// Load a GB ROM from `path` and return a ready-to-step `Gb<DmgBus>` (DMG-0 model).
-fn load_gb_rom_dmg0(path: &str) -> Gb<DmgBus> {
-    let rom = std::fs::read(path).expect("Mooneye ROM file should be present");
-    let cart = load_cartridge(&rom).expect("valid GB ROM");
-    Gb::new(DmgBus::new(cart, DmgModel::Dmg0))
-}
-
-/// Step `gb` until the Mooneye breakpoint fires or `cycle_limit` M-cycles elapse.
-///
-/// Detects the `LD B,B` (0x40) breakpoint by peeking at the next opcode
-/// before each step. For these tests, peeking at the opcode at `PC` is safe
-/// because execution is in cartridge/boot ROM space in our bus implementation.
-pub(crate) fn detect_mooneye_result_with_limit(
-    gb: &mut Gb<DmgBus>,
-    cycle_limit: u64,
-) -> MooneyeResult {
-    let start = gb.cycles();
-    loop {
-        let opcode = gb.cpu.bus.read(gb.cpu.regs.pc);
-        if opcode == LD_B_B {
-            let r = &gb.cpu.regs;
-            if r.b == FIBO_B
-                && r.c == FIBO_C
-                && r.d == FIBO_D
-                && r.e == FIBO_E
-                && r.h == FIBO_H
-                && r.l == FIBO_L
-            {
-                return MooneyeResult::Pass;
-            } else {
-                return MooneyeResult::Fail {
-                    b: r.b,
-                    c: r.c,
-                    d: r.d,
-                    e: r.e,
-                    h: r.h,
-                    l: r.l,
-                };
-            }
-        }
-        if gb.cycles().saturating_sub(start) >= cycle_limit {
-            return MooneyeResult::Timeout;
-        }
-        gb.step();
-    }
-}
-
 /// Step `gb` until the Mooneye breakpoint fires or the default cycle limit is reached.
 pub fn detect_mooneye_result(gb: &mut Gb<DmgBus>) -> MooneyeResult {
     detect_mooneye_result_with_limit(gb, MOONEYE_CYCLE_LIMIT)
-}
-
-/// Run a Mooneye test ROM to completion and return the result.
-pub fn run_mooneye_rom(path: &str) -> MooneyeResult {
-    let mut gb = load_gb_rom(path);
-    detect_mooneye_result(&mut gb)
-}
-
-/// Run a Mooneye test ROM using the DMG-0 hardware model.
-pub fn run_mooneye_rom_dmg0(path: &str) -> MooneyeResult {
-    let mut gb = load_gb_rom_dmg0(path);
-    detect_mooneye_result(&mut gb)
-}
-
-/// Load a GB ROM from `path` and return a ready-to-step `Gb<DmgBus>` (DMG-A model).
-fn load_gb_rom_dmg_a(path: &str) -> Gb<DmgBus> {
-    let rom = std::fs::read(path).expect("Mooneye ROM file should be present");
-    let cart = load_cartridge(&rom).expect("valid GB ROM");
-    Gb::new(DmgBus::new(cart, DmgModel::DmgA))
-}
-
-/// Run a Mooneye test ROM using the DMG-A hardware model.
-fn run_mooneye_rom_dmg_a(path: &str) -> MooneyeResult {
-    let mut gb = load_gb_rom_dmg_a(path);
-    detect_mooneye_result(&mut gb)
-}
-
-/// Load a GB ROM from `path` and return a ready-to-step `Gb<DmgBus>` (DMG-C model).
-fn load_gb_rom_dmg_c(path: &str) -> Gb<DmgBus> {
-    let rom = std::fs::read(path).expect("Mooneye ROM file should be present");
-    let cart = load_cartridge(&rom).expect("valid GB ROM");
-    Gb::new(DmgBus::new(cart, DmgModel::DmgC))
-}
-
-/// Run a Mooneye test ROM using the DMG-C hardware model.
-fn run_mooneye_rom_dmg_c(path: &str) -> MooneyeResult {
-    let mut gb = load_gb_rom_dmg_c(path);
-    detect_mooneye_result(&mut gb)
 }
 
 // ============================================================================
@@ -141,7 +28,7 @@ fn run_mooneye_rom_dmg_c(path: &str) -> MooneyeResult {
 
 macro_rules! assert_mooneye_pass {
     ($path:expr) => {
-        let result = run_mooneye_rom($path);
+        let result = run_and_detect_dmg($path, DmgModel::DmgB, MOONEYE_CYCLE_LIMIT);
         assert_eq!(
             result,
             MooneyeResult::Pass,
@@ -154,7 +41,7 @@ macro_rules! assert_mooneye_pass {
 
 macro_rules! assert_mooneye_pass_dmg0 {
     ($path:expr) => {
-        let result = run_mooneye_rom_dmg0($path);
+        let result = run_and_detect_dmg($path, DmgModel::Dmg0, MOONEYE_CYCLE_LIMIT);
         assert_eq!(
             result,
             MooneyeResult::Pass,
@@ -167,7 +54,7 @@ macro_rules! assert_mooneye_pass_dmg0 {
 
 macro_rules! assert_mooneye_pass_dmg_a {
     ($path:expr) => {
-        let result = run_mooneye_rom_dmg_a($path);
+        let result = run_and_detect_dmg($path, DmgModel::DmgA, MOONEYE_CYCLE_LIMIT);
         assert_eq!(
             result,
             MooneyeResult::Pass,
@@ -180,7 +67,7 @@ macro_rules! assert_mooneye_pass_dmg_a {
 
 macro_rules! assert_mooneye_pass_dmg_c {
     ($path:expr) => {
-        let result = run_mooneye_rom_dmg_c($path);
+        let result = run_and_detect_dmg($path, DmgModel::DmgC, MOONEYE_CYCLE_LIMIT);
         assert_eq!(
             result,
             MooneyeResult::Pass,

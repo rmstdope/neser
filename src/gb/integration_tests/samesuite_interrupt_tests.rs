@@ -9,24 +9,11 @@
 //!
 //! SameSuite project: https://github.com/LIJI32/SameSuite
 
-use super::mooneye_tests::{MooneyeResult, detect_mooneye_result};
-use crate::gb::bus::DmgBus;
-use crate::gb::cartridge::load_cartridge;
-use crate::gb::console::Gb;
+use super::helpers::{MooneyeResult, run_and_detect_dmg};
 use crate::gb::model::DmgModel;
 
-/// Load a GB ROM from `path` and return a ready-to-step `Gb<DmgBus>` (DMG-B model).
-fn load_gb_rom(path: &str) -> Gb<DmgBus> {
-    let rom = std::fs::read(path).expect("SameSuite ROM file should be present");
-    let cart = load_cartridge(&rom).expect("valid GB ROM");
-    Gb::new(DmgBus::new(cart, DmgModel::DmgB))
-}
-
-/// Run a SameSuite test ROM to completion and return the result.
-fn run_samesuite_rom(path: &str) -> MooneyeResult {
-    let mut gb = load_gb_rom(path);
-    detect_mooneye_result(&mut gb)
-}
+/// Default cycle limit for SameSuite interrupt tests.
+const SAMESUITE_CYCLE_LIMIT: u64 = 15_000_000;
 
 // ============================================================================
 // Helper macro to produce a single-line pass assertion.
@@ -34,7 +21,7 @@ fn run_samesuite_rom(path: &str) -> MooneyeResult {
 
 macro_rules! assert_samesuite_pass {
     ($path:expr) => {
-        let result = run_samesuite_rom($path);
+        let result = run_and_detect_dmg($path, DmgModel::DmgB, SAMESUITE_CYCLE_LIMIT);
         assert_eq!(
             result,
             MooneyeResult::Pass,
