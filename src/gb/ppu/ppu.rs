@@ -588,7 +588,11 @@ impl Ppu {
     }
 
     /// Returns whether the LCD is enabled (LCDC bit 7).
-    /// Used by CGB bus to determine if HDMA can proceed (HDMA pauses when LCD is off).
+    ///
+    /// Used by CGB bus for HDMA behavior:
+    /// - When LCD is off (disabled), mode is effectively 0 (HBlank), so HDMA can start
+    ///   an immediate block transfer if requested.
+    /// - When LCD is on, HDMA transfers one block per HBlank (mode 0) period.
     pub fn is_lcd_enabled(&self) -> bool {
         self.registers.lcd_enabled()
     }

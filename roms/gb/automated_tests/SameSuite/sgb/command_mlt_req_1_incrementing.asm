@@ -3,7 +3,7 @@ DEF RESULTS_N_ROWS EQU 1
 
 include "base.inc"
 
-; This test verifies which patters incrememnt MLT_REQ 01
+; This test verifies which patterns increment MLT_REQ 01
 
 MACRO SgbPacket
     push hl

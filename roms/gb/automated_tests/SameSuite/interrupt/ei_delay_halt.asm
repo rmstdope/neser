@@ -31,7 +31,7 @@ CorrectResults:
 ; We left extra room for faulty implementations, but these are normally empty
 dw $BEEF, $BEEF, $BEEF, $BEEF
 dw $BEEF, $BEEF
-; This is the last vlaue of AF we ended up with
+; This is the last value of AF we ended up with
 dw $0350 ; `daa` only executed once
 dw $50F0, RunTest.halt + 1, $69F0 ; Timer int is last ($50), returns after `halt`, no `daa`
 dw $48F0, RunTest.halt,     $69F0 ; STAT int is 2nd   ($48), returns into `halt`,  no `daa`

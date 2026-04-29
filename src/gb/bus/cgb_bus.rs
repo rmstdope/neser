@@ -5,6 +5,7 @@ use crate::gb::cartridge::GbCartridge;
 use crate::gb::input::joypad::Joypad;
 use crate::gb::model::CgbModel;
 use crate::gb::ppu::Ppu;
+use crate::gb::ppu::timing::PpuMode;
 use crate::gb::timer::Timer;
 
 /// Full CGB (Game Boy Color) memory bus.
@@ -62,9 +63,11 @@ pub struct CgbBus {
     /// CGB VRAM DMA (HDMA/GDMA) state for registers $FF51–$FF55.
     hdma: HdmaState,
     /// Number of M-cycles the CPU should be halted due to active HDMA transfer.
-    /// When HDMA performs a transfer, this is set to 8. The CPU should stall for
-    /// this many M-cycles, calling tick(1) each cycle without executing instructions.
-    hdma_halt_cycles: u8,
+    /// When HDMA performs a transfer, this is set to 8 per block transferred.
+    /// For GDMA, this can be up to 128 blocks × 8 cycles = 1024 M-cycles.
+    /// The CPU should stall for this many M-cycles, calling tick(1) each cycle
+    /// without executing instructions.
+    hdma_halt_cycles: u16,
     /// SVBK register ($FF70): selects the active WRAM bank for $D000–$DFFF.
     svbk: u8,
     /// KEY1 register ($FF4D): CGB speed switch.
@@ -315,7 +318,8 @@ impl CgbBus {
 
         // Signal CPU to halt for 8 M-cycles per block transferred.
         // The CPU will stall, calling tick(1) per cycle without executing instructions.
-        self.hdma_halt_cycles = (8 * blocks_transferred).min(255) as u8;
+        // For full 128-block GDMA, this can be up to 1024 M-cycles.
+        self.hdma_halt_cycles = (8 * blocks_transferred) as u16;
     }
 
     /// Raw read bypassing PPU access blocking (used by OAM DMA).
@@ -602,8 +606,9 @@ impl GbBus for CgbBus {
             0xFF53 => self.hdma.write_dest_high(val),
             0xFF54 => self.hdma.write_dest_low(val),
             0xFF55 => {
-                let stat = self.ppu.read_register(0xFF41);
-                let ppu_mode = stat & 0x03;
+                // Use PPU's physical mode for HDMA timing decisions (not STAT register bits
+                // which can lag the physical mode due to mode_for_stat() timing quirks).
+                let ppu_mode = self.ppu.mode();
                 match self.hdma.write_control(val) {
                     HdmaAction::StartGdma => {
                         self.do_gdma_transfer();
@@ -612,7 +617,7 @@ impl GbBus for CgbBus {
                         // Per SameBoy: If HDMA is started while in HBlank (mode 0), transfer starts
                         // immediately regardless of whether LCD is on or off. When LCD is off,
                         // mode is effectively 0, so one block transfers instantly.
-                        if ppu_mode == 0 {
+                        if ppu_mode == PpuMode::HBlank {
                             self.hdma.activate_hdma();
                             // Clear pending flag since we're activating now
                             self.hdma.clear_hblank_pending();
