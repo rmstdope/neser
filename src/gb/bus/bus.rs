@@ -71,6 +71,16 @@ pub trait GbBus {
         false
     }
 
+    /// Check if the CPU should be halted for HDMA and consume one halt cycle.
+    ///
+    /// Returns `true` if the CPU should perform a halt stall (tick subsystems
+    /// without executing an instruction) for this M-cycle. CgbBus uses this for
+    /// HDMA/GDMA transfers which halt the CPU. The default implementation returns
+    /// `false` (DMG / test buses have no HDMA).
+    fn consume_hdma_halt_cycle(&mut self) -> bool {
+        false
+    }
+
     /// Access the PPU for debugger purposes (timing, frame count, scanline).
     ///
     /// Returns a reference to the PPU. The default implementation panics;

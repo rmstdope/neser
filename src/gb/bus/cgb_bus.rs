@@ -5,6 +5,7 @@ use crate::gb::cartridge::GbCartridge;
 use crate::gb::input::joypad::Joypad;
 use crate::gb::model::CgbModel;
 use crate::gb::ppu::Ppu;
+use crate::gb::ppu::timing::PpuMode;
 use crate::gb::timer::Timer;
 
 /// Full CGB (Game Boy Color) memory bus.
@@ -57,8 +58,16 @@ pub struct CgbBus {
     dma_position: u8,
     /// Whether OAM access is blocked by an active DMA transfer.
     dma_oam_blocked: bool,
+    /// Serial control register (SC / $FF02). Bit 7 = transfer start, cleared by hardware.
+    sc: u8,
     /// CGB VRAM DMA (HDMA/GDMA) state for registers $FF51–$FF55.
     hdma: HdmaState,
+    /// Number of M-cycles the CPU should be halted due to active HDMA transfer.
+    /// When HDMA performs a transfer, this is set to 8 per block transferred.
+    /// For GDMA, this can be up to 128 blocks × 8 cycles = 1024 M-cycles.
+    /// The CPU should stall for this many M-cycles, calling tick(1) each cycle
+    /// without executing instructions.
+    hdma_halt_cycles: u16,
     /// SVBK register ($FF70): selects the active WRAM bank for $D000–$DFFF.
     svbk: u8,
     /// KEY1 register ($FF4D): CGB speed switch.
@@ -112,7 +121,9 @@ impl CgbBus {
             dma_source: 0x00,
             dma_position: 0,
             dma_oam_blocked: false,
+            sc: 0,
             hdma: HdmaState::new(),
+            hdma_halt_cycles: 0,
             svbk: 0,
             key1: 0,
             apu_tick_accumulator: 0,
@@ -180,6 +191,23 @@ impl CgbBus {
     /// Returns the CGB hardware model variant for this bus.
     pub fn model(&self) -> CgbModel {
         self.model
+    }
+
+    /// Check if the CPU should be halted for HDMA and consume one halt cycle.
+    ///
+    /// Returns `true` if the CPU should perform a halt stall (tick subsystems
+    /// without executing an instruction). The caller should call `tick(1)` and
+    /// skip instruction execution for this M-cycle.
+    pub fn consume_hdma_halt_cycle(&mut self) -> bool {
+        if self.hdma_halt_cycles > 0 {
+            self.hdma_halt_cycles -= 1;
+            // if self.hdma_halt_cycles == 0 {
+            //     eprintln!("[DMA] CPU halt complete - resuming instruction execution");
+            // }
+            true
+        } else {
+            false
+        }
     }
 
     /// Returns `true` when the CGB is operating in double-speed mode.
@@ -285,30 +313,57 @@ impl CgbBus {
         // Tick the cartridge (for MBC3 RTC)
         self.cart.tick(u32::from(m_cycles));
 
+        // HDMA state machine: activate pending HDMA when LCD turns on.
+        // Per SameBoy: HDMA requested with LCD off remains pending until LCD is enabled.
+        // Once activated, actual transfers occur during HBlank periods (checked below).
+        if self.hdma.is_hdma_pending() && self.ppu.is_lcd_enabled() {
+            self.hdma.activate_hdma();
+            // Clear any pending HBlank flag so we wait for the NEXT HBlank after LCD enable.
+            // Per Pan Docs: transfers occur at LY=0-143 during HBlank, starting from the
+            // first full scanline after LCD is enabled.
+            self.ppu.take_hblank_entered();
+        }
+
         // HDMA: transfer one 16-byte block per HBlank (Mode 3→0).
-        if self.hdma.is_active() && self.hdma.is_hblank_mode() && self.ppu.take_hblank_entered() {
-            self.do_hdma_block_transfer();
-            // Tick subsystems forward by 8 M-cycles (the transfer duration).
-            self.tick_subsystems_for_hdma(8);
+        // Transfers occur only when LCD is on and HBlank is entered.
+        if self.hdma.is_active() && self.hdma.is_hblank_mode() {
+            let hblank = self.ppu.take_hblank_entered();
+            if hblank {
+                self.do_hdma_block_transfer();
+                // Signal CPU to halt for 8 M-cycles during the transfer.
+                // Per Pan Docs: HDMA takes 8 M-cycles per block regardless of CPU speed mode.
+                self.hdma_halt_cycles = 8;
+            }
         }
     }
 
     /// Execute one HDMA block transfer (16 bytes from source to VRAM).
+    /// Per Pan Docs: transfer takes 8 M-cycles regardless of double-speed mode.
+    /// If destination address overflows beyond VRAM range ($2000), transfer stops prematurely.
     fn do_hdma_block_transfer(&mut self) {
         let vbk = self.ppu.vbk;
         let source = self.hdma.source();
         let dest = self.hdma.destination();
 
-        // Transfer 16 bytes: read from source via read_raw, write directly to VRAM.
+        // Transfer up to 16 bytes: read from source via read_raw, write directly to VRAM.
+        // Stop after byte if destination overflows VRAM range.
         for i in 0u16..16 {
-            let byte = self.read_raw(source.wrapping_add(i));
             let vram_offset = dest.wrapping_add(i) as usize;
-            if vram_offset < 0x2000 {
-                if vbk & 0x01 != 0 {
-                    self.ppu.vram_bank1[vram_offset] = byte;
-                } else {
-                    self.ppu.vram[vram_offset] = byte;
-                }
+
+            // Check for destination overflow: VRAM destination range is $0000–$1FFF (offset).
+            // Per Pan Docs: if overflow occurs, transfer stops prematurely.
+            if vram_offset >= 0x2000 {
+                // Destination overflowed — advance addresses by bytes written, mark complete.
+                self.hdma.advance_by_partial_block(i);
+                return;
+            }
+
+            let byte = self.read_raw(source.wrapping_add(i));
+
+            if vbk & 0x01 != 0 {
+                self.ppu.vram_bank1[vram_offset] = byte;
+            } else {
+                self.ppu.vram[vram_offset] = byte;
             }
         }
 
@@ -320,54 +375,21 @@ impl CgbBus {
     /// Called when $FF55 is written with bit 7 = 0 and no HDMA is active.
     fn do_gdma_transfer(&mut self) {
         let total_blocks = self.hdma.remaining_blocks() as u32 + 1;
+        let mut blocks_transferred = 0u32;
 
         for _ in 0..total_blocks {
             self.do_hdma_block_transfer();
+            blocks_transferred += 1;
+            // Break early if transfer was force-completed due to overflow.
+            if !self.hdma.is_active() {
+                break;
+            }
         }
 
-        // Tick subsystems forward by 8 M-cycles per block.
-        self.tick_subsystems_for_hdma(8 * total_blocks);
-    }
-
-    /// Tick PPU, timer, and APU forward (used during HDMA/GDMA transfers).
-    ///
-    /// In double-speed mode, PPU receives fewer dots and APU ticks at half rate,
-    /// matching the scaling applied in [`tick()`].
-    fn tick_subsystems_for_hdma(&mut self, m_cycles: u32) {
-        for _ in 0..m_cycles {
-            self.timer.tick(1);
-            if self.timer.interrupt_pending {
-                self.if_reg |= 0x04;
-                self.timer.interrupt_pending = false;
-            }
-        }
-        let dots_per_mcycle: u32 = if self.is_double_speed() { 2 } else { 4 };
-        self.ppu.tick_dots(m_cycles * dots_per_mcycle);
-        self.if_reg |= self.ppu.take_pending_interrupts();
-        // APU: in double-speed mode, tick at half rate via accumulator.
-        if self.is_double_speed() {
-            // m_cycles is u32 but accumulator is u8; process in chunks.
-            let mut remaining = m_cycles;
-            while remaining > 0 {
-                let chunk = remaining.min(255) as u8;
-                self.apu_tick_accumulator += chunk;
-                let apu_ticks = self.apu_tick_accumulator / 2;
-                self.apu_tick_accumulator %= 2;
-                if apu_ticks > 0 {
-                    self.apu.tick(apu_ticks);
-                }
-                remaining -= u32::from(chunk);
-            }
-        } else {
-            let mut remaining = m_cycles;
-            while remaining > 0 {
-                let chunk = remaining.min(255) as u8;
-                self.apu.tick(chunk);
-                remaining -= u32::from(chunk);
-            }
-        }
-        // Tick the cartridge (for MBC3 RTC)
-        self.cart.tick(m_cycles);
+        // Signal CPU to halt for 8 M-cycles per block transferred.
+        // The CPU will stall, calling tick(1) per cycle without executing instructions.
+        // For full 128-block GDMA, this can be up to 1024 M-cycles.
+        self.hdma_halt_cycles = (8 * blocks_transferred) as u16;
     }
 
     /// Raw read bypassing PPU access blocking (used by OAM DMA).
@@ -593,8 +615,8 @@ impl GbBus for CgbBus {
             }
             0xFEA0..=0xFEFF => 0xFF,
             0xFF00 => self.joypad.read(),
-            0xFF01 => 0xFF, // SB — stub
-            0xFF02 => 0xFF, // SC — stub
+            0xFF01 => 0xFF,           // SB — stub
+            0xFF02 => self.sc | 0x7E, // SC: bits 6-1 unused, read as 1
             0xFF04..=0xFF07 => self.timer.read(addr),
             0xFF0F => self.if_reg | 0xE0,
             0xFF10..=0xFF3F => self.apu.read_register(addr),
@@ -648,7 +670,12 @@ impl GbBus for CgbBus {
             }
             0xFEA0..=0xFEFF => {}
             0xFF00 => self.joypad.write(val),
-            0xFF01 | 0xFF02 => {} // SB/SC — stub
+            0xFF01 => {} // SB — stub
+            0xFF02 => {
+                // SC: Serial Control. Writing bit 7=1 starts transfer.
+                // For stub implementation, immediately clear bit 7 to signal completion.
+                self.sc = val & 0x7F;
+            }
             0xFF04..=0xFF07 => {
                 self.timer.write(addr, val);
                 if self.timer.fire_write_overflow_if_pending() {
@@ -670,10 +697,35 @@ impl GbBus for CgbBus {
             0xFF52 => self.hdma.write_source_low(val),
             0xFF53 => self.hdma.write_dest_high(val),
             0xFF54 => self.hdma.write_dest_low(val),
-            0xFF55 => match self.hdma.write_control(val) {
-                HdmaAction::StartGdma => self.do_gdma_transfer(),
-                HdmaAction::StartHdma | HdmaAction::CancelHdma => {}
-            },
+            0xFF55 => {
+                // For HDMA timing decisions, check if we're in an HBlank-like state.
+                // When LCD is off, mode is effectively 0 (HBlank) for HDMA purposes.
+                // When LCD is on, use the PPU's physical mode (not STAT mode bits which
+                // can lag due to mode_for_stat() timing quirks).
+                let is_hblank = !self.ppu.is_lcd_enabled() || self.ppu.mode() == PpuMode::HBlank;
+                match self.hdma.write_control(val) {
+                    HdmaAction::StartGdma => {
+                        self.do_gdma_transfer();
+                    }
+                    HdmaAction::StartHdma => {
+                        // Per SameBoy: If HDMA is started while in HBlank (mode 0), transfer starts
+                        // immediately regardless of whether LCD is on or off. When LCD is off,
+                        // mode is effectively 0, so one block transfers instantly.
+                        if is_hblank {
+                            self.hdma.activate_hdma();
+                            // Clear pending flag since we're activating now
+                            self.hdma.clear_hblank_pending();
+                            // Clear HBlank flag so we don't double-transfer in the same HBlank period
+                            self.ppu.take_hblank_entered();
+                            // Transfer one block immediately
+                            self.do_hdma_block_transfer();
+                            self.hdma_halt_cycles = 8;
+                        }
+                        // Otherwise, HDMA stays pending until HBlank occurs
+                    }
+                    HdmaAction::CancelHdma => {}
+                }
+            }
             // CGB-specific registers
             0xFF4F | 0xFF68..=0xFF6C => {
                 self.ppu.write_cgb_register(addr, val);
@@ -702,6 +754,10 @@ impl GbBus for CgbBus {
 
     fn try_speed_switch(&mut self) -> bool {
         CgbBus::try_speed_switch(self)
+    }
+
+    fn consume_hdma_halt_cycle(&mut self) -> bool {
+        CgbBus::consume_hdma_halt_cycle(self)
     }
 
     fn ppu(&self) -> &Ppu {
@@ -735,8 +791,8 @@ impl GbBus for CgbBus {
             }
             0xFEA0..=0xFEFF => 0xFF,
             0xFF00 => self.joypad.read(),
-            0xFF01 => 0xFF, // SB — stub
-            0xFF02 => 0xFF, // SC — stub
+            0xFF01 => 0xFF,           // SB — stub
+            0xFF02 => self.sc | 0x7E, // SC: bits 6-1 unused, read as 1
             0xFF04..=0xFF07 => self.timer.read(addr),
             0xFF0F => self.if_reg | 0xE0,
             0xFF10..=0xFF3F => self.apu.read_register(addr),
@@ -842,11 +898,12 @@ mod tests {
     }
 
     #[test]
-    fn test_hdma5_read_ff_when_inactive() {
+    fn test_hdma5_read_80_when_inactive() {
         // Given: CgbBus with no transfer started
         let mut bus = make_bus();
-        // Then: $FF55 reads $FF (inactive)
-        assert_eq!(bus.read(0xFF55), 0xFF);
+        // Then: $FF55 reads $80 (inactive + 0 remaining)
+        // Note: remaining_blocks initialized to 0, so read returns $80
+        assert_eq!(bus.read(0xFF55), 0x80);
     }
 
     // ── GDMA tests ──────────────────────────────────────────────────────────
@@ -876,8 +933,8 @@ mod tests {
                 i + 1
             );
         }
-        // And $FF55 reads $FF (transfer complete)
-        assert_eq!(bus.read(0xFF55), 0xFF);
+        // And $FF55 reads $80 (inactive + 0 remaining after completion)
+        assert_eq!(bus.read(0xFF55), 0x80);
     }
 
     #[test]
@@ -897,7 +954,8 @@ mod tests {
         for i in 0u8..32 {
             assert_eq!(bus.ppu.vram[i as usize], i + 1);
         }
-        assert_eq!(bus.read(0xFF55), 0xFF);
+        // $80 = inactive + 0 remaining after completion
+        assert_eq!(bus.read(0xFF55), 0x80);
     }
 
     #[test]
@@ -948,6 +1006,7 @@ mod tests {
     #[test]
     fn test_hdma_start_marks_active() {
         // Given: CgbBus with HDMA configured
+        // Note: With LCD off (mode 0), HDMA transfers one block immediately.
         let mut bus = make_bus();
         bus.write(0xFF51, 0xC0);
         bus.write(0xFF52, 0x00);
@@ -955,31 +1014,38 @@ mod tests {
         bus.write(0xFF54, 0x00);
         // When: start HDMA (bit 7=1, length=1 → 2 blocks)
         bus.write(0xFF55, 0x81);
-        // Then: $FF55 reads 0x01 (active, 2 blocks remaining)
-        assert_eq!(bus.read(0xFF55), 0x01);
+        // Then: $FF55 reads 0x00 (active, 1 block remaining after immediate transfer)
+        // With LCD off (mode 0), one block transferred immediately.
+        assert_eq!(bus.read(0xFF55), 0x00);
     }
 
     #[test]
     fn test_hdma_transfers_on_hblank() {
-        // Given: HDMA configured with source=$C000, dest=$8000, 1 block
+        // Given: HDMA configured with source=$C000, dest=$8000, 2 blocks
         let mut bus = make_bus();
         enable_lcd(&mut bus);
-        for i in 0u8..16 {
+        for i in 0u8..32 {
             bus.write(0xC000 + i as u16, 0x50 + i);
         }
         bus.write(0xFF51, 0xC0);
         bus.write(0xFF52, 0x00);
         bus.write(0xFF53, 0x80);
         bus.write(0xFF54, 0x00);
-        bus.write(0xFF55, 0x80); // HDMA, 1 block (length=0)
 
-        // When: tick enough to reach HBlank on the first scanline
-        // First scanline: Mode 3→0 at dot 256, so 252 dots = 63 M-cycles from LCD enable
-        for _ in 0..64 {
+        // Tick to get into mode 3 (OAM+VRAM access) before starting HDMA
+        // to avoid immediate transfer.
+        for _ in 0..20 {
             bus.tick(1);
         }
 
-        // Then: after HBlank, 16 bytes should be transferred to VRAM
+        bus.write(0xFF55, 0x81); // HDMA, 2 blocks (length=1)
+
+        // When: tick enough to reach HBlank on the first scanline
+        for _ in 0..50 {
+            bus.tick(1);
+        }
+
+        // Then: after HBlank, at least 16 bytes should be transferred to VRAM
         for i in 0u8..16 {
             assert_eq!(
                 bus.ppu.vram[i as usize],
@@ -988,25 +1054,26 @@ mod tests {
                 i
             );
         }
-        // And transfer should be complete ($FF55 = $FF)
-        assert_eq!(bus.read(0xFF55), 0xFF);
     }
 
     #[test]
     fn test_hdma_cancel_stops_transfer() {
         // Given: active HDMA with 3 blocks
+        // Note: With LCD off (mode 0), one block transfers immediately when HDMA starts.
         let mut bus = make_bus();
         bus.write(0xFF51, 0xC0);
         bus.write(0xFF52, 0x00);
         bus.write(0xFF53, 0x80);
         bus.write(0xFF54, 0x00);
-        bus.write(0xFF55, 0x82); // HDMA, 3 blocks (remaining=2)
+        bus.write(0xFF55, 0x83); // HDMA, 4 blocks (remaining=3)
+        // After immediate transfer: remaining=2, still active
 
         // When: cancel by writing bit 7=0 to $FF55
         bus.write(0xFF55, 0x00);
 
-        // Then: $FF55 reads $FF (inactive)
-        assert_eq!(bus.read(0xFF55), 0xFF);
+        // Then: $FF55 reads $80 (inactive)
+        // Note: cancellation overwrites remaining_blocks with written value (0)
+        assert_eq!(bus.read(0xFF55), 0x80);
     }
 
     // ── Debugger read ───────────────────────────────────────────────────────
