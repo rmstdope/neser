@@ -83,6 +83,7 @@ pub struct Apu {
     /// Set when the APU is powered on while the DIV-APU bit is already HIGH.
     /// Per SameSuite div_write_trigger_10: "Starting the APU while bit 4 of
     /// the DIV register is set causes the APU to skip the first DIV-APU event."
+    #[serde(default)]
     skip_next_div_apu_event: bool,
 
     /// Fractional M-cycle accumulator for sample generation.
@@ -196,7 +197,7 @@ impl Apu {
         // Skip the first event if APU was powered on while DIV-APU bit was high.
         if self.skip_next_div_apu_event {
             self.skip_next_div_apu_event = false;
-            trace_apu!(3; "GB APU skipping DIV-APU event (power-on with bit 4 high)");
+            trace_apu!(3; "GB APU skipping DIV-APU event (power-on with DIV-APU bit high)");
             return;
         }
 
@@ -484,12 +485,16 @@ impl Apu {
             self.nr51 = 0x00;
             self.hp_prev_in = 0.0;
             self.hp_prev_out = 0.0;
+            // Clear skip flag on power-off to prevent leaking into a later power-on.
+            self.skip_next_div_apu_event = false;
         } else if power_on_transition {
             trace_apu!(1; "GB APU power on");
-            // Power on: reset frame sequencer step.
+            // Power on: reset frame sequencer step and skip flag.
             // The frame sequencer is clocked by DIV-APU events (not an internal timer),
-            // so we only reset the step counter here.
+            // so we only reset the step counter here. The skip flag is cleared first,
+            // then write_nr52_with_div_state() will re-arm it if DIV-APU bit is HIGH.
             self.fs_step = 0;
+            self.skip_next_div_apu_event = false;
             // On CGB, powering on resets all length counters to 0.
             if self.is_cgb {
                 self.ch1.length_counter = 0;

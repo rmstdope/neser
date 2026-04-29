@@ -56,6 +56,7 @@ pub struct Timer {
     /// On DMG/CGB normal speed: bit 12 (DIV bit 4).
     /// On CGB double-speed: bit 13 (DIV bit 5).
     /// The APU frame sequencer is clocked on the falling edge of this bit.
+    #[serde(default = "default_div_apu_bit")]
     div_apu_bit: u16,
 }
 
@@ -79,6 +80,12 @@ pub const DIV_APU_BIT_NORMAL: u16 = 1 << 12;
 /// In double-speed mode, the CPU runs at 2x but APU timing stays the same,
 /// so the APU uses the next higher bit to maintain 512 Hz.
 pub const DIV_APU_BIT_DOUBLE: u16 = 1 << 13;
+
+/// Serde default for div_apu_bit when loading older save-states.
+/// Defaults to normal speed bit to preserve existing behavior.
+fn default_div_apu_bit() -> u16 {
+    DIV_APU_BIT_NORMAL
+}
 
 impl Timer {
     pub fn new() -> Self {
