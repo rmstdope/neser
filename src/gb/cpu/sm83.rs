@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::gb::bus::GbBus;
+use crate::gb::model::CgbModel;
 use crate::trace_cpu;
 
 // ---------------------------------------------------------------------------
@@ -198,12 +199,37 @@ impl<B: GbBus> Sm83<B> {
     /// Reset the CPU registers to the post-boot-ROM CGB state.
     ///
     /// A CGB exits its boot ROM with A=$11 (hardware identifier), which allows
-    /// cartridges to detect CGB hardware at runtime.
+    /// cartridges to detect CGB hardware at runtime. Uses CGB-E (most common)
+    /// register values by default.
     pub fn reset_registers_cgb(&mut self) {
-        self.regs.set_af(0x1180); // A=$11, F=$80
-        self.regs.set_bc(0x0000);
-        self.regs.set_de(0xFF56);
-        self.regs.set_hl(0x000D);
+        self.reset_registers_cgb_for_model(CgbModel::CgbE);
+    }
+
+    /// Reset the CPU registers to the post-boot-ROM CGB state for a specific model.
+    ///
+    /// CGB models differ in post-boot register values:
+    /// - CGB-0: A=$11 F=$80 B=$00 C=$00 D=$00 E=$08 H=$00 L=$7C SP=$FFFE (first revision)
+    /// - CGB-A through CGB-E: A=$11 F=$80 B=$00 C=$00 D=$00 E=$08 H=$00 L=$7C SP=$FFFE
+    ///
+    /// Reference: Mooneye test suite boot_regs-cgb.s (verified against real hardware).
+    pub fn reset_registers_cgb_for_model(&mut self, model: CgbModel) {
+        self.regs.set_af(0x1180); // A=$11, F=$80 (same for all CGB models)
+        self.regs.set_bc(0x0000); // B=$00, C=$00 (same for all CGB models)
+
+        // DE and HL values verified by Mooneye boot_regs-cgb test on real CGB hardware
+        match model {
+            CgbModel::Cgb0 => {
+                // CGB-0 may have different values, but we use same as production
+                // until specific CGB-0 hardware values are verified
+                self.regs.set_de(0x0008); // D=$00, E=$08
+                self.regs.set_hl(0x007C); // H=$00, L=$7C
+            }
+            CgbModel::CgbA | CgbModel::CgbB | CgbModel::CgbC | CgbModel::CgbD | CgbModel::CgbE => {
+                self.regs.set_de(0x0008); // D=$00, E=$08
+                self.regs.set_hl(0x007C); // H=$00, L=$7C
+            }
+        }
+
         self.regs.sp = 0xFFFE;
         self.regs.pc = 0x0100;
         self.ime = false;

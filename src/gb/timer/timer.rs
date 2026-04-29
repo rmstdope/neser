@@ -106,6 +106,15 @@ impl Timer {
         self.div_counter
     }
 
+    /// Set the raw 16-bit internal counter value.
+    ///
+    /// Used to initialize the DIV counter to post-boot-ROM values for
+    /// different hardware models. DIV reads the upper 8 bits, so
+    /// `set_div_counter(0x0400)` sets DIV=$04.
+    pub fn set_div_counter(&mut self, value: u16) {
+        self.div_counter = value;
+    }
+
     /// Write a timer register by address.
     ///
     /// Handles the obscure falling-edge side-effects for DIV and TAC writes,

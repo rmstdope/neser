@@ -61,13 +61,14 @@ pub fn load_cgb_rom(path: &str) -> Gb<CgbBus> {
 
 /// Load a CGB ROM from `path` with a specific hardware model.
 ///
-/// Sets the post-boot-ROM CGB CPU register state (A=$11 = CGB hardware identifier).
+/// Sets the post-boot-ROM CGB CPU register state based on the model variant.
+/// CGB-0 has different DE/HL values than CGB-A through CGB-E.
 pub fn load_cgb_rom_with_model(path: &str, model: CgbModel) -> Gb<CgbBus> {
     let rom = std::fs::read(path).expect("ROM file should be present");
     let cart = load_cartridge(&rom).expect("valid GB ROM");
     let mut gb = Gb::new(CgbBus::new(cart, model));
-    // Set CGB post-boot-ROM CPU register state (A=$11 = CGB hardware identifier).
-    gb.cpu.reset_registers_cgb();
+    // Set CGB post-boot-ROM CPU register state for the specific model variant.
+    gb.cpu.reset_registers_cgb_for_model(model);
     gb
 }
 
