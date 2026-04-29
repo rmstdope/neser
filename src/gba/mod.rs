@@ -5,5 +5,6 @@
 //! in subsequent phases.
 
 pub mod console;
+pub mod cpu;
 
 pub use console::gba::Gba;
