@@ -231,7 +231,16 @@ fn exec_format4(regs: &mut Registers, instr: u16) -> ExecOutcome {
         0xC => (a | b, regs.c_flag(), regs.v_flag(), true), // ORR
         0xE => (a & !b, regs.c_flag(), regs.v_flag(), true), // BIC
         0xF => (!b, regs.c_flag(), regs.v_flag(), true),    // MVN
-        _ => (a, regs.c_flag(), regs.v_flag(), false),
+        // Unimplemented format-4 opcodes are a no-op for now: do not write
+        // Rd and do not clobber NZCV. This makes missing instruction
+        // coverage easy to spot rather than silently corrupting flags.
+        _ => {
+            return ExecOutcome {
+                cycles: 1,
+                branched: false,
+                swi: false,
+            };
+        }
     };
     if write {
         regs.r[rd] = result;
@@ -487,6 +496,26 @@ mod tests {
         let instr = 0b0001100_001_000_010u16;
         execute(&mut regs, &mut bus, instr);
         assert_eq!(regs.r[2], 3);
+    }
+
+    #[test]
+    fn thumb_format4_unsupported_opcode_does_not_clobber_flags() {
+        // Format-4 opcodes that are not yet implemented must be a true no-op:
+        // they must not write Rd and must not corrupt NZCV.
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 0xDEAD_BEEF;
+        regs.r[1] = 0;
+        // Set every flag so we can detect any clobber.
+        regs.set_nzcv(true, true, true, true);
+        let cpsr_before = regs.cpsr;
+        let r0_before = regs.r[0];
+        // Format 4 with op=0x2 (LSL Rd, Rs by register) is not implemented.
+        // Encoding: 0100_00_op(4)_Rs(3)_Rd(3) -> op=0x2, Rs=R1, Rd=R0
+        let instr = 0b0100_00_0010_001_000u16;
+        execute(&mut regs, &mut bus, instr);
+        assert_eq!(regs.r[0], r0_before, "Rd must not be modified");
+        assert_eq!(regs.cpsr, cpsr_before, "flags must not be modified");
     }
 
     #[test]

@@ -235,6 +235,13 @@ All Game Boy (DMG) hardware lives under `src/gb/`. The module is structured arou
 | `src/gb/cartridge/mbc0.rs` | ROM-only cartridge (MBC type 0x00). No banking; writes are silently ignored. |
 | `src/gb/cartridge/mbc1.rs` | MBC1 cartridge (types 0x01–0x03). ROM bank switching ($2000–$3FFF), secondary bank register ($4000–$5FFF), banking mode ($6000–$7FFF), RAM enable ($0000–$1FFF). Supports up to 2 MB ROM and 32 KB RAM. |
 | `src/gb/cartridge/mod.rs` | Module declarations and re-exports for GB cartridge support. Re-exports `GbCartridge`, `RomError`, and `load_cartridge`. |
+
+#### Game Boy Advance Emulation (`src/gba/`)
+
+All Game Boy Advance hardware lives under `src/gba/`. The module is currently a stub for everything except the ARM7TDMI CPU core; subsequent phases will add the bus, I/O, PPU, APU, DMA and cartridge layers.
+
+| Directory/File | Description |
+| ---------------- | ------------- |
 | `src/gba/mod.rs` | Game Boy Advance module root. Re-exports `Gba` (platform-facing wrapper) and the `cpu` sub-module. |
 | `src/gba/console/gba.rs` | `Gba` — platform-facing GBA wrapper implementing the `Emulator` trait. Currently a stub; will own the ARM7TDMI core, bus, PPU, etc. as subsequent phases land. |
 | `src/gba/cpu/mod.rs` | Module root for the ARM7TDMI core. Re-exports `Arm7tdmi`, `Bus`, `RamBus`, `Registers`, `CpuMode`, etc. |

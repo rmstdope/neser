@@ -170,6 +170,9 @@ impl Arm7tdmi {
         self.regs.cpsr &= !FLAG_T;
         self.regs.r[15] = ExceptionVector::Irq as u32;
         self.cycles = self.cycles.wrapping_add(3);
+        // The pending line is treated as a latched edge: clear on dispatch so
+        // unmasking I later does not spuriously re-enter the handler.
+        self.irq_pending = false;
     }
 
     /// Dispatch an FIQ: switch to FIQ mode, mask both IRQ and FIQ, jump to 0x1C.
@@ -183,6 +186,8 @@ impl Arm7tdmi {
         self.regs.cpsr &= !FLAG_T;
         self.regs.r[15] = ExceptionVector::Fiq as u32;
         self.cycles = self.cycles.wrapping_add(3);
+        // Latched-edge semantics: clear pending on dispatch.
+        self.fiq_pending = false;
     }
 }
 
@@ -294,6 +299,56 @@ mod tests {
         bus.write_word(0x0, instr);
         cpu.step(&mut bus);
         assert_eq!(cpu.regs.mode(), CpuMode::User);
+    }
+
+    #[test]
+    fn dispatched_irq_pending_is_cleared() {
+        // Latched-edge semantics: once dispatched, IRQ pending must clear so
+        // that unmasking I after the handler doesn't immediately re-enter.
+        let mut cpu = Arm7tdmi::new();
+        cpu.regs.switch_mode(CpuMode::User);
+        cpu.regs.cpsr &= !FLAG_I;
+        cpu.regs.r[15] = 0x100;
+        cpu.raise_irq();
+        let mut bus = RamBus::new(0x100);
+        cpu.step(&mut bus);
+        assert_eq!(cpu.regs.mode(), CpuMode::Irq);
+
+        // Simulate "return from handler": switch back to USR and unmask I.
+        cpu.regs.switch_mode(CpuMode::User);
+        cpu.regs.cpsr &= !FLAG_I;
+        // Bus must contain a valid ARM word so the next step can decode it.
+        bus.write_word(0x0, (0xE_u32 << 28) | (0xD_u32 << 21)); // MOV R0,R0
+        cpu.regs.r[15] = 0x0;
+        cpu.step(&mut bus);
+        assert_eq!(
+            cpu.regs.mode(),
+            CpuMode::User,
+            "IRQ pending must be cleared on dispatch"
+        );
+    }
+
+    #[test]
+    fn dispatched_fiq_pending_is_cleared() {
+        let mut cpu = Arm7tdmi::new();
+        cpu.regs.switch_mode(CpuMode::User);
+        cpu.regs.cpsr &= !(FLAG_I | FLAG_F);
+        cpu.regs.r[15] = 0x100;
+        cpu.raise_fiq();
+        let mut bus = RamBus::new(0x100);
+        cpu.step(&mut bus);
+        assert_eq!(cpu.regs.mode(), CpuMode::Fiq);
+
+        cpu.regs.switch_mode(CpuMode::User);
+        cpu.regs.cpsr &= !(FLAG_I | FLAG_F);
+        bus.write_word(0x0, (0xE_u32 << 28) | (0xD_u32 << 21));
+        cpu.regs.r[15] = 0x0;
+        cpu.step(&mut bus);
+        assert_eq!(
+            cpu.regs.mode(),
+            CpuMode::User,
+            "FIQ pending must be cleared on dispatch"
+        );
     }
 
     #[test]

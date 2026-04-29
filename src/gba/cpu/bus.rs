@@ -39,7 +39,14 @@ pub struct RamBus {
 
 impl RamBus {
     /// Create a new RAM bus with the given size in bytes (zero-initialised).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `size` is zero. Subsequent reads/writes use the size as a
+    /// modulus, so a zero-sized bus would panic with a divide-by-zero on
+    /// every access; reject it here instead with a clear message.
     pub fn new(size: usize) -> Self {
+        assert!(size > 0, "RamBus size must be greater than zero");
         Self {
             bytes: vec![0; size],
         }
@@ -141,5 +148,11 @@ mod tests {
         assert_eq!(bus.read32(0x11), 0xCAFEBABE);
         assert_eq!(bus.read32(0x12), 0xCAFEBABE);
         assert_eq!(bus.read32(0x13), 0xCAFEBABE);
+    }
+
+    #[test]
+    #[should_panic(expected = "RamBus size must be greater than zero")]
+    fn ram_bus_rejects_zero_size() {
+        let _ = RamBus::new(0);
     }
 }
