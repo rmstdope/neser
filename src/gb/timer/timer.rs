@@ -111,7 +111,10 @@ impl Timer {
     /// Used to initialize the DIV counter to post-boot-ROM values for
     /// different hardware models. DIV reads the upper 8 bits, so
     /// `set_div_counter(0x0400)` sets DIV=$04.
-    pub fn set_div_counter(&mut self, value: u16) {
+    ///
+    /// Note: This bypasses normal DIV write side-effects (TAC edge detection).
+    /// Use only for bus-level initialization, not runtime writes.
+    pub(crate) fn set_div_counter(&mut self, value: u16) {
         self.div_counter = value;
     }
 

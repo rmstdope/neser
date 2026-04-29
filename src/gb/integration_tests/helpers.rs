@@ -62,7 +62,8 @@ pub fn load_cgb_rom(path: &str) -> Gb<CgbBus> {
 /// Load a CGB ROM from `path` with a specific hardware model.
 ///
 /// Sets the post-boot-ROM CGB CPU register state based on the model variant.
-/// CGB-0 has different DE/HL values than CGB-A through CGB-E.
+/// Currently all CGB models use the same register values (Mooneye boot_regs-cgb);
+/// model-specific differences may be added when verified against hardware.
 pub fn load_cgb_rom_with_model(path: &str, model: CgbModel) -> Gb<CgbBus> {
     let rom = std::fs::read(path).expect("ROM file should be present");
     let cart = load_cartridge(&rom).expect("valid GB ROM");

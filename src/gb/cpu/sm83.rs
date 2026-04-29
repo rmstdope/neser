@@ -207,28 +207,16 @@ impl<B: GbBus> Sm83<B> {
 
     /// Reset the CPU registers to the post-boot-ROM CGB state for a specific model.
     ///
-    /// CGB models differ in post-boot register values:
-    /// - CGB-0: A=$11 F=$80 B=$00 C=$00 D=$00 E=$08 H=$00 L=$7C SP=$FFFE (first revision)
-    /// - CGB-A through CGB-E: A=$11 F=$80 B=$00 C=$00 D=$00 E=$08 H=$00 L=$7C SP=$FFFE
+    /// Post-boot register values (same for all CGB models currently):
+    /// A=$11 F=$80 B=$00 C=$00 D=$00 E=$08 H=$00 L=$7C SP=$FFFE
     ///
     /// Reference: Mooneye test suite boot_regs-cgb.s (verified against real hardware).
-    pub fn reset_registers_cgb_for_model(&mut self, model: CgbModel) {
-        self.regs.set_af(0x1180); // A=$11, F=$80 (same for all CGB models)
-        self.regs.set_bc(0x0000); // B=$00, C=$00 (same for all CGB models)
-
-        // DE and HL values verified by Mooneye boot_regs-cgb test on real CGB hardware
-        match model {
-            CgbModel::Cgb0 => {
-                // CGB-0 may have different values, but we use same as production
-                // until specific CGB-0 hardware values are verified
-                self.regs.set_de(0x0008); // D=$00, E=$08
-                self.regs.set_hl(0x007C); // H=$00, L=$7C
-            }
-            CgbModel::CgbA | CgbModel::CgbB | CgbModel::CgbC | CgbModel::CgbD | CgbModel::CgbE => {
-                self.regs.set_de(0x0008); // D=$00, E=$08
-                self.regs.set_hl(0x007C); // H=$00, L=$7C
-            }
-        }
+    /// The model parameter is retained for future model-specific differences.
+    pub fn reset_registers_cgb_for_model(&mut self, _model: CgbModel) {
+        self.regs.set_af(0x1180); // A=$11, F=$80
+        self.regs.set_bc(0x0000); // B=$00, C=$00
+        self.regs.set_de(0x0008); // D=$00, E=$08
+        self.regs.set_hl(0x007C); // H=$00, L=$7C
 
         self.regs.sp = 0xFFFE;
         self.regs.pc = 0x0100;

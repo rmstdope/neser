@@ -75,7 +75,8 @@ pub struct CgbBus {
     ff72: u8,
     /// Undocumented CGB register $FF73 (fully R/W, initial value $00).
     ff73: u8,
-    /// Undocumented CGB register $FF74 (fully R/W in CGB mode, initial value $00).
+    /// Undocumented CGB register $FF74 (fully R/W in CGB mode, initial value $FF).
+    /// Per Mooneye boot_hwio-C test (verified against real hardware).
     ff74: u8,
     /// Undocumented CGB register $FF75 (bits 4-6 R/W, initial value $00).
     ff75: u8,
@@ -102,8 +103,9 @@ impl CgbBus {
             joypad: Joypad::new(),
             apu: Apu::new(is_cgb),
             // IF = $E1 at CGB boot ROM exit (VBlank flag set).
-            // Pan Docs: "Console state after boot ROM hand-off".
-            if_reg: 0xE1,
+            // IF stores only lower 5 bits; upper bits read as 1 via read mask.
+            // Store internal value $01 (VBlank set), readback produces $E1.
+            if_reg: 0x01,
             ie_reg: 0,
             dma_active: false,
             // DMA = $00 at CGB boot (different from DMG which has $FF).
@@ -457,6 +459,11 @@ impl CgbBus {
         self.svbk = 0;
         self.key1 = 0;
         self.apu_tick_accumulator = 0;
+        // Reset undocumented CGB registers
+        self.ff72 = 0x00;
+        self.ff73 = 0x00;
+        self.ff74 = 0xFF; // Initial value per Mooneye test
+        self.ff75 = 0x00;
     }
 
     // ── Save-state capture / restore ───────────────────────────────────────
@@ -487,6 +494,10 @@ impl CgbBus {
             svbk: Some(self.svbk),
             key1: Some(self.key1),
             apu_tick_accumulator: Some(self.apu_tick_accumulator),
+            ff72: Some(self.ff72),
+            ff73: Some(self.ff73),
+            ff74: Some(self.ff74),
+            ff75: Some(self.ff75),
             boot_rom_active: None,
             sb: None,
             sc: None,
@@ -530,6 +541,11 @@ impl CgbBus {
         self.svbk = state.svbk.unwrap_or(0);
         self.key1 = state.key1.unwrap_or(0);
         self.apu_tick_accumulator = state.apu_tick_accumulator.unwrap_or(0);
+        // Restore undocumented CGB registers with defaults for older save states
+        self.ff72 = state.ff72.unwrap_or(0x00);
+        self.ff73 = state.ff73.unwrap_or(0x00);
+        self.ff74 = state.ff74.unwrap_or(0xFF);
+        self.ff75 = state.ff75.unwrap_or(0x00);
         Ok(())
     }
 
