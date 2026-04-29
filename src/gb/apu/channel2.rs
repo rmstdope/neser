@@ -318,11 +318,15 @@ impl Channel2 {
             self.length_counter = 64;
         }
         // Startup delay (in T-cycles) before first duty_pos advance.
-        // Values tuned empirically against SameSuite channel_1/2_delay tests.
+        // Values tuned empirically against SameSuite channel_1/2_delay and restart tests.
         // Fresh trigger: 6-8 T-cycles depending on lf_div
-        // Retrigger: 2-4 T-cycles depending on lf_div (2 2MHz ticks earlier)
+        // Retrigger: 4-6 T-cycles depending on lf_div
+        //
+        // Per SameSuite comment: "the start delay from the 'delay' test is actually
+        // 1 tick shorter" after restarting. This means retrigger delay = fresh - 2 T-cycles.
         let delay_t = if was_active {
-            if lf_div { 2u16 } else { 4u16 }
+            // Retrigger delay: 1 2MHz tick (2 T-cycles) shorter than fresh
+            if lf_div { 4u16 } else { 6u16 }
         } else if lf_div {
             6u16
         } else {
