@@ -52,6 +52,11 @@ pub struct Timer {
     /// CPU writes to TIMA during this cycle are ignored; writes to TMA also
     /// update TIMA.
     tima_load_active: bool,
+    /// DIV-APU bit used for frame sequencer clocking.
+    /// On DMG/CGB normal speed: bit 12 (DIV bit 4).
+    /// On CGB double-speed: bit 13 (DIV bit 5).
+    /// The APU frame sequencer is clocked on the falling edge of this bit.
+    div_apu_bit: u16,
 }
 
 /// Bit of the 16-bit system counter that the TIMA multiplexer selects for each
@@ -63,6 +68,17 @@ pub struct Timer {
 ///                10 → bit 5 (  64 T-cycle period)
 ///                11 → bit 7 ( 256 T-cycle period)
 const MUX_BIT: [u16; 4] = [1 << 9, 1 << 3, 1 << 5, 1 << 7];
+
+/// DIV-APU bit for normal speed (DMG / CGB single-speed).
+/// Bit 12 of the 16-bit counter = DIV bit 4.
+/// The APU frame sequencer steps on the falling edge of this bit (512 Hz).
+pub const DIV_APU_BIT_NORMAL: u16 = 1 << 12;
+
+/// DIV-APU bit for CGB double-speed mode.
+/// Bit 13 of the 16-bit counter = DIV bit 5.
+/// In double-speed mode, the CPU runs at 2x but APU timing stays the same,
+/// so the APU uses the next higher bit to maintain 512 Hz.
+pub const DIV_APU_BIT_DOUBLE: u16 = 1 << 13;
 
 impl Timer {
     pub fn new() -> Self {
@@ -83,7 +99,24 @@ impl Timer {
             interrupt_pending: false,
             tima_overflow_pending: false,
             tima_load_active: false,
+            div_apu_bit: DIV_APU_BIT_NORMAL,
         }
+    }
+
+    /// Set the DIV-APU bit mask for CGB double-speed mode switching.
+    ///
+    /// Call with `DIV_APU_BIT_DOUBLE` when entering double-speed mode,
+    /// or `DIV_APU_BIT_NORMAL` when returning to normal speed.
+    pub fn set_div_apu_bit(&mut self, bit: u16) {
+        self.div_apu_bit = bit;
+    }
+
+    /// Check if the DIV-APU bit is currently HIGH.
+    ///
+    /// Used by the bus when writing NR52 to determine if the APU power-on
+    /// should skip the first DIV-APU event.
+    pub fn is_div_apu_bit_high(&self) -> bool {
+        self.div_counter & self.div_apu_bit != 0
     }
 
     /// Read a timer register by address.
@@ -122,7 +155,10 @@ impl Timer {
     ///
     /// Handles the obscure falling-edge side-effects for DIV and TAC writes,
     /// and the TIMA-write/TMA-write interactions during the overflow delay.
-    pub fn write(&mut self, addr: u16, val: u8) {
+    ///
+    /// Returns `true` if a DIV-APU falling edge occurred (only possible for DIV writes).
+    /// The caller should notify the APU to step its frame sequencer.
+    pub fn write(&mut self, addr: u16, val: u8) -> bool {
         match addr {
             0xFF04 => {
                 // Writing DIV resets the full system counter to 0.
@@ -131,7 +167,11 @@ impl Timer {
                 if self.mux_and_high() {
                     self.do_tima_increment();
                 }
+                // Check for DIV-APU falling edge: if the DIV-APU bit was HIGH,
+                // resetting to 0 forces it LOW → falling edge → APU event.
+                let div_apu_falling_edge = self.div_counter & self.div_apu_bit != 0;
                 self.div_counter = 0;
+                div_apu_falling_edge
             }
             0xFF05 => {
                 // Writing TIMA during cycle A (overflow pending but not yet loaded)
@@ -141,6 +181,7 @@ impl Timer {
                 if !self.tima_load_active {
                     self.tima = val;
                 }
+                false
             }
             0xFF06 => {
                 self.tma = val;
@@ -148,6 +189,7 @@ impl Timer {
                 if self.tima_load_active {
                     self.tima = val;
                 }
+                false
             }
             0xFF07 => {
                 // If the AND gate output falls from HIGH to LOW, TIMA increments once.
@@ -156,8 +198,9 @@ impl Timer {
                 if was_high && !self.mux_and_high() {
                     self.do_tima_increment();
                 }
+                false
             }
-            _ => {} // 0xFF03 and all other addresses are unmapped; writes ignored
+            _ => false, // 0xFF03 and all other addresses are unmapped; writes ignored
         }
     }
 
@@ -166,7 +209,12 @@ impl Timer {
     /// Internally the timer steps one T-cycle at a time for correct falling-edge
     /// detection.  Sets `interrupt_pending` when TIMA overflows (caller must
     /// propagate to IF register $FF0F bit 2).
-    pub fn tick(&mut self, m_cycles: u8) {
+    ///
+    /// Returns the number of DIV-APU falling edges that occurred during this tick.
+    /// The caller should notify the APU to step its frame sequencer for each edge.
+    pub fn tick(&mut self, m_cycles: u8) -> u8 {
+        let mut div_apu_edges: u8 = 0;
+
         for _ in 0..m_cycles {
             // Clear the load-active flag from the previous M-cycle.
             self.tima_load_active = false;
@@ -183,15 +231,24 @@ impl Timer {
             let bit = MUX_BIT[(self.tac & 0x03) as usize];
 
             // Advance the system counter one T-cycle at a time, detecting falling
-            // edges on the multiplexer bit.
+            // edges on the multiplexer bit and the DIV-APU bit.
             for _ in 0..4 {
                 let old = self.div_counter;
                 self.div_counter = self.div_counter.wrapping_add(1);
+
+                // Check for TIMA falling edge (timer enabled AND selected bit HIGH→LOW).
                 if enabled && old & bit != 0 && self.div_counter & bit == 0 {
                     self.do_tima_increment();
                 }
+
+                // Check for DIV-APU falling edge (bit HIGH→LOW).
+                if old & self.div_apu_bit != 0 && self.div_counter & self.div_apu_bit == 0 {
+                    div_apu_edges += 1;
+                }
             }
         }
+
+        div_apu_edges
     }
 
     /// Returns true when the AND-gate output (TAC.enable AND selected mux bit) is HIGH.
