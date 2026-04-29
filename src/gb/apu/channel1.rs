@@ -54,6 +54,10 @@ pub struct Channel1 {
     /// Gate flag: duty step clock is disabled until the first trigger after
     /// APU power-on (Pan Docs "Obscure Behavior").
     triggered_once: bool,
+    /// First sample zero: after the first trigger post-power-on, output is 0
+    /// until duty_pos advances (Pan Docs "Obscure Behavior").
+    #[serde(default)]
+    first_sample_zero: bool,
     /// Envelope clock state for zombie mode glitch tracking.
     #[serde(default)]
     env_clock_state: EnvelopeClockState,
@@ -95,6 +99,7 @@ impl Channel1 {
             sweep_enabled: false,
             negate_used: false,
             triggered_once: false,
+            first_sample_zero: false,
             env_clock_state: EnvelopeClockState::default(),
             startup_delay: 0,
         }
@@ -113,6 +118,10 @@ impl Channel1 {
         if !self.active || !self.dac_on {
             return 0.0;
         }
+        // First duty step after first trigger post-power-on outputs 0.
+        if self.first_sample_zero {
+            return 0.0;
+        }
         let bit = super::apu::DUTY_TABLE[self.duty as usize][self.duty_pos as usize];
         if bit == 1 {
             self.volume as f32 / 15.0
@@ -124,6 +133,10 @@ impl Channel1 {
     /// Digital output (0-15) before DAC conversion (for PCM12 register).
     pub fn digital_output(&self) -> u8 {
         if !self.active || !self.dac_on {
+            return 0;
+        }
+        // First duty step after first trigger post-power-on outputs 0.
+        if self.first_sample_zero {
             return 0;
         }
         let bit = super::apu::DUTY_TABLE[self.duty as usize][self.duty_pos as usize];
@@ -143,6 +156,8 @@ impl Channel1 {
             if self.triggered_once {
                 let old_pos = self.duty_pos;
                 self.duty_pos = (self.duty_pos + 1) & 7;
+                // Clear first_sample_zero when duty_pos advances.
+                self.first_sample_zero = false;
                 trace_apu!(5; "GB APU CH1 tick duty_pos {} -> {} period=0x{:03X}", old_pos, self.duty_pos, self.freq);
             }
         }
@@ -276,6 +291,7 @@ impl Channel1 {
         self.sweep_shadow = 0;
         self.sweep_enabled = false;
         self.triggered_once = false;
+        self.first_sample_zero = false;
         self.env_clock_state = EnvelopeClockState::default();
         self.startup_delay = 0;
     }
@@ -446,6 +462,10 @@ impl Channel1 {
         trace_apu!(1; "GB APU CH1 trigger freq=0x{:03X} volume={} sweep_period={} sweep_shift={} lf_div={}", 
             self.freq, self.init_volume, self.sweep_period, self.sweep_shift, lf_div);
         let was_active = self.active;
+        // First trigger after power-on: first duty step outputs 0.
+        if !self.triggered_once {
+            self.first_sample_zero = true;
+        }
         self.triggered_once = true;
         if self.dac_on {
             self.active = true;
@@ -880,13 +900,16 @@ mod tests {
 
     #[test]
     fn test_output_nonzero_when_active_duty_high() {
-        // 50% duty at position 0 is high.
+        // 50% duty at position 5 is high (after first sample completes).
         let mut ch = Channel1::new();
         ch.write_nr12(0xF0); // vol=15, DAC on
         ch.write_nr11(0x80); // 50% duty
         ch.write_nr14(0x80, false, false); // trigger
-        ch.duty_pos = 0; // 50% duty: step 0 → high
-        // DUTY_TABLE[2][0] = 1
+        // Set duty_pos to 5 (high in 50% duty) and clear first_sample_zero
+        // to simulate state after first duty step has completed.
+        ch.duty_pos = 5;
+        ch.first_sample_zero = false;
+        // DUTY_TABLE[2][5] = 1
         assert!(
             ch.output() > 0.0,
             "output must be positive at duty-high step"

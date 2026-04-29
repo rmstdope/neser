@@ -852,21 +852,25 @@ mod tests {
         // Trigger CH1 with volume 7 and 50% duty (high state)
         apu.write_register(0xFF12, 0x70); // vol=7, no envelope
         apu.write_register(0xFF11, 0x80); // 50% duty
-        apu.write_register(0xFF13, 0x00);
-        apu.write_register(0xFF14, 0x87); // trigger + length disable
+        apu.write_register(0xFF13, 0xFF); // freq low = 0xFF for fast period
+        apu.write_register(0xFF14, 0x87); // trigger + length disable, freq high=7
         // Trigger CH2 with volume 5
         apu.write_register(0xFF17, 0x50); // vol=5, no envelope
         apu.write_register(0xFF16, 0x80); // 50% duty
-        apu.write_register(0xFF18, 0x00);
-        apu.write_register(0xFF19, 0x87); // trigger + length disable
+        apu.write_register(0xFF18, 0xFF); // freq low = 0xFF for fast period
+        apu.write_register(0xFF19, 0x87); // trigger + length disable, freq high=7
 
-        // Tick a bit to ensure channels are active and output non-zero
-        apu.tick(10);
+        // Tick to advance duty_pos to position 5 (high in 50% duty).
+        // freq=0x7FF -> period=4 T-cycles = 1 M-cycle per advance.
+        // startup delay ~8 T-cycles = 2 M-cycles.
+        // After ~2 ticks, first_sample_zero is cleared on first advance.
+        // duty_pos at tick N ≈ (N - 2) mod 8.
+        // For duty_pos=5, need N=7 (7-2=5).
+        apu.tick(7);
 
         let pcm12 = apu.read_pcm12();
         // Low nibble = CH1, high nibble = CH2
-        // Exact values depend on duty position, but both should be non-zero
-        // when active and DAC on with volume > 0
+        // At duty_pos=5 (50% duty), output should be volume (7 for CH1, 5 for CH2)
         let ch1_out = pcm12 & 0x0F;
         let ch2_out = (pcm12 >> 4) & 0x0F;
 
