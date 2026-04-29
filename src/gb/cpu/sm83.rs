@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::gb::bus::GbBus;
+use crate::gb::model::CgbModel;
 use crate::trace_cpu;
 
 // ---------------------------------------------------------------------------
@@ -198,12 +199,25 @@ impl<B: GbBus> Sm83<B> {
     /// Reset the CPU registers to the post-boot-ROM CGB state.
     ///
     /// A CGB exits its boot ROM with A=$11 (hardware identifier), which allows
-    /// cartridges to detect CGB hardware at runtime.
+    /// cartridges to detect CGB hardware at runtime. Uses CGB-E (most common)
+    /// register values by default.
     pub fn reset_registers_cgb(&mut self) {
+        self.reset_registers_cgb_for_model(CgbModel::CgbE);
+    }
+
+    /// Reset the CPU registers to the post-boot-ROM CGB state for a specific model.
+    ///
+    /// Post-boot register values (same for all CGB models currently):
+    /// A=$11 F=$80 B=$00 C=$00 D=$00 E=$08 H=$00 L=$7C SP=$FFFE
+    ///
+    /// Reference: Mooneye test suite boot_regs-cgb.s (verified against real hardware).
+    /// The model parameter is retained for future model-specific differences.
+    pub fn reset_registers_cgb_for_model(&mut self, _model: CgbModel) {
         self.regs.set_af(0x1180); // A=$11, F=$80
-        self.regs.set_bc(0x0000);
-        self.regs.set_de(0xFF56);
-        self.regs.set_hl(0x000D);
+        self.regs.set_bc(0x0000); // B=$00, C=$00
+        self.regs.set_de(0x0008); // D=$00, E=$08
+        self.regs.set_hl(0x007C); // H=$00, L=$7C
+
         self.regs.sp = 0xFFFE;
         self.regs.pc = 0x0100;
         self.ime = false;

@@ -35,6 +35,7 @@ Use this skill whenever you need details about any part of Game Boy or Game Boy 
 - The path mirrors the ROM path: `acceptance/oam_dma_start.gb` → `acceptance/oam_dma_start.s`
 - Inline comments like `; M=1: OAM still accessible` are authoritative — they document verified hardware observations.
 - Use the test source to confirm what exact assertion the ROM makes before diagnosing the emulator.
+- **When Mooneye test assertions conflict with Pan Docs, treat the Mooneye values as authoritative.** Mooneye tests are verified against real hardware. Example: Pan Docs claims CGB post-boot D=$FF E=$56, but Mooneye's boot_regs-cgb verifies D=$00 E=$08.
 
 5. When researching PPU Mode 3 timing penalties, apply M-cycle quantization.
 

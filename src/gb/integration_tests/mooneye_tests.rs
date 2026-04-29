@@ -8,11 +8,12 @@
 //! `roms/gb/automated_tests/mts-20240926-1737-443f6e1/`
 
 use super::helpers::{
-    MooneyeResult, detect_mooneye_result_with_limit, load_gb_rom, run_and_detect_dmg,
+    MooneyeResult, detect_mooneye_result_with_limit, load_gb_rom, run_and_detect_cgb,
+    run_and_detect_dmg,
 };
 use crate::gb::bus::{DmgBus, GbBus};
 use crate::gb::console::Gb;
-use crate::gb::model::DmgModel;
+use crate::gb::model::{CgbModel, DmgModel};
 
 /// Generous per-test M-cycle timeout used as a safety budget to avoid hangs.
 const MOONEYE_CYCLE_LIMIT: u64 = 15_000_000;
@@ -74,6 +75,24 @@ macro_rules! assert_mooneye_pass_dmg_c {
             "Mooneye DMG-C test failed: {:?} — ROM: {}",
             result,
             $path
+        );
+    };
+}
+
+/// CGB test macro with model parameter.
+///
+/// Runs a Mooneye test ROM on CGB hardware with the specified model variant.
+/// Pan Docs: CGB models differ in post-boot CPU register values and DIV initial state.
+macro_rules! assert_mooneye_pass_cgb {
+    ($path:expr, $model:expr) => {
+        let result = run_and_detect_cgb($path, $model, MOONEYE_CYCLE_LIMIT);
+        assert_eq!(
+            result,
+            MooneyeResult::Pass,
+            "Mooneye CGB test failed: {:?} — ROM: {} — model: {:?}",
+            result,
+            $path,
+            $model
         );
     };
 }
@@ -740,9 +759,12 @@ fn test_mooneye_emulator_only_mbc5_rom_8mb() {
 // ============================================================================
 
 #[test]
-#[ignore = "CGB-only test — CGB hardware model not yet emulated"]
+#[ignore = "CGB-only test — requires APU/palette register initialization (issue #2238 follow-up)"]
 fn test_mooneye_misc_bits_unused_hwio_c() {
-    assert_mooneye_pass!(&format!("{BASE}/misc/bits/unused_hwio-C.gb"));
+    assert_mooneye_pass_cgb!(
+        &format!("{BASE}/misc/bits/unused_hwio-C.gb"),
+        CgbModel::CgbE
+    );
 }
 
 #[test]
@@ -752,21 +774,19 @@ fn test_mooneye_misc_boot_div_a() {
 }
 
 #[test]
-#[ignore = "CGB-0-only test — CGB hardware model not yet emulated"]
 fn test_mooneye_misc_boot_div_cgb0() {
-    assert_mooneye_pass!(&format!("{BASE}/misc/boot_div-cgb0.gb"));
+    assert_mooneye_pass_cgb!(&format!("{BASE}/misc/boot_div-cgb0.gb"), CgbModel::Cgb0);
 }
 
 #[test]
-#[ignore = "CGB-only test — CGB hardware model not yet emulated"]
 fn test_mooneye_misc_boot_div_cgbabcde() {
-    assert_mooneye_pass!(&format!("{BASE}/misc/boot_div-cgbABCDE.gb"));
+    assert_mooneye_pass_cgb!(&format!("{BASE}/misc/boot_div-cgbABCDE.gb"), CgbModel::CgbE);
 }
 
 #[test]
-#[ignore = "CGB-only test — CGB hardware model not yet emulated"]
+#[ignore = "CGB-only test — requires APU/palette register initialization (issue #2238 follow-up)"]
 fn test_mooneye_misc_boot_hwio_c() {
-    assert_mooneye_pass!(&format!("{BASE}/misc/boot_hwio-C.gb"));
+    assert_mooneye_pass_cgb!(&format!("{BASE}/misc/boot_hwio-C.gb"), CgbModel::CgbE);
 }
 
 #[test]
@@ -776,15 +796,17 @@ fn test_mooneye_misc_boot_regs_a() {
 }
 
 #[test]
-#[ignore = "CGB-only test — CGB hardware model not yet emulated"]
 fn test_mooneye_misc_boot_regs_cgb() {
-    assert_mooneye_pass!(&format!("{BASE}/misc/boot_regs-cgb.gb"));
+    assert_mooneye_pass_cgb!(&format!("{BASE}/misc/boot_regs-cgb.gb"), CgbModel::CgbE);
 }
 
 #[test]
-#[ignore = "CGB-only test — CGB hardware model not yet emulated"]
+#[ignore = "CGB-only test — requires PPU STAT interrupt timing (issue #2238 follow-up)"]
 fn test_mooneye_misc_ppu_vblank_stat_intr_c() {
-    assert_mooneye_pass!(&format!("{BASE}/misc/ppu/vblank_stat_intr-C.gb"));
+    assert_mooneye_pass_cgb!(
+        &format!("{BASE}/misc/ppu/vblank_stat_intr-C.gb"),
+        CgbModel::CgbE
+    );
 }
 
 // ============================================================================
