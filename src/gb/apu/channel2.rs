@@ -74,6 +74,15 @@ impl Channel2 {
         }
     }
 
+    /// Digital output (0-15) before DAC conversion (for PCM12 register).
+    pub fn digital_output(&self) -> u8 {
+        if !self.active || !self.dac_on {
+            return 0;
+        }
+        let bit = super::apu::DUTY_TABLE[self.duty as usize][self.duty_pos as usize];
+        if bit == 1 { self.volume } else { 0 }
+    }
+
     pub fn tick(&mut self) {
         let period = (2048 - self.freq) * 4;
         if self.freq_timer == 0 {
