@@ -587,6 +587,18 @@ impl Ppu {
         entered
     }
 
+    /// Returns whether the LCD is enabled (LCDC bit 7).
+    /// Used by CGB bus to determine if HDMA can proceed (HDMA pauses when LCD is off).
+    pub fn is_lcd_enabled(&self) -> bool {
+        self.registers.lcd_enabled()
+    }
+
+    /// Returns the current PPU mode.
+    /// Used by CGB bus to check PPU state for HDMA activation timing.
+    pub fn mode(&self) -> crate::gb::ppu::timing::PpuMode {
+        self.timing.mode()
+    }
+
     // ── Frame output ──────────────────────────────────────────────────────────
 
     pub fn screen_buffer(&self) -> &ScreenBuffer {

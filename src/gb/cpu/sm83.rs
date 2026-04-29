@@ -683,6 +683,15 @@ impl<B: GbBus> Sm83<B> {
         self.cycles += 1;
         self.bus.tick(1);
 
+        // Check if CPU should be halted for HDMA/GDMA transfer.
+        // When HDMA is active, the CPU is halted for 8 M-cycles per block.
+        // The bus sets hdma_halt_cycles when a transfer begins, and we consume
+        // one cycle here, skipping instruction execution for this M-cycle.
+        if self.bus.consume_hdma_halt_cycle() {
+            // eprintln!("[CPU] Halted for HDMA/GDMA (remaining cycles will follow)");
+            return;
+        }
+
         // T1–T2 of M1: check & potentially dispatch interrupts.
         // service_interrupts() consumes 4 more M-cycles internally when
         // dispatching (NOP + push_hi + push_lo + vector), giving the correct

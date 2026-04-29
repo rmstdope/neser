@@ -33,7 +33,6 @@ macro_rules! assert_samesuite_pass {
 /// Test `gdma_addr_mask.gb`: validates GDMA address masking behavior.
 /// ROM requires CGB hardware.
 #[test]
-#[ignore = "HDMA emulation incomplete - test timeouts tracked in issue #2226"]
 fn test_samesuite_gdma_addr_mask() {
     assert_samesuite_pass!(&format!("{}/gdma_addr_mask.gb", BASE));
 }
@@ -57,7 +56,6 @@ fn test_samesuite_hdma_lcd_off() {
 /// Test `hdma_mode0.gb`: validates HDMA mode 0 (HBlank DMA) behavior.
 /// ROM requires CGB hardware.
 #[test]
-#[ignore = "HDMA emulation incomplete - test timeouts tracked in issue #2226"]
 fn test_samesuite_hdma_mode0() {
     assert_samesuite_pass!(&format!("{}/hdma_mode0.gb", BASE));
 }
