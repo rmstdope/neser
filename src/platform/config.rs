@@ -150,7 +150,8 @@ impl Default for FrontendConfig {
 ///
 /// Composed of [`FrontendConfig`] (generic frontend settings),
 /// [`NesConfig`](crate::nes::console::NesConfig) (NES hardware-specific settings),
-/// and [`GbConfig`](crate::gb::console::config::GbConfig) (Game Boy-specific settings).
+/// [`GbConfig`](crate::gb::console::config::GbConfig) (Game Boy-specific settings),
+/// and [`GbaConfig`](crate::gba::console::config::GbaConfig) (GBA-specific settings).
 /// Parsing from CLI arguments and config files populates all sub-configs.
 #[derive(Debug, Clone, Default)]
 pub struct Config {
@@ -160,6 +161,8 @@ pub struct Config {
     pub nes: crate::nes::console::NesConfig,
     /// Game Boy-specific hardware configuration.
     pub gb: crate::gb::console::config::GbConfig,
+    /// GBA-specific hardware configuration.
+    pub gba: crate::gba::console::config::GbaConfig,
 }
 
 impl FrontendConfig {
@@ -981,12 +984,13 @@ pub(crate) fn parse_search_paths(value: &str) -> Vec<String> {
         .collect()
 }
 
-/// Get an iterator over all CLI flags (platform, NES, and GB).
+/// Get an iterator over all CLI flags (platform, NES, GB, and GBA).
 pub(crate) fn all_cli_flags() -> impl Iterator<Item = &'static CliFlag> {
     PLATFORM_CLI_FLAGS
         .iter()
         .chain(crate::nes::console::CLI_FLAGS.iter())
         .chain(crate::gb::console::config::GB_CLI_FLAGS.iter())
+        .chain(crate::gba::console::config::GBA_CLI_FLAGS.iter())
 }
 
 /// Categorize a flag into its help section.
@@ -1035,6 +1039,7 @@ fn help_section_for_flag(flag: &str) -> &'static str {
             | "--display"
             | "--nes-filter"
             | "--gb-filter"
+            | "--gba-filter"
             | "--window-height"
             | "--vsync"
             | "--no-vsync"

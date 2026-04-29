@@ -62,6 +62,10 @@ pub fn handle_key_pressed(
             handle_unmodified_key(console, key_code, app_state, audio)
         }
         Console::GameBoy(_) => handle_gameboy_key_pressed(console, key_code, app_state, audio),
+        Console::GameBoyAdvance(_) => {
+            // GBA input not yet implemented - use game boy handler for now
+            handle_gameboy_key_pressed(console, key_code, app_state, audio)
+        }
     }
 }
 
@@ -85,6 +89,12 @@ pub fn handle_key_released(
             handle_controller_key(console, key_code, false, ports);
         }
         Console::GameBoy(_) => {
+            if let Some(btn_id) = gameboy_key_to_button_id(key_code) {
+                console.set_button(0, btn_id, false);
+            }
+        }
+        Console::GameBoyAdvance(_) => {
+            // GBA input not yet implemented - use Game Boy handler for now
             if let Some(btn_id) = gameboy_key_to_button_id(key_code) {
                 console.set_button(0, btn_id, false);
             }

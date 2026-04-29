@@ -2,6 +2,7 @@
 // This is not published or exposed externally
 
 pub mod gb;
+pub mod gba;
 pub mod nes;
 pub mod platform;
 

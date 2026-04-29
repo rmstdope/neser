@@ -827,6 +827,13 @@ impl Config {
                 Some(Self::map_filter_name_for(&filter_name, &["none", "dmg"])?);
         }
 
+        if let Some(filter_name) = Self::parse_named_arg(args, "--gba-filter") {
+            self.frontend.shader_path = Some(Self::map_filter_name_for(
+                &filter_name,
+                &["none", "gba-lcd"],
+            )?);
+        }
+
         // ROM path from positional argument
         // TODO: Move to FrontendConfig in task 8
         if let Some(path) = Self::parse_rom_arg(args)? {
@@ -835,6 +842,9 @@ impl Config {
 
         // GB hardware (parsed by GB config module)
         self.gb.apply_args(args)?;
+
+        // GBA hardware (parsed by GBA config module)
+        self.gba.apply_args(args)?;
 
         Ok(())
     }
@@ -1055,6 +1065,12 @@ impl Config {
                         Some(Self::map_filter_name_for(value, &["none", "dmg"])?);
                 }
             }
+            "gba-filter" => {
+                if !value.is_empty() {
+                    self.frontend.shader_path =
+                        Some(Self::map_filter_name_for(value, &["none", "gba-lcd"])?);
+                }
+            }
             "nes-controller_port1" => {
                 self.nes.controller_port1 =
                     Self::parse_controller_arg("nes-controller_port1", value)?;
@@ -1070,6 +1086,9 @@ impl Config {
             }
             "gb-hardware" => {
                 self.gb.apply_config_value("gb-hardware", value)?;
+            }
+            "gba-hardware" => {
+                self.gba.apply_config_value("gba-hardware", value)?;
             }
             _ => {} // Unknown keys are silently ignored (may have been handled by sub-configs)
         }
