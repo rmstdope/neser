@@ -1,4 +1,5 @@
 use crate::gb::apu::Apu;
+use crate::gb::boot_rom::CGB_PLACEHOLDER_BOOT_ROM;
 use crate::gb::bus::GbBus;
 use crate::gb::bus::hdma::{HdmaAction, HdmaState};
 use crate::gb::cartridge::GbCartridge;
@@ -14,20 +15,28 @@ use crate::gb::timer::Timer;
 /// Supports all CGB-specific PPU registers: VRAM bank (`$FF4F`), color palettes
 /// (`$FF68`–`$FF6B`), and object priority mode (`$FF6C`).
 ///
-/// Differences from DMG:
-/// - No boot ROM: starts execution at `$0100` with the CGB post-boot CPU state (A=$11).
+/// Boot ROM support:
+/// - When `boot_rom_active` is true, reads from `$0000–$00FF` and `$0200–$08FF`
+///   return data from the boot ROM instead of the cartridge.
+/// - Reads from `$0100–$01FF` always return cartridge data (header gap).
+/// - Writing any value to `$FF50` unmaps the boot ROM.
+///
+/// CGB-specific features:
 /// - CGB-mode PPU (`Ppu::new_cgb()`): VRAM bank 1, color palette RAM.
 /// - `$FF4F`, `$FF68`–`$FF6B`, `$FF6C` route to CGB PPU helpers.
 /// - `$FF6C` OPRI: object priority mode register.
 /// - WRAM banking (`$FF70` / SVBK): 8 × 4 KB banks; bank 0 at `$C000–$CFFF`,
 ///   switchable banks 1–7 at `$D000–$DFFF`.
-/// - Double-speed mode is **not** implemented.
+/// - Double-speed mode supported via KEY1 ($FF4D).
 ///
 /// HDMA ($FF51–$FF55) supports both GDMA (immediate bulk transfer) and
 /// HDMA (HBlank DMA: 16 bytes per HBlank, synchronized with PPU Mode 3→0).
 ///
 /// Memory map (same as DMG unless noted):
-/// - `$0000–$7FFF`: Cartridge ROM
+/// - `$0000–$00FF`: Boot ROM (when active) or Cartridge ROM
+/// - `$0100–$01FF`: Cartridge ROM (header, always from cartridge)
+/// - `$0200–$08FF`: Boot ROM (when active) or Cartridge ROM
+/// - `$0900–$7FFF`: Cartridge ROM
 /// - `$8000–$9FFF`: VRAM (bank-switched in CGB mode via `$FF4F`)
 /// - `$A000–$BFFF`: Cartridge RAM
 /// - `$C000–$CFFF`: WRAM bank 0 (fixed)
@@ -36,6 +45,7 @@ use crate::gb::timer::Timer;
 /// - `$FE00–$FE9F`: OAM
 /// - `$FF40–$FF4B`: PPU registers (same as DMG)
 /// - `$FF4F`:        VBK — VRAM bank select
+/// - `$FF50`:        Boot ROM disable (write-only)
 /// - `$FF68–$FF6B`:  BCPS/BCPD/OCPS/OCPD — color palette registers
 /// - `$FF6C`:        OPRI — object priority mode
 /// - `$FF80–$FFFE`:  HRAM
@@ -89,19 +99,35 @@ pub struct CgbBus {
     ff74: u8,
     /// Undocumented CGB register $FF75 (bits 4-6 R/W, initial value $00).
     ff75: u8,
+    /// Boot ROM contents (2048 bytes).
+    /// The CGB boot ROM is split: $0000-$00FF (256 bytes) and $0200-$08FF (1792 bytes).
+    /// The array stores both regions contiguously; addresses $0100-$01FF are a gap
+    /// that always reads from the cartridge.
+    boot_rom: [u8; 2048],
+    /// When `true`, reads from `$0000–$00FF` and `$0200–$08FF` are satisfied by
+    /// `boot_rom` instead of the cartridge. Writing any value to `$FF50` sets
+    /// this to `false` (mirrors real CGB hardware behaviour).
+    boot_rom_active: bool,
+    /// When `true`, the boot ROM is skipped on reset (starts at $0100 with
+    /// post-boot register state). Set at construction time.
+    skip_boot_rom: bool,
 }
 
 impl CgbBus {
-    /// Create a new CGB bus, starting at `$0100` (post-boot-ROM entry).
+    /// Create a new CGB bus.
     ///
-    /// Initializes all hardware to CGB post-boot-ROM state per Pan Docs
-    /// "Power-Up Sequence" documentation. The `model` determines variant-specific
-    /// hardware initialization (DIV counter initial state for tests like
-    /// boot_div-cgb0.gb).
+    /// When `skip_boot_rom` is `false` (default hardware behavior), the boot ROM
+    /// is active and the CPU should start execution at `$0000`. When `skip_boot_rom`
+    /// is `true`, the boot ROM is disabled and hardware is initialized to post-boot
+    /// state, with the CPU starting at `$0100`.
     ///
-    /// Callers should call `Sm83::reset_registers_cgb_for_model()` on the CPU to
-    /// set the CGB post-boot register state matching the model variant.
-    pub fn new(cart: Box<dyn GbCartridge>, model: CgbModel) -> Self {
+    /// The `model` determines variant-specific hardware initialization (DIV counter
+    /// initial state for tests like boot_div-cgb0.gb).
+    ///
+    /// When `skip_boot_rom` is `true`, callers should call
+    /// `Sm83::reset_registers_cgb_for_model()` on the CPU to set the CGB post-boot
+    /// register state matching the model variant.
+    pub fn new(cart: Box<dyn GbCartridge>, model: CgbModel, skip_boot_rom: bool) -> Self {
         let is_cgb = cart.is_cgb();
         let mut bus = Self {
             cart,
@@ -136,6 +162,9 @@ impl CgbBus {
             ff73: 0x00,
             ff74: 0xFF, // Value on reset per Mooneye test and Pan Docs
             ff75: 0x00,
+            boot_rom: CGB_PLACEHOLDER_BOOT_ROM,
+            boot_rom_active: !skip_boot_rom,
+            skip_boot_rom,
         };
 
         // Initialize PPU to CGB post-boot state.
@@ -191,6 +220,29 @@ impl CgbBus {
     /// Returns the CGB hardware model variant for this bus.
     pub fn model(&self) -> CgbModel {
         self.model
+    }
+
+    /// Returns `true` while the boot ROM is still mapped at `$0000–$00FF` and `$0200–$08FF`.
+    pub fn is_boot_rom_active(&self) -> bool {
+        self.boot_rom_active
+    }
+
+    /// Read from boot ROM if active and address is in a boot ROM region.
+    ///
+    /// Returns `Some(value)` if boot ROM is active and `addr` is in $0000-$00FF
+    /// or $0200-$08FF. Returns `None` otherwise (address should be read from
+    /// cartridge or other memory).
+    ///
+    /// The boot ROM array maps: $0000-$00FF → [0..256], $0200-$08FF → [256..2048]
+    fn boot_rom_read(&self, addr: u16) -> Option<u8> {
+        if !self.boot_rom_active {
+            return None;
+        }
+        match addr {
+            0x0000..=0x00FF => Some(self.boot_rom[addr as usize]),
+            0x0200..=0x08FF => Some(self.boot_rom[(addr - 0x0100) as usize]),
+            _ => None,
+        }
     }
 
     /// Check if the CPU should be halted for HDMA and consume one halt cycle.
@@ -394,6 +446,10 @@ impl CgbBus {
 
     /// Raw read bypassing PPU access blocking (used by OAM DMA).
     fn read_raw(&self, addr: u16) -> u8 {
+        // Boot ROM interception (same as read() for consistency).
+        if let Some(value) = self.boot_rom_read(addr) {
+            return value;
+        }
         match addr {
             0x0000..=0x7FFF => self.cart.read(addr),
             0x8000..=0x9FFF => {
@@ -461,6 +517,9 @@ impl CgbBus {
     }
 
     /// Reset bus state (PPU, timer, joypad, APU, RAM, DMA).
+    ///
+    /// Respects the `skip_boot_rom` setting from construction: if `skip_boot_rom`
+    /// was true, the boot ROM remains disabled after reset.
     pub fn reset(&mut self) {
         let apu_rate = self.apu.sample_rate();
         self.ppu = Ppu::new_cgb();
@@ -481,6 +540,8 @@ impl CgbBus {
         self.svbk = 0;
         self.key1 = 0;
         self.apu_tick_accumulator = 0;
+        // Respect skip_boot_rom setting from construction
+        self.boot_rom_active = !self.skip_boot_rom;
         // Reset undocumented CGB registers
         self.ff72 = 0x00;
         self.ff73 = 0x00;
@@ -520,7 +581,7 @@ impl CgbBus {
             ff73: Some(self.ff73),
             ff74: Some(self.ff74),
             ff75: Some(self.ff75),
-            boot_rom_active: None,
+            boot_rom_active: Some(self.boot_rom_active),
             sb: None,
             sc: None,
             serial_buf: None,
@@ -568,6 +629,8 @@ impl CgbBus {
         self.ff73 = state.ff73.unwrap_or(0x00);
         self.ff74 = state.ff74.unwrap_or(0xFF);
         self.ff75 = state.ff75.unwrap_or(0x00);
+        // Restore boot ROM state; default to inactive for older save states
+        self.boot_rom_active = state.boot_rom_active.unwrap_or(false);
         Ok(())
     }
 
@@ -599,6 +662,11 @@ impl CgbBus {
 
 impl GbBus for CgbBus {
     fn read(&mut self, addr: u16) -> u8 {
+        // Boot ROM interception: $0000-$00FF and $0200-$08FF read from boot ROM
+        // when active. $0100-$01FF always reads from cartridge (header gap).
+        if let Some(value) = self.boot_rom_read(addr) {
+            return value;
+        }
         match addr {
             0x0000..=0x7FFF => self.cart.read(addr),
             0x8000..=0x9FFF => self.ppu.read_vram(addr),
@@ -730,7 +798,10 @@ impl GbBus for CgbBus {
             0xFF4F | 0xFF68..=0xFF6C => {
                 self.ppu.write_cgb_register(addr, val);
             }
-            0xFF50 => {} // No boot ROM to unmap on CGB bus
+            0xFF50 => {
+                // Boot ROM disable: writing any value unmaps the boot ROM.
+                self.boot_rom_active = false;
+            }
             // CGB undocumented registers ($FF72-$FF75) — Pan Docs "CGB Registers".
             0xFF72 => self.ff72 = val,
             0xFF73 => self.ff73 = val,
@@ -772,6 +843,10 @@ impl GbBus for CgbBus {
         // Debugger reads mirror normal read() address decoding (including register
         // readback behavior like `if_reg | 0xE0`) but avoid side effects such as
         // OAM corruption.
+        // Boot ROM interception (same as read() for consistency).
+        if let Some(value) = self.boot_rom_read(addr) {
+            return value;
+        }
         match addr {
             0x0000..=0x7FFF => self.cart.read(addr),
             0x8000..=0x9FFF => self.ppu.read_vram(addr),
@@ -863,7 +938,7 @@ mod tests {
     }
 
     fn make_bus() -> CgbBus {
-        CgbBus::new(cgb_rom_only_cart(), CgbModel::default())
+        CgbBus::new(cgb_rom_only_cart(), CgbModel::default(), true)
     }
 
     /// Enable LCD (needed for PPU to tick and reach HBlank).
@@ -963,7 +1038,7 @@ mod tests {
         // Given: ROM data at $0100-$010F
         let data: Vec<(u16, u8)> = (0..16).map(|i| (0x0100 + i as u16, 0xA0 + i)).collect();
         let cart = cgb_rom_with_data(&data);
-        let mut bus = CgbBus::new(cart, CgbModel::default());
+        let mut bus = CgbBus::new(cart, CgbModel::default(), true);
         // Configure HDMA: source=$0100, dest=$8000, 1 block
         bus.write(0xFF51, 0x01); // Source high
         bus.write(0xFF52, 0x00); // Source low
@@ -1490,5 +1565,167 @@ mod tests {
         // Then: back to normal speed, not armed
         assert_eq!(bus.read(0xFF4D), 0x7E);
         assert!(!bus.is_double_speed());
+    }
+
+    // ── Boot ROM infrastructure ─────────────────────────────────────────────
+
+    #[test]
+    fn test_boot_rom_inactive_by_default_when_skip_flag_true() {
+        // Given: CgbBus created with skip_boot_rom = true
+        let bus = CgbBus::new(cgb_rom_only_cart(), CgbModel::default(), true);
+        // Then: boot ROM should be inactive
+        assert!(!bus.is_boot_rom_active());
+    }
+
+    #[test]
+    fn test_boot_rom_active_by_default_when_skip_flag_false() {
+        // Given: CgbBus created with skip_boot_rom = false
+        let bus = CgbBus::new(cgb_rom_only_cart(), CgbModel::default(), false);
+        // Then: boot ROM should be active
+        assert!(bus.is_boot_rom_active());
+    }
+
+    #[test]
+    fn test_boot_rom_reads_from_boot_rom_when_active() {
+        // Given: CgbBus with boot ROM active
+        let bus = CgbBus::new(cgb_rom_only_cart(), CgbModel::default(), false);
+        // Then: $0000 should read from boot ROM
+        // Placeholder: LD A, $01 ($3E $01); LDH [$FF50], A ($E0 $50); JP $0100 ($C3 $00 $01)
+        assert_eq!(bus.read_for_debugger(0x0000), 0x3E); // LD A, n8
+        assert_eq!(bus.read_for_debugger(0x0001), 0x01); // $01
+        assert_eq!(bus.read_for_debugger(0x0002), 0xE0); // LDH [n8], A
+        assert_eq!(bus.read_for_debugger(0x0003), 0x50); // $50
+        assert_eq!(bus.read_for_debugger(0x0004), 0xC3); // JP
+        assert_eq!(bus.read_for_debugger(0x0005), 0x00); // $00
+        assert_eq!(bus.read_for_debugger(0x0006), 0x01); // $01
+    }
+
+    #[test]
+    fn test_boot_rom_cartridge_header_gap_reads_from_cartridge() {
+        // Given: CgbBus with boot ROM active and known cartridge header data
+        let mut rom = vec![0u8; 0x8000];
+        rom[0x0100] = 0xAB; // Entry point in cartridge
+        rom[0x0143] = 0x80; // CGB flag
+        rom[0x0147] = 0x00;
+        let chk = rom[0x0134..=0x014C]
+            .iter()
+            .fold(0u8, |acc, &b| acc.wrapping_sub(b).wrapping_sub(1));
+        rom[0x014D] = chk;
+        let cart = load_cartridge(&rom).expect("valid ROM");
+        let bus = CgbBus::new(cart, CgbModel::default(), false);
+        // Then: $0100-$01FF should read from cartridge, not boot ROM
+        assert_eq!(bus.read_for_debugger(0x0100), 0xAB);
+    }
+
+    #[test]
+    fn test_boot_rom_upper_region_reads_from_boot_rom_when_active() {
+        // Given: CgbBus with boot ROM active
+        let bus = CgbBus::new(cgb_rom_only_cart(), CgbModel::default(), false);
+        // Then: $0200-$08FF should read from boot ROM (all zeros in placeholder)
+        assert_eq!(bus.read_for_debugger(0x0200), 0x00);
+        assert_eq!(bus.read_for_debugger(0x08FF), 0x00);
+    }
+
+    #[test]
+    fn test_boot_rom_reads_from_cartridge_when_inactive() {
+        // Given: CgbBus with boot ROM inactive and known cartridge data at $0000
+        let mut rom = vec![0u8; 0x8000];
+        rom[0x0000] = 0xDE;
+        rom[0x0143] = 0x80; // CGB flag
+        rom[0x0147] = 0x00;
+        let chk = rom[0x0134..=0x014C]
+            .iter()
+            .fold(0u8, |acc, &b| acc.wrapping_sub(b).wrapping_sub(1));
+        rom[0x014D] = chk;
+        let cart = load_cartridge(&rom).expect("valid ROM");
+        let bus = CgbBus::new(cart, CgbModel::default(), true);
+        // Then: $0000 should read from cartridge
+        assert_eq!(bus.read_for_debugger(0x0000), 0xDE);
+    }
+
+    #[test]
+    fn test_boot_rom_unmaps_on_ff50_write() {
+        // Given: CgbBus with boot ROM active
+        let mut bus = CgbBus::new(cgb_rom_only_cart(), CgbModel::default(), false);
+        assert!(bus.is_boot_rom_active());
+        // When: write to $FF50
+        bus.write(0xFF50, 0x01);
+        // Then: boot ROM should be unmapped
+        assert!(!bus.is_boot_rom_active());
+    }
+
+    #[test]
+    fn test_boot_rom_unmaps_on_any_ff50_write_value() {
+        // Given: CgbBus with boot ROM active
+        let mut bus = CgbBus::new(cgb_rom_only_cart(), CgbModel::default(), false);
+        // When: write any value to $FF50
+        bus.write(0xFF50, 0x00);
+        // Then: boot ROM should be unmapped (any write value works)
+        assert!(!bus.is_boot_rom_active());
+    }
+
+    #[test]
+    fn test_boot_rom_reset_reactivates_boot_rom() {
+        // Given: CgbBus with boot ROM unmapped (skip_boot_rom=false, then disabled via $FF50)
+        let mut bus = CgbBus::new(cgb_rom_only_cart(), CgbModel::default(), false);
+        bus.write(0xFF50, 0x01);
+        assert!(!bus.is_boot_rom_active());
+        // When: reset
+        bus.reset();
+        // Then: boot ROM should be active again (skip_boot_rom=false means boot ROM runs)
+        assert!(bus.is_boot_rom_active());
+    }
+
+    #[test]
+    fn test_boot_rom_reset_respects_skip_boot_rom_setting() {
+        // Given: CgbBus created with skip_boot_rom=true
+        let mut bus = CgbBus::new(cgb_rom_only_cart(), CgbModel::default(), true);
+        assert!(!bus.is_boot_rom_active());
+        // When: reset
+        bus.reset();
+        // Then: boot ROM should remain inactive (skip_boot_rom=true is preserved)
+        assert!(!bus.is_boot_rom_active());
+    }
+
+    #[test]
+    fn test_boot_rom_save_state_captures_active_state() {
+        // Given: CgbBus with boot ROM active
+        let bus = CgbBus::new(cgb_rom_only_cart(), CgbModel::default(), false);
+        // When: capture save state
+        let state = bus.capture_bus_state();
+        // Then: boot_rom_active should be Some(true)
+        assert_eq!(state.boot_rom_active, Some(true));
+    }
+
+    #[test]
+    fn test_boot_rom_save_state_captures_inactive_state() {
+        // Given: CgbBus with boot ROM inactive
+        let bus = CgbBus::new(cgb_rom_only_cart(), CgbModel::default(), true);
+        // When: capture save state
+        let state = bus.capture_bus_state();
+        // Then: boot_rom_active should be Some(false)
+        assert_eq!(state.boot_rom_active, Some(false));
+    }
+
+    #[test]
+    fn test_boot_rom_save_state_restores_active_state() {
+        // Given: CgbBus with boot ROM inactive
+        let mut bus = CgbBus::new(cgb_rom_only_cart(), CgbModel::default(), true);
+        // And: a save state captured when boot ROM was active
+        let active_bus = CgbBus::new(cgb_rom_only_cart(), CgbModel::default(), false);
+        let state = active_bus.capture_bus_state();
+        // When: restore the save state
+        bus.restore_bus_state(&state)
+            .expect("restore should succeed");
+        // Then: boot ROM should be active
+        assert!(bus.is_boot_rom_active());
+    }
+
+    #[test]
+    fn test_boot_rom_read_raw_intercepts_boot_rom() {
+        // Given: CgbBus with boot ROM active
+        let bus = CgbBus::new(cgb_rom_only_cart(), CgbModel::default(), false);
+        // Then: read_raw should also return boot ROM data
+        assert_eq!(bus.read_raw(0x0000), 0x3E); // LD A, n8 opcode
     }
 }
