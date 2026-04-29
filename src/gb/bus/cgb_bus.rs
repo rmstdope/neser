@@ -523,6 +523,9 @@ impl GbBus for CgbBus {
             0xFF55 => self.hdma.read_control(),
             // CGB-specific registers
             0xFF4F | 0xFF68..=0xFF6C => self.ppu.read_cgb_register(addr).unwrap_or(0xFF),
+            // CGB PCM registers
+            0xFF76 => self.apu.read_pcm12(),
+            0xFF77 => self.apu.read_pcm34(),
             0xFF70 => self.svbk | 0xF8,
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
             0xFFFF => self.ie_reg,
@@ -584,6 +587,8 @@ impl GbBus for CgbBus {
                 self.ppu.write_cgb_register(addr, val);
             }
             0xFF50 => {} // No boot ROM to unmap on CGB bus
+            // CGB PCM registers (read-only; ignore writes)
+            0xFF76 | 0xFF77 => {}
             0xFF70 => self.svbk = val & 0x07,
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize] = val,
             0xFFFF => self.ie_reg = val,
@@ -646,6 +651,9 @@ impl GbBus for CgbBus {
             0xFF55 => self.hdma.read_control(),
             // CGB-specific registers
             0xFF4F | 0xFF68..=0xFF6C => self.ppu.read_cgb_register(addr).unwrap_or(0xFF),
+            // CGB PCM registers
+            0xFF76 => self.apu.read_pcm12(),
+            0xFF77 => self.apu.read_pcm34(),
             0xFF70 => self.svbk | 0xF8,
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
             0xFFFF => self.ie_reg,
