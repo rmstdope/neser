@@ -606,9 +606,11 @@ impl GbBus for CgbBus {
             0xFF53 => self.hdma.write_dest_high(val),
             0xFF54 => self.hdma.write_dest_low(val),
             0xFF55 => {
-                // Use PPU's physical mode for HDMA timing decisions (not STAT register bits
-                // which can lag the physical mode due to mode_for_stat() timing quirks).
-                let ppu_mode = self.ppu.mode();
+                // For HDMA timing decisions, check if we're in an HBlank-like state.
+                // When LCD is off, mode is effectively 0 (HBlank) for HDMA purposes.
+                // When LCD is on, use the PPU's physical mode (not STAT mode bits which
+                // can lag due to mode_for_stat() timing quirks).
+                let is_hblank = !self.ppu.is_lcd_enabled() || self.ppu.mode() == PpuMode::HBlank;
                 match self.hdma.write_control(val) {
                     HdmaAction::StartGdma => {
                         self.do_gdma_transfer();
@@ -617,7 +619,7 @@ impl GbBus for CgbBus {
                         // Per SameBoy: If HDMA is started while in HBlank (mode 0), transfer starts
                         // immediately regardless of whether LCD is on or off. When LCD is off,
                         // mode is effectively 0, so one block transfers instantly.
-                        if ppu_mode == PpuMode::HBlank {
+                        if is_hblank {
                             self.hdma.activate_hdma();
                             // Clear pending flag since we're activating now
                             self.hdma.clear_hblank_pending();
