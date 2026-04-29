@@ -198,6 +198,26 @@ impl GbaBus {
         }
     }
 
+    /// Read a 16-bit little-endian halfword from BIOS, honouring the lock.
+    /// Returns `None` if either byte falls outside the BIOS region or is locked.
+    fn read_bios_u16(&self, addr: u32) -> Option<u16> {
+        Some(u16::from_le_bytes([
+            self.read_bios_byte(addr)?,
+            self.read_bios_byte(addr + 1)?,
+        ]))
+    }
+
+    /// Read a 32-bit little-endian word from BIOS, honouring the lock.
+    /// Returns `None` if any byte falls outside the BIOS region or is locked.
+    fn read_bios_u32(&self, addr: u32) -> Option<u32> {
+        Some(u32::from_le_bytes([
+            self.read_bios_byte(addr)?,
+            self.read_bios_byte(addr + 1)?,
+            self.read_bios_byte(addr + 2)?,
+            self.read_bios_byte(addr + 3)?,
+        ]))
+    }
+
     /// Open-bus byte for a given address.
     fn open_bus_byte(&self, addr: u32) -> u8 {
         ((self.last_bus_value >> ((addr & 3) * 8)) & 0xFF) as u8
@@ -226,24 +246,35 @@ impl GbaBus {
         // ROM is mirrored within its 32 MB window.
         Some(self.rom[offset % self.rom.len()])
     }
+
+    /// Read a 16-bit little-endian halfword from cart ROM, respecting
+    /// mirroring. Returns `None` when no cartridge is inserted.
+    fn rom_u16(&self, offset: usize) -> Option<u16> {
+        Some(u16::from_le_bytes([
+            self.rom_byte(offset)?,
+            self.rom_byte(offset + 1)?,
+        ]))
+    }
+
+    /// Read a 32-bit little-endian word from cart ROM, respecting mirroring.
+    /// Returns `None` when no cartridge is inserted.
+    fn rom_u32(&self, offset: usize) -> Option<u32> {
+        Some(u32::from_le_bytes([
+            self.rom_byte(offset)?,
+            self.rom_byte(offset + 1)?,
+            self.rom_byte(offset + 2)?,
+            self.rom_byte(offset + 3)?,
+        ]))
+    }
 }
 
 impl Bus for GbaBus {
     fn read32(&mut self, addr: u32) -> u32 {
         let aligned = addr & !0x3;
         let val = match (aligned >> 24) & 0xF {
-            0x0 | 0x1 => {
-                if let (Some(b0), Some(b1), Some(b2), Some(b3)) = (
-                    self.read_bios_byte(aligned),
-                    self.read_bios_byte(aligned + 1),
-                    self.read_bios_byte(aligned + 2),
-                    self.read_bios_byte(aligned + 3),
-                ) {
-                    u32::from_le_bytes([b0, b1, b2, b3])
-                } else {
-                    self.open_bus_word()
-                }
-            }
+            0x0 | 0x1 => self
+                .read_bios_u32(aligned)
+                .unwrap_or_else(|| self.open_bus_word()),
             0x2 => read_le_u32(&self.ewram, aligned as usize),
             0x3 => read_le_u32(&self.iwram, aligned as usize),
             0x4 => self
@@ -258,16 +289,8 @@ impl Bus for GbaBus {
             0x7 => read_le_u32(&self.oam, aligned as usize),
             0x8..=0xD => {
                 let off = (aligned & 0x01FF_FFFF) as usize;
-                if let (Some(b0), Some(b1), Some(b2), Some(b3)) = (
-                    self.rom_byte(off),
-                    self.rom_byte(off + 1),
-                    self.rom_byte(off + 2),
-                    self.rom_byte(off + 3),
-                ) {
-                    u32::from_le_bytes([b0, b1, b2, b3])
-                } else {
-                    open_bus_no_cart_word(aligned)
-                }
+                self.rom_u32(off)
+                    .unwrap_or_else(|| open_bus_no_cart_word(aligned))
             }
             0xE | 0xF => {
                 // SRAM is 8-bit only on real hardware; word access mirrors
@@ -284,16 +307,9 @@ impl Bus for GbaBus {
     fn read16(&mut self, addr: u32) -> u16 {
         let aligned = addr & !0x1;
         let val = match (aligned >> 24) & 0xF {
-            0x0 | 0x1 => {
-                if let (Some(b0), Some(b1)) = (
-                    self.read_bios_byte(aligned),
-                    self.read_bios_byte(aligned + 1),
-                ) {
-                    u16::from_le_bytes([b0, b1])
-                } else {
-                    self.open_bus_halfword(aligned)
-                }
-            }
+            0x0 | 0x1 => self
+                .read_bios_u16(aligned)
+                .unwrap_or_else(|| self.open_bus_halfword(aligned)),
             0x2 => read_le_u16(&self.ewram, aligned as usize),
             0x3 => read_le_u16(&self.iwram, aligned as usize),
             0x4 => self
@@ -308,11 +324,8 @@ impl Bus for GbaBus {
             0x7 => read_le_u16(&self.oam, aligned as usize),
             0x8..=0xD => {
                 let off = (aligned & 0x01FF_FFFF) as usize;
-                if let (Some(b0), Some(b1)) = (self.rom_byte(off), self.rom_byte(off + 1)) {
-                    u16::from_le_bytes([b0, b1])
-                } else {
-                    open_bus_no_cart_halfword(aligned)
-                }
+                self.rom_u16(off)
+                    .unwrap_or_else(|| open_bus_no_cart_halfword(aligned))
             }
             0xE | 0xF => {
                 let b = self.sram[(aligned as usize) % SRAM_SIZE];

@@ -121,19 +121,9 @@ impl Timers {
             }
             t.prescaler_acc += cycles;
             let period = t.prescaler();
-            let mut ticks = t.prescaler_acc / period;
+            let ticks = t.prescaler_acc / period;
             t.prescaler_acc %= period;
-            while ticks > 0 {
-                let room = (0x1_0000u32) - t.counter as u32;
-                if ticks >= room {
-                    ticks -= room;
-                    t.counter = t.reload;
-                    overflows[i] += 1;
-                } else {
-                    t.counter = t.counter.wrapping_add(ticks as u16);
-                    ticks = 0;
-                }
-            }
+            overflows[i] = advance_ticks(t, ticks);
         }
         // Cascade: feed previous-timer overflow count into next cascade timer.
         for i in 1..4 {
@@ -145,18 +135,7 @@ impl Timers {
             if !t.enabled() || !t.cascade() {
                 continue;
             }
-            let mut ticks = cascade_ticks;
-            while ticks > 0 {
-                let room = (0x1_0000u32) - t.counter as u32;
-                if ticks >= room {
-                    ticks -= room;
-                    t.counter = t.reload;
-                    overflows[i] += 1;
-                } else {
-                    t.counter = t.counter.wrapping_add(ticks as u16);
-                    ticks = 0;
-                }
-            }
+            overflows[i] = advance_ticks(t, cascade_ticks);
         }
         // Raise IRQs for timers whose overflow IRQ bit is set.
         for i in 0..4 {
@@ -165,6 +144,24 @@ impl Timers {
             }
         }
     }
+}
+
+/// Advance `timer` by `ticks` counter increments, reloading from `timer.reload`
+/// on each overflow. Returns the number of overflows that occurred.
+fn advance_ticks(timer: &mut Timer, mut ticks: u32) -> u32 {
+    let mut overflows = 0u32;
+    while ticks > 0 {
+        let room = 0x1_0000u32 - timer.counter as u32;
+        if ticks >= room {
+            ticks -= room;
+            timer.counter = timer.reload;
+            overflows += 1;
+        } else {
+            timer.counter = timer.counter.wrapping_add(ticks as u16);
+            ticks = 0;
+        }
+    }
+    overflows
 }
 
 #[cfg(test)]

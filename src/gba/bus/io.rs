@@ -74,8 +74,7 @@ impl IoRegisters {
     /// open-bus value when this returns `None`.
     fn idx(addr: u32) -> Option<usize> {
         let off = addr.checked_sub(0x0400_0000)? as usize;
-        // Need both bytes of the halfword to lie within the window.
-        if off + 1 < IO_SIZE { Some(off) } else { None }
+        (off + 1 < IO_SIZE).then_some(off)
     }
 
     /// Try to read a halfword from the I/O register space.
