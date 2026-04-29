@@ -7,6 +7,7 @@
 //! ROMs are located at:
 //! `roms/gb/automated_tests/mts-20240926-1737-443f6e1/`
 
+use super::helpers::load_gb_rom;
 use crate::gb::bus::{DmgBus, GbBus};
 use crate::gb::cartridge::load_cartridge;
 use crate::gb::console::Gb;
@@ -43,13 +44,6 @@ const MOONEYE_CYCLE_LIMIT: u64 = 15_000_000;
 
 /// LD B,B opcode used as a Mooneye software breakpoint.
 const LD_B_B: u8 = 0x40;
-
-/// Load a GB ROM from `path` and return a ready-to-step `Gb<DmgBus>` (DMG-B model).
-fn load_gb_rom(path: &str) -> Gb<DmgBus> {
-    let rom = std::fs::read(path).expect("Mooneye ROM file should be present");
-    let cart = load_cartridge(&rom).expect("valid GB ROM");
-    Gb::new(DmgBus::new(cart, DmgModel::DmgB))
-}
 
 /// Load a GB ROM from `path` and return a ready-to-step `Gb<DmgBus>` (DMG-0 model).
 fn load_gb_rom_dmg0(path: &str) -> Gb<DmgBus> {
