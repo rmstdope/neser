@@ -212,6 +212,24 @@ impl CgbBus {
         self.boot_rom_active
     }
 
+    /// Read from boot ROM if active and address is in a boot ROM region.
+    ///
+    /// Returns `Some(value)` if boot ROM is active and `addr` is in $0000-$00FF
+    /// or $0200-$08FF. Returns `None` otherwise (address should be read from
+    /// cartridge or other memory).
+    ///
+    /// The boot ROM array maps: $0000-$00FF → [0..256], $0200-$08FF → [256..2048]
+    fn boot_rom_read(&self, addr: u16) -> Option<u8> {
+        if !self.boot_rom_active {
+            return None;
+        }
+        match addr {
+            0x0000..=0x00FF => Some(self.boot_rom[addr as usize]),
+            0x0200..=0x08FF => Some(self.boot_rom[(addr - 0x0100) as usize]),
+            _ => None,
+        }
+    }
+
     /// Returns `true` when the CGB is operating in double-speed mode.
     pub fn is_double_speed(&self) -> bool {
         self.key1 & 0x80 != 0
@@ -403,13 +421,8 @@ impl CgbBus {
     /// Raw read bypassing PPU access blocking (used by OAM DMA).
     fn read_raw(&self, addr: u16) -> u8 {
         // Boot ROM interception (same as read() for consistency).
-        // The boot ROM array maps: $0000-$00FF → [0..256], $0200-$08FF → [256..2048]
-        if self.boot_rom_active {
-            match addr {
-                0x0000..=0x00FF => return self.boot_rom[addr as usize],
-                0x0200..=0x08FF => return self.boot_rom[(addr - 0x0100) as usize],
-                _ => {}
-            }
+        if let Some(value) = self.boot_rom_read(addr) {
+            return value;
         }
         match addr {
             0x0000..=0x7FFF => self.cart.read(addr),
@@ -619,15 +632,10 @@ impl CgbBus {
 
 impl GbBus for CgbBus {
     fn read(&mut self, addr: u16) -> u8 {
-        // Boot ROM interception: when active, $0000-$00FF and $0200-$08FF read
-        // from boot ROM. $0100-$01FF always reads from cartridge (header gap).
-        // The boot ROM array maps: $0000-$00FF → [0..256], $0200-$08FF → [256..2048]
-        if self.boot_rom_active {
-            match addr {
-                0x0000..=0x00FF => return self.boot_rom[addr as usize],
-                0x0200..=0x08FF => return self.boot_rom[(addr - 0x0100) as usize],
-                _ => {}
-            }
+        // Boot ROM interception: $0000-$00FF and $0200-$08FF read from boot ROM
+        // when active. $0100-$01FF always reads from cartridge (header gap).
+        if let Some(value) = self.boot_rom_read(addr) {
+            return value;
         }
         match addr {
             0x0000..=0x7FFF => self.cart.read(addr),
@@ -772,13 +780,8 @@ impl GbBus for CgbBus {
         // readback behavior like `if_reg | 0xE0`) but avoid side effects such as
         // OAM corruption.
         // Boot ROM interception (same as read() for consistency).
-        // The boot ROM array maps: $0000-$00FF → [0..256], $0200-$08FF → [256..2048]
-        if self.boot_rom_active {
-            match addr {
-                0x0000..=0x00FF => return self.boot_rom[addr as usize],
-                0x0200..=0x08FF => return self.boot_rom[(addr - 0x0100) as usize],
-                _ => {}
-            }
+        if let Some(value) = self.boot_rom_read(addr) {
+            return value;
         }
         match addr {
             0x0000..=0x7FFF => self.cart.read(addr),
@@ -1511,10 +1514,15 @@ mod tests {
     fn test_boot_rom_reads_from_boot_rom_when_active() {
         // Given: CgbBus with boot ROM active
         let bus = CgbBus::new(cgb_rom_only_cart(), CgbModel::default(), false);
-        // Then: $0000 should read from boot ROM (JP $0100 = $C3 $00 $01)
-        assert_eq!(bus.read_for_debugger(0x0000), 0xC3);
-        assert_eq!(bus.read_for_debugger(0x0001), 0x00);
-        assert_eq!(bus.read_for_debugger(0x0002), 0x01);
+        // Then: $0000 should read from boot ROM
+        // Placeholder: LD A, $01 ($3E $01); LDH [$FF50], A ($E0 $50); JP $0100 ($C3 $00 $01)
+        assert_eq!(bus.read_for_debugger(0x0000), 0x3E); // LD A, n8
+        assert_eq!(bus.read_for_debugger(0x0001), 0x01); // $01
+        assert_eq!(bus.read_for_debugger(0x0002), 0xE0); // LDH [n8], A
+        assert_eq!(bus.read_for_debugger(0x0003), 0x50); // $50
+        assert_eq!(bus.read_for_debugger(0x0004), 0xC3); // JP
+        assert_eq!(bus.read_for_debugger(0x0005), 0x00); // $00
+        assert_eq!(bus.read_for_debugger(0x0006), 0x01); // $01
     }
 
     #[test]
@@ -1632,6 +1640,6 @@ mod tests {
         // Given: CgbBus with boot ROM active
         let bus = CgbBus::new(cgb_rom_only_cart(), CgbModel::default(), false);
         // Then: read_raw should also return boot ROM data
-        assert_eq!(bus.read_raw(0x0000), 0xC3); // JP opcode
+        assert_eq!(bus.read_raw(0x0000), 0x3E); // LD A, n8 opcode
     }
 }

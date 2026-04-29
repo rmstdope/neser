@@ -136,16 +136,23 @@ impl Gb<CgbBus> {
     /// - `soft_reset = true`: resets only the CPU registers to the CGB
     ///   post-boot-ROM state (bus state preserved).
     /// - `soft_reset = false`: resets CPU registers **and** all bus state.
+    ///   If boot ROM is active after reset, uses power-on register state;
+    ///   otherwise uses post-boot-ROM state.
     pub fn reset(&mut self, soft_reset: bool) {
-        self.cpu.reset_registers_cgb();
         if !soft_reset {
             self.cpu.bus.reset();
-            // Start at boot ROM entry point if active, else post-boot ROM entry.
-            self.cpu.regs.pc = if self.cpu.bus.is_boot_rom_active() {
-                0x0000
+            if self.cpu.bus.is_boot_rom_active() {
+                // Boot ROM will run: use power-on register state
+                self.cpu.reset_to_power_on();
+                self.cpu.regs.pc = 0x0000;
             } else {
-                0x0100
-            };
+                // Skip boot ROM: use post-boot register state
+                self.cpu.reset_registers_cgb();
+                self.cpu.regs.pc = 0x0100;
+            }
+        } else {
+            // Soft reset: just restore post-boot registers
+            self.cpu.reset_registers_cgb();
         }
     }
 

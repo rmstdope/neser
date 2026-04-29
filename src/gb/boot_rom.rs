@@ -292,24 +292,34 @@ pub const DMG0_BOOT_ROM: [u8; 256] = [
 
 /// Placeholder CGB boot ROM for infrastructure testing.
 ///
-/// This is a minimal boot ROM that immediately jumps to the cartridge entry
-/// point at $0100. It is used during infrastructure development and will be
-/// replaced by a full IPR-free CGB boot ROM implementation.
+/// This is a minimal boot ROM that immediately disables itself and jumps to
+/// the cartridge entry point at $0100. It is used during infrastructure
+/// development and will be replaced by a full IPR-free CGB boot ROM implementation.
 ///
-/// The CGB boot ROM is 2048 bytes, split into two regions:
+/// The CGB boot ROM is 2048 bytes, split into two mapped regions:
 /// - $0000-$00FF: Early initialization (256 bytes)
-/// - $0100-$01FF: Cartridge header (not part of boot ROM, reads from cartridge)
+/// - $0100-$01FF: Cartridge header (not part of the boot ROM; reads come from the cartridge)
 /// - $0200-$08FF: Main boot ROM code (1792 bytes)
 ///
-/// This placeholder contains a simple `JP $0100` at offset 0, followed by
-/// padding. The cartridge header gap ($0100-$01FF) is filled with placeholder
-/// bytes that are never read (the bus routes those addresses to the cartridge).
+/// In this array, the boot-ROM-backed regions are stored contiguously:
+/// indices 0..256 correspond to $0000-$00FF, and indices 256..2048
+/// correspond to $0200-$08FF. The $0100-$01FF header gap exists in the
+/// memory map, not as a gap inside this array.
+///
+/// This placeholder contains code to disable the boot ROM by writing to $FF50,
+/// then jumping to $0100, followed by zero padding.
 pub const CGB_PLACEHOLDER_BOOT_ROM: [u8; 2048] = {
     let mut rom = [0u8; 2048];
-    // $0000: JP $0100
-    rom[0] = 0xC3; // JP opcode
-    rom[1] = 0x00; // low byte of $0100
-    rom[2] = 0x01; // high byte of $0100
+    // $0000: LD A, $01
+    rom[0] = 0x3E; // LD A, n8
+    rom[1] = 0x01; // value $01
+    // $0002: LDH [$FF50], A  (unmap boot ROM)
+    rom[2] = 0xE0; // LDH [n8], A
+    rom[3] = 0x50; // $FF50
+    // $0004: JP $0100  (jump to cartridge entry point)
+    rom[4] = 0xC3; // JP opcode
+    rom[5] = 0x00; // low byte of $0100
+    rom[6] = 0x01; // high byte of $0100
     // Rest is padding (zeros)
     rom
 };
