@@ -1763,4 +1763,95 @@ mod tests {
         // Then: read_raw should also return boot ROM data
         assert_eq!(bus.read_raw(0x0000), 0x3E); // LD A, n8 opcode
     }
+
+    #[test]
+    fn test_ch1_stops_after_div_apu_clocks_length_counter() {
+        // Simulates the key behavior tested by SameSuite channel_1_stop_div:
+        // CH1 with length_counter=1 should stop after one DIV-APU event clocks the length.
+        let mut bus = make_bus();
+
+        // Reset DIV to ensure clean start
+        bus.write(0xFF04, 0x00);
+
+        // Power on APU
+        bus.write(0xFF26, 0x80);
+
+        // Setup CH1: duty 50%, length=63 → counter=1
+        bus.write(0xFF11, 0x80 | 0x3F);
+        // Enable DAC
+        bus.write(0xFF12, 0x80);
+        // Low freq
+        bus.write(0xFF13, 0xFC);
+        // Trigger with length enabled
+        bus.write(0xFF14, 0xC7);
+
+        // Channel should be active (NR52 bit 0)
+        assert_ne!(
+            bus.read(0xFF26) & 0x01,
+            0,
+            "CH1 should be active after trigger"
+        );
+
+        // Reset DIV to start clean timing
+        bus.write(0xFF04, 0x00);
+
+        // Tick to the DIV-APU falling edge (2048 M-cycles)
+        for _ in 0..2048 {
+            bus.tick(1);
+        }
+
+        // The DIV-APU event should have clocked length, stopping the channel
+        assert_eq!(
+            bus.read(0xFF26) & 0x01,
+            0,
+            "CH1 should be inactive after length reaches 0"
+        );
+
+        // PCM12 should show 0 for CH1
+        assert_eq!(bus.read(0xFF76) & 0x0F, 0, "CH1 output should be 0");
+    }
+
+    #[test]
+    fn test_div_write_triggers_div_apu_event_when_bit_high() {
+        // Writing to DIV resets div_counter to 0.
+        // If the DIV-APU bit was HIGH before the write, this creates a falling edge.
+        // We verify by checking if CH1 with length=1 stops after the DIV write.
+        let mut bus = make_bus();
+
+        // Reset DIV to ensure clean start
+        bus.write(0xFF04, 0x00);
+
+        // Power on APU
+        bus.write(0xFF26, 0x80);
+
+        // Tick to get bit 12 HIGH (at 1024+ M-cycles)
+        for _ in 0..1500 {
+            bus.tick(1);
+        }
+        // At this point, div_counter ≈ 6000, bit 12 is HIGH
+
+        // Setup CH1: length=63 → counter=1
+        bus.write(0xFF11, 0x80 | 0x3F);
+        bus.write(0xFF12, 0x80);
+        bus.write(0xFF13, 0xFC);
+        bus.write(0xFF14, 0xC7);
+
+        // Channel should be active
+        assert_ne!(
+            bus.read(0xFF26) & 0x01,
+            0,
+            "CH1 should be active after trigger"
+        );
+
+        // Writing DIV resets counter to 0, creating a falling edge on bit 12
+        // This should clock the frame sequencer, which clocks length on step 0
+        bus.write(0xFF04, 0x00);
+
+        // CH1 should now be stopped
+        assert_eq!(
+            bus.read(0xFF26) & 0x01,
+            0,
+            "CH1 should be inactive after DIV write with bit high"
+        );
+    }
 }

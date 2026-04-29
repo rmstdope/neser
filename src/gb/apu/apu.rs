@@ -622,21 +622,25 @@ mod tests {
     }
 
     #[test]
-    fn test_frame_sequencer_advances_after_2048_mcycles() {
+    fn test_frame_sequencer_advances_on_clock_div_apu() {
         let mut apu = powered_apu();
         assert_eq!(apu.fs_step, 0);
-        apu.tick(100);
-        for _ in 0..1948u16 {
-            apu.tick(1);
-        }
-        assert_eq!(apu.fs_step, 1, "fs_step must be 1 after 2048 M-cycles");
+        // Frame sequencer is now clocked by explicit DIV-APU events,
+        // not by the internal fs_timer. One call to clock_div_apu()
+        // advances by one step.
+        apu.clock_div_apu();
+        assert_eq!(
+            apu.fs_step, 1,
+            "fs_step must be 1 after one clock_div_apu()"
+        );
     }
 
     #[test]
     fn test_frame_sequencer_wraps_at_8() {
         let mut apu = powered_apu();
-        for _ in 0u32..16_384 {
-            apu.tick(1);
+        // Clock frame sequencer 8 times to verify wrap
+        for _ in 0..8 {
+            apu.clock_div_apu();
         }
         assert_eq!(apu.fs_step, 0, "fs_step must wrap back to 0 after 8 steps");
     }
@@ -874,5 +878,54 @@ mod tests {
         // PCM registers should return 0 when powered off
         assert_eq!(apu.read_pcm12(), 0x00);
         assert_eq!(apu.read_pcm34(), 0x00);
+    }
+
+    #[test]
+    fn test_ch1_length_counter_clocked_by_div_apu_event() {
+        // Simulates the scenario in SameSuite channel_1_stop_div:
+        // Setup CH1 with length_counter = 1, then clock the frame sequencer
+        // via DIV-APU event, which should stop the channel.
+        let mut apu = powered_apu();
+
+        // Setup CH1: duty 50%, length_load = 63 → counter = 64 - 63 = 1
+        apu.write_register(0xFF11, 0x80 | 0x3F);
+        assert_eq!(apu.ch1.length_counter, 1, "CH1 length counter should be 1");
+
+        // Enable DAC and set volume
+        apu.write_register(0xFF12, 0x80); // volume = 8, no envelope
+
+        // Trigger with length enabled
+        apu.write_register(0xFF14, 0xC0);
+
+        // Channel should be active after trigger
+        assert!(
+            apu.ch1.is_active(),
+            "CH1 should be active after trigger with DAC on"
+        );
+        assert!(
+            apu.ch1.length_en(),
+            "CH1 length should be enabled after NR14 write"
+        );
+
+        // Clock the frame sequencer via DIV-APU event.
+        // Since fs_step starts at 0 after power-on, FS_TABLE[0] = 0x01 clocks length.
+        apu.clock_div_apu();
+
+        // Length counter should have decremented from 1 to 0, stopping the channel
+        assert_eq!(
+            apu.ch1.length_counter, 0,
+            "CH1 length counter should be 0 after clocking"
+        );
+        assert!(
+            !apu.ch1.is_active(),
+            "CH1 should be inactive after length counter reaches 0"
+        );
+
+        // PCM12 should show 0 for CH1 now
+        assert_eq!(
+            apu.read_pcm12() & 0x0F,
+            0,
+            "CH1 digital output should be 0 after channel stops"
+        );
     }
 }
