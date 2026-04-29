@@ -463,8 +463,8 @@ pub const CGB_BOOT_ROM: [u8; 2048] = {
 ///
 /// CGB-0 is a rare early CGB revision with a slightly different boot ROM.
 /// The key difference: CGB-0 does NOT initialize wave RAM ($FF30-$FF3F),
-/// leaving it at its power-on state of all zeros. This is confirmed by
-/// Pan Docs and SameBoy's implementation.
+/// leaving it unchanged in its power-on state rather than guaranteeing any
+/// specific initial value. This matches Pan Docs and SameBoy's handling.
 ///
 /// All other aspects are identical to the Production CGB boot ROM:
 /// - Same post-boot CPU register values (A=$11, F=$80, B=$00, C=$00, D=$00, E=$08, H=$00, L=$7C)

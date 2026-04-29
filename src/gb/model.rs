@@ -120,8 +120,8 @@ pub enum CgbModel {
     /// DIV=$04 at cartridge entry.
     ///
     /// **Key difference from Production CGB**: CGB-0 does NOT initialize wave RAM
-    /// ($FF30-$FF3F), leaving it at all zeros. Production CGB initializes wave RAM
-    /// to an alternating 0x00/0xFF pattern.
+    /// ($FF30-$FF3F), leaving it unchanged with undefined power-on contents.
+    /// Production CGB initializes wave RAM to an alternating 0x00/0xFF pattern.
     Cgb0,
 
     /// CGB-A hardware (early production).

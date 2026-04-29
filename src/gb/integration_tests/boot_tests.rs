@@ -358,12 +358,17 @@ fn run_cgb_until_cartridge_entry(gb: &mut Gb<CgbBus>) -> bool {
     }
 }
 
-/// Helper: boot a fresh CGB with the given model and return it at PC=$0100.
-fn boot_cgb_to_cartridge_entry(model: CgbModel) -> Gb<CgbBus> {
+/// Helper: create a fresh CGB with the given model, ready to boot (PC at boot ROM start).
+fn make_cgb_for_boot_test(model: CgbModel) -> Gb<CgbBus> {
     let rom = build_cgb_test_rom();
     let cart = load_cartridge(&rom).expect("valid ROM");
     // skip_boot_rom=false to actually run the boot ROM
-    let mut gb = Gb::new(CgbBus::new(cart, model, false));
+    Gb::new(CgbBus::new(cart, model, false))
+}
+
+/// Helper: boot a fresh CGB with the given model and return it at PC=$0100.
+fn boot_cgb_to_cartridge_entry(model: CgbModel) -> Gb<CgbBus> {
+    let mut gb = make_cgb_for_boot_test(model);
     let reached = run_cgb_until_cartridge_entry(&mut gb);
     assert!(reached, "Boot ROM must reach $0100 for model {:?}", model);
     gb
@@ -528,21 +533,30 @@ fn test_cgb0_boot_sets_same_register_state_as_production() {
     assert_eq!(gb.cpu.regs.pc, 0x0100, "PC after CGB-0 boot");
 }
 
-/// CGB-0 does NOT initialize wave RAM - it remains all zeros.
+/// CGB-0 does NOT initialize wave RAM.
 ///
-/// This is the key difference between CGB-0 and Production CGB boot ROMs.
+/// The behavioral requirement is that the boot ROM leaves wave RAM unchanged,
+/// not that it forces any particular power-on pattern.
 /// Reference: Pan Docs and SameBoy's implementation both confirm this.
 #[test]
 fn test_cgb0_boot_does_not_init_wave_ram() {
-    let mut gb = boot_cgb_to_cartridge_entry(CgbModel::Cgb0);
+    let mut gb = make_cgb_for_boot_test(CgbModel::Cgb0);
 
-    // Wave RAM ($FF30-$FF3F) should be all zeros for CGB-0
-    for addr in 0xFF30..=0xFF3F {
+    // Snapshot wave RAM before boot
+    let wave_ram_before: Vec<u8> = (0xFF30..=0xFF3F)
+        .map(|addr| read_cgb_bus(&mut gb, addr))
+        .collect();
+
+    let reached = run_cgb_until_cartridge_entry(&mut gb);
+    assert!(reached, "Boot ROM must reach $0100");
+
+    // Wave RAM ($FF30-$FF3F) should be unchanged for CGB-0
+    for (addr, expected) in (0xFF30..=0xFF3F).zip(wave_ram_before.iter().copied()) {
         let val = read_cgb_bus(&mut gb, addr);
         assert_eq!(
-            val, 0x00,
-            "CGB-0 wave RAM at ${:04X} should be $00 (got ${:02X})",
-            addr, val
+            val, expected,
+            "CGB-0 boot should preserve wave RAM at ${:04X} (before ${:02X}, after ${:02X})",
+            addr, expected, val
         );
     }
 }
