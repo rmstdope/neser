@@ -1,5 +1,5 @@
 use crate::gb::apu::Apu;
-use crate::gb::boot_rom::CGB_PLACEHOLDER_BOOT_ROM;
+use crate::gb::boot_rom::CGB_BOOT_ROM;
 use crate::gb::bus::GbBus;
 use crate::gb::bus::hdma::{HdmaAction, HdmaState};
 use crate::gb::cartridge::GbCartridge;
@@ -162,7 +162,7 @@ impl CgbBus {
             ff73: 0x00,
             ff74: 0xFF, // Value on reset per Mooneye test and Pan Docs
             ff75: 0x00,
-            boot_rom: CGB_PLACEHOLDER_BOOT_ROM,
+            boot_rom: CGB_BOOT_ROM,
             boot_rom_active: !skip_boot_rom,
             skip_boot_rom,
         };
@@ -1590,14 +1590,12 @@ mod tests {
         // Given: CgbBus with boot ROM active
         let bus = CgbBus::new(cgb_rom_only_cart(), CgbModel::default(), false);
         // Then: $0000 should read from boot ROM
-        // Placeholder: LD A, $01 ($3E $01); LDH [$FF50], A ($E0 $50); JP $0100 ($C3 $00 $01)
-        assert_eq!(bus.read_for_debugger(0x0000), 0x3E); // LD A, n8
-        assert_eq!(bus.read_for_debugger(0x0001), 0x01); // $01
-        assert_eq!(bus.read_for_debugger(0x0002), 0xE0); // LDH [n8], A
-        assert_eq!(bus.read_for_debugger(0x0003), 0x50); // $50
-        assert_eq!(bus.read_for_debugger(0x0004), 0xC3); // JP
-        assert_eq!(bus.read_for_debugger(0x0005), 0x00); // $00
-        assert_eq!(bus.read_for_debugger(0x0006), 0x01); // $01
+        // CGB_BOOT_ROM starts with: LD SP, $FFFE ($31 $FE $FF); LD A, $80 ($3E $80)
+        assert_eq!(bus.read_for_debugger(0x0000), 0x31); // LD SP, nn
+        assert_eq!(bus.read_for_debugger(0x0001), 0xFE); // low byte of $FFFE
+        assert_eq!(bus.read_for_debugger(0x0002), 0xFF); // high byte of $FFFE
+        assert_eq!(bus.read_for_debugger(0x0003), 0x3E); // LD A, n8
+        assert_eq!(bus.read_for_debugger(0x0004), 0x80); // $80
     }
 
     #[test]
@@ -1726,6 +1724,7 @@ mod tests {
         // Given: CgbBus with boot ROM active
         let bus = CgbBus::new(cgb_rom_only_cart(), CgbModel::default(), false);
         // Then: read_raw should also return boot ROM data
-        assert_eq!(bus.read_raw(0x0000), 0x3E); // LD A, n8 opcode
+        // CGB_BOOT_ROM starts with LD SP, $FFFE (0x31)
+        assert_eq!(bus.read_raw(0x0000), 0x31); // LD SP, nn opcode
     }
 }

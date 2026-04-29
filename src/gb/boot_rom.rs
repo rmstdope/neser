@@ -290,6 +290,154 @@ pub const DMG0_BOOT_ROM: [u8; 256] = [
     0xE0, 0x50, // LDH [$FF50], A  (unmap boot ROM → execute $0100)
 ];
 
+/// Minimal CGB boot ROM (Production variant: CGB-A through CGB-E).
+///
+/// Sets up the post-boot hardware state for CGB-native mode without a boot
+/// animation or intentional startup jingle. To match required post-boot APU
+/// state, it may still perform minimal audio register initialization before
+/// handing off to the cartridge at $0100.
+///
+/// ## Post-boot CPU state (Mooneye-verified)
+///
+/// | Register | Value |
+/// |----------|-------|
+/// | A        | $11   |
+/// | F        | $80 (Z=1, N=0, H=0, C=0) |
+/// | B        | $00   |
+/// | C        | $00   |
+/// | D        | $00   |
+/// | E        | $08   |
+/// | H        | $00   |
+/// | L        | $7C   |
+/// | SP       | $FFFE |
+/// | PC       | $0100 |
+///
+/// Note: Pan Docs lists different values (D=$FF, E=$56, L=$0D) but Mooneye's
+/// `misc/boot_regs-cgb.s` test verifies the above values against real hardware.
+///
+/// ## Post-boot IO state
+///
+/// | Address | Register | Value |
+/// |---------|----------|-------|
+/// | $FF26   | NR52     | $F1 (APU on, channel 1 active) |
+/// | $FF24   | NR50     | $77   |
+/// | $FF25   | NR51     | $F3   |
+/// | $FF40   | LCDC     | $91   |
+/// | $FF47   | BGP      | $FC   |
+///
+/// ## Memory layout
+///
+/// The CGB boot ROM is 2048 bytes, split into two mapped regions:
+/// - $0000-$00FF: Early initialization (256 bytes) → array indices [0..256]
+/// - $0100-$01FF: Cartridge header (NOT in boot ROM; reads go to cartridge)
+/// - $0200-$08FF: Main boot ROM code (1792 bytes) → array indices [256..2048]
+///
+/// This minimal implementation uses only the first 256 bytes.
+pub const CGB_BOOT_ROM: [u8; 2048] = {
+    let mut rom = [0u8; 2048];
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // $0000-$00FF: First mapped region (256 bytes)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // ── $0000: Initialize stack pointer ────────────────────────────────────
+    rom[0x00] = 0x31; // LD SP, $FFFE
+    rom[0x01] = 0xFE;
+    rom[0x02] = 0xFF;
+
+    // ── $0003: APU initialization ──────────────────────────────────────────
+    // Turn on APU
+    rom[0x03] = 0x3E; // LD A, $80
+    rom[0x04] = 0x80;
+    rom[0x05] = 0xE0; // LDH [$26], A  ; NR52 = $80 (APU on)
+    rom[0x06] = 0x26;
+
+    // Set channel 1 duty (50%) - writes $80, reads back as $BF due to mask
+    rom[0x07] = 0xE0; // LDH [$11], A  ; NR11 = $80 (reuse A=$80)
+    rom[0x08] = 0x11;
+
+    // Set channel 1 envelope
+    rom[0x09] = 0x3E; // LD A, $F3
+    rom[0x0A] = 0xF3;
+    rom[0x0B] = 0xE0; // LDH [$12], A  ; NR12 = $F3
+    rom[0x0C] = 0x12;
+
+    // Set sound panning (reuse A=$F3)
+    rom[0x0D] = 0xE0; // LDH [$25], A  ; NR51 = $F3
+    rom[0x0E] = 0x25;
+
+    // Set master volume
+    rom[0x0F] = 0x3E; // LD A, $77
+    rom[0x10] = 0x77;
+    rom[0x11] = 0xE0; // LDH [$24], A  ; NR50 = $77
+    rom[0x12] = 0x24;
+
+    // Trigger channel 1 (makes NR52 read as $F1)
+    rom[0x13] = 0x3E; // LD A, $87
+    rom[0x14] = 0x87;
+    rom[0x15] = 0xE0; // LDH [$14], A  ; NR14 = $87 (trigger, length=0, period=7)
+    rom[0x16] = 0x14;
+
+    // ── $0017: PPU initialization ──────────────────────────────────────────
+    rom[0x17] = 0x3E; // LD A, $91
+    rom[0x18] = 0x91;
+    rom[0x19] = 0xE0; // LDH [$40], A  ; LCDC = $91
+    rom[0x1A] = 0x40;
+
+    rom[0x1B] = 0x3E; // LD A, $FC
+    rom[0x1C] = 0xFC;
+    rom[0x1D] = 0xE0; // LDH [$47], A  ; BGP = $FC
+    rom[0x1E] = 0x47;
+
+    // ── $001F: Set CPU registers ───────────────────────────────────────────
+    // Set AF = $1180 (A=$11, F=$80) using HL trick:
+    // PUSH HL pushes H first, then L. POP AF pops to F first, then A.
+    // So for A=$11, F=$80: set H=$11, L=$80, PUSH HL, POP AF.
+    rom[0x1F] = 0x26; // LD H, $11
+    rom[0x20] = 0x11;
+    rom[0x21] = 0x2E; // LD L, $80
+    rom[0x22] = 0x80;
+    rom[0x23] = 0xE5; // PUSH HL
+    rom[0x24] = 0xF1; // POP AF  ; Now A=$11, F=$80
+
+    // Set B, C, D, E
+    rom[0x25] = 0x06; // LD B, $00
+    rom[0x26] = 0x00;
+    rom[0x27] = 0x0E; // LD C, $00
+    rom[0x28] = 0x00;
+    rom[0x29] = 0x16; // LD D, $00
+    rom[0x2A] = 0x00;
+    rom[0x2B] = 0x1E; // LD E, $08
+    rom[0x2C] = 0x08;
+
+    // Set H, L to final values
+    rom[0x2D] = 0x26; // LD H, $00
+    rom[0x2E] = 0x00;
+    rom[0x2F] = 0x2E; // LD L, $7C
+    rom[0x30] = 0x7C;
+
+    // ── $0031: Jump to boot exit ───────────────────────────────────────────
+    rom[0x31] = 0xC3; // JP $00FE
+    rom[0x32] = 0xFE;
+    rom[0x33] = 0x00;
+
+    // ── $0034-$00FD: Padding (zeros) ───────────────────────────────────────
+    // (already zero-initialized)
+
+    // ── $00FE: Boot exit ───────────────────────────────────────────────────
+    // Write to $FF50 to unmap boot ROM. A=$11 from earlier.
+    // After this instruction completes, PC=$0100 = cartridge entry point.
+    rom[0xFE] = 0xE0; // LDH [$50], A
+    rom[0xFF] = 0x50;
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // $0200-$08FF: Second mapped region (1792 bytes) - unused in minimal ROM
+    // ═══════════════════════════════════════════════════════════════════════
+    // (already zero-initialized)
+
+    rom
+};
+
 /// Placeholder CGB boot ROM for infrastructure testing.
 ///
 /// This is a minimal boot ROM that immediately disables itself and jumps to
