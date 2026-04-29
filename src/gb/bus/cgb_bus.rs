@@ -99,6 +99,9 @@ pub struct CgbBus {
     /// `boot_rom` instead of the cartridge. Writing any value to `$FF50` sets
     /// this to `false` (mirrors real CGB hardware behaviour).
     boot_rom_active: bool,
+    /// When `true`, the boot ROM is skipped on reset (starts at $0100 with
+    /// post-boot register state). Set at construction time.
+    skip_boot_rom: bool,
 }
 
 impl CgbBus {
@@ -150,6 +153,7 @@ impl CgbBus {
             ff75: 0x00,
             boot_rom: CGB_PLACEHOLDER_BOOT_ROM,
             boot_rom_active: !skip_boot_rom,
+            skip_boot_rom,
         };
 
         // Initialize PPU to CGB post-boot state.
@@ -491,6 +495,9 @@ impl CgbBus {
     }
 
     /// Reset bus state (PPU, timer, joypad, APU, RAM, DMA).
+    ///
+    /// Respects the `skip_boot_rom` setting from construction: if `skip_boot_rom`
+    /// was true, the boot ROM remains disabled after reset.
     pub fn reset(&mut self) {
         let apu_rate = self.apu.sample_rate();
         self.ppu = Ppu::new_cgb();
@@ -511,7 +518,8 @@ impl CgbBus {
         self.svbk = 0;
         self.key1 = 0;
         self.apu_tick_accumulator = 0;
-        self.boot_rom_active = true;
+        // Respect skip_boot_rom setting from construction
+        self.boot_rom_active = !self.skip_boot_rom;
         // Reset undocumented CGB registers
         self.ff72 = 0x00;
         self.ff73 = 0x00;
@@ -1591,14 +1599,25 @@ mod tests {
 
     #[test]
     fn test_boot_rom_reset_reactivates_boot_rom() {
-        // Given: CgbBus with boot ROM unmapped
+        // Given: CgbBus with boot ROM unmapped (skip_boot_rom=false, then disabled via $FF50)
         let mut bus = CgbBus::new(cgb_rom_only_cart(), CgbModel::default(), false);
         bus.write(0xFF50, 0x01);
         assert!(!bus.is_boot_rom_active());
         // When: reset
         bus.reset();
-        // Then: boot ROM should be active again
+        // Then: boot ROM should be active again (skip_boot_rom=false means boot ROM runs)
         assert!(bus.is_boot_rom_active());
+    }
+
+    #[test]
+    fn test_boot_rom_reset_respects_skip_boot_rom_setting() {
+        // Given: CgbBus created with skip_boot_rom=true
+        let mut bus = CgbBus::new(cgb_rom_only_cart(), CgbModel::default(), true);
+        assert!(!bus.is_boot_rom_active());
+        // When: reset
+        bus.reset();
+        // Then: boot ROM should remain inactive (skip_boot_rom=true is preserved)
+        assert!(!bus.is_boot_rom_active());
     }
 
     #[test]
