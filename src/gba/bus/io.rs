@@ -66,48 +66,82 @@ impl IoRegisters {
         }
     }
 
+    /// Compute the backing-store index for a halfword access at `addr`.
+    ///
+    /// Returns `None` when `addr` is below the I/O base (underflow) or when
+    /// the access (1 byte at `i` or 2 bytes at `i`/`i+1`) would extend past
+    /// the end of the 1 KB window. Callers can substitute the bus
+    /// open-bus value when this returns `None`.
     fn idx(addr: u32) -> Option<usize> {
-        let off = (addr - 0x0400_0000) as usize;
-        if off < IO_SIZE { Some(off) } else { None }
+        let off = addr.checked_sub(0x0400_0000)? as usize;
+        // Need both bytes of the halfword to lie within the window.
+        if off + 1 < IO_SIZE { Some(off) } else { None }
     }
 
-    /// Read a halfword from the I/O register space.
-    pub fn read16(&self, addr: u32, ic: &InterruptController, timers: &Timers) -> u16 {
+    /// Try to read a halfword from the I/O register space.
+    ///
+    /// Returns `None` for addresses outside the 1 KB I/O window so the bus
+    /// can supply the correct open-bus value instead of treating the read
+    /// as a handled register access returning zero.
+    pub fn try_read16(&self, addr: u32, ic: &InterruptController, timers: &Timers) -> Option<u16> {
         match addr {
-            REG_IE => ic.ie,
-            REG_IF => ic.if_flags,
-            REG_IME => ic.read_ime(),
+            REG_IE => Some(ic.ie),
+            REG_IF => Some(ic.if_flags),
+            REG_IME => Some(ic.read_ime()),
             // Timers: TM{0..3}CNT_L = 0x100, 0x104, 0x108, 0x10C
             // Timers: TM{0..3}CNT_H = 0x102, 0x106, 0x10A, 0x10E
-            0x0400_0100 => timers.read_cnt_l(0),
-            0x0400_0102 => timers.read_cnt_h(0),
-            0x0400_0104 => timers.read_cnt_l(1),
-            0x0400_0106 => timers.read_cnt_h(1),
-            0x0400_0108 => timers.read_cnt_l(2),
-            0x0400_010A => timers.read_cnt_h(2),
-            0x0400_010C => timers.read_cnt_l(3),
-            0x0400_010E => timers.read_cnt_h(3),
-            _ => Self::idx(addr)
-                .map(|i| u16::from_le_bytes([self.bytes[i], self.bytes[i + 1]]))
-                .unwrap_or(0),
+            0x0400_0100 => Some(timers.read_cnt_l(0)),
+            0x0400_0102 => Some(timers.read_cnt_h(0)),
+            0x0400_0104 => Some(timers.read_cnt_l(1)),
+            0x0400_0106 => Some(timers.read_cnt_h(1)),
+            0x0400_0108 => Some(timers.read_cnt_l(2)),
+            0x0400_010A => Some(timers.read_cnt_h(2)),
+            0x0400_010C => Some(timers.read_cnt_l(3)),
+            0x0400_010E => Some(timers.read_cnt_h(3)),
+            _ => Self::idx(addr).map(|i| u16::from_le_bytes([self.bytes[i], self.bytes[i + 1]])),
         }
     }
 
-    /// Read a word from the I/O register space (two halfwords).
-    pub fn read32(&self, addr: u32, ic: &InterruptController, timers: &Timers) -> u32 {
-        let lo = self.read16(addr, ic, timers) as u32;
-        let hi = self.read16(addr.wrapping_add(2), ic, timers) as u32;
-        lo | (hi << 16)
+    /// Try to read a word from the I/O register space (two halfwords).
+    ///
+    /// Returns `None` when either halfword falls outside the 1 KB I/O
+    /// window.
+    pub fn try_read32(&self, addr: u32, ic: &InterruptController, timers: &Timers) -> Option<u32> {
+        let lo = self.try_read16(addr, ic, timers)? as u32;
+        let hi = self.try_read16(addr.wrapping_add(2), ic, timers)? as u32;
+        Some(lo | (hi << 16))
     }
 
-    /// Read a byte from the I/O register space.
-    pub fn read8(&self, addr: u32, ic: &InterruptController, timers: &Timers) -> u8 {
-        let hw = self.read16(addr & !1, ic, timers);
-        if addr & 1 == 0 {
+    /// Try to read a byte from the I/O register space.
+    ///
+    /// Returns `None` when the containing halfword lies outside the 1 KB
+    /// I/O window.
+    pub fn try_read8(&self, addr: u32, ic: &InterruptController, timers: &Timers) -> Option<u8> {
+        let hw = self.try_read16(addr & !1, ic, timers)?;
+        Some(if addr & 1 == 0 {
             hw as u8
         } else {
             (hw >> 8) as u8
-        }
+        })
+    }
+
+    /// Read a halfword from the I/O register space, returning 0 for
+    /// addresses outside the 1 KB I/O window. Prefer [`Self::try_read16`]
+    /// from the bus so the correct open-bus value can be substituted.
+    pub fn read16(&self, addr: u32, ic: &InterruptController, timers: &Timers) -> u16 {
+        self.try_read16(addr, ic, timers).unwrap_or(0)
+    }
+
+    /// Read a word from the I/O register space, returning 0 for addresses
+    /// outside the 1 KB I/O window.
+    pub fn read32(&self, addr: u32, ic: &InterruptController, timers: &Timers) -> u32 {
+        self.try_read32(addr, ic, timers).unwrap_or(0)
+    }
+
+    /// Read a byte from the I/O register space, returning 0 for addresses
+    /// outside the 1 KB I/O window.
+    pub fn read8(&self, addr: u32, ic: &InterruptController, timers: &Timers) -> u8 {
+        self.try_read8(addr, ic, timers).unwrap_or(0)
     }
 
     /// Write a halfword to the I/O register space.
@@ -187,6 +221,29 @@ mod tests {
         // round-trip through the backing store.
         io.write16(0x0400_0040, 0xBEEF, &mut ic, &mut t);
         assert_eq!(io.read16(0x0400_0040, &ic, &t), 0xBEEF);
+    }
+
+    #[test]
+    fn try_read_returns_none_outside_window() {
+        let io = IoRegisters::new();
+        let ic = InterruptController::new();
+        let t = Timers::new();
+        // 0x0400_0400 is one past the documented I/O window.
+        assert_eq!(io.try_read16(0x0400_0400, &ic, &t), None);
+        // Halfword starting at the last byte must also be rejected to
+        // avoid an out-of-bounds backing-store access.
+        assert_eq!(io.try_read16(0x0400_03FF, &ic, &t), None);
+        // An address below the I/O base must not underflow.
+        assert_eq!(io.try_read16(0x0300_0000, &ic, &t), None);
+    }
+
+    #[test]
+    fn try_read_returns_some_inside_window() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        io.write16(0x0400_03FE, 0x1234, &mut ic, &mut t);
+        assert_eq!(io.try_read16(0x0400_03FE, &ic, &t), Some(0x1234));
     }
 
     #[test]

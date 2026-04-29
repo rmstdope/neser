@@ -40,7 +40,8 @@ pub mod wait_states {
     pub const PRAM: [u32; 2] = [1, 2];
     pub const VRAM: [u32; 2] = [1, 2];
     pub const OAM: [u32; 2] = [1, 1];
-    /// Cart ROM (Wait State 0) — N=4, S=2 cycles for halfword (GBATek default).
+    /// Cart ROM (Wait State 0) — halfword N=5, S=3 cycles; word N=8, S=6
+    /// cycles for the post-reset `WAITCNT` timing stub values used here.
     pub const ROM_N: [u32; 2] = [5, 8];
     pub const ROM_S: [u32; 2] = [3, 6];
     pub const SRAM: [u32; 2] = [5, 5];
@@ -214,8 +215,10 @@ impl GbaBus {
     }
 
     /// Map the cartridge ROM with mirroring across the three wait-state
-    /// regions.  Returns `None` if no cartridge is inserted or the offset is
-    /// past the end of ROM.
+    /// regions. The ROM is intentionally mirrored within its 32 MB window
+    /// (the cart bus repeats the inserted image), so this only returns
+    /// `None` when no cartridge is inserted at all — in which case callers
+    /// substitute the GBATek "no-cart" open-bus pattern.
     fn rom_byte(&self, offset: usize) -> Option<u8> {
         if self.rom.is_empty() {
             return None;
@@ -243,7 +246,10 @@ impl Bus for GbaBus {
             }
             0x2 => read_le_u32(&self.ewram, aligned as usize),
             0x3 => read_le_u32(&self.iwram, aligned as usize),
-            0x4 => self.io.read32(aligned, &self.ic, &self.timers),
+            0x4 => self
+                .io
+                .try_read32(aligned, &self.ic, &self.timers)
+                .unwrap_or_else(|| self.open_bus_word()),
             0x5 => read_le_u32(&self.pram, aligned as usize),
             0x6 => {
                 let off = vram_offset(aligned);
@@ -290,7 +296,10 @@ impl Bus for GbaBus {
             }
             0x2 => read_le_u16(&self.ewram, aligned as usize),
             0x3 => read_le_u16(&self.iwram, aligned as usize),
-            0x4 => self.io.read16(aligned, &self.ic, &self.timers),
+            0x4 => self
+                .io
+                .try_read16(aligned, &self.ic, &self.timers)
+                .unwrap_or_else(|| self.open_bus_halfword(aligned)),
             0x5 => read_le_u16(&self.pram, aligned as usize),
             0x6 => {
                 let off = vram_offset(aligned);
@@ -326,7 +335,10 @@ impl Bus for GbaBus {
                 .unwrap_or_else(|| self.open_bus_byte(addr)),
             0x2 => self.ewram[(addr as usize) % EWRAM_SIZE],
             0x3 => self.iwram[(addr as usize) % IWRAM_SIZE],
-            0x4 => self.io.read8(addr, &self.ic, &self.timers),
+            0x4 => self
+                .io
+                .try_read8(addr, &self.ic, &self.timers)
+                .unwrap_or_else(|| self.open_bus_byte(addr)),
             0x5 => self.pram[(addr as usize) % PRAM_SIZE],
             0x6 => self.vram[vram_offset(addr)],
             0x7 => self.oam[(addr as usize) % OAM_SIZE],
@@ -623,5 +635,15 @@ mod tests {
         // A random unimplemented register stretching the dispatch.
         bus.write16(0x0400_0050, 0xBEEF);
         assert_eq!(bus.read16(0x0400_0050), 0xBEEF);
+    }
+
+    #[test]
+    fn io_read_outside_1k_window_returns_open_bus() {
+        let mut bus = GbaBus::new();
+        // Establish a known last-bus value via an EWRAM read.
+        bus.write32(0x0200_0000, 0x1234_5678);
+        let _ = bus.read32(0x0200_0000);
+        // 0x0400_0400 is in I/O region 0x4 but past the 1 KB I/O window.
+        assert_eq!(bus.read32(0x0400_0400), 0x1234_5678);
     }
 }

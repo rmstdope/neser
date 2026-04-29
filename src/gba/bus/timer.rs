@@ -109,9 +109,14 @@ impl Timers {
         // Track per-timer overflow counts so cascade can chain through TM1..TM3.
         let mut overflows = [0u32; 4];
         for (i, t) in self.channels.iter_mut().enumerate() {
-            if !t.enabled() || t.cascade() {
-                // Cascade timers don't tick from CPU cycles — their ticks come
-                // from the previous timer's overflow count, applied below.
+            if !t.enabled() {
+                continue;
+            }
+            // Per GBATek the cascade bit has no effect on TM0 (there is no
+            // previous timer to feed it). For TM1..TM3, cascade-mode timers
+            // don't tick from CPU cycles — their ticks come from the
+            // previous timer's overflow count, applied below.
+            if i > 0 && t.cascade() {
                 continue;
             }
             t.prescaler_acc += cycles;
@@ -280,17 +285,15 @@ mod tests {
     fn cascade_does_not_apply_to_timer0() {
         let mut t = Timers::new();
         let mut ic = InterruptController::new();
-        // Setting cascade on timer 0 has no meaning; it should still tick by
-        // CPU cycles (cascade flag ignored for tick purposes).
-        // Per GBATek the bit is reserved on TM0; we model it as "no CPU
-        // ticks" (cascade off prerequisite holds), which is fine because
-        // there is no previous timer to feed it.
+        // Per GBATek the cascade bit has no effect on TM0, so with
+        // prescaler=0 the counter should advance once per CPU cycle even
+        // when the cascade flag is set.
         t.write_cnt_h(0, enable(0, false, true));
         t.step(100, &mut ic);
         assert_eq!(
             t.read_cnt_l(0),
-            0,
-            "TM0 with cascade flag receives no ticks"
+            100,
+            "TM0 should tick normally even when the cascade flag is set"
         );
     }
 
