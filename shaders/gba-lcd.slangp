@@ -1,0 +1,7 @@
+# GBA LCD placeholder shader preset
+# Uses stock shader until a GBA-specific shader is added
+shaders = 1
+
+shader0 = stock.slang
+filter_linear0 = false
+scale_type0 = viewport

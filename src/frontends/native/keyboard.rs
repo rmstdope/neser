@@ -94,7 +94,10 @@ pub fn handle_key_released(
             }
         }
         Console::GameBoyAdvance(_) => {
-            // GBA input not yet implemented
+            // GBA input not yet implemented - use Game Boy handler for now
+            if let Some(btn_id) = gameboy_key_to_button_id(key_code) {
+                console.set_button(0, btn_id, false);
+            }
         }
     }
 }
