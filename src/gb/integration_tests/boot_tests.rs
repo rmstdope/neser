@@ -312,3 +312,191 @@ fn test_dmg0_boot_sets_correct_register_state() {
     assert_eq!(gb.cpu.regs.sp, 0xFFFE, "SP after DMG-0 boot");
     assert_eq!(gb.cpu.regs.pc, 0x0100, "PC after DMG-0 boot");
 }
+
+// ============================================================================
+// CGB boot ROM tests
+// ============================================================================
+
+use crate::gb::bus::CgbBus;
+use crate::gb::model::CgbModel;
+
+/// Build a minimal 32 KiB ROM for CGB boot tests.
+///
+/// Places a `JR $-2` infinite loop at $0100 and sets the CGB compatibility
+/// flag at $0143 to indicate CGB-native mode.
+fn build_cgb_test_rom() -> Vec<u8> {
+    let mut rom = vec![0u8; 0x8000];
+    rom[0x0100] = 0x18; // JR opcode
+    rom[0x0101] = 0xFE; // offset -2 → jumps back to $0100
+    // CGB compatibility flag: $80 = CGB-compatible, $C0 = CGB-only
+    rom[0x0143] = 0x80;
+    // Cartridge type / ROM+RAM size
+    rom[0x0147] = 0x00; // ROM only
+    rom[0x0148] = 0x00; // 32 KiB
+    rom[0x0149] = 0x00; // no RAM
+    // Header checksum over $0134–$014C
+    let chk = rom[0x0134..=0x014C]
+        .iter()
+        .fold(0u8, |acc, &b| acc.wrapping_sub(b).wrapping_sub(1));
+    rom[0x014D] = chk;
+    rom
+}
+
+/// Step CGB until PC reaches $0100 or cycle limit is exceeded.
+fn run_cgb_until_cartridge_entry(gb: &mut Gb<CgbBus>) -> bool {
+    let start = gb.cycles();
+    loop {
+        if gb.cpu.regs.pc == 0x0100 {
+            return true;
+        }
+        if gb.cycles().saturating_sub(start) >= BOOT_CYCLE_LIMIT {
+            return false;
+        }
+        gb.step();
+    }
+}
+
+/// Helper: boot a fresh CGB with the given model and return it at PC=$0100.
+fn boot_cgb_to_cartridge_entry(model: CgbModel) -> Gb<CgbBus> {
+    let rom = build_cgb_test_rom();
+    let cart = load_cartridge(&rom).expect("valid ROM");
+    // skip_boot_rom=false to actually run the boot ROM
+    let mut gb = Gb::new(CgbBus::new(cart, model, false));
+    let reached = run_cgb_until_cartridge_entry(&mut gb);
+    assert!(reached, "Boot ROM must reach $0100 for model {:?}", model);
+    gb
+}
+
+/// Helper: read an IO register from CGB bus.
+fn read_cgb_io(gb: &mut Gb<CgbBus>, addr: u16) -> u8 {
+    gb.cpu.bus.read(addr)
+}
+
+/// After the CGB boot ROM completes, the CPU registers must match the
+/// Mooneye-verified post-boot-ROM state.
+///
+/// Reference: Mooneye test `misc/boot_regs-cgb.s` (verified on real CGB hardware)
+#[test]
+fn test_cgb_boot_sets_correct_register_state() {
+    let gb = boot_cgb_to_cartridge_entry(CgbModel::CgbE);
+
+    assert_eq!(gb.cpu.regs.a, 0x11, "A register after CGB boot");
+    assert_eq!(gb.cpu.regs.f, 0x80, "F register after CGB boot (Z=1)");
+    assert_eq!(gb.cpu.regs.b, 0x00, "B register after CGB boot");
+    assert_eq!(gb.cpu.regs.c, 0x00, "C register after CGB boot");
+    assert_eq!(gb.cpu.regs.d, 0x00, "D register after CGB boot");
+    assert_eq!(gb.cpu.regs.e, 0x08, "E register after CGB boot");
+    assert_eq!(gb.cpu.regs.h, 0x00, "H register after CGB boot");
+    assert_eq!(gb.cpu.regs.l, 0x7C, "L register after CGB boot");
+    assert_eq!(gb.cpu.regs.sp, 0xFFFE, "SP after CGB boot");
+    assert_eq!(gb.cpu.regs.pc, 0x0100, "PC after CGB boot");
+}
+
+/// Verify key IO registers after CGB boot ROM completes.
+///
+/// Reference: Pan Docs Power Up Sequence hardware registers table
+#[test]
+fn test_cgb_boot_sets_correct_io_registers() {
+    let mut gb = boot_cgb_to_cartridge_entry(CgbModel::CgbE);
+
+    // APU registers
+    assert_eq!(read_cgb_io(&mut gb, 0xFF24), 0x77, "NR50 ($FF24)");
+    assert_eq!(read_cgb_io(&mut gb, 0xFF25), 0xF3, "NR51 ($FF25)");
+    assert_eq!(
+        read_cgb_io(&mut gb, 0xFF26),
+        0xF1,
+        "NR52 ($FF26) - APU on, CH1 active"
+    );
+
+    // PPU registers
+    assert_eq!(read_cgb_io(&mut gb, 0xFF40), 0x91, "LCDC ($FF40)");
+    assert_eq!(read_cgb_io(&mut gb, 0xFF47), 0xFC, "BGP ($FF47)");
+}
+
+/// The boot ROM must unmap itself after writing to $FF50.
+/// Subsequent reads from $0000-$00FF should return cartridge data.
+#[test]
+fn test_cgb_boot_rom_unmaps_after_completion() {
+    let mut gb = boot_cgb_to_cartridge_entry(CgbModel::CgbE);
+
+    // Boot ROM should be inactive after reaching $0100
+    assert!(
+        !gb.cpu.bus.is_boot_rom_active(),
+        "Boot ROM should be unmapped after boot completion"
+    );
+
+    // Read from $0000 should return cartridge data (all zeros in our test ROM)
+    assert_eq!(
+        read_cgb_io(&mut gb, 0x0000),
+        0x00,
+        "Read from $0000 should return cartridge data after boot"
+    );
+
+    // Read from $0100-$0101 should return our JR -2 loop
+    assert_eq!(
+        read_cgb_io(&mut gb, 0x0100),
+        0x18,
+        "Read from $0100 should return JR opcode"
+    );
+    assert_eq!(
+        read_cgb_io(&mut gb, 0x0101),
+        0xFE,
+        "Read from $0101 should return -2 offset"
+    );
+}
+
+/// CGB-A through CGB-E should produce identical post-boot state.
+///
+/// All production CGB models share the same boot ROM and should produce
+/// identical CPU register values and IO register values at $0100.
+#[test]
+fn test_cgb_a_through_e_produce_identical_post_boot_state() {
+    let mut gb_a = boot_cgb_to_cartridge_entry(CgbModel::CgbA);
+    let mut gb_e = boot_cgb_to_cartridge_entry(CgbModel::CgbE);
+
+    // CPU registers
+    assert_eq!(gb_a.cpu.regs.af(), gb_e.cpu.regs.af(), "AF: CGB-A vs CGB-E");
+    assert_eq!(gb_a.cpu.regs.bc(), gb_e.cpu.regs.bc(), "BC: CGB-A vs CGB-E");
+    assert_eq!(gb_a.cpu.regs.de(), gb_e.cpu.regs.de(), "DE: CGB-A vs CGB-E");
+    assert_eq!(gb_a.cpu.regs.hl(), gb_e.cpu.regs.hl(), "HL: CGB-A vs CGB-E");
+    assert_eq!(gb_a.cpu.regs.sp, gb_e.cpu.regs.sp, "SP: CGB-A vs CGB-E");
+
+    // Key IO registers
+    let io_addrs: &[u16] = &[0xFF24, 0xFF25, 0xFF26, 0xFF40, 0xFF47];
+    for &addr in io_addrs {
+        let a = read_cgb_io(&mut gb_a, addr);
+        let e = read_cgb_io(&mut gb_e, addr);
+        assert_eq!(
+            a, e,
+            "IO ${:04X}: CGB-A (${:02X}) vs CGB-E (${:02X})",
+            addr, a, e
+        );
+    }
+}
+
+/// The CGB boot ROM accepts any cartridge without logo verification.
+///
+/// Unlike the real Nintendo boot ROM, our IPR-free implementation does not
+/// verify the Nintendo logo, so any cartridge data is accepted.
+#[test]
+fn test_cgb_boot_accepts_any_cartridge() {
+    let mut rom = build_cgb_test_rom();
+    // Put garbage in the logo area
+    for (i, byte) in rom[0x0104..0x0134].iter_mut().enumerate() {
+        *byte = (((0x0104 + i) * 17) & 0xFF) as u8;
+    }
+    // Recompute header checksum
+    let chk = rom[0x0134..=0x014C]
+        .iter()
+        .fold(0u8, |acc, &b| acc.wrapping_sub(b).wrapping_sub(1));
+    rom[0x014D] = chk;
+
+    let cart = load_cartridge(&rom).expect("valid ROM");
+    let mut gb = Gb::new(CgbBus::new(cart, CgbModel::CgbE, false));
+    let reached = run_cgb_until_cartridge_entry(&mut gb);
+
+    assert!(
+        reached,
+        "Boot ROM must accept any cartridge and reach $0100"
+    );
+}
