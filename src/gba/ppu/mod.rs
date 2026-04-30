@@ -338,8 +338,8 @@ impl Ppu {
     /// is enabled in DISPCNT.
     fn render_mode3_scanline(&mut self, y: u32, vram: &[u8]) {
         if !self.bg2_enabled() {
-            // BG2 disabled in mode 3 → backdrop. (Use entry 0 from PRAM
-            // is unavailable here — fall back to black.)
+            // BG2 disabled in mode 3 → backdrop. PRAM entry 0 is
+            // unavailable here — fall back to black.
             let row_start = (y as usize) * (SCREEN_WIDTH as usize) * BYTES_PER_PIXEL;
             let row_end = row_start + (SCREEN_WIDTH as usize) * BYTES_PER_PIXEL;
             for byte in &mut self.framebuffer[row_start..row_end] {
