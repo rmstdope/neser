@@ -238,11 +238,11 @@ All Game Boy (DMG) hardware lives under `src/gb/`. The module is structured arou
 
 #### Game Boy Advance Emulation (`src/gba/`)
 
-All Game Boy Advance hardware lives under `src/gba/`. The module currently provides the ARM7TDMI CPU core and the system memory bus / I/O register foundation; subsequent phases will add the PPU, APU, DMA and cartridge layers.
+All Game Boy Advance hardware lives under `src/gba/`. The module currently provides the ARM7TDMI CPU core, the system memory bus / I/O register foundation, and the cartridge loader (header parsing + auto-detected SRAM/EEPROM/Flash save backends); subsequent phases will add the PPU, APU and DMA layers.
 
 | Directory/File | Description |
 | ---------------- | ------------- |
-| `src/gba/mod.rs` | Game Boy Advance module root. Re-exports `Gba` (platform-facing wrapper), the `cpu` sub-module, and `GbaBus`. |
+| `src/gba/mod.rs` | Game Boy Advance module root. Re-exports `Gba` (platform-facing wrapper), the `cpu` sub-module, `GbaBus`, and `GbaCartridge` / `SaveType` / `load_cartridge`. |
 | `src/gba/console/gba.rs` | `Gba` — platform-facing GBA wrapper implementing the `Emulator` trait. Currently a stub; will own the ARM7TDMI core, bus, PPU, etc. as subsequent phases land. |
 | `src/gba/cpu/mod.rs` | Module root for the ARM7TDMI core. Re-exports `Arm7tdmi`, `Bus`, `RamBus`, `Registers`, `CpuMode`, etc. |
 | `src/gba/cpu/registers.rs` | `Registers` — ARM7TDMI register file with R0–R15, CPSR, and per-mode banked SPSR/SP/LR (and FIQ-banked R8–R12). Includes `CpuMode` (USR/FIQ/IRQ/SVC/ABT/UND/SYS) and `condition_met` for the 16 ARM condition codes. |
@@ -255,6 +255,13 @@ All Game Boy Advance hardware lives under `src/gba/`. The module currently provi
 | `src/gba/bus/io.rs` | `IoRegisters` — dispatch table for the `0x0400_0000`–`0x0400_03FF` I/O window. Routes interrupt-controller and timer registers to live state and provides a backing store for the remaining ~300 registers so unimplemented PPU/APU/DMA registers don't panic. |
 | `src/gba/bus/interrupt.rs` | `InterruptController` — `IE`/`IF`/`IME` registers with write-1-to-clear `IF` semantics and an `irq_line()` predicate consumed by the CPU. |
 | `src/gba/bus/timer.rs` | `Timers` / `Timer` — 4-channel 16-bit timer bank with prescalers (1/64/256/1024), cascade mode, reload latching, enable rising-edge load and overflow IRQ generation. |
+| `src/gba/cartridge/mod.rs` | Cartridge module root. Re-exports `GbaCartridge`, `load_cartridge`, `SaveType`, and the per-backend types. |
+| `src/gba/cartridge/header.rs` | `GbaHeader` parser — reads title, game code, maker code, the fixed `0x96` byte and computes/validates the header complement check (offsets `0x0A0..=0x0BC`). |
+| `src/gba/cartridge/save_type.rs` | `SaveType` enum (`None` / `Sram32K` / `Eeprom512` / `Eeprom8K` / `Flash64K` / `Flash128K`) and the `detect_save_type` heuristic that scans 4-byte aligned ROM offsets for `EEPROM_V`, `SRAM_V`, `FLASH_V`, `FLASH512_V`, `FLASH1M_V`. |
+| `src/gba/cartridge/sram.rs` | `Sram` — 32 KB battery-backed SRAM with mirrored read/write and `snapshot`/`restore` for `.sav` flush. |
+| `src/gba/cartridge/eeprom.rs` | `Eeprom` — 512 B / 8 KB EEPROM bit-serial I²C state machine (`write_bit` / `read_bit`) handling read & write transactions over 6/14-bit address busses. |
+| `src/gba/cartridge/flash.rs` | `Flash` — 64 KB single-bank / 128 KB dual-bank Flash backend implementing the JEDEC magic-write command sequence: byte program, sector erase, chip erase, ID readback (`0x90`/`0xF0`) and bank switch (`0xB0`). |
+| `src/gba/cartridge/cartridge.rs` | `GbaCartridge` aggregate — owns the ROM image, parsed header and selected `SaveBackend`. `load_cartridge` validates size (≤ 32 MB), parses the header and constructs the matching backend. |
 
 #### Frontends
 

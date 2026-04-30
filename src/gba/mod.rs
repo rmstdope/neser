@@ -5,8 +5,10 @@
 //! in subsequent phases.
 
 pub mod bus;
+pub mod cartridge;
 pub mod console;
 pub mod cpu;
 
 pub use bus::GbaBus;
+pub use cartridge::{GbaCartridge, SaveType, load_cartridge};
 pub use console::gba::Gba;
