@@ -819,22 +819,47 @@ impl Channel1 {
         self.sweep_calc_reload_timer = 0;
         self.unshifted_sweep = false;
         self.instant_calc_done = false;
-        // Trigger-time overflow check required by hardware even when sweep is otherwise idle.
-        if self.sweep_shift > 0 {
-            if self.sweep_negate {
-                self.negate_used = true;
+        if self.uses_deferred_sweep() {
+            // SameBoy NR14 trigger sweep init (`Core/apu.c`):
+            //   if (NR10 & 7) {
+            //       calc_countdown = NR10 & 7;
+            //       reload_timer = (lf_div ^ !double_speed) && model<=CGB_C ? 3 : 2;
+            //       if (!was_active) reload_timer++;
+            //       sweep_length_addend = sample_length >> (NR10 & 7);
+            //   } else {
+            //       sweep_length_addend = 0;
+            //   }
+            // We only target CGB-E (model > CGB_C); the lf_div/CGB-C branch
+            // never fires, so reload_timer = 2 (or 3 if !was_active).
+            if self.sweep_shift > 0 {
+                self.sweep_calc_countdown = self.sweep_shift;
+                self.sweep_calc_reload_timer = 2;
+                if !was_active {
+                    self.sweep_calc_reload_timer += 1;
+                }
+                self.unshifted_sweep = false;
+                self.sweep_length_addend = self.freq >> self.sweep_shift;
+                if self.sweep_negate {
+                    self.negate_used = true;
+                }
             }
-            // Synchronous trigger-time overflow check (matches Pan Docs and
-            // existing Blargg 05-sweep test 4 expectations). The deferred
-            // machinery handles the *second* (mid-sweep) overflow.
-            let delta = self.sweep_shadow >> self.sweep_shift;
-            let new_freq = if self.sweep_negate {
-                self.sweep_shadow.wrapping_sub(delta)
-            } else {
-                self.sweep_shadow + delta
-            };
-            if new_freq > 2047 {
-                self.active = false;
+        } else {
+            // Synchronous trigger-time overflow check (Pan Docs / Blargg
+            // 05-sweep test 4). The deferred machinery (above) handles the
+            // overflow check via its own `sweep_calculation_done` path.
+            if self.sweep_shift > 0 {
+                if self.sweep_negate {
+                    self.negate_used = true;
+                }
+                let delta = self.sweep_shadow >> self.sweep_shift;
+                let new_freq = if self.sweep_negate {
+                    self.sweep_shadow.wrapping_sub(delta)
+                } else {
+                    self.sweep_shadow + delta
+                };
+                if new_freq > 2047 {
+                    self.active = false;
+                }
             }
         }
         // SameBoy `Core/apu.c`:
@@ -1456,6 +1481,107 @@ mod tests {
         ch.instant_calc_done = false;
         ch.sweep_tick();
         assert_eq!(ch.sweep_calc_countdown, 2);
+    }
+
+    // ── Phase 7 / D2: trigger arms the deferred sweep machinery ──────────
+    //
+    // SameBoy `Core/apu.c` NR14 trigger (square channel 1):
+    //   if (NR10 & 7) {                              // shift > 0
+    //       sweep_calculate_countdown = NR10 & 7;
+    //       sweep_calc_reload_timer = 2;             // CGB-E (model > C)
+    //       if (!was_active) sweep_calc_reload_timer++;   // → 3
+    //       sweep_length_addend = sample_length >> (NR10 & 7);
+    //   } else {
+    //       sweep_length_addend = 0;
+    //   }
+    //
+    // The trigger-time overflow check is a side effect of the deferred path,
+    // not an inline synchronous check. Gated on `uses_deferred_sweep()` so
+    // DMG/pre-CGB-E retain the synchronous overflow check.
+
+    #[test]
+    fn test_trigger_arms_deferred_calc_countdown_from_shift_cgb_e() {
+        let mut ch = Channel1::new();
+        ch.set_model(true, CgbModel::CgbE);
+        ch.force_deferred_sweep_for_tests = true;
+        ch.write_nr12(0xF0);
+        ch.write_nr10(0x14, false); // period=1, shift=4
+        ch.write_nr13(0x10);
+        ch.write_nr14(0x80, false, false);
+        assert_eq!(
+            ch.sweep_calc_countdown, 4,
+            "trigger must load calc_countdown from NR10 shift bits"
+        );
+    }
+
+    #[test]
+    fn test_trigger_arms_reload_timer_to_three_when_inactive_cgb_e() {
+        let mut ch = Channel1::new();
+        ch.set_model(true, CgbModel::CgbE);
+        ch.force_deferred_sweep_for_tests = true;
+        ch.write_nr12(0xF0);
+        ch.write_nr10(0x14, false); // shift=4
+        ch.write_nr13(0x10);
+        ch.write_nr14(0x80, false, false); // first trigger, was_active=false
+        assert_eq!(
+            ch.sweep_calc_reload_timer, 3,
+            "trigger from inactive must set reload_timer = 2 (CGB-E base) + 1 (!was_active)"
+        );
+    }
+
+    #[test]
+    fn test_trigger_arms_reload_timer_to_two_when_already_active_cgb_e() {
+        let mut ch = Channel1::new();
+        ch.set_model(true, CgbModel::CgbE);
+        ch.force_deferred_sweep_for_tests = true;
+        ch.write_nr12(0xF0);
+        ch.write_nr10(0x14, false); // shift=4
+        ch.write_nr13(0x10);
+        ch.write_nr14(0x80, false, false); // first trigger
+        // Re-trigger while still active:
+        ch.write_nr14(0x80, false, false);
+        assert_eq!(
+            ch.sweep_calc_reload_timer, 2,
+            "retrigger while active must set reload_timer = 2 (no +1 bump)"
+        );
+    }
+
+    #[test]
+    fn test_trigger_loads_sweep_length_addend_from_shifted_freq() {
+        // SameBoy: sweep_length_addend = sample_length >> (NR10 & 7) at
+        // trigger when shift > 0.
+        let mut ch = Channel1::new();
+        ch.set_model(true, CgbModel::CgbE);
+        ch.force_deferred_sweep_for_tests = true;
+        ch.write_nr12(0xF0);
+        ch.write_nr10(0x12, false); // period=1, shift=2
+        ch.write_nr13(0x40); // freq low: 0x40
+        ch.write_nr14(0x82, false, false); // freq high: 2 → freq=0x240=576
+        // sweep_length_addend = 576 >> 2 = 144.
+        assert_eq!(ch.sweep_length_addend, 144);
+    }
+
+    #[test]
+    fn test_trigger_with_shift_zero_does_not_arm_machinery() {
+        let mut ch = Channel1::new();
+        ch.set_model(true, CgbModel::CgbE);
+        ch.force_deferred_sweep_for_tests = true;
+        ch.write_nr12(0xF0);
+        ch.write_nr10(0x10, false); // period=1, shift=0
+        ch.write_nr13(0x40);
+        ch.write_nr14(0x80, false, false);
+        assert_eq!(
+            ch.sweep_calc_countdown, 0,
+            "trigger with shift=0 must not arm calc_countdown"
+        );
+        assert_eq!(
+            ch.sweep_calc_reload_timer, 0,
+            "trigger with shift=0 must not arm reload_timer"
+        );
+        assert_eq!(
+            ch.sweep_length_addend, 0,
+            "trigger with shift=0 must zero sweep_length_addend"
+        );
     }
 
     #[test]
