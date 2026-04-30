@@ -209,7 +209,7 @@ impl IoRegisters {
             REG_IME => ic.write_ime(value),
             // PPU display registers.
             ppu::REG_DISPCNT => ppu.write_dispcnt(value),
-            ppu::REG_DISPSTAT => ppu.write_dispstat(value),
+            ppu::REG_DISPSTAT => ppu.write_dispstat(value, ic),
             ppu::REG_VCOUNT => { /* VCOUNT is read-only */ }
             0x0400_0100 => timers.write_cnt_l(0, value),
             0x0400_0102 => timers.write_cnt_h(0, value),

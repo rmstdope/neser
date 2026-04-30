@@ -180,12 +180,15 @@ impl GbaBus {
         self.run_pending_dma();
     }
 
-    /// Propagate PPU V-Blank / H-Blank edges to DMA-mode hooks.
+    /// Propagate PPU V-Blank / H-Blank edges to DMA-mode hooks. Each
+    /// edge is forwarded individually because a single PPU step may
+    /// span many scanlines (and thus many V-Blank/H-Blank edges) when
+    /// the CPU executes a long block of instructions between calls.
     fn handle_ppu_events(&mut self, events: PpuStepEvents) {
-        if events.vblank_started {
+        for _ in 0..events.vblank_starts {
             self.notify_vblank();
         }
-        if events.hblank_started {
+        for _ in 0..events.hblank_starts {
             self.notify_hblank();
         }
     }
