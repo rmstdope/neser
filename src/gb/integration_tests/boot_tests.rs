@@ -674,14 +674,13 @@ fn test_cgb_boot_dmg_only_cartridge_sets_opri_dmg_mode() {
 /// Reference: Pan Docs CGB Registers, KEY0 description.
 #[test]
 fn test_cgb_boot_cgb_compatible_cartridge_sets_key0_cgb_mode() {
-    let mut gb = boot_cgb_with_cgb_flag(CgbModel::CgbE, 0x80);
+    let gb = boot_cgb_with_cgb_flag(CgbModel::CgbE, 0x80);
 
-    // KEY0 ($FF4C): should contain CGB flag value $80
-    // Upper nibble reads as 1s, so expect $F0 | (0x80 & 0x0F) = $F0
-    let key0 = read_cgb_bus(&mut gb, 0xFF4C);
+    // KEY0 raw value should be the CGB flag ($80)
+    let key0 = gb.cpu.bus.key0();
     assert_eq!(
-        key0, 0xF0,
-        "KEY0 should be $F0 ($80 with unused bits as 1s) for CGB-compatible, got ${:02X}",
+        key0, 0x80,
+        "KEY0 raw value should be $80 for CGB-compatible cartridge, got ${:02X}",
         key0
     );
 }
@@ -706,14 +705,13 @@ fn test_cgb_boot_cgb_compatible_cartridge_keeps_opri_cgb_mode() {
 /// CGB-only cartridges ($0143 = $C0) should set KEY0 to the CGB flag value.
 #[test]
 fn test_cgb_boot_cgb_only_cartridge_sets_key0() {
-    let mut gb = boot_cgb_with_cgb_flag(CgbModel::CgbE, 0xC0);
+    let gb = boot_cgb_with_cgb_flag(CgbModel::CgbE, 0xC0);
 
-    // KEY0 ($FF4C): should contain CGB flag value $C0
-    // Upper nibble reads as 1s, so expect $F0 | (0xC0 & 0x0F) = $F0
-    let key0 = read_cgb_bus(&mut gb, 0xFF4C);
+    // KEY0 raw value should be the CGB flag ($C0)
+    let key0 = gb.cpu.bus.key0();
     assert_eq!(
-        key0, 0xF0,
-        "KEY0 should be $F0 ($C0 with unused bits as 1s) for CGB-only, got ${:02X}",
+        key0, 0xC0,
+        "KEY0 raw value should be $C0 for CGB-only cartridge, got ${:02X}",
         key0
     );
 }
@@ -781,15 +779,17 @@ fn test_cgb0_boot_dmg_only_cartridge_sets_key0_dmg_mode() {
 /// CGB-0 boot ROM should handle CGB-compatible cartridges the same as Production.
 #[test]
 fn test_cgb0_boot_cgb_compatible_cartridge_sets_key0_cgb_mode() {
-    let mut gb = boot_cgb_with_cgb_flag(CgbModel::Cgb0, 0x80);
+    let gb = boot_cgb_with_cgb_flag(CgbModel::Cgb0, 0x80);
 
-    let key0 = read_cgb_bus(&mut gb, 0xFF4C);
+    // Use raw key0() to verify actual stored value
+    let key0 = gb.cpu.bus.key0();
     assert_eq!(
-        key0, 0xF0,
-        "CGB-0: KEY0 should be $F0 for CGB-compatible cartridge, got ${:02X}",
+        key0, 0x80,
+        "CGB-0: KEY0 raw value should be $80 for CGB-compatible cartridge, got ${:02X}",
         key0
     );
 
+    let mut gb = gb;
     let opri = read_cgb_bus(&mut gb, 0xFF6C);
     assert_eq!(
         opri & 0x01,
