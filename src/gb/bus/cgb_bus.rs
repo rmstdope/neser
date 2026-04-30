@@ -253,6 +253,11 @@ impl CgbBus {
         };
         bus.timer.set_div_counter(initial_div_counter);
 
+        // Propagate the CGB hardware revision to the APU so model-specific
+        // sweep/timing quirks (e.g. CH1 restart_hold) match the selected
+        // hardware. Default `Apu::new` assumes `CgbE`.
+        bus.apu.set_cgb_model(model);
+
         bus
     }
 
@@ -608,6 +613,7 @@ impl CgbBus {
         self.joypad = Joypad::new();
         self.apu = Apu::new(self.cart.is_cgb());
         self.apu.set_sample_rate(apu_rate);
+        self.apu.set_cgb_model(self.model);
         self.wram = [[0u8; 0x1000]; 8];
         self.hram = [0u8; 0x7F];
         self.if_reg = 0;

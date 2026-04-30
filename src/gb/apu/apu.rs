@@ -127,8 +127,12 @@ pub struct Apu {
 impl Apu {
     /// Create a new APU in the power-off state.
     pub fn new(is_cgb: bool) -> Self {
+        let mut ch1 = Channel1::new();
+        // Default CGB revision = CgbE (latest); CgbBus overrides via
+        // `set_cgb_model` once it knows the configured revision.
+        ch1.set_model(is_cgb, crate::gb::model::CgbModel::CgbE);
         Self {
-            ch1: Channel1::new(),
+            ch1,
             ch2: Channel2::new(),
             ch3: Channel3::new_with_mode(is_cgb),
             ch4: Channel4::new(),
@@ -162,6 +166,13 @@ impl Apu {
     /// deserializing old save states that predate this field.
     fn default_hp_rc() -> f32 {
         Self::compute_hp_rc(44_100.0)
+    }
+
+    /// Set the CGB hardware revision and propagate it to subchannels that
+    /// consume it (currently CH1 sweep timing). Should be called once at
+    /// bus construction; default model in `Apu::new` is correct for DMG.
+    pub fn set_cgb_model(&mut self, cgb_model: crate::gb::model::CgbModel) {
+        self.ch1.set_model(self.is_cgb, cgb_model);
     }
 
     /// Set the output sample rate in Hz (default: 44 100).

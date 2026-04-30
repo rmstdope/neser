@@ -1,5 +1,6 @@
 //! CH1 – Pulse channel with frequency sweep (NR10–NR14).
 
+use crate::gb::model::CgbModel;
 use crate::trace_apu;
 use serde::{Deserialize, Serialize};
 
@@ -61,6 +62,22 @@ pub struct Channel1 {
     /// Envelope clock state for zombie mode glitch tracking.
     #[serde(default)]
     env_clock_state: EnvelopeClockState,
+
+    // ── SameBoy-derived sub-M-cycle sweep machinery (Phase 2+) ───────────
+    /// `true` when running on a CGB-mode model. Gates CGB-specific sweep
+    /// timing constants. Set via `set_model()` from the APU.
+    #[serde(default)]
+    is_cgb: bool,
+    /// CGB hardware revision (only consulted when `is_cgb`). Default `CgbE`.
+    #[serde(default)]
+    cgb_model: CgbModel,
+    /// `channel_1_restart_hold` — M-cycle countdown after a trigger during
+    /// which sweep activity is suppressed. Set in `trigger()`, decremented
+    /// per M-cycle in `tick()`. Phase 2 only sets/decrements; the gating on
+    /// dependent state machines lands in Phases 3–5.
+    /// Ref: SameBoy `Core/apu.c` `gb->apu.channel_1_restart_hold`.
+    #[serde(default)]
+    pub(super) restart_hold: u8,
 }
 
 impl Default for Channel1 {
@@ -96,7 +113,18 @@ impl Channel1 {
             triggered_once: false,
             first_sample_zero: false,
             env_clock_state: EnvelopeClockState::default(),
+            is_cgb: false,
+            cgb_model: CgbModel::CgbE,
+            restart_hold: 0,
         }
+    }
+
+    /// Set the CGB-mode flag and hardware revision used by sweep timing.
+    /// Should be called once after construction by the APU. Default state
+    /// (DMG, `CgbE`) is correct for DMG hardware.
+    pub fn set_model(&mut self, is_cgb: bool, cgb_model: CgbModel) {
+        self.is_cgb = is_cgb;
+        self.cgb_model = cgb_model;
     }
 
     pub fn is_active(&self) -> bool {
@@ -143,6 +171,11 @@ impl Channel1 {
     /// When the timer expires mid-M-cycle, the remaining T-cycles are applied
     /// after the reload, ensuring correct phase alignment.
     pub fn tick(&mut self) {
+        // SameBoy: restart_hold counts down by 1 per M-cycle, saturating at 0.
+        // Ref: `Core/apu.c` GB_apu_run — `if (gb->apu.channel_1_restart_hold) gb->apu.channel_1_restart_hold--;`
+        if self.restart_hold > 0 {
+            self.restart_hold -= 1;
+        }
         let period = (2048 - self.freq) * 4;
         if self.freq_timer == 0 {
             self.freq_timer = period;
@@ -503,6 +536,15 @@ impl Channel1 {
             }
             self.disable_if_sweep_overflows();
         }
+        // SameBoy `Core/apu.c`:
+        //     channel_1_restart_hold = 2 - lf_div + (is_cgb && model != CGB_D) * 2
+        // Suppresses sweep activity for a few M-cycles after trigger.
+        let cgb_bonus: u8 = if self.is_cgb && self.cgb_model != CgbModel::CgbD {
+            2
+        } else {
+            0
+        };
+        self.restart_hold = 2u8 - (lf_div as u8) + cgb_bonus;
     }
 }
 
@@ -521,6 +563,92 @@ mod tests {
         // NR14: trigger, no length enable, freq high = 0
         ch.write_nr14(0x80, false, false);
         ch
+    }
+
+    // ── Phase 2: restart_hold ────────────────────────────────────────────
+    //
+    // SameBoy `Core/apu.c`:
+    //     channel_1_restart_hold = 2 - lf_div + (is_cgb && model != CGB_D) * 2
+    //
+    // Truth table (lf_div is 0/false or 1/true):
+    //   DMG:           lf_div=0 → 2,  lf_div=1 → 1
+    //   CGB-D:         lf_div=0 → 2,  lf_div=1 → 1
+    //   CGB-A/B/C/E:   lf_div=0 → 4,  lf_div=1 → 3
+
+    fn ch1_for_trigger(is_cgb: bool, cgb_model: CgbModel) -> Channel1 {
+        let mut ch = Channel1::new();
+        ch.set_model(is_cgb, cgb_model);
+        ch.write_nr12(0xF0); // DAC on
+        ch.write_nr11(0x80);
+        ch
+    }
+
+    #[test]
+    fn test_restart_hold_dmg_lf_div_low() {
+        let mut ch = ch1_for_trigger(false, CgbModel::CgbE);
+        ch.write_nr14(0x80, false, /* lf_div = */ false);
+        assert_eq!(ch.restart_hold, 2);
+    }
+
+    #[test]
+    fn test_restart_hold_dmg_lf_div_high() {
+        let mut ch = ch1_for_trigger(false, CgbModel::CgbE);
+        ch.write_nr14(0x80, false, /* lf_div = */ true);
+        assert_eq!(ch.restart_hold, 1);
+    }
+
+    #[test]
+    fn test_restart_hold_cgb_d_lf_div_low() {
+        let mut ch = ch1_for_trigger(true, CgbModel::CgbD);
+        ch.write_nr14(0x80, false, false);
+        assert_eq!(ch.restart_hold, 2);
+    }
+
+    #[test]
+    fn test_restart_hold_cgb_d_lf_div_high() {
+        let mut ch = ch1_for_trigger(true, CgbModel::CgbD);
+        ch.write_nr14(0x80, false, true);
+        assert_eq!(ch.restart_hold, 1);
+    }
+
+    #[test]
+    fn test_restart_hold_cgb_e_lf_div_low() {
+        let mut ch = ch1_for_trigger(true, CgbModel::CgbE);
+        ch.write_nr14(0x80, false, false);
+        assert_eq!(ch.restart_hold, 4);
+    }
+
+    #[test]
+    fn test_restart_hold_cgb_e_lf_div_high() {
+        let mut ch = ch1_for_trigger(true, CgbModel::CgbE);
+        ch.write_nr14(0x80, false, true);
+        assert_eq!(ch.restart_hold, 3);
+    }
+
+    #[test]
+    fn test_restart_hold_cgb_b_matches_cgb_e() {
+        // CGB-A/B/C share the +2 branch with CGB-E (only CGB-D differs).
+        let mut ch = ch1_for_trigger(true, CgbModel::CgbB);
+        ch.write_nr14(0x80, false, false);
+        assert_eq!(ch.restart_hold, 4);
+    }
+
+    #[test]
+    fn test_restart_hold_decrements_per_m_cycle_and_saturates_at_zero() {
+        let mut ch = ch1_for_trigger(true, CgbModel::CgbE);
+        ch.write_nr14(0x80, false, false);
+        assert_eq!(ch.restart_hold, 4);
+        ch.tick();
+        assert_eq!(ch.restart_hold, 3);
+        ch.tick();
+        assert_eq!(ch.restart_hold, 2);
+        ch.tick();
+        ch.tick();
+        assert_eq!(ch.restart_hold, 0);
+        // Must not underflow / wrap.
+        ch.tick();
+        ch.tick();
+        assert_eq!(ch.restart_hold, 0);
     }
 
     // ── DAC / active state ────────────────────────────────────────────────
