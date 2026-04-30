@@ -138,21 +138,25 @@ impl Channel1 {
     }
 
     /// Advance the frequency timer by one M-cycle (= 4 T-cycles).
+    ///
+    /// Processes each T-cycle individually to maintain sub-M-cycle precision.
+    /// When the timer expires mid-M-cycle, the remaining T-cycles are applied
+    /// after the reload, ensuring correct phase alignment.
     pub fn tick(&mut self) {
         let period = (2048 - self.freq) * 4;
         if self.freq_timer == 0 {
             self.freq_timer = period;
         }
-        if self.freq_timer > 4 {
-            self.freq_timer -= 4;
-        } else {
-            self.freq_timer = period;
-            if self.triggered_once {
-                let old_pos = self.duty_pos;
-                self.duty_pos = (self.duty_pos + 1) & 7;
-                // Clear first_sample_zero when duty_pos advances.
-                self.first_sample_zero = false;
-                trace_apu!(5; "GB APU CH1 tick duty_pos {} -> {} period=0x{:03X}", old_pos, self.duty_pos, self.freq);
+        for _ in 0..4 {
+            self.freq_timer -= 1;
+            if self.freq_timer == 0 {
+                self.freq_timer = period;
+                if self.triggered_once {
+                    let old_pos = self.duty_pos;
+                    self.duty_pos = (self.duty_pos + 1) & 7;
+                    self.first_sample_zero = false;
+                    trace_apu!(5; "GB APU CH1 tick duty_pos {} -> {} period=0x{:03X}", old_pos, self.duty_pos, self.freq);
+                }
             }
         }
     }
@@ -935,6 +939,122 @@ mod tests {
         assert_ne!(
             ch.duty_pos, start,
             "duty phase should advance after the channel has been triggered"
+        );
+    }
+
+    // ── T-cycle precision tests ───────────────────────────────────────────
+
+    #[test]
+    fn test_tick_freq_timer_decrements_by_tcycles_within_mcycle() {
+        // Given: freq_timer = 6 (more than 4 T-cycles);
+        // When: tick() once (1 M-cycle = 4 T-cycles);
+        // Then: freq_timer should be 2 (6 - 4 = 2), no duty advance.
+        let mut ch = Channel1::new();
+        ch.write_nr12(0xF0);
+        ch.write_nr11(0x80);
+        // Set freq so period = (2048 - 2047) * 4 = 4
+        ch.write_nr13(0xFF); // freq low = 0xFF
+        ch.write_nr14(0x87, false, false); // trigger, freq high = 7 → freq = 0x7FF = 2047
+        // After trigger: freq_timer = period + delay_t = 4 + delay_t
+        // We need to manipulate freq_timer directly for this test.
+        // Set freq_timer to exactly 6 to test partial decrement.
+        ch.freq_timer = 6;
+        let duty_before = ch.duty_pos;
+        ch.tick();
+        // After 4 T-cycles: timer should be 2 (no reload happened)
+        assert_eq!(
+            ch.freq_timer, 2,
+            "freq_timer should decrement to 2 after one M-cycle"
+        );
+        assert_eq!(
+            ch.duty_pos, duty_before,
+            "duty_pos should not advance when timer > 0"
+        );
+    }
+
+    #[test]
+    fn test_tick_freq_timer_expires_mid_mcycle_and_reloads_with_remainder() {
+        // Given: freq_timer = 3, period = 8 (freq = 2046);
+        // When: tick() once (4 T-cycles);
+        // Then: timer expires at T-cycle 3, reloads to period (8),
+        //       then 1 remaining T-cycle decrements it to 7.
+        //       duty_pos should advance once.
+        let mut ch = Channel1::new();
+        ch.write_nr12(0xF0);
+        ch.write_nr11(0x80);
+        // freq = 2046 → period = (2048 - 2046) * 4 = 8
+        ch.write_nr13(0xFE); // freq low = 0xFE
+        ch.write_nr14(0x87, false, false); // trigger, freq high = 7 → freq = 0x7FE = 2046
+        ch.freq_timer = 3;
+        let duty_before = ch.duty_pos;
+        ch.tick();
+        // Timer expired at T-cycle 3, reloaded to 8, decremented 1 more → 7
+        assert_eq!(
+            ch.freq_timer, 7,
+            "freq_timer should be period - remaining (8 - 1 = 7)"
+        );
+        assert_eq!(
+            ch.duty_pos,
+            (duty_before + 1) & 7,
+            "duty_pos should advance once"
+        );
+    }
+
+    #[test]
+    fn test_tick_freq_timer_expires_exactly_at_mcycle_boundary() {
+        // Given: freq_timer = 4, period = 12 (freq = 2045);
+        // When: tick() once;
+        // Then: timer expires at T-cycle 4, reloads to 12, no remaining T-cycles.
+        //       duty_pos should advance once.
+        let mut ch = Channel1::new();
+        ch.write_nr12(0xF0);
+        ch.write_nr11(0x80);
+        // freq = 2045 → period = (2048 - 2045) * 4 = 12
+        ch.write_nr13(0xFD); // freq low = 0xFD
+        ch.write_nr14(0x87, false, false); // trigger, freq high = 7 → freq = 0x7FD = 2045
+        ch.freq_timer = 4;
+        let duty_before = ch.duty_pos;
+        ch.tick();
+        // Timer expired at T-cycle 4, reloaded to 12, 0 remaining → 12
+        assert_eq!(
+            ch.freq_timer, 12,
+            "freq_timer should be exactly period after expiring at boundary"
+        );
+        assert_eq!(
+            ch.duty_pos,
+            (duty_before + 1) & 7,
+            "duty_pos should advance once"
+        );
+    }
+
+    #[test]
+    fn test_tick_very_short_period_multiple_advances_per_mcycle() {
+        // Given: freq_timer = 1, period = 4 (freq = 2047, minimum period);
+        // When: tick() once (4 T-cycles);
+        // Then: timer expires at T-cycle 1, reloads to 4, then 3 more T-cycles
+        //       decrement it to 1. Only one advance per expiry means we advance
+        //       duty_pos once (timer doesn't expire again because 4-3=1 > 0).
+        //       Wait: 4-3=1, then next T would be the 4th, so timer=4 after reload,
+        //       3 remaining decrements = 4-3=1. So freq_timer=1, duty_pos + 1.
+        //       Actually with period=4: expire at T1, reload=4, T2→3, T3→2, T4→1.
+        //       One advance total.
+        let mut ch = Channel1::new();
+        ch.write_nr12(0xF0);
+        ch.write_nr11(0x80);
+        // freq = 2047 → period = (2048 - 2047) * 4 = 4
+        ch.write_nr13(0xFF);
+        ch.write_nr14(0x87, false, false); // trigger → freq = 0x7FF = 2047
+        ch.freq_timer = 1;
+        let duty_before = ch.duty_pos;
+        ch.tick();
+        assert_eq!(
+            ch.freq_timer, 1,
+            "freq_timer should be 1 (period=4 - 3 remaining)"
+        );
+        assert_eq!(
+            ch.duty_pos,
+            (duty_before + 1) & 7,
+            "duty_pos should advance once"
         );
     }
 }

@@ -102,21 +102,26 @@ impl Channel2 {
         if bit == 1 { self.volume } else { 0 }
     }
 
+    /// Advance the frequency timer by one M-cycle (= 4 T-cycles).
+    ///
+    /// Processes each T-cycle individually to maintain sub-M-cycle precision.
+    /// When the timer expires mid-M-cycle, the remaining T-cycles are applied
+    /// after the reload, ensuring correct phase alignment.
     pub fn tick(&mut self) {
         let period = (2048 - self.freq) * 4;
         if self.freq_timer == 0 {
             self.freq_timer = period;
         }
-        if self.freq_timer > 4 {
-            self.freq_timer -= 4;
-        } else {
-            self.freq_timer = period;
-            if self.triggered_once {
-                let old_pos = self.duty_pos;
-                self.duty_pos = (self.duty_pos + 1) & 7;
-                // Clear first_sample_zero when duty_pos advances.
-                self.first_sample_zero = false;
-                trace_apu!(5; "GB APU CH2 tick duty_pos {} -> {} period=0x{:03X}", old_pos, self.duty_pos, self.freq);
+        for _ in 0..4 {
+            self.freq_timer -= 1;
+            if self.freq_timer == 0 {
+                self.freq_timer = period;
+                if self.triggered_once {
+                    let old_pos = self.duty_pos;
+                    self.duty_pos = (self.duty_pos + 1) & 7;
+                    self.first_sample_zero = false;
+                    trace_apu!(5; "GB APU CH2 tick duty_pos {} -> {} period=0x{:03X}", old_pos, self.duty_pos, self.freq);
+                }
             }
         }
     }
