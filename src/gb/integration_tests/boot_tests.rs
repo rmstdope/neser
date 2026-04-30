@@ -1015,3 +1015,198 @@ fn test_cgb_boot_cgb_game_ignores_button_combo() {
         "CGB game should not be in DMG compat mode, even with buttons held"
     );
 }
+
+// ============================================================================
+// Comprehensive CGB IO Register Verification (Pan Docs reference values)
+// ============================================================================
+
+/// Verify all documented post-boot IO register values for CGB production hardware
+/// (CGB-A through CGB-E) against the Pan Docs reference table.
+///
+/// This test mirrors `test_dmg_production_boot_io_registers` for comprehensive coverage.
+///
+/// Reference: <https://gbdev.io/pandocs/Power_Up_Sequence.html#hardware-registers>
+#[test]
+fn test_cgb_production_boot_io_registers() {
+    let mut gb = boot_cgb_to_cartridge_entry(CgbModel::CgbE);
+
+    // Serial - CGB bus stubs these registers; not tested here.
+    // SB ($FF01) returns $FF (stub), SC ($FF02) returns $7E (stub).
+
+    // Timer
+    // DIV ($FF04) is timing-sensitive and depends on header/boot timing - skip
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF05), 0x00, "TIMA ($FF05)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF06), 0x00, "TMA ($FF06)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF07), 0xF8, "TAC ($FF07)");
+
+    // Interrupt flag
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF0F), 0xE1, "IF ($FF0F)");
+
+    // APU registers (same values as DMG)
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF10), 0x80, "NR10 ($FF10)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF11), 0xBF, "NR11 ($FF11)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF12), 0xF3, "NR12 ($FF12)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF13), 0xFF, "NR13 ($FF13)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF14), 0xBF, "NR14 ($FF14)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF16), 0x3F, "NR21 ($FF16)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF17), 0x00, "NR22 ($FF17)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF18), 0xFF, "NR23 ($FF18)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF19), 0xBF, "NR24 ($FF19)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF1A), 0x7F, "NR30 ($FF1A)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF1B), 0xFF, "NR31 ($FF1B)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF1C), 0x9F, "NR32 ($FF1C)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF1D), 0xFF, "NR33 ($FF1D)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF1E), 0xBF, "NR34 ($FF1E)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF20), 0xFF, "NR41 ($FF20)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF21), 0x00, "NR42 ($FF21)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF22), 0x00, "NR43 ($FF22)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF23), 0xBF, "NR44 ($FF23)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF24), 0x77, "NR50 ($FF24)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF25), 0xF3, "NR51 ($FF25)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF26), 0xF1, "NR52 ($FF26)");
+
+    // PPU registers
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF40), 0x91, "LCDC ($FF40)");
+    // STAT ($FF41) and LY ($FF44) are timing-sensitive; skip in this direct-read audit
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF42), 0x00, "SCY ($FF42)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF43), 0x00, "SCX ($FF43)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF45), 0x00, "LYC ($FF45)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF46), 0x00, "DMA ($FF46)"); // CGB: $00, DMG: $FF
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF47), 0xFC, "BGP ($FF47)");
+    // OBP0 ($FF48) and OBP1 ($FF49) are uninitialized per Pan Docs — not verified.
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF4A), 0x00, "WY ($FF4A)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF4B), 0x00, "WX ($FF4B)");
+
+    // CGB-specific registers (CGB Mode only)
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF4D), 0x7E, "KEY1 ($FF4D)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF4F), 0xFE, "VBK ($FF4F)");
+    // HDMA1-4 are write-only and return $FF
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF51), 0xFF, "HDMA1 ($FF51)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF52), 0xFF, "HDMA2 ($FF52)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF53), 0xFF, "HDMA3 ($FF53)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF54), 0xFF, "HDMA4 ($FF54)");
+    // HDMA5 bit 7 = not active; $80 indicates no DMA in progress
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF55), 0x80, "HDMA5 ($FF55)");
+    // RP ($FF56 - infrared) not implemented in CGB bus; skipped
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF70), 0xF8, "SVBK ($FF70)");
+
+    // Interrupt enable
+    assert_eq!(read_cgb_bus(&mut gb, 0xFFFF), 0x00, "IE ($FFFF)");
+}
+
+/// Verify all documented post-boot IO register values for CGB-0 hardware
+/// against the Pan Docs reference table.
+///
+/// CGB-0 should produce the same IO register state as Production CGB.
+/// The only known difference is wave RAM initialization (tested separately).
+///
+/// Reference: <https://gbdev.io/pandocs/Power_Up_Sequence.html#hardware-registers>
+#[test]
+fn test_cgb0_boot_io_registers() {
+    let mut gb = boot_cgb_to_cartridge_entry(CgbModel::Cgb0);
+
+    // Serial - CGB bus stubs these registers; not tested here.
+
+    // Timer
+    // DIV ($FF04) is timing-sensitive and depends on header/boot timing - skip
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF05), 0x00, "TIMA ($FF05)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF06), 0x00, "TMA ($FF06)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF07), 0xF8, "TAC ($FF07)");
+
+    // Interrupt flag
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF0F), 0xE1, "IF ($FF0F)");
+
+    // APU registers (same values as DMG and Production CGB)
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF10), 0x80, "NR10 ($FF10)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF11), 0xBF, "NR11 ($FF11)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF12), 0xF3, "NR12 ($FF12)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF13), 0xFF, "NR13 ($FF13)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF14), 0xBF, "NR14 ($FF14)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF16), 0x3F, "NR21 ($FF16)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF17), 0x00, "NR22 ($FF17)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF18), 0xFF, "NR23 ($FF18)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF19), 0xBF, "NR24 ($FF19)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF1A), 0x7F, "NR30 ($FF1A)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF1B), 0xFF, "NR31 ($FF1B)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF1C), 0x9F, "NR32 ($FF1C)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF1D), 0xFF, "NR33 ($FF1D)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF1E), 0xBF, "NR34 ($FF1E)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF20), 0xFF, "NR41 ($FF20)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF21), 0x00, "NR42 ($FF21)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF22), 0x00, "NR43 ($FF22)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF23), 0xBF, "NR44 ($FF23)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF24), 0x77, "NR50 ($FF24)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF25), 0xF3, "NR51 ($FF25)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF26), 0xF1, "NR52 ($FF26)");
+
+    // PPU registers
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF40), 0x91, "LCDC ($FF40)");
+    // STAT ($FF41) and LY ($FF44) are timing-sensitive; skip in this direct-read audit
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF42), 0x00, "SCY ($FF42)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF43), 0x00, "SCX ($FF43)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF45), 0x00, "LYC ($FF45)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF46), 0x00, "DMA ($FF46)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF47), 0xFC, "BGP ($FF47)");
+    // OBP0 ($FF48) and OBP1 ($FF49) are uninitialized per Pan Docs — not verified.
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF4A), 0x00, "WY ($FF4A)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF4B), 0x00, "WX ($FF4B)");
+
+    // CGB-specific registers (CGB Mode only)
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF4D), 0x7E, "KEY1 ($FF4D)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF4F), 0xFE, "VBK ($FF4F)");
+    // HDMA1-4 are write-only and return $FF
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF51), 0xFF, "HDMA1 ($FF51)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF52), 0xFF, "HDMA2 ($FF52)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF53), 0xFF, "HDMA3 ($FF53)");
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF54), 0xFF, "HDMA4 ($FF54)");
+    // HDMA5 bit 7 = not active; $80 indicates no DMA in progress
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF55), 0x80, "HDMA5 ($FF55)");
+    // RP ($FF56 - infrared) not implemented in CGB bus; skipped
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF70), 0xF8, "SVBK ($FF70)");
+
+    // Interrupt enable
+    assert_eq!(read_cgb_bus(&mut gb, 0xFFFF), 0x00, "IE ($FFFF)");
+}
+
+/// Verify DIV register timing at CGB boot completion.
+///
+/// The DIV value at PC=$0100 depends on the exact boot ROM timing. This test
+/// verifies that DIV has a reasonable value after boot, but does not assert
+/// an exact value since the CGB boot ROM timing varies with header content.
+///
+/// For precise DIV timing verification, see the Mooneye boot_div-cgb0 and
+/// boot_div-cgbABCDE tests which use cycle-accurate measurement.
+///
+/// Reference: <https://gbdev.io/pandocs/Power_Up_Sequence.html#hardware-registers>
+#[test]
+fn test_cgb_boot_div_timing() {
+    let mut gb_0 = boot_cgb_to_cartridge_entry(CgbModel::Cgb0);
+    let mut gb_e = boot_cgb_to_cartridge_entry(CgbModel::CgbE);
+
+    let div_0 = read_cgb_bus(&mut gb_0, 0xFF04);
+    let div_e = read_cgb_bus(&mut gb_e, 0xFF04);
+
+    // DIV should be non-zero after boot (boot ROM takes significant time)
+    assert_ne!(div_0, 0x00, "CGB-0 DIV should be non-zero after boot");
+    assert_ne!(div_e, 0x00, "CGB-E DIV should be non-zero after boot");
+
+    // Step both consoles forward after the boot ROM has exited and verify
+    // that DIV continues advancing. Comparing for inequality handles
+    // wraparound as well (for example, 0xFF -> 0x00).
+    for _ in 0..1024 {
+        gb_0.step();
+        gb_e.step();
+    }
+
+    let div_0_after = read_cgb_bus(&mut gb_0, 0xFF04);
+    let div_e_after = read_cgb_bus(&mut gb_e, 0xFF04);
+
+    assert_ne!(
+        div_0_after, div_0,
+        "CGB-0 DIV should continue advancing after boot completion"
+    );
+    assert_ne!(
+        div_e_after, div_e,
+        "CGB-E DIV should continue advancing after boot completion"
+    );
+}
