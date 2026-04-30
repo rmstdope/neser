@@ -18,9 +18,15 @@ pub mod header;
 pub mod save_type;
 pub mod sram;
 
+#[allow(unused_imports)]
 pub use cartridge::{CartridgeError, GbaCartridge, ROM_MAX_SIZE, SaveBackend, load_cartridge};
+#[allow(unused_imports)]
 pub use eeprom::Eeprom;
+#[allow(unused_imports)]
 pub use flash::Flash;
+#[allow(unused_imports)]
 pub use header::{GbaHeader, HeaderError, parse_header};
+#[allow(unused_imports)]
 pub use save_type::{SaveType, detect_save_type};
+#[allow(unused_imports)]
 pub use sram::Sram;

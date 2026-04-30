@@ -21,9 +21,13 @@ use crate::gba::cpu::bus::Bus;
 use crate::gba::input::Keypad;
 use crate::gba::ppu::{Ppu, PpuStepEvents};
 
+#[allow(unused_imports)]
 pub use dma::{DmaBus, DmaChannel, DmaController};
+#[allow(unused_imports)]
 pub use interrupt::{InterruptController, bits as irq_bits};
+#[allow(unused_imports)]
 pub use io::{IoRegisters, REG_IE, REG_IF, REG_IME};
+#[allow(unused_imports)]
 pub use timer::{Timer, Timers};
 
 use memory::{

@@ -12,9 +12,13 @@ pub mod cpu;
 pub mod input;
 pub mod ppu;
 
+#[allow(unused_imports)]
 pub use apu::Apu;
 pub use bus::GbaBus;
+#[allow(unused_imports)]
 pub use cartridge::{GbaCartridge, SaveType, load_cartridge};
 pub use console::gba::Gba;
+#[allow(unused_imports)]
 pub use input::Keypad;
+#[allow(unused_imports)]
 pub use ppu::Ppu;
