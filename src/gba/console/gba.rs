@@ -9,6 +9,7 @@
 //! [`Emulator`]: crate::platform::emulator::Emulator
 //! [`Console`]: crate::platform::emulator::Console
 
+use crate::gba::apu::Apu;
 use crate::platform::app_context::{IntoSharedAppContext, SharedAppContext};
 use crate::platform::emulator::{Emulator, SystemType};
 use std::time::Duration;
@@ -32,6 +33,8 @@ const ALLOWED_SHADERS: &[&str] = &["none", "gba-lcd"];
 /// that returns appropriate defaults without actual emulation.
 pub struct Gba {
     app_context: SharedAppContext,
+    /// Audio Processing Unit — produces mixed f32 samples at the configured rate.
+    apu: Apu,
 }
 
 impl Gba {
@@ -44,6 +47,7 @@ impl Gba {
     pub fn new(app_context: impl IntoSharedAppContext) -> Self {
         Self {
             app_context: app_context.into_shared(),
+            apu: Apu::new(),
         }
     }
 }
@@ -96,15 +100,15 @@ impl Emulator for Gba {
     }
 
     fn sample_ready(&self) -> bool {
-        false
+        self.apu.sample_ready()
     }
 
     fn get_sample(&mut self) -> Option<f32> {
-        None
+        self.apu.take_sample()
     }
 
-    fn set_audio_sample_rate(&mut self, _rate: f32) {
-        // No-op: no audio implemented yet
+    fn set_audio_sample_rate(&mut self, rate: f32) {
+        self.apu.set_sample_rate(rate);
     }
 
     fn set_button(&mut self, _port: u8, _button_id: u8, _pressed: bool) {

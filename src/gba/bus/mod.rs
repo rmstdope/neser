@@ -16,6 +16,7 @@ pub mod io;
 pub mod memory;
 pub mod timer;
 
+use crate::gba::apu::Apu;
 use crate::gba::cpu::bus::Bus;
 use crate::gba::ppu::{Ppu, PpuStepEvents};
 
@@ -96,6 +97,8 @@ pub struct GbaBus {
     pub dma: DmaController,
     /// Picture Processing Unit (PPU).
     pub ppu: Ppu,
+    /// Audio Processing Unit (APU).
+    pub apu: Apu,
     /// Last value driven on the bus (used to model open-bus reads).
     last_bus_value: u32,
     /// Whether the BIOS is locked. After the boot ROM finishes executing,
@@ -128,6 +131,7 @@ impl GbaBus {
             timers: Timers::new(),
             dma: DmaController::new(),
             ppu: Ppu::new(),
+            apu: Apu::new(),
             last_bus_value: 0,
             bios_locked: false,
         }
@@ -165,11 +169,12 @@ impl GbaBus {
         !self.rom.is_empty()
     }
 
-    /// Step the bus peripherals (timers, DMA, PPU) by `cycles` CPU
+    /// Step the bus peripherals (timers, DMA, PPU, APU) by `cycles` CPU
     /// cycles. Any pending IRQs are routed into [`Self::ic`]. PPU
     /// V-Blank/H-Blank edges are propagated to the DMA controller.
     pub fn step(&mut self, cycles: u32) {
         self.timers.step(cycles, &mut self.ic);
+        self.apu.tick(cycles);
         let events = self.ppu.step(
             cycles,
             &mut self.ic,
@@ -346,10 +351,18 @@ impl Bus for GbaBus {
                 .unwrap_or_else(|| self.open_bus_word()),
             0x2 => read_le_u32(&self.ewram, aligned as usize),
             0x3 => read_le_u32(&self.iwram, aligned as usize),
-            0x4 => self
-                .io
-                .try_read32(aligned, &self.ic, &self.timers, &self.dma, &self.ppu)
-                .unwrap_or_else(|| self.open_bus_word()),
+            0x4 => {
+                let aligned16 = aligned & !0x1;
+                if (0x0400_0060..=0x0400_00A6).contains(&aligned16) {
+                    let lo = self.apu.read16(aligned16) as u32;
+                    let hi = self.apu.read16(aligned16 + 2) as u32;
+                    lo | (hi << 16)
+                } else {
+                    self.io
+                        .try_read32(aligned, &self.ic, &self.timers, &self.dma, &self.ppu)
+                        .unwrap_or_else(|| self.open_bus_word())
+                }
+            }
             0x5 => read_le_u32(&self.pram, aligned as usize),
             0x6 => {
                 let off = vram_offset(aligned);
@@ -381,10 +394,15 @@ impl Bus for GbaBus {
                 .unwrap_or_else(|| self.open_bus_halfword(aligned)),
             0x2 => read_le_u16(&self.ewram, aligned as usize),
             0x3 => read_le_u16(&self.iwram, aligned as usize),
-            0x4 => self
-                .io
-                .try_read16(aligned, &self.ic, &self.timers, &self.dma, &self.ppu)
-                .unwrap_or_else(|| self.open_bus_halfword(aligned)),
+            0x4 => {
+                if (0x0400_0060..=0x0400_00A6).contains(&aligned) {
+                    self.apu.read16(aligned)
+                } else {
+                    self.io
+                        .try_read16(aligned, &self.ic, &self.timers, &self.dma, &self.ppu)
+                        .unwrap_or_else(|| self.open_bus_halfword(aligned))
+                }
+            }
             0x5 => read_le_u16(&self.pram, aligned as usize),
             0x6 => {
                 let off = vram_offset(aligned);
@@ -417,10 +435,21 @@ impl Bus for GbaBus {
                 .unwrap_or_else(|| self.open_bus_byte(addr)),
             0x2 => self.ewram[(addr as usize) % EWRAM_SIZE],
             0x3 => self.iwram[(addr as usize) % IWRAM_SIZE],
-            0x4 => self
-                .io
-                .try_read8(addr, &self.ic, &self.timers, &self.dma, &self.ppu)
-                .unwrap_or_else(|| self.open_bus_byte(addr)),
+            0x4 => {
+                let aligned_hw = addr & !0x1;
+                if (0x0400_0060..=0x0400_00A6).contains(&aligned_hw) {
+                    let hw = self.apu.read16(aligned_hw);
+                    if addr & 1 == 0 {
+                        hw as u8
+                    } else {
+                        (hw >> 8) as u8
+                    }
+                } else {
+                    self.io
+                        .try_read8(addr, &self.ic, &self.timers, &self.dma, &self.ppu)
+                        .unwrap_or_else(|| self.open_bus_byte(addr))
+                }
+            }
             0x5 => self.pram[(addr as usize) % PRAM_SIZE],
             0x6 => self.vram[vram_offset(addr)],
             0x7 => self.oam[(addr as usize) % OAM_SIZE],
@@ -444,14 +473,26 @@ impl Bus for GbaBus {
             0x0 | 0x1 => { /* BIOS is read-only */ }
             0x2 => write_le_u32(&mut self.ewram, aligned as usize, value),
             0x3 => write_le_u32(&mut self.iwram, aligned as usize, value),
-            0x4 => self.io.write32(
-                aligned,
-                value,
-                &mut self.ic,
-                &mut self.timers,
-                &mut self.dma,
-                &mut self.ppu,
-            ),
+            0x4 => {
+                // FIFO A and B need full 32-bit word writes.
+                if aligned == 0x0400_00A0 {
+                    self.apu.write_fifo_a_word(value);
+                } else if aligned == 0x0400_00A4 {
+                    self.apu.write_fifo_b_word(value);
+                } else if (0x0400_0060..=0x0400_00A6).contains(&aligned) {
+                    self.apu.write16(aligned, value as u16);
+                    self.apu.write16(aligned + 2, (value >> 16) as u16);
+                } else {
+                    self.io.write32(
+                        aligned,
+                        value,
+                        &mut self.ic,
+                        &mut self.timers,
+                        &mut self.dma,
+                        &mut self.ppu,
+                    );
+                }
+            }
             0x5 => write_le_u32(&mut self.pram, aligned as usize, value),
             0x6 => {
                 let off = vram_offset(aligned);
@@ -480,14 +521,20 @@ impl Bus for GbaBus {
             0x0 | 0x1 => {}
             0x2 => write_le_u16(&mut self.ewram, aligned as usize, value),
             0x3 => write_le_u16(&mut self.iwram, aligned as usize, value),
-            0x4 => self.io.write16(
-                aligned,
-                value,
-                &mut self.ic,
-                &mut self.timers,
-                &mut self.dma,
-                &mut self.ppu,
-            ),
+            0x4 => {
+                if (0x0400_0060..=0x0400_00A6).contains(&aligned) {
+                    self.apu.write16(aligned, value);
+                } else {
+                    self.io.write16(
+                        aligned,
+                        value,
+                        &mut self.ic,
+                        &mut self.timers,
+                        &mut self.dma,
+                        &mut self.ppu,
+                    );
+                }
+            }
             0x5 => write_le_u16(&mut self.pram, aligned as usize, value),
             0x6 => {
                 let off = vram_offset(aligned);
@@ -514,14 +561,27 @@ impl Bus for GbaBus {
             0x0 | 0x1 => {}
             0x2 => self.ewram[(addr as usize) % EWRAM_SIZE] = value,
             0x3 => self.iwram[(addr as usize) % IWRAM_SIZE] = value,
-            0x4 => self.io.write8(
-                addr,
-                value,
-                &mut self.ic,
-                &mut self.timers,
-                &mut self.dma,
-                &mut self.ppu,
-            ),
+            0x4 => {
+                let aligned_hw = addr & !0x1;
+                if (0x0400_0060..=0x0400_00A6).contains(&aligned_hw) {
+                    let current = self.apu.read16(aligned_hw);
+                    let merged = if addr & 1 == 0 {
+                        (current & 0xFF00) | value as u16
+                    } else {
+                        (current & 0x00FF) | ((value as u16) << 8)
+                    };
+                    self.apu.write16(aligned_hw, merged);
+                } else {
+                    self.io.write8(
+                        addr,
+                        value,
+                        &mut self.ic,
+                        &mut self.timers,
+                        &mut self.dma,
+                        &mut self.ppu,
+                    );
+                }
+            }
             0x5 => {
                 // Byte writes to PRAM duplicate the byte to a halfword.
                 let off = (addr as usize & !1) % PRAM_SIZE;
