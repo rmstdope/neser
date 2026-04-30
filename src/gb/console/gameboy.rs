@@ -223,9 +223,13 @@ impl GameBoy {
         };
 
         self.gb = Some(if use_cgb_bus {
-            let cgb_variant = self.app_context.borrow().config().gb.cgb_variant;
-            let mut gb = Gb::new(CgbBus::new(cart, cgb_variant, true));
-            gb.cpu.reset_registers_cgb();
+            let config = self.app_context.borrow().config().gb.clone();
+            let skip_boot_rom = !config.boot_animation;
+            let mut gb = Gb::new(CgbBus::new(cart, config.cgb_variant, skip_boot_rom));
+            if skip_boot_rom {
+                // Only set registers if skipping boot ROM (boot ROM sets them otherwise)
+                gb.cpu.reset_registers_cgb();
+            }
             GbConsole::Cgb(Box::new(gb))
         } else {
             let dmg_variant = self.app_context.borrow().config().gb.dmg_variant;
