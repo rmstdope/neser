@@ -820,6 +820,30 @@ impl Ppu {
         self.obj_palette_ram
     }
 
+    /// Apply DMG compatibility palette colors for CGB running a DMG-only game.
+    ///
+    /// Writes the given RGB555 colors to BG palette 0 and OBJ palettes 0/1.
+    /// Each palette is 4 colors × 2 bytes = 8 bytes.
+    ///
+    /// This should only be called during CGB initialization for DMG-only cartridges.
+    pub fn apply_dmg_compat_palettes(&mut self, bg0: &[u16; 4], obj0: &[u16; 4], obj1: &[u16; 4]) {
+        // Write BG palette 0 (bytes 0-7)
+        for (i, &color) in bg0.iter().enumerate() {
+            self.bg_palette_ram[i * 2] = (color & 0xFF) as u8;
+            self.bg_palette_ram[i * 2 + 1] = (color >> 8) as u8;
+        }
+        // Write OBJ palette 0 (bytes 0-7)
+        for (i, &color) in obj0.iter().enumerate() {
+            self.obj_palette_ram[i * 2] = (color & 0xFF) as u8;
+            self.obj_palette_ram[i * 2 + 1] = (color >> 8) as u8;
+        }
+        // Write OBJ palette 1 (bytes 8-15)
+        for (i, &color) in obj1.iter().enumerate() {
+            self.obj_palette_ram[8 + i * 2] = (color & 0xFF) as u8;
+            self.obj_palette_ram[8 + i * 2 + 1] = (color >> 8) as u8;
+        }
+    }
+
     /// Get current register values for debugger.
     ///
     /// Returns: (lcdc, scx, scy, bgp, obp0, obp1)

@@ -3,6 +3,7 @@ pub mod autorun;
 pub mod boot_rom;
 pub mod bus;
 pub mod cartridge;
+pub mod compat_palettes;
 pub mod console;
 pub mod cpu;
 pub mod debugging;
