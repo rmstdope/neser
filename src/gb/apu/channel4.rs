@@ -52,7 +52,7 @@ impl Channel4 {
             length_en: false,
             active: false,
             dac_on: false,
-            lfsr: 0x7FFF,
+            lfsr: 0,
             freq_timer: 0,
             length_counter: 0,
             volume: 0,
@@ -119,13 +119,19 @@ impl Channel4 {
     }
 
     /// Clock the LFSR (exposed for testing).
+    ///
+    /// Per Pan Docs / SameBoy `step_lfsr`: feedback is XNOR of bits 0 and 1,
+    /// written to bit 14 (15-bit mode) or **both** bits 14 and 6 (narrow /
+    /// 7-bit mode). The explicit clear in the `else` branch matters: it keeps
+    /// bit 6 in the right state when the mode is later switched.
     pub fn clock_lfsr(&mut self) {
-        let xor = (self.lfsr & 0x01) ^ ((self.lfsr >> 1) & 0x01);
+        let new_high_bit = ((self.lfsr & 0x01) ^ ((self.lfsr >> 1) & 0x01) ^ 1) & 1;
+        let high_bit_mask: u16 = if self.lfsr_7bit { 0x4040 } else { 0x4000 };
         self.lfsr >>= 1;
-        self.lfsr |= xor << 14;
-        if self.lfsr_7bit {
-            self.lfsr &= !(1 << 6);
-            self.lfsr |= xor << 6;
+        if new_high_bit != 0 {
+            self.lfsr |= high_bit_mask;
+        } else {
+            self.lfsr &= !high_bit_mask;
         }
         trace_apu!(5; "GB APU CH4 LFSR shift mode={} lfsr=0x{:04X}", 
             if self.lfsr_7bit { "7-bit" } else { "15-bit" }, self.lfsr);
@@ -337,7 +343,8 @@ impl Channel4 {
         self.freq_timer = self.freq_timer_period();
         self.volume = self.init_volume;
         self.env_timer = self.env_period;
-        self.lfsr = 0x7FFF;
+        // Pan Docs / SameBoy: LFSR is cleared to 0 on (re)trigger.
+        self.lfsr = 0;
         // Reset envelope clock state on trigger.
         self.env_clock_state = EnvelopeClockState::default();
     }
@@ -368,8 +375,9 @@ mod tests {
     }
 
     #[test]
-    fn test_trigger_resets_lfsr_to_7fff() {
-        assert_eq!(triggered_ch4().lfsr, 0x7FFF);
+    fn test_trigger_resets_lfsr_to_zero() {
+        // Pan Docs / SameBoy: the LFSR is cleared to 0 on (re)trigger.
+        assert_eq!(triggered_ch4().lfsr, 0);
     }
 
     #[test]
@@ -412,24 +420,27 @@ mod tests {
 
     #[test]
     fn test_15bit_lfsr_one_clock() {
-        // LFSR = 0x7FFF: bit0=1, bit1=1, xor=0 -> shifted right = 0x3FFF, bit14=0.
+        // LFSR = 0 (post-trigger): bits 0 and 1 are 0, XNOR feedback = 1.
+        // After `>>1` then setting bit 14: result = 0x4000.
         let mut ch = Channel4::new();
         ch.write_nr42(0xF0);
         ch.write_nr43(0x00); // 15-bit
-        ch.write_nr44(0x80, false); // trigger -> LFSR = 0x7FFF
+        ch.write_nr44(0x80, false); // trigger -> LFSR = 0
         ch.clock_lfsr();
-        assert_eq!(ch.lfsr, 0x3FFF);
+        assert_eq!(ch.lfsr, 0x4000);
     }
 
     #[test]
-    fn test_7bit_lfsr_sets_bit6_to_xor() {
-        // LFSR = 0x7FFF: xor=0 -> bit6 forced to 0 after clock.
+    fn test_7bit_lfsr_writes_bits_14_and_6() {
+        // Narrow mode: feedback is written to BOTH bit 14 and bit 6.
+        // From LFSR=0, XNOR feedback = 1, so both bits are set.
         let mut ch = Channel4::new();
         ch.write_nr42(0xF0);
         ch.write_nr43(0x08); // 7-bit
         ch.write_nr44(0x80, false);
         ch.clock_lfsr();
-        assert_eq!(ch.lfsr & (1 << 6), 0);
+        assert_eq!(ch.lfsr & (1 << 6), 1 << 6);
+        assert_eq!(ch.lfsr & (1 << 14), 1 << 14);
     }
 
     #[test]
@@ -496,7 +507,7 @@ mod tests {
         let mut ch = Channel4::new();
         ch.write_nr42(0xF0);
         ch.write_nr43(0x00); // divisor=0 (8), shift=0 → period = 8
-        ch.write_nr44(0x80, false); // trigger → LFSR = 0x7FFF
+        ch.write_nr44(0x80, false); // trigger → LFSR = 0
         ch.freq_timer = 6;
         let lfsr_before = ch.lfsr;
         ch.tick();
@@ -517,16 +528,16 @@ mod tests {
         let mut ch = Channel4::new();
         ch.write_nr42(0xF0);
         ch.write_nr43(0x00); // period = 8
-        ch.write_nr44(0x80, false); // trigger → LFSR = 0x7FFF
+        ch.write_nr44(0x80, false); // trigger → LFSR = 0
         ch.freq_timer = 3;
         ch.tick();
         assert_eq!(
             ch.freq_timer, 7,
             "freq_timer should be period - remaining (8 - 1 = 7)"
         );
-        // LFSR clocked once: 0x7FFF → 0x3FFF
+        // LFSR clocked once: 0 → 0x4000 (XNOR feedback writes 1 to bit 14).
         assert_eq!(
-            ch.lfsr, 0x3FFF,
+            ch.lfsr, 0x4000,
             "LFSR should clock once when timer expires mid M-cycle"
         );
     }
@@ -539,13 +550,13 @@ mod tests {
         let mut ch = Channel4::new();
         ch.write_nr42(0xF0);
         ch.write_nr43(0x00); // period = 8
-        ch.write_nr44(0x80, false); // trigger → LFSR = 0x7FFF
+        ch.write_nr44(0x80, false); // trigger → LFSR = 0
         ch.freq_timer = 4;
         ch.tick();
         assert_eq!(
             ch.freq_timer, 8,
             "freq_timer should be exactly period after expiring at boundary"
         );
-        assert_eq!(ch.lfsr, 0x3FFF, "LFSR should clock once");
+        assert_eq!(ch.lfsr, 0x4000, "LFSR should clock once");
     }
 }
