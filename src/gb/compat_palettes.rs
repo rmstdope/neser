@@ -344,7 +344,11 @@ fn resolve_duplicate(header: &[u8], initial_index: usize) -> usize {
 /// `header` should start at ROM address $0100 (at least 76 bytes, up to $014B).
 pub fn get_palette_colors(header: &[u8]) -> DmgCompatPalette {
     let palette_id = get_palette_id(header) as usize;
+    palette_colors_from_combination_id(palette_id)
+}
 
+/// Shared implementation for palette lookup by combination ID.
+fn palette_colors_from_combination_id(palette_id: usize) -> DmgCompatPalette {
     if palette_id >= PALETTE_COMBINATIONS.len() {
         return DmgCompatPalette::default();
     }
@@ -378,33 +382,7 @@ pub fn get_palette_colors(header: &[u8]) -> DmgCompatPalette {
 /// This is used for manual palette selection during the CGB boot animation.
 /// Returns the default palette if `palette_id` is out of bounds.
 pub fn get_palette_colors_by_id(palette_id: u8) -> DmgCompatPalette {
-    let id = palette_id as usize;
-    if id >= PALETTE_COMBINATIONS.len() {
-        return DmgCompatPalette::default();
-    }
-
-    let combination = PALETTE_COMBINATIONS[id];
-    let obj0_idx = combination[0] as usize;
-    let obj1_idx = combination[1] as usize;
-    let bg_idx = combination[2] as usize;
-
-    DmgCompatPalette {
-        bg0: if bg_idx < PALETTES.len() {
-            PALETTES[bg_idx]
-        } else {
-            PALETTES[0]
-        },
-        obj0: if obj0_idx < PALETTES.len() {
-            PALETTES[obj0_idx]
-        } else {
-            PALETTES[0]
-        },
-        obj1: if obj1_idx < PALETTES.len() {
-            PALETTES[obj1_idx]
-        } else {
-            PALETTES[0]
-        },
-    }
+    palette_colors_from_combination_id(palette_id as usize)
 }
 
 /// Maps a button combination to a manual palette selection ID.
