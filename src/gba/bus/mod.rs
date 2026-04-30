@@ -17,6 +17,7 @@ pub mod memory;
 pub mod timer;
 
 use crate::gba::cpu::bus::Bus;
+use crate::gba::ppu::{Ppu, PpuStepEvents};
 
 pub use dma::{DmaBus, DmaChannel, DmaController};
 pub use interrupt::{InterruptController, bits as irq_bits};
@@ -93,6 +94,8 @@ pub struct GbaBus {
     pub timers: Timers,
     /// DMA controller (DMA0-DMA3).
     pub dma: DmaController,
+    /// Picture Processing Unit (PPU).
+    pub ppu: Ppu,
     /// Last value driven on the bus (used to model open-bus reads).
     last_bus_value: u32,
     /// Whether the BIOS is locked. After the boot ROM finishes executing,
@@ -124,6 +127,7 @@ impl GbaBus {
             ic: InterruptController::new(),
             timers: Timers::new(),
             dma: DmaController::new(),
+            ppu: Ppu::new(),
             last_bus_value: 0,
             bios_locked: false,
         }
@@ -161,11 +165,29 @@ impl GbaBus {
         !self.rom.is_empty()
     }
 
-    /// Step the bus peripherals (timers, DMA) by `cycles` CPU cycles. Any
-    /// pending IRQs are routed into [`Self::ic`].
+    /// Step the bus peripherals (timers, DMA, PPU) by `cycles` CPU
+    /// cycles. Any pending IRQs are routed into [`Self::ic`]. PPU
+    /// V-Blank/H-Blank edges are propagated to the DMA controller.
     pub fn step(&mut self, cycles: u32) {
         self.timers.step(cycles, &mut self.ic);
+        let events = self.ppu.step(
+            cycles,
+            &mut self.ic,
+            self.vram.as_slice(),
+            self.pram.as_slice(),
+        );
+        self.handle_ppu_events(events);
         self.run_pending_dma();
+    }
+
+    /// Propagate PPU V-Blank / H-Blank edges to DMA-mode hooks.
+    fn handle_ppu_events(&mut self, events: PpuStepEvents) {
+        if events.vblank_started {
+            self.notify_vblank();
+        }
+        if events.hblank_started {
+            self.notify_hblank();
+        }
     }
 
     /// Run any pending Immediate-mode DMA transfers and any triggered
@@ -323,7 +345,7 @@ impl Bus for GbaBus {
             0x3 => read_le_u32(&self.iwram, aligned as usize),
             0x4 => self
                 .io
-                .try_read32(aligned, &self.ic, &self.timers, &self.dma)
+                .try_read32(aligned, &self.ic, &self.timers, &self.dma, &self.ppu)
                 .unwrap_or_else(|| self.open_bus_word()),
             0x5 => read_le_u32(&self.pram, aligned as usize),
             0x6 => {
@@ -358,7 +380,7 @@ impl Bus for GbaBus {
             0x3 => read_le_u16(&self.iwram, aligned as usize),
             0x4 => self
                 .io
-                .try_read16(aligned, &self.ic, &self.timers, &self.dma)
+                .try_read16(aligned, &self.ic, &self.timers, &self.dma, &self.ppu)
                 .unwrap_or_else(|| self.open_bus_halfword(aligned)),
             0x5 => read_le_u16(&self.pram, aligned as usize),
             0x6 => {
@@ -394,7 +416,7 @@ impl Bus for GbaBus {
             0x3 => self.iwram[(addr as usize) % IWRAM_SIZE],
             0x4 => self
                 .io
-                .try_read8(addr, &self.ic, &self.timers, &self.dma)
+                .try_read8(addr, &self.ic, &self.timers, &self.dma, &self.ppu)
                 .unwrap_or_else(|| self.open_bus_byte(addr)),
             0x5 => self.pram[(addr as usize) % PRAM_SIZE],
             0x6 => self.vram[vram_offset(addr)],
@@ -425,6 +447,7 @@ impl Bus for GbaBus {
                 &mut self.ic,
                 &mut self.timers,
                 &mut self.dma,
+                &mut self.ppu,
             ),
             0x5 => write_le_u32(&mut self.pram, aligned as usize, value),
             0x6 => {
@@ -460,6 +483,7 @@ impl Bus for GbaBus {
                 &mut self.ic,
                 &mut self.timers,
                 &mut self.dma,
+                &mut self.ppu,
             ),
             0x5 => write_le_u16(&mut self.pram, aligned as usize, value),
             0x6 => {
@@ -487,9 +511,14 @@ impl Bus for GbaBus {
             0x0 | 0x1 => {}
             0x2 => self.ewram[(addr as usize) % EWRAM_SIZE] = value,
             0x3 => self.iwram[(addr as usize) % IWRAM_SIZE] = value,
-            0x4 => self
-                .io
-                .write8(addr, value, &mut self.ic, &mut self.timers, &mut self.dma),
+            0x4 => self.io.write8(
+                addr,
+                value,
+                &mut self.ic,
+                &mut self.timers,
+                &mut self.dma,
+                &mut self.ppu,
+            ),
             0x5 => {
                 // Byte writes to PRAM duplicate the byte to a halfword.
                 let off = (addr as usize & !1) % PRAM_SIZE;
@@ -820,5 +849,57 @@ mod tests {
         // Both transfers must have completed.
         assert_eq!(bus.read32(0x0200_3000), 0xC1_DA);
         assert_eq!(bus.read32(0x0200_2000), 0xC0_DA);
+    }
+
+    #[test]
+    fn ppu_dispcnt_round_trips_through_bus() {
+        let mut bus = GbaBus::new();
+        // 16-bit write/read at REG_DISPCNT must reach the live PPU.
+        bus.write16(crate::gba::ppu::REG_DISPCNT, 0x0403);
+        assert_eq!(bus.ppu.read_dispcnt(), 0x0403);
+        assert_eq!(bus.read16(crate::gba::ppu::REG_DISPCNT), 0x0403);
+    }
+
+    #[test]
+    fn bus_step_advances_ppu_vcount() {
+        let mut bus = GbaBus::new();
+        // Step a full scanline and verify VCOUNT incremented.
+        bus.step(crate::gba::ppu::CYCLES_PER_SCANLINE);
+        assert_eq!(bus.read16(crate::gba::ppu::REG_VCOUNT), 1);
+    }
+
+    #[test]
+    fn bus_step_raises_vblank_irq_when_enabled() {
+        let mut bus = GbaBus::new();
+        bus.write16(REG_IE, irq_bits::VBLANK);
+        bus.write16(REG_IME, 1);
+        // Enable V-Blank IRQ in DISPSTAT.
+        bus.write16(
+            crate::gba::ppu::REG_DISPSTAT,
+            crate::gba::ppu::dispstat::VBLANK_IRQ_ENABLE,
+        );
+        // Step 160 scanlines to trigger V-Blank.
+        bus.step(crate::gba::ppu::CYCLES_PER_SCANLINE * crate::gba::ppu::VISIBLE_SCANLINES);
+        assert!(bus.ic.irq_line());
+        assert_ne!(bus.ic.if_flags & irq_bits::VBLANK, 0);
+    }
+
+    #[test]
+    fn bus_step_renders_mode3_via_vram_bus_writes() {
+        // End-to-end: CPU writes Mode 3 + BG2 enable to DISPCNT, paints
+        // VRAM through the bus, steps a frame, and verifies the
+        // framebuffer reflects the painted pixels.
+        let mut bus = GbaBus::new();
+        bus.write16(
+            crate::gba::ppu::REG_DISPCNT,
+            3 | crate::gba::ppu::dispcnt::BG2_ENABLE,
+        );
+        // Pixel 0,0 = pure red (BGR555 0x001F). Pixel 1,0 = pure blue.
+        bus.write16(0x0600_0000, 0x001F);
+        bus.write16(0x0600_0002, 0x7C00);
+        bus.step(crate::gba::ppu::CYCLES_PER_SCANLINE * crate::gba::ppu::SCANLINES_PER_FRAME);
+        let fb = bus.ppu.framebuffer();
+        assert_eq!(&fb[0..3], &[0xFF, 0, 0]);
+        assert_eq!(&fb[3..6], &[0, 0, 0xFF]);
     }
 }
