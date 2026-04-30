@@ -34,8 +34,10 @@
 //! * GBATek "LCD I/O Interrupts and Status": <https://problemkaputt.de/gbatek.htm#lcdiointerruptsandstatus>
 //! * Tonc "Video Introduction": <https://www.coranac.com/tonc/text/video.htm>
 
+pub mod affine;
 pub mod color;
 
+use self::affine::BgAffine;
 use super::bus::interrupt::{InterruptController, bits as irq_bits};
 
 /// GBA visible screen width in pixels.
@@ -114,6 +116,26 @@ pub const REG_DISPCNT: u32 = 0x0400_0000;
 pub const REG_DISPSTAT: u32 = 0x0400_0004;
 pub const REG_VCOUNT: u32 = 0x0400_0006;
 
+// Affine background register file (BG2 and BG3). All eight registers
+// per background are write-only; reads are handled by the bus's
+// open-bus / I/O backing-store fallback.
+pub const REG_BG2PA: u32 = 0x0400_0020;
+pub const REG_BG2PB: u32 = 0x0400_0022;
+pub const REG_BG2PC: u32 = 0x0400_0024;
+pub const REG_BG2PD: u32 = 0x0400_0026;
+pub const REG_BG2X_L: u32 = 0x0400_0028;
+pub const REG_BG2X_H: u32 = 0x0400_002A;
+pub const REG_BG2Y_L: u32 = 0x0400_002C;
+pub const REG_BG2Y_H: u32 = 0x0400_002E;
+pub const REG_BG3PA: u32 = 0x0400_0030;
+pub const REG_BG3PB: u32 = 0x0400_0032;
+pub const REG_BG3PC: u32 = 0x0400_0034;
+pub const REG_BG3PD: u32 = 0x0400_0036;
+pub const REG_BG3X_L: u32 = 0x0400_0038;
+pub const REG_BG3X_H: u32 = 0x0400_003A;
+pub const REG_BG3Y_L: u32 = 0x0400_003C;
+pub const REG_BG3Y_H: u32 = 0x0400_003E;
+
 /// Result of stepping the PPU — counts telling the bus how many DMA
 /// hooks (V-Blank / H-Blank) to fire after a step.
 ///
@@ -161,6 +183,10 @@ pub struct Ppu {
     /// True after the PPU finishes scanline 159's render and until the
     /// frontend acknowledges via [`Self::clear_frame_ready`].
     frame_ready: bool,
+    /// Affine register file for BG2 and BG3 (`0x0400_0020..=0x0400_003E`).
+    /// Index `0` is BG2, index `1` is BG3. Consumed by the (future)
+    /// affine renderer; the registers are write-only on the bus side.
+    bg_affine: [BgAffine; 2],
 }
 
 impl Default for Ppu {
@@ -183,6 +209,7 @@ impl Ppu {
             line_cycle: 0,
             framebuffer: vec![0; FRAMEBUFFER_BYTES],
             frame_ready: false,
+            bg_affine: [BgAffine::default(); 2],
         };
         // VCOUNT == LYC == 0 at reset; reflect that in the match flag.
         // No IRQ is raised here — the controller hasn't been wired up
@@ -237,6 +264,41 @@ impl Ppu {
     /// Whether `BG2` is enabled in DISPCNT.
     pub fn bg2_enabled(&self) -> bool {
         self.dispcnt & dispcnt::BG2_ENABLE != 0
+    }
+
+    /// Borrow the affine register file for BG2 (`bg`=0) or BG3 (`bg`=1).
+    /// Used by the affine renderer (and tests) to read the latched
+    /// parameters and reference points.
+    pub fn bg_affine(&self, bg: usize) -> &BgAffine {
+        &self.bg_affine[bg]
+    }
+
+    /// Write a halfword to one of the 16 affine BG registers
+    /// (`0x0400_0020..=0x0400_003E`). The address must be the exact
+    /// register address; the bus dispatcher routes here directly.
+    /// Returns `true` if the address matched an affine register and the
+    /// write was consumed.
+    pub fn write_affine(&mut self, addr: u32, value: u16) -> bool {
+        // Each BG occupies a 16-byte block; index 0 = BG2 at 0x20,
+        // index 1 = BG3 at 0x30.
+        let bg = match addr {
+            0x0400_0020..=0x0400_002F => 0,
+            0x0400_0030..=0x0400_003F => 1,
+            _ => return false,
+        };
+        let a = &mut self.bg_affine[bg];
+        match addr & 0x000F {
+            0x0 => a.pa = value as i16,
+            0x2 => a.pb = value as i16,
+            0x4 => a.pc = value as i16,
+            0x6 => a.pd = value as i16,
+            0x8 => a.write_x_low(value),
+            0xA => a.write_x_high(value),
+            0xC => a.write_y_low(value),
+            0xE => a.write_y_high(value),
+            _ => return false, // odd-aligned writes don't reach here via halfword bus
+        }
+        true
     }
 
     /// True after a completed frame, until [`Self::clear_frame_ready`].
@@ -755,5 +817,57 @@ mod tests {
             &pram,
         );
         assert_eq!(&ppu.framebuffer()[0..3], &[0, 0, 0xFF]);
+    }
+
+    #[test]
+    fn write_affine_routes_pa_pb_pc_pd_for_bg2_and_bg3() {
+        let mut ppu = Ppu::new();
+        // Identity-ish parameters for BG2.
+        assert!(ppu.write_affine(REG_BG2PA, 0x0100));
+        assert!(ppu.write_affine(REG_BG2PB, 0xFF00)); // -1.0
+        assert!(ppu.write_affine(REG_BG2PC, 0x0080)); // 0.5
+        assert!(ppu.write_affine(REG_BG2PD, 0x0100));
+        // Independent values for BG3.
+        assert!(ppu.write_affine(REG_BG3PA, 0x0040));
+        assert!(ppu.write_affine(REG_BG3PD, 0x0040));
+
+        let bg2 = ppu.bg_affine(0);
+        assert_eq!(bg2.pa, 0x0100);
+        assert_eq!(bg2.pb, -256);
+        assert_eq!(bg2.pc, 0x0080);
+        assert_eq!(bg2.pd, 0x0100);
+
+        let bg3 = ppu.bg_affine(1);
+        assert_eq!(bg3.pa, 0x0040);
+        assert_eq!(bg3.pd, 0x0040);
+        // BG3 must not have inherited BG2's parameters.
+        assert_eq!(bg3.pb, 0);
+        assert_eq!(bg3.pc, 0);
+    }
+
+    #[test]
+    fn write_affine_x_y_assembles_28_bit_signed_reference() {
+        let mut ppu = Ppu::new();
+        // Compose BG2X = 0x0005_1234 via two halfword writes.
+        assert!(ppu.write_affine(REG_BG2X_L, 0x1234));
+        assert!(ppu.write_affine(REG_BG2X_H, 0x0005));
+        // BG2Y high halfword has bit 27 set ⇒ negative.
+        assert!(ppu.write_affine(REG_BG2Y_L, 0xFFFF));
+        assert!(ppu.write_affine(REG_BG2Y_H, 0x0FFF));
+
+        let bg2 = ppu.bg_affine(0);
+        assert_eq!(bg2.x, 0x0005_1234);
+        assert_eq!(bg2.y, -1);
+    }
+
+    #[test]
+    fn write_affine_returns_false_for_unrelated_address() {
+        let mut ppu = Ppu::new();
+        // 0x0400_0000 (DISPCNT) is not an affine register.
+        assert!(!ppu.write_affine(REG_DISPCNT, 0xFFFF));
+        // Affine state must remain at default.
+        let bg2 = ppu.bg_affine(0);
+        assert_eq!(bg2.pa, 0);
+        assert_eq!(bg2.x, 0);
     }
 }

@@ -226,6 +226,11 @@ impl IoRegisters {
             ppu::REG_DISPCNT => ppu.write_dispcnt(value),
             ppu::REG_DISPSTAT => ppu.write_dispstat(value, ic),
             ppu::REG_VCOUNT => { /* VCOUNT is read-only */ }
+            // PPU affine BG2/BG3 registers (write-only, reads fall
+            // through to the I/O backing store / open-bus).
+            0x0400_0020..=0x0400_003E => {
+                ppu.write_affine(addr, value);
+            }
             // Keypad.
             REG_KEYINPUT => { /* KEYINPUT is read-only */ }
             REG_KEYCNT => keypad.write_keycnt(value, ic),
@@ -323,6 +328,58 @@ mod tests {
         // round-trip through the backing store.
         io.write16(0x0400_0040, 0xBEEF, &mut ic, &mut t, &mut d, &mut p, &mut k);
         assert_eq!(io.read16(0x0400_0040, &ic, &t, &d, &p, &k), 0xBEEF);
+    }
+
+    #[test]
+    fn affine_bg_writes_route_to_ppu_and_reads_are_open_bus_zero() {
+        // BG2/BG3 affine registers (0x20..=0x3E) are write-only on
+        // hardware: writes must reach the PPU, reads must return the
+        // I/O backing-store value (zero by default), not the PPU state.
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        // BG2PA = identity scale.
+        io.write16(
+            ppu::REG_BG2PA,
+            0x0100,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+        // BG3Y high halfword with bit 27 set → sign-extends to negative.
+        io.write16(
+            ppu::REG_BG3Y_H,
+            0x0FFF,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+        io.write16(
+            ppu::REG_BG3Y_L,
+            0xFFFF,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+
+        // PPU side has the live values.
+        assert_eq!(p.bg_affine(0).pa, 0x0100);
+        assert_eq!(p.bg_affine(1).y, -1);
+
+        // Bus-side reads return open-bus / backing-store zero, NOT the
+        // latched PPU value (write-only register).
+        assert_eq!(io.read16(ppu::REG_BG2PA, &ic, &t, &d, &p, &k), 0);
+        assert_eq!(io.read16(ppu::REG_BG3Y_L, &ic, &t, &d, &p, &k), 0);
     }
 
     #[test]
