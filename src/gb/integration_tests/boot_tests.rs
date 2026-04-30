@@ -1031,7 +1031,7 @@ fn test_cgb_production_boot_io_registers() {
     let mut gb = boot_cgb_to_cartridge_entry(CgbModel::CgbE);
 
     // Serial - CGB bus stubs these registers; not tested here.
-    // SB ($FF01) returns $FF (stub), SC ($FF02) returns $7F (stub).
+    // SB ($FF01) returns $FF (stub), SC ($FF02) returns $7E (stub).
 
     // Timer
     // DIV ($FF04) is timing-sensitive and depends on header/boot timing - skip
@@ -1190,16 +1190,23 @@ fn test_cgb_boot_div_timing() {
     assert_ne!(div_0, 0x00, "CGB-0 DIV should be non-zero after boot");
     assert_ne!(div_e, 0x00, "CGB-E DIV should be non-zero after boot");
 
-    // CGB-0 and Production CGB should have different DIV values due to
-    // different boot ROM code (CGB-0 doesn't init wave RAM, for example).
-    // However, with our IPR-free boot ROMs, the difference may be minimal.
-    // The important thing is that DIV is running and reasonable.
+    // Step both consoles forward after the boot ROM has exited and verify
+    // that DIV continues advancing. Comparing for inequality handles
+    // wraparound as well (for example, 0xFF -> 0x00).
+    for _ in 0..1024 {
+        gb_0.step();
+        gb_e.step();
+    }
 
-    // Verify DIV is in a reasonable range (boot takes several frames)
-    // At 4 MHz, DIV increments every 256 cycles, so after ~2M cycles of boot,
-    // we expect DIV to have wrapped many times. Any non-zero value is acceptable.
-    assert!(
-        div_0 != 0x00 || div_e != 0x00,
-        "At least one DIV value should be non-zero after boot"
+    let div_0_after = read_cgb_bus(&mut gb_0, 0xFF04);
+    let div_e_after = read_cgb_bus(&mut gb_e, 0xFF04);
+
+    assert_ne!(
+        div_0_after, div_0,
+        "CGB-0 DIV should continue advancing after boot completion"
+    );
+    assert_ne!(
+        div_e_after, div_e,
+        "CGB-E DIV should continue advancing after boot completion"
     );
 }
