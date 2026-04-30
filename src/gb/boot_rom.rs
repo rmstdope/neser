@@ -299,6 +299,7 @@ pub const DMG0_BOOT_ROM: [u8; 256] = [
 /// - Boot chime (two tones at ~988 Hz and ~1319 Hz)
 /// - CGB palette initialization
 /// - DMG compatibility mode detection (reads $0143, sets KEY0/OPRI)
+/// - DMG compatibility palette selection (automatic + manual override)
 /// - Proper CPU register setup for cartridge handoff
 ///
 /// ## DMG Compatibility Mode
@@ -306,6 +307,14 @@ pub const DMG0_BOOT_ROM: [u8; 256] = [
 /// The boot ROM reads the CGB flag at $0143 and configures hardware:
 /// - **CGB-compatible** (bit 7 set): KEY0 = CGB flag, OPRI = $00
 /// - **DMG-only** (bit 7 clear): KEY0 = $04, OPRI = $01
+///
+/// For DMG-only games, a colorization palette is applied at boot exit:
+/// - **Automatic**: Selected based on ROM title checksum (like real CGB)
+/// - **Manual override**: User can hold button combinations to select palette:
+///   - Up: palette 5, Up+A: 43, Up+B: 28
+///   - Down: palette 8, Down+A: 3, Down+B: 49
+///   - Left: palette 48, Left+A: 40, Left+B: 7
+///   - Right: palette 1, Right+A: 0, Right+B: 6
 ///
 /// ## Post-boot CPU state
 ///
