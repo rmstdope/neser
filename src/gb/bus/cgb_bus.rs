@@ -947,6 +947,31 @@ impl GbBus for CgbBus {
                 // Also locks KEY0 (writes to $FF4C ignored from this point).
                 self.boot_rom_active = false;
                 self.key0_locked = true;
+
+                // Apply DMG compatibility palettes for DMG-only games.
+                // KEY0 = $04 indicates DMG compatibility mode (bit 2 set).
+                if self.key0 == 0x04 {
+                    // Check for manual palette override via button combo.
+                    let button_state = self.joypad.get_states();
+                    let manual_palette_id =
+                        compat_palettes::button_combo_to_palette_id(button_state);
+
+                    let palette = if let Some(palette_id) = manual_palette_id {
+                        // User held valid button combo: use manual palette selection.
+                        compat_palettes::get_palette_colors_by_id(palette_id)
+                    } else {
+                        // No valid combo: use automatic palette based on title hash.
+                        let mut header = [0u8; 0x4C];
+                        for (i, byte) in header.iter_mut().enumerate() {
+                            *byte = self.cart.read(0x0100 + i as u16);
+                        }
+                        compat_palettes::get_palette_colors(&header)
+                    };
+
+                    self.ppu
+                        .apply_dmg_compat_palettes(&palette.bg0, &palette.obj0, &palette.obj1);
+                    self.ppu.set_dmg_compat(true);
+                }
             }
             // CGB undocumented registers ($FF72-$FF75) — Pan Docs "CGB Registers".
             0xFF72 => self.ff72 = val,

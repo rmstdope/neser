@@ -798,3 +798,220 @@ fn test_cgb0_boot_cgb_compatible_cartridge_sets_key0_cgb_mode() {
         opri
     );
 }
+
+// ============================================================================
+// Manual Palette Override Tests
+// ============================================================================
+//
+// These tests verify that holding button combinations during CGB boot
+// selects the corresponding manual DMG compatibility palette, matching
+// real CGB hardware behavior.
+//
+// Reference: https://tcrf.net/Notes:Game_Boy_Color_Bootstrap_ROM
+
+/// Helper: boot a CGB with a DMG-only ROM while holding specified buttons.
+///
+/// `button_mask` uses NES convention: A=0, B=1, Select=2, Start=3, Up=4, Down=5, Left=6, Right=7.
+fn boot_cgb_with_buttons_held(model: CgbModel, button_mask: u8) -> Gb<CgbBus> {
+    let rom = build_cgb_test_rom_with_flag(0x00); // DMG-only
+    let cart = load_cartridge(&rom).expect("valid ROM");
+    let mut gb = Gb::new(CgbBus::new(cart, model, false));
+
+    // Set buttons BEFORE booting so they're held during the entire boot sequence
+    for id in 0u8..8 {
+        let pressed = button_mask & (1 << id) != 0;
+        gb.cpu.bus.joypad.set_button(id, pressed);
+    }
+
+    let reached = run_cgb_until_cartridge_entry(&mut gb);
+    assert!(
+        reached,
+        "Boot ROM must reach $0100 for model {:?} with buttons ${:02X}",
+        model, button_mask
+    );
+    gb
+}
+
+/// Helper: read the first BG palette color (color 0 of palette 0) as RGB555.
+fn read_bg_palette_color0(gb: &Gb<CgbBus>) -> u16 {
+    let low = gb.cpu.bus.ppu.bg_palette_ram[0] as u16;
+    let high = gb.cpu.bus.ppu.bg_palette_ram[1] as u16;
+    low | (high << 8)
+}
+
+/// No buttons held: should apply automatic palette based on title hash.
+///
+/// For a minimal test ROM with no special title, this should use the default palette.
+#[test]
+fn test_cgb_boot_dmg_no_buttons_uses_automatic_palette() {
+    let mut gb = boot_cgb_with_buttons_held(CgbModel::CgbE, 0x00);
+
+    // Get the expected automatic palette for this ROM
+    let mut header = [0u8; 0x4C];
+    for (i, byte) in header.iter_mut().enumerate() {
+        *byte = gb.cpu.bus.read(0x0100 + i as u16);
+    }
+    let expected_palette = crate::gb::compat_palettes::get_palette_colors(&header);
+
+    // Verify BG palette 0 color 0 matches expected
+    let actual_color = read_bg_palette_color0(&gb);
+    assert_eq!(
+        actual_color, expected_palette.bg0[0],
+        "Without buttons held, automatic palette should be applied. Expected ${:04X}, got ${:04X}",
+        expected_palette.bg0[0], actual_color
+    );
+}
+
+/// Up button held: should apply palette ID 5.
+///
+/// Reference: TCRF CGB boot ROM documentation.
+#[test]
+fn test_cgb_boot_dmg_up_button_selects_palette_5() {
+    let button_mask = 0b0001_0000; // Up = bit 4
+    let gb = boot_cgb_with_buttons_held(CgbModel::CgbE, button_mask);
+
+    // Get expected palette for ID 5
+    let expected_palette = crate::gb::compat_palettes::get_palette_colors_by_id(5);
+
+    // Verify BG palette 0 color 0 matches expected
+    let actual_color = read_bg_palette_color0(&gb);
+    assert_eq!(
+        actual_color, expected_palette.bg0[0],
+        "Up button should select palette 5. Expected ${:04X}, got ${:04X}",
+        expected_palette.bg0[0], actual_color
+    );
+}
+
+/// Down button held: should apply palette ID 8.
+#[test]
+fn test_cgb_boot_dmg_down_button_selects_palette_8() {
+    let button_mask = 0b0010_0000; // Down = bit 5
+    let gb = boot_cgb_with_buttons_held(CgbModel::CgbE, button_mask);
+
+    let expected_palette = crate::gb::compat_palettes::get_palette_colors_by_id(8);
+    let actual_color = read_bg_palette_color0(&gb);
+    assert_eq!(
+        actual_color, expected_palette.bg0[0],
+        "Down button should select palette 8. Expected ${:04X}, got ${:04X}",
+        expected_palette.bg0[0], actual_color
+    );
+}
+
+/// Left button held: should apply palette ID 48.
+#[test]
+fn test_cgb_boot_dmg_left_button_selects_palette_48() {
+    let button_mask = 0b0100_0000; // Left = bit 6
+    let gb = boot_cgb_with_buttons_held(CgbModel::CgbE, button_mask);
+
+    let expected_palette = crate::gb::compat_palettes::get_palette_colors_by_id(48);
+    let actual_color = read_bg_palette_color0(&gb);
+    assert_eq!(
+        actual_color, expected_palette.bg0[0],
+        "Left button should select palette 48. Expected ${:04X}, got ${:04X}",
+        expected_palette.bg0[0], actual_color
+    );
+}
+
+/// Right button held: should apply palette ID 1.
+#[test]
+fn test_cgb_boot_dmg_right_button_selects_palette_1() {
+    let button_mask = 0b1000_0000; // Right = bit 7
+    let gb = boot_cgb_with_buttons_held(CgbModel::CgbE, button_mask);
+
+    let expected_palette = crate::gb::compat_palettes::get_palette_colors_by_id(1);
+    let actual_color = read_bg_palette_color0(&gb);
+    assert_eq!(
+        actual_color, expected_palette.bg0[0],
+        "Right button should select palette 1. Expected ${:04X}, got ${:04X}",
+        expected_palette.bg0[0], actual_color
+    );
+}
+
+/// Up + A buttons held: should apply palette ID 43.
+#[test]
+fn test_cgb_boot_dmg_up_a_selects_palette_43() {
+    let button_mask = 0b0001_0001; // Up (bit 4) + A (bit 0)
+    let gb = boot_cgb_with_buttons_held(CgbModel::CgbE, button_mask);
+
+    let expected_palette = crate::gb::compat_palettes::get_palette_colors_by_id(43);
+    let actual_color = read_bg_palette_color0(&gb);
+    assert_eq!(
+        actual_color, expected_palette.bg0[0],
+        "Up+A should select palette 43. Expected ${:04X}, got ${:04X}",
+        expected_palette.bg0[0], actual_color
+    );
+}
+
+/// Up + B buttons held: should apply palette ID 28.
+#[test]
+fn test_cgb_boot_dmg_up_b_selects_palette_28() {
+    let button_mask = 0b0001_0010; // Up (bit 4) + B (bit 1)
+    let gb = boot_cgb_with_buttons_held(CgbModel::CgbE, button_mask);
+
+    let expected_palette = crate::gb::compat_palettes::get_palette_colors_by_id(28);
+    let actual_color = read_bg_palette_color0(&gb);
+    assert_eq!(
+        actual_color, expected_palette.bg0[0],
+        "Up+B should select palette 28. Expected ${:04X}, got ${:04X}",
+        expected_palette.bg0[0], actual_color
+    );
+}
+
+/// Right + A buttons held: should apply palette ID 0.
+#[test]
+fn test_cgb_boot_dmg_right_a_selects_palette_0() {
+    let button_mask = 0b1000_0001; // Right (bit 7) + A (bit 0)
+    let gb = boot_cgb_with_buttons_held(CgbModel::CgbE, button_mask);
+
+    let expected_palette = crate::gb::compat_palettes::get_palette_colors_by_id(0);
+    let actual_color = read_bg_palette_color0(&gb);
+    assert_eq!(
+        actual_color, expected_palette.bg0[0],
+        "Right+A should select palette 0. Expected ${:04X}, got ${:04X}",
+        expected_palette.bg0[0], actual_color
+    );
+}
+
+/// Invalid combo (A+B together): should fall back to automatic palette.
+#[test]
+fn test_cgb_boot_dmg_invalid_ab_combo_uses_automatic_palette() {
+    let button_mask = 0b0001_0011; // Up + A + B (invalid: A+B together)
+    let mut gb = boot_cgb_with_buttons_held(CgbModel::CgbE, button_mask);
+
+    // Get the expected automatic palette for this ROM
+    let mut header = [0u8; 0x4C];
+    for (i, byte) in header.iter_mut().enumerate() {
+        *byte = gb.cpu.bus.read(0x0100 + i as u16);
+    }
+    let expected_palette = crate::gb::compat_palettes::get_palette_colors(&header);
+
+    let actual_color = read_bg_palette_color0(&gb);
+    assert_eq!(
+        actual_color, expected_palette.bg0[0],
+        "Invalid A+B combo should fall back to automatic palette. Expected ${:04X}, got ${:04X}",
+        expected_palette.bg0[0], actual_color
+    );
+}
+
+/// CGB-compatible cartridge: button combo should be ignored (no palette applied).
+///
+/// Manual palette override only works for DMG-only games.
+#[test]
+fn test_cgb_boot_cgb_game_ignores_button_combo() {
+    let rom = build_cgb_test_rom_with_flag(0x80); // CGB-compatible
+    let cart = load_cartridge(&rom).expect("valid ROM");
+    let mut gb = Gb::new(CgbBus::new(cart, CgbModel::CgbE, false));
+
+    // Hold Up button
+    gb.cpu.bus.joypad.set_button(4, true); // Up
+
+    let reached = run_cgb_until_cartridge_entry(&mut gb);
+    assert!(reached, "Boot ROM must reach $0100");
+
+    // For CGB games, palette RAM should be at initial values (0x0000 or whatever CGB sets)
+    // NOT the Up palette (ID 5). Verify by checking that dmg_compat flag is not set.
+    assert!(
+        !gb.cpu.bus.ppu.dmg_compat,
+        "CGB game should not be in DMG compat mode, even with buttons held"
+    );
+}
