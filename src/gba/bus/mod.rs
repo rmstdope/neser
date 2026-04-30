@@ -10,6 +10,7 @@
 //!
 //! <https://problemkaputt.de/gbatek.htm#gbamemorymap>
 
+pub mod dma;
 pub mod interrupt;
 pub mod io;
 pub mod memory;
@@ -17,6 +18,7 @@ pub mod timer;
 
 use crate::gba::cpu::bus::Bus;
 
+pub use dma::{DmaBus, DmaChannel, DmaController};
 pub use interrupt::{InterruptController, bits as irq_bits};
 pub use io::{IoRegisters, REG_IE, REG_IF, REG_IME};
 pub use timer::{Timer, Timers};
@@ -89,6 +91,8 @@ pub struct GbaBus {
     pub ic: InterruptController,
     /// Timer bank (TM0-TM3).
     pub timers: Timers,
+    /// DMA controller (DMA0-DMA3).
+    pub dma: DmaController,
     /// Last value driven on the bus (used to model open-bus reads).
     last_bus_value: u32,
     /// Whether the BIOS is locked. After the boot ROM finishes executing,
@@ -119,6 +123,7 @@ impl GbaBus {
             io: IoRegisters::new(),
             ic: InterruptController::new(),
             timers: Timers::new(),
+            dma: DmaController::new(),
             last_bus_value: 0,
             bios_locked: false,
         }
@@ -156,10 +161,49 @@ impl GbaBus {
         !self.rom.is_empty()
     }
 
-    /// Step the bus peripherals (currently just the timer bank) by `cycles`
-    /// CPU cycles. Any pending IRQs are routed into [`Self::ic`].
+    /// Step the bus peripherals (timers, DMA) by `cycles` CPU cycles. Any
+    /// pending IRQs are routed into [`Self::ic`].
     pub fn step(&mut self, cycles: u32) {
         self.timers.step(cycles, &mut self.ic);
+        self.run_pending_dma();
+    }
+
+    /// Run any pending Immediate-mode DMA transfers and any triggered
+    /// transfers that have already been armed.
+    pub fn run_pending_dma(&mut self) {
+        // Take the controller out of `self` so we can pass `&mut self` as
+        // the [`DmaBus`] backing during the transfer (avoids borrow conflict
+        // between the controller state and the bus memory it operates on).
+        let mut dma = std::mem::take(&mut self.dma);
+        dma.run_pending_triggered(self);
+        self.dma = dma;
+    }
+
+    /// Notify pending V-blank-triggered DMA channels and run them. Called
+    /// by the PPU when it enters V-blank.
+    pub fn notify_vblank(&mut self) {
+        self.dma.notify_vblank();
+        self.run_pending_dma();
+    }
+
+    /// Notify pending H-blank-triggered DMA channels and run them. Called
+    /// by the PPU when it enters H-blank.
+    pub fn notify_hblank(&mut self) {
+        self.dma.notify_hblank();
+        self.run_pending_dma();
+    }
+
+    /// Notify that audio FIFO `which` (0=A, 1=B) needs replenishment and
+    /// run the corresponding Special-mode DMA channel (1 or 2).
+    pub fn notify_fifo(&mut self, which: usize) {
+        self.dma.notify_fifo(which);
+        self.run_pending_dma();
+    }
+
+    /// Take the accumulated DMA stall cycles. The CPU consumes these when
+    /// stepping after a DMA-induced pause.
+    pub fn take_dma_stall_cycles(&mut self) -> u32 {
+        self.dma.take_cpu_stall()
     }
 
     /// Return non-sequential access cycle count for `addr` and access width.
@@ -279,7 +323,7 @@ impl Bus for GbaBus {
             0x3 => read_le_u32(&self.iwram, aligned as usize),
             0x4 => self
                 .io
-                .try_read32(aligned, &self.ic, &self.timers)
+                .try_read32(aligned, &self.ic, &self.timers, &self.dma)
                 .unwrap_or_else(|| self.open_bus_word()),
             0x5 => read_le_u32(&self.pram, aligned as usize),
             0x6 => {
@@ -314,7 +358,7 @@ impl Bus for GbaBus {
             0x3 => read_le_u16(&self.iwram, aligned as usize),
             0x4 => self
                 .io
-                .try_read16(aligned, &self.ic, &self.timers)
+                .try_read16(aligned, &self.ic, &self.timers, &self.dma)
                 .unwrap_or_else(|| self.open_bus_halfword(aligned)),
             0x5 => read_le_u16(&self.pram, aligned as usize),
             0x6 => {
@@ -350,7 +394,7 @@ impl Bus for GbaBus {
             0x3 => self.iwram[(addr as usize) % IWRAM_SIZE],
             0x4 => self
                 .io
-                .try_read8(addr, &self.ic, &self.timers)
+                .try_read8(addr, &self.ic, &self.timers, &self.dma)
                 .unwrap_or_else(|| self.open_bus_byte(addr)),
             0x5 => self.pram[(addr as usize) % PRAM_SIZE],
             0x6 => self.vram[vram_offset(addr)],
@@ -370,13 +414,18 @@ impl Bus for GbaBus {
     fn write32(&mut self, addr: u32, value: u32) {
         let aligned = addr & !0x3;
         self.last_bus_value = value;
+        let touches_io = (aligned >> 24) & 0xF == 0x4;
         match (aligned >> 24) & 0xF {
             0x0 | 0x1 => { /* BIOS is read-only */ }
             0x2 => write_le_u32(&mut self.ewram, aligned as usize, value),
             0x3 => write_le_u32(&mut self.iwram, aligned as usize, value),
-            0x4 => self
-                .io
-                .write32(aligned, value, &mut self.ic, &mut self.timers),
+            0x4 => self.io.write32(
+                aligned,
+                value,
+                &mut self.ic,
+                &mut self.timers,
+                &mut self.dma,
+            ),
             0x5 => write_le_u32(&mut self.pram, aligned as usize, value),
             0x6 => {
                 let off = vram_offset(aligned);
@@ -390,6 +439,9 @@ impl Bus for GbaBus {
             }
             _ => {}
         }
+        if touches_io && self.dma.any_pending() {
+            self.run_pending_dma();
+        }
     }
 
     fn write16(&mut self, addr: u32, value: u16) {
@@ -397,13 +449,18 @@ impl Bus for GbaBus {
         let shift = if aligned & 0x2 == 0 { 0 } else { 16 };
         self.last_bus_value =
             (self.last_bus_value & !(0xFFFFu32 << shift)) | ((value as u32) << shift);
+        let touches_io = (aligned >> 24) & 0xF == 0x4;
         match (aligned >> 24) & 0xF {
             0x0 | 0x1 => {}
             0x2 => write_le_u16(&mut self.ewram, aligned as usize, value),
             0x3 => write_le_u16(&mut self.iwram, aligned as usize, value),
-            0x4 => self
-                .io
-                .write16(aligned, value, &mut self.ic, &mut self.timers),
+            0x4 => self.io.write16(
+                aligned,
+                value,
+                &mut self.ic,
+                &mut self.timers,
+                &mut self.dma,
+            ),
             0x5 => write_le_u16(&mut self.pram, aligned as usize, value),
             0x6 => {
                 let off = vram_offset(aligned);
@@ -416,17 +473,23 @@ impl Bus for GbaBus {
             }
             _ => {}
         }
+        if touches_io && self.dma.any_pending() {
+            self.run_pending_dma();
+        }
     }
 
     fn write8(&mut self, addr: u32, value: u8) {
         let shift = (addr & 3) * 8;
         self.last_bus_value =
             (self.last_bus_value & !(0xFFu32 << shift)) | ((value as u32) << shift);
+        let touches_io = (addr >> 24) & 0xF == 0x4;
         match (addr >> 24) & 0xF {
             0x0 | 0x1 => {}
             0x2 => self.ewram[(addr as usize) % EWRAM_SIZE] = value,
             0x3 => self.iwram[(addr as usize) % IWRAM_SIZE] = value,
-            0x4 => self.io.write8(addr, value, &mut self.ic, &mut self.timers),
+            0x4 => self
+                .io
+                .write8(addr, value, &mut self.ic, &mut self.timers, &mut self.dma),
             0x5 => {
                 // Byte writes to PRAM duplicate the byte to a halfword.
                 let off = (addr as usize & !1) % PRAM_SIZE;
@@ -445,6 +508,30 @@ impl Bus for GbaBus {
             0xE | 0xF => self.sram[(addr as usize) % SRAM_SIZE] = value,
             _ => {}
         }
+        if touches_io && self.dma.any_pending() {
+            self.run_pending_dma();
+        }
+    }
+}
+
+/// DMA transfers use the bus' standard read/write paths so that DMA
+/// destinations like PRAM/VRAM/OAM see the same byte-mirroring rules as
+/// CPU stores.
+impl dma::DmaBus for GbaBus {
+    fn dma_read16(&mut self, addr: u32) -> u16 {
+        <Self as Bus>::read16(self, addr)
+    }
+    fn dma_write16(&mut self, addr: u32, value: u16) {
+        <Self as Bus>::write16(self, addr, value);
+    }
+    fn dma_read32(&mut self, addr: u32) -> u32 {
+        <Self as Bus>::read32(self, addr)
+    }
+    fn dma_write32(&mut self, addr: u32, value: u32) {
+        <Self as Bus>::write32(self, addr, value);
+    }
+    fn dma_raise_irq(&mut self, sources: u16) {
+        self.ic.raise(sources);
     }
 }
 
@@ -658,5 +745,80 @@ mod tests {
         let _ = bus.read32(0x0200_0000);
         // 0x0400_0400 is in I/O region 0x4 but past the 1 KB I/O window.
         assert_eq!(bus.read32(0x0400_0400), 0x1234_5678);
+    }
+
+    #[test]
+    fn dma_immediate_fires_via_cpu_io_writes() {
+        // Acceptance: CPU programs DMA via I/O writes; transfer happens
+        // when the enable bit transitions 0→1 and the data appears at
+        // the destination region.
+        let mut bus = GbaBus::new();
+        // Place 4 words of source data in EWRAM.
+        for i in 0..4 {
+            bus.write32(0x0200_0000 + i * 4, 0xAABB_0000 + i);
+        }
+        // Program DMA channel 0 via I/O writes (mirroring real software).
+        bus.write32(0x0400_00B0, 0x0200_0000); // SAD
+        bus.write32(0x0400_00B4, 0x0200_1000); // DAD
+        bus.write16(0x0400_00B8, 4); // count
+        // CNT_H: enable | IRQ | timing=immediate | word | src=inc | dst=inc.
+        bus.write16(REG_IE, irq_bits::DMA0);
+        bus.write16(REG_IME, 1);
+        bus.write16(0x0400_00BA, 0x8000 | 0x4000 | 0x0400);
+        // Verify destination contains the source data.
+        for i in 0..4 {
+            assert_eq!(bus.read32(0x0200_1000 + i * 4), 0xAABB_0000 + i);
+        }
+        // CPU stall accumulator reflects 4 units × 2 cycles each.
+        assert_eq!(bus.take_dma_stall_cycles(), 8);
+        // IRQ was raised through the controller.
+        assert!(bus.ic.irq_line());
+        // Enable bit is cleared after one-shot completion.
+        assert_eq!(bus.read16(0x0400_00BA) & 0x8000, 0);
+    }
+
+    #[test]
+    fn dma_vblank_fires_on_notify() {
+        let mut bus = GbaBus::new();
+        bus.write16(0x0200_0000, 0xCAFE);
+        bus.write16(0x0200_0002, 0xBABE);
+        bus.write32(0x0400_00BC, 0x0200_0000); // CH1 SAD
+        bus.write32(0x0400_00C0, 0x0200_1000); // CH1 DAD
+        bus.write16(0x0400_00C4, 2); // CH1 count
+        // CNT_H: enable | timing=VBlank (1) — halfword.
+        bus.write16(0x0400_00C6, 0x8000 | (1 << 12));
+        // Without notify nothing happens.
+        assert_eq!(bus.read16(0x0200_1000), 0);
+        bus.notify_vblank();
+        assert_eq!(bus.read16(0x0200_1000), 0xCAFE);
+        assert_eq!(bus.read16(0x0200_1002), 0xBABE);
+    }
+
+    #[test]
+    fn dma_priority_arbitration_serves_channel0_first() {
+        // Setup both CH0 and CH1 immediate transfers and verify CH0 ran
+        // first by inspecting where they wrote in the bus.
+        let mut bus = GbaBus::new();
+        bus.write32(0x0200_0000, 0xC0_DA);
+        bus.write32(0x0200_0100, 0xC1_DA);
+        // CH1 first (lower priority), then CH0 (higher priority): CH0
+        // must preempt CH1 if it were already mid-burst, but with both
+        // immediate-pending CH0 should be served first.
+        bus.write32(0x0400_00BC, 0x0200_0000); // CH1 SAD
+        bus.write32(0x0400_00C0, 0x0200_2000); // CH1 DAD
+        bus.write16(0x0400_00C4, 1);
+        // Channel 0 gets programmed last but should still win priority.
+        bus.write32(0x0400_00B0, 0x0200_0100); // CH0 SAD
+        bus.write32(0x0400_00B4, 0x0200_3000); // CH0 DAD
+        bus.write16(0x0400_00B8, 1);
+        // Enable both at once via 32-bit write of CH1.CNT_H | CH0.CNT_H?
+        // The two are at different addresses, so do CH1 then CH0; the CH0
+        // enable rising edge will start its transfer first because of
+        // priority, even though CH1 was armed earlier.
+        bus.write16(0x0400_00C6, 0x8000 | 0x0400); // CH1 enable, word
+        bus.write16(0x0400_00BA, 0x8000 | 0x0400); // CH0 enable, word
+        // Both transfers must have completed.
+        assert_eq!(bus.read32(0x0200_3000), 0xC1_DA);
+        assert_eq!(bus.read32(0x0200_2000), 0xC0_DA);
     }
 }
