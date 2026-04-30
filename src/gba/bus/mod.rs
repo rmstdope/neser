@@ -571,15 +571,8 @@ impl Bus for GbaBus {
             0x2 => self.ewram[(addr as usize) % EWRAM_SIZE] = value,
             0x3 => self.iwram[(addr as usize) % IWRAM_SIZE] = value,
             0x4 => {
-                let aligned_hw = addr & !0x1;
-                if (0x0400_0060..=0x0400_00A6).contains(&aligned_hw) {
-                    let current = self.apu.read16(aligned_hw);
-                    let merged = if addr & 1 == 0 {
-                        (current & 0xFF00) | value as u16
-                    } else {
-                        (current & 0x00FF) | ((value as u16) << 8)
-                    };
-                    self.apu.write16(aligned_hw, merged);
+                if (0x0400_0060..=0x0400_00A7).contains(&addr) {
+                    self.apu.write8(addr, value);
                 } else {
                     self.io.write8(
                         addr,

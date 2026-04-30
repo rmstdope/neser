@@ -795,7 +795,12 @@ impl Apu {
     // ── Public API ────────────────────────────────────────────────────────
 
     /// Set the output sample rate in Hz (default: 44 100).
+    ///
+    /// Invalid values (0, negative, NaN, infinity) are silently ignored.
     pub fn set_sample_rate(&mut self, rate: f32) {
+        if !rate.is_finite() || rate <= 0.0 {
+            return;
+        }
         self.cycles_per_sample = GBA_CLOCK_HZ / rate;
     }
 
@@ -815,9 +820,57 @@ impl Apu {
     }
 
     /// Advance the APU by `cycles` GBA CPU cycles.
+    ///
+    /// Rather than iterating one cycle at a time, this computes how many
+    /// cycles remain until the next frame-sequencer event and the next sample
+    /// boundary, advances the channel timers in one step, then handles those
+    /// events in order. This keeps APU stepping O(events) instead of O(cycles).
     pub fn tick(&mut self, cycles: u32) {
-        for _ in 0..cycles {
-            self.tick_one();
+        let mut remaining = cycles;
+        while remaining > 0 {
+            // How many cycles until the frame sequencer fires?
+            let fs_remaining = FS_PERIOD - self.fs_counter;
+
+            // How many cycles until the next output sample?
+            // We track the fractional accumulator as f32; convert the ceiling
+            // to an integer count of cycles needed.
+            let sample_remaining = {
+                let needed = self.cycles_per_sample - self.sample_acc;
+                // Need at least 1 cycle, ceil to nearest integer.
+                needed.ceil().max(1.0) as u32
+            };
+
+            // Advance only up to the nearest event (or end of budget).
+            let step = remaining.min(fs_remaining).min(sample_remaining);
+
+            // Bulk-advance channel frequency timers.
+            self.ch1.tick(step);
+            self.ch2.tick(step);
+            self.ch3.tick(step);
+            self.ch4.tick(step);
+
+            // Advance frame sequencer counter.
+            self.fs_counter += step;
+            if self.fs_counter >= FS_PERIOD {
+                self.fs_counter -= FS_PERIOD;
+                self.clock_frame_sequencer_step();
+            }
+
+            // Advance sample accumulator.
+            self.sample_acc += step as f32;
+            if self.sample_acc >= self.cycles_per_sample {
+                self.sample_acc -= self.cycles_per_sample;
+                if self.pending_sample.is_none() {
+                    // Advance PCM FIFOs once per output sample.
+                    // NOTE: Full DMA/timer-driven FIFO advance will be wired
+                    // in Phase 4 (DMA controller integration).
+                    self.fifo_a.advance();
+                    self.fifo_b.advance();
+                    self.pending_sample = Some(self.mix());
+                }
+            }
+
+            remaining -= step;
         }
     }
 
@@ -933,19 +986,172 @@ impl Apu {
                 self.ch3.wave_ram[off] = val as u8;
                 self.ch3.wave_ram[off + 1] = (val >> 8) as u8;
             }
-            // FIFO_A write (32-bit aligned, treated as halfword pair here)
-            0x0400_00A0 => {
+            // FIFO_A write: 0x00A0–0x00A3 (all four bytes map to FIFO A)
+            0x0400_00A0 | 0x0400_00A2 => {
                 let lo = val as u8;
                 let hi = (val >> 8) as u8;
                 self.fifo_a.push(lo as i8);
                 self.fifo_a.push(hi as i8);
             }
-            // FIFO_B write
-            0x0400_00A4 => {
+            // FIFO_B write: 0x00A4–0x00A7
+            0x0400_00A4 | 0x0400_00A6 => {
                 let lo = val as u8;
                 let hi = (val >> 8) as u8;
                 self.fifo_b.push(lo as i8);
                 self.fifo_b.push(hi as i8);
+            }
+            _ => {}
+        }
+    }
+
+    /// Write a single byte to an APU register.
+    ///
+    /// Many APU register fields are write-only (length, trigger, frequency),
+    /// so the standard read-modify-write pattern would corrupt them. This
+    /// method therefore routes byte writes to dedicated single-byte handlers
+    /// for every register that contains write-only fields, avoiding spurious
+    /// reads through `read16`.
+    pub fn write8(&mut self, addr: u32, val: u8) {
+        match addr {
+            // SOUND1CNT_L: both bytes are fully read/write — RMW is safe.
+            0x0400_0060 | 0x0400_0061 => {
+                let aligned = addr & !0x1;
+                let current = self.read16(aligned);
+                let merged = if addr & 1 == 0 {
+                    (current & 0xFF00) | val as u16
+                } else {
+                    (current & 0x00FF) | ((val as u16) << 8)
+                };
+                self.ch1.write_cnt_l(merged);
+            }
+            // SOUND1CNT_H: high byte (envelope/volume) is read/write;
+            // low byte contains write-only length field — handle separately.
+            0x0400_0062 => {
+                // Low byte: duty (7-6) + length (5-0).  Length is write-only,
+                // so we cannot RMW — write the full low byte directly.
+                let current_hi = self.read16(0x0400_0062) & 0xFF00;
+                self.ch1.write_cnt_h(current_hi | val as u16);
+            }
+            0x0400_0063 => {
+                // High byte: envelope period, add, init volume — read/write.
+                let current_lo = self.read16(0x0400_0062) & 0x00FF;
+                self.ch1.write_cnt_h(current_lo | ((val as u16) << 8));
+            }
+            // SOUND1CNT_X: frequency (10-0) and length-enable are write-only;
+            // trigger bit must be passed through.
+            0x0400_0064 => {
+                // Low byte: low 8 bits of frequency — write-only.
+                let hi = (self.ch1.freq >> 8) & 0x07;
+                let len_en = u16::from(self.ch1.length_en) << 6;
+                self.ch1.write_cnt_x(len_en | (hi << 8) | val as u16);
+            }
+            0x0400_0065 => {
+                // High byte: freq[10:8] | length_en | trigger.
+                self.ch1
+                    .write_cnt_x((val as u16) << 8 | (self.ch1.freq & 0xFF));
+            }
+            // SOUND2CNT_L
+            0x0400_0068 => {
+                let current_hi = self.read16(0x0400_0068) & 0xFF00;
+                self.ch2.write_cnt_l(current_hi | val as u16);
+            }
+            0x0400_0069 => {
+                let current_lo = self.read16(0x0400_0068) & 0x00FF;
+                self.ch2.write_cnt_l(current_lo | ((val as u16) << 8));
+            }
+            // SOUND2CNT_H
+            0x0400_006C => {
+                let hi = (self.ch2.freq >> 8) & 0x07;
+                let len_en = u16::from(self.ch2.length_en) << 6;
+                self.ch2.write_cnt_h(len_en | (hi << 8) | val as u16);
+            }
+            0x0400_006D => {
+                self.ch2
+                    .write_cnt_h((val as u16) << 8 | (self.ch2.freq & 0xFF));
+            }
+            // SOUND3CNT_L: DAC enable in bit 7
+            0x0400_0070 => {
+                self.ch3.write_cnt_l(val as u16);
+            }
+            0x0400_0071 => {} // high byte unused
+            // SOUND3CNT_H: length (7-0) in low byte, output level (14-13) in high byte
+            0x0400_0072 => {
+                let current_hi = self.read16(0x0400_0072) & 0xFF00;
+                self.ch3.write_cnt_h(current_hi | val as u16);
+            }
+            0x0400_0073 => {
+                let current_lo = self.read16(0x0400_0072) & 0x00FF;
+                self.ch3.write_cnt_h(current_lo | ((val as u16) << 8));
+            }
+            // SOUND3CNT_X: frequency/trigger
+            0x0400_0074 => {
+                let hi = (self.ch3.freq >> 8) & 0x07;
+                let len_en = u16::from(self.ch3.length_en) << 6;
+                self.ch3.write_cnt_x(len_en | (hi << 8) | val as u16);
+            }
+            0x0400_0075 => {
+                self.ch3
+                    .write_cnt_x((val as u16) << 8 | (self.ch3.freq & 0xFF));
+            }
+            // SOUND4CNT_L: length (5-0) in low byte, envelope in high byte
+            0x0400_0078 => {
+                let current_hi = self.read16(0x0400_0078) & 0xFF00;
+                self.ch4.write_cnt_l(current_hi | val as u16);
+            }
+            0x0400_0079 => {
+                let current_lo = self.read16(0x0400_0078) & 0x00FF;
+                self.ch4.write_cnt_l(current_lo | ((val as u16) << 8));
+            }
+            // SOUND4CNT_H: clock params + trigger
+            0x0400_007C => {
+                let len_en = u16::from(self.ch4.length_en) << 6;
+                self.ch4
+                    .write_cnt_h(len_en | (0xFF00 & self.read16(0x0400_007C)) | val as u16);
+            }
+            0x0400_007D => {
+                self.ch4
+                    .write_cnt_h((val as u16) << 8 | (self.read16(0x0400_007C) & 0x00FF));
+            }
+            // SOUNDCNT_L: plain read/write register — RMW safe.
+            0x0400_0080 => {
+                self.soundcnt_l = (self.soundcnt_l & 0xFF00) | val as u16;
+            }
+            0x0400_0081 => {
+                self.soundcnt_l = (self.soundcnt_l & 0x00FF) | ((val as u16) << 8);
+            }
+            // SOUNDCNT_H: DMA sound control — use write16 (handles FIFO reset).
+            0x0400_0082 => {
+                let hi = self.soundcnt_h & 0xFF00;
+                self.write_soundcnt_h(hi | val as u16);
+            }
+            0x0400_0083 => {
+                let lo = self.soundcnt_h & 0x00FF;
+                self.write_soundcnt_h(lo | ((val as u16) << 8));
+            }
+            // SOUNDCNT_X: power control — use write16.
+            0x0400_0084 => self.write_soundcnt_x(val as u16),
+            0x0400_0085 => {} // high byte of SOUNDCNT_X is unused
+            // SOUNDBIAS
+            0x0400_0088 => {
+                let hi = self.soundbias & 0xFF00;
+                self.soundbias = (hi | val as u16) & 0xC3FE;
+            }
+            0x0400_0089 => {
+                let lo = self.soundbias & 0x00FF;
+                self.soundbias = (lo | ((val as u16) << 8)) & 0xC3FE;
+            }
+            // WAVE RAM: byte-addressable
+            a if (0x0400_0090..=0x0400_009F).contains(&a) => {
+                let off = (a - 0x0400_0090) as usize;
+                self.ch3.write_wave_ram(off, val);
+            }
+            // FIFO A (0x00A0–0x00A3): each byte is a new PCM sample
+            a if (0x0400_00A0..=0x0400_00A3).contains(&a) => {
+                self.fifo_a.push(val as i8);
+            }
+            // FIFO B (0x00A4–0x00A7)
+            a if (0x0400_00A4..=0x0400_00A7).contains(&a) => {
+                self.fifo_b.push(val as i8);
             }
             _ => {}
         }
@@ -1036,34 +1242,6 @@ impl Apu {
             self.ch4.clock_envelope();
         }
         self.fs_step = (self.fs_step + 1) & 7;
-    }
-
-    /// Advance the APU by exactly one GBA cycle.
-    fn tick_one(&mut self) {
-        // Tick channel frequency timers.
-        self.ch1.tick(1);
-        self.ch2.tick(1);
-        self.ch3.tick(1);
-        self.ch4.tick(1);
-
-        // Frame sequencer.
-        self.fs_counter += 1;
-        if self.fs_counter >= FS_PERIOD {
-            self.fs_counter = 0;
-            self.clock_frame_sequencer_step();
-        }
-
-        // Sample generation.
-        self.sample_acc += 1.0;
-        if self.sample_acc >= self.cycles_per_sample {
-            self.sample_acc -= self.cycles_per_sample;
-            if self.pending_sample.is_none() {
-                // Advance PCM FIFOs once per output sample.
-                self.fifo_a.advance();
-                self.fifo_b.advance();
-                self.pending_sample = Some(self.mix());
-            }
-        }
     }
 
     /// Mix all channels into a mono f32 sample in `[-1.0, 1.0]`.
@@ -1562,7 +1740,7 @@ mod tests {
     // ── Power control ────────────────────────────────────────────────────────
 
     #[test]
-    fn test_power_on_clears_channels() {
+    fn test_power_off_clears_channels() {
         let mut apu = powered_apu();
         apu.write16(0x0400_0062, 0xF080);
         apu.write16(0x0400_0064, 0x8320);
@@ -1598,5 +1776,89 @@ mod tests {
         apu.write16(0x0400_0090, 0xDEAD);
         let val = apu.read16(0x0400_0090);
         assert_eq!(val, 0xDEAD);
+    }
+
+    // ── set_sample_rate validation ───────────────────────────────────────────
+
+    #[test]
+    fn test_set_sample_rate_rejects_zero() {
+        let mut apu = Apu::new();
+        let before = apu.cycles_per_sample;
+        apu.set_sample_rate(0.0);
+        assert_eq!(apu.cycles_per_sample, before, "zero rate should be ignored");
+    }
+
+    #[test]
+    fn test_set_sample_rate_rejects_negative() {
+        let mut apu = Apu::new();
+        let before = apu.cycles_per_sample;
+        apu.set_sample_rate(-100.0);
+        assert_eq!(
+            apu.cycles_per_sample, before,
+            "negative rate should be ignored"
+        );
+    }
+
+    #[test]
+    fn test_set_sample_rate_rejects_nan() {
+        let mut apu = Apu::new();
+        let before = apu.cycles_per_sample;
+        apu.set_sample_rate(f32::NAN);
+        assert_eq!(apu.cycles_per_sample, before, "NaN rate should be ignored");
+    }
+
+    #[test]
+    fn test_set_sample_rate_rejects_infinity() {
+        let mut apu = Apu::new();
+        let before = apu.cycles_per_sample;
+        apu.set_sample_rate(f32::INFINITY);
+        assert_eq!(
+            apu.cycles_per_sample, before,
+            "infinity rate should be ignored"
+        );
+    }
+
+    // ── write8 tests ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_write8_fifo_a_pushes_each_byte() {
+        let mut apu = Apu::new();
+        // Each byte address 0xA0–0xA3 should push one sample.
+        apu.write8(0x0400_00A0, 10);
+        apu.write8(0x0400_00A1, 20);
+        apu.write8(0x0400_00A2, 30);
+        apu.write8(0x0400_00A3, 40);
+        assert_eq!(apu.fifo_a.len(), 4);
+    }
+
+    #[test]
+    fn test_write8_fifo_b_pushes_each_byte() {
+        let mut apu = Apu::new();
+        apu.write8(0x0400_00A4, 1);
+        apu.write8(0x0400_00A5, 2);
+        apu.write8(0x0400_00A6, 3);
+        apu.write8(0x0400_00A7, 4);
+        assert_eq!(apu.fifo_b.len(), 4);
+    }
+
+    #[test]
+    fn test_write8_wave_ram_byte_addressable() {
+        let mut apu = Apu::new();
+        apu.write8(0x0400_0090, 0xAB);
+        apu.write8(0x0400_0091, 0xCD);
+        assert_eq!(apu.ch3.wave_ram[0], 0xAB);
+        assert_eq!(apu.ch3.wave_ram[1], 0xCD);
+    }
+
+    #[test]
+    fn test_write8_soundcnt_l_preserves_other_byte() {
+        let mut apu = Apu::new();
+        apu.write16(0x0400_0080, 0x1234);
+        // Overwrite only the low byte.
+        apu.write8(0x0400_0080, 0x56);
+        assert_eq!(apu.soundcnt_l, 0x1256, "high byte should be preserved");
+        // Overwrite only the high byte.
+        apu.write8(0x0400_0081, 0x78);
+        assert_eq!(apu.soundcnt_l, 0x7856, "low byte should be preserved");
     }
 }
