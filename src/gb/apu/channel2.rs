@@ -34,10 +34,6 @@ pub struct Channel2 {
     /// Envelope clock state for zombie mode glitch tracking.
     #[serde(default)]
     env_clock_state: EnvelopeClockState,
-    /// Startup delay counter. When non-zero, the channel is active but the
-    /// frequency timer doesn't tick and duty position doesn't advance.
-    #[serde(default)]
-    startup_delay: u8,
 }
 
 impl Default for Channel2 {
@@ -66,7 +62,6 @@ impl Channel2 {
             triggered_once: false,
             first_sample_zero: false,
             env_clock_state: EnvelopeClockState::default(),
-            startup_delay: 0,
         }
     }
 
@@ -198,7 +193,6 @@ impl Channel2 {
         self.triggered_once = false;
         self.first_sample_zero = false;
         self.env_clock_state = EnvelopeClockState::default();
-        self.startup_delay = 0;
     }
 
     // ── Register reads ────────────────────────────────────────────────────
@@ -355,7 +349,6 @@ impl Channel2 {
         // Convert delay to T-cycles and add to period for initial freq_timer
         let period = (2048 - self.freq) * 4;
         self.freq_timer = period + delay_t;
-        self.startup_delay = 0; // Not used with this approach
         self.volume = self.init_volume;
         self.env_timer = self.env_period;
         // Reset envelope clock state on trigger.

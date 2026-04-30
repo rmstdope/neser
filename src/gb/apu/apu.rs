@@ -198,8 +198,13 @@ impl Apu {
     /// appropriate length counters, sweep, and/or envelope units.
     ///
     /// If the skip_next_div_apu_event flag is set (APU was powered on while
-    /// DIV bit 4 was HIGH), this event is skipped and the flag is cleared.
+    /// the DIV-APU bit was HIGH), this event is skipped and the flag is cleared.
     pub fn clock_div_apu(&mut self) {
+        // Do nothing if APU is powered off.
+        if !self.powered {
+            return;
+        }
+
         // Skip the first event if APU was powered on while DIV-APU bit was high.
         if self.skip_next_div_apu_event {
             self.skip_next_div_apu_event = false;
@@ -232,6 +237,11 @@ impl Apu {
             self.ch2.clock_envelope();
             self.ch4.clock_envelope();
         }
+
+        // Clear envelope clock flags so NRx2 glitch logic only sees them for one M-cycle.
+        self.ch1.clear_envelope_clock();
+        self.ch2.clear_envelope_clock();
+        self.ch4.clear_envelope_clock();
 
         self.fs_step = (self.fs_step + 1) & 7;
     }
