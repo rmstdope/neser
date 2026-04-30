@@ -53,6 +53,9 @@ pub struct GbConfig {
     /// Game Boy hardware target selection (DMG/CGB/GBA).
     /// `None` means auto-detect from ROM flags.
     pub hardware: Option<GbHardware>,
+    /// Whether to show the boot ROM animation (logo + chime).
+    /// Default is `false` (skip boot animation for faster startup).
+    pub boot_animation: bool,
 }
 
 impl Default for GbConfig {
@@ -61,6 +64,7 @@ impl Default for GbConfig {
             dmg_variant: DmgModel::DmgB,
             cgb_variant: CgbModel::CgbE,
             hardware: None,
+            boot_animation: false,
         }
     }
 }
@@ -97,6 +101,10 @@ impl GbConfig {
             })?);
         }
 
+        if let Some(val) = crate::platform::config::parse_bool_arg(args, "--gb-boot-animation")? {
+            self.boot_animation = val;
+        }
+
         Ok(())
     }
 
@@ -126,6 +134,14 @@ impl GbConfig {
                     )
                 })?);
             }
+            "gb-boot-animation" => {
+                self.boot_animation = crate::platform::config::parse_bool(value)
+                    .map_err(|_| {
+                        format!(
+                            "Invalid gb-boot-animation value: '{value}'. Valid options are: true, false",
+                        )
+                    })?;
+            }
             _ => {
                 return Err(format!("Unknown GB config key: {key}"));
             }
@@ -144,6 +160,7 @@ mod tests {
         assert_eq!(config.dmg_variant, DmgModel::DmgB);
         assert_eq!(config.cgb_variant, CgbModel::CgbE);
         assert_eq!(config.hardware, None);
+        assert!(!config.boot_animation);
     }
 
     #[test]
@@ -341,5 +358,75 @@ mod tests {
         let err_msg = result.unwrap_err();
         assert!(err_msg.contains("Invalid gb-cgb-variant value"));
         assert!(err_msg.contains("cgb-0"));
+    }
+
+    #[test]
+    fn test_cli_parse_boot_animation_true() {
+        let mut config = GbConfig::default();
+        let args = vec![
+            "neser".to_string(),
+            "--gb-boot-animation".to_string(),
+            "true".to_string(),
+        ];
+        config.apply_args(&args).unwrap();
+        assert!(config.boot_animation);
+    }
+
+    #[test]
+    fn test_cli_parse_boot_animation_false() {
+        // Start with true to verify it changes
+        let mut config = GbConfig {
+            boot_animation: true,
+            ..Default::default()
+        };
+        let args = vec![
+            "neser".to_string(),
+            "--gb-boot-animation".to_string(),
+            "false".to_string(),
+        ];
+        config.apply_args(&args).unwrap();
+        assert!(!config.boot_animation);
+    }
+
+    #[test]
+    fn test_cli_parse_boot_animation_flag_only() {
+        let mut config = GbConfig::default();
+        let args = vec![
+            "neser".to_string(),
+            "--gb-boot-animation".to_string(),
+            "game.gbc".to_string(), // This should be treated as a positional arg
+        ];
+        config.apply_args(&args).unwrap();
+        assert!(config.boot_animation); // Flag without value defaults to true
+    }
+
+    #[test]
+    fn test_config_file_parse_boot_animation_true() {
+        let mut config = GbConfig::default();
+        config
+            .apply_config_value("gb-boot-animation", "true")
+            .unwrap();
+        assert!(config.boot_animation);
+    }
+
+    #[test]
+    fn test_config_file_parse_boot_animation_false() {
+        let mut config = GbConfig {
+            boot_animation: true,
+            ..Default::default()
+        };
+        config
+            .apply_config_value("gb-boot-animation", "false")
+            .unwrap();
+        assert!(!config.boot_animation);
+    }
+
+    #[test]
+    fn test_config_file_parse_boot_animation_invalid() {
+        let mut config = GbConfig::default();
+        let result = config.apply_config_value("gb-boot-animation", "maybe");
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err();
+        assert!(err_msg.contains("Invalid gb-boot-animation value"));
     }
 }

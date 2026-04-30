@@ -281,3 +281,10 @@ nes-vertical_overscan=8
 # Note: This only applies when using gb-hardware=cgb or when a CGB ROM is
 # auto-detected. It has no effect on DMG mode.
 #gb-cgb-variant=cgb-e
+
+# Show the Game Boy boot ROM animation (logo + chime).
+# When enabled, the emulator will play the full boot animation with the
+# Nintendo logo scrolling and the boot chime before starting the game.
+# Default: false (skip boot animation for faster startup)
+# Valid values: true, false
+#gb-boot-animation=false

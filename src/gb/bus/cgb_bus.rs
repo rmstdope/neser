@@ -1634,12 +1634,12 @@ mod tests {
         // Given: CgbBus with boot ROM active
         let bus = CgbBus::new(cgb_rom_only_cart(), CgbModel::default(), false);
         // Then: $0000 should read from boot ROM
-        // CGB_BOOT_ROM starts with: LD SP, $FFFE ($31 $FE $FF); LD A, $80 ($3E $80)
+        // CGB_BOOT_ROM starts with: LD SP, $FFFE ($31 $FE $FF); LD HL, $8000 ($21 $00 $80)
         assert_eq!(bus.read_for_debugger(0x0000), 0x31); // LD SP, nn
         assert_eq!(bus.read_for_debugger(0x0001), 0xFE); // low byte of $FFFE
         assert_eq!(bus.read_for_debugger(0x0002), 0xFF); // high byte of $FFFE
-        assert_eq!(bus.read_for_debugger(0x0003), 0x3E); // LD A, n8
-        assert_eq!(bus.read_for_debugger(0x0004), 0x80); // $80
+        assert_eq!(bus.read_for_debugger(0x0003), 0x21); // LD HL, nn (VRAM clear)
+        assert_eq!(bus.read_for_debugger(0x0004), 0x00); // low byte of $8000
     }
 
     #[test]
@@ -1663,8 +1663,10 @@ mod tests {
     fn test_boot_rom_upper_region_reads_from_boot_rom_when_active() {
         // Given: CgbBus with boot ROM active
         let bus = CgbBus::new(cgb_rom_only_cart(), CgbModel::default(), false);
-        // Then: $0200-$08FF should read from boot ROM (all zeros in placeholder)
-        assert_eq!(bus.read_for_debugger(0x0200), 0x00);
+        // Then: $0200-$08FF should read from boot ROM
+        // $0200 contains DoubleBitsAndWriteRowTwice subroutine (CALL $0203 = $CD $03 $02)
+        assert_eq!(bus.read_for_debugger(0x0200), 0xCD); // CALL opcode
+        // $08FF is padding at end of boot ROM
         assert_eq!(bus.read_for_debugger(0x08FF), 0x00);
     }
 
