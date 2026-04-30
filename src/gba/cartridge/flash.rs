@@ -83,20 +83,38 @@ pub struct Flash {
 }
 
 impl Flash {
-    /// Build a new Flash backend for the given save type. Panics if
-    /// `save_type` is not a Flash variant.
-    pub fn new(save_type: SaveType) -> Self {
-        let (size, id) = match save_type {
-            SaveType::Flash64K => (FLASH_BANK_SIZE, ID_64K),
-            SaveType::Flash128K => (FLASH_BANK_SIZE * 2, ID_128K),
-            other => panic!("Flash::new called with non-Flash save type: {other:?}"),
-        };
+    /// Build a new 64 KB single-bank Flash backend.
+    pub fn new_64k() -> Self {
         Self {
-            data: vec![0xFF; size],
+            data: vec![0xFF; FLASH_BANK_SIZE],
             bank: 0,
             id_mode: false,
-            id,
+            id: ID_64K,
             state: FlashState::Ready,
+        }
+    }
+
+    /// Build a new 128 KB dual-bank Flash backend.
+    pub fn new_128k() -> Self {
+        Self {
+            data: vec![0xFF; FLASH_BANK_SIZE * 2],
+            bank: 0,
+            id_mode: false,
+            id: ID_128K,
+            state: FlashState::Ready,
+        }
+    }
+
+    /// Build a new Flash backend for the given save type.
+    ///
+    /// This constructor is crate-private because only Flash save types are
+    /// valid. External callers should use [`Flash::new_64k`] or
+    /// [`Flash::new_128k`] instead.
+    pub(crate) fn new(save_type: SaveType) -> Self {
+        match save_type {
+            SaveType::Flash64K => Self::new_64k(),
+            SaveType::Flash128K => Self::new_128k(),
+            other => panic!("Flash::new called with non-Flash save type: {other:?}"),
         }
     }
 

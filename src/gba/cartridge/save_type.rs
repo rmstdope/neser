@@ -10,11 +10,11 @@
 //! | Marker (ASCII)   | Meaning                                                  |
 //! |------------------|----------------------------------------------------------|
 //! | `EEPROM_V`       | EEPROM — variant (512 B vs 8 KB) chosen by ROM size      |
-//! | `SRAM_V`         | 32 KB battery-backed SRAM                                |
-//! | `SRAM_F_V`       | 32 KB SRAM with FRAM technology — same external behavior |
-//! | `FLASH_V`        | 64 KB flash (Atmel/Macronix/etc., Panasonic MN63F805…)   |
-//! | `FLASH512_V`     | 64 KB flash, explicit                                    |
 //! | `FLASH1M_V`      | 128 KB flash (two banks)                                 |
+//! | `FLASH512_V`     | 64 KB flash, explicit                                    |
+//! | `FLASH_V`        | 64 KB flash (Atmel/Macronix/etc., Panasonic MN63F805…)   |
+//! | `SRAM_F_V`       | 32 KB SRAM with FRAM technology — same external behavior |
+//! | `SRAM_V`         | 32 KB battery-backed SRAM                                |
 //!
 //! The ROM is searched in 4-byte aligned chunks because Nintendo's linker
 //! always 4-byte-aligns these strings; that's also how mGBA's heuristic
@@ -107,7 +107,7 @@ fn find_marker(rom: &[u8], needle: &[u8]) -> bool {
     let last = rom.len() - needle.len();
     let mut i = 0;
     while i <= last {
-        if rom[i..i + needle.len()] == *needle {
+        if &rom[i..i + needle.len()] == needle {
             return true;
         }
         i += 4;

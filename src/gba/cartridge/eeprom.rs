@@ -73,20 +73,38 @@ pub struct Eeprom {
 }
 
 impl Eeprom {
-    /// Build a new EEPROM backend for the given save type. Panics if
-    /// `save_type` is not an EEPROM variant.
-    pub fn new(save_type: SaveType) -> Self {
-        let (size, addr_bits) = match save_type {
-            SaveType::Eeprom512 => (SaveType::Eeprom512.size_bytes(), ADDR_BITS_512),
-            SaveType::Eeprom8K => (SaveType::Eeprom8K.size_bytes(), ADDR_BITS_8K),
-            other => panic!("Eeprom::new called with non-EEPROM save type: {other:?}"),
-        };
+    /// Build a new 512-byte EEPROM backend (6-bit address bus).
+    pub fn new_512b() -> Self {
         Self {
-            data: vec![0xFF; size],
-            addr_bits,
+            data: vec![0xFF; SaveType::Eeprom512.size_bytes()],
+            addr_bits: ADDR_BITS_512,
             phase: Phase::Idle,
             shift_in: 0,
             write_shift: 0,
+        }
+    }
+
+    /// Build a new 8 KB EEPROM backend (14-bit address bus).
+    pub fn new_8k() -> Self {
+        Self {
+            data: vec![0xFF; SaveType::Eeprom8K.size_bytes()],
+            addr_bits: ADDR_BITS_8K,
+            phase: Phase::Idle,
+            shift_in: 0,
+            write_shift: 0,
+        }
+    }
+
+    /// Build a new EEPROM backend for the given save type.
+    ///
+    /// This constructor is crate-private because only EEPROM save types are
+    /// valid. External callers should use [`Eeprom::new_512b`] or
+    /// [`Eeprom::new_8k`] instead.
+    pub(crate) fn new(save_type: SaveType) -> Self {
+        match save_type {
+            SaveType::Eeprom512 => Self::new_512b(),
+            SaveType::Eeprom8K => Self::new_8k(),
+            other => panic!("Eeprom::new called with non-EEPROM save type: {other:?}"),
         }
     }
 
