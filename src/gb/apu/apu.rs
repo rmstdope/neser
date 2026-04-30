@@ -84,11 +84,13 @@ pub struct Apu {
     #[serde(default)]
     lf_div: bool,
 
-    /// SameBoy-derived M-cycle counter (`div_divider`) advanced once per
-    /// M-cycle. Its low two bits gate the upcoming `square_sweep_countdown`
-    /// at the "every 4 M-cycles" boundary (`& 3 == 3`). Currently unused
-    /// outside Phase 1 plumbing tests; the sweep dispatch still runs from
-    /// FS step 2/6 until Phase 3 lands.
+    /// SameBoy-derived FS-step counter (`div_divider`) advanced once per
+    /// DIV-APU event (i.e., per Frame Sequencer step at 512 Hz). Sub-M-cycle
+    /// APU machinery gates on its low bits:
+    ///   * `& 1 == 1` — length / NR14 retrigger "extra length tick" glitch
+    ///   * `& 3 == 3` — sweep tick (drives `Channel1::sweep_countdown`)
+    ///   * `& 7 == 7` — envelope volume countdown decrement
+    ///
     /// Ref: SameBoy `Core/apu.c` `gb->apu.div_divider`.
     #[serde(default)]
     div_divider: u8,
@@ -233,6 +235,11 @@ impl Apu {
             return;
         }
 
+        // SameBoy `Core/apu.c`: increment div_divider at the start of every
+        // serviced DIV-APU event, before any channel work. Low bits drive
+        // length/sweep/envelope sub-events.
+        self.div_divider = self.div_divider.wrapping_add(1);
+
         trace_apu!(3; "GB APU FS step={} length={} sweep={} envelope={}",
             self.fs_step,
             (FS_TABLE[self.fs_step as usize] & 0x01) != 0,
@@ -274,10 +281,6 @@ impl Apu {
     fn tick_one(&mut self) {
         // Toggle the low-frequency divider (tracks 2 MHz alignment).
         self.lf_div = !self.lf_div;
-
-        // Advance the M-cycle counter consumed by sub-M-cycle APU machinery
-        // (Phase 3+ — `square_sweep_countdown` etc.).
-        self.div_divider = self.div_divider.wrapping_add(1);
 
         // ── Channel frequency timers ───────────────────────────────────────
         self.ch1.tick();
@@ -567,11 +570,11 @@ impl Apu {
         self.ch3.read_wave_ram(addr)
     }
 
-    /// SameBoy-style M-cycle counter used by sub-M-cycle APU machinery.
+    /// SameBoy-style FS-step counter used by sub-M-cycle APU machinery.
     ///
-    /// Currently consumed only by Phase 1 plumbing tests; Phase 3 will use
-    /// it to clock `square_sweep_countdown` on `(div_divider & 3) == 3`.
-    #[allow(dead_code)] // Consumer lands in Phase 3 (square_sweep_countdown).
+    /// Advanced once per DIV-APU event in `clock_div_apu`. Phase 3 consumes
+    /// the low two bits to drive the per-128 Hz sweep tick.
+    #[allow(dead_code)] // Direct readers land in Phase 6 (NR10 glitch).
     pub(crate) fn div_divider(&self) -> u8 {
         self.div_divider
     }
@@ -593,41 +596,56 @@ mod tests {
         apu
     }
 
-    /// Phase 1 plumbing: `div_divider` is an M-cycle counter exposed for the
-    /// upcoming SameBoy-derived sub-M-cycle sweep machinery. It must advance
-    /// by exactly one per M-cycle so the low two bits drive the
-    /// "every 4 M-cycles" gating used by Phase 3's `square_sweep_countdown`.
+    /// `div_divider` is a Frame-Sequencer-step counter exposed for the
+    /// SameBoy-derived sub-M-cycle sweep machinery. It must advance by
+    /// exactly one per serviced DIV-APU event so the low bits drive
+    ///   * `& 1 == 1` — extra-length-tick glitch (256 Hz tick, half of 512 Hz)
+    ///   * `& 3 == 3` — sweep tick (128 Hz, every 4 FS steps)
+    ///   * `& 7 == 7` — envelope volume countdown (64 Hz)
     ///
-    /// Ref: SameBoy `Core/apu.c` — `tick_square_sweep` is gated on
-    /// `(gb->apu.div_divider & 3) == 3`.
+    /// Ref: SameBoy `Core/apu.c` — `gb->apu.div_divider`.
     #[test]
-    fn test_div_divider_advances_per_m_cycle() {
+    fn test_div_divider_advances_per_fs_step() {
         let mut apu = powered_apu();
         let start = apu.div_divider();
-        apu.tick(1);
+        apu.clock_div_apu();
         assert_eq!(apu.div_divider(), start.wrapping_add(1));
-        apu.tick(1);
-        assert_eq!(apu.div_divider(), start.wrapping_add(2));
-        apu.tick(2);
-        assert_eq!(apu.div_divider(), start.wrapping_add(4));
+        apu.clock_div_apu();
+        apu.clock_div_apu();
+        assert_eq!(apu.div_divider(), start.wrapping_add(3));
     }
 
     #[test]
-    fn test_div_divider_low_two_bits_align_every_4_m_cycles() {
+    fn test_div_divider_does_not_advance_on_skipped_event() {
+        // Power-on quirk: skip_next_div_apu_event suppresses both the FS
+        // dispatch AND the div_divider increment, mirroring SameBoy's
+        // skip_div_event SKIPPED branch.
         let mut apu = powered_apu();
-        // Advance until low 2 bits are zero, then verify the every-4-M-cycle
-        // boundary lands on `& 3 == 3` exactly once per group of 4.
+        apu.arm_skip_next_div_apu_event();
+        let start = apu.div_divider();
+        apu.clock_div_apu();
+        assert_eq!(apu.div_divider(), start);
+        apu.clock_div_apu();
+        assert_eq!(apu.div_divider(), start.wrapping_add(1));
+    }
+
+    #[test]
+    fn test_div_divider_low_two_bits_align_every_4_fs_steps() {
+        let mut apu = powered_apu();
+        // Advance until the low 2 bits are zero, then verify the
+        // every-4-FS-step boundary lands on `& 3 == 3` exactly once
+        // per group of 4.
         while apu.div_divider() & 3 != 0 {
-            apu.tick(1);
+            apu.clock_div_apu();
         }
         let mut hits = 0u32;
         for _ in 0..16 {
-            apu.tick(1);
+            apu.clock_div_apu();
             if apu.div_divider() & 3 == 3 {
                 hits += 1;
             }
         }
-        assert_eq!(hits, 4, "expected exactly 4 boundary hits over 16 M-cycles");
+        assert_eq!(hits, 4, "expected 4 boundary hits over 16 FS steps");
     }
 
     #[test]
