@@ -481,4 +481,81 @@ mod tests {
             "duty phase should advance after the channel has been triggered"
         );
     }
+
+    // ── T-cycle precision tests ───────────────────────────────────────────
+
+    #[test]
+    fn test_tick_freq_timer_decrements_by_tcycles_within_mcycle() {
+        // Given: freq_timer = 6;
+        // When: tick() once (1 M-cycle = 4 T-cycles);
+        // Then: freq_timer should be 2, no duty advance.
+        let mut ch = Channel2::new();
+        ch.write_nr22(0xF0);
+        ch.write_nr21(0x80);
+        // freq = 2047 → period = 4
+        ch.write_nr23(0xFF);
+        ch.write_nr24(0x87, false, false); // trigger, freq high = 7 → freq = 0x7FF
+        ch.freq_timer = 6;
+        let duty_before = ch.duty_pos;
+        ch.tick();
+        assert_eq!(
+            ch.freq_timer, 2,
+            "freq_timer should decrement to 2 after one M-cycle"
+        );
+        assert_eq!(
+            ch.duty_pos, duty_before,
+            "duty_pos should not advance when timer > 0"
+        );
+    }
+
+    #[test]
+    fn test_tick_freq_timer_expires_mid_mcycle_and_reloads_with_remainder() {
+        // Given: freq_timer = 3, period = 8 (freq = 2046);
+        // When: tick() once (4 T-cycles);
+        // Then: timer expires at T-cycle 3, reloads to 8,
+        //       then 1 remaining T-cycle decrements to 7.
+        let mut ch = Channel2::new();
+        ch.write_nr22(0xF0);
+        ch.write_nr21(0x80);
+        // freq = 2046 → period = (2048 - 2046) * 4 = 8
+        ch.write_nr23(0xFE);
+        ch.write_nr24(0x87, false, false); // trigger, freq high = 7 → freq = 0x7FE
+        ch.freq_timer = 3;
+        let duty_before = ch.duty_pos;
+        ch.tick();
+        assert_eq!(
+            ch.freq_timer, 7,
+            "freq_timer should be period - remaining (8 - 1 = 7)"
+        );
+        assert_eq!(
+            ch.duty_pos,
+            (duty_before + 1) & 7,
+            "duty_pos should advance once"
+        );
+    }
+
+    #[test]
+    fn test_tick_freq_timer_expires_exactly_at_mcycle_boundary() {
+        // Given: freq_timer = 4, period = 12 (freq = 2045);
+        // When: tick() once;
+        // Then: timer expires at T-cycle 4, reloads to 12.
+        let mut ch = Channel2::new();
+        ch.write_nr22(0xF0);
+        ch.write_nr21(0x80);
+        // freq = 2045 → period = (2048 - 2045) * 4 = 12
+        ch.write_nr23(0xFD);
+        ch.write_nr24(0x87, false, false); // trigger, freq high = 7 → freq = 0x7FD
+        ch.freq_timer = 4;
+        let duty_before = ch.duty_pos;
+        ch.tick();
+        assert_eq!(
+            ch.freq_timer, 12,
+            "freq_timer should be exactly period after expiring at boundary"
+        );
+        assert_eq!(
+            ch.duty_pos,
+            (duty_before + 1) & 7,
+            "duty_pos should advance once"
+        );
+    }
 }
