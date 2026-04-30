@@ -125,11 +125,6 @@ pub struct Channel1 {
     /// `sweep_calculation_done` fires immediately on this flag.
     #[serde(default)]
     pub(super) instant_calc_done: bool,
-    /// 1MHz cadence flip-flop for `sweep_tick`. We're called once per
-    /// M-cycle by the APU; SameBoy ticks sweep at 1MHz (M-cycles / 2). This
-    /// flag toggles every M-cycle and gates the actual sweep work.
-    #[serde(default)]
-    sweep_tick_phase: bool,
 }
 
 impl Default for Channel1 {
@@ -174,7 +169,6 @@ impl Channel1 {
             completed_addend: 0,
             unshifted_sweep: false,
             instant_calc_done: false,
-            sweep_tick_phase: false,
             #[cfg(test)]
             force_deferred_sweep_for_tests: false,
         }
@@ -410,46 +404,52 @@ impl Channel1 {
         self.completed_addend = self.sweep_length_addend;
     }
 
-    /// 1MHz sweep machinery tick. The APU calls this once per M-cycle; we
-    /// gate on an internal phase flag to drain countdowns at SameBoy's 1MHz
-    /// cadence. SameBoy: `sweep_cycles = cycles / 2 + lf_div_adj` in
-    /// `GB_apu_run`.
+    /// 1MHz sweep machinery tick. The APU calls this once per M-cycle.
+    ///
+    /// Mirrors SameBoy `Core/apu.c` `GB_apu_run`: each M-cycle is 4 T-cycles,
+    /// `sweep_cycles = cycles / 2 = 2`. We drain the reload timer first; any
+    /// leftover sweep_cycles drain the calc countdown. The `instant_calc_done`
+    /// path fires `sweep_calculation_done` when the reload timer reaches 0
+    /// while the countdown is already 0.
     pub fn sweep_tick(&mut self) {
-        // Hot-path early return: when the deferred machinery is fully idle
-        // there is nothing to do. This keeps the call effectively free in
-        // production (where `uses_deferred_sweep()` returns false and the
-        // machinery is never armed) and avoids continuously mutating
-        // `sweep_tick_phase` (which would otherwise dirty serialized state
-        // every M-cycle).
+        // Hot-path early return when the deferred machinery is fully idle.
         if self.sweep_calc_reload_timer == 0
             && self.sweep_calc_countdown == 0
             && !self.instant_calc_done
         {
             return;
         }
-        // Toggle 1MHz phase; only operate every other call.
-        self.sweep_tick_phase = !self.sweep_tick_phase;
-        if !self.sweep_tick_phase {
-            return;
-        }
-        // Reload timer drains first.
-        if self.sweep_calc_reload_timer > 0 {
-            self.sweep_calc_reload_timer -= 1;
-            if self.sweep_calc_reload_timer == 0
+        // SameBoy `sweep_cycles = cycles / 2`. With cycles = 4 T-cycles per
+        // M-cycle and (cycles & 1) == 0, this is always exactly 2. The
+        // `(cycles & 1) && !lf_div` adjustment in SameBoy only applies to
+        // sub-M-cycle batches and is not needed here.
+        let mut sweep_cycles: u8 = 2;
+
+        // ── Reload timer drain ───────────────────────────────────────────
+        if self.sweep_calc_reload_timer > sweep_cycles {
+            self.sweep_calc_reload_timer -= sweep_cycles;
+            sweep_cycles = 0;
+        } else {
+            // SameBoy: when reload_timer hits 0 with countdown already 0 and
+            // instant_calc_done set, fire sweep_calculation_done (the "arm
+            // with shift=0" path).
+            if self.sweep_calc_reload_timer != 0
                 && self.sweep_calc_countdown == 0
                 && self.instant_calc_done
             {
                 self.sweep_calculation_done();
-                self.instant_calc_done = false;
             }
-            return;
+            self.instant_calc_done = false;
+            sweep_cycles -= self.sweep_calc_reload_timer;
+            self.sweep_calc_reload_timer = 0;
         }
-        // Calc countdown drains, but is paused if NR10 shift==0 unless the
-        // arm captured `unshifted_sweep` (allowing already-armed recalc to
-        // complete).
-        if self.sweep_calc_countdown > 0 && (self.sweep_shift > 0 || self.unshifted_sweep) {
-            self.sweep_calc_countdown -= 1;
-            if self.sweep_calc_countdown == 0 {
+
+        // ── Calc countdown drain (gated on shift!=0 || unshifted_sweep) ──
+        if self.sweep_calc_countdown != 0 && (self.sweep_shift != 0 || self.unshifted_sweep) {
+            if self.sweep_calc_countdown > sweep_cycles {
+                self.sweep_calc_countdown -= sweep_cycles;
+            } else {
+                self.sweep_calc_countdown = 0;
                 self.sweep_calculation_done();
             }
         }
@@ -534,7 +534,6 @@ impl Channel1 {
         self.completed_addend = 0;
         self.unshifted_sweep = false;
         self.instant_calc_done = false;
-        self.sweep_tick_phase = false;
         self.negate_used = false;
     }
 
@@ -1389,6 +1388,74 @@ mod tests {
         ch.clock_sweep(false);
         assert_eq!(ch.sweep_calc_countdown, 4);
         assert!(!ch.unshifted_sweep);
+    }
+
+    // ── Phase 7 / D1: sweep cadence parity with SameBoy ──────────────────
+    //
+    // SameBoy `Core/apu.c` `GB_apu_run`:
+    //     unsigned sweep_cycles = cycles / 2;        // T-cycles → 2 MHz
+    //     // drain reload_timer first; any leftover sweep_cycles drains
+    //     // calc_countdown.
+    //
+    // neser calls `sweep_tick` once per M-cycle (= 4 T-cycles), so each call
+    // must consume `sweep_cycles = 2`, draining the reload_timer first and
+    // applying any leftover to the calc_countdown.
+
+    #[test]
+    fn test_sweep_tick_consumes_two_sweep_cycles_per_call_chained() {
+        // reload_timer=1, calc_countdown=4: per M-cycle (sweep_cycles=2)
+        // SameBoy drains reload from 1 → 0 (consumes 1 sweep_cycle), then
+        // applies leftover (1) to calc_countdown: 4 → 3.
+        let mut ch = Channel1::new();
+        ch.set_model(true, CgbModel::CgbE);
+        ch.force_deferred_sweep_for_tests = true;
+        ch.sweep_calc_reload_timer = 1;
+        ch.sweep_calc_countdown = 4;
+        ch.sweep_shift = 4;
+        ch.unshifted_sweep = false;
+        ch.instant_calc_done = false;
+        ch.sweep_tick();
+        assert_eq!(
+            ch.sweep_calc_reload_timer, 0,
+            "reload_timer must drain to 0 in a single M-cycle when starting at 1"
+        );
+        assert_eq!(
+            ch.sweep_calc_countdown, 3,
+            "leftover sweep_cycle must drain calc_countdown by 1 (4 → 3) in the same M-cycle"
+        );
+    }
+
+    #[test]
+    fn test_sweep_tick_drains_reload_timer_two_per_mcycle() {
+        // reload_timer=2, calc_countdown=4, sweep_cycles=2: reload exactly
+        // consumed (2 → 0), no leftover for calc_countdown (stays at 4).
+        let mut ch = Channel1::new();
+        ch.set_model(true, CgbModel::CgbE);
+        ch.force_deferred_sweep_for_tests = true;
+        ch.sweep_calc_reload_timer = 2;
+        ch.sweep_calc_countdown = 4;
+        ch.sweep_shift = 4;
+        ch.unshifted_sweep = false;
+        ch.instant_calc_done = false;
+        ch.sweep_tick();
+        assert_eq!(ch.sweep_calc_reload_timer, 0);
+        assert_eq!(ch.sweep_calc_countdown, 4);
+    }
+
+    #[test]
+    fn test_sweep_tick_drains_calc_countdown_two_per_mcycle_when_reload_zero() {
+        // reload_timer=0, calc_countdown=4: full sweep_cycles=2 applied to
+        // countdown → 2.
+        let mut ch = Channel1::new();
+        ch.set_model(true, CgbModel::CgbE);
+        ch.force_deferred_sweep_for_tests = true;
+        ch.sweep_calc_reload_timer = 0;
+        ch.sweep_calc_countdown = 4;
+        ch.sweep_shift = 4;
+        ch.unshifted_sweep = false;
+        ch.instant_calc_done = false;
+        ch.sweep_tick();
+        assert_eq!(ch.sweep_calc_countdown, 2);
     }
 
     #[test]
