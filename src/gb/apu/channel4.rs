@@ -98,16 +98,23 @@ impl Channel4 {
         DIVISORS[self.divisor_code as usize] << self.clock_shift
     }
 
+    /// Advance the frequency timer by one M-cycle (= 4 T-cycles).
+    ///
+    /// Processes each T-cycle individually to maintain sub-M-cycle precision.
+    /// When the timer expires mid-M-cycle, the remaining T-cycles are applied
+    /// after the reload, ensuring correct phase alignment.
     pub fn tick(&mut self) {
+        let period = self.freq_timer_period();
         if self.freq_timer == 0 {
-            self.freq_timer = self.freq_timer_period();
+            self.freq_timer = period;
         }
-        if self.freq_timer > 4 {
-            self.freq_timer -= 4;
-        } else {
-            self.freq_timer = self.freq_timer_period();
-            trace_apu!(5; "GB APU CH4 tick timer expired, clocking LFSR");
-            self.clock_lfsr();
+        for _ in 0..4 {
+            self.freq_timer -= 1;
+            if self.freq_timer == 0 {
+                self.freq_timer = period;
+                trace_apu!(5; "GB APU CH4 tick timer expired, clocking LFSR");
+                self.clock_lfsr();
+            }
         }
     }
 
@@ -477,5 +484,68 @@ mod tests {
     #[test]
     fn test_output_zero_when_inactive() {
         assert_eq!(Channel4::new().output(), 0.0);
+    }
+
+    // ── T-cycle precision tests ───────────────────────────────────────────
+
+    #[test]
+    fn test_tick_freq_timer_decrements_by_tcycles_within_mcycle() {
+        // Given: freq_timer = 6;
+        // When: tick() once (4 T-cycles);
+        // Then: freq_timer should be 2 (6 - 4 = 2), no LFSR clock.
+        let mut ch = Channel4::new();
+        ch.write_nr42(0xF0);
+        ch.write_nr43(0x00); // divisor=0 (8), shift=0 → period = 8
+        ch.write_nr44(0x80, false); // trigger → LFSR = 0x7FFF
+        ch.freq_timer = 6;
+        let lfsr_before = ch.lfsr;
+        ch.tick();
+        assert_eq!(
+            ch.freq_timer, 2,
+            "freq_timer should decrement to 2 after one M-cycle"
+        );
+        assert_eq!(ch.lfsr, lfsr_before, "LFSR should not clock when timer > 0");
+    }
+
+    #[test]
+    fn test_tick_freq_timer_expires_mid_mcycle_and_reloads_with_remainder() {
+        // Given: freq_timer = 3, period = 8 (divisor=0, shift=0);
+        // When: tick() once (4 T-cycles);
+        // Then: timer expires at T-cycle 3, reloads to 8,
+        //       then 1 remaining T-cycle decrements to 7.
+        //       LFSR should clock once.
+        let mut ch = Channel4::new();
+        ch.write_nr42(0xF0);
+        ch.write_nr43(0x00); // period = 8
+        ch.write_nr44(0x80, false); // trigger → LFSR = 0x7FFF
+        ch.freq_timer = 3;
+        ch.tick();
+        assert_eq!(
+            ch.freq_timer, 7,
+            "freq_timer should be period - remaining (8 - 1 = 7)"
+        );
+        // LFSR clocked once: 0x7FFF → 0x3FFF
+        assert_eq!(
+            ch.lfsr, 0x3FFF,
+            "LFSR should clock once when timer expires mid M-cycle"
+        );
+    }
+
+    #[test]
+    fn test_tick_freq_timer_expires_exactly_at_mcycle_boundary() {
+        // Given: freq_timer = 4, period = 8;
+        // When: tick() once;
+        // Then: timer expires at T-cycle 4, reloads to 8, no remaining T-cycles.
+        let mut ch = Channel4::new();
+        ch.write_nr42(0xF0);
+        ch.write_nr43(0x00); // period = 8
+        ch.write_nr44(0x80, false); // trigger → LFSR = 0x7FFF
+        ch.freq_timer = 4;
+        ch.tick();
+        assert_eq!(
+            ch.freq_timer, 8,
+            "freq_timer should be exactly period after expiring at boundary"
+        );
+        assert_eq!(ch.lfsr, 0x3FFF, "LFSR should clock once");
     }
 }
