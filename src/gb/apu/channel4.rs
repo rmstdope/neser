@@ -6,6 +6,8 @@
 use crate::trace_apu;
 use serde::{Deserialize, Serialize};
 
+use super::channel1::EnvelopeClockState;
+
 /// Divisor lookup for noise clock (NR43 bits 2-0).
 const DIVISORS: [u32; 8] = [8, 16, 32, 48, 64, 80, 96, 112];
 
@@ -26,6 +28,9 @@ pub struct Channel4 {
     pub(crate) length_counter: u8,
     volume: u8,
     env_timer: u8,
+    /// Envelope clock state for zombie mode glitch tracking.
+    #[serde(default)]
+    env_clock_state: EnvelopeClockState,
 }
 
 impl Default for Channel4 {
@@ -52,6 +57,7 @@ impl Channel4 {
             length_counter: 0,
             volume: 0,
             env_timer: 0,
+            env_clock_state: EnvelopeClockState::default(),
         }
     }
 
@@ -130,6 +136,9 @@ impl Channel4 {
     }
 
     pub fn clock_envelope(&mut self) {
+        // Clear the clock flag from any previous tick.
+        self.env_clock_state.clock = false;
+
         if self.env_period == 0 {
             return;
         }
@@ -138,16 +147,35 @@ impl Channel4 {
         }
         if self.env_timer == 0 {
             self.env_timer = self.env_period;
+            // Set clock state to indicate envelope just ticked.
+            self.env_clock_state.clock = true;
+
+            if self.env_clock_state.locked {
+                // Envelope is locked - no volume change.
+                return;
+            }
+
             let old_volume = self.volume;
             if self.env_add && self.volume < 15 {
                 self.volume += 1;
             } else if !self.env_add && self.volume > 0 {
                 self.volume -= 1;
             }
+
+            // Lock envelope if volume has hit its limit.
+            if (self.env_add && self.volume == 15) || (!self.env_add && self.volume == 0) {
+                self.env_clock_state.locked = true;
+            }
+
             if old_volume != self.volume {
                 trace_apu!(3; "GB APU CH4 envelope volume {} -> {}", old_volume, self.volume);
             }
         }
+    }
+
+    /// Clear envelope clock flag after frame sequencer step completes.
+    pub fn clear_envelope_clock(&mut self) {
+        self.env_clock_state.clock = false;
     }
 
     pub fn power_off(&mut self) {
@@ -165,6 +193,7 @@ impl Channel4 {
         self.length_counter = 0;
         self.volume = 0;
         self.env_timer = 0;
+        self.env_clock_state = EnvelopeClockState::default();
     }
 
     pub fn read_nr42(&self) -> u8 {
@@ -190,12 +219,67 @@ impl Channel4 {
     pub fn write_nr42(&mut self, val: u8) {
         trace_apu!(2; "GB APU CH4 write NR42=0x{:02X} volume={} env_add={} env_period={}", 
             val, (val >> 4) & 0x0F, (val & 0x08) != 0, val & 0x07);
+
+        let old_val = self.read_nr42();
+
         self.init_volume = (val >> 4) & 0x0F;
         self.env_add = val & 0x08 != 0;
         self.env_period = val & 0x07;
         self.dac_on = val & 0xF8 != 0;
+
         if !self.dac_on {
             self.active = false;
+        } else if self.active {
+            // Apply zombie mode glitch when writing NRx2 while channel is active.
+            self.apply_nrx2_glitch(old_val, val);
+        }
+    }
+
+    /// Apply the NRx2 "zombie mode" glitch.
+    fn apply_nrx2_glitch(&mut self, old_val: u8, new_val: u8) {
+        let old_period = old_val & 0x07;
+        let new_period = new_val & 0x07;
+        let old_direction_add = (old_val & 0x08) != 0;
+        let new_direction_add = (new_val & 0x08) != 0;
+
+        if self.env_clock_state.clock {
+            self.env_timer = new_period;
+        }
+
+        let mut should_tick =
+            (new_period != 0) && (old_period == 0) && !self.env_clock_state.locked;
+
+        if (new_val & 0x0F) == 0x08 && (old_val & 0x0F) == 0x08 && !self.env_clock_state.locked {
+            should_tick = true;
+        }
+
+        let should_invert = old_direction_add != new_direction_add;
+
+        if should_invert {
+            let old_volume = self.volume;
+            if new_direction_add {
+                if old_period == 0 && !self.env_clock_state.locked {
+                    self.volume ^= 0x0F;
+                } else {
+                    self.volume = (0x0E_u8.wrapping_sub(self.volume)) & 0x0F;
+                }
+                should_tick = false;
+            } else {
+                self.volume = (0x10_u8.wrapping_sub(self.volume)) & 0x0F;
+            }
+            trace_apu!(3; "GB APU CH4 zombie invert volume {} -> {}", old_volume, self.volume);
+        }
+
+        if should_tick {
+            let old_volume = self.volume;
+            if new_direction_add {
+                self.volume = (self.volume + 1) & 0x0F;
+            } else {
+                self.volume = self.volume.wrapping_sub(1) & 0x0F;
+            }
+            trace_apu!(3; "GB APU CH4 zombie tick volume {} -> {}", old_volume, self.volume);
+        } else if new_period == 0 && self.env_clock_state.clock {
+            self.env_clock_state.clock = false;
         }
     }
 
@@ -247,6 +331,8 @@ impl Channel4 {
         self.volume = self.init_volume;
         self.env_timer = self.env_period;
         self.lfsr = 0x7FFF;
+        // Reset envelope clock state on trigger.
+        self.env_clock_state = EnvelopeClockState::default();
     }
 }
 

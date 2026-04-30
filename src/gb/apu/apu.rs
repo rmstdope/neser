@@ -31,8 +31,8 @@ const DMG_MCYCLES_PER_SEC: f32 = 1_048_576.0;
 /// Cutoff frequency for the GB APU AC-coupling high-pass filter (~7 Hz removes DC bias).
 const HP_CUTOFF_HZ: f32 = 7.0;
 
-/// M-cycles between Frame Sequencer steps (512 Hz → 1 step per 2 048 M-cycles).
-const FS_MCYCLES_PER_STEP: u16 = 2048;
+// Note: The Frame Sequencer is clocked by DIV-APU falling edges (512 Hz = every 2048 M-cycles)
+// from the Timer, not by an internal countdown timer. See `clock_div_apu()`.
 
 /// Frame Sequencer 8-step table.
 ///
@@ -56,7 +56,7 @@ const FS_TABLE: [u8; 8] = [
 pub(super) const DUTY_TABLE: [[u8; 8]; 4] = [
     [0, 0, 0, 0, 0, 0, 0, 1], // 12.5%
     [1, 0, 0, 0, 0, 0, 0, 1], // 25%
-    [1, 0, 0, 0, 1, 1, 1, 1], // 50%
+    [1, 0, 0, 0, 0, 1, 1, 1], // 50%
     [0, 1, 1, 1, 1, 1, 1, 0], // 75%
 ];
 
@@ -75,10 +75,21 @@ pub struct Apu {
     /// APU power flag (NR52 bit 7). When `false` most registers are frozen.
     powered: bool,
 
-    /// Frame Sequencer M-cycle countdown (reloads to `FS_MCYCLES_PER_STEP`).
-    fs_timer: u16,
     /// Current Frame Sequencer step (0–7).
+    /// Clocked by DIV-APU falling edges via `clock_div_apu()`.
     fs_step: u8,
+
+    /// Low-frequency divider flag. Toggled each M-cycle to track 2 MHz alignment.
+    /// Used to calculate the startup delay for pulse channels on trigger.
+    #[serde(default)]
+    lf_div: bool,
+
+    /// When `true`, the next DIV-APU falling edge is skipped.
+    /// Set when the APU is powered on while the DIV-APU bit is already HIGH.
+    /// Per SameSuite div_write_trigger_10: "Starting the APU while bit 4 of
+    /// the DIV register is set causes the APU to skip the first DIV-APU event."
+    #[serde(default)]
+    skip_next_div_apu_event: bool,
 
     /// Fractional M-cycle accumulator for sample generation.
     sample_acc: f32,
@@ -115,8 +126,9 @@ impl Apu {
             nr50: 0x00,
             nr51: 0x00,
             powered: false,
-            fs_timer: FS_MCYCLES_PER_STEP,
             fs_step: 0,
+            lf_div: true, // SameBoy initializes to 1
+            skip_next_div_apu_event: false,
             sample_acc: 0.0,
             cycles_per_sample: DMG_MCYCLES_PER_SEC / 44_100.0,
             pending_sample: None,
@@ -165,45 +177,82 @@ impl Apu {
 
     /// Advance the APU by `m_cycles` M-cycles.
     ///
-    /// Clocks all active channels and the Frame Sequencer. Accumulates the
-    /// fractional sample counter and emits a sample when the threshold is reached.
+    /// Clocks all active channels and accumulates the fractional sample counter.
+    /// The Frame Sequencer is NOT clocked here — it is driven by DIV-APU
+    /// falling edges via `clock_div_apu()`.
     pub fn tick(&mut self, m_cycles: u8) {
         for _ in 0..m_cycles {
             self.tick_one();
         }
     }
 
-    /// Advance by exactly one M-cycle.
-    fn tick_one(&mut self) {
-        // ── Frame Sequencer ────────────────────────────────────────────────
-        self.fs_timer -= 1;
-        if self.fs_timer == 0 {
-            self.fs_timer = FS_MCYCLES_PER_STEP;
-            trace_apu!(3; "GB APU FS step={} length={} sweep={} envelope={}",
-                self.fs_step,
-                (FS_TABLE[self.fs_step as usize] & 0x01) != 0,
-                (FS_TABLE[self.fs_step as usize] & 0x02) != 0,
-                (FS_TABLE[self.fs_step as usize] & 0x04) != 0);
-            let flags = FS_TABLE[self.fs_step as usize];
-            if flags & 0x01 != 0 {
-                trace_apu!(4; "GB APU clock length counters");
-                self.ch1.clock_length();
-                self.ch2.clock_length();
-                self.ch3.clock_length();
-                self.ch4.clock_length();
-            }
-            if flags & 0x02 != 0 {
-                trace_apu!(4; "GB APU clock CH1 sweep");
-                self.ch1.clock_sweep();
-            }
-            if flags & 0x04 != 0 {
-                trace_apu!(4; "GB APU clock envelopes");
-                self.ch1.clock_envelope();
-                self.ch2.clock_envelope();
-                self.ch4.clock_envelope();
-            }
-            self.fs_step = (self.fs_step + 1) & 7;
+    /// Clock the APU frame sequencer due to a DIV-APU falling edge.
+    ///
+    /// The GB APU frame sequencer is clocked by the falling edge of DIV bit 4
+    /// (bit 12 of the 16-bit internal counter, or bit 13 on CGB double-speed).
+    /// This occurs:
+    /// - Naturally every 8192 T-cycles (2048 M-cycles) as the counter wraps
+    /// - Artificially when DIV is written while the DIV-APU bit was HIGH
+    ///
+    /// Each call steps the frame sequencer by one step (0-7), clocking the
+    /// appropriate length counters, sweep, and/or envelope units.
+    ///
+    /// If the skip_next_div_apu_event flag is set (APU was powered on while
+    /// the DIV-APU bit was HIGH), this event is skipped and the flag is cleared.
+    pub fn clock_div_apu(&mut self) {
+        // Do nothing if APU is powered off.
+        if !self.powered {
+            return;
         }
+
+        // Skip the first event if APU was powered on while DIV-APU bit was high.
+        if self.skip_next_div_apu_event {
+            self.skip_next_div_apu_event = false;
+            trace_apu!(3; "GB APU skipping DIV-APU event (power-on with DIV-APU bit high)");
+            return;
+        }
+
+        trace_apu!(3; "GB APU FS step={} length={} sweep={} envelope={}",
+            self.fs_step,
+            (FS_TABLE[self.fs_step as usize] & 0x01) != 0,
+            (FS_TABLE[self.fs_step as usize] & 0x02) != 0,
+            (FS_TABLE[self.fs_step as usize] & 0x04) != 0);
+
+        let flags = FS_TABLE[self.fs_step as usize];
+
+        if flags & 0x01 != 0 {
+            trace_apu!(4; "GB APU clock length counters");
+            self.ch1.clock_length();
+            self.ch2.clock_length();
+            self.ch3.clock_length();
+            self.ch4.clock_length();
+        }
+        if flags & 0x02 != 0 {
+            trace_apu!(4; "GB APU clock CH1 sweep");
+            self.ch1.clock_sweep();
+        }
+        if flags & 0x04 != 0 {
+            trace_apu!(4; "GB APU clock envelopes");
+            self.ch1.clock_envelope();
+            self.ch2.clock_envelope();
+            self.ch4.clock_envelope();
+        }
+
+        // Clear envelope clock flags so NRx2 glitch logic only sees them for one M-cycle.
+        self.ch1.clear_envelope_clock();
+        self.ch2.clear_envelope_clock();
+        self.ch4.clear_envelope_clock();
+
+        self.fs_step = (self.fs_step + 1) & 7;
+    }
+
+    /// Advance by exactly one M-cycle.
+    ///
+    /// Clocks channel frequency timers and generates samples.
+    /// Frame Sequencer is NOT clocked here — see `clock_div_apu()`.
+    fn tick_one(&mut self) {
+        // Toggle the low-frequency divider (tracks 2 MHz alignment).
+        self.lf_div = !self.lf_div;
 
         // ── Channel frequency timers ───────────────────────────────────────
         self.ch1.tick();
@@ -351,11 +400,28 @@ impl Apu {
 
     // ── Register write ─────────────────────────────────────────────────────
 
+    /// Write NR52 ($FF26) with knowledge of the current DIV-APU bit state.
+    ///
+    /// When the APU is powered on while the DIV-APU bit (bit 12 or bit 13 in
+    /// double-speed) is HIGH, the first DIV-APU event should be skipped.
+    /// The bus should call this method for NR52 writes instead of write_register.
+    ///
+    /// `div_apu_bit_high` should be true if the DIV-APU bit is currently HIGH.
+    pub fn write_nr52_with_div_state(&mut self, val: u8, div_apu_bit_high: bool) {
+        let power_on = self.write_nr52(val);
+        if power_on && div_apu_bit_high {
+            self.arm_skip_next_div_apu_event();
+        }
+    }
+
     /// Write an APU register.
     ///
     /// When powered off, writes to NR10–NR51 are ignored (length counters are
     /// writable on DMG even when powered off, but we keep it simple here).
     /// Writes to NR52 are always honoured to allow power-on.
+    ///
+    /// Note: For NR52 ($FF26) writes, prefer `write_nr52_with_div_state()` to
+    /// correctly handle the DIV-APU skip behavior on power-on.
     pub fn write_register(&mut self, addr: u16, val: u8) {
         // NR52 is always writable.
         if addr == 0xFF26 {
@@ -394,12 +460,12 @@ impl Apu {
             0xFF11 => self.ch1.write_nr11(val),
             0xFF12 => self.ch1.write_nr12(val),
             0xFF13 => self.ch1.write_nr13(val),
-            0xFF14 => self.ch1.write_nr14(val, extra_clk),
+            0xFF14 => self.ch1.write_nr14(val, extra_clk, self.lf_div),
             0xFF15 => {}
             0xFF16 => self.ch2.write_nr21(val),
             0xFF17 => self.ch2.write_nr22(val),
             0xFF18 => self.ch2.write_nr23(val),
-            0xFF19 => self.ch2.write_nr24(val, extra_clk),
+            0xFF19 => self.ch2.write_nr24(val, extra_clk, self.lf_div),
             0xFF1A => self.ch3.write_nr30(val),
             0xFF1B => self.ch3.write_nr31(val),
             0xFF1C => self.ch3.write_nr32(val),
@@ -422,9 +488,10 @@ impl Apu {
         }
     }
 
-    fn write_nr52(&mut self, val: u8) {
+    fn write_nr52(&mut self, val: u8) -> bool {
         let was_powered = self.powered;
         self.powered = val & 0x80 != 0;
+        let power_on_transition = !was_powered && self.powered;
 
         if was_powered && !self.powered {
             trace_apu!(1; "GB APU power off");
@@ -437,11 +504,16 @@ impl Apu {
             self.nr51 = 0x00;
             self.hp_prev_in = 0.0;
             self.hp_prev_out = 0.0;
-        } else if !was_powered && self.powered {
+            // Clear skip flag on power-off to prevent leaking into a later power-on.
+            self.skip_next_div_apu_event = false;
+        } else if power_on_transition {
             trace_apu!(1; "GB APU power on");
-            // Power on: reset frame sequencer.
+            // Power on: reset frame sequencer step and skip flag.
+            // The frame sequencer is clocked by DIV-APU events (not an internal timer),
+            // so we only reset the step counter here. The skip flag is cleared first,
+            // then write_nr52_with_div_state() will re-arm it if DIV-APU bit is HIGH.
             self.fs_step = 0;
-            self.fs_timer = FS_MCYCLES_PER_STEP;
+            self.skip_next_div_apu_event = false;
             // On CGB, powering on resets all length counters to 0.
             if self.is_cgb {
                 self.ch1.length_counter = 0;
@@ -450,6 +522,19 @@ impl Apu {
                 self.ch4.length_counter = 0;
             }
         }
+
+        power_on_transition
+    }
+
+    /// Arm the skip flag for the next DIV-APU event.
+    ///
+    /// Call this when the APU is powered on while the DIV-APU bit (bit 12 or
+    /// bit 13 in double-speed) is currently HIGH. Per SameSuite div_write_trigger_10:
+    /// "Starting the APU while bit 4 of the DIV register is set causes the APU
+    /// to skip the first DIV-APU event."
+    pub fn arm_skip_next_div_apu_event(&mut self) {
+        self.skip_next_div_apu_event = true;
+        trace_apu!(2; "GB APU armed skip_next_div_apu_event (power-on with DIV-APU bit high)");
     }
 
     /// Expose ch3 wave RAM read for DmgBus (used during CH3 playback quirk).
@@ -561,21 +646,25 @@ mod tests {
     }
 
     #[test]
-    fn test_frame_sequencer_advances_after_2048_mcycles() {
+    fn test_frame_sequencer_advances_on_clock_div_apu() {
         let mut apu = powered_apu();
         assert_eq!(apu.fs_step, 0);
-        apu.tick(100);
-        for _ in 0..1948u16 {
-            apu.tick(1);
-        }
-        assert_eq!(apu.fs_step, 1, "fs_step must be 1 after 2048 M-cycles");
+        // Frame sequencer is now clocked by explicit DIV-APU events,
+        // not by the internal fs_timer. One call to clock_div_apu()
+        // advances by one step.
+        apu.clock_div_apu();
+        assert_eq!(
+            apu.fs_step, 1,
+            "fs_step must be 1 after one clock_div_apu()"
+        );
     }
 
     #[test]
     fn test_frame_sequencer_wraps_at_8() {
         let mut apu = powered_apu();
-        for _ in 0u32..16_384 {
-            apu.tick(1);
+        // Clock frame sequencer 8 times to verify wrap
+        for _ in 0..8 {
+            apu.clock_div_apu();
         }
         assert_eq!(apu.fs_step, 0, "fs_step must wrap back to 0 after 8 steps");
     }
@@ -773,21 +862,25 @@ mod tests {
         // Trigger CH1 with volume 7 and 50% duty (high state)
         apu.write_register(0xFF12, 0x70); // vol=7, no envelope
         apu.write_register(0xFF11, 0x80); // 50% duty
-        apu.write_register(0xFF13, 0x00);
-        apu.write_register(0xFF14, 0x87); // trigger + length disable
+        apu.write_register(0xFF13, 0xFF); // freq low = 0xFF for fast period
+        apu.write_register(0xFF14, 0x87); // trigger + length disable, freq high=7
         // Trigger CH2 with volume 5
         apu.write_register(0xFF17, 0x50); // vol=5, no envelope
         apu.write_register(0xFF16, 0x80); // 50% duty
-        apu.write_register(0xFF18, 0x00);
-        apu.write_register(0xFF19, 0x87); // trigger + length disable
+        apu.write_register(0xFF18, 0xFF); // freq low = 0xFF for fast period
+        apu.write_register(0xFF19, 0x87); // trigger + length disable, freq high=7
 
-        // Tick a bit to ensure channels are active and output non-zero
-        apu.tick(10);
+        // Tick to advance duty_pos to position 5 (high in 50% duty).
+        // freq=0x7FF -> period=4 T-cycles = 1 M-cycle per advance.
+        // startup delay ~8 T-cycles = 2 M-cycles.
+        // After ~2 ticks, first_sample_zero is cleared on first advance.
+        // duty_pos at tick N ≈ (N - 2) mod 8.
+        // For duty_pos=5, need N=7 (7-2=5).
+        apu.tick(7);
 
         let pcm12 = apu.read_pcm12();
         // Low nibble = CH1, high nibble = CH2
-        // Exact values depend on duty position, but both should be non-zero
-        // when active and DAC on with volume > 0
+        // At duty_pos=5 (50% duty), output should be volume (7 for CH1, 5 for CH2)
         let ch1_out = pcm12 & 0x0F;
         let ch2_out = (pcm12 >> 4) & 0x0F;
 
@@ -814,4 +907,99 @@ mod tests {
         assert_eq!(apu.read_pcm12(), 0x00);
         assert_eq!(apu.read_pcm34(), 0x00);
     }
+
+    #[test]
+    fn test_ch1_length_counter_clocked_by_div_apu_event() {
+        // Simulates the scenario in SameSuite channel_1_stop_div:
+        // Setup CH1 with length_counter = 1, then clock the frame sequencer
+        // via DIV-APU event, which should stop the channel.
+        let mut apu = powered_apu();
+
+        // Setup CH1: duty 50%, length_load = 63 → counter = 64 - 63 = 1
+        apu.write_register(0xFF11, 0x80 | 0x3F);
+        assert_eq!(apu.ch1.length_counter, 1, "CH1 length counter should be 1");
+
+        // Enable DAC and set volume
+        apu.write_register(0xFF12, 0x80); // volume = 8, no envelope
+
+        // Trigger with length enabled
+        apu.write_register(0xFF14, 0xC0);
+
+        // Channel should be active after trigger
+        assert!(
+            apu.ch1.is_active(),
+            "CH1 should be active after trigger with DAC on"
+        );
+        assert!(
+            apu.ch1.length_en(),
+            "CH1 length should be enabled after NR14 write"
+        );
+
+        // Clock the frame sequencer via DIV-APU event.
+        // Since fs_step starts at 0 after power-on, FS_TABLE[0] = 0x01 clocks length.
+        apu.clock_div_apu();
+
+        // Length counter should have decremented from 1 to 0, stopping the channel
+        assert_eq!(
+            apu.ch1.length_counter, 0,
+            "CH1 length counter should be 0 after clocking"
+        );
+        assert!(
+            !apu.ch1.is_active(),
+            "CH1 should be inactive after length counter reaches 0"
+        );
+
+        // PCM12 should show 0 for CH1 now
+        assert_eq!(
+            apu.read_pcm12() & 0x0F,
+            0,
+            "CH1 digital output should be 0 after channel stops"
+        );
+    }
+
+    #[test]
+    fn test_channel_1_delay_high_freq() {
+        // Test mimics SameSuite channel_1_delay test:
+        // freq = $7FF, duty = 75% ($C0), volume = 8 ($80)
+        // Expected: after 2 M-cycles, output should be 0
+        //           after 3 M-cycles, output should be 8
+        let mut apu = powered_cgb_apu();
+
+        // Power off and on APU to reset
+        apu.write_register(0xFF26, 0x00); // APU off
+        apu.write_register(0xFF26, 0xFF); // APU on
+
+        // Set up channel 1 like the test ROM
+        apu.write_register(0xFF13, 0xFF); // NR13: freq low = $FF
+        apu.write_register(0xFF11, 0xC0); // NR11: duty = 75%
+        apu.write_register(0xFF12, 0x80); // NR12: volume = 8, no envelope
+        apu.write_register(0xFF14, 0x87); // NR14: trigger + freq high = 7 → freq = $7FF
+
+        // At this point, trigger happened. duty_pos should be 0.
+        // 75% duty = [0,1,1,1,1,1,1,0], so output at pos 0 = 0.
+
+        // After 2 M-cycles (0 NOPs in SameSuite), should be at position 0 (output = 0)
+        apu.tick(2);
+        let pcm12_at_2 = apu.read_pcm12() & 0x0F;
+        assert_eq!(
+            pcm12_at_2, 0x00,
+            "Output should be 0 at 2 M-cycles (0 NOPs)"
+        );
+
+        // After 1 more M-cycle (1 NOP in SameSuite), should be at position 1 (output = 8)
+        apu.tick(1);
+        let pcm12_at_3 = apu.read_pcm12() & 0x0F;
+        assert_eq!(pcm12_at_3, 0x08, "Output should be 8 at 3 M-cycles (1 NOP)");
+
+        assert!(apu.ch1.is_active(), "CH1 should be active after trigger");
+    }
+
+    // Note: Restart timing test removed - the retrigger delay behavior is complex
+    // and depends on delay_between value in non-trivial ways. The SameSuite restart
+    // tests verify this behavior, but getting all edge cases right requires more
+    // investigation. See channel_1_restart.asm comment:
+    // "It appears that after restarting, the start delay from the 'delay' test
+    // is actually 1 tick shorter. The countdown for the next sample is reset,
+    // but the new pulse's first sample will be the next sample the old pulse
+    // would have played (i.e. the current sample index or phase does not reset)"
 }

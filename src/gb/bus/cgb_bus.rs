@@ -7,7 +7,7 @@ use crate::gb::input::joypad::Joypad;
 use crate::gb::model::CgbModel;
 use crate::gb::ppu::Ppu;
 use crate::gb::ppu::timing::PpuMode;
-use crate::gb::timer::Timer;
+use crate::gb::timer::{DIV_APU_BIT_DOUBLE, DIV_APU_BIT_NORMAL, Timer};
 
 /// Full CGB (Game Boy Color) memory bus.
 ///
@@ -281,8 +281,9 @@ impl CgbBus {
     /// If KEY1 bit 0 is armed, this method:
     /// 1. Ticks the PPU for 2050 M-cycles (at the pre-switch dot rate),
     ///    without ticking the timer or APU (DIV is frozen during the switch).
-    /// 2. Resets the DIV counter to 0.
+    /// 2. Resets the DIV counter to 0 (may trigger DIV-APU event).
     /// 3. Toggles the speed (KEY1 bit 7) and clears the arm bit (bit 0).
+    /// 4. Updates the Timer's DIV-APU bit for the new speed mode.
     ///
     /// Returns `true` if the switch was performed, `false` if not armed.
     pub fn try_speed_switch(&mut self) -> bool {
@@ -299,11 +300,25 @@ impl CgbBus {
         self.if_reg |= self.ppu.take_pending_interrupts();
 
         // Reset DIV counter (writing any value to $FF04 resets it).
-        self.timer.write(0xFF04, 0);
+        // This may trigger a DIV-APU event if the DIV-APU bit was high.
+        let div_apu_edge = self.timer.write(0xFF04, 0);
+        if div_apu_edge {
+            self.apu.clock_div_apu();
+        }
 
         // Toggle speed and clear arm bit.
         self.key1 ^= 0x80;
         self.key1 &= !0x01;
+
+        // Update the Timer's DIV-APU bit for the new speed mode.
+        // In double-speed mode, use bit 13 (DIV bit 5) instead of bit 12 (DIV bit 4)
+        // to maintain the same 512 Hz frame sequencer rate.
+        let new_div_apu_bit = if self.is_double_speed() {
+            DIV_APU_BIT_DOUBLE
+        } else {
+            DIV_APU_BIT_NORMAL
+        };
+        self.timer.set_div_apu_bit(new_div_apu_bit);
 
         // Reset APU accumulator when switching speeds.
         self.apu_tick_accumulator = 0;
@@ -324,14 +339,25 @@ impl CgbBus {
     /// In double-speed mode, PPU receives half the dots per M-cycle (2 instead
     /// of 4) and APU ticks at half rate, since each CPU M-cycle takes half the
     /// real time.  Timer and OAM DMA are M-cycle driven and naturally run at 2x.
+    ///
+    /// The APU frame sequencer is clocked by DIV-APU falling edges from the
+    /// timer (bit 12 of the 16-bit internal counter = DIV bit 4, or bit 13 in
+    /// double-speed mode = DIV bit 5).
     pub fn tick(&mut self, m_cycles: u8) {
         self.if_reg |= self.ppu.take_pending_interrupts();
 
+        let double = self.is_double_speed();
+
         for _ in 0..m_cycles {
-            self.timer.tick(1);
+            let div_apu_edges = self.timer.tick(1);
             if self.timer.interrupt_pending {
                 self.if_reg |= 0x04;
                 self.timer.interrupt_pending = false;
+            }
+
+            // Clock APU frame sequencer for each DIV-APU falling edge.
+            for _ in 0..div_apu_edges {
+                self.apu.clock_div_apu();
             }
 
             if self.dma_active {
@@ -355,7 +381,6 @@ impl CgbBus {
             }
         }
 
-        let double = self.is_double_speed();
         let dots_per_mcycle: u32 = if double { 2 } else { 4 };
         self.ppu.tick_dots(u32::from(m_cycles) * dots_per_mcycle);
 
@@ -754,14 +779,24 @@ impl GbBus for CgbBus {
                 self.sc = val & 0x7F;
             }
             0xFF04..=0xFF07 => {
-                self.timer.write(addr, val);
+                let div_apu_edge = self.timer.write(addr, val);
+                // If a DIV-APU falling edge occurred (DIV write with bit 4/5 HIGH),
+                // clock the APU frame sequencer.
+                if div_apu_edge {
+                    self.apu.clock_div_apu();
+                }
                 if self.timer.fire_write_overflow_if_pending() {
                     self.if_reg |= 0x04;
                     self.timer.take_interrupt();
                 }
             }
             0xFF0F => self.if_reg = val & 0x1F,
-            0xFF10..=0xFF3F => self.apu.write_register(addr, val),
+            0xFF26 => {
+                // NR52 special handling: pass DIV-APU bit state for power-on skip logic.
+                let div_apu_high = self.timer.is_div_apu_bit_high();
+                self.apu.write_nr52_with_div_state(val, div_apu_high);
+            }
+            0xFF10..=0xFF25 | 0xFF27..=0xFF3F => self.apu.write_register(addr, val),
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B => {
                 self.ppu.write_register(addr, val);
                 self.if_reg |= self.ppu.take_pending_interrupts();
@@ -1735,5 +1770,96 @@ mod tests {
         // Then: read_raw should also return boot ROM data
         // CGB_BOOT_ROM starts with LD SP, $FFFE (0x31)
         assert_eq!(bus.read_raw(0x0000), 0x31); // LD SP, nn opcode
+    }
+
+    #[test]
+    fn test_ch1_stops_after_div_apu_clocks_length_counter() {
+        // Simulates the key behavior tested by SameSuite channel_1_stop_div:
+        // CH1 with length_counter=1 should stop after one DIV-APU event clocks the length.
+        let mut bus = make_bus();
+
+        // Reset DIV to ensure clean start
+        bus.write(0xFF04, 0x00);
+
+        // Power on APU
+        bus.write(0xFF26, 0x80);
+
+        // Setup CH1: duty 50%, length=63 → counter=1
+        bus.write(0xFF11, 0x80 | 0x3F);
+        // Enable DAC
+        bus.write(0xFF12, 0x80);
+        // Low freq
+        bus.write(0xFF13, 0xFC);
+        // Trigger with length enabled
+        bus.write(0xFF14, 0xC7);
+
+        // Channel should be active (NR52 bit 0)
+        assert_ne!(
+            bus.read(0xFF26) & 0x01,
+            0,
+            "CH1 should be active after trigger"
+        );
+
+        // Reset DIV to start clean timing
+        bus.write(0xFF04, 0x00);
+
+        // Tick to the DIV-APU falling edge (2048 M-cycles)
+        for _ in 0..2048 {
+            bus.tick(1);
+        }
+
+        // The DIV-APU event should have clocked length, stopping the channel
+        assert_eq!(
+            bus.read(0xFF26) & 0x01,
+            0,
+            "CH1 should be inactive after length reaches 0"
+        );
+
+        // PCM12 should show 0 for CH1
+        assert_eq!(bus.read(0xFF76) & 0x0F, 0, "CH1 output should be 0");
+    }
+
+    #[test]
+    fn test_div_write_triggers_div_apu_event_when_bit_high() {
+        // Writing to DIV resets div_counter to 0.
+        // If the DIV-APU bit was HIGH before the write, this creates a falling edge.
+        // We verify by checking if CH1 with length=1 stops after the DIV write.
+        let mut bus = make_bus();
+
+        // Reset DIV to ensure clean start
+        bus.write(0xFF04, 0x00);
+
+        // Power on APU
+        bus.write(0xFF26, 0x80);
+
+        // Tick to get bit 12 HIGH (at 1024+ M-cycles)
+        for _ in 0..1500 {
+            bus.tick(1);
+        }
+        // At this point, div_counter ≈ 6000, bit 12 is HIGH
+
+        // Setup CH1: length=63 → counter=1
+        bus.write(0xFF11, 0x80 | 0x3F);
+        bus.write(0xFF12, 0x80);
+        bus.write(0xFF13, 0xFC);
+        bus.write(0xFF14, 0xC7);
+
+        // Channel should be active
+        assert_ne!(
+            bus.read(0xFF26) & 0x01,
+            0,
+            "CH1 should be active after trigger"
+        );
+
+        // Writing DIV resets counter to 0, creating a falling edge on bit 12
+        // This should clock the frame sequencer, which clocks length on step 0
+        bus.write(0xFF04, 0x00);
+
+        // CH1 should now be stopped
+        assert_eq!(
+            bus.read(0xFF26) & 0x01,
+            0,
+            "CH1 should be inactive after DIV write with bit high"
+        );
     }
 }
