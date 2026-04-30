@@ -67,6 +67,12 @@ pub struct Ppu {
     /// Set by `tick_one_dot()` on Mode 3→Mode 0 (HBlank entry) for HDMA synchronization.
     /// Consumed by `take_hblank_entered()`.
     hblank_entered: bool,
+    /// DMG compatibility mode: `true` when a DMG-only game runs on CGB hardware.
+    ///
+    /// In this mode, the CGB renderer must map DMG OAM palette bit (0=OBP0, 1=OBP1)
+    /// to CGB OBJ palette 0/1 instead of using CGB OAM attribute bits 0-2.
+    #[serde(default)]
+    pub dmg_compat: bool,
 }
 
 impl Ppu {
@@ -90,6 +96,7 @@ impl Ppu {
             ocps: 0,
             opri: false,
             hblank_entered: false,
+            dmg_compat: false,
         }
     }
 
@@ -99,6 +106,13 @@ impl Ppu {
             cgb_mode: true,
             ..Self::new()
         }
+    }
+
+    /// Enable DMG compatibility mode for CGB running a DMG-only game.
+    ///
+    /// This affects sprite palette selection in the CGB renderer.
+    pub fn set_dmg_compat(&mut self, enabled: bool) {
+        self.dmg_compat = enabled;
     }
 
     // ── Dot-level tick ────────────────────────────────────────────────────────
@@ -193,6 +207,7 @@ impl Ppu {
                     &self.obj_palette_ram,
                     &mut self.window_line,
                     self.opri,
+                    self.dmg_compat,
                     &mut self.screen_buffer,
                 );
             } else {
@@ -818,6 +833,30 @@ impl Ppu {
     /// Capture CGB OBJ palette RAM for debugger (no side effects).
     pub fn obj_palette_ram_snapshot_for_debugger(&self) -> [u8; 64] {
         self.obj_palette_ram
+    }
+
+    /// Apply DMG compatibility palette colors for CGB running a DMG-only game.
+    ///
+    /// Writes the given RGB555 colors to BG palette 0 and OBJ palettes 0/1.
+    /// Each palette is 4 colors × 2 bytes = 8 bytes.
+    ///
+    /// This should only be called during CGB initialization for DMG-only cartridges.
+    pub fn apply_dmg_compat_palettes(&mut self, bg0: &[u16; 4], obj0: &[u16; 4], obj1: &[u16; 4]) {
+        // Write BG palette 0 (bytes 0-7)
+        for (i, &color) in bg0.iter().enumerate() {
+            self.bg_palette_ram[i * 2] = (color & 0xFF) as u8;
+            self.bg_palette_ram[i * 2 + 1] = (color >> 8) as u8;
+        }
+        // Write OBJ palette 0 (bytes 0-7)
+        for (i, &color) in obj0.iter().enumerate() {
+            self.obj_palette_ram[i * 2] = (color & 0xFF) as u8;
+            self.obj_palette_ram[i * 2 + 1] = (color >> 8) as u8;
+        }
+        // Write OBJ palette 1 (bytes 8-15)
+        for (i, &color) in obj1.iter().enumerate() {
+            self.obj_palette_ram[8 + i * 2] = (color & 0xFF) as u8;
+            self.obj_palette_ram[8 + i * 2 + 1] = (color >> 8) as u8;
+        }
     }
 
     /// Get current register values for debugger.
@@ -2653,5 +2692,49 @@ mod tests {
             Some(0xC5),
             "OCPS auto-increment must happen even when write is blocked"
         );
+    }
+
+    #[test]
+    fn test_apply_dmg_compat_palettes_writes_correct_bytes() {
+        // Given: CGB PPU with default (zeroed) palette RAM
+        let mut ppu = Ppu::new_cgb();
+
+        // Define test palettes in RGB555 format
+        let bg0: [u16; 4] = [0x7FFF, 0x5294, 0x294A, 0x0000]; // white, light, dark, black
+        let obj0: [u16; 4] = [0x001F, 0x03E0, 0x7C00, 0x0000]; // red, green, blue, black
+        let obj1: [u16; 4] = [0x7FFF, 0x421F, 0x1CF2, 0x0000]; // white, pink, maroon, black
+
+        // When: apply DMG compatibility palettes
+        ppu.apply_dmg_compat_palettes(&bg0, &obj0, &obj1);
+
+        // Then: BG palette 0 (bytes 0-7) contains bg0 colors in little-endian
+        assert_eq!(ppu.bg_palette_ram[0], 0xFF); // 0x7FFF low byte
+        assert_eq!(ppu.bg_palette_ram[1], 0x7F); // 0x7FFF high byte
+        assert_eq!(ppu.bg_palette_ram[2], 0x94); // 0x5294 low byte
+        assert_eq!(ppu.bg_palette_ram[3], 0x52); // 0x5294 high byte
+        assert_eq!(ppu.bg_palette_ram[4], 0x4A); // 0x294A low byte
+        assert_eq!(ppu.bg_palette_ram[5], 0x29); // 0x294A high byte
+        assert_eq!(ppu.bg_palette_ram[6], 0x00); // 0x0000 low byte
+        assert_eq!(ppu.bg_palette_ram[7], 0x00); // 0x0000 high byte
+
+        // Then: OBJ palette 0 (bytes 0-7) contains obj0 colors
+        assert_eq!(ppu.obj_palette_ram[0], 0x1F); // 0x001F low byte
+        assert_eq!(ppu.obj_palette_ram[1], 0x00); // 0x001F high byte
+        assert_eq!(ppu.obj_palette_ram[2], 0xE0); // 0x03E0 low byte
+        assert_eq!(ppu.obj_palette_ram[3], 0x03); // 0x03E0 high byte
+        assert_eq!(ppu.obj_palette_ram[4], 0x00); // 0x7C00 low byte
+        assert_eq!(ppu.obj_palette_ram[5], 0x7C); // 0x7C00 high byte
+        assert_eq!(ppu.obj_palette_ram[6], 0x00); // 0x0000 low byte
+        assert_eq!(ppu.obj_palette_ram[7], 0x00); // 0x0000 high byte
+
+        // Then: OBJ palette 1 (bytes 8-15) contains obj1 colors
+        assert_eq!(ppu.obj_palette_ram[8], 0xFF); // 0x7FFF low byte
+        assert_eq!(ppu.obj_palette_ram[9], 0x7F); // 0x7FFF high byte
+        assert_eq!(ppu.obj_palette_ram[10], 0x1F); // 0x421F low byte
+        assert_eq!(ppu.obj_palette_ram[11], 0x42); // 0x421F high byte
+        assert_eq!(ppu.obj_palette_ram[12], 0xF2); // 0x1CF2 low byte
+        assert_eq!(ppu.obj_palette_ram[13], 0x1C); // 0x1CF2 high byte
+        assert_eq!(ppu.obj_palette_ram[14], 0x00); // 0x0000 low byte
+        assert_eq!(ppu.obj_palette_ram[15], 0x00); // 0x0000 high byte
     }
 }

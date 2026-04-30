@@ -187,6 +187,7 @@ pub fn fetch_sprite_pixel_cgb(
         let y_flip = attrs & 0x40 != 0;
         let x_flip = attrs & 0x20 != 0;
         let cgb_palette = attrs & 0x07;
+        let dmg_palette = (attrs >> 4) & 1; // bit 4: DMG palette (0=OBP0, 1=OBP1)
         let tile_vram_bank = (attrs >> 3) & 0x01;
         let bg_priority = attrs & 0x80 != 0;
 
@@ -228,7 +229,7 @@ pub fn fetch_sprite_pixel_cgb(
 
         return Some(SpritePixel {
             colour_index,
-            palette: 0,
+            palette: dmg_palette,
             cgb_palette,
             bg_priority,
         });

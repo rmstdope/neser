@@ -3,6 +3,7 @@ use crate::gb::boot_rom::{CGB_BOOT_ROM, CGB0_BOOT_ROM};
 use crate::gb::bus::GbBus;
 use crate::gb::bus::hdma::{HdmaAction, HdmaState};
 use crate::gb::cartridge::GbCartridge;
+use crate::gb::compat_palettes;
 use crate::gb::input::joypad::Joypad;
 use crate::gb::model::CgbModel;
 use crate::gb::ppu::Ppu;
@@ -204,6 +205,21 @@ impl CgbBus {
         // Set OPRI based on cartridge type when skipping boot ROM.
         if skip_boot_rom && opri_value != 0 {
             bus.ppu.write_cgb_register(0xFF6C, opri_value);
+        }
+
+        // Apply DMG compatibility palette when skipping boot ROM for DMG-only games.
+        // DMG-only games (bit 7 of $0143 clear) need colorization palettes.
+        if skip_boot_rom && !is_cgb {
+            // Read ROM header bytes $0100-$014B for palette lookup.
+            let mut header = [0u8; 0x4C];
+            for (i, byte) in header.iter_mut().enumerate() {
+                *byte = bus.cart.read(0x0100 + i as u16);
+            }
+            let palette = compat_palettes::get_palette_colors(&header);
+            bus.ppu
+                .apply_dmg_compat_palettes(&palette.bg0, &palette.obj0, &palette.obj1);
+            // Enable DMG-compat mode for correct OBJ palette selection during rendering.
+            bus.ppu.set_dmg_compat(true);
         }
 
         // Initialize PPU to CGB post-boot state.
@@ -637,6 +653,15 @@ impl CgbBus {
             } else {
                 self.key0 = 0x04;
                 self.ppu.write_cgb_register(0xFF6C, 0x01); // OPRI for DMG mode
+                // Apply DMG compatibility palettes for DMG-only games
+                let mut header = [0u8; 0x4C];
+                for (i, byte) in header.iter_mut().enumerate() {
+                    *byte = self.cart.read(0x0100 + i as u16);
+                }
+                let palette = crate::gb::compat_palettes::get_palette_colors(&header);
+                self.ppu
+                    .apply_dmg_compat_palettes(&palette.bg0, &palette.obj0, &palette.obj1);
+                self.ppu.set_dmg_compat(true);
             }
             self.key0_locked = true;
         } else {
