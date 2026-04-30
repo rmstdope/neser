@@ -20,6 +20,7 @@
 use super::dma::DmaController;
 use super::interrupt::InterruptController;
 use super::timer::Timers;
+use crate::gba::ppu::{self, Ppu};
 
 /// Size of the I/O window backing store. Registers above this limit
 /// (`0x0400_0400`+) read as open-bus on real hardware.
@@ -89,11 +90,16 @@ impl IoRegisters {
         ic: &InterruptController,
         timers: &Timers,
         dma: &DmaController,
+        ppu: &Ppu,
     ) -> Option<u16> {
         match addr {
             REG_IE => Some(ic.ie),
             REG_IF => Some(ic.if_flags),
             REG_IME => Some(ic.read_ime()),
+            // PPU display registers.
+            ppu::REG_DISPCNT => Some(ppu.read_dispcnt()),
+            ppu::REG_DISPSTAT => Some(ppu.read_dispstat()),
+            ppu::REG_VCOUNT => Some(ppu.read_vcount()),
             // Timers: TM{0..3}CNT_L = 0x100, 0x104, 0x108, 0x10C
             // Timers: TM{0..3}CNT_H = 0x102, 0x106, 0x10A, 0x10E
             0x0400_0100 => Some(timers.read_cnt_l(0)),
@@ -120,9 +126,10 @@ impl IoRegisters {
         ic: &InterruptController,
         timers: &Timers,
         dma: &DmaController,
+        ppu: &Ppu,
     ) -> Option<u32> {
-        let lo = self.try_read16(addr, ic, timers, dma)? as u32;
-        let hi = self.try_read16(addr.wrapping_add(2), ic, timers, dma)? as u32;
+        let lo = self.try_read16(addr, ic, timers, dma, ppu)? as u32;
+        let hi = self.try_read16(addr.wrapping_add(2), ic, timers, dma, ppu)? as u32;
         Some(lo | (hi << 16))
     }
 
@@ -136,8 +143,9 @@ impl IoRegisters {
         ic: &InterruptController,
         timers: &Timers,
         dma: &DmaController,
+        ppu: &Ppu,
     ) -> Option<u8> {
-        let hw = self.try_read16(addr & !1, ic, timers, dma)?;
+        let hw = self.try_read16(addr & !1, ic, timers, dma, ppu)?;
         Some(if addr & 1 == 0 {
             hw as u8
         } else {
@@ -154,8 +162,9 @@ impl IoRegisters {
         ic: &InterruptController,
         timers: &Timers,
         dma: &DmaController,
+        ppu: &Ppu,
     ) -> u16 {
-        self.try_read16(addr, ic, timers, dma).unwrap_or(0)
+        self.try_read16(addr, ic, timers, dma, ppu).unwrap_or(0)
     }
 
     /// Read a word from the I/O register space, returning 0 for addresses
@@ -166,8 +175,9 @@ impl IoRegisters {
         ic: &InterruptController,
         timers: &Timers,
         dma: &DmaController,
+        ppu: &Ppu,
     ) -> u32 {
-        self.try_read32(addr, ic, timers, dma).unwrap_or(0)
+        self.try_read32(addr, ic, timers, dma, ppu).unwrap_or(0)
     }
 
     /// Read a byte from the I/O register space, returning 0 for addresses
@@ -178,8 +188,9 @@ impl IoRegisters {
         ic: &InterruptController,
         timers: &Timers,
         dma: &DmaController,
+        ppu: &Ppu,
     ) -> u8 {
-        self.try_read8(addr, ic, timers, dma).unwrap_or(0)
+        self.try_read8(addr, ic, timers, dma, ppu).unwrap_or(0)
     }
 
     /// Write a halfword to the I/O register space.
@@ -190,11 +201,16 @@ impl IoRegisters {
         ic: &mut InterruptController,
         timers: &mut Timers,
         dma: &mut DmaController,
+        ppu: &mut Ppu,
     ) {
         match addr {
             REG_IE => ic.write_ie(value),
             REG_IF => ic.write_if(value),
             REG_IME => ic.write_ime(value),
+            // PPU display registers.
+            ppu::REG_DISPCNT => ppu.write_dispcnt(value),
+            ppu::REG_DISPSTAT => ppu.write_dispstat(value, ic),
+            ppu::REG_VCOUNT => { /* VCOUNT is read-only */ }
             0x0400_0100 => timers.write_cnt_l(0, value),
             0x0400_0102 => timers.write_cnt_h(0, value),
             0x0400_0104 => timers.write_cnt_l(1, value),
@@ -224,9 +240,17 @@ impl IoRegisters {
         ic: &mut InterruptController,
         timers: &mut Timers,
         dma: &mut DmaController,
+        ppu: &mut Ppu,
     ) {
-        self.write16(addr, value as u16, ic, timers, dma);
-        self.write16(addr.wrapping_add(2), (value >> 16) as u16, ic, timers, dma);
+        self.write16(addr, value as u16, ic, timers, dma, ppu);
+        self.write16(
+            addr.wrapping_add(2),
+            (value >> 16) as u16,
+            ic,
+            timers,
+            dma,
+            ppu,
+        );
     }
 
     /// Write a byte to the I/O register space — many GBA I/O registers
@@ -240,6 +264,7 @@ impl IoRegisters {
         ic: &mut InterruptController,
         timers: &mut Timers,
         dma: &mut DmaController,
+        ppu: &mut Ppu,
     ) {
         // DMA registers (0x0400_00B0..=0x0400_00DF) need a dedicated
         // byte path because SAD/DAD/CNT_L are write-only — the generic
@@ -249,13 +274,13 @@ impl IoRegisters {
             return;
         }
         let aligned = addr & !1;
-        let current = self.read16(aligned, ic, timers, dma);
+        let current = self.read16(aligned, ic, timers, dma, ppu);
         let merged = if addr & 1 == 0 {
             (current & 0xFF00) | value as u16
         } else {
             (current & 0x00FF) | ((value as u16) << 8)
         };
-        self.write16(aligned, merged, ic, timers, dma);
+        self.write16(aligned, merged, ic, timers, dma, ppu);
     }
 }
 
@@ -269,10 +294,11 @@ mod tests {
         let mut ic = InterruptController::new();
         let mut t = Timers::new();
         let mut d = DmaController::new();
+        let mut p = Ppu::new();
         // 0x40 is REG_SOUNDCNT_H; not specially handled here — should just
         // round-trip through the backing store.
-        io.write16(0x0400_0040, 0xBEEF, &mut ic, &mut t, &mut d);
-        assert_eq!(io.read16(0x0400_0040, &ic, &t, &d), 0xBEEF);
+        io.write16(0x0400_0040, 0xBEEF, &mut ic, &mut t, &mut d, &mut p);
+        assert_eq!(io.read16(0x0400_0040, &ic, &t, &d, &p), 0xBEEF);
     }
 
     #[test]
@@ -281,13 +307,14 @@ mod tests {
         let ic = InterruptController::new();
         let t = Timers::new();
         let d = DmaController::new();
+        let p = Ppu::new();
         // 0x0400_0400 is one past the documented I/O window.
-        assert_eq!(io.try_read16(0x0400_0400, &ic, &t, &d), None);
+        assert_eq!(io.try_read16(0x0400_0400, &ic, &t, &d, &p), None);
         // Halfword starting at the last byte must also be rejected to
         // avoid an out-of-bounds backing-store access.
-        assert_eq!(io.try_read16(0x0400_03FF, &ic, &t, &d), None);
+        assert_eq!(io.try_read16(0x0400_03FF, &ic, &t, &d, &p), None);
         // An address below the I/O base must not underflow.
-        assert_eq!(io.try_read16(0x0300_0000, &ic, &t, &d), None);
+        assert_eq!(io.try_read16(0x0300_0000, &ic, &t, &d, &p), None);
     }
 
     #[test]
@@ -296,8 +323,9 @@ mod tests {
         let mut ic = InterruptController::new();
         let mut t = Timers::new();
         let mut d = DmaController::new();
-        io.write16(0x0400_03FE, 0x1234, &mut ic, &mut t, &mut d);
-        assert_eq!(io.try_read16(0x0400_03FE, &ic, &t, &d), Some(0x1234));
+        let mut p = Ppu::new();
+        io.write16(0x0400_03FE, 0x1234, &mut ic, &mut t, &mut d, &mut p);
+        assert_eq!(io.try_read16(0x0400_03FE, &ic, &t, &d, &p), Some(0x1234));
     }
 
     #[test]
@@ -306,9 +334,10 @@ mod tests {
         let mut ic = InterruptController::new();
         let mut t = Timers::new();
         let mut d = DmaController::new();
-        io.write16(REG_IE, 0x1234, &mut ic, &mut t, &mut d);
+        let mut p = Ppu::new();
+        io.write16(REG_IE, 0x1234, &mut ic, &mut t, &mut d, &mut p);
         assert_eq!(ic.ie, 0x1234 & super::super::interrupt::IRQ_MASK);
-        assert_eq!(io.read16(REG_IE, &ic, &t, &d), ic.ie);
+        assert_eq!(io.read16(REG_IE, &ic, &t, &d, &p), ic.ie);
     }
 
     #[test]
@@ -317,10 +346,11 @@ mod tests {
         let mut ic = InterruptController::new();
         let mut t = Timers::new();
         let mut d = DmaController::new();
-        io.write16(REG_TM0CNT_L, 0xABCD, &mut ic, &mut t, &mut d);
-        io.write16(REG_TM0CNT_H, 0x0080, &mut ic, &mut t, &mut d);
+        let mut p = Ppu::new();
+        io.write16(REG_TM0CNT_L, 0xABCD, &mut ic, &mut t, &mut d, &mut p);
+        io.write16(REG_TM0CNT_H, 0x0080, &mut ic, &mut t, &mut d, &mut p);
         // After enable rising edge, counter == reload.
-        assert_eq!(io.read16(REG_TM0CNT_L, &ic, &t, &d), 0xABCD);
+        assert_eq!(io.read16(REG_TM0CNT_L, &ic, &t, &d, &p), 0xABCD);
     }
 
     #[test]
@@ -329,11 +359,12 @@ mod tests {
         let mut ic = InterruptController::new();
         let mut t = Timers::new();
         let mut d = DmaController::new();
-        io.write16(REG_DISPCNT, 0xFFFF, &mut ic, &mut t, &mut d);
-        io.write8(REG_DISPCNT, 0x12, &mut ic, &mut t, &mut d);
-        assert_eq!(io.read16(REG_DISPCNT, &ic, &t, &d), 0xFF12);
-        io.write8(REG_DISPCNT + 1, 0x34, &mut ic, &mut t, &mut d);
-        assert_eq!(io.read16(REG_DISPCNT, &ic, &t, &d), 0x3412);
+        let mut p = Ppu::new();
+        io.write16(REG_DISPCNT, 0xFFFF, &mut ic, &mut t, &mut d, &mut p);
+        io.write8(REG_DISPCNT, 0x12, &mut ic, &mut t, &mut d, &mut p);
+        assert_eq!(io.read16(REG_DISPCNT, &ic, &t, &d, &p), 0xFF12);
+        io.write8(REG_DISPCNT + 1, 0x34, &mut ic, &mut t, &mut d, &mut p);
+        assert_eq!(io.read16(REG_DISPCNT, &ic, &t, &d, &p), 0x3412);
     }
 
     #[test]
@@ -342,11 +373,36 @@ mod tests {
         let mut ic = InterruptController::new();
         let mut t = Timers::new();
         let mut d = DmaController::new();
+        let mut p = Ppu::new();
         // Write CNT_H of channel 0 — enable bit set.
-        io.write16(0x0400_00BA, 0x8000, &mut ic, &mut t, &mut d);
+        io.write16(0x0400_00BA, 0x8000, &mut ic, &mut t, &mut d, &mut p);
         assert!(d.channels[0].enabled());
         assert!(d.any_pending());
         // SAD/DAD/CNT_L are write-only (read 0).
-        assert_eq!(io.read16(0x0400_00B0, &ic, &t, &d), 0);
+        assert_eq!(io.read16(0x0400_00B0, &ic, &t, &d, &p), 0);
+    }
+
+    #[test]
+    fn dispcnt_dispatches_to_ppu() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        io.write16(ppu::REG_DISPCNT, 0x0403, &mut ic, &mut t, &mut d, &mut p);
+        assert_eq!(p.read_dispcnt(), 0x0403);
+        assert_eq!(io.read16(ppu::REG_DISPCNT, &ic, &t, &d, &p), 0x0403);
+    }
+
+    #[test]
+    fn vcount_is_read_only_via_io() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        io.write16(ppu::REG_VCOUNT, 0x00AB, &mut ic, &mut t, &mut d, &mut p);
+        assert_eq!(p.read_vcount(), 0);
+        assert_eq!(io.read16(ppu::REG_VCOUNT, &ic, &t, &d, &p), 0);
     }
 }
