@@ -534,6 +534,10 @@ impl Apu {
             self.hp_prev_out = 0.0;
             // Clear skip flag on power-off to prevent leaking into a later power-on.
             self.skip_next_div_apu_event = false;
+            // Reset SameBoy-derived FS-step counter alongside `fs_step` so
+            // that sub-events keyed off `div_divider` low bits stay aligned
+            // across power cycles.
+            self.div_divider = 0;
         } else if power_on_transition {
             trace_apu!(1; "GB APU power on");
             // Power on: reset frame sequencer step and skip flag.
@@ -541,6 +545,7 @@ impl Apu {
             // so we only reset the step counter here. The skip flag is cleared first,
             // then write_nr52_with_div_state() will re-arm it if DIV-APU bit is HIGH.
             self.fs_step = 0;
+            self.div_divider = 0;
             self.skip_next_div_apu_event = false;
             // On CGB, powering on resets all length counters to 0.
             if self.is_cgb {
@@ -646,6 +651,23 @@ mod tests {
             }
         }
         assert_eq!(hits, 4, "expected 4 boundary hits over 16 FS steps");
+    }
+
+    #[test]
+    fn test_div_divider_resets_on_nr52_power_cycle() {
+        // Sub-events keyed off `div_divider` low bits must stay aligned
+        // with `fs_step` after an NR52 power-off / power-on cycle.
+        let mut apu = powered_apu();
+        for _ in 0..5 {
+            apu.clock_div_apu();
+        }
+        assert_ne!(apu.div_divider(), 0);
+        // Power off via NR52.
+        apu.write_register(0xFF26, 0x00);
+        assert_eq!(apu.div_divider(), 0);
+        // Power on again — should still be 0 (and fs_step is also 0).
+        apu.write_register(0xFF26, 0x80);
+        assert_eq!(apu.div_divider(), 0);
     }
 
     #[test]

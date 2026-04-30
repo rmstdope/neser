@@ -131,7 +131,7 @@ impl Channel1 {
     /// Set the CGB-mode flag and hardware revision used by sweep timing.
     /// Should be called once after construction by the APU. Default state
     /// (DMG, `CgbE`) is correct for DMG hardware.
-    pub fn set_model(&mut self, is_cgb: bool, cgb_model: CgbModel) {
+    pub(crate) fn set_model(&mut self, is_cgb: bool, cgb_model: CgbModel) {
         self.is_cgb = is_cgb;
         self.cgb_model = cgb_model;
     }
@@ -344,6 +344,11 @@ impl Channel1 {
         self.triggered_once = false;
         self.first_sample_zero = false;
         self.env_clock_state = EnvelopeClockState::default();
+        // Reset SameBoy-derived sub-M-cycle sweep state (`is_cgb`/`cgb_model`
+        // are configuration, not runtime state, so they are preserved across
+        // NR52 power cycles).
+        self.restart_hold = 0;
+        self.sweep_countdown = 0;
     }
 
     // ── Register reads ────────────────────────────────────────────────────
@@ -758,6 +763,20 @@ mod tests {
             "freq must not change when sweep_period == 0"
         );
         assert!(ch.is_active());
+    }
+
+    #[test]
+    fn test_power_off_clears_restart_hold_and_sweep_countdown() {
+        let mut ch = Channel1::new();
+        ch.set_model(true, CgbModel::CgbE);
+        ch.write_nr12(0xF0);
+        ch.write_nr10(0x32); // period=3
+        ch.write_nr14(0x80, false, false);
+        assert_ne!(ch.restart_hold, 0);
+        assert_ne!(ch.sweep_countdown, 0);
+        ch.power_off();
+        assert_eq!(ch.restart_hold, 0);
+        assert_eq!(ch.sweep_countdown, 0);
     }
 
     // ── Sweep correctness (hardware quirks) ──────────────────────────────
