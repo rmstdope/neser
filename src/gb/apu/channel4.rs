@@ -1,15 +1,19 @@
 //! CH4 – Noise channel with LFSR (NR41–NR44).
 //!
-//! LFSR clock: `f = 524_288 / divisor / 2^(shift+1)` Hz.
-//! 7-bit mode: feedback is also written to bit 6, shortening the period.
+//! LFSR clock model (Pan Docs / SameBoy):
+//! - A 14-bit "noise counter" runs off the global APU T-cycle stream.
+//! - The counter increments every `divisor` T-cycles, where
+//!   `divisor = (NR43 & 0x07) << 2`, and code 0 is special-cased to 2.
+//! - The LFSR is stepped on the **rising edge** of bit `(NR43 >> 4)` of
+//!   the counter, but only when the channel is currently active.
+//! - When the channel triggers, `prepare_noise_start()` aligns the counter
+//!   relative to the APU stream (`alignment & 3`), which is what makes
+//!   restart / freq-change / 7↔15 mode switches behave correctly.
 
 use crate::trace_apu;
 use serde::{Deserialize, Serialize};
 
 use super::channel1::EnvelopeClockState;
-
-/// Divisor lookup for noise clock (NR43 bits 2-0).
-const DIVISORS: [u32; 8] = [8, 16, 32, 48, 64, 80, 96, 112];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Channel4 {
@@ -24,7 +28,29 @@ pub struct Channel4 {
     active: bool,
     dac_on: bool,
     lfsr: u16,
-    freq_timer: u32,
+    /// 14-bit noise counter (Pan Docs / SameBoy `noise_channel.counter`).
+    #[serde(default)]
+    counter: u16,
+    /// T-cycles until the next counter increment.
+    #[serde(default)]
+    counter_countdown: u16,
+    /// `true` while NR42 DAC is on AND channel was triggered. Resets on APU
+    /// off and DAC disable. Mirrors SameBoy `noise_counter_active`.
+    #[serde(default)]
+    noise_counter_active: bool,
+    /// `true` while the counter should keep ticking even when the channel
+    /// is inactive. Mirrors SameBoy `noise_background_counter_active`.
+    #[serde(default)]
+    noise_background_counter_active: bool,
+    /// `true` if the most-recent trigger happened with the DAC disabled.
+    #[serde(default)]
+    noise_started_with_dac_disabled: bool,
+    /// T-cycle stream alignment counter (only the low 2 bits are read).
+    #[serde(default)]
+    alignment: u16,
+    /// Set after the noise counter has stepped at least once since reset.
+    #[serde(default)]
+    did_step_counter: bool,
     pub(crate) length_counter: u8,
     volume: u8,
     env_timer: u8,
@@ -53,7 +79,13 @@ impl Channel4 {
             active: false,
             dac_on: false,
             lfsr: 0,
-            freq_timer: 0,
+            counter: 0,
+            counter_countdown: 0,
+            noise_counter_active: false,
+            noise_background_counter_active: false,
+            noise_started_with_dac_disabled: false,
+            alignment: 0,
+            did_step_counter: false,
             length_counter: 0,
             volume: 0,
             env_timer: 0,
@@ -94,27 +126,53 @@ impl Channel4 {
         }
     }
 
-    fn freq_timer_period(&self) -> u32 {
-        DIVISORS[self.divisor_code as usize] << self.clock_shift
+    /// SameBoy `divisor`: number of T-cycles per noise-counter increment.
+    /// `divisor = (NR43 & 7) << 2`, with code 0 being the special-case 2.
+    fn divisor_t_cycles(&self) -> u16 {
+        let d = (self.divisor_code as u16) << 2;
+        if d == 0 { 2 } else { d }
     }
 
-    /// Advance the frequency timer by one M-cycle (= 4 T-cycles).
+    /// Mask of the counter bit observed for the rising-edge LFSR step.
+    fn counter_bit_mask(&self) -> u16 {
+        1u16 << self.clock_shift
+    }
+
+    /// Advance the noise subsystem by one M-cycle (= 4 T-cycles).
     ///
-    /// Processes each T-cycle individually to maintain sub-M-cycle precision.
-    /// When the timer expires mid-M-cycle, the remaining T-cycles are applied
-    /// after the reload, ensuring correct phase alignment.
+    /// Mirrors the inner loop of SameBoy `GB_apu_run` for the noise channel.
     pub fn tick(&mut self) {
-        let period = self.freq_timer_period();
-        if self.freq_timer == 0 {
-            self.freq_timer = period;
+        const CYCLES: u16 = 4;
+        // Track APU stream alignment (only the low 2 bits ever matter).
+        self.alignment = self.alignment.wrapping_add(CYCLES);
+
+        if !(self.noise_counter_active || self.noise_background_counter_active) {
+            return;
         }
-        for _ in 0..4 {
-            self.freq_timer -= 1;
-            if self.freq_timer == 0 {
-                self.freq_timer = period;
-                trace_apu!(5; "GB APU CH4 tick timer expired, clocking LFSR");
+
+        let divisor = self.divisor_t_cycles();
+        if self.counter_countdown == 0 {
+            self.counter_countdown = divisor;
+        }
+
+        let mut cycles_left: u16 = CYCLES;
+        while cycles_left >= self.counter_countdown {
+            cycles_left -= self.counter_countdown;
+            self.counter_countdown = divisor;
+
+            let mask = self.counter_bit_mask();
+            let old_bit = (self.counter & mask) != 0;
+            self.counter = (self.counter.wrapping_add(1)) & 0x3FFF;
+            self.did_step_counter = true;
+            let new_bit = (self.counter & mask) != 0;
+
+            if new_bit && !old_bit && self.active {
+                trace_apu!(5; "GB APU CH4 counter rising edge -> step LFSR (counter=0x{:04X})", self.counter);
                 self.clock_lfsr();
             }
+        }
+        if cycles_left > 0 {
+            self.counter_countdown -= cycles_left;
         }
     }
 
@@ -202,11 +260,18 @@ impl Channel4 {
         self.length_en = false;
         self.active = false;
         self.dac_on = false;
-        self.freq_timer = 0;
+        self.counter = 0;
+        self.counter_countdown = 0;
+        self.noise_counter_active = false;
+        self.noise_background_counter_active = false;
+        self.noise_started_with_dac_disabled = false;
+        self.did_step_counter = false;
         self.length_counter = 0;
         self.volume = 0;
         self.env_timer = 0;
         self.env_clock_state = EnvelopeClockState::default();
+        // Note: `alignment` is intentionally preserved across power off in
+        // SameBoy, since it tracks the APU stream phase.
     }
 
     pub fn read_nr42(&self) -> u8 {
@@ -238,13 +303,26 @@ impl Channel4 {
         self.init_volume = (val >> 4) & 0x0F;
         self.env_add = val & 0x08 != 0;
         self.env_period = val & 0x07;
-        self.dac_on = val & 0xF8 != 0;
+        let dac_now_on = val & 0xF8 != 0;
 
-        if !self.dac_on {
+        if !dac_now_on {
+            // SameBoy: disabling the DAC clears noise_counter_active and, when
+            // the divisor is non-zero, the background counter as well.
+            // Per-revision counter "kick" quirk (CGB-E special edge case where
+            // counter_countdown ≤ 2 forces an extra increment) is intentionally
+            // omitted — it is non-deterministic and revision-specific.
+            if self.active && (self.divisor_code & 0x07) != 0 {
+                self.noise_background_counter_active = false;
+            }
             self.active = false;
-        } else if self.active {
-            // Apply zombie mode glitch when writing NRx2 while channel is active.
-            self.apply_nrx2_glitch(old_val, val);
+            self.noise_counter_active = false;
+            self.dac_on = false;
+        } else {
+            self.dac_on = true;
+            if self.active {
+                // Apply zombie mode glitch when writing NRx2 while channel is active.
+                self.apply_nrx2_glitch(old_val, val);
+            }
         }
     }
 
@@ -340,13 +418,113 @@ impl Channel4 {
         if self.length_counter == 0 {
             self.length_counter = 64;
         }
-        self.freq_timer = self.freq_timer_period();
         self.volume = self.init_volume;
         self.env_timer = self.env_period;
-        // Pan Docs / SameBoy: LFSR is cleared to 0 on (re)trigger.
-        self.lfsr = 0;
         // Reset envelope clock state on trigger.
         self.env_clock_state = EnvelopeClockState::default();
+        self.prepare_noise_start();
+    }
+
+    /// Port of SameBoy `prepare_noise_start`. Aligns the noise counter to the
+    /// APU T-cycle stream, sets `counter_countdown`, and seeds the LFSR.
+    ///
+    /// This implements the deterministic CGB-E variant. Branches that are
+    /// only relevant for CGB-C, DMG, AGB, double-speed, or non-deterministic
+    /// instance-specific behavior are intentionally omitted; SameBoy itself
+    /// carries TODOs for those cases.
+    fn prepare_noise_start(&mut self) {
+        // `noise_counter_active` resets on APU off and DAC disable; it is
+        // (re)enabled here only when the DAC is on.
+        self.noise_counter_active = self.dac_on;
+        self.noise_started_with_dac_disabled = !self.noise_counter_active;
+        let mut divisor = self.divisor_code as i32 & 0x07;
+        let was_background_counting = self.noise_background_counter_active;
+        self.noise_background_counter_active = true;
+        let mut instant_step = false;
+
+        // Pre-trigger countdown peephole quirks.
+        if divisor > 1 && self.counter_countdown == 1 {
+            self.counter = (self.counter.wrapping_add(1)) & 0x3FFF;
+        } else if self.counter_countdown == 2 && (self.alignment & 3) == 0 && self.active {
+            if divisor == 0 {
+                divisor = 8; // SameBoy explicit override for this edge case.
+            } else if divisor == 1 {
+                let mask = 1u16 << self.clock_shift;
+                let old_bit = (self.counter & mask) != 0;
+                self.counter = (self.counter.wrapping_add(1)) & 0x3FFF;
+                let new_bit = (self.counter & mask) != 0;
+                if new_bit && !old_bit {
+                    instant_step = true;
+                }
+            }
+        }
+
+        // Base reload value (SameBoy: `divisor == 0 ? 6 : divisor*4 + 6`).
+        let mut countdown: i32 = if divisor == 0 { 6 } else { divisor * 4 + 6 };
+
+        // Alignment-based offset table (CGB-E branches only).
+        if (self.alignment & 1) != 0 {
+            if divisor == 0 {
+                // CGB-E (model > CGB_C): branch on whether we were already
+                // background counting.
+                if was_background_counting {
+                    countdown -= 1;
+                } else {
+                    countdown += 1;
+                }
+            } else if (self.alignment & 2) != 0 {
+                if divisor == 1 && !self.active {
+                    countdown += 1;
+                } else {
+                    countdown -= 3;
+                }
+            } else {
+                countdown -= 1;
+                if divisor == 1 && self.active {
+                    countdown -= 4;
+                }
+            }
+        } else if divisor != 0 {
+            if (self.alignment & 2) != 0 {
+                countdown -= 2;
+            } else if divisor > 1 {
+                countdown -= 4;
+            } else if divisor == 1 && self.active && (self.clock_shift == 0) {
+                // SameBoy: `!(NR43 & 0xf0)` — only when shift bits are zero.
+                countdown -= 4;
+            }
+        }
+
+        // Background-counting glitches.
+        if divisor > 1 {
+            if !self.noise_counter_active && (self.alignment & 3) == 0 {
+                countdown += 4;
+            }
+        } else if was_background_counting && !self.active && (self.alignment & 3) == 0 {
+            if divisor == 0 {
+                if self.noise_started_with_dac_disabled {
+                    countdown += 28;
+                }
+            } else {
+                countdown -= 4;
+            }
+        }
+
+        // SameBoy seeds 0x0055 only for divisor=0 / alignment&3==3 / active.
+        if divisor == 0 && self.active && (self.alignment & 3) == 3 {
+            self.lfsr = 0x0055;
+        } else {
+            self.lfsr = 0;
+        }
+
+        // Clamp to non-negative — SameBoy uses unsigned arithmetic that
+        // implicitly wraps; the documented branches above are designed to
+        // never underflow on CGB-E in practice.
+        self.counter_countdown = countdown.max(1) as u16;
+
+        if instant_step {
+            self.clock_lfsr();
+        }
     }
 }
 
@@ -497,66 +675,90 @@ mod tests {
         assert_eq!(Channel4::new().output(), 0.0);
     }
 
-    // ── T-cycle precision tests ───────────────────────────────────────────
+    // ── Noise-counter precision tests ─────────────────────────────────────
 
     #[test]
-    fn test_tick_freq_timer_decrements_by_tcycles_within_mcycle() {
-        // Given: freq_timer = 6;
-        // When: tick() once (4 T-cycles);
-        // Then: freq_timer should be 2 (6 - 4 = 2), no LFSR clock.
+    fn test_tick_decrements_countdown_within_mcycle() {
+        // divisor_code=7 → divisor = 28 T-cycles. One tick (4 T-cycles)
+        // should not increment the counter.
         let mut ch = Channel4::new();
         ch.write_nr42(0xF0);
-        ch.write_nr43(0x00); // divisor=0 (8), shift=0 → period = 8
-        ch.write_nr44(0x80, false); // trigger → LFSR = 0
-        ch.freq_timer = 6;
+        ch.write_nr43(0x07); // divisor=28, shift=0
+        ch.write_nr44(0x80, false); // trigger
+        let counter_before = ch.counter;
+        let countdown_before = ch.counter_countdown;
         let lfsr_before = ch.lfsr;
         ch.tick();
         assert_eq!(
-            ch.freq_timer, 2,
-            "freq_timer should decrement to 2 after one M-cycle"
+            ch.counter, counter_before,
+            "counter must not increment when no countdown wraparound occurs"
         );
-        assert_eq!(ch.lfsr, lfsr_before, "LFSR should not clock when timer > 0");
+        assert!(
+            ch.counter_countdown < countdown_before,
+            "countdown should decrement"
+        );
+        assert_eq!(
+            ch.lfsr, lfsr_before,
+            "LFSR must not step when counter doesn't increment"
+        );
     }
 
     #[test]
-    fn test_tick_freq_timer_expires_mid_mcycle_and_reloads_with_remainder() {
-        // Given: freq_timer = 3, period = 8 (divisor=0, shift=0);
-        // When: tick() once (4 T-cycles);
-        // Then: timer expires at T-cycle 3, reloads to 8,
-        //       then 1 remaining T-cycle decrements to 7.
-        //       LFSR should clock once.
+    fn test_tick_increments_counter_when_countdown_expires() {
+        // divisor_code=0 → divisor = 2 T-cycles. One M-cycle (4 T-cycles)
+        // should increment the counter twice.
         let mut ch = Channel4::new();
         ch.write_nr42(0xF0);
-        ch.write_nr43(0x00); // period = 8
-        ch.write_nr44(0x80, false); // trigger → LFSR = 0
-        ch.freq_timer = 3;
+        ch.write_nr43(0x00); // divisor=2, shift=0
+        ch.write_nr44(0x80, false);
+        let counter_before = ch.counter;
+        // Force countdown to 2 so we get exactly 2 increments per M-cycle.
+        ch.counter_countdown = 2;
         ch.tick();
         assert_eq!(
-            ch.freq_timer, 7,
-            "freq_timer should be period - remaining (8 - 1 = 7)"
+            ch.counter,
+            counter_before.wrapping_add(2) & 0x3FFF,
+            "counter should increment twice for divisor=2"
         );
-        // LFSR clocked once: 0 → 0x4000 (XNOR feedback writes 1 to bit 14).
+    }
+
+    #[test]
+    fn test_lfsr_steps_only_on_rising_edge_of_observed_bit() {
+        // shift=0 → mask = bit 0. Counter goes 0→1 (rising), 1→2 (falling).
+        // Across two increments the LFSR should step exactly once.
+        let mut ch = Channel4::new();
+        ch.write_nr42(0xF0);
+        ch.write_nr43(0x00); // divisor=2, shift=0
+        ch.write_nr44(0x80, false); // trigger → counter=0, lfsr=0
+        ch.counter = 0;
+        ch.counter_countdown = 2;
+        ch.tick();
+        assert_eq!(ch.counter & 0x3, 2, "counter incremented twice");
+        // Rising edge of bit 0 happened on 0→1; LFSR stepped once: 0 → 0x4000.
         assert_eq!(
             ch.lfsr, 0x4000,
-            "LFSR should clock once when timer expires mid M-cycle"
+            "LFSR should step exactly once across two counter increments (one rising edge)"
         );
     }
 
     #[test]
-    fn test_tick_freq_timer_expires_exactly_at_mcycle_boundary() {
-        // Given: freq_timer = 4, period = 8;
-        // When: tick() once;
-        // Then: timer expires at T-cycle 4, reloads to 8, no remaining T-cycles.
+    fn test_lfsr_progresses_over_many_mcycles() {
+        // Sanity check: with code=0/shift=4 (typical), LFSR should produce
+        // a varying sequence of bit-0 values over many M-cycles.
         let mut ch = Channel4::new();
         ch.write_nr42(0xF0);
-        ch.write_nr43(0x00); // period = 8
-        ch.write_nr44(0x80, false); // trigger → LFSR = 0
-        ch.freq_timer = 4;
-        ch.tick();
-        assert_eq!(
-            ch.freq_timer, 8,
-            "freq_timer should be exactly period after expiring at boundary"
+        ch.write_nr43(0x40); // divisor=2, shift=4 → period = 2 * 32 = 64 T-cycles
+        ch.write_nr44(0x80, false);
+        let mut bits = Vec::new();
+        for _ in 0..500 {
+            ch.tick();
+            bits.push((ch.lfsr & 1) as u8);
+        }
+        let zeros = bits.iter().filter(|&&b| b == 0).count();
+        let ones = bits.iter().filter(|&&b| b == 1).count();
+        assert!(
+            zeros > 50 && ones > 50,
+            "LFSR output should vary: zeros={zeros} ones={ones}"
         );
-        assert_eq!(ch.lfsr, 0x4000, "LFSR should clock once");
     }
 }
