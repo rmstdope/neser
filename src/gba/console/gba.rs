@@ -33,7 +33,7 @@ const ALLOWED_SHADERS: &[&str] = &["none", "gba-lcd"];
 /// that returns appropriate defaults without actual emulation.
 pub struct Gba {
     app_context: SharedAppContext,
-    /// System bus owning peripheral state including the keypad and
+    /// System bus owning all peripheral state including APU, keypad and
     /// interrupt controller.
     bus: GbaBus,
 }
@@ -101,15 +101,15 @@ impl Emulator for Gba {
     }
 
     fn sample_ready(&self) -> bool {
-        false
+        self.bus.apu.sample_ready()
     }
 
     fn get_sample(&mut self) -> Option<f32> {
-        None
+        self.bus.apu.take_sample()
     }
 
-    fn set_audio_sample_rate(&mut self, _rate: f32) {
-        // No-op: no audio implemented yet
+    fn set_audio_sample_rate(&mut self, rate: f32) {
+        self.bus.apu.set_sample_rate(rate);
     }
 
     fn set_button(&mut self, _port: u8, button_id: u8, pressed: bool) {

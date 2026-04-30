@@ -4,6 +4,7 @@
 //! The actual CPU, PPU, APU, and memory implementations will be added
 //! in subsequent phases.
 
+pub mod apu;
 pub mod bus;
 pub mod cartridge;
 pub mod console;
@@ -11,6 +12,7 @@ pub mod cpu;
 pub mod input;
 pub mod ppu;
 
+pub use apu::Apu;
 pub use bus::GbaBus;
 pub use cartridge::{GbaCartridge, SaveType, load_cartridge};
 pub use console::gba::Gba;
