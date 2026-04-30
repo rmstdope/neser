@@ -218,6 +218,8 @@ impl CgbBus {
             let palette = compat_palettes::get_palette_colors(&header);
             bus.ppu
                 .apply_dmg_compat_palettes(&palette.bg0, &palette.obj0, &palette.obj1);
+            // Enable DMG-compat mode for correct OBJ palette selection during rendering.
+            bus.ppu.set_dmg_compat(true);
         }
 
         // Initialize PPU to CGB post-boot state.
@@ -651,6 +653,15 @@ impl CgbBus {
             } else {
                 self.key0 = 0x04;
                 self.ppu.write_cgb_register(0xFF6C, 0x01); // OPRI for DMG mode
+                // Apply DMG compatibility palettes for DMG-only games
+                let mut header = [0u8; 0x4C];
+                for (i, byte) in header.iter_mut().enumerate() {
+                    *byte = self.cart.read(0x0100 + i as u16);
+                }
+                let palette = crate::gb::compat_palettes::get_palette_colors(&header);
+                self.ppu
+                    .apply_dmg_compat_palettes(&palette.bg0, &palette.obj0, &palette.obj1);
+                self.ppu.set_dmg_compat(true);
             }
             self.key0_locked = true;
         } else {

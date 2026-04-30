@@ -150,6 +150,9 @@ fn cgb_palette_lookup(palette_ram: &[u8; 64], palette_num: u8, colour_index: u8)
 ///     cause BG to appear on top when the BG colour index is non-zero.
 /// - OBJ priority is determined by OAM order when `opri_dmg_mode` is false
 ///   (CGB default), or by X-coordinate when true.
+/// - When `dmg_compat` is true (DMG-only game on CGB hardware), OBJ palette
+///   selection uses OAM attribute bit 4 (0=palette 0, 1=palette 1) instead of
+///   CGB attribute bits 0-2.
 #[allow(clippy::too_many_arguments)]
 pub fn render_scanline_cgb(
     scanline: u8,
@@ -161,6 +164,7 @@ pub fn render_scanline_cgb(
     obj_palette_ram: &[u8; 64],
     window_line: &mut u8,
     opri_dmg_mode: bool,
+    dmg_compat: bool,
     screen_buffer: &mut ScreenBuffer,
 ) {
     let lcdc = registers.lcdc;
@@ -239,7 +243,14 @@ pub fn render_scanline_cgb(
             if bg_wins {
                 cgb_palette_lookup(bg_palette_ram, bw_px.palette_num, bw_px.colour_index)
             } else {
-                cgb_palette_lookup(obj_palette_ram, sp.cgb_palette, sp.colour_index)
+                // In DMG-compat mode, use OAM attribute bit 4 (sp.palette: 0=OBP0, 1=OBP1)
+                // instead of CGB attribute bits 0-2 (sp.cgb_palette).
+                let obj_pal = if dmg_compat {
+                    sp.palette
+                } else {
+                    sp.cgb_palette
+                };
+                cgb_palette_lookup(obj_palette_ram, obj_pal, sp.colour_index)
             }
         } else {
             cgb_palette_lookup(bg_palette_ram, bw_px.palette_num, bw_px.colour_index)
@@ -442,6 +453,7 @@ mod tests {
             &obj_palette,
             &mut wl,
             false,
+            false, // dmg_compat
             &mut sb,
         );
         // master_priority=false → OBJ always wins → black
@@ -486,12 +498,88 @@ mod tests {
             &obj_palette,
             &mut wl,
             false,
+            false, // dmg_compat
             &mut sb,
         );
         assert_eq!(
             sb.get_pixel(0, 0),
             (255, 255, 255),
             "BG (white) must win with master_priority=true and bg_priority"
+        );
+    }
+
+    #[test]
+    fn test_dmg_compat_uses_oam_bit4_for_obj_palette() {
+        // In DMG-compat mode, sprites select OBJ palette via OAM attr bit 4 (not bits 0-2).
+        // Sprite with attr bit 4 set should use OBJ palette 1, not palette 0.
+        let mut vram = blank_vram();
+        let mut oam = blank_oam();
+        // Sprite at (0,0) with attr bit 4 set (DMG palette 1)
+        oam[0] = 16; // y
+        oam[1] = 8; // x
+        oam[2] = 0; // tile
+        oam[3] = 0x10; // attr: bit 4 set → DMG palette 1 (CGB bits 0-2 = 0)
+
+        // Tile 0 row 0: colour index 1
+        vram[0x0000] = 0xFF; // low byte
+        vram[0x0001] = 0x00; // high byte
+
+        let bank1 = blank_vram_bank1();
+
+        let mut regs = default_registers();
+        regs.lcdc = 0x92; // LCD on, sprites on, BG on
+
+        // BG palette: colour 1 = black (default zeros)
+        let bg_palette = blank_palette_ram();
+        // OBJ palette 0: colour 1 = black (zeros)
+        // OBJ palette 1: colour 1 = white (at bytes 10-11)
+        let mut obj_palette = blank_palette_ram();
+        obj_palette[8 + 2] = 0xFF; // palette 1, colour 1, low byte
+        obj_palette[8 + 3] = 0x7F; // palette 1, colour 1, high byte (0x7FFF = white)
+
+        let mut sb = ScreenBuffer::new();
+        let mut wl = 0u8;
+
+        // Without dmg_compat, CGB uses bits 0-2 → palette 0 → black
+        render_scanline_cgb(
+            0,
+            &vram,
+            &bank1,
+            &oam,
+            &regs,
+            &bg_palette,
+            &obj_palette,
+            &mut wl,
+            false,
+            false, // dmg_compat = false
+            &mut sb,
+        );
+        assert_eq!(
+            sb.get_pixel(0, 0),
+            (0, 0, 0),
+            "CGB mode: attr bits 0-2 (= 0) selects palette 0 → black"
+        );
+
+        // With dmg_compat, uses attr bit 4 → palette 1 → white
+        let mut sb2 = ScreenBuffer::new();
+        wl = 0;
+        render_scanline_cgb(
+            0,
+            &vram,
+            &bank1,
+            &oam,
+            &regs,
+            &bg_palette,
+            &obj_palette,
+            &mut wl,
+            false,
+            true, // dmg_compat = true
+            &mut sb2,
+        );
+        assert_eq!(
+            sb2.get_pixel(0, 0),
+            (255, 255, 255),
+            "DMG-compat mode: attr bit 4 selects palette 1 → white"
         );
     }
 }

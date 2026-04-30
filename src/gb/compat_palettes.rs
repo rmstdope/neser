@@ -188,7 +188,8 @@ const PALETTE_COMBINATIONS: [[u8; 3]; 55] = [
 ];
 
 /// RGB555 palettes (4 colors each).
-/// Each color is in little-endian RGB555 format: 0bGGGRRRRRBBBBBGGG.
+/// Each color is a little-endian `u16` in RGB555 format: 0b0BBBBBGGGGGRRRRR
+/// (bits 0-4 = R, bits 5-9 = G, bits 10-14 = B; bit 15 unused).
 #[rustfmt::skip]
 const PALETTES: [[u16; 4]; 32] = [
     [0x7FFF, 0x32BF, 0x00D0, 0x0000], //  0
@@ -285,11 +286,11 @@ pub fn is_nintendo_licensee(header: &[u8]) -> bool {
 /// Gets the palette combination index for a cartridge header.
 ///
 /// Returns the index into `PALETTE_COMBINATIONS` (0-54).
-/// Non-Nintendo games return 5 (grayscale).
+/// Non-Nintendo games return 5 (the "Up button" default palette).
 pub fn get_palette_id(header: &[u8]) -> u8 {
-    // Non-Nintendo games get the default grayscale palette
+    // Non-Nintendo games get the default palette (combination 5)
     if !is_nintendo_licensee(header) {
-        return 5; // Palette combination 5 = Up button = grayscale
+        return 5; // Palette combination 5 = Up button
     }
 
     let checksum = compute_title_checksum(header);
@@ -312,7 +313,7 @@ pub fn get_palette_id(header: &[u8]) -> u8 {
         // Mask off the $80 flag (logo tilemap indicator)
         PALETTE_PER_CHECKSUM[final_index] & 0x7F
     } else {
-        5 // Default grayscale
+        5 // Default fallback
     }
 }
 
