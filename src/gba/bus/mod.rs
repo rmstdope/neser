@@ -18,6 +18,7 @@ pub mod timer;
 
 use crate::gba::apu::Apu;
 use crate::gba::cpu::bus::Bus;
+use crate::gba::input::Keypad;
 use crate::gba::ppu::{Ppu, PpuStepEvents};
 
 pub use dma::{DmaBus, DmaChannel, DmaController};
@@ -99,6 +100,8 @@ pub struct GbaBus {
     pub ppu: Ppu,
     /// Audio Processing Unit (APU).
     pub apu: Apu,
+    /// Keypad (KEYINPUT / KEYCNT, key IRQ).
+    pub keypad: Keypad,
     /// Last value driven on the bus (used to model open-bus reads).
     last_bus_value: u32,
     /// Whether the BIOS is locked. After the boot ROM finishes executing,
@@ -132,6 +135,7 @@ impl GbaBus {
             dma: DmaController::new(),
             ppu: Ppu::new(),
             apu: Apu::new(),
+            keypad: Keypad::new(),
             last_bus_value: 0,
             bios_locked: false,
         }
@@ -365,7 +369,14 @@ impl Bus for GbaBus {
                     lo | (hi << 16)
                 } else {
                     self.io
-                        .try_read32(aligned, &self.ic, &self.timers, &self.dma, &self.ppu)
+                        .try_read32(
+                            aligned,
+                            &self.ic,
+                            &self.timers,
+                            &self.dma,
+                            &self.ppu,
+                            &self.keypad,
+                        )
                         .unwrap_or_else(|| self.open_bus_word())
                 }
             }
@@ -405,7 +416,14 @@ impl Bus for GbaBus {
                     self.apu.read16(aligned)
                 } else {
                     self.io
-                        .try_read16(aligned, &self.ic, &self.timers, &self.dma, &self.ppu)
+                        .try_read16(
+                            aligned,
+                            &self.ic,
+                            &self.timers,
+                            &self.dma,
+                            &self.ppu,
+                            &self.keypad,
+                        )
                         .unwrap_or_else(|| self.open_bus_halfword(aligned))
                 }
             }
@@ -452,7 +470,14 @@ impl Bus for GbaBus {
                     }
                 } else {
                     self.io
-                        .try_read8(addr, &self.ic, &self.timers, &self.dma, &self.ppu)
+                        .try_read8(
+                            addr,
+                            &self.ic,
+                            &self.timers,
+                            &self.dma,
+                            &self.ppu,
+                            &self.keypad,
+                        )
                         .unwrap_or_else(|| self.open_bus_byte(addr))
                 }
             }
@@ -499,6 +524,7 @@ impl Bus for GbaBus {
                         &mut self.timers,
                         &mut self.dma,
                         &mut self.ppu,
+                        &mut self.keypad,
                     );
                 }
             }
@@ -541,6 +567,7 @@ impl Bus for GbaBus {
                         &mut self.timers,
                         &mut self.dma,
                         &mut self.ppu,
+                        &mut self.keypad,
                     );
                 }
             }
@@ -581,6 +608,7 @@ impl Bus for GbaBus {
                         &mut self.timers,
                         &mut self.dma,
                         &mut self.ppu,
+                        &mut self.keypad,
                     );
                 }
             }
@@ -966,5 +994,35 @@ mod tests {
         let fb = bus.ppu.framebuffer();
         assert_eq!(&fb[0..3], &[0xFF, 0, 0]);
         assert_eq!(&fb[3..6], &[0, 0, 0xFF]);
+    }
+
+    #[test]
+    fn bus_keyinput_reads_active_low_state_via_io() {
+        let mut bus = GbaBus::new();
+        // No buttons pressed → all bits 0–9 high.
+        assert_eq!(bus.read16(crate::gba::input::REG_KEYINPUT), 0x03FF);
+        // Press A (id=0) → bit 0 clears.
+        bus.keypad.set_button(0, true, &mut bus.ic);
+        assert_eq!(bus.read16(crate::gba::input::REG_KEYINPUT), 0x03FE);
+    }
+
+    #[test]
+    fn bus_keypad_irq_routes_to_interrupt_controller() {
+        let mut bus = GbaBus::new();
+        // Configure KEYCNT via the I/O bus: select A, IRQ-enable.
+        bus.write16(
+            crate::gba::input::REG_KEYCNT,
+            crate::gba::input::KEYCNT_IRQ_ENABLE | 0x0001,
+        );
+        // Pressing A must raise the keypad IRQ.
+        bus.keypad.set_button(0, true, &mut bus.ic);
+        assert_ne!(bus.ic.if_flags & irq_bits::KEYPAD, 0);
+    }
+
+    #[test]
+    fn bus_keyinput_is_read_only_via_io_writes() {
+        let mut bus = GbaBus::new();
+        bus.write16(crate::gba::input::REG_KEYINPUT, 0x0000);
+        assert_eq!(bus.read16(crate::gba::input::REG_KEYINPUT), 0x03FF);
     }
 }

@@ -600,3 +600,201 @@ fn test_cgb0_and_production_have_same_io_state() {
         );
     }
 }
+
+// ============================================================================
+// DMG Compatibility Mode Detection Tests
+// ============================================================================
+
+/// Build a CGB test ROM with a specified CGB flag value at $0143.
+///
+/// The CGB flag determines compatibility mode:
+/// - $00: DMG-only
+/// - $80: CGB-compatible (also runs on DMG)
+/// - $C0: CGB-only
+fn build_cgb_test_rom_with_flag(cgb_flag: u8) -> Vec<u8> {
+    let mut rom = build_base_test_rom();
+    rom[0x0143] = cgb_flag;
+    rom[0x014D] = compute_header_checksum(&rom);
+    rom
+}
+
+/// Boot a CGB with a ROM using the specified CGB flag and return it at PC=$0100.
+fn boot_cgb_with_cgb_flag(model: CgbModel, cgb_flag: u8) -> Gb<CgbBus> {
+    let rom = build_cgb_test_rom_with_flag(cgb_flag);
+    let cart = load_cartridge(&rom).expect("valid ROM");
+    let mut gb = Gb::new(CgbBus::new(cart, model, false));
+    let reached = run_cgb_until_cartridge_entry(&mut gb);
+    assert!(
+        reached,
+        "Boot ROM must reach $0100 for model {:?} with CGB flag ${:02X}",
+        model, cgb_flag
+    );
+    gb
+}
+
+/// DMG-only cartridges ($0143 = $00) must set KEY0 to $04 for DMG compatibility mode.
+///
+/// Reference: Pan Docs CGB Registers, KEY0 ($FF4C) description:
+/// Bit 2 set indicates DMG compatibility mode.
+#[test]
+fn test_cgb_boot_dmg_only_cartridge_sets_key0_dmg_mode() {
+    let mut gb = boot_cgb_with_cgb_flag(CgbModel::CgbE, 0x00);
+
+    // KEY0 ($FF4C): $04 = DMG compatibility mode (bit 2 set)
+    // Upper nibble reads as 1s for unused bits, so expect $F4
+    let key0 = read_cgb_bus(&mut gb, 0xFF4C);
+    assert_eq!(
+        key0, 0xF4,
+        "KEY0 should be $F4 ($04 with unused bits as 1s) for DMG-only cartridge, got ${:02X}",
+        key0
+    );
+}
+
+/// DMG-only cartridges ($0143 = $00) must set OPRI to $01 for DMG OBJ priority.
+///
+/// Reference: Pan Docs PPU, OPRI ($FF6C) description:
+/// Bit 0 set indicates DMG OBJ priority mode.
+#[test]
+fn test_cgb_boot_dmg_only_cartridge_sets_opri_dmg_mode() {
+    let mut gb = boot_cgb_with_cgb_flag(CgbModel::CgbE, 0x00);
+
+    // OPRI ($FF6C): $01 = DMG OBJ priority mode
+    // Upper bits read as 1s, so expect $FF if all unused bits are 1
+    let opri = read_cgb_bus(&mut gb, 0xFF6C);
+    assert_eq!(
+        opri & 0x01,
+        0x01,
+        "OPRI bit 0 should be set for DMG-only cartridge, got ${:02X}",
+        opri
+    );
+}
+
+/// CGB-compatible cartridges ($0143 = $80) should set KEY0 to the CGB flag value.
+///
+/// Reference: Pan Docs CGB Registers, KEY0 description.
+#[test]
+fn test_cgb_boot_cgb_compatible_cartridge_sets_key0_cgb_mode() {
+    let gb = boot_cgb_with_cgb_flag(CgbModel::CgbE, 0x80);
+
+    // KEY0 raw value should be the CGB flag ($80)
+    let key0 = gb.cpu.bus.key0();
+    assert_eq!(
+        key0, 0x80,
+        "KEY0 raw value should be $80 for CGB-compatible cartridge, got ${:02X}",
+        key0
+    );
+}
+
+/// CGB-compatible cartridges ($0143 = $80) should keep OPRI at $00 for CGB OBJ priority.
+///
+/// Reference: Pan Docs PPU, OPRI description.
+#[test]
+fn test_cgb_boot_cgb_compatible_cartridge_keeps_opri_cgb_mode() {
+    let mut gb = boot_cgb_with_cgb_flag(CgbModel::CgbE, 0x80);
+
+    // OPRI ($FF6C): $00 = CGB OBJ priority mode
+    let opri = read_cgb_bus(&mut gb, 0xFF6C);
+    assert_eq!(
+        opri & 0x01,
+        0x00,
+        "OPRI bit 0 should be clear for CGB-compatible cartridge, got ${:02X}",
+        opri
+    );
+}
+
+/// CGB-only cartridges ($0143 = $C0) should set KEY0 to the CGB flag value.
+#[test]
+fn test_cgb_boot_cgb_only_cartridge_sets_key0() {
+    let gb = boot_cgb_with_cgb_flag(CgbModel::CgbE, 0xC0);
+
+    // KEY0 raw value should be the CGB flag ($C0)
+    let key0 = gb.cpu.bus.key0();
+    assert_eq!(
+        key0, 0xC0,
+        "KEY0 raw value should be $C0 for CGB-only cartridge, got ${:02X}",
+        key0
+    );
+}
+
+/// CGB-only cartridges should keep OPRI at $00 for CGB OBJ priority.
+#[test]
+fn test_cgb_boot_cgb_only_cartridge_keeps_opri_cgb_mode() {
+    let mut gb = boot_cgb_with_cgb_flag(CgbModel::CgbE, 0xC0);
+
+    let opri = read_cgb_bus(&mut gb, 0xFF6C);
+    assert_eq!(
+        opri & 0x01,
+        0x00,
+        "OPRI bit 0 should be clear for CGB-only cartridge, got ${:02X}",
+        opri
+    );
+}
+
+/// KEY0 must be locked after boot ROM unmaps.
+///
+/// After writing to $FF50, the KEY0 register should ignore further writes.
+#[test]
+fn test_cgb_boot_locks_key0_after_boot() {
+    let mut gb = boot_cgb_with_cgb_flag(CgbModel::CgbE, 0x00);
+
+    // Verify KEY0 is locked
+    assert!(
+        gb.cpu.bus.is_key0_locked(),
+        "KEY0 should be locked after boot ROM unmaps"
+    );
+
+    // Try to write a different value to KEY0
+    let key0_before = read_cgb_bus(&mut gb, 0xFF4C);
+    gb.cpu.bus.write(0xFF4C, 0x00);
+    let key0_after = read_cgb_bus(&mut gb, 0xFF4C);
+
+    assert_eq!(
+        key0_before, key0_after,
+        "KEY0 should not change after boot ROM unmaps (before=${:02X}, after=${:02X})",
+        key0_before, key0_after
+    );
+}
+
+/// CGB-0 boot ROM should detect DMG-only cartridges the same as Production.
+#[test]
+fn test_cgb0_boot_dmg_only_cartridge_sets_key0_dmg_mode() {
+    let mut gb = boot_cgb_with_cgb_flag(CgbModel::Cgb0, 0x00);
+
+    let key0 = read_cgb_bus(&mut gb, 0xFF4C);
+    assert_eq!(
+        key0, 0xF4,
+        "CGB-0: KEY0 should be $F4 for DMG-only cartridge, got ${:02X}",
+        key0
+    );
+
+    let opri = read_cgb_bus(&mut gb, 0xFF6C);
+    assert_eq!(
+        opri & 0x01,
+        0x01,
+        "CGB-0: OPRI bit 0 should be set for DMG-only cartridge, got ${:02X}",
+        opri
+    );
+}
+
+/// CGB-0 boot ROM should handle CGB-compatible cartridges the same as Production.
+#[test]
+fn test_cgb0_boot_cgb_compatible_cartridge_sets_key0_cgb_mode() {
+    let gb = boot_cgb_with_cgb_flag(CgbModel::Cgb0, 0x80);
+
+    // Use raw key0() to verify actual stored value
+    let key0 = gb.cpu.bus.key0();
+    assert_eq!(
+        key0, 0x80,
+        "CGB-0: KEY0 raw value should be $80 for CGB-compatible cartridge, got ${:02X}",
+        key0
+    );
+
+    let mut gb = gb;
+    let opri = read_cgb_bus(&mut gb, 0xFF6C);
+    assert_eq!(
+        opri & 0x01,
+        0x00,
+        "CGB-0: OPRI bit 0 should be clear for CGB-compatible cartridge, got ${:02X}",
+        opri
+    );
+}

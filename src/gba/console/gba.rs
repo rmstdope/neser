@@ -9,7 +9,7 @@
 //! [`Emulator`]: crate::platform::emulator::Emulator
 //! [`Console`]: crate::platform::emulator::Console
 
-use crate::gba::apu::Apu;
+use crate::gba::GbaBus;
 use crate::platform::app_context::{IntoSharedAppContext, SharedAppContext};
 use crate::platform::emulator::{Emulator, SystemType};
 use std::time::Duration;
@@ -33,8 +33,9 @@ const ALLOWED_SHADERS: &[&str] = &["none", "gba-lcd"];
 /// that returns appropriate defaults without actual emulation.
 pub struct Gba {
     app_context: SharedAppContext,
-    /// Audio Processing Unit — produces mixed f32 samples at the configured rate.
-    apu: Apu,
+    /// System bus owning all peripheral state including APU, keypad and
+    /// interrupt controller.
+    bus: GbaBus,
 }
 
 impl Gba {
@@ -47,7 +48,7 @@ impl Gba {
     pub fn new(app_context: impl IntoSharedAppContext) -> Self {
         Self {
             app_context: app_context.into_shared(),
-            apu: Apu::new(),
+            bus: GbaBus::new(),
         }
     }
 }
@@ -100,27 +101,30 @@ impl Emulator for Gba {
     }
 
     fn sample_ready(&self) -> bool {
-        self.apu.sample_ready()
+        self.bus.apu.sample_ready()
     }
 
     fn get_sample(&mut self) -> Option<f32> {
-        self.apu.take_sample()
+        self.bus.apu.take_sample()
     }
 
     fn set_audio_sample_rate(&mut self, rate: f32) {
-        self.apu.set_sample_rate(rate);
+        self.bus.apu.set_sample_rate(rate);
     }
 
-    fn set_button(&mut self, _port: u8, _button_id: u8, _pressed: bool) {
-        // No-op: no input implemented yet
+    fn set_button(&mut self, _port: u8, button_id: u8, pressed: bool) {
+        // GBA has a single keypad; ignore `port`.
+        self.bus
+            .keypad
+            .set_button(button_id, pressed, &mut self.bus.ic);
     }
 
-    fn set_joypad_button_states(&mut self, _port: u8, _state: u8) {
-        // No-op: no input implemented yet
+    fn set_joypad_button_states(&mut self, _port: u8, state: u8) {
+        self.bus.keypad.set_states(state, &mut self.bus.ic);
     }
 
     fn get_joypad_button_states(&self, _port: u8) -> u8 {
-        0
+        self.bus.keypad.get_states()
     }
 
     fn save_state_bytes(&self) -> Result<Vec<u8>, String> {
@@ -215,5 +219,34 @@ mod tests {
         let mut gba = make_gba();
         let result = gba.load_state_bytes(&[]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_set_button_routes_to_keypad() {
+        let mut gba = make_gba();
+        // Default: no buttons pressed → bitmask is 0.
+        assert_eq!(gba.get_joypad_button_states(0), 0);
+        // Press A (id=0).
+        gba.set_button(0, 0, true);
+        assert_eq!(gba.get_joypad_button_states(0) & 0x01, 0x01);
+        // Release.
+        gba.set_button(0, 0, false);
+        assert_eq!(gba.get_joypad_button_states(0), 0);
+    }
+
+    #[test]
+    fn test_set_joypad_button_states_round_trips() {
+        let mut gba = make_gba();
+        gba.set_joypad_button_states(0, 0b1010_0101);
+        assert_eq!(gba.get_joypad_button_states(0), 0b1010_0101);
+    }
+
+    #[test]
+    fn test_unknown_button_id_does_not_panic() {
+        let mut gba = make_gba();
+        // L (id=8) and R (id=9) are GBA-only buttons.
+        gba.set_button(0, 8, true);
+        gba.set_button(0, 9, true);
+        gba.set_button(0, 250, true);
     }
 }
