@@ -352,10 +352,16 @@ impl Bus for GbaBus {
             0x2 => read_le_u32(&self.ewram, aligned as usize),
             0x3 => read_le_u32(&self.iwram, aligned as usize),
             0x4 => {
-                let aligned16 = aligned & !0x1;
+                // aligned is 4-byte aligned; aligned16 == aligned for 32-bit reads
+                let aligned16 = aligned;
                 if (0x0400_0060..=0x0400_00A6).contains(&aligned16) {
                     let lo = self.apu.read16(aligned16) as u32;
-                    let hi = self.apu.read16(aligned16 + 2) as u32;
+                    // Only read the upper halfword if it is also within range.
+                    let hi = if aligned16 + 2 <= 0x0400_00A6 {
+                        self.apu.read16(aligned16 + 2) as u32
+                    } else {
+                        0
+                    };
                     lo | (hi << 16)
                 } else {
                     self.io
@@ -481,7 +487,10 @@ impl Bus for GbaBus {
                     self.apu.write_fifo_b_word(value);
                 } else if (0x0400_0060..=0x0400_00A6).contains(&aligned) {
                     self.apu.write16(aligned, value as u16);
-                    self.apu.write16(aligned + 2, (value >> 16) as u16);
+                    // Only write the upper halfword if it is also within range.
+                    if aligned + 2 <= 0x0400_00A6 {
+                        self.apu.write16(aligned + 2, (value >> 16) as u16);
+                    }
                 } else {
                     self.io.write32(
                         aligned,

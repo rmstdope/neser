@@ -991,18 +991,16 @@ impl Apu {
     }
 
     fn write_soundcnt_h(&mut self, val: u16) {
-        let old = self.soundcnt_h;
         self.soundcnt_h = val;
-        // FIFO A reset (bit 11)
+        // FIFO A reset (bit 11) — auto-clear after triggering.
         if val & 0x0800 != 0 {
             self.fifo_a.clear();
-            self.soundcnt_h &= !0x0800; // auto-clear
+            self.soundcnt_h &= !0x0800;
         }
-        // FIFO B reset (bit 15)
+        // FIFO B reset (bit 15) — auto-clear after triggering.
         if val & 0x8000 != 0 {
             self.fifo_b.clear();
-            self.soundcnt_h = (self.soundcnt_h & !0x8000) | (old & !0x8000);
-            self.soundcnt_h &= !0x8000; // auto-clear
+            self.soundcnt_h &= !0x8000;
         }
     }
 
