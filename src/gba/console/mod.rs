@@ -8,3 +8,4 @@
 
 pub mod config;
 pub mod gba;
+pub mod save_state;

@@ -244,6 +244,97 @@ impl GbaBus {
         self.dma.take_cpu_stall()
     }
 
+    /// Capture the bus memory regions and a few simple scalar fields
+    /// for save-state serialization.
+    ///
+    /// This is intentionally limited to the parts of bus state that are
+    /// already trivially serializable (raw byte regions plus the BIOS
+    /// lock flag and last-bus-value).  Subsystem state owned by the bus
+    /// (PPU, APU, IO, IC, timers, DMA, keypad) will be added as those
+    /// modules grow `Serialize`/`Deserialize` support.
+    ///
+    /// The BIOS image is **not** captured — it is copyrighted firmware
+    /// the user supplies separately at startup, so it must not be
+    /// embedded in save-state files.  Only the [`bios_locked`](Self)
+    /// flag is captured.
+    pub fn capture_memory_state(&self) -> super::console::save_state::BusMemoryState {
+        super::console::save_state::BusMemoryState {
+            ewram: self.ewram.clone(),
+            iwram: self.iwram.clone(),
+            pram: self.pram.clone(),
+            vram: self.vram.clone(),
+            oam: self.oam.clone(),
+            sram: self.sram.clone(),
+            bios_locked: self.bios_locked,
+            last_bus_value: self.last_bus_value,
+        }
+    }
+
+    /// Restore the bus memory regions captured by
+    /// [`capture_memory_state`](Self::capture_memory_state).
+    ///
+    /// The currently loaded BIOS image is preserved — only the BIOS
+    /// lock flag is restored.
+    ///
+    /// Returns an error if any region's length does not match the
+    /// expected GBA region size.
+    pub fn restore_memory_state(
+        &mut self,
+        state: &super::console::save_state::BusMemoryState,
+    ) -> Result<(), String> {
+        if state.ewram.len() != EWRAM_SIZE {
+            return Err(format!(
+                "EWRAM size mismatch (expected {}, found {})",
+                EWRAM_SIZE,
+                state.ewram.len()
+            ));
+        }
+        if state.iwram.len() != IWRAM_SIZE {
+            return Err(format!(
+                "IWRAM size mismatch (expected {}, found {})",
+                IWRAM_SIZE,
+                state.iwram.len()
+            ));
+        }
+        if state.pram.len() != PRAM_SIZE {
+            return Err(format!(
+                "PRAM size mismatch (expected {}, found {})",
+                PRAM_SIZE,
+                state.pram.len()
+            ));
+        }
+        if state.vram.len() != VRAM_SIZE {
+            return Err(format!(
+                "VRAM size mismatch (expected {}, found {})",
+                VRAM_SIZE,
+                state.vram.len()
+            ));
+        }
+        if state.oam.len() != OAM_SIZE {
+            return Err(format!(
+                "OAM size mismatch (expected {}, found {})",
+                OAM_SIZE,
+                state.oam.len()
+            ));
+        }
+        if state.sram.len() != SRAM_SIZE {
+            return Err(format!(
+                "SRAM size mismatch (expected {}, found {})",
+                SRAM_SIZE,
+                state.sram.len()
+            ));
+        }
+        self.ewram.clone_from(&state.ewram);
+        self.iwram.clone_from(&state.iwram);
+        self.pram.clone_from(&state.pram);
+        self.vram.clone_from(&state.vram);
+        self.oam.clone_from(&state.oam);
+        self.sram.clone_from(&state.sram);
+        self.bios_locked = state.bios_locked;
+        self.last_bus_value = state.last_bus_value;
+        Ok(())
+    }
+
     /// Return non-sequential access cycle count for `addr` and access width.
     pub fn n_cycles(&self, addr: u32, width: WidthClass) -> u32 {
         let i = width.idx();

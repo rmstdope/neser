@@ -51,6 +51,16 @@ impl Gba {
             bus: GbaBus::new(),
         }
     }
+
+    /// Borrow the underlying system bus.
+    pub fn bus(&self) -> &GbaBus {
+        &self.bus
+    }
+
+    /// Mutably borrow the underlying system bus.
+    pub fn bus_mut(&mut self) -> &mut GbaBus {
+        &mut self.bus
+    }
 }
 
 impl Emulator for Gba {
@@ -128,11 +138,15 @@ impl Emulator for Gba {
     }
 
     fn save_state_bytes(&self) -> Result<Vec<u8>, String> {
-        Err("GBA save states not yet implemented".to_string())
+        self.save_state()
+            .to_bytes()
+            .map_err(|e| format!("save state serialization failed: {e}"))
     }
 
-    fn load_state_bytes(&mut self, _data: &[u8]) -> Result<(), String> {
-        Err("GBA save states not yet implemented".to_string())
+    fn load_state_bytes(&mut self, data: &[u8]) -> Result<(), String> {
+        let state = super::save_state::GbaSaveState::from_bytes(data)
+            .map_err(|e| format!("save state deserialization failed: {e}"))?;
+        self.load_state(&state).map_err(|e| e.to_string())
     }
 
     fn reset(&mut self, _soft_reset: bool) {
@@ -208,16 +222,25 @@ mod tests {
     }
 
     #[test]
-    fn test_save_state_returns_error() {
+    fn test_save_state_returns_bytes() {
         let gba = make_gba();
         let result = gba.save_state_bytes();
-        assert!(result.is_err());
+        let bytes = result.expect("save_state_bytes should succeed");
+        assert!(!bytes.is_empty(), "save state must contain data");
     }
 
     #[test]
-    fn test_load_state_returns_error() {
+    fn test_load_state_round_trips() {
         let mut gba = make_gba();
-        let result = gba.load_state_bytes(&[]);
+        let bytes = gba.save_state_bytes().expect("save should succeed");
+        gba.load_state_bytes(&bytes)
+            .expect("load_state_bytes should succeed");
+    }
+
+    #[test]
+    fn test_load_state_rejects_invalid_data() {
+        let mut gba = make_gba();
+        let result = gba.load_state_bytes(b"not a valid save state");
         assert!(result.is_err());
     }
 
