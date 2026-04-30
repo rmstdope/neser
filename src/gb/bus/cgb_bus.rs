@@ -111,6 +111,13 @@ pub struct CgbBus {
     /// When `true`, the boot ROM is skipped on reset (starts at $0100 with
     /// post-boot register state). Set at construction time.
     skip_boot_rom: bool,
+    /// KEY0 register ($FF4C): CGB CPU mode select.
+    /// Bit 2 = DMG compatibility mode (0 = CGB mode, 1 = DMG mode).
+    /// Written by the boot ROM based on cartridge header ($0143).
+    /// Locked (writes ignored) after boot ROM unmaps.
+    key0: u8,
+    /// Whether KEY0 is locked (writes ignored). Set when $FF50 is written.
+    key0_locked: bool,
 }
 
 impl CgbBus {
@@ -129,6 +136,21 @@ impl CgbBus {
     /// register state matching the model variant.
     pub fn new(cart: Box<dyn GbCartridge>, model: CgbModel, skip_boot_rom: bool) -> Self {
         let is_cgb = cart.is_cgb();
+        // When skipping boot ROM, determine KEY0/OPRI values from cartridge header.
+        // DMG-only cartridges ($0143 bit 7 clear) need DMG compatibility mode.
+        let (key0_value, opri_value) = if skip_boot_rom {
+            if is_cgb {
+                // CGB-compatible: KEY0 = CGB flag, OPRI = $00
+                (cart.read(0x0143), 0x00)
+            } else {
+                // DMG-only: KEY0 = $04 (DMG mode), OPRI = $01
+                (0x04, 0x01)
+            }
+        } else {
+            // Boot ROM will set these values
+            (0x00, 0x00)
+        };
+
         let mut bus = Self {
             cart,
             ppu: Ppu::new_cgb(),
@@ -174,7 +196,15 @@ impl CgbBus {
             },
             boot_rom_active: !skip_boot_rom,
             skip_boot_rom,
+            // KEY0 value depends on boot mode and cartridge type.
+            key0: key0_value,
+            key0_locked: skip_boot_rom, // If skipping boot ROM, KEY0 is already locked.
         };
+
+        // Set OPRI based on cartridge type when skipping boot ROM.
+        if skip_boot_rom && opri_value != 0 {
+            bus.ppu.write_cgb_register(0xFF6C, opri_value);
+        }
 
         // Initialize PPU to CGB post-boot state.
         // LCDC = $91: LCD on, BG on, OBJ 8x8, BG map $9800, tiles $8800, OBJ on.
@@ -229,6 +259,22 @@ impl CgbBus {
     /// Returns the CGB hardware model variant for this bus.
     pub fn model(&self) -> CgbModel {
         self.model
+    }
+
+    /// Returns the KEY0 register value ($FF4C).
+    ///
+    /// KEY0 controls CGB/DMG compatibility mode:
+    /// - Bit 2 = 0: CGB mode (full CGB hardware features)
+    /// - Bit 2 = 1: DMG compatibility mode (for DMG-only cartridges)
+    pub fn key0(&self) -> u8 {
+        self.key0
+    }
+
+    /// Returns `true` if KEY0 is locked (writes ignored).
+    ///
+    /// KEY0 becomes locked when the boot ROM unmaps (write to $FF50).
+    pub fn is_key0_locked(&self) -> bool {
+        self.key0_locked
     }
 
     /// Returns `true` while the boot ROM is still mapped at `$0000–$00FF` and `$0200–$08FF`.
@@ -581,6 +627,22 @@ impl CgbBus {
         self.ff73 = 0x00;
         self.ff74 = 0xFF; // Initial value per Mooneye test
         self.ff75 = 0x00;
+        // Reset KEY0 state: if boot ROM is active, unlock so boot ROM can write;
+        // if skipping boot ROM, set appropriate value based on cartridge type.
+        if self.skip_boot_rom {
+            // Same logic as constructor: set KEY0/OPRI based on cartridge header
+            let is_cgb = self.cart.is_cgb();
+            if is_cgb {
+                self.key0 = self.cart.read(0x0143);
+            } else {
+                self.key0 = 0x04;
+                self.ppu.write_cgb_register(0xFF6C, 0x01); // OPRI for DMG mode
+            }
+            self.key0_locked = true;
+        } else {
+            self.key0 = 0x00;
+            self.key0_locked = false;
+        }
     }
 
     // ── Save-state capture / restore ───────────────────────────────────────
@@ -615,6 +677,8 @@ impl CgbBus {
             ff73: Some(self.ff73),
             ff74: Some(self.ff74),
             ff75: Some(self.ff75),
+            key0: Some(self.key0),
+            key0_locked: Some(self.key0_locked),
             boot_rom_active: Some(self.boot_rom_active),
             sb: None,
             sc: None,
@@ -663,6 +727,9 @@ impl CgbBus {
         self.ff73 = state.ff73.unwrap_or(0x00);
         self.ff74 = state.ff74.unwrap_or(0xFF);
         self.ff75 = state.ff75.unwrap_or(0x00);
+        // Restore KEY0 state; default to locked with post-boot value for older save states
+        self.key0 = state.key0.unwrap_or(0x00);
+        self.key0_locked = state.key0_locked.unwrap_or(true);
         // Restore boot ROM state; default to inactive for older save states
         self.boot_rom_active = state.boot_rom_active.unwrap_or(false);
         Ok(())
@@ -726,6 +793,8 @@ impl GbBus for CgbBus {
             0xFF46 => self.dma_source,
             // CGB KEY1 — speed switch register
             0xFF4D => (self.key1 & 0x80) | 0x7E | (self.key1 & 0x01),
+            // CGB KEY0 — CPU mode select register (upper nibble reads as 1)
+            0xFF4C => self.key0 | 0xF0,
             // CGB HDMA registers
             0xFF51..=0xFF54 => 0xFF, // HDMA1-4 are write-only
             0xFF55 => self.hdma.read_control(),
@@ -804,6 +873,12 @@ impl GbBus for CgbBus {
             0xFF46 => self.do_oam_dma(val),
             // CGB KEY1 — only bit 0 (arm) is writable; bit 7 (current speed) is read-only
             0xFF4D => self.key1 = (self.key1 & 0x80) | (val & 0x01),
+            // CGB KEY0 — CPU mode select, locked after boot ROM unmaps
+            0xFF4C => {
+                if !self.key0_locked {
+                    self.key0 = val;
+                }
+            }
             // CGB HDMA registers
             0xFF51 => self.hdma.write_source_high(val),
             0xFF52 => self.hdma.write_source_low(val),
@@ -844,7 +919,9 @@ impl GbBus for CgbBus {
             }
             0xFF50 => {
                 // Boot ROM disable: writing any value unmaps the boot ROM.
+                // Also locks KEY0 (writes to $FF4C ignored from this point).
                 self.boot_rom_active = false;
+                self.key0_locked = true;
             }
             // CGB undocumented registers ($FF72-$FF75) — Pan Docs "CGB Registers".
             0xFF72 => self.ff72 = val,
@@ -919,6 +996,8 @@ impl GbBus for CgbBus {
             0xFF46 => self.dma_source,
             // CGB KEY1 — speed switch register (debugger)
             0xFF4D => (self.key1 & 0x80) | 0x7E | (self.key1 & 0x01),
+            // CGB KEY0 — CPU mode select register (debugger)
+            0xFF4C => self.key0 | 0xF0,
             // CGB HDMA registers
             0xFF51..=0xFF54 => 0xFF, // HDMA1-4 are write-only
             0xFF55 => self.hdma.read_control(),
@@ -1863,5 +1942,90 @@ mod tests {
             0,
             "CH1 should be inactive after DIV write with bit high"
         );
+    }
+
+    // ── KEY0 register tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_key0_initial_value() {
+        // Given: CgbBus with boot ROM active
+        let bus = CgbBus::new(cgb_rom_only_cart(), CgbModel::CgbE, false);
+
+        // Then: KEY0 initial value is $00 (CGB mode)
+        assert_eq!(bus.key0(), 0x00);
+        assert!(!bus.is_key0_locked());
+    }
+
+    #[test]
+    fn test_key0_read_returns_unused_bits_as_1() {
+        // Given: CgbBus with boot ROM active
+        let mut bus = CgbBus::new(cgb_rom_only_cart(), CgbModel::CgbE, false);
+
+        // When: KEY0 is $00
+        // Then: read returns $F0 (upper nibble set)
+        assert_eq!(bus.read(0xFF4C), 0xF0);
+
+        // When: write $04 (DMG mode)
+        bus.write(0xFF4C, 0x04);
+
+        // Then: read returns $F4
+        assert_eq!(bus.read(0xFF4C), 0xF4);
+    }
+
+    #[test]
+    fn test_key0_writable_before_boot_rom_unmaps() {
+        // Given: CgbBus with boot ROM active
+        let mut bus = CgbBus::new(cgb_rom_only_cart(), CgbModel::CgbE, false);
+        assert!(!bus.is_key0_locked());
+
+        // When: write $04 to KEY0
+        bus.write(0xFF4C, 0x04);
+
+        // Then: KEY0 is updated
+        assert_eq!(bus.key0(), 0x04);
+    }
+
+    #[test]
+    fn test_key0_locked_after_boot_rom_unmaps() {
+        // Given: CgbBus with boot ROM active
+        let mut bus = CgbBus::new(cgb_rom_only_cart(), CgbModel::CgbE, false);
+        bus.write(0xFF4C, 0x04);
+        assert_eq!(bus.key0(), 0x04);
+
+        // When: unmap boot ROM by writing to $FF50
+        bus.write(0xFF50, 0x01);
+
+        // Then: KEY0 is locked
+        assert!(bus.is_key0_locked());
+        assert!(!bus.is_boot_rom_active());
+
+        // When: try to write different value to KEY0
+        bus.write(0xFF4C, 0x80);
+
+        // Then: KEY0 is unchanged (write ignored)
+        assert_eq!(bus.key0(), 0x04);
+    }
+
+    #[test]
+    fn test_key0_locked_when_skip_boot_rom() {
+        // Given: CgbBus with boot ROM skipped
+        let bus = CgbBus::new(cgb_rom_only_cart(), CgbModel::CgbE, true);
+
+        // Then: KEY0 is locked immediately
+        assert!(bus.is_key0_locked());
+    }
+
+    #[test]
+    fn test_key0_skip_boot_rom_write_ignored() {
+        // Given: CgbBus with boot ROM skipped (KEY0 locked)
+        let mut bus = CgbBus::new(cgb_rom_only_cart(), CgbModel::CgbE, true);
+        assert!(bus.is_key0_locked());
+        let initial = bus.key0();
+
+        // When: try to write to KEY0
+        bus.write(0xFF4C, 0x04);
+
+        // Then: KEY0 is unchanged
+        assert_eq!(bus.key0(), initial);
     }
 }

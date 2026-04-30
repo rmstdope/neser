@@ -73,6 +73,11 @@ pub struct BusState {
     pub ff73: Option<u8>,
     pub ff74: Option<u8>,
     pub ff75: Option<u8>,
+    // CGB KEY0 register ($FF4C) - DMG compatibility mode (None for DMG)
+    #[serde(default)]
+    pub key0: Option<u8>,
+    #[serde(default)]
+    pub key0_locked: Option<bool>,
     // DMG-only fields (None for CGB)
     pub boot_rom_active: Option<bool>,
     pub sb: Option<u8>,

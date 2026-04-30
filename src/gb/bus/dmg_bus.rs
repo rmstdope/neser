@@ -381,6 +381,8 @@ impl DmgBus {
             ff73: None,
             ff74: None,
             ff75: None,
+            key0: None,
+            key0_locked: None,
             boot_rom_active: Some(self.boot_rom_active),
             sb: Some(self.sb),
             sc: Some(self.sc),
