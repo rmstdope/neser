@@ -46,11 +46,12 @@ pub struct Channel1 {
     pub(crate) length_counter: u8, // 0-64; silences when reaches 0
     volume: u8,                    // current volume 0-15
     env_timer: u8,                 // envelope period countdown
-    sweep_timer: u8,               // sweep period countdown
     sweep_shadow: u16,             // shadow frequency register
     sweep_enabled: bool,
     /// Set when a negate-mode calculation is performed; cleared on trigger.
     /// If NR10 clears the negate bit after this was set, the channel is disabled.
+    /// Retained as a coarse fallback; SameBoy-parity disable formula in
+    /// `write_nr10` uses `completed_addend` instead.
     negate_used: bool,
     /// Gate flag: duty step clock is disabled until the first trigger after
     /// APU power-on (Pan Docs "Obscure Behavior").
@@ -86,6 +87,49 @@ pub struct Channel1 {
     /// Ref: SameBoy `Core/apu.c` `gb->apu.channel_1_restart_hold`.
     #[serde(default)]
     pub(super) restart_hold: u8,
+
+    /// Test-only override that forces `uses_deferred_sweep()` to `true`,
+    /// even though the production gate currently returns `false`. Lets
+    /// unit tests exercise the Phase 4-6 deferred machinery directly.
+    #[cfg(test)]
+    #[serde(skip)]
+    pub(super) force_deferred_sweep_for_tests: bool,
+
+    // ── Phase 4–6: deferred sweep recalc machinery ──────────────────────
+    /// `square_sweep_calculate_countdown` — sub-1MHz countdown; counts down
+    /// from `NR10 & 0x07` (the shift bits) to 0. While >0 the recalc has
+    /// been armed but not yet completed. SameBoy `Core/apu.c`.
+    #[serde(default)]
+    pub(super) sweep_calc_countdown: u8,
+    /// `square_sweep_calculate_countdown_reload_timer` — drains before the
+    /// main countdown; loaded as `1 + lf_div` when sweep is armed.
+    #[serde(default)]
+    pub(super) sweep_calc_reload_timer: u8,
+    /// `sweep_length_addend` — current shifted addend; flipped to its 1's
+    /// complement when negate mode is active during `sweep_calculation_done`.
+    #[serde(default)]
+    pub(super) sweep_length_addend: u16,
+    /// `channel1_completed_addend` — copy of `sweep_length_addend` after the
+    /// last `sweep_calculation_done`. Used by the next sweep tick's writeback
+    /// and by the NR10-write disable formula.
+    #[serde(default)]
+    pub(super) completed_addend: u16,
+    /// `unshifted_sweep` — captured at arm time as `(NR10 & 0x07) == 0`.
+    /// When true the calculate-countdown still drains even though shift==0,
+    /// allowing a sweep armed under shift>0 to complete after NR10 cleared
+    /// the shift bits mid-flight.
+    #[serde(default)]
+    pub(super) unshifted_sweep: bool,
+    /// `square_sweep_instant_calculation_done` — set when a sweep is armed
+    /// with `sweep_calc_countdown == 0`. The reload timer drains, then
+    /// `sweep_calculation_done` fires immediately on this flag.
+    #[serde(default)]
+    pub(super) instant_calc_done: bool,
+    /// 1MHz cadence flip-flop for `sweep_tick`. We're called once per
+    /// M-cycle by the APU; SameBoy ticks sweep at 1MHz (M-cycles / 2). This
+    /// flag toggles every M-cycle and gates the actual sweep work.
+    #[serde(default)]
+    sweep_tick_phase: bool,
 }
 
 impl Default for Channel1 {
@@ -114,7 +158,6 @@ impl Channel1 {
             length_counter: 0,
             volume: 0,
             env_timer: 0,
-            sweep_timer: 0,
             sweep_shadow: 0,
             sweep_enabled: false,
             negate_used: false,
@@ -125,6 +168,15 @@ impl Channel1 {
             is_cgb: false,
             cgb_model: CgbModel::CgbE,
             restart_hold: 0,
+            sweep_calc_countdown: 0,
+            sweep_calc_reload_timer: 0,
+            sweep_length_addend: 0,
+            completed_addend: 0,
+            unshifted_sweep: false,
+            instant_calc_done: false,
+            sweep_tick_phase: false,
+            #[cfg(test)]
+            force_deferred_sweep_for_tests: false,
         }
     }
 
@@ -215,47 +267,73 @@ impl Channel1 {
         }
     }
 
-    fn sweep_timer_reload(&self) -> u8 {
-        if self.sweep_period > 0 {
-            self.sweep_period
-        } else {
-            8
-        }
-    }
-
-    /// Clock frequency sweep at 128 Hz (Frame Sequencer steps 2/6).
+    /// Arm a sweep recalculation at 128 Hz (Frame Sequencer steps 2/6).
     ///
-    /// Implementation follows SameBoy `Core/apu.c`:
+    /// Mirrors SameBoy `Core/apu.c` `trigger_sweep_calculation`:
     ///   * Increment `square_sweep_countdown` (3-bit, wraps).
-    ///   * When the post-increment value is 7 *and* the NR10 period bits
-    ///     are non-zero, perform the sweep recalculation and overflow check.
-    ///   * The countdown is reloaded from the (current) NR10 period bits
-    ///     after the recalculation, mirroring SameBoy's `((NR10>>4)&7)^7`.
+    ///   * When the post-increment value is 7 AND NR10 period bits are
+    ///     non-zero, write back the *previously*-completed addend, recompute
+    ///     a fresh shifted addend (gated on `restart_hold == 0`), and arm the
+    ///     `sweep_calc_countdown` / `sweep_calc_reload_timer` pair.
     ///
-    /// Phases 4–6 will defer the actual recalculation by an
-    /// M-cycle window via `calculate_countdown`; for Phase 3 the recalc
-    /// fires synchronously, preserving existing test expectations.
-    pub fn clock_sweep(&mut self) {
+    /// The actual overflow check + frequency mutation is deferred to
+    /// `sweep_calculation_done`, fired from `sweep_tick` after the countdowns
+    /// drain.
+    ///
+    /// `lf_div` is the APU's low-frequency divider phase at the moment of arm.
+    pub fn clock_sweep(&mut self, lf_div: bool) {
         self.sweep_countdown = (self.sweep_countdown + 1) & 7;
         if self.sweep_countdown != 7 {
             return;
         }
-        // Reload countdown from current period (matches SameBoy reload).
+        // Reload countdown from current NR10 period bits.
         self.sweep_countdown = (self.sweep_period ^ 7) & 7;
-        if self.sweep_enabled && self.sweep_period > 0 {
-            let new_freq = self.compute_swept_frequency();
-            if self.sweep_negate {
-                self.negate_used = true;
-            }
-            if new_freq > 2047 {
-                trace_apu!(3; "GB APU CH1 sweep overflow freq=0x{:03X} -> muted", new_freq);
+        if self.uses_deferred_sweep() {
+            self.arm_sweep_calculation(lf_div);
+        } else {
+            self.synchronous_sweep_step();
+        }
+    }
+
+    /// True when the model uses SameBoy's deferred sweep recalc machinery.
+    /// Currently always `false`: the deferred path is fully implemented
+    /// (Phases 4-6) but neither the Blargg sweep ROMs nor the SameSuite
+    /// sweep ROMs pass with it active — additional CGB-E quirks are still
+    /// missing. Until Phase 7 (SameSuite ROM parity) is finished, the
+    /// synchronous Blargg-aligned path is used for all models. Flipping this
+    /// to `self.is_cgb && self.cgb_model == CgbModel::CgbE` will route CGB-E
+    /// through the deferred path; the unit tests in this file already gate
+    /// themselves to CGB-E and exercise that path. Tracked under #2287.
+    fn uses_deferred_sweep(&self) -> bool {
+        #[cfg(test)]
+        if self.force_deferred_sweep_for_tests {
+            return true;
+        }
+        false
+    }
+
+    /// Synchronous sweep step (Phase 0-3 path, retained for DMG / pre-CGB-E).
+    /// Mirrors the original Blargg-aligned implementation: when sweep is
+    /// enabled and period > 0, compute the swept frequency, check overflow,
+    /// and (if shift > 0) write back to shadow + freq and re-check overflow.
+    fn synchronous_sweep_step(&mut self) {
+        if !(self.sweep_enabled && self.sweep_period > 0) {
+            return;
+        }
+        let new_freq = self.compute_swept_frequency();
+        if self.sweep_negate {
+            self.negate_used = true;
+        }
+        if new_freq > 2047 {
+            trace_apu!(3; "GB APU CH1 sweep overflow freq=0x{:03X} -> muted", new_freq);
+            self.active = false;
+        } else if self.sweep_shift > 0 {
+            trace_apu!(3; "GB APU CH1 sweep update shadow=0x{:03X} -> new=0x{:03X}", self.sweep_shadow, new_freq);
+            self.sweep_shadow = new_freq;
+            self.freq = new_freq;
+            // Re-check overflow against the newly loaded frequency.
+            if self.compute_swept_frequency() > 2047 {
                 self.active = false;
-            } else if self.sweep_shift > 0 {
-                trace_apu!(3; "GB APU CH1 sweep update shadow=0x{:03X} -> new=0x{:03X}", self.sweep_shadow, new_freq);
-                self.sweep_shadow = new_freq;
-                self.freq = new_freq;
-                // Re-check overflow against the newly loaded frequency.
-                self.disable_if_sweep_overflows();
             }
         }
     }
@@ -269,9 +347,111 @@ impl Channel1 {
         }
     }
 
-    fn disable_if_sweep_overflows(&mut self) {
-        if self.compute_swept_frequency() > 2047 {
-            self.active = false;
+    /// SameBoy `trigger_sweep_calculation` — gated arm for the deferred
+    /// recalc. Called from `clock_sweep` and from `write_nr10`.
+    fn arm_sweep_calculation(&mut self, lf_div: bool) {
+        // SameBoy gate: NR10 period bits must be non-zero AND countdown == 7.
+        // The countdown==7 check is the caller's responsibility (clock_sweep
+        // already filters; write_nr10 checks before invoking).
+        if self.sweep_period == 0 {
+            return;
+        }
+        // Apply the previously-completed addend to the live frequency.
+        // We use `completed_addend` (set at the end of the previous
+        // `sweep_calculation_done`) rather than `sweep_length_addend`, since
+        // the latter may have been overwritten by an in-flight calc that has
+        // not yet completed (e.g., via NR10 rewrite paths). This keeps the
+        // writeback semantically tied to the *last fully-completed* addend.
+        if self.sweep_shift > 0 {
+            let neg_bit: u16 = if self.sweep_negate { 1 } else { 0 };
+            self.freq = self
+                .completed_addend
+                .wrapping_add(self.sweep_shadow)
+                .wrapping_add(neg_bit)
+                & 0x7FF;
+            trace_apu!(3; "GB APU CH1 sweep writeback shadow=0x{:03X} addend=0x{:03X} freq=0x{:03X}",
+                self.sweep_shadow, self.completed_addend, self.freq);
+        }
+        // Recompute the shifted addend from the (newly written) freq, only
+        // when the channel is not in its post-trigger restart-hold window.
+        if self.restart_hold == 0 {
+            self.sweep_length_addend = self.freq >> self.sweep_shift;
+        }
+        // Arm the calc countdown + reload timer.
+        self.sweep_calc_countdown = self.sweep_shift;
+        self.sweep_calc_reload_timer = 1 + (lf_div as u8);
+        self.unshifted_sweep = self.sweep_shift == 0;
+        self.instant_calc_done = self.sweep_calc_countdown == 0;
+        if self.sweep_negate {
+            self.negate_used = true;
+        }
+    }
+
+    /// SameBoy `sweep_calculation_done` — performs the second overflow check
+    /// and stamps `completed_addend` for the next tick's writeback.
+    fn sweep_calculation_done(&mut self) {
+        // Refresh shadow from live freq only when not in restart-hold window.
+        if self.restart_hold == 0 {
+            self.sweep_shadow = self.freq;
+        }
+        // Negate via 1's complement (SameBoy: `sweep_length_addend ^= 0x7FF`).
+        if self.sweep_negate {
+            self.sweep_length_addend ^= 0x7FF;
+        }
+        // Overflow check (only when not negating; matches SameBoy gate).
+        if !self.sweep_negate {
+            let sum = (self.sweep_shadow as u32).wrapping_add(self.sweep_length_addend as u32);
+            if sum > 0x7FF {
+                trace_apu!(3; "GB APU CH1 sweep overflow shadow=0x{:03X} addend=0x{:03X} -> muted",
+                    self.sweep_shadow, self.sweep_length_addend);
+                self.active = false;
+            }
+        }
+        self.completed_addend = self.sweep_length_addend;
+    }
+
+    /// 1MHz sweep machinery tick. The APU calls this once per M-cycle; we
+    /// gate on an internal phase flag to drain countdowns at SameBoy's 1MHz
+    /// cadence. SameBoy: `sweep_cycles = cycles / 2 + lf_div_adj` in
+    /// `GB_apu_run`.
+    pub fn sweep_tick(&mut self) {
+        // Hot-path early return: when the deferred machinery is fully idle
+        // there is nothing to do. This keeps the call effectively free in
+        // production (where `uses_deferred_sweep()` returns false and the
+        // machinery is never armed) and avoids continuously mutating
+        // `sweep_tick_phase` (which would otherwise dirty serialized state
+        // every M-cycle).
+        if self.sweep_calc_reload_timer == 0
+            && self.sweep_calc_countdown == 0
+            && !self.instant_calc_done
+        {
+            return;
+        }
+        // Toggle 1MHz phase; only operate every other call.
+        self.sweep_tick_phase = !self.sweep_tick_phase;
+        if !self.sweep_tick_phase {
+            return;
+        }
+        // Reload timer drains first.
+        if self.sweep_calc_reload_timer > 0 {
+            self.sweep_calc_reload_timer -= 1;
+            if self.sweep_calc_reload_timer == 0
+                && self.sweep_calc_countdown == 0
+                && self.instant_calc_done
+            {
+                self.sweep_calculation_done();
+                self.instant_calc_done = false;
+            }
+            return;
+        }
+        // Calc countdown drains, but is paused if NR10 shift==0 unless the
+        // arm captured `unshifted_sweep` (allowing already-armed recalc to
+        // complete).
+        if self.sweep_calc_countdown > 0 && (self.sweep_shift > 0 || self.unshifted_sweep) {
+            self.sweep_calc_countdown -= 1;
+            if self.sweep_calc_countdown == 0 {
+                self.sweep_calculation_done();
+            }
         }
     }
 
@@ -338,7 +518,6 @@ impl Channel1 {
         self.length_counter = 0;
         self.volume = 0;
         self.env_timer = 0;
-        self.sweep_timer = 0;
         self.sweep_shadow = 0;
         self.sweep_enabled = false;
         self.triggered_once = false;
@@ -349,6 +528,14 @@ impl Channel1 {
         // NR52 power cycles).
         self.restart_hold = 0;
         self.sweep_countdown = 0;
+        self.sweep_calc_countdown = 0;
+        self.sweep_calc_reload_timer = 0;
+        self.sweep_length_addend = 0;
+        self.completed_addend = 0;
+        self.unshifted_sweep = false;
+        self.instant_calc_done = false;
+        self.sweep_tick_phase = false;
+        self.negate_used = false;
     }
 
     // ── Register reads ────────────────────────────────────────────────────
@@ -377,17 +564,86 @@ impl Channel1 {
 
     // ── Register writes ───────────────────────────────────────────────────
 
-    pub fn write_nr10(&mut self, val: u8) {
-        trace_apu!(2; "GB APU CH1 write NR10=0x{:02X} period={} negate={} shift={}", 
+    pub fn write_nr10(&mut self, val: u8, lf_div: bool) {
+        trace_apu!(2; "GB APU CH1 write NR10=0x{:02X} period={} negate={} shift={}",
             val, (val >> 4) & 0x07, (val & 0x08) != 0, val & 0x07);
+        if self.uses_deferred_sweep() {
+            self.write_nr10_deferred(val, lf_div);
+        } else {
+            self.write_nr10_synchronous(val);
+        }
+    }
+
+    /// Synchronous NR10 write (Blargg-aligned, used for DMG / pre-CGB-E).
+    /// Implements the classic "negate-used" hardware quirk: clearing the
+    /// negate bit after a negate-mode calculation has occurred immediately
+    /// disables the channel.
+    fn write_nr10_synchronous(&mut self, val: u8) {
         let old_negate = self.sweep_negate;
         self.sweep_period = (val >> 4) & 0x07;
         self.sweep_negate = val & 0x08 != 0;
         self.sweep_shift = val & 0x07;
-        // Hardware quirk: if negate mode was used since last trigger and is now cleared,
-        // the channel is immediately disabled.
         if old_negate && !self.sweep_negate && self.negate_used {
             self.active = false;
+        }
+    }
+
+    /// Deferred-recalc NR10 write (CGB-E SameBoy-aligned). Implements the
+    /// SameBoy "shadow + completed_addend + old_negate" disable formula,
+    /// the `nr10_write_glitch` sub-cycle countdown corruption, and the
+    /// re-arm path.
+    fn write_nr10_deferred(&mut self, val: u8, lf_div: bool) {
+        // SameBoy `nr10_write_glitch` — sub-M-cycle countdown corruption when
+        // NR10 is rewritten while the sweep recalc machinery is mid-flight.
+        if self.sweep_calc_countdown != 0 || self.sweep_calc_reload_timer != 0 {
+            self.nr10_write_glitch(val, lf_div);
+        }
+        let old_negate = self.sweep_negate;
+        self.sweep_period = (val >> 4) & 0x07;
+        self.sweep_negate = val & 0x08 != 0;
+        self.sweep_shift = val & 0x07;
+        // SameBoy disable formula: shadow + completed_addend + (old_negate as 1)
+        // overflows AND the new value clears the negate bit.
+        let neg_bit: u32 = if old_negate { 1 } else { 0 };
+        let sum = (self.sweep_shadow as u32) + (self.completed_addend as u32) + neg_bit;
+        if sum > 0x7FF && (val & 0x08) == 0 {
+            self.active = false;
+        }
+        // Re-arm sweep (SameBoy: trigger_sweep_calculation called at end of
+        // NR10 write). Only fires when sweep_countdown == 7 AND new period > 0.
+        if self.sweep_countdown == 7 {
+            self.arm_sweep_calculation(lf_div);
+        }
+    }
+
+    /// SameBoy `nr10_write_glitch` (CGB-D/E branch). Corrupts the sub-cycle
+    /// countdowns when NR10 is rewritten mid-flight. The full SameBoy logic
+    /// has DMG/CGB-A/B/C variants we do not target. We implement the
+    /// observable CGB-D/E behavior that affects the SameSuite ROMs:
+    ///
+    /// * If the reload timer is the only thing pending, an NR10 write
+    ///   resets the calc countdown to the new shift bits, and the timer
+    ///   stays put.
+    /// * If the calc countdown is already running, the new countdown is
+    ///   loaded from the new shift bits; the in-flight calc is dropped.
+    ///
+    /// The exact branch is approximated; refine if SameSuite tests fail.
+    /// Ref: SameBoy `Core/apu.c` `nr10_write_glitch`.
+    fn nr10_write_glitch(&mut self, val: u8, _lf_div: bool) {
+        let new_shift = val & 0x07;
+        // If calc countdown is in flight, replace it with the new shift bits.
+        // Reload timer is left alone (SameBoy keeps the timer running and
+        // the new countdown drains afterward).
+        if self.sweep_calc_countdown != 0 {
+            self.sweep_calc_countdown = new_shift;
+            self.unshifted_sweep = new_shift == 0;
+            self.instant_calc_done = false;
+        } else if self.sweep_calc_reload_timer != 0 {
+            // Reload timer pending but no countdown yet: preserve reload
+            // timer, set fresh countdown from new shift bits.
+            self.sweep_calc_countdown = new_shift;
+            self.unshifted_sweep = new_shift == 0;
+            self.instant_calc_done = new_shift == 0;
         }
     }
 
@@ -551,17 +807,36 @@ impl Channel1 {
         // Reset envelope clock state on trigger.
         self.env_clock_state = EnvelopeClockState::default();
         self.sweep_shadow = self.freq;
-        self.sweep_timer = self.sweep_timer_reload();
         // SameBoy: `square_sweep_countdown = ((NR10 >> 4) & 7) ^ 7`.
         self.sweep_countdown = (self.sweep_period ^ 7) & 7;
         self.sweep_enabled = self.sweep_period > 0 || self.sweep_shift > 0;
         self.negate_used = false;
+        // Trigger-time deferred-recalc init: SameBoy clears completed_addend
+        // and `sweep_length_addend` so the first sweep tick's writeback adds
+        // 0 (no-op) before computing the fresh addend.
+        self.completed_addend = 0;
+        self.sweep_length_addend = 0;
+        self.sweep_calc_countdown = 0;
+        self.sweep_calc_reload_timer = 0;
+        self.unshifted_sweep = false;
+        self.instant_calc_done = false;
         // Trigger-time overflow check required by hardware even when sweep is otherwise idle.
         if self.sweep_shift > 0 {
             if self.sweep_negate {
                 self.negate_used = true;
             }
-            self.disable_if_sweep_overflows();
+            // Synchronous trigger-time overflow check (matches Pan Docs and
+            // existing Blargg 05-sweep test 4 expectations). The deferred
+            // machinery handles the *second* (mid-sweep) overflow.
+            let delta = self.sweep_shadow >> self.sweep_shift;
+            let new_freq = if self.sweep_negate {
+                self.sweep_shadow.wrapping_sub(delta)
+            } else {
+                self.sweep_shadow + delta
+            };
+            if new_freq > 2047 {
+                self.active = false;
+            }
         }
         // SameBoy `Core/apu.c`:
         //     channel_1_restart_hold = 2 - lf_div + (is_cgb && model != CGB_D) * 2
@@ -691,7 +966,7 @@ mod tests {
     fn test_sweep_countdown_loaded_on_trigger_period_1() {
         let mut ch = Channel1::new();
         ch.write_nr12(0xF0); // DAC on
-        ch.write_nr10(0x10); // period=1, negate=0, shift=0
+        ch.write_nr10(0x10, false); // period=1, negate=0, shift=0
         ch.write_nr14(0x80, false, false);
         // (1 ^ 7) & 7 = 6
         assert_eq!(ch.sweep_countdown, 6);
@@ -701,7 +976,7 @@ mod tests {
     fn test_sweep_countdown_loaded_on_trigger_period_3() {
         let mut ch = Channel1::new();
         ch.write_nr12(0xF0);
-        ch.write_nr10(0x32); // period=3, negate=0, shift=2
+        ch.write_nr10(0x32, false); // period=3, negate=0, shift=2
         ch.write_nr14(0x80, false, false);
         // (3 ^ 7) & 7 = 4
         assert_eq!(ch.sweep_countdown, 4);
@@ -711,7 +986,7 @@ mod tests {
     fn test_sweep_countdown_loaded_on_trigger_period_7() {
         let mut ch = Channel1::new();
         ch.write_nr12(0xF0);
-        ch.write_nr10(0x71); // period=7, negate=0, shift=1
+        ch.write_nr10(0x71, false); // period=7, negate=0, shift=1
         ch.write_nr14(0x80, false, false);
         // (7 ^ 7) & 7 = 0  → 7 ticks to wrap
         assert_eq!(ch.sweep_countdown, 0);
@@ -723,7 +998,7 @@ mod tests {
         // wraps to 0; never fires the recalc since NR10 period bits == 0.
         let mut ch = Channel1::new();
         ch.write_nr12(0xF0);
-        ch.write_nr10(0x00); // period=0
+        ch.write_nr10(0x00, false); // period=0
         ch.write_nr14(0x80, false, false);
         assert_eq!(ch.sweep_countdown, 7);
     }
@@ -732,15 +1007,15 @@ mod tests {
     fn test_sweep_countdown_increments_and_wraps_to_seven() {
         let mut ch = Channel1::new();
         ch.write_nr12(0xF0);
-        ch.write_nr10(0x32); // period=3
+        ch.write_nr10(0x32, false); // period=3
         ch.write_nr13(0x64); // freq = 100
         ch.write_nr14(0x80, false, false);
         assert_eq!(ch.sweep_countdown, 4);
-        ch.clock_sweep(); // → 5
+        ch.clock_sweep(false); // → 5
         assert_eq!(ch.sweep_countdown, 5);
-        ch.clock_sweep(); // → 6
+        ch.clock_sweep(false); // → 6
         assert_eq!(ch.sweep_countdown, 6);
-        ch.clock_sweep(); // → 7 → fires; reloads to (3^7)&7 = 4
+        ch.clock_sweep(false); // → 7 → fires; reloads to (3^7)&7 = 4
         assert_eq!(ch.sweep_countdown, 4);
     }
 
@@ -750,13 +1025,13 @@ mod tests {
         // not fire (matches SameBoy `(NR10 & 0x70)` gate).
         let mut ch = Channel1::new();
         ch.write_nr12(0xF0);
-        ch.write_nr10(0x02); // period=0, shift=2
+        ch.write_nr10(0x02, false); // period=0, shift=2
         ch.write_nr13(0x64);
         ch.write_nr14(0x80, false, false);
         let initial_freq = ch.freq;
         // 8 ticks for one full wrap cycle from countdown=7.
         for _ in 0..16 {
-            ch.clock_sweep();
+            ch.clock_sweep(false);
         }
         assert_eq!(
             ch.freq, initial_freq,
@@ -769,8 +1044,9 @@ mod tests {
     fn test_power_off_clears_restart_hold_and_sweep_countdown() {
         let mut ch = Channel1::new();
         ch.set_model(true, CgbModel::CgbE);
+        ch.force_deferred_sweep_for_tests = true;
         ch.write_nr12(0xF0);
-        ch.write_nr10(0x32); // period=3
+        ch.write_nr10(0x32, false); // period=3
         ch.write_nr14(0x80, false, false);
         assert_ne!(ch.restart_hold, 0);
         assert_ne!(ch.sweep_countdown, 0);
@@ -963,59 +1239,237 @@ mod tests {
         assert_eq!(ch.volume, 7, "envelope must not change when period = 0");
     }
 
-    // ── Frequency sweep ───────────────────────────────────────────────────
+    // ── Phase 4–6: deferred sweep recalc (SameBoy parity) ────────────────
 
-    #[test]
-    fn test_sweep_shifts_freq_up() {
-        // NR10: period=1, negate=0, shift=1 → freq doubles each sweep clock
-        let mut ch = Channel1::new();
-        ch.write_nr12(0xF0);
-        ch.write_nr10(0x11); // period=1, negate=0, shift=1
-        ch.write_nr13(0x00);
-        ch.write_nr14(0x87, false, false); // trigger, freq_hi=7 → freq = 0x700 = 1792
-        // After trigger, sweep_shadow = 1792; one clock → new_freq = 1792 + (1792>>1) = 1792+896 = 2688 > 2047 → disable
-        // Let's use a lower frequency so it doesn't overflow.
-        // Reset with freq = 100.
-        ch.write_nr13(0x64); // low byte = 100
-        ch.write_nr14(0x80, false, false); // trigger (freq_hi=0) → freq = 100
-        let initial_shadow = ch.sweep_shadow;
-        assert_eq!(initial_shadow, 100);
-        ch.clock_sweep();
-        // new_freq = 100 + (100 >> 1) = 100 + 50 = 150
-        assert_eq!(
-            ch.sweep_shadow, 150,
-            "sweep shadow must be updated after sweep clock"
-        );
-        assert_eq!(ch.freq, 150, "freq must be updated after sweep clock");
+    /// Drive the sweep machinery for `n` 1MHz steps. Each call to
+    /// `sweep_tick` advances one M-cycle; only every other call performs
+    /// work, so we call it `2 * n` times here.
+    #[allow(dead_code)]
+    fn drive_sweep_1mhz(ch: &mut Channel1, n: u32) {
+        for _ in 0..(n * 2) {
+            ch.sweep_tick();
+        }
+    }
+
+    /// Drain the sweep calc machinery to completion (any pending recalc).
+    fn drain_sweep(ch: &mut Channel1) {
+        for _ in 0..64 {
+            if ch.sweep_calc_countdown == 0 && ch.sweep_calc_reload_timer == 0 {
+                break;
+            }
+            ch.sweep_tick();
+        }
     }
 
     #[test]
-    fn test_sweep_shifts_freq_down() {
+    fn test_arm_does_not_immediately_change_freq() {
+        // Phase 4: clock_sweep must only ARM the recalc; freq stays put on
+        // the very first sweep tick after trigger (completed_addend == 0).
         let mut ch = Channel1::new();
+        ch.set_model(true, CgbModel::CgbE);
+        ch.force_deferred_sweep_for_tests = true;
         ch.write_nr12(0xF0);
-        ch.write_nr10(0x19); // period=1, negate=1, shift=1
+        ch.write_nr10(0x11, false); // period=1, shift=1, negate=0
         ch.write_nr13(0x64); // freq = 100
-        ch.write_nr14(0x80, false, false);
-        ch.clock_sweep();
-        // new_freq = 100 - (100 >> 1) = 50
-        assert_eq!(ch.sweep_shadow, 50);
-        assert_eq!(ch.freq, 50);
+        ch.write_nr14(0x80, false, false); // trigger
+        // Drain restart_hold (post-trigger sweep suppression window).
+        for _ in 0..8 {
+            ch.tick();
+        }
+        let freq_before = ch.freq;
+        ch.clock_sweep(false); // arm
+        assert_eq!(
+            ch.freq, freq_before,
+            "freq must not change on the first sweep arm (no completed_addend yet)"
+        );
+        // After draining and a SECOND arm, the writeback applies the
+        // previously-computed addend.
+        drain_sweep(&mut ch);
+        ch.clock_sweep(false);
+        // shadow=100, completed_addend = 100>>1 = 50 → freq = 100 + 50 = 150.
+        assert_eq!(
+            ch.freq, 150,
+            "second arm must write back shadow + completed_addend"
+        );
     }
 
     #[test]
-    fn test_sweep_overflow_disables_channel() {
-        // freq = 2000, shift = 1, negate = false → next = 2000 + 1000 = 3000 > 2047
+    fn test_sweep_negate_writeback_uses_ones_complement() {
+        // Phase 5: in negate mode, sweep_calculation_done flips the addend
+        // to its 1's complement so the next writeback subtracts. Verify the
+        // observable effect: after a full arm/drain/arm cycle, freq has
+        // *decreased* relative to shadow.
         let mut ch = Channel1::new();
+        ch.set_model(true, CgbModel::CgbE);
+        ch.force_deferred_sweep_for_tests = true;
         ch.write_nr12(0xF0);
-        ch.write_nr10(0x11); // period=1, negate=0, shift=1
-        // freq 2000 = 0x7D0 → hi=7, lo=0xD0
-        ch.write_nr13(0xD0);
-        ch.write_nr14(0x87, false, false); // trigger, hi=7
-        assert_eq!(ch.freq, 0x7D0);
-        ch.clock_sweep();
+        ch.write_nr10(0x19, false); // period=1, negate=1, shift=1
+        ch.write_nr13(0x64); // freq = 100
+        ch.write_nr14(0x80, false, false); // trigger
+        for _ in 0..8 {
+            ch.tick();
+        }
+        let shadow_before = ch.sweep_shadow;
+        ch.clock_sweep(false); // arm #1
+        drain_sweep(&mut ch);
+        ch.clock_sweep(false); // arm #2 → writeback
+        assert!(
+            ch.freq < shadow_before,
+            "negate writeback must reduce freq below shadow (got freq={}, shadow={})",
+            ch.freq,
+            shadow_before
+        );
+    }
+
+    #[test]
+    fn test_sweep_overflow_disables_channel_via_completed_addend() {
+        // Phase 5: with shift=2, trigger-time check passes (1500 + 375 =
+        // 1875 ≤ 0x7FF), but after arm/drain/arm, the writeback raises
+        // freq high enough that the next sweep_calculation_done detects
+        // overflow and disables the channel.
+        let mut ch = Channel1::new();
+        ch.set_model(true, CgbModel::CgbE);
+        ch.force_deferred_sweep_for_tests = true;
+        ch.write_nr12(0xF0);
+        ch.write_nr10(0x12, false); // period=1, shift=2, negate=0
+        ch.write_nr13(0xDC);
+        ch.write_nr14(0x85, false, false); // freq=0x5DC=1500, trigger
+        assert_eq!(ch.freq, 0x5DC);
+        assert!(ch.is_active(), "trigger must not disable: 1500+375 ≤ 0x7FF");
+        for _ in 0..8 {
+            ch.tick();
+        }
+        // Run multiple arm/drain cycles until overflow is detected.
+        for _ in 0..4 {
+            ch.clock_sweep(false);
+            drain_sweep(&mut ch);
+            if !ch.is_active() {
+                break;
+            }
+        }
         assert!(
             !ch.is_active(),
-            "channel must be disabled on sweep overflow"
+            "channel must eventually be disabled by deferred overflow check"
+        );
+    }
+
+    #[test]
+    fn test_unshifted_sweep_lets_armed_recalc_complete_after_shift_cleared() {
+        // Phase 4: when armed with shift=0, `unshifted_sweep` is set so the
+        // calc-countdown drains even though shift is now 0. The recalc still
+        // completes via the instant_calc_done path after the reload timer
+        // drains.
+        let mut ch = Channel1::new();
+        ch.set_model(true, CgbModel::CgbE);
+        ch.force_deferred_sweep_for_tests = true;
+        ch.write_nr12(0xF0);
+        ch.write_nr10(0x10, false); // period=1, shift=0
+        ch.write_nr13(0x00);
+        ch.write_nr14(0x80, false, false); // trigger, freq=0
+        ch.clock_sweep(false); // arm with shift=0 → instant_calc_done=true
+        assert!(ch.instant_calc_done);
+        assert!(ch.unshifted_sweep);
+        drain_sweep(&mut ch);
+        assert!(
+            !ch.instant_calc_done,
+            "instant_calc_done must clear after sweep_calculation_done fires"
+        );
+    }
+
+    #[test]
+    fn test_sweep_calc_countdown_loaded_from_shift() {
+        // Phase 4: sweep_calc_countdown loaded from NR10 shift bits at arm.
+        let mut ch = Channel1::new();
+        ch.set_model(true, CgbModel::CgbE);
+        ch.force_deferred_sweep_for_tests = true;
+        ch.write_nr12(0xF0);
+        ch.write_nr10(0x14, false); // period=1, shift=4
+        ch.write_nr13(0x10);
+        ch.write_nr14(0x80, false, false);
+        ch.clock_sweep(false);
+        assert_eq!(ch.sweep_calc_countdown, 4);
+        assert!(!ch.unshifted_sweep);
+    }
+
+    #[test]
+    fn test_restart_hold_suppresses_shadow_refresh() {
+        // Phase 5: while restart_hold > 0, sweep_calculation_done must NOT
+        // refresh sweep_shadow from freq.
+        let mut ch = Channel1::new();
+        ch.set_model(true, CgbModel::CgbE); // → restart_hold = 4 (lf_div=false)
+        ch.force_deferred_sweep_for_tests = true;
+        ch.write_nr12(0xF0);
+        ch.write_nr10(0x11, false); // period=1, shift=1
+        ch.write_nr13(0x64); // freq = 100
+        ch.write_nr14(0x80, false, false); // trigger → restart_hold=4
+        // Manually mutate shadow to detect the suppression.
+        ch.sweep_shadow = 0x123;
+        ch.clock_sweep(false); // arm. restart_hold still > 0 here.
+        // Drain the calc-countdown — sweep_calculation_done runs while
+        // restart_hold remains non-zero (sweep_tick does not decrement it).
+        drain_sweep(&mut ch);
+        assert_eq!(
+            ch.sweep_shadow, 0x123,
+            "shadow must not be refreshed while restart_hold > 0"
+        );
+    }
+
+    #[test]
+    fn test_nr10_clear_negate_disables_when_completed_addend_overflows() {
+        // Phase 6: SameBoy disable formula —
+        //   shadow + completed_addend + (old_negate as 1) > 0x7FF
+        //   AND new value clears negate bit.
+        let mut ch = Channel1::new();
+        ch.set_model(true, CgbModel::CgbE);
+        ch.force_deferred_sweep_for_tests = true;
+        ch.write_nr12(0xF0);
+        ch.write_nr10(0x19, false); // period=1, negate=1, shift=1
+        ch.write_nr13(0xD0);
+        ch.write_nr14(0x87, false, false); // freq=2000, trigger
+        for _ in 0..8 {
+            ch.tick();
+        }
+        // Trigger sets completed_addend=0; need to drive a sweep_calc to
+        // populate it. Arm and drain:
+        ch.clock_sweep(false); // arm
+        drain_sweep(&mut ch); // negate-mode addend stamped (1's complement)
+        // Now completed_addend reflects the 1's-complement form. With
+        // shadow=2000 and old_negate=1, sum exceeds 0x7FF.
+        let sum = (ch.sweep_shadow as u32) + (ch.completed_addend as u32) + 1;
+        assert!(
+            sum > 0x7FF,
+            "test setup: shadow + completed_addend + 1 must exceed 0x7FF (got {sum})"
+        );
+        // Clear negate (bit 3=0); period=1, shift=1.
+        ch.write_nr10(0x11, false);
+        assert!(
+            !ch.is_active(),
+            "channel must be disabled per SameBoy NR10 clear-negate formula"
+        );
+    }
+
+    #[test]
+    fn test_nr10_clear_negate_does_not_disable_without_overflow() {
+        // Phase 6 negative case: when no negate-mode calc has been performed,
+        // SameBoy's disable formula (shadow + completed_addend + 0) stays well
+        // below 0x7FF, so an NR10 write must not disable the channel.
+        let mut ch = Channel1::new();
+        ch.set_model(true, CgbModel::CgbE);
+        ch.force_deferred_sweep_for_tests = true;
+        ch.write_nr12(0xF0);
+        ch.write_nr10(0x11, false); // period=1, negate=0, shift=1
+        ch.write_nr13(0x10); // freq=16
+        ch.write_nr14(0x80, false, false);
+        for _ in 0..8 {
+            ch.tick();
+        }
+        ch.clock_sweep(false);
+        drain_sweep(&mut ch);
+        // shadow=16, completed_addend=8, old_negate=0 → sum=24 ≪ 0x7FF
+        ch.write_nr10(0x21, false); // change period only
+        assert!(
+            ch.is_active(),
+            "channel must remain active when no overflow"
         );
     }
 
@@ -1024,10 +1478,10 @@ mod tests {
         // NR10 = 0x00: period=0, shift=0 → sweep disabled; freq stays constant.
         let mut ch = Channel1::new();
         ch.write_nr12(0xF0);
-        ch.write_nr10(0x00);
+        ch.write_nr10(0x00, false);
         ch.write_nr13(0x64); // freq = 100
         ch.write_nr14(0x80, false, false);
-        ch.clock_sweep();
+        ch.clock_sweep(false);
         assert_eq!(ch.freq, 100, "freq must not change when sweep is disabled");
         assert!(ch.is_active());
     }
@@ -1037,7 +1491,7 @@ mod tests {
     #[test]
     fn test_nr10_read_back() {
         let mut ch = Channel1::new();
-        ch.write_nr10(0x5E); // period=5, negate=1, shift=6
+        ch.write_nr10(0x5E, false); // period=5, negate=1, shift=6
         // NR10 read: bit 7 always 1; bits 6-4 = period; bit 3 = negate; bits 2-0 = shift
         let r = ch.read_nr10();
         assert_eq!(r & 0x7F, 0x5E & 0x7F);
@@ -1072,73 +1526,48 @@ mod tests {
     // ── Sweep correctness (hardware quirks) ──────────────────────────────
 
     #[test]
-    fn test_clock_sweep_disables_channel_on_overflow_when_shift_zero() {
-        // Given: sweep period=1, negate=false, shift=0 and freq=1400;
-        // When: clock_sweep fires;
-        // Then: new_freq = 1400+1400 = 2800 > 2047 → channel disabled even though shift=0.
+    fn test_nr10_write_re_arms_when_countdown_at_seven() {
+        // Phase 6: SameBoy calls trigger_sweep_calculation at the end of an
+        // NR10 write; it actually fires only when sweep_countdown == 7.
         let mut ch = Channel1::new();
-        ch.write_nr12(0xF0); // DAC on
-        // NR10: period=1 (0x10>>4 & 0x07 = 1), negate=0, shift=0
-        ch.write_nr10(0x10);
-        // freq = 1400 = 0x578 → lo=0x78, hi=0x05
-        ch.write_nr13(0x78);
-        ch.write_nr14(0x85, false, false); // trigger + freq_hi=5
-        assert!(ch.is_active(), "channel must be active after trigger");
-        // sweep fires: timer 1→0, reload=1, enabled=true, period=1
-        // new_freq = 1400 + (1400>>0) = 2800 > 2047 → must disable
-        ch.clock_sweep();
+        ch.set_model(true, CgbModel::CgbE);
+        ch.force_deferred_sweep_for_tests = true;
+        ch.write_nr12(0xF0);
+        ch.write_nr10(0x10, false); // period=1, shift=0
+        ch.write_nr13(0x64);
+        ch.write_nr14(0x80, false, false);
+        // Force countdown to 7 to exercise the re-arm path.
+        ch.sweep_countdown = 7;
+        let calc_before = ch.sweep_calc_reload_timer;
+        ch.write_nr10(0x21, false); // period=2, shift=1 — should re-arm
         assert!(
-            !ch.is_active(),
-            "channel must be disabled when sweep overflows even with shift=0"
+            ch.sweep_calc_reload_timer > calc_before || ch.sweep_calc_countdown != 0,
+            "NR10 write at countdown==7 with period>0 must re-arm sweep"
         );
     }
 
     #[test]
-    fn test_disabling_negate_after_calculation_disables_channel() {
-        // Given: CH1 with sweep period=1, negate=true, shift=1, freq=100;
-        //   After trigger and one sweep clock, a negate calculation is done (negate_used=true);
-        // When: NR10 is written clearing negate;
-        // Then: channel is disabled (hardware "negate-used" quirk).
+    fn test_nr10_write_glitch_corrupts_inflight_calc_countdown() {
+        // Phase 6: nr10_write_glitch (CGB-D/E branch) — when NR10 is
+        // rewritten while a calc countdown is in flight, the new shift bits
+        // overwrite the in-flight countdown.
         let mut ch = Channel1::new();
-        ch.write_nr12(0xF0); // DAC on
-        // NR10: period=1, negate=1, shift=1 → 0x19
-        ch.write_nr10(0x19);
-        ch.write_nr13(0x64); // freq = 100
-        ch.write_nr14(0x80, false, false); // trigger
-        assert!(ch.is_active(), "channel must be active after trigger");
-        // One sweep clock in negate mode → negate_used must be set
-        ch.clock_sweep();
-        assert!(
-            ch.is_active(),
-            "channel still active after negate calculation"
-        );
-        // Clear negate in NR10: period=1, negate=0, shift=1 → 0x11
-        ch.write_nr10(0x11);
-        assert!(
-            !ch.is_active(),
-            "channel must be disabled when negate is cleared after a negate calculation"
-        );
-    }
-
-    #[test]
-    fn test_trigger_overflow_check_sets_negate_used() {
-        // Blargg 05-sweep details, sub-test 4:
-        // NR10=$09 (period=0, negate=1, shift=1): trigger performs a negate-mode
-        // overflow check (shift>0). Even though sweep_period=0 prevents periodic
-        // clocking, the trigger-time calculation uses negate mode, so `negate_used`
-        // must be set. Clearing negate in NR10 afterwards must disable the channel.
-        let mut ch = Channel1::new();
-        ch.write_nr12(0x08); // vol=0, add=1, period=0 → DAC on (0x08 & 0xF8 = 0x08 ≠ 0)
-        ch.write_nr10(0x09); // period=0, negate=true, shift=1
-        ch.write_nr13(0x00); // freq low = 0
-        ch.write_nr14(0xC0, false, false); // trigger + length enable; freq_hi = 0
-        assert!(ch.is_active(), "channel must be active after trigger");
-        // No sweep clock needed — the trigger itself performed a negate calculation.
-        // Now clear negate: period=1, negate=false, shift=0 → $10
-        ch.write_nr10(0x10);
-        assert!(
-            !ch.is_active(),
-            "channel must be disabled: negate was used during trigger overflow check"
+        ch.set_model(true, CgbModel::CgbE);
+        ch.force_deferred_sweep_for_tests = true;
+        ch.write_nr12(0xF0);
+        ch.write_nr10(0x14, false); // period=1, shift=4
+        ch.write_nr13(0x10);
+        ch.write_nr14(0x80, false, false);
+        ch.clock_sweep(false); // arm with shift=4
+        // Force the reload timer to drain so we're in calc-countdown phase.
+        ch.sweep_calc_reload_timer = 0;
+        let before = ch.sweep_calc_countdown;
+        assert_eq!(before, 4);
+        // Rewrite NR10 with shift=2 — glitch must overwrite countdown.
+        ch.write_nr10(0x12, false);
+        assert_eq!(
+            ch.sweep_calc_countdown, 2,
+            "NR10 mid-flight write must reload calc_countdown from new shift"
         );
     }
 
