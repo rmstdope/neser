@@ -20,6 +20,7 @@
 use super::dma::DmaController;
 use super::interrupt::InterruptController;
 use super::timer::Timers;
+use crate::gba::input::{Keypad, REG_KEYCNT, REG_KEYINPUT};
 use crate::gba::ppu::{self, Ppu};
 
 /// Size of the I/O window backing store. Registers above this limit
@@ -91,6 +92,7 @@ impl IoRegisters {
         timers: &Timers,
         dma: &DmaController,
         ppu: &Ppu,
+        keypad: &Keypad,
     ) -> Option<u16> {
         match addr {
             REG_IE => Some(ic.ie),
@@ -100,6 +102,9 @@ impl IoRegisters {
             ppu::REG_DISPCNT => Some(ppu.read_dispcnt()),
             ppu::REG_DISPSTAT => Some(ppu.read_dispstat()),
             ppu::REG_VCOUNT => Some(ppu.read_vcount()),
+            // Keypad.
+            REG_KEYINPUT => Some(keypad.read_keyinput()),
+            REG_KEYCNT => Some(keypad.read_keycnt()),
             // Timers: TM{0..3}CNT_L = 0x100, 0x104, 0x108, 0x10C
             // Timers: TM{0..3}CNT_H = 0x102, 0x106, 0x10A, 0x10E
             0x0400_0100 => Some(timers.read_cnt_l(0)),
@@ -127,9 +132,10 @@ impl IoRegisters {
         timers: &Timers,
         dma: &DmaController,
         ppu: &Ppu,
+        keypad: &Keypad,
     ) -> Option<u32> {
-        let lo = self.try_read16(addr, ic, timers, dma, ppu)? as u32;
-        let hi = self.try_read16(addr.wrapping_add(2), ic, timers, dma, ppu)? as u32;
+        let lo = self.try_read16(addr, ic, timers, dma, ppu, keypad)? as u32;
+        let hi = self.try_read16(addr.wrapping_add(2), ic, timers, dma, ppu, keypad)? as u32;
         Some(lo | (hi << 16))
     }
 
@@ -144,8 +150,9 @@ impl IoRegisters {
         timers: &Timers,
         dma: &DmaController,
         ppu: &Ppu,
+        keypad: &Keypad,
     ) -> Option<u8> {
-        let hw = self.try_read16(addr & !1, ic, timers, dma, ppu)?;
+        let hw = self.try_read16(addr & !1, ic, timers, dma, ppu, keypad)?;
         Some(if addr & 1 == 0 {
             hw as u8
         } else {
@@ -163,8 +170,10 @@ impl IoRegisters {
         timers: &Timers,
         dma: &DmaController,
         ppu: &Ppu,
+        keypad: &Keypad,
     ) -> u16 {
-        self.try_read16(addr, ic, timers, dma, ppu).unwrap_or(0)
+        self.try_read16(addr, ic, timers, dma, ppu, keypad)
+            .unwrap_or(0)
     }
 
     /// Read a word from the I/O register space, returning 0 for addresses
@@ -176,8 +185,10 @@ impl IoRegisters {
         timers: &Timers,
         dma: &DmaController,
         ppu: &Ppu,
+        keypad: &Keypad,
     ) -> u32 {
-        self.try_read32(addr, ic, timers, dma, ppu).unwrap_or(0)
+        self.try_read32(addr, ic, timers, dma, ppu, keypad)
+            .unwrap_or(0)
     }
 
     /// Read a byte from the I/O register space, returning 0 for addresses
@@ -189,11 +200,14 @@ impl IoRegisters {
         timers: &Timers,
         dma: &DmaController,
         ppu: &Ppu,
+        keypad: &Keypad,
     ) -> u8 {
-        self.try_read8(addr, ic, timers, dma, ppu).unwrap_or(0)
+        self.try_read8(addr, ic, timers, dma, ppu, keypad)
+            .unwrap_or(0)
     }
 
     /// Write a halfword to the I/O register space.
+    #[allow(clippy::too_many_arguments)]
     pub fn write16(
         &mut self,
         addr: u32,
@@ -202,6 +216,7 @@ impl IoRegisters {
         timers: &mut Timers,
         dma: &mut DmaController,
         ppu: &mut Ppu,
+        keypad: &mut Keypad,
     ) {
         match addr {
             REG_IE => ic.write_ie(value),
@@ -211,6 +226,9 @@ impl IoRegisters {
             ppu::REG_DISPCNT => ppu.write_dispcnt(value),
             ppu::REG_DISPSTAT => ppu.write_dispstat(value, ic),
             ppu::REG_VCOUNT => { /* VCOUNT is read-only */ }
+            // Keypad.
+            REG_KEYINPUT => { /* KEYINPUT is read-only */ }
+            REG_KEYCNT => keypad.write_keycnt(value, ic),
             0x0400_0100 => timers.write_cnt_l(0, value),
             0x0400_0102 => timers.write_cnt_h(0, value),
             0x0400_0104 => timers.write_cnt_l(1, value),
@@ -233,6 +251,7 @@ impl IoRegisters {
     }
 
     /// Write a word to the I/O register space (two halfwords).
+    #[allow(clippy::too_many_arguments)]
     pub fn write32(
         &mut self,
         addr: u32,
@@ -241,8 +260,9 @@ impl IoRegisters {
         timers: &mut Timers,
         dma: &mut DmaController,
         ppu: &mut Ppu,
+        keypad: &mut Keypad,
     ) {
-        self.write16(addr, value as u16, ic, timers, dma, ppu);
+        self.write16(addr, value as u16, ic, timers, dma, ppu, keypad);
         self.write16(
             addr.wrapping_add(2),
             (value >> 16) as u16,
@@ -250,6 +270,7 @@ impl IoRegisters {
             timers,
             dma,
             ppu,
+            keypad,
         );
     }
 
@@ -257,6 +278,7 @@ impl IoRegisters {
     /// don't accept 8-bit writes; we model the simple "byte-merge into the
     /// containing halfword" semantics which is correct for the registers
     /// covered by this foundation.
+    #[allow(clippy::too_many_arguments)]
     pub fn write8(
         &mut self,
         addr: u32,
@@ -265,6 +287,7 @@ impl IoRegisters {
         timers: &mut Timers,
         dma: &mut DmaController,
         ppu: &mut Ppu,
+        keypad: &mut Keypad,
     ) {
         // DMA registers (0x0400_00B0..=0x0400_00DF) need a dedicated
         // byte path because SAD/DAD/CNT_L are write-only — the generic
@@ -274,13 +297,13 @@ impl IoRegisters {
             return;
         }
         let aligned = addr & !1;
-        let current = self.read16(aligned, ic, timers, dma, ppu);
+        let current = self.read16(aligned, ic, timers, dma, ppu, keypad);
         let merged = if addr & 1 == 0 {
             (current & 0xFF00) | value as u16
         } else {
             (current & 0x00FF) | ((value as u16) << 8)
         };
-        self.write16(aligned, merged, ic, timers, dma, ppu);
+        self.write16(aligned, merged, ic, timers, dma, ppu, keypad);
     }
 }
 
@@ -295,10 +318,11 @@ mod tests {
         let mut t = Timers::new();
         let mut d = DmaController::new();
         let mut p = Ppu::new();
+        let mut k = Keypad::new();
         // 0x40 is REG_SOUNDCNT_H; not specially handled here — should just
         // round-trip through the backing store.
-        io.write16(0x0400_0040, 0xBEEF, &mut ic, &mut t, &mut d, &mut p);
-        assert_eq!(io.read16(0x0400_0040, &ic, &t, &d, &p), 0xBEEF);
+        io.write16(0x0400_0040, 0xBEEF, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        assert_eq!(io.read16(0x0400_0040, &ic, &t, &d, &p, &k), 0xBEEF);
     }
 
     #[test]
@@ -308,13 +332,14 @@ mod tests {
         let t = Timers::new();
         let d = DmaController::new();
         let p = Ppu::new();
+        let k = Keypad::new();
         // 0x0400_0400 is one past the documented I/O window.
-        assert_eq!(io.try_read16(0x0400_0400, &ic, &t, &d, &p), None);
+        assert_eq!(io.try_read16(0x0400_0400, &ic, &t, &d, &p, &k), None);
         // Halfword starting at the last byte must also be rejected to
         // avoid an out-of-bounds backing-store access.
-        assert_eq!(io.try_read16(0x0400_03FF, &ic, &t, &d, &p), None);
+        assert_eq!(io.try_read16(0x0400_03FF, &ic, &t, &d, &p, &k), None);
         // An address below the I/O base must not underflow.
-        assert_eq!(io.try_read16(0x0300_0000, &ic, &t, &d, &p), None);
+        assert_eq!(io.try_read16(0x0300_0000, &ic, &t, &d, &p, &k), None);
     }
 
     #[test]
@@ -324,8 +349,12 @@ mod tests {
         let mut t = Timers::new();
         let mut d = DmaController::new();
         let mut p = Ppu::new();
-        io.write16(0x0400_03FE, 0x1234, &mut ic, &mut t, &mut d, &mut p);
-        assert_eq!(io.try_read16(0x0400_03FE, &ic, &t, &d, &p), Some(0x1234));
+        let mut k = Keypad::new();
+        io.write16(0x0400_03FE, 0x1234, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        assert_eq!(
+            io.try_read16(0x0400_03FE, &ic, &t, &d, &p, &k),
+            Some(0x1234)
+        );
     }
 
     #[test]
@@ -335,9 +364,10 @@ mod tests {
         let mut t = Timers::new();
         let mut d = DmaController::new();
         let mut p = Ppu::new();
-        io.write16(REG_IE, 0x1234, &mut ic, &mut t, &mut d, &mut p);
+        let mut k = Keypad::new();
+        io.write16(REG_IE, 0x1234, &mut ic, &mut t, &mut d, &mut p, &mut k);
         assert_eq!(ic.ie, 0x1234 & super::super::interrupt::IRQ_MASK);
-        assert_eq!(io.read16(REG_IE, &ic, &t, &d, &p), ic.ie);
+        assert_eq!(io.read16(REG_IE, &ic, &t, &d, &p, &k), ic.ie);
     }
 
     #[test]
@@ -347,10 +377,27 @@ mod tests {
         let mut t = Timers::new();
         let mut d = DmaController::new();
         let mut p = Ppu::new();
-        io.write16(REG_TM0CNT_L, 0xABCD, &mut ic, &mut t, &mut d, &mut p);
-        io.write16(REG_TM0CNT_H, 0x0080, &mut ic, &mut t, &mut d, &mut p);
+        let mut k = Keypad::new();
+        io.write16(
+            REG_TM0CNT_L,
+            0xABCD,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+        io.write16(
+            REG_TM0CNT_H,
+            0x0080,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
         // After enable rising edge, counter == reload.
-        assert_eq!(io.read16(REG_TM0CNT_L, &ic, &t, &d, &p), 0xABCD);
+        assert_eq!(io.read16(REG_TM0CNT_L, &ic, &t, &d, &p, &k), 0xABCD);
     }
 
     #[test]
@@ -360,11 +407,20 @@ mod tests {
         let mut t = Timers::new();
         let mut d = DmaController::new();
         let mut p = Ppu::new();
-        io.write16(REG_DISPCNT, 0xFFFF, &mut ic, &mut t, &mut d, &mut p);
-        io.write8(REG_DISPCNT, 0x12, &mut ic, &mut t, &mut d, &mut p);
-        assert_eq!(io.read16(REG_DISPCNT, &ic, &t, &d, &p), 0xFF12);
-        io.write8(REG_DISPCNT + 1, 0x34, &mut ic, &mut t, &mut d, &mut p);
-        assert_eq!(io.read16(REG_DISPCNT, &ic, &t, &d, &p), 0x3412);
+        let mut k = Keypad::new();
+        io.write16(REG_DISPCNT, 0xFFFF, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        io.write8(REG_DISPCNT, 0x12, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        assert_eq!(io.read16(REG_DISPCNT, &ic, &t, &d, &p, &k), 0xFF12);
+        io.write8(
+            REG_DISPCNT + 1,
+            0x34,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+        assert_eq!(io.read16(REG_DISPCNT, &ic, &t, &d, &p, &k), 0x3412);
     }
 
     #[test]
@@ -374,12 +430,13 @@ mod tests {
         let mut t = Timers::new();
         let mut d = DmaController::new();
         let mut p = Ppu::new();
+        let mut k = Keypad::new();
         // Write CNT_H of channel 0 — enable bit set.
-        io.write16(0x0400_00BA, 0x8000, &mut ic, &mut t, &mut d, &mut p);
+        io.write16(0x0400_00BA, 0x8000, &mut ic, &mut t, &mut d, &mut p, &mut k);
         assert!(d.channels[0].enabled());
         assert!(d.any_pending());
         // SAD/DAD/CNT_L are write-only (read 0).
-        assert_eq!(io.read16(0x0400_00B0, &ic, &t, &d, &p), 0);
+        assert_eq!(io.read16(0x0400_00B0, &ic, &t, &d, &p, &k), 0);
     }
 
     #[test]
@@ -389,9 +446,18 @@ mod tests {
         let mut t = Timers::new();
         let mut d = DmaController::new();
         let mut p = Ppu::new();
-        io.write16(ppu::REG_DISPCNT, 0x0403, &mut ic, &mut t, &mut d, &mut p);
+        let mut k = Keypad::new();
+        io.write16(
+            ppu::REG_DISPCNT,
+            0x0403,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
         assert_eq!(p.read_dispcnt(), 0x0403);
-        assert_eq!(io.read16(ppu::REG_DISPCNT, &ic, &t, &d, &p), 0x0403);
+        assert_eq!(io.read16(ppu::REG_DISPCNT, &ic, &t, &d, &p, &k), 0x0403);
     }
 
     #[test]
@@ -401,8 +467,17 @@ mod tests {
         let mut t = Timers::new();
         let mut d = DmaController::new();
         let mut p = Ppu::new();
-        io.write16(ppu::REG_VCOUNT, 0x00AB, &mut ic, &mut t, &mut d, &mut p);
+        let mut k = Keypad::new();
+        io.write16(
+            ppu::REG_VCOUNT,
+            0x00AB,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
         assert_eq!(p.read_vcount(), 0);
-        assert_eq!(io.read16(ppu::REG_VCOUNT, &ic, &t, &d, &p), 0);
+        assert_eq!(io.read16(ppu::REG_VCOUNT, &ic, &t, &d, &p, &k), 0);
     }
 }
