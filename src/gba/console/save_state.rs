@@ -23,10 +23,17 @@ pub const GBA_SAVESTATE_VERSION: u32 = 1;
 
 /// Serializable snapshot of the [`GbaBus`](crate::gba::GbaBus) memory
 /// regions and a small number of associated scalar fields.
+///
+/// The BIOS image is intentionally **not** serialized: the GBA BIOS is
+/// copyrighted firmware that the user supplies separately, and embedding
+/// it in save-state files would both bloat them and risk leaking
+/// firmware bytes when states are shared.  Only the [`bios_locked`]
+/// flag is captured; the BIOS already loaded into the running emulator
+/// is preserved across a load.
+///
+/// [`bios_locked`]: Self::bios_locked
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BusMemoryState {
-    /// 16 KB BIOS ROM.
-    pub bios: Vec<u8>,
     /// 256 KB on-board work RAM (EWRAM).
     pub ewram: Vec<u8>,
     /// 32 KB on-chip work RAM (IWRAM).
@@ -37,7 +44,7 @@ pub struct BusMemoryState {
     pub vram: Vec<u8>,
     /// 1 KB OAM.
     pub oam: Vec<u8>,
-    /// 32 KB cartridge SRAM region (battery-backed RAM).
+    /// 64 KB cartridge SRAM region (battery-backed RAM).
     pub sram: Vec<u8>,
     /// Whether external BIOS reads are currently locked out.
     pub bios_locked: bool,
@@ -167,7 +174,6 @@ mod tests {
         let loaded = GbaSaveState::from_bytes(&bytes).expect("deserialization should succeed");
 
         assert_eq!(loaded.version, GBA_SAVESTATE_VERSION);
-        assert_eq!(loaded.bus.bios.len(), save.bus.bios.len());
         assert_eq!(loaded.bus.ewram.len(), save.bus.ewram.len());
         assert_eq!(loaded.bus.iwram.len(), save.bus.iwram.len());
         assert_eq!(loaded.bus.pram.len(), save.bus.pram.len());
@@ -202,6 +208,53 @@ mod tests {
         assert_eq!(gba.bus_mut().read8(0x0200_0010), 0xAA);
         assert_eq!(gba.bus_mut().read8(0x0300_0020), 0xBB);
         assert_eq!(gba.bus_mut().read8(0x0E00_0030), 0xCC);
+    }
+
+    // ── BIOS exclusion ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_save_state_does_not_embed_bios_bytes() {
+        // Load a recognisable BIOS pattern.
+        let mut gba = make_gba();
+        let mut bios = vec![0u8; 16 * 1024];
+        for (i, b) in bios.iter_mut().enumerate() {
+            *b = (i & 0xFF) as u8;
+        }
+        gba.bus_mut().load_bios(&bios);
+
+        let bytes = gba.save_state().to_bytes().expect("serialization succeeds");
+
+        // The save-state must not embed BIOS bytes.  Search for a unique
+        // recognisable run of the BIOS pattern (256 sequential bytes is
+        // astronomically unlikely to appear in a clean state otherwise).
+        let needle: Vec<u8> = (0u8..=255).collect();
+        let found = bytes.windows(needle.len()).any(|w| w == needle.as_slice());
+        assert!(!found, "save-state must not embed BIOS firmware bytes");
+    }
+
+    #[test]
+    fn test_load_state_preserves_existing_bios() {
+        // Snapshot before BIOS is loaded.
+        let mut gba = make_gba();
+        let saved = gba.save_state();
+
+        // Now load a BIOS image and overwrite EWRAM so the load actually
+        // mutates the bus.
+        let mut bios = vec![0u8; 16 * 1024];
+        bios[0] = 0xDE;
+        bios[1] = 0xAD;
+        bios[2] = 0xBE;
+        bios[3] = 0xEF;
+        gba.bus_mut().load_bios(&bios);
+
+        // Restore from the pre-BIOS snapshot.  The loaded BIOS must
+        // remain in place because the snapshot didn't capture it.
+        use crate::gba::cpu::bus::Bus;
+        gba.load_state(&saved).expect("restore succeeds");
+        assert_eq!(gba.bus_mut().read8(0x0000_0000), 0xDE);
+        assert_eq!(gba.bus_mut().read8(0x0000_0001), 0xAD);
+        assert_eq!(gba.bus_mut().read8(0x0000_0002), 0xBE);
+        assert_eq!(gba.bus_mut().read8(0x0000_0003), 0xEF);
     }
 
     // ── Version mismatch ───────────────────────────────────────────────────

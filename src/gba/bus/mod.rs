@@ -252,9 +252,13 @@ impl GbaBus {
     /// lock flag and last-bus-value).  Subsystem state owned by the bus
     /// (PPU, APU, IO, IC, timers, DMA, keypad) will be added as those
     /// modules grow `Serialize`/`Deserialize` support.
+    ///
+    /// The BIOS image is **not** captured — it is copyrighted firmware
+    /// the user supplies separately at startup, so it must not be
+    /// embedded in save-state files.  Only the [`bios_locked`](Self)
+    /// flag is captured.
     pub fn capture_memory_state(&self) -> super::console::save_state::BusMemoryState {
         super::console::save_state::BusMemoryState {
-            bios: self.bios.clone(),
             ewram: self.ewram.clone(),
             iwram: self.iwram.clone(),
             pram: self.pram.clone(),
@@ -269,19 +273,15 @@ impl GbaBus {
     /// Restore the bus memory regions captured by
     /// [`capture_memory_state`](Self::capture_memory_state).
     ///
+    /// The currently loaded BIOS image is preserved — only the BIOS
+    /// lock flag is restored.
+    ///
     /// Returns an error if any region's length does not match the
     /// expected GBA region size.
     pub fn restore_memory_state(
         &mut self,
         state: &super::console::save_state::BusMemoryState,
     ) -> Result<(), String> {
-        if state.bios.len() != BIOS_SIZE {
-            return Err(format!(
-                "BIOS size mismatch (expected {}, found {})",
-                BIOS_SIZE,
-                state.bios.len()
-            ));
-        }
         if state.ewram.len() != EWRAM_SIZE {
             return Err(format!(
                 "EWRAM size mismatch (expected {}, found {})",
@@ -324,7 +324,6 @@ impl GbaBus {
                 state.sram.len()
             ));
         }
-        self.bios.clone_from(&state.bios);
         self.ewram.clone_from(&state.ewram);
         self.iwram.clone_from(&state.iwram);
         self.pram.clone_from(&state.pram);
