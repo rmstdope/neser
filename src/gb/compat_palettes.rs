@@ -354,26 +354,12 @@ fn palette_colors_from_combination_id(palette_id: usize) -> DmgCompatPalette {
     }
 
     let combination = PALETTE_COMBINATIONS[palette_id];
-    let obj0_idx = combination[0] as usize;
-    let obj1_idx = combination[1] as usize;
-    let bg_idx = combination[2] as usize;
+    let palette_at = |idx: u8| PALETTES.get(idx as usize).copied().unwrap_or(PALETTES[0]);
 
     DmgCompatPalette {
-        bg0: if bg_idx < PALETTES.len() {
-            PALETTES[bg_idx]
-        } else {
-            PALETTES[0]
-        },
-        obj0: if obj0_idx < PALETTES.len() {
-            PALETTES[obj0_idx]
-        } else {
-            PALETTES[0]
-        },
-        obj1: if obj1_idx < PALETTES.len() {
-            PALETTES[obj1_idx]
-        } else {
-            PALETTES[0]
-        },
+        obj0: palette_at(combination[0]),
+        obj1: palette_at(combination[1]),
+        bg0: palette_at(combination[2]),
     }
 }
 
