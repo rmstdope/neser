@@ -65,6 +65,12 @@ pub struct Keypad {
     pressed: u16,
     /// `KEYCNT` register backing.
     keycnt: u16,
+    /// Last evaluated value of the `KEYCNT` IRQ condition. Used to
+    /// raise [`bits::KEYPAD`] only on `false→true` transitions so that
+    /// holding a configured button (or repeated bulk `set_states`
+    /// updates with unchanged input) cannot keep re-asserting `IF`
+    /// after software clears it.
+    irq_active: bool,
 }
 
 impl Keypad {
@@ -138,12 +144,17 @@ impl Keypad {
         self.update_irq(ic);
     }
 
-    /// Re-evaluate the keypad IRQ and raise [`bits::KEYPAD`] if the
-    /// `KEYCNT`-configured condition is currently satisfied.
-    fn update_irq(&self, ic: &mut InterruptController) {
-        if self.irq_condition_met() {
+    /// Re-evaluate the keypad IRQ. Raises [`bits::KEYPAD`] only on a
+    /// `false→true` transition of the `KEYCNT`-configured condition so
+    /// that holding a configured button — or repeated bulk
+    /// `set_states` updates with unchanged input — does not keep
+    /// re-asserting `IF` after software acknowledges the previous one.
+    fn update_irq(&mut self, ic: &mut InterruptController) {
+        let now = self.irq_condition_met();
+        if now && !self.irq_active {
             ic.raise(bits::KEYPAD);
         }
+        self.irq_active = now;
     }
 
     /// Whether the `KEYCNT`-configured key-interrupt condition is met
@@ -357,5 +368,71 @@ mod tests {
             kp.read_keyinput(),
             KEYS_MASK & !((1 << 0) | (1 << 8) | (1 << 9))
         );
+    }
+
+    // ── IRQ edge-detection ───────────────────────────────────────────
+
+    /// Holding a configured button across repeated `set_states` calls
+    /// (e.g. a frontend pumping the same input every frame) must not
+    /// re-raise `IF.KEYPAD` after software has acknowledged the
+    /// previous interrupt — the IRQ is edge-triggered.
+    #[test]
+    fn held_button_does_not_re_raise_irq_via_set_states() {
+        let mut kp = Keypad::new();
+        let mut ic = ic();
+        kp.write_keycnt(KEYCNT_IRQ_ENABLE | 0x0001, &mut ic); // select A
+        kp.set_states(0b0000_0001, &mut ic); // press A
+        assert_ne!(ic.if_flags & bits::KEYPAD, 0);
+        ic.acknowledge(bits::KEYPAD);
+        // Repeatedly re-apply the same state — should NOT re-raise.
+        for _ in 0..8 {
+            kp.set_states(0b0000_0001, &mut ic);
+        }
+        assert_eq!(
+            ic.if_flags & bits::KEYPAD,
+            0,
+            "held key must not storm the IRQ flag"
+        );
+    }
+
+    /// `set_button(true)` for an already-pressed button must not
+    /// re-raise the IRQ either.
+    #[test]
+    fn redundant_press_does_not_re_raise_irq() {
+        let mut kp = Keypad::new();
+        let mut ic = ic();
+        kp.write_keycnt(KEYCNT_IRQ_ENABLE | 0x0001, &mut ic);
+        kp.set_button(0, true, &mut ic);
+        ic.acknowledge(bits::KEYPAD);
+        kp.set_button(0, true, &mut ic);
+        assert_eq!(ic.if_flags & bits::KEYPAD, 0);
+    }
+
+    /// After releasing the configured button (condition false) and
+    /// re-pressing it (condition true again), the IRQ must fire again
+    /// — the edge re-armed.
+    #[test]
+    fn release_then_press_re_raises_irq() {
+        let mut kp = Keypad::new();
+        let mut ic = ic();
+        kp.write_keycnt(KEYCNT_IRQ_ENABLE | 0x0001, &mut ic);
+        kp.set_button(0, true, &mut ic);
+        ic.acknowledge(bits::KEYPAD);
+        kp.set_button(0, false, &mut ic);
+        kp.set_button(0, true, &mut ic);
+        assert_ne!(ic.if_flags & bits::KEYPAD, 0);
+    }
+
+    /// Repeated `KEYCNT` writes that leave the condition continuously
+    /// true must not re-raise the IRQ.
+    #[test]
+    fn redundant_keycnt_write_does_not_re_raise_irq() {
+        let mut kp = Keypad::new();
+        let mut ic = ic();
+        kp.set_button(0, true, &mut ic);
+        kp.write_keycnt(KEYCNT_IRQ_ENABLE | 0x0001, &mut ic);
+        ic.acknowledge(bits::KEYPAD);
+        kp.write_keycnt(KEYCNT_IRQ_ENABLE | 0x0001, &mut ic);
+        assert_eq!(ic.if_flags & bits::KEYPAD, 0);
     }
 }
