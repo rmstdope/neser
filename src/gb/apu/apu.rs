@@ -257,7 +257,7 @@ impl Apu {
         }
         if flags & 0x02 != 0 {
             trace_apu!(4; "GB APU clock CH1 sweep");
-            self.ch1.clock_sweep();
+            self.ch1.clock_sweep(self.lf_div);
         }
         if flags & 0x04 != 0 {
             trace_apu!(4; "GB APU clock envelopes");
@@ -287,6 +287,12 @@ impl Apu {
         self.ch2.tick();
         self.ch3.tick();
         self.ch4.tick();
+
+        // ── CH1 sweep machinery (1 MHz cadence; gated internally) ─────────
+        // SameBoy `Core/apu.c` `GB_apu_run` advances sweep state at half the
+        // M-cycle rate; `Channel1::sweep_tick` toggles its own phase flag and
+        // performs work every other call.
+        self.ch1.sweep_tick();
 
         // ── Sample output ──────────────────────────────────────────────────
         self.sample_acc += 1.0;
@@ -484,7 +490,7 @@ impl Apu {
         let extra_clk = FS_TABLE[self.fs_step as usize] & 0x01 == 0;
 
         match addr {
-            0xFF10 => self.ch1.write_nr10(val),
+            0xFF10 => self.ch1.write_nr10(val, self.lf_div),
             0xFF11 => self.ch1.write_nr11(val),
             0xFF12 => self.ch1.write_nr12(val),
             0xFF13 => self.ch1.write_nr13(val),
