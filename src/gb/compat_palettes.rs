@@ -344,7 +344,11 @@ fn resolve_duplicate(header: &[u8], initial_index: usize) -> usize {
 /// `header` should start at ROM address $0100 (at least 76 bytes, up to $014B).
 pub fn get_palette_colors(header: &[u8]) -> DmgCompatPalette {
     let palette_id = get_palette_id(header) as usize;
+    palette_colors_from_combination_id(palette_id)
+}
 
+/// Shared implementation for palette lookup by combination ID.
+fn palette_colors_from_combination_id(palette_id: usize) -> DmgCompatPalette {
     if palette_id >= PALETTE_COMBINATIONS.len() {
         return DmgCompatPalette::default();
     }
@@ -370,6 +374,85 @@ pub fn get_palette_colors(header: &[u8]) -> DmgCompatPalette {
         } else {
             PALETTES[0]
         },
+    }
+}
+
+/// Gets the DMG compatibility palette colors by palette combination ID.
+///
+/// This is used for manual palette selection during the CGB boot animation.
+/// Returns the default palette if `palette_id` is out of bounds.
+pub fn get_palette_colors_by_id(palette_id: u8) -> DmgCompatPalette {
+    palette_colors_from_combination_id(palette_id as usize)
+}
+
+/// Maps a button combination to a manual palette selection ID.
+///
+/// Button bits follow NES platform convention:
+/// - Bit 0: A
+/// - Bit 1: B
+/// - Bit 4: Up
+/// - Bit 5: Down
+/// - Bit 6: Left
+/// - Bit 7: Right
+///
+/// Returns `Some(palette_id)` for valid manual selection combos, `None` otherwise.
+/// The 12 valid combinations are documented in the CGB boot ROM behavior.
+///
+/// # Button Combinations
+///
+/// | Buttons   | Palette ID | Description       |
+/// |-----------|------------|-------------------|
+/// | Up        | 5          | Light green/brown |
+/// | Up+A      | 43         | Red/blue          |
+/// | Up+B      | 28         | Dark brown        |
+/// | Down      | 8          | Pastel            |
+/// | Down+A    | 3          | Orange            |
+/// | Down+B    | 49         | Yellow            |
+/// | Left      | 48         | Dark green        |
+/// | Left+A    | 40         | Gray              |
+/// | Left+B    | 7          | Dark gray         |
+/// | Right     | 1          | Sepia             |
+/// | Right+A   | 0          | Green             |
+/// | Right+B   | 6          | Reverse           |
+pub fn button_combo_to_palette_id(buttons: u8) -> Option<u8> {
+    // Extract relevant bits
+    let a = buttons & 0x01 != 0;
+    let b = buttons & 0x02 != 0;
+    let up = buttons & 0x10 != 0;
+    let down = buttons & 0x20 != 0;
+    let left = buttons & 0x40 != 0;
+    let right = buttons & 0x80 != 0;
+
+    // Must have exactly one D-pad direction (no diagonals, no multiple directions)
+    let dpad_count = up as u8 + down as u8 + left as u8 + right as u8;
+    if dpad_count != 1 {
+        return None;
+    }
+
+    // Cannot have both A and B pressed
+    if a && b {
+        return None;
+    }
+
+    // Map button combinations to palette IDs per CGB boot ROM behavior
+    match (up, down, left, right, a, b) {
+        // Up combinations
+        (true, false, false, false, false, false) => Some(5), // Up only
+        (true, false, false, false, true, false) => Some(43), // Up + A
+        (true, false, false, false, false, true) => Some(28), // Up + B
+        // Down combinations
+        (false, true, false, false, false, false) => Some(8), // Down only
+        (false, true, false, false, true, false) => Some(3),  // Down + A
+        (false, true, false, false, false, true) => Some(49), // Down + B
+        // Left combinations
+        (false, false, true, false, false, false) => Some(48), // Left only
+        (false, false, true, false, true, false) => Some(40),  // Left + A
+        (false, false, true, false, false, true) => Some(7),   // Left + B
+        // Right combinations
+        (false, false, false, true, false, false) => Some(1), // Right only
+        (false, false, false, true, true, false) => Some(0),  // Right + A
+        (false, false, false, true, false, true) => Some(6),  // Right + B
+        _ => None,
     }
 }
 
@@ -537,5 +620,151 @@ mod tests {
         let palette_id = get_palette_id(&header);
         // PALETTE_PER_CHECKSUM[72+14] = PALETTE_PER_CHECKSUM[86] = 41
         assert_eq!(palette_id, 41);
+    }
+
+    // ── get_palette_colors_by_id tests ─────────────────────────────────────
+
+    #[test]
+    fn test_get_palette_colors_by_id_valid() {
+        // Palette ID 5 (Up button) = combination [0, 0, 0] = all palette 0
+        let palette = get_palette_colors_by_id(5);
+        assert_eq!(palette.bg0, PALETTES[0]);
+        assert_eq!(palette.obj0, PALETTES[0]);
+        assert_eq!(palette.obj1, PALETTES[0]);
+    }
+
+    #[test]
+    fn test_get_palette_colors_by_id_out_of_bounds() {
+        // Out of bounds should return default palette
+        let palette = get_palette_colors_by_id(255);
+        assert_eq!(palette, DmgCompatPalette::default());
+    }
+
+    #[test]
+    fn test_get_palette_colors_by_id_all_manual_palettes() {
+        // Verify all 12 manual palette IDs are valid
+        let manual_ids = [5, 43, 28, 8, 3, 49, 48, 40, 7, 1, 0, 6];
+        for &id in &manual_ids {
+            let palette = get_palette_colors_by_id(id);
+            // Just verify it doesn't panic and returns something
+            assert!(
+                palette.bg0[0] != 0
+                    || palette.bg0[1] != 0
+                    || palette.bg0[2] != 0
+                    || palette.bg0[3] != 0
+            );
+        }
+    }
+
+    // ── button_combo_to_palette_id tests ───────────────────────────────────
+
+    #[test]
+    fn test_button_combo_up_only() {
+        // Up = bit 4 = 0x10
+        assert_eq!(button_combo_to_palette_id(0x10), Some(5));
+    }
+
+    #[test]
+    fn test_button_combo_up_a() {
+        // Up (0x10) + A (0x01) = 0x11
+        assert_eq!(button_combo_to_palette_id(0x11), Some(43));
+    }
+
+    #[test]
+    fn test_button_combo_up_b() {
+        // Up (0x10) + B (0x02) = 0x12
+        assert_eq!(button_combo_to_palette_id(0x12), Some(28));
+    }
+
+    #[test]
+    fn test_button_combo_down_only() {
+        // Down = bit 5 = 0x20
+        assert_eq!(button_combo_to_palette_id(0x20), Some(8));
+    }
+
+    #[test]
+    fn test_button_combo_down_a() {
+        // Down (0x20) + A (0x01) = 0x21
+        assert_eq!(button_combo_to_palette_id(0x21), Some(3));
+    }
+
+    #[test]
+    fn test_button_combo_down_b() {
+        // Down (0x20) + B (0x02) = 0x22
+        assert_eq!(button_combo_to_palette_id(0x22), Some(49));
+    }
+
+    #[test]
+    fn test_button_combo_left_only() {
+        // Left = bit 6 = 0x40
+        assert_eq!(button_combo_to_palette_id(0x40), Some(48));
+    }
+
+    #[test]
+    fn test_button_combo_left_a() {
+        // Left (0x40) + A (0x01) = 0x41
+        assert_eq!(button_combo_to_palette_id(0x41), Some(40));
+    }
+
+    #[test]
+    fn test_button_combo_left_b() {
+        // Left (0x40) + B (0x02) = 0x42
+        assert_eq!(button_combo_to_palette_id(0x42), Some(7));
+    }
+
+    #[test]
+    fn test_button_combo_right_only() {
+        // Right = bit 7 = 0x80
+        assert_eq!(button_combo_to_palette_id(0x80), Some(1));
+    }
+
+    #[test]
+    fn test_button_combo_right_a() {
+        // Right (0x80) + A (0x01) = 0x81
+        assert_eq!(button_combo_to_palette_id(0x81), Some(0));
+    }
+
+    #[test]
+    fn test_button_combo_right_b() {
+        // Right (0x80) + B (0x02) = 0x82
+        assert_eq!(button_combo_to_palette_id(0x82), Some(6));
+    }
+
+    #[test]
+    fn test_button_combo_no_dpad() {
+        // No D-pad direction pressed
+        assert_eq!(button_combo_to_palette_id(0x00), None);
+        assert_eq!(button_combo_to_palette_id(0x01), None); // A only
+        assert_eq!(button_combo_to_palette_id(0x02), None); // B only
+        assert_eq!(button_combo_to_palette_id(0x03), None); // A+B only
+    }
+
+    #[test]
+    fn test_button_combo_multiple_dpad() {
+        // Multiple D-pad directions (diagonal) = invalid
+        assert_eq!(button_combo_to_palette_id(0x30), None); // Up + Down
+        assert_eq!(button_combo_to_palette_id(0xC0), None); // Left + Right
+        assert_eq!(button_combo_to_palette_id(0x50), None); // Up + Left
+        assert_eq!(button_combo_to_palette_id(0xF0), None); // All directions
+    }
+
+    #[test]
+    fn test_button_combo_a_and_b() {
+        // A+B together with D-pad = invalid
+        assert_eq!(button_combo_to_palette_id(0x13), None); // Up + A + B
+        assert_eq!(button_combo_to_palette_id(0x23), None); // Down + A + B
+        assert_eq!(button_combo_to_palette_id(0x43), None); // Left + A + B
+        assert_eq!(button_combo_to_palette_id(0x83), None); // Right + A + B
+    }
+
+    #[test]
+    fn test_button_combo_select_start_ignored() {
+        // Select (0x04) and Start (0x08) should be ignored
+        // Up + Select = still valid Up
+        assert_eq!(button_combo_to_palette_id(0x14), Some(5));
+        // Up + Start = still valid Up
+        assert_eq!(button_combo_to_palette_id(0x18), Some(5));
+        // Up + A + Select + Start = still valid Up + A
+        assert_eq!(button_combo_to_palette_id(0x1D), Some(43));
     }
 }
