@@ -357,16 +357,20 @@ impl Channel1 {
             return;
         }
         // Apply the previously-completed addend to the live frequency.
-        // SameBoy: sample_length = sweep_length_addend + shadow + (NR10 & 8 ? 1 : 0); &= 0x7FF.
+        // We use `completed_addend` (set at the end of the previous
+        // `sweep_calculation_done`) rather than `sweep_length_addend`, since
+        // the latter may have been overwritten by an in-flight calc that has
+        // not yet completed (e.g., via NR10 rewrite paths). This keeps the
+        // writeback semantically tied to the *last fully-completed* addend.
         if self.sweep_shift > 0 {
             let neg_bit: u16 = if self.sweep_negate { 1 } else { 0 };
             self.freq = self
-                .sweep_length_addend
+                .completed_addend
                 .wrapping_add(self.sweep_shadow)
                 .wrapping_add(neg_bit)
                 & 0x7FF;
             trace_apu!(3; "GB APU CH1 sweep writeback shadow=0x{:03X} addend=0x{:03X} freq=0x{:03X}",
-                self.sweep_shadow, self.sweep_length_addend, self.freq);
+                self.sweep_shadow, self.completed_addend, self.freq);
         }
         // Recompute the shifted addend from the (newly written) freq, only
         // when the channel is not in its post-trigger restart-hold window.
@@ -411,6 +415,18 @@ impl Channel1 {
     /// cadence. SameBoy: `sweep_cycles = cycles / 2 + lf_div_adj` in
     /// `GB_apu_run`.
     pub fn sweep_tick(&mut self) {
+        // Hot-path early return: when the deferred machinery is fully idle
+        // there is nothing to do. This keeps the call effectively free in
+        // production (where `uses_deferred_sweep()` returns false and the
+        // machinery is never armed) and avoids continuously mutating
+        // `sweep_tick_phase` (which would otherwise dirty serialized state
+        // every M-cycle).
+        if self.sweep_calc_reload_timer == 0
+            && self.sweep_calc_countdown == 0
+            && !self.instant_calc_done
+        {
+            return;
+        }
         // Toggle 1MHz phase; only operate every other call.
         self.sweep_tick_phase = !self.sweep_tick_phase;
         if !self.sweep_tick_phase {
