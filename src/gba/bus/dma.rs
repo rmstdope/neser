@@ -288,6 +288,42 @@ impl DmaController {
         lo || hi
     }
 
+    /// Write a single byte to a DMA register without clobbering the
+    /// other byte of the containing halfword. The bus' generic
+    /// read-modify-write path can't be used because SAD/DAD/CNT_L are
+    /// write-only and read back as `0`, which would zero the untouched
+    /// byte.
+    pub fn write8(&mut self, addr: u32, value: u8) -> bool {
+        let Some((chan, off)) = decode_addr(addr) else {
+            return false;
+        };
+        let c = &mut self.channels[chan];
+        let lane_shift = (addr & 1) * 8;
+        let mask = !(0xFFu32 << lane_shift);
+        let byte = (value as u32) << lane_shift;
+        match off & !1 {
+            0 => c.sad = (c.sad & 0xFFFF_0000) | (((c.sad as u16 as u32) & mask) | byte),
+            2 => {
+                let hi = (c.sad >> 16) as u16 as u32;
+                c.sad = (c.sad & 0x0000_FFFF) | ((((hi & mask) | byte) & 0xFFFF) << 16);
+            }
+            4 => c.dad = (c.dad & 0xFFFF_0000) | (((c.dad as u16 as u32) & mask) | byte),
+            6 => {
+                let hi = (c.dad >> 16) as u16 as u32;
+                c.dad = (c.dad & 0x0000_FFFF) | ((((hi & mask) | byte) & 0xFFFF) << 16);
+            }
+            8 => c.count = (((c.count as u32) & mask) | byte) as u16,
+            10 => {
+                // Re-use the halfword path so enable rising-edge detection
+                // and pending-arming kick in correctly.
+                let merged = (((c.cnt_h as u32) & mask) | byte) as u16;
+                self.write16(addr & !1, merged);
+            }
+            _ => {}
+        }
+        true
+    }
+
     /// Notify that V-blank started — arm pending V-blank channels.
     pub fn notify_vblank(&mut self) {
         self.notify_trigger(StartTiming::VBlank);
@@ -322,7 +358,7 @@ impl DmaController {
 }
 
 /// Decode the per-channel offset from an absolute I/O address. Returns
-/// `(channel, offset)` where `offset` is `0..=10` within the channel's
+/// `(channel, offset)` where `offset` is `0..=11` within the channel's
 /// 12-byte register block.
 fn decode_addr(addr: u32) -> Option<(usize, u32)> {
     if !(0x0400_00B0..=0x0400_00DF).contains(&addr) {
@@ -425,9 +461,14 @@ impl DmaController {
             AddrControl::Fixed => 0,
         };
 
-        // Sound-FIFO Special mode (ch 1/2): force 4 × 32-bit, dst fixed.
-        let (mut count, force_word, dst_step) = if special && (idx == 1 || idx == 2) {
-            (4u32, true, 0i64)
+        // Sound-FIFO Special mode (ch 1/2): force 4 × 32-bit, fixed dst
+        // hard-wired to FIFO A (channel 1) or FIFO B (channel 2). The
+        // programmed DAD is ignored — real hardware always routes the
+        // burst to the FIFO regardless of what software put in DAD.
+        let (mut count, force_word, dst_step, fifo_dst) = if special && (idx == 1 || idx == 2) {
+            let dst = if idx == 1 { REG_FIFO_A } else { REG_FIFO_B };
+            self.channels[idx].cur_dst = dst;
+            (4u32, true, 0i64, Some(dst))
         } else {
             // For non-immediate triggers we reload count from latch when a
             // burst begins to support repeat semantics.
@@ -435,7 +476,7 @@ impl DmaController {
             if c.timing() != StartTiming::Immediate && c.cur_count == 0 {
                 c.cur_count = decoded_count(idx, c.count);
             }
-            (c.cur_count, false, dst_step)
+            (c.cur_count, false, dst_step, None)
         };
 
         let active_word = is_word || force_word;
@@ -452,11 +493,17 @@ impl DmaController {
 
         while count > 0 {
             // Higher-priority preemption: bail out and let the caller
-            // re-enter so that the higher channel runs first.
+            // re-enter so that the higher channel runs first. Any
+            // higher-priority *pending* channel preempts, regardless of
+            // its start timing — Immediate, V-blank, H-blank, and Special
+            // all become pending via the bus' notify hooks before this
+            // burst resumes.
             for higher in 0..idx {
                 let c = &self.channels[higher];
-                if c.pending && c.timing() == StartTiming::Immediate {
-                    // Save remaining count and resume later.
+                if c.pending {
+                    // Save remaining count and resume later. For FIFO
+                    // mode dst is locked, so it doesn't matter that
+                    // cur_dst was just rewritten above.
                     self.channels[idx].cur_count = count;
                     self.channels[idx].active = false;
                     self.run_burst(higher, bus);
@@ -471,13 +518,14 @@ impl DmaController {
                         special,
                         irq,
                         repeat,
+                        fifo_dst,
                         bus,
                     );
                 }
             }
 
             let src = self.channels[idx].cur_src;
-            let dst = self.channels[idx].cur_dst;
+            let dst = fifo_dst.unwrap_or(self.channels[idx].cur_dst);
             if active_word {
                 let v = bus.dma_read32(src & !0x3);
                 bus.dma_write32(dst & !0x3, v);
@@ -486,7 +534,9 @@ impl DmaController {
                 bus.dma_write16(dst & !0x1, v);
             }
             self.channels[idx].cur_src = (src as i64).wrapping_add(active_src_step) as u32;
-            self.channels[idx].cur_dst = (dst as i64).wrapping_add(dst_step) as u32;
+            if fifo_dst.is_none() {
+                self.channels[idx].cur_dst = (dst as i64).wrapping_add(dst_step) as u32;
+            }
             // Each unit takes ~2 cycles (1N + 1S) — model a flat 2 cycles
             // per unit; bus contention details are deferred per scope.
             self.cpu_stall += 2;
@@ -507,13 +557,14 @@ impl DmaController {
         special: bool,
         irq: bool,
         repeat: bool,
+        fifo_dst: Option<u32>,
         bus: &mut B,
     ) {
         self.channels[idx].active = true;
         while count > 0 {
             for higher in 0..idx {
                 let c = &self.channels[higher];
-                if c.pending && c.timing() == StartTiming::Immediate {
+                if c.pending {
                     self.channels[idx].cur_count = count;
                     self.channels[idx].active = false;
                     self.run_burst(higher, bus);
@@ -522,7 +573,7 @@ impl DmaController {
                 }
             }
             let src = self.channels[idx].cur_src;
-            let dst = self.channels[idx].cur_dst;
+            let dst = fifo_dst.unwrap_or(self.channels[idx].cur_dst);
             if active_word {
                 let v = bus.dma_read32(src & !0x3);
                 bus.dma_write32(dst & !0x3, v);
@@ -531,7 +582,9 @@ impl DmaController {
                 bus.dma_write16(dst & !0x1, v);
             }
             self.channels[idx].cur_src = (src as i64).wrapping_add(src_step) as u32;
-            self.channels[idx].cur_dst = (dst as i64).wrapping_add(dst_step) as u32;
+            if fifo_dst.is_none() {
+                self.channels[idx].cur_dst = (dst as i64).wrapping_add(dst_step) as u32;
+            }
             self.cpu_stall += 2;
             count -= 1;
         }
@@ -872,29 +925,117 @@ mod tests {
     }
 
     #[test]
-    fn fifo_special_writes_4_words() {
+    fn fifo_special_writes_4_words_to_fifo_a() {
         // AC: Audio FIFO DMA (channels 1 and 2, Special mode) replenishes
-        // the FIFO when triggered.
+        // the FIFO when triggered. The destination is hard-wired to
+        // FIFO A (channel 1) / FIFO B (channel 2) regardless of DAD.
         let mut bus = TestBus::new();
         for i in 0..8 {
             bus.write32_at(0x1000 + i * 4, 0x1000_0000 + i);
         }
 
         let mut d = DmaController::new();
-        // Channel 1, Special timing — 4×32-bit writes to fixed dst.
+        // Channel 1, Special timing — DAD intentionally bogus; the
+        // controller must still route writes to REG_FIFO_A.
         write_dma_setup(
             &mut d,
             1,
             0x1000,
-            0x2000,
+            0xDEAD_BEEF,
             16, // count is ignored in FIFO mode
             cnt_h(true, false, 3, false, true, 0, 2),
         );
         d.notify_fifo(0);
         d.run_pending_triggered(&mut bus);
-        // 4 × 32-bit accumulated at the same dst (fixed) — last wins.
-        assert_eq!(bus.read32_at(0x2000), 0x1000_0003);
+        // 4 × 32-bit accumulated at FIFO_A (fixed) — last wins.
+        assert_eq!(bus.read32_at(REG_FIFO_A), 0x1000_0003);
+        // Bogus DAD must NOT have been written.
+        assert_eq!(bus.read32_at(0xDEAD_BEEF & !0x3), 0);
         assert_eq!(d.take_cpu_stall(), 4 * 2);
+    }
+
+    #[test]
+    fn fifo_special_channel2_routes_to_fifo_b() {
+        let mut bus = TestBus::new();
+        bus.write32_at(0x1000, 0xAA);
+        let mut d = DmaController::new();
+        write_dma_setup(
+            &mut d,
+            2,
+            0x1000,
+            0,
+            16,
+            cnt_h(true, false, 3, false, true, 2, 2),
+        );
+        d.notify_fifo(1);
+        d.run_pending_triggered(&mut bus);
+        assert_eq!(bus.read32_at(REG_FIFO_B), 0xAA);
+        assert_eq!(bus.read32_at(REG_FIFO_A), 0);
+    }
+
+    #[test]
+    fn byte_write_to_sad_preserves_other_byte() {
+        // Byte writes to write-only DMA registers must not zero the
+        // untouched byte — the controller maintains its own internal
+        // latches, so the read-modify-write path used by the bus for
+        // generic byte writes can't be used here.
+        let mut d = DmaController::new();
+        // Initialise SAD via two byte writes to the low halfword.
+        d.write8(0x0400_00B0, 0x12); // SAD[7:0]
+        d.write8(0x0400_00B1, 0x34); // SAD[15:8]
+        d.write8(0x0400_00B2, 0x56); // SAD[23:16]
+        d.write8(0x0400_00B3, 0x78); // SAD[31:24]
+        assert_eq!(d.channels[0].sad, 0x7856_3412);
+        // Same for DAD and CNT_L.
+        d.write8(0x0400_00B4, 0xAA);
+        d.write8(0x0400_00B5, 0xBB);
+        assert_eq!(d.channels[0].dad & 0xFFFF, 0xBBAA);
+        d.write8(0x0400_00B8, 0xCD);
+        d.write8(0x0400_00B9, 0xAB);
+        assert_eq!(d.channels[0].count, 0xABCD);
+    }
+
+    #[test]
+    fn vblank_higher_priority_preempts_immediate_lower() {
+        // A higher-priority channel that becomes pending while a lower
+        // channel is mid-burst preempts even when its start timing is
+        // V-blank/H-blank/Special (not just Immediate).
+        let mut bus = TestBus::new();
+        bus.write32_at(0x1000, 0xC0_DA); // CH0 source
+        bus.write32_at(0x3000, 0xC1_DA); // CH1 source
+        let mut d = DmaController::new();
+        // Channel 0 — V-blank, word, count=1.
+        write_dma_setup(
+            &mut d,
+            0,
+            0x1000,
+            0x2000,
+            1,
+            cnt_h(true, false, 1, true, false, 0, 0),
+        );
+        // Channel 1 — Immediate, word, count=4, src=Fixed (so all 4
+        // writes use the single source word at 0x3000).
+        write_dma_setup(
+            &mut d,
+            1,
+            0x3000,
+            0x4000,
+            4,
+            cnt_h(true, false, 0, true, false, 2, 0),
+        );
+        // Pre-arm channel 0 (V-blank) so the in-burst preemption check on
+        // channel 1's loop fires it. `run_pending`'s outer selection only
+        // looks at Immediate channels, so it must start channel 1 first
+        // and then preempt for channel 0.
+        d.notify_vblank();
+        d.run_pending(&mut bus);
+        // Both bursts must have completed.
+        assert_eq!(bus.read32_at(0x2000), 0xC0_DA);
+        for i in 0..4 {
+            assert_eq!(bus.read32_at(0x4000 + i * 4), 0xC1_DA);
+        }
+        assert_eq!(d.channels[0].cnt_h & 0x8000, 0);
+        assert_eq!(d.channels[1].cnt_h & 0x8000, 0);
     }
 
     #[test]

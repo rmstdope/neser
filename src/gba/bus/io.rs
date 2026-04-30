@@ -242,6 +242,13 @@ impl IoRegisters {
         timers: &mut Timers,
         dma: &mut DmaController,
     ) {
+        // DMA registers (0x0400_00B0..=0x0400_00DF) need a dedicated
+        // byte path because SAD/DAD/CNT_L are write-only — the generic
+        // read-modify-write below would zero the untouched byte.
+        if (0x0400_00B0..=0x0400_00DF).contains(&addr) {
+            dma.write8(addr, value);
+            return;
+        }
         let aligned = addr & !1;
         let current = self.read16(aligned, ic, timers, dma);
         let merged = if addr & 1 == 0 {
