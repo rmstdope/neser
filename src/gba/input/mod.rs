@@ -9,4 +9,5 @@
 
 pub mod keypad;
 
+#[allow(unused_imports)]
 pub use keypad::{KEYCNT_COND_AND, KEYCNT_IRQ_ENABLE, KEYS_MASK, Keypad, REG_KEYCNT, REG_KEYINPUT};

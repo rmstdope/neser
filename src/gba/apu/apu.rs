@@ -1649,10 +1649,12 @@ mod tests {
 
     #[test]
     fn test_ch4_lfsr_sequence_7bit() {
-        let mut ch4 = Channel4::default();
-        ch4.dac_on = true;
-        ch4.lfsr_7bit = true;
-        ch4.lfsr = 0x7FFF;
+        let mut ch4 = Channel4 {
+            dac_on: true,
+            lfsr_7bit: true,
+            lfsr: 0x7FFF,
+            ..Channel4::default()
+        };
 
         // Clock 7-bit LFSR manually and verify.
         let mut lfsr = 0x7FFF_u16;

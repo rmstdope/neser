@@ -1,5 +1,6 @@
 //! CH1 – Pulse channel with frequency sweep (NR10–NR14).
 
+use crate::gb::model::CgbModel;
 use crate::trace_apu;
 use serde::{Deserialize, Serialize};
 
@@ -61,6 +62,30 @@ pub struct Channel1 {
     /// Envelope clock state for zombie mode glitch tracking.
     #[serde(default)]
     env_clock_state: EnvelopeClockState,
+
+    /// `square_sweep_countdown` — SameBoy-derived 3-bit sub-counter that
+    /// replaces the old `sweep_timer`. Loaded as `(sweep_period ^ 7) & 7`
+    /// on trigger; incremented on every 128 Hz sweep tick. When it wraps
+    /// to 7 the actual sweep step (recalc + overflow check) fires.
+    /// Ref: SameBoy `Core/apu.c` `gb->apu.square_sweep_countdown`.
+    #[serde(default)]
+    pub(super) sweep_countdown: u8,
+
+    // ── SameBoy-derived sub-M-cycle sweep machinery (Phase 2+) ───────────
+    /// `true` when running on a CGB-mode model. Gates CGB-specific sweep
+    /// timing constants. Set via `set_model()` from the APU.
+    #[serde(default)]
+    is_cgb: bool,
+    /// CGB hardware revision (only consulted when `is_cgb`). Default `CgbE`.
+    #[serde(default)]
+    cgb_model: CgbModel,
+    /// `channel_1_restart_hold` — M-cycle countdown after a trigger during
+    /// which sweep activity is suppressed. Set in `trigger()`, decremented
+    /// per M-cycle in `tick()`. Phase 2 only sets/decrements; the gating on
+    /// dependent state machines lands in Phases 3–5.
+    /// Ref: SameBoy `Core/apu.c` `gb->apu.channel_1_restart_hold`.
+    #[serde(default)]
+    pub(super) restart_hold: u8,
 }
 
 impl Default for Channel1 {
@@ -96,7 +121,19 @@ impl Channel1 {
             triggered_once: false,
             first_sample_zero: false,
             env_clock_state: EnvelopeClockState::default(),
+            sweep_countdown: 0,
+            is_cgb: false,
+            cgb_model: CgbModel::CgbE,
+            restart_hold: 0,
         }
+    }
+
+    /// Set the CGB-mode flag and hardware revision used by sweep timing.
+    /// Should be called once after construction by the APU. Default state
+    /// (DMG, `CgbE`) is correct for DMG hardware.
+    pub(crate) fn set_model(&mut self, is_cgb: bool, cgb_model: CgbModel) {
+        self.is_cgb = is_cgb;
+        self.cgb_model = cgb_model;
     }
 
     pub fn is_active(&self) -> bool {
@@ -143,6 +180,11 @@ impl Channel1 {
     /// When the timer expires mid-M-cycle, the remaining T-cycles are applied
     /// after the reload, ensuring correct phase alignment.
     pub fn tick(&mut self) {
+        // SameBoy: restart_hold counts down by 1 per M-cycle, saturating at 0.
+        // Ref: `Core/apu.c` GB_apu_run — `if (gb->apu.channel_1_restart_hold) gb->apu.channel_1_restart_hold--;`
+        if self.restart_hold > 0 {
+            self.restart_hold -= 1;
+        }
         let period = (2048 - self.freq) * 4;
         if self.freq_timer == 0 {
             self.freq_timer = period;
@@ -182,27 +224,38 @@ impl Channel1 {
     }
 
     /// Clock frequency sweep at 128 Hz (Frame Sequencer steps 2/6).
+    ///
+    /// Implementation follows SameBoy `Core/apu.c`:
+    ///   * Increment `square_sweep_countdown` (3-bit, wraps).
+    ///   * When the post-increment value is 7 *and* the NR10 period bits
+    ///     are non-zero, perform the sweep recalculation and overflow check.
+    ///   * The countdown is reloaded from the (current) NR10 period bits
+    ///     after the recalculation, mirroring SameBoy's `((NR10>>4)&7)^7`.
+    ///
+    /// Phases 4–6 will defer the actual recalculation by an
+    /// M-cycle window via `calculate_countdown`; for Phase 3 the recalc
+    /// fires synchronously, preserving existing test expectations.
     pub fn clock_sweep(&mut self) {
-        if self.sweep_timer > 0 {
-            self.sweep_timer -= 1;
+        self.sweep_countdown = (self.sweep_countdown + 1) & 7;
+        if self.sweep_countdown != 7 {
+            return;
         }
-        if self.sweep_timer == 0 {
-            self.sweep_timer = self.sweep_timer_reload();
-            if self.sweep_enabled && self.sweep_period > 0 {
-                let new_freq = self.compute_swept_frequency();
-                if self.sweep_negate {
-                    self.negate_used = true;
-                }
-                if new_freq > 2047 {
-                    trace_apu!(3; "GB APU CH1 sweep overflow freq=0x{:03X} -> muted", new_freq);
-                    self.active = false;
-                } else if self.sweep_shift > 0 {
-                    trace_apu!(3; "GB APU CH1 sweep update shadow=0x{:03X} -> new=0x{:03X}", self.sweep_shadow, new_freq);
-                    self.sweep_shadow = new_freq;
-                    self.freq = new_freq;
-                    // Re-check overflow against the newly loaded frequency.
-                    self.disable_if_sweep_overflows();
-                }
+        // Reload countdown from current period (matches SameBoy reload).
+        self.sweep_countdown = (self.sweep_period ^ 7) & 7;
+        if self.sweep_enabled && self.sweep_period > 0 {
+            let new_freq = self.compute_swept_frequency();
+            if self.sweep_negate {
+                self.negate_used = true;
+            }
+            if new_freq > 2047 {
+                trace_apu!(3; "GB APU CH1 sweep overflow freq=0x{:03X} -> muted", new_freq);
+                self.active = false;
+            } else if self.sweep_shift > 0 {
+                trace_apu!(3; "GB APU CH1 sweep update shadow=0x{:03X} -> new=0x{:03X}", self.sweep_shadow, new_freq);
+                self.sweep_shadow = new_freq;
+                self.freq = new_freq;
+                // Re-check overflow against the newly loaded frequency.
+                self.disable_if_sweep_overflows();
             }
         }
     }
@@ -291,6 +344,11 @@ impl Channel1 {
         self.triggered_once = false;
         self.first_sample_zero = false;
         self.env_clock_state = EnvelopeClockState::default();
+        // Reset SameBoy-derived sub-M-cycle sweep state (`is_cgb`/`cgb_model`
+        // are configuration, not runtime state, so they are preserved across
+        // NR52 power cycles).
+        self.restart_hold = 0;
+        self.sweep_countdown = 0;
     }
 
     // ── Register reads ────────────────────────────────────────────────────
@@ -494,6 +552,8 @@ impl Channel1 {
         self.env_clock_state = EnvelopeClockState::default();
         self.sweep_shadow = self.freq;
         self.sweep_timer = self.sweep_timer_reload();
+        // SameBoy: `square_sweep_countdown = ((NR10 >> 4) & 7) ^ 7`.
+        self.sweep_countdown = (self.sweep_period ^ 7) & 7;
         self.sweep_enabled = self.sweep_period > 0 || self.sweep_shift > 0;
         self.negate_used = false;
         // Trigger-time overflow check required by hardware even when sweep is otherwise idle.
@@ -503,6 +563,15 @@ impl Channel1 {
             }
             self.disable_if_sweep_overflows();
         }
+        // SameBoy `Core/apu.c`:
+        //     channel_1_restart_hold = 2 - lf_div + (is_cgb && model != CGB_D) * 2
+        // Suppresses sweep activity for a few M-cycles after trigger.
+        let cgb_bonus: u8 = if self.is_cgb && self.cgb_model != CgbModel::CgbD {
+            2
+        } else {
+            0
+        };
+        self.restart_hold = 2u8 - (lf_div as u8) + cgb_bonus;
     }
 }
 
@@ -523,7 +592,194 @@ mod tests {
         ch
     }
 
-    // ── DAC / active state ────────────────────────────────────────────────
+    // ── Phase 2: restart_hold ────────────────────────────────────────────
+    //
+    // SameBoy `Core/apu.c`:
+    //     channel_1_restart_hold = 2 - lf_div + (is_cgb && model != CGB_D) * 2
+    //
+    // Truth table (lf_div is 0/false or 1/true):
+    //   DMG:           lf_div=0 → 2,  lf_div=1 → 1
+    //   CGB-D:         lf_div=0 → 2,  lf_div=1 → 1
+    //   CGB-A/B/C/E:   lf_div=0 → 4,  lf_div=1 → 3
+
+    fn ch1_for_trigger(is_cgb: bool, cgb_model: CgbModel) -> Channel1 {
+        let mut ch = Channel1::new();
+        ch.set_model(is_cgb, cgb_model);
+        ch.write_nr12(0xF0); // DAC on
+        ch.write_nr11(0x80);
+        ch
+    }
+
+    #[test]
+    fn test_restart_hold_dmg_lf_div_low() {
+        let mut ch = ch1_for_trigger(false, CgbModel::CgbE);
+        ch.write_nr14(0x80, false, /* lf_div = */ false);
+        assert_eq!(ch.restart_hold, 2);
+    }
+
+    #[test]
+    fn test_restart_hold_dmg_lf_div_high() {
+        let mut ch = ch1_for_trigger(false, CgbModel::CgbE);
+        ch.write_nr14(0x80, false, /* lf_div = */ true);
+        assert_eq!(ch.restart_hold, 1);
+    }
+
+    #[test]
+    fn test_restart_hold_cgb_d_lf_div_low() {
+        let mut ch = ch1_for_trigger(true, CgbModel::CgbD);
+        ch.write_nr14(0x80, false, false);
+        assert_eq!(ch.restart_hold, 2);
+    }
+
+    #[test]
+    fn test_restart_hold_cgb_d_lf_div_high() {
+        let mut ch = ch1_for_trigger(true, CgbModel::CgbD);
+        ch.write_nr14(0x80, false, true);
+        assert_eq!(ch.restart_hold, 1);
+    }
+
+    #[test]
+    fn test_restart_hold_cgb_e_lf_div_low() {
+        let mut ch = ch1_for_trigger(true, CgbModel::CgbE);
+        ch.write_nr14(0x80, false, false);
+        assert_eq!(ch.restart_hold, 4);
+    }
+
+    #[test]
+    fn test_restart_hold_cgb_e_lf_div_high() {
+        let mut ch = ch1_for_trigger(true, CgbModel::CgbE);
+        ch.write_nr14(0x80, false, true);
+        assert_eq!(ch.restart_hold, 3);
+    }
+
+    #[test]
+    fn test_restart_hold_cgb_b_matches_cgb_e() {
+        // CGB-A/B/C share the +2 branch with CGB-E (only CGB-D differs).
+        let mut ch = ch1_for_trigger(true, CgbModel::CgbB);
+        ch.write_nr14(0x80, false, false);
+        assert_eq!(ch.restart_hold, 4);
+    }
+
+    #[test]
+    fn test_restart_hold_decrements_per_m_cycle_and_saturates_at_zero() {
+        let mut ch = ch1_for_trigger(true, CgbModel::CgbE);
+        ch.write_nr14(0x80, false, false);
+        assert_eq!(ch.restart_hold, 4);
+        ch.tick();
+        assert_eq!(ch.restart_hold, 3);
+        ch.tick();
+        assert_eq!(ch.restart_hold, 2);
+        ch.tick();
+        ch.tick();
+        assert_eq!(ch.restart_hold, 0);
+        // Must not underflow / wrap.
+        ch.tick();
+        ch.tick();
+        assert_eq!(ch.restart_hold, 0);
+    }
+
+    // ── Phase 3: square_sweep_countdown ─────────────────────────────────
+    //
+    // SameBoy `Core/apu.c`:
+    //   On trigger: square_sweep_countdown = ((NR10 >> 4) & 7) ^ 7
+    //   Per 128 Hz tick: ++countdown; countdown &= 7; if 7 → sweep step.
+    //
+    // For sweep_period = N (1..=7) the post-trigger countdown is 7 - N,
+    // and it takes exactly N ticks to reach the wrap point.
+
+    #[test]
+    fn test_sweep_countdown_loaded_on_trigger_period_1() {
+        let mut ch = Channel1::new();
+        ch.write_nr12(0xF0); // DAC on
+        ch.write_nr10(0x10); // period=1, negate=0, shift=0
+        ch.write_nr14(0x80, false, false);
+        // (1 ^ 7) & 7 = 6
+        assert_eq!(ch.sweep_countdown, 6);
+    }
+
+    #[test]
+    fn test_sweep_countdown_loaded_on_trigger_period_3() {
+        let mut ch = Channel1::new();
+        ch.write_nr12(0xF0);
+        ch.write_nr10(0x32); // period=3, negate=0, shift=2
+        ch.write_nr14(0x80, false, false);
+        // (3 ^ 7) & 7 = 4
+        assert_eq!(ch.sweep_countdown, 4);
+    }
+
+    #[test]
+    fn test_sweep_countdown_loaded_on_trigger_period_7() {
+        let mut ch = Channel1::new();
+        ch.write_nr12(0xF0);
+        ch.write_nr10(0x71); // period=7, negate=0, shift=1
+        ch.write_nr14(0x80, false, false);
+        // (7 ^ 7) & 7 = 0  → 7 ticks to wrap
+        assert_eq!(ch.sweep_countdown, 0);
+    }
+
+    #[test]
+    fn test_sweep_countdown_period_zero_loaded_to_seven() {
+        // SameBoy: period=0 → countdown loaded as (0^7)&7 = 7. Next tick
+        // wraps to 0; never fires the recalc since NR10 period bits == 0.
+        let mut ch = Channel1::new();
+        ch.write_nr12(0xF0);
+        ch.write_nr10(0x00); // period=0
+        ch.write_nr14(0x80, false, false);
+        assert_eq!(ch.sweep_countdown, 7);
+    }
+
+    #[test]
+    fn test_sweep_countdown_increments_and_wraps_to_seven() {
+        let mut ch = Channel1::new();
+        ch.write_nr12(0xF0);
+        ch.write_nr10(0x32); // period=3
+        ch.write_nr13(0x64); // freq = 100
+        ch.write_nr14(0x80, false, false);
+        assert_eq!(ch.sweep_countdown, 4);
+        ch.clock_sweep(); // → 5
+        assert_eq!(ch.sweep_countdown, 5);
+        ch.clock_sweep(); // → 6
+        assert_eq!(ch.sweep_countdown, 6);
+        ch.clock_sweep(); // → 7 → fires; reloads to (3^7)&7 = 4
+        assert_eq!(ch.sweep_countdown, 4);
+    }
+
+    #[test]
+    fn test_sweep_countdown_period_zero_no_recalc_on_wrap() {
+        // period=0, shift=2, freq=100. countdown wraps but recalc must
+        // not fire (matches SameBoy `(NR10 & 0x70)` gate).
+        let mut ch = Channel1::new();
+        ch.write_nr12(0xF0);
+        ch.write_nr10(0x02); // period=0, shift=2
+        ch.write_nr13(0x64);
+        ch.write_nr14(0x80, false, false);
+        let initial_freq = ch.freq;
+        // 8 ticks for one full wrap cycle from countdown=7.
+        for _ in 0..16 {
+            ch.clock_sweep();
+        }
+        assert_eq!(
+            ch.freq, initial_freq,
+            "freq must not change when sweep_period == 0"
+        );
+        assert!(ch.is_active());
+    }
+
+    #[test]
+    fn test_power_off_clears_restart_hold_and_sweep_countdown() {
+        let mut ch = Channel1::new();
+        ch.set_model(true, CgbModel::CgbE);
+        ch.write_nr12(0xF0);
+        ch.write_nr10(0x32); // period=3
+        ch.write_nr14(0x80, false, false);
+        assert_ne!(ch.restart_hold, 0);
+        assert_ne!(ch.sweep_countdown, 0);
+        ch.power_off();
+        assert_eq!(ch.restart_hold, 0);
+        assert_eq!(ch.sweep_countdown, 0);
+    }
+
+    // ── Sweep correctness (hardware quirks) ──────────────────────────────
 
     #[test]
     fn test_trigger_makes_channel_active() {

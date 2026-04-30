@@ -84,6 +84,17 @@ pub struct Apu {
     #[serde(default)]
     lf_div: bool,
 
+    /// SameBoy-derived FS-step counter (`div_divider`) advanced once per
+    /// DIV-APU event (i.e., per Frame Sequencer step at 512 Hz). Sub-M-cycle
+    /// APU machinery gates on its low bits:
+    ///   * `& 1 == 1` — length / NR14 retrigger "extra length tick" glitch
+    ///   * `& 3 == 3` — sweep tick (drives `Channel1::sweep_countdown`)
+    ///   * `& 7 == 7` — envelope volume countdown decrement
+    ///
+    /// Ref: SameBoy `Core/apu.c` `gb->apu.div_divider`.
+    #[serde(default)]
+    div_divider: u8,
+
     /// When `true`, the next DIV-APU falling edge is skipped.
     /// Set when the APU is powered on while the DIV-APU bit is already HIGH.
     /// Per SameSuite div_write_trigger_10: "Starting the APU while bit 4 of
@@ -118,8 +129,12 @@ pub struct Apu {
 impl Apu {
     /// Create a new APU in the power-off state.
     pub fn new(is_cgb: bool) -> Self {
+        let mut ch1 = Channel1::new();
+        // Default CGB revision = CgbE (latest); CgbBus overrides via
+        // `set_cgb_model` once it knows the configured revision.
+        ch1.set_model(is_cgb, crate::gb::model::CgbModel::CgbE);
         Self {
-            ch1: Channel1::new(),
+            ch1,
             ch2: Channel2::new(),
             ch3: Channel3::new_with_mode(is_cgb),
             ch4: Channel4::new(),
@@ -128,6 +143,7 @@ impl Apu {
             powered: false,
             fs_step: 0,
             lf_div: true, // SameBoy initializes to 1
+            div_divider: 0,
             skip_next_div_apu_event: false,
             sample_acc: 0.0,
             cycles_per_sample: DMG_MCYCLES_PER_SEC / 44_100.0,
@@ -152,6 +168,13 @@ impl Apu {
     /// deserializing old save states that predate this field.
     fn default_hp_rc() -> f32 {
         Self::compute_hp_rc(44_100.0)
+    }
+
+    /// Set the CGB hardware revision and propagate it to subchannels that
+    /// consume it (currently CH1 sweep timing). Should be called once at
+    /// bus construction; default model in `Apu::new` is correct for DMG.
+    pub fn set_cgb_model(&mut self, cgb_model: crate::gb::model::CgbModel) {
+        self.ch1.set_model(self.is_cgb, cgb_model);
     }
 
     /// Set the output sample rate in Hz (default: 44 100).
@@ -211,6 +234,11 @@ impl Apu {
             trace_apu!(3; "GB APU skipping DIV-APU event (power-on with DIV-APU bit high)");
             return;
         }
+
+        // SameBoy `Core/apu.c`: increment div_divider at the start of every
+        // serviced DIV-APU event, before any channel work. Low bits drive
+        // length/sweep/envelope sub-events.
+        self.div_divider = self.div_divider.wrapping_add(1);
 
         trace_apu!(3; "GB APU FS step={} length={} sweep={} envelope={}",
             self.fs_step,
@@ -506,6 +534,10 @@ impl Apu {
             self.hp_prev_out = 0.0;
             // Clear skip flag on power-off to prevent leaking into a later power-on.
             self.skip_next_div_apu_event = false;
+            // Reset SameBoy-derived FS-step counter alongside `fs_step` so
+            // that sub-events keyed off `div_divider` low bits stay aligned
+            // across power cycles.
+            self.div_divider = 0;
         } else if power_on_transition {
             trace_apu!(1; "GB APU power on");
             // Power on: reset frame sequencer step and skip flag.
@@ -513,6 +545,7 @@ impl Apu {
             // so we only reset the step counter here. The skip flag is cleared first,
             // then write_nr52_with_div_state() will re-arm it if DIV-APU bit is HIGH.
             self.fs_step = 0;
+            self.div_divider = 0;
             self.skip_next_div_apu_event = false;
             // On CGB, powering on resets all length counters to 0.
             if self.is_cgb {
@@ -541,6 +574,15 @@ impl Apu {
     pub fn read_wave_ram(&self, addr: u16) -> u8 {
         self.ch3.read_wave_ram(addr)
     }
+
+    /// SameBoy-style FS-step counter used by sub-M-cycle APU machinery.
+    ///
+    /// Advanced once per DIV-APU event in `clock_div_apu`. Phase 3 consumes
+    /// the low two bits to drive the per-128 Hz sweep tick.
+    #[allow(dead_code)] // Direct readers land in Phase 6 (NR10 glitch).
+    pub(crate) fn div_divider(&self) -> u8 {
+        self.div_divider
+    }
 }
 
 impl Default for Apu {
@@ -557,6 +599,75 @@ mod tests {
         let mut apu = Apu::new(false);
         apu.write_register(0xFF26, 0x80);
         apu
+    }
+
+    /// `div_divider` is a Frame-Sequencer-step counter exposed for the
+    /// SameBoy-derived sub-M-cycle sweep machinery. It must advance by
+    /// exactly one per serviced DIV-APU event so the low bits drive
+    ///   * `& 1 == 1` — extra-length-tick glitch (256 Hz tick, half of 512 Hz)
+    ///   * `& 3 == 3` — sweep tick (128 Hz, every 4 FS steps)
+    ///   * `& 7 == 7` — envelope volume countdown (64 Hz)
+    ///
+    /// Ref: SameBoy `Core/apu.c` — `gb->apu.div_divider`.
+    #[test]
+    fn test_div_divider_advances_per_fs_step() {
+        let mut apu = powered_apu();
+        let start = apu.div_divider();
+        apu.clock_div_apu();
+        assert_eq!(apu.div_divider(), start.wrapping_add(1));
+        apu.clock_div_apu();
+        apu.clock_div_apu();
+        assert_eq!(apu.div_divider(), start.wrapping_add(3));
+    }
+
+    #[test]
+    fn test_div_divider_does_not_advance_on_skipped_event() {
+        // Power-on quirk: skip_next_div_apu_event suppresses both the FS
+        // dispatch AND the div_divider increment, mirroring SameBoy's
+        // skip_div_event SKIPPED branch.
+        let mut apu = powered_apu();
+        apu.arm_skip_next_div_apu_event();
+        let start = apu.div_divider();
+        apu.clock_div_apu();
+        assert_eq!(apu.div_divider(), start);
+        apu.clock_div_apu();
+        assert_eq!(apu.div_divider(), start.wrapping_add(1));
+    }
+
+    #[test]
+    fn test_div_divider_low_two_bits_align_every_4_fs_steps() {
+        let mut apu = powered_apu();
+        // Advance until the low 2 bits are zero, then verify the
+        // every-4-FS-step boundary lands on `& 3 == 3` exactly once
+        // per group of 4.
+        while apu.div_divider() & 3 != 0 {
+            apu.clock_div_apu();
+        }
+        let mut hits = 0u32;
+        for _ in 0..16 {
+            apu.clock_div_apu();
+            if apu.div_divider() & 3 == 3 {
+                hits += 1;
+            }
+        }
+        assert_eq!(hits, 4, "expected 4 boundary hits over 16 FS steps");
+    }
+
+    #[test]
+    fn test_div_divider_resets_on_nr52_power_cycle() {
+        // Sub-events keyed off `div_divider` low bits must stay aligned
+        // with `fs_step` after an NR52 power-off / power-on cycle.
+        let mut apu = powered_apu();
+        for _ in 0..5 {
+            apu.clock_div_apu();
+        }
+        assert_ne!(apu.div_divider(), 0);
+        // Power off via NR52.
+        apu.write_register(0xFF26, 0x00);
+        assert_eq!(apu.div_divider(), 0);
+        // Power on again — should still be 0 (and fs_step is also 0).
+        apu.write_register(0xFF26, 0x80);
+        assert_eq!(apu.div_divider(), 0);
     }
 
     #[test]
