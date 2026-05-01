@@ -51,8 +51,9 @@ impl Default for CpuTrace {
 impl CpuTrace {
     /// Create a new trace buffer with the given capacity.
     ///
-    /// A capacity of zero is treated as 1 to avoid divide-by-zero / panic
-    /// when pushing.
+    /// A capacity of zero is clamped to 1 so that the ring-buffer bounding
+    /// remains meaningful — otherwise `len() == capacity` would never hold
+    /// and the buffer would grow without bound.
     pub fn with_capacity(capacity: usize) -> Self {
         let capacity = capacity.max(1);
         Self {

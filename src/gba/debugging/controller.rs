@@ -110,7 +110,9 @@ impl GbaDebuggerController {
         Ok(())
     }
 
-    /// Stop file logging (does not flush; dropping the writer flushes).
+    /// Stop file logging. Flushes the writer best-effort before dropping it
+    /// so that buffered lines are persisted; flush errors are ignored
+    /// because trace logging is non-critical.
     pub fn clear_trace_file(&mut self) {
         if let Some(mut w) = self.trace_file.take() {
             let _ = w.flush();

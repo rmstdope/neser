@@ -120,16 +120,33 @@ fn format_arm_operand2(instr: u32, i_bit: bool) -> String {
         let shift_name = ["LSL", "LSR", "ASR", "ROR"][shift_type as usize];
         if shift_imm {
             let amount = (instr >> 7) & 0x1F;
-            // LSL #0 is a plain register reference.
-            if amount == 0 && shift_type == 0 {
-                format!("R{}", rm)
-            } else {
-                format!("R{}, {} #{}", rm, shift_name, amount)
-            }
+            format_arm_shifted_register(rm, shift_type, shift_name, amount)
         } else {
             let rs = (instr >> 8) & 0xF;
             format!("R{}, {} R{}", rm, shift_name, rs)
         }
+    }
+}
+
+/// Format `Rm` with an immediate shift, applying ARM's special-case encodings:
+///
+/// * `LSL #0`   → bare `Rm` (no shift applied).
+/// * `LSR #0`   → encodes `LSR #32` (the executor treats it as such).
+/// * `ASR #0`   → encodes `ASR #32`.
+/// * `ROR #0`   → `RRX` (rotate right with extend through carry).
+///
+/// These match the semantics implemented in [`crate::gba::cpu::arm`] so that
+/// disassembled output reflects what the executor actually does.
+fn format_arm_shifted_register(rm: u32, shift_type: u32, shift_name: &str, amount: u32) -> String {
+    if amount == 0 {
+        match shift_type {
+            0 => format!("R{}", rm),                         // LSL #0 — no shift
+            1 | 2 => format!("R{}, {} #32", rm, shift_name), // LSR/ASR #0 means #32
+            3 => format!("R{}, RRX", rm),                    // ROR #0 means RRX
+            _ => unreachable!(),
+        }
+    } else {
+        format!("R{}, {} #{}", rm, shift_name, amount)
     }
 }
 
@@ -147,17 +164,16 @@ fn disasm_arm_single_data_transfer(instr: u32, cond_str: &str) -> String {
     let b_suffix = if b_bit { "B" } else { "" };
 
     let offset = if i_bit {
-        // Register offset (with optional shift).
+        // Register offset (with optional shift). Same special-case encodings
+        // as data-processing operand2: LSL #0 = no shift, LSR/ASR #0 = #32,
+        // ROR #0 = RRX.
         let rm = instr & 0xF;
         let shift_type = (instr >> 5) & 0x3;
         let amount = (instr >> 7) & 0x1F;
+        let shift_name = ["LSL", "LSR", "ASR", "ROR"][shift_type as usize];
         let sign = if u_bit { "" } else { "-" };
-        if amount == 0 && shift_type == 0 {
-            format!("{}R{}", sign, rm)
-        } else {
-            let shift_name = ["LSL", "LSR", "ASR", "ROR"][shift_type as usize];
-            format!("{}R{}, {} #{}", sign, rm, shift_name, amount)
-        }
+        let rm_part = format_arm_shifted_register(rm, shift_type, shift_name, amount);
+        format!("{}{}", sign, rm_part)
     } else {
         // 12-bit immediate offset.
         let imm = instr & 0xFFF;
@@ -230,7 +246,15 @@ fn disasm_thumb_format1(instr: u16) -> String {
     let rs = (instr >> 3) & 0x7;
     let rd = instr & 0x7;
     let mnemonic = ["LSL", "LSR", "ASR"][op as usize];
-    format!("{} R{}, R{}, #{}", mnemonic, rd, rs, amount)
+    // For LSR/ASR, the encoded amount of 0 means "shift by 32" (matches the
+    // executor in `crate::gba::cpu::thumb::exec_format1`). LSL #0 is a plain
+    // register move and is rendered with #0.
+    let display_amount = if amount == 0 && (op == 0b01 || op == 0b10) {
+        32
+    } else {
+        amount
+    };
+    format!("{} R{}, R{}, #{}", mnemonic, rd, rs, display_amount)
 }
 
 fn disasm_thumb_format2(instr: u16) -> String {
@@ -365,6 +389,28 @@ mod tests {
     }
 
     #[test]
+    fn arm_shifter_lsr_zero_renders_as_shift_by_32() {
+        // ADD R0, R1, R2, LSR #0  — encoded amount=0, shift_type=01.
+        // The ARM7TDMI treats this as LSR #32, so the disassembler must too.
+        let instr = 0xE081_0022;
+        assert_eq!(disasm_arm(instr, 0), "ADD R0, R1, R2, LSR #32");
+    }
+
+    #[test]
+    fn arm_shifter_asr_zero_renders_as_shift_by_32() {
+        // ADD R0, R1, R2, ASR #0 — encoded amount=0, shift_type=10.
+        let instr = 0xE081_0042;
+        assert_eq!(disasm_arm(instr, 0), "ADD R0, R1, R2, ASR #32");
+    }
+
+    #[test]
+    fn arm_shifter_ror_zero_renders_as_rrx() {
+        // ADD R0, R1, R2, ROR #0 — encoded amount=0, shift_type=11; means RRX.
+        let instr = 0xE081_0062;
+        assert_eq!(disasm_arm(instr, 0), "ADD R0, R1, R2, RRX");
+    }
+
+    #[test]
     fn arm_data_processing_mov_immediate() {
         // MOV R0, #0x12
         let instr = 0xE3A0_0012;
@@ -458,6 +504,23 @@ mod tests {
     }
 
     #[test]
+    fn arm_ldr_register_offset_with_shift_special_cases() {
+        // LDR R0, [R1, R2]  (LSL #0 → bare register)
+        // I=1, P=1, U=1, B=0, W=0, L=1, Rn=1, Rd=0, shift_type=00, amount=0, Rm=2
+        let instr = 0xE791_0002;
+        assert_eq!(disasm_arm(instr, 0), "LDR R0, [R1, R2]");
+        // LDR R0, [R1, R2, LSR #32]   — amount=0, shift_type=01.
+        let instr = 0xE791_0022;
+        assert_eq!(disasm_arm(instr, 0), "LDR R0, [R1, R2, LSR #32]");
+        // LDR R0, [R1, R2, ASR #32]   — amount=0, shift_type=10.
+        let instr = 0xE791_0042;
+        assert_eq!(disasm_arm(instr, 0), "LDR R0, [R1, R2, ASR #32]");
+        // LDR R0, [R1, R2, RRX]       — amount=0, shift_type=11.
+        let instr = 0xE791_0062;
+        assert_eq!(disasm_arm(instr, 0), "LDR R0, [R1, R2, RRX]");
+    }
+
+    #[test]
     fn arm_swi() {
         // SWI #0x123456
         let instr = 0xEF12_3456;
@@ -487,6 +550,27 @@ mod tests {
         // ASR R2, R3, #5
         let instr = 0b00010_00101_011_010u16;
         assert_eq!(disasm_thumb(instr, 0), "ASR R2, R3, #5");
+    }
+
+    #[test]
+    fn thumb_format1_lsr_zero_renders_as_shift_by_32() {
+        // LSR R0, R1, #0  → encoded amount=0 means LSR #32 (matches executor).
+        let instr = 0b00001_00000_001_000u16;
+        assert_eq!(disasm_thumb(instr, 0), "LSR R0, R1, #32");
+    }
+
+    #[test]
+    fn thumb_format1_asr_zero_renders_as_shift_by_32() {
+        // ASR R0, R1, #0  → encoded amount=0 means ASR #32.
+        let instr = 0b00010_00000_001_000u16;
+        assert_eq!(disasm_thumb(instr, 0), "ASR R0, R1, #32");
+    }
+
+    #[test]
+    fn thumb_format1_lsl_zero_stays_zero() {
+        // LSL R0, R1, #0 — plain register copy; renders with #0.
+        let instr = 0b00000_00000_001_000u16;
+        assert_eq!(disasm_thumb(instr, 0), "LSL R0, R1, #0");
     }
 
     #[test]
