@@ -87,10 +87,7 @@ pub fn detect_save_type(rom: &[u8]) -> SaveType {
     if find_marker(rom, b"FLASH1M_V") {
         return SaveType::Flash128K;
     }
-    if find_marker(rom, b"FLASH512_V") {
-        return SaveType::Flash64K;
-    }
-    if find_marker(rom, b"FLASH_V") {
+    if find_marker(rom, b"FLASH512_V") || find_marker(rom, b"FLASH_V") {
         return SaveType::Flash64K;
     }
     if find_marker(rom, b"SRAM_F_V") || find_marker(rom, b"SRAM_V") {
@@ -104,15 +101,9 @@ fn find_marker(rom: &[u8], needle: &[u8]) -> bool {
     if needle.is_empty() || rom.len() < needle.len() {
         return false;
     }
-    let last = rom.len() - needle.len();
-    let mut i = 0;
-    while i <= last {
-        if &rom[i..i + needle.len()] == needle {
-            return true;
-        }
-        i += 4;
-    }
-    false
+    (0..=rom.len() - needle.len())
+        .step_by(4)
+        .any(|i| rom[i..].starts_with(needle))
 }
 
 #[cfg(test)]
