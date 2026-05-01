@@ -120,6 +120,16 @@ impl Default for GbaBus {
     }
 }
 
+fn check_region_size(region: &[u8], expected: usize, name: &str) -> Result<(), String> {
+    if region.len() != expected {
+        return Err(format!(
+            "{name} size mismatch (expected {expected}, found {})",
+            region.len()
+        ));
+    }
+    Ok(())
+}
+
 impl GbaBus {
     /// Create a new bus with all regions sized per GBATek and all storage
     /// zero-initialised.
@@ -282,48 +292,12 @@ impl GbaBus {
         &mut self,
         state: &super::console::save_state::BusMemoryState,
     ) -> Result<(), String> {
-        if state.ewram.len() != EWRAM_SIZE {
-            return Err(format!(
-                "EWRAM size mismatch (expected {}, found {})",
-                EWRAM_SIZE,
-                state.ewram.len()
-            ));
-        }
-        if state.iwram.len() != IWRAM_SIZE {
-            return Err(format!(
-                "IWRAM size mismatch (expected {}, found {})",
-                IWRAM_SIZE,
-                state.iwram.len()
-            ));
-        }
-        if state.pram.len() != PRAM_SIZE {
-            return Err(format!(
-                "PRAM size mismatch (expected {}, found {})",
-                PRAM_SIZE,
-                state.pram.len()
-            ));
-        }
-        if state.vram.len() != VRAM_SIZE {
-            return Err(format!(
-                "VRAM size mismatch (expected {}, found {})",
-                VRAM_SIZE,
-                state.vram.len()
-            ));
-        }
-        if state.oam.len() != OAM_SIZE {
-            return Err(format!(
-                "OAM size mismatch (expected {}, found {})",
-                OAM_SIZE,
-                state.oam.len()
-            ));
-        }
-        if state.sram.len() != SRAM_SIZE {
-            return Err(format!(
-                "SRAM size mismatch (expected {}, found {})",
-                SRAM_SIZE,
-                state.sram.len()
-            ));
-        }
+        check_region_size(&state.ewram, EWRAM_SIZE, "EWRAM")?;
+        check_region_size(&state.iwram, IWRAM_SIZE, "IWRAM")?;
+        check_region_size(&state.pram, PRAM_SIZE, "PRAM")?;
+        check_region_size(&state.vram, VRAM_SIZE, "VRAM")?;
+        check_region_size(&state.oam, OAM_SIZE, "OAM")?;
+        check_region_size(&state.sram, SRAM_SIZE, "SRAM")?;
         self.ewram.clone_from(&state.ewram);
         self.iwram.clone_from(&state.iwram);
         self.pram.clone_from(&state.pram);
