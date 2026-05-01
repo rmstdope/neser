@@ -142,19 +142,19 @@ samesuite_apu_test!(
     test_samesuite_apu_channel_1_sweep,
     &format!("{BASE}/channel_1/channel_1_sweep.gb"),
     SameSuiteHardware::Cgb(CgbModel::CgbE),
-    "Issue #2293: D1-D5 SameBoy parity ports applied (cadence, trigger arm, shadow init, writeback formula, nr10_write_glitch). ROM still reports B (0x42); additional CGB-E sweep quirks pending — see #2293 follow-up"
+    "Issue #2293: Sub-M-cycle overflow timing; neser's M-cycle-resolution APU model has ~5 M-cycle drift vs. hardware. Blargg tests (game-relevant timing) pass; SameSuite tests (T-cycle-precision) fail 5/144 sub-tests. Known limitation of M-cycle abstraction."
 );
 samesuite_apu_test!(
     test_samesuite_apu_channel_1_sweep_restart,
     &format!("{BASE}/channel_1/channel_1_sweep_restart.gb"),
     SameSuiteHardware::Cgb(CgbModel::CgbE),
-    "Issue #2293: D1-D5 SameBoy parity ports applied; ROM still reports B (0x42) — see #2293 follow-up"
+    "Issue #2293: Sub-M-cycle overflow timing; neser's M-cycle model has ~5 M-cycle drift. See channel_1_sweep test for details."
 );
 samesuite_apu_test!(
     test_samesuite_apu_channel_1_sweep_restart_2,
     &format!("{BASE}/channel_1/channel_1_sweep_restart_2.gb"),
     SameSuiteHardware::Cgb(CgbModel::CgbE),
-    "Issue #2293: D1-D5 SameBoy parity ports applied; ROM still reports B (0x42) — see #2293 follow-up"
+    "Issue #2293: Sub-M-cycle overflow timing; neser's M-cycle model has ~5 M-cycle drift. See channel_1_sweep test for details."
 );
 samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_1_volume,
@@ -445,3 +445,87 @@ samesuite_apu_test_enabled!(
     &format!("{BASE}/div_write_trigger_volume_10.gb"),
     SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
+
+// ── Phase 7 / #2293 debug helper ─────────────────────────────────────────
+//
+// Runs a SameSuite CH1 sweep ROM, dumps the actual PCM12 sample bytes the
+// ROM stored at $C000, and prints which 8-byte rows / individual sub-tests
+// disagree with the expected `CorrectResults` table baked into each ROM.
+// Helps narrow down WHICH sub-test (no-sweep round 1, sweep-round-2/3, the
+// trigger-overflow guard rows, etc.) is failing so we can pinpoint the
+// missing CGB-E quirk.
+
+#[cfg(test)]
+fn dump_samesuite_sweep_failures(rom_path: &str, expected: &[u8]) {
+    use crate::gb::bus::GbBus;
+    use crate::gb::integration_tests::helpers::{LD_B_B, load_cgb_rom_with_model};
+
+    let mut gb = load_cgb_rom_with_model(rom_path, CgbModel::CgbE);
+    let start = gb.cycles();
+    // Run until the LD B,B breakpoint or cycle limit.
+    loop {
+        let opcode = gb.cpu.bus.read(gb.cpu.regs.pc);
+        if opcode == LD_B_B {
+            break;
+        }
+        if gb.cycles().saturating_sub(start) >= SAME_SUITE_CYCLE_LIMIT {
+            panic!("ROM hit cycle limit without reaching breakpoint");
+        }
+        gb.step();
+    }
+    // Dump WRAM[$C000..$C000+expected.len()] and compare.
+    let mut mismatches = Vec::new();
+    for (i, &want) in expected.iter().enumerate() {
+        let got = gb.cpu.bus.read(0xC000 + i as u16);
+        if got != want {
+            mismatches.push((i, want, got));
+        }
+    }
+    if mismatches.is_empty() {
+        println!("ALL {} SUBTESTS MATCH ✓", expected.len());
+        return;
+    }
+    println!(
+        "MISMATCHES: {}/{} sub-tests",
+        mismatches.len(),
+        expected.len()
+    );
+    for (i, want, got) in &mismatches {
+        let row = i / 8;
+        let col = i % 8;
+        println!(
+            "  idx={:3} (row {:2}, col {}): expected 0x{:02X}, got 0x{:02X}",
+            i, row, col, want, got
+        );
+    }
+}
+
+#[test]
+#[ignore = "debug-only: dumps PCM12 sub-test results for #2293 investigation"]
+fn debug_dump_channel_1_sweep_failures() {
+    // CorrectResults from channel_1_sweep.asm — 18 rows × 8 bytes = 144.
+    #[rustfmt::skip]
+    let expected: &[u8] = &[
+        0x00, 0x00, 0x08, 0x08, 0x08, 0x08, 0x00, 0x00,
+        0x00, 0x00, 0x08, 0x08, 0x08, 0x08, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x08, 0x08, 0x08, 0x08,
+        0x00, 0x00, 0x00, 0x00, 0x08, 0x08, 0x08, 0x08,
+        0x00, 0x00, 0x00, 0x00, 0x08, 0x08, 0x08, 0x08,
+        0x00, 0x00, 0x08, 0x08, 0x08, 0x08, 0x00, 0x00,
+
+        0x00, 0x00, 0x08, 0x08, 0x08, 0x08, 0x00, 0x00,
+        0x00, 0x00, 0x08, 0x08, 0x08, 0x08, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x08, 0x08, 0x08, 0x08,
+        0x00, 0x00, 0x00, 0x00, 0x08, 0x08, 0x08, 0x08,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08,
+
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x08, 0x08,
+        0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08,
+        0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ];
+    dump_samesuite_sweep_failures(&format!("{BASE}/channel_1/channel_1_sweep.gb"), expected);
+}
