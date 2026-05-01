@@ -84,14 +84,12 @@ pub struct Apu {
     #[serde(default)]
     lf_div: bool,
 
-    /// SameBoy-derived FS-step counter (`div_divider`) advanced once per
-    /// DIV-APU event (i.e., per Frame Sequencer step at 512 Hz). Sub-M-cycle
-    /// APU machinery gates on its low bits:
+    /// FS-step counter (`div_divider`) advanced once per DIV-APU event (i.e.,
+    /// per Frame Sequencer step at 512 Hz). Sub-M-cycle APU machinery gates
+    /// on its low bits:
     ///   * `& 1 == 1` — length / NR14 retrigger "extra length tick" glitch
     ///   * `& 3 == 3` — sweep tick (drives `Channel1::sweep_countdown`)
     ///   * `& 7 == 7` — envelope volume countdown decrement
-    ///
-    /// Ref: SameBoy `Core/apu.c` `gb->apu.div_divider`.
     #[serde(default)]
     div_divider: u8,
 
@@ -142,7 +140,7 @@ impl Apu {
             nr51: 0x00,
             powered: false,
             fs_step: 0,
-            lf_div: true, // SameBoy initializes to 1
+            lf_div: true, // Initialize to 1
             div_divider: 0,
             skip_next_div_apu_event: false,
             sample_acc: 0.0,
@@ -235,9 +233,8 @@ impl Apu {
             return;
         }
 
-        // SameBoy `Core/apu.c`: increment div_divider at the start of every
-        // serviced DIV-APU event, before any channel work. Low bits drive
-        // length/sweep/envelope sub-events.
+        // Increment div_divider at the start of every serviced DIV-APU event,
+        // before any channel work. Low bits drive length/sweep/envelope sub-events.
         self.div_divider = self.div_divider.wrapping_add(1);
 
         trace_apu!(3; "GB APU FS step={} length={} sweep={} envelope={}",
@@ -289,7 +286,7 @@ impl Apu {
         self.ch4.tick();
 
         // ── CH1 sweep machinery (1 MHz cadence; gated internally) ─────────
-        // SameBoy `Core/apu.c` `GB_apu_run` advances sweep state at half the
+        // Hardware behavior `GB_apu_run` advances sweep state at half the
         // M-cycle rate; `Channel1::sweep_tick` toggles its own phase flag and
         // performs work every other call.
         self.ch1.sweep_tick();
@@ -540,7 +537,7 @@ impl Apu {
             self.hp_prev_out = 0.0;
             // Clear skip flag on power-off to prevent leaking into a later power-on.
             self.skip_next_div_apu_event = false;
-            // Reset SameBoy-derived FS-step counter alongside `fs_step` so
+            // Reset Sub-M-cycle FS-step counter alongside `fs_step` so
             // that sub-events keyed off `div_divider` low bits stay aligned
             // across power cycles.
             self.div_divider = 0;
@@ -581,7 +578,7 @@ impl Apu {
         self.ch3.read_wave_ram(addr)
     }
 
-    /// SameBoy-style FS-step counter used by sub-M-cycle APU machinery.
+    /// Sub-M-cycle FS-step counter used by sub-M-cycle APU machinery.
     ///
     /// Advanced once per DIV-APU event in `clock_div_apu`. Phase 3 consumes
     /// the low two bits to drive the per-128 Hz sweep tick.
@@ -608,13 +605,13 @@ mod tests {
     }
 
     /// `div_divider` is a Frame-Sequencer-step counter exposed for the
-    /// SameBoy-derived sub-M-cycle sweep machinery. It must advance by
+    /// Sub-M-cycle sub-M-cycle sweep machinery. It must advance by
     /// exactly one per serviced DIV-APU event so the low bits drive
     ///   * `& 1 == 1` — extra-length-tick glitch (256 Hz tick, half of 512 Hz)
     ///   * `& 3 == 3` — sweep tick (128 Hz, every 4 FS steps)
     ///   * `& 7 == 7` — envelope volume countdown (64 Hz)
     ///
-    /// Ref: SameBoy `Core/apu.c` — `gb->apu.div_divider`.
+    ///
     #[test]
     fn test_div_divider_advances_per_fs_step() {
         let mut apu = powered_apu();
@@ -629,7 +626,7 @@ mod tests {
     #[test]
     fn test_div_divider_does_not_advance_on_skipped_event() {
         // Power-on quirk: skip_next_div_apu_event suppresses both the FS
-        // dispatch AND the div_divider increment, mirroring SameBoy's
+        // dispatch AND the div_divider increment, (order matters for sub-M-cycle
         // skip_div_event SKIPPED branch.
         let mut apu = powered_apu();
         apu.arm_skip_next_div_apu_event();
