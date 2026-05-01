@@ -1085,8 +1085,8 @@ fn test_cgb_production_boot_io_registers() {
     assert_eq!(read_cgb_bus(&mut gb, 0xFF52), 0xFF, "HDMA2 ($FF52)");
     assert_eq!(read_cgb_bus(&mut gb, 0xFF53), 0xFF, "HDMA3 ($FF53)");
     assert_eq!(read_cgb_bus(&mut gb, 0xFF54), 0xFF, "HDMA4 ($FF54)");
-    // HDMA5 bit 7 = not active; $80 indicates no DMA in progress
-    assert_eq!(read_cgb_bus(&mut gb, 0xFF55), 0x80, "HDMA5 ($FF55)");
+    // HDMA5 reads $FF when no DMA has ever been started (per Mooneye)
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF55), 0xFF, "HDMA5 ($FF55)");
     // RP ($FF56 - infrared) not implemented in CGB bus; skipped
     assert_eq!(read_cgb_bus(&mut gb, 0xFF70), 0xF8, "SVBK ($FF70)");
 
@@ -1159,8 +1159,8 @@ fn test_cgb0_boot_io_registers() {
     assert_eq!(read_cgb_bus(&mut gb, 0xFF52), 0xFF, "HDMA2 ($FF52)");
     assert_eq!(read_cgb_bus(&mut gb, 0xFF53), 0xFF, "HDMA3 ($FF53)");
     assert_eq!(read_cgb_bus(&mut gb, 0xFF54), 0xFF, "HDMA4 ($FF54)");
-    // HDMA5 bit 7 = not active; $80 indicates no DMA in progress
-    assert_eq!(read_cgb_bus(&mut gb, 0xFF55), 0x80, "HDMA5 ($FF55)");
+    // HDMA5 reads $FF when no DMA has ever been started (per Mooneye)
+    assert_eq!(read_cgb_bus(&mut gb, 0xFF55), 0xFF, "HDMA5 ($FF55)");
     // RP ($FF56 - infrared) not implemented in CGB bus; skipped
     assert_eq!(read_cgb_bus(&mut gb, 0xFF70), 0xF8, "SVBK ($FF70)");
 
