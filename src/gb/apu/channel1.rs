@@ -615,34 +615,38 @@ impl Channel1 {
         }
     }
 
-    /// SameBoy `nr10_write_glitch` (CGB-D/E branch). Corrupts the sub-cycle
-    /// countdowns when NR10 is rewritten mid-flight. The full SameBoy logic
-    /// has DMG/CGB-A/B/C variants we do not target. We implement the
-    /// observable CGB-D/E behavior that affects the SameSuite ROMs:
+    /// SameBoy `nr10_write_glitch` (CGB-D/E branch). Two narrow conditions
+    /// affect the in-flight sweep machinery on NR10 rewrite:
     ///
-    /// * If the reload timer is the only thing pending, an NR10 write
-    ///   resets the calc countdown to the new shift bits, and the timer
-    ///   stays put.
-    /// * If the calc countdown is already running, the new countdown is
-    ///   loaded from the new shift bits; the in-flight calc is dropped.
+    /// 1. `reload_timer == 2` — the calc countdown was just reloaded; reload
+    ///    it from the new shift bits. If the new shift is zero, also clear
+    ///    `reload_timer`.
+    /// 2. New shift transitions `0 → non-zero` while `lf_div == false` and
+    ///    `countdown > 1` — perform a "zombie step": decrement the countdown
+    ///    by one and fire `sweep_calculation_done` if it reaches zero.
     ///
-    /// The exact branch is approximated; refine if SameSuite tests fail.
-    /// Ref: SameBoy `Core/apu.c` `nr10_write_glitch`.
-    fn nr10_write_glitch(&mut self, val: u8, _lf_div: bool) {
+    /// Outside these conditions the machinery is left untouched.
+    /// Ref: SameBoy `Core/apu.c` `nr10_write_glitch` (model > CGB_C branch,
+    /// L1192-L1212).
+    fn nr10_write_glitch(&mut self, val: u8, lf_div: bool) {
         let new_shift = val & 0x07;
-        // If calc countdown is in flight, replace it with the new shift bits.
-        // Reload timer is left alone (SameBoy keeps the timer running and
-        // the new countdown drains afterward).
-        if self.sweep_calc_countdown != 0 {
+        let old_shift = self.sweep_shift;
+
+        // Condition 1: countdown just reloaded.
+        if self.sweep_calc_reload_timer == 2 {
             self.sweep_calc_countdown = new_shift;
-            self.unshifted_sweep = new_shift == 0;
-            self.instant_calc_done = false;
-        } else if self.sweep_calc_reload_timer != 0 {
-            // Reload timer pending but no countdown yet: preserve reload
-            // timer, set fresh countdown from new shift bits.
-            self.sweep_calc_countdown = new_shift;
-            self.unshifted_sweep = new_shift == 0;
-            self.instant_calc_done = new_shift == 0;
+            if self.sweep_calc_countdown == 0 {
+                self.sweep_calc_reload_timer = 0;
+            }
+        }
+
+        // Condition 2: shift transitions 0 → non-zero with !lf_div and
+        // countdown > 1.
+        if new_shift != 0 && old_shift == 0 && !lf_div && self.sweep_calc_countdown > 1 {
+            self.sweep_calc_countdown -= 1;
+            if self.sweep_calc_countdown == 0 {
+                self.sweep_calculation_done();
+            }
         }
     }
 
@@ -1780,10 +1784,10 @@ mod tests {
     }
 
     #[test]
-    fn test_nr10_write_glitch_corrupts_inflight_calc_countdown() {
-        // Phase 6: nr10_write_glitch (CGB-D/E branch) — when NR10 is
-        // rewritten while a calc countdown is in flight, the new shift bits
-        // overwrite the in-flight countdown.
+    fn test_nr10_write_glitch_reload_timer_2_resets_countdown() {
+        // Phase 7 / D5: SameBoy CGB-D/E nr10_write_glitch condition 1 —
+        // when reload_timer == 2 (countdown was just reloaded), an NR10
+        // write reloads the calc countdown from the new shift bits.
         let mut ch = Channel1::new();
         ch.set_model(true, CgbModel::CgbE);
         ch.force_deferred_sweep_for_tests = true;
@@ -1791,17 +1795,79 @@ mod tests {
         ch.write_nr10(0x14, false); // period=1, shift=4
         ch.write_nr13(0x10);
         ch.write_nr14(0x80, false, false);
-        ch.clock_sweep(false); // arm with shift=4
-        // Force the reload timer to drain so we're in calc-countdown phase.
-        ch.sweep_calc_reload_timer = 0;
-        let before = ch.sweep_calc_countdown;
-        assert_eq!(before, 4);
-        // Rewrite NR10 with shift=2 — glitch must overwrite countdown.
-        ch.write_nr10(0x12, false);
+        // Place machinery in the post-reload state.
+        ch.sweep_calc_countdown = 4;
+        ch.sweep_calc_reload_timer = 2;
+        ch.write_nr10(0x12, false); // new shift=2 (countdown!=7 → no re-arm)
         assert_eq!(
             ch.sweep_calc_countdown, 2,
-            "NR10 mid-flight write must reload calc_countdown from new shift"
+            "reload_timer==2: countdown must reload from new shift bits"
         );
+    }
+
+    #[test]
+    fn test_nr10_write_glitch_reload_timer_2_zero_shift_clears_timer() {
+        // Phase 7 / D5: SameBoy clears reload_timer when new shift bits
+        // are zero on the reload_timer==2 path.
+        let mut ch = Channel1::new();
+        ch.set_model(true, CgbModel::CgbE);
+        ch.force_deferred_sweep_for_tests = true;
+        ch.write_nr12(0xF0);
+        ch.write_nr10(0x14, false);
+        ch.write_nr13(0x10);
+        ch.write_nr14(0x80, false, false);
+        ch.sweep_calc_countdown = 4;
+        ch.sweep_calc_reload_timer = 2;
+        ch.write_nr10(0x10, false); // new shift=0
+        assert_eq!(ch.sweep_calc_countdown, 0);
+        assert_eq!(
+            ch.sweep_calc_reload_timer, 0,
+            "shift=0 on reload_timer==2 path must clear reload_timer"
+        );
+    }
+
+    #[test]
+    fn test_nr10_write_glitch_zombie_step_decrements_countdown() {
+        // Phase 7 / D5: SameBoy CGB-D/E nr10_write_glitch condition 2 —
+        // when the new shift transitions 0 → non-zero, lf_div is false,
+        // and countdown > 1, the countdown is decremented.
+        let mut ch = Channel1::new();
+        ch.set_model(true, CgbModel::CgbE);
+        ch.force_deferred_sweep_for_tests = true;
+        ch.write_nr12(0xF0);
+        ch.write_nr10(0x10, false); // period=1, shift=0 (old)
+        ch.write_nr13(0x10);
+        ch.write_nr14(0x80, false, false);
+        // Set up running-calc state with old shift=0.
+        ch.sweep_calc_countdown = 3;
+        ch.sweep_calc_reload_timer = 0;
+        ch.write_nr10(0x12, false); // new shift=2, lf_div=false
+        assert_eq!(
+            ch.sweep_calc_countdown, 2,
+            "zombie-step: countdown must decrement"
+        );
+    }
+
+    #[test]
+    fn test_nr10_write_glitch_no_op_outside_both_conditions() {
+        // Phase 7 / D5: when neither SameBoy condition matches, the calc
+        // machinery is untouched. Setup: reload_timer=3 (≠2) and old shift
+        // already non-zero (zombie-step requires old shift==0).
+        let mut ch = Channel1::new();
+        ch.set_model(true, CgbModel::CgbE);
+        ch.force_deferred_sweep_for_tests = true;
+        ch.write_nr12(0xF0);
+        ch.write_nr10(0x14, false); // period=1, shift=4 (non-zero old)
+        ch.write_nr13(0x10);
+        ch.write_nr14(0x80, false, false);
+        ch.sweep_calc_countdown = 4;
+        ch.sweep_calc_reload_timer = 3;
+        ch.write_nr10(0x12, false); // new shift=2; conditions fail
+        assert_eq!(
+            ch.sweep_calc_countdown, 4,
+            "no-op default: countdown must be unchanged"
+        );
+        assert_eq!(ch.sweep_calc_reload_timer, 3);
     }
 
     // ── Output level ──────────────────────────────────────────────────────
