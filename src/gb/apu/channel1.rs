@@ -350,21 +350,21 @@ impl Channel1 {
         if self.sweep_period == 0 {
             return;
         }
-        // Apply the previously-completed addend to the live frequency.
-        // We use `completed_addend` (set at the end of the previous
-        // `sweep_calculation_done`) rather than `sweep_length_addend`, since
-        // the latter may have been overwritten by an in-flight calc that has
-        // not yet completed (e.g., via NR10 rewrite paths). This keeps the
-        // writeback semantically tied to the *last fully-completed* addend.
+        // Apply the running sweep_length_addend to the live frequency.
+        // SameBoy `trigger_sweep_calculation` (Core/apu.c L621-624):
+        //   sample_length = sweep_length_addend + shadow_sweep_sample_length
+        //                 + !!(NR10 & 0x8)
+        // After `sweep_calculation_done` runs, `sweep_length_addend` already
+        // holds the (possibly-negated) value to apply.
         if self.sweep_shift > 0 {
             let neg_bit: u16 = if self.sweep_negate { 1 } else { 0 };
             self.freq = self
-                .completed_addend
+                .sweep_length_addend
                 .wrapping_add(self.sweep_shadow)
                 .wrapping_add(neg_bit)
                 & 0x7FF;
             trace_apu!(3; "GB APU CH1 sweep writeback shadow=0x{:03X} addend=0x{:03X} freq=0x{:03X}",
-                self.sweep_shadow, self.completed_addend, self.freq);
+                self.sweep_shadow, self.sweep_length_addend, self.freq);
         }
         // Recompute the shifted addend from the (newly written) freq, only
         // when the channel is not in its post-trigger restart-hold window.
@@ -820,6 +820,10 @@ impl Channel1 {
         self.unshifted_sweep = false;
         self.instant_calc_done = false;
         if self.uses_deferred_sweep() {
+            // SameBoy clears `shadow_sweep_sample_length` on trigger; it
+            // is lazily refreshed by `sweep_calculation_done` once
+            // `channel_1_restart_hold` drains.
+            self.sweep_shadow = 0;
             // SameBoy NR14 trigger sweep init (`Core/apu.c`):
             //   if (NR10 & 7) {
             //       calc_countdown = NR10 & 7;
@@ -1286,43 +1290,40 @@ mod tests {
     }
 
     #[test]
-    fn test_arm_does_not_immediately_change_freq() {
-        // Phase 4: clock_sweep must only ARM the recalc; freq stays put on
-        // the very first sweep tick after trigger (completed_addend == 0).
+    fn test_arm_writeback_uses_sweep_length_addend_and_shadow() {
+        // Phase 7 / D3+D4: SameBoy writeback formula is
+        //   sample_length = sweep_length_addend + shadow + neg_bit
+        // (shadow is 0 immediately after trigger, refreshed by the first
+        // sweep_calculation_done call when restart_hold drains).
         let mut ch = Channel1::new();
         ch.set_model(true, CgbModel::CgbE);
         ch.force_deferred_sweep_for_tests = true;
         ch.write_nr12(0xF0);
         ch.write_nr10(0x11, false); // period=1, shift=1, negate=0
         ch.write_nr13(0x64); // freq = 100
-        ch.write_nr14(0x80, false, false); // trigger
-        // Drain restart_hold (post-trigger sweep suppression window).
+        ch.write_nr14(0x80, false, false); // trigger → shadow=0, addend=50
         for _ in 0..8 {
             ch.tick();
         }
-        let freq_before = ch.freq;
-        ch.clock_sweep(false); // arm
+        ch.clock_sweep(false); // arm #1: freq = 50 + 0 = 50
         assert_eq!(
-            ch.freq, freq_before,
-            "freq must not change on the first sweep arm (no completed_addend yet)"
+            ch.freq, 50,
+            "first arm: sweep_length_addend(50) + shadow(0) = 50"
         );
-        // After draining and a SECOND arm, the writeback applies the
-        // previously-computed addend.
         drain_sweep(&mut ch);
-        ch.clock_sweep(false);
-        // shadow=100, completed_addend = 100>>1 = 50 → freq = 100 + 50 = 150.
+        ch.clock_sweep(false); // arm #2: freq = 25 + 50 = 75
         assert_eq!(
-            ch.freq, 150,
-            "second arm must write back shadow + completed_addend"
+            ch.freq, 75,
+            "second arm: completed_addend(25) + shadow(50) = 75"
         );
     }
 
     #[test]
     fn test_sweep_negate_writeback_uses_ones_complement() {
-        // Phase 5: in negate mode, sweep_calculation_done flips the addend
+        // Phase 7: in negate mode, sweep_calculation_done flips the addend
         // to its 1's complement so the next writeback subtracts. Verify the
-        // observable effect: after a full arm/drain/arm cycle, freq has
-        // *decreased* relative to shadow.
+        // observable effect: after multiple arm/drain cycles, freq is below
+        // its initial value.
         let mut ch = Channel1::new();
         ch.set_model(true, CgbModel::CgbE);
         ch.force_deferred_sweep_for_tests = true;
@@ -1333,24 +1334,24 @@ mod tests {
         for _ in 0..8 {
             ch.tick();
         }
-        let shadow_before = ch.sweep_shadow;
+        let freq_initial = 100u16;
         ch.clock_sweep(false); // arm #1
         drain_sweep(&mut ch);
-        ch.clock_sweep(false); // arm #2 → writeback
+        ch.clock_sweep(false); // arm #2 → negated writeback
+        drain_sweep(&mut ch);
+        ch.clock_sweep(false); // arm #3 → further reduction
         assert!(
-            ch.freq < shadow_before,
-            "negate writeback must reduce freq below shadow (got freq={}, shadow={})",
-            ch.freq,
-            shadow_before
+            ch.freq < freq_initial,
+            "negate writeback must reduce freq below initial (got freq={})",
+            ch.freq
         );
     }
 
     #[test]
     fn test_sweep_overflow_disables_channel_via_completed_addend() {
-        // Phase 5: with shift=2, trigger-time check passes (1500 + 375 =
-        // 1875 ≤ 0x7FF), but after arm/drain/arm, the writeback raises
-        // freq high enough that the next sweep_calculation_done detects
-        // overflow and disables the channel.
+        // Phase 7: SameBoy deferred-path overflow check fires inside
+        // sweep_calculation_done when shadow + sweep_length_addend > 0x7FF.
+        // Iterating arm/drain cycles raises the running freq until overflow.
         let mut ch = Channel1::new();
         ch.set_model(true, CgbModel::CgbE);
         ch.force_deferred_sweep_for_tests = true;
@@ -1359,12 +1360,12 @@ mod tests {
         ch.write_nr13(0xDC);
         ch.write_nr14(0x85, false, false); // freq=0x5DC=1500, trigger
         assert_eq!(ch.freq, 0x5DC);
-        assert!(ch.is_active(), "trigger must not disable: 1500+375 ≤ 0x7FF");
+        assert!(ch.is_active(), "trigger must not disable on first pass");
         for _ in 0..8 {
             ch.tick();
         }
-        // Run multiple arm/drain cycles until overflow is detected.
-        for _ in 0..4 {
+        // Run arm/drain cycles until overflow is detected (≤ 16 cycles).
+        for _ in 0..16 {
             ch.clock_sweep(false);
             drain_sweep(&mut ch);
             if !ch.is_active() {
@@ -1581,6 +1582,45 @@ mod tests {
         assert_eq!(
             ch.sweep_length_addend, 0,
             "trigger with shift=0 must zero sweep_length_addend"
+        );
+    }
+
+    // ── Phase 7 / D3: trigger zeros sweep_shadow on deferred path ────────
+    //
+    // SameBoy `Core/apu.c` NR14 trigger: `shadow_sweep_sample_length = 0`.
+    // The shadow is then lazily refreshed by the first sweep_calculation_done
+    // call after `channel_1_restart_hold` drains. The synchronous path
+    // (DMG / pre-CGB-E) keeps the legacy `shadow = freq` semantics so the
+    // inline trigger-time overflow check works as before.
+
+    #[test]
+    fn test_trigger_zeros_shadow_on_deferred_path() {
+        let mut ch = Channel1::new();
+        ch.set_model(true, CgbModel::CgbE);
+        ch.force_deferred_sweep_for_tests = true;
+        ch.write_nr12(0xF0);
+        ch.write_nr10(0x12, false); // period=1, shift=2
+        ch.write_nr13(0x40);
+        ch.write_nr14(0x82, false, false); // freq = 0x240
+        assert_eq!(
+            ch.sweep_shadow, 0,
+            "trigger on deferred path must zero shadow (SameBoy parity)"
+        );
+    }
+
+    #[test]
+    fn test_trigger_loads_shadow_from_freq_on_synchronous_path() {
+        // Synchronous path: trigger continues to seed shadow from freq so
+        // the inline overflow check operates against a meaningful value.
+        let mut ch = Channel1::new();
+        ch.set_model(false, CgbModel::CgbE); // DMG-mode → synchronous path
+        ch.write_nr12(0xF0);
+        ch.write_nr10(0x12, false);
+        ch.write_nr13(0x40);
+        ch.write_nr14(0x82, false, false); // freq = 0x240
+        assert_eq!(
+            ch.sweep_shadow, 0x240,
+            "synchronous path must seed shadow from freq on trigger"
         );
     }
 
