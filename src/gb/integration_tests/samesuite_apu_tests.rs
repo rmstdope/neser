@@ -142,19 +142,19 @@ samesuite_apu_test!(
     test_samesuite_apu_channel_1_sweep,
     &format!("{BASE}/channel_1/channel_1_sweep.gb"),
     SameSuiteHardware::Cgb(CgbModel::CgbE),
-    "Issue #2287: deferred recalc + completed_addend + NR10 glitch in place; ROM still reports B (0x42) — additional CGB-E sweep quirks pending"
+    "Issue #2293: D1-D5 SameBoy parity ports applied (cadence, trigger arm, shadow init, writeback formula, nr10_write_glitch). ROM still reports B (0x42); additional CGB-E sweep quirks pending — see #2293 follow-up"
 );
 samesuite_apu_test!(
     test_samesuite_apu_channel_1_sweep_restart,
     &format!("{BASE}/channel_1/channel_1_sweep_restart.gb"),
     SameSuiteHardware::Cgb(CgbModel::CgbE),
-    "Issue #2287: deferred recalc machinery in place; ROM still reports B (0x42)"
+    "Issue #2293: D1-D5 SameBoy parity ports applied; ROM still reports B (0x42) — see #2293 follow-up"
 );
 samesuite_apu_test!(
     test_samesuite_apu_channel_1_sweep_restart_2,
     &format!("{BASE}/channel_1/channel_1_sweep_restart_2.gb"),
     SameSuiteHardware::Cgb(CgbModel::CgbE),
-    "Issue #2287: deferred recalc machinery in place; ROM still reports B (0x42)"
+    "Issue #2293: D1-D5 SameBoy parity ports applied; ROM still reports B (0x42) — see #2293 follow-up"
 );
 samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_1_volume,
