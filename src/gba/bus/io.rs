@@ -301,6 +301,22 @@ impl IoRegisters {
             dma.write8(addr, value);
             return;
         }
+        // PPU affine BG registers (0x0400_0020..=0x0400_003E) are also
+        // write-only on hardware. Reads fall through to the I/O backing
+        // store (zero), so the generic read-modify-write would clobber
+        // the untouched byte. Merge against the PPU's live affine state
+        // instead.
+        if (0x0400_0020..=0x0400_003E).contains(&addr) {
+            let aligned = addr & !1;
+            let current = ppu.read_affine(aligned).unwrap_or(0);
+            let merged = if addr & 1 == 0 {
+                (current & 0xFF00) | value as u16
+            } else {
+                (current & 0x00FF) | ((value as u16) << 8)
+            };
+            ppu.write_affine(aligned, merged);
+            return;
+        }
         let aligned = addr & !1;
         let current = self.read16(aligned, ic, timers, dma, ppu, keypad);
         let merged = if addr & 1 == 0 {
@@ -373,13 +389,77 @@ mod tests {
         );
 
         // PPU side has the live values.
-        assert_eq!(p.bg_affine(0).pa, 0x0100);
-        assert_eq!(p.bg_affine(1).y, -1);
+        assert_eq!(p.bg_affine(0).expect("BG2 affine").pa, 0x0100);
+        assert_eq!(p.bg_affine(1).expect("BG3 affine").y, -1);
 
         // Bus-side reads return open-bus / backing-store zero, NOT the
         // latched PPU value (write-only register).
         assert_eq!(io.read16(ppu::REG_BG2PA, &ic, &t, &d, &p, &k), 0);
         assert_eq!(io.read16(ppu::REG_BG3Y_L, &ic, &t, &d, &p, &k), 0);
+    }
+
+    #[test]
+    fn affine_bg_byte_writes_merge_into_live_ppu_state() {
+        // Affine BG registers are write-only: io.read16 returns 0. A
+        // generic read-modify-write byte path would therefore clobber
+        // the previously-written byte. Verify that two byte writes to
+        // BG2PA preserve each other.
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        // Low byte first, then high byte — the high byte must not
+        // wipe out the previously-written low byte.
+        io.write8(
+            ppu::REG_BG2PA,
+            0x34,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+        io.write8(
+            ppu::REG_BG2PA + 1,
+            0x12,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+        assert_eq!(p.bg_affine(0).expect("BG2 affine").pa as u16, 0x1234);
+
+        // Same for an X reference-point halfword (low halfword).
+        io.write8(
+            ppu::REG_BG2X_L,
+            0xCD,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+        io.write8(
+            ppu::REG_BG2X_L + 1,
+            0xAB,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+        assert_eq!(
+            (p.bg_affine(0).expect("BG2 affine").x as u32) & 0xFFFF,
+            0xABCD
+        );
+
+        // Bus-side reads remain open-bus / backing-store zero.
+        assert_eq!(io.read16(ppu::REG_BG2PA, &ic, &t, &d, &p, &k), 0);
+        assert_eq!(io.read16(ppu::REG_BG2X_L, &ic, &t, &d, &p, &k), 0);
     }
 
     #[test]

@@ -269,8 +269,39 @@ impl Ppu {
     /// Borrow the affine register file for BG2 (`bg`=0) or BG3 (`bg`=1).
     /// Used by the affine renderer (and tests) to read the latched
     /// parameters and reference points.
-    pub fn bg_affine(&self, bg: usize) -> &BgAffine {
-        &self.bg_affine[bg]
+    ///
+    /// Returns `None` if `bg` is not a valid affine background index.
+    pub fn bg_affine(&self, bg: usize) -> Option<&BgAffine> {
+        self.bg_affine.get(bg)
+    }
+
+    /// Read the current value of an affine BG register as a halfword.
+    /// Returns `None` if `addr` is not in the affine BG window
+    /// (`0x0400_0020..=0x0400_003E`).
+    ///
+    /// These registers are write-only on real hardware (CPU reads
+    /// fall through to open-bus / I/O backing store). This accessor
+    /// exposes the *internal* latched value so that byte-granular
+    /// writes can be implemented as read-modify-write of the live
+    /// affine state without losing the previously-written byte.
+    pub fn read_affine(&self, addr: u32) -> Option<u16> {
+        let bg = match addr {
+            0x0400_0020..=0x0400_002F => 0,
+            0x0400_0030..=0x0400_003F => 1,
+            _ => return None,
+        };
+        let a = &self.bg_affine[bg];
+        Some(match addr & 0x000F {
+            0x0 => a.pa as u16,
+            0x2 => a.pb as u16,
+            0x4 => a.pc as u16,
+            0x6 => a.pd as u16,
+            0x8 => (a.x as u32) as u16,
+            0xA => ((a.x as u32) >> 16) as u16,
+            0xC => (a.y as u32) as u16,
+            0xE => ((a.y as u32) >> 16) as u16,
+            _ => return None,
+        })
     }
 
     /// Write a halfword to one of the 16 affine BG registers
@@ -831,18 +862,25 @@ mod tests {
         assert!(ppu.write_affine(REG_BG3PA, 0x0040));
         assert!(ppu.write_affine(REG_BG3PD, 0x0040));
 
-        let bg2 = ppu.bg_affine(0);
+        let bg2 = ppu.bg_affine(0).expect("BG2 affine state must exist");
         assert_eq!(bg2.pa, 0x0100);
         assert_eq!(bg2.pb, -256);
         assert_eq!(bg2.pc, 0x0080);
         assert_eq!(bg2.pd, 0x0100);
 
-        let bg3 = ppu.bg_affine(1);
+        let bg3 = ppu.bg_affine(1).expect("BG3 affine state must exist");
         assert_eq!(bg3.pa, 0x0040);
         assert_eq!(bg3.pd, 0x0040);
         // BG3 must not have inherited BG2's parameters.
         assert_eq!(bg3.pb, 0);
         assert_eq!(bg3.pc, 0);
+    }
+
+    #[test]
+    fn bg_affine_returns_none_for_out_of_range_index() {
+        let ppu = Ppu::new();
+        assert!(ppu.bg_affine(2).is_none());
+        assert!(ppu.bg_affine(usize::MAX).is_none());
     }
 
     #[test]
@@ -855,7 +893,7 @@ mod tests {
         assert!(ppu.write_affine(REG_BG2Y_L, 0xFFFF));
         assert!(ppu.write_affine(REG_BG2Y_H, 0x0FFF));
 
-        let bg2 = ppu.bg_affine(0);
+        let bg2 = ppu.bg_affine(0).expect("BG2 affine state must exist");
         assert_eq!(bg2.x, 0x0005_1234);
         assert_eq!(bg2.y, -1);
     }
@@ -866,7 +904,7 @@ mod tests {
         // 0x0400_0000 (DISPCNT) is not an affine register.
         assert!(!ppu.write_affine(REG_DISPCNT, 0xFFFF));
         // Affine state must remain at default.
-        let bg2 = ppu.bg_affine(0);
+        let bg2 = ppu.bg_affine(0).expect("BG2 affine state must exist");
         assert_eq!(bg2.pa, 0);
         assert_eq!(bg2.x, 0);
     }
