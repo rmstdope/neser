@@ -236,6 +236,25 @@ impl CgbBus {
         bus.ppu.write_register(0xFF4A, 0x00);
         bus.ppu.write_register(0xFF4B, 0x00);
 
+        // When skipping the boot ROM, initialize additional registers to post-boot state.
+        // These values match what the official CGB boot ROM leaves at PC=$0100.
+        // Reference: Mooneye boot_hwio-C test (verified on real CGB hardware).
+        //
+        // Note: KEY1 is NOT initialized here because:
+        // - KEY1=$81 would put the system in double-speed mode (bit 7 set)
+        // - Pan Docs states "CGB is operating in Normal Speed Mode when first turned on"
+        // - The Mooneye boot_hwio-C test's KEY1=$FF expectation may be for a specific
+        //   scenario that doesn't apply to standard post-boot state.
+        if skip_boot_rom {
+            // SVBK ($FF70): reads as $FF when svbk = $07
+            //   (read formula: svbk | 0xF8 = 0x07 | 0xF8 = $FF)
+            bus.svbk = 0x07;
+            // BCPS ($FF68): $C8 (auto-increment + index $48)
+            // OCPS ($FF6A): $D0 (auto-increment + index $50)
+            bus.ppu.write_cgb_register(0xFF68, 0xC8);
+            bus.ppu.write_cgb_register(0xFF6A, 0xD0);
+        }
+
         // Initialize DIV to post-boot value for CGB models.
         // The internal 16-bit counter value must be precisely set for Mooneye
         // boot_div tests to pass. These tests verify the exact phase alignment
@@ -1126,7 +1145,17 @@ mod tests {
         load_cartridge(&rom).expect("valid ROM")
     }
 
+    /// Create a CgbBus with boot ROM active (skip_boot_rom=false).
+    /// This tests hardware DEFAULT values, not post-boot values.
+    /// Use this for unit tests that verify register defaults and hardware functionality.
     fn make_bus() -> CgbBus {
+        CgbBus::new(cgb_rom_only_cart(), CgbModel::default(), false)
+    }
+
+    /// Create a CgbBus with post-boot state (skip_boot_rom=true).
+    /// Use this for tests that verify post-boot register values.
+    #[allow(dead_code)]
+    fn make_bus_post_boot() -> CgbBus {
         CgbBus::new(cgb_rom_only_cart(), CgbModel::default(), true)
     }
 
@@ -1162,12 +1191,11 @@ mod tests {
     }
 
     #[test]
-    fn test_hdma5_read_80_when_inactive() {
-        // Given: CgbBus with no transfer started
+    fn test_hdma5_read_ff_when_never_started() {
+        // Given: CgbBus with no transfer ever started (make_bus uses boot ROM active)
         let mut bus = make_bus();
-        // Then: $FF55 reads $80 (inactive + 0 remaining)
-        // Note: remaining_blocks initialized to 0, so read returns $80
-        assert_eq!(bus.read(0xFF55), 0x80);
+        // Then: $FF55 reads $FF (never_started flag set, per Mooneye boot_hwio-C)
+        assert_eq!(bus.read(0xFF55), 0xFF);
     }
 
     // ── GDMA tests ──────────────────────────────────────────────────────────
