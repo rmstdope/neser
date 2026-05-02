@@ -101,7 +101,11 @@ jobs:
         with:
           submodules: true
       - name: Install native frontend system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libdbus-1-dev
+        run: |
+          for i in 1 2 3; do
+            sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libdbus-1-dev && break
+            echo "apt attempt $i failed (transient network); retrying after 15s..." && sleep 15
+          done
       - name: Cache Rust dependencies and build outputs
         uses: Swatinem/rust-cache@v2
 
@@ -161,7 +165,11 @@ jobs:
         with:
           submodules: true
       - name: Install native frontend system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libdbus-1-dev
+        run: |
+          for i in 1 2 3; do
+            sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libdbus-1-dev && break
+            echo "apt attempt $i failed (transient network); retrying after 15s..." && sleep 15
+          done
       - name: Cache Rust dependencies and build outputs
         uses: Swatinem/rust-cache@v2
       - name: Run clippy (PR fast path)
@@ -178,7 +186,11 @@ jobs:
         with:
           submodules: true
       - name: Install native frontend system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libdbus-1-dev
+        run: |
+          for i in 1 2 3; do
+            sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libdbus-1-dev && break
+            echo "apt attempt $i failed (transient network); retrying after 15s..." && sleep 15
+          done
       - name: Cache Rust dependencies and build outputs
         uses: Swatinem/rust-cache@v2
       - name: Run clippy (main full coverage)
