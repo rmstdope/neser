@@ -264,10 +264,18 @@ jobs:
           key: playwright-chromium-${{ hashFiles('package-lock.json') }}
       - name: Install Playwright Chromium
         if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: npx playwright install --with-deps chromium
+        run: |
+          for i in 1 2 3; do
+            npx playwright install --with-deps chromium && break
+            echo "Playwright install attempt $i failed (transient network); retrying after 15s..." && sleep 15
+          done
       - name: Install Playwright system dependencies
         if: steps.playwright-cache.outputs.cache-hit == 'true'
-        run: npx playwright install-deps chromium
+        run: |
+          for i in 1 2 3; do
+            npx playwright install-deps chromium && break
+            echo "Playwright install-deps attempt $i failed (transient network); retrying after 15s..." && sleep 15
+          done
       - name: Build WASM
         run: |
           cargo build --release --target wasm32-unknown-unknown --no-default-features --features wasm
