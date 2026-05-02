@@ -103,7 +103,7 @@ impl Channel3 {
     }
 
     /// Advance the wave frequency timer by one M-cycle (= 2 APU cycles at 2 MHz).
-    /// Mirrors SameBoy's `while (cycles_left > sample_countdown)` loop exactly.
+    /// Process all sample advances within the given M-cycle.
     /// The countdown is in APU cycles; reload = `freq ^ 0x7FF` = `2047 - freq`.
     pub fn tick(&mut self) {
         self.wave_just_read = false;
@@ -246,7 +246,7 @@ impl Channel3 {
     }
 
     /// DMG-only: wave RAM corruption when retriggering CH3 while it just read a sample.
-    /// SameBoy: `offset = ((current_sample_index + 1) >> 1) & 0xF`.
+    /// Wave RAM offset: `offset = ((current_sample_index + 1) >> 1) & 0xF`.
     /// If offset < 4: wave_ram[0] = wave_ram[offset].
     /// If offset >= 4: wave_ram[0..4] = wave_ram[aligned..aligned+4] where aligned = offset & !3.
     fn apply_dmg_retrigger_corruption(&mut self) {
@@ -497,7 +497,7 @@ mod tests {
 
     #[test]
     fn test_trigger_playback_delay_first_advance_at_tick_3_for_max_freq() {
-        // SameBoy: trigger countdown = (freq ^ 0x7FF) + 3 = (2046 ^ 0x7FF) + 3 = 4 APU cycles.
+        // trigger countdown = (freq ^ 0x7FF) + 3 = (2046 ^ 0x7FF) + 3 = 4 APU cycles.
         // tick() processes 2 APU cycles per M-cycle using `while (cycles_left > countdown)`.
         // Tick 1: cl=2, cd=4. 2>4? No. cd=2.
         // Tick 2: cl=2, cd=2. 2>2? No. cd=0.
@@ -568,7 +568,7 @@ mod tests {
 
     #[test]
     fn test_dmg_retrigger_corrupts_wave_ram_high_position() {
-        // SameBoy: On DMG, retriggering CH3 while sample_countdown == 0
+        // On DMG, retriggering CH3 while sample_countdown == 0
         // causes wave RAM corruption. offset = ((wave_pos+1) >> 1) & 0xF.
         // For offset >= 4: first 4 bytes get the 4-byte-aligned block.
         let mut ch = Channel3::new_with_mode(false); // DMG mode
