@@ -113,6 +113,7 @@ pub mod dispstat {
 
 /// I/O register addresses owned by the PPU.
 pub const REG_DISPCNT: u32 = 0x0400_0000;
+pub const REG_BG0CNT: u32 = 0x0400_0008;
 pub const REG_DISPSTAT: u32 = 0x0400_0004;
 pub const REG_VCOUNT: u32 = 0x0400_0006;
 pub const REG_BG0HOFS: u32 = 0x0400_0010;
@@ -174,6 +175,8 @@ pub struct Ppu {
     /// The low 3 bits (V-Blank/H-Blank/V-Count flags) are status owned
     /// by the PPU; software writes to them are ignored.
     dispstat: u16,
+    /// `BG0CNT` (0x0400_0008) — BG0 control.
+    bg0cnt: u16,
     /// Current scanline (`VCOUNT`, 0x0400_0006). Wraps at
     /// [`SCANLINES_PER_FRAME`].
     vcount: u16,
@@ -209,6 +212,7 @@ impl Ppu {
         let mut ppu = Self {
             dispcnt: 0,
             dispstat: 0,
+            bg0cnt: 0,
             vcount: 0,
             line_cycle: 0,
             framebuffer: vec![0; FRAMEBUFFER_BYTES],
@@ -239,6 +243,11 @@ impl Ppu {
         self.dispstat
     }
 
+    /// Read `BG0CNT`.
+    pub fn read_bg0cnt(&self) -> u16 {
+        self.bg0cnt
+    }
+
     /// Write `DISPSTAT`. Only the IRQ enables (bits 3..5) and V-Count
     /// setting (bits 8..15) are settable; the read-only status bits
     /// retain their PPU-owned values. Writing `DISPSTAT` may change LYC,
@@ -249,6 +258,11 @@ impl Ppu {
         let status = self.dispstat & dispstat::STATUS_MASK;
         self.dispstat = status | (value & dispstat::WRITE_MASK);
         self.update_vcount_match_flag(Some(ic));
+    }
+
+    /// Write `BG0CNT`.
+    pub fn write_bg0cnt(&mut self, value: u16) {
+        self.bg0cnt = value;
     }
 
     /// Read `VCOUNT`.
@@ -491,15 +505,31 @@ impl Ppu {
         }
 
         let backdrop = self.backdrop_bgr555(pram);
+        let bg_size = (self.bg0cnt >> 14) & 0x0003;
+        let (width_tiles, height_tiles) = match bg_size {
+            0 => (32usize, 32usize),
+            1 => (64usize, 32usize),
+            2 => (32usize, 64usize),
+            _ => (64usize, 64usize),
+        };
+        let width_mask = width_tiles * 8 - 1;
+        let height_mask = height_tiles * 8 - 1;
+        let screenblock_base = (((self.bg0cnt >> 8) & 0x001F) as usize) * 0x800;
+        let charblock_base = (((self.bg0cnt >> 2) & 0x0003) as usize) * 16 * 1024;
         let row_start = (y as usize) * (SCREEN_WIDTH as usize) * BYTES_PER_PIXEL;
-        let screen_y = ((y as usize) + self.bg0_scroll.1 as usize) & 0xFF;
+        let screen_y = ((y as usize) + self.bg0_scroll.1 as usize) & height_mask;
 
         for x in 0..(SCREEN_WIDTH as usize) {
-            let screen_x = (x + self.bg0_scroll.0 as usize) & 0xFF;
+            let screen_x = (x + self.bg0_scroll.0 as usize) & width_mask;
             let tile_x = screen_x >> 3;
             let tile_y = screen_y >> 3;
-            let map_index = tile_y * 32 + tile_x;
-            let map_off = map_index * 2;
+            let screenblock_x = tile_x >> 5;
+            let screenblock_y = tile_y >> 5;
+            let screenblock = screenblock_y * (width_tiles >> 5) + screenblock_x;
+            let local_tile_x = tile_x & 31;
+            let local_tile_y = tile_y & 31;
+            let map_off =
+                screenblock_base + screenblock * 0x800 + (local_tile_y * 32 + local_tile_x) * 2;
 
             let entry = if map_off + 1 < vram.len() {
                 u16::from_le_bytes([vram[map_off], vram[map_off + 1]])
@@ -521,7 +551,7 @@ impl Ppu {
             } else {
                 screen_y & 7
             };
-            let tile_addr = tile_id * 32 + pixel_y * 4 + (pixel_x >> 1);
+            let tile_addr = charblock_base + tile_id * 32 + pixel_y * 4 + (pixel_x >> 1);
 
             let palette_index = vram
                 .get(tile_addr)
