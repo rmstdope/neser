@@ -364,11 +364,17 @@ fn run_native_frontend(
             console
         }
         platform::emulator::SystemType::Gba => {
-            // GBA ROM loading not yet implemented
+            let mut console = platform::emulator::Console::new_gba(app_context.clone());
+            if let Err(err) = console.load_rom(&rom_bytes, &rom_path) {
+                app_context
+                    .borrow_mut()
+                    .add_toast(cartridge_load_toast_message(&rom_path, false));
+                return Err(err.into());
+            }
             app_context
                 .borrow_mut()
-                .add_toast(cartridge_load_toast_message(&rom_path, false));
-            return Err("GBA emulation not yet implemented".into());
+                .add_toast(cartridge_load_toast_message(&rom_path, true));
+            console
         }
     };
     let mut console = console;
@@ -422,6 +428,8 @@ fn detect_system_type(path: &str) -> platform::emulator::SystemType {
         .unwrap_or("");
     if ext.eq_ignore_ascii_case("gb") || ext.eq_ignore_ascii_case("gbc") {
         platform::emulator::SystemType::GameBoy
+    } else if ext.eq_ignore_ascii_case("gba") {
+        platform::emulator::SystemType::Gba
     } else {
         platform::emulator::SystemType::Nes
     }
@@ -457,6 +465,11 @@ mod tests {
     #[test]
     fn detect_system_type_uppercase_gb_returns_gameboy() {
         assert_eq!(detect_system_type("TETRIS.GB"), SystemType::GameBoy);
+    }
+
+    #[test]
+    fn detect_system_type_gba_extension_returns_gba() {
+        assert_eq!(detect_system_type("zelda.gba"), SystemType::Gba);
     }
 
     #[test]

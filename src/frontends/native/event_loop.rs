@@ -17,7 +17,7 @@ use crate::platform::audio::{EmulatorAudio, normalize_nes_sample};
 use crate::platform::autorun::AutorunMode;
 use crate::platform::autorun::state::AutorunState;
 use crate::platform::debugging::Tracing;
-use crate::platform::emulator::Console;
+use crate::platform::emulator::{Console, Emulator};
 use crate::platform::frontend_toasts::{
     gamepad_connected_toast_message, gamepad_disconnected_toast_message, gamepad_init_toast_message,
 };
@@ -228,8 +228,17 @@ impl NativeEventLoop {
             Console::GameBoy(gb) => {
                 gb.run_frame_with_debugger(&mut self.gb_debugger_controller, &audio_cell);
             }
-            Console::GameBoyAdvance(_) => {
-                // GBA frame execution not yet implemented
+            Console::GameBoyAdvance(gba) => {
+                while !gba.is_ready_to_render() {
+                    let _ = gba.run_tick();
+                    if let Some(ref mut audio) = *audio_cell.borrow_mut() {
+                        while gba.sample_ready() {
+                            if let Some(sample) = gba.get_sample() {
+                                audio.queue_sample(sample);
+                            }
+                        }
+                    }
+                }
             }
         }
         self.audio = audio_cell.into_inner();

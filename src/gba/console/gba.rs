@@ -3,13 +3,16 @@
 //! `Gba` provides the platform interface for GBA emulation, implementing the
 //! [`Emulator`] trait so frontends can drive it through [`Console`].
 //!
-//! This is currently a stub implementation — actual CPU, PPU, APU, and memory
-//! subsystems will be added in subsequent phases.
+//! ROM loading is implemented so GBA cartridges can be inserted from the
+//! platform startup flow. `run_tick` executes one ARM7TDMI instruction and
+//! advances bus peripherals by the consumed cycles.
 //!
 //! [`Emulator`]: crate::platform::emulator::Emulator
 //! [`Console`]: crate::platform::emulator::Console
 
 use crate::gba::GbaBus;
+use crate::gba::cartridge::load_cartridge;
+use crate::gba::cpu::Arm7tdmi;
 use crate::platform::app_context::{IntoSharedAppContext, SharedAppContext};
 use crate::platform::emulator::{Emulator, SystemType};
 use std::time::Duration;
@@ -22,17 +25,17 @@ const SCREEN_HEIGHT: u32 = 160;
 /// GBA frame duration (~59.7275 Hz refresh rate).
 /// CPU clock: 16.78 MHz, 280896 cycles per frame → 16.743 ms per frame.
 const FRAME_DURATION_NANOS: u64 = 16_743_000;
-
 /// Shader presets allowed for GBA.
 const ALLOWED_SHADERS: &[&str] = &["none", "gba-lcd"];
 
 /// Game Boy Advance emulator wrapper.
 ///
 /// This struct wraps the GBA emulation core and provides the [`Emulator`] trait
-/// implementation for platform integration. Currently implemented as a stub
-/// that returns appropriate defaults without actual emulation.
+/// implementation for platform integration.
 pub struct Gba {
     app_context: SharedAppContext,
+    /// ARM7TDMI CPU core.
+    cpu: Arm7tdmi,
     /// System bus owning all peripheral state including APU, keypad and
     /// interrupt controller.
     bus: GbaBus,
@@ -48,6 +51,7 @@ impl Gba {
     pub fn new(app_context: impl IntoSharedAppContext) -> Self {
         Self {
             app_context: app_context.into_shared(),
+            cpu: Arm7tdmi::new(),
             bus: GbaBus::new(),
         }
     }
@@ -72,20 +76,35 @@ impl Emulator for Gba {
         ALLOWED_SHADERS
     }
 
-    fn load_rom(&mut self, _bytes: &[u8], _name: &str) -> Result<(), String> {
-        Err("GBA emulation not yet implemented".to_string())
+    fn load_rom(&mut self, bytes: &[u8], _name: &str) -> Result<(), String> {
+        let cart = load_cartridge(bytes).map_err(|e| format!("{e:?}"))?;
+        self.bus.load_rom(cart.rom());
+        // With no BIOS loaded yet, start from cart space for incremental bring-up.
+        self.cpu.regs.r[15] = 0x0800_0000;
+        Ok(())
     }
 
     fn run_tick(&mut self) -> u8 {
-        0
+        if !self.bus.has_cart() {
+            return 0;
+        }
+        if self.bus.ic.irq_line() {
+            self.cpu.raise_irq();
+        } else {
+            self.cpu.clear_irq();
+        }
+
+        let cycles = self.cpu.step(&mut self.bus);
+        self.bus.step(cycles);
+        cycles as u8
     }
 
     fn is_ready_to_render(&self) -> bool {
-        false
+        self.bus.ppu.frame_ready()
     }
 
     fn clear_ready_to_render(&mut self) {
-        // No-op: no rendering implemented yet
+        self.bus.ppu.clear_frame_ready();
     }
 
     fn screen_width(&self) -> u32 {
@@ -97,8 +116,7 @@ impl Emulator for Gba {
     }
 
     fn screen_snapshot(&self) -> Vec<u8> {
-        // Return a blank RGB888 buffer (240×160×3 = 115200 bytes)
-        vec![0u8; (SCREEN_WIDTH * SCREEN_HEIGHT * 3) as usize]
+        self.bus.ppu.framebuffer().to_vec()
     }
 
     fn cropped_screen_snapshot(&self, _h_overscan: u32, _v_overscan: u32) -> Vec<u8> {
@@ -107,7 +125,7 @@ impl Emulator for Gba {
     }
 
     fn screen_crc32(&self) -> u32 {
-        0
+        crate::platform::crc32::crc32(&[self.bus.ppu.framebuffer()])
     }
 
     fn sample_ready(&self) -> bool {
@@ -170,10 +188,20 @@ impl Emulator for Gba {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gba::cartridge::header::{
+        COMPLEMENT_CHECK_OFFSET, FIXED_BYTE_OFFSET, FIXED_BYTE_VALUE, compute_complement_check,
+    };
     use crate::platform::app_context::AppContext;
 
     fn make_gba() -> Gba {
         Gba::new(AppContext::default())
+    }
+
+    fn make_minimal_valid_gba_rom() -> Vec<u8> {
+        let mut rom = vec![0u8; 0xC0];
+        rom[FIXED_BYTE_OFFSET] = FIXED_BYTE_VALUE;
+        rom[COMPLEMENT_CHECK_OFFSET] = compute_complement_check(&rom);
+        rom
     }
 
     #[test]
@@ -206,11 +234,45 @@ mod tests {
     }
 
     #[test]
-    fn test_load_rom_returns_error() {
+    fn test_load_rom_loads_valid_cartridge_into_bus() {
         let mut gba = make_gba();
-        let result = gba.load_rom(&[0u8; 256], "test.gba");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("not yet implemented"));
+        let rom = make_minimal_valid_gba_rom();
+        let result = gba.load_rom(&rom, "test.gba");
+        assert!(result.is_ok());
+        assert!(gba.bus().has_cart());
+    }
+
+    #[test]
+    fn test_run_tick_advances_to_frame_ready_and_clear_acknowledges() {
+        let mut gba = make_gba();
+        let rom = make_minimal_valid_gba_rom();
+        gba.load_rom(&rom, "test.gba").expect("valid GBA ROM");
+
+        assert!(!gba.is_ready_to_render());
+
+        for _ in 0..400_000 {
+            let _ = gba.run_tick();
+            if gba.is_ready_to_render() {
+                break;
+            }
+        }
+
+        assert!(gba.is_ready_to_render(), "a frame should become ready");
+        gba.clear_ready_to_render();
+        assert!(!gba.is_ready_to_render());
+    }
+
+    #[test]
+    fn test_run_tick_uses_cpu_instruction_cycles_not_fixed_chunk() {
+        let mut gba = make_gba();
+        let rom = make_minimal_valid_gba_rom();
+        gba.load_rom(&rom, "test.gba").expect("valid GBA ROM");
+
+        let cycles = gba.run_tick();
+        assert!(
+            cycles <= 16,
+            "run_tick should return per-instruction cycles, got {cycles}"
+        );
     }
 
     #[test]

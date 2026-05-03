@@ -16,7 +16,11 @@ pub mod controller;
 pub mod disasm;
 pub mod trace;
 
+#[allow(unused_imports)]
 pub use breakpoints::Breakpoints;
+#[allow(unused_imports)]
 pub use controller::{BreakpointHit, GbaDebuggerController};
+#[allow(unused_imports)]
 pub use disasm::{disasm_arm, disasm_thumb};
+#[allow(unused_imports)]
 pub use trace::{CpuTrace, DEFAULT_TRACE_CAPACITY, TraceEntry};
