@@ -9,6 +9,8 @@ pub mod bus;
 pub mod cartridge;
 pub mod console;
 pub mod cpu;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod debugging;
 pub mod input;
 pub mod ppu;
 

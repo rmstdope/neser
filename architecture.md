@@ -267,6 +267,11 @@ All Game Boy Advance hardware lives under `src/gba/`. The module currently provi
 | `src/gba/cartridge/eeprom.rs` | `Eeprom` — 512 B / 8 KB EEPROM bit-serial I²C state machine (`write_bit` / `read_bit`) handling read & write transactions over 6/14-bit address busses. |
 | `src/gba/cartridge/flash.rs` | `Flash` — 64 KB single-bank / 128 KB dual-bank Flash backend implementing the JEDEC magic-write command sequence: byte program, sector erase, chip erase, ID readback (`0x90`/`0xF0`) and bank switch (`0xB0`). |
 | `src/gba/cartridge/cartridge.rs` | `GbaCartridge` aggregate — owns the ROM image, parsed header and selected `SaveBackend`. `load_cartridge` validates size (≤ 32 MB), parses the header and constructs the matching backend. |
+| `src/gba/debugging/mod.rs` | GBA debugging support module root (excluded from WASM builds). Re-exports `Breakpoints`, `CpuTrace`, `TraceEntry`, `GbaDebuggerController`, and the `disasm_arm` / `disasm_thumb` formatters. |
+| `src/gba/debugging/disasm.rs` | ARM 32-bit and Thumb 16-bit disassembler — formats the subset of instructions implemented by the executor (data-processing, B/BL, BX, LDR/STR/LDRB/STRB, SWI for ARM; formats 1, 2, 3, 4, 5, 6, 14, 16, 18 for Thumb) and renders unimplemented opcodes as `<undefined>`. |
+| `src/gba/debugging/breakpoints.rs` | `Breakpoints` — `BTreeSet<u32>` wrapper supporting insert/remove/contains/clear and ordered iteration over breakpoint addresses. |
+| `src/gba/debugging/trace.rs` | `CpuTrace` ring buffer of recently retired instructions (`TraceEntry` carrying PC, raw word, Thumb flag, mnemonic, R0–R15 snapshot, CPSR and cumulative cycle count); configurable capacity, default 1024, with enable/disable toggle. |
+| `src/gba/debugging/controller.rs` | `GbaDebuggerController` — glues the breakpoint set, trace ring buffer, optional file logger, and disassembler to `Arm7tdmi`. Provides `step`, `run_until_breakpoint` and trace-to-file hooks. |
 
 #### Frontends
 

@@ -101,7 +101,11 @@ jobs:
         with:
           submodules: true
       - name: Install native frontend system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libdbus-1-dev
+        run: |
+          for i in 1 2 3; do
+            sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libdbus-1-dev && break
+            echo "apt attempt $i failed (transient network); retrying after 15s..." && sleep 15
+          done
       - name: Cache Rust dependencies and build outputs
         uses: Swatinem/rust-cache@v2
 
@@ -161,7 +165,11 @@ jobs:
         with:
           submodules: true
       - name: Install native frontend system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libdbus-1-dev
+        run: |
+          for i in 1 2 3; do
+            sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libdbus-1-dev && break
+            echo "apt attempt $i failed (transient network); retrying after 15s..." && sleep 15
+          done
       - name: Cache Rust dependencies and build outputs
         uses: Swatinem/rust-cache@v2
       - name: Run clippy (PR fast path)
@@ -178,7 +186,11 @@ jobs:
         with:
           submodules: true
       - name: Install native frontend system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libdbus-1-dev
+        run: |
+          for i in 1 2 3; do
+            sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libdbus-1-dev && break
+            echo "apt attempt $i failed (transient network); retrying after 15s..." && sleep 15
+          done
       - name: Cache Rust dependencies and build outputs
         uses: Swatinem/rust-cache@v2
       - name: Run clippy (main full coverage)
@@ -252,10 +264,18 @@ jobs:
           key: playwright-chromium-${{ hashFiles('package-lock.json') }}
       - name: Install Playwright Chromium
         if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: npx playwright install --with-deps chromium
+        run: |
+          for i in 1 2 3; do
+            npx playwright install --with-deps chromium && break
+            echo "Playwright install attempt $i failed (transient network); retrying after 15s..." && sleep 15
+          done
       - name: Install Playwright system dependencies
         if: steps.playwright-cache.outputs.cache-hit == 'true'
-        run: npx playwright install-deps chromium
+        run: |
+          for i in 1 2 3; do
+            npx playwright install-deps chromium && break
+            echo "Playwright install-deps attempt $i failed (transient network); retrying after 15s..." && sleep 15
+          done
       - name: Build WASM
         run: |
           cargo build --release --target wasm32-unknown-unknown --no-default-features --features wasm
