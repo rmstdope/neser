@@ -266,6 +266,11 @@ impl Ppu {
         self.dispcnt & dispcnt::BG2_ENABLE != 0
     }
 
+    /// Whether `BG0` is enabled in DISPCNT.
+    pub fn bg0_enabled(&self) -> bool {
+        self.dispcnt & dispcnt::BG0_ENABLE != 0
+    }
+
     /// Borrow the affine register file for BG2 (`bg`=0) or BG3 (`bg`=1).
     /// Used by the affine renderer (and tests) to read the latched
     /// parameters and reference points.
@@ -456,8 +461,67 @@ impl Ppu {
             return;
         }
         match self.mode() {
+            0 => self.render_mode0_scanline(y, vram, pram),
             3 => self.render_mode3_scanline(y, vram, pram),
             _ => self.render_backdrop_scanline(y, pram),
+        }
+    }
+
+    /// Mode 0 (initial increment): render BG0 as 4bpp text background
+    /// using charblock 0 + screenblock 0 (BG0CNT reset defaults).
+    fn render_mode0_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8]) {
+        if !self.bg0_enabled() {
+            self.render_backdrop_scanline(y, pram);
+            return;
+        }
+
+        let backdrop = self.backdrop_bgr555(pram);
+        let row_start = (y as usize) * (SCREEN_WIDTH as usize) * BYTES_PER_PIXEL;
+        let screen_y = y as usize;
+
+        for x in 0..(SCREEN_WIDTH as usize) {
+            let screen_x = x;
+            let tile_x = screen_x >> 3;
+            let tile_y = screen_y >> 3;
+            let map_index = tile_y * 32 + tile_x;
+            let map_off = map_index * 2;
+
+            let entry = if map_off + 1 < vram.len() {
+                u16::from_le_bytes([vram[map_off], vram[map_off + 1]])
+            } else {
+                0
+            };
+
+            let tile_id = (entry & 0x03FF) as usize;
+            let palette_bank = ((entry >> 12) & 0x000F) as usize;
+            let pixel_x = screen_x & 7;
+            let pixel_y = screen_y & 7;
+            let tile_addr = tile_id * 32 + pixel_y * 4 + (pixel_x >> 1);
+
+            let palette_index = vram
+                .get(tile_addr)
+                .map(|byte| {
+                    if pixel_x & 1 == 0 {
+                        byte & 0x0F
+                    } else {
+                        byte >> 4
+                    }
+                })
+                .unwrap_or(0) as usize;
+
+            let bgr555 = if palette_index == 0 {
+                backdrop
+            } else {
+                let pram_index = (palette_bank * 16 + palette_index) * 2;
+                if pram_index + 1 < pram.len() {
+                    u16::from_le_bytes([pram[pram_index], pram[pram_index + 1]])
+                } else {
+                    backdrop
+                }
+            };
+
+            let dst = row_start + x * BYTES_PER_PIXEL;
+            color::write_pixel(&mut self.framebuffer, dst, bgr555);
         }
     }
 
@@ -485,11 +549,7 @@ impl Ppu {
     /// Backdrop fill — uses palette entry 0 from PRAM. Used for modes
     /// where rendering is not yet implemented in this increment.
     fn render_backdrop_scanline(&mut self, y: u32, pram: &[u8]) {
-        let backdrop = if pram.len() >= 2 {
-            u16::from_le_bytes([pram[0], pram[1]])
-        } else {
-            0
-        };
+        let backdrop = self.backdrop_bgr555(pram);
         let (r, g, b) = color::bgr555_to_rgb888(backdrop);
         let row_start = (y as usize) * (SCREEN_WIDTH as usize) * BYTES_PER_PIXEL;
         for x in 0..(SCREEN_WIDTH as usize) {
@@ -497,6 +557,14 @@ impl Ppu {
             self.framebuffer[dst] = r;
             self.framebuffer[dst + 1] = g;
             self.framebuffer[dst + 2] = b;
+        }
+    }
+
+    fn backdrop_bgr555(&self, pram: &[u8]) -> u16 {
+        if pram.len() >= 2 {
+            u16::from_le_bytes([pram[0], pram[1]])
+        } else {
+            0
         }
     }
 }
@@ -848,6 +916,40 @@ mod tests {
             &pram,
         );
         assert_eq!(&ppu.framebuffer()[0..3], &[0, 0, 0xFF]);
+    }
+
+    #[test]
+    fn mode0_bg0_4bpp_renders_first_tile_pixel() {
+        // Arrange: Mode 0 with BG0 enabled. Tile 0 pixel (0,0) uses color
+        // index 1 from BG palette bank 0, which we set to pure red.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        ppu.write_dispcnt(0 | dispcnt::BG0_ENABLE);
+
+        // BG palette entry 1 = BGR555 red (0x001F).
+        pram[2] = 0x1F;
+        pram[3] = 0x00;
+
+        // Charblock 0, tile 1, row 0, first byte: pixel0=1, pixel1=1.
+        vram[32] = 0x11;
+
+        // Screenblock 0, map entry (0,0): tile index 1, palbank 0, no flip.
+        vram[0x0000] = 0x01;
+        vram[0x0001] = 0x00;
+
+        // Act: render one full frame.
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+        );
+
+        // Assert: top-left output pixel should come from tile data, not backdrop.
+        assert_eq!(&ppu.framebuffer()[0..3], &[0xFF, 0, 0]);
     }
 
     #[test]
