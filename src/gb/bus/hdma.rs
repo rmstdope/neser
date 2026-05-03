@@ -128,7 +128,6 @@ impl HdmaState {
     /// Returns $FF when no transfer has ever been started (per Mooneye boot_hwio-C).
     pub fn read_control(&self) -> u8 {
         if self.never_started {
-            // Per Mooneye boot_hwio-C: HDMA5 reads $FF when no transfer has ever been started.
             0xFF
         } else if self.active {
             // Bit 7 = 0 (active), lower 7 bits = remaining blocks.
@@ -387,11 +386,7 @@ mod tests {
         // Start a 1-block GDMA (length = 0 means 1 block)
         hdma.write_control(0x00);
         // Complete the transfer
-        let mock_read = |_| 0u8;
-        let mock_write = |_, _| {};
-        let mut read_fn = mock_read;
-        let mut write_fn = mock_write;
-        hdma.transfer_block(&mut read_fn, &mut write_fn);
+        hdma.transfer_block(&mut |_| 0u8, &mut |_, _| {});
         // Then: $80 (inactive after transfer, 0 remaining)
         assert_eq!(hdma.read_control(), 0x80);
     }
