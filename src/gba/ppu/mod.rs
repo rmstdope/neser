@@ -493,9 +493,19 @@ impl Ppu {
             };
 
             let tile_id = (entry & 0x03FF) as usize;
+            let hflip = (entry & (1 << 10)) != 0;
+            let vflip = (entry & (1 << 11)) != 0;
             let palette_bank = ((entry >> 12) & 0x000F) as usize;
-            let pixel_x = screen_x & 7;
-            let pixel_y = screen_y & 7;
+            let pixel_x = if hflip {
+                7 - (screen_x & 7)
+            } else {
+                screen_x & 7
+            };
+            let pixel_y = if vflip {
+                7 - (screen_y & 7)
+            } else {
+                screen_y & 7
+            };
             let tile_addr = tile_id * 32 + pixel_y * 4 + (pixel_x >> 1);
 
             let palette_index = vram
@@ -949,6 +959,69 @@ mod tests {
         );
 
         // Assert: top-left output pixel should come from tile data, not backdrop.
+        assert_eq!(&ppu.framebuffer()[0..3], &[0xFF, 0, 0]);
+    }
+
+    #[test]
+    fn mode0_bg0_4bpp_hflip_mirrors_tile_pixels() {
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        ppu.write_dispcnt(0 | dispcnt::BG0_ENABLE);
+
+        // BG palette entry 1 = pure red.
+        pram[2] = 0x1F;
+        pram[3] = 0x00;
+
+        // Tile 1 row 0: pixel 7 uses color index 1, others are 0.
+        // Byte 3 contains pixels 6 (low nibble) and 7 (high nibble).
+        vram[32 + 3] = 0x10;
+
+        // Screenblock entry (0,0): tile 1 + horizontal flip (bit 10).
+        vram[0x0000] = 0x01;
+        vram[0x0001] = 0x04;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+        );
+
+        // With H-flip set, source pixel 7 appears at output x=0.
+        assert_eq!(&ppu.framebuffer()[0..3], &[0xFF, 0, 0]);
+    }
+
+    #[test]
+    fn mode0_bg0_4bpp_vflip_mirrors_tile_rows() {
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        ppu.write_dispcnt(0 | dispcnt::BG0_ENABLE);
+
+        // BG palette entry 1 = pure red.
+        pram[2] = 0x1F;
+        pram[3] = 0x00;
+
+        // Tile 1 row 7 (byte offset +28): first pixel uses color index 1.
+        vram[32 + 28] = 0x01;
+
+        // Screenblock entry (0,0): tile 1 + vertical flip (bit 11).
+        vram[0x0000] = 0x01;
+        vram[0x0001] = 0x08;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+        );
+
+        // With V-flip set, source row 7 appears at output y=0.
         assert_eq!(&ppu.framebuffer()[0..3], &[0xFF, 0, 0]);
     }
 
