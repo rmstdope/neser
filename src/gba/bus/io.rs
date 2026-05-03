@@ -226,6 +226,8 @@ impl IoRegisters {
             ppu::REG_DISPCNT => ppu.write_dispcnt(value),
             ppu::REG_DISPSTAT => ppu.write_dispstat(value, ic),
             ppu::REG_VCOUNT => { /* VCOUNT is read-only */ }
+            ppu::REG_BG0HOFS => ppu.write_bg0_hofs(value),
+            ppu::REG_BG0VOFS => ppu.write_bg0_vofs(value),
             // PPU affine BG2/BG3 registers (write-only, reads fall
             // through to the I/O backing store / open-bus).
             0x0400_0020..=0x0400_003E => {
@@ -616,5 +618,103 @@ mod tests {
         );
         assert_eq!(p.read_vcount(), 0);
         assert_eq!(io.read16(ppu::REG_VCOUNT, &ic, &t, &d, &p, &k), 0);
+    }
+
+    #[test]
+    fn mode0_bg0_hofs_scroll_changes_leftmost_pixel() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        let mut vram = vec![0u8; 96 * 1024];
+        let mut pram = vec![0u8; 1024];
+
+        // Mode 0 + BG0 enabled.
+        io.write16(
+            ppu::REG_DISPCNT,
+            ppu::dispcnt::BG0_ENABLE,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+
+        // BG palette entry 1 = red.
+        pram[2] = 0x1F;
+        pram[3] = 0x00;
+
+        // Tile 2 has pixel (0,0) = color index 1.
+        vram[64] = 0x01;
+
+        // Map (0,0) = tile 1 (empty), (1,0) = tile 2 (red at x=0).
+        vram[0] = 0x01;
+        vram[1] = 0x00;
+        vram[2] = 0x02;
+        vram[3] = 0x00;
+
+        // BG0HOFS = 8 pixels (0x0400_0010).
+        io.write16(0x0400_0010, 8, &mut ic, &mut t, &mut d, &mut p, &mut k);
+
+        p.step(
+            ppu::CYCLES_PER_SCANLINE * ppu::SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+        );
+
+        assert_eq!(&p.framebuffer()[0..3], &[0xFF, 0, 0]);
+    }
+
+    #[test]
+    fn mode0_bg0_vofs_scroll_changes_top_row_pixel() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        let mut vram = vec![0u8; 96 * 1024];
+        let mut pram = vec![0u8; 1024];
+
+        // Mode 0 + BG0 enabled.
+        io.write16(
+            ppu::REG_DISPCNT,
+            ppu::dispcnt::BG0_ENABLE,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+
+        // BG palette entry 1 = red.
+        pram[2] = 0x1F;
+        pram[3] = 0x00;
+
+        // Tile 3 has pixel (0,0) = color index 1.
+        vram[96] = 0x01;
+
+        // Map (0,0) = tile 1 (empty), (0,1) = tile 3 (red at y=8).
+        vram[0] = 0x01;
+        vram[1] = 0x00;
+        vram[64] = 0x03;
+        vram[65] = 0x00;
+
+        // BG0VOFS = 8 pixels (0x0400_0012).
+        io.write16(0x0400_0012, 8, &mut ic, &mut t, &mut d, &mut p, &mut k);
+
+        p.step(
+            ppu::CYCLES_PER_SCANLINE * ppu::SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+        );
+
+        assert_eq!(&p.framebuffer()[0..3], &[0xFF, 0, 0]);
     }
 }

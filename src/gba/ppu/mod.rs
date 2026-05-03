@@ -115,6 +115,8 @@ pub mod dispstat {
 pub const REG_DISPCNT: u32 = 0x0400_0000;
 pub const REG_DISPSTAT: u32 = 0x0400_0004;
 pub const REG_VCOUNT: u32 = 0x0400_0006;
+pub const REG_BG0HOFS: u32 = 0x0400_0010;
+pub const REG_BG0VOFS: u32 = 0x0400_0012;
 
 // Affine background register file (BG2 and BG3). All eight registers
 // per background are write-only; reads are handled by the bus's
@@ -187,6 +189,8 @@ pub struct Ppu {
     /// Index `0` is BG2, index `1` is BG3. Consumed by the (future)
     /// affine renderer; the registers are write-only on the bus side.
     bg_affine: [BgAffine; 2],
+    /// BG0 horizontal and vertical scroll offsets (low 9 bits are valid).
+    bg0_scroll: (u16, u16),
 }
 
 impl Default for Ppu {
@@ -210,6 +214,7 @@ impl Ppu {
             framebuffer: vec![0; FRAMEBUFFER_BYTES],
             frame_ready: false,
             bg_affine: [BgAffine::default(); 2],
+            bg0_scroll: (0, 0),
         };
         // VCOUNT == LYC == 0 at reset; reflect that in the match flag.
         // No IRQ is raised here — the controller hasn't been wired up
@@ -335,6 +340,16 @@ impl Ppu {
             _ => return false, // odd-aligned writes don't reach here via halfword bus
         }
         true
+    }
+
+    /// Write BG0HOFS (0x0400_0010). Only the low 9 bits are significant.
+    pub fn write_bg0_hofs(&mut self, value: u16) {
+        self.bg0_scroll.0 = value & 0x01FF;
+    }
+
+    /// Write BG0VOFS (0x0400_0012). Only the low 9 bits are significant.
+    pub fn write_bg0_vofs(&mut self, value: u16) {
+        self.bg0_scroll.1 = value & 0x01FF;
     }
 
     /// True after a completed frame, until [`Self::clear_frame_ready`].
@@ -477,10 +492,10 @@ impl Ppu {
 
         let backdrop = self.backdrop_bgr555(pram);
         let row_start = (y as usize) * (SCREEN_WIDTH as usize) * BYTES_PER_PIXEL;
-        let screen_y = y as usize;
+        let screen_y = ((y as usize) + self.bg0_scroll.1 as usize) & 0xFF;
 
         for x in 0..(SCREEN_WIDTH as usize) {
-            let screen_x = x;
+            let screen_x = (x + self.bg0_scroll.0 as usize) & 0xFF;
             let tile_x = screen_x >> 3;
             let tile_y = screen_y >> 3;
             let map_index = tile_y * 32 + tile_x;
