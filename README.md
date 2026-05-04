@@ -112,9 +112,14 @@ Options:
   --display <N>         Select display index for fullscreen (default: 0)
   --nes-filter <name>   Specify NES shader filter (crt|ntsc|smooth|pal|none)
   --gb-filter <name>    Specify Game Boy shader filter (dmg|none)
+  --gba-bios-path <path>
+                         Path to external GBA BIOS file (required for GBA ROMs)
   --config <path>       Specify config file path (overrides default locations)
   --window-height <N>   Window height in pixels, windowed mode only (e.g., 720)
 ```
+
+For GBA ROMs, provide a 16384-byte BIOS file via `--gba-bios-path` or config key
+`gba-bios-path`. If unset, NESER also checks `~/.neser/gba_bios.bin`.
 
 ## Controller Mapping
 

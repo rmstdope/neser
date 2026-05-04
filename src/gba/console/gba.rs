@@ -18,6 +18,8 @@ use crate::gba::debugging::{disasm_arm, disasm_thumb};
 use crate::platform::app_context::{IntoSharedAppContext, SharedAppContext};
 use crate::platform::debugging::cpu_trace_level;
 use crate::platform::emulator::{Emulator, SystemType};
+use std::fs;
+use std::path::PathBuf;
 use std::time::Duration;
 
 /// GBA display width in pixels.
@@ -31,6 +33,40 @@ const FRAME_DURATION_NANOS: u64 = 16_743_000;
 /// Shader presets allowed for GBA.
 const ALLOWED_SHADERS: &[&str] = &["none", "gba-lcd"];
 
+fn default_gba_bios_path() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME")?;
+    Some(PathBuf::from(home).join(".neser").join("gba_bios.bin"))
+}
+
+fn bios_size() -> usize {
+    crate::gba::bus::memory::BIOS_SIZE
+}
+
+fn load_bios_image(path: &PathBuf) -> Result<Vec<u8>, String> {
+    let metadata = fs::metadata(path).map_err(|_| "GBA BIOS file could not be read".to_string())?;
+
+    if !metadata.is_file() {
+        return Err("GBA BIOS path must point to a regular file".to_string());
+    }
+
+    if metadata.len() != bios_size() as u64 {
+        return Err(format!(
+            "GBA BIOS has invalid size: expected {} bytes",
+            bios_size()
+        ));
+    }
+
+    let bytes = fs::read(path).map_err(|_| "GBA BIOS file could not be read".to_string())?;
+    if bytes.len() != bios_size() {
+        return Err(format!(
+            "GBA BIOS has invalid size: expected {} bytes",
+            bios_size()
+        ));
+    }
+
+    Ok(bytes)
+}
+
 /// Game Boy Advance emulator wrapper.
 ///
 /// This struct wraps the GBA emulation core and provides the [`Emulator`] trait
@@ -42,6 +78,7 @@ pub struct Gba {
     /// System bus owning all peripheral state including APU, keypad and
     /// interrupt controller.
     bus: GbaBus,
+    bios_load_error: Option<String>,
 }
 
 impl Gba {
@@ -52,10 +89,35 @@ impl Gba {
 
     /// Create a new GBA emulator instance.
     pub fn new(app_context: impl IntoSharedAppContext) -> Self {
+        let app_context = app_context.into_shared();
+        let mut bus = GbaBus::new();
+
+        let configured_bios_path = {
+            let cfg = app_context.borrow();
+            cfg.config().gba.bios_path.clone()
+        };
+
+        let bios_path = configured_bios_path
+            .map(PathBuf::from)
+            .or_else(default_gba_bios_path);
+
+        let bios_load_error = if let Some(path) = bios_path {
+            match load_bios_image(&path) {
+                Ok(bytes) => {
+                    bus.load_bios(&bytes);
+                    None
+                }
+                Err(err) => Some(err),
+            }
+        } else {
+            Some("GBA BIOS is required but no BIOS path is available".to_string())
+        };
+
         Self {
-            app_context: app_context.into_shared(),
+            app_context,
             cpu: Arm7tdmi::new(),
-            bus: GbaBus::new(),
+            bus,
+            bios_load_error,
         }
     }
 
@@ -119,10 +181,16 @@ impl Emulator for Gba {
     }
 
     fn load_rom(&mut self, bytes: &[u8], _name: &str) -> Result<(), String> {
+        if !self.bus.has_bios_image() {
+            return Err(self
+                .bios_load_error
+                .clone()
+                .unwrap_or_else(|| "GBA BIOS is required but was not loaded".to_string()));
+        }
+
         let cart = load_cartridge(bytes).map_err(|e| format!("{e:?}"))?;
         self.bus.load_rom(cart.rom());
-        // With no BIOS loaded yet, start from cart space for incremental bring-up.
-        self.cpu.regs.r[15] = 0x0800_0000;
+        self.cpu.regs.r[15] = 0x0000_0000;
         Ok(())
     }
 
@@ -222,7 +290,7 @@ impl Emulator for Gba {
         // from cart space when a ROM is present (or BIOS reset vector with no cart).
         self.cpu = Arm7tdmi::new();
         if self.bus.has_cart() {
-            self.cpu.regs.r[15] = 0x0800_0000;
+            self.cpu.regs.r[15] = 0x0000_0000;
         }
         self.bus.ppu.clear_frame_ready();
     }
@@ -250,9 +318,20 @@ mod tests {
     use crate::gba::cpu::bus::Bus;
     use crate::gba::ppu;
     use crate::platform::app_context::AppContext;
+    use crate::platform::config::Config;
+
+    fn make_gba_without_bios() -> Gba {
+        let mut config = Config::default();
+        config.gba.bios_path = Some("/__neser_missing_gba_bios.bin".to_string());
+        Gba::new(AppContext::new_with_config(config))
+    }
 
     fn make_gba() -> Gba {
-        Gba::new(AppContext::default())
+        let mut gba = make_gba_without_bios();
+        let bios = vec![0u8; crate::gba::bus::memory::BIOS_SIZE];
+        gba.bus.load_bios(&bios);
+        gba.bios_load_error = None;
+        gba
     }
 
     fn make_minimal_valid_gba_rom() -> Vec<u8> {
@@ -306,6 +385,20 @@ mod tests {
     }
 
     #[test]
+    fn test_load_rom_fails_when_bios_is_missing() {
+        let mut gba = make_gba_without_bios();
+        let rom = make_minimal_valid_gba_rom();
+
+        let result = gba.load_rom(&rom, "test.gba");
+        assert!(result.is_err(), "GBA ROM loading should require BIOS");
+        let err = result.unwrap_err();
+        assert!(
+            err.to_lowercase().contains("bios"),
+            "error should mention BIOS, got: {err}"
+        );
+    }
+
+    #[test]
     fn test_run_tick_advances_to_frame_ready_and_clear_acknowledges() {
         let mut gba = make_gba();
         let rom = make_minimal_valid_gba_rom();
@@ -349,14 +442,14 @@ mod tests {
 
         let _ = gba.run_tick();
         let _ = gba.run_tick();
-        assert_ne!(gba.cpu.regs.r[15], 0x0800_0000);
+        assert_ne!(gba.cpu.regs.r[15], 0x0000_0000);
 
         gba.reset(true);
-        assert_eq!(gba.cpu.regs.r[15], 0x0800_0000);
+        assert_eq!(gba.cpu.regs.r[15], 0x0000_0000);
 
         let _ = gba.run_tick();
         gba.reset(false);
-        assert_eq!(gba.cpu.regs.r[15], 0x0800_0000);
+        assert_eq!(gba.cpu.regs.r[15], 0x0000_0000);
     }
 
     #[test]
@@ -382,7 +475,7 @@ mod tests {
             "trace line should be available when ROM is loaded"
         );
         let line = line.unwrap_or_default();
-        assert!(line.contains("PC=08000000"));
+        assert!(line.contains("PC=00000000"));
         assert!(line.contains("RAW="));
         #[cfg(not(target_arch = "wasm32"))]
         assert!(line.contains("ASM="));

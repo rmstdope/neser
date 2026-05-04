@@ -1090,6 +1090,9 @@ impl Config {
             "gba-hardware" => {
                 self.gba.apply_config_value("gba-hardware", value)?;
             }
+            "gba-bios-path" => {
+                self.gba.apply_config_value("gba-bios-path", value)?;
+            }
             _ => {} // Unknown keys are silently ignored (may have been handled by sub-configs)
         }
         Ok(())
@@ -4913,6 +4916,15 @@ nes-filter=invalid-shader
         let result = config.apply_config_value("gb-hardware", "dmg-a");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Invalid gb-hardware value"));
+    }
+
+    #[test]
+    fn test_config_file_gba_bios_path_sets_gba_config() {
+        let mut config = Config::with_defaults();
+        config
+            .apply_config_value("gba-bios-path", "/tmp/gba_bios.bin")
+            .unwrap();
+        assert_eq!(config.gba.bios_path.as_deref(), Some("/tmp/gba_bios.bin"));
     }
 
     #[test]
