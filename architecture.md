@@ -242,8 +242,11 @@ All Game Boy Advance hardware lives under `src/gba/`. The module currently provi
 
 | Directory/File | Description |
 | ---------------- | ------------- |
-| `src/gba/mod.rs` | Game Boy Advance module root. Re-exports `Gba` (platform-facing wrapper), the `cpu`, `input` and `ppu` sub-modules, `GbaBus`, `Ppu`, `Keypad`, and `GbaCartridge` / `SaveType` / `load_cartridge`. |
-| `src/gba/console/gba.rs` | `Gba` — platform-facing GBA wrapper implementing the `Emulator` trait. Currently a stub; will own the ARM7TDMI core, bus, PPU, etc. as subsequent phases land. |
+| `src/gba/mod.rs` | Game Boy Advance module root. Re-exports `Gba` (platform-facing wrapper), the `cpu`, `input` and `ppu` sub-modules, `GbaBus`, `Ppu`, `Keypad`, and `GbaCartridge` / `SaveType` / `load_cartridge`. Includes `#[cfg(test)]` GBA integration test modules under `src/gba/integration_tests/`. |
+| `src/gba/console/gba.rs` | `Gba` — platform-facing GBA wrapper implementing the `Emulator` trait. Owns ARM7TDMI + bus, executes per-instruction ticks, handles IRQ line dispatch, frame-ready signaling, and ROM loading guarded by BIOS presence. |
+| `src/gba/integration_tests/mod.rs` | GBA integration test module root. Includes gba-suite runner and test definitions. |
+| `src/gba/integration_tests/gba_suite_runner.rs` | Headless harness for jsmolka `gba-tests` ARM/Thumb ROMs. Loads ROM assets from `roms/gba/automated_tests/gba-tests`, injects a synthetic BIOS for CI-safe execution, runs until idle-loop detection/timeout, and reports pass/fail from suite registers (ARM `R12`, Thumb `R7`). |
+| `src/gba/integration_tests/gba_suite_tests.rs` | Two ROM-level integration tests (`arm.gba`, `thumb.gba`) with failure diagnostics (index/register/PC/cycles/exit reason). |
 | `src/gba/cpu/mod.rs` | Module root for the ARM7TDMI core. Re-exports `Arm7tdmi`, `Bus`, `RamBus`, `Registers`, `CpuMode`, etc. |
 | `src/gba/cpu/registers.rs` | `Registers` — ARM7TDMI register file with R0–R15, CPSR, and per-mode banked SPSR/SP/LR (and FIQ-banked R8–R12). Includes `CpuMode` (USR/FIQ/IRQ/SVC/ABT/UND/SYS) and `condition_met` for the 16 ARM condition codes. |
 | `src/gba/cpu/bus.rs` | `Bus` trait used by the CPU for byte/halfword/word reads and writes, plus a flat little-endian `RamBus` implementation used by tests and boot stubs. |
@@ -386,6 +389,7 @@ Shader presets using the Slang shading language, loaded via librashader:
 | Directory | Description |
 | --------- | ------------- |
 | `roms/automated_tests/` | **70+ test ROM suites** used by the integration test harness. Includes Blargg's CPU/PPU/APU tests, DMA timing tests, mapper-specific tests (MMC3, MMC5, FME-7, VRC6), sprite tests, and more. |
+| `roms/gba/automated_tests/gba-tests/` | Git submodule snapshot of jsmolka `gba-tests` (ARM/Thumb GBA CPU validation ROMs) used by `src/gba/integration_tests/gba_suite_tests.rs`. |
 | `roms/automated_tests/mapper_verification/` | Custom mapper verification ROMs built from assembly source with per-mapper test definitions. |
 | `roms/manual_tests/` | ROMs for manual visual/audio verification (e.g., volume tests). |
 | `roms/games/` | Game ROMs (not checked into version control). Subdirectories organized by mapper number for autorun regression tests. |
@@ -405,7 +409,7 @@ Shader presets using the Slang shading language, loaded via librashader:
 
 | Workflow | Description |
 | ---------- | ------------- |
-| `ci.yml` | Main CI pipeline. Runs on push to `main` and PRs. Jobs: Rust tests (`cargo test --lib --all-features`), Clippy lint, `cargo fmt` check, WASM build + test (`wasm-pack test`), web JS unit tests (`npm test`), web Playwright integration tests, and Python script tests. Uses path-based change detection to skip unchanged jobs. |
+| `ci.yml` | Main CI pipeline. Runs on push to `main` and PRs. Jobs: Rust tests (`cargo test --lib --all-features`), Clippy lint, `cargo fmt` check, WASM build + test (`wasm-pack test`), web JS unit tests (`npm test`), web Playwright integration tests, and Python script tests. Uses path-based change detection to skip unchanged jobs, and runs NES/GBA integration suites selectively (GBA integration also triggers on `roms/gba/automated_tests/gba-tests` asset changes). |
 | `release.yml` | Release pipeline triggered by version tags (`v*.*.*`). Runs full CI, then cross-compiles release binaries for Linux (x86_64), macOS (x86_64 + aarch64), and Windows (x86_64). Windows builds bundle SDL2.dll and SDL2_ttf.dll. Publishes to GitHub Releases with a git-cliff changelog. |
 
 #### Agentic Workflows (Copilot-powered)

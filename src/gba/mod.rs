@@ -12,6 +12,8 @@ pub mod cpu;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod debugging;
 pub mod input;
+#[cfg(test)]
+pub mod integration_tests;
 pub mod ppu;
 
 #[allow(unused_imports)]
