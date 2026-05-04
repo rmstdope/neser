@@ -80,6 +80,18 @@ pub fn execute<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u32) -> ExecOut
             if (instr & 0x0FFF_FFF0) == 0x012F_FF10 {
                 return execute_bx(regs, instr);
             }
+            // MRS: 0001_0x00_1111_xxxx_0000_0000_0000
+            if (instr & 0x0FBF_0FFF) == 0x010F_0000 {
+                return execute_mrs(regs, instr);
+            }
+            // MSR (register): 0001_0x10_xxxx_1111_0000_0000_xxxx
+            if (instr & 0x0FB0_FFF0) == 0x0120_F000 {
+                return execute_msr_reg(regs, instr);
+            }
+            // MSR (immediate): 0011_0x10_xxxx_1111_xxxx_xxxx_xxxx
+            if (instr & 0x0FB0_F000) == 0x0320_F000 {
+                return execute_msr_imm(regs, instr);
+            }
             // Multiply instructions: bits[27:24]=0000, bits[7:4]=1001
             // MUL/MLA: bits[27:22]=000000, bits[7:4]=1001
             // Long multiply: bits[27:23]=00001, bits[7:4]=1001
@@ -559,6 +571,80 @@ fn long_multiply_cycles(rs: u32) -> u8 {
     multiply_cycles(rs) + 1
 }
 
+// ---------------------------------------------------------------------------
+// PSR Transfer (MRS, MSR)
+// ---------------------------------------------------------------------------
+
+/// MRS: Move PSR to register. Rd = CPSR or SPSR.
+fn execute_mrs(regs: &mut Registers, instr: u32) -> ExecOutcome {
+    let spsr = (instr >> 22) & 1 != 0;
+    let rd = ((instr >> 12) & 0xF) as usize;
+
+    let value = if spsr { regs.spsr() } else { regs.cpsr };
+    regs.r[rd] = value;
+
+    ExecOutcome::cycles(1)
+}
+
+/// MSR (register): Move register to PSR with field mask.
+fn execute_msr_reg(regs: &mut Registers, instr: u32) -> ExecOutcome {
+    let spsr = (instr >> 22) & 1 != 0;
+    let mask = ((instr >> 16) & 0xF) as u8;
+    let rm = (instr & 0xF) as usize;
+    let value = regs.r[rm];
+
+    apply_msr(regs, value, mask, spsr);
+    ExecOutcome::cycles(1)
+}
+
+/// MSR (immediate): Move rotated immediate to PSR with field mask.
+fn execute_msr_imm(regs: &mut Registers, instr: u32) -> ExecOutcome {
+    let spsr = (instr >> 22) & 1 != 0;
+    let mask = ((instr >> 16) & 0xF) as u8;
+    let imm8 = instr & 0xFF;
+    let rotate = ((instr >> 8) & 0xF) * 2;
+    let value = imm8.rotate_right(rotate);
+
+    apply_msr(regs, value, mask, spsr);
+    ExecOutcome::cycles(1)
+}
+
+/// Apply MSR value to CPSR or SPSR with field mask.
+/// Mask bits: bit 0 = c (control), bit 1 = x (extension), bit 2 = s (status), bit 3 = f (flags).
+fn apply_msr(regs: &mut Registers, value: u32, mask: u8, spsr: bool) {
+    // Build the field mask from the 4 mask bits.
+    let mut field_mask = 0u32;
+    if mask & 0x1 != 0 {
+        field_mask |= 0x0000_00FF; // c: control (bits 7:0)
+    }
+    if mask & 0x2 != 0 {
+        field_mask |= 0x0000_FF00; // x: extension (bits 15:8)
+    }
+    if mask & 0x4 != 0 {
+        field_mask |= 0x00FF_0000; // s: status (bits 23:16)
+    }
+    if mask & 0x8 != 0 {
+        field_mask |= 0xFF00_0000; // f: flags (bits 31:24)
+    }
+
+    if spsr {
+        let old_spsr = regs.spsr();
+        let new_spsr = (old_spsr & !field_mask) | (value & field_mask);
+        regs.set_spsr(new_spsr);
+    } else {
+        // In User mode, only flag bits can be modified.
+        let effective_mask = if regs.mode().has_spsr() {
+            field_mask
+        } else {
+            // User/System mode: only flags field allowed
+            field_mask & 0xFF00_0000
+        };
+        let old_cpsr = regs.cpsr;
+        let new_cpsr = (old_cpsr & !effective_mask) | (value & effective_mask);
+        regs.write_cpsr(new_cpsr);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -967,5 +1053,118 @@ mod tests {
         execute(&mut regs, &mut bus, instr);
         assert!(regs.n_flag());
         assert!(!regs.z_flag());
+    }
+
+    // -------------------------------------------------------------------------
+    // PSR Transfer Tests (MRS, MSR)
+    // -------------------------------------------------------------------------
+
+    /// Build MRS instruction: cond | 0001 | 0R00 | 1111 | Rd | 0000 | 0000 | 0000
+    /// R=0 for CPSR, R=1 for SPSR
+    fn arm_mrs(cond: u8, rd: u8, spsr: bool) -> u32 {
+        ((cond as u32) << 28)
+            | (0b0001_0000 << 20)
+            | (if spsr { 1 << 22 } else { 0 })
+            | (0xF << 16)
+            | ((rd as u32 & 0xF) << 12)
+    }
+
+    /// Build MSR (register) instruction: cond | 0001 | 0R10 | mask | 1111 | 0000 | 0000 | Rm
+    fn arm_msr_reg(cond: u8, rm: u8, spsr: bool, mask: u8) -> u32 {
+        ((cond as u32) << 28)
+            | (0b0001_0010 << 20)
+            | (if spsr { 1 << 22 } else { 0 })
+            | ((mask as u32 & 0xF) << 16)
+            | (0xF << 12)
+            | (rm as u32 & 0xF)
+    }
+
+    /// Build MSR (immediate) instruction: cond | 0011 | 0R10 | mask | 1111 | rotate | imm8
+    fn arm_msr_imm(cond: u8, imm8: u8, rotate: u8, spsr: bool, mask: u8) -> u32 {
+        ((cond as u32) << 28)
+            | (0b0011_0010 << 20)
+            | (if spsr { 1 << 22 } else { 0 })
+            | ((mask as u32 & 0xF) << 16)
+            | (0xF << 12)
+            | ((rotate as u32 & 0xF) << 8)
+            | (imm8 as u32)
+    }
+
+    #[test]
+    fn arm_mrs_cpsr() {
+        // MRS R0, CPSR: copy CPSR to R0
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.cpsr = 0xABCD_1234;
+        let instr = arm_mrs(0xE, 0, false);
+        execute(&mut regs, &mut bus, instr);
+        assert_eq!(regs.r[0], 0xABCD_1234);
+    }
+
+    #[test]
+    fn arm_mrs_spsr() {
+        // MRS R1, SPSR: copy SPSR to R1 (requires privileged mode)
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.switch_mode(CpuMode::Supervisor);
+        regs.set_spsr(0x1234_5678);
+        let instr = arm_mrs(0xE, 1, true);
+        execute(&mut regs, &mut bus, instr);
+        assert_eq!(regs.r[1], 0x1234_5678);
+    }
+
+    #[test]
+    fn arm_msr_cpsr_flags_only() {
+        // MSR CPSR_f, R0: update only flags (mask = 0x8 = f)
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.cpsr = 0x0000_001F; // User mode, no flags
+        regs.r[0] = 0xF000_0000; // NZCV all set
+        let instr = arm_msr_reg(0xE, 0, false, 0x8); // mask = f (flags only)
+        execute(&mut regs, &mut bus, instr);
+        // Flags should be updated, mode bits preserved
+        assert_eq!(regs.cpsr & 0xF000_0000, 0xF000_0000);
+        assert_eq!(regs.cpsr & 0x1F, 0x1F); // mode preserved
+    }
+
+    #[test]
+    fn arm_msr_cpsr_control() {
+        // MSR CPSR_c, R0: update control bits (mask = 0x1 = c)
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        // Start in supervisor mode so we can change mode
+        regs.switch_mode(CpuMode::Supervisor);
+        let original_flags = regs.cpsr & 0xF000_0000;
+        regs.r[0] = 0x0000_00D2; // IRQ mode bits
+        let instr = arm_msr_reg(0xE, 0, false, 0x1); // mask = c (control only)
+        execute(&mut regs, &mut bus, instr);
+        // Mode should be changed to IRQ, flags preserved
+        assert_eq!(regs.cpsr & 0x1F, 0x12); // IRQ mode
+        assert_eq!(regs.cpsr & 0xF000_0000, original_flags);
+    }
+
+    #[test]
+    fn arm_msr_imm_flags() {
+        // MSR CPSR_f, #0xF0000000: set all flags using immediate
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.cpsr = 0x0000_001F;
+        // imm8=0xF0, rotate=4 -> 0xF0 ROR 8 = 0xF000_0000
+        let instr = arm_msr_imm(0xE, 0xF0, 4, false, 0x8);
+        execute(&mut regs, &mut bus, instr);
+        assert_eq!(regs.cpsr & 0xF000_0000, 0xF000_0000);
+    }
+
+    #[test]
+    fn arm_msr_spsr() {
+        // MSR SPSR_f, R0: update SPSR flags
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.switch_mode(CpuMode::Supervisor);
+        regs.set_spsr(0x0000_0000);
+        regs.r[0] = 0xA000_0000;
+        let instr = arm_msr_reg(0xE, 0, true, 0x8);
+        execute(&mut regs, &mut bus, instr);
+        assert_eq!(regs.spsr() & 0xF000_0000, 0xA000_0000);
     }
 }
