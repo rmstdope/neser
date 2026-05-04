@@ -13,7 +13,10 @@
 use crate::gba::GbaBus;
 use crate::gba::cartridge::load_cartridge;
 use crate::gba::cpu::Arm7tdmi;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::gba::debugging::{disasm_arm, disasm_thumb};
 use crate::platform::app_context::{IntoSharedAppContext, SharedAppContext};
+use crate::platform::debugging::cpu_trace_level;
 use crate::platform::emulator::{Emulator, SystemType};
 use std::time::Duration;
 
@@ -65,6 +68,45 @@ impl Gba {
     pub fn bus_mut(&mut self) -> &mut GbaBus {
         &mut self.bus
     }
+
+    fn current_instruction_trace_line(&mut self) -> Option<String> {
+        if !self.bus.has_cart() {
+            return None;
+        }
+
+        let pc = self.cpu.regs.r[15];
+        if self.cpu.thumb() {
+            let raw = self.bus.peek16(pc);
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let asm = disasm_thumb(raw, pc);
+                Some(format!("GBA THUMB PC={pc:08X} RAW={raw:04X} ASM={asm}"))
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                Some(format!("GBA THUMB PC={pc:08X} RAW={raw:04X}"))
+            }
+        } else {
+            let raw = self.bus.peek32(pc);
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let asm = disasm_arm(raw, pc);
+                Some(format!("GBA ARM   PC={pc:08X} RAW={raw:08X} ASM={asm}"))
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                Some(format!("GBA ARM   PC={pc:08X} RAW={raw:08X}"))
+            }
+        }
+    }
+
+    fn assert_supported_ppu_mode(&self) {
+        let mode = self.bus.ppu.mode();
+        assert!(
+            mode == 0 || mode == 3,
+            "unimplemented GBA PPU mode {mode} requested via DISPCNT; only modes 0 and 3 are currently supported"
+        );
+    }
 }
 
 impl Emulator for Gba {
@@ -87,6 +129,14 @@ impl Emulator for Gba {
     fn run_tick(&mut self) -> u8 {
         if !self.bus.has_cart() {
             return 0;
+        }
+
+        self.assert_supported_ppu_mode();
+
+        if cpu_trace_level() > 0
+            && let Some(line) = self.current_instruction_trace_line()
+        {
+            crate::trace_cpu!("{line}");
         }
         if self.bus.ic.irq_line() {
             self.cpu.raise_irq();
@@ -168,7 +218,13 @@ impl Emulator for Gba {
     }
 
     fn reset(&mut self, _soft_reset: bool) {
-        // No-op: no state to reset yet
+        // Current reset model: reset CPU core state and restart execution
+        // from cart space when a ROM is present (or BIOS reset vector with no cart).
+        self.cpu = Arm7tdmi::new();
+        if self.bus.has_cart() {
+            self.cpu.regs.r[15] = 0x0800_0000;
+        }
+        self.bus.ppu.clear_frame_ready();
     }
 
     fn save_ram(&self) -> Result<(), String> {
@@ -191,6 +247,8 @@ mod tests {
     use crate::gba::cartridge::header::{
         COMPLEMENT_CHECK_OFFSET, FIXED_BYTE_OFFSET, FIXED_BYTE_VALUE, compute_complement_check,
     };
+    use crate::gba::cpu::bus::Bus;
+    use crate::gba::ppu;
     use crate::platform::app_context::AppContext;
 
     fn make_gba() -> Gba {
@@ -202,6 +260,11 @@ mod tests {
         rom[FIXED_BYTE_OFFSET] = FIXED_BYTE_VALUE;
         rom[COMPLEMENT_CHECK_OFFSET] = compute_complement_check(&rom);
         rom
+    }
+
+    fn set_mode3_bg2_enabled(gba: &mut Gba) {
+        gba.bus
+            .write16(ppu::REG_DISPCNT, 3 | ppu::dispcnt::BG2_ENABLE);
     }
 
     #[test]
@@ -247,6 +310,7 @@ mod tests {
         let mut gba = make_gba();
         let rom = make_minimal_valid_gba_rom();
         gba.load_rom(&rom, "test.gba").expect("valid GBA ROM");
+        set_mode3_bg2_enabled(&mut gba);
 
         assert!(!gba.is_ready_to_render());
 
@@ -267,12 +331,101 @@ mod tests {
         let mut gba = make_gba();
         let rom = make_minimal_valid_gba_rom();
         gba.load_rom(&rom, "test.gba").expect("valid GBA ROM");
+        set_mode3_bg2_enabled(&mut gba);
 
         let cycles = gba.run_tick();
         assert!(
             cycles <= 16,
             "run_tick should return per-instruction cycles, got {cycles}"
         );
+    }
+
+    #[test]
+    fn test_reset_with_loaded_rom_rewinds_cpu_to_cart_start() {
+        let mut gba = make_gba();
+        let rom = make_minimal_valid_gba_rom();
+        gba.load_rom(&rom, "test.gba").expect("valid GBA ROM");
+        set_mode3_bg2_enabled(&mut gba);
+
+        let _ = gba.run_tick();
+        let _ = gba.run_tick();
+        assert_ne!(gba.cpu.regs.r[15], 0x0800_0000);
+
+        gba.reset(true);
+        assert_eq!(gba.cpu.regs.r[15], 0x0800_0000);
+
+        let _ = gba.run_tick();
+        gba.reset(false);
+        assert_eq!(gba.cpu.regs.r[15], 0x0800_0000);
+    }
+
+    #[test]
+    fn test_reset_without_rom_rewinds_cpu_to_reset_vector() {
+        let mut gba = make_gba();
+
+        let _ = gba.run_tick();
+        gba.cpu.regs.r[15] = 0x0800_0000;
+        gba.reset(false);
+
+        assert_eq!(gba.cpu.regs.r[15], 0x0000_0000);
+    }
+
+    #[test]
+    fn test_current_instruction_trace_line_reports_pc_and_raw_opcode() {
+        let mut gba = make_gba();
+        let rom = make_minimal_valid_gba_rom();
+        gba.load_rom(&rom, "test.gba").expect("valid GBA ROM");
+
+        let line = gba.current_instruction_trace_line();
+        assert!(
+            line.is_some(),
+            "trace line should be available when ROM is loaded"
+        );
+        let line = line.unwrap_or_default();
+        assert!(line.contains("PC=08000000"));
+        assert!(line.contains("RAW="));
+        #[cfg(not(target_arch = "wasm32"))]
+        assert!(line.contains("ASM="));
+    }
+
+    #[test]
+    fn test_run_tick_mode0_executes_without_panicking() {
+        let mut gba = make_gba();
+        let rom = make_minimal_valid_gba_rom();
+        gba.load_rom(&rom, "test.gba").expect("valid GBA ROM");
+        // Default DISPCNT mode after reset is 0.
+
+        let cycles = gba.run_tick();
+        assert!(
+            cycles <= 16,
+            "mode 0 should execute normally, got {cycles} cycles"
+        );
+    }
+
+    #[test]
+    fn test_run_tick_mode3_executes_without_panicking() {
+        let mut gba = make_gba();
+        let rom = make_minimal_valid_gba_rom();
+        gba.load_rom(&rom, "test.gba").expect("valid GBA ROM");
+        set_mode3_bg2_enabled(&mut gba);
+
+        let cycles = gba.run_tick();
+        assert!(
+            cycles <= 16,
+            "mode 3 should execute normally, got {cycles} cycles"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "unimplemented GBA PPU mode 1")]
+    fn test_run_tick_mode1_panics_while_unimplemented() {
+        let mut gba = make_gba();
+        let rom = make_minimal_valid_gba_rom();
+        gba.load_rom(&rom, "test.gba").expect("valid GBA ROM");
+
+        // Mode 1 remains unimplemented in this increment.
+        gba.bus.write16(ppu::REG_DISPCNT, 1);
+        let _ = gba.run_tick();
     }
 
     #[test]

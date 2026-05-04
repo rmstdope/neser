@@ -113,8 +113,11 @@ pub mod dispstat {
 
 /// I/O register addresses owned by the PPU.
 pub const REG_DISPCNT: u32 = 0x0400_0000;
+pub const REG_BG0CNT: u32 = 0x0400_0008;
 pub const REG_DISPSTAT: u32 = 0x0400_0004;
 pub const REG_VCOUNT: u32 = 0x0400_0006;
+pub const REG_BG0HOFS: u32 = 0x0400_0010;
+pub const REG_BG0VOFS: u32 = 0x0400_0012;
 
 // Affine background register file (BG2 and BG3). All eight registers
 // per background are write-only; reads are handled by the bus's
@@ -172,6 +175,8 @@ pub struct Ppu {
     /// The low 3 bits (V-Blank/H-Blank/V-Count flags) are status owned
     /// by the PPU; software writes to them are ignored.
     dispstat: u16,
+    /// `BG0CNT` (0x0400_0008) — BG0 control.
+    bg0cnt: u16,
     /// Current scanline (`VCOUNT`, 0x0400_0006). Wraps at
     /// [`SCANLINES_PER_FRAME`].
     vcount: u16,
@@ -187,6 +192,8 @@ pub struct Ppu {
     /// Index `0` is BG2, index `1` is BG3. Consumed by the (future)
     /// affine renderer; the registers are write-only on the bus side.
     bg_affine: [BgAffine; 2],
+    /// BG0 horizontal and vertical scroll offsets (low 9 bits are valid).
+    bg0_scroll: (u16, u16),
 }
 
 impl Default for Ppu {
@@ -205,11 +212,13 @@ impl Ppu {
         let mut ppu = Self {
             dispcnt: 0,
             dispstat: 0,
+            bg0cnt: 0,
             vcount: 0,
             line_cycle: 0,
             framebuffer: vec![0; FRAMEBUFFER_BYTES],
             frame_ready: false,
             bg_affine: [BgAffine::default(); 2],
+            bg0_scroll: (0, 0),
         };
         // VCOUNT == LYC == 0 at reset; reflect that in the match flag.
         // No IRQ is raised here — the controller hasn't been wired up
@@ -234,6 +243,11 @@ impl Ppu {
         self.dispstat
     }
 
+    /// Read `BG0CNT`.
+    pub fn read_bg0cnt(&self) -> u16 {
+        self.bg0cnt
+    }
+
     /// Write `DISPSTAT`. Only the IRQ enables (bits 3..5) and V-Count
     /// setting (bits 8..15) are settable; the read-only status bits
     /// retain their PPU-owned values. Writing `DISPSTAT` may change LYC,
@@ -244,6 +258,11 @@ impl Ppu {
         let status = self.dispstat & dispstat::STATUS_MASK;
         self.dispstat = status | (value & dispstat::WRITE_MASK);
         self.update_vcount_match_flag(Some(ic));
+    }
+
+    /// Write `BG0CNT`.
+    pub fn write_bg0cnt(&mut self, value: u16) {
+        self.bg0cnt = value;
     }
 
     /// Read `VCOUNT`.
@@ -264,6 +283,11 @@ impl Ppu {
     /// Whether `BG2` is enabled in DISPCNT.
     pub fn bg2_enabled(&self) -> bool {
         self.dispcnt & dispcnt::BG2_ENABLE != 0
+    }
+
+    /// Whether `BG0` is enabled in DISPCNT.
+    pub fn bg0_enabled(&self) -> bool {
+        self.dispcnt & dispcnt::BG0_ENABLE != 0
     }
 
     /// Borrow the affine register file for BG2 (`bg`=0) or BG3 (`bg`=1).
@@ -330,6 +354,26 @@ impl Ppu {
             _ => return false, // odd-aligned writes don't reach here via halfword bus
         }
         true
+    }
+
+    /// Write BG0HOFS (0x0400_0010). Only the low 9 bits are significant.
+    pub fn write_bg0_hofs(&mut self, value: u16) {
+        self.bg0_scroll.0 = value & 0x01FF;
+    }
+
+    /// Read BG0HOFS (0x0400_0010).
+    pub fn read_bg0_hofs(&self) -> u16 {
+        self.bg0_scroll.0
+    }
+
+    /// Write BG0VOFS (0x0400_0012). Only the low 9 bits are significant.
+    pub fn write_bg0_vofs(&mut self, value: u16) {
+        self.bg0_scroll.1 = value & 0x01FF;
+    }
+
+    /// Read BG0VOFS (0x0400_0012).
+    pub fn read_bg0_vofs(&self) -> u16 {
+        self.bg0_scroll.1
     }
 
     /// True after a completed frame, until [`Self::clear_frame_ready`].
@@ -456,8 +500,98 @@ impl Ppu {
             return;
         }
         match self.mode() {
+            0 => self.render_mode0_scanline(y, vram, pram),
             3 => self.render_mode3_scanline(y, vram, pram),
             _ => self.render_backdrop_scanline(y, pram),
+        }
+    }
+
+    /// Mode 0 (initial increment): render BG0 as 4bpp text background
+    /// using BG0CNT-selected charblock/screenblock and scroll/size state.
+    fn render_mode0_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8]) {
+        if !self.bg0_enabled() {
+            self.render_backdrop_scanline(y, pram);
+            return;
+        }
+
+        assert!(
+            self.bg0cnt & (1 << 7) == 0,
+            "unimplemented GBA Mode 0 BG0 8bpp rendering requested via BG0CNT bit 7"
+        );
+
+        let backdrop = self.backdrop_bgr555(pram);
+        let bg_size = (self.bg0cnt >> 14) & 0x0003;
+        let (width_tiles, height_tiles) = match bg_size {
+            0 => (32usize, 32usize),
+            1 => (64usize, 32usize),
+            2 => (32usize, 64usize),
+            _ => (64usize, 64usize),
+        };
+        let width_mask = width_tiles * 8 - 1;
+        let height_mask = height_tiles * 8 - 1;
+        let screenblock_base = (((self.bg0cnt >> 8) & 0x001F) as usize) * 0x800;
+        let charblock_base = (((self.bg0cnt >> 2) & 0x0003) as usize) * 16 * 1024;
+        let row_start = (y as usize) * (SCREEN_WIDTH as usize) * BYTES_PER_PIXEL;
+        let screen_y = ((y as usize) + self.bg0_scroll.1 as usize) & height_mask;
+
+        for x in 0..(SCREEN_WIDTH as usize) {
+            let screen_x = (x + self.bg0_scroll.0 as usize) & width_mask;
+            let tile_x = screen_x >> 3;
+            let tile_y = screen_y >> 3;
+            let screenblock_x = tile_x >> 5;
+            let screenblock_y = tile_y >> 5;
+            let screenblock = screenblock_y * (width_tiles >> 5) + screenblock_x;
+            let local_tile_x = tile_x & 31;
+            let local_tile_y = tile_y & 31;
+            let map_off =
+                screenblock_base + screenblock * 0x800 + (local_tile_y * 32 + local_tile_x) * 2;
+
+            let entry = if map_off + 1 < vram.len() {
+                u16::from_le_bytes([vram[map_off], vram[map_off + 1]])
+            } else {
+                0
+            };
+
+            let tile_id = (entry & 0x03FF) as usize;
+            let hflip = (entry & (1 << 10)) != 0;
+            let vflip = (entry & (1 << 11)) != 0;
+            let palette_bank = ((entry >> 12) & 0x000F) as usize;
+            let pixel_x = if hflip {
+                7 - (screen_x & 7)
+            } else {
+                screen_x & 7
+            };
+            let pixel_y = if vflip {
+                7 - (screen_y & 7)
+            } else {
+                screen_y & 7
+            };
+            let tile_addr = charblock_base + tile_id * 32 + pixel_y * 4 + (pixel_x >> 1);
+
+            let palette_index = vram
+                .get(tile_addr)
+                .map(|byte| {
+                    if pixel_x & 1 == 0 {
+                        byte & 0x0F
+                    } else {
+                        byte >> 4
+                    }
+                })
+                .unwrap_or(0) as usize;
+
+            let bgr555 = if palette_index == 0 {
+                backdrop
+            } else {
+                let pram_index = (palette_bank * 16 + palette_index) * 2;
+                if pram_index + 1 < pram.len() {
+                    u16::from_le_bytes([pram[pram_index], pram[pram_index + 1]])
+                } else {
+                    backdrop
+                }
+            };
+
+            let dst = row_start + x * BYTES_PER_PIXEL;
+            color::write_pixel(&mut self.framebuffer, dst, bgr555);
         }
     }
 
@@ -485,11 +619,7 @@ impl Ppu {
     /// Backdrop fill — uses palette entry 0 from PRAM. Used for modes
     /// where rendering is not yet implemented in this increment.
     fn render_backdrop_scanline(&mut self, y: u32, pram: &[u8]) {
-        let backdrop = if pram.len() >= 2 {
-            u16::from_le_bytes([pram[0], pram[1]])
-        } else {
-            0
-        };
+        let backdrop = self.backdrop_bgr555(pram);
         let (r, g, b) = color::bgr555_to_rgb888(backdrop);
         let row_start = (y as usize) * (SCREEN_WIDTH as usize) * BYTES_PER_PIXEL;
         for x in 0..(SCREEN_WIDTH as usize) {
@@ -497,6 +627,14 @@ impl Ppu {
             self.framebuffer[dst] = r;
             self.framebuffer[dst + 1] = g;
             self.framebuffer[dst + 2] = b;
+        }
+    }
+
+    fn backdrop_bgr555(&self, pram: &[u8]) -> u16 {
+        if pram.len() >= 2 {
+            u16::from_le_bytes([pram[0], pram[1]])
+        } else {
+            0
         }
     }
 }
@@ -848,6 +986,123 @@ mod tests {
             &pram,
         );
         assert_eq!(&ppu.framebuffer()[0..3], &[0, 0, 0xFF]);
+    }
+
+    #[test]
+    fn mode0_bg0_4bpp_renders_first_tile_pixel() {
+        // Arrange: Mode 0 with BG0 enabled. Tile 0 pixel (0,0) uses color
+        // index 1 from BG palette bank 0, which we set to pure red.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        ppu.write_dispcnt(dispcnt::BG0_ENABLE);
+
+        // BG palette entry 1 = BGR555 red (0x001F).
+        pram[2] = 0x1F;
+        pram[3] = 0x00;
+
+        // Charblock 0, tile 1, row 0, first byte: pixel0=1, pixel1=1.
+        vram[32] = 0x11;
+
+        // Screenblock 0, map entry (0,0): tile index 1, palbank 0, no flip.
+        vram[0x0000] = 0x01;
+        vram[0x0001] = 0x00;
+
+        // Act: render one full frame.
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+        );
+
+        // Assert: top-left output pixel should come from tile data, not backdrop.
+        assert_eq!(&ppu.framebuffer()[0..3], &[0xFF, 0, 0]);
+    }
+
+    #[test]
+    fn mode0_bg0_4bpp_hflip_mirrors_tile_pixels() {
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        ppu.write_dispcnt(dispcnt::BG0_ENABLE);
+
+        // BG palette entry 1 = pure red.
+        pram[2] = 0x1F;
+        pram[3] = 0x00;
+
+        // Tile 1 row 0: pixel 7 uses color index 1, others are 0.
+        // Byte 3 contains pixels 6 (low nibble) and 7 (high nibble).
+        vram[32 + 3] = 0x10;
+
+        // Screenblock entry (0,0): tile 1 + horizontal flip (bit 10).
+        vram[0x0000] = 0x01;
+        vram[0x0001] = 0x04;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+        );
+
+        // With H-flip set, source pixel 7 appears at output x=0.
+        assert_eq!(&ppu.framebuffer()[0..3], &[0xFF, 0, 0]);
+    }
+
+    #[test]
+    fn mode0_bg0_4bpp_vflip_mirrors_tile_rows() {
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        ppu.write_dispcnt(dispcnt::BG0_ENABLE);
+
+        // BG palette entry 1 = pure red.
+        pram[2] = 0x1F;
+        pram[3] = 0x00;
+
+        // Tile 1 row 7 (byte offset +28): first pixel uses color index 1.
+        vram[32 + 28] = 0x01;
+
+        // Screenblock entry (0,0): tile 1 + vertical flip (bit 11).
+        vram[0x0000] = 0x01;
+        vram[0x0001] = 0x08;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+        );
+
+        // With V-flip set, source row 7 appears at output y=0.
+        assert_eq!(&ppu.framebuffer()[0..3], &[0xFF, 0, 0]);
+    }
+
+    #[test]
+    #[should_panic(expected = "unimplemented GBA Mode 0 BG0 8bpp rendering")]
+    fn mode0_bg0_8bpp_panics_until_implemented() {
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let vram = make_vram();
+        let pram = make_pram();
+
+        // Mode 0 + BG0 enabled, and BG0CNT bit 7 (8bpp) set.
+        ppu.write_dispcnt(dispcnt::BG0_ENABLE);
+        ppu.write_bg0cnt(1 << 7);
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+        );
     }
 
     #[test]

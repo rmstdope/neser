@@ -41,6 +41,7 @@ pub const REG_TM0CNT_H: u32 = 0x0400_0102;
 
 /// Address of `REG_DISPCNT` (PPU display control).
 pub const REG_DISPCNT: u32 = 0x0400_0000;
+const REG_BG0_SCROLL_END: u32 = ppu::REG_BG0VOFS + 1;
 
 /// I/O register backing store.
 ///
@@ -100,6 +101,7 @@ impl IoRegisters {
             REG_IME => Some(ic.read_ime()),
             // PPU display registers.
             ppu::REG_DISPCNT => Some(ppu.read_dispcnt()),
+            ppu::REG_BG0CNT => Some(ppu.read_bg0cnt()),
             ppu::REG_DISPSTAT => Some(ppu.read_dispstat()),
             ppu::REG_VCOUNT => Some(ppu.read_vcount()),
             // Keypad.
@@ -224,8 +226,11 @@ impl IoRegisters {
             REG_IME => ic.write_ime(value),
             // PPU display registers.
             ppu::REG_DISPCNT => ppu.write_dispcnt(value),
+            ppu::REG_BG0CNT => ppu.write_bg0cnt(value),
             ppu::REG_DISPSTAT => ppu.write_dispstat(value, ic),
             ppu::REG_VCOUNT => { /* VCOUNT is read-only */ }
+            ppu::REG_BG0HOFS => ppu.write_bg0_hofs(value),
+            ppu::REG_BG0VOFS => ppu.write_bg0_vofs(value),
             // PPU affine BG2/BG3 registers (write-only, reads fall
             // through to the I/O backing store / open-bus).
             0x0400_0020..=0x0400_003E => {
@@ -315,6 +320,28 @@ impl IoRegisters {
                 (current & 0x00FF) | ((value as u16) << 8)
             };
             ppu.write_affine(aligned, merged);
+            return;
+        }
+        // BG0 scroll registers are write-only as well. Merge byte writes
+        // against live PPU state instead of io.read16() (which returns
+        // backing-store/open-bus for these addresses).
+        if (ppu::REG_BG0HOFS..=REG_BG0_SCROLL_END).contains(&addr) {
+            let aligned = addr & !1;
+            let current = match aligned {
+                ppu::REG_BG0HOFS => ppu.read_bg0_hofs(),
+                ppu::REG_BG0VOFS => ppu.read_bg0_vofs(),
+                _ => unreachable!("unexpected BG0 scroll register address: {aligned:#010X}"),
+            };
+            let merged = if addr & 1 == 0 {
+                (current & 0xFF00) | value as u16
+            } else {
+                (current & 0x00FF) | ((value as u16) << 8)
+            };
+            match aligned {
+                ppu::REG_BG0HOFS => ppu.write_bg0_hofs(merged),
+                ppu::REG_BG0VOFS => ppu.write_bg0_vofs(merged),
+                _ => unreachable!("unexpected BG0 scroll register address: {aligned:#010X}"),
+            }
             return;
         }
         let aligned = addr & !1;
@@ -616,5 +643,360 @@ mod tests {
         );
         assert_eq!(p.read_vcount(), 0);
         assert_eq!(io.read16(ppu::REG_VCOUNT, &ic, &t, &d, &p, &k), 0);
+    }
+
+    #[test]
+    fn mode0_bg0_hofs_scroll_changes_leftmost_pixel() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        let mut vram = vec![0u8; 96 * 1024];
+        let mut pram = vec![0u8; 1024];
+
+        // Mode 0 + BG0 enabled.
+        io.write16(
+            ppu::REG_DISPCNT,
+            ppu::dispcnt::BG0_ENABLE,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+
+        // BG palette entry 1 = red.
+        pram[2] = 0x1F;
+        pram[3] = 0x00;
+
+        // Tile 2 has pixel (0,0) = color index 1.
+        vram[64] = 0x01;
+
+        // Map (0,0) = tile 1 (empty), (1,0) = tile 2 (red at x=0).
+        vram[0] = 0x01;
+        vram[1] = 0x00;
+        vram[2] = 0x02;
+        vram[3] = 0x00;
+
+        // BG0HOFS = 8 pixels (0x0400_0010).
+        io.write16(0x0400_0010, 8, &mut ic, &mut t, &mut d, &mut p, &mut k);
+
+        p.step(
+            ppu::CYCLES_PER_SCANLINE * ppu::SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+        );
+
+        assert_eq!(&p.framebuffer()[0..3], &[0xFF, 0, 0]);
+    }
+
+    #[test]
+    fn mode0_bg0_vofs_scroll_changes_top_row_pixel() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        let mut vram = vec![0u8; 96 * 1024];
+        let mut pram = vec![0u8; 1024];
+
+        // Mode 0 + BG0 enabled.
+        io.write16(
+            ppu::REG_DISPCNT,
+            ppu::dispcnt::BG0_ENABLE,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+
+        // BG palette entry 1 = red.
+        pram[2] = 0x1F;
+        pram[3] = 0x00;
+
+        // Tile 3 has pixel (0,0) = color index 1.
+        vram[96] = 0x01;
+
+        // Map (0,0) = tile 1 (empty), (0,1) = tile 3 (red at y=8).
+        vram[0] = 0x01;
+        vram[1] = 0x00;
+        vram[64] = 0x03;
+        vram[65] = 0x00;
+
+        // BG0VOFS = 8 pixels (0x0400_0012).
+        io.write16(0x0400_0012, 8, &mut ic, &mut t, &mut d, &mut p, &mut k);
+
+        p.step(
+            ppu::CYCLES_PER_SCANLINE * ppu::SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+        );
+
+        assert_eq!(&p.framebuffer()[0..3], &[0xFF, 0, 0]);
+    }
+
+    #[test]
+    fn mode0_bg0_64x32_uses_second_screenblock_for_x_over_255() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        let mut vram = vec![0u8; 96 * 1024];
+        let mut pram = vec![0u8; 1024];
+
+        // Mode 0 + BG0 enabled.
+        io.write16(
+            ppu::REG_DISPCNT,
+            ppu::dispcnt::BG0_ENABLE,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+        // BG0CNT: screen size = 64x32 (size=1 in bits 14..15).
+        io.write16(0x0400_0008, 0x4000, &mut ic, &mut t, &mut d, &mut p, &mut k);
+
+        // BG palette entry 1 = red.
+        pram[2] = 0x1F;
+        pram[3] = 0x00;
+
+        // Tile 3 has pixel (0,0) = color index 1.
+        vram[96] = 0x01;
+
+        // Screenblock 0 entry (0,0) = tile 1 (empty).
+        vram[0x0000] = 0x01;
+        vram[0x0001] = 0x00;
+        // Screenblock 1 entry (0,0) = tile 3 (red).
+        vram[0x0800] = 0x03;
+        vram[0x0801] = 0x00;
+
+        // Scroll x to 256 so leftmost pixel samples from second screenblock.
+        io.write16(0x0400_0010, 256, &mut ic, &mut t, &mut d, &mut p, &mut k);
+
+        p.step(
+            ppu::CYCLES_PER_SCANLINE * ppu::SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+        );
+
+        assert_eq!(&p.framebuffer()[0..3], &[0xFF, 0, 0]);
+    }
+
+    #[test]
+    fn mode0_bg0_32x64_uses_lower_screenblock_for_y_over_255() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        let mut vram = vec![0u8; 96 * 1024];
+        let mut pram = vec![0u8; 1024];
+
+        // Mode 0 + BG0 enabled.
+        io.write16(
+            ppu::REG_DISPCNT,
+            ppu::dispcnt::BG0_ENABLE,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+        // BG0CNT: screen size = 32x64 (size=2 in bits 14..15).
+        io.write16(0x0400_0008, 0x8000, &mut ic, &mut t, &mut d, &mut p, &mut k);
+
+        // BG palette entry 1 = red.
+        pram[2] = 0x1F;
+        pram[3] = 0x00;
+
+        // Tile 3 has pixel (0,0) = color index 1.
+        vram[96] = 0x01;
+
+        // Screenblock 0 entry (0,0) = tile 1 (empty).
+        vram[0x0000] = 0x01;
+        vram[0x0001] = 0x00;
+        // Screenblock 1 entry (0,0) = tile 3 (red).
+        vram[0x0800] = 0x03;
+        vram[0x0801] = 0x00;
+
+        // Scroll y to 256 so top pixel samples from second screenblock row.
+        io.write16(0x0400_0012, 256, &mut ic, &mut t, &mut d, &mut p, &mut k);
+
+        p.step(
+            ppu::CYCLES_PER_SCANLINE * ppu::SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+        );
+
+        assert_eq!(&p.framebuffer()[0..3], &[0xFF, 0, 0]);
+    }
+
+    #[test]
+    fn mode0_bg0_64x64_uses_bottom_right_screenblock_for_xy_over_255() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        let mut vram = vec![0u8; 96 * 1024];
+        let mut pram = vec![0u8; 1024];
+
+        // Mode 0 + BG0 enabled.
+        io.write16(
+            ppu::REG_DISPCNT,
+            ppu::dispcnt::BG0_ENABLE,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+        // BG0CNT: screen size = 64x64 (size=3 in bits 14..15).
+        io.write16(0x0400_0008, 0xC000, &mut ic, &mut t, &mut d, &mut p, &mut k);
+
+        // BG palette entry 1 = red.
+        pram[2] = 0x1F;
+        pram[3] = 0x00;
+
+        // Tile 3 has pixel (0,0) = color index 1.
+        vram[96] = 0x01;
+
+        // Screenblock 0 entry (0,0) = tile 1 (empty).
+        vram[0x0000] = 0x01;
+        vram[0x0001] = 0x00;
+        // Screenblock 3 entry (0,0) = tile 3 (red).
+        vram[0x1800] = 0x03;
+        vram[0x1801] = 0x00;
+
+        // Scroll to x=256, y=256 so sample lands in bottom-right block.
+        io.write16(0x0400_0010, 256, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        io.write16(0x0400_0012, 256, &mut ic, &mut t, &mut d, &mut p, &mut k);
+
+        p.step(
+            ppu::CYCLES_PER_SCANLINE * ppu::SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+        );
+
+        assert_eq!(&p.framebuffer()[0..3], &[0xFF, 0, 0]);
+    }
+
+    #[test]
+    fn mode0_bg0_hofs_byte_writes_preserve_low_byte() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        let mut vram = vec![0u8; 96 * 1024];
+        let mut pram = vec![0u8; 1024];
+
+        // Mode 0 + BG0 enabled.
+        io.write16(
+            ppu::REG_DISPCNT,
+            ppu::dispcnt::BG0_ENABLE,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+
+        // BG palette entry 1 = red.
+        pram[2] = 0x1F;
+        pram[3] = 0x00;
+
+        // Tile 2 has pixel (0,0) = color index 1.
+        vram[64] = 0x01;
+
+        // Map (0,0) = tile 1 (empty), (1,0) = tile 2 (red at x=8).
+        vram[0] = 0x01;
+        vram[1] = 0x00;
+        vram[2] = 0x02;
+        vram[3] = 0x00;
+
+        // BG0HOFS byte writes: low=8 then high=0.
+        io.write8(0x0400_0010, 0x08, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        io.write8(0x0400_0011, 0x00, &mut ic, &mut t, &mut d, &mut p, &mut k);
+
+        p.step(
+            ppu::CYCLES_PER_SCANLINE * ppu::SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+        );
+
+        assert_eq!(&p.framebuffer()[0..3], &[0xFF, 0, 0]);
+    }
+
+    #[test]
+    fn mode0_bg0_vofs_byte_writes_preserve_low_byte() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        let mut vram = vec![0u8; 96 * 1024];
+        let mut pram = vec![0u8; 1024];
+
+        // Mode 0 + BG0 enabled.
+        io.write16(
+            ppu::REG_DISPCNT,
+            ppu::dispcnt::BG0_ENABLE,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+
+        // BG palette entry 1 = red.
+        pram[2] = 0x1F;
+        pram[3] = 0x00;
+
+        // Tile 3 has pixel (0,0) = color index 1.
+        vram[96] = 0x01;
+
+        // Map (0,0) = tile 1 (empty), (0,1) = tile 3 (red at y=8).
+        vram[0] = 0x01;
+        vram[1] = 0x00;
+        vram[64] = 0x03;
+        vram[65] = 0x00;
+
+        // BG0VOFS byte writes: low=8 then high=0.
+        io.write8(0x0400_0012, 0x08, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        io.write8(0x0400_0013, 0x00, &mut ic, &mut t, &mut d, &mut p, &mut k);
+
+        p.step(
+            ppu::CYCLES_PER_SCANLINE * ppu::SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+        );
+
+        assert_eq!(&p.framebuffer()[0..3], &[0xFF, 0, 0]);
     }
 }

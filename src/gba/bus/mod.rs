@@ -403,6 +403,17 @@ impl GbaBus {
         ]))
     }
 
+    /// Non-mutating halfword read used by debugging/tracing paths.
+    ///
+    /// This preserves `last_bus_value` so enabling tracing does not
+    /// perturb open-bus-visible behavior.
+    pub fn peek16(&mut self, addr: u32) -> u16 {
+        let prev = self.last_bus_value;
+        let value = self.read16(addr);
+        self.last_bus_value = prev;
+        value
+    }
+
     /// Read a 32-bit little-endian word from cart ROM, respecting mirroring.
     /// Returns `None` when no cartridge is inserted.
     fn rom_u32(&self, offset: usize) -> Option<u32> {
@@ -412,6 +423,17 @@ impl GbaBus {
             self.rom_byte(offset + 2)?,
             self.rom_byte(offset + 3)?,
         ]))
+    }
+
+    /// Non-mutating word read used by debugging/tracing paths.
+    ///
+    /// This preserves `last_bus_value` so enabling tracing does not
+    /// perturb open-bus-visible behavior.
+    pub fn peek32(&mut self, addr: u32) -> u32 {
+        let prev = self.last_bus_value;
+        let value = self.read32(addr);
+        self.last_bus_value = prev;
+        value
     }
 }
 
