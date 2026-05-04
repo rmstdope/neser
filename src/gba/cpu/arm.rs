@@ -809,6 +809,12 @@ fn execute_block_transfer<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u32)
         let start = if p { end } else { end.wrapping_add(4) };
         (start, base)
     };
+    let writeback_value = if u {
+        final_addr
+    } else {
+        base.wrapping_sub(reg_count * 4)
+    };
+    let first_reg_in_list = effective_rlist.trailing_zeros() as usize;
 
     // Process registers in order (lowest numbered first for ascending,
     // but addresses increase regardless of direction)
@@ -832,6 +838,10 @@ fn execute_block_transfer<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u32)
                 // Store
                 let value = if transfer_user_regs {
                     regs.read_user_reg(i as usize)
+                } else if w && i == rn && rn != first_reg_in_list {
+                    // STM with base in rlist and writeback stores updated base
+                    // when base isn't the first transferred register.
+                    writeback_value
                 } else if i == 15 {
                     regs.r[i].wrapping_add(4)
                 } else {
@@ -853,11 +863,7 @@ fn execute_block_transfer<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u32)
     // For LDM with base in the register list, loaded value must be preserved.
     let base_in_rlist = (effective_rlist & (1 << rn)) != 0;
     if w && !(l && base_in_rlist) {
-        regs.r[rn] = if u {
-            final_addr
-        } else {
-            base.wrapping_sub(reg_count * 4)
-        };
+        regs.r[rn] = writeback_value;
     }
 
     // Cycle timing per GBATek:
