@@ -193,8 +193,8 @@ impl Gba {
     fn assert_supported_ppu_mode(&self) {
         let mode = self.bus.ppu.mode();
         assert!(
-            mode == 0 || mode == 3,
-            "unimplemented GBA PPU mode {mode} requested via DISPCNT; only modes 0 and 3 are currently supported"
+            mode == 0 || mode == 2 || mode == 3 || mode == 4,
+            "unimplemented GBA PPU mode {mode} requested via DISPCNT; only modes 0, 2, 3 and 4 are currently supported"
         );
     }
 }
@@ -547,6 +547,21 @@ mod tests {
         // Mode 1 remains unimplemented in this increment.
         gba.bus.write16(ppu::REG_DISPCNT, 1);
         let _ = gba.run_tick();
+    }
+
+    #[test]
+    fn test_run_tick_mode2_does_not_panic() {
+        let mut gba = make_gba();
+        let rom = make_minimal_valid_gba_rom();
+        gba.load_rom(&rom, "test.gba").expect("valid GBA ROM");
+
+        // Mode 2 is now supported (backdrop-only rendering).
+        gba.bus.write16(ppu::REG_DISPCNT, 2);
+        let cycles = gba.run_tick();
+        assert!(
+            cycles <= 16,
+            "mode 2 should execute normally, got {cycles} cycles"
+        );
     }
 
     #[test]
