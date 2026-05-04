@@ -616,6 +616,7 @@ impl WasmNes {
             crate::nes::console::ExpansionPort::ZapperFamicom => "zapper".to_string(),
             crate::nes::console::ExpansionPort::PowerPadFamicom => "power-pad".to_string(),
             crate::nes::console::ExpansionPort::VsSystem => "vs-system".to_string(),
+            crate::nes::console::ExpansionPort::Playchoice10 => "playchoice10".to_string(),
         }
     }
 
@@ -1206,5 +1207,16 @@ mod tests {
             json.contains("\"recent_trace\""),
             "JSON should include recent_trace field"
         );
+    }
+
+    #[test]
+    fn test_get_expansion_port_reports_playchoice10() {
+        let wasm = WasmNes::new();
+        wasm.app_context
+            .borrow_mut()
+            .config_mut()
+            .nes
+            .expansion_port = crate::nes::console::ExpansionPort::Playchoice10;
+        assert_eq!(wasm.get_expansion_port(), "playchoice10");
     }
 }
