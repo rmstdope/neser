@@ -50,6 +50,18 @@ impl Suite {
             Self::PpuStripes => (12, "r12"),
         }
     }
+
+    fn capture_stem(self) -> &'static str {
+        match self {
+            Self::Arm => "arm",
+            Self::Thumb => "thumb",
+            Self::Nes => "nes",
+            Self::Memory => "memory",
+            Self::PpuHello => "ppu_hello",
+            Self::PpuShades => "ppu_shades",
+            Self::PpuStripes => "ppu_stripes",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -151,6 +163,7 @@ fn result_from_register(
         gba.bus_mut().peek32(pc)
     };
     let framebuffer_crc32 = gba.screen_crc32();
+    maybe_write_capture_png(gba, suite, framebuffer_crc32);
     let passed = failing_index == 0 && exit_reason == ExitReason::IdleLoopDetected;
 
     SuiteResult {
@@ -165,6 +178,51 @@ fn result_from_register(
         reg_name,
         exit_reason,
     }
+}
+
+fn maybe_write_capture_png(gba: &Gba, suite: Suite, framebuffer_crc32: u32) {
+    if std::env::var_os("NESER_CAPTURE_SCREEN").is_none() {
+        return;
+    }
+
+    let path = capture_output_path(suite, framebuffer_crc32);
+    let rgb = gba.screen_snapshot();
+    write_rgb_png(&path, &rgb, Gba::SCREEN_WIDTH, Gba::SCREEN_HEIGHT);
+    println!(
+        "[gba-suite-capture] saved {} (crc=0x{:08X})",
+        path.display(),
+        framebuffer_crc32
+    );
+}
+
+fn capture_output_path(suite: Suite, framebuffer_crc32: u32) -> PathBuf {
+    let file_name = format!("{}_crc_{:08X}.png", suite.capture_stem(), framebuffer_crc32);
+    PathBuf::from("target/gba_suite_checkpoints").join(file_name)
+}
+
+fn write_rgb_png(path: &std::path::Path, rgb: &[u8], width: u32, height: u32) {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).expect("capture output directory should be created");
+    }
+
+    let file = std::fs::File::create(path).expect("capture png file should be created");
+    let mut writer = std::io::BufWriter::new(file);
+    let mut encoder = png::Encoder::new(&mut writer, width, height);
+    encoder.set_color(png::ColorType::Rgb);
+    encoder.set_depth(png::BitDepth::Eight);
+
+    let mut png_writer = encoder
+        .write_header()
+        .expect("capture PNG header should be written");
+    png_writer
+        .write_image_data(rgb)
+        .expect("capture PNG image data should be written");
+    drop(png_writer);
+
+    use std::io::Write as _;
+    writer
+        .flush()
+        .expect("capture PNG buffer should be flushed");
 }
 
 fn is_arm_branch_to_self(opcode: u32, pc: u32) -> bool {
@@ -234,5 +292,25 @@ mod tests {
             ExitReason::ExceptionVectorTrap,
         );
         assert!(!result.passed);
+    }
+
+    #[test]
+    fn capture_output_path_uses_expected_location_and_name() {
+        let path = capture_output_path(Suite::PpuStripes, 0x8C90_CEE0);
+        assert_eq!(
+            path,
+            PathBuf::from("target/gba_suite_checkpoints/ppu_stripes_crc_8C90CEE0.png")
+        );
+    }
+
+    #[test]
+    fn suite_capture_stem_is_stable() {
+        assert_eq!(Suite::Arm.capture_stem(), "arm");
+        assert_eq!(Suite::Thumb.capture_stem(), "thumb");
+        assert_eq!(Suite::Nes.capture_stem(), "nes");
+        assert_eq!(Suite::Memory.capture_stem(), "memory");
+        assert_eq!(Suite::PpuHello.capture_stem(), "ppu_hello");
+        assert_eq!(Suite::PpuShades.capture_stem(), "ppu_shades");
+        assert_eq!(Suite::PpuStripes.capture_stem(), "ppu_stripes");
     }
 }
