@@ -225,6 +225,62 @@ impl Registers {
         }
     }
 
+    /// Read a register from the user/system bank, regardless of current mode.
+    pub fn read_user_reg(&self, index: usize) -> u32 {
+        match index {
+            0..=7 | 15 => self.r[index],
+            8..=12 => {
+                if self.live_mode == CpuMode::Fiq {
+                    self.usr_r8_12[index - 8]
+                } else {
+                    self.r[index]
+                }
+            }
+            13 => {
+                if self.live_mode == CpuMode::User || self.live_mode == CpuMode::System {
+                    self.r[13]
+                } else {
+                    self.sp_usr
+                }
+            }
+            14 => {
+                if self.live_mode == CpuMode::User || self.live_mode == CpuMode::System {
+                    self.r[14]
+                } else {
+                    self.lr_usr
+                }
+            }
+            _ => panic!("register index out of range: {index}"),
+        }
+    }
+
+    /// Write a register in the user/system bank, regardless of current mode.
+    pub fn write_user_reg(&mut self, index: usize, value: u32) {
+        match index {
+            0..=7 | 15 => self.r[index] = value,
+            8..=12 => {
+                if self.live_mode == CpuMode::Fiq {
+                    self.usr_r8_12[index - 8] = value;
+                } else {
+                    self.r[index] = value;
+                }
+            }
+            13 => {
+                if self.live_mode == CpuMode::User || self.live_mode == CpuMode::System {
+                    self.r[13] = value;
+                }
+                self.sp_usr = value;
+            }
+            14 => {
+                if self.live_mode == CpuMode::User || self.live_mode == CpuMode::System {
+                    self.r[14] = value;
+                }
+                self.lr_usr = value;
+            }
+            _ => panic!("register index out of range: {index}"),
+        }
+    }
+
     // --- Flag helpers -----------------------------------------------------
 
     pub fn n_flag(&self) -> bool {

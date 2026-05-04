@@ -180,6 +180,7 @@ fn execute_data_processing(regs: &mut Registers, instr: u32) -> ExecOutcome {
     let rn = ((instr >> 16) & 0xF) as usize;
     let rd = ((instr >> 12) & 0xF) as usize;
     let i_bit = (instr >> 25) & 1 != 0;
+    let reg_shift_by_register = !i_bit && ((instr >> 4) & 1 != 0);
 
     // Resolve operand2 (with shifter carry-out for logical operations).
     let (op2, shifter_carry) = if i_bit {
@@ -204,10 +205,21 @@ fn execute_data_processing(regs: &mut Registers, instr: u32) -> ExecOutcome {
             let rs = ((instr >> 8) & 0xF) as usize;
             regs.r[rs] & 0xFF
         };
-        compute_shift(regs.r[rm], shift_type, amount, regs.c_flag(), shift_imm_bit)
+        // With register-specified shifts, using PC as operand observes PC+12.
+        let rm_val = if !shift_imm_bit && rm == 15 {
+            regs.r[rm].wrapping_add(4)
+        } else {
+            regs.r[rm]
+        };
+        compute_shift(rm_val, shift_type, amount, regs.c_flag(), shift_imm_bit)
     };
 
-    let rn_val = regs.r[rn];
+    // For register-specified shifts, Rn == PC also observes PC+12.
+    let rn_val = if reg_shift_by_register && rn == 15 {
+        regs.r[rn].wrapping_add(4)
+    } else {
+        regs.r[rn]
+    };
     let cf_in = regs.c_flag();
 
     let (result, carry, overflow, write) = match opcode {
@@ -269,13 +281,17 @@ fn execute_data_processing(regs: &mut Registers, instr: u32) -> ExecOutcome {
     let mut branched = write && rd == 15;
 
     if s_bit {
-        if write && rd == 15 {
-            // S-bit + Rd=PC restores CPSR from SPSR (used by MOVS PC, LR).
+        if rd == 15 {
+            // S-bit + Rd=PC restores CPSR from SPSR.
+            // For non-writing test ops (CMP/CMN/TST/TEQ), this must not
+            // flush the pipeline; only true PC writes branch.
             if regs.mode().has_spsr() {
                 let spsr = regs.spsr();
                 regs.write_cpsr(spsr);
             }
-            branched = true;
+            if write {
+                branched = true;
+            }
         } else {
             let n = result & 0x8000_0000 != 0;
             let z = result == 0;
@@ -459,10 +475,13 @@ fn execute_single_data_transfer<B: Bus>(
         regs.r[rd] = value;
         result_branch = rd == 15;
     } else {
-        // Store. PC stored as PC+12 on ARM7 (already PC+8, +4 for store quirk),
-        // we'll keep PC+8 for simplicity which is sufficient for the tests we
-        // exercise.
-        let value = regs.r[rd];
+        // Store. On ARM7TDMI, storing PC writes PC+12 (R15 already reads as
+        // PC+8 during execute, then store adds +4).
+        let value = if rd == 15 {
+            regs.r[rd].wrapping_add(4)
+        } else {
+            regs.r[rd]
+        };
         if b_byte {
             bus.write8(addr, value as u8);
         } else {
@@ -472,7 +491,7 @@ fn execute_single_data_transfer<B: Bus>(
     }
 
     // Writeback (post-indexing always writes back; pre-indexing only when W=1).
-    if !p || w {
+    if (!p || w) && !(l && rd == rn) {
         regs.r[rn] = offset_addr;
     }
 
@@ -700,7 +719,12 @@ fn execute_halfword_transfer<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u
         let value = match sh {
             0b01 => {
                 // LDRH: Load unsigned halfword
-                bus.read16(addr & !1) as u32
+                let raw = bus.read16(addr & !1) as u32;
+                if addr & 1 != 0 {
+                    raw.rotate_right(8)
+                } else {
+                    raw
+                }
             }
             0b10 => {
                 // LDRSB: Load signed byte, sign-extend to 32 bits
@@ -709,8 +733,13 @@ fn execute_halfword_transfer<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u
             }
             0b11 => {
                 // LDRSH: Load signed halfword, sign-extend to 32 bits
-                let hw = bus.read16(addr & !1) as i16;
-                hw as i32 as u32
+                if addr & 1 != 0 {
+                    let byte = bus.read8(addr) as i8;
+                    byte as i32 as u32
+                } else {
+                    let hw = bus.read16(addr & !1) as i16;
+                    hw as i32 as u32
+                }
             }
             _ => 0, // SH=00 would be SWP, which is handled elsewhere
         };
@@ -726,7 +755,7 @@ fn execute_halfword_transfer<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u
     }
 
     // Writeback (post-indexing always writes back; pre-indexing only when W=1).
-    if !p || w {
+    if (!p || w) && !(l && rd == rn) {
         regs.r[rn] = offset_addr;
     }
 
@@ -754,17 +783,17 @@ fn execute_block_transfer<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u32)
 
     // S-bit semantics:
     // - For LDM with PC in rlist: CPSR = SPSR (mode switch)
-    // - For LDM/STM without PC or store: use user-mode registers
-    // Note: User-mode register access is not yet implemented; S-bit currently
-    // only handles CPSR restore on LDM with PC.
+    // - Otherwise, transfer user-mode register bank (the '^' forms)
     let restore_cpsr = s_bit && l && (rlist & (1 << 15)) != 0;
+    let transfer_user_regs = s_bit && !restore_cpsr;
 
-    // Count registers in the list
-    let reg_count = rlist.count_ones();
-    if reg_count == 0 {
-        // Empty register list is unpredictable; treat as NOP
-        return ExecOutcome::cycles(1);
-    }
+    // Empty rlist has ARM7TDMI special behavior: transfer R15 and use
+    // 16-register writeback span (+/- 0x40).
+    let (effective_rlist, reg_count) = if rlist == 0 {
+        (1u16 << 15, 16u32)
+    } else {
+        (rlist, rlist.count_ones())
+    };
 
     let base = regs.r[rn];
 
@@ -787,17 +816,27 @@ fn execute_block_transfer<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u32)
     let mut branch_occurred = false;
 
     for i in 0..16 {
-        if rlist & (1 << i) != 0 {
+        if effective_rlist & (1 << i) != 0 {
             if l {
                 // Load
                 let value = bus.read32(addr);
-                regs.r[i] = value;
-                if i == 15 {
+                if transfer_user_regs {
+                    regs.write_user_reg(i as usize, value);
+                } else {
+                    regs.r[i] = value;
+                }
+                if i == 15 && !transfer_user_regs {
                     branch_occurred = true;
                 }
             } else {
                 // Store
-                let value = regs.r[i];
+                let value = if transfer_user_regs {
+                    regs.read_user_reg(i as usize)
+                } else if i == 15 {
+                    regs.r[i].wrapping_add(4)
+                } else {
+                    regs.r[i]
+                };
                 bus.write32(addr, value);
             }
             addr = addr.wrapping_add(4);
@@ -810,8 +849,10 @@ fn execute_block_transfer<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u32)
         regs.write_cpsr(spsr);
     }
 
-    // Writeback the final address to Rn
-    if w {
+    // Writeback the final address to Rn.
+    // For LDM with base in the register list, loaded value must be preserved.
+    let base_in_rlist = (effective_rlist & (1 << rn)) != 0;
+    if w && !(l && base_in_rlist) {
         regs.r[rn] = if u {
             final_addr
         } else {
@@ -859,8 +900,10 @@ fn execute_swap<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u32) -> ExecOu
         regs.r[rd] = old_val; // Zero-extended to 32 bits
     } else {
         // SWP: Swap word
-        let old_val = bus.read32(addr);
-        bus.write32(addr, rm_val);
+        let aligned = addr & !0x3;
+        let raw = bus.read32(aligned);
+        let old_val = raw.rotate_right((addr & 0x3) * 8);
+        bus.write32(aligned, rm_val);
         regs.r[rd] = old_val;
     }
 
@@ -972,6 +1015,60 @@ mod tests {
     }
 
     #[test]
+    fn arm_mov_pc_with_register_shift_uses_pc_plus_12() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 0;
+        regs.r[15] = 0x100 + 8;
+
+        // From gba-tests t224: mov r0, pc, lsl r0
+        let instr = 0xE1A0_001F;
+        execute(&mut regs, &mut bus, instr);
+
+        assert_eq!(regs.r[0], 0x100 + 12);
+    }
+
+    #[test]
+    fn arm_add_pc_rn_with_register_shift_uses_pc_plus_12() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 0;
+        regs.r[15] = 0x100 + 8;
+
+        // From gba-tests t225: add r0, pc, r0, lsl r0
+        let instr = 0xE08F_0010;
+        execute(&mut regs, &mut bus, instr);
+
+        assert_eq!(regs.r[0], 0x100 + 12);
+    }
+
+    #[test]
+    fn arm_cmp_pc_with_s_bit_restores_mode_without_branching() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+
+        regs.switch_mode(CpuMode::Supervisor);
+        regs.r[8] = 32;
+
+        let to_fiq = arm_msr_imm(0xE, CpuMode::Fiq.bits() as u8, 0, false, 0x1);
+        execute(&mut regs, &mut bus, to_fiq);
+        regs.r[8] = 64;
+
+        let set_spsr = arm_msr_imm(0xE, CpuMode::System.bits() as u8, 0, true, 0x1);
+        execute(&mut regs, &mut bus, set_spsr);
+
+        regs.r[0] = 1;
+
+        // From gba-tests t234: cmp pc, pc, r0 (S=1, Rd=PC, opcode=CMP)
+        let instr = 0xE15F_F000;
+        let outcome = execute(&mut regs, &mut bus, instr);
+
+        assert!(!outcome.branched);
+        assert_eq!(regs.mode(), CpuMode::System);
+        assert_eq!(regs.r[8], 32);
+    }
+
+    #[test]
     fn arm_addne_skips_when_z_set() {
         // Test vector: ADDNE R0,R0,#1 with Z set -> R0 unchanged.
         let mut regs = make_regs();
@@ -1062,6 +1159,51 @@ mod tests {
             | (2 << 12);
         execute(&mut regs, &mut bus, ldr_instr);
         assert_eq!(regs.r[2], 0xCAFE_BABE);
+    }
+
+    #[test]
+    fn arm_str_pc_stores_pc_plus_4() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[1] = 0x40;
+        regs.r[15] = 0x100 + 8;
+
+        // STR R15, [R1]
+        let str_pc =
+            (0xE_u32 << 28) | (0b010 << 25) | (1 << 24) | (1 << 23) | (1 << 16) | (15 << 12);
+        execute(&mut regs, &mut bus, str_pc);
+
+        assert_eq!(bus.read32(0x40), 0x100 + 12);
+    }
+
+    #[test]
+    fn arm_ldr_pre_index_writeback_same_register_keeps_loaded_value() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x200);
+        let mem = 0x80;
+        bus.write32(mem, 32);
+        regs.r[0] = mem.wrapping_sub(4);
+
+        // From gba-tests t360: ldr r0, [r0, 4]!
+        let instr = 0xE5B0_0004;
+        execute(&mut regs, &mut bus, instr);
+
+        assert_eq!(regs.r[0], 32);
+    }
+
+    #[test]
+    fn arm_ldr_post_index_writeback_same_register_keeps_loaded_value() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x200);
+        let mem = 0x80;
+        bus.write32(mem, 32);
+        regs.r[0] = mem;
+
+        // From gba-tests t361: ldr r0, [r0], 4
+        let instr = 0xE490_0004;
+        execute(&mut regs, &mut bus, instr);
+
+        assert_eq!(regs.r[0], 32);
     }
 
     #[test]
@@ -1511,6 +1653,32 @@ mod tests {
     }
 
     #[test]
+    fn arm_ldrh_misaligned_rotates_by_8() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[1] = 0x40;
+        bus.write16(0x40, 0x0020);
+
+        let ldrh = arm_halfword_imm(0xE, true, true, false, true, 1, 0, false, true, 1);
+        execute(&mut regs, &mut bus, ldrh);
+
+        assert_eq!(regs.r[0], 0x2000_0000);
+    }
+
+    #[test]
+    fn arm_ldrsh_misaligned_behaves_like_ldrsb() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[1] = 0x40;
+        bus.write16(0x40, 0xFF00);
+
+        let ldrsh = arm_halfword_imm(0xE, true, true, false, true, 1, 0, true, true, 1);
+        execute(&mut regs, &mut bus, ldrsh);
+
+        assert_eq!(regs.r[0], 0xFFFF_FFFF);
+    }
+
+    #[test]
     fn arm_ldrh_with_offset() {
         // LDRH R0, [R1, #4]: load with immediate offset
         let mut regs = make_regs();
@@ -1591,6 +1759,54 @@ mod tests {
     }
 
     #[test]
+    fn arm_stm_stores_pc_plus_4() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x200);
+        regs.r[11] = 0x80;
+        regs.r[0] = 0x1111_1111;
+        regs.r[15] = 0x100 + 8;
+
+        // STMFD R11!, {R0, R15}
+        let stmfd = arm_block_transfer(
+            0xE,
+            true,
+            false,
+            false,
+            true,
+            false,
+            11,
+            (1 << 0) | (1 << 15),
+        );
+        execute(&mut regs, &mut bus, stmfd);
+
+        assert_eq!(bus.read32(0x78), 0x1111_1111);
+        assert_eq!(bus.read32(0x7C), 0x100 + 12);
+    }
+
+    #[test]
+    fn arm_stm_with_s_bit_uses_user_bank_registers() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x200);
+
+        regs.switch_mode(CpuMode::System);
+        regs.r[0] = 0x80;
+        regs.r[8] = 32;
+        regs.r[9] = 0x1234_5678;
+
+        regs.switch_mode(CpuMode::Fiq);
+        regs.r[8] = 64;
+        regs.r[9] = 0xAAAA_BBBB;
+
+        // STMFD R0, {R8, R9}^
+        let stm_user =
+            arm_block_transfer(0xE, true, false, true, false, false, 0, (1 << 8) | (1 << 9));
+        execute(&mut regs, &mut bus, stm_user);
+
+        assert_eq!(bus.read32(0x78), 32);
+        assert_eq!(bus.read32(0x7C), 0x1234_5678);
+    }
+
+    #[test]
     fn arm_stmdb_ldmdb() {
         // STMDB R0!, {R1-R2}: Store R1, R2 decrementing before, full descending stack
         let mut regs = make_regs();
@@ -1643,6 +1859,35 @@ mod tests {
         let outcome = execute(&mut regs, &mut bus, stmia);
         // Should complete without crashing; base unchanged since no registers transferred
         assert!(outcome.cycles > 0);
+    }
+
+    #[test]
+    fn arm_ldmia_empty_rlist_loads_pc_and_writes_back_64() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 0x40;
+        bus.write32(0x40, 0x2000_0000);
+
+        let ldmia = arm_block_transfer(0xE, false, true, false, true, true, 0, 0);
+        let outcome = execute(&mut regs, &mut bus, ldmia);
+
+        assert!(outcome.branched);
+        assert_eq!(regs.r[15], 0x2000_0000);
+        assert_eq!(regs.r[0], 0x80);
+    }
+
+    #[test]
+    fn arm_stmia_empty_rlist_stores_pc_and_writes_back_64() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 0x40;
+        regs.r[15] = 0x100 + 8;
+
+        let stmia = arm_block_transfer(0xE, false, true, false, true, false, 0, 0);
+        execute(&mut regs, &mut bus, stmia);
+
+        assert_eq!(bus.read32(0x40), 0x100 + 12);
+        assert_eq!(regs.r[0], 0x80);
     }
 
     // -------------------------------------------------------------------------
@@ -1702,5 +1947,22 @@ mod tests {
         // Since we read Rm BEFORE writing to Rd, Rd should get memory value
         assert_eq!(regs.r[1], 0xAAAA_BBBB);
         assert_eq!(bus.read32(0x40), 0xCCCC_DDDD);
+    }
+
+    #[test]
+    fn arm_swp_misaligned_rotates_old_value_and_writes_aligned() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+
+        regs.r[2] = 0x41; // misaligned base
+        regs.r[0] = 32;
+        bus.write32(0x40, 64);
+
+        // From gba-tests t452: swp r3, r0, [r2]
+        let swp = arm_swap(0xE, false, 2, 3, 0);
+        execute(&mut regs, &mut bus, swp);
+
+        assert_eq!(regs.r[3], 64_u32.rotate_right(8));
+        assert_eq!(bus.read32(0x40), 32);
     }
 }
