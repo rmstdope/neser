@@ -30,6 +30,7 @@
 #
 # NES-specific settings are prefixed with nes- (e.g., nes-hardware, nes-pulse1).
 # Game Boy-specific settings are prefixed with gb- (e.g., gb-hardware, gb-dmg-variant).
+# GBA-specific settings are prefixed with gba- (e.g., gba-hardware, gba-bios-path).
 # Generic platform settings have no prefix (e.g., audio, ram_init_mode).
 #
 # CLI boolean flags:
@@ -288,3 +289,17 @@ nes-vertical_overscan=8
 # Default: false (skip boot animation for faster startup)
 # Valid values: true, false
 #gb-boot-animation=false
+
+# -----------------------------------------------------------------------------
+# Game Boy Advance Settings
+# -----------------------------------------------------------------------------
+# GBA hardware model.
+# Valid values: agb, sp, micro
+# Default: agb
+#gba-hardware=agb
+
+# Path to an external GBA BIOS image.
+# This file is required to run GBA ROMs.
+# File must be exactly 16384 bytes.
+# If omitted, NESER also tries: ~/.neser/gba_bios.bin
+#gba-bios-path=/absolute/path/to/gba_bios.bin

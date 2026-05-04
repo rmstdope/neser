@@ -19,6 +19,11 @@ pub(crate) const GBA_CLI_FLAGS: &[CliFlag] = &[
         help: Some("GBA hardware model: agb, sp, micro (default: agb)"),
         has_value: true,
     },
+    CliFlag {
+        flag: "--gba-bios-path",
+        help: Some("Path to external GBA BIOS image (exactly 16384 bytes)"),
+        has_value: true,
+    },
 ];
 
 /// Valid values for the `gba-hardware` option (used in error messages).
@@ -43,11 +48,14 @@ pub enum GbaModel {
 impl GbaModel {
     /// Parse a hardware model string (case-insensitive).
     pub fn parse(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
-            "agb" => Some(Self::Agb),
-            "sp" => Some(Self::Sp),
-            "micro" => Some(Self::Micro),
-            _ => None,
+        if s.eq_ignore_ascii_case("agb") {
+            Some(Self::Agb)
+        } else if s.eq_ignore_ascii_case("sp") {
+            Some(Self::Sp)
+        } else if s.eq_ignore_ascii_case("micro") {
+            Some(Self::Micro)
+        } else {
+            None
         }
     }
 
@@ -66,9 +74,20 @@ impl GbaModel {
 pub struct GbaConfig {
     /// Emulated GBA hardware model.
     pub hardware: GbaModel,
+    /// Optional path to an external GBA BIOS image.
+    pub bios_path: Option<String>,
 }
 
 impl GbaConfig {
+    fn set_bios_path_from_input(&mut self, value: &str) {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            self.bios_path = None;
+        } else {
+            self.bios_path = Some(trimmed.to_string());
+        }
+    }
+
     /// Parse GBA-specific CLI arguments and apply them to this config.
     pub(crate) fn apply_args(&mut self, args: &[String]) -> Result<(), String> {
         if let Some(hardware) =
@@ -79,6 +98,10 @@ impl GbaConfig {
                     "Invalid --gba-hardware value: '{hardware}'. Valid options are: {VALID_HARDWARE_MODELS}",
                 )
             })?;
+        }
+
+        if let Some(path) = crate::platform::config::parse_cli_string_arg(args, "--gba-bios-path") {
+            self.set_bios_path_from_input(&path);
         }
 
         Ok(())
@@ -95,6 +118,9 @@ impl GbaConfig {
                         "Invalid gba-hardware value: '{value}'. Valid options are: {VALID_HARDWARE_MODELS}",
                     )
                 })?;
+            }
+            "gba-bios-path" => {
+                self.set_bios_path_from_input(value);
             }
             _ => {
                 return Err(format!("Unknown GBA config key: {key}"));
@@ -233,5 +259,23 @@ mod tests {
         let result = config.apply_config_value("unknown-key", "value");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Unknown GBA config key"));
+    }
+
+    #[test]
+    fn test_gba_cli_flags_include_gba_bios_path() {
+        assert!(
+            GBA_CLI_FLAGS.iter().any(|f| f.flag == "--gba-bios-path"),
+            "GBA CLI flags should include --gba-bios-path"
+        );
+    }
+
+    #[test]
+    fn test_config_file_parse_gba_bios_path_supported() {
+        let mut config = GbaConfig::default();
+        let result = config.apply_config_value("gba-bios-path", "/tmp/gba_bios.bin");
+        assert!(
+            result.is_ok(),
+            "gba-bios-path should be accepted as a valid GBA config key"
+        );
     }
 }
