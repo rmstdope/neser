@@ -1391,6 +1391,42 @@ mod tests {
         assert_eq!(regs.spsr() & 0xF000_0000, 0xA000_0000);
     }
 
+    #[test]
+    fn arm_subs_pc_restores_mode_and_banked_registers() {
+        // Mirrors gba-tests ARM data_processing case t223:
+        // 1) Set R8 in non-FIQ bank to 32
+        // 2) Enter FIQ and set banked R8 to 64
+        // 3) Program SPSR to SYSTEM mode
+        // 4) Execute SUBS PC, PC, #4 and verify CPSR is restored from SPSR
+        //    and non-FIQ R8 bank is visible again.
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+
+        regs.switch_mode(CpuMode::Supervisor);
+        regs.r[8] = 32;
+
+        // MSR CPSR_c, #FIQ
+        let to_fiq = arm_msr_imm(0xE, CpuMode::Fiq.bits() as u8, 0, false, 0x1);
+        execute(&mut regs, &mut bus, to_fiq);
+        assert_eq!(regs.mode(), CpuMode::Fiq);
+
+        regs.r[8] = 64;
+
+        // MSR SPSR_c, #SYSTEM
+        let set_spsr = arm_msr_imm(0xE, CpuMode::System.bits() as u8, 0, true, 0x1);
+        execute(&mut regs, &mut bus, set_spsr);
+
+        // SUBS PC, PC, #4
+        regs.r[15] = 0x200 + 8;
+        let subs_pc = arm_alu_imm(0xE, 0x2, true, 15, 15, 4);
+        let outcome = execute(&mut regs, &mut bus, subs_pc);
+
+        assert!(outcome.branched);
+        assert_eq!(regs.mode(), CpuMode::System);
+        assert_eq!(regs.r[8], 32);
+        assert_eq!(regs.r[15], 0x200 + 4);
+    }
+
     // -------------------------------------------------------------------------
     // Halfword/Signed Data Transfer Tests (LDRH, STRH, LDRSB, LDRSH)
     // -------------------------------------------------------------------------

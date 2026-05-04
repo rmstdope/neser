@@ -143,6 +143,35 @@ impl Gba {
     }
 
     #[cfg(test)]
+    pub(crate) fn cpu_cpsr(&self) -> u32 {
+        self.cpu.regs.cpsr
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cpu_thumb(&self) -> bool {
+        self.cpu.regs.thumb()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn init_test_stack_pointers(&mut self) {
+        use crate::gba::cpu::registers::CpuMode;
+
+        let saved_mode = self.cpu.regs.mode();
+
+        // Provide deterministic stack pointers for the modes used by suite ROMs.
+        self.cpu.regs.switch_mode(CpuMode::Supervisor);
+        self.cpu.regs.r[13] = 0x0300_7FE0;
+
+        self.cpu.regs.switch_mode(CpuMode::Irq);
+        self.cpu.regs.r[13] = 0x0300_7FA0;
+
+        self.cpu.regs.switch_mode(CpuMode::System);
+        self.cpu.regs.r[13] = 0x0300_7F00;
+
+        self.cpu.regs.switch_mode(saved_mode);
+    }
+
+    #[cfg(test)]
     pub(crate) fn run_tick_for_tests(&mut self) -> u8 {
         if !self.bus.has_cart() {
             return 0;
