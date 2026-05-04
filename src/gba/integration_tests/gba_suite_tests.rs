@@ -19,3 +19,13 @@ fn gba_suite_thumb_rom_passes() {
         result.failing_index, result.reg_name, result.pc, result.cycles, result.exit_reason
     );
 }
+
+#[test]
+fn gba_suite_memory_rom_passes() {
+    let result = run_suite(Suite::Memory);
+    assert!(
+        result.passed,
+        "memory suite failed: index={} reg={} pc=0x{:08X} cycles={} exit={:?}",
+        result.failing_index, result.reg_name, result.pc, result.cycles, result.exit_reason
+    );
+}

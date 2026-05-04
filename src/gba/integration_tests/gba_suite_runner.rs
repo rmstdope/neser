@@ -15,6 +15,7 @@ const CART_ENTRYPOINT: u32 = 0x0800_0000;
 pub enum Suite {
     Arm,
     Thumb,
+    Memory,
 }
 
 impl Suite {
@@ -22,6 +23,7 @@ impl Suite {
         let rel = match self {
             Self::Arm => "roms/gba/automated_tests/gba-tests/arm/arm.gba",
             Self::Thumb => "roms/gba/automated_tests/gba-tests/thumb/thumb.gba",
+            Self::Memory => "roms/gba/automated_tests/gba-tests/memory/memory.gba",
         };
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(rel)
     }
@@ -30,6 +32,7 @@ impl Suite {
         match self {
             Self::Arm => (12, "r12"),
             Self::Thumb => (7, "r7"),
+            Self::Memory => (12, "r12"),
         }
     }
 }
@@ -58,8 +61,7 @@ pub fn run_suite(suite: Suite) -> SuiteResult {
     });
 
     let mut gba = Gba::new(AppContext::default());
-    let bios = vec![0u8; BIOS_SIZE];
-    let mut bios = bios;
+    let mut bios = vec![0u8; BIOS_SIZE];
     bios[0..4].copy_from_slice(&BIOS_RESET_STUB_LDR_PC_MINUS_4.to_le_bytes());
     bios[4..8].copy_from_slice(&CART_ENTRYPOINT.to_le_bytes());
     gba.bus_mut().load_bios(&bios);
