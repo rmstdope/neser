@@ -189,14 +189,6 @@ impl Gba {
             }
         }
     }
-
-    fn assert_supported_ppu_mode(&self) {
-        let mode = self.bus.ppu.mode();
-        assert!(
-            mode == 0 || mode == 2 || mode == 3 || mode == 4,
-            "unimplemented GBA PPU mode {mode} requested via DISPCNT; only modes 0, 2, 3 and 4 are currently supported"
-        );
-    }
 }
 
 impl Emulator for Gba {
@@ -226,8 +218,6 @@ impl Emulator for Gba {
         if !self.bus.has_cart() {
             return 0;
         }
-
-        self.assert_supported_ppu_mode();
 
         if cpu_trace_level() > 0
             && let Some(line) = self.current_instruction_trace_line()
@@ -538,15 +528,22 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "unimplemented GBA PPU mode 1")]
-    fn test_run_tick_mode1_panics_while_unimplemented() {
+    fn test_run_tick_unimplemented_modes_render_backdrop() {
+        // Modes 1, 5, 6, 7 are not fully implemented but should gracefully
+        // render backdrop without panicking. This matches mGBA behavior where
+        // prohibited modes (6-7) simply don't render any backgrounds.
         let mut gba = make_gba();
         let rom = make_minimal_valid_gba_rom();
         gba.load_rom(&rom, "test.gba").expect("valid GBA ROM");
 
-        // Mode 1 remains unimplemented in this increment.
-        gba.bus.write16(ppu::REG_DISPCNT, 1);
-        let _ = gba.run_tick();
+        for mode in [1, 5, 6, 7] {
+            gba.bus.write16(ppu::REG_DISPCNT, mode);
+            let cycles = gba.run_tick();
+            assert!(
+                cycles <= 16,
+                "mode {mode} should execute normally (backdrop), got {cycles} cycles"
+            );
+        }
     }
 
     #[test]
