@@ -114,6 +114,10 @@ pub fn execute<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u32) -> ExecOut
             // Single data transfer (LDR/STR with immediate or register offset).
             execute_single_data_transfer(regs, bus, instr)
         }
+        0b100 => {
+            // Block data transfer (LDM/STM)
+            execute_block_transfer(regs, bus, instr)
+        }
         0b101 => execute_branch(regs, instr),
         0b111 => {
             // SWI is encoded as 1111_xxxx_xxxx_xxxx_xxxx_xxxx_xxxx
@@ -725,6 +729,93 @@ fn execute_halfword_transfer<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u
         ExecOutcome::cycles(3) // 1S + 1N + 1I
     } else {
         ExecOutcome::cycles(2) // 2N
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Block Data Transfer (LDM/STM)
+// ---------------------------------------------------------------------------
+
+fn execute_block_transfer<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u32) -> ExecOutcome {
+    let p = (instr >> 24) & 1 != 0; // pre/post indexing
+    let u = (instr >> 23) & 1 != 0; // up/down
+    let _s = (instr >> 22) & 1 != 0; // PSR & force user mode (TODO: handle this)
+    let w = (instr >> 21) & 1 != 0; // writeback
+    let l = (instr >> 20) & 1 != 0; // load/store
+    let rn = ((instr >> 16) & 0xF) as usize;
+    let rlist = (instr & 0xFFFF) as u16;
+
+    // Count registers in the list
+    let reg_count = rlist.count_ones();
+    if reg_count == 0 {
+        // Empty register list is unpredictable; treat as NOP
+        return ExecOutcome::cycles(1);
+    }
+
+    let base = regs.r[rn];
+
+    // Calculate the lowest and highest addresses based on direction
+    // For U=1 (up), addresses go base, base+4, base+8, ...
+    // For U=0 (down), addresses go base-n*4, ..., base-8, base-4
+    let (start_addr, final_addr) = if u {
+        let start = if p { base.wrapping_add(4) } else { base };
+        let end = base.wrapping_add(reg_count * 4);
+        (start, end)
+    } else {
+        let end = base.wrapping_sub(reg_count * 4);
+        let start = if p { end } else { end.wrapping_add(4) };
+        (start, base)
+    };
+
+    // Process registers in order (lowest numbered first for ascending,
+    // but addresses increase regardless of direction)
+    let mut addr = start_addr;
+    let mut branch_occurred = false;
+
+    for i in 0..16 {
+        if rlist & (1 << i) != 0 {
+            if l {
+                // Load
+                let value = bus.read32(addr);
+                regs.r[i] = value;
+                if i == 15 {
+                    branch_occurred = true;
+                }
+            } else {
+                // Store
+                let value = regs.r[i];
+                bus.write32(addr, value);
+            }
+            addr = addr.wrapping_add(4);
+        }
+    }
+
+    // Writeback the final address to Rn
+    if w {
+        regs.r[rn] = if u {
+            final_addr
+        } else {
+            base.wrapping_sub(reg_count * 4)
+        };
+    }
+
+    // Cycle timing per GBATek:
+    // LDM: nS + 1N + 1I (+ 1S + 1N if PC loaded)
+    // STM: (n-1)S + 2N
+    let cycles = if l {
+        if branch_occurred {
+            (reg_count + 2) as u8 + 2 // extra for PC
+        } else {
+            (reg_count + 2) as u8
+        }
+    } else {
+        (reg_count + 1) as u8
+    };
+
+    if branch_occurred {
+        ExecOutcome::branch(cycles)
+    } else {
+        ExecOutcome::cycles(cycles)
     }
 }
 
@@ -1358,5 +1449,114 @@ mod tests {
         execute(&mut regs, &mut bus, strh);
         assert_eq!(bus.read16(0x40), 0x9ABC);
         assert_eq!(regs.r[1], 0x44); // base updated
+    }
+
+    // -------------------------------------------------------------------------
+    // Block Data Transfer (LDM/STM) Tests
+    // -------------------------------------------------------------------------
+
+    /// Build a block data transfer (LDM/STM): cond | 100 | P | U | S | W | L | Rn | register_list
+    #[allow(clippy::too_many_arguments)]
+    fn arm_block_transfer(
+        cond: u8,
+        p: bool,    // pre/post
+        u: bool,    // up/down
+        s: bool,    // PSR/force user
+        w: bool,    // writeback
+        l: bool,    // load/store
+        rn: u8,     // base register
+        rlist: u16, // register list
+    ) -> u32 {
+        ((cond as u32) << 28)
+            | (0b100 << 25)
+            | ((p as u32) << 24)
+            | ((u as u32) << 23)
+            | ((s as u32) << 22)
+            | ((w as u32) << 21)
+            | ((l as u32) << 20)
+            | ((rn as u32 & 0xF) << 16)
+            | (rlist as u32)
+    }
+
+    #[test]
+    fn arm_stmia_ldmia() {
+        // STMIA R0!, {R1-R3}: Store R1, R2, R3 starting at [R0], increment after
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 0x40;
+        regs.r[1] = 0x1111_1111;
+        regs.r[2] = 0x2222_2222;
+        regs.r[3] = 0x3333_3333;
+        // STMIA: P=0, U=1, S=0, W=1, L=0
+        let stmia = arm_block_transfer(0xE, false, true, false, true, false, 0, 0b1110);
+        execute(&mut regs, &mut bus, stmia);
+        assert_eq!(bus.read32(0x40), 0x1111_1111);
+        assert_eq!(bus.read32(0x44), 0x2222_2222);
+        assert_eq!(bus.read32(0x48), 0x3333_3333);
+        assert_eq!(regs.r[0], 0x4C); // base updated by 12 bytes
+
+        // LDMIA R4!, {R5-R7}: Load into R5, R6, R7 from [R4]
+        regs.r[4] = 0x40;
+        let ldmia = arm_block_transfer(0xE, false, true, false, true, true, 4, 0b1110_0000);
+        execute(&mut regs, &mut bus, ldmia);
+        assert_eq!(regs.r[5], 0x1111_1111);
+        assert_eq!(regs.r[6], 0x2222_2222);
+        assert_eq!(regs.r[7], 0x3333_3333);
+        assert_eq!(regs.r[4], 0x4C);
+    }
+
+    #[test]
+    fn arm_stmdb_ldmdb() {
+        // STMDB R0!, {R1-R2}: Store R1, R2 decrementing before, full descending stack
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 0x48;
+        regs.r[1] = 0xAAAA_BBBB;
+        regs.r[2] = 0xCCCC_DDDD;
+        // STMDB: P=1, U=0, S=0, W=1, L=0
+        let stmdb = arm_block_transfer(0xE, true, false, false, true, false, 0, 0b0110);
+        execute(&mut regs, &mut bus, stmdb);
+        // Pre-decrement: [0x40] = R1, [0x44] = R2
+        assert_eq!(bus.read32(0x40), 0xAAAA_BBBB);
+        assert_eq!(bus.read32(0x44), 0xCCCC_DDDD);
+        assert_eq!(regs.r[0], 0x40);
+
+        // LDMDB: Load back with decrement before
+        regs.r[0] = 0x48;
+        regs.r[3] = 0;
+        regs.r[4] = 0;
+        let ldmdb = arm_block_transfer(0xE, true, false, false, true, true, 0, 0b0001_1000);
+        execute(&mut regs, &mut bus, ldmdb);
+        assert_eq!(regs.r[3], 0xAAAA_BBBB);
+        assert_eq!(regs.r[4], 0xCCCC_DDDD);
+        assert_eq!(regs.r[0], 0x40);
+    }
+
+    #[test]
+    fn arm_ldm_no_writeback() {
+        // LDMIA R0, {R1-R2}: Load without writeback
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        bus.write32(0x40, 0x1234_5678);
+        bus.write32(0x44, 0x9ABC_DEF0);
+        regs.r[0] = 0x40;
+        // W=0, no writeback
+        let ldmia = arm_block_transfer(0xE, false, true, false, false, true, 0, 0b0110);
+        execute(&mut regs, &mut bus, ldmia);
+        assert_eq!(regs.r[1], 0x1234_5678);
+        assert_eq!(regs.r[2], 0x9ABC_DEF0);
+        assert_eq!(regs.r[0], 0x40); // unchanged
+    }
+
+    #[test]
+    fn arm_stm_empty_rlist() {
+        // Edge case: empty register list (undefined behavior, but should not crash)
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 0x40;
+        let stmia = arm_block_transfer(0xE, false, true, false, true, false, 0, 0);
+        let outcome = execute(&mut regs, &mut bus, stmia);
+        // Should complete without crashing; base unchanged since no registers transferred
+        assert!(outcome.cycles > 0);
     }
 }
