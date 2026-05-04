@@ -848,6 +848,59 @@ mod tests {
     }
 
     #[test]
+    fn mode0_bg0_64x64_uses_bottom_right_screenblock_for_xy_over_255() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        let mut vram = vec![0u8; 96 * 1024];
+        let mut pram = vec![0u8; 1024];
+
+        // Mode 0 + BG0 enabled.
+        io.write16(
+            ppu::REG_DISPCNT,
+            ppu::dispcnt::BG0_ENABLE,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+        // BG0CNT: screen size = 64x64 (size=3 in bits 14..15).
+        io.write16(0x0400_0008, 0xC000, &mut ic, &mut t, &mut d, &mut p, &mut k);
+
+        // BG palette entry 1 = red.
+        pram[2] = 0x1F;
+        pram[3] = 0x00;
+
+        // Tile 3 has pixel (0,0) = color index 1.
+        vram[96] = 0x01;
+
+        // Screenblock 0 entry (0,0) = tile 1 (empty).
+        vram[0x0000] = 0x01;
+        vram[0x0001] = 0x00;
+        // Screenblock 3 entry (0,0) = tile 3 (red).
+        vram[0x1800] = 0x03;
+        vram[0x1801] = 0x00;
+
+        // Scroll to x=256, y=256 so sample lands in bottom-right block.
+        io.write16(0x0400_0010, 256, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        io.write16(0x0400_0012, 256, &mut ic, &mut t, &mut d, &mut p, &mut k);
+
+        p.step(
+            ppu::CYCLES_PER_SCANLINE * ppu::SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+        );
+
+        assert_eq!(&p.framebuffer()[0..3], &[0xFF, 0, 0]);
+    }
+
+    #[test]
     fn mode0_bg0_hofs_byte_writes_preserve_low_byte() {
         let mut io = IoRegisters::new();
         let mut ic = InterruptController::new();
