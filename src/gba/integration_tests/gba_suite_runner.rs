@@ -69,6 +69,7 @@ pub struct SuiteResult {
     pub cpsr: u32,
     pub thumb: bool,
     pub opcode_at_pc: u32,
+    pub framebuffer_crc32: u32,
     pub reg_name: &'static str,
     pub exit_reason: ExitReason,
 }
@@ -149,6 +150,7 @@ fn result_from_register(
     } else {
         gba.bus_mut().peek32(pc)
     };
+    let framebuffer_crc32 = gba.screen_crc32();
     let passed = failing_index == 0 && exit_reason == ExitReason::IdleLoopDetected;
 
     SuiteResult {
@@ -159,6 +161,7 @@ fn result_from_register(
         cpsr,
         thumb,
         opcode_at_pc,
+        framebuffer_crc32,
         reg_name,
         exit_reason,
     }
