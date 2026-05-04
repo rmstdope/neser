@@ -22,7 +22,8 @@
 //! * Mode 4 background rendering (240×160 8-bit paletted bitmap from
 //!   VRAM) with dual-frame support via DISPCNT bit 4.
 //! * Backdrop fill from the first palette entry for unimplemented
-//!   display modes (and Mode 3/4 when BG2 is disabled).
+//!   display modes (modes 1, 5, 6, 7) and Mode 3/4 when BG2 is disabled.
+//!   Modes 6-7 are "prohibited" per GBATek but are handled gracefully.
 //! * Forced-blank outputs solid white (per GBATek).
 //!
 //! Out of scope (deferred to follow-up sub-issues):
