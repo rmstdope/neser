@@ -8,6 +8,8 @@ const MAX_CYCLES: u64 = 120_000_000;
 // The suite ends in `idle: b idle`; 1024 repeated PCs is a conservative
 // threshold to recognize that terminal loop without waiting for MAX_CYCLES.
 const IDLE_PC_STABLE_THRESHOLD: u32 = 1_024;
+const BIOS_RESET_STUB_LDR_PC_MINUS_4: u32 = 0xE51F_F004;
+const CART_ENTRYPOINT: u32 = 0x0800_0000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Suite {
@@ -57,6 +59,9 @@ pub fn run_suite(suite: Suite) -> SuiteResult {
 
     let mut gba = Gba::new(AppContext::default());
     let bios = vec![0u8; BIOS_SIZE];
+    let mut bios = bios;
+    bios[0..4].copy_from_slice(&BIOS_RESET_STUB_LDR_PC_MINUS_4.to_le_bytes());
+    bios[4..8].copy_from_slice(&CART_ENTRYPOINT.to_le_bytes());
     gba.bus_mut().load_bios(&bios);
     gba.load_rom(&rom, rom_path.to_str().unwrap_or("gba-suite-rom"))
         .unwrap_or_else(|e| {
