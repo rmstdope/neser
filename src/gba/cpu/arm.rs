@@ -22,7 +22,6 @@
 #![allow(clippy::identity_op)]
 
 use super::bus::Bus;
-#[cfg(test)]
 use super::registers::CpuMode;
 use super::registers::{FLAG_T, Registers, condition_met};
 
@@ -518,7 +517,7 @@ fn execute_multiply(regs: &mut Registers, instr: u32) -> ExecOutcome {
     }
 
     // Cycle count: 1S + mI where mI depends on Rs magnitude (early termination).
-    // For simplicity, we use a fixed count; cycle-accurate timing can refine this.
+    // Uses cycle-accurate timing based on Rs byte positions containing all 0s or all 1s.
     let cycles = multiply_cycles(rs_val);
     ExecOutcome::cycles(cycles)
 }
@@ -649,10 +648,12 @@ fn apply_msr(regs: &mut Registers, value: u32, mask: u8, spsr: bool) {
         regs.set_spsr(new_spsr);
     } else {
         // In User mode, only flag bits can be modified.
-        let effective_mask = if regs.mode().has_spsr() {
+        // System mode is privileged but has no SPSR, so check mode directly.
+        let is_privileged = regs.mode() != CpuMode::User;
+        let effective_mask = if is_privileged {
             field_mask
         } else {
-            // User/System mode: only flags field allowed
+            // User mode: only flags field allowed
             field_mask & 0xFF00_0000
         };
         let old_cpsr = regs.cpsr;
@@ -745,11 +746,18 @@ fn execute_halfword_transfer<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u
 fn execute_block_transfer<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u32) -> ExecOutcome {
     let p = (instr >> 24) & 1 != 0; // pre/post indexing
     let u = (instr >> 23) & 1 != 0; // up/down
-    let _s = (instr >> 22) & 1 != 0; // PSR & force user mode (TODO: handle this)
+    let s_bit = (instr >> 22) & 1 != 0; // PSR & force user mode
     let w = (instr >> 21) & 1 != 0; // writeback
     let l = (instr >> 20) & 1 != 0; // load/store
     let rn = ((instr >> 16) & 0xF) as usize;
     let rlist = (instr & 0xFFFF) as u16;
+
+    // S-bit semantics:
+    // - For LDM with PC in rlist: CPSR = SPSR (mode switch)
+    // - For LDM/STM without PC or store: use user-mode registers
+    // Note: User-mode register access is not yet implemented; S-bit currently
+    // only handles CPSR restore on LDM with PC.
+    let restore_cpsr = s_bit && l && (rlist & (1 << 15)) != 0;
 
     // Count registers in the list
     let reg_count = rlist.count_ones();
@@ -794,6 +802,12 @@ fn execute_block_transfer<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u32)
             }
             addr = addr.wrapping_add(4);
         }
+    }
+
+    // S-bit: restore CPSR from SPSR when loading PC
+    if restore_cpsr && regs.mode().has_spsr() {
+        let spsr = regs.spsr();
+        regs.write_cpsr(spsr);
     }
 
     // Writeback the final address to Rn

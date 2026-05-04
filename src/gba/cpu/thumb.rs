@@ -478,7 +478,10 @@ fn exec_format7<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOu
         regs.r[rd] = if b {
             bus.read8(addr) as u32
         } else {
-            bus.read32(addr & !0x3)
+            // ARMv4 LDR rotation on unaligned addresses
+            let raw = bus.read32(addr & !0x3);
+            let rot = (addr & 0x3) * 8;
+            raw.rotate_right(rot)
         };
     } else {
         // Store
@@ -556,7 +559,10 @@ fn exec_format9<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOu
         regs.r[rd] = if b {
             bus.read8(addr) as u32
         } else {
-            bus.read32(addr & !0x3)
+            // ARMv4 LDR rotation on unaligned addresses
+            let raw = bus.read32(addr & !0x3);
+            let rot = (addr & 0x3) * 8;
+            raw.rotate_right(rot)
         };
     } else if b {
         bus.write8(addr, regs.r[rd] as u8);
@@ -606,7 +612,10 @@ fn exec_format11<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
     let addr = regs.r[13].wrapping_add(offset);
 
     if l {
-        regs.r[rd] = bus.read32(addr & !0x3);
+        // ARMv4 LDR rotation on unaligned addresses
+        let raw = bus.read32(addr & !0x3);
+        let rot = (addr & 0x3) * 8;
+        regs.r[rd] = raw.rotate_right(rot);
     } else {
         bus.write32(addr & !0x3, regs.r[rd]);
     }
@@ -722,7 +731,8 @@ fn exec_format15<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
     let rlist = (instr & 0xFF) as u8;
 
     let count = rlist.count_ones();
-    let mut addr = regs.r[rb];
+    let base = regs.r[rb]; // Capture original base before any modifications
+    let mut addr = base;
 
     if l {
         // LDMIA: Load multiple, increment after
@@ -742,8 +752,8 @@ fn exec_format15<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
         }
     }
 
-    // Writeback
-    regs.r[rb] = regs.r[rb].wrapping_add(count * 4);
+    // Writeback uses original base, not potentially modified regs.r[rb]
+    regs.r[rb] = base.wrapping_add(count * 4);
 
     ExecOutcome {
         cycles: if l {
@@ -1284,18 +1294,24 @@ mod tests {
     fn thumb_format19_bl() {
         let mut regs = make_regs();
         let mut bus = RamBus::new(0x100);
+        // ARM pipeline: PC = current_instruction_address + 4
+        // First instruction at 0x0FFC, so PC = 0x1000
         regs.r[15] = 0x1000;
         // BL to +0x100: two-part instruction
-        // First part (H=0): set LR
+        // First part (H=0): set LR = PC + (offset << 12)
         let bl_hi = 0b1111_0_00000000000u16; // offset = 0
         execute(&mut regs, &mut bus, bl_hi);
-        assert_eq!(regs.r[14], 0x1000); // LR = PC + (0 << 12)
+        assert_eq!(regs.r[14], 0x1000); // LR = PC + (0 << 12) = 0x1000
+
+        // Second instruction at 0x0FFE, so PC = 0x1002
+        regs.r[15] = 0x1002;
 
         // Second part (H=1): jump, set LR to return address
         let bl_lo = 0b1111_1_00010000000u16; // offset = 0x80 << 1 = 0x100
         let outcome = execute(&mut regs, &mut bus, bl_lo);
-        assert_eq!(regs.r[15], 0x1100); // Target
-        assert_eq!(regs.r[14] & !1, 0x0FFE); // Return address (old PC - 2)
+        assert_eq!(regs.r[15], 0x1100); // Target = LR + (offset << 1) = 0x1000 + 0x100
+        // LR = (PC - 2) | 1 = 0x1000 | 1 (next instruction address with Thumb bit)
+        assert_eq!(regs.r[14] & !1, 0x1000);
         assert!(outcome.branched);
     }
 }
