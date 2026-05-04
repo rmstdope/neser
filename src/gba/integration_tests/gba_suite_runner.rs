@@ -18,6 +18,7 @@ pub enum Suite {
     Arm,
     Thumb,
     Nes,
+    Memory,
 }
 
 impl Suite {
@@ -26,6 +27,7 @@ impl Suite {
             Self::Arm => "roms/gba/automated_tests/gba-tests/arm/arm.gba",
             Self::Thumb => "roms/gba/automated_tests/gba-tests/thumb/thumb.gba",
             Self::Nes => "roms/gba/automated_tests/gba-tests/nes/nes.gba",
+            Self::Memory => "roms/gba/automated_tests/gba-tests/memory/memory.gba",
         };
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(rel)
     }
@@ -35,6 +37,7 @@ impl Suite {
             Self::Arm => (12, "r12"),
             Self::Thumb => (7, "r7"),
             Self::Nes => (12, "r12"),
+            Self::Memory => (12, "r12"),
         }
     }
 }
