@@ -101,6 +101,12 @@ pub fn execute<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u32) -> ExecOut
             if (instr & 0x0F80_00F0) == 0x0080_0090 {
                 return execute_long_multiply(regs, instr);
             }
+            // Halfword/Signed data transfer: bits[27:25]=000, bits[7:4]=1xx1 where xx=SH
+            // Encoding: 000P U0WL for register offset, 000P U1WL for immediate offset
+            // bits[7:4] = 1011 (STRH/LDRH), 1101 (LDRSB), 1111 (LDRSH)
+            if (instr & 0x0E00_0090) == 0x0000_0090 && (instr & 0x60) != 0 {
+                return execute_halfword_transfer(regs, bus, instr);
+            }
             // Data-processing immediate / register
             execute_data_processing(regs, instr)
         }
@@ -645,6 +651,83 @@ fn apply_msr(regs: &mut Registers, value: u32, mask: u8, spsr: bool) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Halfword and Signed Data Transfer (LDRH, STRH, LDRSB, LDRSH)
+// ---------------------------------------------------------------------------
+
+fn execute_halfword_transfer<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u32) -> ExecOutcome {
+    let p = (instr >> 24) & 1 != 0; // pre/post indexing
+    let u = (instr >> 23) & 1 != 0; // up/down
+    let i = (instr >> 22) & 1 != 0; // immediate offset (1) or register offset (0)
+    let w = (instr >> 21) & 1 != 0; // writeback
+    let l = (instr >> 20) & 1 != 0; // load/store
+    let rn = ((instr >> 16) & 0xF) as usize;
+    let rd = ((instr >> 12) & 0xF) as usize;
+    let sh = (instr >> 5) & 0x3; // S and H bits: 01=unsigned halfword, 10=signed byte, 11=signed halfword
+
+    // Offset is either immediate (bits[11:8] | bits[3:0]) or register (Rm in bits[3:0])
+    let offset = if i {
+        let hi = (instr >> 4) & 0xF0;
+        let lo = instr & 0xF;
+        hi | lo
+    } else {
+        let rm = (instr & 0xF) as usize;
+        regs.r[rm]
+    };
+
+    let base = regs.r[rn];
+    let offset_addr = if u {
+        base.wrapping_add(offset)
+    } else {
+        base.wrapping_sub(offset)
+    };
+    let addr = if p { offset_addr } else { base };
+
+    let result_branch;
+    if l {
+        // Load
+        let value = match sh {
+            0b01 => {
+                // LDRH: Load unsigned halfword
+                bus.read16(addr & !1) as u32
+            }
+            0b10 => {
+                // LDRSB: Load signed byte, sign-extend to 32 bits
+                let byte = bus.read8(addr) as i8;
+                byte as i32 as u32
+            }
+            0b11 => {
+                // LDRSH: Load signed halfword, sign-extend to 32 bits
+                let hw = bus.read16(addr & !1) as i16;
+                hw as i32 as u32
+            }
+            _ => 0, // SH=00 would be SWP, which is handled elsewhere
+        };
+        regs.r[rd] = value;
+        result_branch = rd == 15;
+    } else {
+        // Store: only STRH (SH=01) is valid for stores
+        if sh == 0b01 {
+            let value = regs.r[rd] as u16;
+            bus.write16(addr & !1, value);
+        }
+        result_branch = false;
+    }
+
+    // Writeback (post-indexing always writes back; pre-indexing only when W=1).
+    if !p || w {
+        regs.r[rn] = offset_addr;
+    }
+
+    if result_branch {
+        ExecOutcome::branch(3)
+    } else if l {
+        ExecOutcome::cycles(3) // 1S + 1N + 1I
+    } else {
+        ExecOutcome::cycles(2) // 2N
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1166,5 +1249,114 @@ mod tests {
         let instr = arm_msr_reg(0xE, 0, true, 0x8);
         execute(&mut regs, &mut bus, instr);
         assert_eq!(regs.spsr() & 0xF000_0000, 0xA000_0000);
+    }
+
+    // -------------------------------------------------------------------------
+    // Halfword/Signed Data Transfer Tests (LDRH, STRH, LDRSB, LDRSH)
+    // -------------------------------------------------------------------------
+
+    /// Build halfword transfer instruction
+    /// cond | 000P | U1WL | Rn | Rd | imm_hi | 1SH1 | imm_lo (immediate)
+    /// cond | 000P | U0WL | Rn | Rd | 0000 | 1SH1 | Rm (register)
+    /// S=1,H=0 -> LDRSB; S=0,H=1 -> LDRH/STRH; S=1,H=1 -> LDRSH
+    #[allow(clippy::too_many_arguments)]
+    fn arm_halfword_imm(
+        cond: u8,
+        p: bool,
+        u: bool,
+        w: bool,
+        l: bool,
+        rn: u8,
+        rd: u8,
+        s: bool,
+        h: bool,
+        offset: u8,
+    ) -> u32 {
+        let imm_hi = (offset >> 4) & 0xF;
+        let imm_lo = offset & 0xF;
+        ((cond as u32) << 28)
+            | ((p as u32) << 24)
+            | ((u as u32) << 23)
+            | (1 << 22) // immediate flag
+            | ((w as u32) << 21)
+            | ((l as u32) << 20)
+            | ((rn as u32 & 0xF) << 16)
+            | ((rd as u32 & 0xF) << 12)
+            | ((imm_hi as u32) << 8)
+            | (1 << 7)
+            | ((s as u32) << 6)
+            | ((h as u32) << 5)
+            | (1 << 4)
+            | (imm_lo as u32)
+    }
+
+    #[test]
+    fn arm_strh_ldrh() {
+        // STRH R0, [R1] then LDRH R2, [R1]
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 0x1234_ABCD; // only low 16 bits stored
+        regs.r[1] = 0x40;
+        // STRH: P=1, U=1, W=0, L=0, S=0, H=1
+        let strh = arm_halfword_imm(0xE, true, true, false, false, 1, 0, false, true, 0);
+        execute(&mut regs, &mut bus, strh);
+        assert_eq!(bus.read16(0x40), 0xABCD);
+
+        // LDRH: P=1, U=1, W=0, L=1, S=0, H=1
+        let ldrh = arm_halfword_imm(0xE, true, true, false, true, 1, 2, false, true, 0);
+        execute(&mut regs, &mut bus, ldrh);
+        assert_eq!(regs.r[2], 0x0000_ABCD); // zero-extended
+    }
+
+    #[test]
+    fn arm_ldrsb() {
+        // LDRSB R0, [R1]: load signed byte
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        bus.write8(0x40, 0x80); // -128 as signed byte
+        regs.r[1] = 0x40;
+        // LDRSB: P=1, U=1, W=0, L=1, S=1, H=0
+        let ldrsb = arm_halfword_imm(0xE, true, true, false, true, 1, 0, true, false, 0);
+        execute(&mut regs, &mut bus, ldrsb);
+        assert_eq!(regs.r[0], 0xFFFF_FF80); // sign-extended
+    }
+
+    #[test]
+    fn arm_ldrsh() {
+        // LDRSH R0, [R1]: load signed halfword
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        bus.write16(0x40, 0x8000); // -32768 as signed halfword
+        regs.r[1] = 0x40;
+        // LDRSH: P=1, U=1, W=0, L=1, S=1, H=1
+        let ldrsh = arm_halfword_imm(0xE, true, true, false, true, 1, 0, true, true, 0);
+        execute(&mut regs, &mut bus, ldrsh);
+        assert_eq!(regs.r[0], 0xFFFF_8000); // sign-extended
+    }
+
+    #[test]
+    fn arm_ldrh_with_offset() {
+        // LDRH R0, [R1, #4]: load with immediate offset
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        bus.write16(0x44, 0x5678);
+        regs.r[1] = 0x40;
+        let ldrh = arm_halfword_imm(0xE, true, true, false, true, 1, 0, false, true, 4);
+        execute(&mut regs, &mut bus, ldrh);
+        assert_eq!(regs.r[0], 0x5678);
+    }
+
+    #[test]
+    fn arm_strh_post_indexed() {
+        // STRH R0, [R1], #4: store and then add offset
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 0x9ABC;
+        regs.r[1] = 0x40;
+        // Post-indexed: P=0, U=1, W=0
+        let strh = arm_halfword_imm(0xE, false, true, false, false, 1, 0, false, true, 4);
+        execute(&mut regs, &mut bus, strh);
+        assert_eq!(bus.read16(0x40), 0x9ABC);
+        assert_eq!(regs.r[1], 0x44); // base updated
     }
 }
