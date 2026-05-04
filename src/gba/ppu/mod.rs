@@ -361,9 +361,19 @@ impl Ppu {
         self.bg0_scroll.0 = value & 0x01FF;
     }
 
+    /// Read BG0HOFS (0x0400_0010).
+    pub fn read_bg0_hofs(&self) -> u16 {
+        self.bg0_scroll.0
+    }
+
     /// Write BG0VOFS (0x0400_0012). Only the low 9 bits are significant.
     pub fn write_bg0_vofs(&mut self, value: u16) {
         self.bg0_scroll.1 = value & 0x01FF;
+    }
+
+    /// Read BG0VOFS (0x0400_0012).
+    pub fn read_bg0_vofs(&self) -> u16 {
+        self.bg0_scroll.1
     }
 
     /// True after a completed frame, until [`Self::clear_frame_ready`].
