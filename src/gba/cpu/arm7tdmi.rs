@@ -41,6 +41,13 @@ pub struct Arm7tdmi {
     irq_pending: bool,
     /// Pending FIQ line (rising-edge triggered).
     fiq_pending: bool,
+    /// Whether the prefetch buffers contain valid instructions for the
+    /// current PC/state.
+    prefetch_valid: bool,
+    /// Three-entry ARM prefetch buffer: [current, next, next-next].
+    prefetch_arm: [u32; 3],
+    /// Three-entry Thumb prefetch buffer: [current, next, next-next].
+    prefetch_thumb: [u16; 3],
 }
 
 impl Default for Arm7tdmi {
@@ -63,7 +70,24 @@ impl Arm7tdmi {
             cycles: 0,
             irq_pending: false,
             fiq_pending: false,
+            prefetch_valid: false,
+            prefetch_arm: [0; 3],
+            prefetch_thumb: [0; 3],
         }
+    }
+
+    fn refill_prefetch<B: Bus>(&mut self, bus: &mut B) {
+        let pc = self.regs.r[15];
+        if self.thumb() {
+            self.prefetch_thumb[0] = bus.read16(pc);
+            self.prefetch_thumb[1] = bus.read16(pc.wrapping_add(2));
+            self.prefetch_thumb[2] = bus.read16(pc.wrapping_add(4));
+        } else {
+            self.prefetch_arm[0] = bus.read32(pc);
+            self.prefetch_arm[1] = bus.read32(pc.wrapping_add(4));
+            self.prefetch_arm[2] = bus.read32(pc.wrapping_add(8));
+        }
+        self.prefetch_valid = true;
     }
 
     /// Whether the CPU is currently executing in Thumb state.
@@ -114,27 +138,43 @@ impl Arm7tdmi {
             return 3;
         }
 
+        if !self.prefetch_valid {
+            self.refill_prefetch(bus);
+        }
+
         let exec_pc = self.regs.r[15];
         let cycles = if self.thumb() {
             // PC during Thumb execution should read as exec_pc + 4.
             self.regs.r[15] = exec_pc.wrapping_add(4);
-            let raw = bus.read16(exec_pc);
+            let raw = self.prefetch_thumb[0];
             let outcome = thumb::execute(&mut self.regs, bus, raw);
             if outcome.swi {
                 self.dispatch_swi(exec_pc);
+                self.prefetch_valid = false;
+            } else if outcome.branched {
+                self.prefetch_valid = false;
             } else if !outcome.branched {
                 self.regs.r[15] = exec_pc.wrapping_add(2);
+                self.prefetch_thumb[0] = self.prefetch_thumb[1];
+                self.prefetch_thumb[1] = self.prefetch_thumb[2];
+                self.prefetch_thumb[2] = bus.read16(exec_pc.wrapping_add(6));
             }
             outcome.cycles as u32
         } else {
             // PC during ARM execution should read as exec_pc + 8.
             self.regs.r[15] = exec_pc.wrapping_add(8);
-            let raw = bus.read32(exec_pc);
+            let raw = self.prefetch_arm[0];
             let outcome = arm::execute(&mut self.regs, bus, raw);
             if outcome.swi {
                 self.dispatch_swi(exec_pc);
+                self.prefetch_valid = false;
+            } else if outcome.branched {
+                self.prefetch_valid = false;
             } else if !outcome.branched {
                 self.regs.r[15] = exec_pc.wrapping_add(4);
+                self.prefetch_arm[0] = self.prefetch_arm[1];
+                self.prefetch_arm[1] = self.prefetch_arm[2];
+                self.prefetch_arm[2] = bus.read32(exec_pc.wrapping_add(12));
             }
             outcome.cycles as u32
         };
@@ -154,6 +194,7 @@ impl Arm7tdmi {
         self.regs.cpsr |= FLAG_I;
         self.regs.cpsr &= !FLAG_T;
         self.regs.r[15] = ExceptionVector::SoftwareInterrupt as u32;
+        self.prefetch_valid = false;
     }
 
     /// Dispatch an IRQ: switch to IRQ mode, save state and jump to 0x18.
@@ -169,6 +210,7 @@ impl Arm7tdmi {
         self.regs.cpsr |= FLAG_I;
         self.regs.cpsr &= !FLAG_T;
         self.regs.r[15] = ExceptionVector::Irq as u32;
+        self.prefetch_valid = false;
         self.cycles = self.cycles.wrapping_add(3);
         // The pending line is treated as a latched edge: clear on dispatch so
         // unmasking I later does not spuriously re-enter the handler.
@@ -185,6 +227,7 @@ impl Arm7tdmi {
         self.regs.cpsr |= FLAG_I | FLAG_F;
         self.regs.cpsr &= !FLAG_T;
         self.regs.r[15] = ExceptionVector::Fiq as u32;
+        self.prefetch_valid = false;
         self.cycles = self.cycles.wrapping_add(3);
         // Latched-edge semantics: clear pending on dispatch.
         self.fiq_pending = false;
@@ -420,5 +463,31 @@ mod tests {
             cpu.thumb(),
             "execution should have switched into Thumb state"
         );
+    }
+
+    #[test]
+    fn arm_prefetch_keeps_two_instructions_after_self_modify() {
+        // Mirrors gba-tests/nes t001: store over the next two ARM opcodes and
+        // ensure they still execute from the prefetch queue.
+        let mut cpu = Arm7tdmi::new();
+        cpu.regs.switch_mode(CpuMode::User);
+        cpu.regs.r[15] = 0x0;
+        let mut bus = RamBus::new(0x100);
+
+        bus.write_word(0x00, 0xE3A02000); // mov r2, #0
+        bus.write_word(0x04, 0xE3A00014); // mov r0, #0x14 (.pipe1)
+        bus.write_word(0x08, 0xE3A01018); // mov r1, #0x18 (.pipe2)
+        bus.write_word(0x0C, 0xE5802000); // str r2, [r0]
+        bus.write_word(0x10, 0xE5812000); // str r2, [r1]
+        bus.write_word(0x14, 0xE3520000); // .pipe1: cmp r2, #0
+        bus.write_word(0x18, 0x0A000000); // .pipe2: beq pass
+        bus.write_word(0x1C, 0xE3A04001); // fail: mov r4, #1
+        bus.write_word(0x20, 0xE3A04002); // pass: mov r4, #2
+
+        for _ in 0..8 {
+            cpu.step(&mut bus);
+        }
+
+        assert_eq!(cpu.regs.r[4], 2);
     }
 }

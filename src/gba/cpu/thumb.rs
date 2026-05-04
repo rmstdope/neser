@@ -526,9 +526,24 @@ fn exec_format8<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOu
     }
 
     regs.r[rd] = match (s, h) {
-        (false, true) => bus.read16(addr & !1) as u32, // LDRH
+        (false, true) => {
+            // LDRH: odd address rotates aligned halfword right by 8.
+            let raw = bus.read16(addr & !1) as u32;
+            if addr & 1 != 0 {
+                raw.rotate_right(8)
+            } else {
+                raw
+            }
+        }
         (true, false) => bus.read8(addr) as i8 as i32 as u32, // LDSB
-        (true, true) => bus.read16(addr & !1) as i16 as i32 as u32, // LDSH
+        (true, true) => {
+            // LDSH: odd address behaves like signed byte load.
+            if addr & 1 != 0 {
+                bus.read8(addr) as i8 as i32 as u32
+            } else {
+                bus.read16(addr & !1) as i16 as i32 as u32
+            }
+        }
         _ => unreachable!(),
     };
     ExecOutcome {
@@ -589,7 +604,12 @@ fn exec_format10<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
     let addr = regs.r[rb].wrapping_add(offset);
 
     if l {
-        regs.r[rd] = bus.read16(addr & !1) as u32;
+        let raw = bus.read16(addr & !1) as u32;
+        regs.r[rd] = if addr & 1 != 0 {
+            raw.rotate_right(8)
+        } else {
+            raw
+        };
     } else {
         bus.write16(addr & !1, regs.r[rd] as u16);
     }
@@ -730,23 +750,48 @@ fn exec_format15<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
     let rb = ((instr >> 8) & 0x7) as usize;
     let rlist = (instr & 0xFF) as u8;
 
-    let count = rlist.count_ones();
+    // Empty rlist on ARM7TDMI is a special transfer of PC with a
+    // 16-register writeback span (+0x40).
+    let (effective_rlist, count) = if rlist == 0 {
+        (1u16 << 15, 16u32)
+    } else {
+        (rlist as u16, rlist.count_ones())
+    };
     let base = regs.r[rb]; // Capture original base before any modifications
     let mut addr = base;
+    let writeback_value = base.wrapping_add(count * 4);
+    let first_reg_in_list = effective_rlist.trailing_zeros() as usize;
+    let mut branched = false;
 
     if l {
         // LDMIA: Load multiple, increment after
-        for i in 0..8 {
-            if rlist & (1 << i) != 0 {
-                regs.r[i] = bus.read32(addr & !0x3);
+        for i in 0..16 {
+            if effective_rlist & (1 << i) != 0 {
+                let value = bus.read32(addr);
+                if i == 15 {
+                    // Like POP {PC} on ARM7TDMI in Thumb state: clear bit 0, keep T set.
+                    regs.r[15] = value & !1;
+                    branched = true;
+                } else {
+                    regs.r[i] = value;
+                }
                 addr = addr.wrapping_add(4);
             }
         }
     } else {
         // STMIA: Store multiple, increment after
-        for i in 0..8 {
-            if rlist & (1 << i) != 0 {
-                bus.write32(addr & !0x3, regs.r[i]);
+        for i in 0..16 {
+            if effective_rlist & (1 << i) != 0 {
+                let value = if i == 15 {
+                    // In Thumb state, storing PC in block transfer uses PC+2.
+                    regs.r[15].wrapping_add(2)
+                } else if i == rb && rb != first_reg_in_list {
+                    // Base in rlist stores updated base when it is not first.
+                    writeback_value
+                } else {
+                    regs.r[i]
+                };
+                bus.write32(addr, value);
                 addr = addr.wrapping_add(4);
             }
         }
@@ -761,7 +806,7 @@ fn exec_format15<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
         } else {
             (count + 1) as u8
         },
-        branched: false,
+        branched,
         swi: false,
     }
 }
@@ -1182,6 +1227,26 @@ mod tests {
     }
 
     #[test]
+    fn thumb_format8_misaligned_ldrh_rotates_and_ldrsh_is_signed_byte() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 0x40;
+        regs.r[1] = 1;
+
+        bus.write16(0x40, 0x00FF);
+        // LDRH R2, [R0, R1]
+        let ldrh = 0b0101_101_001_000_010u16;
+        execute(&mut regs, &mut bus, ldrh);
+        assert_eq!(regs.r[2], 0xFF00_0000);
+
+        bus.write16(0x40, 0xFF00);
+        // LDSH R3, [R0, R1]
+        let ldrsh = 0b0101_111_001_000_011u16;
+        execute(&mut regs, &mut bus, ldrsh);
+        assert_eq!(regs.r[3], 0xFFFF_FFFF);
+    }
+
+    #[test]
     fn thumb_format9_str_ldr_immediate() {
         let mut regs = make_regs();
         let mut bus = RamBus::new(0x100);
@@ -1213,6 +1278,19 @@ mod tests {
         let ldrh = 0b1000_1_00010_000_010u16;
         execute(&mut regs, &mut bus, ldrh);
         assert_eq!(regs.r[2], 0xABCD);
+    }
+
+    #[test]
+    fn thumb_format10_misaligned_ldrh_rotates() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 0x41;
+        bus.write16(0x40, 0x00FF);
+
+        // LDRH R1, [R0, #0]
+        let ldrh = 0b1000_1_00000_000_001u16;
+        execute(&mut regs, &mut bus, ldrh);
+        assert_eq!(regs.r[1], 0xFF00_0000);
     }
 
     #[test]
@@ -1288,6 +1366,42 @@ mod tests {
         assert_eq!(regs.r[4], 0x11);
         assert_eq!(regs.r[5], 0x22);
         assert_eq!(regs.r[6], 0x33);
+    }
+
+    #[test]
+    fn thumb_format15_ldmia_empty_rlist_loads_pc_and_writes_back_64() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 0x40;
+        bus.write32(0x40, 0x80);
+
+        // LDMIA R0!, {}
+        let ldm_empty = 0b1100_1_000_00000000u16;
+        let outcome = execute(&mut regs, &mut bus, ldm_empty);
+
+        assert!(outcome.branched);
+        assert_eq!(regs.r[15], 0x80);
+        assert_eq!(regs.r[0], 0x80);
+    }
+
+    #[test]
+    fn thumb_format15_stmia_base_in_rlist_non_first_stores_updated_base() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x200);
+        regs.r[0] = 0x11;
+        regs.r[1] = 0x100;
+        regs.r[2] = 0x22;
+        regs.r[3] = 0x33;
+
+        // STMIA R1!, {R0-R3}
+        let stmia = 0b1100_0_001_00001111u16;
+        execute(&mut regs, &mut bus, stmia);
+
+        assert_eq!(bus.read32(0x100), 0x11);
+        assert_eq!(bus.read32(0x104), 0x110);
+        assert_eq!(bus.read32(0x108), 0x22);
+        assert_eq!(bus.read32(0x10C), 0x33);
+        assert_eq!(regs.r[1], 0x110);
     }
 
     #[test]
