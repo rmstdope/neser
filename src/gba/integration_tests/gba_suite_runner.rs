@@ -5,6 +5,7 @@ use crate::platform::emulator::Emulator;
 use std::path::PathBuf;
 
 const MAX_CYCLES: u64 = 120_000_000;
+const IDLE_PROBE_STABLE_PC_THRESHOLD: u32 = 1;
 // The suite ends in `idle: b idle` (ARM `b .`, opcode 0xEAFFFFFE).
 const ARM_BRANCH_SELF_OPCODE: u32 = 0xEAFF_FFFE;
 const BIOS_RESET_STUB_LDR_PC_PLUS_24: u32 = 0xE59F_F018;
@@ -87,6 +88,8 @@ pub fn run_suite(suite: Suite) -> SuiteResult {
     gba.init_test_stack_pointers();
 
     let mut cycles = 0u64;
+    let mut last_pc: Option<u32> = None;
+    let mut stable_pc_count: u32 = 0;
 
     while cycles < MAX_CYCLES {
         let tick_cycles = gba.run_tick_for_tests() as u64;
@@ -97,14 +100,23 @@ pub fn run_suite(suite: Suite) -> SuiteResult {
         cycles += tick_cycles;
 
         let pc = gba.cpu_pc();
-        let opcode = gba.bus_mut().peek32(pc);
-        if is_arm_branch_to_self(opcode, pc) {
-            let reason = if is_bios_exception_vector(pc) {
-                ExitReason::ExceptionVectorTrap
-            } else {
-                ExitReason::IdleLoopDetected
-            };
-            return result_from_register(&mut gba, suite, cycles, pc, reason);
+        if Some(pc) == last_pc {
+            stable_pc_count = stable_pc_count.saturating_add(1);
+        } else {
+            stable_pc_count = 0;
+            last_pc = Some(pc);
+        }
+
+        if stable_pc_count >= IDLE_PROBE_STABLE_PC_THRESHOLD {
+            let opcode = gba.bus_mut().peek32(pc);
+            if is_arm_branch_to_self(opcode, pc) {
+                let reason = if is_bios_exception_vector(pc) {
+                    ExitReason::ExceptionVectorTrap
+                } else {
+                    ExitReason::IdleLoopDetected
+                };
+                return result_from_register(&mut gba, suite, cycles, pc, reason);
+            }
         }
     }
 
