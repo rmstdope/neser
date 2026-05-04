@@ -31,6 +31,7 @@ pub fn hardware_mode_toast_message(
             ExpansionPort::ZapperFamicom => "Hardware: Famicom (Zapper expansion)".to_string(),
             ExpansionPort::PowerPadFamicom => "Hardware: Famicom (Power Pad expansion)".to_string(),
             ExpansionPort::VsSystem => "Hardware: VS System".to_string(),
+            ExpansionPort::Playchoice10 => "Hardware: PlayChoice-10".to_string(),
             ExpansionPort::None => "Hardware: Famicom".to_string(),
         },
     }

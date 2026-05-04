@@ -65,7 +65,7 @@ pub(crate) const CLI_FLAGS: &[CliFlag] = &[
     CliFlag {
         flag: "--nes-expansion-port",
         help: Some(
-            "Expansion port controller: none, famicom-four-players, arkanoid, zapper, or power-pad (default: none)",
+            "Expansion port controller: none, famicom-four-players, arkanoid, zapper, power-pad, vs-system, or playchoice10 (default: none)",
         ),
         has_value: true,
     },
@@ -264,6 +264,7 @@ pub enum ExpansionPort {
     ZapperFamicom,
     PowerPadFamicom,
     VsSystem,
+    Playchoice10,
 }
 
 impl ExpansionPort {
@@ -277,6 +278,7 @@ impl ExpansionPort {
             Self::ZapperFamicom => Some("Zapper"),
             Self::PowerPadFamicom => Some("Power Pad"),
             Self::VsSystem => Some("VS System"),
+            Self::Playchoice10 => Some("PlayChoice-10"),
         }
     }
 
@@ -295,6 +297,10 @@ impl ExpansionPort {
         } else if value.eq_ignore_ascii_case("vs-system") || value.eq_ignore_ascii_case("vssystem")
         {
             Some(Self::VsSystem)
+        } else if value.eq_ignore_ascii_case("playchoice10")
+            || value.eq_ignore_ascii_case("playchoice-10")
+        {
+            Some(Self::Playchoice10)
         } else {
             None
         }
@@ -655,7 +661,7 @@ impl Config {
         if let Some(expansion_port) = Self::parse_string_arg(args, "--nes-expansion-port") {
             let parsed = ExpansionPort::parse(&expansion_port).ok_or_else(|| {
                 format!(
-                    "Invalid --nes-expansion-port value: '{}'. Valid options are: none, famicom-four-players, arkanoid, zapper, power-pad, vs-system",
+                    "Invalid --nes-expansion-port value: '{}'. Valid options are: none, famicom-four-players, arkanoid, zapper, power-pad, vs-system, playchoice10",
                     expansion_port
                 )
             })?;
@@ -1230,6 +1236,21 @@ impl Config {
 
         if !self.nes.expansion_port_explicit && self.nes.expansion_port != ExpansionPort::VsSystem {
             self.nes.expansion_port = ExpansionPort::VsSystem;
+            return true;
+        }
+
+        false
+    }
+
+    pub fn apply_rom_db_playchoice10_hint(&mut self, is_playchoice10: bool) -> bool {
+        if !is_playchoice10 {
+            return false;
+        }
+
+        if !self.nes.expansion_port_explicit
+            && self.nes.expansion_port != ExpansionPort::Playchoice10
+        {
+            self.nes.expansion_port = ExpansionPort::Playchoice10;
             return true;
         }
 
@@ -4362,6 +4383,18 @@ nes-filter=invalid-shader
     }
 
     #[test]
+    fn test_config_expansion_port_parse_playchoice10() {
+        assert_eq!(
+            ExpansionPort::parse("playchoice10"),
+            Some(ExpansionPort::Playchoice10)
+        );
+        assert_eq!(
+            ExpansionPort::parse("playchoice-10"),
+            Some(ExpansionPort::Playchoice10)
+        );
+    }
+
+    #[test]
     fn test_config_vs_dip_switches_default() {
         let config = Config::default();
         assert_eq!(config.nes.vs_dip_switches, 0x00);
@@ -4427,6 +4460,43 @@ nes-filter=invalid-shader
         let mut config = Config::default();
 
         let changed = config.apply_rom_db_vs_system_hint(false);
+
+        assert!(!changed);
+        assert_eq!(config.nes.expansion_port, ExpansionPort::None);
+    }
+
+    #[test]
+    fn test_config_apply_rom_db_playchoice10_hint_sets_expansion_port() {
+        let mut config = Config::default();
+
+        let changed = config.apply_rom_db_playchoice10_hint(true);
+
+        assert!(changed);
+        assert_eq!(config.nes.expansion_port, ExpansionPort::Playchoice10);
+    }
+
+    #[test]
+    fn test_config_apply_rom_db_playchoice10_hint_respects_explicit_expansion() {
+        let mut config = Config {
+            nes: NesConfig {
+                expansion_port: ExpansionPort::None,
+                expansion_port_explicit: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let changed = config.apply_rom_db_playchoice10_hint(true);
+
+        assert!(!changed);
+        assert_eq!(config.nes.expansion_port, ExpansionPort::None);
+    }
+
+    #[test]
+    fn test_config_apply_rom_db_playchoice10_hint_false_is_noop() {
+        let mut config = Config::default();
+
+        let changed = config.apply_rom_db_playchoice10_hint(false);
 
         assert!(!changed);
         assert_eq!(config.nes.expansion_port, ExpansionPort::None);
