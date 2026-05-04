@@ -59,7 +59,9 @@ pub(crate) const CLI_FLAGS: &[CliFlag] = &[
     },
     CliFlag {
         flag: "--nes-hardware",
-        help: Some("NES hardware mode: nes-ntsc, nes-pal, famicom, or dendy (default: nes-ntsc)"),
+        help: Some(
+            "NES hardware mode: nes-ntsc, nes-pal, famicom, dendy, or playchoice10/playchoice-10 (default: nes-ntsc)",
+        ),
         has_value: true,
     },
     CliFlag {
@@ -635,6 +637,10 @@ impl Config {
             Some((HardwareMode::Famicom, HardwareModel::NesNtsc))
         } else if value.eq_ignore_ascii_case("dendy") {
             Some((HardwareMode::Nes, HardwareModel::Dendy))
+        } else if value.eq_ignore_ascii_case("playchoice10")
+            || value.eq_ignore_ascii_case("playchoice-10")
+        {
+            Some((HardwareMode::Nes, HardwareModel::NesNtsc))
         } else {
             None
         }
@@ -648,7 +654,7 @@ impl Config {
                 Ok(Some(parsed))
             } else {
                 Err(format!(
-                    "Invalid --nes-hardware value: '{}'. Valid options are: nes-ntsc, nes-pal, famicom, dendy",
+                    "Invalid --nes-hardware value: '{}'. Valid options are: nes-ntsc, nes-pal, famicom, dendy, playchoice10/playchoice-10",
                     hardware
                 ))
             }
@@ -675,7 +681,7 @@ impl Config {
         let (hardware_mode, hardware_model) =
             Self::parse_hardware_value(value).ok_or_else(|| {
                 format!(
-                    "Invalid nes-hardware value: '{}'. Valid options are: nes-ntsc, nes-pal, famicom, dendy",
+                    "Invalid nes-hardware value: '{}'. Valid options are: nes-ntsc, nes-pal, famicom, dendy, playchoice10/playchoice-10",
                     value
                 )
             })?;
@@ -683,6 +689,13 @@ impl Config {
         self.nes.hardware_mode_explicit = true;
         self.nes.hardware_model = hardware_model;
         self.nes.hardware_model_explicit = true;
+
+        if value.eq_ignore_ascii_case("playchoice10") || value.eq_ignore_ascii_case("playchoice-10")
+        {
+            self.nes.expansion_port = ExpansionPort::Playchoice10;
+            self.nes.expansion_port_explicit = true;
+        }
+
         Ok(())
     }
 
@@ -786,11 +799,20 @@ impl Config {
         self.nes.apply_args(args)?;
 
         // Parse hardware mode (TODO: move to NesConfig in task 8)
+        let hardware_arg = Self::parse_string_arg(args, "--nes-hardware");
         if let Some((hardware_mode, hardware_model)) = Self::parse_hardware_arg(args)? {
             self.nes.hardware_mode = hardware_mode;
             self.nes.hardware_mode_explicit = true;
             self.nes.hardware_model = hardware_model;
             self.nes.hardware_model_explicit = true;
+
+            if let Some(hardware) = hardware_arg.as_deref()
+                && (hardware.eq_ignore_ascii_case("playchoice10")
+                    || hardware.eq_ignore_ascii_case("playchoice-10"))
+            {
+                self.nes.expansion_port = ExpansionPort::Playchoice10;
+                self.nes.expansion_port_explicit = true;
+            }
         }
 
         // Parse expansion port (TODO: move to NesConfig in task 8)
@@ -1521,6 +1543,18 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_hardware_value_playchoice10_returns_nes_ntsc() {
+        assert_eq!(
+            Config::parse_hardware_value("playchoice10"),
+            Some((HardwareMode::Nes, HardwareModel::NesNtsc))
+        );
+        assert_eq!(
+            Config::parse_hardware_value("playchoice-10"),
+            Some((HardwareMode::Nes, HardwareModel::NesNtsc))
+        );
+    }
+
+    #[test]
     fn test_hardware_model_dendy_timing_mode_is_dendy() {
         assert_eq!(
             HardwareModel::Dendy.timing_mode(),
@@ -2081,6 +2115,21 @@ mod tests {
             .unwrap();
         assert_eq!(config.nes.hardware_model, HardwareModel::NesNtsc);
         assert_eq!(config.nes.hardware_mode, HardwareMode::Nes);
+    }
+
+    #[test]
+    fn test_config_file_hardware_playchoice10_forces_playchoice_expansion() {
+        let mut config = Config::default();
+        config
+            .apply_config_value("nes-hardware", "playchoice10")
+            .unwrap();
+
+        assert_eq!(config.nes.hardware_model, HardwareModel::NesNtsc);
+        assert!(config.nes.hardware_model_explicit);
+        assert_eq!(config.nes.hardware_mode, HardwareMode::Nes);
+        assert!(config.nes.hardware_mode_explicit);
+        assert_eq!(config.nes.expansion_port, ExpansionPort::Playchoice10);
+        assert!(config.nes.expansion_port_explicit);
     }
 
     #[test]
@@ -4771,6 +4820,20 @@ nes-filter=invalid-shader
         let config = parse_config(args);
         assert_eq!(config.nes.hardware_mode, HardwareMode::Famicom);
         assert!(config.nes.hardware_mode_explicit);
+    }
+
+    #[test]
+    fn test_nes_hardware_playchoice10_arg_forces_playchoice_expansion() {
+        let args = vec![
+            "neser".to_string(),
+            "--nes-hardware".to_string(),
+            "playchoice10".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.nes.hardware_mode, HardwareMode::Nes);
+        assert_eq!(config.nes.hardware_model, HardwareModel::NesNtsc);
+        assert_eq!(config.nes.expansion_port, ExpansionPort::Playchoice10);
+        assert!(config.nes.expansion_port_explicit);
     }
 
     #[test]
