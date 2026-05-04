@@ -112,6 +112,8 @@ pub struct GbaBus {
     /// BIOS reads from outside the BIOS region return open-bus instead of
     /// the BIOS contents.
     bios_locked: bool,
+    /// Whether a full BIOS image has been loaded into the bus.
+    bios_image_loaded: bool,
 }
 
 impl Default for GbaBus {
@@ -152,6 +154,7 @@ impl GbaBus {
             keypad: Keypad::new(),
             last_bus_value: 0,
             bios_locked: false,
+            bios_image_loaded: false,
         }
     }
 
@@ -161,6 +164,12 @@ impl GbaBus {
         let n = data.len().min(BIOS_SIZE);
         self.bios[..n].copy_from_slice(&data[..n]);
         self.bios_locked = false;
+        self.bios_image_loaded = n == BIOS_SIZE;
+    }
+
+    /// Whether a full BIOS image is currently loaded.
+    pub fn has_bios_image(&self) -> bool {
+        self.bios_image_loaded
     }
 
     /// Lock BIOS access. After this is called, reads of the BIOS region

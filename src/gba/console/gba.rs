@@ -78,7 +78,6 @@ pub struct Gba {
     /// System bus owning all peripheral state including APU, keypad and
     /// interrupt controller.
     bus: GbaBus,
-    bios_loaded: bool,
     bios_load_error: Option<String>,
 }
 
@@ -102,26 +101,22 @@ impl Gba {
             .map(PathBuf::from)
             .or_else(default_gba_bios_path);
 
-        let (bios_loaded, bios_load_error) = if let Some(path) = bios_path {
+        let bios_load_error = if let Some(path) = bios_path {
             match load_bios_image(&path) {
                 Ok(bytes) => {
                     bus.load_bios(&bytes);
-                    (true, None)
+                    None
                 }
-                Err(err) => (false, Some(err)),
+                Err(err) => Some(err),
             }
         } else {
-            (
-                false,
-                Some("GBA BIOS is required but no BIOS path is available".to_string()),
-            )
+            Some("GBA BIOS is required but no BIOS path is available".to_string())
         };
 
         Self {
             app_context,
             cpu: Arm7tdmi::new(),
             bus,
-            bios_loaded,
             bios_load_error,
         }
     }
@@ -186,7 +181,7 @@ impl Emulator for Gba {
     }
 
     fn load_rom(&mut self, bytes: &[u8], _name: &str) -> Result<(), String> {
-        if !self.bios_loaded {
+        if !self.bus.has_bios_image() {
             return Err(self
                 .bios_load_error
                 .clone()
@@ -323,16 +318,18 @@ mod tests {
     use crate::gba::cpu::bus::Bus;
     use crate::gba::ppu;
     use crate::platform::app_context::AppContext;
+    use crate::platform::config::Config;
 
     fn make_gba_without_bios() -> Gba {
-        Gba::new(AppContext::default())
+        let mut config = Config::default();
+        config.gba.bios_path = Some("/__neser_missing_gba_bios.bin".to_string());
+        Gba::new(AppContext::new_with_config(config))
     }
 
     fn make_gba() -> Gba {
         let mut gba = make_gba_without_bios();
         let bios = vec![0u8; crate::gba::bus::memory::BIOS_SIZE];
         gba.bus.load_bios(&bios);
-        gba.bios_loaded = true;
         gba.bios_load_error = None;
         gba
     }
