@@ -507,12 +507,17 @@ impl Ppu {
     }
 
     /// Mode 0 (initial increment): render BG0 as 4bpp text background
-    /// using charblock 0 + screenblock 0 (BG0CNT reset defaults).
+    /// using BG0CNT-selected charblock/screenblock and scroll/size state.
     fn render_mode0_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8]) {
         if !self.bg0_enabled() {
             self.render_backdrop_scanline(y, pram);
             return;
         }
+
+        assert!(
+            self.bg0cnt & (1 << 7) == 0,
+            "unimplemented GBA Mode 0 BG0 8bpp rendering requested via BG0CNT bit 7"
+        );
 
         let backdrop = self.backdrop_bgr555(pram);
         let bg_size = (self.bg0cnt >> 14) & 0x0003;
@@ -1078,6 +1083,26 @@ mod tests {
 
         // With V-flip set, source row 7 appears at output y=0.
         assert_eq!(&ppu.framebuffer()[0..3], &[0xFF, 0, 0]);
+    }
+
+    #[test]
+    #[should_panic(expected = "unimplemented GBA Mode 0 BG0 8bpp rendering")]
+    fn mode0_bg0_8bpp_panics_until_implemented() {
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let vram = make_vram();
+        let pram = make_pram();
+
+        // Mode 0 + BG0 enabled, and BG0CNT bit 7 (8bpp) set.
+        ppu.write_dispcnt(dispcnt::BG0_ENABLE);
+        ppu.write_bg0cnt(1 << 7);
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+        );
     }
 
     #[test]

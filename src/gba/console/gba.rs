@@ -13,7 +13,6 @@
 use crate::gba::GbaBus;
 use crate::gba::cartridge::load_cartridge;
 use crate::gba::cpu::Arm7tdmi;
-use crate::gba::cpu::Bus;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::gba::debugging::{disasm_arm, disasm_thumb};
 use crate::platform::app_context::{IntoSharedAppContext, SharedAppContext};
@@ -77,7 +76,7 @@ impl Gba {
 
         let pc = self.cpu.regs.r[15];
         if self.cpu.thumb() {
-            let raw = self.bus.read16(pc);
+            let raw = self.bus.peek16(pc);
             #[cfg(not(target_arch = "wasm32"))]
             {
                 let asm = disasm_thumb(raw, pc);
@@ -88,7 +87,7 @@ impl Gba {
                 Some(format!("GBA THUMB PC={pc:08X} RAW={raw:04X}"))
             }
         } else {
-            let raw = self.bus.read32(pc);
+            let raw = self.bus.peek32(pc);
             #[cfg(not(target_arch = "wasm32"))]
             {
                 let asm = disasm_arm(raw, pc);
@@ -248,6 +247,7 @@ mod tests {
     use crate::gba::cartridge::header::{
         COMPLEMENT_CHECK_OFFSET, FIXED_BYTE_OFFSET, FIXED_BYTE_VALUE, compute_complement_check,
     };
+    use crate::gba::cpu::bus::Bus;
     use crate::gba::ppu;
     use crate::platform::app_context::AppContext;
 
@@ -384,6 +384,7 @@ mod tests {
         let line = line.unwrap_or_default();
         assert!(line.contains("PC=08000000"));
         assert!(line.contains("RAW="));
+        #[cfg(not(target_arch = "wasm32"))]
         assert!(line.contains("ASM="));
     }
 
