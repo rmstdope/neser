@@ -101,6 +101,12 @@ pub fn execute<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u32) -> ExecOut
             if (instr & 0x0F80_00F0) == 0x0080_0090 {
                 return execute_long_multiply(regs, instr);
             }
+            // Single Data Swap: bits[27:23]=00010, bits[21:20]=00, bits[7:4]=1001
+            // SWP: cond 0001 0000 Rn Rd 0000 1001 Rm
+            // SWPB: cond 0001 0100 Rn Rd 0000 1001 Rm
+            if (instr & 0x0FB0_0FF0) == 0x0100_0090 {
+                return execute_swap(regs, bus, instr);
+            }
             // Halfword/Signed data transfer: bits[27:25]=000, bits[7:4]=1xx1 where xx=SH
             // Encoding: 000P U0WL for register offset, 000P U1WL for immediate offset
             // bits[7:4] = 1011 (STRH/LDRH), 1101 (LDRSB), 1111 (LDRSH)
@@ -817,6 +823,35 @@ fn execute_block_transfer<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u32)
     } else {
         ExecOutcome::cycles(cycles)
     }
+}
+
+// ---------------------------------------------------------------------------
+// Single Data Swap (SWP/SWPB)
+// ---------------------------------------------------------------------------
+
+fn execute_swap<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u32) -> ExecOutcome {
+    let b_byte = (instr >> 22) & 1 != 0; // byte/word
+    let rn = ((instr >> 16) & 0xF) as usize;
+    let rd = ((instr >> 12) & 0xF) as usize;
+    let rm = (instr & 0xF) as usize;
+
+    let addr = regs.r[rn];
+    let rm_val = regs.r[rm]; // Read Rm value BEFORE any writes
+
+    if b_byte {
+        // SWPB: Swap byte
+        let old_val = bus.read8(addr) as u32;
+        bus.write8(addr, rm_val as u8);
+        regs.r[rd] = old_val; // Zero-extended to 32 bits
+    } else {
+        // SWP: Swap word
+        let old_val = bus.read32(addr);
+        bus.write32(addr, rm_val);
+        regs.r[rd] = old_val;
+    }
+
+    // Cycle timing: 1S + 2N + 1I
+    ExecOutcome::cycles(4)
 }
 
 #[cfg(test)]
@@ -1558,5 +1593,64 @@ mod tests {
         let outcome = execute(&mut regs, &mut bus, stmia);
         // Should complete without crashing; base unchanged since no registers transferred
         assert!(outcome.cycles > 0);
+    }
+
+    // -------------------------------------------------------------------------
+    // Single Data Swap (SWP/SWPB) Tests
+    // -------------------------------------------------------------------------
+
+    /// Build a single data swap: cond | 0001 0B00 | Rn | Rd | 0000 1001 | Rm
+    fn arm_swap(cond: u8, b: bool, rn: u8, rd: u8, rm: u8) -> u32 {
+        ((cond as u32) << 28)
+            | (0b0001_0000 << 20)
+            | ((b as u32) << 22)
+            | ((rn as u32 & 0xF) << 16)
+            | ((rd as u32 & 0xF) << 12)
+            | (0b1001 << 4)
+            | (rm as u32 & 0xF)
+    }
+
+    #[test]
+    fn arm_swp_word() {
+        // SWP R2, R1, [R0]: Atomically swap [R0] and R1, result in R2
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        bus.write32(0x40, 0x1111_2222); // memory value
+        regs.r[0] = 0x40; // address
+        regs.r[1] = 0x3333_4444; // value to store
+        let swp = arm_swap(0xE, false, 0, 2, 1);
+        execute(&mut regs, &mut bus, swp);
+        assert_eq!(regs.r[2], 0x1111_2222); // old memory value
+        assert_eq!(bus.read32(0x40), 0x3333_4444); // new memory value
+    }
+
+    #[test]
+    fn arm_swpb_byte() {
+        // SWPB R2, R1, [R0]: Atomically swap byte [R0] and R1[7:0], result in R2
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        bus.write8(0x40, 0xAB); // memory value
+        regs.r[0] = 0x40; // address
+        regs.r[1] = 0xFFFF_FF12; // only low byte used
+        let swpb = arm_swap(0xE, true, 0, 2, 1);
+        execute(&mut regs, &mut bus, swpb);
+        assert_eq!(regs.r[2], 0x0000_00AB); // old memory value (zero-extended)
+        assert_eq!(bus.read8(0x40), 0x12); // new memory value
+    }
+
+    #[test]
+    fn arm_swp_same_rd_rm() {
+        // SWP R1, R1, [R0]: Edge case where Rd == Rm (in-place swap)
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        bus.write32(0x40, 0xAAAA_BBBB);
+        regs.r[0] = 0x40;
+        regs.r[1] = 0xCCCC_DDDD;
+        let swp = arm_swap(0xE, false, 0, 1, 1);
+        execute(&mut regs, &mut bus, swp);
+        // Rd gets old memory value, memory gets old Rm value
+        // Since we read Rm BEFORE writing to Rd, Rd should get memory value
+        assert_eq!(regs.r[1], 0xAAAA_BBBB);
+        assert_eq!(bus.read32(0x40), 0xCCCC_DDDD);
     }
 }
