@@ -210,7 +210,7 @@ fn exec_format3(regs: &mut Registers, instr: u16) -> ExecOutcome {
 }
 
 // ---------------------------------------------------------------------------
-// Format 4 — ALU operations (register) — minimal subset
+// Format 4 — ALU operations (register)
 // ---------------------------------------------------------------------------
 
 fn exec_format4(regs: &mut Registers, instr: u16) -> ExecOutcome {
@@ -223,24 +223,125 @@ fn exec_format4(regs: &mut Registers, instr: u16) -> ExecOutcome {
     let (result, carry, overflow, write) = match op {
         0x0 => (a & b, regs.c_flag(), regs.v_flag(), true), // AND
         0x1 => (a ^ b, regs.c_flag(), regs.v_flag(), true), // EOR
+        0x2 => {
+            // LSL: Rd = Rd << Rs[7:0]
+            let shift = (b & 0xFF) as u32;
+            if shift == 0 {
+                (a, regs.c_flag(), regs.v_flag(), true)
+            } else if shift < 32 {
+                let c = (a >> (32 - shift)) & 1 != 0;
+                (a << shift, c, regs.v_flag(), true)
+            } else if shift == 32 {
+                (0, a & 1 != 0, regs.v_flag(), true)
+            } else {
+                (0, false, regs.v_flag(), true)
+            }
+        }
+        0x3 => {
+            // LSR: Rd = Rd >> Rs[7:0] (logical)
+            let shift = (b & 0xFF) as u32;
+            if shift == 0 {
+                (a, regs.c_flag(), regs.v_flag(), true)
+            } else if shift < 32 {
+                let c = (a >> (shift - 1)) & 1 != 0;
+                (a >> shift, c, regs.v_flag(), true)
+            } else if shift == 32 {
+                (0, a & 0x8000_0000 != 0, regs.v_flag(), true)
+            } else {
+                (0, false, regs.v_flag(), true)
+            }
+        }
+        0x4 => {
+            // ASR: Rd = Rd >> Rs[7:0] (arithmetic)
+            let shift = (b & 0xFF) as u32;
+            if shift == 0 {
+                (a, regs.c_flag(), regs.v_flag(), true)
+            } else if shift < 32 {
+                let signed = a as i32;
+                let c = (signed >> (shift - 1)) & 1 != 0;
+                ((signed >> shift) as u32, c, regs.v_flag(), true)
+            } else {
+                // shift >= 32: result is all sign bits
+                let sign = a & 0x8000_0000 != 0;
+                (
+                    if sign { 0xFFFF_FFFF } else { 0 },
+                    sign,
+                    regs.v_flag(),
+                    true,
+                )
+            }
+        }
+        0x5 => {
+            // ADC: Rd = Rd + Rs + C
+            let cin = if regs.c_flag() { 1u64 } else { 0 };
+            let sum64 = a as u64 + b as u64 + cin;
+            let result = sum64 as u32;
+            let carry = sum64 > 0xFFFF_FFFF;
+            let a_sign = a & 0x8000_0000;
+            let b_sign = b & 0x8000_0000;
+            let r_sign = result & 0x8000_0000;
+            let overflow = (a_sign == b_sign) && (a_sign != r_sign);
+            (result, carry, overflow, true)
+        }
+        0x6 => {
+            // SBC: Rd = Rd - Rs - !C
+            let cin = if regs.c_flag() { 1u64 } else { 0 };
+            let sum64 = a as u64 + (!b) as u64 + cin;
+            let result = sum64 as u32;
+            let carry = sum64 > 0xFFFF_FFFF;
+            let a_sign = a & 0x8000_0000;
+            let b_sign = b & 0x8000_0000;
+            let r_sign = result & 0x8000_0000;
+            let overflow = (a_sign != b_sign) && (a_sign != r_sign);
+            (result, carry, overflow, true)
+        }
+        0x7 => {
+            // ROR: Rd = Rd ROR Rs[7:0]
+            let shift = (b & 0xFF) as u32;
+            if shift == 0 {
+                (a, regs.c_flag(), regs.v_flag(), true)
+            } else {
+                let amt = shift & 0x1F; // effective rotation
+                if amt == 0 {
+                    // shift is multiple of 32
+                    (a, a & 0x8000_0000 != 0, regs.v_flag(), true)
+                } else {
+                    let result = a.rotate_right(amt);
+                    let c = result & 0x8000_0000 != 0;
+                    (result, c, regs.v_flag(), true)
+                }
+            }
+        }
+        0x8 => {
+            // TST: set flags for Rd AND Rs (no write)
+            let result = a & b;
+            (result, regs.c_flag(), regs.v_flag(), false)
+        }
+        0x9 => {
+            // NEG: Rd = 0 - Rs
+            let (r, c, v) = sub_flags(0, b);
+            (r, c, v, true)
+        }
         0xA => {
             // CMP
             let (r, c, v) = sub_flags(a, b);
             (r, c, v, false)
         }
-        0xC => (a | b, regs.c_flag(), regs.v_flag(), true), // ORR
-        0xE => (a & !b, regs.c_flag(), regs.v_flag(), true), // BIC
-        0xF => (!b, regs.c_flag(), regs.v_flag(), true),    // MVN
-        // Unimplemented format-4 opcodes are a no-op for now: do not write
-        // Rd and do not clobber NZCV. This makes missing instruction
-        // coverage easy to spot rather than silently corrupting flags.
-        _ => {
-            return ExecOutcome {
-                cycles: 1,
-                branched: false,
-                swi: false,
-            };
+        0xB => {
+            // CMN: set flags for Rd + Rs (no write)
+            let (r, c, v) = add_flags(a, b);
+            (r, c, v, false)
         }
+        0xC => (a | b, regs.c_flag(), regs.v_flag(), true), // ORR
+        0xD => {
+            // MUL: Rd = Rd * Rs
+            let result = a.wrapping_mul(b);
+            // C and V flags are destroyed (set to meaningless values) per ARM spec
+            (result, regs.c_flag(), regs.v_flag(), true)
+        }
+        0xE => (a & !b, regs.c_flag(), regs.v_flag(), true), // BIC
+        0xF => (!b, regs.c_flag(), regs.v_flag(), true),     // MVN
+        _ => unreachable!(),
     };
     if write {
         regs.r[rd] = result;
@@ -499,23 +600,21 @@ mod tests {
     }
 
     #[test]
-    fn thumb_format4_unsupported_opcode_does_not_clobber_flags() {
-        // Format-4 opcodes that are not yet implemented must be a true no-op:
-        // they must not write Rd and must not corrupt NZCV.
+    fn thumb_format4_lsl_by_zero_preserves_value() {
+        // LSL with shift amount of 0 should preserve the value and carry flag.
         let mut regs = make_regs();
         let mut bus = RamBus::new(0x100);
         regs.r[0] = 0xDEAD_BEEF;
-        regs.r[1] = 0;
-        // Set every flag so we can detect any clobber.
-        regs.set_nzcv(true, true, true, true);
-        let cpsr_before = regs.cpsr;
+        regs.r[1] = 0; // shift by 0
+        regs.set_nzcv(true, true, true, true); // C=1 should be preserved
         let r0_before = regs.r[0];
-        // Format 4 with op=0x2 (LSL Rd, Rs by register) is not implemented.
-        // Encoding: 0100_00_op(4)_Rs(3)_Rd(3) -> op=0x2, Rs=R1, Rd=R0
+        // LSL R0, R1: op=0x2, Rs=R1, Rd=R0
         let instr = 0b0100_00_0010_001_000u16;
         execute(&mut regs, &mut bus, instr);
-        assert_eq!(regs.r[0], r0_before, "Rd must not be modified");
-        assert_eq!(regs.cpsr, cpsr_before, "flags must not be modified");
+        assert_eq!(regs.r[0], r0_before, "value preserved when shift=0");
+        assert!(regs.c_flag(), "C flag preserved when shift=0");
+        assert!(regs.n_flag(), "N flag set from negative result");
+        assert!(!regs.z_flag(), "Z flag clear from non-zero result");
     }
 
     #[test]
@@ -606,5 +705,127 @@ mod tests {
         let instr = 0b01001_000_00000010u16;
         execute(&mut regs, &mut bus, instr);
         assert_eq!(regs.r[0], 0xCAFE_BABE);
+    }
+
+    // -------------------------------------------------------------------------
+    // Format 4 Missing ALU Operations Tests
+    // -------------------------------------------------------------------------
+
+    /// Build a Format 4 ALU instruction: 0100_00_op(4)_Rs(3)_Rd(3)
+    fn thumb_alu_op(op: u8, rs: u8, rd: u8) -> u16 {
+        0x4000 | ((op as u16 & 0xF) << 6) | ((rs as u16 & 0x7) << 3) | (rd as u16 & 0x7)
+    }
+
+    #[test]
+    fn thumb_lsl_register() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 0x0000_0001;
+        regs.r[1] = 4;
+        // LSL R0, R1: Rd = Rd << Rs[7:0]
+        execute(&mut regs, &mut bus, thumb_alu_op(0x2, 1, 0));
+        assert_eq!(regs.r[0], 0x0000_0010);
+    }
+
+    #[test]
+    fn thumb_lsr_register() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 0x8000_0000;
+        regs.r[1] = 4;
+        // LSR R0, R1: Rd = Rd >> Rs[7:0] (logical)
+        execute(&mut regs, &mut bus, thumb_alu_op(0x3, 1, 0));
+        assert_eq!(regs.r[0], 0x0800_0000);
+    }
+
+    #[test]
+    fn thumb_asr_register() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 0x8000_0000u32; // negative
+        regs.r[1] = 4;
+        // ASR R0, R1: Rd = Rd >> Rs[7:0] (arithmetic)
+        execute(&mut regs, &mut bus, thumb_alu_op(0x4, 1, 0));
+        assert_eq!(regs.r[0], 0xF800_0000); // sign extended
+    }
+
+    #[test]
+    fn thumb_adc() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 5;
+        regs.r[1] = 3;
+        regs.set_nzcv(false, false, true, false); // C=1
+        // ADC R0, R1: Rd = Rd + Rs + C
+        execute(&mut regs, &mut bus, thumb_alu_op(0x5, 1, 0));
+        assert_eq!(regs.r[0], 9); // 5 + 3 + 1
+    }
+
+    #[test]
+    fn thumb_sbc() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 10;
+        regs.r[1] = 3;
+        regs.set_nzcv(false, false, true, false); // C=1 (no borrow)
+        // SBC R0, R1: Rd = Rd - Rs - !C
+        execute(&mut regs, &mut bus, thumb_alu_op(0x6, 1, 0));
+        assert_eq!(regs.r[0], 7); // 10 - 3 - 0
+    }
+
+    #[test]
+    fn thumb_ror() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 0x0000_000F;
+        regs.r[1] = 4;
+        // ROR R0, R1: Rd = Rd ROR Rs[7:0]
+        execute(&mut regs, &mut bus, thumb_alu_op(0x7, 1, 0));
+        assert_eq!(regs.r[0], 0xF000_0000);
+    }
+
+    #[test]
+    fn thumb_tst() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 0xFF00;
+        regs.r[1] = 0x00FF;
+        // TST R0, R1: sets flags for Rd AND Rs
+        execute(&mut regs, &mut bus, thumb_alu_op(0x8, 1, 0));
+        assert!(regs.z_flag()); // 0xFF00 & 0x00FF = 0
+        assert_eq!(regs.r[0], 0xFF00); // Rd unchanged
+    }
+
+    #[test]
+    fn thumb_neg() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[1] = 5;
+        // NEG R0, R1: Rd = 0 - Rs
+        execute(&mut regs, &mut bus, thumb_alu_op(0x9, 1, 0));
+        assert_eq!(regs.r[0], 0xFFFF_FFFBu32); // -5 in two's complement
+    }
+
+    #[test]
+    fn thumb_cmn() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 1;
+        regs.r[1] = 0xFFFF_FFFFu32; // -1
+        // CMN R0, R1: sets flags for Rd + Rs (tests for negative)
+        execute(&mut regs, &mut bus, thumb_alu_op(0xB, 1, 0));
+        assert!(regs.z_flag()); // 1 + (-1) = 0
+        assert_eq!(regs.r[0], 1); // Rd unchanged
+    }
+
+    #[test]
+    fn thumb_mul() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 7;
+        regs.r[1] = 6;
+        // MUL R0, R1: Rd = Rd * Rs
+        execute(&mut regs, &mut bus, thumb_alu_op(0xD, 1, 0));
+        assert_eq!(regs.r[0], 42);
     }
 }
