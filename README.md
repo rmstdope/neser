@@ -126,7 +126,7 @@ For GBA ROMs, provide a 16384-byte BIOS file via `--gba-bios-path` or config key
 The repository includes the jsmolka `gba-tests` suite as a submodule at
 `roms/gba/automated_tests/gba-tests`.
 
-Run the ARM/Thumb GBA suite integration tests with:
+Run the ARM/Thumb/Memory GBA suite integration tests with:
 
 ```bash
 cargo test --no-default-features --lib gba::integration_tests::gba_suite_tests::
@@ -136,11 +136,13 @@ These tests execute:
 
 - `roms/gba/automated_tests/gba-tests/arm/arm.gba`
 - `roms/gba/automated_tests/gba-tests/thumb/thumb.gba`
+- `roms/gba/automated_tests/gba-tests/memory/memory.gba`
 
 Pass/fail is read from suite-native registers at completion:
 
 - ARM uses `R12`
 - Thumb uses `R7`
+- Memory uses `R12`
 
 ## Controller Mapping
 
