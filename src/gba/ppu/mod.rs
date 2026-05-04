@@ -2,7 +2,7 @@
 //!
 //! Implements the GBA LCD controller timing and a small subset of the
 //! display modes. This module is the foundation for subsequent rendering
-//! work — additional display modes (5), tile background layers, and
+//! work — additional display modes (1, 5), tile background layers, and
 //! sprite (OBJ) rendering will be added in follow-up sub-issues of
 //! rmstdope/neser#2207.
 //!
@@ -294,13 +294,9 @@ impl Ppu {
     }
 
     /// Frame selection for Mode 4/5 (DISPCNT bit 4).
-    /// Returns 0 for frame 0, 1 for frame 1.
-    pub fn frame_select(&self) -> u32 {
-        if self.dispcnt & dispcnt::FRAME_SELECT != 0 {
-            1
-        } else {
-            0
-        }
+    /// Returns `true` for frame 1, `false` for frame 0.
+    pub fn frame_select(&self) -> bool {
+        self.dispcnt & dispcnt::FRAME_SELECT != 0
     }
 
     /// Borrow the affine register file for BG2 (`bg`=0) or BG3 (`bg`=1).
@@ -635,7 +631,8 @@ impl Ppu {
 
     /// Mode 4: 240×160 8-bit paletted bitmap. Each byte in VRAM is a
     /// palette index (0-255) that selects a BGR555 color from PRAM.
-    /// Palette index 0 is transparent (shows backdrop).
+    /// Palette index 0 displays palette entry 0 (which is also the
+    /// backdrop color).
     ///
     /// Two frames are available:
     /// - Frame 0: 0x06000000 - 0x060095FF (38,400 bytes)
@@ -651,10 +648,10 @@ impl Ppu {
         let backdrop = self.backdrop_bgr555(pram);
 
         // Frame base address: Frame 0 at 0x0000, Frame 1 at 0xA000
-        let frame_base = if self.frame_select() == 0 {
-            0x0000usize
-        } else {
+        let frame_base = if self.frame_select() {
             0xA000usize
+        } else {
+            0x0000usize
         };
 
         let line_byte_offset = frame_base + (y as usize) * (SCREEN_WIDTH as usize);
@@ -664,7 +661,7 @@ impl Ppu {
             let src = line_byte_offset + x;
             let pal_index = if src < vram.len() { vram[src] } else { 0 };
 
-            // Palette index 0 is transparent — show backdrop
+            // Palette index 0 uses palette entry 0 (the backdrop color)
             let bgr555 = if pal_index == 0 {
                 backdrop
             } else {
@@ -1288,7 +1285,7 @@ mod tests {
 
     #[test]
     fn mode4_palette_index_0_shows_backdrop() {
-        // Palette index 0 is transparent — should show backdrop color.
+        // Palette index 0 displays palette entry 0 (the backdrop color).
         let mut ppu = Ppu::new();
         let mut ic = make_ic();
         let mut vram = make_vram();
@@ -1301,7 +1298,7 @@ mod tests {
         pram[0] = 0x00;
         pram[1] = 0x7C;
 
-        // VRAM[0] = palette index 0 (transparent).
+        // VRAM[0] = palette index 0 (displays backdrop color).
         vram[0] = 0;
 
         ppu.step(
