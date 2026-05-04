@@ -80,6 +80,15 @@ pub fn execute<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u32) -> ExecOut
             if (instr & 0x0FFF_FFF0) == 0x012F_FF10 {
                 return execute_bx(regs, instr);
             }
+            // Multiply instructions: bits[27:24]=0000, bits[7:4]=1001
+            // MUL/MLA: bits[27:22]=000000, bits[7:4]=1001
+            // Long multiply: bits[27:23]=00001, bits[7:4]=1001
+            if (instr & 0x0FC0_00F0) == 0x0000_0090 {
+                return execute_multiply(regs, instr);
+            }
+            if (instr & 0x0F80_00F0) == 0x0080_0090 {
+                return execute_long_multiply(regs, instr);
+            }
             // Data-processing immediate / register
             execute_data_processing(regs, instr)
         }
@@ -449,6 +458,107 @@ fn execute_single_data_transfer<B: Bus>(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Multiply (MUL, MLA)
+// ---------------------------------------------------------------------------
+
+fn execute_multiply(regs: &mut Registers, instr: u32) -> ExecOutcome {
+    let acc = (instr >> 21) & 1 != 0; // A bit: accumulate
+    let s_bit = (instr >> 20) & 1 != 0;
+    let rd = ((instr >> 16) & 0xF) as usize;
+    let rn = ((instr >> 12) & 0xF) as usize;
+    let rs = ((instr >> 8) & 0xF) as usize;
+    let rm = (instr & 0xF) as usize;
+
+    let rm_val = regs.r[rm];
+    let rs_val = regs.r[rs];
+
+    let product = rm_val.wrapping_mul(rs_val);
+    let result = if acc {
+        product.wrapping_add(regs.r[rn])
+    } else {
+        product
+    };
+
+    regs.r[rd] = result;
+
+    if s_bit {
+        let n = result & 0x8000_0000 != 0;
+        let z = result == 0;
+        // C and V flags are UNPREDICTABLE after MUL/MLA per ARM spec; preserve them.
+        regs.set_nzcv(n, z, regs.c_flag(), regs.v_flag());
+    }
+
+    // Cycle count: 1S + mI where mI depends on Rs magnitude (early termination).
+    // For simplicity, we use a fixed count; cycle-accurate timing can refine this.
+    let cycles = multiply_cycles(rs_val);
+    ExecOutcome::cycles(cycles)
+}
+
+// ---------------------------------------------------------------------------
+// Long Multiply (UMULL, UMLAL, SMULL, SMLAL)
+// ---------------------------------------------------------------------------
+
+fn execute_long_multiply(regs: &mut Registers, instr: u32) -> ExecOutcome {
+    let signed = (instr >> 22) & 1 != 0; // U bit: 1 = signed
+    let acc = (instr >> 21) & 1 != 0; // A bit: accumulate
+    let s_bit = (instr >> 20) & 1 != 0;
+    let rd_hi = ((instr >> 16) & 0xF) as usize;
+    let rd_lo = ((instr >> 12) & 0xF) as usize;
+    let rs = ((instr >> 8) & 0xF) as usize;
+    let rm = (instr & 0xF) as usize;
+
+    let rm_val = regs.r[rm];
+    let rs_val = regs.r[rs];
+
+    let product: u64 = if signed {
+        ((rm_val as i32) as i64 * (rs_val as i32) as i64) as u64
+    } else {
+        rm_val as u64 * rs_val as u64
+    };
+
+    let result = if acc {
+        let existing = ((regs.r[rd_hi] as u64) << 32) | (regs.r[rd_lo] as u64);
+        product.wrapping_add(existing)
+    } else {
+        product
+    };
+
+    regs.r[rd_lo] = result as u32;
+    regs.r[rd_hi] = (result >> 32) as u32;
+
+    if s_bit {
+        let n = (result >> 63) & 1 != 0;
+        let z = result == 0;
+        // C and V flags are UNPREDICTABLE; preserve them.
+        regs.set_nzcv(n, z, regs.c_flag(), regs.v_flag());
+    }
+
+    // Long multiply takes slightly more cycles than short multiply.
+    let cycles = long_multiply_cycles(rs_val);
+    ExecOutcome::cycles(cycles)
+}
+
+/// Compute multiply internal cycles based on Rs magnitude (early termination).
+/// Per GBATek, cycles = 1S + mI where mI = 1..4 depending on Rs[31:8].
+fn multiply_cycles(rs: u32) -> u8 {
+    // Check how many leading bytes are all 0s or all 1s (sign extension).
+    if rs & 0xFFFF_FF00 == 0 || rs & 0xFFFF_FF00 == 0xFFFF_FF00 {
+        2 // 1S + 1I
+    } else if rs & 0xFFFF_0000 == 0 || rs & 0xFFFF_0000 == 0xFFFF_0000 {
+        3 // 1S + 2I
+    } else if rs & 0xFF00_0000 == 0 || rs & 0xFF00_0000 == 0xFF00_0000 {
+        4 // 1S + 3I
+    } else {
+        5 // 1S + 4I
+    }
+}
+
+/// Long multiply cycles: similar to multiply but +1 for 64-bit result.
+fn long_multiply_cycles(rs: u32) -> u8 {
+    multiply_cycles(rs) + 1
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -667,5 +777,195 @@ mod tests {
             | (2 << 12);
         execute(&mut regs, &mut bus, ldr_instr);
         assert_eq!(regs.r[2], 0xAB);
+    }
+
+    // -------------------------------------------------------------------------
+    // Multiply Instructions Tests (MUL, MLA, UMULL, UMLAL, SMULL, SMLAL)
+    // -------------------------------------------------------------------------
+
+    /// Build a MUL instruction: cond | 0000 | 00AS | Rd | 0000 | Rs | 1001 | Rm
+    fn arm_mul(cond: u8, s: bool, rd: u8, rs: u8, rm: u8) -> u32 {
+        ((cond as u32) << 28)
+            | ((s as u32) << 20)
+            | ((rd as u32 & 0xF) << 16)
+            | ((rs as u32 & 0xF) << 8)
+            | (0b1001 << 4)
+            | (rm as u32 & 0xF)
+    }
+
+    /// Build a MLA instruction: cond | 0000 | 001S | Rd | Rn | Rs | 1001 | Rm
+    fn arm_mla(cond: u8, s: bool, rd: u8, rn: u8, rs: u8, rm: u8) -> u32 {
+        ((cond as u32) << 28)
+            | (1 << 21)
+            | ((s as u32) << 20)
+            | ((rd as u32 & 0xF) << 16)
+            | ((rn as u32 & 0xF) << 12)
+            | ((rs as u32 & 0xF) << 8)
+            | (0b1001 << 4)
+            | (rm as u32 & 0xF)
+    }
+
+    /// Build a long multiply: cond | 0000 | 1UAS | RdHi | RdLo | Rs | 1001 | Rm
+    /// U=1 for signed, A=1 for accumulate
+    #[allow(clippy::too_many_arguments)]
+    fn arm_long_mul(
+        cond: u8,
+        signed: bool,
+        acc: bool,
+        s: bool,
+        rd_hi: u8,
+        rd_lo: u8,
+        rs: u8,
+        rm: u8,
+    ) -> u32 {
+        ((cond as u32) << 28)
+            | (1 << 23)
+            | (if signed { 1 << 22 } else { 0 })
+            | (if acc { 1 << 21 } else { 0 })
+            | ((s as u32) << 20)
+            | ((rd_hi as u32 & 0xF) << 16)
+            | ((rd_lo as u32 & 0xF) << 12)
+            | ((rs as u32 & 0xF) << 8)
+            | (0b1001 << 4)
+            | (rm as u32 & 0xF)
+    }
+
+    #[test]
+    fn arm_mul_basic() {
+        // MUL R2, R0, R1: 3 * 7 = 21
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 3;
+        regs.r[1] = 7;
+        let instr = arm_mul(0xE, false, 2, 1, 0);
+        execute(&mut regs, &mut bus, instr);
+        assert_eq!(regs.r[2], 21);
+    }
+
+    #[test]
+    fn arm_muls_zero_flag() {
+        // MULS R2, R0, R1: 0 * 7 = 0, Z flag set
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 0;
+        regs.r[1] = 7;
+        let instr = arm_mul(0xE, true, 2, 1, 0);
+        execute(&mut regs, &mut bus, instr);
+        assert_eq!(regs.r[2], 0);
+        assert!(regs.z_flag());
+        assert!(!regs.n_flag());
+    }
+
+    #[test]
+    fn arm_muls_negative_flag() {
+        // MULS R2, R0, R1: large positive * 2 = negative (overflow wraps)
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 0x8000_0000;
+        regs.r[1] = 1;
+        let instr = arm_mul(0xE, true, 2, 1, 0);
+        execute(&mut regs, &mut bus, instr);
+        assert_eq!(regs.r[2], 0x8000_0000);
+        assert!(regs.n_flag());
+        assert!(!regs.z_flag());
+    }
+
+    #[test]
+    fn arm_mla_basic() {
+        // MLA R3, R0, R1, R2: 3 * 7 + 10 = 31
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 3;
+        regs.r[1] = 7;
+        regs.r[2] = 10;
+        let instr = arm_mla(0xE, false, 3, 2, 1, 0);
+        execute(&mut regs, &mut bus, instr);
+        assert_eq!(regs.r[3], 31);
+    }
+
+    #[test]
+    fn arm_umull_basic() {
+        // UMULL R2, R3, R0, R1: 0xFFFFFFFF * 0x2 = 0x1_FFFFFFFE
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 0xFFFF_FFFF;
+        regs.r[1] = 2;
+        // UMULL: signed=false, acc=false
+        let instr = arm_long_mul(0xE, false, false, false, 3, 2, 1, 0);
+        execute(&mut regs, &mut bus, instr);
+        assert_eq!(regs.r[2], 0xFFFF_FFFE); // low 32 bits
+        assert_eq!(regs.r[3], 0x0000_0001); // high 32 bits
+    }
+
+    #[test]
+    fn arm_umlal_basic() {
+        // UMLAL R2, R3, R0, R1: 0xFFFFFFFF * 0x2 + (R3:R2)
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 0xFFFF_FFFF;
+        regs.r[1] = 2;
+        regs.r[2] = 0x10; // existing low
+        regs.r[3] = 0x5; // existing high
+        // UMLAL: signed=false, acc=true
+        let instr = arm_long_mul(0xE, false, true, false, 3, 2, 1, 0);
+        execute(&mut regs, &mut bus, instr);
+        // 0x1_FFFFFFFE + 0x5_00000010 = 0x6_0000000E
+        assert_eq!(regs.r[2], 0x0000_000E); // low
+        assert_eq!(regs.r[3], 0x0000_0007); // high (1 + 5 + carry = 7)
+    }
+
+    #[test]
+    fn arm_smull_positive() {
+        // SMULL R2, R3, R0, R1: 100 * 200 = 20000 (signed)
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 100;
+        regs.r[1] = 200;
+        // SMULL: signed=true, acc=false
+        let instr = arm_long_mul(0xE, true, false, false, 3, 2, 1, 0);
+        execute(&mut regs, &mut bus, instr);
+        assert_eq!(regs.r[2], 20000);
+        assert_eq!(regs.r[3], 0);
+    }
+
+    #[test]
+    fn arm_smull_negative() {
+        // SMULL R2, R3, R0, R1: -1 * 2 = -2 (0xFFFF_FFFF_FFFF_FFFE)
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 0xFFFF_FFFF; // -1
+        regs.r[1] = 2;
+        let instr = arm_long_mul(0xE, true, false, false, 3, 2, 1, 0);
+        execute(&mut regs, &mut bus, instr);
+        assert_eq!(regs.r[2], 0xFFFF_FFFE); // low 32 bits of -2
+        assert_eq!(regs.r[3], 0xFFFF_FFFF); // high 32 bits (sign extension)
+    }
+
+    #[test]
+    fn arm_smlal_basic() {
+        // SMLAL: -1 * 2 + 10 = 8
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 0xFFFF_FFFF; // -1
+        regs.r[1] = 2;
+        regs.r[2] = 10;
+        regs.r[3] = 0;
+        let instr = arm_long_mul(0xE, true, true, false, 3, 2, 1, 0);
+        execute(&mut regs, &mut bus, instr);
+        assert_eq!(regs.r[2], 8);
+        assert_eq!(regs.r[3], 0);
+    }
+
+    #[test]
+    fn arm_smulls_sets_flags() {
+        // SMULLS: -1 * 2 = -2, should set N flag
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 0xFFFF_FFFF;
+        regs.r[1] = 2;
+        let instr = arm_long_mul(0xE, true, false, true, 3, 2, 1, 0);
+        execute(&mut regs, &mut bus, instr);
+        assert!(regs.n_flag());
+        assert!(!regs.z_flag());
     }
 }
