@@ -53,13 +53,9 @@ pub fn disasm_arm(instr: u32, pc: u32) -> String {
         0b000 | 0b001 => disasm_arm_data_processing(instr, cond_str),
         0b010 | 0b011 => disasm_arm_single_data_transfer(instr, cond_str),
         0b101 => disasm_arm_branch(instr, pc, cond_str),
-        0b111 => {
-            if (instr >> 24) & 0xF == 0xF {
-                let comment = instr & 0x00FF_FFFF;
-                format!("SWI{} #0x{:06X}", cond_str, comment)
-            } else {
-                "<undefined>".to_string()
-            }
+        0b111 if (instr >> 24) & 0xF == 0xF => {
+            let comment = instr & 0x00FF_FFFF;
+            format!("SWI{} #0x{:06X}", cond_str, comment)
         }
         _ => "<undefined>".to_string(),
     }
@@ -227,13 +223,7 @@ pub fn disasm_thumb(instr: u16, pc: u32) -> String {
                 "<undefined>".to_string()
             }
         }
-        0b10110 | 0b10111 => {
-            if instr & 0xF600 == 0xB400 {
-                disasm_thumb_format14(instr)
-            } else {
-                "<undefined>".to_string()
-            }
-        }
+        0b10110 | 0b10111 if instr & 0xF600 == 0xB400 => disasm_thumb_format14(instr),
         0b11010 | 0b11011 => disasm_thumb_format16(instr, pc),
         0b11100 => disasm_thumb_format18(instr, pc),
         _ => "<undefined>".to_string(),
