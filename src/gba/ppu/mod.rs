@@ -2,7 +2,7 @@
 //!
 //! Implements the GBA LCD controller timing and a small subset of the
 //! display modes. This module is the foundation for subsequent rendering
-//! work — additional display modes (0/4/5), tile background layers, and
+//! work — additional display modes (1, 5), tile background layers, and
 //! sprite (OBJ) rendering will be added in follow-up sub-issues of
 //! rmstdope/neser#2207.
 //!
@@ -15,17 +15,20 @@
 //!   the I/O unit.
 //! * V-Blank / H-Blank flag transitions, V-Counter match flag, and the
 //!   three associated IRQ sources (`VBLANK`, `HBLANK`, `VCOUNT`).
+//! * Mode 0 tile background rendering (BG0 with 4bpp text background).
+//! * Mode 2 stub — renders backdrop only (affine tile rendering deferred).
 //! * Mode 3 background rendering (240×160 15-bit BGR555 direct bitmap
 //!   from VRAM) when `BG2` is enabled.
+//! * Mode 4 background rendering (240×160 8-bit paletted bitmap from
+//!   VRAM) with dual-frame support via DISPCNT bit 4.
 //! * Backdrop fill from the first palette entry for unimplemented
-//!   display modes (and Mode 3 when BG2 is disabled).
+//!   display modes (and Mode 3/4 when BG2 is disabled).
 //! * Forced-blank outputs solid white (per GBATek).
 //!
 //! Out of scope (deferred to follow-up sub-issues):
 //!
-//! * Mode 0 tile background layers (BG0–BG3 with tile maps + char data).
-//! * Mode 1, Mode 2 affine modes, Mode 4 (8-bit paletted) and Mode 5
-//!   (160×128 15-bit) rendering.
+//! * Mode 1 mixed affine mode, Mode 5 (160×128 15-bit) rendering.
+//! * Mode 2 full affine tile background rendering for BG2/BG3.
 //! * Sprite (OBJ) rendering and OAM attribute decoding.
 //! * Window masks, alpha blending, mosaic, brightness effects.
 //!
@@ -290,6 +293,12 @@ impl Ppu {
         self.dispcnt & dispcnt::BG0_ENABLE != 0
     }
 
+    /// Frame selection for Mode 4/5 (DISPCNT bit 4).
+    /// Returns `true` for frame 1, `false` for frame 0.
+    pub fn frame_select(&self) -> bool {
+        self.dispcnt & dispcnt::FRAME_SELECT != 0
+    }
+
     /// Borrow the affine register file for BG2 (`bg`=0) or BG3 (`bg`=1).
     /// Used by the affine renderer (and tests) to read the latched
     /// parameters and reference points.
@@ -501,7 +510,11 @@ impl Ppu {
         }
         match self.mode() {
             0 => self.render_mode0_scanline(y, vram, pram),
+            // Mode 2: affine tile backgrounds (BG2/BG3 only). Currently renders
+            // backdrop only; full affine tile rendering is deferred.
+            2 => self.render_backdrop_scanline(y, pram),
             3 => self.render_mode3_scanline(y, vram, pram),
+            4 => self.render_mode4_scanline(y, vram, pram),
             _ => self.render_backdrop_scanline(y, pram),
         }
     }
@@ -612,6 +625,56 @@ impl Ppu {
             // 76 800 bytes which always fits.
             let bgr555 = u16::from_le_bytes([vram[src], vram[src + 1]]);
             let dst = ((y as usize) * (SCREEN_WIDTH as usize) + x) * BYTES_PER_PIXEL;
+            color::write_pixel(&mut self.framebuffer, dst, bgr555);
+        }
+    }
+
+    /// Mode 4: 240×160 8-bit paletted bitmap. Each byte in VRAM is a
+    /// palette index (0-255) that selects a BGR555 color from PRAM.
+    /// Palette index 0 displays palette entry 0 (which is also the
+    /// backdrop color).
+    ///
+    /// Two frames are available:
+    /// - Frame 0: 0x06000000 - 0x060095FF (38,400 bytes)
+    /// - Frame 1: 0x0600A000 - 0x060135FF (38,400 bytes)
+    ///
+    /// DISPCNT bit 4 selects the displayed frame.
+    fn render_mode4_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8]) {
+        if !self.bg2_enabled() {
+            self.render_backdrop_scanline(y, pram);
+            return;
+        }
+
+        let backdrop = self.backdrop_bgr555(pram);
+
+        // Frame base address: Frame 0 at 0x0000, Frame 1 at 0xA000
+        let frame_base = if self.frame_select() {
+            0xA000usize
+        } else {
+            0x0000usize
+        };
+
+        let line_byte_offset = frame_base + (y as usize) * (SCREEN_WIDTH as usize);
+        let row_start = (y as usize) * (SCREEN_WIDTH as usize) * BYTES_PER_PIXEL;
+
+        for x in 0..(SCREEN_WIDTH as usize) {
+            let src = line_byte_offset + x;
+            let pal_index = if src < vram.len() { vram[src] } else { 0 };
+
+            // Palette index 0 uses palette entry 0 (the backdrop color)
+            let bgr555 = if pal_index == 0 {
+                backdrop
+            } else {
+                // Each palette entry is 2 bytes (BGR555) in PRAM
+                let pal_offset = (pal_index as usize) * 2;
+                if pal_offset + 1 < pram.len() {
+                    u16::from_le_bytes([pram[pal_offset], pram[pal_offset + 1]])
+                } else {
+                    backdrop
+                }
+            };
+
+            let dst = row_start + x * BYTES_PER_PIXEL;
             color::write_pixel(&mut self.framebuffer, dst, bgr555);
         }
     }
@@ -1162,5 +1225,147 @@ mod tests {
         let bg2 = ppu.bg_affine(0).expect("BG2 affine state must exist");
         assert_eq!(bg2.pa, 0);
         assert_eq!(bg2.x, 0);
+    }
+
+    #[test]
+    fn mode2_renders_backdrop_color() {
+        // Mode 2 is an affine tile mode for BG2/BG3. Currently we render
+        // only the backdrop; full affine tile rendering is deferred.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let vram = make_vram();
+        let mut pram = make_pram();
+
+        // Mode 2 (bits 0-2 = 2).
+        ppu.write_dispcnt(2);
+
+        // Backdrop = pure green (BGR555 0x03E0) in PRAM[0].
+        pram[0] = 0xE0;
+        pram[1] = 0x03;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+        );
+
+        // First pixel should be green (RGB888: 0, 255, 0).
+        assert_eq!(&ppu.framebuffer()[0..3], &[0, 0xFF, 0]);
+    }
+
+    #[test]
+    fn mode4_renders_paletted_bitmap_from_vram() {
+        // Mode 4: 8-bit paletted bitmap. Each VRAM byte is a palette index.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        // Mode 4 (bits 0-2 = 4), BG2 enabled.
+        ppu.write_dispcnt(4 | dispcnt::BG2_ENABLE);
+
+        // PRAM entry 5 = pure red (BGR555: 0x001F).
+        pram[10] = 0x1F;
+        pram[11] = 0x00;
+
+        // VRAM[0] = palette index 5 for pixel (0, 0).
+        vram[0] = 5;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+        );
+
+        // First pixel should be red (RGB888: 255, 0, 0).
+        assert_eq!(&ppu.framebuffer()[0..3], &[0xFF, 0, 0]);
+    }
+
+    #[test]
+    fn mode4_palette_index_0_shows_backdrop() {
+        // Palette index 0 displays palette entry 0 (the backdrop color).
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        // Mode 4, BG2 enabled.
+        ppu.write_dispcnt(4 | dispcnt::BG2_ENABLE);
+
+        // Backdrop = pure blue (BGR555 0x7C00) in PRAM[0].
+        pram[0] = 0x00;
+        pram[1] = 0x7C;
+
+        // VRAM[0] = palette index 0 (displays backdrop color).
+        vram[0] = 0;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+        );
+
+        // First pixel should be backdrop blue (RGB888: 0, 0, 255).
+        assert_eq!(&ppu.framebuffer()[0..3], &[0, 0, 0xFF]);
+    }
+
+    #[test]
+    fn mode4_with_bg2_disabled_renders_backdrop() {
+        // When BG2 is disabled, mode 4 should just render the backdrop.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let vram = make_vram();
+        let mut pram = make_pram();
+
+        // Mode 4, BG2 NOT enabled.
+        ppu.write_dispcnt(4);
+
+        // Backdrop = pure green (BGR555 0x03E0) in PRAM[0].
+        pram[0] = 0xE0;
+        pram[1] = 0x03;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+        );
+
+        // First pixel should be green (RGB888: 0, 255, 0).
+        assert_eq!(&ppu.framebuffer()[0..3], &[0, 0xFF, 0]);
+    }
+
+    #[test]
+    fn mode4_frame_select_uses_correct_frame_base() {
+        // Frame 1 is at VRAM offset 0xA000.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        // Mode 4, BG2 enabled, frame 1 selected (bit 4).
+        ppu.write_dispcnt(4 | dispcnt::BG2_ENABLE | dispcnt::FRAME_SELECT);
+
+        // PRAM entry 7 = pure green (BGR555 0x03E0).
+        pram[14] = 0xE0;
+        pram[15] = 0x03;
+
+        // Frame 0 pixel (0,0) = palette index 1.
+        vram[0] = 1;
+        // Frame 1 pixel (0,0) = palette index 7.
+        vram[0xA000] = 7;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+        );
+
+        // First pixel should be from frame 1, which is green (RGB888: 0, 255, 0).
+        assert_eq!(&ppu.framebuffer()[0..3], &[0, 0xFF, 0]);
     }
 }
