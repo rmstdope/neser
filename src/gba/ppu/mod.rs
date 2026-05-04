@@ -992,7 +992,7 @@ mod tests {
         let mut vram = make_vram();
         let mut pram = make_pram();
 
-        ppu.write_dispcnt(0 | dispcnt::BG0_ENABLE);
+        ppu.write_dispcnt(dispcnt::BG0_ENABLE);
 
         // BG palette entry 1 = BGR555 red (0x001F).
         pram[2] = 0x1F;
@@ -1024,7 +1024,7 @@ mod tests {
         let mut vram = make_vram();
         let mut pram = make_pram();
 
-        ppu.write_dispcnt(0 | dispcnt::BG0_ENABLE);
+        ppu.write_dispcnt(dispcnt::BG0_ENABLE);
 
         // BG palette entry 1 = pure red.
         pram[2] = 0x1F;
@@ -1056,7 +1056,7 @@ mod tests {
         let mut vram = make_vram();
         let mut pram = make_pram();
 
-        ppu.write_dispcnt(0 | dispcnt::BG0_ENABLE);
+        ppu.write_dispcnt(dispcnt::BG0_ENABLE);
 
         // BG palette entry 1 = pure red.
         pram[2] = 0x1F;
