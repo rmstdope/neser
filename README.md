@@ -121,6 +121,27 @@ Options:
 For GBA ROMs, provide a 16384-byte BIOS file via `--gba-bios-path` or config key
 `gba-bios-path`. If unset, NESER also checks `~/.neser/gba_bios.bin`.
 
+### GBA Automated CPU Suite Tests
+
+The repository includes the jsmolka `gba-tests` suite as a submodule at
+`roms/gba/automated_tests/gba-tests`.
+
+Run the ARM/Thumb GBA suite integration tests with:
+
+```bash
+cargo test --no-default-features --lib gba::integration_tests::gba_suite_tests::
+```
+
+These tests execute:
+
+- `roms/gba/automated_tests/gba-tests/arm/arm.gba`
+- `roms/gba/automated_tests/gba-tests/thumb/thumb.gba`
+
+Pass/fail is read from suite-native registers at completion:
+
+- ARM uses `R12`
+- Thumb uses `R7`
+
 ## Controller Mapping
 
 NESER supports two controller ports (port 1 and port 2), each of which can be configured with different controller types.

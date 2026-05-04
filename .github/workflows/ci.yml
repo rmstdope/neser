@@ -24,6 +24,7 @@ jobs:
       nes: ${{ steps.filter.outputs.nes }}
       gb: ${{ steps.filter.outputs.gb }}
       gba: ${{ steps.filter.outputs.gba }}
+      gba_test_assets: ${{ steps.filter.outputs.gba_test_assets }}
       platform: ${{ steps.filter.outputs.platform }}
       root_rust: ${{ steps.filter.outputs.root_rust }}
 
@@ -65,6 +66,9 @@ jobs:
               - 'src/gb/**'
             gba:
               - 'src/gba/**'
+            gba_test_assets:
+              - 'roms/gba/automated_tests/gba-tests'
+              - 'roms/gba/automated_tests/gba-tests/**'
             platform:
               - 'src/platform/**'
             root_rust:
@@ -115,30 +119,35 @@ jobs:
           CHANGED_NES: ${{ needs.changes.outputs.nes }}
           CHANGED_GB: ${{ needs.changes.outputs.gb }}
           CHANGED_GBA: ${{ needs.changes.outputs.gba }}
+          CHANGED_GBA_TEST_ASSETS: ${{ needs.changes.outputs.gba_test_assets }}
           CHANGED_PLATFORM: ${{ needs.changes.outputs.platform }}
           CHANGED_ROOT: ${{ needs.changes.outputs.root_rust }}
         run: |
           # If platform or root files changed, run all tests (cross-cutting deps)
           if [[ "$CHANGED_PLATFORM" == "true" || "$CHANGED_ROOT" == "true" ]]; then
             echo "filter=" >> "$GITHUB_OUTPUT"
-            echo "run_integration=true" >> "$GITHUB_OUTPUT"
+            echo "run_nes_integration=true" >> "$GITHUB_OUTPUT"
+            echo "run_gba_integration=true" >> "$GITHUB_OUTPUT"
             echo "Running all tests (platform or root change detected)"
           else
             FILTER=""
-            RUN_INTEGRATION=false
+            RUN_NES_INTEGRATION=false
+            RUN_GBA_INTEGRATION=false
             if [[ "$CHANGED_NES" == "true" ]]; then
               FILTER="${FILTER} nes::"
-              RUN_INTEGRATION=true
+              RUN_NES_INTEGRATION=true
             fi
             if [[ "$CHANGED_GB" == "true" ]]; then
               FILTER="${FILTER} gb::"
             fi
-            if [[ "$CHANGED_GBA" == "true" ]]; then
+            if [[ "$CHANGED_GBA" == "true" || "$CHANGED_GBA_TEST_ASSETS" == "true" ]]; then
               FILTER="${FILTER} gba::"
+              RUN_GBA_INTEGRATION=true
             fi
             echo "filter=${FILTER}" >> "$GITHUB_OUTPUT"
-            echo "run_integration=${RUN_INTEGRATION}" >> "$GITHUB_OUTPUT"
-            echo "Test filter: '${FILTER}', integration: ${RUN_INTEGRATION}"
+            echo "run_nes_integration=${RUN_NES_INTEGRATION}" >> "$GITHUB_OUTPUT"
+            echo "run_gba_integration=${RUN_GBA_INTEGRATION}" >> "$GITHUB_OUTPUT"
+            echo "Test filter: '${FILTER}', nes_integration: ${RUN_NES_INTEGRATION}, gba_integration: ${RUN_GBA_INTEGRATION}"
           fi
 
       - name: Run unit tests
@@ -146,15 +155,19 @@ jobs:
           FILTER="${{ steps.test-filter.outputs.filter }}"
           if [[ -z "$FILTER" ]]; then
             echo "Running all unit tests (no filter)"
-            cargo test --lib --examples --all-features -- --skip 'nes::integration_tests'
+            cargo test --lib --examples --all-features -- --skip 'nes::integration_tests' --skip 'gba::integration_tests'
           else
             echo "Running filtered unit tests: $FILTER"
-            cargo test --lib --examples --all-features -- $FILTER --skip 'nes::integration_tests'
+            cargo test --lib --examples --all-features -- $FILTER --skip 'nes::integration_tests' --skip 'gba::integration_tests'
           fi
 
-      - name: Run integration tests
-        if: steps.test-filter.outputs.run_integration == 'true'
+      - name: Run NES integration tests
+        if: steps.test-filter.outputs.run_nes_integration == 'true'
         run: cargo test --lib --all-features -- 'nes::integration_tests::'
+
+      - name: Run GBA integration tests
+        if: steps.test-filter.outputs.run_gba_integration == 'true'
+        run: cargo test --lib --all-features -- 'gba::integration_tests::'
 
   rust-lint-pr:
     runs-on: ubuntu-latest

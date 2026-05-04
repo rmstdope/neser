@@ -131,6 +131,34 @@ impl Gba {
         &mut self.bus
     }
 
+    #[cfg(test)]
+    pub(crate) fn cpu_pc(&self) -> u32 {
+        self.cpu.regs.r[15]
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cpu_reg(&self, index: usize) -> u32 {
+        assert!(index < 16, "cpu register index out of range: {index}");
+        self.cpu.regs.r[index]
+    }
+
+    #[cfg(test)]
+    pub(crate) fn run_tick_for_tests(&mut self) -> u8 {
+        if !self.bus.has_cart() {
+            return 0;
+        }
+
+        if self.bus.ic.irq_line() {
+            self.cpu.raise_irq();
+        } else {
+            self.cpu.clear_irq();
+        }
+
+        let cycles = self.cpu.step(&mut self.bus);
+        self.bus.step(cycles);
+        cycles as u8
+    }
+
     fn current_instruction_trace_line(&mut self) -> Option<String> {
         if !self.bus.has_cart() {
             return None;
