@@ -67,3 +67,54 @@ fn gba_suite_memory_rom_passes() {
         result.exit_reason
     );
 }
+
+#[test]
+fn gba_suite_ppu_hello_rom_passes() {
+    let result = run_suite(Suite::PpuHello);
+    assert!(
+        result.passed,
+        "ppu hello suite failed: index={} reg={} pc=0x{:08X} cpsr=0x{:08X} thumb={} opcode=0x{:08X} cycles={} exit={:?}",
+        result.failing_index,
+        result.reg_name,
+        result.pc,
+        result.cpsr,
+        result.thumb,
+        result.opcode_at_pc,
+        result.cycles,
+        result.exit_reason
+    );
+}
+
+#[test]
+fn gba_suite_ppu_shades_rom_passes() {
+    let result = run_suite(Suite::PpuShades);
+    assert!(
+        result.passed,
+        "ppu shades suite failed: index={} reg={} pc=0x{:08X} cpsr=0x{:08X} thumb={} opcode=0x{:08X} cycles={} exit={:?}",
+        result.failing_index,
+        result.reg_name,
+        result.pc,
+        result.cpsr,
+        result.thumb,
+        result.opcode_at_pc,
+        result.cycles,
+        result.exit_reason
+    );
+}
+
+#[test]
+fn gba_suite_ppu_stripes_rom_passes() {
+    let result = run_suite(Suite::PpuStripes);
+    assert!(
+        result.passed,
+        "ppu stripes suite failed: index={} reg={} pc=0x{:08X} cpsr=0x{:08X} thumb={} opcode=0x{:08X} cycles={} exit={:?}",
+        result.failing_index,
+        result.reg_name,
+        result.pc,
+        result.cpsr,
+        result.thumb,
+        result.opcode_at_pc,
+        result.cycles,
+        result.exit_reason
+    );
+}

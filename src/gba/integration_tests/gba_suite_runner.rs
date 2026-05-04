@@ -20,6 +20,9 @@ pub enum Suite {
     Thumb,
     Nes,
     Memory,
+    PpuHello,
+    PpuShades,
+    PpuStripes,
 }
 
 impl Suite {
@@ -29,6 +32,9 @@ impl Suite {
             Self::Thumb => "roms/gba/automated_tests/gba-tests/thumb/thumb.gba",
             Self::Nes => "roms/gba/automated_tests/gba-tests/nes/nes.gba",
             Self::Memory => "roms/gba/automated_tests/gba-tests/memory/memory.gba",
+            Self::PpuHello => "roms/gba/automated_tests/gba-tests/ppu/hello.gba",
+            Self::PpuShades => "roms/gba/automated_tests/gba-tests/ppu/shades.gba",
+            Self::PpuStripes => "roms/gba/automated_tests/gba-tests/ppu/stripes.gba",
         };
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(rel)
     }
@@ -39,6 +45,9 @@ impl Suite {
             Self::Thumb => (7, "r7"),
             Self::Nes => (12, "r12"),
             Self::Memory => (12, "r12"),
+            Self::PpuHello => (12, "r12"),
+            Self::PpuShades => (12, "r12"),
+            Self::PpuStripes => (12, "r12"),
         }
     }
 }
