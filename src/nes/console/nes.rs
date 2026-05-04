@@ -239,6 +239,15 @@ impl Nes {
             .config_mut()
             .apply_rom_db_vs_system_hint(is_vs_system);
 
+        let is_playchoice10 = matches!(
+            cartridge.hardware_type(),
+            crate::nes::cartridge::HardwareType::Playchoice10
+        );
+        self.app_context
+            .borrow_mut()
+            .config_mut()
+            .apply_rom_db_playchoice10_hint(is_playchoice10);
+
         // Auto-detect VS System swapped controller wiring from ROM DB expansion type
         let vs_controllers_swapped = self.rom_db.has_vs_swapped_controllers(cartridge_crc32);
         self.app_context
@@ -1624,6 +1633,67 @@ mod tests {
 
         rom.extend_from_slice(&prg_rom);
         rom
+    }
+
+    fn create_minimal_playchoice10_rom() -> Vec<u8> {
+        let mut rom = Vec::new();
+
+        // iNES header with PlayChoice-10 bit set in flags7.
+        rom.extend_from_slice(b"NES\x1A");
+        rom.push(1); // 1x 16 KB PRG ROM
+        rom.push(0); // 0x 8 KB CHR ROM (no CHR)
+        rom.push(0); // Flags 6 (horizontal mirroring, no other features)
+        rom.push(0x02); // Flags 7 (PlayChoice-10)
+        rom.extend_from_slice(&[0; 8]); // Padding to complete 16-byte header
+
+        // PRG ROM (16 KB = 16384 bytes)
+        let mut prg_rom = vec![0; 16384];
+
+        // Reset vector at $FFFC-$FFFD points to $8000
+        prg_rom[0x3FFC] = 0x00;
+        prg_rom[0x3FFD] = 0x80;
+
+        // Code at $8000: JMP $8000 (infinite loop)
+        prg_rom[0] = 0x4C;
+        prg_rom[1] = 0x00;
+        prg_rom[2] = 0x80;
+
+        rom.extend_from_slice(&prg_rom);
+        rom
+    }
+
+    #[test]
+    fn test_insert_cartridge_auto_detects_playchoice10_expansion() {
+        let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+
+        let rom_data = create_minimal_playchoice10_rom();
+        let cartridge = load_test_cartridge(&rom_data);
+        nes.insert_cartridge(cartridge);
+
+        assert_eq!(
+            nes.app_context.borrow().config().nes.expansion_port,
+            crate::nes::console::ExpansionPort::Playchoice10,
+            "PlayChoice ROM should auto-select PlayChoice expansion mode"
+        );
+    }
+
+    #[test]
+    fn test_insert_cartridge_hardware_summary_reports_playchoice10() {
+        let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+
+        let rom_data = create_minimal_playchoice10_rom();
+        let cartridge = load_test_cartridge(&rom_data);
+        nes.insert_cartridge(cartridge);
+
+        let summary = nes.app_context.borrow().config().hardware_summary();
+        assert!(
+            summary.contains("PlayChoice-10"),
+            "hardware summary should mention PlayChoice-10 when PC10 ROM is loaded: {summary}"
+        );
     }
 
     #[test]

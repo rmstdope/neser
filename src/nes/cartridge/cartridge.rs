@@ -3,6 +3,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::{error, fmt};
 
+use crate::nes::cartridge::HardwareType;
 #[cfg(test)]
 use crate::nes::cartridge::NametableLayout;
 use crate::nes::cartridge::mapper::MapperContext;
@@ -73,6 +74,9 @@ pub struct Cartridge {
     vs_ppu_type: Option<VsPpuType>,
     /// VS System hardware type from iNES 2.0 header or ROM database.
     vs_hardware_type: Option<VsHardwareType>,
+
+    /// Hardware type derived from console/timing metadata.
+    hardware_type: HardwareType,
 }
 
 impl Cartridge {
@@ -164,6 +168,10 @@ impl Cartridge {
             trainer: parsed.trainer,
             vs_ppu_type: parsed.header.vs_ppu_type.map(VsPpuType::from_raw),
             vs_hardware_type: parsed.header.vs_hardware_type.map(VsHardwareType::from_raw),
+            hardware_type: HardwareType::from_console_type_and_timing(
+                parsed.header.console_type,
+                parsed.header.timing_mode,
+            ),
         };
 
         cart.load_save_ram_from_disk()?;
@@ -272,6 +280,10 @@ impl Cartridge {
         self.vs_hardware_type
     }
 
+    pub fn hardware_type(&self) -> HardwareType {
+        self.hardware_type
+    }
+
     /// Create a cartridge directly from components (for testing)
     #[cfg(test)]
     pub fn from_parts(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
@@ -290,6 +302,7 @@ impl Cartridge {
             trainer: None,
             vs_ppu_type: None,
             vs_hardware_type: None,
+            hardware_type: HardwareType::NesNtsc,
         }
     }
 
@@ -305,6 +318,7 @@ impl Cartridge {
             trainer: None,
             vs_ppu_type: None,
             vs_hardware_type: None,
+            hardware_type: HardwareType::NesNtsc,
         }
     }
 
