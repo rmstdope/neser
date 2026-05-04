@@ -41,8 +41,8 @@ pub fn execute<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOut
         }
         // Format 3: 001xx
         0b00100 | 0b00101 | 0b00110 | 0b00111 => exec_format3(regs, instr),
-        // Format 4 / 5 / 6: 010xx
-        0b01000 | 0b01001 => {
+        // Format 4 / 5 / 6 / 7 / 8: 010xx
+        0b01000 | 0b01001 | 0b01010 | 0b01011 => {
             if instr & 0xFC00 == 0x4000 {
                 // ALU register (format 4)
                 exec_format4(regs, instr)
@@ -52,6 +52,12 @@ pub fn execute<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOut
             } else if instr & 0xF800 == 0x4800 {
                 // PC-relative load (format 6)
                 exec_format6(regs, bus, instr)
+            } else if instr & 0xF200 == 0x5000 {
+                // Format 7: Register offset load/store (bit 9 = 0)
+                exec_format7(regs, bus, instr)
+            } else if instr & 0xF200 == 0x5200 {
+                // Format 8: Sign-extended load/store (bit 9 = 1)
+                exec_format8(regs, bus, instr)
             } else {
                 ExecOutcome {
                     cycles: 1,
@@ -60,9 +66,21 @@ pub fn execute<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOut
                 }
             }
         }
-        // Format 14 (push/pop): 1011x10x
+        // Format 9: 011xx — Immediate offset load/store
+        0b01100 | 0b01101 | 0b01110 | 0b01111 => exec_format9(regs, bus, instr),
+        // Format 10: 1000x — Halfword load/store
+        0b10000 | 0b10001 => exec_format10(regs, bus, instr),
+        // Format 11: 1001x — SP-relative load/store
+        0b10010 | 0b10011 => exec_format11(regs, bus, instr),
+        // Format 12: 1010x — Load address (ADD PC/SP)
+        0b10100 | 0b10101 => exec_format12(regs, instr),
+        // Format 13 / 14: 1011xxxx
         0b10110 | 0b10111 => {
-            if instr & 0xF600 == 0xB400 {
+            if instr & 0xFF00 == 0xB000 {
+                // Format 13: Add offset to SP
+                exec_format13(regs, instr)
+            } else if instr & 0xF600 == 0xB400 {
+                // Format 14: PUSH/POP
                 exec_format14(regs, bus, instr)
             } else {
                 ExecOutcome {
@@ -72,10 +90,14 @@ pub fn execute<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOut
                 }
             }
         }
+        // Format 15: 1100x — Multiple load/store
+        0b11000 | 0b11001 => exec_format15(regs, bus, instr),
         // Format 16 (cond branch): 1101xxxx
         0b11010 | 0b11011 => exec_format16(regs, instr),
         // Format 18 (uncond branch): 11100
         0b11100 => exec_format18(regs, instr),
+        // Format 19: 1111x — Long branch with link
+        0b11110 | 0b11111 => exec_format19(regs, instr),
         _ => ExecOutcome {
             cycles: 1,
             branched: false,
@@ -225,7 +247,7 @@ fn exec_format4(regs: &mut Registers, instr: u16) -> ExecOutcome {
         0x1 => (a ^ b, regs.c_flag(), regs.v_flag(), true), // EOR
         0x2 => {
             // LSL: Rd = Rd << Rs[7:0]
-            let shift = (b & 0xFF) as u32;
+            let shift = b & 0xFF;
             if shift == 0 {
                 (a, regs.c_flag(), regs.v_flag(), true)
             } else if shift < 32 {
@@ -239,7 +261,7 @@ fn exec_format4(regs: &mut Registers, instr: u16) -> ExecOutcome {
         }
         0x3 => {
             // LSR: Rd = Rd >> Rs[7:0] (logical)
-            let shift = (b & 0xFF) as u32;
+            let shift = b & 0xFF;
             if shift == 0 {
                 (a, regs.c_flag(), regs.v_flag(), true)
             } else if shift < 32 {
@@ -253,7 +275,7 @@ fn exec_format4(regs: &mut Registers, instr: u16) -> ExecOutcome {
         }
         0x4 => {
             // ASR: Rd = Rd >> Rs[7:0] (arithmetic)
-            let shift = (b & 0xFF) as u32;
+            let shift = b & 0xFF;
             if shift == 0 {
                 (a, regs.c_flag(), regs.v_flag(), true)
             } else if shift < 32 {
@@ -297,7 +319,7 @@ fn exec_format4(regs: &mut Registers, instr: u16) -> ExecOutcome {
         }
         0x7 => {
             // ROR: Rd = Rd ROR Rs[7:0]
-            let shift = (b & 0xFF) as u32;
+            let shift = b & 0xFF;
             if shift == 0 {
                 (a, regs.c_flag(), regs.v_flag(), true)
             } else {
@@ -439,6 +461,205 @@ fn exec_format6<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOu
 }
 
 // ---------------------------------------------------------------------------
+// Format 7 — Load/store with register offset
+// ---------------------------------------------------------------------------
+
+fn exec_format7<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOutcome {
+    let l = (instr >> 11) & 1 != 0; // load/store
+    let b = (instr >> 10) & 1 != 0; // byte/word
+    let ro = ((instr >> 6) & 0x7) as usize;
+    let rb = ((instr >> 3) & 0x7) as usize;
+    let rd = (instr & 0x7) as usize;
+
+    let addr = regs.r[rb].wrapping_add(regs.r[ro]);
+
+    if l {
+        // Load
+        regs.r[rd] = if b {
+            bus.read8(addr) as u32
+        } else {
+            bus.read32(addr & !0x3)
+        };
+    } else {
+        // Store
+        if b {
+            bus.write8(addr, regs.r[rd] as u8);
+        } else {
+            bus.write32(addr & !0x3, regs.r[rd]);
+        }
+    }
+    ExecOutcome {
+        cycles: if l { 3 } else { 2 },
+        branched: false,
+        swi: false,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Format 8 — Load/store sign-extended byte/halfword
+// ---------------------------------------------------------------------------
+
+fn exec_format8<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOutcome {
+    let h = (instr >> 11) & 1 != 0;
+    let s = (instr >> 10) & 1 != 0;
+    let ro = ((instr >> 6) & 0x7) as usize;
+    let rb = ((instr >> 3) & 0x7) as usize;
+    let rd = (instr & 0x7) as usize;
+
+    let addr = regs.r[rb].wrapping_add(regs.r[ro]);
+
+    // S=0, H=0: STRH (store halfword)
+    // S=0, H=1: LDRH (load unsigned halfword)
+    // S=1, H=0: LDSB (load signed byte)
+    // S=1, H=1: LDSH (load signed halfword)
+    if !s && !h {
+        // STRH
+        bus.write16(addr & !1, regs.r[rd] as u16);
+        return ExecOutcome {
+            cycles: 2,
+            branched: false,
+            swi: false,
+        };
+    }
+
+    regs.r[rd] = match (s, h) {
+        (false, true) => bus.read16(addr & !1) as u32, // LDRH
+        (true, false) => bus.read8(addr) as i8 as i32 as u32, // LDSB
+        (true, true) => bus.read16(addr & !1) as i16 as i32 as u32, // LDSH
+        _ => unreachable!(),
+    };
+    ExecOutcome {
+        cycles: 3,
+        branched: false,
+        swi: false,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Format 9 — Load/store with immediate offset
+// ---------------------------------------------------------------------------
+
+fn exec_format9<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOutcome {
+    let b = (instr >> 12) & 1 != 0; // byte/word
+    let l = (instr >> 11) & 1 != 0; // load/store
+    let offset = ((instr >> 6) & 0x1F) as u32;
+    let rb = ((instr >> 3) & 0x7) as usize;
+    let rd = (instr & 0x7) as usize;
+
+    let addr = if b {
+        regs.r[rb].wrapping_add(offset) // byte: offset is in bytes
+    } else {
+        regs.r[rb].wrapping_add(offset << 2) // word: offset is in words
+    };
+
+    if l {
+        regs.r[rd] = if b {
+            bus.read8(addr) as u32
+        } else {
+            bus.read32(addr & !0x3)
+        };
+    } else if b {
+        bus.write8(addr, regs.r[rd] as u8);
+    } else {
+        bus.write32(addr & !0x3, regs.r[rd]);
+    }
+    ExecOutcome {
+        cycles: if l { 3 } else { 2 },
+        branched: false,
+        swi: false,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Format 10 — Load/store halfword
+// ---------------------------------------------------------------------------
+
+fn exec_format10<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOutcome {
+    let l = (instr >> 11) & 1 != 0;
+    let offset = (((instr >> 6) & 0x1F) << 1) as u32; // offset * 2
+    let rb = ((instr >> 3) & 0x7) as usize;
+    let rd = (instr & 0x7) as usize;
+
+    let addr = regs.r[rb].wrapping_add(offset);
+
+    if l {
+        regs.r[rd] = bus.read16(addr & !1) as u32;
+    } else {
+        bus.write16(addr & !1, regs.r[rd] as u16);
+    }
+    ExecOutcome {
+        cycles: if l { 3 } else { 2 },
+        branched: false,
+        swi: false,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Format 11 — SP-relative load/store
+// ---------------------------------------------------------------------------
+
+fn exec_format11<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOutcome {
+    let l = (instr >> 11) & 1 != 0;
+    let rd = ((instr >> 8) & 0x7) as usize;
+    let offset = ((instr & 0xFF) << 2) as u32; // offset * 4
+
+    let addr = regs.r[13].wrapping_add(offset);
+
+    if l {
+        regs.r[rd] = bus.read32(addr & !0x3);
+    } else {
+        bus.write32(addr & !0x3, regs.r[rd]);
+    }
+    ExecOutcome {
+        cycles: if l { 3 } else { 2 },
+        branched: false,
+        swi: false,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Format 12 — Load address (get relative address)
+// ---------------------------------------------------------------------------
+
+fn exec_format12(regs: &mut Registers, instr: u16) -> ExecOutcome {
+    let sp = (instr >> 11) & 1 != 0; // 0=PC, 1=SP
+    let rd = ((instr >> 8) & 0x7) as usize;
+    let offset = ((instr & 0xFF) << 2) as u32; // offset * 4
+
+    let base = if sp {
+        regs.r[13]
+    } else {
+        regs.r[15] & !0x2 // PC with bit 1 forced to 0
+    };
+    regs.r[rd] = base.wrapping_add(offset);
+    ExecOutcome {
+        cycles: 1,
+        branched: false,
+        swi: false,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Format 13 — Add offset to stack pointer
+// ---------------------------------------------------------------------------
+
+fn exec_format13(regs: &mut Registers, instr: u16) -> ExecOutcome {
+    let s = (instr >> 7) & 1 != 0; // 0=add, 1=subtract
+    let offset = ((instr & 0x7F) << 2) as u32; // offset * 4
+
+    if s {
+        regs.r[13] = regs.r[13].wrapping_sub(offset);
+    } else {
+        regs.r[13] = regs.r[13].wrapping_add(offset);
+    }
+    ExecOutcome {
+        cycles: 1,
+        branched: false,
+        swi: false,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Format 14 — PUSH / POP
 // ---------------------------------------------------------------------------
 
@@ -492,6 +713,50 @@ fn exec_format14<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
 }
 
 // ---------------------------------------------------------------------------
+// Format 15 — Multiple load/store (STMIA/LDMIA)
+// ---------------------------------------------------------------------------
+
+fn exec_format15<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOutcome {
+    let l = (instr >> 11) & 1 != 0;
+    let rb = ((instr >> 8) & 0x7) as usize;
+    let rlist = (instr & 0xFF) as u8;
+
+    let count = rlist.count_ones();
+    let mut addr = regs.r[rb];
+
+    if l {
+        // LDMIA: Load multiple, increment after
+        for i in 0..8 {
+            if rlist & (1 << i) != 0 {
+                regs.r[i] = bus.read32(addr & !0x3);
+                addr = addr.wrapping_add(4);
+            }
+        }
+    } else {
+        // STMIA: Store multiple, increment after
+        for i in 0..8 {
+            if rlist & (1 << i) != 0 {
+                bus.write32(addr & !0x3, regs.r[i]);
+                addr = addr.wrapping_add(4);
+            }
+        }
+    }
+
+    // Writeback
+    regs.r[rb] = regs.r[rb].wrapping_add(count * 4);
+
+    ExecOutcome {
+        cycles: if l {
+            (count + 2) as u8
+        } else {
+            (count + 1) as u8
+        },
+        branched: false,
+        swi: false,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Format 16 — Conditional branch
 // ---------------------------------------------------------------------------
 
@@ -532,6 +797,43 @@ fn exec_format18(regs: &mut Registers, instr: u16) -> ExecOutcome {
     regs.r[15] = (regs.r[15] as i32).wrapping_add(signed) as u32;
     ExecOutcome {
         cycles: 3,
+        branched: true,
+        swi: false,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Format 19 — Long branch with link
+// ---------------------------------------------------------------------------
+
+fn exec_format19(regs: &mut Registers, instr: u16) -> ExecOutcome {
+    let h = (instr >> 11) & 1 != 0;
+    let offset11 = (instr & 0x7FF) as u32;
+
+    if !h {
+        // First instruction (H=0): LR = PC + (offset << 12), sign-extended
+        // Sign extend 11-bit offset to 23 bits (in upper position)
+        let sign_ext = if offset11 & 0x400 != 0 {
+            0xFFFF_F800 // negative
+        } else {
+            0
+        };
+        let offset = ((sign_ext | offset11) << 12) as i32;
+        regs.r[14] = (regs.r[15] as i32).wrapping_add(offset) as u32;
+        return ExecOutcome {
+            cycles: 1,
+            branched: false,
+            swi: false,
+        };
+    }
+
+    // Second instruction (H=1): PC = LR + (offset << 1); LR = old_PC | 1
+    let old_pc = regs.r[15].wrapping_sub(2); // PC of this instruction
+    let target = regs.r[14].wrapping_add(offset11 << 1);
+    regs.r[14] = old_pc | 1; // Set bit 0 to indicate return to Thumb
+    regs.r[15] = target & !1;
+    ExecOutcome {
+        cycles: 4,
         branched: true,
         swi: false,
     }
@@ -827,5 +1129,173 @@ mod tests {
         // MUL R0, R1: Rd = Rd * Rs
         execute(&mut regs, &mut bus, thumb_alu_op(0xD, 1, 0));
         assert_eq!(regs.r[0], 42);
+    }
+
+    // -------------------------------------------------------------------------
+    // Load/Store Format Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn thumb_format7_str_ldr_register_offset() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 0x40; // base
+        regs.r[1] = 4; // offset
+        regs.r[2] = 0xDEAD_BEEF;
+        // STR R2, [R0, R1]: 0101_00_0_Ro_Rb_Rd = 0101_000_001_000_010
+        let str_instr = 0b0101_000_001_000_010u16;
+        execute(&mut regs, &mut bus, str_instr);
+        assert_eq!(bus.read32(0x44), 0xDEAD_BEEF);
+
+        // LDR R3, [R0, R1]: 0101_10_0_Ro_Rb_Rd = 0101_100_001_000_011
+        let ldr_instr = 0b0101_100_001_000_011u16;
+        execute(&mut regs, &mut bus, ldr_instr);
+        assert_eq!(regs.r[3], 0xDEAD_BEEF);
+    }
+
+    #[test]
+    fn thumb_format8_strh_ldrh() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 0x40;
+        regs.r[1] = 2;
+        regs.r[2] = 0x1234;
+        // STRH R2, [R0, R1]: 0101_001_Ro_Rb_Rd
+        let strh = 0b0101_001_001_000_010u16;
+        execute(&mut regs, &mut bus, strh);
+        assert_eq!(bus.read16(0x42), 0x1234);
+
+        // LDRH R3, [R0, R1]: 0101_101_Ro_Rb_Rd
+        let ldrh = 0b0101_101_001_000_011u16;
+        execute(&mut regs, &mut bus, ldrh);
+        assert_eq!(regs.r[3], 0x1234);
+    }
+
+    #[test]
+    fn thumb_format9_str_ldr_immediate() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 0x40;
+        regs.r[1] = 0xCAFE_BABE;
+        // STR R1, [R0, #8]: 0110_0_imm5_Rb_Rd, imm5=2 (offset=8)
+        let str_instr = 0b0110_0_00010_000_001u16;
+        execute(&mut regs, &mut bus, str_instr);
+        assert_eq!(bus.read32(0x48), 0xCAFE_BABE);
+
+        // LDR R2, [R0, #8]: 0110_1_imm5_Rb_Rd
+        let ldr_instr = 0b0110_1_00010_000_010u16;
+        execute(&mut regs, &mut bus, ldr_instr);
+        assert_eq!(regs.r[2], 0xCAFE_BABE);
+    }
+
+    #[test]
+    fn thumb_format10_strh_ldrh() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 0x40;
+        regs.r[1] = 0xABCD;
+        // STRH R1, [R0, #4]: 1000_0_imm5_Rb_Rd, imm5=2 (offset=4)
+        let strh = 0b1000_0_00010_000_001u16;
+        execute(&mut regs, &mut bus, strh);
+        assert_eq!(bus.read16(0x44), 0xABCD);
+
+        // LDRH R2, [R0, #4]: 1000_1_imm5_Rb_Rd
+        let ldrh = 0b1000_1_00010_000_010u16;
+        execute(&mut regs, &mut bus, ldrh);
+        assert_eq!(regs.r[2], 0xABCD);
+    }
+
+    #[test]
+    fn thumb_format11_sp_relative() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x200);
+        regs.r[13] = 0x100; // SP
+        regs.r[0] = 0x1234_5678;
+        // STR R0, [SP, #8]: 1001_0_Rd_imm8, imm8=2 (offset=8)
+        let str_instr = 0b1001_0_000_00000010u16;
+        execute(&mut regs, &mut bus, str_instr);
+        assert_eq!(bus.read32(0x108), 0x1234_5678);
+
+        // LDR R1, [SP, #8]: 1001_1_Rd_imm8
+        let ldr_instr = 0b1001_1_001_00000010u16;
+        execute(&mut regs, &mut bus, ldr_instr);
+        assert_eq!(regs.r[1], 0x1234_5678);
+    }
+
+    #[test]
+    fn thumb_format12_load_address() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[15] = 0x100;
+        regs.r[13] = 0x200;
+        // ADD R0, PC, #8: 1010_0_Rd_imm8, imm8=2 (offset=8)
+        let add_pc = 0b1010_0_000_00000010u16;
+        execute(&mut regs, &mut bus, add_pc);
+        assert_eq!(regs.r[0], 0x108); // PC & ~2 + 8
+
+        // ADD R1, SP, #8: 1010_1_Rd_imm8
+        let add_sp = 0b1010_1_001_00000010u16;
+        execute(&mut regs, &mut bus, add_sp);
+        assert_eq!(regs.r[1], 0x208);
+    }
+
+    #[test]
+    fn thumb_format13_add_offset_sp() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[13] = 0x100;
+        // ADD SP, #16: 1011_0000_0_imm7, imm7=4 (offset=16)
+        let add_sp = 0b1011_0000_0_0000100u16;
+        execute(&mut regs, &mut bus, add_sp);
+        assert_eq!(regs.r[13], 0x110);
+
+        // SUB SP, #8: 1011_0000_1_imm7, imm7=2
+        let sub_sp = 0b1011_0000_1_0000010u16;
+        execute(&mut regs, &mut bus, sub_sp);
+        assert_eq!(regs.r[13], 0x108);
+    }
+
+    #[test]
+    fn thumb_format15_stmia_ldmia() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x200);
+        regs.r[0] = 0x100;
+        regs.r[1] = 0x11;
+        regs.r[2] = 0x22;
+        regs.r[3] = 0x33;
+        // STMIA R0!, {R1-R3}: 1100_0_Rb_rlist = 1100_0_000_00001110
+        let stmia = 0b1100_0_000_00001110u16;
+        execute(&mut regs, &mut bus, stmia);
+        assert_eq!(bus.read32(0x100), 0x11);
+        assert_eq!(bus.read32(0x104), 0x22);
+        assert_eq!(bus.read32(0x108), 0x33);
+        assert_eq!(regs.r[0], 0x10C);
+
+        // LDMIA R0!, {R4-R6}: 1100_1_Rb_rlist
+        regs.r[0] = 0x100;
+        let ldmia = 0b1100_1_000_01110000u16;
+        execute(&mut regs, &mut bus, ldmia);
+        assert_eq!(regs.r[4], 0x11);
+        assert_eq!(regs.r[5], 0x22);
+        assert_eq!(regs.r[6], 0x33);
+    }
+
+    #[test]
+    fn thumb_format19_bl() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[15] = 0x1000;
+        // BL to +0x100: two-part instruction
+        // First part (H=0): set LR
+        let bl_hi = 0b1111_0_00000000000u16; // offset = 0
+        execute(&mut regs, &mut bus, bl_hi);
+        assert_eq!(regs.r[14], 0x1000); // LR = PC + (0 << 12)
+
+        // Second part (H=1): jump, set LR to return address
+        let bl_lo = 0b1111_1_00010000000u16; // offset = 0x80 << 1 = 0x100
+        let outcome = execute(&mut regs, &mut bus, bl_lo);
+        assert_eq!(regs.r[15], 0x1100); // Target
+        assert_eq!(regs.r[14] & !1, 0x0FFE); // Return address (old PC - 2)
+        assert!(outcome.branched);
     }
 }
