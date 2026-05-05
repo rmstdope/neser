@@ -364,7 +364,10 @@ impl GbaBus {
         self.sram.clone_from(&state.sram);
         match &mut self.cart_save {
             SaveBackend::Sram(sram) => sram.restore(&self.sram),
-            SaveBackend::Flash(flash) => flash.restore(&self.sram),
+            // The save-state bus mirror is only 64 KB. Restoring a Flash backend
+            // (especially Flash128) from this mirror would silently truncate data.
+            // Keep the backend as-is until full Flash snapshot state is serialized.
+            SaveBackend::Flash(_) => {}
             SaveBackend::None | SaveBackend::Eeprom(_) => {}
         }
         self.bios_locked = state.bios_locked;
@@ -548,7 +551,7 @@ impl Bus for GbaBus {
             0xE | 0xF => {
                 // SRAM is 8-bit only on real hardware; word access mirrors
                 // the byte across the word.
-                let b = self.sram[(aligned as usize) % SRAM_SIZE];
+                let b = self.cart_read8(aligned);
                 u32::from_le_bytes([b, b, b, b])
             }
             _ => self.open_bus_word(),
@@ -852,6 +855,7 @@ fn open_bus_no_cart_byte(addr: u32) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gba::cartridge::Flash;
 
     #[test]
     fn ewram_mirrors_within_256k() {
@@ -937,6 +941,21 @@ mod tests {
         assert_eq!(bus.read8(0x0E00_0010), 0xAB);
         // Word reads return the byte mirrored into all 4 lanes.
         assert_eq!(bus.read32(0x0E00_0010), 0xABAB_ABAB);
+    }
+
+    #[test]
+    fn cart_read32_uses_active_save_backend() {
+        let mut bus = GbaBus::new();
+        bus.load_rom_with_save(&[0; 0xC0], SaveBackend::Flash(Flash::new_64k()));
+
+        // Program two bytes in flash and ensure read32 mirrors backend byte,
+        // not stale data from the legacy SRAM mirror.
+        bus.write8(0x0E00_5555, 0xAA);
+        bus.write8(0x0E00_2AAA, 0x55);
+        bus.write8(0x0E00_5555, 0xA0);
+        bus.write8(0x0E00_0010, 0x42);
+
+        assert_eq!(bus.read32(0x0E00_0010), 0x4242_4242);
     }
 
     #[test]
