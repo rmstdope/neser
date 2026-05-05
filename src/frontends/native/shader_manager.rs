@@ -184,7 +184,7 @@ impl ShaderManager {
 
         let input_size = Size::new(input_width, input_height);
 
-        // Create GLImage from input NES texture
+        // Create GLImage from input texture
         let image = GLImage {
             handle: Some(glow::NativeTexture(
                 std::num::NonZero::new(input_texture).ok_or("Invalid texture ID")?,
@@ -203,7 +203,6 @@ impl ShaderManager {
         };
 
         // Create viewport for shader output
-        // The viewport output is where the shader will render to
         let viewport = Viewport {
             x: 0.0,
             y: 0.0,
