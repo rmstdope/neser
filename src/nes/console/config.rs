@@ -6,6 +6,7 @@
 //! 2. Config file (neser.conf)
 //! 3. Default values
 
+use crate::gba::console::config::GBA_FILTER_NAMES;
 use crate::nes::console::TimingMode;
 use crate::nes::input::ControllerType;
 use crate::platform::config::CliFlag;
@@ -856,10 +857,8 @@ impl Config {
         }
 
         if let Some(filter_name) = Self::parse_named_arg(args, "--gba-filter") {
-            self.frontend.shader_path = Some(Self::map_filter_name_for(
-                &filter_name,
-                &["none", "gba-lcd"],
-            )?);
+            self.frontend.shader_path =
+                Some(Self::map_filter_name_for(&filter_name, GBA_FILTER_NAMES)?);
         }
 
         // ROM path from positional argument
@@ -1096,7 +1095,7 @@ impl Config {
             "gba-filter" => {
                 if !value.is_empty() {
                     self.frontend.shader_path =
-                        Some(Self::map_filter_name_for(value, &["none", "gba-lcd"])?);
+                        Some(Self::map_filter_name_for(value, GBA_FILTER_NAMES)?);
                 }
             }
             "nes-controller_port1" => {
@@ -5299,5 +5298,135 @@ nes-filter=invalid-shader
         let mut config = Config::default();
         config.apply_config_value("gb-filter", "").unwrap();
         assert_eq!(config.frontend.shader_path, None);
+    }
+
+    // --gba-filter CLI flag tests
+
+    #[test]
+    fn test_config_cmdline_gba_filter_agb001_sets_shader_path() {
+        let args = vec![
+            "neser".to_string(),
+            "--gba-filter".to_string(),
+            "agb001".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(
+            config.frontend.shader_path,
+            Some("vendor/slang-shaders/handheld/agb001.slangp".to_string())
+        );
+    }
+
+    #[test]
+    fn test_config_cmdline_gba_filter_nso_gba_color_sets_shader_path() {
+        let args = vec![
+            "neser".to_string(),
+            "--gba-filter".to_string(),
+            "nso-gba-color".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(
+            config.frontend.shader_path,
+            Some("vendor/slang-shaders/handheld/color-mod/NSO-gba-color.slangp".to_string())
+        );
+    }
+
+    #[test]
+    fn test_config_cmdline_gba_filter_sp101_color_sets_shader_path() {
+        let args = vec![
+            "neser".to_string(),
+            "--gba-filter".to_string(),
+            "sp101-color".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(
+            config.frontend.shader_path,
+            Some("vendor/slang-shaders/handheld/color-mod/SP101-color.slangp".to_string())
+        );
+    }
+
+    #[test]
+    fn test_config_cmdline_gba_filter_gba_lcd_grid_sets_shader_path() {
+        let args = vec![
+            "neser".to_string(),
+            "--gba-filter".to_string(),
+            "gba-lcd-grid".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(
+            config.frontend.shader_path,
+            Some("vendor/slang-shaders/handheld/console-border/gba-lcd-grid-v2.slangp".to_string())
+        );
+    }
+
+    #[test]
+    fn test_config_cmdline_gba_filter_rejects_bogus_shader_with_valid_options() {
+        let args = vec![
+            "neser".to_string(),
+            "--gba-filter".to_string(),
+            "bogus".to_string(),
+        ];
+        let result = config_new(args);
+        assert!(result.is_err());
+        let msg = result.unwrap_err();
+        assert!(msg.contains("bogus"));
+        assert!(msg.contains("none, gba-lcd, agb001, nso-gba-color, sp101-color, gba-lcd-grid"));
+    }
+
+    // gba-filter= config file key tests
+
+    #[test]
+    fn test_config_file_gba_filter_agb001_sets_shader_path() {
+        let mut config = Config::default();
+        config.apply_config_value("gba-filter", "agb001").unwrap();
+        assert_eq!(
+            config.frontend.shader_path,
+            Some("vendor/slang-shaders/handheld/agb001.slangp".to_string())
+        );
+    }
+
+    #[test]
+    fn test_config_file_gba_filter_nso_gba_color_sets_shader_path() {
+        let mut config = Config::default();
+        config
+            .apply_config_value("gba-filter", "nso-gba-color")
+            .unwrap();
+        assert_eq!(
+            config.frontend.shader_path,
+            Some("vendor/slang-shaders/handheld/color-mod/NSO-gba-color.slangp".to_string())
+        );
+    }
+
+    #[test]
+    fn test_config_file_gba_filter_sp101_color_sets_shader_path() {
+        let mut config = Config::default();
+        config
+            .apply_config_value("gba-filter", "sp101-color")
+            .unwrap();
+        assert_eq!(
+            config.frontend.shader_path,
+            Some("vendor/slang-shaders/handheld/color-mod/SP101-color.slangp".to_string())
+        );
+    }
+
+    #[test]
+    fn test_config_file_gba_filter_gba_lcd_grid_sets_shader_path() {
+        let mut config = Config::default();
+        config
+            .apply_config_value("gba-filter", "gba-lcd-grid")
+            .unwrap();
+        assert_eq!(
+            config.frontend.shader_path,
+            Some("vendor/slang-shaders/handheld/console-border/gba-lcd-grid-v2.slangp".to_string())
+        );
+    }
+
+    #[test]
+    fn test_config_file_gba_filter_rejects_bogus_shader_with_valid_options() {
+        let mut config = Config::default();
+        let result = config.apply_config_value("gba-filter", "bogus");
+        assert!(result.is_err());
+        let msg = result.unwrap_err();
+        assert!(msg.contains("bogus"));
+        assert!(msg.contains("none, gba-lcd, agb001, nso-gba-color, sp101-color, gba-lcd-grid"));
     }
 }
