@@ -112,6 +112,26 @@ fn gba_suite_memory_rom_passes() {
 }
 
 #[test]
+fn gba_suite_save_none_rom_passes() {
+    assert_suite_passes_with_crc(Suite::SaveNone);
+}
+
+#[test]
+fn gba_suite_save_sram_rom_passes() {
+    assert_suite_passes_with_crc(Suite::SaveSram);
+}
+
+#[test]
+fn gba_suite_save_flash64_rom_passes() {
+    assert_suite_passes_with_crc(Suite::SaveFlash64);
+}
+
+#[test]
+fn gba_suite_save_flash128_rom_passes() {
+    assert_suite_passes_with_crc(Suite::SaveFlash128);
+}
+
+#[test]
 fn gba_suite_ppu_hello_rom_passes() {
     assert_suite_passes_with_crc(Suite::PpuHello);
 }
@@ -133,6 +153,10 @@ fn approvals_manifest_parses() {
     assert_eq!(approvals.get("thumb"), Some(&0x12FD_AE0B));
     assert_eq!(approvals.get("nes"), Some(&0x12FD_AE0B));
     assert_eq!(approvals.get("memory"), Some(&0x12FD_AE0B));
+    assert_eq!(approvals.get("save_none"), Some(&0x12FD_AE0B));
+    assert_eq!(approvals.get("save_sram"), Some(&0x12FD_AE0B));
+    assert_eq!(approvals.get("save_flash64"), Some(&0x12FD_AE0B));
+    assert_eq!(approvals.get("save_flash128"), Some(&0x12FD_AE0B));
     assert_eq!(approvals.get("ppu_hello"), Some(&0x52F9_B8A4));
     assert_eq!(approvals.get("ppu_shades"), Some(&0x9CD9_40F8));
     assert_eq!(approvals.get("ppu_stripes"), Some(&0xFBAB_D04A));

@@ -27,6 +27,26 @@ use super::bus::Bus;
 use super::registers::{FLAG_C, FLAG_N, FLAG_V, FLAG_Z};
 use super::registers::{Registers, condition_met};
 
+fn is_cart_sram_region(addr: u32) -> bool {
+    matches!((addr >> 24) & 0xF, 0xE | 0xF)
+}
+
+fn thumb_store_word_addr(addr: u32) -> u32 {
+    if is_cart_sram_region(addr) {
+        addr
+    } else {
+        addr & !0x3
+    }
+}
+
+fn thumb_store_halfword_addr(addr: u32) -> u32 {
+    if is_cart_sram_region(addr) {
+        addr
+    } else {
+        addr & !1
+    }
+}
+
 /// Execute one Thumb instruction.
 pub fn execute<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOutcome {
     let top5 = instr >> 11;
@@ -488,7 +508,7 @@ fn exec_format7<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOu
         if b {
             bus.write8(addr, regs.r[rd] as u8);
         } else {
-            bus.write32(addr & !0x3, regs.r[rd]);
+            bus.write32(thumb_store_word_addr(addr), regs.r[rd]);
         }
     }
     ExecOutcome {
@@ -517,7 +537,7 @@ fn exec_format8<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOu
     // S=1, H=1: LDSH (load signed halfword)
     if !s && !h {
         // STRH
-        bus.write16(addr & !1, regs.r[rd] as u16);
+        bus.write16(thumb_store_halfword_addr(addr), regs.r[rd] as u16);
         return ExecOutcome {
             cycles: 2,
             branched: false,
@@ -582,7 +602,7 @@ fn exec_format9<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOu
     } else if b {
         bus.write8(addr, regs.r[rd] as u8);
     } else {
-        bus.write32(addr & !0x3, regs.r[rd]);
+        bus.write32(thumb_store_word_addr(addr), regs.r[rd]);
     }
     ExecOutcome {
         cycles: if l { 3 } else { 2 },
@@ -611,7 +631,7 @@ fn exec_format10<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
             raw
         };
     } else {
-        bus.write16(addr & !1, regs.r[rd] as u16);
+        bus.write16(thumb_store_halfword_addr(addr), regs.r[rd] as u16);
     }
     ExecOutcome {
         cycles: if l { 3 } else { 2 },
@@ -637,7 +657,7 @@ fn exec_format11<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
         let rot = (addr & 0x3) * 8;
         regs.r[rd] = raw.rotate_right(rot);
     } else {
-        bus.write32(addr & !0x3, regs.r[rd]);
+        bus.write32(thumb_store_word_addr(addr), regs.r[rd]);
     }
     ExecOutcome {
         cycles: if l { 3 } else { 2 },
@@ -706,13 +726,13 @@ fn exec_format14<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
         regs.r[13] = sp;
         for i in 0..8 {
             if reg_list & (1 << i) != 0 {
-                bus.write32(sp & !0x3, regs.r[i]);
+                bus.write32(thumb_store_word_addr(sp), regs.r[i]);
                 sp = sp.wrapping_add(4);
             }
         }
         if extra {
             // PUSH stores LR.
-            bus.write32(sp & !0x3, regs.r[14]);
+            bus.write32(thumb_store_word_addr(sp), regs.r[14]);
         }
     } else {
         // POP: read low → high regs from low → high addresses, then update SP.
@@ -1062,6 +1082,15 @@ mod tests {
         let instr = 0b01001_000_00000010u16;
         execute(&mut regs, &mut bus, instr);
         assert_eq!(regs.r[0], 0xCAFE_BABE);
+    }
+
+    #[test]
+    fn cart_store_addr_helpers_preserve_lane_bits_only_for_cart_region() {
+        assert_eq!(thumb_store_word_addr(0x0200_0003), 0x0200_0000);
+        assert_eq!(thumb_store_halfword_addr(0x0200_0001), 0x0200_0000);
+
+        assert_eq!(thumb_store_word_addr(0x0E00_0003), 0x0E00_0003);
+        assert_eq!(thumb_store_halfword_addr(0x0F00_0001), 0x0F00_0001);
     }
 
     // -------------------------------------------------------------------------
