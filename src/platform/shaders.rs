@@ -23,4 +23,64 @@ pub const SHADER_PRESETS: &[(&str, &str)] = &[
     ("dmg", "vendor/slang-shaders/handheld/gameboy.slangp"),
     // GBA LCD placeholder - has its own preset path so it remains distinct from `none`
     ("gba-lcd", "shaders/gba-lcd.slangp"),
+    ("agb001", "vendor/slang-shaders/handheld/agb001.slangp"),
+    (
+        "nso-gba-color",
+        "vendor/slang-shaders/handheld/color-mod/NSO-gba-color.slangp",
+    ),
+    (
+        "sp101-color",
+        "vendor/slang-shaders/handheld/color-mod/SP101-color.slangp",
+    ),
+    (
+        "gba-lcd-grid",
+        "vendor/slang-shaders/handheld/console-border/gba-lcd-grid-v2.slangp",
+    ),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::SHADER_PRESETS;
+
+    fn assert_preset_path(name: &str, expected_path: &str) {
+        let found = SHADER_PRESETS
+            .iter()
+            .find(|(preset_name, _)| *preset_name == name)
+            .map(|(_, path)| *path);
+
+        assert_eq!(
+            found,
+            Some(expected_path),
+            "Preset '{name}' should resolve to '{expected_path}'"
+        );
+    }
+
+    #[test]
+    fn test_gba_preset_agb001_maps_to_expected_path() {
+        assert_preset_path("agb001", "vendor/slang-shaders/handheld/agb001.slangp");
+    }
+
+    #[test]
+    fn test_gba_preset_nso_gba_color_maps_to_expected_path() {
+        assert_preset_path(
+            "nso-gba-color",
+            "vendor/slang-shaders/handheld/color-mod/NSO-gba-color.slangp",
+        );
+    }
+
+    #[test]
+    fn test_gba_preset_sp101_color_maps_to_expected_path() {
+        assert_preset_path(
+            "sp101-color",
+            "vendor/slang-shaders/handheld/color-mod/SP101-color.slangp",
+        );
+    }
+
+    #[test]
+    fn test_gba_preset_gba_lcd_grid_maps_to_expected_path() {
+        assert_preset_path(
+            "gba-lcd-grid",
+            "vendor/slang-shaders/handheld/console-border/gba-lcd-grid-v2.slangp",
+        );
+    }
+}
