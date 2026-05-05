@@ -113,10 +113,14 @@ impl ShaderManager {
         allowed_names: &[&str],
         all_presets: &[(&str, &str)],
     ) -> Vec<PathBuf> {
-        all_presets
+        allowed_names
             .iter()
-            .filter(|(name, _)| allowed_names.contains(name))
-            .map(|(_, path)| PathBuf::from(path))
+            .filter_map(|allowed| {
+                all_presets
+                    .iter()
+                    .find(|(name, _)| name == allowed)
+                    .map(|(_, path)| PathBuf::from(path))
+            })
             .collect()
     }
 
@@ -381,9 +385,26 @@ mod tests {
     }
 
     #[test]
-    fn test_discover_presets_filtered_keeps_explicit_gba_cycle_order() {
-        let discovered = ShaderManager::discover_presets_filtered(GBA_FILTER_NAMES);
+    fn test_presets_for_names_preserves_allowed_names_order() {
+        let all: &[(&str, &str)] = &[
+            (
+                "gba-lcd-grid",
+                "vendor/slang-shaders/handheld/console-border/gba-lcd-grid-v2.slangp",
+            ),
+            (
+                "sp101-color",
+                "vendor/slang-shaders/handheld/color-mod/SP101-color.slangp",
+            ),
+            ("none", "shaders/stock.slangp"),
+            (
+                "nso-gba-color",
+                "vendor/slang-shaders/handheld/color-mod/NSO-gba-color.slangp",
+            ),
+            ("gba-lcd", "shaders/gba-lcd.slangp"),
+            ("agb001", "vendor/slang-shaders/handheld/agb001.slangp"),
+        ];
 
+        let discovered = ShaderManager::presets_for_names(GBA_FILTER_NAMES, all);
         let expected = vec![
             PathBuf::from("shaders/stock.slangp"),
             PathBuf::from("shaders/gba-lcd.slangp"),
@@ -393,9 +414,6 @@ mod tests {
             PathBuf::from("vendor/slang-shaders/handheld/console-border/gba-lcd-grid-v2.slangp"),
         ];
 
-        assert_eq!(
-            discovered, expected,
-            "GBA shader discovery order should match user-visible F4 cycle order"
-        );
+        assert_eq!(discovered, expected);
     }
 }
