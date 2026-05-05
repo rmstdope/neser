@@ -5,13 +5,27 @@
 
 use crate::platform::config::CliFlag;
 
+/// Ordered list of GBA shader filter short names accepted by CLI/config and
+/// used for runtime shader cycling.
+pub(crate) const GBA_FILTER_NAMES: &[&str] = &[
+    "none",
+    "gba-lcd",
+    "agb001",
+    "nso-gba-color",
+    "sp101-color",
+    "gba-lcd-grid",
+];
+
+const GBA_FILTER_HELP: &str =
+    "GBA shader filter: none, gba-lcd, agb001, nso-gba-color, sp101-color, gba-lcd-grid";
+
 /// GBA-specific CLI flags, defined here so that the GBA module owns its flag
 /// declarations and parsing logic. These are chained into the global flag list
 /// by the platform config parser for validation and help-text generation.
 pub(crate) const GBA_CLI_FLAGS: &[CliFlag] = &[
     CliFlag {
         flag: "--gba-filter",
-        help: Some("GBA shader filter: gba-lcd or none"),
+        help: Some(GBA_FILTER_HELP),
         has_value: true,
     },
     CliFlag {

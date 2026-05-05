@@ -12,6 +12,7 @@
 
 use crate::gba::GbaBus;
 use crate::gba::cartridge::load_cartridge;
+use crate::gba::console::config::GBA_FILTER_NAMES;
 use crate::gba::cpu::Arm7tdmi;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::gba::debugging::{disasm_arm, disasm_thumb};
@@ -30,9 +31,6 @@ const SCREEN_HEIGHT: u32 = 160;
 /// GBA frame duration (~59.7275 Hz refresh rate).
 /// CPU clock: 16.78 MHz, 280896 cycles per frame → 16.743 ms per frame.
 const FRAME_DURATION_NANOS: u64 = 16_743_000;
-/// Shader presets allowed for GBA.
-const ALLOWED_SHADERS: &[&str] = &["none", "gba-lcd"];
-
 fn default_gba_bios_path() -> Option<PathBuf> {
     let home = std::env::var_os("HOME")?;
     Some(PathBuf::from(home).join(".neser").join("gba_bios.bin"))
@@ -226,7 +224,7 @@ impl Emulator for Gba {
     }
 
     fn allowed_shaders(&self) -> &'static [&'static str] {
-        ALLOWED_SHADERS
+        GBA_FILTER_NAMES
     }
 
     fn load_rom(&mut self, bytes: &[u8], _name: &str) -> Result<(), String> {

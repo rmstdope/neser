@@ -99,9 +99,20 @@ display=0
 # Shader/filter preset (Game Boy).
 # Valid values:
 #   - dmg    : DMG dot-matrix green-tint LCD simulation
-#   - none    : No filter, raw pixels
+#   - none   : No filter, raw pixels
 # Leave empty or comment out for no shader.
 #gb-filter=dmg
+
+# Shader/filter preset (Game Boy Advance).
+# Valid values:
+#   - none          : No filter, raw pixels
+#   - gba-lcd       : Default GBA LCD shader
+#   - agb001        : AGB-001 handheld preset
+#   - nso-gba-color : Nintendo Switch Online GBA color preset
+#   - sp101-color   : GBA SP-101 color preset
+#   - gba-lcd-grid  : GBA LCD grid + border preset
+# Leave empty or comment out for no shader.
+#gba-filter=gba-lcd
 
 # -----------------------------------------------------------------------------
 # Input Settings

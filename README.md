@@ -112,6 +112,7 @@ Options:
   --display <N>         Select display index for fullscreen (default: 0)
   --nes-filter <name>   Specify NES shader filter (crt|ntsc|smooth|pal|none)
   --gb-filter <name>    Specify Game Boy shader filter (dmg|none)
+  --gba-filter <name>   Specify Game Boy Advance shader filter (none|gba-lcd|agb001|nso-gba-color|sp101-color|gba-lcd-grid)
   --gba-bios-path <path>
                          Path to external GBA BIOS file (required for GBA ROMs)
   --config <path>       Specify config file path (overrides default locations)
