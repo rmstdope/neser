@@ -492,26 +492,7 @@ pub(crate) mod tests {
         width: u32,
         height: u32,
     ) {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .expect("checkpoint artifact directory should be created");
-        }
-        let file = std::fs::File::create(path).expect("checkpoint image file should be created");
-        let mut writer = std::io::BufWriter::new(file);
-        let mut encoder = ::png::Encoder::new(&mut writer, width, height);
-        encoder.set_color(::png::ColorType::Rgb);
-        encoder.set_depth(::png::BitDepth::Eight);
-        let mut png_writer = encoder
-            .write_header()
-            .expect("checkpoint PNG header should be written");
-        png_writer
-            .write_image_data(rgb)
-            .expect("checkpoint PNG image data should be written");
-        drop(png_writer);
-        use std::io::Write as _;
-        writer
-            .flush()
-            .expect("checkpoint PNG buffer should be flushed");
+        crate::platform::png_utils::write_rgb_png(path, rgb, width, height);
     }
 
     #[macro_export]

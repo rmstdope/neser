@@ -13,7 +13,10 @@ const BIOS_SWI_STUB_MOVS_PC_LR: u32 = 0xE1B0_F00E;
 const CART_ENTRYPOINT: u32 = 0x0800_0000;
 const BIOS_RESET_LITERAL_ADDR: usize = 0x20;
 const BIOS_EXCEPTION_VECTORS: [u32; 5] = [0x04, 0x0C, 0x10, 0x18, 0x1C];
-const FRAME_SETTLE_MAX_CYCLES: u64 = 2_000_000;
+// GBA nominal timing: 280_896 cycles per frame (~59.73 Hz).
+const GBA_CYCLES_PER_FRAME: u64 = 280_896;
+// Allow up to two frames while waiting for a fresh frame-ready edge after idle-loop detection.
+const FRAME_SETTLE_MAX_CYCLES: u64 = GBA_CYCLES_PER_FRAME * 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Suite {
@@ -62,6 +65,10 @@ impl Suite {
             Self::PpuShades => "ppu_shades",
             Self::PpuStripes => "ppu_stripes",
         }
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        self.capture_stem()
     }
 }
 
@@ -221,7 +228,7 @@ fn maybe_write_capture_png(gba: &Gba, suite: Suite, framebuffer_crc32: u32) {
 
     let path = capture_output_path(suite, framebuffer_crc32);
     let rgb = gba.screen_snapshot();
-    write_rgb_png(&path, &rgb, Gba::SCREEN_WIDTH, Gba::SCREEN_HEIGHT);
+    crate::platform::png_utils::write_rgb_png(&path, &rgb, Gba::SCREEN_WIDTH, Gba::SCREEN_HEIGHT);
     println!(
         "[gba-suite-capture] saved {} (crc=0x{:08X})",
         path.display(),
@@ -232,31 +239,6 @@ fn maybe_write_capture_png(gba: &Gba, suite: Suite, framebuffer_crc32: u32) {
 fn capture_output_path(suite: Suite, framebuffer_crc32: u32) -> PathBuf {
     let file_name = format!("{}_crc_{:08X}.png", suite.capture_stem(), framebuffer_crc32);
     PathBuf::from("target/gba_suite_checkpoints").join(file_name)
-}
-
-fn write_rgb_png(path: &std::path::Path, rgb: &[u8], width: u32, height: u32) {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).expect("capture output directory should be created");
-    }
-
-    let file = std::fs::File::create(path).expect("capture png file should be created");
-    let mut writer = std::io::BufWriter::new(file);
-    let mut encoder = png::Encoder::new(&mut writer, width, height);
-    encoder.set_color(png::ColorType::Rgb);
-    encoder.set_depth(png::BitDepth::Eight);
-
-    let mut png_writer = encoder
-        .write_header()
-        .expect("capture PNG header should be written");
-    png_writer
-        .write_image_data(rgb)
-        .expect("capture PNG image data should be written");
-    drop(png_writer);
-
-    use std::io::Write as _;
-    writer
-        .flush()
-        .expect("capture PNG buffer should be flushed");
 }
 
 fn is_arm_branch_to_self(opcode: u32, pc: u32) -> bool {

@@ -5,15 +5,7 @@ const APPROVALS_FILE: &str = "src/gba/integration_tests/gba_suite_crc_approvals.
 const APPROVALS_RAW: &str = include_str!("gba_suite_crc_approvals.txt");
 
 fn suite_approval_key(suite: Suite) -> &'static str {
-    match suite {
-        Suite::Arm => "arm",
-        Suite::Thumb => "thumb",
-        Suite::Nes => "nes",
-        Suite::Memory => "memory",
-        Suite::PpuHello => "ppu_hello",
-        Suite::PpuShades => "ppu_shades",
-        Suite::PpuStripes => "ppu_stripes",
-    }
+    suite.label()
 }
 
 fn parse_hex_crc(value: &str) -> Option<u32> {
@@ -75,12 +67,13 @@ fn approved_crc_for_suite(suite: Suite) -> u32 {
     })
 }
 
-fn assert_suite_passes_with_crc(suite: Suite, name: &str) {
+fn assert_suite_passes_with_crc(suite: Suite) {
+    let suite_label = suite.label();
     let expected_crc32 = approved_crc_for_suite(suite);
     let result = run_suite(suite);
     assert!(
         result.passed,
-        "{name} suite failed: index={} reg={} pc=0x{:08X} cpsr=0x{:08X} thumb={} opcode=0x{:08X} fb_crc=0x{:08X} cycles={} exit={:?}",
+        "{suite_label} suite failed: index={} reg={} pc=0x{:08X} cpsr=0x{:08X} thumb={} opcode=0x{:08X} fb_crc=0x{:08X} cycles={} exit={:?}",
         result.failing_index,
         result.reg_name,
         result.pc,
@@ -93,44 +86,44 @@ fn assert_suite_passes_with_crc(suite: Suite, name: &str) {
     );
     assert_eq!(
         result.framebuffer_crc32, expected_crc32,
-        "{name} suite framebuffer CRC mismatch: expected=0x{expected_crc32:08X} actual=0x{:08X}",
+        "{suite_label} suite framebuffer CRC mismatch: expected=0x{expected_crc32:08X} actual=0x{:08X}",
         result.framebuffer_crc32
     );
 }
 
 #[test]
 fn gba_suite_arm_rom_passes() {
-    assert_suite_passes_with_crc(Suite::Arm, "arm");
+    assert_suite_passes_with_crc(Suite::Arm);
 }
 
 #[test]
 fn gba_suite_thumb_rom_passes() {
-    assert_suite_passes_with_crc(Suite::Thumb, "thumb");
+    assert_suite_passes_with_crc(Suite::Thumb);
 }
 
 #[test]
 fn gba_suite_nes_rom_passes() {
-    assert_suite_passes_with_crc(Suite::Nes, "nes");
+    assert_suite_passes_with_crc(Suite::Nes);
 }
 
 #[test]
 fn gba_suite_memory_rom_passes() {
-    assert_suite_passes_with_crc(Suite::Memory, "memory");
+    assert_suite_passes_with_crc(Suite::Memory);
 }
 
 #[test]
 fn gba_suite_ppu_hello_rom_passes() {
-    assert_suite_passes_with_crc(Suite::PpuHello, "ppu hello");
+    assert_suite_passes_with_crc(Suite::PpuHello);
 }
 
 #[test]
 fn gba_suite_ppu_shades_rom_passes() {
-    assert_suite_passes_with_crc(Suite::PpuShades, "ppu shades");
+    assert_suite_passes_with_crc(Suite::PpuShades);
 }
 
 #[test]
 fn gba_suite_ppu_stripes_rom_passes() {
-    assert_suite_passes_with_crc(Suite::PpuStripes, "ppu stripes");
+    assert_suite_passes_with_crc(Suite::PpuStripes);
 }
 
 #[test]
