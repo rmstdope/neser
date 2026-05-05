@@ -24,35 +24,35 @@ fn assert_suite_passes_with_crc(suite: Suite, name: &str, expected_crc32: u32) {
 
 #[test]
 fn gba_suite_arm_rom_passes() {
-    assert_suite_passes_with_crc(Suite::Arm, "arm", 0xD667_4186);
+    assert_suite_passes_with_crc(Suite::Arm, "arm", 0x12FD_AE0B);
 }
 
 #[test]
 fn gba_suite_thumb_rom_passes() {
-    assert_suite_passes_with_crc(Suite::Thumb, "thumb", 0xD667_4186);
+    assert_suite_passes_with_crc(Suite::Thumb, "thumb", 0x12FD_AE0B);
 }
 
 #[test]
 fn gba_suite_nes_rom_passes() {
-    assert_suite_passes_with_crc(Suite::Nes, "nes", 0xC283_FD45);
+    assert_suite_passes_with_crc(Suite::Nes, "nes", 0x12FD_AE0B);
 }
 
 #[test]
 fn gba_suite_memory_rom_passes() {
-    assert_suite_passes_with_crc(Suite::Memory, "memory", 0xD667_4186);
+    assert_suite_passes_with_crc(Suite::Memory, "memory", 0x12FD_AE0B);
 }
 
 #[test]
 fn gba_suite_ppu_hello_rom_passes() {
-    assert_suite_passes_with_crc(Suite::PpuHello, "ppu hello", 0x2A01_C517);
+    assert_suite_passes_with_crc(Suite::PpuHello, "ppu hello", 0x52F9_B8A4);
 }
 
 #[test]
 fn gba_suite_ppu_shades_rom_passes() {
-    assert_suite_passes_with_crc(Suite::PpuShades, "ppu shades", 0x3195_6365);
+    assert_suite_passes_with_crc(Suite::PpuShades, "ppu shades", 0x9CD9_40F8);
 }
 
 #[test]
 fn gba_suite_ppu_stripes_rom_passes() {
-    assert_suite_passes_with_crc(Suite::PpuStripes, "ppu stripes", 0x8C90_CEE0);
+    assert_suite_passes_with_crc(Suite::PpuStripes, "ppu stripes", 0xFBAB_D04A);
 }

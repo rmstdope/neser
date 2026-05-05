@@ -13,6 +13,7 @@ const BIOS_SWI_STUB_MOVS_PC_LR: u32 = 0xE1B0_F00E;
 const CART_ENTRYPOINT: u32 = 0x0800_0000;
 const BIOS_RESET_LITERAL_ADDR: usize = 0x20;
 const BIOS_EXCEPTION_VECTORS: [u32; 5] = [0x04, 0x0C, 0x10, 0x18, 0x1C];
+const FRAME_SETTLE_MAX_CYCLES: u64 = 2_000_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Suite {
@@ -117,7 +118,10 @@ pub fn run_suite(suite: Suite) -> SuiteResult {
         let tick_cycles = gba.run_tick_for_tests() as u64;
         if tick_cycles == 0 {
             let pc = gba.cpu_pc();
-            return result_from_register(&mut gba, suite, cycles, pc, ExitReason::CartStopped);
+            settle_framebuffer_for_result(&mut gba, ExitReason::CartStopped);
+            let result = result_from_register(&mut gba, suite, cycles, pc, ExitReason::CartStopped);
+            maybe_write_capture_png(&gba, suite, result.framebuffer_crc32);
+            return result;
         }
         cycles += tick_cycles;
 
@@ -137,13 +141,19 @@ pub fn run_suite(suite: Suite) -> SuiteResult {
                 } else {
                     ExitReason::IdleLoopDetected
                 };
-                return result_from_register(&mut gba, suite, cycles, pc, reason);
+                settle_framebuffer_for_result(&mut gba, reason);
+                let result = result_from_register(&mut gba, suite, cycles, pc, reason);
+                maybe_write_capture_png(&gba, suite, result.framebuffer_crc32);
+                return result;
             }
         }
     }
 
     let pc = gba.cpu_pc();
-    result_from_register(&mut gba, suite, cycles, pc, ExitReason::CycleLimitReached)
+    settle_framebuffer_for_result(&mut gba, ExitReason::CycleLimitReached);
+    let result = result_from_register(&mut gba, suite, cycles, pc, ExitReason::CycleLimitReached);
+    maybe_write_capture_png(&gba, suite, result.framebuffer_crc32);
+    result
 }
 
 fn result_from_register(
@@ -163,7 +173,6 @@ fn result_from_register(
         gba.bus_mut().peek32(pc)
     };
     let framebuffer_crc32 = gba.screen_crc32();
-    maybe_write_capture_png(gba, suite, framebuffer_crc32);
     let passed = failing_index == 0 && exit_reason == ExitReason::IdleLoopDetected;
 
     SuiteResult {
@@ -177,6 +186,31 @@ fn result_from_register(
         framebuffer_crc32,
         reg_name,
         exit_reason,
+    }
+}
+
+fn settle_framebuffer_for_result(gba: &mut Gba, exit_reason: ExitReason) {
+    if exit_reason != ExitReason::IdleLoopDetected {
+        return;
+    }
+
+    // Consume any stale frame-ready state and then wait for one full frame.
+    if gba.is_ready_to_render() {
+        gba.clear_ready_to_render();
+    }
+
+    let mut settle_cycles = 0u64;
+    while settle_cycles < FRAME_SETTLE_MAX_CYCLES {
+        let tick_cycles = gba.run_tick_for_tests() as u64;
+        if tick_cycles == 0 {
+            return;
+        }
+        settle_cycles += tick_cycles;
+
+        if gba.is_ready_to_render() {
+            gba.clear_ready_to_render();
+            return;
+        }
     }
 }
 
