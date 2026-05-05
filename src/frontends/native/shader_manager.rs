@@ -99,12 +99,10 @@ impl ShaderManager {
 
     fn discover_presets_filtered(allowed_names: &[&str]) -> Vec<PathBuf> {
         // Like discover_presets but restricted to names allowed for the active emulator.
-        let mut presets: Vec<PathBuf> = Self::presets_for_names(allowed_names, SHADER_PRESETS)
+        Self::presets_for_names(allowed_names, SHADER_PRESETS)
             .into_iter()
             .filter(|p| p.exists())
-            .collect();
-        presets.sort();
-        presets
+            .collect()
     }
 
     /// Returns the paths from `all_presets` whose short names appear in `allowed_names`.
@@ -272,6 +270,7 @@ impl Drop for ShaderManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gba::console::config::GBA_FILTER_NAMES;
 
     impl ShaderManager {
         fn with_presets(presets: Vec<PathBuf>) -> Self {
@@ -290,7 +289,7 @@ mod tests {
 
     #[test]
     fn test_cycle_starts_after_initially_loaded_preset() {
-        // Sorted alphabetical order matches discover_presets: stock(0) crt(1) xbrz(2) ntsc(3)
+        // Presets are cycled in the same order they are discovered.
         let presets = vec![
             PathBuf::from("shaders/stock.slangp"),
             PathBuf::from("vendor/slang-shaders/crt/crt-lottes.slangp"),
@@ -316,7 +315,7 @@ mod tests {
     fn test_initial_cycle_without_loaded_shader_starts_after_stock() {
         // When no shader is configured at startup, cycling should behave as if
         // the current position is "stock" (the passthrough preset), so the first
-        // F4 press goes to crt (the preset after stock in sorted order).
+        // F4 press goes to crt (the preset after stock in discovery order).
         let presets = vec![
             PathBuf::from("shaders/stock.slangp"), // 0
             PathBuf::from("vendor/slang-shaders/crt/crt-lottes.slangp"), // 1
@@ -378,6 +377,25 @@ mod tests {
                 .iter()
                 .any(|p| p.to_str().unwrap_or("").contains("gameboy")),
             "NES must not include dmg"
+        );
+    }
+
+    #[test]
+    fn test_discover_presets_filtered_keeps_explicit_gba_cycle_order() {
+        let discovered = ShaderManager::discover_presets_filtered(GBA_FILTER_NAMES);
+
+        let expected = vec![
+            PathBuf::from("shaders/stock.slangp"),
+            PathBuf::from("shaders/gba-lcd.slangp"),
+            PathBuf::from("vendor/slang-shaders/handheld/agb001.slangp"),
+            PathBuf::from("vendor/slang-shaders/handheld/color-mod/NSO-gba-color.slangp"),
+            PathBuf::from("vendor/slang-shaders/handheld/color-mod/SP101-color.slangp"),
+            PathBuf::from("vendor/slang-shaders/handheld/console-border/gba-lcd-grid-v2.slangp"),
+        ];
+
+        assert_eq!(
+            discovered, expected,
+            "GBA shader discovery order should match user-visible F4 cycle order"
         );
     }
 }
