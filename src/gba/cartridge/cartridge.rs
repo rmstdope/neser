@@ -112,6 +112,11 @@ impl GbaCartridge {
     pub fn save(&self) -> &SaveBackend {
         &self.save
     }
+
+    /// Consume the cartridge and return owned ROM + save backend parts.
+    pub fn into_rom_and_save(self) -> (Vec<u8>, SaveBackend) {
+        (self.rom, self.save)
+    }
 }
 
 /// Parse and load a GBA cartridge ROM.

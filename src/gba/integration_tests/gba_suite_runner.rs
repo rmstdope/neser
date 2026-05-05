@@ -24,6 +24,10 @@ pub enum Suite {
     Thumb,
     Nes,
     Memory,
+    SaveNone,
+    SaveSram,
+    SaveFlash64,
+    SaveFlash128,
     PpuHello,
     PpuShades,
     PpuStripes,
@@ -36,6 +40,10 @@ impl Suite {
             Self::Thumb => "roms/gba/automated_tests/gba-tests/thumb/thumb.gba",
             Self::Nes => "roms/gba/automated_tests/gba-tests/nes/nes.gba",
             Self::Memory => "roms/gba/automated_tests/gba-tests/memory/memory.gba",
+            Self::SaveNone => "roms/gba/automated_tests/gba-tests/save/none.gba",
+            Self::SaveSram => "roms/gba/automated_tests/gba-tests/save/sram.gba",
+            Self::SaveFlash64 => "roms/gba/automated_tests/gba-tests/save/flash64.gba",
+            Self::SaveFlash128 => "roms/gba/automated_tests/gba-tests/save/flash128.gba",
             Self::PpuHello => "roms/gba/automated_tests/gba-tests/ppu/hello.gba",
             Self::PpuShades => "roms/gba/automated_tests/gba-tests/ppu/shades.gba",
             Self::PpuStripes => "roms/gba/automated_tests/gba-tests/ppu/stripes.gba",
@@ -49,6 +57,10 @@ impl Suite {
             Self::Thumb => (7, "r7"),
             Self::Nes => (12, "r12"),
             Self::Memory => (12, "r12"),
+            Self::SaveNone => (12, "r12"),
+            Self::SaveSram => (12, "r12"),
+            Self::SaveFlash64 => (12, "r12"),
+            Self::SaveFlash128 => (12, "r12"),
             Self::PpuHello => (12, "r12"),
             Self::PpuShades => (12, "r12"),
             Self::PpuStripes => (12, "r12"),
@@ -61,6 +73,10 @@ impl Suite {
             Self::Thumb => "thumb",
             Self::Nes => "nes",
             Self::Memory => "memory",
+            Self::SaveNone => "save_none",
+            Self::SaveSram => "save_sram",
+            Self::SaveFlash64 => "save_flash64",
+            Self::SaveFlash128 => "save_flash128",
             Self::PpuHello => "ppu_hello",
             Self::PpuShades => "ppu_shades",
             Self::PpuStripes => "ppu_stripes",
@@ -325,6 +341,10 @@ mod tests {
         assert_eq!(Suite::Thumb.capture_stem(), "thumb");
         assert_eq!(Suite::Nes.capture_stem(), "nes");
         assert_eq!(Suite::Memory.capture_stem(), "memory");
+        assert_eq!(Suite::SaveNone.capture_stem(), "save_none");
+        assert_eq!(Suite::SaveSram.capture_stem(), "save_sram");
+        assert_eq!(Suite::SaveFlash64.capture_stem(), "save_flash64");
+        assert_eq!(Suite::SaveFlash128.capture_stem(), "save_flash128");
         assert_eq!(Suite::PpuHello.capture_stem(), "ppu_hello");
         assert_eq!(Suite::PpuShades.capture_stem(), "ppu_shades");
         assert_eq!(Suite::PpuStripes.capture_stem(), "ppu_stripes");

@@ -25,6 +25,10 @@ use super::bus::Bus;
 use super::registers::CpuMode;
 use super::registers::{FLAG_T, Registers, condition_met};
 
+fn is_cart_sram_region(addr: u32) -> bool {
+    matches!((addr >> 24) & 0xF, 0xE | 0xF)
+}
+
 #[cfg(test)]
 use super::registers::{FLAG_C, FLAG_N, FLAG_V, FLAG_Z};
 
@@ -485,7 +489,12 @@ fn execute_single_data_transfer<B: Bus>(
         if b_byte {
             bus.write8(addr, value as u8);
         } else {
-            bus.write32(addr & !0x3, value);
+            let store_addr = if is_cart_sram_region(addr) {
+                addr
+            } else {
+                addr & !0x3
+            };
+            bus.write32(store_addr, value);
         }
         result_branch = false;
     }
@@ -749,7 +758,12 @@ fn execute_halfword_transfer<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u
         // Store: only STRH (SH=01) is valid for stores
         if sh == 0b01 {
             let value = regs.r[rd] as u16;
-            bus.write16(addr & !1, value);
+            let store_addr = if is_cart_sram_region(addr) {
+                addr
+            } else {
+                addr & !1
+            };
+            bus.write16(store_addr, value);
         }
         result_branch = false;
     }
@@ -827,7 +841,7 @@ fn execute_block_transfer<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u32)
                 // Load
                 let value = bus.read32(addr);
                 if transfer_user_regs {
-                    regs.write_user_reg(i as usize, value);
+                    regs.write_user_reg(i, value);
                 } else {
                     regs.r[i] = value;
                 }
@@ -837,7 +851,7 @@ fn execute_block_transfer<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u32)
             } else {
                 // Store
                 let value = if transfer_user_regs {
-                    regs.read_user_reg(i as usize)
+                    regs.read_user_reg(i)
                 } else if w && i == rn && rn != first_reg_in_list {
                     // STM with base in rlist and writeback stores updated base
                     // when base isn't the first transferred register.

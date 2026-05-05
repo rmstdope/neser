@@ -238,7 +238,8 @@ impl Emulator for Gba {
         }
 
         let cart = load_cartridge(bytes).map_err(|e| format!("{e:?}"))?;
-        self.bus.load_rom(cart.rom());
+        let (rom, save) = cart.into_rom_and_save();
+        self.bus.load_rom_with_save(&rom, save);
         self.cpu.regs.r[15] = 0x0000_0000;
         Ok(())
     }

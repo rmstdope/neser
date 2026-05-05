@@ -17,6 +17,7 @@ pub mod memory;
 pub mod timer;
 
 use crate::gba::apu::Apu;
+use crate::gba::cartridge::SaveBackend;
 use crate::gba::cpu::bus::Bus;
 use crate::gba::input::Keypad;
 use crate::gba::ppu::{Ppu, PpuStepEvents};
@@ -90,7 +91,9 @@ pub struct GbaBus {
     oam: Vec<u8>,
     /// Cartridge ROM at `0x0800_0000` (mirrored at `0x0A`/`0x0C`).
     rom: Vec<u8>,
-    /// Cartridge SRAM at `0x0E00_0000`.
+    /// Active cartridge save backend mapped at `0x0E00_0000`.
+    cart_save: SaveBackend,
+    /// Legacy byte mirror of the cart-RAM window used by save-state memory capture.
     sram: Vec<u8>,
     /// I/O register storage and dispatch.
     pub io: IoRegisters,
@@ -144,7 +147,9 @@ impl GbaBus {
             vram: vec![0; VRAM_SIZE],
             oam: vec![0; OAM_SIZE],
             rom: Vec::new(),
-            sram: vec![0; SRAM_SIZE],
+            cart_save: SaveBackend::None,
+            // Cartridge-backed save media powers up in erased state.
+            sram: vec![0xFF; SRAM_SIZE],
             io: IoRegisters::new(),
             ic: InterruptController::new(),
             timers: Timers::new(),
@@ -189,11 +194,55 @@ impl GbaBus {
     pub fn load_rom(&mut self, data: &[u8]) {
         let n = data.len().min(ROM_MAX_SIZE);
         self.rom = data[..n].to_vec();
+        self.cart_save = SaveBackend::None;
+        self.sram.fill(0xFF);
+    }
+
+    /// Load a cartridge ROM and install its detected save backend.
+    pub fn load_rom_with_save(&mut self, data: &[u8], save: SaveBackend) {
+        let n = data.len().min(ROM_MAX_SIZE);
+        self.rom = data[..n].to_vec();
+        self.cart_save = save;
+
+        // Keep the legacy SRAM mirror in sync for save-state memory snapshots.
+        self.sram.fill(0xFF);
+        if let SaveBackend::Sram(sram) = &self.cart_save {
+            let snap = sram.snapshot();
+            let n = snap.len().min(self.sram.len());
+            self.sram[..n].copy_from_slice(&snap[..n]);
+        }
     }
 
     /// Whether a cartridge has been inserted.
     pub fn has_cart(&self) -> bool {
         !self.rom.is_empty()
+    }
+
+    fn cart_read8(&self, addr: u32) -> u8 {
+        let off = addr as usize;
+        match &self.cart_save {
+            SaveBackend::None => self.sram[off % SRAM_SIZE],
+            SaveBackend::Eeprom(_) => 0xFF,
+            SaveBackend::Sram(sram) => sram.read(off),
+            SaveBackend::Flash(flash) => flash.read(off),
+        }
+    }
+
+    fn cart_write8(&mut self, addr: u32, value: u8) {
+        let off = addr as usize;
+        match &mut self.cart_save {
+            SaveBackend::None | SaveBackend::Eeprom(_) => {
+                self.sram[off % SRAM_SIZE] = value;
+            }
+            SaveBackend::Sram(sram) => {
+                sram.write(off, value);
+                self.sram[off % SRAM_SIZE] = value;
+            }
+            SaveBackend::Flash(flash) => {
+                flash.write(off, value);
+                self.sram[off % SRAM_SIZE] = flash.read(off);
+            }
+        }
     }
 
     /// Step the bus peripherals (timers, DMA, PPU, APU) by `cycles` CPU
@@ -313,6 +362,11 @@ impl GbaBus {
         self.vram.clone_from(&state.vram);
         self.oam.clone_from(&state.oam);
         self.sram.clone_from(&state.sram);
+        match &mut self.cart_save {
+            SaveBackend::Sram(sram) => sram.restore(&self.sram),
+            SaveBackend::Flash(flash) => flash.restore(&self.sram),
+            SaveBackend::None | SaveBackend::Eeprom(_) => {}
+        }
         self.bios_locked = state.bios_locked;
         self.last_bus_value = state.last_bus_value;
         Ok(())
@@ -539,7 +593,7 @@ impl Bus for GbaBus {
                     .unwrap_or_else(|| open_bus_no_cart_halfword(aligned))
             }
             0xE | 0xF => {
-                let b = self.sram[(aligned as usize) % SRAM_SIZE];
+                let b = self.cart_read8(addr);
                 u16::from_le_bytes([b, b])
             }
             _ => self.open_bus_halfword(aligned),
@@ -588,7 +642,7 @@ impl Bus for GbaBus {
                 let off = (addr & 0x01FF_FFFF) as usize;
                 self.rom_byte(off).unwrap_or(open_bus_no_cart_byte(addr))
             }
-            0xE | 0xF => self.sram[(addr as usize) % SRAM_SIZE],
+            0xE | 0xF => self.cart_read8(addr),
             _ => self.open_bus_byte(addr),
         };
         let shift = (addr & 3) * 8;
@@ -636,8 +690,10 @@ impl Bus for GbaBus {
             0x7 => write_le_u32(&mut self.oam, aligned as usize, value),
             0x8..=0xD => { /* Cartridge ROM is read-only via the bus */ }
             0xE | 0xF => {
-                // SRAM byte-only writes — store low byte into addressed cell
-                self.sram[(aligned as usize) % SRAM_SIZE] = value as u8;
+                // Cart RAM is an 8-bit bus: a 32-bit store writes only the addressed byte lane.
+                let shift = (addr & 0x3) * 8;
+                let byte = ((value >> shift) & 0xFF) as u8;
+                self.cart_write8(addr, byte);
             }
             _ => {}
         }
@@ -679,7 +735,10 @@ impl Bus for GbaBus {
             0x7 => write_le_u16(&mut self.oam, aligned as usize, value),
             0x8..=0xD => {}
             0xE | 0xF => {
-                self.sram[(aligned as usize) % SRAM_SIZE] = value as u8;
+                // Cart RAM is an 8-bit bus: halfword stores write only the addressed byte lane.
+                let shift = (addr & 0x1) * 8;
+                let byte = ((value as u32 >> shift) & 0xFF) as u8;
+                self.cart_write8(addr, byte);
             }
             _ => {}
         }
@@ -727,7 +786,7 @@ impl Bus for GbaBus {
             }
             0x7 => { /* OAM ignores byte writes */ }
             0x8..=0xD => {}
-            0xE | 0xF => self.sram[(addr as usize) % SRAM_SIZE] = value,
+            0xE | 0xF => self.cart_write8(addr, value),
             _ => {}
         }
         if touches_io && self.dma.any_pending() {
