@@ -1,0 +1,17 @@
+# Approved GBA suite framebuffer CRC32 values.
+#
+# Approval workflow:
+# 1. Generate fresh screenshots:
+#    NESER_CAPTURE_SCREEN=1 cargo test gba_suite_ -- --nocapture
+# 2. Review PNGs under target/gba_suite_checkpoints/.
+# 3. Update the CRC below for any suite you approve.
+#
+# Format: <suite>=0x<8 hex digits>
+
+arm=0x12FDAE0B
+thumb=0x12FDAE0B
+nes=0x12FDAE0B
+memory=0x12FDAE0B
+ppu_hello=0x52F9B8A4
+ppu_shades=0x9CD940F8
+ppu_stripes=0xFBABD04A
