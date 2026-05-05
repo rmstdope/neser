@@ -5,6 +5,7 @@ pub mod crc32;
 pub mod debugging;
 pub mod emulator;
 pub mod frontend_toasts;
+pub mod png_utils;
 pub mod shaders;
 
 #[cfg(feature = "native")]

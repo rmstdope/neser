@@ -1,69 +1,139 @@
 use super::gba_suite_runner::{Suite, run_suite};
+use std::collections::HashMap;
 
-#[test]
-fn gba_suite_arm_rom_passes() {
-    let result = run_suite(Suite::Arm);
+const APPROVALS_FILE: &str = "src/gba/integration_tests/gba_suite_crc_approvals.txt";
+const APPROVALS_RAW: &str = include_str!("gba_suite_crc_approvals.txt");
+
+fn suite_approval_key(suite: Suite) -> &'static str {
+    suite.label()
+}
+
+fn parse_hex_crc(value: &str) -> Option<u32> {
+    let trimmed = value.trim();
+    let digits = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))?;
+    if digits.len() != 8 || !digits.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    u32::from_str_radix(digits, 16).ok()
+}
+
+fn load_approved_crcs() -> HashMap<String, u32> {
+    let mut map = HashMap::new();
+    for (line_no, raw_line) in APPROVALS_RAW.lines().enumerate() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        let (suite, crc_text) = line.split_once('=').unwrap_or_else(|| {
+            panic!(
+                "invalid entry in {APPROVALS_FILE}:{}: expected <suite>=0x<CRC32>",
+                line_no + 1
+            )
+        });
+        let suite = suite.trim();
+        let crc_text = crc_text.trim();
+        let crc = parse_hex_crc(crc_text).unwrap_or_else(|| {
+            panic!(
+                "invalid CRC in {APPROVALS_FILE}:{}: expected 8 hex digits with 0x prefix, got '{}': {}",
+                line_no + 1,
+                crc_text,
+                raw_line
+            )
+        });
+
+        let previous = map.insert(suite.to_string(), crc);
+        assert!(
+            previous.is_none(),
+            "duplicate suite entry '{}' in {}:{}",
+            suite,
+            APPROVALS_FILE,
+            line_no + 1
+        );
+    }
+    map
+}
+
+fn approved_crc_for_suite(suite: Suite) -> u32 {
+    let approvals = load_approved_crcs();
+    let key = suite_approval_key(suite);
+    *approvals.get(key).unwrap_or_else(|| {
+        panic!(
+            "missing approved CRC for suite '{}' in {}. Generate captures with NESER_CAPTURE_SCREEN=1 and add {}=0x........ after visual approval.",
+            key, APPROVALS_FILE, key
+        )
+    })
+}
+
+fn assert_suite_passes_with_crc(suite: Suite) {
+    let suite_label = suite.label();
+    let expected_crc32 = approved_crc_for_suite(suite);
+    let result = run_suite(suite);
     assert!(
         result.passed,
-        "arm suite failed: index={} reg={} pc=0x{:08X} cpsr=0x{:08X} thumb={} opcode=0x{:08X} cycles={} exit={:?}",
+        "{suite_label} suite failed: index={} reg={} pc=0x{:08X} cpsr=0x{:08X} thumb={} opcode=0x{:08X} fb_crc=0x{:08X} cycles={} exit={:?}",
         result.failing_index,
         result.reg_name,
         result.pc,
         result.cpsr,
         result.thumb,
         result.opcode_at_pc,
+        result.framebuffer_crc32,
         result.cycles,
         result.exit_reason
     );
+    assert_eq!(
+        result.framebuffer_crc32, expected_crc32,
+        "{suite_label} suite framebuffer CRC mismatch: expected=0x{expected_crc32:08X} actual=0x{:08X}",
+        result.framebuffer_crc32
+    );
+}
+
+#[test]
+fn gba_suite_arm_rom_passes() {
+    assert_suite_passes_with_crc(Suite::Arm);
 }
 
 #[test]
 fn gba_suite_thumb_rom_passes() {
-    let result = run_suite(Suite::Thumb);
-    assert!(
-        result.passed,
-        "thumb suite failed: index={} reg={} pc=0x{:08X} cpsr=0x{:08X} thumb={} opcode=0x{:08X} cycles={} exit={:?}",
-        result.failing_index,
-        result.reg_name,
-        result.pc,
-        result.cpsr,
-        result.thumb,
-        result.opcode_at_pc,
-        result.cycles,
-        result.exit_reason
-    );
+    assert_suite_passes_with_crc(Suite::Thumb);
 }
 
 #[test]
 fn gba_suite_nes_rom_passes() {
-    let result = run_suite(Suite::Nes);
-    assert!(
-        result.passed,
-        "nes suite failed: index={} reg={} pc=0x{:08X} cpsr=0x{:08X} thumb={} opcode=0x{:08X} cycles={} exit={:?}",
-        result.failing_index,
-        result.reg_name,
-        result.pc,
-        result.cpsr,
-        result.thumb,
-        result.opcode_at_pc,
-        result.cycles,
-        result.exit_reason
-    );
+    assert_suite_passes_with_crc(Suite::Nes);
 }
 
 #[test]
 fn gba_suite_memory_rom_passes() {
-    let result = run_suite(Suite::Memory);
-    assert!(
-        result.passed,
-        "memory suite failed: index={} reg={} pc=0x{:08X} cpsr=0x{:08X} thumb={} opcode=0x{:08X} cycles={} exit={:?}",
-        result.failing_index,
-        result.reg_name,
-        result.pc,
-        result.cpsr,
-        result.thumb,
-        result.opcode_at_pc,
-        result.cycles,
-        result.exit_reason
-    );
+    assert_suite_passes_with_crc(Suite::Memory);
+}
+
+#[test]
+fn gba_suite_ppu_hello_rom_passes() {
+    assert_suite_passes_with_crc(Suite::PpuHello);
+}
+
+#[test]
+fn gba_suite_ppu_shades_rom_passes() {
+    assert_suite_passes_with_crc(Suite::PpuShades);
+}
+
+#[test]
+fn gba_suite_ppu_stripes_rom_passes() {
+    assert_suite_passes_with_crc(Suite::PpuStripes);
+}
+
+#[test]
+fn approvals_manifest_parses() {
+    let approvals = load_approved_crcs();
+    assert_eq!(approvals.get("arm"), Some(&0x12FD_AE0B));
+    assert_eq!(approvals.get("thumb"), Some(&0x12FD_AE0B));
+    assert_eq!(approvals.get("nes"), Some(&0x12FD_AE0B));
+    assert_eq!(approvals.get("memory"), Some(&0x12FD_AE0B));
+    assert_eq!(approvals.get("ppu_hello"), Some(&0x52F9_B8A4));
+    assert_eq!(approvals.get("ppu_shades"), Some(&0x9CD9_40F8));
+    assert_eq!(approvals.get("ppu_stripes"), Some(&0xFBAB_D04A));
 }
