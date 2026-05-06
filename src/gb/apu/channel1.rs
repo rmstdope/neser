@@ -466,43 +466,71 @@ impl Channel1 {
         }
     }
 
-    /// Clock volume envelope at 64 Hz (Frame Sequencer step 7).
-    pub fn clock_envelope(&mut self) {
-        // Clear the clock flag from any previous tick.
-        self.env_clock_state.clock = false;
-
+    /// Decrement the envelope countdown (called every 8th DIV-APU falling edge, 64 Hz).
+    ///
+    /// Only decrements; does not fire the volume tick directly.  When the countdown
+    /// reaches zero the secondary event (`clock_envelope_secondary`) will detect it
+    /// on the next rising edge and arm the clock flag for the subsequent primary event.
+    pub fn clock_envelope_decrement(&mut self) {
         if self.env_period == 0 {
             return;
         }
         if self.env_timer > 0 {
             self.env_timer -= 1;
         }
+    }
+
+    /// Secondary envelope event — called on the **rising** edge of the DIV-APU bit.
+    ///
+    /// If the countdown has reached zero (and the channel is active with a nonzero
+    /// period), arms the clock flag and reloads the countdown so that the volume
+    /// tick fires at the very next falling-edge primary event.
+    pub fn clock_envelope_secondary(&mut self) {
+        if !self.active || self.env_period == 0 {
+            return;
+        }
         if self.env_timer == 0 {
             self.env_timer = self.env_period;
-            // Set clock state to indicate envelope just ticked.
             self.env_clock_state.clock = true;
-
-            if self.env_clock_state.locked {
-                // Envelope is locked - no volume change.
-                return;
-            }
-
-            let old_volume = self.volume;
-            if self.env_add && self.volume < 15 {
-                self.volume += 1;
-            } else if !self.env_add && self.volume > 0 {
-                self.volume -= 1;
-            }
-
-            // Lock envelope if volume has hit its limit.
-            if (self.env_add && self.volume == 15) || (!self.env_add && self.volume == 0) {
-                self.env_clock_state.locked = true;
-            }
-
-            if old_volume != self.volume {
-                trace_apu!(3; "GB APU CH1 envelope volume {} -> {}", old_volume, self.volume);
-            }
         }
+    }
+
+    /// Primary envelope event — called at **every** DIV-APU falling edge.
+    ///
+    /// If the clock flag was armed by `clock_envelope_secondary`, fires the volume
+    /// tick and clears the flag.
+    pub fn clock_envelope_primary(&mut self) {
+        if !self.env_clock_state.clock {
+            return;
+        }
+        self.env_clock_state.clock = false;
+        if self.env_clock_state.locked {
+            return;
+        }
+        let old_volume = self.volume;
+        if self.env_add && self.volume < 15 {
+            self.volume += 1;
+        } else if !self.env_add && self.volume > 0 {
+            self.volume -= 1;
+        }
+        if (self.env_add && self.volume == 15) || (!self.env_add && self.volume == 0) {
+            self.env_clock_state.locked = true;
+        }
+        if old_volume != self.volume {
+            trace_apu!(3; "GB APU CH1 envelope volume {} -> {}", old_volume, self.volume);
+        }
+    }
+
+    /// Clock volume envelope at 64 Hz (Frame Sequencer step 7).
+    ///
+    /// This combined method is kept for unit tests.  Production code calls the
+    /// three split helpers (`clock_envelope_decrement`, `clock_envelope_secondary`,
+    /// `clock_envelope_primary`) via `Apu::clock_div_apu_secondary` /
+    /// `Apu::clock_div_apu` instead.
+    pub fn clock_envelope(&mut self) {
+        self.clock_envelope_decrement();
+        self.clock_envelope_secondary();
+        self.clock_envelope_primary();
     }
 
     /// Clear envelope clock flag after frame sequencer step completes.
@@ -805,13 +833,15 @@ impl Channel1 {
         //
         // Per SameSuite comment: "the start delay from the 'delay' test is actually
         // 1 tick shorter" after restarting. This means retrigger delay = fresh - 2 T-cycles.
+        // Note: lf_div=true means the DIV rising-edge tick fired this M-cycle, which adds
+        // 2 extra T-cycles to the delay (longer, not shorter).
         let delay_t = if was_active {
             // Retrigger delay: 1 2MHz tick (2 T-cycles) shorter than fresh
-            if lf_div { 4u16 } else { 6u16 }
+            if lf_div { 6u16 } else { 4u16 }
         } else if lf_div {
-            6u16
-        } else {
             8u16
+        } else {
+            6u16
         };
         // Convert delay to T-cycles and add to period for initial freq_timer
         let period = (2048 - self.freq) * 4;
