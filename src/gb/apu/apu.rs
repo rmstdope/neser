@@ -438,12 +438,11 @@ impl Apu {
     /// The bus should call this method for NR52 writes instead of write_register.
     ///
     /// `div_apu_bit_high` should be true if the DIV-APU bit is currently HIGH.
-    pub fn write_nr52_with_div_state(&mut self, val: u8, div_apu_bit_high: bool) -> bool {
+    pub fn write_nr52_with_div_state(&mut self, val: u8, div_apu_bit_high: bool) {
         let power_on = self.write_nr52(val);
         if power_on && div_apu_bit_high {
             self.arm_skip_next_div_apu_event();
         }
-        power_on
     }
 
     /// Write an APU register.
