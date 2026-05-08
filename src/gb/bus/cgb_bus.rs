@@ -365,6 +365,16 @@ impl CgbBus {
         self.key1 & 0x80 != 0
     }
 
+    fn sync_cgb_ch3_read_if_needed(&mut self, addr: u16) {
+        if self.is_double_speed()
+            && self.apu_tick_accumulator != 0
+            && self.apu.needs_cgb_ch3_read_sync(addr)
+        {
+            self.apu.tick(1);
+            self.apu_tick_accumulator = 0;
+        }
+    }
+
     /// Attempt a CGB double-speed switch.
     ///
     /// If KEY1 bit 0 is armed, this method:
@@ -853,13 +863,7 @@ impl GbBus for CgbBus {
             0xFF04..=0xFF07 => self.timer.read(addr),
             0xFF0F => self.if_reg | 0xE0,
             0xFF10..=0xFF3F => {
-                if self.is_double_speed()
-                    && self.apu_tick_accumulator != 0
-                    && self.apu.needs_cgb_ch3_read_sync(addr)
-                {
-                    self.apu.tick(1);
-                    self.apu_tick_accumulator = 0;
-                }
+                self.sync_cgb_ch3_read_if_needed(addr);
                 self.apu.read_register(addr)
             }
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B => self.ppu.read_register(addr),
@@ -884,13 +888,7 @@ impl GbBus for CgbBus {
             // CGB PCM registers
             0xFF76 => self.apu.read_pcm12(),
             0xFF77 => {
-                if self.is_double_speed()
-                    && self.apu_tick_accumulator != 0
-                    && self.apu.needs_cgb_ch3_read_sync(addr)
-                {
-                    self.apu.tick(1);
-                    self.apu_tick_accumulator = 0;
-                }
+                self.sync_cgb_ch3_read_if_needed(addr);
                 self.apu.read_pcm34()
             }
             0xFF70 => self.svbk | 0xF8,

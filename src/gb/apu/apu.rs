@@ -454,7 +454,10 @@ impl Apu {
     }
 
     pub(crate) fn needs_cgb_ch3_read_sync(&self, addr: u16) -> bool {
-        (addr == 0xFF77 || (0xFF30..=0xFF3F).contains(&addr)) && self.ch3.needs_cgb_read_sync()
+        // PCM34 ($FF77) and wave RAM ($FF30-$FF3F) expose CH3's current sample
+        // position, so boundary reads may need to consume a pending half APU tick.
+        (addr == 0xFF77 || (0xFF30..=0xFF3F).contains(&addr))
+            && self.ch3.needs_cgb_read_sync()
     }
 
     // ── Register write ─────────────────────────────────────────────────────
