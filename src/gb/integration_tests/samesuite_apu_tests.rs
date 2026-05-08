@@ -66,17 +66,15 @@ samesuite_apu_test_enabled!(
     &format!("{BASE}/channel_1/channel_1_delay.gb"),
     SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
-samesuite_apu_test!(
+samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_1_duty,
     &format!("{BASE}/channel_1/channel_1_duty.gb"),
-    SameSuiteHardware::Cgb(CgbModel::CgbE),
-    "Known SameSuite APU CGB gap on neser; tracked under issue #2262"
+    SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
-samesuite_apu_test!(
+samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_1_duty_delay,
     &format!("{BASE}/channel_1/channel_1_duty_delay.gb"),
-    SameSuiteHardware::Cgb(CgbModel::CgbE),
-    "Known SameSuite APU CGB gap on neser; tracked under issue #2262"
+    SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
 samesuite_apu_test!(
     test_samesuite_apu_channel_1_extra_length_clocking_cgb0b,
@@ -177,17 +175,15 @@ samesuite_apu_test_enabled!(
     &format!("{BASE}/channel_2/channel_2_delay.gb"),
     SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
-samesuite_apu_test!(
+samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_2_duty,
     &format!("{BASE}/channel_2/channel_2_duty.gb"),
-    SameSuiteHardware::Cgb(CgbModel::CgbE),
-    "Known SameSuite APU CGB gap on neser; tracked under issue #2262"
+    SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
-samesuite_apu_test!(
+samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_2_duty_delay,
     &format!("{BASE}/channel_2/channel_2_duty_delay.gb"),
-    SameSuiteHardware::Cgb(CgbModel::CgbE),
-    "Known SameSuite APU CGB gap on neser; tracked under issue #2262"
+    SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
 samesuite_apu_test!(
     test_samesuite_apu_channel_2_extra_length_clocking_cgb0b,
