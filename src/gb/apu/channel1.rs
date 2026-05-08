@@ -288,6 +288,8 @@ impl Channel1 {
         if self.restart_hold > 0 {
             self.restart_hold -= 1;
         }
+        // Sweep restart hold drains even if the channel was stopped; the duty
+        // phase itself does not advance while inactive.
         if !self.active {
             return;
         }

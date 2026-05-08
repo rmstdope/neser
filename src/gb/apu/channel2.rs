@@ -117,6 +117,8 @@ impl Channel2 {
     /// When the timer expires mid-M-cycle, the remaining T-cycles are applied
     /// after the reload, ensuring correct phase alignment.
     pub fn tick(&mut self) {
+        // A DAC stop disables the channel but must preserve duty phase until a
+        // later restart; only active channels clock the duty step.
         if !self.active {
             return;
         }
