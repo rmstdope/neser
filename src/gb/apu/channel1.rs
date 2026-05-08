@@ -288,8 +288,8 @@ impl Channel1 {
         if self.restart_hold > 0 {
             self.restart_hold -= 1;
         }
-        // Sweep restart hold drains even if the channel was stopped; the duty
-        // phase itself does not advance while inactive.
+        // Sweep restart hold drains even if NRx2=$00 stopped the channel by
+        // disabling the DAC; the duty phase itself remains frozen while stopped.
         if !self.active {
             return;
         }
