@@ -86,6 +86,8 @@ pub struct CgbBus {
     key1: u8,
     /// Accumulator for half-rate APU ticking in double-speed mode.
     apu_tick_accumulator: u8,
+    /// Double-speed APU tick accumulator phase when the APU was powered on.
+    apu_power_on_accumulator: u8,
     /// Hardware model variant (CGB-0 through CGB-E).
     /// Stored for model-specific hardware initialization (DIV counter initial
     /// state, post-boot register values).
@@ -176,6 +178,7 @@ impl CgbBus {
             svbk: 0,
             key1: 0,
             apu_tick_accumulator: 0,
+            apu_power_on_accumulator: 0,
             model,
             // Undocumented CGB registers.
             // $FF72-$FF73: fully R/W, initial value $00.
@@ -408,6 +411,7 @@ impl CgbBus {
 
         // Reset APU accumulator when switching speeds.
         self.apu_tick_accumulator = 0;
+        self.apu_power_on_accumulator = 0;
 
         true
     }
@@ -665,6 +669,7 @@ impl CgbBus {
         self.svbk = 0;
         self.key1 = 0;
         self.apu_tick_accumulator = 0;
+        self.apu_power_on_accumulator = 0;
         // Respect skip_boot_rom setting from construction
         self.boot_rom_active = !self.skip_boot_rom;
         // Reset undocumented CGB registers
@@ -780,6 +785,7 @@ impl CgbBus {
         self.svbk = state.svbk.unwrap_or(0);
         self.key1 = state.key1.unwrap_or(0);
         self.apu_tick_accumulator = state.apu_tick_accumulator.unwrap_or(0);
+        self.apu_power_on_accumulator = 0;
         // Restore undocumented CGB registers with defaults for older save states
         self.ff72 = state.ff72.unwrap_or(0x00);
         self.ff73 = state.ff73.unwrap_or(0x00);
@@ -921,9 +927,22 @@ impl GbBus for CgbBus {
             0xFF26 => {
                 // NR52 special handling: pass DIV-APU bit state for power-on skip logic.
                 let div_apu_high = self.timer.is_div_apu_bit_high();
+                let is_powering_on = val & 0x80 != 0 && self.apu.read_register(0xFF26) & 0x80 == 0;
+                if is_powering_on {
+                    self.apu_power_on_accumulator = self.apu_tick_accumulator & 1;
+                }
                 self.apu.write_nr52_with_div_state(val, div_apu_high);
             }
-            0xFF10..=0xFF25 | 0xFF27..=0xFF3F => self.apu.write_register(addr, val),
+            0xFF10..=0xFF25 | 0xFF27..=0xFF3F => {
+                // Bit-pack the two double-speed APU phases used by pulse trigger
+                // timing: bit 0 is the trigger write phase, bit 1 is the NR52
+                // power-on phase captured above.
+                let double_speed_phase_bits = self.is_double_speed().then_some(
+                    (self.apu_tick_accumulator & 1) | (self.apu_power_on_accumulator << 1),
+                );
+                self.apu
+                    .write_register_with_apu_phase(addr, val, double_speed_phase_bits);
+            }
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B => {
                 self.ppu.write_register(addr, val);
                 self.if_reg |= self.ppu.take_pending_interrupts();

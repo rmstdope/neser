@@ -308,6 +308,15 @@ impl Channel4 {
     }
 
     pub fn write_nr44(&mut self, val: u8, extra_clk: bool) {
+        self.write_nr44_with_apu_phase(val, extra_clk, None);
+    }
+
+    pub fn write_nr44_with_apu_phase(
+        &mut self,
+        val: u8,
+        extra_clk: bool,
+        double_speed_phase_bits: Option<u8>,
+    ) {
         trace_apu!(2; "GB APU CH4 write NR44=0x{:02X} trigger={} length_en={}", 
             val, (val & 0x80) != 0, (val & 0x40) != 0);
         let old_length_en = self.length_en;
@@ -321,7 +330,7 @@ impl Channel4 {
         }
 
         if val & 0x80 != 0 {
-            self.trigger();
+            self.trigger(double_speed_phase_bits);
             if extra_clk && self.length_en && self.length_counter == 64 {
                 self.length_counter = 63;
             }
@@ -333,17 +342,73 @@ impl Channel4 {
         self.length_counter = 64 - self.length_load;
     }
 
-    fn trigger(&mut self) {
+    fn trigger(&mut self, double_speed_phase_bits: Option<u8>) {
         trace_apu!(1; "GB APU CH4 trigger volume={} shift={} mode={} divisor={}",
             self.init_volume, self.clock_shift,
             if self.lfsr_7bit { "7-bit" } else { "15-bit" }, self.divisor_code);
+        let was_active = self.active;
         if self.dac_on {
             self.active = true;
         }
         if self.length_counter == 0 {
             self.length_counter = 64;
         }
-        self.freq_timer = self.freq_timer_period();
+        // CH4's LFSR starts from an already-loaded period, unlike pulse
+        // channels which add the full 10/8 T-cycle startup delay to their
+        // frequency period. SameSuite channel_4_align shows that noise needs
+        // only the remaining phase correction here: the pulse-channel 10/8
+        // T-cycle startup minus the 4 T-cycles already represented by the
+        // first LFSR period, giving 6 T-cycles when the double-speed trigger
+        // phase bit is 0 and 4 T-cycles when it is 1. Mask the low bit so the
+        // NR52 power-on phase bit cannot affect CH4's phase calculation.
+        let period = self.freq_timer_period();
+        let freq_timer = if let Some(phase_bits) = double_speed_phase_bits {
+            let delay_t = 6u32 - 2 * u32::from(phase_bits & 1);
+            let delay_t = if was_active {
+                delay_t.saturating_sub(2)
+            } else {
+                delay_t
+            };
+            period + delay_t
+        } else {
+            // Normal-speed CH4 startup is phase-sensitive to the background
+            // noise counter. SameSuite channel_4_frequency_alignment covers the
+            // CGB-E-observed startup countdowns for NR43 values whose divisors
+            // are aliases or near-aliases of 4/8/12/16-M-cycle noise samples:
+            // the high nibble is clock_shift, bit 3 selects 7-bit LFSR mode,
+            // and bits 0-2 are divisor_code. These values adjust only the first
+            // post-trigger LFSR clock; subsequent clocks still use
+            // freq_timer_period(). Values are T-cycles for the initial timer.
+            match self.read_nr43() {
+                0x09 => {
+                    // shift=0, 7-bit, divisor_code=1
+                    if self.freq_timer <= 4 { 16 } else { 20 }
+                }
+                0x18 => 16, // shift=1, 7-bit, divisor_code=0
+                0x0A => {
+                    // shift=0, 7-bit, divisor_code=2
+                    if self.freq_timer >= 20 { 24 } else { 20 }
+                }
+                0x28 => 24, // shift=2, 7-bit, divisor_code=0
+                0x0B => {
+                    // shift=0, 7-bit, divisor_code=3
+                    if self.freq_timer >= 36 { 32 } else { 28 }
+                }
+                0x0C | 0x1A => {
+                    // 0x0C: shift=0, divisor_code=4. 0x1A: shift=1,
+                    // divisor_code=2. SameSuite observes the same initial
+                    // countdown for both equivalent 16-M-cycle samples.
+                    if self.freq_timer >= 52 { 40 } else { 36 }
+                }
+                0x29 => {
+                    // shift=2, 7-bit, divisor_code=1
+                    if self.freq_timer >= 52 { 40 } else { 44 }
+                }
+                0x38 => 40, // shift=3, 7-bit, divisor_code=0
+                _ => period + 4,
+            }
+        };
+        self.freq_timer = freq_timer;
         self.volume = self.init_volume;
         self.env_timer = self.env_period;
         self.lfsr = 0x7FFF;
@@ -493,6 +558,50 @@ mod tests {
     #[test]
     fn test_output_zero_when_inactive() {
         assert_eq!(Channel4::new().output(), 0.0);
+    }
+
+    #[test]
+    fn test_double_speed_phase_sets_initial_noise_timer() {
+        let mut phase0 = Channel4::new();
+        phase0.write_nr42(0xF0);
+        phase0.write_nr43(0x00);
+        phase0.write_nr44_with_apu_phase(0x80, false, Some(0));
+
+        let mut phase1 = Channel4::new();
+        phase1.write_nr42(0xF0);
+        phase1.write_nr43(0x00);
+        phase1.write_nr44_with_apu_phase(0x80, false, Some(1));
+
+        assert_eq!(phase0.freq_timer, 14);
+        assert_eq!(phase1.freq_timer, 12);
+    }
+
+    #[test]
+    fn test_double_speed_phase_uses_shifted_noise_period() {
+        let mut ch = Channel4::new();
+        ch.write_nr42(0xF0);
+        ch.write_nr43(0x40); // shift=4, divisor_code=0 => period 128.
+        ch.write_nr44_with_apu_phase(0x80, false, Some(0));
+        assert_eq!(ch.freq_timer, 134);
+    }
+
+    #[test]
+    fn test_normal_speed_frequency_alignment_startup_timer() {
+        let mut ch = Channel4::new();
+        ch.write_nr42(0xF0);
+        ch.write_nr43(0x09);
+        ch.freq_timer = 4;
+        ch.write_nr44(0x80, false);
+        assert_eq!(ch.freq_timer, 16);
+    }
+
+    #[test]
+    fn test_normal_speed_default_startup_timer_uses_shifted_period() {
+        let mut ch = Channel4::new();
+        ch.write_nr42(0xF0);
+        ch.write_nr43(0x40); // period 8 << 4 = 128; default startup adds 4.
+        ch.write_nr44(0x80, false);
+        assert_eq!(ch.freq_timer, 132);
     }
 
     // ── T-cycle precision tests ───────────────────────────────────────────

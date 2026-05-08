@@ -5,7 +5,7 @@
 use crate::trace_apu;
 use serde::{Deserialize, Serialize};
 
-use super::channel1::EnvelopeClockState;
+use super::channel1::{EnvelopeClockState, pulse_trigger_fresh_delay_t};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Channel2 {
@@ -305,6 +305,16 @@ impl Channel2 {
     }
 
     pub fn write_nr24(&mut self, val: u8, extra_clk: bool, lf_div: bool) {
+        self.write_nr24_with_apu_phase(val, extra_clk, lf_div, None);
+    }
+
+    pub fn write_nr24_with_apu_phase(
+        &mut self,
+        val: u8,
+        extra_clk: bool,
+        lf_div: bool,
+        double_speed_phase_bits: Option<u8>,
+    ) {
         trace_apu!(2; "GB APU CH2 write NR24=0x{:02X} trigger={} length_en={} freq_high={}", 
             val, (val & 0x80) != 0, (val & 0x40) != 0, val & 0x07);
         let old_length_en = self.length_en;
@@ -319,7 +329,7 @@ impl Channel2 {
         }
 
         if val & 0x80 != 0 {
-            self.trigger(lf_div);
+            self.trigger(lf_div, double_speed_phase_bits);
             if extra_clk && self.length_en && self.length_counter == 64 {
                 self.length_counter = 63;
             }
@@ -331,7 +341,7 @@ impl Channel2 {
         self.length_counter = 64 - self.length_load;
     }
 
-    fn trigger(&mut self, lf_div: bool) {
+    fn trigger(&mut self, lf_div: bool, double_speed_phase_bits: Option<u8>) {
         trace_apu!(1; "GB APU CH2 trigger freq=0x{:03X} volume={} lf_div={}", self.freq, self.init_volume, lf_div);
         let was_active = self.active;
         // First trigger after power-on: first duty step outputs 0.
@@ -352,15 +362,12 @@ impl Channel2 {
         //
         // Per SameSuite comment: "the start delay from the 'delay' test is actually
         // 1 tick shorter" after restarting. This means retrigger delay = fresh - 2 T-cycles.
-        // Note: lf_div=true means the DIV rising-edge tick fired this M-cycle, which adds
-        // 2 extra T-cycles to the delay (longer, not shorter).
+        let fresh_delay_t = pulse_trigger_fresh_delay_t(lf_div, double_speed_phase_bits);
         let delay_t = if was_active {
             // Retrigger delay: 1 2MHz tick (2 T-cycles) shorter than fresh
-            if lf_div { 6u16 } else { 4u16 }
-        } else if lf_div {
-            8u16
+            fresh_delay_t.saturating_sub(2)
         } else {
-            6u16
+            fresh_delay_t
         };
         // Convert delay to T-cycles and add to period for initial freq_timer
         let period = (2048 - self.freq) * 4;
@@ -384,6 +391,24 @@ mod tests {
         ch.write_nr21(0x80); // 50% duty
         ch.write_nr24(0x80, false, false); // trigger
         ch
+    }
+
+    #[test]
+    fn test_double_speed_phase_bits_set_initial_freq_timer() {
+        let mut phase0 = Channel2::new();
+        phase0.write_nr22(0xF0);
+        phase0.write_nr21(0x80);
+        phase0.write_nr23(0xFF);
+        phase0.write_nr24_with_apu_phase(0x87, false, false, Some(0b00));
+
+        let mut phase3 = Channel2::new();
+        phase3.write_nr22(0xF0);
+        phase3.write_nr21(0x80);
+        phase3.write_nr23(0xFF);
+        phase3.write_nr24_with_apu_phase(0x87, false, false, Some(0b11));
+
+        assert_eq!(phase0.freq_timer, 14);
+        assert_eq!(phase3.freq_timer, 12);
     }
 
     #[test]

@@ -478,6 +478,17 @@ impl Apu {
     /// Note: For NR52 ($FF26) writes, prefer `write_nr52_with_div_state()` to
     /// correctly handle the DIV-APU skip behavior on power-on.
     pub fn write_register(&mut self, addr: u16, val: u8) {
+        self.write_register_with_apu_phase(addr, val, None);
+    }
+
+    /// Write an APU register, optionally supplying bit-packed CGB double-speed
+    /// phase bits for trigger startup timing.
+    pub fn write_register_with_apu_phase(
+        &mut self,
+        addr: u16,
+        val: u8,
+        double_speed_phase_bits: Option<u8>,
+    ) {
         // NR52 is always writable.
         if addr == 0xFF26 {
             self.write_nr52(val);
@@ -515,12 +526,22 @@ impl Apu {
             0xFF11 => self.ch1.write_nr11(val),
             0xFF12 => self.ch1.write_nr12(val),
             0xFF13 => self.ch1.write_nr13(val),
-            0xFF14 => self.ch1.write_nr14(val, extra_clk, self.lf_div),
+            0xFF14 => self.ch1.write_nr14_with_apu_phase(
+                val,
+                extra_clk,
+                self.lf_div,
+                double_speed_phase_bits,
+            ),
             0xFF15 => {}
             0xFF16 => self.ch2.write_nr21(val),
             0xFF17 => self.ch2.write_nr22(val),
             0xFF18 => self.ch2.write_nr23(val),
-            0xFF19 => self.ch2.write_nr24(val, extra_clk, self.lf_div),
+            0xFF19 => self.ch2.write_nr24_with_apu_phase(
+                val,
+                extra_clk,
+                self.lf_div,
+                double_speed_phase_bits,
+            ),
             0xFF1A => self.ch3.write_nr30(val),
             0xFF1B => self.ch3.write_nr31(val),
             0xFF1C => self.ch3.write_nr32(val),
@@ -530,7 +551,9 @@ impl Apu {
             0xFF20 => self.ch4.write_nr41(val),
             0xFF21 => self.ch4.write_nr42(val),
             0xFF22 => self.ch4.write_nr43(val),
-            0xFF23 => self.ch4.write_nr44(val, extra_clk),
+            0xFF23 => self
+                .ch4
+                .write_nr44_with_apu_phase(val, extra_clk, double_speed_phase_bits),
             0xFF24 => {
                 trace_apu!(2; "GB APU write NR50=0x{:02X} left_vol={} right_vol={}", val, (val >> 4) & 0x07, val & 0x07);
                 self.nr50 = val;

@@ -18,6 +18,30 @@ pub struct EnvelopeClockState {
     pub clock: bool,
 }
 
+pub(super) fn pulse_trigger_fresh_delay_t(
+    lf_div: bool,
+    double_speed_phase_bits: Option<u8>,
+) -> u16 {
+    double_speed_phase_bits
+        .map(|phase_bits| {
+            // Bit layout supplied by CgbBus in double-speed mode:
+            // bit 0 = trigger write phase, bit 1 = NR52 power-on phase.
+            let trigger_phase = phase_bits & 1;
+            let power_on_phase = (phase_bits >> 1) & 1;
+            // Fresh pulse trigger delay is 10 T-cycles at trigger phase 0
+            // and 8 T-cycles at trigger phase 1. If trigger phase 1 follows
+            // an APU power-on at phase 0, SameSuite align_cpu observes one
+            // extra 2 T-cycle tick before the first duty advance.
+            10u16 - 2 * u16::from(trigger_phase)
+                + if trigger_phase == 1 && power_on_phase == 0 {
+                    2
+                } else {
+                    0
+                }
+        })
+        .unwrap_or(if lf_div { 8u16 } else { 6u16 })
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Channel1 {
     // NR10 fields
@@ -778,6 +802,16 @@ impl Channel1 {
     }
 
     pub fn write_nr14(&mut self, val: u8, extra_clk: bool, lf_div: bool) {
+        self.write_nr14_with_apu_phase(val, extra_clk, lf_div, None);
+    }
+
+    pub fn write_nr14_with_apu_phase(
+        &mut self,
+        val: u8,
+        extra_clk: bool,
+        lf_div: bool,
+        double_speed_phase_bits: Option<u8>,
+    ) {
         trace_apu!(2; "GB APU CH1 write NR14=0x{:02X} trigger={} length_en={} freq_high={}", 
             val, (val & 0x80) != 0, (val & 0x40) != 0, val & 0x07);
         let old_length_en = self.length_en;
@@ -794,7 +828,7 @@ impl Channel1 {
         }
 
         if val & 0x80 != 0 {
-            self.trigger(lf_div);
+            self.trigger(lf_div, double_speed_phase_bits);
             // If trigger reloaded counter to max AND length_en AND extra-clock
             // window, decrement the freshly-loaded counter by 1.
             if extra_clk && self.length_en && self.length_counter == 64 {
@@ -811,7 +845,7 @@ impl Channel1 {
 
     // ── Trigger ───────────────────────────────────────────────────────────
 
-    fn trigger(&mut self, lf_div: bool) {
+    fn trigger(&mut self, lf_div: bool, double_speed_phase_bits: Option<u8>) {
         trace_apu!(1; "GB APU CH1 trigger freq=0x{:03X} volume={} sweep_period={} sweep_shift={} lf_div={}", 
             self.freq, self.init_volume, self.sweep_period, self.sweep_shift, lf_div);
         let was_active = self.active;
@@ -833,15 +867,12 @@ impl Channel1 {
         //
         // Per SameSuite comment: "the start delay from the 'delay' test is actually
         // 1 tick shorter" after restarting. This means retrigger delay = fresh - 2 T-cycles.
-        // Note: lf_div=true means the DIV rising-edge tick fired this M-cycle, which adds
-        // 2 extra T-cycles to the delay (longer, not shorter).
+        let fresh_delay_t = pulse_trigger_fresh_delay_t(lf_div, double_speed_phase_bits);
         let delay_t = if was_active {
             // Retrigger delay: 1 2MHz tick (2 T-cycles) shorter than fresh
-            if lf_div { 6u16 } else { 4u16 }
-        } else if lf_div {
-            8u16
+            fresh_delay_t.saturating_sub(2)
         } else {
-            6u16
+            fresh_delay_t
         };
         // Convert delay to T-cycles and add to period for initial freq_timer
         let period = (2048 - self.freq) * 4;
@@ -938,6 +969,17 @@ mod tests {
         // NR14: trigger, no length enable, freq high = 0
         ch.write_nr14(0x80, false, false);
         ch
+    }
+
+    #[test]
+    fn test_double_speed_phase_bits_adjust_fresh_trigger_delay() {
+        assert_eq!(pulse_trigger_fresh_delay_t(false, Some(0b00)), 10);
+        assert_eq!(pulse_trigger_fresh_delay_t(false, Some(0b11)), 8);
+        assert_eq!(
+            pulse_trigger_fresh_delay_t(false, Some(0b01)),
+            10,
+            "trigger phase 1 after NR52 power-on phase 0 gets the CPU-aligned +2 T-cycle delay"
+        );
     }
 
     // ── Phase 2: restart_hold ────────────────────────────────────────────
