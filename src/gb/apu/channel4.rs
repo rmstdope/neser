@@ -374,56 +374,39 @@ impl Channel4 {
             period + delay_t
         } else {
             // Normal-speed CH4 startup is phase-sensitive to the background
-            // noise counter. These NR43/timer combinations are the CGB-E cases
-            // exercised by SameSuite channel_4_frequency_alignment; they adjust
-            // the first post-trigger LFSR clock while subsequent clocks still use
+            // noise counter. SameSuite channel_4_frequency_alignment covers the
+            // CGB-E-observed startup countdowns for NR43 values whose divisors
+            // are aliases or near-aliases of 4/8/12/16-M-cycle noise samples:
+            // the high nibble is clock_shift, bit 3 selects 7-bit LFSR mode,
+            // and bits 0-2 are divisor_code. These values adjust only the first
+            // post-trigger LFSR clock; subsequent clocks still use
             // freq_timer_period(). Values are T-cycles for the initial timer.
             match self.read_nr43() {
                 0x09 => {
-                    if self.freq_timer <= 4 {
-                        16
-                    } else {
-                        20
-                    }
+                    // shift=0, 7-bit, divisor_code=1
+                    if self.freq_timer <= 4 { 16 } else { 20 }
                 }
-                0x18 => 16,
+                0x18 => 16, // shift=1, 7-bit, divisor_code=0
                 0x0A => {
-                    if self.freq_timer >= 20 {
-                        24
-                    } else {
-                        20
-                    }
+                    // shift=0, 7-bit, divisor_code=2
+                    if self.freq_timer >= 20 { 24 } else { 20 }
                 }
-                0x28 => 24,
+                0x28 => 24, // shift=2, 7-bit, divisor_code=0
                 0x0B => {
-                    if self.freq_timer >= 36 {
-                        32
-                    } else {
-                        28
-                    }
+                    // shift=0, 7-bit, divisor_code=3
+                    if self.freq_timer >= 36 { 32 } else { 28 }
                 }
-                0x1A => {
-                    if self.freq_timer >= 52 {
-                        40
-                    } else {
-                        36
-                    }
-                }
-                0x0C => {
-                    if self.freq_timer >= 52 {
-                        40
-                    } else {
-                        36
-                    }
+                0x0C | 0x1A => {
+                    // 0x0C: shift=0, divisor_code=4. 0x1A: shift=1,
+                    // divisor_code=2. SameSuite observes the same initial
+                    // countdown for both equivalent 16-M-cycle samples.
+                    if self.freq_timer >= 52 { 40 } else { 36 }
                 }
                 0x29 => {
-                    if self.freq_timer >= 52 {
-                        40
-                    } else {
-                        44
-                    }
+                    // shift=2, 7-bit, divisor_code=1
+                    if self.freq_timer >= 52 { 40 } else { 44 }
                 }
-                0x38 => 40,
+                0x38 => 40, // shift=3, 7-bit, divisor_code=0
                 _ => {
                     let divisor = u32::from(self.divisor_code);
                     if divisor == 0 { 12 } else { divisor * 8 + 12 }
