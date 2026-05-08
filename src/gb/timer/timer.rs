@@ -218,8 +218,10 @@ impl Timer {
     /// register $FF0F bit 2).
     ///
     /// Returns `(falling_edges, rising_edges)` of the DIV-APU bit that occurred.
-    /// The caller should call `clock_div_apu_secondary()` for each rising edge and
-    /// `clock_div_apu()` for each falling edge to step the APU frame sequencer.
+    /// The caller should call `clock_div_apu()` for each falling edge to advance the
+    /// APU frame sequencer (length, sweep, envelope primary) and
+    /// `clock_div_apu_secondary()` for each rising edge to service the envelope
+    /// phantom-tick / secondary mechanism only (does not step the frame sequencer).
     pub fn tick(&mut self, m_cycles: u8) -> (u8, u8) {
         let mut div_apu_falling: u8 = 0;
         let mut div_apu_rising: u8 = 0;
