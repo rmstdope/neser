@@ -70,6 +70,8 @@ pub struct Channel1 {
     pub(crate) length_counter: u8, // 0-64; silences when reaches 0
     volume: u8,                    // current volume 0-15
     env_timer: u8,                 // envelope period countdown
+    /// Latched square-wave PCM output. Duty register writes do not affect this
+    /// until the current sample finishes and the duty step advances.
     #[serde(default)]
     current_output: u8,
     sweep_shadow: u16, // shadow frequency register
@@ -225,6 +227,10 @@ impl Channel1 {
         if !self.active || !self.dac_on {
             return 0;
         }
+        // At the maximum pulse frequency, CGB-E exposes one half-step of edge
+        // visibility for duty 0 through PCM12: the wrap from step 7 to 0 remains
+        // visible at the reload boundary, while the preceding half-step is still
+        // silent. SameSuite's duty ROMs sample these two boundary positions.
         if self.duty == 0 && self.freq == 0x07FF && !self.first_sample_zero {
             if self.duty_pos == 0 && self.freq_timer == 4 {
                 return self.volume;
