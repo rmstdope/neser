@@ -750,6 +750,16 @@ impl Channel1 {
     }
 
     pub fn write_nr14(&mut self, val: u8, extra_clk: bool, lf_div: bool) {
+        self.write_nr14_with_apu_phase(val, extra_clk, lf_div, None);
+    }
+
+    pub fn write_nr14_with_apu_phase(
+        &mut self,
+        val: u8,
+        extra_clk: bool,
+        lf_div: bool,
+        apu_tick_accumulator: Option<u8>,
+    ) {
         trace_apu!(2; "GB APU CH1 write NR14=0x{:02X} trigger={} length_en={} freq_high={}", 
             val, (val & 0x80) != 0, (val & 0x40) != 0, val & 0x07);
         let old_length_en = self.length_en;
@@ -766,7 +776,7 @@ impl Channel1 {
         }
 
         if val & 0x80 != 0 {
-            self.trigger(lf_div);
+            self.trigger(lf_div, apu_tick_accumulator);
             // If trigger reloaded counter to max AND length_en AND extra-clock
             // window, decrement the freshly-loaded counter by 1.
             if extra_clk && self.length_en && self.length_counter == 64 {
@@ -783,7 +793,7 @@ impl Channel1 {
 
     // ── Trigger ───────────────────────────────────────────────────────────
 
-    fn trigger(&mut self, lf_div: bool) {
+    fn trigger(&mut self, lf_div: bool, apu_tick_accumulator: Option<u8>) {
         trace_apu!(1; "GB APU CH1 trigger freq=0x{:03X} volume={} sweep_period={} sweep_shift={} lf_div={}", 
             self.freq, self.init_volume, self.sweep_period, self.sweep_shift, lf_div);
         let was_active = self.active;
@@ -805,13 +815,14 @@ impl Channel1 {
         //
         // Per SameSuite comment: "the start delay from the 'delay' test is actually
         // 1 tick shorter" after restarting. This means retrigger delay = fresh - 2 T-cycles.
+        let fresh_delay_t = apu_tick_accumulator
+            .map(|acc| 10u16 - 2 * u16::from(acc & 1))
+            .unwrap_or(if lf_div { 6u16 } else { 8u16 });
         let delay_t = if was_active {
             // Retrigger delay: 1 2MHz tick (2 T-cycles) shorter than fresh
-            if lf_div { 4u16 } else { 6u16 }
-        } else if lf_div {
-            6u16
+            fresh_delay_t.saturating_sub(2)
         } else {
-            8u16
+            fresh_delay_t
         };
         // Convert delay to T-cycles and add to period for initial freq_timer
         let period = (2048 - self.freq) * 4;

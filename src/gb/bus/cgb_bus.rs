@@ -919,7 +919,12 @@ impl GbBus for CgbBus {
                 let div_apu_high = self.timer.is_div_apu_bit_high();
                 self.apu.write_nr52_with_div_state(val, div_apu_high);
             }
-            0xFF10..=0xFF25 | 0xFF27..=0xFF3F => self.apu.write_register(addr, val),
+            0xFF10..=0xFF25 | 0xFF27..=0xFF3F => {
+                let apu_phase = self
+                    .is_double_speed()
+                    .then_some(self.apu_tick_accumulator & 1);
+                self.apu.write_register_with_apu_phase(addr, val, apu_phase);
+            }
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B => {
                 self.ppu.write_register(addr, val);
                 self.if_reg |= self.ppu.take_pending_interrupts();

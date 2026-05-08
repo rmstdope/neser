@@ -517,6 +517,25 @@ fn debug_dump_channel_1_align() {
 }
 
 #[test]
+#[ignore = "debug-only: dumps PCM12 sub-test results for align_cpu test investigation"]
+fn debug_dump_channel_1_align_cpu() {
+    // CorrectResults from channel_1_align_cpu.asm — 6 rows × 8 bytes = 48.
+    #[rustfmt::skip]
+    let expected: &[u8] = &[
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x08, 0x08,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x08, 0x08,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x08, 0x08,
+    ];
+    dump_samesuite_sweep_failures(
+        &format!("{BASE}/channel_1/channel_1_align_cpu.gb"),
+        expected,
+    );
+}
+
+#[test]
 #[ignore = "debug-only: dumps PCM34 sub-test results for channel_4_align test investigation"]
 fn debug_dump_channel_4_align() {
     // CorrectResults from channel_4_align.asm — 8 rows × 8 bytes = 64.

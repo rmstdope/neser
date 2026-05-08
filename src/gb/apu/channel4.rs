@@ -299,6 +299,15 @@ impl Channel4 {
     }
 
     pub fn write_nr44(&mut self, val: u8, extra_clk: bool) {
+        self.write_nr44_with_apu_phase(val, extra_clk, None);
+    }
+
+    pub fn write_nr44_with_apu_phase(
+        &mut self,
+        val: u8,
+        extra_clk: bool,
+        apu_tick_accumulator: Option<u8>,
+    ) {
         trace_apu!(2; "GB APU CH4 write NR44=0x{:02X} trigger={} length_en={}", 
             val, (val & 0x80) != 0, (val & 0x40) != 0);
         let old_length_en = self.length_en;
@@ -312,7 +321,7 @@ impl Channel4 {
         }
 
         if val & 0x80 != 0 {
-            self.trigger();
+            self.trigger(apu_tick_accumulator);
             if extra_clk && self.length_en && self.length_counter == 64 {
                 self.length_counter = 63;
             }
@@ -324,17 +333,26 @@ impl Channel4 {
         self.length_counter = 64 - self.length_load;
     }
 
-    fn trigger(&mut self) {
+    fn trigger(&mut self, apu_tick_accumulator: Option<u8>) {
         trace_apu!(1; "GB APU CH4 trigger volume={} shift={} mode={} divisor={}",
             self.init_volume, self.clock_shift,
             if self.lfsr_7bit { "7-bit" } else { "15-bit" }, self.divisor_code);
+        let was_active = self.active;
         if self.dac_on {
             self.active = true;
         }
         if self.length_counter == 0 {
             self.length_counter = 64;
         }
-        self.freq_timer = self.freq_timer_period();
+        let delay_t = apu_tick_accumulator
+            .map(|acc| 6u32 - 2 * u32::from(acc & 1))
+            .unwrap_or(0);
+        let delay_t = if was_active {
+            delay_t.saturating_sub(2)
+        } else {
+            delay_t
+        };
+        self.freq_timer = self.freq_timer_period() + delay_t;
         self.volume = self.init_volume;
         self.env_timer = self.env_period;
         self.lfsr = 0x7FFF;
