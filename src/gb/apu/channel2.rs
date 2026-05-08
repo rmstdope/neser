@@ -313,7 +313,7 @@ impl Channel2 {
         val: u8,
         extra_clk: bool,
         lf_div: bool,
-        apu_tick_accumulator: Option<u8>,
+        double_speed_phase_bits: Option<u8>,
     ) {
         trace_apu!(2; "GB APU CH2 write NR24=0x{:02X} trigger={} length_en={} freq_high={}", 
             val, (val & 0x80) != 0, (val & 0x40) != 0, val & 0x07);
@@ -329,7 +329,7 @@ impl Channel2 {
         }
 
         if val & 0x80 != 0 {
-            self.trigger(lf_div, apu_tick_accumulator);
+            self.trigger(lf_div, double_speed_phase_bits);
             if extra_clk && self.length_en && self.length_counter == 64 {
                 self.length_counter = 63;
             }
@@ -341,7 +341,7 @@ impl Channel2 {
         self.length_counter = 64 - self.length_load;
     }
 
-    fn trigger(&mut self, lf_div: bool, apu_tick_accumulator: Option<u8>) {
+    fn trigger(&mut self, lf_div: bool, double_speed_phase_bits: Option<u8>) {
         trace_apu!(1; "GB APU CH2 trigger freq=0x{:03X} volume={} lf_div={}", self.freq, self.init_volume, lf_div);
         let was_active = self.active;
         // First trigger after power-on: first duty step outputs 0.
@@ -362,7 +362,7 @@ impl Channel2 {
         //
         // Per SameSuite comment: "the start delay from the 'delay' test is actually
         // 1 tick shorter" after restarting. This means retrigger delay = fresh - 2 T-cycles.
-        let fresh_delay_t = pulse_trigger_fresh_delay_t(lf_div, apu_tick_accumulator);
+        let fresh_delay_t = pulse_trigger_fresh_delay_t(lf_div, double_speed_phase_bits);
         let delay_t = if was_active {
             // Retrigger delay: 1 2MHz tick (2 T-cycles) shorter than fresh
             fresh_delay_t.saturating_sub(2)

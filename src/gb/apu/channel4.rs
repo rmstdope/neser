@@ -315,7 +315,7 @@ impl Channel4 {
         &mut self,
         val: u8,
         extra_clk: bool,
-        apu_tick_accumulator: Option<u8>,
+        double_speed_phase_bits: Option<u8>,
     ) {
         trace_apu!(2; "GB APU CH4 write NR44=0x{:02X} trigger={} length_en={}", 
             val, (val & 0x80) != 0, (val & 0x40) != 0);
@@ -330,7 +330,7 @@ impl Channel4 {
         }
 
         if val & 0x80 != 0 {
-            self.trigger(apu_tick_accumulator);
+            self.trigger(double_speed_phase_bits);
             if extra_clk && self.length_en && self.length_counter == 64 {
                 self.length_counter = 63;
             }
@@ -342,7 +342,7 @@ impl Channel4 {
         self.length_counter = 64 - self.length_load;
     }
 
-    fn trigger(&mut self, apu_tick_accumulator: Option<u8>) {
+    fn trigger(&mut self, double_speed_phase_bits: Option<u8>) {
         trace_apu!(1; "GB APU CH4 trigger volume={} shift={} mode={} divisor={}",
             self.init_volume, self.clock_shift,
             if self.lfsr_7bit { "7-bit" } else { "15-bit" }, self.divisor_code);
@@ -358,14 +358,12 @@ impl Channel4 {
         // frequency period. SameSuite channel_4_align shows that noise needs
         // only the remaining phase correction here: the pulse-channel 10/8
         // T-cycle startup minus the 4 T-cycles already represented by the
-        // first LFSR period, giving 6 T-cycles when the double-speed APU
-        // accumulator's low bit is 0 and 4 T-cycles when it is 1. The
-        // accumulator is expected to be 0 or 1; mask the low bit so callers
-        // cannot accidentally feed higher bookkeeping bits into the phase
-        // calculation.
+        // first LFSR period, giving 6 T-cycles when the double-speed trigger
+        // phase bit is 0 and 4 T-cycles when it is 1. Mask the low bit so the
+        // NR52 power-on phase bit cannot affect CH4's phase calculation.
         let period = self.freq_timer_period();
-        let freq_timer = if let Some(acc) = apu_tick_accumulator {
-            let delay_t = 6u32 - 2 * u32::from(acc & 1);
+        let freq_timer = if let Some(phase_bits) = double_speed_phase_bits {
+            let delay_t = 6u32 - 2 * u32::from(phase_bits & 1);
             let delay_t = if was_active {
                 delay_t.saturating_sub(2)
             } else {
@@ -407,10 +405,7 @@ impl Channel4 {
                     if self.freq_timer >= 52 { 40 } else { 44 }
                 }
                 0x38 => 40, // shift=3, 7-bit, divisor_code=0
-                _ => {
-                    let divisor = u32::from(self.divisor_code);
-                    if divisor == 0 { 12 } else { divisor * 8 + 12 }
-                }
+                _ => period + 4,
             }
         };
         self.freq_timer = freq_timer;
@@ -589,6 +584,15 @@ mod tests {
         ch.freq_timer = 4;
         ch.write_nr44(0x80, false);
         assert_eq!(ch.freq_timer, 16);
+    }
+
+    #[test]
+    fn test_normal_speed_default_startup_timer_uses_shifted_period() {
+        let mut ch = Channel4::new();
+        ch.write_nr42(0xF0);
+        ch.write_nr43(0x40); // shift=4, divisor_code=0 => period 8 << 4.
+        ch.write_nr44(0x80, false);
+        assert_eq!(ch.freq_timer, 132);
     }
 
     // ── T-cycle precision tests ───────────────────────────────────────────

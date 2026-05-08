@@ -481,13 +481,13 @@ impl Apu {
         self.write_register_with_apu_phase(addr, val, None);
     }
 
-    /// Write an APU register, optionally supplying the CGB double-speed APU tick
-    /// accumulator phase for trigger startup timing.
+    /// Write an APU register, optionally supplying bit-packed CGB double-speed
+    /// phase bits for trigger startup timing.
     pub fn write_register_with_apu_phase(
         &mut self,
         addr: u16,
         val: u8,
-        apu_tick_accumulator: Option<u8>,
+        double_speed_phase_bits: Option<u8>,
     ) {
         // NR52 is always writable.
         if addr == 0xFF26 {
@@ -530,7 +530,7 @@ impl Apu {
                 val,
                 extra_clk,
                 self.lf_div,
-                apu_tick_accumulator,
+                double_speed_phase_bits,
             ),
             0xFF15 => {}
             0xFF16 => self.ch2.write_nr21(val),
@@ -540,7 +540,7 @@ impl Apu {
                 val,
                 extra_clk,
                 self.lf_div,
-                apu_tick_accumulator,
+                double_speed_phase_bits,
             ),
             0xFF1A => self.ch3.write_nr30(val),
             0xFF1B => self.ch3.write_nr31(val),
@@ -553,7 +553,7 @@ impl Apu {
             0xFF22 => self.ch4.write_nr43(val),
             0xFF23 => self
                 .ch4
-                .write_nr44_with_apu_phase(val, extra_clk, apu_tick_accumulator),
+                .write_nr44_with_apu_phase(val, extra_clk, double_speed_phase_bits),
             0xFF24 => {
                 trace_apu!(2; "GB APU write NR50=0x{:02X} left_vol={} right_vol={}", val, (val >> 4) & 0x07, val & 0x07);
                 self.nr50 = val;

@@ -937,10 +937,11 @@ impl GbBus for CgbBus {
                 // Bit-pack the two double-speed APU phases used by pulse trigger
                 // timing: bit 0 is the trigger write phase, bit 1 is the NR52
                 // power-on phase captured above.
-                let apu_phase = self.is_double_speed().then_some(
+                let double_speed_phase_bits = self.is_double_speed().then_some(
                     (self.apu_tick_accumulator & 1) | (self.apu_power_on_accumulator << 1),
                 );
-                self.apu.write_register_with_apu_phase(addr, val, apu_phase);
+                self.apu
+                    .write_register_with_apu_phase(addr, val, double_speed_phase_bits);
             }
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B => {
                 self.ppu.write_register(addr, val);
