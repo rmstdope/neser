@@ -344,10 +344,14 @@ impl Channel4 {
         if self.length_counter == 0 {
             self.length_counter = 64;
         }
-        // CH4's LFSR starts from an already-loaded period; in CGB double-speed
-        // SameSuite alignment tests, the first noise clock needs a shorter
-        // phase correction than pulse channels: 6 T-cycles on accumulator phase
-        // 0, 4 T-cycles on phase 1.
+        // CH4's LFSR starts from an already-loaded period, unlike pulse
+        // channels which add the full 10/8 T-cycle startup delay to their
+        // frequency period. SameSuite channel_4_align shows that noise needs
+        // only the remaining phase correction here: 6 T-cycles when the
+        // double-speed APU accumulator's low bit is 0, and 4 T-cycles when it
+        // is 1. The accumulator is expected to be 0 or 1; mask the low bit so
+        // callers cannot accidentally feed higher bookkeeping bits into the
+        // phase calculation.
         let delay_t = apu_tick_accumulator
             .map(|acc| 6u32 - 2 * u32::from(acc & 1))
             .unwrap_or(0);
