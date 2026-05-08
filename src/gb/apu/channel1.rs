@@ -557,11 +557,6 @@ impl Channel1 {
         self.clock_envelope_primary();
     }
 
-    /// Clear envelope clock flag after frame sequencer step completes.
-    pub fn clear_envelope_clock(&mut self) {
-        self.env_clock_state.clock = false;
-    }
-
     /// Reset channel state when APU is powered off.
     pub fn power_off(&mut self) {
         self.sweep_period = 0;
