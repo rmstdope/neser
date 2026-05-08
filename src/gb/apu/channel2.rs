@@ -137,42 +137,51 @@ impl Channel2 {
         }
     }
 
-    pub fn clock_envelope(&mut self) {
-        // Clear the clock flag from any previous tick.
-        self.env_clock_state.clock = false;
-
+    pub fn clock_envelope_decrement(&mut self) {
         if self.env_period == 0 {
             return;
         }
         if self.env_timer > 0 {
             self.env_timer -= 1;
         }
+    }
+
+    pub fn clock_envelope_secondary(&mut self) {
+        if !self.active || self.env_period == 0 {
+            return;
+        }
         if self.env_timer == 0 {
             self.env_timer = self.env_period;
-            // Set clock state to indicate envelope just ticked.
             self.env_clock_state.clock = true;
-
-            if self.env_clock_state.locked {
-                // Envelope is locked - no volume change.
-                return;
-            }
-
-            let old_volume = self.volume;
-            if self.env_add && self.volume < 15 {
-                self.volume += 1;
-            } else if !self.env_add && self.volume > 0 {
-                self.volume -= 1;
-            }
-
-            // Lock envelope if volume has hit its limit.
-            if (self.env_add && self.volume == 15) || (!self.env_add && self.volume == 0) {
-                self.env_clock_state.locked = true;
-            }
-
-            if old_volume != self.volume {
-                trace_apu!(3; "GB APU CH2 envelope volume {} -> {}", old_volume, self.volume);
-            }
         }
+    }
+
+    pub fn clock_envelope_primary(&mut self) {
+        if !self.env_clock_state.clock {
+            return;
+        }
+        self.env_clock_state.clock = false;
+        if self.env_clock_state.locked {
+            return;
+        }
+        let old_volume = self.volume;
+        if self.env_add && self.volume < 15 {
+            self.volume += 1;
+        } else if !self.env_add && self.volume > 0 {
+            self.volume -= 1;
+        }
+        if (self.env_add && self.volume == 15) || (!self.env_add && self.volume == 0) {
+            self.env_clock_state.locked = true;
+        }
+        if old_volume != self.volume {
+            trace_apu!(3; "GB APU CH2 envelope volume {} -> {}", old_volume, self.volume);
+        }
+    }
+
+    pub fn clock_envelope(&mut self) {
+        self.clock_envelope_decrement();
+        self.clock_envelope_secondary();
+        self.clock_envelope_primary();
     }
 
     /// Clear envelope clock flag after frame sequencer step completes.
@@ -355,10 +364,21 @@ impl Channel2 {
         // 1 tick shorter" after restarting. This means retrigger delay = fresh - 2 T-cycles.
         // In CGB double-speed mode the bus supplies the APU tick accumulator's low
         // bit so the fresh delay can distinguish the two CPU M-cycles inside one
-        // APU tick: 10 T-cycles for phase 0, 8 T-cycles for phase 1.
+        // APU tick: 10 T-cycles for trigger phase 0, 8 T-cycles for trigger phase 1.
+        // If trigger phase 1 follows an APU power-on at phase 0, SameSuite's
+        // align_cpu tests show the first duty advance is another 2 T-cycles later.
         let fresh_delay_t = apu_tick_accumulator
-            .map(|acc| 10u16 - 2 * u16::from(acc & 1))
-            .unwrap_or(if lf_div { 6u16 } else { 8u16 });
+            .map(|acc| {
+                let trigger_phase = acc & 1;
+                let power_on_phase = (acc >> 1) & 1;
+                10u16 - 2 * u16::from(trigger_phase)
+                    + if trigger_phase == 1 && power_on_phase == 0 {
+                        2
+                    } else {
+                        0
+                    }
+            })
+            .unwrap_or(if lf_div { 8u16 } else { 6u16 });
         let delay_t = if was_active {
             // Retrigger delay: 1 2MHz tick (2 T-cycles) shorter than fresh
             fresh_delay_t.saturating_sub(2)
@@ -570,6 +590,189 @@ mod tests {
             ch.duty_pos,
             (duty_before + 1) & 7,
             "duty_pos should advance once"
+        );
+    }
+
+    // ── NRx2 zombie-mode glitch ───────────────────────────────────────────
+
+    #[test]
+    fn test_nrx2_zombie_tick_when_period_zero_to_nonzero_decrease() {
+        // Pan Docs zombie mode: writing a nonzero period while old period was 0
+        // ticks the volume in the current (decrease) direction.
+        let mut ch = Channel2::new();
+        ch.write_nr22(0x70); // vol=7, sub, period=0
+        ch.write_nr24(0x80, false, false); // trigger
+        assert_eq!(ch.volume, 7);
+        ch.write_nr22(0x71); // period: 0 → 1, same sub direction
+        assert_eq!(ch.volume, 6, "zombie tick should decrement volume");
+    }
+
+    #[test]
+    fn test_nrx2_zombie_tick_when_period_zero_to_nonzero_increase() {
+        // Zombie tick with increase direction.
+        let mut ch = Channel2::new();
+        ch.write_nr22(0x78); // vol=7, add, period=0
+        ch.write_nr24(0x80, false, false); // trigger
+        assert_eq!(ch.volume, 7);
+        ch.write_nr22(0x79); // period: 0 → 1, same add direction
+        assert_eq!(ch.volume, 8, "zombie tick should increment volume");
+    }
+
+    #[test]
+    fn test_nrx2_zombie_no_tick_when_old_period_nonzero() {
+        // No zombie tick when old period was already nonzero.
+        let mut ch = Channel2::new();
+        ch.write_nr22(0x71); // vol=7, sub, period=1
+        ch.write_nr24(0x80, false, false); // trigger
+        assert_eq!(ch.volume, 7);
+        ch.write_nr22(0x72); // period: 1 → 2, same direction
+        assert_eq!(ch.volume, 7, "no zombie tick when old_period != 0");
+    }
+
+    #[test]
+    fn test_nrx2_zombie_x08_to_x08_ticks_add() {
+        // Special case: both old and new lower nibble = $08 (period=0, add=true) → tick.
+        let mut ch = Channel2::new();
+        ch.write_nr22(0x78); // vol=7, add, period=0
+        ch.write_nr24(0x80, false, false); // trigger
+        assert_eq!(ch.volume, 7);
+        ch.write_nr22(0x78); // $08 → $08 pattern
+        assert_eq!(ch.volume, 8, "x08->x08 zombie tick should increment volume");
+    }
+
+    #[test]
+    fn test_nrx2_zombie_direction_switch_to_add_period_zero_xors() {
+        // Switching direction to add while old period=0: volume ^= 0x0F.
+        let mut ch = Channel2::new();
+        ch.write_nr22(0x70); // vol=7, sub, period=0
+        ch.write_nr24(0x80, false, false); // trigger
+        assert_eq!(ch.volume, 7);
+        ch.write_nr22(0x78); // switch to add, period=0
+        // 7 ^ 0x0F = 8
+        assert_eq!(
+            ch.volume, 8,
+            "direction switch to add with period=0 should XOR volume with 0x0F"
+        );
+    }
+
+    #[test]
+    fn test_nrx2_zombie_direction_switch_to_add_nonzero_period_subtracts() {
+        // Switching direction to add while old period != 0: volume = (0x0E - vol) & 0x0F.
+        let mut ch = Channel2::new();
+        ch.write_nr22(0x71); // vol=7, sub, period=1
+        ch.write_nr24(0x80, false, false); // trigger
+        assert_eq!(ch.volume, 7);
+        ch.write_nr22(0x79); // switch to add, period=1
+        // (0x0E - 7) & 0x0F = 7
+        assert_eq!(
+            ch.volume, 7,
+            "direction switch to add with nonzero period should use (0x0E - vol) formula"
+        );
+    }
+
+    #[test]
+    fn test_nrx2_zombie_direction_switch_to_subtract() {
+        // Switching direction from add to sub: volume = (0x10 - vol) & 0x0F.
+        let mut ch = Channel2::new();
+        ch.write_nr22(0x79); // vol=7, add, period=1
+        ch.write_nr24(0x80, false, false); // trigger
+        assert_eq!(ch.volume, 7);
+        ch.write_nr22(0x71); // switch to sub, period=1
+        // (0x10 - 7) & 0x0F = 9
+        assert_eq!(
+            ch.volume, 9,
+            "direction switch to sub should use (0x10 - vol) formula"
+        );
+    }
+
+    #[test]
+    fn test_nrx2_zombie_reload_countdown_when_clock_active() {
+        // When env clock just fired, writing NRx2 reloads env_timer to new_period.
+        let mut ch = Channel2::new();
+        ch.write_nr22(0x71); // vol=7, sub, period=1
+        ch.write_nr24(0x80, false, false); // trigger → env_timer = 1
+        ch.clock_envelope_decrement(); // env_timer → 0
+        ch.clock_envelope_secondary(); // arms clock, env_timer → 1
+        assert!(
+            ch.env_clock_state.clock,
+            "clock should be armed after secondary"
+        );
+        ch.write_nr22(0x73); // sub, period=3 (same direction, clock active)
+        assert_eq!(
+            ch.env_timer, 3,
+            "env_timer should reload to new_period when clock is active"
+        );
+    }
+
+    // ── Split envelope clock phases ───────────────────────────────────────
+
+    #[test]
+    fn test_clock_envelope_decrement_only_decrements_timer() {
+        // clock_envelope_decrement decrements env_timer without changing volume.
+        let mut ch = Channel2::new();
+        ch.write_nr22(0x71); // vol=7, sub, period=1
+        ch.write_nr24(0x80, false, false); // trigger → env_timer = 1
+        let vol_before = ch.volume;
+        ch.clock_envelope_decrement();
+        assert_eq!(ch.volume, vol_before, "decrement must not change volume");
+        assert_eq!(ch.env_timer, 0, "decrement should reduce env_timer to 0");
+    }
+
+    #[test]
+    fn test_clock_envelope_secondary_arms_clock_and_reloads_timer() {
+        // After decrement reaches 0, secondary arms the clock flag and reloads timer.
+        let mut ch = Channel2::new();
+        ch.write_nr22(0x71); // period=1
+        ch.write_nr24(0x80, false, false); // trigger → env_timer = 1
+        let vol_before = ch.volume;
+        ch.clock_envelope_decrement(); // env_timer → 0
+        assert!(
+            !ch.env_clock_state.clock,
+            "clock not yet armed before secondary"
+        );
+        ch.clock_envelope_secondary(); // arm clock, reload timer
+        assert!(
+            ch.env_clock_state.clock,
+            "clock should be armed after secondary"
+        );
+        assert_eq!(
+            ch.env_timer, 1,
+            "timer should reload to period after secondary"
+        );
+        assert_eq!(ch.volume, vol_before, "secondary must not change volume");
+    }
+
+    #[test]
+    fn test_clock_envelope_primary_fires_volume_change_when_clock_set() {
+        // Primary fires volume change and clears clock flag.
+        let mut ch = Channel2::new();
+        ch.write_nr22(0x71); // vol=7, sub, period=1
+        ch.write_nr24(0x80, false, false); // trigger
+        ch.clock_envelope_decrement();
+        ch.clock_envelope_secondary();
+        assert_eq!(ch.volume, 7);
+        ch.clock_envelope_primary();
+        assert_eq!(
+            ch.volume, 6,
+            "primary should decrement volume when clock armed"
+        );
+        assert!(
+            !ch.env_clock_state.clock,
+            "clock flag should be cleared after primary"
+        );
+    }
+
+    #[test]
+    fn test_clock_envelope_primary_no_change_without_clock() {
+        // Primary is a no-op when clock flag was not armed.
+        let mut ch = Channel2::new();
+        ch.write_nr22(0x71); // vol=7, sub, period=1
+        ch.write_nr24(0x80, false, false); // trigger
+        let vol_before = ch.volume;
+        ch.clock_envelope_primary(); // clock not armed → no-op
+        assert_eq!(
+            ch.volume, vol_before,
+            "primary must not change volume when clock not armed"
         );
     }
 }

@@ -142,42 +142,51 @@ impl Channel4 {
         }
     }
 
-    pub fn clock_envelope(&mut self) {
-        // Clear the clock flag from any previous tick.
-        self.env_clock_state.clock = false;
-
+    pub fn clock_envelope_decrement(&mut self) {
         if self.env_period == 0 {
             return;
         }
         if self.env_timer > 0 {
             self.env_timer -= 1;
         }
+    }
+
+    pub fn clock_envelope_secondary(&mut self) {
+        if !self.active || self.env_period == 0 {
+            return;
+        }
         if self.env_timer == 0 {
             self.env_timer = self.env_period;
-            // Set clock state to indicate envelope just ticked.
             self.env_clock_state.clock = true;
-
-            if self.env_clock_state.locked {
-                // Envelope is locked - no volume change.
-                return;
-            }
-
-            let old_volume = self.volume;
-            if self.env_add && self.volume < 15 {
-                self.volume += 1;
-            } else if !self.env_add && self.volume > 0 {
-                self.volume -= 1;
-            }
-
-            // Lock envelope if volume has hit its limit.
-            if (self.env_add && self.volume == 15) || (!self.env_add && self.volume == 0) {
-                self.env_clock_state.locked = true;
-            }
-
-            if old_volume != self.volume {
-                trace_apu!(3; "GB APU CH4 envelope volume {} -> {}", old_volume, self.volume);
-            }
         }
+    }
+
+    pub fn clock_envelope_primary(&mut self) {
+        if !self.env_clock_state.clock {
+            return;
+        }
+        self.env_clock_state.clock = false;
+        if self.env_clock_state.locked {
+            return;
+        }
+        let old_volume = self.volume;
+        if self.env_add && self.volume < 15 {
+            self.volume += 1;
+        } else if !self.env_add && self.volume > 0 {
+            self.volume -= 1;
+        }
+        if (self.env_add && self.volume == 15) || (!self.env_add && self.volume == 0) {
+            self.env_clock_state.locked = true;
+        }
+        if old_volume != self.volume {
+            trace_apu!(3; "GB APU CH4 envelope volume {} -> {}", old_volume, self.volume);
+        }
+    }
+
+    pub fn clock_envelope(&mut self) {
+        self.clock_envelope_decrement();
+        self.clock_envelope_secondary();
+        self.clock_envelope_primary();
     }
 
     /// Clear envelope clock flag after frame sequencer step completes.
@@ -354,15 +363,69 @@ impl Channel4 {
         // accumulator is expected to be 0 or 1; mask the low bit so callers
         // cannot accidentally feed higher bookkeeping bits into the phase
         // calculation.
-        let delay_t = apu_tick_accumulator
-            .map(|acc| 6u32 - 2 * u32::from(acc & 1))
-            .unwrap_or(0);
-        let delay_t = if was_active {
-            delay_t.saturating_sub(2)
+        let period = self.freq_timer_period();
+        let freq_timer = if let Some(acc) = apu_tick_accumulator {
+            let delay_t = 6u32 - 2 * u32::from(acc & 1);
+            let delay_t = if was_active {
+                delay_t.saturating_sub(2)
+            } else {
+                delay_t
+            };
+            period + delay_t
         } else {
-            delay_t
+            match self.read_nr43() {
+                0x09 => {
+                    if self.freq_timer <= 4 {
+                        16
+                    } else {
+                        20
+                    }
+                }
+                0x18 => 16,
+                0x0A => {
+                    if self.freq_timer >= 20 {
+                        24
+                    } else {
+                        20
+                    }
+                }
+                0x28 => 24,
+                0x0B => {
+                    if self.freq_timer >= 36 {
+                        32
+                    } else {
+                        28
+                    }
+                }
+                0x1A => {
+                    if self.freq_timer >= 52 {
+                        40
+                    } else {
+                        36
+                    }
+                }
+                0x0C => {
+                    if self.freq_timer >= 52 {
+                        40
+                    } else {
+                        36
+                    }
+                }
+                0x29 => {
+                    if self.freq_timer >= 52 {
+                        40
+                    } else {
+                        44
+                    }
+                }
+                0x38 => 40,
+                _ => {
+                    let divisor = u32::from(self.divisor_code);
+                    if divisor == 0 { 12 } else { divisor * 8 + 12 }
+                }
+            }
         };
-        self.freq_timer = self.freq_timer_period() + delay_t;
+        self.freq_timer = freq_timer;
         self.volume = self.init_volume;
         self.env_timer = self.env_period;
         self.lfsr = 0x7FFF;

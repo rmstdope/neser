@@ -207,6 +207,24 @@ impl Apu {
         }
     }
 
+    /// Clock the APU envelope units due to a DIV-APU **rising** edge.
+    ///
+    /// The GB APU envelope has a two-phase mechanism driven by the DIV-APU bit:
+    /// - **Rising edge** (this function): if a channel's envelope countdown has
+    ///   reached zero, arm the clock flag and reload the countdown so that the
+    ///   volume tick fires at the very next falling edge.  This is the "phantom
+    ///   tick" mechanism needed for zombie-mode / NRx2-glitch accuracy.
+    /// - **Falling edge** (`clock_div_apu`): fire the volume tick for any channel
+    ///   whose clock flag was armed by the most recent secondary event.
+    pub fn clock_div_apu_secondary(&mut self) {
+        if !self.powered {
+            return;
+        }
+        self.ch1.clock_envelope_secondary();
+        self.ch2.clock_envelope_secondary();
+        self.ch4.clock_envelope_secondary();
+    }
+
     /// Clock the APU frame sequencer due to a DIV-APU falling edge.
     ///
     /// The GB APU frame sequencer is clocked by the falling edge of DIV bit 4
@@ -245,6 +263,13 @@ impl Apu {
 
         let flags = FS_TABLE[self.fs_step as usize];
 
+        // Fire envelope tick for any channel whose clock flag was armed by the
+        // most recent secondary (rising-edge) event.  Must run at *every* FS step
+        // so that phantom ticks land on the correct falling edge, not just step 7.
+        self.ch1.clock_envelope_primary();
+        self.ch2.clock_envelope_primary();
+        self.ch4.clock_envelope_primary();
+
         if flags & 0x01 != 0 {
             trace_apu!(4; "GB APU clock length counters");
             self.ch1.clock_length();
@@ -256,17 +281,16 @@ impl Apu {
             trace_apu!(4; "GB APU clock CH1 sweep");
             self.ch1.clock_sweep(self.lf_div);
         }
-        if flags & 0x04 != 0 {
-            trace_apu!(4; "GB APU clock envelopes");
-            self.ch1.clock_envelope();
-            self.ch2.clock_envelope();
-            self.ch4.clock_envelope();
-        }
 
-        // Clear envelope clock flags so NRx2 glitch logic only sees them for one M-cycle.
-        self.ch1.clear_envelope_clock();
-        self.ch2.clear_envelope_clock();
-        self.ch4.clear_envelope_clock();
+        // Decrement envelope countdowns every 8th FS event (64 Hz).
+        // Uses div_divider bit pattern to match SameBoy timing: fires when
+        // div_divider & 7 == 7, i.e. on the 7th, 15th, 23rd … falling edges.
+        if self.div_divider & 7 == 7 {
+            trace_apu!(4; "GB APU decrement envelope countdowns");
+            self.ch1.clock_envelope_decrement();
+            self.ch2.clock_envelope_decrement();
+            self.ch4.clock_envelope_decrement();
+        }
 
         self.fs_step = (self.fs_step + 1) & 7;
     }

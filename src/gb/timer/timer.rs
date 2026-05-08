@@ -213,14 +213,18 @@ impl Timer {
 
     /// Advance the timer by `m_cycles` M-cycles.
     ///
-    /// Internally the timer steps one T-cycle at a time for correct falling-edge
-    /// detection.  Sets `interrupt_pending` when TIMA overflows (caller must
-    /// propagate to IF register $FF0F bit 2).
+    /// Internally the timer steps one T-cycle at a time for correct edge detection.
+    /// Sets `interrupt_pending` when TIMA overflows (caller must propagate to IF
+    /// register $FF0F bit 2).
     ///
-    /// Returns the number of DIV-APU falling edges that occurred during this tick.
-    /// The caller should notify the APU to step its frame sequencer for each edge.
-    pub fn tick(&mut self, m_cycles: u8) -> u8 {
-        let mut div_apu_edges: u8 = 0;
+    /// Returns `(falling_edges, rising_edges)` of the DIV-APU bit that occurred.
+    /// The caller should call `clock_div_apu()` for each falling edge to advance the
+    /// APU frame sequencer (length, sweep, envelope primary) and
+    /// `clock_div_apu_secondary()` for each rising edge to service the envelope
+    /// phantom-tick / secondary mechanism only (does not step the frame sequencer).
+    pub fn tick(&mut self, m_cycles: u8) -> (u8, u8) {
+        let mut div_apu_falling: u8 = 0;
+        let mut div_apu_rising: u8 = 0;
 
         for _ in 0..m_cycles {
             // Clear the load-active flag from the previous M-cycle.
@@ -237,8 +241,8 @@ impl Timer {
             let enabled = self.tac & 0x04 != 0;
             let bit = MUX_BIT[(self.tac & 0x03) as usize];
 
-            // Advance the system counter one T-cycle at a time, detecting falling
-            // edges on the multiplexer bit and the DIV-APU bit.
+            // Advance the system counter one T-cycle at a time, detecting edges on
+            // the multiplexer bit and both edges of the DIV-APU bit.
             for _ in 0..4 {
                 let old = self.div_counter;
                 self.div_counter = self.div_counter.wrapping_add(1);
@@ -250,12 +254,17 @@ impl Timer {
 
                 // Check for DIV-APU falling edge (bit HIGH→LOW).
                 if old & self.div_apu_bit != 0 && self.div_counter & self.div_apu_bit == 0 {
-                    div_apu_edges += 1;
+                    div_apu_falling += 1;
+                }
+
+                // Check for DIV-APU rising edge (bit LOW→HIGH).
+                if old & self.div_apu_bit == 0 && self.div_counter & self.div_apu_bit != 0 {
+                    div_apu_rising += 1;
                 }
             }
         }
 
-        div_apu_edges
+        (div_apu_falling, div_apu_rising)
     }
 
     /// Returns true when the AND-gate output (TAC.enable AND selected mux bit) is HIGH.

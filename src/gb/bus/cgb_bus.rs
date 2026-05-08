@@ -86,6 +86,8 @@ pub struct CgbBus {
     key1: u8,
     /// Accumulator for half-rate APU ticking in double-speed mode.
     apu_tick_accumulator: u8,
+    /// Double-speed APU tick accumulator phase when the APU was powered on.
+    apu_power_on_accumulator: u8,
     /// Hardware model variant (CGB-0 through CGB-E).
     /// Stored for model-specific hardware initialization (DIV counter initial
     /// state, post-boot register values).
@@ -176,6 +178,7 @@ impl CgbBus {
             svbk: 0,
             key1: 0,
             apu_tick_accumulator: 0,
+            apu_power_on_accumulator: 0,
             model,
             // Undocumented CGB registers.
             // $FF72-$FF73: fully R/W, initial value $00.
@@ -408,6 +411,7 @@ impl CgbBus {
 
         // Reset APU accumulator when switching speeds.
         self.apu_tick_accumulator = 0;
+        self.apu_power_on_accumulator = 0;
 
         true
     }
@@ -435,14 +439,18 @@ impl CgbBus {
         let double = self.is_double_speed();
 
         for _ in 0..m_cycles {
-            let div_apu_edges = self.timer.tick(1);
+            let (div_apu_falling, div_apu_rising) = self.timer.tick(1);
             if self.timer.interrupt_pending {
                 self.if_reg |= 0x04;
                 self.timer.interrupt_pending = false;
             }
 
+            // Rising edge fires the APU secondary event (for envelope phantom-tick detection).
+            for _ in 0..div_apu_rising {
+                self.apu.clock_div_apu_secondary();
+            }
             // Clock APU frame sequencer for each DIV-APU falling edge.
-            for _ in 0..div_apu_edges {
+            for _ in 0..div_apu_falling {
                 self.apu.clock_div_apu();
             }
 
@@ -661,6 +669,7 @@ impl CgbBus {
         self.svbk = 0;
         self.key1 = 0;
         self.apu_tick_accumulator = 0;
+        self.apu_power_on_accumulator = 0;
         // Respect skip_boot_rom setting from construction
         self.boot_rom_active = !self.skip_boot_rom;
         // Reset undocumented CGB registers
@@ -776,6 +785,7 @@ impl CgbBus {
         self.svbk = state.svbk.unwrap_or(0);
         self.key1 = state.key1.unwrap_or(0);
         self.apu_tick_accumulator = state.apu_tick_accumulator.unwrap_or(0);
+        self.apu_power_on_accumulator = 0;
         // Restore undocumented CGB registers with defaults for older save states
         self.ff72 = state.ff72.unwrap_or(0x00);
         self.ff73 = state.ff73.unwrap_or(0x00);
@@ -917,12 +927,15 @@ impl GbBus for CgbBus {
             0xFF26 => {
                 // NR52 special handling: pass DIV-APU bit state for power-on skip logic.
                 let div_apu_high = self.timer.is_div_apu_bit_high();
+                if val & 0x80 != 0 && self.apu.read_register(0xFF26) & 0x80 == 0 {
+                    self.apu_power_on_accumulator = self.apu_tick_accumulator & 1;
+                }
                 self.apu.write_nr52_with_div_state(val, div_apu_high);
             }
             0xFF10..=0xFF25 | 0xFF27..=0xFF3F => {
-                let apu_phase = self
-                    .is_double_speed()
-                    .then_some(self.apu_tick_accumulator & 1);
+                let apu_phase = self.is_double_speed().then_some(
+                    (self.apu_tick_accumulator & 1) | (self.apu_power_on_accumulator << 1),
+                );
                 self.apu.write_register_with_apu_phase(addr, val, apu_phase);
             }
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B => {
