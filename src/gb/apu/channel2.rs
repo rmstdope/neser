@@ -394,6 +394,24 @@ mod tests {
     }
 
     #[test]
+    fn test_double_speed_phase_bits_set_initial_freq_timer() {
+        let mut phase0 = Channel2::new();
+        phase0.write_nr22(0xF0);
+        phase0.write_nr21(0x80);
+        phase0.write_nr23(0xFF);
+        phase0.write_nr24_with_apu_phase(0x87, false, false, Some(0b00));
+
+        let mut phase1_after_power_phase1 = Channel2::new();
+        phase1_after_power_phase1.write_nr22(0xF0);
+        phase1_after_power_phase1.write_nr21(0x80);
+        phase1_after_power_phase1.write_nr23(0xFF);
+        phase1_after_power_phase1.write_nr24_with_apu_phase(0x87, false, false, Some(0b11));
+
+        assert_eq!(phase0.freq_timer, 14);
+        assert_eq!(phase1_after_power_phase1.freq_timer, 12);
+    }
+
+    #[test]
     fn test_trigger_makes_channel_active() {
         let ch = triggered_ch2();
         assert!(ch.is_active());

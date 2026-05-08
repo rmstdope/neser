@@ -968,6 +968,17 @@ mod tests {
         ch
     }
 
+    #[test]
+    fn test_double_speed_phase_bits_adjust_fresh_trigger_delay() {
+        assert_eq!(pulse_trigger_fresh_delay_t(false, Some(0b00)), 10);
+        assert_eq!(pulse_trigger_fresh_delay_t(false, Some(0b11)), 8);
+        assert_eq!(
+            pulse_trigger_fresh_delay_t(false, Some(0b01)),
+            10,
+            "trigger phase 1 after NR52 power-on phase 0 gets the align_cpu +2 T-cycle delay"
+        );
+    }
+
     // ── Phase 2: restart_hold ────────────────────────────────────────────
     //
     // Hardware behavior:

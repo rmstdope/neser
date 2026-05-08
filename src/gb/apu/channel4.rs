@@ -565,6 +565,32 @@ mod tests {
         assert_eq!(Channel4::new().output(), 0.0);
     }
 
+    #[test]
+    fn test_double_speed_phase_sets_initial_noise_timer() {
+        let mut phase0 = Channel4::new();
+        phase0.write_nr42(0xF0);
+        phase0.write_nr43(0x00);
+        phase0.write_nr44_with_apu_phase(0x80, false, Some(0));
+
+        let mut phase1 = Channel4::new();
+        phase1.write_nr42(0xF0);
+        phase1.write_nr43(0x00);
+        phase1.write_nr44_with_apu_phase(0x80, false, Some(1));
+
+        assert_eq!(phase0.freq_timer, 14);
+        assert_eq!(phase1.freq_timer, 12);
+    }
+
+    #[test]
+    fn test_normal_speed_frequency_alignment_startup_timer() {
+        let mut ch = Channel4::new();
+        ch.write_nr42(0xF0);
+        ch.write_nr43(0x09);
+        ch.freq_timer = 4;
+        ch.write_nr44(0x80, false);
+        assert_eq!(ch.freq_timer, 16);
+    }
+
     // ── T-cycle precision tests ───────────────────────────────────────────
 
     #[test]
