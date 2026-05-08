@@ -42,6 +42,34 @@ pub(super) fn pulse_trigger_fresh_delay_t(
         .unwrap_or(if lf_div { 8u16 } else { 6u16 })
 }
 
+/// CGB-E max-frequency duty-0 PCM edge visibility.
+///
+/// SameSuite samples PCM12 at the boundary around the duty step 7→0 wrap. The
+/// wrap remains visible at the reload boundary, while the preceding half-step is
+/// still silent.
+pub(super) fn pulse_duty0_max_freq_edge_output(
+    duty: u8,
+    freq: u16,
+    first_sample_zero: bool,
+    duty_pos: u8,
+    freq_timer: u16,
+    volume: u8,
+) -> Option<u8> {
+    if duty != 0 || freq != 0x07FF || first_sample_zero {
+        return None;
+    }
+
+    const MAX_FREQ_DUTY0_WRAP_TIMER: u16 = 4;
+    const MAX_FREQ_DUTY0_PRE_WRAP_TIMER: u16 = 2;
+    if duty_pos == 0 && freq_timer == MAX_FREQ_DUTY0_WRAP_TIMER {
+        return Some(volume);
+    }
+    if duty_pos == 7 && freq_timer == MAX_FREQ_DUTY0_PRE_WRAP_TIMER {
+        return Some(0);
+    }
+    None
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Channel1 {
     // NR10 fields
@@ -70,7 +98,11 @@ pub struct Channel1 {
     pub(crate) length_counter: u8, // 0-64; silences when reaches 0
     volume: u8,                    // current volume 0-15
     env_timer: u8,                 // envelope period countdown
-    sweep_shadow: u16,             // shadow frequency register
+    /// Latched square-wave PCM output. Duty register writes do not affect this
+    /// until the current sample finishes and the duty step advances.
+    #[serde(default)]
+    current_output: u8,
+    sweep_shadow: u16, // shadow frequency register
     sweep_enabled: bool,
     /// Set when a negate-mode calculation is performed; cleared on trigger.
     /// If NR10 clears the negate bit after this was set, the channel is disabled.
@@ -175,6 +207,7 @@ impl Channel1 {
             length_counter: 0,
             volume: 0,
             env_timer: 0,
+            current_output: 0,
             sweep_shadow: 0,
             sweep_enabled: false,
             negate_used: false,
@@ -214,19 +247,7 @@ impl Channel1 {
 
     /// Output sample in 0.0–1.0 range.
     pub fn output(&self) -> f32 {
-        if !self.active || !self.dac_on {
-            return 0.0;
-        }
-        // First duty step after first trigger post-power-on outputs 0.
-        if self.first_sample_zero {
-            return 0.0;
-        }
-        let bit = super::apu::DUTY_TABLE[self.duty as usize][self.duty_pos as usize];
-        if bit == 1 {
-            self.volume as f32 / 15.0
-        } else {
-            0.0
-        }
+        f32::from(self.digital_output()) / 15.0
     }
 
     /// Digital output (0-15) before DAC conversion (for PCM12 register).
@@ -234,12 +255,26 @@ impl Channel1 {
         if !self.active || !self.dac_on {
             return 0;
         }
-        // First duty step after first trigger post-power-on outputs 0.
-        if self.first_sample_zero {
-            return 0;
+        if let Some(output) = pulse_duty0_max_freq_edge_output(
+            self.duty,
+            self.freq,
+            self.first_sample_zero,
+            self.duty_pos,
+            self.freq_timer,
+            self.volume,
+        ) {
+            return output;
+        }
+        self.current_output
+    }
+
+    fn update_current_output(&mut self) {
+        if !self.active || !self.dac_on || self.first_sample_zero {
+            self.current_output = 0;
+            return;
         }
         let bit = super::apu::DUTY_TABLE[self.duty as usize][self.duty_pos as usize];
-        if bit == 1 { self.volume } else { 0 }
+        self.current_output = if bit == 1 { self.volume } else { 0 };
     }
 
     /// Advance the frequency timer by one M-cycle (= 4 T-cycles).
@@ -265,6 +300,7 @@ impl Channel1 {
                     let old_pos = self.duty_pos;
                     self.duty_pos = (self.duty_pos + 1) & 7;
                     self.first_sample_zero = false;
+                    self.update_current_output();
                     trace_apu!(5; "GB APU CH1 tick duty_pos {} -> {} period=0x{:03X}", old_pos, self.duty_pos, self.freq);
                 }
             }
@@ -280,6 +316,7 @@ impl Channel1 {
         trace_apu!(3; "GB APU CH1 length_counter={} active={}", self.length_counter, self.length_counter > 0);
         if self.length_counter == 0 {
             self.active = false;
+            self.current_output = 0;
         }
     }
 
@@ -542,6 +579,7 @@ impl Channel1 {
         }
         if old_volume != self.volume {
             trace_apu!(3; "GB APU CH1 envelope volume {} -> {}", old_volume, self.volume);
+            self.update_current_output();
         }
     }
 
@@ -576,6 +614,7 @@ impl Channel1 {
         self.length_counter = 0;
         self.volume = 0;
         self.env_timer = 0;
+        self.current_output = 0;
         self.sweep_shadow = 0;
         self.sweep_enabled = false;
         self.triggered_once = false;
@@ -728,9 +767,11 @@ impl Channel1 {
 
         if !self.dac_on {
             self.active = false;
+            self.current_output = 0;
         } else if self.active {
             // Apply zombie mode glitch when writing NRx2 while channel is active.
             self.apply_nrx2_glitch(old_val, val);
+            self.update_current_output();
         }
     }
 
@@ -874,6 +915,11 @@ impl Channel1 {
         self.freq_timer = period + delay_t;
         self.volume = self.init_volume;
         self.env_timer = self.env_period;
+        if was_active {
+            self.update_current_output();
+        } else {
+            self.current_output = 0;
+        }
         // Reset envelope clock state on trigger.
         self.env_clock_state = EnvelopeClockState::default();
         self.sweep_shadow = self.freq;
@@ -964,6 +1010,62 @@ mod tests {
         // NR14: trigger, no length enable, freq high = 0
         ch.write_nr14(0x80, false, false);
         ch
+    }
+
+    #[test]
+    fn test_duty0_max_freq_edge_output_boundaries() {
+        assert_eq!(
+            pulse_duty0_max_freq_edge_output(0, 0x07FF, false, 0, 4, 8),
+            Some(8),
+            "step 7→0 wrap boundary should expose the high duty-0 edge"
+        );
+        assert_eq!(
+            pulse_duty0_max_freq_edge_output(0, 0x07FF, false, 7, 2, 8),
+            Some(0),
+            "pre-wrap half-step should remain silent"
+        );
+        assert_eq!(
+            pulse_duty0_max_freq_edge_output(1, 0x07FF, false, 0, 4, 8),
+            None,
+            "quirk applies only to duty 0"
+        );
+        assert_eq!(
+            pulse_duty0_max_freq_edge_output(0, 0x07FE, false, 0, 4, 8),
+            None,
+            "quirk applies only at max frequency"
+        );
+        assert_eq!(
+            pulse_duty0_max_freq_edge_output(0, 0x07FF, true, 0, 4, 8),
+            None,
+            "first startup sample remains suppressed"
+        );
+    }
+
+    #[test]
+    fn test_duty_write_takes_effect_on_next_sample() {
+        let mut ch = Channel1::new();
+        ch.write_nr12(0x80);
+        ch.write_nr11(0xC0);
+        ch.write_nr13(0xFF);
+        ch.write_nr14(0x87, false, false);
+
+        for _ in 0..3 {
+            ch.tick();
+        }
+
+        assert_eq!(ch.duty_pos, 1);
+        assert_eq!(ch.digital_output(), 8);
+
+        ch.write_nr11(0x00);
+        assert_eq!(
+            ch.digital_output(),
+            8,
+            "duty writes should not affect the current square sample"
+        );
+
+        ch.tick();
+        assert_eq!(ch.duty_pos, 2);
+        assert_eq!(ch.digital_output(), 0);
     }
 
     #[test]
@@ -2150,6 +2252,7 @@ mod tests {
         // to simulate state after first duty step has completed.
         ch.duty_pos = 5;
         ch.first_sample_zero = false;
+        ch.update_current_output();
         // DUTY_TABLE[2][5] = 1
         assert!(
             ch.output() > 0.0,

@@ -5,7 +5,9 @@
 use crate::trace_apu;
 use serde::{Deserialize, Serialize};
 
-use super::channel1::{EnvelopeClockState, pulse_trigger_fresh_delay_t};
+use super::channel1::{
+    EnvelopeClockState, pulse_duty0_max_freq_edge_output, pulse_trigger_fresh_delay_t,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Channel2 {
@@ -24,6 +26,10 @@ pub struct Channel2 {
     pub(crate) length_counter: u8,
     volume: u8,
     env_timer: u8,
+    /// Latched square-wave PCM output. Duty register writes do not affect this
+    /// until the current sample finishes and the duty step advances.
+    #[serde(default)]
+    current_output: u8,
     /// Gate flag: duty step clock is disabled until the first trigger after
     /// APU power-on (Pan Docs "Obscure Behavior").
     triggered_once: bool,
@@ -59,6 +65,7 @@ impl Channel2 {
             length_counter: 0,
             volume: 0,
             env_timer: 0,
+            current_output: 0,
             triggered_once: false,
             first_sample_zero: false,
             env_clock_state: EnvelopeClockState::default(),
@@ -74,19 +81,7 @@ impl Channel2 {
     }
 
     pub fn output(&self) -> f32 {
-        if !self.active || !self.dac_on {
-            return 0.0;
-        }
-        // First duty step after first trigger post-power-on outputs 0.
-        if self.first_sample_zero {
-            return 0.0;
-        }
-        let bit = super::apu::DUTY_TABLE[self.duty as usize][self.duty_pos as usize];
-        if bit == 1 {
-            self.volume as f32 / 15.0
-        } else {
-            0.0
-        }
+        f32::from(self.digital_output()) / 15.0
     }
 
     /// Digital output (0-15) before DAC conversion (for PCM12 register).
@@ -94,12 +89,26 @@ impl Channel2 {
         if !self.active || !self.dac_on {
             return 0;
         }
-        // First duty step after first trigger post-power-on outputs 0.
-        if self.first_sample_zero {
-            return 0;
+        if let Some(output) = pulse_duty0_max_freq_edge_output(
+            self.duty,
+            self.freq,
+            self.first_sample_zero,
+            self.duty_pos,
+            self.freq_timer,
+            self.volume,
+        ) {
+            return output;
+        }
+        self.current_output
+    }
+
+    fn update_current_output(&mut self) {
+        if !self.active || !self.dac_on || self.first_sample_zero {
+            self.current_output = 0;
+            return;
         }
         let bit = super::apu::DUTY_TABLE[self.duty as usize][self.duty_pos as usize];
-        if bit == 1 { self.volume } else { 0 }
+        self.current_output = if bit == 1 { self.volume } else { 0 };
     }
 
     /// Advance the frequency timer by one M-cycle (= 4 T-cycles).
@@ -120,6 +129,7 @@ impl Channel2 {
                     let old_pos = self.duty_pos;
                     self.duty_pos = (self.duty_pos + 1) & 7;
                     self.first_sample_zero = false;
+                    self.update_current_output();
                     trace_apu!(5; "GB APU CH2 tick duty_pos {} -> {} period=0x{:03X}", old_pos, self.duty_pos, self.freq);
                 }
             }
@@ -134,6 +144,7 @@ impl Channel2 {
         trace_apu!(3; "GB APU CH2 length_counter={} active={}", self.length_counter, self.length_counter > 0);
         if self.length_counter == 0 {
             self.active = false;
+            self.current_output = 0;
         }
     }
 
@@ -175,6 +186,7 @@ impl Channel2 {
         }
         if old_volume != self.volume {
             trace_apu!(3; "GB APU CH2 envelope volume {} -> {}", old_volume, self.volume);
+            self.update_current_output();
         }
     }
 
@@ -199,6 +211,7 @@ impl Channel2 {
         self.length_counter = 0;
         self.volume = 0;
         self.env_timer = 0;
+        self.current_output = 0;
         self.triggered_once = false;
         self.first_sample_zero = false;
         self.env_clock_state = EnvelopeClockState::default();
@@ -240,9 +253,11 @@ impl Channel2 {
 
         if !self.dac_on {
             self.active = false;
+            self.current_output = 0;
         } else if self.active {
             // Apply zombie mode glitch when writing NRx2 while channel is active.
             self.apply_nrx2_glitch(old_val, val);
+            self.update_current_output();
         }
     }
 
@@ -369,6 +384,11 @@ impl Channel2 {
         self.freq_timer = period + delay_t;
         self.volume = self.init_volume;
         self.env_timer = self.env_period;
+        if was_active {
+            self.update_current_output();
+        } else {
+            self.current_output = 0;
+        }
         // Reset envelope clock state on trigger.
         self.env_clock_state = EnvelopeClockState::default();
     }
@@ -386,6 +406,33 @@ mod tests {
         ch.write_nr21(0x80); // 50% duty
         ch.write_nr24(0x80, false, false); // trigger
         ch
+    }
+
+    #[test]
+    fn test_duty_write_takes_effect_on_next_sample() {
+        let mut ch = Channel2::new();
+        ch.write_nr22(0x80);
+        ch.write_nr21(0xC0);
+        ch.write_nr23(0xFF);
+        ch.write_nr24(0x87, false, false);
+
+        for _ in 0..3 {
+            ch.tick();
+        }
+
+        assert_eq!(ch.duty_pos, 1);
+        assert_eq!(ch.digital_output(), 8);
+
+        ch.write_nr21(0x00);
+        assert_eq!(
+            ch.digital_output(),
+            8,
+            "duty writes should not affect the current square sample"
+        );
+
+        ch.tick();
+        assert_eq!(ch.duty_pos, 2);
+        assert_eq!(ch.digital_output(), 0);
     }
 
     #[test]
