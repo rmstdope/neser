@@ -577,6 +577,15 @@ mod tests {
     }
 
     #[test]
+    fn test_double_speed_phase_uses_shifted_noise_period() {
+        let mut ch = Channel4::new();
+        ch.write_nr42(0xF0);
+        ch.write_nr43(0x40); // shift=4, divisor_code=0 => period 128.
+        ch.write_nr44_with_apu_phase(0x80, false, Some(0));
+        assert_eq!(ch.freq_timer, 134);
+    }
+
+    #[test]
     fn test_normal_speed_frequency_alignment_startup_timer() {
         let mut ch = Channel4::new();
         ch.write_nr42(0xF0);
@@ -590,7 +599,7 @@ mod tests {
     fn test_normal_speed_default_startup_timer_uses_shifted_period() {
         let mut ch = Channel4::new();
         ch.write_nr42(0xF0);
-        ch.write_nr43(0x40); // shift=4, divisor_code=0 => period 8 << 4.
+        ch.write_nr43(0x40); // period 8 << 4 = 128; default startup adds 4.
         ch.write_nr44(0x80, false);
         assert_eq!(ch.freq_timer, 132);
     }
