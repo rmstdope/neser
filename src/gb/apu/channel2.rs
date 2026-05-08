@@ -353,6 +353,9 @@ impl Channel2 {
         //
         // Per SameSuite comment: "the start delay from the 'delay' test is actually
         // 1 tick shorter" after restarting. This means retrigger delay = fresh - 2 T-cycles.
+        // In CGB double-speed mode the bus supplies the APU tick accumulator's low
+        // bit so the fresh delay can distinguish the two CPU M-cycles inside one
+        // APU tick: 10 T-cycles for phase 0, 8 T-cycles for phase 1.
         let fresh_delay_t = apu_tick_accumulator
             .map(|acc| 10u16 - 2 * u16::from(acc & 1))
             .unwrap_or(if lf_div { 6u16 } else { 8u16 });
