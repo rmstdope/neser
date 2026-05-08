@@ -5,7 +5,7 @@
 use crate::trace_apu;
 use serde::{Deserialize, Serialize};
 
-use super::channel1::EnvelopeClockState;
+use super::channel1::{EnvelopeClockState, pulse_trigger_fresh_delay_t};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Channel2 {
@@ -362,23 +362,7 @@ impl Channel2 {
         //
         // Per SameSuite comment: "the start delay from the 'delay' test is actually
         // 1 tick shorter" after restarting. This means retrigger delay = fresh - 2 T-cycles.
-        // In CGB double-speed mode the bus supplies the APU tick accumulator's low
-        // bit so the fresh delay can distinguish the two CPU M-cycles inside one
-        // APU tick: 10 T-cycles for trigger phase 0, 8 T-cycles for trigger phase 1.
-        // If trigger phase 1 follows an APU power-on at phase 0, SameSuite's
-        // align_cpu tests show the first duty advance is another 2 T-cycles later.
-        let fresh_delay_t = apu_tick_accumulator
-            .map(|acc| {
-                let trigger_phase = acc & 1;
-                let power_on_phase = (acc >> 1) & 1;
-                10u16 - 2 * u16::from(trigger_phase)
-                    + if trigger_phase == 1 && power_on_phase == 0 {
-                        2
-                    } else {
-                        0
-                    }
-            })
-            .unwrap_or(if lf_div { 8u16 } else { 6u16 });
+        let fresh_delay_t = pulse_trigger_fresh_delay_t(lf_div, apu_tick_accumulator);
         let delay_t = if was_active {
             // Retrigger delay: 1 2MHz tick (2 T-cycles) shorter than fresh
             fresh_delay_t.saturating_sub(2)

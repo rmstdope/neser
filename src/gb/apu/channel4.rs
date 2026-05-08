@@ -373,6 +373,11 @@ impl Channel4 {
             };
             period + delay_t
         } else {
+            // Normal-speed CH4 startup is phase-sensitive to the background
+            // noise counter. These NR43/timer combinations are the CGB-E cases
+            // exercised by SameSuite channel_4_frequency_alignment; they adjust
+            // the first post-trigger LFSR clock while subsequent clocks still use
+            // freq_timer_period(). Values are T-cycles for the initial timer.
             match self.read_nr43() {
                 0x09 => {
                     if self.freq_timer <= 4 {
