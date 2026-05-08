@@ -124,10 +124,15 @@ impl NesJoypad {
     }
 
     /// Restore joypad state from a save-state.
+    ///
+    /// `button_states` is intentionally NOT restored: it represents the
+    /// physical key/button state at save time, which is meaningless after
+    /// restore (no keys are physically held). Leaving stale button bits set
+    /// would cause D-pad / face buttons to appear "stuck".
     pub fn restore_state(&mut self, state: &JoypadState) {
         self.strobe = state.strobe;
         self.button_index = state.button_index;
-        self.button_states = state.button_states;
+        self.button_states = 0;
     }
 }
 

@@ -62,7 +62,8 @@ impl Zapper {
     pub fn restore_state(&mut self, state: &ZapperState) {
         self.x = state.x;
         self.y = state.y;
-        self.trigger = state.trigger;
+        // Physical trigger state at save time is meaningless after restore.
+        self.trigger = false;
         self.light.set(state.light);
     }
 }
@@ -265,7 +266,8 @@ mod tests {
         let restored_state = restored.capture_state();
         assert_eq!(restored_state.x, 0x22);
         assert_eq!(restored_state.y, 0x77);
-        assert!(restored_state.trigger);
+        // trigger is cleared on restore (physical input state).
+        assert!(!restored_state.trigger);
     }
 
     #[test]

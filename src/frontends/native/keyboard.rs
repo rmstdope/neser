@@ -141,13 +141,13 @@ pub fn keyboard_target_ports(gamepad_count: usize, four_score: bool) -> &'static
 /// Maps a key code to a Game Boy button ID (0=A,1=B,2=Select,3=Start,4=Up,5=Down,6=Left,7=Right).
 ///
 /// Uses the same physical-position layout as the NES P1 keys so that
-/// players feel at home: WASD for D-pad, R=A, T=B, 4=Select, 5=Start.
+/// players feel at home: WASD for D-pad, T=A, R=B, 4=Select, 5=Start.
 /// Arrow keys are also mapped to the D-pad for convenience.
 fn gameboy_key_to_button_id(key_code: KeyCode) -> Option<u8> {
     use Button::{A, B, Down, Left, Right, Select, Start, Up};
     match key_code {
-        KeyCode::KeyR => Some(A as u8),
-        KeyCode::KeyT => Some(B as u8),
+        KeyCode::KeyT => Some(A as u8),
+        KeyCode::KeyR => Some(B as u8),
         KeyCode::Digit4 => Some(Select as u8),
         KeyCode::Digit5 => Some(Start as u8),
         KeyCode::KeyW | KeyCode::ArrowUp => Some(Up as u8),
@@ -373,9 +373,9 @@ fn handle_controller_key(console: &mut Console, key_code: KeyCode, pressed: bool
         KeyCode::KeyX => pp_p1(nes, PowerPadButton::Eleven, pressed, ports),
         KeyCode::KeyC => pp_p1(nes, PowerPadButton::Twelve, pressed, ports),
 
-        // ── Player 1: R/T = A/B (joypad or SNES Y/X) ─────────────────────
-        KeyCode::KeyR => btn_or_snes_p1(nes, Button::A, SnesButton::Y, pressed, ports),
-        KeyCode::KeyT => btn_or_snes_p1(nes, Button::B, SnesButton::X, pressed, ports),
+        // ── Player 1: T/R = A/B (joypad or SNES Y/X) ─────────────────────
+        KeyCode::KeyT => btn_or_snes_p1(nes, Button::A, SnesButton::Y, pressed, ports),
+        KeyCode::KeyR => btn_or_snes_p1(nes, Button::B, SnesButton::X, pressed, ports),
 
         // ── Player 1: F/G = SNES B/A only ────────────────────────────────
         KeyCode::KeyF => snes_p1(nes, SnesButton::B, pressed, ports),
@@ -1021,26 +1021,26 @@ mod tests {
     }
 
     #[test]
-    fn test_p1_r_sets_a() {
-        let mut console = make_nes_console();
-        let mut state = make_state();
-        handle_key_pressed(&mut console, KeyCode::KeyR, &mut state, None);
-        assert_ne!(
-            console.get_joypad_button_states(1) & BIT_A,
-            0,
-            "R should set A on P1"
-        );
-    }
-
-    #[test]
-    fn test_p1_t_sets_b() {
+    fn test_p1_t_sets_a() {
         let mut console = make_nes_console();
         let mut state = make_state();
         handle_key_pressed(&mut console, KeyCode::KeyT, &mut state, None);
         assert_ne!(
+            console.get_joypad_button_states(1) & BIT_A,
+            0,
+            "T should set A on P1"
+        );
+    }
+
+    #[test]
+    fn test_p1_r_sets_b() {
+        let mut console = make_nes_console();
+        let mut state = make_state();
+        handle_key_pressed(&mut console, KeyCode::KeyR, &mut state, None);
+        assert_ne!(
             console.get_joypad_button_states(1) & BIT_B,
             0,
-            "T should set B on P1"
+            "R should set B on P1"
         );
     }
 
@@ -1085,15 +1085,15 @@ mod tests {
     }
 
     #[test]
-    fn test_p1_r_released_clears_a() {
+    fn test_p1_t_released_clears_a() {
         let mut console = make_nes_console();
         let mut state = make_state();
-        handle_key_pressed(&mut console, KeyCode::KeyR, &mut state, None);
-        handle_key_released(&mut console, KeyCode::KeyR, 0, false);
+        handle_key_pressed(&mut console, KeyCode::KeyT, &mut state, None);
+        handle_key_released(&mut console, KeyCode::KeyT, 0, false);
         assert_eq!(
             console.get_joypad_button_states(1) & BIT_A,
             0,
-            "Releasing R should clear A"
+            "Releasing T should clear A"
         );
     }
 
@@ -1695,14 +1695,14 @@ mod tests {
     }
 
     #[test]
-    fn gameboy_r_key_sets_a_button() {
+    fn gameboy_t_key_sets_a_button() {
         let mut console = make_gameboy_console();
         let mut state = make_state();
-        handle_key_pressed(&mut console, KeyCode::KeyR, &mut state, None);
+        handle_key_pressed(&mut console, KeyCode::KeyT, &mut state, None);
         assert_ne!(
             console.get_joypad_button_states(0) & BIT_A,
             0,
-            "R key should set GB A button"
+            "T key should set GB A button"
         );
     }
 

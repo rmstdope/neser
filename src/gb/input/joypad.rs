@@ -119,6 +119,19 @@ impl Joypad {
         self.prev_nibble = self.effective_nibble();
     }
 
+    /// Clear all button states (called after loading a save state).
+    ///
+    /// Physical key/button states from save time are meaningless after restore
+    /// — no keys are physically held — so we reset them to avoid stuck inputs.
+    /// `select_bits` is left intact (hardware register state). `prev_nibble` is
+    /// rebased to the new effective nibble so subsequent presses compute IRQ
+    /// edges correctly without spuriously re-firing.
+    pub fn clear_buttons(&mut self) {
+        self.p14_state = 0;
+        self.p15_state = 0;
+        self.prev_nibble = self.effective_nibble();
+    }
+
     /// Compute the effective lower nibble for the currently selected group(s).
     ///
     /// Returns `0xF` when no group is selected. Otherwise ANDs together the

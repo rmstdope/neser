@@ -251,9 +251,10 @@ impl SnesAdapter {
         self.mode = state.mode;
         self.strobe = state.strobe;
         self.bit_index = state.bit_index;
-        self.button_states = state.button_states;
-        self.mouse_left_button = state.mouse_left_button;
-        self.mouse_right_button = state.mouse_right_button;
+        // Physical button/mouse-button states at save time are meaningless after restore.
+        self.button_states = 0;
+        self.mouse_left_button = false;
+        self.mouse_right_button = false;
         self.mouse_speed = state.mouse_speed;
         self.mouse_x_position = state.mouse_x_position;
         self.mouse_y_position = state.mouse_y_position;

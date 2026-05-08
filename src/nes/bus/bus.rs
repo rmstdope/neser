@@ -1682,9 +1682,10 @@ mod tests {
         assert!(restored.oam_dma_pending());
         assert_eq!(restored.take_oam_dma_page(), Some(0x22));
 
-        // Port 1 should have Joypad with buttons A and Right pressed, button_index=2
-        // Reading should continue from where we left off
-        let expected_sequence = [0, 0, 0, 0, 0, 1]; // Select, Start, Up, Down, Left, Right
+        // Port 1 should have Joypad with button_index=2 (strobe/index preserved),
+        // but button_states cleared on restore — no buttons remain "pressed".
+        // Reading should continue from index 2, all zeros (no physical key held).
+        let expected_sequence = [0, 0, 0, 0, 0, 0]; // Select, Start, Up, Down, Left, Right
         for expected in expected_sequence {
             assert_eq!(restored.read(0x4016, false) & 0x01, expected);
         }
@@ -1699,21 +1700,22 @@ mod tests {
         memory.set_mouse_left_button(true);
         memory.write(0x4016, 0x01, false);
         memory.write(0x4016, 0x00, false);
-        let expected_paddle = [0x08, 0x18];
 
         let saved_state = memory.capture_state();
 
         let mut restored = create_test_memory();
         restored.restore_state(&saved_state);
 
-        // Port 1 should have Paddle with position 0xA5 and trigger=true
+        // Port 1 should have Paddle with position 0xA5 and trigger cleared (not restored).
+        // bit 4 = position serial, bit 3 = trigger (always 0 after restore).
+        // position 0xA5 → inverted 0x5A → bits (MSB first): 0,1,...
         restored.write(0x0000, 0x00, false);
         restored.read(0x0000, false);
         let restored_paddle = [
             restored.read(0x4016, false) & 0x18,
             restored.read(0x4016, false) & 0x18,
         ];
-        assert_eq!(restored_paddle, expected_paddle);
+        assert_eq!(restored_paddle, [0x00, 0x10]); // trigger cleared; position bit 7=0, bit 6=1
     }
 
     #[test]
@@ -1734,14 +1736,17 @@ mod tests {
         restored.write(0x4016, 0x01, false);
         restored.write(0x4016, 0x00, false);
 
-        assert_eq!(restored.read(0x4016, false) & 0x18, 0x10); // button 2 on D3, button 4 on D4
-        assert_eq!(restored.read(0x4016, false) & 0x18, 0x08); // button 1 on D3, button 3 on D4
-        assert_eq!(restored.read(0x4016, false) & 0x18, 0x00); // button 5 on D3, button 12 on D4
-        assert_eq!(restored.read(0x4016, false) & 0x18, 0x00); // button 9 on D3
-        assert_eq!(restored.read(0x4016, false) & 0x18, 0x10); // button 6 on D3, D4 hardwired high
-        assert_eq!(restored.read(0x4016, false) & 0x18, 0x10); // button 10 on D3, D4 hardwired high
-        assert_eq!(restored.read(0x4016, false) & 0x18, 0x10); // button 11 on D3, D4 hardwired high
-        assert_eq!(restored.read(0x4016, false) & 0x18, 0x10); // button 7 on D3, D4 hardwired high
+        // All buttons cleared on restore; strobe resets bit_index to 0.
+        // With button_states=0: D3/D4 both false for pressed buttons (indices 0-3).
+        // D4 is hardwired high (None) for indices 4-7.
+        assert_eq!(restored.read(0x4016, false) & 0x18, 0x00); // button 2 on D3(off), button 4 on D4(off)
+        assert_eq!(restored.read(0x4016, false) & 0x18, 0x00); // button 1 on D3(off), button 3 on D4(off)
+        assert_eq!(restored.read(0x4016, false) & 0x18, 0x00); // button 5 on D3(off), button 12 on D4(off)
+        assert_eq!(restored.read(0x4016, false) & 0x18, 0x00); // button 9 on D3(off), button 8 on D4(off)
+        assert_eq!(restored.read(0x4016, false) & 0x18, 0x10); // button 6 on D3(off), D4 hardwired high
+        assert_eq!(restored.read(0x4016, false) & 0x18, 0x10); // button 10 on D3(off), D4 hardwired high
+        assert_eq!(restored.read(0x4016, false) & 0x18, 0x10); // button 11 on D3(off), D4 hardwired high
+        assert_eq!(restored.read(0x4016, false) & 0x18, 0x10); // button 7 on D3(off), D4 hardwired high
     }
 
     #[test]
@@ -1785,7 +1790,8 @@ mod tests {
 
         let restored_state = restored.expansion_arkanoid.borrow().capture_state();
         assert_eq!(restored_state.position, 0xB0);
-        assert!(restored_state.trigger);
+        // trigger is cleared on restore (physical input state).
+        assert!(!restored_state.trigger);
     }
 
     #[test]
@@ -2679,9 +2685,16 @@ mod tests {
         let joypad_bit = memory.read(0x4016, false) & 0x01;
         assert_eq!(joypad_bit, 1); // A button pressed on joypad
 
-        // Port 2 should have paddle data (bits 4 and 3)
-        let paddle_bits = memory.read(0x4017, false) & 0x18;
-        assert!(paddle_bits != 0); // Should have paddle data on port 2
+        // Port 2 should have paddle (Arkanoid) configured — trigger cleared on restore,
+        // but position 0xC7 (inverted 0x38) produces bit-4 highs from read 2 onwards.
+        // Read 3 times to reach bit 5 of the inverted position (=1 → bit4 set).
+        let _ = memory.read(0x4017, false) & 0x18; // bit7 of inverted=0
+        let _ = memory.read(0x4017, false) & 0x18; // bit6=0
+        let paddle_bit4 = memory.read(0x4017, false) & 0x10; // bit5=1 → bit4 high
+        assert_ne!(
+            paddle_bit4, 0,
+            "Port 2 position data (bit 4) should appear after restore"
+        );
     }
 
     #[test]

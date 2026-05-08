@@ -2365,6 +2365,44 @@ mod tests {
     }
 
     #[test]
+    fn test_load_state_clears_joypad_button_states() {
+        // Regression: pressing a D-pad button, saving state, then loading that
+        // state used to leave the button stuck pressed even with no key held.
+        let rom_data = create_minimal_nrom_rom();
+        let cartridge = load_test_cartridge(&rom_data);
+
+        let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+
+        // Press Up on P1 and save the state while it is held.
+        nes.set_button(1, crate::nes::input::Button::Up, true);
+        assert_ne!(
+            nes.get_joypad_button_states(1) & (1 << crate::nes::input::Button::Up as u8),
+            0,
+            "Up should be pressed before save"
+        );
+        let state = nes.save_state();
+
+        // Release the button physically (simulates the player's finger lifting
+        // before or after the restore — neither should leave it stuck).
+        nes.set_button(1, crate::nes::input::Button::Up, false);
+
+        // Re-press the button, then restore — the restored state must not carry
+        // the pressed bit forward.
+        nes.set_button(1, crate::nes::input::Button::Up, true);
+        nes.load_state(&state).expect("load_state should succeed");
+
+        assert_eq!(
+            nes.get_joypad_button_states(1),
+            0,
+            "All joypad buttons must be cleared after loading a save state"
+        );
+    }
+
+    #[test]
     fn test_save_state_deterministic_execution() {
         // This test verifies that loading a state and running produces identical results
         let rom_data = create_minimal_nrom_rom();

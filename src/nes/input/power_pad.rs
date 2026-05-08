@@ -106,7 +106,8 @@ impl PowerPad {
     pub fn restore_state(&mut self, state: &PowerPadState) {
         self.strobe = state.strobe;
         self.bit_index = state.bit_index;
-        self.button_states = state.button_states;
+        // Physical button states at save time are meaningless after restore.
+        self.button_states = 0;
     }
 }
 
@@ -203,7 +204,8 @@ mod tests {
         let state = power_pad.capture_state();
         let mut restored = PowerPad::new();
         restored.restore_state(&state);
-        assert_eq!(restored.capture_state().button_states, state.button_states);
+        // button_states is intentionally cleared on restore (physical input state).
+        assert_eq!(restored.capture_state().button_states, 0);
         assert_eq!(restored.capture_state().bit_index, state.bit_index);
         assert_eq!(restored.capture_state().strobe, state.strobe);
     }

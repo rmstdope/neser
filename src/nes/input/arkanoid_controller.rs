@@ -136,7 +136,8 @@ impl ArkanoidController {
         self.latched_position = state
             .latched_position
             .clamp(Self::MIN_POSITION, Self::MAX_POSITION);
-        self.trigger = state.trigger;
+        // Physical trigger state at save time is meaningless after restore.
+        self.trigger = false;
     }
 }
 
