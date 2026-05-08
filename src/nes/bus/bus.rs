@@ -1700,7 +1700,6 @@ mod tests {
         memory.set_mouse_left_button(true);
         memory.write(0x4016, 0x01, false);
         memory.write(0x4016, 0x00, false);
-        let expected_paddle = [0x08, 0x18];
 
         let saved_state = memory.capture_state();
 

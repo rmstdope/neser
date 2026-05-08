@@ -123,7 +123,9 @@ impl Joypad {
     ///
     /// Physical key/button states from save time are meaningless after restore
     /// — no keys are physically held — so we reset them to avoid stuck inputs.
-    /// `select_bits` and `prev_nibble` are left intact (hardware register state).
+    /// `select_bits` is left intact (hardware register state). `prev_nibble` is
+    /// rebased to the new effective nibble so subsequent presses compute IRQ
+    /// edges correctly without spuriously re-firing.
     pub fn clear_buttons(&mut self) {
         self.p14_state = 0;
         self.p15_state = 0;
