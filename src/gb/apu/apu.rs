@@ -453,6 +453,10 @@ impl Apu {
         ch3 | (ch4 << 4)
     }
 
+    pub(crate) fn needs_cgb_ch3_read_sync(&self, addr: u16) -> bool {
+        (addr == 0xFF77 || (0xFF30..=0xFF3F).contains(&addr)) && self.ch3.needs_cgb_read_sync()
+    }
+
     // ── Register write ─────────────────────────────────────────────────────
 
     /// Write NR52 ($FF26) with knowledge of the current DIV-APU bit state.

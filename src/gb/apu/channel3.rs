@@ -282,6 +282,10 @@ impl Channel3 {
         }
     }
 
+    pub(crate) fn needs_cgb_read_sync(&self) -> bool {
+        self.is_cgb && self.active && self.freq_timer == 0
+    }
+
     pub fn read_wave_ram(&self, addr: u16) -> u8 {
         if self.active {
             if self.is_cgb || self.wave_just_read {
@@ -561,6 +565,45 @@ mod tests {
         assert_eq!(
             ch.current_sample, 0x5,
             "first sample read must be nibble at index 1"
+        );
+    }
+
+    #[test]
+    fn test_cgb_read_sync_needed_at_sample_boundary() {
+        let mut ch = Channel3::new_with_mode(true);
+        ch.write_nr30(0x80);
+        ch.active = true;
+        ch.freq_timer = 0;
+
+        assert!(
+            ch.needs_cgb_read_sync(),
+            "CGB CH3 reads should sync a pending half APU tick when the sample timer is at the boundary"
+        );
+    }
+
+    #[test]
+    fn test_cgb_read_sync_not_needed_before_sample_boundary() {
+        let mut ch = Channel3::new_with_mode(true);
+        ch.write_nr30(0x80);
+        ch.active = true;
+        ch.freq_timer = 1;
+
+        assert!(
+            !ch.needs_cgb_read_sync(),
+            "CGB CH3 reads before the sample boundary must not advance early"
+        );
+    }
+
+    #[test]
+    fn test_dmg_read_sync_not_needed_at_sample_boundary() {
+        let mut ch = Channel3::new_with_mode(false);
+        ch.write_nr30(0x80);
+        ch.active = true;
+        ch.freq_timer = 0;
+
+        assert!(
+            !ch.needs_cgb_read_sync(),
+            "the CGB read-sync path must stay disabled for DMG wave RAM behavior"
         );
     }
 

@@ -852,7 +852,16 @@ impl GbBus for CgbBus {
             0xFF02 => self.sc | 0x7E, // SC: bits 6-1 unused, read as 1
             0xFF04..=0xFF07 => self.timer.read(addr),
             0xFF0F => self.if_reg | 0xE0,
-            0xFF10..=0xFF3F => self.apu.read_register(addr),
+            0xFF10..=0xFF3F => {
+                if self.is_double_speed()
+                    && self.apu_tick_accumulator != 0
+                    && self.apu.needs_cgb_ch3_read_sync(addr)
+                {
+                    self.apu.tick(1);
+                    self.apu_tick_accumulator = 0;
+                }
+                self.apu.read_register(addr)
+            }
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B => self.ppu.read_register(addr),
             0xFF46 => self.dma_source,
             // CGB KEY1 — speed switch register
@@ -874,7 +883,16 @@ impl GbBus for CgbBus {
             0xFF75 => self.ff75 | 0x8F,
             // CGB PCM registers
             0xFF76 => self.apu.read_pcm12(),
-            0xFF77 => self.apu.read_pcm34(),
+            0xFF77 => {
+                if self.is_double_speed()
+                    && self.apu_tick_accumulator != 0
+                    && self.apu.needs_cgb_ch3_read_sync(addr)
+                {
+                    self.apu.tick(1);
+                    self.apu_tick_accumulator = 0;
+                }
+                self.apu.read_pcm34()
+            }
             0xFF70 => self.svbk | 0xF8,
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
             0xFFFF => self.ie_reg,
