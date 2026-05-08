@@ -92,10 +92,12 @@ impl Channel2 {
         // visible at the reload boundary, while the preceding half-step is still
         // silent. SameSuite's duty ROMs sample these two boundary positions.
         if self.duty == 0 && self.freq == 0x07FF && !self.first_sample_zero {
-            if self.duty_pos == 0 && self.freq_timer == 4 {
+            const RELOAD_BOUNDARY_T: u16 = 4;
+            const PRE_RELOAD_HALF_STEP_T: u16 = 2;
+            if self.duty_pos == 0 && self.freq_timer == RELOAD_BOUNDARY_T {
                 return self.volume;
             }
-            if self.duty_pos == 7 && self.freq_timer == 2 {
+            if self.duty_pos == 7 && self.freq_timer == PRE_RELOAD_HALF_STEP_T {
                 return 0;
             }
         }
