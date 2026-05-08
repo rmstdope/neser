@@ -435,14 +435,18 @@ impl CgbBus {
         let double = self.is_double_speed();
 
         for _ in 0..m_cycles {
-            let div_apu_edges = self.timer.tick(1);
+            let (div_apu_falling, div_apu_rising) = self.timer.tick(1);
             if self.timer.interrupt_pending {
                 self.if_reg |= 0x04;
                 self.timer.interrupt_pending = false;
             }
 
+            // Rising edge fires the APU secondary event (for envelope phantom-tick detection).
+            for _ in 0..div_apu_rising {
+                self.apu.clock_div_apu_secondary();
+            }
             // Clock APU frame sequencer for each DIV-APU falling edge.
-            for _ in 0..div_apu_edges {
+            for _ in 0..div_apu_falling {
                 self.apu.clock_div_apu();
             }
 

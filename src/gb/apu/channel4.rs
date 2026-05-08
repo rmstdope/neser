@@ -142,42 +142,51 @@ impl Channel4 {
         }
     }
 
-    pub fn clock_envelope(&mut self) {
-        // Clear the clock flag from any previous tick.
-        self.env_clock_state.clock = false;
-
+    pub fn clock_envelope_decrement(&mut self) {
         if self.env_period == 0 {
             return;
         }
         if self.env_timer > 0 {
             self.env_timer -= 1;
         }
+    }
+
+    pub fn clock_envelope_secondary(&mut self) {
+        if !self.active || self.env_period == 0 {
+            return;
+        }
         if self.env_timer == 0 {
             self.env_timer = self.env_period;
-            // Set clock state to indicate envelope just ticked.
             self.env_clock_state.clock = true;
-
-            if self.env_clock_state.locked {
-                // Envelope is locked - no volume change.
-                return;
-            }
-
-            let old_volume = self.volume;
-            if self.env_add && self.volume < 15 {
-                self.volume += 1;
-            } else if !self.env_add && self.volume > 0 {
-                self.volume -= 1;
-            }
-
-            // Lock envelope if volume has hit its limit.
-            if (self.env_add && self.volume == 15) || (!self.env_add && self.volume == 0) {
-                self.env_clock_state.locked = true;
-            }
-
-            if old_volume != self.volume {
-                trace_apu!(3; "GB APU CH4 envelope volume {} -> {}", old_volume, self.volume);
-            }
         }
+    }
+
+    pub fn clock_envelope_primary(&mut self) {
+        if !self.env_clock_state.clock {
+            return;
+        }
+        self.env_clock_state.clock = false;
+        if self.env_clock_state.locked {
+            return;
+        }
+        let old_volume = self.volume;
+        if self.env_add && self.volume < 15 {
+            self.volume += 1;
+        } else if !self.env_add && self.volume > 0 {
+            self.volume -= 1;
+        }
+        if (self.env_add && self.volume == 15) || (!self.env_add && self.volume == 0) {
+            self.env_clock_state.locked = true;
+        }
+        if old_volume != self.volume {
+            trace_apu!(3; "GB APU CH4 envelope volume {} -> {}", old_volume, self.volume);
+        }
+    }
+
+    pub fn clock_envelope(&mut self) {
+        self.clock_envelope_decrement();
+        self.clock_envelope_secondary();
+        self.clock_envelope_primary();
     }
 
     /// Clear envelope clock flag after frame sequencer step completes.

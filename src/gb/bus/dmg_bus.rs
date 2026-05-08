@@ -226,14 +226,18 @@ impl DmgBus {
         for _ in 0..m_cycles {
             let pre_counter = self.timer.raw_counter();
             let pre_bit7 = pre_counter & 0x080;
-            let div_apu_edges = self.timer.tick(1);
+            let (div_apu_falling, div_apu_rising) = self.timer.tick(1);
             if self.timer.interrupt_pending {
                 self.if_reg |= 0x04;
                 self.timer.interrupt_pending = false;
             }
 
-            // Clock APU frame sequencer for each DIV-APU falling edge.
-            for _ in 0..div_apu_edges {
+            // Rising edge fires the APU secondary event (for envelope phantom-tick detection).
+            for _ in 0..div_apu_rising {
+                self.apu.clock_div_apu_secondary();
+            }
+            // Falling edge steps the APU frame sequencer.
+            for _ in 0..div_apu_falling {
                 self.apu.clock_div_apu();
             }
 

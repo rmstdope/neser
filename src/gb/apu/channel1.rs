@@ -466,43 +466,71 @@ impl Channel1 {
         }
     }
 
-    /// Clock volume envelope at 64 Hz (Frame Sequencer step 7).
-    pub fn clock_envelope(&mut self) {
-        // Clear the clock flag from any previous tick.
-        self.env_clock_state.clock = false;
-
+    /// Decrement the envelope countdown (called every 8th DIV-APU falling edge, 64 Hz).
+    ///
+    /// Only decrements; does not fire the volume tick directly.  When the countdown
+    /// reaches zero the secondary event (`clock_envelope_secondary`) will detect it
+    /// on the next rising edge and arm the clock flag for the subsequent primary event.
+    pub fn clock_envelope_decrement(&mut self) {
         if self.env_period == 0 {
             return;
         }
         if self.env_timer > 0 {
             self.env_timer -= 1;
         }
+    }
+
+    /// Secondary envelope event — called on the **rising** edge of the DIV-APU bit.
+    ///
+    /// If the countdown has reached zero (and the channel is active with a nonzero
+    /// period), arms the clock flag and reloads the countdown so that the volume
+    /// tick fires at the very next falling-edge primary event.
+    pub fn clock_envelope_secondary(&mut self) {
+        if !self.active || self.env_period == 0 {
+            return;
+        }
         if self.env_timer == 0 {
             self.env_timer = self.env_period;
-            // Set clock state to indicate envelope just ticked.
             self.env_clock_state.clock = true;
-
-            if self.env_clock_state.locked {
-                // Envelope is locked - no volume change.
-                return;
-            }
-
-            let old_volume = self.volume;
-            if self.env_add && self.volume < 15 {
-                self.volume += 1;
-            } else if !self.env_add && self.volume > 0 {
-                self.volume -= 1;
-            }
-
-            // Lock envelope if volume has hit its limit.
-            if (self.env_add && self.volume == 15) || (!self.env_add && self.volume == 0) {
-                self.env_clock_state.locked = true;
-            }
-
-            if old_volume != self.volume {
-                trace_apu!(3; "GB APU CH1 envelope volume {} -> {}", old_volume, self.volume);
-            }
         }
+    }
+
+    /// Primary envelope event — called at **every** DIV-APU falling edge.
+    ///
+    /// If the clock flag was armed by `clock_envelope_secondary`, fires the volume
+    /// tick and clears the flag.
+    pub fn clock_envelope_primary(&mut self) {
+        if !self.env_clock_state.clock {
+            return;
+        }
+        self.env_clock_state.clock = false;
+        if self.env_clock_state.locked {
+            return;
+        }
+        let old_volume = self.volume;
+        if self.env_add && self.volume < 15 {
+            self.volume += 1;
+        } else if !self.env_add && self.volume > 0 {
+            self.volume -= 1;
+        }
+        if (self.env_add && self.volume == 15) || (!self.env_add && self.volume == 0) {
+            self.env_clock_state.locked = true;
+        }
+        if old_volume != self.volume {
+            trace_apu!(3; "GB APU CH1 envelope volume {} -> {}", old_volume, self.volume);
+        }
+    }
+
+    /// Clock volume envelope at 64 Hz (Frame Sequencer step 7).
+    ///
+    /// This combined method is kept for unit tests.  Production code calls the
+    /// three split helpers (`clock_envelope_decrement`, `clock_envelope_secondary`,
+    /// `clock_envelope_primary`) via `Apu::clock_div_apu_secondary` /
+    /// `Apu::clock_div_apu` instead.
+    pub fn clock_envelope(&mut self) {
+        self.clock_envelope_decrement();
+        self.clock_envelope_secondary();
+        self.clock_envelope_primary();
     }
 
     /// Clear envelope clock flag after frame sequencer step completes.
@@ -805,13 +833,15 @@ impl Channel1 {
         //
         // Per SameSuite comment: "the start delay from the 'delay' test is actually
         // 1 tick shorter" after restarting. This means retrigger delay = fresh - 2 T-cycles.
+        // Note: lf_div=true means the DIV rising-edge tick fired this M-cycle, which adds
+        // 2 extra T-cycles to the delay (longer, not shorter).
         let delay_t = if was_active {
             // Retrigger delay: 1 2MHz tick (2 T-cycles) shorter than fresh
-            if lf_div { 4u16 } else { 6u16 }
+            if lf_div { 6u16 } else { 4u16 }
         } else if lf_div {
-            6u16
-        } else {
             8u16
+        } else {
+            6u16
         };
         // Convert delay to T-cycles and add to period for initial freq_timer
         let period = (2048 - self.freq) * 4;
@@ -1280,6 +1310,189 @@ mod tests {
         ch.write_nr14(0x80, false, false);
         ch.clock_envelope();
         assert_eq!(ch.volume, 7, "envelope must not change when period = 0");
+    }
+
+    // ── NRx2 zombie-mode glitch ───────────────────────────────────────────
+
+    #[test]
+    fn test_nrx2_zombie_tick_when_period_zero_to_nonzero_decrease() {
+        // Pan Docs zombie mode: writing a nonzero period while old period was 0
+        // ticks the volume in the current (decrease) direction.
+        let mut ch = Channel1::new();
+        ch.write_nr12(0x70); // vol=7, sub, period=0
+        ch.write_nr14(0x80, false, false); // trigger
+        assert_eq!(ch.volume, 7);
+        ch.write_nr12(0x71); // period: 0 → 1, same sub direction
+        assert_eq!(ch.volume, 6, "zombie tick should decrement volume");
+    }
+
+    #[test]
+    fn test_nrx2_zombie_tick_when_period_zero_to_nonzero_increase() {
+        // Zombie tick with increase direction.
+        let mut ch = Channel1::new();
+        ch.write_nr12(0x78); // vol=7, add, period=0
+        ch.write_nr14(0x80, false, false); // trigger
+        assert_eq!(ch.volume, 7);
+        ch.write_nr12(0x79); // period: 0 → 1, same add direction
+        assert_eq!(ch.volume, 8, "zombie tick should increment volume");
+    }
+
+    #[test]
+    fn test_nrx2_zombie_no_tick_when_old_period_nonzero() {
+        // No zombie tick when old period was already nonzero.
+        let mut ch = Channel1::new();
+        ch.write_nr12(0x71); // vol=7, sub, period=1
+        ch.write_nr14(0x80, false, false); // trigger
+        assert_eq!(ch.volume, 7);
+        ch.write_nr12(0x72); // period: 1 → 2, same direction
+        assert_eq!(ch.volume, 7, "no zombie tick when old_period != 0");
+    }
+
+    #[test]
+    fn test_nrx2_zombie_x08_to_x08_ticks_add() {
+        // Special case: both old and new lower nibble = $08 (period=0, add=true) → tick.
+        let mut ch = Channel1::new();
+        ch.write_nr12(0x78); // vol=7, add, period=0
+        ch.write_nr14(0x80, false, false); // trigger
+        assert_eq!(ch.volume, 7);
+        ch.write_nr12(0x78); // $08 → $08 pattern
+        assert_eq!(ch.volume, 8, "x08->x08 zombie tick should increment volume");
+    }
+
+    #[test]
+    fn test_nrx2_zombie_direction_switch_to_add_period_zero_xors() {
+        // Switching direction to add while old period=0: volume ^= 0x0F.
+        let mut ch = Channel1::new();
+        ch.write_nr12(0x70); // vol=7, sub, period=0
+        ch.write_nr14(0x80, false, false); // trigger
+        assert_eq!(ch.volume, 7);
+        ch.write_nr12(0x78); // switch to add, period=0
+        // 7 ^ 0x0F = 8
+        assert_eq!(
+            ch.volume, 8,
+            "direction switch to add with period=0 should XOR volume with 0x0F"
+        );
+    }
+
+    #[test]
+    fn test_nrx2_zombie_direction_switch_to_add_nonzero_period_subtracts() {
+        // Switching direction to add while old period != 0: volume = (0x0E - vol) & 0x0F.
+        let mut ch = Channel1::new();
+        ch.write_nr12(0x71); // vol=7, sub, period=1
+        ch.write_nr14(0x80, false, false); // trigger
+        assert_eq!(ch.volume, 7);
+        ch.write_nr12(0x79); // switch to add, period=1
+        // (0x0E - 7) & 0x0F = 7
+        assert_eq!(
+            ch.volume, 7,
+            "direction switch to add with nonzero period should use (0x0E - vol) formula"
+        );
+    }
+
+    #[test]
+    fn test_nrx2_zombie_direction_switch_to_subtract() {
+        // Switching direction from add to sub: volume = (0x10 - vol) & 0x0F.
+        let mut ch = Channel1::new();
+        ch.write_nr12(0x79); // vol=7, add, period=1
+        ch.write_nr14(0x80, false, false); // trigger
+        assert_eq!(ch.volume, 7);
+        ch.write_nr12(0x71); // switch to sub, period=1
+        // (0x10 - 7) & 0x0F = 9
+        assert_eq!(
+            ch.volume, 9,
+            "direction switch to sub should use (0x10 - vol) formula"
+        );
+    }
+
+    #[test]
+    fn test_nrx2_zombie_reload_countdown_when_clock_active() {
+        // When env clock just fired, writing NRx2 reloads env_timer to new_period.
+        let mut ch = Channel1::new();
+        ch.write_nr12(0x71); // vol=7, sub, period=1
+        ch.write_nr14(0x80, false, false); // trigger → env_timer = 1
+        ch.clock_envelope_decrement(); // env_timer → 0
+        ch.clock_envelope_secondary(); // arms clock, env_timer → 1
+        assert!(
+            ch.env_clock_state.clock,
+            "clock should be armed after secondary"
+        );
+        ch.write_nr12(0x73); // sub, period=3 (same direction, clock active)
+        assert_eq!(
+            ch.env_timer, 3,
+            "env_timer should reload to new_period when clock is active"
+        );
+    }
+
+    // ── Split envelope clock phases ───────────────────────────────────────
+
+    #[test]
+    fn test_clock_envelope_decrement_only_decrements_timer() {
+        // clock_envelope_decrement decrements env_timer without changing volume.
+        let mut ch = Channel1::new();
+        ch.write_nr12(0x71); // vol=7, sub, period=1
+        ch.write_nr14(0x80, false, false); // trigger → env_timer = 1
+        let vol_before = ch.volume;
+        ch.clock_envelope_decrement();
+        assert_eq!(ch.volume, vol_before, "decrement must not change volume");
+        assert_eq!(ch.env_timer, 0, "decrement should reduce env_timer to 0");
+    }
+
+    #[test]
+    fn test_clock_envelope_secondary_arms_clock_and_reloads_timer() {
+        // After decrement reaches 0, secondary arms the clock flag and reloads timer.
+        let mut ch = Channel1::new();
+        ch.write_nr12(0x71); // period=1
+        ch.write_nr14(0x80, false, false); // trigger → env_timer = 1
+        let vol_before = ch.volume;
+        ch.clock_envelope_decrement(); // env_timer → 0
+        assert!(
+            !ch.env_clock_state.clock,
+            "clock not yet armed before secondary"
+        );
+        ch.clock_envelope_secondary(); // arm clock, reload timer
+        assert!(
+            ch.env_clock_state.clock,
+            "clock should be armed after secondary"
+        );
+        assert_eq!(
+            ch.env_timer, 1,
+            "timer should reload to period after secondary"
+        );
+        assert_eq!(ch.volume, vol_before, "secondary must not change volume");
+    }
+
+    #[test]
+    fn test_clock_envelope_primary_fires_volume_change_when_clock_set() {
+        // Primary fires volume change and clears clock flag.
+        let mut ch = Channel1::new();
+        ch.write_nr12(0x71); // vol=7, sub, period=1
+        ch.write_nr14(0x80, false, false); // trigger
+        ch.clock_envelope_decrement();
+        ch.clock_envelope_secondary();
+        assert_eq!(ch.volume, 7);
+        ch.clock_envelope_primary();
+        assert_eq!(
+            ch.volume, 6,
+            "primary should decrement volume when clock armed"
+        );
+        assert!(
+            !ch.env_clock_state.clock,
+            "clock flag should be cleared after primary"
+        );
+    }
+
+    #[test]
+    fn test_clock_envelope_primary_no_change_without_clock() {
+        // Primary is a no-op when clock flag was not armed.
+        let mut ch = Channel1::new();
+        ch.write_nr12(0x71); // vol=7, sub, period=1
+        ch.write_nr14(0x80, false, false); // trigger
+        let vol_before = ch.volume;
+        ch.clock_envelope_primary(); // clock not armed → no-op
+        assert_eq!(
+            ch.volume, vol_before,
+            "primary must not change volume when clock not armed"
+        );
     }
 
     // ── Phase 4–6: deferred sweep recalc ──────────────────────────────────
