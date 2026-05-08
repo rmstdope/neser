@@ -1018,6 +1018,35 @@ mod tests {
     }
 
     #[test]
+    fn test_duty0_max_freq_edge_output_boundaries() {
+        assert_eq!(
+            pulse_duty0_max_freq_edge_output(0, 0x07FF, false, 0, 4, 8),
+            Some(8),
+            "step 7→0 wrap boundary should expose the high duty-0 edge"
+        );
+        assert_eq!(
+            pulse_duty0_max_freq_edge_output(0, 0x07FF, false, 7, 2, 8),
+            Some(0),
+            "pre-wrap half-step should remain silent"
+        );
+        assert_eq!(
+            pulse_duty0_max_freq_edge_output(1, 0x07FF, false, 0, 4, 8),
+            None,
+            "quirk applies only to duty 0"
+        );
+        assert_eq!(
+            pulse_duty0_max_freq_edge_output(0, 0x07FE, false, 0, 4, 8),
+            None,
+            "quirk applies only at max frequency"
+        );
+        assert_eq!(
+            pulse_duty0_max_freq_edge_output(0, 0x07FF, true, 0, 4, 8),
+            None,
+            "first startup sample remains suppressed"
+        );
+    }
+
+    #[test]
     fn test_duty_write_takes_effect_on_next_sample() {
         let mut ch = Channel1::new();
         ch.write_nr12(0x80);
