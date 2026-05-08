@@ -42,6 +42,34 @@ pub(super) fn pulse_trigger_fresh_delay_t(
         .unwrap_or(if lf_div { 8u16 } else { 6u16 })
 }
 
+/// CGB-E max-frequency duty-0 PCM edge visibility.
+///
+/// SameSuite samples PCM12 at the boundary around the duty step 7→0 wrap. The
+/// wrap remains visible at the reload boundary, while the preceding half-step is
+/// still silent.
+pub(super) fn pulse_duty0_max_freq_edge_output(
+    duty: u8,
+    freq: u16,
+    first_sample_zero: bool,
+    duty_pos: u8,
+    freq_timer: u16,
+    volume: u8,
+) -> Option<u8> {
+    if duty != 0 || freq != 0x07FF || first_sample_zero {
+        return None;
+    }
+
+    const MAX_FREQ_DUTY0_WRAP_TIMER: u16 = 4;
+    const MAX_FREQ_DUTY0_PRE_WRAP_TIMER: u16 = 2;
+    if duty_pos == 0 && freq_timer == MAX_FREQ_DUTY0_WRAP_TIMER {
+        return Some(volume);
+    }
+    if duty_pos == 7 && freq_timer == MAX_FREQ_DUTY0_PRE_WRAP_TIMER {
+        return Some(0);
+    }
+    None
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Channel1 {
     // NR10 fields
@@ -227,19 +255,15 @@ impl Channel1 {
         if !self.active || !self.dac_on {
             return 0;
         }
-        // At the maximum pulse frequency, CGB-E exposes one half-step of edge
-        // visibility for duty 0 through PCM12: the wrap from step 7 to 0 remains
-        // visible at the reload boundary, while the preceding half-step is still
-        // silent. SameSuite's duty ROMs sample these two boundary positions.
-        if self.duty == 0 && self.freq == 0x07FF && !self.first_sample_zero {
-            const RELOAD_BOUNDARY_T: u16 = 4;
-            const PRE_RELOAD_HALF_STEP_T: u16 = 2;
-            if self.duty_pos == 0 && self.freq_timer == RELOAD_BOUNDARY_T {
-                return self.volume;
-            }
-            if self.duty_pos == 7 && self.freq_timer == PRE_RELOAD_HALF_STEP_T {
-                return 0;
-            }
+        if let Some(output) = pulse_duty0_max_freq_edge_output(
+            self.duty,
+            self.freq,
+            self.first_sample_zero,
+            self.duty_pos,
+            self.freq_timer,
+            self.volume,
+        ) {
+            return output;
         }
         self.current_output
     }
