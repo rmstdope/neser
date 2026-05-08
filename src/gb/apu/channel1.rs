@@ -288,6 +288,9 @@ impl Channel1 {
         if self.restart_hold > 0 {
             self.restart_hold -= 1;
         }
+        if !self.active {
+            return;
+        }
         let period = (2048 - self.freq) * 4;
         if self.freq_timer == 0 {
             self.freq_timer = period;
@@ -1066,6 +1069,33 @@ mod tests {
         ch.tick();
         assert_eq!(ch.duty_pos, 2);
         assert_eq!(ch.digital_output(), 0);
+    }
+
+    #[test]
+    fn test_duty_phase_does_not_advance_while_stopped_by_dac() {
+        let mut ch = Channel1::new();
+        ch.write_nr12(0x80);
+        ch.write_nr11(0x80);
+        ch.write_nr14(0x80, false, false);
+
+        ch.duty_pos = 3;
+        ch.write_nr12(0x00);
+        assert!(!ch.is_active());
+        for _ in 0..16 {
+            ch.tick();
+        }
+        assert_eq!(
+            ch.duty_pos, 3,
+            "stopping via DAC must freeze the duty phase until restart"
+        );
+
+        ch.write_nr12(0x80);
+        ch.write_nr14(0x80, false, false);
+
+        assert_eq!(
+            ch.duty_pos, 3,
+            "restarting after DAC stop must preserve the stopped duty phase"
+        );
     }
 
     #[test]
