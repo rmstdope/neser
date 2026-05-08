@@ -401,14 +401,14 @@ mod tests {
         phase0.write_nr23(0xFF);
         phase0.write_nr24_with_apu_phase(0x87, false, false, Some(0b00));
 
-        let mut phase1_after_power_phase1 = Channel2::new();
-        phase1_after_power_phase1.write_nr22(0xF0);
-        phase1_after_power_phase1.write_nr21(0x80);
-        phase1_after_power_phase1.write_nr23(0xFF);
-        phase1_after_power_phase1.write_nr24_with_apu_phase(0x87, false, false, Some(0b11));
+        let mut trigger_phase1_after_nr52_phase1 = Channel2::new();
+        trigger_phase1_after_nr52_phase1.write_nr22(0xF0);
+        trigger_phase1_after_nr52_phase1.write_nr21(0x80);
+        trigger_phase1_after_nr52_phase1.write_nr23(0xFF);
+        trigger_phase1_after_nr52_phase1.write_nr24_with_apu_phase(0x87, false, false, Some(0b11));
 
         assert_eq!(phase0.freq_timer, 14);
-        assert_eq!(phase1_after_power_phase1.freq_timer, 12);
+        assert_eq!(trigger_phase1_after_nr52_phase1.freq_timer, 12);
     }
 
     #[test]

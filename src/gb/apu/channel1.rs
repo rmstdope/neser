@@ -975,7 +975,7 @@ mod tests {
         assert_eq!(
             pulse_trigger_fresh_delay_t(false, Some(0b01)),
             10,
-            "trigger phase 1 after NR52 power-on phase 0 gets the align_cpu +2 T-cycle delay"
+            "trigger phase 1 after NR52 power-on phase 0 gets the CPU-aligned +2 T-cycle delay"
         );
     }
 
