@@ -189,11 +189,6 @@ impl Channel4 {
         self.clock_envelope_primary();
     }
 
-    /// Clear envelope clock flag after frame sequencer step completes.
-    pub fn clear_envelope_clock(&mut self) {
-        self.env_clock_state.clock = false;
-    }
-
     pub fn power_off(&mut self) {
         self.init_volume = 0;
         self.env_add = false;
