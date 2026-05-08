@@ -153,12 +153,14 @@ impl GbConsole {
                 gb.cpu.bus.restore_bus_state(&state.bus)?;
                 gb.cpu.bus.restore_cart_ram(&state.cart_ram);
                 gb.cpu.bus.restore_mbc_state(&state.mbc_state);
+                gb.cpu.bus.joypad.clear_buttons();
             }
             Self::Cgb(gb) => {
                 gb.cpu.restore_state(&state.cpu);
                 gb.cpu.bus.restore_bus_state(&state.bus)?;
                 gb.cpu.bus.restore_cart_ram(&state.cart_ram);
                 gb.cpu.bus.restore_mbc_state(&state.mbc_state);
+                gb.cpu.bus.joypad.clear_buttons();
             }
         }
         Ok(())
@@ -1004,6 +1006,32 @@ mod tests {
 
         gb.load_state_bytes(&state).unwrap();
         assert_eq!(gb.screen_crc32(), snap1);
+    }
+
+    #[test]
+    fn test_load_state_clears_joypad_button_states() {
+        // Regression: pressing a D-pad button, saving state, then loading that
+        // state used to leave the button stuck pressed even with no key held.
+        let mut gb = make_gameboy();
+        gb.load_rom(&minimal_rom(), "test.gb").unwrap();
+
+        // Press Up (button id 4) and save while it is held.
+        gb.set_button(4, true); // Up
+        assert_ne!(
+            gb.get_joypad_button_states() & (1 << 4),
+            0,
+            "Up should be pressed before save"
+        );
+        let state = gb.save_state_bytes().unwrap();
+
+        // Restore state — Up must not remain pressed.
+        gb.load_state_bytes(&state).unwrap();
+
+        assert_eq!(
+            gb.get_joypad_button_states(),
+            0,
+            "All joypad buttons must be cleared after loading a save state"
+        );
     }
 
     #[test]
