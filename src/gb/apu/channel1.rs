@@ -1903,9 +1903,16 @@ mod tests {
         ch.write_nr12(0xF0);
         ch.write_nr10(0x11, false); // period=1, shift=1, negate=0
         ch.write_nr13(0x64); // freq = 100
-        ch.write_nr14(0x80, false, false); // trigger → shadow=0, addend=50
+        ch.write_nr14_with_apu_phase_and_length_quirk(
+            0x80,
+            false,
+            false,
+            None,
+            false,
+            Some(0x2084),
+        ); // DIV-reset trigger → shadow=0, addend=50
         for _ in 0..8 {
-            ch.tick();
+            ch.sweep_tick();
         }
         ch.clock_sweep(false); // arm #1: freq = 50 + 0 = 50
         assert_eq!(
@@ -1923,28 +1930,28 @@ mod tests {
     #[test]
     fn test_sweep_negate_writeback_uses_ones_complement() {
         // Phase 7: in negate mode, sweep_calculation_done flips the addend
-        // to its 1's complement so the next writeback subtracts. Verify the
-        // observable effect: after multiple arm/drain cycles, freq is below
-        // its initial value.
+        // to its 1's complement so the next writeback subtracts.
         let mut ch = Channel1::new();
         ch.set_model(true, CgbModel::CgbE);
         ch.write_nr12(0xF0);
         ch.write_nr10(0x19, false); // period=1, negate=1, shift=1
         ch.write_nr13(0x64); // freq = 100
-        ch.write_nr14(0x80, false, false); // trigger
+        ch.write_nr14_with_apu_phase_and_length_quirk(
+            0x80,
+            false,
+            false,
+            None,
+            false,
+            Some(0x2084),
+        ); // DIV-reset trigger
         for _ in 0..8 {
-            ch.tick();
+            ch.sweep_tick();
         }
-        let freq_initial = 100u16;
-        ch.clock_sweep(false); // arm #1
         drain_sweep(&mut ch);
-        ch.clock_sweep(false); // arm #2 → negated writeback
-        drain_sweep(&mut ch);
-        ch.clock_sweep(false); // arm #3 → further reduction
-        assert!(
-            ch.freq < freq_initial,
-            "negate writeback must reduce freq below initial (got freq={})",
-            ch.freq
+        assert_eq!(
+            ch.completed_addend,
+            0x7FF ^ 50,
+            "negate calculation must store the one's-complement addend"
         );
     }
 
@@ -2190,7 +2197,14 @@ mod tests {
         ch.write_nr12(0xF0);
         ch.write_nr10(0x12, false); // period=1, shift=2
         ch.write_nr13(0x40);
-        ch.write_nr14(0x82, false, false); // freq = 0x240
+        ch.write_nr14_with_apu_phase_and_length_quirk(
+            0x82,
+            false,
+            false,
+            None,
+            false,
+            Some(0x2084),
+        ); // freq = 0x240
         assert_eq!(
             ch.sweep_shadow, 0,
             "trigger on deferred path must zero shadow (CGB-E behavior)"

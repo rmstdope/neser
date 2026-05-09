@@ -3,7 +3,7 @@ use crate::gb::boot_rom::{DMG_BOOT_ROM, DMG0_BOOT_ROM};
 use crate::gb::bus::GbBus;
 use crate::gb::cartridge::GbCartridge;
 use crate::gb::input::joypad::Joypad;
-use crate::gb::model::{DmgBootVariant, DmgModel};
+use crate::gb::model::{CgbModel, DmgBootVariant, DmgModel};
 use crate::gb::ppu::Ppu;
 use crate::gb::timer::Timer;
 
@@ -102,6 +102,11 @@ impl DmgBus {
             DmgBootVariant::Production => (DMG_BOOT_ROM, 5036),
             DmgBootVariant::Dmg0 => (DMG0_BOOT_ROM, 204),
         };
+        let is_cgb = cart.is_cgb();
+        let mut apu = Apu::new(is_cgb);
+        if is_cgb {
+            apu.set_cgb_model(CgbModel::CgbD);
+        }
         let mut bus = Self {
             cart,
             ppu: Ppu::new(),
@@ -111,7 +116,7 @@ impl DmgBus {
             // our custom boot ROM's cycle count and real DMG hardware timing.
             timer: Timer::with_div_counter(div_counter),
             joypad: Joypad::new(),
-            apu: Apu::new(false),
+            apu,
             if_reg: 1, // VBlank flag set at power-on (real DMG hardware)
             ie_reg: 0,
             boot_rom,
@@ -150,7 +155,10 @@ impl DmgBus {
         self.ppu.write_register(0xFF40, 0x00); // power-on: LCD disabled
         self.timer = Timer::with_div_counter(div_counter);
         self.joypad = Joypad::new();
-        self.apu = Apu::new(false);
+        self.apu = Apu::new(self.cart.is_cgb());
+        if self.cart.is_cgb() {
+            self.apu.set_cgb_model(CgbModel::CgbD);
+        }
         self.apu.set_sample_rate(apu_rate);
         self.wram = [0u8; 0x2000];
         self.hram = [0u8; 0x7F];
