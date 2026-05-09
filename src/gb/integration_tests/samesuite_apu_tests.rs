@@ -109,11 +109,10 @@ samesuite_apu_test_enabled!(
     &format!("{BASE}/channel_1/channel_1_nrx2_speed_change.gb"),
     SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
-samesuite_apu_test!(
+samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_1_restart,
     &format!("{BASE}/channel_1/channel_1_restart.gb"),
-    SameSuiteHardware::Cgb(CgbModel::CgbE),
-    "Known SameSuite APU CGB gap on neser; tracked under issue #2262"
+    SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
 samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_1_restart_nrx2_glitch,
@@ -125,11 +124,10 @@ samesuite_apu_test_enabled!(
     &format!("{BASE}/channel_1/channel_1_stop_div.gb"),
     SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
-samesuite_apu_test!(
+samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_1_stop_restart,
     &format!("{BASE}/channel_1/channel_1_stop_restart.gb"),
-    SameSuiteHardware::Cgb(CgbModel::CgbE),
-    "Known SameSuite APU CGB gap on neser; tracked under issue #2262"
+    SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
 samesuite_apu_test!(
     test_samesuite_apu_channel_1_sweep,
@@ -206,11 +204,10 @@ samesuite_apu_test_enabled!(
     &format!("{BASE}/channel_2/channel_2_nrx2_speed_change.gb"),
     SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
-samesuite_apu_test!(
+samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_2_restart,
     &format!("{BASE}/channel_2/channel_2_restart.gb"),
-    SameSuiteHardware::Cgb(CgbModel::CgbE),
-    "Known SameSuite APU CGB gap on neser; tracked under issue #2262"
+    SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
 samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_2_restart_nrx2_glitch,
@@ -222,11 +219,10 @@ samesuite_apu_test_enabled!(
     &format!("{BASE}/channel_2/channel_2_stop_div.gb"),
     SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
-samesuite_apu_test!(
+samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_2_stop_restart,
     &format!("{BASE}/channel_2/channel_2_stop_restart.gb"),
-    SameSuiteHardware::Cgb(CgbModel::CgbE),
-    "Known SameSuite APU CGB gap on neser; tracked under issue #2262"
+    SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
 samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_2_volume,
@@ -279,17 +275,15 @@ samesuite_apu_test_enabled!(
     &format!("{BASE}/channel_3/channel_3_restart_delay.gb"),
     SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
-samesuite_apu_test!(
+samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_3_restart_during_delay,
     &format!("{BASE}/channel_3/channel_3_restart_during_delay.gb"),
-    SameSuiteHardware::Cgb(CgbModel::CgbE),
-    "Known SameSuite APU CGB gap on neser; tracked under issue #2262"
+    SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
-samesuite_apu_test!(
+samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_3_restart_stop_delay,
     &format!("{BASE}/channel_3/channel_3_restart_stop_delay.gb"),
-    SameSuiteHardware::Cgb(CgbModel::CgbE),
-    "Known SameSuite APU CGB gap on neser; tracked under issue #2262"
+    SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
 samesuite_apu_test!(
     test_samesuite_apu_channel_3_shift_delay,

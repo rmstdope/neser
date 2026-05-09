@@ -117,6 +117,11 @@ impl Channel2 {
     /// When the timer expires mid-M-cycle, the remaining T-cycles are applied
     /// after the reload, ensuring correct phase alignment.
     pub fn tick(&mut self) {
+        // Writing NRx2=$00 disables the DAC and stops the channel, but must
+        // preserve duty phase until a later restart.
+        if !self.active {
+            return;
+        }
         let period = (2048 - self.freq) * 4;
         if self.freq_timer == 0 {
             self.freq_timer = period;
@@ -557,6 +562,33 @@ mod tests {
         assert_ne!(
             ch.duty_pos, start,
             "duty phase should advance after the channel has been triggered"
+        );
+    }
+
+    #[test]
+    fn test_duty_phase_does_not_advance_while_stopped_by_dac() {
+        let mut ch = Channel2::new();
+        ch.write_nr22(0x80);
+        ch.write_nr21(0x80);
+        ch.write_nr24(0x80, false, false);
+
+        ch.duty_pos = 3;
+        ch.write_nr22(0x00);
+        assert!(!ch.is_active());
+        for _ in 0..16 {
+            ch.tick();
+        }
+        assert_eq!(
+            ch.duty_pos, 3,
+            "stopping via DAC must freeze the duty phase until restart"
+        );
+
+        ch.write_nr22(0x80);
+        ch.write_nr24(0x80, false, false);
+
+        assert_eq!(
+            ch.duty_pos, 3,
+            "restarting after DAC stop must preserve the stopped duty phase"
         );
     }
 

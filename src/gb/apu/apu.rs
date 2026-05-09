@@ -453,6 +453,16 @@ impl Apu {
         ch3 | (ch4 << 4)
     }
 
+    pub(crate) fn needs_cgb_ch3_read_sync(&self, addr: u16) -> bool {
+        // PCM34 ($FF77) and wave RAM ($FF30-$FF3F) expose CH3's current sample
+        // position, so boundary reads may need to synchronize CH3 before reading.
+        (addr == 0xFF77 || (0xFF30..=0xFF3F).contains(&addr)) && self.ch3.needs_cgb_read_sync()
+    }
+
+    pub(crate) fn sync_cgb_ch3_read_tick(&mut self) {
+        self.ch3.sync_cgb_read_tick();
+    }
+
     // ── Register write ─────────────────────────────────────────────────────
 
     /// Write NR52 ($FF26) with knowledge of the current DIV-APU bit state.
