@@ -216,11 +216,12 @@ impl Channel3 {
         cgb_early_extra_length_clock: bool,
         cgb_b_delayed_length_disable: bool,
     ) {
+        let trigger = val & 0x80 != 0;
         trace_apu!(2; "GB APU CH3 write NR34=0x{:02X} trigger={} length_en={} freq_high={}", 
-            val, (val & 0x80) != 0, (val & 0x40) != 0, val & 0x07);
+            val, trigger, (val & 0x40) != 0, val & 0x07);
         // The CGB-B pending disable is consumed by the next non-trigger NR34
         // write before that write can evaluate length-enable or clock length.
-        if self.cgb_b_length_disable_pending && val & 0x80 == 0 {
+        if self.cgb_b_length_disable_pending && !trigger {
             self.active = false;
             self.cgb_b_length_disable_pending = false;
         }
@@ -233,7 +234,7 @@ impl Channel3 {
             self.length_counter -= 1;
             if self.length_counter == 0 {
                 let should_delay_disable =
-                    cgb_b_delayed_length_disable && !self.length_en && val & 0x80 == 0;
+                    cgb_b_delayed_length_disable && !self.length_en && !trigger;
                 if should_delay_disable {
                     self.cgb_b_length_disable_pending = true;
                 } else {
@@ -243,7 +244,7 @@ impl Channel3 {
             }
         }
 
-        if val & 0x80 != 0 {
+        if trigger {
             self.trigger();
             self.cgb_b_length_disable_pending = false;
             if extra_clk && clocks_length_on_extra && self.length_counter == 256 {
