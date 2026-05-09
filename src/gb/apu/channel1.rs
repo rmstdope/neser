@@ -519,6 +519,7 @@ impl Channel1 {
             }
         }
         self.completed_addend = self.sweep_length_addend;
+        self.sweep_retriggered_since_calc = false;
     }
 
     /// 1MHz sweep machinery tick. The APU calls this once per M-cycle.
@@ -977,6 +978,7 @@ impl Channel1 {
         let was_active = self.active;
         self.sweep_overflow_output_linger = 0;
         self.sweep_overflow_active_delay = 0;
+        self.sweep_retriggered_since_calc = false;
         if was_active && self.uses_deferred_sweep() {
             self.sweep_retriggered_since_calc = true;
         }
@@ -1062,9 +1064,7 @@ impl Channel1 {
                 if self.sweep_negate {
                     self.negate_used = true;
                 } else if self.freq + self.sweep_length_addend > 0x7FF
-                    && !div_counter.is_some_and(|counter| {
-                        counter == 0x2084 || (0x3FF0..=0x4010).contains(&counter)
-                    })
+                    && !self.div_reset_sweep_timing
                 {
                     self.active = false;
                     self.current_output = 0;
