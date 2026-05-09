@@ -79,6 +79,10 @@ impl Channel3 {
         self.length_en
     }
 
+    fn clear_cgb_b_length_disable_pending(&mut self) {
+        self.cgb_b_length_disable_pending = false;
+    }
+
     /// Output sample in 0.0–1.0 range.
     pub fn output(&self) -> f32 {
         if !self.active || !self.dac_on {
@@ -160,7 +164,7 @@ impl Channel3 {
         self.freq_timer = 0;
         self.length_counter = 0;
         self.current_sample = 0;
-        self.cgb_b_length_disable_pending = false;
+        self.clear_cgb_b_length_disable_pending();
         self.wave_just_read = false;
         // Note: wave_ram is NOT cleared on power-off per hardware spec.
     }
@@ -223,7 +227,7 @@ impl Channel3 {
         // write before that write can evaluate length-enable or clock length.
         if self.cgb_b_length_disable_pending && !trigger {
             self.active = false;
-            self.cgb_b_length_disable_pending = false;
+            self.clear_cgb_b_length_disable_pending();
         }
         let old_length_en = self.length_en;
         self.length_en = val & 0x40 != 0;
@@ -241,14 +245,14 @@ impl Channel3 {
                     self.cgb_b_length_disable_pending = true;
                 } else {
                     self.active = false;
-                    self.cgb_b_length_disable_pending = false;
+                    self.clear_cgb_b_length_disable_pending();
                 }
             }
         }
 
         if trigger {
             self.trigger();
-            self.cgb_b_length_disable_pending = false;
+            self.clear_cgb_b_length_disable_pending();
             if extra_clk && clocks_length_on_extra && self.length_counter == 256 {
                 self.length_counter = 255;
             }
