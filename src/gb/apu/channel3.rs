@@ -281,6 +281,9 @@ impl Channel3 {
 
         self.wave_pos = 0;
 
+        // SameBoy models a boundary retrigger as refreshing the byte buffer
+        // from wave RAM byte 0 before restart output uses the buffer high
+        // nibble. Other retriggers keep the previous fetched byte intact.
         if self.active && self.freq_timer == 0 {
             self.current_sample_byte = self.wave_ram[0];
         }
@@ -326,8 +329,8 @@ impl Channel3 {
 
     // ── Wave RAM ──────────────────────────────────────────────────────────
 
-    fn nibble_from_byte(byte: u8, pos: u8) -> u8 {
-        if pos & 1 == 0 {
+    fn nibble_from_byte(byte: u8, sample_index: u8) -> u8 {
+        if sample_index & 1 == 0 {
             (byte >> 4) & 0x0F
         } else {
             byte & 0x0F
@@ -609,8 +612,13 @@ mod tests {
         let mut ch = Channel3::new_with_mode(true);
         ch.write_nr30(0x80);
         ch.write_nr32(0x20);
-        ch.current_sample_byte = 0xDE;
-        ch.current_sample = 0xE;
+        ch.wave_ram[0] = 0xDE;
+        ch.write_nr33(0xFE);
+        ch.write_nr34(0x87, false);
+        ch.tick();
+        ch.tick();
+        ch.tick();
+        assert_eq!(ch.current_sample, 0xE);
 
         ch.write_nr34(0x80, false);
 
