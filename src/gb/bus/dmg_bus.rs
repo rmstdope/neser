@@ -95,7 +95,6 @@ pub struct DmgBus {
 
 impl DmgBus {
     pub fn new(cart: Box<dyn GbCartridge>, model: DmgModel) -> Self {
-        let is_cgb = cart.is_cgb();
         // The boot ROM and initial div_counter depend on the hardware variant.
         // Production (DMG-A/B/C) scroll-animation ROM: div_counter = 5036.
         // DMG-0 simpler ROM: div_counter = 204 (same as real hardware).
@@ -112,7 +111,7 @@ impl DmgBus {
             // our custom boot ROM's cycle count and real DMG hardware timing.
             timer: Timer::with_div_counter(div_counter),
             joypad: Joypad::new(),
-            apu: Apu::new(is_cgb),
+            apu: Apu::new(false),
             if_reg: 1, // VBlank flag set at power-on (real DMG hardware)
             ie_reg: 0,
             boot_rom,
@@ -151,7 +150,7 @@ impl DmgBus {
         self.ppu.write_register(0xFF40, 0x00); // power-on: LCD disabled
         self.timer = Timer::with_div_counter(div_counter);
         self.joypad = Joypad::new();
-        self.apu = Apu::new(self.cart.is_cgb());
+        self.apu = Apu::new(false);
         self.apu.set_sample_rate(apu_rate);
         self.wram = [0u8; 0x2000];
         self.hram = [0u8; 0x7F];

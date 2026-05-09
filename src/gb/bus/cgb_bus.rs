@@ -958,8 +958,12 @@ impl GbBus for CgbBus {
                 let double_speed_phase_bits = self.is_double_speed().then_some(
                     (self.apu_tick_accumulator & 1) | (self.apu_power_on_accumulator << 1),
                 );
-                self.apu
-                    .write_register_with_apu_phase(addr, val, double_speed_phase_bits);
+                self.apu.write_register_with_apu_phase_and_div_counter(
+                    addr,
+                    val,
+                    double_speed_phase_bits,
+                    Some(self.timer.raw_counter()),
+                );
             }
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B => {
                 self.ppu.write_register(addr, val);

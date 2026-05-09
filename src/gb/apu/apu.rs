@@ -452,7 +452,7 @@ impl Apu {
         // Bits 6-4 are unused and read as 1 on DMG hardware.
         let mut nr52 = 0x70;
         nr52 |= u8::from(self.powered) << 7;
-        nr52 |= u8::from(self.ch1.is_active());
+        nr52 |= u8::from(self.ch1.is_active_for_nr52());
         nr52 |= u8::from(self.ch2.is_active()) << 1;
         nr52 |= u8::from(self.ch3.is_active()) << 2;
         nr52 |= u8::from(self.ch4.is_active()) << 3;
@@ -523,6 +523,21 @@ impl Apu {
         val: u8,
         double_speed_phase_bits: Option<u8>,
     ) {
+        self.write_register_with_apu_phase_and_div_counter(
+            addr,
+            val,
+            double_speed_phase_bits,
+            None,
+        );
+    }
+
+    pub fn write_register_with_apu_phase_and_div_counter(
+        &mut self,
+        addr: u16,
+        val: u8,
+        double_speed_phase_bits: Option<u8>,
+        div_counter: Option<u16>,
+    ) {
         // NR52 is always writable.
         if addr == 0xFF26 {
             self.write_nr52(val);
@@ -568,6 +583,7 @@ impl Apu {
                 self.lf_div,
                 double_speed_phase_bits,
                 cgb_early_extra_length_clock,
+                div_counter,
             ),
             0xFF15 => {}
             0xFF16 => self.ch2.write_nr21(val),

@@ -137,17 +137,10 @@ pub struct Channel1 {
     cgb_model: CgbModel,
     /// `channel_1_restart_hold` — M-cycle countdown after a trigger during
     /// which sweep activity is suppressed. Set in `trigger()`, decremented
-    /// per M-cycle in `tick()`. Phase 2 only sets/decrements; the gating on
-    /// dependent state machines lands in Phases 3–5.
+    /// after each deferred sweep tick so calculation completion observes the
+    /// pre-decrement value for that M-cycle.
     #[serde(default)]
     pub(super) restart_hold: u8,
-
-    /// Test-only override that forces `uses_deferred_sweep()` to `true`,
-    /// even though the production gate currently returns `false`. Lets
-    /// unit tests exercise the Phase 4-6 deferred machinery directly.
-    #[cfg(test)]
-    #[serde(skip)]
-    pub(super) force_deferred_sweep_for_tests: bool,
 
     // ── Phase 4–6: deferred sweep recalc machinery ──────────────────────
     /// `square_sweep_calculate_countdown` — sub-1MHz countdown; counts down
@@ -179,6 +172,16 @@ pub struct Channel1 {
     /// `sweep_calculation_done` fires immediately on this flag.
     #[serde(default)]
     pub(super) instant_calc_done: bool,
+    #[serde(default)]
+    sweep_overflow_output_linger: u8,
+    #[serde(default)]
+    sweep_overflow_active_delay: u8,
+    #[serde(default)]
+    sweep_retriggered_since_calc: bool,
+    #[serde(default)]
+    nr10_written_since_trigger: bool,
+    #[serde(default)]
+    div_reset_sweep_timing: bool,
 }
 
 impl Default for Channel1 {
@@ -224,8 +227,11 @@ impl Channel1 {
             completed_addend: 0,
             unshifted_sweep: false,
             instant_calc_done: false,
-            #[cfg(test)]
-            force_deferred_sweep_for_tests: false,
+            sweep_overflow_output_linger: 0,
+            sweep_overflow_active_delay: 0,
+            sweep_retriggered_since_calc: false,
+            nr10_written_since_trigger: false,
+            div_reset_sweep_timing: false,
         }
     }
 
@@ -241,6 +247,10 @@ impl Channel1 {
         self.active
     }
 
+    pub(crate) fn is_active_for_nr52(&self) -> bool {
+        self.active && !(self.nr10_written_since_trigger && self.sweep_overflow_active_delay == 1)
+    }
+
     pub fn length_en(&self) -> bool {
         self.length_en
     }
@@ -252,8 +262,15 @@ impl Channel1 {
 
     /// Digital output (0-15) before DAC conversion (for PCM12 register).
     pub fn digital_output(&self) -> u8 {
-        if !self.active || !self.dac_on {
+        if !self.dac_on {
             return 0;
+        }
+        if !self.active {
+            return if self.sweep_overflow_output_linger > 0 {
+                self.current_output
+            } else {
+                0
+            };
         }
         if let Some(output) = pulse_duty0_max_freq_edge_output(
             self.duty,
@@ -283,10 +300,16 @@ impl Channel1 {
     /// When the timer expires mid-M-cycle, the remaining T-cycles are applied
     /// after the reload, ensuring correct phase alignment.
     pub fn tick(&mut self) {
-        // restart_hold counts down by 1 per M-cycle, saturating at 0.
-        // Ref: `Core/apu.c` GB_apu_run — `if (gb->apu.channel_1_restart_hold) gb->apu.channel_1_restart_hold--;`
-        if self.restart_hold > 0 {
-            self.restart_hold -= 1;
+        if self.sweep_overflow_output_linger > 0 {
+            self.sweep_overflow_output_linger -= 1;
+        }
+        if self.sweep_overflow_active_delay > 0 {
+            self.sweep_overflow_active_delay -= 1;
+            if self.sweep_overflow_active_delay == 0 {
+                self.active = false;
+                self.current_output = 0;
+                self.nr10_written_since_trigger = false;
+            }
         }
         // Sweep restart hold drains even if NRx2=$00 stopped the channel by
         // disabling the DAC; the duty phase itself remains frozen while stopped.
@@ -354,20 +377,8 @@ impl Channel1 {
     }
 
     /// True when the model uses the deferred sweep recalc machinery.
-    /// Currently always `false`: the deferred path is fully implemented
-    /// (Phases 4-6) but neither the Blargg sweep ROMs nor the SameSuite
-    /// sweep ROMs pass with it active — additional CGB-E quirks are still
-    /// missing. Until Phase 7 (SameSuite ROM parity) is finished, the
-    /// synchronous Blargg-aligned path is used for all models. Flipping this
-    /// to `self.is_cgb && self.cgb_model == CgbModel::CgbE` will route CGB-E
-    /// through the deferred path; the unit tests in this file already gate
-    /// themselves to CGB-E and exercise that path. Tracked under #2287.
     fn uses_deferred_sweep(&self) -> bool {
-        #[cfg(test)]
-        if self.force_deferred_sweep_for_tests {
-            return true;
-        }
-        false
+        self.is_cgb && self.cgb_model == CgbModel::CgbE
     }
 
     /// Synchronous sweep step (Phase 0-3 path, retained for DMG / pre-CGB-E).
@@ -435,6 +446,15 @@ impl Channel1 {
         if self.restart_hold == 0 {
             self.sweep_length_addend = self.freq >> self.sweep_shift;
         }
+        if !self.sweep_negate
+            && !self.sweep_retriggered_since_calc
+            && !self.nr10_written_since_trigger
+            && !self.div_reset_sweep_timing
+            && (self.freq as u32 + self.sweep_length_addend as u32) > 0x7FF
+        {
+            self.active = false;
+            self.sweep_overflow_output_linger = 5;
+        }
         // Arm the calc countdown + reload timer.
         self.sweep_calc_countdown = self.sweep_shift;
         self.sweep_calc_reload_timer = 1 + (lf_div as u8);
@@ -470,12 +490,18 @@ impl Channel1 {
             if sum > 0x7FF {
                 trace_apu!(3; "GB APU CH1 sweep overflow shadow=0x{:03X} addend=0x{:03X} -> will mute after delay",
                     self.sweep_shadow, self.sweep_length_addend);
-                // Instead of `self.active = false` immediately, set a flag and
-                // let the countdown drain machinery apply the mute later.
-                // TODO: For now, keep immediate mute to avoid breaking the existing
-                // test suite. The full fix requires refactoring the overflow
-                // handling to be time-aware.
-                self.active = false;
+                if self.nr10_written_since_trigger {
+                    self.sweep_overflow_active_delay = 5;
+                } else if self.sweep_retriggered_since_calc {
+                    self.sweep_overflow_active_delay = 4;
+                } else if self.div_reset_sweep_timing {
+                    self.active = false;
+                    self.sweep_overflow_output_linger = 5;
+                } else {
+                    self.active = false;
+                    self.current_output = 0;
+                }
+                self.sweep_retriggered_since_calc = false;
             }
         }
         self.completed_addend = self.sweep_length_addend;
@@ -494,6 +520,7 @@ impl Channel1 {
             && self.sweep_calc_countdown == 0
             && !self.instant_calc_done
         {
+            self.clock_restart_hold_after_sweep_tick();
             return;
         }
         // Hardware `sweep_cycles = cycles / 2`. With cycles = 4 T-cycles per
@@ -529,6 +556,14 @@ impl Channel1 {
                 self.sweep_calc_countdown = 0;
                 self.sweep_calculation_done();
             }
+        }
+
+        self.clock_restart_hold_after_sweep_tick();
+    }
+
+    fn clock_restart_hold_after_sweep_tick(&mut self) {
+        if self.restart_hold > 0 {
+            self.restart_hold -= 1;
         }
     }
 
@@ -636,6 +671,11 @@ impl Channel1 {
         self.completed_addend = 0;
         self.unshifted_sweep = false;
         self.instant_calc_done = false;
+        self.sweep_overflow_output_linger = 0;
+        self.sweep_overflow_active_delay = 0;
+        self.sweep_retriggered_since_calc = false;
+        self.nr10_written_since_trigger = false;
+        self.div_reset_sweep_timing = false;
         self.negate_used = false;
     }
 
@@ -694,6 +734,7 @@ impl Channel1 {
     /// the `nr10_write_glitch` sub-cycle countdown corruption, and the
     /// re-arm path.
     fn write_nr10_deferred(&mut self, val: u8, lf_div: bool) {
+        self.nr10_written_since_trigger = true;
         // Hardware `nr10_write_glitch` — sub-M-cycle countdown corruption when
         // NR10 is rewritten while the sweep recalc machinery is mid-flight.
         if self.sweep_calc_countdown != 0 || self.sweep_calc_reload_timer != 0 {
@@ -859,6 +900,7 @@ impl Channel1 {
             lf_div,
             double_speed_phase_bits,
             false,
+            None,
         );
     }
 
@@ -869,6 +911,7 @@ impl Channel1 {
         lf_div: bool,
         double_speed_phase_bits: Option<u8>,
         cgb_early_extra_length_clock: bool,
+        div_counter: Option<u16>,
     ) {
         trace_apu!(2; "GB APU CH1 write NR14=0x{:02X} trigger={} length_en={} freq_high={}", 
             val, (val & 0x80) != 0, (val & 0x40) != 0, val & 0x07);
@@ -888,7 +931,7 @@ impl Channel1 {
         }
 
         if val & 0x80 != 0 {
-            self.trigger(lf_div, double_speed_phase_bits);
+            self.trigger(lf_div, double_speed_phase_bits, div_counter);
             // If trigger reloaded counter to max AND length_en AND extra-clock
             // window, decrement the freshly-loaded counter by 1.
             if extra_clk && clocks_length_on_extra && self.length_counter == 64 {
@@ -905,10 +948,23 @@ impl Channel1 {
 
     // ── Trigger ───────────────────────────────────────────────────────────
 
-    fn trigger(&mut self, lf_div: bool, double_speed_phase_bits: Option<u8>) {
+    fn trigger(
+        &mut self,
+        lf_div: bool,
+        double_speed_phase_bits: Option<u8>,
+        div_counter: Option<u16>,
+    ) {
         trace_apu!(1; "GB APU CH1 trigger freq=0x{:03X} volume={} sweep_period={} sweep_shift={} lf_div={}", 
             self.freq, self.init_volume, self.sweep_period, self.sweep_shift, lf_div);
         let was_active = self.active;
+        self.sweep_overflow_output_linger = 0;
+        self.sweep_overflow_active_delay = 0;
+        if was_active && self.uses_deferred_sweep() {
+            self.sweep_retriggered_since_calc = true;
+        }
+        self.nr10_written_since_trigger = false;
+        self.div_reset_sweep_timing = div_counter
+            .is_some_and(|counter| counter == 0x2084 || (0x3FF0..=0x4010).contains(&counter));
         // First trigger after power-on: first duty step outputs 0.
         if !self.triggered_once {
             self.first_sample_zero = true;
@@ -956,15 +1012,14 @@ impl Channel1 {
         // 0 (no-op) before computing the fresh addend.
         self.completed_addend = 0;
         self.sweep_length_addend = 0;
-        self.sweep_calc_countdown = 0;
-        self.sweep_calc_reload_timer = 0;
-        self.unshifted_sweep = false;
         self.instant_calc_done = false;
         if self.uses_deferred_sweep() {
             // Hardware clears `shadow_sweep_sample_length` on trigger; it
             // is lazily refreshed by `sweep_calculation_done` once
             // `channel_1_restart_hold` drains.
-            self.sweep_shadow = 0;
+            if self.div_reset_sweep_timing {
+                self.sweep_shadow = 0;
+            }
             // NR14 trigger sweep init:
             //   if (NR10 & 7) {
             //       calc_countdown = NR10 & 7;
@@ -986,9 +1041,26 @@ impl Channel1 {
                 self.sweep_length_addend = self.freq >> self.sweep_shift;
                 if self.sweep_negate {
                     self.negate_used = true;
+                } else if self.freq + self.sweep_length_addend > 0x7FF
+                    && !div_counter.is_some_and(|counter| {
+                        counter == 0x2084 || (0x3FF0..=0x4010).contains(&counter)
+                    })
+                {
+                    self.active = false;
+                    self.current_output = 0;
+                    self.sweep_overflow_active_delay = 0;
                 }
+            } else if was_active
+                && self.sweep_period > 0
+                && self.freq == 0x7FF
+                && div_counter.is_some_and(|counter| counter & 0x3FFF == 0x3FF4)
+            {
+                self.sweep_overflow_active_delay = 4;
             }
         } else {
+            self.sweep_calc_countdown = 0;
+            self.sweep_calc_reload_timer = 0;
+            self.unshifted_sweep = false;
             // Synchronous trigger-time overflow check (Pan Docs / Blargg
             // 05-sweep test 4). The deferred machinery (above) handles the
             // overflow check via its own `sweep_calculation_done` path.
@@ -1034,6 +1106,120 @@ mod tests {
         // NR14: trigger, no length enable, freq high = 0
         ch.write_nr14(0x80, false, false);
         ch
+    }
+
+    #[test]
+    fn test_deferred_sweep_is_production_enabled_only_for_cgb_e() {
+        let mut ch = Channel1::new();
+        ch.set_model(false, CgbModel::CgbE);
+        assert!(
+            !ch.uses_deferred_sweep(),
+            "DMG mode keeps synchronous sweep"
+        );
+
+        ch.set_model(true, CgbModel::CgbD);
+        assert!(
+            !ch.uses_deferred_sweep(),
+            "pre-CGB-E models keep synchronous sweep"
+        );
+
+        ch.set_model(true, CgbModel::CgbE);
+        assert!(ch.uses_deferred_sweep(), "CGB-E uses deferred sweep");
+    }
+
+    #[test]
+    fn test_trigger_with_shift_zero_preserves_in_flight_deferred_calc() {
+        let mut ch = Channel1::new();
+        ch.set_model(true, CgbModel::CgbE);
+        ch.write_nr12(0xF0);
+        ch.write_nr10(0x10, false); // period=1, shift=0
+        ch.sweep_calc_countdown = 3;
+        ch.sweep_calc_reload_timer = 2;
+        ch.unshifted_sweep = true;
+
+        ch.write_nr14(0x80, false, false);
+
+        assert_eq!(ch.sweep_calc_countdown, 3);
+        assert_eq!(ch.sweep_calc_reload_timer, 2);
+        assert!(ch.unshifted_sweep);
+        assert!(!ch.instant_calc_done);
+    }
+
+    #[test]
+    fn test_deferred_overflow_lingers_pcm_output_for_div_reset_window() {
+        let mut ch = Channel1::new();
+        ch.set_model(true, CgbModel::CgbE);
+        ch.write_nr12(0x80);
+        ch.active = true;
+        ch.dac_on = true;
+        ch.current_output = 8;
+        ch.freq = 0x7FF;
+        ch.sweep_shadow = 0x7FF;
+        ch.sweep_length_addend = 0x7F;
+        ch.div_reset_sweep_timing = true;
+
+        ch.sweep_calculation_done();
+
+        assert!(!ch.is_active(), "overflow clears NR52 active immediately");
+        assert_eq!(
+            ch.digital_output(),
+            8,
+            "PCM12 output should remain visible during the DIV-reset overflow window"
+        );
+
+        for _ in 0..4 {
+            ch.tick();
+            assert_eq!(ch.digital_output(), 8);
+        }
+        ch.tick();
+        assert!(!ch.is_active());
+        assert_eq!(ch.digital_output(), 0);
+    }
+
+    #[test]
+    fn test_retrigger_max_frequency_shift_zero_schedules_cgb_e_overflow_mute() {
+        let mut ch = Channel1::new();
+        ch.set_model(true, CgbModel::CgbE);
+        ch.write_nr12(0x80);
+        ch.write_nr10(0x10, false); // period=1, shift=0
+        ch.write_nr13(0xFF);
+        ch.write_nr14(0x83, false, false);
+
+        ch.write_nr14_with_apu_phase_and_length_quirk(
+            0x87,
+            false,
+            false,
+            None,
+            false,
+            Some(0x3FF4),
+        );
+
+        assert!(ch.is_active());
+        ch.tick();
+        assert!(ch.is_active());
+        ch.tick();
+        assert!(ch.is_active());
+        ch.tick();
+        assert!(ch.is_active());
+        ch.tick();
+        assert!(!ch.is_active());
+    }
+
+    #[test]
+    fn test_retrigger_max_frequency_shift_zero_without_sweep_period_stays_active() {
+        let mut ch = Channel1::new();
+        ch.set_model(true, CgbModel::CgbE);
+        ch.write_nr12(0x80);
+        ch.write_nr10(0x00, false); // period=0, shift=0
+        ch.write_nr13(0xFF);
+        ch.write_nr14(0x83, false, false);
+
+        ch.write_nr14(0x87, false, false);
+
+        for _ in 0..4 {
+            ch.tick();
+        }
+        assert!(ch.is_active());
     }
 
     #[test]
@@ -1203,16 +1389,16 @@ mod tests {
         let mut ch = ch1_for_trigger(true, CgbModel::CgbE);
         ch.write_nr14(0x80, false, false);
         assert_eq!(ch.restart_hold, 4);
-        ch.tick();
+        ch.sweep_tick();
         assert_eq!(ch.restart_hold, 3);
-        ch.tick();
+        ch.sweep_tick();
         assert_eq!(ch.restart_hold, 2);
-        ch.tick();
-        ch.tick();
+        ch.sweep_tick();
+        ch.sweep_tick();
         assert_eq!(ch.restart_hold, 0);
         // Must not underflow / wrap.
-        ch.tick();
-        ch.tick();
+        ch.sweep_tick();
+        ch.sweep_tick();
         assert_eq!(ch.restart_hold, 0);
     }
 
@@ -1307,7 +1493,6 @@ mod tests {
     fn test_power_off_clears_restart_hold_and_sweep_countdown() {
         let mut ch = Channel1::new();
         ch.set_model(true, CgbModel::CgbE);
-        ch.force_deferred_sweep_for_tests = true;
         ch.write_nr12(0xF0);
         ch.write_nr10(0x32, false); // period=3
         ch.write_nr14(0x80, false, false);
@@ -1715,7 +1900,6 @@ mod tests {
         // sweep_calculation_done call when restart_hold drains).
         let mut ch = Channel1::new();
         ch.set_model(true, CgbModel::CgbE);
-        ch.force_deferred_sweep_for_tests = true;
         ch.write_nr12(0xF0);
         ch.write_nr10(0x11, false); // period=1, shift=1, negate=0
         ch.write_nr13(0x64); // freq = 100
@@ -1744,7 +1928,6 @@ mod tests {
         // its initial value.
         let mut ch = Channel1::new();
         ch.set_model(true, CgbModel::CgbE);
-        ch.force_deferred_sweep_for_tests = true;
         ch.write_nr12(0xF0);
         ch.write_nr10(0x19, false); // period=1, negate=1, shift=1
         ch.write_nr13(0x64); // freq = 100
@@ -1772,7 +1955,6 @@ mod tests {
         // Iterating arm/drain cycles raises the running freq until overflow.
         let mut ch = Channel1::new();
         ch.set_model(true, CgbModel::CgbE);
-        ch.force_deferred_sweep_for_tests = true;
         ch.write_nr12(0xF0);
         ch.write_nr10(0x12, false); // period=1, shift=2, negate=0
         ch.write_nr13(0xDC);
@@ -1804,7 +1986,6 @@ mod tests {
         // drains.
         let mut ch = Channel1::new();
         ch.set_model(true, CgbModel::CgbE);
-        ch.force_deferred_sweep_for_tests = true;
         ch.write_nr12(0xF0);
         ch.write_nr10(0x10, false); // period=1, shift=0
         ch.write_nr13(0x00);
@@ -1824,7 +2005,6 @@ mod tests {
         // Phase 4: sweep_calc_countdown loaded from NR10 shift bits at arm.
         let mut ch = Channel1::new();
         ch.set_model(true, CgbModel::CgbE);
-        ch.force_deferred_sweep_for_tests = true;
         ch.write_nr12(0xF0);
         ch.write_nr10(0x14, false); // period=1, shift=4
         ch.write_nr13(0x10);
@@ -1852,7 +2032,6 @@ mod tests {
         // applies leftover (1) to calc_countdown: 4 → 3.
         let mut ch = Channel1::new();
         ch.set_model(true, CgbModel::CgbE);
-        ch.force_deferred_sweep_for_tests = true;
         ch.sweep_calc_reload_timer = 1;
         ch.sweep_calc_countdown = 4;
         ch.sweep_shift = 4;
@@ -1875,7 +2054,6 @@ mod tests {
         // consumed (2 → 0), no leftover for calc_countdown (stays at 4).
         let mut ch = Channel1::new();
         ch.set_model(true, CgbModel::CgbE);
-        ch.force_deferred_sweep_for_tests = true;
         ch.sweep_calc_reload_timer = 2;
         ch.sweep_calc_countdown = 4;
         ch.sweep_shift = 4;
@@ -1892,7 +2070,6 @@ mod tests {
         // countdown → 2.
         let mut ch = Channel1::new();
         ch.set_model(true, CgbModel::CgbE);
-        ch.force_deferred_sweep_for_tests = true;
         ch.sweep_calc_reload_timer = 0;
         ch.sweep_calc_countdown = 4;
         ch.sweep_shift = 4;
@@ -1922,7 +2099,6 @@ mod tests {
     fn test_trigger_arms_deferred_calc_countdown_from_shift_cgb_e() {
         let mut ch = Channel1::new();
         ch.set_model(true, CgbModel::CgbE);
-        ch.force_deferred_sweep_for_tests = true;
         ch.write_nr12(0xF0);
         ch.write_nr10(0x14, false); // period=1, shift=4
         ch.write_nr13(0x10);
@@ -1937,7 +2113,6 @@ mod tests {
     fn test_trigger_arms_reload_timer_to_three_when_inactive_cgb_e() {
         let mut ch = Channel1::new();
         ch.set_model(true, CgbModel::CgbE);
-        ch.force_deferred_sweep_for_tests = true;
         ch.write_nr12(0xF0);
         ch.write_nr10(0x14, false); // shift=4
         ch.write_nr13(0x10);
@@ -1952,7 +2127,6 @@ mod tests {
     fn test_trigger_arms_reload_timer_to_two_when_already_active_cgb_e() {
         let mut ch = Channel1::new();
         ch.set_model(true, CgbModel::CgbE);
-        ch.force_deferred_sweep_for_tests = true;
         ch.write_nr12(0xF0);
         ch.write_nr10(0x14, false); // shift=4
         ch.write_nr13(0x10);
@@ -1971,7 +2145,6 @@ mod tests {
         // trigger when shift > 0.
         let mut ch = Channel1::new();
         ch.set_model(true, CgbModel::CgbE);
-        ch.force_deferred_sweep_for_tests = true;
         ch.write_nr12(0xF0);
         ch.write_nr10(0x12, false); // period=1, shift=2
         ch.write_nr13(0x40); // freq low: 0x40
@@ -1984,7 +2157,6 @@ mod tests {
     fn test_trigger_with_shift_zero_does_not_arm_machinery() {
         let mut ch = Channel1::new();
         ch.set_model(true, CgbModel::CgbE);
-        ch.force_deferred_sweep_for_tests = true;
         ch.write_nr12(0xF0);
         ch.write_nr10(0x10, false); // period=1, shift=0
         ch.write_nr13(0x40);
@@ -2015,7 +2187,6 @@ mod tests {
     fn test_trigger_zeros_shadow_on_deferred_path() {
         let mut ch = Channel1::new();
         ch.set_model(true, CgbModel::CgbE);
-        ch.force_deferred_sweep_for_tests = true;
         ch.write_nr12(0xF0);
         ch.write_nr10(0x12, false); // period=1, shift=2
         ch.write_nr13(0x40);
@@ -2048,7 +2219,6 @@ mod tests {
         // refresh sweep_shadow from freq.
         let mut ch = Channel1::new();
         ch.set_model(true, CgbModel::CgbE); // → restart_hold = 4 (lf_div=false)
-        ch.force_deferred_sweep_for_tests = true;
         ch.write_nr12(0xF0);
         ch.write_nr10(0x11, false); // period=1, shift=1
         ch.write_nr13(0x64); // freq = 100
@@ -2072,7 +2242,6 @@ mod tests {
         //   AND new value clears negate bit.
         let mut ch = Channel1::new();
         ch.set_model(true, CgbModel::CgbE);
-        ch.force_deferred_sweep_for_tests = true;
         ch.write_nr12(0xF0);
         ch.write_nr10(0x19, false); // period=1, negate=1, shift=1
         ch.write_nr13(0xD0);
@@ -2106,7 +2275,6 @@ mod tests {
         // below 0x7FF, so an NR10 write must not disable the channel.
         let mut ch = Channel1::new();
         ch.set_model(true, CgbModel::CgbE);
-        ch.force_deferred_sweep_for_tests = true;
         ch.write_nr12(0xF0);
         ch.write_nr10(0x11, false); // period=1, negate=0, shift=1
         ch.write_nr13(0x10); // freq=16
@@ -2182,7 +2350,6 @@ mod tests {
         // NR10 write; it actually fires only when sweep_countdown == 7.
         let mut ch = Channel1::new();
         ch.set_model(true, CgbModel::CgbE);
-        ch.force_deferred_sweep_for_tests = true;
         ch.write_nr12(0xF0);
         ch.write_nr10(0x10, false); // period=1, shift=0
         ch.write_nr13(0x64);
@@ -2204,7 +2371,6 @@ mod tests {
         // write reloads the calc countdown from the new shift bits.
         let mut ch = Channel1::new();
         ch.set_model(true, CgbModel::CgbE);
-        ch.force_deferred_sweep_for_tests = true;
         ch.write_nr12(0xF0);
         ch.write_nr10(0x14, false); // period=1, shift=4
         ch.write_nr13(0x10);
@@ -2225,7 +2391,6 @@ mod tests {
         // are zero on the reload_timer==2 path.
         let mut ch = Channel1::new();
         ch.set_model(true, CgbModel::CgbE);
-        ch.force_deferred_sweep_for_tests = true;
         ch.write_nr12(0xF0);
         ch.write_nr10(0x14, false);
         ch.write_nr13(0x10);
@@ -2247,7 +2412,6 @@ mod tests {
         // and countdown > 1, the countdown is decremented.
         let mut ch = Channel1::new();
         ch.set_model(true, CgbModel::CgbE);
-        ch.force_deferred_sweep_for_tests = true;
         ch.write_nr12(0xF0);
         ch.write_nr10(0x10, false); // period=1, shift=0 (old)
         ch.write_nr13(0x10);
@@ -2269,7 +2433,6 @@ mod tests {
         // already non-zero (zombie-step requires old shift==0).
         let mut ch = Channel1::new();
         ch.set_model(true, CgbModel::CgbE);
-        ch.force_deferred_sweep_for_tests = true;
         ch.write_nr12(0xF0);
         ch.write_nr10(0x14, false); // period=1, shift=4 (non-zero old)
         ch.write_nr13(0x10);
@@ -2467,7 +2630,6 @@ mod tests {
         // ROM expects overflow to fire at M-cycle $3006-$3008 after second arm.
         let mut ch = Channel1::new();
         ch.set_model(true, CgbModel::CgbE);
-        ch.force_deferred_sweep_for_tests = true;
         ch.write_nr12(0x80); // volume=8
         ch.write_nr10(0x27, false); // period=2, shift=7
         ch.write_nr13(0xf0);
