@@ -875,6 +875,7 @@ impl Channel1 {
         let old_length_en = self.length_en;
         self.length_en = val & 0x40 != 0;
         self.freq = (self.freq & 0x00FF) | (u16::from(val & 0x07) << 8);
+        // CGB-0/A/B clock length on extra even without current length_en set.
         let clocks_length_on_extra = self.length_en || cgb_early_extra_length_clock;
 
         // Extra length clocking: when length_en transitions 0→1 while the FS

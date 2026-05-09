@@ -31,8 +31,8 @@ pub struct Channel3 {
     pub(crate) current_sample: u8,
     /// True when running a CGB-compatible ROM (gates wave RAM access behavior).
     is_cgb: bool,
-    /// CGB-B CH3 keeps its active flag (reflected in NR52 bit 2) until the next
-    /// non-trigger NR34 write when this quirk clocks length from 1 to 0 with length-enable clear.
+    /// Set when the CGB-B extra length clock reaches 0 with length-enable clear.
+    /// Cleared by a trigger or by the next non-trigger NR34 write, which disables CH3.
     #[serde(default)]
     cgb_b_length_disable_pending: bool,
     /// True when the last wave position advance consumed all remaining APU cycles
@@ -233,6 +233,8 @@ impl Channel3 {
         if extra_clk && !old_length_en && clocks_length_on_extra && self.length_counter > 0 {
             self.length_counter -= 1;
             if self.length_counter == 0 {
+                // Trigger writes reload length below, so only non-trigger writes
+                // can enter the CGB-B delayed-disable path.
                 let should_delay_disable =
                     cgb_b_delayed_length_disable && !self.length_en && !trigger;
                 if should_delay_disable {

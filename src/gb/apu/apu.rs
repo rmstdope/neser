@@ -697,8 +697,8 @@ mod tests {
         apu
     }
 
+    /// Creates a powered CGB APU configured for model-specific quirk tests.
     fn powered_cgb_apu_for_model(model: CgbModel) -> Apu {
-        // Powered CGB APU configured for model-specific quirk tests.
         let mut apu = Apu::new(true);
         apu.set_cgb_model(model);
         apu.write_register(0xFF26, 0x80);
