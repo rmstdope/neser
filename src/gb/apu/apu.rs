@@ -20,6 +20,8 @@
 use crate::trace_apu;
 use serde::{Deserialize, Serialize};
 
+use crate::gb::model::CgbModel;
+
 use super::channel1::Channel1;
 use super::channel2::Channel2;
 use super::channel3::Channel3;
@@ -111,6 +113,10 @@ pub struct Apu {
     /// Gates CGB-specific APU differences (length counter behavior on power off/on).
     is_cgb: bool,
 
+    /// CGB hardware revision for model-specific APU quirks.
+    #[serde(default)]
+    cgb_model: CgbModel,
+
     /// High-pass filter state: previous mix input (before filter).
     #[serde(default)]
     hp_prev_in: f32,
@@ -130,7 +136,7 @@ impl Apu {
         let mut ch1 = Channel1::new();
         // Default CGB revision = CgbE (latest); CgbBus overrides via
         // `set_cgb_model` once it knows the configured revision.
-        ch1.set_model(is_cgb, crate::gb::model::CgbModel::CgbE);
+        ch1.set_model(is_cgb, CgbModel::CgbE);
         Self {
             ch1,
             ch2: Channel2::new(),
@@ -147,6 +153,7 @@ impl Apu {
             cycles_per_sample: DMG_MCYCLES_PER_SEC / 44_100.0,
             pending_sample: None,
             is_cgb,
+            cgb_model: CgbModel::CgbE,
             hp_prev_in: 0.0,
             hp_prev_out: 0.0,
             hp_rc: Self::compute_hp_rc(44_100.0),
@@ -171,8 +178,25 @@ impl Apu {
     /// Set the CGB hardware revision and propagate it to subchannels that
     /// consume it (currently CH1 sweep timing). Should be called once at
     /// bus construction; default model in `Apu::new` is correct for DMG.
-    pub fn set_cgb_model(&mut self, cgb_model: crate::gb::model::CgbModel) {
+    pub fn set_cgb_model(&mut self, cgb_model: CgbModel) {
+        self.cgb_model = cgb_model;
         self.ch1.set_model(self.is_cgb, cgb_model);
+    }
+
+    /// CGB-0/A/B ignore the current NRx4 length-enable bit for the extra length
+    /// clock; only the previously disabled state matters.
+    fn cgb_early_extra_length_clock(&self) -> bool {
+        self.is_cgb
+            && matches!(
+                self.cgb_model,
+                CgbModel::Cgb0 | CgbModel::CgbA | CgbModel::CgbB
+            )
+    }
+
+    /// CGB-B CH3 keeps its active flag set until the next non-trigger NR34
+    /// write when this quirk clocks length from 1 to 0 with length-enable clear.
+    fn cgb_b_delayed_ch3_length_disable(&self) -> bool {
+        self.is_cgb && self.cgb_model == CgbModel::CgbB
     }
 
     /// Set the output sample rate in Hz (default: 44 100).
@@ -530,40 +554,52 @@ impl Apu {
         // (i.e. FS_TABLE[fs_step] has bit 0 clear — steps 1, 3, 5, 7), NRx4
         // writes that enable length_en or trigger with length_en get an extra clock.
         let extra_clk = FS_TABLE[self.fs_step as usize] & 0x01 == 0;
+        let cgb_early_extra_length_clock = self.cgb_early_extra_length_clock();
+        let cgb_b_delayed_ch3_length_disable = self.cgb_b_delayed_ch3_length_disable();
 
         match addr {
             0xFF10 => self.ch1.write_nr10(val, self.lf_div),
             0xFF11 => self.ch1.write_nr11(val),
             0xFF12 => self.ch1.write_nr12(val),
             0xFF13 => self.ch1.write_nr13(val),
-            0xFF14 => self.ch1.write_nr14_with_apu_phase(
+            0xFF14 => self.ch1.write_nr14_with_apu_phase_and_length_quirk(
                 val,
                 extra_clk,
                 self.lf_div,
                 double_speed_phase_bits,
+                cgb_early_extra_length_clock,
             ),
             0xFF15 => {}
             0xFF16 => self.ch2.write_nr21(val),
             0xFF17 => self.ch2.write_nr22(val),
             0xFF18 => self.ch2.write_nr23(val),
-            0xFF19 => self.ch2.write_nr24_with_apu_phase(
+            0xFF19 => self.ch2.write_nr24_with_apu_phase_and_length_quirk(
                 val,
                 extra_clk,
                 self.lf_div,
                 double_speed_phase_bits,
+                cgb_early_extra_length_clock,
             ),
             0xFF1A => self.ch3.write_nr30(val),
             0xFF1B => self.ch3.write_nr31(val),
             0xFF1C => self.ch3.write_nr32(val),
             0xFF1D => self.ch3.write_nr33(val),
-            0xFF1E => self.ch3.write_nr34(val, extra_clk),
+            0xFF1E => self.ch3.write_nr34_with_length_quirk(
+                val,
+                extra_clk,
+                cgb_early_extra_length_clock,
+                cgb_b_delayed_ch3_length_disable,
+            ),
             0xFF1F => {}
             0xFF20 => self.ch4.write_nr41(val),
             0xFF21 => self.ch4.write_nr42(val),
             0xFF22 => self.ch4.write_nr43(val),
-            0xFF23 => self
-                .ch4
-                .write_nr44_with_apu_phase(val, extra_clk, double_speed_phase_bits),
+            0xFF23 => self.ch4.write_nr44_with_apu_phase_and_length_quirk(
+                val,
+                extra_clk,
+                double_speed_phase_bits,
+                cgb_early_extra_length_clock,
+            ),
             0xFF24 => {
                 trace_apu!(2; "GB APU write NR50=0x{:02X} left_vol={} right_vol={}", val, (val >> 4) & 0x07, val & 0x07);
                 self.nr50 = val;
@@ -661,6 +697,14 @@ mod tests {
         apu
     }
 
+    /// Creates a powered CGB APU configured for model-specific quirk tests.
+    fn powered_cgb_apu_for_model(model: CgbModel) -> Apu {
+        let mut apu = Apu::new(true);
+        apu.set_cgb_model(model);
+        apu.write_register(0xFF26, 0x80);
+        apu
+    }
+
     /// `div_divider` is a Frame-Sequencer-step counter exposed for the
     /// Sub-M-cycle sub-M-cycle sweep machinery. It must advance by
     /// exactly one per serviced DIV-APU event so the low bits drive
@@ -728,6 +772,32 @@ mod tests {
         // Power on again — should still be 0 (and fs_step is also 0).
         apu.write_register(0xFF26, 0x80);
         assert_eq!(apu.div_divider(), 0);
+    }
+
+    #[test]
+    fn test_cgb_b_extra_length_clock_ignores_current_length_enable() {
+        let mut apu = powered_cgb_apu_for_model(CgbModel::CgbB);
+        apu.write_register(0xFF11, 0x3E);
+        assert_eq!(apu.ch1.length_counter, 2);
+
+        apu.clock_div_apu();
+        apu.write_register(0xFF14, 0x00);
+
+        assert!(!apu.ch1.length_en());
+        assert_eq!(apu.ch1.length_counter, 1);
+    }
+
+    #[test]
+    fn test_cgb_c_extra_length_clock_requires_current_length_enable() {
+        let mut apu = powered_cgb_apu_for_model(CgbModel::CgbC);
+        apu.write_register(0xFF11, 0x3E);
+        assert_eq!(apu.ch1.length_counter, 2);
+
+        apu.clock_div_apu();
+        apu.write_register(0xFF14, 0x00);
+
+        assert!(!apu.ch1.length_en());
+        assert_eq!(apu.ch1.length_counter, 2);
     }
 
     #[test]

@@ -330,13 +330,31 @@ impl Channel2 {
         lf_div: bool,
         double_speed_phase_bits: Option<u8>,
     ) {
+        self.write_nr24_with_apu_phase_and_length_quirk(
+            val,
+            extra_clk,
+            lf_div,
+            double_speed_phase_bits,
+            false,
+        );
+    }
+
+    pub fn write_nr24_with_apu_phase_and_length_quirk(
+        &mut self,
+        val: u8,
+        extra_clk: bool,
+        lf_div: bool,
+        double_speed_phase_bits: Option<u8>,
+        cgb_early_extra_length_clock: bool,
+    ) {
         trace_apu!(2; "GB APU CH2 write NR24=0x{:02X} trigger={} length_en={} freq_high={}", 
             val, (val & 0x80) != 0, (val & 0x40) != 0, val & 0x07);
         let old_length_en = self.length_en;
         self.length_en = val & 0x40 != 0;
         self.freq = (self.freq & 0x00FF) | (u16::from(val & 0x07) << 8);
+        let clocks_length_on_extra = self.length_en || cgb_early_extra_length_clock;
 
-        if extra_clk && !old_length_en && self.length_en && self.length_counter > 0 {
+        if extra_clk && !old_length_en && clocks_length_on_extra && self.length_counter > 0 {
             self.length_counter -= 1;
             if self.length_counter == 0 {
                 self.active = false;
@@ -345,7 +363,7 @@ impl Channel2 {
 
         if val & 0x80 != 0 {
             self.trigger(lf_div, double_speed_phase_bits);
-            if extra_clk && self.length_en && self.length_counter == 64 {
+            if extra_clk && clocks_length_on_extra && self.length_counter == 64 {
                 self.length_counter = 63;
             }
         }
