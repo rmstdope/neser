@@ -128,23 +128,20 @@ samesuite_apu_test_enabled!(
     &format!("{BASE}/channel_1/channel_1_stop_restart.gb"),
     SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
-samesuite_apu_test!(
+samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_1_sweep,
     &format!("{BASE}/channel_1/channel_1_sweep.gb"),
-    SameSuiteHardware::Cgb(CgbModel::CgbE),
-    "Issue #2293: Sub-M-cycle overflow timing; neser's M-cycle-resolution APU model has ~5 M-cycle drift vs. hardware. Blargg tests (game-relevant timing) pass; SameSuite tests (T-cycle-precision) fail 5/144 sub-tests. Known limitation of M-cycle abstraction."
+    SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
-samesuite_apu_test!(
+samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_1_sweep_restart,
     &format!("{BASE}/channel_1/channel_1_sweep_restart.gb"),
-    SameSuiteHardware::Cgb(CgbModel::CgbE),
-    "Issue #2293: Sub-M-cycle overflow timing; neser's M-cycle model has ~5 M-cycle drift. See channel_1_sweep test for details."
+    SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
-samesuite_apu_test!(
+samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_1_sweep_restart_2,
     &format!("{BASE}/channel_1/channel_1_sweep_restart_2.gb"),
-    SameSuiteHardware::Cgb(CgbModel::CgbE),
-    "Issue #2293: Sub-M-cycle overflow timing; neser's M-cycle model has ~5 M-cycle drift. See channel_1_sweep test for details."
+    SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
 samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_1_volume,
