@@ -106,13 +106,17 @@ impl Channel3 {
     /// Process all sample advances within the given M-cycle.
     /// The countdown is in APU cycles; reload = `freq ^ 0x7FF` = `2047 - freq`.
     pub fn tick(&mut self) {
+        self.tick_apu_cycles(2);
+    }
+
+    fn tick_apu_cycles(&mut self, cycles: u16) {
         self.wave_just_read = false;
 
         if !self.active {
             return;
         }
 
-        let mut cycles_left: u16 = 2; // 2 APU cycles per M-cycle (normal speed)
+        let mut cycles_left = cycles;
         while cycles_left > self.freq_timer {
             cycles_left -= self.freq_timer + 1;
             self.freq_timer = self.freq ^ 0x7FF;
@@ -284,6 +288,12 @@ impl Channel3 {
 
     pub(crate) fn needs_cgb_read_sync(&self) -> bool {
         self.is_cgb && self.active && self.freq_timer == 0
+    }
+
+    pub(crate) fn sync_cgb_read_tick(&mut self) {
+        if self.needs_cgb_read_sync() {
+            self.tick_apu_cycles(2);
+        }
     }
 
     pub fn read_wave_ram(&self, addr: u16) -> u8 {
@@ -604,6 +614,26 @@ mod tests {
         assert!(
             !ch.needs_cgb_read_sync(),
             "the CGB read-sync path must stay disabled for DMG wave RAM behavior"
+        );
+    }
+
+    #[test]
+    fn test_cgb_read_sync_advances_ch3_without_waiting_for_global_tick() {
+        let mut ch = Channel3::new_with_mode(true);
+        ch.write_nr30(0x80);
+        ch.write_nr32(0x20);
+        ch.wave_ram[0] = 0xA5;
+        ch.active = true;
+        ch.freq = 0x07FE;
+        ch.freq_timer = 0;
+
+        ch.sync_cgb_read_tick();
+
+        assert_eq!(ch.wave_pos, 1);
+        assert_eq!(ch.current_sample, 0x5);
+        assert_eq!(
+            ch.freq_timer, 0,
+            "sync consumes one CH3 tick so boundary reads observe the reloaded timer"
         );
     }
 
