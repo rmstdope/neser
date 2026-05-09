@@ -31,6 +31,10 @@ pub struct Channel3 {
     pub(crate) current_sample: u8,
     /// True when running a CGB-compatible ROM (gates wave RAM access behavior).
     is_cgb: bool,
+    /// CGB-B CH3 keeps NR52 active for one extra NRx4 write when this quirk
+    /// clocks length from 1 to 0 with current length-enable clear.
+    #[serde(default)]
+    cgb_b_length_disable_pending: bool,
     /// True when the last wave position advance consumed all remaining APU cycles
     /// in a tick — i.e. a sample read occurred on the very last APU cycle of that
     /// M-cycle. On DMG, CPU can only access wave RAM during this window.
@@ -62,6 +66,7 @@ impl Channel3 {
             wave_ram: [0u8; 16],
             current_sample: 0,
             is_cgb,
+            cgb_b_length_disable_pending: false,
             wave_just_read: false,
         }
     }
@@ -155,6 +160,7 @@ impl Channel3 {
         self.freq_timer = 0;
         self.length_counter = 0;
         self.current_sample = 0;
+        self.cgb_b_length_disable_pending = false;
         self.wave_just_read = false;
         // Note: wave_ram is NOT cleared on power-off per hardware spec.
     }
@@ -200,22 +206,43 @@ impl Channel3 {
     }
 
     pub fn write_nr34(&mut self, val: u8, extra_clk: bool) {
+        self.write_nr34_with_length_quirk(val, extra_clk, false, false);
+    }
+
+    pub fn write_nr34_with_length_quirk(
+        &mut self,
+        val: u8,
+        extra_clk: bool,
+        cgb_early_extra_length_clock: bool,
+        cgb_b_delayed_length_disable: bool,
+    ) {
         trace_apu!(2; "GB APU CH3 write NR34=0x{:02X} trigger={} length_en={} freq_high={}", 
             val, (val & 0x80) != 0, (val & 0x40) != 0, val & 0x07);
+        if self.cgb_b_length_disable_pending && val & 0x80 == 0 {
+            self.active = false;
+            self.cgb_b_length_disable_pending = false;
+        }
         let old_length_en = self.length_en;
         self.length_en = val & 0x40 != 0;
         self.freq = (self.freq & 0x00FF) | (u16::from(val & 0x07) << 8);
+        let clocks_length_on_extra = self.length_en || cgb_early_extra_length_clock;
 
-        if extra_clk && !old_length_en && self.length_en && self.length_counter > 0 {
+        if extra_clk && !old_length_en && clocks_length_on_extra && self.length_counter > 0 {
             self.length_counter -= 1;
             if self.length_counter == 0 {
-                self.active = false;
+                if cgb_b_delayed_length_disable && !self.length_en && val & 0x80 == 0 {
+                    self.cgb_b_length_disable_pending = true;
+                } else {
+                    self.active = false;
+                    self.cgb_b_length_disable_pending = false;
+                }
             }
         }
 
         if val & 0x80 != 0 {
             self.trigger();
-            if extra_clk && self.length_en && self.length_counter == 256 {
+            self.cgb_b_length_disable_pending = false;
+            if extra_clk && clocks_length_on_extra && self.length_counter == 256 {
                 self.length_counter = 255;
             }
         }
