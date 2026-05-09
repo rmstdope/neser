@@ -370,8 +370,13 @@ impl CgbBus {
             && self.apu_tick_accumulator != 0
             && self.apu.needs_cgb_ch3_read_sync(addr)
         {
-            self.apu.tick(1);
-            self.apu_tick_accumulator = 0;
+            // In double-speed mode `apu_tick_accumulator` tracks CPU M-cycles and
+            // only every 2 accumulated M-cycles correspond to a full `apu.tick(1)`.
+            // If there is a single pending unit here, forcing `apu.tick(1)` would
+            // advance a full APU M-cycle while only consuming a half-step of
+            // accounted time, which makes the APU run too fast and incorrectly
+            // advances unrelated APU state. Defer the sync until the normal tick
+            // path has accumulated enough time for a real full APU tick.
         }
     }
 
