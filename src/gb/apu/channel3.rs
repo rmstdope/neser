@@ -29,6 +29,10 @@ pub struct Channel3 {
     wave_ram: [u8; 16],
     /// Byte currently being shifted out (set on wave position advance).
     pub(crate) current_sample: u8,
+    /// Last wave RAM byte fetched by the channel. Retriggers keep this buffer,
+    /// and restart output uses its high nibble until the next wave RAM fetch.
+    #[serde(default)]
+    current_sample_byte: u8,
     /// True when running a CGB-compatible ROM (gates wave RAM access behavior).
     is_cgb: bool,
     /// Set when the CGB-B extra length clock reaches 0 with length-enable clear.
@@ -65,6 +69,7 @@ impl Channel3 {
             length_counter: 0,
             wave_ram: [0u8; 16],
             current_sample: 0,
+            current_sample_byte: 0,
             is_cgb,
             cgb_b_length_disable_pending: false,
             wave_just_read: false,
@@ -131,7 +136,8 @@ impl Channel3 {
             self.freq_timer = self.freq ^ 0x7FF;
             let old_pos = self.wave_pos;
             self.wave_pos = (self.wave_pos + 1) & 31;
-            self.current_sample = self.read_wave_nibble(self.wave_pos);
+            self.current_sample_byte = self.wave_ram[(self.wave_pos / 2) as usize];
+            self.current_sample = Self::nibble_from_byte(self.current_sample_byte, self.wave_pos);
             trace_apu!(5; "GB APU CH3 tick wave_pos {} -> {} sample=0x{:X} freq=0x{:03X}", 
                 old_pos, self.wave_pos, self.current_sample, self.freq);
             self.wave_just_read = true;
@@ -164,6 +170,7 @@ impl Channel3 {
         self.freq_timer = 0;
         self.length_counter = 0;
         self.current_sample = 0;
+        self.current_sample_byte = 0;
         self.clear_cgb_b_length_disable_pending();
         self.wave_just_read = false;
         // Note: wave_ram is NOT cleared on power-off per hardware spec.
@@ -276,6 +283,7 @@ impl Channel3 {
 
         if self.dac_on {
             self.active = true;
+            self.current_sample = (self.current_sample_byte >> 4) & 0x0F;
         }
         if self.length_counter == 0 {
             self.length_counter = 256;
@@ -314,9 +322,7 @@ impl Channel3 {
 
     // ── Wave RAM ──────────────────────────────────────────────────────────
 
-    /// Extract the 4-bit sample at a given wave position from packed wave RAM.
-    fn read_wave_nibble(&self, pos: u8) -> u8 {
-        let byte = self.wave_ram[(pos / 2) as usize];
+    fn nibble_from_byte(byte: u8, pos: u8) -> u8 {
         if pos & 1 == 0 {
             (byte >> 4) & 0x0F
         } else {
@@ -592,6 +598,23 @@ mod tests {
             0.0,
             "trigger must not immediately read new sample"
         );
+    }
+
+    #[test]
+    fn test_retrigger_outputs_previous_sample_byte_high_nibble() {
+        let mut ch = Channel3::new_with_mode(true);
+        ch.write_nr30(0x80);
+        ch.write_nr32(0x20);
+        ch.current_sample_byte = 0xDE;
+        ch.current_sample = 0xE;
+
+        ch.write_nr34(0x80, false);
+
+        assert_eq!(
+            ch.current_sample, 0xD,
+            "trigger should keep the sample byte buffer and output its high nibble"
+        );
+        assert_eq!(ch.digital_output(), 0xD);
     }
 
     #[test]
