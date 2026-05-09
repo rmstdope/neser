@@ -282,17 +282,17 @@ impl Channel3 {
 
         self.wave_pos = 0;
 
-        // SameBoy models an active-channel retrigger exactly at the sample
-        // boundary as refreshing the byte buffer from wave RAM byte 0 before
-        // trigger output uses the buffer high nibble. Other retriggers keep
-        // the previous fetched byte intact.
+        // SameBoy Core/apu.c NR34 handling refreshes current_sample_byte from
+        // wave RAM byte 0 only when CH3 is already active and sample_countdown
+        // is 0: the channel is being retriggered exactly as the next wave byte
+        // would be read. Other retriggers keep the previous fetched byte intact.
         if self.active && self.freq_timer == 0 {
             self.current_sample_byte = self.wave_ram[0];
         }
 
         if self.dac_on {
             self.active = true;
-            self.current_sample = (self.current_sample_byte >> 4) & 0x0F;
+            self.current_sample = Self::get_nibble_from_byte(self.current_sample_byte, 0);
         }
         if self.length_counter == 0 {
             self.length_counter = 256;
