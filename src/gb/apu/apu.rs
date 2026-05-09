@@ -193,8 +193,8 @@ impl Apu {
             )
     }
 
-    /// CGB-B CH3 keeps its active flag set until the next NR34 write when this
-    /// quirk clocks length from 1 to 0 with length-enable still clear.
+    /// CGB-B CH3 keeps its active flag set until the next non-trigger NR34
+    /// write when this quirk clocks length from 1 to 0 with length-enable clear.
     fn cgb_b_delayed_ch3_length_disable(&self) -> bool {
         self.is_cgb && self.cgb_model == CgbModel::CgbB
     }

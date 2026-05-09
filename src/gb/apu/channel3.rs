@@ -31,8 +31,8 @@ pub struct Channel3 {
     pub(crate) current_sample: u8,
     /// True when running a CGB-compatible ROM (gates wave RAM access behavior).
     is_cgb: bool,
-    /// CGB-B CH3 keeps its active flag (reflected in NR52 bit 2) for one extra
-    /// NRx4 write when this quirk clocks length from 1 to 0 with length-enable clear.
+    /// CGB-B CH3 keeps its active flag (reflected in NR52 bit 2) until the next
+    /// non-trigger NR34 write when this quirk clocks length from 1 to 0 with length-enable clear.
     #[serde(default)]
     cgb_b_length_disable_pending: bool,
     /// True when the last wave position advance consumed all remaining APU cycles
