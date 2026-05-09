@@ -155,8 +155,9 @@ impl DmgBus {
         self.ppu.write_register(0xFF40, 0x00); // power-on: LCD disabled
         self.timer = Timer::with_div_counter(div_counter);
         self.joypad = Joypad::new();
-        self.apu = Apu::new(self.cart.is_cgb());
-        if self.cart.is_cgb() {
+        let is_cgb = self.cart.is_cgb();
+        self.apu = Apu::new(is_cgb);
+        if is_cgb {
             self.apu.set_cgb_model(CgbModel::CgbD);
         }
         self.apu.set_sample_rate(apu_rate);

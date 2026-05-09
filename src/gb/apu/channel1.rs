@@ -280,11 +280,10 @@ impl Channel1 {
             return 0;
         }
         if !self.active {
-            return if self.sweep_overflow_output_linger > 0 {
-                self.current_output
-            } else {
-                0
-            };
+            if self.sweep_overflow_output_linger > 0 {
+                return self.current_output;
+            }
+            return 0;
         }
         if let Some(output) = pulse_duty0_max_freq_edge_output(
             self.duty,
@@ -515,7 +514,6 @@ impl Channel1 {
                     self.active = false;
                     self.current_output = 0;
                 }
-                self.sweep_retriggered_since_calc = false;
             }
         }
         self.completed_addend = self.sweep_length_addend;
@@ -978,10 +976,7 @@ impl Channel1 {
         let was_active = self.active;
         self.sweep_overflow_output_linger = 0;
         self.sweep_overflow_active_delay = 0;
-        self.sweep_retriggered_since_calc = false;
-        if was_active && self.uses_deferred_sweep() {
-            self.sweep_retriggered_since_calc = true;
-        }
+        self.sweep_retriggered_since_calc = was_active && self.uses_deferred_sweep();
         self.nr10_written_since_trigger = false;
         // These raw DIV phases correspond to the DIV-reset-aligned windows used
         // by SameSuite's CGB-E CH1 sweep timing probes.
