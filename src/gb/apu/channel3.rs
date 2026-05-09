@@ -281,6 +281,10 @@ impl Channel3 {
 
         self.wave_pos = 0;
 
+        if self.active && self.freq_timer == 0 {
+            self.current_sample_byte = self.wave_ram[0];
+        }
+
         if self.dac_on {
             self.active = true;
             self.current_sample = (self.current_sample_byte >> 4) & 0x0F;
