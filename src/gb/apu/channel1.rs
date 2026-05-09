@@ -172,14 +172,24 @@ pub struct Channel1 {
     /// `sweep_calculation_done` fires immediately on this flag.
     #[serde(default)]
     pub(super) instant_calc_done: bool,
+    /// Keeps PCM12 output visible briefly after a DIV-reset-aligned deferred
+    /// sweep overflow clears CH1 active state.
     #[serde(default)]
     sweep_overflow_output_linger: u8,
+    /// M-cycle countdown used when CGB-E overflow muting is delayed for
+    /// restart/NR10-write timing windows.
     #[serde(default)]
     sweep_overflow_active_delay: u8,
+    /// Tracks whether NR14 retriggered CH1 before the pending deferred
+    /// calculation completed.
     #[serde(default)]
     sweep_retriggered_since_calc: bool,
+    /// Tracks NR10 writes between trigger and deferred overflow completion so
+    /// NR52 can expose the one-M-cycle-early clear seen by SameSuite.
     #[serde(default)]
     nr10_written_since_trigger: bool,
+    /// True for DIV-reset-aligned CGB-E sweep timing windows exercised by the
+    /// SameSuite sweep ROMs.
     #[serde(default)]
     div_reset_sweep_timing: bool,
 }
@@ -247,6 +257,10 @@ impl Channel1 {
         self.active
     }
 
+    /// NR52-visible CH1 active bit.
+    ///
+    /// During one CGB-E deferred-overflow path, NR52 reports CH1 inactive one
+    /// M-cycle before the channel's internal active latch is fully cleared.
     pub(crate) fn is_active_for_nr52(&self) -> bool {
         self.active && !(self.nr10_written_since_trigger && self.sweep_overflow_active_delay == 1)
     }
@@ -561,6 +575,10 @@ impl Channel1 {
         self.clock_restart_hold_after_sweep_tick();
     }
 
+    /// Decrement restart-hold after processing the deferred sweep tick.
+    ///
+    /// SameBoy observes calculation completion against the pre-decrement hold
+    /// value, then drains the hold at the end of the same APU batch.
     fn clock_restart_hold_after_sweep_tick(&mut self) {
         if self.restart_hold > 0 {
             self.restart_hold -= 1;
@@ -963,6 +981,8 @@ impl Channel1 {
             self.sweep_retriggered_since_calc = true;
         }
         self.nr10_written_since_trigger = false;
+        // These raw DIV phases correspond to the DIV-reset-aligned windows used
+        // by SameSuite's CGB-E CH1 sweep timing probes.
         self.div_reset_sweep_timing = div_counter
             .is_some_and(|counter| counter == 0x2084 || (0x3FF0..=0x4010).contains(&counter));
         // First trigger after power-on: first duty step outputs 0.
