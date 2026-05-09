@@ -27,7 +27,7 @@ pub struct Channel3 {
     pub(crate) length_counter: u16, // 0-256
     /// Wave RAM: 16 bytes = 32 × 4-bit samples.
     wave_ram: [u8; 16],
-    /// Byte currently being shifted out (set on wave position advance).
+    /// Current 4-bit sample nibble derived from the latched wave RAM byte.
     pub(crate) current_sample: u8,
     /// Last wave RAM byte fetched by the channel. Trigger event output uses
     /// this byte's high nibble until the next wave RAM fetch.
