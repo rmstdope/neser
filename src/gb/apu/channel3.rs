@@ -29,8 +29,8 @@ pub struct Channel3 {
     wave_ram: [u8; 16],
     /// Byte currently being shifted out (set on wave position advance).
     pub(crate) current_sample: u8,
-    /// Last wave RAM byte fetched by the channel. Retriggers keep this buffer,
-    /// and restart output uses its high nibble until the next wave RAM fetch.
+    /// Last wave RAM byte fetched by the channel. Trigger event output uses
+    /// this byte's high nibble until the next wave RAM fetch.
     #[serde(default)]
     current_sample_byte: u8,
     /// True when running a CGB-compatible ROM (gates wave RAM access behavior).
@@ -137,7 +137,8 @@ impl Channel3 {
             let old_pos = self.wave_pos;
             self.wave_pos = (self.wave_pos + 1) & 31;
             self.current_sample_byte = self.wave_ram[(self.wave_pos / 2) as usize];
-            self.current_sample = Self::nibble_from_byte(self.current_sample_byte, self.wave_pos);
+            self.current_sample =
+                Self::get_nibble_from_byte(self.current_sample_byte, self.wave_pos);
             trace_apu!(5; "GB APU CH3 tick wave_pos {} -> {} sample=0x{:X} freq=0x{:03X}", 
                 old_pos, self.wave_pos, self.current_sample, self.freq);
             self.wave_just_read = true;
@@ -281,9 +282,10 @@ impl Channel3 {
 
         self.wave_pos = 0;
 
-        // SameBoy models a boundary retrigger as refreshing the byte buffer
-        // from wave RAM byte 0 before restart output uses the buffer high
-        // nibble. Other retriggers keep the previous fetched byte intact.
+        // SameBoy models an active-channel retrigger exactly at the sample
+        // boundary as refreshing the byte buffer from wave RAM byte 0 before
+        // trigger output uses the buffer high nibble. Other retriggers keep
+        // the previous fetched byte intact.
         if self.active && self.freq_timer == 0 {
             self.current_sample_byte = self.wave_ram[0];
         }
@@ -329,7 +331,7 @@ impl Channel3 {
 
     // ── Wave RAM ──────────────────────────────────────────────────────────
 
-    fn nibble_from_byte(byte: u8, wave_pos: u8) -> u8 {
+    fn get_nibble_from_byte(byte: u8, wave_pos: u8) -> u8 {
         if wave_pos & 1 == 0 {
             (byte >> 4) & 0x0F
         } else {
