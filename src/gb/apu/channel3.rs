@@ -31,8 +31,8 @@ pub struct Channel3 {
     pub(crate) current_sample: u8,
     /// True when running a CGB-compatible ROM (gates wave RAM access behavior).
     is_cgb: bool,
-    /// CGB-B CH3 keeps NR52 active for one extra NRx4 write when this quirk
-    /// clocks length from 1 to 0 with current length-enable clear.
+    /// CGB-B CH3 keeps its active flag (reflected in NR52 bit 2) for one extra
+    /// NRx4 write when this quirk clocks length from 1 to 0 with length-enable clear.
     #[serde(default)]
     cgb_b_length_disable_pending: bool,
     /// True when the last wave position advance consumed all remaining APU cycles
@@ -218,6 +218,8 @@ impl Channel3 {
     ) {
         trace_apu!(2; "GB APU CH3 write NR34=0x{:02X} trigger={} length_en={} freq_high={}", 
             val, (val & 0x80) != 0, (val & 0x40) != 0, val & 0x07);
+        // The CGB-B pending disable is consumed by the next non-trigger NR34
+        // write before that write can evaluate length-enable or clock length.
         if self.cgb_b_length_disable_pending && val & 0x80 == 0 {
             self.active = false;
             self.cgb_b_length_disable_pending = false;
@@ -230,7 +232,9 @@ impl Channel3 {
         if extra_clk && !old_length_en && clocks_length_on_extra && self.length_counter > 0 {
             self.length_counter -= 1;
             if self.length_counter == 0 {
-                if cgb_b_delayed_length_disable && !self.length_en && val & 0x80 == 0 {
+                let should_delay_disable =
+                    cgb_b_delayed_length_disable && !self.length_en && val & 0x80 == 0;
+                if should_delay_disable {
                     self.cgb_b_length_disable_pending = true;
                 } else {
                     self.active = false;

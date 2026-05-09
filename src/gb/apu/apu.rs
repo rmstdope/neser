@@ -183,6 +183,8 @@ impl Apu {
         self.ch1.set_model(self.is_cgb, cgb_model);
     }
 
+    /// CGB-0/A/B ignore the current NRx4 length-enable bit for the extra length
+    /// clock; only the previously disabled state matters.
     fn cgb_early_extra_length_clock(&self) -> bool {
         self.is_cgb
             && matches!(
@@ -191,6 +193,8 @@ impl Apu {
             )
     }
 
+    /// CGB-B CH3 keeps its active flag set until the next NR34 write when this
+    /// quirk clocks length from 1 to 0 with length-enable still clear.
     fn cgb_b_delayed_ch3_length_disable(&self) -> bool {
         self.is_cgb && self.cgb_model == CgbModel::CgbB
     }
