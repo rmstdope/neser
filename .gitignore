@@ -85,3 +85,9 @@ test-results/
 obj
 
 test.state
+
+# Production secrets
+.env
+
+# TheGamesDB metadata cache
+scripts/metadata-scraper/thegamesdb_cache.sqlite

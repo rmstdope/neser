@@ -1,9 +1,10 @@
 {
   "cSpell.enabled": false,
   "python.testing.pytestArgs": [
-    "scripts/scraper",
-    "scripts/mappertool",
+    // "scripts/scraper",
+    // "scripts/mappertool",
     "scripts"
   ],
-  "python.testing.pytestEnabled": true
+  "python.testing.pytestEnabled": true,
+  "python.terminal.useEnvFile": true,
 }
