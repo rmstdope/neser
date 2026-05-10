@@ -91,3 +91,4 @@ test.state
 
 # TheGamesDB metadata cache
 scripts/metadata-scraper/metadata.db
+scripts/metadata-scraper/thegamesdb_cache.sqlite
