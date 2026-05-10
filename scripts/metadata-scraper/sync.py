@@ -59,7 +59,7 @@ class Syncer:
             game_ids.append(game["id"])
 
         # Store boxart images already returned in the platform response
-        self._store_images(boxart, str_keys=True)
+        self._store_images(boxart)
 
         # Fetch all remaining image types via the Images endpoint
         if game_ids:
@@ -169,22 +169,15 @@ class Syncer:
             for entity in data.values():
                 self._db.upsert_reference(table, entity)
 
-    def _store_images(self, images_by_game: dict, str_keys: bool = True):
+    def _store_images(self, images_by_game: dict):
         """Persist image records without a progress bar (used for boxart from platform response)."""
         for game_id_key, img_list in images_by_game.items():
             try:
-                game_id = int(game_id_key) if str_keys else game_id_key
+                game_id = int(game_id_key)
             except (ValueError, TypeError):
                 continue
             for img in img_list:
-                self._db.upsert_image({
-                    "id": img["id"],
-                    "game_id": game_id,
-                    "type": img.get("type"),
-                    "side": img.get("side"),
-                    "filename": img.get("filename"),
-                    "resolution": img.get("resolution"),
-                })
+                self._persist_image(game_id, img)
 
     def _store_images_with_progress(self, images_by_game: dict, desc: str = "  Images"):
         """Persist image records with a tqdm progress bar per game."""
@@ -202,11 +195,14 @@ class Syncer:
             except (ValueError, TypeError):
                 continue
             for img in img_list:
-                self._db.upsert_image({
-                    "id": img["id"],
-                    "game_id": game_id,
-                    "type": img.get("type"),
-                    "side": img.get("side"),
-                    "filename": img.get("filename"),
-                    "resolution": img.get("resolution"),
-                })
+                self._persist_image(game_id, img)
+
+    def _persist_image(self, game_id: int, img: dict) -> None:
+        self._db.upsert_image({
+            "id": img["id"],
+            "game_id": game_id,
+            "type": img.get("type"),
+            "side": img.get("side"),
+            "filename": img.get("filename"),
+            "resolution": img.get("resolution"),
+        })

@@ -267,6 +267,10 @@ impl Channel4 {
         self.volume = 0;
         self.env_timer = 0;
         self.env_clock_state = EnvelopeClockState::default();
+        self.reset_counter_model();
+    }
+
+    fn reset_counter_model(&mut self) {
         self.counter = 0;
         self.counter_countdown = 0;
         self.alignment = 0;
@@ -571,11 +575,7 @@ impl Channel4 {
     /// Reset counter model state when APU is turned on (NR52 bit 7 set).
     /// Mirrors SameBoy's `GB_apu_init` which zeroes alignment and counter.
     pub fn apu_init(&mut self) {
-        self.counter = 0;
-        self.counter_countdown = 0;
-        self.alignment = 0;
-        self.countdown_reloaded = false;
-        self.counter_active = false;
+        self.reset_counter_model();
     }
 }
 
