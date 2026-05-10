@@ -37,9 +37,6 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="TheGamesDB API key (overrides THEGAMESDB_API_KEY env var)")
     common.add_argument("--db", metavar="PATH", default=DEFAULT_DB,
                         help=f"Path to SQLite database (default: {DEFAULT_DB})")
-    common.add_argument("--cache", metavar="PATH", nargs="?", const="thegamesdb_cache",
-                        help="Cache HTTP responses to an SQLite file (dev mode). "
-                             "Optional path; default: thegamesdb_cache.sqlite")
 
     parser = argparse.ArgumentParser(
         prog="metadata-scraper",
@@ -56,6 +53,9 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Platform(s) to sync (default: nes)")
     p_sync.add_argument("--force-full", action="store_true",
                         help="Force a full re-sync even if incremental data exists")
+    p_sync.add_argument("--cache", metavar="PATH", nargs="?", const="thegamesdb_cache",
+                        help="Cache HTTP responses to an SQLite file (dev mode). "
+                             "Optional path; default: thegamesdb_cache.sqlite")
 
     # list
     p_list = sub.add_parser("list", help="List stored games", parents=[common])
