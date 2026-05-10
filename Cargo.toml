@@ -59,6 +59,8 @@ nosleep = { version = "0.2.1", optional = true }
 serde_with = "3.18.0"
 rusqlite = { version = "0.36", optional = true, features = ["bundled"] }
 strsim = { version = "0.11", optional = true }
+reqwest = { version = "0.12", optional = true, default-features = false, features = ["blocking", "rustls-tls"] }
+image = { version = "0.25", optional = true, default-features = false, features = ["jpeg", "png"] }
 
 [features]
 default = ["native"]
@@ -83,6 +85,8 @@ native = [
 	"dep:nosleep",
 	"dep:rusqlite",
 	"dep:strsim",
+	"dep:reqwest",
+	"dep:image",
 ]
 wasm = [
 	"dep:wasm-bindgen",

@@ -6,6 +6,7 @@ pub mod crc32;
 pub mod debugging;
 pub mod emulator;
 pub mod frontend_toasts;
+pub mod image_cache;
 pub mod metadata;
 pub mod png_utils;
 pub mod shaders;
