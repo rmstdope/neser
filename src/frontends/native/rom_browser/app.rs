@@ -1,18 +1,19 @@
 //! ROM browser winit application handler.
 //!
 //! This is the `ApplicationHandler` for the ROM browser window. It opens a
-//! window with a placeholder screen and accepts a ROM selection that
+//! GL-backed window with imgui rendering and accepts a ROM selection that
 //! transitions the application into emulation mode.
 
 use std::path::PathBuf;
 
 use winit::application::ApplicationHandler;
-use winit::dpi::LogicalSize;
-use winit::event::WindowEvent;
-use winit::event_loop::{ActiveEventLoop, EventLoop};
-use winit::window::{Window, WindowId};
+use winit::event::{ElementState, WindowEvent};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::window::WindowId;
 
+use super::renderer::BrowserGl;
 use crate::platform::app_context::SharedAppContext;
+use crate::platform::catalog::RomEntry;
 
 /// Result from running the ROM browser.
 #[derive(Debug)]
@@ -25,16 +26,17 @@ pub enum BrowserResult {
 
 /// ROM browser winit application.
 ///
-/// Manages the browser window and handles user interactions until a ROM is
-/// selected or the window is closed.
+/// Manages the browser window with GL rendering and handles user interactions
+/// until a ROM is selected or the window is closed.
 pub struct RomBrowserApp {
-    #[allow(dead_code)] // Will be used by ROM browser rendering (grid-view todo).
     app_context: SharedAppContext,
-    window: Option<Window>,
+    gl: Option<BrowserGl>,
     result: BrowserResult,
     default_width: u32,
     default_height: u32,
     fullscreen: bool,
+    catalog: Vec<RomEntry>,
+    selected_index: usize,
 }
 
 impl RomBrowserApp {
@@ -45,17 +47,24 @@ impl RomBrowserApp {
             let config = ctx.config();
             (config.frontend.window_height, config.frontend.fullscreen)
         };
-        // Default browser window is 1280×720, or use configured height with 16:9 ratio.
+        // Default browser window: use configured height with 16:9 ratio.
         let default_width = (default_height as f64 * 16.0 / 9.0) as u32;
 
         Self {
             app_context,
-            window: None,
+            gl: None,
             result: BrowserResult::Closed,
             default_width,
             default_height,
             fullscreen,
+            catalog: Vec::new(),
+            selected_index: 0,
         }
+    }
+
+    /// Set the ROM catalog to display.
+    pub fn set_catalog(&mut self, catalog: Vec<RomEntry>) {
+        self.catalog = catalog;
     }
 
     /// Run the ROM browser and return the result.
@@ -71,35 +80,105 @@ impl RomBrowserApp {
         Ok(self.result)
     }
 
-    /// Set the selected ROM and trigger exit.
-    ///
-    /// Called when the user picks a ROM from the browser UI.
-    pub fn select_rom(&mut self, path: PathBuf, event_loop: &ActiveEventLoop) {
-        self.result = BrowserResult::RomSelected(path);
-        event_loop.exit();
+    /// Render the browser UI for one frame.
+    fn render_frame(&mut self) {
+        let Some(ref mut gl) = self.gl else { return };
+
+        let (display_w, display_h) = gl.logical_size();
+        let catalog_len = self.catalog.len();
+        let selected = self.selected_index;
+
+        let ui = gl.begin_frame();
+
+        // Full-window background panel.
+        ui.window("##browser_bg")
+            .position([0.0, 0.0], imgui::Condition::Always)
+            .size([display_w, display_h], imgui::Condition::Always)
+            .flags(
+                imgui::WindowFlags::NO_TITLE_BAR
+                    | imgui::WindowFlags::NO_RESIZE
+                    | imgui::WindowFlags::NO_MOVE
+                    | imgui::WindowFlags::NO_SCROLLBAR
+                    | imgui::WindowFlags::NO_COLLAPSE
+                    | imgui::WindowFlags::NO_BACKGROUND,
+            )
+            .build(|| {
+                if self.catalog.is_empty() {
+                    ui.text("No ROMs found. Add ROM files to ~/.neser/roms/");
+                    ui.text("or configure cartridge-search-paths in neser.conf");
+                } else {
+                    ui.text(format!("NESER ROM Browser — {catalog_len} games"));
+                    ui.separator();
+
+                    let avail = ui.content_region_avail();
+                    ui.child_window("##rom_list")
+                        .size([avail[0], avail[1] - 30.0])
+                        .build(|| {
+                            for (i, entry) in self.catalog.iter().enumerate() {
+                                if ui
+                                    .selectable_config(&entry.display_name)
+                                    .selected(i == selected)
+                                    .build()
+                                {
+                                    self.selected_index = i;
+                                }
+                            }
+                        });
+
+                    ui.separator();
+                    ui.text("Enter: Launch  |  ↑↓: Navigate  |  Esc: Quit");
+                }
+            });
+
+        gl.end_frame();
     }
 }
 
 impl ApplicationHandler for RomBrowserApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_some() {
+        if self.gl.is_some() {
             return;
         }
 
-        let mut attrs = Window::default_attributes()
-            .with_title("NESER - ROM Browser")
-            .with_inner_size(LogicalSize::new(self.default_width, self.default_height));
-
-        if self.fullscreen {
-            attrs = attrs.with_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
-        }
-
-        match event_loop.create_window(attrs) {
-            Ok(window) => {
-                self.window = Some(window);
+        match BrowserGl::new(
+            event_loop,
+            self.default_width,
+            self.default_height,
+            self.fullscreen,
+        ) {
+            Ok(gl) => {
+                self.gl = Some(gl);
+                // Load the ROM catalog.
+                let search_paths = self
+                    .app_context
+                    .borrow()
+                    .config()
+                    .frontend
+                    .cartridge_search_paths
+                    .clone();
+                let rebuild = self
+                    .app_context
+                    .borrow()
+                    .config()
+                    .frontend
+                    .rebuild_cartridge_catalog;
+                match crate::platform::catalog::load_catalog(&search_paths, rebuild) {
+                    Ok(mut catalog) => {
+                        catalog.sort_by(|a, b| {
+                            a.display_name
+                                .to_lowercase()
+                                .cmp(&b.display_name.to_lowercase())
+                        });
+                        self.catalog = catalog;
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to load ROM catalog: {e}");
+                    }
+                }
+                event_loop.set_control_flow(ControlFlow::Poll);
             }
             Err(e) => {
-                eprintln!("Failed to create browser window: {e}");
+                eprintln!("Failed to create browser GL context: {e}");
                 event_loop.exit();
             }
         }
@@ -116,11 +195,44 @@ impl ApplicationHandler for RomBrowserApp {
                 self.result = BrowserResult::Closed;
                 event_loop.exit();
             }
+
+            WindowEvent::Resized(physical_size) => {
+                if let Some(ref mut gl) = self.gl {
+                    gl.notify_resize(physical_size.width, physical_size.height);
+                }
+            }
+
+            WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
+                use winit::keyboard::{Key, NamedKey};
+                match event.logical_key {
+                    Key::Named(NamedKey::Escape) => {
+                        self.result = BrowserResult::Closed;
+                        event_loop.exit();
+                    }
+                    Key::Named(NamedKey::ArrowUp) => {
+                        if self.selected_index > 0 {
+                            self.selected_index -= 1;
+                        }
+                    }
+                    Key::Named(NamedKey::ArrowDown) => {
+                        if self.selected_index + 1 < self.catalog.len() {
+                            self.selected_index += 1;
+                        }
+                    }
+                    Key::Named(NamedKey::Enter) => {
+                        if let Some(entry) = self.catalog.get(self.selected_index) {
+                            self.result = BrowserResult::RomSelected(entry.path.clone());
+                            event_loop.exit();
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
             WindowEvent::RedrawRequested => {
-                // TODO: Render the ROM browser grid here (gl-browser-scaffold todo).
-                // For now, just request another redraw to keep the window responsive.
-                if let Some(ref window) = self.window {
-                    window.request_redraw();
+                self.render_frame();
+                if let Some(ref gl) = self.gl {
+                    gl.window().request_redraw();
                 }
             }
             _ => {}

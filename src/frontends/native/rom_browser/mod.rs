@@ -5,5 +5,6 @@
 //! This module implements the `ApplicationHandler` for the browser state.
 
 mod app;
+pub mod renderer;
 
 pub use app::{BrowserResult, RomBrowserApp};
