@@ -123,7 +123,7 @@ impl Channel3 {
         self.tick_apu_cycles(2);
     }
 
-    fn tick_apu_cycles(&mut self, cycles: u16) {
+    pub(super) fn tick_apu_cycles(&mut self, cycles: u16) {
         self.wave_just_read = false;
 
         if !self.active {
@@ -336,16 +336,6 @@ impl Channel3 {
             (byte >> 4) & 0x0F
         } else {
             byte & 0x0F
-        }
-    }
-
-    pub(crate) fn needs_cgb_read_sync(&self) -> bool {
-        self.is_cgb && self.active && self.freq_timer == 0
-    }
-
-    pub(crate) fn sync_cgb_read_tick(&mut self) {
-        if self.needs_cgb_read_sync() {
-            self.tick_apu_cycles(2);
         }
     }
 
@@ -669,65 +659,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_cgb_read_sync_needed_at_sample_boundary() {
-        let mut ch = Channel3::new_with_mode(true);
-        ch.write_nr30(0x80);
-        ch.active = true;
-        ch.freq_timer = 0;
-
-        assert!(
-            ch.needs_cgb_read_sync(),
-            "CGB CH3 reads should sync a pending half APU tick when the sample timer is at the boundary"
-        );
-    }
-
-    #[test]
-    fn test_cgb_read_sync_not_needed_before_sample_boundary() {
-        let mut ch = Channel3::new_with_mode(true);
-        ch.write_nr30(0x80);
-        ch.active = true;
-        ch.freq_timer = 1;
-
-        assert!(
-            !ch.needs_cgb_read_sync(),
-            "CGB CH3 reads before the sample boundary must not advance early"
-        );
-    }
-
-    #[test]
-    fn test_dmg_read_sync_not_needed_at_sample_boundary() {
-        let mut ch = Channel3::new_with_mode(false);
-        ch.write_nr30(0x80);
-        ch.active = true;
-        ch.freq_timer = 0;
-
-        assert!(
-            !ch.needs_cgb_read_sync(),
-            "the CGB read-sync path must stay disabled for DMG wave RAM behavior"
-        );
-    }
-
-    #[test]
-    fn test_cgb_read_sync_advances_ch3_without_waiting_for_global_tick() {
-        let mut ch = Channel3::new_with_mode(true);
-        ch.write_nr30(0x80);
-        ch.write_nr32(0x20);
-        ch.wave_ram[0] = 0xA5;
-        ch.active = true;
-        ch.freq = 0x07FE;
-        ch.freq_timer = 0;
-
-        ch.sync_cgb_read_tick();
-
-        assert_eq!(ch.wave_pos, 1);
-        assert_eq!(ch.current_sample, 0x5);
-        assert_eq!(
-            ch.freq_timer, 0,
-            "sync consumes one CH3 tick so boundary reads observe the reloaded timer"
-        );
-    }
-
     // ── DMG retrigger corruption ──────────────────────────────────────────
 
     #[test]
@@ -756,6 +687,60 @@ mod tests {
         assert_eq!(ch.wave_ram[1], 0x55, "byte 1 should be wave_ram[5]");
         assert_eq!(ch.wave_ram[2], 0x66, "byte 2 should be wave_ram[6]");
         assert_eq!(ch.wave_ram[3], 0x77, "byte 3 should be wave_ram[7]");
+    }
+
+    /// Verify that the second wave advance for freq=0x700 happens at tick 258
+    /// post-trigger, matching the hardware timing observed in SameSuite shift_delay.
+    /// First advance at tick 130, second advance at tick 258.
+    #[test]
+    fn test_shift_delay_second_advance_timing() {
+        let mut ch = Channel3::new_with_mode(true); // CGB mode
+        ch.dac_on = true;
+        // Fill wave RAM with 0xF7 (all nibbles: high=0xF, low=0x7)
+        ch.wave_ram = [0xF7; 16];
+        ch.current_sample_byte = 0;
+        // Trigger with freq=0x700: freq_timer = (0x700^0x7FF)+3 = 255+3 = 258
+        ch.write_nr33(0x00);
+        ch.write_nr34(0x80 | 0x07, false); // trigger + freq_high=7
+        assert!(ch.active);
+        assert_eq!(ch.freq, 0x700);
+        assert_eq!(ch.freq_timer, 258);
+        assert_eq!(ch.wave_pos, 0);
+
+        // Tick until first advance
+        let mut first_advance_tick = None;
+        for tick in 1..=200 {
+            ch.tick();
+            if ch.wave_pos == 1 {
+                first_advance_tick = Some(tick);
+                break;
+            }
+        }
+        assert_eq!(
+            first_advance_tick,
+            Some(130),
+            "first advance should be at tick 130"
+        );
+        assert_eq!(ch.current_sample, 7, "nibble 1 of 0xF7 = 7");
+
+        // Continue to second advance
+        let mut second_advance_tick = None;
+        for tick in (first_advance_tick.unwrap() + 1)..=300 {
+            ch.tick();
+            if ch.wave_pos == 2 {
+                second_advance_tick = Some(tick);
+                break;
+            }
+        }
+        assert_eq!(
+            second_advance_tick,
+            Some(258),
+            "second advance should be at tick 258"
+        );
+        assert_eq!(
+            ch.current_sample, 15,
+            "nibble 2 of 0xF7 (high nibble of byte 1) = 0xF"
+        );
     }
 
     #[test]
