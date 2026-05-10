@@ -3,7 +3,6 @@ import argparse
 import json
 import os
 import sys
-from io import StringIO
 from typing import IO
 
 try:
