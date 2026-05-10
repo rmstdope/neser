@@ -19,14 +19,23 @@ use crate::platform::app_context::SharedAppContext;
 use crate::platform::catalog::RomEntry;
 use crate::platform::catalog::favorites::Favorites;
 
+use crate::platform::catalog::EnrichmentPhase;
+use crate::platform::catalog::EnrichmentProgress;
+
+/// Messages sent from the background catalog loading thread.
+enum CatalogMessage {
+    Progress(EnrichmentProgress),
+    Done(Vec<RomEntry>),
+}
+
 /// Tracks the catalog loading state.
 enum CatalogState {
     /// Not started yet.
     Idle,
     /// Background thread is loading and enriching the catalog.
     Loading {
-        receiver: mpsc::Receiver<Vec<RomEntry>>,
-        status: String,
+        receiver: mpsc::Receiver<CatalogMessage>,
+        progress: Option<EnrichmentProgress>,
     },
     /// Catalog is loaded and ready.
     Ready,
@@ -220,14 +229,29 @@ impl RomBrowserApp {
 
     /// Check if the background catalog loading thread has finished.
     fn poll_catalog_loading(&mut self) {
-        let received = if let CatalogState::Loading { ref receiver, .. } = self.catalog_state {
-            receiver.try_recv().ok()
-        } else {
-            None
-        };
-        if let Some(catalog) = received {
-            self.set_catalog(catalog);
-            self.catalog_state = CatalogState::Ready;
+        // Drain all pending messages — update progress or finalize catalog.
+        loop {
+            let msg = if let CatalogState::Loading { ref receiver, .. } = self.catalog_state {
+                receiver.try_recv().ok()
+            } else {
+                break;
+            };
+            match msg {
+                Some(CatalogMessage::Progress(p)) => {
+                    if let CatalogState::Loading {
+                        ref mut progress, ..
+                    } = self.catalog_state
+                    {
+                        *progress = Some(p);
+                    }
+                }
+                Some(CatalogMessage::Done(catalog)) => {
+                    self.set_catalog(catalog);
+                    self.catalog_state = CatalogState::Ready;
+                    break;
+                }
+                None => break,
+            }
         }
     }
 
@@ -244,9 +268,9 @@ impl RomBrowserApp {
 
         let Some(ref mut gl) = self.gl else { return };
 
-        // If still loading, render a loading screen.
-        if let CatalogState::Loading { ref status, .. } = self.catalog_state {
-            let loading_msg = status.clone();
+        // If still loading, render a loading screen with progress bar.
+        if let CatalogState::Loading { ref progress, .. } = self.catalog_state {
+            let progress_snapshot = progress.clone();
             let ui = gl.begin_frame();
             let (display_w, display_h) = (ui.io().display_size[0], ui.io().display_size[1]);
             ui.window("##loading")
@@ -254,9 +278,50 @@ impl RomBrowserApp {
                 .size([display_w, display_h], imgui::Condition::Always)
                 .flags(Self::panel_flags())
                 .build(|| {
-                    let _color = ui.push_style_color(imgui::StyleColor::Text, theme::HEADER_TEXT);
-                    ui.set_cursor_pos([display_w * 0.3, display_h * 0.45]);
-                    ui.text(&loading_msg);
+                    let bar_w = (display_w * 0.55).max(320.0);
+                    let bar_x = (display_w - bar_w) * 0.5;
+                    let center_y = display_h * 0.45;
+
+                    // Title.
+                    let _title = ui.push_style_color(imgui::StyleColor::Text, theme::HEADER_TEXT);
+                    ui.set_cursor_pos([bar_x, center_y - 36.0]);
+                    ui.text("NESER ROM Browser");
+                    drop(_title);
+
+                    ui.set_cursor_pos([bar_x, center_y - 16.0]);
+                    let _dim = ui.push_style_color(imgui::StyleColor::Text, theme::DIM_TEXT);
+
+                    if let Some(ref p) = progress_snapshot {
+                        let fraction = if p.total > 0 {
+                            p.current as f32 / p.total as f32
+                        } else {
+                            0.0
+                        };
+                        let phase_label = match p.phase {
+                            EnrichmentPhase::MatchingMetadata => "Matching metadata",
+                            EnrichmentPhase::DownloadingImages => "Downloading cover art",
+                        };
+                        let overlay = format!("{phase_label}: {} / {}", p.current, p.total);
+                        ui.set_cursor_pos([bar_x, center_y - 16.0]);
+                        ui.text(&overlay);
+                        ui.set_cursor_pos([bar_x, center_y]);
+                        imgui::ProgressBar::new(fraction)
+                            .size([bar_w, 18.0])
+                            .build(ui);
+                        ui.set_cursor_pos([bar_x, center_y + 26.0]);
+                        // Truncate long game titles.
+                        let max_chars = (bar_w / 7.5) as usize;
+                        let title = if p.game_title.len() > max_chars && max_chars > 3 {
+                            format!("{}...", &p.game_title[..max_chars - 3])
+                        } else {
+                            p.game_title.clone()
+                        };
+                        ui.text(&title);
+                    } else {
+                        ui.text("Loading ROM catalog...");
+                        ui.set_cursor_pos([bar_x, center_y]);
+                        imgui::ProgressBar::new(0.0).size([bar_w, 18.0]).build(ui);
+                    }
                 });
             gl.end_frame();
             return;
@@ -872,28 +937,31 @@ impl ApplicationHandler for RomBrowserApp {
                     std::thread::spawn(move || {
                         match crate::platform::catalog::load_catalog(&search_paths, rebuild) {
                             Ok(mut catalog) => {
+                                let tx2 = tx.clone();
                                 crate::platform::catalog::enrich_catalog(
                                     &mut catalog,
                                     &metadata_db_path,
                                     &image_cache_path,
-                                    |_progress| {},
+                                    move |progress| {
+                                        let _ = tx2.send(CatalogMessage::Progress(progress));
+                                    },
                                 );
                                 catalog.sort_by(|a, b| {
                                     a.display_name
                                         .to_lowercase()
                                         .cmp(&b.display_name.to_lowercase())
                                 });
-                                let _ = tx.send(catalog);
+                                let _ = tx.send(CatalogMessage::Done(catalog));
                             }
                             Err(e) => {
                                 eprintln!("Failed to load ROM catalog: {e}");
-                                let _ = tx.send(Vec::new());
+                                let _ = tx.send(CatalogMessage::Done(Vec::new()));
                             }
                         }
                     });
                     self.catalog_state = CatalogState::Loading {
                         receiver: rx,
-                        status: "Loading ROM catalog...".to_string(),
+                        progress: None,
                     };
                 }
                 event_loop.set_control_flow(ControlFlow::Poll);
@@ -1334,7 +1402,7 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         app.catalog_state = CatalogState::Loading {
             receiver: rx,
-            status: "Testing...".to_string(),
+            progress: None,
         };
 
         // Before send: poll does nothing.
@@ -1342,11 +1410,43 @@ mod tests {
         assert!(app.catalog.is_empty());
 
         // Send catalog from "background thread".
-        tx.send(vec![make_entry("Zelda"), make_entry("Mario")])
-            .unwrap();
+        tx.send(CatalogMessage::Done(vec![
+            make_entry("Zelda"),
+            make_entry("Mario"),
+        ]))
+        .unwrap();
         app.poll_catalog_loading();
 
         assert_eq!(app.catalog.len(), 2);
         assert!(matches!(app.catalog_state, CatalogState::Ready));
+    }
+
+    #[test]
+    fn poll_catalog_loading_tracks_progress() {
+        let mut app = test_browser(vec![]);
+
+        let (tx, rx) = mpsc::channel();
+        app.catalog_state = CatalogState::Loading {
+            receiver: rx,
+            progress: None,
+        };
+
+        tx.send(CatalogMessage::Progress(EnrichmentProgress {
+            current: 3,
+            total: 10,
+            game_title: "Zelda".to_string(),
+            phase: EnrichmentPhase::MatchingMetadata,
+        }))
+        .unwrap();
+        app.poll_catalog_loading();
+
+        if let CatalogState::Loading { ref progress, .. } = app.catalog_state {
+            let p = progress.as_ref().unwrap();
+            assert_eq!(p.current, 3);
+            assert_eq!(p.total, 10);
+            assert_eq!(p.game_title, "Zelda");
+        } else {
+            panic!("Expected CatalogState::Loading");
+        }
     }
 }
