@@ -2,8 +2,10 @@
 
 import unittest
 
-from scripts.scraper.main import _csv_cell, _filter_present_fields
-
+try:
+    from .main import _csv_cell, _filter_present_fields
+except ImportError:  # pragma: no cover - allow running as a script
+    from main import _csv_cell, _filter_present_fields
 
 class TestMainHelpers(unittest.TestCase):
     """Tests for row filtering used by list output."""

@@ -8,8 +8,10 @@ import os
 import tempfile
 import unittest
 
-from scripts.scraper.rom_database import RomDatabase, RomDbKey, HardwareType, hardware_from_console_type_and_region
-
+try:
+    from .rom_database import RomDatabase, RomDbKey, HardwareType, hardware_from_console_type_and_region
+except ImportError:  # pragma: no cover - allow running as a script
+    from rom_database import RomDatabase, RomDbKey, HardwareType, hardware_from_console_type_and_region
 
 class TestRomDatabase(unittest.TestCase):
     """Tests for RomDatabase: schema, insert/update, queries and helpers."""
