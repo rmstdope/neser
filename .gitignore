@@ -85,3 +85,6 @@ test-results/
 obj
 
 test.state
+
+# Production secrets
+.env
