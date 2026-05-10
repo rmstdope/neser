@@ -16,6 +16,7 @@ use super::renderer::{BrowserGl, TextureKey};
 use super::theme;
 use crate::platform::app_context::SharedAppContext;
 use crate::platform::catalog::RomEntry;
+use crate::platform::catalog::favorites::Favorites;
 
 /// Result from running the ROM browser.
 #[derive(Debug)]
@@ -60,15 +61,23 @@ pub struct RomBrowserApp {
     genre_cursor: usize,
     /// Detail view overlay active.
     detail_view_active: bool,
+    /// Persistent favorites manager.
+    favorites: Favorites,
+    /// When true, show only favorited ROMs.
+    show_favorites_only: bool,
 }
 
 impl RomBrowserApp {
     /// Create a new ROM browser application.
     pub fn new(app_context: SharedAppContext) -> Self {
-        let (default_height, fullscreen) = {
+        let (default_height, fullscreen, favorites_path) = {
             let ctx = app_context.borrow();
             let config = ctx.config();
-            (config.frontend.window_height, config.frontend.fullscreen)
+            (
+                config.frontend.window_height,
+                config.frontend.fullscreen,
+                config.frontend.resolved_favorites_path(),
+            )
         };
         // Default browser window: use configured height with 16:9 ratio.
         let default_width = (default_height as f64 * 16.0 / 9.0) as u32;
@@ -93,11 +102,18 @@ impl RomBrowserApp {
             active_genres: Vec::new(),
             genre_cursor: 0,
             detail_view_active: false,
+            favorites: Favorites::load(&favorites_path),
+            show_favorites_only: false,
         }
     }
 
     /// Set the ROM catalog to display.
-    pub fn set_catalog(&mut self, catalog: Vec<RomEntry>) {
+    pub fn set_catalog(&mut self, mut catalog: Vec<RomEntry>) {
+        // Apply stored favorites to catalog entries.
+        for entry in &mut catalog {
+            entry.is_favorite = self.favorites.contains(&entry.path);
+        }
+
         // Collect all unique genres from the catalog.
         let mut genres: Vec<String> = catalog
             .iter()
@@ -111,7 +127,7 @@ impl RomBrowserApp {
         self.rebuild_filtered();
     }
 
-    /// Rebuild the filtered index list based on current search query and genre filter.
+    /// Rebuild the filtered index list based on current search query, genre, and favorites filter.
     fn rebuild_filtered(&mut self) {
         let query = self.search_query.to_lowercase();
         self.filtered_indices = self
@@ -119,6 +135,10 @@ impl RomBrowserApp {
             .iter()
             .enumerate()
             .filter(|(_, e)| {
+                // Favorites filter.
+                if self.show_favorites_only && !e.is_favorite {
+                    return false;
+                }
                 // Text search filter.
                 if !query.is_empty()
                     && !e.search_key.contains(&query)
@@ -149,6 +169,23 @@ impl RomBrowserApp {
     fn selected_entry(&self) -> Option<&RomEntry> {
         let &catalog_idx = self.filtered_indices.get(self.selected_index)?;
         self.catalog.get(catalog_idx)
+    }
+
+    /// Toggle favorite status for the currently selected ROM.
+    fn toggle_favorite(&mut self) {
+        if let Some(&catalog_idx) = self.filtered_indices.get(self.selected_index)
+            && let Some(entry) = self.catalog.get_mut(catalog_idx)
+        {
+            let new_status = self.favorites.toggle(&entry.path);
+            entry.is_favorite = new_status;
+            if let Err(e) = self.favorites.save() {
+                crate::platform::debugging::log_info(format!("Failed to save favorites: {e}"));
+            }
+            // If showing favorites only and we just unfavorited, rebuild filter.
+            if self.show_favorites_only && !new_status {
+                self.rebuild_filtered();
+            }
+        }
     }
 
     /// Run the ROM browser and return the result.
@@ -220,6 +257,7 @@ impl RomBrowserApp {
         let active_genres = &self.active_genres;
         let genre_cursor = self.genre_cursor;
         let detail_view_active = self.detail_view_active;
+        let show_favorites_only = self.show_favorites_only;
 
         let ui = gl.begin_frame();
 
@@ -229,11 +267,18 @@ impl RomBrowserApp {
         } else {
             format!("  [{}]", active_genres.join(", "))
         };
+        let fav_suffix = if show_favorites_only {
+            "  \u{2665}"
+        } else {
+            ""
+        };
         let header_text = if search_query.is_empty() {
-            format!("NESER ROM Browser \u{2014} {filtered_count}/{total_count} games{genre_suffix}")
+            format!(
+                "NESER ROM Browser \u{2014} {filtered_count}/{total_count} games{genre_suffix}{fav_suffix}"
+            )
         } else {
             format!(
-                "NESER ROM Browser \u{2014} {filtered_count}/{total_count} (search: \"{search_query}\"){genre_suffix}"
+                "NESER ROM Browser \u{2014} {filtered_count}/{total_count} (search: \"{search_query}\"){genre_suffix}{fav_suffix}"
             )
         };
 
@@ -384,7 +429,7 @@ impl RomBrowserApp {
                     ui.text("Enter: Launch  |  Esc: Back to grid");
                 } else {
                     ui.text(
-                        "Enter: Launch  |  Arrows: Navigate  |  /: Search  |  g: Genre  |  d: Details  |  Esc: Quit",
+                        "Enter: Launch  |  /: Search  |  g: Genre  |  d: Details  |  f: Fav  |  F: Filter Favs  |  Esc: Quit",
                     );
                 }
             });
@@ -946,6 +991,13 @@ impl ApplicationHandler for RomBrowserApp {
                                 self.detail_view_active = true;
                             }
                         }
+                        Key::Character(ref ch) if ch.as_str() == "f" => {
+                            self.toggle_favorite();
+                        }
+                        Key::Character(ref ch) if ch.as_str() == "F" => {
+                            self.show_favorites_only = !self.show_favorites_only;
+                            self.rebuild_filtered();
+                        }
                         _ => {}
                     }
                 }
@@ -1007,6 +1059,8 @@ mod tests {
 
     /// Create a minimal RomBrowserApp for testing (without GL or AppContext).
     fn test_browser(entries: Vec<RomEntry>) -> RomBrowserApp {
+        let dir = tempfile::TempDir::new().unwrap();
+        let fav_path = dir.path().join("favorites.json");
         let mut app = RomBrowserApp {
             app_context: crate::platform::app_context::AppContext::new().into_shared(),
             gl: None,
@@ -1027,6 +1081,8 @@ mod tests {
             active_genres: Vec::new(),
             genre_cursor: 0,
             detail_view_active: false,
+            favorites: Favorites::load(&fav_path),
+            show_favorites_only: false,
         };
         app.set_catalog(entries);
         app
@@ -1163,5 +1219,51 @@ mod tests {
             app.detail_view_active = true;
         }
         assert!(!app.detail_view_active);
+    }
+
+    #[test]
+    fn toggle_favorite_marks_entry() {
+        let mut app = test_browser(vec![make_entry("Zelda"), make_entry("Mario")]);
+        assert!(!app.catalog[0].is_favorite);
+        app.toggle_favorite();
+        assert!(app.catalog[0].is_favorite);
+        // Toggle off.
+        app.toggle_favorite();
+        assert!(!app.catalog[0].is_favorite);
+    }
+
+    #[test]
+    fn show_favorites_only_filters_non_favorites() {
+        let mut app = test_browser(vec![
+            make_entry("Zelda"),
+            make_entry("Mario"),
+            make_entry("Contra"),
+        ]);
+        // Favorite only Mario (index 1).
+        app.selected_index = 1;
+        app.toggle_favorite();
+        // Enable favorites filter.
+        app.show_favorites_only = true;
+        app.rebuild_filtered();
+        assert_eq!(app.filtered_indices.len(), 1);
+        assert_eq!(app.catalog[app.filtered_indices[0]].display_name, "Mario");
+    }
+
+    #[test]
+    fn toggle_favorite_rebuilds_filter_when_showing_favorites() {
+        let mut app = test_browser(vec![make_entry("Zelda"), make_entry("Mario")]);
+        // Favorite both.
+        app.toggle_favorite();
+        app.selected_index = 1;
+        app.toggle_favorite();
+        // Enable favorites filter.
+        app.show_favorites_only = true;
+        app.rebuild_filtered();
+        assert_eq!(app.filtered_indices.len(), 2);
+        // Unfavorite Zelda (selected = 0).
+        app.selected_index = 0;
+        app.toggle_favorite();
+        // Should auto-rebuild and now only Mario remains.
+        assert_eq!(app.filtered_indices.len(), 1);
     }
 }

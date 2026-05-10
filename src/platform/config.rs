@@ -569,6 +569,16 @@ impl FrontendConfig {
             home.join(".neser").join("image_cache")
         }
     }
+
+    /// Resolve the favorites file path.
+    ///
+    /// Returns `~/.neser/favorites.json`.
+    pub fn resolved_favorites_path(&self) -> std::path::PathBuf {
+        let home = std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_default();
+        home.join(".neser").join("favorites.json")
+    }
 }
 
 /// Result of parsing command-line arguments.

@@ -3,6 +3,7 @@
 //! This module provides the shared ROM discovery and catalog enrichment logic
 //! used by both the TUI and native graphical frontends.
 
+pub mod favorites;
 pub mod rom_entry;
 
 use std::path::{Path, PathBuf};
