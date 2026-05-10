@@ -200,6 +200,110 @@ fn hardware_label(hw: HardwareType) -> String {
     .to_string()
 }
 
+/// Progress information during catalog enrichment.
+#[cfg(feature = "native")]
+#[derive(Debug, Clone)]
+pub struct EnrichmentProgress {
+    pub current: usize,
+    pub total: usize,
+    pub game_title: String,
+    pub phase: EnrichmentPhase,
+}
+
+/// Current phase of the enrichment pipeline.
+#[cfg(feature = "native")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EnrichmentPhase {
+    MatchingMetadata,
+    DownloadingImages,
+}
+
+/// Enrich a ROM catalog with TheGamesDB metadata and cached cover art.
+///
+/// For each ROM entry, this:
+/// 1. Fuzzy-matches the display name against the metadata DB titles
+/// 2. Fills in genres, overview, release date, players, rating
+/// 3. Downloads missing cover art via the image cache
+///
+/// The `progress_callback` is called for each ROM so the UI can display a
+/// progress bar. Pass `|_| {}` if no progress reporting is needed.
+#[cfg(feature = "native")]
+pub fn enrich_catalog(
+    catalog: &mut [RomEntry],
+    metadata_db_path: &std::path::Path,
+    image_cache_path: &std::path::Path,
+    mut progress_callback: impl FnMut(EnrichmentProgress),
+) {
+    use crate::platform::image_cache::ImageCache;
+    use crate::platform::metadata::{MetadataDb, match_title};
+
+    let db = match MetadataDb::open(metadata_db_path) {
+        Some(db) => db,
+        None => return, // No metadata DB available — skip enrichment.
+    };
+
+    let titles = db.all_titles();
+    let base_url = db.medium_base_url().to_string();
+    let total = catalog.len();
+
+    // Phase 1: Match metadata.
+    for (i, entry) in catalog.iter_mut().enumerate() {
+        progress_callback(EnrichmentProgress {
+            current: i + 1,
+            total,
+            game_title: entry.display_name.clone(),
+            phase: EnrichmentPhase::MatchingMetadata,
+        });
+
+        if let Some(m) = match_title(&entry.display_name, &titles) {
+            entry.metadata_game_id = Some(m.game_id);
+            if let Some(meta) = db.get_game(m.game_id) {
+                entry.genres = meta.genres;
+                entry.overview = meta.overview;
+                entry.release_date = meta.release_date;
+                entry.players = meta.players;
+                entry.rating = meta.rating;
+            }
+        }
+    }
+
+    // Phase 2: Download images.
+    let image_cache = match ImageCache::new(image_cache_path.to_path_buf(), base_url) {
+        Ok(cache) => cache,
+        Err(e) => {
+            crate::platform::debugging::log_info(format!("Failed to create image cache: {e}"));
+            return;
+        }
+    };
+
+    for (i, entry) in catalog.iter_mut().enumerate() {
+        progress_callback(EnrichmentProgress {
+            current: i + 1,
+            total,
+            game_title: entry.display_name.clone(),
+            phase: EnrichmentPhase::DownloadingImages,
+        });
+
+        let game_id = match entry.metadata_game_id {
+            Some(id) => id,
+            None => continue,
+        };
+
+        let meta = match db.get_game(game_id) {
+            Some(m) => m,
+            None => continue,
+        };
+
+        let boxart_filename = meta.front_boxart();
+        let screenshot_filenames: Vec<&str> = meta.screenshots();
+
+        let cached = image_cache.ensure_game_images(boxart_filename, &screenshot_filenames);
+
+        entry.boxart_path = cached.boxart_path;
+        entry.screenshot_paths = cached.screenshot_paths;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -364,5 +468,89 @@ mod tests {
         assert!(entry.boxart_path.is_none());
         assert!(entry.screenshot_paths.is_empty());
         assert!(!entry.is_favorite);
+    }
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn test_enrich_catalog_with_metadata_db() {
+        let db_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("scripts")
+            .join("metadata-scraper")
+            .join("metadata.db");
+        if !db_path.exists() {
+            eprintln!("Skipping test: metadata.db not found at {db_path:?}");
+            return;
+        }
+
+        let cache_dir = tempfile::TempDir::new().unwrap();
+        let mut catalog = vec![RomEntry {
+            path: std::path::PathBuf::from("super_mario_bros_3.nes"),
+            display_name: "Super Mario Bros. 3".to_string(),
+            search_key: "super mario bros. 3".to_string(),
+            mapper_label: "4".to_string(),
+            mapper: Some(4),
+            hardware: Some("NES NTSC".to_string()),
+            crc: Some("AABBCCDD".to_string()),
+            recording_duration: None,
+            metadata_game_id: None,
+            genres: Vec::new(),
+            overview: None,
+            release_date: None,
+            players: None,
+            rating: None,
+            boxart_path: None,
+            screenshot_paths: Vec::new(),
+            is_favorite: false,
+        }];
+
+        let mut progress_count = 0;
+        enrich_catalog(&mut catalog, &db_path, cache_dir.path(), |_| {
+            progress_count += 1
+        });
+
+        assert!(
+            progress_count > 0,
+            "progress callback should have been called"
+        );
+        let entry = &catalog[0];
+        assert!(
+            entry.metadata_game_id.is_some(),
+            "SMB3 should match a metadata entry"
+        );
+        assert!(!entry.genres.is_empty(), "SMB3 should have genres");
+    }
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn test_enrich_catalog_skips_missing_db() {
+        let mut catalog = vec![RomEntry {
+            path: std::path::PathBuf::from("game.nes"),
+            display_name: "Test Game".to_string(),
+            search_key: "test game".to_string(),
+            mapper_label: "-".to_string(),
+            mapper: None,
+            hardware: None,
+            crc: None,
+            recording_duration: None,
+            metadata_game_id: None,
+            genres: Vec::new(),
+            overview: None,
+            release_date: None,
+            players: None,
+            rating: None,
+            boxart_path: None,
+            screenshot_paths: Vec::new(),
+            is_favorite: false,
+        }];
+
+        // Should not panic with a non-existent DB path.
+        enrich_catalog(
+            &mut catalog,
+            std::path::Path::new("/nonexistent/metadata.db"),
+            std::path::Path::new("/nonexistent/cache"),
+            |_| {},
+        );
+
+        assert!(catalog[0].metadata_game_id.is_none());
     }
 }

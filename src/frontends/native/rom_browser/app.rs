@@ -149,21 +149,27 @@ impl ApplicationHandler for RomBrowserApp {
             Ok(gl) => {
                 self.gl = Some(gl);
                 // Load the ROM catalog.
-                let search_paths = self
-                    .app_context
-                    .borrow()
-                    .config()
-                    .frontend
-                    .cartridge_search_paths
-                    .clone();
-                let rebuild = self
-                    .app_context
-                    .borrow()
-                    .config()
-                    .frontend
-                    .rebuild_cartridge_catalog;
+                let (search_paths, rebuild, metadata_db_path, image_cache_path) = {
+                    let ctx = self.app_context.borrow();
+                    let config = ctx.config();
+                    (
+                        config.frontend.cartridge_search_paths.clone(),
+                        config.frontend.rebuild_cartridge_catalog,
+                        config.frontend.resolved_metadata_db_path(),
+                        config.frontend.resolved_image_cache_path(),
+                    )
+                };
                 match crate::platform::catalog::load_catalog(&search_paths, rebuild) {
                     Ok(mut catalog) => {
+                        // Enrich with metadata and cover art.
+                        crate::platform::catalog::enrich_catalog(
+                            &mut catalog,
+                            &metadata_db_path,
+                            &image_cache_path,
+                            |_progress| {
+                                // TODO: render progress bar (startup-progress todo)
+                            },
+                        );
                         catalog.sort_by(|a, b| {
                             a.display_name
                                 .to_lowercase()
