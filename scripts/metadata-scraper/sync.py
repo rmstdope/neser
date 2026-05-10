@@ -1,13 +1,21 @@
 """Sync orchestration: bulk and incremental sync from TheGamesDB."""
 from datetime import datetime, timezone
 
+from tqdm import tqdm
+
+_BAR_FMT = "{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]"
 
 class Syncer:
     """Coordinates fetching from TheGamesDbClient and persisting via MetadataDb."""
 
-    def __init__(self, db, client):
+    def __init__(self, db, client, verbose: bool = False):
         self._db = db
         self._client = client
+        self._verbose = verbose
+
+    def _log(self, msg: str) -> None:
+        if self._verbose:
+            tqdm.write(msg)
 
     # ── public entry point ────────────────────────────────────────────────────
 
@@ -23,9 +31,12 @@ class Syncer:
 
     def full_sync(self, platform_id: int, platform_info: dict):
         """Bulk-fetch all games and images for the given platform."""
+        name = platform_info.get("name", f"Platform {platform_id}")
+        label = platform_info.get("slug") or name
         self._db.upsert_platform(platform_info)
-        self._fetch_reference_data()
+        self._fetch_reference_data(label)
 
+        self._log(f"Downloading all games for {name}…")
         result = self._client.get_games_by_platform(platform_id)
         games = result["games"]
         base_url = result.get("base_url", {})
@@ -34,9 +45,16 @@ class Syncer:
         if base_url:
             self._db.upsert_image_base_urls(base_url)
 
-        max_edit_id = 0
         game_ids = []
-        for game in games:
+        pbar = tqdm(
+            games,
+            desc=f"  Games [{label}]",
+            unit=" game",
+            bar_format=_BAR_FMT,
+            disable=not self._verbose,
+        )
+        for game in pbar:
+            pbar.set_postfix_str(game.get("game_title", ""), refresh=False)
             self._db.upsert_game(game)
             game_ids.append(game["id"])
 
@@ -45,11 +63,15 @@ class Syncer:
 
         # Fetch all remaining image types via the Images endpoint
         if game_ids:
+            self._log(f"Downloading images for {len(game_ids)} games…")
             images_result = self._client.get_games_images(game_ids)
             img_base_url = images_result.get("base_url", {})
             if img_base_url:
                 self._db.upsert_image_base_urls(img_base_url)
-            self._store_images(images_result.get("images", {}), str_keys=True)
+            self._store_images_with_progress(
+                images_result.get("images", {}),
+                desc=f"  Images [{label}]",
+            )
 
         now = datetime.now(timezone.utc).isoformat()
         self._db.update_sync_log(
@@ -91,16 +113,30 @@ class Syncer:
             g for g in (games.values() if isinstance(games, dict) else games)
             if g.get("platform") == platform_id
         ]
-        for game in platform_games:
+        name = platform_info.get("name", f"Platform {platform_id}")
+        label = platform_info.get("slug") or name
+        pbar = tqdm(
+            platform_games,
+            desc=f"  Games [{label}]",
+            unit=" game",
+            bar_format=_BAR_FMT,
+            disable=not self._verbose,
+        )
+        for game in pbar:
+            pbar.set_postfix_str(game.get("game_title", ""), refresh=False)
             self._db.upsert_game(game)
 
         platform_game_ids = [g["id"] for g in platform_games]
         if platform_game_ids:
+            self._log(f"Downloading images for {len(platform_game_ids)} updated games…")
             images_result = self._client.get_games_images(platform_game_ids)
             img_base_url = images_result.get("base_url", {})
             if img_base_url:
                 self._db.upsert_image_base_urls(img_base_url)
-            self._store_images(images_result.get("images", {}), str_keys=True)
+            self._store_images_with_progress(
+                images_result.get("images", {}),
+                desc=f"  Images [{label}]",
+            )
 
         now = datetime.now(timezone.utc).isoformat()
         self._db.update_sync_log(
@@ -111,23 +147,58 @@ class Syncer:
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
-    def _fetch_reference_data(self):
-        for table, fetcher in (
-            ("genres", self._client.get_genres),
+    def _fetch_reference_data(self, label: str = ""):
+        suffix = f" [{label}]" if label else ""
+        steps = [
+            ("genres",     self._client.get_genres),
             ("developers", self._client.get_developers),
             ("publishers", self._client.get_publishers),
-            ("regions", self._client.get_regions),
-            ("countries", self._client.get_countries),
-        ):
+            ("regions",    self._client.get_regions),
+            ("countries",  self._client.get_countries),
+        ]
+        pbar = tqdm(
+            steps,
+            desc=f"  Reference data{suffix}",
+            unit=" category",
+            bar_format=_BAR_FMT,
+            disable=not self._verbose,
+        )
+        for table, fetcher in pbar:
+            pbar.set_postfix_str(table, refresh=False)
             data = fetcher()
             for entity in data.values():
                 self._db.upsert_reference(table, entity)
 
     def _store_images(self, images_by_game: dict, str_keys: bool = True):
-        """Persist image records; images_by_game maps game_id → list of image dicts."""
+        """Persist image records without a progress bar (used for boxart from platform response)."""
         for game_id_key, img_list in images_by_game.items():
             try:
                 game_id = int(game_id_key) if str_keys else game_id_key
+            except (ValueError, TypeError):
+                continue
+            for img in img_list:
+                self._db.upsert_image({
+                    "id": img["id"],
+                    "game_id": game_id,
+                    "type": img.get("type"),
+                    "side": img.get("side"),
+                    "filename": img.get("filename"),
+                    "resolution": img.get("resolution"),
+                })
+
+    def _store_images_with_progress(self, images_by_game: dict, desc: str = "  Images"):
+        """Persist image records with a tqdm progress bar per game."""
+        items = list(images_by_game.items())
+        pbar = tqdm(
+            items,
+            desc=desc,
+            unit=" game",
+            bar_format=_BAR_FMT,
+            disable=not self._verbose,
+        )
+        for game_id_key, img_list in pbar:
+            try:
+                game_id = int(game_id_key)
             except (ValueError, TypeError):
                 continue
             for img in img_list:

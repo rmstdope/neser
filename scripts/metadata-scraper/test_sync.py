@@ -4,7 +4,23 @@ from unittest.mock import MagicMock, patch, call
 
 from sync import Syncer
 
-PLATFORM_NES = {"id": 7, "name": "Nintendo Entertainment System (NES)", "alias": "nintendo-entertainment-system-nes"}
+# ── tqdm passthrough helper ───────────────────────────────────────────────────
+
+def _passthrough_tqdm(iterable, **kwargs):
+    """Fake tqdm that iterates normally and silently accepts all tqdm method calls."""
+    class _PbarProxy:
+        def __init__(self, items):
+            self._items = items
+        def __iter__(self):
+            return iter(self._items)
+        def __getattr__(self, _):
+            return lambda *a, **kw: None
+    return _PbarProxy(list(iterable))
+
+
+# ── shared fixtures ───────────────────────────────────────────────────────────
+
+PLATFORM_NES = {"id": 7, "name": "Nintendo Entertainment System (NES)", "alias": "nintendo-entertainment-system-nes", "slug": "nes"}
 
 SAMPLE_GAME = {
     "id": 135,
@@ -302,6 +318,108 @@ class TestSyncerSyncDispatch(unittest.TestCase):
 
         syncer.full_sync.assert_called_once()
         syncer.incremental_sync.assert_not_called()
+
+
+class TestSyncerProgress(unittest.TestCase):
+    """Verify that progress bars are shown when verbose=True."""
+
+    def _make_full_sync_mocks(self):
+        db = MagicMock()
+        client = MagicMock()
+        client.get_games_by_platform.return_value = {
+            "games": [SAMPLE_GAME],
+            "base_url": BASE_URL,
+            "boxart": {},
+        }
+        client.get_games_images.return_value = {"images": {}, "base_url": BASE_URL}
+        client.get_genres.return_value = {}
+        client.get_developers.return_value = {}
+        client.get_publishers.return_value = {}
+        client.get_regions.return_value = {}
+        client.get_countries.return_value = {}
+        db.get_sync_log.return_value = None
+        return db, client
+
+    def test_syncer_accepts_verbose_parameter(self):
+        db, client = self._make_full_sync_mocks()
+        syncer = Syncer(db=db, client=client, verbose=True)
+        self.assertIsNotNone(syncer)
+
+    @patch("sync.tqdm", side_effect=_passthrough_tqdm)
+    def test_full_sync_verbose_shows_game_progress_bar(self, mock_tqdm):
+        db, client = self._make_full_sync_mocks()
+        syncer = Syncer(db=db, client=client, verbose=True)
+
+        syncer.full_sync(platform_id=7, platform_info=PLATFORM_NES)
+
+        descs = [kw.get("desc", "") for _, kw in mock_tqdm.call_args_list]
+        self.assertTrue(
+            any("game" in d.lower() for d in descs),
+            f"Expected a tqdm bar with 'game' in desc, got: {descs}",
+        )
+
+    @patch("sync.tqdm", side_effect=_passthrough_tqdm)
+    def test_full_sync_verbose_shows_reference_data_progress_bar(self, mock_tqdm):
+        db, client = self._make_full_sync_mocks()
+        syncer = Syncer(db=db, client=client, verbose=True)
+
+        syncer.full_sync(platform_id=7, platform_info=PLATFORM_NES)
+
+        descs = [kw.get("desc", "") for _, kw in mock_tqdm.call_args_list]
+        self.assertTrue(
+            any("reference" in d.lower() for d in descs),
+            f"Expected a tqdm bar with 'reference' in desc, got: {descs}",
+        )
+
+    @patch("sync.tqdm", side_effect=_passthrough_tqdm)
+    def test_full_sync_verbose_shows_image_progress_bar(self, mock_tqdm):
+        db, client = self._make_full_sync_mocks()
+        syncer = Syncer(db=db, client=client, verbose=True)
+
+        syncer.full_sync(platform_id=7, platform_info=PLATFORM_NES)
+
+        descs = [kw.get("desc", "") for _, kw in mock_tqdm.call_args_list]
+        self.assertTrue(
+            any("image" in d.lower() for d in descs),
+            f"Expected a tqdm bar with 'image' in desc, got: {descs}",
+        )
+
+    @patch("sync.tqdm", side_effect=_passthrough_tqdm)
+    def test_full_sync_not_verbose_passes_disable_true_to_tqdm(self, mock_tqdm):
+        db, client = self._make_full_sync_mocks()
+        syncer = Syncer(db=db, client=client, verbose=False)
+
+        syncer.full_sync(platform_id=7, platform_info=PLATFORM_NES)
+
+        for c in mock_tqdm.call_args_list:
+            self.assertTrue(
+                c.kwargs.get("disable", False),
+                f"Expected disable=True when verbose=False, got: {c}",
+            )
+
+    @patch("sync.tqdm", side_effect=_passthrough_tqdm)
+    def test_incremental_sync_verbose_shows_game_progress_bar(self, mock_tqdm):
+        db = MagicMock()
+        client = MagicMock()
+        db.get_sync_log.return_value = {
+            "last_full_sync": "2026-01-01T00:00:00",
+            "last_incremental_sync": None,
+            "last_update_id": 1000,
+        }
+        client.get_games_updates.return_value = {
+            "updates": [{"game_id": 135, "edit_id": 1001}],
+        }
+        client.get_games_by_id.return_value = {"games": {"135": SAMPLE_GAME}}
+        client.get_games_images.return_value = {"images": {}, "base_url": BASE_URL}
+
+        syncer = Syncer(db=db, client=client, verbose=True)
+        syncer.incremental_sync(platform_id=7, platform_info=PLATFORM_NES)
+
+        descs = [kw.get("desc", "") for _, kw in mock_tqdm.call_args_list]
+        self.assertTrue(
+            any("game" in d.lower() for d in descs),
+            f"Expected a tqdm bar with 'game' in desc, got: {descs}",
+        )
 
 
 if __name__ == "__main__":

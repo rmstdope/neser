@@ -1,9 +1,9 @@
 """HTTP client for TheGamesDB REST API v1."""
 import time
-from typing import Any
 from urllib.parse import urlencode
 
 import requests
+from tqdm import tqdm
 
 _BASE_URL = "https://api.thegamesdb.net"
 
@@ -21,12 +21,14 @@ class ApiError(Exception):
 class TheGamesDbClient:
     """Thin, rate-limited client for TheGamesDB REST API."""
 
-    def __init__(self, api_key: str, request_delay: float = 0.2, batch_size: int = 100):
+    def __init__(self, api_key: str, request_delay: float = 0.2, batch_size: int = 100,
+                 verbose: bool = False):
         if not api_key:
             raise ValueError("api_key must not be empty")
         self._api_key = api_key
         self._request_delay = request_delay
         self._batch_size = batch_size
+        self._verbose = verbose
         self._last_request_time: float = 0.0
 
     # ── internal helpers ──────────────────────────────────────────────────────
@@ -54,12 +56,20 @@ class TheGamesDbClient:
         base_url: dict = {}
         boxart: dict = {}
         page = 1
+        pbar = tqdm(
+            desc="  Fetching pages",
+            unit=" page",
+            bar_format="{desc}: {n_fmt} [{elapsed}, {rate_fmt}]",
+            disable=not self._verbose,
+        )
         while True:
             p = dict(params)
             p["page"] = page
             data = self._get(path, p)
             games = data.get("data", {}).get("games") or []
             all_games.extend(games)
+            pbar.update(1)
+            pbar.set_postfix_str(f"{len(all_games)} games so far", refresh=True)
 
             include = data.get("include", {})
             if "boxart" in include:
@@ -74,7 +84,7 @@ class TheGamesDbClient:
             if not pages.get("next"):
                 break
             page += 1
-
+        pbar.close()
         return {"games": all_games, "base_url": base_url, "boxart": boxart}
 
     def _batch_ids(self, ids: list[int]) -> list[list[int]]:

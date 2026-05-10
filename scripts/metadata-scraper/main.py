@@ -82,14 +82,18 @@ def _resolve_api_key(args: argparse.Namespace) -> str:
 
 def _cmd_sync(args: argparse.Namespace, db: MetadataDb, output: IO[str]):
     key = _resolve_api_key(args)
-    client = TheGamesDbClient(api_key=key)
-    syncer = Syncer(db=db, client=client)
+    client = TheGamesDbClient(api_key=key, verbose=True)
+    syncer = Syncer(db=db, client=client, verbose=True)
 
-    platforms_to_sync = list(PLATFORMS.items()) if args.platform == "all" else [(args.platform, PLATFORMS[args.platform])]
+    platforms_to_sync = (
+        list(PLATFORMS.items()) if args.platform == "all"
+        else [(args.platform, PLATFORMS[args.platform])]
+    )
 
     for slug, info in platforms_to_sync:
+        platform_info = {**info, "slug": slug}
         print(f"Syncing {info['name']} …", file=output)
-        syncer.sync(platform_id=info["id"], platform_info=info, force_full=args.force_full)
+        syncer.sync(platform_id=info["id"], platform_info=platform_info, force_full=args.force_full)
         print(f"  Done.", file=output)
 
 
