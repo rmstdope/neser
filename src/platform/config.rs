@@ -107,6 +107,12 @@ pub struct FrontendConfig {
     pub ram_init_mode: RamInitMode,
     /// Breakpoints to set on startup (from --breakpoint CLI flag).
     pub breakpoints: Vec<BreakpointKind>,
+    /// Path to the TheGamesDB metadata SQLite database.
+    /// Default: `~/.neser/metadata.db`
+    pub metadata_db_path: Option<String>,
+    /// Path to the directory where downloaded cover art images are cached.
+    /// Default: `~/.neser/image_cache/`
+    pub image_cache_path: Option<String>,
 }
 
 impl Default for FrontendConfig {
@@ -142,6 +148,8 @@ impl Default for FrontendConfig {
             #[cfg(not(target_arch = "wasm32"))]
             ram_init_mode: RamInitMode::Random,
             breakpoints: Vec::new(),
+            metadata_db_path: None,
+            image_cache_path: None,
         }
     }
 }
@@ -495,6 +503,12 @@ impl FrontendConfig {
                     self.rebuild_cartridge_catalog = rebuild;
                 }
             }
+            "metadata_db_path" => {
+                self.metadata_db_path = Some(value.to_string());
+            }
+            "image_cache_path" => {
+                self.image_cache_path = Some(value.to_string());
+            }
             _ => {}
         }
         Ok(())
@@ -517,7 +531,43 @@ impl FrontendConfig {
             self.rebuild_cartridge_catalog = true;
         }
 
+        if let Some(path) = parse_cli_string_arg(args, "--metadata-db-path") {
+            self.metadata_db_path = Some(path);
+        }
+
+        if let Some(path) = parse_cli_string_arg(args, "--image-cache-path") {
+            self.image_cache_path = Some(path);
+        }
+
         Ok(())
+    }
+
+    /// Resolve the metadata database path, falling back to the default.
+    ///
+    /// Returns the configured path, or `~/.neser/metadata.db` if not set.
+    pub fn resolved_metadata_db_path(&self) -> std::path::PathBuf {
+        if let Some(ref p) = self.metadata_db_path {
+            std::path::PathBuf::from(p)
+        } else {
+            let home = std::env::var_os("HOME")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_default();
+            home.join(".neser").join("metadata.db")
+        }
+    }
+
+    /// Resolve the image cache directory path, falling back to the default.
+    ///
+    /// Returns the configured path, or `~/.neser/image_cache/` if not set.
+    pub fn resolved_image_cache_path(&self) -> std::path::PathBuf {
+        if let Some(ref p) = self.image_cache_path {
+            std::path::PathBuf::from(p)
+        } else {
+            let home = std::env::var_os("HOME")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_default();
+            home.join(".neser").join("image_cache")
+        }
     }
 }
 
@@ -745,6 +795,16 @@ pub(crate) const PLATFORM_CLI_FLAGS: &[CliFlag] = &[
         flag: "--tui",
         help: Some("Launch the interactive TUI ROM browser (requires tui feature)"),
         has_value: false,
+    },
+    CliFlag {
+        flag: "--metadata-db-path",
+        help: Some("Path to TheGamesDB metadata SQLite database (default: ~/.neser/metadata.db)"),
+        has_value: true,
+    },
+    CliFlag {
+        flag: "--image-cache-path",
+        help: Some("Path to cover art image cache directory (default: ~/.neser/image_cache/)"),
+        has_value: true,
     },
 ];
 
@@ -1661,4 +1721,153 @@ mod tests {
     // Note: Config file tests that use apply_config_value remain in nes::console::config
     // since apply_config_value is private and config file parsing is orchestrated there.
     // These CLI tests verify the platform flags work correctly.
+
+    #[test]
+    fn test_config_metadata_db_path_defaults_to_none() {
+        let config = parse_config(vec!["neser".to_string(), "game.nes".to_string()]);
+        assert!(config.frontend.metadata_db_path.is_none());
+    }
+
+    #[test]
+    fn test_config_metadata_db_path_from_cli() {
+        let config = parse_config(vec![
+            "neser".to_string(),
+            "--metadata-db-path".to_string(),
+            "/custom/metadata.db".to_string(),
+            "game.nes".to_string(),
+        ]);
+        assert_eq!(
+            config.frontend.metadata_db_path.as_deref(),
+            Some("/custom/metadata.db")
+        );
+    }
+
+    #[test]
+    fn test_config_image_cache_path_defaults_to_none() {
+        let config = parse_config(vec!["neser".to_string(), "game.nes".to_string()]);
+        assert!(config.frontend.image_cache_path.is_none());
+    }
+
+    #[test]
+    fn test_config_image_cache_path_from_cli() {
+        let config = parse_config(vec![
+            "neser".to_string(),
+            "--image-cache-path".to_string(),
+            "/custom/cache".to_string(),
+            "game.nes".to_string(),
+        ]);
+        assert_eq!(
+            config.frontend.image_cache_path.as_deref(),
+            Some("/custom/cache")
+        );
+    }
+
+    #[test]
+    fn test_config_metadata_db_path_from_config_file() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(b"metadata_db_path=/from/config/metadata.db\n")
+            .unwrap();
+
+        let config = parse_config(vec![
+            "neser".to_string(),
+            "--config".to_string(),
+            file.path().to_string_lossy().to_string(),
+            "game.nes".to_string(),
+        ]);
+        assert_eq!(
+            config.frontend.metadata_db_path.as_deref(),
+            Some("/from/config/metadata.db")
+        );
+    }
+
+    #[test]
+    fn test_config_image_cache_path_from_config_file() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(b"image_cache_path=/from/config/cache\n")
+            .unwrap();
+
+        let config = parse_config(vec![
+            "neser".to_string(),
+            "--config".to_string(),
+            file.path().to_string_lossy().to_string(),
+            "game.nes".to_string(),
+        ]);
+        assert_eq!(
+            config.frontend.image_cache_path.as_deref(),
+            Some("/from/config/cache")
+        );
+    }
+
+    #[test]
+    fn test_config_cli_overrides_config_file_metadata_db_path() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(b"metadata_db_path=/from/config/metadata.db\n")
+            .unwrap();
+
+        let config = parse_config(vec![
+            "neser".to_string(),
+            "--config".to_string(),
+            file.path().to_string_lossy().to_string(),
+            "--metadata-db-path".to_string(),
+            "/from/cli/metadata.db".to_string(),
+            "game.nes".to_string(),
+        ]);
+        assert_eq!(
+            config.frontend.metadata_db_path.as_deref(),
+            Some("/from/cli/metadata.db")
+        );
+    }
+
+    #[test]
+    fn test_resolved_metadata_db_path_uses_configured_value() {
+        let cfg = FrontendConfig {
+            metadata_db_path: Some("/custom/metadata.db".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            cfg.resolved_metadata_db_path(),
+            std::path::PathBuf::from("/custom/metadata.db")
+        );
+    }
+
+    #[test]
+    fn test_resolved_metadata_db_path_falls_back_to_default() {
+        let cfg = FrontendConfig::default();
+        let path = cfg.resolved_metadata_db_path();
+        assert!(
+            path.ends_with(".neser/metadata.db"),
+            "expected path ending with .neser/metadata.db, got: {path:?}"
+        );
+    }
+
+    #[test]
+    fn test_resolved_image_cache_path_uses_configured_value() {
+        let cfg = FrontendConfig {
+            image_cache_path: Some("/custom/cache".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            cfg.resolved_image_cache_path(),
+            std::path::PathBuf::from("/custom/cache")
+        );
+    }
+
+    #[test]
+    fn test_resolved_image_cache_path_falls_back_to_default() {
+        let cfg = FrontendConfig::default();
+        let path = cfg.resolved_image_cache_path();
+        assert!(
+            path.ends_with(".neser/image_cache"),
+            "expected path ending with .neser/image_cache, got: {path:?}"
+        );
+    }
 }
