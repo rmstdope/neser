@@ -365,18 +365,6 @@ impl CgbBus {
         self.key1 & 0x80 != 0
     }
 
-    fn sync_cgb_ch3_read_if_needed(&mut self, addr: u16) {
-        if self.is_double_speed()
-            && self.apu_tick_accumulator != 0
-            && self.apu.needs_cgb_ch3_read_sync(addr)
-        {
-            // Limit the boundary sync to CH3; a full APU tick here would also
-            // advance unrelated channel timers and sample generation.
-            self.apu.sync_cgb_ch3_read_tick();
-            self.apu_tick_accumulator = 0;
-        }
-    }
-
     /// Attempt a CGB double-speed switch.
     ///
     /// If KEY1 bit 0 is armed, this method:
@@ -491,13 +479,18 @@ impl CgbBus {
         self.ppu.tick_dots(u32::from(m_cycles) * dots_per_mcycle);
 
         if double {
-            // APU runs at normal speed; in double-speed mode each CPU M-cycle
-            // is half the real time, so tick APU at half rate via accumulator.
+            // In double-speed mode the APU runs at normal speed (half the CPU M-cycle
+            // rate). CH3 wave-position timing requires 1-APU-cycle-per-M-cycle
+            // granularity, so it is ticked once per CPU M-cycle with 1 cycle.
+            // All other channels are still ticked at the half rate via the accumulator.
+            for _ in 0..m_cycles {
+                self.apu.tick_ch3_one_apu_cycle();
+            }
             self.apu_tick_accumulator += m_cycles;
             let apu_ticks = self.apu_tick_accumulator / 2;
             self.apu_tick_accumulator %= 2;
             if apu_ticks > 0 {
-                self.apu.tick(apu_ticks);
+                self.apu.tick_except_ch3(apu_ticks);
             }
         } else {
             self.apu.tick(m_cycles);
@@ -864,10 +857,7 @@ impl GbBus for CgbBus {
             0xFF02 => self.sc | 0x7E, // SC: bits 6-1 unused, read as 1
             0xFF04..=0xFF07 => self.timer.read(addr),
             0xFF0F => self.if_reg | 0xE0,
-            0xFF10..=0xFF3F => {
-                self.sync_cgb_ch3_read_if_needed(addr);
-                self.apu.read_register(addr)
-            }
+            0xFF10..=0xFF3F => self.apu.read_register(addr),
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B => self.ppu.read_register(addr),
             0xFF46 => self.dma_source,
             // CGB KEY1 — speed switch register
@@ -889,10 +879,7 @@ impl GbBus for CgbBus {
             0xFF75 => self.ff75 | 0x8F,
             // CGB PCM registers
             0xFF76 => self.apu.read_pcm12(),
-            0xFF77 => {
-                self.sync_cgb_ch3_read_if_needed(addr);
-                self.apu.read_pcm34()
-            }
+            0xFF77 => self.apu.read_pcm34(),
             0xFF70 => self.svbk | 0xF8,
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
             0xFFFF => self.ie_reg,

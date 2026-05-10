@@ -230,11 +230,10 @@ samesuite_apu_test_enabled!(
     SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
 
-samesuite_apu_test!(
+samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_3_and_glitch,
     &format!("{BASE}/channel_3/channel_3_and_glitch.gb"),
-    SameSuiteHardware::Cgb(CgbModel::CgbE),
-    "Known SameSuite APU CGB gap on neser; tracked under issue #2262"
+    SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
 samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_3_delay,
@@ -251,17 +250,15 @@ samesuite_apu_test_enabled!(
     &format!("{BASE}/channel_3/channel_3_extra_length_clocking-cgbB.gb"),
     SameSuiteHardware::Cgb(CgbModel::CgbB)
 );
-samesuite_apu_test!(
+samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_3_first_sample,
     &format!("{BASE}/channel_3/channel_3_first_sample.gb"),
-    SameSuiteHardware::Cgb(CgbModel::CgbE),
-    "Known SameSuite APU CGB gap on neser; tracked under issue #2262"
+    SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
-samesuite_apu_test!(
+samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_3_freq_change_delay,
     &format!("{BASE}/channel_3/channel_3_freq_change_delay.gb"),
-    SameSuiteHardware::Cgb(CgbModel::CgbE),
-    "Known SameSuite APU CGB gap on neser; tracked under issue #2262"
+    SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
 samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_3_restart_delay,
@@ -278,17 +275,15 @@ samesuite_apu_test_enabled!(
     &format!("{BASE}/channel_3/channel_3_restart_stop_delay.gb"),
     SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
-samesuite_apu_test!(
+samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_3_shift_delay,
     &format!("{BASE}/channel_3/channel_3_shift_delay.gb"),
-    SameSuiteHardware::Cgb(CgbModel::CgbE),
-    "Known SameSuite APU CGB gap on neser; tracked under issue #2262"
+    SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
-samesuite_apu_test!(
+samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_3_shift_skip_delay,
     &format!("{BASE}/channel_3/channel_3_shift_skip_delay.gb"),
-    SameSuiteHardware::Cgb(CgbModel::CgbE),
-    "Known SameSuite APU CGB gap on neser; tracked under issue #2262"
+    SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
 samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_3_stop_delay,
@@ -310,11 +305,10 @@ samesuite_apu_test_enabled!(
     &format!("{BASE}/channel_3/channel_3_wave_ram_locked_write.gb"),
     SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
-samesuite_apu_test!(
+samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_3_wave_ram_sync,
     &format!("{BASE}/channel_3/channel_3_wave_ram_sync.gb"),
-    SameSuiteHardware::Cgb(CgbModel::CgbE),
-    "Known SameSuite APU CGB gap on neser; tracked under issue #2262"
+    SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
 
 samesuite_apu_test_enabled!(
@@ -498,4 +492,47 @@ fn debug_dump_channel_1_sweep_failures() {
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     ];
     dump_samesuite_sweep_failures(&format!("{BASE}/channel_1/channel_1_sweep.gb"), expected);
+}
+
+#[test]
+#[ignore = "debug only"]
+fn test_debug_shift_delay_dump() {
+    use super::helpers::run_cgb_and_dump;
+    let path = format!("{BASE}/channel_3/channel_3_shift_delay.gb");
+    let (result, buf) = run_cgb_and_dump::<8>(&path, CgbModel::CgbE, 15_000_000, 0xC000);
+    println!("Result: {:?}", result);
+    println!("Actual:   {:02X?}", buf);
+    println!("Expected: [01, 01, 01, 01, 01, 03, 03, 03]");
+    // \1 values: $0,$1,$7E,$7F,$80,$81,$82,$83
+    let subtests = [0u16, 1, 0x7E, 0x7F, 0x80, 0x81, 0x82, 0x83];
+    let expected = [0x01u8, 0x01, 0x01, 0x01, 0x01, 0x03, 0x03, 0x03];
+    for i in 0..8 {
+        let ok = if buf[i] == expected[i] { "✓" } else { "✗" };
+        println!(
+            "  [{i}] \\1={:#04X} expected={:#04X} actual={:#04X} {ok}",
+            subtests[i], expected[i], buf[i]
+        );
+    }
+}
+
+#[test]
+#[ignore = "debug only"]
+fn test_debug_freq_change_delay_dump() {
+    use super::helpers::run_cgb_and_dump;
+    let path = format!("{BASE}/channel_3/channel_3_freq_change_delay.gb");
+    let (result, buf) = run_cgb_and_dump::<16>(&path, CgbModel::CgbE, 15_000_000, 0xC000);
+    println!("Result: {:?}", result);
+    println!("Actual:   {:02X?}", buf);
+    println!("Expected: [00, 00, 00, 00, 00, 00, 00, 0F,  00, 00, 0F, 0F, 0F, 0F, 0F, 0F]");
+}
+
+#[test]
+#[ignore = "debug only"]
+fn test_debug_first_sample_dump() {
+    use super::helpers::run_cgb_and_dump;
+    let path = format!("{BASE}/channel_3/channel_3_first_sample.gb");
+    let (result, buf) = run_cgb_and_dump::<8>(&path, CgbModel::CgbE, 15_000_000, 0xC000);
+    println!("Result: {:?}", result);
+    println!("Actual:   {:02X?}", buf);
+    println!("Expected: [00, 00, 00, 00, 00, 0E, 0E, 0E]");
 }

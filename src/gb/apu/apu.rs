@@ -231,6 +231,46 @@ impl Apu {
         }
     }
 
+    /// Advance CH3 by exactly one APU cycle (used in CGB double-speed mode).
+    ///
+    /// In double-speed mode CH3 is ticked once per CPU M-cycle (1 APU cycle)
+    /// rather than twice every two M-cycles (2 APU cycles), giving the
+    /// 1-cycle granularity required for accurate wave-position timing.
+    pub(crate) fn tick_ch3_one_apu_cycle(&mut self) {
+        if self.powered {
+            self.ch3.tick_apu_cycles(1);
+        }
+    }
+
+    /// Advance all channels **except CH3** by `m_cycles` M-cycles.
+    ///
+    /// Used in CGB double-speed mode where CH3 is ticked separately via
+    /// `tick_ch3_one_apu_cycle` for finer timing granularity.
+    pub(crate) fn tick_except_ch3(&mut self, m_cycles: u8) {
+        for _ in 0..m_cycles {
+            self.tick_one_except_ch3();
+        }
+    }
+
+    /// Advance CH1, CH2, CH4, sweep, and the sample mixer by one M-cycle.
+    /// CH3 is intentionally excluded — see `tick_except_ch3`.
+    fn tick_one_except_ch3(&mut self) {
+        self.lf_div = !self.lf_div;
+
+        self.ch1.tick();
+        self.ch2.tick();
+        self.ch4.tick();
+        self.ch1.sweep_tick();
+
+        self.sample_acc += 1.0;
+        if self.sample_acc >= self.cycles_per_sample {
+            self.sample_acc -= self.cycles_per_sample;
+            if self.pending_sample.is_none() {
+                self.pending_sample = Some(self.mix());
+            }
+        }
+    }
+
     /// Clock the APU envelope units due to a DIV-APU **rising** edge.
     ///
     /// The GB APU envelope has a two-phase mechanism driven by the DIV-APU bit:
@@ -475,16 +515,6 @@ impl Apu {
         let ch3 = self.ch3.digital_output();
         let ch4 = self.ch4.digital_output();
         ch3 | (ch4 << 4)
-    }
-
-    pub(crate) fn needs_cgb_ch3_read_sync(&self, addr: u16) -> bool {
-        // PCM34 ($FF77) and wave RAM ($FF30-$FF3F) expose CH3's current sample
-        // position, so boundary reads may need to synchronize CH3 before reading.
-        (addr == 0xFF77 || (0xFF30..=0xFF3F).contains(&addr)) && self.ch3.needs_cgb_read_sync()
-    }
-
-    pub(crate) fn sync_cgb_ch3_read_tick(&mut self) {
-        self.ch3.sync_cgb_read_tick();
     }
 
     // ── Register write ─────────────────────────────────────────────────────
