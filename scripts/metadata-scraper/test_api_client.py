@@ -350,5 +350,91 @@ class TestGetApiLimit(unittest.TestCase):
         self.assertIn("remaining_monthly_allowance", result)
 
 
+# ── _find_last_page (binary search for total page count) ─────────────────────
+
+def _empty_page(page: int) -> MagicMock:
+    """Mock response with no games (beyond last page)."""
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {
+        "code": 200, "status": "Success",
+        "data": {"count": 0, "games": []},
+        "pages": {
+            "previous": f"https://api.thegamesdb.net/v1/Games/ByPlatformID?page={page - 1}",
+            "current": f"https://api.thegamesdb.net/v1/Games/ByPlatformID?page={page}",
+            "next": None,
+        },
+        "remaining_monthly_allowance": 900,
+        "extra_allowance": 0,
+    }
+    return resp
+
+
+class TestFindLastPage(unittest.TestCase):
+    """Binary search for last page: should return correct total with minimal calls."""
+
+    def _make_side_effect(self, total_pages: int):
+        """Return a side_effect function that responds based on requested page number."""
+        from urllib.parse import urlparse, parse_qs
+
+        def _side_effect(url, **kwargs):
+            page = int(parse_qs(urlparse(url).query).get("page", ["1"])[0])
+            games = [{"id": page * 100 + i} for i in range(20)] if page <= total_pages else []
+            return _page(games, page=page, total=total_pages) if games else _empty_page(page)
+
+        return _side_effect
+
+    @patch("api_client.time.sleep")
+    @patch("api_client.requests.get")
+    def test_single_page_platform(self, mock_get, _sleep):
+        mock_get.side_effect = self._make_side_effect(1)
+        client = TheGamesDbClient(api_key=FAKE_KEY)
+        self.assertEqual(client._find_last_page("/v1/Games/ByPlatformID", {"id": 99}), 1)
+
+    @patch("api_client.time.sleep")
+    @patch("api_client.requests.get")
+    def test_exact_three_pages(self, mock_get, _sleep):
+        mock_get.side_effect = self._make_side_effect(3)
+        client = TheGamesDbClient(api_key=FAKE_KEY)
+        self.assertEqual(client._find_last_page("/v1/Games/ByPlatformID", {"id": 7}), 3)
+
+    @patch("api_client.time.sleep")
+    @patch("api_client.requests.get")
+    def test_nes_scale_55_pages(self, mock_get, _sleep):
+        mock_get.side_effect = self._make_side_effect(55)
+        client = TheGamesDbClient(api_key=FAKE_KEY)
+        self.assertEqual(client._find_last_page("/v1/Games/ByPlatformID", {"id": 7}), 55)
+
+    @patch("api_client.time.sleep")
+    @patch("api_client.requests.get")
+    def test_uses_at_most_log2_calls(self, mock_get, _sleep):
+        import math
+        total_pages = 55
+        mock_get.side_effect = self._make_side_effect(total_pages)
+        client = TheGamesDbClient(api_key=FAKE_KEY)
+        client._find_last_page("/v1/Games/ByPlatformID", {"id": 7})
+        max_expected = math.ceil(math.log2(256)) + 1  # upper bound is 256
+        self.assertLessEqual(mock_get.call_count, max_expected)
+
+    @patch("api_client.time.sleep")
+    @patch("api_client.requests.get")
+    def test_paginate_sets_total_on_progress_bar(self, mock_get, _sleep):
+        """_paginate should know total pages and pass it to tqdm."""
+        total_pages = 3
+        mock_get.side_effect = self._make_side_effect(total_pages)
+        totals_seen = []
+
+        def fake_tqdm(*args, **kwargs):
+            totals_seen.append(kwargs.get("total"))
+            bar = MagicMock()
+            bar.__iter__ = MagicMock(return_value=iter([]))
+            return bar
+
+        client = TheGamesDbClient(api_key=FAKE_KEY, verbose=True)
+        with patch("api_client.tqdm", side_effect=fake_tqdm):
+            client._paginate("/v1/Games/ByPlatformID", {"id": 7})
+        self.assertIn(total_pages, totals_seen)
+
+
 if __name__ == "__main__":
     unittest.main()
