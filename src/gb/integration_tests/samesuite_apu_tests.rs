@@ -316,28 +316,25 @@ samesuite_apu_test_enabled!(
     &format!("{BASE}/channel_4/channel_4_align.gb"),
     SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
-samesuite_apu_test!(
+samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_4_delay,
     &format!("{BASE}/channel_4/channel_4_delay.gb"),
-    SameSuiteHardware::Cgb(CgbModel::CgbE),
-    "Known SameSuite APU CGB gap on neser; tracked under issue #2262"
+    SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
-samesuite_apu_test!(
+samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_4_equivalent_frequencies,
     &format!("{BASE}/channel_4/channel_4_equivalent_frequencies.gb"),
-    SameSuiteHardware::Cgb(CgbModel::CgbE),
-    "Known SameSuite APU CGB gap on neser; tracked under issue #2262"
+    SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
 samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_4_extra_length_clocking_cgb0b,
     &format!("{BASE}/channel_4/channel_4_extra_length_clocking-cgb0B.gb"),
     SameSuiteHardware::Cgb(CgbModel::CgbB)
 );
-samesuite_apu_test!(
+samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_4_freq_change,
     &format!("{BASE}/channel_4/channel_4_freq_change.gb"),
-    SameSuiteHardware::Cgb(CgbModel::CgbE),
-    "Known SameSuite APU CGB gap on neser; tracked under issue #2262"
+    SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
 samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_4_frequency_alignment,
@@ -359,23 +356,20 @@ samesuite_apu_test_enabled!(
     &format!("{BASE}/channel_4/channel_4_lfsr_15_7.gb"),
     SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
-samesuite_apu_test!(
+samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_4_lfsr_7_15,
     &format!("{BASE}/channel_4/channel_4_lfsr_7_15.gb"),
-    SameSuiteHardware::Cgb(CgbModel::CgbE),
-    "Known SameSuite APU CGB gap on neser; tracked under issue #2262"
+    SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
-samesuite_apu_test!(
+samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_4_lfsr_restart,
     &format!("{BASE}/channel_4/channel_4_lfsr_restart.gb"),
-    SameSuiteHardware::Cgb(CgbModel::CgbE),
-    "Known SameSuite APU CGB gap on neser; tracked under issue #2262"
+    SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
-samesuite_apu_test!(
+samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_4_lfsr_restart_fast,
     &format!("{BASE}/channel_4/channel_4_lfsr_restart_fast.gb"),
-    SameSuiteHardware::Cgb(CgbModel::CgbE),
-    "Known SameSuite APU CGB gap on neser; tracked under issue #2262"
+    SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
 samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_4_volume_div,
