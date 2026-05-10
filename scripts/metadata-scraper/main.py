@@ -6,6 +6,12 @@ import sys
 from io import StringIO
 from typing import IO
 
+try:
+    import requests_cache
+    _HAVE_REQUESTS_CACHE = True
+except ImportError:
+    _HAVE_REQUESTS_CACHE = False
+
 from api_client import TheGamesDbClient
 from metadata_db import MetadataDb
 from sync import Syncer
@@ -31,6 +37,9 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="TheGamesDB API key (overrides THEGAMESDB_API_KEY env var)")
     common.add_argument("--db", metavar="PATH", default=DEFAULT_DB,
                         help=f"Path to SQLite database (default: {DEFAULT_DB})")
+    common.add_argument("--cache", metavar="PATH", nargs="?", const="thegamesdb_cache",
+                        help="Cache HTTP responses to an SQLite file (dev mode). "
+                             "Optional path; default: thegamesdb_cache.sqlite")
 
     parser = argparse.ArgumentParser(
         prog="metadata-scraper",
@@ -163,6 +172,18 @@ def main(output: IO[str] = None):
 
     parser = _build_parser()
     args = parser.parse_args()
+
+    if getattr(args, "cache", None):
+        if not _HAVE_REQUESTS_CACHE:
+            print("ERROR: requests-cache is not installed. Run: pip install requests-cache",
+                  file=sys.stderr)
+            sys.exit(1)
+        requests_cache.install_cache(
+            args.cache,
+            backend="sqlite",
+            expire_after=None,  # never expire during dev
+        )
+        print(f"[cache] HTTP responses cached to {args.cache}.sqlite", file=sys.stderr)
 
     with MetadataDb(args.db) as db:
         if args.command == "sync":
