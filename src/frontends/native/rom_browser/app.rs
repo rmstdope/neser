@@ -50,6 +50,14 @@ pub struct RomBrowserApp {
     /// Search overlay state.
     search_active: bool,
     search_query: String,
+    /// Genre filter overlay state.
+    genre_filter_active: bool,
+    /// All available genres (collected from catalog).
+    available_genres: Vec<String>,
+    /// Currently active genre filters (genre names that must match).
+    active_genres: Vec<String>,
+    /// Cursor position in the genre filter list.
+    genre_cursor: usize,
 }
 
 impl RomBrowserApp {
@@ -78,16 +86,29 @@ impl RomBrowserApp {
             textures_loaded: false,
             search_active: false,
             search_query: String::new(),
+            genre_filter_active: false,
+            available_genres: Vec::new(),
+            active_genres: Vec::new(),
+            genre_cursor: 0,
         }
     }
 
     /// Set the ROM catalog to display.
     pub fn set_catalog(&mut self, catalog: Vec<RomEntry>) {
+        // Collect all unique genres from the catalog.
+        let mut genres: Vec<String> = catalog
+            .iter()
+            .flat_map(|e| e.genres.iter().cloned())
+            .collect();
+        genres.sort();
+        genres.dedup();
+        self.available_genres = genres;
+
         self.catalog = catalog;
         self.rebuild_filtered();
     }
 
-    /// Rebuild the filtered index list based on current search query.
+    /// Rebuild the filtered index list based on current search query and genre filter.
     fn rebuild_filtered(&mut self) {
         let query = self.search_query.to_lowercase();
         self.filtered_indices = self
@@ -95,10 +116,20 @@ impl RomBrowserApp {
             .iter()
             .enumerate()
             .filter(|(_, e)| {
-                if query.is_empty() {
-                    return true;
+                // Text search filter.
+                if !query.is_empty()
+                    && !e.search_key.contains(&query)
+                    && !e.display_name.to_lowercase().contains(&query)
+                {
+                    return false;
                 }
-                e.search_key.contains(&query) || e.display_name.to_lowercase().contains(&query)
+                // Genre filter: entry must have at least one of the active genres.
+                if !self.active_genres.is_empty()
+                    && !e.genres.iter().any(|g| self.active_genres.contains(g))
+                {
+                    return false;
+                }
+                true
             })
             .map(|(i, _)| i)
             .collect();
@@ -181,15 +212,24 @@ impl RomBrowserApp {
 
         let search_active = self.search_active;
         let search_query = self.search_query.clone();
+        let genre_filter_active = self.genre_filter_active;
+        let available_genres = &self.available_genres;
+        let active_genres = &self.active_genres;
+        let genre_cursor = self.genre_cursor;
 
         let ui = gl.begin_frame();
 
         // --- Header bar ---
+        let genre_suffix = if active_genres.is_empty() {
+            String::new()
+        } else {
+            format!("  [{}]", active_genres.join(", "))
+        };
         let header_text = if search_query.is_empty() {
-            format!("NESER ROM Browser \u{2014} {total_count} games")
+            format!("NESER ROM Browser \u{2014} {filtered_count}/{total_count} games{genre_suffix}")
         } else {
             format!(
-                "NESER ROM Browser \u{2014} {filtered_count}/{total_count} (search: \"{search_query}\")"
+                "NESER ROM Browser \u{2014} {filtered_count}/{total_count} (search: \"{search_query}\"){genre_suffix}"
             )
         };
 
@@ -332,9 +372,13 @@ impl RomBrowserApp {
                 let _color = ui.push_style_color(imgui::StyleColor::Text, theme::DIM_TEXT);
                 if search_active {
                     ui.text("Type to search  |  Esc: Close search  |  Enter: Launch");
+                } else if genre_filter_active {
+                    ui.text(
+                        "\u{2191}\u{2193}: Navigate  |  Enter: Toggle  |  Esc: Close filter",
+                    );
                 } else {
                     ui.text(
-                        "Enter/A: Launch  |  \u{2190}\u{2191}\u{2192}\u{2193}: Navigate  |  /: Search  |  Esc: Quit",
+                        "Enter: Launch  |  Arrows: Navigate  |  /: Search  |  g: Genre  |  Esc: Quit",
                     );
                 }
             });
@@ -370,6 +414,58 @@ impl RomBrowserApp {
                     ui.text(format!(
                         "Search: {search_query}\u{258C}    ({filtered_count} matches)"
                     ));
+                });
+        }
+
+        // --- Genre filter overlay ---
+        if genre_filter_active && !available_genres.is_empty() {
+            let overlay_draw = ui.get_foreground_draw_list();
+            let dim_color = imgui::ImColor32::from_rgba(0, 0, 0, 120);
+            overlay_draw.add_rect_filled_multicolor(
+                [0.0, 0.0],
+                [display_w, display_h],
+                dim_color,
+                dim_color,
+                dim_color,
+                dim_color,
+            );
+
+            let panel_w = 300.0_f32.min(display_w * 0.4);
+            let panel_h = (available_genres.len() as f32 * 26.0 + 60.0).min(display_h * 0.8);
+            let panel_x = (display_w - panel_w) / 2.0;
+            let panel_y = (display_h - panel_h) / 2.0;
+
+            ui.window("##genre_filter")
+                .position([panel_x, panel_y], imgui::Condition::Always)
+                .size([panel_w, panel_h], imgui::Condition::Always)
+                .flags(Self::panel_flags() | imgui::WindowFlags::NO_SAVED_SETTINGS)
+                .build(|| {
+                    let _header = ui.push_style_color(imgui::StyleColor::Text, theme::HEADER_TEXT);
+                    ui.text("Filter by Genre");
+                    drop(_header);
+                    ui.separator();
+
+                    for (i, genre) in available_genres.iter().enumerate() {
+                        let is_active = active_genres.contains(genre);
+                        let marker = if is_active { "[x] " } else { "[ ] " };
+                        let is_cursor = i == genre_cursor;
+
+                        let color = if is_cursor {
+                            theme::SELECTION_COLOR
+                        } else if is_active {
+                            theme::SELECTED_TEXT
+                        } else {
+                            theme::TEXT_COLOR
+                        };
+                        let _c = ui.push_style_color(imgui::StyleColor::Text, color);
+
+                        let label = if is_cursor {
+                            format!("> {marker}{genre}")
+                        } else {
+                            format!("  {marker}{genre}")
+                        };
+                        ui.text(&label);
+                    }
                 });
         }
 
@@ -617,11 +713,6 @@ impl ApplicationHandler for RomBrowserApp {
                     match event.logical_key {
                         Key::Named(NamedKey::Escape) => {
                             self.search_active = false;
-                            if self.search_query.is_empty() {
-                                // No query — just close overlay.
-                            } else {
-                                // Keep the filter active, just close overlay.
-                            }
                         }
                         Key::Named(NamedKey::Backspace) => {
                             self.search_query.pop();
@@ -645,13 +736,45 @@ impl ApplicationHandler for RomBrowserApp {
                         }
                         _ => {}
                     }
+                } else if self.genre_filter_active {
+                    // Genre filter mode input handling.
+                    match event.logical_key {
+                        Key::Named(NamedKey::Escape) => {
+                            self.genre_filter_active = false;
+                        }
+                        Key::Named(NamedKey::ArrowUp) => {
+                            if self.genre_cursor > 0 {
+                                self.genre_cursor -= 1;
+                            }
+                        }
+                        Key::Named(NamedKey::ArrowDown) => {
+                            if self.genre_cursor + 1 < self.available_genres.len() {
+                                self.genre_cursor += 1;
+                            }
+                        }
+                        Key::Named(NamedKey::Enter) | Key::Named(NamedKey::Space) => {
+                            if let Some(genre) =
+                                self.available_genres.get(self.genre_cursor).cloned()
+                            {
+                                if let Some(pos) =
+                                    self.active_genres.iter().position(|g| *g == genre)
+                                {
+                                    self.active_genres.remove(pos);
+                                } else {
+                                    self.active_genres.push(genre);
+                                }
+                                self.rebuild_filtered();
+                            }
+                        }
+                        _ => {}
+                    }
                 } else {
                     // Normal browsing mode.
                     match event.logical_key {
                         Key::Named(NamedKey::Escape) => {
-                            if !self.search_query.is_empty() {
-                                // Clear search filter first.
+                            if !self.search_query.is_empty() || !self.active_genres.is_empty() {
                                 self.search_query.clear();
+                                self.active_genres.clear();
                                 self.rebuild_filtered();
                             } else {
                                 self.result = BrowserResult::Closed;
@@ -684,6 +807,10 @@ impl ApplicationHandler for RomBrowserApp {
                         }
                         Key::Character(ref ch) if ch.as_str() == "/" => {
                             self.search_active = true;
+                        }
+                        Key::Character(ref ch) if ch.as_str() == "g" => {
+                            self.genre_filter_active = true;
+                            self.genre_cursor = 0;
                         }
                         _ => {}
                     }
@@ -761,6 +888,10 @@ mod tests {
             textures_loaded: false,
             search_active: false,
             search_query: String::new(),
+            genre_filter_active: false,
+            available_genres: Vec::new(),
+            active_genres: Vec::new(),
+            genre_cursor: 0,
         };
         app.set_catalog(entries);
         app
@@ -830,5 +961,51 @@ mod tests {
         // Only 1 match, selection should clamp to 0.
         assert_eq!(app.selected_index, 0);
         assert_eq!(app.selected_entry().unwrap().display_name, "A");
+    }
+
+    fn make_entry_with_genres(name: &str, genres: Vec<&str>) -> RomEntry {
+        let mut entry = make_entry(name);
+        entry.genres = genres.into_iter().map(String::from).collect();
+        entry
+    }
+
+    #[test]
+    fn set_catalog_collects_available_genres() {
+        let app = test_browser(vec![
+            make_entry_with_genres("Mario", vec!["Platform", "Action"]),
+            make_entry_with_genres("Zelda", vec!["Adventure", "Action"]),
+            make_entry_with_genres("Tetris", vec!["Puzzle"]),
+        ]);
+        assert_eq!(
+            app.available_genres,
+            vec!["Action", "Adventure", "Platform", "Puzzle"]
+        );
+    }
+
+    #[test]
+    fn genre_filter_narrows_results() {
+        let mut app = test_browser(vec![
+            make_entry_with_genres("Mario", vec!["Platform"]),
+            make_entry_with_genres("Zelda", vec!["Adventure"]),
+            make_entry_with_genres("Contra", vec!["Platform", "Shooter"]),
+        ]);
+        app.active_genres = vec!["Platform".to_string()];
+        app.rebuild_filtered();
+        assert_eq!(app.filtered_indices.len(), 2);
+        assert_eq!(app.filtered_indices, vec![0, 2]);
+    }
+
+    #[test]
+    fn genre_and_search_combined() {
+        let mut app = test_browser(vec![
+            make_entry_with_genres("Super Mario", vec!["Platform"]),
+            make_entry_with_genres("Super Contra", vec!["Platform", "Shooter"]),
+            make_entry_with_genres("Zelda", vec!["Adventure"]),
+        ]);
+        app.active_genres = vec!["Platform".to_string()];
+        app.search_query = "super".to_string();
+        app.rebuild_filtered();
+        assert_eq!(app.filtered_indices.len(), 2);
+        assert_eq!(app.filtered_indices, vec![0, 1]);
     }
 }
