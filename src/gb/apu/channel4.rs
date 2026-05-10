@@ -367,6 +367,8 @@ impl Channel4 {
 
         // CGB-E: when the counter just reloaded, reset counter_countdown
         // based on the new divisor and an alignment-dependent adjustment.
+        // `alignment` is always even, so `alignment & 3` is only ever 0 or 2.
+        // The adjustment is +2 when alignment & 2 == 0, otherwise +0.
         if self.countdown_reloaded && self.counter_active {
             let new_div = val & 0x07;
             let new_divisor = if new_div == 0 {
@@ -374,11 +376,10 @@ impl Channel4 {
             } else {
                 u16::from(new_div) * 4
             };
-            let al_adj = [2u16, 1, 0, 3][(self.alignment & 3) as usize];
-            self.counter_countdown = if new_divisor == 2 {
+            self.counter_countdown = if new_divisor == 2 || self.alignment & 2 != 0 {
                 new_divisor
             } else {
-                new_divisor + al_adj
+                new_divisor + 2
             };
         }
 
@@ -553,25 +554,14 @@ impl Channel4 {
         } else {
             u16::from(div) * 4 + 6
         };
-        // CGB-E alignment adjustments.
-        if self.alignment & 1 == 0 {
-            if div > 1 {
-                if self.alignment & 2 != 0 {
-                    initial_cd = initial_cd.saturating_sub(2);
-                } else {
-                    initial_cd = initial_cd.saturating_sub(4);
-                }
-            }
-        } else if div == 0 {
-            if self.counter_active {
-                initial_cd -= 1;
+        // CGB-E alignment adjustment. `alignment` is always even (incremented
+        // by 2 per M-cycle), so only `alignment & 2` distinguishes phases.
+        if div > 1 {
+            if self.alignment & 2 != 0 {
+                initial_cd = initial_cd.saturating_sub(2);
             } else {
-                initial_cd += 1;
+                initial_cd = initial_cd.saturating_sub(4);
             }
-        } else if self.alignment & 2 != 0 {
-            initial_cd = initial_cd.saturating_sub(3);
-        } else {
-            initial_cd = initial_cd.saturating_sub(1);
         }
         self.counter_countdown = initial_cd;
         self.countdown_reloaded = false;
