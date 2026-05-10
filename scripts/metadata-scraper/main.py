@@ -37,6 +37,10 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="TheGamesDB API key (overrides THEGAMESDB_API_KEY env var)")
     common.add_argument("--db", metavar="PATH", default=DEFAULT_DB,
                         help=f"Path to SQLite database (default: {DEFAULT_DB})")
+    common.add_argument("--cache", action="store_true",
+                        help="Cache HTTP responses (dev mode, avoids re-spending API quota)")
+    common.add_argument("--cache-path", metavar="PATH", default="thegamesdb_cache",
+                        help="SQLite cache file path without extension (default: thegamesdb_cache)")
 
     parser = argparse.ArgumentParser(
         prog="metadata-scraper",
@@ -53,9 +57,6 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Platform(s) to sync (default: nes)")
     p_sync.add_argument("--force-full", action="store_true",
                         help="Force a full re-sync even if incremental data exists")
-    p_sync.add_argument("--cache", metavar="PATH", nargs="?", const="thegamesdb_cache",
-                        help="Cache HTTP responses to an SQLite file (dev mode). "
-                             "Optional path; default: thegamesdb_cache.sqlite")
 
     # list
     p_list = sub.add_parser("list", help="List stored games", parents=[common])
@@ -173,17 +174,18 @@ def main(output: IO[str] = None):
     parser = _build_parser()
     args = parser.parse_args()
 
-    if getattr(args, "cache", None):
+    if getattr(args, "cache", False):
         if not _HAVE_REQUESTS_CACHE:
             print("ERROR: requests-cache is not installed. Run: pip install requests-cache",
                   file=sys.stderr)
             sys.exit(1)
+        cache_path = getattr(args, "cache_path", "thegamesdb_cache")
         requests_cache.install_cache(
-            args.cache,
+            cache_path,
             backend="sqlite",
-            expire_after=None,  # never expire during dev
+            expire_after=None,
         )
-        print(f"[cache] HTTP responses cached to {args.cache}.sqlite", file=sys.stderr)
+        print(f"[cache] HTTP responses cached to {cache_path}.sqlite", file=sys.stderr)
 
     with MetadataDb(args.db) as db:
         if args.command == "sync":
