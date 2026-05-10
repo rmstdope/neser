@@ -57,6 +57,8 @@ ratatui = { version = "0.29", optional = true }
 crossterm = { version = "0.28", optional = true }
 nosleep = { version = "0.2.1", optional = true }
 serde_with = "3.18.0"
+rusqlite = { version = "0.36", optional = true, features = ["bundled"] }
+strsim = { version = "0.11", optional = true }
 
 [features]
 default = ["native"]
@@ -79,6 +81,8 @@ native = [
 	"dep:cpal",
 	"dep:gilrs",
 	"dep:nosleep",
+	"dep:rusqlite",
+	"dep:strsim",
 ]
 wasm = [
 	"dep:wasm-bindgen",
