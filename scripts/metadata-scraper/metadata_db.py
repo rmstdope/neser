@@ -232,6 +232,16 @@ class MetadataDb:
         rows = self._conn.execute(query, params).fetchall()
         return [dict(r) for r in rows]
 
+    def search_games(self, name: str, platform_id: int = None) -> list[dict]:
+        query = "SELECT * FROM games WHERE LOWER(game_title) LIKE LOWER('%' || ? || '%')"
+        params: list[Any] = [name]
+        if platform_id is not None:
+            query += " AND platform_id = ?"
+            params.append(platform_id)
+        query += " ORDER BY game_title"
+        rows = self._conn.execute(query, params).fetchall()
+        return [dict(r) for r in rows]
+
     def get_game_genres(self, game_id: int) -> list[int]:
         rows = self._conn.execute(
             "SELECT genre_id FROM game_genres WHERE game_id = ? ORDER BY genre_id", (game_id,)

@@ -147,5 +147,109 @@ class TestMainCliArgParsing(unittest.TestCase):
         self.assertIn(5, platform_ids)   # GBA
 
 
+class TestInfoCommand(unittest.TestCase):
+    """Tests for the 'info' subcommand."""
+
+    def _run_info(self, args, search_results=None):
+        search_results = search_results or []
+        with patch("sys.argv", ["main.py", "info"] + args), \
+             patch("main.MetadataDb") as MockDb, \
+             patch("main.TheGamesDbClient"), \
+             patch("main.Syncer"):
+            mock_db = MagicMock()
+            MockDb.return_value.__enter__ = MagicMock(return_value=mock_db)
+            MockDb.return_value.__exit__ = MagicMock(return_value=False)
+            mock_db.search_games.return_value = search_results
+            mock_db.get_game_genres.return_value = []
+            mock_db.get_game_developers.return_value = []
+            mock_db.get_game_publishers.return_value = []
+            mock_db.get_game_images.return_value = []
+            mock_db.get_reference.return_value = None
+            captured = StringIO()
+            import main as m
+            m.main(output=captured)
+            return mock_db, captured.getvalue()
+
+    def test_info_calls_search_games_with_name(self):
+        db, _ = self._run_info(["castlevania"])
+        db.search_games.assert_called_once()
+        call_args = db.search_games.call_args
+        args_list = list(call_args[0]) + list(call_args[1].values())
+        self.assertIn("castlevania", args_list)
+
+    def test_info_with_platform_passes_platform_id(self):
+        db, _ = self._run_info(["castlevania", "--platform", "nes"])
+        call_kwargs = db.search_games.call_args[1]
+        self.assertEqual(call_kwargs.get("platform_id"), 7)
+
+    def test_info_no_results_prints_not_found(self):
+        _, output = self._run_info(["zeldaXXX"])
+        self.assertIn("No games found", output)
+        self.assertIn("zeldaXXX", output)
+
+    def test_info_prints_game_title_and_id(self):
+        game = {
+            "id": 135, "game_title": "Castlevania", "platform_id": 7,
+            "release_date": "1987-05-01", "rating": "E", "players": 1,
+            "overview": "Fight Dracula.", "coop": "No", "youtube": "",
+            "alternates": None, "last_updated": "2025-01-01",
+        }
+        _, output = self._run_info(["castlevania"], search_results=[game])
+        self.assertIn("135", output)
+        self.assertIn("Castlevania", output)
+
+    def test_info_resolves_genre_names(self):
+        game = {
+            "id": 135, "game_title": "Castlevania", "platform_id": 7,
+            "release_date": "", "rating": "", "players": None,
+            "overview": "", "coop": "", "youtube": "",
+            "alternates": None, "last_updated": "",
+        }
+        with patch("sys.argv", ["main.py", "info", "castlevania"]), \
+             patch("main.MetadataDb") as MockDb, \
+             patch("main.TheGamesDbClient"), \
+             patch("main.Syncer"):
+            mock_db = MagicMock()
+            MockDb.return_value.__enter__ = MagicMock(return_value=mock_db)
+            MockDb.return_value.__exit__ = MagicMock(return_value=False)
+            mock_db.search_games.return_value = [game]
+            mock_db.get_game_genres.return_value = [15]
+            mock_db.get_game_developers.return_value = []
+            mock_db.get_game_publishers.return_value = []
+            mock_db.get_game_images.return_value = []
+            mock_db.get_reference.side_effect = lambda table, eid: (
+                {"id": 15, "name": "Action"} if table == "genres" and eid == 15 else None
+            )
+            captured = StringIO()
+            import main as m
+            m.main(output=captured)
+            self.assertIn("Action", captured.getvalue())
+
+    def test_info_shows_image_count(self):
+        game = {
+            "id": 135, "game_title": "Castlevania", "platform_id": 7,
+            "release_date": "", "rating": "", "players": None,
+            "overview": "", "coop": "", "youtube": "",
+            "alternates": None, "last_updated": "",
+        }
+        with patch("sys.argv", ["main.py", "info", "castlevania"]), \
+             patch("main.MetadataDb") as MockDb, \
+             patch("main.TheGamesDbClient"), \
+             patch("main.Syncer"):
+            mock_db = MagicMock()
+            MockDb.return_value.__enter__ = MagicMock(return_value=mock_db)
+            MockDb.return_value.__exit__ = MagicMock(return_value=False)
+            mock_db.search_games.return_value = [game]
+            mock_db.get_game_genres.return_value = []
+            mock_db.get_game_developers.return_value = []
+            mock_db.get_game_publishers.return_value = []
+            mock_db.get_game_images.return_value = [{"id": 1}, {"id": 2}, {"id": 3}]
+            mock_db.get_reference.return_value = None
+            captured = StringIO()
+            import main as m
+            m.main(output=captured)
+            self.assertIn("3", captured.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

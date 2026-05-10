@@ -77,6 +77,11 @@ def _build_parser() -> argparse.ArgumentParser:
     # status
     sub.add_parser("status", help="Show DB statistics and remaining API allowance", parents=[common])
 
+    # info
+    p_info = sub.add_parser("info", help="Search for games by name and display details", parents=[common])
+    p_info.add_argument("name", metavar="NAME", help="Substring to search for (case-insensitive)")
+    p_info.add_argument("--platform", choices=list(PLATFORMS), help="Limit search to one platform")
+
     return parser
 
 
@@ -165,6 +170,54 @@ def _cmd_status(args: argparse.Namespace, db: MetadataDb, client: TheGamesDbClie
         print(f"  Could not fetch API limit: {exc}", file=output)
 
 
+def _cmd_info(args: argparse.Namespace, db: MetadataDb, output: IO[str]):
+    platform_id = PLATFORMS[args.platform]["id"] if getattr(args, "platform", None) else None
+    games = db.search_games(args.name, platform_id=platform_id)
+
+    if not games:
+        print(f"No games found matching '{args.name}'.", file=output)
+        return
+
+    platforms = {p["id"]: p for p in db.list_platforms()}
+
+    for game in games:
+        pid = game.get("platform_id")
+        platform_name = platforms.get(pid, {}).get("alias") or platforms.get(pid, {}).get("name") or str(pid)
+        print(f"Game #{game['id']} — {game['game_title']} ({platform_name.upper()})", file=output)
+
+        def _resolve_names(ids, table):
+            names = []
+            for eid in ids:
+                row = db.get_reference(table, eid)
+                if row:
+                    names.append(row["name"])
+            return ", ".join(names) if names else ""
+
+        genre_ids = db.get_game_genres(game["id"])
+        dev_ids = db.get_game_developers(game["id"])
+        pub_ids = db.get_game_publishers(game["id"])
+        image_count = len(db.get_game_images(game["id"]))
+
+        fields = [
+            ("Release date", game.get("release_date") or ""),
+            ("Rating",       game.get("rating") or ""),
+            ("Players",      game.get("players") or ""),
+            ("Co-op",        game.get("coop") or ""),
+            ("Overview",     game.get("overview") or ""),
+            ("Genres",       _resolve_names(genre_ids, "genres")),
+            ("Developers",   _resolve_names(dev_ids, "developers")),
+            ("Publishers",   _resolve_names(pub_ids, "publishers")),
+            ("YouTube",      game.get("youtube") or ""),
+            ("Alternates",   game.get("alternates") or ""),
+            ("Last updated", game.get("last_updated") or ""),
+            ("Images",       str(image_count)),
+        ]
+        width = max(len(label) for label, _ in fields)
+        for label, value in fields:
+            print(f"  {label:<{width}} : {value}", file=output)
+        print("", file=output)
+
+
 # ── main ──────────────────────────────────────────────────────────────────────
 
 def main(output: IO[str] = None):
@@ -198,6 +251,8 @@ def main(output: IO[str] = None):
             key = _resolve_api_key(args)
             client = TheGamesDbClient(api_key=key)
             _cmd_status(args, db, client, output)
+        elif args.command == "info":
+            _cmd_info(args, db, output)
 
 
 if __name__ == "__main__":

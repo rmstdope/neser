@@ -341,5 +341,61 @@ class TestMetadataDbSyncLog(unittest.TestCase):
         self.assertNotIn(4, counts)
 
 
+class TestMetadataDbSearchGames(unittest.TestCase):
+    """Tests for MetadataDb.search_games — case-insensitive substring lookup."""
+
+    def setUp(self):
+        self.db = MetadataDb(":memory:")
+        self.db.upsert_platform({"id": 7, "name": "NES", "alias": "nes"})
+        self.db.upsert_platform({"id": 4, "name": "GB", "alias": "gb"})
+        self._base = {
+            "release_date": "", "region_id": 0, "country_id": 0, "players": 1,
+            "overview": "", "last_updated": "", "rating": "", "coop": "",
+            "youtube": "", "alternates": None, "developers": [], "genres": [], "publishers": [],
+        }
+
+    def tearDown(self):
+        self.db.close()
+
+    def _game(self, game_id, title, platform=7):
+        return {"id": game_id, "game_title": title, "platform": platform, **self._base}
+
+    def test_returns_exact_match(self):
+        self.db.upsert_game(self._game(135, "Castlevania"))
+        results = self.db.search_games("Castlevania")
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["id"], 135)
+
+    def test_partial_name_matches_substring(self):
+        self.db.upsert_game(self._game(135, "Castlevania"))
+        self.db.upsert_game(self._game(136, "Castlevania II - Simon's Quest"))
+        results = self.db.search_games("castlevania")
+        self.assertEqual(len(results), 2)
+
+    def test_case_insensitive_match(self):
+        self.db.upsert_game(self._game(135, "Castlevania"))
+        results = self.db.search_games("CASTLE")
+        self.assertEqual(len(results), 1)
+
+    def test_no_match_returns_empty_list(self):
+        self.db.upsert_game(self._game(135, "Castlevania"))
+        results = self.db.search_games("zeldaXXX")
+        self.assertEqual(results, [])
+
+    def test_platform_filter_narrows_results(self):
+        self.db.upsert_game(self._game(135, "Castlevania", platform=7))
+        self.db.upsert_game(self._game(200, "Castlevania II", platform=4))
+        results = self.db.search_games("castlevania", platform_id=7)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["id"], 135)
+
+    def test_results_include_game_fields(self):
+        self.db.upsert_game(self._game(135, "Castlevania"))
+        results = self.db.search_games("Castlevania")
+        self.assertIn("id", results[0])
+        self.assertIn("game_title", results[0])
+        self.assertIn("platform_id", results[0])
+
+
 if __name__ == "__main__":
     unittest.main()
