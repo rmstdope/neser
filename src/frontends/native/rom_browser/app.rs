@@ -38,6 +38,8 @@ pub struct RomBrowserApp {
     default_height: u32,
     fullscreen: bool,
     catalog: Vec<RomEntry>,
+    /// Indices into `catalog` that match the current filter (search + genre).
+    filtered_indices: Vec<usize>,
     selected_index: usize,
     /// Current scroll offset (logical pixels from top).
     scroll_offset: f32,
@@ -45,6 +47,9 @@ pub struct RomBrowserApp {
     scroll_target: f32,
     /// Tracks whether cover art textures have been loaded.
     textures_loaded: bool,
+    /// Search overlay state.
+    search_active: bool,
+    search_query: String,
 }
 
 impl RomBrowserApp {
@@ -66,16 +71,50 @@ impl RomBrowserApp {
             default_height,
             fullscreen,
             catalog: Vec::new(),
+            filtered_indices: Vec::new(),
             selected_index: 0,
             scroll_offset: 0.0,
             scroll_target: 0.0,
             textures_loaded: false,
+            search_active: false,
+            search_query: String::new(),
         }
     }
 
     /// Set the ROM catalog to display.
     pub fn set_catalog(&mut self, catalog: Vec<RomEntry>) {
         self.catalog = catalog;
+        self.rebuild_filtered();
+    }
+
+    /// Rebuild the filtered index list based on current search query.
+    fn rebuild_filtered(&mut self) {
+        let query = self.search_query.to_lowercase();
+        self.filtered_indices = self
+            .catalog
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| {
+                if query.is_empty() {
+                    return true;
+                }
+                e.search_key.contains(&query) || e.display_name.to_lowercase().contains(&query)
+            })
+            .map(|(i, _)| i)
+            .collect();
+
+        // Clamp selection.
+        if self.selected_index >= self.filtered_indices.len() {
+            self.selected_index = self.filtered_indices.len().saturating_sub(1);
+        }
+        self.scroll_offset = 0.0;
+        self.scroll_target = 0.0;
+    }
+
+    /// Get the catalog entry for the currently selected filtered item.
+    fn selected_entry(&self) -> Option<&RomEntry> {
+        let &catalog_idx = self.filtered_indices.get(self.selected_index)?;
+        self.catalog.get(catalog_idx)
     }
 
     /// Run the ROM browser and return the result.
@@ -102,7 +141,7 @@ impl RomBrowserApp {
         let Some(ref mut gl) = self.gl else { return };
 
         let (display_w, display_h) = gl.logical_size();
-        let catalog_len = self.catalog.len();
+        let total_count = self.catalog.len();
         let selected = self.selected_index;
 
         // Smooth scroll animation.
@@ -129,12 +168,31 @@ impl RomBrowserApp {
         let cell_h = theme::cell_height(cover_w);
         let cover_h = cover_w / theme::COVER_ASPECT;
 
-        // Extract catalog slice reference before begin_frame to avoid borrow conflicts.
-        let catalog = &self.catalog;
+        // Build display entries from filtered indices (avoids borrow conflicts).
+        let filtered_count = self.filtered_indices.len();
+        let display_entries: Vec<&RomEntry> = self
+            .filtered_indices
+            .iter()
+            .map(|&idx| &self.catalog[idx])
+            .collect();
+
+        // Selected catalog index for sidebar.
+        let selected_entry_idx = self.filtered_indices.get(selected).copied();
+
+        let search_active = self.search_active;
+        let search_query = self.search_query.clone();
 
         let ui = gl.begin_frame();
 
         // --- Header bar ---
+        let header_text = if search_query.is_empty() {
+            format!("NESER ROM Browser \u{2014} {total_count} games")
+        } else {
+            format!(
+                "NESER ROM Browser \u{2014} {filtered_count}/{total_count} (search: \"{search_query}\")"
+            )
+        };
+
         ui.window("##header")
             .position([0.0, 0.0], imgui::Condition::Always)
             .size(
@@ -144,7 +202,7 @@ impl RomBrowserApp {
             .flags(Self::panel_flags())
             .build(|| {
                 let _color = ui.push_style_color(imgui::StyleColor::Text, theme::HEADER_TEXT);
-                ui.text(format!("NESER ROM Browser — {catalog_len} games"));
+                ui.text(&header_text);
             });
 
         // --- Grid area ---
@@ -158,14 +216,17 @@ impl RomBrowserApp {
             .build(|| {
                 let _text_color = ui.push_style_color(imgui::StyleColor::Text, theme::TEXT_COLOR);
 
-                if catalog.is_empty() {
-                    ui.text("No ROMs found. Add ROM files to ~/.neser/roms/");
-                    ui.text("or configure cartridge-search-paths in neser.conf");
+                if display_entries.is_empty() {
+                    if search_query.is_empty() {
+                        ui.text("No ROMs found. Add ROM files to ~/.neser/roms/");
+                        ui.text("or configure cartridge-search-paths in neser.conf");
+                    } else {
+                        ui.text(format!("No games match \"{search_query}\""));
+                    }
                     return;
                 }
 
-                // Use a child window so we can control scroll position.
-                let total_rows = catalog_len.div_ceil(cols);
+                let total_rows = filtered_count.div_ceil(cols);
                 let content_height =
                     total_rows as f32 * (cell_h + theme::GRID_SPACING) + theme::GRID_PADDING;
 
@@ -184,7 +245,7 @@ impl RomBrowserApp {
                         let draw_list = ui.get_window_draw_list();
                         let window_pos = ui.window_pos();
 
-                        for (i, entry) in catalog.iter().enumerate() {
+                        for (i, entry) in display_entries.iter().enumerate() {
                             let row = i / cols;
                             let col = i % cols;
 
@@ -255,7 +316,9 @@ impl RomBrowserApp {
             .flags(Self::panel_flags())
             .build(|| {
                 let _bg = ui.push_style_color(imgui::StyleColor::WindowBg, theme::SIDEBAR_BG);
-                if let Some(entry) = catalog.get(selected) {
+                if let Some(idx) = selected_entry_idx
+                    && let Some(entry) = self.catalog.get(idx)
+                {
                     Self::render_sidebar(ui, entry, sidebar_w);
                 }
             });
@@ -267,10 +330,48 @@ impl RomBrowserApp {
             .flags(Self::panel_flags())
             .build(|| {
                 let _color = ui.push_style_color(imgui::StyleColor::Text, theme::DIM_TEXT);
-                ui.text(
-                    "Enter/A: Launch  |  \u{2190}\u{2191}\u{2192}\u{2193}: Navigate  |  Esc/B: Quit",
-                );
+                if search_active {
+                    ui.text("Type to search  |  Esc: Close search  |  Enter: Launch");
+                } else {
+                    ui.text(
+                        "Enter/A: Launch  |  \u{2190}\u{2191}\u{2192}\u{2193}: Navigate  |  /: Search  |  Esc: Quit",
+                    );
+                }
             });
+
+        // --- Search overlay ---
+        if search_active {
+            let overlay_draw = ui.get_foreground_draw_list();
+            let dim_color = imgui::ImColor32::from_rgba(0, 0, 0, 120);
+            overlay_draw.add_rect_filled_multicolor(
+                [0.0, 0.0],
+                [display_w, display_h],
+                dim_color,
+                dim_color,
+                dim_color,
+                dim_color,
+            );
+
+            let search_w = (display_w * 0.5).clamp(300.0, 600.0);
+            let search_h = 60.0;
+            let search_x = (display_w - search_w) / 2.0;
+            let search_y = 80.0;
+
+            ui.window("##search_overlay")
+                .position([search_x, search_y], imgui::Condition::Always)
+                .size([search_w, search_h], imgui::Condition::Always)
+                .flags(
+                    Self::panel_flags()
+                        | imgui::WindowFlags::NO_SCROLLBAR
+                        | imgui::WindowFlags::NO_SAVED_SETTINGS,
+                )
+                .build(|| {
+                    let _color = ui.push_style_color(imgui::StyleColor::Text, theme::HEADER_TEXT);
+                    ui.text(format!(
+                        "Search: {search_query}\u{258C}    ({filtered_count} matches)"
+                    ));
+                });
+        }
 
         gl.end_frame();
     }
@@ -423,12 +524,12 @@ impl RomBrowserApp {
     /// Move selection down by one row in the grid.
     fn navigate_down(&mut self) {
         let cols = self.current_cols();
+        let count = self.filtered_indices.len();
         let new_idx = self.selected_index + cols;
-        if new_idx < self.catalog.len() {
+        if new_idx < count {
             self.selected_index = new_idx;
-        } else if self.selected_index < self.catalog.len().saturating_sub(1) {
-            // Jump to last item if the target row doesn't exist.
-            self.selected_index = self.catalog.len() - 1;
+        } else if self.selected_index < count.saturating_sub(1) {
+            self.selected_index = count - 1;
         }
         self.ensure_selected_visible();
     }
@@ -475,7 +576,7 @@ impl ApplicationHandler for RomBrowserApp {
                                 .to_lowercase()
                                 .cmp(&b.display_name.to_lowercase())
                         });
-                        self.catalog = catalog;
+                        self.set_catalog(catalog);
                     }
                     Err(e) => {
                         eprintln!("Failed to load ROM catalog: {e}");
@@ -510,36 +611,82 @@ impl ApplicationHandler for RomBrowserApp {
 
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
                 use winit::keyboard::{Key, NamedKey};
-                match event.logical_key {
-                    Key::Named(NamedKey::Escape) => {
-                        self.result = BrowserResult::Closed;
-                        event_loop.exit();
-                    }
-                    Key::Named(NamedKey::ArrowUp) => {
-                        self.navigate_up();
-                    }
-                    Key::Named(NamedKey::ArrowDown) => {
-                        self.navigate_down();
-                    }
-                    Key::Named(NamedKey::ArrowLeft) => {
-                        if self.selected_index > 0 {
-                            self.selected_index -= 1;
-                            self.ensure_selected_visible();
+
+                if self.search_active {
+                    // Search mode input handling.
+                    match event.logical_key {
+                        Key::Named(NamedKey::Escape) => {
+                            self.search_active = false;
+                            if self.search_query.is_empty() {
+                                // No query — just close overlay.
+                            } else {
+                                // Keep the filter active, just close overlay.
+                            }
                         }
-                    }
-                    Key::Named(NamedKey::ArrowRight) => {
-                        if self.selected_index + 1 < self.catalog.len() {
-                            self.selected_index += 1;
-                            self.ensure_selected_visible();
+                        Key::Named(NamedKey::Backspace) => {
+                            self.search_query.pop();
+                            self.rebuild_filtered();
                         }
-                    }
-                    Key::Named(NamedKey::Enter) => {
-                        if let Some(entry) = self.catalog.get(self.selected_index) {
-                            self.result = BrowserResult::RomSelected(entry.path.clone());
-                            event_loop.exit();
+                        Key::Named(NamedKey::Enter) => {
+                            if let Some(entry) = self.selected_entry() {
+                                self.result = BrowserResult::RomSelected(entry.path.clone());
+                                event_loop.exit();
+                            }
                         }
+                        Key::Named(NamedKey::ArrowUp) => {
+                            self.navigate_up();
+                        }
+                        Key::Named(NamedKey::ArrowDown) => {
+                            self.navigate_down();
+                        }
+                        Key::Character(ref ch) => {
+                            self.search_query.push_str(ch.as_str());
+                            self.rebuild_filtered();
+                        }
+                        _ => {}
                     }
-                    _ => {}
+                } else {
+                    // Normal browsing mode.
+                    match event.logical_key {
+                        Key::Named(NamedKey::Escape) => {
+                            if !self.search_query.is_empty() {
+                                // Clear search filter first.
+                                self.search_query.clear();
+                                self.rebuild_filtered();
+                            } else {
+                                self.result = BrowserResult::Closed;
+                                event_loop.exit();
+                            }
+                        }
+                        Key::Named(NamedKey::ArrowUp) => {
+                            self.navigate_up();
+                        }
+                        Key::Named(NamedKey::ArrowDown) => {
+                            self.navigate_down();
+                        }
+                        Key::Named(NamedKey::ArrowLeft) => {
+                            if self.selected_index > 0 {
+                                self.selected_index -= 1;
+                                self.ensure_selected_visible();
+                            }
+                        }
+                        Key::Named(NamedKey::ArrowRight) => {
+                            if self.selected_index + 1 < self.filtered_indices.len() {
+                                self.selected_index += 1;
+                                self.ensure_selected_visible();
+                            }
+                        }
+                        Key::Named(NamedKey::Enter) => {
+                            if let Some(entry) = self.selected_entry() {
+                                self.result = BrowserResult::RomSelected(entry.path.clone());
+                                event_loop.exit();
+                            }
+                        }
+                        Key::Character(ref ch) if ch.as_str() == "/" => {
+                            self.search_active = true;
+                        }
+                        _ => {}
+                    }
                 }
             }
 
@@ -557,6 +704,7 @@ impl ApplicationHandler for RomBrowserApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::platform::app_context::IntoSharedAppContext;
 
     #[test]
     fn browser_result_default_is_closed() {
@@ -572,5 +720,115 @@ mod tests {
             BrowserResult::RomSelected(p) => assert_eq!(p, path),
             BrowserResult::Closed => panic!("expected RomSelected"),
         }
+    }
+
+    fn make_entry(name: &str) -> RomEntry {
+        RomEntry {
+            path: PathBuf::from(format!("{name}.nes")),
+            display_name: name.to_string(),
+            search_key: name.to_lowercase(),
+            mapper_label: "-".to_string(),
+            mapper: None,
+            hardware: None,
+            crc: None,
+            recording_duration: None,
+            metadata_game_id: None,
+            genres: Vec::new(),
+            overview: None,
+            release_date: None,
+            players: None,
+            rating: None,
+            boxart_path: None,
+            screenshot_paths: Vec::new(),
+            is_favorite: false,
+        }
+    }
+
+    /// Create a minimal RomBrowserApp for testing (without GL or AppContext).
+    fn test_browser(entries: Vec<RomEntry>) -> RomBrowserApp {
+        let mut app = RomBrowserApp {
+            app_context: crate::platform::app_context::AppContext::new().into_shared(),
+            gl: None,
+            result: BrowserResult::Closed,
+            default_width: 1280,
+            default_height: 720,
+            fullscreen: false,
+            catalog: Vec::new(),
+            filtered_indices: Vec::new(),
+            selected_index: 0,
+            scroll_offset: 0.0,
+            scroll_target: 0.0,
+            textures_loaded: false,
+            search_active: false,
+            search_query: String::new(),
+        };
+        app.set_catalog(entries);
+        app
+    }
+
+    #[test]
+    fn rebuild_filtered_shows_all_when_no_query() {
+        let app = test_browser(vec![
+            make_entry("Super Mario Bros"),
+            make_entry("Zelda"),
+            make_entry("Metroid"),
+        ]);
+        assert_eq!(app.filtered_indices.len(), 3);
+        assert_eq!(app.filtered_indices, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn rebuild_filtered_narrows_by_search() {
+        let mut app = test_browser(vec![
+            make_entry("Super Mario Bros"),
+            make_entry("Zelda"),
+            make_entry("Super Metroid"),
+        ]);
+        app.search_query = "super".to_string();
+        app.rebuild_filtered();
+        assert_eq!(app.filtered_indices.len(), 2);
+        assert_eq!(app.filtered_indices, vec![0, 2]);
+    }
+
+    #[test]
+    fn rebuild_filtered_empty_result() {
+        let mut app = test_browser(vec![make_entry("Mario"), make_entry("Zelda")]);
+        app.search_query = "castlevania".to_string();
+        app.rebuild_filtered();
+        assert!(app.filtered_indices.is_empty());
+    }
+
+    #[test]
+    fn selected_entry_returns_correct_rom() {
+        let app = test_browser(vec![
+            make_entry("Game A"),
+            make_entry("Game B"),
+            make_entry("Game C"),
+        ]);
+        assert_eq!(app.selected_entry().unwrap().display_name, "Game A");
+    }
+
+    #[test]
+    fn selected_entry_after_filter_returns_filtered_item() {
+        let mut app = test_browser(vec![
+            make_entry("Alpha"),
+            make_entry("Beta"),
+            make_entry("Gamma"),
+        ]);
+        app.search_query = "beta".to_string();
+        app.rebuild_filtered();
+        // selected_index 0 in filtered = "Beta" (catalog index 1).
+        assert_eq!(app.selected_entry().unwrap().display_name, "Beta");
+    }
+
+    #[test]
+    fn selection_clamps_after_filter_reduces_results() {
+        let mut app = test_browser(vec![make_entry("A"), make_entry("B"), make_entry("C")]);
+        app.selected_index = 2; // last item
+        app.search_query = "a".to_string();
+        app.rebuild_filtered();
+        // Only 1 match, selection should clamp to 0.
+        assert_eq!(app.selected_index, 0);
+        assert_eq!(app.selected_entry().unwrap().display_name, "A");
     }
 }
