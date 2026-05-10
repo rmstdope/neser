@@ -31,6 +31,25 @@ pub struct Channel4 {
     /// Envelope clock state for zombie mode glitch tracking.
     #[serde(default)]
     env_clock_state: EnvelopeClockState,
+    /// 14-bit up-counter for noise prescaler (SameBoy counter model).
+    /// Tracks the hardware counter that drives LFSR clocking via
+    /// rising-edge detection on bit(clock_shift).
+    #[serde(default)]
+    counter: u16,
+    /// APU-cycle countdown until next counter increment (2 MHz units).
+    #[serde(default)]
+    counter_countdown: u16,
+    /// Running total of APU cycles since APU init, used for
+    /// alignment-dependent adjustments on trigger and NR43 writes.
+    #[serde(default)]
+    alignment: u32,
+    /// True when the last tick ended with counter_countdown exactly
+    /// at a reload boundary (no leftover cycles).
+    #[serde(default)]
+    countdown_reloaded: bool,
+    /// True after trigger — enables counter model updates in tick().
+    #[serde(default)]
+    counter_active: bool,
 }
 
 impl Default for Channel4 {
@@ -58,6 +77,11 @@ impl Channel4 {
             volume: 0,
             env_timer: 0,
             env_clock_state: EnvelopeClockState::default(),
+            counter: 0,
+            counter_countdown: 0,
+            alignment: 0,
+            countdown_reloaded: false,
+            counter_active: false,
         }
     }
 
@@ -103,6 +127,9 @@ impl Channel4 {
     /// Processes each T-cycle individually to maintain sub-M-cycle precision.
     /// When the timer expires mid-M-cycle, the remaining T-cycles are applied
     /// after the reload, ensuring correct phase alignment.
+    ///
+    /// Also maintains the parallel counter model (alignment, counter,
+    /// counter_countdown) used for mid-stream NR43 write adjustments.
     pub fn tick(&mut self) {
         let period = self.freq_timer_period();
         if self.freq_timer == 0 {
@@ -115,6 +142,41 @@ impl Channel4 {
                 trace_apu!(5; "GB APU CH4 tick timer expired, clocking LFSR");
                 self.clock_lfsr();
             }
+        }
+
+        // Maintain counter model (2 APU cycles per M-cycle).
+        self.alignment = self.alignment.wrapping_add(2);
+        if self.counter_active {
+            self.tick_counter_model();
+        }
+    }
+
+    /// Process 2 APU cycles of the noise prescaler counter model.
+    fn tick_counter_model(&mut self) {
+        let reload = self.counter_reload();
+        if self.counter_countdown > 2 {
+            self.counter_countdown -= 2;
+            self.countdown_reloaded = false;
+        } else if self.counter_countdown == 2 {
+            self.counter = (self.counter + 1) & 0x3FFF;
+            self.counter_countdown = reload;
+            self.countdown_reloaded = true;
+        } else if self.counter_countdown == 1 {
+            self.counter = (self.counter + 1) & 0x3FFF;
+            self.counter_countdown = reload - 1;
+            self.countdown_reloaded = false;
+        } else {
+            // counter_countdown == 0: shouldn't happen in normal operation
+            self.counter_countdown = reload;
+        }
+    }
+
+    /// Counter reload value in APU cycles (2 MHz).
+    fn counter_reload(&self) -> u16 {
+        if self.divisor_code == 0 {
+            2
+        } else {
+            u16::from(self.divisor_code) * 4
         }
     }
 
@@ -205,6 +267,11 @@ impl Channel4 {
         self.volume = 0;
         self.env_timer = 0;
         self.env_clock_state = EnvelopeClockState::default();
+        self.counter = 0;
+        self.counter_countdown = 0;
+        self.alignment = 0;
+        self.countdown_reloaded = false;
+        self.counter_active = false;
     }
 
     pub fn read_nr42(&self) -> u8 {
@@ -297,9 +364,52 @@ impl Channel4 {
     pub fn write_nr43(&mut self, val: u8) {
         trace_apu!(2; "GB APU CH4 write NR43=0x{:02X} shift={} mode={} divisor={}", 
             val, (val >> 4) & 0x0F, if (val & 0x08) != 0 { "7-bit" } else { "15-bit" }, val & 0x07);
+
+        // CGB-E: when the counter just reloaded, reset counter_countdown
+        // based on the new divisor and an alignment-dependent adjustment.
+        // `alignment` is always even, so `alignment & 3` is only ever 0 or 2.
+        // The adjustment is +2 when alignment & 2 == 0, otherwise +0.
+        if self.countdown_reloaded && self.counter_active {
+            let new_div = val & 0x07;
+            let new_divisor = if new_div == 0 {
+                2u16
+            } else {
+                u16::from(new_div) * 4
+            };
+            self.counter_countdown = if new_divisor == 2 || self.alignment & 2 != 0 {
+                new_divisor
+            } else {
+                new_divisor + 2
+            };
+        }
+
         self.clock_shift = (val >> 4) & 0x0F;
         self.lfsr_7bit = val & 0x08 != 0;
         self.divisor_code = val & 0x07;
+
+        // Recompute freq_timer from counter state for mid-stream changes.
+        if self.counter_active {
+            self.recompute_freq_timer_from_counter();
+        }
+    }
+
+    /// Compute freq_timer from the current counter model state.
+    ///
+    /// Determines how many T-cycles remain until the next LFSR clock
+    /// by finding the distance (in counter increments) to the next
+    /// rising edge of `bit(clock_shift)` in the counter.
+    fn recompute_freq_timer_from_counter(&mut self) {
+        let shift = u32::from(self.clock_shift);
+        let reload = u32::from(self.counter_reload());
+        let half_period = 1u32 << shift;
+        let full_period = half_period << 1;
+        let pos = u32::from(self.counter) & (full_period - 1);
+        let distance = if pos < half_period {
+            half_period - pos
+        } else {
+            full_period - pos + half_period
+        };
+        self.freq_timer = u32::from(self.counter_countdown) * 2 + (distance - 1) * reload * 2;
     }
 
     pub fn write_nr44(&mut self, val: u8, extra_clk: bool) {
@@ -416,7 +526,17 @@ impl Channel4 {
                     if self.freq_timer >= 52 { 40 } else { 44 }
                 }
                 0x38 => 40, // shift=3, 7-bit, divisor_code=0
-                _ => period + 4,
+                // Retrigger adds one extra period to the startup delay.
+                // SameBoy's prepare_noise_start increments counter_countdown
+                // by 1 when was_background_counting, which shifts the first
+                // LFSR clock by one full period in our freq_timer model.
+                _ => {
+                    if was_active {
+                        period * 2 + 4
+                    } else {
+                        period + 4
+                    }
+                }
             }
         };
         self.freq_timer = freq_timer;
@@ -425,6 +545,37 @@ impl Channel4 {
         self.lfsr = 0x7FFF;
         // Reset envelope clock state on trigger.
         self.env_clock_state = EnvelopeClockState::default();
+
+        // Initialize counter model (SameBoy's prepare_noise_start).
+        // Counter is NOT reset on trigger — only on APU init.
+        let div = self.divisor_code;
+        let mut initial_cd = if div == 0 {
+            6u16
+        } else {
+            u16::from(div) * 4 + 6
+        };
+        // CGB-E alignment adjustment. `alignment` is always even (incremented
+        // by 2 per M-cycle), so only `alignment & 2` distinguishes phases.
+        if div > 1 {
+            if self.alignment & 2 != 0 {
+                initial_cd = initial_cd.saturating_sub(2);
+            } else {
+                initial_cd = initial_cd.saturating_sub(4);
+            }
+        }
+        self.counter_countdown = initial_cd;
+        self.countdown_reloaded = false;
+        self.counter_active = true;
+    }
+
+    /// Reset counter model state when APU is turned on (NR52 bit 7 set).
+    /// Mirrors SameBoy's `GB_apu_init` which zeroes alignment and counter.
+    pub fn apu_init(&mut self) {
+        self.counter = 0;
+        self.counter_countdown = 0;
+        self.alignment = 0;
+        self.countdown_reloaded = false;
+        self.counter_active = false;
     }
 }
 

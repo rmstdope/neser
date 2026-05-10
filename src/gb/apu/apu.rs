@@ -689,6 +689,9 @@ impl Apu {
             self.fs_step = 0;
             self.div_divider = 0;
             self.skip_next_div_apu_event = false;
+            // Reset CH4 counter model state (alignment, counter) on APU init,
+            // matching SameBoy's GB_apu_init which zeroes everything.
+            self.ch4.apu_init();
             // On CGB, powering on resets all length counters to 0.
             if self.is_cgb {
                 self.ch1.length_counter = 0;
