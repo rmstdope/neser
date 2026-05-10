@@ -1,5 +1,6 @@
 pub mod app_context;
 pub mod autorun;
+pub mod catalog;
 pub mod config;
 pub mod crc32;
 pub mod debugging;

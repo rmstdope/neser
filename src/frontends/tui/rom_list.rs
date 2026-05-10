@@ -123,7 +123,7 @@ impl RomList {
     /// Call this after a Record/ExtendRecording launch so newly created recordings are
     /// discovered without a full catalog reload.
     pub fn refresh_recording_for(&mut self, path: &std::path::Path) {
-        use super::catalog::read_recording_duration;
+        use crate::platform::catalog::read_recording_duration;
         for entry in self.all.iter_mut() {
             if entry.path == path {
                 entry.recording_duration = read_recording_duration(path);
@@ -206,6 +206,15 @@ mod tests {
                 hardware: Some("NES NTSC".to_string()),
                 crc: Some("DEADBEEF".to_string()),
                 recording_duration: None,
+                metadata_game_id: None,
+                genres: Vec::new(),
+                overview: None,
+                release_date: None,
+                players: None,
+                rating: None,
+                boxart_path: None,
+                screenshot_paths: Vec::new(),
+                is_favorite: false,
             })
             .collect()
     }
@@ -317,6 +326,15 @@ mod tests {
             hardware: None,
             crc: None,
             recording_duration: None,
+            metadata_game_id: None,
+            genres: Vec::new(),
+            overview: None,
+            release_date: None,
+            players: None,
+            rating: None,
+            boxart_path: None,
+            screenshot_paths: Vec::new(),
+            is_favorite: false,
         };
         let mut list = RomList::new(vec![entry]);
 
