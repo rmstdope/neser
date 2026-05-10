@@ -50,34 +50,16 @@ class TheGamesDbClient:
         except Exception as exc:
             raise ApiError(f"Invalid JSON from {path}: {exc}") from exc
 
-    def _find_last_page(self, path: str, params: dict) -> int:
-        """Binary search for the last non-empty page (uses ~log2(256) = 8 calls)."""
-        lo, hi = 1, 256
-        while lo < hi:
-            mid = (lo + hi + 1) // 2  # upper-mid so lo always advances
-            p = dict(params)
-            p["page"] = mid
-            data = self._get(path, p)
-            games = data.get("data", {}).get("games") or []
-            if games:
-                lo = mid
-            else:
-                hi = mid - 1
-        return lo
-
     def _paginate(self, path: str, params: dict) -> dict:
         """Fetch all pages and merge the games lists."""
         all_games: list[dict] = []
         base_url: dict = {}
         boxart: dict = {}
         page = 1
-        total_pages = self._find_last_page(path, params) if self._verbose else None
         pbar = tqdm(
             desc="  Fetching pages",
             unit=" page",
-            total=total_pages,
-            bar_format="{desc}: {n_fmt}/{total_fmt} [{elapsed}<{remaining}]" if total_pages
-                       else "{desc}: {n_fmt} [{elapsed}, {rate_fmt}]",
+            bar_format="{desc}: page {n_fmt} | {postfix} [{elapsed}]",
             disable=not self._verbose,
         )
         while True:
@@ -87,7 +69,7 @@ class TheGamesDbClient:
             games = data.get("data", {}).get("games") or []
             all_games.extend(games)
             pbar.update(1)
-            pbar.set_postfix_str(f"{len(all_games)} games so far", refresh=True)
+            pbar.set_postfix_str(f"{len(all_games)} games fetched", refresh=True)
 
             include = data.get("include", {})
             if "boxart" in include:
