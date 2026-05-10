@@ -271,8 +271,8 @@ impl RomBrowserApp {
         // If still loading, render a loading screen with progress bar.
         if let CatalogState::Loading { ref progress, .. } = self.catalog_state {
             let progress_snapshot = progress.clone();
+            let (display_w, display_h) = gl.logical_size();
             let ui = gl.begin_frame();
-            let (display_w, display_h) = (ui.io().display_size[0], ui.io().display_size[1]);
             ui.window("##loading")
                 .position([0.0, 0.0], imgui::Condition::Always)
                 .size([display_w, display_h], imgui::Condition::Always)
@@ -280,15 +280,17 @@ impl RomBrowserApp {
                 .build(|| {
                     let bar_w = (display_w * 0.55).max(320.0);
                     let bar_x = (display_w - bar_w) * 0.5;
-                    let center_y = display_h * 0.45;
+                    // Lay out a fixed-height block of 4 rows centred vertically.
+                    // Row heights: title(16) + gap(8) + phase(16) + gap(4) + bar(18) + gap(6) + title(16) = 84
+                    let block_h = 84.0;
+                    let block_y = (display_h - block_h) * 0.5;
 
-                    // Title.
+                    // Row 1 — "NESER ROM Browser"
                     let _title = ui.push_style_color(imgui::StyleColor::Text, theme::HEADER_TEXT);
-                    ui.set_cursor_pos([bar_x, center_y - 36.0]);
+                    ui.set_cursor_pos([bar_x, block_y]);
                     ui.text("NESER ROM Browser");
                     drop(_title);
 
-                    ui.set_cursor_pos([bar_x, center_y - 16.0]);
                     let _dim = ui.push_style_color(imgui::StyleColor::Text, theme::DIM_TEXT);
 
                     if let Some(ref p) = progress_snapshot {
@@ -301,25 +303,33 @@ impl RomBrowserApp {
                             EnrichmentPhase::MatchingMetadata => "Matching metadata",
                             EnrichmentPhase::DownloadingImages => "Downloading cover art",
                         };
-                        let overlay = format!("{phase_label}: {} / {}", p.current, p.total);
-                        ui.set_cursor_pos([bar_x, center_y - 16.0]);
-                        ui.text(&overlay);
-                        ui.set_cursor_pos([bar_x, center_y]);
+
+                        // Row 2 — phase label + count
+                        ui.set_cursor_pos([bar_x, block_y + 24.0]);
+                        ui.text(format!("{phase_label}: {} / {}", p.current, p.total));
+
+                        // Row 3 — progress bar
+                        ui.set_cursor_pos([bar_x, block_y + 44.0]);
                         imgui::ProgressBar::new(fraction)
                             .size([bar_w, 18.0])
                             .build(ui);
-                        ui.set_cursor_pos([bar_x, center_y + 26.0]);
-                        // Truncate long game titles.
+
+                        // Row 4 — current game title (truncated to bar width)
                         let max_chars = (bar_w / 7.5) as usize;
                         let title = if p.game_title.len() > max_chars && max_chars > 3 {
                             format!("{}...", &p.game_title[..max_chars - 3])
                         } else {
                             p.game_title.clone()
                         };
+                        ui.set_cursor_pos([bar_x, block_y + 68.0]);
                         ui.text(&title);
                     } else {
-                        ui.text("Loading ROM catalog...");
-                        ui.set_cursor_pos([bar_x, center_y]);
+                        // Row 2 — placeholder text while scan hasn't started
+                        ui.set_cursor_pos([bar_x, block_y + 24.0]);
+                        ui.text("Scanning ROM library...");
+
+                        // Row 3 — indeterminate bar (empty)
+                        ui.set_cursor_pos([bar_x, block_y + 44.0]);
                         imgui::ProgressBar::new(0.0).size([bar_w, 18.0]).build(ui);
                     }
                 });
