@@ -1,6 +1,6 @@
 //! OpenGL rendering backend for the ROM browser.
 //!
-//! Manages the GL context, imgui integration, and texture loading for
+//! Manages the GL context, egui integration, and texture loading for
 //! cover art images displayed in the ROM browser grid.
 
 use std::collections::HashMap;
@@ -10,6 +10,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
+use egui_glow::EguiGlow;
 use glutin::config::ConfigTemplateBuilder;
 use glutin::context::{ContextApi, ContextAttributesBuilder, Version};
 use glutin::display::GetGlDisplay;
@@ -18,18 +19,18 @@ use glutin::surface::SurfaceAttributesBuilder;
 use glutin_winit::DisplayBuilder;
 use raw_window_handle::HasWindowHandle;
 use winit::dpi::LogicalSize;
+use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowAttributes};
 
-/// Browser GL renderer managing the window, GL context, and imgui.
+/// Browser GL renderer managing the window, GL context, and egui.
 pub struct BrowserGl {
     window: Arc<Window>,
     surface: glutin::surface::Surface<glutin::surface::WindowSurface>,
     gl_context: glutin::context::PossiblyCurrentContext,
-    imgui: imgui::Context,
-    imgui_renderer: imgui_glow_renderer::Renderer,
-    #[allow(dead_code)] // Kept alive for GL resource ownership
-    glow_context: Arc<glow::Context>,
+    pub egui_glow: EguiGlow,
+    #[allow(dead_code)]
+    glow_context: Arc<egui_glow::glow::Context>,
     last_frame: Instant,
     textures: HashMap<TextureKey, LoadedTexture>,
 }
@@ -49,7 +50,7 @@ pub enum TextureKey {
 #[derive(Debug, Clone, Copy)]
 pub struct LoadedTexture {
     pub gl_id: gl::types::GLuint,
-    pub imgui_id: imgui::TextureId,
+    pub egui_id: egui::TextureId,
     pub width: u32,
     pub height: u32,
 }
@@ -140,43 +141,46 @@ impl BrowserGl {
             gl::Disable(gl::DEPTH_TEST);
             gl::Disable(gl::CULL_FACE);
             gl::Viewport(0, 0, size.width as i32, size.height as i32);
-            gl::ClearColor(0.08, 0.08, 0.12, 1.0); // Dark theme background
+            gl::ClearColor(0.08, 0.08, 0.12, 1.0);
         }
 
-        // Create imgui context.
-        let mut imgui = imgui::Context::create();
-        imgui.set_ini_filename(None);
+        // Create glow context for egui_glow.
+        let glow_context = Arc::new(unsafe {
+            egui_glow::glow::Context::from_loader_function(|s| {
+                let s = std::ffi::CString::new(s).expect("valid CString");
+                gl_display.get_proc_address(s.as_c_str()).cast()
+            })
+        });
 
-        // Add default font at a comfortable reading size.
-        let font_size = 20.0;
-        imgui
-            .fonts()
-            .add_font(&[imgui::FontSource::DefaultFontData {
-                config: Some(imgui::FontConfig {
-                    size_pixels: font_size,
-                    ..Default::default()
-                }),
-            }]);
+        let egui_glow = EguiGlow::new(event_loop, glow_context.clone(), None, None, true);
 
-        // Create glow context for imgui renderer.
-        let glow_context = unsafe {
-            let display_clone = gl_display.clone();
-            Arc::new(glow::Context::from_loader_function(|s| {
-                display_clone
-                    .get_proc_address(std::ffi::CString::new(s).expect("valid CString").as_c_str())
-                    .cast()
-            }))
-        };
+        // Configure Press Start 2P font.
+        let mut fonts = egui::FontDefinitions::default();
+        fonts.font_data.insert(
+            "press_start_2p".to_owned(),
+            egui::FontData::from_static(include_bytes!(
+                "../../../../assets/fonts/PressStart2P-Regular.ttf"
+            ))
+            .into(),
+        );
+        fonts
+            .families
+            .entry(egui::FontFamily::Proportional)
+            .or_default()
+            .insert(0, "press_start_2p".to_owned());
+        egui_glow.egui_ctx.set_fonts(fonts);
 
-        let imgui_renderer = imgui_glow_renderer::Renderer::new(
-            &glow_context,
-            &mut imgui,
-            &mut imgui_glow_renderer::SimpleTextureMap::default(),
-            true,
-        )
-        .map_err(|e| format!("Failed to initialise imgui renderer: {e:?}"))?;
+        // Dark theme.
+        egui_glow.egui_ctx.set_visuals(egui::Visuals {
+            dark_mode: true,
+            window_fill: egui::Color32::from_rgb(15, 15, 20),
+            panel_fill: egui::Color32::from_rgb(15, 15, 20),
+            extreme_bg_color: egui::Color32::from_rgb(10, 10, 15),
+            faint_bg_color: egui::Color32::from_rgb(20, 20, 30),
+            ..egui::Visuals::dark()
+        });
 
-        // Enable vsync for the browser (no need for precise frame timing).
+        // Enable vsync.
         let _ = surface.set_swap_interval(
             &gl_context,
             glutin::surface::SwapInterval::Wait(NonZeroU32::new(1).unwrap()),
@@ -186,8 +190,7 @@ impl BrowserGl {
             window,
             surface,
             gl_context,
-            imgui,
-            imgui_renderer,
+            egui_glow,
             glow_context,
             last_frame: Instant::now(),
             textures: HashMap::new(),
@@ -206,6 +209,29 @@ impl BrowserGl {
             NonZeroU32::new(width.max(1)).unwrap(),
             NonZeroU32::new(height.max(1)).unwrap(),
         );
+    }
+
+    /// Forward a winit window event to egui for processing.
+    pub fn on_window_event(&mut self, event: &WindowEvent) -> egui_winit::EventResponse {
+        self.egui_glow.on_window_event(&self.window, event)
+    }
+
+    /// Run one UI frame. `build_ui` receives a `&mut egui::Ui` covering the full window.
+    pub fn run_frame<F>(&mut self, build_ui: F)
+    where
+        F: FnMut(&mut egui::Ui),
+    {
+        let size = self.window.inner_size();
+        unsafe {
+            gl::Viewport(0, 0, size.width as i32, size.height as i32);
+            gl::Clear(gl::COLOR_BUFFER_BIT);
+        }
+        self.egui_glow.run(&self.window, build_ui);
+        self.egui_glow.paint(&self.window);
+        self.surface
+            .swap_buffers(&self.gl_context)
+            .expect("swap_buffers failed");
+        self.last_frame = Instant::now();
     }
 
     /// Load an RGBA image from a file path and create a GL texture.
@@ -265,7 +291,6 @@ impl BrowserGl {
             let mut tex: gl::types::GLuint = 0;
             gl::GenTextures(1, &mut tex);
             gl::BindTexture(gl::TEXTURE_2D, tex);
-            // Use LINEAR filtering for cover art (smooth scaling).
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
@@ -283,54 +308,13 @@ impl BrowserGl {
                 pixels.as_ptr() as *const c_void,
             );
 
-            let imgui_id: imgui::TextureId = (tex as usize).into();
             LoadedTexture {
                 gl_id: tex,
-                imgui_id,
+                egui_id: egui::TextureId::User(tex as u64),
                 width,
                 height,
             }
         }
-    }
-
-    /// Begin a new frame for rendering. Returns the imgui Ui handle.
-    ///
-    /// Call `end_frame()` after drawing to swap buffers.
-    pub fn begin_frame(&mut self) -> &imgui::Ui {
-        let now = Instant::now();
-        let delta = now - self.last_frame;
-        self.last_frame = now;
-
-        let io = self.imgui.io_mut();
-        io.delta_time = delta.as_secs_f32();
-
-        let size = self.window.inner_size();
-        let scale = self.window.scale_factor() as f32;
-        io.display_size = [size.width as f32 / scale, size.height as f32 / scale];
-        io.display_framebuffer_scale = [scale, scale];
-
-        unsafe {
-            gl::Viewport(0, 0, size.width as i32, size.height as i32);
-            gl::Clear(gl::COLOR_BUFFER_BIT);
-        }
-
-        self.imgui.new_frame()
-    }
-
-    /// End the current frame: render imgui draw data and swap buffers.
-    pub fn end_frame(&mut self) {
-        let draw_data = self.imgui.render();
-        self.imgui_renderer
-            .render(
-                &self.glow_context,
-                &imgui_glow_renderer::SimpleTextureMap::default(),
-                draw_data,
-            )
-            .expect("imgui render failed");
-
-        self.surface
-            .swap_buffers(&self.gl_context)
-            .expect("swap_buffers failed");
     }
 
     /// Get the current drawable (physical pixel) dimensions.
@@ -354,7 +338,7 @@ impl BrowserGl {
 
 impl Drop for BrowserGl {
     fn drop(&mut self) {
-        // Clean up GL textures.
+        self.egui_glow.destroy();
         for loaded in self.textures.values() {
             unsafe {
                 gl::DeleteTextures(1, &loaded.gl_id);

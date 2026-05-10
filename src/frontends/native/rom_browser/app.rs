@@ -1,7 +1,7 @@
 //! ROM browser winit application handler.
 //!
 //! This is the `ApplicationHandler` for the ROM browser window. It opens a
-//! GL-backed window with imgui rendering and accepts a ROM selection that
+//! GL-backed window with egui rendering and accepts a ROM selection that
 //! transitions the application into emulation mode.
 
 use std::collections::HashMap;
@@ -255,12 +255,9 @@ impl RomBrowserApp {
         }
     }
 
-    /// Render the browser UI for one frame.
     fn render_frame(&mut self) {
-        // Poll background catalog loading.
         self.poll_catalog_loading();
 
-        // Load textures on first frame after catalog arrives.
         if !self.textures_loaded && matches!(self.catalog_state, CatalogState::Ready) {
             self.load_cover_textures();
             self.textures_loaded = true;
@@ -268,126 +265,68 @@ impl RomBrowserApp {
 
         let Some(ref mut gl) = self.gl else { return };
 
-        // If still loading, render a loading screen with progress bar.
         if let CatalogState::Loading { ref progress, .. } = self.catalog_state {
             let progress_snapshot = progress.clone();
             let (display_w, display_h) = gl.logical_size();
-            let ui = gl.begin_frame();
-            ui.window("##loading")
-                .position([0.0, 0.0], imgui::Condition::Always)
-                .size([display_w, display_h], imgui::Condition::Always)
-                .flags(Self::panel_flags())
-                .build(|| {
-                    let bar_w = (display_w * 0.55).max(320.0);
-                    let bar_x = (display_w - bar_w) * 0.5;
-                    // Lay out a fixed-height block of 4 rows centred vertically.
-                    // Row heights: title(16) + gap(8) + phase(16) + gap(4) + bar(18) + gap(6) + title(16) = 84
-                    let block_h = 84.0;
-                    let block_y = (display_h - block_h) * 0.5;
-
-                    // Row 1 — "NESER ROM Browser"
-                    let _title = ui.push_style_color(imgui::StyleColor::Text, theme::HEADER_TEXT);
-                    ui.set_cursor_pos([bar_x, block_y]);
-                    ui.text("NESER ROM Browser");
-                    drop(_title);
-
-                    let _dim = ui.push_style_color(imgui::StyleColor::Text, theme::DIM_TEXT);
-
-                    if let Some(ref p) = progress_snapshot {
-                        let fraction = if p.total > 0 {
-                            p.current as f32 / p.total as f32
-                        } else {
-                            0.0
-                        };
-                        let phase_label = match p.phase {
-                            EnrichmentPhase::MatchingMetadata => "Matching metadata",
-                            EnrichmentPhase::DownloadingImages => "Downloading cover art",
-                        };
-
-                        // Row 2 — phase label + count
-                        ui.set_cursor_pos([bar_x, block_y + 24.0]);
-                        ui.text(format!("{phase_label}: {} / {}", p.current, p.total));
-
-                        // Row 3 — progress bar
-                        ui.set_cursor_pos([bar_x, block_y + 44.0]);
-                        imgui::ProgressBar::new(fraction)
-                            .size([bar_w, 18.0])
-                            .build(ui);
-
-                        // Row 4 — current game title (truncated to bar width)
-                        let max_chars = (bar_w / 7.5) as usize;
-                        let title = if p.game_title.len() > max_chars && max_chars > 3 {
-                            format!("{}...", &p.game_title[..max_chars - 3])
-                        } else {
-                            p.game_title.clone()
-                        };
-                        ui.set_cursor_pos([bar_x, block_y + 68.0]);
-                        ui.text(&title);
-                    } else {
-                        // Row 2 — placeholder text while scan hasn't started
-                        ui.set_cursor_pos([bar_x, block_y + 24.0]);
-                        ui.text("Scanning ROM library...");
-
-                        // Row 3 — indeterminate bar (empty)
-                        ui.set_cursor_pos([bar_x, block_y + 44.0]);
-                        imgui::ProgressBar::new(0.0).size([bar_w, 18.0]).build(ui);
-                    }
+            gl.run_frame(|ui| {
+                egui::CentralPanel::default().show_inside(ui, |ui| {
+                    Self::render_loading_screen(
+                        ui,
+                        display_w,
+                        display_h,
+                        progress_snapshot.as_ref(),
+                    );
                 });
-            gl.end_frame();
+            });
             return;
         }
 
         let (display_w, display_h) = gl.logical_size();
-        let total_count = self.catalog.len();
-        let selected = self.selected_index;
-
-        // Smooth scroll animation.
         let dt = gl.delta_time();
         self.scroll_offset +=
             (self.scroll_target - self.scroll_offset) * (theme::SCROLL_SPEED * dt).min(1.0);
         let scroll_offset = self.scroll_offset;
 
-        // Pre-collect texture IDs for cover art rendering to avoid borrow conflicts.
-        let tex_map: HashMap<i64, (imgui::TextureId, u32, u32)> = self
-            .catalog
-            .iter()
-            .filter_map(|e| {
-                let game_id = e.metadata_game_id?;
-                let tex = gl.get_texture(&TextureKey::CoverArt(game_id))?;
-                Some((game_id, (tex.imgui_id, tex.width, tex.height)))
-            })
-            .collect();
-
-        // Layout calculations.
         let sidebar_w = theme::sidebar_width(display_w);
         let grid_area_w = display_w - sidebar_w;
         let (cols, cover_w) = theme::grid_layout(grid_area_w);
         let cell_h = theme::cell_height(cover_w);
         let cover_h = cover_w / theme::COVER_ASPECT;
 
-        // Build display entries from filtered indices (avoids borrow conflicts).
         let filtered_count = self.filtered_indices.len();
-        let display_entries: Vec<&RomEntry> = self
-            .filtered_indices
+        let total_count = self.catalog.len();
+        let selected = self.selected_index;
+
+        let tex_map: HashMap<i64, (egui::TextureId, u32, u32)> = self
+            .catalog
             .iter()
-            .map(|&idx| &self.catalog[idx])
+            .filter_map(|e| {
+                let game_id = e.metadata_game_id?;
+                let tex = gl.get_texture(&TextureKey::CoverArt(game_id))?;
+                Some((game_id, (tex.egui_id, tex.width, tex.height)))
+            })
             .collect();
 
-        // Selected catalog index for sidebar.
-        let selected_entry_idx = self.filtered_indices.get(selected).copied();
+        let display_entries: Vec<RomEntry> = self
+            .filtered_indices
+            .iter()
+            .map(|&idx| self.catalog[idx].clone())
+            .collect();
 
         let search_active = self.search_active;
         let search_query = self.search_query.clone();
         let genre_filter_active = self.genre_filter_active;
-        let available_genres = &self.available_genres;
-        let active_genres = &self.active_genres;
+        let available_genres = self.available_genres.clone();
+        let active_genres = self.active_genres.clone();
         let genre_cursor = self.genre_cursor;
         let detail_view_active = self.detail_view_active;
         let show_favorites_only = self.show_favorites_only;
+        let selected_entry: Option<RomEntry> = self
+            .filtered_indices
+            .get(selected)
+            .and_then(|&idx| self.catalog.get(idx))
+            .cloned();
 
-        let ui = gl.begin_frame();
-
-        // --- Header bar ---
         let genre_suffix = if active_genres.is_empty() {
             String::new()
         } else {
@@ -408,444 +347,603 @@ impl RomBrowserApp {
             )
         };
 
-        ui.window("##header")
-            .position([0.0, 0.0], imgui::Condition::Always)
-            .size(
-                [grid_area_w, theme::HEADER_HEIGHT],
-                imgui::Condition::Always,
-            )
-            .flags(Self::panel_flags())
-            .build(|| {
-                let _color = ui.push_style_color(imgui::StyleColor::Text, theme::HEADER_TEXT);
-                ui.text(&header_text);
+        gl.run_frame(|ui| {
+            ui.ctx().global_style_mut(|s| {
+                s.text_styles.insert(
+                    egui::TextStyle::Body,
+                    egui::FontId::new(10.0, egui::FontFamily::Proportional),
+                );
+                s.text_styles.insert(
+                    egui::TextStyle::Small,
+                    egui::FontId::new(8.0, egui::FontFamily::Proportional),
+                );
             });
 
-        // --- Grid area ---
-        let grid_top = theme::HEADER_HEIGHT;
-        let grid_height = display_h - theme::HEADER_HEIGHT - theme::FOOTER_HEIGHT;
+            egui::Panel::right("sidebar")
+                .exact_size(sidebar_w)
+                .resizable(false)
+                .show_inside(ui, |ui| {
+                    if let Some(ref entry) = selected_entry {
+                        Self::render_sidebar_egui(ui, entry);
+                    }
+                });
 
-        ui.window("##grid")
-            .position([0.0, grid_top], imgui::Condition::Always)
-            .size([grid_area_w, grid_height], imgui::Condition::Always)
-            .flags(Self::panel_flags() | imgui::WindowFlags::NO_SCROLLBAR)
-            .build(|| {
-                let _text_color = ui.push_style_color(imgui::StyleColor::Text, theme::TEXT_COLOR);
+            egui::Panel::top("header")
+                .exact_size(theme::HEADER_HEIGHT)
+                .show_inside(ui, |ui| {
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new(&header_text)
+                            .color(theme::HEADER_TEXT)
+                            .size(10.0),
+                    );
+                });
 
-                if display_entries.is_empty() {
-                    if search_query.is_empty() {
-                        ui.text("No ROMs found. Add ROM files to ~/.neser/roms/");
-                        ui.text("or configure cartridge-search-paths in neser.conf");
+            egui::Panel::bottom("footer")
+                .exact_size(theme::FOOTER_HEIGHT)
+                .show_inside(ui, |ui| {
+                    ui.add_space(4.0);
+                    let footer_text = if search_active {
+                        "Type to search  |  Esc: Close  |  Enter: Launch"
+                    } else if genre_filter_active {
+                        "Up/Down: Navigate  |  Enter: Toggle  |  Esc: Close"
+                    } else if detail_view_active {
+                        "Enter: Launch  |  Esc: Back"
                     } else {
-                        ui.text(format!("No games match \"{search_query}\""));
-                    }
-                    return;
-                }
-
-                let total_rows = filtered_count.div_ceil(cols);
-                let content_height =
-                    total_rows as f32 * (cell_h + theme::GRID_SPACING) + theme::GRID_PADDING;
-
-                ui.child_window("##grid_scroll")
-                    .size([grid_area_w - 8.0, grid_height - 8.0])
-                    .flags(imgui::WindowFlags::NO_SCROLLBAR)
-                    .build(|| {
-                        // Set scroll position from our smooth-scroll offset.
-                        ui.set_scroll_y(scroll_offset);
-
-                        // Invisible dummy to establish full content height.
-                        let cursor_start = ui.cursor_pos();
-                        ui.dummy([grid_area_w - 24.0, content_height]);
-                        ui.set_cursor_pos(cursor_start);
-
-                        let draw_list = ui.get_window_draw_list();
-                        let window_pos = ui.window_pos();
-
-                        for (i, entry) in display_entries.iter().enumerate() {
-                            let row = i / cols;
-                            let col = i % cols;
-
-                            let x =
-                                theme::GRID_PADDING + col as f32 * (cover_w + theme::GRID_SPACING);
-                            let y =
-                                theme::GRID_PADDING + row as f32 * (cell_h + theme::GRID_SPACING);
-
-                            let abs_x = window_pos[0] + x;
-                            let abs_y = window_pos[1] + y - scroll_offset;
-
-                            // Skip cells that are off-screen.
-                            if abs_y + cell_h < window_pos[1] || abs_y > window_pos[1] + grid_height
-                            {
-                                continue;
-                            }
-
-                            // Selection highlight.
-                            if i == selected {
-                                draw_list
-                                    .add_rect(
-                                        [abs_x - 3.0, abs_y - 3.0],
-                                        [abs_x + cover_w + 3.0, abs_y + cell_h + 3.0],
-                                        theme::SELECTION_COLOR,
-                                    )
-                                    .thickness(2.5)
-                                    .rounding(4.0)
-                                    .build();
-                            }
-
-                            // Cover art or placeholder.
-                            Self::draw_cover(
-                                &draw_list, entry, abs_x, abs_y, cover_w, cover_h, &tex_map,
-                            );
-
-                            // Game title below cover.
-                            let title_y = abs_y + cover_h + 4.0;
-                            let title_color = if i == selected {
-                                theme::SELECTED_TEXT
-                            } else {
-                                theme::TEXT_COLOR
-                            };
-                            // Truncate title to fit cover width.
-                            let max_chars = (cover_w / 8.0) as usize; // rough char width estimate
-                            let title = if entry.display_name.len() > max_chars && max_chars > 3 {
-                                format!("{}...", &entry.display_name[..max_chars - 3])
-                            } else {
-                                entry.display_name.clone()
-                            };
-                            draw_list.add_text([abs_x + 2.0, title_y], title_color, &title);
-
-                            // Favourite heart indicator.
-                            if entry.is_favorite {
-                                draw_list.add_text(
-                                    [abs_x + cover_w - 18.0, abs_y + 4.0],
-                                    theme::FAVORITE_COLOR,
-                                    "\u{2665}",
-                                );
-                            }
-                        }
-                    });
-            });
-
-        // --- Sidebar ---
-        ui.window("##sidebar")
-            .position([grid_area_w, 0.0], imgui::Condition::Always)
-            .size([sidebar_w, display_h], imgui::Condition::Always)
-            .flags(Self::panel_flags())
-            .build(|| {
-                let _bg = ui.push_style_color(imgui::StyleColor::WindowBg, theme::SIDEBAR_BG);
-                if let Some(idx) = selected_entry_idx
-                    && let Some(entry) = self.catalog.get(idx)
-                {
-                    Self::render_sidebar(ui, entry, sidebar_w);
-                }
-            });
-
-        // --- Footer bar ---
-        ui.window("##footer")
-            .position([0.0, display_h - theme::FOOTER_HEIGHT], imgui::Condition::Always)
-            .size([grid_area_w, theme::FOOTER_HEIGHT], imgui::Condition::Always)
-            .flags(Self::panel_flags())
-            .build(|| {
-                let _color = ui.push_style_color(imgui::StyleColor::Text, theme::DIM_TEXT);
-                if search_active {
-                    ui.text("Type to search  |  Esc: Close search  |  Enter: Launch");
-                } else if genre_filter_active {
-                    ui.text(
-                        "\u{2191}\u{2193}: Navigate  |  Enter: Toggle  |  Esc: Close filter",
+                        "Enter: Launch  |  /: Search  |  g: Genre  |  d: Details  |  f: Fav  |  F: Filter Favs  |  Esc: Quit"
+                    };
+                    ui.label(
+                        egui::RichText::new(footer_text)
+                            .color(theme::DIM_TEXT)
+                            .size(8.0),
                     );
-                } else if detail_view_active {
-                    ui.text("Enter: Launch  |  Esc: Back to grid");
-                } else {
-                    ui.text(
-                        "Enter: Launch  |  /: Search  |  g: Genre  |  d: Details  |  f: Fav  |  F: Filter Favs  |  Esc: Quit",
-                    );
-                }
+                });
+
+            egui::CentralPanel::default().show_inside(ui, |ui| {
+                Self::render_grid_egui(
+                    ui,
+                    &display_entries,
+                    &tex_map,
+                    cols,
+                    cover_w,
+                    cover_h,
+                    cell_h,
+                    selected,
+                    scroll_offset,
+                    &search_query,
+                );
             });
 
-        // --- Search overlay ---
-        if search_active {
-            let overlay_draw = ui.get_foreground_draw_list();
-            let dim_color = imgui::ImColor32::from_rgba(0, 0, 0, 120);
-            overlay_draw.add_rect_filled_multicolor(
-                [0.0, 0.0],
-                [display_w, display_h],
-                dim_color,
-                dim_color,
-                dim_color,
-                dim_color,
-            );
-
-            let search_w = (display_w * 0.5).clamp(300.0, 600.0);
-            let search_h = 60.0;
-            let search_x = (display_w - search_w) / 2.0;
-            let search_y = 80.0;
-
-            ui.window("##search_overlay")
-                .position([search_x, search_y], imgui::Condition::Always)
-                .size([search_w, search_h], imgui::Condition::Always)
-                .flags(
-                    Self::panel_flags()
-                        | imgui::WindowFlags::NO_SCROLLBAR
-                        | imgui::WindowFlags::NO_SAVED_SETTINGS,
-                )
-                .build(|| {
-                    let _color = ui.push_style_color(imgui::StyleColor::Text, theme::HEADER_TEXT);
-                    ui.text(format!(
-                        "Search: {search_query}\u{258C}    ({filtered_count} matches)"
-                    ));
-                });
-        }
-
-        // --- Genre filter overlay ---
-        if genre_filter_active && !available_genres.is_empty() {
-            let overlay_draw = ui.get_foreground_draw_list();
-            let dim_color = imgui::ImColor32::from_rgba(0, 0, 0, 120);
-            overlay_draw.add_rect_filled_multicolor(
-                [0.0, 0.0],
-                [display_w, display_h],
-                dim_color,
-                dim_color,
-                dim_color,
-                dim_color,
-            );
-
-            let panel_w = 300.0_f32.min(display_w * 0.4);
-            let panel_h = (available_genres.len() as f32 * 26.0 + 60.0).min(display_h * 0.8);
-            let panel_x = (display_w - panel_w) / 2.0;
-            let panel_y = (display_h - panel_h) / 2.0;
-
-            ui.window("##genre_filter")
-                .position([panel_x, panel_y], imgui::Condition::Always)
-                .size([panel_w, panel_h], imgui::Condition::Always)
-                .flags(Self::panel_flags() | imgui::WindowFlags::NO_SAVED_SETTINGS)
-                .build(|| {
-                    let _header = ui.push_style_color(imgui::StyleColor::Text, theme::HEADER_TEXT);
-                    ui.text("Filter by Genre");
-                    drop(_header);
-                    ui.separator();
-
-                    for (i, genre) in available_genres.iter().enumerate() {
-                        let is_active = active_genres.contains(genre);
-                        let marker = if is_active { "[x] " } else { "[ ] " };
-                        let is_cursor = i == genre_cursor;
-
-                        let color = if is_cursor {
-                            theme::SELECTION_COLOR
-                        } else if is_active {
-                            theme::SELECTED_TEXT
-                        } else {
-                            theme::TEXT_COLOR
-                        };
-                        let _c = ui.push_style_color(imgui::StyleColor::Text, color);
-
-                        let label = if is_cursor {
-                            format!("> {marker}{genre}")
-                        } else {
-                            format!("  {marker}{genre}")
-                        };
-                        ui.text(&label);
-                    }
-                });
-        }
-
-        // --- Detail view overlay ---
-        if detail_view_active
-            && let Some(idx) = selected_entry_idx
-            && let Some(entry) = self.catalog.get(idx)
-        {
-            let overlay_draw = ui.get_foreground_draw_list();
-            let dim_color = imgui::ImColor32::from_rgba(0, 0, 0, 200);
-            overlay_draw.add_rect_filled_multicolor(
-                [0.0, 0.0],
-                [display_w, display_h],
-                dim_color,
-                dim_color,
-                dim_color,
-                dim_color,
-            );
-
-            let margin = 40.0;
-            ui.window("##detail_view")
-                .position([margin, margin], imgui::Condition::Always)
-                .size(
-                    [display_w - margin * 2.0, display_h - margin * 2.0],
-                    imgui::Condition::Always,
-                )
-                .flags(Self::panel_flags() | imgui::WindowFlags::NO_SAVED_SETTINGS)
-                .build(|| {
-                    Self::render_detail_view(ui, entry, &tex_map);
-                });
-        }
-
-        gl.end_frame();
+            if search_active {
+                Self::render_search_overlay_egui(
+                    ui.ctx(),
+                    &search_query,
+                    filtered_count,
+                    display_w,
+                );
+            }
+            if genre_filter_active && !available_genres.is_empty() {
+                Self::render_genre_filter_egui(
+                    ui.ctx(),
+                    &available_genres,
+                    &active_genres,
+                    genre_cursor,
+                    display_w,
+                    display_h,
+                );
+            }
+            if detail_view_active
+                && let Some(ref entry) = selected_entry
+            {
+                Self::render_detail_view_egui(ui.ctx(), entry, &tex_map, display_w, display_h);
+            }
+        });
     }
 
-    /// Draw cover art or a placeholder rectangle.
-    fn draw_cover(
-        draw_list: &imgui::DrawListMut<'_>,
-        entry: &RomEntry,
-        x: f32,
-        y: f32,
-        w: f32,
-        h: f32,
-        tex_map: &HashMap<i64, (imgui::TextureId, u32, u32)>,
+    fn render_loading_screen(
+        ui: &mut egui::Ui,
+        display_w: f32,
+        display_h: f32,
+        progress: Option<&EnrichmentProgress>,
     ) {
-        if let Some(game_id) = entry.metadata_game_id
-            && let Some(&(tex_id, _, _)) = tex_map.get(&game_id)
-        {
-            draw_list.add_image(tex_id, [x, y], [x + w, y + h]).build();
+        let bar_w = (display_w * 0.55).max(320.0);
+
+        ui.vertical_centered(|ui| {
+            ui.add_space(display_h / 2.0 - 42.0);
+            ui.label(
+                egui::RichText::new("NESER ROM Browser")
+                    .color(theme::HEADER_TEXT)
+                    .size(14.0),
+            );
+            ui.add_space(8.0);
+
+            if let Some(p) = progress {
+                let fraction = if p.total > 0 {
+                    p.current as f32 / p.total as f32
+                } else {
+                    0.0
+                };
+                let phase_label = match p.phase {
+                    EnrichmentPhase::MatchingMetadata => "Matching metadata",
+                    EnrichmentPhase::DownloadingImages => "Downloading cover art",
+                };
+                ui.label(
+                    egui::RichText::new(format!("{phase_label}: {} / {}", p.current, p.total))
+                        .color(theme::DIM_TEXT)
+                        .size(10.0),
+                );
+                ui.add_space(4.0);
+                ui.add(
+                    egui::ProgressBar::new(fraction)
+                        .desired_width(bar_w)
+                        .fill(egui::Color32::from_rgb(100, 140, 220)),
+                );
+                ui.add_space(4.0);
+                let max_chars = (bar_w / 8.0) as usize;
+                let title = if p.game_title.len() > max_chars && max_chars > 3 {
+                    format!("{}...", &p.game_title[..max_chars - 3])
+                } else {
+                    p.game_title.clone()
+                };
+                ui.label(
+                    egui::RichText::new(&title)
+                        .color(theme::DIM_TEXT)
+                        .size(10.0),
+                );
+            } else {
+                ui.label(
+                    egui::RichText::new("Scanning ROM library...")
+                        .color(theme::DIM_TEXT)
+                        .size(10.0),
+                );
+                ui.add_space(4.0);
+                ui.add(
+                    egui::ProgressBar::new(0.0)
+                        .desired_width(bar_w)
+                        .fill(egui::Color32::from_rgb(60, 80, 120)),
+                );
+            }
+        });
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_grid_egui(
+        ui: &mut egui::Ui,
+        entries: &[RomEntry],
+        tex_map: &HashMap<i64, (egui::TextureId, u32, u32)>,
+        cols: usize,
+        cover_w: f32,
+        cover_h: f32,
+        cell_h: f32,
+        selected: usize,
+        scroll_offset: f32,
+        search_query: &str,
+    ) {
+        if entries.is_empty() {
+            ui.vertical_centered(|ui| {
+                ui.add_space(40.0);
+                if search_query.is_empty() {
+                    ui.label(
+                        egui::RichText::new("No ROMs found. Add ROM files to ~/.neser/roms/")
+                            .color(theme::DIM_TEXT)
+                            .size(10.0),
+                    );
+                } else {
+                    ui.label(
+                        egui::RichText::new(format!("No games match \"{search_query}\""))
+                            .color(theme::DIM_TEXT)
+                            .size(10.0),
+                    );
+                }
+            });
             return;
         }
 
-        // Placeholder: dark rectangle with game title.
-        draw_list
-            .add_rect([x, y], [x + w, y + h], theme::PLACEHOLDER_BG)
-            .filled(true)
-            .build();
-        // Draw title centred in placeholder.
-        let max_chars = (w / 7.0) as usize;
-        let short = if entry.display_name.len() > max_chars && max_chars > 3 {
-            format!("{}...", &entry.display_name[..max_chars - 3])
-        } else {
-            entry.display_name.clone()
-        };
-        draw_list.add_text([x + 6.0, y + h / 2.0 - 8.0], theme::DIM_TEXT, &short);
+        let panel_rect = ui.available_rect_before_wrap();
+        ui.allocate_rect(panel_rect, egui::Sense::hover());
+        let painter = ui.painter_at(panel_rect);
+        let origin = panel_rect.min;
+
+        for (i, entry) in entries.iter().enumerate() {
+            let row = (i / cols) as f32;
+            let col = (i % cols) as f32;
+            let x = origin.x + theme::GRID_PADDING + col * (cover_w + theme::GRID_SPACING);
+            let y = origin.y + theme::GRID_PADDING + row * (cell_h + theme::GRID_SPACING)
+                - scroll_offset;
+
+            if y + cell_h < panel_rect.top() || y > panel_rect.bottom() {
+                continue;
+            }
+
+            if i == selected {
+                painter.rect_stroke(
+                    egui::Rect::from_min_max(
+                        egui::pos2(x - 3.0, y - 3.0),
+                        egui::pos2(x + cover_w + 3.0, y + cell_h + 3.0),
+                    ),
+                    egui::CornerRadius::same(4),
+                    egui::Stroke::new(2.5, theme::SELECTION_COLOR),
+                    egui::StrokeKind::Middle,
+                );
+            }
+
+            let cover_rect =
+                egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(cover_w, cover_h));
+            if let Some(game_id) = entry.metadata_game_id {
+                if let Some(&(tex_id, _, _)) = tex_map.get(&game_id) {
+                    painter.image(
+                        tex_id,
+                        cover_rect,
+                        egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                        egui::Color32::WHITE,
+                    );
+                } else {
+                    painter.rect_filled(
+                        cover_rect,
+                        egui::CornerRadius::ZERO,
+                        theme::PLACEHOLDER_BG,
+                    );
+                    let max_chars = (cover_w / 7.0) as usize;
+                    let short = if entry.display_name.len() > max_chars && max_chars > 3 {
+                        format!("{}...", &entry.display_name[..max_chars - 3])
+                    } else {
+                        entry.display_name.clone()
+                    };
+                    painter.text(
+                        egui::pos2(x + 6.0, y + cover_h / 2.0 - 5.0),
+                        egui::Align2::LEFT_TOP,
+                        &short,
+                        egui::FontId::new(8.0, egui::FontFamily::Proportional),
+                        theme::DIM_TEXT,
+                    );
+                }
+            } else {
+                painter.rect_filled(cover_rect, egui::CornerRadius::ZERO, theme::PLACEHOLDER_BG);
+                let max_chars = (cover_w / 7.0) as usize;
+                let short = if entry.display_name.len() > max_chars && max_chars > 3 {
+                    format!("{}...", &entry.display_name[..max_chars - 3])
+                } else {
+                    entry.display_name.clone()
+                };
+                painter.text(
+                    egui::pos2(x + 6.0, y + cover_h / 2.0 - 5.0),
+                    egui::Align2::LEFT_TOP,
+                    &short,
+                    egui::FontId::new(8.0, egui::FontFamily::Proportional),
+                    theme::DIM_TEXT,
+                );
+            }
+
+            let title_color = if i == selected {
+                theme::SELECTED_TEXT
+            } else {
+                theme::TEXT_COLOR
+            };
+            let max_chars = (cover_w / 8.0) as usize;
+            let title = if entry.display_name.len() > max_chars && max_chars > 3 {
+                format!("{}...", &entry.display_name[..max_chars - 3])
+            } else {
+                entry.display_name.clone()
+            };
+            painter.text(
+                egui::pos2(x + 2.0, y + cover_h + 4.0),
+                egui::Align2::LEFT_TOP,
+                &title,
+                egui::FontId::new(9.0, egui::FontFamily::Proportional),
+                title_color,
+            );
+
+            if entry.is_favorite {
+                painter.text(
+                    egui::pos2(x + cover_w - 14.0, y + 4.0),
+                    egui::Align2::LEFT_TOP,
+                    "\u{2665}",
+                    egui::FontId::new(12.0, egui::FontFamily::Proportional),
+                    theme::FAVORITE_COLOR,
+                );
+            }
+        }
     }
 
-    /// Render the metadata sidebar for the selected game.
-    fn render_sidebar(ui: &imgui::Ui, entry: &RomEntry, _sidebar_w: f32) {
-        let _header = ui.push_style_color(imgui::StyleColor::Text, theme::HEADER_TEXT);
-        ui.text_wrapped(&entry.display_name);
-        drop(_header);
-
-        ui.spacing();
+    fn render_sidebar_egui(ui: &mut egui::Ui, entry: &RomEntry) {
+        ui.add_space(8.0);
+        ui.label(
+            egui::RichText::new(&entry.display_name)
+                .color(theme::HEADER_TEXT)
+                .size(12.0),
+        );
+        ui.add_space(4.0);
         ui.separator();
-        ui.spacing();
+        ui.add_space(4.0);
 
-        let _dim = ui.push_style_color(imgui::StyleColor::Text, theme::DIM_TEXT);
         if !entry.genres.is_empty() {
-            ui.text(format!("Genre: {}", entry.genres.join(", ")));
+            ui.label(
+                egui::RichText::new(format!("Genre: {}", entry.genres.join(", ")))
+                    .color(theme::DIM_TEXT)
+                    .size(9.0),
+            );
         }
         if let Some(ref date) = entry.release_date {
-            ui.text(format!("Released: {date}"));
+            ui.label(
+                egui::RichText::new(format!("Released: {date}"))
+                    .color(theme::DIM_TEXT)
+                    .size(9.0),
+            );
         }
         if let Some(players) = entry.players {
-            ui.text(format!("Players: {players}"));
+            ui.label(
+                egui::RichText::new(format!("Players: {players}"))
+                    .color(theme::DIM_TEXT)
+                    .size(9.0),
+            );
         }
         if let Some(ref rating) = entry.rating {
-            ui.text(format!("Rating: {rating}"));
+            ui.label(
+                egui::RichText::new(format!("Rating: {rating}"))
+                    .color(theme::DIM_TEXT)
+                    .size(9.0),
+            );
         }
-        drop(_dim);
 
         if let Some(ref overview) = entry.overview {
-            ui.spacing();
+            ui.add_space(4.0);
             ui.separator();
-            ui.spacing();
-            let _text = ui.push_style_color(imgui::StyleColor::Text, theme::TEXT_COLOR);
-            ui.text_wrapped(overview);
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new(overview)
+                    .color(theme::TEXT_COLOR)
+                    .size(9.0),
+            );
         }
 
-        ui.spacing();
+        ui.add_space(4.0);
         ui.separator();
-        ui.spacing();
-        let _dim2 = ui.push_style_color(imgui::StyleColor::Text, theme::DIM_TEXT);
-        ui.text(format!("Mapper: {}", entry.mapper_label));
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(format!("Mapper: {}", entry.mapper_label))
+                .color(theme::DIM_TEXT)
+                .size(9.0),
+        );
         if let Some(ref crc) = entry.crc {
-            ui.text(format!("CRC: {crc}"));
+            ui.label(
+                egui::RichText::new(format!("CRC: {crc}"))
+                    .color(theme::DIM_TEXT)
+                    .size(9.0),
+            );
         }
         if let Some(ref hw) = entry.hardware {
-            ui.text(format!("Hardware: {hw}"));
+            ui.label(
+                egui::RichText::new(format!("Hardware: {hw}"))
+                    .color(theme::DIM_TEXT)
+                    .size(9.0),
+            );
         }
         if entry.is_favorite {
-            let _fav = ui.push_style_color(imgui::StyleColor::Text, theme::FAVORITE_COLOR);
-            ui.text("\u{2665} Favourite");
+            ui.label(
+                egui::RichText::new("\u{2665} Favourite")
+                    .color(theme::FAVORITE_COLOR)
+                    .size(10.0),
+            );
         }
     }
 
-    /// Render the full detail view for a selected game.
-    fn render_detail_view(
-        ui: &imgui::Ui,
-        entry: &RomEntry,
-        tex_map: &HashMap<i64, (imgui::TextureId, u32, u32)>,
-    ) {
-        let avail = ui.content_region_avail();
+    fn render_search_overlay_egui(ctx: &egui::Context, query: &str, count: usize, display_w: f32) {
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Background,
+            egui::Id::new("search_dim"),
+        ));
+        painter.rect_filled(
+            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(display_w * 2.0, 10000.0)),
+            egui::CornerRadius::ZERO,
+            egui::Color32::from_black_alpha(120),
+        );
 
-        // Two-column layout: left = boxart, right = metadata.
-        let boxart_w = avail[0] * 0.35;
-        let meta_x = boxart_w + 24.0;
+        let search_w = (display_w * 0.5).clamp(300.0, 600.0);
+        let search_x = (display_w - search_w) / 2.0;
 
-        // --- Left: cover art ---
-        if let Some(game_id) = entry.metadata_game_id
-            && let Some(&(tex_id, _tw, _th)) = tex_map.get(&game_id)
-        {
-            let art_h = boxart_w / theme::COVER_ASPECT;
-            let cursor = ui.cursor_pos();
-            ui.set_cursor_pos(cursor);
-            imgui::Image::new(tex_id, [boxart_w, art_h]).build(ui);
-        }
-
-        // --- Right: metadata ---
-        ui.set_cursor_pos([meta_x, 0.0]);
-        ui.child_window("##detail_meta")
-            .size([avail[0] - meta_x - 8.0, avail[1]])
-            .build(|| {
-                // Title.
-                let _title_color = ui.push_style_color(imgui::StyleColor::Text, theme::HEADER_TEXT);
-                ui.text_wrapped(&entry.display_name);
-                drop(_title_color);
-
-                ui.spacing();
-                ui.separator();
-                ui.spacing();
-
-                // Metadata fields.
-                let _dim = ui.push_style_color(imgui::StyleColor::Text, theme::DIM_TEXT);
-                if !entry.genres.is_empty() {
-                    ui.text(format!("Genre: {}", entry.genres.join(", ")));
-                }
-                if let Some(ref date) = entry.release_date {
-                    ui.text(format!("Released: {date}"));
-                }
-                if let Some(players) = entry.players {
-                    ui.text(format!("Players: {players}"));
-                }
-                if let Some(ref rating) = entry.rating {
-                    ui.text(format!("Rating: {rating}"));
-                }
-                ui.text(format!("Mapper: {}", entry.mapper_label));
-                if let Some(ref crc) = entry.crc {
-                    ui.text(format!("CRC: {crc}"));
-                }
-                if let Some(ref hw) = entry.hardware {
-                    ui.text(format!("Hardware: {hw}"));
-                }
-                if entry.is_favorite {
-                    let _fav = ui.push_style_color(imgui::StyleColor::Text, theme::FAVORITE_COLOR);
-                    ui.text("\u{2665} Favourite");
-                }
-                drop(_dim);
-
-                // Description.
-                if let Some(ref overview) = entry.overview {
-                    ui.spacing();
-                    ui.separator();
-                    ui.spacing();
-                    let _text = ui.push_style_color(imgui::StyleColor::Text, theme::TEXT_COLOR);
-                    ui.text_wrapped(overview);
-                }
-
-                ui.spacing();
-                ui.separator();
-                ui.spacing();
-                let _foot = ui.push_style_color(imgui::StyleColor::Text, theme::DIM_TEXT);
-                ui.text("Enter: Launch  |  Esc: Back to grid");
+        egui::Window::new("search")
+            .id(egui::Id::new("search_overlay"))
+            .fixed_pos(egui::pos2(search_x, 80.0))
+            .fixed_size(egui::vec2(search_w, 48.0))
+            .title_bar(false)
+            .resizable(false)
+            .movable(false)
+            .show(ctx, |ui| {
+                ui.label(
+                    egui::RichText::new(format!("Search: {query}\u{258C}    ({count} matches)"))
+                        .color(theme::HEADER_TEXT)
+                        .size(10.0),
+                );
             });
     }
 
-    /// Common imgui window flags for the browser panels.
-    fn panel_flags() -> imgui::WindowFlags {
-        imgui::WindowFlags::NO_TITLE_BAR
-            | imgui::WindowFlags::NO_RESIZE
-            | imgui::WindowFlags::NO_MOVE
-            | imgui::WindowFlags::NO_COLLAPSE
+    fn render_genre_filter_egui(
+        ctx: &egui::Context,
+        available_genres: &[String],
+        active_genres: &[String],
+        genre_cursor: usize,
+        display_w: f32,
+        display_h: f32,
+    ) {
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Background,
+            egui::Id::new("genre_dim"),
+        ));
+        painter.rect_filled(
+            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(display_w * 2.0, 10000.0)),
+            egui::CornerRadius::ZERO,
+            egui::Color32::from_black_alpha(120),
+        );
+
+        let panel_w = 300.0_f32.min(display_w * 0.4);
+        let panel_h = (available_genres.len() as f32 * 26.0 + 60.0).min(display_h * 0.8);
+        let panel_x = (display_w - panel_w) / 2.0;
+        let panel_y = (display_h - panel_h) / 2.0;
+
+        egui::Window::new("genre_filter")
+            .id(egui::Id::new("genre_overlay"))
+            .fixed_pos(egui::pos2(panel_x, panel_y))
+            .fixed_size(egui::vec2(panel_w, panel_h))
+            .title_bar(false)
+            .resizable(false)
+            .movable(false)
+            .show(ctx, |ui| {
+                ui.label(
+                    egui::RichText::new("Filter by Genre")
+                        .color(theme::HEADER_TEXT)
+                        .size(10.0),
+                );
+                ui.separator();
+
+                for (i, genre) in available_genres.iter().enumerate() {
+                    let is_active = active_genres.contains(genre);
+                    let marker = if is_active { "[x] " } else { "[ ] " };
+                    let is_cursor = i == genre_cursor;
+
+                    let color = if is_cursor {
+                        theme::SELECTION_COLOR
+                    } else if is_active {
+                        theme::SELECTED_TEXT
+                    } else {
+                        theme::TEXT_COLOR
+                    };
+
+                    let label = if is_cursor {
+                        format!("> {marker}{genre}")
+                    } else {
+                        format!("  {marker}{genre}")
+                    };
+                    ui.label(egui::RichText::new(&label).color(color).size(9.0));
+                }
+            });
+    }
+
+    fn render_detail_view_egui(
+        ctx: &egui::Context,
+        entry: &RomEntry,
+        tex_map: &HashMap<i64, (egui::TextureId, u32, u32)>,
+        display_w: f32,
+        display_h: f32,
+    ) {
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Background,
+            egui::Id::new("detail_dim"),
+        ));
+        painter.rect_filled(
+            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(display_w * 2.0, 10000.0)),
+            egui::CornerRadius::ZERO,
+            egui::Color32::from_black_alpha(200),
+        );
+
+        let margin = 40.0;
+        egui::Window::new("detail_view")
+            .id(egui::Id::new("detail_overlay"))
+            .fixed_pos(egui::pos2(margin, margin))
+            .fixed_size(egui::vec2(
+                display_w - margin * 2.0,
+                display_h - margin * 2.0,
+            ))
+            .title_bar(false)
+            .resizable(false)
+            .movable(false)
+            .show(ctx, |ui| {
+                let avail = ui.available_size();
+                let boxart_w = avail.x * 0.35;
+
+                ui.horizontal(|ui| {
+                    // Left: cover art.
+                    if let Some(game_id) = entry.metadata_game_id
+                        && let Some(&(tex_id, _, _)) = tex_map.get(&game_id)
+                    {
+                        let art_h = boxart_w / theme::COVER_ASPECT;
+                        ui.add(egui::Image::from_texture(egui::load::SizedTexture::new(
+                            tex_id,
+                            egui::vec2(boxart_w, art_h),
+                        )));
+                    }
+
+                    // Right: metadata.
+                    ui.vertical(|ui| {
+                        ui.label(
+                            egui::RichText::new(&entry.display_name)
+                                .color(theme::HEADER_TEXT)
+                                .size(12.0),
+                        );
+                        ui.separator();
+
+                        if !entry.genres.is_empty() {
+                            ui.label(
+                                egui::RichText::new(format!("Genre: {}", entry.genres.join(", ")))
+                                    .color(theme::DIM_TEXT)
+                                    .size(9.0),
+                            );
+                        }
+                        if let Some(ref date) = entry.release_date {
+                            ui.label(
+                                egui::RichText::new(format!("Released: {date}"))
+                                    .color(theme::DIM_TEXT)
+                                    .size(9.0),
+                            );
+                        }
+                        if let Some(players) = entry.players {
+                            ui.label(
+                                egui::RichText::new(format!("Players: {players}"))
+                                    .color(theme::DIM_TEXT)
+                                    .size(9.0),
+                            );
+                        }
+                        if let Some(ref rating) = entry.rating {
+                            ui.label(
+                                egui::RichText::new(format!("Rating: {rating}"))
+                                    .color(theme::DIM_TEXT)
+                                    .size(9.0),
+                            );
+                        }
+                        ui.label(
+                            egui::RichText::new(format!("Mapper: {}", entry.mapper_label))
+                                .color(theme::DIM_TEXT)
+                                .size(9.0),
+                        );
+                        if let Some(ref crc) = entry.crc {
+                            ui.label(
+                                egui::RichText::new(format!("CRC: {crc}"))
+                                    .color(theme::DIM_TEXT)
+                                    .size(9.0),
+                            );
+                        }
+                        if let Some(ref hw) = entry.hardware {
+                            ui.label(
+                                egui::RichText::new(format!("Hardware: {hw}"))
+                                    .color(theme::DIM_TEXT)
+                                    .size(9.0),
+                            );
+                        }
+                        if entry.is_favorite {
+                            ui.label(
+                                egui::RichText::new("\u{2665} Favourite")
+                                    .color(theme::FAVORITE_COLOR)
+                                    .size(10.0),
+                            );
+                        }
+
+                        if let Some(ref overview) = entry.overview {
+                            ui.separator();
+                            ui.label(
+                                egui::RichText::new(overview)
+                                    .color(theme::TEXT_COLOR)
+                                    .size(9.0),
+                            );
+                        }
+
+                        ui.separator();
+                        ui.label(
+                            egui::RichText::new("Enter: Launch  |  Esc: Back to grid")
+                                .color(theme::DIM_TEXT)
+                                .size(9.0),
+                        );
+                    });
+                });
+            });
     }
 
     /// Load cover art textures for all catalog entries that have boxart paths.
@@ -1136,6 +1234,19 @@ impl ApplicationHandler for RomBrowserApp {
                         }
                         _ => {}
                     }
+                }
+            }
+
+            WindowEvent::CursorMoved { .. }
+            | WindowEvent::MouseInput { .. }
+            | WindowEvent::MouseWheel { .. }
+            | WindowEvent::Touch { .. }
+            | WindowEvent::ScaleFactorChanged { .. }
+            | WindowEvent::Focused(_)
+            | WindowEvent::Ime(_)
+            | WindowEvent::ModifiersChanged(_) => {
+                if let Some(ref mut gl) = self.gl {
+                    let _ = gl.on_window_event(&event);
                 }
             }
 

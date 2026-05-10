@@ -50,6 +50,9 @@ js-sys = { version = "0.3", optional = true }
 web-sys = { version = "0.3", optional = true, features = ["Window", "console"] }
 wasm-bindgen-test = { version = "0.3.45", optional = true }
 imgui = { version = "0.12", optional = true }
+egui = { version = "0.34.2", optional = true, default-features = false, features = ["default_fonts"] }
+egui-winit = { version = "0.34.2", optional = true, default-features = false }
+egui_glow = { version = "0.34.2", optional = true, features = ["winit"] }
 cpal = { version = "0.15", optional = true }
 gilrs = { version = "0.11", optional = true }
 num_enum = "0.7"
@@ -87,6 +90,9 @@ native = [
 	"dep:strsim",
 	"dep:reqwest",
 	"dep:image",
+	"dep:egui",
+	"dep:egui-winit",
+	"dep:egui_glow",
 ]
 wasm = [
 	"dep:wasm-bindgen",

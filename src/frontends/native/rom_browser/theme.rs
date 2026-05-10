@@ -2,32 +2,34 @@
 //!
 //! Defines colours, spacing, and sizing used across the browser UI.
 
-/// Dark background colour (RGBA float).
-pub const BG_COLOR: [f32; 4] = [0.08, 0.08, 0.12, 1.0];
+use egui::Color32;
+
+/// Dark background colour.
+pub const BG_COLOR: Color32 = Color32::from_rgb(20, 20, 31);
 
 /// Sidebar background colour.
-pub const SIDEBAR_BG: [f32; 4] = [0.10, 0.10, 0.16, 0.95];
+pub const SIDEBAR_BG: Color32 = Color32::from_rgba_premultiplied(25, 25, 40, 242);
 
 /// Selection highlight colour (blue accent).
-pub const SELECTION_COLOR: [f32; 4] = [0.20, 0.45, 0.85, 1.0];
+pub const SELECTION_COLOR: Color32 = Color32::from_rgb(51, 115, 217);
 
 /// Selected text colour.
-pub const SELECTED_TEXT: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
+pub const SELECTED_TEXT: Color32 = Color32::WHITE;
 
 /// Normal text colour.
-pub const TEXT_COLOR: [f32; 4] = [0.85, 0.85, 0.85, 1.0];
+pub const TEXT_COLOR: Color32 = Color32::from_rgb(217, 217, 217);
 
 /// Dimmed/secondary text colour.
-pub const DIM_TEXT: [f32; 4] = [0.55, 0.55, 0.60, 1.0];
+pub const DIM_TEXT: Color32 = Color32::from_rgb(140, 140, 153);
 
 /// Header/title text colour.
-pub const HEADER_TEXT: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
+pub const HEADER_TEXT: Color32 = Color32::WHITE;
 
 /// Favourite heart colour.
-pub const FAVORITE_COLOR: [f32; 4] = [0.95, 0.25, 0.25, 1.0];
+pub const FAVORITE_COLOR: Color32 = Color32::from_rgb(242, 64, 64);
 
 /// Placeholder cover art background.
-pub const PLACEHOLDER_BG: [f32; 4] = [0.15, 0.15, 0.22, 1.0];
+pub const PLACEHOLDER_BG: Color32 = Color32::from_rgb(38, 38, 56);
 
 /// Cover art aspect ratio (width / height), typical NES box art ~0.71.
 pub const COVER_ASPECT: f32 = 0.71;
