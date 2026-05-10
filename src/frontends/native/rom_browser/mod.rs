@@ -6,5 +6,6 @@
 
 mod app;
 pub mod renderer;
+pub mod theme;
 
 pub use app::{BrowserResult, RomBrowserApp};

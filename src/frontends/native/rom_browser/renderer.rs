@@ -345,6 +345,11 @@ impl BrowserGl {
         let scale = self.window.scale_factor() as f32;
         (size.width as f32 / scale, size.height as f32 / scale)
     }
+
+    /// Get the time delta since the last frame in seconds.
+    pub fn delta_time(&self) -> f32 {
+        self.last_frame.elapsed().as_secs_f32()
+    }
 }
 
 impl Drop for BrowserGl {
