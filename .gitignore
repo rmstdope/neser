@@ -88,3 +88,6 @@ test.state
 
 # Production secrets
 .env
+
+# TheGamesDB metadata cache
+scripts/metadata-scraper/metadata.db

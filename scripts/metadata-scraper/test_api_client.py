@@ -1,0 +1,354 @@
+"""Tests for TheGamesDbClient — all HTTP is mocked, no real network calls."""
+import unittest
+from unittest.mock import MagicMock, patch, call
+
+from api_client import TheGamesDbClient, ApiError
+
+FAKE_KEY = "fake_api_key"
+
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+def _ok(data: dict) -> MagicMock:
+    """Return a mock requests.Response with status 200 and the given JSON."""
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {"code": 200, "status": "Success", "data": data,
+                              "remaining_monthly_allowance": 900,
+                              "extra_allowance": 0}
+    return resp
+
+
+def _page(games: list, page: int = 1, total: int = None) -> MagicMock:
+    total = total or len(games)
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {
+        "code": 200,
+        "status": "Success",
+        "data": {"count": len(games), "games": games},
+        "pages": {
+            "previous": None,
+            "current": f"https://api.thegamesdb.net/v1/Games/ByPlatformID?page={page}",
+            "next": None if len(games) < 20 else f"https://api.thegamesdb.net/v1/Games/ByPlatformID?page={page+1}",
+        },
+        "remaining_monthly_allowance": 900,
+        "extra_allowance": 0,
+    }
+    return resp
+
+
+# ── construction ─────────────────────────────────────────────────────────────
+
+class TestTheGamesDbClientConstruction(unittest.TestCase):
+    def test_raises_if_no_api_key(self):
+        with self.assertRaises(ValueError):
+            TheGamesDbClient(api_key="")
+
+    def test_accepts_valid_api_key(self):
+        client = TheGamesDbClient(api_key=FAKE_KEY)
+        self.assertIsNotNone(client)
+
+
+# ── rate limiting ─────────────────────────────────────────────────────────────
+
+class TestTheGamesDbClientRateLimiting(unittest.TestCase):
+    @patch("api_client.time.sleep")
+    @patch("api_client.requests.get")
+    def test_sleep_called_between_requests(self, mock_get, mock_sleep):
+        game = {"id": 5, "game_title": "Donkey Kong", "release_date": "1986-06-01",
+                "platform": 7, "region_id": 2, "country_id": 50}
+        mock_get.return_value = _page([game])
+        client = TheGamesDbClient(api_key=FAKE_KEY, request_delay=0.2)
+        client.get_games_by_platform(7)
+        client.get_games_by_platform(7)
+        self.assertGreaterEqual(mock_sleep.call_count, 1)
+
+    @patch("api_client.time.sleep")
+    @patch("api_client.requests.get")
+    def test_sleep_duration_matches_configured_delay(self, mock_get, mock_sleep):
+        mock_get.return_value = _page([])
+        client = TheGamesDbClient(api_key=FAKE_KEY, request_delay=0.123)
+        client.get_games_by_platform(7)
+        client.get_games_by_platform(7)
+        for c in mock_sleep.call_args_list:
+            self.assertAlmostEqual(c.args[0], 0.123, places=2)
+
+
+# ── get_games_by_platform ─────────────────────────────────────────────────────
+
+class TestGetGamesByPlatform(unittest.TestCase):
+    @patch("api_client.time.sleep")
+    @patch("api_client.requests.get")
+    def test_returns_games_from_single_page(self, mock_get, _sleep):
+        games = [{"id": 5, "game_title": "Donkey Kong", "release_date": "1986-06-01",
+                  "platform": 7, "region_id": 2, "country_id": 50}]
+        mock_get.return_value = _page(games)
+        client = TheGamesDbClient(api_key=FAKE_KEY)
+        result = client.get_games_by_platform(7)
+        self.assertEqual(len(result["games"]), 1)
+        self.assertEqual(result["games"][0]["id"], 5)
+
+    @patch("api_client.time.sleep")
+    @patch("api_client.requests.get")
+    def test_paginates_through_all_pages(self, mock_get, _sleep):
+        page1_games = [{"id": i, "game_title": f"Game {i}", "release_date": "",
+                        "platform": 7, "region_id": 0, "country_id": 0} for i in range(20)]
+        page2_games = [{"id": 20, "game_title": "Game 20", "release_date": "",
+                        "platform": 7, "region_id": 0, "country_id": 0}]
+        mock_get.side_effect = [_page(page1_games, page=1, total=21),
+                                 _page(page2_games, page=2, total=21)]
+        client = TheGamesDbClient(api_key=FAKE_KEY)
+        result = client.get_games_by_platform(7)
+        self.assertEqual(len(result["games"]), 21)
+        self.assertEqual(mock_get.call_count, 2)
+
+    @patch("api_client.time.sleep")
+    @patch("api_client.requests.get")
+    def test_includes_all_fields_parameter(self, mock_get, _sleep):
+        mock_get.return_value = _page([])
+        client = TheGamesDbClient(api_key=FAKE_KEY)
+        client.get_games_by_platform(7)
+        url = mock_get.call_args[0][0]
+        self.assertIn("fields=", url)
+        self.assertIn("overview", url)
+
+    @patch("api_client.time.sleep")
+    @patch("api_client.requests.get")
+    def test_includes_boxart_in_include_parameter(self, mock_get, _sleep):
+        mock_get.return_value = _page([])
+        client = TheGamesDbClient(api_key=FAKE_KEY)
+        client.get_games_by_platform(7)
+        url = mock_get.call_args[0][0]
+        self.assertIn("include=", url)
+        self.assertIn("boxart", url)
+
+    @patch("api_client.time.sleep")
+    @patch("api_client.requests.get")
+    def test_raises_api_error_on_http_error(self, mock_get, _sleep):
+        resp = MagicMock()
+        resp.status_code = 429
+        resp.json.return_value = {"code": 429, "status": "Too Many Requests"}
+        mock_get.return_value = resp
+        client = TheGamesDbClient(api_key=FAKE_KEY)
+        with self.assertRaises(ApiError):
+            client.get_games_by_platform(7)
+
+    @patch("api_client.time.sleep")
+    @patch("api_client.requests.get")
+    def test_returns_base_url_when_boxart_present(self, mock_get, _sleep):
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {
+            "code": 200, "status": "Success",
+            "data": {"count": 0, "games": []},
+            "include": {
+                "boxart": {
+                    "base_url": {"original": "https://cdn.thegamesdb.net/images/original/"},
+                    "data": {},
+                }
+            },
+            "pages": {"previous": None, "current": "...", "next": None},
+            "remaining_monthly_allowance": 900,
+            "extra_allowance": 0,
+        }
+        mock_get.return_value = resp
+        client = TheGamesDbClient(api_key=FAKE_KEY)
+        result = client.get_games_by_platform(7)
+        self.assertIn("base_url", result)
+        self.assertIn("original", result["base_url"])
+
+
+# ── get_games_by_id ───────────────────────────────────────────────────────────
+
+class TestGetGamesById(unittest.TestCase):
+    @patch("api_client.time.sleep")
+    @patch("api_client.requests.get")
+    def test_fetches_multiple_ids_in_one_call(self, mock_get, _sleep):
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {
+            "code": 200, "status": "Success",
+            "data": {"count": 2, "games": {
+                "135": {"id": 135, "game_title": "Castlevania"},
+                "140": {"id": 140, "game_title": "Super Mario Bros."},
+            }},
+            "remaining_monthly_allowance": 899,
+            "extra_allowance": 0,
+        }
+        mock_get.return_value = resp
+        client = TheGamesDbClient(api_key=FAKE_KEY)
+        result = client.get_games_by_id([135, 140])
+        self.assertEqual(len(result["games"]), 2)
+        self.assertEqual(mock_get.call_count, 1)
+
+    @patch("api_client.time.sleep")
+    @patch("api_client.requests.get")
+    def test_batches_large_id_lists(self, mock_get, _sleep):
+        """When more than BATCH_SIZE ids, splits into multiple requests."""
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {
+            "code": 200, "status": "Success",
+            "data": {"count": 0, "games": {}},
+            "remaining_monthly_allowance": 800,
+            "extra_allowance": 0,
+        }
+        mock_get.return_value = resp
+        client = TheGamesDbClient(api_key=FAKE_KEY, batch_size=10)
+        client.get_games_by_id(list(range(25)))
+        self.assertEqual(mock_get.call_count, 3)  # 10+10+5
+
+
+# ── get_games_images ──────────────────────────────────────────────────────────
+
+class TestGetGamesImages(unittest.TestCase):
+    @patch("api_client.time.sleep")
+    @patch("api_client.requests.get")
+    def test_returns_images_for_given_ids(self, mock_get, _sleep):
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {
+            "code": 200, "status": "Success",
+            "data": {
+                "count": 1,
+                "base_url": {"original": "https://cdn.thegamesdb.net/images/original/"},
+                "images": {
+                    "135": [{"id": 718, "type": "boxart", "side": "back",
+                              "filename": "boxart/back/135-2.jpg", "resolution": "1000x1435"}],
+                },
+            },
+            "remaining_monthly_allowance": 890,
+            "extra_allowance": 0,
+        }
+        mock_get.return_value = resp
+        client = TheGamesDbClient(api_key=FAKE_KEY)
+        result = client.get_games_images([135])
+        self.assertIn("images", result)
+        self.assertIn("135", result["images"])
+
+    @patch("api_client.time.sleep")
+    @patch("api_client.requests.get")
+    def test_batches_large_id_lists(self, mock_get, _sleep):
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {
+            "code": 200, "status": "Success",
+            "data": {"count": 0, "base_url": {}, "images": {}},
+            "remaining_monthly_allowance": 800,
+            "extra_allowance": 0,
+        }
+        mock_get.return_value = resp
+        client = TheGamesDbClient(api_key=FAKE_KEY, batch_size=10)
+        client.get_games_images(list(range(25)))
+        self.assertEqual(mock_get.call_count, 3)
+
+
+# ── get_games_updates ─────────────────────────────────────────────────────────
+
+class TestGetGamesUpdates(unittest.TestCase):
+    @patch("api_client.time.sleep")
+    @patch("api_client.requests.get")
+    def test_returns_list_of_updated_game_ids(self, mock_get, _sleep):
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {
+            "code": 200, "status": "Success",
+            "data": {
+                "count": 2,
+                "updates": [
+                    {"game_id": 135, "edit_id": 1001},
+                    {"game_id": 140, "edit_id": 1002},
+                ],
+            },
+            "remaining_monthly_allowance": 850,
+            "extra_allowance": 0,
+        }
+        mock_get.return_value = resp
+        client = TheGamesDbClient(api_key=FAKE_KEY)
+        result = client.get_games_updates(last_edit_id=999)
+        self.assertIn("updates", result)
+        self.assertEqual(len(result["updates"]), 2)
+
+
+# ── reference data endpoints ──────────────────────────────────────────────────
+
+class TestReferenceEndpoints(unittest.TestCase):
+    @patch("api_client.time.sleep")
+    @patch("api_client.requests.get")
+    def test_get_genres_returns_dict_keyed_by_id(self, mock_get, _sleep):
+        mock_get.return_value = _ok({
+            "count": 1,
+            "genres": {"15": {"id": 15, "name": "Action"}},
+        })
+        client = TheGamesDbClient(api_key=FAKE_KEY)
+        result = client.get_genres()
+        self.assertIn("15", result)
+        self.assertEqual(result["15"]["name"], "Action")
+
+    @patch("api_client.time.sleep")
+    @patch("api_client.requests.get")
+    def test_get_developers_returns_dict_keyed_by_id(self, mock_get, _sleep):
+        mock_get.return_value = _ok({
+            "count": 1,
+            "developers": {"389": {"id": 389, "name": "Nintendo"}},
+        })
+        client = TheGamesDbClient(api_key=FAKE_KEY)
+        result = client.get_developers()
+        self.assertIn("389", result)
+
+    @patch("api_client.time.sleep")
+    @patch("api_client.requests.get")
+    def test_get_publishers_returns_dict_keyed_by_id(self, mock_get, _sleep):
+        mock_get.return_value = _ok({
+            "count": 1,
+            "publishers": {"252": {"id": 252, "name": "Nintendo of America"}},
+        })
+        client = TheGamesDbClient(api_key=FAKE_KEY)
+        result = client.get_publishers()
+        self.assertIn("252", result)
+
+    @patch("api_client.time.sleep")
+    @patch("api_client.requests.get")
+    def test_get_regions_returns_list(self, mock_get, _sleep):
+        mock_get.return_value = _ok({
+            "count": 1,
+            "regions": {"1": {"id": 1, "name": "US"}},
+        })
+        client = TheGamesDbClient(api_key=FAKE_KEY)
+        result = client.get_regions()
+        self.assertIn("1", result)
+
+    @patch("api_client.time.sleep")
+    @patch("api_client.requests.get")
+    def test_get_countries_returns_list(self, mock_get, _sleep):
+        mock_get.return_value = _ok({
+            "count": 1,
+            "countries": {"50": {"id": 50, "name": "United States"}},
+        })
+        client = TheGamesDbClient(api_key=FAKE_KEY)
+        result = client.get_countries()
+        self.assertIn("50", result)
+
+
+# ── get_api_limit ─────────────────────────────────────────────────────────────
+
+class TestGetApiLimit(unittest.TestCase):
+    @patch("api_client.time.sleep")
+    @patch("api_client.requests.get")
+    def test_returns_remaining_allowance(self, mock_get, _sleep):
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {
+            "code": 200, "status": "Success",
+            "data": {"remaining_monthly_allowance": 750, "extra_allowance": 5},
+            "remaining_monthly_allowance": 750,
+            "extra_allowance": 5,
+        }
+        mock_get.return_value = resp
+        client = TheGamesDbClient(api_key=FAKE_KEY)
+        result = client.get_api_limit()
+        self.assertIn("remaining_monthly_allowance", result)
+
+
+if __name__ == "__main__":
+    unittest.main()
