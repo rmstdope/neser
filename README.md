@@ -37,6 +37,32 @@ git config core.hooksPath .githooks
 cargo run --release
 ```
 
+When launched without a ROM path, NESER opens the **ROM Browser** — a console-style graphical launcher with cover art grid, search, genre filtering, detail view, and favorites.
+
+To launch a specific ROM directly (skipping the browser):
+
+```bash
+cargo run --release -- path/to/rom.nes
+```
+
+### ROM Browser
+
+The ROM browser scans configured search paths for NES ROMs and displays them in a cover art grid with metadata from TheGamesDB.
+
+**Keyboard shortcuts:**
+- Arrow keys / D-pad: Navigate the grid
+- Enter: Launch selected ROM
+- `/`: Open search overlay (type to filter in real-time)
+- `g`: Open genre filter overlay
+- `d`: Open detail view for selected ROM
+- `f`: Toggle favorite on selected ROM
+- `F`: Toggle favorites-only filter
+- Escape: Close overlay / quit browser
+
+**Setup for cover art:**
+1. Download `metadata.db` from TheGamesDB and place it at `~/.neser/metadata.db` (or configure `metadata-db-path`)
+2. Cover art images are automatically downloaded to `~/.neser/image_cache/` on first launch
+
 ### Autorunner
 
 Record or play back joypad input alongside a ROM:
