@@ -1,7 +1,10 @@
 """Tests for Syncer — MetadataDb and TheGamesDbClient are both mocked."""
+import os
+import sys
 import unittest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from sync import Syncer
 
 # ── tqdm passthrough helper ───────────────────────────────────────────────────

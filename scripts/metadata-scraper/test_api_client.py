@@ -1,7 +1,10 @@
 """Tests for TheGamesDbClient — all HTTP is mocked, no real network calls."""
+import os
+import sys
 import unittest
 from unittest.mock import MagicMock, patch, call
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from api_client import TheGamesDbClient, ApiError
 
 FAKE_KEY = "fake_api_key"

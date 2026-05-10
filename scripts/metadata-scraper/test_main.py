@@ -1,9 +1,11 @@
 """Tests for the CLI entrypoint in main.py."""
+import os
 import sys
 import unittest
 from io import StringIO
 from unittest.mock import MagicMock, patch
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 class TestMainCliArgParsing(unittest.TestCase):
     """Verify argument parsing without invoking real DB or network."""
