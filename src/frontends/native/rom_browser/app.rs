@@ -58,6 +58,8 @@ pub struct RomBrowserApp {
     active_genres: Vec<String>,
     /// Cursor position in the genre filter list.
     genre_cursor: usize,
+    /// Detail view overlay active.
+    detail_view_active: bool,
 }
 
 impl RomBrowserApp {
@@ -90,6 +92,7 @@ impl RomBrowserApp {
             available_genres: Vec::new(),
             active_genres: Vec::new(),
             genre_cursor: 0,
+            detail_view_active: false,
         }
     }
 
@@ -216,6 +219,7 @@ impl RomBrowserApp {
         let available_genres = &self.available_genres;
         let active_genres = &self.active_genres;
         let genre_cursor = self.genre_cursor;
+        let detail_view_active = self.detail_view_active;
 
         let ui = gl.begin_frame();
 
@@ -376,9 +380,11 @@ impl RomBrowserApp {
                     ui.text(
                         "\u{2191}\u{2193}: Navigate  |  Enter: Toggle  |  Esc: Close filter",
                     );
+                } else if detail_view_active {
+                    ui.text("Enter: Launch  |  Esc: Back to grid");
                 } else {
                     ui.text(
-                        "Enter: Launch  |  Arrows: Navigate  |  /: Search  |  g: Genre  |  Esc: Quit",
+                        "Enter: Launch  |  Arrows: Navigate  |  /: Search  |  g: Genre  |  d: Details  |  Esc: Quit",
                     );
                 }
             });
@@ -469,6 +475,35 @@ impl RomBrowserApp {
                 });
         }
 
+        // --- Detail view overlay ---
+        if detail_view_active
+            && let Some(idx) = selected_entry_idx
+            && let Some(entry) = self.catalog.get(idx)
+        {
+            let overlay_draw = ui.get_foreground_draw_list();
+            let dim_color = imgui::ImColor32::from_rgba(0, 0, 0, 200);
+            overlay_draw.add_rect_filled_multicolor(
+                [0.0, 0.0],
+                [display_w, display_h],
+                dim_color,
+                dim_color,
+                dim_color,
+                dim_color,
+            );
+
+            let margin = 40.0;
+            ui.window("##detail_view")
+                .position([margin, margin], imgui::Condition::Always)
+                .size(
+                    [display_w - margin * 2.0, display_h - margin * 2.0],
+                    imgui::Condition::Always,
+                )
+                .flags(Self::panel_flags() | imgui::WindowFlags::NO_SAVED_SETTINGS)
+                .build(|| {
+                    Self::render_detail_view(ui, entry, &tex_map);
+                });
+        }
+
         gl.end_frame();
     }
 
@@ -552,6 +587,86 @@ impl RomBrowserApp {
             let _fav = ui.push_style_color(imgui::StyleColor::Text, theme::FAVORITE_COLOR);
             ui.text("\u{2665} Favourite");
         }
+    }
+
+    /// Render the full detail view for a selected game.
+    fn render_detail_view(
+        ui: &imgui::Ui,
+        entry: &RomEntry,
+        tex_map: &HashMap<i64, (imgui::TextureId, u32, u32)>,
+    ) {
+        let avail = ui.content_region_avail();
+
+        // Two-column layout: left = boxart, right = metadata.
+        let boxart_w = avail[0] * 0.35;
+        let meta_x = boxart_w + 24.0;
+
+        // --- Left: cover art ---
+        if let Some(game_id) = entry.metadata_game_id
+            && let Some(&(tex_id, _tw, _th)) = tex_map.get(&game_id)
+        {
+            let art_h = boxart_w / theme::COVER_ASPECT;
+            let cursor = ui.cursor_pos();
+            ui.set_cursor_pos(cursor);
+            imgui::Image::new(tex_id, [boxart_w, art_h]).build(ui);
+        }
+
+        // --- Right: metadata ---
+        ui.set_cursor_pos([meta_x, 0.0]);
+        ui.child_window("##detail_meta")
+            .size([avail[0] - meta_x - 8.0, avail[1]])
+            .build(|| {
+                // Title.
+                let _title_color = ui.push_style_color(imgui::StyleColor::Text, theme::HEADER_TEXT);
+                ui.text_wrapped(&entry.display_name);
+                drop(_title_color);
+
+                ui.spacing();
+                ui.separator();
+                ui.spacing();
+
+                // Metadata fields.
+                let _dim = ui.push_style_color(imgui::StyleColor::Text, theme::DIM_TEXT);
+                if !entry.genres.is_empty() {
+                    ui.text(format!("Genre: {}", entry.genres.join(", ")));
+                }
+                if let Some(ref date) = entry.release_date {
+                    ui.text(format!("Released: {date}"));
+                }
+                if let Some(players) = entry.players {
+                    ui.text(format!("Players: {players}"));
+                }
+                if let Some(ref rating) = entry.rating {
+                    ui.text(format!("Rating: {rating}"));
+                }
+                ui.text(format!("Mapper: {}", entry.mapper_label));
+                if let Some(ref crc) = entry.crc {
+                    ui.text(format!("CRC: {crc}"));
+                }
+                if let Some(ref hw) = entry.hardware {
+                    ui.text(format!("Hardware: {hw}"));
+                }
+                if entry.is_favorite {
+                    let _fav = ui.push_style_color(imgui::StyleColor::Text, theme::FAVORITE_COLOR);
+                    ui.text("\u{2665} Favourite");
+                }
+                drop(_dim);
+
+                // Description.
+                if let Some(ref overview) = entry.overview {
+                    ui.spacing();
+                    ui.separator();
+                    ui.spacing();
+                    let _text = ui.push_style_color(imgui::StyleColor::Text, theme::TEXT_COLOR);
+                    ui.text_wrapped(overview);
+                }
+
+                ui.spacing();
+                ui.separator();
+                ui.spacing();
+                let _foot = ui.push_style_color(imgui::StyleColor::Text, theme::DIM_TEXT);
+                ui.text("Enter: Launch  |  Esc: Back to grid");
+            });
     }
 
     /// Common imgui window flags for the browser panels.
@@ -768,6 +883,20 @@ impl ApplicationHandler for RomBrowserApp {
                         }
                         _ => {}
                     }
+                } else if self.detail_view_active {
+                    // Detail view mode.
+                    match event.logical_key {
+                        Key::Named(NamedKey::Escape) => {
+                            self.detail_view_active = false;
+                        }
+                        Key::Named(NamedKey::Enter) => {
+                            if let Some(entry) = self.selected_entry() {
+                                self.result = BrowserResult::RomSelected(entry.path.clone());
+                                event_loop.exit();
+                            }
+                        }
+                        _ => {}
+                    }
                 } else {
                     // Normal browsing mode.
                     match event.logical_key {
@@ -811,6 +940,11 @@ impl ApplicationHandler for RomBrowserApp {
                         Key::Character(ref ch) if ch.as_str() == "g" => {
                             self.genre_filter_active = true;
                             self.genre_cursor = 0;
+                        }
+                        Key::Character(ref ch) if ch.as_str() == "d" => {
+                            if self.selected_entry().is_some() {
+                                self.detail_view_active = true;
+                            }
                         }
                         _ => {}
                     }
@@ -892,6 +1026,7 @@ mod tests {
             available_genres: Vec::new(),
             active_genres: Vec::new(),
             genre_cursor: 0,
+            detail_view_active: false,
         };
         app.set_catalog(entries);
         app
@@ -1007,5 +1142,26 @@ mod tests {
         app.rebuild_filtered();
         assert_eq!(app.filtered_indices.len(), 2);
         assert_eq!(app.filtered_indices, vec![0, 1]);
+    }
+
+    #[test]
+    fn detail_view_opens_when_entry_selected() {
+        let app = test_browser(vec![make_entry("Castlevania")]);
+        assert!(!app.detail_view_active);
+        // Simulate pressing 'd' — selected_entry() returns Some so detail opens
+        let mut app = app;
+        app.detail_view_active = app.selected_entry().is_some();
+        assert!(app.detail_view_active);
+    }
+
+    #[test]
+    fn detail_view_does_not_open_when_catalog_empty() {
+        let app = test_browser(vec![]);
+        assert!(!app.detail_view_active);
+        let mut app = app;
+        if app.selected_entry().is_some() {
+            app.detail_view_active = true;
+        }
+        assert!(!app.detail_view_active);
     }
 }
