@@ -31,7 +31,7 @@ macro_rules! assert_samesuite_pass {
     };
 }
 
-/// Macro for SameSuite APU tests that are now passing (no ignore).
+/// Macro for SameSuite APU tests that pass without needing to be ignored.
 macro_rules! samesuite_apu_test_enabled {
     ($name:ident, $path:expr, $hardware:expr) => {
         #[test]

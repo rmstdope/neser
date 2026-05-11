@@ -102,7 +102,9 @@ pub struct Apu {
     #[serde(default)]
     skip_next_div_apu_event: bool,
     /// When `true`, the next DIV-APU event is serviced without advancing
-    /// `div_divider`. This models SameBoy's post-skip "SKIPPED" state.
+    /// `div_divider`. This models SameBoy's post-skip "SKIPPED" state: the
+    /// first event after a power-on-high skip still runs APU edge side effects,
+    /// but keeps the seeded divider phase for length/envelope/sweep timing.
     #[serde(default)]
     div_apu_event_without_div_increment: bool,
 
@@ -729,7 +731,9 @@ impl Apu {
     pub fn arm_skip_next_div_apu_event(&mut self) {
         // SameBoy initializes this skipped-start phase to 1 so trigger-time
         // length glitches see `div_divider & 1 == 1`, even before the first
-        // non-skipped DIV-APU event advances the divider.
+        // non-skipped DIV-APU event advances the divider. `extra_clk` uses this
+        // LSB directly, so the following NR14 trigger can clock/reload length
+        // in the same phase as hardware.
         self.div_divider = 1;
         self.skip_next_div_apu_event = true;
         trace_apu!(2; "GB APU armed skip_next_div_apu_event (power-on with DIV-APU bit high)");
