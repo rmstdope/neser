@@ -160,7 +160,7 @@ impl NativeEventLoop {
         }
     }
 
-    pub fn run(mut self) -> Result<(), String> {
+    pub fn run(self) -> Result<(), String> {
         if self.headless {
             return self.run_headless();
         }

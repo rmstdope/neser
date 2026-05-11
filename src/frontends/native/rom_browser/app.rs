@@ -92,6 +92,8 @@ pub struct RomBrowserApp {
     catalog_state: CatalogState,
     /// Tracks current modifier key state.
     modifiers: winit::keyboard::ModifiersState,
+    /// Decoded RGBA pixel cache for cover art (survives GL context changes).
+    pixel_cache: HashMap<i64, (u32, u32, Vec<u8>)>,
 }
 
 impl RomBrowserApp {
@@ -133,6 +135,7 @@ impl RomBrowserApp {
             show_favorites_only: false,
             catalog_state: CatalogState::Idle,
             modifiers: winit::keyboard::ModifiersState::empty(),
+            pixel_cache: HashMap::new(),
         }
     }
 
@@ -717,26 +720,26 @@ impl RomBrowserApp {
         let (art_rect, _) =
             ui.allocate_exact_size(egui::vec2(avail_w, art_area_h), egui::Sense::hover());
 
-        if let Some(game_id) = entry.metadata_game_id {
-            if let Some(&(tex_id, tex_w, tex_h)) = tex_map.get(&game_id) {
-                let img_aspect = tex_w as f32 / tex_h.max(1) as f32;
-                // Fit image within the fixed area, preserving aspect ratio.
-                let (draw_w, draw_h) = if img_aspect > avail_w / art_area_h {
-                    (avail_w, avail_w / img_aspect)
-                } else {
-                    (art_area_h * img_aspect, art_area_h)
-                };
-                let cx = art_rect.center().x;
-                let cy = art_rect.center().y;
-                let img_rect =
-                    egui::Rect::from_center_size(egui::pos2(cx, cy), egui::vec2(draw_w, draw_h));
-                let rounding = egui::CornerRadius::same(theme::CORNER_RADIUS as u8);
-                let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-                ui.painter().add(
-                    egui::epaint::RectShape::filled(img_rect, rounding, egui::Color32::WHITE)
-                        .with_texture(tex_id, uv),
-                );
-            }
+        if let Some(game_id) = entry.metadata_game_id
+            && let Some(&(tex_id, tex_w, tex_h)) = tex_map.get(&game_id)
+        {
+            let img_aspect = tex_w as f32 / tex_h.max(1) as f32;
+            // Fit image within the fixed area, preserving aspect ratio.
+            let (draw_w, draw_h) = if img_aspect > avail_w / art_area_h {
+                (avail_w, avail_w / img_aspect)
+            } else {
+                (art_area_h * img_aspect, art_area_h)
+            };
+            let cx = art_rect.center().x;
+            let cy = art_rect.center().y;
+            let img_rect =
+                egui::Rect::from_center_size(egui::pos2(cx, cy), egui::vec2(draw_w, draw_h));
+            let rounding = egui::CornerRadius::same(theme::CORNER_RADIUS as u8);
+            let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+            ui.painter().add(
+                egui::epaint::RectShape::filled(img_rect, rounding, egui::Color32::WHITE)
+                    .with_texture(tex_id, uv),
+            );
         }
         ui.add_space(8.0);
 
@@ -1053,7 +1056,19 @@ impl RomBrowserApp {
         for entry in &self.catalog {
             if let (Some(game_id), Some(path)) = (entry.metadata_game_id, &entry.boxart_path) {
                 let key = TextureKey::CoverArt(game_id);
-                gl.load_texture_from_file(key, path);
+                if let Some((w, h, pixels)) = self.pixel_cache.get(&game_id) {
+                    // Re-upload from in-memory cache (fast, no disk I/O).
+                    gl.load_texture_from_rgba(key, *w, *h, pixels);
+                } else if path.exists() {
+                    // First load: decode from disk, upload, and cache pixels.
+                    if let Ok(img) = image::open(path) {
+                        let rgba = img.into_rgba8();
+                        let (w, h) = rgba.dimensions();
+                        let pixels = rgba.into_raw();
+                        gl.load_texture_from_rgba(key, w, h, &pixels);
+                        self.pixel_cache.insert(game_id, (w, h, pixels));
+                    }
+                }
             }
         }
     }
@@ -1466,6 +1481,7 @@ mod tests {
             show_favorites_only: false,
             catalog_state: CatalogState::Ready,
             modifiers: winit::keyboard::ModifiersState::empty(),
+            pixel_cache: HashMap::new(),
         };
         app.set_catalog(entries);
         app
