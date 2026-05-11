@@ -1209,11 +1209,12 @@ impl RomBrowserApp {
                 let boxart_w = avail.x * 0.35;
 
                 ui.horizontal(|ui| {
-                    // Left: cover art.
+                    // Left: cover art (preserve actual aspect ratio).
                     if let Some(game_id) = entry.metadata_game_id
-                        && let Some(&(tex_id, _, _)) = tex_map.get(&game_id)
+                        && let Some(&(tex_id, tex_w, tex_h)) = tex_map.get(&game_id)
                     {
-                        let art_h = boxart_w / theme::COVER_ASPECT;
+                        let img_aspect = tex_w as f32 / tex_h.max(1) as f32;
+                        let art_h = boxart_w / img_aspect;
                         ui.add(
                             egui::Image::from_texture(egui::load::SizedTexture::new(
                                 tex_id,
@@ -1228,7 +1229,7 @@ impl RomBrowserApp {
                         ui.label(
                             egui::RichText::new(&entry.display_name)
                                 .color(theme::HEADER_TEXT)
-                                .size(18.0),
+                                .size(22.0),
                         );
                         ui.separator();
 
@@ -1236,54 +1237,64 @@ impl RomBrowserApp {
                             ui.label(
                                 egui::RichText::new(format!("Genre: {}", entry.genres.join(", ")))
                                     .color(theme::DIM_TEXT)
-                                    .size(13.0),
+                                    .size(15.0),
                             );
                         }
                         if let Some(ref date) = entry.release_date {
                             ui.label(
                                 egui::RichText::new(format!("Released: {date}"))
                                     .color(theme::DIM_TEXT)
-                                    .size(13.0),
+                                    .size(15.0),
                             );
                         }
                         if let Some(players) = entry.players {
                             ui.label(
                                 egui::RichText::new(format!("Players: {players}"))
                                     .color(theme::DIM_TEXT)
-                                    .size(13.0),
+                                    .size(15.0),
                             );
                         }
                         if let Some(ref rating) = entry.rating {
                             ui.label(
                                 egui::RichText::new(format!("Rating: {rating}"))
                                     .color(theme::DIM_TEXT)
-                                    .size(13.0),
+                                    .size(15.0),
                             );
                         }
                         ui.label(
                             egui::RichText::new(format!("Mapper: {}", entry.mapper_label))
                                 .color(theme::DIM_TEXT)
-                                .size(13.0),
+                                .size(15.0),
                         );
                         if let Some(ref crc) = entry.crc {
                             ui.label(
                                 egui::RichText::new(format!("CRC: {crc}"))
                                     .color(theme::DIM_TEXT)
-                                    .size(13.0),
+                                    .size(15.0),
                             );
                         }
                         if let Some(ref hw) = entry.hardware {
                             ui.label(
                                 egui::RichText::new(format!("Hardware: {hw}"))
                                     .color(theme::DIM_TEXT)
-                                    .size(13.0),
+                                    .size(15.0),
+                            );
+                        }
+                        if let Some(file_name) = entry.path.file_name() {
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "File: {}",
+                                    file_name.to_string_lossy()
+                                ))
+                                .color(theme::DIM_TEXT)
+                                .size(15.0),
                             );
                         }
                         if entry.is_favorite {
                             ui.label(
                                 egui::RichText::new("\u{2665} Favourite")
                                     .color(theme::FAVORITE_COLOR)
-                                    .size(14.0),
+                                    .size(16.0),
                             );
                         }
 
@@ -1292,15 +1303,14 @@ impl RomBrowserApp {
                             ui.label(
                                 egui::RichText::new(overview)
                                     .color(theme::TEXT_COLOR)
-                                    .size(13.0),
+                                    .size(15.0),
                             );
                         }
 
                         ui.separator();
-                        ui.label(
-                            egui::RichText::new("Enter: Launch  |  Esc: Back to grid")
-                                .color(theme::DIM_TEXT)
-                                .size(12.0),
+                        Self::render_button_legend(
+                            ui,
+                            &[("A", "Launch"), ("Y", "Fav"), ("B", "Back")],
                         );
                     });
                 });
