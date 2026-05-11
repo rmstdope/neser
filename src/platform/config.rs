@@ -113,6 +113,9 @@ pub struct FrontendConfig {
     /// Path to the directory where downloaded cover art images are cached.
     /// Default: `~/.neser/image_cache/`
     pub image_cache_path: Option<String>,
+    /// Whether to include unofficial ROMs (hacks, homebrew, etc.) in the catalog.
+    /// Default: `false` (exclude unofficial ROMs).
+    pub include_unofficial_roms: bool,
 }
 
 impl Default for FrontendConfig {
@@ -150,6 +153,7 @@ impl Default for FrontendConfig {
             breakpoints: Vec::new(),
             metadata_db_path: None,
             image_cache_path: None,
+            include_unofficial_roms: false,
         }
     }
 }
@@ -509,6 +513,11 @@ impl FrontendConfig {
             "image_cache_path" => {
                 self.image_cache_path = Some(value.to_string());
             }
+            "include_unofficial_roms" => {
+                if let Ok(include) = parse_bool(value) {
+                    self.include_unofficial_roms = include;
+                }
+            }
             _ => {}
         }
         Ok(())
@@ -537,6 +546,10 @@ impl FrontendConfig {
 
         if let Some(path) = parse_cli_string_arg(args, "--image-cache-path") {
             self.image_cache_path = Some(path);
+        }
+
+        if let Some(include) = parse_bool_arg(args, "--include-unofficial-roms")? {
+            self.include_unofficial_roms = include;
         }
 
         Ok(())
@@ -814,6 +827,11 @@ pub(crate) const PLATFORM_CLI_FLAGS: &[CliFlag] = &[
     CliFlag {
         flag: "--image-cache-path",
         help: Some("Path to cover art image cache directory (default: ~/.neser/image_cache/)"),
+        has_value: true,
+    },
+    CliFlag {
+        flag: "--include-unofficial-roms",
+        help: Some("Include unofficial ROMs (hacks, homebrew, etc.) in the browser catalog"),
         has_value: true,
     },
 ];

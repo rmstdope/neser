@@ -25,13 +25,25 @@ pub use rom_entry::RomEntry;
 /// # Errors
 ///
 /// Returns an error if the catalog CSV cannot be read or written.
-pub fn load_catalog(search_paths: &[String], rebuild: bool) -> Result<Vec<RomEntry>, String> {
+pub fn load_catalog(
+    search_paths: &[String],
+    rebuild: bool,
+    include_unofficial: bool,
+) -> Result<Vec<RomEntry>, String> {
     let rom_paths = read_catalog_paths(search_paths, rebuild)?;
     let rom_db = RomDb::new().map_err(|e| format!("Failed to load ROM DB: {e}"))?;
-    Ok(rom_paths
+    let entries: Vec<RomEntry> = rom_paths
         .iter()
         .map(|p| build_rom_entry(p, &rom_db))
-        .collect())
+        .collect();
+    if include_unofficial {
+        Ok(entries)
+    } else {
+        Ok(entries
+            .into_iter()
+            .filter(|e| !is_unofficial_rom(e))
+            .collect())
+    }
 }
 
 fn read_catalog_paths(search_paths: &[String], rebuild: bool) -> Result<Vec<PathBuf>, String> {
@@ -153,6 +165,61 @@ fn file_stem(path: &Path) -> String {
         .and_then(|s| s.to_str())
         .unwrap_or("?")
         .to_string()
+}
+
+/// Keywords in ROM filenames that indicate unofficial/non-original ROMs.
+const UNOFFICIAL_KEYWORDS: &[&str] = &[
+    "(hack)",
+    "[hack]",
+    "(pirate)",
+    "[pirate]",
+    "(bootleg)",
+    "[bootleg]",
+    "(homebrew)",
+    "[homebrew]",
+    "(unl)",
+    "[unl]",
+    "(unif)",
+    "[unif]",
+    "(pd)",
+    "[pd]",
+    "(beta)",
+    "[beta]",
+    "(proto)",
+    "[proto]",
+    "(prototype)",
+    "[prototype]",
+    "(sample)",
+    "[sample]",
+    "(demo)",
+    "[demo]",
+    "(bad)",
+    "[bad]",
+    "[b]",
+    "(overdump)",
+    "[o]",
+    "[!p]",
+    "[t]",
+    "(trainer)",
+    "[t+",
+    "(translation)",
+];
+
+/// Check whether a ROM entry appears to be an unofficial ROM based on its
+/// filename and display name. Uses keyword matching against common ROM naming
+/// conventions (No-Intro, GoodNES, etc.).
+fn is_unofficial_rom(entry: &RomEntry) -> bool {
+    let filename = entry
+        .path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let name = entry.display_name.to_lowercase();
+
+    UNOFFICIAL_KEYWORDS
+        .iter()
+        .any(|kw| filename.contains(kw) || name.contains(kw))
 }
 
 /// Return the duration of the `.autorun` recording for `rom_path`, or `None` if no recording
@@ -611,5 +678,81 @@ mod tests {
         );
 
         assert!(catalog[0].metadata_game_id.is_none());
+    }
+
+    fn make_entry_with_path(path: &str, name: &str) -> RomEntry {
+        RomEntry {
+            path: PathBuf::from(path),
+            display_name: name.to_string(),
+            search_key: name.to_lowercase(),
+            mapper_label: "-".to_string(),
+            mapper: None,
+            hardware: None,
+            crc: None,
+            recording_duration: None,
+            metadata_game_id: None,
+            genres: Vec::new(),
+            overview: None,
+            release_date: None,
+            players: None,
+            rating: None,
+            boxart_path: None,
+            screenshot_paths: Vec::new(),
+            is_favorite: false,
+        }
+    }
+
+    #[test]
+    fn is_unofficial_rom_detects_hack_in_filename() {
+        let entry = make_entry_with_path("Super Mario (hack).nes", "Super Mario");
+        assert!(is_unofficial_rom(&entry));
+    }
+
+    #[test]
+    fn is_unofficial_rom_detects_hack_in_display_name() {
+        let entry = make_entry_with_path("game.nes", "Super Mario (Hack)");
+        assert!(is_unofficial_rom(&entry));
+    }
+
+    #[test]
+    fn is_unofficial_rom_detects_pirate() {
+        let entry = make_entry_with_path("Game (Pirate).nes", "Game");
+        assert!(is_unofficial_rom(&entry));
+    }
+
+    #[test]
+    fn is_unofficial_rom_detects_homebrew() {
+        let entry = make_entry_with_path("Game [Homebrew].nes", "Game");
+        assert!(is_unofficial_rom(&entry));
+    }
+
+    #[test]
+    fn is_unofficial_rom_detects_prototype() {
+        let entry = make_entry_with_path("Game (Proto).nes", "Game");
+        assert!(is_unofficial_rom(&entry));
+    }
+
+    #[test]
+    fn is_unofficial_rom_detects_beta() {
+        let entry = make_entry_with_path("Game [Beta].nes", "Game");
+        assert!(is_unofficial_rom(&entry));
+    }
+
+    #[test]
+    fn is_unofficial_rom_detects_unl() {
+        let entry = make_entry_with_path("Game (Unl).nes", "Game");
+        assert!(is_unofficial_rom(&entry));
+    }
+
+    #[test]
+    fn is_unofficial_rom_allows_official_rom() {
+        let entry = make_entry_with_path("Super Mario Bros. 3 (USA).nes", "Super Mario Bros. 3");
+        assert!(!is_unofficial_rom(&entry));
+    }
+
+    #[test]
+    fn is_unofficial_rom_allows_region_variants() {
+        let entry = make_entry_with_path("Metroid (Europe).nes", "Metroid");
+        assert!(!is_unofficial_rom(&entry));
     }
 }

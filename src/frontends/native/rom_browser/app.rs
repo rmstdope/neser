@@ -1147,7 +1147,13 @@ impl ApplicationHandler for RomBrowserApp {
                 self.gl = Some(gl);
                 // Spawn background thread for catalog loading + enrichment.
                 if matches!(self.catalog_state, CatalogState::Idle) {
-                    let (search_paths, rebuild, metadata_db_path, image_cache_path) = {
+                    let (
+                        search_paths,
+                        rebuild,
+                        metadata_db_path,
+                        image_cache_path,
+                        include_unofficial,
+                    ) = {
                         let ctx = self.app_context.borrow();
                         let config = ctx.config();
                         (
@@ -1155,11 +1161,16 @@ impl ApplicationHandler for RomBrowserApp {
                             config.frontend.rebuild_cartridge_catalog,
                             config.frontend.resolved_metadata_db_path(),
                             config.frontend.resolved_image_cache_path(),
+                            config.frontend.include_unofficial_roms,
                         )
                     };
                     let (tx, rx) = mpsc::channel();
                     std::thread::spawn(move || {
-                        match crate::platform::catalog::load_catalog(&search_paths, rebuild) {
+                        match crate::platform::catalog::load_catalog(
+                            &search_paths,
+                            rebuild,
+                            include_unofficial,
+                        ) {
                             Ok(mut catalog) => {
                                 let tx2 = tx.clone();
                                 crate::platform::catalog::enrich_catalog(

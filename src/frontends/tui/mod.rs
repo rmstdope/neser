@@ -26,7 +26,7 @@ pub fn run_tui(
     search_paths: &[String],
     rebuild_catalog: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (entries, catalog_err) = match catalog::load_catalog(search_paths, rebuild_catalog) {
+    let (entries, catalog_err) = match catalog::load_catalog(search_paths, rebuild_catalog, true) {
         Ok(entries) => (entries, None),
         Err(e) => (vec![], Some(e)),
     };

@@ -55,6 +55,11 @@
 # Default: ~/.neser/image_cache/
 #image_cache_path=~/.neser/image_cache/
 
+# Include unofficial ROMs (hacks, homebrew, bootlegs, prototypes, etc.) in the
+# ROM browser catalog. When false (default), ROMs with keywords like "(Hack)",
+# "(Pirate)", "[Homebrew]", "(Proto)", etc. in their filename are excluded.
+#include_unofficial_roms=false
+
 # -----------------------------------------------------------------------------
 # Hardware
 # -----------------------------------------------------------------------------
