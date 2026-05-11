@@ -920,7 +920,7 @@ impl RomBrowserApp {
     /// Render a row of pill-shaped button prompts (e.g., `[A] Launch`).
     fn render_button_legend(ui: &mut egui::Ui, items: &[(&str, &str)]) {
         let pill_font = egui::FontId::proportional(13.0);
-        let label_font = egui::FontId::proportional(14.0);
+        let label_font = egui::FontId::new(16.0, egui::FontFamily::Monospace);
         let pill_h = 24.0_f32;
         let outer_h = 30.0_f32;
         let pill_pad_x = 7.0_f32;
