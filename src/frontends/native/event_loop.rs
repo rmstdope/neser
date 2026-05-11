@@ -164,9 +164,9 @@ impl NativeEventLoop {
         if self.headless {
             return self.run_headless();
         }
-        let event_loop =
+        let mut event_loop =
             EventLoop::new().map_err(|e| format!("Failed to create event loop: {e}"))?;
-        self.run_with_event_loop(event_loop)
+        self.run_with_event_loop(&mut event_loop)
     }
 
     /// Run with an externally-created event loop (used when transitioning from ROM browser).
