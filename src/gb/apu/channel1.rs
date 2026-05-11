@@ -348,6 +348,9 @@ impl Channel1 {
         if !self.active {
             return;
         }
+        // Only a reload on the final T-cycle can be observed by CPU register
+        // writes before the next CH1 tick; earlier reloads are immediately
+        // followed by additional timer decrements within this same tick.
         self.freq_timer_just_reloaded = false;
         let period = (2048 - self.freq) * 4;
         if self.freq_timer == 0 {
