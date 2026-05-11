@@ -2,8 +2,8 @@
 //!
 //! Stores metadata matching and image cache results keyed by ROM path so that
 //! subsequent startups can skip re-matching and re-downloading for already-
-//! processed ROMs. The cache is stored as a JSON file (default location:
-//! `~/.neser/enrichment_cache.json`).
+//! processed ROMs. The cache is stored as a JSON file inside the image cache
+//! directory (e.g. `~/.neser/image_cache/enrichment_cache.json`).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

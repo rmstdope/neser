@@ -2,6 +2,13 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+/// Connect timeout for cover art downloads.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Read timeout for cover art downloads.
+const READ_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Progress callback data for image downloads.
 #[derive(Debug, Clone)]
@@ -22,6 +29,8 @@ pub struct CachedImages {
 pub struct ImageCache {
     cache_dir: PathBuf,
     base_url: String,
+    /// Shared HTTP client configured with connection and read timeouts.
+    client: reqwest::blocking::Client,
 }
 
 impl ImageCache {
@@ -31,9 +40,16 @@ impl ImageCache {
     pub fn new(cache_dir: PathBuf, base_url: String) -> Result<Self, String> {
         fs::create_dir_all(&cache_dir)
             .map_err(|e| format!("Failed to create image cache dir {cache_dir:?}: {e}"))?;
+        let client = reqwest::blocking::Client::builder()
+            .connect_timeout(CONNECT_TIMEOUT)
+            .timeout(READ_TIMEOUT)
+            .user_agent(concat!("neser/", env!("CARGO_PKG_VERSION")))
+            .build()
+            .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
         Ok(Self {
             cache_dir,
             base_url,
+            client,
         })
     }
 
@@ -74,7 +90,7 @@ impl ImageCache {
     /// Download an image from the CDN and save to the cache directory.
     fn download(&self, filename: &str) -> Option<PathBuf> {
         let url = format!("{}{}", self.base_url, filename);
-        let response = reqwest::blocking::get(&url).ok()?;
+        let response = self.client.get(&url).send().ok()?;
 
         if !response.status().is_success() {
             return None;

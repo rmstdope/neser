@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 pub struct Favorites {
     /// The file where favorites are persisted.
     path: PathBuf,
-    /// In-memory set of favorited ROM paths (stored as canonical strings).
+    /// In-memory set of favorited ROM paths (stored as lossy UTF-8 path strings).
     entries: HashSet<String>,
 }
 

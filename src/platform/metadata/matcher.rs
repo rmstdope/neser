@@ -24,13 +24,13 @@ pub fn match_title(rom_title: &str, candidates: &[(i64, String)]) -> Option<Titl
         .map(|(id, title)| {
             let normalized_db = normalize(title);
             let score = jaro_winkler(&normalized_rom, &normalized_db);
-            (*id, title.clone(), score)
+            (*id, title.as_str(), score)
         })
         .filter(|(_, _, score)| *score >= SIMILARITY_THRESHOLD)
         .max_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
         .map(|(game_id, db_title, score)| TitleMatch {
             game_id,
-            db_title,
+            db_title: db_title.to_string(),
             score,
         })
 }

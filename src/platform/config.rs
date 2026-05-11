@@ -833,7 +833,7 @@ pub(crate) const PLATFORM_CLI_FLAGS: &[CliFlag] = &[
     CliFlag {
         flag: "--include-unofficial-roms",
         help: Some("Include unofficial ROMs (hacks, homebrew, etc.) in the browser catalog"),
-        has_value: true,
+        has_value: false,
     },
 ];
 
@@ -859,6 +859,7 @@ pub(crate) const OPTIONAL_BOOL_FLAGS: &[&str] = &[
     "--scan-cartridges",
     "--convert-autorun",
     "--recalculate-autorun",
+    "--include-unofficial-roms",
 ];
 
 /// Parse a boolean argument from command-line args.
