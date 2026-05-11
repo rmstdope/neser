@@ -4,6 +4,18 @@ use crate::gb::model::CgbModel;
 use crate::trace_apu;
 use serde::{Deserialize, Serialize};
 
+/// Extra delay observed by SameSuite for freshly-reloaded CH1 frequency
+/// rewrites on CGB-0/A/B/C compared with CGB-D/E.
+const EARLY_CGB_FREQ_REWRITE_DELAY_T: u16 = 2;
+const LATE_CGB_FREQ_REWRITE_DELAY_T: u16 = 0;
+/// CGB-0/A/B/C non-reload rewrite windows where the old fast period is extended
+/// by one APU tick before the new period takes effect.
+const EARLY_CGB_NORMAL_REWRITE_EXTENSION_TIMER_T: u16 = 6;
+const EARLY_CGB_DOUBLE_REWRITE_EXTENSION_TIMER_T: u16 = 2;
+/// CGB-D/E double-speed rewrite window where SameSuite observes the new period
+/// taking effect before the next nominal reload boundary.
+const LATE_CGB_DOUBLE_REWRITE_TIMER_T: u16 = 14;
+
 /// Envelope clock state for zombie mode glitch tracking.
 /// The envelope clock affects how NRx2 writes modify volume.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -986,7 +998,8 @@ impl Channel1 {
             && !self.freq_timer_just_reloaded
             && self.current_output == 0
             && self.duty_pos == 6
-            && ((!double_speed && self.freq_timer == 6) || (double_speed && self.freq_timer == 2))
+            && ((!double_speed && self.freq_timer == EARLY_CGB_NORMAL_REWRITE_EXTENSION_TIMER_T)
+                || (double_speed && self.freq_timer == EARLY_CGB_DOUBLE_REWRITE_EXTENSION_TIMER_T))
         {
             self.freq_timer += 4;
             return;
@@ -994,14 +1007,18 @@ impl Channel1 {
         let late_de_double_speed_rewrite = double_speed
             && self.is_cgb
             && matches!(self.cgb_model, CgbModel::CgbD | CgbModel::CgbE)
-            && self.freq_timer == 14;
+            && self.freq_timer == LATE_CGB_DOUBLE_REWRITE_TIMER_T;
         if !self.freq_timer_just_reloaded && !late_de_double_speed_rewrite {
             return;
         }
         let period = (2048 - self.freq) * 4;
         // SameSuite's CGB-0/B/C timing ROM observes the freshly-reloaded period
         // taking effect one 2 MHz APU tick later than on CGB-D/E.
-        let cgb_revision_delay_t = if self.is_early_cgb_revision() { 2 } else { 0 };
+        let cgb_revision_delay_t = if self.is_early_cgb_revision() {
+            EARLY_CGB_FREQ_REWRITE_DELAY_T
+        } else {
+            LATE_CGB_FREQ_REWRITE_DELAY_T
+        };
         self.freq_timer = period + cgb_revision_delay_t;
         self.freq_timer_just_reloaded = false;
     }
