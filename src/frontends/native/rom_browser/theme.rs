@@ -76,6 +76,15 @@ pub const HEADER_HEIGHT: f32 = 48.0;
 /// Smooth scroll speed (higher = faster, 1.0 = instant).
 pub const SCROLL_SPEED: f32 = 80.0;
 
+/// Button pill background colour.
+pub const BUTTON_PILL_BG: Color32 = Color32::from_rgb(60, 60, 75);
+
+/// Button pill text colour.
+pub const BUTTON_PILL_TEXT: Color32 = Color32::WHITE;
+
+/// Button pill label colour (action description).
+pub const BUTTON_PILL_LABEL: Color32 = Color32::from_rgb(170, 170, 185);
+
 /// Calculate the number of grid columns and cover width for a given area.
 ///
 /// Returns `(columns, cover_width)`.

@@ -521,25 +521,24 @@ impl RomBrowserApp {
                             }
 
                             // Button legend at the bottom of the sidebar.
-                            ui.with_layout(
-                                egui::Layout::bottom_up(egui::Align::LEFT),
-                                |ui| {
-                                    let legend = if search_active {
-                                        "Esc: Close  |  Enter: Launch"
-                                    } else if genre_filter_active {
-                                        "↑↓: Navigate  |  Enter: Toggle  |  Esc: Close"
-                                    } else if detail_view_active {
-                                        "A: Launch  |  Y: Fav  |  B: Back"
-                                    } else {
-                                        "A: Launch  |  X: Details  |  Y: Fav\nSelect: Filter  |  Start: Search"
-                                    };
-                                    ui.label(
-                                        egui::RichText::new(legend)
-                                            .color(theme::DIM_TEXT)
-                                            .size(11.0),
-                                    );
-                                },
-                            );
+                            ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+                                let legend_items: &[(&str, &str)] = if search_active {
+                                    &[("Esc", "Close"), ("Enter", "Launch")]
+                                } else if genre_filter_active {
+                                    &[("↑↓", "Navigate"), ("Enter", "Toggle"), ("Esc", "Close")]
+                                } else if detail_view_active {
+                                    &[("A", "Launch"), ("Y", "Fav"), ("B", "Back")]
+                                } else {
+                                    &[
+                                        ("A", "Launch"),
+                                        ("X", "Details"),
+                                        ("Y", "Fav"),
+                                        ("Select", "Filter"),
+                                        ("Start", "Search"),
+                                    ]
+                                };
+                                Self::render_button_legend(ui, legend_items);
+                            });
                         });
                 });
 
@@ -597,9 +596,7 @@ impl RomBrowserApp {
                     display_h,
                 );
             }
-            if detail_view_active
-                && let Some(ref entry) = selected_entry
-            {
+            if detail_view_active && let Some(ref entry) = selected_entry {
                 Self::render_detail_view_egui(ui.ctx(), entry, &tex_map, display_w, display_h);
             }
         });
@@ -917,6 +914,83 @@ impl RomBrowserApp {
                             .size(12.0),
                     );
                 });
+        }
+    }
+
+    /// Render a row of pill-shaped button prompts (e.g., `[A] Launch`).
+    fn render_button_legend(ui: &mut egui::Ui, items: &[(&str, &str)]) {
+        let pill_font = egui::FontId::proportional(11.0);
+        let label_font = egui::FontId::proportional(11.0);
+        let pill_h = 22.0_f32;
+        let pill_pad_x = 8.0_f32;
+        let item_gap = 6.0_f32;
+        let label_gap = 5.0_f32;
+        let rounding = egui::CornerRadius::same(11);
+        let avail_w = ui.available_width();
+
+        // Lay items out in rows that wrap when they exceed available width.
+        let mut cursor_x = 0.0_f32;
+        let mut rows: Vec<Vec<(f32, &str, &str)>> = vec![Vec::new()];
+
+        for &(btn, label) in items {
+            let btn_galley = ui.painter().layout_no_wrap(
+                btn.to_owned(),
+                pill_font.clone(),
+                egui::Color32::WHITE,
+            );
+            let label_galley = ui.painter().layout_no_wrap(
+                label.to_owned(),
+                label_font.clone(),
+                egui::Color32::WHITE,
+            );
+            let pill_w = btn_galley.size().x + pill_pad_x * 2.0;
+            let item_w = pill_w + label_gap + label_galley.size().x;
+
+            if !rows.last().unwrap().is_empty() && cursor_x + item_w > avail_w {
+                rows.push(Vec::new());
+                cursor_x = 0.0;
+            }
+            rows.last_mut().unwrap().push((pill_w, btn, label));
+            cursor_x += item_w + item_gap;
+        }
+
+        // Render from bottom up (bottom_up layout reverses order).
+        for row in rows.iter().rev() {
+            let (_, row_rect) = ui.allocate_space(egui::vec2(avail_w, pill_h + 4.0));
+            let mut x = row_rect.left();
+            let cy = row_rect.center().y;
+
+            for &(pill_w, btn, label) in row {
+                let pill_rect = egui::Rect::from_min_size(
+                    egui::pos2(x, cy - pill_h / 2.0),
+                    egui::vec2(pill_w, pill_h),
+                );
+                ui.painter()
+                    .rect_filled(pill_rect, rounding, theme::BUTTON_PILL_BG);
+                ui.painter().text(
+                    pill_rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    btn,
+                    pill_font.clone(),
+                    theme::BUTTON_PILL_TEXT,
+                );
+
+                x += pill_w + label_gap;
+                ui.painter().text(
+                    egui::pos2(x, cy),
+                    egui::Align2::LEFT_CENTER,
+                    label,
+                    label_font.clone(),
+                    theme::BUTTON_PILL_LABEL,
+                );
+
+                let label_galley = ui.painter().layout_no_wrap(
+                    label.to_owned(),
+                    label_font.clone(),
+                    egui::Color32::WHITE,
+                );
+                x += label_galley.size().x + item_gap;
+            }
         }
     }
 
