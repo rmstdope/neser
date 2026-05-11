@@ -921,16 +921,19 @@ impl RomBrowserApp {
     fn render_button_legend(ui: &mut egui::Ui, items: &[(&str, &str)]) {
         let pill_font = egui::FontId::proportional(11.0);
         let label_font = egui::FontId::proportional(11.0);
-        let pill_h = 22.0_f32;
-        let pill_pad_x = 8.0_f32;
+        let pill_h = 20.0_f32;
+        let outer_h = 26.0_f32;
+        let pill_pad_x = 7.0_f32;
         let item_gap = 6.0_f32;
         let label_gap = 5.0_f32;
-        let rounding = egui::CornerRadius::same(11);
+        let outer_pad_x = 4.0_f32;
+        let pill_rounding = egui::CornerRadius::same(10);
+        let outer_rounding = egui::CornerRadius::same(13);
         let avail_w = ui.available_width();
 
         // Lay items out in rows that wrap when they exceed available width.
         let mut cursor_x = 0.0_f32;
-        let mut rows: Vec<Vec<(f32, &str, &str)>> = vec![Vec::new()];
+        let mut rows: Vec<Vec<(f32, f32, &str, &str)>> = vec![Vec::new()];
 
         for &(btn, label) in items {
             let btn_galley = ui.painter().layout_no_wrap(
@@ -944,29 +947,40 @@ impl RomBrowserApp {
                 egui::Color32::WHITE,
             );
             let pill_w = btn_galley.size().x + pill_pad_x * 2.0;
-            let item_w = pill_w + label_gap + label_galley.size().x;
+            let label_w = label_galley.size().x;
+            let outer_w = outer_pad_x + pill_w + label_gap + label_w + outer_pad_x;
 
-            if !rows.last().unwrap().is_empty() && cursor_x + item_w > avail_w {
+            if !rows.last().unwrap().is_empty() && cursor_x + outer_w > avail_w {
                 rows.push(Vec::new());
                 cursor_x = 0.0;
             }
-            rows.last_mut().unwrap().push((pill_w, btn, label));
-            cursor_x += item_w + item_gap;
+            rows.last_mut().unwrap().push((pill_w, outer_w, btn, label));
+            cursor_x += outer_w + item_gap;
         }
 
         // Render from bottom up (bottom_up layout reverses order).
         for row in rows.iter().rev() {
-            let (_, row_rect) = ui.allocate_space(egui::vec2(avail_w, pill_h + 4.0));
+            let (_, row_rect) = ui.allocate_space(egui::vec2(avail_w, outer_h + 4.0));
             let mut x = row_rect.left();
             let cy = row_rect.center().y;
 
-            for &(pill_w, btn, label) in row {
-                let pill_rect = egui::Rect::from_min_size(
-                    egui::pos2(x, cy - pill_h / 2.0),
-                    egui::vec2(pill_w, pill_h),
+            for &(pill_w, outer_w, btn, label) in row {
+                // Outer wrapper pill.
+                let outer_rect = egui::Rect::from_min_size(
+                    egui::pos2(x, cy - outer_h / 2.0),
+                    egui::vec2(outer_w, outer_h),
                 );
                 ui.painter()
-                    .rect_filled(pill_rect, rounding, theme::BUTTON_PILL_BG);
+                    .rect_filled(outer_rect, outer_rounding, theme::LEGEND_ITEM_BG);
+
+                // Inner coloured button pill.
+                let pill_x = x + outer_pad_x;
+                let pill_rect = egui::Rect::from_min_size(
+                    egui::pos2(pill_x, cy - pill_h / 2.0),
+                    egui::vec2(pill_w, pill_h),
+                );
+                let pill_bg = Self::button_pill_color(btn);
+                ui.painter().rect_filled(pill_rect, pill_rounding, pill_bg);
                 ui.painter().text(
                     pill_rect.center(),
                     egui::Align2::CENTER_CENTER,
@@ -975,22 +989,29 @@ impl RomBrowserApp {
                     theme::BUTTON_PILL_TEXT,
                 );
 
-                x += pill_w + label_gap;
+                // Action label.
+                let label_x = pill_x + pill_w + label_gap;
                 ui.painter().text(
-                    egui::pos2(x, cy),
+                    egui::pos2(label_x, cy),
                     egui::Align2::LEFT_CENTER,
                     label,
                     label_font.clone(),
                     theme::BUTTON_PILL_LABEL,
                 );
 
-                let label_galley = ui.painter().layout_no_wrap(
-                    label.to_owned(),
-                    label_font.clone(),
-                    egui::Color32::WHITE,
-                );
-                x += label_galley.size().x + item_gap;
+                x += outer_w + item_gap;
             }
+        }
+    }
+
+    /// Get the background colour for a button pill based on standard gamepad colours.
+    fn button_pill_color(btn: &str) -> egui::Color32 {
+        match btn {
+            "A" => theme::BUTTON_COLOR_A,
+            "B" => theme::BUTTON_COLOR_B,
+            "X" => theme::BUTTON_COLOR_X,
+            "Y" => theme::BUTTON_COLOR_Y,
+            _ => theme::BUTTON_PILL_BG,
         }
     }
 
