@@ -101,6 +101,10 @@ pub struct Apu {
     /// the DIV register is set causes the APU to skip the first DIV-APU event."
     #[serde(default)]
     skip_next_div_apu_event: bool,
+    /// When `true`, the next DIV-APU event is serviced without advancing
+    /// `div_divider`. This models SameBoy's post-skip "SKIPPED" state.
+    #[serde(default)]
+    div_apu_event_without_div_increment: bool,
 
     /// Fractional M-cycle accumulator for sample generation.
     sample_acc: f32,
@@ -149,6 +153,7 @@ impl Apu {
             lf_div: true, // Initialize to 1
             div_divider: 0,
             skip_next_div_apu_event: false,
+            div_apu_event_without_div_increment: false,
             sample_acc: 0.0,
             cycles_per_sample: DMG_MCYCLES_PER_SEC / 44_100.0,
             pending_sample: None,
@@ -311,13 +316,19 @@ impl Apu {
         // Skip the first event if APU was powered on while DIV-APU bit was high.
         if self.skip_next_div_apu_event {
             self.skip_next_div_apu_event = false;
+            self.div_apu_event_without_div_increment = true;
             trace_apu!(3; "GB APU skipping DIV-APU event (power-on with DIV-APU bit high)");
             return;
         }
 
-        // Increment div_divider at the start of every serviced DIV-APU event,
-        // before any channel work. Low bits drive length/sweep/envelope sub-events.
-        self.div_divider = self.div_divider.wrapping_add(1);
+        let increment_divider = !self.div_apu_event_without_div_increment;
+        if increment_divider {
+            // Increment div_divider at the start of every serviced DIV-APU event,
+            // before any channel work. Low bits drive length/sweep/envelope sub-events.
+            self.div_divider = self.div_divider.wrapping_add(1);
+        } else {
+            self.div_apu_event_without_div_increment = false;
+        }
 
         trace_apu!(3; "GB APU FS step={} length={} sweep={} envelope={}",
             self.fs_step,
@@ -595,10 +606,8 @@ impl Apu {
             return;
         }
 
-        // Extra length clocking: when the current FS step does NOT clock length
-        // (i.e. FS_TABLE[fs_step] has bit 0 clear — steps 1, 3, 5, 7), NRx4
-        // writes that enable length_en or trigger with length_en get an extra clock.
-        let extra_clk = FS_TABLE[self.fs_step as usize] & 0x01 == 0;
+        // Extra length clocking is keyed directly off the DIV-APU divider LSB.
+        let extra_clk = self.div_divider & 1 == 1;
         let cgb_early_extra_length_clock = self.cgb_early_extra_length_clock();
         let cgb_b_delayed_ch3_length_disable = self.cgb_b_delayed_ch3_length_disable();
 
@@ -678,6 +687,7 @@ impl Apu {
             self.hp_prev_out = 0.0;
             // Clear skip flag on power-off to prevent leaking into a later power-on.
             self.skip_next_div_apu_event = false;
+            self.div_apu_event_without_div_increment = false;
             // Reset Sub-M-cycle FS-step counter alongside `fs_step` so
             // that sub-events keyed off `div_divider` low bits stay aligned
             // across power cycles.
@@ -691,6 +701,7 @@ impl Apu {
             self.fs_step = 0;
             self.div_divider = 0;
             self.skip_next_div_apu_event = false;
+            self.div_apu_event_without_div_increment = false;
             // Reset CH4 counter model state (alignment, counter) on APU init,
             // matching SameBoy's GB_apu_init which zeroes everything.
             self.ch4.apu_init();
@@ -713,6 +724,7 @@ impl Apu {
     /// "Starting the APU while bit 4 of the DIV register is set causes the APU
     /// to skip the first DIV-APU event."
     pub fn arm_skip_next_div_apu_event(&mut self) {
+        self.div_divider = 1;
         self.skip_next_div_apu_event = true;
         trace_apu!(2; "GB APU armed skip_next_div_apu_event (power-on with DIV-APU bit high)");
     }
@@ -778,15 +790,25 @@ mod tests {
     #[test]
     fn test_div_divider_does_not_advance_on_skipped_event() {
         // Power-on quirk: skip_next_div_apu_event suppresses both the FS
-        // dispatch AND the div_divider increment, (order matters for sub-M-cycle
-        // skip_div_event SKIPPED branch.
+        // dispatch AND the div_divider increment. The following DIV-APU event is
+        // serviced without incrementing the divider, matching SameBoy's SKIPPED
+        // state before normal divider increments resume.
         let mut apu = powered_apu();
+        apu.write_register(0xFF11, 0x3E);
+        apu.write_register(0xFF12, 0x80);
+        apu.write_register(0xFF14, 0xC0);
+        assert_eq!(apu.ch1.length_counter, 2);
         apu.arm_skip_next_div_apu_event();
-        let start = apu.div_divider();
+        assert_eq!(apu.div_divider(), 1);
         apu.clock_div_apu();
-        assert_eq!(apu.div_divider(), start);
+        assert_eq!(apu.div_divider(), 1);
+        assert_eq!(apu.ch1.length_counter, 2);
         apu.clock_div_apu();
-        assert_eq!(apu.div_divider(), start.wrapping_add(1));
+        assert_eq!(apu.div_divider(), 1);
+        assert_eq!(apu.ch1.length_counter, 1);
+        apu.clock_div_apu();
+        assert_eq!(apu.div_divider(), 2);
+        assert_eq!(apu.ch1.length_counter, 1);
     }
 
     #[test]

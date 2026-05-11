@@ -31,16 +31,6 @@ macro_rules! assert_samesuite_pass {
     };
 }
 
-macro_rules! samesuite_apu_test {
-    ($name:ident, $path:expr, $hardware:expr, $reason:expr) => {
-        #[test]
-        #[ignore = $reason]
-        fn $name() {
-            assert_samesuite_pass!($path, $hardware);
-        }
-    };
-}
-
 /// Macro for SameSuite APU tests that are now passing (no ignore).
 macro_rules! samesuite_apu_test_enabled {
     ($name:ident, $path:expr, $hardware:expr) => {
@@ -390,11 +380,10 @@ samesuite_apu_test_enabled!(
     &format!("{BASE}/div_write_trigger.gb"),
     SameSuiteHardware::DmgB
 );
-samesuite_apu_test!(
+samesuite_apu_test_enabled!(
     test_samesuite_apu_div_write_trigger_10,
     &format!("{BASE}/div_write_trigger_10.gb"),
-    SameSuiteHardware::DmgB,
-    "Known SameSuite APU failure on neser DMG-B; tracked under issue #2262"
+    SameSuiteHardware::DmgB
 );
 samesuite_apu_test_enabled!(
     test_samesuite_apu_div_write_trigger_volume,
