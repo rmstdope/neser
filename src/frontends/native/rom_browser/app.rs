@@ -174,7 +174,18 @@ impl RomBrowserApp {
                 if let Ok(mappings) = std::fs::read_to_string("gamecontrollerdb.txt") {
                     builder = builder.add_mappings(&mappings);
                 }
-                builder.build().ok()
+                let gilrs = builder.build().ok();
+                if let Some(ref g) = gilrs {
+                    for (_id, gp) in g.gamepads() {
+                        eprintln!(
+                            "[gamepad] name={:?} uuid={:?} mapping_source={:?}",
+                            gp.name(),
+                            gp.uuid(),
+                            gp.mapping_source()
+                        );
+                    }
+                }
+                gilrs
             },
             gamepad_axis: GamepadAxisState::default(),
         }
@@ -1182,6 +1193,15 @@ impl RomBrowserApp {
         while let Some(event) = gilrs.next_event() {
             match event.event {
                 EventType::ButtonPressed(button, _) => {
+                    if let Some(gp) = gilrs.connected_gamepad(event.id) {
+                        eprintln!(
+                            "[gamepad] name={:?} uuid={:02x?} mapping_source={:?} button={:?}",
+                            gp.name(),
+                            gp.uuid(),
+                            gp.mapping_source(),
+                            button
+                        );
+                    }
                     if let Some(action) = Self::map_button(button) {
                         actions.push(action);
                     }
@@ -1203,11 +1223,11 @@ impl RomBrowserApp {
             gilrs::Button::DPadDown => Some(BrowserAction::Down),
             gilrs::Button::DPadLeft => Some(BrowserAction::Left),
             gilrs::Button::DPadRight => Some(BrowserAction::Right),
-            gilrs::Button::South => Some(BrowserAction::Confirm), // A button
-            gilrs::Button::East => Some(BrowserAction::Back),     // B button
+            gilrs::Button::East => Some(BrowserAction::Confirm), // Nintendo A button
+            gilrs::Button::South => Some(BrowserAction::Back),   // Nintendo B button
             gilrs::Button::Start => Some(BrowserAction::Search),
-            gilrs::Button::North => Some(BrowserAction::Favorite), // Y button
-            gilrs::Button::West => Some(BrowserAction::Detail),    // X button
+            gilrs::Button::North => Some(BrowserAction::Detail), // Nintendo X button
+            gilrs::Button::West => Some(BrowserAction::Favorite), // Nintendo Y button
             gilrs::Button::Select => Some(BrowserAction::GenreFilter),
             _ => None,
         }

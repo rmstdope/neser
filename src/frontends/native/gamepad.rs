@@ -35,8 +35,8 @@ const MAX_CONTROLLERS_FOUR_SCORE: usize = 4;
 /// Returns `None` for buttons that have no NES equivalent.
 pub fn map_button_to_nes(button: gilrs::Button) -> Option<Button> {
     match button {
-        gilrs::Button::South => Some(Button::A),
-        gilrs::Button::East => Some(Button::B),
+        gilrs::Button::South => Some(Button::B),
+        gilrs::Button::East => Some(Button::A),
         gilrs::Button::West => Some(Button::A),
         gilrs::Button::North => Some(Button::B),
         gilrs::Button::Start | gilrs::Button::RightTrigger2 => Some(Button::Start),
