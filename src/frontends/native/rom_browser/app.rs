@@ -919,16 +919,16 @@ impl RomBrowserApp {
 
     /// Render a row of pill-shaped button prompts (e.g., `[A] Launch`).
     fn render_button_legend(ui: &mut egui::Ui, items: &[(&str, &str)]) {
-        let pill_font = egui::FontId::proportional(11.0);
-        let label_font = egui::FontId::proportional(11.0);
-        let pill_h = 20.0_f32;
-        let outer_h = 26.0_f32;
+        let pill_font = egui::FontId::proportional(13.0);
+        let label_font = egui::FontId::proportional(13.0);
+        let pill_h = 24.0_f32;
+        let outer_h = 30.0_f32;
         let pill_pad_x = 7.0_f32;
         let item_gap = 6.0_f32;
         let label_gap = 5.0_f32;
         let outer_pad_x = 4.0_f32;
-        let pill_rounding = egui::CornerRadius::same(10);
-        let outer_rounding = egui::CornerRadius::same(13);
+        let pill_rounding = egui::CornerRadius::same(12);
+        let outer_rounding = egui::CornerRadius::same(15);
         let avail_w = ui.available_width();
 
         // Lay items out in rows that wrap when they exceed available width.
