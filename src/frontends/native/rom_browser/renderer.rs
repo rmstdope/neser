@@ -288,6 +288,23 @@ impl BrowserGl {
         self.textures.get(key)
     }
 
+    /// Remove a texture from the cache and free its GL resources.
+    pub fn remove_texture(&mut self, key: &TextureKey) {
+        if let Some(loaded) = self.textures.remove(key) {
+            self.egui_glow.painter.free_texture(loaded.egui_id);
+        }
+    }
+
+    /// Number of currently loaded textures.
+    pub fn texture_count(&self) -> usize {
+        self.textures.len()
+    }
+
+    /// Get all currently loaded texture keys (for eviction decisions).
+    pub fn texture_keys(&self) -> Vec<TextureKey> {
+        self.textures.keys().cloned().collect()
+    }
+
     /// Create a GL texture and upload RGBA pixels, registering it with egui's painter.
     ///
     /// Uses the glow API so the texture is tracked by `egui_glow::Painter` and

@@ -96,8 +96,6 @@ pub struct RomBrowserApp {
     scroll_offset: f32,
     /// Target scroll offset for smooth scrolling.
     scroll_target: f32,
-    /// Tracks whether cover art textures have been loaded.
-    textures_loaded: bool,
     /// Search overlay state.
     search_active: bool,
     search_query: String,
@@ -119,8 +117,6 @@ pub struct RomBrowserApp {
     catalog_state: CatalogState,
     /// Tracks current modifier key state.
     modifiers: winit::keyboard::ModifiersState,
-    /// Decoded RGBA pixel cache for cover art (survives GL context changes).
-    pixel_cache: HashMap<i64, (u32, u32, Vec<u8>)>,
     /// Gamepad input via gilrs.
     gilrs: Option<Gilrs>,
     /// Tracks analog stick state for digital D-pad conversion.
@@ -154,7 +150,6 @@ impl RomBrowserApp {
             selected_index: 0,
             scroll_offset: 0.0,
             scroll_target: 0.0,
-            textures_loaded: false,
             search_active: false,
             search_query: String::new(),
             genre_filter_active: false,
@@ -166,7 +161,6 @@ impl RomBrowserApp {
             show_favorites_only: false,
             catalog_state: CatalogState::Idle,
             modifiers: winit::keyboard::ModifiersState::empty(),
-            pixel_cache: HashMap::new(),
             gilrs: {
                 let mut builder = GilrsBuilder::new()
                     .with_default_filters(true)
@@ -174,18 +168,7 @@ impl RomBrowserApp {
                 if let Ok(mappings) = std::fs::read_to_string("gamecontrollerdb.txt") {
                     builder = builder.add_mappings(&mappings);
                 }
-                let gilrs = builder.build().ok();
-                if let Some(ref g) = gilrs {
-                    for (_id, gp) in g.gamepads() {
-                        eprintln!(
-                            "[gamepad] name={:?} uuid={:?} mapping_source={:?}",
-                            gp.name(),
-                            gp.uuid(),
-                            gp.mapping_source()
-                        );
-                    }
-                }
-                gilrs
+                builder.build().ok()
             },
             gamepad_axis: GamepadAxisState::default(),
         }
@@ -281,8 +264,6 @@ impl RomBrowserApp {
         // Reset transient state for a fresh UI pass but keep catalog/textures.
         self.result = BrowserResult::Closed;
         self.gl = None;
-        // Textures must be re-uploaded to the new GL context.
-        self.textures_loaded = false;
         event_loop
             .run_app_on_demand(self)
             .map_err(|e| format!("Browser event loop error: {e}"))?;
@@ -320,9 +301,8 @@ impl RomBrowserApp {
     fn render_frame(&mut self) {
         self.poll_catalog_loading();
 
-        if !self.textures_loaded && matches!(self.catalog_state, CatalogState::Ready) {
-            self.load_cover_textures();
-            self.textures_loaded = true;
+        if matches!(self.catalog_state, CatalogState::Ready) {
+            self.lazy_load_visible_textures();
         }
 
         let Some(ref mut gl) = self.gl else { return };
@@ -1102,26 +1082,99 @@ impl RomBrowserApp {
             });
     }
 
-    /// Load cover art textures for all catalog entries that have boxart paths.
-    fn load_cover_textures(&mut self) {
-        let Some(ref mut gl) = self.gl else { return };
-        for entry in &self.catalog {
-            if let (Some(game_id), Some(path)) = (entry.metadata_game_id, &entry.boxart_path) {
-                let key = TextureKey::CoverArt(game_id);
-                if let Some((w, h, pixels)) = self.pixel_cache.get(&game_id) {
-                    // Re-upload from in-memory cache (fast, no disk I/O).
-                    gl.load_texture_from_rgba(key, *w, *h, pixels);
-                } else if path.exists() {
-                    // First load: decode from disk, upload, and cache pixels.
-                    if let Ok(img) = image::open(path) {
-                        let rgba = img.into_rgba8();
-                        let (w, h) = rgba.dimensions();
-                        let pixels = rgba.into_raw();
-                        gl.load_texture_from_rgba(key, w, h, &pixels);
-                        self.pixel_cache.insert(game_id, (w, h, pixels));
-                    }
+    /// Maximum number of textures to load per frame to avoid frame drops.
+    const MAX_LOADS_PER_FRAME: usize = 4;
+    /// How many rows of buffer above/below the viewport to preload.
+    const PRELOAD_ROW_BUFFER: usize = 2;
+    /// Maximum number of textures to keep in memory.
+    const MAX_CACHED_TEXTURES: usize = 200;
+
+    /// Lazily load textures for visible grid items and evict offscreen ones.
+    fn lazy_load_visible_textures(&mut self) {
+        let Some(ref gl) = self.gl else { return };
+
+        let (display_w, display_h) = gl.logical_size();
+        let sidebar_w = theme::sidebar_width(display_w);
+        let grid_area_w = display_w - sidebar_w;
+        let (cols, cover_w) = theme::grid_layout(grid_area_w);
+        let cell_h = theme::cell_height(cover_w);
+        let grid_height = display_h - theme::HEADER_HEIGHT - theme::FOOTER_HEIGHT;
+
+        // Determine the range of rows visible on screen (with buffer).
+        let first_visible_row =
+            (self.scroll_offset / (cell_h + theme::GRID_SPACING)).floor() as usize;
+        let rows_on_screen = (grid_height / (cell_h + theme::GRID_SPACING)).ceil() as usize + 1;
+        let first_row = first_visible_row.saturating_sub(Self::PRELOAD_ROW_BUFFER);
+        let last_row = first_visible_row + rows_on_screen + Self::PRELOAD_ROW_BUFFER;
+
+        // Collect game IDs for entries in the visible range.
+        let first_idx = first_row * cols;
+        let last_idx = ((last_row + 1) * cols).min(self.filtered_indices.len());
+        let range_start = first_idx.min(self.filtered_indices.len());
+        let range_end = last_idx.min(self.filtered_indices.len());
+
+        let mut visible_game_ids: Vec<i64> = Vec::with_capacity(range_end - range_start);
+        for &fi in &self.filtered_indices[range_start..range_end] {
+            if let Some(gid) = self.catalog[fi].metadata_game_id {
+                visible_game_ids.push(gid);
+            }
+        }
+
+        // Also include the selected entry (sidebar needs its texture).
+        if let Some(&catalog_idx) = self.filtered_indices.get(self.selected_index)
+            && let Some(gid) = self.catalog[catalog_idx].metadata_game_id
+            && !visible_game_ids.contains(&gid)
+        {
+            visible_game_ids.push(gid);
+        }
+
+        // Collect paths for entries that need loading (before borrowing gl mutably).
+        let mut to_load: Vec<(TextureKey, std::path::PathBuf)> =
+            Vec::with_capacity(Self::MAX_LOADS_PER_FRAME);
+        for &game_id in &visible_game_ids {
+            if to_load.len() >= Self::MAX_LOADS_PER_FRAME {
+                break;
+            }
+            let key = TextureKey::CoverArt(game_id);
+            if gl.get_texture(&key).is_some() {
+                continue;
+            }
+            if let Some(path) = self
+                .catalog
+                .iter()
+                .find(|e| e.metadata_game_id == Some(game_id))
+                .and_then(|e| e.boxart_path.as_ref())
+                && path.exists()
+            {
+                to_load.push((key, path.clone()));
+            }
+        }
+
+        // Determine which textures to evict.
+        let mut to_evict: Vec<TextureKey> = Vec::new();
+        if gl.texture_count() + to_load.len() > Self::MAX_CACHED_TEXTURES {
+            let loaded_keys = gl.texture_keys();
+            for key in loaded_keys {
+                if gl.texture_count().saturating_sub(to_evict.len()) + to_load.len()
+                    <= Self::MAX_CACHED_TEXTURES
+                {
+                    break;
+                }
+                if let TextureKey::CoverArt(gid) = key
+                    && !visible_game_ids.contains(&gid)
+                {
+                    to_evict.push(TextureKey::CoverArt(gid));
                 }
             }
+        }
+
+        // Now take the mutable borrow for actual GL operations.
+        let gl = self.gl.as_mut().unwrap();
+        for key in to_evict {
+            gl.remove_texture(&key);
+        }
+        for (key, path) in &to_load {
+            gl.load_texture_from_file(key.clone(), path);
         }
     }
 
@@ -1193,15 +1246,6 @@ impl RomBrowserApp {
         while let Some(event) = gilrs.next_event() {
             match event.event {
                 EventType::ButtonPressed(button, _) => {
-                    if let Some(gp) = gilrs.connected_gamepad(event.id) {
-                        eprintln!(
-                            "[gamepad] name={:?} uuid={:02x?} mapping_source={:?} button={:?}",
-                            gp.name(),
-                            gp.uuid(),
-                            gp.mapping_source(),
-                            button
-                        );
-                    }
                     if let Some(action) = Self::map_button(button) {
                         actions.push(action);
                     }
@@ -1725,7 +1769,6 @@ mod tests {
             selected_index: 0,
             scroll_offset: 0.0,
             scroll_target: 0.0,
-            textures_loaded: false,
             search_active: false,
             search_query: String::new(),
             genre_filter_active: false,
@@ -1737,7 +1780,6 @@ mod tests {
             show_favorites_only: false,
             catalog_state: CatalogState::Ready,
             modifiers: winit::keyboard::ModifiersState::empty(),
-            pixel_cache: HashMap::new(),
             gilrs: None, // No gamepad in tests
             gamepad_axis: GamepadAxisState::default(),
         };
