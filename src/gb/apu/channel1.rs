@@ -422,6 +422,11 @@ impl Channel1 {
             )
     }
 
+    fn matches_early_cgb_rewrite_extension_window(&self, double_speed: bool) -> bool {
+        (!double_speed && self.freq_timer == EARLY_CGB_NORMAL_REWRITE_EXTENSION_TIMER_T)
+            || (double_speed && self.freq_timer == EARLY_CGB_DOUBLE_REWRITE_EXTENSION_TIMER_T)
+    }
+
     /// Synchronous sweep step (Phase 0-3 path, retained for DMG / pre-CGB-E).
     /// Mirrors the original Blargg-aligned implementation: when sweep is
     /// enabled and period > 0, compute the swept frequency, check overflow,
@@ -998,8 +1003,7 @@ impl Channel1 {
             && !self.freq_timer_just_reloaded
             && self.current_output == 0
             && self.duty_pos == 6
-            && ((!double_speed && self.freq_timer == EARLY_CGB_NORMAL_REWRITE_EXTENSION_TIMER_T)
-                || (double_speed && self.freq_timer == EARLY_CGB_DOUBLE_REWRITE_EXTENSION_TIMER_T))
+            && self.matches_early_cgb_rewrite_extension_window(double_speed)
         {
             self.freq_timer += 4;
             return;
@@ -1013,7 +1017,7 @@ impl Channel1 {
         }
         let period = (2048 - self.freq) * 4;
         // SameSuite's CGB-0/B/C timing ROM observes the freshly-reloaded period
-        // taking effect one 2 MHz APU tick later than on CGB-D/E.
+        // taking effect one APU tick (at 2 MHz) later than on CGB-D/E.
         let cgb_revision_delay_t = if self.is_early_cgb_revision() {
             EARLY_CGB_FREQ_REWRITE_DELAY_T
         } else {
