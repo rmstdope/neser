@@ -400,7 +400,7 @@ impl RomBrowserApp {
                 .inner_margin(egui::Margin::same(12))
                 .outer_margin(egui::Margin {
                     left: 10,
-                    right: 16,
+                    right: 0,
                     top: 10,
                     bottom: 16,
                 })
@@ -1314,7 +1314,17 @@ impl ApplicationHandler for RomBrowserApp {
                         Key::Character(ref ch)
                             if (ch.as_str() == "f" || ch.as_str() == "F") && ctrl =>
                         {
-                            self.search_active = true;
+                            // Toggle fullscreen.
+                            if let Some(ref gl) = self.gl {
+                                let window = gl.window();
+                                if window.fullscreen().is_some() {
+                                    window.set_fullscreen(None);
+                                } else {
+                                    window.set_fullscreen(Some(
+                                        winit::window::Fullscreen::Borderless(None),
+                                    ));
+                                }
+                            }
                         }
                         Key::Character(ref ch)
                             if (ch.as_str() == "q" || ch.as_str() == "Q") && ctrl =>
