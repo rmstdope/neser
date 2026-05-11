@@ -902,17 +902,75 @@ impl RomBrowserApp {
 
         if let Some(ref overview) = entry.overview {
             ui.add_space(6.0);
-            egui::Frame::new()
-                .fill(egui::Color32::from_rgb(22, 22, 28))
-                .corner_radius(egui::CornerRadius::same(theme::CORNER_RADIUS as u8))
-                .inner_margin(egui::Margin::same(10))
-                .show(ui, |ui| {
-                    ui.label(
-                        egui::RichText::new(overview)
-                            .color(theme::TEXT_COLOR)
-                            .size(15.0),
-                    );
-                });
+            // Reserve space for the button legend at the bottom.
+            let legend_reserve = 80.0;
+            let max_desc_h = (ui.available_height() - legend_reserve).max(0.0);
+            if max_desc_h > 30.0 {
+                egui::Frame::new()
+                    .fill(egui::Color32::from_rgb(22, 22, 28))
+                    .corner_radius(egui::CornerRadius::same(theme::CORNER_RADIUS as u8))
+                    .inner_margin(egui::Margin::same(10))
+                    .show(ui, |ui| {
+                        let font = egui::FontId::proportional(15.0);
+                        let avail_w = ui.available_width();
+                        // Inner margin eats into available width.
+                        let text_w = avail_w.max(1.0);
+                        let truncated = Self::truncate_text_to_height(
+                            ui,
+                            overview,
+                            &font,
+                            text_w,
+                            max_desc_h - 20.0,
+                        );
+                        ui.label(
+                            egui::RichText::new(truncated)
+                                .color(theme::TEXT_COLOR)
+                                .size(15.0),
+                        );
+                    });
+            }
+        }
+    }
+
+    /// Truncate text with '...' so its laid-out height fits within `max_height`.
+    fn truncate_text_to_height(
+        ui: &egui::Ui,
+        text: &str,
+        font: &egui::FontId,
+        wrap_width: f32,
+        max_height: f32,
+    ) -> String {
+        // First check if the full text fits.
+        let full_galley =
+            ui.painter()
+                .layout(text.to_owned(), font.clone(), theme::TEXT_COLOR, wrap_width);
+        if full_galley.size().y <= max_height {
+            return text.to_owned();
+        }
+
+        // Binary search for the longest prefix that fits with "...".
+        let chars: Vec<char> = text.chars().collect();
+        let mut lo = 0_usize;
+        let mut hi = chars.len();
+        while lo < hi {
+            let mid = (lo + hi).div_ceil(2);
+            let candidate: String = chars[..mid].iter().collect();
+            let candidate_text = format!("{candidate}...");
+            let galley =
+                ui.painter()
+                    .layout(candidate_text, font.clone(), theme::TEXT_COLOR, wrap_width);
+            if galley.size().y <= max_height {
+                lo = mid;
+            } else {
+                hi = mid - 1;
+            }
+        }
+
+        if lo == 0 {
+            "...".to_owned()
+        } else {
+            let prefix: String = chars[..lo].iter().collect();
+            format!("{prefix}...")
         }
     }
 
