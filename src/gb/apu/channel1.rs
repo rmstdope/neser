@@ -98,6 +98,11 @@ pub struct Channel1 {
     pub(crate) length_counter: u8, // 0-64; silences when reaches 0
     volume: u8,                    // current volume 0-15
     env_timer: u8,                 // envelope period countdown
+    /// True when the frequency timer reloaded exactly at the end of the last
+    /// APU tick. CGB CH1 frequency rewrites can replace the freshly-reloaded
+    /// period before the next pulse step.
+    #[serde(default)]
+    freq_timer_just_reloaded: bool,
     /// Latched square-wave PCM output. Duty register writes do not affect this
     /// until the current sample finishes and the duty step advances.
     #[serde(default)]
@@ -220,6 +225,7 @@ impl Channel1 {
             length_counter: 0,
             volume: 0,
             env_timer: 0,
+            freq_timer_just_reloaded: false,
             current_output: 0,
             sweep_shadow: 0,
             sweep_enabled: false,
@@ -329,14 +335,16 @@ impl Channel1 {
         if !self.active {
             return;
         }
+        self.freq_timer_just_reloaded = false;
         let period = (2048 - self.freq) * 4;
         if self.freq_timer == 0 {
             self.freq_timer = period;
         }
-        for _ in 0..4 {
+        for t in 0..4 {
             self.freq_timer -= 1;
             if self.freq_timer == 0 {
                 self.freq_timer = period;
+                self.freq_timer_just_reloaded = t == 3;
                 if self.triggered_once {
                     let old_pos = self.duty_pos;
                     self.duty_pos = (self.duty_pos + 1) & 7;
@@ -897,6 +905,7 @@ impl Channel1 {
 
     pub fn write_nr13(&mut self, val: u8) {
         self.freq = (self.freq & 0x0700) | u16::from(val);
+        self.apply_active_freq_rewrite_timing(None);
         trace_apu!(2; "GB APU CH1 write NR13=0x{:02X} freq=0x{:03X}", val, self.freq);
     }
 
@@ -935,6 +944,9 @@ impl Channel1 {
         let old_length_en = self.length_en;
         self.length_en = val & 0x40 != 0;
         self.freq = (self.freq & 0x00FF) | (u16::from(val & 0x07) << 8);
+        if val & 0x80 == 0 {
+            self.apply_active_freq_rewrite_timing(double_speed_phase_bits);
+        }
         // CGB-0/A/B clock length on extra even without current length_en set.
         let clocks_length_on_extra = self.length_en || cgb_early_extra_length_clock;
 
@@ -955,6 +967,46 @@ impl Channel1 {
                 self.length_counter = 63;
             }
         }
+    }
+
+    fn apply_active_freq_rewrite_timing(&mut self, double_speed_phase_bits: Option<u8>) {
+        if !self.active {
+            return;
+        }
+        let is_cgb_0bc = self.is_cgb
+            && matches!(
+                self.cgb_model,
+                CgbModel::Cgb0 | CgbModel::CgbA | CgbModel::CgbB | CgbModel::CgbC
+            );
+        let double_speed = double_speed_phase_bits.is_some();
+        if is_cgb_0bc
+            && !self.freq_timer_just_reloaded
+            && self.current_output == 0
+            && self.duty_pos == 6
+            && ((!double_speed && self.freq_timer == 6) || (double_speed && self.freq_timer == 2))
+        {
+            self.freq_timer += 4;
+            return;
+        }
+        let late_de_double_speed_rewrite = double_speed
+            && self.is_cgb
+            && matches!(self.cgb_model, CgbModel::CgbD | CgbModel::CgbE)
+            && self.freq_timer == 14;
+        if !self.freq_timer_just_reloaded && !late_de_double_speed_rewrite {
+            return;
+        }
+        let period = (2048 - self.freq) * 4;
+        let cgb_revision_delay_t = if self.is_cgb
+            && matches!(
+                self.cgb_model,
+                CgbModel::Cgb0 | CgbModel::CgbA | CgbModel::CgbB | CgbModel::CgbC
+            ) {
+            2
+        } else {
+            0
+        };
+        self.freq_timer = period + cgb_revision_delay_t;
+        self.freq_timer_just_reloaded = false;
     }
 
     /// Length counter write when APU is powered off (DMG quirk).
