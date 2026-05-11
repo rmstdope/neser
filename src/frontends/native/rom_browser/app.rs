@@ -530,9 +530,8 @@ impl RomBrowserApp {
                                     &[("A", "Launch"), ("Y", "Fav"), ("B", "Back")]
                                 } else {
                                     &[
-                                        ("A", "Launch"),
-                                        ("X", "Details"),
-                                        ("Y", "Fav"),
+                                        ("A", "Details"),
+                                        ("B", "Favorite"),
                                         ("Select", "Filter"),
                                         ("Start", "Search"),
                                     ]
@@ -925,7 +924,7 @@ impl RomBrowserApp {
         let outer_h = 30.0_f32;
         let pill_pad_x = 7.0_f32;
         let item_gap = 6.0_f32;
-        let label_gap = 5.0_f32;
+        let label_gap = 8.0_f32;
         let outer_pad_x = 8.0_f32;
         let pill_rounding = egui::CornerRadius::same(12);
         let outer_rounding = egui::CornerRadius::same(15);
