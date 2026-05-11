@@ -121,6 +121,12 @@ pub struct RomBrowserApp {
     gilrs: Option<Gilrs>,
     /// Tracks analog stick state for digital D-pad conversion.
     gamepad_axis: GamepadAxisState,
+    /// Sender for texture decode requests (game_id, path).
+    texture_request_tx: mpsc::Sender<(i64, PathBuf)>,
+    /// Receiver for decoded texture results (game_id, width, height, pixels).
+    texture_result_rx: mpsc::Receiver<(i64, u32, u32, Vec<u8>)>,
+    /// Game IDs that have been requested but not yet received.
+    texture_pending: Vec<i64>,
 }
 
 impl RomBrowserApp {
@@ -137,6 +143,25 @@ impl RomBrowserApp {
         };
         // Default browser window: use configured height with 16:9 ratio.
         let default_width = (default_height as f64 * 16.0 / 9.0) as u32;
+
+        // Spawn a background thread for image decoding.
+        let (request_tx, request_rx) = mpsc::channel::<(i64, PathBuf)>();
+        let (result_tx, result_rx) = mpsc::channel::<(i64, u32, u32, Vec<u8>)>();
+        std::thread::Builder::new()
+            .name("texture-decoder".into())
+            .spawn(move || {
+                while let Ok((game_id, path)) = request_rx.recv() {
+                    if let Ok(img) = image::open(&path) {
+                        let rgba = img.into_rgba8();
+                        let (w, h) = rgba.dimensions();
+                        let pixels = rgba.into_raw();
+                        if result_tx.send((game_id, w, h, pixels)).is_err() {
+                            break;
+                        }
+                    }
+                }
+            })
+            .expect("failed to spawn texture decoder thread");
 
         Self {
             app_context,
@@ -171,6 +196,9 @@ impl RomBrowserApp {
                 builder.build().ok()
             },
             gamepad_axis: GamepadAxisState::default(),
+            texture_request_tx: request_tx,
+            texture_result_rx: result_rx,
+            texture_pending: Vec::new(),
         }
     }
 
@@ -1082,15 +1110,43 @@ impl RomBrowserApp {
             });
     }
 
-    /// Maximum number of textures to load per frame to avoid frame drops.
-    const MAX_LOADS_PER_FRAME: usize = 4;
+    /// Maximum number of decode requests to send per frame.
+    const MAX_REQUESTS_PER_FRAME: usize = 8;
+    /// Maximum number of decoded results to upload per frame.
+    const MAX_UPLOADS_PER_FRAME: usize = 4;
     /// How many rows of buffer above/below the viewport to preload.
     const PRELOAD_ROW_BUFFER: usize = 2;
     /// Maximum number of textures to keep in memory.
     const MAX_CACHED_TEXTURES: usize = 200;
 
     /// Lazily load textures for visible grid items and evict offscreen ones.
+    ///
+    /// Image decoding is done on a background thread. This method:
+    /// 1. Uploads any decoded results that are ready (fast GL upload only)
+    /// 2. Sends decode requests for visible but unloaded textures
+    /// 3. Evicts offscreen textures when the budget is exceeded
     fn lazy_load_visible_textures(&mut self) {
+        // 1. Upload any decoded results from the background thread (non-blocking).
+        let mut decoded: Vec<(i64, u32, u32, Vec<u8>)> =
+            Vec::with_capacity(Self::MAX_UPLOADS_PER_FRAME);
+        while decoded.len() < Self::MAX_UPLOADS_PER_FRAME {
+            match self.texture_result_rx.try_recv() {
+                Ok(result) => decoded.push(result),
+                Err(_) => break,
+            }
+        }
+        if !decoded.is_empty() {
+            if let Some(ref mut gl) = self.gl {
+                for (game_id, w, h, pixels) in &decoded {
+                    let key = TextureKey::CoverArt(*game_id);
+                    gl.load_texture_from_rgba(key, *w, *h, pixels);
+                }
+            }
+            for (game_id, _, _, _) in &decoded {
+                self.texture_pending.retain(|&id| id != *game_id);
+            }
+        }
+
         let Some(ref gl) = self.gl else { return };
 
         let (display_w, display_h) = gl.logical_size();
@@ -1128,15 +1184,14 @@ impl RomBrowserApp {
             visible_game_ids.push(gid);
         }
 
-        // Collect paths for entries that need loading (before borrowing gl mutably).
-        let mut to_load: Vec<(TextureKey, std::path::PathBuf)> =
-            Vec::with_capacity(Self::MAX_LOADS_PER_FRAME);
+        // 2. Send decode requests for visible entries not yet loaded or pending.
+        let mut requests_sent = 0;
         for &game_id in &visible_game_ids {
-            if to_load.len() >= Self::MAX_LOADS_PER_FRAME {
+            if requests_sent >= Self::MAX_REQUESTS_PER_FRAME {
                 break;
             }
             let key = TextureKey::CoverArt(game_id);
-            if gl.get_texture(&key).is_some() {
+            if gl.get_texture(&key).is_some() || self.texture_pending.contains(&game_id) {
                 continue;
             }
             if let Some(path) = self
@@ -1146,18 +1201,18 @@ impl RomBrowserApp {
                 .and_then(|e| e.boxart_path.as_ref())
                 && path.exists()
             {
-                to_load.push((key, path.clone()));
+                let _ = self.texture_request_tx.send((game_id, path.clone()));
+                self.texture_pending.push(game_id);
+                requests_sent += 1;
             }
         }
 
-        // Determine which textures to evict.
-        let mut to_evict: Vec<TextureKey> = Vec::new();
-        if gl.texture_count() + to_load.len() > Self::MAX_CACHED_TEXTURES {
+        // 3. Evict offscreen textures when we exceed the budget.
+        if gl.texture_count() > Self::MAX_CACHED_TEXTURES {
             let loaded_keys = gl.texture_keys();
+            let mut to_evict: Vec<TextureKey> = Vec::new();
             for key in loaded_keys {
-                if gl.texture_count().saturating_sub(to_evict.len()) + to_load.len()
-                    <= Self::MAX_CACHED_TEXTURES
-                {
+                if gl.texture_count().saturating_sub(to_evict.len()) <= Self::MAX_CACHED_TEXTURES {
                     break;
                 }
                 if let TextureKey::CoverArt(gid) = key
@@ -1166,15 +1221,10 @@ impl RomBrowserApp {
                     to_evict.push(TextureKey::CoverArt(gid));
                 }
             }
-        }
-
-        // Now take the mutable borrow for actual GL operations.
-        let gl = self.gl.as_mut().unwrap();
-        for key in to_evict {
-            gl.remove_texture(&key);
-        }
-        for (key, path) in &to_load {
-            gl.load_texture_from_file(key.clone(), path);
+            let gl = self.gl.as_mut().unwrap();
+            for key in to_evict {
+                gl.remove_texture(&key);
+            }
         }
     }
 
@@ -1782,6 +1832,15 @@ mod tests {
             modifiers: winit::keyboard::ModifiersState::empty(),
             gilrs: None, // No gamepad in tests
             gamepad_axis: GamepadAxisState::default(),
+            texture_request_tx: {
+                let (tx, _rx) = mpsc::channel();
+                tx
+            },
+            texture_result_rx: {
+                let (_tx, rx) = mpsc::channel();
+                rx
+            },
+            texture_pending: Vec::new(),
         };
         app.set_catalog(entries);
         app
