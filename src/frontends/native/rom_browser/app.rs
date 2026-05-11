@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc;
 
+use gilrs::{Axis, EventType, Gilrs, GilrsBuilder};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -48,6 +49,32 @@ pub enum BrowserResult {
     RomSelected(PathBuf),
     /// User closed the browser window without selecting.
     Closed,
+}
+
+/// Threshold for converting analog stick axes to digital D-pad presses.
+const AXIS_DEAD_ZONE: f32 = 0.5;
+
+/// Tracks analog stick state for digital D-pad conversion in the browser.
+#[derive(Default)]
+struct GamepadAxisState {
+    up: bool,
+    down: bool,
+    left: bool,
+    right: bool,
+}
+
+/// Actions that can be triggered by gamepad input.
+enum BrowserAction {
+    Up,
+    Down,
+    Left,
+    Right,
+    Confirm,
+    Back,
+    Search,
+    Favorite,
+    Detail,
+    GenreFilter,
 }
 
 /// ROM browser winit application.
@@ -94,6 +121,10 @@ pub struct RomBrowserApp {
     modifiers: winit::keyboard::ModifiersState,
     /// Decoded RGBA pixel cache for cover art (survives GL context changes).
     pixel_cache: HashMap<i64, (u32, u32, Vec<u8>)>,
+    /// Gamepad input via gilrs.
+    gilrs: Option<Gilrs>,
+    /// Tracks analog stick state for digital D-pad conversion.
+    gamepad_axis: GamepadAxisState,
 }
 
 impl RomBrowserApp {
@@ -136,6 +167,16 @@ impl RomBrowserApp {
             catalog_state: CatalogState::Idle,
             modifiers: winit::keyboard::ModifiersState::empty(),
             pixel_cache: HashMap::new(),
+            gilrs: {
+                let mut builder = GilrsBuilder::new()
+                    .with_default_filters(true)
+                    .add_env_mappings(true);
+                if let Ok(mappings) = std::fs::read_to_string("gamecontrollerdb.txt") {
+                    builder = builder.add_mappings(&mappings);
+                }
+                builder.build().ok()
+            },
+            gamepad_axis: GamepadAxisState::default(),
         }
     }
 
@@ -1129,6 +1170,183 @@ impl RomBrowserApp {
         }
         self.ensure_selected_visible();
     }
+
+    /// Poll gamepad events and return browser actions.
+    fn poll_gamepad(&mut self) -> Vec<BrowserAction> {
+        let gilrs = match self.gilrs.as_mut() {
+            Some(g) => g,
+            None => return Vec::new(),
+        };
+
+        let mut actions = Vec::new();
+        while let Some(event) = gilrs.next_event() {
+            match event.event {
+                EventType::ButtonPressed(button, _) => {
+                    if let Some(action) = Self::map_button(button) {
+                        actions.push(action);
+                    }
+                }
+                EventType::AxisChanged(axis, value, _) => {
+                    let axis_actions = Self::update_axis(&mut self.gamepad_axis, axis, value);
+                    actions.extend(axis_actions);
+                }
+                _ => {}
+            }
+        }
+        actions
+    }
+
+    /// Map a gilrs button to a browser action.
+    fn map_button(button: gilrs::Button) -> Option<BrowserAction> {
+        match button {
+            gilrs::Button::DPadUp => Some(BrowserAction::Up),
+            gilrs::Button::DPadDown => Some(BrowserAction::Down),
+            gilrs::Button::DPadLeft => Some(BrowserAction::Left),
+            gilrs::Button::DPadRight => Some(BrowserAction::Right),
+            gilrs::Button::South => Some(BrowserAction::Confirm), // A button
+            gilrs::Button::East => Some(BrowserAction::Back),     // B button
+            gilrs::Button::Start => Some(BrowserAction::Search),
+            gilrs::Button::North => Some(BrowserAction::Favorite), // Y button
+            gilrs::Button::West => Some(BrowserAction::Detail),    // X button
+            gilrs::Button::Select => Some(BrowserAction::GenreFilter),
+            _ => None,
+        }
+    }
+
+    /// Update axis state and return actions for any new digital presses.
+    fn update_axis(state: &mut GamepadAxisState, axis: Axis, value: f32) -> Vec<BrowserAction> {
+        let mut actions = Vec::new();
+        match axis {
+            Axis::LeftStickX | Axis::RightStickX => {
+                let new_left = value < -AXIS_DEAD_ZONE;
+                let new_right = value > AXIS_DEAD_ZONE;
+                if new_left && !state.left {
+                    actions.push(BrowserAction::Left);
+                }
+                if new_right && !state.right {
+                    actions.push(BrowserAction::Right);
+                }
+                state.left = new_left;
+                state.right = new_right;
+            }
+            Axis::LeftStickY | Axis::RightStickY => {
+                // gilrs on macOS: positive = up (Cartesian convention)
+                let new_up = value > AXIS_DEAD_ZONE;
+                let new_down = value < -AXIS_DEAD_ZONE;
+                if new_up && !state.up {
+                    actions.push(BrowserAction::Up);
+                }
+                if new_down && !state.down {
+                    actions.push(BrowserAction::Down);
+                }
+                state.up = new_up;
+                state.down = new_down;
+            }
+            _ => {}
+        }
+        actions
+    }
+
+    /// Apply a browser action (shared between keyboard and gamepad).
+    fn apply_action(&mut self, action: BrowserAction, event_loop: &ActiveEventLoop) {
+        if self.search_active {
+            match action {
+                BrowserAction::Back => self.search_active = false,
+                BrowserAction::Up => self.navigate_up(),
+                BrowserAction::Down => self.navigate_down(),
+                BrowserAction::Confirm => {
+                    if let Some(entry) = self.selected_entry() {
+                        self.result = BrowserResult::RomSelected(entry.path.clone());
+                        event_loop.exit();
+                    }
+                }
+                _ => {}
+            }
+        } else if self.genre_filter_active {
+            match action {
+                BrowserAction::Back => self.genre_filter_active = false,
+                BrowserAction::Up => {
+                    if self.genre_cursor > 0 {
+                        self.genre_cursor -= 1;
+                    }
+                }
+                BrowserAction::Down => {
+                    if self.genre_cursor + 1 < self.available_genres.len() {
+                        self.genre_cursor += 1;
+                    }
+                }
+                BrowserAction::Confirm => {
+                    if let Some(genre) = self.available_genres.get(self.genre_cursor).cloned() {
+                        if let Some(pos) = self.active_genres.iter().position(|g| *g == genre) {
+                            self.active_genres.remove(pos);
+                        } else {
+                            self.active_genres.push(genre);
+                        }
+                        self.rebuild_filtered();
+                    }
+                }
+                _ => {}
+            }
+        } else if self.detail_view_active {
+            match action {
+                BrowserAction::Back => self.detail_view_active = false,
+                BrowserAction::Confirm => {
+                    if let Some(entry) = self.selected_entry() {
+                        self.result = BrowserResult::RomSelected(entry.path.clone());
+                        event_loop.exit();
+                    }
+                }
+                BrowserAction::Favorite => self.toggle_favorite(),
+                _ => {}
+            }
+        } else {
+            match action {
+                BrowserAction::Up => self.navigate_up(),
+                BrowserAction::Down => self.navigate_down(),
+                BrowserAction::Left => {
+                    if self.selected_index > 0 {
+                        self.selected_index -= 1;
+                        self.ensure_selected_visible();
+                    }
+                }
+                BrowserAction::Right => {
+                    if self.selected_index + 1 < self.filtered_indices.len() {
+                        self.selected_index += 1;
+                        self.ensure_selected_visible();
+                    }
+                }
+                BrowserAction::Confirm => {
+                    if let Some(entry) = self.selected_entry() {
+                        self.result = BrowserResult::RomSelected(entry.path.clone());
+                        event_loop.exit();
+                    }
+                }
+                BrowserAction::Back => {
+                    if !self.search_query.is_empty() || !self.active_genres.is_empty() {
+                        self.search_query.clear();
+                        self.active_genres.clear();
+                        self.rebuild_filtered();
+                    } else {
+                        self.result = BrowserResult::Closed;
+                        event_loop.exit();
+                    }
+                }
+                BrowserAction::Search => {
+                    self.search_active = true;
+                }
+                BrowserAction::Favorite => self.toggle_favorite(),
+                BrowserAction::Detail => {
+                    if self.selected_entry().is_some() {
+                        self.detail_view_active = true;
+                    }
+                }
+                BrowserAction::GenreFilter => {
+                    self.genre_filter_active = true;
+                    self.genre_cursor = 0;
+                }
+            }
+        }
+    }
 }
 
 impl ApplicationHandler for RomBrowserApp {
@@ -1412,6 +1630,12 @@ impl ApplicationHandler for RomBrowserApp {
             }
 
             WindowEvent::RedrawRequested => {
+                // Poll gamepad events and apply browser actions.
+                let actions = self.poll_gamepad();
+                for action in actions {
+                    self.apply_action(action, event_loop);
+                }
+
                 self.render_frame();
                 if let Some(ref gl) = self.gl {
                     gl.window().request_redraw();
@@ -1494,6 +1718,8 @@ mod tests {
             catalog_state: CatalogState::Ready,
             modifiers: winit::keyboard::ModifiersState::empty(),
             pixel_cache: HashMap::new(),
+            gilrs: None, // No gamepad in tests
+            gamepad_axis: GamepadAxisState::default(),
         };
         app.set_catalog(entries);
         app
