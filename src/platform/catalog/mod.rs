@@ -209,6 +209,11 @@ const UNOFFICIAL_KEYWORDS: &[&str] = &[
     "(bad)",
     "[bad]",
     "[b]",
+    "-bad.",
+    "-bad-",
+    "_bad_",
+    "_bad.",
+    " bad.",
     "(overdump)",
     "[o]",
     "[!p]",
@@ -230,7 +235,48 @@ const UNOFFICIAL_KEYWORDS: &[&str] = &[
     " test.",
     "(test)",
     "[test]",
+    "-hm00.",
+    "-hm00-",
+    "_hm00_",
+    "_hm00.",
+    "[hm00]",
 ];
+
+/// GoodNES/Good* numbered suffixes that indicate unofficial dumps.
+/// Matches patterns like `-p1`, `-h2`, `[b3]`, `[p12]`, `[h1]` in filenames.
+fn has_numbered_dump_suffix(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    let len = bytes.len();
+    // Check for `-p<digits>.` or `-h<digits>.` (dash-prefixed, dot-terminated)
+    // e.g. "game-p1.nes", "game-h12.nes"
+    for i in 0..len.saturating_sub(3) {
+        if bytes[i] == b'-' && (bytes[i + 1] == b'p' || bytes[i + 1] == b'h') {
+            let rest = &s[i + 2..];
+            if let Some(dot) = rest.find('.') {
+                let num_part = &rest[..dot];
+                if !num_part.is_empty() && num_part.bytes().all(|b| b.is_ascii_digit()) {
+                    return true;
+                }
+            }
+        }
+    }
+    // Check for `[bN]`, `[pN]`, `[hN]` (bracket-prefixed, numbered)
+    // e.g. "[b1]", "[p2]", "[h3]"
+    for i in 0..len.saturating_sub(4) {
+        if bytes[i] == b'['
+            && (bytes[i + 1] == b'b' || bytes[i + 1] == b'p' || bytes[i + 1] == b'h')
+        {
+            let rest = &s[i + 2..];
+            if let Some(bracket) = rest.find(']') {
+                let num_part = &rest[..bracket];
+                if !num_part.is_empty() && num_part.bytes().all(|b| b.is_ascii_digit()) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
 
 /// Check whether a ROM entry appears to be an unofficial ROM based on its
 /// filename and display name. Uses keyword matching against common ROM naming
@@ -247,6 +293,8 @@ fn is_unofficial_rom(entry: &RomEntry) -> bool {
     UNOFFICIAL_KEYWORDS
         .iter()
         .any(|kw| filename.contains(kw) || name.contains(kw))
+        || has_numbered_dump_suffix(&filename)
+        || has_numbered_dump_suffix(&name)
 }
 
 /// Return the duration of the `.autorun` recording for `rom_path`, or `None` if no recording
@@ -835,5 +883,81 @@ mod tests {
         // "Test Drive" is an actual game — the word "test" must be delimited
         let entry = make_entry_with_path("test-drive.nes", "Test Drive");
         assert!(!is_unofficial_rom(&entry));
+    }
+
+    #[test]
+    fn is_unofficial_rom_detects_bad_suffix() {
+        let entry = make_entry_with_path("game-bad.nes", "Game");
+        assert!(is_unofficial_rom(&entry));
+    }
+
+    #[test]
+    fn is_unofficial_rom_detects_p_numbered_suffix() {
+        let entry = make_entry_with_path("game-p1.nes", "Game");
+        assert!(is_unofficial_rom(&entry));
+    }
+
+    #[test]
+    fn is_unofficial_rom_detects_p_multi_digit_suffix() {
+        let entry = make_entry_with_path("game-p12.nes", "Game");
+        assert!(is_unofficial_rom(&entry));
+    }
+
+    #[test]
+    fn is_unofficial_rom_detects_h_numbered_suffix() {
+        let entry = make_entry_with_path("game-h2.nes", "Game");
+        assert!(is_unofficial_rom(&entry));
+    }
+
+    #[test]
+    fn is_unofficial_rom_detects_hm00_suffix() {
+        let entry = make_entry_with_path("game-hm00.nes", "Game");
+        assert!(is_unofficial_rom(&entry));
+    }
+
+    #[test]
+    fn is_unofficial_rom_detects_bracketed_b_numbered() {
+        let entry = make_entry_with_path("Game [b3].nes", "Game");
+        assert!(is_unofficial_rom(&entry));
+    }
+
+    #[test]
+    fn is_unofficial_rom_detects_bracketed_p_numbered() {
+        let entry = make_entry_with_path("Game [p1].nes", "Game");
+        assert!(is_unofficial_rom(&entry));
+    }
+
+    #[test]
+    fn is_unofficial_rom_detects_bracketed_h_numbered() {
+        let entry = make_entry_with_path("Game [h1].nes", "Game");
+        assert!(is_unofficial_rom(&entry));
+    }
+
+    #[test]
+    fn is_unofficial_rom_allows_game_with_p_in_title() {
+        // "P-47" is an actual game — -p<n> must be at end before extension
+        let entry = make_entry_with_path("p-47.nes", "P-47");
+        assert!(!is_unofficial_rom(&entry));
+    }
+
+    #[test]
+    fn has_numbered_dump_suffix_matches_dash_p_digit_dot() {
+        assert!(has_numbered_dump_suffix("game-p1.nes"));
+        assert!(has_numbered_dump_suffix("game-p99.nes"));
+        assert!(has_numbered_dump_suffix("game-h3.nes"));
+    }
+
+    #[test]
+    fn has_numbered_dump_suffix_matches_bracket_b_digit() {
+        assert!(has_numbered_dump_suffix("game [b1].nes"));
+        assert!(has_numbered_dump_suffix("game [p2].nes"));
+        assert!(has_numbered_dump_suffix("game [h3].nes"));
+    }
+
+    #[test]
+    fn has_numbered_dump_suffix_ignores_non_numbered() {
+        assert!(!has_numbered_dump_suffix("game-play.nes"));
+        assert!(!has_numbered_dump_suffix("game-help.nes"));
+        assert!(!has_numbered_dump_suffix("test-drive.nes"));
     }
 }
