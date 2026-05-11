@@ -201,6 +201,11 @@ const UNOFFICIAL_KEYWORDS: &[&str] = &[
     "[sample]",
     "(demo)",
     "[demo]",
+    "-demo.",
+    "-demo-",
+    "_demo_",
+    "_demo.",
+    " demo.",
     "(bad)",
     "[bad]",
     "[b]",
@@ -211,6 +216,20 @@ const UNOFFICIAL_KEYWORDS: &[&str] = &[
     "(trainer)",
     "[t+",
     "(translation)",
+    "-menu.",
+    "-menu-",
+    "_menu_",
+    "_menu.",
+    " menu.",
+    "(menu)",
+    "[menu]",
+    "-test.",
+    "-test-",
+    "_test_",
+    "_test.",
+    " test.",
+    "(test)",
+    "[test]",
 ];
 
 /// Check whether a ROM entry appears to be an unofficial ROM based on its
@@ -791,5 +810,30 @@ mod tests {
     fn is_unofficial_rom_detects_hack_with_underscores() {
         let entry = make_entry_with_path("game_hack_v2.nes", "Game");
         assert!(is_unofficial_rom(&entry));
+    }
+
+    #[test]
+    fn is_unofficial_rom_detects_menu_in_filename() {
+        let entry = make_entry_with_path("super-game-menu.nes", "Super Game Menu");
+        assert!(is_unofficial_rom(&entry));
+    }
+
+    #[test]
+    fn is_unofficial_rom_detects_demo_in_filename() {
+        let entry = make_entry_with_path("cool-game-demo.nes", "Cool Game Demo");
+        assert!(is_unofficial_rom(&entry));
+    }
+
+    #[test]
+    fn is_unofficial_rom_detects_test_in_filename() {
+        let entry = make_entry_with_path("mapper-test.nes", "Mapper Test");
+        assert!(is_unofficial_rom(&entry));
+    }
+
+    #[test]
+    fn is_unofficial_rom_allows_game_with_test_in_title() {
+        // "Test Drive" is an actual game — the word "test" must be delimited
+        let entry = make_entry_with_path("test-drive.nes", "Test Drive");
+        assert!(!is_unofficial_rom(&entry));
     }
 }
