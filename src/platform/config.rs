@@ -378,7 +378,8 @@ impl FrontendConfig {
     /// Handles platform-level config keys (audio, vsync, fullscreen, display,
     /// window_height, debugger_alpha, tracing keys, ram_init_mode, etc.).
     pub(crate) fn apply_config_value(&mut self, key: &str, value: &str) -> Result<(), String> {
-        match key {
+        let key = key.replace('-', "_");
+        match key.as_str() {
             "audio" => {
                 if let Ok(b) = parse_bool(value) {
                     self.audio_enabled = b;
@@ -426,7 +427,7 @@ impl FrontendConfig {
                     self.debugger_alpha = v.clamp(0.1, 1.0);
                 }
             }
-            "trace-cpu" => {
+            "trace_cpu" => {
                 if let Ok(level) = value.parse::<u8>() {
                     self.tracing.cpu = level;
                     if level > 0 {
@@ -434,7 +435,7 @@ impl FrontendConfig {
                     }
                 }
             }
-            "trace-ppu" => {
+            "trace_ppu" => {
                 if let Ok(level) = value.parse::<u8>() {
                     self.tracing.ppu = Tracing::clamp_ppu_level(level);
                     if level > 0 {
@@ -442,7 +443,7 @@ impl FrontendConfig {
                     }
                 }
             }
-            "trace-apu" => {
+            "trace_apu" => {
                 if let Ok(level) = value.parse::<u8>() {
                     self.tracing.apu = level;
                     if level > 0 {
@@ -450,7 +451,7 @@ impl FrontendConfig {
                     }
                 }
             }
-            "trace-mapper" => {
+            "trace_mapper" => {
                 if let Ok(level) = value.parse::<u8>() {
                     self.tracing.mapper = Tracing::clamp_mapper_level(level);
                     if level > 0 {
@@ -458,7 +459,7 @@ impl FrontendConfig {
                     }
                 }
             }
-            "trace-nestest" => {
+            "trace_nestest" => {
                 if let Ok(b) = parse_bool(value) {
                     self.tracing.nestest = b;
                     if b {
@@ -1897,5 +1898,25 @@ mod tests {
             path.ends_with(".neser/image_cache"),
             "expected path ending with .neser/image_cache, got: {path:?}"
         );
+    }
+
+    #[test]
+    fn test_apply_config_value_accepts_dashes_for_underscore_keys() {
+        let mut cfg = FrontendConfig::default();
+        cfg.apply_config_value("cartridge-search-paths", "/tmp/roms")
+            .unwrap();
+        assert_eq!(cfg.cartridge_search_paths, vec!["/tmp/roms"]);
+
+        cfg.apply_config_value("metadata-db-path", "/tmp/meta.db")
+            .unwrap();
+        assert_eq!(cfg.metadata_db_path.as_deref(), Some("/tmp/meta.db"));
+
+        cfg.apply_config_value("image-cache-path", "/tmp/cache")
+            .unwrap();
+        assert_eq!(cfg.image_cache_path.as_deref(), Some("/tmp/cache"));
+
+        cfg.apply_config_value("include-unofficial-roms", "true")
+            .unwrap();
+        assert!(cfg.include_unofficial_roms);
     }
 }

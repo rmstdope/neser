@@ -125,15 +125,16 @@ impl GbaConfig {
     ///
     /// Accepts `gba-hardware` key.
     pub(crate) fn apply_config_value(&mut self, key: &str, value: &str) -> Result<(), String> {
-        match key {
-            "gba-hardware" => {
+        let key = key.replace('-', "_");
+        match key.as_str() {
+            "gba_hardware" => {
                 self.hardware = GbaModel::parse(value).ok_or_else(|| {
                     format!(
-                        "Invalid gba-hardware value: '{value}'. Valid options are: {VALID_HARDWARE_MODELS}",
+                        "Invalid gba_hardware value: '{value}'. Valid options are: {VALID_HARDWARE_MODELS}",
                     )
                 })?;
             }
-            "gba-bios-path" => {
+            "gba_bios_path" => {
                 self.set_bios_path_from_input(value);
             }
             _ => {
@@ -263,7 +264,7 @@ mod tests {
         let result = config.apply_config_value("gba-hardware", "invalid");
         assert!(result.is_err());
         let err_msg = result.unwrap_err();
-        assert!(err_msg.contains("Invalid gba-hardware value"));
+        assert!(err_msg.contains("Invalid gba_hardware value"));
         assert!(err_msg.contains("agb, sp, micro"));
     }
 
