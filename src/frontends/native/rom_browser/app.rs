@@ -1316,9 +1316,9 @@ impl RomBrowserApp {
                     }
                 }
                 BrowserAction::Confirm => {
-                    if let Some(entry) = self.selected_entry() {
-                        self.result = BrowserResult::RomSelected(entry.path.clone());
-                        event_loop.exit();
+                    // In grid mode, Confirm opens the detail view.
+                    if self.selected_entry().is_some() {
+                        self.detail_view_active = true;
                     }
                 }
                 BrowserAction::Back => {
@@ -1560,9 +1560,9 @@ impl ApplicationHandler for RomBrowserApp {
                             }
                         }
                         Key::Named(NamedKey::Enter) => {
-                            if let Some(entry) = self.selected_entry() {
-                                self.result = BrowserResult::RomSelected(entry.path.clone());
-                                event_loop.exit();
+                            // Open detail view; launch is done from the detail view.
+                            if self.selected_entry().is_some() {
+                                self.detail_view_active = true;
                             }
                         }
                         Key::Character(ref ch) if ch.as_str() == "/" => {
