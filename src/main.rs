@@ -181,7 +181,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(feature = "tui")]
     if app_context.borrow().config().frontend.tui_mode {
         let (search_paths, _, rebuild) = cartridge_catalog_startup_config(&app_context);
-        return frontends::tui::run_tui(&search_paths, rebuild);
+        let include_unofficial = app_context
+            .borrow()
+            .config()
+            .frontend
+            .include_unofficial_roms;
+        return frontends::tui::run_tui(&search_paths, rebuild, include_unofficial);
     }
 
     refresh_startup_cartridge_catalog(&app_context);
