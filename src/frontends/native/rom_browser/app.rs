@@ -891,6 +891,13 @@ impl RomBrowserApp {
                             .size(15.0),
                     );
                 }
+                if let Some(file_name) = entry.path.file_name() {
+                    ui.label(
+                        egui::RichText::new(format!("File: {}", file_name.to_string_lossy()))
+                            .color(theme::DIM_TEXT)
+                            .size(15.0),
+                    );
+                }
                 if entry.is_favorite {
                     ui.label(
                         egui::RichText::new("\u{2665} Favourite")
