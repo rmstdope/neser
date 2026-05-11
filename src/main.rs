@@ -249,19 +249,26 @@ fn run_native_frontend(
     app_context: Rc<RefCell<AppContext>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use frontends::native::rom_browser::{BrowserResult, RomBrowserApp};
+    use winit::event_loop::EventLoop;
 
     let rom_path = app_context.borrow().config().frontend.rom_path.clone();
 
     if let Some(rom_path) = rom_path {
         // ROM path provided via CLI — go straight to emulation.
-        run_native_emulator(app_context, &rom_path)
+        run_native_emulator(app_context, &rom_path, None)
     } else {
         // No ROM path — launch the ROM browser.
+        // Create a single EventLoop to be shared with the emulator if a ROM is selected.
+        let event_loop =
+            EventLoop::new().map_err(|e| format!("Failed to create event loop: {e}"))?;
         let browser = RomBrowserApp::new(app_context.clone());
-        match browser.run()? {
+        match browser.run(event_loop)? {
             BrowserResult::RomSelected(path) => {
                 let rom_path = path.to_string_lossy().to_string();
-                run_native_emulator(app_context, &rom_path)
+                // Create a new EventLoop for the emulator (the browser's loop has exited).
+                let event_loop =
+                    EventLoop::new().map_err(|e| format!("Failed to create event loop: {e}"))?;
+                run_native_emulator(app_context, &rom_path, Some(event_loop))
             }
             BrowserResult::Closed => Ok(()),
         }
@@ -273,6 +280,7 @@ fn run_native_frontend(
 fn run_native_emulator(
     app_context: Rc<RefCell<AppContext>>,
     rom_path: &str,
+    event_loop: Option<winit::event_loop::EventLoop<()>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use frontends::native::{NativeAudio, NativeEventLoop};
     use platform::audio::EmulatorAudio;
@@ -396,12 +404,12 @@ fn run_native_emulator(
     console.reset(false);
 
     let tracing = app_context.borrow().config().frontend.tracing;
-    let mut event_loop =
+    let mut native_loop =
         NativeEventLoop::new(app_context.clone(), console, audio, tracing, headless);
 
     // Initialize autorun AFTER reset so checkpoint state restore is not overwritten.
     if autorun_mode != platform::autorun::AutorunMode::None {
-        event_loop.init_autorun(
+        native_loop.init_autorun(
             autorun_mode,
             rom_path,
             autorun_overwrite,
@@ -411,7 +419,11 @@ fn run_native_emulator(
         )?;
     }
 
-    let run_result = event_loop.run();
+    let run_result = if let Some(el) = event_loop {
+        native_loop.run_with_event_loop(el)
+    } else {
+        native_loop.run()
+    };
 
     // Handle autorun exit codes
     if let Err(ref e) = run_result

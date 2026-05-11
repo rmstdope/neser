@@ -166,6 +166,11 @@ impl NativeEventLoop {
         }
         let event_loop =
             EventLoop::new().map_err(|e| format!("Failed to create event loop: {e}"))?;
+        self.run_with_event_loop(event_loop)
+    }
+
+    /// Run with an externally-created event loop (used when transitioning from ROM browser).
+    pub fn run_with_event_loop(mut self, event_loop: EventLoop<()>) -> Result<(), String> {
         event_loop
             .run_app(&mut self)
             .map_err(|e| format!("Event loop error: {e}"))?;

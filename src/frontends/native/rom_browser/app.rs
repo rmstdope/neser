@@ -217,13 +217,11 @@ impl RomBrowserApp {
         }
     }
 
-    /// Run the ROM browser and return the result.
+    /// Run the ROM browser using the provided event loop and return the result.
     ///
     /// Returns `BrowserResult::RomSelected` if a ROM was chosen, or
     /// `BrowserResult::Closed` if the user closed the window.
-    pub fn run(mut self) -> Result<BrowserResult, String> {
-        let event_loop =
-            EventLoop::new().map_err(|e| format!("Failed to create event loop: {e}"))?;
+    pub fn run(mut self, event_loop: EventLoop<()>) -> Result<BrowserResult, String> {
         event_loop
             .run_app(&mut self)
             .map_err(|e| format!("Browser event loop error: {e}"))?;
