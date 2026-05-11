@@ -10,6 +10,7 @@ const EARLY_CGB_FREQ_REWRITE_DELAY_T: u16 = 2;
 const LATE_CGB_FREQ_REWRITE_DELAY_T: u16 = 0;
 /// CGB-0/A/B/C non-reload rewrite windows where the old fast period is extended
 /// by one APU tick before the new period takes effect.
+const EARLY_CGB_REWRITE_EXTENSION_AMOUNT_T: u16 = 4;
 const EARLY_CGB_NORMAL_REWRITE_EXTENSION_TIMER_T: u16 = 6;
 const EARLY_CGB_DOUBLE_REWRITE_EXTENSION_TIMER_T: u16 = 2;
 /// CGB-D/E double-speed rewrite window where SameSuite observes the new period
@@ -1005,11 +1006,14 @@ impl Channel1 {
         let double_speed = double_speed_phase_bits.is_some();
         if self.is_early_cgb_revision()
             && !self.freq_timer_just_reloaded
+            // These SameSuite probes use duty 0. At duty position 6, the next
+            // pulse step would enter the only high sample (position 7); early
+            // CGB revisions hold that transition off by one T-cycle group.
             && self.current_output == 0
             && self.duty_pos == 6
             && self.matches_early_cgb_rewrite_extension_window(double_speed)
         {
-            self.freq_timer += 4;
+            self.freq_timer += EARLY_CGB_REWRITE_EXTENSION_AMOUNT_T;
             return;
         }
         let late_de_double_speed_rewrite = double_speed
