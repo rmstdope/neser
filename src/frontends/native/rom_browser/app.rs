@@ -666,7 +666,7 @@ impl RomBrowserApp {
                         tex_id,
                         egui::vec2(avail_w, art_h),
                     ))
-                    .rounding(theme::CORNER_RADIUS),
+                    .corner_radius(theme::CORNER_RADIUS),
                 );
                 ui.add_space(8.0);
             }
@@ -886,7 +886,7 @@ impl RomBrowserApp {
                                 tex_id,
                                 egui::vec2(boxart_w, art_h),
                             ))
-                            .rounding(theme::CORNER_RADIUS),
+                            .corner_radius(theme::CORNER_RADIUS),
                         );
                     }
 
