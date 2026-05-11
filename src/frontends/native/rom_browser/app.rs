@@ -519,6 +519,27 @@ impl RomBrowserApp {
                             if let Some(ref entry) = selected_entry {
                                 Self::render_sidebar_egui(ui, entry, &tex_map);
                             }
+
+                            // Button legend at the bottom of the sidebar.
+                            ui.with_layout(
+                                egui::Layout::bottom_up(egui::Align::LEFT),
+                                |ui| {
+                                    let legend = if search_active {
+                                        "Esc: Close  |  Enter: Launch"
+                                    } else if genre_filter_active {
+                                        "↑↓: Navigate  |  Enter: Toggle  |  Esc: Close"
+                                    } else if detail_view_active {
+                                        "A: Launch  |  Y: Fav  |  B: Back"
+                                    } else {
+                                        "A: Launch  |  X: Details  |  Y: Fav\nSelect: Filter  |  Start: Search"
+                                    };
+                                    ui.label(
+                                        egui::RichText::new(legend)
+                                            .color(theme::DIM_TEXT)
+                                            .size(11.0),
+                                    );
+                                },
+                            );
                         });
                 });
 
@@ -534,26 +555,6 @@ impl RomBrowserApp {
                         egui::RichText::new(&header_text)
                             .color(theme::HEADER_TEXT)
                             .size(20.0),
-                    );
-                });
-
-            egui::Panel::bottom("footer")
-                .exact_size(theme::FOOTER_HEIGHT)
-                .frame(bar_frame)
-                .show_inside(ui, |ui| {
-                    let footer_text = if search_active {
-                        "Type to search  |  Esc: Close  |  Enter: Launch"
-                    } else if genre_filter_active {
-                        "Up/Down: Navigate  |  Enter: Toggle  |  Esc: Close"
-                    } else if detail_view_active {
-                        "Enter: Launch  |  Esc: Back"
-                    } else {
-                        "Enter: Launch  |  /: Search  |  g: Genre  |  d: Details  |  f: Fav  |  F: Filter Favs  |  Esc: Quit"
-                    };
-                    ui.label(
-                        egui::RichText::new(footer_text)
-                            .color(theme::DIM_TEXT)
-                            .size(11.0),
                     );
                 });
 
@@ -1185,7 +1186,7 @@ impl RomBrowserApp {
         let grid_area_w = display_w - sidebar_w;
         let (cols, cover_w) = theme::grid_layout(grid_area_w);
         let cell_h = theme::cell_height(cover_w);
-        let grid_height = display_h - theme::HEADER_HEIGHT - theme::FOOTER_HEIGHT;
+        let grid_height = display_h - theme::HEADER_HEIGHT;
 
         // Determine the range of rows visible on screen (with buffer).
         let first_visible_row =
@@ -1267,7 +1268,7 @@ impl RomBrowserApp {
         let grid_area_w = display_w - sidebar_w;
         let (cols, cover_w) = theme::grid_layout(grid_area_w);
         let cell_h = theme::cell_height(cover_w);
-        let grid_height = display_h - theme::HEADER_HEIGHT - theme::FOOTER_HEIGHT;
+        let grid_height = display_h - theme::HEADER_HEIGHT;
 
         let row = self.selected_index / cols;
         let cell_top = theme::GRID_PADDING + row as f32 * (cell_h + theme::GRID_SPACING);

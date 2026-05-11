@@ -73,9 +73,6 @@ pub const MAX_SIDEBAR_WIDTH: f32 = 420.0;
 /// Header bar height.
 pub const HEADER_HEIGHT: f32 = 48.0;
 
-/// Footer bar height.
-pub const FOOTER_HEIGHT: f32 = 36.0;
-
 /// Smooth scroll speed (higher = faster, 1.0 = instant).
 pub const SCROLL_SPEED: f32 = 80.0;
 
