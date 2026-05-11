@@ -240,6 +240,14 @@ const UNOFFICIAL_KEYWORDS: &[&str] = &[
     "_hm00_",
     "_hm00.",
     "[hm00]",
+    "-pd.",
+    "-pd-",
+    "_pd_",
+    "_pd.",
+    " pd.",
+    "zzz-",
+    "zzz_",
+    "zzz ",
 ];
 
 /// GoodNES/Good* numbered suffixes that indicate unofficial dumps.
@@ -959,5 +967,23 @@ mod tests {
         assert!(!has_numbered_dump_suffix("game-play.nes"));
         assert!(!has_numbered_dump_suffix("game-help.nes"));
         assert!(!has_numbered_dump_suffix("test-drive.nes"));
+    }
+
+    #[test]
+    fn is_unofficial_rom_detects_pd_suffix() {
+        let entry = make_entry_with_path("game-pd.nes", "Game");
+        assert!(is_unofficial_rom(&entry));
+    }
+
+    #[test]
+    fn is_unofficial_rom_detects_zzz_prefix() {
+        let entry = make_entry_with_path("zzz-multicart.nes", "ZZZ Multicart");
+        assert!(is_unofficial_rom(&entry));
+    }
+
+    #[test]
+    fn is_unofficial_rom_detects_zzz_with_underscore() {
+        let entry = make_entry_with_path("zzz_unknown_game.nes", "ZZZ Unknown Game");
+        assert!(is_unofficial_rom(&entry));
     }
 }
