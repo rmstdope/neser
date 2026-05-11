@@ -531,8 +531,8 @@ impl RomBrowserApp {
                                 } else {
                                     &[
                                         ("A", "Details"),
-                                        ("B", "Favorite"),
-                                        ("Select", "Filter"),
+                                        ("B", "Filter"),
+                                        ("Select", "Favorite"),
                                         ("Start", "Search"),
                                     ]
                                 };
@@ -1229,7 +1229,7 @@ impl RomBrowserApp {
                         ui.label(
                             egui::RichText::new(&entry.display_name)
                                 .color(theme::HEADER_TEXT)
-                                .size(22.0),
+                                .size(25.0),
                         );
                         ui.separator();
 
@@ -1237,47 +1237,47 @@ impl RomBrowserApp {
                             ui.label(
                                 egui::RichText::new(format!("Genre: {}", entry.genres.join(", ")))
                                     .color(theme::DIM_TEXT)
-                                    .size(15.0),
+                                    .size(18.0),
                             );
                         }
                         if let Some(ref date) = entry.release_date {
                             ui.label(
                                 egui::RichText::new(format!("Released: {date}"))
                                     .color(theme::DIM_TEXT)
-                                    .size(15.0),
+                                    .size(18.0),
                             );
                         }
                         if let Some(players) = entry.players {
                             ui.label(
                                 egui::RichText::new(format!("Players: {players}"))
                                     .color(theme::DIM_TEXT)
-                                    .size(15.0),
+                                    .size(18.0),
                             );
                         }
                         if let Some(ref rating) = entry.rating {
                             ui.label(
                                 egui::RichText::new(format!("Rating: {rating}"))
                                     .color(theme::DIM_TEXT)
-                                    .size(15.0),
+                                    .size(18.0),
                             );
                         }
                         ui.label(
                             egui::RichText::new(format!("Mapper: {}", entry.mapper_label))
                                 .color(theme::DIM_TEXT)
-                                .size(15.0),
+                                .size(18.0),
                         );
                         if let Some(ref crc) = entry.crc {
                             ui.label(
                                 egui::RichText::new(format!("CRC: {crc}"))
                                     .color(theme::DIM_TEXT)
-                                    .size(15.0),
+                                    .size(18.0),
                             );
                         }
                         if let Some(ref hw) = entry.hardware {
                             ui.label(
                                 egui::RichText::new(format!("Hardware: {hw}"))
                                     .color(theme::DIM_TEXT)
-                                    .size(15.0),
+                                    .size(18.0),
                             );
                         }
                         if let Some(file_name) = entry.path.file_name() {
@@ -1287,14 +1287,14 @@ impl RomBrowserApp {
                                     file_name.to_string_lossy()
                                 ))
                                 .color(theme::DIM_TEXT)
-                                .size(15.0),
+                                .size(18.0),
                             );
                         }
                         if entry.is_favorite {
                             ui.label(
                                 egui::RichText::new("\u{2665} Favourite")
                                     .color(theme::FAVORITE_COLOR)
-                                    .size(16.0),
+                                    .size(19.0),
                             );
                         }
 
@@ -1303,14 +1303,14 @@ impl RomBrowserApp {
                             ui.label(
                                 egui::RichText::new(overview)
                                     .color(theme::TEXT_COLOR)
-                                    .size(15.0),
+                                    .size(18.0),
                             );
                         }
 
                         ui.separator();
                         Self::render_button_legend(
                             ui,
-                            &[("A", "Launch"), ("Y", "Fav"), ("B", "Back")],
+                            &[("A", "Launch"), ("B", "Back"), ("Select", "Favorite")],
                         );
                     });
                 });
