@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc;
+use std::time::Instant;
 
 use gilrs::{Axis, EventType, Gilrs, GilrsBuilder};
 use winit::application::ApplicationHandler;
@@ -54,6 +55,11 @@ pub enum BrowserResult {
 /// Threshold for converting analog stick axes to digital D-pad presses.
 const AXIS_DEAD_ZONE: f32 = 0.5;
 
+/// Delay before the first repeat fires (ms).
+const REPEAT_DELAY_MS: u128 = 400;
+/// Interval between subsequent repeats (ms).
+const REPEAT_INTERVAL_MS: u128 = 80;
+
 /// Tracks analog stick state for digital D-pad conversion in the browser.
 #[derive(Default)]
 struct GamepadAxisState {
@@ -61,6 +67,15 @@ struct GamepadAxisState {
     down: bool,
     left: bool,
     right: bool,
+}
+
+/// Tracks held D-pad buttons for auto-repeat.
+#[derive(Default)]
+struct GamepadRepeatState {
+    /// Currently held directional buttons and when they were first pressed.
+    held: HashMap<gilrs::Button, Instant>,
+    /// Last time a repeat fired for each button.
+    last_repeat: HashMap<gilrs::Button, Instant>,
 }
 
 /// Actions that can be triggered by gamepad input.
@@ -121,6 +136,8 @@ pub struct RomBrowserApp {
     gilrs: Option<Gilrs>,
     /// Tracks analog stick state for digital D-pad conversion.
     gamepad_axis: GamepadAxisState,
+    /// Tracks held D-pad buttons for auto-repeat.
+    gamepad_repeat: GamepadRepeatState,
     /// Sender for texture decode requests (game_id, path).
     texture_request_tx: mpsc::Sender<(i64, PathBuf)>,
     /// Receiver for decoded texture results (game_id, width, height, pixels).
@@ -196,6 +213,7 @@ impl RomBrowserApp {
                 builder.build().ok()
             },
             gamepad_axis: GamepadAxisState::default(),
+            gamepad_repeat: GamepadRepeatState::default(),
             texture_request_tx: request_tx,
             texture_result_rx: result_rx,
             texture_pending: Vec::new(),
@@ -1297,12 +1315,23 @@ impl RomBrowserApp {
         };
 
         let mut actions = Vec::new();
+        let now = Instant::now();
+
         while let Some(event) = gilrs.next_event() {
             match event.event {
                 EventType::ButtonPressed(button, _) => {
+                    // Track held state for directional buttons.
+                    if Self::is_repeatable(button) {
+                        self.gamepad_repeat.held.insert(button, now);
+                        self.gamepad_repeat.last_repeat.remove(&button);
+                    }
                     if let Some(action) = Self::map_button(button) {
                         actions.push(action);
                     }
+                }
+                EventType::ButtonReleased(button, _) => {
+                    self.gamepad_repeat.held.remove(&button);
+                    self.gamepad_repeat.last_repeat.remove(&button);
                 }
                 EventType::AxisChanged(axis, value, _) => {
                     let axis_actions = Self::update_axis(&mut self.gamepad_axis, axis, value);
@@ -1311,7 +1340,41 @@ impl RomBrowserApp {
                 _ => {}
             }
         }
+
+        // Generate repeat actions for held directional buttons.
+        let held_snapshot: Vec<(gilrs::Button, Instant)> = self
+            .gamepad_repeat
+            .held
+            .iter()
+            .map(|(&b, &t)| (b, t))
+            .collect();
+        for (button, press_time) in held_snapshot {
+            let elapsed = now.duration_since(press_time).as_millis();
+            if elapsed < REPEAT_DELAY_MS {
+                continue;
+            }
+            let should_fire = match self.gamepad_repeat.last_repeat.get(&button) {
+                Some(&last) => now.duration_since(last).as_millis() >= REPEAT_INTERVAL_MS,
+                None => true,
+            };
+            if should_fire && let Some(action) = Self::map_button(button) {
+                actions.push(action);
+                self.gamepad_repeat.last_repeat.insert(button, now);
+            }
+        }
+
         actions
+    }
+
+    /// Whether a button should support auto-repeat when held.
+    fn is_repeatable(button: gilrs::Button) -> bool {
+        matches!(
+            button,
+            gilrs::Button::DPadUp
+                | gilrs::Button::DPadDown
+                | gilrs::Button::DPadLeft
+                | gilrs::Button::DPadRight
+        )
     }
 
     /// Map a gilrs button to a browser action.
@@ -1836,6 +1899,7 @@ mod tests {
             modifiers: winit::keyboard::ModifiersState::empty(),
             gilrs: None, // No gamepad in tests
             gamepad_axis: GamepadAxisState::default(),
+            gamepad_repeat: GamepadRepeatState::default(),
             texture_request_tx: {
                 let (tx, _rx) = mpsc::channel();
                 tx
