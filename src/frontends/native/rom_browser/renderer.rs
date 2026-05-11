@@ -4,7 +4,6 @@
 //! cover art images displayed in the ROM browser grid.
 
 use std::collections::HashMap;
-use std::ffi::c_void;
 use std::num::NonZeroU32;
 use std::path::Path;
 use std::sync::Arc;
@@ -49,7 +48,6 @@ pub enum TextureKey {
 /// A loaded GL texture with its dimensions.
 #[derive(Debug, Clone, Copy)]
 pub struct LoadedTexture {
-    pub gl_id: gl::types::GLuint,
     pub egui_id: egui::TextureId,
     pub width: u32,
     pub height: u32,
@@ -277,43 +275,65 @@ impl BrowserGl {
         self.textures.get(key)
     }
 
-    /// Create a GL texture and upload RGBA pixels.
+    /// Create a GL texture and upload RGBA pixels, registering it with egui's painter.
+    ///
+    /// Uses the glow API so the texture is tracked by `egui_glow::Painter` and
+    /// referenced by a proper `egui::TextureId` (not a raw GL handle).
     ///
     /// # Safety
     /// Must be called with an active GL context.
     unsafe fn create_and_upload_texture(
-        &self,
+        &mut self,
         width: u32,
         height: u32,
         pixels: &[u8],
     ) -> LoadedTexture {
+        use egui_glow::glow::HasContext as _;
+        let gl = &self.glow_context;
+        let tex = unsafe { gl.create_texture().expect("GL texture creation failed") };
         unsafe {
-            let mut tex: gl::types::GLuint = 0;
-            gl::GenTextures(1, &mut tex);
-            gl::BindTexture(gl::TEXTURE_2D, tex);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
-            gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
-            gl::TexImage2D(
-                gl::TEXTURE_2D,
+            gl.bind_texture(egui_glow::glow::TEXTURE_2D, Some(tex));
+            gl.tex_parameter_i32(
+                egui_glow::glow::TEXTURE_2D,
+                egui_glow::glow::TEXTURE_MIN_FILTER,
+                egui_glow::glow::LINEAR as i32,
+            );
+            gl.tex_parameter_i32(
+                egui_glow::glow::TEXTURE_2D,
+                egui_glow::glow::TEXTURE_MAG_FILTER,
+                egui_glow::glow::LINEAR as i32,
+            );
+            gl.tex_parameter_i32(
+                egui_glow::glow::TEXTURE_2D,
+                egui_glow::glow::TEXTURE_WRAP_S,
+                egui_glow::glow::CLAMP_TO_EDGE as i32,
+            );
+            gl.tex_parameter_i32(
+                egui_glow::glow::TEXTURE_2D,
+                egui_glow::glow::TEXTURE_WRAP_T,
+                egui_glow::glow::CLAMP_TO_EDGE as i32,
+            );
+            gl.pixel_store_i32(egui_glow::glow::UNPACK_ALIGNMENT, 1);
+            gl.tex_image_2d(
+                egui_glow::glow::TEXTURE_2D,
                 0,
-                gl::RGBA8 as i32,
+                egui_glow::glow::RGBA8 as i32,
                 width as i32,
                 height as i32,
                 0,
-                gl::RGBA,
-                gl::UNSIGNED_BYTE,
-                pixels.as_ptr() as *const c_void,
+                egui_glow::glow::RGBA,
+                egui_glow::glow::UNSIGNED_BYTE,
+                egui_glow::glow::PixelUnpackData::Slice(Some(pixels)),
             );
-
-            LoadedTexture {
-                gl_id: tex,
-                egui_id: egui::TextureId::User(tex as u64),
-                width,
-                height,
-            }
+        }
+        // Register with egui's painter to get a proper TextureId.
+        // This is required: TextureId::User is an index into the painter's registry,
+        // not a raw GL texture name.
+        let egui_id = self.egui_glow.painter.register_native_texture(tex);
+        LoadedTexture {
+            egui_id,
+            width,
+            height,
         }
     }
 
@@ -338,11 +358,7 @@ impl BrowserGl {
 
 impl Drop for BrowserGl {
     fn drop(&mut self) {
+        // egui_glow.destroy() frees all registered textures (including ours) via glow.
         self.egui_glow.destroy();
-        for loaded in self.textures.values() {
-            unsafe {
-                gl::DeleteTextures(1, &loaded.gl_id);
-            }
-        }
     }
 }
