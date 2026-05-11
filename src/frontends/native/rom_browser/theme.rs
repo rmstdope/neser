@@ -38,10 +38,10 @@ pub const PLACEHOLDER_BG: Color32 = Color32::from_rgb(38, 38, 56);
 pub const COVER_ASPECT: f32 = 0.71;
 
 /// Minimum cover art width in logical pixels.
-pub const MIN_COVER_WIDTH: f32 = 120.0;
+pub const MIN_COVER_WIDTH: f32 = 160.0;
 
 /// Maximum cover art width in logical pixels.
-pub const MAX_COVER_WIDTH: f32 = 200.0;
+pub const MAX_COVER_WIDTH: f32 = 240.0;
 
 /// Spacing between grid cells in logical pixels.
 pub const GRID_SPACING: f32 = 16.0;
