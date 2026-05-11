@@ -358,8 +358,8 @@ impl RomBrowserApp {
         gl.run_frame(|ui| {
             let mut visuals = egui::Visuals::dark();
             visuals.dark_mode = true;
-            visuals.panel_fill = theme::BG_COLOR;
-            visuals.window_fill = theme::BG_COLOR;
+            visuals.panel_fill = egui::Color32::TRANSPARENT;
+            visuals.window_fill = egui::Color32::TRANSPARENT;
             visuals.extreme_bg_color = egui::Color32::from_rgb(10, 10, 15);
             visuals.faint_bg_color = egui::Color32::from_rgb(20, 20, 30);
             // Remove all widget/panel borders for a clean look.
@@ -379,13 +379,28 @@ impl RomBrowserApp {
                 );
                 s.text_styles.insert(
                     egui::TextStyle::Heading,
-                    egui::FontId::new(18.0, egui::FontFamily::Monospace),
+                    egui::FontId::new(20.0, egui::FontFamily::Monospace),
                 );
             });
+
+            // Full-window gradient background.
+            let full_rect = ui.max_rect();
+            let painter = ui.painter();
+            painter.add(egui::Shape::gradient_rect(
+                full_rect,
+                egui::epaint::Direction::TopDown,
+                [theme::BG_COLOR, theme::BG_COLOR_LIGHT],
+            ));
 
             let sidebar_frame = egui::Frame::new()
                 .fill(theme::SIDEBAR_BG)
                 .inner_margin(egui::Margin::same(12))
+                .outer_margin(egui::Margin {
+                    left: 8,
+                    right: 8,
+                    top: 8,
+                    bottom: 8,
+                })
                 .corner_radius(egui::CornerRadius::same(theme::CORNER_RADIUS as u8))
                 .stroke(egui::Stroke::NONE);
             egui::Panel::right("sidebar")
@@ -399,7 +414,7 @@ impl RomBrowserApp {
                 });
 
             let bar_frame = egui::Frame::new()
-                .fill(theme::BG_COLOR)
+                .fill(egui::Color32::TRANSPARENT)
                 .inner_margin(egui::Margin::same(8))
                 .stroke(egui::Stroke::NONE);
             egui::Panel::top("header")
@@ -409,7 +424,7 @@ impl RomBrowserApp {
                     ui.label(
                         egui::RichText::new(&header_text)
                             .color(theme::HEADER_TEXT)
-                            .size(14.0),
+                            .size(20.0),
                     );
                 });
 
@@ -436,7 +451,7 @@ impl RomBrowserApp {
             egui::CentralPanel::default()
                 .frame(
                     egui::Frame::new()
-                        .fill(theme::BG_COLOR)
+                        .fill(egui::Color32::TRANSPARENT)
                         .stroke(egui::Stroke::NONE),
                 )
                 .show_inside(ui, |ui| {
@@ -582,13 +597,6 @@ impl RomBrowserApp {
         let panel_rect = ui.available_rect_before_wrap();
         ui.allocate_rect(panel_rect, egui::Sense::hover());
         let painter = ui.painter_at(panel_rect);
-
-        // Soft vertical gradient background.
-        painter.add(egui::Shape::gradient_rect(
-            panel_rect,
-            egui::epaint::Direction::TopDown,
-            [theme::BG_COLOR, theme::BG_COLOR_LIGHT],
-        ));
 
         let origin = panel_rect.min;
         let rounding = egui::CornerRadius::same(theme::CORNER_RADIUS as u8);

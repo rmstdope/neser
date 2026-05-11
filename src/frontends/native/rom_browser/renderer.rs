@@ -152,31 +152,33 @@ impl BrowserGl {
 
         let egui_glow = EguiGlow::new(event_loop, glow_context.clone(), None, None, true);
 
-        // Configure Inter font family.
+        // Configure Nunito Sans font family.
         let mut fonts = egui::FontDefinitions::default();
         fonts.font_data.insert(
-            "inter_regular".to_owned(),
+            "nunito_regular".to_owned(),
             egui::FontData::from_static(include_bytes!(
-                "../../../../assets/fonts/Inter-Regular.ttf"
+                "../../../../assets/fonts/NunitoSans-Regular.ttf"
             ))
             .into(),
         );
         fonts.font_data.insert(
-            "inter_bold".to_owned(),
-            egui::FontData::from_static(include_bytes!("../../../../assets/fonts/Inter-Bold.ttf"))
-                .into(),
+            "nunito_bold".to_owned(),
+            egui::FontData::from_static(include_bytes!(
+                "../../../../assets/fonts/NunitoSans-Bold.ttf"
+            ))
+            .into(),
         );
         fonts
             .families
             .entry(egui::FontFamily::Proportional)
             .or_default()
-            .insert(0, "inter_regular".to_owned());
-        // Map monospace family to Inter Bold for headings.
+            .insert(0, "nunito_regular".to_owned());
+        // Map monospace family to Nunito Bold for headings.
         fonts
             .families
             .entry(egui::FontFamily::Monospace)
             .or_default()
-            .insert(0, "inter_bold".to_owned());
+            .insert(0, "nunito_bold".to_owned());
         egui_glow.egui_ctx.set_fonts(fonts);
 
         // Dark theme.

@@ -4,14 +4,14 @@
 
 use egui::Color32;
 
-/// Dark background colour (soft dark grey).
-pub const BG_COLOR: Color32 = Color32::from_rgb(28, 28, 32);
+/// Dark background colour (lighter grey for gradient top).
+pub const BG_COLOR: Color32 = Color32::from_rgb(42, 42, 50);
 
-/// Slightly lighter background for gradient effect.
-pub const BG_COLOR_LIGHT: Color32 = Color32::from_rgb(38, 38, 44);
+/// Slightly lighter background for gradient bottom.
+pub const BG_COLOR_LIGHT: Color32 = Color32::from_rgb(55, 55, 65);
 
-/// Sidebar background colour (darker panel).
-pub const SIDEBAR_BG: Color32 = Color32::from_rgb(18, 18, 24);
+/// Sidebar background colour (dark floating panel).
+pub const SIDEBAR_BG: Color32 = Color32::from_rgb(12, 12, 18);
 
 /// Selection highlight colour (blue accent).
 pub const SELECTION_COLOR: Color32 = Color32::from_rgb(51, 115, 217);
