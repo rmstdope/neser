@@ -132,52 +132,6 @@ pub fn run_and_detect_cgb(path: &str, model: CgbModel, cycle_limit: u64) -> Moon
     detect_mooneye_result_with_limit(&mut gb, cycle_limit)
 }
 
-/// Run a CGB ROM until the LD B,B breakpoint; return the result AND dump `n`
-/// bytes from `start_addr` (useful for diagnosing SameSuite failures).
-#[cfg(test)]
-pub fn run_cgb_and_dump<const N: usize>(
-    path: &str,
-    model: CgbModel,
-    cycle_limit: u64,
-    start_addr: u16,
-) -> (MooneyeResult, [u8; N]) {
-    let mut gb = load_cgb_rom_with_model(path, model);
-    let start = gb.cycles();
-    loop {
-        let opcode = gb.cpu.bus.read(gb.cpu.regs.pc);
-        if opcode == LD_B_B {
-            let mut buf = [0u8; N];
-            for (i, b) in buf.iter_mut().enumerate() {
-                *b = gb.cpu.bus.read(start_addr + i as u16);
-            }
-            let r = &gb.cpu.regs;
-            let result = if r.b == FIBO_B
-                && r.c == FIBO_C
-                && r.d == FIBO_D
-                && r.e == FIBO_E
-                && r.h == FIBO_H
-                && r.l == FIBO_L
-            {
-                MooneyeResult::Pass
-            } else {
-                MooneyeResult::Fail {
-                    b: r.b,
-                    c: r.c,
-                    d: r.d,
-                    e: r.e,
-                    h: r.h,
-                    l: r.l,
-                }
-            };
-            return (result, buf);
-        }
-        if gb.cycles().saturating_sub(start) >= cycle_limit {
-            return (MooneyeResult::Timeout, [0; N]);
-        }
-        gb.step();
-    }
-}
-
 // ============================================================================
 // Frame and Screen Helpers
 // ============================================================================
