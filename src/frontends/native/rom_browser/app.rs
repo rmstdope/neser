@@ -361,8 +361,12 @@ impl RomBrowserApp {
 
         let (display_w, display_h) = gl.logical_size();
         let dt = gl.delta_time();
-        self.scroll_offset +=
-            (self.scroll_target - self.scroll_offset) * (theme::SCROLL_SPEED * dt).min(1.0);
+        let diff = self.scroll_target - self.scroll_offset;
+        if diff.abs() < 0.5 {
+            self.scroll_offset = self.scroll_target;
+        } else {
+            self.scroll_offset += diff * (theme::SCROLL_SPEED * dt).min(1.0);
+        }
         let scroll_offset = self.scroll_offset;
 
         let sidebar_w = theme::sidebar_width(display_w);
