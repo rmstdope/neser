@@ -734,7 +734,7 @@ impl RomBrowserApp {
 
         // Metadata in a darker rounded frame.
         egui::Frame::new()
-            .fill(egui::Color32::from_rgb(12, 12, 18))
+            .fill(egui::Color32::from_rgb(22, 22, 28))
             .corner_radius(egui::CornerRadius::same(theme::CORNER_RADIUS as u8))
             .inner_margin(egui::Margin::same(10))
             .show(ui, |ui| {
@@ -797,7 +797,7 @@ impl RomBrowserApp {
         if let Some(ref overview) = entry.overview {
             ui.add_space(6.0);
             egui::Frame::new()
-                .fill(egui::Color32::from_rgb(12, 12, 18))
+                .fill(egui::Color32::from_rgb(22, 22, 28))
                 .corner_radius(egui::CornerRadius::same(theme::CORNER_RADIUS as u8))
                 .inner_margin(egui::Margin::same(10))
                 .show(ui, |ui| {

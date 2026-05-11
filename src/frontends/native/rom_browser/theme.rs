@@ -10,8 +10,8 @@ pub const BG_COLOR: Color32 = Color32::from_rgb(52, 52, 62);
 /// Lighter background for gradient bottom.
 pub const BG_COLOR_LIGHT: Color32 = Color32::from_rgb(72, 72, 82);
 
-/// Sidebar background colour (dark floating panel).
-pub const SIDEBAR_BG: Color32 = Color32::from_rgb(12, 12, 18);
+/// Sidebar background colour (dark grey floating panel).
+pub const SIDEBAR_BG: Color32 = Color32::from_rgb(32, 32, 40);
 
 /// Selection highlight colour (blue accent).
 pub const SELECTION_COLOR: Color32 = Color32::from_rgb(51, 115, 217);
@@ -56,7 +56,7 @@ pub const TITLE_HEIGHT: f32 = 0.0;
 pub const CORNER_RADIUS: f32 = 8.0;
 
 /// Fixed height for the sidebar cover art area.
-pub const SIDEBAR_ART_HEIGHT: f32 = 260.0;
+pub const SIDEBAR_ART_HEIGHT: f32 = 340.0;
 
 /// Blur width for the selection glow effect.
 pub const SELECTION_GLOW: f32 = 12.0;
@@ -77,7 +77,7 @@ pub const HEADER_HEIGHT: f32 = 48.0;
 pub const FOOTER_HEIGHT: f32 = 36.0;
 
 /// Smooth scroll speed (higher = faster, 1.0 = instant).
-pub const SCROLL_SPEED: f32 = 8.0;
+pub const SCROLL_SPEED: f32 = 4.0;
 
 /// Calculate the number of grid columns and cover width for a given area.
 ///
