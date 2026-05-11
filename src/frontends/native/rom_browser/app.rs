@@ -269,14 +269,22 @@ impl RomBrowserApp {
             let progress_snapshot = progress.clone();
             let (display_w, display_h) = gl.logical_size();
             gl.run_frame(|ui| {
-                egui::CentralPanel::default().show_inside(ui, |ui| {
-                    Self::render_loading_screen(
-                        ui,
-                        display_w,
-                        display_h,
-                        progress_snapshot.as_ref(),
-                    );
+                ui.ctx().set_visuals(egui::Visuals {
+                    dark_mode: true,
+                    panel_fill: theme::BG_COLOR,
+                    window_fill: theme::BG_COLOR,
+                    ..egui::Visuals::dark()
                 });
+                egui::CentralPanel::default()
+                    .frame(egui::Frame::new().fill(theme::BG_COLOR))
+                    .show_inside(ui, |ui| {
+                        Self::render_loading_screen(
+                            ui,
+                            display_w,
+                            display_h,
+                            progress_snapshot.as_ref(),
+                        );
+                    });
             });
             return;
         }
@@ -348,6 +356,14 @@ impl RomBrowserApp {
         };
 
         gl.run_frame(|ui| {
+            ui.ctx().set_visuals(egui::Visuals {
+                dark_mode: true,
+                panel_fill: theme::BG_COLOR,
+                window_fill: theme::BG_COLOR,
+                extreme_bg_color: egui::Color32::from_rgb(10, 10, 15),
+                faint_bg_color: egui::Color32::from_rgb(20, 20, 30),
+                ..egui::Visuals::dark()
+            });
             ui.ctx().global_style_mut(|s| {
                 s.text_styles.insert(
                     egui::TextStyle::Body,
@@ -359,19 +375,26 @@ impl RomBrowserApp {
                 );
             });
 
+            let sidebar_frame = egui::Frame::new()
+                .fill(theme::SIDEBAR_BG)
+                .inner_margin(egui::Margin::same(8));
             egui::Panel::right("sidebar")
                 .exact_size(sidebar_w)
                 .resizable(false)
+                .frame(sidebar_frame)
                 .show_inside(ui, |ui| {
                     if let Some(ref entry) = selected_entry {
-                        Self::render_sidebar_egui(ui, entry);
+                        Self::render_sidebar_egui(ui, entry, &tex_map);
                     }
                 });
 
+            let bar_frame = egui::Frame::new()
+                .fill(theme::BG_COLOR)
+                .inner_margin(egui::Margin::same(8));
             egui::Panel::top("header")
                 .exact_size(theme::HEADER_HEIGHT)
+                .frame(bar_frame)
                 .show_inside(ui, |ui| {
-                    ui.add_space(4.0);
                     ui.label(
                         egui::RichText::new(&header_text)
                             .color(theme::HEADER_TEXT)
@@ -381,8 +404,8 @@ impl RomBrowserApp {
 
             egui::Panel::bottom("footer")
                 .exact_size(theme::FOOTER_HEIGHT)
+                .frame(bar_frame)
                 .show_inside(ui, |ui| {
-                    ui.add_space(4.0);
                     let footer_text = if search_active {
                         "Type to search  |  Esc: Close  |  Enter: Launch"
                     } else if genre_filter_active {
@@ -399,20 +422,22 @@ impl RomBrowserApp {
                     );
                 });
 
-            egui::CentralPanel::default().show_inside(ui, |ui| {
-                Self::render_grid_egui(
-                    ui,
-                    &display_entries,
-                    &tex_map,
-                    cols,
-                    cover_w,
-                    cover_h,
-                    cell_h,
-                    selected,
-                    scroll_offset,
-                    &search_query,
-                );
-            });
+            egui::CentralPanel::default()
+                .frame(egui::Frame::new().fill(theme::BG_COLOR))
+                .show_inside(ui, |ui| {
+                    Self::render_grid_egui(
+                        ui,
+                        &display_entries,
+                        &tex_map,
+                        cols,
+                        cover_w,
+                        cover_h,
+                        cell_h,
+                        selected,
+                        scroll_offset,
+                        &search_query,
+                    );
+                });
 
             if search_active {
                 Self::render_search_overlay_egui(
@@ -645,8 +670,24 @@ impl RomBrowserApp {
         }
     }
 
-    fn render_sidebar_egui(ui: &mut egui::Ui, entry: &RomEntry) {
-        ui.add_space(8.0);
+    fn render_sidebar_egui(
+        ui: &mut egui::Ui,
+        entry: &RomEntry,
+        tex_map: &HashMap<i64, (egui::TextureId, u32, u32)>,
+    ) {
+        // Cover art image at the top of the sidebar.
+        if let Some(game_id) = entry.metadata_game_id {
+            if let Some(&(tex_id, _, _)) = tex_map.get(&game_id) {
+                let avail_w = ui.available_width();
+                let art_h = avail_w / theme::COVER_ASPECT;
+                ui.add(egui::Image::from_texture(egui::load::SizedTexture::new(
+                    tex_id,
+                    egui::vec2(avail_w, art_h),
+                )));
+                ui.add_space(8.0);
+            }
+        }
+
         ui.label(
             egui::RichText::new(&entry.display_name)
                 .color(theme::HEADER_TEXT)
@@ -978,6 +1019,8 @@ impl RomBrowserApp {
             self.scroll_target = cell_bottom - grid_height + theme::GRID_PADDING;
         }
         self.scroll_target = self.scroll_target.max(0.0);
+        // Snap immediately so keyboard navigation never lags behind.
+        self.scroll_offset = self.scroll_target;
     }
 
     /// Get the current number of grid columns based on window size.
