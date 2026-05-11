@@ -606,7 +606,10 @@ impl Apu {
             return;
         }
 
-        // Extra length clocking is keyed directly off the DIV-APU divider LSB.
+        // Extra length clocking is keyed directly off the DIV-APU divider LSB,
+        // not `fs_step`: the power-on-high skip path seeds `div_divider` before
+        // the first serviced FS step so the trigger-time length glitch observes
+        // the same phase as hardware.
         let extra_clk = self.div_divider & 1 == 1;
         let cgb_early_extra_length_clock = self.cgb_early_extra_length_clock();
         let cgb_b_delayed_ch3_length_disable = self.cgb_b_delayed_ch3_length_disable();
@@ -724,6 +727,9 @@ impl Apu {
     /// "Starting the APU while bit 4 of the DIV register is set causes the APU
     /// to skip the first DIV-APU event."
     pub fn arm_skip_next_div_apu_event(&mut self) {
+        // SameBoy initializes this skipped-start phase to 1 so trigger-time
+        // length glitches see `div_divider & 1 == 1`, even before the first
+        // non-skipped DIV-APU event advances the divider.
         self.div_divider = 1;
         self.skip_next_div_apu_event = true;
         trace_apu!(2; "GB APU armed skip_next_div_apu_event (power-on with DIV-APU bit high)");
