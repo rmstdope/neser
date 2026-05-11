@@ -919,8 +919,8 @@ impl RomBrowserApp {
 
     /// Render a row of pill-shaped button prompts (e.g., `[A] Launch`).
     fn render_button_legend(ui: &mut egui::Ui, items: &[(&str, &str)]) {
-        let pill_font = egui::FontId::new(13.0, egui::FontFamily::Monospace);
-        let label_font = egui::FontId::new(16.0, egui::FontFamily::Monospace);
+        let pill_font = egui::FontId::new(14.0, egui::FontFamily::Monospace);
+        let label_font = egui::FontId::new(17.0, egui::FontFamily::Monospace);
         let pill_h = 24.0_f32;
         let outer_h = 30.0_f32;
         let pill_pad_x = 7.0_f32;
@@ -1009,13 +1009,14 @@ impl RomBrowserApp {
         }
     }
 
-    /// Get the background colour for a button pill based on standard gamepad colours.
+    /// Get the outline colour for a button pill based on standard gamepad colours.
     fn button_pill_color(btn: &str) -> egui::Color32 {
         match btn {
             "A" => theme::BUTTON_COLOR_A,
             "B" => theme::BUTTON_COLOR_B,
             "X" => theme::BUTTON_COLOR_X,
             "Y" => theme::BUTTON_COLOR_Y,
+            "Select" | "Start" => egui::Color32::from_rgb(160, 160, 175),
             _ => theme::BUTTON_PILL_BG,
         }
     }
