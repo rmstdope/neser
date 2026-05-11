@@ -90,6 +90,8 @@ pub struct RomBrowserApp {
     show_favorites_only: bool,
     /// Tracks catalog loading progress.
     catalog_state: CatalogState,
+    /// Tracks current modifier key state.
+    modifiers: winit::keyboard::ModifiersState,
 }
 
 impl RomBrowserApp {
@@ -130,6 +132,7 @@ impl RomBrowserApp {
             favorites: Favorites::load(&favorites_path),
             show_favorites_only: false,
             catalog_state: CatalogState::Idle,
+            modifiers: winit::keyboard::ModifiersState::empty(),
         }
     }
 
@@ -1064,8 +1067,6 @@ impl RomBrowserApp {
             self.scroll_target = cell_bottom - grid_height + theme::GRID_PADDING;
         }
         self.scroll_target = self.scroll_target.max(0.0);
-        // Snap immediately so keyboard navigation never lags behind.
-        self.scroll_offset = self.scroll_target;
     }
 
     /// Get the current number of grid columns based on window size.
@@ -1266,6 +1267,12 @@ impl ApplicationHandler for RomBrowserApp {
                     }
                 } else {
                     // Normal browsing mode.
+                    let ctrl = self
+                        .modifiers
+                        .contains(winit::keyboard::ModifiersState::CONTROL)
+                        || self
+                            .modifiers
+                            .contains(winit::keyboard::ModifiersState::SUPER);
                     match event.logical_key {
                         Key::Named(NamedKey::Escape) => {
                             if !self.search_query.is_empty() || !self.active_genres.is_empty() {
@@ -1304,24 +1311,42 @@ impl ApplicationHandler for RomBrowserApp {
                         Key::Character(ref ch) if ch.as_str() == "/" => {
                             self.search_active = true;
                         }
-                        Key::Character(ref ch) if ch.as_str() == "g" => {
+                        Key::Character(ref ch)
+                            if (ch.as_str() == "f" || ch.as_str() == "F") && ctrl =>
+                        {
+                            self.search_active = true;
+                        }
+                        Key::Character(ref ch)
+                            if (ch.as_str() == "q" || ch.as_str() == "Q") && ctrl =>
+                        {
+                            self.result = BrowserResult::Closed;
+                            event_loop.exit();
+                        }
+                        Key::Character(ref ch) if ch.as_str() == "g" && !ctrl => {
                             self.genre_filter_active = true;
                             self.genre_cursor = 0;
                         }
-                        Key::Character(ref ch) if ch.as_str() == "d" => {
+                        Key::Character(ref ch) if ch.as_str() == "d" && !ctrl => {
                             if self.selected_entry().is_some() {
                                 self.detail_view_active = true;
                             }
                         }
-                        Key::Character(ref ch) if ch.as_str() == "f" => {
+                        Key::Character(ref ch) if ch.as_str() == "f" && !ctrl => {
                             self.toggle_favorite();
                         }
-                        Key::Character(ref ch) if ch.as_str() == "F" => {
+                        Key::Character(ref ch) if ch.as_str() == "F" && !ctrl => {
                             self.show_favorites_only = !self.show_favorites_only;
                             self.rebuild_filtered();
                         }
                         _ => {}
                     }
+                }
+            }
+
+            WindowEvent::ModifiersChanged(mods) => {
+                self.modifiers = mods.state();
+                if let Some(ref mut gl) = self.gl {
+                    let _ = gl.on_window_event(&event);
                 }
             }
 
@@ -1331,8 +1356,7 @@ impl ApplicationHandler for RomBrowserApp {
             | WindowEvent::Touch { .. }
             | WindowEvent::ScaleFactorChanged { .. }
             | WindowEvent::Focused(_)
-            | WindowEvent::Ime(_)
-            | WindowEvent::ModifiersChanged(_) => {
+            | WindowEvent::Ime(_) => {
                 if let Some(ref mut gl) = self.gl {
                     let _ = gl.on_window_event(&event);
                 }
@@ -1419,6 +1443,7 @@ mod tests {
             favorites: Favorites::load(&fav_path),
             show_favorites_only: false,
             catalog_state: CatalogState::Ready,
+            modifiers: winit::keyboard::ModifiersState::empty(),
         };
         app.set_catalog(entries);
         app
