@@ -261,8 +261,8 @@ fn run_native_frontend(
         // After emulation ends, return to the browser for another selection.
         let mut event_loop =
             EventLoop::new().map_err(|e| format!("Failed to create event loop: {e}"))?;
+        let mut browser = RomBrowserApp::new(app_context.clone());
         loop {
-            let browser = RomBrowserApp::new(app_context.clone());
             match browser.run(&mut event_loop)? {
                 BrowserResult::RomSelected(path) => {
                     let rom_path = path.to_string_lossy().to_string();

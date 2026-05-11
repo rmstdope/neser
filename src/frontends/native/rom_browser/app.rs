@@ -42,7 +42,7 @@ enum CatalogState {
 }
 
 /// Result from running the ROM browser.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum BrowserResult {
     /// User selected a ROM to launch.
     RomSelected(PathBuf),
@@ -220,12 +220,18 @@ impl RomBrowserApp {
     /// Run the ROM browser using the provided event loop and return the result.
     ///
     /// Uses `run_app_on_demand` so the event loop can be reused afterwards.
-    pub fn run(mut self, event_loop: &mut EventLoop<()>) -> Result<BrowserResult, String> {
+    /// The browser state (catalog, textures) is preserved across calls.
+    pub fn run(&mut self, event_loop: &mut EventLoop<()>) -> Result<BrowserResult, String> {
         use winit::platform::run_on_demand::EventLoopExtRunOnDemand;
+        // Reset transient state for a fresh UI pass but keep catalog/textures.
+        self.result = BrowserResult::Closed;
+        self.gl = None;
+        // Textures must be re-uploaded to the new GL context.
+        self.textures_loaded = false;
         event_loop
-            .run_app_on_demand(&mut self)
+            .run_app_on_demand(self)
             .map_err(|e| format!("Browser event loop error: {e}"))?;
-        Ok(self.result)
+        Ok(self.result.clone())
     }
 
     /// Check if the background catalog loading thread has finished.
